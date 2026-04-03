@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kobutachan-allaganeye"
+version = "0.1.0"
+description = "FF14 Frontline video auto-highlight extraction tool"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.9",
+    "opencv-python>=4.8",
+    "ffmpeg-python>=0.2",
+]
+
+[project.scripts]
+allaganeye = "allaganeye.cli:app"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.4",
+    "pyright>=1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: marks tests requiring video files (deselect with '-m \"not slow\"')"]
+addopts = "-m 'not slow'"
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "ASYNC", "S", "UP", "RUF"]
+ignore = [
+    "S603",    # subprocess call - process trusted input
+    "S607",    # partial executable path - ffmpeg/ffprobe are PATH-dependent
+    "S101",    # assert in tests OK
+    "E501",    # line length managed by formatter
+    "RUF001",  # ambiguous unicode (Japanese OK)
+    "RUF002",  # ambiguous unicode (Japanese OK)
+    "RUF003",  # ambiguous unicode (Japanese OK)
+]
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"

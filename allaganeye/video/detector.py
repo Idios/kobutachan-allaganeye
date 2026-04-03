@@ -1,0 +1,121 @@
+"""Match boundary detection using OpenCV frame analysis."""
+
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+from allaganeye.exceptions import VideoProcessingError
+
+
+def detect_match_boundaries(
+    video_path: Path,
+    *,
+    sample_interval: float = 1.0,
+    blackout_threshold: float = 15.0,
+    min_match_duration: float = 300.0,
+) -> list[dict]:
+    """Detect match boundaries by finding blackout frames.
+
+    Samples frames at the given interval, detects blackout (low brightness)
+    frames, and returns non-blackout segments that are longer than
+    min_match_duration.
+
+    Returns list of dicts with 'start' and 'end' keys (seconds).
+    """
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise VideoProcessingError(f"Cannot open video: {video_path}")
+
+    try:
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if fps <= 0 or total_frames <= 0:
+            raise VideoProcessingError("Cannot read video properties (fps or frame count)")
+
+        duration = total_frames / fps
+        frame_step = int(fps * sample_interval)
+        if frame_step < 1:
+            frame_step = 1
+
+        # Collect brightness values at sampled positions
+        blackout_times: list[float] = []
+        frame_idx = 0
+
+        while frame_idx < total_frames:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            mean_brightness = float(np.mean(gray))
+            timestamp = frame_idx / fps
+
+            if mean_brightness < blackout_threshold:
+                blackout_times.append(timestamp)
+
+            frame_idx += frame_step
+
+    finally:
+        cap.release()
+
+    # Build segments from non-blackout regions
+    return _extract_segments(blackout_times, duration, sample_interval, min_match_duration)
+
+
+def _extract_segments(
+    blackout_times: list[float],
+    total_duration: float,
+    sample_interval: float,
+    min_match_duration: float,
+) -> list[dict]:
+    """Extract match segments from blackout timestamps.
+
+    Groups consecutive blackout frames into blackout regions,
+    then extracts gaps between them as match candidates.
+    """
+    if not blackout_times:
+        # No blackouts found — entire video is one segment
+        if total_duration >= min_match_duration:
+            return [{"start": 0.0, "end": total_duration}]
+        return []
+
+    # Group consecutive blackout times into regions
+    tolerance = sample_interval * 2
+    blackout_regions: list[tuple[float, float]] = []
+    region_start = blackout_times[0]
+    region_end = blackout_times[0]
+
+    for t in blackout_times[1:]:
+        if t - region_end <= tolerance:
+            region_end = t
+        else:
+            blackout_regions.append((region_start, region_end))
+            region_start = t
+            region_end = t
+    blackout_regions.append((region_start, region_end))
+
+    # Extract segments between blackout regions
+    segments: list[dict] = []
+
+    # Before first blackout
+    if blackout_regions[0][0] > 0:
+        seg_start = 0.0
+        seg_end = blackout_regions[0][0]
+        if seg_end - seg_start >= min_match_duration:
+            segments.append({"start": seg_start, "end": seg_end})
+
+    # Between blackout regions
+    for i in range(len(blackout_regions) - 1):
+        seg_start = blackout_regions[i][1]
+        seg_end = blackout_regions[i + 1][0]
+        if seg_end - seg_start >= min_match_duration:
+            segments.append({"start": seg_start, "end": seg_end})
+
+    # After last blackout
+    last_end = blackout_regions[-1][1]
+    if total_duration - last_end >= min_match_duration:
+        segments.append({"start": last_end, "end": total_duration})
+
+    return segments
