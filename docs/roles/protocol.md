@@ -71,6 +71,13 @@ Issue に着手する際、コメントを追加:
 
 ## PR ワークフロー
 
+### ベースブランチ
+
+- 各ロールの PR は **`develop-x.x.x`** にマージする（`main` ではない）
+- `main` はリリース時の `develop-x.x.0 → main` マージのみ
+- 現在の開発ブランチは `develop-0.1.0`
+- 詳細は `docs/release-strategy.md` を参照
+
 ### PR 作成時
 
 - タイトルに変更内容を簡潔に記述

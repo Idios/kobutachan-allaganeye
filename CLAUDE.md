@@ -81,9 +81,10 @@ MP4/MKV入力 → probe.py（メタデータ取得）
 
 詳細は `docs/release-strategy.md` を参照。要約:
 
-- トランクベース開発、`main` 保護ブランチ
+- `develop-x.x.x` が日常の統合先、`main` はリリース時のみ更新
+- 各ロールの PR はすべて `develop-x.x.x` にマージ
+- リリース時に `develop-x.x.0 → main` マージ + タグ打ち
 - レイヤーごとに minor バージョン（L1=0.1, L2=0.2, L3=0.3, L4=0.4）
-- タグ: `v<major>.<minor>.<patch>`（Director がリリース時に打刻）
 
 ## ロールシステム
 
