@@ -77,6 +77,15 @@ MP4/MKV入力 → probe.py（メタデータ取得）
 - MKV: OBSの長時間録画（30-80GB、複数試合を含む）
 - サブディレクトリ（`20260116/` 等）: 手動で試合分割済みのMP4（`YYYYMMDD_N.mp4`）
 
+## リリース戦略
+
+詳細は `docs/release-strategy.md` を参照。要約:
+
+- `develop-x.x.x` が日常の統合先、`main` はリリース時のみ更新
+- 各ロールの PR はすべて `develop-x.x.x` にマージ
+- リリース時に `develop-x.x.0 → main` マージ + タグ打ち
+- レイヤーごとに minor バージョン（L1=0.1, L2=0.2, L3=0.3, L4=0.4）
+
 ## ロールシステム
 
 マルチエージェント開発に対応。詳細は `docs/roles/protocol.md` を参照。
@@ -96,13 +105,22 @@ MP4/MKV入力 → probe.py（メタデータ取得）
 
 - プレフィックス: `[bug]`, `[doc]`, `[refactor]`, `[task]`, `[question]`, `[risk]`
 - Assignee: 常に `Idios`
-- ラベル: `bug`, `documentation`, `enhancement`, `question` + `role:*`
+- 作成者明示: 本文末尾に `作成: <session-id>`
+- ラベル: prefix ラベル + `role:*` + 優先度（`P1-high` / `P2-medium` / `P3-low`）
+- `[bug]`/`[refactor]` は初期ラベル `role:lead-engineer`（方針コメント必要）
+- `role:*` ラベルは「次に誰が行動すべきか」を示す。作業進行に合わせて付替える
+- `Closes`/`Fixes` キーワードは使わない（クローズは手動）
 
 ## PR 作成ルール
 
-- ロールに応じたレビューワラベルを付与
-- テスト通過を確認してからマージ
-- チェックリスト未完了の PR はマージしない
+詳細は `docs/roles/protocol.md` を参照。要約:
+
+- ベースブランチ: `develop-x.x.x`（`main` ではない）
+- ロールラベル: レビュー担当の `role:*` を付与（元 issue 作成者ロール優先）
+- コード変更 PR: `role:tester` も付与（テスト実施のため）
+- マージ方法: `gh pr merge <番号> --squash`
+- コード変更はテスター確認必須、ドキュメントのみはレビューのみ
+- コミットメッセージに `[<session-id>]` を含める
 
 ## ユーザー指示の短縮記法
 
