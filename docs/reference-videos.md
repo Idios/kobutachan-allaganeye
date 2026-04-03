@@ -32,7 +32,7 @@
 
 | リソース | URL | 備考 |
 |---|---|---|
-| フロントラインの基本 | [ララのおもちゃ箱](https://lala-toybox.com/pvp/flontline/fl-general/%E3%83%95%E3%83%AD%E3%83%B3%E3%83%88%E3%83%A9%E3%82%A4%E3%83%B3%E3%81%AE%E5%9F%BA%E6%9C%AC/) | ルール・開始〜終了の流れを解説 |
+| フロントライン攻略（開放方法やルール） | [ゲームエイト](https://game8.jp/ff14/512268) | ルール・開始〜終了の流れを解説 |
 | フロントラインに行ってみよう！ | [note.com](https://note.com/dopelight/n/n6b3bc345a91a) | 初参加者向け、画面の流れが分かりやすい |
 
 ### YouTube 検索キーワード（長時間配信アーカイブ）
@@ -78,7 +78,7 @@
 | 公式 Frontline ページ | [Lodestone](https://na.finalfantasyxiv.com/lodestone/playguide/contentsguide/frontline/) | 公式ルール説明 |
 | フロントライン攻略 | [ゲームエイト](https://game8.jp/ff14/512268) | 全ルールの日本語解説 |
 | フロントラインの各ルール簡易解説 | [うわさの調べ](https://uwasablog.com/game230406/) | パッチ6.5 時点の簡潔な解説 |
-| Revival PvP Community | [pvpaissa.com](https://pvpaissa.com/) | FFXIV PvP コミュニティ（英語、Discord あり） |
+| Revival PvP Community | Discord で「Revival FFXIV PvP」を検索 | FFXIV PvP コミュニティ（英語）。Web サイトは Cloudflare 保護のためブラウザアクセス推奨 |
 
 ## 5. OBS 配信設定（録画環境の参考）
 
