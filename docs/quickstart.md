@@ -23,10 +23,12 @@ ffprobe -version
 ## 2. インストール
 
 ```bash
-git clone https://github.com/Idios/kobutachan-allaganeye.git
+git clone git@github.com:Idios/kobutachan-allaganeye.git
 cd kobutachan-allaganeye
 pip install -e .
 ```
+
+> このリポジトリは private です。アクセス権のある GitHub アカウントで SSH 認証が必要です。
 
 ## 3. 動画を分割する
 
