@@ -31,7 +31,9 @@ def detect_match_boundaries(
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         if fps <= 0 or total_frames <= 0:
-            raise VideoProcessingError("Cannot read video properties (fps or frame count)")
+            raise VideoProcessingError(
+                "Cannot read video properties (fps or frame count)"
+            )
 
         duration = total_frames / fps
         frame_step = int(fps * sample_interval)
@@ -61,7 +63,9 @@ def detect_match_boundaries(
         cap.release()
 
     # Build segments from non-blackout regions
-    return _extract_segments(blackout_times, duration, sample_interval, min_match_duration)
+    return _extract_segments(
+        blackout_times, duration, sample_interval, min_match_duration
+    )
 
 
 def _extract_segments(

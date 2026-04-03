@@ -48,7 +48,9 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
     for i, b in enumerate(boundaries, 1):
         duration = b["end"] - b["start"]
         if verbose:
-            typer.echo(f"  Match {i}: {b['start']:.1f}s - {b['end']:.1f}s ({duration:.0f}s)")
+            typer.echo(
+                f"  Match {i}: {b['start']:.1f}s - {b['end']:.1f}s ({duration:.0f}s)"
+            )
 
     # Step 3: Split (unless dry-run)
     if config.dry_run:
@@ -75,7 +77,9 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
         ],
     }
     metadata_path = config.output_dir / "metadata.json"
-    metadata_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+    metadata_path.write_text(
+        json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
     typer.echo(f"Output: {config.output_dir}")
     for f in output_files:
