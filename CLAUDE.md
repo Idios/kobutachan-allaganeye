@@ -77,6 +77,14 @@ MP4/MKV入力 → probe.py（メタデータ取得）
 - MKV: OBSの長時間録画（30-80GB、複数試合を含む）
 - サブディレクトリ（`20260116/` 等）: 手動で試合分割済みのMP4（`YYYYMMDD_N.mp4`）
 
+## リリース戦略
+
+詳細は `docs/release-strategy.md` を参照。要約:
+
+- トランクベース開発、`main` 保護ブランチ
+- レイヤーごとに minor バージョン（L1=0.1, L2=0.2, L3=0.3, L4=0.4）
+- タグ: `v<major>.<minor>.<patch>`（Director がリリース時に打刻）
+
 ## ロールシステム
 
 マルチエージェント開発に対応。詳細は `docs/roles/protocol.md` を参照。

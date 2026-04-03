@@ -1,41 +1,62 @@
 # Allagan Eye
 
-FF14 PvPコンテンツ「フロントライン」の長時間録画動画から、試合単位の分割・ハイライト抽出・投稿価値の評価を段階的に自動化するCLIツール。
+FF14 フロントラインの長時間録画動画を、試合ごとに自動分割する CLI ツール。
 
-## 段階的アーキテクチャ
+OBS 等で録画した数時間分の動画を入力すると、試合の切れ目を自動検知し、試合単位の MP4 ファイルに無劣化で分割します。
 
-```
-L1: 試合分割        ← 現在のスコープ
- ↓
-L2: メタデータ化    (OCR / 音声認識でタイムスタンプ化)
- ↓
-L3: 価値評価        (LLMによる投稿価値判定)
- ↓
-L4: 自動編集        (切り出し + 投稿提案)
-```
+## 環境要件
 
-## 現在の機能（L1: 試合分割）
+| 要件 | バージョン |
+|---|---|
+| Python | 3.11 以上 |
+| ffmpeg / ffprobe | PATH に存在すること |
 
-OBS録画のMP4/MKVファイルを入力し、OpenCVによるUI変化検知で試合境界を検出。FFmpegのコピーモード（`-c copy`）で無劣化・高速に試合ごとのMP4ファイルへ分割する。
+対応入力形式: MP4, MKV, AVI, MOV
 
-### コマンド
+## Quick Start
+
+> 詳しいセットアップ手順は [Quick Start Guide](docs/quickstart.md) を参照してください。
 
 ```bash
-# 試合分割
-allaganeye split <video_path>
+pip install -e .
+allaganeye split your_recording.mkv
+```
 
-# 出力先を指定
+## 使い方
+
+### 試合分割
+
+```bash
+allaganeye split <video_path>
+```
+
+出力先を指定する場合:
+
+```bash
 allaganeye split <video_path> -o <output_dir>
 ```
 
+### オプション
+
+| オプション | デフォルト | 説明 |
+|---|---|---|
+| `-o`, `--output-dir` | `./output` | 出力ディレクトリ |
+| `--sample-interval` | `1.0` | フレームサンプリング間隔（秒） |
+| `--blackout-threshold` | `15.0` | 暗転検知の輝度閾値 |
+| `--min-match-duration` | `300.0` | 最小試合時間（秒）。短いセグメントを除外 |
+| `--dry-run` | - | 検知のみ実行し、分割しない |
+| `-v`, `--verbose` | - | 詳細ログ出力 |
+
 ### 出力
+
+指定ディレクトリに試合ごとの MP4 とメタデータが出力されます。
 
 ```
 output/
 ├── match_001.mp4
 ├── match_002.mp4
 ├── match_003.mp4
-└── metadata.json    # 各試合の開始/終了時刻、推定情報
+└── metadata.json
 ```
 
 ### Exit Codes
@@ -44,62 +65,27 @@ output/
 |---|---|
 | 0 | 正常終了 |
 | 1 | 一般エラー |
-| 2 | 入力ファイル不正 |
+| 2 | 入力ファイル不正（ファイルが存在しない、非対応形式） |
 | 3 | FFmpeg / OpenCV エラー |
 | 4 | 検知失敗（試合境界が見つからない） |
 
-## 前提条件
-
-- Python 3.11+
-- ffmpeg / ffprobe（PATH に存在すること）
-- OBS 録画の MP4 または MKV ファイル
-
-## セットアップ
-
-```bash
-# 開発用インストール
-pip install -e ".[dev]"
-
-# テスト実行
-pytest
-
-# Lint
-ruff check .
-pyright
-```
-
-## プロジェクト構成
-
-```
-kobutachan-allaganeye/
-├── allaganeye/           # メインパッケージ
-│   ├── cli.py            # CLI エントリポイント
-│   ├── config.py         # 設定管理
-│   ├── exceptions.py     # エラークラス
-│   ├── commands/         # コマンド実装
-│   │   └── split_matches.py
-│   └── video/            # 動画処理
-│       ├── detector.py   # UI変化検知
-│       ├── splitter.py   # 動画分割
-│       └── probe.py      # メタデータ取得
-├── tests/                # テスト
-├── docs/                 # ドキュメント
-├── .claude/              # Claude Code 設定
-└── .github/workflows/    # CI
-```
-
 ## ロードマップ
 
-- [ ] **L1**: 試合分割（UI変化検知 + FFmpeg分割）
-- [ ] **L2**: メタデータ化（Tesseract OCR + Whisper音声認識）
-- [ ] **L3**: 価値評価（Claude API / Gemini API によるハイライト判定）
-- [ ] **L4**: 自動編集（MoviePy切り出し + YouTube投稿提案）
+| フェーズ | 機能 | 状態 |
+|---|---|---|
+| L1 | 試合分割 | 実装中 |
+| L2 | メタデータ化（OCR・音声認識） | 予定 |
+| L3 | 投稿価値の自動評価 | 予定 |
+| L4 | ハイライト自動編集 | 予定 |
 
-## 関連ドキュメント
+## ドキュメント
 
+- [Quick Start Guide](docs/quickstart.md)
+- [CLI コマンド仕様](docs/cli-spec.md)
 - [システムアーキテクチャ](docs/design-overview.md)
-- [CLIコマンド仕様](docs/cli-spec.md)
 - [動画処理設計](docs/video-processing.md)
-- [Issue作成ルール](docs/issue-policy.md)
-- [コーディング規約](docs/coding-conventions.md)
-- [バージョニング](docs/versioning.md)
+- [リリース戦略](docs/release-strategy.md)
+
+## ライセンス
+
+TBD
