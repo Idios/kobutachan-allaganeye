@@ -43,3 +43,33 @@ def test_split_unsupported_format(tmp_path):
         "unsupported" in result.stdout.lower()
         or "unsupported" in (result.stderr or "").lower()
     )
+
+
+def test_split_negative_sample_interval(tmp_path):
+    fake_file = tmp_path / "video.mp4"
+    fake_file.write_bytes(b"\x00")
+    result = runner.invoke(app, ["split", str(fake_file), "--sample-interval", "-1"])
+    assert result.exit_code == 2
+
+
+def test_split_zero_sample_interval(tmp_path):
+    fake_file = tmp_path / "video.mp4"
+    fake_file.write_bytes(b"\x00")
+    result = runner.invoke(app, ["split", str(fake_file), "--sample-interval", "0"])
+    assert result.exit_code == 2
+
+
+def test_split_blackout_threshold_over_255(tmp_path):
+    fake_file = tmp_path / "video.mp4"
+    fake_file.write_bytes(b"\x00")
+    result = runner.invoke(
+        app, ["split", str(fake_file), "--blackout-threshold", "300"]
+    )
+    assert result.exit_code == 2
+
+
+def test_split_negative_min_match_duration(tmp_path):
+    fake_file = tmp_path / "video.mp4"
+    fake_file.write_bytes(b"\x00")
+    result = runner.invoke(app, ["split", str(fake_file), "--min-match-duration", "-1"])
+    assert result.exit_code == 2
