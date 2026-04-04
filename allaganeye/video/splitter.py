@@ -37,7 +37,14 @@ def _ffmpeg_split(
     end: float,
     output: Path,
 ) -> None:
-    """Run FFmpeg to extract a segment with copy mode (no re-encoding)."""
+    """Run FFmpeg to extract a segment with copy mode (no re-encoding).
+
+    Design notes:
+    - `-y` overwrites without prompting; safe because output filenames are
+      auto-generated (match_NNN.mp4), not user-specified paths.
+    - On failure, stderr is truncated to 500 chars to keep error messages
+      readable (ffmpeg can produce very long diagnostic output).
+    """
     try:
         result = subprocess.run(
             [

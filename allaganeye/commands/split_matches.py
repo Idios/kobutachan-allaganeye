@@ -6,7 +6,7 @@ from pathlib import Path
 import typer
 
 from allaganeye.config import SplitConfig
-from allaganeye.exceptions import DetectionError
+from allaganeye.exceptions import AllaganEyeError, DetectionError
 from allaganeye.video.detector import detect_match_boundaries
 from allaganeye.video.probe import probe_video
 from allaganeye.video.splitter import split_video
@@ -57,7 +57,12 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
         typer.echo("Dry run: skipping split")
         return
 
-    config.output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        config.output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise AllaganEyeError(
+            f"Cannot create output directory {config.output_dir}: {e}"
+        ) from e
 
     output_files = split_video(video_path, boundaries, config.output_dir)
 
@@ -77,9 +82,12 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
         ],
     }
     metadata_path = config.output_dir / "metadata.json"
-    metadata_path.write_text(
-        json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    try:
+        metadata_path.write_text(
+            json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    except OSError as e:
+        raise AllaganEyeError(f"Cannot write metadata to {metadata_path}: {e}") from e
 
     typer.echo(f"Output: {config.output_dir}")
     for f in output_files:

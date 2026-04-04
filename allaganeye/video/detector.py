@@ -43,13 +43,23 @@ def detect_match_boundaries(
         # Collect brightness values at sampled positions
         blackout_times: list[float] = []
         frame_idx = 0
+        consecutive_failures = 0
+        max_consecutive_failures = 3
 
         while frame_idx < total_frames:
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ret, frame = cap.read()
             if not ret:
-                break
+                consecutive_failures += 1
+                if consecutive_failures >= max_consecutive_failures:
+                    raise VideoProcessingError(
+                        f"Failed to read {max_consecutive_failures} consecutive "
+                        f"frames at position {frame_idx}/{total_frames}"
+                    )
+                frame_idx += frame_step
+                continue
 
+            consecutive_failures = 0
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             mean_brightness = float(np.mean(gray))
             timestamp = frame_idx / fps
