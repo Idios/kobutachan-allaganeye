@@ -78,6 +78,15 @@ def detect_match_boundaries(
     )
 
 
+_BLACKOUT_PADDING = 3.0
+"""Seconds to offset cut points into blackout regions.
+
+With ``-c copy``, FFmpeg can only cut at keyframes (~2s apart for OBS).
+By placing cut points inside blackout regions, keyframe drift never
+clips actual match footage.
+"""
+
+
 def _extract_segments(
     blackout_times: list[float],
     total_duration: float,
@@ -88,6 +97,10 @@ def _extract_segments(
 
     Groups consecutive blackout frames into blackout regions,
     then extracts gaps between them as match candidates.
+
+    Cut points are offset into the blackout regions by
+    ``_BLACKOUT_PADDING`` so that keyframe-level imprecision in
+    ``-c copy`` mode never clips match footage.
     """
     if not blackout_times:
         # No blackouts found — entire video is one segment
@@ -116,20 +129,40 @@ def _extract_segments(
     # Before first blackout
     if blackout_regions[0][0] > 0:
         seg_start = 0.0
-        seg_end = blackout_regions[0][0]
+        seg_end = _padded_end(blackout_regions[0])
+        seg_end = min(seg_end, total_duration)
         if seg_end - seg_start >= min_match_duration:
             segments.append({"start": seg_start, "end": seg_end})
 
     # Between blackout regions
     for i in range(len(blackout_regions) - 1):
-        seg_start = blackout_regions[i][1]
-        seg_end = blackout_regions[i + 1][0]
+        seg_start = _padded_start(blackout_regions[i])
+        seg_start = max(seg_start, 0.0)
+        seg_end = _padded_end(blackout_regions[i + 1])
+        seg_end = min(seg_end, total_duration)
         if seg_end - seg_start >= min_match_duration:
             segments.append({"start": seg_start, "end": seg_end})
 
     # After last blackout
-    last_end = blackout_regions[-1][1]
-    if total_duration - last_end >= min_match_duration:
-        segments.append({"start": last_end, "end": total_duration})
+    seg_start = _padded_start(blackout_regions[-1])
+    seg_start = max(seg_start, 0.0)
+    if total_duration - seg_start >= min_match_duration:
+        segments.append({"start": seg_start, "end": total_duration})
 
     return segments
+
+
+def _padded_end(region: tuple[float, float]) -> float:
+    """Offset the segment end into the blackout region start."""
+    region_start, region_end = region
+    region_duration = region_end - region_start
+    effective_padding = min(_BLACKOUT_PADDING, region_duration / 2)
+    return region_start + effective_padding
+
+
+def _padded_start(region: tuple[float, float]) -> float:
+    """Offset the segment start into the blackout region end."""
+    region_start, region_end = region
+    region_duration = region_end - region_start
+    effective_padding = min(_BLACKOUT_PADDING, region_duration / 2)
+    return region_end - effective_padding
