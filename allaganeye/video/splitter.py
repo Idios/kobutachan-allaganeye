@@ -42,20 +42,25 @@ def _ffmpeg_split(
     Design notes:
     - `-y` overwrites without prompting; safe because output filenames are
       auto-generated (match_NNN.mp4), not user-specified paths.
+    - `-ss` is placed before `-i` for input seeking (fast, keyframe-based).
+      With `-c copy`, precision is keyframe-level regardless of `-ss` position,
+      so input seeking avoids decoding from file start to seek point.
+    - `-to` specifies duration (relative to seek point) when `-ss` is before `-i`.
     - On failure, stderr is truncated to 500 chars to keep error messages
       readable (ffmpeg can produce very long diagnostic output).
     """
+    duration = end - start
     try:
         result = subprocess.run(
             [
                 "ffmpeg",
                 "-y",
-                "-i",
-                str(input_path),
                 "-ss",
                 str(start),
+                "-i",
+                str(input_path),
                 "-to",
-                str(end),
+                str(duration),
                 "-c",
                 "copy",
                 "-avoid_negative_ts",
