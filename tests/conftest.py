@@ -17,3 +17,11 @@ def tmp_output_dir(tmp_path: Path) -> Path:
     output = tmp_path / "output"
     output.mkdir()
     return output
+
+
+@pytest.fixture
+def fake_video(tmp_path: Path) -> Path:
+    """Create a zero-byte .mp4 file that passes CLI validation."""
+    video = tmp_path / "test_video.mp4"
+    video.write_bytes(b"")
+    return video
