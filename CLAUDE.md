@@ -69,7 +69,7 @@ MP4/MKV入力 → probe.py（メタデータ取得）
 
 ### 外部依存
 
-- **ffmpeg / ffprobe**: PATH に存在する必要あり
+- **ffmpeg / ffprobe**: 4.1 以上。PATH に存在する必要あり
 - **Python パッケージ**: opencv-python, typer
 
 ### 動画サンプルデータ
