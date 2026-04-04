@@ -63,3 +63,7 @@ allaganeye split your_recording.mkv --min-match-duration 120.0
 ```
 
 詳細は `allaganeye split --help` で確認できます。
+
+### 分割が途中で失敗した場合
+
+途中で失敗しても、成功済みの出力ファイル（`match_001.mp4` 等）は出力ディレクトリに残ります。再実行すれば自動的に上書きされるため、手動削除は不要です。

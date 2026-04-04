@@ -78,4 +78,5 @@ def _ffmpeg_split(
     if result.returncode != 0:
         raise VideoProcessingError(
             f"ffmpeg split failed for {output.name}: {result.stderr[-500:]}"
+            " (previously output files may remain in the output directory)"
         )
