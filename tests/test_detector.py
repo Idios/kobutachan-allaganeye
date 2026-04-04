@@ -30,8 +30,9 @@ def _make_capture_mock(
     frames: dict[int, np.ndarray] | None = None,
     default_brightness: int = 128,
 ) -> MagicMock:
-    """Create a mock cv2.VideoCapture with configurable behavior.
+    """Create a mock cv2.VideoCapture with sequential read behavior.
 
+    Simulates grab()/read() sequential access pattern.
     Args:
         frames: dict mapping frame index to numpy frame.
             Missing indices use default_brightness.
@@ -52,11 +53,6 @@ def _make_capture_mock(
 
     current_frame = [0]
 
-    def set_pos(prop_id, value):
-        current_frame[0] = int(value)
-
-    cap.set.side_effect = set_pos
-
     if frames is None:
         frames = {}
 
@@ -64,11 +60,21 @@ def _make_capture_mock(
         idx = current_frame[0]
         if idx >= frame_count:
             return False, None
+        current_frame[0] += 1
         if idx in frames:
             return True, frames[idx]
         return True, _make_frame(default_brightness)
 
     cap.read.side_effect = read
+
+    def grab():
+        idx = current_frame[0]
+        if idx >= frame_count:
+            return False
+        current_frame[0] += 1
+        return True
+
+    cap.grab.side_effect = grab
 
     return cap
 
@@ -315,7 +321,7 @@ class TestDetectMatchBoundaries:
 
     @patch("allaganeye.video.detector.cv2.VideoCapture")
     def test_sample_interval_respected(self, mock_vc_class):
-        """frame_step = fps * sample_interval determines sampling stride."""
+        """frame_step = fps * sample_interval; only sampled frames are decoded."""
         fps = 30.0
         total_frames = 9000  # 300s
         cap = _make_capture_mock(
@@ -329,19 +335,18 @@ class TestDetectMatchBoundaries:
             min_match_duration=100.0,
         )
 
-        # frame_step = 30 * 2.0 = 60, frames sampled: 0, 60, 120, ...
-        set_calls = list(cap.set.call_args_list)
-        frame_indices = [int(c[0][1]) for c in set_calls]
-        if len(frame_indices) > 1:
-            strides = [
-                frame_indices[i + 1] - frame_indices[i]
-                for i in range(len(frame_indices) - 1)
-            ]
-            assert all(s == 60 for s in strides)
+        # frame_step = 30 * 2.0 = 60
+        # read() called for sampled frames, grab() for skipped frames
+        # Total read calls = total_frames / frame_step = 150
+        # Total grab calls = total_frames - read_calls = 8850
+        read_count = cap.read.call_count
+        grab_count = cap.grab.call_count
+        assert read_count == 150
+        assert grab_count == total_frames - read_count
 
     @patch("allaganeye.video.detector.cv2.VideoCapture")
     def test_sample_interval_very_small(self, mock_vc_class):
-        """Very small sample_interval clamps frame_step to 1."""
+        """Very small sample_interval clamps frame_step to 1 (every frame sampled)."""
         fps = 30.0
         total_frames = 90  # 3s, small for speed
         cap = _make_capture_mock(
@@ -356,14 +361,9 @@ class TestDetectMatchBoundaries:
         )
 
         # frame_step = int(30 * 0.01) = 0 → clamped to 1
-        set_calls = list(cap.set.call_args_list)
-        frame_indices = [int(c[0][1]) for c in set_calls]
-        if len(frame_indices) > 1:
-            strides = [
-                frame_indices[i + 1] - frame_indices[i]
-                for i in range(len(frame_indices) - 1)
-            ]
-            assert all(s == 1 for s in strides)
+        # Every frame is sampled via read(), no grab() calls
+        assert cap.read.call_count == total_frames
+        assert cap.grab.call_count == 0
 
     @patch("allaganeye.video.detector.cv2.VideoCapture")
     def test_custom_threshold(self, mock_vc_class):
@@ -437,13 +437,13 @@ class TestDetectMatchBoundaries:
             7: 3600.0,  # CAP_PROP_FRAME_COUNT
         }.get(prop, 0.0)
 
-        # Every read fails
+        # Every read/grab fails
         cap.read.return_value = (False, None)
+        cap.grab.return_value = False
 
         mock_cv2.VideoCapture.return_value = cap
         mock_cv2.CAP_PROP_FPS = 5
         mock_cv2.CAP_PROP_FRAME_COUNT = 7
-        mock_cv2.CAP_PROP_POS_FRAMES = 1
 
         with pytest.raises(VideoProcessingError, match="consecutive"):
             detect_match_boundaries(Path("test.mp4"), min_match_duration=1.0)

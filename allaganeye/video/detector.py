@@ -40,34 +40,49 @@ def detect_match_boundaries(
         if frame_step < 1:
             frame_step = 1
 
-        # Collect brightness values at sampled positions
+        # Collect brightness values at sampled positions.
+        # Uses sequential grab()/retrieve() instead of random-access
+        # set(CAP_PROP_POS_FRAMES) to avoid costly seeking on MKV files.
         blackout_times: list[float] = []
         frame_idx = 0
         consecutive_failures = 0
         max_consecutive_failures = 3
 
         while frame_idx < total_frames:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-            ret, frame = cap.read()
-            if not ret:
-                consecutive_failures += 1
-                if consecutive_failures >= max_consecutive_failures:
-                    raise VideoProcessingError(
-                        f"Failed to read {max_consecutive_failures} consecutive "
-                        f"frames at position {frame_idx}/{total_frames}"
-                    )
-                frame_idx += frame_step
-                continue
+            if frame_idx % frame_step == 0:
+                # Sample frame: decode and analyze brightness
+                ret, frame = cap.read()
+                if not ret:
+                    consecutive_failures += 1
+                    if consecutive_failures >= max_consecutive_failures:
+                        raise VideoProcessingError(
+                            f"Failed to read {max_consecutive_failures} consecutive "
+                            f"frames at position {frame_idx}/{total_frames}"
+                        )
+                    frame_idx += 1
+                    continue
 
-            consecutive_failures = 0
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            mean_brightness = float(np.mean(gray))
-            timestamp = frame_idx / fps
+                consecutive_failures = 0
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                mean_brightness = float(np.mean(gray))
+                timestamp = frame_idx / fps
 
-            if mean_brightness < blackout_threshold:
-                blackout_times.append(timestamp)
+                if mean_brightness < blackout_threshold:
+                    blackout_times.append(timestamp)
+            else:
+                # Non-sample frame: advance pointer without decoding
+                if not cap.grab():
+                    consecutive_failures += 1
+                    if consecutive_failures >= max_consecutive_failures:
+                        raise VideoProcessingError(
+                            f"Failed to read {max_consecutive_failures} consecutive "
+                            f"frames at position {frame_idx}/{total_frames}"
+                        )
+                    frame_idx += 1
+                    continue
+                consecutive_failures = 0
 
-            frame_idx += frame_step
+            frame_idx += 1
 
     finally:
         cap.release()
