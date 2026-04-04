@@ -74,9 +74,19 @@ MP4/MKV入力 → probe.py（メタデータ取得）
 
 ### 動画サンプルデータ
 
-テスト・開発用の録画データ: `E:\royalstraightflesh\videos\`
+テスト・開発用の録画データは環境変数 `ALLAGANEYE_SAMPLE_VIDEO_DIR` で指定する。
+
+```bash
+# Windows (デフォルトの録画保存先)
+set ALLAGANEYE_SAMPLE_VIDEO_DIR=E:\royalstraightflesh\videos
+
+# Linux / macOS
+export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
+```
+
 - MKV: OBSの長時間録画（30-80GB、複数試合を含む）
 - サブディレクトリ（`20260116/` 等）: 手動で試合分割済みのMP4（`YYYYMMDD_N.mp4`）
+- 未設定の場合、`sample_video_dir` fixture を使うテスト（`slow` マーカー）はスキップされる
 
 ## リリース戦略
 
