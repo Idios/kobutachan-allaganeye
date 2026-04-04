@@ -83,9 +83,7 @@ def test_split_blackout_threshold_over_255(tmp_path):
 def test_split_negative_min_match_duration(tmp_path):
     fake_file = tmp_path / "video.mp4"
     fake_file.write_bytes(b"\x00")
-    result = runner.invoke(
-        app, ["split", str(fake_file), "--min-match-duration", "-1"]
-    )
+    result = runner.invoke(app, ["split", str(fake_file), "--min-match-duration", "-1"])
     assert result.exit_code == 5
 
 
@@ -134,9 +132,7 @@ def test_split_output_dir_long_form(mock_run_split, fake_video, tmp_path):
 @patch(MODULE)
 def test_split_sample_interval(mock_run_split, fake_video):
     """--sample-interval option is forwarded to config."""
-    result = runner.invoke(
-        app, ["split", str(fake_video), "--sample-interval", "2.5"]
-    )
+    result = runner.invoke(app, ["split", str(fake_video), "--sample-interval", "2.5"])
 
     assert result.exit_code == 0
     config = mock_run_split.call_args[0][1]
