@@ -7,6 +7,16 @@ from pathlib import Path
 from allaganeye.exceptions import InputFileError, VideoProcessingError
 
 
+def _parse_frame_rate(rate_str: str) -> float:
+    """Parse a frame rate string like '30/1' or '60000/1001'. Returns 0.0 on failure."""
+    try:
+        num, den = rate_str.split("/")
+        fps = float(num) / float(den)
+    except (ValueError, ZeroDivisionError, AttributeError):
+        return 0.0
+    return fps if fps > 0 else 0.0
+
+
 def probe_video(video_path: Path) -> dict:
     """Extract video metadata using ffprobe.
 
@@ -49,13 +59,15 @@ def probe_video(video_path: Path) -> dict:
     if video_stream is None:
         raise InputFileError("No video stream found in file")
 
-    # Parse FPS from r_frame_rate (e.g., "30/1" or "60000/1001")
-    fps_str = video_stream.get("r_frame_rate", "0/1")
-    try:
-        num, den = fps_str.split("/")
-        fps = float(num) / float(den)
-    except (ValueError, ZeroDivisionError):
-        fps = 0.0
+    # Parse FPS from r_frame_rate (e.g., "30/1" or "60000/1001"),
+    # falling back to avg_frame_rate if r_frame_rate is unusable.
+    fps = _parse_frame_rate(video_stream.get("r_frame_rate", ""))
+    if fps <= 0:
+        fps = _parse_frame_rate(video_stream.get("avg_frame_rate", ""))
+    if fps <= 0:
+        raise VideoProcessingError(
+            "Cannot determine video frame rate from ffprobe output"
+        )
 
     duration = float(data.get("format", {}).get("duration", 0))
 
