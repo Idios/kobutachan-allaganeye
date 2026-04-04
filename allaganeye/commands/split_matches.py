@@ -63,6 +63,11 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
     result = {
         "source": str(video_path),
         "source_duration": metadata["duration"],
+        "note": (
+            "Split times are approximate due to keyframe-aligned copy mode. "
+            "Actual start/end may differ by up to the source keyframe interval "
+            "(typically 2s for OBS recordings)."
+        ),
         "matches": [
             {
                 "index": i + 1,
