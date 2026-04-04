@@ -34,7 +34,9 @@ def main(
 
 @app.command()
 def split(
-    video_path: Annotated[Path, typer.Argument(help="Input video file (MP4/MKV)")],
+    video_path: Annotated[
+        Path, typer.Argument(help="Input video file (MP4/MKV/AVI/MOV)")
+    ],
     output_dir: Annotated[
         Path, typer.Option("-o", "--output-dir", help="Output directory")
     ] = Path("./output"),

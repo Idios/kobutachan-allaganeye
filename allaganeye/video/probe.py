@@ -26,8 +26,10 @@ def probe_video(video_path: Path) -> dict:
         result = subprocess.run(
             [
                 "ffprobe",
-                "-v", "quiet",
-                "-print_format", "json",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
                 "-show_format",
                 "-show_streams",
                 str(video_path),
@@ -77,5 +79,7 @@ def probe_video(video_path: Path) -> dict:
         "height": int(video_stream.get("height", 0)),
         "fps": fps,
         "codec": video_stream.get("codec_name", "unknown"),
-        "audio_codec": audio_stream.get("codec_name", "unknown") if audio_stream else None,
+        "audio_codec": audio_stream.get("codec_name", "unknown")
+        if audio_stream
+        else None,
     }

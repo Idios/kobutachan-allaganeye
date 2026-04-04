@@ -44,19 +44,21 @@ def test_parse_frame_rate_invalid(rate_str):
 
 def _make_ffprobe_output(r_frame_rate="30/1", avg_frame_rate="30/1"):
     """Build a fake ffprobe JSON output."""
-    return json.dumps({
-        "streams": [
-            {
-                "codec_type": "video",
-                "codec_name": "h264",
-                "width": 1920,
-                "height": 1080,
-                "r_frame_rate": r_frame_rate,
-                "avg_frame_rate": avg_frame_rate,
-            }
-        ],
-        "format": {"duration": "600.0"},
-    })
+    return json.dumps(
+        {
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "codec_name": "h264",
+                    "width": 1920,
+                    "height": 1080,
+                    "r_frame_rate": r_frame_rate,
+                    "avg_frame_rate": avg_frame_rate,
+                }
+            ],
+            "format": {"duration": "600.0"},
+        }
+    )
 
 
 @patch("allaganeye.video.probe.subprocess.run")

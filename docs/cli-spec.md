@@ -22,7 +22,7 @@ allaganeye split <video_path> [OPTIONS]
 
 | 引数 | 必須 | 説明 |
 |---|---|---|
-| `video_path` | Yes | 入力動画ファイルのパス（MP4/MKV） |
+| `video_path` | Yes | 入力動画ファイルのパス（MP4/MKV/AVI/MOV） |
 
 ### オプション
 

@@ -24,14 +24,16 @@ def detect_match_boundaries(
     Returns list of dicts with 'start' and 'end' keys (seconds).
     """
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise VideoProcessingError(f"Cannot open video: {video_path}")
-
     try:
+        if not cap.isOpened():
+            raise VideoProcessingError(f"Cannot open video: {video_path}")
+
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         if fps <= 0 or total_frames <= 0:
-            raise VideoProcessingError("Cannot read video properties (fps or frame count)")
+            raise VideoProcessingError(
+                "Cannot read video properties (fps or frame count)"
+            )
 
         duration = total_frames / fps
         frame_step = int(fps * sample_interval)
@@ -41,13 +43,23 @@ def detect_match_boundaries(
         # Collect brightness values at sampled positions
         blackout_times: list[float] = []
         frame_idx = 0
+        consecutive_failures = 0
+        max_consecutive_failures = 3
 
         while frame_idx < total_frames:
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ret, frame = cap.read()
             if not ret:
-                break
+                consecutive_failures += 1
+                if consecutive_failures >= max_consecutive_failures:
+                    raise VideoProcessingError(
+                        f"Failed to read {max_consecutive_failures} consecutive "
+                        f"frames at position {frame_idx}/{total_frames}"
+                    )
+                frame_idx += frame_step
+                continue
 
+            consecutive_failures = 0
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             mean_brightness = float(np.mean(gray))
             timestamp = frame_idx / fps
@@ -61,7 +73,9 @@ def detect_match_boundaries(
         cap.release()
 
     # Build segments from non-blackout regions
-    return _extract_segments(blackout_times, duration, sample_interval, min_match_duration)
+    return _extract_segments(
+        blackout_times, duration, sample_interval, min_match_duration
+    )
 
 
 def _extract_segments(
