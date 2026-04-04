@@ -45,7 +45,10 @@
 - `[bug]`/`[refactor]` issue は **初期ラベルを `role:lead-engineer` にする**（リードエンジニアの方針コメントが必要なため）。方針決定後、リードエンジニアが `role:engineer` に付替える
 - `[task]` issue は対象ロールの `role:*` ラベルを必ず付ける（prefix だけではどのロール向けか判別できないため）
 - `[question]` issue は回答を求めるロールの `role:*` ラベルを付ける
-- `[doc]` issue は対象ドキュメントの担当ロールの `role:*` ラベルを付ける
+- `[doc]` issue は内容に応じて起票者がロールを選択する:
+  - typo 修正、手順追記、記述の誤り → `role:engineer`
+  - バージョン要件、設計文書、方針策定 → `role:lead-engineer`
+  - プロジェクト方針、ロール定義、連携プロトコル → `role:director`
 - `[risk]` issue は `role:lead-engineer` ラベルを付ける（リスク評価はリードエンジニアが行う）
 - PR にも同様に、レビュー担当ロールの `role:*` ラベルを付ける（`docs/roles/protocol.md` 参照）
 
