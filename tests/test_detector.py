@@ -10,6 +10,70 @@ from allaganeye.exceptions import VideoProcessingError
 from allaganeye.video.detector import _extract_segments, detect_match_boundaries
 
 
+# --- Helpers ---
+
+
+def _make_frame(brightness: int) -> np.ndarray:
+    """Create a 2x2 BGR frame with uniform brightness."""
+    return np.full((2, 2, 3), brightness, dtype=np.uint8)
+
+
+def _make_capture_mock(
+    *,
+    is_opened: bool = True,
+    fps: float = 30.0,
+    frame_count: int = 9000,
+    frames: dict[int, np.ndarray] | None = None,
+    default_brightness: int = 128,
+) -> MagicMock:
+    """Create a mock cv2.VideoCapture with configurable behavior.
+
+    Args:
+        frames: dict mapping frame index to numpy frame.
+            Missing indices use default_brightness.
+    """
+    cap = MagicMock()
+    cap.isOpened.return_value = is_opened
+
+    def get_prop(prop_id):
+        import cv2
+
+        if prop_id == cv2.CAP_PROP_FPS:
+            return fps
+        if prop_id == cv2.CAP_PROP_FRAME_COUNT:
+            return frame_count
+        return 0.0
+
+    cap.get.side_effect = get_prop
+
+    current_frame = [0]
+
+    def set_pos(prop_id, value):
+        current_frame[0] = int(value)
+
+    cap.set.side_effect = set_pos
+
+    if frames is None:
+        frames = {}
+
+    def read():
+        idx = current_frame[0]
+        if idx >= frame_count:
+            return False, None
+        if idx in frames:
+            return True, frames[idx]
+        return True, _make_frame(default_brightness)
+
+    cap.read.side_effect = read
+
+    return cap
+
+
+# ============================================================
+# TestExtractSegments
+# ============================================================
+
+
 class TestExtractSegments:
     """Unit tests for segment extraction logic (no video files needed)."""
 
@@ -95,35 +159,232 @@ class TestExtractSegments:
         assert result[1]["start"] == 604.0
 
 
+# ============================================================
+# TestDetectMatchBoundaries
+# ============================================================
+
+
 class TestDetectMatchBoundaries:
-    """Tests for detect_match_boundaries with mocked OpenCV."""
+    """Tests for detect_match_boundaries() with mocked cv2.VideoCapture."""
 
-    def _make_mock_cap(self, fps=30.0, total_frames=3600, read_failures=None):
-        """Create a mock VideoCapture that returns bright frames."""
-        cap = MagicMock()
-        cap.isOpened.return_value = True
-        cap.get.side_effect = lambda prop: {
-            5: fps,  # CAP_PROP_FPS
-            7: float(total_frames),  # CAP_PROP_FRAME_COUNT
-        }.get(prop, 0.0)
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_video_cannot_open(self, mock_vc_class):
+        """VideoCapture open failure raises VideoProcessingError."""
+        mock_vc_class.return_value = _make_capture_mock(is_opened=False)
 
-        bright_frame = np.full((100, 100, 3), 128, dtype=np.uint8)
-        failure_positions = set(read_failures or [])
-        call_count = {"n": 0}
+        with pytest.raises(VideoProcessingError, match="Cannot open video"):
+            detect_match_boundaries(Path("test.mp4"))
 
-        def mock_read():
-            pos = call_count["n"]
-            call_count["n"] += 1
-            if pos in failure_positions:
-                return False, None
-            return True, bright_frame.copy()
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_fps_zero(self, mock_vc_class):
+        """fps=0 raises VideoProcessingError."""
+        mock_vc_class.return_value = _make_capture_mock(fps=0.0, frame_count=9000)
 
-        cap.read.side_effect = mock_read
-        return cap
+        with pytest.raises(VideoProcessingError, match="Cannot read video properties"):
+            detect_match_boundaries(Path("test.mp4"))
+
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_frame_count_zero(self, mock_vc_class):
+        """frame_count=0 raises VideoProcessingError."""
+        mock_vc_class.return_value = _make_capture_mock(fps=30.0, frame_count=0)
+
+        with pytest.raises(VideoProcessingError, match="Cannot read video properties"):
+            detect_match_boundaries(Path("test.mp4"))
+
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_negative_fps(self, mock_vc_class):
+        """Negative fps raises VideoProcessingError."""
+        mock_vc_class.return_value = _make_capture_mock(fps=-1.0, frame_count=9000)
+
+        with pytest.raises(VideoProcessingError, match="Cannot read video properties"):
+            detect_match_boundaries(Path("test.mp4"))
+
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_all_bright_frames(self, mock_vc_class):
+        """All bright frames → single segment covering full duration."""
+        mock_vc_class.return_value = _make_capture_mock(
+            fps=30.0,
+            frame_count=9000,
+            default_brightness=128,
+        )
+
+        result = detect_match_boundaries(
+            Path("test.mp4"),
+            min_match_duration=100.0,
+        )
+        assert len(result) == 1
+        assert result[0]["start"] == 0.0
+        assert result[0]["end"] == pytest.approx(300.0)
+
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_all_black_frames(self, mock_vc_class):
+        """All black frames → no segments (entire video is blackout)."""
+        mock_vc_class.return_value = _make_capture_mock(
+            fps=30.0,
+            frame_count=9000,
+            default_brightness=5,
+        )
+
+        result = detect_match_boundaries(
+            Path("test.mp4"),
+            min_match_duration=100.0,
+        )
+        assert len(result) == 0
+
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_blackout_in_middle(self, mock_vc_class):
+        """Blackout in middle splits video into two segments."""
+        fps = 30.0
+        total_frames = 54000  # 1800s
+
+        black_frames = {}
+        for sec in range(598, 603):
+            frame_idx = int(sec * fps)
+            black_frames[frame_idx] = _make_frame(5)
+
+        mock_vc_class.return_value = _make_capture_mock(
+            fps=fps,
+            frame_count=total_frames,
+            frames=black_frames,
+            default_brightness=128,
+        )
+
+        result = detect_match_boundaries(
+            Path("test.mp4"),
+            sample_interval=1.0,
+            min_match_duration=300.0,
+        )
+        assert len(result) == 2
+        assert result[0]["start"] == 0.0
+        assert result[1]["end"] == pytest.approx(1800.0)
+
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_sample_interval_respected(self, mock_vc_class):
+        """frame_step = fps * sample_interval determines sampling stride."""
+        fps = 30.0
+        total_frames = 9000  # 300s
+        cap = _make_capture_mock(
+            fps=fps, frame_count=total_frames, default_brightness=128
+        )
+        mock_vc_class.return_value = cap
+
+        detect_match_boundaries(
+            Path("test.mp4"),
+            sample_interval=2.0,
+            min_match_duration=100.0,
+        )
+
+        # frame_step = 30 * 2.0 = 60, frames sampled: 0, 60, 120, ...
+        set_calls = list(cap.set.call_args_list)
+        frame_indices = [int(c[0][1]) for c in set_calls]
+        if len(frame_indices) > 1:
+            strides = [
+                frame_indices[i + 1] - frame_indices[i]
+                for i in range(len(frame_indices) - 1)
+            ]
+            assert all(s == 60 for s in strides)
+
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_sample_interval_very_small(self, mock_vc_class):
+        """Very small sample_interval clamps frame_step to 1."""
+        fps = 30.0
+        total_frames = 90  # 3s, small for speed
+        cap = _make_capture_mock(
+            fps=fps, frame_count=total_frames, default_brightness=128
+        )
+        mock_vc_class.return_value = cap
+
+        detect_match_boundaries(
+            Path("test.mp4"),
+            sample_interval=0.01,
+            min_match_duration=1.0,
+        )
+
+        # frame_step = int(30 * 0.01) = 0 → clamped to 1
+        set_calls = list(cap.set.call_args_list)
+        frame_indices = [int(c[0][1]) for c in set_calls]
+        if len(frame_indices) > 1:
+            strides = [
+                frame_indices[i + 1] - frame_indices[i]
+                for i in range(len(frame_indices) - 1)
+            ]
+            assert all(s == 1 for s in strides)
+
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_custom_threshold(self, mock_vc_class):
+        """Brightness 20 with threshold 15 → not blackout → 1 segment."""
+        fps = 30.0
+        total_frames = 9000  # 300s
+        mock_vc_class.return_value = _make_capture_mock(
+            fps=fps,
+            frame_count=total_frames,
+            default_brightness=20,
+        )
+
+        result = detect_match_boundaries(
+            Path("test.mp4"),
+            blackout_threshold=15.0,
+            min_match_duration=100.0,
+        )
+        assert len(result) == 1
+
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_custom_threshold_blackout(self, mock_vc_class):
+        """Higher threshold makes same brightness frames count as blackout."""
+        fps = 30.0
+        total_frames = 9000
+        mock_vc_class.return_value = _make_capture_mock(
+            fps=fps,
+            frame_count=total_frames,
+            default_brightness=20,
+        )
+
+        result = detect_match_boundaries(
+            Path("test.mp4"),
+            blackout_threshold=25.0,
+            min_match_duration=100.0,
+        )
+        assert len(result) == 0
+
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_custom_min_duration(self, mock_vc_class):
+        """min_match_duration filters short segments."""
+        fps = 30.0
+        total_frames = 54000  # 1800s
+
+        # Blackout at 200s → segments: 0-200s (200s) and ~200-1800s (1600s)
+        black_frames = {}
+        for sec in range(198, 203):
+            black_frames[int(sec * fps)] = _make_frame(5)
+
+        mock_vc_class.return_value = _make_capture_mock(
+            fps=fps,
+            frame_count=total_frames,
+            frames=black_frames,
+            default_brightness=128,
+        )
+
+        # min_match_duration=300 → only the long segment
+        result = detect_match_boundaries(
+            Path("test.mp4"),
+            min_match_duration=300.0,
+        )
+        assert len(result) == 1
+        assert result[0]["start"] > 100.0  # the second (long) segment
 
     @patch("allaganeye.video.detector.cv2")
     def test_consecutive_read_failures_raises(self, mock_cv2):
-        cap = self._make_mock_cap(read_failures={0, 1, 2})
+        """3 consecutive read failures raise VideoProcessingError."""
+        cap = MagicMock()
+        cap.isOpened.return_value = True
+        cap.get.side_effect = lambda prop: {
+            5: 30.0,  # CAP_PROP_FPS
+            7: 3600.0,  # CAP_PROP_FRAME_COUNT
+        }.get(prop, 0.0)
+
+        # Every read fails
+        cap.read.return_value = (False, None)
+
         mock_cv2.VideoCapture.return_value = cap
         mock_cv2.CAP_PROP_FPS = 5
         mock_cv2.CAP_PROP_FRAME_COUNT = 7
@@ -132,11 +393,22 @@ class TestDetectMatchBoundaries:
         with pytest.raises(VideoProcessingError, match="consecutive"):
             detect_match_boundaries(Path("test.mp4"), min_match_duration=1.0)
 
-    @patch("allaganeye.video.detector.cv2")
-    def test_open_failure_raises(self, mock_cv2):
-        cap = MagicMock()
-        cap.isOpened.return_value = False
-        mock_cv2.VideoCapture.return_value = cap
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_release_called_on_success(self, mock_vc_class):
+        """cap.release() is called after successful processing."""
+        cap = _make_capture_mock(fps=30.0, frame_count=9000, default_brightness=128)
+        mock_vc_class.return_value = cap
 
-        with pytest.raises(VideoProcessingError, match="Cannot open"):
+        detect_match_boundaries(Path("test.mp4"), min_match_duration=100.0)
+        cap.release.assert_called_once()
+
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_release_called_on_property_error(self, mock_vc_class):
+        """cap.release() is called even when fps/frame_count error occurs."""
+        cap = _make_capture_mock(fps=0.0, frame_count=9000)
+        mock_vc_class.return_value = cap
+
+        with pytest.raises(VideoProcessingError):
             detect_match_boundaries(Path("test.mp4"))
+
+        cap.release.assert_called_once()
