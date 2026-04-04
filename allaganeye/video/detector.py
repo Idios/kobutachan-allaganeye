@@ -24,10 +24,9 @@ def detect_match_boundaries(
     Returns list of dicts with 'start' and 'end' keys (seconds).
     """
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise VideoProcessingError(f"Cannot open video: {video_path}")
-
     try:
+        if not cap.isOpened():
+            raise VideoProcessingError(f"Cannot open video: {video_path}")
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         if fps <= 0 or total_frames <= 0:
