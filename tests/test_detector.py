@@ -240,11 +240,72 @@ class TestDetectMatchBoundaries:
 
     @patch("allaganeye.video.detector.cv2.VideoCapture")
     def test_frame_count_zero(self, mock_vc_class):
-        """frame_count=0 raises VideoProcessingError."""
+        """frame_count=0 without duration_hint raises VideoProcessingError."""
         mock_vc_class.return_value = _make_capture_mock(fps=30.0, frame_count=0)
 
         with pytest.raises(VideoProcessingError, match="Cannot read video properties"):
             detect_match_boundaries(Path("test.mp4"))
+
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_frame_count_zero_with_duration_hint(self, mock_vc_class):
+        """frame_count=0 with duration_hint falls back to fps * duration."""
+        # frame_count=0 but we provide a 9000-frame equivalent mock
+        # that returns frames when read sequentially
+        cap = _make_capture_mock(fps=30.0, frame_count=9000, default_brightness=128)
+        # Override get to return 0 for FRAME_COUNT but still allow reads
+        original_get = cap.get.side_effect
+
+        def get_with_zero_frames(prop_id):
+            import cv2
+
+            if prop_id == cv2.CAP_PROP_FRAME_COUNT:
+                return 0
+            return original_get(prop_id)
+
+        cap.get.side_effect = get_with_zero_frames
+        mock_vc_class.return_value = cap
+
+        result = detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=300.0,  # 300s * 30fps = 9000 frames
+            min_match_duration=100.0,
+        )
+        assert len(result) == 1
+        assert result[0]["start"] == 0.0
+        assert result[0]["end"] == pytest.approx(300.0)
+
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_frame_count_negative_with_duration_hint(self, mock_vc_class):
+        """frame_count=-1 (MKV) with duration_hint uses fallback."""
+        cap = _make_capture_mock(fps=30.0, frame_count=9000, default_brightness=128)
+        original_get = cap.get.side_effect
+
+        def get_with_negative_frames(prop_id):
+            import cv2
+
+            if prop_id == cv2.CAP_PROP_FRAME_COUNT:
+                return -1
+            return original_get(prop_id)
+
+        cap.get.side_effect = get_with_negative_frames
+        mock_vc_class.return_value = cap
+
+        result = detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=300.0,
+            min_match_duration=100.0,
+        )
+        assert len(result) == 1
+
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_frame_count_zero_with_zero_duration_hint(self, mock_vc_class):
+        """frame_count=0 with duration_hint=0 still raises."""
+        mock_vc_class.return_value = _make_capture_mock(fps=30.0, frame_count=0)
+
+        with pytest.raises(VideoProcessingError, match="Cannot read video properties"):
+            detect_match_boundaries(
+                Path("test.mp4"), duration_hint=0.0, min_match_duration=100.0
+            )
 
     @patch("allaganeye.video.detector.cv2.VideoCapture")
     def test_negative_fps(self, mock_vc_class):

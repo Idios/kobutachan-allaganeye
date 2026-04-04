@@ -76,6 +76,7 @@ def test_pipeline_happy_path(mock_probe, mock_detect, mock_split, tmp_path):
     mock_probe.assert_called_once_with(video)
     mock_detect.assert_called_once_with(
         video,
+        duration_hint=PROBE_RESULT["duration"],
         sample_interval=config.sample_interval,
         blackout_threshold=config.blackout_threshold,
         min_match_duration=config.min_match_duration,
@@ -285,6 +286,7 @@ def test_pipeline_config_params_forwarded(
 
     mock_detect.assert_called_once_with(
         Path("input.mp4"),
+        duration_hint=PROBE_RESULT["duration"],
         sample_interval=2.0,
         blackout_threshold=20.0,
         min_match_duration=120.0,
