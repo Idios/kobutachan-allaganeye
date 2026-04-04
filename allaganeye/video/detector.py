@@ -1,5 +1,6 @@
 """Match boundary detection using OpenCV frame analysis."""
 
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
@@ -8,20 +9,54 @@ import numpy as np
 from allaganeye.exceptions import VideoProcessingError
 
 
+@dataclass
+class BrightnessStats:
+    """Frame brightness statistics collected during detection."""
+
+    samples: list[tuple[float, float]] = field(default_factory=list)
+    """List of (timestamp, brightness) tuples."""
+
+    @property
+    def min_brightness(self) -> float:
+        if not self.samples:
+            return 0.0
+        return min(b for _, b in self.samples)
+
+    @property
+    def max_brightness(self) -> float:
+        if not self.samples:
+            return 0.0
+        return max(b for _, b in self.samples)
+
+    @property
+    def mean_brightness(self) -> float:
+        if not self.samples:
+            return 0.0
+        return sum(b for _, b in self.samples) / len(self.samples)
+
+    def near_threshold(
+        self, threshold: float, margin: float = 10.0
+    ) -> list[tuple[float, float]]:
+        """Return samples within margin of the threshold."""
+        return [(t, b) for t, b in self.samples if abs(b - threshold) <= margin]
+
+
 def detect_match_boundaries(
     video_path: Path,
     *,
     sample_interval: float = 1.0,
     blackout_threshold: float = 15.0,
     min_match_duration: float = 300.0,
-) -> list[dict]:
+    collect_brightness: bool = False,
+) -> list[dict] | tuple[list[dict], BrightnessStats]:
     """Detect match boundaries by finding blackout frames.
 
     Samples frames at the given interval, detects blackout (low brightness)
     frames, and returns non-blackout segments that are longer than
     min_match_duration.
 
-    Returns list of dicts with 'start' and 'end' keys (seconds).
+    If collect_brightness is True, returns a tuple of (segments, stats).
+    Otherwise returns just the segments list.
     """
     cap = cv2.VideoCapture(str(video_path))
     try:
@@ -41,6 +76,7 @@ def detect_match_boundaries(
 
         # Collect brightness values at sampled positions
         blackout_times: list[float] = []
+        brightness_stats = BrightnessStats() if collect_brightness else None
         frame_idx = 0
         consecutive_failures = 0
         max_consecutive_failures = 3
@@ -63,6 +99,9 @@ def detect_match_boundaries(
             mean_brightness = float(np.mean(gray))
             timestamp = frame_idx / fps
 
+            if brightness_stats is not None:
+                brightness_stats.samples.append((timestamp, mean_brightness))
+
             if mean_brightness < blackout_threshold:
                 blackout_times.append(timestamp)
 
@@ -72,9 +111,14 @@ def detect_match_boundaries(
         cap.release()
 
     # Build segments from non-blackout regions
-    return _extract_segments(
+    segments = _extract_segments(
         blackout_times, duration, sample_interval, min_match_duration
     )
+
+    if collect_brightness:
+        assert brightness_stats is not None
+        return segments, brightness_stats
+    return segments
 
 
 def _extract_segments(

@@ -7,7 +7,11 @@ import numpy as np
 import pytest
 
 from allaganeye.exceptions import VideoProcessingError
-from allaganeye.video.detector import _extract_segments, detect_match_boundaries
+from allaganeye.video.detector import (
+    BrightnessStats,
+    _extract_segments,
+    detect_match_boundaries,
+)
 
 
 class TestExtractSegments:
@@ -140,3 +144,62 @@ class TestDetectMatchBoundaries:
 
         with pytest.raises(VideoProcessingError, match="Cannot open"):
             detect_match_boundaries(Path("test.mp4"))
+
+    @patch("allaganeye.video.detector.cv2")
+    def test_collect_brightness_returns_stats(self, mock_cv2):
+        cap = self._make_mock_cap(fps=30.0, total_frames=90)
+        mock_cv2.VideoCapture.return_value = cap
+        mock_cv2.CAP_PROP_FPS = 5
+        mock_cv2.CAP_PROP_FRAME_COUNT = 7
+        mock_cv2.CAP_PROP_POS_FRAMES = 1
+        mock_cv2.COLOR_BGR2GRAY = 6
+
+        result = detect_match_boundaries(
+            Path("test.mp4"),
+            min_match_duration=1.0,
+            collect_brightness=True,
+        )
+        assert isinstance(result, tuple)
+        _segments, stats = result
+        assert isinstance(stats, BrightnessStats)
+        assert len(stats.samples) > 0
+        assert stats.min_brightness > 0
+        assert stats.max_brightness > 0
+
+
+class TestBrightnessStats:
+    def test_empty_stats(self):
+        stats = BrightnessStats()
+        assert stats.min_brightness == 0.0
+        assert stats.max_brightness == 0.0
+        assert stats.mean_brightness == 0.0
+        assert stats.near_threshold(15.0) == []
+
+    def test_stats_properties(self):
+        stats = BrightnessStats(
+            samples=[
+                (0.0, 5.0),
+                (1.0, 10.0),
+                (2.0, 100.0),
+                (3.0, 200.0),
+            ]
+        )
+        assert stats.min_brightness == 5.0
+        assert stats.max_brightness == 200.0
+        assert stats.mean_brightness == pytest.approx(78.75)
+
+    def test_near_threshold(self):
+        stats = BrightnessStats(
+            samples=[
+                (0.0, 5.0),
+                (1.0, 14.0),
+                (2.0, 16.0),
+                (3.0, 100.0),
+            ]
+        )
+        near = stats.near_threshold(15.0, margin=10.0)
+        assert len(near) == 3  # 5.0, 14.0, 16.0 are within 15 +/- 10
+        timestamps = [t for t, _ in near]
+        assert 0.0 in timestamps
+        assert 1.0 in timestamps
+        assert 2.0 in timestamps
