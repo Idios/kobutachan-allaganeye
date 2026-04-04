@@ -8,17 +8,52 @@
 python --version
 ```
 
-### ffmpeg / ffprobe
+### ffmpeg / ffprobe (4.1 以上)
 
 ```bash
 ffmpeg -version
 ffprobe -version
 ```
 
-インストールされていない場合:
-- **Windows**: [ffmpeg.org](https://ffmpeg.org/download.html) からダウンロードし、PATH に追加
-- **macOS**: `brew install ffmpeg`
-- **Linux**: `sudo apt install ffmpeg`
+**最低バージョン: 4.1**（`-avoid_negative_ts make_zero` 等の機能を使用）
+
+#### インストール方法
+
+**Windows**（いずれか 1 つ）:
+
+```bash
+# winget（推奨）
+winget install Gyan.FFmpeg
+
+# scoop
+scoop install ffmpeg
+
+# Chocolatey
+choco install ffmpeg
+```
+
+パッケージマネージャを使わない場合は [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) から `ffmpeg-release-essentials.zip` をダウンロードし、展開先の `bin/` フォルダを PATH に追加してください。
+
+**macOS**:
+
+```bash
+brew install ffmpeg
+```
+
+**Linux (Ubuntu/Debian)**:
+
+```bash
+sudo apt update && sudo apt install ffmpeg
+```
+
+#### インストール確認
+
+```bash
+ffmpeg -version   # "ffmpeg version 4.x" 以上が表示されること
+ffprobe -version  # "ffprobe version 4.x" 以上が表示されること
+```
+
+PATH が通っていない場合は、ターミナルを再起動するか環境変数の設定を確認してください。
 
 ## 2. インストール
 
