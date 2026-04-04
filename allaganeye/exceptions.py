@@ -19,6 +19,12 @@ class VideoProcessingError(AllaganEyeError):
     exit_code = 3
 
 
+class ConfigValidationError(AllaganEyeError):
+    """Invalid configuration parameter."""
+
+    exit_code = 5
+
+
 class DetectionError(AllaganEyeError):
     """No match boundaries detected in the video."""
 
