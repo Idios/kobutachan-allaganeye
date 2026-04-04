@@ -205,9 +205,7 @@ class TestMkdirError:
         with patch.object(
             Path, "mkdir", side_effect=PermissionError("Permission denied")
         ):
-            with pytest.raises(
-                AllaganEyeError, match="Cannot create output directory"
-            ):
+            with pytest.raises(AllaganEyeError, match="Cannot create output directory"):
                 run_split(Path("video.mp4"), config)
 
 

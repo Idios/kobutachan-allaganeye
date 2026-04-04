@@ -134,9 +134,7 @@ def test_probe_normal_mp4(mock_run, tmp_path):
     """Normal ffprobe output is parsed correctly."""
     video = tmp_path / "test.mp4"
     video.touch()
-    mock_run.return_value = _mock_result(
-        stdout=_make_ffprobe_output(duration="1800.5")
-    )
+    mock_run.return_value = _mock_result(stdout=_make_ffprobe_output(duration="1800.5"))
 
     result = probe_video(video)
 
