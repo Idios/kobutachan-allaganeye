@@ -97,6 +97,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | 3 | FFmpeg / ffprobe エラー |
 | 4 | 検知失敗（試合境界が見つからない） |
 | 5 | 設定値不正（パラメータの範囲外等） |
+| 6 | セキュリティ検査不合格（allaganeye-guard が FAIL を返した） |
 
 ### 外部依存
 
@@ -121,6 +122,15 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 - MKV: OBSの長時間録画（30-80GB、複数試合を含む）
 - サブディレクトリ（`20260116/` 等）: 手動で試合分割済みのMP4（`YYYYMMDD_N.mp4`）
 - 未設定の場合、`sample_video_dir` fixture を使うテスト（`slow` マーカー）はスキップされる
+
+## セキュリティ検査（allaganeye-guard 連携）
+
+外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `allaganeye-guard` でセキュリティ検査を行う。詳細は `docs/guard-integration.md` を参照。
+
+- guard は allaganeye とは別リポジトリ（`kobutachan-allaganeye-guard`）
+- `allaganeye-guard verify <file>` で検査、PASS なら `allaganeye split` で処理
+- 将来的に `--verify` オプションで自動呼び出しを実装予定
+- guard がインストールされていなくても allaganeye 本体は正常動作する
 
 ## リリース戦略
 

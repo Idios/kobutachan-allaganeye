@@ -60,5 +60,6 @@ lead-1/work     → PR → (director-1 レビュー) → develop-0.1.0 へマー
 4. `develop-x.x.0 → main` のリリース PR を作成・マージ
 5. `main` にタグを打つ (`v0.x.0`)
 6. GitHub Release を作成（変更内容サマリ付き）
-7. `main` から次バージョンの `develop-x.x.0` ブランチを作成
-8. 次レイヤーの Issue を作成し、作業開始
+7. allaganeye-guard との連携チェック（`docs/guard-integration.md` §10 参照）
+8. `main` から次バージョンの `develop-x.x.0` ブランチを作成
+9. 次レイヤーの Issue を作成し、作業開始
