@@ -10,6 +10,8 @@ from allaganeye.exceptions import VideoProcessingError
 from allaganeye.video.detector import (
     _BLACKOUT_PADDING,
     _FRAME_SIZE,
+    _TRANSITION_THRESHOLD,
+    _expand_with_transitions,
     _extract_segments,
     _generate_timestamps,
     _probe_single_frame,
@@ -26,6 +28,108 @@ def _make_run_result(brightness: int = 128, frame_size: int = _FRAME_SIZE) -> Ma
     result.stdout = bytes([brightness]) * frame_size
     result.returncode = 0
     return result
+
+
+# ============================================================
+# TestExpandWithTransitions
+# ============================================================
+
+
+class TestExpandWithTransitions:
+    """Tests for transition region expansion (#71)."""
+
+    def test_no_blackouts_unchanged(self):
+        result = _expand_with_transitions([], {}, 1.0, 55.0)
+        assert result == []
+
+    def test_blackout_followed_by_lobby(self):
+        """Blackout followed by low-brightness lobby screen is expanded."""
+        # Blackout at t=100-101, followed by lobby (~51) for 20s
+        all_results = {}
+        for t in range(200):
+            all_results[float(t)] = 80.0  # game frames
+        all_results[100.0] = 5.0  # blackout
+        all_results[101.0] = 5.0  # blackout
+        for t in range(102, 122):
+            all_results[float(t)] = 51.0  # lobby screen
+
+        blackout_times = [100.0, 101.0]
+        result = _expand_with_transitions(blackout_times, all_results, 1.0, 55.0)
+
+        # Should include blackout + lobby frames
+        assert 100.0 in result
+        assert 101.0 in result
+        assert 102.0 in result
+        assert 121.0 in result
+        # Should not include game frames
+        assert 122.0 not in result
+        assert 99.0 not in result
+
+    def test_blackout_followed_by_game_not_expanded(self):
+        """Blackout followed by bright game frames is NOT expanded (respawn)."""
+        all_results = {}
+        for t in range(200):
+            all_results[float(t)] = 80.0
+        all_results[100.0] = 5.0  # blackout
+        all_results[101.0] = 5.0  # blackout
+
+        blackout_times = [100.0, 101.0]
+        result = _expand_with_transitions(blackout_times, all_results, 1.0, 55.0)
+
+        assert result == [100.0, 101.0]
+
+    def test_expansion_both_directions(self):
+        """Transition frames before and after blackout are included."""
+        all_results = {}
+        for t in range(50):
+            all_results[float(t)] = 80.0
+        # Transition before blackout
+        all_results[18.0] = 50.0
+        all_results[19.0] = 50.0
+        # Blackout
+        all_results[20.0] = 5.0
+        all_results[21.0] = 5.0
+        # Transition after blackout
+        all_results[22.0] = 50.0
+        all_results[23.0] = 50.0
+
+        blackout_times = [20.0, 21.0]
+        result = _expand_with_transitions(blackout_times, all_results, 1.0, 55.0)
+
+        assert 18.0 in result
+        assert 19.0 in result
+        assert 22.0 in result
+        assert 23.0 in result
+        assert 17.0 not in result
+        assert 24.0 not in result
+
+    def test_transition_threshold_constant(self):
+        assert _TRANSITION_THRESHOLD == 55.0
+
+    def test_expansion_enables_boundary_detection(self):
+        """End-to-end: short blackout + lobby passes min_blackout_duration after expansion."""
+        # Simulate: 2s blackout + 20s lobby = 22s expanded region
+        all_results = {}
+        for t in range(200):
+            all_results[float(t)] = 80.0
+        all_results[100.0] = 5.0
+        all_results[101.0] = 5.0
+        for t in range(102, 122):
+            all_results[float(t)] = 51.0
+
+        blackout_times = [100.0, 101.0]
+        expanded = _expand_with_transitions(blackout_times, all_results, 1.0, 55.0)
+
+        # Feed expanded times to _extract_segments
+        segments = _extract_segments(
+            expanded,
+            total_duration=200.0,
+            sample_interval=1.0,
+            min_match_duration=10.0,
+            min_blackout_duration=3.0,
+        )
+        # Should detect 2 segments (before and after the expanded blackout)
+        assert len(segments) == 2
 
 
 # ============================================================
