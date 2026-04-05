@@ -10,12 +10,16 @@ from allaganeye.exceptions import VideoProcessingError
 from allaganeye.video.detector import (
     _BLACKOUT_PADDING,
     _FRAME_SIZE,
+    _REFINED_MIN_BLACKOUT,
+    _REFINE_INTERVAL,
+    _REFINE_WINDOW,
     _TRANSITION_THRESHOLD,
     _expand_regions_with_transitions,
     _filter_and_extract_segments,
     _generate_timestamps,
     _group_blackout_regions,
     _probe_single_frame,
+    _refine_blackout_regions,
     detect_match_boundaries,
 )
 
@@ -159,6 +163,85 @@ class TestGroupBlackoutRegions:
 
         result = _group_blackout_regions([100.0, 103.0], 1.0)  # gap=3.0 > tolerance=2.0
         assert len(result) == 2
+
+
+# ============================================================
+# TestRefineBlackoutRegions
+# ============================================================
+
+
+class TestRefineBlackoutRegions:
+    """Tests for 2nd-pass precise blackout measurement (#77)."""
+
+    def test_constants(self):
+        assert _REFINE_INTERVAL == 0.25
+        assert _REFINE_WINDOW == 5.0
+        assert _REFINED_MIN_BLACKOUT == 1.8
+
+    @patch("allaganeye.video.detector._probe_single_frame")
+    def test_empty_regions(self, mock_probe):
+        result = _refine_blackout_regions(Path("test.mp4"), [], 15.0, 1000.0)
+        assert result == []
+        mock_probe.assert_not_called()
+
+    @patch("allaganeye.video.detector._probe_single_frame")
+    def test_2s_blackout_detected(self, mock_probe):
+        """A 2.0s blackout is precisely measured and retained."""
+
+        def side_effect(path, t):
+            # Blackout from 100.0 to 102.0
+            return 5.0 if 100.0 <= t < 102.0 else 128.0
+
+        mock_probe.side_effect = side_effect
+
+        regions = [(99.0, 102.0)]  # coarse region from pass 1
+        result = _refine_blackout_regions(Path("test.mp4"), regions, 15.0, 1000.0)
+
+        # Should find a refined region ~100.0-101.75
+        assert len(result) >= 1
+        region = result[0]
+        assert region[0] >= 99.0
+        assert region[1] <= 103.0
+        assert region[1] - region[0] >= 1.5  # refined duration
+
+    @patch("allaganeye.video.detector._probe_single_frame")
+    def test_1s_respawn_stays_short(self, mock_probe):
+        """A 1.0s respawn blackout remains short after refinement."""
+
+        def side_effect(path, t):
+            return 5.0 if 100.0 <= t < 101.0 else 128.0
+
+        mock_probe.side_effect = side_effect
+
+        regions = [(100.0, 101.0)]
+        result = _refine_blackout_regions(Path("test.mp4"), regions, 15.0, 1000.0)
+
+        # Refined region should be ~0.75s (< 1.8 REFINED_MIN_BLACKOUT)
+        assert len(result) >= 1
+        region = result[0]
+        assert region[1] - region[0] < _REFINED_MIN_BLACKOUT
+
+    @patch("allaganeye.video.detector._probe_single_frame")
+    def test_probes_limited_to_window(self, mock_probe):
+        """Probes are within ±REFINE_WINDOW of each region."""
+        mock_probe.return_value = 128.0
+
+        regions = [(500.0, 502.0)]
+        _refine_blackout_regions(Path("test.mp4"), regions, 15.0, 1000.0)
+
+        probed_times = [call[0][1] for call in mock_probe.call_args_list]
+        assert all(495.0 <= t <= 507.0 for t in probed_times)
+
+    @patch("allaganeye.video.detector._probe_single_frame")
+    def test_window_clamped_to_duration(self, mock_probe):
+        """Window does not extend beyond 0 or total_duration."""
+        mock_probe.return_value = 128.0
+
+        regions = [(2.0, 3.0)]
+        _refine_blackout_regions(Path("test.mp4"), regions, 15.0, 6.0)
+
+        probed_times = [call[0][1] for call in mock_probe.call_args_list]
+        assert all(0.0 <= t <= 8.0 for t in probed_times)
 
 
 # ============================================================
