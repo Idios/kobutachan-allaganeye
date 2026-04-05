@@ -60,6 +60,22 @@ lead-1/work     → PR → (director-1 レビュー) → develop-0.1.0 へマー
 4. `develop-x.x.0 → main` のリリース PR を作成・マージ
 5. `main` にタグを打つ (`v0.x.0`)
 6. GitHub Release を作成（変更内容サマリ付き）
-7. allaganeye-guard との連携チェック（`docs/guard-integration.md` §10 参照）
+7. allaganeye-guard との連携チェック（`docs/guard-integration.md` §10 参照）:
+   - guard の最新バージョンとの JSON スキーマ互換性を確認
+   - allaganeye が新たに対応したコーデックが guard の許可リストに含まれているか確認
+   - exit code 体系の衝突がないか確認
+   - 不整合があれば guard リポジトリに issue を起票し、対応完了を待ってからリリース
 8. `main` から次バージョンの `develop-x.x.0` ブランチを作成
 9. 次レイヤーの Issue を作成し、作業開始
+
+## 関連プロジェクトとのリリース同期
+
+### kobutachan-allaganeye-guard
+
+- **リポジトリ**: [Idios/kobutachan-allaganeye-guard](https://github.com/Idios/kobutachan-allaganeye-guard)
+- **関係**: allaganeye が guard を subprocess で呼び出す（一方向依存）
+- **同期ルール**:
+  - guard の破壊的変更（JSON スキーマ変更等）がある場合、guard を先にリリースする
+  - allaganeye のレイヤーリリース時に guard の互換性チェックを行う（上記 Step 7）
+  - guard 側の YARA ルール更新・パッチリリースは allaganeye のリリースに影響しない（独立）
+- **ディレクターの責任**: 両プロジェクトのリリースタイミングを調整し、互換性を維持する（`docs/roles/director.md` 参照）

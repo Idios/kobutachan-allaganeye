@@ -31,6 +31,35 @@
 4. **進捗把握**: GitHub Issues と PR の状態から全体の進捗を把握し、必要に応じて方針を調整する
 5. **リリース判断**: 各レイヤーの完了判断とタグ打ち（`docs/release-strategy.md` 参照）
 6. **deferred issue のレビュー**: リリース時に全 `deferred` ラベル付き issue を見直し、次バージョンのスコープに含めるか判断する（`docs/issue-policy.md` §8 参照）
+7. **allaganeye-guard との連携管理**: guard プロジェクトと開発・リリースの足並みを揃える（`docs/guard-integration.md` 参照）
+
+## allaganeye-guard 連携（ディレクター固有）
+
+allaganeye は独立リポジトリ [kobutachan-allaganeye-guard](https://github.com/Idios/kobutachan-allaganeye-guard) と連携して動作する。ディレクターは両プロジェクト間の整合性を維持する責任を持つ。
+
+### 開発時の責務
+
+- **機能の依存関係管理**: allaganeye 側で guard 連携機能（`--verify` オプション等）を実装する際、guard 側の対応するインターフェース（JSON スキーマ、exit code）が先に安定していることを確認する
+- **コーデック許可リストの同期**: allaganeye が新コーデックに対応する場合、guard の許可リストにも反映する issue を guard リポジトリに起票する
+- **exit code の衝突防止**: 両プロジェクトの exit code 体系が衝突しないよう管理する（allaganeye: 0-6、guard: 0-4）
+- **クロスプロジェクト issue**: 一方のプロジェクトで発見した他方に影響する問題は、該当リポジトリに issue を起票する
+
+### リリース時の責務
+
+- **互換性チェック**: allaganeye のレイヤーリリース前に guard との互換性を確認する（`docs/guard-integration.md` §10）
+- **リリース順序**: guard の破壊的変更がある場合は guard を先にリリースし、allaganeye 側で対応してからリリースする
+- **バージョン対応表の維持**: どの allaganeye バージョンがどの guard バージョンと互換性があるかを把握する
+
+### 定期見直しの起票
+
+guard の保守ポリシー（`kobutachan-allaganeye-guard/docs/maintenance-policy.md`）に基づき、以下の定期見直し issue を guard リポジトリに起票する:
+
+| 見直し対象 | 頻度 |
+|---|---|
+| YARA ルールセット | 月次 + FFmpeg CVE 公開時 |
+| コーデック許可リスト | allaganeye レイヤーリリース時 |
+| バックエンドツールバージョン | 四半期ごと |
+| 脅威モデル | 半年ごと |
 
 ## 作業ディレクトリ
 
