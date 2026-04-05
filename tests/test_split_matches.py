@@ -249,7 +249,7 @@ def test_pipeline_verbose_output(mock_probe, mock_detect, mock_split, tmp_path, 
 def test_pipeline_non_verbose_output(
     mock_probe, mock_detect, mock_split, tmp_path, capsys
 ):
-    """Non-verbose mode prints summary but not details."""
+    """Non-verbose mode prints match list with timestamps but not probe details."""
     mock_probe.return_value = PROBE_RESULT
     mock_detect.return_value = BOUNDARIES
     mock_split.return_value = _output_files(tmp_path)
@@ -259,8 +259,9 @@ def test_pipeline_non_verbose_output(
 
     output = capsys.readouterr().out
     assert "Detected 2 match(es)" in output
+    assert "Match 1:" in output
+    assert "Match 2:" in output
     assert "Probing:" not in output
-    assert "Match 1:" not in output
 
 
 # --- Config forwarding ---
