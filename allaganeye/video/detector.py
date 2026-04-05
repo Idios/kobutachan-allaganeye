@@ -197,6 +197,52 @@ def _probe_single_frame(video_path: Path, timestamp: float) -> float:
     return float(np.frombuffer(result.stdout[:_FRAME_SIZE], dtype=np.uint8).mean())
 
 
+_RGB_FRAME_SIZE = _SAMPLE_WIDTH * _SAMPLE_HEIGHT * 3  # 172800 bytes (rgb24)
+
+
+def _probe_frame_rgb(video_path: Path, timestamp: float) -> bytes | None:
+    """Probe a single frame as RGB24 raw bytes (320x180).
+
+    Same seeking strategy as ``_probe_single_frame`` but returns raw RGB
+    bytes instead of a scalar brightness value.  Used by debug-brightness
+    ROI analysis.
+
+    Returns None on probe failure (timeout, incomplete frame).
+    """
+    cmd = [
+        find_ffmpeg(),
+        "-threads",
+        "1",
+        "-ss",
+        str(timestamp),
+        "-i",
+        str(video_path),
+        "-frames:v",
+        "1",
+        "-s",
+        f"{_SAMPLE_WIDTH}x{_SAMPLE_HEIGHT}",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "pipe:1",
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=30)
+    except FileNotFoundError as e:
+        raise VideoProcessingError(
+            "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
+        ) from e
+    except subprocess.TimeoutExpired:
+        return None
+
+    if len(result.stdout) < _RGB_FRAME_SIZE:
+        return None
+
+    return result.stdout[:_RGB_FRAME_SIZE]
+
+
 _TRANSITION_THRESHOLD = 55.0
 """Brightness threshold for transition regions adjacent to blackouts.
 

@@ -128,6 +128,10 @@ def debug_brightness(
         int | None,
         typer.Option(help="Number of parallel workers (default: auto)"),
     ] = None,
+    roi_mode: Annotated[
+        str | None,
+        typer.Option("--roi-mode", help="ROI analysis mode (scorebar)"),
+    ] = None,
 ) -> None:
     """Probe frame brightness at regular intervals (CSV output for threshold tuning)."""
     try:
@@ -143,7 +147,12 @@ def debug_brightness(
         from allaganeye.commands.debug_brightness import run_debug_brightness
 
         run_debug_brightness(
-            video_path, start=start, end=end, interval=interval, workers=workers
+            video_path,
+            start=start,
+            end=end,
+            interval=interval,
+            workers=workers,
+            roi_mode=roi_mode,
         )
 
     except AllaganEyeError as e:
