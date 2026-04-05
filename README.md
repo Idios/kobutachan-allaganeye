@@ -88,4 +88,4 @@ output/
 
 ## ライセンス
 
-TBD
+[MIT License](LICENSE)
