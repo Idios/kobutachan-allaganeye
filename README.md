@@ -44,8 +44,11 @@ allaganeye split <video_path> -o <output_dir>
 | `--sample-interval` | `1.0` | フレームサンプリング間隔（秒） |
 | `--blackout-threshold` | `15.0` | 暗転検知の輝度閾値 |
 | `--min-match-duration` | `300.0` | 最小試合時間（秒）。短いセグメントを除外 |
+| `--min-blackout-duration` | `3.0` | 最小暗転時間（秒）。短い暗転を無視 |
 | `--dry-run` | - | 検知のみ実行し、分割しない |
 | `-v`, `--verbose` | - | 詳細ログ出力 |
+
+> うまく分割されない場合は [パラメータ調整ガイド](docs/tuning-guide.md) を参照してください。
 
 ### 出力
 
@@ -81,6 +84,7 @@ output/
 ## ドキュメント
 
 - [Quick Start Guide](docs/quickstart.md)
+- [パラメータ調整ガイド](docs/tuning-guide.md)
 - [CLI コマンド仕様](docs/cli-spec.md)
 - [システムアーキテクチャ](docs/design-overview.md)
 - [動画処理設計](docs/video-processing.md)
