@@ -1,12 +1,16 @@
-"""Match boundary detection using OpenCV frame analysis."""
+"""Match boundary detection using ffmpeg frame sampling."""
 
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
-import cv2
 import numpy as np
 
 from allaganeye.exceptions import VideoProcessingError
+
+_SAMPLE_WIDTH = 320
+_SAMPLE_HEIGHT = 180
+_FRAME_SIZE = _SAMPLE_WIDTH * _SAMPLE_HEIGHT  # grayscale, 1 byte per pixel
 
 
 def detect_match_boundaries(
@@ -20,99 +24,115 @@ def detect_match_boundaries(
 ) -> list[dict]:
     """Detect match boundaries by finding blackout frames.
 
-    Samples frames at the given interval, detects blackout (low brightness)
-    frames, and returns non-blackout segments that are longer than
-    min_match_duration.
+    Uses ffmpeg to sample frames at the given interval, converting to
+    low-resolution grayscale for fast brightness analysis.  This avoids
+    the OpenCV VideoCapture bottleneck of sequentially walking every
+    frame in large MKV files.
 
     Args:
-        duration_hint: Video duration in seconds from ffprobe. Used as
-            fallback when CAP_PROP_FRAME_COUNT returns <= 0 (common with
-            MKV containers, especially after abnormal OBS shutdown).
+        duration_hint: Video duration in seconds from ffprobe.  Used to
+            estimate total sample count for progress reporting.
         progress_callback: Optional callback invoked at each sampled frame
-            with ``(frame_idx, total_frames, blackout_count)``.  Allows the
-            caller to display progress without coupling detector to UI.
+            with ``(sample_index, total_samples, blackout_count)``.  Allows
+            the caller to display progress without coupling detector to UI.
 
     Returns list of dicts with 'start' and 'end' keys (seconds).
     """
-    cap = cv2.VideoCapture(str(video_path))
-    try:
-        if not cap.isOpened():
-            raise VideoProcessingError(f"Cannot open video: {video_path}")
+    blackout_times = _sample_brightness_ffmpeg(
+        video_path,
+        sample_interval=sample_interval,
+        blackout_threshold=blackout_threshold,
+        duration_hint=duration_hint,
+        progress_callback=progress_callback,
+    )
 
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        if fps <= 0:
+    duration = duration_hint if duration_hint is not None and duration_hint > 0 else 0.0
+    if duration <= 0:
+        # Estimate duration from last sample timestamp
+        if blackout_times:
+            duration = blackout_times[-1] + sample_interval
+        else:
+            # No blackouts and no duration hint — cannot determine duration
             raise VideoProcessingError(
-                "Cannot read video properties (fps or frame count)"
+                "Cannot determine video duration. Provide duration_hint via probe."
             )
 
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if total_frames <= 0:
-            if duration_hint is not None and duration_hint > 0:
-                total_frames = int(fps * duration_hint)
-            else:
-                raise VideoProcessingError(
-                    "Cannot read video properties (fps or frame count)"
-                )
-
-        duration = total_frames / fps
-        frame_step = int(fps * sample_interval)
-        if frame_step < 1:
-            frame_step = 1
-
-        # Collect brightness values at sampled positions.
-        # Uses sequential grab()/retrieve() instead of random-access
-        # set(CAP_PROP_POS_FRAMES) to avoid costly seeking on MKV files.
-        blackout_times: list[float] = []
-        frame_idx = 0
-        consecutive_failures = 0
-        max_consecutive_failures = 3
-
-        while frame_idx < total_frames:
-            if frame_idx % frame_step == 0:
-                # Sample frame: decode and analyze brightness
-                ret, frame = cap.read()
-                if not ret:
-                    consecutive_failures += 1
-                    if consecutive_failures >= max_consecutive_failures:
-                        raise VideoProcessingError(
-                            f"Failed to read {max_consecutive_failures} consecutive "
-                            f"frames at position {frame_idx}/{total_frames}"
-                        )
-                    frame_idx += 1
-                    continue
-
-                consecutive_failures = 0
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                mean_brightness = float(np.mean(gray))
-                timestamp = frame_idx / fps
-
-                if mean_brightness < blackout_threshold:
-                    blackout_times.append(timestamp)
-            else:
-                # Non-sample frame: advance pointer without decoding
-                if not cap.grab():
-                    consecutive_failures += 1
-                    if consecutive_failures >= max_consecutive_failures:
-                        raise VideoProcessingError(
-                            f"Failed to read {max_consecutive_failures} consecutive "
-                            f"frames at position {frame_idx}/{total_frames}"
-                        )
-                    frame_idx += 1
-                    continue
-                consecutive_failures = 0
-
-            if progress_callback is not None and frame_idx % frame_step == 0:
-                progress_callback(frame_idx, total_frames, len(blackout_times))
-
-            frame_idx += 1
-
-    finally:
-        cap.release()
-
-    # Build segments from non-blackout regions
     return _extract_segments(
         blackout_times, duration, sample_interval, min_match_duration
     )
+
+
+def _sample_brightness_ffmpeg(
+    video_path: Path,
+    *,
+    sample_interval: float,
+    blackout_threshold: float,
+    duration_hint: float | None,
+    progress_callback: Callable[[int, int, int], None] | None,
+) -> list[float]:
+    """Sample frame brightness using ffmpeg pipe.
+
+    Runs ffmpeg with a ``select`` filter to extract one frame per
+    *sample_interval* seconds, scaled to 320x180 grayscale.  Raw pixel
+    data is piped to Python for brightness analysis.
+    """
+    cmd = [
+        "ffmpeg",
+        "-i",
+        str(video_path),
+        "-vf",
+        f"select='not(mod(t\\,{sample_interval}))',setpts=N/FRAME_RATE/TB",
+        "-vsync",
+        "vfr",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
+        "-s",
+        f"{_SAMPLE_WIDTH}x{_SAMPLE_HEIGHT}",
+        "pipe:1",
+    ]
+
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except FileNotFoundError as e:
+        raise VideoProcessingError(
+            "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
+        ) from e
+
+    total_samples = 0
+    if duration_hint is not None and duration_hint > 0:
+        total_samples = int(duration_hint / sample_interval)
+
+    blackout_times: list[float] = []
+    sample_idx = 0
+
+    try:
+        while True:
+            raw = proc.stdout.read(_FRAME_SIZE)
+            if len(raw) < _FRAME_SIZE:
+                break
+            brightness = float(np.frombuffer(raw, dtype=np.uint8).mean())
+            timestamp = sample_idx * sample_interval
+            if brightness < blackout_threshold:
+                blackout_times.append(timestamp)
+
+            if progress_callback is not None:
+                progress_callback(sample_idx, total_samples, len(blackout_times))
+
+            sample_idx += 1
+    finally:
+        proc.stdout.close()
+        proc.wait()
+
+    if proc.returncode != 0 and sample_idx == 0:
+        stderr = proc.stderr.read().decode(errors="replace")[-500:]
+        proc.stderr.close()
+        raise VideoProcessingError(f"ffmpeg frame sampling failed: {stderr}")
+    if proc.stderr:
+        proc.stderr.close()
+
+    return blackout_times
 
 
 _BLACKOUT_PADDING = 3.0
