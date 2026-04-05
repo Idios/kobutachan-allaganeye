@@ -176,7 +176,7 @@ class TestRefineBlackoutRegions:
     def test_constants(self):
         assert _REFINE_INTERVAL == 0.25
         assert _REFINE_WINDOW == 5.0
-        assert _REFINED_MIN_BLACKOUT == 1.8
+        assert _REFINED_MIN_BLACKOUT == 1.5
 
     @patch("allaganeye.video.detector._probe_single_frame")
     def test_empty_regions(self, mock_probe):
@@ -202,7 +202,7 @@ class TestRefineBlackoutRegions:
         region = result[0]
         assert region[0] >= 99.0
         assert region[1] <= 103.0
-        assert region[1] - region[0] >= 1.5  # refined duration
+        assert region[1] - region[0] >= _REFINED_MIN_BLACKOUT  # passes threshold
 
     @patch("allaganeye.video.detector._probe_single_frame")
     def test_1s_respawn_stays_short(self, mock_probe):

@@ -85,11 +85,12 @@ def detect_match_boundaries(
         video_path, blackout_regions, blackout_threshold, duration_hint
     )
 
+    effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
     return _filter_and_extract_segments(
         refined_regions,
         duration_hint,
         min_match_duration,
-        _REFINED_MIN_BLACKOUT,
+        effective_min,
     )
 
 
@@ -161,11 +162,11 @@ _REFINE_INTERVAL = 0.25
 _REFINE_WINDOW = 5.0
 """Seconds to probe before and after each blackout region in pass 2."""
 
-_REFINED_MIN_BLACKOUT = 1.8
+_REFINED_MIN_BLACKOUT = 1.5
 """Min blackout duration when using refined (0.25s) measurements.
 
-At interval=0.25s, a 2.0s blackout measures ~1.75s (≥ 1.8 → detected)
-while a 1.5s respawn measures ~1.25s (< 1.8 → filtered).
+At interval=0.25s, a 2.0s blackout measures ~1.5-1.75s (≥ 1.5 → detected)
+while a 1.5s respawn measures ~1.0-1.25s (< 1.5 → filtered).
 """
 
 _BLACKOUT_PADDING = 3.0
