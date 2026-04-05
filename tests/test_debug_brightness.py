@@ -226,3 +226,64 @@ def test_scorebar_probe_failure(mock_probe_video, mock_probe_rgb, capsys):
     lines = output.strip().split("\n")
     parts = lines[1].split(",")
     assert parts[1] == "255.0"  # fallback brightness
+
+
+# --- Scorebar detail mode tests ---
+
+
+@patch(f"{MODULE}._probe_frame_rgb")
+@patch(f"{MODULE}.probe_video")
+def test_scorebar_detail_csv_header(mock_probe_video, mock_probe_rgb, capsys):
+    """scorebar-detail mode outputs 3-section RGB CSV."""
+    mock_probe_video.return_value = PROBE_RESULT
+    mock_probe_rgb.return_value = _make_rgb_frame(100, 50, 200)
+
+    run_debug_brightness(
+        Path("test.mp4"), start=0.0, end=1.0, interval=1.0, roi_mode="scorebar-detail"
+    )
+
+    output = capsys.readouterr().out
+    lines = output.strip().split("\n")
+    assert lines[0].startswith("timestamp,roi_brightness,")
+    assert "left_r,left_g,left_b" in lines[0]
+    assert "center_r,center_g,center_b" in lines[0]
+    assert "right_r,right_g,right_b" in lines[0]
+    # 11 columns: timestamp + roi_brightness + 3 sections * 3 channels
+    parts = lines[1].split(",")
+    assert len(parts) == 11
+
+
+@patch(f"{MODULE}._probe_frame_rgb")
+@patch(f"{MODULE}.probe_video")
+def test_scorebar_detail_section_values(mock_probe_video, mock_probe_rgb, capsys):
+    """scorebar-detail correctly reports per-section RGB."""
+    mock_probe_video.return_value = PROBE_RESULT
+    # Create frame with distinct left/center/right in ROI
+    roi_y_end = int(_SCALED_H * 0.08)  # 14
+    roi_x1, roi_x2 = 80, 240  # 25%-75% of 320
+    sec_w = (roi_x2 - roi_x1) // 3  # ~53
+
+    frame = np.zeros((_SCALED_H, 320, 3), dtype=np.uint8)
+    frame[0:roi_y_end, roi_x1 : roi_x1 + sec_w, :] = [200, 30, 30]  # left: red
+    frame[0:roi_y_end, roi_x1 + sec_w : roi_x1 + 2 * sec_w, :] = [
+        30,
+        200,
+        30,
+    ]  # center: green
+    frame[0:roi_y_end, roi_x1 + 2 * sec_w : roi_x2, :] = [30, 30, 200]  # right: blue
+    mock_probe_rgb.return_value = frame.tobytes()
+
+    run_debug_brightness(
+        Path("test.mp4"), start=0.0, end=1.0, interval=1.0, roi_mode="scorebar-detail"
+    )
+
+    output = capsys.readouterr().out
+    lines = output.strip().split("\n")
+    parts = lines[1].split(",")
+    # left section should be red-dominant
+    assert float(parts[2]) > 150  # left_r
+    assert float(parts[3]) < 50  # left_g
+    # center section should be green-dominant
+    assert float(parts[6]) > 150  # center_g
+    # right section should be blue-dominant
+    assert float(parts[10]) > 150  # right_b
