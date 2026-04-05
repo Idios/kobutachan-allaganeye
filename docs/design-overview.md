@@ -113,6 +113,17 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 | 2 | Linux | 対応済み | パッケージマネージャで PATH に入る |
 | 3 | macOS | 動作想定 | Homebrew (`/opt/homebrew/bin`, `/usr/local/bin`) |
 
+## セキュリティ検査（allaganeye-guard）
+
+外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `kobutachan-allaganeye-guard` でセキュリティ検査を行う。
+
+- **リポジトリ**: `Idios/kobutachan-allaganeye-guard`（独立パッケージ）
+- **依存方向**: allaganeye → guard（一方向。guard は allaganeye に依存しない）
+- **連携方式**: subprocess 呼び出し（`allaganeye-guard verify --json <file>`）
+- **オプション依存**: `pip install allaganeye[guard]` で一緒にインストール可能。なくても動作する
+
+詳細��� `docs/guard-integration.md` を参照。
+
 ## AI モデル対応（将来: L3）
 
 プラグイン方式で複数モデルに対応予定:

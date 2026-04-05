@@ -122,6 +122,16 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 - サブディレクトリ（`20260116/` 等）: 手動で試合分割済みのMP4（`YYYYMMDD_N.mp4`）
 - 未設定の場合、`sample_video_dir` fixture を使うテスト（`slow` マーカー）はスキップされる
 
+## セキュリティ検査（allaganeye-guard 連携）
+
+外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `allaganeye-guard` でセキュリティ検査を行う。詳細は `docs/guard-integration.md` を参照。
+
+- **リポジトリ**: [Idios/kobutachan-allaganeye-guard](https://github.com/Idios/kobutachan-allaganeye-guard)
+- `allaganeye-guard verify <file>` で検査、PASS なら `allaganeye split` で処理
+- 将来的に `--verify` オプションで自動呼び出しを実装予定
+- guard がインストールされていなくても allaganeye 本体は正常動作する
+- **開発・リリース同期**: guard 実装後、allaganeye のレイヤーリリース時に guard との互換性チェックが必要になる。ディレクターが両プロジェクトの同期を管理する（`docs/guard-integration.md` 参照）
+
 ## リリース戦略
 
 詳細は `docs/release-strategy.md` を参照。要約:
