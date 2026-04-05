@@ -108,6 +108,12 @@ allaganeye split your_recording.mkv --min-match-duration 120.0
 allaganeye split your_recording.mkv --min-blackout-duration 5.0
 ```
 
+**ヒント**: `debug-brightness` コマンドで特定区間のフレーム輝度を確認し、`--blackout-threshold` の適切な値を決められます。
+
+```bash
+allaganeye debug-brightness your_recording.mkv --start 900 --end 1000 --interval 0.5
+```
+
 ### パラメータの目安
 
 | パラメータ | デフォルト | 用途 |
@@ -116,6 +122,8 @@ allaganeye split your_recording.mkv --min-blackout-duration 5.0
 | `--min-match-duration` | 300.0 | 最小試合時間（秒）。短い試合も含めたい場合は下げる |
 | `--min-blackout-duration` | 3.0 | 最小暗転時間（秒）。リスポーン暗転（1-2s）を除外するため 3s がデフォルト |
 | `--sample-interval` | 1.0 | フレームサンプリング間隔（秒）。大きくすると高速だが検知精度が下がる |
+| `--workers` | auto | 並列ワーカー数（デフォルト: CPU コア数、最大 24） |
+| `--gpu` / `--no-gpu` | `--no-gpu` | GPU アクセラレーション検知 |
 
 詳細は `allaganeye split --help` で確認できます。
 
