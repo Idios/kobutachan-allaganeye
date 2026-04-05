@@ -528,3 +528,73 @@ class TestDetectMatchBoundaries:
             detect_match_boundaries(Path("test.mp4"))
 
         cap.release.assert_called_once()
+
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_progress_callback_called(self, mock_vc_class):
+        """progress_callback is called for each sampled frame."""
+        fps = 30.0
+        total_frames = 9000  # 300s
+        mock_vc_class.return_value = _make_capture_mock(
+            fps=fps, frame_count=total_frames, default_brightness=128
+        )
+        calls = []
+
+        def on_progress(frame_idx, total, blackout_count):
+            calls.append((frame_idx, total, blackout_count))
+
+        detect_match_boundaries(
+            Path("test.mp4"),
+            sample_interval=1.0,
+            min_match_duration=100.0,
+            progress_callback=on_progress,
+        )
+
+        # frame_step = 30, sampled frames: 0, 30, 60, ... → 300 calls
+        assert len(calls) == 300
+        # First call: frame 0, total 9000, 0 blackouts
+        assert calls[0] == (0, total_frames, 0)
+        # All calls have correct total_frames
+        assert all(c[1] == total_frames for c in calls)
+        # blackout_count is non-decreasing
+        counts = [c[2] for c in calls]
+        assert counts == sorted(counts)
+
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_progress_callback_none_default(self, mock_vc_class):
+        """No callback (default) works without error."""
+        mock_vc_class.return_value = _make_capture_mock(
+            fps=30.0, frame_count=9000, default_brightness=128
+        )
+
+        # Should not raise — progress_callback defaults to None
+        result = detect_match_boundaries(Path("test.mp4"), min_match_duration=100.0)
+        assert len(result) == 1
+
+    @patch("allaganeye.video.detector.cv2.VideoCapture")
+    def test_progress_callback_with_blackouts(self, mock_vc_class):
+        """progress_callback reports increasing blackout count."""
+        fps = 30.0
+        total_frames = 54000  # 1800s
+
+        black_frames = {}
+        for sec in range(598, 603):
+            black_frames[int(sec * fps)] = _make_frame(5)
+
+        mock_vc_class.return_value = _make_capture_mock(
+            fps=fps,
+            frame_count=total_frames,
+            frames=black_frames,
+            default_brightness=128,
+        )
+        calls = []
+
+        detect_match_boundaries(
+            Path("test.mp4"),
+            sample_interval=1.0,
+            min_match_duration=300.0,
+            progress_callback=lambda fi, t, bc: calls.append((fi, t, bc)),
+        )
+
+        # Should have blackout_count > 0 in later calls
+        max_blackouts = max(c[2] for c in calls)
+        assert max_blackouts == 5  # frames at 598, 599, 600, 601, 602

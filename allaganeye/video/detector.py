@@ -1,5 +1,6 @@
 """Match boundary detection using OpenCV frame analysis."""
 
+from collections.abc import Callable
 from pathlib import Path
 
 import cv2
@@ -15,6 +16,7 @@ def detect_match_boundaries(
     sample_interval: float = 1.0,
     blackout_threshold: float = 15.0,
     min_match_duration: float = 300.0,
+    progress_callback: Callable[[int, int, int], None] | None = None,
 ) -> list[dict]:
     """Detect match boundaries by finding blackout frames.
 
@@ -26,6 +28,9 @@ def detect_match_boundaries(
         duration_hint: Video duration in seconds from ffprobe. Used as
             fallback when CAP_PROP_FRAME_COUNT returns <= 0 (common with
             MKV containers, especially after abnormal OBS shutdown).
+        progress_callback: Optional callback invoked at each sampled frame
+            with ``(frame_idx, total_frames, blackout_count)``.  Allows the
+            caller to display progress without coupling detector to UI.
 
     Returns list of dicts with 'start' and 'end' keys (seconds).
     """
@@ -95,6 +100,9 @@ def detect_match_boundaries(
                     frame_idx += 1
                     continue
                 consecutive_failures = 0
+
+            if progress_callback is not None and frame_idx % frame_step == 0:
+                progress_callback(frame_idx, total_frames, len(blackout_times))
 
             frame_idx += 1
 

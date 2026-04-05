@@ -31,13 +31,36 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
             f"Detecting match boundaries "
             f"(interval={config.sample_interval}s, threshold={config.blackout_threshold})"
         )
-    boundaries = detect_match_boundaries(
-        video_path,
-        duration_hint=metadata["duration"],
-        sample_interval=config.sample_interval,
-        blackout_threshold=config.blackout_threshold,
-        min_match_duration=config.min_match_duration,
-    )
+
+        total_duration = metadata["duration"]
+        fps = metadata["fps"]
+        estimated_frames = int(fps * total_duration)
+
+        with typer.progressbar(length=estimated_frames, label="Detecting") as progress:
+            last_pos = [0]
+
+            def on_progress(frame_idx: int, total: int, blackout_count: int) -> None:
+                advance = frame_idx - last_pos[0]
+                if advance > 0:
+                    progress.update(advance)
+                last_pos[0] = frame_idx
+
+            boundaries = detect_match_boundaries(
+                video_path,
+                duration_hint=metadata["duration"],
+                sample_interval=config.sample_interval,
+                blackout_threshold=config.blackout_threshold,
+                min_match_duration=config.min_match_duration,
+                progress_callback=on_progress,
+            )
+    else:
+        boundaries = detect_match_boundaries(
+            video_path,
+            duration_hint=metadata["duration"],
+            sample_interval=config.sample_interval,
+            blackout_threshold=config.blackout_threshold,
+            min_match_duration=config.min_match_duration,
+        )
 
     if not boundaries:
         raise DetectionError(
