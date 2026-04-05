@@ -44,9 +44,13 @@ def _find_binary(name: str) -> str:
         if candidate:
             return candidate
 
-    # 3. Windows known paths
+    # 3. OS-specific known paths
     if sys.platform == "win32":
         candidate = _search_windows_known_paths(name)
+        if candidate:
+            return candidate
+    elif sys.platform == "darwin":
+        candidate = _search_macos_known_paths(name)
         if candidate:
             return candidate
 
@@ -89,6 +93,16 @@ def _search_windows_known_paths(name: str) -> str | None:
     return None
 
 
+def _search_macos_known_paths(name: str) -> str | None:
+    """Search common macOS installation paths for ffmpeg/ffprobe."""
+    # Homebrew: Apple Silicon (/opt/homebrew) and Intel (/usr/local)
+    for prefix in ("/opt/homebrew/bin", "/usr/local/bin"):
+        candidate = Path(prefix) / name
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 def _error_message(name: str) -> str:
     lines = [
         f"{name} not found. Install ffmpeg and ensure it is accessible.",
@@ -101,4 +115,6 @@ def _error_message(name: str) -> str:
         lines.append(
             "  3. Install via winget: winget install Gyan.FFmpeg (auto-discovered)"
         )
+    elif sys.platform == "darwin":
+        lines.append("  3. Install via Homebrew: brew install ffmpeg (auto-discovered)")
     return "\n".join(lines)

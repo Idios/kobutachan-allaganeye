@@ -10,6 +10,7 @@ from allaganeye.ffmpeg_path import (
     _ENV_VAR,
     _check_dir,
     _find_binary,
+    _search_macos_known_paths,
     _search_windows_known_paths,
     find_ffmpeg,
     find_ffprobe,
@@ -108,6 +109,28 @@ class TestSearchWindowsKnownPaths:
     def test_returns_none_when_no_match(self, tmp_path):
         with patch.dict(os.environ, {"LOCALAPPDATA": str(tmp_path)}):
             assert _search_windows_known_paths("ffmpeg") is None
+
+
+class TestSearchMacosKnownPaths:
+    def test_finds_in_opt_homebrew(self, tmp_path):
+        ffmpeg = tmp_path / "ffmpeg"
+        ffmpeg.touch()
+        with patch(
+            "allaganeye.ffmpeg_path._search_macos_known_paths",
+            wraps=_search_macos_known_paths,
+        ):
+            # Direct test with real tmp_path won't match /opt/homebrew,
+            # so test the function with mocked Path.is_file
+            from pathlib import Path
+
+            with patch.object(Path, "is_file", side_effect=lambda: True):
+                result = _search_macos_known_paths("ffmpeg")
+        assert result is not None
+        assert "ffmpeg" in result
+
+    def test_returns_none_when_not_installed(self):
+        with patch("pathlib.Path.is_file", return_value=False):
+            assert _search_macos_known_paths("ffmpeg") is None
 
 
 class TestCaching:
