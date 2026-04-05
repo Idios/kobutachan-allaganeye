@@ -97,7 +97,6 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | 3 | FFmpeg / ffprobe エラー |
 | 4 | 検知失敗（試合境界が見つからない） |
 | 5 | 設定値不正（パラメータの範囲外等） |
-| 6 | セキュリティ検査不合格（allaganeye-guard が FAIL を返した） |
 
 ### 外部依存
 
@@ -131,7 +130,7 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 - `allaganeye-guard verify <file>` で検査、PASS なら `allaganeye split` で処理
 - 将来的に `--verify` オプションで自動呼び出しを実装予定
 - guard がインストールされていなくても allaganeye 本体は正常動作する
-- **開発・リリース同期**: allaganeye のレイヤーリリース時に guard との互換性チェックが必須（`docs/release-strategy.md` 参照）。ディレクターが両プロジェクトの同期を管理する
+- **開発・リリース同期**: guard 実装後、allaganeye のレイヤーリリース時に guard との互換性チェックが必要になる。ディレクターが両プロジェクトの同期を管理する（`docs/guard-integration.md` 参照）
 
 ## リリース戦略
 

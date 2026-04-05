@@ -41,7 +41,7 @@ allaganeye は独立リポジトリ [kobutachan-allaganeye-guard](https://github
 
 - **機能の依存関係管理**: allaganeye 側で guard 連携機能（`--verify` オプション等）を実装する際、guard 側の対応するインターフェース（JSON スキーマ、exit code）が先に安定していることを確認する
 - **コーデック許可リストの同期**: allaganeye が新コーデックに対応する場合、guard の許可リストにも反映する issue を guard リポジトリに起票する
-- **exit code の衝突防止**: 両プロジェクトの exit code 体系が衝突しないよう管理する（allaganeye: 0-6、guard: 0-4）
+- **exit code の衝突防止**: 両プロジェクトの exit code 体系が衝突しないよう管理する（allaganeye: 0-5、guard: 0-4。guard 連携用の exit code は guard 実装時に追加）
 - **クロスプロジェクト issue**: 一方のプロジェクトで発見した他方に影響する問題は、該当リポジトリに issue を起票する
 
 ### リリース時の責務
