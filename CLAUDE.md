@@ -51,22 +51,30 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `cli.py` | Typer CLIエントリポイント。コマンドルーティング |
 | `config.py` | 設定管理（検知閾値、出力パス等） |
 | `exceptions.py` | エラークラス + exit code マッピング |
-| `commands/split_matches.py` | split コマンドのオーケストレーション。タイムスタンプ表示・gap 検出 |
+| `commands/split_matches.py` | split コマンドのオーケストレーション。タイムスタンプ表示・gap 検出・sample_interval 自動調整 |
+| `commands/debug_brightness.py` | debug-brightness コマンド。フレーム輝度を CSV 出力（閾値チューニング用） |
 | `video/probe.py` | ffprobe でメタデータ取得（解像度、fps、長さ） |
 | `video/detector.py` | ffmpeg 並列プローブで暗転検知、試合境界抽出 |
 | `video/splitter.py` | FFmpeg で動画分割（-c copy） |
 
 ### 検知アルゴリズム（detector.py）
 
-1. `duration_hint`（ffprobe の duration）から `sample_interval` 秒間隔のタイムスタンプを生成
-2. 各タイムスタンプで `ffmpeg -ss {t} -i` により 1 フレームを 320x180 grayscale でデコード
-3. `ThreadPoolExecutor` で並列実行（デフォルト: `min(8, cpu_count)`）
+**Pass 1: 粗いスキャン**
+1. `duration_hint` から `sample_interval` 秒間隔のタイムスタンプを生成（長時間動画は自動で 2-3s に調整）
+2. 各タイムスタンプで `ffmpeg -threads 1 -ss {t} -i` により 1 フレームを 320x180 grayscale でデコード
+3. `ThreadPoolExecutor(max_workers=min(cpu_count, 24))` で並列実行
 4. 各フレームの平均輝度が `blackout_threshold` 以下なら暗転と判定
-5. 連続する暗転フレームを blackout region にマージ
-6. `min_blackout_duration`（デフォルト 3.0s）未満の短い暗転を除外（リスポーン暗転の誤判定防止）
-7. blackout region 間の非暗転区間を試合セグメントとして抽出（暗転内パディング付き）
+5. 連続する暗転フレームを `_group_blackout_regions()` で blackout region にマージ
 
-**性能**: 37GB/60fps MKV (2.5時間) で約 1 分（8 並列時）
+**transition expansion**
+6. 各暗転領域の前後で brightness < 55（`_TRANSITION_THRESHOLD`）のフレームが連続する区間を暗転領域に含めて拡張
+
+**Pass 2: 精密計測**
+7. 各暗転候補の ±5s を 0.25s 間隔で再プローブし、正確な持続時間を計測
+
+**フィルタリング・抽出**
+8. `min(min_blackout_duration, 1.5)` 未満の短い暗転を除外（リスポーン暗転の誤判定防止）
+9. blackout region 間の非暗転区間を試合セグメントとして抽出（暗転内パディング付き）
 
 ### Exit Codes
 
