@@ -256,15 +256,25 @@ _SCOREBAR_ROI_Y_START = 0.0
 _SCOREBAR_ROI_Y_END = 0.08
 
 
+_SCOREBAR_CHANNEL_STD_THRESHOLD = 8.0
+"""Minimum cross-section channel std for scorebar detection.
+
+FL scorebar has 3GC color bands (red/blue/yellow).  When the ROI is split
+into left/center/right thirds, at least one RGB channel shows significant
+std across the three sections (15-35 for FL, ~5 for lobby/non-FL).
+Threshold 8.0 sits in the gap between lobby max (~5.3) and FL min (~15).
+"""
+
+
 def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
     """Determine if FL scorebar is present in the frame.
 
     Returns True if scorebar detected, False if not, or None if probe
     failed (raw_rgb is None).
 
-    Criteria (lead-1 Phase 2 spec, based on tester-1 measurements):
+    Criteria (lead-1 revised spec based on 3-section analysis, #121):
     - 20 < roi_brightness < 140 (FL match typical range)
-    - RGB channel std > 5 (scorebar has 3GC colors, not uniform)
+    - max cross-section channel std > 8.0 (3GC color separation)
     """
     if raw_rgb is None:
         return None
@@ -277,12 +287,33 @@ def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
     roi = frame[y1:y2, x1:x2, :]
 
     roi_brightness = float(roi.mean())
-    roi_r = float(roi[:, :, 0].mean())
-    roi_g = float(roi[:, :, 1].mean())
-    roi_b = float(roi[:, :, 2].mean())
-    rgb_std = float(np.std([roi_r, roi_g, roi_b]))
+    if not (20.0 < roi_brightness < 140.0):
+        return False
 
-    return (20.0 < roi_brightness < 140.0) and (rgb_std > 5.0)
+    # Split ROI into 3 sections and compute cross-section channel std
+    w = roi.shape[1]
+    sec_w = w // 3
+    left = roi[:, :sec_w, :]
+    center = roi[:, sec_w : 2 * sec_w, :]
+    right = roi[:, 2 * sec_w :, :]
+
+    section_means = []
+    for section in (left, center, right):
+        section_means.append(
+            [
+                float(section[:, :, 0].mean()),
+                float(section[:, :, 1].mean()),
+                float(section[:, :, 2].mean()),
+            ]
+        )
+
+    max_channel_std = max(
+        float(np.std([s[0] for s in section_means])),
+        float(np.std([s[1] for s in section_means])),
+        float(np.std([s[2] for s in section_means])),
+    )
+
+    return max_channel_std > _SCOREBAR_CHANNEL_STD_THRESHOLD
 
 
 _TRANSITION_THRESHOLD = 55.0

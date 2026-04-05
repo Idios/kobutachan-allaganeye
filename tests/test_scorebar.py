@@ -25,20 +25,37 @@ def _make_frame(
     height: int = _HEIGHT,
     bg: tuple[int, int, int] = (50, 50, 50),
     roi_color: tuple[int, int, int] | None = None,
+    roi_sections: tuple[
+        tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]
+    ]
+    | None = None,
 ) -> bytes:
-    """Create a 320xH RGB24 frame with optional distinct ROI color."""
+    """Create a 320xH RGB24 frame with optional ROI color.
+
+    roi_color: uniform color for entire ROI.
+    roi_sections: (left_rgb, center_rgb, right_rgb) for 3-section scorebar.
+    """
     frame = np.zeros((height, _SAMPLE_WIDTH, 3), dtype=np.uint8)
     frame[:, :, 0] = bg[0]
     frame[:, :, 1] = bg[1]
     frame[:, :, 2] = bg[2]
 
+    x1 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_START)
+    x2 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_END)
+    y2 = int(height * _SCOREBAR_ROI_Y_END)
+
     if roi_color is not None:
-        x1 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_START)
-        x2 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_END)
-        y2 = int(height * _SCOREBAR_ROI_Y_END)
         frame[0:y2, x1:x2, 0] = roi_color[0]
         frame[0:y2, x1:x2, 1] = roi_color[1]
         frame[0:y2, x1:x2, 2] = roi_color[2]
+    elif roi_sections is not None:
+        sec_w = (x2 - x1) // 3
+        for i, color in enumerate(roi_sections):
+            sx = x1 + i * sec_w
+            ex = x1 + (i + 1) * sec_w if i < 2 else x2
+            frame[0:y2, sx:ex, 0] = color[0]
+            frame[0:y2, sx:ex, 1] = color[1]
+            frame[0:y2, sx:ex, 2] = color[2]
 
     return frame.tobytes()
 
@@ -48,9 +65,9 @@ def _make_frame(
 
 class TestHasScorebar:
     def test_fl_match_frame(self):
-        """FL match frame with colored scorebar → True."""
-        # ROI: R=120, G=60, B=90 → brightness ~90, std ~24.5
-        raw = _make_frame(roi_color=(120, 60, 90))
+        """FL match frame with 3GC colored scorebar sections → True."""
+        # 3 distinct section colors → high cross-section std
+        raw = _make_frame(roi_sections=((60, 75, 100), (90, 95, 80), (65, 50, 55)))
         assert _has_scorebar(raw, _HEIGHT) is True
 
     def test_blackout_frame(self):
@@ -60,12 +77,15 @@ class TestHasScorebar:
 
     def test_bright_non_fl_frame(self):
         """Very bright non-FL frame (brightness > 160) → False."""
-        raw = _make_frame(bg=(200, 200, 200), roi_color=(180, 190, 200))
+        raw = _make_frame(
+            bg=(200, 200, 200),
+            roi_sections=((180, 190, 200), (170, 200, 220), (190, 180, 210)),
+        )
         assert _has_scorebar(raw, _HEIGHT) is False
 
     def test_uniform_color_frame(self):
-        """Uniform ROI color (RGB std < 5) → False."""
-        raw = _make_frame(roi_color=(80, 80, 80))
+        """Uniform ROI sections (cross-section std < 8) → False."""
+        raw = _make_frame(roi_sections=((80, 80, 80), (82, 80, 80), (80, 80, 82)))
         assert _has_scorebar(raw, _HEIGHT) is False
 
     def test_probe_failure(self):
@@ -73,22 +93,29 @@ class TestHasScorebar:
         assert _has_scorebar(None, _HEIGHT) is None
 
     def test_boundary_brightness_20(self):
-        """ROI brightness exactly 20 → False (not strictly greater)."""
-        # ROI with mean brightness ~20, but with color variation
-        raw = _make_frame(roi_color=(30, 15, 15))
+        """ROI brightness at 20 → False (not strictly greater)."""
+        raw = _make_frame(roi_sections=((30, 10, 10), (10, 30, 10), (10, 10, 30)))
+        # mean brightness ~16.7, below 20 → False
         assert _has_scorebar(raw, _HEIGHT) is False
 
     def test_boundary_brightness_just_above_20(self):
         """ROI brightness just above 20 with color variation → True."""
-        raw = _make_frame(roi_color=(40, 20, 10))
-        result = _has_scorebar(raw, _HEIGHT)
-        # brightness ~23.3, std ~12.5 → True
-        assert result is True
+        raw = _make_frame(roi_sections=((40, 15, 10), (10, 40, 15), (15, 10, 40)))
+        # mean brightness ~21.7, cross-section R std ~16 → True
+        assert _has_scorebar(raw, _HEIGHT) is True
 
     def test_high_blue_non_fl(self):
-        """Non-FL with high blue (Match 2 type, roi_b > 200) → False."""
-        raw = _make_frame(roi_color=(170, 170, 225))
-        # brightness ~188, exceeds 140 → False
+        """Non-FL with high blue (Match 2 type) → False due to brightness."""
+        raw = _make_frame(
+            roi_sections=((150, 190, 230), (140, 200, 240), (110, 160, 200))
+        )
+        # mean brightness ~180, exceeds 140 → False
+        assert _has_scorebar(raw, _HEIGHT) is False
+
+    def test_lobby_like_uniform(self):
+        """Lobby-like frame: brightness in range but low cross-section std."""
+        raw = _make_frame(roi_sections=((55, 52, 47), (54, 53, 48), (53, 52, 46)))
+        # brightness ~51, but sections are nearly identical → std ~0.8 → False
         assert _has_scorebar(raw, _HEIGHT) is False
 
 
