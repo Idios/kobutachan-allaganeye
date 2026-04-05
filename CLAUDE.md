@@ -8,7 +8,7 @@ FF14 PvPコンテンツ「フロントライン」の長時間録画動画（OBS
 
 | レイヤー | 処理 | 技術 | 状態 |
 |---|---|---|---|
-| L1: 試合分割 | UI変化検知で試合単位に分割 | OpenCV + FFmpeg | **実装中** |
+| L1: 試合分割 | 暗転検知で試合単位に分割 | FFmpeg（検知+分割） | **実装中** |
 | L2: メタデータ化 | キルログ・音声・チャットをタイムスタンプ化 | Tesseract / Whisper | 未着手 |
 | L3: 価値評価 | 抽出データをLLMが判定 | Claude API / Gemini API | 未着手 |
 | L4: 自動編集 | 判定に基づき動画切り出し・投稿提案 | MoviePy / FFmpeg | 未着手 |
@@ -38,8 +38,8 @@ allaganeye split <video_path> -o <dir>  # 出力先指定
 ### データフロー（L1）
 
 ```
-MP4/MKV入力 → probe.py（メタデータ取得）
-           → detector.py（OpenCVでUI変化検知 → 試合境界タイムスタンプ）
+MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
+           → detector.py（ffmpeg 並列 -ss プローブで暗転検知 → 試合境界タイムスタンプ）
            → splitter.py（FFmpeg -c copy で無劣化分割）
            → 出力: 試合ごとのMP4 + metadata.json
 ```
@@ -51,10 +51,22 @@ MP4/MKV入力 → probe.py（メタデータ取得）
 | `cli.py` | Typer CLIエントリポイント。コマンドルーティング |
 | `config.py` | 設定管理（検知閾値、出力パス等） |
 | `exceptions.py` | エラークラス + exit code マッピング |
-| `commands/split_matches.py` | split コマンドのオーケストレーション |
+| `commands/split_matches.py` | split コマンドのオーケストレーション。タイムスタンプ表示・gap 検出 |
 | `video/probe.py` | ffprobe でメタデータ取得（解像度、fps、長さ） |
-| `video/detector.py` | OpenCV でフレーム解析、試合境界検知 |
+| `video/detector.py` | ffmpeg 並列プローブで暗転検知、試合境界抽出 |
 | `video/splitter.py` | FFmpeg で動画分割（-c copy） |
+
+### 検知アルゴリズム（detector.py）
+
+1. `duration_hint`（ffprobe の duration）から `sample_interval` 秒間隔のタイムスタンプを生成
+2. 各タイムスタンプで `ffmpeg -ss {t} -i` により 1 フレームを 320x180 grayscale でデコード
+3. `ThreadPoolExecutor` で並列実行（デフォルト: `min(8, cpu_count)`）
+4. 各フレームの平均輝度が `blackout_threshold` 以下なら暗転と判定
+5. 連続する暗転フレームを blackout region にマージ
+6. `min_blackout_duration`（デフォルト 3.0s）未満の短い暗転を除外（リスポーン暗転の誤判定防止）
+7. blackout region 間の非暗転区間を試合セグメントとして抽出（暗転内パディング付き）
+
+**性能**: 37GB/60fps MKV (2.5時間) で約 1 分（8 並列時）
 
 ### Exit Codes
 
@@ -63,14 +75,14 @@ MP4/MKV入力 → probe.py（メタデータ取得）
 | 0 | 正常終了 |
 | 1 | 一般エラー |
 | 2 | 入力ファイル不正（存在しない、未対応形式） |
-| 3 | FFmpeg / OpenCV エラー |
+| 3 | FFmpeg / ffprobe エラー |
 | 4 | 検知失敗（試合境界が見つからない） |
 | 5 | 設定値不正（パラメータの範囲外等） |
 
 ### 外部依存
 
 - **ffmpeg / ffprobe**: 4.1 以上。PATH に存在する必要あり
-- **Python パッケージ**: opencv-python, typer
+- **Python パッケージ**: numpy, typer（opencv-python は L1 では不要。L2 以降で使用予定）
 
 ### 動画サンプルデータ
 
