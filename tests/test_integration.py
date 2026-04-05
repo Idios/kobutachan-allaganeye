@@ -212,18 +212,62 @@ class TestDetectRealVideo:
     ):
         """Detected boundary count is in the right ballpark vs manual splits.
 
-        Transition expansion (#71/#75) improved detection from 4/7 to 6/7.
-        Remaining gap: short blackouts followed by bright screens (pattern C)
-        cannot be distinguished from respawn blackouts by duration alone.
+        Transition expansion (#71/#75) and 2-pass refinement (#77/#79)
+        improved detection to 7/7.  Tolerance ±2 allows for edge cases
+        in other recordings.
         """
         boundaries = pipeline_result["boundaries"]
         expected_count = len(manual_splits)
-        # Allow +/- 2 tolerance: transition expansion catches most boundaries
-        # but pattern C (short blackout + bright post-screen) remains undetected
+        # Allow +/- 2 tolerance
         assert abs(len(boundaries) - expected_count) <= 2, (
             f"Detected {len(boundaries)} matches, expected ~{expected_count} "
             f"(manual splits: {[f.name for f in manual_splits]})"
         )
+
+    def test_detect_total_duration_accuracy(
+        self, pipeline_result: dict, manual_splits: list[Path]
+    ):
+        """Total detected match duration is close to total manual duration.
+
+        Individual match boundaries may differ from manual splits (the
+        detector and human choose different cut points), so per-match
+        comparison is unreliable.  Total duration comparison validates
+        that the detector captures roughly the same amount of content.
+        """
+        boundaries = pipeline_result["boundaries"]
+        if not boundaries:
+            pytest.skip("No boundaries detected")
+
+        detected_total = sum(b["end"] - b["start"] for b in boundaries)
+
+        manual_total = 0.0
+        for mp4 in manual_splits:
+            meta = probe_video(mp4)
+            manual_total += meta["duration"]
+
+        # Allow 15% tolerance on total duration
+        ratio = detected_total / manual_total
+        assert 0.85 <= ratio <= 1.15, (
+            f"Total duration ratio {ratio:.2f}: "
+            f"detected {detected_total:.0f}s vs manual {manual_total:.0f}s"
+        )
+
+    def test_detect_match_durations_reasonable(
+        self, pipeline_result: dict, manual_splits: list[Path]
+    ):
+        """Each detected match duration is within a plausible FL match range.
+
+        FL matches typically last 8-20 minutes.  Detected matches outside
+        this range suggest boundary detection issues.
+        """
+        boundaries = pipeline_result["boundaries"]
+
+        for i, b in enumerate(boundaries):
+            dur = b["end"] - b["start"]
+            assert 300.0 <= dur <= 1500.0, (
+                f"Match {i + 1}: {dur:.0f}s is outside plausible range "
+                f"(5-25 min for FL matches)"
+            )
 
 
 # --- Split tests ---
