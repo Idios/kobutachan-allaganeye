@@ -26,6 +26,9 @@ OBS 等で録画した数時間分の動画を入力すると、試合の切れ�
 > 詳しいセットアップ手順は [Quick Start Guide](docs/quickstart.md) を参照してください。
 
 ```bash
+# 前提: Python 3.11+, ffmpeg 4.1+ がインストール済みであること
+git clone git@github.com:Idios/kobutachan-allaganeye.git
+cd kobutachan-allaganeye
 pip install -e .
 allaganeye split your_recording.mkv
 ```
