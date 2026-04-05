@@ -197,18 +197,19 @@ def _probe_single_frame(video_path: Path, timestamp: float) -> float:
     return float(np.frombuffer(result.stdout[:_FRAME_SIZE], dtype=np.uint8).mean())
 
 
-_RGB_FRAME_SIZE = _SAMPLE_WIDTH * _SAMPLE_HEIGHT * 3  # 172800 bytes (rgb24)
+def _probe_frame_rgb(
+    video_path: Path, timestamp: float, height: int = _SAMPLE_HEIGHT
+) -> bytes | None:
+    """Probe a single frame as RGB24 raw bytes with aspect-ratio preservation.
 
-
-def _probe_frame_rgb(video_path: Path, timestamp: float) -> bytes | None:
-    """Probe a single frame as RGB24 raw bytes (320x180).
-
-    Same seeking strategy as ``_probe_single_frame`` but returns raw RGB
-    bytes instead of a scalar brightness value.  Used by debug-brightness
-    ROI analysis.
+    Uses ``-vf scale={width}:-2`` to preserve the source aspect ratio while
+    scaling width to ``_SAMPLE_WIDTH``.  The caller provides the expected
+    ``height`` (computed from the source aspect ratio) so the function can
+    validate the output size.
 
     Returns None on probe failure (timeout, incomplete frame).
     """
+    rgb_size = _SAMPLE_WIDTH * height * 3
     cmd = [
         find_ffmpeg(),
         "-threads",
@@ -219,12 +220,10 @@ def _probe_frame_rgb(video_path: Path, timestamp: float) -> bytes | None:
         str(video_path),
         "-frames:v",
         "1",
-        "-s",
-        f"{_SAMPLE_WIDTH}x{_SAMPLE_HEIGHT}",
+        "-vf",
+        f"scale={_SAMPLE_WIDTH}:-2,format=rgb24",
         "-f",
         "rawvideo",
-        "-pix_fmt",
-        "rgb24",
         "pipe:1",
     ]
 
@@ -237,10 +236,10 @@ def _probe_frame_rgb(video_path: Path, timestamp: float) -> bytes | None:
     except subprocess.TimeoutExpired:
         return None
 
-    if len(result.stdout) < _RGB_FRAME_SIZE:
+    if len(result.stdout) < rgb_size:
         return None
 
-    return result.stdout[:_RGB_FRAME_SIZE]
+    return result.stdout[:rgb_size]
 
 
 _TRANSITION_THRESHOLD = 55.0

@@ -130,10 +130,15 @@ def test_varying_brightness(mock_probe_video, mock_probe_frame, capsys):
 
 # --- Scorebar ROI mode tests ---
 
+# For 1920x1080 source, scaled height = round(320 * 1080 / 1920) = 180 (even)
+_SCALED_H = 180
 
-def _make_rgb_frame(r: int = 128, g: int = 128, b: int = 128) -> bytes:
-    """Create a 320x180 RGB24 frame filled with a uniform color."""
-    frame = np.zeros((180, 320, 3), dtype=np.uint8)
+
+def _make_rgb_frame(
+    r: int = 128, g: int = 128, b: int = 128, height: int = _SCALED_H
+) -> bytes:
+    """Create a 320xH RGB24 frame filled with a uniform color."""
+    frame = np.zeros((height, 320, 3), dtype=np.uint8)
     frame[:, :, 0] = r
     frame[:, :, 1] = g
     frame[:, :, 2] = b
@@ -163,14 +168,15 @@ def test_scorebar_csv_header(mock_probe_video, mock_probe_rgb, capsys):
 @patch(f"{MODULE}._probe_frame_rgb")
 @patch(f"{MODULE}.probe_video")
 def test_scorebar_roi_values(mock_probe_video, mock_probe_rgb, capsys):
-    """Scorebar mode computes correct ROI channel means."""
+    """Scorebar mode computes correct ROI channel means from ratio-based ROI."""
     mock_probe_video.return_value = PROBE_RESULT
-    # Create frame with distinct ROI: scorebar region (y=0:15, x=80:240) = red
-    frame = np.zeros((180, 320, 3), dtype=np.uint8)
+    # For 320x180: ROI x=80:240 (25%-75%), y=0:14 (0%-8%)
+    roi_y_end = int(_SCALED_H * 0.08)  # 14
+    frame = np.zeros((_SCALED_H, 320, 3), dtype=np.uint8)
     frame[:, :, :] = 50  # background
-    frame[0:15, 80:240, 0] = 200  # ROI red channel
-    frame[0:15, 80:240, 1] = 30  # ROI green channel
-    frame[0:15, 80:240, 2] = 80  # ROI blue channel
+    frame[0:roi_y_end, 80:240, 0] = 200  # ROI red channel
+    frame[0:roi_y_end, 80:240, 1] = 30  # ROI green channel
+    frame[0:roi_y_end, 80:240, 2] = 80  # ROI blue channel
     mock_probe_rgb.return_value = frame.tobytes()
 
     run_debug_brightness(
