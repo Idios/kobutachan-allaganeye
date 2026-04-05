@@ -101,6 +101,16 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 | numpy (Python) | フレーム輝度計算 | Yes |
 | OpenCV (Python) | L2 以降のフレーム解析（L1 では不使用） | No |
 
+## クロスプラットフォーム対応
+
+全モジュールが OS 非依存（subprocess + pathlib + numpy）。ffmpeg のパス検索のみ OS 別ロジックあり（`ffmpeg_path.py`）。
+
+| 優先度 | OS | 状態 | ffmpeg 自動検索 |
+|---|---|---|---|
+| 1 | Windows | 対応済み | winget (`Gyan.FFmpeg`) |
+| 2 | Linux | 対応済み | パッケージマネージャで PATH に入る |
+| 3 | macOS | 動作想定 | Homebrew (`/opt/homebrew/bin`, `/usr/local/bin`) |
+
 ## AI モデル対応（将来: L3）
 
 プラグイン方式で複数モデルに対応予定:

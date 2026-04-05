@@ -89,8 +89,11 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 
 ### 外部依存
 
-- **ffmpeg / ffprobe**: 4.1 以上。PATH、`ALLAGANEYE_FFMPEG` 環境変数、または winget の既知パスから自動検索（`allaganeye/ffmpeg_path.py`）
+- **ffmpeg / ffprobe**: 4.1 以上。PATH、`ALLAGANEYE_FFMPEG` 環境変数、または OS 別既知パスから自動検索（`allaganeye/ffmpeg_path.py`）
+  - Windows: winget (`Gyan.FFmpeg`) のインストール先を自動検索
+  - macOS: Homebrew (`/opt/homebrew/bin`, `/usr/local/bin`) を自動検索
 - **Python パッケージ**: numpy, typer（opencv-python は L1 では不要。L2 以降で使用予定）
+- **対応プラットフォーム**: Windows（メイン）、Linux（CI 済み）、macOS（動作想定、CI は将来）
 
 ### 動画サンプルデータ
 
