@@ -17,8 +17,13 @@ class SplitConfig:
     min_blackout_duration: float = 3.0
     dry_run: bool = False
     use_gpu: bool = False
+    workers: int | None = None
 
     def __post_init__(self) -> None:
+        if self.workers is not None and self.workers < 1:
+            raise ConfigValidationError(
+                f"--workers must be at least 1, got {self.workers}"
+            )
         if self.sample_interval <= 0:
             raise ConfigValidationError(
                 f"--sample-interval must be positive, got {self.sample_interval}"

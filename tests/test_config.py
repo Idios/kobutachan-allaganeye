@@ -51,6 +51,22 @@ class TestSplitConfigValidation:
         with pytest.raises(ConfigValidationError, match="min-match-duration"):
             SplitConfig(min_match_duration=-100.0)
 
+    def test_workers_none_is_valid(self):
+        config = SplitConfig(workers=None)
+        assert config.workers is None
+
+    def test_workers_positive_is_valid(self):
+        config = SplitConfig(workers=4)
+        assert config.workers == 4
+
+    def test_workers_zero_raises(self):
+        with pytest.raises(ConfigValidationError, match="workers"):
+            SplitConfig(workers=0)
+
+    def test_workers_negative_raises(self):
+        with pytest.raises(ConfigValidationError, match="workers"):
+            SplitConfig(workers=-1)
+
     def test_exit_code_is_5(self):
         with pytest.raises(ConfigValidationError) as exc_info:
             SplitConfig(sample_interval=-1.0)

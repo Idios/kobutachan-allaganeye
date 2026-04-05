@@ -1,6 +1,5 @@
 """Debug-brightness command: probe frame brightness and output CSV."""
 
-import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -16,6 +15,7 @@ def run_debug_brightness(
     start: float = 0.0,
     end: float | None = None,
     interval: float = 1.0,
+    workers: int | None = None,
 ) -> None:
     """Probe brightness at regular intervals and print CSV to stdout."""
     metadata = probe_video(video_path)
@@ -37,7 +37,9 @@ def run_debug_brightness(
         typer.echo("No timestamps to probe.", err=True)
         raise typer.Exit(code=1)
 
-    max_workers = min(os.cpu_count() or 4, 24)
+    from allaganeye.video.detector import _resolve_workers
+
+    max_workers = _resolve_workers(workers)
     results: dict[float, float] = {}
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:

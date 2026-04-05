@@ -56,6 +56,10 @@ def split(
             "Shorter blackouts (e.g. respawn) are ignored."
         ),
     ] = 3.0,
+    workers: Annotated[
+        int | None,
+        typer.Option(help="Number of parallel workers for detection (default: auto)"),
+    ] = None,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Detect only, do not split")
     ] = False,
@@ -90,6 +94,7 @@ def split(
             min_blackout_duration=min_blackout_duration,
             dry_run=dry_run,
             use_gpu=gpu,
+            workers=workers,
         )
 
         from allaganeye.commands.split_matches import run_split
@@ -119,6 +124,10 @@ def debug_brightness(
     interval: Annotated[
         float, typer.Option("--interval", help="Sampling interval in seconds")
     ] = 1.0,
+    workers: Annotated[
+        int | None,
+        typer.Option(help="Number of parallel workers (default: auto)"),
+    ] = None,
 ) -> None:
     """Probe frame brightness at regular intervals (CSV output for threshold tuning)."""
     try:
@@ -133,7 +142,9 @@ def debug_brightness(
 
         from allaganeye.commands.debug_brightness import run_debug_brightness
 
-        run_debug_brightness(video_path, start=start, end=end, interval=interval)
+        run_debug_brightness(
+            video_path, start=start, end=end, interval=interval, workers=workers
+        )
 
     except AllaganEyeError as e:
         typer.echo(f"Error: {e}", err=True)
