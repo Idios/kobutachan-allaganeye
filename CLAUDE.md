@@ -126,6 +126,7 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 
 詳細は `docs/roles/protocol.md` を参照。要約:
 
+- **PR 作成前**: ベースブランチをリベースし、`ruff check .` / `ruff format --check .` / `pytest` を通すこと
 - ベースブランチ: `develop-x.x.x`（`main` ではない）
 - ロールラベル: レビュー担当の `role:*` を付与（元 issue 作成者ロール優先）
 - コード変更 PR: `role:tester` も付与（テスト実施のため）
