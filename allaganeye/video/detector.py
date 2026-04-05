@@ -16,6 +16,13 @@ _SAMPLE_HEIGHT = 180
 _FRAME_SIZE = _SAMPLE_WIDTH * _SAMPLE_HEIGHT  # grayscale, 1 byte per pixel
 
 
+def _resolve_workers(workers: int | None) -> int:
+    """Resolve worker count: explicit value or auto-detect."""
+    if workers is not None:
+        return workers
+    return min(os.cpu_count() or 4, 24)
+
+
 def detect_match_boundaries(
     video_path: Path,
     *,
@@ -25,6 +32,7 @@ def detect_match_boundaries(
     min_match_duration: float = 300.0,
     min_blackout_duration: float = 3.0,
     use_gpu: bool = False,
+    workers: int | None = None,
     progress_callback: Callable[[int, int, int], None] | None = None,
 ) -> list[dict]:
     """Detect match boundaries by finding blackout frames.
@@ -63,6 +71,7 @@ def detect_match_boundaries(
                 duration_hint,
                 sample_interval,
                 blackout_threshold,
+                workers,
                 progress_callback,
             )
     else:
@@ -71,6 +80,7 @@ def detect_match_boundaries(
             duration_hint,
             sample_interval,
             blackout_threshold,
+            workers,
             progress_callback,
         )
 
@@ -85,7 +95,7 @@ def detect_match_boundaries(
 
     # 2nd pass: refine blackout regions at fine interval (#77)
     refined_regions = _refine_blackout_regions(
-        video_path, blackout_regions, blackout_threshold, duration_hint
+        video_path, blackout_regions, blackout_threshold, duration_hint, workers
     )
 
     effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
@@ -102,6 +112,7 @@ def _scan_cpu(
     duration_hint: float,
     sample_interval: float,
     blackout_threshold: float,
+    workers: int | None = None,
     progress_callback: Callable[[int, int, int], None] | None = None,
 ) -> dict[float, float]:
     """CPU mode: parallel -ss probes, one ffmpeg process per frame."""
@@ -110,7 +121,7 @@ def _scan_cpu(
         return {}
 
     total_samples = len(timestamps)
-    max_workers = min(os.cpu_count() or 4, 24)
+    max_workers = _resolve_workers(workers)
 
     results: dict[float, float] = {}
     blackout_count = 0
@@ -305,6 +316,7 @@ def _refine_blackout_regions(
     blackout_regions: list[tuple[float, float]],
     blackout_threshold: float,
     total_duration: float,
+    workers: int | None = None,
 ) -> list[tuple[float, float]]:
     """Re-probe blackout regions at fine interval for precise duration.
 
@@ -315,7 +327,7 @@ def _refine_blackout_regions(
     if not blackout_regions:
         return blackout_regions
 
-    max_workers = min(os.cpu_count() or 4, 24)
+    max_workers = _resolve_workers(workers)
 
     # Collect all timestamps to probe (deduplicated)
     probe_timestamps: set[float] = set()
