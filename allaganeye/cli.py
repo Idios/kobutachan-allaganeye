@@ -93,3 +93,42 @@ def split(
     except Exception as e:
         typer.echo(f"Unexpected error: {e}", err=True)
         raise typer.Exit(code=1) from None
+
+
+@app.command(name="debug-brightness")
+def debug_brightness(
+    video_path: Annotated[
+        Path, typer.Argument(help="Input video file (MP4/MKV/AVI/MOV)")
+    ],
+    start: Annotated[
+        float, typer.Option("--start", help="Start time in seconds")
+    ] = 0.0,
+    end: Annotated[
+        float | None,
+        typer.Option("--end", help="End time in seconds (default: video duration)"),
+    ] = None,
+    interval: Annotated[
+        float, typer.Option("--interval", help="Sampling interval in seconds")
+    ] = 1.0,
+) -> None:
+    """Probe frame brightness at regular intervals (CSV output for threshold tuning)."""
+    try:
+        if not video_path.exists():
+            raise InputFileError(f"File not found: {video_path}")
+
+        if video_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            raise InputFileError(
+                f"Unsupported format: {video_path.suffix}. "
+                f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
+            )
+
+        from allaganeye.commands.debug_brightness import run_debug_brightness
+
+        run_debug_brightness(video_path, start=start, end=end, interval=interval)
+
+    except AllaganEyeError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=e.exit_code) from None
+    except Exception as e:
+        typer.echo(f"Unexpected error: {e}", err=True)
+        raise typer.Exit(code=1) from None
