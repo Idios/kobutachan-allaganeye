@@ -50,7 +50,7 @@ def detect_match_boundaries(
         return []
 
     total_samples = len(timestamps)
-    max_workers = min(8, os.cpu_count() or 4)
+    max_workers = min(os.cpu_count() or 4, 24)
 
     # Parallel -ss probes
     results: dict[float, float] = {}  # timestamp → brightness
