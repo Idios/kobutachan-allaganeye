@@ -14,7 +14,7 @@ class InputFileError(AllaganEyeError):
 
 
 class VideoProcessingError(AllaganEyeError):
-    """FFmpeg or OpenCV processing failed."""
+    """FFmpeg / ffprobe processing failed."""
 
     exit_code = 3
 

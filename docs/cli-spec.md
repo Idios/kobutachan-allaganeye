@@ -1,5 +1,11 @@
 # CLI コマンド仕様
 
+## 前提条件
+
+| 要件 | 説明 |
+|---|---|
+| ffmpeg / ffprobe 4.1+ | 以下の順序で自動検索: (1) PATH (`shutil.which`) (2) `ALLAGANEYE_FFMPEG` 環境変数で指定したディレクトリ (3) OS 別既知パス（Windows: winget `Gyan.FFmpeg`、macOS: Homebrew） |
+
 ## グローバルオプション
 
 | オプション | 説明 |
@@ -33,6 +39,8 @@ allaganeye split <video_path> [OPTIONS]
 | `--blackout-threshold` | `15.0` | 暗転検知の輝度閾値（0-255） |
 | `--min-match-duration` | `300.0` | 最小試合時間（秒）。これより短いセグメントは無視 |
 | `--min-blackout-duration` | `3.0` | 最小暗転時間（秒）。これより短い暗転は無視 |
+| `--workers` | auto | 検知の並列ワーカー数（デフォルト: 自動=`min(cpu_count, 24)`） |
+| `--gpu` / `--no-gpu` | `false` | GPU アクセラレーション検知（チャンク並列デコード）。利用不可時は CPU フォールバック |
 | `--dry-run` | `false` | 検知のみ実行し分割しない |
 | `-v`, `--verbose` | `false` | 詳細ログ出力 |
 
@@ -76,6 +84,47 @@ allaganeye split <video_path> [OPTIONS]
 | `start_display` | string | ギャップ開始時刻 |
 | `end_display` | string | ギャップ終了時刻 |
 | `duration_display` | string | ギャップ時間 |
+
+## debug-brightness コマンド
+
+フレーム輝度を CSV 出力する。暗転検知の閾値チューニング用。
+
+### 構文
+
+```bash
+allaganeye debug-brightness <video_path> [OPTIONS]
+```
+
+### 引数
+
+| 引数 | 必須 | 説明 |
+|---|---|---|
+| `video_path` | Yes | 入力動画ファイルのパス（MP4/MKV/AVI/MOV） |
+
+### オプション
+
+| オプション | デフォルト | 説明 |
+|---|---|---|
+| `--start` | `0.0` | 開始時刻（秒） |
+| `--end` | 動画全長 | 終了時刻（秒） |
+| `--interval` | `1.0` | サンプリング間隔（秒） |
+| `--workers` | auto | 並列ワーカー数（デフォルト: 自動=`min(cpu_count, 24)`） |
+
+### 出力形式
+
+CSV 形式で stdout に出力。パイプやリダイレクトで利用可能。
+
+```
+timestamp,brightness
+0.0,12.3
+1.0,245.6
+2.0,8.1
+```
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `timestamp` | float | タイムスタンプ（秒、小数点1桁） |
+| `brightness` | float | フレームの平均輝度（0.0-255.0、小数点1桁） |
 
 ### Exit Codes
 

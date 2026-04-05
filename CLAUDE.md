@@ -31,6 +31,9 @@ pyright
 # CLI
 allaganeye split <video_path>           # 試合分割
 allaganeye split <video_path> -o <dir>  # 出力先指定
+allaganeye split <video_path> --gpu     # GPU アクセラレーション検知
+allaganeye split <video_path> --workers 8  # ワーカー数指定
+allaganeye debug-brightness <video_path>   # フレーム輝度 CSV 出力
 ```
 
 ## アーキテクチャ
@@ -54,7 +57,8 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `commands/split_matches.py` | split コマンドのオーケストレーション。タイムスタンプ表示・gap 検出・sample_interval 自動調整 |
 | `commands/debug_brightness.py` | debug-brightness コマンド。フレーム輝度を CSV 出力（閾値チューニング用） |
 | `video/probe.py` | ffprobe でメタデータ取得（解像度、fps、長さ） |
-| `video/detector.py` | ffmpeg 並列プローブで暗転検知、試合境界抽出 |
+| `video/detector.py` | ffmpeg 並列プローブで暗転検知、試合境界抽出（CPU モード） |
+| `video/gpu_detector.py` | GPU アクセラレーション検知（チャンク並列デコード） |
 | `video/splitter.py` | FFmpeg で動画分割（-c copy） |
 
 ### 検知アルゴリズム（detector.py）
@@ -75,6 +79,13 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 **フィルタリング・抽出**
 8. `min(min_blackout_duration, 1.5)` 未満の短い暗転を除外（リスポーン暗転の誤判定防止）
 9. blackout region 間の非暗転区間を試合セグメントとして抽出（暗転内パディング付き）
+
+**GPU モード** (`--gpu`)
+- CPU モードの Pass 1 を GPU チャンク並列デコードで代替（`gpu_detector.py`）
+- 動画を N チャンク（`min(cpu_count, 16)`）に分割し、各チャンクで長寿命の ffmpeg プロセスを `-hwaccel auto` + `fps` フィルタで起動
+- GPU 初期化コストを分散し、1プロセスあたり多数フレームをデコードすることで効率化
+- Pass 1 以降の処理（transition expansion, Pass 2, フィルタリング）は CPU/GPU 共通
+- GPU 利用不可時は自動で CPU モードにフォールバック
 
 ### Exit Codes
 

@@ -40,7 +40,7 @@ ffmpeg -ss {timestamp} -i input.mkv -frames:v 1 -s 320x180 -pix_fmt gray -f rawv
 
 ### 並列実行
 
-`ThreadPoolExecutor(max_workers=min(8, cpu_count))` で複数タイムスタンプを同時にプローブ。各 ffmpeg プロセスは独立したキーフレームシークを行うため、不要フレームのデコードが発生しない。
+`ThreadPoolExecutor(max_workers=min(cpu_count, 24))` で複数タイムスタンプを同時にプローブ。各 ffmpeg プロセスは独立したキーフレームシークを行うため、不要フレームのデコードが発生しない。`--workers` オプションで明示指定も可能。
 
 **設計経緯**: OpenCV `VideoCapture` → シーケンシャル `grab()`/`read()` → ffmpeg `select` フィルタ → **並列 `-ss` プローブ** と段階的に改善。select フィルタは全フレームをデコード後にフィルタリングするため、大容量ファイルで効果がなかった。
 
@@ -90,6 +90,25 @@ ffmpeg -ss {timestamp} -i input.mkv -frames:v 1 -s 320x180 -pix_fmt gray -f rawv
 
 追加プローブ数は ~400（暗転候補 ~10箇所 × ±5s / 0.25s）で、Pass 1 の 5-15%。
 
+### GPU アクセラレーション検知（`--gpu`）
+
+`--gpu` オ��ションにより Pass 1 の粗いスキャンを GPU チャンク並列デコードで実行できる（`gpu_detector.py`���。
+
+**方式**: 動画を N チャンク（`min(cpu_count, 16)`）に分割し、各チャンクで長寿命の ffmpeg プロセスを並列実行する。
+
+```
+ffmpeg -hwaccel auto -ss <chunk_start> -t <chunk_duration> -i input.mkv \
+  -vf "fps=1/{interval},scale=320:180,format=gray" -f rawvideo pipe:1
+```
+
+- `-hwaccel auto`: GPU デコードを自動選択（NVIDIA CUDA, Intel QSV 等）
+- `fps=1/{interval}`: sample_interval に基づくフレームフィルタ
+- 1プロセスあたり多数フレームをデコードするため、GPU 初期化コストが分散される
+
+**CPU モードとの差異**: CPU モードはタイムスタンプごとに独立した ffmpeg プロセスを起動する（`-ss` プローブ方式）。GPU モードは少数の長寿命プロセスでチャンク全体をデコードする。Pass 1 以降（transition expansion, Pass 2, フ���ルタリング）は共通。
+
+**フォールバック**: GPU デコードに失敗した場合は `VideoProcessingError` を送出し、呼び出し元（`detector.py`）が自動で CPU モードにフォールバックする。
+
 ## 設計経緯
 
 ### 検知方式の選定
@@ -120,6 +139,13 @@ ffmpeg -ss {timestamp} -i input.mkv -frames:v 1 -s 320x180 -pix_fmt gray -f rawv
 - **現象**: 短い暗転 (2.0s) + 明るい画面 (~79) では transition expansion が発動しない
 - **対策**: 2パス精密計測 — 暗転候補を ±5s / 0.25s 間隔で再プローブし正確な持続時間を計測
 - **根拠**: interval=1.0 では 2.0s 暗転と 1.5s リスポーンが同じ計測値になるが、interval=0.25 なら区別可能（実測）
+
+#### 課題 4: `_REFINED_MIN_BLACKOUT` の閾値調整
+
+- **初期実装**: `_REFINED_MIN_BLACKOUT = 1.8` で実装
+- **問題**: 0.25s 間隔の精密計測では、2.0s の暗転が 1.75s と計測される（サンプリング間隔分の誤差）。1.75 < 1.8 のため、検出すべき試合境界暗転がフィルタされてしまう
+- **修正**: `_REFINED_MIN_BLACKOUT = 1.5` に引き下げ。2.0s 暗転は 1.5-1.75s と計測され、1.5 以上なので検出される。リスポーン暗転 (1.0-1.5s) は 0.75-1.25s と計測され、1.5 未満なので除外される
+- **教訓**: 離散サンプリングの計測誤差（最大 `interval` 秒）を閾値設計に織り込む必要がある
 
 #### 検討したが不採用の手法
 

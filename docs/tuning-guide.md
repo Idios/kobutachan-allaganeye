@@ -26,6 +26,15 @@ Match 3: 40:08 - 55:30 (15m22s) → match_003.mp4
 
 下の「症状別の対処法」を参考に、パラメータを変更して再度 `--dry-run` で確認します。
 
+**ヒント**: 閾値の調整で迷う場合は `debug-brightness` コマンドで特定区間のフレーム輝度を確認できます。
+
+```bash
+# 試合間の暗転がありそうな区間の輝度を確認
+allaganeye debug-brightness your_recording.mkv --start 900 --end 1000 --interval 0.5
+```
+
+CSV 形式（`timestamp,brightness`）で出力されるので、暗転部分の輝度を確認し `--blackout-threshold` の値を決める参考にしてください。
+
 ### 3. 結果が正しければ本実行する
 
 ```bash
@@ -115,7 +124,7 @@ allaganeye split your_recording.mkv --min-match-duration 60 --dry-run
 
 **症状**: 大容量ファイル（50GB 以上）で処理に時間がかかる。
 
-**対処**: `--sample-interval` を上げる。
+**対処 1: `--sample-interval` を上げる**
 
 ```bash
 # デフォルト: 1.0秒 → 2.0秒に変更
@@ -132,6 +141,23 @@ allaganeye split your_recording.mkv --sample-interval 2.0
 
 **自動調整**: `--sample-interval` を指定しない場合、動画の長さに応じて自動で調整されます（1h超→2.0s、2h超→3.0s）。明示的に指定した場合は自動調整は無効になります。
 
+**対処 2: `--workers` でワーカー数を指定する**
+
+```bash
+# CPU コア数が多い環境で並列数を増やす
+allaganeye split your_recording.mkv --workers 16
+```
+
+デフォルトでは CPU コア数（最大 24）が自動設定されます。通常は変更不要ですが、他のプロセスとリソースを共有する場合は下げることも検討してください。
+
+**対処 3: `--gpu` で GPU アクセラレーションを使う**
+
+```bash
+allaganeye split your_recording.mkv --gpu
+```
+
+GPU 対応環境（NVIDIA CUDA, Intel QSV 等）では、暗転検知の処理を GPU で高速化できます。動画をチャンクに分割し、各チャンクで長寿命の ffmpeg プロセスを GPU デコードで並列実行します。GPU が利用できない場合は自動で CPU モードにフォールバックします。
+
 ---
 
 ## パラメータ一覧
@@ -142,6 +168,8 @@ allaganeye split your_recording.mkv --sample-interval 2.0
 | `--min-match-duration` | 300.0 | 0 以上 | この秒数未満のセグメントを除外する |
 | `--min-blackout-duration` | 3.0 | 0 以上 | この秒数未満の暗転を無視する（リスポーン暗転の除外用） |
 | `--sample-interval` | 1.0 | 0 より大きい値 | フレームチェックの間隔（秒）。大きくすると高速だが精度が下がる |
+| `--workers` | auto | 1 以上 | 並列ワーカー数。デフォルトは CPU コア数（最大 24） |
+| `--gpu` / `--no-gpu` | `--no-gpu` | - | GPU アクセラレーション検知。利用不可時は CPU フォールバック |
 
 ## よくある質問
 

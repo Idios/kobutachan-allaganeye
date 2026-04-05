@@ -50,13 +50,34 @@ allaganeye split <video_path> -o <output_dir>
 |---|---|---|
 | `-o`, `--output-dir` | `./output` | 出力ディレクトリ |
 | `--sample-interval` | `1.0` | フレームサンプリング間隔（秒） |
-| `--blackout-threshold` | `15.0` | 暗転検知の輝度閾値 |
+| `--blackout-threshold` | `15.0` | 暗転検知の輝度閾値（0-255） |
 | `--min-match-duration` | `300.0` | 最小試合時間（秒）。短いセグメントを除外 |
 | `--min-blackout-duration` | `3.0` | 最小暗転時間（秒）。短い暗転を無視 |
+| `--workers` | auto | 検知の並列ワーカー数（デフォルト: 自動=CPU コア数、最大24） |
+| `--gpu` / `--no-gpu` | `--no-gpu` | GPU アクセラレーション検知（チャンク並列デコード）。GPU が利用不可の場合は CPU にフォールバック |
 | `--dry-run` | - | 検知のみ実行し、分割しない |
 | `-v`, `--verbose` | - | 詳細ログ出力 |
 
 > うまく分割されない場合は [パラメータ調整ガイド](docs/tuning-guide.md) を参照してください。
+
+### フレーム輝度の確認
+
+暗転検知の閾値をチューニングする際は、`debug-brightness` コマンドでフレーム輝度を CSV 出力できます。
+
+```bash
+allaganeye debug-brightness <video_path> --start 100 --end 200 --interval 0.5
+```
+
+出力（CSV 形式、stdout）:
+
+```
+timestamp,brightness
+100.0,12.3
+100.5,245.6
+101.0,8.1
+```
+
+詳細は [CLI コマンド仕様](docs/cli-spec.md) を参照してください。
 
 ### 出力
 
