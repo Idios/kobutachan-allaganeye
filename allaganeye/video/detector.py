@@ -242,6 +242,49 @@ def _probe_frame_rgb(
     return result.stdout[:rgb_size]
 
 
+def _scaled_height(src_width: int, src_height: int) -> int:
+    """Compute scaled height preserving aspect ratio, rounded to even."""
+    h = round(_SAMPLE_WIDTH * src_height / src_width)
+    h += h % 2  # round up to even (ffmpeg -2 requirement)
+    return h
+
+
+# Scorebar ROI as ratios of scaled frame dimensions
+_SCOREBAR_ROI_X_START = 0.25
+_SCOREBAR_ROI_X_END = 0.75
+_SCOREBAR_ROI_Y_START = 0.0
+_SCOREBAR_ROI_Y_END = 0.08
+
+
+def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
+    """Determine if FL scorebar is present in the frame.
+
+    Returns True if scorebar detected, False if not, or None if probe
+    failed (raw_rgb is None).
+
+    Criteria (lead-1 Phase 2 spec, based on tester-1 measurements):
+    - 20 < roi_brightness < 140 (FL match typical range)
+    - RGB channel std > 5 (scorebar has 3GC colors, not uniform)
+    """
+    if raw_rgb is None:
+        return None
+
+    frame = np.frombuffer(raw_rgb, dtype=np.uint8).reshape(height, _SAMPLE_WIDTH, 3)
+    x1 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_START)
+    x2 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_END)
+    y1 = int(height * _SCOREBAR_ROI_Y_START)
+    y2 = int(height * _SCOREBAR_ROI_Y_END)
+    roi = frame[y1:y2, x1:x2, :]
+
+    roi_brightness = float(roi.mean())
+    roi_r = float(roi[:, :, 0].mean())
+    roi_g = float(roi[:, :, 1].mean())
+    roi_b = float(roi[:, :, 2].mean())
+    rgb_std = float(np.std([roi_r, roi_g, roi_b]))
+
+    return (20.0 < roi_brightness < 140.0) and (rgb_std > 5.0)
+
+
 _TRANSITION_THRESHOLD = 55.0
 """Brightness threshold for transition regions adjacent to blackouts.
 

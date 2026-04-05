@@ -9,24 +9,17 @@ import typer
 
 from allaganeye.video.detector import (
     _SAMPLE_WIDTH,
+    _SCOREBAR_ROI_X_END,
+    _SCOREBAR_ROI_X_START,
+    _SCOREBAR_ROI_Y_END,
+    _SCOREBAR_ROI_Y_START,
     _generate_timestamps,
     _probe_frame_rgb,
     _probe_single_frame,
+    _resolve_workers,
+    _scaled_height,
 )
 from allaganeye.video.probe import probe_video
-
-# Scorebar ROI as ratios of scaled frame dimensions
-_SCOREBAR_ROI_X_START = 0.25  # 25% from left
-_SCOREBAR_ROI_X_END = 0.75  # 75% from left
-_SCOREBAR_ROI_Y_START = 0.0  # top edge
-_SCOREBAR_ROI_Y_END = 0.08  # 8% from top
-
-
-def _scaled_height(src_width: int, src_height: int) -> int:
-    """Compute scaled height preserving aspect ratio, rounded to even."""
-    h = round(_SAMPLE_WIDTH * src_height / src_width)
-    h += h % 2  # round up to even (ffmpeg -2 requirement)
-    return h
 
 
 def run_debug_brightness(
@@ -57,8 +50,6 @@ def run_debug_brightness(
     if not timestamps:
         typer.echo("No timestamps to probe.", err=True)
         raise typer.Exit(code=1)
-
-    from allaganeye.video.detector import _resolve_workers
 
     max_workers = _resolve_workers(workers)
 
