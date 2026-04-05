@@ -104,8 +104,12 @@ def _sample_brightness_ffmpeg(
     if duration_hint is not None and duration_hint > 0:
         total_samples = int(duration_hint / sample_interval)
 
+    assert proc.stdout is not None  # guaranteed by stdout=PIPE
+    assert proc.stderr is not None  # guaranteed by stderr=PIPE
+
     blackout_times: list[float] = []
     sample_idx = 0
+    stderr_tail = ""
 
     try:
         while True:
@@ -123,14 +127,12 @@ def _sample_brightness_ffmpeg(
             sample_idx += 1
     finally:
         proc.stdout.close()
+        stderr_tail = proc.stderr.read().decode(errors="replace")[-500:]
+        proc.stderr.close()
         proc.wait()
 
     if proc.returncode != 0 and sample_idx == 0:
-        stderr = proc.stderr.read().decode(errors="replace")[-500:]
-        proc.stderr.close()
-        raise VideoProcessingError(f"ffmpeg frame sampling failed: {stderr}")
-    if proc.stderr:
-        proc.stderr.close()
+        raise VideoProcessingError(f"ffmpeg frame sampling failed: {stderr_tail}")
 
     return blackout_times
 
