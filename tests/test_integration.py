@@ -13,10 +13,12 @@ aspects of that single run to avoid repeated 15-minute detection passes.
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
 
+from allaganeye.ffmpeg_path import find_ffmpeg
 from allaganeye.video.probe import probe_video
 
 pytestmark = pytest.mark.slow
@@ -48,6 +50,29 @@ def _find_subdir_with_splits(sample_video_dir: Path) -> Path | None:
         if _find_source_mkv(subdir) and _find_manual_splits(subdir):
             return subdir
     return None
+
+
+def _gpu_available() -> bool:
+    """Check if GPU decode is available by running a minimal ffmpeg hwaccel probe."""
+    try:
+        result = subprocess.run(
+            [find_ffmpeg(), "-hwaccels"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        accels = result.stdout.lower()
+        return any(
+            a in accels for a in ("cuda", "d3d11va", "qsv", "vulkan", "videotoolbox")
+        )
+    except Exception:
+        return False
+
+
+gpu_available = pytest.mark.skipif(
+    not _gpu_available(),
+    reason="No GPU hardware acceleration available",
+)
 
 
 # --- Fixtures ---
@@ -322,3 +347,65 @@ class TestMetadataJson:
             assert "start_display" in match_info
             assert "end_display" in match_info
             assert "duration_display" in match_info
+
+
+# --- GPU/CPU consistency fixtures ---
+
+
+@pytest.fixture(scope="session")
+def gpu_cpu_results(source_mkv: Path, source_metadata: dict) -> dict:
+    """Run detection in both CPU and GPU modes (cached for session)."""
+    if not _gpu_available():
+        pytest.skip("No GPU available")
+
+    from allaganeye.video.detector import detect_match_boundaries
+
+    common = dict(
+        duration_hint=source_metadata["duration"],
+        sample_interval=2.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+    )
+    cpu = detect_match_boundaries(source_mkv, use_gpu=False, **common)
+    gpu = detect_match_boundaries(source_mkv, use_gpu=True, **common)
+    return {"cpu": cpu, "gpu": gpu}
+
+
+# --- GPU/CPU consistency tests ---
+
+
+class TestGpuCpuConsistency:
+    """Verify GPU and CPU detection produce consistent results."""
+
+    @gpu_available
+    def test_gpu_cpu_boundary_count_matches(self, gpu_cpu_results: dict):
+        """GPU and CPU modes detect the same number of matches."""
+        cpu = gpu_cpu_results["cpu"]
+        gpu = gpu_cpu_results["gpu"]
+
+        assert len(cpu) == len(gpu), (
+            f"CPU detected {len(cpu)} matches, GPU detected {len(gpu)}"
+        )
+
+    @gpu_available
+    def test_gpu_cpu_boundaries_close(self, gpu_cpu_results: dict):
+        """GPU and CPU boundary timestamps are within tolerance."""
+        cpu = gpu_cpu_results["cpu"]
+        gpu = gpu_cpu_results["gpu"]
+
+        if len(cpu) != len(gpu):
+            pytest.skip(
+                "Boundary count mismatch — see test_gpu_cpu_boundary_count_matches"
+            )
+
+        tolerance = 10.0  # seconds
+        for i, (c, g) in enumerate(zip(cpu, gpu, strict=True)):
+            assert abs(c["start"] - g["start"]) <= tolerance, (
+                f"Match {i + 1} start: CPU={c['start']:.1f}s, GPU={g['start']:.1f}s "
+                f"(diff={abs(c['start'] - g['start']):.1f}s > {tolerance}s)"
+            )
+            assert abs(c["end"] - g["end"]) <= tolerance, (
+                f"Match {i + 1} end: CPU={c['end']:.1f}s, GPU={g['end']:.1f}s "
+                f"(diff={abs(c['end'] - g['end']):.1f}s > {tolerance}s)"
+            )
