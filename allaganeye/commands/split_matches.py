@@ -25,11 +25,22 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
             f"FPS: {metadata['fps']:.2f}"
         )
 
+    # Auto-adjust sample_interval for long videos (C strategy from #68)
+    effective_interval = _auto_sample_interval(
+        metadata["duration"], config.sample_interval
+    )
+
     # Step 2: Detect match boundaries
     if verbose:
+        if effective_interval != config.sample_interval:
+            typer.echo(
+                f"  Auto-adjusted sample interval: "
+                f"{config.sample_interval}s → {effective_interval}s "
+                f"(video is {_format_duration(metadata['duration'])})"
+            )
         typer.echo(
             f"Detecting match boundaries "
-            f"(interval={config.sample_interval}s, threshold={config.blackout_threshold})"
+            f"(interval={effective_interval}s, threshold={config.blackout_threshold})"
         )
 
         total_duration = metadata["duration"]
@@ -48,7 +59,7 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
             boundaries = detect_match_boundaries(
                 video_path,
                 duration_hint=metadata["duration"],
-                sample_interval=config.sample_interval,
+                sample_interval=effective_interval,
                 blackout_threshold=config.blackout_threshold,
                 min_match_duration=config.min_match_duration,
                 min_blackout_duration=config.min_blackout_duration,
@@ -58,7 +69,7 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
         boundaries = detect_match_boundaries(
             video_path,
             duration_hint=metadata["duration"],
-            sample_interval=config.sample_interval,
+            sample_interval=effective_interval,
             blackout_threshold=config.blackout_threshold,
             min_match_duration=config.min_match_duration,
             min_blackout_duration=config.min_blackout_duration,
@@ -173,6 +184,21 @@ def _format_duration(seconds: float) -> str:
     if h:
         return f"{h}h{m:02d}m"
     return f"{m}m{s:02d}s"
+
+
+def _auto_sample_interval(duration: float, configured_interval: float) -> float:
+    """Raise sample interval for long videos to reduce probe count.
+
+    Only adjusts when the configured interval is the default (1.0).
+    Thresholds chosen so total probes stay under ~3600 (≈ 5 min at 24 workers).
+    """
+    if configured_interval != 1.0:
+        return configured_interval
+    if duration > 7200:  # > 2h
+        return 3.0
+    if duration > 3600:  # > 1h
+        return 2.0
+    return configured_interval
 
 
 def _find_gaps(

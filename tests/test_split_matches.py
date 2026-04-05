@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from allaganeye.commands.split_matches import run_split
+from allaganeye.commands.split_matches import _auto_sample_interval, run_split
 from allaganeye.config import SplitConfig
 from allaganeye.exceptions import AllaganEyeError, DetectionError, VideoProcessingError
 
@@ -262,6 +262,56 @@ def test_pipeline_non_verbose_output(
     assert "Match 1:" in output
     assert "Match 2:" in output
     assert "Probing:" not in output
+
+
+# --- Auto sample interval ---
+
+
+class TestAutoSampleInterval:
+    def test_short_video_unchanged(self):
+        assert _auto_sample_interval(1800.0, 1.0) == 1.0
+
+    def test_one_hour_boundary_unchanged(self):
+        assert _auto_sample_interval(3600.0, 1.0) == 1.0
+
+    def test_over_one_hour(self):
+        assert _auto_sample_interval(3601.0, 1.0) == 2.0
+
+    def test_two_hour_boundary(self):
+        assert _auto_sample_interval(7200.0, 1.0) == 2.0
+
+    def test_over_two_hours(self):
+        assert _auto_sample_interval(7201.0, 1.0) == 3.0
+
+    def test_custom_interval_not_adjusted(self):
+        """User-specified interval is never auto-adjusted."""
+        assert _auto_sample_interval(9000.0, 0.5) == 0.5
+        assert _auto_sample_interval(9000.0, 2.0) == 2.0
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_pipeline_auto_interval_long_video(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """Long video (>1h) auto-adjusts sample_interval from 1.0 to 2.0."""
+    probe = {**PROBE_RESULT, "duration": 5400.0}  # 1.5h
+    mock_probe.return_value = probe
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    mock_detect.assert_called_once_with(
+        Path("input.mp4"),
+        duration_hint=5400.0,
+        sample_interval=2.0,
+        blackout_threshold=config.blackout_threshold,
+        min_match_duration=config.min_match_duration,
+        min_blackout_duration=config.min_blackout_duration,
+    )
 
 
 # --- Config forwarding ---
