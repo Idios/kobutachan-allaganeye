@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from allaganeye.exceptions import InputFileError, VideoProcessingError
+from allaganeye.ffmpeg_path import find_ffprobe
 
 
 def _parse_frame_rate(rate_str: str) -> float:
@@ -25,7 +26,7 @@ def probe_video(video_path: Path) -> dict:
     try:
         result = subprocess.run(
             [
-                "ffprobe",
+                find_ffprobe(),
                 "-v",
                 "quiet",
                 "-print_format",

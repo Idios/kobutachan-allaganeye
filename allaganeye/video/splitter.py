@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 from allaganeye.exceptions import VideoProcessingError
+from allaganeye.ffmpeg_path import find_ffmpeg
 
 
 def split_video(
@@ -53,7 +54,7 @@ def _ffmpeg_split(
     try:
         result = subprocess.run(
             [
-                "ffmpeg",
+                find_ffmpeg(),
                 "-y",
                 "-ss",
                 str(start),
