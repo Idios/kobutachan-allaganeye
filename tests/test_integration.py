@@ -212,15 +212,15 @@ class TestDetectRealVideo:
     ):
         """Detected boundary count is in the right ballpark vs manual splits.
 
-        Current detection merges some matches due to short inter-match gaps
-        (see #60 respawn blackout issue). Tolerance is generous until
-        detection accuracy improves.
+        Transition expansion (#71/#75) improved detection from 4/7 to 6/7.
+        Remaining gap: short blackouts followed by bright screens (pattern C)
+        cannot be distinguished from respawn blackouts by duration alone.
         """
         boundaries = pipeline_result["boundaries"]
         expected_count = len(manual_splits)
-        # Allow +/- 3 tolerance: current detector merges adjacent matches
-        # when inter-match blackouts are too short or masked by respawn screens
-        assert abs(len(boundaries) - expected_count) <= 3, (
+        # Allow +/- 2 tolerance: transition expansion catches most boundaries
+        # but pattern C (short blackout + bright post-screen) remains undetected
+        assert abs(len(boundaries) - expected_count) <= 2, (
             f"Detected {len(boundaries)} matches, expected ~{expected_count} "
             f"(manual splits: {[f.name for f in manual_splits]})"
         )
