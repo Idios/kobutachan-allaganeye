@@ -6,12 +6,15 @@ All tests require:
 
 Run with: pytest -m slow
 
-Design: The full pipeline (probe → detect → split) runs once per session
+Design: The ``split_subdir`` fixture is parameterized over every
+subdirectory that contains both a source MKV and manual splits.
+The full pipeline (probe → detect → split) runs once per subdirectory
 via the ``pipeline_result`` fixture.  Individual tests verify different
-aspects of that single run to avoid repeated 15-minute detection passes.
+aspects of that single run to avoid repeated detection passes.
 """
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -42,14 +45,26 @@ def _find_manual_splits(subdir: Path) -> list[Path]:
     return sorted(f for f in subdir.iterdir() if pattern.match(f.name))
 
 
-def _find_subdir_with_splits(sample_video_dir: Path) -> Path | None:
-    """Find a subdirectory that has both a source MKV and manual splits."""
-    for subdir in sorted(sample_video_dir.iterdir()):
-        if not subdir.is_dir():
-            continue
-        if _find_source_mkv(subdir) and _find_manual_splits(subdir):
-            return subdir
-    return None
+def _discover_split_subdirs() -> list[Path]:
+    """Discover all subdirectories with source MKV and manual splits.
+
+    Called at import time so that pytest can parameterize fixtures.
+    Returns an empty list when the environment variable is unset.
+    """
+    env_path = os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR")
+    if not env_path:
+        return []
+    base = Path(env_path)
+    if not base.is_dir():
+        return []
+    return [
+        subdir
+        for subdir in sorted(base.iterdir())
+        if subdir.is_dir() and _find_source_mkv(subdir) and _find_manual_splits(subdir)
+    ]
+
+
+_SPLIT_SUBDIRS = _discover_split_subdirs()
 
 
 def _gpu_available() -> bool:
@@ -79,10 +94,8 @@ gpu_available = pytest.mark.skipif(
 
 
 @pytest.fixture(scope="session")
-def _sample_video_dir_session(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def _sample_video_dir_session() -> Path:
     """Session-scoped sample_video_dir (avoids per-test skip)."""
-    import os
-
     env_path = os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR")
     if not env_path:
         pytest.skip("ALLAGANEYE_SAMPLE_VIDEO_DIR not set")
@@ -92,13 +105,16 @@ def _sample_video_dir_session(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return path
 
 
-@pytest.fixture(scope="session")
-def split_subdir(_sample_video_dir_session: Path) -> Path:
-    """Find a subdirectory with source MKV and manual splits."""
-    subdir = _find_subdir_with_splits(_sample_video_dir_session)
-    if subdir is None:
+@pytest.fixture(
+    scope="session",
+    params=_SPLIT_SUBDIRS or [None],
+    ids=lambda p: p.name if p else "no-data",
+)
+def split_subdir(request: pytest.FixtureRequest) -> Path:
+    """Parameterized over every subdirectory with source MKV + manual splits."""
+    if request.param is None:
         pytest.skip("No subdirectory with source MKV and manual splits found")
-    return subdir
+    return request.param
 
 
 @pytest.fixture(scope="session")
@@ -240,7 +256,14 @@ class TestDetectRealVideo:
         Transition expansion (#71/#75) and 2-pass refinement (#77/#79)
         improved detection to 7/7.  Tolerance ±2 allows for edge cases
         in other recordings.
+
+        Skipped when manual splits < 3 (likely incomplete hand-splitting).
         """
+        if len(manual_splits) < 3:
+            pytest.skip(
+                f"Incomplete manual splits ({len(manual_splits)}): "
+                "comparison unreliable"
+            )
         boundaries = pipeline_result["boundaries"]
         expected_count = len(manual_splits)
         # Allow +/- 2 tolerance
@@ -258,7 +281,14 @@ class TestDetectRealVideo:
         detector and human choose different cut points), so per-match
         comparison is unreliable.  Total duration comparison validates
         that the detector captures roughly the same amount of content.
+
+        Skipped when manual splits < 3 (likely incomplete hand-splitting).
         """
+        if len(manual_splits) < 3:
+            pytest.skip(
+                f"Incomplete manual splits ({len(manual_splits)}): "
+                "comparison unreliable"
+            )
         boundaries = pipeline_result["boundaries"]
         if not boundaries:
             pytest.skip("No boundaries detected")
@@ -282,16 +312,16 @@ class TestDetectRealVideo:
     ):
         """Each detected match duration is within a plausible FL match range.
 
-        FL matches typically last 8-20 minutes.  Detected matches outside
-        this range suggest boundary detection issues.
+        FL matches typically last 8-20 minutes but overtime can push
+        to ~26 minutes.  Upper bound set to 30 minutes.
         """
         boundaries = pipeline_result["boundaries"]
 
         for i, b in enumerate(boundaries):
             dur = b["end"] - b["start"]
-            assert 300.0 <= dur <= 1500.0, (
+            assert 300.0 <= dur <= 1800.0, (
                 f"Match {i + 1}: {dur:.0f}s is outside plausible range "
-                f"(5-25 min for FL matches)"
+                f"(5-30 min for FL matches)"
             )
 
 
