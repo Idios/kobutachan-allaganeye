@@ -71,8 +71,10 @@
 - 関連 issue がある場合は `#番号` を含める
 
 ### PR チェックリスト
+- [ ] ベースブランチの最新をリベース済み（`git fetch origin develop-0.1.0 && git rebase origin/develop-0.1.0`）
 - [ ] 全テスト通過（`pytest`）
 - [ ] Lint 通過（`ruff check .`）
+- [ ] フォーマット通過（`ruff format --check .`）
 - [ ] 型チェック通過（`pyright`）
 - [ ] 関連ドキュメント更新
 - [ ] CLAUDE.md の更新が必要な場合は更新済み
