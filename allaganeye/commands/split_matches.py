@@ -51,6 +51,7 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
                 sample_interval=config.sample_interval,
                 blackout_threshold=config.blackout_threshold,
                 min_match_duration=config.min_match_duration,
+                min_blackout_duration=config.min_blackout_duration,
                 progress_callback=on_progress,
             )
     else:
@@ -60,6 +61,7 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
             sample_interval=config.sample_interval,
             blackout_threshold=config.blackout_threshold,
             min_match_duration=config.min_match_duration,
+            min_blackout_duration=config.min_blackout_duration,
         )
 
     if not boundaries:

@@ -80,6 +80,7 @@ def test_pipeline_happy_path(mock_probe, mock_detect, mock_split, tmp_path):
         sample_interval=config.sample_interval,
         blackout_threshold=config.blackout_threshold,
         min_match_duration=config.min_match_duration,
+        min_blackout_duration=config.min_blackout_duration,
     )
     mock_split.assert_called_once_with(video, BOUNDARIES, tmp_path)
     assert (tmp_path / "metadata.json").exists()
@@ -290,4 +291,5 @@ def test_pipeline_config_params_forwarded(
         sample_interval=2.0,
         blackout_threshold=20.0,
         min_match_duration=120.0,
+        min_blackout_duration=3.0,
     )

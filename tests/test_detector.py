@@ -65,18 +65,35 @@ class TestExtractSegments:
         assert result[1]["end"] == 1800.0
 
     def test_short_segment_filtered(self):
-        blackout_times = [100.0, 101.0]
+        """Segments shorter than min_match_duration are excluded."""
+        # Blackout at 100-104s (4s, passes min_blackout_duration=3)
+        blackout_times = [100.0, 101.0, 102.0, 103.0, 104.0]
         result = _extract_segments(
             blackout_times,
             total_duration=500.0,
             sample_interval=1.0,
             min_match_duration=300.0,
         )
+        # First segment: 0 to ~102 (too short), second: ~102 to 500 (long enough)
         assert len(result) == 1
-        assert result[0]["start"] == pytest.approx(100.5)
+        assert result[0]["start"] == pytest.approx(102.0)
 
     def test_multiple_blackouts_three_matches(self):
-        blackout_times = [600.0, 601.0, 602.0, 1800.0, 1801.0, 1802.0]
+        """Multiple blackout regions create multiple match segments with padding."""
+        blackout_times = [
+            # First blackout (600-604, 4s > 3s min_blackout)
+            600.0,
+            601.0,
+            602.0,
+            603.0,
+            604.0,
+            # Second blackout (1800-1804, 4s > 3s min_blackout)
+            1800.0,
+            1801.0,
+            1802.0,
+            1803.0,
+            1804.0,
+        ]
         result = _extract_segments(
             blackout_times,
             total_duration=3600.0,
@@ -84,10 +101,11 @@ class TestExtractSegments:
             min_match_duration=300.0,
         )
         assert len(result) == 3
-        assert result[0]["end"] == pytest.approx(601.0)
-        assert result[1]["start"] == pytest.approx(601.0)
-        assert result[1]["end"] == pytest.approx(1801.0)
-        assert result[2]["start"] == pytest.approx(1801.0)
+        # padding clamped to 2.0 (region duration 4s / 2)
+        assert result[0]["end"] == pytest.approx(602.0)
+        assert result[1]["start"] == pytest.approx(602.0)
+        assert result[1]["end"] == pytest.approx(1802.0)
+        assert result[2]["start"] == pytest.approx(1802.0)
 
     def test_consecutive_blackouts_merged(self):
         blackout_times = [600.0, 601.0, 602.0, 603.0, 604.0]
@@ -114,7 +132,9 @@ class TestExtractSegments:
         assert result[1]["start"] == pytest.approx(607.0)
 
     def test_padding_clamped_for_short_region(self):
-        blackout_times = [600.0, 601.0, 602.0]
+        """Padding clamped for region shorter than 2*padding but >= min_blackout."""
+        # Region 600-604 (4s): padding = min(3.0, 2.0) = 2.0
+        blackout_times = [600.0, 601.0, 602.0, 603.0, 604.0]
         result = _extract_segments(
             blackout_times,
             total_duration=1800.0,
@@ -122,8 +142,8 @@ class TestExtractSegments:
             min_match_duration=300.0,
         )
         assert len(result) == 2
-        assert result[0]["end"] == pytest.approx(601.0)
-        assert result[1]["start"] == pytest.approx(601.0)
+        assert result[0]["end"] == pytest.approx(602.0)
+        assert result[1]["start"] == pytest.approx(602.0)
 
     def test_padding_does_not_exceed_total_duration(self):
         blackout_times = [997.0, 998.0, 999.0, 1000.0]
@@ -138,6 +158,74 @@ class TestExtractSegments:
 
     def test_padding_constant_value(self):
         assert _BLACKOUT_PADDING == 3.0
+
+    def test_short_blackout_ignored(self):
+        """Blackout regions shorter than min_blackout_duration are ignored."""
+        # 1-2s respawn blackout should NOT split the video
+        blackout_times = [600.0, 601.0]  # 1s region
+        result = _extract_segments(
+            blackout_times,
+            total_duration=1800.0,
+            sample_interval=1.0,
+            min_match_duration=300.0,
+            min_blackout_duration=3.0,
+        )
+        # Short blackout ignored → entire video is one segment
+        assert len(result) == 1
+        assert result[0]["start"] == 0.0
+        assert result[0]["end"] == 1800.0
+
+    def test_long_blackout_kept(self):
+        """Blackout regions >= min_blackout_duration are kept as boundaries."""
+        # 5s blackout should split the video
+        blackout_times = [600.0, 601.0, 602.0, 603.0, 604.0, 605.0]
+        result = _extract_segments(
+            blackout_times,
+            total_duration=1800.0,
+            sample_interval=1.0,
+            min_match_duration=300.0,
+            min_blackout_duration=3.0,
+        )
+        assert len(result) == 2
+
+    def test_min_blackout_duration_zero(self):
+        """min_blackout_duration=0 keeps all blackout regions."""
+        blackout_times = [600.0, 601.0]  # 1s region
+        result = _extract_segments(
+            blackout_times,
+            total_duration=1800.0,
+            sample_interval=1.0,
+            min_match_duration=300.0,
+            min_blackout_duration=0.0,
+        )
+        # 1s blackout kept → two segments
+        assert len(result) == 2
+
+    def test_mixed_short_and_long_blackouts(self):
+        """Only long blackouts are used as boundaries, short ones ignored."""
+        blackout_times = [
+            # Short respawn blackout (1s, ignored)
+            600.0,
+            601.0,
+            # Long match boundary (5s, kept)
+            900.0,
+            901.0,
+            902.0,
+            903.0,
+            904.0,
+            905.0,
+        ]
+        result = _extract_segments(
+            blackout_times,
+            total_duration=1800.0,
+            sample_interval=1.0,
+            min_match_duration=300.0,
+            min_blackout_duration=3.0,
+        )
+        # Only the 5s blackout at 900s splits the video
+        assert len(result) == 2
+        assert result[0]["start"] == 0.0
+        assert result[1]["end"] == 1800.0
 
 
 # ============================================================
