@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import click.exceptions
+import numpy as np
 import pytest
 
 from allaganeye.commands.debug_brightness import run_debug_brightness
@@ -125,3 +126,103 @@ def test_varying_brightness(mock_probe_video, mock_probe_frame, capsys):
     assert lines[1] == "0.0,5.0"
     assert lines[2] == "1.0,128.0"
     assert lines[3] == "2.0,42.3"
+
+
+# --- Scorebar ROI mode tests ---
+
+# For 1920x1080 source, scaled height = round(320 * 1080 / 1920) = 180 (even)
+_SCALED_H = 180
+
+
+def _make_rgb_frame(
+    r: int = 128, g: int = 128, b: int = 128, height: int = _SCALED_H
+) -> bytes:
+    """Create a 320xH RGB24 frame filled with a uniform color."""
+    frame = np.zeros((height, 320, 3), dtype=np.uint8)
+    frame[:, :, 0] = r
+    frame[:, :, 1] = g
+    frame[:, :, 2] = b
+    return frame.tobytes()
+
+
+@patch(f"{MODULE}._probe_frame_rgb")
+@patch(f"{MODULE}.probe_video")
+def test_scorebar_csv_header(mock_probe_video, mock_probe_rgb, capsys):
+    """Scorebar mode outputs CSV with ROI columns."""
+    mock_probe_video.return_value = PROBE_RESULT
+    mock_probe_rgb.return_value = _make_rgb_frame(100, 50, 200)
+
+    run_debug_brightness(
+        Path("test.mp4"), start=0.0, end=2.0, interval=1.0, roi_mode="scorebar"
+    )
+
+    output = capsys.readouterr().out
+    lines = output.strip().split("\n")
+    assert (
+        lines[0]
+        == "timestamp,brightness,roi_r_mean,roi_g_mean,roi_b_mean,roi_brightness"
+    )
+    assert len(lines) == 3  # header + 2 rows
+
+
+@patch(f"{MODULE}._probe_frame_rgb")
+@patch(f"{MODULE}.probe_video")
+def test_scorebar_roi_values(mock_probe_video, mock_probe_rgb, capsys):
+    """Scorebar mode computes correct ROI channel means from ratio-based ROI."""
+    mock_probe_video.return_value = PROBE_RESULT
+    # For 320x180: ROI x=80:240 (25%-75%), y=0:14 (0%-8%)
+    roi_y_end = int(_SCALED_H * 0.08)  # 14
+    frame = np.zeros((_SCALED_H, 320, 3), dtype=np.uint8)
+    frame[:, :, :] = 50  # background
+    frame[0:roi_y_end, 80:240, 0] = 200  # ROI red channel
+    frame[0:roi_y_end, 80:240, 1] = 30  # ROI green channel
+    frame[0:roi_y_end, 80:240, 2] = 80  # ROI blue channel
+    mock_probe_rgb.return_value = frame.tobytes()
+
+    run_debug_brightness(
+        Path("test.mp4"), start=0.0, end=1.0, interval=1.0, roi_mode="scorebar"
+    )
+
+    output = capsys.readouterr().out
+    lines = output.strip().split("\n")
+    parts = lines[1].split(",")
+    assert len(parts) == 6
+    assert parts[0] == "0.0"
+    # ROI values should be the distinct values we set
+    assert float(parts[2]) == pytest.approx(200.0, abs=0.1)  # roi_r
+    assert float(parts[3]) == pytest.approx(30.0, abs=0.1)  # roi_g
+    assert float(parts[4]) == pytest.approx(80.0, abs=0.1)  # roi_b
+
+
+@patch(f"{MODULE}._probe_single_frame")
+@patch(f"{MODULE}.probe_video")
+def test_roi_mode_none_unchanged(mock_probe_video, mock_probe_frame, capsys):
+    """roi_mode=None produces original 2-column CSV."""
+    mock_probe_video.return_value = PROBE_RESULT
+    mock_probe_frame.return_value = 42.5
+
+    run_debug_brightness(
+        Path("test.mp4"), start=0.0, end=2.0, interval=1.0, roi_mode=None
+    )
+
+    output = capsys.readouterr().out
+    lines = output.strip().split("\n")
+    assert lines[0] == "timestamp,brightness"
+    assert len(lines[1].split(",")) == 2
+
+
+@patch(f"{MODULE}._probe_frame_rgb")
+@patch(f"{MODULE}.probe_video")
+def test_scorebar_probe_failure(mock_probe_video, mock_probe_rgb, capsys):
+    """Probe failure (None) outputs fallback values."""
+    mock_probe_video.return_value = PROBE_RESULT
+    mock_probe_rgb.return_value = None
+
+    run_debug_brightness(
+        Path("test.mp4"), start=0.0, end=1.0, interval=1.0, roi_mode="scorebar"
+    )
+
+    output = capsys.readouterr().out
+    lines = output.strip().split("\n")
+    parts = lines[1].split(",")
+    assert parts[1] == "255.0"  # fallback brightness
