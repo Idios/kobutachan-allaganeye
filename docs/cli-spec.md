@@ -31,8 +31,10 @@ allaganeye split <video_path> [OPTIONS]
 | `-o`, `--output-dir` | `./output` | 出力ディレクトリ |
 | `--sample-interval` | `1.0` | フレームサンプリング間隔（秒） |
 | `--blackout-threshold` | `15.0` | 暗転検知の輝度閾値（0-255） |
-| `--min-match-duration` | `300` | 最小試合時間（秒）。これより短いセグメントは無視 |
+| `--min-match-duration` | `300.0` | 最小試合時間（秒）。これより短いセグメントは無視 |
+| `--min-blackout-duration` | `3.0` | 最小暗転時間（秒）。これより短い暗転は無視 |
 | `--dry-run` | `false` | 検知のみ実行し分割しない |
+| `-v`, `--verbose` | `false` | 詳細ログ出力 |
 
 ### 出力
 
@@ -46,5 +48,6 @@ allaganeye split <video_path> [OPTIONS]
 | 0 | 正常終了 |
 | 1 | 一般エラー |
 | 2 | 入力ファイル不正 |
-| 3 | FFmpeg / OpenCV エラー |
+| 3 | FFmpeg / ffprobe エラー |
 | 4 | 試合境界が見つからない |
+| 5 | 設定値不正（パラメータの範囲外等） |
