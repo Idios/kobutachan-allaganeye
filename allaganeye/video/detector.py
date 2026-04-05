@@ -104,6 +104,8 @@ def _probe_single_frame(video_path: Path, timestamp: float) -> float:
     """
     cmd = [
         "ffmpeg",
+        "-threads",
+        "1",
         "-ss",
         str(timestamp),
         "-i",
