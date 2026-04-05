@@ -27,27 +27,29 @@ description: PRのレビューとマージを自動化する
    - CLAUDE.md / docs の更新必要性
    - コーディング規約への準拠
    - チェックリストの完了状態
-4. レビュー結果をコメント:
+4. レビュー結果を PR コメントで投稿:
    ```bash
-   gh pr review $ARGUMENTS --repo Idios/kobutachan-allaganeye --comment --body "<レビュー内容>"
+   gh pr comment $ARGUMENTS --repo Idios/kobutachan-allaganeye --body "<レビュー内容>"
    ```
-5. 問題がなければ LGTM:
-   ```bash
-   gh pr review $ARGUMENTS --repo Idios/kobutachan-allaganeye --approve
-   ```
+
+> **注意**: `gh pr review --approve` は使用しない（全ロールが同一アカウントのため self-approve 不可。`docs/roles/protocol.md` 参照）。レビュー結果はコメントで投稿する。
 
 ## マージ条件（Lead Engineer / Director のみ）
 
 以下のすべてを満たす場合にマージ可能:
 - チェックリストが全て完了
-- テスト通過の確認コメントがある
-- レビューが approve 済み
+- コード変更を含む PR: テスターのテスト結果コメントがある
+- ドキュメントのみの PR: レビューコメントで LGTM
 - マージコンフリクトがない
 
 ```bash
-gh pr merge $ARGUMENTS --repo Idios/kobutachan-allaganeye --squash --delete-branch
+gh pr merge $ARGUMENTS --repo Idios/kobutachan-allaganeye --squash
 ```
 
 ## 関連 Issue のクローズ
 
-PR に `Closes #N` が含まれている場合、マージ後に Issue が自動クローズされることを確認。
+PR マージ後、関連 Issue は **手動でクローズ** する（`Closes` / `Fixes` / `Resolves` キーワードは使用禁止。`docs/issue-policy.md` 参照）。
+
+```bash
+gh issue close <番号> --repo Idios/kobutachan-allaganeye --comment "マージ確認: <session-id> ← PR #$ARGUMENTS"
+```
