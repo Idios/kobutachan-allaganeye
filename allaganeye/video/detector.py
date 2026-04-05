@@ -1,12 +1,18 @@
-"""Match boundary detection using OpenCV frame analysis."""
+"""Match boundary detection using parallel ffmpeg frame probing."""
 
+import os
+import subprocess
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-import cv2
 import numpy as np
 
 from allaganeye.exceptions import VideoProcessingError
+
+_SAMPLE_WIDTH = 320
+_SAMPLE_HEIGHT = 180
+_FRAME_SIZE = _SAMPLE_WIDTH * _SAMPLE_HEIGHT  # grayscale, 1 byte per pixel
 
 
 def detect_match_boundaries(
@@ -20,99 +26,107 @@ def detect_match_boundaries(
 ) -> list[dict]:
     """Detect match boundaries by finding blackout frames.
 
-    Samples frames at the given interval, detects blackout (low brightness)
-    frames, and returns non-blackout segments that are longer than
-    min_match_duration.
+    Uses parallel ffmpeg ``-ss`` probes to extract one frame per
+    *sample_interval* seconds.  Each probe seeks to the target timestamp
+    (keyframe-based input seeking) and decodes only one frame, avoiding
+    the cost of decoding the entire stream.
 
     Args:
-        duration_hint: Video duration in seconds from ffprobe. Used as
-            fallback when CAP_PROP_FRAME_COUNT returns <= 0 (common with
-            MKV containers, especially after abnormal OBS shutdown).
-        progress_callback: Optional callback invoked at each sampled frame
-            with ``(frame_idx, total_frames, blackout_count)``.  Allows the
-            caller to display progress without coupling detector to UI.
+        duration_hint: Video duration in seconds from ffprobe.  Required
+            to generate the list of sample timestamps.
+        progress_callback: Optional callback invoked after each sampled
+            frame with ``(completed_count, total_samples, blackout_count)``.
 
     Returns list of dicts with 'start' and 'end' keys (seconds).
     """
-    cap = cv2.VideoCapture(str(video_path))
-    try:
-        if not cap.isOpened():
-            raise VideoProcessingError(f"Cannot open video: {video_path}")
+    if duration_hint is None or duration_hint <= 0:
+        raise VideoProcessingError(
+            "Cannot determine video duration. Provide duration_hint via probe."
+        )
 
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        if fps <= 0:
-            raise VideoProcessingError(
-                "Cannot read video properties (fps or frame count)"
-            )
+    timestamps = _generate_timestamps(duration_hint, sample_interval)
+    if not timestamps:
+        return []
 
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if total_frames <= 0:
-            if duration_hint is not None and duration_hint > 0:
-                total_frames = int(fps * duration_hint)
-            else:
-                raise VideoProcessingError(
-                    "Cannot read video properties (fps or frame count)"
-                )
+    total_samples = len(timestamps)
+    max_workers = min(8, os.cpu_count() or 4)
 
-        duration = total_frames / fps
-        frame_step = int(fps * sample_interval)
-        if frame_step < 1:
-            frame_step = 1
+    # Parallel -ss probes
+    results: dict[float, float] = {}  # timestamp → brightness
+    blackout_count = 0
+    completed = 0
 
-        # Collect brightness values at sampled positions.
-        # Uses sequential grab()/retrieve() instead of random-access
-        # set(CAP_PROP_POS_FRAMES) to avoid costly seeking on MKV files.
-        blackout_times: list[float] = []
-        frame_idx = 0
-        consecutive_failures = 0
-        max_consecutive_failures = 3
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(_probe_single_frame, video_path, t): t for t in timestamps
+        }
+        for future in as_completed(futures):
+            t = futures[future]
+            brightness = future.result()
+            results[t] = brightness
+            completed += 1
+            if brightness < blackout_threshold:
+                blackout_count += 1
+            if progress_callback is not None:
+                progress_callback(completed, total_samples, blackout_count)
 
-        while frame_idx < total_frames:
-            if frame_idx % frame_step == 0:
-                # Sample frame: decode and analyze brightness
-                ret, frame = cap.read()
-                if not ret:
-                    consecutive_failures += 1
-                    if consecutive_failures >= max_consecutive_failures:
-                        raise VideoProcessingError(
-                            f"Failed to read {max_consecutive_failures} consecutive "
-                            f"frames at position {frame_idx}/{total_frames}"
-                        )
-                    frame_idx += 1
-                    continue
+    # Collect blackout timestamps in chronological order
+    blackout_times = sorted(t for t, b in results.items() if b < blackout_threshold)
 
-                consecutive_failures = 0
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                mean_brightness = float(np.mean(gray))
-                timestamp = frame_idx / fps
-
-                if mean_brightness < blackout_threshold:
-                    blackout_times.append(timestamp)
-            else:
-                # Non-sample frame: advance pointer without decoding
-                if not cap.grab():
-                    consecutive_failures += 1
-                    if consecutive_failures >= max_consecutive_failures:
-                        raise VideoProcessingError(
-                            f"Failed to read {max_consecutive_failures} consecutive "
-                            f"frames at position {frame_idx}/{total_frames}"
-                        )
-                    frame_idx += 1
-                    continue
-                consecutive_failures = 0
-
-            if progress_callback is not None and frame_idx % frame_step == 0:
-                progress_callback(frame_idx, total_frames, len(blackout_times))
-
-            frame_idx += 1
-
-    finally:
-        cap.release()
-
-    # Build segments from non-blackout regions
     return _extract_segments(
-        blackout_times, duration, sample_interval, min_match_duration
+        blackout_times, duration_hint, sample_interval, min_match_duration
     )
+
+
+def _generate_timestamps(duration: float, interval: float) -> list[float]:
+    """Generate sample timestamps from 0 to duration at given interval."""
+    timestamps: list[float] = []
+    t = 0.0
+    while t < duration:
+        timestamps.append(t)
+        t += interval
+    return timestamps
+
+
+def _probe_single_frame(video_path: Path, timestamp: float) -> float:
+    """Probe a single frame's mean brightness using ffmpeg -ss seek.
+
+    Uses input seeking (``-ss`` before ``-i``) for fast keyframe-based
+    access, then decodes exactly one frame at 320x180 grayscale.
+
+    Returns the mean brightness (0-255).  Returns 255.0 on probe failure
+    (treated as non-blackout to avoid false positives).
+    """
+    cmd = [
+        "ffmpeg",
+        "-ss",
+        str(timestamp),
+        "-i",
+        str(video_path),
+        "-frames:v",
+        "1",
+        "-s",
+        f"{_SAMPLE_WIDTH}x{_SAMPLE_HEIGHT}",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
+        "pipe:1",
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=30)
+    except FileNotFoundError as e:
+        raise VideoProcessingError(
+            "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
+        ) from e
+    except subprocess.TimeoutExpired:
+        return 255.0  # treat timeout as non-blackout
+
+    if len(result.stdout) < _FRAME_SIZE:
+        return 255.0  # incomplete frame, treat as non-blackout
+
+    return float(np.frombuffer(result.stdout[:_FRAME_SIZE], dtype=np.uint8).mean())
 
 
 _BLACKOUT_PADDING = 3.0
