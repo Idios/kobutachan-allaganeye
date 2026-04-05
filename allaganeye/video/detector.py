@@ -242,6 +242,80 @@ def _probe_frame_rgb(
     return result.stdout[:rgb_size]
 
 
+def _scaled_height(src_width: int, src_height: int) -> int:
+    """Compute scaled height preserving aspect ratio, rounded to even."""
+    h = round(_SAMPLE_WIDTH * src_height / src_width)
+    h += h % 2  # round up to even (ffmpeg -2 requirement)
+    return h
+
+
+# Scorebar ROI as ratios of scaled frame dimensions
+_SCOREBAR_ROI_X_START = 0.25
+_SCOREBAR_ROI_X_END = 0.75
+_SCOREBAR_ROI_Y_START = 0.0
+_SCOREBAR_ROI_Y_END = 0.08
+
+
+_SCOREBAR_CHANNEL_STD_THRESHOLD = 8.0
+"""Minimum cross-section channel std for scorebar detection.
+
+FL scorebar has 3GC color bands (red/blue/yellow).  When the ROI is split
+into left/center/right thirds, at least one RGB channel shows significant
+std across the three sections (15-35 for FL, ~5 for lobby/non-FL).
+Threshold 8.0 sits in the gap between lobby max (~5.3) and FL min (~15).
+"""
+
+
+def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
+    """Determine if FL scorebar is present in the frame.
+
+    Returns True if scorebar detected, False if not, or None if probe
+    failed (raw_rgb is None).
+
+    Criteria (lead-1 revised spec based on 3-section analysis, #121):
+    - 20 < roi_brightness < 140 (FL match typical range)
+    - max cross-section channel std > 8.0 (3GC color separation)
+    """
+    if raw_rgb is None:
+        return None
+
+    frame = np.frombuffer(raw_rgb, dtype=np.uint8).reshape(height, _SAMPLE_WIDTH, 3)
+    x1 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_START)
+    x2 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_END)
+    y1 = int(height * _SCOREBAR_ROI_Y_START)
+    y2 = int(height * _SCOREBAR_ROI_Y_END)
+    roi = frame[y1:y2, x1:x2, :]
+
+    roi_brightness = float(roi.mean())
+    if not (20.0 < roi_brightness < 140.0):
+        return False
+
+    # Split ROI into 3 sections and compute cross-section channel std
+    w = roi.shape[1]
+    sec_w = w // 3
+    left = roi[:, :sec_w, :]
+    center = roi[:, sec_w : 2 * sec_w, :]
+    right = roi[:, 2 * sec_w :, :]
+
+    section_means = []
+    for section in (left, center, right):
+        section_means.append(
+            [
+                float(section[:, :, 0].mean()),
+                float(section[:, :, 1].mean()),
+                float(section[:, :, 2].mean()),
+            ]
+        )
+
+    max_channel_std = max(
+        float(np.std([s[0] for s in section_means])),
+        float(np.std([s[1] for s in section_means])),
+        float(np.std([s[2] for s in section_means])),
+    )
+
+    return max_channel_std > _SCOREBAR_CHANNEL_STD_THRESHOLD
+
+
 _TRANSITION_THRESHOLD = 55.0
 """Brightness threshold for transition regions adjacent to blackouts.
 
