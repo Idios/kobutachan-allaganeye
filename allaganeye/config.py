@@ -16,6 +16,7 @@ class SplitConfig:
     min_match_duration: float = 300.0
     min_blackout_duration: float = 3.0
     dry_run: bool = False
+    use_gpu: bool = False
 
     def __post_init__(self) -> None:
         if self.sample_interval <= 0:
