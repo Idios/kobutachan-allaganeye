@@ -80,11 +80,17 @@ def detect_match_boundaries(
         blackout_regions, results, sample_interval, _TRANSITION_THRESHOLD
     )
 
+    # 2nd pass: refine blackout regions at fine interval (#77)
+    refined_regions = _refine_blackout_regions(
+        video_path, blackout_regions, blackout_threshold, duration_hint
+    )
+
+    effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
     return _filter_and_extract_segments(
-        blackout_regions,
+        refined_regions,
         duration_hint,
         min_match_duration,
-        min_blackout_duration,
+        effective_min,
     )
 
 
@@ -148,6 +154,19 @@ Game frames are typically 60-120, while lobby/waiting screens are ~51.
 Frames below this threshold that are adjacent to a blackout region are
 included in the expanded region, allowing short blackouts followed by
 lobby screens to be detected as match boundaries.
+"""
+
+_REFINE_INTERVAL = 0.25
+"""Fine interval for 2nd-pass re-probing of blackout candidates."""
+
+_REFINE_WINDOW = 5.0
+"""Seconds to probe before and after each blackout region in pass 2."""
+
+_REFINED_MIN_BLACKOUT = 1.5
+"""Min blackout duration when using refined (0.25s) measurements.
+
+At interval=0.25s, a 2.0s blackout measures ~1.5-1.75s (≥ 1.5 → detected)
+while a 1.5s respawn measures ~1.0-1.25s (< 1.5 → filtered).
 """
 
 _BLACKOUT_PADDING = 3.0
@@ -240,6 +259,52 @@ def _expand_regions_with_transitions(
             merged.append((start, end))
 
     return merged
+
+
+def _refine_blackout_regions(
+    video_path: Path,
+    blackout_regions: list[tuple[float, float]],
+    blackout_threshold: float,
+    total_duration: float,
+) -> list[tuple[float, float]]:
+    """Re-probe blackout regions at fine interval for precise duration.
+
+    For each region, probes ±_REFINE_WINDOW seconds at _REFINE_INTERVAL
+    to get an accurate measurement of the blackout duration.  Returns
+    updated regions with refined start/end times.
+    """
+    if not blackout_regions:
+        return blackout_regions
+
+    max_workers = min(os.cpu_count() or 4, 24)
+
+    # Collect all timestamps to probe (deduplicated)
+    probe_timestamps: set[float] = set()
+    for reg_start, reg_end in blackout_regions:
+        window_start = max(0.0, reg_start - _REFINE_WINDOW)
+        window_end = min(total_duration, reg_end + _REFINE_WINDOW)
+        t = window_start
+        while t < window_end:
+            probe_timestamps.add(round(t, 4))
+            t += _REFINE_INTERVAL
+
+    # Parallel probes
+    results: dict[float, float] = {}
+    sorted_probes = sorted(probe_timestamps)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(_probe_single_frame, video_path, t): t for t in sorted_probes
+        }
+        for future in as_completed(futures):
+            t = futures[future]
+            results[t] = future.result()
+
+    # Re-extract blackout regions from fine-grained data
+    fine_blackout_times = sorted(
+        t for t, b in results.items() if b < blackout_threshold
+    )
+    return _group_blackout_regions(fine_blackout_times, _REFINE_INTERVAL)
 
 
 def _filter_and_extract_segments(
