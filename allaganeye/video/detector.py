@@ -24,18 +24,16 @@ def detect_match_boundaries(
     blackout_threshold: float = 15.0,
     min_match_duration: float = 300.0,
     min_blackout_duration: float = 3.0,
+    use_gpu: bool = False,
     progress_callback: Callable[[int, int, int], None] | None = None,
 ) -> list[dict]:
     """Detect match boundaries by finding blackout frames.
 
-    Uses parallel ffmpeg ``-ss`` probes to extract one frame per
-    *sample_interval* seconds.  Each probe seeks to the target timestamp
-    (keyframe-based input seeking) and decodes only one frame, avoiding
-    the cost of decoding the entire stream.
-
     Args:
         duration_hint: Video duration in seconds from ffprobe.  Required
             to generate the list of sample timestamps.
+        use_gpu: If True, use chunked parallel GPU decode instead of
+            per-frame -ss probes.  Falls back to CPU on failure.
         progress_callback: Optional callback invoked after each sampled
             frame with ``(completed_count, total_samples, blackout_count)``.
 
@@ -46,31 +44,35 @@ def detect_match_boundaries(
             "Cannot determine video duration. Provide duration_hint via probe."
         )
 
-    timestamps = _generate_timestamps(duration_hint, sample_interval)
-    if not timestamps:
-        return []
+    # Pass 1: scan for blackout frames
+    if use_gpu:
+        from allaganeye.video.gpu_detector import scan_gpu
 
-    total_samples = len(timestamps)
-    max_workers = min(os.cpu_count() or 4, 24)
-
-    # Parallel -ss probes
-    results: dict[float, float] = {}  # timestamp → brightness
-    blackout_count = 0
-    completed = 0
-
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {
-            pool.submit(_probe_single_frame, video_path, t): t for t in timestamps
-        }
-        for future in as_completed(futures):
-            t = futures[future]
-            brightness = future.result()
-            results[t] = brightness
-            completed += 1
-            if brightness < blackout_threshold:
-                blackout_count += 1
-            if progress_callback is not None:
-                progress_callback(completed, total_samples, blackout_count)
+        try:
+            results = scan_gpu(
+                video_path,
+                duration_hint,
+                sample_interval,
+                blackout_threshold,
+                progress_callback,
+            )
+        except VideoProcessingError:
+            # GPU failed — fall back to CPU
+            results = _scan_cpu(
+                video_path,
+                duration_hint,
+                sample_interval,
+                blackout_threshold,
+                progress_callback,
+            )
+    else:
+        results = _scan_cpu(
+            video_path,
+            duration_hint,
+            sample_interval,
+            blackout_threshold,
+            progress_callback,
+        )
 
     # Collect blackout timestamps in chronological order
     blackout_times = sorted(t for t, b in results.items() if b < blackout_threshold)
@@ -93,6 +95,42 @@ def detect_match_boundaries(
         min_match_duration,
         effective_min,
     )
+
+
+def _scan_cpu(
+    video_path: Path,
+    duration_hint: float,
+    sample_interval: float,
+    blackout_threshold: float,
+    progress_callback: Callable[[int, int, int], None] | None = None,
+) -> dict[float, float]:
+    """CPU mode: parallel -ss probes, one ffmpeg process per frame."""
+    timestamps = _generate_timestamps(duration_hint, sample_interval)
+    if not timestamps:
+        return {}
+
+    total_samples = len(timestamps)
+    max_workers = min(os.cpu_count() or 4, 24)
+
+    results: dict[float, float] = {}
+    blackout_count = 0
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(_probe_single_frame, video_path, t): t for t in timestamps
+        }
+        for future in as_completed(futures):
+            t = futures[future]
+            brightness = future.result()
+            results[t] = brightness
+            completed += 1
+            if brightness < blackout_threshold:
+                blackout_count += 1
+            if progress_callback is not None:
+                progress_callback(completed, total_samples, blackout_count)
+
+    return results
 
 
 def _generate_timestamps(duration: float, interval: float) -> list[float]:

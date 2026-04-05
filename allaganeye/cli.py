@@ -59,6 +59,14 @@ def split(
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Detect only, do not split")
     ] = False,
+    gpu: Annotated[
+        bool,
+        typer.Option(
+            "--gpu/--no-gpu",
+            help="Use GPU-accelerated detection (chunked parallel decode). "
+            "Falls back to CPU if GPU is unavailable.",
+        ),
+    ] = False,
     verbose: Annotated[
         bool, typer.Option("-v", "--verbose", help="Verbose output")
     ] = False,
@@ -81,6 +89,7 @@ def split(
             min_match_duration=min_match_duration,
             min_blackout_duration=min_blackout_duration,
             dry_run=dry_run,
+            use_gpu=gpu,
         )
 
         from allaganeye.commands.split_matches import run_split
