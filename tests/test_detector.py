@@ -11,15 +11,30 @@ from allaganeye.video.detector import (
     _BLACKOUT_PADDING,
     _FRAME_SIZE,
     _TRANSITION_THRESHOLD,
-    _expand_with_transitions,
-    _extract_segments,
+    _expand_regions_with_transitions,
+    _filter_and_extract_segments,
     _generate_timestamps,
+    _group_blackout_regions,
     _probe_single_frame,
     detect_match_boundaries,
 )
 
 
 # --- Helpers ---
+
+
+def _extract_segments(
+    blackout_times: list[float],
+    total_duration: float,
+    sample_interval: float,
+    min_match_duration: float,
+    min_blackout_duration: float = 3.0,
+) -> list[dict]:
+    """Test helper: groups + filters + extracts (replaces old monolithic function)."""
+    regions = _group_blackout_regions(blackout_times, sample_interval)
+    return _filter_and_extract_segments(
+        regions, total_duration, min_match_duration, min_blackout_duration
+    )
 
 
 def _make_run_result(brightness: int = 128, frame_size: int = _FRAME_SIZE) -> MagicMock:
@@ -35,80 +50,15 @@ def _make_run_result(brightness: int = 128, frame_size: int = _FRAME_SIZE) -> Ma
 # ============================================================
 
 
-class TestExpandWithTransitions:
+class TestExpandRegionsWithTransitions:
     """Tests for transition region expansion (#71)."""
 
-    def test_no_blackouts_unchanged(self):
-        result = _expand_with_transitions([], {}, 1.0, 55.0)
+    def test_no_regions_unchanged(self):
+        result = _expand_regions_with_transitions([], {}, 1.0, 55.0)
         assert result == []
 
     def test_blackout_followed_by_lobby(self):
         """Blackout followed by low-brightness lobby screen is expanded."""
-        # Blackout at t=100-101, followed by lobby (~51) for 20s
-        all_results = {}
-        for t in range(200):
-            all_results[float(t)] = 80.0  # game frames
-        all_results[100.0] = 5.0  # blackout
-        all_results[101.0] = 5.0  # blackout
-        for t in range(102, 122):
-            all_results[float(t)] = 51.0  # lobby screen
-
-        blackout_times = [100.0, 101.0]
-        result = _expand_with_transitions(blackout_times, all_results, 1.0, 55.0)
-
-        # Should include blackout + lobby frames
-        assert 100.0 in result
-        assert 101.0 in result
-        assert 102.0 in result
-        assert 121.0 in result
-        # Should not include game frames
-        assert 122.0 not in result
-        assert 99.0 not in result
-
-    def test_blackout_followed_by_game_not_expanded(self):
-        """Blackout followed by bright game frames is NOT expanded (respawn)."""
-        all_results = {}
-        for t in range(200):
-            all_results[float(t)] = 80.0
-        all_results[100.0] = 5.0  # blackout
-        all_results[101.0] = 5.0  # blackout
-
-        blackout_times = [100.0, 101.0]
-        result = _expand_with_transitions(blackout_times, all_results, 1.0, 55.0)
-
-        assert result == [100.0, 101.0]
-
-    def test_expansion_both_directions(self):
-        """Transition frames before and after blackout are included."""
-        all_results = {}
-        for t in range(50):
-            all_results[float(t)] = 80.0
-        # Transition before blackout
-        all_results[18.0] = 50.0
-        all_results[19.0] = 50.0
-        # Blackout
-        all_results[20.0] = 5.0
-        all_results[21.0] = 5.0
-        # Transition after blackout
-        all_results[22.0] = 50.0
-        all_results[23.0] = 50.0
-
-        blackout_times = [20.0, 21.0]
-        result = _expand_with_transitions(blackout_times, all_results, 1.0, 55.0)
-
-        assert 18.0 in result
-        assert 19.0 in result
-        assert 22.0 in result
-        assert 23.0 in result
-        assert 17.0 not in result
-        assert 24.0 not in result
-
-    def test_transition_threshold_constant(self):
-        assert _TRANSITION_THRESHOLD == 55.0
-
-    def test_expansion_enables_boundary_detection(self):
-        """End-to-end: short blackout + lobby passes min_blackout_duration after expansion."""
-        # Simulate: 2s blackout + 20s lobby = 22s expanded region
         all_results = {}
         for t in range(200):
             all_results[float(t)] = 80.0
@@ -117,19 +67,98 @@ class TestExpandWithTransitions:
         for t in range(102, 122):
             all_results[float(t)] = 51.0
 
-        blackout_times = [100.0, 101.0]
-        expanded = _expand_with_transitions(blackout_times, all_results, 1.0, 55.0)
+        regions = [(100.0, 101.0)]
+        result = _expand_regions_with_transitions(regions, all_results, 1.0, 55.0)
 
-        # Feed expanded times to _extract_segments
-        segments = _extract_segments(
+        assert len(result) == 1
+        assert result[0][0] == 100.0  # no transition before
+        assert result[0][1] == 121.0  # expanded to end of lobby
+
+    def test_blackout_followed_by_game_not_expanded(self):
+        """Blackout followed by bright game frames is NOT expanded (respawn)."""
+        all_results = {}
+        for t in range(200):
+            all_results[float(t)] = 80.0
+        all_results[100.0] = 5.0
+        all_results[101.0] = 5.0
+
+        regions = [(100.0, 101.0)]
+        result = _expand_regions_with_transitions(regions, all_results, 1.0, 55.0)
+
+        assert result == [(100.0, 101.0)]
+
+    def test_expansion_both_directions(self):
+        """Transition frames before and after blackout are included."""
+        all_results = {}
+        for t in range(50):
+            all_results[float(t)] = 80.0
+        all_results[18.0] = 50.0
+        all_results[19.0] = 50.0
+        all_results[20.0] = 5.0
+        all_results[21.0] = 5.0
+        all_results[22.0] = 50.0
+        all_results[23.0] = 50.0
+
+        regions = [(20.0, 21.0)]
+        result = _expand_regions_with_transitions(regions, all_results, 1.0, 55.0)
+
+        assert len(result) == 1
+        assert result[0][0] == 18.0
+        assert result[0][1] == 23.0
+
+    def test_transition_threshold_constant(self):
+        assert _TRANSITION_THRESHOLD == 55.0
+
+    def test_expansion_enables_boundary_detection(self):
+        """End-to-end: short blackout + lobby passes min_blackout_duration after expansion."""
+        all_results = {}
+        for t in range(200):
+            all_results[float(t)] = 80.0
+        all_results[100.0] = 5.0
+        all_results[101.0] = 5.0
+        for t in range(102, 122):
+            all_results[float(t)] = 51.0
+
+        regions = [(100.0, 101.0)]
+        expanded = _expand_regions_with_transitions(regions, all_results, 1.0, 55.0)
+
+        segments = _filter_and_extract_segments(
             expanded,
             total_duration=200.0,
-            sample_interval=1.0,
             min_match_duration=10.0,
             min_blackout_duration=3.0,
         )
-        # Should detect 2 segments (before and after the expanded blackout)
         assert len(segments) == 2
+
+
+# ============================================================
+# TestGroupBlackoutRegions
+# ============================================================
+
+
+class TestGroupBlackoutRegions:
+    def test_empty(self):
+        assert _group_blackout_regions([], 1.0) == []
+
+    def test_single_timestamp(self):
+        result = _group_blackout_regions([100.0], 1.0)
+        assert result == [(100.0, 100.0)]
+
+    def test_consecutive_merged(self):
+        result = _group_blackout_regions([100.0, 101.0, 102.0], 1.0)
+        assert result == [(100.0, 102.0)]
+
+    def test_gap_splits(self):
+        result = _group_blackout_regions([100.0, 101.0, 200.0, 201.0], 1.0)
+        assert result == [(100.0, 101.0), (200.0, 201.0)]
+
+    def test_tolerance_is_double_interval(self):
+        """Timestamps within 2*interval are merged."""
+        result = _group_blackout_regions([100.0, 102.0], 1.0)  # gap=2.0, tolerance=2.0
+        assert result == [(100.0, 102.0)]
+
+        result = _group_blackout_regions([100.0, 103.0], 1.0)  # gap=3.0 > tolerance=2.0
+        assert len(result) == 2
 
 
 # ============================================================
