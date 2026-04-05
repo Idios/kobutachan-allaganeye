@@ -19,11 +19,12 @@ def run_debug_brightness(
 ) -> None:
     """Probe brightness at regular intervals and print CSV to stdout."""
     metadata = probe_video(video_path)
-    duration = metadata["duration"]
+    duration: float = metadata["duration"]
 
     if end is None:
         end = duration
-    end = min(end, duration)
+    else:
+        end = min(end, duration)
 
     if start >= end:
         typer.echo("Error: --start must be less than --end", err=True)
