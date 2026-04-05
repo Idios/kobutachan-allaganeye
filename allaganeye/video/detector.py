@@ -74,6 +74,11 @@ def detect_match_boundaries(
     # Collect blackout timestamps in chronological order
     blackout_times = sorted(t for t, b in results.items() if b < blackout_threshold)
 
+    # Expand blackout regions with adjacent transition frames (#71)
+    blackout_times = _expand_with_transitions(
+        blackout_times, results, sample_interval, _TRANSITION_THRESHOLD
+    )
+
     return _extract_segments(
         blackout_times,
         duration_hint,
@@ -136,6 +141,15 @@ def _probe_single_frame(video_path: Path, timestamp: float) -> float:
     return float(np.frombuffer(result.stdout[:_FRAME_SIZE], dtype=np.uint8).mean())
 
 
+_TRANSITION_THRESHOLD = 55.0
+"""Brightness threshold for transition regions adjacent to blackouts.
+
+Game frames are typically 60-120, while lobby/waiting screens are ~51.
+Frames below this threshold that are adjacent to a blackout region are
+included in the expanded region, allowing short blackouts followed by
+lobby screens to be detected as match boundaries.
+"""
+
 _BLACKOUT_PADDING = 3.0
 """Seconds to offset cut points into blackout regions.
 
@@ -143,6 +157,63 @@ With ``-c copy``, FFmpeg can only cut at keyframes (~2s apart for OBS).
 By placing cut points inside blackout regions, keyframe drift never
 clips actual match footage.
 """
+
+
+def _expand_with_transitions(
+    blackout_times: list[float],
+    all_results: dict[float, float],
+    sample_interval: float,
+    transition_threshold: float,
+) -> list[float]:
+    """Expand blackout timestamps to include adjacent transition frames.
+
+    Groups blackout timestamps into regions, then for each region expands
+    forward and backward through timestamps where brightness is below
+    *transition_threshold*.  This captures lobby/waiting screens (~51
+    brightness) that follow match-boundary blackouts, making them long
+    enough to pass the min_blackout_duration filter while leaving short
+    respawn blackouts (followed by immediate 60+ game frames) unchanged.
+    """
+    if not blackout_times:
+        return blackout_times
+
+    sorted_timestamps = sorted(all_results)
+    tolerance = sample_interval * 2
+
+    # Group blackout timestamps into regions
+    regions: list[tuple[float, float]] = []
+    region_start = blackout_times[0]
+    region_end = blackout_times[0]
+    for t in blackout_times[1:]:
+        if t - region_end <= tolerance:
+            region_end = t
+        else:
+            regions.append((region_start, region_end))
+            region_start = t
+            region_end = t
+    regions.append((region_start, region_end))
+
+    # Expand each region with adjacent transition frames
+    expanded_timestamps: set[float] = set(blackout_times)
+    for reg_start, reg_end in regions:
+        # Expand backward
+        for t in reversed(sorted_timestamps):
+            if t >= reg_start:
+                continue
+            if all_results[t] < transition_threshold:
+                expanded_timestamps.add(t)
+            else:
+                break
+        # Expand forward
+        for t in sorted_timestamps:
+            if t <= reg_end:
+                continue
+            if all_results[t] < transition_threshold:
+                expanded_timestamps.add(t)
+            else:
+                break
+
+    return sorted(expanded_timestamps)
 
 
 def _extract_segments(
