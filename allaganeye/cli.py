@@ -49,6 +49,13 @@ def split(
     min_match_duration: Annotated[
         float, typer.Option(help="Minimum match duration in seconds")
     ] = 300.0,
+    min_blackout_duration: Annotated[
+        float,
+        typer.Option(
+            help="Minimum blackout duration to treat as match boundary (seconds). "
+            "Shorter blackouts (e.g. respawn) are ignored."
+        ),
+    ] = 3.0,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Detect only, do not split")
     ] = False,
@@ -72,6 +79,7 @@ def split(
             sample_interval=sample_interval,
             blackout_threshold=blackout_threshold,
             min_match_duration=min_match_duration,
+            min_blackout_duration=min_blackout_duration,
             dry_run=dry_run,
         )
 

@@ -22,6 +22,7 @@ def detect_match_boundaries(
     sample_interval: float = 1.0,
     blackout_threshold: float = 15.0,
     min_match_duration: float = 300.0,
+    min_blackout_duration: float = 3.0,
     progress_callback: Callable[[int, int, int], None] | None = None,
 ) -> list[dict]:
     """Detect match boundaries by finding blackout frames.
@@ -74,7 +75,11 @@ def detect_match_boundaries(
     blackout_times = sorted(t for t, b in results.items() if b < blackout_threshold)
 
     return _extract_segments(
-        blackout_times, duration_hint, sample_interval, min_match_duration
+        blackout_times,
+        duration_hint,
+        sample_interval,
+        min_match_duration,
+        min_blackout_duration,
     )
 
 
@@ -143,11 +148,14 @@ def _extract_segments(
     total_duration: float,
     sample_interval: float,
     min_match_duration: float,
+    min_blackout_duration: float = 3.0,
 ) -> list[dict]:
     """Extract match segments from blackout timestamps.
 
     Groups consecutive blackout frames into blackout regions,
-    then extracts gaps between them as match candidates.
+    filters out regions shorter than *min_blackout_duration* (e.g.
+    respawn blackouts), then extracts gaps between them as match
+    candidates.
 
     Cut points are offset into the blackout regions by
     ``_BLACKOUT_PADDING`` so that keyframe-level imprecision in
@@ -173,6 +181,17 @@ def _extract_segments(
             region_start = t
             region_end = t
     blackout_regions.append((region_start, region_end))
+
+    # Filter out short blackout regions (e.g. respawn blackouts 1-2s)
+    blackout_regions = [
+        (s, e) for s, e in blackout_regions if e - s >= min_blackout_duration
+    ]
+
+    if not blackout_regions:
+        # All blackouts were too short — treat as no blackouts
+        if total_duration >= min_match_duration:
+            return [{"start": 0.0, "end": total_duration}]
+        return []
 
     # Extract segments between blackout regions
     segments: list[dict] = []

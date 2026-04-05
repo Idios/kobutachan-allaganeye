@@ -80,6 +80,7 @@ def test_pipeline_happy_path(mock_probe, mock_detect, mock_split, tmp_path):
         sample_interval=config.sample_interval,
         blackout_threshold=config.blackout_threshold,
         min_match_duration=config.min_match_duration,
+        min_blackout_duration=config.min_blackout_duration,
     )
     mock_split.assert_called_once_with(video, BOUNDARIES, tmp_path)
     assert (tmp_path / "metadata.json").exists()
@@ -248,7 +249,7 @@ def test_pipeline_verbose_output(mock_probe, mock_detect, mock_split, tmp_path, 
 def test_pipeline_non_verbose_output(
     mock_probe, mock_detect, mock_split, tmp_path, capsys
 ):
-    """Non-verbose mode prints summary but not details."""
+    """Non-verbose mode prints match list with timestamps but not probe details."""
     mock_probe.return_value = PROBE_RESULT
     mock_detect.return_value = BOUNDARIES
     mock_split.return_value = _output_files(tmp_path)
@@ -258,8 +259,9 @@ def test_pipeline_non_verbose_output(
 
     output = capsys.readouterr().out
     assert "Detected 2 match(es)" in output
+    assert "Match 1:" in output
+    assert "Match 2:" in output
     assert "Probing:" not in output
-    assert "Match 1:" not in output
 
 
 # --- Config forwarding ---
@@ -290,4 +292,5 @@ def test_pipeline_config_params_forwarded(
         sample_interval=2.0,
         blackout_threshold=20.0,
         min_match_duration=120.0,
+        min_blackout_duration=3.0,
     )

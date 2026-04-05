@@ -14,6 +14,7 @@ class SplitConfig:
     sample_interval: float = 1.0
     blackout_threshold: float = 15.0
     min_match_duration: float = 300.0
+    min_blackout_duration: float = 3.0
     dry_run: bool = False
 
     def __post_init__(self) -> None:
@@ -28,6 +29,10 @@ class SplitConfig:
         if self.min_match_duration <= 0:
             raise ConfigValidationError(
                 f"--min-match-duration must be positive, got {self.min_match_duration}"
+            )
+        if self.min_blackout_duration < 0:
+            raise ConfigValidationError(
+                f"--min-blackout-duration must be non-negative, got {self.min_blackout_duration}"
             )
 
 
