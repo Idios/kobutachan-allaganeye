@@ -132,7 +132,7 @@ ffmpeg -ss {timestamp} -i input.mkv -frames:v 1 -s 320x180 -pix_fmt gray -f rawv
 
 ## 性能チューニング
 
-37GB/2h AV1 MKV での実測に基づく最適化:
+37GB/2h AV1 MKV での実測に基づく最適化。詳細なベンチマーク結果は [`docs/benchmarks.md`](benchmarks.md) を参照。
 
 | 施策 | 変更 | 効果 | 根拠 |
 |---|---|---|---|
