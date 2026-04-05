@@ -11,6 +11,7 @@ from allaganeye.exceptions import VideoProcessingError
 def detect_match_boundaries(
     video_path: Path,
     *,
+    duration_hint: float | None = None,
     sample_interval: float = 1.0,
     blackout_threshold: float = 15.0,
     min_match_duration: float = 300.0,
@@ -21,6 +22,11 @@ def detect_match_boundaries(
     frames, and returns non-blackout segments that are longer than
     min_match_duration.
 
+    Args:
+        duration_hint: Video duration in seconds from ffprobe. Used as
+            fallback when CAP_PROP_FRAME_COUNT returns <= 0 (common with
+            MKV containers, especially after abnormal OBS shutdown).
+
     Returns list of dicts with 'start' and 'end' keys (seconds).
     """
     cap = cv2.VideoCapture(str(video_path))
@@ -29,11 +35,19 @@ def detect_match_boundaries(
             raise VideoProcessingError(f"Cannot open video: {video_path}")
 
         fps = cap.get(cv2.CAP_PROP_FPS)
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if fps <= 0 or total_frames <= 0:
+        if fps <= 0:
             raise VideoProcessingError(
                 "Cannot read video properties (fps or frame count)"
             )
+
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total_frames <= 0:
+            if duration_hint is not None and duration_hint > 0:
+                total_frames = int(fps * duration_hint)
+            else:
+                raise VideoProcessingError(
+                    "Cannot read video properties (fps or frame count)"
+                )
 
         duration = total_frames / fps
         frame_step = int(fps * sample_interval)

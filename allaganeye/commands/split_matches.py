@@ -33,6 +33,7 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
         )
     boundaries = detect_match_boundaries(
         video_path,
+        duration_hint=metadata["duration"],
         sample_interval=config.sample_interval,
         blackout_threshold=config.blackout_threshold,
         min_match_duration=config.min_match_duration,
