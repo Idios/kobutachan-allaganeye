@@ -56,11 +56,24 @@ ffprobe -version  # "ffprobe version 4.x" 以上が表示されること
 **PATH が通らない場合**: Allagan Eye は winget のインストール先を自動検索するため、多くの場合 PATH の手動設定は不要です。自動検索で見つからない場合は `ALLAGANEYE_FFMPEG` 環境変数に ffmpeg/ffprobe の入ったディレクトリを指定してください:
 
 ```bash
-# Windows
+# Windows（現在のセッションのみ）
 set ALLAGANEYE_FFMPEG=C:\path\to\ffmpeg\bin
 
-# Linux / macOS
+# Linux / macOS（現在のセッションのみ）
 export ALLAGANEYE_FFMPEG=/path/to/ffmpeg/bin
+```
+
+**永続化する場合**:
+
+```bash
+# Windows: システム環境変数に追加（管理者権限不要）
+setx ALLAGANEYE_FFMPEG "C:\path\to\ffmpeg\bin"
+
+# Linux (bash): ~/.bashrc に追記
+echo 'export ALLAGANEYE_FFMPEG=/path/to/ffmpeg/bin' >> ~/.bashrc
+
+# macOS (zsh): ~/.zshrc に追記
+echo 'export ALLAGANEYE_FFMPEG=/path/to/ffmpeg/bin' >> ~/.zshrc
 ```
 
 ## 2. インストール
