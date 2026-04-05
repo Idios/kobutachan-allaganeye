@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from allaganeye.exceptions import VideoProcessingError
+from allaganeye.ffmpeg_path import find_ffmpeg
 
 _SAMPLE_WIDTH = 320
 _SAMPLE_HEIGHT = 180
@@ -114,7 +115,7 @@ def _probe_single_frame(video_path: Path, timestamp: float) -> float:
     (treated as non-blackout to avoid false positives).
     """
     cmd = [
-        "ffmpeg",
+        find_ffmpeg(),
         "-threads",
         "1",
         "-ss",
