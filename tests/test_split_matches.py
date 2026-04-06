@@ -83,6 +83,7 @@ def test_pipeline_happy_path(mock_probe, mock_detect, mock_split, tmp_path):
         min_blackout_duration=config.min_blackout_duration,
         use_gpu=config.use_gpu,
         workers=config.workers,
+        src_resolution=(PROBE_RESULT["width"], PROBE_RESULT["height"]),
     )
     mock_split.assert_called_once_with(video, BOUNDARIES, tmp_path)
     assert (tmp_path / "metadata.json").exists()
@@ -315,6 +316,7 @@ def test_pipeline_auto_interval_long_video(
         min_blackout_duration=config.min_blackout_duration,
         use_gpu=config.use_gpu,
         workers=config.workers,
+        src_resolution=(1920, 1080),
     )
 
 
@@ -349,4 +351,5 @@ def test_pipeline_config_params_forwarded(
         min_blackout_duration=3.0,
         use_gpu=False,
         workers=None,
+        src_resolution=(PROBE_RESULT["width"], PROBE_RESULT["height"]),
     )

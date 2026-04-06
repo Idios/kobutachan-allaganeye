@@ -65,6 +65,7 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
                 min_blackout_duration=config.min_blackout_duration,
                 use_gpu=config.use_gpu,
                 workers=config.workers,
+                src_resolution=(metadata["width"], metadata["height"]),
                 progress_callback=on_progress,
             )
     else:
@@ -77,6 +78,7 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
             min_blackout_duration=config.min_blackout_duration,
             use_gpu=config.use_gpu,
             workers=config.workers,
+            src_resolution=(metadata["width"], metadata["height"]),
         )
 
     if not boundaries:

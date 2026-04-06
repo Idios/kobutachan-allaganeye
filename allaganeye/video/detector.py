@@ -33,6 +33,7 @@ def detect_match_boundaries(
     min_blackout_duration: float = 3.0,
     use_gpu: bool = False,
     workers: int | None = None,
+    src_resolution: tuple[int, int] | None = None,
     progress_callback: Callable[[int, int, int], None] | None = None,
 ) -> list[dict]:
     """Detect match boundaries by finding blackout frames.
@@ -42,6 +43,9 @@ def detect_match_boundaries(
             to generate the list of sample timestamps.
         use_gpu: If True, use chunked parallel GPU decode instead of
             per-frame -ss probes.  Falls back to CPU on failure.
+        src_resolution: (width, height) from probe.  When provided,
+            scorebar-based filtering is applied to remove in-match
+            blackouts and non-FL blackouts.
         progress_callback: Optional callback invoked after each sampled
             frame with ``(completed_count, total_samples, blackout_count)``.
 
@@ -97,6 +101,15 @@ def detect_match_boundaries(
     refined_regions = _refine_blackout_regions(
         video_path, blackout_regions, blackout_threshold, duration_hint, workers
     )
+
+    # Scorebar-based filtering: remove in-match and non-FL blackouts (#111)
+    if src_resolution is not None:
+        from allaganeye.video.scorebar import filter_blackouts_with_scorebar
+
+        height = _scaled_height(src_resolution[0], src_resolution[1])
+        refined_regions = filter_blackouts_with_scorebar(
+            video_path, refined_regions, duration_hint, height, workers
+        )
 
     effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
     return _filter_and_extract_segments(
