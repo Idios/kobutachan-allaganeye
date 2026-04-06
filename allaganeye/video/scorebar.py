@@ -1,5 +1,6 @@
 """Scorebar-based blackout classification for FL match detection."""
 
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from math import ceil
 from pathlib import Path
@@ -9,6 +10,8 @@ from allaganeye.video.detector import (
     _probe_frame_rgb,
     _resolve_workers,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _probe_scorebar_context(
@@ -75,12 +78,28 @@ def classify_blackout(
     post_has = _majority_scorebar(post_results)
 
     if pre_has is None or post_has is None:
-        return "unknown"
-    if pre_has and post_has:
-        return "in_match"
-    if pre_has or post_has:
-        return "match_boundary"
-    return "non_fl"
+        classification = "unknown"
+    elif pre_has and post_has:
+        classification = "in_match"
+    elif pre_has or post_has:
+        classification = "match_boundary"
+    else:
+        classification = "non_fl"
+
+    logger.debug(
+        "classify region [%.1f-%.1f] (%.1fs): "
+        "pre=%s (votes=%s) post=%s (votes=%s) → %s",
+        region[0],
+        region[1],
+        region[1] - region[0],
+        pre_has,
+        pre_results,
+        post_has,
+        post_results,
+        classification,
+    )
+
+    return classification
 
 
 _IN_MATCH_MAX_DURATION = 5.0
@@ -120,9 +139,30 @@ def filter_blackouts_with_scorebar(
         region_duration = region[1] - region[0]
 
         if classification == "in_match" and region_duration < _IN_MATCH_MAX_DURATION:
-            continue  # short in_match = character down → remove
+            logger.info(
+                "REMOVE [%.1f-%.1f] (%.1fs): %s (short in_match)",
+                region[0],
+                region[1],
+                region_duration,
+                classification,
+            )
+            continue
         if classification == "non_fl":
-            continue  # non-FL → remove
+            logger.info(
+                "REMOVE [%.1f-%.1f] (%.1fs): %s",
+                region[0],
+                region[1],
+                region_duration,
+                classification,
+            )
+            continue
 
+        logger.info(
+            "KEEP   [%.1f-%.1f] (%.1fs): %s",
+            region[0],
+            region[1],
+            region_duration,
+            classification,
+        )
         kept.append(region)
     return kept

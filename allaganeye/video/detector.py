@@ -1,5 +1,6 @@
 """Match boundary detection using parallel ffmpeg frame probing."""
 
+import logging
 import os
 import subprocess
 from collections.abc import Callable
@@ -10,6 +11,8 @@ import numpy as np
 
 from allaganeye.exceptions import VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
+
+logger = logging.getLogger(__name__)
 
 _SAMPLE_WIDTH = 320
 _SAMPLE_HEIGHT = 180
@@ -302,6 +305,10 @@ def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
 
     roi_brightness = float(roi.mean())
     if not (20.0 < roi_brightness < 140.0):
+        logger.debug(
+            "scorebar: brightness=%.1f (out of 20-140 range) → False",
+            roi_brightness,
+        )
         return False
 
     # Split ROI into 3 sections and compute cross-section channel std
@@ -321,13 +328,26 @@ def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
             ]
         )
 
-    max_channel_std = max(
+    channel_stds = [
         float(np.std([s[0] for s in section_means])),
         float(np.std([s[1] for s in section_means])),
         float(np.std([s[2] for s in section_means])),
+    ]
+    max_channel_std = max(channel_stds)
+    detected = max_channel_std > _SCOREBAR_CHANNEL_STD_THRESHOLD
+
+    logger.debug(
+        "scorebar: brightness=%.1f  ch_std=[R=%.1f G=%.1f B=%.1f] max=%.1f thr=%.1f → %s",
+        roi_brightness,
+        channel_stds[0],
+        channel_stds[1],
+        channel_stds[2],
+        max_channel_std,
+        _SCOREBAR_CHANNEL_STD_THRESHOLD,
+        detected,
     )
 
-    return max_channel_std > _SCOREBAR_CHANNEL_STD_THRESHOLD
+    return detected
 
 
 _TRANSITION_THRESHOLD = 55.0
