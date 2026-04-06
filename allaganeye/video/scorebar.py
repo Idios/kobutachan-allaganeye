@@ -68,8 +68,12 @@ def classify_blackout(
     - ``"non_fl"``: neither side has scorebar → non-FL blackout (#109)
     - ``"unknown"``: all probes failed on either side → keep boundary (safe)
     """
-    pre_timestamps = [max(0.0, region[0] - d) for d in (3.0, 2.0, 1.0)]
-    post_timestamps = [min(duration, region[1] + d) for d in (1.0, 2.0, 3.0)]
+    pre_timestamps = sorted(
+        set(max(0.0, region[0] - d) for d in (3.0, 2.0, 1.0))
+    )
+    post_timestamps = sorted(
+        set(min(duration, region[1] + d) for d in (1.0, 2.0, 3.0))
+    )
 
     pre_results = _probe_scorebar_context(video_path, pre_timestamps, height, workers)
     post_results = _probe_scorebar_context(video_path, post_timestamps, height, workers)
