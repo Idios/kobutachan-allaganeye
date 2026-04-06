@@ -25,12 +25,12 @@ ls -d E:/projects/kobutachan-tools/kobutachan-allaganeye-<サフィックス> 2>
 
 ### 2a: 既存 worktree がある場合（再利用）
 
-1. work ブランチに切り替えてから main の最新を取り込む:
+1. work ブランチに切り替えてから開発ブランチの最新を取り込む:
    ```bash
    cd E:/projects/kobutachan-tools/kobutachan-allaganeye-<サフィックス>
    git checkout <セッション ID>/work
-   git fetch origin main
-   git merge origin/main
+   git fetch origin develop-0.1.0
+   git merge origin/develop-0.1.0
    ```
 
 2. `settings.local.json` を同ロールの既存セッションからコピーする:
