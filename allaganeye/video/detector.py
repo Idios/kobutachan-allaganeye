@@ -273,13 +273,13 @@ _SCOREBAR_ROI_Y_START = 0.0
 _SCOREBAR_ROI_Y_END = 0.04
 
 
-_SCOREBAR_CHANNEL_STD_THRESHOLD = 8.0
+_SCOREBAR_CHANNEL_STD_THRESHOLD = 15.0
 """Minimum cross-section channel std for scorebar detection.
 
 FL scorebar has 3GC color bands (red/blue/yellow).  When the ROI is split
 into left/center/right thirds, at least one RGB channel shows significant
-std across the three sections (15-35 for FL, ~5 for lobby/non-FL).
-Threshold 8.0 sits in the gap between lobby max (~5.3) and FL min (~15).
+std across the three sections (26-48 for FL, ~5 for lobby, ~8-9 for queue).
+Threshold 15.0 sits in the gap between queue max (~8.8) and FL min (~26).
 """
 
 

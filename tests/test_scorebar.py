@@ -84,7 +84,7 @@ class TestHasScorebar:
         assert _has_scorebar(raw, _HEIGHT) is False
 
     def test_uniform_color_frame(self):
-        """Uniform ROI sections (cross-section std < 8) → False."""
+        """Uniform ROI sections (cross-section std < 15) → False."""
         raw = _make_frame(roi_sections=((80, 80, 80), (82, 80, 80), (80, 80, 82)))
         assert _has_scorebar(raw, _HEIGHT) is False
 
@@ -100,8 +100,8 @@ class TestHasScorebar:
 
     def test_boundary_brightness_just_above_20(self):
         """ROI brightness just above 20 with color variation → True."""
-        raw = _make_frame(roi_sections=((40, 15, 10), (10, 40, 15), (15, 10, 40)))
-        # mean brightness ~21.7, cross-section R std ~16 → True
+        raw = _make_frame(roi_sections=((50, 15, 10), (10, 50, 15), (15, 10, 50)))
+        # mean brightness ~25, cross-section R std ~18 → True
         assert _has_scorebar(raw, _HEIGHT) is True
 
     def test_high_blue_non_fl(self):
