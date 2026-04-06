@@ -245,11 +245,20 @@ class TestFilterBlackouts:
         assert result == regions
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
-    def test_removes_in_match(self, mock_classify):
+    def test_removes_short_in_match(self, mock_classify):
+        """Short in_match (< 5s) = character down → removed."""
         mock_classify.return_value = "in_match"
-        regions = [(100.0, 102.0)]
+        regions = [(100.0, 102.0)]  # 2s duration
         result = filter_blackouts_with_scorebar(Path("v.mp4"), regions, 300.0, _HEIGHT)
         assert result == []
+
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_keeps_long_in_match(self, mock_classify):
+        """Long in_match (>= 5s) = FL match boundary → kept."""
+        mock_classify.return_value = "in_match"
+        regions = [(100.0, 108.0)]  # 8s duration
+        result = filter_blackouts_with_scorebar(Path("v.mp4"), regions, 300.0, _HEIGHT)
+        assert result == [(100.0, 108.0)]
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_removes_non_fl(self, mock_classify):
@@ -268,20 +277,27 @@ class TestFilterBlackouts:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_mixed_classifications(self, mock_classify):
-        """Mix of classifications: only boundary and unknown kept."""
+        """Mix of classifications with duration-aware in_match filtering."""
         mock_classify.side_effect = [
-            "match_boundary",
-            "in_match",
-            "non_fl",
-            "unknown",
-            "match_boundary",
+            "match_boundary",  # kept
+            "in_match",  # short (2s) → removed
+            "non_fl",  # removed
+            "unknown",  # kept
+            "match_boundary",  # kept
+            "in_match",  # long (8s) → kept
         ]
         regions = [
-            (50.0, 55.0),
-            (100.0, 102.0),
-            (150.0, 155.0),
-            (200.0, 202.0),
-            (250.0, 255.0),
+            (50.0, 55.0),  # boundary → kept
+            (100.0, 102.0),  # in_match 2s → removed
+            (150.0, 155.0),  # non_fl → removed
+            (200.0, 202.0),  # unknown → kept
+            (250.0, 255.0),  # boundary → kept
+            (280.0, 288.0),  # in_match 8s → kept
         ]
         result = filter_blackouts_with_scorebar(Path("v.mp4"), regions, 300.0, _HEIGHT)
-        assert result == [(50.0, 55.0), (200.0, 202.0), (250.0, 255.0)]
+        assert result == [
+            (50.0, 55.0),
+            (200.0, 202.0),
+            (250.0, 255.0),
+            (280.0, 288.0),
+        ]

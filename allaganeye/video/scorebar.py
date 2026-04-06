@@ -83,6 +83,17 @@ def classify_blackout(
     return "non_fl"
 
 
+_IN_MATCH_MAX_DURATION = 5.0
+"""Maximum blackout duration to consider as in-match (e.g. character down).
+
+Only ``"in_match"`` blackouts shorter than this are removed.  Longer
+``"in_match"`` blackouts are FL match boundaries (7s+ for Pattern A,
+20s+ for Pattern B after transition expansion) and must be kept.
+
+Threshold: character down = 1.5-3s (refined), FL boundary = 7s+.
+"""
+
+
 def filter_blackouts_with_scorebar(
     video_path: Path,
     blackout_regions: list[tuple[float, float]],
@@ -90,13 +101,14 @@ def filter_blackouts_with_scorebar(
     height: int,
     workers: int | None = None,
 ) -> list[tuple[float, float]]:
-    """Filter blackout regions using scorebar context.
+    """Filter blackout regions using scorebar context and duration.
 
     Removes:
-    - ``"in_match"`` blackouts (e.g. character down, #107)
+    - Short ``"in_match"`` blackouts (< 5s, e.g. character down, #107)
     - ``"non_fl"`` blackouts (non-FL content boundaries, #109)
 
     Keeps:
+    - Long ``"in_match"`` blackouts (>= 5s, FL match boundaries)
     - ``"match_boundary"`` (FL match start/end)
     - ``"unknown"`` (probe failure → safe side, keep boundary)
     """
@@ -105,6 +117,12 @@ def filter_blackouts_with_scorebar(
         classification = classify_blackout(
             video_path, region, duration, height, workers
         )
-        if classification in ("match_boundary", "unknown"):
-            kept.append(region)
+        region_duration = region[1] - region[0]
+
+        if classification == "in_match" and region_duration < _IN_MATCH_MAX_DURATION:
+            continue  # short in_match = character down → remove
+        if classification == "non_fl":
+            continue  # non-FL → remove
+
+        kept.append(region)
     return kept
