@@ -249,11 +249,12 @@ def _scaled_height(src_width: int, src_height: int) -> int:
     return h
 
 
-# Scorebar ROI as ratios of scaled frame dimensions
-_SCOREBAR_ROI_X_START = 0.25
-_SCOREBAR_ROI_X_END = 0.75
+# Scorebar ROI as ratios of scaled frame dimensions.
+# Narrowed to center-top to exclude party list (left) and minimap (right).
+_SCOREBAR_ROI_X_START = 0.35
+_SCOREBAR_ROI_X_END = 0.65
 _SCOREBAR_ROI_Y_START = 0.0
-_SCOREBAR_ROI_Y_END = 0.08
+_SCOREBAR_ROI_Y_END = 0.04
 
 
 _SCOREBAR_CHANNEL_STD_THRESHOLD = 8.0

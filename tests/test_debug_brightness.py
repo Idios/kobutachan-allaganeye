@@ -8,6 +8,12 @@ import numpy as np
 import pytest
 
 from allaganeye.commands.debug_brightness import run_debug_brightness
+from allaganeye.video.detector import (
+    _SAMPLE_WIDTH,
+    _SCOREBAR_ROI_X_END,
+    _SCOREBAR_ROI_X_START,
+    _SCOREBAR_ROI_Y_END,
+)
 
 MODULE = "allaganeye.commands.debug_brightness"
 
@@ -170,13 +176,14 @@ def test_scorebar_csv_header(mock_probe_video, mock_probe_rgb, capsys):
 def test_scorebar_roi_values(mock_probe_video, mock_probe_rgb, capsys):
     """Scorebar mode computes correct ROI channel means from ratio-based ROI."""
     mock_probe_video.return_value = PROBE_RESULT
-    # For 320x180: ROI x=80:240 (25%-75%), y=0:14 (0%-8%)
-    roi_y_end = int(_SCALED_H * 0.08)  # 14
+    roi_x1 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_START)
+    roi_x2 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_END)
+    roi_y_end = int(_SCALED_H * _SCOREBAR_ROI_Y_END)
     frame = np.zeros((_SCALED_H, 320, 3), dtype=np.uint8)
     frame[:, :, :] = 50  # background
-    frame[0:roi_y_end, 80:240, 0] = 200  # ROI red channel
-    frame[0:roi_y_end, 80:240, 1] = 30  # ROI green channel
-    frame[0:roi_y_end, 80:240, 2] = 80  # ROI blue channel
+    frame[0:roi_y_end, roi_x1:roi_x2, 0] = 200  # ROI red channel
+    frame[0:roi_y_end, roi_x1:roi_x2, 1] = 30  # ROI green channel
+    frame[0:roi_y_end, roi_x1:roi_x2, 2] = 80  # ROI blue channel
     mock_probe_rgb.return_value = frame.tobytes()
 
     run_debug_brightness(
@@ -258,10 +265,11 @@ def test_scorebar_detail_csv_header(mock_probe_video, mock_probe_rgb, capsys):
 def test_scorebar_detail_section_values(mock_probe_video, mock_probe_rgb, capsys):
     """scorebar-detail correctly reports per-section RGB."""
     mock_probe_video.return_value = PROBE_RESULT
-    # Create frame with distinct left/center/right in ROI
-    roi_y_end = int(_SCALED_H * 0.08)  # 14
-    roi_x1, roi_x2 = 80, 240  # 25%-75% of 320
-    sec_w = (roi_x2 - roi_x1) // 3  # ~53
+    # Create frame with distinct left/center/right in ROI (using actual constants)
+    roi_y_end = int(_SCALED_H * _SCOREBAR_ROI_Y_END)
+    roi_x1 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_START)
+    roi_x2 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_END)
+    sec_w = (roi_x2 - roi_x1) // 3
 
     frame = np.zeros((_SCALED_H, 320, 3), dtype=np.uint8)
     frame[0:roi_y_end, roi_x1 : roi_x1 + sec_w, :] = [200, 30, 30]  # left: red
