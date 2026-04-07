@@ -246,7 +246,7 @@ class TestFilterBlackouts:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_removes_short_in_match(self, mock_classify):
-        """Short in_match (< 5s) = character down → removed."""
+        """Short in_match (< 3.5s) = character down → removed."""
         mock_classify.return_value = "in_match"
         regions = [(100.0, 102.0)]  # 2s duration
         result = filter_blackouts_with_scorebar(Path("v.mp4"), regions, 300.0, _HEIGHT)
@@ -254,7 +254,7 @@ class TestFilterBlackouts:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_keeps_long_in_match(self, mock_classify):
-        """Long in_match (>= 5s) = FL match boundary → kept."""
+        """Long in_match (>= 3.5s) = FL match boundary → kept."""
         mock_classify.return_value = "in_match"
         regions = [(100.0, 108.0)]  # 8s duration
         result = filter_blackouts_with_scorebar(Path("v.mp4"), regions, 300.0, _HEIGHT)
