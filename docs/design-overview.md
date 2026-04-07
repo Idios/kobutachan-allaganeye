@@ -157,7 +157,7 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 - **連携方式**: subprocess 呼び出し（`allaganeye-guard verify --json <file>`）
 - **オプション依存**: `pip install allaganeye[guard]` で一緒にインストール可能。なくても動作する
 
-詳細��� `docs/guard-integration.md` を参照。
+詳細は `docs/guard-integration.md` を参照。
 
 ## AI モデル対応（将来: L3）
 

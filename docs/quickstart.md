@@ -8,6 +8,46 @@
 python --version
 ```
 
+#### インストール方法
+
+**Windows**（いずれか 1 つ）:
+
+```bash
+# python.org からインストーラをダウンロード（推奨）
+# https://www.python.org/downloads/ → 「Add python.exe to PATH」にチェックを入れてインストール
+
+# winget
+winget install Python.Python.3.13
+
+# Microsoft Store
+# Microsoft Store で「Python 3.13」を検索してインストール
+```
+
+**macOS**:
+
+```bash
+# python.org からインストーラをダウンロード（推奨）
+# https://www.python.org/downloads/
+
+# Homebrew
+brew install python@3.13
+```
+
+**Linux (Ubuntu/Debian)**:
+
+```bash
+sudo apt update && sudo apt install python3 python3-pip python3-venv
+```
+
+#### インストール確認
+
+```bash
+python --version   # "Python 3.11.x" 以上が表示されること
+pip --version      # pip が利用可能であること
+```
+
+> **注意**: Windows では `python` の代わりに `py` コマンドが必要な場合があります。`py --version` で確認してください。
+
 ### ffmpeg / ffprobe (4.1 以上)
 
 ```bash
@@ -79,16 +119,32 @@ echo 'export ALLAGANEYE_FFMPEG=/path/to/ffmpeg/bin' >> ~/.zshrc
 ## 2. インストール
 
 ```bash
-git clone git@github.com:Idios/kobutachan-allaganeye.git
+git clone https://github.com/Idios/kobutachan-allaganeye.git
 cd kobutachan-allaganeye
 pip install -e .
 ```
 
-> このリポジトリは private です。アクセス権のある GitHub アカウントで SSH 認証が必要です。
+> SSH を使う場合: `git clone git@github.com:Idios/kobutachan-allaganeye.git`
 
 ## 3. 動画を分割する
 
+### 対応する録画
+
+このツールは **FF14 フロントライン（FL）の複数試合を含む長時間録画** を試合ごとに分割します。FL の試合間にはロード画面（暗転）が入るため、この暗転をセパレータとして検知し、試合を分割します。
+
+- OBS 等で録画した MP4 / MKV ファイルに対応
+- 1 回の録画に複数試合が含まれている場合に効果を発揮
+- 1 試合だけの録画では分割する境界がないため、検知結果は 0 件になります
+
+### 基本的な使い方
+
+まず `--dry-run` で検知結果を確認してから本実行するのがおすすめです。
+
 ```bash
+# 1. 検知結果だけ確認（動画は分割しない）
+allaganeye split your_recording.mkv --dry-run
+
+# 2. 結果が正しければ本実行
 allaganeye split your_recording.mkv
 ```
 
@@ -100,45 +156,29 @@ allaganeye split your_recording.mkv
 allaganeye split your_recording.mkv -o ~/Desktop/matches
 ```
 
-### 分割せずに検知結果だけ確認する
+### GPU アクセラレーション
+
+GPU 対応環境（NVIDIA CUDA, Intel QSV 等）では `--gpu` で暗転検知を GPU で実行できます。
 
 ```bash
-allaganeye split your_recording.mkv --dry-run
+allaganeye split your_recording.mkv --gpu
 ```
+
+GPU が利用できない場合は自動で CPU モードにフォールバックします。どちらが速いかはコーデックや環境によって異なります。使い分けの判断方法は [パラメータ調整ガイド](tuning-guide.md) を参照してください。
 
 ## 4. うまく分割されない場合
 
-試合の区切りが正しく検知されない場合、パラメータを調整してください。
+デフォルト設定は FL の一般的な録画に合わせて調整されており、多くの場合そのまま使えます。
 
-```bash
-# 暗転の閾値を上げる（明るめのロード画面にも対応）
-allaganeye split your_recording.mkv --blackout-threshold 25.0
+うまくいかない場合は以下の症状に応じて対処してください。詳細な対処法と各パラメータの値の決め方は [パラメータ調整ガイド](tuning-guide.md) を参照してください。
 
-# 短い試合も含める（デフォルト: 300秒 = 5分）
-allaganeye split your_recording.mkv --min-match-duration 120.0
-
-# リスポーン暗転で試合が分断される場合、最小暗転時間を上げる（デフォルト: 3秒）
-allaganeye split your_recording.mkv --min-blackout-duration 5.0
-```
-
-**ヒント**: `debug-brightness` コマンドで特定区間のフレーム輝度を確認し、`--blackout-threshold` の適切な値を決められます。
-
-```bash
-allaganeye debug-brightness your_recording.mkv --start 900 --end 1000 --interval 0.5
-```
-
-### パラメータの目安
-
-| パラメータ | デフォルト | 用途 |
+| 症状 | 主な原因 | 対処の方向 |
 |---|---|---|
-| `--blackout-threshold` | 15.0 | 暗転判定の輝度閾値（0-255）。上げると明るめの暗転も検知 |
-| `--min-match-duration` | 300.0 | 最小試合時間（秒）。短い試合も含めたい場合は下げる |
-| `--min-blackout-duration` | 3.0 | 最小暗転時間（秒）。リスポーン暗転（1-2s）を除外するため 3s がデフォルト |
-| `--sample-interval` | 1.0 | フレームサンプリング間隔（秒）。大きくすると高速だが検知精度が下がる |
-| `--workers` | auto | 並列ワーカー数（デフォルト: CPU コア数、最大 24） |
-| `--gpu` / `--no-gpu` | `--no-gpu` | GPU アクセラレーション検知 |
-
-詳細は `allaganeye split --help` で確認できます。
+| 試合の途中で分断される | リスポーン暗転の誤検知 | `--min-blackout-duration` を上げる |
+| 別々の試合がくっつく | 暗転閾値が低すぎる | `--blackout-threshold` を上げる |
+| 短い試合が出力されない | 最小試合時間で除外 | `--min-match-duration` を下げる |
+| 試合が 1 つも検知されない | 閾値/録画形式の問題 | [パラメータ調整ガイド](tuning-guide.md) を参照 |
+| 処理が遅い | サンプリング間隔/並列度 | [パラメータ調整ガイド](tuning-guide.md) を参照 |
 
 ### 分割が途中で失敗した場合
 
