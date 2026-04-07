@@ -146,6 +146,7 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
                 "end_display": _format_timestamp(b["end"]),
                 "duration": b["end"] - b["start"],
                 "duration_display": _format_duration(b["end"] - b["start"]),
+                "type": b.get("type", "unknown"),
                 "output_file": str(f),
             }
             for i, (b, f) in enumerate(zip(boundaries, output_files, strict=True))

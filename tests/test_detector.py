@@ -18,6 +18,7 @@ from allaganeye.video.detector import (
     _filter_and_extract_segments,
     _generate_timestamps,
     _group_blackout_regions,
+    _infer_segment_type,
     _probe_single_frame,
     _refine_blackout_regions,
     detect_match_boundaries,
@@ -443,6 +444,92 @@ class TestExtractSegments:
         assert result[0]["start"] == 0.0
         assert result[1]["end"] == 1800.0
 
+    def test_type_unknown_without_classifications(self):
+        """All segments get type=unknown when no classifications provided."""
+        blackout_times = [600.0, 601.0, 602.0, 603.0, 604.0]
+        result = _extract_segments(
+            blackout_times,
+            total_duration=1800.0,
+            sample_interval=1.0,
+            min_match_duration=300.0,
+        )
+        assert len(result) == 2
+        assert all(s["type"] == "unknown" for s in result)
+
+    def test_type_fl_match_with_classifications(self):
+        """Segments between match_boundary blackouts get type=fl_match."""
+        regions = [(100.0, 105.0), (900.0, 905.0)]
+        cls = ["match_boundary", "match_boundary"]
+        result = _filter_and_extract_segments(
+            regions, 1800.0, 300.0, 3.0, classifications=cls
+        )
+        # Before first blackout: too short (102.5s < 300s) → excluded
+        # Between blackouts: fl_match (both sides match_boundary)
+        # After last blackout: unknown (tail segment)
+        assert len(result) == 2
+        assert result[0]["type"] == "fl_match"
+        assert result[1]["type"] == "unknown"
+
+    def test_type_unknown_with_mixed_classifications(self):
+        """Segments between non-boundary blackouts get type=unknown."""
+        regions = [(100.0, 105.0), (900.0, 905.0)]
+        cls = ["match_boundary", "unknown"]
+        result = _filter_and_extract_segments(
+            regions, 1800.0, 300.0, 3.0, classifications=cls
+        )
+        assert len(result) == 2
+        assert result[0]["type"] == "unknown"
+
+    def test_type_with_in_match_classifications(self):
+        """in_match classifications produce fl_match segments."""
+        regions = [(100.0, 105.0), (900.0, 905.0)]
+        cls = ["in_match", "match_boundary"]
+        result = _filter_and_extract_segments(
+            regions, 1800.0, 300.0, 3.0, classifications=cls
+        )
+        assert len(result) == 2
+        assert result[0]["type"] == "fl_match"
+
+    def test_classifications_filtered_with_regions(self):
+        """Short blackouts are filtered along with their classifications."""
+        regions = [(100.0, 101.0), (500.0, 505.0), (1200.0, 1205.0)]
+        cls = ["unknown", "match_boundary", "match_boundary"]
+        result = _filter_and_extract_segments(
+            regions, 1800.0, 300.0, 3.0, classifications=cls
+        )
+        # First region (1s) filtered out; remaining: match_boundary, match_boundary
+        assert len(result) == 3
+        assert result[1]["type"] == "fl_match"
+
+
+# ============================================================
+# TestInferSegmentType
+# ============================================================
+
+
+class TestInferSegmentType:
+    def test_both_match_boundary(self):
+        assert _infer_segment_type("match_boundary", "match_boundary") == "fl_match"
+
+    def test_both_in_match(self):
+        assert _infer_segment_type("in_match", "in_match") == "fl_match"
+
+    def test_mixed_boundary_and_in_match(self):
+        assert _infer_segment_type("match_boundary", "in_match") == "fl_match"
+        assert _infer_segment_type("in_match", "match_boundary") == "fl_match"
+
+    def test_unknown_left(self):
+        assert _infer_segment_type("unknown", "match_boundary") == "unknown"
+
+    def test_unknown_right(self):
+        assert _infer_segment_type("match_boundary", "unknown") == "unknown"
+
+    def test_both_unknown(self):
+        assert _infer_segment_type("unknown", "unknown") == "unknown"
+
+    def test_non_fl(self):
+        assert _infer_segment_type("non_fl", "match_boundary") == "unknown"
+
 
 # ============================================================
 # TestGenerateTimestamps
@@ -633,7 +720,10 @@ class TestDetectMatchBoundaries:
     def test_scorebar_filtering_called_with_resolution(self, mock_probe, mock_filter):
         """Scorebar filtering is invoked when src_resolution is provided."""
         mock_probe.return_value = 128.0
-        mock_filter.side_effect = lambda vp, regions, dur, h, w: regions
+        mock_filter.side_effect = lambda vp, regions, dur, h, w: (
+            regions,
+            ["match_boundary"] * len(regions),
+        )
         detect_match_boundaries(
             Path("test.mp4"),
             duration_hint=300.0,

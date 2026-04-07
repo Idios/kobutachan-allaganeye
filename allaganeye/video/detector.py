@@ -106,11 +106,12 @@ def detect_match_boundaries(
     )
 
     # Scorebar-based filtering: remove in-match and non-FL blackouts (#111)
+    region_classifications: list[str] | None = None
     if src_resolution is not None:
         from allaganeye.video.scorebar import filter_blackouts_with_scorebar
 
         height = _scaled_height(src_resolution[0], src_resolution[1])
-        refined_regions = filter_blackouts_with_scorebar(
+        refined_regions, region_classifications = filter_blackouts_with_scorebar(
             video_path, refined_regions, duration_hint, height, workers
         )
 
@@ -120,6 +121,7 @@ def detect_match_boundaries(
         duration_hint,
         min_match_duration,
         effective_min,
+        classifications=region_classifications,
     )
 
 
@@ -517,11 +519,22 @@ def _refine_blackout_regions(
     return _group_blackout_regions(fine_blackout_times, _REFINE_INTERVAL)
 
 
+_BOUNDARY_CLASSES = {"match_boundary", "in_match"}
+
+
+def _infer_segment_type(left_cls: str, right_cls: str) -> str:
+    """Infer segment type from adjacent blackout classifications."""
+    if left_cls in _BOUNDARY_CLASSES and right_cls in _BOUNDARY_CLASSES:
+        return "fl_match"
+    return "unknown"
+
+
 def _filter_and_extract_segments(
     blackout_regions: list[tuple[float, float]],
     total_duration: float,
     min_match_duration: float,
     min_blackout_duration: float = 3.0,
+    classifications: list[str] | None = None,
 ) -> list[dict]:
     """Filter blackout regions by duration and extract match segments.
 
@@ -530,20 +543,38 @@ def _filter_and_extract_segments(
     offset into the blackout regions by ``_BLACKOUT_PADDING`` so that
     keyframe-level imprecision in ``-c copy`` mode never clips match
     footage.
+
+    When *classifications* is provided, each segment receives a ``"type"``
+    field inferred from adjacent blackout classifications.
     """
     if not blackout_regions:
         if total_duration >= min_match_duration:
-            return [{"start": 0.0, "end": total_duration}]
+            return [{"start": 0.0, "end": total_duration, "type": "unknown"}]
         return []
 
     # Filter out short blackout regions (e.g. respawn blackouts 1-2s)
-    blackout_regions = [
-        (s, e) for s, e in blackout_regions if e - s >= min_blackout_duration
-    ]
+    if classifications is not None:
+        paired = [
+            (r, c)
+            for r, c in zip(blackout_regions, classifications, strict=True)
+            if r[1] - r[0] >= min_blackout_duration
+        ]
+        if paired:
+            blackout_regions, filtered_cls = [
+                list(x) for x in zip(*paired, strict=True)
+            ]
+        else:
+            blackout_regions = []
+            filtered_cls = []
+    else:
+        blackout_regions = [
+            (s, e) for s, e in blackout_regions if e - s >= min_blackout_duration
+        ]
+        filtered_cls = None
 
     if not blackout_regions:
         if total_duration >= min_match_duration:
-            return [{"start": 0.0, "end": total_duration}]
+            return [{"start": 0.0, "end": total_duration, "type": "unknown"}]
         return []
 
     # Extract segments between blackout regions
@@ -555,7 +586,13 @@ def _filter_and_extract_segments(
         seg_end = _padded_end(blackout_regions[0])
         seg_end = min(seg_end, total_duration)
         if seg_end - seg_start >= min_match_duration:
-            segments.append({"start": seg_start, "end": seg_end})
+            segments.append(
+                {
+                    "start": seg_start,
+                    "end": seg_end,
+                    "type": "unknown",
+                }
+            )
 
     # Between blackout regions
     for i in range(len(blackout_regions) - 1):
@@ -564,13 +601,30 @@ def _filter_and_extract_segments(
         seg_end = _padded_end(blackout_regions[i + 1])
         seg_end = min(seg_end, total_duration)
         if seg_end - seg_start >= min_match_duration:
-            segments.append({"start": seg_start, "end": seg_end})
+            seg_type = (
+                _infer_segment_type(filtered_cls[i], filtered_cls[i + 1])
+                if filtered_cls is not None
+                else "unknown"
+            )
+            segments.append(
+                {
+                    "start": seg_start,
+                    "end": seg_end,
+                    "type": seg_type,
+                }
+            )
 
     # After last blackout
     seg_start = _padded_start(blackout_regions[-1])
     seg_start = max(seg_start, 0.0)
     if total_duration - seg_start >= min_match_duration:
-        segments.append({"start": seg_start, "end": total_duration})
+        segments.append(
+            {
+                "start": seg_start,
+                "end": total_duration,
+                "type": "unknown",
+            }
+        )
 
     return segments
 

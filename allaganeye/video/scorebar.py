@@ -137,7 +137,7 @@ def filter_blackouts_with_scorebar(
     duration: float,
     height: int,
     workers: int | None = None,
-) -> list[tuple[float, float]]:
+) -> tuple[list[tuple[float, float]], list[str]]:
     """Filter blackout regions using scorebar context and duration.
 
     Removes:
@@ -152,6 +152,9 @@ def filter_blackouts_with_scorebar(
     Post-processing:
     - Merges consecutive ``"match_boundary"`` pairs separated by non-FL
       content (result screen / lobby) into a single boundary region.
+
+    Returns:
+        Tuple of (filtered_regions, filtered_classifications).
     """
     kept: list[tuple[float, float]] = []
     classifications: list[str] = []
@@ -202,7 +205,7 @@ def _merge_boundary_pairs(
     duration: float,
     height: int,
     workers: int | None,
-) -> list[tuple[float, float]]:
+) -> tuple[list[tuple[float, float]], list[str]]:
     """Merge consecutive match_boundary pairs separated by non-FL content.
 
     FL match transitions often produce two blackouts:
@@ -211,11 +214,15 @@ def _merge_boundary_pairs(
 
     When two consecutive match_boundary regions have a gap < _MERGE_GAP_MAX
     and the gap midpoint has no scorebar, merge them into one region.
+
+    Returns:
+        Tuple of (merged_regions, merged_classifications).
     """
     if len(regions) < 2:
-        return regions
+        return regions, classifications
 
     merged: list[tuple[float, float]] = []
+    merged_cls: list[str] = []
     i = 0
     while i < len(regions):
         if (
@@ -252,6 +259,7 @@ def _merge_boundary_pairs(
                         probe_results,
                     )
                     merged.append(merged_region)
+                    merged_cls.append("match_boundary")
                     i += 2
                     continue
                 logger.debug(
@@ -264,6 +272,7 @@ def _merge_boundary_pairs(
                     probe_results,
                 )
         merged.append(regions[i])
+        merged_cls.append(classifications[i])
         i += 1
 
-    return merged
+    return merged, merged_cls

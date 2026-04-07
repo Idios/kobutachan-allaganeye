@@ -110,6 +110,7 @@ def test_pipeline_metadata_json_content(mock_probe, mock_detect, mock_split, tmp
     assert m1["start_time"] == 0.0
     assert m1["end_time"] == 600.0
     assert m1["duration"] == 600.0
+    assert m1["type"] == "unknown"
     assert "match_001" in m1["output_file"]
 
 
