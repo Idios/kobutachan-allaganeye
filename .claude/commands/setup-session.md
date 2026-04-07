@@ -25,33 +25,46 @@ ls -d E:/projects/kobutachan-tools/kobutachan-allaganeye-<サフィックス> 2>
 
 ### 2a: 既存 worktree がある場合（再利用）
 
-1. そのディレクトリへ移動
-2. `git status` で状態確認
-3. ROLE ファイルが存在することを確認
-4. `/assume-role <role>` を実行
-
-### 2b: 既存 worktree がない場合（新規作成）
-
-1. main ブランチの最新を取得:
+1. work ブランチに切り替えてから開発ブランチの最新を取り込む:
    ```bash
-   git -C E:/projects/kobutachan-tools/kobutachan-allaganeye fetch origin
+   cd E:/projects/kobutachan-tools/kobutachan-allaganeye-<サフィックス>
+   git checkout <セッション ID>/work
+   git fetch origin develop-0.1.0
+   git merge origin/develop-0.1.0
    ```
-2. worktree を作成:
-   ```bash
-   git -C E:/projects/kobutachan-tools/kobutachan-allaganeye worktree add -b <ブランチ名> E:/projects/kobutachan-tools/kobutachan-allaganeye-<サフィックス> origin/main
-   ```
-3. worktree に移動
-4. ROLE ファイルを作成:
-   ```bash
-   echo "<role>" > ROLE
-   ```
-5. `.claude/settings.local.json` を作成（同一ロールの worktree 間で共有するため、本体リポジトリからコピー）
-6. `/assume-role <role>` を実行
 
-## ステップ 3: 作業開始
+2. `settings.local.json` を同ロールの既存セッションからコピーする:
+   - 同ロールの worktree（番号1）から `.claude/settings.local.json` をコピー
+   - コピー元が存在しない場合はスキップ
 
-ユーザーに以下を報告:
+### 2b: worktree が存在しない場合（新規作成）
+
+1. メインリポジトリから worktree を作成する:
+   ```bash
+   cd E:/projects/kobutachan-tools/kobutachan-allaganeye
+   git worktree add ../kobutachan-allaganeye-<サフィックス> -b <セッション ID>/work
+   ```
+
+2. ROLE ファイルを作成する:
+   ```bash
+   echo "<ROLE ファイル値>" > E:/projects/kobutachan-tools/kobutachan-allaganeye-<サフィックス>/ROLE
+   ```
+   ※ 末尾に改行を含めること
+
+3. `settings.local.json` を同ロールの既存セッションからコピーする:
+   - 同ロールの worktree（番号1）の `.claude/settings.local.json` をコピー
+   - コピー元が存在しない場合はスキップ
+   ```bash
+   mkdir -p E:/projects/kobutachan-tools/kobutachan-allaganeye-<サフィックス>/.claude
+   cp E:/projects/kobutachan-tools/kobutachan-allaganeye-<コピー元サフィックス>/.claude/settings.local.json \
+      E:/projects/kobutachan-tools/kobutachan-allaganeye-<サフィックス>/.claude/settings.local.json
+   ```
+
+## ステップ 3: 完了報告
+
+以下を報告する:
 - worktree パス
 - ブランチ名
 - セッション ID
-- ロールの概要
+- 新規作成 or 再利用
+- settings.local.json のコピー元（コピーした場合）
