@@ -71,6 +71,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `video/probe.py` | ffprobe でメタデータ取得（解像度、fps、長さ） |
 | `video/detector.py` | ffmpeg 並列プローブで暗転検知、試合境界抽出（CPU モード） |
 | `video/gpu_detector.py` | GPU アクセラレーション検知（チャンク並列デコード） |
+| `video/scorebar.py` | スコアバーフィルタリング（暗転分類・試合内/非FL判定） |
 | `video/splitter.py` | FFmpeg で動画分割（-c copy） |
 
 ### 検知アルゴリズム（detector.py）
