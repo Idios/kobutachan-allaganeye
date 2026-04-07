@@ -1,6 +1,7 @@
 """Split command: orchestrates video probing, detection, and splitting."""
 
 import json
+import logging
 from pathlib import Path
 
 import typer
@@ -10,6 +11,10 @@ from allaganeye.exceptions import AllaganEyeError, DetectionError
 from allaganeye.video.detector import detect_match_boundaries
 from allaganeye.video.probe import probe_video
 from allaganeye.video.splitter import split_video
+
+logger = logging.getLogger(__name__)
+
+_CACHE_VERSION = 1
 
 
 def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -> None:
@@ -29,6 +34,40 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
     effective_interval = _auto_sample_interval(
         metadata["duration"], config.sample_interval
     )
+
+    # Check detection cache
+    cache_path = config.output_dir / ".detection_cache.json"
+    if not config.no_cache:
+        cached = _load_cache(cache_path, video_path, effective_interval, config)
+        if cached is not None:
+            boundaries = cached
+            typer.echo(
+                f"Detected {len(boundaries)} match(es) in {video_path.name} "
+                f"({_format_timestamp(metadata['duration'])}) (cached)"
+            )
+            typer.echo()
+            for i, b in enumerate(boundaries, 1):
+                dur = b["end"] - b["start"]
+                typer.echo(
+                    f"  Match {i}: {_format_timestamp(b['start']):>7s} - "
+                    f"{_format_timestamp(b['end']):>7s}  ({_format_duration(dur)})"
+                )
+            gaps = _find_gaps(boundaries, metadata["duration"], min_gap=300.0)
+            if gaps:
+                typer.echo()
+                for gap in gaps:
+                    typer.echo(
+                        f"  Gap: {_format_timestamp(gap['start'])} - "
+                        f"{_format_timestamp(gap['end'])} "
+                        f"({_format_duration(gap['duration'])})"
+                    )
+            if config.dry_run:
+                typer.echo("\nDry run: skipping split")
+                return
+            # Jump to splitting
+            return _split_and_write_metadata(
+                video_path, boundaries, gaps, metadata, config
+            )
 
     # Step 2: Detect match boundaries
     if verbose:
@@ -113,10 +152,28 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
                 f"({_format_duration(gap['duration'])})"
             )
 
+    # Save detection cache
+    _save_cache(
+        cache_path, video_path, metadata, effective_interval, config, boundaries
+    )
+
     # Step 3: Split (unless dry-run)
     if config.dry_run:
         typer.echo("\nDry run: skipping split")
         return
+
+    _split_and_write_metadata(video_path, boundaries, gaps, metadata, config)
+
+
+def _split_and_write_metadata(
+    video_path: Path,
+    boundaries: list[dict],
+    gaps: list[dict],
+    metadata: dict,
+    config: SplitConfig,
+) -> None:
+    """Split video and write metadata.json."""
+    source_duration = metadata["duration"]
 
     try:
         config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -220,3 +277,103 @@ def _find_gaps(
         if gap_dur >= min_gap:
             gaps.append({"start": gap_start, "end": gap_end, "duration": gap_dur})
     return gaps
+
+
+def _save_cache(
+    cache_path: Path,
+    video_path: Path,
+    probe_metadata: dict,
+    effective_interval: float,
+    config: SplitConfig,
+    boundaries: list[dict],
+) -> None:
+    """Save detection results to cache file."""
+    resolved = video_path.resolve()
+    try:
+        stat = resolved.stat()
+    except OSError:
+        logger.debug("Cannot stat source file for cache: %s", resolved)
+        return
+    cache_data = {
+        "cache_version": _CACHE_VERSION,
+        "source": str(resolved),
+        "source_size": stat.st_size,
+        "source_mtime": stat.st_mtime,
+        "probe": {
+            "duration": probe_metadata["duration"],
+            "width": probe_metadata["width"],
+            "height": probe_metadata["height"],
+            "fps": probe_metadata["fps"],
+            "codec": probe_metadata.get("codec", ""),
+        },
+        "params": {
+            "sample_interval": effective_interval,
+            "blackout_threshold": config.blackout_threshold,
+            "min_match_duration": config.min_match_duration,
+            "min_blackout_duration": config.min_blackout_duration,
+        },
+        "boundaries": boundaries,
+    }
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(
+            json.dumps(cache_data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    except OSError:
+        logger.debug("Failed to write detection cache to %s", cache_path)
+
+
+def _load_cache(
+    cache_path: Path,
+    video_path: Path,
+    effective_interval: float,
+    config: SplitConfig,
+) -> list[dict] | None:
+    """Load and validate detection cache. Returns boundaries or None."""
+    if not cache_path.is_file():
+        return None
+
+    try:
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.debug("Detection cache unreadable: %s", cache_path)
+        return None
+
+    if data.get("cache_version") != _CACHE_VERSION:
+        logger.debug("Cache version mismatch")
+        return None
+
+    resolved = video_path.resolve()
+    if data.get("source") != str(resolved):
+        logger.debug("Cache source path mismatch")
+        return None
+
+    try:
+        stat = resolved.stat()
+    except OSError:
+        return None
+
+    if data.get("source_size") != stat.st_size:
+        logger.debug("Cache source size mismatch")
+        return None
+
+    if data.get("source_mtime") != stat.st_mtime:
+        logger.debug("Cache source mtime mismatch")
+        return None
+
+    params = data.get("params", {})
+    if (
+        params.get("sample_interval") != effective_interval
+        or params.get("blackout_threshold") != config.blackout_threshold
+        or params.get("min_match_duration") != config.min_match_duration
+        or params.get("min_blackout_duration") != config.min_blackout_duration
+    ):
+        logger.debug("Cache parameter mismatch")
+        return None
+
+    boundaries = data.get("boundaries")
+    if not isinstance(boundaries, list):
+        logger.debug("Cache boundaries invalid")
+        return None
+
+    return boundaries

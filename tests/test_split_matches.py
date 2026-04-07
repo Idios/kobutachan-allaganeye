@@ -6,7 +6,12 @@ from unittest.mock import patch
 
 import pytest
 
-from allaganeye.commands.split_matches import _auto_sample_interval, run_split
+from allaganeye.commands.split_matches import (
+    _auto_sample_interval,
+    _load_cache,
+    _save_cache,
+    run_split,
+)
 from allaganeye.config import SplitConfig
 from allaganeye.exceptions import AllaganEyeError, DetectionError, VideoProcessingError
 
@@ -354,3 +359,193 @@ def test_pipeline_config_params_forwarded(
         workers=None,
         src_resolution=(PROBE_RESULT["width"], PROBE_RESULT["height"]),
     )
+
+
+# ============================================================
+# Detection cache tests
+# ============================================================
+
+
+@pytest.fixture
+def cache_video(tmp_path):
+    """Create a real video file for cache tests."""
+    video = tmp_path / "test.mp4"
+    video.write_bytes(b"\x00" * 1024)
+    return video
+
+
+@pytest.fixture
+def cache_config(tmp_path):
+    return SplitConfig(
+        output_dir=tmp_path / "output",
+        sample_interval=1.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+    )
+
+
+CACHE_BOUNDARIES = [
+    {"start": 0.0, "end": 600.0, "type": "fl_match"},
+    {"start": 700.0, "end": 1200.0, "type": "fl_match"},
+]
+
+
+class TestCacheRoundTrip:
+    def test_save_and_load(self, cache_video, cache_config, tmp_path):
+        """Save → load round-trip restores boundaries."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        result = _load_cache(cache_path, cache_video, 1.0, cache_config)
+        assert result == CACHE_BOUNDARIES
+
+    def test_size_mismatch(self, cache_video, cache_config, tmp_path):
+        """source_size mismatch → None."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        # Change file size
+        cache_video.write_bytes(b"\x00" * 2048)
+        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+
+    def test_mtime_mismatch(self, cache_video, cache_config, tmp_path):
+        """source_mtime mismatch → None."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        # Modify cache to have wrong mtime
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["source_mtime"] = 0.0
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+
+    def test_param_mismatch_threshold(self, cache_video, cache_config, tmp_path):
+        """blackout_threshold mismatch → None."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        different_config = SplitConfig(
+            output_dir=tmp_path / "output", blackout_threshold=20.0
+        )
+        assert _load_cache(cache_path, cache_video, 1.0, different_config) is None
+
+    def test_param_mismatch_interval(self, cache_video, cache_config, tmp_path):
+        """sample_interval mismatch → None."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        assert _load_cache(cache_path, cache_video, 2.0, cache_config) is None
+
+    def test_version_mismatch(self, cache_video, cache_config, tmp_path):
+        """cache_version mismatch → None."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["cache_version"] = 999
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+
+    def test_path_mismatch(self, cache_video, cache_config, tmp_path):
+        """source path mismatch → None."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        other_video = tmp_path / "other.mp4"
+        other_video.write_bytes(b"\x00" * 1024)
+        assert _load_cache(cache_path, other_video, 1.0, cache_config) is None
+
+    def test_file_not_found(self, cache_video, cache_config, tmp_path):
+        """Cache file doesn't exist → None."""
+        cache_path = tmp_path / "nonexistent" / ".detection_cache.json"
+        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+
+    def test_corrupted_json(self, cache_video, cache_config, tmp_path):
+        """Corrupted cache file → None (no exception)."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text("not valid json{{{", encoding="utf-8")
+        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+
+
+class TestCachePipeline:
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    def test_dry_run_saves_cache(self, mock_probe, mock_detect, mock_split, tmp_path):
+        """dry-run saves .detection_cache.json."""
+        video = tmp_path / "input.mp4"
+        video.write_bytes(b"\x00" * 512)
+        mock_probe.return_value = PROBE_RESULT
+        mock_detect.return_value = BOUNDARIES
+        config = SplitConfig(output_dir=tmp_path / "output", dry_run=True)
+        run_split(video, config)
+        assert (tmp_path / "output" / ".detection_cache.json").exists()
+
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    def test_second_run_uses_cache(self, mock_probe, mock_detect, mock_split, tmp_path):
+        """2nd run skips detection when cache is valid."""
+        video = tmp_path / "input.mp4"
+        video.write_bytes(b"\x00" * 512)
+        mock_probe.return_value = PROBE_RESULT
+        mock_detect.return_value = BOUNDARIES
+        out = tmp_path / "output"
+        mock_split.return_value = [out / "match_001.mp4", out / "match_002.mp4"]
+        config = SplitConfig(output_dir=out, min_match_duration=60.0)
+        # 1st run: detect is called
+        run_split(video, config)
+        assert mock_detect.call_count == 1
+        # 2nd run: detect is NOT called (cached)
+        mock_split.return_value = [out / "match_001.mp4", out / "match_002.mp4"]
+        run_split(video, config)
+        assert mock_detect.call_count == 1  # still 1
+
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    def test_param_change_triggers_redetect(
+        self, mock_probe, mock_detect, mock_split, tmp_path
+    ):
+        """Changed parameters invalidate cache → re-detect."""
+        video = tmp_path / "input.mp4"
+        video.write_bytes(b"\x00" * 512)
+        mock_probe.return_value = PROBE_RESULT
+        mock_detect.return_value = BOUNDARIES
+        config1 = SplitConfig(output_dir=tmp_path / "output", dry_run=True)
+        run_split(video, config1)
+        assert mock_detect.call_count == 1
+        # 2nd run with different threshold
+        config2 = SplitConfig(
+            output_dir=tmp_path / "output", blackout_threshold=20.0, dry_run=True
+        )
+        run_split(video, config2)
+        assert mock_detect.call_count == 2
+
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    def test_no_cache_flag(self, mock_probe, mock_detect, mock_split, tmp_path):
+        """--no-cache ignores existing cache."""
+        video = tmp_path / "input.mp4"
+        video.write_bytes(b"\x00" * 512)
+        mock_probe.return_value = PROBE_RESULT
+        mock_detect.return_value = BOUNDARIES
+        config = SplitConfig(output_dir=tmp_path / "output", dry_run=True)
+        run_split(video, config)
+        assert mock_detect.call_count == 1
+        # 2nd run with --no-cache
+        config_no_cache = SplitConfig(
+            output_dir=tmp_path / "output", dry_run=True, no_cache=True
+        )
+        run_split(video, config_no_cache)
+        assert mock_detect.call_count == 2

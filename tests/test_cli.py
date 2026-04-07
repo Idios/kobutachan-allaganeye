@@ -473,3 +473,12 @@ def test_debug_brightness_start_end_interval(mock_run, fake_video):
     assert kwargs["start"] == 10.0
     assert kwargs["end"] == 60.0
     assert kwargs["interval"] == 0.5
+
+
+@patch(MODULE)
+def test_no_cache_option_accepted(mock_run, fake_video):
+    """--no-cache option is accepted without error."""
+    result = runner.invoke(app, ["split", str(fake_video), "--no-cache"])
+    assert result.exit_code == 0
+    config = mock_run.call_args[0][1]
+    assert config.no_cache is True
