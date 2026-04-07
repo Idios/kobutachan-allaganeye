@@ -87,6 +87,22 @@ def test_split_negative_min_match_duration(tmp_path):
     assert result.exit_code == 5
 
 
+def test_split_workers_zero(tmp_path):
+    """--workers 0 should fail validation (must be >= 1)."""
+    fake_file = tmp_path / "video.mp4"
+    fake_file.write_bytes(b"\x00")
+    result = runner.invoke(app, ["split", str(fake_file), "--workers", "0"])
+    assert result.exit_code == 5
+
+
+def test_split_workers_negative(tmp_path):
+    """--workers -1 should fail validation."""
+    fake_file = tmp_path / "video.mp4"
+    fake_file.write_bytes(b"\x00")
+    result = runner.invoke(app, ["split", str(fake_file), "--workers", "-1"])
+    assert result.exit_code == 5
+
+
 # --- Option tests ---
 
 
@@ -103,6 +119,8 @@ def test_split_default_options(mock_run_split, fake_video):
     assert config.sample_interval == 1.0
     assert config.blackout_threshold == 15.0
     assert config.min_match_duration == 300.0
+    assert config.workers is None
+    assert config.use_gpu is False
     assert config.dry_run is False
     assert kwargs["verbose"] is False
 
@@ -174,6 +192,36 @@ def test_split_dry_run(mock_run_split, fake_video):
 
 
 @patch(MODULE)
+def test_split_workers_option(mock_run_split, fake_video):
+    """--workers 8 sets config.workers=8."""
+    result = runner.invoke(app, ["split", str(fake_video), "--workers", "8"])
+
+    assert result.exit_code == 0
+    config = mock_run_split.call_args[0][1]
+    assert config.workers == 8
+
+
+@patch(MODULE)
+def test_split_gpu_flag(mock_run_split, fake_video):
+    """--gpu sets config.use_gpu=True."""
+    result = runner.invoke(app, ["split", str(fake_video), "--gpu"])
+
+    assert result.exit_code == 0
+    config = mock_run_split.call_args[0][1]
+    assert config.use_gpu is True
+
+
+@patch(MODULE)
+def test_split_no_gpu_flag(mock_run_split, fake_video):
+    """--no-gpu explicitly sets config.use_gpu=False."""
+    result = runner.invoke(app, ["split", str(fake_video), "--no-gpu"])
+
+    assert result.exit_code == 0
+    config = mock_run_split.call_args[0][1]
+    assert config.use_gpu is False
+
+
+@patch(MODULE)
 def test_split_verbose_short(mock_run_split, fake_video):
     """-v flag sets verbose=True."""
     result = runner.invoke(app, ["split", str(fake_video), "-v"])
@@ -208,6 +256,9 @@ def test_split_all_options_combined(mock_run_split, fake_video, tmp_path):
             "25.0",
             "--min-match-duration",
             "60",
+            "--workers",
+            "4",
+            "--gpu",
             "--dry-run",
             "-v",
         ],
@@ -219,6 +270,8 @@ def test_split_all_options_combined(mock_run_split, fake_video, tmp_path):
     assert config.sample_interval == 0.5
     assert config.blackout_threshold == 25.0
     assert config.min_match_duration == 60.0
+    assert config.workers == 4
+    assert config.use_gpu is True
     assert config.dry_run is True
     assert mock_run_split.call_args[1]["verbose"] is True
 
