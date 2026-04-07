@@ -89,12 +89,12 @@ def _ffmpeg_interval(request: pytest.FixtureRequest) -> None:
 - ffmpeg のパス自動検索: winget (`Gyan.FFmpeg`) のインストール先を自動検索する。見つからない場合は `ALLAGANEYE_FFMPEG` 環境変数を設定する
 - GPU テスト: NVIDIA GPU + 最新ドライバが必要。GPU がない環境では自動的に CPU モードにフォールバックする
 
-### Linux（CI）
+### Linux（未検証）
 
-- GitHub Actions では `apt-get install ffmpeg` で ffmpeg をインストール
+- GitHub Actions では `apt-get install ffmpeg` で lint/型チェック/ユニットテストを実行しているが、実動画での動作確認はしていない
 - GPU テストは CI 環境では実行しない（GPU なし）
 
-### macOS
+### macOS（未検証）
 
-- Homebrew (`/opt/homebrew/bin`, `/usr/local/bin`) から ffmpeg を自動検索
-- 動作想定だが CI は未構築
+- Homebrew (`/opt/homebrew/bin`, `/usr/local/bin`) から ffmpeg を自動検索するコードはあるが動作確認なし
+- CI 未構築
