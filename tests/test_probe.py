@@ -339,3 +339,14 @@ def test_probe_missing_dimensions(mock_run, tmp_path):
     result = probe_video(video)
     assert result["width"] == 0
     assert result["height"] == 0
+
+
+@patch("allaganeye.video.probe.subprocess.run")
+@patch("allaganeye.video.probe.find_ffprobe", return_value="ffprobe")
+def test_timeout_raises_video_processing_error(_mock_ffprobe, mock_run, tmp_path):
+    """ffprobe timeout raises VideoProcessingError."""
+    mock_run.side_effect = subprocess.TimeoutExpired(cmd="ffprobe", timeout=30)
+    video = tmp_path / "test.mp4"
+    video.write_bytes(b"")
+    with pytest.raises(VideoProcessingError, match="timed out"):
+        probe_video(video)

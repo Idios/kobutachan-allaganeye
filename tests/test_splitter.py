@@ -167,3 +167,26 @@ def test_split_partial_failure(mock_run, tmp_path):
 
     # First call succeeded, second failed
     assert mock_run.call_count == 2
+
+
+@patch("allaganeye.video.splitter.subprocess.run")
+@patch("allaganeye.video.splitter.find_ffmpeg", return_value="ffmpeg")
+def test_timeout_raises_video_processing_error(_mock_ffmpeg, mock_run, tmp_path):
+    """ffmpeg split timeout raises VideoProcessingError."""
+    mock_run.side_effect = subprocess.TimeoutExpired(cmd="ffmpeg", timeout=120)
+    output = tmp_path / "out.mp4"
+    with pytest.raises(VideoProcessingError, match="timed out"):
+        _ffmpeg_split(Path("input.mp4"), start=0.0, end=600.0, output=output)
+
+
+@patch("allaganeye.video.splitter.subprocess.run")
+@patch("allaganeye.video.splitter.find_ffmpeg", return_value="ffmpeg")
+def test_timeout_scales_with_duration(_mock_ffmpeg, mock_run, tmp_path):
+    """Timeout scales: max(duration*2 + 60, 120)."""
+    result = MagicMock()
+    result.returncode = 0
+    mock_run.return_value = result
+    output = tmp_path / "out.mp4"
+    _ffmpeg_split(Path("input.mp4"), start=0.0, end=600.0, output=output)
+    # 600 * 2 + 60 = 1260 > 120
+    assert mock_run.call_args.kwargs["timeout"] == 1260
