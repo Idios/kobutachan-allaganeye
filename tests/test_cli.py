@@ -87,6 +87,16 @@ def test_split_negative_min_match_duration(tmp_path):
     assert result.exit_code == 5
 
 
+def test_split_negative_min_blackout_duration(tmp_path):
+    """--min-blackout-duration -1 should fail validation (must be >= 0)."""
+    fake_file = tmp_path / "video.mp4"
+    fake_file.write_bytes(b"\x00")
+    result = runner.invoke(
+        app, ["split", str(fake_file), "--min-blackout-duration", "-1"]
+    )
+    assert result.exit_code == 5
+
+
 def test_split_workers_zero(tmp_path):
     """--workers 0 should fail validation (must be >= 1)."""
     fake_file = tmp_path / "video.mp4"
@@ -119,6 +129,7 @@ def test_split_default_options(mock_run_split, fake_video):
     assert config.sample_interval == 1.0
     assert config.blackout_threshold == 15.0
     assert config.min_match_duration == 300.0
+    assert config.min_blackout_duration == 3.0
     assert config.workers is None
     assert config.use_gpu is False
     assert config.dry_run is False
@@ -179,6 +190,18 @@ def test_split_min_match_duration(mock_run_split, fake_video):
     assert result.exit_code == 0
     config = mock_run_split.call_args[0][1]
     assert config.min_match_duration == 120.0
+
+
+@patch(MODULE)
+def test_split_min_blackout_duration(mock_run_split, fake_video):
+    """--min-blackout-duration option is forwarded to config."""
+    result = runner.invoke(
+        app, ["split", str(fake_video), "--min-blackout-duration", "5.0"]
+    )
+
+    assert result.exit_code == 0
+    config = mock_run_split.call_args[0][1]
+    assert config.min_blackout_duration == 5.0
 
 
 @patch(MODULE)
@@ -256,6 +279,8 @@ def test_split_all_options_combined(mock_run_split, fake_video, tmp_path):
             "25.0",
             "--min-match-duration",
             "60",
+            "--min-blackout-duration",
+            "5.0",
             "--workers",
             "4",
             "--gpu",
@@ -270,6 +295,7 @@ def test_split_all_options_combined(mock_run_split, fake_video, tmp_path):
     assert config.sample_interval == 0.5
     assert config.blackout_threshold == 25.0
     assert config.min_match_duration == 60.0
+    assert config.min_blackout_duration == 5.0
     assert config.workers == 4
     assert config.use_gpu is True
     assert config.dry_run is True

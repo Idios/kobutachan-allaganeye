@@ -51,6 +51,18 @@ class TestSplitConfigValidation:
         with pytest.raises(ConfigValidationError, match="min-match-duration"):
             SplitConfig(min_match_duration=-100.0)
 
+    def test_min_blackout_duration_zero_is_valid(self):
+        config = SplitConfig(min_blackout_duration=0.0)
+        assert config.min_blackout_duration == 0.0
+
+    def test_min_blackout_duration_positive_is_valid(self):
+        config = SplitConfig(min_blackout_duration=5.0)
+        assert config.min_blackout_duration == 5.0
+
+    def test_min_blackout_duration_negative_raises(self):
+        with pytest.raises(ConfigValidationError, match="min-blackout-duration"):
+            SplitConfig(min_blackout_duration=-1.0)
+
     def test_workers_none_is_valid(self):
         config = SplitConfig(workers=None)
         assert config.workers is None
