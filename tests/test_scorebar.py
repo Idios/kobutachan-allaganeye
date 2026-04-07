@@ -262,6 +262,27 @@ class TestFilterBlackouts:
         assert result == [(100.0, 108.0)]
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_keeps_in_match_exactly_3_5s(self, mock_classify):
+        """in_match at exactly 3.5s boundary → kept (not strictly less than)."""
+        mock_classify.return_value = "in_match"
+        regions = [(100.0, 103.5)]  # exactly 3.5s
+        result = filter_blackouts_with_scorebar(Path("v.mp4"), regions, 300.0, _HEIGHT)
+        assert result == [(100.0, 103.5)]
+
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_removes_in_match_just_under_3_5s(self, mock_classify):
+        """in_match at 3.49s → removed (strictly less than 3.5)."""
+        mock_classify.return_value = "in_match"
+        regions = [(100.0, 103.49)]  # 3.49s
+        result = filter_blackouts_with_scorebar(Path("v.mp4"), regions, 300.0, _HEIGHT)
+        assert result == []
+
+    def test_empty_regions(self):
+        """Empty blackout list → empty result, no classify calls."""
+        result = filter_blackouts_with_scorebar(Path("v.mp4"), [], 300.0, _HEIGHT)
+        assert result == []
+
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_removes_non_fl(self, mock_classify):
         mock_classify.return_value = "non_fl"
         regions = [(100.0, 102.0)]

@@ -1,6 +1,7 @@
 """Shared test fixtures for Allagan Eye."""
 
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -36,3 +37,15 @@ def fake_video(tmp_path: Path) -> Path:
     video = tmp_path / "test_video.mp4"
     video.write_bytes(b"")
     return video
+
+
+@pytest.fixture(autouse=True)
+def _ffmpeg_interval(request: pytest.FixtureRequest) -> None:  # type: ignore[return]
+    """Insert 1s interval after slow-marked tests to prevent GPU deadlock.
+
+    Repeated ffmpeg calls can cause NVIDIA driver unresponsiveness due to
+    GPU memory fragmentation.  A 1s cooldown between tests mitigates this.
+    """
+    yield
+    if request.node.get_closest_marker("slow"):
+        time.sleep(1)
