@@ -2,6 +2,7 @@
 
 import os
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -40,7 +41,7 @@ def fake_video(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def _ffmpeg_interval(request: pytest.FixtureRequest) -> None:  # type: ignore[return]
+def _ffmpeg_interval(request: pytest.FixtureRequest) -> Iterator[None]:
     """Insert 1s interval after slow-marked tests to prevent GPU deadlock.
 
     Repeated ffmpeg calls can cause NVIDIA driver unresponsiveness due to
