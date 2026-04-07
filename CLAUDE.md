@@ -66,6 +66,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `cli.py` | Typer CLIエントリポイント。コマンドルーティング |
 | `config.py` | 設定管理（検知閾値、出力パス等） |
 | `exceptions.py` | エラークラス + exit code マッピング |
+| `ffmpeg_path.py` | ffmpeg/ffprobe のパス自動検索（winget, Homebrew, PATH, 環境変数） |
 | `commands/split_matches.py` | split コマンドのオーケストレーション。タイムスタンプ表示・gap 検出・sample_interval 自動調整 |
 | `commands/debug_brightness.py` | debug-brightness コマンド。フレーム輝度を CSV 出力（閾値チューニング用） |
 | `video/probe.py` | ffprobe でメタデータ取得（解像度、fps、長さ） |
