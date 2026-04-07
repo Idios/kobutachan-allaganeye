@@ -299,7 +299,7 @@ def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
 
     Criteria (lead-1 revised spec based on 3-section analysis, #121):
     - 20 < roi_brightness < 140 (FL match typical range)
-    - max cross-section channel std > 8.0 (3GC color separation)
+    - max cross-section channel std > 15.0 (3GC color separation)
     """
     if raw_rgb is None:
         return None
