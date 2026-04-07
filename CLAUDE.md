@@ -27,6 +27,8 @@ FF14 PvPコンテンツ「フロントライン」の長時間録画動画（OBS
 
 ## コマンド
 
+詳細は [`docs/testing-guide.md`](docs/testing-guide.md) を参照（GPU テスト間インターバル、サンプルデータ設定等）。
+
 ```bash
 # テスト
 pytest                          # 全テスト（slowマーカー除外）
