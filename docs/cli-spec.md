@@ -12,7 +12,6 @@
 |---|---|
 | `--version` | バージョン表示 |
 | `--help` | ヘルプ表示 |
-| `--verbose` / `-v` | 詳細ログ出力 |
 
 ## split コマンド
 
@@ -109,6 +108,7 @@ allaganeye debug-brightness <video_path> [OPTIONS]
 | `--end` | 動画全長 | 終了時刻（秒） |
 | `--interval` | `1.0` | サンプリング間隔（秒） |
 | `--workers` | auto | 並列ワーカー数（デフォルト: 自動=`min(cpu_count, 24)`） |
+| `--roi-mode` | なし | ROI 分析モード。`scorebar`: スコアバー ROI の輝度・色情報を追加出力。`scorebar-detail`: セクション別の詳細情報も出力 |
 
 ### 出力形式
 
