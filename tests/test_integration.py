@@ -398,6 +398,7 @@ def gpu_cpu_results(source_mkv: Path, source_metadata: dict) -> dict:
         blackout_threshold=15.0,
         min_match_duration=300.0,
         min_blackout_duration=3.0,
+        src_resolution=(source_metadata["width"], source_metadata["height"]),
     )
     gpu = detect_match_boundaries(
         source_mkv,
@@ -407,6 +408,7 @@ def gpu_cpu_results(source_mkv: Path, source_metadata: dict) -> dict:
         blackout_threshold=15.0,
         min_match_duration=300.0,
         min_blackout_duration=3.0,
+        src_resolution=(source_metadata["width"], source_metadata["height"]),
     )
     return {"cpu": cpu, "gpu": gpu}
 
