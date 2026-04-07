@@ -18,6 +18,7 @@ class SplitConfig:
     dry_run: bool = False
     use_gpu: bool = False
     workers: int | None = None
+    no_cache: bool = False
 
     def __post_init__(self) -> None:
         if self.workers is not None and self.workers < 1:

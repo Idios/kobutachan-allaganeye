@@ -71,6 +71,10 @@ def split(
             "Falls back to CPU if GPU is unavailable.",
         ),
     ] = False,
+    no_cache: Annotated[
+        bool,
+        typer.Option("--no-cache", help="Ignore cached detection results"),
+    ] = False,
     verbose: Annotated[
         bool, typer.Option("-v", "--verbose", help="Verbose output")
     ] = False,
@@ -95,6 +99,7 @@ def split(
             dry_run=dry_run,
             use_gpu=gpu,
             workers=workers,
+            no_cache=no_cache,
         )
 
         from allaganeye.commands.split_matches import run_split
