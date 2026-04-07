@@ -326,3 +326,101 @@ class TestMetadataIntegrity:
             result = probe_video(mp4)
             assert result["duration"] > 0
             assert result["width"] > 0
+
+
+# --- 5. Backward compatibility: src_resolution=None ---
+
+_BASELINES_DIR = Path(__file__).parent / "baselines"
+
+
+def _load_baseline(name: str) -> dict | None:
+    path = _BASELINES_DIR / f"{name}.json"
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+class TestNoResolutionCompat:
+    """When src_resolution is omitted, behavior must be identical to pre-#124."""
+
+    def test_same_count_as_baseline(
+        self, target_recording: tuple[str, Path], detection_without_scorebar: dict
+    ):
+        """Detection without src_resolution matches saved baseline count."""
+        name, _ = target_recording
+        baseline = _load_baseline(name)
+        if baseline is None:
+            pytest.skip(f"No baseline for {name}")
+
+        detected = detection_without_scorebar["match_count"]
+        baseline_count = baseline["match_count"]
+        assert detected == baseline_count, (
+            f"{name}: without scorebar got {detected}, baseline was {baseline_count}"
+        )
+
+    def test_boundaries_match_baseline(
+        self, target_recording: tuple[str, Path], detection_without_scorebar: dict
+    ):
+        """Each boundary timestamp matches baseline within 5s tolerance."""
+        name, _ = target_recording
+        baseline = _load_baseline(name)
+        if baseline is None:
+            pytest.skip(f"No baseline for {name}")
+
+        detected = detection_without_scorebar["boundaries"]
+        baseline_b = baseline["boundaries"]
+        assert len(detected) == len(baseline_b), (
+            f"{name}: count mismatch {len(detected)} vs {len(baseline_b)}"
+        )
+
+        tolerance = 5.0
+        for i, (d, b) in enumerate(zip(detected, baseline_b, strict=True)):
+            assert abs(d["start"] - b["start"]) <= tolerance, (
+                f"Match {i + 1} start: {d['start']:.1f} vs baseline {b['start']:.1f}"
+            )
+            assert abs(d["end"] - b["end"]) <= tolerance, (
+                f"Match {i + 1} end: {d['end']:.1f} vs baseline {b['end']:.1f}"
+            )
+
+
+# --- 6. Baseline comparison: scorebar detection results ---
+
+
+class TestBaselineComparison:
+    """Compare scorebar detection against saved baselines."""
+
+    def test_baseline_boundaries_preserved(
+        self, target_recording: tuple[str, Path], detection_with_scorebar: dict
+    ):
+        """Scorebar filtering preserves baseline boundaries within tolerance.
+
+        Each baseline boundary should have a corresponding scorebar boundary
+        within 15s.  Scorebar may remove false positives but should not lose
+        real matches.
+        """
+        name, _ = target_recording
+        baseline = _load_baseline(name)
+        if baseline is None:
+            pytest.skip(f"No baseline for {name}")
+
+        baseline_boundaries = baseline["boundaries"]
+        scorebar_boundaries = detection_with_scorebar["boundaries"]
+
+        tolerance = 15.0
+        missing = []
+        for i, bb in enumerate(baseline_boundaries):
+            found = any(
+                abs(sb["start"] - bb["start"]) <= tolerance
+                and abs(sb["end"] - bb["end"]) <= tolerance
+                for sb in scorebar_boundaries
+            )
+            if not found:
+                missing.append(
+                    f"Baseline match {i + 1} "
+                    f"({bb['start']:.0f}-{bb['end']:.0f}s) not found"
+                )
+
+        # Allow losing at most 2 boundaries (non-FL removal is intentional)
+        assert len(missing) <= 2, (
+            f"{name}: {len(missing)} baseline boundaries lost:\n" + "\n".join(missing)
+        )
