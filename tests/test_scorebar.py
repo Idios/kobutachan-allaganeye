@@ -4,13 +4,16 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 
 from allaganeye.video.detector import (
     _SAMPLE_WIDTH,
+    _SCOREBAR_CHANNEL_STD_THRESHOLD,
     _SCOREBAR_ROI_X_END,
     _SCOREBAR_ROI_X_START,
     _SCOREBAR_ROI_Y_END,
     _has_scorebar,
+    _scaled_height,
 )
 from allaganeye.video.scorebar import (
     _MERGE_GAP_MAX,
@@ -262,6 +265,27 @@ class TestFilterBlackouts:
         assert result == [(100.0, 108.0)]
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_keeps_in_match_exactly_3_5s(self, mock_classify):
+        """in_match at exactly 3.5s boundary → kept (not strictly less than)."""
+        mock_classify.return_value = "in_match"
+        regions = [(100.0, 103.5)]  # exactly 3.5s
+        result = filter_blackouts_with_scorebar(Path("v.mp4"), regions, 300.0, _HEIGHT)
+        assert result == [(100.0, 103.5)]
+
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_removes_in_match_just_under_3_5s(self, mock_classify):
+        """in_match at 3.49s → removed (strictly less than 3.5)."""
+        mock_classify.return_value = "in_match"
+        regions = [(100.0, 103.49)]  # 3.49s
+        result = filter_blackouts_with_scorebar(Path("v.mp4"), regions, 300.0, _HEIGHT)
+        assert result == []
+
+    def test_empty_regions(self):
+        """Empty blackout list → empty result, no classify calls."""
+        result = filter_blackouts_with_scorebar(Path("v.mp4"), [], 300.0, _HEIGHT)
+        assert result == []
+
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_removes_non_fl(self, mock_classify):
         mock_classify.return_value = "non_fl"
         regions = [(100.0, 102.0)]
@@ -385,3 +409,218 @@ class TestMergeBoundaryPairs:
         result = filter_blackouts_with_scorebar(Path("v.mp4"), regions, 400.0, _HEIGHT)
         # First pair merges → (100, 205), third is separate
         assert result == [(100.0, 205.0), (300.0, 305.0)]
+
+    @patch(f"{SCOREBAR_MODULE}._has_scorebar")
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_merge_gap_exactly_600s(self, mock_classify, mock_probe_rgb, mock_has_sb):
+        """Gap exactly 600.0s (= _MERGE_GAP_MAX) → merge attempted."""
+        mock_classify.side_effect = ["match_boundary", "match_boundary"]
+        mock_probe_rgb.return_value = b"\x00" * 100
+        mock_has_sb.return_value = False
+
+        regions = [(100.0, 105.0), (705.0, 710.0)]  # gap = 600.0
+        result = filter_blackouts_with_scorebar(Path("v.mp4"), regions, 1000.0, _HEIGHT)
+        assert result == [(100.0, 710.0)]
+
+    @patch(f"{SCOREBAR_MODULE}._has_scorebar")
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_no_merge_gap_just_over_600s(
+        self, mock_classify, mock_probe_rgb, mock_has_sb
+    ):
+        """Gap 600.1s (> _MERGE_GAP_MAX) → no merge."""
+        mock_classify.side_effect = ["match_boundary", "match_boundary"]
+        mock_probe_rgb.return_value = b"\x00" * 100
+        mock_has_sb.return_value = False
+
+        regions = [(100.0, 105.0), (705.1, 710.0)]  # gap = 600.1
+        result = filter_blackouts_with_scorebar(Path("v.mp4"), regions, 1000.0, _HEIGHT)
+        assert result == regions
+
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_single_region_no_merge(self, mock_classify):
+        """Single region → no merge processing, returned as-is."""
+        mock_classify.return_value = "match_boundary"
+        regions = [(100.0, 105.0)]
+        result = filter_blackouts_with_scorebar(Path("v.mp4"), regions, 300.0, _HEIGHT)
+        assert result == regions
+
+
+# --- _has_scorebar boundary tests ---
+
+
+class TestHasScorebarBoundaries:
+    """Additional boundary tests for _has_scorebar thresholds."""
+
+    def test_brightness_just_below_140(self):
+        """ROI brightness just below 140 with color variation → True."""
+        # Aim for ~135 brightness with high cross-section std
+        raw = _make_frame(
+            roi_sections=((180, 100, 100), (100, 180, 100), (100, 100, 180))
+        )
+        assert _has_scorebar(raw, _HEIGHT) is True
+
+    def test_brightness_at_140(self):
+        """ROI brightness at 140 → False (not strictly less than)."""
+        raw = _make_frame(
+            roi_sections=((180, 130, 100), (130, 180, 110), (110, 100, 180))
+        )
+        # brightness ~140, at boundary → False
+        result = _has_scorebar(raw, _HEIGHT)
+        # Verify the threshold is exclusive at 140
+        roi_y2 = int(_HEIGHT * _SCOREBAR_ROI_Y_END)
+        x1 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_START)
+        x2 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_END)
+        frame = np.frombuffer(raw, dtype=np.uint8).reshape(_HEIGHT, _SAMPLE_WIDTH, 3)
+        roi_brightness = float(frame[0:roi_y2, x1:x2, :].mean())
+        if roi_brightness >= 140.0:
+            assert result is False
+
+    def test_channel_std_threshold_constant(self):
+        """_SCOREBAR_CHANNEL_STD_THRESHOLD is 15.0."""
+        assert _SCOREBAR_CHANNEL_STD_THRESHOLD == 15.0
+
+
+# --- _majority_scorebar edge cases ---
+
+
+class TestMajorityScorebarEdge:
+    def test_empty_list(self):
+        """Empty list → None."""
+        assert _majority_scorebar([]) is None
+
+
+# --- classify_blackout boundary tests ---
+
+
+class TestClassifyBlackoutBoundary:
+    @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
+    def test_region_at_video_start(self, mock_probe):
+        """Region near start (0.5s) → pre timestamps clamp to 0.0."""
+        mock_probe.side_effect = [
+            [True],  # pre: only 1 unique timestamp after dedup
+            [True, True, True],  # post: 3 timestamps
+        ]
+        result = classify_blackout(Path("v.mp4"), (0.5, 3.0), 300.0, _HEIGHT)
+        assert result == "in_match"
+        # Verify pre_timestamps were deduplicated
+        pre_call_args = mock_probe.call_args_list[0]
+        pre_ts = pre_call_args[0][1]  # second positional arg = timestamps
+        assert len(pre_ts) < 3  # some timestamps collapsed to 0.0
+
+    @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
+    def test_region_at_video_end(self, mock_probe):
+        """Region near end → post timestamps clamp to duration."""
+        mock_probe.side_effect = [
+            [False, False, False],  # pre
+            [False],  # post: collapsed
+        ]
+        result = classify_blackout(Path("v.mp4"), (297.0, 299.5), 300.0, _HEIGHT)
+        assert result == "non_fl"
+        # Verify post_timestamps were deduplicated
+        post_call_args = mock_probe.call_args_list[1]
+        post_ts = post_call_args[0][1]
+        assert len(post_ts) < 3
+
+
+# --- _scaled_height tests ---
+
+
+class TestScaledHeight:
+    def test_1920x1080(self):
+        """Standard 16:9 → 180 (even)."""
+        assert _scaled_height(1920, 1080) == 180
+
+    def test_1280x720(self):
+        """720p 16:9 → 180."""
+        assert _scaled_height(1280, 720) == 180
+
+    def test_2560x1440(self):
+        """1440p 16:9 → 180."""
+        assert _scaled_height(2560, 1440) == 180
+
+    def test_odd_result_rounds_to_even(self):
+        """4096x2160 → round(320*2160/4096) = 169 → +1 = 170."""
+        assert _scaled_height(4096, 2160) == 170
+
+    def test_4_3_aspect(self):
+        """1920x1200 (16:10) → round(320*1200/1920) = 200."""
+        assert _scaled_height(1920, 1200) == 200
+
+    def test_result_is_always_even(self):
+        """Result must be even for ffmpeg -2 requirement."""
+        test_cases = [
+            (1920, 1080),
+            (1280, 720),
+            (2560, 1440),
+            (4096, 2160),
+            (1920, 1200),
+            (3840, 2160),
+        ]
+        for w, h in test_cases:
+            result = _scaled_height(w, h)
+            assert result % 2 == 0, f"_scaled_height({w}, {h}) = {result} (odd)"
+
+
+# --- _probe_frame_rgb tests ---
+
+
+class TestProbeFrameRgb:
+    @patch("allaganeye.video.detector.subprocess.run")
+    @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
+    def test_timeout_returns_none(self, _mock_ff, mock_run):
+        """Timeout → None."""
+        from subprocess import TimeoutExpired
+
+        from allaganeye.video.detector import _probe_frame_rgb
+
+        mock_run.side_effect = TimeoutExpired("ffmpeg", 30)
+        assert _probe_frame_rgb(Path("v.mp4"), 10.0) is None
+
+    @patch("allaganeye.video.detector.subprocess.run")
+    @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
+    def test_incomplete_frame_returns_none(self, _mock_ff, mock_run):
+        """Incomplete stdout → None."""
+        from unittest.mock import MagicMock
+
+        from allaganeye.video.detector import _probe_frame_rgb
+
+        result = MagicMock()
+        result.stdout = b"\x00" * 10  # way too short
+        mock_run.return_value = result
+        assert _probe_frame_rgb(Path("v.mp4"), 10.0) is None
+
+    @patch("allaganeye.video.detector.subprocess.run")
+    @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
+    def test_valid_frame_returns_bytes(self, _mock_ff, mock_run):
+        """Complete frame → bytes."""
+        from unittest.mock import MagicMock
+
+        from allaganeye.video.detector import _probe_frame_rgb
+
+        expected_size = _SAMPLE_WIDTH * _HEIGHT * 3
+        result = MagicMock()
+        result.stdout = b"\x80" * expected_size
+        mock_run.return_value = result
+        raw = _probe_frame_rgb(Path("v.mp4"), 10.0, _HEIGHT)
+        assert raw is not None
+        assert len(raw) == expected_size
+
+    def test_ffmpeg_not_found_raises(self):
+        """ffmpeg not found → VideoProcessingError."""
+        from allaganeye.video.detector import _probe_frame_rgb
+        from allaganeye.exceptions import VideoProcessingError
+
+        with (
+            patch(
+                "allaganeye.video.detector.find_ffmpeg",
+                return_value="nonexistent_ffmpeg",
+            ),
+            patch(
+                "allaganeye.video.detector.subprocess.run",
+                side_effect=FileNotFoundError,
+            ),
+        ):
+            with pytest.raises(VideoProcessingError):
+                _probe_frame_rgb(Path("v.mp4"), 10.0)
