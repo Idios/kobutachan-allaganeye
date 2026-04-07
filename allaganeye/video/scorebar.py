@@ -22,14 +22,16 @@ def _probe_scorebar_context(
 ) -> list[bool | None]:
     """Probe multiple timestamps and return has_scorebar for each.
 
-    Returns a list aligned with timestamps: True/False/None per frame.
+    Returns a list aligned with *timestamps*: True/False/None per frame.
+    Duplicate timestamps are probed only once; results are shared.
     """
     max_workers = _resolve_workers(workers)
+    unique_ts = sorted(set(timestamps))
     results: dict[float, bool | None] = {}
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
-            pool.submit(_probe_frame_rgb, video_path, t, height): t for t in timestamps
+            pool.submit(_probe_frame_rgb, video_path, t, height): t for t in unique_ts
         }
         for future in as_completed(futures):
             t = futures[future]
@@ -118,8 +120,14 @@ _MERGE_GAP_MAX = 600.0
 
 FL match transitions often produce two blackouts separated by a non-FL
 segment (result screen, lobby, queue).  When the gap is short and has no
-scorebar at the midpoint, the two boundaries are merged into one spanning
-the full transition.
+scorebar at any of 9 probe points, the two boundaries are merged into
+one spanning the full transition.
+
+Measured gap durations (non-FL content between FL matches):
+- Result screen: 83-266s (1.4-4.4min)
+- Lobby/queue: 232-468s (3.9-7.8min)
+600s (10min) covers observed lobby gaps with margin.  9-point scorebar
+probes guard against merging real FL match content.
 """
 
 
@@ -222,13 +230,11 @@ def _merge_boundary_pairs(
                 gap_start = regions[i][1]
                 gap_end = regions[i + 1][0]
                 probe_points = [
-                    gap_start + (gap_end - gap_start) * k / 10
-                    for k in range(1, 10)
+                    gap_start + (gap_end - gap_start) * k / 10 for k in range(1, 10)
                 ]
-                probe_results = [
-                    _has_scorebar(_probe_frame_rgb(video_path, t, height), height)
-                    for t in probe_points
-                ]
+                probe_results = _probe_scorebar_context(
+                    video_path, probe_points, height, workers
+                )
                 all_valid = all(r is not None for r in probe_results)
                 any_scorebar = any(r is True for r in probe_results)
                 if all_valid and not any_scorebar:

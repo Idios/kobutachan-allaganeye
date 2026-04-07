@@ -13,6 +13,7 @@ from allaganeye.video.detector import (
     _has_scorebar,
 )
 from allaganeye.video.scorebar import (
+    _MERGE_GAP_MAX,
     _majority_scorebar,
     classify_blackout,
     filter_blackouts_with_scorebar,
@@ -301,3 +302,86 @@ class TestFilterBlackouts:
             (250.0, 255.0),
             (280.0, 288.0),
         ]
+
+
+DETECTOR_MODULE = "allaganeye.video.detector"
+
+
+class TestMergeBoundaryPairs:
+    """Test match_boundary pair merging in filter_blackouts_with_scorebar."""
+
+    @patch(f"{SCOREBAR_MODULE}._has_scorebar")
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_merge_when_gap_has_no_scorebar(
+        self, mock_classify, mock_probe_rgb, mock_has_sb
+    ):
+        """Consecutive match_boundary with non-FL gap → merged."""
+        mock_classify.side_effect = ["match_boundary", "match_boundary"]
+        mock_probe_rgb.return_value = b"\x00" * 100
+        mock_has_sb.return_value = False  # no scorebar in gap
+
+        regions = [(100.0, 105.0), (200.0, 205.0)]  # gap=95s
+        result = filter_blackouts_with_scorebar(Path("v.mp4"), regions, 300.0, _HEIGHT)
+        assert result == [(100.0, 205.0)]
+
+    @patch(f"{SCOREBAR_MODULE}._has_scorebar")
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_no_merge_when_gap_has_scorebar(
+        self, mock_classify, mock_probe_rgb, mock_has_sb
+    ):
+        """Gap with scorebar detected → no merge (FL match content)."""
+        mock_classify.side_effect = ["match_boundary", "match_boundary"]
+        mock_probe_rgb.return_value = b"\x00" * 100
+        mock_has_sb.return_value = True  # scorebar in gap
+
+        regions = [(100.0, 105.0), (200.0, 205.0)]
+        result = filter_blackouts_with_scorebar(Path("v.mp4"), regions, 300.0, _HEIGHT)
+        assert result == regions
+
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_no_merge_when_gap_exceeds_max(self, mock_classify):
+        """Gap > _MERGE_GAP_MAX → no merge attempt."""
+        mock_classify.side_effect = ["match_boundary", "match_boundary"]
+        gap = _MERGE_GAP_MAX + 100
+        regions = [(100.0, 105.0), (105.0 + gap, 110.0 + gap)]
+        result = filter_blackouts_with_scorebar(
+            Path("v.mp4"), regions, 10000.0, _HEIGHT
+        )
+        assert result == regions
+
+    @patch(f"{SCOREBAR_MODULE}._has_scorebar")
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_no_merge_when_probe_fails(
+        self, mock_classify, mock_probe_rgb, mock_has_sb
+    ):
+        """Probe failure (None) → no merge (safe side)."""
+        mock_classify.side_effect = ["match_boundary", "match_boundary"]
+        mock_probe_rgb.return_value = None
+        mock_has_sb.return_value = None  # probe failure
+
+        regions = [(100.0, 105.0), (200.0, 205.0)]
+        result = filter_blackouts_with_scorebar(Path("v.mp4"), regions, 300.0, _HEIGHT)
+        assert result == regions
+
+    @patch(f"{SCOREBAR_MODULE}._has_scorebar")
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_three_consecutive_match_boundary(
+        self, mock_classify, mock_probe_rgb, mock_has_sb
+    ):
+        """3 consecutive match_boundary: first pair merges, third kept separate."""
+        mock_classify.side_effect = [
+            "match_boundary",
+            "match_boundary",
+            "match_boundary",
+        ]
+        mock_probe_rgb.return_value = b"\x00" * 100
+        mock_has_sb.return_value = False
+
+        regions = [(100.0, 105.0), (200.0, 205.0), (300.0, 305.0)]
+        result = filter_blackouts_with_scorebar(Path("v.mp4"), regions, 400.0, _HEIGHT)
+        # First pair merges → (100, 205), third is separate
+        assert result == [(100.0, 205.0), (300.0, 305.0)]
