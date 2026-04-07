@@ -117,7 +117,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
   - Windows: winget (`Gyan.FFmpeg`) のインストール先を自動検索
   - macOS: Homebrew (`/opt/homebrew/bin`, `/usr/local/bin`) を自動検索
 - **Python パッケージ**: numpy, typer（opencv-python は L1 では不要。L2 以降で使用予定）
-- **対応プラットフォーム**: Windows（メイン）、Linux（CI 済み）、macOS（動作想定、CI は将来）
+- **対応プラットフォーム**: Windows のみ（実動画での動作確認済み）。Linux・macOS は未検証（CI では lint/型チェックのみ ubuntu で実行）
 
 ### 動画サンプルデータ
 
