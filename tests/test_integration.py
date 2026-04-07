@@ -390,15 +390,24 @@ def gpu_cpu_results(source_mkv: Path, source_metadata: dict) -> dict:
 
     from allaganeye.video.detector import detect_match_boundaries
 
-    common = dict(
+    cpu = detect_match_boundaries(
+        source_mkv,
+        use_gpu=False,
         duration_hint=source_metadata["duration"],
         sample_interval=2.0,
         blackout_threshold=15.0,
         min_match_duration=300.0,
         min_blackout_duration=3.0,
     )
-    cpu = detect_match_boundaries(source_mkv, use_gpu=False, **common)
-    gpu = detect_match_boundaries(source_mkv, use_gpu=True, **common)
+    gpu = detect_match_boundaries(
+        source_mkv,
+        use_gpu=True,
+        duration_hint=source_metadata["duration"],
+        sample_interval=2.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+    )
     return {"cpu": cpu, "gpu": gpu}
 
 

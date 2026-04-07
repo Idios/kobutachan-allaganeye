@@ -1,5 +1,6 @@
 """Match boundary detection using parallel ffmpeg frame probing."""
 
+import logging
 import os
 import subprocess
 from collections.abc import Callable
@@ -10,6 +11,8 @@ import numpy as np
 
 from allaganeye.exceptions import VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
+
+logger = logging.getLogger(__name__)
 
 _SAMPLE_WIDTH = 320
 _SAMPLE_HEIGHT = 180
@@ -33,6 +36,7 @@ def detect_match_boundaries(
     min_blackout_duration: float = 3.0,
     use_gpu: bool = False,
     workers: int | None = None,
+    src_resolution: tuple[int, int] | None = None,
     progress_callback: Callable[[int, int, int], None] | None = None,
 ) -> list[dict]:
     """Detect match boundaries by finding blackout frames.
@@ -42,6 +46,9 @@ def detect_match_boundaries(
             to generate the list of sample timestamps.
         use_gpu: If True, use chunked parallel GPU decode instead of
             per-frame -ss probes.  Falls back to CPU on failure.
+        src_resolution: (width, height) from probe.  When provided,
+            scorebar-based filtering is applied to remove in-match
+            blackouts and non-FL blackouts.
         progress_callback: Optional callback invoked after each sampled
             frame with ``(completed_count, total_samples, blackout_count)``.
 
@@ -97,6 +104,15 @@ def detect_match_boundaries(
     refined_regions = _refine_blackout_regions(
         video_path, blackout_regions, blackout_threshold, duration_hint, workers
     )
+
+    # Scorebar-based filtering: remove in-match and non-FL blackouts (#111)
+    if src_resolution is not None:
+        from allaganeye.video.scorebar import filter_blackouts_with_scorebar
+
+        height = _scaled_height(src_resolution[0], src_resolution[1])
+        refined_regions = filter_blackouts_with_scorebar(
+            video_path, refined_regions, duration_hint, height, workers
+        )
 
     effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
     return _filter_and_extract_segments(
@@ -257,13 +273,13 @@ _SCOREBAR_ROI_Y_START = 0.0
 _SCOREBAR_ROI_Y_END = 0.04
 
 
-_SCOREBAR_CHANNEL_STD_THRESHOLD = 8.0
+_SCOREBAR_CHANNEL_STD_THRESHOLD = 15.0
 """Minimum cross-section channel std for scorebar detection.
 
 FL scorebar has 3GC color bands (red/blue/yellow).  When the ROI is split
 into left/center/right thirds, at least one RGB channel shows significant
-std across the three sections (15-35 for FL, ~5 for lobby/non-FL).
-Threshold 8.0 sits in the gap between lobby max (~5.3) and FL min (~15).
+std across the three sections (26-48 for FL, ~5 for lobby, ~8-9 for queue).
+Threshold 15.0 sits in the gap between queue max (~8.8) and FL min (~26).
 """
 
 
@@ -289,6 +305,10 @@ def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
 
     roi_brightness = float(roi.mean())
     if not (20.0 < roi_brightness < 140.0):
+        logger.debug(
+            "scorebar: brightness=%.1f (out of 20-140 range) → False",
+            roi_brightness,
+        )
         return False
 
     # Split ROI into 3 sections and compute cross-section channel std
@@ -308,13 +328,26 @@ def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
             ]
         )
 
-    max_channel_std = max(
+    channel_stds = [
         float(np.std([s[0] for s in section_means])),
         float(np.std([s[1] for s in section_means])),
         float(np.std([s[2] for s in section_means])),
+    ]
+    max_channel_std = max(channel_stds)
+    detected = max_channel_std > _SCOREBAR_CHANNEL_STD_THRESHOLD
+
+    logger.debug(
+        "scorebar: brightness=%.1f  ch_std=[R=%.1f G=%.1f B=%.1f] max=%.1f thr=%.1f → %s",
+        roi_brightness,
+        channel_stds[0],
+        channel_stds[1],
+        channel_stds[2],
+        max_channel_std,
+        _SCOREBAR_CHANNEL_STD_THRESHOLD,
+        detected,
     )
 
-    return max_channel_std > _SCOREBAR_CHANNEL_STD_THRESHOLD
+    return detected
 
 
 _TRANSITION_THRESHOLD = 55.0

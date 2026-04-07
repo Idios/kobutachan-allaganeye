@@ -619,3 +619,31 @@ class TestDetectMatchBoundaries:
         )
         assert len(result) == 1
         assert mock_probe.call_count == 100
+
+    @patch("allaganeye.video.scorebar.filter_blackouts_with_scorebar")
+    @patch("allaganeye.video.detector._probe_single_frame")
+    def test_scorebar_filtering_called_with_resolution(self, mock_probe, mock_filter):
+        """Scorebar filtering is invoked when src_resolution is provided."""
+        mock_probe.return_value = 128.0
+        mock_filter.side_effect = lambda vp, regions, dur, h, w: regions
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=300.0,
+            min_match_duration=100.0,
+            src_resolution=(1920, 1080),
+        )
+        mock_filter.assert_called_once()
+
+    @patch("allaganeye.video.scorebar.filter_blackouts_with_scorebar")
+    @patch("allaganeye.video.detector._probe_single_frame")
+    def test_scorebar_filtering_skipped_without_resolution(
+        self, mock_probe, mock_filter
+    ):
+        """Scorebar filtering is NOT invoked when src_resolution is None."""
+        mock_probe.return_value = 128.0
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=300.0,
+            min_match_duration=100.0,
+        )
+        mock_filter.assert_not_called()

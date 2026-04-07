@@ -1,5 +1,6 @@
 """Scorebar-based blackout classification for FL match detection."""
 
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from math import ceil
 from pathlib import Path
@@ -10,6 +11,8 @@ from allaganeye.video.detector import (
     _resolve_workers,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _probe_scorebar_context(
     video_path: Path,
@@ -19,14 +22,16 @@ def _probe_scorebar_context(
 ) -> list[bool | None]:
     """Probe multiple timestamps and return has_scorebar for each.
 
-    Returns a list aligned with timestamps: True/False/None per frame.
+    Returns a list aligned with *timestamps*: True/False/None per frame.
+    Duplicate timestamps are probed only once; results are shared.
     """
     max_workers = _resolve_workers(workers)
+    unique_ts = sorted(set(timestamps))
     results: dict[float, bool | None] = {}
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
-            pool.submit(_probe_frame_rgb, video_path, t, height): t for t in timestamps
+            pool.submit(_probe_frame_rgb, video_path, t, height): t for t in unique_ts
         }
         for future in as_completed(futures):
             t = futures[future]
@@ -65,8 +70,8 @@ def classify_blackout(
     - ``"non_fl"``: neither side has scorebar → non-FL blackout (#109)
     - ``"unknown"``: all probes failed on either side → keep boundary (safe)
     """
-    pre_timestamps = [max(0.0, region[0] - d) for d in (3.0, 2.0, 1.0)]
-    post_timestamps = [min(duration, region[1] + d) for d in (1.0, 2.0, 3.0)]
+    pre_timestamps = sorted(set(max(0.0, region[0] - d) for d in (3.0, 2.0, 1.0)))
+    post_timestamps = sorted(set(min(duration, region[1] + d) for d in (1.0, 2.0, 3.0)))
 
     pre_results = _probe_scorebar_context(video_path, pre_timestamps, height, workers)
     post_results = _probe_scorebar_context(video_path, post_timestamps, height, workers)
@@ -75,12 +80,55 @@ def classify_blackout(
     post_has = _majority_scorebar(post_results)
 
     if pre_has is None or post_has is None:
-        return "unknown"
-    if pre_has and post_has:
-        return "in_match"
-    if pre_has or post_has:
-        return "match_boundary"
-    return "non_fl"
+        classification = "unknown"
+    elif pre_has and post_has:
+        classification = "in_match"
+    elif pre_has or post_has:
+        classification = "match_boundary"
+    else:
+        classification = "non_fl"
+
+    logger.debug(
+        "classify region [%.1f-%.1f] (%.1fs): "
+        "pre=%s (votes=%s) post=%s (votes=%s) → %s",
+        region[0],
+        region[1],
+        region[1] - region[0],
+        pre_has,
+        pre_results,
+        post_has,
+        post_results,
+        classification,
+    )
+
+    return classification
+
+
+_IN_MATCH_MAX_DURATION = 3.5
+"""Maximum blackout duration to consider as in-match (e.g. character down).
+
+Only ``"in_match"`` blackouts shorter than this are removed.  Longer
+``"in_match"`` blackouts are FL match boundaries and must be kept.
+
+Threshold: character down = 1.0-2.0s (refined measurement), short FL
+boundary = 4.5s+.  3.5s sits in the gap with 1.5s margin on each side.
+"""
+
+
+_MERGE_GAP_MAX = 600.0
+"""Maximum gap (seconds) between consecutive match_boundary regions to merge.
+
+FL match transitions often produce two blackouts separated by a non-FL
+segment (result screen, lobby, queue).  When the gap is short and has no
+scorebar at any of 9 probe points, the two boundaries are merged into
+one spanning the full transition.
+
+Measured gap durations (non-FL content between FL matches):
+- Result screen: 83-266s (1.4-4.4min)
+- Lobby/queue: 232-468s (3.9-7.8min)
+600s (10min) covers observed lobby gaps with margin.  9-point scorebar
+probes guard against merging real FL match content.
+"""
 
 
 def filter_blackouts_with_scorebar(
@@ -90,21 +138,132 @@ def filter_blackouts_with_scorebar(
     height: int,
     workers: int | None = None,
 ) -> list[tuple[float, float]]:
-    """Filter blackout regions using scorebar context.
+    """Filter blackout regions using scorebar context and duration.
 
     Removes:
-    - ``"in_match"`` blackouts (e.g. character down, #107)
+    - Short ``"in_match"`` blackouts (< 3.5s, e.g. character down, #107)
     - ``"non_fl"`` blackouts (non-FL content boundaries, #109)
 
     Keeps:
+    - Long ``"in_match"`` blackouts (>= 3.5s, FL match boundaries)
     - ``"match_boundary"`` (FL match start/end)
     - ``"unknown"`` (probe failure → safe side, keep boundary)
+
+    Post-processing:
+    - Merges consecutive ``"match_boundary"`` pairs separated by non-FL
+      content (result screen / lobby) into a single boundary region.
     """
     kept: list[tuple[float, float]] = []
+    classifications: list[str] = []
     for region in blackout_regions:
         classification = classify_blackout(
             video_path, region, duration, height, workers
         )
-        if classification in ("match_boundary", "unknown"):
-            kept.append(region)
-    return kept
+        region_duration = region[1] - region[0]
+
+        if classification == "in_match" and region_duration < _IN_MATCH_MAX_DURATION:
+            logger.info(
+                "REMOVE [%.1f-%.1f] (%.1fs): %s (short in_match)",
+                region[0],
+                region[1],
+                region_duration,
+                classification,
+            )
+            continue
+        if classification == "non_fl":
+            logger.info(
+                "REMOVE [%.1f-%.1f] (%.1fs): %s",
+                region[0],
+                region[1],
+                region_duration,
+                classification,
+            )
+            continue
+
+        logger.info(
+            "KEEP   [%.1f-%.1f] (%.1fs): %s",
+            region[0],
+            region[1],
+            region_duration,
+            classification,
+        )
+        kept.append(region)
+        classifications.append(classification)
+
+    return _merge_boundary_pairs(
+        video_path, kept, classifications, duration, height, workers
+    )
+
+
+def _merge_boundary_pairs(
+    video_path: Path,
+    regions: list[tuple[float, float]],
+    classifications: list[str],
+    duration: float,
+    height: int,
+    workers: int | None,
+) -> list[tuple[float, float]]:
+    """Merge consecutive match_boundary pairs separated by non-FL content.
+
+    FL match transitions often produce two blackouts:
+      FL Match → blackout₁ (match_boundary) → lobby/result → blackout₂ (match_boundary) → FL Match
+    The intermediate non-FL segment creates a false short "match".
+
+    When two consecutive match_boundary regions have a gap < _MERGE_GAP_MAX
+    and the gap midpoint has no scorebar, merge them into one region.
+    """
+    if len(regions) < 2:
+        return regions
+
+    merged: list[tuple[float, float]] = []
+    i = 0
+    while i < len(regions):
+        if (
+            i + 1 < len(regions)
+            and classifications[i] == "match_boundary"
+            and classifications[i + 1] == "match_boundary"
+        ):
+            gap = regions[i + 1][0] - regions[i][1]
+            if gap <= _MERGE_GAP_MAX:
+                # Probe 9 points evenly across the gap to reliably
+                # detect FL match content (scorebar intermittently visible)
+                gap_start = regions[i][1]
+                gap_end = regions[i + 1][0]
+                probe_points = [
+                    gap_start + (gap_end - gap_start) * k / 10 for k in range(1, 10)
+                ]
+                probe_results = _probe_scorebar_context(
+                    video_path, probe_points, height, workers
+                )
+                all_valid = all(r is not None for r in probe_results)
+                any_scorebar = any(r is True for r in probe_results)
+                if all_valid and not any_scorebar:
+                    merged_region = (regions[i][0], regions[i + 1][1])
+                    logger.info(
+                        "MERGE  [%.1f-%.1f] + [%.1f-%.1f] → [%.1f-%.1f] "
+                        "(gap=%.0fs, probes=%s)",
+                        regions[i][0],
+                        regions[i][1],
+                        regions[i + 1][0],
+                        regions[i + 1][1],
+                        merged_region[0],
+                        merged_region[1],
+                        gap,
+                        probe_results,
+                    )
+                    merged.append(merged_region)
+                    i += 2
+                    continue
+                logger.debug(
+                    "NO-MERGE [%.1f-%.1f] + [%.1f-%.1f] (gap=%.0fs, probes=%s)",
+                    regions[i][0],
+                    regions[i][1],
+                    regions[i + 1][0],
+                    regions[i + 1][1],
+                    gap,
+                    probe_results,
+                )
+        merged.append(regions[i])
+        i += 1
+
+    return merged
