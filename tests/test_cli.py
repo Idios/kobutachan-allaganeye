@@ -6,7 +6,12 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from allaganeye.cli import app
-from allaganeye.exceptions import DetectionError, VideoProcessingError
+from allaganeye.exceptions import (
+    AllaganEyeError,
+    DetectionError,
+    InputFileError,
+    VideoProcessingError,
+)
 
 runner = CliRunner()
 
@@ -242,6 +247,24 @@ def test_split_detection_error_exit_code(mock_run_split, fake_video):
 
     result = runner.invoke(app, ["split", str(fake_video)])
     assert result.exit_code == 4
+
+
+@patch(MODULE)
+def test_split_input_file_error_exit_code(mock_run_split, fake_video):
+    """InputFileError from run_split produces exit code 2."""
+    mock_run_split.side_effect = InputFileError("No video stream found")
+
+    result = runner.invoke(app, ["split", str(fake_video)])
+    assert result.exit_code == 2
+
+
+@patch(MODULE)
+def test_split_base_error_exit_code(mock_run_split, fake_video):
+    """AllaganEyeError (base class) produces exit code 1."""
+    mock_run_split.side_effect = AllaganEyeError("generic error")
+
+    result = runner.invoke(app, ["split", str(fake_video)])
+    assert result.exit_code == 1
 
 
 @patch(MODULE)
