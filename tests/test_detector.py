@@ -504,6 +504,14 @@ class TestProbeSingleFrame:
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="ffmpeg", timeout=30)
         assert _probe_single_frame(Path("test.mp4"), 10.0) == 255.0
 
+    @patch("allaganeye.video.detector.subprocess.run")
+    def test_nonzero_returncode(self, mock_run):
+        result = MagicMock()
+        result.returncode = 1
+        result.stdout = b"\x00" * _FRAME_SIZE  # valid-length but from failed process
+        mock_run.return_value = result
+        assert _probe_single_frame(Path("test.mp4"), 10.0) == 255.0
+
 
 # ============================================================
 # TestDetectMatchBoundaries

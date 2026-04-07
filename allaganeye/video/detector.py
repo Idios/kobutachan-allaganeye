@@ -207,6 +207,9 @@ def _probe_single_frame(video_path: Path, timestamp: float) -> float:
     except subprocess.TimeoutExpired:
         return 255.0  # treat timeout as non-blackout
 
+    if result.returncode != 0:
+        return 255.0  # ffmpeg error, treat as non-blackout
+
     if len(result.stdout) < _FRAME_SIZE:
         return 255.0  # incomplete frame, treat as non-blackout
 
@@ -250,6 +253,9 @@ def _probe_frame_rgb(
             "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
         ) from e
     except subprocess.TimeoutExpired:
+        return None
+
+    if result.returncode != 0:
         return None
 
     if len(result.stdout) < rgb_size:
