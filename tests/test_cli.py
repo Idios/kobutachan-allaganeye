@@ -274,3 +274,100 @@ def test_split_avi_extension(mock_run_split, tmp_path):
     result = runner.invoke(app, ["split", str(video)])
     assert result.exit_code == 0
     mock_run_split.assert_called_once()
+
+
+# ============================================================
+# debug-brightness CLI tests
+# ============================================================
+
+DEBUG_MODULE = "allaganeye.commands.debug_brightness.run_debug_brightness"
+
+
+def test_debug_brightness_help():
+    """debug-brightness --help shows usage."""
+    result = runner.invoke(app, ["debug-brightness", "--help"])
+    assert result.exit_code == 0
+    assert "video_path" in result.stdout.lower() or "VIDEO_PATH" in result.stdout
+
+
+def test_debug_brightness_missing_file():
+    """Nonexistent file produces exit code 2."""
+    result = runner.invoke(app, ["debug-brightness", "nonexistent.mp4"])
+    assert result.exit_code == 2
+    assert (
+        "not found" in result.stdout.lower()
+        or "not found" in (result.stderr or "").lower()
+    )
+
+
+def test_debug_brightness_unsupported_format(tmp_path):
+    """Unsupported extension produces exit code 2."""
+    fake_file = tmp_path / "video.txt"
+    fake_file.write_text("not a video")
+    result = runner.invoke(app, ["debug-brightness", str(fake_file)])
+    assert result.exit_code == 2
+    assert (
+        "unsupported" in result.stdout.lower()
+        or "unsupported" in (result.stderr or "").lower()
+    )
+
+
+@patch(DEBUG_MODULE)
+def test_debug_brightness_default_options(mock_run, fake_video):
+    """Default options are forwarded correctly."""
+    result = runner.invoke(app, ["debug-brightness", str(fake_video)])
+
+    assert result.exit_code == 0
+    mock_run.assert_called_once()
+    _, kwargs = mock_run.call_args
+    assert kwargs["start"] == 0.0
+    assert kwargs["end"] is None
+    assert kwargs["interval"] == 1.0
+    assert kwargs["workers"] is None
+    assert kwargs["roi_mode"] is None
+
+
+@patch(DEBUG_MODULE)
+def test_debug_brightness_roi_mode_scorebar(mock_run, fake_video):
+    """--roi-mode scorebar is forwarded."""
+    result = runner.invoke(
+        app, ["debug-brightness", str(fake_video), "--roi-mode", "scorebar"]
+    )
+
+    assert result.exit_code == 0
+    assert mock_run.call_args[1]["roi_mode"] == "scorebar"
+
+
+@patch(DEBUG_MODULE)
+def test_debug_brightness_roi_mode_scorebar_detail(mock_run, fake_video):
+    """--roi-mode scorebar-detail is forwarded."""
+    result = runner.invoke(
+        app, ["debug-brightness", str(fake_video), "--roi-mode", "scorebar-detail"]
+    )
+
+    assert result.exit_code == 0
+    assert mock_run.call_args[1]["roi_mode"] == "scorebar-detail"
+
+
+@patch(DEBUG_MODULE)
+def test_debug_brightness_start_end_interval(mock_run, fake_video):
+    """--start, --end, --interval are forwarded."""
+    result = runner.invoke(
+        app,
+        [
+            "debug-brightness",
+            str(fake_video),
+            "--start",
+            "10.0",
+            "--end",
+            "60.0",
+            "--interval",
+            "0.5",
+        ],
+    )
+
+    assert result.exit_code == 0
+    _, kwargs = mock_run.call_args
+    assert kwargs["start"] == 10.0
+    assert kwargs["end"] == 60.0
+    assert kwargs["interval"] == 0.5
