@@ -74,6 +74,7 @@ allaganeye split <video_path> [OPTIONS]
 | `end_display` | string | 終了時刻の表示形式 |
 | `duration` | float | 試合時間（秒） |
 | `duration_display` | string | 試合時間の表示形式 |
+| `type` | string | セグメントの種別（`"fl_match"` / `"unknown"`） |
 | `output_file` | string | 出力ファイルパス |
 
 **gaps[]:**
