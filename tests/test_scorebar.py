@@ -587,6 +587,7 @@ class TestProbeFrameRgb:
         from allaganeye.video.detector import _probe_frame_rgb
 
         result = MagicMock()
+        result.returncode = 0
         result.stdout = b"\x00" * 10  # way too short
         mock_run.return_value = result
         assert _probe_frame_rgb(Path("v.mp4"), 10.0) is None
@@ -601,11 +602,27 @@ class TestProbeFrameRgb:
 
         expected_size = _SAMPLE_WIDTH * _HEIGHT * 3
         result = MagicMock()
+        result.returncode = 0
         result.stdout = b"\x80" * expected_size
         mock_run.return_value = result
         raw = _probe_frame_rgb(Path("v.mp4"), 10.0, _HEIGHT)
         assert raw is not None
         assert len(raw) == expected_size
+
+    @patch("allaganeye.video.detector.subprocess.run")
+    @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
+    def test_nonzero_returncode_returns_none(self, _mock_ff, mock_run):
+        """ffmpeg error exit → None (not partial data)."""
+        from unittest.mock import MagicMock
+
+        from allaganeye.video.detector import _probe_frame_rgb
+
+        expected_size = _SAMPLE_WIDTH * _HEIGHT * 3
+        result = MagicMock()
+        result.returncode = 1
+        result.stdout = b"\x00" * expected_size  # valid-length but from failed process
+        mock_run.return_value = result
+        assert _probe_frame_rgb(Path("v.mp4"), 10.0, _HEIGHT) is None
 
     def test_ffmpeg_not_found_raises(self):
         """ffmpeg not found → VideoProcessingError."""
