@@ -8,6 +8,7 @@ import pytest
 
 from allaganeye.exceptions import VideoProcessingError
 from allaganeye.video.detector import (
+    MatchBoundary,
     _BLACKOUT_PADDING,
     _FRAME_SIZE,
     _REFINED_MIN_BLACKOUT,
@@ -34,7 +35,7 @@ def _extract_segments(
     sample_interval: float,
     min_match_duration: float,
     min_blackout_duration: float = 3.0,
-) -> list[dict]:
+) -> list[MatchBoundary]:
     """Test helper: groups + filters + extracts (replaces old monolithic function)."""
     regions = _group_blackout_regions(blackout_times, sample_interval)
     return _filter_and_extract_segments(

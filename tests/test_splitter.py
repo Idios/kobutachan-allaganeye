@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from allaganeye.exceptions import VideoProcessingError
+from allaganeye.video.detector import MatchBoundary
 from allaganeye.video.splitter import _ffmpeg_split, split_video
 
 
@@ -16,7 +17,7 @@ from allaganeye.video.splitter import _ffmpeg_split, split_video
 def test_split_nonexistent_file(tmp_path):
     """Splitting a nonexistent file raises VideoProcessingError."""
     fake = tmp_path / "nonexistent.mp4"
-    boundaries = [{"start": 0.0, "end": 10.0}]
+    boundaries: list[MatchBoundary] = [{"start": 0.0, "end": 10.0, "type": "unknown"}]
     with pytest.raises(VideoProcessingError):
         split_video(fake, boundaries, tmp_path)
 
@@ -77,7 +78,7 @@ def test_split_single_boundary(mock_run, tmp_path):
         args=["ffmpeg"], returncode=0, stdout="", stderr=""
     )
     video = tmp_path / "input.mp4"
-    boundaries = [{"start": 10.0, "end": 300.0}]
+    boundaries: list[MatchBoundary] = [{"start": 10.0, "end": 300.0, "type": "unknown"}]
 
     result = split_video(video, boundaries, tmp_path)
 
@@ -93,10 +94,10 @@ def test_split_multiple_boundaries(mock_run, tmp_path):
         args=["ffmpeg"], returncode=0, stdout="", stderr=""
     )
     video = tmp_path / "input.mp4"
-    boundaries = [
-        {"start": 0.0, "end": 600.0},
-        {"start": 610.0, "end": 1200.0},
-        {"start": 1210.0, "end": 1800.0},
+    boundaries: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "unknown"},
+        {"start": 610.0, "end": 1200.0, "type": "unknown"},
+        {"start": 1210.0, "end": 1800.0, "type": "unknown"},
     ]
 
     result = split_video(video, boundaries, tmp_path)
@@ -129,7 +130,7 @@ def test_split_ffmpeg_returns_nonzero(mock_run, tmp_path):
         args=["ffmpeg"], returncode=1, stdout="", stderr="encoding failed"
     )
     video = tmp_path / "input.mp4"
-    boundaries = [{"start": 0.0, "end": 300.0}]
+    boundaries: list[MatchBoundary] = [{"start": 0.0, "end": 300.0, "type": "unknown"}]
 
     with pytest.raises(VideoProcessingError, match="ffmpeg split failed"):
         split_video(video, boundaries, tmp_path)
@@ -140,7 +141,7 @@ def test_split_ffmpeg_not_found(mock_run, tmp_path):
     """Missing ffmpeg raises VideoProcessingError."""
     mock_run.side_effect = FileNotFoundError()
     video = tmp_path / "input.mp4"
-    boundaries = [{"start": 0.0, "end": 300.0}]
+    boundaries: list[MatchBoundary] = [{"start": 0.0, "end": 300.0, "type": "unknown"}]
 
     with pytest.raises(VideoProcessingError, match="ffmpeg not found"):
         split_video(video, boundaries, tmp_path)
@@ -157,9 +158,9 @@ def test_split_partial_failure(mock_run, tmp_path):
     )
     mock_run.side_effect = [success, failure]
     video = tmp_path / "input.mp4"
-    boundaries = [
-        {"start": 0.0, "end": 600.0},
-        {"start": 610.0, "end": 1200.0},
+    boundaries: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "unknown"},
+        {"start": 610.0, "end": 1200.0, "type": "unknown"},
     ]
 
     with pytest.raises(VideoProcessingError, match="ffmpeg split failed"):
