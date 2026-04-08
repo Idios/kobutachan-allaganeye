@@ -1,5 +1,6 @@
 """Tests for GPU-accelerated detection."""
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -93,6 +94,27 @@ class TestScanGpu:
 
         with pytest.raises(VideoProcessingError, match="falling back"):
             scan_gpu(Path("test.mp4"), 10.0, 1.0, 15.0)
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_gpu_failure_cancels_pending_futures(self, mock_decode):
+        """GPU failure cancels pending futures via shutdown(cancel_futures=True)."""
+        call_count = 0
+
+        def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise VideoProcessingError("GPU decode failed")
+            return {0.0: 128.0}
+
+        mock_decode.side_effect = side_effect
+
+        with pytest.raises(VideoProcessingError, match="falling back"):
+            scan_gpu(Path("test.mp4"), 100.0, 1.0, 15.0)
+
+        # With cancel_futures=True, not all chunks should have been executed
+        # (some were cancelled before starting)
+        assert call_count < min(os.cpu_count() or 4, 16)
 
     @patch("allaganeye.video.gpu_detector._decode_chunk")
     def test_progress_callback(self, mock_decode):

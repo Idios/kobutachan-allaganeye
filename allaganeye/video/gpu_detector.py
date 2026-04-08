@@ -63,6 +63,7 @@ def scan_gpu(
                 chunk_results = future.result()
             except VideoProcessingError:
                 gpu_failed = True
+                pool.shutdown(wait=False, cancel_futures=True)
                 break
             for t, brightness in chunk_results.items():
                 results[t] = brightness
