@@ -5,7 +5,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from math import ceil
 from pathlib import Path
 
+import numpy as np
+
 from allaganeye.video.detector import (
+    _SAMPLE_WIDTH,
+    _SCOREBAR_ROI_X_END,
+    _SCOREBAR_ROI_X_START,
+    _SCOREBAR_ROI_Y_END,
+    _SCOREBAR_ROI_Y_START,
     _has_scorebar,
     _probe_frame_rgb,
     _resolve_workers,
@@ -52,6 +59,81 @@ def _majority_scorebar(results: list[bool | None]) -> bool | None:
     return sum(valid) >= ceil(len(valid) / 2)
 
 
+_STATIC_SCREEN_MAD_THRESHOLD = 0.5
+"""Max scorebar-ROI MAD to consider consecutive frames as a static screen.
+
+Loading/result screens are pixel-identical across seconds, giving MAD ≈ 0.
+FL match frames always differ (character motion, particles) with MAD > 1.5.
+Threshold 0.5 sits well inside the gap.
+"""
+
+
+def _is_static_screen(
+    video_path: Path,
+    timestamps: list[float],
+    height: int,
+    workers: int | None,
+) -> bool:
+    """Detect static screens (loading/result) via scorebar ROI frame diff.
+
+    Probes frames at the given timestamps and computes the mean absolute
+    difference (MAD) of the scorebar ROI pixels between consecutive pairs.
+    If the **minimum** MAD across all pairs is below threshold, the frames
+    show a static screen.
+
+    Using min() tolerates a single screen transition within the window
+    (one pair may have high MAD from a screen change, but the next pair
+    will be static).
+
+    Returns False if fewer than 2 frames are successfully probed.
+    """
+    max_workers = _resolve_workers(workers)
+    unique_ts = sorted(set(timestamps))
+
+    raw_frames: dict[float, bytes | None] = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(_probe_frame_rgb, video_path, t, height): t for t in unique_ts
+        }
+        for future in as_completed(futures):
+            t = futures[future]
+            raw_frames[t] = future.result()
+
+    ordered = [raw_frames[t] for t in unique_ts]
+    valid = [r for r in ordered if r is not None]
+    if len(valid) < 2:
+        return False
+
+    x1 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_START)
+    x2 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_END)
+    y1 = int(height * _SCOREBAR_ROI_Y_START)
+    y2 = int(height * _SCOREBAR_ROI_Y_END)
+
+    rois = []
+    for raw in valid:
+        frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, _SAMPLE_WIDTH, 3)
+        rois.append(frame[y1:y2, x1:x2, :].astype(np.int16))
+
+    mads = []
+    for i in range(len(rois) - 1):
+        mad = float(np.mean(np.abs(rois[i] - rois[i + 1])))
+        mads.append(mad)
+
+    min_mad = min(mads)
+    is_static = min_mad < _STATIC_SCREEN_MAD_THRESHOLD
+
+    logger.debug(
+        "static_screen: timestamps=%s mads=%s min=%.2f thr=%.1f → %s",
+        [f"{t:.1f}" for t in unique_ts],
+        [f"{m:.2f}" for m in mads],
+        min_mad,
+        _STATIC_SCREEN_MAD_THRESHOLD,
+        is_static,
+    )
+
+    return is_static
+
+
 def classify_blackout(
     video_path: Path,
     region: tuple[float, float],
@@ -78,6 +160,26 @@ def classify_blackout(
 
     pre_has = _majority_scorebar(pre_results)
     post_has = _majority_scorebar(post_results)
+
+    # Override scorebar detection on static screens (loading/result).
+    # Loading screens can trigger _has_scorebar due to color patterns
+    # that mimic scorebar channel separation.  (#201)
+    if pre_has and post_has:
+        if _is_static_screen(video_path, post_timestamps, height, workers):
+            logger.debug(
+                "static_screen override: post side [%.1f-%.1f]",
+                region[0],
+                region[1],
+            )
+            post_has = False
+        if pre_has and post_has:
+            if _is_static_screen(video_path, pre_timestamps, height, workers):
+                logger.debug(
+                    "static_screen override: pre side [%.1f-%.1f]",
+                    region[0],
+                    region[1],
+                )
+                pre_has = False
 
     if pre_has is None or post_has is None:
         classification = "unknown"
@@ -114,6 +216,16 @@ Threshold: character down = 1.0-2.0s (refined measurement), short FL
 boundary = 4.5s+.  3.5s sits in the gap with 1.5s margin on each side.
 """
 
+
+_MERGE_MAX_SCOREBAR_HITS = 2
+"""Max scorebar detections in gap probes to still allow merging.
+
+A single borderline false positive (channel std just above threshold)
+should not block merging of consecutive match_boundary pairs.  Real
+FL match content produces scorebar hits on 4+ out of 9 probe points.
+Allowing up to 1 hit (< 2) absorbs non-deterministic ffmpeg seek
+variations at threshold boundaries.  (#200)
+"""
 
 _MERGE_GAP_MAX = 600.0
 """Maximum gap (seconds) between consecutive match_boundary regions to merge.
@@ -243,8 +355,8 @@ def _merge_boundary_pairs(
                     video_path, probe_points, height, workers
                 )
                 all_valid = all(r is not None for r in probe_results)
-                any_scorebar = any(r is True for r in probe_results)
-                if all_valid and not any_scorebar:
+                scorebar_count = sum(1 for r in probe_results if r is True)
+                if all_valid and scorebar_count < _MERGE_MAX_SCOREBAR_HITS:
                     merged_region = (regions[i][0], regions[i + 1][1])
                     logger.info(
                         "MERGE  [%.1f-%.1f] + [%.1f-%.1f] → [%.1f-%.1f] "

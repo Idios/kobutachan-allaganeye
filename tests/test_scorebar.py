@@ -17,6 +17,7 @@ from allaganeye.video.detector import (
 )
 from allaganeye.video.scorebar import (
     _MERGE_GAP_MAX,
+    _is_static_screen,
     _majority_scorebar,
     classify_blackout,
     filter_blackouts_with_scorebar,
@@ -166,15 +167,43 @@ SCOREBAR_MODULE = "allaganeye.video.scorebar"
 
 
 class TestClassifyBlackout:
+    @patch(f"{SCOREBAR_MODULE}._is_static_screen", return_value=False)
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
-    def test_in_match(self, mock_probe):
-        """Both sides have scorebar → in_match."""
+    def test_in_match(self, mock_probe, _mock_static):
+        """Both sides have scorebar, not static → in_match."""
         mock_probe.side_effect = [
             [True, True, True],  # pre
             [True, True, True],  # post
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
         assert result == "in_match"
+
+    @patch(f"{SCOREBAR_MODULE}._is_static_screen")
+    @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
+    def test_in_match_overridden_by_static_post(self, mock_probe, mock_static):
+        """Both sides scorebar, but post is static → match_boundary."""
+        mock_probe.side_effect = [
+            [True, True, True],  # pre
+            [True, True, True],  # post
+        ]
+        mock_static.return_value = True  # post side is static screen
+        result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
+        assert result == "match_boundary"
+        # Only post side checked (first call)
+        assert mock_static.call_count == 1
+
+    @patch(f"{SCOREBAR_MODULE}._is_static_screen")
+    @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
+    def test_in_match_overridden_by_static_pre(self, mock_probe, mock_static):
+        """Both sides scorebar, post not static but pre is → match_boundary."""
+        mock_probe.side_effect = [
+            [True, True, True],  # pre
+            [True, True, True],  # post
+        ]
+        mock_static.side_effect = [False, True]  # post=not static, pre=static
+        result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
+        assert result == "match_boundary"
+        assert mock_static.call_count == 2
 
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_match_boundary_start(self, mock_probe):
@@ -383,10 +412,10 @@ class TestMergeBoundaryPairs:
     def test_no_merge_when_gap_has_scorebar(
         self, mock_classify, mock_probe_rgb, mock_has_sb
     ):
-        """Gap with scorebar detected → no merge (FL match content)."""
+        """Gap with scorebar detected (>=2 hits) → no merge."""
         mock_classify.side_effect = ["match_boundary", "match_boundary"]
         mock_probe_rgb.return_value = b"\x00" * 100
-        mock_has_sb.return_value = True  # scorebar in gap
+        mock_has_sb.return_value = True  # all 9 probes → scorebar
 
         regions = [(100.0, 105.0), (200.0, 205.0)]
         result, cls = filter_blackouts_with_scorebar(
@@ -394,6 +423,35 @@ class TestMergeBoundaryPairs:
         )
         assert result == regions
         assert cls == ["match_boundary", "match_boundary"]
+
+    @patch(f"{SCOREBAR_MODULE}._has_scorebar")
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_merge_with_single_borderline_scorebar_hit(
+        self, mock_classify, mock_probe_rgb, mock_has_sb
+    ):
+        """Gap with 1 borderline scorebar hit out of 9 → still merged (#200)."""
+        mock_classify.side_effect = ["match_boundary", "match_boundary"]
+        mock_probe_rgb.return_value = b"\x00" * 100
+        # 1 out of 9 probes returns True (borderline false positive)
+        mock_has_sb.side_effect = [
+            False,
+            False,
+            False,
+            False,
+            True,
+            False,
+            False,
+            False,
+            False,
+        ]
+
+        regions = [(100.0, 105.0), (200.0, 205.0)]  # gap=95s
+        result, cls = filter_blackouts_with_scorebar(
+            Path("v.mp4"), regions, 300.0, _HEIGHT
+        )
+        assert result == [(100.0, 205.0)]
+        assert cls == ["match_boundary"]
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_no_merge_when_gap_exceeds_max(self, mock_classify):
@@ -688,3 +746,68 @@ class TestProbeFrameRgb:
         ):
             with pytest.raises(VideoProcessingError):
                 _probe_frame_rgb(Path("v.mp4"), 10.0)
+
+
+# --- _is_static_screen tests ---
+
+
+class TestIsStaticScreen:
+    """Tests for static screen detection via scorebar ROI MAD."""
+
+    def _make_static_frames(
+        self, count: int = 3, roi_color: tuple[int, int, int] = (87, 87, 87)
+    ) -> list[bytes]:
+        """Create identical frames (simulating a loading screen)."""
+        return [_make_frame(roi_color=roi_color) for _ in range(count)]
+
+    def _make_varying_frames(self, count: int = 3) -> list[bytes]:
+        """Create frames with different ROI content (simulating gameplay)."""
+        colors = [(60, 75, 100), (90, 50, 80), (65, 95, 55)]
+        return [_make_frame(roi_color=colors[i % len(colors)]) for i in range(count)]
+
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
+    def test_static_screen_detected(self, mock_probe):
+        """Identical frames → static screen detected."""
+        frames = self._make_static_frames()
+        mock_probe.side_effect = frames
+        assert _is_static_screen(Path("v.mp4"), [1.0, 2.0, 3.0], _HEIGHT, None) is True
+
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
+    def test_varying_frames_not_static(self, mock_probe):
+        """Different frames → not static."""
+        frames = self._make_varying_frames()
+        mock_probe.side_effect = frames
+        assert _is_static_screen(Path("v.mp4"), [1.0, 2.0, 3.0], _HEIGHT, None) is False
+
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
+    def test_single_transition_tolerated(self, mock_probe):
+        """Screen changes between F1-F2 but F2-F3 static → detected (#201)."""
+        # F1: different screen, F2-F3: identical loading screen
+        f1 = _make_frame(roi_color=(50, 100, 150))
+        f2 = _make_frame(roi_color=(87, 87, 87))
+        f3 = _make_frame(roi_color=(87, 87, 87))
+        mock_probe.side_effect = [f1, f2, f3]
+        assert _is_static_screen(Path("v.mp4"), [1.0, 2.0, 3.0], _HEIGHT, None) is True
+
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
+    def test_all_probes_failed(self, mock_probe):
+        """All probes return None → not static (safe side)."""
+        mock_probe.return_value = None
+        assert _is_static_screen(Path("v.mp4"), [1.0, 2.0, 3.0], _HEIGHT, None) is False
+
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
+    def test_only_one_valid_probe(self, mock_probe):
+        """Only 1 valid frame → not static (need >=2 for comparison)."""
+        frame = self._make_static_frames(1)[0]
+        mock_probe.side_effect = [frame, None, None]
+        assert _is_static_screen(Path("v.mp4"), [1.0, 2.0, 3.0], _HEIGHT, None) is False
+
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
+    def test_threshold_boundary_above(self, mock_probe):
+        """MAD just above threshold → not static."""
+        f1 = _make_frame(roi_color=(87, 87, 87))
+        # Shift enough to push MAD above 0.5
+        f2 = _make_frame(roi_color=(90, 90, 90))
+        mock_probe.side_effect = [f1, f2]
+        result = _is_static_screen(Path("v.mp4"), [1.0, 2.0], _HEIGHT, None)
+        assert result is False
