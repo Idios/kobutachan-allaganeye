@@ -38,10 +38,15 @@ def probe_video(video_path: Path) -> dict:
             capture_output=True,
             text=True,
             check=True,
+            timeout=30,
         )
     except FileNotFoundError as e:
         raise VideoProcessingError(
             "ffprobe not found. Please install ffmpeg and ensure it is in PATH."
+        ) from e
+    except subprocess.TimeoutExpired as e:
+        raise VideoProcessingError(
+            f"ffprobe timed out after 30s for {video_path}"
         ) from e
     except subprocess.CalledProcessError as e:
         raise VideoProcessingError(f"ffprobe failed: {e.stderr}") from e

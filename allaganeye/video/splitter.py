@@ -51,6 +51,7 @@ def _ffmpeg_split(
       readable (ffmpeg can produce very long diagnostic output).
     """
     duration = end - start
+    timeout = max(int(duration * 2) + 60, 120)
     try:
         result = subprocess.run(
             [
@@ -70,10 +71,15 @@ def _ffmpeg_split(
             ],
             capture_output=True,
             text=True,
+            timeout=timeout,
         )
     except FileNotFoundError as e:
         raise VideoProcessingError(
             "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
+        ) from e
+    except subprocess.TimeoutExpired as e:
+        raise VideoProcessingError(
+            f"ffmpeg split timed out after {timeout}s for {output.name}"
         ) from e
 
     if result.returncode != 0:
