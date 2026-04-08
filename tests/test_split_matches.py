@@ -14,9 +14,11 @@ from allaganeye.commands.split_matches import (
 )
 from allaganeye.config import SplitConfig
 from allaganeye.exceptions import AllaganEyeError, DetectionError, VideoProcessingError
+from allaganeye.video.detector import MatchBoundary
+from allaganeye.video.probe import ProbeResult
 
 # Standard mock return values
-PROBE_RESULT = {
+PROBE_RESULT: ProbeResult = {
     "duration": 1800.0,
     "width": 1920,
     "height": 1080,
@@ -25,9 +27,9 @@ PROBE_RESULT = {
     "audio_codec": "aac",
 }
 
-BOUNDARIES = [
-    {"start": 0.0, "end": 600.0},
-    {"start": 610.0, "end": 1200.0},
+BOUNDARIES: list[MatchBoundary] = [
+    {"start": 0.0, "end": 600.0, "type": "unknown"},
+    {"start": 610.0, "end": 1200.0, "type": "unknown"},
 ]
 
 MODULE = "allaganeye.commands.split_matches"
@@ -385,7 +387,7 @@ def cache_config(tmp_path):
     )
 
 
-CACHE_BOUNDARIES = [
+CACHE_BOUNDARIES: list[MatchBoundary] = [
     {"start": 0.0, "end": 600.0, "type": "fl_match"},
     {"start": 700.0, "end": 1200.0, "type": "fl_match"},
 ]

@@ -5,11 +5,12 @@ from pathlib import Path
 
 from allaganeye.exceptions import VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
+from allaganeye.video.detector import MatchBoundary
 
 
 def split_video(
     video_path: Path,
-    boundaries: list[dict],
+    boundaries: list[MatchBoundary],
     output_dir: Path,
 ) -> list[Path]:
     """Split video into segments using FFmpeg copy mode.

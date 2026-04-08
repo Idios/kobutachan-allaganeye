@@ -6,11 +6,21 @@ import subprocess
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import TypedDict
 
 import numpy as np
 
 from allaganeye.exceptions import VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
+
+
+class MatchBoundary(TypedDict):
+    """A detected match segment with start/end times and type."""
+
+    start: float
+    end: float
+    type: str
+
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +48,7 @@ def detect_match_boundaries(
     workers: int | None = None,
     src_resolution: tuple[int, int] | None = None,
     progress_callback: Callable[[int, int, int], None] | None = None,
-) -> list[dict]:
+) -> list[MatchBoundary]:
     """Detect match boundaries by finding blackout frames.
 
     Args:
@@ -535,7 +545,7 @@ def _filter_and_extract_segments(
     min_match_duration: float,
     min_blackout_duration: float = 3.0,
     classifications: list[str] | None = None,
-) -> list[dict]:
+) -> list[MatchBoundary]:
     """Filter blackout regions by duration and extract match segments.
 
     Removes regions shorter than *min_blackout_duration*, then extracts
@@ -578,7 +588,7 @@ def _filter_and_extract_segments(
         return []
 
     # Extract segments between blackout regions
-    segments: list[dict] = []
+    segments: list[MatchBoundary] = []
 
     # Before first blackout
     if blackout_regions[0][0] > 0:

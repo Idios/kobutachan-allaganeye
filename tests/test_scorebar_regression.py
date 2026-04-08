@@ -20,7 +20,7 @@ import pytest
 from allaganeye.commands.split_matches import run_split
 from allaganeye.config import SplitConfig
 from allaganeye.video.detector import detect_match_boundaries
-from allaganeye.video.probe import probe_video
+from allaganeye.video.probe import ProbeResult, probe_video
 
 pytestmark = pytest.mark.slow
 
@@ -75,7 +75,7 @@ def target_recording(request: pytest.FixtureRequest) -> tuple[str, Path]:
 
 
 @pytest.fixture(scope="session")
-def target_metadata(target_recording: tuple[str, Path]) -> dict:
+def target_metadata(target_recording: tuple[str, Path]) -> ProbeResult:
     _, mkv = target_recording
     return probe_video(mkv)
 

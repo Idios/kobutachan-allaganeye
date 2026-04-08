@@ -3,14 +3,24 @@
 import json
 import logging
 from pathlib import Path
+from typing import TypedDict
 
 import typer
 
 from allaganeye.config import SplitConfig
 from allaganeye.exceptions import AllaganEyeError, DetectionError
-from allaganeye.video.detector import detect_match_boundaries
-from allaganeye.video.probe import probe_video
+from allaganeye.video.detector import MatchBoundary, detect_match_boundaries
+from allaganeye.video.probe import ProbeResult, probe_video
 from allaganeye.video.splitter import split_video
+
+
+class Gap(TypedDict):
+    """A significant gap between detected matches."""
+
+    start: float
+    end: float
+    duration: float
+
 
 logger = logging.getLogger(__name__)
 
@@ -167,9 +177,9 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
 
 def _split_and_write_metadata(
     video_path: Path,
-    boundaries: list[dict],
-    gaps: list[dict],
-    metadata: dict,
+    boundaries: list[MatchBoundary],
+    gaps: list[Gap],
+    metadata: ProbeResult,
     config: SplitConfig,
 ) -> None:
     """Split video and write metadata.json."""
@@ -266,10 +276,10 @@ def _auto_sample_interval(duration: float, configured_interval: float) -> float:
 
 
 def _find_gaps(
-    boundaries: list[dict], total_duration: float, *, min_gap: float = 300.0
-) -> list[dict]:
+    boundaries: list[MatchBoundary], total_duration: float, *, min_gap: float = 300.0
+) -> list[Gap]:
     """Find significant gaps between detected matches."""
-    gaps: list[dict] = []
+    gaps: list[Gap] = []
     for i in range(len(boundaries) - 1):
         gap_start = boundaries[i]["end"]
         gap_end = boundaries[i + 1]["start"]
@@ -282,10 +292,10 @@ def _find_gaps(
 def _save_cache(
     cache_path: Path,
     video_path: Path,
-    probe_metadata: dict,
+    probe_metadata: ProbeResult,
     effective_interval: float,
     config: SplitConfig,
-    boundaries: list[dict],
+    boundaries: list[MatchBoundary],
 ) -> None:
     """Save detection results to cache file."""
     resolved = video_path.resolve()
@@ -328,7 +338,7 @@ def _load_cache(
     video_path: Path,
     effective_interval: float,
     config: SplitConfig,
-) -> list[dict] | None:
+) -> list[MatchBoundary] | None:
     """Load and validate detection cache. Returns boundaries or None."""
     if not cache_path.is_file():
         return None

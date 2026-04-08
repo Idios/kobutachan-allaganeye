@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from allaganeye.ffmpeg_path import find_ffmpeg
-from allaganeye.video.probe import probe_video
+from allaganeye.video.probe import ProbeResult, probe_video
 
 pytestmark = pytest.mark.slow
 
@@ -126,7 +126,7 @@ def source_mkv(split_subdir: Path) -> Path:
 
 
 @pytest.fixture(scope="session")
-def source_metadata(source_mkv: Path) -> dict:
+def source_metadata(source_mkv: Path) -> ProbeResult:
     """Probe metadata for the source MKV (cached for session)."""
     return probe_video(source_mkv)
 

@@ -3,9 +3,21 @@
 import json
 import subprocess
 from pathlib import Path
+from typing import TypedDict
 
 from allaganeye.exceptions import InputFileError, VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffprobe
+
+
+class ProbeResult(TypedDict):
+    """Metadata returned by probe_video()."""
+
+    duration: float
+    width: int
+    height: int
+    fps: float
+    codec: str
+    audio_codec: str | None
 
 
 def _parse_frame_rate(rate_str: str) -> float:
@@ -18,7 +30,7 @@ def _parse_frame_rate(rate_str: str) -> float:
     return fps if fps > 0 else 0.0
 
 
-def probe_video(video_path: Path) -> dict:
+def probe_video(video_path: Path) -> ProbeResult:
     """Extract video metadata using ffprobe.
 
     Returns dict with keys: duration, width, height, fps, codec, audio_codec.
