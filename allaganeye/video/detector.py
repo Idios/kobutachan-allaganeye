@@ -327,9 +327,11 @@ def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
     Returns True if scorebar detected, False if not, or None if probe
     failed (raw_rgb is None).
 
-    Criteria (lead-1 revised spec based on 3-section analysis, #121):
+    Uses a 4-condition AND gate (#121, #201, #200):
     - 20 < roi_brightness < 140 (FL match typical range)
     - max cross-section channel std > 15.0 (3GC color separation)
+    - 2nd-highest channel std > 12.0 (multi-channel variation, A1)
+    - max per-channel horizontal edge > 8.0 (sharp band boundaries, A2)
     """
     if raw_rgb is None:
         return None

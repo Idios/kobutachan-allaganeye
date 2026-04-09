@@ -1,19 +1,11 @@
 """Scorebar-based blackout classification for FL match detection."""
 
 import logging
-from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from math import ceil
 from pathlib import Path
 
-import numpy as np
-
 from allaganeye.video.detector import (
-    _SAMPLE_WIDTH,
-    _SCOREBAR_ROI_X_END,
-    _SCOREBAR_ROI_X_START,
-    _SCOREBAR_ROI_Y_END,
-    _SCOREBAR_ROI_Y_START,
     _has_scorebar,
     _probe_frame_rgb,
     _resolve_workers,
@@ -27,19 +19,15 @@ def _probe_scorebar_context(
     timestamps: list[float],
     height: int,
     workers: int | None,
-) -> tuple[list[bool | None], list[bytes | None]]:
-    """Probe multiple timestamps and return has_scorebar + raw frames.
+) -> list[bool | None]:
+    """Probe multiple timestamps and return has_scorebar for each.
 
-    Returns a tuple of two lists aligned with *timestamps*:
-    - scorebar results: True/False/None per frame
-    - raw RGB frame bytes: bytes/None per frame
-
+    Returns a list aligned with *timestamps*: True/False/None per frame.
     Duplicate timestamps are probed only once; results are shared.
     """
     max_workers = _resolve_workers(workers)
     unique_ts = sorted(set(timestamps))
-    scorebar_results: dict[float, bool | None] = {}
-    raw_frames: dict[float, bytes | None] = {}
+    results: dict[float, bool | None] = {}
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
@@ -48,13 +36,9 @@ def _probe_scorebar_context(
         for future in as_completed(futures):
             t = futures[future]
             raw = future.result()
-            raw_frames[t] = raw
-            scorebar_results[t] = _has_scorebar(raw, height)
+            results[t] = _has_scorebar(raw, height)
 
-    return (
-        [scorebar_results[t] for t in timestamps],
-        [raw_frames[t] for t in timestamps],
-    )
+    return [results[t] for t in timestamps]
 
 
 def _majority_scorebar(results: list[bool | None]) -> bool | None:
@@ -66,65 +50,6 @@ def _majority_scorebar(results: list[bool | None]) -> bool | None:
     if not valid:
         return None
     return sum(valid) >= ceil(len(valid) / 2)
-
-
-_STATIC_SCREEN_MAD_THRESHOLD = 0.5
-"""Max scorebar-ROI MAD to consider consecutive frames as a static screen.
-
-Loading/result screens are pixel-identical across seconds, giving MAD ≈ 0.
-FL match frames always differ (character motion, particles) with MAD > 1.5.
-Threshold 0.5 sits well inside the gap.
-"""
-
-
-def _is_static_from_frames(
-    raw_frames: Sequence[bytes | None],
-    height: int,
-) -> bool:
-    """Detect static screens (loading/result) via scorebar ROI frame diff.
-
-    Computes the mean absolute difference (MAD) of the scorebar ROI pixels
-    between consecutive frame pairs.  If the **minimum** MAD across all
-    pairs is below threshold, the frames show a static screen.
-
-    Using min() tolerates a single screen transition within the window
-    (one pair may have high MAD from a screen change, but the next pair
-    will be static).
-
-    Returns False if fewer than 2 valid frames are provided.
-    """
-    valid = [r for r in raw_frames if r is not None]
-    if len(valid) < 2:
-        return False
-
-    x1 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_START)
-    x2 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_END)
-    y1 = int(height * _SCOREBAR_ROI_Y_START)
-    y2 = int(height * _SCOREBAR_ROI_Y_END)
-
-    rois = []
-    for raw in valid:
-        frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, _SAMPLE_WIDTH, 3)
-        rois.append(frame[y1:y2, x1:x2, :].astype(np.int16))
-
-    mads = []
-    for i in range(len(rois) - 1):
-        mad = float(np.mean(np.abs(rois[i] - rois[i + 1])))
-        mads.append(mad)
-
-    min_mad = min(mads)
-    is_static = min_mad < _STATIC_SCREEN_MAD_THRESHOLD
-
-    logger.debug(
-        "static_screen: frames=%d mads=%s min=%.2f thr=%.1f → %s",
-        len(raw_frames),
-        [f"{m:.2f}" for m in mads],
-        min_mad,
-        _STATIC_SCREEN_MAD_THRESHOLD,
-        is_static,
-    )
-
-    return is_static
 
 
 def classify_blackout(
@@ -148,12 +73,8 @@ def classify_blackout(
     pre_timestamps = sorted(set(max(0.0, region[0] - d) for d in (3.0, 2.0, 1.0)))
     post_timestamps = sorted(set(min(duration, region[1] + d) for d in (1.0, 2.0, 3.0)))
 
-    pre_results, _ = _probe_scorebar_context(
-        video_path, pre_timestamps, height, workers
-    )
-    post_results, _ = _probe_scorebar_context(
-        video_path, post_timestamps, height, workers
-    )
+    pre_results = _probe_scorebar_context(video_path, pre_timestamps, height, workers)
+    post_results = _probe_scorebar_context(video_path, post_timestamps, height, workers)
 
     pre_has = _majority_scorebar(pre_results)
     post_has = _majority_scorebar(post_results)
@@ -318,7 +239,7 @@ def _merge_boundary_pairs(
                 probe_points = [
                     gap_start + (gap_end - gap_start) * k / 10 for k in range(1, 10)
                 ]
-                probe_results, _ = _probe_scorebar_context(
+                probe_results = _probe_scorebar_context(
                     video_path, probe_points, height, workers
                 )
                 all_valid = all(r is not None for r in probe_results)
