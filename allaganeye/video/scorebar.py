@@ -1,6 +1,7 @@
 """Scorebar-based blackout classification for FL match detection."""
 
 import logging
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from math import ceil
 from pathlib import Path
@@ -26,15 +27,19 @@ def _probe_scorebar_context(
     timestamps: list[float],
     height: int,
     workers: int | None,
-) -> list[bool | None]:
-    """Probe multiple timestamps and return has_scorebar for each.
+) -> tuple[list[bool | None], list[bytes | None]]:
+    """Probe multiple timestamps and return has_scorebar + raw frames.
 
-    Returns a list aligned with *timestamps*: True/False/None per frame.
+    Returns a tuple of two lists aligned with *timestamps*:
+    - scorebar results: True/False/None per frame
+    - raw RGB frame bytes: bytes/None per frame
+
     Duplicate timestamps are probed only once; results are shared.
     """
     max_workers = _resolve_workers(workers)
     unique_ts = sorted(set(timestamps))
-    results: dict[float, bool | None] = {}
+    scorebar_results: dict[float, bool | None] = {}
+    raw_frames: dict[float, bytes | None] = {}
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
@@ -43,9 +48,13 @@ def _probe_scorebar_context(
         for future in as_completed(futures):
             t = futures[future]
             raw = future.result()
-            results[t] = _has_scorebar(raw, height)
+            raw_frames[t] = raw
+            scorebar_results[t] = _has_scorebar(raw, height)
 
-    return [results[t] for t in timestamps]
+    return (
+        [scorebar_results[t] for t in timestamps],
+        [raw_frames[t] for t in timestamps],
+    )
 
 
 def _majority_scorebar(results: list[bool | None]) -> bool | None:
@@ -68,39 +77,23 @@ Threshold 0.5 sits well inside the gap.
 """
 
 
-def _is_static_screen(
-    video_path: Path,
-    timestamps: list[float],
+def _is_static_from_frames(
+    raw_frames: Sequence[bytes | None],
     height: int,
-    workers: int | None,
 ) -> bool:
     """Detect static screens (loading/result) via scorebar ROI frame diff.
 
-    Probes frames at the given timestamps and computes the mean absolute
-    difference (MAD) of the scorebar ROI pixels between consecutive pairs.
-    If the **minimum** MAD across all pairs is below threshold, the frames
-    show a static screen.
+    Computes the mean absolute difference (MAD) of the scorebar ROI pixels
+    between consecutive frame pairs.  If the **minimum** MAD across all
+    pairs is below threshold, the frames show a static screen.
 
     Using min() tolerates a single screen transition within the window
     (one pair may have high MAD from a screen change, but the next pair
     will be static).
 
-    Returns False if fewer than 2 frames are successfully probed.
+    Returns False if fewer than 2 valid frames are provided.
     """
-    max_workers = _resolve_workers(workers)
-    unique_ts = sorted(set(timestamps))
-
-    raw_frames: dict[float, bytes | None] = {}
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {
-            pool.submit(_probe_frame_rgb, video_path, t, height): t for t in unique_ts
-        }
-        for future in as_completed(futures):
-            t = futures[future]
-            raw_frames[t] = future.result()
-
-    ordered = [raw_frames[t] for t in unique_ts]
-    valid = [r for r in ordered if r is not None]
+    valid = [r for r in raw_frames if r is not None]
     if len(valid) < 2:
         return False
 
@@ -123,8 +116,8 @@ def _is_static_screen(
     is_static = min_mad < _STATIC_SCREEN_MAD_THRESHOLD
 
     logger.debug(
-        "static_screen: timestamps=%s mads=%s min=%.2f thr=%.1f → %s",
-        [f"{t:.1f}" for t in unique_ts],
+        "static_screen: frames=%d mads=%s min=%.2f thr=%.1f → %s",
+        len(raw_frames),
         [f"{m:.2f}" for m in mads],
         min_mad,
         _STATIC_SCREEN_MAD_THRESHOLD,
@@ -155,31 +148,15 @@ def classify_blackout(
     pre_timestamps = sorted(set(max(0.0, region[0] - d) for d in (3.0, 2.0, 1.0)))
     post_timestamps = sorted(set(min(duration, region[1] + d) for d in (1.0, 2.0, 3.0)))
 
-    pre_results = _probe_scorebar_context(video_path, pre_timestamps, height, workers)
-    post_results = _probe_scorebar_context(video_path, post_timestamps, height, workers)
+    pre_results, _ = _probe_scorebar_context(
+        video_path, pre_timestamps, height, workers
+    )
+    post_results, _ = _probe_scorebar_context(
+        video_path, post_timestamps, height, workers
+    )
 
     pre_has = _majority_scorebar(pre_results)
     post_has = _majority_scorebar(post_results)
-
-    # Override scorebar detection on static screens (loading/result).
-    # Loading screens can trigger _has_scorebar due to color patterns
-    # that mimic scorebar channel separation.  (#201)
-    if pre_has and post_has:
-        if _is_static_screen(video_path, post_timestamps, height, workers):
-            logger.debug(
-                "static_screen override: post side [%.1f-%.1f]",
-                region[0],
-                region[1],
-            )
-            post_has = False
-        if pre_has and post_has:
-            if _is_static_screen(video_path, pre_timestamps, height, workers):
-                logger.debug(
-                    "static_screen override: pre side [%.1f-%.1f]",
-                    region[0],
-                    region[1],
-                )
-                pre_has = False
 
     if pre_has is None or post_has is None:
         classification = "unknown"
@@ -216,16 +193,6 @@ Threshold: character down = 1.0-2.0s (refined measurement), short FL
 boundary = 4.5s+.  3.5s sits in the gap with 1.5s margin on each side.
 """
 
-
-_MERGE_MAX_SCOREBAR_HITS = 2
-"""Max scorebar detections in gap probes to still allow merging.
-
-A single borderline false positive (channel std just above threshold)
-should not block merging of consecutive match_boundary pairs.  Real
-FL match content produces scorebar hits on 4+ out of 9 probe points.
-Allowing up to 1 hit (< 2) absorbs non-deterministic ffmpeg seek
-variations at threshold boundaries.  (#200)
-"""
 
 _MERGE_GAP_MAX = 600.0
 """Maximum gap (seconds) between consecutive match_boundary regions to merge.
@@ -351,12 +318,12 @@ def _merge_boundary_pairs(
                 probe_points = [
                     gap_start + (gap_end - gap_start) * k / 10 for k in range(1, 10)
                 ]
-                probe_results = _probe_scorebar_context(
+                probe_results, _ = _probe_scorebar_context(
                     video_path, probe_points, height, workers
                 )
                 all_valid = all(r is not None for r in probe_results)
-                scorebar_count = sum(1 for r in probe_results if r is True)
-                if all_valid and scorebar_count < _MERGE_MAX_SCOREBAR_HITS:
+                any_scorebar = any(r is True for r in probe_results)
+                if all_valid and not any_scorebar:
                     merged_region = (regions[i][0], regions[i + 1][1])
                     logger.info(
                         "MERGE  [%.1f-%.1f] + [%.1f-%.1f] → [%.1f-%.1f] "
