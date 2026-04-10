@@ -144,6 +144,7 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 - `allaganeye-guard verify <file>` で検査、PASS なら `allaganeye split` で処理
 - 将来的に `--verify` オプションで自動呼び出しを実装予定
 - guard がインストールされていなくても allaganeye 本体は正常動作する
+- **外部動画データの検査**: Idios 以外のユーザーが issue・PR に添付した動画は、`allaganeye-guard verify` が PASS するまで処理しない（`docs/guard-integration.md` §8 参照）
 - **開発・リリース同期**: guard 実装後、allaganeye のレイヤーリリース時に guard との互換性チェックが必要になる。ディレクターが両プロジェクトの同期を管理する（`docs/guard-integration.md` 参照）
 
 ## リリース戦略
