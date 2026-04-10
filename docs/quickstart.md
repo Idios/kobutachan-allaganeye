@@ -126,7 +126,17 @@ pip install -e .
 
 > SSH を使う場合: `git clone git@github.com:Idios/kobutachan-allaganeye.git`
 
-## 3. 動画を分割する
+## 3. 更新
+
+```bash
+cd kobutachan-allaganeye
+git pull
+```
+
+editable install (`pip install -e .`) のため、通常は `git pull` だけで更新が反映されます。
+依存パッケージが追加・変更された場合のみ `pip install -e .` の再実行が必要です。
+
+## 4. 動画を分割する
 
 ### 対応する録画
 
@@ -166,7 +176,7 @@ allaganeye split your_recording.mkv --gpu
 
 GPU が利用できない場合は自動で CPU モードにフォールバックします。どちらが速いかはコーデックや環境によって異なります。使い分けの判断方法は [パラメータ調整ガイド](tuning-guide.md) を参照してください。
 
-## 4. うまく分割されない場合
+## 5. うまく分割されない場合
 
 デフォルト設定は FL の一般的な録画に合わせて調整されており、多くの場合そのまま使えます。
 
