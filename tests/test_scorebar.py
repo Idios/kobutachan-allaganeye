@@ -17,12 +17,14 @@ from allaganeye.video.detector import (
 )
 from allaganeye.video.scorebar import (
     _MERGE_GAP_MAX,
+    _is_static_from_frames,
     _majority_scorebar,
     classify_blackout,
     filter_blackouts_with_scorebar,
 )
 
 _HEIGHT = 180  # 16:9 scaled height
+_FAKE_FRAME = b"\x00" * (_SAMPLE_WIDTH * _HEIGHT * 3)  # dummy frame for mocks
 
 
 def _make_frame(
@@ -212,22 +214,53 @@ SCOREBAR_MODULE = "allaganeye.video.scorebar"
 
 
 class TestClassifyBlackout:
+    @patch(f"{SCOREBAR_MODULE}._is_static_from_frames", return_value=False)
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
-    def test_in_match(self, mock_probe):
-        """Both sides have scorebar → in_match."""
+    def test_in_match(self, mock_probe, _mock_static):
+        """Both sides have scorebar, not static → in_match."""
+        f = _FAKE_FRAME
         mock_probe.side_effect = [
-            [True, True, True],  # pre
-            [True, True, True],  # post
+            ([True, True, True], [f, f, f]),  # pre
+            ([True, True, True], [f, f, f]),  # post
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
         assert result == "in_match"
 
+    @patch(f"{SCOREBAR_MODULE}._is_static_from_frames")
+    @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
+    def test_in_match_overridden_by_static_post(self, mock_probe, mock_static):
+        """Both sides scorebar, but post is static → match_boundary."""
+        f = _FAKE_FRAME
+        mock_probe.side_effect = [
+            ([True, True, True], [f, f, f]),  # pre
+            ([True, True, True], [f, f, f]),  # post
+        ]
+        mock_static.return_value = True  # post side is static screen
+        result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
+        assert result == "match_boundary"
+        assert mock_static.call_count == 1
+
+    @patch(f"{SCOREBAR_MODULE}._is_static_from_frames")
+    @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
+    def test_in_match_overridden_by_static_pre(self, mock_probe, mock_static):
+        """Both sides scorebar, post not static but pre is → match_boundary."""
+        f = _FAKE_FRAME
+        mock_probe.side_effect = [
+            ([True, True, True], [f, f, f]),  # pre
+            ([True, True, True], [f, f, f]),  # post
+        ]
+        mock_static.side_effect = [False, True]  # post=not static, pre=static
+        result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
+        assert result == "match_boundary"
+        assert mock_static.call_count == 2
+
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_match_boundary_start(self, mock_probe):
         """Pre=False, Post=True → match_boundary (match start)."""
+        f = _FAKE_FRAME
         mock_probe.side_effect = [
-            [False, False, False],  # pre
-            [True, True, True],  # post
+            ([False, False, False], [f, f, f]),  # pre
+            ([True, True, True], [f, f, f]),  # post
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
         assert result == "match_boundary"
@@ -235,9 +268,10 @@ class TestClassifyBlackout:
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_match_boundary_end(self, mock_probe):
         """Pre=True, Post=False → match_boundary (match end)."""
+        f = _FAKE_FRAME
         mock_probe.side_effect = [
-            [True, True, True],  # pre
-            [False, False, False],  # post
+            ([True, True, True], [f, f, f]),  # pre
+            ([False, False, False], [f, f, f]),  # post
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
         assert result == "match_boundary"
@@ -245,9 +279,10 @@ class TestClassifyBlackout:
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_non_fl(self, mock_probe):
         """Neither side has scorebar → non_fl."""
+        f = _FAKE_FRAME
         mock_probe.side_effect = [
-            [False, False, False],  # pre
-            [False, False, False],  # post
+            ([False, False, False], [f, f, f]),  # pre
+            ([False, False, False], [f, f, f]),  # post
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
         assert result == "non_fl"
@@ -256,8 +291,8 @@ class TestClassifyBlackout:
     def test_all_probes_failed(self, mock_probe):
         """All probes failed → unknown."""
         mock_probe.side_effect = [
-            [None, None, None],  # pre
-            [None, None, None],  # post
+            ([None, None, None], [None, None, None]),  # pre
+            ([None, None, None], [None, None, None]),  # post
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
         assert result == "unknown"
@@ -265,9 +300,10 @@ class TestClassifyBlackout:
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_pre_failed_post_scorebar(self, mock_probe):
         """Pre all failed, post has scorebar → unknown (safe side)."""
+        f = _FAKE_FRAME
         mock_probe.side_effect = [
-            [None, None, None],  # pre
-            [True, True, True],  # post
+            ([None, None, None], [None, None, None]),  # pre
+            ([True, True, True], [f, f, f]),  # post
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
         assert result == "unknown"
@@ -275,9 +311,10 @@ class TestClassifyBlackout:
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_partial_failure_majority(self, mock_probe):
         """Partial failures with majority vote."""
+        f = _FAKE_FRAME
         mock_probe.side_effect = [
-            [True, True, None],  # pre: 2/2 True
-            [False, None, None],  # post: 1/1 False
+            ([True, True, None], [f, f, None]),  # pre: 2/2 True
+            ([False, None, None], [f, None, None]),  # post: 1/1 False
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
         assert result == "match_boundary"
@@ -618,12 +655,14 @@ class TestMajorityScorebarEdge:
 
 
 class TestClassifyBlackoutBoundary:
+    @patch(f"{SCOREBAR_MODULE}._is_static_from_frames", return_value=False)
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
-    def test_region_at_video_start(self, mock_probe):
+    def test_region_at_video_start(self, mock_probe, _mock_static):
         """Region near start (0.5s) → pre timestamps clamp to 0.0."""
+        f = _FAKE_FRAME
         mock_probe.side_effect = [
-            [True],  # pre: only 1 unique timestamp after dedup
-            [True, True, True],  # post: 3 timestamps
+            ([True], [f]),  # pre: only 1 unique timestamp after dedup
+            ([True, True, True], [f, f, f]),  # post: 3 timestamps
         ]
         result = classify_blackout(Path("v.mp4"), (0.5, 3.0), 300.0, _HEIGHT)
         assert result == "in_match"
@@ -635,9 +674,10 @@ class TestClassifyBlackoutBoundary:
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_region_at_video_end(self, mock_probe):
         """Region near end → post timestamps clamp to duration."""
+        f = _FAKE_FRAME
         mock_probe.side_effect = [
-            [False, False, False],  # pre
-            [False],  # post: collapsed
+            ([False, False, False], [f, f, f]),  # pre
+            ([False], [f]),  # post: collapsed
         ]
         result = classify_blackout(Path("v.mp4"), (297.0, 299.5), 300.0, _HEIGHT)
         assert result == "non_fl"
@@ -764,3 +804,58 @@ class TestProbeFrameRgb:
         ):
             with pytest.raises(VideoProcessingError):
                 _probe_frame_rgb(Path("v.mp4"), 10.0)
+
+
+# --- _is_static_from_frames tests ---
+
+
+class TestIsStaticFromFrames:
+    """Tests for static screen detection via scorebar ROI MAD (max-based)."""
+
+    def _make_static_frames(
+        self, count: int = 3, roi_color: tuple[int, int, int] = (87, 87, 87)
+    ) -> list[bytes]:
+        """Create identical frames (simulating a loading screen)."""
+        return [_make_frame(roi_color=roi_color) for _ in range(count)]
+
+    def _make_varying_frames(self, count: int = 3) -> list[bytes]:
+        """Create frames with different ROI content (simulating gameplay)."""
+        colors = [(60, 75, 100), (90, 50, 80), (65, 95, 55)]
+        return [_make_frame(roi_color=colors[i % len(colors)]) for i in range(count)]
+
+    def test_static_screen_detected(self):
+        """Identical frames → static screen detected."""
+        frames = self._make_static_frames()
+        assert _is_static_from_frames(frames, _HEIGHT) is True
+
+    def test_varying_frames_not_static(self):
+        """Different frames → not static."""
+        frames = self._make_varying_frames()
+        assert _is_static_from_frames(frames, _HEIGHT) is False
+
+    def test_all_frames_none(self):
+        """All frames None → not static (safe side)."""
+        assert _is_static_from_frames([None, None, None], _HEIGHT) is False
+
+    def test_only_one_valid_frame(self):
+        """Only 1 valid frame → not static (need >=2 for comparison)."""
+        frame = self._make_static_frames(1)[0]
+        assert _is_static_from_frames([frame, None, None], _HEIGHT) is False
+
+    def test_single_transition_not_static(self):
+        """Screen changes between F1-F2 but F2-F3 static → NOT static (max-based).
+
+        With max(MADs), a single high-MAD pair prevents static detection.
+        This reduces false positives from keyframe aliasing.
+        """
+        f1 = _make_frame(roi_color=(50, 100, 150))
+        f2 = _make_frame(roi_color=(87, 87, 87))
+        f3 = _make_frame(roi_color=(87, 87, 87))
+        # F1-F2: high MAD, F2-F3: MAD=0 → max(MADs) > 0.5 → NOT static
+        assert _is_static_from_frames([f1, f2, f3], _HEIGHT) is False
+
+    def test_threshold_boundary_above(self):
+        """MAD just above threshold → not static."""
+        f1 = _make_frame(roi_color=(87, 87, 87))
+        f2 = _make_frame(roi_color=(90, 90, 90))
+        assert _is_static_from_frames([f1, f2], _HEIGHT) is False
