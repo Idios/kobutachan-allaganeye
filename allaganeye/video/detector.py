@@ -135,6 +135,91 @@ def detect_match_boundaries(
     )
 
 
+def _decode_chunk_cpu(
+    video_path: Path,
+    chunk_timestamps: list[float],
+    chunk_start: float,
+    chunk_end: float,
+    sample_interval: float,
+) -> dict[float, float]:
+    """Decode a chunk using CPU-only ffmpeg with continuous decode.
+
+    Mirrors the GPU ``_decode_chunk()`` approach but without hardware
+    acceleration: one long-lived ffmpeg process decodes the entire chunk
+    via the ``fps`` filter, eliminating per-frame ``-ss`` non-determinism.
+
+    Returns a dict mapping each timestamp in *chunk_timestamps* to its
+    mean brightness.  On failure, returns all timestamps mapped to 255.0
+    (safe non-blackout).
+    """
+    if not chunk_timestamps:
+        return {}
+
+    chunk_duration = chunk_end - chunk_start
+    fps_value = 1.0 / sample_interval
+
+    cmd = [
+        find_ffmpeg(),
+        "-threads",
+        "1",
+        "-ss",
+        str(chunk_start),
+        "-t",
+        str(chunk_duration),
+        "-i",
+        str(video_path),
+        "-vf",
+        f"fps={fps_value},scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
+        "pipe:1",
+    ]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=max(300, int(chunk_duration * 2)),
+        )
+    except FileNotFoundError as e:
+        raise VideoProcessingError(
+            "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
+        ) from e
+    except subprocess.TimeoutExpired:
+        logger.warning("CPU chunk decode timed out [%.1f-%.1f]", chunk_start, chunk_end)
+        return {t: 255.0 for t in chunk_timestamps}
+
+    if proc.returncode != 0:
+        logger.warning(
+            "CPU chunk decode failed [%.1f-%.1f]: %s",
+            chunk_start,
+            chunk_end,
+            proc.stderr.decode(errors="replace")[-200:],
+        )
+        return {t: 255.0 for t in chunk_timestamps}
+
+    # Parse raw frames and map to pre-computed timestamps
+    data = proc.stdout
+    results: dict[float, float] = {}
+    frame_idx = 0
+    offset = 0
+
+    while offset + _FRAME_SIZE <= len(data) and frame_idx < len(chunk_timestamps):
+        frame = np.frombuffer(data[offset : offset + _FRAME_SIZE], dtype=np.uint8)
+        results[chunk_timestamps[frame_idx]] = float(frame.mean())
+        offset += _FRAME_SIZE
+        frame_idx += 1
+
+    # Fill missing timestamps with safe non-blackout value
+    for t in chunk_timestamps:
+        if t not in results:
+            results[t] = 255.0
+
+    return results
+
+
 def _scan_cpu(
     video_path: Path,
     duration_hint: float,
@@ -143,31 +228,67 @@ def _scan_cpu(
     workers: int | None = None,
     progress_callback: Callable[[int, int, int], None] | None = None,
 ) -> dict[float, float]:
-    """CPU mode: parallel -ss probes, one ffmpeg process per frame."""
+    """CPU mode: chunked continuous decode, one ffmpeg process per chunk.
+
+    Splits the video timeline into chunks and decodes each chunk with
+    a long-lived ffmpeg process using the ``fps`` filter.  This replaces
+    per-frame ``-ss`` probing, reducing ffmpeg seek non-determinism to
+    one seek per chunk instead of one per frame.  (#214)
+    """
     timestamps = _generate_timestamps(duration_hint, sample_interval)
     if not timestamps:
         return {}
 
     total_samples = len(timestamps)
-    max_workers = _resolve_workers(workers)
+    num_chunks = min(os.cpu_count() or 4, 16)
+    chunk_duration = duration_hint / num_chunks
+
+    # Distribute pre-computed timestamps to chunks (with overlap)
+    chunks: list[tuple[float, float, list[float]]] = []
+    for i in range(num_chunks):
+        c_start = i * chunk_duration
+        c_end = min((i + 1) * chunk_duration + sample_interval, duration_hint)
+        c_timestamps = [t for t in timestamps if c_start <= t < c_end]
+        if c_timestamps:
+            chunks.append((c_start, c_end, c_timestamps))
 
     results: dict[float, float] = {}
     blackout_count = 0
     completed = 0
 
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+    with ThreadPoolExecutor(
+        max_workers=min(num_chunks, _resolve_workers(workers))
+    ) as pool:
         futures = {
-            pool.submit(_probe_single_frame, video_path, t): t for t in timestamps
+            pool.submit(
+                _decode_chunk_cpu,
+                video_path,
+                c_ts,
+                c_start,
+                c_end,
+                sample_interval,
+            ): (c_start, c_ts)
+            for c_start, c_end, c_ts in chunks
         }
         for future in as_completed(futures):
-            t = futures[future]
-            brightness = future.result()
-            results[t] = brightness
-            completed += 1
-            if brightness < blackout_threshold:
-                blackout_count += 1
-            if progress_callback is not None:
-                progress_callback(completed, total_samples, blackout_count)
+            chunk_results = future.result()
+            for t, brightness in chunk_results.items():
+                if t not in results:  # first-writer-wins for overlap
+                    results[t] = brightness
+                    completed += 1
+                    if brightness < blackout_threshold:
+                        blackout_count += 1
+                    if progress_callback is not None:
+                        progress_callback(completed, total_samples, blackout_count)
+
+    # Safety: ensure all timestamps have a result
+    for t in timestamps:
+        if t not in results:
+            results[t] = 255.0
+
+    if not any(b < blackout_threshold for b in results.values()) and len(results) > 0:
+        # All chunks may have failed silently
+        logger.debug("No blackouts detected in %d frames", len(results))
 
     return results
 
