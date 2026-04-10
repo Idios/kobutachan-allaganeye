@@ -206,7 +206,29 @@ guard = ["kobutachan-allaganeye-guard"]
 
 ---
 
-## 8. バグ報告時の運用フロー
+## 8. 外部動画データの検査ルール
+
+GitHub の issue・PR に添付またはリンクされた動画ファイルについて、以下のルールに従う。
+
+| データの出所 | guard 検査 |
+|---|---|
+| Idios が作成した issue/PR の添付・リンク | 不要（自己録画データ） |
+| Idios 以外が作成した issue/PR の添付・リンク | **必須** |
+| 外部ユーザーから直接受領したファイル（§9） | **必須** |
+| `ALLAGANEYE_SAMPLE_VIDEO_DIR` の既存データ | 不要（検証済み） |
+
+### 検査手順
+
+1. ファイルをダウンロードし、隔離ディレクトリに保存する
+2. `allaganeye-guard verify <file>` を実行する
+3. **PASS するまで allaganeye で処理しない**
+4. guard 未インストールの場合は先にインストールする（§7 参照）
+5. FAIL の場合は処理せず、issue・PR にコメントして提供者に確認を求める
+6. 検査結果（PASS / FAIL）を issue・PR にコメントとして記録する
+
+---
+
+## 9. バグ報告時の運用フロー
 
 外部ユーザーからバグ再現データを受領する際の手順。
 
@@ -237,7 +259,7 @@ guard = ["kobutachan-allaganeye-guard"]
 
 ---
 
-## 9. allaganeye 側の実装タスク
+## 10. allaganeye 側の実装タスク
 
 guard 連携のために allaganeye 側で必要な変更。
 
@@ -252,7 +274,7 @@ guard 連携のために allaganeye 側で必要な変更。
 
 ---
 
-## 10. 保守と定期見直し
+## 11. 保守と定期見直し
 
 guard はセキュリティツールのため、以下の定期見直しが必要（詳細は guard リポジトリの `docs/maintenance-policy.md`）。
 
