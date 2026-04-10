@@ -300,6 +300,26 @@ std across the three sections (26-48 for FL, ~5 for lobby, ~8-9 for queue).
 Threshold 15.0 sits in the gap between queue max (~8.8) and FL min (~26).
 """
 
+_SCOREBAR_MIN_SECONDARY_STD = 12.0
+"""Minimum cross-section std for the 2nd-highest channel.
+
+FL scorebar 3GC colors produce high std in all 3 RGB channels (26-48).
+Loading screen gradients typically affect only 1 channel (e.g. R std 31.7
+while G, B std < 5).  Requiring 2+ channels above this threshold
+rejects single-channel gradient false positives.  (#201)
+12.0 sits between queue max (~8.8) and FL min (~26) with margin.
+"""
+
+_SCOREBAR_EDGE_THRESHOLD = 8.0
+"""Minimum per-channel horizontal edge magnitude in scorebar ROI.
+
+FL scorebar band boundaries produce sharp pixel transitions where
+adjacent sections meet (typical max edge 20-60).  Loading screens
+have smooth gradients with max edge < 5.  Computed per RGB channel
+to detect chrominance-only boundaries (same luminance, different hue).
+8.0 provides safe margin between gradient max (~5) and FL min (~20).
+"""
+
 
 def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
     """Determine if FL scorebar is present in the frame.
@@ -307,9 +327,11 @@ def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
     Returns True if scorebar detected, False if not, or None if probe
     failed (raw_rgb is None).
 
-    Criteria (lead-1 revised spec based on 3-section analysis, #121):
+    Uses a 4-condition AND gate (#121, #201, #200):
     - 20 < roi_brightness < 140 (FL match typical range)
     - max cross-section channel std > 15.0 (3GC color separation)
+    - 2nd-highest channel std > 12.0 (multi-channel variation, A1)
+    - max per-channel horizontal edge > 8.0 (sharp band boundaries, A2)
     """
     if raw_rgb is None:
         return None
@@ -352,20 +374,61 @@ def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
         float(np.std([s[2] for s in section_means])),
     ]
     max_channel_std = max(channel_stds)
-    detected = max_channel_std > _SCOREBAR_CHANNEL_STD_THRESHOLD
+    if max_channel_std <= _SCOREBAR_CHANNEL_STD_THRESHOLD:
+        logger.debug(
+            "scorebar: brightness=%.1f ch_std=[R=%.1f G=%.1f B=%.1f] "
+            "max=%.1f <= %.1f → False",
+            roi_brightness,
+            *channel_stds,
+            max_channel_std,
+            _SCOREBAR_CHANNEL_STD_THRESHOLD,
+        )
+        return False
+
+    # A1: Require at least 2 channels with high cross-section std.
+    # FL scorebar 3GC colors produce high std in all channels (26-48).
+    # Loading screen gradients affect only 1 channel.  (#201)
+    sorted_stds = sorted(channel_stds)
+    secondary_std = sorted_stds[-2]
+    if secondary_std <= _SCOREBAR_MIN_SECONDARY_STD:
+        logger.debug(
+            "scorebar: brightness=%.1f ch_std=[R=%.1f G=%.1f B=%.1f] "
+            "secondary=%.1f <= %.1f → False (A1)",
+            roi_brightness,
+            *channel_stds,
+            secondary_std,
+            _SCOREBAR_MIN_SECONDARY_STD,
+        )
+        return False
+
+    # A2: Require sharp horizontal edges in ROI (band boundaries).
+    # FL scorebar has distinct color bands with sharp transitions (edge 20-60).
+    # Loading screens have smooth gradients (edge < 5).
+    # Computed per RGB channel to detect chrominance-only boundaries.
+    roi_int = roi.astype(np.int16)
+    h_edges = np.abs(roi_int[:, 1:, :] - roi_int[:, :-1, :])
+    max_edge = float(h_edges.max())
+    if max_edge <= _SCOREBAR_EDGE_THRESHOLD:
+        logger.debug(
+            "scorebar: brightness=%.1f ch_std max=%.1f "
+            "max_edge=%.1f <= %.1f → False (A2)",
+            roi_brightness,
+            max_channel_std,
+            max_edge,
+            _SCOREBAR_EDGE_THRESHOLD,
+        )
+        return False
 
     logger.debug(
-        "scorebar: brightness=%.1f  ch_std=[R=%.1f G=%.1f B=%.1f] max=%.1f thr=%.1f → %s",
+        "scorebar: brightness=%.1f ch_std=[R=%.1f G=%.1f B=%.1f] "
+        "secondary=%.1f max_edge=%.1f → True",
         roi_brightness,
-        channel_stds[0],
-        channel_stds[1],
-        channel_stds[2],
-        max_channel_std,
-        _SCOREBAR_CHANNEL_STD_THRESHOLD,
-        detected,
+        *channel_stds,
+        secondary_std,
+        max_edge,
     )
 
-    return detected
+    return True
 
 
 _TRANSITION_THRESHOLD = 55.0
