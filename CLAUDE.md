@@ -6,22 +6,23 @@ FF14 PvPコンテンツ「フロントライン」の長時間録画動画（OBS
 
 ### 段階的アーキテクチャ
 
-**コアレイヤー（L1〜L4）**
+**コアレイヤー（L1〜L5）**
 
 | レイヤー | 処理 | 技術 | 状態 |
 |---|---|---|---|
 | L1: 試合分割 | 暗転検知で試合単位に分割 | FFmpeg（検知+分割） | **実装中** |
-| L2: メタデータ化 | キルログ・音声・チャットをタイムスタンプ化 | Tesseract / Whisper | 未着手 |
-| L3: 価値評価 | 抽出データをMLが判定 | ローカル ML（scikit-learn 等） | 未着手 |
-| L4: 自動編集 | 判定に基づき動画切り出し・投稿提案 | MoviePy / FFmpeg | 未着手 |
+| L2: GUI | GUI サポート | TBD | 計画中 |
+| L3: メタデータ化 | キルログ・音声・チャットをタイムスタンプ化 | Tesseract / Whisper | 未着手 |
+| L4: 価値評価 | 抽出データをMLが判定 | ローカル ML（scikit-learn 等） | 未着手 |
+| L5: 自動編集 | 判定に基づき動画切り出し・投稿提案 | MoviePy / FFmpeg | 未着手 |
 
-**拡張レイヤー（L5〜L7、暫定）**
+**拡張レイヤー（L6〜L8、暫定）**
 
 | レイヤー | 処理 | 状態 |
 |---|---|---|
-| L5: guard 連携 | allaganeye-guard 統合 | 計画中 |
-| L6: 配布・UX | ゼロ環境構築配布、GUI | 計画中 |
-| L7: プライバシー・精密分割 | プレイヤー名ぼかし、再エンコード分割 | 計画中 |
+| L6: guard 連携 | allaganeye-guard 統合 | 計画中 |
+| L7: 配布 | ゼロ環境構築配布 | 計画中 |
+| L8: プライバシー・精密分割 | プレイヤー名ぼかし、再エンコード分割 | 計画中 |
 
 **設計原則**: ツールの独立性・ポータビリティを保つため、Web 経由のサービスや大規模モデルをツールの実行時依存に含めない。AI（LLM）はツール自体の設計と評価にのみ用いる。動画編集・変換は FFmpeg/OpenCV 等のライブラリで実行する。ローカル ML（scikit-learn 等の軽量モデル）は信号処理・分類で必要に応じて使用してよい。
 
@@ -117,7 +118,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 - **ffmpeg / ffprobe**: 4.1 以上。PATH、`ALLAGANEYE_FFMPEG` 環境変数、または OS 別既知パスから自動検索（`allaganeye/ffmpeg_path.py`）
   - Windows: winget (`Gyan.FFmpeg`) のインストール先を自動検索
   - macOS: Homebrew (`/opt/homebrew/bin`, `/usr/local/bin`) を自動検索
-- **Python パッケージ**: numpy, typer（opencv-python は L1 では不要。L2 以降で使用予定）
+- **Python パッケージ**: numpy, typer（opencv-python は L1 では不要。L3 以降で使用予定）
 - **対応プラットフォーム**: Windows のみ（実動画での動作確認済み）。Linux・macOS は未検証（CI では lint/型チェックのみ ubuntu で実行）
 
 ### 動画サンプルデータ
@@ -154,7 +155,7 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 - `develop-x.x.x` が日常の統合先、`main` はリリース時のみ更新
 - 各ロールの PR はすべて `develop-x.x.x` にマージ
 - リリース時に `develop-x.x.0 → main` マージ + タグ打ち
-- レイヤーごとに minor バージョン（L1=0.1, L2=0.2, L3=0.3, L4=0.4）
+- レイヤーごとに minor バージョン（L1=0.1, L2=0.2, L3=0.3, L4=0.4, L5=0.5）
 
 ## ロールシステム
 
