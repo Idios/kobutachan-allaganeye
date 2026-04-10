@@ -84,12 +84,15 @@ def _is_static_from_frames(
     """Detect static screens (loading/result) via scorebar ROI frame diff.
 
     Computes the mean absolute difference (MAD) of the scorebar ROI pixels
-    between consecutive frame pairs.  If the **maximum** MAD across all
+    between consecutive frame pairs.  If the **minimum** MAD across all
     pairs is below threshold, the frames show a static screen.
 
-    Using max() requires ALL consecutive pairs to be static, reducing
-    false positives from ffmpeg keyframe aliasing where only some probes
-    return the same decoded frame.
+    Using min() tolerates a single screen transition within the window
+    (one pair may have high MAD from a screen change, but the next pair
+    will be static).  False positives from ffmpeg keyframe aliasing are
+    mitigated by the A1+A2 checks in ``_has_scorebar``, which reduce the
+    number of blackouts reaching the ``in_match`` classification path
+    where this check is applied.
 
     Returns False if fewer than 2 valid frames are provided.
     """
@@ -112,14 +115,14 @@ def _is_static_from_frames(
         mad = float(np.mean(np.abs(rois[i] - rois[i + 1])))
         mads.append(mad)
 
-    max_mad = max(mads)
-    is_static = max_mad < _STATIC_SCREEN_MAD_THRESHOLD
+    min_mad = min(mads)
+    is_static = min_mad < _STATIC_SCREEN_MAD_THRESHOLD
 
     logger.debug(
-        "static_screen: frames=%d mads=%s max=%.2f thr=%.1f → %s",
+        "static_screen: frames=%d mads=%s min=%.2f thr=%.1f → %s",
         len(raw_frames),
         [f"{m:.2f}" for m in mads],
-        max_mad,
+        min_mad,
         _STATIC_SCREEN_MAD_THRESHOLD,
         is_static,
     )
@@ -161,7 +164,12 @@ def classify_blackout(
     # Override scorebar detection on static screens (loading/result).
     # Loading screens can pass _has_scorebar A1+A2 checks due to complex
     # color patterns.  Static frame-diff catches them.  (#201)
-    if pre_has and post_has:
+    # Only apply to short blackouts (< _IN_MATCH_MAX_DURATION) that would
+    # be removed as in_match.  Long blackouts are kept regardless, and
+    # overriding them creates unwanted merge candidates that cause
+    # baseline match loss on contiguous-match recordings.
+    region_duration = region[1] - region[0]
+    if pre_has and post_has and region_duration < _IN_MATCH_MAX_DURATION:
         if _is_static_from_frames(post_frames, height):
             logger.debug(
                 "static_screen override: post side [%.1f-%.1f]",

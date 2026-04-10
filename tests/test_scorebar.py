@@ -810,7 +810,7 @@ class TestProbeFrameRgb:
 
 
 class TestIsStaticFromFrames:
-    """Tests for static screen detection via scorebar ROI MAD (max-based)."""
+    """Tests for static screen detection via scorebar ROI MAD (min-based)."""
 
     def _make_static_frames(
         self, count: int = 3, roi_color: tuple[int, int, int] = (87, 87, 87)
@@ -842,17 +842,17 @@ class TestIsStaticFromFrames:
         frame = self._make_static_frames(1)[0]
         assert _is_static_from_frames([frame, None, None], _HEIGHT) is False
 
-    def test_single_transition_not_static(self):
-        """Screen changes between F1-F2 but F2-F3 static → NOT static (max-based).
+    def test_single_transition_tolerated(self):
+        """Screen changes between F1-F2 but F2-F3 static → detected (#201).
 
-        With max(MADs), a single high-MAD pair prevents static detection.
-        This reduces false positives from keyframe aliasing.
+        With min(MADs), a single static pair is enough to detect loading
+        screens even when a transition occurs within the probe window.
         """
         f1 = _make_frame(roi_color=(50, 100, 150))
         f2 = _make_frame(roi_color=(87, 87, 87))
         f3 = _make_frame(roi_color=(87, 87, 87))
-        # F1-F2: high MAD, F2-F3: MAD=0 → max(MADs) > 0.5 → NOT static
-        assert _is_static_from_frames([f1, f2, f3], _HEIGHT) is False
+        # F1-F2: high MAD, F2-F3: MAD=0 → min(MADs) = 0 < 0.5 → static
+        assert _is_static_from_frames([f1, f2, f3], _HEIGHT) is True
 
     def test_threshold_boundary_above(self):
         """MAD just above threshold → not static."""
