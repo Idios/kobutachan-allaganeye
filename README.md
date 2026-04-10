@@ -27,7 +27,8 @@ OBS 等で録画した数時間分の動画を入力すると、試合の切れ�
 > 更新方法は [Quick Start Guide — 更新](docs/quickstart.md#3-更新) を参照してください。
 
 ```bash
-# 前提: Python 3.11+, ffmpeg 4.1+ がインストール済みであること
+# 前提: Git, Python 3.11+, ffmpeg 4.1+ がインストール済みであること
+# 初めての方は docs/quickstart.md を参照
 git clone https://github.com/Idios/kobutachan-allaganeye.git
 cd kobutachan-allaganeye
 pip install -e .

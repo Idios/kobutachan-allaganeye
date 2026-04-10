@@ -2,6 +2,52 @@
 
 ## 1. 前提条件の確認
 
+Allagan Eye を使うには以下の 3 つのソフトウェアが必要です:
+
+- **Git**: ツールのダウンロードと更新に使います
+- **Python**: ツールの実行環境です
+- **ffmpeg**: 動画の解析・分割を行うエンジンです
+
+### Git
+
+```bash
+git --version
+```
+
+#### インストール方法
+
+**Windows**（いずれか 1 つ）:
+
+```bash
+# git-scm.com からインストーラをダウンロード（推奨）
+# https://git-scm.com/downloads/win → デフォルト設定でインストール
+
+# winget
+winget install Git.Git
+```
+
+**macOS**:
+
+```bash
+# Xcode Command Line Tools（推奨）
+xcode-select --install
+
+# Homebrew
+brew install git
+```
+
+**Linux (Ubuntu/Debian)**:
+
+```bash
+sudo apt update && sudo apt install git
+```
+
+#### インストール確認
+
+```bash
+git --version   # "git version 2.x" 以上が表示されること
+```
+
 ### Python 3.11+
 
 ```bash
