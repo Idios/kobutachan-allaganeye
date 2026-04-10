@@ -192,6 +192,7 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 - マージ方法: `gh pr merge <番号> --squash`
 - コード変更はテスター確認必須、ドキュメントのみはレビューのみ
 - コミットメッセージに `[<session-id>]` を含める
+- **PR 本文・コミットメッセージで `Closes` / `Fixes` / `Resolves` キーワードを使わない**（issue のクローズは手動で行う）
 
 ## ユーザー指示の短縮記法
 
