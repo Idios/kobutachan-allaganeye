@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from allaganeye.commands.debug_brightness import run_debug_brightness
+from allaganeye.exceptions import VideoProcessingError
 from allaganeye.video.detector import (
     _SAMPLE_WIDTH,
     _SCOREBAR_ROI_X_END,
@@ -295,3 +296,84 @@ def test_scorebar_detail_section_values(mock_probe_video, mock_probe_rgb, capsys
     assert float(parts[6]) > 150  # center_g
     # right section should be blue-dominant
     assert float(parts[10]) > 150  # right_b
+
+
+# --- VideoProcessingError fallback tests (PR #238 gap coverage) ---
+
+
+@patch(f"{MODULE}._probe_single_frame")
+@patch(f"{MODULE}.probe_video")
+def test_brightness_mode_exception_fallback(mock_probe_video, mock_probe_frame, capsys):
+    """Brightness mode: VideoProcessingError → 255.0 fallback."""
+    mock_probe_video.return_value = PROBE_RESULT
+
+    def side_effect(path, t):
+        if t == 1.0:
+            raise VideoProcessingError("probe failed")
+        return 42.5
+
+    mock_probe_frame.side_effect = side_effect
+
+    run_debug_brightness(Path("test.mp4"), start=0.0, end=3.0, interval=1.0)
+
+    output = capsys.readouterr().out
+    lines = output.strip().split("\n")
+    assert lines[1] == "0.0,42.5"
+    assert lines[2] == "1.0,255.0"  # fallback
+    assert lines[3] == "2.0,42.5"
+
+
+@patch(f"{MODULE}._probe_frame_rgb")
+@patch(f"{MODULE}.probe_video")
+def test_scorebar_mode_exception_fallback(mock_probe_video, mock_probe_rgb, capsys):
+    """Scorebar mode: VideoProcessingError → None → fallback row."""
+    mock_probe_video.return_value = PROBE_RESULT
+
+    def side_effect(path, t, *, height=180):
+        if t == 0.0:
+            raise VideoProcessingError("probe failed")
+        return _make_rgb_frame(100, 50, 200, height=height)
+
+    mock_probe_rgb.side_effect = side_effect
+
+    run_debug_brightness(
+        Path("test.mp4"), start=0.0, end=2.0, interval=1.0, roi_mode="scorebar"
+    )
+
+    output = capsys.readouterr().out
+    lines = output.strip().split("\n")
+    # t=0.0 should have fallback values
+    parts_0 = lines[1].split(",")
+    assert parts_0[1] == "255.0"  # fallback brightness
+    # t=1.0 should have normal values
+    parts_1 = lines[2].split(",")
+    assert float(parts_1[1]) < 255.0
+
+
+@patch(f"{MODULE}._probe_frame_rgb")
+@patch(f"{MODULE}.probe_video")
+def test_scorebar_detail_mode_exception_fallback(
+    mock_probe_video, mock_probe_rgb, capsys
+):
+    """Scorebar-detail mode: VideoProcessingError → None → fallback row."""
+    mock_probe_video.return_value = PROBE_RESULT
+
+    def side_effect(path, t, *, height=180):
+        if t == 0.0:
+            raise VideoProcessingError("probe failed")
+        return _make_rgb_frame(100, 50, 200, height=height)
+
+    mock_probe_rgb.side_effect = side_effect
+
+    run_debug_brightness(
+        Path("test.mp4"), start=0.0, end=2.0, interval=1.0, roi_mode="scorebar-detail"
+    )
+
+    output = capsys.readouterr().out
+    lines = output.strip().split("\n")
+    # t=0.0 should have fallback (all zeros)
+    parts_0 = lines[1].split(",")
+    assert parts_0[1] == "0.0"  # roi_brightness fallback
+    # t=1.0 should have normal values
+    parts_1 = lines[2].split(",")
+    assert float(parts_1[1]) > 0.0

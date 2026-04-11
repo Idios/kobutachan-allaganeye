@@ -319,6 +319,50 @@ def test_probe_missing_duration(mock_run, tmp_path):
 
 
 @patch("allaganeye.video.probe.subprocess.run")
+def test_probe_duration_zero(mock_run, tmp_path):
+    """Explicit duration=0 raises VideoProcessingError."""
+    video = tmp_path / "test.mp4"
+    video.touch()
+    mock_run.return_value = _mock_result(stdout=_make_ffprobe_output(duration="0"))
+    with pytest.raises(VideoProcessingError, match="duration"):
+        probe_video(video)
+
+
+@patch("allaganeye.video.probe.subprocess.run")
+def test_probe_duration_negative(mock_run, tmp_path):
+    """Negative duration raises VideoProcessingError."""
+    video = tmp_path / "test.mp4"
+    video.touch()
+    mock_run.return_value = _mock_result(stdout=_make_ffprobe_output(duration="-5.0"))
+    with pytest.raises(VideoProcessingError, match="duration"):
+        probe_video(video)
+
+
+@patch("allaganeye.video.probe.subprocess.run")
+def test_probe_width_zero(mock_run, tmp_path):
+    """width=0 with valid height raises VideoProcessingError."""
+    video = tmp_path / "test.mp4"
+    video.touch()
+    mock_run.return_value = _mock_result(
+        stdout=_make_ffprobe_output(width=0, height=1080)
+    )
+    with pytest.raises(VideoProcessingError, match="resolution"):
+        probe_video(video)
+
+
+@patch("allaganeye.video.probe.subprocess.run")
+def test_probe_height_zero(mock_run, tmp_path):
+    """height=0 with valid width raises VideoProcessingError."""
+    video = tmp_path / "test.mp4"
+    video.touch()
+    mock_run.return_value = _mock_result(
+        stdout=_make_ffprobe_output(width=1920, height=0)
+    )
+    with pytest.raises(VideoProcessingError, match="resolution"):
+        probe_video(video)
+
+
+@patch("allaganeye.video.probe.subprocess.run")
 def test_probe_missing_dimensions(mock_run, tmp_path):
     """Missing width/height raises VideoProcessingError."""
     video = tmp_path / "test.mp4"

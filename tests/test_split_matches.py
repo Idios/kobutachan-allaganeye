@@ -478,6 +478,74 @@ class TestCacheRoundTrip:
         assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
 
 
+# --- Progressbar tests (PR #233 gap coverage) ---
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_progressbar_length(mock_probe, mock_detect, mock_split, tmp_path):
+    """Progressbar length equals estimated_samples, not frame count."""
+    mock_probe.return_value = {**PROBE_RESULT, "duration": 1800.0}
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    with patch("typer.progressbar") as mock_bar:
+        mock_bar.return_value.__enter__ = lambda s: s
+        mock_bar.return_value.__exit__ = lambda s, *a: None
+        mock_bar.return_value.update = lambda n: None
+        run_split(Path("input.mp4"), config, verbose=True)
+
+    # interval=1.0 for 1800s → estimated_samples = 1800
+    mock_bar.assert_called_once()
+    assert mock_bar.call_args[1]["length"] == 1800
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_progressbar_tiny_video(mock_probe, mock_detect, mock_split, tmp_path):
+    """Progressbar length is at least 1 for very short videos."""
+    mock_probe.return_value = {**PROBE_RESULT, "duration": 0.5}
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    with patch("typer.progressbar") as mock_bar:
+        mock_bar.return_value.__enter__ = lambda s: s
+        mock_bar.return_value.__exit__ = lambda s, *a: None
+        mock_bar.return_value.update = lambda n: None
+        run_split(Path("input.mp4"), config, verbose=True)
+
+    # int(0.5 / 1.0) = 0, max(1, 0) = 1
+    mock_bar.assert_called_once()
+    assert mock_bar.call_args[1]["length"] == 1
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_progressbar_auto_interval(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """Progressbar length uses auto-adjusted interval for long videos."""
+    mock_probe.return_value = {**PROBE_RESULT, "duration": 7300.0}  # > 2h
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    with patch("typer.progressbar") as mock_bar:
+        mock_bar.return_value.__enter__ = lambda s: s
+        mock_bar.return_value.__exit__ = lambda s, *a: None
+        mock_bar.return_value.update = lambda n: None
+        run_split(Path("input.mp4"), config, verbose=True)
+
+    # auto interval = 3.0 for > 2h, estimated_samples = int(7300/3.0) = 2433
+    mock_bar.assert_called_once()
+    assert mock_bar.call_args[1]["length"] == 2433
+
+
 class TestCachePipeline:
     @patch(f"{MODULE}.split_video")
     @patch(f"{MODULE}.detect_match_boundaries")
