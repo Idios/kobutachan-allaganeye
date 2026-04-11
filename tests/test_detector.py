@@ -15,6 +15,7 @@ from allaganeye.video.detector import (
     _REFINE_INTERVAL,
     _REFINE_WINDOW,
     _TRANSITION_THRESHOLD,
+    _decode_chunk_cpu,
     _expand_regions_with_transitions,
     _filter_and_extract_segments,
     _generate_timestamps,
@@ -783,3 +784,63 @@ class TestDetectMatchBoundaries:
             min_match_duration=100.0,
         )
         mock_filter.assert_not_called()
+
+
+# ============================================================
+# TestDecodeChunkCpu
+# ============================================================
+
+
+class TestDecodeChunkCpu:
+    """Tests for _decode_chunk_cpu frame fallback behavior."""
+
+    @patch("allaganeye.video.detector.subprocess.run")
+    @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
+    def test_truncated_stdout_fills_missing_with_255(self, _mock_ff, mock_run):
+        """When ffmpeg returns fewer frames than expected, missing ones get 255.0."""
+        timestamps = [0.0, 1.0, 2.0, 3.0]
+        # Return only 2 full frames (dark)
+        dark_frame = bytes(b"\x00" * _FRAME_SIZE)
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=dark_frame * 2,
+            stderr=b"",
+        )
+
+        result = _decode_chunk_cpu(Path("test.mp4"), timestamps, 0.0, 4.0, 1.0)
+
+        assert len(result) == 4
+        # First 2 timestamps have real brightness (0.0 = all black)
+        assert result[0.0] == 0.0
+        assert result[1.0] == 0.0
+        # Last 2 timestamps filled with 255.0
+        assert result[2.0] == 255.0
+        assert result[3.0] == 255.0
+
+    @patch("allaganeye.video.detector.subprocess.run")
+    @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
+    def test_zero_byte_stdout_fills_all_with_255(self, _mock_ff, mock_run):
+        """When ffmpeg returns 0 bytes, all timestamps get 255.0."""
+        timestamps = [0.0, 1.0, 2.0]
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=b"",
+            stderr=b"",
+        )
+
+        result = _decode_chunk_cpu(Path("test.mp4"), timestamps, 0.0, 3.0, 1.0)
+
+        assert len(result) == 3
+        assert all(v == 255.0 for v in result.values())
+
+    @patch("allaganeye.video.detector.subprocess.run")
+    @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
+    def test_timeout_fills_all_with_255(self, _mock_ff, mock_run):
+        """When ffmpeg times out, all timestamps get 255.0."""
+        timestamps = [0.0, 1.0, 2.0]
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="ffmpeg", timeout=300)
+
+        result = _decode_chunk_cpu(Path("test.mp4"), timestamps, 0.0, 3.0, 1.0)
+
+        assert len(result) == 3
+        assert all(v == 255.0 for v in result.values())
