@@ -30,9 +30,43 @@ pytest -v
 
 | マーカー | 用途 | デフォルト |
 |---|---|---|
-| `slow` | 実動画ファイルが必要なテスト（統合テスト、リグレッションテスト） | 除外（`-m "not slow"` が `addopts` で設定済み） |
+| `slow` | 実動画ファイルが必要なテスト全体（下記サブマーカーのスーパーセット） | 除外 |
+| `slow_probe` | `probe_video()` のみ使用するテスト | 除外 |
+| `slow_detect` | `detect_match_boundaries()` を実行するテスト | 除外 |
+| `slow_pipeline` | `run_split()` 全パイプラインを実行するテスト | 除外 |
+| `slow_gpu` | GPU アクセラレーション必須テスト | 除外 |
+| `baseline_regen` | ベースライン再生成時のみ必要なテスト | 除外 |
 
-`slow` マーカーを付与したテストは `pytest` の通常実行では自動的にスキップされる。明示的に `-m slow` または `-m ""` を指定して実行する。
+`slow` および `baseline_regen` マーカーは `addopts = "-m 'not slow and not baseline_regen'"` で除外される。
+
+### マーカーの使い分け
+
+```bash
+# 高速サニティチェック（probe のみ、~30秒）
+pytest -m slow_probe
+
+# 検出テストのみ（~15-30分/録画）
+pytest -m slow_detect
+
+# 全パイプラインテスト（~20-40分/録画）
+pytest -m slow_pipeline
+
+# GPU テストのみ
+pytest -m slow_gpu
+
+# slow テスト全体（サブマーカー全含む、baseline_regen 除外）
+pytest -m slow
+
+# baseline_regen 含む全テスト（ベースライン再生成時）
+pytest -m "slow or baseline_regen"
+```
+
+### 開発時の推奨テスト実行パターン
+
+1. **コード変更後**: `pytest`（ユニットテストのみ、数秒）
+2. **PR 作成前**: `pytest -m slow`（全 slow テスト）
+3. **検出アルゴリズム変更時**: `pytest -m "slow or baseline_regen"`（ベースライン検証含む）
+4. **probe 周りの変更確認**: `pytest -m slow_probe`（高速確認）
 
 ## サンプル動画データの設定
 
