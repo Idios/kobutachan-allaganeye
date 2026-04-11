@@ -93,17 +93,16 @@ def run_split(video_path: Path, config: SplitConfig, *, verbose: bool = False) -
         )
 
         total_duration = metadata["duration"]
-        fps = metadata["fps"]
-        estimated_frames = int(fps * total_duration)
+        estimated_samples = max(1, int(total_duration / effective_interval))
 
-        with typer.progressbar(length=estimated_frames, label="Detecting") as progress:
+        with typer.progressbar(length=estimated_samples, label="Detecting") as progress:
             last_pos = [0]
 
-            def on_progress(frame_idx: int, total: int, blackout_count: int) -> None:
-                advance = frame_idx - last_pos[0]
+            def on_progress(completed: int, total: int, blackout_count: int) -> None:
+                advance = completed - last_pos[0]
                 if advance > 0:
                     progress.update(advance)
-                last_pos[0] = frame_idx
+                last_pos[0] = completed
 
             boundaries = detect_match_boundaries(
                 video_path,
