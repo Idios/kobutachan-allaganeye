@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
+from allaganeye.exceptions import VideoProcessingError
 from allaganeye.video.detector import (
     _SAMPLE_WIDTH,
     _SCOREBAR_ROI_X_END,
@@ -47,7 +48,10 @@ def _probe_scorebar_context(
         }
         for future in as_completed(futures):
             t = futures[future]
-            raw = future.result()
+            try:
+                raw = future.result()
+            except VideoProcessingError:
+                raw = None
             raw_frames[t] = raw
             scorebar_results[t] = _has_scorebar(raw, height)
 

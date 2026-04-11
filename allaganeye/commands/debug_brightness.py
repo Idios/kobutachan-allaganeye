@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import typer
 
+from allaganeye.exceptions import VideoProcessingError
 from allaganeye.video.detector import (
     _SAMPLE_WIDTH,
     _SCOREBAR_ROI_X_END,
@@ -75,7 +76,10 @@ def _run_brightness_mode(
         }
         for future in as_completed(futures):
             t = futures[future]
-            results[t] = future.result()
+            try:
+                results[t] = future.result()
+            except VideoProcessingError:
+                results[t] = 255.0
 
     typer.echo("timestamp,brightness")
     for t in sorted(results):
@@ -93,7 +97,10 @@ def _run_scorebar_mode(
         futures = {pool.submit(probe_fn, video_path, t): t for t in timestamps}
         for future in as_completed(futures):
             t = futures[future]
-            results[t] = future.result()
+            try:
+                results[t] = future.result()
+            except VideoProcessingError:
+                results[t] = None
 
     # Compute ROI pixel bounds from ratios
     x1 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_START)
@@ -137,7 +144,10 @@ def _run_scorebar_detail_mode(
         futures = {pool.submit(probe_fn, video_path, t): t for t in timestamps}
         for future in as_completed(futures):
             t = futures[future]
-            results[t] = future.result()
+            try:
+                results[t] = future.result()
+            except VideoProcessingError:
+                results[t] = None
 
     x1 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_START)
     x2 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_END)
