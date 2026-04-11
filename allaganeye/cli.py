@@ -135,7 +135,9 @@ def debug_brightness(
     ] = None,
     roi_mode: Annotated[
         str | None,
-        typer.Option("--roi-mode", help="ROI analysis mode (scorebar)"),
+        typer.Option(
+            "--roi-mode", help="ROI analysis mode (scorebar, scorebar-detail)"
+        ),
     ] = None,
 ) -> None:
     """Probe frame brightness at regular intervals (CSV output for threshold tuning)."""
