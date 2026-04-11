@@ -320,7 +320,7 @@ def test_probe_missing_duration(mock_run, tmp_path):
 
 @patch("allaganeye.video.probe.subprocess.run")
 def test_probe_missing_dimensions(mock_run, tmp_path):
-    """Missing width/height defaults to 0."""
+    """Missing width/height raises VideoProcessingError."""
     video = tmp_path / "test.mp4"
     video.touch()
     data = {
@@ -336,9 +336,8 @@ def test_probe_missing_dimensions(mock_run, tmp_path):
     }
     mock_run.return_value = _mock_result(stdout=json.dumps(data))
 
-    result = probe_video(video)
-    assert result["width"] == 0
-    assert result["height"] == 0
+    with pytest.raises(VideoProcessingError, match="resolution"):
+        probe_video(video)
 
 
 @patch("allaganeye.video.probe.subprocess.run")

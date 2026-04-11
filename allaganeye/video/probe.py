@@ -95,10 +95,17 @@ def probe_video(video_path: Path) -> ProbeResult:
             "Cannot determine video duration from ffprobe output"
         )
 
+    width = int(video_stream.get("width", 0))
+    height = int(video_stream.get("height", 0))
+    if width <= 0 or height <= 0:
+        raise VideoProcessingError(
+            "Cannot determine video resolution from ffprobe output"
+        )
+
     return {
         "duration": duration,
-        "width": int(video_stream.get("width", 0)),
-        "height": int(video_stream.get("height", 0)),
+        "width": width,
+        "height": height,
         "fps": fps,
         "codec": video_stream.get("codec_name", "unknown"),
         "audio_codec": audio_stream.get("codec_name", "unknown")
