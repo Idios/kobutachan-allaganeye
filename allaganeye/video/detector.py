@@ -583,7 +583,10 @@ def _refine_blackout_regions(
         }
         for future in as_completed(futures):
             t = futures[future]
-            results[t] = future.result()
+            try:
+                results[t] = future.result()
+            except VideoProcessingError:
+                results[t] = 255.0
 
     # Re-extract blackout regions from fine-grained data
     fine_blackout_times = sorted(
