@@ -933,3 +933,18 @@ class TestProbeScorebarContext:
         assert results == []
         assert frames == []
         assert mock_probe.call_count == 0
+
+    @patch(f"{SCOREBAR_MODULE}._has_scorebar")
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
+    def test_video_processing_error_treated_as_none(self, mock_probe, mock_has):
+        """VideoProcessingError from future is caught and treated as None."""
+        from allaganeye.exceptions import VideoProcessingError
+
+        mock_probe.side_effect = VideoProcessingError("ffmpeg not found")
+        mock_has.side_effect = lambda raw, _h: True if raw is not None else None
+
+        results, frames = _probe_scorebar_context(
+            Path("dummy.mp4"), [1.0, 2.0], _HEIGHT, workers=1
+        )
+        assert results == [None, None]
+        assert frames == [None, None]
