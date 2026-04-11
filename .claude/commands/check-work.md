@@ -43,7 +43,7 @@ gh issue view <番号> --comments
 gh pr list --state open --label "role:director" --json number,title,headRefName,author,createdAt
 ```
 
-`role:director` ラベルが付いた PR（ディレクターがレビュー担当）を抽出する。
+`role:director` ラベルが付いた PR（ディレクターがレビュー担当）を抽出する。**自セッションが作成した PR はレビュー対象から除外する**（ブランチ名の `<session-id>/` プレフィックスまたは PR body の `[<session-id>]` で判定）。
 
 **ディレクター定期見直し（担当 Issue/PR の処理後に実施）:**
 
@@ -107,7 +107,7 @@ gh issue view <番号> --comments
 gh pr list --state open --label "role:lead-engineer" --json number,title,headRefName,author,createdAt
 ```
 
-`role:lead-engineer` ラベルが付いた PR（リードエンジニアがレビュー担当）を抽出する。
+`role:lead-engineer` ラベルが付いた PR（リードエンジニアがレビュー担当）を抽出する。**自セッションが作成した PR はレビュー対象から除外する**（ブランチ名の `<session-id>/` プレフィックスまたは PR body の `[<session-id>]` で判定）。
 
 ---
 
@@ -141,7 +141,7 @@ gh issue view <番号> --comments
 gh pr list --state open --label "role:engineer" --json number,title,headRefName,author,createdAt
 ```
 
-`role:engineer` ラベルが付いた PR（レビューで修正依頼された自分の PR）を抽出する。
+`role:engineer` ラベルが付いた PR（レビューで修正依頼された自分の PR）を抽出する。**自セッションが作成した PR のうちレビュー待ち状態のものは、自分ではレビューできないため除外する**。
 
 ---
 
@@ -173,7 +173,7 @@ gh issue view <番号> --comments
 gh pr list --state open --label "role:tester" --json number,title,headRefName,author,createdAt
 ```
 
-`role:tester` ラベルが付いた PR を抽出する。これにはテスト対象の PR と、レビューで修正依頼された自分の PR の両方が含まれる。
+`role:tester` ラベルが付いた PR を抽出する。これにはテスト対象の PR と、レビューで修正依頼された自分の PR の両方が含まれる。**自セッションが作成した PR のうちレビュー待ち状態のものは、自分ではレビューできないため除外する**。
 
 ---
 
