@@ -92,9 +92,13 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 **Pass 2: 精密計測**
 7. 各暗転候補の ±5s を 0.25s 間隔で再プローブし、正確な持続時間を計測
 
+**スコアバーフィルタリング**（`src_resolution` 提供時、CLIのデフォルトパス）
+8. `filter_blackouts_with_scorebar()` で各暗転領域の前後フレームのスコアバー有無を判定し、暗転を分類（`match_boundary` / `in_match` / `non_fl`）
+9. `non_fl`（非FL暗転）と短い `in_match`（試合内暗転）を除外。隣接する `match_boundary` ペア間の短いギャップをマージ
+
 **フィルタリング・抽出**
-8. `min(min_blackout_duration, 1.5)` 未満の短い暗転を除外（リスポーン暗転の誤判定防止）
-9. blackout region 間の非暗転区間を試合セグメントとして抽出（暗転内パディング付き）
+10. `min(min_blackout_duration, _REFINED_MIN_BLACKOUT)` 未満の短い暗転を除外（リスポーン暗転の誤判定防止）
+11. blackout region 間の非暗転区間を試合セグメントとして抽出（暗転内パディング付き）
 
 **GPU モード** (`--gpu`)
 - CPU モードの Pass 1 を GPU チャンク並列デコードで代替（`gpu_detector.py`）
