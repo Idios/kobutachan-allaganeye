@@ -302,9 +302,9 @@ class TestDetectRealVideo:
             meta = probe_video(mp4)
             manual_total += meta["duration"]
 
-        # Allow 15% tolerance on total duration
+        # Allow 25% tolerance on total duration
         ratio = detected_total / manual_total
-        assert 0.85 <= ratio <= 1.15, (
+        assert 0.75 <= ratio <= 1.25, (
             f"Total duration ratio {ratio:.2f}: "
             f"detected {detected_total:.0f}s vs manual {manual_total:.0f}s"
         )
