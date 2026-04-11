@@ -117,7 +117,10 @@ def detection_without_scorebar(
     target_recording: tuple[str, Path],
     target_metadata: dict,
 ) -> dict:
-    """Run detection WITHOUT scorebar filtering and measure time."""
+    """Run detection WITHOUT scorebar filtering and measure time.
+
+    Only used by baseline_regen tests (TestPerformance, TestNoResolutionCompat).
+    """
     name, mkv = target_recording
     meta = target_metadata
 
@@ -205,7 +208,6 @@ class TestDetectionCount:
         self,
         target_recording: tuple[str, Path],
         detection_with_scorebar: dict,
-        detection_without_scorebar: dict,
     ):
         """Scorebar filtering does not lose real matches vs no filtering."""
         name, _ = target_recording
@@ -248,6 +250,7 @@ class TestMatchDurations:
 # --- 3. Performance: scorebar overhead ---
 
 
+@pytest.mark.baseline_regen
 class TestPerformance:
     """Scorebar filtering should add minimal overhead."""
 
@@ -340,6 +343,7 @@ def _load_baseline(name: str) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+@pytest.mark.baseline_regen
 class TestNoResolutionCompat:
     """When src_resolution is omitted, behavior must be identical to pre-#124."""
 
@@ -434,7 +438,6 @@ class TestBaselineComparison:
         self,
         target_recording: tuple[str, Path],
         detection_with_scorebar: dict,
-        detection_without_scorebar: dict,
     ):
         """Scorebar should not produce significantly more matches than baseline.
 
@@ -442,10 +445,14 @@ class TestBaselineComparison:
         or at most +2 (edge cases where non-FL removal creates new segments).
         """
         name, _ = target_recording
-        with_sb = detection_with_scorebar["match_count"]
-        without_sb = detection_without_scorebar["match_count"]
+        baseline = _load_baseline(name)
+        if baseline is None:
+            pytest.skip(f"No baseline for {name}")
 
-        assert with_sb <= without_sb + 2, (
+        with_sb = detection_with_scorebar["match_count"]
+        baseline_count = baseline["match_count"]
+
+        assert with_sb <= baseline_count + 2, (
             f"{name}: scorebar produced {with_sb} matches vs "
-            f"baseline {without_sb} (fragmentation)"
+            f"baseline {baseline_count} (fragmentation)"
         )
