@@ -245,6 +245,29 @@ class TestRefineBlackoutRegions:
         probed_times = [call[0][1] for call in mock_probe.call_args_list]
         assert all(0.0 <= t <= 8.0 for t in probed_times)
 
+    @patch("allaganeye.video.detector._probe_single_frame")
+    def test_video_processing_error_treated_as_non_blackout(self, mock_probe):
+        """VideoProcessingError from a future is caught and treated as 255.0."""
+        from allaganeye.exceptions import VideoProcessingError
+
+        call_count = 0
+
+        def side_effect(video_path, t):
+            nonlocal call_count
+            call_count += 1
+            if call_count % 3 == 0:
+                raise VideoProcessingError("ffmpeg not found")
+            return 5.0  # dark frame
+
+        mock_probe.side_effect = side_effect
+
+        regions = [(100.0, 102.0)]
+        result = _refine_blackout_regions(Path("test.mp4"), regions, 15.0, 1000.0)
+
+        # Should not raise; failed probes are treated as non-blackout (255.0)
+        # Some probes succeed (5.0 < 15.0 threshold), so we get a region
+        assert isinstance(result, list)
+
 
 # ============================================================
 # TestExtractSegments
