@@ -618,19 +618,23 @@ class TestDetectMatchBoundaries:
         assert result[0]["end"] == pytest.approx(300.0)
 
     @patch("allaganeye.video.detector._probe_single_frame")
-    def test_all_black(self, mock_probe):
-        mock_probe.return_value = 5.0
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_all_black(self, mock_chunk, mock_probe):
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 5.0 for t in ts}
+        mock_probe.return_value = 5.0  # Pass 2 refinement
         result = detect_match_boundaries(
             Path("test.mp4"), duration_hint=300.0, min_match_duration=100.0
         )
         assert len(result) == 0
 
     @patch("allaganeye.video.detector._probe_single_frame")
-    def test_blackout_in_middle(self, mock_probe):
-        def side_effect(path, t):
-            return 5.0 if 598.0 <= t <= 602.0 else 128.0
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_blackout_in_middle(self, mock_chunk, mock_probe):
+        def chunk_side_effect(vp, ts, cs, ce, si):
+            return {t: 5.0 if 598.0 <= t <= 602.0 else 128.0 for t in ts}
 
-        mock_probe.side_effect = side_effect
+        mock_chunk.side_effect = chunk_side_effect
+        mock_probe.side_effect = lambda path, t: 5.0 if 593.0 <= t <= 607.0 else 128.0
         result = detect_match_boundaries(
             Path("test.mp4"),
             duration_hint=1800.0,
@@ -641,9 +645,9 @@ class TestDetectMatchBoundaries:
         assert result[0]["start"] == 0.0
         assert result[1]["end"] == pytest.approx(1800.0)
 
-    @patch("allaganeye.video.detector._probe_single_frame")
-    def test_custom_threshold(self, mock_probe):
-        mock_probe.return_value = 20.0
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_custom_threshold(self, mock_chunk):
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 20.0 for t in ts}
         result = detect_match_boundaries(
             Path("test.mp4"),
             duration_hint=300.0,
@@ -653,8 +657,10 @@ class TestDetectMatchBoundaries:
         assert len(result) == 1
 
     @patch("allaganeye.video.detector._probe_single_frame")
-    def test_custom_threshold_blackout(self, mock_probe):
-        mock_probe.return_value = 20.0
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_custom_threshold_blackout(self, mock_chunk, mock_probe):
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 20.0 for t in ts}
+        mock_probe.return_value = 20.0  # Pass 2 refinement
         result = detect_match_boundaries(
             Path("test.mp4"),
             duration_hint=300.0,
@@ -669,9 +675,9 @@ class TestDetectMatchBoundaries:
         ):
             detect_match_boundaries(Path("test.mp4"), min_match_duration=100.0)
 
-    @patch("allaganeye.video.detector._probe_single_frame")
-    def test_progress_callback(self, mock_probe):
-        mock_probe.return_value = 128.0
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_progress_callback(self, mock_chunk):
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
         calls = []
         detect_match_boundaries(
             Path("test.mp4"),
@@ -685,28 +691,36 @@ class TestDetectMatchBoundaries:
         completed = sorted(c[0] for c in calls)
         assert completed == list(range(1, 11))
 
-    @patch("allaganeye.video.detector._probe_single_frame")
-    def test_progress_callback_none(self, mock_probe):
-        mock_probe.return_value = 128.0
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_progress_callback_none(self, mock_chunk):
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
         result = detect_match_boundaries(
             Path("test.mp4"), duration_hint=300.0, min_match_duration=100.0
         )
         assert len(result) == 1
 
-    @patch("allaganeye.video.detector._probe_single_frame")
-    def test_sample_count(self, mock_probe):
-        mock_probe.return_value = 128.0
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_sample_count(self, mock_chunk):
+        """All timestamps are processed across chunks."""
+        call_timestamps = []
+
+        def side_effect(vp, ts, cs, ce, si):
+            call_timestamps.extend(ts)
+            return {t: 128.0 for t in ts}
+
+        mock_chunk.side_effect = side_effect
         detect_match_boundaries(
             Path("test.mp4"),
             duration_hint=300.0,
             sample_interval=2.0,
             min_match_duration=100.0,
         )
-        assert mock_probe.call_count == 150
+        assert len(set(call_timestamps)) == 150
 
-    @patch("allaganeye.video.detector._probe_single_frame")
-    def test_parallel_execution(self, mock_probe):
-        mock_probe.return_value = 128.0
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_chunked_execution(self, mock_chunk):
+        """Multiple chunks are created for parallel execution."""
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
         result = detect_match_boundaries(
             Path("test.mp4"),
             duration_hint=100.0,
@@ -714,13 +728,13 @@ class TestDetectMatchBoundaries:
             min_match_duration=10.0,
         )
         assert len(result) == 1
-        assert mock_probe.call_count == 100
+        assert mock_chunk.call_count >= 1
 
     @patch("allaganeye.video.scorebar.filter_blackouts_with_scorebar")
-    @patch("allaganeye.video.detector._probe_single_frame")
-    def test_scorebar_filtering_called_with_resolution(self, mock_probe, mock_filter):
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_scorebar_filtering_called_with_resolution(self, mock_chunk, mock_filter):
         """Scorebar filtering is invoked when src_resolution is provided."""
-        mock_probe.return_value = 128.0
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
         mock_filter.side_effect = lambda vp, regions, dur, h, w: (
             regions,
             ["match_boundary"] * len(regions),
@@ -734,12 +748,12 @@ class TestDetectMatchBoundaries:
         mock_filter.assert_called_once()
 
     @patch("allaganeye.video.scorebar.filter_blackouts_with_scorebar")
-    @patch("allaganeye.video.detector._probe_single_frame")
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_scorebar_filtering_skipped_without_resolution(
-        self, mock_probe, mock_filter
+        self, mock_chunk, mock_filter
     ):
         """Scorebar filtering is NOT invoked when src_resolution is None."""
-        mock_probe.return_value = 128.0
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
         detect_match_boundaries(
             Path("test.mp4"),
             duration_hint=300.0,

@@ -421,12 +421,19 @@ class TestGpuCpuConsistency:
 
     @gpu_available
     def test_gpu_cpu_boundary_count_matches(self, gpu_cpu_results: dict):
-        """GPU and CPU modes detect the same number of matches."""
+        """GPU and CPU modes detect similar number of matches (±1).
+
+        Exact match is not guaranteed due to ffmpeg seek non-determinism:
+        per-frame ``-ss`` (CPU) and chunked ``fps`` filter (GPU) may
+        decode different frames at the same timestamp, causing ±1
+        boundary difference at threshold edges.  (#214)
+        """
         cpu = gpu_cpu_results["cpu"]
         gpu = gpu_cpu_results["gpu"]
 
-        assert len(cpu) == len(gpu), (
-            f"CPU detected {len(cpu)} matches, GPU detected {len(gpu)}"
+        assert abs(len(cpu) - len(gpu)) <= 1, (
+            f"CPU detected {len(cpu)} matches, GPU detected {len(gpu)} "
+            f"(diff {abs(len(cpu) - len(gpu))} > 1)"
         )
 
     @gpu_available
@@ -435,9 +442,13 @@ class TestGpuCpuConsistency:
         cpu = gpu_cpu_results["cpu"]
         gpu = gpu_cpu_results["gpu"]
 
+        if abs(len(cpu) - len(gpu)) > 1:
+            pytest.skip(
+                "Boundary count mismatch > 1 — see test_gpu_cpu_boundary_count_matches"
+            )
         if len(cpu) != len(gpu):
             pytest.skip(
-                "Boundary count mismatch — see test_gpu_cpu_boundary_count_matches"
+                "Boundary count differs by 1 — timestamp comparison not meaningful"
             )
 
         tolerance = 10.0  # seconds
