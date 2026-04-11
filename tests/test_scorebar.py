@@ -19,6 +19,7 @@ from allaganeye.video.scorebar import (
     _MERGE_GAP_MAX,
     _is_static_from_frames,
     _majority_scorebar,
+    _probe_scorebar_context,
     classify_blackout,
     filter_blackouts_with_scorebar,
 )
@@ -859,3 +860,76 @@ class TestIsStaticFromFrames:
         f1 = _make_frame(roi_color=(87, 87, 87))
         f2 = _make_frame(roi_color=(90, 90, 90))
         assert _is_static_from_frames([f1, f2], _HEIGHT) is False
+
+
+# ---------------------------------------------------------------------------
+# _probe_scorebar_context unit tests (#224)
+# ---------------------------------------------------------------------------
+
+
+class TestProbeScorebarContext:
+    """Direct tests for _probe_scorebar_context."""
+
+    @patch(f"{SCOREBAR_MODULE}._has_scorebar", return_value=True)
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb", return_value=_FAKE_FRAME)
+    def test_duplicate_timestamps_probed_once(self, mock_probe, mock_has):
+        """Duplicate timestamps should be deduplicated — probe called once."""
+        results, frames = _probe_scorebar_context(
+            Path("dummy.mp4"), [1.0, 1.0, 1.0], _HEIGHT, workers=1
+        )
+        assert mock_probe.call_count == 1
+        assert len(results) == 3
+        assert len(frames) == 3
+        # All three entries share the same result
+        assert results == [True, True, True]
+        assert all(f == _FAKE_FRAME for f in frames)
+
+    @patch(f"{SCOREBAR_MODULE}._has_scorebar", return_value=False)
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb", return_value=_FAKE_FRAME)
+    def test_results_aligned_with_input_order(self, mock_probe, mock_has):
+        """Returned lists must follow the original timestamps order."""
+        ts = [3.0, 1.0, 2.0]
+        results, frames = _probe_scorebar_context(
+            Path("dummy.mp4"), ts, _HEIGHT, workers=2
+        )
+        assert len(results) == len(ts)
+        assert len(frames) == len(ts)
+        # Each unique ts probed exactly once (3 unique → 3 calls)
+        assert mock_probe.call_count == 3
+
+    @patch(f"{SCOREBAR_MODULE}._has_scorebar", return_value=None)
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb", return_value=None)
+    def test_probe_failure_returns_none(self, mock_probe, mock_has):
+        """When _probe_frame_rgb returns None, results propagate None."""
+        results, frames = _probe_scorebar_context(
+            Path("dummy.mp4"), [1.0, 2.0], _HEIGHT, workers=1
+        )
+        assert results == [None, None]
+        assert frames == [None, None]
+
+    @patch(f"{SCOREBAR_MODULE}._has_scorebar")
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
+    def test_mixed_success_and_failure(self, mock_probe, mock_has):
+        """Mix of successful and failed probes — results match per-ts."""
+        mock_probe.side_effect = lambda _path, t, _h: _FAKE_FRAME if t == 1.0 else None
+        mock_has.side_effect = lambda raw, _h: True if raw is not None else None
+
+        results, frames = _probe_scorebar_context(
+            Path("dummy.mp4"), [1.0, 2.0, 1.0], _HEIGHT, workers=1
+        )
+        # ts=1.0 succeeds (True), ts=2.0 fails (None), ts=1.0 reuses result
+        assert results == [True, None, True]
+        assert frames[0] == _FAKE_FRAME
+        assert frames[1] is None
+        assert frames[2] == _FAKE_FRAME
+
+    @patch(f"{SCOREBAR_MODULE}._has_scorebar", return_value=True)
+    @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb", return_value=_FAKE_FRAME)
+    def test_empty_timestamps(self, mock_probe, mock_has):
+        """Empty timestamps list returns empty results."""
+        results, frames = _probe_scorebar_context(
+            Path("dummy.mp4"), [], _HEIGHT, workers=1
+        )
+        assert results == []
+        assert frames == []
+        assert mock_probe.call_count == 0
