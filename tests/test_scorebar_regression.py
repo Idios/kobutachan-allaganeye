@@ -186,6 +186,7 @@ def pipeline_output_with_scorebar(
 # --- 1. Functional regression: detection count ---
 
 
+@pytest.mark.slow_detect
 class TestDetectionCount:
     """Scorebar filtering should not reduce detection count vs manual splits."""
 
@@ -227,6 +228,7 @@ class TestDetectionCount:
 # --- 2. Functional regression: match durations ---
 
 
+@pytest.mark.slow_detect
 class TestMatchDurations:
     """Each detected match should be within plausible FL duration range."""
 
@@ -250,6 +252,7 @@ class TestMatchDurations:
 # --- 3. Performance: scorebar overhead ---
 
 
+@pytest.mark.slow_detect
 @pytest.mark.baseline_regen
 class TestPerformance:
     """Scorebar filtering should add minimal overhead."""
@@ -276,6 +279,7 @@ class TestPerformance:
 # --- 4. Pipeline output: metadata.json integrity ---
 
 
+@pytest.mark.slow_pipeline
 class TestMetadataIntegrity:
     """metadata.json should have all required fields."""
 
@@ -343,6 +347,7 @@ def _load_baseline(name: str) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+@pytest.mark.slow_detect
 @pytest.mark.baseline_regen
 class TestNoResolutionCompat:
     """When src_resolution is omitted, behavior must be identical to pre-#124."""
@@ -390,6 +395,7 @@ class TestNoResolutionCompat:
 # --- 6. Baseline comparison: scorebar detection results ---
 
 
+@pytest.mark.slow_detect
 class TestBaselineComparison:
     """Compare scorebar detection against saved baselines.
 
