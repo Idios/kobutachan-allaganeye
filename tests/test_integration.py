@@ -201,6 +201,7 @@ def any_video(_sample_video_dir_session: Path) -> Path:
 # --- Probe tests ---
 
 
+@pytest.mark.slow_probe
 class TestProbeRealVideo:
     """Test probe_video with real video files."""
 
@@ -236,6 +237,7 @@ class TestProbeRealVideo:
 # --- Detection tests ---
 
 
+@pytest.mark.slow_detect
 class TestDetectRealVideo:
     """Test detection results (from cached pipeline run)."""
 
@@ -328,6 +330,7 @@ class TestDetectRealVideo:
 # --- Split tests ---
 
 
+@pytest.mark.slow_pipeline
 class TestSplitRealVideo:
     """Test split output (from cached pipeline run)."""
 
@@ -355,6 +358,7 @@ class TestSplitRealVideo:
 # --- Metadata verification ---
 
 
+@pytest.mark.slow_pipeline
 class TestMetadataJson:
     """Test metadata.json content (from cached pipeline run)."""
 
@@ -416,6 +420,7 @@ def gpu_cpu_results(source_mkv: Path, source_metadata: dict) -> dict:
 # --- GPU/CPU consistency tests ---
 
 
+@pytest.mark.slow_gpu
 class TestGpuCpuConsistency:
     """Verify GPU and CPU detection produce consistent results."""
 

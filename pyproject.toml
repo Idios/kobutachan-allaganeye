@@ -27,6 +27,10 @@ dev = [
 testpaths = ["tests"]
 markers = [
     "slow: marks tests requiring video files (deselect with '-m \"not slow\"')",
+    "slow_probe: probe-only slow tests",
+    "slow_detect: detection slow tests",
+    "slow_pipeline: full pipeline slow tests",
+    "slow_gpu: GPU-specific slow tests",
     "baseline_regen: marks tests only needed during baseline regeneration",
 ]
 addopts = "-m 'not slow and not baseline_regen'"
