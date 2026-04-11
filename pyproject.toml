@@ -25,8 +25,11 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["slow: marks tests requiring video files (deselect with '-m \"not slow\"')"]
-addopts = "-m 'not slow'"
+markers = [
+    "slow: marks tests requiring video files (deselect with '-m \"not slow\"')",
+    "baseline_regen: marks tests only needed during baseline regeneration",
+]
+addopts = "-m 'not slow and not baseline_regen'"
 
 [tool.ruff]
 target-version = "py311"
