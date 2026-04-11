@@ -296,7 +296,7 @@ def test_probe_ffprobe_not_found(mock_run, tmp_path):
 
 @patch("allaganeye.video.probe.subprocess.run")
 def test_probe_missing_duration(mock_run, tmp_path):
-    """Missing duration in format defaults to 0.0."""
+    """Missing duration in format raises VideoProcessingError."""
     video = tmp_path / "test.mp4"
     video.touch()
     data = {
@@ -314,8 +314,8 @@ def test_probe_missing_duration(mock_run, tmp_path):
     }
     mock_run.return_value = _mock_result(stdout=json.dumps(data))
 
-    result = probe_video(video)
-    assert result["duration"] == 0.0
+    with pytest.raises(VideoProcessingError, match="duration"):
+        probe_video(video)
 
 
 @patch("allaganeye.video.probe.subprocess.run")

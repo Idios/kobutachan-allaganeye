@@ -90,6 +90,10 @@ def probe_video(video_path: Path) -> ProbeResult:
         )
 
     duration = float(data.get("format", {}).get("duration", 0))
+    if duration <= 0:
+        raise VideoProcessingError(
+            "Cannot determine video duration from ffprobe output"
+        )
 
     return {
         "duration": duration,
