@@ -130,6 +130,17 @@ def _is_static_from_frames(
     return is_static
 
 
+_IN_MATCH_MAX_DURATION = 3.5
+"""Maximum blackout duration to consider as in-match (e.g. character down).
+
+Only ``"in_match"`` blackouts shorter than this are removed.  Longer
+``"in_match"`` blackouts are FL match boundaries and must be kept.
+
+Threshold: character down = 1.0-2.0s (refined measurement), short FL
+boundary = 4.5s+.  3.5s sits in the gap with 1.5s margin on each side.
+"""
+
+
 def classify_blackout(
     video_path: Path,
     region: tuple[float, float],
@@ -141,6 +152,13 @@ def classify_blackout(
 
     Probes 3 frames before and 3 frames after the blackout at 1s intervals.
     Uses majority vote on has_scorebar to determine context.
+
+    For short blackouts (< ``_IN_MATCH_MAX_DURATION``) classified as
+    ``"in_match"``, applies static screen detection: if the post or pre
+    frames are pixel-identical (loading/result screen), the scorebar
+    detection is overridden to ``False``, changing the classification to
+    ``"match_boundary"``.  This prevents loading screens that pass the
+    A1+A2 checks from being misclassified as in-match.  (#201)
 
     Returns one of:
     - ``"in_match"``: both sides have scorebar → in-match blackout (#107)
@@ -209,17 +227,6 @@ def classify_blackout(
     )
 
     return classification
-
-
-_IN_MATCH_MAX_DURATION = 3.5
-"""Maximum blackout duration to consider as in-match (e.g. character down).
-
-Only ``"in_match"`` blackouts shorter than this are removed.  Longer
-``"in_match"`` blackouts are FL match boundaries and must be kept.
-
-Threshold: character down = 1.0-2.0s (refined measurement), short FL
-boundary = 4.5s+.  3.5s sits in the gap with 1.5s margin on each side.
-"""
 
 
 _MERGE_GAP_MAX = 600.0

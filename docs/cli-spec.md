@@ -40,6 +40,7 @@ allaganeye split <video_path> [OPTIONS]
 | `--min-blackout-duration` | `3.0` | 最小暗転時間（秒）。これより短い暗転は無視 |
 | `--workers` | auto | 検知の並列ワーカー数（デフォルト: 自動=`min(cpu_count, 24)`） |
 | `--gpu` / `--no-gpu` | `false` | GPU アクセラレーション検知（チャンク並列デコード）。利用不可時は CPU フォールバック |
+| `--no-cache` | `false` | キャッシュされた検知結果を無視して再検知する |
 | `--dry-run` | `false` | 検知のみ実行し分割しない |
 | `-v`, `--verbose` | `false` | 詳細ログ出力 |
 
