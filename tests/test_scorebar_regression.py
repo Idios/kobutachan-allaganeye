@@ -83,10 +83,42 @@ def target_metadata(target_recording: tuple[str, Path]) -> ProbeResult:
 def detection_with_scorebar(
     target_recording: tuple[str, Path],
     target_metadata: dict,
+    _cache_context: dict,
 ) -> dict:
     """Run detection WITH scorebar filtering and measure time."""
+    from tests.detection_cache import read_fixture_cache, write_fixture_cache
+
     name, mkv = target_recording
     meta = target_metadata
+
+    detection_params = {
+        "sample_interval": 2.0,
+        "blackout_threshold": 15.0,
+        "min_match_duration": 300.0,
+        "min_blackout_duration": 3.0,
+        "src_resolution": [meta["width"], meta["height"]],
+    }
+
+    cache_dir = _cache_context["cache_dir"]
+    source_hashes = _cache_context["source_hashes"]
+
+    if not _cache_context["no_cache"]:
+        cached = read_fixture_cache(
+            cache_dir,
+            mkv,
+            "detection_with_scorebar",
+            detection_params,
+            source_hashes,
+        )
+        if cached is not None:
+            print(f"\n[cache] HIT detection_with_scorebar for {name}")
+            return {
+                "name": name,
+                "boundaries": cached["boundaries"],
+                "elapsed": 0.0,
+                "match_count": len(cached["boundaries"]),
+            }
+        print(f"\n[cache] MISS detection_with_scorebar for {name}")
 
     start = time.monotonic()
     boundaries = detect_match_boundaries(
@@ -102,6 +134,15 @@ def detection_with_scorebar(
 
     # GPU cooldown: prevent NVIDIA driver deadlock from rapid ffmpeg calls
     time.sleep(1)
+
+    write_fixture_cache(
+        cache_dir,
+        mkv,
+        "detection_with_scorebar",
+        detection_params,
+        source_hashes,
+        result={"boundaries": boundaries},
+    )
 
     return {
         "name": name,
