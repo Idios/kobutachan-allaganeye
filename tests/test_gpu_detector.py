@@ -25,22 +25,37 @@ class TestDecodeChunk:
             stderr=b"",
             returncode=0,
         )
-        result = _decode_chunk(Path("test.mp4"), 100.0, 103.0, 1.0)
+        result, stderr = _decode_chunk(Path("test.mp4"), 100.0, 103.0, 1.0)
 
         assert len(result) == 3
         assert result[100.0] == pytest.approx(128.0)
         assert result[101.0] == pytest.approx(5.0)
         assert result[102.0] == pytest.approx(200.0)
+        assert isinstance(stderr, str)
 
     @patch("allaganeye.video.gpu_detector.subprocess.run")
-    def test_hwaccel_in_cmd(self, mock_run):
-        """ffmpeg command includes -hwaccel auto."""
+    def test_hwaccel_auto_when_no_codec(self, mock_run):
+        """ffmpeg command includes -hwaccel auto when codec is unknown."""
         mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
         _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0)
 
         cmd = mock_run.call_args[0][0]
         assert "-hwaccel" in cmd
         assert "auto" in cmd
+
+    @patch("allaganeye.video.gpu_detector.subprocess.run")
+    def test_hwaccel_cuda_with_known_codec(self, mock_run):
+        """ffmpeg command uses -hwaccel cuda -c:v av1_cuvid for AV1."""
+        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
+        _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0, codec="av1")
+
+        cmd = mock_run.call_args[0][0]
+        assert "-hwaccel" in cmd
+        cuda_idx = cmd.index("-hwaccel")
+        assert cmd[cuda_idx + 1] == "cuda"
+        assert "-c:v" in cmd
+        cv_idx = cmd.index("-c:v")
+        assert cmd[cv_idx + 1] == "av1_cuvid"
 
     @patch("allaganeye.video.gpu_detector.subprocess.run")
     def test_nonzero_returncode_raises(self, mock_run):
@@ -70,7 +85,7 @@ class TestDecodeChunk:
             stderr=b"",
             returncode=0,
         )
-        result = _decode_chunk(Path("test.mp4"), 500.0, 502.0, 1.0)
+        result, _ = _decode_chunk(Path("test.mp4"), 500.0, 502.0, 1.0)
 
         assert 500.0 in result
         assert 501.0 in result
@@ -81,7 +96,7 @@ class TestScanGpu:
     @patch("allaganeye.video.gpu_detector._decode_chunk")
     def test_collects_all_chunks(self, mock_decode):
         """Results from all chunks are merged."""
-        mock_decode.return_value = {0.0: 128.0}
+        mock_decode.return_value = ({0.0: 128.0}, "")
         result = scan_gpu(Path("test.mp4"), 10.0, 1.0, 15.0)
 
         assert len(result) >= 1
@@ -105,7 +120,7 @@ class TestScanGpu:
             call_count += 1
             if call_count == 1:
                 raise VideoProcessingError("GPU decode failed")
-            return {0.0: 128.0}
+            return ({0.0: 128.0}, "")
 
         mock_decode.side_effect = side_effect
 
@@ -119,7 +134,7 @@ class TestScanGpu:
     @patch("allaganeye.video.gpu_detector._decode_chunk")
     def test_progress_callback(self, mock_decode):
         """Progress callback is invoked."""
-        mock_decode.return_value = {0.0: 128.0, 1.0: 5.0}
+        mock_decode.return_value = ({0.0: 128.0, 1.0: 5.0}, "")
         calls: list[tuple] = []
 
         scan_gpu(
