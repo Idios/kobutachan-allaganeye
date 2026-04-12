@@ -101,6 +101,11 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 10. `min(min_blackout_duration, _REFINED_MIN_BLACKOUT)` 未満の短い暗転を除外（リスポーン暗転の誤判定防止）
 11. blackout region 間の非暗転区間を試合セグメントとして抽出（暗転内パディング付き）
 
+**検出の動作確認済み環境と制限事項**
+- 動作確認済み: ハイスペック PC（高速 SSD、高性能 GPU）での OBS 録画。試合間暗転 2-5 秒程度
+- 未検証: 低スペック環境でローディング画面が長い（10 秒超）ケース
+- 既知の制限: ローディング画面が純粋な黒画面でなく UI 要素（スピナー、ロゴ等）を含む場合、brightness が 15-55 の範囲で変動し暗転が分断されることがある。分断された各区間が `min_blackout_duration` 未満になると試合境界を検出できない
+
 **GPU モード** (`--gpu`)
 - CPU モードの Pass 1 を GPU チャンク並列デコードで代替（`gpu_detector.py`）
 - 動画を N チャンク（`min(cpu_count, 16)`）に分割し、各チャンクで長寿命の ffmpeg プロセスを `-hwaccel auto` + `fps` フィルタで起動
