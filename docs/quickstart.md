@@ -167,15 +167,37 @@ echo 'export ALLAGANEYE_FFMPEG=/path/to/ffmpeg/bin' >> ~/.zshrc
 ```bash
 git clone https://github.com/Idios/kobutachan-allaganeye.git
 cd kobutachan-allaganeye
+python -m venv .venv
+```
+
+仮想環境を有効化する:
+
+```bash
+# Windows (PowerShell)
+.venv\Scripts\Activate.ps1
+
+# Windows (Git Bash / MSYS2)
+source .venv/Scripts/activate
+
+# Linux / macOS
+source .venv/bin/activate
+```
+
+パッケージをインストールする:
+
+```bash
 pip install -e .
 ```
 
 > SSH を使う場合: `git clone git@github.com:Idios/kobutachan-allaganeye.git`
 
+> **注意**: 仮想環境を使わずに `pip install -e .` すると、`allaganeye` コマンドが PATH の通らないディレクトリにインストールされることがあります（特に Microsoft Store 版 Python）。仮想環境の使用を推奨します。
+
 ## 3. 更新
 
 ```bash
 cd kobutachan-allaganeye
+source .venv/Scripts/activate   # または上記の有効化コマンド
 git pull
 ```
 

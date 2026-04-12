@@ -31,6 +31,7 @@ OBS 等で録画した数時間分の動画を入力すると、試合の切れ�
 # 初めての方は docs/quickstart.md を参照
 git clone https://github.com/Idios/kobutachan-allaganeye.git
 cd kobutachan-allaganeye
+python -m venv .venv && source .venv/Scripts/activate  # Windows Git Bash
 pip install -e .
 
 # まず検知結果を確認
