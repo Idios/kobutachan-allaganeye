@@ -76,7 +76,16 @@ def split(
         typer.Option("--no-cache", help="Ignore cached detection results"),
     ] = False,
     verbose: Annotated[
-        bool, typer.Option("-v", "--verbose", help="Verbose output")
+        bool,
+        typer.Option(
+            "-v", "--verbose", help="Verbose output (metadata details, gap info)"
+        ),
+    ] = False,
+    quiet: Annotated[
+        bool,
+        typer.Option(
+            "-q", "--quiet", help="Suppress progress output (final result only)"
+        ),
     ] = False,
 ) -> None:
     """Split a long recording into per-match video files."""
@@ -104,7 +113,7 @@ def split(
 
         from allaganeye.commands.split_matches import run_split
 
-        run_split(video_path, config, verbose=verbose)
+        run_split(video_path, config, verbose=verbose, quiet=quiet)
 
     except AllaganEyeError as e:
         typer.echo(f"Error: {e}", err=True)

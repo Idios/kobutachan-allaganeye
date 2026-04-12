@@ -139,6 +139,7 @@ def test_split_default_options(mock_run_split, fake_video):
     assert config.use_gpu is False
     assert config.dry_run is False
     assert kwargs["verbose"] is False
+    assert kwargs["quiet"] is False
 
 
 @patch(MODULE)
@@ -265,6 +266,24 @@ def test_split_verbose_long(mock_run_split, fake_video):
 
     assert result.exit_code == 0
     assert mock_run_split.call_args[1]["verbose"] is True
+
+
+@patch(MODULE)
+def test_split_quiet_short(mock_run_split, fake_video):
+    """-q flag sets quiet=True."""
+    result = runner.invoke(app, ["split", str(fake_video), "-q"])
+
+    assert result.exit_code == 0
+    assert mock_run_split.call_args[1]["quiet"] is True
+
+
+@patch(MODULE)
+def test_split_quiet_long(mock_run_split, fake_video):
+    """--quiet flag sets quiet=True."""
+    result = runner.invoke(app, ["split", str(fake_video), "--quiet"])
+
+    assert result.exit_code == 0
+    assert mock_run_split.call_args[1]["quiet"] is True
 
 
 @patch(MODULE)

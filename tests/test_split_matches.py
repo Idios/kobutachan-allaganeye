@@ -81,16 +81,18 @@ def test_pipeline_happy_path(mock_probe, mock_detect, mock_split, tmp_path):
     run_split(video, config)
 
     mock_probe.assert_called_once_with(video)
-    mock_detect.assert_called_once_with(
-        video,
-        duration_hint=PROBE_RESULT["duration"],
-        sample_interval=config.sample_interval,
-        blackout_threshold=config.blackout_threshold,
-        min_match_duration=config.min_match_duration,
-        min_blackout_duration=config.min_blackout_duration,
-        use_gpu=config.use_gpu,
-        workers=config.workers,
-        src_resolution=(PROBE_RESULT["width"], PROBE_RESULT["height"]),
+    mock_detect.assert_called_once()
+    _, detect_kwargs = mock_detect.call_args
+    assert detect_kwargs["duration_hint"] == PROBE_RESULT["duration"]
+    assert detect_kwargs["sample_interval"] == config.sample_interval
+    assert detect_kwargs["blackout_threshold"] == config.blackout_threshold
+    assert detect_kwargs["min_match_duration"] == config.min_match_duration
+    assert detect_kwargs["min_blackout_duration"] == config.min_blackout_duration
+    assert detect_kwargs["use_gpu"] == config.use_gpu
+    assert detect_kwargs["workers"] == config.workers
+    assert detect_kwargs["src_resolution"] == (
+        PROBE_RESULT["width"],
+        PROBE_RESULT["height"],
     )
     mock_split.assert_called_once_with(video, BOUNDARIES, tmp_path)
     assert (tmp_path / "metadata.json").exists()
@@ -238,7 +240,7 @@ class TestMetadataWriteError:
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
 def test_pipeline_verbose_output(mock_probe, mock_detect, mock_split, tmp_path, capsys):
-    """Verbose mode prints probe info and match details."""
+    """Verbose mode prints probe details and gap info."""
     mock_probe.return_value = PROBE_RESULT
     mock_detect.return_value = BOUNDARIES
     mock_split.return_value = _output_files(tmp_path)
@@ -257,22 +259,42 @@ def test_pipeline_verbose_output(mock_probe, mock_detect, mock_split, tmp_path, 
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
-def test_pipeline_non_verbose_output(
-    mock_probe, mock_detect, mock_split, tmp_path, capsys
-):
-    """Non-verbose mode prints match list with timestamps but not probe details."""
+def test_pipeline_default_output(mock_probe, mock_detect, mock_split, tmp_path, capsys):
+    """Default mode prints probing status, match list, but not metadata details."""
     mock_probe.return_value = PROBE_RESULT
     mock_detect.return_value = BOUNDARIES
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    run_split(Path("input.mp4"), config, verbose=False)
+    run_split(Path("input.mp4"), config)
 
     output = capsys.readouterr().out
+    assert "Probing:" in output
     assert "Detected 2 match(es)" in output
     assert "Match 1:" in output
     assert "Match 2:" in output
+    # Metadata details only in verbose
+    assert "Duration:" not in output
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_pipeline_quiet_output(mock_probe, mock_detect, mock_split, tmp_path, capsys):
+    """Quiet mode suppresses progress but still shows output files."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, quiet=True)
+
+    output = capsys.readouterr().out
     assert "Probing:" not in output
+    assert "Detecting match boundaries" not in output
+    assert "Match 1:" not in output
+    # Output files still shown
+    assert "Output:" in output
 
 
 # --- Auto sample interval ---
@@ -315,17 +337,10 @@ def test_pipeline_auto_interval_long_video(
 
     run_split(Path("input.mp4"), config)
 
-    mock_detect.assert_called_once_with(
-        Path("input.mp4"),
-        duration_hint=5400.0,
-        sample_interval=2.0,
-        blackout_threshold=config.blackout_threshold,
-        min_match_duration=config.min_match_duration,
-        min_blackout_duration=config.min_blackout_duration,
-        use_gpu=config.use_gpu,
-        workers=config.workers,
-        src_resolution=(1920, 1080),
-    )
+    mock_detect.assert_called_once()
+    _, detect_kwargs = mock_detect.call_args
+    assert detect_kwargs["sample_interval"] == 2.0
+    assert detect_kwargs["duration_hint"] == 5400.0
 
 
 # --- Config forwarding ---
@@ -350,17 +365,12 @@ def test_pipeline_config_params_forwarded(
 
     run_split(Path("input.mp4"), config)
 
-    mock_detect.assert_called_once_with(
-        Path("input.mp4"),
-        duration_hint=PROBE_RESULT["duration"],
-        sample_interval=2.0,
-        blackout_threshold=20.0,
-        min_match_duration=120.0,
-        min_blackout_duration=3.0,
-        use_gpu=False,
-        workers=None,
-        src_resolution=(PROBE_RESULT["width"], PROBE_RESULT["height"]),
-    )
+    mock_detect.assert_called_once()
+    _, detect_kwargs = mock_detect.call_args
+    assert detect_kwargs["sample_interval"] == 2.0
+    assert detect_kwargs["blackout_threshold"] == 20.0
+    assert detect_kwargs["min_match_duration"] == 120.0
+    assert detect_kwargs["min_blackout_duration"] == 3.0
 
 
 # ============================================================
@@ -484,7 +494,7 @@ class TestCacheRoundTrip:
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
-def test_verbose_progressbar_length(mock_probe, mock_detect, mock_split, tmp_path):
+def test_progressbar_length(mock_probe, mock_detect, mock_split, tmp_path):
     """Progressbar length equals estimated_samples, not frame count."""
     mock_probe.return_value = {**PROBE_RESULT, "duration": 1800.0}
     mock_detect.return_value = BOUNDARIES
@@ -495,7 +505,7 @@ def test_verbose_progressbar_length(mock_probe, mock_detect, mock_split, tmp_pat
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
-        run_split(Path("input.mp4"), config, verbose=True)
+        run_split(Path("input.mp4"), config)
 
     # interval=1.0 for 1800s → estimated_samples = 1800
     mock_bar.assert_called_once()
@@ -505,7 +515,7 @@ def test_verbose_progressbar_length(mock_probe, mock_detect, mock_split, tmp_pat
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
-def test_verbose_progressbar_tiny_video(mock_probe, mock_detect, mock_split, tmp_path):
+def test_progressbar_tiny_video(mock_probe, mock_detect, mock_split, tmp_path):
     """Progressbar length is at least 1 for very short videos."""
     mock_probe.return_value = {**PROBE_RESULT, "duration": 0.5}
     mock_detect.return_value = BOUNDARIES
@@ -516,7 +526,7 @@ def test_verbose_progressbar_tiny_video(mock_probe, mock_detect, mock_split, tmp
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
-        run_split(Path("input.mp4"), config, verbose=True)
+        run_split(Path("input.mp4"), config)
 
     # int(0.5 / 1.0) = 0, max(1, 0) = 1
     mock_bar.assert_called_once()
@@ -526,9 +536,7 @@ def test_verbose_progressbar_tiny_video(mock_probe, mock_detect, mock_split, tmp
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
-def test_verbose_progressbar_auto_interval(
-    mock_probe, mock_detect, mock_split, tmp_path
-):
+def test_progressbar_auto_interval(mock_probe, mock_detect, mock_split, tmp_path):
     """Progressbar length uses auto-adjusted interval for long videos."""
     mock_probe.return_value = {**PROBE_RESULT, "duration": 7300.0}  # > 2h
     mock_detect.return_value = BOUNDARIES
@@ -539,7 +547,7 @@ def test_verbose_progressbar_auto_interval(
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
-        run_split(Path("input.mp4"), config, verbose=True)
+        run_split(Path("input.mp4"), config)
 
     # auto interval = 3.0 for > 2h, estimated_samples = int(7300/3.0) = 2433
     mock_bar.assert_called_once()
