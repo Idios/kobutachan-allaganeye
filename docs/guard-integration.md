@@ -220,11 +220,12 @@ GitHub の issue・PR に添付またはリンクされた動画ファイルに�
 ### 検査手順
 
 1. ファイルをダウンロードし、隔離ディレクトリに保存する
-2. `allaganeye-guard verify <file>` を実行する
-3. **PASS するまで allaganeye で処理しない**
-4. guard 未インストールの場合は先にインストールする（§7 参照）
-5. FAIL の場合は処理せず、issue・PR にコメントして提供者に確認を求める
-6. 検査結果（PASS / FAIL）を issue・PR にコメントとして記録する
+2. guard を最新版に更新する（`git pull && pip install -e .`）。YARA ルールセットは随時更新されるため、古いバージョンでの検査は不十分な可能性がある
+3. `allaganeye-guard verify <file>` を実行する
+4. **PASS するまで allaganeye で処理しない**
+5. guard 未インストールの場合は先にインストールする（§7 参照）
+6. FAIL の場合は処理せず、issue・PR にコメントして提供者に確認を求める
+7. 検査結果（PASS / FAIL）を issue・PR にコメントとして記録する
 
 ---
 
