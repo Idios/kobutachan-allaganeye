@@ -22,7 +22,6 @@ from allaganeye.config import SplitConfig
 from allaganeye.video.detector import detect_match_boundaries
 from allaganeye.video.probe import ProbeResult, probe_video
 
-pytestmark = pytest.mark.slow
 
 # --- Helpers ---
 
@@ -186,6 +185,7 @@ def pipeline_output_with_scorebar(
 # --- 1. Functional regression: detection count ---
 
 
+@pytest.mark.slow
 @pytest.mark.slow_detect
 class TestDetectionCount:
     """Scorebar filtering should not reduce detection count vs manual splits."""
@@ -228,6 +228,7 @@ class TestDetectionCount:
 # --- 2. Functional regression: match durations ---
 
 
+@pytest.mark.slow
 @pytest.mark.slow_detect
 class TestMatchDurations:
     """Each detected match should be within plausible FL duration range."""
@@ -279,6 +280,7 @@ class TestPerformance:
 # --- 4. Pipeline output: metadata.json integrity ---
 
 
+@pytest.mark.slow
 @pytest.mark.slow_pipeline
 class TestMetadataIntegrity:
     """metadata.json should have all required fields."""
@@ -395,6 +397,7 @@ class TestNoResolutionCompat:
 # --- 6. Baseline comparison: scorebar detection results ---
 
 
+@pytest.mark.slow
 @pytest.mark.slow_detect
 class TestBaselineComparison:
     """Compare scorebar detection against saved baselines.
