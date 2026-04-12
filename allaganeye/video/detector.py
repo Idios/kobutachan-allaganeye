@@ -33,7 +33,7 @@ def _resolve_workers(workers: int | None) -> int:
     """Resolve worker count: explicit value or auto-detect."""
     if workers is not None:
         return workers
-    return min(os.cpu_count() or 4, 24)
+    return min(os.cpu_count() or 4, 32)
 
 
 def detect_match_boundaries(
@@ -240,7 +240,7 @@ def _scan_cpu(
         return {}
 
     total_samples = len(timestamps)
-    num_chunks = min(os.cpu_count() or 4, 16)
+    num_chunks = min(os.cpu_count() or 4, 32)
     chunk_duration = duration_hint / num_chunks
 
     # Distribute pre-computed timestamps to chunks (with overlap)
