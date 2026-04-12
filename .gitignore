@@ -25,6 +25,7 @@ Desktop.ini
 
 # Testing
 .pytest_cache/
+tests/.detection_cache/
 .coverage
 htmlcov/
 

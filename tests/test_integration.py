@@ -141,25 +141,70 @@ def manual_splits(split_subdir: Path) -> list[Path]:
 
 @pytest.fixture(scope="session")
 def pipeline_result(
-    source_mkv: Path, source_metadata: dict, tmp_path_factory: pytest.TempPathFactory
+    source_mkv: Path,
+    source_metadata: dict,
+    tmp_path_factory: pytest.TempPathFactory,
+    _cache_context: dict,
 ) -> dict:
     """Run the full split pipeline ONCE and return results for all tests.
 
     Returns dict with keys: output_dir, output_files, metadata, boundaries.
-    Boundaries are extracted from metadata.json to avoid running detect twice.
+    On cache hit, skips detection and runs only the split step.
     """
-    from allaganeye.commands.split_matches import run_split
+    from allaganeye.commands.split_matches import (
+        _find_gaps,
+        _split_and_write_metadata,
+        run_split,
+    )
     from allaganeye.config import SplitConfig
+    from allaganeye.video.probe import probe_video
+    from tests.detection_cache import read_fixture_cache, write_fixture_cache
 
+    detection_params = {
+        "sample_interval": 2.0,
+        "blackout_threshold": 15.0,
+        "min_match_duration": 300.0,
+        "min_blackout_duration": 3.0,
+    }
+
+    cache_dir = _cache_context["cache_dir"]
+    source_hashes = _cache_context["source_hashes"]
     output_dir = tmp_path_factory.mktemp("pipeline_output")
 
-    config = SplitConfig(
-        output_dir=output_dir,
-        sample_interval=2.0,
-        blackout_threshold=15.0,
-        min_match_duration=300.0,
-    )
-    run_split(source_mkv, config)
+    cached = None
+    if not _cache_context["no_cache"]:
+        cached = read_fixture_cache(
+            cache_dir,
+            source_mkv,
+            "pipeline_result",
+            detection_params,
+            source_hashes,
+        )
+
+    if cached is not None:
+        name = source_mkv.parent.name
+        print(f"\n[cache] HIT pipeline_result for {name}")
+        boundaries = cached["boundaries"]
+        # Run split only (skip detection)
+        meta = probe_video(source_mkv)
+        config = SplitConfig(
+            output_dir=output_dir,
+            sample_interval=2.0,
+            blackout_threshold=15.0,
+            min_match_duration=300.0,
+        )
+        gaps = _find_gaps(boundaries, meta["duration"], min_gap=300.0)
+        _split_and_write_metadata(source_mkv, boundaries, gaps, meta, config)
+    else:
+        name = source_mkv.parent.name
+        print(f"\n[cache] MISS pipeline_result for {name}")
+        config = SplitConfig(
+            output_dir=output_dir,
+            sample_interval=2.0,
+            blackout_threshold=15.0,
+            min_match_duration=300.0,
+        )
+        run_split(source_mkv, config)
 
     output_files = sorted(output_dir.glob("match_*.mp4"))
     metadata_path = output_dir / "metadata.json"
@@ -169,11 +214,22 @@ def pipeline_result(
         else None
     )
 
-    # Extract boundaries from metadata.json (avoids a second detect pass)
+    # Extract boundaries from metadata.json
     boundaries = []
     if metadata:
         for m in metadata["matches"]:
             boundaries.append({"start": m["start_time"], "end": m["end_time"]})
+
+    # Write cache on miss
+    if cached is None and boundaries:
+        write_fixture_cache(
+            cache_dir,
+            source_mkv,
+            "pipeline_result",
+            detection_params,
+            source_hashes,
+            result={"boundaries": boundaries},
+        )
 
     return {
         "output_dir": output_dir,
@@ -387,12 +443,41 @@ class TestMetadataJson:
 
 
 @pytest.fixture(scope="session")
-def gpu_cpu_results(source_mkv: Path, source_metadata: dict) -> dict:
+def gpu_cpu_results(
+    source_mkv: Path, source_metadata: dict, _cache_context: dict
+) -> dict:
     """Run detection in both CPU and GPU modes (cached for session)."""
     if not _gpu_available():
         pytest.skip("No GPU available")
 
     from allaganeye.video.detector import detect_match_boundaries
+    from tests.detection_cache import read_fixture_cache, write_fixture_cache
+
+    detection_params = {
+        "sample_interval": 2.0,
+        "blackout_threshold": 15.0,
+        "min_match_duration": 300.0,
+        "min_blackout_duration": 3.0,
+        "src_resolution": [source_metadata["width"], source_metadata["height"]],
+    }
+
+    cache_dir = _cache_context["cache_dir"]
+    source_hashes = _cache_context["source_hashes"]
+
+    if not _cache_context["no_cache"]:
+        cached = read_fixture_cache(
+            cache_dir,
+            source_mkv,
+            "gpu_cpu_results",
+            detection_params,
+            source_hashes,
+        )
+        if cached is not None:
+            name = source_mkv.parent.name
+            print(f"\n[cache] HIT gpu_cpu_results for {name}")
+            return {"cpu": cached["cpu"], "gpu": cached["gpu"]}
+        name = source_mkv.parent.name
+        print(f"\n[cache] MISS gpu_cpu_results for {name}")
 
     cpu = detect_match_boundaries(
         source_mkv,
@@ -414,6 +499,16 @@ def gpu_cpu_results(source_mkv: Path, source_metadata: dict) -> dict:
         min_blackout_duration=3.0,
         src_resolution=(source_metadata["width"], source_metadata["height"]),
     )
+
+    write_fixture_cache(
+        cache_dir,
+        source_mkv,
+        "gpu_cpu_results",
+        detection_params,
+        source_hashes,
+        result={"cpu": cpu, "gpu": gpu},
+    )
+
     return {"cpu": cpu, "gpu": gpu}
 
 
