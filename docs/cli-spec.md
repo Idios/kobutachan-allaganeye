@@ -42,7 +42,8 @@ allaganeye split <video_path> [OPTIONS]
 | `--gpu` / `--no-gpu` | `false` | GPU アクセラレーション検知（チャンク並列デコード）。利用不可時は CPU フォールバック |
 | `--no-cache` | `false` | キャッシュされた検知結果を無視して再検知する |
 | `--dry-run` | `false` | 検知のみ実行し分割しない |
-| `-v`, `--verbose` | `false` | 詳細ログ出力 |
+| `-v`, `--verbose` | `false` | 詳細出力（メタデータ詳細、gap 情報） |
+| `-q`, `--quiet` | `false` | 進捗出力を抑制（出力ファイル一覧のみ） |
 
 ### 出力
 

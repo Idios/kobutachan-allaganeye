@@ -47,6 +47,7 @@ allaganeye split <video_path> -o <dir>  # 出力先指定
 allaganeye split <video_path> --gpu     # GPU アクセラレーション検知
 allaganeye split <video_path> --workers 8  # ワーカー数指定
 allaganeye split <video_path> --no-cache   # キャッシュ無視で再検知
+allaganeye split <video_path> --quiet      # 進捗抑制（出力ファイルのみ）
 allaganeye debug-brightness <video_path>   # フレーム輝度 CSV 出力
 ```
 
