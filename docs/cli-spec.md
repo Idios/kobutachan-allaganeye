@@ -41,7 +41,7 @@ allaganeye split <video_path> [OPTIONS]
 | `--workers` | auto | 検知の並列ワーカー数（デフォルト: 自動=`min(cpu_count, 24)`） |
 | `--gpu` / `--no-gpu` | `false` | GPU アクセラレーション検知（チャンク並列デコード）。利用不可時は CPU フォールバック |
 | `--no-cache` | `false` | キャッシュされた検知結果を無視して再検知する |
-| `--dry-run` | `false` | 検知のみ実行し分割しない |
+| `--dry-run` | `false` | 検知のみ実行し分割しない（検知結果はキャッシュに保存される） |
 | `-v`, `--verbose` | `false` | 詳細出力（メタデータ詳細、gap 情報） |
 | `-q`, `--quiet` | `false` | 進捗出力を抑制（出力ファイル一覧のみ） |
 
