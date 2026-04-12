@@ -248,17 +248,3 @@ GPU が利用できない場合は自動で CPU モードにフォールバッ�
 ### 分割が途中で失敗した場合
 
 途中で失敗しても、成功済みの出力ファイル（`match_001.mp4` 等）は出力ディレクトリに残ります。再実行すれば自動的に上書きされるため、手動削除は不要です。
-
-## 開発者向け
-
-### 実動画テストの実行
-
-実動画を使った統合テスト（`pytest -m slow`）には以下の環境変数が必要:
-
-```bash
-# Windows
-set ALLAGANEYE_SAMPLE_VIDEO_DIR=E:\path\to\videos
-
-# Linux / macOS
-export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
-```
