@@ -177,6 +177,7 @@ def _run_detection(
         "use_gpu": config.use_gpu,
         "workers": config.workers,
         "src_resolution": (metadata["width"], metadata["height"]),
+        "codec": metadata.get("codec"),
     }
 
     if not quiet:

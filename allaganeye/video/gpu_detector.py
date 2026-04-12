@@ -12,6 +12,17 @@ from allaganeye.exceptions import VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
 from allaganeye.video.detector import _FRAME_SIZE, _SAMPLE_HEIGHT, _SAMPLE_WIDTH
 
+_CUVID_CODEC_MAP: dict[str, str] = {
+    "h264": "h264_cuvid",
+    "hevc": "hevc_cuvid",
+    "av1": "av1_cuvid",
+    "vp9": "vp9_cuvid",
+    "vp8": "vp8_cuvid",
+    "mpeg1video": "mpeg1_cuvid",
+    "mpeg2video": "mpeg2_cuvid",
+    "mpeg4": "mpeg4_cuvid",
+}
+
 
 def scan_gpu(
     video_path: Path,
@@ -19,8 +30,9 @@ def scan_gpu(
     sample_interval: float,
     blackout_threshold: float,
     progress_callback: Callable[[int, int, int], None] | None = None,
+    codec: str | None = None,
 ) -> dict[float, float]:
-    """GPU mode: chunked parallel decode with -hwaccel auto.
+    """GPU mode: chunked parallel decode with cuvid hardware decoder.
 
     Splits the video timeline into chunks and runs one long-lived ffmpeg
     process per chunk with GPU-accelerated decoding.  Each process uses
@@ -54,6 +66,7 @@ def scan_gpu(
                 chunk_start,
                 chunk_end,
                 sample_interval,
+                codec,
             ): (chunk_start, chunk_end)
             for chunk_start, chunk_end in chunks
         }
@@ -84,19 +97,29 @@ def _decode_chunk(
     chunk_start: float,
     chunk_end: float,
     sample_interval: float,
+    codec: str | None = None,
 ) -> dict[float, float]:
     """Decode a single chunk using GPU-accelerated ffmpeg.
 
     Runs one ffmpeg process that decodes from chunk_start to chunk_end,
     outputting one frame per sample_interval via the fps filter.
+
+    When *codec* maps to a known cuvid decoder, uses explicit
+    ``-hwaccel cuda -c:v <codec>_cuvid`` for reliable GPU decode.
+    Falls back to ``-hwaccel auto`` for unknown codecs.
     """
     chunk_duration = chunk_end - chunk_start
     fps_value = 1.0 / sample_interval
 
+    cuvid_decoder = _CUVID_CODEC_MAP.get(codec or "")
+    if cuvid_decoder:
+        hwaccel_args = ["-hwaccel", "cuda", "-c:v", cuvid_decoder]
+    else:
+        hwaccel_args = ["-hwaccel", "auto"]
+
     cmd = [
         find_ffmpeg(),
-        "-hwaccel",
-        "auto",
+        *hwaccel_args,
         "-ss",
         str(chunk_start),
         "-t",

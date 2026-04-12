@@ -47,6 +47,7 @@ def detect_match_boundaries(
     use_gpu: bool = False,
     workers: int | None = None,
     src_resolution: tuple[int, int] | None = None,
+    codec: str | None = None,
     progress_callback: Callable[[int, int, int], None] | None = None,
 ) -> list[MatchBoundary]:
     """Detect match boundaries by finding blackout frames.
@@ -80,6 +81,7 @@ def detect_match_boundaries(
                 sample_interval,
                 blackout_threshold,
                 progress_callback,
+                codec=codec,
             )
         except VideoProcessingError:
             # GPU failed — fall back to CPU
