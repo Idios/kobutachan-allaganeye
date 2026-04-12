@@ -82,7 +82,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 **Pass 1: 粗いスキャン**
 1. `duration_hint` から `sample_interval` 秒間隔のタイムスタンプを生成（長時間動画は自動で 2-3s に調整）
 2. 各タイムスタンプで `ffmpeg -threads 1 -ss {t} -i` により 1 フレームを 320x180 grayscale でデコード
-3. `ThreadPoolExecutor(max_workers=min(cpu_count, 24))` で並列実行
+3. `ThreadPoolExecutor(max_workers=min(cpu_count, 32))` で並列実行
 4. 各フレームの平均輝度が `blackout_threshold` 以下なら暗転と判定
 5. 連続する暗転フレームを `_group_blackout_regions()` で blackout region にマージ
 
@@ -102,7 +102,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 
 **GPU モード** (`--gpu`)
 - CPU モードの Pass 1 を GPU チャンク並列デコードで代替（`gpu_detector.py`）
-- 動画を N チャンク（`min(cpu_count, 16)`）に分割し、各チャンクで長寿命の ffmpeg プロセスを `-hwaccel auto` + `fps` フィルタで起動
+- 動画を N チャンク（`min(cpu_count, 32)`）に分割し、各チャンクで長寿命の ffmpeg プロセスを `-hwaccel auto` + `fps` フィルタで起動
 - GPU 初期化コストを分散し、1プロセスあたり多数フレームをデコードすることで効率化
 - Pass 1 以降の処理（transition expansion, Pass 2, フィルタリング）は CPU/GPU 共通
 - GPU 利用不可時は自動で CPU モードにフォールバック
