@@ -51,6 +51,16 @@ allaganeye は独立リポジトリ [kobutachan-allaganeye-guard](https://github
 - **リリース順序**: guard の破壊的変更がある場合は guard を先にリリースし、allaganeye 側で対応してからリリースする
 - **バージョン対応表の維持**: どの allaganeye バージョンがどの guard バージョンと互換性があるかを把握する
 
+### guard リリース issue の処理
+
+`[info] allaganeye-guard` タイトルの issue が起票された場合、ディレクターは以下を実施する:
+
+1. issue 本文からリリースバージョンを読み取る
+2. `docs/guard-integration.md` §1.1 の「推奨 guard バージョン」テーブルを更新する PR を作成する
+3. PR マージ後、該当 issue をクローズする
+
+この処理は `/check-work` の定期見直し (b) で自動検出される。
+
 ### 定期見直しの起票
 
 guard の保守ポリシー（`kobutachan-allaganeye-guard/docs/maintenance-policy.md`）に基づき、以下の定期見直し issue を guard リポジトリに起票する:
