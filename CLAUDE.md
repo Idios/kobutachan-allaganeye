@@ -102,7 +102,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 
 **GPU モード** (`--gpu`)
 - CPU モードの Pass 1 を GPU チャンク並列デコードで代替（`gpu_detector.py`）
-- 動画を N チャンク（`min(cpu_count, 32)`）に分割し、各チャンクで長寿命の ffmpeg プロセスを `-hwaccel auto` + `fps` フィルタで起動
+- 動画を N チャンク（`min(cpu_count, 16)`）に分割し、各チャンクで長寿命の ffmpeg プロセスを `-hwaccel auto` + `fps` フィルタで起動
 - GPU 初期化コストを分散し、1プロセスあたり多数フレームをデコードすることで効率化
 - Pass 1 以降の処理（transition expansion, Pass 2, フィルタリング）は CPU/GPU 共通
 - GPU 利用不可時は自動で CPU モードにフォールバック
