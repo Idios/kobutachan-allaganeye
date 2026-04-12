@@ -62,7 +62,19 @@ gh pr list --state all --json number,title,state,labels,comments,createdAt,merge
 - **レビューで複数回差し戻された PR** — 原因パターンを特定し、再発防止策を提案
 - **着手済みだが長期間（3日以上）進展がない issue** — 担当セッションへの確認コメントを提案
 
-**(b) プロセスルールの整合性チェック:**
+**(b) guard リリース issue の検出:**
+
+```bash
+gh issue list --state open --search "[info] allaganeye-guard" --json number,title,createdAt
+```
+
+タイトルが `[info] allaganeye-guard` で始まるオープン issue を検出する。見つかった場合:
+
+1. issue 本文からリリースバージョンを読み取る
+2. `docs/guard-integration.md` §1.1 の「推奨 guard バージョン」テーブルを更新する PR を作成する
+3. PR マージ後、該当 issue をクローズする（`gh issue close <番号> --comment "ポリシー更新: director-1 ← PR #<番号>"`)
+
+**(c) プロセスルールの整合性チェック:**
 
 Explore サブエージェントを使い、**ロール定義・プロトコル・コマンド間** の矛盾・欠落を検出する:
 - `docs/roles/protocol.md` のルール vs `.claude/commands/` の実装
@@ -73,9 +85,9 @@ Explore サブエージェントを使い、**ロール定義・プロトコル�
 - ディレクターのスコープ内（`docs/`, `.claude/`）なら直接修正して PR を作成
 - 他ロールのスコープなら issue を作成して `role:*` ラベルで割り当て
 
-**(c) 見直し結果の報告:**
+**(d) 見直し結果の報告:**
 
-上記 (a)(b) の結果を、担当 Issue/PR の一覧と合わせて報告する。
+上記 (a)(b)(c) の結果を、担当 Issue/PR の一覧と合わせて報告する。
 
 ---
 
@@ -195,7 +207,8 @@ gh pr list --state open --label "role:tester" --json number,title,headRefName,au
 ### ロール別の追加判断基準
 
 **ディレクター:**
-- 定期見直し (a)(b) で検出した問題への対応を、担当 Issue/PR と同列で優先判断する
+- 定期見直し (a)(b)(c) で検出した問題への対応を、担当 Issue/PR と同列で優先判断する
+- guard リリース issue (b) はセキュリティポリシーに関わるため優先的に処理する
 - 他ロールの作業を止めている問題（未クローズ issue、ルール不整合）は最優先
 
 **リードエンジニア:**
