@@ -26,19 +26,20 @@ OBS 等で録画した数時間分の動画を入力すると、試合の切れ�
 > 詳しいセットアップ手順は [Quick Start Guide](docs/quickstart.md) を参照してください。
 > 更新方法は [Quick Start Guide — 更新](docs/quickstart.md#3-更新) を参照してください。
 
-```bash
-# 前提: Git, Python 3.11+, ffmpeg 4.1+ がインストール済みであること
-# 初めての方は docs/quickstart.md を参照
+```
 git clone https://github.com/Idios/kobutachan-allaganeye.git
 cd kobutachan-allaganeye
-python -m venv .venv && source .venv/Scripts/activate  # Windows Git Bash
+python -m venv .venv
+.venv\Scripts\activate.bat
 pip install -e .
 
-# まず検知結果を確認
+rem まず検知結果を確認
 allaganeye split your_recording.mkv --dry-run
-# 結果が正しければ本実行
+rem 結果が正しければ本実行
 allaganeye split your_recording.mkv
 ```
+
+> 上記は Windows コマンドプロンプトでの例です。PowerShell・Git Bash・Linux・macOS での手順は [Quick Start Guide](docs/quickstart.md) を参照してください。
 
 ## 使い方
 
