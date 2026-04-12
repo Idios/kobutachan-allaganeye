@@ -173,6 +173,9 @@ python -m venv .venv
 仮想環境を有効化する:
 
 ```bash
+# Windows (コマンドプロンプト)
+.venv\Scripts\activate.bat
+
 # Windows (PowerShell)
 .venv\Scripts\Activate.ps1
 
