@@ -3,8 +3,16 @@
 The features are deliberately one-way: the mel filterbank discards FFT
 phase and aggregates magnitudes into ``n_mels`` bands, so the original
 audio cannot be perceptually reconstructed from the saved features.
+
+The on-disk ``.npz`` format is pickle-free: metadata is stored as a JSON
+string and ``fmax=None`` is persisted as ``NaN``.  This allows
+``load_features`` to use ``allow_pickle=False``, closing the RCE vector
+that would otherwise exist when reading ``.npz`` files from untrusted
+sources.
 """
 
+import json
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -101,7 +109,7 @@ def log_mel_spectrogram(
     return np.log1p(mel_power).astype(np.float32)
 
 
-_FEATURE_FILE_FORMAT_VERSION = 1
+_FEATURE_FILE_FORMAT_VERSION = 2
 
 
 def save_features(
@@ -114,7 +122,9 @@ def save_features(
 
     Features are stored as float16 to keep file size minimal.  ``config``
     fields are persisted so the file can be loaded without external
-    knowledge of the extraction parameters.
+    knowledge of the extraction parameters.  ``metadata`` must be
+    JSON-serializable; it is stored as a JSON string so the file can be
+    loaded without ``allow_pickle=True``.
     """
     if features.ndim != 2 or features.shape[0] != config.n_mels:
         raise ValueError(
@@ -125,12 +135,14 @@ def save_features(
         "format_version": np.array(_FEATURE_FILE_FORMAT_VERSION, dtype=np.int32),
     }
     for key, value in asdict(config).items():
-        if value is None:
-            payload[f"config__{key}"] = np.array("__none__", dtype=object)
+        # fmax=None is the only optional field; persist it as NaN so the
+        # column stays numeric and readable without allow_pickle.
+        if key == "fmax" and value is None:
+            payload[f"config__{key}"] = np.array(np.nan, dtype=np.float64)
         else:
             payload[f"config__{key}"] = np.array(value)
     if metadata:
-        payload["metadata"] = np.array(metadata, dtype=object)
+        payload["metadata"] = np.array(json.dumps(metadata))
 
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(path, **payload)
@@ -140,9 +152,11 @@ def load_features(path: Path) -> tuple[np.ndarray, LogMelConfig, dict[str, Any]]
     """Load features, config, and metadata from a .npz file.
 
     Returns features as float32 (upcast from stored float16) for matcher
-    compatibility.  Raises ``ValueError`` on format mismatch.
+    compatibility.  Raises ``ValueError`` on format mismatch.  Uses
+    ``allow_pickle=False`` so malicious ``.npz`` inputs cannot execute
+    code via pickle during load.
     """
-    with np.load(path, allow_pickle=True) as data:
+    with np.load(path, allow_pickle=False) as data:
         version = int(data["format_version"])
         if version != _FEATURE_FILE_FORMAT_VERSION:
             raise ValueError(
@@ -155,12 +169,12 @@ def load_features(path: Path) -> tuple[np.ndarray, LogMelConfig, dict[str, Any]]
         for key in ("sample_rate", "n_fft", "hop", "n_mels"):
             config_kwargs[key] = int(data[f"config__{key}"])
         config_kwargs["fmin"] = float(data["config__fmin"])
-        fmax_raw = data["config__fmax"]
-        config_kwargs["fmax"] = None if str(fmax_raw) == "__none__" else float(fmax_raw)
+        fmax_val = float(data["config__fmax"])
+        config_kwargs["fmax"] = None if math.isnan(fmax_val) else fmax_val
         config = LogMelConfig(**config_kwargs)
 
         metadata: dict[str, Any] = (
-            dict(data["metadata"].item()) if "metadata" in data else {}
+            json.loads(str(data["metadata"])) if "metadata" in data else {}
         )
 
     return features, config, metadata

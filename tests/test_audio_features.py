@@ -1,5 +1,7 @@
 """Tests for allaganeye.audio.features module."""
 
+import pickle
+
 import numpy as np
 import pytest
 
@@ -83,6 +85,36 @@ def test_save_load_features_roundtrip(tmp_path):
     assert metadata == {"label": "test", "src": "fixture"}
 
 
+def test_save_load_features_metadata_json_types(tmp_path):
+    """Metadata preserves JSON-safe types (str, int, float, bool, None, list)."""
+    cfg = LogMelConfig(n_mels=20)
+    out = tmp_path / "test.npz"
+    metadata = {
+        "label": "fanfare",
+        "count": 3,
+        "duration": 5.0,
+        "active": True,
+        "tags": ["bgm", "ref"],
+        "note": None,
+    }
+    save_features(out, np.zeros((cfg.n_mels, 5), dtype=np.float32), cfg, metadata)
+    _, _, loaded = load_features(out)
+    assert loaded == metadata
+
+
+def test_save_features_rejects_non_json_metadata(tmp_path):
+    """Non-JSON-serializable metadata values are rejected at save time."""
+    cfg = LogMelConfig(n_mels=20)
+    out = tmp_path / "test.npz"
+    with pytest.raises(TypeError):
+        save_features(
+            out,
+            np.zeros((cfg.n_mels, 5), dtype=np.float32),
+            cfg,
+            {"when": np.datetime64("2026-04-15")},
+        )
+
+
 def test_save_features_preserves_none_fmax(tmp_path):
     """fmax=None survives the round-trip without becoming numeric."""
     cfg = LogMelConfig(fmax=None)
@@ -133,7 +165,35 @@ def test_load_features_format_version_mismatch(tmp_path):
         config__hop=np.array(cfg.hop),
         config__n_mels=np.array(cfg.n_mels),
         config__fmin=np.array(cfg.fmin),
-        config__fmax=np.array("__none__", dtype=object),
+        config__fmax=np.array(np.nan, dtype=np.float64),
     )
     with pytest.raises(ValueError, match="format version"):
+        load_features(out)
+
+
+def test_load_features_refuses_pickle(tmp_path):
+    """A .npz containing a pickled object array is rejected by load_features.
+
+    Regression guard: if ``allow_pickle=True`` ever slips back in, this test
+    breaks. The payload below is a minimal pickle-only object array.
+    """
+    out = tmp_path / "malicious.npz"
+    # Craft a legitimate-looking header but include a pickle-only object array.
+    np.savez_compressed(
+        out,
+        features=np.zeros((80, 5), dtype=np.float16),
+        format_version=np.array(2, dtype=np.int32),
+        config__sample_rate=np.array(22050),
+        config__n_fft=np.array(2048),
+        config__hop=np.array(512),
+        config__n_mels=np.array(80),
+        config__fmin=np.array(0.0),
+        config__fmax=np.array(np.nan, dtype=np.float64),
+        metadata=np.array({"evil": object()}, dtype=object),
+    )
+    # Sanity: the crafted file genuinely requires pickle to read metadata.
+    with np.load(out, allow_pickle=True) as data:
+        pickle.dumps(data["metadata"].item())  # ensures object-array payload
+
+    with pytest.raises(ValueError, match="allow_pickle=False"):
         load_features(out)
