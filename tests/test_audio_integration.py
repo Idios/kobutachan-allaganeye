@@ -31,12 +31,20 @@ pytestmark = pytest.mark.slow
 _PRIMARY_EXPECTED_STARTS = [50, 1129, 2437, 5021, 6037, 7186, 8179, 9315]
 _PRIMARY_REQUIRED_HITS = 8  # acceptance: >= 8/8 starts at sim >= 0.65
 
-# Sample-dir recordings; counts derive from the horizontal validation report.
-# (subdir_name, mkv_name, expected_start_count_minimum)
-_SAMPLE_DIR_EXPECTATIONS = [
-    ("20260116", "2026-01-16 22-12-57.mkv", 3),
-    ("20260118", "2026-01-18 22-15-18.mkv", 4),
-    ("20260119", "2026-01-19 22-09-07.mkv", 6),
+# Sample-dir recordings. ``expected_starts`` lists the match-start timestamps
+# (seconds) that the engineer-1 prototype confirmed Fanfare-detectable during
+# the horizontal validation reported in issue #271. The cumulative acceptance
+# threshold (13) equals the sum of entries below and guards against regression
+# on this known-detectable baseline.
+# (subdir_name, mkv_name, expected_starts)
+_SAMPLE_DIR_EXPECTATIONS: list[tuple[str, str, list[float]]] = [
+    ("20260116", "2026-01-16 22-12-57.mkv", [2355.8, 3367.1, 5624.2]),
+    ("20260118", "2026-01-18 22-15-18.mkv", [2976.2, 4200.2, 5499.0, 7231.8]),
+    (
+        "20260119",
+        "2026-01-19 22-09-07.mkv",
+        [1985.0, 3069.1, 3993.0, 5099.5, 7556.0, 8413.2],
+    ),
 ]
 # Cumulative acceptance (per #287): 13/20 starts across the 3 recordings.
 _CUMULATIVE_REQUIRED_HITS = 13
@@ -93,22 +101,23 @@ def test_primary_recording_fanfare_coverage(_fanfare_reference):
 def test_sample_recordings_cumulative_coverage(
     _fanfare_reference, sample_video_dir: Path
 ):
-    """Bundled fanfare reference detects >= 13/20 starts across the 3 sample recordings."""
+    """Matched starts across the 3 sample recordings reach the baseline >= 13."""
     ref_features, config = _fanfare_reference
 
-    total = 0
-    per_video: dict[str, int] = {}
-    for subdir_name, mkv_name, _ in _SAMPLE_DIR_EXPECTATIONS:
+    total_matched = 0
+    per_video: dict[str, tuple[int, int]] = {}
+    for subdir_name, mkv_name, expected_starts in _SAMPLE_DIR_EXPECTATIONS:
         video = sample_video_dir / subdir_name / mkv_name
         if not video.exists():
             pytest.skip(f"Sample recording missing: {video}")
         hits = _detect_fanfare_hits(video, ref_features, config, threshold=0.65)
-        total += len(hits)
-        per_video[subdir_name] = len(hits)
+        matched = _hits_within_offset(hits, expected_starts)
+        total_matched += matched
+        per_video[subdir_name] = (matched, len(expected_starts))
 
-    assert total >= _CUMULATIVE_REQUIRED_HITS, (
-        f"Expected >= {_CUMULATIVE_REQUIRED_HITS} cumulative hits, "
-        f"got {total} (per video: {per_video})"
+    assert total_matched >= _CUMULATIVE_REQUIRED_HITS, (
+        f"Expected >= {_CUMULATIVE_REQUIRED_HITS} matched starts, "
+        f"got {total_matched} (per video matched/expected: {per_video})"
     )
 
 
