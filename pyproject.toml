@@ -11,10 +11,14 @@ requires-python = ">=3.11"
 dependencies = [
     "typer>=0.9",
     "numpy>=1.24",
+    "scipy>=1.11",
 ]
 
 [project.scripts]
 allaganeye = "allaganeye.cli:app"
+
+[tool.setuptools.package-data]
+"allaganeye.audio.refs" = ["*.npz"]
 
 [project.optional-dependencies]
 dev = [
@@ -53,3 +57,4 @@ ignore = [
 [tool.pyright]
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
+exclude = ["tmp", ".venv", "build", "dist"]

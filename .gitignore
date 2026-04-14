@@ -43,3 +43,4 @@ ROLE
 *.avi
 *.mov
 output/
+tmp/
