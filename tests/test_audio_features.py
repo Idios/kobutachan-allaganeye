@@ -8,9 +8,11 @@ import pytest
 from allaganeye.audio.features import (
     LogMelConfig,
     load_features,
+    load_features_multi,
     log_mel_spectrogram,
     mel_filterbank,
     save_features,
+    save_features_multi,
 )
 
 
@@ -197,3 +199,83 @@ def test_load_features_refuses_pickle(tmp_path):
 
     with pytest.raises(ValueError, match="allow_pickle=False"):
         load_features(out)
+
+
+# --- Multi-reference format (v3, #289) ---
+
+
+def test_save_load_features_multi_roundtrip(tmp_path):
+    """Saved multi-ref features are recovered (within float16 precision)."""
+    cfg = LogMelConfig(n_mels=40)
+    rng = np.random.RandomState(7)
+    refs = [
+        rng.randn(40, 60).astype(np.float32),
+        rng.randn(40, 100).astype(np.float32),
+    ]
+    out = tmp_path / "multi.npz"
+    save_features_multi(out, refs, cfg, {"windows": [{"w": 0}, {"w": 1}]})
+
+    loaded, loaded_cfg, metadata = load_features_multi(out)
+    assert len(loaded) == 2
+    for i, (ref, exp) in enumerate(zip(loaded, refs, strict=True)):
+        assert ref.shape == exp.shape, f"ref {i} shape"
+        np.testing.assert_allclose(ref, exp, rtol=1e-2, atol=1e-3)
+    assert loaded_cfg == cfg
+    assert metadata == {"windows": [{"w": 0}, {"w": 1}]}
+
+
+def test_load_features_multi_accepts_legacy_single_ref(tmp_path):
+    """load_features_multi transparently wraps a v2 file into a 1-element list."""
+    cfg = LogMelConfig(n_mels=20)
+    features = np.ones((20, 30), dtype=np.float32)
+    out = tmp_path / "legacy.npz"
+    save_features(out, features, cfg, {"label": "legacy"})
+
+    loaded, loaded_cfg, metadata = load_features_multi(out)
+    assert len(loaded) == 1
+    np.testing.assert_allclose(loaded[0], features, rtol=1e-2, atol=1e-3)
+    assert loaded_cfg == cfg
+    assert metadata == {"label": "legacy"}
+
+
+def test_save_features_multi_rejects_empty_list(tmp_path):
+    cfg = LogMelConfig()
+    out = tmp_path / "empty.npz"
+    with pytest.raises(ValueError, match="at least one reference"):
+        save_features_multi(out, [], cfg)
+
+
+def test_save_features_multi_rejects_shape_mismatch(tmp_path):
+    cfg = LogMelConfig(n_mels=80)
+    good = np.zeros((80, 10), dtype=np.float32)
+    bad = np.zeros((40, 10), dtype=np.float32)
+    out = tmp_path / "bad.npz"
+    with pytest.raises(ValueError, match=r"features_list\[1\]"):
+        save_features_multi(out, [good, bad], cfg)
+
+
+def test_load_features_multi_refuses_pickle(tmp_path):
+    """Multi-ref load also uses allow_pickle=False.
+
+    Crafts a v3-shaped file with pickle-only metadata; loading must raise
+    rather than deserialize the malicious object.
+    """
+    out = tmp_path / "malicious_multi.npz"
+    np.savez_compressed(
+        out,
+        features_0=np.zeros((80, 5), dtype=np.float16),
+        n_refs=np.array(1, dtype=np.int32),
+        format_version=np.array(3, dtype=np.int32),
+        config__sample_rate=np.array(22050),
+        config__n_fft=np.array(2048),
+        config__hop=np.array(512),
+        config__n_mels=np.array(80),
+        config__fmin=np.array(0.0),
+        config__fmax=np.array(np.nan, dtype=np.float64),
+        metadata=np.array({"evil": object()}, dtype=object),
+    )
+    with np.load(out, allow_pickle=True) as data:
+        pickle.dumps(data["metadata"].item())
+
+    with pytest.raises(ValueError, match="allow_pickle=False"):
+        load_features_multi(out)
