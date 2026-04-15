@@ -3,13 +3,14 @@
 import logging
 import os
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import TypedDict
 
 import numpy as np
 
+from allaganeye.audio.matcher import BgmHit
 from allaganeye.exceptions import VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
 
@@ -49,6 +50,7 @@ def detect_match_boundaries(
     src_resolution: tuple[int, int] | None = None,
     codec: str | None = None,
     progress_callback: Callable[[int, int, int], None] | None = None,
+    audio_hits: Sequence[BgmHit] | None = None,
 ) -> list[MatchBoundary]:
     """Detect match boundaries by finding blackout frames.
 
@@ -62,6 +64,10 @@ def detect_match_boundaries(
             blackouts and non-FL blackouts.
         progress_callback: Optional callback invoked after each sampled
             frame with ``(completed_count, total_samples, blackout_count)``.
+        audio_hits: Optional Fanfare peaks from audio scan (#288).  When
+            provided and scorebar filtering is active, blackouts
+            classified as ``"in_match"`` but near a Fanfare hit are
+            promoted to ``"match_boundary"``.
 
     Returns list of dicts with 'start' and 'end' keys (seconds).
     """
@@ -124,7 +130,12 @@ def detect_match_boundaries(
 
         height = _scaled_height(src_resolution[0], src_resolution[1])
         refined_regions, region_classifications = filter_blackouts_with_scorebar(
-            video_path, refined_regions, duration_hint, height, workers
+            video_path,
+            refined_regions,
+            duration_hint,
+            height,
+            workers,
+            audio_hits=audio_hits,
         )
 
     effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)

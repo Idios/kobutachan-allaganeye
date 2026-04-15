@@ -19,6 +19,7 @@ class SplitConfig:
     use_gpu: bool = False
     workers: int | None = None
     no_cache: bool = False
+    no_audio: bool = False
 
     def __post_init__(self) -> None:
         if self.workers is not None and self.workers < 1:

@@ -75,6 +75,13 @@ def split(
         bool,
         typer.Option("--no-cache", help="Ignore cached detection results"),
     ] = False,
+    no_audio: Annotated[
+        bool,
+        typer.Option(
+            "--no-audio",
+            help="Disable audio-based match boundary promotion (Fanfare scan)",
+        ),
+    ] = False,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -109,6 +116,7 @@ def split(
             use_gpu=gpu,
             workers=workers,
             no_cache=no_cache,
+            no_audio=no_audio,
         )
 
         from allaganeye.commands.split_matches import run_split

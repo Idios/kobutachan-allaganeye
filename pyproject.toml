@@ -36,6 +36,7 @@ markers = [
     "slow_pipeline: full pipeline slow tests",
     "slow_gpu: GPU-specific slow tests",
     "baseline_regen: marks tests only needed during baseline regeneration",
+    "real_audio_scan: opt out of the autouse _run_audio_scan mock (#288)",
 ]
 addopts = "-m 'not slow and not baseline_regen'"
 

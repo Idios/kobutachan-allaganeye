@@ -36,6 +36,7 @@ from allaganeye.audio.matcher import (
     find_match_peaks,
     sliding_cosine_similarity,
 )
+from allaganeye.audio.scan import scan_fanfare_hits
 
 __all__ = [
     "BgmHit",
@@ -45,5 +46,6 @@ __all__ = [
     "load_features",
     "log_mel_spectrogram",
     "save_features",
+    "scan_fanfare_hits",
     "sliding_cosine_similarity",
 ]

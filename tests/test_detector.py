@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from allaganeye.audio.matcher import BgmHit
 from allaganeye.exceptions import VideoProcessingError
 from allaganeye.video.detector import (
     MatchBoundary,
@@ -759,7 +760,7 @@ class TestDetectMatchBoundaries:
     def test_scorebar_filtering_called_with_resolution(self, mock_chunk, mock_filter):
         """Scorebar filtering is invoked when src_resolution is provided."""
         mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
-        mock_filter.side_effect = lambda vp, regions, dur, h, w: (
+        mock_filter.side_effect = lambda vp, regions, dur, h, w, **kw: (
             regions,
             ["match_boundary"] * len(regions),
         )
@@ -784,6 +785,43 @@ class TestDetectMatchBoundaries:
             min_match_duration=100.0,
         )
         mock_filter.assert_not_called()
+
+    @patch("allaganeye.video.scorebar.filter_blackouts_with_scorebar")
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_audio_hits_forwarded_to_scorebar_filter(self, mock_chunk, mock_filter):
+        """audio_hits parameter is passed through to scorebar filtering (#288)."""
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+        mock_filter.side_effect = lambda vp, regions, dur, h, w, **kw: (
+            regions,
+            ["match_boundary"] * len(regions),
+        )
+        hits: list[BgmHit] = [{"timestamp": 50.0, "similarity": 0.72}]
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=300.0,
+            min_match_duration=100.0,
+            src_resolution=(1920, 1080),
+            audio_hits=hits,
+        )
+        mock_filter.assert_called_once()
+        assert mock_filter.call_args.kwargs["audio_hits"] == hits
+
+    @patch("allaganeye.video.scorebar.filter_blackouts_with_scorebar")
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_audio_hits_default_none_forwarded_as_none(self, mock_chunk, mock_filter):
+        """Omitted audio_hits reaches the scorebar filter as None."""
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+        mock_filter.side_effect = lambda vp, regions, dur, h, w, **kw: (
+            regions,
+            ["match_boundary"] * len(regions),
+        )
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=300.0,
+            min_match_duration=100.0,
+            src_resolution=(1920, 1080),
+        )
+        assert mock_filter.call_args.kwargs["audio_hits"] is None
 
 
 # ============================================================

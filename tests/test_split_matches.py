@@ -42,6 +42,23 @@ def _output_files(output_dir: Path) -> list[Path]:
 # --- Fixtures ---
 
 
+@pytest.fixture(autouse=True)
+def _mock_audio_scan(request):
+    """Skip the real audio scan in every split_matches test by default.
+
+    The audio pipeline requires a real video file with an audio track; the
+    pipeline tests here use dummy paths, so the scan would fail with an
+    ffmpeg error.  Tests that need to exercise the real ``_run_audio_scan``
+    (e.g. to verify ``no_audio`` / error-handling branches) mark themselves
+    with ``@pytest.mark.real_audio_scan`` to opt out.
+    """
+    if request.node.get_closest_marker("real_audio_scan") is not None:
+        yield None
+        return
+    with patch(f"{MODULE}._run_audio_scan", return_value=None) as m:
+        yield m
+
+
 @pytest.fixture
 def config(tmp_path):
     return SplitConfig(output_dir=tmp_path / "output", min_match_duration=60.0)
@@ -454,6 +471,15 @@ class TestCacheRoundTrip:
         )
         assert _load_cache(cache_path, cache_video, 2.0, cache_config) is None
 
+    def test_param_mismatch_no_audio(self, cache_video, cache_config, tmp_path):
+        """no_audio mismatch → None (cache must be keyed to audio pipeline, #288)."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        different_config = SplitConfig(output_dir=tmp_path / "output", no_audio=True)
+        assert _load_cache(cache_path, cache_video, 1.0, different_config) is None
+
     def test_version_mismatch(self, cache_video, cache_config, tmp_path):
         """cache_version mismatch → None."""
         cache_path = tmp_path / "output" / ".detection_cache.json"
@@ -627,3 +653,68 @@ class TestCachePipeline:
         )
         run_split(video, config_no_cache)
         assert mock_detect.call_count == 2
+
+
+# --- Audio scan integration (#288) ---
+
+
+class TestAudioScanIntegration:
+    """Audio scan pipeline wiring in run_split and _run_audio_scan (#288)."""
+
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    def test_audio_hits_forwarded_to_detect(
+        self, mock_probe, mock_detect, mock_split, tmp_path, _mock_audio_scan
+    ):
+        """Scan output is forwarded to detect_match_boundaries via audio_hits."""
+        hits = [{"timestamp": 50.0, "similarity": 0.72}]
+        _mock_audio_scan.return_value = hits
+        mock_probe.return_value = PROBE_RESULT
+        mock_detect.return_value = BOUNDARIES
+        mock_split.return_value = _output_files(tmp_path)
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+        run_split(Path("input.mp4"), config)
+
+        _, detect_kwargs = mock_detect.call_args
+        assert detect_kwargs["audio_hits"] == hits
+
+    @pytest.mark.real_audio_scan
+    def test_run_audio_scan_returns_none_when_disabled(self, tmp_path):
+        """config.no_audio=True skips audio scan without invoking scan_fanfare_hits."""
+        from allaganeye.commands.split_matches import _run_audio_scan
+
+        config = SplitConfig(
+            output_dir=tmp_path, min_match_duration=60.0, no_audio=True
+        )
+        result = _run_audio_scan(Path("input.mp4"), config, show=False, verbose=False)
+        assert result is None
+
+    @pytest.mark.real_audio_scan
+    @patch("allaganeye.audio.scan.scan_fanfare_hits")
+    def test_run_audio_scan_returns_hits_on_success(self, mock_scan, tmp_path):
+        """Successful scan returns hits verbatim."""
+        from allaganeye.commands.split_matches import _run_audio_scan
+
+        hits = [{"timestamp": 100.0, "similarity": 0.7}]
+        mock_scan.return_value = hits
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+        result = _run_audio_scan(Path("input.mp4"), config, show=False, verbose=False)
+        assert result == hits
+        mock_scan.assert_called_once()
+
+    @pytest.mark.real_audio_scan
+    @patch("allaganeye.audio.scan.scan_fanfare_hits")
+    def test_run_audio_scan_falls_back_on_video_processing_error(
+        self, mock_scan, tmp_path
+    ):
+        """VideoProcessingError is caught; returns None instead of propagating."""
+        from allaganeye.commands.split_matches import _run_audio_scan
+
+        mock_scan.side_effect = VideoProcessingError("no audio track")
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+        result = _run_audio_scan(Path("input.mp4"), config, show=False, verbose=False)
+        assert result is None
