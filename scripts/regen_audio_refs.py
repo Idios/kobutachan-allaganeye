@@ -5,9 +5,19 @@ maintainer owns.  The script extracts a window via ffmpeg, computes the
 log-mel spectrogram, and writes a compressed ``.npz`` to the bundled
 ``allaganeye/audio/refs/`` directory.
 
-Usage:
+Usage (Fanfare, #287):
     python scripts/regen_audio_refs.py \\
-        --video PATH --start 50 --duration 5 --name fanfare
+        --video "E:/videos/2026-04-08 21-14-05.mkv" \\
+        --start 50 --duration 5 --name fanfare
+
+Usage (War Room, #289):
+    # The War Room BGM rendition captured in the 20260116-era recordings
+    # differs spectrally from both the canonical 219_PvP_Intro_WarRoom.ogg
+    # and the 2026-04-08 recording.  A 3s window extracted from 20260116
+    # covers all four validation recordings at sim >= 0.65.
+    python scripts/regen_audio_refs.py \\
+        --video "E:/royalstraightflesh/videos/20260116/2026-01-16 22-12-57.mkv" \\
+        --start 5466 --duration 3 --name war_room
 
 The output is ``allaganeye/audio/refs/<name>.npz`` (relative to repo root).
 Existing files are overwritten.

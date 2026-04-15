@@ -131,3 +131,117 @@ def test_bundled_fanfare_reference_loads():
     # Expected ~5 seconds of frames at default settings (~213 frames)
     assert 200 <= features.shape[1] <= 250
     assert "source_filename" in metadata
+
+
+# War Room reference acceptance (issue #289).
+#
+# ``_WAR_ROOM_EXPECTATIONS`` lists the true match-end timestamps (seconds)
+# taken from the detector baseline output for each recording.  The
+# reference must achieve sim >= 0.65 within [end, end + 240s] on at least
+# 50% of these ends (per #289 acceptance condition).
+_WAR_ROOM_ACCEPT_WINDOW = 240.0
+_WAR_ROOM_COVERAGE_MIN = 0.50
+_WAR_ROOM_THRESHOLD = 0.65
+
+# Primary (2026-04-08) must retain sim_max in [0.78, 0.88] — no regression.
+_WAR_ROOM_PRIMARY_SIM_BAND = (0.78, 0.88)
+
+_WAR_ROOM_SAMPLE_EXPECTATIONS: list[tuple[str, str, list[float]]] = [
+    (
+        "20260116",
+        "2026-01-16 22-12-57.mkv",
+        # Baseline match ends excluding the final match (no successor gap).
+        [1054.4, 2355.8, 3367.2, 4352.0, 5622.9, 6469.8],
+    ),
+    (
+        "20260118",
+        "2026-01-18 22-15-18.mkv",
+        [2608.6, 3928.2, 4572.4, 5253.3, 6184.0, 7231.6],
+    ),
+    (
+        "20260119",
+        "2026-01-19 22-09-07.mkv",
+        [865.5, 1980.9, 3069.1, 3839.2, 5099.5, 6035.0, 7383.7, 8405.2],
+    ),
+]
+
+
+def _count_covered_ends(hits, match_ends: list[float]) -> int:
+    """How many *match_ends* have at least one hit within the accept window."""
+    covered = 0
+    for end in match_ends:
+        if any(end <= h["timestamp"] <= end + _WAR_ROOM_ACCEPT_WINDOW for h in hits):
+            covered += 1
+    return covered
+
+
+@pytest.fixture(scope="module")
+def _war_room_reference():
+    features, config, _ = load_features(get_reference_path("war_room"))
+    return features, config
+
+
+def test_bundled_war_room_reference_loads():
+    """The bundled war_room reference file is valid and matches LogMelConfig defaults."""
+    features, config, metadata = load_features(get_reference_path("war_room"))
+    default = LogMelConfig()
+    assert config.sample_rate == default.sample_rate
+    assert config.n_mels == default.n_mels
+    assert features.shape[0] == config.n_mels
+    # Short reference: ~3 seconds at default settings (~129 frames).  The
+    # design (#289) uses a short window to improve robustness to truncated
+    # in-game playback, so the frame count is deliberately below the
+    # Fanfare reference's 200-250 range.
+    assert 100 <= features.shape[1] <= 180
+    assert "source_filename" in metadata
+
+
+def test_war_room_sample_recordings_coverage(
+    _war_room_reference, sample_video_dir: Path
+):
+    """War Room reference meets >=50% match-end coverage on all 3 sample recordings."""
+    ref_features, config = _war_room_reference
+
+    per_video: dict[str, tuple[int, int]] = {}
+    failures: list[str] = []
+    for subdir_name, mkv_name, match_ends in _WAR_ROOM_SAMPLE_EXPECTATIONS:
+        video = sample_video_dir / subdir_name / mkv_name
+        if not video.exists():
+            pytest.skip(f"Sample recording missing: {video}")
+        hits = _detect_fanfare_hits(
+            video, ref_features, config, threshold=_WAR_ROOM_THRESHOLD
+        )
+        covered = _count_covered_ends(hits, match_ends)
+        total = len(match_ends)
+        per_video[subdir_name] = (covered, total)
+        if covered / total < _WAR_ROOM_COVERAGE_MIN:
+            failures.append(
+                f"{subdir_name}: {covered}/{total} "
+                f"({covered / total * 100:.0f}%) < {_WAR_ROOM_COVERAGE_MIN * 100:.0f}%"
+            )
+
+    assert not failures, (
+        f"War Room coverage below threshold: {failures} "
+        f"(per video covered/total: {per_video})"
+    )
+
+
+def test_war_room_primary_sim_in_maintain_band(_war_room_reference):
+    """Primary (2026-04-08) sim_max stays in [0.78, 0.88] — no regression vs baseline."""
+    env_path = os.environ.get("ALLAGANEYE_AUDIO_TEST_VIDEO")
+    if not env_path:
+        pytest.skip("ALLAGANEYE_AUDIO_TEST_VIDEO not set")
+    video = Path(env_path)
+    if not video.exists():
+        pytest.skip(f"Primary test video not found: {video}")
+
+    ref_features, config = _war_room_reference
+    pcm = extract_pcm(video, sample_rate=config.sample_rate)
+    target = log_mel_spectrogram(pcm, config)
+    sim = sliding_cosine_similarity(ref_features, target)
+    sim_max = float(sim.max())
+    lo, hi = _WAR_ROOM_PRIMARY_SIM_BAND
+    assert lo <= sim_max <= hi, (
+        f"Primary sim_max {sim_max:.3f} outside maintain band [{lo}, {hi}]. "
+        "#289 acceptance requires 2026-04-08 to retain 0.78-0.88."
+    )
