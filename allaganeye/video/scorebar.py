@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
+from allaganeye.audio.matcher import BgmHit
 from allaganeye.exceptions import VideoProcessingError
 from allaganeye.video.detector import (
     _SAMPLE_WIDTH,
@@ -145,6 +146,38 @@ boundary = 4.5s+.  3.5s sits in the gap with 1.5s margin on each side.
 """
 
 
+_AUDIO_PROMOTE_WINDOW_POST = 60.0
+"""Seconds AFTER a blackout to search for a Fanfare peak when promoting
+``"in_match"`` to ``"match_boundary"`` (#288).
+
+Fanfare plays during the match-start cinematic, landing 0-60s past the
+end of a boundary blackout on the recordings validated in #271.  A
+post-blackout-only window (rather than ±60s symmetric) avoids promoting
+in-match character-down blackouts that happen to precede a legitimate
+Fanfare from the next match.  The pre-side of a real boundary blackout
+has no Fanfare by construction — Fanfare never plays during an ongoing
+match.
+"""
+
+
+def _has_nearby_fanfare_hit(
+    region: tuple[float, float],
+    audio_hits: Sequence[BgmHit],
+    window: float = _AUDIO_PROMOTE_WINDOW_POST,
+) -> BgmHit | None:
+    """Return the first Fanfare hit within *window* seconds AFTER *region* end.
+
+    A hit qualifies when ``region_end <= hit.timestamp <= region_end + window``.
+    Returns ``None`` when no hit qualifies.
+    """
+    lo = region[1]
+    hi = region[1] + window
+    for hit in audio_hits:
+        if lo <= hit["timestamp"] <= hi:
+            return hit
+    return None
+
+
 def classify_blackout(
     video_path: Path,
     region: tuple[float, float],
@@ -255,6 +288,8 @@ def filter_blackouts_with_scorebar(
     duration: float,
     height: int,
     workers: int | None = None,
+    *,
+    audio_hits: Sequence[BgmHit] | None = None,
 ) -> tuple[list[tuple[float, float]], list[str]]:
     """Filter blackout regions using scorebar context and duration.
 
@@ -266,6 +301,13 @@ def filter_blackouts_with_scorebar(
     - Long ``"in_match"`` blackouts (>= 3.5s, FL match boundaries)
     - ``"match_boundary"`` (FL match start/end)
     - ``"unknown"`` (probe failure → safe side, keep boundary)
+
+    Audio promotion (#288):
+    When *audio_hits* is provided, a blackout initially classified as
+    ``"in_match"`` is promoted to ``"match_boundary"`` if any Fanfare
+    peak falls within ±60s of the region.  This rescues boundaries that
+    scorebar afterimage (visible ~30s past match end) causes to be
+    misclassified.
 
     Post-processing:
     - Merges consecutive ``"match_boundary"`` pairs separated by non-FL
@@ -281,6 +323,20 @@ def filter_blackouts_with_scorebar(
             video_path, region, duration, height, workers
         )
         region_duration = region[1] - region[0]
+
+        if classification == "in_match" and audio_hits is not None:
+            hit = _has_nearby_fanfare_hit(region, audio_hits)
+            if hit is not None:
+                logger.info(
+                    "PROMOTE [%.1f-%.1f] (%.1fs): in_match → match_boundary "
+                    "(fanfare t=%.1f sim=%.3f)",
+                    region[0],
+                    region[1],
+                    region_duration,
+                    hit["timestamp"],
+                    hit["similarity"],
+                )
+                classification = "match_boundary"
 
         if classification == "in_match" and region_duration < _IN_MATCH_MAX_DURATION:
             logger.info(

@@ -7,8 +7,9 @@ from typing import TypedDict
 
 import typer
 
+from allaganeye.audio.matcher import BgmHit
 from allaganeye.config import SplitConfig
-from allaganeye.exceptions import AllaganEyeError, DetectionError
+from allaganeye.exceptions import AllaganEyeError, DetectionError, VideoProcessingError
 from allaganeye.video.detector import MatchBoundary, detect_match_boundaries
 from allaganeye.video.probe import ProbeResult, probe_video
 from allaganeye.video.splitter import split_video
@@ -24,7 +25,7 @@ class Gap(TypedDict):
 
 logger = logging.getLogger(__name__)
 
-_CACHE_VERSION = 1
+_CACHE_VERSION = 2
 
 
 def run_split(
@@ -103,6 +104,8 @@ def run_split(
                 f"(video is {_format_duration(metadata['duration'])})"
             )
 
+    audio_hits = _run_audio_scan(video_path, config, show=show, verbose=verbose)
+
     if show:
         typer.echo(
             f"Detecting match boundaries "
@@ -111,7 +114,12 @@ def run_split(
         )
 
     boundaries = _run_detection(
-        video_path, metadata, effective_interval, config, quiet=quiet
+        video_path,
+        metadata,
+        effective_interval,
+        config,
+        audio_hits=audio_hits,
+        quiet=quiet,
     )
 
     if not boundaries:
@@ -159,12 +167,46 @@ def run_split(
     _split_and_write_metadata(video_path, boundaries, gaps, metadata, config)
 
 
+def _run_audio_scan(
+    video_path: Path,
+    config: SplitConfig,
+    *,
+    show: bool,
+    verbose: bool,
+) -> list[BgmHit] | None:
+    """Scan the video for Fanfare peaks, returning hits or None.
+
+    Returns ``None`` when audio promotion is disabled (``--no-audio``) or
+    when the scan fails for a recoverable reason (missing audio track,
+    ffmpeg error).  Callers then proceed with scorebar-only filtering.
+    """
+    if config.no_audio:
+        return None
+
+    from allaganeye.audio.scan import scan_fanfare_hits
+
+    if show:
+        typer.echo("Scanning audio for Fanfare peaks")
+    try:
+        hits = scan_fanfare_hits(video_path)
+    except VideoProcessingError as e:
+        if show:
+            typer.echo(f"  audio scan skipped: {e}")
+        logger.warning("Audio scan failed for %s: %s", video_path, e)
+        return None
+
+    if show and verbose:
+        typer.echo(f"  {len(hits)} Fanfare peak(s) detected")
+    return hits
+
+
 def _run_detection(
     video_path: Path,
     metadata: ProbeResult,
     effective_interval: float,
     config: SplitConfig,
     *,
+    audio_hits: list[BgmHit] | None = None,
     quiet: bool = False,
 ) -> list[MatchBoundary]:
     """Run detection with optional progress bar."""
@@ -178,6 +220,7 @@ def _run_detection(
         "workers": config.workers,
         "src_resolution": (metadata["width"], metadata["height"]),
         "codec": metadata.get("codec"),
+        "audio_hits": audio_hits,
     }
 
     if not quiet:
@@ -346,6 +389,7 @@ def _save_cache(
             "blackout_threshold": config.blackout_threshold,
             "min_match_duration": config.min_match_duration,
             "min_blackout_duration": config.min_blackout_duration,
+            "no_audio": config.no_audio,
         },
         "boundaries": boundaries,
     }
@@ -402,6 +446,7 @@ def _load_cache(
         or params.get("blackout_threshold") != config.blackout_threshold
         or params.get("min_match_duration") != config.min_match_duration
         or params.get("min_blackout_duration") != config.min_blackout_duration
+        or params.get("no_audio") != config.no_audio
     ):
         logger.debug("Cache parameter mismatch")
         return None

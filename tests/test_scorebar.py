@@ -6,6 +6,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+from allaganeye.audio.matcher import BgmHit
 from allaganeye.video.detector import (
     _SAMPLE_WIDTH,
     _SCOREBAR_CHANNEL_STD_THRESHOLD,
@@ -435,6 +436,159 @@ class TestFilterBlackouts:
             (280.0, 288.0),
         ]
         assert cls == ["match_boundary", "unknown", "match_boundary", "in_match"]
+
+
+class TestAudioPromotion:
+    """Audio-based in_match → match_boundary promotion (#288).
+
+    Fanfare is only searched AFTER the blackout end (post-blackout window),
+    not symmetrically, to avoid promoting in-match character-down blackouts
+    that happen to precede a legitimate next-match Fanfare.
+    """
+
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_short_in_match_promoted_by_post_fanfare(self, mock_classify):
+        """Short in_match with Fanfare 18s after end → promoted."""
+        mock_classify.return_value = "in_match"
+        regions = [(100.0, 102.0)]  # 2s, would normally be removed
+        audio_hits: list[BgmHit] = [{"timestamp": 120.0, "similarity": 0.72}]
+
+        result, cls = filter_blackouts_with_scorebar(
+            Path("v.mp4"), regions, 300.0, _HEIGHT, audio_hits=audio_hits
+        )
+
+        assert result == regions
+        assert cls == ["match_boundary"]
+
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_long_in_match_promoted_by_post_fanfare(self, mock_classify):
+        """Long in_match with Fanfare after end → promoted."""
+        mock_classify.return_value = "in_match"
+        regions = [(100.0, 108.0)]  # 8s
+        audio_hits: list[BgmHit] = [{"timestamp": 120.0, "similarity": 0.68}]
+
+        result, cls = filter_blackouts_with_scorebar(
+            Path("v.mp4"), regions, 300.0, _HEIGHT, audio_hits=audio_hits
+        )
+
+        assert result == regions
+        assert cls == ["match_boundary"]
+
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_pre_blackout_fanfare_does_not_promote(self, mock_classify):
+        """Fanfare BEFORE blackout start → not promoted (prevents in-match false positives)."""
+        mock_classify.return_value = "in_match"
+        regions = [(100.0, 102.0)]
+        # Fanfare from a previous match, ending 50s before this blackout
+        audio_hits: list[BgmHit] = [{"timestamp": 50.0, "similarity": 0.85}]
+
+        result, cls = filter_blackouts_with_scorebar(
+            Path("v.mp4"), regions, 300.0, _HEIGHT, audio_hits=audio_hits
+        )
+
+        assert result == []
+        assert cls == []
+
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_fanfare_far_past_window(self, mock_classify):
+        """Fanfare > 60s past end → not promoted."""
+        mock_classify.return_value = "in_match"
+        regions = [(100.0, 102.0)]
+        audio_hits: list[BgmHit] = [
+            {"timestamp": 200.0, "similarity": 0.80}
+        ]  # region_end + 98
+
+        result, cls = filter_blackouts_with_scorebar(
+            Path("v.mp4"), regions, 300.0, _HEIGHT, audio_hits=audio_hits
+        )
+
+        assert result == []
+        assert cls == []
+
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_no_audio_hits_does_not_change_behavior(self, mock_classify):
+        """audio_hits=None → legacy scorebar-only path (short in_match removed)."""
+        mock_classify.return_value = "in_match"
+        regions = [(100.0, 102.0)]
+
+        result, cls = filter_blackouts_with_scorebar(
+            Path("v.mp4"), regions, 300.0, _HEIGHT, audio_hits=None
+        )
+
+        assert result == []
+        assert cls == []
+
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_empty_audio_hits_treated_as_no_hits(self, mock_classify):
+        """Empty audio_hits list → no promotion."""
+        mock_classify.return_value = "in_match"
+        regions = [(100.0, 102.0)]
+
+        result, cls = filter_blackouts_with_scorebar(
+            Path("v.mp4"), regions, 300.0, _HEIGHT, audio_hits=[]
+        )
+
+        assert result == []
+        assert cls == []
+
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_non_in_match_not_affected_by_audio(self, mock_classify):
+        """non_fl/match_boundary classifications unchanged by audio hits."""
+        mock_classify.side_effect = ["non_fl", "match_boundary"]
+        regions = [(100.0, 102.0), (200.0, 205.0)]
+        audio_hits: list[BgmHit] = [
+            {"timestamp": 110.0, "similarity": 0.90},
+            {"timestamp": 210.0, "similarity": 0.88},
+        ]
+
+        result, cls = filter_blackouts_with_scorebar(
+            Path("v.mp4"), regions, 300.0, _HEIGHT, audio_hits=audio_hits
+        )
+
+        assert result == [(200.0, 205.0)]
+        assert cls == ["match_boundary"]
+
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_fanfare_at_window_far_edge(self, mock_classify):
+        """Fanfare at region_end + 60s → inclusive end → promoted."""
+        mock_classify.return_value = "in_match"
+        regions = [(100.0, 102.0)]
+        audio_hits: list[BgmHit] = [{"timestamp": 162.0, "similarity": 0.66}]
+
+        result, cls = filter_blackouts_with_scorebar(
+            Path("v.mp4"), regions, 300.0, _HEIGHT, audio_hits=audio_hits
+        )
+
+        assert result == regions
+        assert cls == ["match_boundary"]
+
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_fanfare_just_past_window(self, mock_classify):
+        """Fanfare at region_end + 60.01s → outside window, no promotion."""
+        mock_classify.return_value = "in_match"
+        regions = [(100.0, 102.0)]
+        audio_hits: list[BgmHit] = [{"timestamp": 162.01, "similarity": 0.90}]
+
+        result, cls = filter_blackouts_with_scorebar(
+            Path("v.mp4"), regions, 300.0, _HEIGHT, audio_hits=audio_hits
+        )
+
+        assert result == []
+        assert cls == []
+
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_fanfare_at_region_end_promoted(self, mock_classify):
+        """Fanfare exactly at region_end → on inclusive lower bound, promoted."""
+        mock_classify.return_value = "in_match"
+        regions = [(100.0, 102.0)]
+        audio_hits: list[BgmHit] = [{"timestamp": 102.0, "similarity": 0.70}]
+
+        result, cls = filter_blackouts_with_scorebar(
+            Path("v.mp4"), regions, 300.0, _HEIGHT, audio_hits=audio_hits
+        )
+
+        assert result == regions
+        assert cls == ["match_boundary"]
 
 
 DETECTOR_MODULE = "allaganeye.video.detector"

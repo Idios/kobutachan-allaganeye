@@ -47,6 +47,7 @@ allaganeye split <video_path> -o <dir>  # 出力先指定
 allaganeye split <video_path> --gpu     # GPU アクセラレーション検知
 allaganeye split <video_path> --workers 8  # ワーカー数指定
 allaganeye split <video_path> --no-cache   # キャッシュ無視で再検知
+allaganeye split <video_path> --no-audio   # 音声昇格を無効化（視覚のみ）
 allaganeye split <video_path> --quiet      # 進捗抑制（出力ファイルのみ）
 allaganeye debug-brightness <video_path>   # フレーム輝度 CSV 出力
 ```
@@ -75,8 +76,13 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `video/probe.py` | ffprobe でメタデータ取得（解像度、fps、長さ） |
 | `video/detector.py` | ffmpeg 並列プローブで暗転検知、試合境界抽出（CPU モード） |
 | `video/gpu_detector.py` | GPU アクセラレーション検知（チャンク並列デコード） |
-| `video/scorebar.py` | スコアバーフィルタリング（暗転分類・試合内/非FL判定） |
+| `video/scorebar.py` | スコアバーフィルタリング（暗転分類・試合内/非FL判定）+ 音声昇格 |
 | `video/splitter.py` | FFmpeg で動画分割（-c copy） |
+| `audio/extract.py` | ffmpeg で音声 PCM 抽出 |
+| `audio/features.py` | log-mel スペクトログラム計算と保存 |
+| `audio/matcher.py` | 参照 BGM と target の相互相関で peak 検出 |
+| `audio/scan.py` | 動画全域を走査して Fanfare ピークを返す |
+| `audio/refs/` | 同梱参照特徴量（`fanfare.npz`） |
 
 ### 検知アルゴリズム（detector.py）
 
@@ -96,6 +102,12 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 **スコアバーフィルタリング**（`src_resolution` 提供時、CLIのデフォルトパス）
 8. `filter_blackouts_with_scorebar()` で各暗転領域の前後フレームのスコアバー有無を判定し、暗転を分類（`match_boundary` / `in_match` / `non_fl`）
 9. `non_fl`（非FL暗転）と短い `in_match`（試合内暗転）を除外。隣接する `match_boundary` ペア間の短いギャップをマージ
+
+**音声昇格**（`--no-audio` 未指定時、#288）
+- `audio/scan.py` で動画全域の音声から Fanfare ピーク（log-mel 相関 sim ≥ 0.65）を抽出
+- `in_match` 分類された暗転のうち、暗転終了後 0-60s 以内に Fanfare ピークがあるものを `match_boundary` に昇格
+- スコアバー残像で誤分類された試合境界（例: 2026-04-08 57:53）を救済
+- 既知の制約: Fanfare は試合中にも弱いピーク（sim 0.65-0.75）を出すため、本条件のみでは偽陽性が混入しうる。WR 参照 (#301) 同梱後に WR→Fanfare 間隔による (B) 条件を追加して偽陽性除去
 
 **フィルタリング・抽出**
 10. `min(min_blackout_duration, _REFINED_MIN_BLACKOUT)` 未満の短い暗転を除外（リスポーン暗転の誤判定防止）
