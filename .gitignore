@@ -36,6 +36,7 @@ htmlcov/
 # Claude Code
 .claude/settings.local.json
 .claude/worktrees/
+.env
 ROLE
 
 # Project specific
