@@ -1,4 +1,4 @@
-"""Test detection cache — persists detection results across pytest sessions.
+"""Test detection cache -- persists detection results across pytest sessions.
 
 Caches the output of expensive ``detect_match_boundaries`` calls so that
 ``pytest -m slow`` can skip re-detection when neither source video files
@@ -110,7 +110,7 @@ def _validate_cache_entry(
     cached_hashes = data.get("source_hashes", {})
     if cached_hashes != source_hashes:
         changed = [k for k in source_hashes if source_hashes[k] != cached_hashes.get(k)]
-        logger.warning("Cache stale — source files changed: %s", changed)
+        logger.warning("Cache stale -- source files changed: %s", changed)
         return None
 
     fixtures = data.get("fixtures", {})
