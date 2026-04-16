@@ -72,7 +72,7 @@ def _warn_if_stale(cache_dir: Path, current_hashes: dict[str, str]) -> None:
         ]
         print(
             f"\n[cache] WARNING: Detection cache may be stale "
-            f"— source files changed: {changed}"
+            f"-- source files changed: {changed}"
         )
         print("[cache] Run with --clear-test-cache to regenerate.")
 
