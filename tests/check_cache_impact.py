@@ -11,22 +11,33 @@ import sys
 from tests.detection_cache import _CACHE_SENSITIVE_FILES
 
 
+def _run_git(*args: str) -> str:
+    """Run a git command and return stdout.
+
+    Raises SystemExit with stderr message if git fails.
+    """
+    cmd = ["git", *args]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        print(f"ERROR: git command failed: {' '.join(cmd)}", file=sys.stderr)
+        if stderr:
+            print(f"  {stderr}", file=sys.stderr)
+        raise SystemExit(2)
+    return result.stdout
+
+
 def _get_changed_files(*, all_changes: bool = False) -> list[str]:
     """Return changed file paths relative to repo root."""
     if all_changes:
         # Staged + unstaged
-        cmd_staged = ["git", "diff", "--cached", "--name-only"]
-        cmd_unstaged = ["git", "diff", "--name-only"]
-        staged = subprocess.run(cmd_staged, capture_output=True, text=True, check=False)
-        unstaged = subprocess.run(
-            cmd_unstaged, capture_output=True, text=True, check=False
-        )
-        files = set(staged.stdout.splitlines()) | set(unstaged.stdout.splitlines())
+        staged_out = _run_git("diff", "--cached", "--name-only")
+        unstaged_out = _run_git("diff", "--name-only")
+        files = set(staged_out.splitlines()) | set(unstaged_out.splitlines())
         return [f.strip() for f in files if f.strip()]
 
-    cmd = ["git", "diff", "--cached", "--name-only"]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    return [f.strip() for f in result.stdout.splitlines() if f.strip()]
+    out = _run_git("diff", "--cached", "--name-only")
+    return [f.strip() for f in out.splitlines() if f.strip()]
 
 
 def _check_impact(changed_files: list[str]) -> list[str]:
