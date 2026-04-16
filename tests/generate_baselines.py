@@ -54,7 +54,7 @@ def main() -> None:
             blackout_threshold=15.0,
             min_match_duration=300.0,
             min_blackout_duration=3.0,
-            # src_resolution omitted → no scorebar filtering
+            # src_resolution omitted -> no scorebar filtering
         )
         elapsed = time.monotonic() - start
 
@@ -76,7 +76,7 @@ def main() -> None:
         out_path.write_text(
             json.dumps(baseline, indent=2, ensure_ascii=False), encoding="utf-8"
         )
-        print(f"  → {out_path.name}: {len(boundaries)} matches, {elapsed:.1f}s")
+        print(f"  -> {out_path.name}: {len(boundaries)} matches, {elapsed:.1f}s")
 
     print("Done.")
 

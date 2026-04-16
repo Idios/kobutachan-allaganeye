@@ -8,7 +8,7 @@ Run with: pytest -m slow
 
 Design: The ``split_subdir`` fixture is parameterized over every
 subdirectory that contains both a source MKV and manual splits.
-The full pipeline (probe → detect → split) runs once per subdirectory
+The full pipeline (probe -> detect -> split) runs once per subdirectory
 via the ``pipeline_result`` fixture.  Individual tests verify different
 aspects of that single run to avoid repeated detection passes.
 """
@@ -312,7 +312,7 @@ class TestDetectRealVideo:
         """Detected boundary count is in the right ballpark vs manual splits.
 
         Transition expansion (#71/#75) and 2-pass refinement (#77/#79)
-        improved detection to 7/7.  Tolerance ±2 allows for edge cases
+        improved detection to 7/7.  Tolerance +-2 allows for edge cases
         in other recordings.
 
         Skipped when manual splits < 3 (likely incomplete hand-splitting).
@@ -521,11 +521,11 @@ class TestGpuCpuConsistency:
 
     @gpu_available
     def test_gpu_cpu_boundary_count_matches(self, gpu_cpu_results: dict):
-        """GPU and CPU modes detect similar number of matches (±1).
+        """GPU and CPU modes detect similar number of matches (+-1).
 
         Exact match is not guaranteed due to ffmpeg seek non-determinism:
         per-frame ``-ss`` (CPU) and chunked ``fps`` filter (GPU) may
-        decode different frames at the same timestamp, causing ±1
+        decode different frames at the same timestamp, causing +-1
         boundary difference at threshold edges.  (#214)
         """
         cpu = gpu_cpu_results["cpu"]
@@ -544,11 +544,11 @@ class TestGpuCpuConsistency:
 
         if abs(len(cpu) - len(gpu)) > 1:
             pytest.skip(
-                "Boundary count mismatch > 1 — see test_gpu_cpu_boundary_count_matches"
+                "Boundary count mismatch > 1 -- see test_gpu_cpu_boundary_count_matches"
             )
         if len(cpu) != len(gpu):
             pytest.skip(
-                "Boundary count differs by 1 — timestamp comparison not meaningful"
+                "Boundary count differs by 1 -- timestamp comparison not meaningful"
             )
 
         tolerance = 10.0  # seconds

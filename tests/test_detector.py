@@ -227,7 +227,7 @@ class TestRefineBlackoutRegions:
 
     @patch("allaganeye.video.detector._probe_single_frame")
     def test_probes_limited_to_window(self, mock_probe):
-        """Probes are within ±REFINE_WINDOW of each region."""
+        """Probes are within +-REFINE_WINDOW of each region."""
         mock_probe.return_value = 128.0
 
         regions = [(500.0, 502.0)]
@@ -413,7 +413,7 @@ class TestExtractSegments:
             min_match_duration=300.0,
             min_blackout_duration=3.0,
         )
-        # Short blackout ignored → entire video is one segment
+        # Short blackout ignored -> entire video is one segment
         assert len(result) == 1
         assert result[0]["start"] == 0.0
         assert result[0]["end"] == 1800.0
@@ -441,7 +441,7 @@ class TestExtractSegments:
             min_match_duration=300.0,
             min_blackout_duration=0.0,
         )
-        # 1s blackout kept → two segments
+        # 1s blackout kept -> two segments
         assert len(result) == 2
 
     def test_mixed_short_and_long_blackouts(self):
@@ -489,7 +489,7 @@ class TestExtractSegments:
         result = _filter_and_extract_segments(
             regions, 1800.0, 300.0, 3.0, classifications=cls
         )
-        # Before first blackout: too short (102.5s < 300s) → excluded
+        # Before first blackout: too short (102.5s < 300s) -> excluded
         # Between blackouts: fl_match (both sides match_boundary)
         # After last blackout: unknown (tail segment)
         assert len(result) == 2

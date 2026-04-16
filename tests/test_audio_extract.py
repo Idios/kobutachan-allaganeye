@@ -75,7 +75,7 @@ def test_extract_pcm_omits_seek_args_when_unset(_mock_ffmpeg, mock_run, tmp_path
 @patch("allaganeye.audio.extract.subprocess.run")
 @patch("allaganeye.audio.extract.find_ffmpeg", return_value="ffmpeg")
 def test_extract_pcm_ffmpeg_not_found(_mock_ffmpeg, mock_run, tmp_path):
-    """FileNotFoundError → VideoProcessingError with helpful message."""
+    """FileNotFoundError -> VideoProcessingError with helpful message."""
     video = tmp_path / "test.mp4"
     video.touch()
     mock_run.side_effect = FileNotFoundError()
@@ -87,7 +87,7 @@ def test_extract_pcm_ffmpeg_not_found(_mock_ffmpeg, mock_run, tmp_path):
 @patch("allaganeye.audio.extract.subprocess.run")
 @patch("allaganeye.audio.extract.find_ffmpeg", return_value="ffmpeg")
 def test_extract_pcm_timeout(_mock_ffmpeg, mock_run, tmp_path):
-    """TimeoutExpired → VideoProcessingError."""
+    """TimeoutExpired -> VideoProcessingError."""
     video = tmp_path / "test.mp4"
     video.touch()
     mock_run.side_effect = subprocess.TimeoutExpired(cmd="ffmpeg", timeout=1800)
@@ -99,7 +99,7 @@ def test_extract_pcm_timeout(_mock_ffmpeg, mock_run, tmp_path):
 @patch("allaganeye.audio.extract.subprocess.run")
 @patch("allaganeye.audio.extract.find_ffmpeg", return_value="ffmpeg")
 def test_extract_pcm_nonzero_returncode(_mock_ffmpeg, mock_run, tmp_path):
-    """Non-zero ffmpeg return code → VideoProcessingError including stderr tail."""
+    """Non-zero ffmpeg return code -> VideoProcessingError including stderr tail."""
     video = tmp_path / "test.mp4"
     video.touch()
     mock_run.return_value = _mock_result(returncode=1, stderr=b"some ffmpeg error here")
@@ -111,7 +111,7 @@ def test_extract_pcm_nonzero_returncode(_mock_ffmpeg, mock_run, tmp_path):
 @patch("allaganeye.audio.extract.subprocess.run")
 @patch("allaganeye.audio.extract.find_ffmpeg", return_value="ffmpeg")
 def test_extract_pcm_empty_output(_mock_ffmpeg, mock_run, tmp_path):
-    """Empty stdout (no audio track) → VideoProcessingError."""
+    """Empty stdout (no audio track) -> VideoProcessingError."""
     video = tmp_path / "test.mp4"
     video.touch()
     mock_run.return_value = _mock_result(stdout=b"")

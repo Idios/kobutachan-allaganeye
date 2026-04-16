@@ -422,7 +422,7 @@ CACHE_BOUNDARIES: list[MatchBoundary] = [
 
 class TestCacheRoundTrip:
     def test_save_and_load(self, cache_video, cache_config, tmp_path):
-        """Save → load round-trip restores boundaries."""
+        """Save -> load round-trip restores boundaries."""
         cache_path = tmp_path / "output" / ".detection_cache.json"
         _save_cache(
             cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
@@ -431,7 +431,7 @@ class TestCacheRoundTrip:
         assert result == CACHE_BOUNDARIES
 
     def test_size_mismatch(self, cache_video, cache_config, tmp_path):
-        """source_size mismatch → None."""
+        """source_size mismatch -> None."""
         cache_path = tmp_path / "output" / ".detection_cache.json"
         _save_cache(
             cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
@@ -441,7 +441,7 @@ class TestCacheRoundTrip:
         assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
 
     def test_mtime_mismatch(self, cache_video, cache_config, tmp_path):
-        """source_mtime mismatch → None."""
+        """source_mtime mismatch -> None."""
         cache_path = tmp_path / "output" / ".detection_cache.json"
         _save_cache(
             cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
@@ -453,7 +453,7 @@ class TestCacheRoundTrip:
         assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
 
     def test_param_mismatch_threshold(self, cache_video, cache_config, tmp_path):
-        """blackout_threshold mismatch → None."""
+        """blackout_threshold mismatch -> None."""
         cache_path = tmp_path / "output" / ".detection_cache.json"
         _save_cache(
             cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
@@ -464,7 +464,7 @@ class TestCacheRoundTrip:
         assert _load_cache(cache_path, cache_video, 1.0, different_config) is None
 
     def test_param_mismatch_interval(self, cache_video, cache_config, tmp_path):
-        """sample_interval mismatch → None."""
+        """sample_interval mismatch -> None."""
         cache_path = tmp_path / "output" / ".detection_cache.json"
         _save_cache(
             cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
@@ -472,7 +472,7 @@ class TestCacheRoundTrip:
         assert _load_cache(cache_path, cache_video, 2.0, cache_config) is None
 
     def test_param_mismatch_no_audio(self, cache_video, cache_config, tmp_path):
-        """no_audio mismatch → None (cache must be keyed to audio pipeline, #288)."""
+        """no_audio mismatch -> None (cache must be keyed to audio pipeline, #288)."""
         cache_path = tmp_path / "output" / ".detection_cache.json"
         _save_cache(
             cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
@@ -481,7 +481,7 @@ class TestCacheRoundTrip:
         assert _load_cache(cache_path, cache_video, 1.0, different_config) is None
 
     def test_version_mismatch(self, cache_video, cache_config, tmp_path):
-        """cache_version mismatch → None."""
+        """cache_version mismatch -> None."""
         cache_path = tmp_path / "output" / ".detection_cache.json"
         _save_cache(
             cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
@@ -492,7 +492,7 @@ class TestCacheRoundTrip:
         assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
 
     def test_path_mismatch(self, cache_video, cache_config, tmp_path):
-        """source path mismatch → None."""
+        """source path mismatch -> None."""
         cache_path = tmp_path / "output" / ".detection_cache.json"
         _save_cache(
             cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
@@ -502,12 +502,12 @@ class TestCacheRoundTrip:
         assert _load_cache(cache_path, other_video, 1.0, cache_config) is None
 
     def test_file_not_found(self, cache_video, cache_config, tmp_path):
-        """Cache file doesn't exist → None."""
+        """Cache file doesn't exist -> None."""
         cache_path = tmp_path / "nonexistent" / ".detection_cache.json"
         assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
 
     def test_corrupted_json(self, cache_video, cache_config, tmp_path):
-        """Corrupted cache file → None (no exception)."""
+        """Corrupted cache file -> None (no exception)."""
         cache_path = tmp_path / "output" / ".detection_cache.json"
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_path.write_text("not valid json{{{", encoding="utf-8")
@@ -533,7 +533,7 @@ def test_progressbar_length(mock_probe, mock_detect, mock_split, tmp_path):
         mock_bar.return_value.update = lambda n: None
         run_split(Path("input.mp4"), config)
 
-    # interval=1.0 for 1800s → estimated_samples = 1800
+    # interval=1.0 for 1800s -> estimated_samples = 1800
     mock_bar.assert_called_once()
     assert mock_bar.call_args[1]["length"] == 1800
 
@@ -620,7 +620,7 @@ class TestCachePipeline:
     def test_param_change_triggers_redetect(
         self, mock_probe, mock_detect, mock_split, tmp_path
     ):
-        """Changed parameters invalidate cache → re-detect."""
+        """Changed parameters invalidate cache -> re-detect."""
         video = tmp_path / "input.mp4"
         video.write_bytes(b"\x00" * 512)
         mock_probe.return_value = PROBE_RESULT

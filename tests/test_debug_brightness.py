@@ -304,7 +304,7 @@ def test_scorebar_detail_section_values(mock_probe_video, mock_probe_rgb, capsys
 @patch(f"{MODULE}._probe_single_frame")
 @patch(f"{MODULE}.probe_video")
 def test_brightness_mode_exception_fallback(mock_probe_video, mock_probe_frame, capsys):
-    """Brightness mode: VideoProcessingError → 255.0 fallback."""
+    """Brightness mode: VideoProcessingError -> 255.0 fallback."""
     mock_probe_video.return_value = PROBE_RESULT
 
     def side_effect(path, t):
@@ -326,7 +326,7 @@ def test_brightness_mode_exception_fallback(mock_probe_video, mock_probe_frame, 
 @patch(f"{MODULE}._probe_frame_rgb")
 @patch(f"{MODULE}.probe_video")
 def test_scorebar_mode_exception_fallback(mock_probe_video, mock_probe_rgb, capsys):
-    """Scorebar mode: VideoProcessingError → None → fallback row."""
+    """Scorebar mode: VideoProcessingError -> None -> fallback row."""
     mock_probe_video.return_value = PROBE_RESULT
 
     def side_effect(path, t, *, height=180):
@@ -355,7 +355,7 @@ def test_scorebar_mode_exception_fallback(mock_probe_video, mock_probe_rgb, caps
 def test_scorebar_detail_mode_exception_fallback(
     mock_probe_video, mock_probe_rgb, capsys
 ):
-    """Scorebar-detail mode: VideoProcessingError → None → fallback row."""
+    """Scorebar-detail mode: VideoProcessingError -> None -> fallback row."""
     mock_probe_video.return_value = PROBE_RESULT
 
     def side_effect(path, t, *, height=180):

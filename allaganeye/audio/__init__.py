@@ -5,11 +5,11 @@ detection.  See ``allaganeye/video/`` for visual signals and the high-level
 ``commands/split_matches.py`` for orchestration.
 
 Public API:
-    extract_pcm — pull mono PCM from a video via ffmpeg
-    LogMelConfig / log_mel_spectrogram — compute reference/target features
-    save_features / load_features — persist/load .npz feature files
-    sliding_cosine_similarity / find_match_peaks — match a reference window
-    BgmHit — typed dict for matcher results
+    extract_pcm -- pull mono PCM from a video via ffmpeg
+    LogMelConfig / log_mel_spectrogram -- compute reference/target features
+    save_features / load_features -- persist/load .npz feature files
+    sliding_cosine_similarity / find_match_peaks -- match a reference window
+    BgmHit -- typed dict for matcher results
 
 Removal (director Q3 compliance, #284):
     If this module ever needs to be stripped from the distribution, the

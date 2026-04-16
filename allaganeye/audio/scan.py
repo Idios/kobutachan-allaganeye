@@ -1,6 +1,6 @@
 """Full-video BGM scanning for match boundary promotion (#288).
 
-Wraps the audio pipeline (extract → log-mel → sliding correlation → peaks)
+Wraps the audio pipeline (extract -> log-mel -> sliding correlation -> peaks)
 into a single call so higher-level detection code does not need to thread
 four primitives together.  The scan runs once per video; the resulting
 hits are reused for every blackout region evaluated during classification.
@@ -8,7 +8,7 @@ hits are reused for every blackout region evaluated during classification.
 Multi-reference bundles (introduced in #289 for War Room, which requires
 both pre-patch and post-patch BGM windows) are handled transparently by
 taking the per-frame max across all references' sliding similarities
-before peak-finding — the OR-style detection described in issue #289
+before peak-finding -- the OR-style detection described in issue #289
 scope item (b).
 """
 

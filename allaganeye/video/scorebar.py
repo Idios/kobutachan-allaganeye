@@ -76,7 +76,7 @@ def _majority_scorebar(results: list[bool | None]) -> bool | None:
 _STATIC_SCREEN_MAD_THRESHOLD = 0.5
 """Max scorebar-ROI MAD to consider consecutive frames as a static screen.
 
-Loading/result screens are pixel-identical across seconds, giving MAD ≈ 0.
+Loading/result screens are pixel-identical across seconds, giving MAD ~= 0.
 FL match frames always differ (character motion, particles) with MAD > 1.5.
 Threshold 0.5 sits well inside the gap.
 """
@@ -124,7 +124,7 @@ def _is_static_from_frames(
     is_static = min_mad < _STATIC_SCREEN_MAD_THRESHOLD
 
     logger.debug(
-        "static_screen: frames=%d mads=%s min=%.2f thr=%.1f → %s",
+        "static_screen: frames=%d mads=%s min=%.2f thr=%.1f -> %s",
         len(raw_frames),
         [f"{m:.2f}" for m in mads],
         min_mad,
@@ -152,10 +152,10 @@ _AUDIO_PROMOTE_WINDOW_POST = 60.0
 
 Fanfare plays during the match-start cinematic, landing 0-60s past the
 end of a boundary blackout on the recordings validated in #271.  A
-post-blackout-only window (rather than ±60s symmetric) avoids promoting
+post-blackout-only window (rather than +-60s symmetric) avoids promoting
 in-match character-down blackouts that happen to precede a legitimate
 Fanfare from the next match.  The pre-side of a real boundary blackout
-has no Fanfare by construction — Fanfare never plays during an ongoing
+has no Fanfare by construction -- Fanfare never plays during an ongoing
 match.
 """
 
@@ -198,10 +198,10 @@ def classify_blackout(
     A1+A2 checks from being misclassified as in-match.  (#201)
 
     Returns one of:
-    - ``"in_match"``: both sides have scorebar → in-match blackout (#107)
-    - ``"match_boundary"``: one side has scorebar → match start/end
-    - ``"non_fl"``: neither side has scorebar → non-FL blackout (#109)
-    - ``"unknown"``: all probes failed on either side → keep boundary (safe)
+    - ``"in_match"``: both sides have scorebar -> in-match blackout (#107)
+    - ``"match_boundary"``: one side has scorebar -> match start/end
+    - ``"non_fl"``: neither side has scorebar -> non-FL blackout (#109)
+    - ``"unknown"``: all probes failed on either side -> keep boundary (safe)
     """
     pre_timestamps = sorted(set(max(0.0, region[0] - d) for d in (3.0, 2.0, 1.0)))
     post_timestamps = sorted(set(min(duration, region[1] + d) for d in (1.0, 2.0, 3.0)))
@@ -252,7 +252,7 @@ def classify_blackout(
 
     logger.debug(
         "classify region [%.1f-%.1f] (%.1fs): "
-        "pre=%s (votes=%s) post=%s (votes=%s) → %s",
+        "pre=%s (votes=%s) post=%s (votes=%s) -> %s",
         region[0],
         region[1],
         region[1] - region[0],
@@ -300,12 +300,12 @@ def filter_blackouts_with_scorebar(
     Keeps:
     - Long ``"in_match"`` blackouts (>= 3.5s, FL match boundaries)
     - ``"match_boundary"`` (FL match start/end)
-    - ``"unknown"`` (probe failure → safe side, keep boundary)
+    - ``"unknown"`` (probe failure -> safe side, keep boundary)
 
     Audio promotion (#288):
     When *audio_hits* is provided, a blackout initially classified as
     ``"in_match"`` is promoted to ``"match_boundary"`` if any Fanfare
-    peak falls within ±60s of the region.  This rescues boundaries that
+    peak falls within +-60s of the region.  This rescues boundaries that
     scorebar afterimage (visible ~30s past match end) causes to be
     misclassified.
 
@@ -328,7 +328,7 @@ def filter_blackouts_with_scorebar(
             hit = _has_nearby_fanfare_hit(region, audio_hits)
             if hit is not None:
                 logger.info(
-                    "PROMOTE [%.1f-%.1f] (%.1fs): in_match → match_boundary "
+                    "PROMOTE [%.1f-%.1f] (%.1fs): in_match -> match_boundary "
                     "(fanfare t=%.1f sim=%.3f)",
                     region[0],
                     region[1],
@@ -383,7 +383,7 @@ def _merge_boundary_pairs(
     """Merge consecutive match_boundary pairs separated by non-FL content.
 
     FL match transitions often produce two blackouts:
-      FL Match → blackout₁ (match_boundary) → lobby/result → blackout₂ (match_boundary) → FL Match
+      FL Match -> blackout1 (match_boundary) -> lobby/result -> blackout2 (match_boundary) -> FL Match
     The intermediate non-FL segment creates a false short "match".
 
     When two consecutive match_boundary regions have a gap < _MERGE_GAP_MAX
@@ -421,7 +421,7 @@ def _merge_boundary_pairs(
                 if all_valid and not any_scorebar:
                     merged_region = (regions[i][0], regions[i + 1][1])
                     logger.info(
-                        "MERGE  [%.1f-%.1f] + [%.1f-%.1f] → [%.1f-%.1f] "
+                        "MERGE  [%.1f-%.1f] + [%.1f-%.1f] -> [%.1f-%.1f] "
                         "(gap=%.0fs, probes=%s)",
                         regions[i][0],
                         regions[i][1],
