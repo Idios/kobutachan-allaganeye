@@ -17,7 +17,6 @@ from allaganeye.video.detector import (
     _scaled_height,
 )
 from allaganeye.video.scorebar import (
-    _MERGE_GAP_MAX,
     _is_static_from_frames,
     _majority_scorebar,
     _probe_scorebar_context,
@@ -663,18 +662,6 @@ class TestMergeBoundaryPairs:
         assert result == regions
         assert cls == ["match_boundary", "match_boundary"]
 
-    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
-    def test_no_merge_when_gap_exceeds_max(self, mock_classify):
-        """Gap > _MERGE_GAP_MAX -> no merge attempt."""
-        mock_classify.side_effect = ["match_boundary", "match_boundary"]
-        gap = _MERGE_GAP_MAX + 100
-        regions = [(100.0, 105.0), (105.0 + gap, 110.0 + gap)]
-        result, cls = filter_blackouts_with_scorebar(
-            Path("v.mp4"), regions, 10000.0, _HEIGHT
-        )
-        assert result == regions
-        assert cls == ["match_boundary", "match_boundary"]
-
     @patch(f"{SCOREBAR_MODULE}._has_scorebar")
     @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
@@ -735,13 +722,24 @@ class TestMergeBoundaryPairs:
     @patch(f"{SCOREBAR_MODULE}._has_scorebar")
     @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
-    def test_no_merge_gap_just_over_600s(
+    def test_no_merge_when_scorebar_detected_in_gap(
         self, mock_classify, mock_probe_rgb, mock_has_sb
     ):
-        """Gap 600.1s (> _MERGE_GAP_MAX) -> no merge."""
+        """Scorebar detected in gap -> no merge (real match content)."""
         mock_classify.side_effect = ["match_boundary", "match_boundary"]
         mock_probe_rgb.return_value = b"\x00" * 100
-        mock_has_sb.return_value = False
+        # One of the gap probes detects scorebar -> no merge
+        mock_has_sb.side_effect = [
+            False,
+            False,
+            False,
+            True,
+            False,
+            False,
+            False,
+            False,
+            False,
+        ]
 
         regions = [(100.0, 105.0), (705.1, 710.0)]  # gap = 600.1
         result, cls = filter_blackouts_with_scorebar(

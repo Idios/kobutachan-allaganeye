@@ -455,6 +455,174 @@ to detect chrominance-only boundaries (same luminance, different hue).
 """
 
 
+# ---------------------------------------------------------------------------
+# V2 Scorebar Detection: GC-Emblem 3-point AND (#307)
+# ---------------------------------------------------------------------------
+
+_SCOREBAR_V2_PROBE_WIDTH = 1920
+"""Probe width for V2 scorebar detection.
+
+GC emblem positions are defined at 1920x1080.  At lower resolutions the
+emblem regions are too small (3-6 px at 320x180) for meaningful feature
+extraction.
+"""
+
+_SCOREBAR_V2_PROBE_HEIGHT = 1080
+"""Probe height for V2 scorebar detection (16:9 at 1920 width)."""
+
+# GC emblem detection positions at 1920x1080 (absolute pixel coordinates).
+# Each tuple: (name, x1, y1, x2, y2).
+# Validated on 5 recordings (0408/0209/0116/0118/0119), N=156+ non-match
+# frames with zero FP.
+_EMBLEM_POSITIONS: list[tuple[str, int, int, int, int]] = [
+    ("left", 600, 2, 665, 40),
+    ("center", 828, 22, 862, 42),
+    ("right", 1263, 2, 1318, 40),
+]
+
+_EMBLEM_SAT_THRESHOLD = 70.0
+"""Minimum mean HSV saturation (of bright pixels) at each emblem position.
+
+GC emblems show high saturation (typically 100-220 in-match).  Lobby
+backgrounds at emblem positions show median saturation of 66-79, with
+occasional peaks up to 179 at individual positions -- but never all 3
+positions simultaneously exceeding the threshold.
+Validated: 5 recordings, 156+ non-match frames, zero 3-position FP.
+"""
+
+_EMBLEM_EDGE_THRESHOLD = 40.0
+"""Minimum Sobel edge density at each emblem position.
+
+GC emblem icons have complex internal structure producing high edge
+density (typically 60-200 in-match).  Lobby backgrounds at emblem
+positions show median edge density of 25-40.  Even individual positions
+exceeding the threshold (max 225) do not cause FP due to the 3-point
+AND condition.
+Validated: 5 recordings, 156+ non-match frames, zero 3-position FP.
+"""
+
+# Method selector: "v2" (GC-emblem 3-point AND) or "v1" (channel-std).
+_SCOREBAR_METHOD: str = "v2"
+
+
+def _probe_frame_rgb_hires(video_path: Path, timestamp: float) -> bytes | None:
+    """Probe a single frame at 1920x1080 for V2 scorebar detection.
+
+    Similar to ``_probe_frame_rgb`` but uses fixed 1920x1080 resolution
+    instead of the low-resolution 320x180.  Used only during the scorebar
+    classification phase, not for pass-1/pass-2 blackout detection.
+    """
+    width = _SCOREBAR_V2_PROBE_WIDTH
+    height = _SCOREBAR_V2_PROBE_HEIGHT
+    rgb_size = width * height * 3
+    cmd = [
+        find_ffmpeg(),
+        "-threads",
+        "1",
+        "-ss",
+        str(timestamp),
+        "-i",
+        str(video_path),
+        "-frames:v",
+        "1",
+        "-vf",
+        f"scale={width}:{height},format=rgb24",
+        "-f",
+        "rawvideo",
+        "pipe:1",
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=30)
+    except FileNotFoundError as e:
+        raise VideoProcessingError(
+            "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
+        ) from e
+    except subprocess.TimeoutExpired:
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    if len(result.stdout) < rgb_size:
+        return None
+
+    return result.stdout[:rgb_size]
+
+
+def _has_scorebar_v2(raw_rgb: bytes | None) -> bool | None:
+    """Determine if FL scorebar is present using GC-emblem 3-point AND.
+
+    Checks 3 fixed positions in the scorebar where GC emblems appear
+    (left/center/right).  At each position, computes HSV saturation and
+    Sobel edge density.  Returns True only if ALL 3 positions exceed
+    both thresholds (AND condition).
+
+    This exploits the structural invariant that FL scorebar always has
+    3 GC emblems at fixed positions, while lobby backgrounds never have
+    high-saturation + high-edge-density content at all 3 positions
+    simultaneously.
+
+    Requires 1920x1080 input (see ``_probe_frame_rgb_hires``).
+
+    Returns True if scorebar detected, False if not, or None if probe
+    failed (raw_rgb is None).
+
+    Validated on 5 recordings (0408/0209/0116/0118/0119):
+    - 156+ non-match frames: zero FP
+    - In-match TPR: 98.7% (FN only on UI-hidden transition frames)
+    """
+    if raw_rgb is None:
+        return None
+
+    try:
+        import cv2
+    except ImportError:
+        logger.warning(
+            "opencv-python-headless not installed; "
+            "falling back to V1 scorebar detection"
+        )
+        return None
+
+    width = _SCOREBAR_V2_PROBE_WIDTH
+    height = _SCOREBAR_V2_PROBE_HEIGHT
+    frame = np.frombuffer(raw_rgb, dtype=np.uint8).reshape(height, width, 3)
+
+    for name, x1, y1, x2, y2 in _EMBLEM_POSITIONS:
+        region = frame[y1:y2, x1:x2, :]
+        bgr = cv2.cvtColor(region, cv2.COLOR_RGB2BGR)
+        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+
+        # Saturation of bright pixels (exclude very dark pixels)
+        val = hsv[:, :, 2].astype(np.float32)
+        sat = hsv[:, :, 1].astype(np.float32)
+        bright_mask = val > 30
+        if bright_mask.sum() > 5:
+            mean_sat = float(sat[bright_mask].mean())
+        else:
+            mean_sat = 0.0
+
+        # Edge density (Sobel magnitude)
+        sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        edge_density = float(np.sqrt(sobel_x**2 + sobel_y**2).mean())
+
+        if mean_sat <= _EMBLEM_SAT_THRESHOLD or edge_density <= _EMBLEM_EDGE_THRESHOLD:
+            logger.debug(
+                "scorebar_v2: %s sat=%.1f edge=%.1f -> fail (th: sat>%.0f edge>%.0f)",
+                name,
+                mean_sat,
+                edge_density,
+                _EMBLEM_SAT_THRESHOLD,
+                _EMBLEM_EDGE_THRESHOLD,
+            )
+            return False
+
+    logger.debug("scorebar_v2: all 3 positions passed -> True")
+    return True
+
+
 def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
     """Determine if FL scorebar is present in the frame.
 
