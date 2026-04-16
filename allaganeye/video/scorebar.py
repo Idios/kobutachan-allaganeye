@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from math import ceil
 from pathlib import Path
 
@@ -12,12 +12,15 @@ from allaganeye.audio.matcher import BgmHit
 from allaganeye.exceptions import VideoProcessingError
 from allaganeye.video.detector import (
     _SAMPLE_WIDTH,
+    _SCOREBAR_METHOD,
     _SCOREBAR_ROI_X_END,
     _SCOREBAR_ROI_X_START,
     _SCOREBAR_ROI_Y_END,
     _SCOREBAR_ROI_Y_START,
     _has_scorebar,
+    _has_scorebar_v2,
     _probe_frame_rgb,
+    _probe_frame_rgb_hires,
     _resolve_workers,
 )
 
@@ -34,27 +37,73 @@ def _probe_scorebar_context(
 
     Returns a tuple of two lists aligned with *timestamps*:
     - scorebar results: True/False/None per frame
-    - raw RGB frame bytes: bytes/None per frame
+    - raw RGB frame bytes: bytes/None per frame (low-res for static detection)
+
+    When ``_SCOREBAR_METHOD == "v2"``, probes at 1920x1080 for GC-emblem
+    3-point AND detection.  V2 False is used as-is (no V1 fallback) to
+    avoid V1 FP on lobby backgrounds that would prevent correct merge
+    of match_boundary pairs.  V2 FN on UI-hidden in-match frames is
+    acceptable because ``classify_blackout``'s 3-frame majority vote
+    and downstream merge logic handle isolated false negatives.
 
     Duplicate timestamps are probed only once; results are shared.
     """
     max_workers = _resolve_workers(workers)
+    use_v2 = _SCOREBAR_METHOD == "v2"
     unique_ts = sorted(set(timestamps))
     scorebar_results: dict[float, bool | None] = {}
     raw_frames: dict[float, bytes | None] = {}
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {
+        # Always probe low-res for static screen detection (classify_blackout)
+        lo_futures = {
             pool.submit(_probe_frame_rgb, video_path, t, height): t for t in unique_ts
         }
-        for future in as_completed(futures):
-            t = futures[future]
+        # V2: also probe high-res for emblem detection
+        hi_futures: dict[Future[bytes | None], float] = {}
+        if use_v2:
+            hi_futures = {
+                pool.submit(_probe_frame_rgb_hires, video_path, t): t for t in unique_ts
+            }
+
+        # Collect low-res results
+        for future in as_completed(lo_futures):
+            t = lo_futures[future]
             try:
                 raw = future.result()
             except VideoProcessingError:
                 raw = None
             raw_frames[t] = raw
-            scorebar_results[t] = _has_scorebar(raw, height)
+
+        # Collect high-res results and run V2 detection
+        hi_raws: dict[float, bytes | None] = {}
+        if use_v2:
+            for future in as_completed(hi_futures):
+                t = hi_futures[future]
+                try:
+                    raw = future.result()
+                except VideoProcessingError:
+                    raw = None
+                hi_raws[t] = raw
+
+        # Determine scorebar results.
+        # V2 True -> True (high specificity, eliminates lobby FP).
+        # V2 False -> False (V1 fallback disabled: V1 has FP on lobby
+        #   backgrounds that prevent correct merge of match_boundary
+        #   pairs; V2 FN on UI-hidden in-match frames is acceptable
+        #   because classify_blackout's 3-frame majority vote and
+        #   downstream merge logic handle isolated FN).
+        # V2 None -> V1 (opencv not installed).
+        for t in unique_ts:
+            if use_v2:
+                v2_result = _has_scorebar_v2(hi_raws.get(t))
+                if v2_result is not None:
+                    scorebar_results[t] = v2_result
+                else:
+                    # V2 failed (e.g. no opencv) -> use V1
+                    scorebar_results[t] = _has_scorebar(raw_frames[t], height)
+            else:
+                scorebar_results[t] = _has_scorebar(raw_frames[t], height)
 
     return (
         [scorebar_results[t] for t in timestamps],
@@ -266,19 +315,16 @@ def classify_blackout(
     return classification
 
 
-_MERGE_GAP_MAX = 600.0
+_MERGE_GAP_MAX: float | None = None
 """Maximum gap (seconds) between consecutive match_boundary regions to merge.
 
-FL match transitions often produce two blackouts separated by a non-FL
-segment (result screen, lobby, queue).  When the gap is short and has no
-scorebar at any of 9 probe points, the two boundaries are merged into
-one spanning the full transition.
-
-Measured gap durations (non-FL content between FL matches):
-- Result screen: 83-266s (1.4-4.4min)
-- Lobby/queue: 232-468s (3.9-7.8min)
-600s (10min) covers observed lobby gaps with margin.  9-point scorebar
-probes guard against merging real FL match content.
+``None`` means no limit -- any gap is eligible for merge as long as all
+9 probe points show no scorebar.  This is safe because V2 scorebar
+detection (GC-emblem 3-point AND at 1080p) reliably detects in-match
+frames: an FL match is 15-20 minutes, so at least 2-3 of 9 evenly
+spaced probes would detect scorebar within a match, preventing false
+merges.  Lobby/queue waits can exceed 1 hour during off-peak, so a
+fixed upper bound would miss legitimate merge opportunities.
 """
 
 
@@ -405,7 +451,7 @@ def _merge_boundary_pairs(
             and classifications[i + 1] == "match_boundary"
         ):
             gap = regions[i + 1][0] - regions[i][1]
-            if gap <= _MERGE_GAP_MAX:
+            if _MERGE_GAP_MAX is None or gap <= _MERGE_GAP_MAX:
                 # Probe 9 points evenly across the gap to reliably
                 # detect FL match content (scorebar intermittently visible)
                 gap_start = regions[i][1]
@@ -414,7 +460,10 @@ def _merge_boundary_pairs(
                     gap_start + (gap_end - gap_start) * k / 10 for k in range(1, 10)
                 ]
                 probe_results, _ = _probe_scorebar_context(
-                    video_path, probe_points, height, workers
+                    video_path,
+                    probe_points,
+                    height,
+                    workers,
                 )
                 all_valid = all(r is not None for r in probe_results)
                 any_scorebar = any(r is True for r in probe_results)
