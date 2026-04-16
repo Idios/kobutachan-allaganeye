@@ -73,18 +73,18 @@ def _make_frame(
 
 class TestHasScorebar:
     def test_fl_match_frame(self):
-        """FL match frame with 3GC colored scorebar sections → True."""
-        # 3 distinct section colors → high cross-section std
+        """FL match frame with 3GC colored scorebar sections -> True."""
+        # 3 distinct section colors -> high cross-section std
         raw = _make_frame(roi_sections=((60, 75, 100), (90, 95, 80), (65, 50, 55)))
         assert _has_scorebar(raw, _HEIGHT) is True
 
     def test_blackout_frame(self):
-        """Dark frame (brightness < 10) → False."""
+        """Dark frame (brightness < 10) -> False."""
         raw = _make_frame(bg=(3, 3, 3), roi_color=(5, 5, 5))
         assert _has_scorebar(raw, _HEIGHT) is False
 
     def test_bright_non_fl_frame(self):
-        """Very bright non-FL frame (brightness > 160) → False."""
+        """Very bright non-FL frame (brightness > 160) -> False."""
         raw = _make_frame(
             bg=(200, 200, 200),
             roi_sections=((180, 190, 200), (170, 200, 220), (190, 180, 210)),
@@ -92,63 +92,63 @@ class TestHasScorebar:
         assert _has_scorebar(raw, _HEIGHT) is False
 
     def test_uniform_color_frame(self):
-        """Uniform ROI sections (cross-section std < 15) → False."""
+        """Uniform ROI sections (cross-section std < 15) -> False."""
         raw = _make_frame(roi_sections=((80, 80, 80), (82, 80, 80), (80, 80, 82)))
         assert _has_scorebar(raw, _HEIGHT) is False
 
     def test_probe_failure(self):
-        """None input (probe failure) → None."""
+        """None input (probe failure) -> None."""
         assert _has_scorebar(None, _HEIGHT) is None
 
     def test_boundary_brightness_20(self):
-        """ROI brightness at 20 → False (not strictly greater)."""
+        """ROI brightness at 20 -> False (not strictly greater)."""
         raw = _make_frame(roi_sections=((30, 10, 10), (10, 30, 10), (10, 10, 30)))
-        # mean brightness ~16.7, below 20 → False
+        # mean brightness ~16.7, below 20 -> False
         assert _has_scorebar(raw, _HEIGHT) is False
 
     def test_boundary_brightness_just_above_20(self):
-        """ROI brightness just above 20 with color variation → True."""
+        """ROI brightness just above 20 with color variation -> True."""
         raw = _make_frame(roi_sections=((50, 15, 10), (10, 50, 15), (15, 10, 50)))
-        # mean brightness ~25, cross-section R std ~18 → True
+        # mean brightness ~25, cross-section R std ~18 -> True
         assert _has_scorebar(raw, _HEIGHT) is True
 
     def test_high_blue_non_fl(self):
-        """Non-FL with high blue (Match 2 type) → False due to brightness."""
+        """Non-FL with high blue (Match 2 type) -> False due to brightness."""
         raw = _make_frame(
             roi_sections=((150, 190, 230), (140, 200, 240), (110, 160, 200))
         )
-        # mean brightness ~180, exceeds 140 → False
+        # mean brightness ~180, exceeds 140 -> False
         assert _has_scorebar(raw, _HEIGHT) is False
 
     def test_lobby_like_uniform(self):
         """Lobby-like frame: brightness in range but low cross-section std."""
         raw = _make_frame(roi_sections=((55, 52, 47), (54, 53, 48), (53, 52, 46)))
-        # brightness ~51, but sections are nearly identical → std ~0.8 → False
+        # brightness ~51, but sections are nearly identical -> std ~0.8 -> False
         assert _has_scorebar(raw, _HEIGHT) is False
 
     def test_single_channel_gradient_rejected(self):
-        """Loading screen gradient: 1 channel high std, others low → False (A1).
+        """Loading screen gradient: 1 channel high std, others low -> False (A1).
 
         Simulates a loading screen where R varies across sections (std > 15)
         but G and B are nearly uniform (std < 12).
         """
         raw = _make_frame(roi_sections=((90, 60, 60), (50, 58, 62), (70, 62, 58)))
-        # R std: std([90,50,70]) ≈ 16.3 > 15 (passes primary)
-        # G std: std([60,58,62]) ≈ 1.6 < 12 (fails secondary)
-        # B std: std([60,62,58]) ≈ 1.6 < 12 (fails secondary)
-        # secondary_std ≈ 1.6 <= 12 → False (A1)
+        # R std: std([90,50,70]) ~= 16.3 > 15 (passes primary)
+        # G std: std([60,58,62]) ~= 1.6 < 12 (fails secondary)
+        # B std: std([60,62,58]) ~= 1.6 < 12 (fails secondary)
+        # secondary_std ~= 1.6 <= 12 -> False (A1)
         assert _has_scorebar(raw, _HEIGHT) is False
 
     def test_smooth_multi_channel_gradient_rejected(self):
-        """Smooth gradient with multi-channel variation but no sharp edges → False (A2).
+        """Smooth gradient with multi-channel variation but no sharp edges -> False (A2).
 
         Sections have gradually changing colors (no sharp band boundaries).
         """
         raw = _make_frame(roi_sections=((60, 80, 50), (65, 55, 80), (80, 65, 55)))
-        # R std: std([60,65,80]) ≈ 8.5
-        # G std: std([80,55,65]) ≈ 10.3
-        # B std: std([50,80,55]) ≈ 13.3
-        # max=13.3 < 15 → actually fails primary check, not A2
+        # R std: std([60,65,80]) ~= 8.5
+        # G std: std([80,55,65]) ~= 10.3
+        # B std: std([50,80,55]) ~= 13.3
+        # max=13.3 < 15 -> actually fails primary check, not A2
         # Need values that pass primary+A1 but fail A2
         # Use per-pixel smooth gradient instead of uniform sections
         # Create a frame with smooth gradient across the ROI (no sharp edges)
@@ -161,15 +161,15 @@ class TestHasScorebar:
         for x in range(roi_w):
             t = x / roi_w
             # Smooth gradient: R decreases, G stays, B increases
-            r = int(100 - 60 * t)  # 100 → 40
-            g = int(50 + 30 * t)  # 50 → 80
-            b = int(40 + 70 * t)  # 40 → 110
+            r = int(100 - 60 * t)  # 100 -> 40
+            g = int(50 + 30 * t)  # 50 -> 80
+            b = int(40 + 70 * t)  # 40 -> 110
             frame[0:y2, x1 + x, :] = (r, g, b)
         raw = frame.tobytes()
         # Section means approximate:
-        # Left: R≈90,G≈55,B≈52  Center: R≈70,G≈65,B≈75  Right: R≈50,G≈75,B≈98
-        # R std ≈ 16, G std ≈ 8, B std ≈ 19 → max 19>15, secondary 16>12 ✓
-        # But max edge per pixel ≈ 1-2 (smooth gradient) < 8 → False (A2)
+        # Left: R~=90,G~=55,B~=52  Center: R~=70,G~=65,B~=75  Right: R~=50,G~=75,B~=98
+        # R std ~= 16, G std ~= 8, B std ~= 19 -> max 19>15, secondary 16>12 OK
+        # But max edge per pixel ~= 1-2 (smooth gradient) < 8 -> False (A2)
         assert _has_scorebar(raw, _HEIGHT) is False
 
 
@@ -190,7 +190,7 @@ class TestMajorityScorebar:
         assert _majority_scorebar([False, False, True]) is False
 
     def test_all_none(self):
-        """All probe failures → None."""
+        """All probe failures -> None."""
         assert _majority_scorebar([None, None, None]) is None
 
     def test_partial_failure_majority_true(self):
@@ -198,15 +198,15 @@ class TestMajorityScorebar:
         assert _majority_scorebar([True, True, None]) is True
 
     def test_partial_failure_single_true(self):
-        """1 success (True), 2 failures → True (1 >= ceil(1/2))."""
+        """1 success (True), 2 failures -> True (1 >= ceil(1/2))."""
         assert _majority_scorebar([True, None, None]) is True
 
     def test_partial_failure_single_false(self):
-        """1 success (False), 2 failures → False (0 < ceil(1/2))."""
+        """1 success (False), 2 failures -> False (0 < ceil(1/2))."""
         assert _majority_scorebar([False, None, None]) is False
 
     def test_tie_two_values(self):
-        """1 True, 1 False, 1 None → True (1 >= ceil(2/2) = 1)."""
+        """1 True, 1 False, 1 None -> True (1 >= ceil(2/2) = 1)."""
         assert _majority_scorebar([True, False, None]) is True
 
 
@@ -219,7 +219,7 @@ class TestClassifyBlackout:
     @patch(f"{SCOREBAR_MODULE}._is_static_from_frames", return_value=False)
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_in_match(self, mock_probe, _mock_static):
-        """Both sides have scorebar, not static → in_match."""
+        """Both sides have scorebar, not static -> in_match."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
             ([True, True, True], [f, f, f]),  # pre
@@ -231,7 +231,7 @@ class TestClassifyBlackout:
     @patch(f"{SCOREBAR_MODULE}._is_static_from_frames")
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_in_match_overridden_by_static_post(self, mock_probe, mock_static):
-        """Both sides scorebar, but post is static → match_boundary."""
+        """Both sides scorebar, but post is static -> match_boundary."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
             ([True, True, True], [f, f, f]),  # pre
@@ -245,7 +245,7 @@ class TestClassifyBlackout:
     @patch(f"{SCOREBAR_MODULE}._is_static_from_frames")
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_in_match_overridden_by_static_pre(self, mock_probe, mock_static):
-        """Both sides scorebar, post not static but pre is → match_boundary."""
+        """Both sides scorebar, post not static but pre is -> match_boundary."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
             ([True, True, True], [f, f, f]),  # pre
@@ -258,7 +258,7 @@ class TestClassifyBlackout:
 
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_match_boundary_start(self, mock_probe):
-        """Pre=False, Post=True → match_boundary (match start)."""
+        """Pre=False, Post=True -> match_boundary (match start)."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
             ([False, False, False], [f, f, f]),  # pre
@@ -269,7 +269,7 @@ class TestClassifyBlackout:
 
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_match_boundary_end(self, mock_probe):
-        """Pre=True, Post=False → match_boundary (match end)."""
+        """Pre=True, Post=False -> match_boundary (match end)."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
             ([True, True, True], [f, f, f]),  # pre
@@ -280,7 +280,7 @@ class TestClassifyBlackout:
 
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_non_fl(self, mock_probe):
-        """Neither side has scorebar → non_fl."""
+        """Neither side has scorebar -> non_fl."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
             ([False, False, False], [f, f, f]),  # pre
@@ -291,7 +291,7 @@ class TestClassifyBlackout:
 
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_all_probes_failed(self, mock_probe):
-        """All probes failed → unknown."""
+        """All probes failed -> unknown."""
         mock_probe.side_effect = [
             ([None, None, None], [None, None, None]),  # pre
             ([None, None, None], [None, None, None]),  # post
@@ -301,7 +301,7 @@ class TestClassifyBlackout:
 
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_pre_failed_post_scorebar(self, mock_probe):
-        """Pre all failed, post has scorebar → unknown (safe side)."""
+        """Pre all failed, post has scorebar -> unknown (safe side)."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
             ([None, None, None], [None, None, None]),  # pre
@@ -338,7 +338,7 @@ class TestFilterBlackouts:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_removes_short_in_match(self, mock_classify):
-        """Short in_match (< 3.5s) = character down → removed."""
+        """Short in_match (< 3.5s) = character down -> removed."""
         mock_classify.return_value = "in_match"
         regions = [(100.0, 102.0)]  # 2s duration
         result, cls = filter_blackouts_with_scorebar(
@@ -349,7 +349,7 @@ class TestFilterBlackouts:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_keeps_long_in_match(self, mock_classify):
-        """Long in_match (>= 3.5s) = FL match boundary → kept."""
+        """Long in_match (>= 3.5s) = FL match boundary -> kept."""
         mock_classify.return_value = "in_match"
         regions = [(100.0, 108.0)]  # 8s duration
         result, cls = filter_blackouts_with_scorebar(
@@ -360,7 +360,7 @@ class TestFilterBlackouts:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_keeps_in_match_exactly_3_5s(self, mock_classify):
-        """in_match at exactly 3.5s boundary → kept (not strictly less than)."""
+        """in_match at exactly 3.5s boundary -> kept (not strictly less than)."""
         mock_classify.return_value = "in_match"
         regions = [(100.0, 103.5)]  # exactly 3.5s
         result, cls = filter_blackouts_with_scorebar(
@@ -371,7 +371,7 @@ class TestFilterBlackouts:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_removes_in_match_just_under_3_5s(self, mock_classify):
-        """in_match at 3.49s → removed (strictly less than 3.5)."""
+        """in_match at 3.49s -> removed (strictly less than 3.5)."""
         mock_classify.return_value = "in_match"
         regions = [(100.0, 103.49)]  # 3.49s
         result, cls = filter_blackouts_with_scorebar(
@@ -381,7 +381,7 @@ class TestFilterBlackouts:
         assert cls == []
 
     def test_empty_regions(self):
-        """Empty blackout list → empty result, no classify calls."""
+        """Empty blackout list -> empty result, no classify calls."""
         result, cls = filter_blackouts_with_scorebar(Path("v.mp4"), [], 300.0, _HEIGHT)
         assert result == []
         assert cls == []
@@ -398,7 +398,7 @@ class TestFilterBlackouts:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_keeps_unknown(self, mock_classify):
-        """Unknown → safe side, keep boundary."""
+        """Unknown -> safe side, keep boundary."""
         mock_classify.return_value = "unknown"
         regions = [(100.0, 102.0)]
         result, cls = filter_blackouts_with_scorebar(
@@ -412,19 +412,19 @@ class TestFilterBlackouts:
         """Mix of classifications with duration-aware in_match filtering."""
         mock_classify.side_effect = [
             "match_boundary",  # kept
-            "in_match",  # short (2s) → removed
+            "in_match",  # short (2s) -> removed
             "non_fl",  # removed
             "unknown",  # kept
             "match_boundary",  # kept
-            "in_match",  # long (8s) → kept
+            "in_match",  # long (8s) -> kept
         ]
         regions = [
-            (50.0, 55.0),  # boundary → kept
-            (100.0, 102.0),  # in_match 2s → removed
-            (150.0, 155.0),  # non_fl → removed
-            (200.0, 202.0),  # unknown → kept
-            (250.0, 255.0),  # boundary → kept
-            (280.0, 288.0),  # in_match 8s → kept
+            (50.0, 55.0),  # boundary -> kept
+            (100.0, 102.0),  # in_match 2s -> removed
+            (150.0, 155.0),  # non_fl -> removed
+            (200.0, 202.0),  # unknown -> kept
+            (250.0, 255.0),  # boundary -> kept
+            (280.0, 288.0),  # in_match 8s -> kept
         ]
         result, cls = filter_blackouts_with_scorebar(
             Path("v.mp4"), regions, 300.0, _HEIGHT
@@ -439,7 +439,7 @@ class TestFilterBlackouts:
 
 
 class TestAudioPromotion:
-    """Audio-based in_match → match_boundary promotion (#288).
+    """Audio-based in_match -> match_boundary promotion (#288).
 
     Fanfare is only searched AFTER the blackout end (post-blackout window),
     not symmetrically, to avoid promoting in-match character-down blackouts
@@ -448,7 +448,7 @@ class TestAudioPromotion:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_short_in_match_promoted_by_post_fanfare(self, mock_classify):
-        """Short in_match with Fanfare 18s after end → promoted."""
+        """Short in_match with Fanfare 18s after end -> promoted."""
         mock_classify.return_value = "in_match"
         regions = [(100.0, 102.0)]  # 2s, would normally be removed
         audio_hits: list[BgmHit] = [{"timestamp": 120.0, "similarity": 0.72}]
@@ -462,7 +462,7 @@ class TestAudioPromotion:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_long_in_match_promoted_by_post_fanfare(self, mock_classify):
-        """Long in_match with Fanfare after end → promoted."""
+        """Long in_match with Fanfare after end -> promoted."""
         mock_classify.return_value = "in_match"
         regions = [(100.0, 108.0)]  # 8s
         audio_hits: list[BgmHit] = [{"timestamp": 120.0, "similarity": 0.68}]
@@ -476,7 +476,7 @@ class TestAudioPromotion:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_pre_blackout_fanfare_does_not_promote(self, mock_classify):
-        """Fanfare BEFORE blackout start → not promoted (prevents in-match false positives)."""
+        """Fanfare BEFORE blackout start -> not promoted (prevents in-match false positives)."""
         mock_classify.return_value = "in_match"
         regions = [(100.0, 102.0)]
         # Fanfare from a previous match, ending 50s before this blackout
@@ -491,7 +491,7 @@ class TestAudioPromotion:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_fanfare_far_past_window(self, mock_classify):
-        """Fanfare > 60s past end → not promoted."""
+        """Fanfare > 60s past end -> not promoted."""
         mock_classify.return_value = "in_match"
         regions = [(100.0, 102.0)]
         audio_hits: list[BgmHit] = [
@@ -507,7 +507,7 @@ class TestAudioPromotion:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_no_audio_hits_does_not_change_behavior(self, mock_classify):
-        """audio_hits=None → legacy scorebar-only path (short in_match removed)."""
+        """audio_hits=None -> legacy scorebar-only path (short in_match removed)."""
         mock_classify.return_value = "in_match"
         regions = [(100.0, 102.0)]
 
@@ -520,7 +520,7 @@ class TestAudioPromotion:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_empty_audio_hits_treated_as_no_hits(self, mock_classify):
-        """Empty audio_hits list → no promotion."""
+        """Empty audio_hits list -> no promotion."""
         mock_classify.return_value = "in_match"
         regions = [(100.0, 102.0)]
 
@@ -550,7 +550,7 @@ class TestAudioPromotion:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_fanfare_at_window_far_edge(self, mock_classify):
-        """Fanfare at region_end + 60s → inclusive end → promoted."""
+        """Fanfare at region_end + 60s -> inclusive end -> promoted."""
         mock_classify.return_value = "in_match"
         regions = [(100.0, 102.0)]
         audio_hits: list[BgmHit] = [{"timestamp": 162.0, "similarity": 0.66}]
@@ -564,7 +564,7 @@ class TestAudioPromotion:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_fanfare_just_past_window(self, mock_classify):
-        """Fanfare at region_end + 60.01s → outside window, no promotion."""
+        """Fanfare at region_end + 60.01s -> outside window, no promotion."""
         mock_classify.return_value = "in_match"
         regions = [(100.0, 102.0)]
         audio_hits: list[BgmHit] = [{"timestamp": 162.01, "similarity": 0.90}]
@@ -578,7 +578,7 @@ class TestAudioPromotion:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_fanfare_at_region_end_promoted(self, mock_classify):
-        """Fanfare exactly at region_end → on inclusive lower bound, promoted."""
+        """Fanfare exactly at region_end -> on inclusive lower bound, promoted."""
         mock_classify.return_value = "in_match"
         regions = [(100.0, 102.0)]
         audio_hits: list[BgmHit] = [{"timestamp": 102.0, "similarity": 0.70}]
@@ -603,7 +603,7 @@ class TestMergeBoundaryPairs:
     def test_merge_when_gap_has_no_scorebar(
         self, mock_classify, mock_probe_rgb, mock_has_sb
     ):
-        """Consecutive match_boundary with non-FL gap → merged."""
+        """Consecutive match_boundary with non-FL gap -> merged."""
         mock_classify.side_effect = ["match_boundary", "match_boundary"]
         mock_probe_rgb.return_value = b"\x00" * 100
         mock_has_sb.return_value = False  # no scorebar in gap
@@ -621,10 +621,10 @@ class TestMergeBoundaryPairs:
     def test_no_merge_when_gap_has_scorebar(
         self, mock_classify, mock_probe_rgb, mock_has_sb
     ):
-        """Gap with scorebar detected (>=2 hits) → no merge."""
+        """Gap with scorebar detected (>=2 hits) -> no merge."""
         mock_classify.side_effect = ["match_boundary", "match_boundary"]
         mock_probe_rgb.return_value = b"\x00" * 100
-        mock_has_sb.return_value = True  # all 9 probes → scorebar
+        mock_has_sb.return_value = True  # all 9 probes -> scorebar
 
         regions = [(100.0, 105.0), (200.0, 205.0)]
         result, cls = filter_blackouts_with_scorebar(
@@ -639,7 +639,7 @@ class TestMergeBoundaryPairs:
     def test_no_merge_when_any_scorebar_hit(
         self, mock_classify, mock_probe_rgb, mock_has_sb
     ):
-        """Gap with any scorebar hit → no merge (strict zero-hit policy)."""
+        """Gap with any scorebar hit -> no merge (strict zero-hit policy)."""
         mock_classify.side_effect = ["match_boundary", "match_boundary"]
         mock_probe_rgb.return_value = b"\x00" * 100
         # 1 out of 9 probes returns True
@@ -665,7 +665,7 @@ class TestMergeBoundaryPairs:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_no_merge_when_gap_exceeds_max(self, mock_classify):
-        """Gap > _MERGE_GAP_MAX → no merge attempt."""
+        """Gap > _MERGE_GAP_MAX -> no merge attempt."""
         mock_classify.side_effect = ["match_boundary", "match_boundary"]
         gap = _MERGE_GAP_MAX + 100
         regions = [(100.0, 105.0), (105.0 + gap, 110.0 + gap)]
@@ -681,7 +681,7 @@ class TestMergeBoundaryPairs:
     def test_no_merge_when_probe_fails(
         self, mock_classify, mock_probe_rgb, mock_has_sb
     ):
-        """Probe failure (None) → no merge (safe side)."""
+        """Probe failure (None) -> no merge (safe side)."""
         mock_classify.side_effect = ["match_boundary", "match_boundary"]
         mock_probe_rgb.return_value = None
         mock_has_sb.return_value = None  # probe failure
@@ -712,7 +712,7 @@ class TestMergeBoundaryPairs:
         result, cls = filter_blackouts_with_scorebar(
             Path("v.mp4"), regions, 400.0, _HEIGHT
         )
-        # First pair merges → (100, 205), third is separate
+        # First pair merges -> (100, 205), third is separate
         assert result == [(100.0, 205.0), (300.0, 305.0)]
         assert cls == ["match_boundary", "match_boundary"]
 
@@ -720,7 +720,7 @@ class TestMergeBoundaryPairs:
     @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_merge_gap_exactly_600s(self, mock_classify, mock_probe_rgb, mock_has_sb):
-        """Gap exactly 600.0s (= _MERGE_GAP_MAX) → merge attempted."""
+        """Gap exactly 600.0s (= _MERGE_GAP_MAX) -> merge attempted."""
         mock_classify.side_effect = ["match_boundary", "match_boundary"]
         mock_probe_rgb.return_value = b"\x00" * 100
         mock_has_sb.return_value = False
@@ -738,7 +738,7 @@ class TestMergeBoundaryPairs:
     def test_no_merge_gap_just_over_600s(
         self, mock_classify, mock_probe_rgb, mock_has_sb
     ):
-        """Gap 600.1s (> _MERGE_GAP_MAX) → no merge."""
+        """Gap 600.1s (> _MERGE_GAP_MAX) -> no merge."""
         mock_classify.side_effect = ["match_boundary", "match_boundary"]
         mock_probe_rgb.return_value = b"\x00" * 100
         mock_has_sb.return_value = False
@@ -752,7 +752,7 @@ class TestMergeBoundaryPairs:
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_single_region_no_merge(self, mock_classify):
-        """Single region → no merge processing, returned as-is."""
+        """Single region -> no merge processing, returned as-is."""
         mock_classify.return_value = "match_boundary"
         regions = [(100.0, 105.0)]
         result, cls = filter_blackouts_with_scorebar(
@@ -769,7 +769,7 @@ class TestHasScorebarBoundaries:
     """Additional boundary tests for _has_scorebar thresholds."""
 
     def test_brightness_just_below_140(self):
-        """ROI brightness just below 140 with color variation → True."""
+        """ROI brightness just below 140 with color variation -> True."""
         # Aim for ~135 brightness with high cross-section std
         raw = _make_frame(
             roi_sections=((180, 100, 100), (100, 180, 100), (100, 100, 180))
@@ -777,11 +777,11 @@ class TestHasScorebarBoundaries:
         assert _has_scorebar(raw, _HEIGHT) is True
 
     def test_brightness_at_140(self):
-        """ROI brightness at 140 → False (not strictly less than)."""
+        """ROI brightness at 140 -> False (not strictly less than)."""
         raw = _make_frame(
             roi_sections=((180, 130, 100), (130, 180, 110), (110, 100, 180))
         )
-        # brightness ~140, at boundary → False
+        # brightness ~140, at boundary -> False
         result = _has_scorebar(raw, _HEIGHT)
         # Verify the threshold is exclusive at 140
         roi_y2 = int(_HEIGHT * _SCOREBAR_ROI_Y_END)
@@ -802,7 +802,7 @@ class TestHasScorebarBoundaries:
 
 class TestMajorityScorebarEdge:
     def test_empty_list(self):
-        """Empty list → None."""
+        """Empty list -> None."""
         assert _majority_scorebar([]) is None
 
 
@@ -813,7 +813,7 @@ class TestClassifyBlackoutBoundary:
     @patch(f"{SCOREBAR_MODULE}._is_static_from_frames", return_value=False)
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_region_at_video_start(self, mock_probe, _mock_static):
-        """Region near start (0.5s) → pre timestamps clamp to 0.0."""
+        """Region near start (0.5s) -> pre timestamps clamp to 0.0."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
             ([True], [f]),  # pre: only 1 unique timestamp after dedup
@@ -828,7 +828,7 @@ class TestClassifyBlackoutBoundary:
 
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_region_at_video_end(self, mock_probe):
-        """Region near end → post timestamps clamp to duration."""
+        """Region near end -> post timestamps clamp to duration."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
             ([False, False, False], [f, f, f]),  # pre
@@ -847,23 +847,23 @@ class TestClassifyBlackoutBoundary:
 
 class TestScaledHeight:
     def test_1920x1080(self):
-        """Standard 16:9 → 180 (even)."""
+        """Standard 16:9 -> 180 (even)."""
         assert _scaled_height(1920, 1080) == 180
 
     def test_1280x720(self):
-        """720p 16:9 → 180."""
+        """720p 16:9 -> 180."""
         assert _scaled_height(1280, 720) == 180
 
     def test_2560x1440(self):
-        """1440p 16:9 → 180."""
+        """1440p 16:9 -> 180."""
         assert _scaled_height(2560, 1440) == 180
 
     def test_odd_result_rounds_to_even(self):
-        """4096x2160 → round(320*2160/4096) = 169 → +1 = 170."""
+        """4096x2160 -> round(320*2160/4096) = 169 -> +1 = 170."""
         assert _scaled_height(4096, 2160) == 170
 
     def test_4_3_aspect(self):
-        """1920x1200 (16:10) → round(320*1200/1920) = 200."""
+        """1920x1200 (16:10) -> round(320*1200/1920) = 200."""
         assert _scaled_height(1920, 1200) == 200
 
     def test_result_is_always_even(self):
@@ -888,7 +888,7 @@ class TestProbeFrameRgb:
     @patch("allaganeye.video.detector.subprocess.run")
     @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
     def test_timeout_returns_none(self, _mock_ff, mock_run):
-        """Timeout → None."""
+        """Timeout -> None."""
         from subprocess import TimeoutExpired
 
         from allaganeye.video.detector import _probe_frame_rgb
@@ -899,7 +899,7 @@ class TestProbeFrameRgb:
     @patch("allaganeye.video.detector.subprocess.run")
     @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
     def test_incomplete_frame_returns_none(self, _mock_ff, mock_run):
-        """Incomplete stdout → None."""
+        """Incomplete stdout -> None."""
         from unittest.mock import MagicMock
 
         from allaganeye.video.detector import _probe_frame_rgb
@@ -913,7 +913,7 @@ class TestProbeFrameRgb:
     @patch("allaganeye.video.detector.subprocess.run")
     @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
     def test_valid_frame_returns_bytes(self, _mock_ff, mock_run):
-        """Complete frame → bytes."""
+        """Complete frame -> bytes."""
         from unittest.mock import MagicMock
 
         from allaganeye.video.detector import _probe_frame_rgb
@@ -930,7 +930,7 @@ class TestProbeFrameRgb:
     @patch("allaganeye.video.detector.subprocess.run")
     @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
     def test_nonzero_returncode_returns_none(self, _mock_ff, mock_run):
-        """ffmpeg error exit → None (not partial data)."""
+        """ffmpeg error exit -> None (not partial data)."""
         from unittest.mock import MagicMock
 
         from allaganeye.video.detector import _probe_frame_rgb
@@ -943,7 +943,7 @@ class TestProbeFrameRgb:
         assert _probe_frame_rgb(Path("v.mp4"), 10.0, _HEIGHT) is None
 
     def test_ffmpeg_not_found_raises(self):
-        """ffmpeg not found → VideoProcessingError."""
+        """ffmpeg not found -> VideoProcessingError."""
         from allaganeye.video.detector import _probe_frame_rgb
         from allaganeye.exceptions import VideoProcessingError
 
@@ -979,26 +979,26 @@ class TestIsStaticFromFrames:
         return [_make_frame(roi_color=colors[i % len(colors)]) for i in range(count)]
 
     def test_static_screen_detected(self):
-        """Identical frames → static screen detected."""
+        """Identical frames -> static screen detected."""
         frames = self._make_static_frames()
         assert _is_static_from_frames(frames, _HEIGHT) is True
 
     def test_varying_frames_not_static(self):
-        """Different frames → not static."""
+        """Different frames -> not static."""
         frames = self._make_varying_frames()
         assert _is_static_from_frames(frames, _HEIGHT) is False
 
     def test_all_frames_none(self):
-        """All frames None → not static (safe side)."""
+        """All frames None -> not static (safe side)."""
         assert _is_static_from_frames([None, None, None], _HEIGHT) is False
 
     def test_only_one_valid_frame(self):
-        """Only 1 valid frame → not static (need >=2 for comparison)."""
+        """Only 1 valid frame -> not static (need >=2 for comparison)."""
         frame = self._make_static_frames(1)[0]
         assert _is_static_from_frames([frame, None, None], _HEIGHT) is False
 
     def test_single_transition_tolerated(self):
-        """Screen changes between F1-F2 but F2-F3 static → detected (#201).
+        """Screen changes between F1-F2 but F2-F3 static -> detected (#201).
 
         With min(MADs), a single static pair is enough to detect loading
         screens even when a transition occurs within the probe window.
@@ -1006,11 +1006,11 @@ class TestIsStaticFromFrames:
         f1 = _make_frame(roi_color=(50, 100, 150))
         f2 = _make_frame(roi_color=(87, 87, 87))
         f3 = _make_frame(roi_color=(87, 87, 87))
-        # F1-F2: high MAD, F2-F3: MAD=0 → min(MADs) = 0 < 0.5 → static
+        # F1-F2: high MAD, F2-F3: MAD=0 -> min(MADs) = 0 < 0.5 -> static
         assert _is_static_from_frames([f1, f2, f3], _HEIGHT) is True
 
     def test_threshold_boundary_above(self):
-        """MAD just above threshold → not static."""
+        """MAD just above threshold -> not static."""
         f1 = _make_frame(roi_color=(87, 87, 87))
         f2 = _make_frame(roi_color=(90, 90, 90))
         assert _is_static_from_frames([f1, f2], _HEIGHT) is False
@@ -1027,7 +1027,7 @@ class TestProbeScorebarContext:
     @patch(f"{SCOREBAR_MODULE}._has_scorebar", return_value=True)
     @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb", return_value=_FAKE_FRAME)
     def test_duplicate_timestamps_probed_once(self, mock_probe, mock_has):
-        """Duplicate timestamps should be deduplicated — probe called once."""
+        """Duplicate timestamps should be deduplicated -- probe called once."""
         results, frames = _probe_scorebar_context(
             Path("dummy.mp4"), [1.0, 1.0, 1.0], _HEIGHT, workers=1
         )
@@ -1048,7 +1048,7 @@ class TestProbeScorebarContext:
         )
         assert len(results) == len(ts)
         assert len(frames) == len(ts)
-        # Each unique ts probed exactly once (3 unique → 3 calls)
+        # Each unique ts probed exactly once (3 unique -> 3 calls)
         assert mock_probe.call_count == 3
 
     @patch(f"{SCOREBAR_MODULE}._has_scorebar", return_value=None)
@@ -1064,7 +1064,7 @@ class TestProbeScorebarContext:
     @patch(f"{SCOREBAR_MODULE}._has_scorebar")
     @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
     def test_mixed_success_and_failure(self, mock_probe, mock_has):
-        """Mix of successful and failed probes — results match per-ts."""
+        """Mix of successful and failed probes -- results match per-ts."""
         mock_probe.side_effect = lambda _path, t, _h: _FAKE_FRAME if t == 1.0 else None
         mock_has.side_effect = lambda raw, _h: True if raw is not None else None
 

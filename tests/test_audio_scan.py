@@ -1,4 +1,4 @@
-"""Unit tests for allaganeye.audio.scan — mocked pipeline (#288)."""
+"""Unit tests for allaganeye.audio.scan -- mocked pipeline (#288)."""
 
 from pathlib import Path
 from unittest.mock import patch

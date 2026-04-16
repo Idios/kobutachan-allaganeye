@@ -17,9 +17,9 @@ def find_ffmpeg() -> str:
     """Find the ffmpeg binary path.
 
     Resolution order:
-    1. shutil.which("ffmpeg") — works if PATH is set
-    2. ALLAGANEYE_FFMPEG env var — user-specified directory containing ffmpeg
-    3. Windows known paths — winget typical install location
+    1. shutil.which("ffmpeg") -- works if PATH is set
+    2. ALLAGANEYE_FFMPEG env var -- user-specified directory containing ffmpeg
+    3. Windows known paths -- winget typical install location
     4. Error with setup instructions
     """
     return _find_binary("ffmpeg")

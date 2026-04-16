@@ -35,7 +35,7 @@ def run_split(
     verbose: bool = False,
     quiet: bool = False,
 ) -> None:
-    """Run the split pipeline: probe → detect → split.
+    """Run the split pipeline: probe -> detect -> split.
 
     Output levels:
     - Default: probe status, progress bar, match list, output files
@@ -100,7 +100,7 @@ def run_split(
         if effective_interval != config.sample_interval:
             typer.echo(
                 f"  Auto-adjusted sample interval: "
-                f"{config.sample_interval}s → {effective_interval}s "
+                f"{config.sample_interval}s -> {effective_interval}s "
                 f"(video is {_format_duration(metadata['duration'])})"
             )
 
@@ -332,7 +332,7 @@ def _auto_sample_interval(duration: float, configured_interval: float) -> float:
     """Raise sample interval for long videos to reduce probe count.
 
     Only adjusts when the configured interval is the default (1.0).
-    Thresholds chosen so total probes stay under ~3600 (≈ 5 min at 24 workers).
+    Thresholds chosen so total probes stay under ~3600 (~5 min at 24 workers).
     """
     if configured_interval != 1.0:
         return configured_interval

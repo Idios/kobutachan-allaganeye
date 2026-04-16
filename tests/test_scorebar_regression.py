@@ -172,7 +172,7 @@ def detection_without_scorebar(
         blackout_threshold=15.0,
         min_match_duration=300.0,
         min_blackout_duration=3.0,
-        # src_resolution omitted → no scorebar filtering
+        # src_resolution omitted -> no scorebar filtering
     )
     elapsed = time.monotonic() - start
 
@@ -287,7 +287,7 @@ class TestMatchDurations:
         for i, b in enumerate(detection_with_scorebar["boundaries"]):
             dur = b["end"] - b["start"]
             assert dur <= 2400.0, (
-                f"Match {i + 1}: {dur:.0f}s (>40min) — likely merged matches"
+                f"Match {i + 1}: {dur:.0f}s (>40min) -- likely merged matches"
             )
 
 

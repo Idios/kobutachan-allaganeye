@@ -90,7 +90,7 @@ def detect_match_boundaries(
                 codec=codec,
             )
         except VideoProcessingError:
-            # GPU failed — fall back to CPU
+            # GPU failed -- fall back to CPU
             results = _scan_cpu(
                 video_path,
                 duration_hint,
@@ -480,7 +480,7 @@ def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
     roi_brightness = float(roi.mean())
     if not (20.0 < roi_brightness < 140.0):
         logger.debug(
-            "scorebar: brightness=%.1f (out of 20-140 range) → False",
+            "scorebar: brightness=%.1f (out of 20-140 range) -> False",
             roi_brightness,
         )
         return False
@@ -511,7 +511,7 @@ def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
     if max_channel_std <= _SCOREBAR_CHANNEL_STD_THRESHOLD:
         logger.debug(
             "scorebar: brightness=%.1f ch_std=[R=%.1f G=%.1f B=%.1f] "
-            "max=%.1f <= %.1f → False",
+            "max=%.1f <= %.1f -> False",
             roi_brightness,
             *channel_stds,
             max_channel_std,
@@ -527,7 +527,7 @@ def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
     if secondary_std <= _SCOREBAR_MIN_SECONDARY_STD:
         logger.debug(
             "scorebar: brightness=%.1f ch_std=[R=%.1f G=%.1f B=%.1f] "
-            "secondary=%.1f <= %.1f → False (A1)",
+            "secondary=%.1f <= %.1f -> False (A1)",
             roi_brightness,
             *channel_stds,
             secondary_std,
@@ -545,7 +545,7 @@ def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
     if max_edge <= _SCOREBAR_EDGE_THRESHOLD:
         logger.debug(
             "scorebar: brightness=%.1f ch_std max=%.1f "
-            "max_edge=%.1f <= %.1f → False (A2)",
+            "max_edge=%.1f <= %.1f -> False (A2)",
             roi_brightness,
             max_channel_std,
             max_edge,
@@ -555,7 +555,7 @@ def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
 
     logger.debug(
         "scorebar: brightness=%.1f ch_std=[R=%.1f G=%.1f B=%.1f] "
-        "secondary=%.1f max_edge=%.1f → True",
+        "secondary=%.1f max_edge=%.1f -> True",
         roi_brightness,
         *channel_stds,
         secondary_std,
@@ -583,8 +583,8 @@ _REFINE_WINDOW = 5.0
 _REFINED_MIN_BLACKOUT = 1.5
 """Min blackout duration when using refined (0.25s) measurements.
 
-At interval=0.25s, a 2.0s blackout measures ~1.5-1.75s (≥ 1.5 → detected)
-while a 1.5s respawn measures ~1.0-1.25s (< 1.5 → filtered).
+At interval=0.25s, a 2.0s blackout measures ~1.5-1.75s (>= 1.5 -> detected)
+while a 1.5s respawn measures ~1.0-1.25s (< 1.5 -> filtered).
 """
 
 _BLACKOUT_PADDING = 3.0
@@ -688,7 +688,7 @@ def _refine_blackout_regions(
 ) -> list[tuple[float, float]]:
     """Re-probe blackout regions at fine interval for precise duration.
 
-    For each region, probes ±_REFINE_WINDOW seconds at _REFINE_INTERVAL
+    For each region, probes +-_REFINE_WINDOW seconds at _REFINE_INTERVAL
     to get an accurate measurement of the blackout duration.  Returns
     updated regions with refined start/end times.
     """

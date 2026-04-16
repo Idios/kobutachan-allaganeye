@@ -1,4 +1,4 @@
-"""Integration tests for allaganeye.audio — exercises real video files.
+"""Integration tests for allaganeye.audio -- exercises real video files.
 
 Requires:
 - ALLAGANEYE_SAMPLE_VIDEO_DIR pointing to a directory that contains the
@@ -152,8 +152,8 @@ _WAR_ROOM_COVERAGE_MIN = 0.50
 _WAR_ROOM_THRESHOLD = 0.65
 
 # Primary (2026-04-08) must retain sim_max at the lower edge of the
-# issue-stated baseline band [0.78, 0.88] — "no regression".  The original
-# ogg@0_1.5 reference actually produces sim_max ≈ 0.89 on 2026-04-08 (above
+# issue-stated baseline band [0.78, 0.88] -- "no regression".  The original
+# ogg@0_1.5 reference actually produces sim_max ~= 0.89 on 2026-04-08 (above
 # the upper edge of the stated band), so we interpret "maintain" as a
 # lower-bound guarantee: sim_max must stay >= 0.78.  Going higher than 0.88
 # is not a regression.
@@ -175,7 +175,7 @@ _WAR_ROOM_SAMPLE_EXPECTATIONS: list[tuple[str, str, list[float]]] = [
         "20260118",
         "2026-01-18 22-15-18.mkv",
         # 20260118 real match ends (user-confirmed in #286 follow-up):
-        # 1:05:25 / 1:27:33 / 1:47:44 → 3925, 5253, 6464.  The remaining
+        # 1:05:25 / 1:27:33 / 1:47:44 -> 3925, 5253, 6464.  The remaining
         # entries in the detector output were knockdown blackouts and are
         # excluded to avoid testing against false boundaries.
         [3925.0, 5253.3, 6464.0],
@@ -184,7 +184,7 @@ _WAR_ROOM_SAMPLE_EXPECTATIONS: list[tuple[str, str, list[float]]] = [
         "20260119",
         "2026-01-19 22-09-07.mkv",
         # 20260119 match ends (user-confirmed in #286 follow-up):
-        # 0:14:26 / 1:03:59 / 1:40:35 / 2:03:03 → 866, 3839, 6035, 7383.
+        # 0:14:26 / 1:03:59 / 1:40:35 / 2:03:03 -> 866, 3839, 6035, 7383.
         [866.0, 3839.0, 6035.0, 7383.0],
     ),
 ]
@@ -273,7 +273,7 @@ def test_war_room_sample_recordings_coverage(
 
 
 def test_war_room_primary_sim_maintained(_war_room_reference):
-    """Primary (2026-04-08) combined sim_max stays >= 0.78 — no regression."""
+    """Primary (2026-04-08) combined sim_max stays >= 0.78 -- no regression."""
     env_path = os.environ.get("ALLAGANEYE_AUDIO_TEST_VIDEO")
     if not env_path:
         pytest.skip("ALLAGANEYE_AUDIO_TEST_VIDEO not set")

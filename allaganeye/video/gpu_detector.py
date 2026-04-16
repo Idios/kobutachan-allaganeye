@@ -42,7 +42,7 @@ def scan_gpu(
     ``fps=1/{interval}`` to output one frame per interval, which is read
     from stdout and analyzed for brightness.
 
-    Returns dict mapping timestamp → brightness, same as CPU mode.
+    Returns dict mapping timestamp -> brightness, same as CPU mode.
 
     Raises VideoProcessingError if GPU decode fails for all chunks.
     """
