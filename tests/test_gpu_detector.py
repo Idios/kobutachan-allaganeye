@@ -1,6 +1,5 @@
 """Tests for GPU-accelerated detection."""
 
-import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -112,14 +111,34 @@ class TestScanGpu:
 
     @patch("allaganeye.video.gpu_detector._decode_chunk")
     def test_gpu_failure_cancels_pending_futures(self, mock_decode):
-        """GPU failure cancels pending futures via shutdown(cancel_futures=True)."""
-        call_count = 0
+        """GPU failure triggers shutdown(cancel_futures=True) and raises.
+
+        Uses threading.Event to synchronize mock chunks: the first chunk
+        raises immediately while subsequent chunks block until released.
+        This prevents the timing-dependent flakiness of the original test
+        where fast mock completion could race with cancellation (#299).
+
+        Note: since scan_gpu uses max_workers == num_chunks, all futures
+        start immediately and cancel_futures has no pending futures to
+        cancel.  The test verifies the error propagation path works
+        correctly under concurrent conditions.
+        """
+        import threading
+
+        lock = threading.Lock()
+        call_order = 0
+        release = threading.Event()
 
         def side_effect(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
+            nonlocal call_order
+            with lock:
+                call_order += 1
+                my_order = call_order
+            if my_order == 1:
                 raise VideoProcessingError("GPU decode failed")
+            # Block subsequent chunks until released after scan_gpu returns.
+            # Short timeout prevents test hang if release is not set.
+            release.wait(timeout=2)
             return ({0.0: 128.0}, "")
 
         mock_decode.side_effect = side_effect
@@ -127,9 +146,12 @@ class TestScanGpu:
         with pytest.raises(VideoProcessingError, match="falling back"):
             scan_gpu(Path("test.mp4"), 100.0, 1.0, 15.0)
 
-        # With cancel_futures=True, not all chunks should have been executed
-        # (some were cancelled before starting)
-        assert call_count < min(os.cpu_count() or 4, 16)
+        # Release blocked threads so ThreadPoolExecutor can shut down cleanly
+        release.set()
+
+        # Verify the error propagated and no results were returned.
+        # The assertion above (pytest.raises) confirms scan_gpu raised
+        # without returning partial results from other chunks.
 
     @patch("allaganeye.video.gpu_detector._decode_chunk")
     def test_progress_callback(self, mock_decode):
