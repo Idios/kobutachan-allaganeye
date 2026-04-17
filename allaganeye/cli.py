@@ -68,6 +68,7 @@ def split(
         typer.Option(
             "--gpu/--no-gpu",
             help="Use GPU-accelerated detection (chunked parallel decode). "
+            "CPU mode is fast enough for most recordings, so GPU is off by default. "
             "Falls back to CPU if GPU is unavailable.",
         ),
     ] = False,
