@@ -91,14 +91,53 @@ def test_scan_fanfare_hits_forwards_threshold(
 @patch(f"{_SCAN_MODULE}.get_reference_path")
 def test_scan_fanfare_hits_uses_custom_ref_name(mock_ref_path):
     """ref_name parameter is passed to get_reference_path."""
+    from allaganeye.exceptions import VideoProcessingError
+
     mock_ref_path.side_effect = FileNotFoundError("stop early")
 
     try:
         scan_fanfare_hits(Path("/fake/v.mkv"), ref_name="war_room")
-    except FileNotFoundError:
+    except VideoProcessingError:
         pass
 
     mock_ref_path.assert_called_once_with("war_room")
+
+
+@patch(f"{_SCAN_MODULE}.get_reference_path")
+def test_scan_fanfare_hits_missing_ref_raises_video_processing_error(mock_ref_path):
+    """FileNotFoundError from get_reference_path is wrapped as VideoProcessingError (#350)."""
+    import pytest
+
+    from allaganeye.exceptions import VideoProcessingError
+
+    mock_ref_path.side_effect = FileNotFoundError("fanfare.npz not found")
+
+    with pytest.raises(VideoProcessingError, match="fanfare reference feature missing"):
+        scan_fanfare_hits(Path("/fake/v.mkv"))
+
+
+@patch(f"{_SCAN_MODULE}.get_reference_path")
+def test_scan_fanfare_hits_missing_ref_preserves_cause(mock_ref_path):
+    """Wrapped VideoProcessingError preserves __cause__ chain for debugging (#350).
+
+    The PR summary documents that ``from e`` keeps ``__cause__`` so the
+    original FileNotFoundError (with its detail about which path was
+    missing) is visible in tracebacks.  Guards against a future refactor
+    dropping ``from e`` -- which would preserve CLI fallback behaviour
+    but lose the packaging diagnostic that makes this error actionable.
+    """
+    import pytest
+
+    from allaganeye.exceptions import VideoProcessingError
+
+    original = FileNotFoundError("fanfare.npz not found at expected path")
+    mock_ref_path.side_effect = original
+
+    with pytest.raises(VideoProcessingError) as excinfo:
+        scan_fanfare_hits(Path("/fake/v.mkv"))
+
+    assert excinfo.value.__cause__ is original
+    assert isinstance(excinfo.value.__cause__, FileNotFoundError)
 
 
 @patch(f"{_SCAN_MODULE}.find_match_peaks")
