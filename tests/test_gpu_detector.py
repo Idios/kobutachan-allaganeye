@@ -169,6 +169,52 @@ class TestScanGpu:
 
         assert len(calls) >= 1
 
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_chunk_progress_callback_fires_per_chunk(self, mock_decode):
+        """chunk_progress_callback fires once per chunk with (done, total, eta) (#333)."""
+        mock_decode.return_value = ({0.0: 128.0, 1.0: 5.0}, "")
+        chunk_calls: list[tuple[int, int, float]] = []
+
+        scan_gpu(
+            Path("test.mp4"),
+            10.0,
+            1.0,
+            15.0,
+            chunk_progress_callback=lambda d, t, eta: chunk_calls.append((d, t, eta)),
+        )
+
+        # One call per chunk -- exactly num_chunks total (lead review).
+        assert len(chunk_calls) >= 1
+        num_chunks = chunk_calls[-1][1]
+        assert len(chunk_calls) == num_chunks
+        # done is monotonically increasing 1..num_chunks
+        dones = [c[0] for c in chunk_calls]
+        assert dones == list(range(1, num_chunks + 1))
+        # total stays constant at num_chunks
+        assert all(c[1] == num_chunks for c in chunk_calls)
+        # Final ETA is 0 (no remaining chunks)
+        assert chunk_calls[-1][2] == 0.0
+        # Intermediate ETAs are non-negative
+        assert all(c[2] >= 0 for c in chunk_calls)
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_chunk_progress_not_called_on_failure(self, mock_decode):
+        """Callback must not fire for a failed chunk (#333)."""
+        mock_decode.side_effect = VideoProcessingError("fail")
+        chunk_calls: list[tuple[int, int, float]] = []
+
+        with pytest.raises(VideoProcessingError):
+            scan_gpu(
+                Path("test.mp4"),
+                10.0,
+                1.0,
+                15.0,
+                chunk_progress_callback=lambda d, t, eta: chunk_calls.append(
+                    (d, t, eta)
+                ),
+            )
+        assert chunk_calls == []
+
 
 class TestGpuFallbackIntegration:
     @patch("allaganeye.video.detector._scan_cpu")

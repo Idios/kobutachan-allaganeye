@@ -1232,3 +1232,27 @@ def test_probe_ffmpeg_version_returns_unknown_on_failure():
     with patch("subprocess.run", side_effect=subprocess.SubprocessError("boom")):
         result = _probe_ffmpeg_version()
     assert result == "(unknown)"
+
+
+# --- ETA formatter (issue #333) ---
+
+
+def test_format_eta_seconds():
+    from allaganeye.commands.split_matches import _format_eta
+
+    assert _format_eta(5) == "5s"
+    assert _format_eta(59) == "59s"
+
+
+def test_format_eta_minutes():
+    from allaganeye.commands.split_matches import _format_eta
+
+    assert _format_eta(60) == "1m00s"
+    assert _format_eta(125) == "2m05s"
+
+
+def test_format_eta_hours():
+    from allaganeye.commands.split_matches import _format_eta
+
+    assert _format_eta(3600) == "1h00m"
+    assert _format_eta(3700) == "1h01m"
