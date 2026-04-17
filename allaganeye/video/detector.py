@@ -170,7 +170,6 @@ def detect_match_boundaries(
         from allaganeye.video.scorebar import filter_blackouts_with_scorebar
 
         height = _scaled_height(src_resolution[0], src_resolution[1])
-        scorebar_stats: dict[str, int] | None = {} if stats is not None else None
         refined_regions, region_classifications = filter_blackouts_with_scorebar(
             video_path,
             refined_regions,
@@ -178,11 +177,8 @@ def detect_match_boundaries(
             height,
             workers,
             audio_hits=audio_hits,
-            stats=scorebar_stats,
+            stats=stats,
         )
-        if stats is not None and scorebar_stats is not None:
-            for key, value in scorebar_stats.items():
-                stats[key] = value  # type: ignore[literal-required]
 
     effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
     return _filter_and_extract_segments(

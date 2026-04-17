@@ -393,16 +393,18 @@ class TestFilterBlackouts:
         must still appear in the stats counters so verbose output shows
         the full picture.
         """
+        from allaganeye.video.detector import DetectionStats
+
         mock_classify.side_effect = ["match_boundary", "in_match", "non_fl"]
         regions = [(100.0, 105.0), (200.0, 201.0), (300.0, 302.0)]
-        stats: dict[str, int] = {}
+        stats: DetectionStats = {}
         result, _ = filter_blackouts_with_scorebar(
             Path("v.mp4"), regions, 400.0, _HEIGHT, stats=stats
         )
-        assert stats["scorebar_match_boundary"] == 1
-        assert stats["scorebar_in_match"] == 1
-        assert stats["scorebar_non_fl"] == 1
-        assert stats["audio_promotions"] == 0
+        assert stats.get("scorebar_match_boundary") == 1
+        assert stats.get("scorebar_in_match") == 1
+        assert stats.get("scorebar_non_fl") == 1
+        assert stats.get("audio_promotions") == 0
         # Short in_match and non_fl dropped from return
         assert result == [(100.0, 105.0)]
 

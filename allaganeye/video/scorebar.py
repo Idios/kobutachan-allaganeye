@@ -11,6 +11,7 @@ import numpy as np
 from allaganeye.audio.matcher import BgmHit
 from allaganeye.exceptions import VideoProcessingError
 from allaganeye.video.detector import (
+    DetectionStats,
     _SAMPLE_WIDTH,
     _SCOREBAR_METHOD,
     _SCOREBAR_ROI_X_END,
@@ -336,7 +337,7 @@ def filter_blackouts_with_scorebar(
     workers: int | None = None,
     *,
     audio_hits: Sequence[BgmHit] | None = None,
-    stats: dict[str, int] | None = None,
+    stats: DetectionStats | None = None,
 ) -> tuple[list[tuple[float, float]], list[str]]:
     """Filter blackout regions using scorebar context and duration.
 
