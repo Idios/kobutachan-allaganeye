@@ -15,6 +15,7 @@ from itertools import pairwise
 from pathlib import Path
 from unittest.mock import patch
 
+from allaganeye.audio.matcher import BgmHit
 from allaganeye.video.detector import (
     MatchBoundary,
     _SUSPICIOUS_MATCH_MAX_DURATION,
@@ -200,7 +201,7 @@ class TestRefineOneSegmentScorebarPath:
         mock_refine_regions.return_value = [(900.0, 902.0)]
         mock_filter.return_value = ([(900.0, 902.0)], ["match_boundary"])
 
-        hits = [{"timestamp": 910.0, "similarity": 0.8}]
+        hits: list[BgmHit] = [{"timestamp": 910.0, "similarity": 0.8}]
         _refine_one_segment(
             seg,
             Path("t.mp4"),
