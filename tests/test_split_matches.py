@@ -658,6 +658,215 @@ class TestCachePipeline:
 # --- Audio scan integration (#288) ---
 
 
+class TestDiskSpaceCheck:
+    """Disk space check before splitting (#338)."""
+
+    def test_estimate_output_size(self, tmp_path):
+        """Output size estimation uses file size, duration ratio, and margin."""
+        from allaganeye.commands.split_matches import _estimate_output_size
+
+        video = tmp_path / "test.mp4"
+        video.write_bytes(b"\x00" * 1_000_000)  # 1 MB
+
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 500.0, "type": "unknown"},
+        ]
+        # 500s out of 1000s = 50%, plus 10% margin = 55%
+        result = _estimate_output_size(video, boundaries, 1000.0)
+        assert result == int(1_000_000 * 0.5 * 1.1)
+
+    def test_check_disk_space_raises_on_insufficient(self, tmp_path):
+        """Raises AllaganEyeError when free space is insufficient."""
+        from allaganeye.commands.split_matches import _check_disk_space
+
+        video = tmp_path / "test.mp4"
+        video.write_bytes(b"\x00" * 1_000_000)
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 900.0, "type": "unknown"},
+        ]
+        config = SplitConfig(output_dir=tmp_path / "output")
+
+        # Mock disk_usage to report very low free space
+        fake_usage = type(
+            "Usage", (), {"total": 1_000_000, "used": 999_000, "free": 1_000}
+        )
+        with patch(
+            "allaganeye.commands.split_matches.shutil.disk_usage",
+            return_value=fake_usage,
+        ):
+            with pytest.raises(AllaganEyeError, match="Not enough disk space"):
+                _check_disk_space(video, boundaries, 1000.0, config)
+
+    def test_check_disk_space_passes_when_sufficient(self, tmp_path):
+        """No error when free space is sufficient."""
+        from allaganeye.commands.split_matches import _check_disk_space
+
+        video = tmp_path / "test.mp4"
+        video.write_bytes(b"\x00" * 1_000_000)
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 500.0, "type": "unknown"},
+        ]
+        config = SplitConfig(output_dir=tmp_path / "output")
+
+        fake_usage = type(
+            "Usage", (), {"total": 100_000_000, "used": 50_000_000, "free": 50_000_000}
+        )
+        with patch(
+            "allaganeye.commands.split_matches.shutil.disk_usage",
+            return_value=fake_usage,
+        ):
+            # Should not raise
+            _check_disk_space(video, boundaries, 1000.0, config)
+
+    def test_check_disk_space_warns_on_tight(self, tmp_path, capsys):
+        """Warns (but doesn't error) when space is tight."""
+        from allaganeye.commands.split_matches import _check_disk_space
+
+        video = tmp_path / "test.mp4"
+        video.write_bytes(b"\x00" * 1_000_000)
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 900.0, "type": "unknown"},
+        ]
+        config = SplitConfig(output_dir=tmp_path / "output")
+
+        # estimated = 1M * 0.9 * 1.1 = 990_000; free = 1_100_000
+        # estimated > free * 0.8 (880_000) -> warn
+        fake_usage = type(
+            "Usage", (), {"total": 2_000_000, "used": 900_000, "free": 1_100_000}
+        )
+        with patch(
+            "allaganeye.commands.split_matches.shutil.disk_usage",
+            return_value=fake_usage,
+        ):
+            _check_disk_space(video, boundaries, 1000.0, config, show=True)
+
+        stderr = capsys.readouterr().err
+        assert "Warning" in stderr
+
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    def test_dry_run_skips_check(self, mock_probe, mock_detect, mock_split, tmp_path):
+        """--dry-run does not check disk space."""
+        mock_probe.return_value = PROBE_RESULT
+        mock_detect.return_value = BOUNDARIES
+        config = SplitConfig(output_dir=tmp_path, dry_run=True, min_match_duration=60.0)
+
+        with patch(f"{MODULE}._check_disk_space") as mock_check:
+            run_split(Path("input.mp4"), config)
+            mock_check.assert_not_called()
+
+    def test_error_message_includes_recovery_command(self, tmp_path):
+        """Error message includes re-run command."""
+        from allaganeye.commands.split_matches import _check_disk_space
+
+        video = tmp_path / "my video.mp4"
+        video.write_bytes(b"\x00" * 1_000_000)
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 900.0, "type": "unknown"},
+        ]
+        config = SplitConfig(output_dir=tmp_path / "output")
+
+        fake_usage = type(
+            "Usage", (), {"total": 1_000_000, "used": 999_000, "free": 1_000}
+        )
+        with patch(
+            "allaganeye.commands.split_matches.shutil.disk_usage",
+            return_value=fake_usage,
+        ):
+            with pytest.raises(AllaganEyeError, match="allaganeye split") as exc_info:
+                _check_disk_space(video, boundaries, 1000.0, config)
+            # Path with space should be quoted
+            assert '"' in str(exc_info.value)
+
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    def test_match_list_displayed_before_disk_error(
+        self, mock_probe, mock_detect, mock_split, tmp_path, capsys
+    ):
+        """Match list is displayed before disk space error is raised (#338).
+
+        Core UX contract from issue #338: even when the split is aborted
+        for insufficient space, the user must see the detection results
+        first so they can confirm what was detected / was cached.
+        """
+        mock_probe.return_value = PROBE_RESULT
+        mock_detect.return_value = BOUNDARIES
+        config = SplitConfig(output_dir=tmp_path / "output", min_match_duration=60.0)
+
+        fake_usage = type("Usage", (), {"total": 10_000, "used": 9_000, "free": 1_000})
+        with (
+            patch(
+                "allaganeye.commands.split_matches.shutil.disk_usage",
+                return_value=fake_usage,
+            ),
+            patch(
+                f"{MODULE}._estimate_output_size",
+                return_value=100_000_000_000,  # 100GB vs 1KB free -> raises
+            ),
+        ):
+            with pytest.raises(AllaganEyeError, match="Not enough disk space"):
+                run_split(Path("input.mp4"), config)
+
+        output = capsys.readouterr().out
+        # Detected header + both Match lines must appear before the raise
+        assert "Detected 2 match(es)" in output
+        assert "Match 1:" in output
+        assert "Match 2:" in output
+        # Split must not be attempted
+        mock_split.assert_not_called()
+
+    def test_quiet_suppresses_tight_space_warning(self, tmp_path, capsys):
+        """show=False suppresses the tight-space warning (#338 + --quiet)."""
+        from allaganeye.commands.split_matches import _check_disk_space
+
+        video = tmp_path / "test.mp4"
+        video.write_bytes(b"\x00" * 1_000_000)
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 900.0, "type": "unknown"},
+        ]
+        config = SplitConfig(output_dir=tmp_path / "output")
+
+        # Tight but sufficient: estimated 990_000, free 1_100_000 (>80% -> warn)
+        fake_usage = type(
+            "Usage", (), {"total": 2_000_000, "used": 900_000, "free": 1_100_000}
+        )
+        with patch(
+            "allaganeye.commands.split_matches.shutil.disk_usage",
+            return_value=fake_usage,
+        ):
+            _check_disk_space(video, boundaries, 1000.0, config, show=False)
+
+        stderr = capsys.readouterr().err
+        assert "Warning" not in stderr
+
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    @patch(f"{MODULE}._load_cache")
+    def test_cached_path_enforces_disk_check(
+        self, mock_load, mock_probe, mock_detect, mock_split, tmp_path
+    ):
+        """Disk space check runs even when boundaries come from cache (#338).
+
+        The cached re-run is the primary recovery path from an earlier
+        disk-full failure; the check must re-validate that enough space
+        is available before splitting.
+        """
+        mock_probe.return_value = PROBE_RESULT
+        mock_load.return_value = BOUNDARIES  # simulate cache hit
+        mock_split.return_value = _output_files(tmp_path)
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+        with patch(f"{MODULE}._check_disk_space") as mock_check:
+            run_split(Path("input.mp4"), config)
+
+        mock_check.assert_called_once()
+        # detect_match_boundaries must not be invoked (cache hit)
+        mock_detect.assert_not_called()
+
+
 class TestAudioScanIntegration:
     """Audio scan pipeline wiring in run_split and _run_audio_scan (#288)."""
 
