@@ -1147,6 +1147,50 @@ class TestResolveGpuMode:
         assert "Auto-selected GPU mode" in out
         assert "h264" in out
 
+    def test_auto_cpu_verbose_shows_cpu_message(self, capsys):
+        """CPU auto-selection also emits a verbose notice (#334).
+
+        Guards the else-branch of the mode resolution -- users on
+        AV1/VP9 recordings need to see that CPU mode was chosen
+        intentionally (not just because GPU failed).
+        """
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        _resolve_gpu_mode(None, "av1", show=True, verbose=True)
+        out = capsys.readouterr().out
+        assert "Auto-selected CPU mode" in out
+        assert "av1" in out
+
+    def test_auto_non_verbose_suppresses_message(self, capsys):
+        """Non-verbose auto selection is silent (#334)."""
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        _resolve_gpu_mode(None, "h264", show=True, verbose=False)
+        out = capsys.readouterr().out
+        assert "Auto-selected" not in out
+
+    def test_auto_quiet_suppresses_message(self, capsys):
+        """--quiet (show=False) silences auto-selection message even with verbose (#334)."""
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        _resolve_gpu_mode(None, "h264", show=False, verbose=True)
+        out = capsys.readouterr().out
+        assert "Auto-selected" not in out
+
+    def test_auto_codec_matching_is_case_insensitive(self):
+        """Codec name matching is case-insensitive (#334).
+
+        ffprobe normally returns lowercase codec_name, but downstream
+        callers or manual ProbeResult construction may pass "H264" /
+        "HEVC".  The set is compared via ``.lower()``; guards against a
+        future refactor dropping that normalization.
+        """
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        assert _resolve_gpu_mode(None, "H264", show=False, verbose=False) is True
+        assert _resolve_gpu_mode(None, "HEVC", show=False, verbose=False) is True
+        assert _resolve_gpu_mode(None, "Hevc", show=False, verbose=False) is True
+
 
 class TestAudioScanIntegration:
     """Audio scan pipeline wiring in run_split and _run_audio_scan (#288)."""
