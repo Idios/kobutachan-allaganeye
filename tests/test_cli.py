@@ -156,7 +156,7 @@ def test_split_default_options(mock_run_split, fake_video):
     assert config.min_match_duration == 300.0
     assert config.min_blackout_duration == 3.0
     assert config.workers is None
-    assert config.use_gpu is False
+    assert config.use_gpu is None  # auto mode (#334)
     assert config.dry_run is False
     assert kwargs["verbose"] is False
     assert kwargs["quiet"] is False

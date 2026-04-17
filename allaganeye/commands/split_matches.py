@@ -97,6 +97,9 @@ def run_split(
                 video_path, boundaries, gaps, metadata, config, quiet=quiet
             )
 
+    # Resolve GPU/CPU mode: auto-select based on codec when not explicit (#334)
+    use_gpu = _resolve_gpu_mode(config.use_gpu, metadata.get("codec"), show, verbose)
+
     # Step 2: Detect match boundaries
     if verbose and show:
         if effective_interval != config.sample_interval:
@@ -130,6 +133,7 @@ def run_split(
         audio_hits=audio_hits,
         quiet=quiet,
         stats=detect_stats,
+        use_gpu=use_gpu,
     )
 
     if not boundaries:
@@ -246,6 +250,32 @@ def _run_audio_scan(
     return hits
 
 
+# Codecs where GPU decode is typically faster than CPU parallel probing.
+_GPU_PREFERRED_CODECS = {"h264", "hevc"}
+
+
+def _resolve_gpu_mode(
+    use_gpu: bool | None,
+    codec: str | None,
+    show: bool,
+    verbose: bool,
+) -> bool:
+    """Resolve GPU/CPU mode from explicit flag or codec auto-detection (#334).
+
+    When *use_gpu* is ``None`` (no ``--gpu``/``--no-gpu`` given), selects
+    GPU for H.264/HEVC (mature GPU decode support) and CPU for everything
+    else (AV1, VP9, etc.).  Returns a concrete ``bool``.
+    """
+    if use_gpu is not None:
+        return use_gpu
+
+    selected = (codec or "").lower() in _GPU_PREFERRED_CODECS
+    if show and verbose:
+        mode = "GPU" if selected else "CPU"
+        typer.echo(f"  Auto-selected {mode} mode (codec: {codec or 'unknown'})")
+    return selected
+
+
 def _run_detection(
     video_path: Path,
     metadata: ProbeResult,
@@ -255,6 +285,7 @@ def _run_detection(
     audio_hits: list[BgmHit] | None = None,
     quiet: bool = False,
     stats: DetectionStats | None = None,
+    use_gpu: bool = False,
 ) -> list[MatchBoundary]:
     """Run detection with progress bars for each phase (#328, #329, #331)."""
     detect_kwargs = {
@@ -263,7 +294,7 @@ def _run_detection(
         "blackout_threshold": config.blackout_threshold,
         "min_match_duration": config.min_match_duration,
         "min_blackout_duration": config.min_blackout_duration,
-        "use_gpu": config.use_gpu,
+        "use_gpu": use_gpu,
         "workers": config.workers,
         "src_resolution": (metadata["width"], metadata["height"]),
         "codec": metadata.get("codec"),

@@ -105,7 +105,8 @@ def test_pipeline_happy_path(mock_probe, mock_detect, mock_split, tmp_path):
     assert detect_kwargs["blackout_threshold"] == config.blackout_threshold
     assert detect_kwargs["min_match_duration"] == config.min_match_duration
     assert detect_kwargs["min_blackout_duration"] == config.min_blackout_duration
-    assert detect_kwargs["use_gpu"] == config.use_gpu
+    # Auto-selected GPU for h264 codec (#334)
+    assert detect_kwargs["use_gpu"] is True
     assert detect_kwargs["workers"] == config.workers
     assert detect_kwargs["src_resolution"] == (
         PROBE_RESULT["width"],
@@ -1098,6 +1099,53 @@ class TestDiskSpaceCheck:
         mock_check.assert_called_once()
         # detect_match_boundaries must not be invoked (cache hit)
         mock_detect.assert_not_called()
+
+
+class TestResolveGpuMode:
+    """Codec-based GPU/CPU auto-selection (#334)."""
+
+    def test_explicit_gpu_true(self):
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        assert _resolve_gpu_mode(True, "av1", show=False, verbose=False) is True
+
+    def test_explicit_gpu_false(self):
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        assert _resolve_gpu_mode(False, "h264", show=False, verbose=False) is False
+
+    def test_auto_h264_selects_gpu(self):
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        assert _resolve_gpu_mode(None, "h264", show=False, verbose=False) is True
+
+    def test_auto_hevc_selects_gpu(self):
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        assert _resolve_gpu_mode(None, "hevc", show=False, verbose=False) is True
+
+    def test_auto_av1_selects_cpu(self):
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        assert _resolve_gpu_mode(None, "av1", show=False, verbose=False) is False
+
+    def test_auto_vp9_selects_cpu(self):
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        assert _resolve_gpu_mode(None, "vp9", show=False, verbose=False) is False
+
+    def test_auto_unknown_codec_selects_cpu(self):
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        assert _resolve_gpu_mode(None, None, show=False, verbose=False) is False
+
+    def test_auto_verbose_shows_message(self, capsys):
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        _resolve_gpu_mode(None, "h264", show=True, verbose=True)
+        out = capsys.readouterr().out
+        assert "Auto-selected GPU mode" in out
+        assert "h264" in out
 
 
 class TestAudioScanIntegration:
