@@ -57,7 +57,7 @@ def run_split(
 
     # Step 1: Probe video metadata
     if show:
-        typer.echo(f"Probing: {video_path}")
+        typer.echo(f"Probing: {video_path.name}")
     metadata = probe_video(video_path)
     if verbose and show:
         typer.echo(
@@ -66,6 +66,10 @@ def run_split(
             f"FPS: {metadata['fps']:.2f}, "
             f"Codec: {metadata.get('codec', 'unknown')}"
         )
+
+    # Dry-run notice (#331): show early so user knows what mode they're in
+    if show and config.dry_run:
+        typer.echo("[dry-run] Detect only. Video will not be split.")
 
     # Auto-adjust sample_interval for long videos (C strategy from #68)
     effective_interval = _auto_sample_interval(
@@ -79,27 +83,10 @@ def run_split(
         if cached is not None:
             boundaries = cached
             if show:
-                typer.echo(
-                    f"Detected {len(boundaries)} match(es) in {video_path.name} "
-                    f"({_format_timestamp(metadata['duration'])}) (cached)"
-                )
-                typer.echo()
-                for i, b in enumerate(boundaries, 1):
-                    dur = b["end"] - b["start"]
-                    typer.echo(
-                        f"  Match {i}: {_format_timestamp(b['start']):>7s} - "
-                        f"{_format_timestamp(b['end']):>7s}  "
-                        f"({_format_duration(dur)})"
-                    )
+                _display_results(boundaries, metadata, video_path, verbose, cached=True)
             gaps = _find_gaps(boundaries, metadata["duration"], min_gap=300.0)
             if show and verbose and gaps:
-                typer.echo()
-                for gap in gaps:
-                    typer.echo(
-                        f"  Gap: {_format_timestamp(gap['start'])} - "
-                        f"{_format_timestamp(gap['end'])} "
-                        f"({_format_duration(gap['duration'])})"
-                    )
+                _display_gaps(gaps)
             if config.dry_run:
                 typer.echo("\nDry run: skipping split")
                 return
@@ -107,7 +94,7 @@ def run_split(
                 video_path, boundaries, metadata["duration"], config, show=show
             )
             return _split_and_write_metadata(
-                video_path, boundaries, gaps, metadata, config
+                video_path, boundaries, gaps, metadata, config, quiet=quiet
             )
 
     # Step 2: Detect match boundaries
@@ -121,24 +108,17 @@ def run_split(
 
     audio_hits = _run_audio_scan(video_path, config, show=show, verbose=verbose)
 
-    if show:
-        if verbose:
-            workers_str = str(config.workers) if config.workers is not None else "auto"
-            audio_str = "off" if config.no_audio else "on"
-            typer.echo(
-                f"Detecting match boundaries "
-                f"(interval={effective_interval}s, "
-                f"threshold={config.blackout_threshold}, workers={workers_str}, "
-                f"min_match={config.min_match_duration}s, "
-                f"min_blackout={config.min_blackout_duration}s, "
-                f"audio={audio_str})"
-            )
-        else:
-            typer.echo(
-                f"Detecting match boundaries "
-                f"(interval={effective_interval}s, "
-                f"threshold={config.blackout_threshold})"
-            )
+    if show and verbose:
+        workers_str = str(config.workers) if config.workers is not None else "auto"
+        audio_str = "off" if config.no_audio else "on"
+        typer.echo(
+            f"Detecting match boundaries "
+            f"(interval={effective_interval}s, "
+            f"threshold={config.blackout_threshold}, workers={workers_str}, "
+            f"min_match={config.min_match_duration}s, "
+            f"min_blackout={config.min_blackout_duration}s, "
+            f"audio={audio_str})"
+        )
 
     detect_stats: DetectionStats | None = {} if verbose else None
 
@@ -164,29 +144,12 @@ def run_split(
 
     # Display detection results
     if show:
-        source_duration = metadata["duration"]
-        typer.echo(
-            f"Detected {len(boundaries)} match(es) in {video_path.name} "
-            f"({_format_timestamp(source_duration)})"
-        )
-        typer.echo()
-        for i, b in enumerate(boundaries, 1):
-            dur = b["end"] - b["start"]
-            typer.echo(
-                f"  Match {i}: {_format_timestamp(b['start']):>7s} - "
-                f"{_format_timestamp(b['end']):>7s}  ({_format_duration(dur)})"
-            )
+        _display_results(boundaries, metadata, video_path, verbose)
 
     # Show significant gaps (verbose only)
     gaps = _find_gaps(boundaries, metadata["duration"], min_gap=300.0)
     if verbose and show and gaps:
-        typer.echo()
-        for gap in gaps:
-            typer.echo(
-                f"  Gap: {_format_timestamp(gap['start'])} - "
-                f"{_format_timestamp(gap['end'])} "
-                f"({_format_duration(gap['duration'])})"
-            )
+        _display_gaps(gaps)
 
     # Save detection cache
     _save_cache(
@@ -201,9 +164,46 @@ def run_split(
         return
 
     _check_disk_space(video_path, boundaries, metadata["duration"], config, show=show)
-    _split_and_write_metadata(video_path, boundaries, gaps, metadata, config)
+    _split_and_write_metadata(
+        video_path, boundaries, gaps, metadata, config, quiet=quiet
+    )
     if verbose and show:
         typer.echo(f"Total: {_format_duration(time.monotonic() - total_start)}")
+
+
+def _display_results(
+    boundaries: list[MatchBoundary],
+    metadata: ProbeResult,
+    video_path: Path,
+    verbose: bool,
+    *,
+    cached: bool = False,
+) -> None:
+    """Display detection results."""
+    source_duration = metadata["duration"]
+    suffix = " (cached)" if cached else ""
+    typer.echo(
+        f"Detected {len(boundaries)} match(es) in {video_path.name} "
+        f"({_format_timestamp(source_duration)}){suffix}"
+    )
+    typer.echo()
+    for i, b in enumerate(boundaries, 1):
+        dur = b["end"] - b["start"]
+        typer.echo(
+            f"  Match {i}: {_format_timestamp(b['start']):>7s} - "
+            f"{_format_timestamp(b['end']):>7s}  ({_format_duration(dur)})"
+        )
+
+
+def _display_gaps(gaps: list[Gap]) -> None:
+    """Display significant gaps between matches."""
+    typer.echo()
+    for gap in gaps:
+        typer.echo(
+            f"  Gap: {_format_timestamp(gap['start'])} - "
+            f"{_format_timestamp(gap['end'])} "
+            f"({_format_duration(gap['duration'])})"
+        )
 
 
 def _run_audio_scan(
@@ -256,7 +256,7 @@ def _run_detection(
     quiet: bool = False,
     stats: DetectionStats | None = None,
 ) -> list[MatchBoundary]:
-    """Run detection with optional progress bar."""
+    """Run detection with progress bars for each phase (#328, #329, #331)."""
     detect_kwargs = {
         "duration_hint": metadata["duration"],
         "sample_interval": effective_interval,
@@ -275,7 +275,8 @@ def _run_detection(
         total_duration = metadata["duration"]
         estimated_samples = max(1, int(total_duration / effective_interval))
 
-        with typer.progressbar(length=estimated_samples, label="Detecting") as progress:
+        # Phase 1: Detecting (Pass 1 scan)
+        with _eta_progressbar(estimated_samples, "Detecting") as progress:
             last_pos = [0]
 
             def on_progress(completed: int, total: int, blackout_count: int) -> None:
@@ -290,17 +291,51 @@ def _run_detection(
                 if eta_seconds > 0:
                     progress.label = (
                         f"Detecting [chunk {done}/{total}, "
-                        f"ETA ~{_format_eta(eta_seconds)}]"
+                        f"ETA ~{_format_eta(eta_seconds)}]".ljust(_PROGRESS_LABEL_WIDTH)
                     )
                 else:
-                    progress.label = f"Detecting [chunk {done}/{total}]"
+                    progress.label = f"Detecting [chunk {done}/{total}]".ljust(
+                        _PROGRESS_LABEL_WIDTH
+                    )
 
-            return detect_match_boundaries(
+            # Phase 2: Refining (Pass 2 + scorebar).
+            # The bar is lazily opened on the first callback from
+            # detect_match_boundaries, because we don't know the total
+            # step count until Pass 1 completes.
+            refine_bar_ctx: list[dict] = []
+
+            def on_refine(completed: int, total: int) -> None:
+                import click
+
+                if not refine_bar_ctx:
+                    bar = click.progressbar(
+                        length=total,
+                        label="Refining ".ljust(11),
+                        bar_template="%(label)s%(bar)s %(info)s",
+                        show_eta=True,
+                        show_percent=True,
+                    )
+                    bar.__enter__()
+                    refine_bar_ctx.append({"bar": bar, "last": 0})
+                ctx = refine_bar_ctx[0]
+                advance = completed - ctx["last"]
+                if advance > 0:
+                    ctx["bar"].update(advance)
+                ctx["last"] = completed
+
+            result = detect_match_boundaries(
                 video_path,
                 **detect_kwargs,
                 progress_callback=on_progress,
+                refine_progress_callback=on_refine,
                 chunk_progress_callback=on_chunk,
             )
+
+        # Close the refine bar if it was opened
+        if refine_bar_ctx:
+            refine_bar_ctx[0]["bar"].__exit__(None, None, None)
+
+        return result
 
     return detect_match_boundaries(video_path, **detect_kwargs)
 
@@ -393,14 +428,38 @@ def _check_disk_space(
         )
 
 
+_PROGRESS_LABEL_WIDTH = 11
+"""Column width for progress bar labels (Detecting/Refining/Splitting)."""
+
+
+def _eta_progressbar(length: int, label: str):  # type: ignore[no-untyped-def]
+    """Create a progress bar with explicit ETA label (#329).
+
+    Labels are left-justified to ``_PROGRESS_LABEL_WIDTH`` so that
+    Detecting / Refining / Splitting bars align vertically.
+    """
+    import click
+
+    return click.progressbar(
+        length=length,
+        label=label.ljust(_PROGRESS_LABEL_WIDTH),
+        bar_template="%(label)s%(bar)s %(info)s",
+        show_eta=True,
+        show_percent=True,
+    )
+
+
 def _split_and_write_metadata(
     video_path: Path,
     boundaries: list[MatchBoundary],
     gaps: list[Gap],
     metadata: ProbeResult,
     config: SplitConfig,
+    *,
+    quiet: bool = False,
 ) -> None:
     """Split video and write metadata.json."""
+    show = not quiet
     source_duration = metadata["duration"]
 
     try:
@@ -410,7 +469,22 @@ def _split_and_write_metadata(
             f"Cannot create output directory {config.output_dir}: {e}"
         ) from e
 
-    output_files = split_video(video_path, boundaries, config.output_dir)
+    # Split with progress bar (#331)
+    if show:
+        total = len(boundaries)
+        with _eta_progressbar(total, "Splitting") as progress:
+
+            def on_split_progress(completed: int, total: int) -> None:
+                progress.update(1)
+
+            output_files = split_video(
+                video_path,
+                boundaries,
+                config.output_dir,
+                progress_callback=on_split_progress,
+            )
+    else:
+        output_files = split_video(video_path, boundaries, config.output_dir)
 
     # Write metadata
     result = {

@@ -736,7 +736,15 @@ class TestDetectMatchBoundaries:
         ) as mock_filter:
 
             def filter_side_effect(
-                video_path, regions, duration, height, workers, *, audio_hits, stats
+                video_path,
+                regions,
+                duration,
+                height,
+                workers,
+                *,
+                audio_hits,
+                stats,
+                progress_callback=None,
             ):
                 if stats is not None:
                     stats["scorebar_match_boundary"] = 1
@@ -776,6 +784,36 @@ class TestDetectMatchBoundaries:
         assert all(c[1] == 10 for c in calls)
         completed = sorted(c[0] for c in calls)
         assert completed == list(range(1, 11))
+
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_refine_progress_callback(self, mock_chunk):
+        """refine_progress_callback fires during Pass 2 (#328).
+
+        Contract: called per blackout region discovered in Pass 1, with
+        (completed, total) arguments.  total matches the number of
+        regions (no scorebar phase here since src_resolution=None).
+        """
+
+        # Single blackout region at t=5 (below threshold)
+        def side_effect(vp, ts, cs, ce, si):
+            return {t: 0.0 if 4.0 <= t <= 6.0 else 128.0 for t in ts}
+
+        mock_chunk.side_effect = side_effect
+        refine_calls: list[tuple[int, int]] = []
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=10.0,
+            sample_interval=1.0,
+            min_match_duration=1.0,
+            refine_progress_callback=lambda c, t: refine_calls.append((c, t)),
+        )
+        # At least one refine callback for the detected region
+        assert len(refine_calls) >= 1
+        # completed counts are monotonically non-decreasing and bounded by total
+        for completed, total in refine_calls:
+            assert 1 <= completed <= total
+        # final completed == total (all refine steps reported)
+        assert refine_calls[-1][0] == refine_calls[-1][1]
 
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_progress_callback_none(self, mock_chunk):

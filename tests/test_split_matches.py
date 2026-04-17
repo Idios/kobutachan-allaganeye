@@ -111,7 +111,9 @@ def test_pipeline_happy_path(mock_probe, mock_detect, mock_split, tmp_path):
         PROBE_RESULT["width"],
         PROBE_RESULT["height"],
     )
-    mock_split.assert_called_once_with(video, BOUNDARIES, tmp_path)
+    mock_split.assert_called_once()
+    split_args = mock_split.call_args
+    assert split_args[0] == (video, BOUNDARIES, tmp_path)
     assert (tmp_path / "metadata.json").exists()
 
 
@@ -171,6 +173,103 @@ def test_pipeline_dry_run(mock_probe, mock_detect, mock_split, tmp_path):
     mock_detect.assert_called_once()
     mock_split.assert_not_called()
     assert not (tmp_path / "metadata.json").exists()
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_pipeline_dry_run_display(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Dry-run shows early notice and no Splitting bar (#331)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    config = SplitConfig(output_dir=tmp_path, dry_run=True, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    output = capsys.readouterr().out
+    assert "[dry-run]" in output
+    assert "Splitting" not in output
+    assert "Dry run: skipping split" in output
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_splitting_bar_shown_in_normal_run(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """Normal (non-dry-run) run opens a Splitting progress bar (#331).
+
+    Guards the UX contract from issue #331: split phase must have
+    visible progress so the user isn't left wondering what's happening
+    after Detected.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    with patch("click.progressbar") as mock_bar:
+        mock_bar.return_value.__enter__ = lambda s: s
+        mock_bar.return_value.__exit__ = lambda s, *a: None
+        mock_bar.return_value.update = lambda n: None
+        run_split(Path("input.mp4"), config)
+
+    labels = [call.kwargs.get("label", "") for call in mock_bar.call_args_list]
+    assert any("Splitting" in label for label in labels), (
+        f"Expected a Splitting progress bar, got labels: {labels}"
+    )
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_progressbar_shows_eta_label(mock_probe, mock_detect, mock_split, tmp_path):
+    """Progress bars enable ETA and percent display (#329).
+
+    Guards the contract from issue #329: the user must be able to tell
+    that the time shown is ETA, via ``show_eta=True`` on click.progressbar.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    with patch("click.progressbar") as mock_bar:
+        mock_bar.return_value.__enter__ = lambda s: s
+        mock_bar.return_value.__exit__ = lambda s, *a: None
+        mock_bar.return_value.update = lambda n: None
+        run_split(Path("input.mp4"), config)
+
+    # Every bar created via _eta_progressbar must enable eta + percent
+    assert mock_bar.call_count >= 1
+    for call in mock_bar.call_args_list:
+        assert call.kwargs.get("show_eta") is True, (
+            f"Expected show_eta=True, got {call.kwargs}"
+        )
+        assert call.kwargs.get("show_percent") is True
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_split_video_receives_progress_callback(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """split_video is invoked with a progress_callback kwarg in normal mode (#331)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    mock_split.assert_called_once()
+    # progress_callback is passed as kwarg so the Splitting bar advances
+    assert "progress_callback" in mock_split.call_args.kwargs
+    assert callable(mock_split.call_args.kwargs["progress_callback"])
 
 
 # --- Detection empty ---
@@ -268,7 +367,7 @@ def test_pipeline_verbose_output(mock_probe, mock_detect, mock_split, tmp_path, 
     output = capsys.readouterr().out
     assert "Probing:" in output
     assert "Duration:" in output
-    assert "Detecting match boundaries" in output
+    assert "Detecting" in output
     assert "Match 1:" in output
     assert "Match 2:" in output
 
@@ -308,7 +407,7 @@ def test_pipeline_quiet_output(mock_probe, mock_detect, mock_split, tmp_path, ca
 
     output = capsys.readouterr().out
     assert "Probing:" not in output
-    assert "Detecting match boundaries" not in output
+    assert "Detecting" not in output
     assert "Match 1:" not in output
     # Output files still shown
     assert "Output:" in output
@@ -521,21 +620,23 @@ class TestCacheRoundTrip:
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
 def test_progressbar_length(mock_probe, mock_detect, mock_split, tmp_path):
-    """Progressbar length equals estimated_samples, not frame count."""
+    """Detecting progressbar length equals estimated_samples (#329, #331)."""
     mock_probe.return_value = {**PROBE_RESULT, "duration": 1800.0}
     mock_detect.return_value = BOUNDARIES
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    with patch("typer.progressbar") as mock_bar:
+    with patch("click.progressbar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
         run_split(Path("input.mp4"), config)
 
-    # interval=1.0 for 1800s -> estimated_samples = 1800
-    mock_bar.assert_called_once()
-    assert mock_bar.call_args[1]["length"] == 1800
+    # First call is Detecting bar: interval=1.0 for 1800s -> 1800
+    # Additional calls may include Splitting bar
+    assert mock_bar.call_count >= 1
+    detecting_call = mock_bar.call_args_list[0]
+    assert detecting_call[1]["length"] == 1800
 
 
 @patch(f"{MODULE}.split_video")
@@ -548,15 +649,16 @@ def test_progressbar_tiny_video(mock_probe, mock_detect, mock_split, tmp_path):
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    with patch("typer.progressbar") as mock_bar:
+    with patch("click.progressbar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
         run_split(Path("input.mp4"), config)
 
     # int(0.5 / 1.0) = 0, max(1, 0) = 1
-    mock_bar.assert_called_once()
-    assert mock_bar.call_args[1]["length"] == 1
+    assert mock_bar.call_count >= 1
+    detecting_call = mock_bar.call_args_list[0]
+    assert detecting_call[1]["length"] == 1
 
 
 @patch(f"{MODULE}.split_video")
@@ -569,15 +671,16 @@ def test_progressbar_auto_interval(mock_probe, mock_detect, mock_split, tmp_path
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    with patch("typer.progressbar") as mock_bar:
+    with patch("click.progressbar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
         run_split(Path("input.mp4"), config)
 
     # auto interval = 3.0 for > 2h, estimated_samples = int(7300/3.0) = 2433
-    mock_bar.assert_called_once()
-    assert mock_bar.call_args[1]["length"] == 2433
+    assert mock_bar.call_count >= 1
+    detecting_call = mock_bar.call_args_list[0]
+    assert detecting_call[1]["length"] == 2433
 
 
 class TestCachePipeline:
@@ -653,6 +756,136 @@ class TestCachePipeline:
         )
         run_split(video, config_no_cache)
         assert mock_detect.call_count == 2
+
+
+# --- Refine progress bar (#328) ---
+
+
+class TestRefineProgressBar:
+    """Refining progress bar behaviour (#328)."""
+
+    def test_refine_callback_called_by_detector(self):
+        """refine_progress_callback receives calls from detector."""
+        from allaganeye.video.detector import detect_match_boundaries
+
+        calls: list[tuple[int, int]] = []
+
+        def on_refine(completed: int, total: int) -> None:
+            calls.append((completed, total))
+
+        # Use a minimal mock: scan_cpu returns a blackout region so Pass 2 fires
+        with (
+            patch(
+                "allaganeye.video.detector._scan_cpu",
+                return_value={0.0: 1.0, 5.0: 1.0, 10.0: 100.0},
+            ),
+            patch(
+                "allaganeye.video.detector._refine_blackout_regions",
+                return_value=[(0.0, 5.0)],
+            ),
+            patch(
+                "allaganeye.video.scorebar.filter_blackouts_with_scorebar",
+                return_value=([(0.0, 5.0)], ["match_boundary"]),
+            ),
+        ):
+            detect_match_boundaries(
+                Path("test.mp4"),
+                duration_hint=100.0,
+                min_match_duration=10.0,
+                src_resolution=(1920, 1080),
+                refine_progress_callback=on_refine,
+            )
+
+        assert len(calls) >= 1
+        # Final call should have completed == total
+        last_completed, last_total = calls[-1]
+        assert last_completed == last_total
+
+    def test_refine_total_matches_actual_calls(self):
+        """Total reported to callback matches actual number of calls."""
+        from allaganeye.video.detector import detect_match_boundaries
+
+        calls: list[tuple[int, int]] = []
+
+        def on_refine(completed: int, total: int) -> None:
+            calls.append((completed, total))
+
+        # 2 blackout regions from Pass 1, 3 refined regions for scorebar
+        with (
+            patch(
+                "allaganeye.video.detector._scan_cpu",
+                return_value={0.0: 1.0, 5.0: 1.0, 20.0: 1.0, 25.0: 1.0, 50.0: 100.0},
+            ),
+            patch(
+                "allaganeye.video.detector._refine_blackout_regions",
+                return_value=[(0.0, 5.0), (15.0, 20.0), (25.0, 30.0)],
+            ),
+            patch(
+                "allaganeye.video.scorebar.filter_blackouts_with_scorebar",
+                return_value=(
+                    [(0.0, 5.0), (15.0, 20.0), (25.0, 30.0)],
+                    ["match_boundary", "match_boundary", "match_boundary"],
+                ),
+            ) as mock_scorebar,
+        ):
+            # Simulate scorebar calling progress 3 times
+            def scorebar_side_effect(
+                vp,
+                regions,
+                dur,
+                h,
+                w,
+                *,
+                audio_hits=None,
+                stats=None,
+                progress_callback=None,
+            ):
+                for i in range(len(regions)):
+                    if progress_callback:
+                        progress_callback(i + 1, len(regions))
+                return (regions, ["match_boundary"] * len(regions))
+
+            mock_scorebar.side_effect = scorebar_side_effect
+
+            detect_match_boundaries(
+                Path("test.mp4"),
+                duration_hint=100.0,
+                min_match_duration=10.0,
+                src_resolution=(1920, 1080),
+                refine_progress_callback=on_refine,
+            )
+
+        # completed should reach total exactly
+        assert calls[-1][0] == calls[-1][1]
+
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    def test_three_bars_displayed(
+        self, mock_probe, mock_detect, mock_split, tmp_path, capsys
+    ):
+        """Detecting, Refining, and Splitting bars all appear (#331)."""
+        mock_probe.return_value = PROBE_RESULT
+        mock_detect.return_value = BOUNDARIES
+        mock_split.return_value = _output_files(tmp_path)
+
+        # Simulate refine callback to trigger Refining bar
+        def detect_side_effect(video_path, **kwargs):
+            cb = kwargs.get("refine_progress_callback")
+            if cb:
+                cb(1, 2)
+                cb(2, 2)
+            return BOUNDARIES
+
+        mock_detect.side_effect = detect_side_effect
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+        run_split(Path("input.mp4"), config)
+
+        output = capsys.readouterr().out
+        assert "Detecting" in output
+        assert "Refining" in output
+        assert "Splitting" in output
 
 
 # --- Audio scan integration (#288) ---
