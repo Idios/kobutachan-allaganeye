@@ -736,7 +736,15 @@ class TestDetectMatchBoundaries:
         ) as mock_filter:
 
             def filter_side_effect(
-                video_path, regions, duration, height, workers, *, audio_hits, stats
+                video_path,
+                regions,
+                duration,
+                height,
+                workers,
+                *,
+                audio_hits,
+                stats,
+                progress_callback=None,
             ):
                 if stats is not None:
                     stats["scorebar_match_boundary"] = 1

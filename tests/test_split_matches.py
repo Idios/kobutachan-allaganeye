@@ -830,7 +830,15 @@ class TestRefineProgressBar:
         ):
             # Simulate scorebar calling progress 3 times
             def scorebar_side_effect(
-                vp, regions, dur, h, w, *, audio_hits=None, progress_callback=None
+                vp,
+                regions,
+                dur,
+                h,
+                w,
+                *,
+                audio_hits=None,
+                stats=None,
+                progress_callback=None,
             ):
                 for i in range(len(regions)):
                     if progress_callback:
