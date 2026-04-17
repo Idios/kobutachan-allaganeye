@@ -139,13 +139,27 @@ def detect_match_boundaries(
         )
 
     effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
-    return _filter_and_extract_segments(
+    boundaries = _filter_and_extract_segments(
         refined_regions,
         duration_hint,
         min_match_duration,
         effective_min,
         classifications=region_classifications,
     )
+
+    # Re-scan suspicious long segments at finer interval (#317)
+    boundaries = _refine_long_segments(
+        boundaries,
+        video_path,
+        blackout_threshold,
+        min_match_duration,
+        min_blackout_duration,
+        src_resolution,
+        workers,
+        audio_hits,
+    )
+
+    return boundaries
 
 
 def _decode_chunk_cpu(
@@ -755,6 +769,25 @@ At interval=0.25s, a 2.0s blackout measures ~1.5-1.75s (>= 1.5 -> detected)
 while a 1.5s respawn measures ~1.0-1.25s (< 1.5 -> filtered).
 """
 
+_SUSPICIOUS_MATCH_MAX_DURATION = 28 * 60
+"""Trigger threshold for finer re-scan of long segments (#317).
+
+FL matches are typically 15-20 min, maximum 25 min.  A detected segment
+longer than 28 min strongly suggests one or more missed match boundaries
+within it.  Re-scanning at a finer sample interval can recover those
+boundaries when the coarse Pass 1 interval (auto-adjusted to 2-3s for
+long videos) misses brief 1.5-2.0s blackouts.
+"""
+
+_REFINEMENT_SAMPLE_INTERVAL = 1.0
+"""Fine-grained sample interval for segment refinement (#317).
+
+Used by ``_refine_long_segments`` when re-scanning suspicious segments.
+At 1.0s a 1.5s blackout is guaranteed to fall within at least one
+sample window.
+"""
+
+
 _BLACKOUT_PADDING = 3.0
 """Seconds to offset cut points into blackout regions.
 
@@ -1003,6 +1036,245 @@ def _filter_and_extract_segments(
                 "type": "unknown",
             }
         )
+
+    return segments
+
+
+def _refine_long_segments(
+    boundaries: list[MatchBoundary],
+    video_path: Path,
+    blackout_threshold: float,
+    min_match_duration: float,
+    min_blackout_duration: float,
+    src_resolution: tuple[int, int] | None,
+    workers: int | None,
+    audio_hits: Sequence[BgmHit] | None,
+) -> list[MatchBoundary]:
+    """Re-scan segments longer than the suspicious threshold (#317).
+
+    For each segment whose duration exceeds
+    ``_SUSPICIOUS_MATCH_MAX_DURATION``, re-runs Pass 1 at
+    ``_REFINEMENT_SAMPLE_INTERVAL`` (1.0s) within the segment range and
+    feeds the recovered blackout regions through the same scorebar
+    classification + filter pipeline.  Sub-segments produced by the
+    refinement replace the original long segment.
+
+    The refinement is **one level only**: if a refined sub-segment is
+    still longer than the threshold, it is left alone (warning logged)
+    rather than recursing.
+    """
+    if not boundaries:
+        return boundaries
+
+    suspicious_indices = [
+        i
+        for i, b in enumerate(boundaries)
+        if b["end"] - b["start"] > _SUSPICIOUS_MATCH_MAX_DURATION
+    ]
+    if not suspicious_indices:
+        return boundaries
+
+    refined = list(boundaries)
+    # Iterate in reverse so list slice replacement does not shift earlier indices
+    for idx in reversed(suspicious_indices):
+        segment = refined[idx]
+        sub_segments = _refine_one_segment(
+            segment,
+            video_path,
+            blackout_threshold,
+            min_match_duration,
+            min_blackout_duration,
+            src_resolution,
+            workers,
+            audio_hits,
+        )
+        if len(sub_segments) > 1:
+            logger.info(
+                "REFINE [%.1f-%.1f] (%.1fs): split into %d sub-segments",
+                segment["start"],
+                segment["end"],
+                segment["end"] - segment["start"],
+                len(sub_segments),
+            )
+            refined[idx : idx + 1] = sub_segments
+        else:
+            logger.warning(
+                "REFINE [%.1f-%.1f] (%.1fs): no additional boundaries found "
+                "despite exceeding %ds threshold",
+                segment["start"],
+                segment["end"],
+                segment["end"] - segment["start"],
+                _SUSPICIOUS_MATCH_MAX_DURATION,
+            )
+
+    # One-level guard: warn if any refined segment still exceeds the threshold
+    for b in refined:
+        if b["end"] - b["start"] > _SUSPICIOUS_MATCH_MAX_DURATION:
+            logger.warning(
+                "REFINE result still > %ds: [%.1f-%.1f] (%.1fs) -- "
+                "not recursing further",
+                _SUSPICIOUS_MATCH_MAX_DURATION,
+                b["start"],
+                b["end"],
+                b["end"] - b["start"],
+            )
+
+    return refined
+
+
+def _refine_one_segment(
+    segment: MatchBoundary,
+    video_path: Path,
+    blackout_threshold: float,
+    min_match_duration: float,
+    min_blackout_duration: float,
+    src_resolution: tuple[int, int] | None,
+    workers: int | None,
+    audio_hits: Sequence[BgmHit] | None,
+) -> list[MatchBoundary]:
+    """Re-scan one suspicious segment at finer interval and re-extract.
+
+    Returns a list of sub-segments that should replace the original one.
+    Returns ``[segment]`` (the original) when no additional structure is
+    found.
+    """
+    seg_start = segment["start"]
+    seg_end = segment["end"]
+
+    # Pass 1 fine: probe the segment range at _REFINEMENT_SAMPLE_INTERVAL
+    timestamps: list[float] = []
+    t = seg_start
+    while t < seg_end:
+        timestamps.append(round(t, 4))
+        t += _REFINEMENT_SAMPLE_INTERVAL
+
+    if not timestamps:
+        return [segment]
+
+    fine_results = _decode_chunk_cpu(
+        video_path,
+        timestamps,
+        seg_start,
+        seg_end,
+        _REFINEMENT_SAMPLE_INTERVAL,
+    )
+
+    blackout_times = sorted(
+        t for t, b in fine_results.items() if b < blackout_threshold
+    )
+    if not blackout_times:
+        return [segment]
+
+    blackout_regions = _group_blackout_regions(
+        blackout_times, _REFINEMENT_SAMPLE_INTERVAL
+    )
+    blackout_regions = _expand_regions_with_transitions(
+        blackout_regions,
+        fine_results,
+        _REFINEMENT_SAMPLE_INTERVAL,
+        _TRANSITION_THRESHOLD,
+    )
+
+    refined_regions = _refine_blackout_regions(
+        video_path, blackout_regions, blackout_threshold, seg_end, workers
+    )
+
+    region_classifications: list[str] | None = None
+    if src_resolution is not None and refined_regions:
+        from allaganeye.video.scorebar import filter_blackouts_with_scorebar
+
+        height = _scaled_height(src_resolution[0], src_resolution[1])
+        refined_regions, region_classifications = filter_blackouts_with_scorebar(
+            video_path,
+            refined_regions,
+            seg_end,
+            height,
+            workers,
+            audio_hits=audio_hits,
+        )
+
+    if not refined_regions:
+        return [segment]
+
+    effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
+    sub_segments = _extract_subsegments(
+        refined_regions,
+        region_classifications,
+        seg_start,
+        seg_end,
+        min_match_duration,
+        effective_min,
+        original_type=segment.get("type", "unknown"),
+    )
+
+    return sub_segments if sub_segments else [segment]
+
+
+def _extract_subsegments(
+    blackout_regions: list[tuple[float, float]],
+    classifications: list[str] | None,
+    range_start: float,
+    range_end: float,
+    min_match_duration: float,
+    min_blackout_duration: float,
+    original_type: str = "unknown",
+) -> list[MatchBoundary]:
+    """Extract sub-segments within [range_start, range_end] (#317).
+
+    Mirrors ``_filter_and_extract_segments`` but operates on a sub-range.
+    Boundaries that lie entirely outside the range are ignored.  The
+    first and last sub-segments are anchored to ``range_start`` /
+    ``range_end`` (no leading/trailing segments are produced).
+    """
+    if classifications is not None:
+        paired = [
+            (r, c)
+            for r, c in zip(blackout_regions, classifications, strict=True)
+            if r[1] - r[0] >= min_blackout_duration
+            and r[1] >= range_start
+            and r[0] <= range_end
+        ]
+        regions = [r for r, _ in paired]
+        cls: list[str] | None = [c for _, c in paired]
+    else:
+        regions = [
+            r
+            for r in blackout_regions
+            if r[1] - r[0] >= min_blackout_duration
+            and r[1] >= range_start
+            and r[0] <= range_end
+        ]
+        cls = None
+
+    if not regions:
+        return []
+
+    # Sort regions and corresponding classifications together
+    if cls is not None:
+        order = sorted(range(len(regions)), key=lambda i: regions[i])
+        regions = [regions[i] for i in order]
+        cls = [cls[i] for i in order]
+    else:
+        regions.sort()
+
+    segments: list[MatchBoundary] = []
+    cur_start = range_start
+
+    for i, region in enumerate(regions):
+        seg_end = _padded_end(region)
+        seg_end = min(seg_end, range_end)
+        if seg_end - cur_start >= min_match_duration:
+            if cls is not None and i > 0:
+                seg_type = _infer_segment_type(cls[i - 1], cls[i])
+            else:
+                seg_type = original_type if i == 0 else "unknown"
+            segments.append({"start": cur_start, "end": seg_end, "type": seg_type})
+        cur_start = _padded_start(region)
+        cur_start = max(cur_start, range_start)
+        cur_start = min(cur_start, range_end)
+
+    if range_end - cur_start >= min_match_duration:
+        segments.append({"start": cur_start, "end": range_end, "type": original_type})
 
     return segments
 
