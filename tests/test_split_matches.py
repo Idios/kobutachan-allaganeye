@@ -194,6 +194,84 @@ def test_pipeline_dry_run_display(
     assert "Dry run: skipping split" in output
 
 
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_splitting_bar_shown_in_normal_run(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """Normal (non-dry-run) run opens a Splitting progress bar (#331).
+
+    Guards the UX contract from issue #331: split phase must have
+    visible progress so the user isn't left wondering what's happening
+    after Detected.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    with patch("click.progressbar") as mock_bar:
+        mock_bar.return_value.__enter__ = lambda s: s
+        mock_bar.return_value.__exit__ = lambda s, *a: None
+        mock_bar.return_value.update = lambda n: None
+        run_split(Path("input.mp4"), config)
+
+    labels = [call.kwargs.get("label", "") for call in mock_bar.call_args_list]
+    assert any("Splitting" in label for label in labels), (
+        f"Expected a Splitting progress bar, got labels: {labels}"
+    )
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_progressbar_shows_eta_label(mock_probe, mock_detect, mock_split, tmp_path):
+    """Progress bars enable ETA and percent display (#329).
+
+    Guards the contract from issue #329: the user must be able to tell
+    that the time shown is ETA, via ``show_eta=True`` on click.progressbar.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    with patch("click.progressbar") as mock_bar:
+        mock_bar.return_value.__enter__ = lambda s: s
+        mock_bar.return_value.__exit__ = lambda s, *a: None
+        mock_bar.return_value.update = lambda n: None
+        run_split(Path("input.mp4"), config)
+
+    # Every bar created via _eta_progressbar must enable eta + percent
+    assert mock_bar.call_count >= 1
+    for call in mock_bar.call_args_list:
+        assert call.kwargs.get("show_eta") is True, (
+            f"Expected show_eta=True, got {call.kwargs}"
+        )
+        assert call.kwargs.get("show_percent") is True
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_split_video_receives_progress_callback(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """split_video is invoked with a progress_callback kwarg in normal mode (#331)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    mock_split.assert_called_once()
+    # progress_callback is passed as kwarg so the Splitting bar advances
+    assert "progress_callback" in mock_split.call_args.kwargs
+    assert callable(mock_split.call_args.kwargs["progress_callback"])
+
+
 # --- Detection empty ---
 
 
