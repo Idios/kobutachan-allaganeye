@@ -49,7 +49,8 @@ allaganeye split <video_path> [OPTIONS]
 ### 出力
 
 - `output/match_001.mp4`, `match_002.mp4`, ...
-- `output/metadata.json`
+- `output/metadata.json` — 分割結果（機械可読）
+- `output/.detection_cache.json` — 検知結果キャッシュ（同一ソース・同一パラメータの再実行を高速化。`--no-cache` で無視）
 
 ### metadata.json
 
