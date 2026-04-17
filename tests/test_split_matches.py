@@ -846,3 +846,120 @@ def test_non_verbose_does_not_print_stats(
     out = capsys.readouterr().out
     assert "Pass 1" not in out
     assert "Scorebar:" not in out
+    # Environment header is a verbose-only feature too
+    assert "Python" not in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_reports_gpu_fallback_mode(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Verbose Pass 1 line distinguishes 'GPU' from 'CPU (GPU fallback)' (#336 / #335).
+
+    This is the core motivation for #336 Phase 1 -- the mode string is
+    what lets us diagnose the GPU/CPU +-2 discrepancy tracked in #335.
+    A bug here (e.g. always reporting 'CPU') would silently hide
+    whether the fallback actually fired.
+    """
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_fallback(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU (GPU fallback)"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 0
+            stats["pass1_elapsed_s"] = 1.0
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_fallback
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, use_gpu=True)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "Pass 1 (CPU (GPU fallback))" in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_detecting_line_shows_audio_off_when_no_audio(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Verbose Detecting line reflects --no-audio (#336)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, no_audio=True)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "audio=off" in out
+    assert "audio=on" not in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_dry_run_emits_total(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Verbose + dry-run still emits the Total: line (#336)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    config = SplitConfig(output_dir=tmp_path, dry_run=True, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "Dry run: skipping split" in out
+    assert "Total:" in out
+    mock_split.assert_not_called()
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_audio_promotion_line_suppressed_when_zero(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Audio promotion line is hidden when no promotions happened (#336)."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_no_promo(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 0
+            stats["pass1_elapsed_s"] = 1.0
+            stats["pass2_regions"] = 0
+            stats["pass2_elapsed_s"] = 0.1
+            stats["scorebar_match_boundary"] = 2
+            stats["scorebar_in_match"] = 0
+            stats["scorebar_non_fl"] = 0
+            stats["scorebar_unknown"] = 0
+            stats["audio_promotions"] = 0
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_no_promo
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "Scorebar:" in out  # scorebar line still shown
+    assert "Audio promotion" not in out  # but promo line hidden
+
+
+def test_probe_ffmpeg_version_returns_unknown_on_failure():
+    """ffmpeg -version failure yields '(unknown)' without raising (#336)."""
+    import subprocess
+
+    from allaganeye.commands.split_matches import _probe_ffmpeg_version
+
+    with patch("subprocess.run", side_effect=subprocess.SubprocessError("boom")):
+        result = _probe_ffmpeg_version()
+    assert result == "(unknown)"
