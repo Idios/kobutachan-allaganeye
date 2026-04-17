@@ -132,10 +132,10 @@ def split(
         run_split(video_path, config, verbose=verbose, quiet=quiet)
 
     except AllaganEyeError as e:
-        typer.echo(f"Error: {e}", err=True)
+        _report_app_error(e, verbose=verbose)
         raise typer.Exit(code=e.exit_code) from None
-    except Exception as e:
-        typer.echo(f"Unexpected error: {e}", err=True)
+    except Exception:
+        _report_unexpected_error(verbose=verbose)
         raise typer.Exit(code=1) from None
 
 
@@ -188,8 +188,35 @@ def debug_brightness(
         )
 
     except AllaganEyeError as e:
-        typer.echo(f"Error: {e}", err=True)
+        _report_app_error(e, verbose=False)
         raise typer.Exit(code=e.exit_code) from None
-    except Exception as e:
-        typer.echo(f"Unexpected error: {e}", err=True)
+    except Exception:
+        _report_unexpected_error(verbose=False)
         raise typer.Exit(code=1) from None
+
+
+def _report_app_error(exc: AllaganEyeError, *, verbose: bool) -> None:
+    """Render an ``AllaganEyeError`` to stderr, adding verbose detail (#351)."""
+    typer.echo(f"Error: {exc}", err=True)
+    if verbose:
+        detail = exc.verbose_detail()
+        if detail:
+            typer.echo(detail, err=True)
+
+
+def _report_unexpected_error(*, verbose: bool) -> None:
+    """Render an unexpected (non-``AllaganEyeError``) exception (#351).
+
+    Non-verbose: short one-liner.  Verbose: full traceback via
+    ``traceback.print_exc`` so ``__cause__`` / ``__context__`` chains are
+    preserved (we purposefully do not pass ``from None`` in this path).
+    """
+    if verbose:
+        import traceback
+
+        traceback.print_exc()
+    else:
+        import sys
+
+        exc = sys.exc_info()[1]
+        typer.echo(f"Unexpected error: {exc}", err=True)

@@ -133,9 +133,17 @@ def run_split(
     )
 
     if not boundaries:
+        det_context: dict[str, object] = {
+            "audio_hits": len(audio_hits) if audio_hits is not None else "disabled",
+        }
+        if detect_stats:
+            det_context.update(
+                {f"stats.{k}": v for k, v in detect_stats.items()}  # type: ignore[misc]
+            )
         raise DetectionError(
             "No match boundaries detected. "
-            "Try adjusting --blackout-threshold or --min-match-duration."
+            "Try adjusting --blackout-threshold or --min-match-duration.",
+            context=det_context,
         )
 
     # Display pipeline statistics (verbose only)

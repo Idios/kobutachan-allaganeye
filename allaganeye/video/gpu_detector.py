@@ -198,7 +198,15 @@ def _decode_chunk(
     stderr_text = proc.stderr.decode(errors="replace")
 
     if proc.returncode != 0:
-        raise VideoProcessingError(f"GPU decode failed: {stderr_text[-500:]}")
+        raise VideoProcessingError(
+            "GPU decode failed",
+            context={
+                "command": " ".join(str(c) for c in cmd),
+                "return_code": proc.returncode,
+                "chunk": f"{chunk_start:.1f}-{chunk_end:.1f}",
+                "stderr_tail": stderr_text[-2000:],
+            },
+        )
 
     # Parse raw frames from stdout
     data = proc.stdout

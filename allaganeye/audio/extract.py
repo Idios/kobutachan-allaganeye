@@ -54,9 +54,14 @@ def extract_pcm(
         ) from e
 
     if proc.returncode != 0:
-        stderr_tail = proc.stderr.decode(errors="replace")[-300:]
+        stderr_text = proc.stderr.decode(errors="replace")
         raise VideoProcessingError(
-            f"ffmpeg audio extraction failed for {video_path}: {stderr_tail}"
+            f"ffmpeg audio extraction failed for {video_path}",
+            context={
+                "command": " ".join(str(c) for c in cmd),
+                "return_code": proc.returncode,
+                "stderr_tail": stderr_text[-2000:],
+            },
         )
 
     if len(proc.stdout) == 0:
