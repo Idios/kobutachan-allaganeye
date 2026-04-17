@@ -1,7 +1,7 @@
 """Scorebar-based blackout classification for FL match detection."""
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from math import ceil
 from pathlib import Path
@@ -338,6 +338,7 @@ def filter_blackouts_with_scorebar(
     *,
     audio_hits: Sequence[BgmHit] | None = None,
     stats: DetectionStats | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> tuple[list[tuple[float, float]], list[str]]:
     """Filter blackout regions using scorebar context and duration.
 
@@ -373,10 +374,13 @@ def filter_blackouts_with_scorebar(
         "unknown": 0,
     }
     audio_promotions = 0
-    for region in blackout_regions:
+    total_regions = len(blackout_regions)
+    for idx, region in enumerate(blackout_regions):
         classification = classify_blackout(
             video_path, region, duration, height, workers
         )
+        if progress_callback is not None:
+            progress_callback(idx + 1, total_regions)
         region_duration = region[1] - region[0]
         raw_counts[classification if classification in raw_counts else "unknown"] += 1
 
