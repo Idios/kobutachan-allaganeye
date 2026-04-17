@@ -2,6 +2,7 @@
 
 import json
 import logging
+import shutil
 from pathlib import Path
 from typing import TypedDict
 
@@ -91,6 +92,9 @@ def run_split(
             if config.dry_run:
                 typer.echo("\nDry run: skipping split")
                 return
+            _check_disk_space(
+                video_path, boundaries, metadata["duration"], config, show=show
+            )
             return _split_and_write_metadata(
                 video_path, boundaries, gaps, metadata, config
             )
@@ -164,6 +168,7 @@ def run_split(
         typer.echo("\nDry run: skipping split")
         return
 
+    _check_disk_space(video_path, boundaries, metadata["duration"], config, show=show)
     _split_and_write_metadata(video_path, boundaries, gaps, metadata, config)
 
 
@@ -241,6 +246,94 @@ def _run_detection(
             )
 
     return detect_match_boundaries(video_path, **detect_kwargs)
+
+
+_DISK_SPACE_SAFETY_MARGIN = 1.1
+"""Safety margin multiplier for estimated output size (10% overhead)."""
+
+_DISK_SPACE_WARNING_RATIO = 0.8
+"""Warn when estimated output exceeds this fraction of free space."""
+
+
+def _estimate_output_size(
+    video_path: Path,
+    boundaries: list[MatchBoundary],
+    source_duration: float,
+) -> int:
+    """Estimate total output size in bytes.
+
+    Assumes -c copy produces the same bitrate as input.  Returns
+    estimated bytes including a 10% safety margin.
+    """
+    try:
+        source_size = video_path.stat().st_size
+    except OSError:
+        return 0
+    if source_duration <= 0:
+        return 0
+
+    total_match_duration = sum(b["end"] - b["start"] for b in boundaries)
+    ratio = total_match_duration / source_duration
+    return int(source_size * ratio * _DISK_SPACE_SAFETY_MARGIN)
+
+
+def _format_bytes(n: int) -> str:
+    """Format bytes as human-readable string (e.g. '45.2 GB')."""
+    if n >= 1_073_741_824:
+        return f"{n / 1_073_741_824:.1f} GB"
+    if n >= 1_048_576:
+        return f"{n / 1_048_576:.1f} MB"
+    return f"{n / 1024:.1f} KB"
+
+
+def _check_disk_space(
+    video_path: Path,
+    boundaries: list[MatchBoundary],
+    source_duration: float,
+    config: SplitConfig,
+    *,
+    show: bool = True,
+) -> None:
+    """Check if output disk has enough space for the split output (#338).
+
+    Raises AllaganEyeError if free space is insufficient.  Shows a warning
+    if free space is tight but sufficient.  Skipped when output dir cannot
+    be resolved (e.g. network path).
+    """
+    estimated = _estimate_output_size(video_path, boundaries, source_duration)
+    if estimated <= 0:
+        return
+
+    try:
+        config.output_dir.mkdir(parents=True, exist_ok=True)
+        usage = shutil.disk_usage(config.output_dir)
+    except OSError:
+        logger.debug("Cannot check disk space for %s", config.output_dir)
+        return
+
+    free = usage.free
+
+    if estimated > free:
+        # Quote the path if it contains spaces
+        video_str = str(video_path)
+        if " " in video_str:
+            video_str = f'"{video_str}"'
+        raise AllaganEyeError(
+            f"Not enough disk space for split output.\n"
+            f"  Estimated output: {_format_bytes(estimated)}\n"
+            f"  Free space: {_format_bytes(free)} ({config.output_dir.resolve().drive or config.output_dir})\n"
+            f"\n"
+            f"Detection results are cached. Free up space and re-run:\n"
+            f"  allaganeye split {video_str}"
+        )
+
+    if estimated > free * _DISK_SPACE_WARNING_RATIO and show:
+        typer.echo(
+            f"Warning: free space is tight "
+            f"(estimated: {_format_bytes(estimated)}, "
+            f"free: {_format_bytes(free)})",
+            err=True,
+        )
 
 
 def _split_and_write_metadata(
