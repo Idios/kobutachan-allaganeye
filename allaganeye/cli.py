@@ -70,14 +70,14 @@ def split(
         bool, typer.Option("--dry-run", help="Detect only, do not split")
     ] = False,
     gpu: Annotated[
-        bool,
+        bool | None,
         typer.Option(
             "--gpu/--no-gpu",
-            help="Use GPU-accelerated detection (chunked parallel decode). "
-            "CPU mode is fast enough for most recordings, so GPU is off by default. "
+            help="Use GPU-accelerated detection. "
+            "Default: auto-select based on codec (H.264/HEVC -> GPU, others -> CPU). "
             "Falls back to CPU if GPU is unavailable.",
         ),
-    ] = False,
+    ] = None,
     no_cache: Annotated[
         bool,
         typer.Option("--no-cache", help="Ignore cached detection results"),

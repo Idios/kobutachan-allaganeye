@@ -65,7 +65,7 @@ allaganeye split <video_path> -o <output_dir>
 | `--min-match-duration` | `300.0` | 最小試合時間（秒）。短いセグメントを除外 |
 | `--min-blackout-duration` | `3.0` | 最小暗転時間（秒）。短い暗転を無視 |
 | `--workers` | auto | 検知の並列ワーカー数（デフォルト: 自動=CPU コア数、最大24） |
-| `--gpu` / `--no-gpu` | `--no-gpu` | GPU デコードで検知。CPU モードが十分高速なためデフォルトは off。GPU が利用不可の場合は CPU にフォールバック |
+| `--gpu` / `--no-gpu` | auto | GPU デコードで検知。デフォルトはコーデックで自動選択（H.264/HEVC -> GPU、その他 -> CPU）。GPU が利用不可の場合は CPU にフォールバック |
 | `--no-cache` | - | キャッシュを無視して再検知 |
 | `--dry-run` | - | 検知のみ実行し、分割しない |
 | `-v`, `--verbose` | - | 詳細ログ出力 |

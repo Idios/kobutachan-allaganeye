@@ -105,7 +105,8 @@ def test_pipeline_happy_path(mock_probe, mock_detect, mock_split, tmp_path):
     assert detect_kwargs["blackout_threshold"] == config.blackout_threshold
     assert detect_kwargs["min_match_duration"] == config.min_match_duration
     assert detect_kwargs["min_blackout_duration"] == config.min_blackout_duration
-    assert detect_kwargs["use_gpu"] == config.use_gpu
+    # Auto-selected GPU for h264 codec (#334)
+    assert detect_kwargs["use_gpu"] is True
     assert detect_kwargs["workers"] == config.workers
     assert detect_kwargs["src_resolution"] == (
         PROBE_RESULT["width"],
@@ -1098,6 +1099,97 @@ class TestDiskSpaceCheck:
         mock_check.assert_called_once()
         # detect_match_boundaries must not be invoked (cache hit)
         mock_detect.assert_not_called()
+
+
+class TestResolveGpuMode:
+    """Codec-based GPU/CPU auto-selection (#334)."""
+
+    def test_explicit_gpu_true(self):
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        assert _resolve_gpu_mode(True, "av1", show=False, verbose=False) is True
+
+    def test_explicit_gpu_false(self):
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        assert _resolve_gpu_mode(False, "h264", show=False, verbose=False) is False
+
+    def test_auto_h264_selects_gpu(self):
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        assert _resolve_gpu_mode(None, "h264", show=False, verbose=False) is True
+
+    def test_auto_hevc_selects_gpu(self):
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        assert _resolve_gpu_mode(None, "hevc", show=False, verbose=False) is True
+
+    def test_auto_av1_selects_cpu(self):
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        assert _resolve_gpu_mode(None, "av1", show=False, verbose=False) is False
+
+    def test_auto_vp9_selects_cpu(self):
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        assert _resolve_gpu_mode(None, "vp9", show=False, verbose=False) is False
+
+    def test_auto_unknown_codec_selects_cpu(self):
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        assert _resolve_gpu_mode(None, None, show=False, verbose=False) is False
+
+    def test_auto_verbose_shows_message(self, capsys):
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        _resolve_gpu_mode(None, "h264", show=True, verbose=True)
+        out = capsys.readouterr().out
+        assert "Auto-selected GPU mode" in out
+        assert "h264" in out
+
+    def test_auto_cpu_verbose_shows_cpu_message(self, capsys):
+        """CPU auto-selection also emits a verbose notice (#334).
+
+        Guards the else-branch of the mode resolution -- users on
+        AV1/VP9 recordings need to see that CPU mode was chosen
+        intentionally (not just because GPU failed).
+        """
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        _resolve_gpu_mode(None, "av1", show=True, verbose=True)
+        out = capsys.readouterr().out
+        assert "Auto-selected CPU mode" in out
+        assert "av1" in out
+
+    def test_auto_non_verbose_suppresses_message(self, capsys):
+        """Non-verbose auto selection is silent (#334)."""
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        _resolve_gpu_mode(None, "h264", show=True, verbose=False)
+        out = capsys.readouterr().out
+        assert "Auto-selected" not in out
+
+    def test_auto_quiet_suppresses_message(self, capsys):
+        """--quiet (show=False) silences auto-selection message even with verbose (#334)."""
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        _resolve_gpu_mode(None, "h264", show=False, verbose=True)
+        out = capsys.readouterr().out
+        assert "Auto-selected" not in out
+
+    def test_auto_codec_matching_is_case_insensitive(self):
+        """Codec name matching is case-insensitive (#334).
+
+        ffprobe normally returns lowercase codec_name, but downstream
+        callers or manual ProbeResult construction may pass "H264" /
+        "HEVC".  The set is compared via ``.lower()``; guards against a
+        future refactor dropping that normalization.
+        """
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        assert _resolve_gpu_mode(None, "H264", show=False, verbose=False) is True
+        assert _resolve_gpu_mode(None, "HEVC", show=False, verbose=False) is True
+        assert _resolve_gpu_mode(None, "Hevc", show=False, verbose=False) is True
 
 
 class TestAudioScanIntegration:

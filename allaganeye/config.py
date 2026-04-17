@@ -16,7 +16,7 @@ class SplitConfig:
     min_match_duration: float = 300.0
     min_blackout_duration: float = 3.0
     dry_run: bool = False
-    use_gpu: bool = False
+    use_gpu: bool | None = None
     workers: int | None = None
     no_cache: bool = False
     no_audio: bool = False
