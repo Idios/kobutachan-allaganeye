@@ -3,6 +3,7 @@
 import logging
 import os
 import subprocess
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -34,6 +35,7 @@ def scan_gpu(
     blackout_threshold: float,
     progress_callback: Callable[[int, int, int], None] | None = None,
     codec: str | None = None,
+    chunk_progress_callback: Callable[[int, int, float], None] | None = None,
 ) -> dict[float, float]:
     """GPU mode: chunked parallel decode with cuvid hardware decoder.
 
@@ -43,6 +45,12 @@ def scan_gpu(
     from stdout and analyzed for brightness.
 
     Returns dict mapping timestamp -> brightness, same as CPU mode.
+
+    ``chunk_progress_callback`` is called as ``(done, total, eta_seconds)``
+    each time a chunk completes.  ETA is derived from the average
+    per-chunk wall time so it becomes accurate after the first few
+    completions.  Emitted BEFORE the per-frame ``progress_callback``
+    burst so the UI label updates before the bar jumps (#333).
 
     Raises VideoProcessingError if GPU decode fails for all chunks.
     """
@@ -63,6 +71,8 @@ def scan_gpu(
     fallback_checked = False
 
     cuvid_decoder = _CUVID_CODEC_MAP.get(codec or "")
+    scan_start = time.monotonic()
+    chunks_done = 0
 
     with ThreadPoolExecutor(max_workers=num_chunks) as pool:
         futures = {
@@ -89,6 +99,18 @@ def scan_gpu(
             if not fallback_checked:
                 fallback_checked = True
                 _check_gpu_usage(stderr_text, codec, cuvid_decoder)
+
+            chunks_done += 1
+            if chunk_progress_callback is not None:
+                elapsed = time.monotonic() - scan_start
+                remaining = num_chunks - chunks_done
+                # Linear extrapolation from completion ratio.  Chunks run
+                # in parallel but have similar sizes, so the rate at which
+                # they finish is a reasonable proxy for remaining wall
+                # time.  Conservative (overshoots slightly near the start,
+                # accurate near the end) -- users prefer that to overshoot.
+                eta = elapsed * remaining / chunks_done if remaining > 0 else 0.0
+                chunk_progress_callback(chunks_done, num_chunks, eta)
 
             for t, brightness in chunk_results.items():
                 results[t] = brightness

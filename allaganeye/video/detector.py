@@ -74,6 +74,7 @@ def detect_match_boundaries(
     progress_callback: Callable[[int, int, int], None] | None = None,
     audio_hits: Sequence[BgmHit] | None = None,
     stats: DetectionStats | None = None,
+    chunk_progress_callback: Callable[[int, int, float], None] | None = None,
 ) -> list[MatchBoundary]:
     """Detect match boundaries by finding blackout frames.
 
@@ -113,6 +114,7 @@ def detect_match_boundaries(
                 blackout_threshold,
                 progress_callback,
                 codec=codec,
+                chunk_progress_callback=chunk_progress_callback,
             )
             resolved_mode = "GPU"
         except VideoProcessingError:
