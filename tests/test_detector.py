@@ -701,6 +701,67 @@ class TestDetectMatchBoundaries:
             detect_match_boundaries(Path("test.mp4"), min_match_duration=100.0)
 
     @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_stats_populated_cpu(self, mock_chunk):
+        """Verbose callers receive pipeline statistics (issue #336 Phase 1)."""
+        from allaganeye.video.detector import DetectionStats
+
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+        stats: DetectionStats = {}
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=10.0,
+            sample_interval=1.0,
+            min_match_duration=1.0,
+            stats=stats,
+        )
+        assert stats.get("mode") == "CPU"
+        assert stats.get("pass1_samples") == 10
+        assert stats.get("pass1_blackout_frames") == 0
+        assert "pass1_elapsed_s" in stats
+        assert "pass2_regions" in stats
+        assert "pass2_elapsed_s" in stats
+
+    @patch("allaganeye.video.detector._probe_single_frame")
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_stats_scorebar_counts(self, mock_chunk, mock_probe):
+        """Scorebar classification counts flow through to stats."""
+        from allaganeye.video.detector import DetectionStats
+
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {
+            t: 5.0 if 598.0 <= t <= 602.0 else 128.0 for t in ts
+        }
+        mock_probe.side_effect = lambda path, t: 5.0 if 593.0 <= t <= 607.0 else 128.0
+        with patch(
+            "allaganeye.video.scorebar.filter_blackouts_with_scorebar"
+        ) as mock_filter:
+
+            def filter_side_effect(
+                video_path, regions, duration, height, workers, *, audio_hits, stats
+            ):
+                if stats is not None:
+                    stats["scorebar_match_boundary"] = 1
+                    stats["scorebar_in_match"] = 2
+                    stats["scorebar_non_fl"] = 3
+                    stats["scorebar_unknown"] = 0
+                    stats["audio_promotions"] = 1
+                return regions, ["match_boundary"] * len(regions)
+
+            mock_filter.side_effect = filter_side_effect
+            stats: DetectionStats = {}
+            detect_match_boundaries(
+                Path("test.mp4"),
+                duration_hint=1800.0,
+                sample_interval=1.0,
+                min_match_duration=300.0,
+                src_resolution=(1920, 1080),
+                stats=stats,
+            )
+        assert stats.get("scorebar_match_boundary") == 1
+        assert stats.get("scorebar_in_match") == 2
+        assert stats.get("scorebar_non_fl") == 3
+        assert stats.get("audio_promotions") == 1
+
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_progress_callback(self, mock_chunk):
         mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
         calls = []

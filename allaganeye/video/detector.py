@@ -3,6 +3,7 @@
 import logging
 import os
 import subprocess
+import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -21,6 +22,27 @@ class MatchBoundary(TypedDict):
     start: float
     end: float
     type: str
+
+
+class DetectionStats(TypedDict, total=False):
+    """Pipeline statistics populated by :func:`detect_match_boundaries`.
+
+    All keys are optional; callers pass an empty dict which the detector
+    populates as each phase completes.  Used for ``--verbose`` output
+    (issue #336 Phase 1).
+    """
+
+    mode: str  # "CPU" or "GPU"
+    pass1_samples: int
+    pass1_blackout_frames: int
+    pass1_elapsed_s: float
+    pass2_regions: int
+    pass2_elapsed_s: float
+    scorebar_match_boundary: int
+    scorebar_in_match: int
+    scorebar_non_fl: int
+    scorebar_unknown: int
+    audio_promotions: int
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +73,7 @@ def detect_match_boundaries(
     codec: str | None = None,
     progress_callback: Callable[[int, int, int], None] | None = None,
     audio_hits: Sequence[BgmHit] | None = None,
+    stats: DetectionStats | None = None,
 ) -> list[MatchBoundary]:
     """Detect match boundaries by finding blackout frames.
 
@@ -77,6 +100,8 @@ def detect_match_boundaries(
         )
 
     # Pass 1: scan for blackout frames
+    pass1_start = time.monotonic()
+    resolved_mode = "CPU"
     if use_gpu:
         from allaganeye.video.gpu_detector import scan_gpu
 
@@ -89,6 +114,7 @@ def detect_match_boundaries(
                 progress_callback,
                 codec=codec,
             )
+            resolved_mode = "GPU"
         except VideoProcessingError:
             # GPU failed -- fall back to CPU
             results = _scan_cpu(
@@ -99,6 +125,7 @@ def detect_match_boundaries(
                 workers,
                 progress_callback,
             )
+            resolved_mode = "CPU (GPU fallback)"
     else:
         results = _scan_cpu(
             video_path,
@@ -108,6 +135,15 @@ def detect_match_boundaries(
             workers,
             progress_callback,
         )
+    pass1_elapsed = time.monotonic() - pass1_start
+
+    if stats is not None:
+        stats["mode"] = resolved_mode
+        stats["pass1_samples"] = len(results)
+        stats["pass1_blackout_frames"] = sum(
+            1 for b in results.values() if b < blackout_threshold
+        )
+        stats["pass1_elapsed_s"] = pass1_elapsed
 
     # Collect blackout timestamps in chronological order
     blackout_times = sorted(t for t, b in results.items() if b < blackout_threshold)
@@ -119,9 +155,14 @@ def detect_match_boundaries(
     )
 
     # 2nd pass: refine blackout regions at fine interval (#77)
+    pass2_start = time.monotonic()
     refined_regions = _refine_blackout_regions(
         video_path, blackout_regions, blackout_threshold, duration_hint, workers
     )
+    pass2_elapsed = time.monotonic() - pass2_start
+    if stats is not None:
+        stats["pass2_regions"] = len(refined_regions)
+        stats["pass2_elapsed_s"] = pass2_elapsed
 
     # Scorebar-based filtering: remove in-match and non-FL blackouts (#111)
     region_classifications: list[str] | None = None
@@ -129,6 +170,7 @@ def detect_match_boundaries(
         from allaganeye.video.scorebar import filter_blackouts_with_scorebar
 
         height = _scaled_height(src_resolution[0], src_resolution[1])
+        scorebar_stats: dict[str, int] | None = {} if stats is not None else None
         refined_regions, region_classifications = filter_blackouts_with_scorebar(
             video_path,
             refined_regions,
@@ -136,7 +178,11 @@ def detect_match_boundaries(
             height,
             workers,
             audio_hits=audio_hits,
+            stats=scorebar_stats,
         )
+        if stats is not None and scorebar_stats is not None:
+            for key, value in scorebar_stats.items():
+                stats[key] = value  # type: ignore[literal-required]
 
     effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
     return _filter_and_extract_segments(

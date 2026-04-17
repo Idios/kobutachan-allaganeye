@@ -49,6 +49,8 @@ allaganeye split <video_path> --workers 8  # ワーカー数指定
 allaganeye split <video_path> --no-cache   # キャッシュ無視で再検知
 allaganeye split <video_path> --no-audio   # 音声昇格を無効化（視覚のみ）
 allaganeye split <video_path> --quiet      # 進捗抑制（出力ファイルのみ）
+allaganeye split <video_path> -v           # verbose（環境情報・パイプライン統計を表示、#336）
+allaganeye --version                       # バージョン表示（短縮形: -V、#337）
 allaganeye debug-brightness <video_path>   # フレーム輝度 CSV 出力
 ```
 

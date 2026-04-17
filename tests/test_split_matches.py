@@ -718,3 +718,128 @@ class TestAudioScanIntegration:
 
         result = _run_audio_scan(Path("input.mp4"), config, show=False, verbose=False)
         assert result is None
+
+
+# --- Verbose output (issue #336 Phase 1) ---
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_emits_environment_header(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Verbose mode prints allaganeye version + Python/OS header (issue #336)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "allaganeye " in out
+    assert "Python" in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_emits_codec_in_duration_line(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Verbose probe line includes video codec (issue #336)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "Codec: h264" in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_detecting_line_includes_mode_and_params(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Verbose 'Detecting' line shows mode=CPU|GPU plus detailed params (issue #336)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(
+        output_dir=tmp_path, min_match_duration=60.0, use_gpu=True, workers=8
+    )
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "mode=GPU" in out
+    assert "workers=8" in out
+    assert "min_match=60.0s" in out
+    assert "min_blackout=3.0s" in out
+    assert "audio=on" in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_prints_pipeline_stats(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Verbose mode emits Pass 1 / Pass 2 / Scorebar breakdown (issue #336)."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 1800
+            stats["pass1_blackout_frames"] = 42
+            stats["pass1_elapsed_s"] = 120.0
+            stats["pass2_regions"] = 12
+            stats["pass2_elapsed_s"] = 5.0
+            stats["scorebar_match_boundary"] = 4
+            stats["scorebar_in_match"] = 3
+            stats["scorebar_non_fl"] = 2
+            stats["scorebar_unknown"] = 0
+            stats["audio_promotions"] = 1
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "Pass 1 (CPU)" in out
+    assert "1800 samples" in out
+    assert "42 blackout frames" in out
+    assert "Pass 2" in out
+    assert "12 regions refined" in out
+    assert "Scorebar" in out
+    assert "4 match_boundary" in out
+    assert "3 in_match" in out
+    assert "2 non_fl" in out
+    assert "Audio promotion: 1" in out
+    assert "Total:" in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_non_verbose_does_not_print_stats(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Default (non-verbose) run must NOT pass stats into detect (avoid overhead)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=False)
+    _, detect_kwargs = mock_detect.call_args
+    assert detect_kwargs["stats"] is None
+    out = capsys.readouterr().out
+    assert "Pass 1" not in out
+    assert "Scorebar:" not in out

@@ -26,7 +26,13 @@ def version_callback(value: bool) -> None:
 def main(
     version: Annotated[
         bool | None,
-        typer.Option("--version", callback=version_callback, is_eager=True),
+        typer.Option(
+            "--version",
+            "-V",
+            callback=version_callback,
+            is_eager=True,
+            help="Show version and exit.",
+        ),
     ] = None,
 ) -> None:
     """Allagan Eye - FF14 Frontline video auto-highlight extraction tool."""
