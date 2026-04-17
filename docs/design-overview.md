@@ -136,14 +136,16 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 
 | ツール | 用途 | 必須 | 検索方法 |
 |---|---|---|---|
-| ffmpeg 4.1+ | 動画分割・暗転検知プローブ | Yes | PATH → `ALLAGANEYE_FFMPEG` 環境変数 → OS 別既知パス（自動検索） |
+| ffmpeg 4.1+ | 動画分割・暗転検知プローブ | Yes | PATH -> `ALLAGANEYE_FFMPEG` 環境変数 -> OS 別既知パス（自動検索） |
 | ffprobe 4.1+ | 動画メタデータ取得 | Yes | 同上 |
+| typer (Python) | CLI フレームワーク | Yes | pip |
 | numpy (Python) | フレーム輝度計算 | Yes | pip |
-| OpenCV (Python) | L3 以降のフレーム解析（L1 では不使用） | No | - |
+| scipy (Python) | 音声特徴量の相互相関計算 | Yes | pip |
+| opencv-python-headless (Python) | scorebar V2 検出（GC エンブレム判定, #307） | Yes | pip |
 
 ## クロスプラットフォーム対応
 
-全モジュールが OS 非依存（subprocess + pathlib + numpy）。ffmpeg のパス検索のみ OS 別ロジックあり（`ffmpeg_path.py`）。
+全モジュールが OS 非依存（subprocess + pathlib + numpy + scipy + opencv）。ffmpeg のパス検索のみ OS 別ロジックあり（`ffmpeg_path.py`）。
 
 | 優先度 | OS | 状態 | ffmpeg 自動検索 |
 |---|---|---|---|
