@@ -5,6 +5,7 @@ detection.  See ``allaganeye/video/`` for visual signals and the high-level
 ``commands/split_matches.py`` for orchestration.
 
 Public API:
+    AUDIO_FROZEN -- whether the audio module is frozen (True = skip scan)
     extract_pcm -- pull mono PCM from a video via ffmpeg
     LogMelConfig / log_mel_spectrogram -- compute reference/target features
     save_features / load_features -- persist/load .npz feature files
@@ -24,6 +25,8 @@ Removal (director Q3 compliance, #284):
        it is used only inside this module (STFT and FFT convolution)
 """
 
+from typing import Final
+
 from allaganeye.audio.extract import extract_pcm
 from allaganeye.audio.features import (
     LogMelConfig,
@@ -38,7 +41,14 @@ from allaganeye.audio.matcher import (
 )
 from allaganeye.audio.scan import scan_fanfare_hits
 
+# Audio module freeze flag (#327, l1-detection-redesign.md).
+# Fanfare scan alone produces false positives (#303); the module is
+# frozen until compound-signal integration is ready.  Set to False
+# to re-enable audio promotion as the default behaviour.
+AUDIO_FROZEN: Final[bool] = True
+
 __all__ = [
+    "AUDIO_FROZEN",
     "BgmHit",
     "LogMelConfig",
     "extract_pcm",

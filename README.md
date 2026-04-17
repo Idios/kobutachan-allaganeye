@@ -67,7 +67,6 @@ allaganeye split <video_path> -o <output_dir>
 | `--workers` | auto | 検知の並列ワーカー数（デフォルト: 自動=CPU コア数、最大24） |
 | `--gpu` / `--no-gpu` | `--no-gpu` | GPU アクセラレーション検知（チャンク並列デコード）。GPU が利用不可の場合は CPU にフォールバック |
 | `--no-cache` | - | キャッシュを無視して再検知 |
-| `--no-audio` | - | 音声昇格（Fanfare スキャン）を無効化 |
 | `--dry-run` | - | 検知のみ実行し、分割しない |
 | `-v`, `--verbose` | - | 詳細ログ出力 |
 | `-q`, `--quiet` | - | 進捗出力を抑制（最終結果のみ） |

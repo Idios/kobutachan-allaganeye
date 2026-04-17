@@ -79,7 +79,8 @@ def split(
         bool,
         typer.Option(
             "--no-audio",
-            help="Disable audio-based match boundary promotion (Fanfare scan)",
+            help="Disable audio-based match boundary promotion (Fanfare scan). "
+            "Currently frozen: audio scan is always skipped regardless of this flag.",
         ),
     ] = False,
     verbose: Annotated[
