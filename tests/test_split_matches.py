@@ -681,6 +681,17 @@ class TestAudioScanIntegration:
         assert detect_kwargs["audio_hits"] == hits
 
     @pytest.mark.real_audio_scan
+    def test_run_audio_scan_returns_none_when_frozen(self, tmp_path):
+        """AUDIO_FROZEN=True skips scan without invoking scan_fanfare_hits (#327)."""
+        from allaganeye.commands.split_matches import _run_audio_scan
+
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+        # AUDIO_FROZEN is True by default -- scan should be skipped
+        result = _run_audio_scan(Path("input.mp4"), config, show=False, verbose=False)
+        assert result is None
+
+    @pytest.mark.real_audio_scan
+    @patch("allaganeye.audio.AUDIO_FROZEN", False)
     def test_run_audio_scan_returns_none_when_disabled(self, tmp_path):
         """config.no_audio=True skips audio scan without invoking scan_fanfare_hits."""
         from allaganeye.commands.split_matches import _run_audio_scan
@@ -692,6 +703,7 @@ class TestAudioScanIntegration:
         assert result is None
 
     @pytest.mark.real_audio_scan
+    @patch("allaganeye.audio.AUDIO_FROZEN", False)
     @patch("allaganeye.audio.scan.scan_fanfare_hits")
     def test_run_audio_scan_returns_hits_on_success(self, mock_scan, tmp_path):
         """Successful scan returns hits verbatim."""
@@ -706,6 +718,7 @@ class TestAudioScanIntegration:
         mock_scan.assert_called_once()
 
     @pytest.mark.real_audio_scan
+    @patch("allaganeye.audio.AUDIO_FROZEN", False)
     @patch("allaganeye.audio.scan.scan_fanfare_hits")
     def test_run_audio_scan_falls_back_on_video_processing_error(
         self, mock_scan, tmp_path

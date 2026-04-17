@@ -176,10 +176,17 @@ def _run_audio_scan(
 ) -> list[BgmHit] | None:
     """Scan the video for Fanfare peaks, returning hits or None.
 
-    Returns ``None`` when audio promotion is disabled (``--no-audio``) or
-    when the scan fails for a recoverable reason (missing audio track,
-    ffmpeg error).  Callers then proceed with scorebar-only filtering.
+    Returns ``None`` when audio promotion is disabled (``--no-audio``),
+    when the audio module is frozen (``AUDIO_FROZEN``), or when the scan
+    fails for a recoverable reason (missing audio track, ffmpeg error).
+    Callers then proceed with scorebar-only filtering.
     """
+    from allaganeye.audio import AUDIO_FROZEN
+
+    if AUDIO_FROZEN:
+        logger.debug("Audio module frozen (#327) -- skipping Fanfare scan")
+        return None
+
     if config.no_audio:
         return None
 
