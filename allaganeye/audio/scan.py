@@ -20,6 +20,7 @@ from allaganeye.audio.extract import extract_pcm
 from allaganeye.audio.features import load_features_multi, log_mel_spectrogram
 from allaganeye.audio.matcher import BgmHit, find_match_peaks, sliding_cosine_similarity
 from allaganeye.audio.refs import get_reference_path
+from allaganeye.exceptions import VideoProcessingError
 
 
 _DEFAULT_THRESHOLD = 0.65
@@ -49,15 +50,19 @@ def scan_fanfare_hits(
 
     Returns hits sorted by timestamp (seconds from video start).  Raises
     ``VideoProcessingError`` when audio extraction fails (e.g. missing
-    audio track); callers may catch this to fall back to audio-less
-    classification.
+    audio track) or when the bundled reference feature file is missing;
+    callers may catch this to fall back to audio-less classification.
 
     When the referenced feature file bundles multiple reference windows
     (#289, War Room spans BGM version differences), the per-frame max of
     all references' sliding similarity curves is used; peaks are then
     detected on that combined curve.
     """
-    features_list, config, _ = load_features_multi(get_reference_path(ref_name))
+    try:
+        ref_path = get_reference_path(ref_name)
+    except FileNotFoundError as e:
+        raise VideoProcessingError(f"fanfare reference feature missing: {e}") from e
+    features_list, config, _ = load_features_multi(ref_path)
     pcm = extract_pcm(video_path, sample_rate=config.sample_rate)
     target = log_mel_spectrogram(pcm, config)
 
