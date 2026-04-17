@@ -4,6 +4,16 @@
 
 以下の手順を実行してください:
 
+## ステップ 0: 開発ブランチの特定
+
+現在の開発ブランチを特定する:
+
+```bash
+git branch -r --list 'origin/develop-*' --sort=-creatordate | head -1 | sed 's|origin/||;s/^[[:space:]]*//'
+```
+
+結果を `<develop-branch>` として以降のステップで使用する。
+
 ## ステップ 1: 引数の解析
 
 引数から以下を決定する:
@@ -15,22 +25,22 @@
 | `tester <N>` | `tester<N>` (`tester 1` のみ `tester`) | `tester` | `tester-<N>` | `tester-<N>/work` |
 | `director <N>` | `director<N>` (`director 1` のみ `director`) | `director` | `director-<N>` | `director-<N>/work` |
 
-worktree ディレクトリ: `E:\projects\kobutachan-tools\kobutachan-allaganeye-<サフィックス>\`
+worktree ディレクトリ: `.claude/worktrees/<サフィックス>/`
 
 ## ステップ 2: worktree の存在確認
 
 ```bash
-ls -d E:/projects/kobutachan-tools/kobutachan-allaganeye-<サフィックス> 2>/dev/null
+ls -d .claude/worktrees/<サフィックス> 2>/dev/null
 ```
 
 ### 2a: 既存 worktree がある場合（再利用）
 
 1. work ブランチに切り替えてから開発ブランチの最新を取り込む:
    ```bash
-   cd E:/projects/kobutachan-tools/kobutachan-allaganeye-<サフィックス>
+   cd .claude/worktrees/<サフィックス>
    git checkout <セッション ID>/work
-   git fetch origin develop-0.1.0
-   git merge origin/develop-0.1.0
+   git fetch origin <develop-branch>
+   git merge origin/<develop-branch>
    ```
 
 2. `settings.local.json` を同ロールの既存セッションからコピーする:
@@ -41,13 +51,12 @@ ls -d E:/projects/kobutachan-tools/kobutachan-allaganeye-<サフィックス> 2>
 
 1. メインリポジトリから worktree を作成する:
    ```bash
-   cd E:/projects/kobutachan-tools/kobutachan-allaganeye
-   git worktree add ../kobutachan-allaganeye-<サフィックス> -b <セッション ID>/work
+   git worktree add .claude/worktrees/<サフィックス> -b <セッション ID>/work origin/<develop-branch>
    ```
 
 2. ROLE ファイルを作成する:
    ```bash
-   echo "<ROLE ファイル値>" > E:/projects/kobutachan-tools/kobutachan-allaganeye-<サフィックス>/ROLE
+   echo "<ROLE ファイル値>" > .claude/worktrees/<サフィックス>/ROLE
    ```
    ※ 末尾に改行を含めること
 
@@ -55,9 +64,9 @@ ls -d E:/projects/kobutachan-tools/kobutachan-allaganeye-<サフィックス> 2>
    - 同ロールの worktree（番号1）の `.claude/settings.local.json` をコピー
    - コピー元が存在しない場合はスキップ
    ```bash
-   mkdir -p E:/projects/kobutachan-tools/kobutachan-allaganeye-<サフィックス>/.claude
-   cp E:/projects/kobutachan-tools/kobutachan-allaganeye-<コピー元サフィックス>/.claude/settings.local.json \
-      E:/projects/kobutachan-tools/kobutachan-allaganeye-<サフィックス>/.claude/settings.local.json
+   mkdir -p .claude/worktrees/<サフィックス>/.claude
+   cp .claude/worktrees/<コピー元サフィックス>/.claude/settings.local.json \
+      .claude/worktrees/<サフィックス>/.claude/settings.local.json
    ```
 
 ## ステップ 3: 完了報告
@@ -66,5 +75,6 @@ ls -d E:/projects/kobutachan-tools/kobutachan-allaganeye-<サフィックス> 2>
 - worktree パス
 - ブランチ名
 - セッション ID
+- 開発ブランチ（`<develop-branch>`）
 - 新規作成 or 再利用
 - settings.local.json のコピー元（コピーした場合）
