@@ -4,12 +4,25 @@
 
 以下の手順を実行してください:
 
+> **注意**: 本コマンドはメインリポジトリのルートから実行すること。worktree 内から実行された場合は、まずメインリポジトリのルートに移動する:
+> ```bash
+> MAIN_REPO=$(git rev-parse --path-format=absolute --git-common-dir | sed 's|/\.git$||')
+> cd "$MAIN_REPO"
+> ```
+
 ## ステップ 0: 開発ブランチの特定
 
 現在の開発ブランチを特定する:
 
 ```bash
-git branch -r --list 'origin/develop-*' --sort=-creatordate | head -1 | sed 's|origin/||;s/^[[:space:]]*//'
+git fetch origin
+DEV_BRANCH=$(git branch -r --list 'origin/develop-*' --sort=-creatordate | head -1 | sed 's|origin/||;s/^[[:space:]]*//')
+```
+
+`DEV_BRANCH` が空の場合はエラーとして中断する:
+
+```bash
+if [ -z "$DEV_BRANCH" ]; then echo "ERROR: origin/develop-* branch not found"; exit 1; fi
 ```
 
 結果を `<develop-branch>` として以降のステップで使用する。
