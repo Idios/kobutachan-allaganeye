@@ -291,31 +291,51 @@ def _run_detection(
                 if eta_seconds > 0:
                     progress.label = (
                         f"Detecting [chunk {done}/{total}, "
-                        f"ETA ~{_format_eta(eta_seconds)}]"
+                        f"ETA ~{_format_eta(eta_seconds)}]".ljust(_PROGRESS_LABEL_WIDTH)
                     )
                 else:
-                    progress.label = f"Detecting [chunk {done}/{total}]"
+                    progress.label = f"Detecting [chunk {done}/{total}]".ljust(
+                        _PROGRESS_LABEL_WIDTH
+                    )
 
-            # Phase 2: Refining (Pass 2 + scorebar), shown inline
-            refine_bar_ctx: list = []
+            # Phase 2: Refining (Pass 2 + scorebar).
+            # The bar is lazily opened on the first callback from
+            # detect_match_boundaries, because we don't know the total
+            # step count until Pass 1 completes.
+            refine_bar_ctx: list[dict] = []
 
             def on_refine(completed: int, total: int) -> None:
-                if not refine_bar_ctx:
-                    return
-                bar = refine_bar_ctx[0]
-                advance = completed - bar["last"]
-                if advance > 0:
-                    bar["progress"].update(advance)
-                bar["last"] = completed
+                import click
 
-            return _run_detection_with_refine_bar(
+                if not refine_bar_ctx:
+                    bar = click.progressbar(
+                        length=total,
+                        label="Refining ".ljust(11),
+                        bar_template="%(label)s%(bar)s %(info)s",
+                        show_eta=True,
+                        show_percent=True,
+                    )
+                    bar.__enter__()
+                    refine_bar_ctx.append({"bar": bar, "last": 0})
+                ctx = refine_bar_ctx[0]
+                advance = completed - ctx["last"]
+                if advance > 0:
+                    ctx["bar"].update(advance)
+                ctx["last"] = completed
+
+            result = detect_match_boundaries(
                 video_path,
-                detect_kwargs,
-                on_progress,
-                on_refine,
-                refine_bar_ctx,
-                on_chunk=on_chunk,
+                **detect_kwargs,
+                progress_callback=on_progress,
+                refine_progress_callback=on_refine,
+                chunk_progress_callback=on_chunk,
             )
+
+        # Close the refine bar if it was opened
+        if refine_bar_ctx:
+            refine_bar_ctx[0]["bar"].__exit__(None, None, None)
+
+        return result
 
     return detect_match_boundaries(video_path, **detect_kwargs)
 
@@ -406,6 +426,8 @@ def _check_disk_space(
             f"free: {_format_bytes(free)})",
             err=True,
         )
+
+
 def _run_detection_with_refine_bar(
     video_path: Path,
     detect_kwargs: dict,
@@ -480,17 +502,21 @@ def _run_detection_with_refine_bar(
     return result
 
 
+_PROGRESS_LABEL_WIDTH = 11
+"""Column width for progress bar labels (Detecting/Refining/Splitting)."""
+
+
 def _eta_progressbar(length: int, label: str):  # type: ignore[no-untyped-def]
     """Create a progress bar with explicit ETA label (#329).
 
-    Returns a context manager (click ProgressBar) with a bar_template
-    that clearly labels the time display as ETA.
+    Labels are left-justified to ``_PROGRESS_LABEL_WIDTH`` so that
+    Detecting / Refining / Splitting bars align vertically.
     """
     import click
 
     return click.progressbar(
         length=length,
-        label=label + "  ",
+        label=label.ljust(_PROGRESS_LABEL_WIDTH),
         bar_template="%(label)s%(bar)s %(info)s",
         show_eta=True,
         show_percent=True,

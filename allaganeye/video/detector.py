@@ -160,11 +160,10 @@ def detect_match_boundaries(
         blackout_regions, results, sample_interval, _TRANSITION_THRESHOLD
     )
 
-    # Compute total refine steps for progress reporting:
-    # Pass 2 = len(blackout_regions), scorebar = len(blackout_regions)
-    refine_total = (
-        len(blackout_regions) * 2 if src_resolution else len(blackout_regions)
-    )
+    # Progress tracking for Pass 2 + scorebar filtering.
+    # Total is initially set for Pass 2 only, then updated after Pass 2
+    # when the actual refined_regions count is known for scorebar.
+    refine_total = len(blackout_regions)
     refine_completed = 0
 
     def _refine_step() -> None:
@@ -190,6 +189,9 @@ def detect_match_boundaries(
     region_classifications: list[str] | None = None
     if src_resolution is not None:
         from allaganeye.video.scorebar import filter_blackouts_with_scorebar
+
+        # Update total now that we know how many regions scorebar will process
+        refine_total = refine_completed + len(refined_regions)
 
         height = _scaled_height(src_resolution[0], src_resolution[1])
         refined_regions, region_classifications = filter_blackouts_with_scorebar(

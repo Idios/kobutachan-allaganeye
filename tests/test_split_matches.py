@@ -680,6 +680,128 @@ class TestCachePipeline:
         assert mock_detect.call_count == 2
 
 
+# --- Refine progress bar (#328) ---
+
+
+class TestRefineProgressBar:
+    """Refining progress bar behaviour (#328)."""
+
+    def test_refine_callback_called_by_detector(self):
+        """refine_progress_callback receives calls from detector."""
+        from allaganeye.video.detector import detect_match_boundaries
+
+        calls: list[tuple[int, int]] = []
+
+        def on_refine(completed: int, total: int) -> None:
+            calls.append((completed, total))
+
+        # Use a minimal mock: scan_cpu returns a blackout region so Pass 2 fires
+        with (
+            patch(
+                "allaganeye.video.detector._scan_cpu",
+                return_value={0.0: 1.0, 5.0: 1.0, 10.0: 100.0},
+            ),
+            patch(
+                "allaganeye.video.detector._refine_blackout_regions",
+                return_value=[(0.0, 5.0)],
+            ),
+            patch(
+                "allaganeye.video.scorebar.filter_blackouts_with_scorebar",
+                return_value=([(0.0, 5.0)], ["match_boundary"]),
+            ),
+        ):
+            detect_match_boundaries(
+                Path("test.mp4"),
+                duration_hint=100.0,
+                min_match_duration=10.0,
+                src_resolution=(1920, 1080),
+                refine_progress_callback=on_refine,
+            )
+
+        assert len(calls) >= 1
+        # Final call should have completed == total
+        last_completed, last_total = calls[-1]
+        assert last_completed == last_total
+
+    def test_refine_total_matches_actual_calls(self):
+        """Total reported to callback matches actual number of calls."""
+        from allaganeye.video.detector import detect_match_boundaries
+
+        calls: list[tuple[int, int]] = []
+
+        def on_refine(completed: int, total: int) -> None:
+            calls.append((completed, total))
+
+        # 2 blackout regions from Pass 1, 3 refined regions for scorebar
+        with (
+            patch(
+                "allaganeye.video.detector._scan_cpu",
+                return_value={0.0: 1.0, 5.0: 1.0, 20.0: 1.0, 25.0: 1.0, 50.0: 100.0},
+            ),
+            patch(
+                "allaganeye.video.detector._refine_blackout_regions",
+                return_value=[(0.0, 5.0), (15.0, 20.0), (25.0, 30.0)],
+            ),
+            patch(
+                "allaganeye.video.scorebar.filter_blackouts_with_scorebar",
+                return_value=(
+                    [(0.0, 5.0), (15.0, 20.0), (25.0, 30.0)],
+                    ["match_boundary", "match_boundary", "match_boundary"],
+                ),
+            ) as mock_scorebar,
+        ):
+            # Simulate scorebar calling progress 3 times
+            def scorebar_side_effect(
+                vp, regions, dur, h, w, *, audio_hits=None, progress_callback=None
+            ):
+                for i in range(len(regions)):
+                    if progress_callback:
+                        progress_callback(i + 1, len(regions))
+                return (regions, ["match_boundary"] * len(regions))
+
+            mock_scorebar.side_effect = scorebar_side_effect
+
+            detect_match_boundaries(
+                Path("test.mp4"),
+                duration_hint=100.0,
+                min_match_duration=10.0,
+                src_resolution=(1920, 1080),
+                refine_progress_callback=on_refine,
+            )
+
+        # completed should reach total exactly
+        assert calls[-1][0] == calls[-1][1]
+
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    def test_three_bars_displayed(
+        self, mock_probe, mock_detect, mock_split, tmp_path, capsys
+    ):
+        """Detecting, Refining, and Splitting bars all appear (#331)."""
+        mock_probe.return_value = PROBE_RESULT
+        mock_detect.return_value = BOUNDARIES
+        mock_split.return_value = _output_files(tmp_path)
+
+        # Simulate refine callback to trigger Refining bar
+        def detect_side_effect(video_path, **kwargs):
+            cb = kwargs.get("refine_progress_callback")
+            if cb:
+                cb(1, 2)
+                cb(2, 2)
+            return BOUNDARIES
+
+        mock_detect.side_effect = detect_side_effect
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+        run_split(Path("input.mp4"), config)
+
+        output = capsys.readouterr().out
+        assert "Detecting" in output
+        assert "Refining" in output
+        assert "Splitting" in output
+
+
 # --- Audio scan integration (#288) ---
 
 
