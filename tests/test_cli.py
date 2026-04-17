@@ -27,6 +27,26 @@ def test_version():
     assert "allaganeye" in result.stdout
 
 
+def test_version_short_flag():
+    """-V should be an alias for --version (issue #337)."""
+    result = runner.invoke(app, ["-V"])
+    assert result.exit_code == 0
+    assert "allaganeye" in result.stdout
+
+
+def test_verbose_short_flag_unchanged():
+    """-v must still map to --verbose (not --version) on the split command.
+
+    Breaking-change policy for v0.1.x: we add -V for --version but keep
+    -v = --verbose to avoid disrupting existing preview users (issue #337).
+    """
+    result = runner.invoke(app, ["split", "--help"])
+    assert result.exit_code == 0
+    # -v appears in the verbose flag help
+    assert "-v" in result.stdout
+    assert "verbose" in result.stdout.lower()
+
+
 def test_help():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0

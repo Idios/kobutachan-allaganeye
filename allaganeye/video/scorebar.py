@@ -11,6 +11,7 @@ import numpy as np
 from allaganeye.audio.matcher import BgmHit
 from allaganeye.exceptions import VideoProcessingError
 from allaganeye.video.detector import (
+    DetectionStats,
     _SAMPLE_WIDTH,
     _SCOREBAR_METHOD,
     _SCOREBAR_ROI_X_END,
@@ -336,6 +337,7 @@ def filter_blackouts_with_scorebar(
     workers: int | None = None,
     *,
     audio_hits: Sequence[BgmHit] | None = None,
+    stats: DetectionStats | None = None,
 ) -> tuple[list[tuple[float, float]], list[str]]:
     """Filter blackout regions using scorebar context and duration.
 
@@ -364,11 +366,19 @@ def filter_blackouts_with_scorebar(
     """
     kept: list[tuple[float, float]] = []
     classifications: list[str] = []
+    raw_counts: dict[str, int] = {
+        "match_boundary": 0,
+        "in_match": 0,
+        "non_fl": 0,
+        "unknown": 0,
+    }
+    audio_promotions = 0
     for region in blackout_regions:
         classification = classify_blackout(
             video_path, region, duration, height, workers
         )
         region_duration = region[1] - region[0]
+        raw_counts[classification if classification in raw_counts else "unknown"] += 1
 
         if classification == "in_match" and audio_hits is not None:
             hit = _has_nearby_fanfare_hit(region, audio_hits)
@@ -383,6 +393,7 @@ def filter_blackouts_with_scorebar(
                     hit["similarity"],
                 )
                 classification = "match_boundary"
+                audio_promotions += 1
 
         if classification == "in_match" and region_duration < _IN_MATCH_MAX_DURATION:
             logger.info(
@@ -412,6 +423,13 @@ def filter_blackouts_with_scorebar(
         )
         kept.append(region)
         classifications.append(classification)
+
+    if stats is not None:
+        stats["scorebar_match_boundary"] = raw_counts["match_boundary"]
+        stats["scorebar_in_match"] = raw_counts["in_match"]
+        stats["scorebar_non_fl"] = raw_counts["non_fl"]
+        stats["scorebar_unknown"] = raw_counts["unknown"]
+        stats["audio_promotions"] = audio_promotions
 
     return _merge_boundary_pairs(
         video_path, kept, classifications, duration, height, workers

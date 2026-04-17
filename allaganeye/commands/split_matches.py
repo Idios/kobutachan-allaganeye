@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from pathlib import Path
 from typing import TypedDict
 
@@ -10,7 +11,11 @@ import typer
 from allaganeye.audio.matcher import BgmHit
 from allaganeye.config import SplitConfig
 from allaganeye.exceptions import AllaganEyeError, DetectionError, VideoProcessingError
-from allaganeye.video.detector import MatchBoundary, detect_match_boundaries
+from allaganeye.video.detector import (
+    DetectionStats,
+    MatchBoundary,
+    detect_match_boundaries,
+)
 from allaganeye.video.probe import ProbeResult, probe_video
 from allaganeye.video.splitter import split_video
 
@@ -44,6 +49,11 @@ def run_split(
     """
     show = not quiet
 
+    total_start = time.monotonic()
+
+    if verbose and show:
+        _print_environment_header()
+
     # Step 1: Probe video metadata
     if show:
         typer.echo(f"Probing: {video_path}")
@@ -52,7 +62,8 @@ def run_split(
         typer.echo(
             f"  Duration: {metadata['duration']:.1f}s, "
             f"Resolution: {metadata['width']}x{metadata['height']}, "
-            f"FPS: {metadata['fps']:.2f}"
+            f"FPS: {metadata['fps']:.2f}, "
+            f"Codec: {metadata.get('codec', 'unknown')}"
         )
 
     # Auto-adjust sample_interval for long videos (C strategy from #68)
@@ -107,11 +118,25 @@ def run_split(
     audio_hits = _run_audio_scan(video_path, config, show=show, verbose=verbose)
 
     if show:
-        typer.echo(
-            f"Detecting match boundaries "
-            f"(interval={effective_interval}s, "
-            f"threshold={config.blackout_threshold})"
-        )
+        if verbose:
+            workers_str = str(config.workers) if config.workers is not None else "auto"
+            audio_str = "off" if config.no_audio else "on"
+            typer.echo(
+                f"Detecting match boundaries "
+                f"(interval={effective_interval}s, "
+                f"threshold={config.blackout_threshold}, workers={workers_str}, "
+                f"min_match={config.min_match_duration}s, "
+                f"min_blackout={config.min_blackout_duration}s, "
+                f"audio={audio_str})"
+            )
+        else:
+            typer.echo(
+                f"Detecting match boundaries "
+                f"(interval={effective_interval}s, "
+                f"threshold={config.blackout_threshold})"
+            )
+
+    detect_stats: DetectionStats | None = {} if verbose else None
 
     boundaries = _run_detection(
         video_path,
@@ -120,6 +145,7 @@ def run_split(
         config,
         audio_hits=audio_hits,
         quiet=quiet,
+        stats=detect_stats,
     )
 
     if not boundaries:
@@ -127,6 +153,10 @@ def run_split(
             "No match boundaries detected. "
             "Try adjusting --blackout-threshold or --min-match-duration."
         )
+
+    # Display pipeline statistics (verbose only)
+    if verbose and show and detect_stats is not None:
+        _print_detection_stats(detect_stats)
 
     # Display detection results
     if show:
@@ -162,9 +192,13 @@ def run_split(
     # Step 3: Split (unless dry-run)
     if config.dry_run:
         typer.echo("\nDry run: skipping split")
+        if verbose and show:
+            typer.echo(f"Total: {_format_duration(time.monotonic() - total_start)}")
         return
 
     _split_and_write_metadata(video_path, boundaries, gaps, metadata, config)
+    if verbose and show:
+        typer.echo(f"Total: {_format_duration(time.monotonic() - total_start)}")
 
 
 def _run_audio_scan(
@@ -215,6 +249,7 @@ def _run_detection(
     *,
     audio_hits: list[BgmHit] | None = None,
     quiet: bool = False,
+    stats: DetectionStats | None = None,
 ) -> list[MatchBoundary]:
     """Run detection with optional progress bar."""
     detect_kwargs = {
@@ -228,6 +263,7 @@ def _run_detection(
         "src_resolution": (metadata["width"], metadata["height"]),
         "codec": metadata.get("codec"),
         "audio_hits": audio_hits,
+        "stats": stats,
     }
 
     if not quiet:
@@ -314,6 +350,96 @@ def _split_and_write_metadata(
     for f in output_files:
         typer.echo(f"  {f.name}")
     typer.echo(f"Metadata: {metadata_path}")
+
+
+def _print_environment_header() -> None:
+    """Print environment info header (allaganeye / Python / OS) for -v mode.
+
+    Hardware details (CPU/GPU/memory/disk) are deferred to Phase 2
+    (issue #336).  This Phase 1 header covers the essentials needed
+    for bug reports.
+    """
+    import platform
+
+    from allaganeye import __version__
+
+    ffmpeg_version = _probe_ffmpeg_version()
+    typer.echo(
+        f"allaganeye {__version__} "
+        f"(ffmpeg {ffmpeg_version}, "
+        f"Python {platform.python_version()}, "
+        f"{platform.system()} {platform.release()})"
+    )
+
+
+def _probe_ffmpeg_version() -> str:
+    """Return ffmpeg version string, or '(unknown)' on failure."""
+    import subprocess
+
+    from allaganeye.ffmpeg_path import find_ffmpeg
+
+    try:
+        result = subprocess.run(
+            [find_ffmpeg(), "-version"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "(unknown)"
+
+    first_line = result.stdout.splitlines()[0] if result.stdout else ""
+    # "ffmpeg version 8.1-essentials_build-www.gyan.dev Copyright ..."
+    parts = first_line.split()
+    if len(parts) >= 3 and parts[0] == "ffmpeg" and parts[1] == "version":
+        return parts[2]
+    return "(unknown)"
+
+
+def _print_detection_stats(stats: DetectionStats) -> None:
+    """Emit pipeline statistics in verbose mode (issue #336 Phase 1)."""
+    mode = stats.get("mode")
+    if mode is not None:
+        pass1_samples = stats.get("pass1_samples", 0)
+        pass1_blackouts = stats.get("pass1_blackout_frames", 0)
+        pass1_elapsed = stats.get("pass1_elapsed_s", 0.0)
+        blackout_pct = 100.0 * pass1_blackouts / pass1_samples if pass1_samples else 0.0
+        typer.echo(
+            f"  Pass 1 ({mode}): {pass1_samples} samples, "
+            f"{pass1_blackouts} blackout frames ({blackout_pct:.1f}%), "
+            f"{_format_duration(pass1_elapsed)}"
+        )
+
+    if "pass2_regions" in stats:
+        pass2_elapsed = stats.get("pass2_elapsed_s", 0.0)
+        typer.echo(
+            f"  Pass 2: {stats['pass2_regions']} regions refined, "
+            f"{_format_duration(pass2_elapsed)}"
+        )
+
+    if any(
+        k in stats
+        for k in (
+            "scorebar_match_boundary",
+            "scorebar_in_match",
+            "scorebar_non_fl",
+            "scorebar_unknown",
+        )
+    ):
+        parts = [
+            f"{stats.get('scorebar_match_boundary', 0)} match_boundary",
+            f"{stats.get('scorebar_in_match', 0)} in_match",
+            f"{stats.get('scorebar_non_fl', 0)} non_fl",
+        ]
+        unknown = stats.get("scorebar_unknown", 0)
+        if unknown:
+            parts.append(f"{unknown} unknown")
+        typer.echo(f"  Scorebar: {', '.join(parts)}")
+
+    promotions = stats.get("audio_promotions")
+    if promotions is not None and promotions > 0:
+        typer.echo(f"  Audio promotion: {promotions} in_match -> match_boundary")
 
 
 def _format_timestamp(seconds: float) -> str:

@@ -386,6 +386,29 @@ class TestFilterBlackouts:
         assert cls == []
 
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
+    def test_stats_records_raw_counts(self, mock_classify):
+        """stats dict receives raw classification counts (issue #336).
+
+        Non-FL and short in_match regions are dropped from the return but
+        must still appear in the stats counters so verbose output shows
+        the full picture.
+        """
+        from allaganeye.video.detector import DetectionStats
+
+        mock_classify.side_effect = ["match_boundary", "in_match", "non_fl"]
+        regions = [(100.0, 105.0), (200.0, 201.0), (300.0, 302.0)]
+        stats: DetectionStats = {}
+        result, _ = filter_blackouts_with_scorebar(
+            Path("v.mp4"), regions, 400.0, _HEIGHT, stats=stats
+        )
+        assert stats.get("scorebar_match_boundary") == 1
+        assert stats.get("scorebar_in_match") == 1
+        assert stats.get("scorebar_non_fl") == 1
+        assert stats.get("audio_promotions") == 0
+        # Short in_match and non_fl dropped from return
+        assert result == [(100.0, 105.0)]
+
+    @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_removes_non_fl(self, mock_classify):
         mock_classify.return_value = "non_fl"
         regions = [(100.0, 102.0)]
