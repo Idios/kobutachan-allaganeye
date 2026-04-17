@@ -284,8 +284,22 @@ def _run_detection(
                     progress.update(advance)
                 last_pos[0] = completed
 
+            def on_chunk(done: int, total: int, eta_seconds: float) -> None:
+                # Update label so users see movement between chunk completions
+                # on GPU mode (otherwise the bar stays at 0% then jumps, #333).
+                if eta_seconds > 0:
+                    progress.label = (
+                        f"Detecting [chunk {done}/{total}, "
+                        f"ETA ~{_format_eta(eta_seconds)}]"
+                    )
+                else:
+                    progress.label = f"Detecting [chunk {done}/{total}]"
+
             return detect_match_boundaries(
-                video_path, **detect_kwargs, progress_callback=on_progress
+                video_path,
+                **detect_kwargs,
+                progress_callback=on_progress,
+                chunk_progress_callback=on_chunk,
             )
 
     return detect_match_boundaries(video_path, **detect_kwargs)
@@ -542,6 +556,22 @@ def _format_timestamp(seconds: float) -> str:
     if h:
         return f"{h}:{m:02d}:{s:02d}"
     return f"{m:02d}:{s:02d}"
+
+
+def _format_eta(seconds: float) -> str:
+    """Format an ETA for in-label display (compact, e.g. '45s' or '3m20s').
+
+    Designed for the GPU chunk progress label (#333).  Keeps width small
+    so the progress bar does not overflow typical terminal widths.
+    """
+    total = int(seconds)
+    if total < 60:
+        return f"{total}s"
+    m, s = divmod(total, 60)
+    if m < 60:
+        return f"{m}m{s:02d}s"
+    h, m = divmod(m, 60)
+    return f"{h}h{m:02d}m"
 
 
 def _format_duration(seconds: float) -> str:
