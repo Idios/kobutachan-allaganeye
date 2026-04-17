@@ -111,7 +111,9 @@ def test_pipeline_happy_path(mock_probe, mock_detect, mock_split, tmp_path):
         PROBE_RESULT["width"],
         PROBE_RESULT["height"],
     )
-    mock_split.assert_called_once_with(video, BOUNDARIES, tmp_path)
+    mock_split.assert_called_once()
+    split_args = mock_split.call_args
+    assert split_args[0] == (video, BOUNDARIES, tmp_path)
     assert (tmp_path / "metadata.json").exists()
 
 
@@ -171,6 +173,25 @@ def test_pipeline_dry_run(mock_probe, mock_detect, mock_split, tmp_path):
     mock_detect.assert_called_once()
     mock_split.assert_not_called()
     assert not (tmp_path / "metadata.json").exists()
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_pipeline_dry_run_display(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Dry-run shows early notice and no Splitting bar (#331)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    config = SplitConfig(output_dir=tmp_path, dry_run=True, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    output = capsys.readouterr().out
+    assert "[dry-run]" in output
+    assert "Splitting" not in output
+    assert "Dry run: skipping split" in output
 
 
 # --- Detection empty ---
@@ -268,7 +289,7 @@ def test_pipeline_verbose_output(mock_probe, mock_detect, mock_split, tmp_path, 
     output = capsys.readouterr().out
     assert "Probing:" in output
     assert "Duration:" in output
-    assert "Detecting match boundaries" in output
+    assert "Detecting" in output
     assert "Match 1:" in output
     assert "Match 2:" in output
 
@@ -308,7 +329,7 @@ def test_pipeline_quiet_output(mock_probe, mock_detect, mock_split, tmp_path, ca
 
     output = capsys.readouterr().out
     assert "Probing:" not in output
-    assert "Detecting match boundaries" not in output
+    assert "Detecting" not in output
     assert "Match 1:" not in output
     # Output files still shown
     assert "Output:" in output
@@ -521,21 +542,23 @@ class TestCacheRoundTrip:
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
 def test_progressbar_length(mock_probe, mock_detect, mock_split, tmp_path):
-    """Progressbar length equals estimated_samples, not frame count."""
+    """Detecting progressbar length equals estimated_samples (#329, #331)."""
     mock_probe.return_value = {**PROBE_RESULT, "duration": 1800.0}
     mock_detect.return_value = BOUNDARIES
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    with patch("typer.progressbar") as mock_bar:
+    with patch("click.progressbar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
         run_split(Path("input.mp4"), config)
 
-    # interval=1.0 for 1800s -> estimated_samples = 1800
-    mock_bar.assert_called_once()
-    assert mock_bar.call_args[1]["length"] == 1800
+    # First call is Detecting bar: interval=1.0 for 1800s -> 1800
+    # Additional calls may include Splitting bar
+    assert mock_bar.call_count >= 1
+    detecting_call = mock_bar.call_args_list[0]
+    assert detecting_call[1]["length"] == 1800
 
 
 @patch(f"{MODULE}.split_video")
@@ -548,15 +571,16 @@ def test_progressbar_tiny_video(mock_probe, mock_detect, mock_split, tmp_path):
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    with patch("typer.progressbar") as mock_bar:
+    with patch("click.progressbar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
         run_split(Path("input.mp4"), config)
 
     # int(0.5 / 1.0) = 0, max(1, 0) = 1
-    mock_bar.assert_called_once()
-    assert mock_bar.call_args[1]["length"] == 1
+    assert mock_bar.call_count >= 1
+    detecting_call = mock_bar.call_args_list[0]
+    assert detecting_call[1]["length"] == 1
 
 
 @patch(f"{MODULE}.split_video")
@@ -569,15 +593,16 @@ def test_progressbar_auto_interval(mock_probe, mock_detect, mock_split, tmp_path
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    with patch("typer.progressbar") as mock_bar:
+    with patch("click.progressbar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
         run_split(Path("input.mp4"), config)
 
     # auto interval = 3.0 for > 2h, estimated_samples = int(7300/3.0) = 2433
-    mock_bar.assert_called_once()
-    assert mock_bar.call_args[1]["length"] == 2433
+    assert mock_bar.call_count >= 1
+    detecting_call = mock_bar.call_args_list[0]
+    assert detecting_call[1]["length"] == 2433
 
 
 class TestCachePipeline:

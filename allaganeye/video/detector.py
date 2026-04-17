@@ -50,6 +50,7 @@ def detect_match_boundaries(
     src_resolution: tuple[int, int] | None = None,
     codec: str | None = None,
     progress_callback: Callable[[int, int, int], None] | None = None,
+    refine_progress_callback: Callable[[int, int], None] | None = None,
     audio_hits: Sequence[BgmHit] | None = None,
 ) -> list[MatchBoundary]:
     """Detect match boundaries by finding blackout frames.
@@ -64,6 +65,9 @@ def detect_match_boundaries(
             blackouts and non-FL blackouts.
         progress_callback: Optional callback invoked after each sampled
             frame with ``(completed_count, total_samples, blackout_count)``.
+        refine_progress_callback: Optional callback invoked during
+            Pass 2 refinement and scorebar filtering with
+            ``(completed_steps, total_steps)``.
         audio_hits: Optional Fanfare peaks from audio scan (#288).  When
             provided and scorebar filtering is active, blackouts
             classified as ``"in_match"`` but near a Fanfare hit are
@@ -118,10 +122,26 @@ def detect_match_boundaries(
         blackout_regions, results, sample_interval, _TRANSITION_THRESHOLD
     )
 
+    # Compute total refine steps for progress reporting:
+    # Pass 2 = len(blackout_regions), scorebar = len(blackout_regions)
+    refine_total = (
+        len(blackout_regions) * 2 if src_resolution else len(blackout_regions)
+    )
+    refine_completed = 0
+
+    def _refine_step() -> None:
+        nonlocal refine_completed
+        refine_completed += 1
+        if refine_progress_callback is not None:
+            refine_progress_callback(refine_completed, refine_total)
+
     # 2nd pass: refine blackout regions at fine interval (#77)
     refined_regions = _refine_blackout_regions(
         video_path, blackout_regions, blackout_threshold, duration_hint, workers
     )
+    # Report Pass 2 completion (one step per original region)
+    for _ in blackout_regions:
+        _refine_step()
 
     # Scorebar-based filtering: remove in-match and non-FL blackouts (#111)
     region_classifications: list[str] | None = None
@@ -136,6 +156,7 @@ def detect_match_boundaries(
             height,
             workers,
             audio_hits=audio_hits,
+            progress_callback=lambda c, t: _refine_step(),
         )
 
     effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)

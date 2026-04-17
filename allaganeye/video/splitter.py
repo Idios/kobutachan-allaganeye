@@ -1,6 +1,7 @@
 """Video splitting using FFmpeg copy mode."""
 
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from allaganeye.exceptions import VideoProcessingError
@@ -12,12 +13,19 @@ def split_video(
     video_path: Path,
     boundaries: list[MatchBoundary],
     output_dir: Path,
+    *,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[Path]:
     """Split video into segments using FFmpeg copy mode.
+
+    Args:
+        progress_callback: Optional callback invoked after each segment
+            with ``(completed, total)``.
 
     Returns list of output file paths.
     """
     output_files: list[Path] = []
+    total = len(boundaries)
 
     for i, boundary in enumerate(boundaries, 1):
         output_file = output_dir / f"match_{i:03d}.mp4"
@@ -28,6 +36,8 @@ def split_video(
             output=output_file,
         )
         output_files.append(output_file)
+        if progress_callback is not None:
+            progress_callback(i, total)
 
     return output_files
 
