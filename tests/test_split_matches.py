@@ -761,10 +761,14 @@ def test_verbose_emits_codec_in_duration_line(
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
-def test_verbose_detecting_line_includes_mode_and_params(
+def test_verbose_detecting_line_includes_params(
     mock_probe, mock_detect, mock_split, tmp_path, capsys
 ):
-    """Verbose 'Detecting' line shows mode=CPU|GPU plus detailed params (issue #336)."""
+    """Verbose 'Detecting' line shows detailed params (issue #336).
+
+    Mode is shown in Pass 1 stats (post-detection) rather than in
+    the Detecting line, so that GPU fallback is accurately reported.
+    """
     mock_probe.return_value = PROBE_RESULT
     mock_detect.return_value = BOUNDARIES
     mock_split.return_value = _output_files(tmp_path)
@@ -774,7 +778,6 @@ def test_verbose_detecting_line_includes_mode_and_params(
 
     run_split(Path("input.mp4"), config, verbose=True)
     out = capsys.readouterr().out
-    assert "mode=GPU" in out
     assert "workers=8" in out
     assert "min_match=60.0s" in out
     assert "min_blackout=3.0s" in out

@@ -119,12 +119,11 @@ def run_split(
 
     if show:
         if verbose:
-            mode = "GPU" if config.use_gpu else "CPU"
             workers_str = str(config.workers) if config.workers is not None else "auto"
             audio_str = "off" if config.no_audio else "on"
             typer.echo(
                 f"Detecting match boundaries "
-                f"(mode={mode}, interval={effective_interval}s, "
+                f"(interval={effective_interval}s, "
                 f"threshold={config.blackout_threshold}, workers={workers_str}, "
                 f"min_match={config.min_match_duration}s, "
                 f"min_blackout={config.min_blackout_duration}s, "
