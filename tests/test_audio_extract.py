@@ -104,8 +104,10 @@ def test_extract_pcm_nonzero_returncode(_mock_ffmpeg, mock_run, tmp_path):
     video.touch()
     mock_run.return_value = _mock_result(returncode=1, stderr=b"some ffmpeg error here")
 
-    with pytest.raises(VideoProcessingError, match="some ffmpeg error here"):
+    with pytest.raises(VideoProcessingError) as exc_info:
         extract_pcm(video)
+    # stderr tail is now on .context (verbose detail), not the message (#351)
+    assert "some ffmpeg error here" in exc_info.value.context["stderr_tail"]
 
 
 @patch("allaganeye.audio.extract.subprocess.run")

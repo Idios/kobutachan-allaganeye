@@ -394,6 +394,68 @@ def test_split_unexpected_error_exit_code(mock_run_split, fake_video):
     assert result.exit_code == 1
 
 
+# --- Verbose error detail tests (issue #351) ---
+
+
+@patch(MODULE)
+def test_split_verbose_shows_context_detail(mock_run_split, fake_video):
+    """VideoProcessingError with context emits 'stderr_tail:' in verbose mode."""
+    mock_run_split.side_effect = VideoProcessingError(
+        "ffmpeg failed",
+        context={
+            "command": "ffmpeg -i foo.mp4",
+            "return_code": 1,
+            "stderr_tail": "NAL unit type 12 not supported",
+        },
+    )
+    result = runner.invoke(app, ["split", str(fake_video), "-v"])
+    assert result.exit_code == 3
+    combined = result.stdout + (result.stderr or "")
+    assert "Error: ffmpeg failed" in combined
+    assert "command:" in combined
+    assert "return_code:" in combined
+    assert "stderr_tail:" in combined
+    assert "NAL unit type 12 not supported" in combined
+
+
+@patch(MODULE)
+def test_split_non_verbose_hides_context_detail(mock_run_split, fake_video):
+    """Without -v, context detail stays hidden (short error only)."""
+    mock_run_split.side_effect = VideoProcessingError(
+        "ffmpeg failed",
+        context={"stderr_tail": "NAL unit type 12 not supported"},
+    )
+    result = runner.invoke(app, ["split", str(fake_video)])
+    assert result.exit_code == 3
+    combined = result.stdout + (result.stderr or "")
+    assert "Error: ffmpeg failed" in combined
+    assert "stderr_tail" not in combined
+    assert "NAL unit type 12 not supported" not in combined
+
+
+@patch(MODULE)
+def test_split_verbose_shows_traceback_for_unexpected(mock_run_split, fake_video):
+    """Unexpected Exception emits traceback to stderr in verbose mode."""
+    mock_run_split.side_effect = RuntimeError("boom")
+    result = runner.invoke(app, ["split", str(fake_video), "-v"])
+    assert result.exit_code == 1
+    combined = result.stdout + (result.stderr or "")
+    assert "Traceback" in combined
+    assert "RuntimeError: boom" in combined
+
+
+@patch(MODULE)
+def test_split_non_verbose_hides_traceback_for_unexpected(mock_run_split, fake_video):
+    """Without -v, unexpected error shows short one-liner (no traceback)."""
+    mock_run_split.side_effect = RuntimeError("boom")
+    result = runner.invoke(app, ["split", str(fake_video)])
+    assert result.exit_code == 1
+    combined = result.stdout + (result.stderr or "")
+    assert "Traceback" not in combined
+    assert "Unexpected error" in combined
+    assert "boom" in combined
+
+
 # --- Extension support tests ---
 
 

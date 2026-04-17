@@ -61,7 +61,15 @@ def probe_video(video_path: Path) -> ProbeResult:
             f"ffprobe timed out after 30s for {video_path}"
         ) from e
     except subprocess.CalledProcessError as e:
-        raise VideoProcessingError(f"ffprobe failed: {e.stderr}") from e
+        stderr_text = e.stderr if isinstance(e.stderr, str) else ""
+        raise VideoProcessingError(
+            "ffprobe failed",
+            context={
+                "command": " ".join(str(c) for c in e.cmd) if e.cmd else "",
+                "return_code": e.returncode,
+                "stderr_tail": stderr_text[-2000:] if stderr_text else "",
+            },
+        ) from e
 
     try:
         data = json.loads(result.stdout)
