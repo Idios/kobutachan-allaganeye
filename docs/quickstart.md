@@ -200,7 +200,27 @@ pip install -e .
 
 ```bash
 cd kobutachan-allaganeye
-source .venv/Scripts/activate   # または上記の有効化コマンド
+```
+
+仮想環境を有効化する（[§2 インストール](#2-インストール) と同じコマンド）:
+
+```bash
+# Windows (コマンドプロンプト)
+.venv\Scripts\activate.bat
+
+# Windows (PowerShell)
+.venv\Scripts\Activate.ps1
+
+# Windows (Git Bash / MSYS2)
+source .venv/Scripts/activate
+
+# Linux / macOS
+source .venv/bin/activate
+```
+
+最新版を取得する:
+
+```bash
 git pull
 ```
 
@@ -256,7 +276,7 @@ GPU が利用できない場合は自動で CPU モードにフォールバッ�
 
 これらのセグメントは試合の途中から始まる（または途中で終わる）不完全な録画のため、`metadata.json` では `type: "unknown"` として記録されます。`--min-match-duration`（デフォルト 300 秒）より短い場合は出力されません。
 
-## 6. うまく分割されない場合
+## 5. うまく分割されない場合
 
 デフォルト設定は FL の一般的な録画に合わせて調整されており、多くの場合そのまま使えます。
 

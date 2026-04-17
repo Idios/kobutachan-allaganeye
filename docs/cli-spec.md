@@ -41,6 +41,7 @@ allaganeye split <video_path> [OPTIONS]
 | `--workers` | auto | 検知の並列ワーカー数（デフォルト: 自動=`min(cpu_count, 24)`） |
 | `--gpu` / `--no-gpu` | `false` | GPU アクセラレーション検知（チャンク並列デコード）。利用不可時は CPU フォールバック |
 | `--no-cache` | `false` | キャッシュされた検知結果を無視して再検知する |
+| `--no-audio` | `false` | 音声ベースの試合境界昇格（Fanfare スキャン）を無効化する |
 | `--dry-run` | `false` | 検知のみ実行し分割しない（検知結果はキャッシュに保存される） |
 | `-v`, `--verbose` | `false` | 詳細出力（メタデータ詳細、gap 情報） |
 | `-q`, `--quiet` | `false` | 進捗出力を抑制（出力ファイル一覧のみ） |
@@ -63,7 +64,7 @@ allaganeye split <video_path> [OPTIONS]
 | `source_duration_display` | string | 総再生時間の表示形式（MM:SS or H:MM:SS） |
 | `note` | string | キーフレーム精度に関する注意書き |
 | `matches` | array | 検出された試合セグメント |
-| `gaps` | array | 試合間の有意なギャップ（≥5分） |
+| `gaps` | array | 試合間の有意なギャップ（>=5分） |
 
 **matches[]:**
 
