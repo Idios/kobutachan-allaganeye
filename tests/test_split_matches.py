@@ -987,3 +987,97 @@ def test_format_eta_hours():
 
     assert _format_eta(3600) == "1h00m"
     assert _format_eta(3700) == "1h01m"
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_gpu_chunk_callback_updates_progressbar_label(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """GPU chunk progress rewrites progress.label with chunk X/Y and ETA (#333 core UX).
+
+    With GPU mode the Detecting bar used to stay at 0% and jump when chunks
+    completed.  This PR rewrites the bar's label on every chunk completion
+    so the user sees movement.  Verifies the '[chunk {d}/{t}, ETA ~{eta}]'
+    template actually fires and that the ETA suffix is omitted on the
+    final (eta=0) call.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    captured_labels: list[str] = []
+
+    def detect_side_effect(video_path, **kwargs):
+        cb = kwargs.get("chunk_progress_callback")
+        assert cb is not None, "GPU path must wire chunk_progress_callback"
+        cb(1, 16, 120.0)
+        cb(8, 16, 60.0)
+        cb(16, 16, 0.0)
+        return BOUNDARIES
+
+    mock_detect.side_effect = detect_side_effect
+
+    class SpyBar:
+        def __init__(self, length=0, label=""):
+            self._label = label
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def update(self, _n):
+            pass
+
+        @property
+        def label(self):
+            return self._label
+
+        @label.setter
+        def label(self, value):
+            self._label = value
+            captured_labels.append(value)
+
+    def spy_progressbar(**kwargs):
+        return SpyBar(length=kwargs.get("length", 0), label=kwargs.get("label", ""))
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, use_gpu=True)
+    with patch(f"{MODULE}.typer.progressbar", side_effect=spy_progressbar):
+        run_split(Path("input.mp4"), config)
+
+    chunk_labels = [lbl for lbl in captured_labels if "chunk " in lbl]
+    assert len(chunk_labels) >= 3
+    assert any("chunk 1/16" in lbl and "ETA ~" in lbl for lbl in chunk_labels)
+    # Final call (eta=0) must omit the ETA suffix
+    assert any(
+        lbl.endswith("chunk 16/16]") and "ETA" not in lbl for lbl in chunk_labels
+    )
+
+
+@patch("allaganeye.video.gpu_detector._decode_chunk")
+def test_chunk_eta_monotonically_decreases(mock_decode):
+    """ETA decreases as more chunks complete (#333).
+
+    Formula: elapsed * remaining / done.  With steady completions the ETA
+    must shrink as each chunk finishes.  Protects against off-by-one
+    errors (e.g. using `remaining + 1` would make ETA stay flat or grow).
+    """
+    from allaganeye.video.gpu_detector import scan_gpu
+
+    mock_decode.return_value = ({0.0: 128.0, 1.0: 128.0}, "")
+    etas: list[float] = []
+
+    scan_gpu(
+        Path("test.mp4"),
+        10.0,
+        1.0,
+        15.0,
+        chunk_progress_callback=lambda d, t, eta: etas.append(eta),
+    )
+
+    # Non-increasing monotonic sequence terminating at 0
+    for i in range(len(etas) - 1):
+        assert etas[i] >= etas[i + 1], f"ETA should not grow: {etas}"
+    assert etas[-1] == 0.0
