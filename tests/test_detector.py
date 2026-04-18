@@ -11,17 +11,22 @@ from allaganeye.exceptions import VideoProcessingError
 from allaganeye.video.detector import (
     MatchBoundary,
     _BLACKOUT_PADDING,
+    _BLACKOUT_THRESHOLD_UPPER_MARGIN,
+    _BORDERLINE_REFINE_RADIUS,
+    _ENABLE_BORDERLINE_REFINEMENT,
     _FRAME_SIZE,
     _REFINED_MIN_BLACKOUT,
     _REFINE_INTERVAL,
     _REFINE_WINDOW,
     _TRANSITION_THRESHOLD,
+    _borderline_pseudo_regions,
     _decode_chunk_cpu,
     _expand_regions_with_transitions,
     _filter_and_extract_segments,
     _generate_timestamps,
     _group_blackout_regions,
     _infer_segment_type,
+    _merge_regions,
     _probe_single_frame,
     _refine_blackout_regions,
     detect_match_boundaries,
@@ -981,3 +986,223 @@ class TestDecodeChunkCpu:
 
         assert len(result) == 3
         assert all(v == 255.0 for v in result.values())
+
+
+# ============================================================
+# TestPass1HysteresisAndBorderline (#361)
+# ============================================================
+
+
+class TestPass1HysteresisConstants:
+    """Constants for A4 hysteresis and A3 borderline refinement (#361)."""
+
+    def test_upper_margin_default(self):
+        assert _BLACKOUT_THRESHOLD_UPPER_MARGIN == 2.0
+
+    def test_borderline_refinement_enabled_by_default(self):
+        assert _ENABLE_BORDERLINE_REFINEMENT is True
+
+    def test_borderline_refine_radius(self):
+        assert _BORDERLINE_REFINE_RADIUS == 3.0
+
+
+class TestBorderlinePseudoRegions:
+    """Unit tests for _borderline_pseudo_regions (A3, #361)."""
+
+    def test_empty_results(self):
+        assert _borderline_pseudo_regions({}, 15.0, 1000.0) == []
+
+    def test_no_borderline_frames(self):
+        """All frames outside [threshold, threshold*2) -> no pseudo regions."""
+        results = {0.0: 128.0, 10.0: 5.0, 20.0: 200.0}
+        assert _borderline_pseudo_regions(results, 15.0, 1000.0) == []
+
+    def test_borderline_frame_creates_window(self):
+        """A single borderline frame at 15.13 creates a +-3s window."""
+        results = {100.0: 15.13}
+        regions = _borderline_pseudo_regions(results, 15.0, 1000.0)
+        assert regions == [(97.0, 103.0)]
+
+    def test_window_clamped_to_start(self):
+        """Window does not go below 0.0."""
+        results = {1.0: 20.0}
+        regions = _borderline_pseudo_regions(results, 15.0, 1000.0)
+        assert regions[0][0] == 0.0
+        assert regions[0][1] == 4.0
+
+    def test_window_clamped_to_duration(self):
+        """Window does not exceed total_duration."""
+        results = {999.0: 20.0}
+        regions = _borderline_pseudo_regions(results, 15.0, 1000.0)
+        assert regions[0][0] == 996.0
+        assert regions[0][1] == 1000.0
+
+    def test_upper_bound_exclusive(self):
+        """Frames at exactly 2 * threshold are not borderline."""
+        results = {100.0: 30.0}  # == threshold * 2
+        assert _borderline_pseudo_regions(results, 15.0, 1000.0) == []
+
+    def test_lower_bound_inclusive(self):
+        """Frames at exactly threshold are borderline."""
+        results = {100.0: 15.0}
+        regions = _borderline_pseudo_regions(results, 15.0, 1000.0)
+        assert len(regions) == 1
+
+
+class TestMergeRegions:
+    """Unit tests for _merge_regions (A3 helper, #361)."""
+
+    def test_empty(self):
+        assert _merge_regions([], 1.0) == []
+
+    def test_single_region(self):
+        assert _merge_regions([(10.0, 20.0)], 1.0) == [(10.0, 20.0)]
+
+    def test_overlapping_merged(self):
+        result = _merge_regions([(10.0, 20.0), (15.0, 25.0)], 1.0)
+        assert result == [(10.0, 25.0)]
+
+    def test_adjacent_within_tolerance_merged(self):
+        """Gap <= 2*sample_interval merges."""
+        result = _merge_regions([(10.0, 20.0), (21.5, 25.0)], 1.0)  # gap 1.5 < 2.0
+        assert result == [(10.0, 25.0)]
+
+    def test_far_apart_kept_separate(self):
+        result = _merge_regions([(10.0, 20.0), (100.0, 110.0)], 1.0)
+        assert result == [(10.0, 20.0), (100.0, 110.0)]
+
+    def test_unsorted_input(self):
+        """Regions are sorted before merging."""
+        result = _merge_regions([(100.0, 110.0), (10.0, 20.0)], 1.0)
+        assert result == [(10.0, 20.0), (100.0, 110.0)]
+
+
+class TestPass1HysteresisIntegration:
+    """Integration of A4 hysteresis and A3 refinement in detect_match_boundaries."""
+
+    @patch("allaganeye.video.detector._probe_single_frame")
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_upper_margin_catches_borderline_blackout(self, mock_chunk, mock_probe):
+        """A4: Pass 1 frame at brightness 15.5 is treated as blackout with margin=2.0.
+
+        With strict threshold 15.0 this frame would not pass Pass 1.  With
+        the upper hysteresis margin, it enters the blackout set.  Pass 2
+        is mocked to confirm blackout, so the boundary is retained.
+        """
+
+        # Put borderline frames in the middle, bright frames elsewhere.
+        # Pass 1 runs at 3s interval (default), so frames at 600-609 become
+        # a 10s borderline span.
+        def chunk_side_effect(vp, ts, cs, ce, si):
+            return {t: 15.5 if 600.0 <= t <= 609.0 else 128.0 for t in ts}
+
+        mock_chunk.side_effect = chunk_side_effect
+        # Pass 2 confirms blackout (<15.0 strict) in the same span
+        mock_probe.side_effect = lambda p, t: 5.0 if 599.0 <= t <= 610.0 else 128.0
+
+        result = detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=1800.0,
+            sample_interval=3.0,
+            min_match_duration=300.0,
+        )
+
+        # With A4, borderline Pass 1 frames trigger Pass 2, which confirms
+        # the blackout and splits the video into two matches.
+        assert len(result) == 2
+
+    @patch("allaganeye.video.detector._probe_single_frame")
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_borderline_triggers_refinement_around_missed_blackout(
+        self, mock_chunk, mock_probe
+    ):
+        """A3: Pass 1 borderline frames trigger Pass 2 +-3s refinement.
+
+        Simulates the #330 scenario: Pass 1 at 3s interval returns 20.0 at
+        t=8139 (borderline, not blackout).  No frame crosses the strict
+        threshold in Pass 1, so without A3 there is no blackout region.
+        With A3, a pseudo-region (8136, 8142) is added and Pass 2 probes
+        at 0.25s intervals -- finding the real short blackout at 8137-8140.
+        """
+
+        def chunk_side_effect(vp, ts, cs, ce, si):
+            # t=8139 is borderline; surrounding Pass 1 samples are bright
+            out = {}
+            for t in ts:
+                if t == 8139.0:
+                    out[t] = 20.0  # borderline: in [15, 30)
+                else:
+                    out[t] = 128.0
+            return out
+
+        mock_chunk.side_effect = chunk_side_effect
+        # Pass 2 at 0.25s finds real blackout 8137.25-8139.75
+        mock_probe.side_effect = lambda p, t: 2.0 if 8137.25 <= t <= 8139.75 else 128.0
+
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=10000.0,
+            sample_interval=3.0,
+            min_match_duration=300.0,
+        )
+
+        # Confirm Pass 2 was asked to probe around the borderline timestamp
+        probed = [c.args[1] for c in mock_probe.call_args_list]
+        near_borderline = [t for t in probed if 8136.0 <= t <= 8142.0]
+        assert near_borderline, (
+            "Expected Pass 2 probes around borderline t=8139, "
+            f"but probed: {sorted(set(probed))[:10]}..."
+        )
+
+    @patch("allaganeye.video.detector._probe_single_frame")
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_borderline_refinement_disabled_skips_pseudo_regions(
+        self, mock_chunk, mock_probe
+    ):
+        """With _ENABLE_BORDERLINE_REFINEMENT=False, no pseudo regions added."""
+
+        def chunk_side_effect(vp, ts, cs, ce, si):
+            return {t: 20.0 if t == 8139.0 else 128.0 for t in ts}
+
+        mock_chunk.side_effect = chunk_side_effect
+        mock_probe.return_value = 128.0
+
+        with patch("allaganeye.video.detector._ENABLE_BORDERLINE_REFINEMENT", False):
+            detect_match_boundaries(
+                Path("test.mp4"),
+                duration_hint=10000.0,
+                sample_interval=3.0,
+                min_match_duration=300.0,
+            )
+
+        probed = [c.args[1] for c in mock_probe.call_args_list]
+        # No Pass 2 probes around 8139 since no blackout region was created
+        near_borderline = [t for t in probed if 8136.0 <= t <= 8142.0]
+        assert not near_borderline
+
+    @patch("allaganeye.video.detector._probe_single_frame")
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_upper_margin_zero_restores_strict_threshold(self, mock_chunk, mock_probe):
+        """With _BLACKOUT_THRESHOLD_UPPER_MARGIN=0.0, only b<threshold is blackout."""
+
+        def chunk_side_effect(vp, ts, cs, ce, si):
+            # Make one frame borderline (15.5) but otherwise bright.
+            # Also disable A3 so only A4 behavior is under test.
+            return {t: 15.5 if 600.0 <= t <= 609.0 else 128.0 for t in ts}
+
+        mock_chunk.side_effect = chunk_side_effect
+        mock_probe.return_value = 128.0  # Pass 2 finds no blackout
+
+        with (
+            patch("allaganeye.video.detector._BLACKOUT_THRESHOLD_UPPER_MARGIN", 0.0),
+            patch("allaganeye.video.detector._ENABLE_BORDERLINE_REFINEMENT", False),
+        ):
+            result = detect_match_boundaries(
+                Path("test.mp4"),
+                duration_hint=1800.0,
+                sample_interval=3.0,
+                min_match_duration=300.0,
+            )
+
+        # Borderline not captured -> single match spans whole video
+        assert len(result) == 1
