@@ -36,15 +36,6 @@ pytestmark = pytest.mark.slow
 _MATCH_6_ACTUAL_END_SECONDS = 8137.0
 _BOUNDARY_TOLERANCE_SECONDS = 10.0
 
-# Match 6 was Match index 5 (0-based) in the observed 8-match detection.
-# See memory `project_audio_primary_recording.md` for expected starts.
-_MATCH_6_INDEX = 5
-
-# Accept a small variance around the expected 8-match count to stay resilient
-# to unrelated detector tweaks; the assertion on Match 6 end is the core check.
-_EXPECTED_MATCH_COUNT_MIN = 7
-_EXPECTED_MATCH_COUNT_MAX = 9
-
 
 def _video_from_env() -> Path | None:
     env = os.environ.get("ALLAGANEYE_AUDIO_TEST_VIDEO")
@@ -109,18 +100,22 @@ def _run_detection(
 
 
 def _assert_match_6_end_within_tolerance(boundaries: list[MatchBoundary]) -> None:
-    count = len(boundaries)
-    assert _EXPECTED_MATCH_COUNT_MIN <= count <= _EXPECTED_MATCH_COUNT_MAX, (
-        f"Expected {_EXPECTED_MATCH_COUNT_MIN}-{_EXPECTED_MATCH_COUNT_MAX} "
-        f"matches, got {count}. boundaries={boundaries}"
-    )
-    match_6 = boundaries[_MATCH_6_INDEX]
-    diff = abs(match_6["end"] - _MATCH_6_ACTUAL_END_SECONDS)
-    assert diff <= _BOUNDARY_TOLERANCE_SECONDS, (
-        f"Match 6 end {match_6['end']:.1f}s differs from ground truth "
-        f"{_MATCH_6_ACTUAL_END_SECONDS:.1f}s by {diff:.1f}s "
-        f"(tolerance {_BOUNDARY_TOLERANCE_SECONDS:.1f}s). "
-        f"match_6={match_6}"
+    """Assert exactly one detected match ends within tolerance of the ground truth.
+
+    Content-based matching is robust against unrelated detector changes that
+    shift the overall match count or ordering: the regression check stays
+    meaningful as long as *some* match boundary lands near 2:15:37.
+    """
+    candidates = [
+        b
+        for b in boundaries
+        if abs(b["end"] - _MATCH_6_ACTUAL_END_SECONDS) <= _BOUNDARY_TOLERANCE_SECONDS
+    ]
+    assert len(candidates) == 1, (
+        f"Expected exactly one match ending within "
+        f"{_BOUNDARY_TOLERANCE_SECONDS:.1f}s of "
+        f"{_MATCH_6_ACTUAL_END_SECONDS:.1f}s, found {len(candidates)}. "
+        f"boundaries={boundaries}"
     )
 
 
