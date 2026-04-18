@@ -101,7 +101,8 @@ output/
 ├── match_001.mp4
 ├── match_002.mp4
 ├── match_003.mp4
-└── metadata.json
+├── metadata.json         # 分割結果（機械可読）
+└── .detection_cache.json # 検知結果キャッシュ（同一ソース・同一パラメータの再実行を高速化。--no-cache で無視）
 ```
 
 ### Exit Codes
