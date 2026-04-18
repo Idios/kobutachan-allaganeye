@@ -1,0 +1,141 @@
+"""Regression tests for issue #330 Match 6 boundary accuracy (#361).
+
+Verifies that detect_match_boundaries places the end of the 6th match near
+2:15:37 in the 2026-04-08 21-14-05 recording, rather than the 2:16:12 value
+observed before the #361 Prong A3/A4 fix.
+
+Requires:
+- ``ALLAGANEYE_AUDIO_TEST_VIDEO`` pointing to the 2026-04-08 21-14-05 primary
+  recording (same env var used by ``tests/test_audio_integration.py``).
+- ffmpeg/ffprobe in PATH.
+- For the GPU variant, a GPU with hardware acceleration available.
+
+Run with: ``pytest -m slow tests/test_regression_330.py``
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from allaganeye.ffmpeg_path import find_ffmpeg
+from allaganeye.video.detector import (
+    MatchBoundary,
+    detect_match_boundaries,
+)
+from allaganeye.video.probe import ProbeResult, probe_video
+
+pytestmark = pytest.mark.slow
+
+
+# Match 6 actual end (ground truth, 2026-04-08 21-14-05 recording):
+# 2:15:37 = 8137s, from user verification in issue #330.
+_MATCH_6_ACTUAL_END_SECONDS = 8137.0
+_BOUNDARY_TOLERANCE_SECONDS = 10.0
+
+# Match 6 was Match index 5 (0-based) in the observed 8-match detection.
+# See memory `project_audio_primary_recording.md` for expected starts.
+_MATCH_6_INDEX = 5
+
+# Accept a small variance around the expected 8-match count to stay resilient
+# to unrelated detector tweaks; the assertion on Match 6 end is the core check.
+_EXPECTED_MATCH_COUNT_MIN = 7
+_EXPECTED_MATCH_COUNT_MAX = 9
+
+
+def _video_from_env() -> Path | None:
+    env = os.environ.get("ALLAGANEYE_AUDIO_TEST_VIDEO")
+    if not env:
+        return None
+    path = Path(env)
+    return path if path.is_file() else None
+
+
+def _gpu_available() -> bool:
+    try:
+        result = subprocess.run(
+            [find_ffmpeg(), "-hwaccels"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        accels = result.stdout.lower()
+        return any(
+            a in accels for a in ("cuda", "d3d11va", "qsv", "vulkan", "videotoolbox")
+        )
+    except Exception:
+        return False
+
+
+gpu_available = pytest.mark.skipif(
+    not _gpu_available(),
+    reason="No GPU hardware acceleration available",
+)
+
+
+@pytest.fixture(scope="module")
+def primary_video() -> Path:
+    video = _video_from_env()
+    if video is None:
+        pytest.skip(
+            "ALLAGANEYE_AUDIO_TEST_VIDEO not set or file missing; "
+            "expected the 2026-04-08 21-14-05.mkv primary recording"
+        )
+    return video
+
+
+@pytest.fixture(scope="module")
+def primary_metadata(primary_video: Path) -> ProbeResult:
+    return probe_video(primary_video)
+
+
+def _run_detection(
+    video: Path, metadata: ProbeResult, *, use_gpu: bool
+) -> list[MatchBoundary]:
+    return detect_match_boundaries(
+        video,
+        use_gpu=use_gpu,
+        duration_hint=metadata["duration"],
+        sample_interval=2.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        src_resolution=(metadata["width"], metadata["height"]),
+        codec=metadata["codec"],
+    )
+
+
+def _assert_match_6_end_within_tolerance(boundaries: list[MatchBoundary]) -> None:
+    count = len(boundaries)
+    assert _EXPECTED_MATCH_COUNT_MIN <= count <= _EXPECTED_MATCH_COUNT_MAX, (
+        f"Expected {_EXPECTED_MATCH_COUNT_MIN}-{_EXPECTED_MATCH_COUNT_MAX} "
+        f"matches, got {count}. boundaries={boundaries}"
+    )
+    match_6 = boundaries[_MATCH_6_INDEX]
+    diff = abs(match_6["end"] - _MATCH_6_ACTUAL_END_SECONDS)
+    assert diff <= _BOUNDARY_TOLERANCE_SECONDS, (
+        f"Match 6 end {match_6['end']:.1f}s differs from ground truth "
+        f"{_MATCH_6_ACTUAL_END_SECONDS:.1f}s by {diff:.1f}s "
+        f"(tolerance {_BOUNDARY_TOLERANCE_SECONDS:.1f}s). "
+        f"match_6={match_6}"
+    )
+
+
+class TestMatch6BoundaryRegression:
+    """Regression: #330 Match 6 end 35s shift resolved by #361 A3/A4."""
+
+    def test_match_6_boundary_2015_within_tolerance_cpu(
+        self, primary_video: Path, primary_metadata: ProbeResult
+    ) -> None:
+        boundaries = _run_detection(primary_video, primary_metadata, use_gpu=False)
+        _assert_match_6_end_within_tolerance(boundaries)
+
+    @gpu_available
+    def test_match_6_boundary_2015_within_tolerance_gpu(
+        self, primary_video: Path, primary_metadata: ProbeResult
+    ) -> None:
+        boundaries = _run_detection(primary_video, primary_metadata, use_gpu=True)
+        _assert_match_6_end_within_tolerance(boundaries)

@@ -151,14 +151,32 @@ def detect_match_boundaries(
         )
         stats["pass1_elapsed_s"] = pass1_elapsed
 
-    # Collect blackout timestamps in chronological order
-    blackout_times = sorted(t for t, b in results.items() if b < blackout_threshold)
+    # A4 (#361): Pass 1 blackout judgment uses upper hysteresis margin so
+    # borderline frames (e.g. brightness 15.13 when threshold is 15.0) are
+    # treated as blackout.  Pass 2 precise measurement later rejects false
+    # positives introduced by the wider net.
+    pass1_blackout_threshold = blackout_threshold + _BLACKOUT_THRESHOLD_UPPER_MARGIN
+    blackout_times = sorted(
+        t for t, b in results.items() if b < pass1_blackout_threshold
+    )
 
     # Group into regions and expand with transition frames (#71)
     blackout_regions = _group_blackout_regions(blackout_times, sample_interval)
     blackout_regions = _expand_regions_with_transitions(
         blackout_regions, results, sample_interval, _TRANSITION_THRESHOLD
     )
+
+    # A3 (#361): add +-_BORDERLINE_REFINE_RADIUS pseudo-regions around Pass 1
+    # borderline frames so Pass 2's 0.25s probing covers short blackouts
+    # (<=2.5s) that Pass 1 missed due to sample_interval alignment.
+    if _ENABLE_BORDERLINE_REFINEMENT:
+        borderline_regions = _borderline_pseudo_regions(
+            results, blackout_threshold, duration_hint
+        )
+        if borderline_regions:
+            blackout_regions = _merge_regions(
+                blackout_regions + borderline_regions, sample_interval
+            )
 
     # Progress tracking for Pass 2 + scorebar filtering.
     # Total is initially set for Pass 2 only, then updated after Pass 2
@@ -809,6 +827,40 @@ included in the expanded region, allowing short blackouts followed by
 lobby screens to be detected as match boundaries.
 """
 
+_BLACKOUT_THRESHOLD_UPPER_MARGIN = 2.0
+"""Upper hysteresis margin for Pass 1 blackout judgment (#361).
+
+Pass 1 judges a frame as blackout when ``brightness < blackout_threshold +
+_BLACKOUT_THRESHOLD_UPPER_MARGIN``.  Catches frames that sit just above
+the strict threshold due to decoder-path variance (chunked fps filter vs
+single-frame decode returning different brightnesses for the same
+timestamp).  False positives are rejected by Pass 2 precise 0.25s
+measurement and scorebar classification.
+
+Set to 0.0 to disable A4 hysteresis (pre-#361 behavior).
+"""
+
+_ENABLE_BORDERLINE_REFINEMENT = True
+"""If True, Pass 2 refines +-_BORDERLINE_REFINE_RADIUS around Pass 1
+borderline frames (#361).
+
+Borderline = brightness in ``[blackout_threshold, blackout_threshold * 2)``.
+These are near-miss frames that may surround short blackouts (<=2.5s)
+missed by Pass 1 sample_interval.  Adding +-3s windows to Pass 2's
+refinement set lets 0.25s probing catch the real blackout even if
+Pass 1 never saw a frame below threshold.
+
+Set to False to restore pre-#361 behavior.
+"""
+
+_BORDERLINE_REFINE_RADIUS = 3.0
+"""Seconds on each side of borderline timestamps added to Pass 2 refinement (#361).
+
++-3s covers the worst case of a 2.5s blackout centered between two
+Pass 1 samples spaced 3s apart.  Pass 2's own +-_REFINE_WINDOW (5s)
+further extends the probe window, so effective coverage is +-8s.
+"""
+
 _REFINE_INTERVAL = 0.25
 """Fine interval for 2nd-pass re-probing of blackout candidates."""
 
@@ -829,6 +881,46 @@ With ``-c copy``, FFmpeg can only cut at keyframes (~2s apart for OBS).
 By placing cut points inside blackout regions, keyframe drift never
 clips actual match footage.
 """
+
+
+def _borderline_pseudo_regions(
+    results: dict[float, float],
+    blackout_threshold: float,
+    total_duration: float,
+) -> list[tuple[float, float]]:
+    """Build pseudo-regions around Pass 1 borderline frames (A3, #361).
+
+    A borderline frame sits in ``[blackout_threshold, blackout_threshold * 2)``
+    -- close to blackout but not dark enough to pass the strict Pass 1 cut.
+    Each borderline timestamp produces a +-``_BORDERLINE_REFINE_RADIUS``
+    window so Pass 2 precise sampling probes around it.
+    """
+    radius = _BORDERLINE_REFINE_RADIUS
+    upper = blackout_threshold * 2
+    return [
+        (max(0.0, t - radius), min(total_duration, t + radius))
+        for t, b in results.items()
+        if blackout_threshold <= b < upper
+    ]
+
+
+def _merge_regions(
+    regions: list[tuple[float, float]],
+    sample_interval: float,
+) -> list[tuple[float, float]]:
+    """Sort and merge overlapping or adjacent (start, end) regions."""
+    if not regions:
+        return []
+    tolerance = sample_interval * 2
+    sorted_regions = sorted(regions)
+    merged: list[tuple[float, float]] = [sorted_regions[0]]
+    for start, end in sorted_regions[1:]:
+        prev_start, prev_end = merged[-1]
+        if start - prev_end <= tolerance:
+            merged[-1] = (prev_start, max(prev_end, end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def _group_blackout_regions(
