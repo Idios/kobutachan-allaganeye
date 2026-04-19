@@ -1744,6 +1744,86 @@ def test_verbose_dry_run_emits_total(
     mock_split.assert_not_called()
 
 
+def _seed_cache(source: Path, output_dir: Path, config: SplitConfig) -> None:
+    """Write a .detection_cache.json entry matching ``config`` so ``_load_cache``
+    hits.  Helper for cache-hit tests (#381)."""
+    source.write_bytes(b"")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _save_cache(
+        output_dir / ".detection_cache.json",
+        source,
+        PROBE_RESULT,
+        config.sample_interval,
+        config,
+        BOUNDARIES,
+    )
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_split_emits_total(mock_probe, mock_split, tmp_path, capsys):
+    """Verbose + cache-hit + split path must emit the Total: line (#381).
+
+    Previously only the cache-miss paths emitted Total:, so users who ran
+    repeatedly saw "split done, no timing" which broke the UX symmetry.
+    """
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    _seed_cache(source, tmp_path, config)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True)
+
+    out = capsys.readouterr().out
+    assert "(cached)" in out, "cache hit path expected"
+    assert "Total:" in out, (
+        f"verbose+cache+split must emit Total: line (#381)\n--- captured ---\n{out}"
+    )
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_dry_run_emits_total(
+    mock_probe, mock_split, tmp_path, capsys
+):
+    """Verbose + cache-hit + dry-run path must also emit Total: (#381)."""
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(output_dir=tmp_path, dry_run=True, min_match_duration=60.0)
+    _seed_cache(source, tmp_path, config)
+
+    mock_probe.return_value = PROBE_RESULT
+
+    run_split(source, config, verbose=True)
+
+    out = capsys.readouterr().out
+    assert "Dry run: skipping split" in out
+    assert "Total:" in out
+    mock_split.assert_not_called()
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_cache_hit_quiet_suppresses_total(mock_probe, mock_split, tmp_path, capsys):
+    """Quiet mode suppresses Total: even on cache-hit split path (#381).
+
+    _emit_total_time gates on both verbose and show, so quiet (show=False)
+    must still hide Total: regardless of verbose setting.
+    """
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    _seed_cache(source, tmp_path, config)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True, quiet=True)
+
+    out = capsys.readouterr().out
+    assert "Total:" not in out
+
+
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
