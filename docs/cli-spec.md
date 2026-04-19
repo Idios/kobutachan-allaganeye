@@ -84,6 +84,8 @@ Splitting  #################################### 100% 0:00:05
 | `source_duration` | float | 入力動画の総再生時間（秒） |
 | `source_duration_display` | string | 総再生時間の表示形式（MM:SS or H:MM:SS） |
 | `note` | string | キーフレーム精度に関する注意書き |
+| `detected_at` | string | **metadata.json 生成時刻** (UTC ISO 8601 秒精度、`Z` 終端、例: `"2026-04-19T12:34:56Z"`)。`run_split` 開始直後に生成し、キャッシュヒット時も本ランの生成時刻を記録する。検知自体が cache から復元されたか否かではなく、当該 metadata ファイルがいつ書き出されたかのトレーサビリティとして機能する |
+| `detection_params` | object | 検知パラメータのスナップショット（下表） |
 | `matches` | array | 検出された試合セグメント |
 | `gaps` | array | 試合間の有意なギャップ（>=5分） |
 
@@ -111,6 +113,20 @@ Splitting  #################################### 100% 0:00:05
 | `end_display` | string | ギャップ終了時刻の表示形式 |
 | `duration` | float | ギャップ時間（秒） |
 | `duration_display` | string | ギャップ時間の表示形式 |
+
+**detection_params:**
+
+検知実行時の設定スナップショット。`.detection_cache.json` の `params` と重複するキーは同一値になる（互換性のため）。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `sample_interval` | float | 実効サンプリング間隔（秒）。長時間動画では `_auto_sample_interval` によってユーザー指定値から自動調整された値。`.detection_cache.json` の `params.sample_interval` と同じ値 |
+| `blackout_threshold` | float | 暗転検知の輝度閾値（0-255） |
+| `min_match_duration` | float | 最小試合時間（秒） |
+| `min_blackout_duration` | float | 最小暗転時間（秒） |
+| `no_audio` | bool | 音声ベースの境界昇格 (Fanfare スキャン) を無効化したか |
+| `use_gpu` | bool \| null | GPU 検知の指定値。`null` は CLI で `--gpu` を指定せずコーデック自動選択に任せたことを示す |
+| `workers` | int \| null | 並列ワーカー数の指定値。`null` は auto（`_resolve_workers` が `min(cpu_count, 24)` で解決）を示す |
 
 ## debug-brightness コマンド
 

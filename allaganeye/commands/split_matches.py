@@ -5,6 +5,7 @@ import logging
 import re
 import shutil
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypedDict
 
@@ -52,6 +53,7 @@ def run_split(
     show = not quiet
 
     total_start = time.monotonic()
+    detected_at = _iso_utc_now()
 
     if verbose and show:
         _print_environment_header()
@@ -96,7 +98,14 @@ def run_split(
                 video_path, boundaries, metadata["duration"], config, show=show
             )
             _split_and_write_metadata(
-                video_path, boundaries, gaps, metadata, config, quiet=quiet
+                video_path,
+                boundaries,
+                gaps,
+                metadata,
+                config,
+                effective_interval=effective_interval,
+                detected_at=detected_at,
+                quiet=quiet,
             )
             _emit_total_time(total_start, verbose, show)
             return
@@ -180,7 +189,14 @@ def run_split(
 
     _check_disk_space(video_path, boundaries, metadata["duration"], config, show=show)
     _split_and_write_metadata(
-        video_path, boundaries, gaps, metadata, config, quiet=quiet
+        video_path,
+        boundaries,
+        gaps,
+        metadata,
+        config,
+        effective_interval=effective_interval,
+        detected_at=detected_at,
+        quiet=quiet,
     )
     _emit_total_time(total_start, verbose, show)
 
@@ -556,6 +572,8 @@ def _split_and_write_metadata(
     metadata: ProbeResult,
     config: SplitConfig,
     *,
+    effective_interval: float,
+    detected_at: str,
     quiet: bool = False,
 ) -> None:
     """Split video and write metadata.json."""
@@ -596,6 +614,16 @@ def _split_and_write_metadata(
             "Actual start/end may differ by up to the source keyframe interval "
             "(typically 2s for OBS recordings)."
         ),
+        "detected_at": detected_at,
+        "detection_params": {
+            "sample_interval": effective_interval,
+            "blackout_threshold": config.blackout_threshold,
+            "min_match_duration": config.min_match_duration,
+            "min_blackout_duration": config.min_blackout_duration,
+            "no_audio": config.no_audio,
+            "use_gpu": config.use_gpu,
+            "workers": config.workers,
+        },
         "matches": [
             {
                 "index": i + 1,
@@ -796,6 +824,15 @@ def _emit_total_time(total_start: float, verbose: bool, show: bool) -> None:
     """
     if verbose and show:
         typer.echo(f"Total: {_format_duration(time.monotonic() - total_start)}")
+
+
+def _iso_utc_now() -> str:
+    """UTC timestamp in ISO 8601 with 'Z' suffix, e.g. '2026-04-19T12:34:56Z'.
+
+    Used for metadata.json `detected_at` (#370).  Second precision keeps the
+    string human-readable without losing practical reproducibility.
+    """
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _auto_sample_interval(duration: float, configured_interval: float) -> float:

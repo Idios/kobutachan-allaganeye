@@ -428,6 +428,142 @@ def test_metadata_gaps_shape_consistent_across_multiple_gaps(
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
+def test_metadata_detection_params_present(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """metadata.json records detection_params and detected_at (#370)."""
+    from datetime import UTC, datetime
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(
+        output_dir=tmp_path,
+        sample_interval=1.5,
+        blackout_threshold=20.0,
+        min_match_duration=120.0,
+        min_blackout_duration=4.0,
+        no_audio=True,
+        use_gpu=True,
+        workers=8,
+    )
+
+    run_split(Path("input.mp4"), config)
+
+    data = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+
+    assert "detection_params" in data, "metadata.json missing detection_params"
+    params = data["detection_params"]
+    expected_keys = {
+        "sample_interval",
+        "blackout_threshold",
+        "min_match_duration",
+        "min_blackout_duration",
+        "no_audio",
+        "use_gpu",
+        "workers",
+    }
+    assert set(params) == expected_keys, (
+        f"detection_params keys mismatch: {set(params) ^ expected_keys}"
+    )
+
+    # Values must reflect runtime SplitConfig.  sample_interval is the
+    # effective (post-auto-adjust) value to stay in sync with
+    # .detection_cache.json params; with 1800s duration + 1.5s requested,
+    # auto-adjust is a no-op so it equals the requested value.
+    assert params["sample_interval"] == 1.5
+    assert params["blackout_threshold"] == 20.0
+    assert params["min_match_duration"] == 120.0
+    assert params["min_blackout_duration"] == 4.0
+    assert params["no_audio"] is True
+    assert params["use_gpu"] is True
+    assert params["workers"] == 8
+
+    # detected_at is ISO 8601 UTC with 'Z' suffix and parseable.
+    detected_at = data["detected_at"]
+    assert isinstance(detected_at, str), "detected_at must be string"
+    assert detected_at.endswith("Z"), f"detected_at must end with 'Z': {detected_at!r}"
+    parsed = datetime.fromisoformat(detected_at.replace("Z", "+00:00"))
+    offset = parsed.utcoffset()
+    assert offset is not None and offset.total_seconds() == 0, (
+        "detected_at must be UTC (offset 0)"
+    )
+    # Sanity: within one minute of wall clock.
+    delta = abs((datetime.now(UTC) - parsed).total_seconds())
+    assert delta < 60, f"detected_at drifted from now by {delta}s"
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_metadata_detection_params_none_serializes_null(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """None values (workers=auto, use_gpu=auto) serialize as JSON null (#370)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(
+        output_dir=tmp_path,
+        min_match_duration=60.0,
+        workers=None,
+        use_gpu=None,  # type: ignore[arg-type]
+    )
+
+    run_split(Path("input.mp4"), config)
+
+    data = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+    assert data["detection_params"]["workers"] is None
+    assert data["detection_params"]["use_gpu"] is None
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_metadata_detection_params_match_cache(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """metadata.json detection_params match .detection_cache.json params (#370).
+
+    Overlapping keys must have identical values so L3 consumers can treat
+    cache and metadata interchangeably.
+    """
+    # _save_cache requires the source file to exist for stat().
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(
+        output_dir=tmp_path,
+        sample_interval=2.0,
+        blackout_threshold=18.0,
+        min_match_duration=180.0,
+        min_blackout_duration=2.5,
+        no_audio=False,
+    )
+
+    run_split(source, config)
+
+    meta = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+    cache = json.loads((tmp_path / ".detection_cache.json").read_text(encoding="utf-8"))
+
+    shared_keys = (
+        "sample_interval",
+        "blackout_threshold",
+        "min_match_duration",
+        "min_blackout_duration",
+        "no_audio",
+    )
+    for key in shared_keys:
+        assert meta["detection_params"][key] == cache["params"][key], (
+            f"detection_params/{key} diverges from cache/{key}"
+        )
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
 def test_pipeline_output_dir_created(mock_probe, mock_detect, mock_split, tmp_path):
     """Output directory is created if it doesn't exist."""
     output = tmp_path / "subdir" / "output"

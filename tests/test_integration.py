@@ -194,7 +194,15 @@ def pipeline_result(
             min_match_duration=300.0,
         )
         gaps = _find_gaps(boundaries, meta["duration"], min_gap=300.0)
-        _split_and_write_metadata(source_mkv, boundaries, gaps, meta, config)
+        _split_and_write_metadata(
+            source_mkv,
+            boundaries,
+            gaps,
+            meta,
+            config,
+            effective_interval=config.sample_interval,
+            detected_at="1970-01-01T00:00:00Z",
+        )
     else:
         name = source_mkv.parent.name
         print(f"\n[cache] MISS pipeline_result for {name}")
