@@ -200,6 +200,37 @@ def test_match_list_no_marker_when_all_fl_match(
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
+def test_match_list_handles_missing_type_key(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Boundary dict without ``type`` key yields no marker and no error (#382).
+
+    Legacy cache / older metadata payloads may ship MatchBoundary-shaped
+    dicts that omit ``type``.  The display code uses ``b.get("type")``
+    defensively; this test pins that contract so a future refactor to
+    ``b["type"]`` fails loudly here rather than KeyError-ing at runtime.
+    """
+    no_type_boundaries: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0},  # type: ignore[typeddict-item]
+        {"start": 610.0, "end": 1200.0},  # type: ignore[typeddict-item]
+    ]
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = no_type_boundaries
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+    out = capsys.readouterr().out
+
+    # No marker, no crash, and the Match lines still render.
+    assert "[unknown]" not in out
+    match_lines = [ln for ln in out.splitlines() if ln.strip().startswith("Match ")]
+    assert len(match_lines) == 2
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
 def test_metadata_output_file_uses_posix_separator(
     mock_probe, mock_detect, mock_split, tmp_path
 ):
@@ -2272,6 +2303,32 @@ def test_probe_ffmpeg_version_unknown_when_format_unexpected():
     with patch("subprocess.run", return_value=mock_result):
         result = _probe_ffmpeg_version()
     assert result == "(unknown)"
+
+
+@pytest.mark.parametrize(
+    ("raw_first_line", "expected"),
+    [
+        # 'v' prefix is less common than 'n' but the regex supports both.
+        # Pin this so a future regex narrowing to ``^n?`` surfaces here.
+        ("ffmpeg version v7.0 Copyright (c) 2000-2024", "7.0"),
+        ("ffmpeg version v6.1.1-custom Copyright (c) 2000-2023", "6.1.1"),
+    ],
+)
+def test_probe_ffmpeg_version_handles_v_prefix(raw_first_line, expected):
+    """'v' prefix variant is trimmed just like 'n' (#383).
+
+    The parametric coverage in the PR focuses on ``n`` (BtbN nightly style)
+    and bare numerics.  ``^[nv]?`` in the regex also accepts ``v`` -- pin
+    that explicitly so a narrowing to ``^n?`` would fail loudly.
+    """
+    from unittest.mock import MagicMock
+
+    from allaganeye.commands.split_matches import _probe_ffmpeg_version
+
+    mock_result = MagicMock(stdout=raw_first_line + "\n")
+    with patch("subprocess.run", return_value=mock_result):
+        result = _probe_ffmpeg_version()
+    assert result == expected
 
 
 # --- ETA formatter (issue #333) ---
