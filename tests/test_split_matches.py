@@ -146,6 +146,60 @@ def test_pipeline_metadata_json_content(mock_probe, mock_detect, mock_split, tmp
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
+def test_match_list_marks_unknown_type(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Match list marks unknown-type segments with '[unknown]' (#382).
+
+    Users need to see at a glance which matches are uncertain (recording
+    started/ended mid-match) vs full fl_match runs without opening
+    metadata.json.  fl_match segments stay unmarked to avoid noise.
+    """
+    mixed: list[MatchBoundary] = [
+        {"start": 0.0, "end": 917.0, "type": "unknown"},
+        {"start": 1129.0, "end": 2091.0, "type": "fl_match"},
+        {"start": 2437.5, "end": 3473.0, "type": "fl_match"},
+    ]
+    mock_probe.return_value = {**PROBE_RESULT, "duration": 4000.0}
+    mock_detect.return_value = mixed
+    mock_split.return_value = [tmp_path / f"match_{i:03d}.mp4" for i in range(1, 4)]
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+    out = capsys.readouterr().out
+
+    # The unknown-type row must carry the marker; the fl_match rows must not.
+    lines = [line for line in out.splitlines() if line.strip().startswith("Match ")]
+    assert len(lines) == 3, f"expected 3 Match lines, got: {lines!r}"
+    assert "[unknown]" in lines[0], f"Match 1 should be marked: {lines[0]!r}"
+    assert "[unknown]" not in lines[1], f"Match 2 should be clean: {lines[1]!r}"
+    assert "[unknown]" not in lines[2], f"Match 3 should be clean: {lines[2]!r}"
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_match_list_no_marker_when_all_fl_match(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """When every match is fl_match, no '[unknown]' markers appear (#382)."""
+    all_fl: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "fl_match"},
+        {"start": 610.0, "end": 1200.0, "type": "fl_match"},
+    ]
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = all_fl
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+    out = capsys.readouterr().out
+    assert "[unknown]" not in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
 def test_metadata_output_file_uses_posix_separator(
     mock_probe, mock_detect, mock_split, tmp_path
 ):
