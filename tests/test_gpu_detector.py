@@ -341,6 +341,107 @@ class TestScanGpu:
         assert result[324.0] == pytest.approx(5.0)
         assert result[327.0] == pytest.approx(200.0)
 
+    # ------------------------------------------------------------
+    # Parametric duration/interval sweep + short-video edge case
+    # (#392 follow-up - extends engineer-1's single-case tests)
+    # ------------------------------------------------------------
+    #
+    # ``test_dispatched_timestamps_match_cpu_grid_exactly`` covers a
+    # single (1000, 3.0) configuration and
+    # ``test_chunk_count_reported_via_callback_matches_dispatched`` only
+    # pins the short-video (10, 3.0) shape.  These bounded parametric
+    # cases sweep additional boundary conditions so regressions in the
+    # per-chunk slicing logic (``[t for t in global_grid if start <= t <
+    # end]``) show up here instead of on a user's 30-second clip.
+
+    @pytest.mark.parametrize(
+        ("duration", "interval"),
+        [
+            (48.0, 3.0),  # exact divide (16 chunks * 3s each)
+            (100.0, 3.0),  # partial final chunk
+            (60.0, 2.5),  # non-integer interval (L1 auto-adjust)
+            (30.0, 3.0),  # target_chunks (16) vs 10 available slots
+            (5.0, 3.0),  # ultra-short: most chunks collapse
+            (100.0, 5.0),  # large interval
+            (3.0, 3.0),  # duration == interval
+            (8.0, 3.0),  # short with 3 grid points
+        ],
+    )
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_dispatched_timestamps_match_cpu_grid_parametric(
+        self, mock_decode, duration, interval
+    ):
+        """dispatched timestamps union == _generate_timestamps across cases.
+
+        The strongest contract for #392: regardless of duration/interval,
+        the per-chunk ``chunk_timestamps`` slices together must equal the
+        CPU grid with no duplicates and no missing points.  A broken
+        per-chunk filter (``start <= t < end``) would drop boundary
+        points or re-emit them in two chunks; either would fail here.
+        """
+        from allaganeye.video.detector import _generate_timestamps
+
+        mock_decode.return_value = ({}, "")
+        scan_gpu(Path("test.mp4"), duration, interval, 15.0)
+
+        dispatched: list[float] = []
+        for call in mock_decode.call_args_list:
+            ts = call.kwargs.get("chunk_timestamps")
+            if ts is None and len(call.args) >= 6:
+                ts = call.args[5]
+            assert ts is not None, (
+                f"scan_gpu must pass chunk_timestamps (duration={duration}, "
+                f"interval={interval})"
+            )
+            dispatched.extend(ts)
+
+        expected = _generate_timestamps(duration, interval)
+        assert sorted(dispatched) == expected, (
+            f"grid mismatch for duration={duration}, interval={interval}: "
+            f"missing={sorted(set(expected) - set(dispatched))}, "
+            f"extra={sorted(set(dispatched) - set(expected))}"
+        )
+        # No duplicates across chunks (same frame dispatched twice would
+        # confuse _decode_chunk's frame_idx labeling).
+        assert len(dispatched) == len(set(dispatched)), (
+            f"duplicate timestamps dispatched for duration={duration}, "
+            f"interval={interval}"
+        )
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_ultra_short_video_dispatches_minimum_chunks(self, mock_decode):
+        """Ultra-short video (duration < chunk_duration_target) collapses cleanly.
+
+        For duration=5 / interval=3, only 2 grid points exist (0.0, 3.0)
+        but target_chunks=16.  All intermediate chunks collapse to
+        zero-grid-points and are dropped by ``if chunk_timestamps:``.
+        The call must still dispatch at least one chunk covering those
+        2 points, and the callback's total must match actual dispatches.
+        """
+        from allaganeye.video.detector import _generate_timestamps
+
+        mock_decode.return_value = ({}, "")
+        scan_gpu(Path("test.mp4"), 5.0, 3.0, 15.0)
+
+        expected_grid = _generate_timestamps(5.0, 3.0)
+        # Few chunks dispatched, but their union covers the full grid.
+        dispatched: list[float] = []
+        for call in mock_decode.call_args_list:
+            ts = call.kwargs.get("chunk_timestamps")
+            if ts is None and len(call.args) >= 6:
+                ts = call.args[5]
+            dispatched.extend(ts or [])
+
+        assert sorted(dispatched) == expected_grid, (
+            f"short-video grid mismatch: dispatched={sorted(dispatched)}, "
+            f"expected={expected_grid}"
+        )
+        # ``target_chunks`` (16) is too high for 5 seconds -- collapse
+        # must cull degenerate chunks rather than dispatching 16.
+        assert mock_decode.call_count < 16, (
+            f"too many chunks for short video: {mock_decode.call_count}"
+        )
+
 
 class TestGpuFallbackIntegration:
     @patch("allaganeye.video.detector._scan_cpu")
