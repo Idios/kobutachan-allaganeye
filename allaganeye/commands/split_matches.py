@@ -85,6 +85,12 @@ def run_split(
         cached = _load_cache(cache_path, video_path, effective_interval, config)
         if cached is not None:
             boundaries = cached
+            # Surface the detection context that the cached run used (#380).
+            # Without this, verbose+cached prints only "Detected ... (cached)"
+            # which strips the parameter summary users rely on for
+            # troubleshooting (interval / threshold / audio state).
+            if show and verbose:
+                _display_cache_hit_params(cache_path, config)
             if show:
                 _display_results(boundaries, metadata, video_path, verbose, cached=True)
             gaps = _find_gaps(boundaries, metadata["duration"], min_gap=300.0)
@@ -239,6 +245,45 @@ def _display_gaps(gaps: list[Gap]) -> None:
             f"{_format_timestamp(gap['end'])} "
             f"({_format_duration(gap['duration'])})"
         )
+
+
+def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
+    """Echo the cached run's detection parameters for verbose + cache-hit (#380).
+
+    When ``.detection_cache.json`` hits, ``run_split`` early-returns before
+    the cache-miss path prints its ``Detecting match boundaries (...)``
+    summary, which strips every parameter a troubleshoot report relies on.
+    This surfaces the same params from the cache itself so verbose output
+    stays informative whether or not Pass 1/2 ran.
+
+    Falls back silently if the cache is unreadable or params are missing:
+    ``_load_cache`` already decided the cache was valid, so a read failure
+    here is a race / corruption edge case that shouldn't block the split.
+    """
+    try:
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.debug("Cannot re-read cache for verbose params: %s", cache_path)
+        return
+
+    params = data.get("params", {})
+    if not isinstance(params, dict) or not params:
+        return
+
+    # The cached ``audio`` state is recorded in ``params.no_audio`` (bool).
+    # Live-probe AUDIO_FROZEN so the verbose line mirrors `_run_audio_scan`
+    # behaviour for the current run, same as the cache-miss summary.
+    cached_no_audio = bool(params.get("no_audio", config.no_audio))
+
+    typer.echo(f"Cache hit: detection params from {cache_path.name}")
+    typer.echo(
+        "  "
+        f"sample_interval={params.get('sample_interval', '?')}s, "
+        f"threshold={params.get('blackout_threshold', '?')}, "
+        f"min_match={params.get('min_match_duration', '?')}s, "
+        f"min_blackout={params.get('min_blackout_duration', '?')}s, "
+        f"audio={_audio_status_str(cached_no_audio)}"
+    )
 
 
 def _workers_summary_str(workers: int | None) -> str:

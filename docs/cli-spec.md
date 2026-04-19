@@ -82,6 +82,30 @@ Splitting  #################################### 100% 0:00:05
 
 HW 情報は全て best-effort。取得失敗しても `(unavailable)` を返すのみで検知は継続する。`psutil` 等の重量依存は使わず、OS ネイティブツール (`wmic` / `nvidia-smi` / `/proc` / `sysctl`) を subprocess で呼び出す。
 
+### verbose + キャッシュヒット時の出力 (#380)
+
+`.detection_cache.json` がヒットすると Pass 1 / Pass 2 は実行されないため、検知フェーズの summary や progress bar は出力されない。代わりに verbose モードではキャッシュに記録された検知パラメータを表示し、troubleshoot に必要な context を保つ:
+
+```
+allaganeye 0.1.1 (ffmpeg 8.1, Python 3.12.10, Windows 11)
+  CPU: AMD Ryzen 9 9950X3D (16C/32T)
+  GPU: NVIDIA GeForce RTX 5090 (32GB VRAM)
+  Memory: 61.6 GB
+  Disk: 1359.5 / 3726.0 GB free on E:
+Probing: recording.mkv
+  Duration: 10228.7s, Resolution: 1920x1080, FPS: 60.00, Codec: h264
+Cache hit: detection params from .detection_cache.json
+  sample_interval=3.0s, threshold=15.0, min_match=300.0s, min_blackout=3.0s, audio=frozen
+Detected 8 match(es) in recording.mkv (2:50:28) (cached)
+  Match 1:   00:00 -   15:17  (15m17s)  [unknown]
+  ...
+Splitting  #################################### 100% 0:00:05
+  Splitting: 8 matches, 0m05s
+Total: 0m07s
+```
+
+`audio` 表示は cache-miss 側の Detecting summary と同じヘルパ (`_audio_status_str`) を経由するため、`AUDIO_FROZEN` 状態を反映する (#384)。キャッシュファイル自体が `_load_cache` 検証をパスしているため、このセクションではキャッシュ読み直しに失敗しても警告を出さず無言で fallback する (読み取り時点ではキャッシュパラメータは既に検証済み)。
+
 ### 検知フェーズの進捗バー (#368 / #393)
 
 検知パイプラインは 3 フェーズに分かれ、それぞれ独立した進捗バーを 1 行ずつ表示する:
