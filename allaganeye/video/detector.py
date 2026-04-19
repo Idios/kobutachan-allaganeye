@@ -179,9 +179,9 @@ def detect_match_boundaries(
             )
 
     # Progress tracking for Pass 2 + scorebar filtering.
-    # Total is initially set for Pass 2 only, then updated after Pass 2
-    # when the actual refined_regions count is known for scorebar.
-    refine_total = len(blackout_regions)
+    # Pass 2 publishes the actual probe count via its progress_callback;
+    # scorebar bumps the total later when refined_regions is known.
+    refine_total = 0
     refine_completed = 0
 
     def _refine_step() -> None:
@@ -190,18 +190,29 @@ def detect_match_boundaries(
         if refine_progress_callback is not None:
             refine_progress_callback(refine_completed, refine_total)
 
-    # 2nd pass: refine blackout regions at fine interval (#77)
+    def _on_refine_probe(completed: int, total: int) -> None:
+        nonlocal refine_completed, refine_total
+        refine_total = total
+        refine_completed = completed
+        if refine_progress_callback is not None:
+            refine_progress_callback(refine_completed, refine_total)
+
+    # 2nd pass: refine blackout regions at fine interval (#77).
+    # progress_callback fires per probe so the Refining bar advances during
+    # the long ThreadPoolExecutor wait (#366).
     pass2_start = time.monotonic()
     refined_regions = _refine_blackout_regions(
-        video_path, blackout_regions, blackout_threshold, duration_hint, workers
+        video_path,
+        blackout_regions,
+        blackout_threshold,
+        duration_hint,
+        workers,
+        progress_callback=_on_refine_probe,
     )
     pass2_elapsed = time.monotonic() - pass2_start
     if stats is not None:
         stats["pass2_regions"] = len(refined_regions)
         stats["pass2_elapsed_s"] = pass2_elapsed
-    # Report Pass 2 completion (one step per original region)
-    for _ in blackout_regions:
-        _refine_step()
 
     # Scorebar-based filtering: remove in-match and non-FL blackouts (#111)
     region_classifications: list[str] | None = None
@@ -1012,12 +1023,18 @@ def _refine_blackout_regions(
     blackout_threshold: float,
     total_duration: float,
     workers: int | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[tuple[float, float]]:
     """Re-probe blackout regions at fine interval for precise duration.
 
     For each region, probes +-_REFINE_WINDOW seconds at _REFINE_INTERVAL
     to get an accurate measurement of the blackout duration.  Returns
     updated regions with refined start/end times.
+
+    *progress_callback* fires once before probing with ``(0, total_probes)``
+    to publish the total, then once per completed probe with the running
+    ``(completed, total)``.  This lets callers drive a progress bar during
+    the long ThreadPoolExecutor wait (#366).
     """
     if not blackout_regions:
         return blackout_regions
@@ -1037,17 +1054,25 @@ def _refine_blackout_regions(
     # Parallel probes
     results: dict[float, float] = {}
     sorted_probes = sorted(probe_timestamps)
+    total_probes = len(sorted_probes)
+
+    if progress_callback is not None:
+        progress_callback(0, total_probes)
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
             pool.submit(_probe_single_frame, video_path, t): t for t in sorted_probes
         }
+        completed = 0
         for future in as_completed(futures):
             t = futures[future]
             try:
                 results[t] = future.result()
             except VideoProcessingError:
                 results[t] = 255.0
+            completed += 1
+            if progress_callback is not None:
+                progress_callback(completed, total_probes)
 
     # Re-extract blackout regions from fine-grained data
     fine_blackout_times = sorted(

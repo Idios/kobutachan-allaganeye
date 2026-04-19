@@ -806,6 +806,23 @@ class TestRefineProgressBar:
         def on_refine(completed: int, total: int) -> None:
             calls.append((completed, total))
 
+        def refine_side_effect(
+            video_path,
+            blackout_regions,
+            blackout_threshold,
+            duration_hint,
+            workers,
+            *,
+            progress_callback=None,
+        ):
+            # Mimic Pass 2: publish total then advance per probe (#366)
+            total_probes = 4
+            if progress_callback is not None:
+                progress_callback(0, total_probes)
+                for i in range(1, total_probes + 1):
+                    progress_callback(i, total_probes)
+            return [(0.0, 5.0)]
+
         # Use a minimal mock: scan_cpu returns a blackout region so Pass 2 fires
         with (
             patch(
@@ -814,7 +831,7 @@ class TestRefineProgressBar:
             ),
             patch(
                 "allaganeye.video.detector._refine_blackout_regions",
-                return_value=[(0.0, 5.0)],
+                side_effect=refine_side_effect,
             ),
             patch(
                 "allaganeye.video.scorebar.filter_blackouts_with_scorebar",
@@ -843,6 +860,23 @@ class TestRefineProgressBar:
         def on_refine(completed: int, total: int) -> None:
             calls.append((completed, total))
 
+        def refine_side_effect(
+            video_path,
+            blackout_regions,
+            blackout_threshold,
+            duration_hint,
+            workers,
+            *,
+            progress_callback=None,
+        ):
+            # Mimic Pass 2: publish total then advance per probe (#366)
+            total_probes = 6
+            if progress_callback is not None:
+                progress_callback(0, total_probes)
+                for i in range(1, total_probes + 1):
+                    progress_callback(i, total_probes)
+            return [(0.0, 5.0), (15.0, 20.0), (25.0, 30.0)]
+
         # 2 blackout regions from Pass 1, 3 refined regions for scorebar
         with (
             patch(
@@ -851,7 +885,7 @@ class TestRefineProgressBar:
             ),
             patch(
                 "allaganeye.video.detector._refine_blackout_regions",
-                return_value=[(0.0, 5.0), (15.0, 20.0), (25.0, 30.0)],
+                side_effect=refine_side_effect,
             ),
             patch(
                 "allaganeye.video.scorebar.filter_blackouts_with_scorebar",
