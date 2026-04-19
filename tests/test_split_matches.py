@@ -1790,6 +1790,67 @@ def test_probe_ffmpeg_version_returns_unknown_on_failure():
     assert result == "(unknown)"
 
 
+# --- ffmpeg version string trimming (#383) ---
+
+
+@pytest.mark.parametrize(
+    ("raw_first_line", "expected"),
+    [
+        # Windows Gyan full build: the original #383 reproduction
+        (
+            "ffmpeg version 8.1-full_build-www.gyan.dev Copyright (c) 2000-2025",
+            "8.1",
+        ),
+        # Linux distribution build with Ubuntu patch metadata
+        (
+            "ffmpeg version 4.4.2-0ubuntu0.22.04.1 Copyright (c) 2000-2021",
+            "4.4.2",
+        ),
+        # BtbN 'n' prefix (common on nightly CI builds)
+        ("ffmpeg version n7.1 Copyright (c) 2000-2024", "7.1"),
+        # essentials_build variant
+        ("ffmpeg version 6.0-essentials_build-www.gyan.dev", "6.0"),
+        # Bare version (macOS Homebrew style)
+        ("ffmpeg version 5.1.4 Copyright (c) 2000-2023", "5.1.4"),
+    ],
+)
+def test_probe_ffmpeg_version_trims_build_metadata(raw_first_line, expected):
+    """_probe_ffmpeg_version returns major.minor[.patch] only (#383)."""
+    from unittest.mock import MagicMock
+
+    from allaganeye.commands.split_matches import _probe_ffmpeg_version
+
+    mock_result = MagicMock(stdout=raw_first_line + "\n")
+    with patch("subprocess.run", return_value=mock_result):
+        result = _probe_ffmpeg_version()
+    assert result == expected
+
+
+def test_probe_ffmpeg_version_falls_back_to_raw_when_regex_misses():
+    """Unparseable tokens return raw string rather than (unknown) (#383)."""
+    from unittest.mock import MagicMock
+
+    from allaganeye.commands.split_matches import _probe_ffmpeg_version
+
+    # "git-" style dev build has no numeric prefix after the regex.
+    mock_result = MagicMock(stdout="ffmpeg version git-2023-01-01-abcdef Copyright\n")
+    with patch("subprocess.run", return_value=mock_result):
+        result = _probe_ffmpeg_version()
+    assert result == "git-2023-01-01-abcdef"
+
+
+def test_probe_ffmpeg_version_unknown_when_format_unexpected():
+    """Malformed first line (no 'ffmpeg version' prefix) yields (unknown)."""
+    from unittest.mock import MagicMock
+
+    from allaganeye.commands.split_matches import _probe_ffmpeg_version
+
+    mock_result = MagicMock(stdout="not ffmpeg output at all\n")
+    with patch("subprocess.run", return_value=mock_result):
+        result = _probe_ffmpeg_version()
+    assert result == "(unknown)"
+
+
 # --- ETA formatter (issue #333) ---
 
 

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import shutil
 import time
 from pathlib import Path
@@ -595,8 +596,26 @@ def _print_environment_header() -> None:
     )
 
 
+_FFMPEG_VERSION_RE = re.compile(r"^[nv]?(\d+\.\d+(?:\.\d+)?)")
+"""Strip ``n`` / ``v`` / ``git-`` prefixes and build-metadata suffixes from
+ffmpeg version strings, keeping only ``major.minor[.patch]`` (#383).
+
+Handles common shapes:
+  - ``8.1-full_build-www.gyan.dev``  -> ``8.1``
+  - ``n7.1``                          -> ``7.1``
+  - ``4.4.2-0ubuntu0.22.04.1``        -> ``4.4.2``
+  - ``git-2023-01-01-abcdef``         -> no match, caller keeps raw
+"""
+
+
 def _probe_ffmpeg_version() -> str:
-    """Return ffmpeg version string, or '(unknown)' on failure."""
+    """Return ffmpeg ``major.minor[.patch]`` version, or '(unknown)' on failure.
+
+    Build-metadata and distributor suffixes (``-full_build-www.gyan.dev``,
+    ``-0ubuntu0.22.04.1``, etc.) are stripped so the verbose header stays
+    concise (#383).  If the prefix doesn't match the expected numeric
+    pattern, the raw token is returned as a fallback.
+    """
     import subprocess
 
     from allaganeye.ffmpeg_path import find_ffmpeg
@@ -616,7 +635,9 @@ def _probe_ffmpeg_version() -> str:
     # "ffmpeg version 8.1-essentials_build-www.gyan.dev Copyright ..."
     parts = first_line.split()
     if len(parts) >= 3 and parts[0] == "ffmpeg" and parts[1] == "version":
-        return parts[2]
+        raw = parts[2]
+        match = _FFMPEG_VERSION_RE.match(raw)
+        return match.group(1) if match else raw
     return "(unknown)"
 
 
