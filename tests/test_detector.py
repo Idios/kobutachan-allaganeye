@@ -677,6 +677,137 @@ class TestExtractSegments:
 
 
 # ============================================================
+# _filter_and_extract_segments: filter_drops stats wiring (#388)
+# ============================================================
+
+
+class TestFilterDropsStats:
+    """Verify the stats param captures drop breakdown (#388)."""
+
+    def test_candidates_count_matches_input(self):
+        """filter_candidates == len(blackout_regions) entering the filter."""
+        stats: dict = {}
+        regions = [(100.0, 105.0), (500.0, 505.0), (1200.0, 1205.0)]
+        _filter_and_extract_segments(
+            regions,
+            1800.0,
+            300.0,
+            3.0,
+            stats=stats,  # type: ignore[arg-type]
+        )
+        assert stats["filter_candidates"] == 3
+
+    def test_no_drops_when_all_segments_pass(self):
+        """Every segment >= min_match_duration -> zero drops."""
+        stats: dict = {}
+        # Two blackouts spaced to give 3 segments each >= 300s.
+        regions = [(400.0, 405.0), (800.0, 805.0)]
+        _filter_and_extract_segments(
+            regions,
+            1500.0,
+            300.0,
+            3.0,
+            stats=stats,  # type: ignore[arg-type]
+        )
+        assert stats["filter_drops"] == {
+            "below_min_match_duration": 0,
+            "other": 0,
+        }
+
+    def test_below_min_match_duration_increments_on_short_segment(self):
+        """Segments shorter than min_match_duration bump the counter."""
+        stats: dict = {}
+        # First segment 0-100 (100s), second 150-400 (250s), last 450-500 (50s).
+        # All three < min_match_duration=300 -> 3 drops.
+        regions = [(100.0, 150.0), (400.0, 450.0)]
+        result = _filter_and_extract_segments(
+            regions,
+            500.0,
+            300.0,
+            3.0,
+            stats=stats,  # type: ignore[arg-type]
+        )
+        assert result == []
+        assert stats["filter_drops"]["below_min_match_duration"] == 3
+        assert stats["filter_drops"]["other"] == 0
+
+    def test_mixed_pass_and_drop(self):
+        """One segment passes, two fail -> candidates=2, drops=2, kept=1."""
+        stats: dict = {}
+        # seg1: 0-100 (100s, drop), seg2: 150-900 (750s, pass),
+        # seg3: 950-1000 (50s, drop).
+        regions = [(100.0, 150.0), (900.0, 950.0)]
+        result = _filter_and_extract_segments(
+            regions,
+            1000.0,
+            300.0,
+            3.0,
+            stats=stats,  # type: ignore[arg-type]
+        )
+        assert len(result) == 1
+        assert stats["filter_drops"]["below_min_match_duration"] == 2
+
+    def test_empty_regions_whole_video_short_counts_as_other(self):
+        """No blackouts + video shorter than min_match -> 'other' drop."""
+        stats: dict = {}
+        result = _filter_and_extract_segments(
+            [],
+            100.0,
+            300.0,
+            3.0,
+            stats=stats,  # type: ignore[arg-type]
+        )
+        assert result == []
+        assert stats["filter_drops"]["other"] == 1
+
+    def test_empty_regions_whole_video_long_no_drop(self):
+        """No blackouts + video >= min_match -> whole-video match, no drop."""
+        stats: dict = {}
+        result = _filter_and_extract_segments(
+            [],
+            1800.0,
+            300.0,
+            3.0,
+            stats=stats,  # type: ignore[arg-type]
+        )
+        assert len(result) == 1
+        assert stats["filter_drops"] == {
+            "below_min_match_duration": 0,
+            "other": 0,
+        }
+
+    def test_stats_none_runs_without_raising(self):
+        """When stats is None the function behaves exactly as before."""
+        # Sanity: existing callers / tests that don't pass stats must
+        # continue to work (backwards-compatibility with the pre-#388
+        # signature).
+        result = _filter_and_extract_segments([(100.0, 105.0)], 1800.0, 300.0, 3.0)
+        assert len(result) >= 1
+
+    def test_below_min_blackout_regions_rolled_into_candidate_count(self):
+        """Regions below min_blackout_duration are not candidates.
+
+        They get filtered before the segment loop and don't contribute to
+        filter_drops (those live on the Scorebar / min-blackout path above
+        this function). The candidate count reflects what's left after
+        scorebar but before min-blackout trimming.
+        """
+        stats: dict = {}
+        # 3 regions incoming; one is 1s (< 3s min_blackout) so it gets
+        # trimmed, leaving 2 effective blackouts that make 3 segments
+        # (0-100 short, 100-900 pass, 900-1000 short).
+        regions = [(100.0, 101.0), (100.0, 105.0), (900.0, 905.0)]
+        _filter_and_extract_segments(
+            regions,
+            1000.0,
+            300.0,
+            3.0,
+            stats=stats,  # type: ignore[arg-type]
+        )
+        assert stats["filter_candidates"] == 3
+
+
+# ============================================================
 # TestInferSegmentType
 # ============================================================
 

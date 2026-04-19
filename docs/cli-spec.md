@@ -95,6 +95,30 @@ HW 情報は全て best-effort。取得失敗しても `(unavailable)` を返す
 
 各バーは前のバーが 100% 到達 → 改行して確定 → 次のバーが新しい行で開始する。過去のバーが `\r` で上書きされたり、単位切替で 100% → 99% に逆戻りしたりすることはない。
 
+### verbose stats の内訳行 (#386 / #387 / #388)
+
+検知完了後、verbose は以下の順でパイプライン統計を出力する:
+
+```
+  Pass 1 (CPU): 3410 samples, 31 blackout frames (0.9%), 5m50s
+  Pass 2: 18 regions refined, 1m03s
+  Scorebar: 15 match_boundary, 2 in_match, 1 non_fl, 0m12s
+  Filter: 15 candidates -> 8 matches
+    6 dropped (below min_match_duration)
+    1 dropped (other)
+  Splitting: 8 matches, 1m02s
+```
+
+| 行 | 内容 |
+|---|---|
+| `Pass 1` | Pass 1 のサンプル数・暗転フレーム数・所要時間 |
+| `Pass 2` | Pass 2 精密計測の region 数・所要時間 (#366) |
+| `Scorebar` | Scorebar 分類 (match_boundary / in_match / non_fl / unknown) のカウントと所要時間 (#386) |
+| `Filter` | Scorebar 通過後の候補数 → 最終 match 数。`below_min_match_duration` / `other` が 0 より大きい場合のみ内訳を追加出力 (#388) |
+| `Splitting` | 分割フェーズの match 数・所要時間 (#387) |
+
+`Filter` セクションは候補数がゼロかつドロップがゼロの場合 (whole-video fallback により match が生成されたケース) は出力を省略する。`dropped (below min_match_duration)` は **セグメント長が `min_match_duration` に満たなかった数**、`dropped (other)` は短尺動画の whole-video 候補不適合等の残余カウント。`in_match` / `non_fl` はここに含まれず、上の Scorebar 行がそのカウントを担う (重複防止)。
+
 ### metadata.json
 
 分割結果の機械可読な記録。外部ツールやスクリプトから参照可能。L3（メタデータ化）パイプラインの入力として使用予定。L3 未着手のため、フィールド構造は暫定であり破壊的変更の可能性がある。

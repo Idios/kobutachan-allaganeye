@@ -826,6 +826,32 @@ def _print_detection_stats(stats: DetectionStats) -> None:
     if promotions is not None and promotions > 0:
         typer.echo(f"  Audio promotion: {promotions} in_match -> match_boundary")
 
+    # Filter drop breakdown (#388): why candidates -> matches shrank.
+    # scorebar in_match / non_fl counts stay on the Scorebar line above;
+    # this section captures duration-based drops (below_min_match_duration
+    # and residual "other") so users can tune --min-match-duration.
+    candidates = stats.get("filter_candidates")
+    drops = stats.get("filter_drops")
+    # Skip the section entirely when there are no real candidates *and*
+    # no drops: the match came from the whole-video fallback path, so
+    # ``Filter: 0 candidates -> 0 matches`` would be misleading noise.
+    if (
+        candidates is not None
+        and drops is not None
+        and (candidates > 0 or sum(drops.values()) > 0)
+    ):
+        kept = candidates - sum(drops.values())
+        typer.echo(f"  Filter: {candidates} candidates -> {kept} matches")
+        # Emit only non-zero categories so the output stays terse on
+        # healthy runs; zero-row lines would be noise.
+        if drops.get("below_min_match_duration", 0) > 0:
+            typer.echo(
+                f"    {drops['below_min_match_duration']} dropped "
+                f"(below min_match_duration)"
+            )
+        if drops.get("other", 0) > 0:
+            typer.echo(f"    {drops['other']} dropped (other)")
+
 
 def _format_timestamp(seconds: float) -> str:
     """Format seconds as MM:SS or H:MM:SS."""

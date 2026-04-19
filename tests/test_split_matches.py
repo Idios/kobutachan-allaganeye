@@ -2108,6 +2108,176 @@ def test_verbose_scorebar_line_without_elapsed_still_prints(
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
+def test_verbose_prints_filter_drop_breakdown(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Verbose stats show Filter section with drop breakdown (#388).
+
+    Troubleshoot scenario: Pass 2 refined 18 candidates, scorebar removed
+    some, filter dropped 6 for min_match_duration -> only 8 final. Users
+    need to see the drop counts to tune --min-match-duration.
+    """
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 3410
+            stats["pass1_blackout_frames"] = 31
+            stats["pass1_elapsed_s"] = 350.0
+            stats["pass2_regions"] = 18
+            stats["pass2_elapsed_s"] = 63.0
+            stats["scorebar_match_boundary"] = 15
+            stats["scorebar_in_match"] = 2
+            stats["scorebar_non_fl"] = 1
+            stats["scorebar_unknown"] = 0
+            stats["filter_candidates"] = 15
+            stats["filter_drops"] = {
+                "below_min_match_duration": 6,
+                "other": 1,
+            }
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    lines = out.splitlines()
+    filter_header = next(
+        (line for line in lines if line.strip().startswith("Filter:")),
+        None,
+    )
+    assert filter_header is not None, f"Filter: line missing in: {out!r}"
+    # 15 candidates - (6 + 1) = 8 kept
+    assert "15 candidates" in filter_header
+    assert "8 matches" in filter_header
+
+    # Breakdown lines appear as indented entries after the header.
+    assert "6 dropped (below min_match_duration)" in out
+    assert "1 dropped (other)" in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_filter_breakdown_hides_zero_categories(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Zero-count drop categories stay hidden to keep output terse (#388)."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 2
+            stats["pass2_elapsed_s"] = 1.0
+            stats["filter_candidates"] = 2
+            stats["filter_drops"] = {
+                "below_min_match_duration": 0,
+                "other": 0,
+            }
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "Filter: 2 candidates -> 2 matches" in out
+    # No breakdown rows when every category is 0.
+    assert "0 dropped" not in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_filter_breakdown_absent_when_stats_missing_keys(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Legacy stats without filter_candidates / filter_drops render safely (#388).
+
+    Backwards-compat: older detect fixtures (or tests that mock
+    detect_match_boundaries) may not populate the new keys.  Filter
+    section must simply be skipped rather than raising.
+    """
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 2
+            stats["pass2_elapsed_s"] = 1.0
+            # intentionally NOT setting filter_candidates / filter_drops
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "Filter:" not in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_filter_section_skipped_on_whole_video_fallback(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Whole-video fallback produces ``candidates=0, drops=0`` -> hide Filter (#388).
+
+    When every refined region is removed at the scorebar stage, the
+    filter function still returns one whole-video match via the fallback
+    path.  Emitting ``Filter: 0 candidates -> 0 matches`` in that case
+    would contradict the ``Detected 1 match(es)`` line and confuse users.
+    """
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 2
+            stats["pass2_elapsed_s"] = 1.0
+            stats["filter_candidates"] = 0
+            stats["filter_drops"] = {
+                "below_min_match_duration": 0,
+                "other": 0,
+            }
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "Filter:" not in out, (
+        f"Filter: section should be hidden on whole-video fallback: {out!r}"
+    )
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
 def test_non_verbose_does_not_print_stats(
     mock_probe, mock_detect, mock_split, tmp_path, capsys
 ):
