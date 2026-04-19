@@ -1093,20 +1093,28 @@ class TestRefineProgressBar:
     @patch(f"{MODULE}.split_video")
     @patch(f"{MODULE}.detect_match_boundaries")
     @patch(f"{MODULE}.probe_video")
-    def test_three_bars_displayed(
+    def test_all_four_bars_displayed(
         self, mock_probe, mock_detect, mock_split, tmp_path, capsys
     ):
-        """Detecting, Refining, and Splitting bars all appear (#331)."""
+        """Detecting, Refining, Scorebar and Splitting bars all appear (#368, #393).
+
+        Rewritten for the 3-phase detection progress model (was
+        ``test_three_bars_displayed`` which asserted only 2 detection bars).
+        """
         mock_probe.return_value = PROBE_RESULT
         mock_detect.return_value = BOUNDARIES
         mock_split.return_value = _output_files(tmp_path)
 
-        # Simulate refine callback to trigger Refining bar
+        # Simulate both detection-phase callbacks.
         def detect_side_effect(video_path, **kwargs):
-            cb = kwargs.get("refine_progress_callback")
-            if cb:
-                cb(1, 2)
-                cb(2, 2)
+            refine_cb = kwargs.get("refine_progress_callback")
+            if refine_cb:
+                refine_cb(1, 4)
+                refine_cb(4, 4)
+            sb_cb = kwargs.get("scorebar_progress_callback")
+            if sb_cb:
+                sb_cb(1, 2)
+                sb_cb(2, 2)
             return BOUNDARIES
 
         mock_detect.side_effect = detect_side_effect
@@ -1117,7 +1125,137 @@ class TestRefineProgressBar:
         output = capsys.readouterr().out
         assert "Detecting" in output
         assert "Refining" in output
+        assert "Scorebar" in output
         assert "Splitting" in output
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_detecting_bar_is_not_overwritten_by_refining(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Detecting row survives on the TTY once Refining opens (#368).
+
+    Regression guard: previously Refining was opened inside Detecting's
+    ``with`` block, so click's ``\\r`` rewrite erased Detecting.  With the
+    manual-lifecycle redesign, Detecting is ``__exit__``-ed (emitting a
+    newline) before Refining opens, so both labels persist in the output.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+
+    def detect_side_effect(video_path, **kwargs):
+        if kwargs.get("refine_progress_callback"):
+            kwargs["refine_progress_callback"](1, 2)
+            kwargs["refine_progress_callback"](2, 2)
+        return BOUNDARIES
+
+    mock_detect.side_effect = detect_side_effect
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    output = capsys.readouterr().out
+    # Detecting must appear strictly before Refining in the byte stream.
+    det_pos = output.find("Detecting")
+    ref_pos = output.find("Refining")
+    assert det_pos >= 0, f"Detecting missing: {output!r}"
+    assert ref_pos >= 0, f"Refining missing: {output!r}"
+    assert det_pos < ref_pos, (
+        "Detecting must appear before Refining in the stream "
+        "(regression guard for #368)"
+    )
+    # And a newline must sit between them so the cursor moved off the
+    # Detecting row before Refining began writing.
+    between = output[det_pos:ref_pos]
+    assert "\n" in between, (
+        f"Detecting row not terminated with newline before Refining opens: {between!r}"
+    )
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_refining_and_scorebar_bars_do_not_overlap(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Scorebar opens on its own line after Refining closes (#393).
+
+    Regression guard for the unit-mixing bug where Refining hit 100% on
+    probe count and then reset to 99% when scorebar extended ``total``.
+    With separate callbacks / separate bars, each phase's bar ends cleanly
+    at 100% before the next opens.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+
+    def detect_side_effect(video_path, **kwargs):
+        if kwargs.get("refine_progress_callback"):
+            kwargs["refine_progress_callback"](1, 2)
+            kwargs["refine_progress_callback"](2, 2)
+        if kwargs.get("scorebar_progress_callback"):
+            kwargs["scorebar_progress_callback"](1, 2)
+            kwargs["scorebar_progress_callback"](2, 2)
+        return BOUNDARIES
+
+    mock_detect.side_effect = detect_side_effect
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    output = capsys.readouterr().out
+    ref_pos = output.find("Refining")
+    sb_pos = output.find("Scorebar")
+    assert ref_pos < sb_pos, "Refining must appear before Scorebar in output stream"
+    between = output[ref_pos:sb_pos]
+    assert "\n" in between, (
+        f"Refining row not terminated with newline before Scorebar opens: {between!r}"
+    )
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_progress_bars_cleanup_on_exception(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """All three detection bars close even when detect_match_boundaries raises.
+
+    Guards the ``try/finally`` wrapper in ``_run_detection`` (#368, #393).
+    If a bar leaked, subsequent output would be mangled by an open bar's
+    ``\\r`` rewrites; here we assert the exception propagates cleanly and
+    no mid-phase ``%`` artifact lingers past the final line.
+    """
+    from allaganeye.exceptions import VideoProcessingError
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    def detect_side_effect(video_path, **kwargs):
+        # Open Refining, then blow up -- the finally block should close it.
+        if kwargs.get("refine_progress_callback"):
+            kwargs["refine_progress_callback"](1, 5)
+        raise VideoProcessingError("simulated ffmpeg failure")
+
+    mock_detect.side_effect = detect_side_effect
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    with pytest.raises(VideoProcessingError):
+        run_split(Path("input.mp4"), config)
+
+    # The exception propagated, and the bars were closed in the finally
+    # block.  A leaked bar would leave the cursor mid-line without a
+    # trailing newline after the last '%' token.
+    output = capsys.readouterr().out
+    if "%" in output:
+        last_percent = output.rfind("%")
+        tail = output[last_percent:]
+        assert "\n" in tail, (
+            f"progress bar not terminated with newline on exception path: {tail!r}"
+        )
 
 
 # --- Audio scan integration (#288) ---
