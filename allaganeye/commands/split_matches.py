@@ -90,13 +90,16 @@ def run_split(
                 _display_gaps(gaps)
             if config.dry_run:
                 typer.echo("\nDry run: skipping split")
+                _emit_total_time(total_start, verbose, show)
                 return
             _check_disk_space(
                 video_path, boundaries, metadata["duration"], config, show=show
             )
-            return _split_and_write_metadata(
+            _split_and_write_metadata(
                 video_path, boundaries, gaps, metadata, config, quiet=quiet
             )
+            _emit_total_time(total_start, verbose, show)
+            return
 
     # Resolve GPU/CPU mode: auto-select based on codec when not explicit (#334)
     use_gpu = _resolve_gpu_mode(config.use_gpu, metadata.get("codec"), show, verbose)
@@ -172,16 +175,14 @@ def run_split(
     # Step 3: Split (unless dry-run)
     if config.dry_run:
         typer.echo("\nDry run: skipping split")
-        if verbose and show:
-            typer.echo(f"Total: {_format_duration(time.monotonic() - total_start)}")
+        _emit_total_time(total_start, verbose, show)
         return
 
     _check_disk_space(video_path, boundaries, metadata["duration"], config, show=show)
     _split_and_write_metadata(
         video_path, boundaries, gaps, metadata, config, quiet=quiet
     )
-    if verbose and show:
-        typer.echo(f"Total: {_format_duration(time.monotonic() - total_start)}")
+    _emit_total_time(total_start, verbose, show)
 
 
 def _display_results(
@@ -736,6 +737,17 @@ def _format_duration(seconds: float) -> str:
     if h:
         return f"{h}h{m:02d}m"
     return f"{m}m{s:02d}s"
+
+
+def _emit_total_time(total_start: float, verbose: bool, show: bool) -> None:
+    """Print ``Total: HH:MM:SS`` wall-clock for the split pipeline (#381).
+
+    Emitted on every verbose-visible exit path (cache hit + split, cache hit
+    + dry-run, cache miss + split, cache miss + dry-run) so users always see
+    how long the run took regardless of which branch executed.
+    """
+    if verbose and show:
+        typer.echo(f"Total: {_format_duration(time.monotonic() - total_start)}")
 
 
 def _auto_sample_interval(duration: float, configured_interval: float) -> float:
