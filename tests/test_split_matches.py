@@ -146,6 +146,38 @@ def test_pipeline_metadata_json_content(mock_probe, mock_detect, mock_split, tmp
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
+def test_metadata_output_file_uses_posix_separator(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """metadata.json output_file uses POSIX '/' separator on all platforms (#371).
+
+    JSON is a cross-platform data-interchange format; backslashes in paths
+    break Linux/macOS consumers of metadata.json (e.g. the L2/L3 pipeline).
+    """
+    nested = tmp_path / "sub" / "output"
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = [
+        nested / "match_001.mp4",
+        nested / "match_002.mp4",
+    ]
+    config = SplitConfig(output_dir=nested, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    data = json.loads((nested / "metadata.json").read_text(encoding="utf-8"))
+    for m in data["matches"]:
+        assert "\\" not in m["output_file"], (
+            f"output_file must not contain backslashes: {m['output_file']!r}"
+        )
+        assert "/" in m["output_file"], (
+            f"output_file must contain forward slashes: {m['output_file']!r}"
+        )
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
 def test_pipeline_output_dir_created(mock_probe, mock_detect, mock_split, tmp_path):
     """Output directory is created if it doesn't exist."""
     output = tmp_path / "subdir" / "output"

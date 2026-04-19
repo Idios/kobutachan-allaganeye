@@ -545,7 +545,7 @@ def _split_and_write_metadata(
                 "duration": b["end"] - b["start"],
                 "duration_display": _format_duration(b["end"] - b["start"]),
                 "type": b.get("type", "unknown"),
-                "output_file": str(f),
+                "output_file": f.as_posix(),
             }
             for i, (b, f) in enumerate(zip(boundaries, output_files, strict=True))
         ],
