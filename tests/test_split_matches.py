@@ -2256,6 +2256,85 @@ def test_audio_status_str_helper_matches_run_audio_scan_contract():
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
+def test_verbose_emits_splitting_elapsed_with_match_count(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Verbose mode emits 'Splitting: N matches, Xs' after split (#387).
+
+    Pass 1 / Pass 2 / Scorebar already report elapsed; Splitting was the
+    only hidden phase, forcing users to do arithmetic on Total to infer
+    its cost.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES  # 2 matches
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    splitting_line = next(
+        (line for line in out.splitlines() if line.strip().startswith("Splitting:")),
+        None,
+    )
+    assert splitting_line is not None, f"Splitting: line missing in: {out!r}"
+    assert "2 matches" in splitting_line, (
+        f"Splitting line should report count=2: {splitting_line!r}"
+    )
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_non_verbose_does_not_emit_splitting_line(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Splitting elapsed is verbose-only; default runs stay terse (#387)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=False)
+    out = capsys.readouterr().out
+    assert "Splitting:" not in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_also_emits_splitting_line(
+    mock_probe, mock_split, tmp_path, capsys
+):
+    """Cache-hit + split path also emits the Splitting line (#387).
+
+    Symmetry with the non-cache path so users see the same breakdown
+    whether or not Pass 1/2 ran.
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    _save_cache(
+        tmp_path / ".detection_cache.json",
+        source,
+        PROBE_RESULT,
+        config.sample_interval,
+        config,
+        BOUNDARIES,
+    )
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True)
+    out = capsys.readouterr().out
+    assert "(cached)" in out
+    assert "Splitting:" in out, f"cache+split path must show Splitting: {out!r}"
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
 def test_verbose_dry_run_emits_total(
     mock_probe, mock_detect, mock_split, tmp_path, capsys
 ):
