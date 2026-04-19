@@ -44,6 +44,11 @@ class DetectionStats(TypedDict, total=False):
     scorebar_unknown: int
     scorebar_elapsed_s: float
     audio_promotions: int
+    # Refined-region count entering _filter_and_extract_segments (#388).
+    # Paired with filter_drops so verbose can report
+    # ``<candidates> -> <final matches>`` with breakdown.
+    filter_candidates: int
+    filter_drops: dict[str, int]  # keys: below_min_match_duration, other
 
 
 logger = logging.getLogger(__name__)
@@ -235,6 +240,7 @@ def detect_match_boundaries(
         min_match_duration,
         effective_min,
         classifications=region_classifications,
+        stats=stats,
     )
 
 
@@ -1091,6 +1097,7 @@ def _filter_and_extract_segments(
     min_match_duration: float,
     min_blackout_duration: float = 3.0,
     classifications: list[str] | None = None,
+    stats: DetectionStats | None = None,
 ) -> list[MatchBoundary]:
     """Filter blackout regions by duration and extract match segments.
 
@@ -1102,10 +1109,39 @@ def _filter_and_extract_segments(
 
     When *classifications* is provided, each segment receives a ``"type"``
     field inferred from adjacent blackout classifications.
+
+    When *stats* is provided, the candidate count entering this function
+    and the per-reason drop counts are recorded under
+    ``stats["filter_candidates"]`` and ``stats["filter_drops"]`` (#388).
+    ``filter_drops`` keys: ``"below_min_match_duration"`` (segment length
+    short of the threshold) and ``"other"`` (whole-video candidate also
+    below the threshold when no valid blackout remains).  scorebar-based
+    drops (``in_match`` / ``non_fl``) stay in the dedicated
+    ``scorebar_*`` fields -- this counter is strictly for the duration-
+    based filters that happen inside this function.
     """
+    # Candidate count reported as "the number of refined regions fed in";
+    # scorebar filtering has already shrunk this above.  Pass 2 numbers
+    # still live in ``pass2_regions``.
+    if stats is not None:
+        stats["filter_candidates"] = len(blackout_regions)
+        # Reuse an existing dict if the caller pre-populated it (future
+        # multi-stage increments), otherwise start fresh.
+        drops = stats.get("filter_drops") or {}
+        drops.setdefault("below_min_match_duration", 0)
+        drops.setdefault("other", 0)
+        stats["filter_drops"] = drops
+
+    def _record_drop(key: str) -> None:
+        if stats is not None:
+            stats["filter_drops"][key] = stats["filter_drops"].get(key, 0) + 1
+
     if not blackout_regions:
         if total_duration >= min_match_duration:
             return [{"start": 0.0, "end": total_duration, "type": "unknown"}]
+        # Whole video was shorter than min_match_duration -- count the
+        # implicit whole-video candidate as dropped.
+        _record_drop("other")
         return []
 
     # Filter out short blackout regions (e.g. respawn blackouts 1-2s)
@@ -1131,6 +1167,7 @@ def _filter_and_extract_segments(
     if not blackout_regions:
         if total_duration >= min_match_duration:
             return [{"start": 0.0, "end": total_duration, "type": "unknown"}]
+        _record_drop("other")
         return []
 
     # Extract segments between blackout regions
@@ -1149,6 +1186,8 @@ def _filter_and_extract_segments(
                     "type": "unknown",
                 }
             )
+        else:
+            _record_drop("below_min_match_duration")
 
     # Between blackout regions
     for i in range(len(blackout_regions) - 1):
@@ -1169,6 +1208,8 @@ def _filter_and_extract_segments(
                     "type": seg_type,
                 }
             )
+        else:
+            _record_drop("below_min_match_duration")
 
     # After last blackout
     seg_start = _padded_start(blackout_regions[-1])
@@ -1181,6 +1222,8 @@ def _filter_and_extract_segments(
                 "type": "unknown",
             }
         )
+    else:
+        _record_drop("below_min_match_duration")
 
     return segments
 
