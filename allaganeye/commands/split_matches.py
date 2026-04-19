@@ -581,7 +581,6 @@ def _split_and_write_metadata(
         "detected_at": detected_at,
         "detection_params": {
             "sample_interval": effective_interval,
-            "sample_interval_requested": config.sample_interval,
             "blackout_threshold": config.blackout_threshold,
             "min_match_duration": config.min_match_duration,
             "min_blackout_duration": config.min_blackout_duration,

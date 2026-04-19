@@ -425,7 +425,6 @@ def test_metadata_detection_params_present(
     params = data["detection_params"]
     expected_keys = {
         "sample_interval",
-        "sample_interval_requested",
         "blackout_threshold",
         "min_match_duration",
         "min_blackout_duration",
@@ -437,18 +436,17 @@ def test_metadata_detection_params_present(
         f"detection_params keys mismatch: {set(params) ^ expected_keys}"
     )
 
-    # Values must reflect runtime SplitConfig.
-    assert params["sample_interval_requested"] == 1.5
+    # Values must reflect runtime SplitConfig.  sample_interval is the
+    # effective (post-auto-adjust) value to stay in sync with
+    # .detection_cache.json params; with 1800s duration + 1.5s requested,
+    # auto-adjust is a no-op so it equals the requested value.
+    assert params["sample_interval"] == 1.5
     assert params["blackout_threshold"] == 20.0
     assert params["min_match_duration"] == 120.0
     assert params["min_blackout_duration"] == 4.0
     assert params["no_audio"] is True
     assert params["use_gpu"] is True
     assert params["workers"] == 8
-    # sample_interval is the effective (post-auto-adjust) value; with 1800s
-    # duration and 1.5s requested, auto-adjust is a no-op (only default 1.0
-    # triggers) so it equals the requested value.
-    assert params["sample_interval"] == 1.5
 
     # detected_at is ISO 8601 UTC with 'Z' suffix and parseable.
     detected_at = data["detected_at"]
