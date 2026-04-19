@@ -253,6 +253,51 @@ class TestRefineBlackoutRegions:
         assert all(0.0 <= t <= 8.0 for t in probed_times)
 
     @patch("allaganeye.video.detector._probe_single_frame")
+    def test_progress_callback_fires_per_probe(self, mock_probe):
+        """progress_callback is called per probe completion (#366).
+
+        Before #366 the Refining bar froze for the entire Pass 2 wait
+        because progress was only reported after the function returned.
+        """
+        mock_probe.return_value = 128.0
+        regions = [(100.0, 102.0)]
+        calls: list[tuple[int, int]] = []
+
+        _refine_blackout_regions(
+            Path("test.mp4"),
+            regions,
+            15.0,
+            1000.0,
+            progress_callback=lambda c, t: calls.append((c, t)),
+        )
+
+        # Initial publish + one call per probe
+        probe_count = mock_probe.call_count
+        assert probe_count > 0
+        assert calls[0] == (0, probe_count)
+        assert len(calls) == probe_count + 1
+        # Monotonically non-decreasing completed counts
+        completed_seq = [c for c, _ in calls]
+        assert completed_seq == sorted(completed_seq)
+        # Total stays constant; final completed equals total
+        assert all(t == probe_count for _, t in calls)
+        assert calls[-1] == (probe_count, probe_count)
+
+    @patch("allaganeye.video.detector._probe_single_frame")
+    def test_progress_callback_not_called_for_empty_regions(self, mock_probe):
+        """Empty input short-circuits before any progress is published."""
+        calls: list[tuple[int, int]] = []
+        _refine_blackout_regions(
+            Path("test.mp4"),
+            [],
+            15.0,
+            1000.0,
+            progress_callback=lambda c, t: calls.append((c, t)),
+        )
+        assert calls == []
+        mock_probe.assert_not_called()
+
+    @patch("allaganeye.video.detector._probe_single_frame")
     def test_video_processing_error_treated_as_non_blackout(self, mock_probe):
         """VideoProcessingError from a future is caught and treated as 255.0."""
         from allaganeye.exceptions import VideoProcessingError
@@ -814,9 +859,10 @@ class TestDetectMatchBoundaries:
         )
         # At least one refine callback for the detected region
         assert len(refine_calls) >= 1
-        # completed counts are monotonically non-decreasing and bounded by total
+        # completed counts are bounded by total.  The initial probe publish
+        # uses (0, total) before any probe completes (#366), so 0 is allowed.
         for completed, total in refine_calls:
-            assert 1 <= completed <= total
+            assert 0 <= completed <= total
         # final completed == total (all refine steps reported)
         assert refine_calls[-1][0] == refine_calls[-1][1]
 
