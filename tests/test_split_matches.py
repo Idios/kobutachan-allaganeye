@@ -1779,6 +1779,68 @@ def test_audio_promotion_line_suppressed_when_zero(
     assert "Audio promotion" not in out  # but promo line hidden
 
 
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_workers_auto_shows_resolved_count(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Verbose summary resolves workers=auto to the actual count (#389).
+
+    ``workers=auto`` alone doesn't let users diagnose CPU under-utilisation
+    or hit the right number for their box; the resolved ``min(cpu_count,
+    24)`` must be shown alongside.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, workers=None)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    # Line must contain "workers=auto (<number>)" with the number >= 1.
+    import re as _re
+
+    m = _re.search(r"workers=auto \((\d+)\)", out)
+    assert m is not None, f"expected 'workers=auto (<n>)' in: {out!r}"
+    assert int(m.group(1)) >= 1
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_workers_explicit_shows_plain_number(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Explicit workers=N is printed as the number without '(auto)' (#389)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, workers=8)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "workers=8" in out
+    assert "workers=auto" not in out
+    assert "(auto)" not in out  # no parentheses suffix for explicit values
+
+
+def test_workers_summary_str_helper_contract():
+    """_workers_summary_str unit coverage (#389).
+
+    Ensures future changes to _resolve_workers fallback (e.g. cpu_count
+    detection tweaks) stay reflected in the verbose output.
+    """
+    from allaganeye.commands.split_matches import _workers_summary_str
+
+    assert _workers_summary_str(1) == "1"
+    assert _workers_summary_str(16) == "16"
+
+    with patch("allaganeye.video.detector._resolve_workers", return_value=12):
+        assert _workers_summary_str(None) == "auto (12)"
+
+
 def test_probe_ffmpeg_version_returns_unknown_on_failure():
     """ffmpeg -version failure yields '(unknown)' without raising (#336)."""
     import subprocess
