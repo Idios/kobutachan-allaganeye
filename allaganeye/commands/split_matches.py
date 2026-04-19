@@ -97,6 +97,7 @@ def run_split(
             _check_disk_space(
                 video_path, boundaries, metadata["duration"], config, show=show
             )
+            split_start = time.monotonic()
             _split_and_write_metadata(
                 video_path,
                 boundaries,
@@ -107,6 +108,7 @@ def run_split(
                 detected_at=detected_at,
                 quiet=quiet,
             )
+            _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
             _emit_total_time(total_start, verbose, show)
             return
 
@@ -187,6 +189,7 @@ def run_split(
         return
 
     _check_disk_space(video_path, boundaries, metadata["duration"], config, show=show)
+    split_start = time.monotonic()
     _split_and_write_metadata(
         video_path,
         boundaries,
@@ -197,6 +200,7 @@ def run_split(
         detected_at=detected_at,
         quiet=quiet,
     )
+    _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
     _emit_total_time(total_start, verbose, show)
 
 
@@ -741,6 +745,21 @@ def _probe_ffmpeg_version() -> str:
         match = _FFMPEG_VERSION_RE.match(raw)
         return match.group(1) if match else raw
     return "(unknown)"
+
+
+def _emit_splitting_elapsed(
+    split_start: float, match_count: int, verbose: bool, show: bool
+) -> None:
+    """Emit ``  Splitting: N matches, Xs`` for verbose stats (#387).
+
+    Called from ``run_split`` after ``_split_and_write_metadata`` returns so
+    users can see the split phase's standalone cost instead of inferring it
+    from ``Total - (Pass 1 + Pass 2 + Scorebar)``.  Printed on both the
+    cached and cache-miss paths so the number is always surfaced.
+    """
+    if verbose and show:
+        elapsed = time.monotonic() - split_start
+        typer.echo(f"  Splitting: {match_count} matches, {_format_duration(elapsed)}")
 
 
 def _print_detection_stats(stats: DetectionStats) -> None:
