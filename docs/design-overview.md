@@ -127,7 +127,14 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
     }
   ],
   "gaps": [
-    {"start_display": "50:12", "end_display": "75:39", "duration_display": "25m27s"}
+    {
+      "start_time": 3012.0,
+      "end_time": 4539.0,
+      "start_display": "50:12",
+      "end_display": "75:39",
+      "duration": 1527.0,
+      "duration_display": "25m27s"
+    }
   ]
 }
 ```
