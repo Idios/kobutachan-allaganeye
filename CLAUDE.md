@@ -190,6 +190,14 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 - `/setup-session <role> <number>`: Worktree セットアップ
 - `/check-work`: 担当作業の発見・優先順位付け
 
+### 行動規範 (#399)
+
+director / lead の独走パターン (曖昧判断をユーザー確認なく進める) を是正するため、両ロールは以下 3 点を遵守する。詳細は `docs/roles/director.md` §「行動規範: 独走パターン是正」および `docs/roles/lead-engineer.md` §「行動規範: 独走パターン是正」を参照:
+
+- A: Issue 起票時の「修正方針」は engineer 裁量を尊重する
+- B: PR レビューで「観察 (修正不要)」と独断で結論しない (issue 起票 or escalate)
+- C: bulk 操作 (3 件以上) 前にユーザー確認を取る
+
 ## CLAUDE.md 継続改善
 
 ユーザーから「CLAUDE.md に追記して」等の指示があった場合、このファイルを即座に更新する。
