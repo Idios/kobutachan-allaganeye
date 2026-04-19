@@ -551,8 +551,11 @@ def _split_and_write_metadata(
         ],
         "gaps": [
             {
+                "start_time": g["start"],
+                "end_time": g["end"],
                 "start_display": _format_timestamp(g["start"]),
                 "end_display": _format_timestamp(g["end"]),
+                "duration": g["duration"],
                 "duration_display": _format_duration(g["duration"]),
             }
             for g in gaps

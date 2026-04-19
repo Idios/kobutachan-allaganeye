@@ -178,6 +178,45 @@ def test_metadata_output_file_uses_posix_separator(
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
+def test_metadata_gaps_have_raw_seconds(mock_probe, mock_detect, mock_split, tmp_path):
+    """metadata.json gaps carry raw start_time/end_time/duration (#369).
+
+    L2/L3 pipelines need machine-readable raw seconds to avoid re-parsing
+    display strings. Shape must match matches[] (raw + display pairs).
+    """
+    boundaries_with_gap: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "unknown"},
+        {"start": 1200.5, "end": 1800.0, "type": "unknown"},
+    ]
+    mock_probe.return_value = {**PROBE_RESULT, "duration": 2000.0}
+    mock_detect.return_value = boundaries_with_gap
+    mock_split.return_value = [
+        tmp_path / "match_001.mp4",
+        tmp_path / "match_002.mp4",
+    ]
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    data = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+    assert len(data["gaps"]) == 1, "expected one significant gap >= 300s"
+    gap = data["gaps"][0]
+
+    for key in ("start_time", "end_time", "duration"):
+        assert key in gap, f"gaps[] missing raw key {key!r}: {list(gap)!r}"
+        assert isinstance(gap[key], float), (
+            f"gaps[0].{key} must be float, got {type(gap[key]).__name__}"
+        )
+
+    # Raw fields must agree with display fields (same event, same value).
+    assert gap["start_time"] == 600.0
+    assert gap["end_time"] == 1200.5
+    assert abs(gap["duration"] - (gap["end_time"] - gap["start_time"])) < 1e-6
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
 def test_pipeline_output_dir_created(mock_probe, mock_detect, mock_split, tmp_path):
     """Output directory is created if it doesn't exist."""
     output = tmp_path / "subdir" / "output"

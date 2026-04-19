@@ -85,9 +85,12 @@ allaganeye split <video_path> [OPTIONS]
 
 | フィールド | 型 | 説明 |
 |---|---|---|
-| `start_display` | string | ギャップ開始時刻 |
-| `end_display` | string | ギャップ終了時刻 |
-| `duration_display` | string | ギャップ時間 |
+| `start_time` | float | ギャップ開始時刻（秒） |
+| `end_time` | float | ギャップ終了時刻（秒） |
+| `start_display` | string | ギャップ開始時刻の表示形式 |
+| `end_display` | string | ギャップ終了時刻の表示形式 |
+| `duration` | float | ギャップ時間（秒） |
+| `duration_display` | string | ギャップ時間の表示形式 |
 
 ## debug-brightness コマンド
 
