@@ -3,6 +3,7 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from typer.testing import CliRunner
 
 from allaganeye.cli import app
@@ -666,3 +667,169 @@ def test_split_neither_gpu_flag_preserves_auto(mock_run_split, fake_video):
     assert result.exit_code == 0
     config = mock_run_split.call_args[0][1]
     assert config.use_gpu is None
+
+
+# --- CLI option combination tests ---
+#
+# The existing per-option tests verify each flag in isolation.  Users run
+# the CLI with *combinations* (e.g. ``--dry-run --no-cache -v`` when
+# troubleshooting), and individual-flag tests don't guarantee that
+# pairwise and three-way interactions still wire through to SplitConfig
+# correctly.
+#
+# Full 2^N cartesian coverage is infeasible (~16k cases for ~14 options).
+# Instead we cover three bounded axes:
+#
+#   1. Real usecase patterns - the combinations a user actually types
+#   2. Risk-high pairs - flags that interact via the same code path
+#      (cache + dry-run, GPU + cache, etc.)
+#   3. Order-independence - Typer should not care about flag order
+#
+# All cases mock ``run_split`` so a full parametrize sweep is < 1 second.
+
+
+class TestCliOptionCombinations:
+    """Representative CLI flag combinations forward to SplitConfig."""
+
+    @pytest.mark.parametrize(
+        ("argv_extras", "expected_config"),
+        [
+            # --- Real usecase patterns ---
+            # Inspect mode: check what would be detected without splitting.
+            (["--dry-run", "-v"], {"dry_run": True}),
+            # Force fresh inspect: ignore cache and dry-run.
+            (
+                ["--dry-run", "--no-cache", "-v"],
+                {"dry_run": True, "no_cache": True},
+            ),
+            # Silent bulk processing with audio disabled.
+            (["-q", "--no-audio"], {"no_audio": True}),
+            # CPU debugging: verbose, force CPU, limit workers.
+            (
+                ["-v", "--no-gpu", "--workers", "4"],
+                {"use_gpu": False, "workers": 4},
+            ),
+            # Custom output + GPU + workers (typical batch script).
+            (
+                ["--gpu", "--workers", "8"],
+                {"use_gpu": True, "workers": 8},
+            ),
+            # Tuned detection parameters (no flags).
+            (
+                [
+                    "--sample-interval",
+                    "1.0",
+                    "--blackout-threshold",
+                    "20.0",
+                    "--min-match-duration",
+                    "180",
+                ],
+                {
+                    "sample_interval": 1.0,
+                    "blackout_threshold": 20.0,
+                    "min_match_duration": 180.0,
+                },
+            ),
+            # --- Risk-high pairs (shared code paths) ---
+            # dry-run writes cache; --no-cache invalidates on read.
+            (
+                ["--dry-run", "--no-cache"],
+                {"dry_run": True, "no_cache": True},
+            ),
+            # Force fresh GPU detection.
+            (
+                ["--gpu", "--no-cache"],
+                {"use_gpu": True, "no_cache": True},
+            ),
+            # Full debug invocation.
+            (
+                ["-v", "--no-cache", "--dry-run"],
+                {"no_cache": True, "dry_run": True},
+            ),
+            # Silent dry-run with fresh detection.
+            (
+                ["-q", "--dry-run", "--no-cache"],
+                {"dry_run": True, "no_cache": True},
+            ),
+            # --- Three-way flag interaction ---
+            # All three boolean flags with GPU.
+            (
+                ["--no-cache", "--dry-run", "--no-audio", "--gpu"],
+                {
+                    "no_cache": True,
+                    "dry_run": True,
+                    "no_audio": True,
+                    "use_gpu": True,
+                },
+            ),
+            # Value options + flag combination.
+            (
+                ["--sample-interval", "2.0", "--no-gpu", "--no-audio"],
+                {
+                    "sample_interval": 2.0,
+                    "use_gpu": False,
+                    "no_audio": True,
+                },
+            ),
+        ],
+    )
+    @patch(MODULE)
+    def test_cli_combination_forwards_to_config(
+        self, mock_run_split, fake_video, argv_extras, expected_config
+    ):
+        """Combination of CLI flags forwards expected values to SplitConfig."""
+        result = runner.invoke(app, ["split", str(fake_video), *argv_extras])
+        assert result.exit_code == 0, (
+            f"exit code {result.exit_code} for argv={argv_extras!r}: {result.stdout}"
+        )
+        config = mock_run_split.call_args[0][1]
+        for key, expected in expected_config.items():
+            actual = getattr(config, key)
+            assert actual == expected, (
+                f"argv={argv_extras!r}: expected {key}={expected!r}, got {actual!r}"
+            )
+
+    @pytest.mark.parametrize(
+        "argv_order",
+        [
+            ["--dry-run", "-v"],
+            ["-v", "--dry-run"],
+            ["--no-gpu", "--no-audio", "-v"],
+            ["-v", "--no-audio", "--no-gpu"],
+            ["--no-audio", "-v", "--no-gpu"],
+        ],
+    )
+    @patch(MODULE)
+    def test_flag_order_is_independent(self, mock_run_split, fake_video, argv_order):
+        """Flag order does not alter which config fields end up set."""
+        result = runner.invoke(app, ["split", str(fake_video), *argv_order])
+        assert result.exit_code == 0
+        config = mock_run_split.call_args[0][1]
+        # Regardless of order, presence of each flag flips its field.
+        if "--dry-run" in argv_order:
+            assert config.dry_run is True
+        if "--no-gpu" in argv_order:
+            assert config.use_gpu is False
+        if "--no-audio" in argv_order:
+            assert config.no_audio is True
+
+    @patch(MODULE)
+    def test_verbose_routed_as_kwarg_not_config_in_combo(
+        self, mock_run_split, fake_video
+    ):
+        """Combinations containing -v route verbose as run_split kwarg.
+
+        ``verbose`` is not a SplitConfig field -- it's a display-side
+        kwarg for ``run_split``.  Any combination including ``-v`` must
+        preserve that routing.
+        """
+        result = runner.invoke(
+            app,
+            ["split", str(fake_video), "--dry-run", "--no-cache", "-v"],
+        )
+        assert result.exit_code == 0
+        assert mock_run_split.call_args[1]["verbose"] is True
+        # Config still holds the flag values.
+        config = mock_run_split.call_args[0][1]
+        assert config.dry_run is True
+        assert config.no_cache is True
