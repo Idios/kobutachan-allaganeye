@@ -217,6 +217,132 @@ def test_metadata_gaps_have_raw_seconds(mock_probe, mock_detect, mock_split, tmp
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
+def test_metadata_gaps_preserve_display_fields(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """gaps[] retains start_display / end_display / duration_display (#369).
+
+    Adding raw fields must not silently remove display fields.  Callers
+    rendering human-readable output rely on them.
+    """
+    boundaries: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "unknown"},
+        {"start": 1200.5, "end": 1800.0, "type": "unknown"},
+    ]
+    mock_probe.return_value = {**PROBE_RESULT, "duration": 2000.0}
+    mock_detect.return_value = boundaries
+    mock_split.return_value = [
+        tmp_path / "match_001.mp4",
+        tmp_path / "match_002.mp4",
+    ]
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    data = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+    gap = data["gaps"][0]
+
+    for key in ("start_display", "end_display", "duration_display"):
+        assert key in gap, f"gaps[] missing display key {key!r}: {list(gap)!r}"
+        assert isinstance(gap[key], str), (
+            f"gaps[0].{key} must be str, got {type(gap[key]).__name__}"
+        )
+        assert gap[key], f"gaps[0].{key} must not be empty"
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_metadata_gaps_display_formatted_from_raw(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """display strings are formatted from the paired raw values (#369).
+
+    Guards against raw/display variable swaps where the pair ships the
+    wrong time for one side.  Uses the actual formatters to compute the
+    expected display values.
+    """
+    from allaganeye.commands.split_matches import (
+        _format_duration,
+        _format_timestamp,
+    )
+
+    boundaries: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "unknown"},
+        {"start": 1200.5, "end": 1800.0, "type": "unknown"},
+    ]
+    mock_probe.return_value = {**PROBE_RESULT, "duration": 2000.0}
+    mock_detect.return_value = boundaries
+    mock_split.return_value = [
+        tmp_path / "match_001.mp4",
+        tmp_path / "match_002.mp4",
+    ]
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    data = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+    gap = data["gaps"][0]
+
+    assert gap["start_display"] == _format_timestamp(gap["start_time"])
+    assert gap["end_display"] == _format_timestamp(gap["end_time"])
+    assert gap["duration_display"] == _format_duration(gap["duration"])
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_metadata_gaps_shape_consistent_across_multiple_gaps(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """Every element of gaps[] shares the same raw+display shape (#369).
+
+    Single-gap tests cannot catch shape drift introduced only for the
+    first or last element.  Use 3 matches -> 2 gaps and iterate.
+    """
+    boundaries: list[MatchBoundary] = [
+        {"start": 0.0, "end": 400.0, "type": "unknown"},
+        {"start": 800.0, "end": 1200.0, "type": "unknown"},
+        {"start": 1600.0, "end": 2000.0, "type": "unknown"},
+    ]
+    mock_probe.return_value = {**PROBE_RESULT, "duration": 2200.0}
+    mock_detect.return_value = boundaries
+    mock_split.return_value = [tmp_path / f"match_{i:03d}.mp4" for i in range(1, 4)]
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    data = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+    gaps = data["gaps"]
+    assert len(gaps) == 2, f"expected 2 gaps between 3 matches, got {len(gaps)}"
+
+    expected_keys = {
+        "start_time",
+        "end_time",
+        "duration",
+        "start_display",
+        "end_display",
+        "duration_display",
+    }
+    for i, gap in enumerate(gaps):
+        assert set(gap.keys()) == expected_keys, (
+            f"gaps[{i}] keys diverged: {sorted(gap.keys())!r}"
+        )
+        for key in ("start_time", "end_time", "duration"):
+            assert isinstance(gap[key], float)
+        for key in ("start_display", "end_display", "duration_display"):
+            assert isinstance(gap[key], str) and gap[key]
+
+    # Gaps must be in temporal order (sanity): 400->800 precedes 1200->1600.
+    assert gaps[0]["start_time"] == 400.0
+    assert gaps[0]["end_time"] == 800.0
+    assert gaps[1]["start_time"] == 1200.0
+    assert gaps[1]["end_time"] == 1600.0
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
 def test_pipeline_output_dir_created(mock_probe, mock_detect, mock_split, tmp_path):
     """Output directory is created if it doesn't exist."""
     output = tmp_path / "subdir" / "output"
