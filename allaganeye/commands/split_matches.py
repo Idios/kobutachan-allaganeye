@@ -113,12 +113,12 @@ def run_split(
     audio_hits = _run_audio_scan(video_path, config, show=show, verbose=verbose)
 
     if show and verbose:
-        workers_str = str(config.workers) if config.workers is not None else "auto"
         audio_str = "off" if config.no_audio else "on"
         typer.echo(
             f"Detecting match boundaries "
             f"(interval={effective_interval}s, "
-            f"threshold={config.blackout_threshold}, workers={workers_str}, "
+            f"threshold={config.blackout_threshold}, "
+            f"workers={_workers_summary_str(config.workers)}, "
             f"min_match={config.min_match_duration}s, "
             f"min_blackout={config.min_blackout_duration}s, "
             f"audio={audio_str})"
@@ -217,6 +217,23 @@ def _display_gaps(gaps: list[Gap]) -> None:
             f"{_format_timestamp(gap['end'])} "
             f"({_format_duration(gap['duration'])})"
         )
+
+
+def _workers_summary_str(workers: int | None) -> str:
+    """Format workers count for verbose summary, resolving ``auto`` (#389).
+
+    When ``config.workers is None`` the CLI delegates to
+    ``_resolve_workers`` which picks ``min(cpu_count, 24)``.  Users with
+    performance issues need to see the *resolved* number to diagnose
+    under-parallelised runs, not just the ``auto`` placeholder.
+    """
+    if workers is not None:
+        return str(workers)
+
+    from allaganeye.video.detector import _resolve_workers
+
+    resolved = _resolve_workers(None)
+    return f"auto ({resolved})"
 
 
 def _run_audio_scan(
