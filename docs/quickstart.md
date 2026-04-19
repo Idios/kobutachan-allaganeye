@@ -196,6 +196,16 @@ pip install -e .
 
 > **注意**: 仮想環境を使わずに `pip install -e .` すると、`allaganeye` コマンドが PATH の通らないディレクトリにインストールされることがあります（特に Microsoft Store 版 Python）。仮想環境の使用を推奨します。
 
+### 仮想環境を抜ける
+
+作業が終わって仮想環境から抜けるときは、どのシェル・OS でも共通で `deactivate` と入力します。
+
+```bash
+deactivate
+```
+
+`deactivate` は venv が提供する組み込みコマンドで、Windows (コマンドプロンプト / PowerShell / Git Bash) ・Linux ・macOS のいずれでも同じ一語で動作します。ターミナル自体を閉じれば自動的に抜けます。
+
 ## 3. 更新
 
 ```bash
@@ -228,6 +238,8 @@ editable install (`pip install -e .`) のため、通常は `git pull` だけで
 依存パッケージが追加・変更された場合のみ `pip install -e .` の再実行が必要です。
 
 ## 4. 動画を分割する
+
+> **新しいターミナルで作業を再開する場合**: 仮想環境を `deactivate` した、あるいはターミナルを閉じてから戻ってきた場合は、[§2 インストール](#2-インストール) に載っているコマンドで `.venv` を再 activate してから `allaganeye` を実行してください。再 activate せずに実行すると `command not found` （Windows では `コマンドが見つかりません` / `not recognized`）になります。
 
 ### 対応する録画
 

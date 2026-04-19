@@ -37,9 +37,14 @@ rem まず検知結果を確認
 allaganeye split your_recording.mkv --dry-run
 rem 結果が正しければ本実行
 allaganeye split your_recording.mkv
+
+rem 使い終わったら仮想環境を抜ける (Windows/Linux/macOS 共通)
+deactivate
 ```
 
 > 上記は Windows コマンドプロンプトでの例です。PowerShell・Git Bash・Linux・macOS での手順は [Quick Start Guide](docs/quickstart.md) を参照してください。
+>
+> 新しいターミナルで再度作業する場合は、`.venv` を再 activate してから `allaganeye` を実行してください（詳細は [Quick Start Guide §4](docs/quickstart.md#4-動画を分割する)）。
 
 ## 使い方
 
