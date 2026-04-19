@@ -52,16 +52,39 @@ allaganeye split <video_path> [OPTIONS]
 - `output/metadata.json` — 分割結果（機械可読）
 - `output/.detection_cache.json` — 検知結果キャッシュ（同一ソース・同一パラメータの再実行を高速化。`--no-cache` で無視）
 
-### 検知フェーズの進捗バー (#368 / #393)
-
-検知パイプラインは 3 フェーズに分かれ、それぞれ独立した進捗バーを 1 行ずつ表示する:
+### verbose (`-v`) 出力例
 
 ```
+allaganeye 0.1.1 (ffmpeg 8.1, Python 3.12.10, Windows 11)
+  CPU: AMD Ryzen 9 9950X3D (16C/32T)
+  GPU: NVIDIA GeForce RTX 5090 (32GB VRAM)
+  Memory: 61.6 GB
+  Disk: 1359.5 / 3726.0 GB free on E:
+Probing: recording.mkv
+  Duration: 10228.7s, Resolution: 1920x1080, FPS: 60.00, Codec: h264
+Detecting match boundaries (interval=3.0s, threshold=15.0, workers=auto, min_match=300.0s, min_blackout=3.0s, audio=frozen)
 Detecting  #################################### 100% 0:00:22
 Refining   #################################### 100% 0:00:15
 Scorebar   #################################### 100% 0:00:08
 Splitting  #################################### 100% 0:00:05
+...
 ```
+
+ヘッダ各行の意味:
+
+| 行 | 意味 | 取得失敗時 |
+|---|---|---|
+| 1 行目 | allaganeye / ffmpeg / Python / OS のバージョン | ffmpeg は `(unknown)` にフォールバック |
+| `CPU:` | CPU モデル + `(物理Core/論理Thread)` (#377) | `(unavailable)` / `(unknown CPU) (NT)` 等 |
+| `GPU:` | GPU モデル (+ NVIDIA のみ VRAM) (#377) | `(unavailable)` |
+| `Memory:` | 物理メモリ総量 (#377) | `(unavailable)` |
+| `Disk:` | 出力先ディスクの空き / 総量 (#377) | `(unavailable)` |
+
+HW 情報は全て best-effort。取得失敗しても `(unavailable)` を返すのみで検知は継続する。`psutil` 等の重量依存は使わず、OS ネイティブツール (`wmic` / `nvidia-smi` / `/proc` / `sysctl`) を subprocess で呼び出す。
+
+### 検知フェーズの進捗バー (#368 / #393)
+
+検知パイプラインは 3 フェーズに分かれ、それぞれ独立した進捗バーを 1 行ずつ表示する:
 
 | バー | フェーズ | 進捗単位 |
 |---|---|---|

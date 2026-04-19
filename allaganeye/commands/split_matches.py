@@ -56,7 +56,7 @@ def run_split(
     detected_at = _iso_utc_now()
 
     if verbose and show:
-        _print_environment_header()
+        _print_environment_header(config.output_dir)
 
     # Step 1: Probe video metadata
     if show:
@@ -678,16 +678,25 @@ def _split_and_write_metadata(
     typer.echo(f"Metadata: {metadata_path}")
 
 
-def _print_environment_header() -> None:
-    """Print environment info header (allaganeye / Python / OS) for -v mode.
+def _print_environment_header(
+    output_dir: Path | None = None,
+) -> None:
+    """Print environment info header for -v mode (#336 Phase 1 + #377 Phase 2).
 
-    Hardware details (CPU/GPU/memory/disk) are deferred to Phase 2
-    (issue #336).  This Phase 1 header covers the essentials needed
-    for bug reports.
+    Phase 1 line: allaganeye / ffmpeg / Python / OS (unchanged).
+    Phase 2 lines: CPU, GPU, memory, and disk (where the output will be
+    written) -- each best-effort, each gracefully degrades to
+    ``"(unavailable)"`` without aborting the split.
     """
     import platform
 
     from allaganeye import __version__
+    from allaganeye.system_info import (
+        get_cpu_info,
+        get_disk_info,
+        get_gpu_info,
+        get_memory_info,
+    )
 
     ffmpeg_version = _probe_ffmpeg_version()
     typer.echo(
@@ -696,6 +705,11 @@ def _print_environment_header() -> None:
         f"Python {platform.python_version()}, "
         f"{platform.system()} {platform.release()})"
     )
+    typer.echo(f"  CPU: {get_cpu_info()}")
+    typer.echo(f"  GPU: {get_gpu_info()}")
+    typer.echo(f"  Memory: {get_memory_info()}")
+    disk_target = output_dir if output_dir is not None else Path.cwd()
+    typer.echo(f"  Disk: {get_disk_info(disk_target)}")
 
 
 _FFMPEG_VERSION_RE = re.compile(r"^[nv]?(\d+\.\d+(?:\.\d+)?)")
