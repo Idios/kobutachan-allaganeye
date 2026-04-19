@@ -339,65 +339,101 @@ def _run_detection(
         total_duration = metadata["duration"]
         estimated_samples = max(1, int(total_duration / effective_interval))
 
-        # Phase 1: Detecting (Pass 1 scan)
-        with _eta_progressbar(estimated_samples, "Detecting") as progress:
-            last_pos = [0]
+        # Three-bar progress design (#368 / #393):
+        #
+        # - Detecting (Pass 1 scan, known length = estimated_samples)
+        # - Refining (Pass 2 probes, total published via first callback)
+        # - Scorebar (classification, total published via first callback)
+        #
+        # Each bar is opened with a manual ``__enter__`` and closed with
+        # ``__exit__`` *before* the next bar opens so click's ``\r`` rewrite
+        # can never overwrite an active bar (that caused Detecting to
+        # vanish, #368) and the Pass 2 -> Scorebar transition no longer
+        # mixes units (100% -> 99% rollover, #393).  ``try/finally`` guards
+        # against exceptions leaving a bar dangling on the TTY.
+        detecting_bar = _eta_progressbar(estimated_samples, "Detecting")
+        detecting_bar.__enter__()
+        detecting_state = {"last_pos": 0, "closed": False}
+        refine_state: dict = {"bar": None, "last": 0}
+        scorebar_state: dict = {"bar": None, "last": 0}
 
-            def on_progress(completed: int, total: int, blackout_count: int) -> None:
-                advance = completed - last_pos[0]
-                if advance > 0:
-                    progress.update(advance)
-                last_pos[0] = completed
+        def _close_detecting_if_open() -> None:
+            """Emit newline after Pass 1 so the next bar starts cleanly."""
+            if not detecting_state["closed"]:
+                detecting_bar.__exit__(None, None, None)
+                detecting_state["closed"] = True
 
-            def on_chunk(done: int, total: int, eta_seconds: float) -> None:
-                # Update label so users see movement between chunk completions
-                # on GPU mode (otherwise the bar stays at 0% then jumps, #333).
-                if eta_seconds > 0:
-                    progress.label = (
-                        f"Detecting [chunk {done}/{total}, "
-                        f"ETA ~{_format_eta(eta_seconds)}]".ljust(_PROGRESS_LABEL_WIDTH)
-                    )
-                else:
-                    progress.label = f"Detecting [chunk {done}/{total}]".ljust(
-                        _PROGRESS_LABEL_WIDTH
-                    )
+        def _close_refine_if_open() -> None:
+            if refine_state["bar"] is not None:
+                refine_state["bar"].__exit__(None, None, None)
+                refine_state["bar"] = None
 
-            # Phase 2: Refining (Pass 2 + scorebar).
-            # The bar is lazily opened on the first callback from
-            # detect_match_boundaries, because we don't know the total
-            # step count until Pass 1 completes.
-            refine_bar_ctx: list[dict] = []
+        def _close_scorebar_if_open() -> None:
+            if scorebar_state["bar"] is not None:
+                scorebar_state["bar"].__exit__(None, None, None)
+                scorebar_state["bar"] = None
 
-            def on_refine(completed: int, total: int) -> None:
-                import click
+        def on_progress(completed: int, total: int, blackout_count: int) -> None:
+            advance = completed - detecting_state["last_pos"]
+            if advance > 0:
+                detecting_bar.update(advance)
+            detecting_state["last_pos"] = completed
 
-                if not refine_bar_ctx:
-                    bar = click.progressbar(
-                        length=total,
-                        label="Refining ".ljust(11),
-                        bar_template="%(label)s%(bar)s %(info)s",
-                        show_eta=True,
-                        show_percent=True,
-                    )
-                    bar.__enter__()
-                    refine_bar_ctx.append({"bar": bar, "last": 0})
-                ctx = refine_bar_ctx[0]
-                advance = completed - ctx["last"]
-                if advance > 0:
-                    ctx["bar"].update(advance)
-                ctx["last"] = completed
+        def on_chunk(done: int, total: int, eta_seconds: float) -> None:
+            # Update label so users see movement between chunk completions
+            # on GPU mode (otherwise the bar stays at 0% then jumps, #333).
+            if eta_seconds > 0:
+                detecting_bar.label = (
+                    f"Detecting [chunk {done}/{total}, "
+                    f"ETA ~{_format_eta(eta_seconds)}]".ljust(_PROGRESS_LABEL_WIDTH)
+                )
+            else:
+                detecting_bar.label = f"Detecting [chunk {done}/{total}]".ljust(
+                    _PROGRESS_LABEL_WIDTH
+                )
 
+        def on_refine(completed: int, total: int) -> None:
+            # First Pass 2 callback: close Detecting (emits newline) and
+            # open the Refining bar on a fresh line.
+            if refine_state["bar"] is None:
+                _close_detecting_if_open()
+                refine_state["bar"] = _eta_progressbar(total, "Refining")
+                refine_state["bar"].__enter__()
+                refine_state["last"] = 0
+            advance = completed - refine_state["last"]
+            if advance > 0:
+                refine_state["bar"].update(advance)
+            refine_state["last"] = completed
+
+        def on_scorebar(completed: int, total: int) -> None:
+            # First scorebar callback: close Refining (or Detecting if
+            # Pass 2 had no regions) and open the Scorebar bar fresh.
+            if scorebar_state["bar"] is None:
+                _close_refine_if_open()
+                _close_detecting_if_open()
+                scorebar_state["bar"] = _eta_progressbar(total, "Scorebar")
+                scorebar_state["bar"].__enter__()
+                scorebar_state["last"] = 0
+            advance = completed - scorebar_state["last"]
+            if advance > 0:
+                scorebar_state["bar"].update(advance)
+            scorebar_state["last"] = completed
+
+        try:
             result = detect_match_boundaries(
                 video_path,
                 **detect_kwargs,
                 progress_callback=on_progress,
                 refine_progress_callback=on_refine,
+                scorebar_progress_callback=on_scorebar,
                 chunk_progress_callback=on_chunk,
             )
-
-        # Close the refine bar if it was opened
-        if refine_bar_ctx:
-            refine_bar_ctx[0]["bar"].__exit__(None, None, None)
+        finally:
+            # Close in reverse open-order; if detection raised we still
+            # tidy the TTY.
+            _close_scorebar_if_open()
+            _close_refine_if_open()
+            _close_detecting_if_open()
 
         return result
 

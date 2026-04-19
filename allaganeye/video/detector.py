@@ -73,6 +73,7 @@ def detect_match_boundaries(
     codec: str | None = None,
     progress_callback: Callable[[int, int, int], None] | None = None,
     refine_progress_callback: Callable[[int, int], None] | None = None,
+    scorebar_progress_callback: Callable[[int, int], None] | None = None,
     audio_hits: Sequence[BgmHit] | None = None,
     stats: DetectionStats | None = None,
     chunk_progress_callback: Callable[[int, int, float], None] | None = None,
@@ -89,9 +90,15 @@ def detect_match_boundaries(
             blackouts and non-FL blackouts.
         progress_callback: Optional callback invoked after each sampled
             frame with ``(completed_count, total_samples, blackout_count)``.
-        refine_progress_callback: Optional callback invoked during
-            Pass 2 refinement and scorebar filtering with
-            ``(completed_steps, total_steps)``.
+        refine_progress_callback: Optional callback invoked during Pass 2
+            refinement with ``(completed_probes, total_probes)``.  Scoped
+            to Pass 2 only; scorebar filtering progress goes through
+            ``scorebar_progress_callback`` so unit-mixed rollover (#393)
+            is impossible by construction.
+        scorebar_progress_callback: Optional callback invoked during
+            scorebar classification with ``(completed_regions, total_regions)``.
+            Opens/closes independently from Pass 2 so the two phases can
+            render as separate progress bars (#393).
         audio_hits: Optional Fanfare peaks from audio scan (#288).  When
             provided and scorebar filtering is active, blackouts
             classified as ``"in_match"`` but near a Fanfare hit are
@@ -178,28 +185,13 @@ def detect_match_boundaries(
                 blackout_regions + borderline_regions, sample_interval
             )
 
-    # Progress tracking for Pass 2 + scorebar filtering.
-    # Pass 2 publishes the actual probe count via its progress_callback;
-    # scorebar bumps the total later when refined_regions is known.
-    refine_total = 0
-    refine_completed = 0
-
-    def _refine_step() -> None:
-        nonlocal refine_completed
-        refine_completed += 1
-        if refine_progress_callback is not None:
-            refine_progress_callback(refine_completed, refine_total)
-
-    def _on_refine_probe(completed: int, total: int) -> None:
-        nonlocal refine_completed, refine_total
-        refine_total = total
-        refine_completed = completed
-        if refine_progress_callback is not None:
-            refine_progress_callback(refine_completed, refine_total)
-
     # 2nd pass: refine blackout regions at fine interval (#77).
     # progress_callback fires per probe so the Refining bar advances during
-    # the long ThreadPoolExecutor wait (#366).
+    # the long ThreadPoolExecutor wait (#366).  This callback reports
+    # Pass 2 progress in **probe units** only; scorebar filtering
+    # progress flows through scorebar_progress_callback (#393) so the
+    # caller can render them as separate bars without unit-mixed
+    # 100% -> 99% rollover.
     pass2_start = time.monotonic()
     refined_regions = _refine_blackout_regions(
         video_path,
@@ -207,7 +199,7 @@ def detect_match_boundaries(
         blackout_threshold,
         duration_hint,
         workers,
-        progress_callback=_on_refine_probe,
+        progress_callback=refine_progress_callback,
     )
     pass2_elapsed = time.monotonic() - pass2_start
     if stats is not None:
@@ -219,9 +211,6 @@ def detect_match_boundaries(
     if src_resolution is not None:
         from allaganeye.video.scorebar import filter_blackouts_with_scorebar
 
-        # Update total now that we know how many regions scorebar will process
-        refine_total = refine_completed + len(refined_regions)
-
         height = _scaled_height(src_resolution[0], src_resolution[1])
         refined_regions, region_classifications = filter_blackouts_with_scorebar(
             video_path,
@@ -231,7 +220,7 @@ def detect_match_boundaries(
             workers,
             audio_hits=audio_hits,
             stats=stats,
-            progress_callback=lambda c, t: _refine_step(),
+            progress_callback=scorebar_progress_callback,
         )
 
     effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
