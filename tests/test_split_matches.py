@@ -1960,7 +1960,11 @@ def test_verbose_detecting_line_includes_params(
         output_dir=tmp_path, min_match_duration=60.0, use_gpu=True, workers=8
     )
 
-    run_split(Path("input.mp4"), config, verbose=True)
+    # Force AUDIO_FROZEN=False so this test verifies the on/off branch of
+    # _audio_status_str (the frozen branch is covered by a dedicated test
+    # below).
+    with patch("allaganeye.audio.AUDIO_FROZEN", False):
+        run_split(Path("input.mp4"), config, verbose=True)
     out = capsys.readouterr().out
     assert "workers=8" in out
     assert "min_match=60.0s" in out
@@ -2162,16 +2166,91 @@ def test_verbose_reports_gpu_fallback_mode(
 def test_verbose_detecting_line_shows_audio_off_when_no_audio(
     mock_probe, mock_detect, mock_split, tmp_path, capsys
 ):
-    """Verbose Detecting line reflects --no-audio (#336)."""
+    """Verbose Detecting line reflects --no-audio (#336).
+
+    Exercises the non-frozen branch of _audio_status_str (#384); with
+    AUDIO_FROZEN=True in production, the frozen branch dominates, so this
+    test patches it off to assert the config.no_audio-driven flip.
+    """
     mock_probe.return_value = PROBE_RESULT
     mock_detect.return_value = BOUNDARIES
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, no_audio=True)
 
-    run_split(Path("input.mp4"), config, verbose=True)
+    with patch("allaganeye.audio.AUDIO_FROZEN", False):
+        run_split(Path("input.mp4"), config, verbose=True)
     out = capsys.readouterr().out
     assert "audio=off" in out
     assert "audio=on" not in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_detecting_line_shows_audio_frozen_when_module_frozen(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Verbose Detecting line shows 'audio=frozen' when AUDIO_FROZEN is True (#384).
+
+    The audio module is currently frozen (#327), so regardless of the
+    ``--no-audio`` flag the scan is skipped.  verbose output must reflect
+    that reality instead of reading ``config.no_audio`` blindly, which
+    previously printed misleading ``audio=on``.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+
+    # no_audio=False would previously have produced audio=on; with
+    # AUDIO_FROZEN=True we expect audio=frozen.
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, no_audio=False)
+
+    with patch("allaganeye.audio.AUDIO_FROZEN", True):
+        run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "audio=frozen" in out, f"expected audio=frozen in: {out!r}"
+    assert "audio=on" not in out
+    assert "audio=off" not in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_audio_frozen_overrides_no_audio_flag(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """When frozen, the verbose status stays 'frozen' even with --no-audio (#384).
+
+    Prevents regression to config.no_audio taking precedence over the
+    frozen module state (the original bug).
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, no_audio=True)
+
+    with patch("allaganeye.audio.AUDIO_FROZEN", True):
+        run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "audio=frozen" in out
+    assert "audio=off" not in out
+
+
+def test_audio_status_str_helper_matches_run_audio_scan_contract():
+    """_audio_status_str output stays in sync with _run_audio_scan behaviour (#384).
+
+    Direct unit coverage of the helper.  If this test passes but the
+    verbose output still shows wrong values, the helper isn't being called.
+    """
+    from allaganeye.commands.split_matches import _audio_status_str
+
+    with patch("allaganeye.audio.AUDIO_FROZEN", True):
+        assert _audio_status_str(no_audio=False) == "frozen"
+        assert _audio_status_str(no_audio=True) == "frozen"
+
+    with patch("allaganeye.audio.AUDIO_FROZEN", False):
+        assert _audio_status_str(no_audio=False) == "on"
+        assert _audio_status_str(no_audio=True) == "off"
 
 
 @patch(f"{MODULE}.split_video")
