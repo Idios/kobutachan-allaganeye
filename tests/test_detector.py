@@ -298,6 +298,104 @@ class TestRefineBlackoutRegions:
         mock_probe.assert_not_called()
 
     @patch("allaganeye.video.detector._probe_single_frame")
+    def test_progress_callback_fires_on_probe_error(self, mock_probe):
+        """Progress still advances when a probe raises VideoProcessingError (#366).
+
+        The whole point of #366 is that the Refining bar must keep moving
+        during the Pass 2 wait.  If failed probes silently skipped the
+        callback, a video with a corrupt region would re-freeze the bar.
+        """
+
+        call_count = 0
+
+        def side_effect(video_path, t):
+            nonlocal call_count
+            call_count += 1
+            # Every 3rd probe fails
+            if call_count % 3 == 0:
+                raise VideoProcessingError("simulated probe failure")
+            return 5.0
+
+        mock_probe.side_effect = side_effect
+        calls: list[tuple[int, int]] = []
+        regions = [(100.0, 102.0)]
+
+        _refine_blackout_regions(
+            Path("test.mp4"),
+            regions,
+            15.0,
+            1000.0,
+            progress_callback=lambda c, t: calls.append((c, t)),
+        )
+
+        probe_count = mock_probe.call_count
+        assert probe_count > 0
+        # Initial publish + one call per probe, regardless of success/failure
+        assert len(calls) == probe_count + 1
+        assert calls[0] == (0, probe_count)
+        assert calls[-1] == (probe_count, probe_count)
+        # Monotonically non-decreasing
+        completed_seq = [c for c, _ in calls]
+        assert completed_seq == sorted(completed_seq)
+
+    @patch("allaganeye.video.detector._probe_single_frame")
+    def test_progress_callback_count_matches_deduplicated_probes(self, mock_probe):
+        """Progress total equals dedup'd probe count, not len(blackout_regions).
+
+        Guards against regressing to the old `len(blackout_regions)` semantics:
+        overlapping regions share probe timestamps and must be counted once.
+        """
+        mock_probe.return_value = 128.0
+        # Two heavily overlapping regions so probe windows overlap and dedup
+        regions = [(100.0, 102.0), (101.0, 103.0)]
+        calls: list[tuple[int, int]] = []
+
+        _refine_blackout_regions(
+            Path("test.mp4"),
+            regions,
+            15.0,
+            1000.0,
+            progress_callback=lambda c, t: calls.append((c, t)),
+        )
+
+        probe_count = mock_probe.call_count
+        # Total reported must equal the actual (deduplicated) probe count,
+        # which is strictly less than the naive sum of per-region windows.
+        reported_total = calls[0][1]
+        assert reported_total == probe_count
+        assert len(calls) == probe_count + 1
+        # And crucially: not len(regions).
+        assert reported_total != len(regions)
+
+    @patch("allaganeye.video.detector._probe_single_frame")
+    def test_progress_callback_contract_holds_with_multiple_workers(self, mock_probe):
+        """With workers>1 the callback contract still holds.
+
+        as_completed runs in the main thread so the callback is never
+        concurrent, but ordering is non-deterministic.  Verify counts are
+        monotonic and final == total regardless.
+        """
+        mock_probe.return_value = 128.0
+        regions = [(100.0, 110.0)]  # wider region => more probes
+        calls: list[tuple[int, int]] = []
+
+        _refine_blackout_regions(
+            Path("test.mp4"),
+            regions,
+            15.0,
+            1000.0,
+            workers=4,
+            progress_callback=lambda c, t: calls.append((c, t)),
+        )
+
+        probe_count = mock_probe.call_count
+        assert probe_count > 1  # must actually exercise parallelism
+        assert len(calls) == probe_count + 1
+        completed_seq = [c for c, _ in calls]
+        assert completed_seq == sorted(completed_seq)
+        assert calls[-1] == (probe_count, probe_count)
+
+    @patch("allaganeye.video.detector._probe_single_frame")
     def test_video_processing_error_treated_as_non_blackout(self, mock_probe):
         """VideoProcessingError from a future is caught and treated as 255.0."""
         from allaganeye.exceptions import VideoProcessingError
@@ -865,6 +963,58 @@ class TestDetectMatchBoundaries:
             assert 0 <= completed <= total
         # final completed == total (all refine steps reported)
         assert refine_calls[-1][0] == refine_calls[-1][1]
+
+    @patch("allaganeye.video.detector._probe_single_frame")
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_refine_progress_delivered_per_probe_through_detector(
+        self, mock_chunk, mock_probe
+    ):
+        """End-to-end #366 contract: UI receives per-probe updates, not a batch.
+
+        Before #366, detect_match_boundaries called `_refine_step()` in a
+        tight loop *after* Pass 2 returned, producing len(blackout_regions)
+        batched calls.  After #366, each probe must surface as an individual
+        callback invocation so the Refining bar advances during the wait.
+
+        This test pins that contract at the detect_match_boundaries level:
+        the number of refine callbacks must equal the number of actual
+        probes + 1 (initial publish), which is always strictly greater than
+        len(blackout_regions) for non-trivial regions.
+        """
+
+        # One blackout region around t=5.
+        def chunk_side_effect(vp, ts, cs, ce, si):
+            return {t: 0.0 if 4.0 <= t <= 6.0 else 128.0 for t in ts}
+
+        mock_chunk.side_effect = chunk_side_effect
+        mock_probe.return_value = 128.0
+
+        refine_calls: list[tuple[int, int]] = []
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=10.0,
+            sample_interval=1.0,
+            min_match_duration=1.0,
+            refine_progress_callback=lambda c, t: refine_calls.append((c, t)),
+        )
+
+        probe_count = mock_probe.call_count
+        assert probe_count > 1, "test needs multiple probes to be meaningful"
+
+        # The critical regression guard: we must have received at least one
+        # callback per probe (plus the initial publish).  If someone reverts
+        # to the pre-#366 "batch after Pass 2" shape, this count drops to
+        # len(blackout_regions) == 1 and the assertion fails.
+        assert len(refine_calls) >= probe_count + 1
+        assert refine_calls[0] == (0, probe_count)
+
+        # Completed count strictly increases at some point during Pass 2,
+        # i.e. at least one (completed, total) pair with 0 < completed < total
+        # appears before the final one -- proving delivery was not batched.
+        intermediate = [(c, t) for c, t in refine_calls if 0 < c < t]
+        assert intermediate, (
+            "no intermediate progress was published; callbacks appear batched"
+        )
 
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_progress_callback_none(self, mock_chunk):
