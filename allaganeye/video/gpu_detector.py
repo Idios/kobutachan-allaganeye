@@ -1,7 +1,6 @@
 """GPU-accelerated match detection using chunked parallel ffmpeg decode."""
 
 import logging
-import math
 import os
 import subprocess
 import time
@@ -13,7 +12,12 @@ import numpy as np
 
 from allaganeye.exceptions import VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
-from allaganeye.video.detector import _FRAME_SIZE, _SAMPLE_HEIGHT, _SAMPLE_WIDTH
+from allaganeye.video.detector import (
+    _FRAME_SIZE,
+    _SAMPLE_HEIGHT,
+    _SAMPLE_WIDTH,
+    _generate_timestamps,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,46 +59,33 @@ def scan_gpu(
 
     Raises VideoProcessingError if GPU decode fails for all chunks.
     """
-    target_chunks = min(os.cpu_count() or 4, 16)
-    chunk_duration_raw = duration / target_chunks
+    num_chunks = min(os.cpu_count() or 4, 16)
+    chunk_duration = duration / num_chunks
 
-    # Align chunk boundaries to the global sample grid used by
-    # ``_scan_cpu`` (#392): ``_generate_timestamps`` produces
-    # ``[0, interval, 2*interval, ...]``, and ffmpeg's ``fps=1/interval``
-    # filter emits frames at ``chunk_start + k*interval``.  Without
-    # alignment, ``chunk_start = i * (duration / num_chunks)`` is an
-    # arbitrary float, so GPU timestamps end up offset from the CPU grid
-    # by ``chunk_start % sample_interval`` and downstream grouping /
-    # transition expansion produce different blackout region boundaries.
-    #
-    # Snapping each chunk_start down to the nearest multiple of
-    # sample_interval keeps GPU output aligned with CPU output: the same
-    # physical frame is labeled with the same key in both dicts.
-    chunks: list[tuple[float, float]] = []
-    for i in range(target_chunks):
-        raw_start = i * chunk_duration_raw
-        chunk_start = math.floor(raw_start / sample_interval) * sample_interval
-        if i == target_chunks - 1:
-            chunk_end = duration
-        else:
-            raw_next = (i + 1) * chunk_duration_raw
-            chunk_end = math.floor(raw_next / sample_interval) * sample_interval
-        chunk_start = max(0.0, min(chunk_start, duration))
-        chunk_end = max(chunk_start, min(chunk_end, duration))
-        # Skip degenerate chunks that collapse to 0-duration after grid
-        # snapping (happens for short videos where
-        # ``chunk_duration_raw < sample_interval``).  The remaining
-        # chunks still cover the full timeline; we just dispatch fewer
-        # ffmpeg processes.
-        if chunk_start < chunk_end and (not chunks or chunks[-1][1] <= chunk_start):
-            chunks.append((chunk_start, chunk_end))
+    # Pre-compute the global sample grid (same one ``_scan_cpu`` uses) so
+    # GPU and CPU agree on the keys of the resulting dict (#392).  We
+    # still let each chunk's ffmpeg process use its native off-grid
+    # ``-ss chunk_start`` (to keep chunk boundaries balanced) but map
+    # the N-th emitted frame to the N-th pre-assigned grid timestamp --
+    # exactly the same labeling trick ``_decode_chunk_cpu`` uses.  Before
+    # this change, GPU labeled frames with ``chunk_start + k*interval``
+    # which is off-grid for chunks whose start isn't a multiple of
+    # ``sample_interval``; downstream grouping then saw different
+    # blackout region boundaries from CPU, causing #392's 1m47s miss.
+    global_grid = _generate_timestamps(duration, sample_interval)
+    chunks: list[tuple[float, float, list[float]]] = []
+    for i in range(num_chunks):
+        chunk_start = i * chunk_duration
+        chunk_end = min((i + 1) * chunk_duration, duration)
+        chunk_timestamps = [t for t in global_grid if chunk_start <= t < chunk_end]
+        if chunk_timestamps:
+            chunks.append((chunk_start, chunk_end, chunk_timestamps))
 
-    # Post-alignment chunk count may be < target_chunks when grid
-    # snapping collapsed intermediate chunks.  Use the actual count so
-    # the progress callback reports a truthful total.
+    # Chunks without any grid point (very short videos) are dropped, so
+    # report the actual dispatched count via progress_callback.
     num_chunks = len(chunks) if chunks else 1
 
-    total_expected = int(duration / sample_interval)
+    total_expected = len(global_grid) or 1
     results: dict[float, float] = {}
     blackout_count = 0
     completed = 0
@@ -114,8 +105,9 @@ def scan_gpu(
                 chunk_end,
                 sample_interval,
                 codec,
+                chunk_timestamps,
             ): (chunk_start, chunk_end)
-            for chunk_start, chunk_end in chunks
+            for chunk_start, chunk_end, chunk_timestamps in chunks
         }
         for future in as_completed(futures):
             chunk_start, chunk_end = futures[future]
@@ -178,11 +170,20 @@ def _decode_chunk(
     chunk_end: float,
     sample_interval: float,
     codec: str | None = None,
+    chunk_timestamps: list[float] | None = None,
 ) -> tuple[dict[float, float], str]:
     """Decode a single chunk using GPU-accelerated ffmpeg.
 
     Returns ``(results_dict, stderr_text)`` so the caller can inspect
     GPU usage from the first completed chunk.
+
+    When *chunk_timestamps* is supplied, the N-th emitted frame is mapped
+    to ``chunk_timestamps[N]`` (the global sample grid) instead of
+    ``chunk_start + N*sample_interval`` (#392).  Mirrors
+    ``_decode_chunk_cpu``'s labeling so CPU and GPU produce dicts keyed
+    identically on the same physical content.  Falls back to the chunk-
+    local formula when ``chunk_timestamps`` is None for backwards
+    compatibility with the unit tests that invoke the function directly.
     """
     chunk_duration = chunk_end - chunk_start
     fps_value = 1.0 / sample_interval
@@ -245,13 +246,28 @@ def _decode_chunk(
     frame_idx = 0
     offset = 0
 
-    while offset + _FRAME_SIZE <= len(data):
-        frame = np.frombuffer(data[offset : offset + _FRAME_SIZE], dtype=np.uint8)
-        brightness = float(frame.mean())
-        timestamp = round(chunk_start + frame_idx * sample_interval, 4)
-        if timestamp < chunk_end:
-            results[timestamp] = brightness
-        offset += _FRAME_SIZE
-        frame_idx += 1
+    if chunk_timestamps is not None:
+        # Caller supplied pre-computed global grid timestamps -- map by
+        # index so CPU and GPU agree on dict keys (#392).  Stop when the
+        # pre-assigned list runs out even if ffmpeg emitted extra frames
+        # (can happen with keyframe-aligned -ss seeks near chunk_end).
+        while offset + _FRAME_SIZE <= len(data) and frame_idx < len(chunk_timestamps):
+            frame = np.frombuffer(data[offset : offset + _FRAME_SIZE], dtype=np.uint8)
+            results[chunk_timestamps[frame_idx]] = float(frame.mean())
+            offset += _FRAME_SIZE
+            frame_idx += 1
+    else:
+        # Legacy path: derive timestamp from chunk_start + k*interval.
+        # Kept for existing callers / unit tests that invoke _decode_chunk
+        # directly without a pre-computed list.  New code should always
+        # pass chunk_timestamps from scan_gpu.
+        while offset + _FRAME_SIZE <= len(data):
+            frame = np.frombuffer(data[offset : offset + _FRAME_SIZE], dtype=np.uint8)
+            brightness = float(frame.mean())
+            timestamp = round(chunk_start + frame_idx * sample_interval, 4)
+            if timestamp < chunk_end:
+                results[timestamp] = brightness
+            offset += _FRAME_SIZE
+            frame_idx += 1
 
     return results, stderr_text

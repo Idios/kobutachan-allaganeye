@@ -216,66 +216,83 @@ class TestScanGpu:
         assert chunk_calls == []
 
     # ------------------------------------------------------------
-    # Chunk boundaries aligned to sample grid (#392)
+    # Global sample grid labeling (#392)
     # ------------------------------------------------------------
 
     @patch("allaganeye.video.gpu_detector._decode_chunk")
-    def test_chunk_starts_aligned_to_sample_interval(self, mock_decode):
-        """All chunk_starts are multiples of sample_interval (#392).
+    def test_chunks_receive_global_grid_timestamps(self, mock_decode):
+        """Each chunk is passed grid-aligned timestamps (#392).
 
-        Without alignment, ``chunk_start = i * (duration / num_chunks)``
-        lands on arbitrary floats; ffmpeg's ``fps=1/interval`` filter
-        then emits frames at ``chunk_start + k*interval`` off-grid, so
-        GPU timestamps diverge from ``_scan_cpu``'s global grid.  After
-        the fix, every dispatched chunk starts at a multiple of
-        sample_interval, which keeps GPU and CPU output keyed identically.
+        Before the fix, ``_decode_chunk`` derived timestamps from
+        ``chunk_start + k*interval``; chunks whose start wasn't a
+        multiple of ``sample_interval`` then labeled frames off-grid, so
+        GPU and CPU dicts had different keys for the same physical
+        content.  The fix pre-computes the global grid via
+        ``_generate_timestamps`` and passes the per-chunk slice to
+        ``_decode_chunk`` as ``chunk_timestamps``, mirroring what
+        ``_decode_chunk_cpu`` does.
         """
         mock_decode.return_value = ({}, "")
         scan_gpu(Path("test.mp4"), 10228.7, 3.0, 15.0)
 
-        # Extract chunk_start from each dispatched ffmpeg call.
-        chunk_starts = [call.args[1] for call in mock_decode.call_args_list]
-        assert chunk_starts, "no chunks dispatched"
-        for cs in chunk_starts:
-            remainder = cs - round(cs / 3.0) * 3.0
+        all_timestamps: list[float] = []
+        for call in mock_decode.call_args_list:
+            kwargs = call.kwargs
+            if "chunk_timestamps" in kwargs:
+                ts = kwargs["chunk_timestamps"]
+            elif len(call.args) >= 6:
+                ts = call.args[5]
+            else:
+                ts = None
+            assert ts is not None, (
+                "scan_gpu must pass chunk_timestamps to _decode_chunk (#392)"
+            )
+            all_timestamps.extend(ts)
+
+        assert all_timestamps, "no timestamps dispatched"
+        for t in all_timestamps:
+            remainder = t - round(t / 3.0) * 3.0
             assert abs(remainder) < 1e-6, (
-                f"chunk_start={cs} not aligned to sample_interval=3.0 "
+                f"timestamp={t} not aligned to sample_interval=3.0 "
                 f"(remainder={remainder})"
             )
 
     @patch("allaganeye.video.gpu_detector._decode_chunk")
-    def test_chunks_cover_full_duration_without_overlap(self, mock_decode):
-        """Adjacent chunks tile the timeline without gaps or overlap (#392).
+    def test_dispatched_timestamps_match_cpu_grid_exactly(self, mock_decode):
+        """The union of dispatched timestamps equals ``_generate_timestamps`` (#392).
 
-        After grid snapping, chunks may merge or collapse, but the union
-        of ``[chunk_start, chunk_end)`` ranges must still cover the whole
-        video duration, and no frame should be decoded by two chunks
-        (which would produce duplicate dict keys at the boundary).
+        Ensures no grid point is skipped and no duplicates are dispatched
+        across chunks.  With this guarantee, GPU's resulting dict has
+        exactly the same keys as ``_scan_cpu``'s.
         """
+        from allaganeye.video.detector import _generate_timestamps
+
         mock_decode.return_value = ({}, "")
         scan_gpu(Path("test.mp4"), 1000.0, 3.0, 15.0)
 
-        ranges = [(call.args[1], call.args[2]) for call in mock_decode.call_args_list]
-        ranges.sort()
-        assert ranges, "no chunks dispatched"
-        assert ranges[0][0] == 0.0, f"first chunk should start at 0, got {ranges[0][0]}"
-        assert ranges[-1][1] == 1000.0, (
-            f"last chunk should end at duration, got {ranges[-1][1]}"
+        dispatched: list[float] = []
+        for call in mock_decode.call_args_list:
+            kwargs = call.kwargs
+            ts = kwargs.get("chunk_timestamps")
+            if ts is None and len(call.args) >= 6:
+                ts = call.args[5]
+            assert ts is not None
+            dispatched.extend(ts)
+
+        expected = _generate_timestamps(1000.0, 3.0)
+        assert sorted(dispatched) == expected, (
+            f"dispatched grid mismatch: "
+            f"missing={set(expected) - set(dispatched)}, "
+            f"extra={set(dispatched) - set(expected)}"
         )
-        for i in range(len(ranges) - 1):
-            prev_end = ranges[i][1]
-            next_start = ranges[i + 1][0]
-            assert prev_end <= next_start, f"chunks overlap: {prev_end} > {next_start}"
-            # Boundary points are shared, but timestamp-filter uses
-            # ``< chunk_end`` so the frame at the boundary is counted
-            # exactly once (in the next chunk).
 
     @patch("allaganeye.video.gpu_detector._decode_chunk")
     def test_chunk_count_reported_via_callback_matches_dispatched(self, mock_decode):
         """Progress callback's ``total`` equals actually-dispatched chunks (#392).
 
-        Regression guard for the original 16 vs 10 mismatch when grid
-        snapping collapses degenerate chunks.
+        Short videos where ``chunk_duration < sample_interval`` collapse
+        some chunks (no grid point in range).  The callback must report
+        the post-collapse count so ``done / total`` tracks reality.
         """
         mock_decode.return_value = ({0.0: 128.0}, "")
         chunk_calls: list[tuple[int, int, float]] = []
@@ -288,12 +305,41 @@ class TestScanGpu:
             chunk_progress_callback=lambda d, t, eta: chunk_calls.append((d, t, eta)),
         )
 
-        # Total from last callback must equal number of actual dispatches.
         assert chunk_calls
         total_reported = chunk_calls[-1][1]
         assert total_reported == mock_decode.call_count, (
             f"callback total={total_reported}, actual={mock_decode.call_count}"
         )
+
+    def test_decode_chunk_labels_frames_by_pre_assigned_grid(self):
+        """_decode_chunk uses chunk_timestamps[frame_idx] when supplied (#392).
+
+        Direct unit check: passing 3 grid timestamps and 3 decoded frames
+        yields a dict keyed by those exact timestamps (not by
+        ``chunk_start + k*interval``).
+        """
+        mock_grid = [321.0, 324.0, 327.0]  # deliberately off from chunk_start
+        with patch("allaganeye.video.gpu_detector.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                stdout=_make_frames([100, 5, 200]),
+                stderr=b"",
+                returncode=0,
+            )
+            result, _ = _decode_chunk(
+                Path("test.mp4"),
+                319.65,  # off-grid chunk_start
+                330.0,
+                3.0,
+                codec=None,
+                chunk_timestamps=mock_grid,
+            )
+
+        assert set(result) == set(mock_grid), (
+            f"labels should come from chunk_timestamps, got {sorted(result)}"
+        )
+        assert result[321.0] == pytest.approx(100.0)
+        assert result[324.0] == pytest.approx(5.0)
+        assert result[327.0] == pytest.approx(200.0)
 
 
 class TestGpuFallbackIntegration:
