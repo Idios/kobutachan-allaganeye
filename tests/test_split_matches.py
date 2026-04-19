@@ -2445,11 +2445,14 @@ def test_verbose_cache_hit_audio_line_matches_cache_miss_path(
     assert "audio=on" in tail, f"expected audio=on in cache hit summary: {tail[:400]!r}"
 
 
-def test_display_cache_hit_params_swallows_corrupt_cache(tmp_path, capsys):
-    """Helper does not raise if the cache file is unreadable (#380).
+def test_display_cache_hit_params_malformed_json_emits_unavailable(tmp_path, capsys):
+    """Malformed JSON emits header + (unavailable: ...) instead of silent (#380).
 
-    _load_cache already validated the file, but a race or mid-flight
-    corruption shouldn't abort the split.  Missing params dict -> silent.
+    Previously the helper returned silently on any read/parse failure,
+    hiding verbose output even though the user explicitly asked for it.
+    The helper now always emits the ``Cache hit: ...`` header so users
+    can confirm verbose mode is active, and surfaces the specific
+    failure reason so degraded cache state is diagnosable.
     """
     from allaganeye.commands.split_matches import _display_cache_hit_params
 
@@ -2460,7 +2463,111 @@ def test_display_cache_hit_params_swallows_corrupt_cache(tmp_path, capsys):
     # Must not raise.
     _display_cache_hit_params(cache_path, config)
     out = capsys.readouterr().out
-    assert out == "", f"expected silent return, got: {out!r}"
+    assert "Cache hit: detection params from .detection_cache.json" in out
+    assert "(unavailable: cache file is not valid JSON)" in out
+
+
+# ------------------------------------------------------------
+# G1-G5 unavailable fallback gap tests (#380 tester review)
+# ------------------------------------------------------------
+
+
+def test_display_cache_hit_params_empty_params_dict_emits_unavailable(tmp_path, capsys):
+    """G1: Empty ``params`` dict -> header + (unavailable: no params section)."""
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(json.dumps({"params": {}}), encoding="utf-8")
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "Cache hit: detection params from .detection_cache.json" in out
+    assert "(unavailable: cache file has no params section)" in out
+
+
+def test_display_cache_hit_params_missing_params_key_emits_unavailable(
+    tmp_path, capsys
+):
+    """G2: Missing ``params`` key -> header + (unavailable: no params section)."""
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(json.dumps({"boundaries": []}), encoding="utf-8")
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "Cache hit: detection params from .detection_cache.json" in out
+    assert "(unavailable: cache file has no params section)" in out
+
+
+def test_display_cache_hit_params_non_dict_params_emits_unavailable(tmp_path, capsys):
+    """G3: ``params`` is not a dict -> header + (unavailable: no params section).
+
+    ``_load_cache`` validates top-level structure but not that ``params``
+    itself is a dict, so a corrupt cache with ``{"params": "str"}`` can
+    reach the helper.
+    """
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(json.dumps({"params": "not a dict"}), encoding="utf-8")
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "Cache hit: detection params from .detection_cache.json" in out
+    assert "(unavailable: cache file has no params section)" in out
+
+
+def test_display_cache_hit_params_missing_individual_keys_use_placeholder(
+    tmp_path, capsys
+):
+    """G4: Individual key absence falls back to ``?`` placeholder tokens.
+
+    Legacy caches may lack newer keys (``no_audio`` introduced later).
+    The helper must still emit a valid line with ``?`` in place of each
+    missing value so the summary structure stays intact.
+    """
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    # Only one key present; every other shows ``?``.
+    cache_path.write_text(
+        json.dumps({"params": {"sample_interval": 3.0}}), encoding="utf-8"
+    )
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "Cache hit: detection params from .detection_cache.json" in out
+    assert "sample_interval=3.0s" in out
+    assert "threshold=?" in out
+    assert "min_match=?s" in out
+    assert "min_blackout=?s" in out
+    # audio= token driven by config.no_audio when cache key is absent.
+    assert "audio=" in out
+
+
+def test_display_cache_hit_params_oserror_emits_unavailable(tmp_path, capsys):
+    """G5: OSError (permission / IO) -> header + (unavailable: OSError).
+
+    Simulates a post-``_load_cache`` race where the file became
+    unreadable (deletion, chmod, IO error) between validation and the
+    helper call.
+    """
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    # File does not exist so read_text raises FileNotFoundError (OSError).
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "Cache hit: detection params from .detection_cache.json" in out
+    assert "(unavailable: cache file unreadable" in out
+    # Concrete exception class name surfaced for diagnostics.
+    assert "FileNotFoundError" in out
 
 
 @patch(f"{MODULE}.split_video")

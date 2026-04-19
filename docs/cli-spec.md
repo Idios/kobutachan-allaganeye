@@ -104,7 +104,29 @@ Splitting  #################################### 100% 0:00:05
 Total: 0m07s
 ```
 
-`audio` 表示は cache-miss 側の Detecting summary と同じヘルパ (`_audio_status_str`) を経由するため、`AUDIO_FROZEN` 状態を反映する (#384)。キャッシュファイル自体が `_load_cache` 検証をパスしているため、このセクションではキャッシュ読み直しに失敗しても警告を出さず無言で fallback する (読み取り時点ではキャッシュパラメータは既に検証済み)。
+`audio` 表示は cache-miss 側の Detecting summary と同じヘルパ (`_audio_status_str`) を経由するため、`AUDIO_FROZEN` 状態を反映する (#384)。
+
+#### キャッシュ再読み込み失敗時のフォールバック
+
+`_load_cache` 検証通過後でも race condition / 破損 / 権限変更等で helper 側の読み直しが失敗しうる。その場合はヘッダ (`Cache hit: detection params from ...`) を常に emit した上で、失敗理由を `(unavailable: ...)` 行で通知する。split 本体は妨げない (helper は raise しない):
+
+| シナリオ | 出力 |
+|---|---|
+| JSON parse 失敗 (破損) | `(unavailable: cache file is not valid JSON)` |
+| `params` キー欠落 / `params` が dict でない / 空 dict | `(unavailable: cache file has no params section)` |
+| I/O エラー (削除・権限・ディスク障害) | `(unavailable: cache file unreadable - <ExceptionClassName>)` |
+| 個別パラメータキーの欠落 (旧バージョンキャッシュ等) | 該当トークンのみ `?` にフォールバック (`threshold=?` 等)、他は表示 |
+
+出力例 (JSON 破損ケース):
+
+```
+Cache hit: detection params from .detection_cache.json
+  (unavailable: cache file is not valid JSON)
+Detected 8 match(es) in recording.mkv (2:50:28) (cached)
+  ...
+```
+
+verbose モードの UX 目的 (= 情報取得) を優先する設計。silent return だと「verbose が効いていない」と誤認する恐れがあるため、ヘッダは常時 emit する (#380 tester review)。
 
 ### 検知フェーズの進捗バー (#368 / #393)
 

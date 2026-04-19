@@ -256,18 +256,32 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
     This surfaces the same params from the cache itself so verbose output
     stays informative whether or not Pass 1/2 ran.
 
-    Falls back silently if the cache is unreadable or params are missing:
-    ``_load_cache`` already decided the cache was valid, so a read failure
-    here is a race / corruption edge case that shouldn't block the split.
+    Always emits the ``Cache hit: ...`` header so users running with ``-v``
+    can see that verbose output is active even when the cache can't be
+    introspected.  Failure modes (I/O error, malformed JSON, missing
+    params section) are surfaced as ``(unavailable: <reason>)`` rather
+    than returning silently -- the split itself is unaffected, but the
+    verbose summary makes the degraded state visible.
     """
+    header = f"Cache hit: detection params from {cache_path.name}"
+
     try:
         data = json.loads(cache_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError as e:
         logger.debug("Cannot re-read cache for verbose params: %s", cache_path)
+        typer.echo(header)
+        typer.echo(f"  (unavailable: cache file unreadable - {type(e).__name__})")
+        return
+    except json.JSONDecodeError:
+        logger.debug("Cache file not valid JSON for verbose params: %s", cache_path)
+        typer.echo(header)
+        typer.echo("  (unavailable: cache file is not valid JSON)")
         return
 
-    params = data.get("params", {})
+    params = data.get("params")
     if not isinstance(params, dict) or not params:
+        typer.echo(header)
+        typer.echo("  (unavailable: cache file has no params section)")
         return
 
     # The cached ``audio`` state is recorded in ``params.no_audio`` (bool).
@@ -275,7 +289,7 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
     # behaviour for the current run, same as the cache-miss summary.
     cached_no_audio = bool(params.get("no_audio", config.no_audio))
 
-    typer.echo(f"Cache hit: detection params from {cache_path.name}")
+    typer.echo(header)
     typer.echo(
         "  "
         f"sample_interval={params.get('sample_interval', '?')}s, "
