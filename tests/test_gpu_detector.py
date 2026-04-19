@@ -215,6 +215,86 @@ class TestScanGpu:
             )
         assert chunk_calls == []
 
+    # ------------------------------------------------------------
+    # Chunk boundaries aligned to sample grid (#392)
+    # ------------------------------------------------------------
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_chunk_starts_aligned_to_sample_interval(self, mock_decode):
+        """All chunk_starts are multiples of sample_interval (#392).
+
+        Without alignment, ``chunk_start = i * (duration / num_chunks)``
+        lands on arbitrary floats; ffmpeg's ``fps=1/interval`` filter
+        then emits frames at ``chunk_start + k*interval`` off-grid, so
+        GPU timestamps diverge from ``_scan_cpu``'s global grid.  After
+        the fix, every dispatched chunk starts at a multiple of
+        sample_interval, which keeps GPU and CPU output keyed identically.
+        """
+        mock_decode.return_value = ({}, "")
+        scan_gpu(Path("test.mp4"), 10228.7, 3.0, 15.0)
+
+        # Extract chunk_start from each dispatched ffmpeg call.
+        chunk_starts = [call.args[1] for call in mock_decode.call_args_list]
+        assert chunk_starts, "no chunks dispatched"
+        for cs in chunk_starts:
+            remainder = cs - round(cs / 3.0) * 3.0
+            assert abs(remainder) < 1e-6, (
+                f"chunk_start={cs} not aligned to sample_interval=3.0 "
+                f"(remainder={remainder})"
+            )
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_chunks_cover_full_duration_without_overlap(self, mock_decode):
+        """Adjacent chunks tile the timeline without gaps or overlap (#392).
+
+        After grid snapping, chunks may merge or collapse, but the union
+        of ``[chunk_start, chunk_end)`` ranges must still cover the whole
+        video duration, and no frame should be decoded by two chunks
+        (which would produce duplicate dict keys at the boundary).
+        """
+        mock_decode.return_value = ({}, "")
+        scan_gpu(Path("test.mp4"), 1000.0, 3.0, 15.0)
+
+        ranges = [(call.args[1], call.args[2]) for call in mock_decode.call_args_list]
+        ranges.sort()
+        assert ranges, "no chunks dispatched"
+        assert ranges[0][0] == 0.0, f"first chunk should start at 0, got {ranges[0][0]}"
+        assert ranges[-1][1] == 1000.0, (
+            f"last chunk should end at duration, got {ranges[-1][1]}"
+        )
+        for i in range(len(ranges) - 1):
+            prev_end = ranges[i][1]
+            next_start = ranges[i + 1][0]
+            assert prev_end <= next_start, f"chunks overlap: {prev_end} > {next_start}"
+            # Boundary points are shared, but timestamp-filter uses
+            # ``< chunk_end`` so the frame at the boundary is counted
+            # exactly once (in the next chunk).
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_chunk_count_reported_via_callback_matches_dispatched(self, mock_decode):
+        """Progress callback's ``total`` equals actually-dispatched chunks (#392).
+
+        Regression guard for the original 16 vs 10 mismatch when grid
+        snapping collapses degenerate chunks.
+        """
+        mock_decode.return_value = ({0.0: 128.0}, "")
+        chunk_calls: list[tuple[int, int, float]] = []
+
+        scan_gpu(
+            Path("test.mp4"),
+            10.0,
+            3.0,
+            15.0,
+            chunk_progress_callback=lambda d, t, eta: chunk_calls.append((d, t, eta)),
+        )
+
+        # Total from last callback must equal number of actual dispatches.
+        assert chunk_calls
+        total_reported = chunk_calls[-1][1]
+        assert total_reported == mock_decode.call_count, (
+            f"callback total={total_reported}, actual={mock_decode.call_count}"
+        )
+
 
 class TestGpuFallbackIntegration:
     @patch("allaganeye.video.detector._scan_cpu")

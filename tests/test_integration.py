@@ -569,3 +569,35 @@ class TestGpuCpuConsistency:
                 f"Match {i + 1} end: CPU={c['end']:.1f}s, GPU={g['end']:.1f}s "
                 f"(diff={abs(c['end'] - g['end']):.1f}s > {tolerance}s)"
             )
+
+    @gpu_available
+    def test_gpu_cpu_boundaries_strict_parity(self, gpu_cpu_results: dict):
+        """CPU/GPU boundary timestamps within +-5s (#392).
+
+        Tighter contract than ``test_gpu_cpu_boundaries_close`` (+-10s):
+        verifies the #392 fix (grid-aligned GPU chunk starts) keeps the
+        two modes within 5s per boundary.  Regression from this level
+        means GPU has drifted off the sample grid again.
+        """
+        cpu = gpu_cpu_results["cpu"]
+        gpu = gpu_cpu_results["gpu"]
+
+        # #392: GPU should now match CPU match count exactly, not +-1.
+        assert len(cpu) == len(gpu), (
+            f"match count differs: CPU={len(cpu)}, GPU={len(gpu)}. "
+            "Regression of #392 -- GPU chunk_start no longer aligned to "
+            "sample grid, causing different blackout region boundaries."
+        )
+
+        tolerance = 5.0  # seconds
+        for i, (c, g) in enumerate(zip(cpu, gpu, strict=True)):
+            assert abs(c["start"] - g["start"]) <= tolerance, (
+                f"Match {i + 1} start drift: CPU={c['start']:.1f}, "
+                f"GPU={g['start']:.1f}, diff={abs(c['start'] - g['start']):.2f}s "
+                f"(>{tolerance}s). #392 regression."
+            )
+            assert abs(c["end"] - g["end"]) <= tolerance, (
+                f"Match {i + 1} end drift: CPU={c['end']:.1f}, "
+                f"GPU={g['end']:.1f}, diff={abs(c['end'] - g['end']):.2f}s "
+                f"(>{tolerance}s). #392 regression."
+            )

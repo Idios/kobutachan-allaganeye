@@ -1,6 +1,7 @@
 """GPU-accelerated match detection using chunked parallel ffmpeg decode."""
 
 import logging
+import math
 import os
 import subprocess
 import time
@@ -54,14 +55,44 @@ def scan_gpu(
 
     Raises VideoProcessingError if GPU decode fails for all chunks.
     """
-    num_chunks = min(os.cpu_count() or 4, 16)
-    chunk_duration = duration / num_chunks
+    target_chunks = min(os.cpu_count() or 4, 16)
+    chunk_duration_raw = duration / target_chunks
 
+    # Align chunk boundaries to the global sample grid used by
+    # ``_scan_cpu`` (#392): ``_generate_timestamps`` produces
+    # ``[0, interval, 2*interval, ...]``, and ffmpeg's ``fps=1/interval``
+    # filter emits frames at ``chunk_start + k*interval``.  Without
+    # alignment, ``chunk_start = i * (duration / num_chunks)`` is an
+    # arbitrary float, so GPU timestamps end up offset from the CPU grid
+    # by ``chunk_start % sample_interval`` and downstream grouping /
+    # transition expansion produce different blackout region boundaries.
+    #
+    # Snapping each chunk_start down to the nearest multiple of
+    # sample_interval keeps GPU output aligned with CPU output: the same
+    # physical frame is labeled with the same key in both dicts.
     chunks: list[tuple[float, float]] = []
-    for i in range(num_chunks):
-        chunk_start = i * chunk_duration
-        chunk_end = min((i + 1) * chunk_duration, duration)
-        chunks.append((chunk_start, chunk_end))
+    for i in range(target_chunks):
+        raw_start = i * chunk_duration_raw
+        chunk_start = math.floor(raw_start / sample_interval) * sample_interval
+        if i == target_chunks - 1:
+            chunk_end = duration
+        else:
+            raw_next = (i + 1) * chunk_duration_raw
+            chunk_end = math.floor(raw_next / sample_interval) * sample_interval
+        chunk_start = max(0.0, min(chunk_start, duration))
+        chunk_end = max(chunk_start, min(chunk_end, duration))
+        # Skip degenerate chunks that collapse to 0-duration after grid
+        # snapping (happens for short videos where
+        # ``chunk_duration_raw < sample_interval``).  The remaining
+        # chunks still cover the full timeline; we just dispatch fewer
+        # ffmpeg processes.
+        if chunk_start < chunk_end and (not chunks or chunks[-1][1] <= chunk_start):
+            chunks.append((chunk_start, chunk_end))
+
+    # Post-alignment chunk count may be < target_chunks when grid
+    # snapping collapsed intermediate chunks.  Use the actual count so
+    # the progress callback reports a truthful total.
+    num_chunks = len(chunks) if chunks else 1
 
     total_expected = int(duration / sample_interval)
     results: dict[float, float] = {}
