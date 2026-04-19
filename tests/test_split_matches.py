@@ -2699,7 +2699,7 @@ def test_quiet_dry_run_cache_hit_stdout_empty(mock_probe, mock_split, tmp_path, 
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.probe_video")
 def test_quiet_cache_hit_only_output_listing(mock_probe, mock_split, tmp_path, capsys):
-    """-q cache-hit emits ONLY the output listing — no '(cached)' (#418 M)."""
+    """-q cache-hit emits ONLY the output listing -- no '(cached)' (#418 M)."""
     source = tmp_path / "input.mp4"
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
     _seed_cache(source, tmp_path, config)
