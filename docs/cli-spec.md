@@ -79,7 +79,7 @@ allaganeye split <video_path> [OPTIONS]
 | `duration` | float | 試合時間（秒） |
 | `duration_display` | string | 試合時間の表示形式 |
 | `type` | string | セグメントの種別（`"fl_match"` / `"unknown"`） |
-| `output_file` | string | 出力ファイルパス |
+| `output_file` | string | 出力ファイルパス（POSIX 区切り、例: `output/match_001.mp4`）。Windows 実行時も `/` で記録される |
 
 **gaps[]:**
 
