@@ -457,6 +457,150 @@ def test_split_non_verbose_hides_traceback_for_unexpected(mock_run_split, fake_v
     assert "boom" in combined
 
 
+# --- Matrix v2 19a/19b/19c error display tests (issue #428) ---
+
+
+@patch(MODULE)
+def test_matrix_19a_verbose_emits_traceback_for_app_error(mock_run_split, fake_video):
+    """19a: -v shows Error + verbose_detail + full traceback for AllaganEyeError.
+
+    The traceback must be emitted even though the CLI handler re-raises
+    via ``raise typer.Exit from None``: we print the traceback *before*
+    the re-raise, when the original exception stack is still attached.
+    """
+    mock_run_split.side_effect = VideoProcessingError(
+        "ffmpeg failed",
+        context={
+            "command": "ffmpeg -i foo.mp4",
+            "return_code": 1,
+            "stderr_tail": "NAL unit type 12 not supported",
+        },
+    )
+    result = runner.invoke(app, ["split", str(fake_video), "-v"])
+    assert result.exit_code == 3
+    combined = result.stdout + (result.stderr or "")
+    # Error line + verbose detail + traceback lines all present.
+    assert "Error: ffmpeg failed" in combined
+    assert "stderr_tail:" in combined
+    assert "NAL unit type 12 not supported" in combined
+    assert "Traceback" in combined
+    assert "VideoProcessingError" in combined
+    # Hint must NOT appear in verbose mode (hint is 19b's signal).
+    assert "--verbose for full details" not in combined
+
+
+@patch(MODULE)
+def test_matrix_19b_default_emits_hint_for_app_error(mock_run_split, fake_video):
+    """19b: default shows Error + 1-line hint (no context, no traceback)."""
+    mock_run_split.side_effect = VideoProcessingError(
+        "ffmpeg failed",
+        context={"stderr_tail": "NAL unit type 12 not supported"},
+    )
+    result = runner.invoke(app, ["split", str(fake_video)])
+    assert result.exit_code == 3
+    combined = result.stdout + (result.stderr or "")
+    assert "Error: ffmpeg failed" in combined
+    # Hint is the defining 19b signal.
+    assert "Run with -v / --verbose for full details" in combined
+    # Neither context detail nor traceback leak into default mode.
+    assert "stderr_tail" not in combined
+    assert "NAL unit type" not in combined
+    assert "Traceback" not in combined
+
+
+@patch(MODULE)
+def test_matrix_19c_quiet_emits_error_only_for_app_error(mock_run_split, fake_video):
+    """19c: -q shows Error only.  No context, no hint, no traceback."""
+    mock_run_split.side_effect = VideoProcessingError(
+        "ffmpeg failed",
+        context={"stderr_tail": "NAL unit type 12 not supported"},
+    )
+    result = runner.invoke(app, ["split", str(fake_video), "-q"])
+    assert result.exit_code == 3
+    combined = result.stdout + (result.stderr or "")
+    assert "Error: ffmpeg failed" in combined
+    assert "--verbose for full details" not in combined
+    assert "stderr_tail" not in combined
+    assert "NAL unit type" not in combined
+    assert "Traceback" not in combined
+
+
+@patch(MODULE)
+def test_matrix_19b_default_emits_hint_for_unexpected(mock_run_split, fake_video):
+    """19b applies to non-AllaganEyeError too: one-liner + hint."""
+    mock_run_split.side_effect = RuntimeError("boom")
+    result = runner.invoke(app, ["split", str(fake_video)])
+    assert result.exit_code == 1
+    combined = result.stdout + (result.stderr or "")
+    assert "Unexpected error: boom" in combined
+    assert "Run with -v / --verbose for full details" in combined
+    assert "Traceback" not in combined
+
+
+@patch(MODULE)
+def test_matrix_19c_quiet_emits_error_only_for_unexpected(mock_run_split, fake_video):
+    """19c for non-AllaganEyeError: one-liner only (no hint, no traceback)."""
+    mock_run_split.side_effect = RuntimeError("boom")
+    result = runner.invoke(app, ["split", str(fake_video), "-q"])
+    assert result.exit_code == 1
+    combined = result.stdout + (result.stderr or "")
+    assert "Unexpected error: boom" in combined
+    assert "--verbose for full details" not in combined
+    assert "Traceback" not in combined
+
+
+@patch(MODULE)
+def test_matrix_traceback_includes_exception_class_name(mock_run_split, fake_video):
+    """-v traceback must surface the concrete AllaganEyeError subclass.
+
+    Bug reports lean on the subclass name to classify failures; a bare
+    base-class ``AllaganEyeError`` would lose the signal.
+    """
+    mock_run_split.side_effect = DetectionError("no boundaries")
+    result = runner.invoke(app, ["split", str(fake_video), "-v"])
+    assert result.exit_code == 4
+    combined = result.stdout + (result.stderr or "")
+    assert "Traceback" in combined
+    assert "DetectionError" in combined
+
+
+@patch(MODULE)
+def test_matrix_config_error_follows_matrix(mock_run_split, fake_video):
+    """ConfigValidationError (pre-run_split path) still follows the matrix.
+
+    The CLI raises ConfigValidationError itself when -v and -q conflict
+    (#419); the reporter must use the correct mode for the *successful*
+    option -- i.e. when only -v is passed, -v wins and 19a applies.
+    """
+    # Invalid threshold raises during SplitConfig.__post_init__ -> CVE.
+    # Run with -v so we assert 19a's output shape.
+    result = runner.invoke(
+        app,
+        ["split", str(fake_video), "--blackout-threshold", "-5", "-v"],
+    )
+    assert result.exit_code == 5
+    combined = result.stdout + (result.stderr or "")
+    assert "Error:" in combined
+    assert "Traceback" in combined
+    assert "ConfigValidationError" in combined
+
+
+def test_matrix_debug_brightness_hint_suppressed(tmp_path):
+    """debug-brightness has no -v option; do not show the -v hint on error.
+
+    Input-validation error path triggers InputFileError without -v / -q
+    flags available.  The hint would be misleading ("Run with -v" is not
+    a valid option here), so ``show_hint=False`` is passed in the
+    debug-brightness handler.  Exit code must stay at 2 (InputFileError).
+    """
+    missing = tmp_path / "does_not_exist.mp4"
+    result = runner.invoke(app, ["debug-brightness", str(missing)])
+    assert result.exit_code == 2
+    combined = result.stdout + (result.stderr or "")
+    assert "Error:" in combined
+    assert "--verbose for full details" not in combined
+
+
 # --- Extension support tests ---
 
 

@@ -1,5 +1,7 @@
 """CLI entry point for Allagan Eye."""
 
+import sys
+import traceback
 from pathlib import Path
 from typing import Annotated
 
@@ -12,6 +14,8 @@ from allaganeye.exceptions import (
     ConfigValidationError,
     InputFileError,
 )
+
+_VERBOSE_HINT = "  (Run with -v / --verbose for full details)"
 
 app = typer.Typer(
     name="allaganeye",
@@ -163,10 +167,10 @@ def split(
         run_split(video_path, config, verbose=verbose, quiet=quiet)
 
     except AllaganEyeError as e:
-        _report_app_error(e, verbose=verbose)
+        _report_app_error(e, verbose=verbose, quiet=quiet)
         raise typer.Exit(code=e.exit_code) from None
     except Exception:
-        _report_unexpected_error(verbose=verbose)
+        _report_unexpected_error(verbose=verbose, quiet=quiet)
         raise typer.Exit(code=1) from None
 
 
@@ -219,35 +223,78 @@ def debug_brightness(
         )
 
     except AllaganEyeError as e:
-        _report_app_error(e, verbose=False)
+        # debug-brightness has no -v / -q, so it maps to matrix 19b's
+        # "default" row but without a -v hint (the option doesn't exist
+        # for this command).
+        _report_app_error(e, verbose=False, quiet=False, show_hint=False)
         raise typer.Exit(code=e.exit_code) from None
     except Exception:
-        _report_unexpected_error(verbose=False)
+        _report_unexpected_error(verbose=False, quiet=False, show_hint=False)
         raise typer.Exit(code=1) from None
 
 
-def _report_app_error(exc: AllaganEyeError, *, verbose: bool) -> None:
-    """Render an ``AllaganEyeError`` to stderr, adding verbose detail (#351)."""
+def _report_app_error(
+    exc: AllaganEyeError,
+    *,
+    verbose: bool,
+    quiet: bool = False,
+    show_hint: bool = True,
+) -> None:
+    """Render an ``AllaganEyeError`` per matrix v2 19a/19b/19c (#428, #351).
+
+    - 19a (verbose=True):  ``Error: <msg>`` + ``verbose_detail()`` context
+      lines + full traceback (exceptions are raised ``from None`` in the
+      CLI handlers but the traceback is emitted here *before* re-raise,
+      so the stack is still the original error's).
+    - 19b (default):       ``Error: <msg>`` + one-line hint directing to
+      ``-v``.  Suppressed when ``show_hint=False`` (commands with no
+      verbose option, e.g. ``debug-brightness``, still take this branch
+      but skip the misleading hint).
+    - 19c (quiet=True):    ``Error: <msg>`` only.  No hint, no context,
+      no traceback.  Keeps the -q contract of "error message only"
+      intact even when verbose_detail would otherwise be available.
+    """
     typer.echo(f"Error: {exc}", err=True)
+
+    if quiet:
+        return
+
     if verbose:
         detail = exc.verbose_detail()
         if detail:
             typer.echo(detail, err=True)
+        tb = "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        ).rstrip()
+        typer.echo(tb, err=True)
+        return
+
+    if show_hint:
+        typer.echo(_VERBOSE_HINT, err=True)
 
 
-def _report_unexpected_error(*, verbose: bool) -> None:
-    """Render an unexpected (non-``AllaganEyeError``) exception (#351).
+def _report_unexpected_error(
+    *, verbose: bool, quiet: bool = False, show_hint: bool = True
+) -> None:
+    """Render an unexpected (non-``AllaganEyeError``) exception per matrix v2.
 
-    Non-verbose: short one-liner.  Verbose: full traceback via
-    ``traceback.print_exc`` so ``__cause__`` / ``__context__`` chains are
-    preserved (we purposefully do not pass ``from None`` in this path).
+    - 19a (verbose=True):  full traceback via ``traceback.print_exc`` so
+      ``__cause__`` / ``__context__`` chains are preserved (the CLI
+      handlers deliberately skip ``from None`` for this path).
+    - 19b (default):       ``Unexpected error: <exc>`` + -v hint (when
+      ``show_hint=True``).  No traceback so the default noise level
+      stays low.
+    - 19c (quiet=True):    ``Unexpected error: <exc>`` only.
     """
     if verbose:
-        import traceback
-
         traceback.print_exc()
-    else:
-        import sys
+        return
 
-        exc = sys.exc_info()[1]
-        typer.echo(f"Unexpected error: {exc}", err=True)
+    exc = sys.exc_info()[1]
+    typer.echo(f"Unexpected error: {exc}", err=True)
+
+    if quiet:
+        return
+
+    if show_hint:
+        typer.echo(_VERBOSE_HINT, err=True)

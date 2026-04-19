@@ -276,3 +276,45 @@ timestamp,brightness
 | 3 | FFmpeg / ffprobe エラー |
 | 4 | 試合境界が見つからない |
 | 5 | 設定値不正（パラメータの範囲外等） |
+
+### エラー表示 (#428 / #405 matrix v2)
+
+`split` コマンドのエラーは `-v` / `-q` によって出力量が変わる。すべてのエラーは stderr に出力される (stdout は壊れたデータを残さないよう空のまま)。
+
+| モード | 出力形式 (AllaganEyeError 系) | 出力形式 (予期せぬ例外) |
+|---|---|---|
+| `-v` (19a) | `Error: <msg>` + `verbose_detail()` コンテキスト (ffmpeg stderr_tail 等) + full traceback | full traceback (``__cause__`` / ``__context__`` 含む) |
+| default (19b) | `Error: <msg>` + `  (Run with -v / --verbose for full details)` 1 行 hint | `Unexpected error: <exc>` + 1 行 hint |
+| `-q` (19c) | `Error: <msg>` のみ | `Unexpected error: <exc>` のみ |
+
+`debug-brightness` には `-v` / `-q` がないため、エラーは上表の default 形式に準じるが、**存在しないオプションを誘導しないよう -v hint は出さない** (対応オプションがない場合は `show_hint=False`)。
+
+verbose モードの traceback は CLI ハンドラが `raise typer.Exit(...) from None` で上位に抜ける直前、元の例外が `sys.exc_info()` に残っている段階で `traceback.format_exception(type(exc), exc, exc.__traceback__)` により生成される。`from None` で traceback 自体を抑制しているわけではなく、典型的なユーザーには邪魔になるため default / -q では出さない設計。
+
+出力例 (ffmpeg 失敗 + `-v`):
+
+```
+Error: ffmpeg failed
+  command: ffmpeg -i recording.mkv ...
+  return_code: 1
+  stderr_tail:
+    NAL unit type 12 not supported
+Traceback (most recent call last):
+  File "...\allaganeye\cli.py", line 163, in split
+    run_split(video_path, config, verbose=verbose, quiet=quiet)
+  ...
+allaganeye.exceptions.VideoProcessingError: ffmpeg failed
+```
+
+出力例 (同じエラー / default):
+
+```
+Error: ffmpeg failed
+  (Run with -v / --verbose for full details)
+```
+
+出力例 (同じエラー / `-q`):
+
+```
+Error: ffmpeg failed
+```
