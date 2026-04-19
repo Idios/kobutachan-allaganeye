@@ -42,6 +42,7 @@ class DetectionStats(TypedDict, total=False):
     scorebar_in_match: int
     scorebar_non_fl: int
     scorebar_unknown: int
+    scorebar_elapsed_s: float
     audio_promotions: int
 
 
@@ -223,6 +224,7 @@ def detect_match_boundaries(
         refine_total = refine_completed + len(refined_regions)
 
         height = _scaled_height(src_resolution[0], src_resolution[1])
+        scorebar_start = time.monotonic()
         refined_regions, region_classifications = filter_blackouts_with_scorebar(
             video_path,
             refined_regions,
@@ -233,6 +235,9 @@ def detect_match_boundaries(
             stats=stats,
             progress_callback=lambda c, t: _refine_step(),
         )
+        scorebar_elapsed = time.monotonic() - scorebar_start
+        if stats is not None:
+            stats["scorebar_elapsed_s"] = scorebar_elapsed
 
     effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
     return _filter_and_extract_segments(
