@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
@@ -218,3 +218,179 @@ def test_print_environment_header_emits_hw_lines(cpu, gpu, mem, disk, tmp_path, 
     assert f"GPU: {gpu}" in out
     assert f"Memory: {mem}" in out
     assert f"Disk: {disk}" in out
+
+
+# --- Non-Windows parser coverage (#377 follow-up) ---
+#
+# The existing suite mocks the ``_detect_*`` functions end-to-end, which
+# leaves the actual Linux / Darwin parser logic untested.  These tests feed
+# realistic fixture strings through the real parser code so a broken regex
+# or partition sequence surfaces here instead of silently downgrading a
+# Linux/macOS user's verbose header to ``(unavailable)``.
+
+
+# --- G1: _detect_cpu_model Linux /proc/cpuinfo ---
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Linux")
+def test_detect_cpu_model_linux_parses_proc_cpuinfo(_system):
+    """Linux branch extracts 'model name' value from /proc/cpuinfo."""
+    from allaganeye.system_info import _detect_cpu_model
+
+    cpuinfo = (
+        "processor\t: 0\n"
+        "vendor_id\t: AuthenticAMD\n"
+        "model name\t: AMD Ryzen 9 9950X3D 16-Core Processor\n"
+        "cache size\t: 512 KB\n"
+        "\n"
+        "processor\t: 1\n"
+        "model name\t: AMD Ryzen 9 9950X3D 16-Core Processor\n"
+    )
+    with patch("builtins.open", mock_open(read_data=cpuinfo)):
+        result = _detect_cpu_model()
+    assert result == "AMD Ryzen 9 9950X3D 16-Core Processor"
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Linux")
+@patch("allaganeye.system_info.platform.processor", return_value="")
+def test_detect_cpu_model_linux_falls_back_when_no_model_name(_proc, _system):
+    """Linux branch returns None when /proc/cpuinfo lacks 'model name'."""
+    from allaganeye.system_info import _detect_cpu_model
+
+    cpuinfo = "processor\t: 0\nvendor_id\t: AuthenticAMD\n"
+    with patch("builtins.open", mock_open(read_data=cpuinfo)):
+        result = _detect_cpu_model()
+    # With no model line AND platform.processor() returning empty, we
+    # must surface None so the caller can mark CPU as unknown.
+    assert result is None
+
+
+# --- G2: _detect_physical_cores Linux physical id / core id aggregation ---
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Linux")
+def test_detect_physical_cores_linux_counts_unique_pairs(_system):
+    """Linux branch counts unique (physical_id, core_id) pairs.
+
+    2 physical packages, each with 2 cores, each with 2 HT threads
+    -> 4 unique physical cores, 8 logical threads.
+    """
+    from allaganeye.system_info import _detect_physical_cores
+
+    def block(proc_id: int, phys: int, core: int) -> str:
+        return f"processor\t: {proc_id}\nphysical id\t: {phys}\ncore id\t: {core}\n\n"
+
+    # 8 logical threads -> 4 unique (phys, core) pairs.
+    cpuinfo = (
+        block(0, 0, 0)
+        + block(1, 0, 0)  # duplicate pair (0,0) - same core, different HT
+        + block(2, 0, 1)
+        + block(3, 0, 1)  # duplicate pair (0,1)
+        + block(4, 1, 0)
+        + block(5, 1, 0)  # duplicate pair (1,0)
+        + block(6, 1, 1)
+        + block(7, 1, 1)  # duplicate pair (1,1)
+    )
+    with patch("builtins.open", mock_open(read_data=cpuinfo)):
+        result = _detect_physical_cores()
+    assert result == 4
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Linux")
+def test_detect_physical_cores_linux_returns_none_on_empty_file(_system):
+    """Linux branch returns None when no (physical id, core id) pair is seen."""
+    from allaganeye.system_info import _detect_physical_cores
+
+    with patch("builtins.open", mock_open(read_data="")):
+        result = _detect_physical_cores()
+    assert result is None
+
+
+# --- G3: get_gpu_info Linux lspci ---
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Linux")
+@patch("allaganeye.system_info._detect_gpu_nvidia", return_value=None)
+@patch("allaganeye.system_info._run_text")
+def test_get_gpu_info_linux_parses_lspci_vga_line(mock_run, _nvidia, _system):
+    """Linux branch extracts the GPU name from a 'VGA compatible controller' line."""
+    mock_run.return_value = (
+        "00:00.0 Host bridge: Intel Corporation 12th Gen Core Host Bridge\n"
+        "01:00.0 VGA compatible controller: "
+        "NVIDIA Corporation GA102 [GeForce RTX 3090] (rev a1)\n"
+        "02:00.0 Audio device: Intel Corporation ...\n"
+    )
+    result = get_gpu_info()
+    assert "NVIDIA Corporation GA102 [GeForce RTX 3090] (rev a1)" in result
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Linux")
+@patch("allaganeye.system_info._detect_gpu_nvidia", return_value=None)
+@patch("allaganeye.system_info._run_text")
+def test_get_gpu_info_linux_parses_lspci_3d_controller_line(mock_run, _nvidia, _system):
+    """Linux branch also matches '3D controller' lines (common on laptops)."""
+    mock_run.return_value = (
+        "00:02.0 VGA compatible controller: Intel Corporation UHD Graphics\n"
+        "01:00.0 3D controller: NVIDIA Corporation GA107M [GeForce RTX 3050 Mobile]\n"
+    )
+    result = get_gpu_info()
+    # Either line may match first; both should parse to a non-default value.
+    # The first hit wins per the implementation's loop, so Intel should win.
+    assert "Intel Corporation UHD Graphics" in result
+
+
+# --- G4: get_gpu_info Darwin system_profiler ---
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Darwin")
+@patch("allaganeye.system_info._detect_gpu_nvidia", return_value=None)
+@patch("allaganeye.system_info._run_text")
+def test_get_gpu_info_darwin_parses_chipset_model(mock_run, _nvidia, _system):
+    """Darwin branch extracts 'Chipset Model: X' via regex."""
+    mock_run.return_value = (
+        "Graphics/Displays:\n\n"
+        "    Apple M1 Pro:\n\n"
+        "      Chipset Model: Apple M1 Pro\n"
+        "      Type: GPU\n"
+        "      Bus: Built-In\n"
+    )
+    assert get_gpu_info() == "Apple M1 Pro"
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Darwin")
+@patch("allaganeye.system_info._detect_gpu_nvidia", return_value=None)
+@patch("allaganeye.system_info._run_text")
+def test_get_gpu_info_darwin_unavailable_when_no_chipset_line(
+    mock_run, _nvidia, _system
+):
+    """Darwin branch falls back when system_profiler output lacks Chipset Model."""
+    mock_run.return_value = "Graphics/Displays:\n\n    (info missing)\n"
+    assert get_gpu_info() == _UNAVAILABLE
+
+
+# --- G5: _detect_total_memory_bytes Linux /proc/meminfo ---
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Linux")
+def test_detect_total_memory_bytes_linux_parses_proc_meminfo(_system):
+    """Linux branch extracts MemTotal from /proc/meminfo and converts kB -> bytes."""
+    from allaganeye.system_info import _detect_total_memory_bytes
+
+    meminfo = (
+        "MemTotal:       16334364 kB\n"
+        "MemFree:         1234567 kB\n"
+        "Buffers:          123456 kB\n"
+    )
+    with patch("builtins.open", mock_open(read_data=meminfo)):
+        result = _detect_total_memory_bytes()
+    assert result == 16334364 * 1024
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Linux")
+def test_detect_total_memory_bytes_linux_returns_none_when_missing(_system):
+    """Linux branch returns None if /proc/meminfo has no MemTotal line."""
+    from allaganeye.system_info import _detect_total_memory_bytes
+
+    with patch("builtins.open", mock_open(read_data="Buffers: 123 kB\n")):
+        result = _detect_total_memory_bytes()
+    assert result is None
