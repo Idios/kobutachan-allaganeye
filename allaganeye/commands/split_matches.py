@@ -201,9 +201,15 @@ def _display_results(
     typer.echo()
     for i, b in enumerate(boundaries, 1):
         dur = b["end"] - b["start"]
+        # Mark uncertain segments ("unknown" = recording started/ended
+        # mid-match) so users can tell them apart from full "fl_match" runs
+        # without opening metadata.json (#382). fl_match stays unmarked to
+        # avoid noise in the common case.
+        type_marker = "  [unknown]" if b.get("type") == "unknown" else ""
         typer.echo(
             f"  Match {i}: {_format_timestamp(b['start']):>7s} - "
             f"{_format_timestamp(b['end']):>7s}  ({_format_duration(dur)})"
+            f"{type_marker}"
         )
 
 
