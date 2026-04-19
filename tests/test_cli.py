@@ -583,3 +583,86 @@ def test_no_cache_option_accepted(mock_run, fake_video):
     assert result.exit_code == 0
     config = mock_run.call_args[0][1]
     assert config.no_cache is True
+
+
+# --- Mutually exclusive flag tests (#419) ---
+#
+# -q / -v and --gpu / --no-gpu are semantically exclusive.  Typer's default
+# parse treats each pair as last-wins (silent), so scripts that set both
+# end up with non-deterministic behaviour.  Exit code 5 (config-invalid)
+# surfaces the mistake instead.
+
+
+@patch(MODULE)
+def test_split_quiet_verbose_mutually_exclusive(mock_run_split, fake_video):
+    """-q and -v together exit 5 without calling run_split (#419 P)."""
+    result = runner.invoke(app, ["split", str(fake_video), "-q", "-v"])
+    assert result.exit_code == 5
+    mock_run_split.assert_not_called()
+    combined = result.stdout + (result.stderr or "")
+    assert "--quiet and --verbose are mutually exclusive" in combined
+    assert result.stdout == "", f"stdout must be empty: {result.stdout!r}"
+
+
+@patch(MODULE)
+def test_split_verbose_quiet_mutually_exclusive_order_independent(
+    mock_run_split, fake_video
+):
+    """-v -q (reverse order) also exits 5 (#419 P)."""
+    result = runner.invoke(app, ["split", str(fake_video), "-v", "-q"])
+    assert result.exit_code == 5
+    mock_run_split.assert_not_called()
+
+
+@patch(MODULE)
+def test_split_long_quiet_verbose_mutually_exclusive(mock_run_split, fake_video):
+    """Long forms --quiet --verbose are also caught (#419 P)."""
+    result = runner.invoke(app, ["split", str(fake_video), "--quiet", "--verbose"])
+    assert result.exit_code == 5
+    mock_run_split.assert_not_called()
+
+
+@patch(MODULE)
+def test_split_gpu_no_gpu_mutually_exclusive(mock_run_split, fake_video):
+    """--gpu and --no-gpu together exit 5 (#419)."""
+    result = runner.invoke(app, ["split", str(fake_video), "--gpu", "--no-gpu"])
+    assert result.exit_code == 5
+    mock_run_split.assert_not_called()
+    combined = result.stdout + (result.stderr or "")
+    assert "--gpu and --no-gpu are mutually exclusive" in combined
+    assert result.stdout == "", f"stdout must be empty: {result.stdout!r}"
+
+
+@patch(MODULE)
+def test_split_no_gpu_gpu_order_independent(mock_run_split, fake_video):
+    """--no-gpu --gpu (reverse order) also exits 5 (#419)."""
+    result = runner.invoke(app, ["split", str(fake_video), "--no-gpu", "--gpu"])
+    assert result.exit_code == 5
+    mock_run_split.assert_not_called()
+
+
+@patch(MODULE)
+def test_split_no_gpu_alone_still_works(mock_run_split, fake_video):
+    """--no-gpu alone continues to force CPU mode (#419 regression guard)."""
+    result = runner.invoke(app, ["split", str(fake_video), "--no-gpu"])
+    assert result.exit_code == 0
+    config = mock_run_split.call_args[0][1]
+    assert config.use_gpu is False
+
+
+@patch(MODULE)
+def test_split_gpu_alone_still_works(mock_run_split, fake_video):
+    """--gpu alone forces GPU mode (#419 regression guard)."""
+    result = runner.invoke(app, ["split", str(fake_video), "--gpu"])
+    assert result.exit_code == 0
+    config = mock_run_split.call_args[0][1]
+    assert config.use_gpu is True
+
+
+@patch(MODULE)
+def test_split_neither_gpu_flag_preserves_auto(mock_run_split, fake_video):
+    """Neither --gpu nor --no-gpu keeps use_gpu=None (auto-select, #334)."""
+    result = runner.invoke(app, ["split", str(fake_video)])
+    assert result.exit_code == 0
+    config = mock_run_split.call_args[0][1]
+    assert config.use_gpu is None

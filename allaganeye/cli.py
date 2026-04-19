@@ -7,7 +7,11 @@ import typer
 
 from allaganeye import __version__
 from allaganeye.config import SUPPORTED_EXTENSIONS, SplitConfig
-from allaganeye.exceptions import AllaganEyeError, InputFileError
+from allaganeye.exceptions import (
+    AllaganEyeError,
+    ConfigValidationError,
+    InputFileError,
+)
 
 app = typer.Typer(
     name="allaganeye",
@@ -70,14 +74,21 @@ def split(
         bool, typer.Option("--dry-run", help="Detect only, do not split")
     ] = False,
     gpu: Annotated[
-        bool | None,
+        bool,
         typer.Option(
-            "--gpu/--no-gpu",
-            help="Use GPU-accelerated detection. "
-            "Default: auto-select based on codec (H.264/HEVC -> GPU, others -> CPU). "
-            "Falls back to CPU if GPU is unavailable.",
+            "--gpu",
+            help="Force GPU-accelerated detection. Falls back to CPU if "
+            "GPU is unavailable. Mutually exclusive with --no-gpu.",
         ),
-    ] = None,
+    ] = False,
+    no_gpu: Annotated[
+        bool,
+        typer.Option(
+            "--no-gpu",
+            help="Force CPU detection, disabling GPU acceleration. "
+            "Mutually exclusive with --gpu.",
+        ),
+    ] = False,
     no_cache: Annotated[
         bool,
         typer.Option("--no-cache", help="Ignore cached detection results"),
@@ -105,6 +116,26 @@ def split(
 ) -> None:
     """Split a long recording into per-match video files."""
     try:
+        # Mutual exclusion checks (#419). Raised before any file / config
+        # validation so users get a single, deterministic error even when
+        # their command would otherwise fail for other reasons too.
+        if verbose and quiet:
+            raise ConfigValidationError("--quiet and --verbose are mutually exclusive")
+        if gpu and no_gpu:
+            raise ConfigValidationError("--gpu and --no-gpu are mutually exclusive")
+
+        # Collapse the two independent flags back into the tri-state
+        # (True / False / None=auto) that SplitConfig.use_gpu expects.
+        # The independent-flag split (vs Typer's "--gpu/--no-gpu" form) is
+        # what lets us detect simultaneous specification above (#419).
+        use_gpu: bool | None
+        if gpu:
+            use_gpu = True
+        elif no_gpu:
+            use_gpu = False
+        else:
+            use_gpu = None
+
         if not video_path.exists():
             raise InputFileError(f"File not found: {video_path}")
 
@@ -121,7 +152,7 @@ def split(
             min_match_duration=min_match_duration,
             min_blackout_duration=min_blackout_duration,
             dry_run=dry_run,
-            use_gpu=gpu,
+            use_gpu=use_gpu,
             workers=workers,
             no_cache=no_cache,
             no_audio=no_audio,
