@@ -739,6 +739,12 @@ def _print_detection_stats(stats: DetectionStats) -> None:
         unknown = stats.get("scorebar_unknown", 0)
         if unknown:
             parts.append(f"{unknown} unknown")
+        # Append elapsed time when available (#386) for symmetry with
+        # Pass 1 / Pass 2.  Gate on presence so tests that don't populate
+        # the key still render a clean "X match_boundary, ..." line.
+        scorebar_elapsed = stats.get("scorebar_elapsed_s")
+        if scorebar_elapsed is not None:
+            parts.append(_format_duration(scorebar_elapsed))
         typer.echo(f"  Scorebar: {', '.join(parts)}")
 
     promotions = stats.get("audio_promotions")

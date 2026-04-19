@@ -1848,6 +1848,95 @@ def test_verbose_prints_pipeline_stats(
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
+def test_verbose_scorebar_line_includes_elapsed(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Scorebar line includes an elapsed-time token (#386).
+
+    Pass 1 and Pass 2 already print elapsed; the scorebar line previously
+    showed only counts, breaking symmetry and hiding scorebar-specific
+    performance regressions from troubleshoot reports.
+    """
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 5
+            stats["pass1_elapsed_s"] = 10.0
+            stats["pass2_regions"] = 3
+            stats["pass2_elapsed_s"] = 2.0
+            stats["scorebar_match_boundary"] = 2
+            stats["scorebar_in_match"] = 1
+            stats["scorebar_non_fl"] = 0
+            stats["scorebar_unknown"] = 0
+            stats["scorebar_elapsed_s"] = 12.0
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    scorebar_line = next(
+        (line for line in out.splitlines() if line.strip().startswith("Scorebar:")),
+        None,
+    )
+    assert scorebar_line is not None, f"Scorebar line missing in: {out!r}"
+    # _format_duration(12.0) -> "0m12s"
+    assert "0m12s" in scorebar_line, f"Scorebar line missing elapsed: {scorebar_line!r}"
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_scorebar_line_without_elapsed_still_prints(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """When scorebar_elapsed_s is absent, the line still renders counts (#386).
+
+    Backwards-compat safety: downstream code (or an older detector) that
+    doesn't populate the new key must not break the stats output.
+    """
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 5
+            stats["pass1_elapsed_s"] = 10.0
+            stats["pass2_regions"] = 3
+            stats["pass2_elapsed_s"] = 2.0
+            stats["scorebar_match_boundary"] = 1
+            stats["scorebar_in_match"] = 0
+            stats["scorebar_non_fl"] = 0
+            stats["scorebar_unknown"] = 0
+            # intentionally NOT setting scorebar_elapsed_s
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    scorebar_line = next(
+        (line for line in out.splitlines() if line.strip().startswith("Scorebar:")),
+        None,
+    )
+    assert scorebar_line is not None
+    assert "1 match_boundary" in scorebar_line
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
 def test_non_verbose_does_not_print_stats(
     mock_probe, mock_detect, mock_split, tmp_path, capsys
 ):
