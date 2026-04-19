@@ -1,41 +1,113 @@
 # Allagan Eye
 
-FF14 PvPコンテンツ「フロントライン」の長時間録画動画から、試合単位の分割・ハイライト抽出・投稿価値の評価を段階的に自動化するCLIツール。
+FF14 フロントラインの長時間録画動画を、試合ごとに自動分割する CLI ツール。
 
-## 段階的アーキテクチャ
+OBS 等で録画した数時間分の動画を入力すると、試合の切れ目を自動検知し、試合単位の MP4 ファイルに無劣化で分割します。
+
+## 環境要件
+
+| 要件 | バージョン |
+|---|---|
+| Python | 3.11 以上 |
+| ffmpeg / ffprobe | 4.1 以上（PATH、環境変数、または既知パスから自動検索） |
+
+対応入力形式: MP4, MKV, AVI, MOV
+
+### 対応プラットフォーム
+
+| 優先度 | OS | 状態 | 備考 |
+|---|---|---|---|
+| 1 | Windows | 対応済み | メイン開発・録画環境 |
+| 2 | Linux | 未検証 | CI では lint/型チェックのみ実行。実動画での動作確認なし |
+| 3 | macOS | 未検証 | Homebrew パス自動検索のコードはあるが動作確認なし |
+
+## Quick Start
+
+> 詳しいセットアップ手順は [Quick Start Guide](docs/quickstart.md) を参照してください。
+> 更新方法は [Quick Start Guide — 更新](docs/quickstart.md#3-更新) を参照してください。
 
 ```
-L1: 試合分割        ← 現在のスコープ
- ↓
-L2: メタデータ化    (OCR / 音声認識でタイムスタンプ化)
- ↓
-L3: 価値評価        (LLMによる投稿価値判定)
- ↓
-L4: 自動編集        (切り出し + 投稿提案)
+git clone https://github.com/Idios/kobutachan-allaganeye.git
+cd kobutachan-allaganeye
+python -m venv .venv
+.venv\Scripts\activate.bat
+pip install -e .
+
+rem まず検知結果を確認
+allaganeye split your_recording.mkv --dry-run
+rem 結果が正しければ本実行
+allaganeye split your_recording.mkv
+
+rem 使い終わったら仮想環境を抜ける (Windows/Linux/macOS 共通)
+deactivate
 ```
 
-## 現在の機能（L1: 試合分割）
+> 上記は Windows コマンドプロンプトでの例です。PowerShell・Git Bash・Linux・macOS での手順は [Quick Start Guide](docs/quickstart.md) を参照してください。
+>
+> 新しいターミナルで再度作業する場合は、`.venv` を再 activate してから `allaganeye` を実行してください（詳細は [Quick Start Guide §4](docs/quickstart.md#4-動画を分割する)）。
 
-OBS録画のMP4/MKVファイルを入力し、OpenCVによるUI変化検知で試合境界を検出。FFmpegのコピーモード（`-c copy`）で無劣化・高速に試合ごとのMP4ファイルへ分割する。
+## 使い方
 
-### コマンド
+### 試合分割
 
 ```bash
-# 試合分割
 allaganeye split <video_path>
+```
 
-# 出力先を指定
+出力先を指定する場合:
+
+```bash
 allaganeye split <video_path> -o <output_dir>
 ```
 
+### オプション
+
+| オプション | デフォルト | 説明 |
+|---|---|---|
+| `-o`, `--output-dir` | `./output` | 出力ディレクトリ |
+| `--sample-interval` | `1.0` | フレームサンプリング間隔（秒） |
+| `--blackout-threshold` | `15.0` | 暗転検知の輝度閾値（0-255） |
+| `--min-match-duration` | `300.0` | 最小試合時間（秒）。短いセグメントを除外 |
+| `--min-blackout-duration` | `3.0` | 最小暗転時間（秒）。短い暗転を無視 |
+| `--workers` | auto | 検知の並列ワーカー数（デフォルト: 自動=CPU コア数、最大24） |
+| `--gpu` / `--no-gpu` | auto | GPU デコードで検知。デフォルトはコーデックで自動選択（H.264/HEVC -> GPU、その他 -> CPU）。GPU が利用不可の場合は CPU にフォールバック |
+| `--no-cache` | - | キャッシュを無視して再検知 |
+| `--dry-run` | - | 検知のみ実行し、分割しない |
+| `-v`, `--verbose` | - | 詳細ログ出力 |
+| `-q`, `--quiet` | - | 進捗出力を抑制（最終結果のみ） |
+
+> うまく分割されない場合は [パラメータ調整ガイド](docs/tuning-guide.md) を参照してください。
+
+### フレーム輝度の確認
+
+暗転検知の閾値をチューニングする際は、`debug-brightness` コマンドでフレーム輝度を CSV 出力できます。
+
+```bash
+allaganeye debug-brightness <video_path> --start 100 --end 200 --interval 0.5
+```
+
+出力（CSV 形式、stdout）:
+
+```
+timestamp,brightness
+100.0,12.3
+100.5,245.6
+101.0,8.1
+```
+
+詳細は [CLI コマンド仕様](docs/cli-spec.md) を参照してください。
+
 ### 出力
+
+指定ディレクトリに試合ごとの MP4 とメタデータが出力されます。
 
 ```
 output/
 ├── match_001.mp4
 ├── match_002.mp4
 ├── match_003.mp4
-└── metadata.json    # 各試合の開始/終了時刻、推定情報
+├── metadata.json         # 分割結果（機械可読）
+└── .detection_cache.json # 検知結果キャッシュ（同一ソース・同一パラメータの再実行を高速化。--no-cache で無視）
 ```
 
 ### Exit Codes
@@ -44,62 +116,33 @@ output/
 |---|---|
 | 0 | 正常終了 |
 | 1 | 一般エラー |
-| 2 | 入力ファイル不正 |
-| 3 | FFmpeg / OpenCV エラー |
+| 2 | 入力ファイル不正（ファイルが存在しない、非対応形式） |
+| 3 | FFmpeg / ffprobe エラー |
 | 4 | 検知失敗（試合境界が見つからない） |
-
-## 前提条件
-
-- Python 3.11+
-- ffmpeg / ffprobe（PATH に存在すること）
-- OBS 録画の MP4 または MKV ファイル
-
-## セットアップ
-
-```bash
-# 開発用インストール
-pip install -e ".[dev]"
-
-# テスト実行
-pytest
-
-# Lint
-ruff check .
-pyright
-```
-
-## プロジェクト構成
-
-```
-kobutachan-allaganeye/
-├── allaganeye/           # メインパッケージ
-│   ├── cli.py            # CLI エントリポイント
-│   ├── config.py         # 設定管理
-│   ├── exceptions.py     # エラークラス
-│   ├── commands/         # コマンド実装
-│   │   └── split_matches.py
-│   └── video/            # 動画処理
-│       ├── detector.py   # UI変化検知
-│       ├── splitter.py   # 動画分割
-│       └── probe.py      # メタデータ取得
-├── tests/                # テスト
-├── docs/                 # ドキュメント
-├── .claude/              # Claude Code 設定
-└── .github/workflows/    # CI
-```
+| 5 | 設定値不正（パラメータの範囲外等） |
 
 ## ロードマップ
 
-- [ ] **L1**: 試合分割（UI変化検知 + FFmpeg分割）
-- [ ] **L2**: メタデータ化（Tesseract OCR + Whisper音声認識）
-- [ ] **L3**: 価値評価（Claude API / Gemini API によるハイライト判定）
-- [ ] **L4**: 自動編集（MoviePy切り出し + YouTube投稿提案）
+| フェーズ | 機能 | 目標日 | 状態 |
+|---|---|---|---|
+| L1 | 試合分割 | 4/17 (preview) | preview 済み、パッチ開発中 |
+| L2 | GUI サポート | TBD | 計画中 |
+| L3 | メタデータ化（OCR・音声認識） | 5/2 | 予定 |
+| L4 | 投稿価値の自動評価 | 5/9 | 予定 |
+| L5 | ハイライト自動編集 | 5/23 | 予定 |
+| L6 | セキュリティ検査連携（guard） | 5/30 | 計画中 |
+| L7 | 配布（ゼロ環境構築） | 6/6 | 計画中 |
+| L8 | プライバシー・精密分割 | 6/13 | 計画中 |
 
-## 関連ドキュメント
+## ドキュメント
 
+- [Quick Start Guide](docs/quickstart.md)
+- [パラメータ調整ガイド](docs/tuning-guide.md)
+- [CLI コマンド仕様](docs/cli-spec.md)
 - [システムアーキテクチャ](docs/design-overview.md)
-- [CLIコマンド仕様](docs/cli-spec.md)
 - [動画処理設計](docs/video-processing.md)
-- [Issue作成ルール](docs/issue-policy.md)
-- [コーディング規約](docs/coding-conventions.md)
-- [バージョニング](docs/versioning.md)
+- [リリース戦略](docs/release-strategy.md)
+
+## ライセンス
+
+[MIT License](LICENSE)

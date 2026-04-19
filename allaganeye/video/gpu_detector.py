@@ -1,0 +1,273 @@
+"""GPU-accelerated match detection using chunked parallel ffmpeg decode."""
+
+import logging
+import os
+import subprocess
+import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+import numpy as np
+
+from allaganeye.exceptions import VideoProcessingError
+from allaganeye.ffmpeg_path import find_ffmpeg
+from allaganeye.video.detector import (
+    _FRAME_SIZE,
+    _SAMPLE_HEIGHT,
+    _SAMPLE_WIDTH,
+    _generate_timestamps,
+)
+
+logger = logging.getLogger(__name__)
+
+_CUVID_CODEC_MAP: dict[str, str] = {
+    "h264": "h264_cuvid",
+    "hevc": "hevc_cuvid",
+    "av1": "av1_cuvid",
+    "vp9": "vp9_cuvid",
+    "vp8": "vp8_cuvid",
+    "mpeg1video": "mpeg1_cuvid",
+    "mpeg2video": "mpeg2_cuvid",
+    "mpeg4": "mpeg4_cuvid",
+}
+
+
+def scan_gpu(
+    video_path: Path,
+    duration: float,
+    sample_interval: float,
+    blackout_threshold: float,
+    progress_callback: Callable[[int, int, int], None] | None = None,
+    codec: str | None = None,
+    chunk_progress_callback: Callable[[int, int, float], None] | None = None,
+) -> dict[float, float]:
+    """GPU mode: chunked parallel decode with cuvid hardware decoder.
+
+    Splits the video timeline into chunks and runs one long-lived ffmpeg
+    process per chunk with GPU-accelerated decoding.  Each process uses
+    ``fps=1/{interval}`` to output one frame per interval, which is read
+    from stdout and analyzed for brightness.
+
+    Returns dict mapping timestamp -> brightness, same as CPU mode.
+
+    ``chunk_progress_callback`` is called as ``(done, total, eta_seconds)``
+    each time a chunk completes.  ETA is derived from the average
+    per-chunk wall time so it becomes accurate after the first few
+    completions.  Emitted BEFORE the per-frame ``progress_callback``
+    burst so the UI label updates before the bar jumps (#333).
+
+    Raises VideoProcessingError if GPU decode fails for all chunks.
+    """
+    num_chunks = min(os.cpu_count() or 4, 16)
+    chunk_duration = duration / num_chunks
+
+    # Pre-compute the global sample grid (same one ``_scan_cpu`` uses) so
+    # GPU and CPU agree on the keys of the resulting dict (#392).  We
+    # still let each chunk's ffmpeg process use its native off-grid
+    # ``-ss chunk_start`` (to keep chunk boundaries balanced) but map
+    # the N-th emitted frame to the N-th pre-assigned grid timestamp --
+    # exactly the same labeling trick ``_decode_chunk_cpu`` uses.  Before
+    # this change, GPU labeled frames with ``chunk_start + k*interval``
+    # which is off-grid for chunks whose start isn't a multiple of
+    # ``sample_interval``; downstream grouping then saw different
+    # blackout region boundaries from CPU, causing #392's 1m47s miss.
+    global_grid = _generate_timestamps(duration, sample_interval)
+    chunks: list[tuple[float, float, list[float]]] = []
+    for i in range(num_chunks):
+        chunk_start = i * chunk_duration
+        chunk_end = min((i + 1) * chunk_duration, duration)
+        chunk_timestamps = [t for t in global_grid if chunk_start <= t < chunk_end]
+        if chunk_timestamps:
+            chunks.append((chunk_start, chunk_end, chunk_timestamps))
+
+    # Chunks without any grid point (very short videos) are dropped, so
+    # report the actual dispatched count via progress_callback.
+    num_chunks = len(chunks) if chunks else 1
+
+    total_expected = len(global_grid) or 1
+    results: dict[float, float] = {}
+    blackout_count = 0
+    completed = 0
+    gpu_failed = False
+    fallback_checked = False
+
+    cuvid_decoder = _CUVID_CODEC_MAP.get(codec or "")
+    scan_start = time.monotonic()
+    chunks_done = 0
+
+    with ThreadPoolExecutor(max_workers=num_chunks) as pool:
+        futures = {
+            pool.submit(
+                _decode_chunk,
+                video_path,
+                chunk_start,
+                chunk_end,
+                sample_interval,
+                codec,
+                chunk_timestamps,
+            ): (chunk_start, chunk_end)
+            for chunk_start, chunk_end, chunk_timestamps in chunks
+        }
+        for future in as_completed(futures):
+            chunk_start, chunk_end = futures[future]
+            try:
+                chunk_results, stderr_text = future.result()
+            except VideoProcessingError:
+                gpu_failed = True
+                pool.shutdown(wait=False, cancel_futures=True)
+                break
+
+            # Check GPU usage from the first completed chunk
+            if not fallback_checked:
+                fallback_checked = True
+                _check_gpu_usage(stderr_text, codec, cuvid_decoder)
+
+            chunks_done += 1
+            if chunk_progress_callback is not None:
+                elapsed = time.monotonic() - scan_start
+                remaining = num_chunks - chunks_done
+                # Linear extrapolation from completion ratio.  Chunks run
+                # in parallel but have similar sizes, so the rate at which
+                # they finish is a reasonable proxy for remaining wall
+                # time.  Conservative (overshoots slightly near the start,
+                # accurate near the end) -- users prefer that to overshoot.
+                eta = elapsed * remaining / chunks_done if remaining > 0 else 0.0
+                chunk_progress_callback(chunks_done, num_chunks, eta)
+
+            for t, brightness in chunk_results.items():
+                results[t] = brightness
+                completed += 1
+                if brightness < blackout_threshold:
+                    blackout_count += 1
+                if progress_callback is not None:
+                    progress_callback(completed, total_expected, blackout_count)
+
+    if gpu_failed:
+        raise VideoProcessingError("GPU decode failed, falling back to CPU")
+
+    return results
+
+
+def _check_gpu_usage(
+    stderr_text: str, codec: str | None, cuvid_decoder: str | None
+) -> None:
+    """Log GPU decode status based on ffmpeg stderr output."""
+    if cuvid_decoder and cuvid_decoder in stderr_text:
+        logger.info("GPU decode active: %s", cuvid_decoder)
+    elif "hwaccel" in stderr_text.lower() or "cuda" in stderr_text.lower():
+        logger.info("GPU decode active (hwaccel auto)")
+    else:
+        logger.warning(
+            "GPU acceleration not active for codec '%s', falling back to CPU decode",
+            codec or "unknown",
+        )
+
+
+def _decode_chunk(
+    video_path: Path,
+    chunk_start: float,
+    chunk_end: float,
+    sample_interval: float,
+    codec: str | None = None,
+    chunk_timestamps: list[float] | None = None,
+) -> tuple[dict[float, float], str]:
+    """Decode a single chunk using GPU-accelerated ffmpeg.
+
+    Returns ``(results_dict, stderr_text)`` so the caller can inspect
+    GPU usage from the first completed chunk.
+
+    When *chunk_timestamps* is supplied, the N-th emitted frame is mapped
+    to ``chunk_timestamps[N]`` (the global sample grid) instead of
+    ``chunk_start + N*sample_interval`` (#392).  Mirrors
+    ``_decode_chunk_cpu``'s labeling so CPU and GPU produce dicts keyed
+    identically on the same physical content.  Falls back to the chunk-
+    local formula when ``chunk_timestamps`` is None for backwards
+    compatibility with the unit tests that invoke the function directly.
+    """
+    chunk_duration = chunk_end - chunk_start
+    fps_value = 1.0 / sample_interval
+
+    cuvid_decoder = _CUVID_CODEC_MAP.get(codec or "")
+    if cuvid_decoder:
+        hwaccel_args = ["-hwaccel", "cuda", "-c:v", cuvid_decoder]
+    else:
+        hwaccel_args = ["-hwaccel", "auto"]
+
+    cmd = [
+        find_ffmpeg(),
+        *hwaccel_args,
+        "-ss",
+        str(chunk_start),
+        "-t",
+        str(chunk_duration),
+        "-i",
+        str(video_path),
+        "-vf",
+        f"fps={fps_value},scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
+        "pipe:1",
+    ]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=max(300, int(chunk_duration * 2)),
+        )
+    except FileNotFoundError as e:
+        raise VideoProcessingError(
+            "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
+        ) from e
+    except subprocess.TimeoutExpired as e:
+        raise VideoProcessingError(
+            f"GPU decode timed out for chunk {chunk_start}"
+        ) from e
+
+    stderr_text = proc.stderr.decode(errors="replace")
+
+    if proc.returncode != 0:
+        raise VideoProcessingError(
+            "GPU decode failed",
+            context={
+                "command": " ".join(str(c) for c in cmd),
+                "return_code": proc.returncode,
+                "chunk": f"{chunk_start:.1f}-{chunk_end:.1f}",
+                "stderr_tail": stderr_text[-2000:],
+            },
+        )
+
+    # Parse raw frames from stdout
+    data = proc.stdout
+    results: dict[float, float] = {}
+    frame_idx = 0
+    offset = 0
+
+    if chunk_timestamps is not None:
+        # Caller supplied pre-computed global grid timestamps -- map by
+        # index so CPU and GPU agree on dict keys (#392).  Stop when the
+        # pre-assigned list runs out even if ffmpeg emitted extra frames
+        # (can happen with keyframe-aligned -ss seeks near chunk_end).
+        while offset + _FRAME_SIZE <= len(data) and frame_idx < len(chunk_timestamps):
+            frame = np.frombuffer(data[offset : offset + _FRAME_SIZE], dtype=np.uint8)
+            results[chunk_timestamps[frame_idx]] = float(frame.mean())
+            offset += _FRAME_SIZE
+            frame_idx += 1
+    else:
+        # Legacy path: derive timestamp from chunk_start + k*interval.
+        # Kept for existing callers / unit tests that invoke _decode_chunk
+        # directly without a pre-computed list.  New code should always
+        # pass chunk_timestamps from scan_gpu.
+        while offset + _FRAME_SIZE <= len(data):
+            frame = np.frombuffer(data[offset : offset + _FRAME_SIZE], dtype=np.uint8)
+            brightness = float(frame.mean())
+            timestamp = round(chunk_start + frame_idx * sample_interval, 4)
+            if timestamp < chunk_end:
+                results[timestamp] = brightness
+            offset += _FRAME_SIZE
+            frame_idx += 1
+
+    return results, stderr_text

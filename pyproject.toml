@@ -4,17 +4,22 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kobutachan-allaganeye"
-version = "0.1.0"
+version = "0.1.1"
 description = "FF14 Frontline video auto-highlight extraction tool"
+license = {text = "MIT"}
 requires-python = ">=3.11"
 dependencies = [
     "typer>=0.9",
-    "opencv-python>=4.8",
-    "ffmpeg-python>=0.2",
+    "numpy>=1.24",
+    "scipy>=1.11",
+    "opencv-python-headless>=4.8",
 ]
 
 [project.scripts]
 allaganeye = "allaganeye.cli:app"
+
+[tool.setuptools.package-data]
+"allaganeye.audio.refs" = ["*.npz"]
 
 [project.optional-dependencies]
 dev = [
@@ -25,8 +30,16 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["slow: marks tests requiring video files (deselect with '-m \"not slow\"')"]
-addopts = "-m 'not slow'"
+markers = [
+    "slow: marks tests requiring video files (deselect with '-m \"not slow\"')",
+    "slow_probe: probe-only slow tests",
+    "slow_detect: detection slow tests",
+    "slow_pipeline: full pipeline slow tests",
+    "slow_gpu: GPU-specific slow tests",
+    "baseline_regen: marks tests only needed during baseline regeneration",
+    "real_audio_scan: opt out of the autouse _run_audio_scan mock (#288)",
+]
+addopts = "-m 'not slow and not baseline_regen'"
 
 [tool.ruff]
 target-version = "py311"
@@ -46,3 +59,4 @@ ignore = [
 [tool.pyright]
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
+exclude = ["tmp", ".venv", "build", "dist"]

@@ -25,6 +25,7 @@ Desktop.ini
 
 # Testing
 .pytest_cache/
+tests/.detection_cache/
 .coverage
 htmlcov/
 
@@ -34,6 +35,9 @@ htmlcov/
 
 # Claude Code
 .claude/settings.local.json
+.claude/worktrees/
+.claude/state/
+.env
 ROLE
 
 # Project specific
@@ -42,3 +46,4 @@ ROLE
 *.avi
 *.mov
 output/
+tmp/

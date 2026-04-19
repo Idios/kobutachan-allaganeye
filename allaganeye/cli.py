@@ -1,5 +1,7 @@
 """CLI entry point for Allagan Eye."""
 
+import sys
+import traceback
 from pathlib import Path
 from typing import Annotated
 
@@ -7,7 +9,13 @@ import typer
 
 from allaganeye import __version__
 from allaganeye.config import SUPPORTED_EXTENSIONS, SplitConfig
-from allaganeye.exceptions import AllaganEyeError, InputFileError
+from allaganeye.exceptions import (
+    AllaganEyeError,
+    ConfigValidationError,
+    InputFileError,
+)
+
+_VERBOSE_HINT = "  (Run with -v / --verbose for full details)"
 
 app = typer.Typer(
     name="allaganeye",
@@ -26,7 +34,13 @@ def version_callback(value: bool) -> None:
 def main(
     version: Annotated[
         bool | None,
-        typer.Option("--version", callback=version_callback, is_eager=True),
+        typer.Option(
+            "--version",
+            "-V",
+            callback=version_callback,
+            is_eager=True,
+            help="Show version and exit.",
+        ),
     ] = None,
 ) -> None:
     """Allagan Eye - FF14 Frontline video auto-highlight extraction tool."""
@@ -34,7 +48,9 @@ def main(
 
 @app.command()
 def split(
-    video_path: Annotated[Path, typer.Argument(help="Input video file (MP4/MKV)")],
+    video_path: Annotated[
+        Path, typer.Argument(help="Input video file (MP4/MKV/AVI/MOV)")
+    ],
     output_dir: Annotated[
         Path, typer.Option("-o", "--output-dir", help="Output directory")
     ] = Path("./output"),
@@ -47,15 +63,83 @@ def split(
     min_match_duration: Annotated[
         float, typer.Option(help="Minimum match duration in seconds")
     ] = 300.0,
+    min_blackout_duration: Annotated[
+        float,
+        typer.Option(
+            help="Minimum blackout duration to treat as match boundary (seconds). "
+            "Shorter blackouts (e.g. respawn) are ignored."
+        ),
+    ] = 3.0,
+    workers: Annotated[
+        int | None,
+        typer.Option(help="Number of parallel workers for detection (default: auto)"),
+    ] = None,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Detect only, do not split")
     ] = False,
+    gpu: Annotated[
+        bool,
+        typer.Option(
+            "--gpu",
+            help="Force GPU-accelerated detection. Falls back to CPU if "
+            "GPU is unavailable. Mutually exclusive with --no-gpu.",
+        ),
+    ] = False,
+    no_gpu: Annotated[
+        bool,
+        typer.Option(
+            "--no-gpu",
+            help="Force CPU detection, disabling GPU acceleration. "
+            "Mutually exclusive with --gpu.",
+        ),
+    ] = False,
+    no_cache: Annotated[
+        bool,
+        typer.Option("--no-cache", help="Ignore cached detection results"),
+    ] = False,
+    no_audio: Annotated[
+        bool,
+        typer.Option(
+            "--no-audio",
+            help="Disable audio-based match boundary promotion (Fanfare scan). "
+            "Currently frozen: audio scan is always skipped regardless of this flag.",
+        ),
+    ] = False,
     verbose: Annotated[
-        bool, typer.Option("-v", "--verbose", help="Verbose output")
+        bool,
+        typer.Option(
+            "-v", "--verbose", help="Verbose output (metadata details, gap info)"
+        ),
+    ] = False,
+    quiet: Annotated[
+        bool,
+        typer.Option(
+            "-q", "--quiet", help="Suppress progress output (final result only)"
+        ),
     ] = False,
 ) -> None:
     """Split a long recording into per-match video files."""
     try:
+        # Mutual exclusion checks (#419). Raised before any file / config
+        # validation so users get a single, deterministic error even when
+        # their command would otherwise fail for other reasons too.
+        if verbose and quiet:
+            raise ConfigValidationError("--quiet and --verbose are mutually exclusive")
+        if gpu and no_gpu:
+            raise ConfigValidationError("--gpu and --no-gpu are mutually exclusive")
+
+        # Collapse the two independent flags back into the tri-state
+        # (True / False / None=auto) that SplitConfig.use_gpu expects.
+        # The independent-flag split (vs Typer's "--gpu/--no-gpu" form) is
+        # what lets us detect simultaneous specification above (#419).
+        use_gpu: bool | None
+        if gpu:
+            use_gpu = True
+        elif no_gpu:
+            use_gpu = False
+        else:
+            use_gpu = None
+
         if not video_path.exists():
             raise InputFileError(f"File not found: {video_path}")
 
@@ -70,16 +154,147 @@ def split(
             sample_interval=sample_interval,
             blackout_threshold=blackout_threshold,
             min_match_duration=min_match_duration,
+            min_blackout_duration=min_blackout_duration,
             dry_run=dry_run,
+            use_gpu=use_gpu,
+            workers=workers,
+            no_cache=no_cache,
+            no_audio=no_audio,
         )
 
         from allaganeye.commands.split_matches import run_split
 
-        run_split(video_path, config, verbose=verbose)
+        run_split(video_path, config, verbose=verbose, quiet=quiet)
 
     except AllaganEyeError as e:
-        typer.echo(f"Error: {e}", err=True)
+        _report_app_error(e, verbose=verbose, quiet=quiet)
         raise typer.Exit(code=e.exit_code) from None
-    except Exception as e:
-        typer.echo(f"Unexpected error: {e}", err=True)
+    except Exception:
+        _report_unexpected_error(verbose=verbose, quiet=quiet)
         raise typer.Exit(code=1) from None
+
+
+@app.command(name="debug-brightness")
+def debug_brightness(
+    video_path: Annotated[
+        Path, typer.Argument(help="Input video file (MP4/MKV/AVI/MOV)")
+    ],
+    start: Annotated[
+        float, typer.Option("--start", help="Start time in seconds")
+    ] = 0.0,
+    end: Annotated[
+        float | None,
+        typer.Option("--end", help="End time in seconds (default: video duration)"),
+    ] = None,
+    interval: Annotated[
+        float, typer.Option("--interval", help="Sampling interval in seconds")
+    ] = 1.0,
+    workers: Annotated[
+        int | None,
+        typer.Option(help="Number of parallel workers (default: auto)"),
+    ] = None,
+    roi_mode: Annotated[
+        str | None,
+        typer.Option(
+            "--roi-mode", help="ROI analysis mode (scorebar, scorebar-detail)"
+        ),
+    ] = None,
+) -> None:
+    """Probe frame brightness at regular intervals (CSV output for threshold tuning)."""
+    try:
+        if not video_path.exists():
+            raise InputFileError(f"File not found: {video_path}")
+
+        if video_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            raise InputFileError(
+                f"Unsupported format: {video_path.suffix}. "
+                f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
+            )
+
+        from allaganeye.commands.debug_brightness import run_debug_brightness
+
+        run_debug_brightness(
+            video_path,
+            start=start,
+            end=end,
+            interval=interval,
+            workers=workers,
+            roi_mode=roi_mode,
+        )
+
+    except AllaganEyeError as e:
+        # debug-brightness has no -v / -q, so it maps to matrix 19b's
+        # "default" row but without a -v hint (the option doesn't exist
+        # for this command).
+        _report_app_error(e, verbose=False, quiet=False, show_hint=False)
+        raise typer.Exit(code=e.exit_code) from None
+    except Exception:
+        _report_unexpected_error(verbose=False, quiet=False, show_hint=False)
+        raise typer.Exit(code=1) from None
+
+
+def _report_app_error(
+    exc: AllaganEyeError,
+    *,
+    verbose: bool,
+    quiet: bool = False,
+    show_hint: bool = True,
+) -> None:
+    """Render an ``AllaganEyeError`` per matrix v2 19a/19b/19c (#428, #351).
+
+    - 19a (verbose=True):  ``Error: <msg>`` + ``verbose_detail()`` context
+      lines + full traceback (exceptions are raised ``from None`` in the
+      CLI handlers but the traceback is emitted here *before* re-raise,
+      so the stack is still the original error's).
+    - 19b (default):       ``Error: <msg>`` + one-line hint directing to
+      ``-v``.  Suppressed when ``show_hint=False`` (commands with no
+      verbose option, e.g. ``debug-brightness``, still take this branch
+      but skip the misleading hint).
+    - 19c (quiet=True):    ``Error: <msg>`` only.  No hint, no context,
+      no traceback.  Keeps the -q contract of "error message only"
+      intact even when verbose_detail would otherwise be available.
+    """
+    typer.echo(f"Error: {exc}", err=True)
+
+    if quiet:
+        return
+
+    if verbose:
+        detail = exc.verbose_detail()
+        if detail:
+            typer.echo(detail, err=True)
+        tb = "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        ).rstrip()
+        typer.echo(tb, err=True)
+        return
+
+    if show_hint:
+        typer.echo(_VERBOSE_HINT, err=True)
+
+
+def _report_unexpected_error(
+    *, verbose: bool, quiet: bool = False, show_hint: bool = True
+) -> None:
+    """Render an unexpected (non-``AllaganEyeError``) exception per matrix v2.
+
+    - 19a (verbose=True):  full traceback via ``traceback.print_exc`` so
+      ``__cause__`` / ``__context__`` chains are preserved (the CLI
+      handlers deliberately skip ``from None`` for this path).
+    - 19b (default):       ``Unexpected error: <exc>`` + -v hint (when
+      ``show_hint=True``).  No traceback so the default noise level
+      stays low.
+    - 19c (quiet=True):    ``Unexpected error: <exc>`` only.
+    """
+    if verbose:
+        traceback.print_exc()
+        return
+
+    exc = sys.exc_info()[1]
+    typer.echo(f"Unexpected error: {exc}", err=True)
+
+    if quiet:
+        return
+
+    if show_hint:
+        typer.echo(_VERBOSE_HINT, err=True)

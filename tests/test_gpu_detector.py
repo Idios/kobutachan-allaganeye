@@ -1,0 +1,465 @@
+"""Tests for GPU-accelerated detection."""
+
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from allaganeye.exceptions import VideoProcessingError
+from allaganeye.video.detector import _FRAME_SIZE
+from allaganeye.video.gpu_detector import _decode_chunk, scan_gpu
+
+
+def _make_frames(brightness_values: list[int]) -> bytes:
+    """Create raw frame data for a sequence of brightness values."""
+    return b"".join(bytes([b]) * _FRAME_SIZE for b in brightness_values)
+
+
+class TestDecodeChunk:
+    @patch("allaganeye.video.gpu_detector.subprocess.run")
+    def test_parses_frames(self, mock_run):
+        """Correctly parses multiple frames from stdout."""
+        mock_run.return_value = MagicMock(
+            stdout=_make_frames([128, 5, 200]),
+            stderr=b"",
+            returncode=0,
+        )
+        result, stderr = _decode_chunk(Path("test.mp4"), 100.0, 103.0, 1.0)
+
+        assert len(result) == 3
+        assert result[100.0] == pytest.approx(128.0)
+        assert result[101.0] == pytest.approx(5.0)
+        assert result[102.0] == pytest.approx(200.0)
+        assert isinstance(stderr, str)
+
+    @patch("allaganeye.video.gpu_detector.subprocess.run")
+    def test_hwaccel_auto_when_no_codec(self, mock_run):
+        """ffmpeg command includes -hwaccel auto when codec is unknown."""
+        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
+        _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0)
+
+        cmd = mock_run.call_args[0][0]
+        assert "-hwaccel" in cmd
+        assert "auto" in cmd
+
+    @patch("allaganeye.video.gpu_detector.subprocess.run")
+    def test_hwaccel_cuda_with_known_codec(self, mock_run):
+        """ffmpeg command uses -hwaccel cuda -c:v av1_cuvid for AV1."""
+        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
+        _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0, codec="av1")
+
+        cmd = mock_run.call_args[0][0]
+        assert "-hwaccel" in cmd
+        cuda_idx = cmd.index("-hwaccel")
+        assert cmd[cuda_idx + 1] == "cuda"
+        assert "-c:v" in cmd
+        cv_idx = cmd.index("-c:v")
+        assert cmd[cv_idx + 1] == "av1_cuvid"
+
+    @patch("allaganeye.video.gpu_detector.subprocess.run")
+    def test_nonzero_returncode_raises(self, mock_run):
+        mock_run.return_value = MagicMock(stdout=b"", stderr=b"error", returncode=1)
+        with pytest.raises(VideoProcessingError, match="GPU decode failed"):
+            _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0)
+
+    @patch("allaganeye.video.gpu_detector.subprocess.run")
+    def test_ffmpeg_not_found(self, mock_run):
+        mock_run.side_effect = FileNotFoundError("ffmpeg")
+        with pytest.raises(VideoProcessingError, match="ffmpeg not found"):
+            _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0)
+
+    @patch("allaganeye.video.gpu_detector.subprocess.run")
+    def test_timeout_raises(self, mock_run):
+        import subprocess
+
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="ffmpeg", timeout=300)
+        with pytest.raises(VideoProcessingError, match="timed out"):
+            _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0)
+
+    @patch("allaganeye.video.gpu_detector.subprocess.run")
+    def test_timestamps_respect_chunk_start(self, mock_run):
+        """Timestamps start from chunk_start, not 0."""
+        mock_run.return_value = MagicMock(
+            stdout=_make_frames([100, 100]),
+            stderr=b"",
+            returncode=0,
+        )
+        result, _ = _decode_chunk(Path("test.mp4"), 500.0, 502.0, 1.0)
+
+        assert 500.0 in result
+        assert 501.0 in result
+        assert 0.0 not in result
+
+
+class TestScanGpu:
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_collects_all_chunks(self, mock_decode):
+        """Results from all chunks are merged."""
+        mock_decode.return_value = ({0.0: 128.0}, "")
+        result = scan_gpu(Path("test.mp4"), 10.0, 1.0, 15.0)
+
+        assert len(result) >= 1
+        assert mock_decode.call_count >= 1
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_gpu_failure_raises(self, mock_decode):
+        """GPU failure raises VideoProcessingError for fallback."""
+        mock_decode.side_effect = VideoProcessingError("GPU decode failed")
+
+        with pytest.raises(VideoProcessingError, match="falling back"):
+            scan_gpu(Path("test.mp4"), 10.0, 1.0, 15.0)
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_gpu_failure_cancels_pending_futures(self, mock_decode):
+        """GPU failure triggers shutdown(cancel_futures=True) and raises.
+
+        Uses threading.Event to synchronize mock chunks: the first chunk
+        raises immediately while subsequent chunks block until released.
+        This prevents the timing-dependent flakiness of the original test
+        where fast mock completion could race with cancellation (#299).
+
+        Note: since scan_gpu uses max_workers == num_chunks, all futures
+        start immediately and cancel_futures has no pending futures to
+        cancel.  The test verifies the error propagation path works
+        correctly under concurrent conditions.
+        """
+        import threading
+
+        lock = threading.Lock()
+        call_order = 0
+        release = threading.Event()
+
+        def side_effect(*args, **kwargs):
+            nonlocal call_order
+            with lock:
+                call_order += 1
+                my_order = call_order
+            if my_order == 1:
+                raise VideoProcessingError("GPU decode failed")
+            # Block subsequent chunks until released after scan_gpu returns.
+            # Short timeout prevents test hang if release is not set.
+            release.wait(timeout=2)
+            return ({0.0: 128.0}, "")
+
+        mock_decode.side_effect = side_effect
+
+        with pytest.raises(VideoProcessingError, match="falling back"):
+            scan_gpu(Path("test.mp4"), 100.0, 1.0, 15.0)
+
+        # Release blocked threads so ThreadPoolExecutor can shut down cleanly
+        release.set()
+
+        # Verify the error propagated and no results were returned.
+        # The assertion above (pytest.raises) confirms scan_gpu raised
+        # without returning partial results from other chunks.
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_progress_callback(self, mock_decode):
+        """Progress callback is invoked."""
+        mock_decode.return_value = ({0.0: 128.0, 1.0: 5.0}, "")
+        calls: list[tuple] = []
+
+        scan_gpu(
+            Path("test.mp4"),
+            10.0,
+            1.0,
+            15.0,
+            progress_callback=lambda c, t, bc: calls.append((c, t, bc)),
+        )
+
+        assert len(calls) >= 1
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_chunk_progress_callback_fires_per_chunk(self, mock_decode):
+        """chunk_progress_callback fires once per chunk with (done, total, eta) (#333)."""
+        mock_decode.return_value = ({0.0: 128.0, 1.0: 5.0}, "")
+        chunk_calls: list[tuple[int, int, float]] = []
+
+        scan_gpu(
+            Path("test.mp4"),
+            10.0,
+            1.0,
+            15.0,
+            chunk_progress_callback=lambda d, t, eta: chunk_calls.append((d, t, eta)),
+        )
+
+        # One call per chunk -- exactly num_chunks total (lead review).
+        assert len(chunk_calls) >= 1
+        num_chunks = chunk_calls[-1][1]
+        assert len(chunk_calls) == num_chunks
+        # done is monotonically increasing 1..num_chunks
+        dones = [c[0] for c in chunk_calls]
+        assert dones == list(range(1, num_chunks + 1))
+        # total stays constant at num_chunks
+        assert all(c[1] == num_chunks for c in chunk_calls)
+        # Final ETA is 0 (no remaining chunks)
+        assert chunk_calls[-1][2] == 0.0
+        # Intermediate ETAs are non-negative
+        assert all(c[2] >= 0 for c in chunk_calls)
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_chunk_progress_not_called_on_failure(self, mock_decode):
+        """Callback must not fire for a failed chunk (#333)."""
+        mock_decode.side_effect = VideoProcessingError("fail")
+        chunk_calls: list[tuple[int, int, float]] = []
+
+        with pytest.raises(VideoProcessingError):
+            scan_gpu(
+                Path("test.mp4"),
+                10.0,
+                1.0,
+                15.0,
+                chunk_progress_callback=lambda d, t, eta: chunk_calls.append(
+                    (d, t, eta)
+                ),
+            )
+        assert chunk_calls == []
+
+    # ------------------------------------------------------------
+    # Global sample grid labeling (#392)
+    # ------------------------------------------------------------
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_chunks_receive_global_grid_timestamps(self, mock_decode):
+        """Each chunk is passed grid-aligned timestamps (#392).
+
+        Before the fix, ``_decode_chunk`` derived timestamps from
+        ``chunk_start + k*interval``; chunks whose start wasn't a
+        multiple of ``sample_interval`` then labeled frames off-grid, so
+        GPU and CPU dicts had different keys for the same physical
+        content.  The fix pre-computes the global grid via
+        ``_generate_timestamps`` and passes the per-chunk slice to
+        ``_decode_chunk`` as ``chunk_timestamps``, mirroring what
+        ``_decode_chunk_cpu`` does.
+        """
+        mock_decode.return_value = ({}, "")
+        scan_gpu(Path("test.mp4"), 10228.7, 3.0, 15.0)
+
+        all_timestamps: list[float] = []
+        for call in mock_decode.call_args_list:
+            kwargs = call.kwargs
+            if "chunk_timestamps" in kwargs:
+                ts = kwargs["chunk_timestamps"]
+            elif len(call.args) >= 6:
+                ts = call.args[5]
+            else:
+                ts = None
+            assert ts is not None, (
+                "scan_gpu must pass chunk_timestamps to _decode_chunk (#392)"
+            )
+            all_timestamps.extend(ts)
+
+        assert all_timestamps, "no timestamps dispatched"
+        for t in all_timestamps:
+            remainder = t - round(t / 3.0) * 3.0
+            assert abs(remainder) < 1e-6, (
+                f"timestamp={t} not aligned to sample_interval=3.0 "
+                f"(remainder={remainder})"
+            )
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_dispatched_timestamps_match_cpu_grid_exactly(self, mock_decode):
+        """The union of dispatched timestamps equals ``_generate_timestamps`` (#392).
+
+        Ensures no grid point is skipped and no duplicates are dispatched
+        across chunks.  With this guarantee, GPU's resulting dict has
+        exactly the same keys as ``_scan_cpu``'s.
+        """
+        from allaganeye.video.detector import _generate_timestamps
+
+        mock_decode.return_value = ({}, "")
+        scan_gpu(Path("test.mp4"), 1000.0, 3.0, 15.0)
+
+        dispatched: list[float] = []
+        for call in mock_decode.call_args_list:
+            kwargs = call.kwargs
+            ts = kwargs.get("chunk_timestamps")
+            if ts is None and len(call.args) >= 6:
+                ts = call.args[5]
+            assert ts is not None
+            dispatched.extend(ts)
+
+        expected = _generate_timestamps(1000.0, 3.0)
+        assert sorted(dispatched) == expected, (
+            f"dispatched grid mismatch: "
+            f"missing={set(expected) - set(dispatched)}, "
+            f"extra={set(dispatched) - set(expected)}"
+        )
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_chunk_count_reported_via_callback_matches_dispatched(self, mock_decode):
+        """Progress callback's ``total`` equals actually-dispatched chunks (#392).
+
+        Short videos where ``chunk_duration < sample_interval`` collapse
+        some chunks (no grid point in range).  The callback must report
+        the post-collapse count so ``done / total`` tracks reality.
+        """
+        mock_decode.return_value = ({0.0: 128.0}, "")
+        chunk_calls: list[tuple[int, int, float]] = []
+
+        scan_gpu(
+            Path("test.mp4"),
+            10.0,
+            3.0,
+            15.0,
+            chunk_progress_callback=lambda d, t, eta: chunk_calls.append((d, t, eta)),
+        )
+
+        assert chunk_calls
+        total_reported = chunk_calls[-1][1]
+        assert total_reported == mock_decode.call_count, (
+            f"callback total={total_reported}, actual={mock_decode.call_count}"
+        )
+
+    def test_decode_chunk_labels_frames_by_pre_assigned_grid(self):
+        """_decode_chunk uses chunk_timestamps[frame_idx] when supplied (#392).
+
+        Direct unit check: passing 3 grid timestamps and 3 decoded frames
+        yields a dict keyed by those exact timestamps (not by
+        ``chunk_start + k*interval``).
+        """
+        mock_grid = [321.0, 324.0, 327.0]  # deliberately off from chunk_start
+        with patch("allaganeye.video.gpu_detector.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                stdout=_make_frames([100, 5, 200]),
+                stderr=b"",
+                returncode=0,
+            )
+            result, _ = _decode_chunk(
+                Path("test.mp4"),
+                319.65,  # off-grid chunk_start
+                330.0,
+                3.0,
+                codec=None,
+                chunk_timestamps=mock_grid,
+            )
+
+        assert set(result) == set(mock_grid), (
+            f"labels should come from chunk_timestamps, got {sorted(result)}"
+        )
+        assert result[321.0] == pytest.approx(100.0)
+        assert result[324.0] == pytest.approx(5.0)
+        assert result[327.0] == pytest.approx(200.0)
+
+    # ------------------------------------------------------------
+    # Parametric duration/interval sweep + short-video edge case
+    # (#392 follow-up - extends engineer-1's single-case tests)
+    # ------------------------------------------------------------
+    #
+    # ``test_dispatched_timestamps_match_cpu_grid_exactly`` covers a
+    # single (1000, 3.0) configuration and
+    # ``test_chunk_count_reported_via_callback_matches_dispatched`` only
+    # pins the short-video (10, 3.0) shape.  These bounded parametric
+    # cases sweep additional boundary conditions so regressions in the
+    # per-chunk slicing logic (``[t for t in global_grid if start <= t <
+    # end]``) show up here instead of on a user's 30-second clip.
+
+    @pytest.mark.parametrize(
+        ("duration", "interval"),
+        [
+            (48.0, 3.0),  # exact divide (16 chunks * 3s each)
+            (100.0, 3.0),  # partial final chunk
+            (60.0, 2.5),  # non-integer interval (L1 auto-adjust)
+            (30.0, 3.0),  # target_chunks (16) vs 10 available slots
+            (5.0, 3.0),  # ultra-short: most chunks collapse
+            (100.0, 5.0),  # large interval
+            (3.0, 3.0),  # duration == interval
+            (8.0, 3.0),  # short with 3 grid points
+        ],
+    )
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_dispatched_timestamps_match_cpu_grid_parametric(
+        self, mock_decode, duration, interval
+    ):
+        """dispatched timestamps union == _generate_timestamps across cases.
+
+        The strongest contract for #392: regardless of duration/interval,
+        the per-chunk ``chunk_timestamps`` slices together must equal the
+        CPU grid with no duplicates and no missing points.  A broken
+        per-chunk filter (``start <= t < end``) would drop boundary
+        points or re-emit them in two chunks; either would fail here.
+        """
+        from allaganeye.video.detector import _generate_timestamps
+
+        mock_decode.return_value = ({}, "")
+        scan_gpu(Path("test.mp4"), duration, interval, 15.0)
+
+        dispatched: list[float] = []
+        for call in mock_decode.call_args_list:
+            ts = call.kwargs.get("chunk_timestamps")
+            if ts is None and len(call.args) >= 6:
+                ts = call.args[5]
+            assert ts is not None, (
+                f"scan_gpu must pass chunk_timestamps (duration={duration}, "
+                f"interval={interval})"
+            )
+            dispatched.extend(ts)
+
+        expected = _generate_timestamps(duration, interval)
+        assert sorted(dispatched) == expected, (
+            f"grid mismatch for duration={duration}, interval={interval}: "
+            f"missing={sorted(set(expected) - set(dispatched))}, "
+            f"extra={sorted(set(dispatched) - set(expected))}"
+        )
+        # No duplicates across chunks (same frame dispatched twice would
+        # confuse _decode_chunk's frame_idx labeling).
+        assert len(dispatched) == len(set(dispatched)), (
+            f"duplicate timestamps dispatched for duration={duration}, "
+            f"interval={interval}"
+        )
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_ultra_short_video_dispatches_minimum_chunks(self, mock_decode):
+        """Ultra-short video (duration < chunk_duration_target) collapses cleanly.
+
+        For duration=5 / interval=3, only 2 grid points exist (0.0, 3.0)
+        but target_chunks=16.  All intermediate chunks collapse to
+        zero-grid-points and are dropped by ``if chunk_timestamps:``.
+        The call must still dispatch at least one chunk covering those
+        2 points, and the callback's total must match actual dispatches.
+        """
+        from allaganeye.video.detector import _generate_timestamps
+
+        mock_decode.return_value = ({}, "")
+        scan_gpu(Path("test.mp4"), 5.0, 3.0, 15.0)
+
+        expected_grid = _generate_timestamps(5.0, 3.0)
+        # Few chunks dispatched, but their union covers the full grid.
+        dispatched: list[float] = []
+        for call in mock_decode.call_args_list:
+            ts = call.kwargs.get("chunk_timestamps")
+            if ts is None and len(call.args) >= 6:
+                ts = call.args[5]
+            dispatched.extend(ts or [])
+
+        assert sorted(dispatched) == expected_grid, (
+            f"short-video grid mismatch: dispatched={sorted(dispatched)}, "
+            f"expected={expected_grid}"
+        )
+        # ``target_chunks`` (16) is too high for 5 seconds -- collapse
+        # must cull degenerate chunks rather than dispatching 16.
+        assert mock_decode.call_count < 16, (
+            f"too many chunks for short video: {mock_decode.call_count}"
+        )
+
+
+class TestGpuFallbackIntegration:
+    @patch("allaganeye.video.detector._scan_cpu")
+    @patch("allaganeye.video.gpu_detector.scan_gpu")
+    def test_fallback_to_cpu(self, mock_gpu, mock_cpu):
+        """GPU failure triggers CPU fallback in detect_match_boundaries."""
+        from allaganeye.video.detector import detect_match_boundaries
+
+        mock_gpu.side_effect = VideoProcessingError("GPU failed")
+        mock_cpu.return_value = {0.0: 128.0, 100.0: 128.0, 200.0: 128.0}
+
+        result = detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=300.0,
+            min_match_duration=100.0,
+            use_gpu=True,
+        )
+
+        mock_gpu.assert_called_once()
+        mock_cpu.assert_called_once()
+        assert len(result) >= 1
