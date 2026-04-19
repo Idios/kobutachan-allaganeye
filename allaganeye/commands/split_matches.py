@@ -116,7 +116,6 @@ def run_split(
     audio_hits = _run_audio_scan(video_path, config, show=show, verbose=verbose)
 
     if show and verbose:
-        audio_str = "off" if config.no_audio else "on"
         typer.echo(
             f"Detecting match boundaries "
             f"(interval={effective_interval}s, "
@@ -124,7 +123,7 @@ def run_split(
             f"workers={_workers_summary_str(config.workers)}, "
             f"min_match={config.min_match_duration}s, "
             f"min_blackout={config.min_blackout_duration}s, "
-            f"audio={audio_str})"
+            f"audio={_audio_status_str(config.no_audio)})"
         )
 
     detect_stats: DetectionStats | None = {} if verbose else None
@@ -241,6 +240,21 @@ def _workers_summary_str(workers: int | None) -> str:
 
     resolved = _resolve_workers(None)
     return f"auto ({resolved})"
+
+
+def _audio_status_str(no_audio: bool) -> str:
+    """Return audio-scan status string for verbose summary (#384).
+
+    Must stay in sync with ``_run_audio_scan``: if the audio module is
+    frozen, the scan is skipped regardless of ``--no-audio``, and the
+    verbose summary must reflect that instead of reading ``config.no_audio``
+    blindly.
+    """
+    from allaganeye.audio import AUDIO_FROZEN
+
+    if AUDIO_FROZEN:
+        return "frozen"
+    return "off" if no_audio else "on"
 
 
 def _run_audio_scan(
