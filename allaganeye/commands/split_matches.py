@@ -91,7 +91,8 @@ def run_split(
             if show and verbose and gaps:
                 _display_gaps(gaps)
             if config.dry_run:
-                typer.echo("\nDry run: skipping split")
+                if show:
+                    typer.echo("\nDry run: skipping split")
                 _emit_total_time(total_start, verbose, show)
                 return
             _check_disk_space(
@@ -184,7 +185,8 @@ def run_split(
 
     # Step 3: Split (unless dry-run)
     if config.dry_run:
-        typer.echo("\nDry run: skipping split")
+        if show:
+            typer.echo("\nDry run: skipping split")
         _emit_total_time(total_start, verbose, show)
         return
 

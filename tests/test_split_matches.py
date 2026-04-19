@@ -2647,3 +2647,97 @@ def test_format_eta_hours():
 
     assert _format_eta(3600) == "1h00m"
     assert _format_eta(3700) == "1h01m"
+
+
+# --- Quiet strict-silent (#418) ---
+#
+# Per user-confirmed matrix v2 spec, ``-q`` (quiet) emits ONLY the output
+# file listing (``Output:`` / filenames / ``Metadata:``) on stdout.  Every
+# dry-run / cache notice / verbose line must stay hidden, on every branch
+# (cache-hit vs cache-miss, dry-run vs split).  The regression was that
+# ``Dry run: skipping split`` was echoed without a ``show`` gate so
+# ``-q --dry-run`` leaked the notice on both paths.
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_quiet_dry_run_cache_miss_stdout_empty(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """-q --dry-run (cache-miss) emits nothing on stdout (#418 L)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    config = SplitConfig(output_dir=tmp_path, dry_run=True, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, quiet=True)
+
+    captured = capsys.readouterr()
+    assert captured.out == "", f"stdout leaked under -q --dry-run: {captured.out!r}"
+    mock_split.assert_not_called()
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_quiet_dry_run_cache_hit_stdout_empty(mock_probe, mock_split, tmp_path, capsys):
+    """-q --dry-run (cache-hit) emits nothing on stdout (#418 L)."""
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(output_dir=tmp_path, dry_run=True, min_match_duration=60.0)
+    _seed_cache(source, tmp_path, config)
+
+    mock_probe.return_value = PROBE_RESULT
+
+    run_split(source, config, quiet=True)
+
+    captured = capsys.readouterr()
+    assert captured.out == "", (
+        f"stdout leaked under -q --dry-run cache-hit: {captured.out!r}"
+    )
+    mock_split.assert_not_called()
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_quiet_cache_hit_only_output_listing(mock_probe, mock_split, tmp_path, capsys):
+    """-q cache-hit emits ONLY the output listing — no '(cached)' (#418 M)."""
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    _seed_cache(source, tmp_path, config)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, quiet=True)
+
+    out = capsys.readouterr().out
+    assert "(cached)" not in out
+    assert "Probing:" not in out
+    assert "Detected" not in out
+    assert "Dry run" not in out
+    assert f"Output: {tmp_path}" in out
+    assert "match_001.mp4" in out
+    assert "Metadata:" in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_quiet_no_cache_only_output_listing(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """-q --no-cache emits ONLY the output listing (#418)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, no_cache=True)
+
+    run_split(Path("input.mp4"), config, quiet=True)
+
+    out = capsys.readouterr().out
+    assert "Probing:" not in out
+    assert "Detected" not in out
+    assert "Dry run" not in out
+    assert "(cached)" not in out
+    assert f"Output: {tmp_path}" in out
+    assert "match_001.mp4" in out
+    assert "Metadata:" in out
