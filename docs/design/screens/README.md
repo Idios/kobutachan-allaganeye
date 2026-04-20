@@ -1,29 +1,27 @@
 # GUI プロトタイプ スクリーンショット
 
-本ディレクトリには GUI プロトタイプ 5 画面 (drop / detecting / complete / preview / export) のスクリーンショットを配置する (予定)。
+GUI プロトタイプ 5 画面 (drop / detecting / complete / preview / export) のスクリーンショット。
 
-## 状態
+## ファイル一覧
 
-**空 (追加待ち)**
+| ファイル | 画面 | 状態 |
+|---|---|---|
+| [`01-drop.png`](01-drop.png) | ① インポート (Drop / Import) | state: drop |
+| [`02-detecting.png`](02-detecting.png) | ② 検知中 (Detecting) | state: detecting |
+| [`03-complete.png`](03-complete.png) | ③ 一覧 (Matches) | state: complete |
+| [`04-preview.png`](04-preview.png) | ④ 境界調整 (Preview) | state: preview |
+| [`05-export.png`](05-export.png) | ⑤ 書き出し (Export) | state: export |
 
-## 追加手順
+解像度: 約 1836 × 1323 (アートボード 1200 × 780 ＋ キャプション)。
 
-handoff bundle の指示により、Claude はブラウザ描画・スクリーンショット取得を行わない。Idios が手動で以下のファイルを追加する:
+## 用途
 
-1. [`../bundle/project/Allagan Eye GUI.html`](../bundle/project/Allagan%20Eye%20GUI.html) をブラウザで開く (Chrome 推奨、インターネット接続要: React/Babel CDN)
-2. 5 つのアートボード (state: drop / detecting / complete / preview / export) を順にスクリーンショット
-3. 以下のファイル名で保存:
-   - `01-drop.png`
-   - `02-detecting.png`
-   - `03-complete.png`
-   - `04-preview.png`
-   - `05-export.png`
-
-推奨解像度: 1200×780 (アートボード 1 つ分)。全体を 1 枚に収めるのであれば `00-canvas-overview.png` も可。
-
-スクリーンショットは Claude Code の実装時に視覚参照として使われる (handoff 側 README 指示)。
+- 実装時の視覚参照 (handoff 側 README の指示: `bundle/project/variants/aether.jsx` のコンポーネント形状と合わせて参照する)
+- レビュー時の比較基準 (実装結果とスクショを対比して差分確認)
+- ユーザーガイド・ドキュメントでの利用 (将来)
 
 ## 注意事項
 
 - **FF14 ゲーム画面のスクリーンショットは含めない** (Square Enix 権利物、GitHub 登録不可)
-- **プロトタイプ UI のスクリーンショットのみ** が対象
+- 本ディレクトリ内は**プロトタイプ UI のスクリーンショットのみ**
+- プロトタイプに変更があった場合は、Idios が手動で再取得して差し替える (handoff bundle README の指示により Claude はブラウザ描画・スクショ取得を行わない)
