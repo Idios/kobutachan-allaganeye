@@ -11,7 +11,7 @@ FF14 PvPコンテンツ「フロントライン」の長時間録画動画（OBS
 | レイヤー | 処理 | 技術 | 状態 |
 |---|---|---|---|
 | L1: 試合分割 | 暗転検知で試合単位に分割 | FFmpeg（検知+分割） | **リリース済み** (v0.1.0-preview 2026-04-17, v0.1.1 2026-04-20) |
-| L2: 配布・統合 | GUI + ゼロ環境構築配布 + guard 統合 | Tauri/PyQt 他 + PyInstaller + allaganeye-guard | **開発中** |
+| L2: 配布・統合 | GUI + ゼロ環境構築配布 + guard 統合 | Tauri 2.x + React 19 + TS + allaganeye-guard | **開発中** |
 | L3: メタデータ化 | キルログ・音声・チャットをタイムスタンプ化 | Tesseract / Whisper | 未着手 |
 | L4: 価値評価 | 抽出データをMLが判定 | ローカル ML（scikit-learn 等） | 未着手 |
 | L5: 自動編集 | 判定に基づき動画切り出し・投稿提案 | MoviePy / FFmpeg | 未着手 |

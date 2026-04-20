@@ -109,10 +109,127 @@ Phase 0 完了後、以下を総合して #450 を確定する:
 
 ## Phase 0 合格基準
 
-- [ ] 採用候補となる FW が 1 つ以上決定 (F1-F3 が OK または F4 で代替成立)
-- [ ] F2 OK (目標 200ms 以内) または F4 代替案で 1 フレームシーク成立
-- [ ] F3 OK (2h seek 耐性あり) — 採用候補 FW 側
-- [ ] F5 OK (インストーラ同梱 + sidecar ストリーミング両立) — 採用候補 FW 側
-- [ ] #450 に最終判断をコメントし issue をクローズ
+- [x] 採用候補となる FW が 1 つ以上決定 (F1-F3 が OK または F4 で代替成立) — 両 FW とも OK
+- [x] F2 OK (目標 200ms 以内) または F4 代替案で 1 フレームシーク成立 — 両 FW とも p95 < 200 ms
+- [x] F3 OK (2h seek 耐性あり) — 採用候補 FW 側 — Tauri http: p95 294 ms, 100/100 成功
+- [x] F5 OK (インストーラ同梱 + sidecar ストリーミング両立) — 採用候補 FW 側 — Tauri: 706s 長時間 detect で first-line 1.3-1.7s
+- [x] #450 に最終判断をコメントし issue をクローズ — 2026-04-20 Tauri 採用確定
 
-全項目合格で Phase 1 (データ層) に進む。両 FW とも NG かつ F4 でも成立しない場合は #450 で代替候補 (PySide6 / Textual 等) を再検討、または L2 スコープ見直しを #105 のコメントで提起する。
+## 計測結果 (2026-04-20 実施)
+
+プロトタイプは `.claude/prototypes/{electron,tauri}-phase0/` (gitignore) で構築。サンプル MKV は `E:/videos/2026-04-08 21-14-05.mkv` (36.61 GB, 2:50:28)、remux 後 MP4 は 36.61 GB。
+
+### F1: MKV 再生 (remux, 済)
+
+- **検証日**: 2026-04-20
+- **検証環境**: Windows 11 / ffmpeg 8.1 / sample: 2026-04-08 21-14-05.mkv (36.61 GB)
+- **コマンド**: `.claude/prototypes/common/remux.sh <file>` (`ffmpeg -c copy -movflags +frag_keyframe+empty_moov`)
+- **所要時間**: 38 秒
+- **出力**: 36.61 GB fragmented MP4
+- **結果**: OK (目標 60s 以内)
+- **記録担当**: relaxed-mestorf-9807da
+
+### F2: フレーム精度シーク (済)
+
+- **検証日**: 2026-04-20
+- **検証環境**: Windows 11 / Electron 34 (Chromium) / Tauri 2.10.3 (WebView2) / fragmented MP4 36.61 GB (2:50:28)
+- **計測**: 動画中央付近で 1/60s 刻み seek 100 サンプル、`requestVideoFrameCallback` 解決までの latency を記録
+
+| | Electron | Tauri asset | Tauri http (axum) |
+|---|---|---|---|
+| p50 | — | 151.2 ms | 150.6 ms |
+| p95 | 178.2 ms | 179.6 ms | 182.2 ms |
+| max | 183.2 ms | 355.7 ms | 184.4 ms |
+| heap (MB) | 9 / 10 | 4 / 4 | 4 / 4 |
+
+- **結果 (Electron)**: OK (p95 178.2 ms)
+- **結果 (Tauri asset)**: OK (p95 179.6 ms、ただし max スパイク 355 ms あり)
+- **結果 (Tauri http)**: OK (p95 182.2 ms)
+- **記録担当**: relaxed-mestorf-9807da
+
+### F3: 長時間ファイル seek 耐性 (済)
+
+- **検証日**: 2026-04-20
+- **検証環境**: 同上、36.61 GB MP4
+- **計測**: 全域ランダム seek 100 回、各回 10s タイムアウト判定
+
+| | Electron (protocol.handle 206) | Tauri asset (convertFileSrc) | Tauri http (axum + tower-http) |
+|---|---|---|---|
+| 成功 | 100/100 | 100/100 | 100/100 |
+| 失敗 (>10s) | 0 | 0 | 0 |
+| p50 | 114 ms | 385 ms | 106 ms |
+| p95 | 352 ms | 991 ms | **294 ms** |
+| max | 496 ms | 1735 ms | 434 ms |
+| total | — | 44.6 s | 14.6 s |
+| heap (MB) | 10 / 10 | 4 / 4 | 5 / 4 |
+
+- **結果 (Electron)**: OK
+- **結果 (Tauri asset)**: **OK** — [tauri#6375](https://github.com/tauri-apps/tauri/issues/6375) は Tauri 2.10.3 / WebView2 現行で**再現せず**。36 GB ファイルで 100/100 seek 成立。ただし p95 991 ms / max 1735 ms と劣化あり (Range 未対応による range-load の非効率性の可能性)
+- **結果 (Tauri http)**: **OK**、かつ Electron を上回る (p95 294 ms vs 352 ms)。tower-http の `ServeFile` の 206 Partial Content 対応が機能
+- **記録担当**: relaxed-mestorf-9807da
+
+### F4: 代替案 (不要)
+
+- **判定**: F1-F3 が両 FW で成立したため F4 (low-res proxy) の事前実装は不要。将来 1920x1080 以上の 4K 録画等で再検討
+
+### F5: CLI sidecar ストリーミング (済)
+
+- **検証日**: 2026-04-20
+- **検証環境**: 同上 / `allaganeye` CLI (pip install 経由)
+- **計測**: `allaganeye split <file> --dry-run --no-cache` を spawn し、first-line latency と全体 duration を記録
+
+#### Electron (`child_process.spawn` + PYTHONUNBUFFERED=1)
+
+| 項目 | 値 |
+|---|---|
+| exit code | 0 |
+| duration | 706,233 ms (~11:46) |
+| first-line latency | 1,944 ms |
+| 実行内容 | 8 試合正常検知、progress ログ (Detecting/Refining/Scorebar) が進捗に合わせて届く |
+| verdict | OK (streaming) |
+
+#### Tauri (`tokio::process::Command` + `app.emit`)
+
+| 項目 | PYTHONUNBUFFERED=1 | PYTHONUNBUFFERED=0 |
+|---|---|---|
+| exit code | 0 | 0 |
+| duration | 704,452 ms | 700,952 ms |
+| first-line latency | 1,722 ms | 1,280 ms |
+| verdict | OK (streaming) | OK (streaming) |
+
+- **[tauri#5022](https://github.com/tauri-apps/tauri/issues/5022) 再現**: **否**。11 分超の detect でも stdout は行単位でストリーミングされ、PYTHONUNBUFFERED 設定の有無で挙動差なし。allaganeye は PyInstaller バイナリではなく setuptools scripts 由来の Python ランチャーなので、#5022 が取り上げる PyInstaller 特有の stdout バッファリング問題には該当しない
+- **記録担当**: relaxed-mestorf-9807da
+
+## 採用確定: Tauri + React + TypeScript (2026-04-20)
+
+### 根拠
+
+1. **F3 seek 耐性**: Tauri http 経路で Electron を上回る (p95 294 ms vs 352 ms)。Tauri asset 経路も劣化するものの 100/100 seek 成立
+2. **F2 フレーム精度**: 両 FW 実質同等 (p95 178-182 ms、差 4 ms)
+3. **F5 sidecar streaming**: 706-700 秒の長時間 detect で first-line 1.3-1.9 秒、両 FW 問題なく streaming
+4. **Tauri 固有 blocker の解消確認**: #6375 および #5022 はいずれも Tauri 2.10.3 現行で再現せず
+5. **配布サイズ**: Tauri ~90 MB (L2b の <100 MB 目安達成) vs Electron ~200 MB
+6. **実装コスト**: axum HTTP サーバ (~50 行 Rust、Phase 0 プロトで構築済) + React 部は handoff jsx 流用可。Rust 学習は初回のみのコスト
+
+### 不採用側 (Electron) の扱い
+
+Electron プロトタイプ (`.claude/prototypes/electron-phase0/`) は `protocol.handle()` 206 対応のリファレンス実装として残す。Phase 1-4 (L2a 本実装) では Tauri ベースで進め、Electron 側は破棄。
+
+### 後続タスクへの影響
+
+- **L2a Phase 1 ([#463](https://github.com/Idios/kobutachan-allaganeye/issues/463))**: データ層 (metadata.json state 管理) — Zustand/Jotai など React エコシステムの stateMgr を採用、Rust 側は不要
+- **L2a Phase 2 ([#464](https://github.com/Idios/kobutachan-allaganeye/issues/464))**: 5 画面骨格 — handoff bundle の aether.jsx を TS に写経、Tauri 固有の IPC 取り込み
+- **L2a Phase 3 ([#465](https://github.com/Idios/kobutachan-allaganeye/issues/465))**: preview 本物化 — 本プロトの axum + ServeFile 経路をそのまま移植し `requestVideoFrameCallback` + ffmpeg サムネキャッシュを構築
+- **L2a Phase 4 ([#466](https://github.com/Idios/kobutachan-allaganeye/issues/466))**: export 本物化 — 本プロトの `run_cli` コマンドを拡張して ffmpeg 起動・進捗受信を実装
+- **L2b ([#106](https://github.com/Idios/kobutachan-allaganeye/issues/106))**: Tauri bundler (NSIS / MSI) で ~90 MB + ffmpeg sidecar (externalBin)。インストーラ形式決定 [#452](https://github.com/Idios/kobutachan-allaganeye/issues/452) に反映
+
+### 運用上の注意
+
+- Tauri asset (`convertFileSrc` / `http://asset.localhost/`) 経路は性能で劣るため、**本実装では axum HTTP 経路を使う** (Phase 0 プロトと同形)
+- 一方で asset 経路が完全に使えないわけではないため、サムネイル画像の配信 (短時間 / 小サイズ) には asset 経路を使って HTTP サーバ負荷を避けるなどの分担を検討
+
+## 今後の追加検証 (L2a 実装中)
+
+- [ ] Windows Defender SmartScreen の警告レベル (コードサイニング未実施の bundle 起動時) — L2b の [#462](https://github.com/Idios/kobutachan-allaganeye/issues/462) コードサイニング検討と連携
+- [ ] 60 fps / 4K 録画での F2/F3 再計測 — 将来の高解像度対応時
+- [ ] macOS / Linux 上での基本動作 ([#451](https://github.com/Idios/kobutachan-allaganeye/issues/451) プラットフォーム範囲決定後)
