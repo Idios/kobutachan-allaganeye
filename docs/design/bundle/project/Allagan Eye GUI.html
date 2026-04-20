@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Allagan Eye — A1 全画面カタログ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Cinzel:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; padding: 0; background: #f0eee9; overflow: hidden; }
+  * { box-sizing: border-box; }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="shared/metadata.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="shared/common.jsx"></script>
+<script type="text/babel" src="variants/aether.jsx"></script>
+<script type="text/babel" src="variants/aether-preview.jsx"></script>
+<script type="text/babel">
+const { useState } = React;
+
+// ─────────────────────────────────────────────────────────
+// Wrapper: render the A-variant UI locked to a specific state
+// (no state switcher — good for catalog/handoff view)
+// ─────────────────────────────────────────────────────────
+function LockedStage({ state }) {
+  const theme = aetherTheme;
+  return (
+    <div style={{
+      width: '100%', height: '100%', background: theme.bg, color: theme.text,
+      display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden',
+    }}>
+      <WindowChrome title="Allagan Eye" theme={theme}/>
+      <div style={{flex: 1, display: 'flex', minHeight: 0}}>
+        <div style={{
+          width: 48, background: theme.bgDeep,
+          borderRight: `1px solid ${theme.gold}22`,
+          display: 'flex', flexDirection: 'column', alignItems: 'center',
+          padding: '16px 0', gap: 20, color: theme.gold,
+        }}>
+          <div style={{fontFamily: theme.uiFont, fontSize: 18, color: theme.goldBright, transform:'rotate(-90deg)', marginTop: 30, letterSpacing: 4, whiteSpace: 'nowrap'}}>ALLAGAN</div>
+          <div style={{flex: 1}}/>
+          {['◈','◇','◆','⎊'].map((c, i) => (
+            <div key={i} style={{
+              width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: i === 0 ? theme.goldBright : theme.goldDim, fontSize: 14,
+              border: i === 0 ? `1px solid ${theme.gold}` : '1px solid transparent',
+            }}>{c}</div>
+          ))}
+        </div>
+        <div style={{flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', minWidth: 0}}>
+          {state === 'drop' && <AetherDrop theme={theme}/>}
+          {state === 'detecting' && <AetherDetecting theme={theme}/>}
+          {state === 'complete' && <AetherComplete theme={theme}/>}
+          {state === 'preview' && <AetherPreviewA1 theme={theme} matchIndex={4} onBack={() => {}} onExport={() => {}}/>}
+          {state === 'export' && <AetherExport theme={theme} onBack={() => {}}/>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const ART_W = 1200, ART_H = 780;
+
+  return (
+    <DesignCanvas>
+      <div style={{padding: '20px 60px 40px', maxWidth: 1300}}>
+        <div style={{fontFamily: '"Cinzel", serif', fontSize: 32, fontWeight: 600, color: 'rgba(30,20,10,0.9)', letterSpacing: 1, marginBottom: 8}}>
+          Allagan Eye — A1 全画面カタログ
+        </div>
+        <div style={{fontFamily: '"Inter", sans-serif', fontSize: 14, color: 'rgba(60,50,40,0.7)', lineHeight: 1.6, maxWidth: 880}}>
+          Aetheric Observatory / Dual IN/OUT Preview 方向で確定。
+          5画面を単独アートボードとして並べ、Claude Code への引き渡し用ドキュメントを兼ねる。
+        </div>
+        <div style={{marginTop: 14, display: 'flex', gap: 14, flexWrap: 'wrap', fontFamily: '"JetBrains Mono", monospace', fontSize: 11, color: 'rgba(80,70,50,0.8)'}}>
+          <span>データ源: CLI の <b>--dry-run</b> 出力 metadata.json</span>
+          <span>·</span>
+          <span>編集は GUI 上の一時状態 → 「適用」で上書き</span>
+          <span>·</span>
+          <span>書き出しは編集後 metadata を入力に ffmpeg 実行</span>
+        </div>
+      </div>
+
+      <DCSection
+        title="① インポート ⸱ Drop / Import"
+        subtitle="録画ファイルを受け取る入口。直近の録画一覧から再検知にも対応。"
+      >
+        <DCArtboard label="1200 × 780  ·  state: drop" width={ART_W} height={ART_H}>
+          <LockedStage state="drop"/>
+        </DCArtboard>
+        <DCPostIt top={40} right={-190} rotate={2}>
+          D&D ／ 参照ボタン ／ 直近の録画から選択。中央のアラガン紋章は静止状態。
+        </DCPostIt>
+      </DCSection>
+
+      <DCSection
+        title="② 検知中 ⸱ Detecting"
+        subtitle="CLI 相当の4フェーズ (Detecting / Refining / Scorebar / Splitting) を進捗表示。"
+      >
+        <DCArtboard label="1200 × 780  ·  state: detecting" width={ART_W} height={ART_H}>
+          <LockedStage state="detecting"/>
+        </DCArtboard>
+        <DCPostIt top={40} right={-190} rotate={-1}>
+          紋章が回転＝観測中。ライブログで「こう判定されている」が見える。中断可能。CLI との挙動差は出さない。
+        </DCPostIt>
+      </DCSection>
+
+      <DCSection
+        title="③ 一覧 ⸱ Matches"
+        subtitle="検知結果のレビュー。輝度タイムライン + 試合一覧 + 選択試合プレビュー。"
+      >
+        <DCArtboard label="1200 × 780  ·  state: complete" width={ART_W} height={ART_H}>
+          <LockedStage state="complete"/>
+        </DCArtboard>
+        <DCPostIt top={40} right={-190} rotate={2}>
+          ここまでが「読み取り」。試合行をダブルクリック → ④境界調整へ。全試合を一括書き出しなら直接 ⑤へ。
+        </DCPostIt>
+      </DCSection>
+
+      <DCSection
+        title="④ 境界調整 ⸱ Preview (CLI 未サポート・新機能)"
+        subtitle="IN/OUT 2画面プレビュー + 候補フレームストリップ + 微細タイムライン。秒単位で境界を動かす。"
+      >
+        <DCArtboard label="1200 × 780  ·  state: preview" width={ART_W} height={ART_H}>
+          <LockedStage state="preview"/>
+        </DCArtboard>
+        <DCPostIt top={40} right={-190} rotate={-2}>
+          操作: 候補フレーム直接クリック / ±10s±1s±1F ステッパー / TC数値入力 / ←→↑↓キー。
+          試合名・type も編集可。変更は一時状態で保持され、「適用→書き出し」で一括反映。
+        </DCPostIt>
+      </DCSection>
+
+      <DCSection
+        title="⑤ 書き出し ⸱ Export"
+        subtitle="編集結果を入力に ffmpeg で試合動画を生成。コーデック選択・命名規則・進捗表示。"
+      >
+        <DCArtboard label="1200 × 780  ·  state: export" width={ART_W} height={ART_H}>
+          <LockedStage state="export"/>
+        </DCArtboard>
+        <DCPostIt top={40} right={-190} rotate={2}>
+          copy (無損失・前Iフレーム吸着) と h264 (正確な秒) を試合ごとに選べる想定。進捗は1試合単位で表示。
+        </DCPostIt>
+      </DCSection>
+
+      {/* ───────────────── Handoff to Claude Code ───────────────── */}
+      <DCSection
+        title="Claude Code 引き渡しガイド"
+        subtitle="この成果物を allagaeye リポジトリ側に渡し、実装に入るまでの手順"
+      >
+        <div style={{
+          width: 1200, background: '#fff8e1', border: '1px solid rgba(200, 163, 92, 0.4)',
+          padding: 32, fontFamily: '"Inter", sans-serif', color: '#3a2e18', lineHeight: 1.7,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
+        }}>
+          <H2>0 ⸱ 前提 — なぜ2プロジェクトに分けるか</H2>
+          <P>
+            このプロジェクト（デザイン側）は「デザインの反復」に最適化されている。
+            実装は allagaeye 側のリポジトリで、Electron + React + CLI 連携の本番コードとして進める。
+            このプロジェクトはデザインの「契約書」と視覚仕様を提供する役目。
+          </P>
+
+          <H2>1 ⸱ 動画プレイヤーの実装方針（A1 採用時の推奨）</H2>
+          <P>
+            <B>一般的な手段を採用するなら Electron + HTML5 <C>{'<video>'}</C> タグがベース</B>。
+            具体的には下記3層構成:
+          </P>
+          <UL>
+            <li><B>メインプレイヤー</B>: <C>{'<video>'}</C> タグに録画ファイルを <C>file://</C> で直接読ませる。
+              MP4 (h264/AAC) はネイティブで再生可。MKV は ffmpeg.wasm または Electron のネイティブ設定で対応（要検証）。</li>
+            <li><B>フレーム精度シーク</B>: <C>video.currentTime</C> はキーフレーム依存で不正確。
+              正確な1フレーム移動には <C>requestVideoFrameCallback</C> + 微小 seek、もしくはサーバ側（Electron main）で ffmpeg サムネ抽出をキャッシュ。</li>
+            <li><B>候補フレームストリップ / サムネ</B>: 起動時に ffmpeg で低解像度 WebP を生成してキャッシュ（<C>{'~/.allagaeye/cache/<hash>/thumbs/*.webp'}</C>）。再生とは独立。</li>
+          </UL>
+          <P>
+            <B>フィージビリティ未確認なので、最初のスプリントで以下を検証:</B>
+          </P>
+          <UL>
+            <li>MKV ファイルを <C>{'<video>'}</C> タグで再生できるか (Electron のビルド設定依存)</li>
+            <li>60fps の録画で 1フレーム単位シークが実用速度か</li>
+            <li>2時間超のファイルで seek が破綻しないか</li>
+          </UL>
+          <P>
+            検証 NG の場合の代替案: ffmpeg で事前に <B>low-res プロキシファイル</B>（480p h264）を生成してそれを再生、書き出し時だけオリジナルを使う。
+          </P>
+
+          <H2>2 ⸱ データフローの契約</H2>
+          <PRE>{`CLI (dry-run)
+  └→ metadata.json  ← ただの観測結果。CLI は書き換えない
+      ├→ GUI がロード
+      │  └→ GUI 編集 = 一時オブジェクト
+      │     (start_time / end_time / name / type / split / skip)
+      ├→ [適用] ボタンで overwrite
+      │  └→ 元ファイルは metadata.original.json に退避
+      └→ GUI が [書き出し] で ffmpeg を呼ぶ
+          └→ 編集後 metadata を入力として match_xxx.mp4 を生成`}</PRE>
+          <P>
+            <B>CLI は書き換え側を持たない</B> — 検知 (dry-run) と分割 (--from-metadata) の2コマンドに割る。GUI は両方を呼び出す側。これで CLI だけでも従来通り使え、GUI は CLI の薄いラッパになる。
+          </P>
+
+          <H2>3 ⸱ このプロジェクトを allagaeye に引き渡す手順</H2>
+          <OL>
+            <li>
+              <B>デザイン成果物をダウンロード</B> — このプロジェクトのファイル一覧から必要分を zip で落とす:
+              <UL>
+                <li><C>Allagan Eye GUI.html</C>（このファイル）</li>
+                <li><C>variants/aether.jsx</C>, <C>variants/aether-preview.jsx</C></li>
+                <li><C>shared/common.jsx</C>, <C>shared/metadata.js</C></li>
+                <li><C>design-canvas.jsx</C>（参考）</li>
+              </UL>
+            </li>
+            <li>
+              <B>allagaeye リポジトリに <C>docs/design/</C> を作る</B> — 落としたファイルをそのまま置く。
+              これがデザイン側の「単一ソース」になり、以後 Claude Code はこれを見て実装する。
+            </li>
+            <li>
+              <B>スクリーンショット5枚を一緒に置く</B> — このページの各アートボードをスクショして
+              <C>docs/design/screens/{'{'}01-drop, 02-detecting, 03-complete, 04-preview, 05-export{'}'}.png</C> に保存。
+              Claude Code は jsx よりも画像の方を視覚的参照に使う。
+            </li>
+            <li>
+              <B><C>docs/design/README.md</C> を書く</B> — テンプレは次項。
+            </li>
+            <li>
+              <B>Claude Code に最初のプロンプトを投げる</B>（次々項のテンプレを使用）。
+            </li>
+          </OL>
+
+          <H2>4 ⸱ docs/design/README.md テンプレ</H2>
+          <PRE>{`# Allagan Eye — GUI Design Spec (A1 / Aetheric Observatory)
+
+## 画面フロー
+drop → detecting → complete → preview → export
+
+## ターゲット
+- Electron (macOS / Windows / Linux)
+- React + TypeScript 推奨 (このリポの既存方針に従う)
+
+## デザインシステム (色・タイポ)
+variants/aether.jsx の aetherTheme を参照。主要トークン:
+- bg: #0a0e14 / bgDeep: #05070b / panel: dark gradient
+- gold: #c8a35c / goldBright: #e8c47a / cyan: #4ac3d9
+- uiFont: Cinzel (見出し) / bodyFont: Inter / monoFont: JetBrains Mono
+
+## 画面ごとの仕様
+各画面 jsx を React コンポーネントの「形状の参照」として使う。
+実装時はデータを window.AE_META から props に置き換える。
+
+### 1. drop
+- D&D + 参照 + 直近録画一覧。録画をドロップしたら detecting へ。
+
+### 2. detecting
+- 4フェーズバー (Detecting / Refining / Scorebar / Splitting)
+- リアルタイムログ (CLI stdout を行単位で流す)
+- 中断ボタン
+
+### 3. complete
+- 輝度タイムライン + 黒フェードバンド + 試合ブロック
+- 試合行クリックで選択、ダブルクリックで preview へ
+- 「全試合書き出し」で export へ直行
+
+### 4. preview (A1)
+- IN / OUT 2画面 <video> タグ
+- 候補フレームストリップ (±3s, 12 frames @ 0.5s)
+- 微細タイムライン (±5s, 輝度 + 閾値)
+- ステッパー (−10s / −1s / −1F / +1F / +1s / +10s)
+- TC 数値入力 (HH:MM:SS.ff)
+- キーボード: ←→ 1s / shift ←→ 10s / ⌥ ←→ 1F / space 再生
+- 試合名 / type 編集可
+
+### 5. export
+- 出力先 / 命名規則 / コーデック選択 (copy | h264)
+- 試合別進捗 + 完了後フォルダを開く
+
+## データ契約
+metadata.json のスキーマは shared/metadata.js の window.AE_META を参照。
+GUI 側拡張:
+  match.name?: string        // GUI で付けた表示名
+  match.type: 'fl_match' | 'unknown' | 'skip'
+  match.edited?: { start_time, end_time }  // 編集後
+
+## 非機能
+- 2:50:28 の録画で全操作 60fps
+- preview での 1F シークは 200ms 以内が目標
+`}</PRE>
+
+          <H2>5 ⸱ Claude Code への最初のプロンプト（テンプレ）</H2>
+          <PRE>{`docs/design/ にデザインスペックがある。README.md と screens/*.png を読んで、
+このリポジトリの Electron + React アプリに以下の順で実装してほしい。
+
+Phase 0: フィージビリティ検証
+  - MKV を <video> タグで再生できるか試作
+  - 60fps 録画で 1F シークの精度を確認
+  - 結果を docs/design/feasibility.md に記録
+
+Phase 1: データ層
+  - CLI を --dry-run / --from-metadata の2モードに分離
+  - metadata.json のスキーマを TypeScript 型に落とす
+  - 読み込み / 編集 / 保存の state 管理 (zustand か Redux)
+
+Phase 2: 画面骨格 (5画面 + ルータ)
+  - variants/aether.jsx のコンポーネント形状をそのまま TS に写経
+  - 色・フォントは aetherTheme をそのまま CSS 変数化
+
+Phase 3: preview 画面の本物化
+  - <video> タグ + ffmpeg サムネキャッシュ
+  - キーボードショートカット
+  - 編集の一時状態管理
+
+Phase 4: export の本物化
+  - ffmpeg 呼び出し (copy / h264)
+  - 進捗取得 (ffmpeg stderr パース)
+
+各 Phase 終わりで動く状態でコミットし、僕に見せてほしい。
+色や余白でデザインと差分が出たら、デザイン jsx を優先。
+`}</PRE>
+
+          <H2>6 ⸱ 以降の反復</H2>
+          <P>
+            実装で詰まった点（「preview で音声波形出す余裕ない」等）があれば、ここに戻って jsx を修正 → docs/design に同期、のループで回す。
+            このプロジェクトを「生きたスペック」として維持する。
+          </P>
+        </div>
+      </DCSection>
+
+      <div style={{height: 80}}/>
+    </DesignCanvas>
+  );
+}
+
+function H2({children}) { return <div style={{fontFamily: '"Cinzel", serif', fontSize: 20, color: '#6b4d12', marginTop: 24, marginBottom: 8, letterSpacing: 0.5}}>{children}</div>; }
+function P({children}) { return <div style={{fontSize: 14, marginBottom: 10}}>{children}</div>; }
+function UL({children}) { return <ul style={{paddingLeft: 24, marginTop: 4, marginBottom: 10, fontSize: 14}}>{children}</ul>; }
+function OL({children}) { return <ol style={{paddingLeft: 24, marginTop: 4, marginBottom: 10, fontSize: 14}}>{children}</ol>; }
+function B({children}) { return <b style={{color: '#2a1f08'}}>{children}</b>; }
+function C({children}) { return <code style={{fontFamily: '"JetBrains Mono", monospace', fontSize: 12, background: 'rgba(200,163,92,0.18)', padding: '1px 5px', borderRadius: 2}}>{children}</code>; }
+function PRE({children}) { return <pre style={{fontFamily: '"JetBrains Mono", monospace', fontSize: 11.5, background: '#2a2218', color: '#e8d5a8', padding: 16, borderRadius: 4, overflowX: 'auto', lineHeight: 1.5, margin: '8px 0 14px'}}>{children}</pre>; }
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
