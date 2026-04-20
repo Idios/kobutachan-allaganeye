@@ -72,9 +72,8 @@ lead-1/work     → PR → (director-1 レビュー) → develop-0.1.1 へマー
 
 1. `develop-x.x.0` 上で全 PR がマージ済み、テスト通過を確認
 2. `deferred` ラベル付き issue を全件レビューし、次バージョンのスコープに含めるか判断する
-3. `pyproject.toml` の `version` を更新する PR を `develop-x.x.0` に作成・マージ
-4. `develop-x.x.0 → main` のリリース PR を作成・マージ
-5. `main` にタグを打つ (`v0.x.0`)
-6. GitHub Release を作成（変更内容サマリ付き）
-7. `main` から次バージョンの `develop-x.x.0` ブランチを作成
-8. 次レイヤーの Issue を作成し、作業開始
+3. `develop-x.x.0 → main` のリリース PR を作成・マージ
+4. `main` にタグを打つ (`v0.x.0`)
+5. GitHub Release を作成（変更内容サマリ付き）
+6. `main` から次バージョンの `develop-x.x.0` ブランチを作成し、その時点で `pyproject.toml` の `version` を `x.y.0` に更新（`.dev` 等の pre-release 識別子は付けない。PyPI 未公開のため不要）
+7. 次レイヤーの Issue を作成し、作業開始
