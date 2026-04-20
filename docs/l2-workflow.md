@@ -17,14 +17,20 @@ L1 のロール方式は単一スコープ (試合分割) では機能したが�
 
 ```
 E:/projects/kobutachan-tools/kobutachan-allaganeye/  ← 唯一の worktree (main or develop-x.x.x)
+    ├── .claude/hooks/
+    │   ├── session-start.sh         ← Iron Law を毎セッション先頭に注入 (superpowers 方式)
+    │   ├── preuse.py                ← Bash 実行前の確認ゲート (#401 由来)
+    │   └── post-merge-reload.sh     ← マージ後のリロード
     ├── .claude/skills/
-    │   ├── review-pr/               ← PR レビュー (既存、#367 対策強化版)
-    │   ├── create-task/             ← issue 起票 (既存)
-    │   └── release/                 ← リリース作業 (既存)
+    │   ├── review-pr/               ← PR レビュー (#367 対策強化版)
+    │   ├── enforce-acceptance-criteria/  ← 受け入れ条件逐条検証ゲート (Iron Law 1)
+    │   ├── scope-guard/             ← スコープ逸脱検知 (Iron Law 3)
+    │   ├── create-task/             ← issue 起票
+    │   └── release/                 ← リリース作業
     └── docs/knowledge/              ← セッション横断の知見蓄積
 ```
 
-ユーザーは**単一セッション**で作業する。既存 skill は上記 3 件。計画立案・実装・PR テスト等は本ドキュメント (§skill 一覧と責務) の手順に従い、AskUserQuestion や Agent 呼び出し、TodoWrite で構成する。
+ユーザーは**単一セッション**で作業する。既存 skill は上記 5 件。計画立案・実装・PR テスト等は本ドキュメント (§タスク種別と進め方) の手順に従い、AskUserQuestion や Agent 呼び出し、TodoWrite で構成する。
 
 新規 skill の追加は**実際に反復利用されることが判明した時点**で行う (L2 実装開始後、同じプレイブックを 2-3 回使った段階等)。事前に空の skill ファイルは作らない。
 
@@ -157,14 +163,17 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 
 ### 強制メカニズム
 
-上記ルールおよび「レビュー受け入れ基準」(#367 対策) を複数層で強制する:
+上記ルールおよび「レビュー受け入れ基準」(#367 対策) を多層で強制する。設計思想は [obra/superpowers](https://github.com/obra/superpowers) の「Iron Law / Red Flags / Gate Function」パターンに倣い、単にルールを書くだけでなく**エージェントが自己抑制せざるを得ない語彙と構造**を配置する。
 
-1. **PR テンプレート** (`.github/pull_request_template.md`): PR 作成時にチェックリストが自動挿入される。PR 作成者 (Claude) が実測でチェックを入れて埋める
-2. **`/review-pr` skill**: PR レビュー時に skill がチェックリスト各項目を読み取り、実装・テストとの整合性を検証する (未達項目は修正依頼)
-3. **PreToolUse hook** (`.claude/hooks/preuse.py`, #401 由来): Bash 実行時の確認ゲート。特に bulk 操作・破壊的コマンドを対象
-4. **ユーザー最終承認**: マージは全てユーザー (Idios) が実行。チェックリスト未達の PR は差し戻しまたは追加作業を指示
+1. **`SessionStart` hook** (`.claude/hooks/session-start.sh`): セッション開始・`/clear`・compaction 直後に `<EXTREMELY_IMPORTANT>` タグで Iron Law (5 条) と Red Flags 表を会話先頭に注入。全セッションで同じ語彙が強制される (superpowers 方式)
+2. **`enforce-acceptance-criteria` skill** (`.claude/skills/enforce-acceptance-criteria/SKILL.md`): `/review-pr` 冒頭で呼ばれ、元 issue の受け入れ条件を逐条引用 → 対応 diff/test を逐条引用 → 全項目 ✓ で初めて LGTM 可能。1 項目でも未達なら修正依頼フローへ (Gate Function)
+3. **`scope-guard` skill** (`.claude/skills/scope-guard/SKILL.md`): 実装中の「ついでに直した」を検知し、AskUserQuestion で「新 issue 起票 / revert / スコープ拡大」の 3 択を強制。独断禁止
+4. **`/review-pr` skill**: PR レビュー全体のオーケストレーション。上記 `enforce-acceptance-criteria` を必ず呼び出す
+5. **`PreToolUse` hook** (`.claude/hooks/preuse.py`, #401 由来): Bash 実行時の確認ゲート。特に bulk 操作・破壊的コマンドを対象
+6. **PR テンプレート** (`.github/pull_request_template.md`): PR 作成時にチェックリストが自動挿入される
+7. **ユーザー最終承認**: マージは全てユーザー (Idios) が実行。未達 PR は差し戻し
 
-ハード CI ゲート (GitHub Action でマージブロック) は将来の強化候補。現状は Claude + ユーザーの 2 段検証で運用する。
+ハード CI ゲート (GitHub Action でマージブロック) と `PreToolUse` での `gh` bulk 実ブロックは将来の強化候補。現状は Claude + ユーザーの 2 段検証で運用する。
 
 ## 移行前後の対応表
 
