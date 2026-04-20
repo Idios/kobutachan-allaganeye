@@ -46,14 +46,25 @@ gh pr checks $ARGUMENTS
 - 失敗あり: 失敗ジョブ名と概要をユーザーに報告し、修正依頼コメントを投稿
 - 未完了: 完了を待つ or ユーザーに判断を仰ぐ
 
-### 5. ロジックレビュー
+### 5. ロジック / ドキュメントレビュー
 
-以下の観点でコード品質を確認する:
+PR の変更種別に応じて以下を確認する:
 
+**共通観点**:
 - 変更の意図が PR の説明と一致しているか
 - アーキテクチャに沿っているか (`CLAUDE.md` §モジュール構成、`docs/design-overview.md`)
 - セキュリティモデルが守られているか (特に外部入力処理、subprocess 呼び出し)
-- ドキュメント変更の場合: 既存のドキュメントとの整合性、矛盾がないか
+
+**ドキュメント変更 PR の場合**:
+- doc 内容が元 issue の要件と一致しているか
+- doc が言及するソースコード (関数名、ファイルパス、設定値) が現状と整合しているか
+- 関連する既存 doc (`CLAUDE.md`, `docs/cli-spec.md`, `docs/design-overview.md`, `docs/l2-workflow.md` 等) との矛盾がないか
+- doc が言及するテスト / CLI 出力サンプルが実装と一致しているか
+
+**コード / テスト変更 PR の場合**:
+- 関連ドキュメント (`docs/cli-spec.md`, `docs/design-overview.md`, `README.md`, `CLAUDE.md` 等) が更新されているか
+- コード変更がドキュメント記述と矛盾していないか
+- 出力形式変更の場合、`docs/cli-spec.md` の出力例も更新されているか (#343 系の再発防止)
 
 ### 6. レビュー結果をユーザーに報告
 
@@ -61,13 +72,26 @@ gh pr checks $ARGUMENTS
 
 - **LGTM (問題なし)**: ユーザーに `--squash` マージを提案
 - **修正依頼**: 具体的な指摘内容を表示し、PR コメントに投稿するかユーザー確認
-- **テスト不足**: `/test-pr` skill 呼び出しを提案
+- **テスト不足**: 追加テスト実行を提案
 - **スコープ逸脱**: 別 issue 起票を提案
 
 ### 7. ユーザー承認後のアクション
 
 - **LGTM 承認**: `gh pr comment $ARGUMENTS --body "LGTM. <簡潔な理由> [<session-id>]"` → ユーザーが `gh pr merge $ARGUMENTS --squash` 実行
-- **修正依頼**: `gh pr comment $ARGUMENTS --body "<修正依頼内容> [<session-id>]"` → 修正後に再レビュー
+- **修正依頼**: 下記「修正フロー」に従う
+
+### 修正フロー (修正依頼時)
+
+新ワークフローでは**単一セッションが続けて修正を行う**ため、旧 engineer ↔ lead-engineer の往復は発生しない:
+
+1. `gh pr comment $ARGUMENTS --body "<修正依頼内容> [<session-id>]"` で PR に具体的な修正指示を記録
+2. 同セッション内で PR の作業ブランチをチェックアウト (`git checkout <PR-branch>` または worktree 使用)
+3. 修正を実装 (Edit / Write ツール、必要ならテスト追加)
+4. `ruff check` / `pytest` 通過を確認
+5. `git commit` + `git push` で同じ PR に追加コミット
+6. `/review-pr $ARGUMENTS` を再実行して受け入れ条件を再確認
+
+PR を別ブランチに切り直す必要はなし。修正コミットが積み重なることで履歴として残る。squash マージで最終的に 1 コミットに統合される。
 
 ### 8. マージ後のフォローアップ
 

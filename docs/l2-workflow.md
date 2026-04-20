@@ -17,17 +17,16 @@ L1 のロール方式は単一スコープ (試合分割) では機能したが�
 
 ```
 E:/projects/kobutachan-tools/kobutachan-allaganeye/  ← 唯一の worktree (main or develop-x.x.x)
-    ├── .claude/skills/              ← タスク種別ごとの skill
-    │   ├── plan/                    ← 計画立案 (grill-me 的)
-    │   ├── implement/               ← 実装タスク
-    │   ├── test-pr/                 ← PR テスト検証
-    │   ├── review-pr/               ← PR レビュー (#367 対策強化版)
-    │   ├── create-task/             ← issue 起票
-    │   └── release/                 ← リリース作業
+    ├── .claude/skills/
+    │   ├── review-pr/               ← PR レビュー (既存、#367 対策強化版)
+    │   ├── create-task/             ← issue 起票 (既存)
+    │   └── release/                 ← リリース作業 (既存)
     └── docs/knowledge/              ← セッション横断の知見蓄積
 ```
 
-ユーザーは**単一セッション**で作業し、タスクに応じて `/plan`, `/implement`, `/review-pr` 等を呼び分ける。`AskUserQuestion` でスコープや方針を確認し、`spawn_task` や Agent 呼び出しで独立した調査・実装を並列化する。
+ユーザーは**単一セッション**で作業する。既存 skill は上記 3 件。計画立案・実装・PR テスト等は本ドキュメント (§skill 一覧と責務) の手順に従い、AskUserQuestion や Agent 呼び出し、TodoWrite で構成する。
+
+新規 skill の追加は**実際に反復利用されることが判明した時点**で行う (L2 実装開始後、同じプレイブックを 2-3 回使った段階等)。事前に空の skill ファイルは作らない。
 
 ### 3 スコープ並行開発のブランチ戦略
 
@@ -49,20 +48,22 @@ main (リリースタグのみ)
 
 **リリース時**: `develop-0.2.0 → main` をマージ → `v0.2.0` タグ。
 
-## skill 一覧と責務
+## タスク種別と進め方
 
-旧ロール (director/lead-engineer/engineer/tester) に対応する機能を skill に再構成する。粒度は「タスク種別ごと」で、役割ではなくアクションで分ける。
+旧ロール (director/lead-engineer/engineer/tester) に対応する機能を、既存 skill + CLAUDE.md / 本ドキュメントのガイダンスで代替する。粒度は「タスク種別ごと」で、役割ではなくアクションで分ける。
 
-| skill | 旧ロール対応 | 責務 |
-|---|---|---|
-| `/plan` | director + lead-engineer | タスクの分解、リスク・曖昧点の事前洗い出し (grill-me)、実装前の計画合意 |
-| `/implement` | engineer | 実装 + unit/integration テスト + PR 作成。スコープ逸脱時は `/plan` に戻る |
-| `/review-pr` | lead-engineer | PR レビュー + #367 受け入れ基準チェックリスト検証 + マージ判断 |
-| `/test-pr` | tester | PR の実機テスト (UX、長時間動画、GPU mode 等)、結果を PR コメントで報告 |
-| `/create-task` | director + lead-engineer | issue 起票 (定型テンプレート適用) |
-| `/release` | director | リリースタグ、CHANGELOG、main へのマージ |
+| タスク種別 | 対応 skill / 手段 | 旧ロール対応 | 責務 |
+|---|---|---|---|
+| 計画立案 | Plan モード + AskUserQuestion + TodoWrite | director + lead-engineer | タスクの分解、リスク・曖昧点の事前洗い出し、実装前の計画合意 |
+| 実装 | Claude の通常ツール (Edit/Write/Bash) + TodoWrite | engineer | 実装 + unit/integration テスト + PR 作成。スコープ逸脱時は Plan モードに戻る |
+| PR レビュー | `/review-pr` | lead-engineer | PR レビュー + #367 受け入れ基準チェックリスト検証 + マージ判断 |
+| PR テスト | 通常セッション内で手動実行 + PR コメント記録 | tester | PR の実機テスト (UX、長時間動画、GPU mode 等)、結果を PR コメントで報告 |
+| issue 起票 | `/create-task` | director + lead-engineer | issue 起票 (定型テンプレート適用) |
+| リリース | `/release` | director | リリースタグ、CHANGELOG、main へのマージ |
 
-旧ロールが持っていた「権限境界」(engineer は close 禁止、tester は コード変更禁止等) は**人間 = ユーザーが判断**する責任に戻す。Claude は skill 実行時に `AskUserQuestion` で曖昧点をユーザーに確認する。
+旧ロールが持っていた「権限境界」(engineer は close 禁止、tester は コード変更禁止等) は**人間 = ユーザーが判断**する責任に戻す。Claude は曖昧点を `AskUserQuestion` でユーザーに確認する。
+
+反復利用される手順があれば、実運用でパターンが固まった時点で新規 skill を追加する (事前に空の skill は作らない)。
 
 ## レビュー受け入れ基準 (#367 対策)
 
@@ -95,16 +96,16 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 
 ユーザーが「次に何する?」と聞いた場合、Claude は上記を実施し `AskUserQuestion` で候補提示する。
 
-## 計画フェーズ (/plan skill の運用)
+## 計画フェーズの運用
 
-実装着手前の曖昧点洗い出しを標準化する。`/plan <issue番号>` 呼び出し時の出力:
+実装着手前の曖昧点洗い出しを標準化する。Claude Code の plan モード (ExitPlanMode ツール) を活用し、以下を必ず出力する:
 
 1. **現状理解**: 対象 issue の本文を要約、依存 issue / 関連 PR の一覧
 2. **リスクと曖昧点**: 実装時に発生しうる不確実性 (API 選定、互換性、パフォーマンス、外部依存等) をリスト化
 3. **実装ステップ案**: タスクを 2-5 個のサブステップに分解
 4. **判断ポイント**: ユーザーに確認すべき方針選択肢を `AskUserQuestion` で提示
 
-ユーザーが方針承認後、`/implement` に移る。計画段階で未決事項が残る場合は plan mode を維持。
+ユーザーが方針承認後に実装へ移る。計画段階で未決事項が残る場合は plan mode を維持。
 
 ## Issue ラベル運用
 
@@ -154,41 +155,41 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 - **曖昧判断**: 複数選択肢がある場合、ユーザーに選ばせる (Recommended 付き)
 - **スコープ拡張**: 当初 issue の範囲外の変更が必要になったら、作業を止めて確認 or 別 issue 起票
 
+### 強制メカニズム
+
+上記ルールおよび「レビュー受け入れ基準」(#367 対策) を複数層で強制する:
+
+1. **PR テンプレート** (`.github/pull_request_template.md`): PR 作成時にチェックリストが自動挿入される。PR 作成者 (Claude) が実測でチェックを入れて埋める
+2. **`/review-pr` skill**: PR レビュー時に skill がチェックリスト各項目を読み取り、実装・テストとの整合性を検証する (未達項目は修正依頼)
+3. **PreToolUse hook** (`.claude/hooks/preuse.py`, #401 由来): Bash 実行時の確認ゲート。特に bulk 操作・破壊的コマンドを対象
+4. **ユーザー最終承認**: マージは全てユーザー (Idios) が実行。チェックリスト未達の PR は差し戻しまたは追加作業を指示
+
+ハード CI ゲート (GitHub Action でマージブロック) は将来の強化候補。現状は Claude + ユーザーの 2 段検証で運用する。
+
 ## 移行前後の対応表
 
 旧 → 新の変換:
 
-| 旧ロール/command | 新 skill / 運用 |
+| 旧ロール/command | 新運用 |
 |---|---|
 | `/assume-role <role>` | 削除。ユーザーと Claude の 1 対 1 セッションのみ |
 | `/setup-session <role> <N>` | 削除。worktree は main 統合後の claude 自動 worktree のみ |
-| `/check-work` | skill 廃止。「## タスク発見」節の手順で代替 |
+| `/check-work` | 削除。「## タスク発見」節の手順で代替 |
 | director (戦略・方針) | ユーザー (Idios) 自身が判断。Claude は選択肢提示 |
-| lead-engineer (設計・レビュー) | `/plan`, `/review-pr` skill |
-| engineer (実装) | `/implement` skill |
-| tester (テスト) | `/test-pr` skill |
-| `role:director` ラベル | スコープラベル (`l2-workflow` 等) で代替 |
-| `role:lead-engineer` ラベル | 同上 |
-| `role:engineer` ラベル | 同上 |
-| `role:tester` ラベル | 同上 |
+| lead-engineer (設計・レビュー) | Plan モード (設計) + `/review-pr` (レビュー) |
+| engineer (実装) | Claude の通常ツール (Edit/Write/Bash) + TodoWrite |
+| tester (テスト) | 通常セッション内で手動テスト実行 + PR コメント記録 |
+| `role:director` / `role:lead-engineer` / `role:engineer` / `role:tester` ラベル | スコープラベル (`l2-workflow`, `l2a-gui`, `l2b-installer`, `l2c-guard` 等) で代替 |
 
-## スキル間の引き継ぎ (旧ロールハンドオフの代替)
+## タスクフロー (旧ロールハンドオフの代替)
 
-旧ワークフローでは PR 作成 → lead-engineer レビュー → tester テスト → director マージ の 4 ロール間でラベル付け替えが必要だった。新ワークフローでは**単一セッションが順次 skill を呼ぶ**ため、ハンドオフは不要:
+旧ワークフローでは PR 作成 → lead-engineer レビュー → tester テスト → director マージ の 4 ロール間でラベル付け替えが必要だった。新ワークフローでは**単一セッションが順次タスクを実行**するため、ハンドオフは不要:
 
 ```
-/plan #N → 計画合意 → /implement #N → PR 作成 → /review-pr #PR → (修正あれば /implement 再実行) → /test-pr #PR → ユーザー承認 → マージ
+Plan モードで計画合意 → 実装 (TodoWrite で進捗管理) → PR 作成 → /review-pr → (修正あれば再実装) → テスト実行 → ユーザー承認 → ユーザーがマージ
 ```
 
-各 skill の完了報告で次の skill に渡すコンテキストを明示する (PR 番号、テスト結果等)。
-
-## 今後の追加 skill
-
-L2 実装過程で必要と判明した場合のみ新設する。初期は上記 6 skill で凍結。候補:
-
-- `/debug-brightness` (既存) — L1 時代の debug-brightness skill (保留)
-- `/audit-recent-prs` — 月次 PR audit、#367 パターン A-D 検出の自動化 (必要なら追加)
-- `/grill-me` — 計画フェーズでの事前課題洗い出し (`/plan` に統合予定)
+各フェーズの完了時点で次フェーズに渡すコンテキストを明示する (PR 番号、テスト結果等)。修正が必要な場合は同じセッション内で該当ブランチに追加コミットを積み、再度 `/review-pr` を呼び出す (旧ロールの engineer → lead-engineer 往復は発生しない)。
 
 ## 参考
 
