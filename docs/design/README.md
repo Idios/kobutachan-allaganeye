@@ -14,11 +14,19 @@ drop → detecting → complete → preview → export
 - **preview**: **CLI 未サポートの新機能**。IN/OUT 2 画面プレビュー + 候補フレームストリップで境界微調整
 - **export**: 編集結果を入力に ffmpeg で試合動画生成 (copy | h264)
 
-## ターゲット技術 (未確定)
+## ターゲット技術 (確定: Tauri + React + TypeScript)
 
-handoff bundle の推奨: **Electron + React + TypeScript**。ただし [#450 GUI フレームワーク決定](https://github.com/Idios/kobutachan-allaganeye/issues/450) でユーザー最終判断待ち。
+[#450](https://github.com/Idios/kobutachan-allaganeye/issues/450) は 2026-04-20 の Phase 0 実測結果をもとに **Tauri 2.x + React 19 + TypeScript** で確定。
 
-判断材料は [`bundle/project/Allagan Eye GUI.html`](bundle/project/Allagan%20Eye%20GUI.html) 末尾の「Claude Code 引き渡しガイド」§1 (動画プレイヤーの実装方針) を参照。
+動画プレイヤーの方針:
+- MKV → fragmented MP4 への ingest 時 remux (`ffmpeg -c copy`)
+- プレイヤーは axum HTTP サーバ (Rust 側、tower-http の `ServeFile` で 206 Partial Content 対応) 経由で動画配信
+- フレーム精度シークは `requestVideoFrameCallback` + ffmpeg サムネイルキャッシュ
+- CLI 呼び出しは `tokio::process::Command` + event emit で stdout ストリーミング
+
+詳細な計測結果と採用根拠は [`feasibility.md`](feasibility.md) を参照。
+
+handoff bundle の元推奨 (Electron) は Phase 0 で Tauri と比較計測した結果、Tauri が同等以上の性能と小さい配布サイズを実証したため非採用。[`bundle/project/Allagan Eye GUI.html`](bundle/project/Allagan%20Eye%20GUI.html) の「Claude Code 引き渡しガイド」の実装方針 (Electron 前提) は React 部分のみ参照する。
 
 ## デザインシステム (色・タイポ)
 
@@ -90,18 +98,20 @@ interface Match {
 
 実装は #105 (GUI 親 issue) で Phase 0-4 の子 issue を起票して進める。
 
-### Phase 0: フィージビリティ検証 (framework 確定後)
-- MKV を `<video>` タグ (Electron) / 採用 framework のメディア API で再生可能か
-- 60 fps 録画で 1 フレーム単位シークが実用速度 (目標 200ms 以内) か
-- 2 時間超のファイルで seek が破綻しないか
-- NG 時の代替: low-res proxy (480p h264) 事前生成
+### Phase 0: フィージビリティ検証 (済 2026-04-20)
 
-結果は [`feasibility.md`](feasibility.md) に記録。
+Electron / Tauri の両方で最小プロトタイプを構築し F1-F5 を計測 → Tauri 採用確定。計測結果と採用根拠は [`feasibility.md`](feasibility.md) 参照。要点:
+
+- MKV は両 FW とも `<video>` で直接再生不可 (Chromium ポリシー) → `ffmpeg -c copy` で fragmented MP4 に ingest 時 remux (38s / 2h 録画)
+- フレーム精度: 両 FW p95 178-182 ms (目標 200ms 以内)
+- 36 GB seek: Tauri http (axum) が p95 294 ms で Electron (352 ms) を上回る
+- CLI streaming: 706s 長時間 detect で first-line 1.3-1.9s、両 FW streaming 成立
+- Tauri 固有 blocker (tauri#6375, #5022) は現行 2.10.3 で再現せず
 
 ### Phase 1: データ層
 - CLI を `detect` / `split --from-metadata` の 2 モードに分離
 - metadata.json スキーマを TypeScript 型へ落とす
-- 読み込み / 編集 / 保存の state 管理 (Electron 採用なら zustand か Redux)
+- 読み込み / 編集 / 保存の state 管理 (zustand 等 React 用 stateMgr)
 
 ### Phase 2: 画面骨格 (5 画面 + ルータ)
 - `bundle/project/variants/aether.jsx` のコンポーネント形状を TS に写経
@@ -183,7 +193,7 @@ docs/design/
 ## 関連 issue
 
 - [#105](https://github.com/Idios/kobutachan-allaganeye/issues/105) — GUI サポート (親)
-- [#450](https://github.com/Idios/kobutachan-allaganeye/issues/450) — GUI フレームワーク決定 (Electron + React + TS が handoff 推奨)
+- [#450](https://github.com/Idios/kobutachan-allaganeye/issues/450) — GUI フレームワーク決定 (Tauri + React + TS に確定 2026-04-20)
 - [#451](https://github.com/Idios/kobutachan-allaganeye/issues/451) — プラットフォーム対応範囲
 - [#452](https://github.com/Idios/kobutachan-allaganeye/issues/452) — インストーラ形式
 
