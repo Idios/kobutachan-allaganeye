@@ -34,37 +34,38 @@ L2 完了後の拡張フェーズ。L3〜L5 の開発で新たな課題が判明
 
 ## ブランチ戦略
 
-`develop-x.x.x` を日常の統合先とし、`main` はリリース時のみ更新する。
+`develop-x.x.x` を日常の統合先とし、`main` はリリース時のみ更新する。L2 以降は単一ワークツリー + 作業ブランチで運用する (詳細は `docs/l2-workflow.md` 参照)。
 
 ```
 main (リリースタグ時のみ更新、L1: v0.1.0-preview / v0.1.1 タグ済み)
  └── develop-0.2.0 (L2 開発の統合先)
-      ├── engineer-1/work   ← 実装作業
-      ├── engineer-2/work   ← 実装作業
-      ├── lead-1/work       ← 設計・レビュー
-      ├── tester-1/work     ← テスト
-      └── director-1/work   ← 戦略・プロセス
+      ├── claude/l2-gui-*            ← GUI 関連作業 (#105 系)
+      ├── claude/l2-installer-*      ← インストーラ作業 (#106 系)
+      ├── claude/l2-guard-*          ← guard 統合 (N1-N7)
+      ├── claude/l2-workflow-*       ← L2-0 プロセス系
+      └── claude/l1-residual-*       ← L1 残課題消化 (#412-#440)
 ```
 
 ### ルール
 
 1. **`main` は保護ブランチ** — リリース時の `develop-x.x.0 → main` マージのみ
-2. **`develop-x.x.x`** が日常の統合先 — 開発対象のバージョンを明示（例: `develop-0.1.0`）
-3. **ロール worktree ブランチ** (`<role>-<N>/work`) で作業し、PR を `develop-x.x.x` に出す
+2. **`develop-x.x.x`** が日常の統合先 — 開発対象のバージョンを明示（例: `develop-0.2.0`）
+3. **作業ブランチ** (`claude/<scope>-<short-description>` または `claude/<issue-N>-<slug>`) で作業し、PR を `develop-x.x.x` に出す
 4. **リリース完了後** — 次バージョンの `develop-x.x.x` を `main` から作成
 5. **ホットフィックス** — `main` からブランチを切り、`main` と `develop-x.x.x` 両方に PR
 
 ### PR フロー
 
 ```
-engineer-1/work → PR → (lead-1 レビュー) → develop-0.1.1 へマージ
-lead-1/work     → PR → (director-1 レビュー) → develop-0.1.1 へマージ
+claude/<scope>-* → PR → /review-pr (受け入れ条件チェック) → /test-pr (実機検証) → develop-x.x.x へマージ
 ```
+
+レビュー・テスト・マージは**単一セッション内で skill を呼び分けて**実施する。ロール間ハンドオフは不要 (詳細は `docs/l2-workflow.md`)。
 
 ## タグ運用
 
 - リリース判断後、`develop-x.x.0 → main` の PR を作成・マージ
-- Director が `main` の HEAD にタグを打つ
+- `main` の HEAD にタグを打つ
 - タグ形式: `v<major>.<minor>.<patch>`
 - コマンド: `git tag -a v0.x.0 -m "Release v0.x.0: <レイヤー名>"`
 - GitHub Release は `/release` スキルで作成

@@ -169,79 +169,46 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 - 将来的に `--verify` オプションで自動呼び出しを実装予定
 - guard がインストールされていなくても allaganeye 本体は正常動作する
 - **外部動画データの検査**: Idios 以外のユーザーが issue・PR に添付した動画は、`allaganeye-guard verify` が PASS するまで処理しない（`docs/guard-integration.md` §8 参照）
-- **開発・リリース同期**: guard 実装後、allaganeye のレイヤーリリース時に guard との互換性チェックが必要になる。ディレクターが両プロジェクトの同期を管理する（`docs/guard-integration.md` 参照）
+- **開発・リリース同期**: allaganeye のレイヤーリリース時に guard との互換性チェックが必要になる（`docs/guard-integration.md` §11 参照）
 
 ## リリース戦略
 
 詳細は `docs/release-strategy.md` を参照。要約:
 
 - `develop-x.x.x` が日常の統合先、`main` はリリース時のみ更新
-- 各ロールの PR はすべて `develop-x.x.x` にマージ
+- PR はすべて `develop-x.x.x` にマージ
 - リリース時に `develop-x.x.0 → main` マージ + タグ打ち
 - レイヤーごとに minor バージョン（L1=0.1, L2=0.2, L3=0.3, L4=0.4, L5=0.5）
 
-## ロールシステム
+## 開発ワークフロー
 
-マルチエージェント開発に対応。詳細は `docs/roles/protocol.md` を参照。
+L2 からは**単一ワークツリー + skill ベースディスパッチ**を採用。詳細は `docs/l2-workflow.md` を参照。
 
-- `/assume-role <role>`: ロール設定（director, lead-engineer, engineer, tester）
-- `/setup-session <role> <number>`: Worktree セットアップ
-- `/check-work`: 担当作業の発見・優先順位付け
+- 旧ロール体制 (director / lead-engineer / engineer / tester) は廃止
+- タスク種別ごとの skill (`/plan`, `/implement`, `/review-pr`, `/test-pr`, `/create-task`, `/release`) を呼び分け
+- ユーザー (Idios) が戦略・方針を判断し、Claude は選択肢提示と実装を担う
 
-### 行動規範 (#399)
+### ユーザー確認ルール
 
-director / lead の独走パターン (曖昧判断をユーザー確認なく進める) を是正するため、両ロールは以下 3 点を遵守する。詳細は `docs/roles/director.md` §「行動規範: 独走パターン是正」および `docs/roles/lead-engineer.md` §「行動規範: 独走パターン是正」を参照:
+以下のケースでは独断せず、必ず `AskUserQuestion` で確認する:
 
-- A: Issue 起票時の「修正方針」は engineer 裁量を尊重する
-- B: PR レビューで「観察 (修正不要)」と独断で結論しない (issue 起票 or escalate)
-- C: bulk 操作 (3 件以上) 前にユーザー確認を取る
+- **bulk 操作** (3 件以上の issue 編集、ブランチ削除、ラベル一括変更等): 事前にサンプル 1 件提示し「全件 OK / 個別調整 / やめる」
+- **曖昧判断**: 実装方針の選択肢が複数ある場合、各案のトレードオフを options として提示し Recommended 付き
+- **優先度判定**: `[P1-high, P2-medium, P3-low, deferred]` の 4 択
+- **スコープ拡張**: 当初範囲外の変更が必要になったら `[スコープ内 / 別 issue 起票 / 見送り]` の 3 択
 
-### 自律判断 / ユーザー確認必須マトリクス (#400)
-
-各ロールが「自律で進めてよい操作」「ユーザー確認が必要な操作」を一目で識別できるマトリクス。迷った場合は `AskUserQuestion` ツールで多肢選択提示する (§「AskUserQuestion 活用」参照)。
-
-| 操作 | director | lead-engineer | engineer | tester |
-|---|---|---|---|---|
-| コード修正 (実装) | - | 軽微のみ自律 | 自律 | - |
-| テスト追加 | - | 自律 | 自律 | 自律 |
-| Issue 検索・読み取り | 自律 | 自律 | 自律 | 自律 |
-| Issue 単発起票 | 自律 | 自律 | 確認 | 確認 |
-| Issue 一括起票 (3 件以上) | 確認 | 確認 | 確認 | 確認 |
-| Issue クローズ | 確認 | 確認 | - | - |
-| 優先度ラベル付与 (P1/P2/P3) | 基準明示時は自律、それ以外は確認 | 確認 | - | - |
-| `deferred` ラベル付与 | 確認 | 確認 | - | - |
-| `role:*` ラベル付替え | 自律 | 自律 | 自律 | 自律 |
-| PR レビュー approve / request changes | 自律 | 自律 | - | - |
-| PR レビューで「観察 (修正不要)」 | **禁止** (#399 B: issue 起票必須) | **禁止** (#399 B) | - | - |
-| PR マージ | 確認 | 確認 | - | - |
-| `docs/roles/*.md` / `CLAUDE.md` 改定 | 確認 | 確認 | 確認 (起票のみ) | - |
-| `docs/protocol.md` 改定 | 確認 | 確認 | 確認 (起票のみ) | - |
-| 技術 docs 更新 (cli-spec.md 等) | 確認 | 自律 | 自律 | - |
-| bulk 操作 (3 件以上: ラベル / クローズ / 起票) | 確認 | 確認 | 確認 | 確認 |
-
-凡例: **自律** = ユーザー確認不要、**確認** = 必ず `AskUserQuestion` 等で確認、**禁止** = ルール違反。ロールの責務範囲外は `-`。
-
-### AskUserQuestion 活用
-
-曖昧判断で独走しないため、以下の場面で `AskUserQuestion` ツールを活用する:
-
-- 優先度判定 → `[P1-high, P2-medium, P3-low, deferred]` の 4 択提示
-- 実装方針の選択肢が複数 → 各案のトレードオフを options として提示し、Recommended 付き
-- スコープ拡張の是非 → `[スコープ内 / 別 issue 起票 / 見送り]` の 3 択
-- bulk 操作の直前 → サンプル 1 件提示し「全件 OK / 個別調整 / やめる」の選択
-
-自由記述で確認するより誤解が減り、ユーザーも選びやすい。`AskUserQuestion` には自動で「Other」選択肢が追加されるため、選択肢に無いケースも柔軟に対応できる。
+PR レビューで「観察 (修正不要)」と独断で結論することは**禁止**。懸念があれば別 issue 起票するか、ユーザーに判断を委ねる (#399 B 由来の原則)。
 
 ### Memory 活用 (ユーザー訂正の蓄積)
 
-ユーザーが Claude の判断を訂正した場合、訂正内容を `feedback_*.md` 形式でメモリに蓄積する。詳細は memory 運用ガイド (Claude Code の auto memory セクション) を参照。蓄積対象の例:
+ユーザーが Claude の判断を訂正した場合、訂正内容を `feedback_*.md` 形式でメモリに蓄積する。蓄積対象の例:
 
 - 優先度判定基準の訂正 (「この観点は P1」「このレベルの UX 品質は P3」等)
-- ラベル振り分け基準の訂正 (deferred 判定・role 振り替えの根拠)
-- レビュー判断基準の訂正 (「観察 (修正不要)」と書きかけて訂正されたケース)
+- ラベル振り分け基準の訂正 (`deferred` / スコープラベル判定の根拠)
+- レビュー判断基準の訂正
 - bulk 操作の閾値・順序の訂正
 
-蓄積した基準を次セッション以降で読み返すことで、同じ訂正を繰り返さず、ユーザー期待に沿った判断精度を上げる。個別セッションの一時状態 (進行中の PR 番号・作業中の issue 等) は memory ではなく TodoWrite / plan に残す。
+蓄積した基準を次セッション以降で読み返し、同じ訂正を繰り返さないようにする。個別セッションの一時状態 (進行中の PR 番号・作業中の issue 等) は memory ではなく TodoWrite / plan に残す。
 
 ## CLAUDE.md 継続改善
 
@@ -255,21 +222,19 @@ director / lead の独走パターン (曖昧判断をユーザー確認なく�
 - プレフィックス: `[bug]`, `[doc]`, `[refactor]`, `[task]`, `[question]`, `[risk]`
 - Assignee: 常に `Idios`
 - 作成者明示: 本文末尾に `作成: <session-id>`
-- ラベル: prefix ラベル + `role:*` + 優先度（`P1-high` / `P2-medium` / `P3-low`）
-- `[bug]`/`[refactor]` は初期ラベル `role:lead-engineer`（方針コメント必要）
-- `role:*` ラベルは「次に誰が行動すべきか」を示す。作業進行に合わせて付替える
+- ラベル: prefix ラベル + スコープラベル (`l2a-gui` / `l2b-installer` / `l2c-guard` / `l2-workflow` / `l2-decision` / `l1-residual` 等) + 優先度（`P1-high` / `P2-medium` / `P3-low`）
 - `Closes`/`Fixes` キーワードは使わない（クローズは手動）
 
 ## PR 作成ルール
 
-詳細は `docs/roles/protocol.md` を参照。要約:
+詳細は `docs/l2-workflow.md` を参照。要約:
 
 - **PR 作成前**: ベースブランチをリベースし、`ruff check .` / `ruff format --check .` / `pytest` を通すこと
 - ベースブランチ: `develop-x.x.x`（`main` ではない）
-- ロールラベル: レビュー担当の `role:*` を付与（元 issue 作成者ロール優先）
-- コード変更 PR: `role:tester` も付与（テスト実施のため）
-- マージ方法: `gh pr merge <番号> --squash`
-- コード変更はテスター確認必須、ドキュメントのみはレビューのみ
+- 作業ブランチ命名: `claude/<scope>-<short-description>` または `claude/<issue-N>-<slug>`
+- マージ方法: `gh pr merge <番号> --squash` (ユーザーが実行)
+- レビュー: `/review-pr` skill で受け入れ条件チェックリスト検証 (#367 対策)
+- コード変更は `/test-pr` skill で実機テスト実施
 - コミットメッセージに `[<session-id>]` を含める
 - **PR 本文・コミットメッセージで `Closes` / `Fixes` / `Resolves` キーワードを使わない**（issue のクローズは手動で行う）
 

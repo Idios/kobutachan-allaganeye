@@ -26,9 +26,9 @@
 ## 関連
 
 - Refs #
-- Base branch: `develop-0.1.x`
-- Session: <!-- 例: engineer-1 / lead-2 / tester-1 -->
+- Base branch: `develop-0.2.0`
+- Session: <!-- 例: relaxed-mestorf-9807da -->
 
 ## 備考 (任意)
 
-<!-- スコープ制限・既知の未対応事項・テスター確認依頼事項など -->
+<!-- スコープ制限・既知の未対応事項・追加テスト依頼事項など -->
