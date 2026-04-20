@@ -274,7 +274,7 @@ GitHub の issue・PR に添付またはリンクされた動画ファイルに�
 
 ## 10. allaganeye 側の実装タスク
 
-guard 連携のために allaganeye 側で必要な変更。
+guard 連携のために allaganeye 側で必要な変更。**リリース目標: L2 (v0.2.0)** に統合して実装。
 
 | # | 変更内容 | 対象ファイル | 優先度 |
 |---|---|---|---|
@@ -284,6 +284,7 @@ guard 連携のために allaganeye 側で必要な変更。
 | 4 | `.github/ISSUE_TEMPLATE/bug_report.yml` | `.github/` | P2 |
 | 5 | バグ報告ガイド | `docs/bug-report-guide.md` | P2 |
 | 6 | 統合テスト | `tests/test_guard_integration.py` | P3 |
+| 7 | `pyproject.toml` の optional-dependencies に guard を追加 | `pyproject.toml` | P1 |
 
 ---
 
