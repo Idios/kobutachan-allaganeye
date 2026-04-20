@@ -185,19 +185,15 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 L2 からは**単一ワークツリー + skill ベースディスパッチ**を採用。詳細は `docs/l2-workflow.md` を参照。
 
 - 旧ロール体制 (director / lead-engineer / engineer / tester) は廃止
-- タスク種別ごとの skill (`/plan`, `/implement`, `/review-pr`, `/test-pr`, `/create-task`, `/release`) を呼び分け
+- 既存 skill: `/review-pr`, `/enforce-acceptance-criteria`, `/scope-guard`, `/create-task`, `/release`
+- 計画立案・実装・PR テストは Plan モード + 通常ツール + TodoWrite で代替
 - ユーザー (Idios) が戦略・方針を判断し、Claude は選択肢提示と実装を担う
 
-### ユーザー確認ルール
+### Iron Law と強制メカニズム
 
-以下のケースでは独断せず、必ず `AskUserQuestion` で確認する:
+プロジェクト基本ルールは `.claude/hooks/session-start.sh` の Iron Law (5 条 + Red Flags 表) として毎セッション先頭に注入される。条文と Red Flags の正は同ファイル。違反が 1% でも疑われる状況では STOP し `AskUserQuestion` でユーザー確認する。
 
-- **bulk 操作** (3 件以上の issue 編集、ブランチ削除、ラベル一括変更等): 事前にサンプル 1 件提示し「全件 OK / 個別調整 / やめる」
-- **曖昧判断**: 実装方針の選択肢が複数ある場合、各案のトレードオフを options として提示し Recommended 付き
-- **優先度判定**: `[P1-high, P2-medium, P3-low, deferred]` の 4 択
-- **スコープ拡張**: 当初範囲外の変更が必要になったら `[スコープ内 / 別 issue 起票 / 見送り]` の 3 択
-
-PR レビューで「観察 (修正不要)」と独断で結論することは**禁止**。懸念があれば別 issue 起票するか、ユーザーに判断を委ねる (#399 B 由来の原則)。
+強制メカニズム (7 層) の詳細は [docs/l2-workflow.md](docs/l2-workflow.md) §強制メカニズム を参照。
 
 ### Memory 活用 (ユーザー訂正の蓄積)
 

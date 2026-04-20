@@ -153,27 +153,25 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 
 **L2 → L3 昇格**: feedback が複数セッションで再利用される汎用知見に育ったら `docs/knowledge/` へ移動し、memory からは削除。
 
-## ユーザー確認ルール (bulk 操作 / 曖昧判断)
+## ルールと強制メカニズム
 
-旧「独走パターン是正 (#399/#400)」を skill 横断の規約として継承:
-
-- **bulk 操作** (3 件以上の issue 編集、ブランチ削除、ラベル一括変更等): 必ず `AskUserQuestion` で事前確認
-- **曖昧判断**: 複数選択肢がある場合、ユーザーに選ばせる (Recommended 付き)
-- **スコープ拡張**: 当初 issue の範囲外の変更が必要になったら、作業を止めて確認 or 別 issue 起票
+本プロジェクトの基本ルールは **Iron Law** としてセッション開始時に全て注入される (`.claude/hooks/session-start.sh`)。詳細な条文はそのファイルを正とし、本ドキュメントでは重複記載しない。
 
 ### 強制メカニズム
 
-上記ルールおよび「レビュー受け入れ基準」(#367 対策) を多層で強制する。設計思想は [obra/superpowers](https://github.com/obra/superpowers) の「Iron Law / Red Flags / Gate Function」パターンに倣い、単にルールを書くだけでなく**エージェントが自己抑制せざるを得ない語彙と構造**を配置する。
+[obra/superpowers](https://github.com/obra/superpowers) の「Iron Law / Red Flags / Gate Function」パターンに倣い、ルールを書くだけでなく**エージェントが自己抑制せざるを得ない語彙と構造**を配置する。
 
-1. **`SessionStart` hook** (`.claude/hooks/session-start.sh`): セッション開始・`/clear`・compaction 直後に `<EXTREMELY_IMPORTANT>` タグで Iron Law (5 条) と Red Flags 表を会話先頭に注入。全セッションで同じ語彙が強制される (superpowers 方式)
-2. **`enforce-acceptance-criteria` skill** (`.claude/skills/enforce-acceptance-criteria/SKILL.md`): `/review-pr` 冒頭で呼ばれ、元 issue の受け入れ条件を逐条引用 → 対応 diff/test を逐条引用 → 全項目 ✓ で初めて LGTM 可能。1 項目でも未達なら修正依頼フローへ (Gate Function)
-3. **`scope-guard` skill** (`.claude/skills/scope-guard/SKILL.md`): 実装中の「ついでに直した」を検知し、AskUserQuestion で「新 issue 起票 / revert / スコープ拡大」の 3 択を強制。独断禁止
-4. **`/review-pr` skill**: PR レビュー全体のオーケストレーション。上記 `enforce-acceptance-criteria` を必ず呼び出す
-5. **`PreToolUse` hook** (`.claude/hooks/preuse.py`, #401 由来): Bash 実行時の確認ゲート。特に bulk 操作・破壊的コマンドを対象
-6. **PR テンプレート** (`.github/pull_request_template.md`): PR 作成時にチェックリストが自動挿入される
-7. **ユーザー最終承認**: マージは全てユーザー (Idios) が実行。未達 PR は差し戻し
+| 層 | 実装 | 役割 |
+|---|---|---|
+| 1 | `SessionStart` hook (`.claude/hooks/session-start.sh`) | セッション開始・`/clear`・compact 時に Iron Law + Red Flags を `<EXTREMELY_IMPORTANT>` で会話先頭に注入 |
+| 2 | `enforce-acceptance-criteria` skill | `/review-pr` から呼ばれる Gate Function。受け入れ条件の逐条検証 |
+| 3 | `scope-guard` skill | スコープ逸脱検知で AskUserQuestion を強制 |
+| 4 | `/review-pr` skill | PR レビューのオーケストレーション。上記 2 を必ず呼び出す |
+| 5 | `PreToolUse` hook (`.claude/hooks/preuse.py`, #401 由来) | Bash 実行時の確認ゲート |
+| 6 | PR テンプレート (`.github/pull_request_template.md`) | Iron Law 1/3/4 の逐条チェックリスト |
+| 7 | ユーザー最終承認 | マージは全て Idios が実行、未達 PR は差し戻し |
 
-ハード CI ゲート (GitHub Action でマージブロック) と `PreToolUse` での `gh` bulk 実ブロックは将来の強化候補。現状は Claude + ユーザーの 2 段検証で運用する。
+**真のハードゲート候補 (未実装)**: `PreToolUse` で `gh` bulk 操作の exit 2 ブロック、GitHub Action でマージブロック。L2 実装中に必要性が顕在化したら別 issue で対応。
 
 ## 移行前後の対応表
 
