@@ -1,0 +1,69 @@
+name: "[bug] バグ報告"
+description: バグを報告する (動画添付する場合はプライバシー確認が必要)
+title: "[bug] "
+labels: ["bug"]
+assignees:
+  - Idios
+body:
+  - type: markdown
+    attributes:
+      value: |
+        バグ報告ありがとうございます。以下のフォームに従って情報を記入してください。
+
+        動画ファイルを添付する場合は、プライバシー・機密情報の混入がないことを事前にご確認ください (下のチェックボックス参照)。
+
+        詳細は [`docs/bug-report-guide.md`](../../blob/develop-0.2.0/docs/bug-report-guide.md) を参照してください (公開までしばらくお待ちください)。
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 再現手順
+      description: バグが発生する手順を具体的に記述してください
+      placeholder: |
+        1. `allaganeye split recording.mkv` を実行
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待される動作
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 実際の動作
+      description: エラーメッセージ全文やログがあれば貼り付けてください
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 環境情報
+      description: |
+        `allaganeye --version` と `allaganeye split <video> -v` の出力ヘッダがあれば貼り付けてください (OS / Python / FFmpeg / CPU / GPU / Memory が含まれます)。
+      placeholder: |
+        allaganeye 0.2.0 (ffmpeg 8.1, Python 3.12.10, Windows 11)
+          CPU: AMD Ryzen 9 9950X3D (16C/32T)
+          GPU: NVIDIA GeForce RTX 5090 (32GB VRAM)
+          Memory: 61.6 GB
+          Disk: 1359.5 / 3726.0 GB free on E:
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: 動画添付時のプライバシー・機密情報確認
+      description: |
+        動画ファイルを添付する場合は以下を確認してください。動画を添付しない報告でも、今後動画を添付する可能性がある場合の同意として全項目チェックしてください (動画添付しない issue ではチェックしても影響ありません)。
+      options:
+        - label: 動画中に他プレイヤーの個人情報 (名前、ID、パーティ情報) が含まれる場合、ぼかし等の処理を行った、または公開しても問題ない範囲であることを確認した
+          required: true
+        - label: 動画中に FF14 のアカウント情報、決済情報、その他機密情報が含まれていないことを確認した
+          required: true

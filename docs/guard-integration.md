@@ -160,7 +160,7 @@ GitHub の issue・PR に添付またはリンクされた動画ファイルに�
 
 ### 受領時の必須手順 (メンテナ側)
 
-1. Issue Template (#458 で整備予定) の同意チェックボックスが全てチェック済みであることを確認
+1. Issue Template (`.github/ISSUE_TEMPLATE/bug_report.yml`) の同意チェックボックスが全てチェック済みであることを確認
 2. ファイルをダウンロードし、隔離ディレクトリに保存
 3. **エージェント (Claude + Idios) が `allaganeye-guard verify` を実行**。PASS するまで allaganeye で処理しない
 4. 調査完了後、ローカルデータを削除し Issue にコメントで報告
@@ -173,7 +173,7 @@ GitHub の issue・PR に添付またはリンクされた動画ファイルに�
 - メンテナがバグ調査目的で閲覧することへの同意
 - バグ解決後にデータが削除されることの理解
 
-同意は GitHub Issue Template のチェックボックスで取得する (`.github/ISSUE_TEMPLATE/bug_report.yml`、#458 で整備予定)。なお**セキュリティ検査の実行はメンテナ側の責務**であり、Issue Template ではユーザーに guard 実行を求めない。
+同意は GitHub Issue Template のチェックボックスで取得する (`.github/ISSUE_TEMPLATE/bug_report.yml`)。なお**セキュリティ検査の実行はメンテナ側の責務**であり、Issue Template ではユーザーに guard 実行を求めない。
 
 ---
 
