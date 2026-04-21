@@ -5,7 +5,7 @@ on:
     branches: [main, "develop-*"]
 
 jobs:
-  lint-and-test:
+  python:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,3 +31,68 @@ jobs:
 
       - name: Test
         run: pytest
+
+  gui-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: gui/package-lock.json
+
+      - name: Install dependencies
+        working-directory: gui
+        run: npm ci
+
+      - name: Lint
+        working-directory: gui
+        run: npm run lint
+
+      - name: Type check
+        working-directory: gui
+        run: npm run typecheck
+
+      - name: Build
+        working-directory: gui
+        run: npm run build
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-dist
+          path: gui/dist
+          retention-days: 1
+
+  gui-rust:
+    runs-on: windows-latest
+    needs: gui-frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: gui/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+
+      - name: Install node dependencies
+        working-directory: gui
+        run: npm ci
+
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: gui-dist
+          path: gui/dist
+
+      - name: Cargo check
+        run: cargo check --manifest-path gui/src-tauri/Cargo.toml
