@@ -66,7 +66,7 @@ cd gui/src-tauri && cargo check         # Rust 型/依存チェック
 
 ### データフロー（L1）
 
-```
+```text
 MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
            → detector.py（ffmpeg 並列 -ss プローブで暗転検知 → 試合境界タイムスタンプ）
            → splitter.py（FFmpeg -c copy で無劣化分割）
@@ -99,6 +99,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 ### 検知アルゴリズム（detector.py）
 
 **Pass 1: 粗いスキャン**
+
 1. `duration_hint` から `sample_interval` 秒間隔のタイムスタンプを生成（長時間動画は自動で 2-3s に調整）
 2. 各タイムスタンプで `ffmpeg -threads 1 -ss {t} -i` により 1 フレームを 320x180 grayscale でデコード
 3. `ThreadPoolExecutor(max_workers=min(cpu_count, 32))` で並列実行
@@ -116,6 +117,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 9. `non_fl`（非FL暗転）と短い `in_match`（試合内暗転）を除外。隣接する `match_boundary` ペア間の短いギャップをマージ
 
 **音声昇格**（`--no-audio` 未指定時、#288）
+
 - `audio/scan.py` で動画全域の音声から Fanfare ピーク（log-mel 相関 sim ≥ 0.65）を抽出
 - `in_match` 分類された暗転のうち、暗転終了後 0-60s 以内に Fanfare ピークがあるものを `match_boundary` に昇格
 - スコアバー残像で誤分類された試合境界（例: 2026-04-08 57:53）を救済
@@ -126,11 +128,13 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 11. blackout region 間の非暗転区間を試合セグメントとして抽出（暗転内パディング付き）
 
 **検出の動作確認済み環境と制限事項**
+
 - 動作確認済み: ハイスペック PC（高速 SSD、高性能 GPU）での OBS 録画。試合間暗転 2-5 秒程度
 - 未検証: 低スペック環境でローディング画面が長い（10 秒超）ケース
 - 既知の制限: ローディング画面が純粋な黒画面でなく UI 要素（スピナー、ロゴ等）を含む場合、brightness が 15-55 の範囲で変動し暗転が分断されることがある。分断された各区間が `min_blackout_duration` 未満になると試合境界を検出できない
 
 **GPU モード** (`--gpu`)
+
 - CPU モードの Pass 1 を GPU チャンク並列デコードで代替（`gpu_detector.py`）
 - 動画を N チャンク（`min(cpu_count, 16)`）に分割し、各チャンクで長寿命の ffmpeg プロセスを `-hwaccel auto` + `fps` フィルタで起動
 - GPU 初期化コストを分散し、1プロセスあたり多数フレームをデコードすることで効率化

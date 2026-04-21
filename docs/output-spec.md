@@ -21,7 +21,7 @@
 
 排他違反時は stderr に以下を出力し split 処理は開始しない:
 
-```
+```text
 Error: --quiet and --verbose are mutually exclusive
 ```
 
@@ -41,6 +41,7 @@ Error: --quiet and --verbose are mutually exclusive
 ## マトリクス v2
 
 凡例:
+
 - **◯** = 出力する
 - **×** = 出力しない
 - **-** = 該当せず (split 処理に到達しないため)
@@ -81,7 +82,7 @@ Error: --quiet and --verbose are mutually exclusive
 
 `-q` モードでは `#418` 対応 (マトリクス行 3, 6, 7, 13 が全て `×`) により、以下のみが stdout に出力される:
 
-```
+```text
 Output: <output_dir>
   <match_001.mp4>
   ...

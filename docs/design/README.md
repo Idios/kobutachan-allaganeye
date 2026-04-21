@@ -4,7 +4,7 @@
 
 ## 画面フロー
 
-```
+```text
 drop → detecting → complete → preview → export
 ```
 
@@ -19,6 +19,7 @@ drop → detecting → complete → preview → export
 [#450](https://github.com/Idios/kobutachan-allaganeye/issues/450) は 2026-04-20 の Phase 0 実測結果をもとに **Tauri 2.x + React 19 + TypeScript** で確定。
 
 動画プレイヤーの方針:
+
 - MKV → fragmented MP4 への ingest 時 remux (`ffmpeg -c copy`)
 - プレイヤーは axum HTTP サーバ (Rust 側、tower-http の `ServeFile` で 206 Partial Content 対応) 経由で動画配信
 - フレーム精度シークは `requestVideoFrameCallback` + ffmpeg サムネイルキャッシュ
@@ -57,7 +58,7 @@ handoff bundle の元推奨 (Electron) は Phase 0 で Tauri と比較計測し�
 
 ### CLI 分離 (重要)
 
-```
+```text
 CLI (dry-run)
   └→ metadata.json  ← 観測結果。CLI は書き換えない
       ├→ GUI がロード
@@ -70,6 +71,7 @@ CLI (dry-run)
 ```
 
 **CLI 側の変更**: 現行の `allaganeye split` を 2 コマンドに分離:
+
 - `allaganeye detect <video>` — 検知のみ実行し metadata.json を出力 (現 `--dry-run` 相当)
 - `allaganeye split --from-metadata <metadata.json>` — 分割のみ実行
 
@@ -109,20 +111,24 @@ Electron / Tauri の両方で最小プロトタイプを構築し F1-F5 を計�
 - Tauri 固有 blocker (tauri#6375, #5022) は現行 2.10.3 で再現せず
 
 ### Phase 1: データ層
+
 - CLI を `detect` / `split --from-metadata` の 2 モードに分離
 - metadata.json スキーマを TypeScript 型へ落とす
 - 読み込み / 編集 / 保存の state 管理 (zustand 等 React 用 stateMgr)
 
 ### Phase 2: 画面骨格 (5 画面 + ルータ)
+
 - `bundle/project/variants/aether.jsx` のコンポーネント形状を TS に写経
 - 色・フォントを `aetherTheme` をそのまま CSS 変数化
 
 ### Phase 3: preview 画面の本物化
+
 - `<video>` タグ + ffmpeg サムネキャッシュ (`~/.allaganeye/cache/<hash>/thumbs/*.webp`)
 - キーボードショートカット (←→ 1s / shift 10s / ⌥ 1F / space 再生)
 - 編集の一時状態管理
 
 ### Phase 4: export の本物化
+
 - ffmpeg 呼び出し (copy / h264)
 - 進捗取得 (ffmpeg stderr パース)
 - 試合別進捗 + 完了後フォルダを開く
@@ -132,21 +138,25 @@ Electron / Tauri の両方で最小プロトタイプを構築し F1-F5 を計�
 各画面の詳細は handoff HTML の該当 jsx を参照。主要ポイント:
 
 ### 1. drop
+
 - D&D + 参照ボタン + 直近録画リスト
 - 録画ドロップで `detecting` へ
 
 ### 2. detecting
+
 - 4 フェーズバー (Detecting / Refining / Scorebar / Splitting)
 - リアルタイムログ (CLI stdout を行単位で流す)
 - 中断ボタン
 - 中央のアラガン紋章が回転 (観測中の視覚フィードバック)
 
 ### 3. complete
+
 - 輝度タイムライン + 黒フェードバンド + 試合ブロック
 - 試合行クリックで選択、ダブルクリックで `preview` へ
 - 「全試合書き出し」で `export` へ直行
 
 ### 4. preview (新機能)
+
 - **IN / OUT 2 画面** `<video>` タグ
 - 候補フレームストリップ (±3s, 12 frames @ 0.5s 間隔)
 - 微細タイムライン (±5s, 輝度 + 閾値)
@@ -156,6 +166,7 @@ Electron / Tauri の両方で最小プロトタイプを構築し F1-F5 を計�
 - 試合名 / type 編集可
 
 ### 5. export
+
 - 出力先 / 命名規則 / コーデック選択 (copy | h264)
 - 試合別進捗 + 完了後フォルダを開く
 
@@ -170,7 +181,7 @@ Electron / Tauri の両方で最小プロトタイプを構築し F1-F5 を計�
 
 ## ファイル構成
 
-```
+```text
 docs/design/
 ├── README.md              — 本ファイル (設計仕様・実装 Phase のインデックス)
 ├── feasibility.md         — Phase 0 フィージビリティ検証の記録場所 (Phase 0 完了時に埋める)
@@ -194,7 +205,7 @@ docs/design/
 
 `#483` bootstrap で作成した Tauri 2 プロジェクト。`repo-root/gui/` に配置。
 
-```
+```text
 gui/
 ├── package.json             — React + Vite + TypeScript + Zustand + @tauri-apps/*
 ├── vite.config.ts           — dev server 127.0.0.1:1420 固定
@@ -235,6 +246,7 @@ gui/
 ## 反復
 
 デザイン側で修正が必要になったら:
+
 1. Claude Design 上で jsx を更新
 2. 再 export → 本ディレクトリの `bundle/` を差し替え
 3. 本 README と feasibility.md を同期

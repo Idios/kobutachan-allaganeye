@@ -29,7 +29,7 @@ Allagan Eye にバグ報告をいただく際の手順です。動画ファイ�
 
 `allaganeye split <video> -v` の出力ヘッダには OS・Python・ffmpeg・CPU・GPU・メモリ情報が含まれます (#336)。これを issue 本文の環境欄に貼り付けてください。
 
-```
+```text
 allaganeye 0.2.0 (ffmpeg 8.1, Python 3.12.10, Windows 11)
   CPU: AMD Ryzen 9 9950X3D (16C/32T)
   GPU: NVIDIA GeForce RTX 5090 (32GB VRAM)

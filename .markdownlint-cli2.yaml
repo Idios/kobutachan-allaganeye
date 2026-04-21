@@ -1,33 +1,23 @@
 # markdownlint-cli2 configuration (#474).
 #
-# 段階導入方針: 既存ドキュメントで違反のあるルールは全て disable し、CI を
-# green な状態で開始する。新規コミット時に disable 対象外のルール (~40 種) が
-# 違反を検出すればエラーになる。段階的にルールを有効化する方針は
-# follow-up issue で管理する。
+# 段階導入方針: 既存ドキュメントで違反のあるルールは全て disable して CI を
+# green な状態で開始し、段階的に解除する (#474 follow-up)。新規コミット時に
+# 有効化済みルールが違反を検出すれば CI が失敗する。
 #
-# 各 disable の理由:
+# フェーズ進捗:
+# - フェーズ 1 (本 PR): MD022/MD031/MD032/MD040 を有効化
+# - フェーズ 2: MD029/MD036/MD041/MD038/MD028 (予定)
+# - フェーズ 3: MD024 (siblings_only: true で有効化済み、PR #500)
+# - フェーズ 4: MD013 (完全 disable 維持で方針確定)
+#
+# 各残り disable の理由:
 
 config:
-  # MD013 (line-length, 既存 294 件): 日本語ドキュメントは自動折り返し非対応の
-  # エディタが多く、80 文字制限は実情に合わない。
+  # MD013 (line-length, 既存 317 件): 日本語ドキュメントは自動折り返し非対応の
+  # エディタが多く、80 文字制限は実情に合わない。#474 フェーズ 4 方針判断で
+  # 「完全 disable 維持」を確定 (分布: p50=114 / p75=151 / p90=197 / max=385)。
+  # リーダビリティはコンテンツカーブ (VS Code の word wrap 等) に委ねる。
   MD013: false
-
-  # MD040 (fenced-code-language, 既存 38 件): ``` 直後の言語指定を推奨する
-  # ルール。既存 38 件を段階的に修正するまで disable。
-  MD040: false
-
-  # MD032 (blanks-around-lists, 既存 37 件): リスト前後の空行を要求。
-  MD032: false
-
-  # MD031 (blanks-around-fences, 既存 18 件): ``` フェンス前後の空行を要求。
-  MD031: false
-
-  # MD022 (blanks-around-headings, 既存 17 件): 見出し前後の空行を要求。
-  MD022: false
-
-  # MD029 (ol-prefix, 既存 7 件): 番号付きリストの番号スタイル統一。
-  # 1./2./3. と 1./1./1. の混在を許容する。
-  MD029: false
 
   # MD024 (no-duplicate-heading, #474 Phase 3 で有効化): CHANGELOG の複数
   # バージョン節で重複見出し (`### Changed` 等) が構造上必要なため、
@@ -43,6 +33,10 @@ config:
   # MD036 (no-emphasis-as-heading, 既存 5 件): 強調を見出し代わりに使う記法を
   # ドキュメントの一部で意図的に採用している。
   MD036: false
+
+  # MD029 (ol-prefix, 既存 7 件): 番号付きリストの番号スタイル統一。
+  # 1./2./3. と 1./1./1. の混在を許容する。
+  MD029: false
 
   # MD028 (no-blanks-blockquote, 既存 1 件): blockquote 内の空行を許容。
   MD028: false

@@ -10,6 +10,7 @@ description: deferred issue レビュー → バージョンバンプ → リリ
 ## 引数
 
 `$ARGUMENTS` にバージョン種別を指定（省略時は自動判定）:
+
 - `patch`: バグ修正のみ
 - `minor`: 新機能追加
 - `major`: 破壊的変更
@@ -38,9 +39,11 @@ gh issue list --repo Idios/kobutachan-allaganeye --state open --label "deferred"
 
 1. 現在のバージョンを `pyproject.toml` から取得
 2. 前回リリースタグ以降のコミットを分析:
+
    ```bash
    git log $(git describe --tags --abbrev=0 2>/dev/null || echo "HEAD~50")..HEAD --oneline
    ```
+
 3. バージョン種別を決定（引数指定 or 上記「自動判定ルール」）
 4. ベースブランチを特定:
    - **minor/major**: 現在の `develop-<新バージョン>` （既存 develop ブランチ）
@@ -49,30 +52,39 @@ gh issue list --repo Idios/kobutachan-allaganeye --state open --label "deferred"
 ### Step 3: バージョンバンプと PR 作成
 
 5. **事前品質チェック** (CLAUDE.md PR 作成ルール):
+
    ```bash
    ruff check .
    ruff format --check .
    pytest
    pyright
    ```
+
    いずれか失敗したら修正してから以下に進む
 6. `pyproject.toml` の `version` を更新（他にバージョン参照箇所があれば `grep -r '<旧バージョン>' --include='*.py' --include='*.toml'` で確認し同時更新）
 7. リリースブランチを作成（Step 2-4 で特定したベースブランチから分岐）:
+
    ```bash
    git checkout <ベースブランチ>
    git pull
    git checkout -b release/v<新バージョン>
    ```
+
 8. 変更をコミット（session-id を含める、CLAUDE.md PR 作成ルール）:
+
    ```bash
    git add pyproject.toml
    git commit -m "chore: bump version to <新バージョン> [<session-id>]"
    ```
+
 9. リリースブランチを push:
+
    ```bash
    git push -u origin release/v<新バージョン>
    ```
+
 10. リリース PR を作成（base は Step 2-4 で特定したベースブランチ、Windows + Git Bash での日本語本文破損回避のため `printf | --body-file -` 方式）:
+
     ```bash
     printf '%s\n' "## Release v<新バージョン>
 
@@ -95,11 +107,13 @@ gh issue list --repo Idios/kobutachan-allaganeye --state open --label "deferred"
       --label "release" \
       --assignee Idios
     ```
+
 11. ユーザーに PR URL とバージョン変更内容を報告
 
 ### タグ打ち・GitHub Release 作成
 
 リリース PR マージ後の手順（本スキル範囲外、`docs/release-strategy.md` §タグ運用 を参照）:
+
 - patch リリース: マージされたブランチで `git tag v<新バージョン>` → `git push origin v<新バージョン>`
 - minor/major リリース: `develop-<新バージョン>` を `main` にマージしてから `main` でタグ打ち
 - `gh release create v<新バージョン> --notes-from-tag` で GitHub Release 作成

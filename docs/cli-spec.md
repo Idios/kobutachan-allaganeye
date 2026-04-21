@@ -59,7 +59,7 @@ allaganeye split <video_path> [OPTIONS]
 
 ### verbose (`-v`) 出力例
 
-```
+```text
 allaganeye 0.1.1 (ffmpeg 8.1, Python 3.12.10, Windows 11)
   CPU: AMD Ryzen 9 9950X3D (16C/32T)
   GPU: NVIDIA GeForce RTX 5090 (32GB VRAM)
@@ -91,7 +91,7 @@ HW 情報は全て best-effort。取得失敗しても `(unavailable)` を返す
 
 `.detection_cache.json` がヒットすると Pass 1 / Pass 2 は実行されないため、検知フェーズの summary や progress bar は出力されない。代わりに verbose モードではキャッシュに記録された検知パラメータを表示し、troubleshoot に必要な context を保つ:
 
-```
+```text
 allaganeye 0.1.1 (ffmpeg 8.1, Python 3.12.10, Windows 11)
   CPU: AMD Ryzen 9 9950X3D (16C/32T)
   GPU: NVIDIA GeForce RTX 5090 (32GB VRAM)
@@ -124,7 +124,7 @@ Total: 0m07s
 
 出力例 (JSON 破損ケース):
 
-```
+```text
 Cache hit: detection params from .detection_cache.json
   (unavailable: cache file is not valid JSON)
 Detected 8 match(es) in recording.mkv (2:50:28) (cached)
@@ -150,7 +150,7 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 
 検知完了後、verbose は以下の順でパイプライン統計を出力する:
 
-```
+```text
   Pass 1 (CPU): 3410 samples, 31 blackout frames (0.9%), 5m50s
   Pass 2: 18 regions refined, 1m03s
   Scorebar: 15 match_boundary, 2 in_match, 1 non_fl, 0m12s
@@ -256,7 +256,7 @@ allaganeye debug-brightness <video_path> [OPTIONS]
 
 CSV 形式で stdout に出力。パイプやリダイレクトで利用可能。
 
-```
+```text
 timestamp,brightness
 0.0,12.3
 1.0,245.6
@@ -295,7 +295,7 @@ verbose モードの traceback は CLI ハンドラが `raise typer.Exit(...) fr
 
 出力例 (ffmpeg 失敗 + `-v`):
 
-```
+```text
 Error: ffmpeg failed
   command: ffmpeg -i recording.mkv ...
   return_code: 1
@@ -310,13 +310,13 @@ allaganeye.exceptions.VideoProcessingError: ffmpeg failed
 
 出力例 (同じエラー / default):
 
-```
+```text
 Error: ffmpeg failed
   (Run with -v / --verbose for full details)
 ```
 
 出力例 (同じエラー / `-q`):
 
-```
+```text
 Error: ffmpeg failed
 ```

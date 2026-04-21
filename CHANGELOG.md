@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 L1 (試合分割) の正式リリース版。2026-04-17 に `v0.1.0-preview` として公開後、品質向上を経て `v0.1.1` として正式リリース。verbose 出力の網羅的改善、GPU/CPU 検知精度の一致、進捗バー UX 修正、メタデータ拡充、運用ルール強化。
 
 ### Added
+
 - verbose ヘッダに HW 情報 (CPU/GPU/Memory/Disk) を表示 (#377)
 - verbose 出力に Pass 1/Pass 2/Scorebar/Splitting の elapsed time を表示 (#386, #387)
 - verbose 出力に Filter drop 内訳を表示 (#388)
@@ -33,6 +34,7 @@ L1 (試合分割) の正式リリース版。2026-04-17 に `v0.1.0-preview` と
 - `--gpu` がデフォルト off の理由を README / CLI ヘルプに補足 (#332)
 
 ### Changed
+
 - verbose 出力の `audio=on/off` を実態に合わせ `audio=frozen` に修正 (#384)
 - verbose 出力の ffmpeg version 文字列を簡潔化 (`8.1` 等) (#383)
 - verbose 出力の Total time 表示を全パス (cache hit + split 含む) に統一 (#381)
@@ -40,6 +42,7 @@ L1 (試合分割) の正式リリース版。2026-04-17 に `v0.1.0-preview` と
 - CLI で `-q` / `-v` / `--gpu` / `--no-gpu` 同時指定を排他エラー化 (#419)
 
 ### Fixed
+
 - 進捗バー (Detecting/Refining/Scorebar) の上書き表示問題 (#368, #393)
 - Pass 2 中の進捗無音問題 (#366)
 - 進捗バー ETA ラベル明確化、split 出力表示改善 (#328, #329, #331)
@@ -52,5 +55,6 @@ L1 (試合分割) の正式リリース版。2026-04-17 に `v0.1.0-preview` と
 - CLI エラー表示を output matrix v2 (19a/19b/19c) に整合 (#428)
 
 ### Internal
+
 - テスト網羅性向上 (オプション組合せ網羅、GPU chunk_timestamps parametric、system_info Linux/Darwin パーサ実解析、metadata gaps shape、Pass 2 進捗、B グループカバレッジ等)
 - `setup-session` の開発ブランチ参照とパスを動的化
