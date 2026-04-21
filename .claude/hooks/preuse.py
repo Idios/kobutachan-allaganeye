@@ -6,7 +6,7 @@ rules (#399 / #400) when Claude would otherwise independently run:
 
 - ``gh issue create`` 3+ times within 60 seconds (bulk Issue 起票)
 - ``gh pr merge`` (PR マージ)
-- ``gh issue close`` (Issue クローズ)
+- ``gh issue close`` 3+ times within 60 seconds (bulk Issue クローズ, #485)
 - ``gh issue edit ... --add-label deferred`` 2+ times within 60 seconds
 
 Exit code 2 asks Claude Code to show the stderr message to the user and
@@ -79,14 +79,15 @@ _GATED_PATTERNS: dict[str, dict[str, object]] = {
             "確認しましたか?  #400 のマトリクスでは PR マージは常に確認必須です。"
         ),
     },
-    "issue_close": {
+    "issue_close_bulk": {
         "pattern": re.compile(r"^gh\s+issue\s+close\b"),
-        "mode": "always",
-        "threshold": 1,
+        "mode": "bulk",
+        "threshold": _BULK_THRESHOLD,
         "message": (
-            "Issue クローズ操作です。実動画再現確認 / 副作用 Issue 起票 / "
-            "ユーザー承認を行いましたか?  #400 のマトリクスで Issue クローズは "
-            "常に確認必須です。"
+            "60 秒以内に 3 件以上の Issue クローズを検知しました。\n"
+            "bulk 操作前にサンプル 1 件を提示してユーザー確認を取る運用 "
+            "(#399 C / #400 D) に沿って、続行前に確認を取ってください。\n"
+            "単発 close は Claude 側の AskUserQuestion 等での個別確認を前提に許可 (#485)。"
         ),
     },
     "deferred_label_bulk": {

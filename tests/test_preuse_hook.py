@@ -84,11 +84,43 @@ def test_pr_merge_always_gated(_isolated_paths, monkeypatch):
     assert "PR マージ" in err
 
 
-def test_issue_close_always_gated(_isolated_paths, monkeypatch):
-    """``gh issue close`` is gated on the very first invocation (#401 G-3)."""
+def test_issue_close_single_allowed(_isolated_paths, monkeypatch):
+    """Single ``gh issue close`` is allowed under bulk mode (#485).
+
+    Claude is expected to have taken individual confirmation via
+    AskUserQuestion before each close; the hook only catches genuine
+    bulk shortcuts (3+ / 60s).
+    """
     rc, err = _invoke(_bash_event("gh issue close 42"), monkeypatch)
+    assert rc == 0
+    assert err == ""
+
+
+def test_issue_close_second_allowed(_isolated_paths, monkeypatch):
+    """2 ``gh issue close`` calls in 60s are still allowed (below threshold=3)."""
+    rc1, _ = _invoke(_bash_event("gh issue close 1"), monkeypatch)
+    rc2, _ = _invoke(_bash_event("gh issue close 2"), monkeypatch)
+    assert rc1 == 0
+    assert rc2 == 0
+
+
+def test_issue_close_third_in_window_triggers_gate(_isolated_paths, monkeypatch):
+    """3rd ``gh issue close`` within 60s trips the bulk gate (#485)."""
+    _invoke(_bash_event("gh issue close 1"), monkeypatch)
+    _invoke(_bash_event("gh issue close 2"), monkeypatch)
+    rc, err = _invoke(_bash_event("gh issue close 3"), monkeypatch)
     assert rc == 2
-    assert "Issue クローズ" in err
+    assert "Issue クローズ" in err or "60 秒" in err
+
+
+def test_issue_close_outside_window_resets(_isolated_paths, monkeypatch):
+    """close entries older than 60s fall out of the sliding window (#485)."""
+    stale = time.time() - 61
+    preuse._append_op(_isolated_paths["state"], "gh issue close 1", stale)
+    preuse._append_op(_isolated_paths["state"], "gh issue close 2", stale)
+    # Fresh 3rd call is NOT gated because stale entries are discarded.
+    rc, _ = _invoke(_bash_event("gh issue close 3"), monkeypatch)
+    assert rc == 0
 
 
 # ---------------------------------------------------------------
