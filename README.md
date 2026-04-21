@@ -1,147 +1,49 @@
 # Allagan Eye
 
-FF14 フロントラインの長時間録画動画を、試合ごとに自動分割する CLI ツール。
+FF14 フロントラインの長時間録画動画を、試合ごとに自動で分割する Windows 向けツールです。
 
-OBS 等で録画した数時間分の動画を入力すると、試合の切れ目を自動検知し、試合単位の MP4 ファイルに無劣化で分割します。
+OBS などで録画した数時間分の動画を入力すると、試合の切れ目を自動検知し、試合ごとの MP4 ファイルに無劣化で分割します。
 
-## 環境要件
+## クイックスタート
 
-| 要件 | バージョン |
-|---|---|
-| Python | 3.11 以上 |
-| ffmpeg / ffprobe | 4.1 以上（PATH、環境変数、または既知パスから自動検索） |
+1. [Releases ページ](https://github.com/Idios/kobutachan-allaganeye/releases/latest) から `allaganeye-*-windows.zip` をダウンロード
+2. ZIP をデスクトップなどに展開
+3. 分割したい動画ファイルを、展開したフォルダ内の `allaganeye.bat` にドラッグ＆ドロップ
 
-対応入力形式: MP4, MKV, AVI, MOV
+分割結果は `allaganeye-*\output\` フォルダに保存されます。
 
-### 対応プラットフォーム
+詳しい手順や SmartScreen 警告への対処は [Quick Start Guide](docs/quickstart.md) を参照してください。
 
-| 優先度 | OS | 状態 | 備考 |
-|---|---|---|---|
-| 1 | Windows | 対応済み | メイン開発・録画環境 |
-| 2 | Linux | 未検証 | CI では lint/型チェックのみ実行。実動画での動作確認なし |
-| 3 | macOS | 未検証 | Homebrew パス自動検索のコードはあるが動作確認なし |
+## 対応プラットフォーム
 
-## Quick Start
-
-> 詳しいセットアップ手順は [Quick Start Guide](docs/quickstart.md) を参照してください。
-> 更新方法は [Quick Start Guide — 更新](docs/quickstart.md#3-更新) を参照してください。
->
-> **非エンジニア向け**: Git や Python を個別に用意しなくても、ランタイム同梱の [Portable ZIP (Windows)](docs/quickstart.md#6-portable-zip-windows-を使う場合) を GitHub Releases からダウンロードして利用できます。SmartScreen 警告への対処もリンク先に記載しています (#462)。
-
-```
-git clone https://github.com/Idios/kobutachan-allaganeye.git
-cd kobutachan-allaganeye
-python -m venv .venv
-.venv\Scripts\activate.bat
-pip install -e .
-
-rem まず検知結果を確認
-allaganeye split your_recording.mkv --dry-run
-rem 結果が正しければ本実行
-allaganeye split your_recording.mkv
-
-rem 使い終わったら仮想環境を抜ける (Windows/Linux/macOS 共通)
-deactivate
-```
-
-> 上記は Windows コマンドプロンプトでの例です。PowerShell・Git Bash・Linux・macOS での手順は [Quick Start Guide](docs/quickstart.md) を参照してください。
->
-> 新しいターミナルで再度作業する場合は、`.venv` を再 activate してから `allaganeye` を実行してください（詳細は [Quick Start Guide §4](docs/quickstart.md#4-動画を分割する)）。
-
-## 使い方
-
-### 試合分割
-
-```bash
-allaganeye split <video_path>
-```
-
-出力先を指定する場合:
-
-```bash
-allaganeye split <video_path> -o <output_dir>
-```
-
-### オプション
-
-| オプション | デフォルト | 説明 |
-|---|---|---|
-| `-o`, `--output-dir` | `./output` | 出力ディレクトリ |
-| `--sample-interval` | `1.0` | フレームサンプリング間隔（秒） |
-| `--blackout-threshold` | `15.0` | 暗転検知の輝度閾値（0-255） |
-| `--min-match-duration` | `300.0` | 最小試合時間（秒）。短いセグメントを除外 |
-| `--min-blackout-duration` | `3.0` | 最小暗転時間（秒）。短い暗転を無視 |
-| `--workers` | auto | 検知の並列ワーカー数（デフォルト: 自動=CPU コア数、最大24） |
-| `--gpu` / `--no-gpu` | auto | GPU デコードで検知。デフォルトはコーデックで自動選択（H.264/HEVC -> GPU、その他 -> CPU）。GPU が利用不可の場合は CPU にフォールバック |
-| `--no-cache` | - | キャッシュを無視して再検知 |
-| `--dry-run` | - | 検知のみ実行し、分割しない |
-| `-v`, `--verbose` | - | 詳細ログ出力 |
-| `-q`, `--quiet` | - | 進捗出力を抑制（最終結果のみ） |
-
-> うまく分割されない場合は [パラメータ調整ガイド](docs/tuning-guide.md) を参照してください。
-
-### フレーム輝度の確認
-
-暗転検知の閾値をチューニングする際は、`debug-brightness` コマンドでフレーム輝度を CSV 出力できます。
-
-```bash
-allaganeye debug-brightness <video_path> --start 100 --end 200 --interval 0.5
-```
-
-出力（CSV 形式、stdout）:
-
-```
-timestamp,brightness
-100.0,12.3
-100.5,245.6
-101.0,8.1
-```
-
-詳細は [CLI コマンド仕様](docs/cli-spec.md) を参照してください。
-
-### 出力
-
-指定ディレクトリに試合ごとの MP4 とメタデータが出力されます。
-
-```
-output/
-├── match_001.mp4
-├── match_002.mp4
-├── match_003.mp4
-├── metadata.json         # 分割結果（機械可読）
-└── .detection_cache.json # 検知結果キャッシュ（同一ソース・同一パラメータの再実行を高速化。--no-cache で無視）
-```
-
-### Exit Codes
-
-| コード | 意味 |
-|---|---|
-| 0 | 正常終了 |
-| 1 | 一般エラー |
-| 2 | 入力ファイル不正（ファイルが存在しない、非対応形式） |
-| 3 | FFmpeg / ffprobe エラー |
-| 4 | 検知失敗（試合境界が見つからない） |
-| 5 | 設定値不正（パラメータの範囲外等） |
-
-## ロードマップ
-
-| フェーズ | 機能 | 目標日 | 状態 |
-|---|---|---|---|
-| L1 | 試合分割 | 4/17 preview → 4/20 release | リリース済み (v0.1.1) |
-| L2 | 配布・統合 (GUI + インストーラ + guard) | 4/26 | 開発中 |
-| L3 | メタデータ化（OCR・音声認識） | 5/3 | 予定 |
-| L4 | 投稿価値の自動評価 | 5/10 | 予定 |
-| L5 | ハイライト自動編集 | 5/17 | 予定 |
-| L6 | プライバシー・精密分割 | 5/24 | 計画中 |
+Windows 専用です。Python や FFmpeg の事前インストールは必要ありません（ZIP に同梱されています）。
 
 ## ドキュメント
 
-- [Quick Start Guide](docs/quickstart.md)
-- [パラメータ調整ガイド](docs/tuning-guide.md)
+### 一般ユーザー向け
+
+- [Quick Start Guide](docs/quickstart.md) — Portable ZIP の使い方、SmartScreen 警告、トラブルシュート
+- [パラメータ調整ガイド](docs/tuning-guide.md) — 分割結果が期待と異なるときのチューニング
+
+### 開発者向け
+
+- [Developer Setup Guide](docs/developer-setup.md) — ソースコードから動かす手順（Git / Python / venv）
 - [CLI コマンド仕様](docs/cli-spec.md)
+- [出力仕様マトリクス](docs/output-spec.md)
 - [システムアーキテクチャ](docs/design-overview.md)
 - [動画処理設計](docs/video-processing.md)
 - [リリース戦略](docs/release-strategy.md)
+
+## ロードマップ
+
+| フェーズ | 機能 | 状態 |
+|---|---|---|
+| L1 | 試合分割 | リリース済み (v0.1.1) |
+| L2 | 配布・統合 (GUI + インストーラ + guard) | 開発中 |
+| L3 | メタデータ化（OCR・音声認識） | 予定 |
+| L4 | 投稿価値の自動評価 | 予定 |
+| L5 | ハイライト自動編集 | 予定 |
+| L6 | プライバシー・精密分割 | 計画中 |
 
 ## ライセンス
 

@@ -1,356 +1,155 @@
 # Quick Start Guide
 
-## 1. 前提条件の確認
+Allagan Eye は FF14 フロントラインの長時間録画動画を、試合ごとに自動で分割するツールです。Windows 専用です。
 
-Allagan Eye を使うには以下の 3 つのソフトウェアが必要です:
+このガイドは **Portable ZIP 版** の使い方です。Git や Python のインストールは不要です。
 
-- **Git**: ツールのダウンロードと更新に使います
-- **Python**: ツールの実行環境です
-- **ffmpeg**: 動画の解析・分割を行うエンジンです
+> ソースコードから動かしたい開発者の方は [Developer Setup Guide](developer-setup.md) を参照してください。
 
-### Git
+## 1. ダウンロードと展開
 
-```bash
-git --version
+### 1.1 ダウンロード
+
+[Releases ページ](https://github.com/Idios/kobutachan-allaganeye/releases/latest) を開き、**Assets** から `allaganeye-*-windows.zip` をクリックしてダウンロードします。
+
+### 1.2 任意の場所に展開
+
+ダウンロードした ZIP ファイルを、**デスクトップ** など書き込み可能な場所に展開します。管理者権限は不要です。
+
+推奨の場所（どれを選んでも動作します）:
+
+- デスクトップ: `%USERPROFILE%\Desktop\allaganeye\`
+- ドキュメントフォルダ: `%USERPROFILE%\Documents\allaganeye\`
+- ダウンロードフォルダ: `%USERPROFILE%\Downloads\allaganeye\`
+
+> `C:\Program Files\` や `C:\Windows\` のようなシステムフォルダは**避けてください**。展開や実行に管理者権限が必要になります。
+
+### 1.3 展開手順（Windows 標準機能）
+
+1. エクスプローラでダウンロードした `allaganeye-*-windows.zip` を右クリック
+2. **「すべて展開」** を選択
+3. 展開先として上記のいずれかのフォルダを指定
+4. **展開** をクリック
+
+展開後のフォルダ構成:
+
+```
+allaganeye-vX.Y.Z\
+├── python\            Python ランタイム（同梱済み、別途インストール不要）
+├── lib\               allaganeye 本体
+├── ffmpeg\            動画処理エンジン（同梱済み、別途インストール不要）
+├── allaganeye.bat     ← このファイルを使います
+└── README.txt
 ```
 
-#### インストール方法
+## 2. 基本の使い方: 動画ファイルを `allaganeye.bat` にドラッグ＆ドロップ
 
-**Windows**（いずれか 1 つ）:
+もっとも簡単な手順です。
 
-```bash
-# git-scm.com からインストーラをダウンロード（推奨）
-# https://git-scm.com/downloads/win → デフォルト設定でインストール
+1. 展開した `allaganeye-vX.Y.Z` フォルダを開く
+2. 分割したい動画ファイル（`.mkv` や `.mp4`）を、別のエクスプローラウィンドウやデスクトップから用意
+3. 動画ファイルを **`allaganeye.bat`** の上にドラッグ＆ドロップ
 
-# winget
-winget install Git.Git
-```
+コマンドプロンプトのウィンドウが開き、検知と分割が自動で進みます。処理が終わったら、**Enter キーなどで結果を確認してから閉じて**ください。
 
-**macOS**:
+分割された動画は、**`allaganeye-vX.Y.Z\output\`** フォルダ内に `match_001.mp4` のような形式で保存されます。
 
-```bash
-# Xcode Command Line Tools（推奨）
-xcode-select --install
+> 複数の動画を一度に処理することはできません。1 つずつドラッグ＆ドロップしてください。
 
-# Homebrew
-brew install git
-```
+## 3. ダブルクリックで起動した場合
 
-**Linux (Ubuntu/Debian)**:
+`allaganeye.bat` を **ダブルクリック** すると、使い方のヘルプが表示されます。そのまま閉じずに、ヘルプを読んでから動画ファイルをドラッグ＆ドロップすると分割が始まります。
 
-```bash
-sudo apt update && sudo apt install git
-```
+## 4. SmartScreen 警告が出た場合
 
-#### インストール確認
+`allaganeye.bat` には allaganeye 独自の実行ファイル（`.exe`）が含まれないため、通常は Microsoft Defender SmartScreen の警告は出ません。同梱の `python.exe`・`ffmpeg.exe`・`ffprobe.exe` はそれぞれ配布元（python.org / gyan.dev）で署名されています。
 
-```bash
-git --version   # "git version 2.x" 以上が表示されること
-```
+しかし、以下の状況では警告が出ることがあります:
 
-### Python 3.11+
+- ZIP ダウンロード直後で Windows が「Mark of the Web」を付与している
+- 企業ネットワーク等で SmartScreen のポリシーが厳格化されている
+- 古い Windows で配布元の署名を信頼していない
 
-```bash
-python --version
-```
+### 対処法
 
-#### インストール方法
+**方法 1（推奨）: ZIP のブロックを展開前に解除する**
 
-**Windows**（いずれか 1 つ）:
+1. エクスプローラでダウンロードした ZIP を右クリック → **プロパティ**
+2. 下部「セキュリティ」欄の **許可する** にチェック
+3. **OK** をクリックしてから ZIP を展開
 
-```bash
-# python.org からインストーラをダウンロード（推奨）
-# https://www.python.org/downloads/ → 「Add python.exe to PATH」にチェックを入れてインストール
+**方法 2: 警告ダイアログで「実行」を選ぶ**
 
-# winget
-winget install Python.Python.3.13
+1. 「WindowsによってPCが保護されました」と表示されたら、青色の **詳細情報** をクリック
+2. 表示される **実行** ボタンをクリック
 
-# Microsoft Store
-# Microsoft Store で「Python 3.13」を検索してインストール
-```
+**方法 3: それでも解決しない場合**
 
-**macOS**:
+[Issue を起票](https://github.com/Idios/kobutachan-allaganeye/issues/new) してください。スクリーンショット・Windows のバージョン・SmartScreen の表示内容を添付していただけると助かります。
 
-```bash
-# python.org からインストーラをダウンロード（推奨）
-# https://www.python.org/downloads/
+> 現時点では EV コード署名証明書を導入していません。将来的に allaganeye 独自の `.exe`（PyInstaller や MSI インストーラ）を提供する段階で再検討します (#462)。
 
-# Homebrew
-brew install python@3.13
-```
+## 5. 録画の冒頭・末尾が試合中だった場合
 
-**Linux (Ubuntu/Debian)**:
+録画開始時にすでに試合中だった場合や、試合中に録画を停止した場合も、該当部分はセグメントとして出力されます。
 
-```bash
-sudo apt update && sudo apt install python3 python3-pip python3-venv
-```
-
-#### インストール確認
-
-```bash
-python --version   # "Python 3.11.x" 以上が表示されること
-pip --version      # pip が利用可能であること
-```
-
-> **注意**: Windows では `python` の代わりに `py` コマンドが必要な場合があります。`py --version` で確認してください。
-
-### ffmpeg / ffprobe (4.1 以上)
-
-```bash
-ffmpeg -version
-ffprobe -version
-```
-
-**最低バージョン: 4.1**（`-avoid_negative_ts make_zero` 等の機能を使用）
-
-#### インストール方法
-
-**Windows**（いずれか 1 つ）:
-
-```bash
-# winget（推奨）
-winget install Gyan.FFmpeg
-
-# scoop
-scoop install ffmpeg
-
-# Chocolatey
-choco install ffmpeg
-```
-
-パッケージマネージャを使わない場合は [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) から `ffmpeg-release-essentials.zip` をダウンロードし、展開先の `bin/` フォルダを PATH に追加してください。
-
-**macOS**:
-
-```bash
-brew install ffmpeg
-```
-
-**Linux (Ubuntu/Debian)**:
-
-```bash
-sudo apt update && sudo apt install ffmpeg
-```
-
-#### インストール確認
-
-```bash
-ffmpeg -version   # "ffmpeg version 4.x" 以上が表示されること
-ffprobe -version  # "ffprobe version 4.x" 以上が表示されること
-```
-
-**PATH が通らない場合**: Allagan Eye は winget のインストール先を自動検索するため、多くの場合 PATH の手動設定は不要です。自動検索で見つからない場合は `ALLAGANEYE_FFMPEG` 環境変数に ffmpeg/ffprobe の入ったディレクトリを指定してください:
-
-```bash
-# Windows（現在のセッションのみ）
-set ALLAGANEYE_FFMPEG=C:\path\to\ffmpeg\bin
-
-# Linux / macOS（現在のセッションのみ）
-export ALLAGANEYE_FFMPEG=/path/to/ffmpeg/bin
-```
-
-**永続化する場合**:
-
-```bash
-# Windows: システム環境変数に追加（管理者権限不要）
-setx ALLAGANEYE_FFMPEG "C:\path\to\ffmpeg\bin"
-
-# Linux (bash): ~/.bashrc に追記
-echo 'export ALLAGANEYE_FFMPEG=/path/to/ffmpeg/bin' >> ~/.bashrc
-
-# macOS (zsh): ~/.zshrc に追記
-echo 'export ALLAGANEYE_FFMPEG=/path/to/ffmpeg/bin' >> ~/.zshrc
-```
-
-## 2. インストール
-
-```bash
-git clone https://github.com/Idios/kobutachan-allaganeye.git
-cd kobutachan-allaganeye
-python -m venv .venv
-```
-
-仮想環境を有効化する:
-
-```bash
-# Windows (コマンドプロンプト)
-.venv\Scripts\activate.bat
-
-# Windows (PowerShell)
-.venv\Scripts\Activate.ps1
-
-# Windows (Git Bash / MSYS2)
-source .venv/Scripts/activate
-
-# Linux / macOS
-source .venv/bin/activate
-```
-
-パッケージをインストールする:
-
-```bash
-pip install -e .
-```
-
-> SSH を使う場合: `git clone git@github.com:Idios/kobutachan-allaganeye.git`
-
-> **注意**: 仮想環境を使わずに `pip install -e .` すると、`allaganeye` コマンドが PATH の通らないディレクトリにインストールされることがあります（特に Microsoft Store 版 Python）。仮想環境の使用を推奨します。
-
-### 仮想環境を抜ける
-
-作業が終わって仮想環境から抜けるときは、どのシェル・OS でも共通で `deactivate` と入力します。
-
-```bash
-deactivate
-```
-
-`deactivate` は venv が提供する組み込みコマンドで、Windows (コマンドプロンプト / PowerShell / Git Bash) ・Linux ・macOS のいずれでも同じ一語で動作します。ターミナル自体を閉じれば自動的に抜けます。
-
-## 3. 更新
-
-```bash
-cd kobutachan-allaganeye
-```
-
-仮想環境を有効化する（[§2 インストール](#2-インストール) と同じコマンド）:
-
-```bash
-# Windows (コマンドプロンプト)
-.venv\Scripts\activate.bat
-
-# Windows (PowerShell)
-.venv\Scripts\Activate.ps1
-
-# Windows (Git Bash / MSYS2)
-source .venv/Scripts/activate
-
-# Linux / macOS
-source .venv/bin/activate
-```
-
-最新版を取得する:
-
-```bash
-git pull
-```
-
-editable install (`pip install -e .`) のため、通常は `git pull` だけで更新が反映されます。
-依存パッケージが追加・変更された場合のみ `pip install -e .` の再実行が必要です。
-
-## 4. 動画を分割する
-
-> **新しいターミナルで作業を再開する場合**: 仮想環境を `deactivate` した、あるいはターミナルを閉じてから戻ってきた場合は、[§2 インストール](#2-インストール) に載っているコマンドで `.venv` を再 activate してから `allaganeye` を実行してください。再 activate せずに実行すると `command not found` （Windows では `コマンドが見つかりません` / `not recognized`）になります。
-
-### 対応する録画
-
-このツールは **FF14 フロントライン（FL）の複数試合を含む長時間録画** を試合ごとに分割します。FL の試合間にはロード画面（暗転）が入るため、この暗転をセパレータとして検知し、試合を分割します。
-
-- OBS 等で録画した MP4 / MKV ファイルに対応
-- 1 回の録画に複数試合が含まれている場合に効果を発揮
-- 1 試合だけの録画では分割する境界がないため、検知結果は 0 件になります
-
-### 基本的な使い方
-
-まず `--dry-run` で検知結果を確認してから本実行するのがおすすめです。
-
-```bash
-# 1. 検知結果だけ確認（動画は分割しない）
-allaganeye split your_recording.mkv --dry-run
-
-# 2. 結果が正しければ本実行
-allaganeye split your_recording.mkv
-```
-
-`./output/` に試合ごとの MP4 ファイルと `metadata.json` が出力されます。
-
-### 出力先を変更する
-
-```bash
-allaganeye split your_recording.mkv -o ~/Desktop/matches
-```
-
-### GPU アクセラレーション
-
-GPU 対応環境（NVIDIA CUDA, Intel QSV 等）では `--gpu` で暗転検知を GPU で実行できます。
-
-```bash
-allaganeye split your_recording.mkv --gpu
-```
-
-GPU が利用できない場合は自動で CPU モードにフォールバックします。どちらが速いかはコーデックや環境によって異なります。使い分けの判断方法は [パラメータ調整ガイド](tuning-guide.md) を参照してください。
-
-### 録画の冒頭・末尾が試合中だった場合
-
-録画開始時にすでに試合中だった場合や、試合中に録画を停止した場合でも、該当部分はセグメントとして出力されます。
-
-- **冒頭**: 録画開始（0秒）から最初の暗転までが 1 つのセグメントになります
+- **冒頭**: 録画開始（0 秒）から最初の暗転までが 1 つのセグメントになります
 - **末尾**: 最後の暗転から録画終了までが 1 つのセグメントになります
 
-これらのセグメントは試合の途中から始まる（または途中で終わる）不完全な録画のため、`metadata.json` では `type: "unknown"` として記録されます。`--min-match-duration`（デフォルト 300 秒）より短い場合は出力されません。
+これらのセグメントは試合の途中から始まる（または途中で終わる）不完全な録画として扱われ、`metadata.json` では `type: "unknown"` と記録されます。既定では **5 分（300 秒）未満** のセグメントは出力されません。
 
-## 5. うまく分割されない場合
+## 6. うまく分割されないとき
 
-デフォルト設定は FL の一般的な録画に合わせて調整されており、多くの場合そのまま使えます。
+Allagan Eye は FF14 フロントラインの一般的な録画に合わせて調整されていますが、録画環境によって検知が合わないことがあります。
 
-うまくいかない場合は以下の症状に応じて対処してください。詳細な対処法と各パラメータの値の決め方は [パラメータ調整ガイド](tuning-guide.md) を参照してください。
-
-| 症状 | 主な原因 | 対処の方向 |
+| 症状 | よくある原因 | 対処 |
 |---|---|---|
-| 試合の途中で分断される | リスポーン暗転の誤検知 | `--min-blackout-duration` を上げる |
-| 別々の試合がくっつく | 暗転閾値が低すぎる | `--blackout-threshold` を上げる |
-| 短い試合が出力されない | 最小試合時間で除外 | `--min-match-duration` を下げる |
-| 試合が 1 つも検知されない | 閾値/録画形式の問題 | [パラメータ調整ガイド](tuning-guide.md) を参照 |
-| 処理が遅い | サンプリング間隔/並列度 | [パラメータ調整ガイド](tuning-guide.md) を参照 |
-| ローディング画面が長い環境で境界が検出されない | 暗転が UI 要素で分断される | 現バージョンでは未対応。issue で報告を |
+| 試合の途中で分断される | 試合中のリスポーン暗転を誤検知 | 最小暗転時間を長くする |
+| 別々の試合がくっついている | 試合間の暗転が検知閾値より明るい | 暗転輝度の閾値を上げる |
+| 短い試合だけ出力されない | 最小試合時間で除外された | 最小試合時間を下げる |
+| 試合が 1 つも検知されない | 閾値や録画形式が合わない | [パラメータ調整ガイド](tuning-guide.md) を参照 |
+| 処理が遅い | サンプリング間隔・並列度の問題 | [パラメータ調整ガイド](tuning-guide.md) を参照 |
+| 読み込み画面が長い環境で境界が検出されない | 暗転が UI 要素で分断される | 現バージョンでは未対応。[Issue 起票](https://github.com/Idios/kobutachan-allaganeye/issues/new) で報告してください |
 
-### 分割が途中で失敗した場合
+パラメータの具体的な調整方法は [パラメータ調整ガイド](tuning-guide.md) を参照してください。コマンドラインから細かいオプションを指定したい場合は [§7 高度な使い方](#7-高度な使い方コマンドプロンプト) を参照してください。
 
-途中で失敗しても、成功済みの出力ファイル（`match_001.mp4` 等）は出力ディレクトリに残ります。再実行すれば自動的に上書きされるため、手動削除は不要です。
+## 7. 高度な使い方（コマンドプロンプト）
 
-## 6. Portable ZIP (Windows) を使う場合
+オプション指定付きで起動したい場合は、コマンドプロンプトから呼び出せます。
 
-Git や Python を個別にインストールしたくない場合は、ランタイムと依存をまとめて同梱した Portable ZIP を GitHub Releases からダウンロードできます (#461)。
+1. エクスプローラで `allaganeye-vX.Y.Z` フォルダを開く
+2. アドレスバーに `cmd` と入力して Enter → そのフォルダでコマンドプロンプトが開く
+3. 例:
 
-### ダウンロードと解凍
+    ```cmd
+    rem 検知結果だけ確認（分割しない）
+    allaganeye.bat split "C:\Users\あなた\Videos\動画.mkv" --dry-run
 
-1. [GitHub Releases](https://github.com/Idios/kobutachan-allaganeye/releases) から最新の `allaganeye-vX.Y.Z-windows.zip` をダウンロード
-2. 任意のフォルダに解凍（例: `C:\allaganeye\`）
-3. 解凍後のフォルダ構成:
+    rem 出力先を変える
+    allaganeye.bat split "C:\Users\あなた\Videos\動画.mkv" -o "%USERPROFILE%\Desktop\matches"
 
-    ```
-    allaganeye-vX.Y.Z/
-    ├── python/            Python 3.11 embeddable (python.org 配布・元署名あり)
-    ├── lib/               allaganeye 本体 + Python 依存パッケージ
-    ├── ffmpeg/            FFmpeg LGPL essentials (gyan.dev 配布・元署名あり)
-    ├── allaganeye.bat     ランチャー（.bat スクリプト）
-    └── README.txt
+    rem バージョン確認
+    allaganeye.bat --version
     ```
 
-### 起動
+主要オプションと出力形式の詳細は以下を参照してください:
 
-コマンドプロンプトで解凍先に移動し、`.bat` を実行します。
+- [CLI コマンド仕様](cli-spec.md)
+- [出力仕様マトリクス](output-spec.md)
+- [パラメータ調整ガイド](tuning-guide.md)
 
-```cmd
-cd C:\allaganeye\allaganeye-vX.Y.Z
-allaganeye.bat split "C:\path\to\your_recording.mkv"
-```
+## 8. 更新方法
 
-`allaganeye.bat` は内部で `python\python.exe -m allaganeye` を呼び出し、`ffmpeg\ffmpeg.exe` と `ffmpeg\ffprobe.exe` を自動で使用します。PATH 設定は不要です。
+1. [Releases ページ](https://github.com/Idios/kobutachan-allaganeye/releases/latest) から最新の ZIP をダウンロード
+2. 古い `allaganeye-vX.Y.Z` フォルダは、必要なら `output\` フォルダの中身を別の場所にコピーしてから削除
+3. 新しい ZIP を展開して同じように使う
 
-### SmartScreen 警告が出た場合
+> `output\` フォルダには過去に分割した MP4 ファイルと `metadata.json` / `.detection_cache.json` が入っています。作業データを残したい場合は先にコピーしてください。
 
-Portable ZIP は allaganeye 独自の `.exe` を含まないため、通常は Microsoft Defender SmartScreen の警告は発生しません。同梱の `python.exe`・`ffmpeg.exe`・`ffprobe.exe` はそれぞれ配布元（python.org / gyan.dev）で署名されています。
+## 9. アンインストール
 
-ただし以下の状況では警告が出ることがあります:
+展開した `allaganeye-vX.Y.Z` フォルダをまるごと削除してください。レジストリには書き込まないので、他に残るファイルはありません。
 
-- ZIP ダウンロード直後、Windows が「Mark of the Web (MOTW)」を付与し、各 `.exe` を未検証として扱うケース
-- 企業ネットワーク等で SmartScreen のポリシーが厳格化されているケース
-- 古い Windows で python.org / gyan.dev の署名を証明書ストアが信頼していないケース
+## 10. 開発者の方へ
 
-警告が出た場合の対処:
-
-1. **ZIP のブロック解除**（最も確実）: エクスプローラで ZIP ファイルを右クリック → **プロパティ** → 下部の「セキュリティ」で **許可する** にチェック → **OK** してから解凍
-2. **SmartScreen 警告ダイアログが出た場合**: 画面の「**詳細情報**」リンクをクリック → 表示された「**実行**」ボタンを押す
-3. 上記で解決しない場合は [Issue を起票](https://github.com/Idios/kobutachan-allaganeye/issues/new) してください（スクリーンショット・Windows バージョン・SmartScreen の表示内容を添付）
-
-> Portable ZIP は allaganeye 独自の `.exe` を生成しないため、現時点ではコードサイニング証明書（EV コード署名証明書）を導入していません (#462)。GUI 化 (#105) や `.exe` 単体配布を行う段階で再検討します。
+ソースコードから動かしたい、コードを修正したい、テストを追加したい場合は [Developer Setup Guide](developer-setup.md) を参照してください。
