@@ -140,6 +140,7 @@ output/
 - [システムアーキテクチャ](docs/design-overview.md)
 - [動画処理設計](docs/video-processing.md)
 - [リリース戦略](docs/release-strategy.md)
+- [バグ報告ガイド](docs/bug-report-guide.md)
 
 ## ライセンス
 
