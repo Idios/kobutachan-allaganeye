@@ -7,6 +7,9 @@ Downloads Python 3.11 embeddable and FFmpeg LGPL essentials, installs
 allaganeye and its runtime dependencies into the payload, adds a .bat
 launcher, and compresses everything into dist/allaganeye-v<version>-windows.zip.
 
+Downloaded artefacts (Python embed, get-pip.py, FFmpeg zip) are pinned by URL
+and verified against hard-coded SHA256 digests. A mismatch aborts the build.
+
 The script is idempotent: build/portable and dist are cleaned at the start.
 
 .PARAMETER Version
@@ -31,16 +34,30 @@ $ZipPath = Join-Path $DistDir "$PayloadName-windows.zip"
 
 $PythonVersion = '3.11.9'
 $PythonEmbedUrl = "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVersion-embed-amd64.zip"
+$PythonEmbedSha256 = '009D6BF7E3B2DDCA3D784FA09F90FE54336D5B60F0E0F305C37F400BF83CFD3B'
+
 $GetPipUrl = 'https://bootstrap.pypa.io/get-pip.py'
-$FFmpegUrl = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
+$GetPipSha256 = 'FEBA1C697DF45BE1B539B40D93C102C9EE9DDE1D966303323B830B06F3FBCA3C'
+
+# FFmpeg version is pinned so the same allaganeye tag always ships the same FFmpeg.
+# To update: bump $FFmpegVersion, replace $FFmpegSha256 with the new asset's hash.
+$FFmpegVersion = '8.1'
+$FFmpegUrl = "https://github.com/GyanD/codexffmpeg/releases/download/$FFmpegVersion/ffmpeg-$FFmpegVersion-essentials_build.zip"
+$FFmpegSha256 = '8748283D821613D930B0E7BE685AAA9DF4CA6F0AD4D0C42FD02622B3623463C6'
 
 function Invoke-Download {
   param(
     [Parameter(Mandatory = $true)][string]$Uri,
-    [Parameter(Mandatory = $true)][string]$OutPath
+    [Parameter(Mandatory = $true)][string]$OutPath,
+    [Parameter(Mandatory = $true)][string]$ExpectedSha256
   )
   Write-Host "Downloading $Uri"
   Invoke-WebRequest -Uri $Uri -OutFile $OutPath -UseBasicParsing
+  $actual = (Get-FileHash -Algorithm SHA256 -Path $OutPath).Hash
+  if ($actual -ne $ExpectedSha256.ToUpperInvariant()) {
+    throw "SHA256 mismatch for ${Uri}: expected $ExpectedSha256, actual $actual"
+  }
+  Write-Host "  SHA256 verified: $actual"
 }
 
 foreach ($dir in @($BuildDir, $DistDir)) {
@@ -51,7 +68,7 @@ New-Item -ItemType Directory -Force -Path $PayloadDir | Out-Null
 
 # 1. Python embeddable
 $PythonZip = Join-Path $BuildDir 'python-embed.zip'
-Invoke-Download -Uri $PythonEmbedUrl -OutPath $PythonZip
+Invoke-Download -Uri $PythonEmbedUrl -OutPath $PythonZip -ExpectedSha256 $PythonEmbedSha256
 $PythonDir = Join-Path $PayloadDir 'python'
 Expand-Archive -Path $PythonZip -DestinationPath $PythonDir -Force
 
@@ -65,7 +82,7 @@ Set-Content -Path $PthFile -Encoding ASCII -Value @(
 
 # 2. Install pip into the embedded interpreter
 $GetPipPath = Join-Path $BuildDir 'get-pip.py'
-Invoke-Download -Uri $GetPipUrl -OutPath $GetPipPath
+Invoke-Download -Uri $GetPipUrl -OutPath $GetPipPath -ExpectedSha256 $GetPipSha256
 $PythonExe = Join-Path $PythonDir 'python.exe'
 & $PythonExe $GetPipPath --no-warn-script-location --no-cache-dir
 
@@ -79,9 +96,9 @@ New-Item -ItemType Directory -Force -Path $LibDir | Out-Null
     --no-cache-dir `
     $RepoRoot
 
-# 4. FFmpeg LGPL essentials
+# 4. FFmpeg LGPL essentials (version-pinned)
 $FFmpegZip = Join-Path $BuildDir 'ffmpeg.zip'
-Invoke-Download -Uri $FFmpegUrl -OutPath $FFmpegZip
+Invoke-Download -Uri $FFmpegUrl -OutPath $FFmpegZip -ExpectedSha256 $FFmpegSha256
 $FFmpegExtract = Join-Path $BuildDir 'ffmpeg-extracted'
 Expand-Archive -Path $FFmpegZip -DestinationPath $FFmpegExtract -Force
 $FFmpegBin = Get-ChildItem -Path $FFmpegExtract -Directory |
@@ -127,7 +144,7 @@ See https://github.com/Idios/kobutachan-allaganeye for full documentation.
 
 - allaganeye: MIT (see the repository LICENSE file)
 - Python: PSF License (python\LICENSE.txt)
-- FFmpeg: LGPL (ffmpeg redistributable essentials build from gyan.dev)
+- FFmpeg: LGPL (ffmpeg $FFmpegVersion essentials build from GyanD/codexffmpeg)
 "@
 Set-Content -Path (Join-Path $PayloadDir 'README.txt') -Value $Readme -Encoding UTF8
 
