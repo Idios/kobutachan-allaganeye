@@ -6,11 +6,23 @@ rules (#399 / #400) when Claude would otherwise independently run:
 
 - ``gh issue create`` 3+ times within 60 seconds (bulk Issue 起票)
 - ``gh pr merge`` (PR マージ)
-- ``gh issue close`` (Issue クローズ)
+- ``gh issue close`` 3+ times within 60 seconds (bulk Issue クローズ, #485)
 - ``gh issue edit ... --add-label deferred`` 2+ times within 60 seconds
 
 Exit code 2 asks Claude Code to show the stderr message to the user and
 pause; Claude then asks for confirmation before proceeding.
+
+## Bypass after explicit approval (#485 / PR #491 review)
+
+Once the user has approved a command that was just blocked, Claude can
+re-issue it with the ``ALLAGANEYE_PREUSE_BYPASS=1`` prefix to skip the
+gate for that single invocation:
+
+    ALLAGANEYE_PREUSE_BYPASS=1 gh issue close 123
+
+The prefix is stripped and the underlying command is recorded to state
+normally, so bulk counters remain accurate for the next non-bypassed
+command.  Every bypass is logged to stderr for audit.
 
 ## Contract
 
@@ -52,6 +64,16 @@ _BULK_WINDOW_SEC: float = 60.0
 _DEFERRED_BULK_THRESHOLD: int = 2
 """deferred ラベル付与は 2 件以上 / 60s で gate (issue body より低い閾値)."""
 
+_BYPASS_PREFIX: re.Pattern[str] = re.compile(r"^ALLAGANEYE_PREUSE_BYPASS=1\s+")
+"""User-approved one-shot bypass prefix (#485 / PR #491 review).
+
+When Claude re-runs a command that was just blocked and the user has
+already approved it, prefixing the command with this env-var assignment
+skips the gate for that single invocation.  The prefix is stripped and
+the underlying command is recorded to state normally, so subsequent
+unbypass-prefixed commands continue to be counted toward bulk windows.
+"""
+
 
 # Gated command patterns.  Each entry:
 #   ``pattern``: regex matched against the stripped Bash command
@@ -79,14 +101,15 @@ _GATED_PATTERNS: dict[str, dict[str, object]] = {
             "確認しましたか?  #400 のマトリクスでは PR マージは常に確認必須です。"
         ),
     },
-    "issue_close": {
+    "issue_close_bulk": {
         "pattern": re.compile(r"^gh\s+issue\s+close\b"),
-        "mode": "always",
-        "threshold": 1,
+        "mode": "bulk",
+        "threshold": _BULK_THRESHOLD,
         "message": (
-            "Issue クローズ操作です。実動画再現確認 / 副作用 Issue 起票 / "
-            "ユーザー承認を行いましたか?  #400 のマトリクスで Issue クローズは "
-            "常に確認必須です。"
+            "60 秒以内に 3 件以上の Issue クローズを検知しました。\n"
+            "bulk 操作前にサンプル 1 件を提示してユーザー確認を取る運用 "
+            "(#399 C / #400 D) に沿って、続行前に確認を取ってください。\n"
+            "単発 close は Claude 側の AskUserQuestion 等での個別確認を前提に許可 (#485)。"
         ),
     },
     "deferred_label_bulk": {
@@ -264,6 +287,23 @@ def main() -> int:
 
     state_path = _state_path()
     now = time.time()
+
+    # User-approved one-shot bypass (#485 / PR #491 review).
+    # Prefix is explicit in the Bash tool log (auditable); the underlying
+    # command is recorded to state so the next non-bypassed command still
+    # sees accurate bulk counts.
+    bypass_match = _BYPASS_PREFIX.match(command)
+    if bypass_match:
+        stripped = command[bypass_match.end() :]
+        print(
+            "[preuse:bypass] ALLAGANEYE_PREUSE_BYPASS=1 "
+            "で承認済み実行として gate を bypass しました。\n"
+            f"Command: {stripped.strip()[:400]}",
+            file=sys.stderr,
+        )
+        _append_op(state_path, stripped.strip(), now)
+        return 0
+
     recent = _read_recent_ops(state_path, now)
 
     # Pattern 判定 (candidate の command を recent に含めずに判定)
@@ -276,7 +316,10 @@ def main() -> int:
 
     if key is not None:
         print(
-            f"[preuse:{key}] {message}\nDetected command: {command.strip()[:400]}",
+            f"[preuse:{key}] {message}\n"
+            "承認済みの場合は `ALLAGANEYE_PREUSE_BYPASS=1 <command>` で "
+            "再実行してください (1 回分のみ bypass)。\n"
+            f"Detected command: {command.strip()[:400]}",
             file=sys.stderr,
         )
         # Exit code 2 = block with error surfaced to Claude (PreToolUse

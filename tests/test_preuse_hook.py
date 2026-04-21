@@ -84,11 +84,115 @@ def test_pr_merge_always_gated(_isolated_paths, monkeypatch):
     assert "PR マージ" in err
 
 
-def test_issue_close_always_gated(_isolated_paths, monkeypatch):
-    """``gh issue close`` is gated on the very first invocation (#401 G-3)."""
+def test_issue_close_single_allowed(_isolated_paths, monkeypatch):
+    """Single ``gh issue close`` is allowed under bulk mode (#485).
+
+    Claude is expected to have taken individual confirmation via
+    AskUserQuestion before each close; the hook only catches genuine
+    bulk shortcuts (3+ / 60s).
+    """
     rc, err = _invoke(_bash_event("gh issue close 42"), monkeypatch)
+    assert rc == 0
+    assert err == ""
+
+
+def test_issue_close_second_allowed(_isolated_paths, monkeypatch):
+    """2 ``gh issue close`` calls in 60s are still allowed (below threshold=3)."""
+    rc1, _ = _invoke(_bash_event("gh issue close 1"), monkeypatch)
+    rc2, _ = _invoke(_bash_event("gh issue close 2"), monkeypatch)
+    assert rc1 == 0
+    assert rc2 == 0
+
+
+def test_issue_close_third_in_window_triggers_gate(_isolated_paths, monkeypatch):
+    """3rd ``gh issue close`` within 60s trips the bulk gate (#485)."""
+    _invoke(_bash_event("gh issue close 1"), monkeypatch)
+    _invoke(_bash_event("gh issue close 2"), monkeypatch)
+    rc, err = _invoke(_bash_event("gh issue close 3"), monkeypatch)
     assert rc == 2
-    assert "Issue クローズ" in err
+    assert "Issue クローズ" in err or "60 秒" in err
+
+
+def test_issue_close_outside_window_resets(_isolated_paths, monkeypatch):
+    """close entries older than 60s fall out of the sliding window (#485)."""
+    stale = time.time() - 61
+    preuse._append_op(_isolated_paths["state"], "gh issue close 1", stale)
+    preuse._append_op(_isolated_paths["state"], "gh issue close 2", stale)
+    # Fresh 3rd call is NOT gated because stale entries are discarded.
+    rc, _ = _invoke(_bash_event("gh issue close 3"), monkeypatch)
+    assert rc == 0
+
+
+# ---------------------------------------------------------------
+# ALLAGANEYE_PREUSE_BYPASS=1 (user-approved one-shot bypass, PR #491 review)
+# ---------------------------------------------------------------
+
+
+def test_bypass_allows_blocked_bulk_retry(_isolated_paths, monkeypatch):
+    """After the 3rd close is blocked, prefix-bypass re-execution is allowed."""
+    _invoke(_bash_event("gh issue close 1"), monkeypatch)
+    _invoke(_bash_event("gh issue close 2"), monkeypatch)
+    rc_block, _ = _invoke(_bash_event("gh issue close 3"), monkeypatch)
+    assert rc_block == 2
+    # User approves, Claude retries with bypass prefix.
+    rc_bypass, err = _invoke(
+        _bash_event("ALLAGANEYE_PREUSE_BYPASS=1 gh issue close 3"), monkeypatch
+    )
+    assert rc_bypass == 0
+    assert "[preuse:bypass]" in err
+    assert "gh issue close 3" in err
+
+
+def test_bypass_allows_always_gated_pr_merge(_isolated_paths, monkeypatch):
+    """Bypass also releases pr_merge (always mode) after user approval."""
+    rc_block, _ = _invoke(_bash_event("gh pr merge 42 --squash"), monkeypatch)
+    assert rc_block == 2
+    rc_bypass, err = _invoke(
+        _bash_event("ALLAGANEYE_PREUSE_BYPASS=1 gh pr merge 42 --squash"), monkeypatch
+    )
+    assert rc_bypass == 0
+    assert "[preuse:bypass]" in err
+
+
+def test_bypass_records_stripped_command_to_state(_isolated_paths, monkeypatch):
+    """State keeps the underlying command so bulk counters stay accurate."""
+    _invoke(_bash_event("ALLAGANEYE_PREUSE_BYPASS=1 gh issue close 1"), monkeypatch)
+    data = json.loads(_isolated_paths["state"].read_text(encoding="utf-8"))
+    assert any(entry.get("cmd") == "gh issue close 1" for entry in data)
+    # The prefix must NOT be stored -- future _classify relies on ^gh ... anchor.
+    assert not any("ALLAGANEYE_PREUSE_BYPASS" in entry.get("cmd", "") for entry in data)
+
+
+def test_bypass_counts_toward_subsequent_bulk(_isolated_paths, monkeypatch):
+    """Bypassed close still adds to the 60s window for non-bypassed retries."""
+    _invoke(_bash_event("gh issue close 1"), monkeypatch)
+    _invoke(_bash_event("gh issue close 2"), monkeypatch)
+    _invoke(_bash_event("gh issue close 3"), monkeypatch)  # blocked & recorded
+    _invoke(_bash_event("ALLAGANEYE_PREUSE_BYPASS=1 gh issue close 3"), monkeypatch)
+    # Next un-prefixed close is still blocked -- counter includes the bypass.
+    rc, _ = _invoke(_bash_event("gh issue close 4"), monkeypatch)
+    assert rc == 2
+
+
+def test_bypass_wrong_value_still_blocked(_isolated_paths, monkeypatch):
+    """Only exactly ``ALLAGANEYE_PREUSE_BYPASS=1`` honors; ``=0`` is not magic."""
+    _invoke(_bash_event("gh issue close 1"), monkeypatch)
+    _invoke(_bash_event("gh issue close 2"), monkeypatch)
+    rc, _ = _invoke(
+        _bash_event("ALLAGANEYE_PREUSE_BYPASS=0 gh issue close 3"), monkeypatch
+    )
+    # The prefix is not recognized, so the command is evaluated as-is.  Because
+    # `^gh ...` anchor requires the string to start with `gh`, no pattern
+    # matches -- the command is allowed but NOT via bypass path.
+    assert rc == 0
+
+
+def test_bypass_block_message_mentions_bypass_option(_isolated_paths, monkeypatch):
+    """Block stderr instructs Claude to retry with the bypass prefix."""
+    _invoke(_bash_event("gh issue close 1"), monkeypatch)
+    _invoke(_bash_event("gh issue close 2"), monkeypatch)
+    _, err = _invoke(_bash_event("gh issue close 3"), monkeypatch)
+    assert "ALLAGANEYE_PREUSE_BYPASS=1" in err
 
 
 # ---------------------------------------------------------------
