@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'scripts/build-portable-zip.ps1'
+      - 'scripts/extract_release_notes.py'
+      - 'pyproject.toml'
   workflow_dispatch:
     inputs:
       version_override:
