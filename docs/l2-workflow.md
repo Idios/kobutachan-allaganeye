@@ -198,6 +198,53 @@ Plan モードで計画合意 → 実装 (TodoWrite で進捗管理) → PR 作�
 
 各フェーズの完了時点で次フェーズに渡すコンテキストを明示する (PR 番号、テスト結果等)。修正が必要な場合は同じセッション内で該当ブランチに追加コミットを積み、再度 `/review-pr` を呼び出す (旧ロールの engineer → lead-engineer 往復は発生しない)。
 
+## worktree メンテナンス (#477)
+
+Claude Code のセッション用 worktree はセッション終了時に `git worktree remove` されるが、`.claude/worktrees/<name>/` 自体のディレクトリが空のまま残ることがある (#477 で観測)。残骸は **Stop hook で自動 sweep** される。手動での sweep も可能。
+
+### 自動実行 (Stop hook)
+
+セッション終了時に `.claude/hooks/stop.sh` が `scripts/cleanup-worktrees.sh --apply` を起動し、空ディレクトリを rmdir で除去する。`rmdir` のみを使うため未保存ファイルを含むディレクトリは絶対に削除されず、セッション中の作業が消失することはない。
+
+設定箇所: `.claude/settings.json` の `hooks.Stop` セクション。
+
+### 手動実行
+
+区切りで一斉掃除したい場合や、hook を介さず状態を確認したい場合:
+
+```bash
+# 削除候補を表示するだけ (dry-run, デフォルト)
+scripts/cleanup-worktrees.sh
+
+# 実際に rmdir を実行 (非空ディレクトリは触らない)
+scripts/cleanup-worktrees.sh --apply
+```
+
+### 動作
+
+1. `git worktree prune` で git 側メタデータをクリーンアップ (stale worktree の記録を消す)
+2. `.claude/worktrees/` 直下のサブディレクトリを走査
+3. `.git` 参照を持たない (= 現在アクティブではない) 空ディレクトリを `rmdir` で削除
+
+### 自セッションの残骸が sweep されるタイミング (2 段階設計)
+
+Stop hook は**自セッションのディレクトリを sweep しない**。これは 2 つの理由による:
+
+1. **`.git` 参照で skip される**: 自セッションのワーキングツリーには `.git` ファイル (linked worktree の gitdir 参照) が存在するため、`cleanup-worktrees.sh` はアクティブ worktree とみなし skip する。
+2. **Windows のディレクトリハンドル保持問題** (#477 コメント): Windows では Claude Code ランタイムが自セッションの initial cwd のハンドルを握り続けるため、Stop hook 実行中に自セッション自身のディレクトリを削除しようとしても OS レベルで失敗する可能性が高い。
+
+このため、自セッションの残骸 (セッション終了後にディレクトリだけが残るパターン) は、**次回以降のセッション終了時の Stop hook** が空ディレクトリとして rmdir する 2 段階設計になっている:
+
+- t0: セッション A 終了 → A の Stop hook は A 自身を skip (`.git` 参照ありまたはハンドル保持中)
+- t1: `git worktree remove` 完了後、A のディレクトリは空のまま残る (= 残骸化)
+- t2: 次にセッション B が起動・終了 → B の Stop hook が A のディレクトリを「`.git` 無し + 空」と判定して rmdir
+
+つまり **残骸は最長で 1 セッションぶん残存しうる**が、次セッション終了時点で解消される。単独セッションでの E2E 検証はできないため、動作確認は `scripts/cleanup-worktrees.sh --apply` の手動実行および dry-run 出力で行う (#477 対応 PR #493 で 4 件の候補が正しく skip されることを確認済み)。
+
+### 安全性
+
+`rmdir` のみを使用するため、アクティブな worktree や何らかのファイルが残っているディレクトリは**削除されない**。想定外のファイルが残っているディレクトリは出力で明示されるため、必要に応じて手動で確認する。Stop hook が起動中のセッションのアクティブ worktree は `.git` 参照で保護されるため安全に skip される。Windows のディレクトリハンドル保持問題 (#477 コメント) は上記 2 段階設計により回避している。
+
 ## 参考
 
 - [code.claude.com/docs/en/skills](https://code.claude.com/docs/en/skills) — skill 設計ガイド
