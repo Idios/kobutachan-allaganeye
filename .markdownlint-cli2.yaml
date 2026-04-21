@@ -1,0 +1,61 @@
+# markdownlint-cli2 configuration (#474).
+#
+# 段階導入方針: 既存ドキュメントで違反のあるルールは全て disable し、CI を
+# green な状態で開始する。新規コミット時に disable 対象外のルール (~40 種) が
+# 違反を検出すればエラーになる。段階的にルールを有効化する方針は
+# follow-up issue で管理する。
+#
+# 各 disable の理由:
+
+config:
+  # MD013 (line-length, 既存 294 件): 日本語ドキュメントは自動折り返し非対応の
+  # エディタが多く、80 文字制限は実情に合わない。
+  MD013: false
+
+  # MD040 (fenced-code-language, 既存 38 件): ``` 直後の言語指定を推奨する
+  # ルール。既存 38 件を段階的に修正するまで disable。
+  MD040: false
+
+  # MD032 (blanks-around-lists, 既存 37 件): リスト前後の空行を要求。
+  MD032: false
+
+  # MD031 (blanks-around-fences, 既存 18 件): ``` フェンス前後の空行を要求。
+  MD031: false
+
+  # MD022 (blanks-around-headings, 既存 17 件): 見出し前後の空行を要求。
+  MD022: false
+
+  # MD029 (ol-prefix, 既存 7 件): 番号付きリストの番号スタイル統一。
+  # 1./2./3. と 1./1./1. の混在を許容する。
+  MD029: false
+
+  # MD024 (no-duplicate-heading, 既存 7 件): CHANGELOG の複数バージョン節で
+  # 重複見出し (`### Changed` 等) が構造上必要。
+  MD024: false
+
+  # MD041 (first-line-h1, 既存 5 件): 先頭が H1 でないドキュメント
+  # (PR テンプレート、skill 定義等) が正当なケースとして存在する。
+  MD041: false
+
+  # MD036 (no-emphasis-as-heading, 既存 5 件): 強調を見出し代わりに使う記法を
+  # ドキュメントの一部で意図的に採用している。
+  MD036: false
+
+  # MD028 (no-blanks-blockquote, 既存 1 件): blockquote 内の空行を許容。
+  MD028: false
+
+  # MD038 (no-space-in-code, 既存 1 件): コードスパン内の空白を許容。
+  MD038: false
+
+# 対象ファイル: リポジトリ配下の全 .md を対象にし、依存物 / キャッシュ / 生成物を
+# 除外する。markdownlint-cli2 は引数未指定時に globs を参照する。
+globs:
+  - "**/*.md"
+
+ignores:
+  - "node_modules/**"
+  - ".venv/**"
+  - ".git/**"
+  - ".pytest_cache/**"
+  - ".ruff_cache/**"
+  - "**/kobutachan_allaganeye.egg-info/**"

@@ -9,12 +9,18 @@
 
 - **ruff**: lint + format
 - **pyright**: 型チェック
+- **markdownlint-cli2**: Markdown ドキュメントの lint (CI)
 
 ```bash
 ruff check .
 ruff format --check .
 pyright
+
+# Markdown (Node.js 必須、ローカル実行は任意)
+npx -y markdownlint-cli2@0.18.1
 ```
+
+設定は [`.markdownlint-cli2.yaml`](../.markdownlint-cli2.yaml)。既存違反のあるルールを disable し、新規コミット時の違反を CI で捕捉する構成。段階的に disable を外す計画は `#474` 系の follow-up issue で管理する。
 
 ## スタイル
 
