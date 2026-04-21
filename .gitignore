@@ -40,6 +40,10 @@ htmlcov/
 .env
 ROLE
 
+# Node.js (markdownlint-cli2 など、`npx -y` のキャッシュ想定)
+node_modules/
+package-lock.json
+
 # Project specific
 *.mp4
 *.mkv
