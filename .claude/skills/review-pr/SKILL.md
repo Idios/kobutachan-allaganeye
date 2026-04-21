@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: PR をレビューし、受け入れ条件チェックリストで検証。懸念点があればコメント、なければ LGTM してユーザーにマージを提案
+description: PR をレビュー（base ブランチ確認・受け入れ条件ゲート・CI・ロジック/ドキュメント整合性）し、懸念があれば修正依頼、なければ LGTM とマージ提案、マージ後は紐づく issue を処理する。修正は同セッションで継続
 user-invocable: true
 argument-hint: <PR番号>
 ---
@@ -34,7 +34,7 @@ gh pr diff $ARGUMENTS
   - UI/出力変更: スナップショットテストまたは contract テスト
 - [ ] **複数 issue 束ね時の合理性**: 1 PR で複数 issue を閉じる場合、束ねる理由が PR 本文に明記されているか
 - [ ] **Phase 分割時の子 issue 起票**: 「Phase 2 は別途」等で残タスクを先送りする場合、子 issue 番号が親 issue に記載されているか
-- [ ] **`Closes` / `Fixes` / `Resolves` キーワードが使われていない**: issue クローズは手動で行う
+- [ ] **`Closes` / `Fixes` / `Resolves` キーワードが使われていない**: issue クローズは手動で行う（`/enforce-acceptance-criteria` が verified を返していればこの項目は自動 PASS。二重チェックになるため明示スキップ可）
 
 ### 4. CI / Lint / Test ステータス確認
 
@@ -63,6 +63,7 @@ PR の変更種別に応じて以下を確認する:
 
 **コード / テスト変更 PR の場合**:
 - 関連ドキュメント (`docs/cli-spec.md`, `docs/design-overview.md`, `README.md`, `CLAUDE.md` 等) が更新されているか
+- **特に CLAUDE.md / docs に「追加予定」「今後実装」等の予告記述があり、本 PR がその実装に該当する場合、予告文を実装済み記述に更新すること。更新漏れは Step 6 で修正依頼対象**
 - コード変更がドキュメント記述と矛盾していないか
 - 出力形式変更の場合、`docs/cli-spec.md` の出力例も更新されているか (#343 系の再発防止)
 
