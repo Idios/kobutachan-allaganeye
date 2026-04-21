@@ -29,9 +29,12 @@ config:
   # 1./2./3. と 1./1./1. の混在を許容する。
   MD029: false
 
-  # MD024 (no-duplicate-heading, 既存 7 件): CHANGELOG の複数バージョン節で
-  # 重複見出し (`### Changed` 等) が構造上必要。
-  MD024: false
+  # MD024 (no-duplicate-heading, #474 Phase 3 で有効化): CHANGELOG の複数
+  # バージョン節で重複見出し (`### Changed` 等) が構造上必要なため、
+  # `siblings_only: true` で同階層 (同じ親見出し直下) の重複のみを禁止する。
+  # 異なる `## [x.y.z]` セクション間の `### Changed` 重複は許容される。
+  MD024:
+    siblings_only: true
 
   # MD041 (first-line-h1, 既存 5 件): 先頭が H1 でないドキュメント
   # (PR テンプレート、skill 定義等) が正当なケースとして存在する。
