@@ -306,3 +306,51 @@ GPU が利用できない場合は自動で CPU モードにフォールバッ�
 ### 分割が途中で失敗した場合
 
 途中で失敗しても、成功済みの出力ファイル（`match_001.mp4` 等）は出力ディレクトリに残ります。再実行すれば自動的に上書きされるため、手動削除は不要です。
+
+## 6. Portable ZIP (Windows) を使う場合
+
+Git や Python を個別にインストールしたくない場合は、ランタイムと依存をまとめて同梱した Portable ZIP を GitHub Releases からダウンロードできます (#461)。
+
+### ダウンロードと解凍
+
+1. [GitHub Releases](https://github.com/Idios/kobutachan-allaganeye/releases) から最新の `allaganeye-vX.Y.Z-windows.zip` をダウンロード
+2. 任意のフォルダに解凍（例: `C:\allaganeye\`）
+3. 解凍後のフォルダ構成:
+
+    ```
+    allaganeye-vX.Y.Z/
+    ├── python/            Python 3.11 embeddable (python.org 配布・元署名あり)
+    ├── lib/               allaganeye 本体 + Python 依存パッケージ
+    ├── ffmpeg/            FFmpeg LGPL essentials (gyan.dev 配布・元署名あり)
+    ├── allaganeye.bat     ランチャー（.bat スクリプト）
+    └── README.txt
+    ```
+
+### 起動
+
+コマンドプロンプトで解凍先に移動し、`.bat` を実行します。
+
+```cmd
+cd C:\allaganeye\allaganeye-vX.Y.Z
+allaganeye.bat split "C:\path\to\your_recording.mkv"
+```
+
+`allaganeye.bat` は内部で `python\python.exe -m allaganeye` を呼び出し、`ffmpeg\ffmpeg.exe` と `ffmpeg\ffprobe.exe` を自動で使用します。PATH 設定は不要です。
+
+### SmartScreen 警告が出た場合
+
+Portable ZIP は allaganeye 独自の `.exe` を含まないため、通常は Microsoft Defender SmartScreen の警告は発生しません。同梱の `python.exe`・`ffmpeg.exe`・`ffprobe.exe` はそれぞれ配布元（python.org / gyan.dev）で署名されています。
+
+ただし以下の状況では警告が出ることがあります:
+
+- ZIP ダウンロード直後、Windows が「Mark of the Web (MOTW)」を付与し、各 `.exe` を未検証として扱うケース
+- 企業ネットワーク等で SmartScreen のポリシーが厳格化されているケース
+- 古い Windows で python.org / gyan.dev の署名を証明書ストアが信頼していないケース
+
+警告が出た場合の対処:
+
+1. **ZIP のブロック解除**（最も確実）: エクスプローラで ZIP ファイルを右クリック → **プロパティ** → 下部の「セキュリティ」で **許可する** にチェック → **OK** してから解凍
+2. **SmartScreen 警告ダイアログが出た場合**: 画面の「**詳細情報**」リンクをクリック → 表示された「**実行**」ボタンを押す
+3. 上記で解決しない場合は [Issue を起票](https://github.com/Idios/kobutachan-allaganeye/issues/new) してください（スクリーンショット・Windows バージョン・SmartScreen の表示内容を添付）
+
+> Portable ZIP は allaganeye 独自の `.exe` を生成しないため、現時点ではコードサイニング証明書（EV コード署名証明書）を導入していません (#462)。GUI 化 (#105) や `.exe` 単体配布を行う段階で再検討します。

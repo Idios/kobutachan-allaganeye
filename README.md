@@ -25,6 +25,8 @@ OBS 等で録画した数時間分の動画を入力すると、試合の切れ�
 
 > 詳しいセットアップ手順は [Quick Start Guide](docs/quickstart.md) を参照してください。
 > 更新方法は [Quick Start Guide — 更新](docs/quickstart.md#3-更新) を参照してください。
+>
+> **非エンジニア向け**: Git や Python を個別に用意しなくても、ランタイム同梱の [Portable ZIP (Windows)](docs/quickstart.md#6-portable-zip-windows-を使う場合) を GitHub Releases からダウンロードして利用できます。SmartScreen 警告への対処もリンク先に記載しています (#462)。
 
 ```
 git clone https://github.com/Idios/kobutachan-allaganeye.git
