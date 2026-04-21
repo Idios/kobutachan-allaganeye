@@ -12,7 +12,7 @@ OBS などで録画した数時間分の動画を入力すると、試合の切�
 
 分割結果は `allaganeye-*\output\` フォルダに保存されます。
 
-詳しい手順や SmartScreen 警告への対処は [Quick Start Guide](docs/quickstart.md) を参照してください。
+詳しい手順は [Quick Start Guide](docs/quickstart.md) を、SmartScreen 警告への対処は [Quick Start Guide §4 SmartScreen 警告が出た場合](docs/quickstart.md#4-smartscreen-警告が出た場合) を参照してください。
 
 ## 対応プラットフォーム
 
