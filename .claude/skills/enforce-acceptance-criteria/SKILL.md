@@ -53,6 +53,8 @@ gh issue view <ISSUE番号> --json body | python -c "import json,sys;b=json.load
 - [ ] 各条件に対応する diff の具体的なファイル:行範囲を特定した
 - [ ] 各条件に対応するテストケース名を特定した
 - [ ] テストが実際に通過していることを確認した (`gh pr checks` or 手動 pytest)
+- [ ] baseline FAIL → FIX 検証テストがある場合、baseline FAIL の実証（修正前コミットの test 失敗ログ、または PR 本文での明記）が確認できた
+- [ ] 参照ファイル追加を伴う条件がある場合、`gh pr diff --name-only` で追加ファイルの実体（拡張子・サイズ等）を確認した
 - [ ] UI/出力変更の場合、実サンプル (CLI 出力・スクショ) が PR 本文に添付されているか確認した
 - [ ] 複数 issue を束ねている PR の場合、全 issue の条件を逐条処理した
 - [ ] 「Phase 2 は別途」等の先送りがある場合、子 issue 番号が PR 本文と親 issue 本文の両方に記載されているか確認した

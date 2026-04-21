@@ -1,6 +1,6 @@
 ---
 name: scope-guard
-description: 実装中の「ついでに直した」スコープ逸脱を検知し、別 issue 起票または revert を強制する。Iron Law 3 の執行機構。
+description: 実装中の「ついでに直した」スコープ逸脱を検知し、(a) 別 issue 起票 / (b) revert / (c) スコープ拡大 の 3 択をユーザー判断で強制する。Iron Law 3 の執行機構。
 user-invocable: true
 ---
 
@@ -41,10 +41,19 @@ AskUserQuestion: 現在の作業ブランチはどの issue に対応します�
 
 ### Step 2: 変更範囲の確認
 
+現行 develop ブランチを特定してから実行:
+
 ```bash
-git diff --stat develop-0.2.0...HEAD
-git diff develop-0.2.0...HEAD --name-only
+# 現行 develop ブランチを特定（origin の develop-* から最新版を選択）
+DEVELOP_BRANCH=$(git branch -r | grep -E 'origin/develop-[0-9]+' | sed 's|.*origin/||' | sort -V | tail -1)
+echo "base: $DEVELOP_BRANCH"  # 例: develop-0.2.0
+
+# 変更範囲を確認
+git diff --stat "$DEVELOP_BRANCH"...HEAD
+git diff "$DEVELOP_BRANCH"...HEAD --name-only
 ```
+
+ブランチ特定が不明瞭な場合は `AskUserQuestion` でユーザー確認。
 
 変更ファイル一覧を issue スコープと照合:
 
@@ -63,6 +72,8 @@ git diff develop-0.2.0...HEAD --name-only
    - **(c) スコープ拡大を認める**: 元 issue の scope を編集し、変更を正当化 (ユーザー判断必須)
 
 2. 上記いずれかを実行、**独断で (a)/(b)/(c) を選ばない**
+
+**フロー**: (b) revert を選択した場合は本スキル終了（作業ブランチから逸脱変更が消えたため Step 4 不要）。(a)/(c) を選択した場合は Step 4 に進み PR 本文への記載事項を確認する。
 
 ### Step 4: PR 作成前の最終確認
 
