@@ -162,7 +162,7 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 
 ## セキュリティ検査（allaganeye-guard 運用連携）
 
-外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `allaganeye-guard` でセキュリティ検査を行う。**プログラムレベルでの結合は行わず**、エージェント (= Claude + 人間メンテナ Idios) が手動で `allaganeye-guard verify` を実行する運用ルールとする (2026-04-21 方針確定、#454 参照)。詳細は `docs/guard-integration.md` を参照。
+外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `allaganeye-guard` でセキュリティ検査を行う。**プログラムレベルでの結合は行わず**、エージェント (= Claude + 人間メンテナ Idios) が手動で `allaganeye-guard verify` を実行する運用ルールとする (2026-04-21 方針確定、#454 参照)。詳細は [`docs/guard-integration.md`](docs/guard-integration.md)、外部ユーザー向けバグ報告案内は [`docs/bug-report-guide.md`](docs/bug-report-guide.md) を参照。
 
 - **リポジトリ**: [Idios/kobutachan-allaganeye-guard](https://github.com/Idios/kobutachan-allaganeye-guard) (独立パッケージ)
 - **運用**: `allaganeye-guard verify <file>` → PASS (exit 0 / 1) 後に `allaganeye split` で処理
