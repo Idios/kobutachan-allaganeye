@@ -84,7 +84,7 @@ cargo check          # Rust 側の型/依存チェック
 
 ### production build で F5 を押しても反応しない
 
-→ 仕様。`gui/src/main.tsx` で `import.meta.env.PROD` 時に F5 / Ctrl+R / Ctrl+Shift+R / F12 / Ctrl+U / Ctrl+P / 右クリックを `preventDefault` している ([bootstrap 計画の WebView リロード抑止節](#webview-のリロードブラウザ挙動の抑止) を参照)。
+→ 仕様。`gui/src/main.tsx` で `import.meta.env.PROD` 時に F5 / Ctrl+R / Ctrl+Shift+R / F12 / Ctrl+U / Ctrl+P / 右クリックを `preventDefault` している。詳細は `gui/src/main.tsx` の keydown ハンドラを参照。
 
 ### DevTools (F12) が開かない
 
