@@ -190,12 +190,47 @@ docs/design/
             └── ops.jsx               — C variant (参考、採用しない)
 ```
 
+## `gui/` — Tauri GUI 実装ディレクトリ (L2)
+
+`#483` bootstrap で作成した Tauri 2 プロジェクト。`repo-root/gui/` に配置。
+
+```
+gui/
+├── package.json             — React + Vite + TypeScript + Zustand + @tauri-apps/*
+├── vite.config.ts           — dev server 127.0.0.1:1420 固定
+├── tsconfig.json / tsconfig.node.json
+├── eslint.config.js         — ESLint 9 flat config
+├── .prettierrc.json
+├── index.html               — SPA エントリ (React マウントポイント)
+├── src/                     — フロントエンド TypeScript
+│   ├── main.tsx             — React root + F5/F12 等 production 時抑止
+│   ├── App.tsx              — ルートコンポーネント (現在はプレースホルダ)
+│   ├── styles/tokens.css    — aetherTheme デザイントークン (#464 で実装)
+│   └── vite-env.d.ts
+└── src-tauri/               — Rust バックエンド (Tauri 2 crate)
+    ├── Cargo.toml           — tauri + dialog/fs/shell plugin + axum + tokio 他
+    ├── tauri.conf.json      — CSP, window, bundle (active: false) 設定
+    ├── capabilities/        — Tauri 2 permission モデル
+    ├── icons/               — ico/png/Square*Logo (tauri icon で生成)
+    └── src/
+        ├── main.rs          — エントリ shim
+        └── lib.rs           — tauri::Builder (axum 実装は #465 で追加)
+```
+
+**state 管理**: [Zustand](https://github.com/pmndrs/zustand) を採用 (#482 決定)。`useMetadataStore` 等は #463 Phase 1 で実装。
+
+**実装知見**: [`phase0-tauri-reference.md`](phase0-tauri-reference.md) に Phase 0 (#468) で検証済みの全設定・コード片を保存。bootstrap はこのリファレンスを source of truth として展開した。
+
+**開発者向けガイド**: [`../gui-development.md`](../gui-development.md) にセットアップ手順・CI 構成・トラブルシュート・バージョンポリシーを記載。
+
 ## 関連 issue
 
 - [#105](https://github.com/Idios/kobutachan-allaganeye/issues/105) — GUI サポート (親)
 - [#450](https://github.com/Idios/kobutachan-allaganeye/issues/450) — GUI フレームワーク決定 (Tauri + React + TS に確定 2026-04-20)
 - [#451](https://github.com/Idios/kobutachan-allaganeye/issues/451) — プラットフォーム対応範囲
 - [#452](https://github.com/Idios/kobutachan-allaganeye/issues/452) — インストーラ形式
+- [#482](https://github.com/Idios/kobutachan-allaganeye/issues/482) — state 管理ライブラリ (Zustand 採用)
+- [#483](https://github.com/Idios/kobutachan-allaganeye/issues/483) — Tauri プロジェクト bootstrap
 
 ## 反復
 

@@ -51,3 +51,12 @@ package-lock.json
 *.mov
 output/
 tmp/
+
+# Node / GUI (gui/)
+node_modules/
+gui/dist/
+gui/.vite/
+
+# Rust / Tauri (gui/src-tauri/)
+gui/src-tauri/target/
+gui/src-tauri/gen/schemas/
