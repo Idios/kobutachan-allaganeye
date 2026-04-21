@@ -39,10 +39,11 @@
 |--------|-----------|
 | `l2a-gui` | L2 GUI 関連 (#105 系) |
 | `l2b-installer` | L2 インストーラ関連 (#106 系) |
-| `l2c-guard` | L2 guard 統合 (`docs/guard-integration.md` §10) |
-| `l2-workflow` | 開発プロセス改善 |
+| `l2-workflow` | 開発プロセス改善 + allaganeye-guard 運用連携 doc 整備 |
 | `l2-decision` | 方針判断が必要な issue |
 | `l1-residual` | L1 残課題 (#412-#440 系) |
+
+> `l2c-guard` ラベルは 2026-04-21 廃止 (guard との program integration 構想を破棄、#454 参照)。関連 doc 整備は `l2-workflow` で追跡。
 
 L3 以降のレイヤーは着手時に適切なスコープラベルを新設する。
 

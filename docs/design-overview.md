@@ -14,7 +14,7 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 │  出力: 試合ごとの MP4 + metadata.json              │
 ├─────────────────────────────────────────────────┤
 │  L2: 配布・統合（開発中）                            │
-│  GUI サポート + ゼロ環境構築配布 + guard 統合        │
+│  GUI サポート + ゼロ環境構築配布                     │
 ├─────────────────────────────────────────────────┤
 │  L3: メタデータ化（将来）                           │
 │  入力: L1 出力の試合動画                           │
@@ -164,14 +164,13 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 | 2 | Linux | 未検証 | パッケージマネージャで PATH に入る（CI は lint/型チェックのみ） |
 | 3 | macOS | 未検証 | Homebrew (`/opt/homebrew/bin`, `/usr/local/bin`) |
 
-## セキュリティ検査（allaganeye-guard）
+## セキュリティ検査（allaganeye-guard 運用連携）
 
-外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `kobutachan-allaganeye-guard` でセキュリティ検査を行う。
+外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `kobutachan-allaganeye-guard` でセキュリティ検査を行う。**プログラムレベルでの結合は行わず**、エージェント (Claude + 人間メンテナ Idios) が手動で `allaganeye-guard verify` を実行する運用ルールとする (2026-04-21 方針確定、#454 参照)。
 
-- **リポジトリ**: `Idios/kobutachan-allaganeye-guard`（独立パッケージ）
-- **依存方向**: allaganeye → guard（一方向。guard は allaganeye に依存しない）
-- **連携方式**: subprocess 呼び出し（`allaganeye-guard verify --json <file>`）
-- **オプション依存**: `pip install allaganeye[guard]` で一緒にインストール可能。なくても動作する
+- **リポジトリ**: `Idios/kobutachan-allaganeye-guard` (独立パッケージ)
+- **依存方向**: 運用上のみ一方向 (guard verify 先行 → allaganeye split 後続)。パッケージ依存関係としては**完全独立** (import / optional-deps / 統合 exit code を持たない)
+- **運用**: `allaganeye-guard verify <file>` → PASS (exit 0 / 1) 後に `allaganeye split` で処理
 
 詳細は `docs/guard-integration.md` を参照。
 

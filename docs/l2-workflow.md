@@ -4,7 +4,7 @@ L1 で運用した「マルチセッション・ロール方式」 (director / l
 
 ## 背景
 
-L1 のロール方式は単一スコープ (試合分割) では機能したが、L2 の 3 スコープ並行開発 (GUI / インストーラ / guard 統合) では以下の問題が顕在化する:
+L1 のロール方式は単一スコープ (試合分割) では機能したが、L2 の複数スコープ並行開発 (GUI / インストーラ + 周辺プロセス改善) では以下の問題が顕在化する:
 
 - 4 セッション × 3 スコープ = 12 ワークツリーとなり、ブランチ・コンフリクト管理が困難
 - ロール切り替え (`/assume-role`) の摩擦コストがセッション間往復で増える
@@ -34,17 +34,16 @@ E:/projects/kobutachan-tools/kobutachan-allaganeye/  ← 唯一の worktree (mai
 
 新規 skill の追加は**実際に反復利用されることが判明した時点**で行う (L2 実装開始後、同じプレイブックを 2-3 回使った段階等)。事前に空の skill ファイルは作らない。
 
-### 3 スコープ並行開発のブランチ戦略
+### 複数スコープ並行開発のブランチ戦略
 
-L2 は `develop-0.2.0` を統合先とする。3 スコープは**単一ブランチの統合**で運用する:
+L2 は `develop-0.2.0` を統合先とする。複数スコープは**単一ブランチの統合**で運用する:
 
 ```
 main (リリースタグのみ)
  └── develop-0.2.0 (L2 統合先)
       ├── claude/l2-gui-*            ← GUI 関連作業ブランチ (#105 子)
       ├── claude/l2-installer-*      ← インストーラ作業 (#106 子)
-      ├── claude/l2-guard-*          ← guard 統合 (#N1-N7)
-      ├── claude/l2-workflow-*       ← L2-0 プロセス系
+      ├── claude/l2-workflow-*       ← L2-0 プロセス系 + guard 運用連携 doc
       └── claude/l1-residual-*       ← L1 残課題消化 (#412-#440)
 ```
 
@@ -97,7 +96,7 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 旧ロール前提の `/check-work` は廃止。新規タスクは以下の手順で発見する:
 
 1. `gh issue list --state open --assignee Idios --sort updated` で最近更新された issue を確認
-2. スコープラベル (`l2a-gui`, `l2b-installer`, `l2c-guard`, `l2-workflow`) でフィルタし、優先度 (`P1-high`) 順に並べる
+2. スコープラベル (`l2a-gui`, `l2b-installer`, `l2-workflow`) でフィルタし、優先度 (`P1-high`) 順に並べる
 3. 着手対象が選ばれたら `/plan` を呼んで実装前の計画を固める
 
 ユーザーが「次に何する?」と聞いた場合、Claude は上記を実施し `AskUserQuestion` で候補提示する。
@@ -130,10 +129,11 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 
 - `l2a-gui` — GUI 関連 (#105 系)
 - `l2b-installer` — インストーラ関連 (#106 系)
-- `l2c-guard` — guard 統合 (guard-integration.md §10)
-- `l2-workflow` — 開発プロセス改善
+- `l2-workflow` — 開発プロセス改善 + allaganeye-guard 運用連携 doc 整備 (#458 / #459)
 - `l2-decision` — 方針決定 issue
 - `l1-residual` — L1 残課題 (#412-#440 系)
+
+> `l2c-guard` ラベルは 2026-04-21 廃止 (guard との program integration 構想を破棄したため)。関連 doc 整備は `l2-workflow` で追跡。
 
 ### 優先度ラベル (既存維持)
 
@@ -186,7 +186,7 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 | lead-engineer (設計・レビュー) | Plan モード (設計) + `/review-pr` (レビュー) |
 | engineer (実装) | Claude の通常ツール (Edit/Write/Bash) + TodoWrite |
 | tester (テスト) | 通常セッション内で手動テスト実行 + PR コメント記録 |
-| `role:director` / `role:lead-engineer` / `role:engineer` / `role:tester` ラベル | スコープラベル (`l2-workflow`, `l2a-gui`, `l2b-installer`, `l2c-guard` 等) で代替 |
+| `role:director` / `role:lead-engineer` / `role:engineer` / `role:tester` ラベル | スコープラベル (`l2-workflow`, `l2a-gui`, `l2b-installer` 等) で代替 |
 
 ## タスクフロー (旧ロールハンドオフの代替)
 
