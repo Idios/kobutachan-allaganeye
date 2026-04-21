@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'scripts/build-portable-zip.ps1'
+      - 'scripts/extract_release_notes.py'
+      - 'pyproject.toml'
+  workflow_dispatch:
+    inputs:
+      version_override:
+        description: 'Version string used for dry-run build. Defaults to pyproject.toml version.'
+        required: false
+        type: string
+
+jobs:
+  version-check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.parse.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Resolve and verify version
+        id: parse
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYPROJECT_VERSION=$(python -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')
+          echo "pyproject.toml version: $PYPROJECT_VERSION"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "tag version: $TAG_VERSION"
+            if [[ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]]; then
+              echo "::error::Tag v$TAG_VERSION does not match pyproject.toml version $PYPROJECT_VERSION"
+              exit 1
+            fi
+            VERSION="$TAG_VERSION"
+          else
+            OVERRIDE='${{ inputs.version_override }}'
+            VERSION="${OVERRIDE:-$PYPROJECT_VERSION}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Using version: $VERSION"
+
+  build-windows:
+    needs: version-check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build Portable ZIP
+        shell: pwsh
+        run: ./scripts/build-portable-zip.ps1 -Version '${{ needs.version-check.outputs.version }}'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: allaganeye-portable-windows
+          path: dist/allaganeye-v*-windows.zip
+          if-no-files-found: error
+
+  release:
+    needs: [version-check, build-windows]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: allaganeye-portable-windows
+          path: dist
+
+      - name: Extract release notes from CHANGELOG
+        shell: bash
+        run: python scripts/extract_release_notes.py '${{ needs.version-check.outputs.version }}' release-notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/allaganeye-v*-windows.zip
+          body_path: release-notes.md
+          generate_release_notes: false
