@@ -198,6 +198,28 @@ Plan モードで計画合意 → 実装 (TodoWrite で進捗管理) → PR 作�
 
 各フェーズの完了時点で次フェーズに渡すコンテキストを明示する (PR 番号、テスト結果等)。修正が必要な場合は同じセッション内で該当ブランチに追加コミットを積み、再度 `/review-pr` を呼び出す (旧ロールの engineer → lead-engineer 往復は発生しない)。
 
+## worktree メンテナンス (#477)
+
+Claude Code のセッション用 worktree はセッション終了時に `git worktree remove` されるが、`.claude/worktrees/<name>/` 自体のディレクトリが空のまま残ることがある (#477 で観測)。定期的にまとめて掃除する手動スクリプト `scripts/cleanup-worktrees.sh` を用意している。
+
+```bash
+# 削除候補を表示するだけ (dry-run, デフォルト)
+scripts/cleanup-worktrees.sh
+
+# 実際に rmdir を実行 (非空ディレクトリは触らない)
+scripts/cleanup-worktrees.sh --apply
+```
+
+動作:
+
+1. `git worktree prune` で git 側メタデータをクリーンアップ (stale worktree の記録を消す)
+2. `.claude/worktrees/` 直下のサブディレクトリを走査
+3. `.git` 参照を持たない (= 現在アクティブではない) 空ディレクトリを `rmdir` で削除
+
+安全性: `rmdir` のみを使用するため、アクティブな worktree や何らかのファイルが残っているディレクトリは**削除されない**。想定外のファイルが残っているディレクトリは出力で明示されるため、必要に応じて手動で確認する。
+
+運用: 新規セッション開始前や、リリース PR マージ後の区切りで `--apply` を実行する運用を推奨。自動化 (Stop hook 等) は、セッション実行中の worktree 内ファイル消失リスクがあるため採用しない (#477 対応方針 C)。
+
 ## 参考
 
 - [code.claude.com/docs/en/skills](https://code.claude.com/docs/en/skills) — skill 設計ガイド
