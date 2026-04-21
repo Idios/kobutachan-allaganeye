@@ -3,6 +3,7 @@
 from allaganeye.exceptions import (
     AllaganEyeError,
     DetectionError,
+    SecurityVerificationError,
     VideoProcessingError,
 )
 
@@ -40,6 +41,30 @@ def test_exit_code_preserved_with_context():
     exc = DetectionError("nope", context={"stats": {"a": 1}})
     assert exc.exit_code == 4
     assert "stats: {'a': 1}" in exc.verbose_detail()
+
+
+def test_security_verification_error_exit_code():
+    """SecurityVerificationError must map to exit code 6 (#454)."""
+    exc = SecurityVerificationError("guard verification failed")
+    assert exc.exit_code == 6
+    assert isinstance(exc, AllaganEyeError)
+
+
+def test_security_verification_error_exit_code_is_unique():
+    """Exit code 6 must not collide with any other AllaganEyeError subclass."""
+    from allaganeye.exceptions import (
+        ConfigValidationError,
+        InputFileError,
+    )
+
+    other_codes = {
+        AllaganEyeError.exit_code,
+        InputFileError.exit_code,
+        VideoProcessingError.exit_code,
+        DetectionError.exit_code,
+        ConfigValidationError.exit_code,
+    }
+    assert SecurityVerificationError.exit_code not in other_codes
 
 
 def test_str_message_independent_of_context():

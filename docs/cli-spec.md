@@ -278,6 +278,7 @@ timestamp,brightness
 | 3 | FFmpeg / ffprobe エラー |
 | 4 | 試合境界が見つからない |
 | 5 | 設定値不正（パラメータの範囲外等） |
+| 6 | セキュリティ検査失敗（`allaganeye-guard verify` が FAIL を返した場合） |
 
 ### エラー表示 (#428 / #405 matrix v2)
 

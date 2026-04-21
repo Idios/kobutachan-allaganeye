@@ -11,6 +11,7 @@ from allaganeye.exceptions import (
     AllaganEyeError,
     DetectionError,
     InputFileError,
+    SecurityVerificationError,
     VideoProcessingError,
 )
 
@@ -384,6 +385,22 @@ def test_split_base_error_exit_code(mock_run_split, fake_video):
 
     result = runner.invoke(app, ["split", str(fake_video)])
     assert result.exit_code == 1
+
+
+@patch(MODULE)
+def test_split_security_verification_error_exit_code(mock_run_split, fake_video):
+    """SecurityVerificationError produces exit code 6 via base handler (#454).
+
+    allaganeye-guard verify 失敗を表す例外は `AllaganEyeError` 基底クラスの
+    汎用ハンドラを通じて exit 6 に写像される。`--verify` CLI 実装 (後続 issue)
+    より先に exit code 契約を確立し、guard 統合時の互換性を保証する。
+    """
+    mock_run_split.side_effect = SecurityVerificationError(
+        "allaganeye-guard reported FAIL for input"
+    )
+
+    result = runner.invoke(app, ["split", str(fake_video)])
+    assert result.exit_code == 6
 
 
 @patch(MODULE)

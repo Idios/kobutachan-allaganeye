@@ -60,3 +60,9 @@ class DetectionError(AllaganEyeError):
     """No match boundaries detected in the video."""
 
     exit_code = 4
+
+
+class SecurityVerificationError(AllaganEyeError):
+    """allaganeye-guard verification reported FAIL for the input file."""
+
+    exit_code = 6

@@ -135,6 +135,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | 3 | FFmpeg / ffprobe エラー |
 | 4 | 検知失敗（試合境界が見つからない） |
 | 5 | 設定値不正（パラメータの範囲外等） |
+| 6 | セキュリティ検査失敗（`allaganeye-guard verify` が FAIL を返した場合） |
 
 ### 外部依存
 
