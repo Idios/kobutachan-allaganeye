@@ -25,7 +25,7 @@ gh issue list --repo Idios/kobutachan-allaganeye --state open --label "deferred"
 ```
 
 - 各 issue について、次バージョンのスコープに含めるか・引き続き deferred かをユーザーに確認する
-- スコープに含める場合: `deferred` を外し、適切な `role:*` + 優先度ラベルに変更
+- スコープに含める場合: `deferred` を外し、適切なスコープラベル + 優先度ラベルに変更
 - deferred issue が 0 件の場合のみ自動で次ステップに進む
 - 1 件以上ある場合: **必ずユーザーに判断を求めてから** 次に進む
 
