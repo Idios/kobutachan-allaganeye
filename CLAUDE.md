@@ -50,6 +50,16 @@ allaganeye split <video_path> --quiet      # 進捗抑制（出力ファイル�
 allaganeye split <video_path> -v           # verbose（環境情報・パイプライン統計を表示、#336）
 allaganeye --version                       # バージョン表示（短縮形: -V、#337）
 allaganeye debug-brightness <video_path>   # フレーム輝度 CSV 出力
+
+# GUI (L2a Tauri、#483 で bootstrap)
+# 詳細は docs/gui-development.md を参照
+cd gui && npm install                   # 初回セットアップ
+cd gui && npm run tauri dev             # dev ウィンドウ起動
+cd gui && npm test                      # vitest 単体テスト
+cd gui && npm run lint                  # eslint
+cd gui && npm run typecheck             # tsc --noEmit
+cd gui && npm run build                 # vite build (gui/dist/ 生成)
+cd gui/src-tauri && cargo check         # Rust 型/依存チェック
 ```
 
 ## アーキテクチャ
@@ -83,6 +93,8 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `audio/matcher.py` | 参照 BGM と target の相互相関で peak 検出 |
 | `audio/scan.py` | 動画全域を走査して Fanfare ピークを返す |
 | `audio/refs/` | 同梱参照特徴量（`fanfare.npz`） |
+| `gui/` | L2a Tauri GUI (React 19 + TS + Vite + Zustand)。`#483` で bootstrap。詳細は [docs/gui-development.md](docs/gui-development.md) および [docs/design/README.md](docs/design/README.md) |
+| `gui/src-tauri/` | Tauri 2 Rust バックエンド (axum/tower-http による動画配信は #465 で実装予定) |
 
 ### 検知アルゴリズム（detector.py）
 
@@ -225,7 +237,7 @@ L2 からは**単一ワークツリー + skill ベースディスパッチ**を�
 
 詳細は `docs/l2-workflow.md` を参照。要約:
 
-- **PR 作成前**: ベースブランチをリベースし、`ruff check .` / `ruff format --check .` / `pytest` を通すこと
+- **PR 作成前**: ベースブランチをリベースし、Python 側は `ruff check .` / `ruff format --check .` / `pytest`、GUI (gui/) 変更を含む場合は追加で `npm run lint` / `npm run typecheck` / `npm test` / `cargo check` (src-tauri/) を通すこと
 - ベースブランチ: `develop-x.x.x`（`main` ではない）
 - 作業ブランチ命名: `claude/<scope>-<short-description>` または `claude/<issue-N>-<slug>`
 - マージ方法: `gh pr merge <番号> --squash` (ユーザーが実行)
