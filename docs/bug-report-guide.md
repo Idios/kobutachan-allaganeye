@@ -109,8 +109,6 @@ Issue Template には同意 checkbox が 2 件あります (両方 required)。*
 | 他プレイヤー個人情報の確認 | 添付する場合、他プレイヤーのプレイヤー名・ID・パーティ情報について適切に処理 (ぼかし / クロップ / 公開可) 済みであること |
 | FF14 機密情報の確認 | 添付する場合、アカウント情報・決済情報・その他機密情報が含まれていないこと |
 
-報告者が事前に `allaganeye-guard verify` を実行する必要は**ありません**。セキュリティ検査はメンテナ側で実施します (§4.2 参照)。
-
 ## §4 対応プロセス
 
 ### 4.1 メンテナ側の受領後フロー
@@ -119,28 +117,26 @@ Issue Template には同意 checkbox が 2 件あります (両方 required)。*
 
 1. Issue 内容確認 (再現手順・環境情報)
 2. 動画添付があればダウンロードし、隔離ディレクトリに保存
-3. **エージェントが `allaganeye-guard verify <file>` を実行** (受領動画は必ず検査してから allaganeye で処理)
-4. PASS (exit 0 / 1) なら調査開始
-5. FAIL (exit 2) なら §4.3 の差戻しフローへ
-6. ERROR / 入力エラー (exit 3 / 4) ならメンテナ環境側の問題として調整
+3. **メンテナ側でセキュリティ確認を実施** (詳細手順は内部運用ドキュメントに準拠)
+4. 確認 PASS なら調査開始
+5. 確認 FAIL なら §4.3 の差戻しフローへ
+6. 確認ツール実行エラー等はメンテナ環境側の問題として調整
 7. 調査完了後、ローカル動画を削除し issue に結果コメント
-
-詳細は [docs/guard-integration.md](guard-integration.md) §6 参照。
 
 ### 4.2 検査結果の通知
 
 メンテナは issue に以下のコメントを残します:
 
-- **PASS**: `allaganeye-guard verify` の exit code と主要フェーズの PASS を記録 (報告者への安心材料)
-- **PASS with warnings (exit 1)**: warning 内容を記録、そのまま調査続行
-- **FAIL (exit 2)**: FAIL した Phase と脅威 ID (T1-T8) を記録、§4.3 の差戻しへ
-- **ERROR (exit 3)**: メンテナ環境側で解決 (guard の依存ツール更新等)
+- **PASS**: セキュリティ確認が完了した旨を記録 (報告者への安心材料)
+- **PASS with warnings**: 軽微な警告があった旨を記録、そのまま調査続行
+- **FAIL**: セキュリティ上の懸念が検出された旨を記録、§4.3 の差戻しへ
+- **ツール実行エラー**: メンテナ環境側で解決
 
 ### 4.3 FAIL 時の差戻しフロー
 
-セキュリティ検査で FAIL が出た場合:
+セキュリティ確認で FAIL が出た場合:
 
-1. メンテナが FAIL 理由 (コンテナ不正・マルウェアシグネチャ等) を issue にコメント
+1. メンテナが FAIL の概要 (コンテンツに関する懸念・構造的な問題など) を issue にコメント
 2. 提供者に以下のいずれかを依頼:
    - リエンコード (FFmpeg で `-c copy -f matroska output.mkv` 等) して再提出
    - 別の録画データで再試行
@@ -160,6 +156,5 @@ Issue Template には同意 checkbox が 2 件あります (両方 required)。*
 ## 参考リンク
 
 - [Issue Template (`.github/ISSUE_TEMPLATE/bug_report.yml`)](../.github/ISSUE_TEMPLATE/bug_report.yml)
-- [セキュリティ検査仕様 (`docs/guard-integration.md`)](guard-integration.md)
 - [CLI コマンド仕様 (`docs/cli-spec.md`)](cli-spec.md)
 - [Quick Start Guide (`docs/quickstart.md`)](quickstart.md)
