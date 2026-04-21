@@ -200,7 +200,17 @@ Plan モードで計画合意 → 実装 (TodoWrite で進捗管理) → PR 作�
 
 ## worktree メンテナンス (#477)
 
-Claude Code のセッション用 worktree はセッション終了時に `git worktree remove` されるが、`.claude/worktrees/<name>/` 自体のディレクトリが空のまま残ることがある (#477 で観測)。定期的にまとめて掃除する手動スクリプト `scripts/cleanup-worktrees.sh` を用意している。
+Claude Code のセッション用 worktree はセッション終了時に `git worktree remove` されるが、`.claude/worktrees/<name>/` 自体のディレクトリが空のまま残ることがある (#477 で観測)。残骸は **Stop hook で自動 sweep** される。手動での sweep も可能。
+
+### 自動実行 (Stop hook)
+
+セッション終了時に `.claude/hooks/stop.sh` が `scripts/cleanup-worktrees.sh --apply` を起動し、空ディレクトリを rmdir で除去する。`rmdir` のみを使うため未保存ファイルを含むディレクトリは絶対に削除されず、セッション中の作業が消失することはない。
+
+設定箇所: `.claude/settings.json` の `hooks.Stop` セクション。
+
+### 手動実行
+
+区切りで一斉掃除したい場合や、hook を介さず状態を確認したい場合:
 
 ```bash
 # 削除候補を表示するだけ (dry-run, デフォルト)
@@ -210,15 +220,15 @@ scripts/cleanup-worktrees.sh
 scripts/cleanup-worktrees.sh --apply
 ```
 
-動作:
+### 動作
 
 1. `git worktree prune` で git 側メタデータをクリーンアップ (stale worktree の記録を消す)
 2. `.claude/worktrees/` 直下のサブディレクトリを走査
 3. `.git` 参照を持たない (= 現在アクティブではない) 空ディレクトリを `rmdir` で削除
 
-安全性: `rmdir` のみを使用するため、アクティブな worktree や何らかのファイルが残っているディレクトリは**削除されない**。想定外のファイルが残っているディレクトリは出力で明示されるため、必要に応じて手動で確認する。
+### 安全性
 
-運用: 新規セッション開始前や、リリース PR マージ後の区切りで `--apply` を実行する運用を推奨。自動化 (Stop hook 等) は、セッション実行中の worktree 内ファイル消失リスクがあるため採用しない (#477 対応方針 C)。
+`rmdir` のみを使用するため、アクティブな worktree や何らかのファイルが残っているディレクトリは**削除されない**。想定外のファイルが残っているディレクトリは出力で明示されるため、必要に応じて手動で確認する。Stop hook が起動中のセッションのアクティブ worktree は `.git` 参照で保護されるため安全に skip される。
 
 ## 参考
 
