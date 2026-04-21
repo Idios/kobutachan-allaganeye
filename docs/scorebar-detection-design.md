@@ -56,7 +56,7 @@ FL（フロントライン）の試合境界検知において、スコアバー
 
 ### 4 条件の AND ゲート
 
-```
+```text
 ROI brightness ∈ (20, 140)          ... 暗転・白飛びを排除
   AND max(channel_stds) > 15.0      ... ロビー・キューを排除
   AND sorted(channel_stds)[-2] > 12.0  ... 1チャンネルのみ高stdのローディング画面を排除 (A1)

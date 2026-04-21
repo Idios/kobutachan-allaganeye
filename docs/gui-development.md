@@ -59,6 +59,7 @@ cargo check          # Rust 側の型/依存チェック
 - **watch モード**: `npm run test:watch`
 
 現時点で追加済みのテスト:
+
 - `src/lib/preventBrowserShortcuts.test.ts`: WebView のブラウザショートカット抑止ロジックの単体テスト (F5/Ctrl+R/F12/Ctrl+U/Ctrl+P 等の分類 + installer の preventDefault 呼び出し確認)
 - `src/App.test.tsx`: placeholder の smoke render テスト
 

@@ -29,7 +29,7 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を、試合�
 
 展開後のフォルダ構成:
 
-```
+```text
 allaganeye-vX.Y.Z\
 ├── python\            Python ランタイム（同梱済み、別途インストール不要）
 ├── lib\               allaganeye 本体

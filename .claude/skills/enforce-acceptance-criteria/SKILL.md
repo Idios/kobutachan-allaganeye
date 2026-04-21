@@ -63,22 +63,26 @@ gh issue view <ISSUE番号> --json body | python -c "import json,sys;b=json.load
 ### Step 4: 結果報告
 
 **全項目 ✓**:
-```
+
+```bash
 gh pr comment $ARGUMENTS --body "acceptance-criteria verified [<session-id>]
 - (条件 1): (対応 diff / test 要約)
 - (条件 2): ...
 "
 ```
+
 その後 `/review-pr` に戻り、残りのロジック/ドキュメントレビューへ進む。
 
 **未達あり**:
-```
+
+```bash
 gh pr comment $ARGUMENTS --body "修正依頼 (受け入れ条件未達) [<session-id>]
 - 未達項目:
   - (条件 X): <理由: 対応 diff/test が無い / test 未 pass / 出力サンプル未添付 等>
 - 対応方針: (具体的な修正指示)
 "
 ```
+
 `/review-pr` の「修正フロー」に従い、同セッション内で修正 → 再 `/enforce-acceptance-criteria` ループ。
 
 ## Red Flags (以下の思考が浮かんだら STOP)

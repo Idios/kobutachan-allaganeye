@@ -34,7 +34,7 @@ allaganeye split your_recording.mkv --dry-run
 
 出力例:
 
-```
+```text
   Match 1:   00:00 -   15:17  (15m17s)  [unknown]
   Match 2:   18:49 -   34:51  (16m01s)
   Match 3:   40:37 -   57:53  (17m15s)

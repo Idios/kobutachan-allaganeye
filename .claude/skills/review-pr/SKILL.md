@@ -51,17 +51,20 @@ gh pr checks $ARGUMENTS
 PR の変更種別に応じて以下を確認する:
 
 **共通観点**:
+
 - 変更の意図が PR の説明と一致しているか
 - アーキテクチャに沿っているか (`CLAUDE.md` §モジュール構成、`docs/design-overview.md`)
 - セキュリティモデルが守られているか (特に外部入力処理、subprocess 呼び出し)
 
 **ドキュメント変更 PR の場合**:
+
 - doc 内容が元 issue の要件と一致しているか
 - doc が言及するソースコード (関数名、ファイルパス、設定値) が現状と整合しているか
 - 関連する既存 doc (`CLAUDE.md`, `docs/cli-spec.md`, `docs/design-overview.md`, `docs/l2-workflow.md` 等) との矛盾がないか
 - doc が言及するテスト / CLI 出力サンプルが実装と一致しているか
 
 **コード / テスト変更 PR の場合**:
+
 - 関連ドキュメント (`docs/cli-spec.md`, `docs/design-overview.md`, `README.md`, `CLAUDE.md` 等) が更新されているか
 - **特に CLAUDE.md / docs に「追加予定」「今後実装」等の予告記述があり、本 PR がその実装に該当する場合、予告文を実装済み記述に更新すること。更新漏れは Step 6 で修正依頼対象**
 - コード変更がドキュメント記述と矛盾していないか
@@ -105,7 +108,7 @@ PR に紐づく issue がある場合:
 
 ## 呼び出し例
 
-```
+```text
 /review-pr 443
 ```
 

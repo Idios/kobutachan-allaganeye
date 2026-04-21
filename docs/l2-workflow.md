@@ -15,7 +15,7 @@ L1 のロール方式は単一スコープ (試合分割) では機能したが�
 
 ### 単一ワークツリー + skill ディスパッチ
 
-```
+```text
 E:/projects/kobutachan-tools/kobutachan-allaganeye/  ← 唯一の worktree (main or develop-x.x.x)
     ├── .claude/hooks/
     │   ├── session-start.sh         ← Iron Law を毎セッション先頭に注入 (superpowers 方式)
@@ -38,7 +38,7 @@ E:/projects/kobutachan-tools/kobutachan-allaganeye/  ← 唯一の worktree (mai
 
 L2 は `develop-0.2.0` を統合先とする。複数スコープは**単一ブランチの統合**で運用する:
 
-```
+```text
 main (リリースタグのみ)
  └── develop-0.2.0 (L2 統合先)
       ├── claude/l2-gui-*            ← GUI 関連作業ブランチ (#105 子)
@@ -192,7 +192,7 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 
 旧ワークフローでは PR 作成 → lead-engineer レビュー → tester テスト → director マージ の 4 ロール間でラベル付け替えが必要だった。新ワークフローでは**単一セッションが順次タスクを実行**するため、ハンドオフは不要:
 
-```
+```text
 Plan モードで計画合意 → 実装 (TodoWrite で進捗管理) → PR 作成 → /review-pr → (修正あれば再実装) → テスト実行 → ユーザー承認 → ユーザーがマージ
 ```
 

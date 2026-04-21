@@ -11,6 +11,7 @@ L1 の動画処理は以下の3段階で構成される:
 ## probe（メタデータ取得）
 
 ffprobe を使用して以下の情報を取得:
+
 - コーデック（映像/音声）
 - 解像度
 - フレームレート（r_frame_rate → avg_frame_rate フォールバック）
@@ -36,7 +37,7 @@ ffprobe を使用して以下の情報を取得:
 
 **方式**: ffmpeg の `-ss`（入力シーク）で各タイムスタンプに直接ジャンプし、1フレームのみデコード。
 
-```
+```bash
 ffmpeg -ss {timestamp} -i input.mkv -frames:v 1 -s 320x180 -pix_fmt gray -f rawvideo pipe:1
 ```
 
@@ -92,6 +93,7 @@ ffmpeg -ss {timestamp} -i input.mkv -frames:v 1 -s 320x180 -pix_fmt gray -f rawv
 | Pass 2（精密計測） | 0.25s | 候補 ±5s を再プローブ → 正確な持続時間 |
 
 精密計測後は `_REFINED_MIN_BLACKOUT=1.5s` で判定:
+
 - 2.0s 暗転 → 計測 1.5-1.75s ≥ 1.5 → **検出**
 - 1.5s リスポーン → 計測 1.0-1.25s < 1.5 → **除外**
 
@@ -103,7 +105,7 @@ ffmpeg -ss {timestamp} -i input.mkv -frames:v 1 -s 320x180 -pix_fmt gray -f rawv
 
 **方式**: 動画を N チャンク（`min(cpu_count, 16)`）に分割し、各チャンクで長寿命の ffmpeg プロセスを並列実行する。
 
-```
+```bash
 ffmpeg -hwaccel auto -ss <chunk_start> -t <chunk_duration> -i input.mkv \
   -vf "fps=1/{interval},scale=320:180,format=gray" -f rawvideo pipe:1
 ```
@@ -158,7 +160,7 @@ ROI を左・中央・右の 3 セクションに分割し、各セクション�
 
 FL 試合間の遷移は 2 つの暗転を伴うことがある:
 
-```
+```text
 FL 試合 A → 暗転₁ (match_boundary) → ロビー/結果画面 → 暗転₂ (match_boundary) → FL 試合 B
 ```
 
@@ -288,7 +290,7 @@ ffmpeg -y -ss <start> -i input.mkv -to <duration> -c copy -avoid_negative_ts mak
 
 ### 出力命名規則
 
-```
+```text
 match_001.mp4
 match_002.mp4
 ...

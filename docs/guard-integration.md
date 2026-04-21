@@ -15,7 +15,7 @@ allaganeye と allaganeye-guard は**プログラムレベルでの結合を行�
 - **独立したリリースサイクル**: CVE 対応等のセキュリティ更新を allaganeye のリリースと独立して行える
 - **allaganeye 側の軽量化**: guard を optional-deps にすらしないことで、allaganeye の依存グラフとインストール手順を最小に保つ
 
-```
+```text
 allaganeye-guard (セキュリティ検査 CLI)
       │  ← 運用ルールによる手動チェーン (プログラム結合なし)
       ▼
@@ -53,7 +53,7 @@ allaganeye (動画処理 CLI)
 
 ## 3. 検査パイプライン
 
-```
+```text
 入力ファイル
     │
     ▼

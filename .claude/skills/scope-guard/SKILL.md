@@ -35,7 +35,8 @@ gh issue view <ISSUE番号> --json title,body | python -c "import json,sys;d=jso
 ```
 
 もし着手 issue が不明 (作業ブランチ名に番号が無い等) なら、ユーザーに確認:
-```
+
+```text
 AskUserQuestion: 現在の作業ブランチはどの issue に対応しますか？
 ```
 

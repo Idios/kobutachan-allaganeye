@@ -34,6 +34,7 @@ npx -y markdownlint-cli2@0.18.1
 ## コミットメッセージ
 
 Conventional Commits 形式:
+
 - `feat:` -- 新機能
 - `fix:` -- バグ修正
 - `refactor:` -- リファクタリング

@@ -20,6 +20,7 @@ argument-hint: <タスクの概要（自然言語）>
    - 本文全文
    - 選択肢: 「はい / 修正箇所を指摘 / やめる」
 6. ユーザーが承認したら以下のコマンドで作成する（Windows + Git Bash での日本語本文破損回避のため `printf | --body-file -` 方式）:
+
    ```bash
    printf '%s\n' "<本文>" | gh issue create \
      --repo Idios/kobutachan-allaganeye \
