@@ -14,11 +14,11 @@ SemVer に従い、各レイヤーを minor バージョンで区切る。
 | L4: 価値評価 | 0.4.0 | `v0.4.0` | 2026-05-10 |
 | L5: 自動編集 | 0.5.0 | `v0.5.0` | 2026-05-17 |
 
-L2 は 3 スコープを 1 リリースに統合する:
+L2 は以下のスコープを 1 リリースに統合する:
 - GUI サポート (#105)
 - ゼロ環境構築配布 (#106)
-- allaganeye-guard 統合 (`--verify`、exit code 6、`guard.py` ラッパー他 — `docs/guard-integration.md` §10)
 - 開発プロセス刷新 (L2-0: ハイブリッド skill 方式への移行、レビュープロセス改善)
+- allaganeye-guard の運用連携ドキュメント整備 (#458 / #459 — プログラム結合は行わない、`docs/guard-integration.md` 参照)
 
 ### 拡張レイヤー（L6）
 
@@ -41,8 +41,7 @@ main (リリースタグ時のみ更新、L1: v0.1.0-preview / v0.1.1 タグ済�
  └── develop-0.2.0 (L2 開発の統合先)
       ├── claude/l2-gui-*            ← GUI 関連作業 (#105 系)
       ├── claude/l2-installer-*      ← インストーラ作業 (#106 系)
-      ├── claude/l2-guard-*          ← guard 統合 (N1-N7)
-      ├── claude/l2-workflow-*       ← L2-0 プロセス系
+      ├── claude/l2-workflow-*       ← L2-0 プロセス系 + guard 運用連携 doc
       └── claude/l1-residual-*       ← L1 残課題消化 (#412-#440)
 ```
 

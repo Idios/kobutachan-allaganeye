@@ -11,7 +11,7 @@ FF14 PvPコンテンツ「フロントライン」の長時間録画動画（OBS
 | レイヤー | 処理 | 技術 | 状態 |
 |---|---|---|---|
 | L1: 試合分割 | 暗転検知で試合単位に分割 | FFmpeg（検知+分割） | **リリース済み** (v0.1.0-preview 2026-04-17, v0.1.1 2026-04-20) |
-| L2: 配布・統合 | GUI + ゼロ環境構築配布 + guard 統合 | Tauri 2.x + React 19 + TS + allaganeye-guard | **開発中** |
+| L2: 配布・統合 | GUI + ゼロ環境構築配布 | Tauri 2.x + React 19 + TS | **開発中** |
 | L3: メタデータ化 | キルログ・音声・チャットをタイムスタンプ化 | Tesseract / Whisper | 未着手 |
 | L4: 価値評価 | 抽出データをMLが判定 | ローカル ML（scikit-learn 等） | 未着手 |
 | L5: 自動編集 | 判定に基づき動画切り出し・投稿提案 | MoviePy / FFmpeg | 未着手 |
@@ -160,16 +160,14 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 - サブディレクトリ（`20260116/` 等）: 手動で試合分割済みのMP4（`YYYYMMDD_N.mp4`）
 - 未設定の場合、`sample_video_dir` fixture を使うテスト（`slow` マーカー）はスキップされる
 
-## セキュリティ検査（allaganeye-guard 連携）
+## セキュリティ検査（allaganeye-guard 運用連携）
 
-外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `allaganeye-guard` でセキュリティ検査を行う。詳細は `docs/guard-integration.md` を参照。
+外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `allaganeye-guard` でセキュリティ検査を行う。**プログラムレベルでの結合は行わず**、エージェント (= Claude + 人間メンテナ Idios) が手動で `allaganeye-guard verify` を実行する運用ルールとする (2026-04-21 方針確定、#454 参照)。詳細は `docs/guard-integration.md` を参照。
 
-- **リポジトリ**: [Idios/kobutachan-allaganeye-guard](https://github.com/Idios/kobutachan-allaganeye-guard)
-- `allaganeye-guard verify <file>` で検査、PASS なら `allaganeye split` で処理
-- 将来的に `--verify` オプションで自動呼び出しを実装予定
-- guard がインストールされていなくても allaganeye 本体は正常動作する
-- **外部動画データの検査**: Idios 以外のユーザーが issue・PR に添付した動画は、`allaganeye-guard verify` が PASS するまで処理しない（`docs/guard-integration.md` §8 参照）
-- **開発・リリース同期**: allaganeye のレイヤーリリース時に guard との互換性チェックが必要になる（`docs/guard-integration.md` §11 参照）
+- **リポジトリ**: [Idios/kobutachan-allaganeye-guard](https://github.com/Idios/kobutachan-allaganeye-guard) (独立パッケージ)
+- **運用**: `allaganeye-guard verify <file>` → PASS (exit 0 / 1) 後に `allaganeye split` で処理
+- **外部動画データの検査**: Idios 以外のユーザーが issue・PR に添付した動画は、`allaganeye-guard verify` が PASS するまで処理しない (`docs/guard-integration.md` §5 参照)
+- allaganeye 側に guard を import する実装・optional-deps・統合 exit code は持たない (独立性維持)
 
 ## リリース戦略
 
@@ -218,7 +216,7 @@ L2 からは**単一ワークツリー + skill ベースディスパッチ**を�
 - プレフィックス: `[bug]`, `[doc]`, `[refactor]`, `[task]`, `[question]`, `[risk]`
 - Assignee: 常に `Idios`
 - 作成者明示: 本文末尾に `作成: <session-id>`
-- ラベル: prefix ラベル + スコープラベル (`l2a-gui` / `l2b-installer` / `l2c-guard` / `l2-workflow` / `l2-decision` / `l1-residual` 等) + 優先度（`P1-high` / `P2-medium` / `P3-low`）
+- ラベル: prefix ラベル + スコープラベル (`l2a-gui` / `l2b-installer` / `l2-workflow` / `l2-decision` / `l1-residual` 等) + 優先度（`P1-high` / `P2-medium` / `P3-low`）
 - `Closes`/`Fixes` キーワードは使わない（クローズは手動）
 
 ## PR 作成ルール
