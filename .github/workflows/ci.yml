@@ -55,6 +55,10 @@ jobs:
         working-directory: gui
         run: npm run typecheck
 
+      - name: Test
+        working-directory: gui
+        run: npm test
+
       - name: Build
         working-directory: gui
         run: npm run build

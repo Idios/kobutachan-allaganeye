@@ -43,12 +43,24 @@ Tauri CLI が以下を並列起動する:
 cd gui
 npm run lint         # ESLint (flat config)
 npm run typecheck    # tsc --noEmit
+npm test             # vitest (jsdom + @testing-library/react)
 npm run build        # vite build → gui/dist/
 cd src-tauri
 cargo check          # Rust 側の型/依存チェック
 ```
 
 `cargo check` は `tauri.conf.json` の `frontendDist: "../dist"` を要求するため、**必ず `npm run build` を先に実行する必要がある**。
+
+## テスト
+
+- **フレームワーク**: [vitest](https://vitest.dev/) + [@testing-library/react](https://testing-library.com/docs/react-testing-library/intro/) + [jsdom](https://github.com/jsdom/jsdom)
+- **配置規約**: ソースと同一ディレクトリに `*.test.ts` / `*.test.tsx` として配置 (`src/lib/foo.ts` → `src/lib/foo.test.ts`)
+- **セットアップ**: `src/test-setup.ts` で `@testing-library/jest-dom` matcher と `afterEach(cleanup)` を注入 (`vite.config.ts` の `test.setupFiles` で参照)
+- **watch モード**: `npm run test:watch`
+
+現時点で追加済みのテスト:
+- `src/lib/preventBrowserShortcuts.test.ts`: WebView のブラウザショートカット抑止ロジックの単体テスト (F5/Ctrl+R/F12/Ctrl+U/Ctrl+P 等の分類 + installer の preventDefault 呼び出し確認)
+- `src/App.test.tsx`: placeholder の smoke render テスト
 
 ## CI 構成
 
