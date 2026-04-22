@@ -17,14 +17,17 @@ async fn load_metadata(path: String) -> Result<Value, String> {
 
 #[tauri::command]
 async fn apply_changes(path: String, metadata: Value) -> Result<(), String> {
-    let meta_path = PathBuf::from(&path);
+    apply_changes_sync(&PathBuf::from(&path), &metadata)
+}
+
+fn apply_changes_sync(meta_path: &Path, payload: &Value) -> Result<(), String> {
     let parent = meta_path
         .parent()
         .ok_or_else(|| format!("metadata path has no parent: {}", meta_path.display()))?;
     let original_path = parent.join("metadata.original.json");
 
     if meta_path.exists() && !original_path.exists() {
-        fs::copy(&meta_path, &original_path).map_err(|e| {
+        fs::copy(meta_path, &original_path).map_err(|e| {
             format!(
                 "failed to back up {} to {}: {}",
                 meta_path.display(),
@@ -34,7 +37,7 @@ async fn apply_changes(path: String, metadata: Value) -> Result<(), String> {
         })?;
     }
 
-    write_metadata_atomic(&meta_path, &metadata)
+    write_metadata_atomic(meta_path, payload)
 }
 
 fn write_metadata_atomic(path: &Path, payload: &Value) -> Result<(), String> {
@@ -107,5 +110,56 @@ mod tests {
         write_metadata_atomic(&target, &payload).unwrap();
         let roundtrip: Value = serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
         assert_eq!(roundtrip, payload);
+    }
+
+    #[test]
+    fn apply_changes_creates_backup_on_first_call() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let backup = tmp.path().join("metadata.original.json");
+        let original = json!({"source": "a.mkv", "matches": [{"m": 1}]});
+        fs::write(&meta, serde_json::to_string_pretty(&original).unwrap()).unwrap();
+
+        let edited = json!({"source": "a.mkv", "matches": [{"m": 1, "edited": true}]});
+        apply_changes_sync(&meta, &edited).unwrap();
+
+        assert!(backup.exists());
+        let backup_value: Value =
+            serde_json::from_str(&fs::read_to_string(&backup).unwrap()).unwrap();
+        assert_eq!(backup_value, original);
+        let current: Value = serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
+        assert_eq!(current, edited);
+    }
+
+    #[test]
+    fn apply_changes_preserves_backup_across_subsequent_calls() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let backup = tmp.path().join("metadata.original.json");
+        let original = json!({"version": "v1"});
+        fs::write(&meta, serde_json::to_string_pretty(&original).unwrap()).unwrap();
+
+        apply_changes_sync(&meta, &json!({"version": "v2"})).unwrap();
+        apply_changes_sync(&meta, &json!({"version": "v3"})).unwrap();
+        apply_changes_sync(&meta, &json!({"version": "v4"})).unwrap();
+
+        // backup stays the very first snapshot
+        let backup_value: Value =
+            serde_json::from_str(&fs::read_to_string(&backup).unwrap()).unwrap();
+        assert_eq!(backup_value, original);
+        let current: Value = serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
+        assert_eq!(current, json!({"version": "v4"}));
+    }
+
+    #[test]
+    fn apply_changes_skips_backup_when_target_missing() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let backup = tmp.path().join("metadata.original.json");
+        // No pre-existing metadata.json
+        apply_changes_sync(&meta, &json!({"first": true})).unwrap();
+        assert!(meta.exists());
+        // No backup created because there was nothing to back up
+        assert!(!backup.exists());
     }
 }

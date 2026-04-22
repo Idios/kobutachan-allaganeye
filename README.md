@@ -29,6 +29,7 @@ Windows 専用です。Python や FFmpeg の事前インストールは必要あ
 
 - [Developer Setup Guide](docs/developer-setup.md) — ソースコードから動かす手順（Git / Python / venv）
 - [CLI コマンド仕様](docs/cli-spec.md)
+- [metadata.json 仕様](docs/metadata-spec.md) — CLI ↔ GUI の契約 (#463)
 - [出力仕様マトリクス](docs/output-spec.md)
 - [システムアーキテクチャ](docs/design-overview.md)
 - [動画処理設計](docs/video-processing.md)
