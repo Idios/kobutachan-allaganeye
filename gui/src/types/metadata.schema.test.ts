@@ -100,4 +100,21 @@ describe('MetadataSchema', () => {
     doc.gaps = [];
     expect(MetadataSchema.safeParse(doc).success).toBe(true);
   });
+
+  it('rejects a gap with end_time < start_time', () => {
+    const doc = {
+      ...validMetadata(),
+      gaps: [
+        {
+          start_time: 100,
+          end_time: 50,
+          start_display: '1:40',
+          end_display: '0:50',
+          duration: 50,
+          duration_display: '50s',
+        },
+      ],
+    };
+    expect(MetadataSchema.safeParse(doc).success).toBe(false);
+  });
 });

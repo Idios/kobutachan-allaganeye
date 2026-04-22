@@ -26,14 +26,18 @@ export const MatchSchema = z
     message: 'end_time must be >= start_time',
   });
 
-export const GapSchema = z.object({
-  start_time: z.number().min(0),
-  end_time: z.number().min(0),
-  start_display: z.string(),
-  end_display: z.string(),
-  duration: z.number().min(0),
-  duration_display: z.string(),
-});
+export const GapSchema = z
+  .object({
+    start_time: z.number().min(0),
+    end_time: z.number().min(0),
+    start_display: z.string(),
+    end_display: z.string(),
+    duration: z.number().min(0),
+    duration_display: z.string(),
+  })
+  .refine((g) => g.end_time >= g.start_time, {
+    message: 'end_time must be >= start_time',
+  });
 
 export const MetadataSchema = z
   .object({

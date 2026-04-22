@@ -167,3 +167,45 @@ describe('useMetadataStore.apply', () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });
+
+describe('useMetadataStore.clear', () => {
+  it('resets the store to its initial empty state', () => {
+    useMetadataStore.setState({
+      metadata: validMetadata(),
+      filePath: '/tmp/x/metadata.json',
+      dirty: true,
+      loadError: 'prev error',
+      applying: true,
+      applyError: 'prev apply error',
+    });
+
+    useMetadataStore.getState().clear();
+
+    const s = useMetadataStore.getState();
+    expect(s.metadata).toBeNull();
+    expect(s.filePath).toBeNull();
+    expect(s.dirty).toBe(false);
+    expect(s.loadError).toBeNull();
+    expect(s.applying).toBe(false);
+    expect(s.applyError).toBeNull();
+  });
+});
+
+describe('useMetadataStore.reset', () => {
+  it('only clears the dirty flag and preserves metadata + filePath', () => {
+    const meta = validMetadata();
+    useMetadataStore.setState({
+      metadata: meta,
+      filePath: '/tmp/x/metadata.json',
+      dirty: true,
+    });
+
+    useMetadataStore.getState().reset();
+
+    const s = useMetadataStore.getState();
+    expect(s.metadata).not.toBeNull();
+    expect(s.metadata).toEqual(meta);
+    expect(s.filePath).toBe('/tmp/x/metadata.json');
+    expect(s.dirty).toBe(false);
+  });
+});
