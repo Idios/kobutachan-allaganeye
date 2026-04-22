@@ -52,6 +52,45 @@ function validMetadata(): Metadata {
   };
 }
 
+/**
+ * Set up an invoke mock that dispatches per command name. Tests can override
+ * specific commands via .mockImplementationOnce(...) or by configuring this
+ * map further.
+ */
+interface MockConfig {
+  load_metadata?: unknown;
+  load_metadata_error?: Error;
+  apply_changes?: unknown;
+  apply_changes_error?: Error;
+  restore_from_original?: unknown;
+  restore_from_original_error?: Error;
+  check_backup_exists?: boolean;
+  check_backup_exists_error?: Error;
+}
+
+function configureInvoke(cfg: MockConfig) {
+  invokeMock.mockImplementation((cmd: string) => {
+    switch (cmd) {
+      case 'load_metadata':
+        if (cfg.load_metadata_error) return Promise.reject(cfg.load_metadata_error);
+        return Promise.resolve(cfg.load_metadata);
+      case 'apply_changes':
+        if (cfg.apply_changes_error) return Promise.reject(cfg.apply_changes_error);
+        return Promise.resolve(cfg.apply_changes);
+      case 'restore_from_original':
+        if (cfg.restore_from_original_error)
+          return Promise.reject(cfg.restore_from_original_error);
+        return Promise.resolve(cfg.restore_from_original);
+      case 'check_backup_exists':
+        if (cfg.check_backup_exists_error)
+          return Promise.reject(cfg.check_backup_exists_error);
+        return Promise.resolve(cfg.check_backup_exists ?? false);
+      default:
+        return Promise.reject(new Error(`unmocked invoke: ${cmd}`));
+    }
+  });
+}
+
 beforeEach(() => {
   invokeMock.mockReset();
   useMetadataStore.getState().clear();
@@ -59,28 +98,39 @@ beforeEach(() => {
 
 describe('useMetadataStore.load', () => {
   it('populates metadata + filePath + clears dirty on success', async () => {
-    invokeMock.mockResolvedValueOnce(validMetadata());
+    configureInvoke({ load_metadata: validMetadata(), check_backup_exists: false });
     await useMetadataStore.getState().load('C:/videos/out/metadata.json');
     const state = useMetadataStore.getState();
     expect(state.metadata).not.toBeNull();
     expect(state.filePath).toBe('C:/videos/out/metadata.json');
     expect(state.dirty).toBe(false);
     expect(state.loadError).toBeNull();
+    expect(state.hasBackup).toBe(false);
     expect(invokeMock).toHaveBeenCalledWith('load_metadata', {
+      path: 'C:/videos/out/metadata.json',
+    });
+    expect(invokeMock).toHaveBeenCalledWith('check_backup_exists', {
       path: 'C:/videos/out/metadata.json',
     });
   });
 
+  it('sets hasBackup=true when backup exists after load', async () => {
+    configureInvoke({ load_metadata: validMetadata(), check_backup_exists: true });
+    await useMetadataStore.getState().load('p');
+    expect(useMetadataStore.getState().hasBackup).toBe(true);
+  });
+
   it('sets loadError when invoke rejects', async () => {
-    invokeMock.mockRejectedValueOnce(new Error('nope'));
+    configureInvoke({ load_metadata_error: new Error('nope') });
     await useMetadataStore.getState().load('C:/missing/metadata.json');
     const state = useMetadataStore.getState();
     expect(state.metadata).toBeNull();
     expect(state.loadError).toContain('nope');
+    expect(state.hasBackup).toBe(false);
   });
 
   it('sets loadError when schema validation fails', async () => {
-    invokeMock.mockResolvedValueOnce({ bogus: true });
+    configureInvoke({ load_metadata: { bogus: true } });
     await useMetadataStore.getState().load('x');
     expect(useMetadataStore.getState().metadata).toBeNull();
     expect(useMetadataStore.getState().loadError).toBeTruthy();
@@ -89,7 +139,7 @@ describe('useMetadataStore.load', () => {
 
 describe('useMetadataStore.updateMatch', () => {
   it('applies name / type_override / edited and flips dirty', async () => {
-    invokeMock.mockResolvedValueOnce(validMetadata());
+    configureInvoke({ load_metadata: validMetadata(), check_backup_exists: false });
     await useMetadataStore.getState().load('p');
     useMetadataStore.getState().updateMatch(1, {
       name: 'Round 1',
@@ -114,21 +164,25 @@ describe('useMetadataStore.updateMatch', () => {
 
 describe('useMetadataStore.apply', () => {
   it('normalizes edited/type_override into canonical fields and clears dirty', async () => {
-    invokeMock.mockResolvedValueOnce(validMetadata());
+    configureInvoke({
+      load_metadata: validMetadata(),
+      apply_changes: undefined,
+      check_backup_exists: true,
+    });
     await useMetadataStore.getState().load('p');
     useMetadataStore.getState().updateMatch(1, {
       edited: { start_time: 10, end_time: 900 },
       type_override: 'unknown',
       name: 'My match',
     });
-    invokeMock.mockResolvedValueOnce(undefined);
     await useMetadataStore.getState().apply();
     const state = useMetadataStore.getState();
     expect(state.dirty).toBe(false);
     expect(state.applyError).toBeNull();
-    const sentArgs = invokeMock.mock.calls[invokeMock.mock.calls.length - 1];
-    expect(sentArgs[0]).toBe('apply_changes');
-    const persistedMatches = (sentArgs[1] as { metadata: Metadata }).metadata
+    expect(state.hasBackup).toBe(true);
+    const applyCall = invokeMock.mock.calls.find((c) => c[0] === 'apply_changes');
+    expect(applyCall).toBeDefined();
+    const persistedMatches = (applyCall![1] as { metadata: Metadata }).metadata
       .matches;
     expect(persistedMatches[0].start_time).toBe(10);
     expect(persistedMatches[0].end_time).toBe(900);
@@ -140,21 +194,27 @@ describe('useMetadataStore.apply', () => {
   });
 
   it('does not change canonical type when type_override is skip', async () => {
-    invokeMock.mockResolvedValueOnce(validMetadata());
+    configureInvoke({
+      load_metadata: validMetadata(),
+      apply_changes: undefined,
+      check_backup_exists: true,
+    });
     await useMetadataStore.getState().load('p');
     useMetadataStore.getState().updateMatch(1, { type_override: 'skip' });
-    invokeMock.mockResolvedValueOnce(undefined);
     await useMetadataStore.getState().apply();
-    const sentArgs = invokeMock.mock.calls[invokeMock.mock.calls.length - 1];
-    const match = (sentArgs[1] as { metadata: Metadata }).metadata.matches[0];
+    const applyCall = invokeMock.mock.calls.find((c) => c[0] === 'apply_changes');
+    const match = (applyCall![1] as { metadata: Metadata }).metadata.matches[0];
     expect(match.type).toBe('fl_match');
   });
 
   it('sets applyError when invoke rejects', async () => {
-    invokeMock.mockResolvedValueOnce(validMetadata());
+    configureInvoke({
+      load_metadata: validMetadata(),
+      apply_changes_error: new Error('write failed'),
+      check_backup_exists: false,
+    });
     await useMetadataStore.getState().load('p');
     useMetadataStore.getState().updateMatch(1, { name: 'x' });
-    invokeMock.mockRejectedValueOnce(new Error('write failed'));
     await useMetadataStore.getState().apply();
     const state = useMetadataStore.getState();
     expect(state.applying).toBe(false);
@@ -163,13 +223,14 @@ describe('useMetadataStore.apply', () => {
   });
 
   it('no-ops when metadata is not loaded', async () => {
+    configureInvoke({});
     await useMetadataStore.getState().apply();
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });
 
 describe('useMetadataStore.clear', () => {
-  it('resets the store to its initial empty state', () => {
+  it('resets the store to its initial empty state including #516 fields', () => {
     useMetadataStore.setState({
       metadata: validMetadata(),
       filePath: '/tmp/x/metadata.json',
@@ -177,6 +238,9 @@ describe('useMetadataStore.clear', () => {
       loadError: 'prev error',
       applying: true,
       applyError: 'prev apply error',
+      hasBackup: true,
+      restoring: true,
+      restoreError: 'prev restore error',
     });
 
     useMetadataStore.getState().clear();
@@ -188,6 +252,9 @@ describe('useMetadataStore.clear', () => {
     expect(s.loadError).toBeNull();
     expect(s.applying).toBe(false);
     expect(s.applyError).toBeNull();
+    expect(s.hasBackup).toBe(false);
+    expect(s.restoring).toBe(false);
+    expect(s.restoreError).toBeNull();
   });
 });
 
@@ -207,5 +274,88 @@ describe('useMetadataStore.reset', () => {
     expect(s.metadata).toEqual(meta);
     expect(s.filePath).toBe('/tmp/x/metadata.json');
     expect(s.dirty).toBe(false);
+  });
+});
+
+describe('useMetadataStore.restore (#516)', () => {
+  it('invokes restore_from_original and reloads metadata', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      restore_from_original: undefined,
+      check_backup_exists: true,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, { name: 'dirty' });
+    expect(useMetadataStore.getState().dirty).toBe(true);
+
+    await useMetadataStore.getState().restore();
+
+    const state = useMetadataStore.getState();
+    expect(state.restoring).toBe(false);
+    expect(state.restoreError).toBeNull();
+    expect(state.dirty).toBe(false);
+    // metadata was reloaded fresh (no longer dirty name)
+    expect(state.metadata?.matches[0].name).toBeUndefined();
+    const restoreCall = invokeMock.mock.calls.find(
+      (c) => c[0] === 'restore_from_original',
+    );
+    expect(restoreCall?.[1]).toEqual({ path: 'p' });
+  });
+
+  it('sets restoreError when the invoke rejects', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      restore_from_original_error: new Error('no backup'),
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    await useMetadataStore.getState().restore();
+    const state = useMetadataStore.getState();
+    expect(state.restoring).toBe(false);
+    expect(state.restoreError).toContain('no backup');
+  });
+
+  it('no-ops when filePath is null (e.g. after loadSample)', async () => {
+    configureInvoke({});
+    useMetadataStore.getState().loadSample();
+    await useMetadataStore.getState().restore();
+    // only loadSample should have run — no invoke calls at all
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('useMetadataStore.refreshBackupStatus (#516)', () => {
+  it('updates hasBackup based on check_backup_exists', async () => {
+    configureInvoke({ check_backup_exists: true });
+    useMetadataStore.setState({ filePath: '/tmp/m.json' });
+    await useMetadataStore.getState().refreshBackupStatus();
+    expect(useMetadataStore.getState().hasBackup).toBe(true);
+  });
+
+  it('falls back to hasBackup=false when invoke errors', async () => {
+    configureInvoke({ check_backup_exists_error: new Error('fs error') });
+    useMetadataStore.setState({ filePath: '/tmp/m.json', hasBackup: true });
+    await useMetadataStore.getState().refreshBackupStatus();
+    expect(useMetadataStore.getState().hasBackup).toBe(false);
+  });
+
+  it('no-ops when filePath is null', async () => {
+    configureInvoke({});
+    useMetadataStore.setState({ filePath: null, hasBackup: true });
+    await useMetadataStore.getState().refreshBackupStatus();
+    expect(useMetadataStore.getState().hasBackup).toBe(false);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('useMetadataStore.loadSample', () => {
+  it('populates metadata with sample data and null filePath', () => {
+    useMetadataStore.getState().loadSample();
+    const state = useMetadataStore.getState();
+    expect(state.metadata).not.toBeNull();
+    expect(state.metadata?.matches.length).toBeGreaterThan(0);
+    expect(state.filePath).toBeNull();
+    expect(state.dirty).toBe(false);
+    expect(state.hasBackup).toBe(false);
   });
 });

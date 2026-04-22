@@ -1,0 +1,328 @@
+.screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 24px;
+  gap: 16px;
+  position: relative;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.backButton {
+  background: transparent;
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
+  color: var(--ae-gold);
+  padding: 5px 10px;
+  font-family: var(--ae-font-ui);
+  font-size: 10px;
+  letter-spacing: 2px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+
+.backButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.caption {
+  font-family: var(--ae-font-ui);
+  font-size: 9px;
+  letter-spacing: 3px;
+  color: var(--ae-gold-dim);
+  text-transform: uppercase;
+}
+
+.title {
+  font-family: var(--ae-font-ui);
+  font-size: 20px;
+  color: var(--ae-gold-bright);
+  margin-top: 2px;
+  letter-spacing: 1px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+}
+
+.panel {
+  background: var(--ae-bg-deep);
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.13);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: auto;
+}
+
+.panelCaption {
+  font-family: var(--ae-font-ui);
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--ae-gold-dim);
+}
+
+.fieldLabel {
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+  margin-bottom: 4px;
+}
+
+.outDirRow {
+  display: flex;
+  gap: 6px;
+}
+
+.outDirInput {
+  flex: 1;
+  background: var(--ae-bg);
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
+  color: var(--ae-text);
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.pickButton {
+  background: transparent;
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
+  color: var(--ae-gold);
+  padding: 6px 12px;
+  font-family: var(--ae-font-ui);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.nameInput {
+  width: 100%;
+  background: var(--ae-bg);
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
+  color: var(--ae-text);
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.nameHint {
+  font-family: var(--ae-font-mono);
+  font-size: 9px;
+  color: var(--ae-text-dim);
+  margin-top: 4px;
+}
+
+.codecRow {
+  display: flex;
+  gap: 6px;
+}
+
+.codecButton {
+  flex: 1;
+  padding: 10px;
+  background: transparent;
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
+  color: var(--ae-text);
+  font-family: var(--ae-font-ui);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.codecButtonActive {
+  background: rgba(var(--ae-gold-rgb), 0.13);
+  border-color: var(--ae-gold);
+  color: var(--ae-gold-bright);
+}
+
+.codecLabel {
+  font-weight: 600;
+}
+
+.codecSub {
+  font-family: var(--ae-font-mono);
+  font-size: 9px;
+  color: var(--ae-text-dim);
+  margin-top: 2px;
+}
+
+.bottomActions {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.progressBox {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.progressHeader {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+}
+
+.progressLabel {
+  color: var(--ae-gold-bright);
+  font-family: var(--ae-font-ui);
+  letter-spacing: 2px;
+}
+
+.progressBar {
+  height: 8px;
+  background: var(--ae-bg);
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.2);
+  position: relative;
+  overflow: hidden;
+}
+
+.progressFill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, var(--ae-gold-dim), var(--ae-gold-bright));
+  box-shadow: 0 0 10px var(--ae-gold);
+  transition: width 0.2s;
+}
+
+.progressFillDone {
+  background: linear-gradient(90deg, var(--ae-cyan), var(--ae-cyan-bright));
+  box-shadow: none;
+}
+
+.primaryButton {
+  width: 100%;
+  padding: 12px 16px;
+  background: linear-gradient(180deg, var(--ae-gold), var(--ae-gold-dim));
+  border: none;
+  color: var(--ae-bg);
+  font-family: var(--ae-font-ui);
+  font-size: 13px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.primaryButton:disabled {
+  background: var(--ae-gold-dim);
+  cursor: default;
+}
+
+.cancelButton {
+  padding: 10px 18px;
+  background: transparent;
+  border: 1px solid var(--ae-danger);
+  color: var(--ae-danger);
+  font-family: var(--ae-font-ui);
+  font-size: 11px;
+  letter-spacing: 2px;
+  cursor: pointer;
+}
+
+.errorMessage {
+  padding: 8px;
+  background: rgba(200, 112, 88, 0.1);
+  border: 1px solid var(--ae-danger);
+  color: var(--ae-danger);
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+}
+
+.listPanel {
+  background: var(--ae-bg-deep);
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.13);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.listCaption {
+  font-family: var(--ae-font-ui);
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--ae-gold-dim);
+  margin-bottom: 6px;
+  padding: 4px 4px 0;
+}
+
+.listBody {
+  flex: 1;
+  overflow: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.listItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(var(--ae-gold-rgb), 0.07);
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text);
+}
+
+.listMark {
+  color: var(--ae-gold);
+  width: 16px;
+}
+
+.listMarkDone {
+  color: var(--ae-cyan);
+}
+
+.listName {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listDur {
+  color: var(--ae-text-dim);
+}
+
+.listProgress {
+  width: 60px;
+  height: 3px;
+  background: var(--ae-bg);
+  position: relative;
+}
+
+.listProgressFill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--ae-gold);
+}
+
+.listProgressFillDone {
+  background: var(--ae-cyan);
+}
+
+.emptyNote {
+  padding: 24px;
+  text-align: center;
+  color: var(--ae-text-dim);
+}

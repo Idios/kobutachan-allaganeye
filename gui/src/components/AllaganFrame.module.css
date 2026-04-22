@@ -1,0 +1,30 @@
+.frame {
+  position: relative;
+}
+
+.cornerTopLeft {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.cornerTopRight {
+  position: absolute;
+  top: 0;
+  right: 0;
+  transform: rotate(90deg);
+}
+
+.cornerBottomLeft {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  transform: rotate(-90deg);
+}
+
+.cornerBottomRight {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  transform: rotate(180deg);
+}

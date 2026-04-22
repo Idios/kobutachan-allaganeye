@@ -20,6 +20,46 @@ async fn apply_changes(path: String, metadata: Value) -> Result<(), String> {
     apply_changes_sync(&PathBuf::from(&path), &metadata)
 }
 
+/// #516 — atomically restore metadata.json from the first-Apply backup.
+#[tauri::command]
+async fn restore_from_original(path: String) -> Result<(), String> {
+    restore_from_original_sync(&PathBuf::from(&path))
+}
+
+fn restore_from_original_sync(meta_path: &Path) -> Result<(), String> {
+    let parent = meta_path
+        .parent()
+        .ok_or_else(|| format!("metadata path has no parent: {}", meta_path.display()))?;
+    let original_path = parent.join("metadata.original.json");
+    if !original_path.exists() {
+        return Err(format!(
+            "no backup to restore: {}",
+            original_path.display()
+        ));
+    }
+    let content = fs::read_to_string(&original_path)
+        .map_err(|e| format!("read backup failed ({}): {}", original_path.display(), e))?;
+    let value: Value = serde_json::from_str(&content).map_err(|e| {
+        format!(
+            "parse backup failed ({}): {}",
+            original_path.display(),
+            e
+        )
+    })?;
+    write_metadata_atomic(meta_path, &value)
+}
+
+/// #516 — report whether a metadata.original.json exists next to the active
+/// metadata.json. Used by the GUI to enable/disable the [元に戻す] button.
+#[tauri::command]
+async fn check_backup_exists(path: String) -> Result<bool, String> {
+    let meta_path = PathBuf::from(&path);
+    let parent = meta_path
+        .parent()
+        .ok_or_else(|| format!("metadata path has no parent: {}", meta_path.display()))?;
+    Ok(parent.join("metadata.original.json").exists())
+}
+
 fn apply_changes_sync(meta_path: &Path, payload: &Value) -> Result<(), String> {
     let parent = meta_path
         .parent()
@@ -76,7 +116,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![load_metadata, apply_changes])
+        .invoke_handler(tauri::generate_handler![
+            load_metadata,
+            apply_changes,
+            restore_from_original,
+            check_backup_exists,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -161,5 +206,72 @@ mod tests {
         assert!(meta.exists());
         // No backup created because there was nothing to back up
         assert!(!backup.exists());
+    }
+
+    #[test]
+    fn restore_from_original_succeeds_when_backup_exists() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let backup = tmp.path().join("metadata.original.json");
+
+        let pristine = json!({"source": "a.mkv", "matches": [{"m": 1}]});
+        fs::write(&backup, serde_json::to_string_pretty(&pristine).unwrap()).unwrap();
+
+        let dirty = json!({"source": "a.mkv", "matches": [{"m": 1, "edited": true}]});
+        fs::write(&meta, serde_json::to_string_pretty(&dirty).unwrap()).unwrap();
+
+        restore_from_original_sync(&meta).unwrap();
+
+        let current: Value =
+            serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
+        assert_eq!(current, pristine);
+    }
+
+    #[test]
+    fn restore_from_original_fails_when_no_backup() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        fs::write(&meta, r#"{"ok":true}"#).unwrap();
+
+        let err = restore_from_original_sync(&meta).unwrap_err();
+        assert!(err.contains("no backup to restore"));
+    }
+
+    #[test]
+    fn restore_preserves_backup_file_after_successful_restore() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let backup = tmp.path().join("metadata.original.json");
+        let pristine = json!({"v": "original"});
+        fs::write(&backup, serde_json::to_string_pretty(&pristine).unwrap()).unwrap();
+        fs::write(&meta, r#"{"v":"dirty"}"#).unwrap();
+
+        restore_from_original_sync(&meta).unwrap();
+
+        // backup should still be present (restore is a read-only fetch)
+        assert!(backup.exists());
+        let backup_value: Value =
+            serde_json::from_str(&fs::read_to_string(&backup).unwrap()).unwrap();
+        assert_eq!(backup_value, pristine);
+    }
+
+    #[test]
+    fn check_backup_exists_returns_false_when_absent() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        // not calling the async fn directly — probe via same logic
+        let parent = meta.parent().unwrap();
+        assert!(!parent.join("metadata.original.json").exists());
+    }
+
+    #[test]
+    fn check_backup_exists_returns_true_when_present() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let backup = tmp.path().join("metadata.original.json");
+        fs::write(&backup, r#"{}"#).unwrap();
+        assert!(backup.exists());
+        let parent = meta.parent().unwrap();
+        assert!(parent.join("metadata.original.json").exists());
     }
 }

@@ -1,0 +1,29 @@
+.sigil {
+  position: relative;
+  display: inline-block;
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+}
+
+@keyframes ae-spin-cw {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes ae-spin-ccw {
+  to { transform: rotate(-360deg); }
+}
+
+.rotateCw24s {
+  animation: ae-spin-cw 24s linear infinite;
+}
+
+.rotateCcw16s {
+  animation: ae-spin-ccw 16s linear infinite;
+}
+
+.rotateCw10s {
+  animation: ae-spin-cw 10s linear infinite;
+}

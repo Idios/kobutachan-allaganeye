@@ -1,0 +1,32 @@
+.switcher {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 50;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--ae-switcher-bg);
+  border: var(--ae-switcher-border);
+  border-radius: 20px;
+  backdrop-filter: blur(8px);
+  font-family: var(--ae-font-ui);
+}
+
+.tab {
+  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  border: none;
+  border-radius: 14px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--ae-switcher-fg);
+  transition: all 0.15s;
+}
+
+.tabActive {
+  background: var(--ae-switcher-active-bg);
+  color: var(--ae-switcher-active-fg);
+}

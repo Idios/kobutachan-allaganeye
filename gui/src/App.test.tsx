@@ -1,16 +1,60 @@
-import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import App from './App';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-describe('App (bootstrap placeholder)', () => {
-  it('renders placeholder heading', () => {
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  open: vi.fn(),
+}));
+
+import App from './App';
+import { useAppStateStore } from './state/appStateStore';
+import { useMetadataStore } from './state/metadataStore';
+
+beforeEach(() => {
+  useAppStateStore.getState().reset();
+  useMetadataStore.getState().clear();
+});
+
+describe('App routing', () => {
+  it('renders the drop screen by default on launch', () => {
     render(<App />);
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Allagan Eye');
+    expect(screen.getByTestId('drop-screen')).toBeInTheDocument();
   });
 
-  it('renders bootstrap notice mentioning issue #483', () => {
+  it('renders the detecting screen when navigate("detecting")', () => {
+    useAppStateStore.getState().setSelectedVideoPath('/x/video.mkv');
+    useAppStateStore.getState().navigate('detecting');
     render(<App />);
-    expect(screen.getByText(/bootstrap/i)).toBeInTheDocument();
-    expect(screen.getByText(/#483/)).toBeInTheDocument();
+    expect(screen.getByTestId('detecting-screen')).toBeInTheDocument();
+  });
+
+  it('renders the complete screen when store has sample metadata', () => {
+    useMetadataStore.getState().loadSample();
+    useAppStateStore.getState().navigate('complete');
+    render(<App />);
+    expect(screen.getByTestId('complete-screen')).toBeInTheDocument();
+  });
+
+  it('renders the preview screen', () => {
+    useMetadataStore.getState().loadSample();
+    useAppStateStore.getState().openPreviewFor(4);
+    render(<App />);
+    expect(screen.getByTestId('preview-screen')).toBeInTheDocument();
+  });
+
+  it('renders the export screen', () => {
+    useMetadataStore.getState().loadSample();
+    useAppStateStore.getState().navigate('export');
+    render(<App />);
+    expect(screen.getByTestId('export-screen')).toBeInTheDocument();
+  });
+
+  it('renders the window chrome + side rail on every screen', () => {
+    render(<App />);
+    expect(screen.getByTestId('window-chrome')).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Allagan Eye navigation' })).toBeInTheDocument();
   });
 });

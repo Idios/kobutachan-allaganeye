@@ -1,0 +1,56 @@
+.strip {
+  display: flex;
+  gap: 2px;
+  width: 100%;
+}
+
+.cell {
+  flex: 1;
+  aspect-ratio: 16 / 9;
+  position: relative;
+  cursor: pointer;
+  overflow: hidden;
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.13);
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.cellBoundary {
+  border-color: var(--ae-gold-bright);
+}
+
+.shimmer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.blackOverlay {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.boundaryBar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--ae-gold-bright);
+  box-shadow: 0 0 4px var(--ae-gold-bright);
+  pointer-events: none;
+}
+
+.label {
+  position: absolute;
+  bottom: 1px;
+  left: 2px;
+  font-family: var(--ae-font-mono);
+  font-size: 7px;
+  color: rgba(255, 255, 255, 0.7);
+  pointer-events: none;
+}
