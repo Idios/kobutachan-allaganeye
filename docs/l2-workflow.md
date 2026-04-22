@@ -181,7 +181,7 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 
 1. Claude が `gh` コマンドを発行 → hook が bulk 閾値 (3 件 / 60s) または always gate (PR マージ等) でブロック (exit 2)
 2. Claude は `AskUserQuestion` でサンプル 1 件を提示し、**「全件 OK / 個別調整 / やめる」** の 3 択を問う (Iron Law 2)
-3. ユーザーが承認したら、該当コマンドに `ALLAGANEYE_PREUSE_BYPASS=1 ` prefix を付けて再実行する
+3. ユーザーが承認したら、該当コマンドに `ALLAGANEYE_PREUSE_BYPASS=1` prefix (末尾スペース込み) を付けて再実行する
 
    ```bash
    ALLAGANEYE_PREUSE_BYPASS=1 gh issue close 123
