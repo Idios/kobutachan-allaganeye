@@ -977,3 +977,79 @@ class TestCliOptionCombinations:
         config = mock_run_split.call_args[0][1]
         assert config.dry_run is True
         assert config.no_cache is True
+
+
+# --- detect command + split --from-metadata (#463) ---
+
+
+def test_detect_help():
+    result = runner.invoke(app, ["detect", "--help"])
+    assert result.exit_code == 0
+    assert "detect" in result.stdout.lower()
+    # --dry-run removed from detect (it *is* the dry-run)
+    assert "--dry-run" not in result.stdout
+
+
+@patch("allaganeye.commands.detect.run_detect")
+def test_detect_invokes_run_detect(mock_run_detect, fake_video):
+    result = runner.invoke(app, ["detect", str(fake_video), "-o", "out"])
+    assert result.exit_code == 0, result.stdout
+    mock_run_detect.assert_called_once()
+    args, _kwargs = mock_run_detect.call_args
+    assert args[0] == fake_video
+
+
+@patch("allaganeye.commands.detect.run_detect")
+def test_detect_missing_file_exits_with_input_file_error(mock_run_detect, tmp_path):
+    result = runner.invoke(app, ["detect", str(tmp_path / "missing.mp4")])
+    assert result.exit_code == 2  # InputFileError
+    mock_run_detect.assert_not_called()
+
+
+@patch("allaganeye.commands.detect.run_detect")
+def test_detect_rejects_unsupported_format(mock_run_detect, tmp_path):
+    bad = tmp_path / "input.txt"
+    bad.write_bytes(b"x")
+    result = runner.invoke(app, ["detect", str(bad)])
+    assert result.exit_code == 2  # InputFileError (unsupported)
+    mock_run_detect.assert_not_called()
+
+
+@patch("allaganeye.commands.split_matches.run_split_from_metadata")
+def test_split_from_metadata_invokes_split_from_metadata(mock_run_from_meta, tmp_path):
+    meta = tmp_path / "metadata.json"
+    meta.write_text("{}", encoding="utf-8")
+    result = runner.invoke(app, ["split", "--from-metadata", str(meta)])
+    assert result.exit_code == 0, result.stdout
+    mock_run_from_meta.assert_called_once()
+
+
+def test_split_from_metadata_and_video_path_mutually_exclusive(fake_video, tmp_path):
+    meta = tmp_path / "metadata.json"
+    meta.write_text("{}", encoding="utf-8")
+    result = runner.invoke(
+        app, ["split", str(fake_video), "--from-metadata", str(meta)]
+    )
+    assert result.exit_code == 5  # ConfigValidationError
+
+
+def test_split_requires_one_of_video_path_or_from_metadata():
+    result = runner.invoke(app, ["split"])
+    # typer shows help and exits when neither is given, or our mutex error
+    assert result.exit_code != 0
+
+
+@patch("allaganeye.commands.split_matches.run_split_from_metadata")
+def test_split_from_metadata_dry_run_rejected(mock_run_from_meta, tmp_path):
+    meta = tmp_path / "metadata.json"
+    meta.write_text("{}", encoding="utf-8")
+    result = runner.invoke(app, ["split", "--from-metadata", str(meta), "--dry-run"])
+    assert result.exit_code == 5  # ConfigValidationError
+    mock_run_from_meta.assert_not_called()
+
+
+def test_split_from_metadata_missing_file_exits_with_input_file_error(tmp_path):
+    result = runner.invoke(
+        app, ["split", "--from-metadata", str(tmp_path / "nope.json")]
+    )
+    assert result.exit_code == 2  # InputFileError

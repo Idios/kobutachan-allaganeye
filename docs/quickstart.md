@@ -105,7 +105,10 @@ Allagan Eye は FF14 フロントラインの一般的な録画に合わせて�
 3. 例:
 
     ```cmd
-    rem 検知結果だけ確認（分割しない）
+    rem 検知結果だけ確認（分割しない、推奨）
+    allaganeye.bat detect "C:\Users\あなた\Videos\動画.mkv"
+
+    rem 旧形式（--dry-run）も後方互換で利用可能
     allaganeye.bat split "C:\Users\あなた\Videos\動画.mkv" --dry-run
 
     rem 出力先を変える

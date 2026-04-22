@@ -49,8 +49,21 @@ def main(
 @app.command()
 def split(
     video_path: Annotated[
-        Path, typer.Argument(help="Input video file (MP4/MKV/AVI/MOV)")
-    ],
+        Path | None,
+        typer.Argument(
+            help="Input video file (MP4/MKV/AVI/MOV). Mutually exclusive "
+            "with --from-metadata."
+        ),
+    ] = None,
+    from_metadata: Annotated[
+        Path | None,
+        typer.Option(
+            "--from-metadata",
+            help="Path to a metadata.json produced by `allaganeye detect`. "
+            "When given, detection is skipped and only the ffmpeg split "
+            "phase runs. Mutually exclusive with VIDEO_PATH (#463).",
+        ),
+    ] = None,
     output_dir: Annotated[
         Path, typer.Option("-o", "--output-dir", help="Output directory")
     ] = Path("./output"),
@@ -75,7 +88,12 @@ def split(
         typer.Option(help="Number of parallel workers for detection (default: auto)"),
     ] = None,
     dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="Detect only, do not split")
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Detect only, do not split. Consider using `allaganeye detect` "
+            "instead (#463).",
+        ),
     ] = False,
     gpu: Annotated[
         bool,
@@ -120,13 +138,26 @@ def split(
 ) -> None:
     """Split a long recording into per-match video files."""
     try:
-        # Mutual exclusion checks (#419). Raised before any file / config
+        # Mutual exclusion checks (#419 / #463). Raised before any file / config
         # validation so users get a single, deterministic error even when
         # their command would otherwise fail for other reasons too.
         if verbose and quiet:
             raise ConfigValidationError("--quiet and --verbose are mutually exclusive")
         if gpu and no_gpu:
             raise ConfigValidationError("--gpu and --no-gpu are mutually exclusive")
+        if video_path is not None and from_metadata is not None:
+            raise ConfigValidationError(
+                "VIDEO_PATH and --from-metadata are mutually exclusive"
+            )
+        if video_path is None and from_metadata is None:
+            raise ConfigValidationError(
+                "One of VIDEO_PATH or --from-metadata must be provided"
+            )
+        if from_metadata is not None and dry_run:
+            raise ConfigValidationError(
+                "--dry-run is not compatible with --from-metadata "
+                "(use `allaganeye detect` to regenerate metadata)"
+            )
 
         # Collapse the two independent flags back into the tri-state
         # (True / False / None=auto) that SplitConfig.use_gpu expects.
@@ -140,6 +171,27 @@ def split(
         else:
             use_gpu = None
 
+        if from_metadata is not None:
+            if not from_metadata.exists():
+                raise InputFileError(f"Metadata file not found: {from_metadata}")
+            config = SplitConfig(
+                output_dir=output_dir,
+                sample_interval=sample_interval,
+                blackout_threshold=blackout_threshold,
+                min_match_duration=min_match_duration,
+                min_blackout_duration=min_blackout_duration,
+                dry_run=False,
+                use_gpu=use_gpu,
+                workers=workers,
+                no_cache=no_cache,
+                no_audio=no_audio,
+            )
+            from allaganeye.commands.split_matches import run_split_from_metadata
+
+            run_split_from_metadata(from_metadata, config, verbose=verbose, quiet=quiet)
+            return
+
+        assert video_path is not None  # for type-checker; mutex-checked above
         if not video_path.exists():
             raise InputFileError(f"File not found: {video_path}")
 
@@ -165,6 +217,128 @@ def split(
         from allaganeye.commands.split_matches import run_split
 
         run_split(video_path, config, verbose=verbose, quiet=quiet)
+
+    except AllaganEyeError as e:
+        _report_app_error(e, verbose=verbose, quiet=quiet)
+        raise typer.Exit(code=e.exit_code) from None
+    except Exception:
+        _report_unexpected_error(verbose=verbose, quiet=quiet)
+        raise typer.Exit(code=1) from None
+
+
+@app.command()
+def detect(
+    video_path: Annotated[
+        Path, typer.Argument(help="Input video file (MP4/MKV/AVI/MOV)")
+    ],
+    output_dir: Annotated[
+        Path, typer.Option("-o", "--output-dir", help="Output directory")
+    ] = Path("./output"),
+    sample_interval: Annotated[
+        float, typer.Option(help="Frame sampling interval in seconds")
+    ] = 1.0,
+    blackout_threshold: Annotated[
+        float, typer.Option(help="Blackout detection brightness threshold (0-255)")
+    ] = 15.0,
+    min_match_duration: Annotated[
+        float, typer.Option(help="Minimum match duration in seconds")
+    ] = 300.0,
+    min_blackout_duration: Annotated[
+        float,
+        typer.Option(
+            help="Minimum blackout duration to treat as match boundary (seconds). "
+            "Shorter blackouts (e.g. respawn) are ignored."
+        ),
+    ] = 3.0,
+    workers: Annotated[
+        int | None,
+        typer.Option(help="Number of parallel workers for detection (default: auto)"),
+    ] = None,
+    gpu: Annotated[
+        bool,
+        typer.Option(
+            "--gpu",
+            help="Force GPU-accelerated detection. Falls back to CPU if "
+            "GPU is unavailable. Mutually exclusive with --no-gpu.",
+        ),
+    ] = False,
+    no_gpu: Annotated[
+        bool,
+        typer.Option(
+            "--no-gpu",
+            help="Force CPU detection, disabling GPU acceleration. "
+            "Mutually exclusive with --gpu.",
+        ),
+    ] = False,
+    no_cache: Annotated[
+        bool,
+        typer.Option("--no-cache", help="Ignore cached detection results"),
+    ] = False,
+    no_audio: Annotated[
+        bool,
+        typer.Option(
+            "--no-audio",
+            help="Disable audio-based match boundary promotion (Fanfare scan). "
+            "Currently frozen: audio scan is always skipped regardless of this flag.",
+        ),
+    ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "-v", "--verbose", help="Verbose output (metadata details, gap info)"
+        ),
+    ] = False,
+    quiet: Annotated[
+        bool,
+        typer.Option(
+            "-q", "--quiet", help="Suppress progress output (final result only)"
+        ),
+    ] = False,
+) -> None:
+    """Run detection only and write metadata.json (no split, #463).
+
+    Subsequent ``allaganeye split --from-metadata <metadata.json>`` can use
+    the output to produce match files without redetecting.
+    """
+    try:
+        if verbose and quiet:
+            raise ConfigValidationError("--quiet and --verbose are mutually exclusive")
+        if gpu and no_gpu:
+            raise ConfigValidationError("--gpu and --no-gpu are mutually exclusive")
+
+        use_gpu: bool | None
+        if gpu:
+            use_gpu = True
+        elif no_gpu:
+            use_gpu = False
+        else:
+            use_gpu = None
+
+        if not video_path.exists():
+            raise InputFileError(f"File not found: {video_path}")
+
+        if video_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            raise InputFileError(
+                f"Unsupported format: {video_path.suffix}. "
+                f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
+            )
+
+        config = SplitConfig(
+            output_dir=output_dir,
+            sample_interval=sample_interval,
+            blackout_threshold=blackout_threshold,
+            min_match_duration=min_match_duration,
+            min_blackout_duration=min_blackout_duration,
+            dry_run=False,
+            use_gpu=use_gpu,
+            workers=workers,
+            no_cache=no_cache,
+            no_audio=no_audio,
+        )
+
+        from allaganeye.commands.detect import run_detect
+
+        run_detect(video_path, config, verbose=verbose, quiet=quiet)
 
     except AllaganEyeError as e:
         _report_app_error(e, verbose=verbose, quiet=quiet)

@@ -17,19 +17,27 @@ CLI コマンド・引数・オプションの**構文**をまとめる。各オ
 
 ## split コマンド
 
-試合単位で動画を分割する。
+試合単位で動画を分割する。`detect` との関係:
+
+- **`allaganeye split <video>`**: 従来通り、検知 → 分割を一気通貫で実行 (後方互換)
+- **`allaganeye split --from-metadata <metadata.json>`**: 既存の `metadata.json` を読み込んで分割のみ実行 (#463)
+- **`allaganeye detect <video>`** (別コマンド、後述): 検知のみ実行し `metadata.json` を出力
+
+GUI (L2a) は `detect` で観測し、ユーザー編集後に `split --from-metadata` を呼ぶ 2 段階フローを採用。
 
 ### 構文
 
 ```bash
 allaganeye split <video_path> [OPTIONS]
+allaganeye split --from-metadata <metadata.json> [OPTIONS]
 ```
 
 ### 引数
 
 | 引数 | 必須 | 説明 |
 |---|---|---|
-| `video_path` | Yes | 入力動画ファイルのパス（MP4/MKV/AVI/MOV） |
+| `video_path` | 下記いずれか | 入力動画ファイルのパス（MP4/MKV/AVI/MOV）。`--from-metadata` と排他 |
+| `--from-metadata` | 下記いずれか | `allaganeye detect` が出力した `metadata.json` のパス。指定時は検知をスキップし分割のみ実行 (#463)。`video_path` / `--dry-run` と排他 |
 
 ### オプション
 
@@ -174,6 +182,10 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 
 分割結果の機械可読な記録。外部ツールやスクリプトから参照可能。L3（メタデータ化）パイプラインの入力として使用予定。L3 未着手のため、フィールド構造は暫定であり破壊的変更の可能性がある。
 
+**キーフレーム精度の注意点**: `split` は `ffmpeg -c copy` で再エンコードなしに分割する。このため各 match の `start_time` / `end_time` は元動画のキーフレーム位置に丸められ、検知された boundary とは最大でキーフレーム間隔 (OBS 録画で通常 2 秒) 程度ずれうる。従来 `note` フィールドに埋めていた文言はスキーマから取り除き、本仕様書の説明に移した (#463)。
+
+**スキーマ契約の総論**は [`docs/metadata-spec.md`](metadata-spec.md) を参照。生成契約・書き込み方針・GUI 編集契約・`metadata.original.json` policy・手動編集シナリオ・将来拡張が集約されている。
+
 **トップレベル:**
 
 | フィールド | 型 | 説明 |
@@ -181,7 +193,6 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 | `source` | string | 入力動画のファイルパス |
 | `source_duration` | float | 入力動画の総再生時間（秒） |
 | `source_duration_display` | string | 総再生時間の表示形式（MM:SS or H:MM:SS） |
-| `note` | string | キーフレーム精度に関する注意書き |
 | `detected_at` | string | **metadata.json 生成時刻** (UTC ISO 8601 秒精度、`Z` 終端、例: `"2026-04-19T12:34:56Z"`)。`run_split` 開始直後に生成し、キャッシュヒット時も本ランの生成時刻を記録する。検知自体が cache から復元されたか否かではなく、当該 metadata ファイルがいつ書き出されたかのトレーサビリティとして機能する |
 | `detection_params` | object | 検知パラメータのスナップショット（下表） |
 | `matches` | array | 検出された試合セグメント |
@@ -225,6 +236,64 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 | `no_audio` | bool | 音声ベースの境界昇格 (Fanfare スキャン) を無効化したか |
 | `use_gpu` | bool \| null | GPU 検知の指定値。`null` は CLI で `--gpu` を指定せずコーデック自動選択に任せたことを示す |
 | `workers` | int \| null | 並列ワーカー数の指定値。`null` は auto（`_resolve_workers` が `min(cpu_count, 24)` で解決）を示す |
+
+## detect コマンド
+
+検知のみ実行し `metadata.json` を生成する (#463)。`split` コマンドから検知部分だけを分離したもので、GUI (L2a) が検知結果を編集する前段として使う想定。`split --from-metadata` と対で使い、検知と分割を分離運用できる。
+
+### 構文
+
+```bash
+allaganeye detect <video_path> [OPTIONS]
+```
+
+### 引数
+
+| 引数 | 必須 | 説明 |
+|---|---|---|
+| `video_path` | Yes | 入力動画ファイルのパス（MP4/MKV/AVI/MOV） |
+
+### オプション
+
+`split` と同じオプションセットだが `--dry-run` は存在しない (detect 自体が "dry-run 相当" のため)。
+
+| オプション | デフォルト | 説明 |
+|---|---|---|
+| `-o`, `--output-dir` | `./output` | 出力ディレクトリ (`metadata.json` の配置先) |
+| `--sample-interval` | `1.0` | フレームサンプリング間隔（秒） |
+| `--blackout-threshold` | `15.0` | 暗転検知の輝度閾値（0-255） |
+| `--min-match-duration` | `300.0` | 最小試合時間（秒） |
+| `--min-blackout-duration` | `3.0` | 最小暗転時間（秒） |
+| `--workers` | auto | 検知の並列ワーカー数 |
+| `--gpu` / `--no-gpu` | auto | GPU 強制 / CPU 強制 (排他) |
+| `--no-cache` | `false` | キャッシュ無視で再検知 |
+| `--no-audio` | `false` | 音声昇格無効化 (現在 frozen) |
+| `-v`, `--verbose` | `false` | 詳細出力 |
+| `-q`, `--quiet` | `false` | 進捗出力抑制 |
+
+### 出力
+
+- `<output_dir>/metadata.json` のみ (MP4 ファイルは生成されない)
+- `<output_dir>/.detection_cache.json` — `split` と共有する検知結果キャッシュ
+
+`matches[].output_file` は `match_001.mp4`, `match_002.mp4`, ... のプレースホルダ名 (相対パス)。後続の `allaganeye split --from-metadata` がこの名前で実際の MP4 を生成する。
+
+### Exit Codes
+
+`split` と同じ (0 / 1 / 2 / 3 / 4 / 5)。
+
+### 典型的な使用例
+
+```bash
+# 検知のみ (GUI と連携する場合の前段)
+allaganeye detect recording.mkv -o output/
+
+# GUI で metadata.json を編集後、分割のみ実行
+allaganeye split --from-metadata output/metadata.json -o output/
+
+# あるいは従来通りの一気通貫 (後方互換)
+allaganeye split recording.mkv -o output/
+```
 
 ## debug-brightness コマンド
 
