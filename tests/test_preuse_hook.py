@@ -167,9 +167,12 @@ def test_bypass_counts_toward_subsequent_bulk(_isolated_paths, monkeypatch):
     """Bypassed close still adds to the 60s window for non-bypassed retries."""
     _invoke(_bash_event("gh issue close 1"), monkeypatch)
     _invoke(_bash_event("gh issue close 2"), monkeypatch)
-    _invoke(_bash_event("gh issue close 3"), monkeypatch)  # blocked & recorded
+    _invoke(
+        _bash_event("gh issue close 3"), monkeypatch
+    )  # blocked (NOT recorded, #513)
     _invoke(_bash_event("ALLAGANEYE_PREUSE_BYPASS=1 gh issue close 3"), monkeypatch)
-    # Next un-prefixed close is still blocked -- counter includes the bypass.
+    # Next un-prefixed close is still blocked -- bypass entry (3 in window)
+    # plus current (4) exceed threshold=3.
     rc, _ = _invoke(_bash_event("gh issue close 4"), monkeypatch)
     assert rc == 2
 
@@ -351,6 +354,70 @@ def test_missing_tool_input(_isolated_paths, monkeypatch):
     event = {"tool_name": "Bash"}
     rc, _ = _invoke(event, monkeypatch)
     assert rc == 0
+
+
+# ---------------------------------------------------------------
+# State hygiene: blocked commands must NOT inflate bulk counters (#513)
+# ---------------------------------------------------------------
+
+
+def test_blocked_bulk_command_not_recorded(_isolated_paths, monkeypatch):
+    """Blocked bulk command must not be recorded to state (#513 A).
+
+    Previously every blocked invocation was appended to state, so the
+    bulk counter included ghost entries for commands that never ran.
+    """
+    _invoke(_bash_event("gh issue close 1"), monkeypatch)
+    _invoke(_bash_event("gh issue close 2"), monkeypatch)
+    rc, _ = _invoke(_bash_event("gh issue close 3"), monkeypatch)
+    assert rc == 2
+    data = json.loads(_isolated_paths["state"].read_text(encoding="utf-8"))
+    # Only the two allowed closes are recorded; the blocked 3rd is dropped.
+    assert len(data) == 2
+    assert all("close 3" not in entry.get("cmd", "") for entry in data)
+
+
+def test_blocked_always_gated_command_not_recorded(_isolated_paths, monkeypatch):
+    """Blocked always-mode pr_merge must not create any state entry (#513)."""
+    rc, _ = _invoke(_bash_event("gh pr merge 42 --squash"), monkeypatch)
+    assert rc == 2
+    if _isolated_paths["state"].exists():
+        data = json.loads(_isolated_paths["state"].read_text(encoding="utf-8"))
+        assert data == []
+
+
+def test_forgotten_bypass_retry_does_not_inflate_counter(_isolated_paths, monkeypatch):
+    """Un-prefixed retries of a blocked command must not grow state (#513).
+
+    Regression guard for the scenario: Claude forgets the bypass prefix
+    and retries the same command multiple times.  Previously every attempt
+    was appended to state, so bulk counters would grow indefinitely even
+    though no command actually ran.  With the fix, state is unchanged
+    after any number of un-prefixed retries, and the subsequent
+    user-approved bypass adds exactly one entry.
+    """
+    _invoke(_bash_event("gh issue close 1"), monkeypatch)
+    _invoke(_bash_event("gh issue close 2"), monkeypatch)
+    for _ in range(5):
+        rc, _ = _invoke(_bash_event("gh issue close 3"), monkeypatch)
+        assert rc == 2
+    data = json.loads(_isolated_paths["state"].read_text(encoding="utf-8"))
+    assert len(data) == 2
+    rc, _ = _invoke(
+        _bash_event("ALLAGANEYE_PREUSE_BYPASS=1 gh issue close 3"), monkeypatch
+    )
+    assert rc == 0
+    data = json.loads(_isolated_paths["state"].read_text(encoding="utf-8"))
+    assert len(data) == 3
+
+
+def test_block_message_mentions_state_not_recorded(_isolated_paths, monkeypatch):
+    """Block stderr explains both bypass prefix and state hygiene (#513 B)."""
+    _invoke(_bash_event("gh issue create --title a"), monkeypatch)
+    _invoke(_bash_event("gh issue create --title b"), monkeypatch)
+    _, err = _invoke(_bash_event("gh issue create --title c"), monkeypatch)
+    assert "ALLAGANEYE_PREUSE_BYPASS=1" in err
+    assert "記録" in err
 
 
 # ---------------------------------------------------------------
