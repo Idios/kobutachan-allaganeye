@@ -576,6 +576,23 @@ _EMBLEM_POSITIONS: list[tuple[str, int, int, int, int]] = [
     ("right", 1263, 2, 1318, 40),
 ]
 
+# Legacy absolute coordinates above are kept for reference and for tests
+# that exercise fixed-layout frame builders.  Production code uses
+# ``_EMBLEM_RELATIVE_POSITIONS`` with ``_find_scorebar_horizontal_range``
+# to follow HUD scale variations (1080p OBS vs 4K Game DVR) -- see #522.
+#
+# Ratios measured against dynamically-detected scorebar span on 13
+# in-match frames across 3 OBS 1080p recordings (20260116/20260118/
+# 20260119) on 2026-04-22.  half-width ratios equal current absolute
+# half-widths (32.5 / 17 / 27.5 px) divided by median detected span
+# (717 px).  See .scorebar_measure_emblem.py for the measurement script.
+_EMBLEM_RELATIVE_POSITIONS: list[tuple[str, float, float, int, int]] = [
+    # (name, x_rel_center, half_width_rel, y1, y2)
+    ("left", 0.0455, 0.0453, 2, 40),
+    ("center", 0.3427, 0.0237, 22, 42),
+    ("right", 0.9638, 0.0384, 2, 40),
+]
+
 _EMBLEM_SAT_THRESHOLD = 70.0
 """Minimum mean HSV saturation (of bright pixels) at each emblem position.
 
@@ -599,6 +616,58 @@ Validated: 5 recordings, 156+ non-match frames, zero 3-position FP.
 
 # Method selector: "v2" (GC-emblem 3-point AND) or "v1" (channel-std).
 _SCOREBAR_METHOD: str = "v2"
+
+
+# ---------------------------------------------------------------------------
+# Scorebar horizontal range detection (V2 dynamic positioning, #522)
+# ---------------------------------------------------------------------------
+# The scorebar's horizontal extent varies between recording setups:
+# 1080p OBS captures draw it nearly full-width, while 4K Game DVR draws
+# it narrower and more centered (HUD-scale / render-range / window-mode
+# differences -- not a resolution-scaling artifact).  V2 emblem detection
+# locates the scorebar dynamically and computes emblem positions as
+# ratios of that range, replacing hardcoded absolute coordinates.
+
+_SCOREBAR_SCAN_Y_START = 0
+_SCOREBAR_SCAN_Y_END = 45
+"""Vertical slice (pixel rows) to analyze for scorebar horizontal extent.
+
+Covers y=0..45 in the 1920x1080 probe frame to include the colored band
+without stepping into emblem glyphs below.  Both 1080p OBS and 4K Game
+DVR captures place the FL scorebar within this row range.
+"""
+
+_SCOREBAR_SCAN_SAT_THRESHOLD = 80.0
+"""Minimum per-pixel HSV saturation to qualify as a scorebar pixel.
+
+FL scorebar red/blue/yellow bands show saturation typically >= 150.
+Lobby backgrounds show median saturation 66-79.  80 sits in the gap.
+"""
+
+_SCOREBAR_SCAN_VAL_THRESHOLD = 60.0
+"""Minimum per-pixel HSV value (brightness) to exclude dark frames."""
+
+_SCOREBAR_SCAN_COL_RATIO = 0.30
+"""Fraction of rows in scan ROI that must be saturated for a column.
+
+Robust against anti-aliased band edges and thin sub-pixel details.
+"""
+
+_SCOREBAR_SCAN_MIN_WIDTH_PX = 500
+"""Minimum detected span (pixels) to accept as scorebar.
+
+1080p OBS scorebar spans ~712-1090 px.  4K Game DVR in-match span is
+~613-620 px.  The floor of 500 safely clears both while rejecting 4K
+Game DVR lobby UI artifacts (observed: ~409 px width at screen-top
+minimap/content-name widget).  Confirmed during #522 validation.
+"""
+
+_SCOREBAR_SCAN_MAX_GAP_PX = 80
+"""Maximum gap (pixels) to bridge when merging saturated runs.
+
+Center of scorebar contains a timer / score-number gap of desaturated
+columns; 80px covers it without merging across separate UI elements.
+"""
 
 
 def _probe_frame_rgb_hires(video_path: Path, timestamp: float) -> bytes | None:
@@ -646,27 +715,109 @@ def _probe_frame_rgb_hires(video_path: Path, timestamp: float) -> bytes | None:
     return result.stdout[:rgb_size]
 
 
+def _find_scorebar_horizontal_range(raw_rgb: bytes) -> tuple[int, int] | None:
+    """Detect horizontal extent [x_left, x_right] of the FL scorebar.
+
+    Scans rows y=``_SCOREBAR_SCAN_Y_START``..``_SCOREBAR_SCAN_Y_END`` of a
+    1920x1080 RGB frame, counts columns where at least
+    ``_SCOREBAR_SCAN_COL_RATIO`` of rows have HSV saturation
+    > ``_SCOREBAR_SCAN_SAT_THRESHOLD`` AND value
+    > ``_SCOREBAR_SCAN_VAL_THRESHOLD``.  The longest contiguous run of
+    saturated columns (bridging gaps up to ``_SCOREBAR_SCAN_MAX_GAP_PX``)
+    becomes the scorebar span.
+
+    Returns ``(x_left, x_right)`` with both endpoints inclusive when the
+    detected span is at least ``_SCOREBAR_SCAN_MIN_WIDTH_PX`` wide.
+    Returns ``None`` when:
+
+    - cv2 is not installed (matches V2 "None -> V1 fallback" contract),
+    - no saturated run is found (lobby / loading / all-dark frame), or
+    - the longest run is narrower than the minimum width.
+    """
+    try:
+        import cv2
+    except ImportError:
+        return None
+
+    width = _SCOREBAR_V2_PROBE_WIDTH
+    height = _SCOREBAR_V2_PROBE_HEIGHT
+    frame = np.frombuffer(raw_rgb, dtype=np.uint8).reshape(height, width, 3)
+
+    top = frame[_SCOREBAR_SCAN_Y_START:_SCOREBAR_SCAN_Y_END, :, :]
+    bgr = cv2.cvtColor(top, cv2.COLOR_RGB2BGR)
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    sat = hsv[:, :, 1].astype(np.float32)
+    val = hsv[:, :, 2].astype(np.float32)
+
+    pixel_mask = (sat > _SCOREBAR_SCAN_SAT_THRESHOLD) & (
+        val > _SCOREBAR_SCAN_VAL_THRESHOLD
+    )
+    col_fraction = pixel_mask.mean(axis=0)
+    col_saturated = col_fraction >= _SCOREBAR_SCAN_COL_RATIO
+
+    raw_runs: list[tuple[int, int]] = []
+    i = 0
+    while i < width:
+        if col_saturated[i]:
+            j = i
+            while j < width and col_saturated[j]:
+                j += 1
+            raw_runs.append((i, j - 1))
+            i = j
+        else:
+            i += 1
+
+    if not raw_runs:
+        return None
+
+    merged: list[tuple[int, int]] = [raw_runs[0]]
+    for start, end in raw_runs[1:]:
+        prev_start, prev_end = merged[-1]
+        if start - prev_end - 1 <= _SCOREBAR_SCAN_MAX_GAP_PX:
+            merged[-1] = (prev_start, end)
+        else:
+            merged.append((start, end))
+
+    longest = max(merged, key=lambda r: r[1] - r[0])
+    span_width = longest[1] - longest[0] + 1
+    if span_width < _SCOREBAR_SCAN_MIN_WIDTH_PX:
+        return None
+
+    return longest
+
+
 def _has_scorebar_v2(raw_rgb: bytes | None) -> bool | None:
     """Determine if FL scorebar is present using GC-emblem 3-point AND.
 
-    Checks 3 fixed positions in the scorebar where GC emblems appear
-    (left/center/right).  At each position, computes HSV saturation and
-    Sobel edge density.  Returns True only if ALL 3 positions exceed
-    both thresholds (AND condition).
+    Dynamically locates the scorebar horizontal range
+    (``_find_scorebar_horizontal_range``) to follow HUD scale variations
+    across recording setups (1080p OBS full-width, 4K Game DVR
+    narrow-centered, etc.), then checks 3 emblem positions at relative
+    offsets within that range (``_EMBLEM_RELATIVE_POSITIONS``).  At each
+    position computes HSV saturation and Sobel edge density.  Returns
+    ``True`` only if ALL 3 positions exceed both thresholds (AND).
 
     This exploits the structural invariant that FL scorebar always has
-    3 GC emblems at fixed positions, while lobby backgrounds never have
-    high-saturation + high-edge-density content at all 3 positions
-    simultaneously.
+    3 GC emblems at the same horizontal ratios within the bar, while
+    lobby backgrounds never have high-saturation + high-edge-density
+    content at all 3 positions simultaneously.
 
     Requires 1920x1080 input (see ``_probe_frame_rgb_hires``).
 
-    Returns True if scorebar detected, False if not, or None if probe
-    failed (raw_rgb is None).
+    Returns ``True`` if scorebar detected, ``False`` if emblems fail the
+    AND check, or ``None`` if:
+
+    - probe failed (``raw_rgb`` is None),
+    - opencv is not installed, or
+    - the scorebar horizontal range cannot be located (#522).
+
+    The ``None`` contract lets ``_probe_scorebar_context`` fall back to
+    V1 (channel-std) detection.
 
     Validated on 5 recordings (0408/0209/0116/0118/0119):
     - 156+ non-match frames: zero FP
     - In-match TPR: 98.7% (FN only on UI-hidden transition frames)
+    - 4K Game DVR regression fix: #522 (2026-04-22)
     """
     if raw_rgb is None:
         return None
@@ -680,11 +831,25 @@ def _has_scorebar_v2(raw_rgb: bytes | None) -> bool | None:
         )
         return None
 
+    # Dynamically locate the scorebar horizontal range to accommodate
+    # different HUD layouts (1080p OBS full-width vs 4K Game DVR
+    # narrow-centered).  #522.
+    span = _find_scorebar_horizontal_range(raw_rgb)
+    if span is None:
+        logger.debug("scorebar_v2: no horizontal range detected -> None (V1 fallback)")
+        return None
+    x_left, x_right = span
+    bar_width = x_right - x_left
+
     width = _SCOREBAR_V2_PROBE_WIDTH
     height = _SCOREBAR_V2_PROBE_HEIGHT
     frame = np.frombuffer(raw_rgb, dtype=np.uint8).reshape(height, width, 3)
 
-    for name, x1, y1, x2, y2 in _EMBLEM_POSITIONS:
+    for name, cx_rel, hw_rel, y1, y2 in _EMBLEM_RELATIVE_POSITIONS:
+        cx = x_left + cx_rel * bar_width
+        half = hw_rel * bar_width
+        x1 = int(cx - half)
+        x2 = int(cx + half)
         region = frame[y1:y2, x1:x2, :]
         bgr = cv2.cvtColor(region, cv2.COLOR_RGB2BGR)
         hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
@@ -706,16 +871,20 @@ def _has_scorebar_v2(raw_rgb: bytes | None) -> bool | None:
 
         if mean_sat <= _EMBLEM_SAT_THRESHOLD or edge_density <= _EMBLEM_EDGE_THRESHOLD:
             logger.debug(
-                "scorebar_v2: %s sat=%.1f edge=%.1f -> fail (th: sat>%.0f edge>%.0f)",
+                "scorebar_v2: %s x=%d..%d sat=%.1f edge=%.1f -> fail",
                 name,
+                x1,
+                x2,
                 mean_sat,
                 edge_density,
-                _EMBLEM_SAT_THRESHOLD,
-                _EMBLEM_EDGE_THRESHOLD,
             )
             return False
 
-    logger.debug("scorebar_v2: all 3 positions passed -> True")
+    logger.debug(
+        "scorebar_v2: span=%d..%d all 3 positions passed -> True",
+        x_left,
+        x_right,
+    )
     return True
 
 

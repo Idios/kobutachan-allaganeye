@@ -78,3 +78,43 @@ ROI brightness ∈ (20, 140)          ... 暗転・白飛びを排除
 2. **時間的静止判定の再導入 (C1)**: A1+A2 でカバーできないエッジケース（ローディング画面が A1+A2 を通過する場合）が発見された場合、`_is_static_from_frames()` を defense-in-depth として再導入する。実装は git history から復元可能
 3. **セグメントレベル分類 (B1)**: 暗転分類から直接セグメント判定への移行
 4. **副次 ROI (C3)**: ミニマップ ROI の 320x180 での有効性を調査
+
+## V2: GC-emblem 3-point AND と動的 scorebar 外輪郭検出 (#307, #522)
+
+### 背景
+
+V1 (`_has_scorebar`) は 320x180 低解像度 ROI での色特徴量判定を行うが、ロビー背景や GC 配色の順序変動で偽陽性が発生しうる。PR #313 で V2 (`_has_scorebar_v2`) を導入し、1920x1080 高解像度フレームの 3 GC emblem 位置で HSV saturation と Sobel edge density の AND を取ることで構造的に FP を排除した。
+
+### 動的 emblem 位置 (#522)
+
+V2 導入時の `_EMBLEM_POSITIONS` は 1920x1080 絶対座標の hardcode で、1080p OBS 録画で validated された。しかし 4K Game DVR 録画 (Windows/Xbox) では FF14 HUD scale が異なり scorebar が画面中央寄りに描画されるため、絶対座標の left/right 位置が scorebar 外 (ゲーム背景) にヒットする FP 問題が発生した。
+
+解決策として、frame ごとに scorebar 外輪郭を動的検出し、emblem 位置を scorebar 幅の相対比で計算する仕組みを追加:
+
+1. `_find_scorebar_horizontal_range(raw_rgb)`: 画面上部 y=0..45 の HSV saturation mask で saturated 列の最長 run を scorebar span として返す。run 幅 < 500px は None (lobby UI 誤検出排除)
+2. `_EMBLEM_RELATIVE_POSITIONS`: 1080p OBS validated set 13 frames の実測 median 相対比
+   - left: `cx_rel=0.0455, half_width_rel=0.0453`
+   - center: `cx_rel=0.3427, half_width_rel=0.0237`
+   - right: `cx_rel=0.9638, half_width_rel=0.0384`
+3. `_has_scorebar_v2`: span 検出 → 相対位置で emblem 絶対座標を計算 → 既存 3-point AND
+4. span 検出失敗時は `None` を返し、V1 (`_has_scorebar`) fallback に委譲 (既存契約維持)
+
+### 閾値定数 (V2 動的検出)
+
+| 定数 | 値 | 役割 |
+|---|---|---|
+| `_SCOREBAR_SCAN_Y_START` / `_Y_END` | 0 / 45 | 画面上部 scan ROI |
+| `_SCOREBAR_SCAN_SAT_THRESHOLD` | 80.0 | saturated pixel 閾値 (lobby 背景 66-79 を超え、scorebar バンド >= 150 の中間) |
+| `_SCOREBAR_SCAN_VAL_THRESHOLD` | 60.0 | 暗フレーム排除 |
+| `_SCOREBAR_SCAN_COL_RATIO` | 0.30 | 行の 30% 以上が saturated であれば該当列を qualifying |
+| `_SCOREBAR_SCAN_MIN_WIDTH_PX` | 500 | scorebar と認める最小幅 (1080p 712+, 4K DVR 613+, lobby 409 FP 排除) |
+| `_SCOREBAR_SCAN_MAX_GAP_PX` | 80 | scorebar 中央 timer/score 部のギャップを bridge |
+
+### 検証サマリー
+
+- 1080p OBS (20260118 baseline): 改修前と match_count / boundary 時刻完全一致 (5 matches、時刻同一)
+- 4K Game DVR: emblem 位置は scorebar に正しく追従 (可視化検証済み)。ただし Pass 2 region 幅が狭く classify post probes (region_end + 1/2/3s) が暗転 fade-in 中に hit して V1 fallback で False になるケースあり
+
+### 残課題 (follow-up)
+
+- 4K Game DVR の長めの UI fade-in (~2-3s) に対応するため、classify_blackout の post probe offset を動的に調整する (別 issue)
