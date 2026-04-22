@@ -309,16 +309,18 @@ def main() -> int:
     # Pattern 判定 (candidate の command を recent に含めずに判定)
     key, message = _classify(command, recent)
 
-    # Bulk カウント目的で今回の command を state に記録.
-    # 常時 gate と bulk gate のどちらでも、state は更新する (後続判定の
-    # ために今回のコマンドも履歴に入れる).
-    _append_op(state_path, command.strip(), now)
-
     if key is not None:
+        # block された時点では state に記録しない (#513).
+        # 実行されないコマンドを bulk counter に入れると、prefix 付け忘れ
+        # による再試行で counter が累積的に膨張し、閾値を永続的に超えて
+        # 再ブロックが続く不具合になる。bypass 経由で実行された場合のみ
+        # bypass ルート側で記録されるので、実測の実行回数と state が一致する。
         print(
             f"[preuse:{key}] {message}\n"
-            "承認済みの場合は `ALLAGANEYE_PREUSE_BYPASS=1 <command>` で "
-            "再実行してください (1 回分のみ bypass)。\n"
+            "このコマンドは未実行で state にも記録されていません。\n"
+            "ユーザー承認済みの場合は必ず `ALLAGANEYE_PREUSE_BYPASS=1 <command>` "
+            "prefix を付けて再実行してください (1 回分のみ bypass)。\n"
+            "prefix なしで同じコマンドを再送しても同じ理由でブロックされます。\n"
             f"Detected command: {command.strip()[:400]}",
             file=sys.stderr,
         )
@@ -326,6 +328,8 @@ def main() -> int:
         # hook convention).  Claude will pause and escalate to the user.
         return 2
 
+    # Block 通過時のみ state に記録 (bulk カウント用).
+    _append_op(state_path, command.strip(), now)
     return 0
 
 

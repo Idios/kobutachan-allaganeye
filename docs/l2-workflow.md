@@ -173,6 +173,29 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 
 **真のハードゲート候補 (未実装)**: `PreToolUse` で `gh` bulk 操作の exit 2 ブロック、GitHub Action でマージブロック。L2 実装中に必要性が顕在化したら別 issue で対応。
 
+#### PreToolUse hook の bypass 運用 (#485 / #513)
+
+`preuse.py` が exit 2 でブロックした `gh` コマンドは、ユーザー承認後に `ALLAGANEYE_PREUSE_BYPASS=1 <command>` prefix を付けて再実行することで 1 回分だけ通過できる (`_BYPASS_PREFIX` 正規表現)。
+
+運用手順:
+
+1. Claude が `gh` コマンドを発行 → hook が bulk 閾値 (3 件 / 60s) または always gate (PR マージ等) でブロック (exit 2)
+2. Claude は `AskUserQuestion` でサンプル 1 件を提示し、**「全件 OK / 個別調整 / やめる」** の 3 択を問う (Iron Law 2)
+3. ユーザーが承認したら、該当コマンドに `ALLAGANEYE_PREUSE_BYPASS=1` prefix (末尾スペース込み) を付けて再実行する
+
+   ```bash
+   ALLAGANEYE_PREUSE_BYPASS=1 gh issue close 123
+   ```
+
+4. prefix は strip されて `gh issue close 123` が実行される。`[preuse:bypass]` 監査ログが stderr に出力され、実行コマンド本体のみが state (`.claude/state/recent_ops.json`) に記録され、以降の bulk 判定に正しく参入する
+
+重要ポイント:
+
+- prefix は **1 コマンドごとに都度付与** する。bulk 承認を得た場合でも各コマンドに個別に付ける (1 回分のみ bypass の仕様)
+- **ブロックされたコマンドは state に記録されない** (#513)。prefix を付け忘れて素の再送をしても、counter が累積膨張することはなく同じ理由で再ブロックされるだけ
+- `ALLAGANEYE_PREUSE_BYPASS=0` 等は認識されない (prefix 正規表現は `=1` 固定)
+- `.claude/settings.local.json` で `"pretooluse_gate": false` を設定すると gate 全体を無効化できる (緊急避難用、通常は true = デフォルト)
+
 ## 移行前後の対応表
 
 旧 → 新の変換:
