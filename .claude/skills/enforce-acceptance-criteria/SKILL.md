@@ -83,7 +83,7 @@ gh pr comment $ARGUMENTS --body "修正依頼 (受け入れ条件未達) [<sessi
 "
 ```
 
-`/review-pr` の「修正フロー」に従い、同セッション内で修正 → 再 `/enforce-acceptance-criteria` ループ。
+`/review-pr` §「修正依頼コメント投稿」(レビュー専用セッション) または `docs/l2-workflow.md` §タスクフロー の「PR 作成と同一セッション」分岐に従い、修正 → 再 `/enforce-acceptance-criteria` ループ。
 
 ## Red Flags (以下の思考が浮かんだら STOP)
 
