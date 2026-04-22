@@ -113,13 +113,51 @@ Copy-Item -Path (Join-Path $FFmpegBin 'ffmpeg.exe') -Destination $FFmpegDest
 Copy-Item -Path (Join-Path $FFmpegBin 'ffprobe.exe') -Destination $FFmpegDest
 
 # 5. Launcher
+# The launcher is ASCII-only so that it runs on any Windows code page without
+# chcp munging. Keep help text in English for the same reason.
+# Behaviour:
+#   - double-click (no args)       -> print help + pause
+#   - drag & drop of a video file  -> treat as `allaganeye split <file>` + pause
+#   - explicit args via cmd        -> pass through to allaganeye + pause
 $Launcher = @'
 @echo off
 setlocal
 set PAYLOAD=%~dp0
 set ALLAGANEYE_FFMPEG=%PAYLOAD%ffmpeg\ffmpeg.exe
 set PATH=%PAYLOAD%ffmpeg;%PATH%
-"%PAYLOAD%python\python.exe" -m allaganeye %*
+
+if "%~1"=="" (
+  echo.
+  echo allaganeye - FF14 Frontline video splitter
+  echo.
+  echo How to use:
+  echo   1. Drag a video file ^(.mkv / .mp4 / .avi / .mov^) onto allaganeye.bat
+  echo      to split it automatically.
+  echo   2. From a Command Prompt:
+  echo      allaganeye.bat split "C:\path\to\video.mkv"
+  echo.
+  echo Docs: https://github.com/Idios/kobutachan-allaganeye
+  echo.
+  pause
+  endlocal
+  exit /b 0
+)
+
+set EXT=%~x1
+set IS_VIDEO=
+if /i "%EXT%"==".mp4" set IS_VIDEO=1
+if /i "%EXT%"==".mkv" set IS_VIDEO=1
+if /i "%EXT%"==".avi" set IS_VIDEO=1
+if /i "%EXT%"==".mov" set IS_VIDEO=1
+
+if defined IS_VIDEO (
+  "%PAYLOAD%python\python.exe" -m allaganeye split %*
+) else (
+  "%PAYLOAD%python\python.exe" -m allaganeye %*
+)
+
+echo.
+pause
 endlocal
 '@
 Set-Content -Path (Join-Path $PayloadDir 'allaganeye.bat') -Value $Launcher -Encoding ASCII
@@ -132,11 +170,22 @@ Python 3.11 and FFmpeg LGPL binaries are bundled alongside allaganeye.
 
 ## Usage
 
-1. Extract this ZIP anywhere.
-2. Open a Command Prompt in the extracted folder.
-3. Run:
+### Basic: drag-and-drop
 
-    allaganeye.bat split <path-to-video>
+Drop a video file (.mkv / .mp4 / .avi / .mov) onto ``allaganeye.bat`` and it
+will split the video automatically. The command window stays open at the end so
+you can read the result -- press any key to close it.
+
+Output MP4 files and metadata.json land under ``output\`` inside this folder.
+
+### Advanced: from a Command Prompt
+
+If you want to pass options such as --dry-run or -o, open a Command Prompt in
+this folder and run:
+
+    allaganeye.bat split "C:\path\to\video.mkv"
+    allaganeye.bat split "C:\path\to\video.mkv" --dry-run
+    allaganeye.bat --version
 
 See https://github.com/Idios/kobutachan-allaganeye for full documentation.
 
