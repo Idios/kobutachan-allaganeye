@@ -1,0 +1,187 @@
+.screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 24px;
+  gap: 20px;
+  position: relative;
+}
+
+.header {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+}
+
+.headerText {
+  flex: 1;
+}
+
+.caption {
+  font-family: var(--ae-font-ui);
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: var(--ae-gold-dim);
+  text-transform: uppercase;
+}
+
+.fileName {
+  font-family: var(--ae-font-body);
+  font-size: 14px;
+  color: var(--ae-text-bright);
+  margin-top: 4px;
+}
+
+.meta {
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+  margin-top: 3px;
+}
+
+.progressBadge {
+  text-align: right;
+}
+
+.progressNum {
+  font-family: var(--ae-font-ui);
+  font-size: 32px;
+  color: var(--ae-gold-bright);
+  letter-spacing: 1px;
+}
+
+.progressTiming {
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+}
+
+.divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--ae-gold), transparent);
+  opacity: 0.4;
+}
+
+.phases {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.phaseRow {
+  display: flex;
+  flex-direction: column;
+}
+
+.phaseLabel {
+  display: flex;
+  align-items: baseline;
+  margin-bottom: 6px;
+  gap: 12px;
+  font-family: var(--ae-font-body);
+  font-size: 12px;
+}
+
+.phaseName {
+  font-family: var(--ae-font-ui);
+  letter-spacing: 1.5px;
+  width: 90px;
+}
+
+.phaseNameRunning {
+  color: var(--ae-gold-bright);
+}
+
+.phaseNameDone {
+  color: var(--ae-cyan);
+}
+
+.phaseNamePending {
+  color: var(--ae-text-dim);
+}
+
+.phaseJp {
+  color: var(--ae-text-dim);
+  font-size: 11px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.phaseSub {
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+}
+
+.phaseTime {
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-gold);
+  width: 40px;
+  text-align: right;
+}
+
+.bar {
+  height: 4px;
+  background: rgba(var(--ae-gold-rgb), 0.1);
+  position: relative;
+  overflow: hidden;
+}
+
+.barFill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, var(--ae-gold-dim), var(--ae-gold-bright));
+  box-shadow: 0 0 8px var(--ae-gold);
+}
+
+.barFillDone {
+  background: linear-gradient(90deg, var(--ae-cyan), var(--ae-cyan-bright));
+  box-shadow: none;
+}
+
+.log {
+  flex: 1;
+  background: var(--ae-bg-deep);
+  padding: 12px;
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+  overflow: hidden;
+  line-height: 1.6;
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.08);
+}
+
+.logTime {
+  color: var(--ae-cyan);
+}
+
+.logTimeActive {
+  color: var(--ae-gold-bright);
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+}
+
+.cancelButton {
+  padding: 8px 18px;
+  background: transparent;
+  border: 1px solid var(--ae-danger);
+  color: var(--ae-danger);
+  font-family: var(--ae-font-ui);
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.cancelButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

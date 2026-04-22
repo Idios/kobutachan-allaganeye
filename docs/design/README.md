@@ -119,10 +119,14 @@ Electron / Tauri の両方で最小プロトタイプを構築し F1-F5 を計�
 - Rust Tauri commands (`load_metadata` / `apply_changes` atomic write + `metadata.original.json` backup)
 - 契約詳細は [`../metadata-spec.md`](../metadata-spec.md) を参照
 
-### Phase 2: 画面骨格 (5 画面 + ルータ)
+### Phase 2: 画面骨格 (5 画面 + ルータ) — 完了 (#464 + #516)
 
-- `bundle/project/variants/aether.jsx` のコンポーネント形状を TS に写経
-- 色・フォントを `aetherTheme` をそのまま CSS 変数化
+- `bundle/project/variants/aether.jsx` + `aether-preview.jsx` のコンポーネント形状を TS + CSS Modules に写経
+- 色・フォントを `aetherTheme` をそのまま CSS 変数化 (`gui/src/styles/tokens.css`)
+- Zustand ベースの 2 層 state machine (screen + phase) で 5 画面を切替
+- `#516` `[元に戻す]` 機能を同時実装 (`metadata.original.json` からの atomic restore)
+- detecting は Detecting / Refining の 2 phases に更新 (#464 issue 起票時点の「4 phases」から scorebar 統合 + splitting を export 移動)
+- 詳細は [`../ui-architecture.md`](../ui-architecture.md) 参照
 
 ### Phase 3: preview 画面の本物化
 

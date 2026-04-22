@@ -49,9 +49,19 @@ npm test             # vitest (jsdom + @testing-library/react)
 npm run build        # vite build → gui/dist/
 cd src-tauri
 cargo check          # Rust 側の型/依存チェック
+cargo test           # Rust 単体テスト
 ```
 
 `cargo check` は `tauri.conf.json` の `frontendDist: "../dist"` を要求するため、**必ず `npm run build` を先に実行する必要がある**。
+
+## CSS 慣例 (Phase 2 以降)
+
+GUI のスタイルは CSS 変数 + CSS Modules で統一。詳細は [`ui-architecture.md` §9](ui-architecture.md#9-css-modules-慣例) を参照。要点:
+
+- 色・フォントは `gui/src/styles/tokens.css` の `:root` カスタムプロパティ (`--ae-bg`, `--ae-gold`, `--ae-font-ui` ...) 経由で参照する。リテラルの hex コードを component 内に書かない
+- 各 component は `Foo.tsx` / `Foo.module.css` / `Foo.test.tsx` の 3 点セット
+- CSS クラス名は camelCase (`container`, `topBar`)。modifier は base との空白区切り (`styles.button styles.buttonActive`)
+- hover / transition は CSS 疑似クラスで表現する (JS 側での切替は避ける)
 
 ## テスト
 

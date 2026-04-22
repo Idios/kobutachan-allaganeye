@@ -1,0 +1,239 @@
+import { open } from '@tauri-apps/plugin-dialog';
+import { useReducer, useState } from 'react';
+
+import { AllaganFrame } from '../components/AllaganFrame';
+import { AllaganSigil } from '../components/AllaganSigil';
+import { useAppStateStore } from '../state/appStateStore';
+import { dropReducer } from './reducers/drop';
+import type { DropPhase, VideoProbeInfo } from './types';
+import styles from './DropScreen.module.css';
+
+const RECENT_DUMMY = [
+  { name: '2026-04-08 21-14-05.mkv', size: '38.2 GB', dur: '2:50:28' },
+  { name: '2026-04-05 20-02-11.mkv', size: '24.1 GB', dur: '1:45:12' },
+  { name: '2026-03-28 19-45-33.mkv', size: '52.8 GB', dur: '3:28:40' },
+];
+
+/**
+ * Phase 2 dummy probe. Sleeps briefly and returns hard-coded video metadata.
+ * Phase 3 (#465) replaces this with an actual `invoke('probe_video', { path })`.
+ * Exposed as a module-level function so tests can vi.spyOn it.
+ */
+export async function dummyProbeVideo(path: string): Promise<VideoProbeInfo> {
+  await new Promise<void>((r) => setTimeout(r, 30));
+  const fileName = path.split(/[/\\]/).pop() ?? path;
+  return {
+    path,
+    fileName,
+    sizeBytes: 38 * 1024 * 1024 * 1024,
+    durationSeconds: 10228.735,
+    width: 1920,
+    height: 1080,
+    fps: 60,
+    codec: 'h264',
+  };
+}
+
+export interface DropScreenProps {
+  /** Injection hook for tests / Phase 3. Defaults to dummyProbeVideo. */
+  probeFn?: (path: string) => Promise<VideoProbeInfo>;
+  /** Injection hook for tests. Defaults to @tauri-apps/plugin-dialog open(). */
+  openDialogFn?: () => Promise<string | null>;
+}
+
+export function DropScreen({ probeFn, openDialogFn }: DropScreenProps = {}) {
+  const navigate = useAppStateStore((s) => s.navigate);
+  const setSelectedVideoPath = useAppStateStore((s) => s.setSelectedVideoPath);
+
+  const [phase, dispatch] = useReducer(dropReducer, 'idle' as DropPhase);
+  const [probeInfo, setProbeInfo] = useState<VideoProbeInfo | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function pickAndProbe() {
+    dispatch({ type: 'BROWSE_CLICKED' });
+    setError(null);
+    let selected: string | null;
+    try {
+      selected = await (openDialogFn ?? defaultOpenDialog)();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      dispatch({ type: 'PROBE_FAIL' });
+      return;
+    }
+    if (!selected) {
+      dispatch({ type: 'DIALOG_CANCELLED' });
+      return;
+    }
+    dispatch({ type: 'FILE_PICKED' });
+    try {
+      const info = await (probeFn ?? dummyProbeVideo)(selected);
+      setProbeInfo(info);
+      dispatch({ type: 'PROBE_OK' });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      dispatch({ type: 'PROBE_FAIL' });
+    }
+  }
+
+  function confirm() {
+    if (!probeInfo) return;
+    setSelectedVideoPath(probeInfo.path);
+    navigate('detecting');
+  }
+
+  function cancelSelection() {
+    setProbeInfo(null);
+    dispatch({ type: 'CANCEL_SELECTION' });
+  }
+
+  function dismissError() {
+    setError(null);
+    dispatch({ type: 'DISMISS_ERROR' });
+  }
+
+  return (
+    <div
+      className={styles.screen}
+      data-testid="drop-screen"
+      data-phase={phase}
+    >
+      <svg className={styles.etching}>
+        <defs>
+          <pattern
+            id="ae-grid-a"
+            width="40"
+            height="40"
+            patternUnits="userSpaceOnUse"
+          >
+            <path d="M40 0H0V40" stroke="var(--ae-gold)" strokeWidth="0.5" fill="none" />
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#ae-grid-a)" />
+      </svg>
+
+      <AllaganSigil size={140} rotating={false} />
+
+      <div className={styles.heading}>
+        <div className={styles.kicker}>Allagan Eye ⸱ 観測器</div>
+        <div className={styles.title}>録画を捧げよ</div>
+        <div className={styles.subtitle}>MP4 · MKV · AVI · MOV を受け入れます</div>
+      </div>
+
+      {phase === 'selected' && probeInfo ? (
+        <SelectedCard info={probeInfo} onConfirm={confirm} onCancel={cancelSelection} />
+      ) : phase === 'probeError' ? (
+        <div className={styles.selectedCard} role="alert">
+          <div className={styles.selectedHeading}>エラー</div>
+          <div className={styles.error}>{error ?? 'probe failed'}</div>
+          <div className={styles.actions}>
+            <button
+              type="button"
+              className={styles.cancelButton}
+              onClick={dismissError}
+            >
+              閉じる
+            </button>
+            <button
+              type="button"
+              className={styles.okButton}
+              onClick={pickAndProbe}
+            >
+              再試行
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <AllaganFrame style={{ width: '78%', padding: 2, zIndex: 2 }}>
+            <div className={styles.dropZone}>
+              <div className={styles.dropZoneLabel}>
+                ⬦ ここに録画ファイルをドロップ
+              </div>
+              <div className={styles.dropZoneHint}>
+                or{' '}
+                <button
+                  type="button"
+                  className={styles.browseButton}
+                  disabled={phase === 'selecting' || phase === 'probing'}
+                  onClick={pickAndProbe}
+                >
+                  参照…
+                </button>
+                {phase === 'selecting' && <span className={styles.loading}> (選択中)</span>}
+                {phase === 'probing' && <span className={styles.loading}> (解析中)</span>}
+              </div>
+            </div>
+          </AllaganFrame>
+
+          <div className={styles.recent}>
+            <div className={styles.recentHeading}>──── 直近の録画 ────</div>
+            {RECENT_DUMMY.map((r) => (
+              <div key={r.name} className={styles.recentItem}>
+                <span className={styles.recentMark}>◈</span>
+                <span className={styles.recentName}>{r.name}</span>
+                <span className={styles.recentDur}>{r.dur}</span>
+                <span className={styles.recentSize}>{r.size}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+async function defaultOpenDialog(): Promise<string | null> {
+  const result = await open({
+    multiple: false,
+    filters: [
+      {
+        name: 'Video',
+        extensions: ['mp4', 'mkv', 'avi', 'mov'],
+      },
+    ],
+  });
+  if (Array.isArray(result)) return result[0] ?? null;
+  return result;
+}
+
+interface SelectedCardProps {
+  info: VideoProbeInfo;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+function SelectedCard({ info, onConfirm, onCancel }: SelectedCardProps) {
+  const sizeGB = (info.sizeBytes / 1024 / 1024 / 1024).toFixed(1);
+  const durH = Math.floor(info.durationSeconds / 3600);
+  const durM = Math.floor((info.durationSeconds % 3600) / 60);
+  const durS = Math.floor(info.durationSeconds % 60);
+  const durDisplay = durH
+    ? `${durH}:${String(durM).padStart(2, '0')}:${String(durS).padStart(2, '0')}`
+    : `${String(durM).padStart(2, '0')}:${String(durS).padStart(2, '0')}`;
+  return (
+    <div className={styles.selectedCard} data-testid="drop-selected-card">
+      <div className={styles.selectedHeading}>検知対象の確認</div>
+      <div className={styles.selectedName}>{info.fileName}</div>
+      <div className={styles.selectedMetaTable}>
+        <span className={styles.selectedMetaLabel}>解像度</span>
+        <span>{info.width}×{info.height}</span>
+        <span className={styles.selectedMetaLabel}>fps</span>
+        <span>{info.fps}</span>
+        <span className={styles.selectedMetaLabel}>長さ</span>
+        <span>{durDisplay}</span>
+        <span className={styles.selectedMetaLabel}>サイズ</span>
+        <span>{sizeGB} GB</span>
+        <span className={styles.selectedMetaLabel}>コーデック</span>
+        <span>{info.codec}</span>
+      </div>
+      <div className={styles.actions}>
+        <button type="button" className={styles.cancelButton} onClick={onCancel}>
+          キャンセル
+        </button>
+        <button type="button" className={styles.okButton} onClick={onConfirm}>
+          OK — 検知開始
+        </button>
+      </div>
+    </div>
+  );
+}

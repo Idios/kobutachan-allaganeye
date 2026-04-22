@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { create } from 'zustand';
 
+import { sampleMetadata } from '../data/sampleMetadata';
 import type { Match, Metadata, TypeOverride } from '../types/metadata';
 import { MetadataSchema } from '../types/metadata.schema';
 
@@ -16,11 +17,26 @@ export interface MetadataState {
   applying: boolean;
   applyError: string | null;
 
+  /** #516: flips true after a successful `apply()` that created metadata.original.json. */
+  hasBackup: boolean;
+  /** #516: in-flight restore flag. */
+  restoring: boolean;
+  /** #516: last restore error message, if any. */
+  restoreError: string | null;
+
   load: (path: string) => Promise<void>;
   updateMatch: (index: number, patch: MatchEditPatch) => void;
   apply: () => Promise<void>;
   reset: () => void;
   clear: () => void;
+
+  /** #516: atomically copy metadata.original.json back over metadata.json, then reload. */
+  restore: () => Promise<void>;
+  /** #516: re-probe the filesystem to update hasBackup. Called after load / apply / restore. */
+  refreshBackupStatus: () => Promise<void>;
+
+  /** Phase 2 only: load the in-memory sample metadata (no filePath set). */
+  loadSample: () => void;
 }
 
 const PERSISTABLE_TYPES = new Set<TypeOverride>(['fl_match', 'unknown']);
@@ -59,6 +75,10 @@ export const useMetadataStore = create<MetadataState>((set, get) => ({
   applying: false,
   applyError: null,
 
+  hasBackup: false,
+  restoring: false,
+  restoreError: null,
+
   load: async (path) => {
     try {
       const raw = await invoke<unknown>('load_metadata', { path });
@@ -69,13 +89,16 @@ export const useMetadataStore = create<MetadataState>((set, get) => ({
         dirty: false,
         loadError: null,
         applyError: null,
+        restoreError: null,
       });
+      await get().refreshBackupStatus();
     } catch (e) {
       set({
         metadata: null,
         filePath: null,
         dirty: false,
         loadError: e instanceof Error ? e.message : String(e),
+        hasBackup: false,
       });
     }
   },
@@ -108,6 +131,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => ({
         applying: false,
         applyError: null,
       });
+      await get().refreshBackupStatus();
     } catch (e) {
       set({
         applying: false,
@@ -128,6 +152,57 @@ export const useMetadataStore = create<MetadataState>((set, get) => ({
       loadError: null,
       applying: false,
       applyError: null,
+      hasBackup: false,
+      restoring: false,
+      restoreError: null,
+    });
+  },
+
+  restore: async () => {
+    const { filePath } = get();
+    if (!filePath) return;
+    set({ restoring: true, restoreError: null });
+    try {
+      await invoke('restore_from_original', { path: filePath });
+      // Reload metadata from disk; load() also refreshes hasBackup.
+      await get().load(filePath);
+      set({ restoring: false });
+    } catch (e) {
+      set({
+        restoring: false,
+        restoreError: e instanceof Error ? e.message : String(e),
+      });
+    }
+  },
+
+  refreshBackupStatus: async () => {
+    const { filePath } = get();
+    if (!filePath) {
+      set({ hasBackup: false });
+      return;
+    }
+    try {
+      const exists = await invoke<boolean>('check_backup_exists', {
+        path: filePath,
+      });
+      set({ hasBackup: !!exists });
+    } catch {
+      // Fall back to hasBackup=false on any probing error; not fatal.
+      set({ hasBackup: false });
+    }
+  },
+
+  loadSample: () => {
+    set({
+      metadata: sampleMetadata,
+      filePath: null,
+      dirty: false,
+      loadError: null,
+      applying: false,
+      applyError: null,
+      hasBackup: false,
+      restoring: false,
+      restoreError: null,
     });
   },
 }));
