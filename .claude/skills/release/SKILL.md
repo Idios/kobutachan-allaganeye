@@ -51,7 +51,7 @@ gh issue list --repo Idios/kobutachan-allaganeye --state open --label "deferred"
 
 ### Step 3: バージョンバンプと PR 作成
 
-5. **事前品質チェック** (CLAUDE.md PR 作成ルール):
+1. **事前品質チェック** (CLAUDE.md PR 作成ルール):
 
    ```bash
    ruff check .
@@ -61,8 +61,8 @@ gh issue list --repo Idios/kobutachan-allaganeye --state open --label "deferred"
    ```
 
    いずれか失敗したら修正してから以下に進む
-6. `pyproject.toml` の `version` を更新（他にバージョン参照箇所があれば `grep -r '<旧バージョン>' --include='*.py' --include='*.toml'` で確認し同時更新）
-7. リリースブランチを作成（Step 2-4 で特定したベースブランチから分岐）:
+2. `pyproject.toml` の `version` を更新（他にバージョン参照箇所があれば `grep -r '<旧バージョン>' --include='*.py' --include='*.toml'` で確認し同時更新）
+3. リリースブランチを作成（Step 2-4 で特定したベースブランチから分岐）:
 
    ```bash
    git checkout <ベースブランチ>
@@ -70,20 +70,20 @@ gh issue list --repo Idios/kobutachan-allaganeye --state open --label "deferred"
    git checkout -b release/v<新バージョン>
    ```
 
-8. 変更をコミット（session-id を含める、CLAUDE.md PR 作成ルール）:
+4. 変更をコミット（session-id を含める、CLAUDE.md PR 作成ルール）:
 
    ```bash
    git add pyproject.toml
    git commit -m "chore: bump version to <新バージョン> [<session-id>]"
    ```
 
-9. リリースブランチを push:
+5. リリースブランチを push:
 
    ```bash
    git push -u origin release/v<新バージョン>
    ```
 
-10. リリース PR を作成（base は Step 2-4 で特定したベースブランチ、Windows + Git Bash での日本語本文破損回避のため `printf | --body-file -` 方式）:
+6. リリース PR を作成（base は Step 2-4 で特定したベースブランチ、Windows + Git Bash での日本語本文破損回避のため `printf | --body-file -` 方式）:
 
     ```bash
     printf '%s\n' "## Release v<新バージョン>
@@ -108,7 +108,7 @@ gh issue list --repo Idios/kobutachan-allaganeye --state open --label "deferred"
       --assignee Idios
     ```
 
-11. ユーザーに PR URL とバージョン変更内容を報告
+7. ユーザーに PR URL とバージョン変更内容を報告
 
 ### タグ打ち・GitHub Release 作成
 

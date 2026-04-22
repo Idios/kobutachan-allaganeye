@@ -197,7 +197,7 @@ pip install -e ".[dev]"
 ```
 
 > SSH を使う場合: `git clone git@github.com:Idios/kobutachan-allaganeye.git`
-
+>
 > **注意**: 仮想環境を使わずに `pip install -e .` すると、`allaganeye` コマンドが PATH の通らないディレクトリにインストールされることがあります（特に Microsoft Store 版 Python）。仮想環境の使用を推奨します。
 
 ### 仮想環境を抜ける
