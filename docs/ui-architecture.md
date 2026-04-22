@@ -17,7 +17,7 @@ Phase 3/4 (#465, #466) は本 doc の phase 遷移を維持したまま reducer 
 
 ## 2. 2 層構造の state machine
 
-```
+```text
 (a) screen   = drop | detecting | complete | preview | export   (useAppStateStore.screen)
 (b) phase    = 各 screen の内部 state enum                        (screens/types.ts + local useState)
 ```
@@ -126,12 +126,14 @@ stateDiagram-v2
 ```
 
 Phase 2 実装:
+
 - local state (`startT`, `endT`, `matchName`, `matchType`) は component マウント時に store から初期化
 - App.tsx で `key={selectedMatchIndex}` を渡すことで、別 match を開くと PreviewScreen が再マウントされ local state が自動リセット (React 19 "avoid setState in effect" に準拠)
 - [適用] は `updateMatch(...)` → `apply()` の一括処理 (local draft を store へ commit + 永続化)
 - filePath が null (sampleMetadata) の場合 [適用] は disabled
 
 Phase 3 で差し替え:
+
 - 2 つの `<video>` placeholder を実 `<video>` + axum HTTP ストリーミングに
 - `FrameStrip` を実デコードサムネイルに
 
@@ -184,7 +186,7 @@ Phase 2 は dummy なので `×` 即時 exit。Phase 3/4 では以下を実装 (
 
 ## 8. コンポーネント階層
 
-```
+```text
 App (App.tsx)
 ├── StateSwitcher           (dev 用 5 タブ、absolute 配置で右上に float)
 └── body
@@ -291,6 +293,7 @@ sequenceDiagram
 | 起動 → drop 画面表示 (実機) | <3s | 手動計測、PR 本文記載 |
 
 Phase 3 で追加される目標:
+
 - 2:50:28 録画での全操作 60fps
 - preview 1 フレームシーク 200ms 以内
 
