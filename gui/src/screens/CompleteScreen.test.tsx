@@ -54,6 +54,18 @@ describe('CompleteScreen', () => {
     expect(state.selectedMatchIndex).toBe(4);
   });
 
+  it('[境界を調整] button navigates to preview with the selected match', async () => {
+    render(<CompleteScreen />);
+    const user = userEvent.setup();
+    // Select match 3 first
+    await user.click(screen.getByTestId('match-row-3'));
+    // Then click the header [境界を調整] button
+    await user.click(screen.getByRole('button', { name: '境界を調整' }));
+    const state = useAppStateStore.getState();
+    expect(state.screen).toBe('preview');
+    expect(state.selectedMatchIndex).toBe(3);
+  });
+
   it('[全試合書き出し] navigates to export', async () => {
     render(<CompleteScreen />);
     const user = userEvent.setup();

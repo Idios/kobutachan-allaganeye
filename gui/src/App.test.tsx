@@ -52,9 +52,15 @@ describe('App routing', () => {
     expect(screen.getByTestId('export-screen')).toBeInTheDocument();
   });
 
-  it('renders the window chrome + side rail on every screen', () => {
+  it('does not render an in-app title bar (Windows native chrome is used instead)', () => {
     render(<App />);
-    expect(screen.getByTestId('window-chrome')).toBeInTheDocument();
-    expect(screen.getByRole('navigation', { name: 'Allagan Eye navigation' })).toBeInTheDocument();
+    expect(screen.queryByTestId('window-chrome')).toBeNull();
+  });
+
+  it('renders the side rail on every screen', () => {
+    render(<App />);
+    expect(
+      screen.getByRole('navigation', { name: 'Allagan Eye navigation' }),
+    ).toBeInTheDocument();
   });
 });

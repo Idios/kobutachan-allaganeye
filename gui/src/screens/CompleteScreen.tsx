@@ -77,6 +77,17 @@ export function CompleteScreen() {
           <RestoreButton />
           <button
             type="button"
+            className={styles.adjustButton}
+            onClick={() =>
+              selectedMatch ? openPreviewFor(selectedMatch.index) : undefined
+            }
+            disabled={!selectedMatch}
+            aria-label="境界を調整"
+          >
+            ⬦ 境界を調整
+          </button>
+          <button
+            type="button"
             className={styles.exportAllButton}
             onClick={() => navigate('export')}
           >
@@ -172,15 +183,9 @@ export function CompleteScreen() {
                 <span>{selectedMatch.type}</span>
               </div>
             </div>
-            <div className={styles.previewActions}>
-              <button
-                type="button"
-                className={styles.previewActionBtn}
-                onClick={() => openPreviewFor(selectedMatch.index)}
-              >
-                境界を調整
-              </button>
-            </div>
+            {/* 境界を調整 action was moved to the top action bar (#464 review
+                feedback — the pane button could scroll below the fold on
+                shorter viewports). */}
           </div>
         )}
       </div>

@@ -99,12 +99,14 @@ stateDiagram-v2
     complete_restoring --> complete_idle: 成功
     complete_restoring --> complete_restoreError: 失敗
     complete_restoreError --> complete_idle: dismiss
-    complete_idle --> [*]: double-click → preview
+    complete_idle --> [*]: [境界を調整] or 行 double-click → preview
     complete_idle --> [*]: [全試合書き出し] → export
     complete_idle --> [*]: [x 閉じる] → clear + reset → drop
 ```
 
 `selectedMatchIndex` は `useAppStateStore` に保持 (complete ↔ preview の往復で維持)。
+
+**preview 遷移トリガは 2 つ**: 試合行の double-click、および上部アクションバーの `[境界を調整]` ボタン (選択中 match が無い場合 disabled)。当初は double-click のみだったが、発見性が低いという #464 レビュー指摘を受けて明示ボタンを追加。
 
 ### preview (A1 Dual IN/OUT)
 
@@ -184,8 +186,7 @@ Phase 2 は dummy なので `×` 即時 exit。Phase 3/4 では以下を実装 (
 
 ```
 App (App.tsx)
-├── StateSwitcher           (dev 用 5 タブ、production でも表示は残す)
-├── WindowChrome            (タイトルバー + traffic lights)
+├── StateSwitcher           (dev 用 5 タブ、absolute 配置で右上に float)
 └── body
     ├── SideRail            (ALLAGAN + 4 アイコン)
     └── main
@@ -197,11 +198,16 @@ App (App.tsx)
 
 components/
 ├── AllaganCorner / AllaganFrame / AllaganSigil   (装飾)
-├── WindowChrome / SideRail / StateSwitcher       (shell)
+├── SideRail / StateSwitcher                      (shell)
 ├── MatchThumb                                    (サムネ placeholder)
 ├── BrightnessTimeline                            (complete 用 SVG)
 ├── FrameStrip                                    (preview 用候補フレーム)
 └── RestoreButton                                 (#516)
+
+注: **カスタム title bar は無し** (prototype の WindowChrome は handoff 時点の
+MacOS 風デザインだったが、L2 は Windows-only (#451) のため Tauri のネイティブ
+Windows title bar に一本化。`tauri.conf.json` の `title: "Allagan Eye"` が
+表示される)。
 
 state/
 ├── appStateStore.ts  — screen + selectedMatchIndex + selectedVideoPath
