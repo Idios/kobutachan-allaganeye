@@ -140,7 +140,7 @@ GUI による初回 `[適用]` 時のみ作成。
 | GUI 初回 `[適用]` | `metadata.json` が存在し `metadata.original.json` が存在しない場合、前者を後者にコピーしてから書き戻す |
 | GUI 2 回目以降 `[適用]` | `metadata.original.json` には触らない (初回時の純粋な detect 結果を保持) |
 | `allaganeye detect` 再実行 | `metadata.json` を上書き、`metadata.original.json` には触らない (注: この場合 `.original` は古い状態のまま残り、ユーザーが手動管理) |
-| 将来の `[元に戻す]` 機能 (Phase 1 スコープ外) | `metadata.original.json` → `metadata.json` へ復元 |
+| GUI `[元に戻す]` (#516 完了、Phase 2 で実装) | `metadata.original.json` の内容で `metadata.json` を atomic 上書き。`.original` は読み取りのみで保持 |
 
 ## ユーザー手動編集シナリオ
 
@@ -161,7 +161,7 @@ GUI による初回 `[適用]` 時のみ作成。
 |---|---|---|
 | 排他管理 (mtime 検知 / 同時編集警告) | (新規起票予定) | GUI load 時の mtime 記録、save 時の外部変更検知 UX |
 | schema_version フィールド | (新規起票予定) | 明示的な版数管理 + migration 基盤 |
-| `[元に戻す]` 機能 | (新規起票予定) | `metadata.original.json` → `metadata.json` 復元ボタン |
+| ~~`[元に戻す]` 機能~~ | [#516](https://github.com/Idios/kobutachan-allaganeye/issues/516) (Phase 2 で実装済み) | `metadata.original.json` → `metadata.json` 復元ボタン (Rust `restore_from_original` + `metadataStore.restore`) |
 | draft auto save | (新規起票予定) | GUI 一時編集を `metadata.draft.json` に定期保存 (リロード耐性) |
 | `warnings: Warning[]` 構造化 | (新規起票予定) | legacy `note` の後継。`{code, message, severity}` 配列 |
 
