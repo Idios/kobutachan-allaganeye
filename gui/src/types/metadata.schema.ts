@@ -1,0 +1,48 @@
+import { z } from 'zod';
+
+export const DetectionParamsSchema = z.object({
+  sample_interval: z.number(),
+  blackout_threshold: z.number(),
+  min_match_duration: z.number(),
+  min_blackout_duration: z.number(),
+  no_audio: z.boolean(),
+  use_gpu: z.union([z.number(), z.boolean(), z.null()]),
+  workers: z.number().nullable(),
+});
+
+export const MatchSchema = z
+  .object({
+    index: z.number().int().min(1),
+    start_time: z.number().min(0),
+    end_time: z.number().min(0),
+    start_display: z.string(),
+    end_display: z.string(),
+    duration: z.number().min(0),
+    duration_display: z.string(),
+    type: z.enum(['fl_match', 'unknown']),
+    output_file: z.string(),
+  })
+  .refine((m) => m.end_time >= m.start_time, {
+    message: 'end_time must be >= start_time',
+  });
+
+export const GapSchema = z.object({
+  start_time: z.number().min(0),
+  end_time: z.number().min(0),
+  start_display: z.string(),
+  end_display: z.string(),
+  duration: z.number().min(0),
+  duration_display: z.string(),
+});
+
+export const MetadataSchema = z
+  .object({
+    source: z.string().min(1),
+    source_duration: z.number().positive(),
+    source_duration_display: z.string(),
+    detected_at: z.string().min(1),
+    detection_params: DetectionParamsSchema,
+    matches: z.array(MatchSchema),
+    gaps: z.array(GapSchema),
+  })
+  .passthrough();

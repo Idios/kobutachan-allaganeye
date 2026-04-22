@@ -40,7 +40,9 @@ ruff format --check .
 pyright
 
 # CLI
-allaganeye split <video_path>           # 試合分割
+allaganeye detect <video_path>                          # 検知のみ (metadata.json 出力、#463)
+allaganeye split --from-metadata <metadata.json>        # metadata.json から分割のみ (#463)
+allaganeye split <video_path>           # 試合分割 (detect + split の一気通貫、後方互換)
 allaganeye split <video_path> -o <dir>  # 出力先指定
 allaganeye split <video_path> --gpu     # GPU アクセラレーション検知
 allaganeye split <video_path> --workers 8  # ワーカー数指定
@@ -93,8 +95,10 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `audio/matcher.py` | 参照 BGM と target の相互相関で peak 検出 |
 | `audio/scan.py` | 動画全域を走査して Fanfare ピークを返す |
 | `audio/refs/` | 同梱参照特徴量（`fanfare.npz`） |
-| `gui/` | L2a Tauri GUI (React 19 + TS + Vite + Zustand)。`#483` で bootstrap。詳細は [docs/gui-development.md](docs/gui-development.md) および [docs/design/README.md](docs/design/README.md) |
-| `gui/src-tauri/` | Tauri 2 Rust バックエンド (axum/tower-http による動画配信は #465 で実装予定) |
+| `commands/detect.py` | detect コマンド。検知のみ実行し metadata.json を出力 (#463) |
+| `detection/` | 検知パイプラインの共有ヘルパ (#463)。`format.py` (フォーマッタ) / `metadata_writer.py` (atomic read/write) |
+| `gui/` | L2a Tauri GUI (React 19 + TS + Vite + Zustand + zod)。`#483` で bootstrap、`#463` で data 層 (store / Tauri commands)。詳細は [docs/gui-development.md](docs/gui-development.md) および [docs/design/README.md](docs/design/README.md) |
+| `gui/src-tauri/` | Tauri 2 Rust バックエンド (`load_metadata` / `apply_changes` command、axum/tower-http による動画配信は #465 で実装予定) |
 
 ### 検知アルゴリズム（detector.py）
 

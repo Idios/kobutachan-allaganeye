@@ -70,12 +70,13 @@ CLI (dry-run)
           └→ 編集後 metadata を入力として match_xxx.mp4 を生成
 ```
 
-**CLI 側の変更**: 現行の `allaganeye split` を 2 コマンドに分離:
+**CLI 側の変更** (#463 で実装完了):
 
-- `allaganeye detect <video>` — 検知のみ実行し metadata.json を出力 (現 `--dry-run` 相当)
+- `allaganeye detect <video>` — 検知のみ実行し metadata.json を出力
 - `allaganeye split --from-metadata <metadata.json>` — 分割のみ実行
+- `allaganeye split <video>` — 従来の一気通貫 (後方互換、内部で detect + split)
 
-これにより CLI 単体でも従来通り使え、GUI は CLI の薄いラッパとなる。
+これにより CLI 単体でも従来通り使え、GUI は CLI の薄いラッパとなる。詳細スキーマと契約は [`../metadata-spec.md`](../metadata-spec.md) を参照。
 
 ### GUI 側拡張フィールド
 
@@ -110,11 +111,13 @@ Electron / Tauri の両方で最小プロトタイプを構築し F1-F5 を計�
 - CLI streaming: 706s 長時間 detect で first-line 1.3-1.9s、両 FW streaming 成立
 - Tauri 固有 blocker (tauri#6375, #5022) は現行 2.10.3 で再現せず
 
-### Phase 1: データ層
+### Phase 1: データ層 (#463 完了)
 
-- CLI を `detect` / `split --from-metadata` の 2 モードに分離
-- metadata.json スキーマを TypeScript 型へ落とす
-- 読み込み / 編集 / 保存の state 管理 (zustand 等 React 用 stateMgr)
+- CLI を `detect` / `split --from-metadata` の 2 モードに分離 (後方互換維持)
+- metadata.json スキーマを TypeScript 型 + zod schema に落とす
+- Zustand による `useMetadataStore` (load / updateMatch / apply / clear)
+- Rust Tauri commands (`load_metadata` / `apply_changes` atomic write + `metadata.original.json` backup)
+- 契約詳細は [`../metadata-spec.md`](../metadata-spec.md) を参照
 
 ### Phase 2: 画面骨格 (5 画面 + ルータ)
 

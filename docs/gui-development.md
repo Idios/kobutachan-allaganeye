@@ -37,6 +37,8 @@ Tauri CLI が以下を並列起動する:
 
 ファイル編集で HMR (hot module replacement) が発動する。Rust 側の変更は再ビルドが必要。
 
+> **開発時は 1 インスタンスのみ実行可能** (#504): Vite dev server の port 1420 が `strictPort: true` で固定されているため、同時に 2 本目の `npm run tauri dev` を起動しようとすると `Port 1420 is already in use` で失敗する。配布版 (`tauri build` 後の .exe) は Vite を使わず axum HTTP サーバも ephemeral port を使うため、**複数起動の制約はない**。
+
 ## ビルド確認 (smoke test)
 
 ```bash
@@ -94,6 +96,20 @@ cargo check          # Rust 側の型/依存チェック
 ### `npm run tauri dev` 起動後、Tauri ウィンドウが空白
 
 → Vite dev server (`http://127.0.0.1:1420`) が他プロセスに専有されている可能性。`npm run dev` 単体で起動確認し、ポート競合を解決する。
+
+### `Port 1420 is already in use` で起動失敗 (#504)
+
+dev server の port 競合。以下のいずれか:
+
+- 別の `npm run (tauri) dev` が同時起動中 → どちらか 1 つに絞る
+- 過去セッションの残留プロセス (TaskStop / Ctrl+C 後に子プロセスが残るケース) → PowerShell で PID 特定 + kill:
+
+```powershell
+netstat -ano | findstr ":1420"
+Stop-Process -Id <pid> -Force
+```
+
+将来 port の動的化が必要になった場合は別 issue で対応 (現状は `vite.config.ts` の `strictPort: true` を意図的に残している)。
 
 ### production build で F5 を押しても反応しない
 

@@ -13,7 +13,16 @@ import typer
 
 from allaganeye.audio.matcher import BgmHit
 from allaganeye.config import SplitConfig
-from allaganeye.exceptions import AllaganEyeError, DetectionError, VideoProcessingError
+from allaganeye.detection.metadata_writer import (
+    read_metadata,
+    write_metadata_atomic,
+)
+from allaganeye.exceptions import (
+    AllaganEyeError,
+    DetectionError,
+    InputFileError,
+    VideoProcessingError,
+)
 from allaganeye.video.detector import (
     DetectionStats,
     MatchBoundary,
@@ -203,6 +212,122 @@ def run_split(
         boundaries,
         gaps,
         metadata,
+        config,
+        effective_interval=effective_interval,
+        detected_at=detected_at,
+        quiet=quiet,
+    )
+    _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
+    _emit_total_time(total_start, verbose, show)
+
+
+def run_split_from_metadata(
+    metadata_path: Path,
+    config: SplitConfig,
+    *,
+    verbose: bool = False,
+    quiet: bool = False,
+) -> None:
+    """Split a video using a previously generated ``metadata.json`` (#463).
+
+    Reads the JSON produced by ``allaganeye detect <video>`` (or a legacy
+    ``allaganeye split <video>`` run), resolves the source video path, and
+    runs only the ffmpeg ``-c copy`` split phase.  Detection is skipped.
+
+    The source path stored in ``metadata.json`` is resolved relative to the
+    metadata file's directory when it is not absolute, so a metadata file
+    that travels alongside its output directory keeps working after a move.
+
+    Output files are written into ``config.output_dir`` (not necessarily the
+    metadata file's directory), and the metadata file is **rewritten** with
+    updated ``output_file`` entries that reflect the new paths.
+    """
+    show = not quiet
+    total_start = time.monotonic()
+
+    payload = read_metadata(metadata_path)
+
+    source_value = payload.get("source")
+    if not isinstance(source_value, str) or not source_value:
+        raise InputFileError(
+            f"metadata file {metadata_path} missing required field 'source'"
+        )
+    source_path = Path(source_value)
+    if not source_path.is_absolute():
+        source_path = (metadata_path.parent / source_path).resolve()
+    if not source_path.exists():
+        raise InputFileError(
+            f"source video referenced by {metadata_path} not found: {source_path}"
+        )
+
+    matches = payload.get("matches")
+    if not isinstance(matches, list) or not matches:
+        raise InputFileError(
+            f"metadata file {metadata_path} has no match entries to split"
+        )
+
+    boundaries: list[MatchBoundary] = []
+    for entry in matches:
+        if not isinstance(entry, dict):
+            raise InputFileError(
+                f"metadata file {metadata_path} has a non-object match entry"
+            )
+        try:
+            start = float(entry["start_time"])
+            end = float(entry["end_time"])
+        except (KeyError, TypeError, ValueError) as e:
+            raise InputFileError(
+                f"metadata file {metadata_path} has a match entry missing "
+                f"start_time/end_time: {e}"
+            ) from e
+        type_value = entry.get("type", "unknown")
+        boundaries.append({"start": start, "end": end, "type": type_value})
+
+    gaps_raw = payload.get("gaps", [])
+    gaps: list[Gap] = []
+    if isinstance(gaps_raw, list):
+        for g in gaps_raw:
+            if not isinstance(g, dict):
+                continue
+            try:
+                gaps.append(
+                    {
+                        "start": float(g["start_time"]),
+                        "end": float(g["end_time"]),
+                        "duration": float(g["duration"]),
+                    }
+                )
+            except (KeyError, TypeError, ValueError):
+                # Forgiving: gaps are informational only.
+                continue
+
+    probe = probe_video(source_path)
+
+    detected_at_value = payload.get("detected_at")
+    detected_at = (
+        detected_at_value if isinstance(detected_at_value, str) else _iso_utc_now()
+    )
+
+    detection_params = payload.get("detection_params")
+    if isinstance(detection_params, dict):
+        effective_interval = float(
+            detection_params.get("sample_interval", config.sample_interval)
+        )
+    else:
+        effective_interval = config.sample_interval
+
+    if show:
+        typer.echo(f"Splitting {len(boundaries)} match(es) from {metadata_path.name}")
+    if verbose and show:
+        typer.echo(f"  Source: {source_path}")
+
+    _check_disk_space(source_path, boundaries, probe["duration"], config, show=show)
+    split_start = time.monotonic()
+    _split_and_write_metadata(
+        source_path,
+        boundaries,
+        gaps,
+        probe,
         config,
         effective_interval=effective_interval,
         detected_at=detected_at,
@@ -683,16 +808,48 @@ def _split_and_write_metadata(
     else:
         output_files = split_video(video_path, boundaries, config.output_dir)
 
-    # Write metadata
-    result = {
+    # Write metadata (#463: ``note`` field retired; caveats documented in
+    # docs/cli-spec.md and docs/metadata-spec.md instead of being embedded
+    # in the payload)
+    result = _build_metadata_payload(
+        video_path=video_path,
+        source_duration=source_duration,
+        detected_at=detected_at,
+        effective_interval=effective_interval,
+        config=config,
+        boundaries=boundaries,
+        output_files=output_files,
+        gaps=gaps,
+    )
+    metadata_path = config.output_dir / "metadata.json"
+    write_metadata_atomic(metadata_path, result)
+
+    typer.echo(f"\nOutput: {config.output_dir}")
+    for f in output_files:
+        typer.echo(f"  {f.name}")
+    typer.echo(f"Metadata: {metadata_path}")
+
+
+def _build_metadata_payload(
+    *,
+    video_path: Path,
+    source_duration: float,
+    detected_at: str,
+    effective_interval: float,
+    config: SplitConfig,
+    boundaries: list[MatchBoundary],
+    output_files: list[Path],
+    gaps: list[Gap],
+) -> dict:
+    """Build the ``metadata.json`` payload dict (schema v1, #463).
+
+    Kept private to this module; ``commands.detect`` builds a variant
+    (no ``output_files``) via its own helper.
+    """
+    return {
         "source": str(video_path),
         "source_duration": source_duration,
         "source_duration_display": _format_timestamp(source_duration),
-        "note": (
-            "Split times are approximate due to keyframe-aligned copy mode. "
-            "Actual start/end may differ by up to the source keyframe interval "
-            "(typically 2s for OBS recordings)."
-        ),
         "detected_at": detected_at,
         "detection_params": {
             "sample_interval": effective_interval,
@@ -729,18 +886,6 @@ def _split_and_write_metadata(
             for g in gaps
         ],
     }
-    metadata_path = config.output_dir / "metadata.json"
-    try:
-        metadata_path.write_text(
-            json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-    except OSError as e:
-        raise AllaganEyeError(f"Cannot write metadata to {metadata_path}: {e}") from e
-
-    typer.echo(f"\nOutput: {config.output_dir}")
-    for f in output_files:
-        typer.echo(f"  {f.name}")
-    typer.echo(f"Metadata: {metadata_path}")
 
 
 def _print_environment_header(
