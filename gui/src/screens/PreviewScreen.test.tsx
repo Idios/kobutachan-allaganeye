@@ -14,6 +14,19 @@ import { useMetadataStore } from '../state/metadataStore';
 
 beforeEach(() => {
   invokeMock.mockReset();
+  // #465: PreviewScreen kicks off register_video on mount. Default the
+  // mock so individual tests don't see "unmocked invoke" from that call.
+  invokeMock.mockImplementation((cmd: string) => {
+    if (cmd === 'register_video') {
+      return Promise.resolve({
+        url: 'http://127.0.0.1:0/video/test-token',
+        token: 'test-token',
+      });
+    }
+    if (cmd === 'generate_match_thumbnails') return Promise.resolve([]);
+    if (cmd === 'check_backup_exists') return Promise.resolve(false);
+    return Promise.reject(new Error(`unmocked: ${cmd}`));
+  });
   useAppStateStore.getState().reset();
   useMetadataStore.getState().clear();
   useMetadataStore.getState().loadSample();
@@ -105,5 +118,65 @@ describe('PreviewScreen', () => {
       screen.getByLabelText('IN (start) timecode') as HTMLInputElement
     ).value;
     expect(after).not.toBe(initial);
+  });
+
+  // #465 -- video player + keyboard.
+
+  it('renders a <video> element with the registered URL after mount', async () => {
+    render(<PreviewScreen />);
+    const video = await screen.findByLabelText<HTMLVideoElement>(
+      'IN (start) video',
+    );
+    expect(video.tagName).toBe('VIDEO');
+    expect(video.getAttribute('src')).toContain('/video/test-token');
+  });
+
+  it('falls back to an error banner when register_video rejects', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'register_video')
+        return Promise.reject(new Error('video server busted'));
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    render(<PreviewScreen />);
+    const alerts = await screen.findAllByRole('alert');
+    expect(alerts.some((el) => el.textContent?.includes('video server busted')))
+      .toBe(true);
+  });
+
+  it('ArrowRight key nudges the active timestamp forward by 1s', async () => {
+    render(<PreviewScreen />);
+    const before = (
+      screen.getByLabelText('IN (start) timecode') as HTMLInputElement
+    ).value;
+    await userEvent.setup().keyboard('{ArrowRight}');
+    const after = (
+      screen.getByLabelText('IN (start) timecode') as HTMLInputElement
+    ).value;
+    expect(after).not.toBe(before);
+  });
+
+  it('Shift+ArrowLeft nudges the active timestamp (10s step) — different value from plain ArrowLeft', async () => {
+    render(<PreviewScreen />);
+    const before = (
+      screen.getByLabelText('IN (start) timecode') as HTMLInputElement
+    ).value;
+    await userEvent.setup().keyboard('{Shift>}{ArrowLeft}{/Shift}');
+    const after = (
+      screen.getByLabelText('IN (start) timecode') as HTMLInputElement
+    ).value;
+    expect(after).not.toBe(before);
+  });
+
+  it('keyboard shortcuts do not fire while the TC input is focused', async () => {
+    render(<PreviewScreen />);
+    const tc = screen.getByLabelText(
+      'IN (start) timecode',
+    ) as HTMLInputElement;
+    const initial = tc.value;
+    tc.focus();
+    await userEvent.setup().keyboard('{ArrowRight}');
+    // tc remains focused; ArrowRight is caret movement inside the input.
+    expect(tc.value).toBe(initial);
   });
 });

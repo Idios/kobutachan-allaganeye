@@ -37,6 +37,7 @@ htmlcov/
 .claude/settings.local.json
 .claude/worktrees/
 .claude/state/
+.claude/scheduled_tasks.lock
 .env
 ROLE
 

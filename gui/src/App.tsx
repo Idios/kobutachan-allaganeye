@@ -1,3 +1,4 @@
+import { ConfirmExitModal } from './components/ConfirmExitModal';
 import { ConflictModal } from './components/ConflictModal';
 import { DraftRestoreModal } from './components/DraftRestoreModal';
 import { SideRail } from './components/SideRail';
@@ -48,6 +49,8 @@ export default function App() {
       <ConflictModal />
       {/* #517 — global modal for draft restore offers on mount/post-load. */}
       <DraftRestoreModal />
+      {/* #523 -- global modal for ffmpeg-in-flight close confirmation. */}
+      <ConfirmExitModal />
     </div>
   );
 }

@@ -1,8 +1,66 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use axum::{
+    extract::{Path as AxumPath, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::get,
+    Router,
+};
+use tauri::Emitter;
+use futures::future::join_all;
+use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
+use tokio::sync::{Mutex, Semaphore};
+use tower_http::services::ServeFile;
+use uuid::Uuid;
+
+/// #465 -- per-token mapping from opaque UUID to absolute video file path.
+///
+/// Shared between the axum server's handler state and the Tauri commands so
+/// that `register_video` can insert and the handler can look up without
+/// copying the whole map each request.
+type TokenMap = Arc<Mutex<HashMap<Uuid, PathBuf>>>;
+
+/// #465 -- process-global video-server handle.
+///
+/// Holds the bound port (`None` until the first `register_video` call starts
+/// the server) and the shared token map. Wrapped in a `tokio::sync::Mutex`
+/// so multiple concurrent Tauri async commands can await it safely.
+struct VideoServer {
+    port: Option<u16>,
+    tokens: TokenMap,
+}
+
+impl VideoServer {
+    fn new() -> Self {
+        Self {
+            port: None,
+            tokens: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+static VIDEO_SERVER: OnceLock<Mutex<VideoServer>> = OnceLock::new();
+
+fn video_server() -> &'static Mutex<VideoServer> {
+    VIDEO_SERVER.get_or_init(|| Mutex::new(VideoServer::new()))
+}
+
+/// #465 -- payload returned to the GUI from `register_video`.
+///
+/// The frontend sets `url` as the `<video>` element's `src` and keeps `token`
+/// around in case it later needs to unregister the file (future feature).
+#[derive(Debug, Serialize)]
+pub struct RegisteredVideo {
+    pub url: String,
+    pub token: String,
+}
 
 #[tauri::command]
 async fn load_metadata(path: String) -> Result<Value, String> {
@@ -155,6 +213,125 @@ async fn check_backup_exists(path: String) -> Result<bool, String> {
     Ok(parent.join("metadata.original.json").exists())
 }
 
+/// #465 -- register a video file with the local HTTP server and return a
+/// playback URL for the GUI's `<video>` element.
+///
+/// Starts the axum server lazily on the first call (subsequent calls reuse
+/// the same bound port). The returned URL has the form
+/// `http://127.0.0.1:{port}/video/{token}` and is only reachable from the
+/// same machine; the server binds exclusively to 127.0.0.1.
+#[tauri::command]
+async fn register_video(path: String) -> Result<RegisteredVideo, String> {
+    let file_path = PathBuf::from(&path);
+    let canonical = validate_video_path(&file_path)?;
+
+    let port = ensure_server_started().await?;
+    let token = {
+        let guard = video_server().lock().await;
+        let mut tokens = guard.tokens.lock().await;
+        register_video_sync(&canonical, &mut tokens)
+    };
+
+    Ok(RegisteredVideo {
+        url: format!("http://127.0.0.1:{}/video/{}", port, token),
+        token: token.to_string(),
+    })
+}
+
+/// Validate that `path` points to an existing regular file and return the
+/// canonicalized absolute path on success.
+fn validate_video_path(path: &Path) -> Result<PathBuf, String> {
+    if !path.exists() {
+        return Err(format!("video file not found: {}", path.display()));
+    }
+    let meta = fs::metadata(path)
+        .map_err(|e| format!("stat failed ({}): {}", path.display(), e))?;
+    if !meta.is_file() {
+        return Err(format!(
+            "video path is not a regular file: {}",
+            path.display()
+        ));
+    }
+    fs::canonicalize(path)
+        .map_err(|e| format!("canonicalize failed ({}): {}", path.display(), e))
+}
+
+/// Pure helper: mint a new UUID, insert `(token, path)` into the token map,
+/// and return the token. Extracted so unit tests can exercise the
+/// registration logic without starting an axum server.
+fn register_video_sync(path: &Path, tokens: &mut HashMap<Uuid, PathBuf>) -> Uuid {
+    let token = Uuid::new_v4();
+    tokens.insert(token, path.to_path_buf());
+    token
+}
+
+/// Ensure the local video server is listening on 127.0.0.1 and return the
+/// bound port. Idempotent: re-uses the existing port on every call after the
+/// first.
+async fn ensure_server_started() -> Result<u16, String> {
+    let mut guard = video_server().lock().await;
+    if let Some(port) = guard.port {
+        return Ok(port);
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| format!("bind 127.0.0.1:0 failed: {}", e))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|e| format!("local_addr failed: {}", e))?;
+
+    let tokens = guard.tokens.clone();
+    let app = build_router(tokens);
+
+    tokio::spawn(async move {
+        if let Err(e) = axum::serve(listener, app).await {
+            eprintln!("video server error: {}", e);
+        }
+    });
+
+    guard.port = Some(addr.port());
+    Ok(addr.port())
+}
+
+/// Build the axum `Router` that serves `GET /video/{token}` and dispatches
+/// to `ServeFile` (which handles HTTP Range requests natively) when the
+/// token resolves to a registered file.
+fn build_router(tokens: TokenMap) -> Router {
+    Router::new()
+        .route("/video/{token}", get(serve_video))
+        .with_state(tokens)
+}
+
+async fn serve_video(
+    State(tokens): State<TokenMap>,
+    AxumPath(token): AxumPath<String>,
+    request: axum::extract::Request,
+) -> axum::response::Response {
+    let parsed = match Uuid::parse_str(&token) {
+        Ok(t) => t,
+        Err(_) => return (StatusCode::NOT_FOUND, "unknown token").into_response(),
+    };
+
+    let path = {
+        let map = tokens.lock().await;
+        map.get(&parsed).cloned()
+    };
+
+    match path {
+        Some(p) => {
+            // ServeFile handles Range, Content-Type sniffing, and If-Range.
+            // Forward the original request so the Range header survives.
+            let mut svc = ServeFile::new(p);
+            match svc.try_call(request).await {
+                Ok(resp) => resp.into_response(),
+                Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "serve failed").into_response(),
+            }
+        }
+        None => (StatusCode::NOT_FOUND, "unknown token").into_response(),
+    }
+}
+
 fn apply_changes_sync(
     meta_path: &Path,
     payload: &Value,
@@ -178,6 +355,7 @@ fn apply_changes_sync(
             }
         }
     }
+
 
     let parent = meta_path
         .parent()
@@ -229,11 +407,265 @@ fn write_metadata_atomic(path: &Path, payload: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// #465 -- per-candidate thumbnail entry returned to the GUI.
+///
+/// `t_seconds` is the absolute timestamp (seconds from video start) where the
+/// thumbnail was extracted; `file_path` is an absolute path to the cached
+/// WebP file the frontend can read (via tauri_plugin_fs) or serve via the
+/// video HTTP server in a later iteration.
+#[derive(Debug, Serialize)]
+pub struct ThumbnailEntry {
+    pub t_seconds: f64,
+    pub file_path: String,
+}
+
+/// #465 -- stable per-video cache key derived from the absolute path and the
+/// file's last-modified time. Recreating the same video (even at the same
+/// path) yields a different hash because mtime changes, forcing a fresh
+/// thumbnail cache and preventing stale frames from being served.
+fn compute_video_cache_hash(video_path: &Path, mtime_ms: u64) -> String {
+    let mut hasher = Sha256::new();
+    let key = format!("{}:{}", video_path.display(), mtime_ms);
+    hasher.update(key.as_bytes());
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest.iter() {
+        hex.push_str(&format!("{:02x}", byte));
+    }
+    hex
+}
+
+/// #465 -- resolve `<home>/.allaganeye/cache/<video_hash>/thumbs/`.
+///
+/// Returns the path without creating it; callers that intend to write thumbs
+/// are responsible for `create_dir_all`. On Windows the home directory comes
+/// from `USERPROFILE` via `dirs::home_dir`; on Unix it reads `HOME`.
+fn thumb_cache_dir(video_hash: &str) -> Result<PathBuf, String> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| "failed to resolve user home directory".to_string())?;
+    Ok(home
+        .join(".allaganeye")
+        .join("cache")
+        .join(video_hash)
+        .join("thumbs"))
+}
+
+/// #465 -- compute the evenly-spaced timestamps for a given boundary window.
+///
+/// Produces `count` samples covering
+/// `[boundary - window_seconds, boundary + window_seconds]`, clamped at 0.
+/// Pulled out for unit testing (no ffmpeg involvement).
+fn compute_candidate_timestamps(
+    boundary_t_seconds: f64,
+    window_seconds: f64,
+    count: u32,
+) -> Vec<f64> {
+    if count == 0 {
+        return Vec::new();
+    }
+    if count == 1 {
+        return vec![boundary_t_seconds.max(0.0)];
+    }
+    let start = boundary_t_seconds - window_seconds;
+    let end = boundary_t_seconds + window_seconds;
+    let step = (end - start) / f64::from(count - 1);
+    let mut out = Vec::with_capacity(count as usize);
+    for i in 0..count {
+        let t = start + step * f64::from(i);
+        out.push(t.max(0.0));
+    }
+    out
+}
+
+/// #465 -- filesystem-safe token for a single cached thumbnail.
+///
+/// Format: `match{match_index:03}_t{timestamp_ms}` so the filename carries
+/// enough context to debug cache entries by eye (e.g. `match003_t452500`).
+fn thumb_token(match_index: u32, t_seconds: f64) -> String {
+    let t_ms = (t_seconds * 1000.0).round() as i64;
+    let t_ms = t_ms.max(0) as u64;
+    format!("match{:03}_t{}", match_index, t_ms)
+}
+
+/// #465 -- generate (or reuse cached) thumbnails for a match boundary window.
+///
+/// Spawns `ffmpeg` per missing frame with bounded concurrency. Returns one
+/// entry per requested timestamp in order; any ffmpeg failure aborts the
+/// whole call so the caller never sees a partially populated list.
+#[tauri::command]
+async fn generate_match_thumbnails(
+    video_path: String,
+    match_index: u32,
+    boundary_t_seconds: f64,
+    window_seconds: f64,
+    count: u32,
+) -> Result<Vec<ThumbnailEntry>, String> {
+    let video = PathBuf::from(&video_path);
+    if !video.exists() {
+        return Err(format!("video file not found: {}", video.display()));
+    }
+    let meta = fs::metadata(&video)
+        .map_err(|e| format!("stat failed ({}): {}", video.display(), e))?;
+    let mtime_ms = meta
+        .modified()
+        .map_err(|e| format!("mtime failed ({}): {}", video.display(), e))?
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .map_err(|e| format!("mtime before epoch ({}): {}", video.display(), e))?;
+    let canonical = fs::canonicalize(&video)
+        .map_err(|e| format!("canonicalize failed ({}): {}", video.display(), e))?;
+
+    let video_hash = compute_video_cache_hash(&canonical, mtime_ms);
+    let cache_dir = thumb_cache_dir(&video_hash)?;
+    fs::create_dir_all(&cache_dir)
+        .map_err(|e| format!("create cache dir {} failed: {}", cache_dir.display(), e))?;
+
+    let timestamps = compute_candidate_timestamps(boundary_t_seconds, window_seconds, count);
+    let semaphore = Arc::new(Semaphore::new(4));
+
+    let mut tasks = Vec::with_capacity(timestamps.len());
+    for t in timestamps.iter().copied() {
+        let token = thumb_token(match_index, t);
+        let out_path = cache_dir.join(format!("{}.webp", token));
+        let video_for_task = canonical.clone();
+        let sem = Arc::clone(&semaphore);
+        tasks.push(async move {
+            let _permit = sem
+                .acquire_owned()
+                .await
+                .map_err(|e| format!("semaphore closed: {}", e))?;
+            ensure_thumbnail_exists(&video_for_task, t, &out_path).await?;
+            Ok::<ThumbnailEntry, String>(ThumbnailEntry {
+                t_seconds: t,
+                file_path: out_path.to_string_lossy().to_string(),
+            })
+        });
+    }
+
+    let results = join_all(tasks).await;
+    let mut entries = Vec::with_capacity(results.len());
+    for r in results {
+        entries.push(r?);
+    }
+    Ok(entries)
+}
+
+/// #465 -- spawn ffmpeg to materialise a single thumbnail unless the cache
+/// file is already present and non-empty. On any non-zero exit, the stderr
+/// is folded into the returned error so the GUI can surface it.
+async fn ensure_thumbnail_exists(
+    video_path: &Path,
+    t_seconds: f64,
+    out_path: &Path,
+) -> Result<(), String> {
+    if let Ok(meta) = fs::metadata(out_path) {
+        if meta.is_file() && meta.len() > 0 {
+            return Ok(());
+        }
+    }
+    if let Some(parent) = out_path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| {
+                format!("create dir {} failed: {}", parent.display(), e)
+            })?;
+        }
+    }
+
+    let t_arg = format!("{:.3}", t_seconds.max(0.0));
+    let output = tokio::process::Command::new("ffmpeg")
+        .arg("-y")
+        .arg("-ss")
+        .arg(&t_arg)
+        .arg("-i")
+        .arg(video_path)
+        .arg("-frames:v")
+        .arg("1")
+        .arg("-vf")
+        .arg("scale=160:90")
+        .arg("-q:v")
+        .arg("80")
+        .arg("-f")
+        .arg("webp")
+        .arg("-loglevel")
+        .arg("error")
+        .arg(out_path)
+        .output()
+        .await
+        .map_err(|e| format!("spawn ffmpeg failed at t={}: {}", t_arg, e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "ffmpeg failed at t={} (exit={:?}): {}",
+            t_arg,
+            output.status.code(),
+            stderr.trim()
+        ));
+    }
+    Ok(())
+}
+
+/// #523 -- tracker for long-running external processes (detecting /export
+/// ffmpeg invocations). Phase 3 preview itself does not spawn persistent
+/// children, but detecting (Phase 3) and export (Phase 4) will register
+/// their children here so the Close-Requested handler can kill them before
+/// exit.
+type ProcessMap = Arc<Mutex<HashMap<Uuid, tokio::process::Child>>>;
+
+static PROCESS_TRACKER: OnceLock<ProcessMap> = OnceLock::new();
+
+fn process_tracker() -> &'static ProcessMap {
+    PROCESS_TRACKER.get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
+}
+
+/// #523 -- report whether any child process is currently being tracked.
+/// Called by the frontend when it receives a `close-requested` event so it
+/// can decide whether to show the confirm modal or let the window close.
+#[tauri::command]
+async fn is_process_running() -> bool {
+    let tracker = process_tracker();
+    let guard = tracker.lock().await;
+    !guard.is_empty()
+}
+
+/// #523 -- kill every tracked child. Returns the number of processes that
+/// were alive at kill time. Best-effort -- already-dead children are silently
+/// skipped so partial kills don't block the exit flow.
+#[tauri::command]
+async fn kill_tracked_processes() -> Result<u32, String> {
+    let tracker = process_tracker();
+    let mut guard = tracker.lock().await;
+    let count = guard.len() as u32;
+    for (_, mut child) in guard.drain() {
+        let _ = child.kill().await;
+    }
+    Ok(count)
+}
+
+/// #523 -- explicit app exit, used after the user confirms they want to
+/// terminate a running process. `on_window_event` always calls
+/// `prevent_close`, so the frontend must drive the actual exit through this
+/// command once it has finished cleanup.
+#[tauri::command]
+async fn force_exit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .on_window_event(|window, event| {
+            // #523 -- intercept every CloseRequested. The frontend inspects
+            // tracked processes on receipt: if none are running it calls
+            // `force_exit_app` immediately; otherwise it surfaces the
+            // ConfirmExitModal and drives kill + exit on confirm.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.emit("close-requested", ());
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             load_metadata,
             get_metadata_mtime,
@@ -243,6 +675,11 @@ pub fn run() {
             clear_draft,
             restore_from_original,
             check_backup_exists,
+            register_video,
+            generate_match_thumbnails,
+            is_process_running,
+            kill_tracked_processes,
+            force_exit_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -705,5 +1142,171 @@ mod tests {
         let roundtrip: Value =
             serde_json::from_str(&fs::read_to_string(&draft_file).unwrap()).unwrap();
         assert_eq!(roundtrip, draft);
+    }
+
+    /// #465 -- a non-existent path must be rejected before any token is
+    /// minted or the server is touched.
+    #[test]
+    fn register_video_rejects_missing_file() {
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("does_not_exist.mp4");
+        let err = validate_video_path(&missing).unwrap_err();
+        assert!(
+            err.contains("not found"),
+            "expected 'not found' in error, got: {}",
+            err
+        );
+    }
+
+    /// #465 -- directories are not valid video sources; we only allow
+    /// regular files. This prevents a caller from accidentally registering
+    /// a folder and serving its contents.
+    #[test]
+    fn register_video_rejects_directory() {
+        let tmp = TempDir::new().unwrap();
+        let err = validate_video_path(tmp.path()).unwrap_err();
+        assert!(
+            err.contains("not a regular file"),
+            "expected 'not a regular file' in error, got: {}",
+            err
+        );
+    }
+
+    /// #465 -- accepting a regular file returns a canonicalized absolute
+    /// path suitable for the token map.
+    #[test]
+    fn validate_video_path_accepts_regular_file() {
+        let tmp = TempDir::new().unwrap();
+        let video = tmp.path().join("clip.mp4");
+        fs::write(&video, b"fake mp4 bytes").unwrap();
+        let canonical = validate_video_path(&video).unwrap();
+        assert!(canonical.is_absolute());
+        assert!(canonical.exists());
+    }
+
+    /// #465 -- two consecutive registrations must yield distinct tokens and
+    /// leave both entries in the map.
+    #[test]
+    fn register_video_returns_distinct_tokens_for_two_registrations() {
+        let tmp = TempDir::new().unwrap();
+        let a = tmp.path().join("a.mp4");
+        let b = tmp.path().join("b.mp4");
+        fs::write(&a, b"aaa").unwrap();
+        fs::write(&b, b"bbb").unwrap();
+
+        let mut tokens: HashMap<Uuid, PathBuf> = HashMap::new();
+        let token_a = register_video_sync(&a, &mut tokens);
+        let token_b = register_video_sync(&b, &mut tokens);
+
+        assert_ne!(token_a, token_b, "tokens must be distinct");
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens.get(&token_a).unwrap(), &a);
+        assert_eq!(tokens.get(&token_b).unwrap(), &b);
+    }
+
+    /// #465 -- registering the same file twice also yields distinct tokens
+    /// (each registration is an independent handle; no deduplication).
+    #[test]
+    fn register_video_same_file_twice_yields_distinct_tokens() {
+        let tmp = TempDir::new().unwrap();
+        let video = tmp.path().join("clip.mp4");
+        fs::write(&video, b"same file").unwrap();
+
+        let mut tokens: HashMap<Uuid, PathBuf> = HashMap::new();
+        let t1 = register_video_sync(&video, &mut tokens);
+        let t2 = register_video_sync(&video, &mut tokens);
+
+        assert_ne!(t1, t2);
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens.get(&t1).unwrap(), &video);
+        assert_eq!(tokens.get(&t2).unwrap(), &video);
+    }
+
+    /// #465 -- same path + same mtime must produce the same hash across
+    /// invocations (cache hits rely on this).
+    #[test]
+    fn compute_video_cache_hash_is_deterministic() {
+        let path = Path::new("C:/videos/sample.mp4");
+        let h1 = compute_video_cache_hash(path, 1_700_000_000_000);
+        let h2 = compute_video_cache_hash(path, 1_700_000_000_000);
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 64, "SHA256 hex is 64 chars");
+    }
+
+    /// #465 -- mtime deltas invalidate the cache so re-encoded videos at the
+    /// same path never serve stale thumbnails.
+    #[test]
+    fn compute_video_cache_hash_changes_with_mtime() {
+        let path = Path::new("C:/videos/sample.mp4");
+        let h1 = compute_video_cache_hash(path, 1_700_000_000_000);
+        let h2 = compute_video_cache_hash(path, 1_700_000_000_001);
+        assert_ne!(h1, h2);
+    }
+
+    /// #465 -- different paths never collide, even with identical mtimes.
+    #[test]
+    fn compute_video_cache_hash_changes_with_path() {
+        let mtime = 1_700_000_000_000u64;
+        let h1 = compute_video_cache_hash(Path::new("C:/videos/a.mp4"), mtime);
+        let h2 = compute_video_cache_hash(Path::new("C:/videos/b.mp4"), mtime);
+        assert_ne!(h1, h2);
+    }
+
+    /// #465 -- `thumb_cache_dir` must place the hash segment and the
+    /// literal `thumbs` leaf under `.allaganeye/cache/`. We check path
+    /// components to stay OS-separator-agnostic.
+    #[test]
+    fn thumb_cache_dir_includes_hash_and_thumbs_suffix() {
+        let hash = "deadbeef".repeat(8); // 64 chars like a real digest
+        let dir = thumb_cache_dir(&hash).unwrap();
+        let components: Vec<String> = dir
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .collect();
+        // Must end with ... / .allaganeye / cache / <hash> / thumbs
+        let n = components.len();
+        assert!(n >= 4, "path too short: {:?}", components);
+        assert_eq!(components[n - 1], "thumbs");
+        assert_eq!(components[n - 2], hash);
+        assert_eq!(components[n - 3], "cache");
+        assert_eq!(components[n - 4], ".allaganeye");
+    }
+
+    /// #465 -- timestamp grid is centred on the boundary, spans the full
+    /// window, and contains exactly `count` samples.
+    #[test]
+    fn compute_candidate_timestamps_centres_window() {
+        let ts = compute_candidate_timestamps(100.0, 2.0, 5);
+        assert_eq!(ts.len(), 5);
+        assert!((ts[0] - 98.0).abs() < 1e-9);
+        assert!((ts[2] - 100.0).abs() < 1e-9);
+        assert!((ts[4] - 102.0).abs() < 1e-9);
+    }
+
+    /// #465 -- the grid must never produce negative timestamps (ffmpeg
+    /// rejects `-ss <0`); clamp at 0.
+    #[test]
+    fn compute_candidate_timestamps_clamps_below_zero() {
+        let ts = compute_candidate_timestamps(1.0, 3.0, 5);
+        for t in &ts {
+            assert!(*t >= 0.0, "negative t: {}", t);
+        }
+        assert!((ts[0] - 0.0).abs() < 1e-9);
+    }
+
+    /// #465 -- single-sample requests return exactly the boundary.
+    #[test]
+    fn compute_candidate_timestamps_single_sample() {
+        let ts = compute_candidate_timestamps(42.5, 1.0, 1);
+        assert_eq!(ts, vec![42.5]);
+    }
+
+    /// #465 -- the token format carries the match index (3-digit pad) and
+    /// the ms timestamp so cached files are self-describing.
+    #[test]
+    fn thumb_token_formats_index_and_ms() {
+        assert_eq!(thumb_token(3, 452.5), "match003_t452500");
+        assert_eq!(thumb_token(0, 0.0), "match000_t0");
+        assert_eq!(thumb_token(999, 1.001), "match999_t1001");
     }
 }

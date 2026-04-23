@@ -12,17 +12,32 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { invokeMock, dialogOpenMock } = vi.hoisted(() => ({
+const { invokeMock, dialogOpenMock, listenMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   dialogOpenMock: vi.fn(),
+  listenMock: vi.fn(),
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
+  // convertFileSrc is called by PreviewScreen to resolve cached thumbnails
+  // to URLs the browser can fetch. jsdom doesn't care about the scheme,
+  // so a simple passthrough is enough.
+  convertFileSrc: (p: string) => `asset://localhost/${p}`,
 }));
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: dialogOpenMock,
+}));
+
+// #523: ConfirmExitModal subscribes to the Tauri event bus on mount. The
+// real listen() reaches into Tauri's native shim which is absent under
+// vitest; stub it to a no-op that returns a no-op unsubscribe.
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: (...args: unknown[]) => {
+    listenMock(...args);
+    return Promise.resolve(() => undefined);
+  },
 }));
 
 import App from '../App';
@@ -73,6 +88,21 @@ function configureHappyInvoke() {
         return Promise.resolve();
       case 'check_backup_exists':
         return Promise.resolve(true);
+      // #465
+      case 'register_video':
+        return Promise.resolve({
+          url: 'http://127.0.0.1:0/video/test-token',
+          token: 'test-token',
+        });
+      case 'generate_match_thumbnails':
+        return Promise.resolve([]);
+      // #523
+      case 'is_process_running':
+        return Promise.resolve(false);
+      case 'kill_tracked_processes':
+        return Promise.resolve(0);
+      case 'force_exit_app':
+        return Promise.resolve();
       default:
         return Promise.resolve();
     }
