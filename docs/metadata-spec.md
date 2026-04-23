@@ -169,13 +169,13 @@ GUI による初回 `[適用]` 時のみ作成。
 ### migration policy
 
 - **Python 側** (`allaganeye/detection/migrations.py`):
-    - `CURRENT_SCHEMA_VERSION` が現在の版 (`"1"`)
-    - `MIGRATIONS: dict[str, Callable]` に `from_version -> fn` を登録
-    - `check_schema_version(payload, source)` が read_metadata から呼ばれ、未知の version を `InputFileError` で拒否 / 既知 legacy は accept
-    - `apply_migrations(payload)` で登録済みチェーンを辿って現行版に昇格 (現状 v1 のみなので no-op)
+  - `CURRENT_SCHEMA_VERSION` が現在の版 (`"1"`)
+  - `MIGRATIONS: dict[str, Callable]` に `from_version -> fn` を登録
+  - `check_schema_version(payload, source)` が read_metadata から呼ばれ、未知の version を `InputFileError` で拒否 / 既知 legacy は accept
+  - `apply_migrations(payload)` で登録済みチェーンを辿って現行版に昇格 (現状 v1 のみなので no-op)
 - **GUI 側** (`gui/src/types/metadata.schema.ts`):
-    - zod: `schema_version: z.literal(SCHEMA_VERSION).optional()` — 欠落 or `"1"` のみ accept、それ以外は reject
-    - 新規書き込み時 (GUI 単体では行わないが、CLI の apply 後に自動付与)
+  - zod: `schema_version: z.literal(SCHEMA_VERSION).optional()` — 欠落 or `"1"` のみ accept、それ以外は reject
+  - 新規書き込み時 (GUI 単体では行わないが、CLI の apply 後に自動付与)
 - **読み込み挙動の一致**: Python `read_metadata` と GUI zod は両方とも「欠落 ok、`"1"` ok、他は error」で統一
 
 ### 新しい版を追加する手順

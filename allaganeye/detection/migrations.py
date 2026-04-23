@@ -25,16 +25,17 @@ See ``docs/metadata-spec.md`` section "schema_version" for the full policy.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from allaganeye.exceptions import InputFileError
 
 __all__ = [
     "CURRENT_SCHEMA_VERSION",
     "MIGRATIONS",
-    "check_schema_version",
     "apply_migrations",
+    "check_schema_version",
 ]
 
 CURRENT_SCHEMA_VERSION: str = "1"
