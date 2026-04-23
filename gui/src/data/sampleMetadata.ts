@@ -1,17 +1,26 @@
 import type { Metadata } from '../types/metadata';
 
 /**
- * TypeScript-typed sample metadata used as a stand-in until Phase 3 (#465)
- * wires up real detect output. Sourced from docs/design/bundle/project/shared/metadata.js
- * (window.AE_META) — 9 matches from a 2:50:28 recording.
+ * TypeScript-typed sample metadata used as a stand-in until DropScreen is
+ * hooked to real detect output. Sourced from docs/design/bundle/project/shared/metadata.js
+ * (window.AE_META) -- 9 matches from a 2:50:28 recording.
  *
  * Phase 2 uses this via `useMetadataStore.loadSample()` when the dummy
  * detecting flow completes, so that the complete / preview / export screens
  * have data to display.
+ *
+ * #465: `source` points at the physical 2:50:28 recording kept on the
+ * development machine (path from the ALLAGANEYE_AUDIO_TEST_VIDEO convention,
+ * see docs/testing-guide.md). This lets `register_video` resolve a real
+ * file so the preview screen's `<video>` tag actually plays during
+ * `npm run tauri dev` smoke-tests. On machines without this path the
+ * preview panes fall back to the "video file not found" banner, which is
+ * the correct behaviour for that environment. Production builds do not
+ * invoke `loadSample()`.
  */
 export const sampleMetadata: Metadata = {
   schema_version: '1',
-  source: '2026-04-08 21-14-05.mkv',
+  source: 'E:/videos/2026-04-08 21-14-05.mkv',
   source_duration: 10228.735,
   source_duration_display: '2:50:28',
   detected_at: '2026-04-19T12:34:56Z',
