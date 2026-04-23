@@ -3,7 +3,7 @@
 Build the allaganeye Portable ZIP for Windows.
 
 .DESCRIPTION
-Downloads Python 3.11 embeddable and FFmpeg LGPL essentials, installs
+Downloads Python 3.11 embeddable and FFmpeg LGPLv3 static (BtbN), installs
 allaganeye and its runtime dependencies into the payload, adds a .bat
 launcher, and compresses everything into dist/allaganeye-v<version>-windows.zip.
 
@@ -39,11 +39,16 @@ $PythonEmbedSha256 = '009D6BF7E3B2DDCA3D784FA09F90FE54336D5B60F0E0F305C37F400BF8
 $GetPipUrl = 'https://bootstrap.pypa.io/get-pip.py'
 $GetPipSha256 = 'FEBA1C697DF45BE1B539B40D93C102C9EE9DDE1D966303323B830B06F3FBCA3C'
 
-# FFmpeg version is pinned so the same allaganeye tag always ships the same FFmpeg.
-# To update: bump $FFmpegVersion, replace $FFmpegSha256 with the new asset's hash.
+# FFmpeg is pinned to a specific BtbN autobuild so the same allaganeye tag ships
+# the same binary and the LGPLv3 license applies uniformly across CI and Portable ZIP.
+# To update: bump $FFmpegBuildTag / $FFmpegAsset / $FFmpegSha256 together.
+# CI workflows (`.github/workflows/ci.yml`) must be updated with the matching
+# linux64-lgpl asset at the same build tag; see docs/developer-setup.md § 9.
 $FFmpegVersion = '8.1'
-$FFmpegUrl = "https://github.com/GyanD/codexffmpeg/releases/download/$FFmpegVersion/ffmpeg-$FFmpegVersion-essentials_build.zip"
-$FFmpegSha256 = '8748283D821613D930B0E7BE685AAA9DF4CA6F0AD4D0C42FD02622B3623463C6'
+$FFmpegBuildTag = 'autobuild-2026-04-22-13-15'
+$FFmpegAsset = 'ffmpeg-n8.1-10-g7f5c90f77e-win64-lgpl-8.1'
+$FFmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/$FFmpegBuildTag/$FFmpegAsset.zip"
+$FFmpegSha256 = '230B29CD76AA194F76FB48BBF5D81CBAB8EFD7CD4FD1D7DE6500A040A8587A1C'
 
 function Invoke-Download {
   param(
@@ -96,7 +101,7 @@ New-Item -ItemType Directory -Force -Path $LibDir | Out-Null
     --no-cache-dir `
     $RepoRoot
 
-# 4. FFmpeg LGPL essentials (version-pinned)
+# 4. FFmpeg LGPLv3 static, BtbN/FFmpeg-Builds (version-pinned)
 $FFmpegZip = Join-Path $BuildDir 'ffmpeg.zip'
 Invoke-Download -Uri $FFmpegUrl -OutPath $FFmpegZip -ExpectedSha256 $FFmpegSha256
 $FFmpegExtract = Join-Path $BuildDir 'ffmpeg-extracted'
@@ -193,7 +198,7 @@ See https://github.com/Idios/kobutachan-allaganeye for full documentation.
 
 - allaganeye: MIT (see the repository LICENSE file)
 - Python: PSF License (python\LICENSE.txt)
-- FFmpeg: LGPL (ffmpeg $FFmpegVersion essentials build from GyanD/codexffmpeg)
+- FFmpeg: LGPLv3 (ffmpeg n$FFmpegVersion win64-lgpl static build from BtbN/FFmpeg-Builds, tag $FFmpegBuildTag)
 "@
 Set-Content -Path (Join-Path $PayloadDir 'README.txt') -Value $Readme -Encoding UTF8
 
