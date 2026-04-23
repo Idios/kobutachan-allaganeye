@@ -102,20 +102,38 @@ New-Item -ItemType Directory -Force -Path $LibDir | Out-Null
     $RepoRoot
 
 # 4. FFmpeg LGPLv3 static, BtbN/FFmpeg-Builds (version-pinned)
+# LGPLv3 redistribution requires shipping the license text alongside the binary
+# and making the corresponding source available. We copy LICENSE.txt into the
+# payload and point README at the upstream source repo.
 $FFmpegZip = Join-Path $BuildDir 'ffmpeg.zip'
 Invoke-Download -Uri $FFmpegUrl -OutPath $FFmpegZip -ExpectedSha256 $FFmpegSha256
 $FFmpegExtract = Join-Path $BuildDir 'ffmpeg-extracted'
 Expand-Archive -Path $FFmpegZip -DestinationPath $FFmpegExtract -Force
-$FFmpegBin = Get-ChildItem -Path $FFmpegExtract -Directory |
-  Select-Object -First 1 |
-  ForEach-Object { Join-Path $_.FullName 'bin' }
-if (-not $FFmpegBin -or -not (Test-Path $FFmpegBin)) {
-  throw "FFmpeg bin directory not found under $FFmpegExtract"
+$FFmpegRoot = Get-ChildItem -Path $FFmpegExtract -Directory | Select-Object -First 1
+if (-not $FFmpegRoot) {
+  throw "FFmpeg root directory not found under $FFmpegExtract"
+}
+$FFmpegBin = Join-Path $FFmpegRoot.FullName 'bin'
+$FFmpegLicenseSrc = Join-Path $FFmpegRoot.FullName 'LICENSE.txt'
+if (-not (Test-Path $FFmpegBin)) {
+  throw "FFmpeg bin directory not found: $FFmpegBin"
+}
+if (-not (Test-Path $FFmpegLicenseSrc)) {
+  throw "FFmpeg LICENSE.txt not found: $FFmpegLicenseSrc"
+}
+# BtbN assets embed the upstream FFmpeg source commit hash in the filename:
+#   ffmpeg-n<version>-<count>-g<commit>-<target>-<variant>
+# Extract it so README can point users to the exact source they need under LGPLv3.
+if ($FFmpegAsset -match '^ffmpeg-n[^-]+-[^-]+-g([0-9a-f]+)-') {
+  $FFmpegSourceCommit = $matches[1]
+} else {
+  throw "Cannot extract upstream source commit from asset name: $FFmpegAsset"
 }
 $FFmpegDest = Join-Path $PayloadDir 'ffmpeg'
 New-Item -ItemType Directory -Force -Path $FFmpegDest | Out-Null
 Copy-Item -Path (Join-Path $FFmpegBin 'ffmpeg.exe') -Destination $FFmpegDest
 Copy-Item -Path (Join-Path $FFmpegBin 'ffprobe.exe') -Destination $FFmpegDest
+Copy-Item -Path $FFmpegLicenseSrc -Destination (Join-Path $FFmpegDest 'LICENSE.txt')
 
 # 5. Launcher
 # The launcher is ASCII-only so that it runs on any Windows code page without
@@ -198,7 +216,14 @@ See https://github.com/Idios/kobutachan-allaganeye for full documentation.
 
 - allaganeye: MIT (see the repository LICENSE file)
 - Python: PSF License (python\LICENSE.txt)
-- FFmpeg: LGPLv3 (ffmpeg n$FFmpegVersion win64-lgpl static build from BtbN/FFmpeg-Builds, tag $FFmpegBuildTag)
+- FFmpeg: LGPLv3 (full text in ffmpeg\LICENSE.txt)
+    Build:         ffmpeg n$FFmpegVersion win64-lgpl static build (BtbN/FFmpeg-Builds)
+    Build tag:     $FFmpegBuildTag
+    Source:        https://git.ffmpeg.org/ffmpeg.git (commit $FFmpegSourceCommit)
+    Build scripts: https://github.com/BtbN/FFmpeg-Builds
+
+allaganeye (MIT) invokes the FFmpeg binary as a separate subprocess only.
+Static linking restrictions of LGPLv3 therefore do not apply to allaganeye itself.
 "@
 Set-Content -Path (Join-Path $PayloadDir 'README.txt') -Value $Readme -Encoding UTF8
 
