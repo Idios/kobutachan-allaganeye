@@ -105,7 +105,7 @@ def _search_macos_known_paths(name: str) -> str | None:
 
 def _error_message(name: str) -> str:
     lines = [
-        f"{name} not found. Install ffmpeg and ensure it is accessible.",
+        f"{name} not found. Install ffmpeg (LGPL build recommended) and ensure it is accessible.",
         "",
         "Options:",
         "  1. Add ffmpeg to PATH",
@@ -113,7 +113,13 @@ def _error_message(name: str) -> str:
     ]
     if sys.platform == "win32":
         lines.append(
-            "  3. Install via winget: winget install Gyan.FFmpeg (auto-discovered)"
+            "  3. Download BtbN LGPL build from "
+            "https://github.com/BtbN/FFmpeg-Builds/releases "
+            "(ffmpeg-nX.Y-...-win64-lgpl-X.Y.zip, recommended to match the Portable ZIP)"
+        )
+        lines.append(
+            "  4. Existing winget Gyan.FFmpeg (GPL) installs are still auto-discovered "
+            "as a fallback"
         )
     elif sys.platform == "darwin":
         lines.append("  3. Install via Homebrew: brew install ffmpeg (auto-discovered)")

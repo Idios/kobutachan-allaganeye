@@ -2945,6 +2945,11 @@ def test_probe_ffmpeg_version_returns_unknown_on_failure():
         ),
         # BtbN 'n' prefix (common on nightly CI builds)
         ("ffmpeg version n7.1 Copyright (c) 2000-2024", "7.1"),
+        # BtbN LGPL autobuild (shipped with Portable ZIP since #508)
+        (
+            "ffmpeg version n8.1-10-g7f5c90f77e-20260421 Copyright (c) 2000-2026",
+            "8.1",
+        ),
         # essentials_build variant
         ("ffmpeg version 6.0-essentials_build-www.gyan.dev", "6.0"),
         # Bare version (macOS Homebrew style)
