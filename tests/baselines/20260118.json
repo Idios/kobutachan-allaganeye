@@ -4,51 +4,37 @@
   "duration": 8234.73,
   "width": 1920,
   "height": 1080,
-  "match_count": 11,
+  "match_count": 6,
   "boundaries": [
     {
       "start": 177.25,
-      "end": 1218.75
+      "end": 1221.0,
+      "type": "fl_match"
     },
     {
-      "start": 1218.75,
-      "end": 1688.0
+      "start": 1686.0,
+      "end": 2610.75,
+      "type": "fl_match"
     },
     {
-      "start": 1688.0,
-      "end": 2608.5
-    },
-    {
-      "start": 2608.5,
-      "end": 2978.125
-    },
-    {
-      "start": 2978.125,
-      "end": 3926.0
+      "start": 2976.25,
+      "end": 3928.25,
+      "type": "fl_match"
     },
     {
       "start": 4200.25,
-      "end": 4572.5
-    },
-    {
-      "start": 4572.5,
-      "end": 5253.375
+      "end": 5255.5,
+      "type": "fl_match"
     },
     {
       "start": 5499.0,
-      "end": 6465.25
+      "end": 6467.5,
+      "type": "fl_match"
     },
     {
-      "start": 6465.25,
-      "end": 6802.75
-    },
-    {
-      "start": 6802.75,
-      "end": 7231.75
-    },
-    {
-      "start": 7231.75,
-      "end": 8114.625
+      "start": 7231.25,
+      "end": 8114.625,
+      "type": "fl_match"
     }
   ],
   "elapsed": 537.5
