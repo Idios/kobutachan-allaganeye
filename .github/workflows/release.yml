@@ -65,6 +65,40 @@ jobs:
         shell: pwsh
         run: ./scripts/build-portable-zip.ps1 -Version '${{ needs.version-check.outputs.version }}'
 
+      - name: Smoke test (extract ZIP and run launcher --version)
+        shell: pwsh
+        run: |
+          $version = '${{ needs.version-check.outputs.version }}'
+          $zip = "dist/allaganeye-v$version-windows.zip"
+          if (-not (Test-Path $zip)) {
+            throw "ZIP not found: $zip"
+          }
+          Expand-Archive -Path $zip -DestinationPath 'smoke-extract' -Force
+          $payload = Join-Path 'smoke-extract' "allaganeye-v$version"
+          if (-not (Test-Path $payload)) {
+            throw "Extracted payload directory not found: $payload"
+          }
+          Push-Location $payload
+          try {
+            # cmd.exe -c so the .bat runs end-to-end (including final pause).
+            # Empty stdin via '' | pipes a newline that releases the pause.
+            $output = '' | & cmd.exe /c "allaganeye.bat --version" 2>&1
+            $exitCode = $LASTEXITCODE
+            $joined = $output | Out-String
+            Write-Host '--- allaganeye.bat --version output ---'
+            Write-Host $joined
+            Write-Host "--- exit code: $exitCode ---"
+            if ($exitCode -ne 0) {
+              throw "allaganeye.bat --version exited with $exitCode"
+            }
+            if ($joined -notmatch 'allaganeye') {
+              throw "Expected 'allaganeye' marker in version output, got: $joined"
+            }
+          }
+          finally {
+            Pop-Location
+          }
+
       - uses: actions/upload-artifact@v4
         with:
           name: allaganeye-portable-windows
