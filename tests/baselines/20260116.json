@@ -8,31 +8,38 @@
   "boundaries": [
     {
       "start": 49.125,
-      "end": 1052.375
+      "end": 1054.5,
+      "type": "fl_match"
     },
     {
       "start": 1256.0,
-      "end": 2176.625
+      "end": 2178.75,
+      "type": "fl_match"
     },
     {
-      "start": 2355.75,
-      "end": 3228.25
+      "start": 2355.0,
+      "end": 3230.5,
+      "type": "fl_match"
     },
     {
-      "start": 3516.25,
-      "end": 4235.875
+      "start": 3365.0,
+      "end": 4352.0,
+      "type": "fl_match"
     },
     {
-      "start": 4539.5,
-      "end": 5482.5
+      "start": 4538.0,
+      "end": 5484.5,
+      "type": "fl_match"
     },
     {
       "start": 5624.25,
-      "end": 6542.0
+      "end": 6542.0,
+      "type": "fl_match"
     },
     {
-      "start": 6737.25,
-      "end": 7303.488
+      "start": 6542.0,
+      "end": 7303.488,
+      "type": "unknown"
     }
   ],
   "elapsed": 633.9
