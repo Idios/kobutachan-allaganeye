@@ -10,6 +10,7 @@ import type { Metadata } from '../types/metadata';
  * have data to display.
  */
 export const sampleMetadata: Metadata = {
+  schema_version: '1',
   source: '2026-04-08 21-14-05.mkv',
   source_duration: 10228.735,
   source_duration_display: '2:50:28',

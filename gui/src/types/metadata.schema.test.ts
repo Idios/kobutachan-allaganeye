@@ -117,4 +117,27 @@ describe('MetadataSchema', () => {
     };
     expect(MetadataSchema.safeParse(doc).success).toBe(false);
   });
+
+  // #515 — schema_version policy.
+
+  it('accepts documents with schema_version "1"', () => {
+    const doc = { ...validMetadata(), schema_version: '1' };
+    expect(MetadataSchema.safeParse(doc).success).toBe(true);
+  });
+
+  it('accepts documents without schema_version (backward compat)', () => {
+    const doc = validMetadata();
+    expect('schema_version' in doc).toBe(false);
+    expect(MetadataSchema.safeParse(doc).success).toBe(true);
+  });
+
+  it('rejects documents with an unknown future schema_version', () => {
+    const doc = { ...validMetadata(), schema_version: '99' };
+    expect(MetadataSchema.safeParse(doc).success).toBe(false);
+  });
+
+  it('rejects documents with a non-string schema_version', () => {
+    const doc = { ...validMetadata(), schema_version: 1 };
+    expect(MetadataSchema.safeParse(doc).success).toBe(false);
+  });
 });

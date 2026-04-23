@@ -11,6 +11,10 @@ Key guarantees:
 * **``note`` field removed** (#463): messages that used to live in
   ``note`` have moved to ``docs/cli-spec.md`` section metadata.json so the
   on-disk payload stays purely structured.
+* **``schema_version`` (#515)**: new files are written with
+  ``schema_version: "1"``; files missing the field are interpreted as v1
+  (backward compat with pre-#515 output).  Unknown future versions are
+  rejected at read time via :mod:`allaganeye.detection.migrations`.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from allaganeye.detection.migrations import check_schema_version
 from allaganeye.exceptions import AllaganEyeError, InputFileError
 
 __all__ = ["read_metadata", "write_metadata_atomic"]
@@ -77,4 +82,7 @@ def read_metadata(path: Path) -> dict[str, Any]:
             f"metadata file {path} root must be a JSON object, "
             f"got {type(data).__name__}"
         )
+    # #515 -- refuse files whose schema_version is newer than we understand.
+    # Missing field is treated as v1 for backward compat (see migrations.py).
+    check_schema_version(data, source=path)
     return data

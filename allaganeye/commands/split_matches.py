@@ -845,8 +845,13 @@ def _build_metadata_payload(
 
     Kept private to this module; ``commands.detect`` builds a variant
     (no ``output_files``) via its own helper.
+
+    ``schema_version`` (#515) declares the payload revision so future
+    readers can migrate or refuse older / newer files. v1 is the current
+    schema; see ``docs/metadata-spec.md`` section "schema_version".
     """
     return {
+        "schema_version": "1",
         "source": str(video_path),
         "source_duration": source_duration,
         "source_duration_display": _format_timestamp(source_duration),

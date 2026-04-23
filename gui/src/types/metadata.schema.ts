@@ -39,8 +39,18 @@ export const GapSchema = z
     message: 'end_time must be >= start_time',
   });
 
+/**
+ * #515 — accepted schema versions.
+ *
+ * - Omitted field: treated as v1 for backward compat with pre-#515 files.
+ * - `"1"`: current schema.
+ * - Anything else: rejected with a clear message.
+ */
+export const SCHEMA_VERSION = '1' as const;
+
 export const MetadataSchema = z
   .object({
+    schema_version: z.literal(SCHEMA_VERSION).optional(),
     source: z.string().min(1),
     source_duration: z.number().positive(),
     source_duration_display: z.string(),
