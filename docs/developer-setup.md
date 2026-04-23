@@ -9,8 +9,8 @@
 開発セットアップには以下 3 つのソフトウェアが必要です。
 
 - **Git**: ソースコードの取得・更新に使います
-- **Python 3.11 以上**: 実行環境です（Portable ZIP 同梱の Python とは別に必要です）
-- **ffmpeg / ffprobe 4.1 以上**: 動画の解析・分割エンジンです
+- **Python 3.11 (3.11.9 推奨)**: 実行環境です（Portable ZIP 同梱の Python とは別に必要です）。CI と Portable ZIP は 3.11.9 で固定しているため、ローカルも同じ patch に揃えると挙動差を避けられます
+- **ffmpeg / ffprobe 8.1 LGPLv3 推奨**: 動画の解析・分割エンジンです。最低 4.1 で動作しますが、CI / Portable ZIP は BtbN の LGPLv3 8.1 static に固定しているので同系列を推奨します
 
 ### Git
 
@@ -67,10 +67,10 @@ python --version
 # https://www.python.org/downloads/ → 「Add python.exe to PATH」にチェックを入れてインストール
 
 # winget
-winget install Python.Python.3.13
+winget install Python.Python.3.11
 
 # Microsoft Store
-# Microsoft Store で「Python 3.13」を検索してインストール
+# Microsoft Store で「Python 3.11」を検索してインストール
 ```
 
 **macOS**:
@@ -80,7 +80,7 @@ winget install Python.Python.3.13
 # https://www.python.org/downloads/
 
 # Homebrew
-brew install python@3.13
+brew install python@3.11
 ```
 
 **Linux (Ubuntu/Debian)**:
@@ -92,7 +92,7 @@ sudo apt update && sudo apt install python3 python3-pip python3-venv
 #### インストール確認
 
 ```bash
-python --version   # "Python 3.11.x" 以上が表示されること
+python --version   # "Python 3.11.9" (推奨) または "Python 3.11.x" 以上が表示されること
 pip --version      # pip が利用可能であること
 ```
 
@@ -105,7 +105,7 @@ ffmpeg -version
 ffprobe -version
 ```
 
-**最低バージョン: 4.1**（`-avoid_negative_ts make_zero` 等の機能を使用）
+**推奨: ffmpeg 8.1 LGPLv3** (CI / Portable ZIP と同じ系列)。**最低バージョン: 4.1**（`-avoid_negative_ts make_zero` 等の機能を使用）が、CI / Portable ZIP 同梱版との挙動差を避けるため 8.1 LGPLv3 を推奨します。
 
 #### インストール方法
 
@@ -139,8 +139,8 @@ sudo apt update && sudo apt install ffmpeg
 #### インストール確認
 
 ```bash
-ffmpeg -version   # "ffmpeg version 4.x" 以上が表示されること
-ffprobe -version  # "ffprobe version 4.x" 以上が表示されること
+ffmpeg -version   # "ffmpeg version 8.1" (推奨) または "ffmpeg version 4.x" 以上が表示されること
+ffprobe -version  # 同上
 ```
 
 **PATH が通らない場合**: Allagan Eye は winget のインストール先を自動検索するため、多くの場合 PATH の手動設定は不要です。自動検索で見つからない場合は `ALLAGANEYE_FFMPEG` 環境変数に ffmpeg/ffprobe の入ったディレクトリを指定してください:
@@ -301,3 +301,35 @@ allaganeye debug-brightness <video_path> --start 100 --end 200 --interval 0.5
 - [動画処理設計](video-processing.md)
 - [リリース戦略](release-strategy.md)
 - [コーディング規約](coding-conventions.md)
+
+## 9. Python / FFmpeg バージョン更新チェックリスト
+
+CI / Portable ZIP / 開発環境の 3 環境で Python と FFmpeg のバージョンを揃えるため、bump 時は以下を**同時に**更新する (#510 で 2026-04-23 に統一)。
+
+### Python (現在 3.11.9 に固定)
+
+| 場所 | キー |
+|---|---|
+| `.github/workflows/ci.yml` | `python-version: "3.11.9"` |
+| `.github/workflows/release.yml` (3 ジョブ) | `python-version: '3.11.9'` |
+| `scripts/build-portable-zip.ps1` | `$PythonVersion = '3.11.9'` + `$PythonEmbedSha256` |
+| `docs/developer-setup.md` §1 | 「Python 3.11 (3.11.9 推奨)」の記載 |
+
+### FFmpeg (現在 BtbN LGPLv3 n8.1 / `autobuild-2026-04-22-13-15` に固定)
+
+更新手順:
+
+1. [BtbN/FFmpeg-Builds/releases](https://github.com/BtbN/FFmpeg-Builds/releases) で新しい `autobuild-YYYY-MM-DD-HH-MM` タグを選ぶ
+2. 必要な 2 資産 (win64-lgpl-8.1.zip / linux64-lgpl-8.1.tar.xz) の SHA256 を取得:
+   ```bash
+   gh api repos/BtbN/FFmpeg-Builds/releases/tags/<タグ名> \
+     --jq '.assets[] | select(.name | test("n8[.]1.*(win64-lgpl-8[.]1[.]zip|linux64-lgpl-8[.]1[.]tar[.]xz)$")) | {name, digest}'
+   ```
+3. 以下 2 箇所を**同一タグ・同一 autobuild 系列で**更新:
+
+| 場所 | キー |
+|---|---|
+| `scripts/build-portable-zip.ps1` | `$FFmpegBuildTag` / `$FFmpegAsset` / `$FFmpegSha256` |
+| `.github/workflows/ci.yml` (`Install ffmpeg` ステップ) | `FFMPEG_URL` / `FFMPEG_SHA256` (linux64-lgpl 版) |
+
+4. ローカルで Portable ZIP ビルドが緑になることを確認 (`pwsh ./scripts/build-portable-zip.ps1 -Version <version>`) し、PR で CI の `build-windows` と `python` ジョブ両方が通ることを確認する
