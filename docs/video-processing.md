@@ -132,9 +132,10 @@ ffmpeg -hwaccel auto -ss <chunk_start> -t <chunk_duration> -i input.mkv \
 | H.264 | GPU | 全世代 | 全世代 | 全世代 |
 | HEVC | GPU | Maxwell GM206+ | Skylake+ | VCN 1.0+ |
 | AV1 | GPU (#414) | RTX 30 (Ampere) 以降 | Arc / Gen12 以降 | VCN 4.0 以降 |
-| VP9 | GPU (#414) | Maxwell 以降 | Gen9+ | VCN 1.0+ |
+| VP9 | GPU (#414) — 実 decode は soft (#538) | N/A | N/A | N/A |
 | その他 (mpeg2video, vc1, prores 等) | CPU | — | — | — |
 
+- VP9 は `_GPU_PREFERRED_CODECS` に残すが `_CUVID_CODEC_MAP` から除外 (#538)。理由: ffmpeg 8.1 の `vp9_cuvid` は frame を `nv12 + csp:gbr` で tag し、後段の swscaler が gray 変換を `EOPNOTSUPP (-129)` として reject する。auto-select で GPU mode に振られても `_decode_chunk` は else branch (`-hwaccel auto`) を使い、ffmpeg 側で soft decode (native) が選ばれる (実測 speed 2.64x で chunk 並列に十分)。`vp9_cuvid` の ffmpeg 側修正が入った時点で復活検討。
 - ハードウェアが新 codec に未対応の場合、ffmpeg の `-hwaccel auto` が GPU decode に失敗 → 上記フォールバック経路で CPU に自動切替
 - 明示的に GPU を使いたい場合は `--gpu` フラグで強制可能（対応しない codec では起動時に GPU decode 失敗で exit）
 - `_CUVID_CODEC_MAP` には mpeg2video / mpeg4 / vp8 / mpeg1video も登録済みだが、`_GPU_PREFERRED_CODECS` に含めず auto では CPU (`--gpu` 明示時のみ GPU decode 経路)
