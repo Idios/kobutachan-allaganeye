@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- scorebar V2 (`_has_scorebar_v2`) を two-path OR semantics に変更 (Primary=absolute `_EMBLEM_POSITIONS` + Rescue=dynamic span + `_EMBLEM_RELATIVE_POSITIONS`)。1080p OBS validated set (20260116/118/119/219) は Primary で完全無回帰、4K Game DVR の HUD scale 差異は Rescue path で救済 (#522)
+
 ## [0.1.1] - 2026-04-20
 
 L1 (試合分割) の正式リリース版。2026-04-17 に `v0.1.0-preview` として公開後、品質向上を経て `v0.1.1` として正式リリース。verbose 出力の網羅的改善、GPU/CPU 検知精度の一致、進捗バー UX 修正、メタデータ拡充、運用ルール強化。

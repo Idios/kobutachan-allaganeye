@@ -121,7 +121,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 7. 各暗転候補の ±5s を 0.25s 間隔で再プローブし、正確な持続時間を計測
 
 **スコアバーフィルタリング**（`src_resolution` 提供時、CLIのデフォルトパス）
-8. `filter_blackouts_with_scorebar()` で各暗転領域の前後フレームのスコアバー有無を判定し、暗転を分類（`match_boundary` / `in_match` / `non_fl`）
+8. `filter_blackouts_with_scorebar()` で各暗転領域の前後フレームのスコアバー有無を判定し、暗転を分類（`match_boundary` / `in_match` / `non_fl`）。V2 検出 (`_has_scorebar_v2`) は 1920x1080 リサイズ後に **two-path OR semantics** で GC 紋章 3 点 AND 判定 (#307, #522): **Primary=absolute `_EMBLEM_POSITIONS`** (pre-#522 validated)、**Rescue=dynamic span (`_find_scorebar_horizontal_range`) + `_EMBLEM_RELATIVE_POSITIONS` 相対比**。Primary pass で short-circuit、両 path fail で False。`raw_rgb` None / opencv 未インストール時のみ None → V1 (`_has_scorebar`, channel-std + edge) フォールバック。1080p OBS validated set の挙動を完全保持しつつ 4K Game DVR の HUD スケール差異は Rescue で救済
 9. `non_fl`（非FL暗転）と短い `in_match`（試合内暗転）を除外。隣接する `match_boundary` ペア間の短いギャップをマージ
 
 **音声昇格**（`--no-audio` 未指定時、#288）
