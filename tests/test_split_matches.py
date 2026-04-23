@@ -646,15 +646,20 @@ def test_splitting_bar_shown_in_normal_run(
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
 def test_progressbar_shows_eta_label(mock_probe, mock_detect, mock_split, tmp_path):
-    """Progress bars enable ETA and percent display (#329).
+    """Progress bars enable ETA and percent display in CPU mode (#329).
 
     Guards the contract from issue #329: the user must be able to tell
     that the time shown is ETA, via ``show_eta=True`` on click.progressbar.
+    GPU mode deliberately suppresses click's ETA on the Detecting bar
+    (#438); that variant is covered by
+    :func:`test_progressbar_suppresses_click_eta_on_detecting_in_gpu_mode`.
     """
     mock_probe.return_value = PROBE_RESULT
     mock_detect.return_value = BOUNDARIES
     mock_split.return_value = _output_files(tmp_path)
-    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    # CPU mode explicitly -- avoid codec auto-select pulling in GPU path
+    # (which would suppress click ETA on Detecting per #438).
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, use_gpu=False)
 
     with patch("click.progressbar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
@@ -669,6 +674,69 @@ def test_progressbar_shows_eta_label(mock_probe, mock_detect, mock_split, tmp_pa
             f"Expected show_eta=True, got {call.kwargs}"
         )
         assert call.kwargs.get("show_percent") is True
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_progressbar_suppresses_click_eta_on_detecting_in_gpu_mode(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """GPU mode sets ``show_eta=False`` on the Detecting bar only (#438).
+
+    GPU chunk completion is non-linear (long stall, then burst) so
+    click's rate estimator produces absurd ETAs like ``3d 08:08:52``.
+    The Detecting bar supplies its own ETA in the label; click's
+    built-in ETA must be off.  Refining / Scorebar / Splitting stay
+    at ``show_eta=True`` because their progress is linear.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, use_gpu=True)
+
+    with patch("click.progressbar") as mock_bar:
+        mock_bar.return_value.__enter__ = lambda s: s
+        mock_bar.return_value.__exit__ = lambda s, *a: None
+        mock_bar.return_value.update = lambda n: None
+        run_split(Path("input.mp4"), config)
+
+    assert mock_bar.call_count >= 1
+
+    # Partition bar creations by label prefix for cleaner assertions.
+    detecting_calls = [
+        c
+        for c in mock_bar.call_args_list
+        if c.kwargs.get("label", "").strip().startswith("Detecting")
+    ]
+    non_detecting_calls = [
+        c
+        for c in mock_bar.call_args_list
+        if not c.kwargs.get("label", "").strip().startswith("Detecting")
+    ]
+
+    assert detecting_calls, "Detecting bar was not created"
+    for call in detecting_calls:
+        assert call.kwargs.get("show_eta") is False, (
+            "GPU mode must disable click's built-in ETA on Detecting "
+            f"(#438); got {call.kwargs}"
+        )
+
+    for call in non_detecting_calls:
+        assert call.kwargs.get("show_eta") is True, (
+            f"Non-Detecting bars keep click ETA even in GPU mode (got {call.kwargs})"
+        )
+
+
+def test_eta_progressbar_suppress_click_eta_flag():
+    """_eta_progressbar(suppress_click_eta=True) toggles click's show_eta off (#438)."""
+    from allaganeye.commands.split_matches import _eta_progressbar
+
+    suppressed = _eta_progressbar(100, "Detecting", suppress_click_eta=True)
+    default = _eta_progressbar(100, "Detecting")
+
+    assert suppressed.show_eta is False
+    assert default.show_eta is True
 
 
 @patch(f"{MODULE}.split_video")

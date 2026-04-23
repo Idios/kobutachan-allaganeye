@@ -216,6 +216,121 @@ class TestScanGpu:
         assert chunk_calls == []
 
     # ------------------------------------------------------------
+    # Dynamic chunk sizing / dispatch callback / force 100% (#437, #439)
+    # ------------------------------------------------------------
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_chunk_dispatch_callback_fires_before_chunks(self, mock_decode):
+        """chunk_dispatch_callback fires exactly once before any chunk executes (#437).
+
+        Long videos used to sit at ``Detecting 0%`` for 2-3 minutes
+        while the first chunk decoded; this callback is the hook that
+        lets the UI show ``[dispatching N chunks, ...]`` immediately.
+        """
+        calls: list[str] = []
+
+        def _decode_mock(*args, **kwargs):
+            calls.append("chunk")
+            return ({0.0: 100.0}, "")
+
+        mock_decode.side_effect = _decode_mock
+
+        def dispatch_cb(n: int) -> None:
+            calls.append(f"dispatch:{n}")
+
+        scan_gpu(
+            Path("test.mp4"),
+            5.0,
+            1.0,
+            15.0,
+            chunk_dispatch_callback=dispatch_cb,
+        )
+
+        dispatch_events = [c for c in calls if c.startswith("dispatch")]
+        assert len(dispatch_events) == 1, "dispatch callback should fire exactly once"
+        assert calls[0].startswith("dispatch"), (
+            "dispatch callback should fire before any chunk runs"
+        )
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_num_chunks_scales_with_duration(self, mock_decode):
+        """Long videos break into more chunks than the old fixed 16 (#437).
+
+        Short videos stay at the historical ``max_parallel`` cap; long
+        videos push chunk count up toward ``_MAX_CHUNKS`` so the
+        Detecting label can update every ~90s wall time instead of
+        every 10 minutes.
+        """
+        from allaganeye.video.gpu_detector import _MAX_CHUNKS
+
+        mock_decode.return_value = ({}, "")
+
+        scan_gpu(Path("short.mp4"), 10.0, 1.0, 15.0)
+        short_chunks = mock_decode.call_count
+        mock_decode.reset_mock()
+
+        # 10000s (~2h47m) is well past the _TARGET_CHUNK_WALL_SECS budget
+        # so the ceiling engages.
+        scan_gpu(Path("long.mp4"), 10000.0, 1.0, 15.0)
+        long_chunks = mock_decode.call_count
+
+        assert long_chunks > short_chunks, (
+            "long videos must break into more chunks than short ones"
+        )
+        assert long_chunks == _MAX_CHUNKS, (
+            f"long videos should hit the _MAX_CHUNKS ceiling "
+            f"(got {long_chunks}, expected {_MAX_CHUNKS})"
+        )
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_progress_callback_reaches_total_even_with_drops(self, mock_decode):
+        """Final emit equalizes completed with total so bar hits 100% (#439).
+
+        Returning only 1 frame per chunk simulates the frame-drop
+        pattern where completed < total_expected naturally.  Without
+        the fix, the Detecting bar stopped at 99% and the next line
+        (Refining) opened before the user saw completion.
+        """
+        mock_decode.return_value = ({0.0: 100.0}, "")
+
+        events: list[tuple[int, int]] = []
+
+        scan_gpu(
+            Path("test.mp4"),
+            20.0,
+            1.0,
+            15.0,
+            progress_callback=lambda c, t, bc: events.append((c, t)),
+        )
+
+        assert events, "progress_callback should fire at least once"
+        final_completed, final_total = events[-1]
+        assert final_completed == final_total, (
+            f"last emit must equalize completed with total "
+            f"(got {final_completed}/{final_total})"
+        )
+
+    @patch("allaganeye.video.gpu_detector._decode_chunk")
+    def test_frame_drop_warning_logged(self, mock_decode, caplog):
+        """Dropped frames trigger an info log so verbose users can see (#439)."""
+        import logging
+
+        mock_decode.return_value = ({0.0: 100.0}, "")
+
+        with caplog.at_level(logging.INFO, logger="allaganeye.video.gpu_detector"):
+            scan_gpu(
+                Path("test.mp4"),
+                20.0,
+                1.0,
+                15.0,
+                progress_callback=lambda c, t, bc: None,
+            )
+
+        assert any("boundary drop" in rec.message for rec in caplog.records), (
+            "dropped-frame info log not emitted"
+        )
+
+    # ------------------------------------------------------------
     # Global sample grid labeling (#392)
     # ------------------------------------------------------------
 

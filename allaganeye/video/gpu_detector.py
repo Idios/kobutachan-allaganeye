@@ -1,6 +1,7 @@
 """GPU-accelerated match detection using chunked parallel ffmpeg decode."""
 
 import logging
+import math
 import os
 import subprocess
 import time
@@ -20,6 +21,16 @@ from allaganeye.video.detector import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Target wall-time per chunk for dynamic chunk sizing (#437).
+# Long videos would otherwise wait 2-3 minutes before the first chunk
+# completes with the old fixed 16 chunks; chopping into smaller pieces
+# lets the progress bar label update more frequently.
+_TARGET_CHUNK_WALL_SECS = 90.0
+
+# Upper bound on the number of chunks (#437). Too many chunks pay fixed
+# ffmpeg startup cost per chunk and can overwhelm GPU scheduling.
+_MAX_CHUNKS = 32
 
 _CUVID_CODEC_MAP: dict[str, str] = {
     "h264": "h264_cuvid",
@@ -41,6 +52,7 @@ def scan_gpu(
     progress_callback: Callable[[int, int, int], None] | None = None,
     codec: str | None = None,
     chunk_progress_callback: Callable[[int, int, float], None] | None = None,
+    chunk_dispatch_callback: Callable[[int], None] | None = None,
 ) -> dict[float, float]:
     """GPU mode: chunked parallel decode with cuvid hardware decoder.
 
@@ -57,9 +69,30 @@ def scan_gpu(
     completions.  Emitted BEFORE the per-frame ``progress_callback``
     burst so the UI label updates before the bar jumps (#333).
 
+    ``chunk_dispatch_callback`` is called once with the final chunk count
+    immediately BEFORE the decode threads start, so the caller can show
+    "[dispatching N chunks, first result pending...]" while users wait
+    for the first chunk to complete (#437, which was an incomplete fix
+    for #333 on long videos).
+
+    Chunk count scales with duration: long videos are broken into more
+    pieces so the UI label updates every ~90s wall time (controlled by
+    ``_TARGET_CHUNK_WALL_SECS``) capped at ``_MAX_CHUNKS``.  Short videos
+    keep the historical behavior (``min(cpu_count, 16)``) so their
+    dispatch overhead isn't inflated.
+
     Raises VideoProcessingError if GPU decode fails for all chunks.
     """
-    num_chunks = min(os.cpu_count() or 4, 16)
+    # Parallelism cap: number of ffmpeg processes running concurrently.
+    # Bounded by CPU count and 16 to keep GPU memory pressure sane.
+    max_parallel = min(os.cpu_count() or 4, 16)
+    # Chunk count: may exceed ``max_parallel`` for long videos, in which
+    # case chunks are processed in waves.  More chunks = more label
+    # updates during Pass 1 (#437).
+    target_from_duration = (
+        math.ceil(duration / _TARGET_CHUNK_WALL_SECS) if duration > 0 else 1
+    )
+    num_chunks = min(max(max_parallel, target_from_duration), _MAX_CHUNKS)
     chunk_duration = duration / num_chunks
 
     # Pre-compute the global sample grid (same one ``_scan_cpu`` uses) so
@@ -96,7 +129,13 @@ def scan_gpu(
     scan_start = time.monotonic()
     chunks_done = 0
 
-    with ThreadPoolExecutor(max_workers=num_chunks) as pool:
+    # #437: Notify the UI layer BEFORE any chunk starts so long-video
+    # users see movement (label update) instead of 0% stall for 2-3
+    # minutes while the first chunk decodes.
+    if chunk_dispatch_callback is not None:
+        chunk_dispatch_callback(num_chunks)
+
+    with ThreadPoolExecutor(max_workers=max_parallel) as pool:
         futures = {
             pool.submit(
                 _decode_chunk,
@@ -145,6 +184,20 @@ def scan_gpu(
 
     if gpu_failed:
         raise VideoProcessingError("GPU decode failed, falling back to CPU")
+
+    # #439: Force the progress bar to 100% when GPU chunk-boundary
+    # rounding leaves a few frames short of ``total_expected``.  Without
+    # this emit, the Detecting bar freezes at 99% until Refining opens
+    # on the next line -- cosmetic but confusing.
+    if progress_callback is not None and completed < total_expected:
+        dropped = total_expected - completed
+        logger.info(
+            "GPU decode returned %d of %d frames (%d boundary drop(s))",
+            completed,
+            total_expected,
+            dropped,
+        )
+        progress_callback(total_expected, total_expected, blackout_count)
 
     return results
 
