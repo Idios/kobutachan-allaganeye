@@ -18,7 +18,7 @@ See `docs/metadata-spec.md` section "warnings" for the contract.
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, Required, TypedDict
 
 __all__ = [
     "WARNING_CODES",
@@ -31,7 +31,7 @@ Severity = Literal["info", "warn", "error"]
 """Allowed severity levels for an emitted warning."""
 
 
-class MetadataWarning(TypedDict, total=False):
+class MetadataWarning(TypedDict):
     """A single warning entry in metadata.json `warnings[]`.
 
     `code` is required; the other fields are optional so emitters can
@@ -39,10 +39,10 @@ class MetadataWarning(TypedDict, total=False):
     `message_en` and rely on a lookup table on the reader side).
     """
 
-    code: str
-    message_en: str
-    severity: Severity
-    context: dict[str, Any]
+    code: Required[str]
+    message_en: NotRequired[str]
+    severity: NotRequired[Severity]
+    context: NotRequired[dict[str, Any]]
 
 
 WARNING_CODES: dict[str, str] = {}
