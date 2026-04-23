@@ -52,6 +52,18 @@ export const GapSchema = z
  */
 export const SCHEMA_VERSION = '1' as const;
 
+/**
+ * #518 -- warning entry scaffolding. Writer currently emits an empty
+ * `warnings` array; future detection / scorebar / audio codes will
+ * populate it. Readers must not reject unknown codes (future-proof).
+ */
+export const WarningSchema = z.object({
+  code: z.string().min(1),
+  message_en: z.string().optional(),
+  severity: z.enum(['info', 'warn', 'error']).optional(),
+  context: z.record(z.string(), z.unknown()).optional(),
+});
+
 export const MetadataSchema = z
   .object({
     schema_version: z.literal(SCHEMA_VERSION).optional(),
@@ -62,5 +74,6 @@ export const MetadataSchema = z
     detection_params: DetectionParamsSchema,
     matches: z.array(MatchSchema),
     gaps: z.array(GapSchema),
+    warnings: z.array(WarningSchema).optional(),
   })
   .passthrough();

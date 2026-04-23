@@ -23,6 +23,7 @@
 | `detection_params` | object | ✓ | 検知に使われたパラメータ (後述) | (object) |
 | `matches` | array | ✓ | 試合セグメント列 (0 件可) | |
 | `gaps` | array | ✓ | 試合間の空白区間列 (0 件可) | |
+| `warnings` | array | 新規書き込みは ✓ (デフォルト `[]`) / 読み込み時は欠落許容 | 構造化警告一覧 (#518) | 個々のエントリは §warnings 参照 |
 
 ### `detection_params` オブジェクト
 
@@ -236,6 +237,35 @@ GUI が `load` / `apply` / `reloadAfterConflict` を実行するとき、排他�
 - **`applyOverwrite` と draft**: `applyOverwrite` は `apply` と共通 helper (`runApply`) 経由なので、上書き成功後も draft clear が発火する
 - **`reloadAfterConflict` 後の draft**: `reloadAfterConflict` は `load(filePath)` を呼ぶため、source 一致な draft があれば `DraftRestoreModal` が再提示される (ユーザー編集の救済として意図された挙動)
 
+## warnings (#518)
+
+検知 / scorebar / audio が発行する構造化警告の scaffold。v1 時点では常に空配列を書き出し、具体的な warning コードは後続 PR で追加する。
+
+### エントリの形 (`Warning` / `MetadataWarning`)
+
+```ts
+interface MetadataWarning {
+  code: string;            // 必須。コードキー (例: "audio_skipped")
+  message_en?: string;     // 英語メッセージ。省略時は reader が WARNING_CODES で lookup
+  severity?: 'info' | 'warn' | 'error';
+  context?: Record<string, unknown>;  // コード固有の追加情報
+}
+```
+
+### 読み書き契約
+
+- **新規書き込み**: `allaganeye detect` / `allaganeye split` は常に `warnings: []` を emit する
+- **読み込み**: `warnings` が欠落していても error にしない (pre-#518 の legacy metadata.json を許容)。GUI の zod schema は `optional`
+- **pass-through**: 未知の `code` を reader が reject してはならない (forward compat)
+- **emitter の責務** (後続 PR): `allaganeye/detection/warnings.py::WARNING_CODES` にコードキーを登録し、`build_warnings` で該当箇所から push
+
+### 新しいコードを追加する手順
+
+1. `allaganeye/detection/warnings.py::WARNING_CODES` に `"your_code": "english message"` を追加
+2. 発行箇所から `MetadataWarning(code=..., severity=..., context=...)` を生成
+3. `build_warnings` (または呼び出し経路) に集約
+4. `docs/metadata-spec.md` § warnings 一覧表 (以下 TBD) に追加
+
 ## 将来の拡張 (Phase 1 スコープ外)
 
 以下は派生 issue で追跡する (本 Phase 1 では実装せず、設計余地だけ確保):
@@ -246,7 +276,7 @@ GUI が `load` / `apply` / `reloadAfterConflict` を実行するとき、排他�
 | ~~schema_version フィールド~~ | [#515](https://github.com/Idios/kobutachan-allaganeye/issues/515) (実装済み、上記 §schema_version 参照) | 明示的な版数管理 + migration 基盤 |
 | ~~`[元に戻す]` 機能~~ | [#516](https://github.com/Idios/kobutachan-allaganeye/issues/516) (Phase 2 で実装済み) | `metadata.original.json` → `metadata.json` 復元ボタン (Rust `restore_from_original` + `metadataStore.restore`) |
 | ~~draft auto save~~ | [#517](https://github.com/Idios/kobutachan-allaganeye/issues/517) (実装済み、上記 §draft auto save 参照) | GUI 一時編集を `metadata.draft.json` に定期保存 (リロード耐性) |
-| `warnings: Warning[]` 構造化 | (新規起票予定) | legacy `note` の後継。`{code, message, severity}` 配列 |
+| ~~`warnings: Warning[]` 構造化 (scaffold)~~ | [#518](https://github.com/Idios/kobutachan-allaganeye/issues/518) (scaffold 実装済み、上記 §warnings 参照。実際の warning code 追加は派生 PR) | legacy `note` の後継。`{code, message, severity}` 配列 |
 
 ## 関連 issue / doc
 

@@ -201,4 +201,50 @@ describe('MetadataSchema', () => {
     const nulled = { ...validMetadata(), detection_params: null };
     expect(MetadataSchema.safeParse(nulled).success).toBe(false);
   });
+
+  // #518 -- warnings scaffold.
+
+  it('accepts a document with an empty warnings array', () => {
+    const doc = { ...validMetadata(), warnings: [] };
+    expect(MetadataSchema.safeParse(doc).success).toBe(true);
+  });
+
+  it('accepts a document without warnings (backward compat)', () => {
+    const doc = validMetadata();
+    expect('warnings' in doc).toBe(false);
+    expect(MetadataSchema.safeParse(doc).success).toBe(true);
+  });
+
+  it('accepts valid warning entries with various shapes', () => {
+    const doc = {
+      ...validMetadata(),
+      warnings: [
+        { code: 'audio_skipped' },
+        { code: 'low_confidence', severity: 'warn' },
+        {
+          code: 'gpu_fallback',
+          message_en: 'fell back to CPU',
+          severity: 'info',
+          context: { reason: 'cuda not found' },
+        },
+      ],
+    };
+    expect(MetadataSchema.safeParse(doc).success).toBe(true);
+  });
+
+  it('rejects a warning missing its code field', () => {
+    const doc = {
+      ...validMetadata(),
+      warnings: [{ message_en: 'no code', severity: 'warn' }],
+    };
+    expect(MetadataSchema.safeParse(doc).success).toBe(false);
+  });
+
+  it('rejects a warning with unknown severity', () => {
+    const doc = {
+      ...validMetadata(),
+      warnings: [{ code: 'x', severity: 'catastrophic' }],
+    };
+    expect(MetadataSchema.safeParse(doc).success).toBe(false);
+  });
 });

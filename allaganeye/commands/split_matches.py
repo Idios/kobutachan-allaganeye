@@ -17,6 +17,7 @@ from allaganeye.detection.metadata_writer import (
     read_metadata,
     write_metadata_atomic,
 )
+from allaganeye.detection.warnings import build_warnings
 from allaganeye.exceptions import (
     AllaganEyeError,
     DetectionError,
@@ -967,6 +968,7 @@ def _build_metadata_payload(
             }
             for g in gaps
         ],
+        "warnings": build_warnings(),
     }
 
 
