@@ -144,7 +144,8 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 **GPU モード** (`--gpu`)
 
 - CPU モードの Pass 1 を GPU チャンク並列デコードで代替（`gpu_detector.py`）
-- 動画を N チャンク（`min(cpu_count, 16)`）に分割し、各チャンクで長寿命の ffmpeg プロセスを `-hwaccel auto` + `fps` フィルタで起動
+- 動画を N チャンク（短動画は `min(cpu_count, 16)`、長動画は `_TARGET_CHUNK_WALL_SECS=90s` を目安に `_MAX_CHUNKS=32` まで細分化 / #437）に分割し、各チャンクで長寿命の ffmpeg プロセスを `-hwaccel auto` + `fps` フィルタで起動
+- ffmpeg 並列上限は `max_parallel = min(cpu_count, 16)` で固定、長動画では chunks > max_parallel となり wave 実行（chunk 完了ごとにラベル更新頻度を確保）
 - GPU 初期化コストを分散し、1プロセスあたり多数フレームをデコードすることで効率化
 - Pass 1 以降の処理（transition expansion, Pass 2, フィルタリング）は CPU/GPU 共通
 - GPU 利用不可時は自動で CPU モードにフォールバック

@@ -103,7 +103,12 @@ ffmpeg -ss {timestamp} -i input.mkv -frames:v 1 -s 320x180 -pix_fmt gray -f rawv
 
 `--gpu` オプションにより Pass 1 の粗いスキャンを GPU チャンク並列デコードで実行できる（`gpu_detector.py`）。
 
-**方式**: 動画を N チャンク（`min(cpu_count, 16)`）に分割し、各チャンクで長寿命の ffmpeg プロセスを並列実行する。
+**方式**: 動画を N チャンクに分割し、各チャンクで長寿命の ffmpeg プロセスを並列実行する。chunk 数は動画長に応じて動的調整される (#437):
+
+- 短動画 (目安: 24 分以下): `max_parallel = min(cpu_count, 16)` を chunk 数として使用（従来通り）
+- 長動画: `math.ceil(duration / _TARGET_CHUNK_WALL_SECS)` (90s/chunk 目安) で細分化、上限 `_MAX_CHUNKS=32`
+- ffmpeg 並列上限は常に `max_parallel` で固定。chunks > max_parallel の場合は wave 実行となり、chunk 完了ごとのラベル更新頻度を確保する
+- 最初の chunk が完了する前に `chunk_dispatch_callback` で `Detecting [dispatching N chunks, ...]` を表示し、長時間動画での 0% 停滞誤解を回避
 
 ```bash
 ffmpeg -hwaccel auto -ss <chunk_start> -t <chunk_duration> -i input.mkv \
