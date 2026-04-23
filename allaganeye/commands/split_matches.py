@@ -576,7 +576,11 @@ def _run_detection(
         # vanish, #368) and the Pass 2 -> Scorebar transition no longer
         # mixes units (100% -> 99% rollover, #393).  ``try/finally`` guards
         # against exceptions leaving a bar dangling on the TTY.
-        detecting_bar = _eta_progressbar(estimated_samples, "Detecting")
+        detecting_bar = _eta_progressbar(
+            estimated_samples,
+            "Detecting",
+            suppress_click_eta=use_gpu,
+        )
         detecting_bar.__enter__()
         detecting_state = {"last_pos": 0, "closed": False}
         refine_state: dict = {"bar": None, "last": 0}
@@ -603,6 +607,17 @@ def _run_detection(
             if advance > 0:
                 detecting_bar.update(advance)
             detecting_state["last_pos"] = completed
+
+        def on_chunk_dispatch(num_chunks: int) -> None:
+            # First feedback before any chunk completes (#437).
+            # Long videos (2h+) used to sit at "Detecting 0%" for 2-3
+            # minutes while the first chunk decoded; this shows users
+            # the work has started and how many chunks to expect.
+            detecting_bar.label = (
+                f"Detecting [dispatching {num_chunks} chunks, "
+                f"first result pending...]".ljust(_PROGRESS_LABEL_WIDTH)
+            )
+            detecting_bar.render_progress()
 
         def on_chunk(done: int, total: int, eta_seconds: float) -> None:
             # Update label so users see movement between chunk completions
@@ -652,6 +667,7 @@ def _run_detection(
                 refine_progress_callback=on_refine,
                 scorebar_progress_callback=on_scorebar,
                 chunk_progress_callback=on_chunk,
+                chunk_dispatch_callback=on_chunk_dispatch,
             )
         finally:
             # Close in reverse open-order; if detection raised we still
@@ -757,11 +773,16 @@ _PROGRESS_LABEL_WIDTH = 11
 """Column width for progress bar labels (Detecting/Refining/Splitting)."""
 
 
-def _eta_progressbar(length: int, label: str):  # type: ignore[no-untyped-def]
+def _eta_progressbar(length: int, label: str, *, suppress_click_eta: bool = False):  # type: ignore[no-untyped-def]
     """Create a progress bar with explicit ETA label (#329).
 
     Labels are left-justified to ``_PROGRESS_LABEL_WIDTH`` so that
     Detecting / Refining / Splitting bars align vertically.
+
+    When ``suppress_click_eta`` is True (GPU mode, #438), click's own
+    ETA is hidden.  GPU chunk completion is non-linear so click's rate
+    estimator produces nonsense (e.g. ``3d 08:08:52``); the caller
+    supplies a self-computed ETA in the label instead.
     """
     import click
 
@@ -769,7 +790,7 @@ def _eta_progressbar(length: int, label: str):  # type: ignore[no-untyped-def]
         length=length,
         label=label.ljust(_PROGRESS_LABEL_WIDTH),
         bar_template="%(label)s%(bar)s %(info)s",
-        show_eta=True,
+        show_eta=not suppress_click_eta,
         show_percent=True,
     )
 
