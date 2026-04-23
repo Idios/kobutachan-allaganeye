@@ -57,6 +57,27 @@ class TestDecodeChunk:
         assert cmd[cv_idx + 1] == "av1_cuvid"
 
     @patch("allaganeye.video.gpu_detector.subprocess.run")
+    def test_hwaccel_auto_for_vp9_codec(self, mock_run):
+        """VP9 は #538 で cuvid を強制しない。
+
+        ffmpeg 8.1 の vp9_cuvid は nv12+csp:gbr を出力し swscaler gray 変換が
+        EOPNOTSUPP で失敗するため、_CUVID_CODEC_MAP から vp9 を除外。
+        codec=vp9 時は else branch に落ち、``-hwaccel auto`` (soft decode 相当) で
+        動作する。`-c:v vp9_cuvid` は cmd に含まれない。
+        """
+        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
+        _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0, codec="vp9")
+
+        cmd = mock_run.call_args[0][0]
+        assert "-hwaccel" in cmd
+        hw_idx = cmd.index("-hwaccel")
+        assert cmd[hw_idx + 1] == "auto", (
+            f"Expected -hwaccel auto for vp9 (soft decode fallback), "
+            f"got -hwaccel {cmd[hw_idx + 1]}"
+        )
+        assert "vp9_cuvid" not in cmd, "vp9_cuvid must not appear in ffmpeg args (#538)"
+
+    @patch("allaganeye.video.gpu_detector.subprocess.run")
     def test_nonzero_returncode_raises(self, mock_run):
         mock_run.return_value = MagicMock(stdout=b"", stderr=b"error", returncode=1)
         with pytest.raises(VideoProcessingError, match="GPU decode failed"):

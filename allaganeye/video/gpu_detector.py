@@ -36,7 +36,12 @@ _CUVID_CODEC_MAP: dict[str, str] = {
     "h264": "h264_cuvid",
     "hevc": "hevc_cuvid",
     "av1": "av1_cuvid",
-    "vp9": "vp9_cuvid",
+    # vp9: #538 で除外。ffmpeg 8.1 の vp9_cuvid は frame を
+    # nv12 + csp:gbr (非標準) で tag し、後段 swscaler の
+    # gray 変換が EOPNOTSUPP (-129) で必ず失敗する。soft decode
+    # (-hwaccel auto 経路) は実測 speed 2.64x で chunk 並列に
+    # 耐えるため、vp9 はデフォルトで cuvid を強制しない。
+    # ffmpeg 側で color space tag が修正された時点で復活検討。
     "vp8": "vp8_cuvid",
     "mpeg1video": "mpeg1_cuvid",
     "mpeg2video": "mpeg2_cuvid",
