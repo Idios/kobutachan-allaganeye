@@ -327,10 +327,11 @@ CI / Portable ZIP / 開発環境の 3 環境で Python と FFmpeg のバージ�
      --jq '.assets[] | select(.name | test("n8[.]1.*(win64-lgpl-8[.]1[.]zip|linux64-lgpl-8[.]1[.]tar[.]xz)$")) | {name, digest}'
    ```
 
-1. 以下 2 箇所を**同一タグ・同一 autobuild 系列で**更新 (下表参照)
+1. 以下を**同一タグ・同一 autobuild 系列で**更新 (下表参照)。major version 系列変更 (例: 8.x → 9.x) 時は docs の major version 記述も揃える
 1. ローカルで Portable ZIP ビルドが緑になることを確認 (`pwsh ./scripts/build-portable-zip.ps1 -Version <version>`) し、PR で CI の `build-windows` と `python` ジョブ両方が通ることを確認する
 
 | 場所 | キー |
 |---|---|
 | `scripts/build-portable-zip.ps1` | `$FFmpegBuildTag` / `$FFmpegAsset` / `$FFmpegSha256` |
 | `.github/workflows/ci.yml` (`Install ffmpeg` ステップ) | `FFMPEG_URL` / `FFMPEG_SHA256` (linux64-lgpl 版) |
+| `docs/developer-setup.md` §1 | 「ffmpeg / ffprobe 8.1 LGPLv3 推奨」「推奨: ffmpeg 8.1 LGPLv3」の major version 記述 (系列変更時のみ) |
