@@ -200,3 +200,69 @@ def test_split_and_write_metadata_has_no_note_field(tmp_path):
 
     payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
     assert "note" not in payload
+
+
+def test_split_and_write_metadata_contains_schema_version(tmp_path):
+    """#515: newly written metadata.json declares ``schema_version: "1"``."""
+    from allaganeye.video.detector import MatchBoundary
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    boundaries: list[MatchBoundary] = [
+        {"start": 0.0, "end": 120.0, "type": "fl_match"},
+    ]
+
+    with patch(
+        f"{MODULE}.split_video",
+        return_value=[tmp_path / "match_001.mp4"],
+    ):
+        _split_and_write_metadata(
+            tmp_path / "input.mp4",
+            boundaries,
+            [],
+            PROBE_RESULT,
+            config,
+            effective_interval=1.0,
+            detected_at="2026-04-22T00:00:00Z",
+            quiet=True,
+        )
+
+    payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
+    assert payload["schema_version"] == "1"
+
+
+def test_run_split_from_metadata_accepts_legacy_file_without_schema_version(
+    tmp_path,
+):
+    """#515: pre-0.2.0 metadata.json files without schema_version still load."""
+    meta = _sample_metadata(source_path=str(tmp_path / "input.mp4"))
+    # legacy file explicitly has no schema_version
+    assert "schema_version" not in meta
+    meta_path = tmp_path / "metadata.json"
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    (tmp_path / "input.mp4").write_bytes(b"")  # satisfies source path check
+
+    out_dir = tmp_path / "out"
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                out_dir / "match_001.mp4",
+                out_dir / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)  # no raise
+
+
+def test_run_split_from_metadata_rejects_future_schema_version(tmp_path):
+    """#515: metadata.json with an unknown future schema_version is rejected."""
+    meta = _sample_metadata(source_path=str(tmp_path / "input.mp4"))
+    meta["schema_version"] = "99"
+    meta_path = tmp_path / "metadata.json"
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
+    with pytest.raises(InputFileError, match="unsupported schema_version"):
+        run_split_from_metadata(meta_path, config, quiet=True)

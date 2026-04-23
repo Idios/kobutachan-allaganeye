@@ -15,6 +15,7 @@
 
 | フィールド | 型 | 必須 | 意味 | 範囲 / 形式 |
 |---|---|---|---|---|
+| `schema_version` | string | 新規書き込みは ✓ / 読み込み時は欠落許容 | ペイロードのスキーマ版数 (#515) | 現行は `"1"`。欠落時は v1 として解釈 |
 | `source` | string | ✓ | 元動画ファイルの絶対パス (OS 表記そのまま) | 非空 |
 | `source_duration` | number | ✓ | 元動画の総秒数 | > 0 |
 | `source_duration_display` | string | ✓ | 人間可読な長さ表示 | `HH:MM:SS` または `MM:SS` |
@@ -153,6 +154,39 @@ GUI による初回 `[適用]` 時のみ作成。
 | source ファイル移動・削除 | CLI は `InputFileError` (`source video not found`) / GUI は `[書き出し]` 時に同様エラー |
 | 未知のトップレベルフィールド (legacy `note` 等) | 無視して load 成功 (`.passthrough()`)、ただし次回 CLI 書き直しで落ちる |
 
+## schema_version (#515)
+
+ペイロードのスキーマ版数を宣言して将来の breaking change に対する migration 基盤を提供する。
+
+### 版数の表
+
+| version | 状態 | 概要 |
+|---|---|---|
+| (欠落) | 読み込み時に v1 として解釈 | pre-#515 の出力。自動で v1 扱い、ファイルは書き換えない |
+| `"1"` | 現行 | `allaganeye detect` / `allaganeye split` が書き込む |
+| `"2"` 以降 | 未定義 | 将来のスキーマ拡張用。未実装版を読み込むと `InputFileError` で拒否 |
+
+### migration policy
+
+- **Python 側** (`allaganeye/detection/migrations.py`):
+  - `CURRENT_SCHEMA_VERSION` が現在の版 (`"1"`)
+  - `MIGRATIONS: dict[str, Callable]` に `from_version -> fn` を登録
+  - `check_schema_version(payload, source)` が read_metadata から呼ばれ、未知の version を `InputFileError` で拒否 / 既知 legacy は accept
+  - `apply_migrations(payload)` で登録済みチェーンを辿って現行版に昇格 (現状 v1 のみなので no-op)
+- **GUI 側** (`gui/src/types/metadata.schema.ts`):
+  - zod: `schema_version: z.literal(SCHEMA_VERSION).optional()` — 欠落 or `"1"` のみ accept、それ以外は reject
+  - 新規書き込み時 (GUI 単体では行わないが、CLI の apply 後に自動付与)
+- **読み込み挙動の一致**: Python `read_metadata` と GUI zod は両方とも「欠落 ok、`"1"` ok、他は error」で統一
+
+### 新しい版を追加する手順
+
+1. `CURRENT_SCHEMA_VERSION` を `"2"` に更新 (`allaganeye/detection/migrations.py`)
+2. `MIGRATIONS["1"] = migrate_v1_to_v2` を追加 (v1 payload を v2 に変換する関数)
+3. `_build_metadata_payload` の `"schema_version": "1"` を `"2"` に更新 (`allaganeye/commands/split_matches.py`)
+4. zod の `SCHEMA_VERSION` を `"2"` に更新 (`gui/src/types/metadata.schema.ts`)
+5. 本 doc の版数の表を更新
+6. テスト: `tests/test_migrations.py` に migration 関数単体 + end-to-end 読み込みテスト
+
 ## 将来の拡張 (Phase 1 スコープ外)
 
 以下は派生 issue で追跡する (本 Phase 1 では実装せず、設計余地だけ確保):
@@ -160,7 +194,7 @@ GUI による初回 `[適用]` 時のみ作成。
 | 拡張 | 追跡 issue | 内容 |
 |---|---|---|
 | 排他管理 (mtime 検知 / 同時編集警告) | (新規起票予定) | GUI load 時の mtime 記録、save 時の外部変更検知 UX |
-| schema_version フィールド | (新規起票予定) | 明示的な版数管理 + migration 基盤 |
+| ~~schema_version フィールド~~ | [#515](https://github.com/Idios/kobutachan-allaganeye/issues/515) (実装済み、上記 §schema_version 参照) | 明示的な版数管理 + migration 基盤 |
 | ~~`[元に戻す]` 機能~~ | [#516](https://github.com/Idios/kobutachan-allaganeye/issues/516) (Phase 2 で実装済み) | `metadata.original.json` → `metadata.json` 復元ボタン (Rust `restore_from_original` + `metadataStore.restore`) |
 | draft auto save | (新規起票予定) | GUI 一時編集を `metadata.draft.json` に定期保存 (リロード耐性) |
 | `warnings: Warning[]` 構造化 | (新規起票予定) | legacy `note` の後継。`{code, message, severity}` 配列 |

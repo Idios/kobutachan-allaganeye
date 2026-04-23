@@ -37,6 +37,12 @@ export interface Gap {
 }
 
 export interface Metadata {
+  /**
+   * #515: schema revision declaration. Optional on the TS type because
+   * pre-0.2.0 files don't carry the field; readers treat missing as v1.
+   * New writes always emit `"1"`.
+   */
+  schema_version?: '1';
   source: string;
   source_duration: number;
   source_duration_display: string;
