@@ -504,7 +504,12 @@ def _run_audio_scan(
 
 
 # Codecs where GPU decode is typically faster than CPU parallel probing.
-_GPU_PREFERRED_CODECS = {"h264", "hevc"}
+# AV1 / VP9 added per #414. Hardware requirements:
+# - NVDEC AV1 = RTX 30 series or later
+# - Intel QSV AV1 = Arc / Gen12 or later
+# - AMD VCN AV1 = VCN 4.0 or later
+# VP9 is widely supported on older GPU generations (NVDEC Maxwell+).
+_GPU_PREFERRED_CODECS = {"h264", "hevc", "av1", "vp9"}
 
 
 def _resolve_gpu_mode(
@@ -516,8 +521,8 @@ def _resolve_gpu_mode(
     """Resolve GPU/CPU mode from explicit flag or codec auto-detection (#334).
 
     When *use_gpu* is ``None`` (no ``--gpu``/``--no-gpu`` given), selects
-    GPU for H.264/HEVC (mature GPU decode support) and CPU for everything
-    else (AV1, VP9, etc.).  Returns a concrete ``bool``.
+    GPU for H.264/HEVC/AV1/VP9 (mature GPU decode support, #414) and CPU
+    for everything else.  Returns a concrete ``bool``.
     """
     if use_gpu is not None:
         return use_gpu
