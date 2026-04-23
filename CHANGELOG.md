@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- scorebar V2 で emblem 位置を 1080p 固定座標から動的検出に変更し、4K Game DVR 録画で試合境界が認識できない問題を改善 (#522)
+- scorebar V2 (`_has_scorebar_v2`) を two-path OR semantics に変更 (Primary=absolute `_EMBLEM_POSITIONS` + Rescue=dynamic span + `_EMBLEM_RELATIVE_POSITIONS`)。1080p OBS validated set (20260116/118/119/219) は Primary で完全無回帰、4K Game DVR の HUD scale 差異は Rescue path で救済 (#522)
 
 ## [0.1.1] - 2026-04-20
 

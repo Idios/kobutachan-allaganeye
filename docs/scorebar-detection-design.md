@@ -89,15 +89,20 @@ V1 (`_has_scorebar`) は 320x180 低解像度 ROI での色特徴量判定を行
 
 V2 導入時の `_EMBLEM_POSITIONS` は 1920x1080 絶対座標の hardcode で、1080p OBS 録画で validated された。しかし 4K Game DVR 録画 (Windows/Xbox) では FF14 HUD scale が異なり scorebar が画面中央寄りに描画されるため、絶対座標の left/right 位置が scorebar 外 (ゲーム背景) にヒットする FP 問題が発生した。
 
-解決策として、frame ごとに scorebar 外輪郭を動的検出し、emblem 位置を scorebar 幅の相対比で計算する仕組みを追加:
+解決策として **two-path OR semantics** を採用。Primary は pre-#522 validated の absolute `_EMBLEM_POSITIONS`、Rescue は scorebar span 動的検出 + `_EMBLEM_RELATIVE_POSITIONS` 相対比で HUD scale 差異を吸収する。
 
 1. `_find_scorebar_horizontal_range(raw_rgb)`: 画面上部 y=0..45 の HSV saturation mask で saturated 列の最長 run を scorebar span として返す。run 幅 < 500px は None (lobby UI 誤検出排除)
 2. `_EMBLEM_RELATIVE_POSITIONS`: 1080p OBS validated set 13 frames の実測 median 相対比
    - left: `cx_rel=0.0455, half_width_rel=0.0453`
    - center: `cx_rel=0.3427, half_width_rel=0.0237`
    - right: `cx_rel=0.9638, half_width_rel=0.0384`
-3. `_has_scorebar_v2`: span 検出 → 相対位置で emblem 絶対座標を計算 → 既存 3-point AND
-4. span 検出失敗時は `None` を返し、V1 (`_has_scorebar`) fallback に委譲 (既存契約維持)
+3. `_has_scorebar_v2` (two-path OR):
+   - **Primary**: `_EMBLEM_POSITIONS` (absolute) で 3-point AND check → pass なら True (short-circuit)
+   - **Rescue**: Primary fail 時のみ span 検出 → 相対位置で emblem 絶対座標計算 → 3-point AND check → pass なら True
+   - 両 path fail で False、`raw_rgb is None` / opencv 未インストール時のみ None → V1 (`_has_scorebar`) fallback
+4. `_emblem_and_check` helper で両 path の AND 評価を共通化
+
+OR 結合により、1080p OBS validated set は Primary で完結 (FP 耐性保持)、4K Game DVR の HUD-scaled scorebar は Rescue で救済。初版 (dynamic primary) で発覚した 20260219 (5h+ 長時間録画) の Match 6/16 結合退行 (33-41min 超長 match) は two-path 化で解消。
 
 ### 閾値定数 (V2 動的検出)
 
