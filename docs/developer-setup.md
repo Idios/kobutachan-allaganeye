@@ -332,6 +332,7 @@ CI / Portable ZIP / 開発環境の 3 環境で Python と FFmpeg のバージ�
 
 | 場所 | キー |
 |---|---|
-| `scripts/build-portable-zip.ps1` | `$FFmpegBuildTag` / `$FFmpegAsset` / `$FFmpegSha256` |
+| `scripts/build-portable-zip.ps1` | `$FFmpegBuildTag` / `$FFmpegAsset` / `$FFmpegSha256` (`$FFmpegSourceCommit` は asset 名から自動抽出) |
 | `.github/workflows/ci.yml` (`Install ffmpeg` ステップ) | `FFMPEG_URL` / `FFMPEG_SHA256` (linux64-lgpl 版) |
 | `docs/developer-setup.md` §1 | 「ffmpeg / ffprobe 8.1 LGPLv3 推奨」「推奨: ffmpeg 8.1 LGPLv3」の major version 記述 (系列変更時のみ) |
+| `docs/quickstart.md` §10 | 対応 FFmpeg コミット (例: `7f5c90f77e`) の記述 (upstream commit 変更時) |
