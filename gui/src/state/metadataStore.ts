@@ -24,6 +24,20 @@ export interface MetadataState {
   /** #516: last restore error message, if any. */
   restoreError: string | null;
 
+  /**
+   * #514: mtime (ms since epoch) of metadata.json recorded at load time.
+   * Passed to `apply_changes` so Rust can refuse to overwrite a file that
+   * was modified externally between load and apply. `null` when no file is
+   * loaded (sample mode or after `clear()`).
+   */
+  loadedMtimeMs: number | null;
+  /**
+   * #514: last conflict error produced by apply. Non-null means the UI must
+   * surface the "overwrite / reload / cancel" modal. Resolved via
+   * `applyOverwrite` / `reloadAfterConflict` / `dismissConflict`.
+   */
+  conflictError: string | null;
+
   load: (path: string) => Promise<void>;
   updateMatch: (index: number, patch: MatchEditPatch) => void;
   apply: () => Promise<void>;
@@ -34,6 +48,13 @@ export interface MetadataState {
   restore: () => Promise<void>;
   /** #516: re-probe the filesystem to update hasBackup. Called after load / apply / restore. */
   refreshBackupStatus: () => Promise<void>;
+
+  /** #514: re-apply with the mtime check bypassed (overwrite external edits). */
+  applyOverwrite: () => Promise<void>;
+  /** #514: discard in-memory edits and re-load metadata.json from disk. */
+  reloadAfterConflict: () => Promise<void>;
+  /** #514: close the conflict modal without side effects (edits stay in store). */
+  dismissConflict: () => void;
 
   /** Phase 2 only: load the in-memory sample metadata (no filePath set). */
   loadSample: () => void;
@@ -67,7 +88,43 @@ function normalizeForPersistence(metadata: Metadata): Metadata {
   };
 }
 
-export const useMetadataStore = create<MetadataState>((set, get) => ({
+export const useMetadataStore = create<MetadataState>((set, get) => {
+  /**
+   * #514 shared implementation for `apply` / `applyOverwrite`. When
+   * `overwrite` is true the stored `loadedMtimeMs` is discarded so the Rust
+   * side skips the conflict check.
+   */
+  async function runApply(overwrite: boolean): Promise<void> {
+    const { metadata, filePath, loadedMtimeMs } = get();
+    if (!metadata || !filePath) return;
+    set({ applying: true, applyError: null, conflictError: null });
+    try {
+      const normalized = normalizeForPersistence(metadata);
+      const newMtime = await invoke<number>('apply_changes', {
+        path: filePath,
+        metadata: normalized,
+        expectedMtimeMs: overwrite ? null : loadedMtimeMs,
+      });
+      set({
+        metadata: normalized,
+        dirty: false,
+        applying: false,
+        applyError: null,
+        loadedMtimeMs: newMtime,
+        conflictError: null,
+      });
+      await get().refreshBackupStatus();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.startsWith('conflict:')) {
+        set({ applying: false, conflictError: msg });
+      } else {
+        set({ applying: false, applyError: msg });
+      }
+    }
+  }
+
+  return {
   metadata: null,
   filePath: null,
   dirty: false,
@@ -79,10 +136,17 @@ export const useMetadataStore = create<MetadataState>((set, get) => ({
   restoring: false,
   restoreError: null,
 
+  loadedMtimeMs: null,
+  conflictError: null,
+
   load: async (path) => {
     try {
       const raw = await invoke<unknown>('load_metadata', { path });
       const parsed = MetadataSchema.parse(raw);
+      // #514: record mtime alongside contents so subsequent apply can detect
+      // external modifications. A missing mtime (file vanished between the
+      // two calls) is recorded as null; apply will then skip the check.
+      const mtime = await invoke<number | null>('get_metadata_mtime', { path });
       set({
         metadata: parsed as unknown as Metadata,
         filePath: path,
@@ -90,6 +154,8 @@ export const useMetadataStore = create<MetadataState>((set, get) => ({
         loadError: null,
         applyError: null,
         restoreError: null,
+        loadedMtimeMs: mtime ?? null,
+        conflictError: null,
       });
       await get().refreshBackupStatus();
     } catch (e) {
@@ -99,6 +165,8 @@ export const useMetadataStore = create<MetadataState>((set, get) => ({
         dirty: false,
         loadError: e instanceof Error ? e.message : String(e),
         hasBackup: false,
+        loadedMtimeMs: null,
+        conflictError: null,
       });
     }
   },
@@ -116,28 +184,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => ({
   },
 
   apply: async () => {
-    const { metadata, filePath } = get();
-    if (!metadata || !filePath) return;
-    set({ applying: true, applyError: null });
-    try {
-      const normalized = normalizeForPersistence(metadata);
-      await invoke('apply_changes', {
-        path: filePath,
-        metadata: normalized,
-      });
-      set({
-        metadata: normalized,
-        dirty: false,
-        applying: false,
-        applyError: null,
-      });
-      await get().refreshBackupStatus();
-    } catch (e) {
-      set({
-        applying: false,
-        applyError: e instanceof Error ? e.message : String(e),
-      });
-    }
+    await runApply(false);
   },
 
   reset: () => {
@@ -155,6 +202,8 @@ export const useMetadataStore = create<MetadataState>((set, get) => ({
       hasBackup: false,
       restoring: false,
       restoreError: null,
+      loadedMtimeMs: null,
+      conflictError: null,
     });
   },
 
@@ -192,6 +241,23 @@ export const useMetadataStore = create<MetadataState>((set, get) => ({
     }
   },
 
+  applyOverwrite: async () => {
+    await runApply(true);
+  },
+
+  reloadAfterConflict: async () => {
+    const { filePath } = get();
+    if (!filePath) {
+      set({ conflictError: null });
+      return;
+    }
+    await get().load(filePath);
+  },
+
+  dismissConflict: () => {
+    set({ conflictError: null });
+  },
+
   loadSample: () => {
     set({
       metadata: sampleMetadata,
@@ -203,6 +269,9 @@ export const useMetadataStore = create<MetadataState>((set, get) => ({
       hasBackup: false,
       restoring: false,
       restoreError: null,
+      loadedMtimeMs: null,
+      conflictError: null,
     });
   },
-}));
+  };
+});

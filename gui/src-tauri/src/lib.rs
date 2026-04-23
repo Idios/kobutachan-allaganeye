@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
@@ -25,9 +26,36 @@ fn load_metadata_sync(meta_path: &Path) -> Result<Value, String> {
     Ok(value)
 }
 
+/// #514 — return the mtime (ms since epoch) of an existing metadata file,
+/// or `None` when the file is missing. Used by the GUI to detect external
+/// modifications between load and apply.
 #[tauri::command]
-async fn apply_changes(path: String, metadata: Value) -> Result<(), String> {
-    apply_changes_sync(&PathBuf::from(&path), &metadata)
+async fn get_metadata_mtime(path: String) -> Result<Option<u64>, String> {
+    Ok(file_mtime_ms(&PathBuf::from(&path)))
+}
+
+fn file_mtime_ms(path: &Path) -> Option<u64> {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t: SystemTime| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+}
+
+#[tauri::command]
+async fn apply_changes(
+    path: String,
+    metadata: Value,
+    expected_mtime_ms: Option<u64>,
+) -> Result<u64, String> {
+    let meta_path = PathBuf::from(&path);
+    apply_changes_sync(&meta_path, &metadata, expected_mtime_ms)?;
+    file_mtime_ms(&meta_path).ok_or_else(|| {
+        format!(
+            "apply succeeded but could not read post-write mtime: {}",
+            meta_path.display()
+        )
+    })
 }
 
 /// #516 — atomically restore metadata.json from the first-Apply backup.
@@ -70,7 +98,30 @@ async fn check_backup_exists(path: String) -> Result<bool, String> {
     Ok(parent.join("metadata.original.json").exists())
 }
 
-fn apply_changes_sync(meta_path: &Path, payload: &Value) -> Result<(), String> {
+fn apply_changes_sync(
+    meta_path: &Path,
+    payload: &Value,
+    expected_mtime_ms: Option<u64>,
+) -> Result<(), String> {
+    // #514 — refuse to overwrite a file that has been modified externally
+    // since the caller last loaded it. Target not existing is not a conflict
+    // (treat as a fresh write).
+    if let Some(expected) = expected_mtime_ms {
+        if meta_path.exists() {
+            let actual = file_mtime_ms(meta_path).ok_or_else(|| {
+                format!("cannot read mtime of {}", meta_path.display())
+            })?;
+            if actual != expected {
+                return Err(format!(
+                    "conflict: external modification detected ({} expected mtime {}, got {})",
+                    meta_path.display(),
+                    expected,
+                    actual
+                ));
+            }
+        }
+    }
+
     let parent = meta_path
         .parent()
         .ok_or_else(|| format!("metadata path has no parent: {}", meta_path.display()))?;
@@ -128,6 +179,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             load_metadata,
+            get_metadata_mtime,
             apply_changes,
             restore_from_original,
             check_backup_exists,
@@ -176,7 +228,7 @@ mod tests {
         fs::write(&meta, serde_json::to_string_pretty(&original).unwrap()).unwrap();
 
         let edited = json!({"source": "a.mkv", "matches": [{"m": 1, "edited": true}]});
-        apply_changes_sync(&meta, &edited).unwrap();
+        apply_changes_sync(&meta, &edited, None).unwrap();
 
         assert!(backup.exists());
         let backup_value: Value =
@@ -194,9 +246,9 @@ mod tests {
         let original = json!({"version": "v1"});
         fs::write(&meta, serde_json::to_string_pretty(&original).unwrap()).unwrap();
 
-        apply_changes_sync(&meta, &json!({"version": "v2"})).unwrap();
-        apply_changes_sync(&meta, &json!({"version": "v3"})).unwrap();
-        apply_changes_sync(&meta, &json!({"version": "v4"})).unwrap();
+        apply_changes_sync(&meta, &json!({"version": "v2"}), None).unwrap();
+        apply_changes_sync(&meta, &json!({"version": "v3"}), None).unwrap();
+        apply_changes_sync(&meta, &json!({"version": "v4"}), None).unwrap();
 
         // backup stays the very first snapshot
         let backup_value: Value =
@@ -212,7 +264,7 @@ mod tests {
         let meta = tmp.path().join("metadata.json");
         let backup = tmp.path().join("metadata.original.json");
         // No pre-existing metadata.json
-        apply_changes_sync(&meta, &json!({"first": true})).unwrap();
+        apply_changes_sync(&meta, &json!({"first": true}), None).unwrap();
         assert!(meta.exists());
         // No backup created because there was nothing to back up
         assert!(!backup.exists());
@@ -320,5 +372,77 @@ mod tests {
         fs::write(&meta, r#"["not", "an", "object"]"#).unwrap();
         let err = load_metadata_sync(&meta).unwrap_err();
         assert!(err.contains("must be a JSON object"));
+    }
+
+    // #514 — mtime-based exclusive control for apply_changes.
+
+    #[test]
+    fn apply_changes_succeeds_when_expected_mtime_matches() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        fs::write(&meta, r#"{"v":1}"#).unwrap();
+        let current = file_mtime_ms(&meta).expect("mtime exists for newly written file");
+
+        apply_changes_sync(&meta, &json!({"v": 2}), Some(current)).unwrap();
+
+        let after: Value =
+            serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
+        assert_eq!(after, json!({"v": 2}));
+    }
+
+    #[test]
+    fn apply_changes_returns_conflict_when_expected_mtime_mismatches() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        fs::write(&meta, r#"{"v":1}"#).unwrap();
+        // An obviously stale mtime — `1 ms after epoch` is decades before any
+        // real-world file write, so the comparison is deterministic.
+        let stale: u64 = 1;
+
+        let err = apply_changes_sync(&meta, &json!({"v": 2}), Some(stale)).unwrap_err();
+        assert!(err.starts_with("conflict:"), "unexpected error: {err}");
+
+        // Conflict must not overwrite the file.
+        let current: Value =
+            serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
+        assert_eq!(current, json!({"v": 1}));
+    }
+
+    #[test]
+    fn apply_changes_skips_check_when_expected_mtime_is_none() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        fs::write(&meta, r#"{"v":1}"#).unwrap();
+
+        // None → check is bypassed even though the file already exists.
+        apply_changes_sync(&meta, &json!({"v": 2}), None).unwrap();
+        let after: Value =
+            serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
+        assert_eq!(after, json!({"v": 2}));
+    }
+
+    #[test]
+    fn apply_changes_skips_check_when_target_missing() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        // First write: no existing file to conflict against, so expected_mtime
+        // must not block the write.
+        apply_changes_sync(&meta, &json!({"first": true}), Some(12345)).unwrap();
+        assert!(meta.exists());
+    }
+
+    #[test]
+    fn file_mtime_ms_returns_none_for_missing_file() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("missing.json");
+        assert!(file_mtime_ms(&meta).is_none());
+    }
+
+    #[test]
+    fn file_mtime_ms_returns_some_for_existing_file() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        fs::write(&meta, r#"{}"#).unwrap();
+        assert!(file_mtime_ms(&meta).is_some());
     }
 }

@@ -60,7 +60,9 @@ function validMetadata(): Metadata {
 interface MockConfig {
   load_metadata?: unknown;
   load_metadata_error?: Error;
-  apply_changes?: unknown;
+  get_metadata_mtime?: number | null;
+  get_metadata_mtime_error?: Error;
+  apply_changes?: number;
   apply_changes_error?: Error;
   restore_from_original?: unknown;
   restore_from_original_error?: Error;
@@ -74,9 +76,15 @@ function configureInvoke(cfg: MockConfig) {
       case 'load_metadata':
         if (cfg.load_metadata_error) return Promise.reject(cfg.load_metadata_error);
         return Promise.resolve(cfg.load_metadata);
+      case 'get_metadata_mtime':
+        if (cfg.get_metadata_mtime_error)
+          return Promise.reject(cfg.get_metadata_mtime_error);
+        return Promise.resolve(cfg.get_metadata_mtime ?? null);
       case 'apply_changes':
         if (cfg.apply_changes_error) return Promise.reject(cfg.apply_changes_error);
-        return Promise.resolve(cfg.apply_changes);
+        // Rust side returns post-write mtime as u64. Default to a sentinel
+        // so apply() can still update loadedMtimeMs when tests don't care.
+        return Promise.resolve(cfg.apply_changes ?? 2000);
       case 'restore_from_original':
         if (cfg.restore_from_original_error)
           return Promise.reject(cfg.restore_from_original_error);
@@ -230,7 +238,7 @@ describe('useMetadataStore.apply', () => {
 });
 
 describe('useMetadataStore.clear', () => {
-  it('resets the store to its initial empty state including #516 fields', () => {
+  it('resets the store to its initial empty state including #514/#516 fields', () => {
     useMetadataStore.setState({
       metadata: validMetadata(),
       filePath: '/tmp/x/metadata.json',
@@ -241,6 +249,8 @@ describe('useMetadataStore.clear', () => {
       hasBackup: true,
       restoring: true,
       restoreError: 'prev restore error',
+      loadedMtimeMs: 12345,
+      conflictError: 'prev conflict',
     });
 
     useMetadataStore.getState().clear();
@@ -255,6 +265,8 @@ describe('useMetadataStore.clear', () => {
     expect(s.hasBackup).toBe(false);
     expect(s.restoring).toBe(false);
     expect(s.restoreError).toBeNull();
+    expect(s.loadedMtimeMs).toBeNull();
+    expect(s.conflictError).toBeNull();
   });
 });
 
@@ -357,5 +369,154 @@ describe('useMetadataStore.loadSample', () => {
     expect(state.filePath).toBeNull();
     expect(state.dirty).toBe(false);
     expect(state.hasBackup).toBe(false);
+    expect(state.loadedMtimeMs).toBeNull();
+    expect(state.conflictError).toBeNull();
+  });
+});
+
+// #514 — mtime-based exclusive control for metadata.json edits.
+
+describe('useMetadataStore (#514 mtime + conflict)', () => {
+  it('records loadedMtimeMs from get_metadata_mtime after a successful load', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      get_metadata_mtime: 1700,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    const state = useMetadataStore.getState();
+    expect(state.loadedMtimeMs).toBe(1700);
+    expect(state.conflictError).toBeNull();
+    // get_metadata_mtime is called alongside load_metadata.
+    expect(invokeMock).toHaveBeenCalledWith('get_metadata_mtime', { path: 'p' });
+  });
+
+  it('passes the recorded mtime as expectedMtimeMs when apply is called', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      get_metadata_mtime: 1700,
+      apply_changes: 2500,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, { name: 'x' });
+    await useMetadataStore.getState().apply();
+
+    const applyCall = invokeMock.mock.calls.find((c) => c[0] === 'apply_changes');
+    expect(applyCall).toBeDefined();
+    const args = applyCall![1] as { expectedMtimeMs: number | null };
+    expect(args.expectedMtimeMs).toBe(1700);
+
+    // Post-apply mtime rotates forward so the next apply uses the fresh value.
+    expect(useMetadataStore.getState().loadedMtimeMs).toBe(2500);
+    expect(useMetadataStore.getState().conflictError).toBeNull();
+  });
+
+  it('surfaces conflict errors in conflictError, not applyError', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      get_metadata_mtime: 1700,
+      apply_changes_error: new Error(
+        'conflict: external modification detected (expected mtime 1700, got 1800)',
+      ),
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, { name: 'x' });
+    await useMetadataStore.getState().apply();
+
+    const state = useMetadataStore.getState();
+    expect(state.applying).toBe(false);
+    expect(state.applyError).toBeNull();
+    expect(state.conflictError).toContain('conflict:');
+    // Store retains dirty edits so the user can choose to overwrite.
+    expect(state.dirty).toBe(true);
+  });
+
+  it('routes non-conflict errors to applyError and leaves conflictError null', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      get_metadata_mtime: 1700,
+      apply_changes_error: new Error('write failed: disk full'),
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, { name: 'x' });
+    await useMetadataStore.getState().apply();
+
+    const state = useMetadataStore.getState();
+    expect(state.applyError).toContain('disk full');
+    expect(state.conflictError).toBeNull();
+  });
+
+  it('applyOverwrite re-runs apply with expectedMtimeMs=null', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      get_metadata_mtime: 1700,
+      apply_changes: 2500,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, { name: 'x' });
+    await useMetadataStore.getState().applyOverwrite();
+
+    const applyCalls = invokeMock.mock.calls.filter((c) => c[0] === 'apply_changes');
+    const lastApply = applyCalls[applyCalls.length - 1];
+    const args = lastApply[1] as { expectedMtimeMs: number | null };
+    expect(args.expectedMtimeMs).toBeNull();
+    expect(useMetadataStore.getState().loadedMtimeMs).toBe(2500);
+  });
+
+  it('reloadAfterConflict re-loads metadata.json from disk', async () => {
+    // First load with mtime 1700, then `conflictError` is set.
+    configureInvoke({
+      load_metadata: validMetadata(),
+      get_metadata_mtime: 1700,
+      apply_changes_error: new Error('conflict: stale'),
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, { name: 'dirty' });
+    await useMetadataStore.getState().apply();
+    expect(useMetadataStore.getState().conflictError).toContain('conflict');
+
+    // Reload now returns a fresh validMetadata (no `name` edit) + new mtime.
+    configureInvoke({
+      load_metadata: validMetadata(),
+      get_metadata_mtime: 1900,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().reloadAfterConflict();
+
+    const state = useMetadataStore.getState();
+    expect(state.conflictError).toBeNull();
+    expect(state.loadedMtimeMs).toBe(1900);
+    expect(state.metadata?.matches[0].name).toBeUndefined();
+    expect(state.dirty).toBe(false);
+  });
+
+  it('reloadAfterConflict is a no-op when filePath is null (sample mode)', async () => {
+    useMetadataStore.setState({ conflictError: 'stale' });
+    await useMetadataStore.getState().reloadAfterConflict();
+    expect(useMetadataStore.getState().conflictError).toBeNull();
+  });
+
+  it('dismissConflict clears the modal state without reloading or reapplying', () => {
+    useMetadataStore.setState({ conflictError: 'conflict: x', dirty: true });
+    useMetadataStore.getState().dismissConflict();
+    const state = useMetadataStore.getState();
+    expect(state.conflictError).toBeNull();
+    expect(state.dirty).toBe(true); // edits are retained
+  });
+
+  it('load that fails clears loadedMtimeMs and conflictError', async () => {
+    // Seed with prior state
+    useMetadataStore.setState({ loadedMtimeMs: 999, conflictError: 'stale' });
+    configureInvoke({ load_metadata_error: new Error('io error') });
+    await useMetadataStore.getState().load('p');
+    const state = useMetadataStore.getState();
+    expect(state.loadedMtimeMs).toBeNull();
+    expect(state.conflictError).toBeNull();
+    expect(state.loadError).toContain('io error');
   });
 });
