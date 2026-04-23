@@ -291,6 +291,21 @@
   color: var(--ae-cyan);
 }
 
+.listMarkError {
+  color: var(--ae-danger);
+}
+
+.listError {
+  font-family: var(--ae-font-mono);
+  font-size: 9px;
+  color: var(--ae-danger);
+  margin-left: 8px;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .listName {
   flex: 1;
   overflow: hidden;
