@@ -569,10 +569,12 @@ def _resolve_gpu_mode(
         return use_gpu, vendor
 
     codec_match = (codec or "").lower() in _GPU_PREFERRED_CODECS
-    # Auto-select requires BOTH a GPU-capable codec AND a detected vendor.
-    # vendor=None means probe_gpu_vendors() returned empty (no GPU found),
-    # in which case we fall back to CPU even for GPU-preferred codecs.
-    selected = codec_match and vendor is not None
+    # Codec match is the primary signal (#334 の既存挙動を維持)。
+    # vendor=None (probe_gpu_vendors() が空 / 未実装 vendor のみ検出)
+    # でも use_gpu=True を返し、scan_gpu の legacy path
+    # (-hwaccel auto) に入る。ffmpeg 側で GPU decode に失敗した場合は
+    # CPU fallback される (既存の動作)。
+    selected = codec_match
     if show and verbose:
         mode = "GPU" if selected else "CPU"
         typer.echo(f"  Auto-selected {mode} mode (codec: {codec or 'unknown'})")

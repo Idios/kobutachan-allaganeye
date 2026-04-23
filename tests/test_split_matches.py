@@ -1891,12 +1891,14 @@ class TestResolveGpuMode:
         assert vendor == "nvidia"
 
     def test_vendor_auto_no_vendor_when_only_amd(self, monkeypatch):
-        """AMD iGPU のみ環境では vendor=None (#553 で復活予定).
+        """AMD iGPU のみ環境では vendor=None だが codec match で use_gpu=True.
 
-        AMD AMF decoder は allaganeye の filter pipeline (fps,scale,
-        format=gray) と非互換で swscaler reinit 失敗するため、#546
-        実装時点では _VENDOR_HWACCEL_MAP から除外。#553 で workaround
-        確定時に復活予定。
+        AMD AMF decoder は #546 実装時点では _VENDOR_HWACCEL_MAP 未登録
+        (#553 で filter pipeline workaround 確定時に復活予定)。auto
+        選択で AMD は skip されるが、codec=av1 が `_GPU_PREFERRED_CODECS`
+        に含まれるため use_gpu=True を返し、scan_gpu の legacy path
+        (-hwaccel auto) で動作する (GPU decode 失敗時は ffmpeg が
+        CPU fallback)。
         """
         monkeypatch.setattr(
             "allaganeye.system_info.probe_gpu_vendors",
@@ -1907,7 +1909,7 @@ class TestResolveGpuMode:
         use_gpu, vendor = _resolve_gpu_mode(
             None, None, "av1", show=False, verbose=False
         )
-        assert use_gpu is False
+        assert use_gpu is True
         assert vendor is None
 
     def test_vendor_explicit_amd_unimplemented_raises(self, monkeypatch):
@@ -1961,7 +1963,12 @@ class TestResolveGpuMode:
         assert vendor == "nvidia"
 
     def test_vendor_none_when_no_gpu_available(self, monkeypatch):
-        """GPU probe が空リストを返すと vendor=None + use_gpu=False."""
+        """GPU probe が空でも codec match なら use_gpu=True (legacy path).
+
+        vendor=None (probe 失敗 / Linux CI 等) でも scan_gpu の legacy
+        path (-hwaccel auto) で動作する。ffmpeg 側で GPU decode 失敗
+        した場合は CPU fallback (#334 既存挙動維持)。
+        """
         monkeypatch.setattr(
             "allaganeye.system_info.probe_gpu_vendors",
             lambda: [],
@@ -1971,7 +1978,7 @@ class TestResolveGpuMode:
         use_gpu, vendor = _resolve_gpu_mode(
             None, None, "av1", show=False, verbose=False
         )
-        assert use_gpu is False
+        assert use_gpu is True
         assert vendor is None
 
     def test_vendor_auto_string_equivalent_to_none(self, monkeypatch):
