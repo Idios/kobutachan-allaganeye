@@ -195,9 +195,9 @@ GUI が `load_metadata` した瞬間のファイル mtime を `metadataStore.loa
 - **検知単位**: epoch ms (u64)。Windows / Linux / macOS いずれも `fs::Metadata::modified()` が返す `SystemTime` を ms に丸めて比較
 - **挙動**: 不一致時は Rust が `conflict: external modification detected ...` を返し、GUI は `conflictError` state に格納して `ConflictModal` を表示
 - **ユーザー選択肢**:
-    - **上書き** → `metadataStore.applyOverwrite()` で `expectedMtimeMs=null` 再送 (check bypass)
-    - **リロード** → `metadataStore.reloadAfterConflict()` で metadata.json を再読み込み (GUI 編集は破棄)
-    - **キャンセル** → `metadataStore.dismissConflict()` でモーダルのみ閉じる (編集は保持、ディスクに触らない)
+  - **上書き** → `metadataStore.applyOverwrite()` で `expectedMtimeMs=null` 再送 (check bypass)
+  - **リロード** → `metadataStore.reloadAfterConflict()` で metadata.json を再読み込み (GUI 編集は破棄)
+  - **キャンセル** → `metadataStore.dismissConflict()` でモーダルのみ閉じる (編集は保持、ディスクに触らない)
 - **新規書き込み** (target が未存在): mtime check 対象外。`expectedMtimeMs` が指定されても skip し通常書き込み
 - **Rust command**: `get_metadata_mtime(path) -> Option<u64>` を追加。`apply_changes` の戻り値は書き込み後の mtime (`u64`) に変更され、GUI 側 `loadedMtimeMs` を自動更新
 
