@@ -279,21 +279,25 @@ class TestClassifyBlackout:
 
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_non_fl(self, mock_probe):
-        """Neither side has scorebar -> non_fl."""
+        """Neither side has scorebar -> non_fl (re-probe also confirms)."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([False, False, False], [f, f, f]),  # pre
-            ([False, False, False], [f, f, f]),  # post
+            ([False, False, False], [f, f, f]),  # pre initial
+            ([False, False, False], [f, f, f]),  # post initial
+            ([False, False], [f, f]),  # pre re-probe (#524)
+            ([False, False], [f, f]),  # post re-probe (#524)
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
         assert result == "non_fl"
 
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_all_probes_failed(self, mock_probe):
-        """All probes failed -> unknown."""
+        """All probes failed (initial+re-probe) -> unknown."""
         mock_probe.side_effect = [
-            ([None, None, None], [None, None, None]),  # pre
-            ([None, None, None], [None, None, None]),  # post
+            ([None, None, None], [None, None, None]),  # pre initial
+            ([None, None, None], [None, None, None]),  # post initial
+            ([None, None], [None, None]),  # pre re-probe (#524)
+            ([None, None], [None, None]),  # post re-probe (#524)
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
         assert result == "unknown"
@@ -849,11 +853,18 @@ class TestClassifyBlackoutBoundary:
 
     @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
     def test_region_at_video_end(self, mock_probe):
-        """Region near end -> post timestamps clamp to duration."""
+        """Region near end -> post timestamps clamp to duration.
+
+        Re-probe (#524) fires because both sides are not-True.  Pre re-probe
+        runs (291.5/292.5/293.5 are well clear of duration); post re-probe
+        timestamps all collapse to 300.0 which dedupes against existing
+        post probe -> empty list, so post re-probe is skipped.
+        """
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([False, False, False], [f, f, f]),  # pre
-            ([False], [f]),  # post: collapsed
+            ([False, False, False], [f, f, f]),  # pre initial
+            ([False], [f]),  # post initial: collapsed
+            ([False, False, False], [f, f, f]),  # pre re-probe
         ]
         result = classify_blackout(Path("v.mp4"), (297.0, 299.5), 300.0, _HEIGHT)
         assert result == "non_fl"
@@ -861,6 +872,130 @@ class TestClassifyBlackoutBoundary:
         post_call_args = mock_probe.call_args_list[1]
         post_ts = post_call_args[0][1]
         assert len(post_ts) < 3
+
+
+# --- classify_blackout re-probe fallback (#524) ---
+
+
+class TestClassifyBlackoutReProbe:
+    @patch(f"{SCOREBAR_MODULE}._is_static_from_frames", return_value=False)
+    @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
+    def test_re_probe_post_recovers_match_boundary(self, mock_probe, _mock_static):
+        """Both pre/post initial=False -> re-probe finds post=True -> match_boundary."""
+        f = _FAKE_FRAME
+        mock_probe.side_effect = [
+            ([False, False, False], [f, f, f]),  # pre initial
+            ([False, False, False], [f, f, f]),  # post initial
+            ([False, False, False], [f, f, f]),  # pre re-probe
+            ([True, True, True], [f, f, f]),  # post re-probe
+        ]
+        result = classify_blackout(Path("v.mp4"), (100.0, 108.0), 300.0, _HEIGHT)
+        assert result == "match_boundary"
+        assert mock_probe.call_count == 4
+        # post re-probe offsets = region_end + (region_width + 1/2/3)
+        # = 108 + 9/10/11 = 117/118/119
+        post_re_call = mock_probe.call_args_list[3]
+        post_re_ts = post_re_call[0][1]
+        assert post_re_ts == [117.0, 118.0, 119.0]
+
+    @patch(f"{SCOREBAR_MODULE}._is_static_from_frames", return_value=False)
+    @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
+    def test_re_probe_pre_recovers_match_boundary(self, mock_probe, _mock_static):
+        """Initial both None -> re-probe pre=True, post=False -> match_boundary.
+
+        Post must succeed (False) on re-probe; if it stays None the
+        existing "either side None -> unknown" rule keeps the result
+        unknown for safety.
+        """
+        f = _FAKE_FRAME
+        mock_probe.side_effect = [
+            ([None, None, None], [None, None, None]),  # pre initial
+            ([None, None, None], [None, None, None]),  # post initial
+            ([True, True, True], [f, f, f]),  # pre re-probe
+            ([False, False, False], [f, f, f]),  # post re-probe success False
+        ]
+        result = classify_blackout(Path("v.mp4"), (100.0, 108.0), 300.0, _HEIGHT)
+        assert result == "match_boundary"
+        # pre re-probe offsets = region_start - (region_width + 3/2/1)
+        # = 100 - 11/10/9 = 89/90/91
+        pre_re_call = mock_probe.call_args_list[2]
+        pre_re_ts = pre_re_call[0][1]
+        assert pre_re_ts == [89.0, 90.0, 91.0]
+
+    @patch(f"{SCOREBAR_MODULE}._is_static_from_frames", return_value=False)
+    @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
+    def test_re_probe_skipped_when_pre_true(self, mock_probe, _mock_static):
+        """Initial pre=True (any-side True) -> re-probe skipped."""
+        f = _FAKE_FRAME
+        mock_probe.side_effect = [
+            ([True, True, True], [f, f, f]),  # pre initial
+            ([False, False, False], [f, f, f]),  # post initial
+        ]
+        result = classify_blackout(Path("v.mp4"), (100.0, 108.0), 300.0, _HEIGHT)
+        assert result == "match_boundary"
+        assert mock_probe.call_count == 2
+
+    @patch(f"{SCOREBAR_MODULE}._is_static_from_frames", return_value=False)
+    @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
+    def test_re_probe_skipped_when_post_true(self, mock_probe, _mock_static):
+        """Initial post=True -> re-probe skipped."""
+        f = _FAKE_FRAME
+        mock_probe.side_effect = [
+            ([False, False, False], [f, f, f]),  # pre initial
+            ([True, True, True], [f, f, f]),  # post initial
+        ]
+        result = classify_blackout(Path("v.mp4"), (100.0, 108.0), 300.0, _HEIGHT)
+        assert result == "match_boundary"
+        assert mock_probe.call_count == 2
+
+    @patch(f"{SCOREBAR_MODULE}._is_static_from_frames", return_value=False)
+    @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
+    def test_re_probe_no_change_keeps_non_fl(self, mock_probe, _mock_static):
+        """Initial both False + re-probe both False -> non_fl preserved."""
+        f = _FAKE_FRAME
+        mock_probe.side_effect = [
+            ([False, False, False], [f, f, f]),  # pre initial
+            ([False, False, False], [f, f, f]),  # post initial
+            ([False, False, False], [f, f, f]),  # pre re-probe
+            ([False, False, False], [f, f, f]),  # post re-probe
+        ]
+        result = classify_blackout(Path("v.mp4"), (100.0, 108.0), 300.0, _HEIGHT)
+        assert result == "non_fl"
+        assert mock_probe.call_count == 4
+
+    @patch(f"{SCOREBAR_MODULE}._is_static_from_frames", return_value=False)
+    @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
+    def test_re_probe_promotes_unknown_to_non_fl(self, mock_probe, _mock_static):
+        """Initial both None + re-probe both False -> non_fl (unknown -> non_fl)."""
+        f = _FAKE_FRAME
+        mock_probe.side_effect = [
+            ([None, None, None], [None, None, None]),  # pre initial
+            ([None, None, None], [None, None, None]),  # post initial
+            ([False, False, False], [f, f, f]),  # pre re-probe success False
+            ([False, False, False], [f, f, f]),  # post re-probe success False
+        ]
+        result = classify_blackout(Path("v.mp4"), (100.0, 108.0), 300.0, _HEIGHT)
+        assert result == "non_fl"
+
+    @patch(f"{SCOREBAR_MODULE}._is_static_from_frames", return_value=False)
+    @patch(f"{SCOREBAR_MODULE}._probe_scorebar_context")
+    def test_re_probe_clamps_at_video_bounds(self, mock_probe, _mock_static):
+        """Pre re-probe collapses to existing 0.0 -> skipped; post re-probe runs."""
+        f = _FAKE_FRAME
+        mock_probe.side_effect = [
+            ([False], [f]),  # pre initial (all 3 collapse to 0.0)
+            ([False, False, False], [f, f, f]),  # post initial
+            # pre re-probe: max(0, 0-(5+3/2/1)) = 0.0 -> dedupe vs {0.0} -> empty
+            # post re-probe: 5+(5+1/2/3) = 11/12/13
+            ([True, True, True], [f, f, f]),  # post re-probe
+        ]
+        # region (0.0, 5.0), duration=15, region_width=5.0
+        result = classify_blackout(Path("v.mp4"), (0.0, 5.0), 15.0, _HEIGHT)
+        assert result == "match_boundary"
+        assert mock_probe.call_count == 3
+        post_re_call = mock_probe.call_args_list[2]
+        post_re_ts = post_re_call[0][1]
+        assert post_re_ts == [11.0, 12.0, 13.0]
 
 
 # --- _scaled_height tests ---
