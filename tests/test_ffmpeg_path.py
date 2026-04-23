@@ -108,7 +108,7 @@ class TestErrorMessage:
         """
         msg = _error_message("ffmpeg")
         assert "BtbN" in msg
-        assert "win64-lgpl" in msg
+        assert "win64-lgpl-shared" in msg
         assert "Gyan.FFmpeg" in msg
 
     @pytest.mark.skipif(sys.platform != "darwin", reason="macOS-specific guidance")

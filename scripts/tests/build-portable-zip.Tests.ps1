@@ -113,7 +113,7 @@ Describe 'Get-FFmpegSourceCommit' {
 }
 
 Describe 'Format-ReadmeContent' {
-  It 'includes the LGPLv3 BtbN win64-lgpl attribution and the source commit' {
+  It 'includes the LGPLv3 BtbN win64-lgpl-shared attribution and the source commit' {
     $readme = Format-ReadmeContent `
       -Version '0.2.0' `
       -FFmpegVersion '8.1' `
@@ -122,8 +122,32 @@ Describe 'Format-ReadmeContent' {
 
     $readme | Should -Match 'LGPLv3'
     $readme | Should -Match 'BtbN/FFmpeg-Builds'
-    $readme | Should -Match 'win64-lgpl'
+    # The Portable ZIP ships the shared variant (#551), so README must point
+    # to the matching BtbN asset name to satisfy LGPLv3 source-availability.
+    $readme | Should -Match 'win64-lgpl-shared'
     $readme | Should -Match '7f5c90f77e'
     $readme | Should -Match 'autobuild-2026-04-22-13-15'
+    # Shared-build wording supersedes the old "Static linking restrictions"
+    # paragraph; assert the new dynamic-linking explanation is present.
+    $readme | Should -Match 'shared-build DLLs'
+  }
+}
+
+Describe 'Script parameters' {
+  It 'exposes -SkipArchive as a switch parameter' {
+    # CI sets -SkipArchive so actions/upload-artifact can zip the payload
+    # folder once (#551). Regression-test: keep the switch on the param block.
+    $cmd = Get-Command $script:BuildScript
+    $cmd.Parameters.ContainsKey('SkipArchive') | Should -BeTrue
+    $cmd.Parameters['SkipArchive'].SwitchParameter | Should -BeTrue
+  }
+
+  It 'keeps -Version optional so dot-sourcing loads functions without building' {
+    # The Pester suite dot-sources the script with no arguments to load helper
+    # functions; making -Version mandatory again would break this contract.
+    $cmd = Get-Command $script:BuildScript
+    $cmd.Parameters['Version'].Attributes |
+      Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] } |
+      ForEach-Object { $_.Mandatory | Should -BeFalse }
   }
 }

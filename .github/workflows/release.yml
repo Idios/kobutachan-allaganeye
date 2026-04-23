@@ -54,6 +54,11 @@ jobs:
   build-windows:
     needs: version-check
     runs-on: windows-latest
+    env:
+      # build-portable-zip.ps1 reuses the BtbN FFmpeg zip from this directory
+      # when the digest matches, and saves freshly downloaded copies here.
+      # actions/cache persists the directory across runs keyed by asset SHA256.
+      ALLAGANEYE_BUILD_CACHE_DIR: ${{ github.workspace }}/build-cache
     steps:
       - uses: actions/checkout@v4
 
@@ -61,22 +66,23 @@ jobs:
         with:
           python-version: '3.11.9'
 
-      - name: Build Portable ZIP
-        shell: pwsh
-        run: ./scripts/build-portable-zip.ps1 -Version '${{ needs.version-check.outputs.version }}'
+      - name: Cache FFmpeg archive
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/build-cache
+          key: btbn-ffmpeg-win64-lgpl-shared-8.1-fef865cab8a097f07f1dcba66d73be94742b79d952cf6fd8643bd42c18995034
 
-      - name: Smoke test (extract ZIP and run launcher --version)
+      - name: Build Portable ZIP (skip archive)
+        shell: pwsh
+        run: ./scripts/build-portable-zip.ps1 -Version '${{ needs.version-check.outputs.version }}' -SkipArchive
+
+      - name: Smoke test (run launcher --version from built payload)
         shell: pwsh
         run: |
           $version = '${{ needs.version-check.outputs.version }}'
-          $zip = "dist/allaganeye-v$version-windows.zip"
-          if (-not (Test-Path $zip)) {
-            throw "ZIP not found: $zip"
-          }
-          Expand-Archive -Path $zip -DestinationPath 'smoke-extract' -Force
-          $payload = Join-Path 'smoke-extract' "allaganeye-v$version"
+          $payload = "build/portable/allaganeye-v$version"
           if (-not (Test-Path $payload)) {
-            throw "Extracted payload directory not found: $payload"
+            throw "Payload directory not found: $payload"
           }
           Push-Location $payload
           try {
@@ -99,10 +105,12 @@ jobs:
             Pop-Location
           }
 
+      # Upload the expanded payload folder; actions/upload-artifact zips it once
+      # on its own, which avoids the previous "zip inside a zip" artifact.
       - uses: actions/upload-artifact@v4
         with:
           name: allaganeye-portable-windows
-          path: dist/allaganeye-v*-windows.zip
+          path: build/portable/allaganeye-v${{ needs.version-check.outputs.version }}
           if-no-files-found: error
 
   release:
@@ -121,7 +129,17 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: allaganeye-portable-windows
-          path: dist
+          path: dist/allaganeye-v${{ needs.version-check.outputs.version }}
+
+      # Re-create the single release archive from the payload folder. Keeping
+      # the top-level allaganeye-v<version>/ directory inside the zip preserves
+      # the extraction layout users have relied on since v0.1.0.
+      - name: Create release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          zip -r "allaganeye-v${{ needs.version-check.outputs.version }}-windows.zip" "allaganeye-v${{ needs.version-check.outputs.version }}"
 
       - name: Extract release notes from CHANGELOG
         shell: bash

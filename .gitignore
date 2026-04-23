@@ -51,6 +51,7 @@ package-lock.json
 *.mov
 output/
 tmp/
+build-cache/
 
 # Node / GUI (gui/)
 node_modules/

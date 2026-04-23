@@ -3,12 +3,16 @@
 Build the allaganeye Portable ZIP for Windows.
 
 .DESCRIPTION
-Downloads Python 3.11 embeddable and FFmpeg LGPLv3 static (BtbN), installs
+Downloads Python 3.11 embeddable and FFmpeg LGPLv3 shared (BtbN), installs
 allaganeye and its runtime dependencies into the payload, adds a .bat
 launcher, and compresses everything into dist/allaganeye-v<version>-windows.zip.
 
 Downloaded artefacts (Python embed, get-pip.py, FFmpeg zip) are pinned by URL
 and verified against hard-coded SHA256 digests. A mismatch aborts the build.
+
+The FFmpeg zip is cached in $env:ALLAGANEYE_BUILD_CACHE_DIR when that variable
+is set. CI populates that directory with actions/cache so the ~85MB BtbN zip
+is downloaded only on cache miss.
 
 The script is idempotent: build/portable and dist are cleaned at the start.
 
@@ -23,10 +27,18 @@ Pass -Version to actually run the build.
 Semantic version string (e.g. "0.2.0") used in the output ZIP filename. When
 omitted, the script loads its functions for dot-sourcing and returns without
 building anything.
+
+.PARAMETER SkipArchive
+If specified, leave the expanded payload under build/portable/allaganeye-v<version>/
+and do not create the final zip. CI passes this so actions/upload-artifact can
+zip the payload folder once, avoiding a "zip inside a zip" artifact. Local
+dry-run invocations omit this switch and still get dist/allaganeye-v*-windows.zip.
+Ignored when -Version is omitted (dot-sourcing path).
 #>
 [CmdletBinding()]
 param(
-  [string]$Version = ''
+  [string]$Version = '',
+  [switch]$SkipArchive
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,14 +55,16 @@ $GetPipSha256 = 'FEBA1C697DF45BE1B539B40D93C102C9EE9DDE1D966303323B830B06F3FBCA3
 
 # FFmpeg is pinned to a specific BtbN autobuild so the same allaganeye tag ships
 # the same binary and the LGPLv3 license applies uniformly across CI and Portable ZIP.
+# We use the shared variant (wrapper exe + individual avcodec/avfilter/... DLLs)
+# rather than the static build to keep Portable ZIP size down (~200 MB vs ~330 MB).
 # To update: bump $FFmpegBuildTag / $FFmpegAsset / $FFmpegSha256 together.
 # CI workflows (`.github/workflows/ci.yml`) must be updated with the matching
-# linux64-lgpl asset at the same build tag; see docs/developer-setup.md § 9.
+# linux64-lgpl-shared asset at the same build tag; see docs/developer-setup.md § 9.
 $FFmpegVersion = '8.1'
 $FFmpegBuildTag = 'autobuild-2026-04-22-13-15'
-$FFmpegAsset = 'ffmpeg-n8.1-10-g7f5c90f77e-win64-lgpl-8.1'
+$FFmpegAsset = 'ffmpeg-n8.1-10-g7f5c90f77e-win64-lgpl-shared-8.1'
 $FFmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/$FFmpegBuildTag/$FFmpegAsset.zip"
-$FFmpegSha256 = '230B29CD76AA194F76FB48BBF5D81CBAB8EFD7CD4FD1D7DE6500A040A8587A1C'
+$FFmpegSha256 = 'FEF865CAB8A097F07F1DCBA66D73BE94742B79D952CF6FD8643BD42C18995034'
 
 function Invoke-Download {
   param(
@@ -155,13 +169,15 @@ See https://github.com/Idios/kobutachan-allaganeye for full documentation.
 - allaganeye: MIT (see the repository LICENSE file)
 - Python: PSF License (python\LICENSE.txt)
 - FFmpeg: LGPLv3 (full text in ffmpeg\LICENSE.txt)
-    Build:         ffmpeg n$FFmpegVersion win64-lgpl static build (BtbN/FFmpeg-Builds)
+    Build:         ffmpeg n$FFmpegVersion win64-lgpl-shared build (BtbN/FFmpeg-Builds)
     Build tag:     $FFmpegBuildTag
     Source:        https://git.ffmpeg.org/ffmpeg.git (commit $FFmpegSourceCommit)
     Build scripts: https://github.com/BtbN/FFmpeg-Builds
 
 allaganeye (MIT) invokes the FFmpeg binary as a separate subprocess only.
-Static linking restrictions of LGPLv3 therefore do not apply to allaganeye itself.
+The shared-build DLLs are loaded dynamically by the FFmpeg executables and are
+redistributed under LGPLv3 alongside the license text; LGPLv3 therefore does
+not apply to allaganeye itself.
 "@
 }
 
@@ -214,20 +230,47 @@ New-Item -ItemType Directory -Force -Path $LibDir | Out-Null
     --no-cache-dir `
     $RepoRoot
 
-# 4. FFmpeg LGPLv3 static, BtbN/FFmpeg-Builds (version-pinned)
+# 4. FFmpeg LGPLv3 shared, BtbN/FFmpeg-Builds (version-pinned)
 # LGPLv3 redistribution requires shipping the license text alongside the binary
 # and making the corresponding source available. We copy LICENSE.txt into the
 # payload and point README at the upstream source repo.
 $FFmpegZip = Join-Path $BuildDir 'ffmpeg.zip'
-Invoke-Download -Uri $FFmpegUrl -OutPath $FFmpegZip -ExpectedSha256 $FFmpegSha256
+# Optional download cache: CI sets $env:ALLAGANEYE_BUILD_CACHE_DIR and uses
+# actions/cache to persist the BtbN zip across runs. Local builds leave the
+# variable unset and always download. Cache is keyed by asset name so a pinned
+# bump invalidates automatically; the SHA256 is re-verified on every reuse.
+$FFmpegCacheDir = $env:ALLAGANEYE_BUILD_CACHE_DIR
+if ($FFmpegCacheDir) {
+  $FFmpegCached = Join-Path $FFmpegCacheDir "$FFmpegAsset.zip"
+  if (Test-Path $FFmpegCached) {
+    $cachedHash = (Get-FileHash -Algorithm SHA256 -Path $FFmpegCached).Hash
+    if ($cachedHash -eq $FFmpegSha256.ToUpperInvariant()) {
+      Copy-Item -Path $FFmpegCached -Destination $FFmpegZip
+      Write-Host "Using cached FFmpeg zip: $FFmpegCached"
+    } else {
+      Write-Host "  Cached FFmpeg zip SHA256 mismatch, re-downloading"
+    }
+  }
+}
+if (-not (Test-Path $FFmpegZip)) {
+  Invoke-Download -Uri $FFmpegUrl -OutPath $FFmpegZip -ExpectedSha256 $FFmpegSha256
+  if ($FFmpegCacheDir) {
+    New-Item -ItemType Directory -Force -Path $FFmpegCacheDir | Out-Null
+    Copy-Item -Path $FFmpegZip -Destination (Join-Path $FFmpegCacheDir "$FFmpegAsset.zip") -Force
+    Write-Host "Saved FFmpeg zip to cache: $FFmpegCacheDir"
+  }
+}
 $FFmpegExtract = Join-Path $BuildDir 'ffmpeg-extracted'
 Expand-Archive -Path $FFmpegZip -DestinationPath $FFmpegExtract -Force
 $FFmpegLayout = Assert-FFmpegLayout -ExtractDir $FFmpegExtract
 $FFmpegSourceCommit = Get-FFmpegSourceCommit -AssetName $FFmpegAsset
 $FFmpegDest = Join-Path $PayloadDir 'ffmpeg'
 New-Item -ItemType Directory -Force -Path $FFmpegDest | Out-Null
+# Shared build: copy ffmpeg.exe, ffprobe.exe, and all DLLs. ffplay.exe is excluded
+# because allaganeye never invokes it and keeping it would cost ~17 MB.
 Copy-Item -Path (Join-Path $FFmpegLayout.Bin 'ffmpeg.exe') -Destination $FFmpegDest
 Copy-Item -Path (Join-Path $FFmpegLayout.Bin 'ffprobe.exe') -Destination $FFmpegDest
+Get-ChildItem -Path $FFmpegLayout.Bin -Filter '*.dll' | Copy-Item -Destination $FFmpegDest
 Copy-Item -Path $FFmpegLayout.License -Destination (Join-Path $FFmpegDest 'LICENSE.txt')
 
 # 5. Launcher
@@ -288,6 +331,12 @@ $Readme = Format-ReadmeContent `
   -FFmpegSourceCommit $FFmpegSourceCommit
 Set-Content -Path (Join-Path $PayloadDir 'README.txt') -Value $Readme -Encoding UTF8
 
-# 7. Compress
-Compress-Archive -Path $PayloadDir -DestinationPath $ZipPath -CompressionLevel Optimal
-Write-Host "Built $ZipPath"
+# 7. Compress (skipped with -SkipArchive so CI can hand the payload folder
+# directly to actions/upload-artifact; upload-artifact zips it once instead of
+# producing a nested zip).
+if ($SkipArchive) {
+  Write-Host "Skipping archive creation (-SkipArchive). Payload at: $PayloadDir"
+} else {
+  Compress-Archive -Path $PayloadDir -DestinationPath $ZipPath -CompressionLevel Optimal
+  Write-Host "Built $ZipPath"
+}

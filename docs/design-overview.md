@@ -162,7 +162,7 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 
 | 優先度 | OS | 状態 | ffmpeg 自動検索 |
 |---|---|---|---|
-| 1 | Windows | 対応済み | `ALLAGANEYE_FFMPEG` で BtbN LGPLv3 static (#508 推奨) または winget (`Gyan.FFmpeg`, GPL、後方互換 fallback) |
+| 1 | Windows | 対応済み | `ALLAGANEYE_FFMPEG` で BtbN LGPLv3 shared (#508 推奨) または winget (`Gyan.FFmpeg`, GPL、後方互換 fallback) |
 | 2 | Linux | 未検証 | パッケージマネージャで PATH に入る（CI は lint/型チェックのみ） |
 | 3 | macOS | 未検証 | Homebrew (`/opt/homebrew/bin`, `/usr/local/bin`) |
 
