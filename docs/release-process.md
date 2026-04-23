@@ -88,3 +88,63 @@ claude/<scope>-* → PR → /review-pr (受け入れ条件チェック) → /tes
 5. GitHub Release を作成（変更内容サマリ付き）
 6. `main` から次バージョンの `develop-x.x.0` ブランチを作成し、その時点で `pyproject.toml` の `version` を `x.y.0` に更新（`.dev` 等の pre-release 識別子は付けない。PyPI 未公開のため不要）
 7. 次レイヤーの Issue を作成し、作業開始
+
+## 手動リリース手順 (CI 迂回)
+
+通常のリリースは `git push origin v<x.y.z>` をトリガーに [`.github/workflows/release.yml`](../.github/workflows/release.yml) が自動実行する (上記 §タグ運用 参照)。本節は CI が一時的に使えない場合 (GitHub Actions 障害、`release.yml` 自体の不具合など) の代替手順として、手動でビルド + Release 作成を行う方法を記載する (#461)。
+
+### 前提
+
+- ローカル環境に Python 3.11.9 + PowerShell (Windows PowerShell 5.1 以上 or pwsh 7+) + Git がインストール済み ([Developer Setup](developer-setup.md) §1)
+- `develop-x.x.x` で全テスト pass、`develop-x.x.0 → main` PR マージ済み
+- 公開対象バージョン (`x.y.z`) と `pyproject.toml` の `version` が一致していること
+
+### 手順
+
+1. **main の最新化**:
+
+   ```bash
+   git checkout main
+   git pull origin main
+   ```
+
+1. **ローカル Portable ZIP ビルド** ([`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) を直接呼び出し):
+
+   ```powershell
+   pwsh ./scripts/build-portable-zip.ps1 -Version 'x.y.z'
+   ```
+
+   `dist/allaganeye-vx.y.z-windows.zip` が生成される (Python 3.11.9 embed + BtbN LGPLv3 FFmpeg n8.1 + 各 LICENSE 同梱、SHA256 検証付き)。
+
+1. **Release notes の抽出**:
+
+   ```bash
+   python scripts/extract_release_notes.py x.y.z release-notes.md
+   ```
+
+1. **タグ push 時に `release.yml` が誤発火しないよう Actions を一時無効化**:
+   GitHub Web UI: `Settings > Actions > General > Actions permissions` → `Disable actions`。自動 Release 作成と手動 Release 作成の重複を防ぐため。
+
+1. **タグを打って push**:
+
+   ```bash
+   git tag -a vx.y.z -m "Release vx.y.z: <レイヤー名>"
+   git push origin vx.y.z
+   ```
+
+1. **GitHub Release を手動作成 + ZIP 添付**:
+
+   ```bash
+   gh release create vx.y.z dist/allaganeye-vx.y.z-windows.zip \
+     --title "vx.y.z" \
+     --notes-file release-notes.md
+   ```
+
+1. **Actions を再有効化**:
+   GitHub Web UI: `Settings > Actions > General > Actions permissions` → `Allow all actions and reusable workflows`。
+
+### 注意事項
+
+- 手動リリース後、次回の通常 push で `release.yml` の `pull_request` トリガーや `python` ジョブが正常動作するか確認する (Actions タブから `Release` workflow を `workflow_dispatch` で dry-run 起動するのが確実)
+- 同梱バイナリ (Python / FFmpeg) の更新は手動ビルドでも自動ビルドでも更新箇所が同じ ([`docs/developer-setup.md` §9](developer-setup.md) のチェックリストに従う)
+- 手動 Release は通常時は不要。CI 復旧後は `release.yml` 経由に戻す
