@@ -117,8 +117,10 @@ OR 結合により、1080p OBS validated set は Primary で完結 (FP 耐性保
 
 ### 検証サマリー
 
-- 1080p OBS (20260118 baseline): 改修前と match_count / boundary 時刻完全一致 (5 matches、時刻同一)
-- 4K Game DVR: emblem 位置は scorebar に正しく追従 (可視化検証済み)。ただし Pass 2 region 幅が狭く classify post probes (region_end + 1/2/3s) が暗転 fade-in 中に hit して V1 fallback で False になるケースあり
+- 1080p OBS 4 録画 (20260116/20260118/20260119/20260219) で改修前と match_count / boundary 時刻・types 完全一致 (境界差 <0.5s)。初版 dynamic primary で発覚した 20260219 Match 6/16 結合退行 (33-41min 超長 match) は two-path 化で解消
+- 4K Game DVR file 1: Path 1 absolute fail → Path 2 dynamic rescue (span=652..1272) で in-match True 復帰、lobby は両 path fail で False (FP なし)
+- emblem 位置の追従は 1080p / 4K 両方で可視化確認済み
+- ただし 4K Game DVR の試合境界完全回復は Pass 2 region 幅が狭く classify post probes が暗転 fade-in 中に hit する別問題で未達 (#524 で follow-up)
 
 ### 残課題 (follow-up)
 
