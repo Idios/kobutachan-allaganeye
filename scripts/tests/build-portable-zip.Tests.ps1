@@ -1,0 +1,117 @@
+<#
+Pester v5 tests for scripts/build-portable-zip.ps1.
+
+Run:
+  Invoke-Pester -Path scripts/tests/build-portable-zip.Tests.ps1
+
+CI: `.github/workflows/ci.yml` `installer-pester` job (windows runner).
+
+Scope (issue #528 / PR #528):
+  1. Invoke-Download verifies matching SHA256 and emits a "verified" message.
+  2. Invoke-Download throws on SHA256 mismatch.
+  3. Assert-FFmpegLayout throws when the extracted archive has no `bin/`.
+  4. Format-ReadmeContent includes the LGPLv3 attribution + BtbN / win64-lgpl
+     pointers required by the Portable ZIP license compliance.
+
+We dot-source build-portable-zip.ps1 without -Version so it loads the helper
+functions and returns before running the real build.
+#>
+
+BeforeAll {
+  $script:BuildScript = Join-Path (Join-Path $PSScriptRoot '..') 'build-portable-zip.ps1'
+  . $script:BuildScript
+}
+
+Describe 'Invoke-Download' {
+  BeforeAll {
+    $script:TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) "build-portable-zip-tests-$(New-Guid)"
+    New-Item -ItemType Directory -Force -Path $script:TmpDir | Out-Null
+  }
+
+  AfterAll {
+    if (Test-Path $script:TmpDir) {
+      Remove-Item -Recurse -Force $script:TmpDir
+    }
+  }
+
+  It 'emits a verified message when the downloaded file matches the expected SHA256' {
+    $outPath = Join-Path $script:TmpDir 'match.bin'
+    # Raw ASCII bytes for 'pester-match' (12 bytes, no BOM/newline).
+    # Verified via `printf 'pester-match' | sha256sum`.
+    $expected = '1FCD54F3ACE7BB354D466C56742E4DCE7879EB2D8E6AF99308A8967DBE6A9DE6'
+
+    Mock Invoke-WebRequest {
+      $bytes = [System.Text.Encoding]::ASCII.GetBytes('pester-match')
+      [System.IO.File]::WriteAllBytes($OutFile, $bytes)
+    }
+
+    $output = Invoke-Download -Uri 'https://example.invalid/match' -OutPath $outPath -ExpectedSha256 $expected 6>&1
+    ($output -join "`n") | Should -Match 'SHA256 verified:'
+    Should -Invoke Invoke-WebRequest -Times 1 -Exactly
+  }
+
+  It 'throws when the downloaded SHA256 does not match' {
+    $outPath = Join-Path $script:TmpDir 'mismatch.bin'
+
+    Mock Invoke-WebRequest {
+      $bytes = [System.Text.Encoding]::ASCII.GetBytes('pester-mismatch')
+      [System.IO.File]::WriteAllBytes($OutFile, $bytes)
+    }
+
+    { Invoke-Download -Uri 'https://example.invalid/mismatch' -OutPath $outPath `
+        -ExpectedSha256 '0000000000000000000000000000000000000000000000000000000000000000' } |
+      Should -Throw -ExpectedMessage '*SHA256 mismatch*'
+  }
+}
+
+Describe 'Assert-FFmpegLayout' {
+  BeforeAll {
+    $script:ExtractRoot = Join-Path ([System.IO.Path]::GetTempPath()) "ffmpeg-layout-tests-$(New-Guid)"
+    New-Item -ItemType Directory -Force -Path $script:ExtractRoot | Out-Null
+  }
+
+  AfterAll {
+    if (Test-Path $script:ExtractRoot) {
+      Remove-Item -Recurse -Force $script:ExtractRoot
+    }
+  }
+
+  It 'throws when the single top-level directory has no bin/ subdirectory' {
+    $noBin = Join-Path $script:ExtractRoot 'no-bin'
+    New-Item -ItemType Directory -Force -Path $noBin | Out-Null
+    # Simulate a BtbN-style top-level directory but without the expected bin/.
+    New-Item -ItemType Directory -Force -Path (Join-Path $noBin 'ffmpeg-fake-top') | Out-Null
+
+    { Assert-FFmpegLayout -ExtractDir $noBin } |
+      Should -Throw -ExpectedMessage '*bin directory not found*'
+  }
+
+  It 'returns Root/Bin/License when the layout is valid' {
+    $ok = Join-Path $script:ExtractRoot 'ok'
+    New-Item -ItemType Directory -Force -Path $ok | Out-Null
+    $top = Join-Path $ok 'ffmpeg-fake-top'
+    New-Item -ItemType Directory -Force -Path (Join-Path $top 'bin') | Out-Null
+    Set-Content -Path (Join-Path $top 'LICENSE.txt') -Value 'fake license'
+
+    $layout = Assert-FFmpegLayout -ExtractDir $ok
+    $layout.Root | Should -Be $top
+    $layout.Bin | Should -Be (Join-Path $top 'bin')
+    $layout.License | Should -Be (Join-Path $top 'LICENSE.txt')
+  }
+}
+
+Describe 'Format-ReadmeContent' {
+  It 'includes the LGPLv3 BtbN win64-lgpl attribution and the source commit' {
+    $readme = Format-ReadmeContent `
+      -Version '0.2.0' `
+      -FFmpegVersion '8.1' `
+      -FFmpegBuildTag 'autobuild-2026-04-22-13-15' `
+      -FFmpegSourceCommit '7f5c90f77e'
+
+    $readme | Should -Match 'LGPLv3'
+    $readme | Should -Match 'BtbN/FFmpeg-Builds'
+    $readme | Should -Match 'win64-lgpl'
+    $readme | Should -Match '7f5c90f77e'
+    $readme | Should -Match 'autobuild-2026-04-22-13-15'
+  }
+}

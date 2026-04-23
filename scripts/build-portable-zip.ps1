@@ -12,26 +12,28 @@ and verified against hard-coded SHA256 digests. A mismatch aborts the build.
 
 The script is idempotent: build/portable and dist are cleaned at the start.
 
+The script also exposes its main helpers as functions so Pester tests can load
+them via dot-sourcing without triggering a real build:
+
+    . ./scripts/build-portable-zip.ps1        # Version="" -> loads functions only
+
+Pass -Version to actually run the build.
+
 .PARAMETER Version
-Semantic version string (e.g. "0.2.0") used in the output ZIP filename.
+Semantic version string (e.g. "0.2.0") used in the output ZIP filename. When
+omitted, the script loads its functions for dot-sourcing and returns without
+building anything.
 #>
 [CmdletBinding()]
 param(
-  [Parameter(Mandatory = $true)]
-  [string]$Version
+  [string]$Version = ''
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $ProgressPreference = 'SilentlyContinue'
 
-$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$BuildDir = Join-Path $RepoRoot 'build\portable'
-$DistDir = Join-Path $RepoRoot 'dist'
-$PayloadName = "allaganeye-v$Version"
-$PayloadDir = Join-Path $BuildDir $PayloadName
-$ZipPath = Join-Path $DistDir "$PayloadName-windows.zip"
-
+# Pinned versions - referenced from both the main build path and Pester tests.
 $PythonVersion = '3.11.9'
 $PythonEmbedUrl = "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVersion-embed-amd64.zip"
 $PythonEmbedSha256 = '009D6BF7E3B2DDCA3D784FA09F90FE54336D5B60F0E0F305C37F400BF83CFD3B'
@@ -64,6 +66,117 @@ function Invoke-Download {
   }
   Write-Host "  SHA256 verified: $actual"
 }
+
+function Assert-FFmpegLayout {
+  <#
+  Validate that an extracted BtbN FFmpeg archive has the expected layout
+  (single top-level directory containing `bin/ffmpeg.exe` etc. and
+  `LICENSE.txt`). Throws if the layout is wrong so the build fails loudly
+  when BtbN changes their archive structure.
+  Returns a PSCustomObject with Root / Bin / License paths.
+  #>
+  param(
+    [Parameter(Mandatory = $true)][string]$ExtractDir
+  )
+  $root = Get-ChildItem -Path $ExtractDir -Directory | Select-Object -First 1
+  if (-not $root) {
+    throw "FFmpeg root directory not found under $ExtractDir"
+  }
+  $bin = Join-Path $root.FullName 'bin'
+  $license = Join-Path $root.FullName 'LICENSE.txt'
+  if (-not (Test-Path $bin)) {
+    throw "FFmpeg bin directory not found: $bin"
+  }
+  if (-not (Test-Path $license)) {
+    throw "FFmpeg LICENSE.txt not found: $license"
+  }
+  return [pscustomobject]@{
+    Root    = $root.FullName
+    Bin     = $bin
+    License = $license
+  }
+}
+
+function Get-FFmpegSourceCommit {
+  <#
+  Extract the upstream FFmpeg git commit hash from a BtbN asset name.
+  BtbN assets embed it as: ffmpeg-n<version>-<count>-g<commit>-<target>-<variant>
+  So users can fetch the exact source under LGPLv3 obligations.
+  #>
+  param(
+    [Parameter(Mandatory = $true)][string]$AssetName
+  )
+  if ($AssetName -match '^ffmpeg-n[^-]+-[^-]+-g([0-9a-f]+)-') {
+    return $matches[1]
+  }
+  throw "Cannot extract upstream source commit from asset name: $AssetName"
+}
+
+function Format-ReadmeContent {
+  <#
+  Produce the README.txt shipped inside the Portable ZIP. Exposing this as a
+  function lets Pester assert the LGPLv3 attribution + source pointers are
+  present without running a full build.
+  #>
+  param(
+    [Parameter(Mandatory = $true)][string]$Version,
+    [Parameter(Mandatory = $true)][string]$FFmpegVersion,
+    [Parameter(Mandatory = $true)][string]$FFmpegBuildTag,
+    [Parameter(Mandatory = $true)][string]$FFmpegSourceCommit
+  )
+  return @"
+# allaganeye v$Version (Portable ZIP for Windows)
+
+Python 3.11 and FFmpeg LGPL binaries are bundled alongside allaganeye.
+
+## Usage
+
+### Basic: drag-and-drop
+
+Drop a video file (.mkv / .mp4 / .avi / .mov) onto ``allaganeye.bat`` and it
+will split the video automatically. The command window stays open at the end so
+you can read the result -- press any key to close it.
+
+Output MP4 files and metadata.json land under ``output\`` inside this folder.
+
+### Advanced: from a Command Prompt
+
+If you want to pass options such as --dry-run or -o, open a Command Prompt in
+this folder and run:
+
+    allaganeye.bat split "C:\path\to\video.mkv"
+    allaganeye.bat split "C:\path\to\video.mkv" --dry-run
+    allaganeye.bat --version
+
+See https://github.com/Idios/kobutachan-allaganeye for full documentation.
+
+## Licenses
+
+- allaganeye: MIT (see the repository LICENSE file)
+- Python: PSF License (python\LICENSE.txt)
+- FFmpeg: LGPLv3 (full text in ffmpeg\LICENSE.txt)
+    Build:         ffmpeg n$FFmpegVersion win64-lgpl static build (BtbN/FFmpeg-Builds)
+    Build tag:     $FFmpegBuildTag
+    Source:        https://git.ffmpeg.org/ffmpeg.git (commit $FFmpegSourceCommit)
+    Build scripts: https://github.com/BtbN/FFmpeg-Builds
+
+allaganeye (MIT) invokes the FFmpeg binary as a separate subprocess only.
+Static linking restrictions of LGPLv3 therefore do not apply to allaganeye itself.
+"@
+}
+
+# Dot-sourced (no -Version): stop here so callers only get the function
+# definitions. Pester tests rely on this behaviour.
+if ([string]::IsNullOrEmpty($Version)) { return }
+
+# --- Main build path below ---
+
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$BuildDir = Join-Path $RepoRoot 'build\portable'
+$DistDir = Join-Path $RepoRoot 'dist'
+$PayloadName = "allaganeye-v$Version"
+$PayloadDir = Join-Path $BuildDir $PayloadName
+$ZipPath = Join-Path $DistDir "$PayloadName-windows.zip"
 
 foreach ($dir in @($BuildDir, $DistDir)) {
   if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
@@ -109,31 +222,13 @@ $FFmpegZip = Join-Path $BuildDir 'ffmpeg.zip'
 Invoke-Download -Uri $FFmpegUrl -OutPath $FFmpegZip -ExpectedSha256 $FFmpegSha256
 $FFmpegExtract = Join-Path $BuildDir 'ffmpeg-extracted'
 Expand-Archive -Path $FFmpegZip -DestinationPath $FFmpegExtract -Force
-$FFmpegRoot = Get-ChildItem -Path $FFmpegExtract -Directory | Select-Object -First 1
-if (-not $FFmpegRoot) {
-  throw "FFmpeg root directory not found under $FFmpegExtract"
-}
-$FFmpegBin = Join-Path $FFmpegRoot.FullName 'bin'
-$FFmpegLicenseSrc = Join-Path $FFmpegRoot.FullName 'LICENSE.txt'
-if (-not (Test-Path $FFmpegBin)) {
-  throw "FFmpeg bin directory not found: $FFmpegBin"
-}
-if (-not (Test-Path $FFmpegLicenseSrc)) {
-  throw "FFmpeg LICENSE.txt not found: $FFmpegLicenseSrc"
-}
-# BtbN assets embed the upstream FFmpeg source commit hash in the filename:
-#   ffmpeg-n<version>-<count>-g<commit>-<target>-<variant>
-# Extract it so README can point users to the exact source they need under LGPLv3.
-if ($FFmpegAsset -match '^ffmpeg-n[^-]+-[^-]+-g([0-9a-f]+)-') {
-  $FFmpegSourceCommit = $matches[1]
-} else {
-  throw "Cannot extract upstream source commit from asset name: $FFmpegAsset"
-}
+$FFmpegLayout = Assert-FFmpegLayout -ExtractDir $FFmpegExtract
+$FFmpegSourceCommit = Get-FFmpegSourceCommit -AssetName $FFmpegAsset
 $FFmpegDest = Join-Path $PayloadDir 'ffmpeg'
 New-Item -ItemType Directory -Force -Path $FFmpegDest | Out-Null
-Copy-Item -Path (Join-Path $FFmpegBin 'ffmpeg.exe') -Destination $FFmpegDest
-Copy-Item -Path (Join-Path $FFmpegBin 'ffprobe.exe') -Destination $FFmpegDest
-Copy-Item -Path $FFmpegLicenseSrc -Destination (Join-Path $FFmpegDest 'LICENSE.txt')
+Copy-Item -Path (Join-Path $FFmpegLayout.Bin 'ffmpeg.exe') -Destination $FFmpegDest
+Copy-Item -Path (Join-Path $FFmpegLayout.Bin 'ffprobe.exe') -Destination $FFmpegDest
+Copy-Item -Path $FFmpegLayout.License -Destination (Join-Path $FFmpegDest 'LICENSE.txt')
 
 # 5. Launcher
 # The launcher is ASCII-only so that it runs on any Windows code page without
@@ -186,45 +281,11 @@ endlocal
 Set-Content -Path (Join-Path $PayloadDir 'allaganeye.bat') -Value $Launcher -Encoding ASCII
 
 # 6. README
-$Readme = @"
-# allaganeye v$Version (Portable ZIP for Windows)
-
-Python 3.11 and FFmpeg LGPL binaries are bundled alongside allaganeye.
-
-## Usage
-
-### Basic: drag-and-drop
-
-Drop a video file (.mkv / .mp4 / .avi / .mov) onto ``allaganeye.bat`` and it
-will split the video automatically. The command window stays open at the end so
-you can read the result -- press any key to close it.
-
-Output MP4 files and metadata.json land under ``output\`` inside this folder.
-
-### Advanced: from a Command Prompt
-
-If you want to pass options such as --dry-run or -o, open a Command Prompt in
-this folder and run:
-
-    allaganeye.bat split "C:\path\to\video.mkv"
-    allaganeye.bat split "C:\path\to\video.mkv" --dry-run
-    allaganeye.bat --version
-
-See https://github.com/Idios/kobutachan-allaganeye for full documentation.
-
-## Licenses
-
-- allaganeye: MIT (see the repository LICENSE file)
-- Python: PSF License (python\LICENSE.txt)
-- FFmpeg: LGPLv3 (full text in ffmpeg\LICENSE.txt)
-    Build:         ffmpeg n$FFmpegVersion win64-lgpl static build (BtbN/FFmpeg-Builds)
-    Build tag:     $FFmpegBuildTag
-    Source:        https://git.ffmpeg.org/ffmpeg.git (commit $FFmpegSourceCommit)
-    Build scripts: https://github.com/BtbN/FFmpeg-Builds
-
-allaganeye (MIT) invokes the FFmpeg binary as a separate subprocess only.
-Static linking restrictions of LGPLv3 therefore do not apply to allaganeye itself.
-"@
+$Readme = Format-ReadmeContent `
+  -Version $Version `
+  -FFmpegVersion $FFmpegVersion `
+  -FFmpegBuildTag $FFmpegBuildTag `
+  -FFmpegSourceCommit $FFmpegSourceCommit
 Set-Content -Path (Join-Path $PayloadDir 'README.txt') -Value $Readme -Encoding UTF8
 
 # 7. Compress

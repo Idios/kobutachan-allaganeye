@@ -243,6 +243,22 @@ ruff format --check .
 pyright
 ```
 
+### Windows: Pester v5 (scripts/ 用 PowerShell ユニットテスト)
+
+`scripts/build-portable-zip.ps1` の関数ユニットテスト (`scripts/tests/`) は Pester v5 を使います。build-portable-zip.ps1 を変更する場合のみ必要で、Linux / macOS のみでの開発なら入れなくても構いません (CI が Windows runner で `installer-pester` ジョブとして常時実行します)。
+
+```powershell
+# 初回: PowerShell Gallery から Pester v5 をユーザースコープにインストール
+# (PowerShell 5.1 では TLS 1.2 を先に有効化する必要があります)
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+Install-Module Pester -MinimumVersion 5.0.0 -Scope CurrentUser -Force -SkipPublisherCheck
+
+# テスト実行
+Invoke-Pester -Path scripts/tests/ -Output Detailed
+```
+
+テスト対象: `Invoke-Download` の SHA256 検証、`Assert-FFmpegLayout` の BtbN 展開レイアウト検証、`Format-ReadmeContent` の LGPLv3 文言。詳細は [`scripts/tests/build-portable-zip.Tests.ps1`](../scripts/tests/build-portable-zip.Tests.ps1)。
+
 ## 5. サンプル動画データ
 
 `slow` マーカー付きテストや実動画での動作確認には、環境変数 `ALLAGANEYE_SAMPLE_VIDEO_DIR` で録画データの場所を指定します。
