@@ -65,7 +65,7 @@ def check_schema_version(payload: dict[str, Any], *, source: Path) -> None:
     if not isinstance(version, str):
         raise InputFileError(
             f"metadata file {source} has non-string schema_version "
-            f"({type(version).__name__}); expected string like \"1\""
+            f'({type(version).__name__}); expected string like "1"'
         )
     if version == CURRENT_SCHEMA_VERSION:
         return
@@ -75,8 +75,8 @@ def check_schema_version(payload: dict[str, Any], *, source: Path) -> None:
         return
     raise InputFileError(
         f"metadata file {source} has unsupported schema_version "
-        f"\"{version}\" (this build understands up to "
-        f"\"{CURRENT_SCHEMA_VERSION}\"); update allaganeye to a newer "
+        f'"{version}" (this build understands up to '
+        f'"{CURRENT_SCHEMA_VERSION}"); update allaganeye to a newer '
         f"version or re-run detect"
     )
 
@@ -102,14 +102,14 @@ def apply_migrations(payload: dict[str, Any]) -> dict[str, Any]:
         migrate = MIGRATIONS.get(version)
         if migrate is None:
             raise InputFileError(
-                f"no migration path from schema_version \"{version}\" "
-                f"to \"{CURRENT_SCHEMA_VERSION}\""
+                f'no migration path from schema_version "{version}" '
+                f'to "{CURRENT_SCHEMA_VERSION}"'
             )
         current = migrate(current)
         new_version = current.get("schema_version")
         if not isinstance(new_version, str) or new_version == version:
             raise InputFileError(
-                f"migration from \"{version}\" did not advance schema_version"
+                f'migration from "{version}" did not advance schema_version'
             )
         version = new_version
     return current
