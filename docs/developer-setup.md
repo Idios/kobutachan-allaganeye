@@ -320,16 +320,17 @@ CI / Portable ZIP / 開発環境の 3 環境で Python と FFmpeg のバージ�
 更新手順:
 
 1. [BtbN/FFmpeg-Builds/releases](https://github.com/BtbN/FFmpeg-Builds/releases) で新しい `autobuild-YYYY-MM-DD-HH-MM` タグを選ぶ
-2. 必要な 2 資産 (win64-lgpl-8.1.zip / linux64-lgpl-8.1.tar.xz) の SHA256 を取得:
+1. 必要な 2 資産 (win64-lgpl-8.1.zip / linux64-lgpl-8.1.tar.xz) の SHA256 を取得:
+
    ```bash
    gh api repos/BtbN/FFmpeg-Builds/releases/tags/<タグ名> \
      --jq '.assets[] | select(.name | test("n8[.]1.*(win64-lgpl-8[.]1[.]zip|linux64-lgpl-8[.]1[.]tar[.]xz)$")) | {name, digest}'
    ```
-3. 以下 2 箇所を**同一タグ・同一 autobuild 系列で**更新:
+
+1. 以下 2 箇所を**同一タグ・同一 autobuild 系列で**更新 (下表参照)
+1. ローカルで Portable ZIP ビルドが緑になることを確認 (`pwsh ./scripts/build-portable-zip.ps1 -Version <version>`) し、PR で CI の `build-windows` と `python` ジョブ両方が通ることを確認する
 
 | 場所 | キー |
 |---|---|
 | `scripts/build-portable-zip.ps1` | `$FFmpegBuildTag` / `$FFmpegAsset` / `$FFmpegSha256` |
 | `.github/workflows/ci.yml` (`Install ffmpeg` ステップ) | `FFMPEG_URL` / `FFMPEG_SHA256` (linux64-lgpl 版) |
-
-4. ローカルで Portable ZIP ビルドが緑になることを確認 (`pwsh ./scripts/build-portable-zip.ps1 -Version <version>`) し、PR で CI の `build-windows` と `python` ジョブ両方が通ることを確認する
