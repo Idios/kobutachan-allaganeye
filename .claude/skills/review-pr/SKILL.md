@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: PR をレビュー（base ブランチ確認・受け入れ条件ゲート・CI・ロジック/ドキュメント整合性）し、懸念があれば PR コメントで修正依頼、なければ LGTM とマージ提案、マージ後は紐づく issue を処理する。レビュー専用セッションのため PR ブランチへの編集・commit・push は行わない
+description: PR をレビュー（base ブランチ確認・受け入れ条件ゲート・CI・ロジック/ドキュメント整合性・ギャップ分析）し、懸念があれば PR コメントで修正依頼、なければ LGTM とマージ提案、マージ後は紐づく issue を処理する。レビュー専用セッションのため PR ブランチへの編集・commit・push は行わない
 user-invocable: true
 argument-hint: <PR番号>
 ---
@@ -42,6 +42,8 @@ gh pr diff $ARGUMENTS
 - [ ] **Phase 分割時の子 issue 起票**: 「Phase 2 は別途」等で残タスクを先送りする場合、子 issue 番号が親 issue に記載されているか
 - [ ] **`Closes` / `Fixes` / `Resolves` キーワードが使われていない**: issue クローズは手動で行う（`/enforce-acceptance-criteria` が verified を返していればこの項目は自動 PASS。二重チェックになるため明示スキップ可）
 
+補足: `/enforce-acceptance-criteria` は受け入れ条件の逐条検証、Step 5a は補足ギャップ分析 (カバレッジ・観点・エッジケース) を担う。両者は排他ではなく、受け入れ条件で読めない未テスト分岐や未考慮観点を Step 5a で拾う責務分担。
+
 ### 4. CI / Lint / Test ステータス確認
 
 ```bash
@@ -76,6 +78,25 @@ PR の変更種別に応じて以下を確認する:
 - コード変更がドキュメント記述と矛盾していないか
 - 出力形式変更の場合、`docs/cli-spec.md` の出力例も更新されているか (#343 系の再発防止)
 
+### 5a. ギャップ分析 (明示指示不要で自動実施)
+
+Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾いきれない未テスト分岐・未考慮観点を洗い出す。`/review-pr` 呼び出し時は指示の有無に関わらず標準業務として実施する (#511)。
+
+**列挙プロセス (軸ごとに列挙し優先度付け)**
+
+| 軸 | 取り方 | シグナル |
+|---|---|---|
+| カバレッジ | 変更行のうち test が hit しない分岐を洗い出す | 未テスト分岐残数 |
+| 観点 | happy path / error path / edge case を網羅 | 観点欠落 |
+| エッジケース | 入力境界 (空 / null / 巨大) / 並行性 / resource 枯渇 | 想定外入力 |
+| 優先度 | 受け入れ条件関連 = P1 必須、nice-to-have = P3 推奨 | ブロッカー判定 |
+
+**long-running / integration 検証観点**
+
+- 長時間動画 (2 時間以上) / GPU mode / audio 統合 / 大規模入力 等は mock 不可
+- レビュー側は「手動検証が必要」と明示し、PR 作成セッションに `/test-pr` 実施を依頼する (`docs/l2-workflow.md` §「タスク種別と進め方」の "PR テスト" 行参照)
+- 自動 CI で担保できる範囲と、手動検証が必須な範囲の境界を明示してユーザー / PR 作成セッションに伝達する
+
 ### 6. レビュー結果をユーザーに報告
 
 `AskUserQuestion` で以下を提示する:
@@ -84,6 +105,34 @@ PR の変更種別に応じて以下を確認する:
 - **修正依頼**: 具体的な指摘内容を表示し、PR コメントに投稿するかユーザー確認
 - **テスト不足**: 追加テスト実行を提案
 - **スコープ逸脱**: 別 issue 起票を提案
+
+**レビュー報告テンプレート** (PR コメントまたはユーザー提示時の推奨構造):
+
+````markdown
+## 受け入れ条件チェック (逐条)
+
+| # | 条件 | 実証 (diff / test / log) | 判定 |
+|---|---|---|---|
+| 1 | <条件 1> | `path/to/file.py:123` / `test_xxx` / CI log | ○ / × / 部分的 |
+| 2 | ... | ... | ... |
+
+## ギャップ分析 (Step 5a)
+
+- **カバレッジ**: <未テスト分岐 / 観点欠落 / なし>
+- **観点**: <happy path / error path / edge case の抜け / なし>
+- **エッジケース**: <入力境界 / 並行性 / resource 枯渇 / なし>
+
+## 検証推奨
+
+- **自動 (CI)**: `pytest tests/test_xxx.py::test_yyy` / `ruff check .`
+- **手動 (/test-pr)**: <long-running / GPU / audio 統合 の具体手順>
+
+## 判定
+
+<LGTM / 修正依頼 / ブロッカー>
+
+[<session-id>]
+````
 
 ### 7. ユーザー承認後のアクション
 
@@ -155,8 +204,28 @@ PR に紐づく issue がある場合:
 
 ユーザーが PR 番号を指定して呼び出す。Claude は自動的に段階を進め、要所で `AskUserQuestion` により判断を仰ぐ。
 
+## Red flags (レビュー中に浮かんだら STOP)
+
+Iron Law Red Flags と呼応。以下の合理化が浮かんだら LGTM 寸前でも止まる。
+
+| 出てくる合理化 | 実態 |
+|---|---|
+| 「受け入れ条件は大体満たしてる」 | Iron Law 1 違反。逐条引用 + diff / test の対応付けが必須 |
+| 「明らかな diff だからレビュー簡略化でよい」 | Step 5a ギャップ分析 skip は NG。明示指示不要で自動実施 |
+| 「unit test pass だから手動検証不要」 | GPU / audio / 長時間動画は mock 不可。PR 作成セッションに `/test-pr` 依頼 |
+| 「観察コメントだけ残して別 issue にしない」 | #399 B 違反。観察で止めず、別 issue 起票または scope-guard で escalate |
+| 「PR ブランチを checkout して自分で修正した方が速い」 | レビュー専用セッション違反。PR コメントで PR 作成セッションに依頼 (本ファイル冒頭「重要」節参照) |
+
+## よくある失敗
+
+- **受け入れ条件の逐条引用を飛ばす**: 「全項目 OK」のサマリで済ませる → Iron Law 1 違反。`/enforce-acceptance-criteria` の出力を再確認し、条件 1 つずつに diff / test / log を対応付ける
+- **ギャップ分析を自然言語コメントだけで書く**: 「テスト不足ぎみ」等の印象コメント → Step 5a の軸 (カバレッジ / 観点 / エッジケース) に紐付けて具体化し、軸ごとに「未テスト箇所 X」「欠落観点 Y」で列挙する
+- **long-running 検証を自己判断で OK とする**: unit test pass = 全部 OK と誤解。GPU / 長時間動画 / audio 統合は mock 不可のため、PR 作成セッションに `/test-pr` 実施を明示依頼する
+- **提示フォーマットを無視して口語で書く**: レビュー結果が PR コメントに混在して追跡困難 → Step 6 の「レビュー報告テンプレート」構造で投稿
+
 ## 参考
 
-- `docs/l2-workflow.md` §「レビュー受け入れ基準 (#367 対策)」
+- `docs/l2-workflow.md` §「レビュー受け入れ基準 (#367 対策)」 / §「タスク種別と進め方」の "PR テスト" 行
 - `docs/issue-policy.md` — issue ラベル・ライフサイクル
 - #367 — レビュープロセス改善の経緯
+- #511 — 本 skill への #475 memory 由来 3 観点 + [mizchi empirical-prompt-tuning](https://github.com/mizchi/chezmoi-dotfiles/blob/main/dot_claude/skills/empirical-prompt-tuning/SKILL.md) 参考ブラッシュアップ
