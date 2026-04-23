@@ -5,14 +5,24 @@ use serde_json::Value;
 
 #[tauri::command]
 async fn load_metadata(path: String) -> Result<Value, String> {
-    let meta_path = PathBuf::from(&path);
+    load_metadata_sync(&PathBuf::from(&path))
+}
+
+fn load_metadata_sync(meta_path: &Path) -> Result<Value, String> {
     if !meta_path.exists() {
         return Err(format!("metadata file not found: {}", meta_path.display()));
     }
-    let content = fs::read_to_string(&meta_path)
+    let content = fs::read_to_string(meta_path)
         .map_err(|e| format!("read failed ({}): {}", meta_path.display(), e))?;
-    serde_json::from_str::<Value>(&content)
-        .map_err(|e| format!("invalid JSON in {}: {}", meta_path.display(), e))
+    let value: Value = serde_json::from_str(&content)
+        .map_err(|e| format!("invalid JSON in {}: {}", meta_path.display(), e))?;
+    if !value.is_object() {
+        return Err(format!(
+            "metadata file {} root must be a JSON object",
+            meta_path.display()
+        ));
+    }
+    Ok(value)
 }
 
 #[tauri::command]
@@ -273,5 +283,42 @@ mod tests {
         assert!(backup.exists());
         let parent = meta.parent().unwrap();
         assert!(parent.join("metadata.original.json").exists());
+    }
+
+    #[test]
+    fn load_metadata_returns_error_when_file_missing() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let err = load_metadata_sync(&meta).unwrap_err();
+        assert!(err.contains("metadata file not found"));
+    }
+
+    #[test]
+    fn load_metadata_returns_error_on_invalid_json() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        fs::write(&meta, r#"{"source": "a.mkv", invalid"#).unwrap();
+        let err = load_metadata_sync(&meta).unwrap_err();
+        assert!(err.contains("invalid JSON"));
+    }
+
+    #[test]
+    fn load_metadata_returns_ok_on_valid_json() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let payload = json!({"source": "a.mkv", "matches": []});
+        fs::write(&meta, serde_json::to_string_pretty(&payload).unwrap()).unwrap();
+        let value = load_metadata_sync(&meta).unwrap();
+        assert_eq!(value, payload);
+    }
+
+    #[test]
+    fn load_metadata_rejects_non_object_root() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        // Valid JSON but root is an array — Python side's read_metadata also rejects this.
+        fs::write(&meta, r#"["not", "an", "object"]"#).unwrap();
+        let err = load_metadata_sync(&meta).unwrap_err();
+        assert!(err.contains("must be a JSON object"));
     }
 }
