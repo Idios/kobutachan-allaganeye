@@ -2945,9 +2945,10 @@ def test_probe_ffmpeg_version_returns_unknown_on_failure():
         ),
         # BtbN 'n' prefix (common on nightly CI builds)
         ("ffmpeg version n7.1 Copyright (c) 2000-2024", "7.1"),
-        # BtbN LGPL autobuild (shipped with Portable ZIP since #508)
+        # BtbN LGPL autobuild (shipped with Portable ZIP since #508 / #531;
+        # date matches $FFmpegBuildTag = autobuild-2026-04-22-13-15)
         (
-            "ffmpeg version n8.1-10-g7f5c90f77e-20260421 Copyright (c) 2000-2026",
+            "ffmpeg version n8.1-10-g7f5c90f77e-20260422 Copyright (c) 2000-2026",
             "8.1",
         ),
         # essentials_build variant
