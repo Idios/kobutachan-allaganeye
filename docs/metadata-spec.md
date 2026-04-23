@@ -201,6 +201,27 @@ GUI が `load_metadata` した瞬間のファイル mtime を `metadataStore.loa
 - **新規書き込み** (target が未存在): mtime check 対象外。`expectedMtimeMs` が指定されても skip し通常書き込み
 - **Rust command**: `get_metadata_mtime(path) -> Option<u64>` を追加。`apply_changes` の戻り値は書き込み後の mtime (`u64`) に変更され、GUI 側 `loadedMtimeMs` を自動更新
 
+## draft auto save (#517)
+
+GUI の編集バッファを `metadata.draft.json` に自動保存し、WebView のリロードやアプリクラッシュ時にも編集内容を復元できるようにする。
+
+- **保存先**: `metadata.json` と同ディレクトリの `metadata.draft.json`。atomic write (`.tmp` → rename)
+- **保存タイミング**: `metadataStore.updateMatch` 呼び出し後の debounce (デフォルト 500ms)。`setDraftSaveDelay(ms)` でテスト時短縮可能
+- **保存内容**: in-memory の Metadata そのまま (編集フィールド `name` / `type_override` / `edited` も含む)。zod の `MatchSchema.passthrough()` で load 時に pass-through
+- **復元フロー**: `metadataStore.load` 成功後に自動で `loadDraft` を呼び、存在すれば `pendingDraft` にセット。`DraftRestoreModal` (App.tsx に global 配置) が「復元 / 破棄」を提示
+- **source 不一致チェック**: draft の `source` が現在 load した metadata の `source` と異なる場合、stale draft として自動削除 (modal は出さない)
+- **apply 成功後**: `metadataStore.apply` が成功すると `clearDraft` を呼び、`metadata.draft.json` をディスクから削除
+- **Rust commands**: `save_draft(path, draft)` / `load_draft(path) -> Option<Value>` / `clear_draft(path)` — すべて atomic、clear は no-op-when-missing
+
+### ユーザー選択肢 (DraftRestoreModal)
+
+| ボタン | 動作 |
+|---|---|
+| 復元 | `pendingDraft` を `metadata` に適用し `dirty=true`。ディスクには触らない (ユーザーが [適用] で永続化) |
+| 破棄 | `clearDraft()` を呼んで `metadata.draft.json` を削除し、`pendingDraft=null` |
+
+draft の zod parse に失敗した場合は error-only modal を出し「破棄」のみ提示する。
+
 ## 将来の拡張 (Phase 1 スコープ外)
 
 以下は派生 issue で追跡する (本 Phase 1 では実装せず、設計余地だけ確保):
@@ -210,7 +231,7 @@ GUI が `load_metadata` した瞬間のファイル mtime を `metadataStore.loa
 | ~~排他管理 (mtime 検知 / 同時編集警告)~~ | [#514](https://github.com/Idios/kobutachan-allaganeye/issues/514) (実装済み、上記 §排他管理 参照) | GUI load 時の mtime 記録、save 時の外部変更検知 UX |
 | ~~schema_version フィールド~~ | [#515](https://github.com/Idios/kobutachan-allaganeye/issues/515) (実装済み、上記 §schema_version 参照) | 明示的な版数管理 + migration 基盤 |
 | ~~`[元に戻す]` 機能~~ | [#516](https://github.com/Idios/kobutachan-allaganeye/issues/516) (Phase 2 で実装済み) | `metadata.original.json` → `metadata.json` 復元ボタン (Rust `restore_from_original` + `metadataStore.restore`) |
-| draft auto save | (新規起票予定) | GUI 一時編集を `metadata.draft.json` に定期保存 (リロード耐性) |
+| ~~draft auto save~~ | [#517](https://github.com/Idios/kobutachan-allaganeye/issues/517) (実装済み、上記 §draft auto save 参照) | GUI 一時編集を `metadata.draft.json` に定期保存 (リロード耐性) |
 | `warnings: Warning[]` 構造化 | (新規起票予定) | legacy `note` の後継。`{code, message, severity}` 配列 |
 
 ## 関連 issue / doc

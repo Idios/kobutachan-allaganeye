@@ -22,6 +22,10 @@ export const MatchSchema = z
     type: z.enum(['fl_match', 'unknown']),
     output_file: z.string(),
   })
+  // #517: passthrough match-level edit fields (`name` / `type_override` /
+  // `edited`) so metadata.draft.json round-trips them when reloaded.
+  // metadata.json proper still strips these via normalizeForPersistence.
+  .passthrough()
   .refine((m) => m.end_time >= m.start_time, {
     message: 'end_time must be >= start_time',
   });

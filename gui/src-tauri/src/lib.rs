@@ -58,6 +58,63 @@ async fn apply_changes(
     })
 }
 
+/// #517 — persist the in-memory edit buffer as `metadata.draft.json` next to
+/// the live `metadata.json`. Survives WebView reloads and app crashes.
+#[tauri::command]
+async fn save_draft(path: String, draft: Value) -> Result<(), String> {
+    save_draft_sync(&PathBuf::from(&path), &draft)
+}
+
+/// #517 — reload the draft buffer if one exists. Returns `None` when no
+/// draft is on disk (fresh session or post-apply state).
+#[tauri::command]
+async fn load_draft(path: String) -> Result<Option<Value>, String> {
+    load_draft_sync(&PathBuf::from(&path))
+}
+
+/// #517 — delete the draft file. Called after a successful `apply` so a
+/// restart doesn't re-prompt about stale edits.
+#[tauri::command]
+async fn clear_draft(path: String) -> Result<(), String> {
+    clear_draft_sync(&PathBuf::from(&path))
+}
+
+fn draft_path_for(meta_path: &Path) -> Result<PathBuf, String> {
+    let parent = meta_path
+        .parent()
+        .ok_or_else(|| format!("metadata path has no parent: {}", meta_path.display()))?;
+    Ok(parent.join("metadata.draft.json"))
+}
+
+fn save_draft_sync(meta_path: &Path, draft: &Value) -> Result<(), String> {
+    let draft_path = draft_path_for(meta_path)?;
+    write_metadata_atomic(&draft_path, draft)
+}
+
+fn load_draft_sync(meta_path: &Path) -> Result<Option<Value>, String> {
+    let draft_path = draft_path_for(meta_path)?;
+    if !draft_path.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(&draft_path)
+        .map_err(|e| format!("read draft failed ({}): {}", draft_path.display(), e))?;
+    let value: Value = serde_json::from_str(&content)
+        .map_err(|e| format!("invalid JSON in draft {}: {}", draft_path.display(), e))?;
+    Ok(Some(value))
+}
+
+fn clear_draft_sync(meta_path: &Path) -> Result<(), String> {
+    let draft_path = draft_path_for(meta_path)?;
+    if !draft_path.exists() {
+        // Nothing to clear — treat as success so callers don't have to
+        // special-case the post-apply no-draft state.
+        return Ok(());
+    }
+    fs::remove_file(&draft_path).map_err(|e| {
+        format!("remove draft failed ({}): {}", draft_path.display(), e)
+    })
+}
+
 /// #516 — atomically restore metadata.json from the first-Apply backup.
 #[tauri::command]
 async fn restore_from_original(path: String) -> Result<(), String> {
@@ -181,6 +238,9 @@ pub fn run() {
             load_metadata,
             get_metadata_mtime,
             apply_changes,
+            save_draft,
+            load_draft,
+            clear_draft,
             restore_from_original,
             check_backup_exists,
         ])
@@ -512,5 +572,113 @@ mod tests {
         // (regression guard: prevents accepting pre-first-apply handles).
         let err = apply_changes_sync(&meta, &json!({"v": 4}), Some(m1)).unwrap_err();
         assert!(err.starts_with("conflict:"), "unexpected error: {err}");
+    }
+
+    // #517 — draft auto-save tests.
+
+    #[test]
+    fn save_draft_creates_sibling_draft_file() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let draft_file = tmp.path().join("metadata.draft.json");
+        let draft = json!({"source": "a.mkv", "matches": []});
+
+        save_draft_sync(&meta, &draft).unwrap();
+
+        assert!(draft_file.exists());
+        let roundtrip: Value =
+            serde_json::from_str(&fs::read_to_string(&draft_file).unwrap()).unwrap();
+        assert_eq!(roundtrip, draft);
+    }
+
+    #[test]
+    fn save_draft_overwrites_existing_draft() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let draft_file = tmp.path().join("metadata.draft.json");
+        fs::write(&draft_file, r#"{"old": true}"#).unwrap();
+
+        let new_draft = json!({"new": true});
+        save_draft_sync(&meta, &new_draft).unwrap();
+
+        let roundtrip: Value =
+            serde_json::from_str(&fs::read_to_string(&draft_file).unwrap()).unwrap();
+        assert_eq!(roundtrip, new_draft);
+    }
+
+    #[test]
+    fn load_draft_returns_none_when_file_missing() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let result = load_draft_sync(&meta).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn load_draft_returns_parsed_value_when_present() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let draft_file = tmp.path().join("metadata.draft.json");
+        let draft = json!({"source": "a.mkv", "matches": [{"m": 1}]});
+        fs::write(&draft_file, serde_json::to_string_pretty(&draft).unwrap()).unwrap();
+
+        let result = load_draft_sync(&meta).unwrap();
+        assert_eq!(result, Some(draft));
+    }
+
+    #[test]
+    fn load_draft_returns_err_on_invalid_json() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let draft_file = tmp.path().join("metadata.draft.json");
+        fs::write(&draft_file, r#"{"broken": invalid"#).unwrap();
+
+        let err = load_draft_sync(&meta).unwrap_err();
+        assert!(err.contains("invalid JSON in draft"));
+    }
+
+    #[test]
+    fn clear_draft_removes_existing_file() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let draft_file = tmp.path().join("metadata.draft.json");
+        fs::write(&draft_file, r#"{}"#).unwrap();
+        assert!(draft_file.exists());
+
+        clear_draft_sync(&meta).unwrap();
+        assert!(!draft_file.exists());
+    }
+
+    #[test]
+    fn clear_draft_is_noop_when_file_missing() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        // No draft on disk — should still succeed.
+        clear_draft_sync(&meta).unwrap();
+    }
+
+    #[test]
+    fn save_and_load_draft_roundtrip() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let draft = json!({"source": "a.mkv", "matches": [{"index": 1}]});
+
+        save_draft_sync(&meta, &draft).unwrap();
+        let loaded = load_draft_sync(&meta).unwrap();
+        assert_eq!(loaded, Some(draft));
+    }
+
+    #[test]
+    fn draft_lives_alongside_metadata_not_backup() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let backup = tmp.path().join("metadata.original.json");
+        let draft_file = tmp.path().join("metadata.draft.json");
+
+        save_draft_sync(&meta, &json!({"m": 1})).unwrap();
+
+        assert!(draft_file.exists());
+        // Draft must not touch the backup file.
+        assert!(!backup.exists());
     }
 }
