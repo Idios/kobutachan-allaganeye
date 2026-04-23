@@ -21,9 +21,9 @@ from __future__ import annotations
 from typing import Any, Literal, TypedDict
 
 __all__ = [
+    "WARNING_CODES",
     "MetadataWarning",
     "Severity",
-    "WARNING_CODES",
     "build_warnings",
 ]
 
