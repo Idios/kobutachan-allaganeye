@@ -17,6 +17,7 @@ class SplitConfig:
     min_blackout_duration: float = 3.0
     dry_run: bool = False
     use_gpu: bool | None = None
+    gpu_vendor: str | None = None
     workers: int | None = None
     no_cache: bool = False
     no_audio: bool = False
@@ -25,6 +26,16 @@ class SplitConfig:
         if self.workers is not None and self.workers < 1:
             raise ConfigValidationError(
                 f"--workers must be at least 1, got {self.workers}"
+            )
+        if self.gpu_vendor is not None and self.gpu_vendor not in (
+            "auto",
+            "nvidia",
+            "amd",
+            "intel",
+        ):
+            raise ConfigValidationError(
+                f"--gpu-vendor must be one of auto/nvidia/amd/intel, "
+                f"got {self.gpu_vendor!r}"
             )
         if self.sample_interval <= 0:
             raise ConfigValidationError(

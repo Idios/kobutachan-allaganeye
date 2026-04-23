@@ -111,6 +111,15 @@ def split(
             "Mutually exclusive with --gpu.",
         ),
     ] = False,
+    gpu_vendor: Annotated[
+        str | None,
+        typer.Option(
+            "--gpu-vendor",
+            help="GPU vendor for hardware decode. Choices: auto / nvidia / amd / intel. "
+            "'intel' is currently not implemented (tracked in #550) and returns exit 5. "
+            "Default: auto (probe-based, NVIDIA dGPU preferred). #546",
+        ),
+    ] = None,
     no_cache: Annotated[
         bool,
         typer.Option("--no-cache", help="Ignore cached detection results"),
@@ -209,6 +218,7 @@ def split(
             min_blackout_duration=min_blackout_duration,
             dry_run=dry_run,
             use_gpu=use_gpu,
+            gpu_vendor=gpu_vendor,
             workers=workers,
             no_cache=no_cache,
             no_audio=no_audio,
@@ -270,6 +280,15 @@ def detect(
             "Mutually exclusive with --gpu.",
         ),
     ] = False,
+    gpu_vendor: Annotated[
+        str | None,
+        typer.Option(
+            "--gpu-vendor",
+            help="GPU vendor for hardware decode. Choices: auto / nvidia / amd / intel. "
+            "'intel' is currently not implemented (tracked in #550) and returns exit 5. "
+            "Default: auto (probe-based, NVIDIA dGPU preferred). #546",
+        ),
+    ] = None,
     no_cache: Annotated[
         bool,
         typer.Option("--no-cache", help="Ignore cached detection results"),
@@ -331,6 +350,7 @@ def detect(
             min_blackout_duration=min_blackout_duration,
             dry_run=False,
             use_gpu=use_gpu,
+            gpu_vendor=gpu_vendor,
             workers=workers,
             no_cache=no_cache,
             no_audio=no_audio,

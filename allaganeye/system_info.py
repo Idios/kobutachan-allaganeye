@@ -293,6 +293,66 @@ def _first_existing_ancestor(path: Path) -> Path | None:
         candidate = parent
 
 
+_VENDOR_KEYWORDS: dict[str, tuple[str, ...]] = {
+    # Substring match (case-insensitive). Keywords are chosen to avoid
+    # false positives from generic phrases (e.g. "ati" would match
+    # "compATIble" in lspci output).
+    "nvidia": ("nvidia", "geforce", "quadro", "tesla"),
+    "amd": ("amd ", "radeon"),
+    "intel": ("intel",),
+}
+
+
+def probe_gpu_vendors() -> list[str]:
+    """Return GPU vendor identifiers detected on the system (#546).
+
+    Elements are a subset of ``{"nvidia", "amd", "intel"}`` in the order
+    they were first seen (NVIDIA is probed first via nvidia-smi because
+    it's the most reliable signal, then platform probe fills in the
+    rest).
+
+    Best-effort: returns an empty list when no probe succeeds so callers
+    can fall back to CPU mode gracefully.  Never raises.
+    """
+    vendors: list[str] = []
+
+    # NVIDIA first -- nvidia-smi success = NVIDIA GPU present.
+    if _detect_gpu_nvidia() is not None:
+        vendors.append("nvidia")
+
+    names = _probe_gpu_names_platform()
+    for name in names:
+        lowered = name.lower()
+        for vendor, keywords in _VENDOR_KEYWORDS.items():
+            if any(kw in lowered for kw in keywords) and vendor not in vendors:
+                vendors.append(vendor)
+                break
+
+    return vendors
+
+
+def _probe_gpu_names_platform() -> list[str]:
+    """Return raw GPU name strings from platform-specific probes."""
+    system = platform.system()
+    if system == "Windows":
+        stdout = _run_text(["wmic", "path", "win32_VideoController", "get", "Name"])
+        if stdout:
+            return [line.strip() for line in stdout.splitlines()[1:] if line.strip()]
+    elif system == "Linux":
+        stdout = _run_text(["lspci"])
+        if stdout:
+            return [
+                line.strip()
+                for line in stdout.splitlines()
+                if "vga" in line.lower() or "3d controller" in line.lower()
+            ]
+    elif system == "Darwin":
+        stdout = _run_text(["system_profiler", "SPDisplaysDataType"])
+        if stdout:
+            return re.findall(r"Chipset Model:\s*(.+)", stdout)
+    return []
+
+
 def _drive_label(path: Path) -> str:
     """Return a short label for the disk holding *path* (drive letter or mount)."""
     try:

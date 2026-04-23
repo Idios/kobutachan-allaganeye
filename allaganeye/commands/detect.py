@@ -91,8 +91,12 @@ def run_detect(
                 _display_results(boundaries, metadata, video_path, verbose, cached=True)
 
     if boundaries is None:
-        use_gpu = _resolve_gpu_mode(
-            config.use_gpu, metadata.get("codec"), show, verbose
+        use_gpu, gpu_vendor = _resolve_gpu_mode(
+            config.use_gpu,
+            config.gpu_vendor,
+            metadata.get("codec"),
+            show,
+            verbose,
         )
 
         if verbose and show and effective_interval != config.sample_interval:
@@ -115,6 +119,7 @@ def run_detect(
             quiet=quiet,
             stats=detect_stats,
             use_gpu=use_gpu,
+            gpu_vendor=gpu_vendor,
         )
 
         if not boundaries:

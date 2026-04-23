@@ -84,6 +84,7 @@ def detect_match_boundaries(
     stats: DetectionStats | None = None,
     chunk_progress_callback: Callable[[int, int, float], None] | None = None,
     chunk_dispatch_callback: Callable[[int], None] | None = None,
+    gpu_vendor: str | None = None,
 ) -> list[MatchBoundary]:
     """Detect match boundaries by finding blackout frames.
 
@@ -134,6 +135,7 @@ def detect_match_boundaries(
                 codec=codec,
                 chunk_progress_callback=chunk_progress_callback,
                 chunk_dispatch_callback=chunk_dispatch_callback,
+                vendor=gpu_vendor,
             )
             resolved_mode = "GPU"
         except VideoProcessingError:

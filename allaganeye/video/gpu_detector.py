@@ -32,21 +32,70 @@ _TARGET_CHUNK_WALL_SECS = 90.0
 # ffmpeg startup cost per chunk and can overwhelm GPU scheduling.
 _MAX_CHUNKS = 32
 
-_CUVID_CODEC_MAP: dict[str, str] = {
-    "h264": "h264_cuvid",
-    "hevc": "hevc_cuvid",
-    "av1": "av1_cuvid",
-    # vp9: #538 で除外。ffmpeg 8.1 の vp9_cuvid は frame を
-    # nv12 + csp:gbr (非標準) で tag し、後段 swscaler の
-    # gray 変換が EOPNOTSUPP (-129) で必ず失敗する。soft decode
-    # (-hwaccel auto 経路) は実測 speed 2.64x で chunk 並列に
-    # 耐えるため、vp9 はデフォルトで cuvid を強制しない。
-    # ffmpeg 側で color space tag が修正された時点で復活検討。
-    "vp8": "vp8_cuvid",
-    "mpeg1video": "mpeg1_cuvid",
-    "mpeg2video": "mpeg2_cuvid",
-    "mpeg4": "mpeg4_cuvid",
+_GPU_DECODER_MAP: dict[str, dict[str, str]] = {
+    "nvidia": {
+        "h264": "h264_cuvid",
+        "hevc": "hevc_cuvid",
+        "av1": "av1_cuvid",
+        # vp9: #538 / #549 で除外。ffmpeg 8.1 の vp9_cuvid が
+        # nv12 + csp:gbr を出力し swscaler gray 変換が
+        # EOPNOTSUPP で失敗するため、NVIDIA 経路から外す。
+        # soft decode (else branch -hwaccel auto) は実測
+        # speed 2.64x で chunk 並列に十分。ffmpeg 側の修正が
+        # 入った時点で復活検討。
+        "vp8": "vp8_cuvid",
+        "mpeg1video": "mpeg1_cuvid",
+        "mpeg2video": "mpeg2_cuvid",
+        "mpeg4": "mpeg4_cuvid",
+    },
+    # "amd": {} は #553 (AMD AMF decoder + allaganeye filter pipeline
+    # 相性問題) で追跡中。AMF decoder 出力 pix_fmt `amf` が swscaler
+    # と不整合で `fps -> scale -> format=gray` が失敗するため、
+    # `--gpu-vendor amd` は #546 実装時点では option を受けるが
+    # _VENDOR_HWACCEL_MAP にも未登録 -> ConfigValidationError で exit 5。
+    # #553 で filter pipeline workaround が確定した時点で復活。
+    # "intel": {} は #550 (Intel QSV 対応調査) で追加予定。
 }
+
+_VENDOR_HWACCEL_MAP: dict[str, str] = {
+    "nvidia": "cuda",
+    # "amd": "amf" は #553 で filter pipeline 相性確定後に追加。
+    # "intel": "qsv" は #550 で追加予定。
+}
+
+_VENDOR_PREFERENCE: tuple[str, ...] = ("nvidia", "amd", "intel")
+"""Auto-select 時の vendor 優先順 (#546). dGPU (NVIDIA) を最優先、
+次に AMD (#553 で復活予定), 最後に Intel (#550)。AMD / Intel は現時点
+で実装未完だが future-proof で preference に含める (_VENDOR_HWACCEL_MAP
+に無いので auto-select では skip される)."""
+
+# Backward-compat alias: 既存の `_CUVID_CODEC_MAP` 参照 (テスト等) を
+# 壊さないため NVIDIA 用 dict を指す。新規コードは `_GPU_DECODER_MAP`
+# を使用 (#546)。L3 以降で削除検討。
+_CUVID_CODEC_MAP: dict[str, str] = _GPU_DECODER_MAP["nvidia"]
+
+
+def _select_gpu_vendor(
+    requested: str | None,
+    available: list[str],
+    *,
+    preference: tuple[str, ...] = _VENDOR_PREFERENCE,
+) -> str | None:
+    """Resolve the vendor to use (#546).
+
+    - ``requested`` が ``None`` / ``"auto"``: ``available`` x ``preference``
+      かつ実装済み (``_VENDOR_HWACCEL_MAP`` に含まれる) の最上位を選ぶ。
+    - ``requested`` が explicit vendor: ``available`` に含まれればそれを
+      返す。含まれなければ ``None`` (呼び出し側で ConfigValidationError)。
+    """
+    if not requested or requested == "auto":
+        for pref in preference:
+            if pref in available and pref in _VENDOR_HWACCEL_MAP:
+                return pref
+        return None
+    if requested in available:
+        return requested
+    return None
 
 
 def scan_gpu(
@@ -58,6 +107,7 @@ def scan_gpu(
     codec: str | None = None,
     chunk_progress_callback: Callable[[int, int, float], None] | None = None,
     chunk_dispatch_callback: Callable[[int], None] | None = None,
+    vendor: str | None = None,
 ) -> dict[float, float]:
     """GPU mode: chunked parallel decode with cuvid hardware decoder.
 
@@ -130,7 +180,11 @@ def scan_gpu(
     gpu_failed = False
     fallback_checked = False
 
-    cuvid_decoder = _CUVID_CODEC_MAP.get(codec or "")
+    # Resolve decoder for the selected vendor (#546). Falls back to the
+    # legacy NVIDIA-only map when ``vendor`` is None so existing callers
+    # (unit tests that invoke scan_gpu without vendor) keep working.
+    vendor_map = _GPU_DECODER_MAP.get(vendor or "nvidia", _GPU_DECODER_MAP["nvidia"])
+    hw_decoder = vendor_map.get(codec or "")
     scan_start = time.monotonic()
     chunks_done = 0
 
@@ -150,6 +204,7 @@ def scan_gpu(
                 sample_interval,
                 codec,
                 chunk_timestamps,
+                vendor,
             ): (chunk_start, chunk_end)
             for chunk_start, chunk_end, chunk_timestamps in chunks
         }
@@ -165,7 +220,7 @@ def scan_gpu(
             # Check GPU usage from the first completed chunk
             if not fallback_checked:
                 fallback_checked = True
-                _check_gpu_usage(stderr_text, codec, cuvid_decoder)
+                _check_gpu_usage(stderr_text, codec, hw_decoder)
 
             chunks_done += 1
             if chunk_progress_callback is not None:
@@ -229,6 +284,7 @@ def _decode_chunk(
     sample_interval: float,
     codec: str | None = None,
     chunk_timestamps: list[float] | None = None,
+    vendor: str | None = None,
 ) -> tuple[dict[float, float], str]:
     """Decode a single chunk using GPU-accelerated ffmpeg.
 
@@ -242,13 +298,29 @@ def _decode_chunk(
     identically on the same physical content.  Falls back to the chunk-
     local formula when ``chunk_timestamps`` is None for backwards
     compatibility with the unit tests that invoke the function directly.
+
+    When *vendor* is provided (#546), the ffmpeg command uses the
+    vendor-specific decoder (e.g. ``-hwaccel amf -c:v av1_amf``).  When
+    vendor is None, falls back to the legacy NVIDIA CUVID path to keep
+    existing unit tests working.
     """
     chunk_duration = chunk_end - chunk_start
     fps_value = 1.0 / sample_interval
 
-    cuvid_decoder = _CUVID_CODEC_MAP.get(codec or "")
-    if cuvid_decoder:
-        hwaccel_args = ["-hwaccel", "cuda", "-c:v", cuvid_decoder]
+    decoder: str | None = None
+    hwaccel_name: str | None = None
+    if vendor and codec:
+        decoder = _GPU_DECODER_MAP.get(vendor, {}).get(codec)
+        hwaccel_name = _VENDOR_HWACCEL_MAP.get(vendor)
+    # Legacy path: vendor=None -> NVIDIA CUVID (tests call _decode_chunk
+    # directly without vendor, so keep the historical behavior).
+    if decoder is None and vendor is None:
+        decoder = _CUVID_CODEC_MAP.get(codec or "")
+        if decoder:
+            hwaccel_name = "cuda"
+
+    if decoder and hwaccel_name:
+        hwaccel_args = ["-hwaccel", hwaccel_name, "-c:v", decoder]
     else:
         hwaccel_args = ["-hwaccel", "auto"]
 

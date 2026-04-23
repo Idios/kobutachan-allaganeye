@@ -128,8 +128,15 @@ def run_split(
             _emit_total_time(total_start, verbose, show)
             return
 
-    # Resolve GPU/CPU mode: auto-select based on codec when not explicit (#334)
-    use_gpu = _resolve_gpu_mode(config.use_gpu, metadata.get("codec"), show, verbose)
+    # Resolve GPU/CPU mode + vendor: auto-select based on codec + probe
+    # when not explicit (#334, #546)
+    use_gpu, gpu_vendor = _resolve_gpu_mode(
+        config.use_gpu,
+        config.gpu_vendor,
+        metadata.get("codec"),
+        show,
+        verbose,
+    )
 
     # Step 2: Detect match boundaries
     if verbose and show:
@@ -164,6 +171,7 @@ def run_split(
         quiet=quiet,
         stats=detect_stats,
         use_gpu=use_gpu,
+        gpu_vendor=gpu_vendor,
     )
 
     if not boundaries:
@@ -514,24 +522,63 @@ _GPU_PREFERRED_CODECS = {"h264", "hevc", "av1", "vp9"}
 
 def _resolve_gpu_mode(
     use_gpu: bool | None,
+    gpu_vendor_option: str | None,
     codec: str | None,
     show: bool,
     verbose: bool,
-) -> bool:
-    """Resolve GPU/CPU mode from explicit flag or codec auto-detection (#334).
+) -> tuple[bool, str | None]:
+    """Resolve GPU/CPU mode and vendor from user flags + probe (#334, #546).
 
-    When *use_gpu* is ``None`` (no ``--gpu``/``--no-gpu`` given), selects
-    GPU for H.264/HEVC/AV1/VP9 (mature GPU decode support, #414) and CPU
-    for everything else.  Returns a concrete ``bool``.
+    - *use_gpu*: None で自動 codec 判定、True/False で明示指示。
+    - *gpu_vendor_option*: None / "auto" で自動選択、"nvidia" / "amd" /
+      "intel" で明示指定。未実装 vendor (intel) や probe に見つからない
+      vendor を要求すると ``ConfigValidationError`` (exit 5)。
+
+    Returns ``(use_gpu_concrete, selected_vendor)`` tuple.  vendor が
+    ``None`` の場合は GPU 経路で ``-hwaccel auto`` が使われる。
     """
-    if use_gpu is not None:
-        return use_gpu
+    from allaganeye.exceptions import ConfigValidationError
+    from allaganeye.system_info import probe_gpu_vendors
+    from allaganeye.video.gpu_detector import (
+        _VENDOR_HWACCEL_MAP,
+        _select_gpu_vendor,
+    )
 
-    selected = (codec or "").lower() in _GPU_PREFERRED_CODECS
+    available = probe_gpu_vendors()
+
+    # Explicit vendor request validation (#546): 未実装 or 未検出は exit 5
+    if gpu_vendor_option and gpu_vendor_option != "auto":
+        if gpu_vendor_option not in _VENDOR_HWACCEL_MAP:
+            raise ConfigValidationError(
+                f"--gpu-vendor {gpu_vendor_option}: 現在未実装です "
+                "(AMD AMF は #553, Intel QSV は #550 で追跡予定)。"
+                " --gpu-vendor auto / nvidia のいずれかを使用してください。"
+            )
+        if gpu_vendor_option not in available:
+            raise ConfigValidationError(
+                f"--gpu-vendor {gpu_vendor_option} を要求されましたが、"
+                f"環境で検出された GPU vendor は {available or '(なし)'} です。"
+                " --gpu-vendor auto または --no-gpu を使用してください。"
+            )
+
+    vendor = _select_gpu_vendor(gpu_vendor_option, available)
+
+    if use_gpu is not None:
+        if show and verbose and use_gpu and vendor:
+            typer.echo(f"  GPU vendor: {vendor}")
+        return use_gpu, vendor
+
+    codec_match = (codec or "").lower() in _GPU_PREFERRED_CODECS
+    # Auto-select requires BOTH a GPU-capable codec AND a detected vendor.
+    # vendor=None means probe_gpu_vendors() returned empty (no GPU found),
+    # in which case we fall back to CPU even for GPU-preferred codecs.
+    selected = codec_match and vendor is not None
     if show and verbose:
         mode = "GPU" if selected else "CPU"
         typer.echo(f"  Auto-selected {mode} mode (codec: {codec or 'unknown'})")
-    return selected
+        if selected and vendor:
+            typer.echo(f"  GPU vendor: {vendor}")
+    return selected, vendor if selected else None
 
 
 def _run_detection(
@@ -544,6 +591,7 @@ def _run_detection(
     quiet: bool = False,
     stats: DetectionStats | None = None,
     use_gpu: bool = False,
+    gpu_vendor: str | None = None,
 ) -> list[MatchBoundary]:
     """Run detection with progress bars for each phase (#328, #329, #331)."""
     detect_kwargs = {
@@ -552,6 +600,7 @@ def _run_detection(
         "blackout_threshold": config.blackout_threshold,
         "min_match_duration": config.min_match_duration,
         "min_blackout_duration": config.min_blackout_duration,
+        "gpu_vendor": gpu_vendor,
         "use_gpu": use_gpu,
         "workers": config.workers,
         "src_resolution": (metadata["width"], metadata["height"]),
