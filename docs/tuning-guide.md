@@ -186,9 +186,10 @@ GPU 対応環境（NVIDIA CUDA, Intel QSV 等）では、暗転検知の処理�
 
 | コーデック | 推奨モード | 理由 |
 |---|---|---|
-| AV1 | CPU (`--no-gpu`) | GPU の AV1 デコード支援は未成熟。CPU 並列プローブのほうが高速 |
 | H.264 | GPU (`--gpu`) | GPU デコード支援が最も成熟しており、恩恵が大きい |
 | HEVC (H.265) | GPU (`--gpu`) | GPU 支援あり。AV1 より効率的 |
+| AV1 | GPU (`--gpu`) (NVDEC RTX 30+ / QSV Arc・Gen12+ / VCN 4.0+) | #414 で GPU auto-select 対象に追加。対応 GPU で decode 成功、未対応環境では自動で CPU フォールバック |
+| VP9 | GPU (`--gpu`) (NVDEC Maxwell+ / QSV Gen9+ / VCN 1.0+) | #414 で GPU auto-select 対象に追加。環境によっては fallback (#538 で調査中) |
 
 低コア数 CPU（4-8 コア）では、GPU モードが有利になりやすい傾向があります。
 
