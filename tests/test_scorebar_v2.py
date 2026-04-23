@@ -284,15 +284,16 @@ class TestHasScorebarV2:
         """Probe failure (None) -> None passthrough."""
         assert _has_scorebar_v2(None) is None
 
-    def test_empty_frame_returns_none(self):
-        """All-zero frame -> no scorebar outline -> None (V1 fallback, #522).
+    def test_empty_frame_returns_false(self):
+        """All-zero frame -> absolute fallback -> 0 sat, 0 edge -> False.
 
-        Contract change in #522: previously returned False when the first
-        emblem failed the AND check.  With dynamic scorebar range
-        detection, an empty frame fails the span-detection step and
-        returns None so V1 can evaluate.
+        #522 hybrid: when dynamic scorebar span detection fails, V2 falls
+        back to absolute ``_EMBLEM_POSITIONS`` instead of returning None.
+        For an empty frame this fallback still fails on the first emblem
+        (sat=0, edge=0) -> False.  This preserves the pre-#522 empty-
+        frame contract.
         """
-        assert _has_scorebar_v2(_empty_hires_frame()) is None
+        assert _has_scorebar_v2(_empty_hires_frame()) is False
 
     @pytest.mark.parametrize("x_left,x_right", [(500, 1400), (700, 1300)])
     def test_detects_scorebar_at_dynamic_layout(self, x_left, x_right):
@@ -305,14 +306,17 @@ class TestHasScorebarV2:
         frame = _make_hires_frame_with_emblems_at_layout(x_left, x_right)
         assert _has_scorebar_v2(frame) is True
 
-    def test_frame_without_scorebar_strip_returns_none(self):
-        """Frame with emblems but no scorebar outline -> None.
+    def test_frame_without_scorebar_strip_returns_true_via_absolute(self):
+        """Frame with emblems but no scorebar outline -> absolute fallback -> True.
 
-        Exercises the ``_find_scorebar_horizontal_range -> None`` path
-        when the surrounding scorebar strip is absent.
+        Exercises the hybrid fallback path (#522): when
+        ``_find_scorebar_horizontal_range`` returns None (no saturated
+        outline), V2 evaluates ``_EMBLEM_POSITIONS`` absolutely.  The
+        emblems are placed at the same absolute coordinates, so the
+        3-point AND still passes.
         """
         frame = _make_hires_frame_with_emblems(include_scorebar_strip=False)
-        assert _has_scorebar_v2(frame) is None
+        assert _has_scorebar_v2(frame) is True
 
     def test_all_three_emblems_present_returns_true(self):
         """All 3 emblems with high sat + high edge -> True."""

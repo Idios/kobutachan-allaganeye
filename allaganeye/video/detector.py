@@ -786,38 +786,92 @@ def _find_scorebar_horizontal_range(raw_rgb: bytes) -> tuple[int, int] | None:
     return longest
 
 
+def _emblem_and_check(
+    frame: "np.ndarray",
+    positions: list[tuple[str, int, int, int, int]],
+    path_label: str,
+    cv2_module,
+) -> bool:
+    """Evaluate 3-point emblem AND on the given positions.
+
+    Returns True if ALL 3 emblems pass sat/edge thresholds, otherwise
+    False.  Each position is ``(name, x1, y1, x2, y2)``.
+    """
+    for name, x1, y1, x2, y2 in positions:
+        region = frame[y1:y2, x1:x2, :]
+        bgr = cv2_module.cvtColor(region, cv2_module.COLOR_RGB2BGR)
+        hsv = cv2_module.cvtColor(bgr, cv2_module.COLOR_BGR2HSV)
+        gray = cv2_module.cvtColor(bgr, cv2_module.COLOR_BGR2GRAY)
+
+        # Saturation of bright pixels (exclude very dark pixels)
+        val = hsv[:, :, 2].astype(np.float32)
+        sat = hsv[:, :, 1].astype(np.float32)
+        bright_mask = val > 30
+        if bright_mask.sum() > 5:
+            mean_sat = float(sat[bright_mask].mean())
+        else:
+            mean_sat = 0.0
+
+        # Edge density (Sobel magnitude)
+        sobel_x = cv2_module.Sobel(gray, cv2_module.CV_64F, 1, 0, ksize=3)
+        sobel_y = cv2_module.Sobel(gray, cv2_module.CV_64F, 0, 1, ksize=3)
+        edge_density = float(np.sqrt(sobel_x**2 + sobel_y**2).mean())
+
+        if mean_sat <= _EMBLEM_SAT_THRESHOLD or edge_density <= _EMBLEM_EDGE_THRESHOLD:
+            logger.debug(
+                "scorebar_v2 (%s): %s x=%d..%d sat=%.1f edge=%.1f -> fail",
+                path_label,
+                name,
+                x1,
+                x2,
+                mean_sat,
+                edge_density,
+            )
+            return False
+    logger.debug("scorebar_v2 (%s): all 3 positions passed -> True", path_label)
+    return True
+
+
 def _has_scorebar_v2(raw_rgb: bytes | None) -> bool | None:
     """Determine if FL scorebar is present using GC-emblem 3-point AND.
 
-    Dynamically locates the scorebar horizontal range
-    (``_find_scorebar_horizontal_range``) to follow HUD scale variations
-    across recording setups (1080p OBS full-width, 4K Game DVR
-    narrow-centered, etc.), then checks 3 emblem positions at relative
-    offsets within that range (``_EMBLEM_RELATIVE_POSITIONS``).  At each
-    position computes HSV saturation and Sobel edge density.  Returns
-    ``True`` only if ALL 3 positions exceed both thresholds (AND).
+    Two-path evaluation with OR semantics:
 
-    This exploits the structural invariant that FL scorebar always has
-    3 GC emblems at the same horizontal ratios within the bar, while
-    lobby backgrounds never have high-saturation + high-edge-density
-    content at all 3 positions simultaneously.
+    1. **Primary**: absolute coordinates (``_EMBLEM_POSITIONS``).
+       This preserves the pre-#522 behavior validated on 5 recordings
+       (0408/0209/0116/0118/0119) with 156+ non-match frames and zero
+       FP.  Returns True immediately on AND pass (short-circuit).
+    2. **Secondary**: dynamic scorebar horizontal range detection
+       (``_find_scorebar_horizontal_range``) with emblem positions
+       computed from ``_EMBLEM_RELATIVE_POSITIONS``.  This handles
+       HUD-scale variations such as 4K Game DVR's narrow-centered
+       scorebar (#522).  Evaluated only if Primary returned False.
+       Returns True on AND pass.
+
+    OR semantics ensures 1080p OBS validated set stays FP-free (Primary
+    is authoritative), while 4K Game DVR recordings (where Primary fails
+    due to scorebar layout offset) gain a rescue path via Secondary.
+
+    At each position computes HSV saturation and Sobel edge density.
+    Returns True only if all 3 positions in the same path exceed both
+    thresholds (``_EMBLEM_SAT_THRESHOLD``, ``_EMBLEM_EDGE_THRESHOLD``).
 
     Requires 1920x1080 input (see ``_probe_frame_rgb_hires``).
 
-    Returns ``True`` if scorebar detected, ``False`` if emblems fail the
-    AND check, or ``None`` if:
+    Returns ``True`` if scorebar detected by either path, ``False`` if
+    both paths fail, or ``None`` if:
 
-    - probe failed (``raw_rgb`` is None),
-    - opencv is not installed, or
-    - the scorebar horizontal range cannot be located (#522).
+    - probe failed (``raw_rgb`` is None), or
+    - opencv is not installed.
 
     The ``None`` contract lets ``_probe_scorebar_context`` fall back to
     V1 (channel-std) detection.
 
     Validated on 5 recordings (0408/0209/0116/0118/0119):
-    - 156+ non-match frames: zero FP
+    - 156+ non-match frames: zero FP (Primary)
     - In-match TPR: 98.7% (FN only on UI-hidden transition frames)
-    - 4K Game DVR regression fix: #522 (2026-04-22)
+    - 4K Game DVR regression fix: #522 (2026-04-22) -- Secondary
+    - 20260219 long-recording regression fix: #522 two-path (2026-04-23)
     """
     if raw_rgb is None:
         return None
@@ -831,61 +885,35 @@ def _has_scorebar_v2(raw_rgb: bytes | None) -> bool | None:
         )
         return None
 
-    # Dynamically locate the scorebar horizontal range to accommodate
-    # different HUD layouts (1080p OBS full-width vs 4K Game DVR
-    # narrow-centered).  #522.
-    span = _find_scorebar_horizontal_range(raw_rgb)
-    if span is None:
-        logger.debug("scorebar_v2: no horizontal range detected -> None (V1 fallback)")
-        return None
-    x_left, x_right = span
-    bar_width = x_right - x_left
-
     width = _SCOREBAR_V2_PROBE_WIDTH
     height = _SCOREBAR_V2_PROBE_HEIGHT
     frame = np.frombuffer(raw_rgb, dtype=np.uint8).reshape(height, width, 3)
 
-    for name, cx_rel, hw_rel, y1, y2 in _EMBLEM_RELATIVE_POSITIONS:
-        cx = x_left + cx_rel * bar_width
-        half = hw_rel * bar_width
-        x1 = int(cx - half)
-        x2 = int(cx + half)
-        region = frame[y1:y2, x1:x2, :]
-        bgr = cv2.cvtColor(region, cv2.COLOR_RGB2BGR)
-        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    # Path 1: absolute coordinates (pre-#522 validated path).
+    if _emblem_and_check(frame, list(_EMBLEM_POSITIONS), "absolute", cv2):
+        return True
 
-        # Saturation of bright pixels (exclude very dark pixels)
-        val = hsv[:, :, 2].astype(np.float32)
-        sat = hsv[:, :, 1].astype(np.float32)
-        bright_mask = val > 30
-        if bright_mask.sum() > 5:
-            mean_sat = float(sat[bright_mask].mean())
-        else:
-            mean_sat = 0.0
-
-        # Edge density (Sobel magnitude)
-        sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-        sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-        edge_density = float(np.sqrt(sobel_x**2 + sobel_y**2).mean())
-
-        if mean_sat <= _EMBLEM_SAT_THRESHOLD or edge_density <= _EMBLEM_EDGE_THRESHOLD:
-            logger.debug(
-                "scorebar_v2: %s x=%d..%d sat=%.1f edge=%.1f -> fail",
+    # Path 2: dynamic span rescue for HUD-scaled recordings (4K Game DVR).
+    span = _find_scorebar_horizontal_range(raw_rgb)
+    if span is not None:
+        x_left, x_right = span
+        bar_width = x_right - x_left
+        positions: list[tuple[str, int, int, int, int]] = [
+            (
                 name,
-                x1,
-                x2,
-                mean_sat,
-                edge_density,
+                int(x_left + cx_rel * bar_width - hw_rel * bar_width),
+                y1,
+                int(x_left + cx_rel * bar_width + hw_rel * bar_width),
+                y2,
             )
-            return False
+            for name, cx_rel, hw_rel, y1, y2 in _EMBLEM_RELATIVE_POSITIONS
+        ]
+        if _emblem_and_check(
+            frame, positions, f"dynamic span={x_left}..{x_right}", cv2
+        ):
+            return True
 
-    logger.debug(
-        "scorebar_v2: span=%d..%d all 3 positions passed -> True",
-        x_left,
-        x_right,
-    )
-    return True
+    return False
 
 
 def _has_scorebar(raw_rgb: bytes | None, height: int) -> bool | None:
