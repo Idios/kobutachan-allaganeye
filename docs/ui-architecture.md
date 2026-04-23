@@ -1,5 +1,7 @@
 # Allagan Eye GUI — UI Architecture (Phase 2)
 
+> **スコープ**: 本 doc は **L2a GUI (Tauri 2 + React 19) の UI 基盤のみ**を扱う。CLI (`allaganeye` サブコマンド) は [cli-spec.md](cli-spec.md)、CLI と GUI の全体構成・起動経路は [system-architecture.md](system-architecture.md) を参照。
+
 本 doc は L2a GUI Phase 2 (#464) で確立した UI 基盤を記録する。Phase 3/4 の実装が参照する source of truth。
 
 ## 1. 概要

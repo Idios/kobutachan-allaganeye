@@ -28,10 +28,12 @@ Windows 専用です。Python や FFmpeg の事前インストールは必要あ
 ### 開発者向け
 
 - [Developer Setup Guide](docs/developer-setup.md) — ソースコードから動かす手順（Git / Python / venv）
+- [System Architecture](docs/system-architecture.md) — CLI + GUI + installer の全体構成と起動経路 (#527)
 - [CLI コマンド仕様](docs/cli-spec.md)
+- [GUI UI Architecture](docs/ui-architecture.md) — L2a Tauri GUI の screen / phase state machine
 - [metadata.json 仕様](docs/metadata-spec.md) — CLI ↔ GUI の契約 (#463)
 - [出力仕様マトリクス](docs/output-spec.md)
-- [システムアーキテクチャ](docs/design-overview.md)
+- [システム設計概要](docs/design-overview.md)
 - [動画処理設計](docs/video-processing.md)
 - [リリース戦略](docs/release-strategy.md)
 - [バグ報告ガイド](docs/bug-report-guide.md)
