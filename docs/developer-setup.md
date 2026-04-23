@@ -299,7 +299,7 @@ allaganeye debug-brightness <video_path> --start 100 --end 200 --interval 0.5
 - [出力仕様マトリクス](output-spec.md)
 - [システムアーキテクチャ](design-overview.md)
 - [動画処理設計](video-processing.md)
-- [リリース戦略](release-strategy.md)
+- [リリース戦略・手順](release-process.md)
 - [コーディング規約](coding-conventions.md)
 
 ## 9. Python / FFmpeg バージョン更新チェックリスト

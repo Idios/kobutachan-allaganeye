@@ -112,7 +112,7 @@ gh issue list --repo Idios/kobutachan-allaganeye --state open --label "deferred"
 
 ### タグ打ち・GitHub Release 作成
 
-リリース PR マージ後の手順（本スキル範囲外、`docs/release-strategy.md` §タグ運用 を参照）:
+リリース PR マージ後の手順（本スキル範囲外、`docs/release-process.md` §タグ運用 を参照）:
 
 - patch リリース: マージされたブランチで `git tag v<新バージョン>` → `git push origin v<新バージョン>`
 - minor/major リリース: `develop-<新バージョン>` を `main` にマージしてから `main` でタグ打ち

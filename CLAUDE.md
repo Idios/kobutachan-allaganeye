@@ -196,7 +196,7 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 
 ## リリース戦略
 
-詳細は `docs/release-strategy.md` を参照。要約:
+詳細は `docs/release-process.md` を参照。要約:
 
 - `develop-x.x.x` が日常の統合先、`main` はリリース時のみ更新
 - PR はすべて `develop-x.x.x` にマージ

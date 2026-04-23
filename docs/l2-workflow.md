@@ -277,6 +277,6 @@ Stop hook は**自セッションのディレクトリを sweep しない**。�
 
 - [code.claude.com/docs/en/skills](https://code.claude.com/docs/en/skills) — skill 設計ガイド
 - [code.claude.com/docs/en/best-practices](https://code.claude.com/docs/en/best-practices) — 単一セッション推奨
-- `docs/release-strategy.md` — ブランチ戦略の詳細
+- `docs/release-process.md` — ブランチ戦略と手動リリース手順
 - `docs/issue-policy.md` — Issue 起票ルール (role:* 節を削除済み)
 - `plans/deffere-issue-l2-deffered-1-l1-issue-2-graceful-clover.md` — L2 移行計画全体

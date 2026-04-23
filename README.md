@@ -33,7 +33,7 @@ Windows 専用です。Python や FFmpeg の事前インストールは必要あ
 - [出力仕様マトリクス](docs/output-spec.md)
 - [システムアーキテクチャ](docs/design-overview.md)
 - [動画処理設計](docs/video-processing.md)
-- [リリース戦略](docs/release-strategy.md)
+- [リリース戦略・手順](docs/release-process.md)
 - [バグ報告ガイド](docs/bug-report-guide.md)
 
 ## ロードマップ
