@@ -1,8 +1,10 @@
-# システムアーキテクチャ
+# システム設計概要 (レイヤ構造)
+
+> **スコープ**: 本 doc はレイヤ (L1〜L6) の役割と段階的ロードマップを扱う。現時点での CLI / GUI / installer の組み合わせ構成と起動経路は [system-architecture.md](system-architecture.md) を参照。
 
 ## 概要
 
-Allagan Eye は FF14 フロントラインの長時間録画動画を段階的に処理するCLIツール。
+Allagan Eye は FF14 フロントラインの長時間録画動画を段階的に処理するツール (L1 CLI / L2a GUI / L2b installer)。
 
 ## 段階的アーキテクチャ
 
