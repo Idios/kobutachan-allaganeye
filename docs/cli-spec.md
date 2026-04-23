@@ -6,7 +6,7 @@ CLI コマンド・引数・オプションの**構文**をまとめる。各オ
 
 | 要件 | 説明 |
 |---|---|
-| ffmpeg / ffprobe 4.1+ | 以下の順序で自動検索: (1) PATH (`shutil.which`) (2) `ALLAGANEYE_FFMPEG` 環境変数で指定したディレクトリ (3) OS 別既知パス（Windows: winget `Gyan.FFmpeg`、macOS: Homebrew） |
+| ffmpeg / ffprobe 4.1+ | 以下の順序で自動検索: (1) PATH (`shutil.which`) (2) `ALLAGANEYE_FFMPEG` 環境変数で指定したディレクトリ (3) OS 別既知パス（Windows: winget `Gyan.FFmpeg`、macOS: Homebrew）。配布版・dev 環境ともに LGPLv3 版 (BtbN FFmpeg-Builds `win64-lgpl` static) の使用を推奨 (#508)。winget `Gyan.FFmpeg` は GPL 版で、後方互換 fallback として自動検索される |
 
 ## グローバルオプション
 

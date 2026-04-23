@@ -69,9 +69,9 @@ claude/<scope>-* → PR → /review-pr (受け入れ条件チェック) → /tes
 - タグ形式: `v<major>.<minor>.<patch>`
 - コマンド: `git tag -a v0.x.0 -m "Release v0.x.0: <レイヤー名>"`
 - `git push origin v0.x.0` すると [`.github/workflows/release.yml`](../.github/workflows/release.yml) が発火し、Windows Portable ZIP (`allaganeye-v<version>-windows.zip`) のビルドと GitHub Release への成果物自動添付を実行する (#461)
-  - ビルドは [`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) で Python 3.11 embeddable + FFmpeg LGPL essentials を同梱する
-    - ダウンロードする外部バイナリ (Python embed / get-pip.py / FFmpeg) はスクリプト内に **SHA256 ダイジェストをハードコードして検証** する。ダイジェスト不一致時はビルドを fail。FFmpeg は特定バージョンタグを URL にピン留め (現在 `8.1`) して再現性を確保する
-    - 外部バイナリを更新する場合はスクリプト先頭の `$FFmpegVersion` / `$*Sha256` 定数を更新する
+  - ビルドは [`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) で Python 3.11 embeddable + FFmpeg LGPLv3 static (BtbN FFmpeg-Builds win64-lgpl、libdav1d 入り) を同梱する
+    - ダウンロードする外部バイナリ (Python embed / get-pip.py / FFmpeg) はスクリプト内に **SHA256 ダイジェストをハードコードして検証** する。ダイジェスト不一致時はビルドを fail。FFmpeg は BtbN の `autobuild-YYYY-MM-DD-HH-MM` タグと特定アセット名を URL にピン留めして再現性を確保する (`latest` タグは日次更新の可動ポインタなので不可)
+    - 外部バイナリを更新する場合はスクリプト先頭の `$FFmpegBuildTag` / `$FFmpegAssetName` / `$*Sha256` 定数を更新する
   - Release 本文は [`scripts/extract_release_notes.py`](../scripts/extract_release_notes.py) が CHANGELOG.md から該当バージョンのセクションを抽出する
   - タグ名と `pyproject.toml` の `version` が一致しない場合、workflow は fail する
 - 手動で dry-run ビルドを確認したい場合は、Actions タブから `Release` workflow を `workflow_dispatch` で起動する (Release は作成されず ZIP artifact のみ)
