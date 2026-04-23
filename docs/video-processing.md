@@ -118,6 +118,22 @@ ffmpeg -hwaccel auto -ss <chunk_start> -t <chunk_duration> -i input.mkv \
 
 **フォールバック**: GPU デコードに失敗した場合は `VideoProcessingError` を送出し、呼び出し元（`detector.py`）が自動で CPU モードにフォールバックする。
 
+### コーデック自動選択（#334, #414）
+
+`--gpu` / `--no-gpu` 未指定時は probe で取得した codec を元に GPU/CPU を自動選択する (`_resolve_gpu_mode`)。判定セットは `_GPU_PREFERRED_CODECS` に定義。
+
+| Codec | auto 選択 | NVDEC 要件 | Intel QSV 要件 | AMD VCN 要件 |
+|---|---|---|---|---|
+| H.264 | GPU | 全世代 | 全世代 | 全世代 |
+| HEVC | GPU | Maxwell GM206+ | Skylake+ | VCN 1.0+ |
+| AV1 | GPU (#414) | RTX 30 (Ampere) 以降 | Arc / Gen12 以降 | VCN 4.0 以降 |
+| VP9 | GPU (#414) | Maxwell 以降 | Gen9+ | VCN 1.0+ |
+| その他 (mpeg2video, vc1, prores 等) | CPU | — | — | — |
+
+- ハードウェアが新 codec に未対応の場合、ffmpeg の `-hwaccel auto` が GPU decode に失敗 → 上記フォールバック経路で CPU に自動切替
+- 明示的に GPU を使いたい場合は `--gpu` フラグで強制可能（対応しない codec では起動時に GPU decode 失敗で exit）
+- `_CUVID_CODEC_MAP` には mpeg2video / mpeg4 / vp8 / mpeg1video も登録済みだが、`_GPU_PREFERRED_CODECS` に含めず auto では CPU (`--gpu` 明示時のみ GPU decode 経路)
+
 ### スコアバーフィルタリング（Phase 3, #111）
 
 暗転検知だけでは分類できない暗転パターンを、フロントラインのスコアバー（画面上部の 3GC 得点バー）の有無で判別する。`src_resolution` が `detect_match_boundaries` に渡された場合に有効化される。

@@ -1714,15 +1714,17 @@ class TestResolveGpuMode:
 
         assert _resolve_gpu_mode(None, "hevc", show=False, verbose=False) is True
 
-    def test_auto_av1_selects_cpu(self):
+    def test_auto_av1_selects_gpu(self):
+        """AV1 auto-selects GPU (#414: NVDEC AV1 = RTX 30+ / QSV AV1 = Gen12+ / VCN 4.0+)."""
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        assert _resolve_gpu_mode(None, "av1", show=False, verbose=False) is False
+        assert _resolve_gpu_mode(None, "av1", show=False, verbose=False) is True
 
-    def test_auto_vp9_selects_cpu(self):
+    def test_auto_vp9_selects_gpu(self):
+        """VP9 auto-selects GPU (#414: widely supported NVDEC Maxwell+)."""
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        assert _resolve_gpu_mode(None, "vp9", show=False, verbose=False) is False
+        assert _resolve_gpu_mode(None, "vp9", show=False, verbose=False) is True
 
     def test_auto_unknown_codec_selects_cpu(self):
         from allaganeye.commands.split_matches import _resolve_gpu_mode
@@ -1741,15 +1743,15 @@ class TestResolveGpuMode:
         """CPU auto-selection also emits a verbose notice (#334).
 
         Guards the else-branch of the mode resolution -- users on
-        AV1/VP9 recordings need to see that CPU mode was chosen
-        intentionally (not just because GPU failed).
+        legacy codecs (mpeg2video etc.) need to see that CPU mode was
+        chosen intentionally (not just because GPU failed).
         """
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        _resolve_gpu_mode(None, "av1", show=True, verbose=True)
+        _resolve_gpu_mode(None, "mpeg2video", show=True, verbose=True)
         out = capsys.readouterr().out
         assert "Auto-selected CPU mode" in out
-        assert "av1" in out
+        assert "mpeg2video" in out
 
     def test_auto_non_verbose_suppresses_message(self, capsys):
         """Non-verbose auto selection is silent (#334)."""
