@@ -100,6 +100,18 @@ Describe 'Assert-FFmpegLayout' {
   }
 }
 
+Describe 'Get-FFmpegSourceCommit' {
+  It 'extracts the upstream commit from a valid BtbN asset name' {
+    $commit = Get-FFmpegSourceCommit -AssetName 'ffmpeg-n8.1-123-g7f5c90f77e-win64-lgpl-shared.zip'
+    $commit | Should -Be '7f5c90f77e'
+  }
+
+  It 'throws when the asset name does not match the BtbN pattern' {
+    { Get-FFmpegSourceCommit -AssetName 'unexpected-name.zip' } |
+      Should -Throw -ExpectedMessage '*Cannot extract upstream source commit*'
+  }
+}
+
 Describe 'Format-ReadmeContent' {
   It 'includes the LGPLv3 BtbN win64-lgpl attribution and the source commit' {
     $readme = Format-ReadmeContent `
