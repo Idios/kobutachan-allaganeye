@@ -1,22 +1,26 @@
-"""PreToolUse gate for risky / bulk operations (#401).
+"""PreToolUse gate for risky / bulk operations (#401, #559).
 
-Intercepts a small set of ``gh`` / bulk operations and forces Claude to
-escalate to the user before proceeding.  Designed to backstop the docs
-rules (#399 / #400) when Claude would otherwise independently run:
+Intercepts a small set of ``gh`` / bulk operations and forces the user
+to approve before proceeding.  Designed to backstop the docs rules
+(#399 / #400) when Claude would otherwise independently run:
 
 - ``gh issue create`` 3+ times within 60 seconds (bulk Issue 起票)
 - ``gh pr merge`` (PR マージ)
 - ``gh issue close`` 3+ times within 60 seconds (bulk Issue クローズ, #485)
 - ``gh issue edit ... --add-label deferred`` 2+ times within 60 seconds
 
-Exit code 2 asks Claude Code to show the stderr message to the user and
-pause; Claude then asks for confirmation before proceeding.
+On match, the hook emits a Claude Code PreToolUse JSON output with
+``hookSpecificOutput.permissionDecision = "ask"``, which triggers the
+standard permission prompt.  The user answers allow / deny in the UI
+and the command runs (or is cancelled) in the same tool invocation --
+no retry with a prefix is needed (#559 migration from exit-code 2).
 
 ## Bypass after explicit approval (#485 / PR #491 review)
 
-Once the user has approved a command that was just blocked, Claude can
-re-issue it with the ``ALLAGANEYE_PREUSE_BYPASS=1`` prefix to skip the
-gate for that single invocation:
+Retained as an escape hatch for environments where the permission
+prompt is unavailable (non-interactive runs, older Claude Code builds).
+Claude can prefix the command with ``ALLAGANEYE_PREUSE_BYPASS=1`` to
+skip the gate entirely for that single invocation:
 
     ALLAGANEYE_PREUSE_BYPASS=1 gh issue close 123
 
@@ -28,6 +32,11 @@ command.  Every bypass is logged to stderr for audit.
 
 - Reads a Claude Code PreToolUse JSON event from stdin.  Only Bash tool
   calls are gated; every other tool is allowed unconditionally (exit 0).
+- Gate activation: exit 0 + stdout JSON with ``permissionDecision: "ask"``
+  so Claude Code surfaces an allow / deny prompt to the user.  The matched
+  command is NOT written to ``recent_ops.json`` because the hook cannot
+  observe the user's answer (#513 hygiene preserved: ghost entries would
+  inflate bulk counters).
 - State: ``.claude/state/recent_ops.json`` records ``[{"cmd", "ts"}]``
   for bulk-pattern timing.  Entries older than ``_BULK_WINDOW_SEC`` are
   discarded on every read.
@@ -227,6 +236,43 @@ def _gate_enabled() -> bool:
 
 
 # ---------------------------------------------------------------
+# Permission prompt output (#559)
+# ---------------------------------------------------------------
+
+
+def _emit_ask(key: str, message: str, command: str) -> None:
+    """Emit a PreToolUse ``permissionDecision: "ask"`` payload on stdout.
+
+    Claude Code reads this JSON (while exit code stays 0) and surfaces
+    the standard allow / deny permission prompt to the user with
+    ``permissionDecisionReason`` as the body text.
+
+    The reason string is intentionally verbose (Iron Law context +
+    command preview) so the prompt is self-contained for the user --
+    they should not need to scroll the transcript to understand why
+    they're being asked.
+    """
+    reason = (
+        f"[{key}] {message}\n"
+        "Claude Code permission prompt で allow / deny を選んでください。\n"
+        "allow 時のみコマンドが 1 回だけ実行されます (state は allow 後の"
+        " PostToolUse 経路でなく、次回 PreToolUse の pass 時に記録されます)。\n"
+        f"Detected command: {command.strip()[:400]}"
+    )
+    payload = {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "ask",
+            "permissionDecisionReason": reason,
+        }
+    }
+    # Advanced JSON output must be on stdout (Claude Code hooks spec).
+    # A single line keeps the payload obvious in hook logs.
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False))
+    sys.stdout.write("\n")
+
+
+# ---------------------------------------------------------------
 # Classification
 # ---------------------------------------------------------------
 
@@ -310,25 +356,24 @@ def main() -> int:
     key, message = _classify(command, recent)
 
     if key is not None:
-        # block された時点では state に記録しない (#513).
-        # 実行されないコマンドを bulk counter に入れると、prefix 付け忘れ
-        # による再試行で counter が累積的に膨張し、閾値を永続的に超えて
-        # 再ブロックが続く不具合になる。bypass 経由で実行された場合のみ
-        # bypass ルート側で記録されるので、実測の実行回数と state が一致する。
+        # ask された時点では state に記録しない (#513 + #559).
+        # 実行されるかはユーザーの allow / deny 回答次第で、hook からは
+        # 観測できない。deny された ghost 実行を bulk counter に入れると、
+        # 閾値を永続的に超えて ask が連発する不具合になるので、state に
+        # 載せるのは bypass / pass ルートに限定する (実測主義、#513 維持)。
+        #
+        # stderr には audit 用の log を残し、stdout には Claude Code の
+        # permission prompt 用 JSON を出力して exit 0 で終了する。
+        assert message is not None  # _classify 契約: key != None のとき message も非 None
         print(
-            f"[preuse:{key}] {message}\n"
-            "このコマンドは未実行で state にも記録されていません。\n"
-            "ユーザー承認済みの場合は必ず `ALLAGANEYE_PREUSE_BYPASS=1 <command>` "
-            "prefix を付けて再実行してください (1 回分のみ bypass)。\n"
-            "prefix なしで同じコマンドを再送しても同じ理由でブロックされます。\n"
-            f"Detected command: {command.strip()[:400]}",
+            f"[preuse:{key}] ask -> user permission prompt\n"
+            f"Command: {command.strip()[:400]}",
             file=sys.stderr,
         )
-        # Exit code 2 = block with error surfaced to Claude (PreToolUse
-        # hook convention).  Claude will pause and escalate to the user.
-        return 2
+        _emit_ask(key, message, command)
+        return 0
 
-    # Block 通過時のみ state に記録 (bulk カウント用).
+    # Block / ask 通過時のみ state に記録 (bulk カウント用).
     _append_op(state_path, command.strip(), now)
     return 0
 
