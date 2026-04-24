@@ -106,4 +106,4 @@ skill の新設要素が本番レビューで機能した確認:
 - [../scenario_b_bundled.md](../scenario_b_bundled.md) — モックシナリオ B (束ね PR)
 - [../scenario_c_isolated.md](../scenario_c_isolated.md) — モックシナリオ C (孤立 PR)
 - [../requirements.md](../requirements.md) — [critical] 付き要件チェックリスト
-- [memory/feedback_skill_revision_empirical.md](../../../../../../../../../Users/idios/.claude/projects/E--projects-kobutachan-tools-kobutachan-allaganeye/memory/feedback_skill_revision_empirical.md) — 本体験を基にした memory 蓄積
+- memory: `feedback_skill_revision_empirical.md` — 本体験を基にした memory 蓄積 (Claude 環境依存、リポジトリ外のためリンクなし)
