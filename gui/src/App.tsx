@@ -1,3 +1,4 @@
+import { ConflictModal } from './components/ConflictModal';
 import { SideRail } from './components/SideRail';
 import { StateSwitcher } from './components/StateSwitcher';
 import { CompleteScreen } from './screens/CompleteScreen';
@@ -42,6 +43,8 @@ export default function App() {
           {screen === 'export' && <ExportScreen />}
         </main>
       </div>
+      {/* #514 — global modal for metadata.json external-modification conflicts. */}
+      <ConflictModal />
     </div>
   );
 }

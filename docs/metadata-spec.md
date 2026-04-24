@@ -188,13 +188,26 @@ GUI による初回 `[適用]` 時のみ作成。
 5. 本 doc の版数の表を更新
 6. テスト: `tests/test_migrations.py` に migration 関数単体 + end-to-end 読み込みテスト
 
+## 排他管理 (mtime 検知、#514)
+
+GUI が `load_metadata` した瞬間のファイル mtime を `metadataStore.loadedMtimeMs` に保存し、`apply_changes` 呼び出し時に Rust 側へ `expectedMtimeMs` として渡す。Rust 側は `fs::metadata(path).modified()` から現在の mtime を取得し、渡された値と一致しなければ `conflict: ...` で拒否する。
+
+- **検知単位**: epoch ms (u64)。Windows / Linux / macOS いずれも `fs::Metadata::modified()` が返す `SystemTime` を ms に丸めて比較
+- **挙動**: 不一致時は Rust が `conflict: external modification detected ...` を返し、GUI は `conflictError` state に格納して `ConflictModal` を表示
+- **ユーザー選択肢**:
+  - **上書き** → `metadataStore.applyOverwrite()` で `expectedMtimeMs=null` 再送 (check bypass)
+  - **リロード** → `metadataStore.reloadAfterConflict()` で metadata.json を再読み込み (GUI 編集は破棄)
+  - **キャンセル** → `metadataStore.dismissConflict()` でモーダルのみ閉じる (編集は保持、ディスクに触らない)
+- **新規書き込み** (target が未存在): mtime check 対象外。`expectedMtimeMs` が指定されても skip し通常書き込み
+- **Rust command**: `get_metadata_mtime(path) -> Option<u64>` を追加。`apply_changes` の戻り値は書き込み後の mtime (`u64`) に変更され、GUI 側 `loadedMtimeMs` を自動更新
+
 ## 将来の拡張 (Phase 1 スコープ外)
 
 以下は派生 issue で追跡する (本 Phase 1 では実装せず、設計余地だけ確保):
 
 | 拡張 | 追跡 issue | 内容 |
 |---|---|---|
-| 排他管理 (mtime 検知 / 同時編集警告) | (新規起票予定) | GUI load 時の mtime 記録、save 時の外部変更検知 UX |
+| ~~排他管理 (mtime 検知 / 同時編集警告)~~ | [#514](https://github.com/Idios/kobutachan-allaganeye/issues/514) (実装済み、上記 §排他管理 参照) | GUI load 時の mtime 記録、save 時の外部変更検知 UX |
 | ~~schema_version フィールド~~ | [#515](https://github.com/Idios/kobutachan-allaganeye/issues/515) (実装済み、上記 §schema_version 参照) | 明示的な版数管理 + migration 基盤 |
 | ~~`[元に戻す]` 機能~~ | [#516](https://github.com/Idios/kobutachan-allaganeye/issues/516) (Phase 2 で実装済み) | `metadata.original.json` → `metadata.json` 復元ボタン (Rust `restore_from_original` + `metadataStore.restore`) |
 | draft auto save | (新規起票予定) | GUI 一時編集を `metadata.draft.json` に定期保存 (リロード耐性) |
