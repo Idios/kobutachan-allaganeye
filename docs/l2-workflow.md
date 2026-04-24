@@ -171,28 +171,32 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 | 6 | PR テンプレート (`.github/pull_request_template.md`) | Iron Law 1/3/4 の逐条チェックリスト |
 | 7 | ユーザー最終承認 | マージは全て Idios が実行、未達 PR は差し戻し |
 
-**真のハードゲート候補 (未実装)**: `PreToolUse` で `gh` bulk 操作の exit 2 ブロック、GitHub Action でマージブロック。L2 実装中に必要性が顕在化したら別 issue で対応。
+**ハードゲートの実装**: `.claude/hooks/preuse.py` が `PreToolUse` で `gh` bulk 操作・PR マージ等をインターセプトし、#559 以降は `permissionDecision=ask` を返して Claude Code の permission prompt を出す (旧: #401 の exit 2 block + bypass prefix 運用)。GitHub Action でのマージブロックは将来候補。
 
-#### PreToolUse hook の bypass 運用 (#485 / #513)
+#### PreToolUse hook の gate 運用 (#485 / #513 / #559)
 
-`preuse.py` が exit 2 でブロックした `gh` コマンドは、ユーザー承認後に `ALLAGANEYE_PREUSE_BYPASS=1 <command>` prefix を付けて再実行することで 1 回分だけ通過できる (`_BYPASS_PREFIX` 正規表現)。
+`preuse.py` は gate 発動時に **exit 0 + stdout JSON (`permissionDecision: "ask"`)** を出力し、Claude Code 本体の permission prompt でユーザーが allow / deny を選ぶ (#559)。allow なら同一 tool invocation でそのまま実行、deny ならキャンセルされる。旧来の `ALLAGANEYE_PREUSE_BYPASS=1 <command>` prefix は **非対話環境向けの escape hatch** として維持 (自動化スクリプト等で permission prompt が出せない場合 / 旧 exit 2 方式の hook と互換したい場合)。
 
-運用手順:
+運用手順 (主フロー, #559 以降):
 
-1. Claude が `gh` コマンドを発行 → hook が bulk 閾値 (3 件 / 60s) または always gate (PR マージ等) でブロック (exit 2)
-2. Claude は `AskUserQuestion` でサンプル 1 件を提示し、**「全件 OK / 個別調整 / やめる」** の 3 択を問う (Iron Law 2)
-3. ユーザーが承認したら、該当コマンドに `ALLAGANEYE_PREUSE_BYPASS=1` prefix (末尾スペース込み) を付けて再実行する
+1. Claude が `gh` コマンドを発行 → hook が bulk 閾値 (3 件 / 60s) または always gate (PR マージ等) を判定
+2. gate 発動時、hook は `{"hookSpecificOutput": {"permissionDecision": "ask", "permissionDecisionReason": ...}}` を stdout に出力して exit 0
+3. Claude Code 本体が permission prompt を表示 (reason にコマンド先頭数百文字と Iron Law 解説が含まれる)
+4. ユーザーが allow すればそのまま実行、deny すればツール呼び出しがキャンセルされる
 
-   ```bash
-   ALLAGANEYE_PREUSE_BYPASS=1 gh issue close 123
-   ```
+escape hatch (非対話環境等):
 
-4. prefix は strip されて `gh issue close 123` が実行される。`[preuse:bypass]` 監査ログが stderr に出力され、実行コマンド本体のみが state (`.claude/state/recent_ops.json`) に記録され、以降の bulk 判定に正しく参入する
+```bash
+ALLAGANEYE_PREUSE_BYPASS=1 gh issue close 123
+```
+
+prefix は strip されて `gh issue close 123` が実行される。`[preuse:bypass]` 監査ログが stderr に出力される。
 
 重要ポイント:
 
-- prefix は **1 コマンドごとに都度付与** する。bulk 承認を得た場合でも各コマンドに個別に付ける (1 回分のみ bypass の仕様)
-- **ブロックされたコマンドは state に記録されない** (#513)。prefix を付け忘れて素の再送をしても、counter が累積膨張することはなく同じ理由で再ブロックされるだけ
+- **主フローは Claude Code の permission prompt**。Claude が `AskUserQuestion` で別途確認する必要はない (permission prompt 自体が確認動作を兼ねる)
+- bypass prefix は escape hatch のみ。非対話環境では 1 コマンドごとに個別付与する (1 回分のみ bypass の仕様)
+- **ask / bypass されたコマンドは state に記録されない** (#513 挙動を #559 以降も維持)。permission prompt で deny された場合や prefix 付き実行 (`[preuse:bypass]`) では counter が累積膨張せず、以降の bulk 判定に影響を与えない
 - `ALLAGANEYE_PREUSE_BYPASS=0` 等は認識されない (prefix 正規表現は `=1` 固定)
 - `.claude/settings.local.json` で `"pretooluse_gate": false` を設定すると gate 全体を無効化できる (緊急避難用、通常は true = デフォルト)
 
