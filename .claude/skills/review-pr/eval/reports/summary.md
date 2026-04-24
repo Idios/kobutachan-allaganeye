@@ -92,9 +92,23 @@ skill の新設要素が本番レビューで機能した確認:
 
 ## 残課題 (deferred issue 候補)
 
-1. Iter 1 新出 5 件の細部判断基準を skill に追記 (詳細は `iter_1_revaluation.md` 各 Scenario 節参照)
-2. scope-guard skill の「逆方向」例外規定 (doc 変更 PR → CI 設定矛盾の同 PR 修正可否) — 本 skill 改修で review-pr 側の典型ケース表に一部盛り込んだが scope-guard 本体は未改修
-3. `subagent レポート raw output` の保存スキーム検討 (本ファイル群は要約版。全文保存は session transcript 依存で再現性がやや弱い)
+1. ~~Iter 1 新出 5 件の細部判断基準を skill に追記~~ — **#563 で対応済み (2026-04-24)**。Iter 2 再評価で 3 subagent 全件「解消」確認。詳細は `iter_2_revaluation.md` 参照
+2. ~~scope-guard skill の「逆方向」例外規定~~ — **#564 で (a) 方針採用 (2026-04-24)**。scope-guard SKILL.md §例外節に「doc 変更 PR で発見した CI 設定 / コード側参照との矛盾は同 PR 修正可」を追記。review-pr skill との定量基準 cross-ref を維持
+3. ~~`subagent レポート raw output` の保存スキーム検討~~ — **#565 で (c) 現状維持を採用 (2026-04-24)**。要約版 (iter_*_revaluation.md) で十分、session transcript 依存を容認
+
+---
+
+## Iter 2 (2026-04-24) 追加メトリクス
+
+| 指標 | Iter 1 | Iter 2 | 変化 |
+|---|---|---|---|
+| [critical] 成功率 | 3/3 | 3/3 | 維持 |
+| Iter 1 新出検証 | — | **5/5 解消** | — |
+| tool_uses 合計 | 28 | 11 | -61% (subagent が追記箇所を直接参照し探索を削減) |
+| duration 合計 | 394s | 156s | -60% |
+| 新出構造的欠陥 | 0 | 0 | 維持 |
+
+empirical §「収束判定」: 構造的欠陥ゼロ + 新出細部不明瞭点も軽微 (次 Iter 検討事項 4 件はいずれも本 issue スコープ外) → **skill 改修サイクル収束**。
 
 ---
 
@@ -102,6 +116,7 @@ skill の新設要素が本番レビューで機能した確認:
 
 - [iter_0_baseline.md](iter_0_baseline.md) — Iter 0 詳細
 - [iter_1_revaluation.md](iter_1_revaluation.md) — Iter 1 詳細
+- [iter_2_revaluation.md](iter_2_revaluation.md) — Iter 2 詳細 (#563 対応確認)
 - [../scenario_a_central.md](../scenario_a_central.md) — モックシナリオ A (中央値)
 - [../scenario_b_bundled.md](../scenario_b_bundled.md) — モックシナリオ B (束ね PR)
 - [../scenario_c_isolated.md](../scenario_c_isolated.md) — モックシナリオ C (孤立 PR)
