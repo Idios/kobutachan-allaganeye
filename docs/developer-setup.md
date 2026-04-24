@@ -10,7 +10,7 @@
 
 - **Git**: ソースコードの取得・更新に使います
 - **Python 3.11 (3.11.9 推奨)**: 実行環境です（Portable ZIP 同梱の Python とは別に必要です）。CI と Portable ZIP は 3.11.9 で固定しているため、ローカルも同じ patch に揃えると挙動差を避けられます
-- **ffmpeg / ffprobe 8.1 LGPLv3 推奨**: 動画の解析・分割エンジンです。最低 4.1 で動作しますが、CI / Portable ZIP は BtbN の LGPLv3 8.1 static に固定しているので同系列を推奨します
+- **ffmpeg / ffprobe 8.1 LGPLv3 推奨**: 動画の解析・分割エンジンです。最低 4.1 で動作しますが、CI / Portable ZIP は BtbN の LGPLv3 8.1 shared に固定しているので同系列を推奨します
 
 ### Git
 
@@ -331,24 +331,25 @@ CI / Portable ZIP / 開発環境の 3 環境で Python と FFmpeg のバージ�
 | `scripts/build-portable-zip.ps1` | `$PythonVersion = '3.11.9'` + `$PythonEmbedSha256` |
 | `docs/developer-setup.md` §1 | 「Python 3.11 (3.11.9 推奨)」の記載 |
 
-### FFmpeg (現在 BtbN LGPLv3 n8.1 / `autobuild-2026-04-22-13-15` に固定)
+### FFmpeg (現在 BtbN LGPLv3 n8.1 shared / `autobuild-2026-04-22-13-15` に固定)
 
 更新手順:
 
 1. [BtbN/FFmpeg-Builds/releases](https://github.com/BtbN/FFmpeg-Builds/releases) で新しい `autobuild-YYYY-MM-DD-HH-MM` タグを選ぶ
-1. 必要な 2 資産 (win64-lgpl-8.1.zip / linux64-lgpl-8.1.tar.xz) の SHA256 を取得:
+1. 必要な 2 資産 (win64-lgpl-shared-8.1.zip / linux64-lgpl-shared-8.1.tar.xz) の SHA256 を取得:
 
    ```bash
    gh api repos/BtbN/FFmpeg-Builds/releases/tags/<タグ名> \
-     --jq '.assets[] | select(.name | test("n8[.]1.*(win64-lgpl-8[.]1[.]zip|linux64-lgpl-8[.]1[.]tar[.]xz)$")) | {name, digest}'
+     --jq '.assets[] | select(.name | test("n8[.]1.*(win64-lgpl-shared-8[.]1[.]zip|linux64-lgpl-shared-8[.]1[.]tar[.]xz)$")) | {name, digest}'
    ```
 
-1. 以下を**同一タグ・同一 autobuild 系列で**更新 (下表参照)。major version 系列変更 (例: 8.x → 9.x) 時は docs の major version 記述も揃える
+1. 以下を**同一タグ・同一 autobuild 系列で**更新 (下表参照)。major version 系列変更 (例: 8.x → 9.x) 時は docs の major version 記述も揃える。cache key に SHA256 が埋め込まれているので、SHA256 を変更すれば CI / release 両方のキャッシュが自動で invalidate される
 1. ローカルで Portable ZIP ビルドが緑になることを確認 (`pwsh ./scripts/build-portable-zip.ps1 -Version <version>`) し、PR で CI の `build-windows` と `python` ジョブ両方が通ることを確認する
 
 | 場所 | キー |
 |---|---|
 | `scripts/build-portable-zip.ps1` | `$FFmpegBuildTag` / `$FFmpegAsset` / `$FFmpegSha256` (`$FFmpegSourceCommit` は asset 名から自動抽出) |
-| `.github/workflows/ci.yml` (`Install ffmpeg` ステップ) | `FFMPEG_URL` / `FFMPEG_SHA256` (linux64-lgpl 版) |
+| `.github/workflows/ci.yml` (`Cache FFmpeg archive` / `Download FFmpeg archive (cache miss)` / `Install ffmpeg` の 3 ステップ) | cache `key` 内 SHA256 + DL step の URL + install step の `FFMPEG_SHA256` (linux64-lgpl-shared 版) |
+| `.github/workflows/release.yml` (`Cache FFmpeg archive` ステップ) | cache `key` 内 SHA256 (win64-lgpl-shared 版、build-portable-zip.ps1 の SHA256 と同じ値) |
 | `docs/developer-setup.md` §1 | 「ffmpeg / ffprobe 8.1 LGPLv3 推奨」「推奨: ffmpeg 8.1 LGPLv3」の major version 記述 (系列変更時のみ) |
 | `docs/quickstart.md` §10 | 対応 FFmpeg コミット (例: `7f5c90f77e`) の記述 (upstream commit 変更時) |

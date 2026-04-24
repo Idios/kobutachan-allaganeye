@@ -14,19 +14,33 @@ jobs:
         with:
           python-version: "3.11.9"
 
-      - name: Install ffmpeg (BtbN LGPLv3 n8.1 static, pinned)
+      - name: Cache FFmpeg archive
+        id: cache-ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: /tmp/ffmpeg.tar.xz
+          key: btbn-ffmpeg-linux64-lgpl-shared-8.1-d3b400378b8180fcc59249331ce03c75520404d9e62f950e4eb827f810cc7c53
+
+      - name: Download FFmpeg archive (cache miss)
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
-          FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-04-22-13-15/ffmpeg-n8.1-10-g7f5c90f77e-linux64-lgpl-8.1.tar.xz"
-          FFMPEG_SHA256="863a5eb145a06529f3ce3c1ee4908abb24ac60d63b47659af9d696abbca9257e"
-          curl -fsSL -o /tmp/ffmpeg.tar.xz "$FFMPEG_URL"
+          curl -fsSL -o /tmp/ffmpeg.tar.xz "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-04-22-13-15/ffmpeg-n8.1-10-g7f5c90f77e-linux64-lgpl-shared-8.1.tar.xz"
+
+      - name: Install ffmpeg (BtbN LGPLv3 n8.1 shared, pinned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          FFMPEG_SHA256="d3b400378b8180fcc59249331ce03c75520404d9e62f950e4eb827f810cc7c53"
           echo "$FFMPEG_SHA256  /tmp/ffmpeg.tar.xz" | sha256sum -c -
           mkdir -p /tmp/ffmpeg
           tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg --strip-components=1
           echo "/tmp/ffmpeg/bin" >> "$GITHUB_PATH"
-          /tmp/ffmpeg/bin/ffmpeg -version
-          /tmp/ffmpeg/bin/ffprobe -version
+          # Shared build: exe wrappers load DLL/SO siblings from ../lib.
+          echo "LD_LIBRARY_PATH=/tmp/ffmpeg/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          LD_LIBRARY_PATH="/tmp/ffmpeg/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" /tmp/ffmpeg/bin/ffmpeg -version
+          LD_LIBRARY_PATH="/tmp/ffmpeg/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" /tmp/ffmpeg/bin/ffprobe -version
 
       - name: Install dependencies
         run: pip install -e ".[dev]"

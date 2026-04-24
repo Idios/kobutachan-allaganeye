@@ -166,7 +166,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 
 ### 外部依存
 
-- **ffmpeg / ffprobe**: 4.1 以上。PATH、`ALLAGANEYE_FFMPEG` 環境変数、または OS 別既知パスから自動検索（`allaganeye/ffmpeg_path.py`）。配布版・開発環境ともに LGPLv3 版 (BtbN FFmpeg-Builds `win64-lgpl` static、libdav1d 入り) の使用を推奨 (#508)
+- **ffmpeg / ffprobe**: 4.1 以上。PATH、`ALLAGANEYE_FFMPEG` 環境変数、または OS 別既知パスから自動検索（`allaganeye/ffmpeg_path.py`）。配布版・開発環境ともに LGPLv3 版 (BtbN FFmpeg-Builds `win64-lgpl-shared`、libdav1d 入り) の使用を推奨 (#508)
   - Windows: `ALLAGANEYE_FFMPEG` で BtbN LGPL ビルドを指定する運用を推奨。既存 winget (`Gyan.FFmpeg`, GPL) のインストール先も後方互換で自動検索される
   - macOS: Homebrew (`/opt/homebrew/bin`, `/usr/local/bin`) を自動検索
 - **Python パッケージ**: numpy, typer, scipy, opencv-python-headless（scorebar V2 検出で使用 #307）

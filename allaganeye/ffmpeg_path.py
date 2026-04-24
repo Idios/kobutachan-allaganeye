@@ -115,7 +115,7 @@ def _error_message(name: str) -> str:
         lines.append(
             "  3. Download BtbN LGPL build from "
             "https://github.com/BtbN/FFmpeg-Builds/releases "
-            "(ffmpeg-nX.Y-...-win64-lgpl-X.Y.zip, recommended to match the Portable ZIP)"
+            "(ffmpeg-nX.Y-...-win64-lgpl-shared-X.Y.zip, recommended to match the Portable ZIP)"
         )
         lines.append(
             "  4. Existing winget Gyan.FFmpeg (GPL) installs are still auto-discovered "
