@@ -364,7 +364,9 @@ def main() -> int:
         #
         # stderr には audit 用の log を残し、stdout には Claude Code の
         # permission prompt 用 JSON を出力して exit 0 で終了する。
-        assert message is not None  # _classify 契約: key != None のとき message も非 None
+        assert (
+            message is not None
+        )  # _classify 契約: key != None のとき message も非 None
         print(
             f"[preuse:{key}] ask -> user permission prompt\n"
             f"Command: {command.strip()[:400]}",
