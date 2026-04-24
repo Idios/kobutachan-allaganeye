@@ -445,4 +445,72 @@ mod tests {
         fs::write(&meta, r#"{}"#).unwrap();
         assert!(file_mtime_ms(&meta).is_some());
     }
+
+    /// Integration test: simulate an external process writing the file after
+    /// GUI load. The fresh mtime must differ from the cached one, and
+    /// `apply_changes_sync` must refuse the stale handle with a conflict error
+    /// while leaving the external write intact. Review指摘 3 (#514 再見直し).
+    #[test]
+    fn apply_changes_detects_conflict_after_real_external_write() {
+        use std::thread::sleep;
+        use std::time::Duration;
+
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        fs::write(&meta, r#"{"v":1}"#).unwrap();
+        let initial_mtime = file_mtime_ms(&meta).expect("initial mtime");
+
+        // Simulate an external writer (another process) replacing the file.
+        // 20ms sleep comfortably exceeds NTFS (100ns) / ext4 (ns) / APFS (ns)
+        // mtime resolutions so the second write produces a strictly newer
+        // timestamp. macOS HFS+ (1s granularity) is out of CI scope.
+        sleep(Duration::from_millis(20));
+        fs::write(&meta, r#"{"external":true}"#).unwrap();
+        let after_external = file_mtime_ms(&meta).expect("post-external mtime");
+        assert!(
+            after_external > initial_mtime,
+            "external write must advance mtime ({after_external} > {initial_mtime})",
+        );
+
+        // apply_changes_sync with the stale initial mtime must refuse the write.
+        let err = apply_changes_sync(&meta, &json!({"v": 2}), Some(initial_mtime))
+            .unwrap_err();
+        assert!(err.starts_with("conflict:"), "unexpected error: {err}");
+
+        // File still reflects the external write (not overwritten).
+        let current: Value =
+            serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
+        assert_eq!(current, json!({"external": true}));
+    }
+
+    /// Integration test: consecutive applies must rotate the mtime correctly.
+    /// After apply 1, the caller holds a fresh mtime; apply 2 with that fresh
+    /// mtime succeeds, and a subsequent apply with the original stale mtime
+    /// must fail. This detects the regression where a GUI self-write would
+    /// immediately conflict on its own next apply. Review指摘 3 (#514 再見直し).
+    #[test]
+    fn consecutive_applies_rotate_mtime_correctly() {
+        use std::thread::sleep;
+        use std::time::Duration;
+
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        fs::write(&meta, r#"{"v":1}"#).unwrap();
+        let m1 = file_mtime_ms(&meta).unwrap();
+
+        sleep(Duration::from_millis(20));
+        apply_changes_sync(&meta, &json!({"v": 2}), Some(m1)).unwrap();
+        let m2 = file_mtime_ms(&meta).unwrap();
+        assert!(m2 > m1, "mtime must advance after apply ({m2} > {m1})");
+
+        sleep(Duration::from_millis(20));
+        apply_changes_sync(&meta, &json!({"v": 3}), Some(m2)).unwrap();
+        let m3 = file_mtime_ms(&meta).unwrap();
+        assert!(m3 > m2, "mtime must advance again ({m3} > {m2})");
+
+        // The original m1 is now stale — attempting to apply with it must fail
+        // (regression guard: prevents accepting pre-first-apply handles).
+        let err = apply_changes_sync(&meta, &json!({"v": 4}), Some(m1)).unwrap_err();
+        assert!(err.starts_with("conflict:"), "unexpected error: {err}");
+    }
 }

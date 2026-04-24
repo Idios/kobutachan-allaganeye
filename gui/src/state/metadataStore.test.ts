@@ -519,4 +519,88 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
     expect(state.conflictError).toBeNull();
     expect(state.loadError).toContain('io error');
   });
+
+  // Review 指摘 3: end-to-end recovery — conflict → reload → re-apply succeeds.
+  // Current `reloadAfterConflict re-loads...` test stops at the reload; this one
+  // proves the next apply completes with the rotated mtime (regression guard).
+  it('conflict → reload → apply completes the full recovery flow', async () => {
+    // Step 1: initial load + apply triggers conflict.
+    configureInvoke({
+      load_metadata: validMetadata(),
+      get_metadata_mtime: 1700,
+      apply_changes_error: new Error(
+        'conflict: external modification detected (expected 1700, got 1800)',
+      ),
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, { name: 'pending-edit' });
+    await useMetadataStore.getState().apply();
+    expect(useMetadataStore.getState().conflictError).toContain('conflict');
+
+    // Step 2: reload → fresh mtime, conflictError cleared.
+    configureInvoke({
+      load_metadata: validMetadata(),
+      get_metadata_mtime: 1900,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().reloadAfterConflict();
+    expect(useMetadataStore.getState().loadedMtimeMs).toBe(1900);
+    expect(useMetadataStore.getState().conflictError).toBeNull();
+
+    // Step 3: re-edit and re-apply with the fresh mtime → success.
+    useMetadataStore.getState().updateMatch(1, { name: 'retry' });
+    configureInvoke({
+      load_metadata: validMetadata(),
+      get_metadata_mtime: 1900,
+      apply_changes: 2100,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().apply();
+
+    const applyCalls = invokeMock.mock.calls.filter((c) => c[0] === 'apply_changes');
+    const lastApply = applyCalls[applyCalls.length - 1];
+    const args = lastApply[1] as { expectedMtimeMs: number | null };
+    expect(args.expectedMtimeMs).toBe(1900);
+    expect(useMetadataStore.getState().conflictError).toBeNull();
+    expect(useMetadataStore.getState().loadedMtimeMs).toBe(2100);
+    expect(useMetadataStore.getState().dirty).toBe(false);
+  });
+
+  // Review 指摘 4: second apply must use the rotated mtime from the first apply
+  // (not the original load mtime). Current `passes the recorded mtime...` test
+  // only checks post-apply `loadedMtimeMs`; this one proves the next apply call
+  // sends the rotated value as expectedMtimeMs — guards against the "self-write
+  // then conflict on own next apply" regression.
+  it('second apply uses the rotated mtime from the first apply, not the original', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      get_metadata_mtime: 1700,
+      apply_changes: 2500,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+
+    // First apply: expectedMtimeMs=1700 → post-write mtime rotates to 2500.
+    useMetadataStore.getState().updateMatch(1, { name: 'first' });
+    await useMetadataStore.getState().apply();
+    expect(useMetadataStore.getState().loadedMtimeMs).toBe(2500);
+
+    // Second apply: swap apply_changes to return 3300, then assert the
+    // expectedMtimeMs sent is the rotated 2500 (not the original 1700).
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'apply_changes') return Promise.resolve(3300);
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    useMetadataStore.getState().updateMatch(1, { name: 'second' });
+    await useMetadataStore.getState().apply();
+
+    const applyCalls = invokeMock.mock.calls.filter((c) => c[0] === 'apply_changes');
+    const args = applyCalls[applyCalls.length - 1][1] as {
+      expectedMtimeMs: number | null;
+    };
+    expect(args.expectedMtimeMs).toBe(2500);
+    expect(useMetadataStore.getState().loadedMtimeMs).toBe(3300);
+  });
 });
