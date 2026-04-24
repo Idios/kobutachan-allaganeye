@@ -801,4 +801,53 @@ describe('useMetadataStore (#517 draft)', () => {
     expect(state.draftLoadError).toBeNull();
     expect(state.draftSaving).toBe(false);
   });
+
+  // Review 指摘 A: path normalization. Platform is Windows-only (CLAUDE.md),
+  // so separator / case differences must not be read as different sources.
+  // Without normalization the draft is silently discarded even though it's
+  // the same file (regression on 受け入れ条件 #3).
+  it('loadDraft treats source paths differing only in separator as equal', async () => {
+    const meta = validMetadata();
+    // Draft captured with backslashes, live metadata with forward slashes.
+    const draft = { ...meta, source: meta.source.replace(/\//g, '\\') };
+    configureInvoke({
+      load_metadata: meta,
+      check_backup_exists: false,
+      load_draft: draft,
+    });
+    await useMetadataStore.getState().load('p');
+    await useMetadataStore.getState().loadDraft();
+    expect(useMetadataStore.getState().pendingDraft).not.toBeNull();
+  });
+
+  it('loadDraft treats source paths differing only in case as equal (Windows)', async () => {
+    const meta = validMetadata();
+    const draft = { ...meta, source: meta.source.toUpperCase() };
+    configureInvoke({
+      load_metadata: meta,
+      check_backup_exists: false,
+      load_draft: draft,
+    });
+    await useMetadataStore.getState().load('p');
+    await useMetadataStore.getState().loadDraft();
+    expect(useMetadataStore.getState().pendingDraft).not.toBeNull();
+  });
+
+  // Review 指摘 B: schema_version unknown → draft parse fails → draftLoadError.
+  // Proves 受け入れ条件 #3 is exercised through the schema_version axis.
+  // Guards against a silent regression when v2 migration is introduced.
+  it('loadDraft surfaces an error when the draft schema_version is unknown', async () => {
+    const meta = validMetadata();
+    const draft = { ...meta, schema_version: '99' };
+    configureInvoke({
+      load_metadata: meta,
+      check_backup_exists: false,
+      load_draft: draft,
+    });
+    await useMetadataStore.getState().load('p');
+    await useMetadataStore.getState().loadDraft();
+    const state = useMetadataStore.getState();
+    expect(state.pendingDraft).toBeNull();
+    expect(state.draftLoadError).toBeTruthy();
+  });
 });

@@ -206,10 +206,11 @@ GUI が `load_metadata` した瞬間のファイル mtime を `metadataStore.loa
 GUI の編集バッファを `metadata.draft.json` に自動保存し、WebView のリロードやアプリクラッシュ時にも編集内容を復元できるようにする。
 
 - **保存先**: `metadata.json` と同ディレクトリの `metadata.draft.json`。atomic write (`.tmp` → rename)
-- **保存タイミング**: `metadataStore.updateMatch` 呼び出し後の debounce (デフォルト 500ms)。`setDraftSaveDelay(ms)` でテスト時短縮可能
+- **保存タイミング**: `metadataStore.updateMatch` 呼び出し後の debounce (デフォルト 500ms)。`setDraftSaveDelay(ms)` でテスト時短縮可能。**debounce 発火前に異常終了した場合、直近 500ms 以内の編集は失われる (データロス上限 = debounce 間隔)**
 - **保存内容**: in-memory の Metadata そのまま (編集フィールド `name` / `type_override` / `edited` も含む)。zod の `MatchSchema.passthrough()` で load 時に pass-through
 - **復元フロー**: `metadataStore.load` 成功後に自動で `loadDraft` を呼び、存在すれば `pendingDraft` にセット。`DraftRestoreModal` (App.tsx に global 配置) が「復元 / 破棄」を提示
-- **source 不一致チェック**: draft の `source` が現在 load した metadata の `source` と異なる場合、stale draft として自動削除 (modal は出さない)
+- **source 不一致チェック**: draft の `source` が現在 load した metadata の `source` と異なる場合、stale draft として自動削除 (modal は出さない)。比較は Windows 前提で separator (`\\` ↔ `/`) と大文字小文字を正規化した上で行う (`normalizeSourcePath`)
+- **source 以外のドリフト** (matches 数・detection_params・source_duration 等): 検知対象外。source が一致する限り draft は有効と見なす。metadata.json を CLI で再生成した場合の排他管理は別 issue (§将来の拡張「排他管理 (mtime 検知 / 同時編集警告)」参照) で対応予定
 - **apply 成功後**: `metadataStore.apply` が成功すると `clearDraft` を呼び、`metadata.draft.json` をディスクから削除
 - **Rust commands**: `save_draft(path, draft)` / `load_draft(path) -> Option<Value>` / `clear_draft(path)` — すべて atomic、clear は no-op-when-missing
 

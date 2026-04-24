@@ -9,6 +9,19 @@ export type MatchEditPatch = Partial<
   Pick<Match, 'name' | 'type_override' | 'edited'>
 >;
 
+/**
+ * Normalize a filesystem path for source-equality comparison (#517, review).
+ *
+ * The current platform is Windows-only (see CLAUDE.md), so two paths that
+ * differ only in separator (`\` vs `/`) or letter case should be treated as
+ * pointing at the same file. Without normalization a draft whose source was
+ * captured with one convention is dropped as stale even though it's the same
+ * video — the draft the user was editing would be silently discarded.
+ */
+function normalizeSourcePath(p: string): string {
+  return p.replace(/\\/g, '/').toLowerCase();
+}
+
 export interface MetadataState {
   metadata: Metadata | null;
   filePath: string | null;
@@ -354,7 +367,12 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       const parsed = MetadataSchema.parse(raw) as unknown as Metadata;
       // #517: if the draft was produced against a different source video,
       // it's stale — drop it rather than offering restore on the wrong file.
-      if (parsed.source !== metadata.source) {
+      // Normalize separator + case (Windows only) so the same file captured
+      // with `C:\...` vs `C:/...` or `...MKV` vs `...mkv` round-trips as equal.
+      if (
+        normalizeSourcePath(parsed.source) !==
+        normalizeSourcePath(metadata.source)
+      ) {
         await invoke('clear_draft', { path: filePath });
         set({ pendingDraft: null, draftLoadError: null });
         return;
