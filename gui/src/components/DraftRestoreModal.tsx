@@ -11,9 +11,13 @@ import styles from './DraftRestoreModal.module.css';
 export function DraftRestoreModal() {
   const pendingDraft = useMetadataStore((s) => s.pendingDraft);
   const draftLoadError = useMetadataStore((s) => s.draftLoadError);
+  const conflictError = useMetadataStore((s) => s.conflictError);
   const restoreDraft = useMetadataStore((s) => s.restoreDraft);
   const discardDraft = useMetadataStore((s) => s.discardDraft);
 
+  // #517 × #514: ConflictModal は metadata 本体の同期が優先。draft restore は
+  // conflict 解消後に提示する (Modal 同時表示による UX 崩壊を回避)。
+  if (conflictError) return null;
   if (!pendingDraft && !draftLoadError) return null;
 
   if (draftLoadError) {

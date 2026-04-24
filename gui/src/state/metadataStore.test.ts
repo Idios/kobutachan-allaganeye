@@ -891,3 +891,80 @@ describe('useMetadataStore (#517 draft)', () => {
     expect(useMetadataStore.getState().draftSaveError).toBeNull();
   });
 });
+
+// Review 指摘 4: #514 × #517 相互作用。各 Modal / action の順序契約と state
+// 共存の妥当性を unit レベルで pin し、将来 refactor で silent regression が
+// 発生しないよう保護する。
+describe('useMetadataStore (#514 × #517 interaction)', () => {
+  // 4-1: load は mtime 記録が終わってから loadDraft を呼ぶ。順序が入れ替わると
+  // draft 検査時に metadata が未確定 or mtime 未記録になる。
+  it('load invokes get_metadata_mtime before loadDraft', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      check_backup_exists: false,
+      load_draft: null,
+    });
+    await useMetadataStore.getState().load('p');
+    const calls = invokeMock.mock.calls.map((c) => c[0] as string);
+    const mtimeIdx = calls.indexOf('get_metadata_mtime');
+    const loadDraftIdx = calls.indexOf('load_draft');
+    expect(mtimeIdx).toBeGreaterThanOrEqual(0);
+    expect(loadDraftIdx).toBeGreaterThan(mtimeIdx);
+  });
+
+  // 4-2: applyOverwrite は apply と共通 helper (runApply) 経由なので、上書き
+  // 成功後も clear_draft が発火することを保証する。
+  it('applyOverwrite success triggers clearDraft via shared runApply', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      check_backup_exists: false,
+      apply_changes: 9999,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, { name: 'x' });
+    await useMetadataStore.getState().applyOverwrite();
+    const clearCall = invokeMock.mock.calls.find((c) => c[0] === 'clear_draft');
+    expect(clearCall).toBeDefined();
+  });
+
+  // 4-3: reloadAfterConflict は load(filePath) を呼ぶため、source 一致な draft
+  // があれば pendingDraft が再設定される (ユーザー編集救済の意図挙動)。
+  it('reloadAfterConflict re-triggers loadDraft via load', async () => {
+    const meta = validMetadata();
+    const draft = {
+      ...meta,
+      matches: meta.matches.map((m) => ({ ...m, name: 'rescued' })),
+    };
+    configureInvoke({
+      load_metadata: meta,
+      check_backup_exists: false,
+      load_draft: draft,
+    });
+    await useMetadataStore.getState().load('p');
+    // conflict 発火を simulate
+    useMetadataStore.setState({ conflictError: 'conflict: external' });
+    await useMetadataStore.getState().reloadAfterConflict();
+    expect(useMetadataStore.getState().pendingDraft?.matches[0].name).toBe(
+      'rescued',
+    );
+    expect(useMetadataStore.getState().conflictError).toBeNull();
+  });
+
+  // 4-4: state 層では conflictError と pendingDraft が共存できる。排他制御は
+  // UI 層 (DraftRestoreModal が conflictError 非 null 時に return null) が担う。
+  // store に排他条件を入れると「conflict 解消後に draft modal が復活する」
+  // 挙動を壊してしまう。
+  it('conflictError and pendingDraft can coexist in state (resolved at render layer)', async () => {
+    const meta = validMetadata();
+    configureInvoke({
+      load_metadata: meta,
+      check_backup_exists: false,
+      load_draft: meta,
+    });
+    await useMetadataStore.getState().load('p');
+    expect(useMetadataStore.getState().pendingDraft).not.toBeNull();
+    useMetadataStore.setState({ conflictError: 'conflict: external' });
+    expect(useMetadataStore.getState().conflictError).toBeTruthy();
+    expect(useMetadataStore.getState().pendingDraft).not.toBeNull();
+  });
+});

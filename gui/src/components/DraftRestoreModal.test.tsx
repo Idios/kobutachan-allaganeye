@@ -122,4 +122,17 @@ describe('DraftRestoreModal', () => {
     expect(screen.getByRole('button', { name: '破棄' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '復元' })).toBeNull();
   });
+
+  // Review 指摘 2-2 (#517 × #514): ConflictModal が前に出ている間は
+  // DraftRestoreModal を描画しない。両 Modal の同時表示で backdrop が
+  // 重なる UX 崩壊を防ぐ (ConflictModal の 3 択を先に解消させる)。
+  it('does not render while conflictError is set (ConflictModal takes priority)', () => {
+    useMetadataStore.setState({
+      pendingDraft: seedMetadata(),
+      conflictError: 'conflict: external modification detected',
+      filePath: '/tmp/metadata.json',
+    });
+    const { container } = render(<DraftRestoreModal />);
+    expect(container.firstChild).toBeNull();
+  });
 });

@@ -211,7 +211,7 @@ GUI の編集バッファを `metadata.draft.json` に自動保存し、WebView 
 - **復元フロー**: `metadataStore.load` 成功後に自動で `loadDraft` を呼び、存在すれば `pendingDraft` にセット。`DraftRestoreModal` (App.tsx に global 配置) が「復元 / 破棄」を提示
 - **metadata.json load 失敗時の挙動**: `metadata.json` が不正 / 不存在 / 破損で load が失敗した場合、`loadDraft` は呼ばれず (`metadata` が null のため早期 return)、復元 modal も表示されない。ユーザーは `metadata.json` を復旧してから再 load することで、残存する draft が復元候補として提示される。`metadata.draft.json` のみ単独で存在する状態での復元は対象外
 - **source 不一致チェック**: draft の `source` が現在 load した metadata の `source` と異なる場合、stale draft として自動削除 (modal は出さない)。比較は Windows 前提で separator (`\\` ↔ `/`) と大文字小文字を正規化した上で行う (`normalizeSourcePath`)
-- **source 以外のドリフト** (matches 数・detection_params・source_duration 等): 検知対象外。source が一致する限り draft は有効と見なす。metadata.json を CLI で再生成した場合の排他管理は別 issue (§将来の拡張「排他管理 (mtime 検知 / 同時編集警告)」参照) で対応予定
+- **source 以外のドリフト** (matches 数・detection_params・source_duration 等): 検知対象外。source が一致する限り draft は有効と見なす。metadata.json を CLI で再生成した場合の検知は §排他管理 (#514) で別途実装されている (mtime mismatch → `ConflictModal`)。本機能と排他管理は独立したレイヤ: mtime check が metadata 本体の同期を担当し、draft は GUI 編集バッファの保全を担当する。両者の相互作用は §排他管理と draft の相互作用 参照
 - **apply 成功後**: `metadataStore.apply` が成功すると `clearDraft` を呼び、`metadata.draft.json` をディスクから削除
 - **save 失敗の可視化**: `save_draft` 呼び出しが失敗 (disk full / permission denied / atomic rename 失敗等) すると `metadataStore.draftSaveError` に格納される。`scheduleDraftSave` は fire-and-forget だが state 経由で UI が検知可能 (toast / status bar 表示は Phase 3 以降で拡張予定)。次回 save 成功時に自動クリア
 - **Rust commands**: `save_draft(path, draft)` / `load_draft(path) -> Option<Value>` / `clear_draft(path)` — すべて atomic、clear は no-op-when-missing
@@ -225,6 +225,16 @@ GUI の編集バッファを `metadata.draft.json` に自動保存し、WebView 
 | 破棄 | `clearDraft()` を呼んで `metadata.draft.json` を削除し、`pendingDraft=null` |
 
 draft の zod parse に失敗した場合は error-only modal を出し「破棄」のみ提示する。
+
+### 排他管理 (#514) と draft (#517) の相互作用
+
+GUI が `load` / `apply` / `reloadAfterConflict` を実行するとき、排他管理 (mtime) と draft (in-memory buffer) が同時に state を更新する。両者の契約を以下に固定:
+
+- **`load` 順序**: `load_metadata` → `get_metadata_mtime` → set state → `refreshBackupStatus` → `loadDraft`。mtime 記録が完了してから draft 検査を行う
+- **Modal 優先順位**: `conflictError` が非 null の場合、`DraftRestoreModal` は描画されない。`ConflictModal` (3 択: 上書き / リロード / キャンセル) を先に解消してから draft restore を提示
+- **`apply` 成功時の順序**: `loadedMtimeMs` 更新 → `refreshBackupStatus` → `cancelDraftSave` → `clearDraft`。mtime を確実に更新した後に draft clear
+- **`applyOverwrite` と draft**: `applyOverwrite` は `apply` と共通 helper (`runApply`) 経由なので、上書き成功後も draft clear が発火する
+- **`reloadAfterConflict` 後の draft**: `reloadAfterConflict` は `load(filePath)` を呼ぶため、source 一致な draft があれば `DraftRestoreModal` が再提示される (ユーザー編集の救済として意図された挙動)
 
 ## 将来の拡張 (Phase 1 スコープ外)
 
