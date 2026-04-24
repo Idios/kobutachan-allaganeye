@@ -82,6 +82,8 @@ PR の変更種別に応じて以下を確認する:
 - コード変更がドキュメント記述と矛盾していないか
 - 出力形式変更の場合、`docs/cli-spec.md` の出力例も更新されているか (#343 系の再発防止)
 
+**diff 外 doc の確認ができない場合の処置**: 関連 doc の整合性確認がレビューセッションで完結しない (ファイルが session context 外 / アクセス不可 / 判断に専門領域知識が必要) 場合、「確認不要」と自己判断して省略せず、**(A) PR コメントで PR 作成セッションに整合性確認を依頼** する。Iron Law 3 / 5 に従い、曖昧な判断は独断で skip しない。
+
 ### 5a. ギャップ分析 (明示指示不要で自動実施)
 
 Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾いきれない未テスト分岐・未考慮観点を洗い出す。`/review-pr` 呼び出し時は指示の有無に関わらず標準業務として実施する (#511)。
@@ -126,7 +128,7 @@ Step 3 (受け入れ条件未達) / Step 4 (CI 失敗) / Step 5 (ロジック・
 | PR 本文に記載のある軽微なスコープ外変更 (無関係な lint fix / 型リネーム 等) | **(A) revert 要求** または **(B) 別 issue 起票** を `AskUserQuestion` で確定 | Iron Law 3「軽微だから」の独断禁止。scope-guard skill に委譲可 |
 | スコープ外変更に伴う追従テスト不足 | 元変更の処置に連動: (A) revert → 追従テスト指摘は消滅 / (B) スコープ拡大合意 → 同 PR 内で (A) 追加要求 | 二重構造なので元スコープ判定を先に確定する |
 | 参照ファイル追加 (バイナリ等) の実体未検証 | **(A) PR コメント** (サイズ・次元・生成条件の PR 本文追記を要求) | enforce-acceptance-criteria §Step 3 チェック項目直結 |
-| doc 変更 PR で発見した CI 設定 (`.github/workflows/`) との矛盾 | **(A) PR コメント** (パス変更スコープに含まれる) | doc-only の境界を越える。波及が大きく別タスク相当なら (B) |
+| doc 変更 PR で発見した CI 設定 (`.github/workflows/`) との矛盾 | **(A) PR コメント** (パス変更スコープに含まれる) | doc-only の境界を越える。「波及が大きい」の目安 — **(A) 目安**: 同一 PR で対応可能 (CI YAML 1-2 箇所の path 書換え / テスト追加 1-2 ファイル / doc 追従 1-2 箇所)。**(B) 目安**: 別レイヤー実装変更を伴う (検知パイプライン / GUI / CLI への連鎖修正 / 既存テスト再実行工数が GPU / 音声統合で 30 分超 / 別担当領域)。判断に迷う場合は AskUserQuestion でユーザー (Idios) 判断に回す |
 | 束ね PR で分離推奨と判断 | **(A) 分離依頼** (束ねの合理性を問い、分離 or 合理性説明を要求) | 束ね合理性が明記されていれば合意可、なければ分離優先 |
 | 予告文 (「今後実装」「追加予定」) の実装に該当する PR での予告文更新漏れ | **(A) PR コメント** (本 skill Step 5 にも明記された修正依頼対象) | CLAUDE.md / docs の予告文更新は受け入れ条件レベル |
 
@@ -244,6 +246,12 @@ Step 5b のトリアージ表を前提に `AskUserQuestion` で以下を提示�
 
 4. issue 側への方針記録コメント (受け入れ条件 #N の合意内容など) はレビューセッションで行って OK (PR コード編集とは別粒度のアクション)。
 
+**補足: scope-guard 発動時の AskUserQuestion 投げ先**
+
+スコープ逸脱に該当する摘出課題で (A) / (B) を確定する場合、AskUserQuestion は**ユーザー (Idios) に対して**実施する。PR 作成セッションではない。
+
+根拠: scope-guard skill は Iron Law 3 の執行機構として人間メンテナの判断 (a)/(b)/(c) を強制するゲートであり、PR 作成セッション側に判断権限はない (`scope-guard/SKILL.md` §Step 3 参照)。
+
 ### 7a. 再レビューラウンド管理 (Round 2+)
 
 修正依頼 → PR 作成セッション修正 → 再レビュー のループを Round N で追跡する。各 Round で Step 6 テンプレートの `# Review Round N` ヘッダと「前回差分 / 本 Round 新出」を必ず記録する。
@@ -311,6 +319,7 @@ Step 5b のトリアージ表を前提に `AskUserQuestion` で以下を提示�
 1. 代替として本 SKILL.md Step 3 + `enforce-acceptance-criteria/SKILL.md` の手順を手動で再現する (`gh pr view $ARGUMENTS --json body` で PR 本文を取得し、受け入れ条件節を抽出 → 各条件を diff / test / log で実証)
 2. Step 6 テンプレート冒頭に「fallback: /enforce-acceptance-criteria 未実行 — 手動で Iron Law 1 逐条検証を実施」と明示
 3. 手動実施でも**逐条引用 + diff / test 対応付け**の質は妥協しない (Iron Law 1 違反は skill 実行有無に関わらず NG)
+4. Step 3 補助チェックの **`Closes` / `Fixes` / `Resolves` キーワード不在** は §B fallback 時も**必須チェック** として実施する。`/enforce-acceptance-criteria` が動く場合は二重チェックになるため明示スキップ可だが、fallback 時は enforce-ac の自動検証がないため省略しない
 
 ### §C. CI 未設定 / CI failing が意図的
 
@@ -331,6 +340,11 @@ Step 5b のトリアージ表を前提に `AskUserQuestion` で以下を提示�
 1. doc 内で変更されたパス・ファイル名・コマンド例が `.github/workflows/` の YAML や `allaganeye/` コード内でも参照されているか `grep` で確認
 2. 変更範囲が「純粋な文章のみ」(参照パス・識別子 変更を含まない) であれば CI 波及チェックをスキップ可
 3. パス・識別子 変更を含む場合は CI 設定 / コード参照の整合性を Step 5 ドキュメント整合性チェックで必須項目化
+4. `grep` 検証の判定水準:
+   - (i) grep が残存 import / 参照を検出 → (A) PR コメントで修正依頼
+   - (ii) grep 結果なし + CI typecheck green (pyright / tsc) → 実質的に未使用と判定可、追加対応不要
+   - (iii) grep 結果なし + CI typecheck 未設定 → typecheck 追加を (B) 別 issue 起票 or PR 作成セッションに依頼
+   - 動的 import (`importlib` / `import()` 実行時解決) は grep / typecheck だけでは検出不可。該当ソースに動的 import が含まれる場合は `/test-pr` で実機検証を依頼
 
 ### §E. 参照ファイル追加 (バイナリ等) を伴う PR
 
