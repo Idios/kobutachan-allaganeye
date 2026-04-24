@@ -257,4 +257,50 @@ describe('PreviewScreen', () => {
     await userEvent.setup().click(outVideo);
     expect(playSpy).toHaveBeenCalledTimes(1);
   });
+
+  // #465 review 追加: 再生中の TC 表示は video.currentTime に追従する。
+
+  it('TC display follows video.currentTime during playback (timeupdate event)', async () => {
+    render(<PreviewScreen />);
+    const video = (await screen.findByLabelText(
+      'IN (start) video',
+    )) as HTMLVideoElement;
+    const tc = screen.getByLabelText('IN (start) timecode') as HTMLInputElement;
+    const initial = tc.value;
+
+    // video が再生中の状態を simulate: paused=false + currentTime を進める
+    Object.defineProperty(video, 'paused', { value: false, configurable: true });
+    Object.defineProperty(video, 'currentTime', {
+      value: 12.5,
+      configurable: true,
+    });
+    // dispatchEvent で timeupdate を発火
+    video.dispatchEvent(new Event('timeupdate'));
+
+    // state 更新を待つ
+    await new Promise((r) => setTimeout(r, 20));
+    expect(tc.value).not.toBe(initial);
+    // TC は 0:00:12.xx (fmtPreciseTime 形式) であるべき
+    expect(tc.value).toMatch(/^0:00:12/);
+  });
+
+  it('TC display does NOT update from timeupdate while paused (state remains user-controlled)', async () => {
+    render(<PreviewScreen />);
+    const video = (await screen.findByLabelText(
+      'IN (start) video',
+    )) as HTMLVideoElement;
+    const tc = screen.getByLabelText('IN (start) timecode') as HTMLInputElement;
+    const initial = tc.value;
+
+    // paused=true の状態で currentTime を変更 → timeupdate (pause 直前の最後の tick 等)
+    Object.defineProperty(video, 'paused', { value: true, configurable: true });
+    Object.defineProperty(video, 'currentTime', {
+      value: 30.0,
+      configurable: true,
+    });
+    video.dispatchEvent(new Event('timeupdate'));
+    await new Promise((r) => setTimeout(r, 20));
+    // paused 中は state を上書きしない → TC は初期値のまま
+    expect(tc.value).toBe(initial);
+  });
 });

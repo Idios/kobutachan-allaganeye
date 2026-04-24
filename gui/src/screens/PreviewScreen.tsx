@@ -41,6 +41,10 @@ const ASSUMED_FPS = 60;
  * - The active pane's video.currentTime follows the editable start/end,
  *   giving frame-accurate seek preview.
  * - Click on the video toggles play/pause on the active pane (UX item 4).
+ * - TC display follows `video.currentTime` during playback (UX review
+ *   追加). Paused 中は nudge / manual input が t の source、playback 中は
+ *   video 側が source。境界の最終値 (edited.start_time / end_time) は
+ *   停止時の currentTime になる。
  * - FrameStrip still serves a cache of thumbnails around the boundary; the
  *   Rust side generates them through `generate_match_thumbnails`.
  *
@@ -131,9 +135,20 @@ export function PreviewScreen() {
   // Keep each video's currentTime in sync with the edit buffer so a keyboard
   // nudge immediately seeks the frame preview. We only seek when the numeric
   // value actually changes to avoid feedback loops with timeupdate events.
+  //
+  // #465 review 追加: `v.paused` guard で playback 中は seek しない。再生中の
+  // onTimeUpdate が setStartT/setEndT を呼ぶため、もし guard が無いと
+  //   timeupdate → setStartT(cur) → effect 実行中に cur が advance →
+  //   effect は差分 > 0.001 を検出し backward seek
+  // というループで再生が揺れる。paused 中のみ state → video を反映する。
   useEffect(() => {
     const v = inVideoRef.current;
-    if (v && !Number.isNaN(startT) && Math.abs(v.currentTime - startT) > 0.001) {
+    if (
+      v &&
+      v.paused &&
+      !Number.isNaN(startT) &&
+      Math.abs(v.currentTime - startT) > 0.001
+    ) {
       try {
         v.currentTime = startT;
       } catch {
@@ -144,7 +159,12 @@ export function PreviewScreen() {
 
   useEffect(() => {
     const v = outVideoRef.current;
-    if (v && !Number.isNaN(endT) && Math.abs(v.currentTime - endT) > 0.001) {
+    if (
+      v &&
+      v.paused &&
+      !Number.isNaN(endT) &&
+      Math.abs(v.currentTime - endT) > 0.001
+    ) {
       try {
         v.currentTime = endT;
       } catch {
@@ -522,6 +542,18 @@ function Pane({
               if (v) {
                 if (v.paused) void v.play().catch(() => undefined);
                 else v.pause();
+              }
+            }}
+            // #465 review 追加: 再生中は TC 表示 (onTChange) を video.currentTime
+            // に同期させる (UX 追加: ユーザー期待)。paused 中は nudge / 手入力
+            // した t を残したいので guard。paused 状態の最終 timeupdate も読む
+            // ので、pause 後の TC は「停止したフレームの時刻」になる。
+            // 逆方向の sync (t → video.currentTime) は外側の useEffect が 0.001
+            // 閾値付きで担当しており feedback loop は起きない。
+            onTimeUpdate={(e) => {
+              const v = e.currentTarget;
+              if (!v.paused) {
+                onTChange(v.currentTime);
               }
             }}
           />
