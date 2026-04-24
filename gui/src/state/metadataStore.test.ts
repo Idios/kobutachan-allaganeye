@@ -794,12 +794,14 @@ describe('useMetadataStore (#517 draft)', () => {
       pendingDraft: validMetadata(),
       draftLoadError: 'prev',
       draftSaving: true,
+      draftSaveError: 'prev-save-err',
     });
     useMetadataStore.getState().clear();
     const state = useMetadataStore.getState();
     expect(state.pendingDraft).toBeNull();
     expect(state.draftLoadError).toBeNull();
     expect(state.draftSaving).toBe(false);
+    expect(state.draftSaveError).toBeNull();
   });
 
   // Review 指摘 A: path normalization. Platform is Windows-only (CLAUDE.md),
@@ -849,5 +851,43 @@ describe('useMetadataStore (#517 draft)', () => {
     const state = useMetadataStore.getState();
     expect(state.pendingDraft).toBeNull();
     expect(state.draftLoadError).toBeTruthy();
+  });
+
+  // Review 指摘 F1: saveDraft failures must surface via draftSaveError.
+  // scheduleDraftSave calls saveDraft fire-and-forget, so without this guard
+  // disk-full / permission-denied failures would be silent unhandled
+  // rejections. A save that never landed breaks the "restore after crash"
+  // contract — users need a way to detect it.
+  it('saveDraft surfaces invoke errors via draftSaveError state', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      check_backup_exists: false,
+      save_draft_error: new Error('disk full'),
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, { name: 'x' });
+    await useMetadataStore.getState().saveDraft();
+    const state = useMetadataStore.getState();
+    expect(state.draftSaveError).toContain('disk full');
+    expect(state.draftSaving).toBe(false);
+  });
+
+  it('saveDraft clears previous draftSaveError on next success', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      check_backup_exists: false,
+      save_draft_error: new Error('transient'),
+    });
+    await useMetadataStore.getState().load('p');
+    await useMetadataStore.getState().saveDraft();
+    expect(useMetadataStore.getState().draftSaveError).toBeTruthy();
+
+    // Next save succeeds → error cleared.
+    configureInvoke({
+      load_metadata: validMetadata(),
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().saveDraft();
+    expect(useMetadataStore.getState().draftSaveError).toBeNull();
   });
 });

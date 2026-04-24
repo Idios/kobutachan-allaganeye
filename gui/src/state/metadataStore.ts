@@ -61,6 +61,14 @@ export interface MetadataState {
   draftLoadError: string | null;
   /** #517: true while an auto-save (debounced saveDraft) is in flight. */
   draftSaving: boolean;
+  /**
+   * #517: last draft save error (disk full / permission denied / atomic
+   * rename failure). Cleared on the next successful save. Surfacing this in
+   * state lets the UI notify the user — otherwise save failures are silent
+   * unhandled rejections and the "restore after crash" contract is weakened
+   * (a save that never landed cannot be restored).
+   */
+  draftSaveError: string | null;
 
   load: (path: string) => Promise<void>;
   updateMatch: (index: number, patch: MatchEditPatch) => void;
@@ -205,6 +213,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
   pendingDraft: null,
   draftLoadError: null,
   draftSaving: false,
+  draftSaveError: null,
 
   load: async (path) => {
     try {
@@ -225,6 +234,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         conflictError: null,
         pendingDraft: null,
         draftLoadError: null,
+        draftSaveError: null,
       });
       await get().refreshBackupStatus();
       // #517: automatically probe for a draft after a successful load. If one
@@ -242,6 +252,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         conflictError: null,
         pendingDraft: null,
         draftLoadError: null,
+        draftSaveError: null,
       });
     }
   },
@@ -290,6 +301,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       pendingDraft: null,
       draftLoadError: null,
       draftSaving: false,
+      draftSaveError: null,
     });
   },
 
@@ -347,9 +359,14 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
   saveDraft: async () => {
     const { filePath, metadata } = get();
     if (!filePath || !metadata) return;
-    set({ draftSaving: true });
+    // Clear any prior save error up-front so consumers see a fresh attempt.
+    set({ draftSaving: true, draftSaveError: null });
     try {
       await invoke('save_draft', { path: filePath, draft: metadata });
+    } catch (e) {
+      // Surface the failure via state — scheduleDraftSave's fire-and-forget
+      // call would otherwise swallow the rejection silently (see F1 review).
+      set({ draftSaveError: e instanceof Error ? e.message : String(e) });
     } finally {
       set({ draftSaving: false });
     }
@@ -433,6 +450,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       pendingDraft: null,
       draftLoadError: null,
       draftSaving: false,
+      draftSaveError: null,
     });
   },
   };

@@ -681,4 +681,29 @@ mod tests {
         // Draft must not touch the backup file.
         assert!(!backup.exists());
     }
+
+    /// Review 指摘 F3: save_draft must complete correctly even when a stale
+    /// `metadata.draft.json.tmp` is left over from a previous crash. This
+    /// pins the atomic-write contract for the draft file: the rename is not
+    /// blocked by pre-existing tmp artifacts and the final file reflects the
+    /// new payload regardless of prior state.
+    #[test]
+    fn save_draft_succeeds_when_stale_tmp_file_exists() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let draft_file = tmp.path().join("metadata.draft.json");
+        let tmp_file = tmp.path().join("metadata.draft.json.tmp");
+        // Simulate a crash that left a stale .tmp file behind.
+        fs::write(&tmp_file, r#"{"corrupt": true}"#).unwrap();
+        assert!(tmp_file.exists());
+
+        let draft = json!({"source": "a.mkv", "matches": []});
+        save_draft_sync(&meta, &draft).unwrap();
+
+        // Final file must have the new content regardless of prior .tmp state.
+        assert!(draft_file.exists());
+        let roundtrip: Value =
+            serde_json::from_str(&fs::read_to_string(&draft_file).unwrap()).unwrap();
+        assert_eq!(roundtrip, draft);
+    }
 }

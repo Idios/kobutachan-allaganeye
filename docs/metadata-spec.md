@@ -209,10 +209,13 @@ GUI の編集バッファを `metadata.draft.json` に自動保存し、WebView 
 - **保存タイミング**: `metadataStore.updateMatch` 呼び出し後の debounce (デフォルト 500ms)。`setDraftSaveDelay(ms)` でテスト時短縮可能。**debounce 発火前に異常終了した場合、直近 500ms 以内の編集は失われる (データロス上限 = debounce 間隔)**
 - **保存内容**: in-memory の Metadata そのまま (編集フィールド `name` / `type_override` / `edited` も含む)。zod の `MatchSchema.passthrough()` で load 時に pass-through
 - **復元フロー**: `metadataStore.load` 成功後に自動で `loadDraft` を呼び、存在すれば `pendingDraft` にセット。`DraftRestoreModal` (App.tsx に global 配置) が「復元 / 破棄」を提示
+- **metadata.json load 失敗時の挙動**: `metadata.json` が不正 / 不存在 / 破損で load が失敗した場合、`loadDraft` は呼ばれず (`metadata` が null のため早期 return)、復元 modal も表示されない。ユーザーは `metadata.json` を復旧してから再 load することで、残存する draft が復元候補として提示される。`metadata.draft.json` のみ単独で存在する状態での復元は対象外
 - **source 不一致チェック**: draft の `source` が現在 load した metadata の `source` と異なる場合、stale draft として自動削除 (modal は出さない)。比較は Windows 前提で separator (`\\` ↔ `/`) と大文字小文字を正規化した上で行う (`normalizeSourcePath`)
 - **source 以外のドリフト** (matches 数・detection_params・source_duration 等): 検知対象外。source が一致する限り draft は有効と見なす。metadata.json を CLI で再生成した場合の排他管理は別 issue (§将来の拡張「排他管理 (mtime 検知 / 同時編集警告)」参照) で対応予定
 - **apply 成功後**: `metadataStore.apply` が成功すると `clearDraft` を呼び、`metadata.draft.json` をディスクから削除
+- **save 失敗の可視化**: `save_draft` 呼び出しが失敗 (disk full / permission denied / atomic rename 失敗等) すると `metadataStore.draftSaveError` に格納される。`scheduleDraftSave` は fire-and-forget だが state 経由で UI が検知可能 (toast / status bar 表示は Phase 3 以降で拡張予定)。次回 save 成功時に自動クリア
 - **Rust commands**: `save_draft(path, draft)` / `load_draft(path) -> Option<Value>` / `clear_draft(path)` — すべて atomic、clear は no-op-when-missing
+- **クラッシュ時のアトミック性**: `save_draft` は `write_metadata_atomic` ヘルパー (`.tmp` → atomic rename) を使用する。save 中のクラッシュでは `metadata.draft.json` は書き換え前の状態で残る (partial 書き込みは発生しない)。`metadata.draft.json.tmp` が残存することがあるが、次回 save で上書きされる / 次回 load で読み込み対象外のため cleanup は不要
 
 ### ユーザー選択肢 (DraftRestoreModal)
 
