@@ -230,6 +230,38 @@ def test_split_and_write_metadata_contains_schema_version(tmp_path):
     assert payload["schema_version"] == "1"
 
 
+def test_split_and_write_metadata_emits_empty_warnings_array(tmp_path):
+    """#518: metadata.json writer always emits a `warnings` field (default []).
+
+    Locks in the schema for consumers so that once concrete codes ship in
+    a later PR, readers already treat `warnings` as a known key.
+    """
+    from allaganeye.video.detector import MatchBoundary
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    boundaries: list[MatchBoundary] = [
+        {"start": 0.0, "end": 120.0, "type": "fl_match"},
+    ]
+
+    with patch(
+        f"{MODULE}.split_video",
+        return_value=[tmp_path / "match_001.mp4"],
+    ):
+        _split_and_write_metadata(
+            tmp_path / "input.mp4",
+            boundaries,
+            [],
+            PROBE_RESULT,
+            config,
+            effective_interval=1.0,
+            detected_at="2026-04-22T00:00:00Z",
+            quiet=True,
+        )
+
+    payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
+    assert payload["warnings"] == []
+
+
 def test_run_split_from_metadata_accepts_legacy_file_without_schema_version(
     tmp_path,
 ):

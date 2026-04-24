@@ -36,6 +36,20 @@ export interface Gap {
   duration_display: string;
 }
 
+/**
+ * #518 -- structured warning scaffold. The writer currently emits `[]`;
+ * future detection codes populate individual entries. Readers should
+ * pass unknown `code` values through unchanged.
+ */
+export type WarningSeverity = 'info' | 'warn' | 'error';
+
+export interface MetadataWarning {
+  code: string;
+  message_en?: string;
+  severity?: WarningSeverity;
+  context?: Record<string, unknown>;
+}
+
 export interface Metadata {
   /**
    * #515: schema revision declaration. Optional on the TS type because
@@ -50,4 +64,6 @@ export interface Metadata {
   detection_params: DetectionParams;
   matches: Match[];
   gaps: Gap[];
+  /** #518 -- optional on the TS type because legacy files don't emit it. */
+  warnings?: MetadataWarning[];
 }
