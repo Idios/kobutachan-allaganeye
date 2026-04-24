@@ -9,6 +9,19 @@ export type MatchEditPatch = Partial<
   Pick<Match, 'name' | 'type_override' | 'edited'>
 >;
 
+/**
+ * Normalize a filesystem path for source-equality comparison (#517, review).
+ *
+ * The current platform is Windows-only (see CLAUDE.md), so two paths that
+ * differ only in separator (`\` vs `/`) or letter case should be treated as
+ * pointing at the same file. Without normalization a draft whose source was
+ * captured with one convention is dropped as stale even though it's the same
+ * video — the draft the user was editing would be silently discarded.
+ */
+function normalizeSourcePath(p: string): string {
+  return p.replace(/\\/g, '/').toLowerCase();
+}
+
 export interface MetadataState {
   metadata: Metadata | null;
   filePath: string | null;
@@ -37,6 +50,25 @@ export interface MetadataState {
    * `applyOverwrite` / `reloadAfterConflict` / `dismissConflict`.
    */
   conflictError: string | null;
+  /**
+   * #517: a draft snapshot loaded from metadata.draft.json that differs from
+   * the live metadata on disk. Non-null means the UI should ask the user
+   * whether to restore or discard. Resolved via `restoreDraft()` /
+   * `discardDraft()`.
+   */
+  pendingDraft: Metadata | null;
+  /** #517: last draft load error (corrupt draft / parse failure). */
+  draftLoadError: string | null;
+  /** #517: true while an auto-save (debounced saveDraft) is in flight. */
+  draftSaving: boolean;
+  /**
+   * #517: last draft save error (disk full / permission denied / atomic
+   * rename failure). Cleared on the next successful save. Surfacing this in
+   * state lets the UI notify the user — otherwise save failures are silent
+   * unhandled rejections and the "restore after crash" contract is weakened
+   * (a save that never landed cannot be restored).
+   */
+  draftSaveError: string | null;
 
   load: (path: string) => Promise<void>;
   updateMatch: (index: number, patch: MatchEditPatch) => void;
@@ -56,11 +88,47 @@ export interface MetadataState {
   /** #514: close the conflict modal without side effects (edits stay in store). */
   dismissConflict: () => void;
 
+  /** #517: write the current in-memory metadata to metadata.draft.json. */
+  saveDraft: () => Promise<void>;
+  /** #517: probe the filesystem for a draft; populates `pendingDraft` if the
+   *  draft is valid and references the same source. Call after `load()`. */
+  loadDraft: () => Promise<void>;
+  /** #517: delete metadata.draft.json (post-apply cleanup). */
+  clearDraft: () => Promise<void>;
+  /** #517: apply `pendingDraft` to `metadata` and mark the store dirty so the
+   *  user can re-apply. Does NOT touch disk — user still needs to press 適用. */
+  restoreDraft: () => void;
+  /** #517: drop `pendingDraft` and delete the on-disk draft file. */
+  discardDraft: () => Promise<void>;
+
   /** Phase 2 only: load the in-memory sample metadata (no filePath set). */
   loadSample: () => void;
 }
 
 const PERSISTABLE_TYPES = new Set<TypeOverride>(['fl_match', 'unknown']);
+
+/** #517: draft auto-save debounce interval. Module-scoped so tests can
+ *  override by importing `setDraftSaveDelay`. */
+let draftSaveDelayMs = 500;
+export function setDraftSaveDelay(ms: number): void {
+  draftSaveDelayMs = ms;
+}
+let draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleDraftSave(trigger: () => void): void {
+  if (draftSaveTimer !== null) {
+    clearTimeout(draftSaveTimer);
+  }
+  draftSaveTimer = setTimeout(() => {
+    draftSaveTimer = null;
+    trigger();
+  }, draftSaveDelayMs);
+}
+function cancelDraftSave(): void {
+  if (draftSaveTimer !== null) {
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
+  }
+}
 
 function normalizeForPersistence(metadata: Metadata): Metadata {
   return {
@@ -114,6 +182,10 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         conflictError: null,
       });
       await get().refreshBackupStatus();
+      // #517: successful apply means the on-disk state caught up with our
+      // edits, so drop the draft.
+      cancelDraftSave();
+      await get().clearDraft();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.startsWith('conflict:')) {
@@ -138,6 +210,10 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
 
   loadedMtimeMs: null,
   conflictError: null,
+  pendingDraft: null,
+  draftLoadError: null,
+  draftSaving: false,
+  draftSaveError: null,
 
   load: async (path) => {
     try {
@@ -156,8 +232,15 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         restoreError: null,
         loadedMtimeMs: mtime ?? null,
         conflictError: null,
+        pendingDraft: null,
+        draftLoadError: null,
+        draftSaveError: null,
       });
       await get().refreshBackupStatus();
+      // #517: automatically probe for a draft after a successful load. If one
+      // exists and references the same source, the UI will surface a restore
+      // modal via `pendingDraft`.
+      await get().loadDraft();
     } catch (e) {
       set({
         metadata: null,
@@ -167,6 +250,9 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         hasBackup: false,
         loadedMtimeMs: null,
         conflictError: null,
+        pendingDraft: null,
+        draftLoadError: null,
+        draftSaveError: null,
       });
     }
   },
@@ -181,6 +267,13 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       metadata: { ...state.metadata, matches },
       dirty: true,
     });
+    // #517: auto-save the edit buffer. Only makes sense when a real file is
+    // loaded (sample mode has no backing path).
+    if (get().filePath) {
+      scheduleDraftSave(() => {
+        void get().saveDraft();
+      });
+    }
   },
 
   apply: async () => {
@@ -192,6 +285,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
   },
 
   clear: () => {
+    cancelDraftSave();
     set({
       metadata: null,
       filePath: null,
@@ -204,6 +298,10 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       restoreError: null,
       loadedMtimeMs: null,
       conflictError: null,
+      pendingDraft: null,
+      draftLoadError: null,
+      draftSaving: false,
+      draftSaveError: null,
     });
   },
 
@@ -258,7 +356,85 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
     set({ conflictError: null });
   },
 
+  saveDraft: async () => {
+    const { filePath, metadata } = get();
+    if (!filePath || !metadata) return;
+    // Clear any prior save error up-front so consumers see a fresh attempt.
+    set({ draftSaving: true, draftSaveError: null });
+    try {
+      await invoke('save_draft', { path: filePath, draft: metadata });
+    } catch (e) {
+      // Surface the failure via state — scheduleDraftSave's fire-and-forget
+      // call would otherwise swallow the rejection silently (see F1 review).
+      set({ draftSaveError: e instanceof Error ? e.message : String(e) });
+    } finally {
+      set({ draftSaving: false });
+    }
+  },
+
+  loadDraft: async () => {
+    const { filePath, metadata } = get();
+    if (!filePath || !metadata) return;
+    try {
+      const raw = await invoke<unknown>('load_draft', { path: filePath });
+      if (raw === null || raw === undefined) {
+        set({ pendingDraft: null, draftLoadError: null });
+        return;
+      }
+      const parsed = MetadataSchema.parse(raw) as unknown as Metadata;
+      // #517: if the draft was produced against a different source video,
+      // it's stale — drop it rather than offering restore on the wrong file.
+      // Normalize separator + case (Windows only) so the same file captured
+      // with `C:\...` vs `C:/...` or `...MKV` vs `...mkv` round-trips as equal.
+      if (
+        normalizeSourcePath(parsed.source) !==
+        normalizeSourcePath(metadata.source)
+      ) {
+        await invoke('clear_draft', { path: filePath });
+        set({ pendingDraft: null, draftLoadError: null });
+        return;
+      }
+      set({ pendingDraft: parsed, draftLoadError: null });
+    } catch (e) {
+      set({
+        pendingDraft: null,
+        draftLoadError: e instanceof Error ? e.message : String(e),
+      });
+    }
+  },
+
+  clearDraft: async () => {
+    const { filePath } = get();
+    if (!filePath) {
+      set({ pendingDraft: null });
+      return;
+    }
+    try {
+      await invoke('clear_draft', { path: filePath });
+    } finally {
+      set({ pendingDraft: null });
+    }
+  },
+
+  restoreDraft: () => {
+    const { pendingDraft } = get();
+    if (!pendingDraft) return;
+    // Apply the draft to the store as an in-memory edit. The user still has
+    // to press 適用 to persist, which mirrors the normal edit flow and gives
+    // them a chance to back out.
+    set({
+      metadata: pendingDraft,
+      dirty: true,
+      pendingDraft: null,
+    });
+  },
+
+  discardDraft: async () => {
+    await get().clearDraft();
+  },
+
   loadSample: () => {
+    cancelDraftSave();
     set({
       metadata: sampleMetadata,
       filePath: null,
@@ -271,6 +447,10 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       restoreError: null,
       loadedMtimeMs: null,
       conflictError: null,
+      pendingDraft: null,
+      draftLoadError: null,
+      draftSaving: false,
+      draftSaveError: null,
     });
   },
   };

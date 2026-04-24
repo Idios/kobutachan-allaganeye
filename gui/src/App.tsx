@@ -1,4 +1,5 @@
 import { ConflictModal } from './components/ConflictModal';
+import { DraftRestoreModal } from './components/DraftRestoreModal';
 import { SideRail } from './components/SideRail';
 import { StateSwitcher } from './components/StateSwitcher';
 import { CompleteScreen } from './screens/CompleteScreen';
@@ -45,6 +46,8 @@ export default function App() {
       </div>
       {/* #514 — global modal for metadata.json external-modification conflicts. */}
       <ConflictModal />
+      {/* #517 — global modal for draft restore offers on mount/post-load. */}
+      <DraftRestoreModal />
     </div>
   );
 }

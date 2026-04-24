@@ -68,6 +68,13 @@ interface MockConfig {
   restore_from_original_error?: Error;
   check_backup_exists?: boolean;
   check_backup_exists_error?: Error;
+  // #517
+  save_draft?: unknown;
+  save_draft_error?: Error;
+  load_draft?: unknown;
+  load_draft_error?: Error;
+  clear_draft?: unknown;
+  clear_draft_error?: Error;
 }
 
 function configureInvoke(cfg: MockConfig) {
@@ -93,6 +100,15 @@ function configureInvoke(cfg: MockConfig) {
         if (cfg.check_backup_exists_error)
           return Promise.reject(cfg.check_backup_exists_error);
         return Promise.resolve(cfg.check_backup_exists ?? false);
+      case 'save_draft':
+        if (cfg.save_draft_error) return Promise.reject(cfg.save_draft_error);
+        return Promise.resolve(cfg.save_draft);
+      case 'load_draft':
+        if (cfg.load_draft_error) return Promise.reject(cfg.load_draft_error);
+        return Promise.resolve(cfg.load_draft ?? null);
+      case 'clear_draft':
+        if (cfg.clear_draft_error) return Promise.reject(cfg.clear_draft_error);
+        return Promise.resolve(cfg.clear_draft);
       default:
         return Promise.reject(new Error(`unmocked invoke: ${cmd}`));
     }
@@ -371,6 +387,8 @@ describe('useMetadataStore.loadSample', () => {
     expect(state.hasBackup).toBe(false);
     expect(state.loadedMtimeMs).toBeNull();
     expect(state.conflictError).toBeNull();
+    expect(state.pendingDraft).toBeNull();
+    expect(state.draftLoadError).toBeNull();
   });
 });
 
@@ -602,5 +620,351 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
     };
     expect(args.expectedMtimeMs).toBe(2500);
     expect(useMetadataStore.getState().loadedMtimeMs).toBe(3300);
+  });
+});
+
+// #517 — draft auto-save.
+
+describe('useMetadataStore (#517 draft)', () => {
+  it('saveDraft invokes save_draft with the current metadata', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, { name: 'x' });
+    await useMetadataStore.getState().saveDraft();
+
+    const saveCall = invokeMock.mock.calls.find((c) => c[0] === 'save_draft');
+    expect(saveCall).toBeDefined();
+    expect(saveCall![1]).toMatchObject({ path: 'p' });
+    // The draft payload carries the in-memory metadata (including name).
+    const draft = (saveCall![1] as { draft: Metadata }).draft;
+    expect(draft.matches[0].name).toBe('x');
+  });
+
+  it('saveDraft is a no-op when no filePath is set (sample mode)', async () => {
+    useMetadataStore.getState().loadSample();
+    await useMetadataStore.getState().saveDraft();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('loadDraft populates pendingDraft when backing source matches', async () => {
+    const meta = validMetadata();
+    const draft = { ...meta, matches: meta.matches.map((m) => ({ ...m, name: 'restored' })) };
+    configureInvoke({
+      load_metadata: meta,
+      check_backup_exists: false,
+      load_draft: draft,
+    });
+    await useMetadataStore.getState().load('p');
+    await useMetadataStore.getState().loadDraft();
+    const state = useMetadataStore.getState();
+    expect(state.pendingDraft).not.toBeNull();
+    expect(state.pendingDraft?.matches[0].name).toBe('restored');
+    expect(state.draftLoadError).toBeNull();
+  });
+
+  it('loadDraft discards drafts whose source does not match the loaded file', async () => {
+    const meta = validMetadata();
+    // Draft points at a different source video.
+    const draft = { ...meta, source: 'C:/videos/DIFFERENT.mkv' };
+    configureInvoke({
+      load_metadata: meta,
+      check_backup_exists: false,
+      load_draft: draft,
+    });
+    await useMetadataStore.getState().load('p');
+    await useMetadataStore.getState().loadDraft();
+    const state = useMetadataStore.getState();
+    expect(state.pendingDraft).toBeNull();
+    // Stale draft is cleaned up on disk.
+    const clearCall = invokeMock.mock.calls.find((c) => c[0] === 'clear_draft');
+    expect(clearCall).toBeDefined();
+  });
+
+  it('loadDraft sets draftLoadError on parse failure', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      check_backup_exists: false,
+      load_draft: { bogus: true }, // won't pass zod
+    });
+    await useMetadataStore.getState().load('p');
+    await useMetadataStore.getState().loadDraft();
+    const state = useMetadataStore.getState();
+    expect(state.pendingDraft).toBeNull();
+    expect(state.draftLoadError).toBeTruthy();
+  });
+
+  it('loadDraft is a no-op when no draft exists on disk', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      check_backup_exists: false,
+      load_draft: null,
+    });
+    await useMetadataStore.getState().load('p');
+    await useMetadataStore.getState().loadDraft();
+    const state = useMetadataStore.getState();
+    expect(state.pendingDraft).toBeNull();
+    expect(state.draftLoadError).toBeNull();
+  });
+
+  it('restoreDraft applies pendingDraft to metadata and marks dirty', async () => {
+    const meta = validMetadata();
+    const draft = {
+      ...meta,
+      matches: meta.matches.map((m) => ({ ...m, name: 'from-draft' })),
+    };
+    configureInvoke({
+      load_metadata: meta,
+      check_backup_exists: false,
+      load_draft: draft,
+    });
+    await useMetadataStore.getState().load('p');
+    await useMetadataStore.getState().loadDraft();
+    useMetadataStore.getState().restoreDraft();
+    const state = useMetadataStore.getState();
+    expect(state.metadata?.matches[0].name).toBe('from-draft');
+    expect(state.dirty).toBe(true);
+    expect(state.pendingDraft).toBeNull();
+  });
+
+  it('discardDraft removes the on-disk draft and clears pendingDraft', async () => {
+    const meta = validMetadata();
+    configureInvoke({
+      load_metadata: meta,
+      check_backup_exists: false,
+      load_draft: meta,
+    });
+    await useMetadataStore.getState().load('p');
+    await useMetadataStore.getState().loadDraft();
+    expect(useMetadataStore.getState().pendingDraft).not.toBeNull();
+
+    await useMetadataStore.getState().discardDraft();
+    expect(useMetadataStore.getState().pendingDraft).toBeNull();
+    const clearCall = invokeMock.mock.calls.find((c) => c[0] === 'clear_draft');
+    expect(clearCall).toBeDefined();
+  });
+
+  it('clearDraft is a no-op when filePath is null', async () => {
+    useMetadataStore.setState({ filePath: null, pendingDraft: null });
+    // No mock for clear_draft — should still succeed because we skip invoke.
+    await useMetadataStore.getState().clearDraft();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('apply success triggers clearDraft', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      check_backup_exists: false,
+      apply_changes: undefined,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, { name: 'x' });
+    await useMetadataStore.getState().apply();
+    const clearCall = invokeMock.mock.calls.find((c) => c[0] === 'clear_draft');
+    expect(clearCall).toBeDefined();
+  });
+
+  it('updateMatch schedules a debounced saveDraft', async () => {
+    const { setDraftSaveDelay } = await import('./metadataStore');
+    setDraftSaveDelay(10); // speed up the debounce for the test
+    try {
+      configureInvoke({
+        load_metadata: validMetadata(),
+        check_backup_exists: false,
+      });
+      await useMetadataStore.getState().load('p');
+      useMetadataStore.getState().updateMatch(1, { name: 'x' });
+      // Not invoked yet — debounce in flight.
+      expect(
+        invokeMock.mock.calls.find((c) => c[0] === 'save_draft'),
+      ).toBeUndefined();
+      await new Promise((r) => setTimeout(r, 25));
+      expect(
+        invokeMock.mock.calls.find((c) => c[0] === 'save_draft'),
+      ).toBeDefined();
+    } finally {
+      setDraftSaveDelay(500);
+    }
+  });
+
+  it('clear() resets all draft state', () => {
+    useMetadataStore.setState({
+      pendingDraft: validMetadata(),
+      draftLoadError: 'prev',
+      draftSaving: true,
+      draftSaveError: 'prev-save-err',
+    });
+    useMetadataStore.getState().clear();
+    const state = useMetadataStore.getState();
+    expect(state.pendingDraft).toBeNull();
+    expect(state.draftLoadError).toBeNull();
+    expect(state.draftSaving).toBe(false);
+    expect(state.draftSaveError).toBeNull();
+  });
+
+  // Review 指摘 A: path normalization. Platform is Windows-only (CLAUDE.md),
+  // so separator / case differences must not be read as different sources.
+  // Without normalization the draft is silently discarded even though it's
+  // the same file (regression on 受け入れ条件 #3).
+  it('loadDraft treats source paths differing only in separator as equal', async () => {
+    const meta = validMetadata();
+    // Draft captured with backslashes, live metadata with forward slashes.
+    const draft = { ...meta, source: meta.source.replace(/\//g, '\\') };
+    configureInvoke({
+      load_metadata: meta,
+      check_backup_exists: false,
+      load_draft: draft,
+    });
+    await useMetadataStore.getState().load('p');
+    await useMetadataStore.getState().loadDraft();
+    expect(useMetadataStore.getState().pendingDraft).not.toBeNull();
+  });
+
+  it('loadDraft treats source paths differing only in case as equal (Windows)', async () => {
+    const meta = validMetadata();
+    const draft = { ...meta, source: meta.source.toUpperCase() };
+    configureInvoke({
+      load_metadata: meta,
+      check_backup_exists: false,
+      load_draft: draft,
+    });
+    await useMetadataStore.getState().load('p');
+    await useMetadataStore.getState().loadDraft();
+    expect(useMetadataStore.getState().pendingDraft).not.toBeNull();
+  });
+
+  // Review 指摘 B: schema_version unknown → draft parse fails → draftLoadError.
+  // Proves 受け入れ条件 #3 is exercised through the schema_version axis.
+  // Guards against a silent regression when v2 migration is introduced.
+  it('loadDraft surfaces an error when the draft schema_version is unknown', async () => {
+    const meta = validMetadata();
+    const draft = { ...meta, schema_version: '99' };
+    configureInvoke({
+      load_metadata: meta,
+      check_backup_exists: false,
+      load_draft: draft,
+    });
+    await useMetadataStore.getState().load('p');
+    await useMetadataStore.getState().loadDraft();
+    const state = useMetadataStore.getState();
+    expect(state.pendingDraft).toBeNull();
+    expect(state.draftLoadError).toBeTruthy();
+  });
+
+  // Review 指摘 F1: saveDraft failures must surface via draftSaveError.
+  // scheduleDraftSave calls saveDraft fire-and-forget, so without this guard
+  // disk-full / permission-denied failures would be silent unhandled
+  // rejections. A save that never landed breaks the "restore after crash"
+  // contract — users need a way to detect it.
+  it('saveDraft surfaces invoke errors via draftSaveError state', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      check_backup_exists: false,
+      save_draft_error: new Error('disk full'),
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, { name: 'x' });
+    await useMetadataStore.getState().saveDraft();
+    const state = useMetadataStore.getState();
+    expect(state.draftSaveError).toContain('disk full');
+    expect(state.draftSaving).toBe(false);
+  });
+
+  it('saveDraft clears previous draftSaveError on next success', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      check_backup_exists: false,
+      save_draft_error: new Error('transient'),
+    });
+    await useMetadataStore.getState().load('p');
+    await useMetadataStore.getState().saveDraft();
+    expect(useMetadataStore.getState().draftSaveError).toBeTruthy();
+
+    // Next save succeeds → error cleared.
+    configureInvoke({
+      load_metadata: validMetadata(),
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().saveDraft();
+    expect(useMetadataStore.getState().draftSaveError).toBeNull();
+  });
+});
+
+// Review 指摘 4: #514 × #517 相互作用。各 Modal / action の順序契約と state
+// 共存の妥当性を unit レベルで pin し、将来 refactor で silent regression が
+// 発生しないよう保護する。
+describe('useMetadataStore (#514 × #517 interaction)', () => {
+  // 4-1: load は mtime 記録が終わってから loadDraft を呼ぶ。順序が入れ替わると
+  // draft 検査時に metadata が未確定 or mtime 未記録になる。
+  it('load invokes get_metadata_mtime before loadDraft', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      check_backup_exists: false,
+      load_draft: null,
+    });
+    await useMetadataStore.getState().load('p');
+    const calls = invokeMock.mock.calls.map((c) => c[0] as string);
+    const mtimeIdx = calls.indexOf('get_metadata_mtime');
+    const loadDraftIdx = calls.indexOf('load_draft');
+    expect(mtimeIdx).toBeGreaterThanOrEqual(0);
+    expect(loadDraftIdx).toBeGreaterThan(mtimeIdx);
+  });
+
+  // 4-2: applyOverwrite は apply と共通 helper (runApply) 経由なので、上書き
+  // 成功後も clear_draft が発火することを保証する。
+  it('applyOverwrite success triggers clearDraft via shared runApply', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      check_backup_exists: false,
+      apply_changes: 9999,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, { name: 'x' });
+    await useMetadataStore.getState().applyOverwrite();
+    const clearCall = invokeMock.mock.calls.find((c) => c[0] === 'clear_draft');
+    expect(clearCall).toBeDefined();
+  });
+
+  // 4-3: reloadAfterConflict は load(filePath) を呼ぶため、source 一致な draft
+  // があれば pendingDraft が再設定される (ユーザー編集救済の意図挙動)。
+  it('reloadAfterConflict re-triggers loadDraft via load', async () => {
+    const meta = validMetadata();
+    const draft = {
+      ...meta,
+      matches: meta.matches.map((m) => ({ ...m, name: 'rescued' })),
+    };
+    configureInvoke({
+      load_metadata: meta,
+      check_backup_exists: false,
+      load_draft: draft,
+    });
+    await useMetadataStore.getState().load('p');
+    // conflict 発火を simulate
+    useMetadataStore.setState({ conflictError: 'conflict: external' });
+    await useMetadataStore.getState().reloadAfterConflict();
+    expect(useMetadataStore.getState().pendingDraft?.matches[0].name).toBe(
+      'rescued',
+    );
+    expect(useMetadataStore.getState().conflictError).toBeNull();
+  });
+
+  // 4-4: state 層では conflictError と pendingDraft が共存できる。排他制御は
+  // UI 層 (DraftRestoreModal が conflictError 非 null 時に return null) が担う。
+  // store に排他条件を入れると「conflict 解消後に draft modal が復活する」
+  // 挙動を壊してしまう。
+  it('conflictError and pendingDraft can coexist in state (resolved at render layer)', async () => {
+    const meta = validMetadata();
+    configureInvoke({
+      load_metadata: meta,
+      check_backup_exists: false,
+      load_draft: meta,
+    });
+    await useMetadataStore.getState().load('p');
+    expect(useMetadataStore.getState().pendingDraft).not.toBeNull();
+    useMetadataStore.setState({ conflictError: 'conflict: external' });
+    expect(useMetadataStore.getState().conflictError).toBeTruthy();
+    expect(useMetadataStore.getState().pendingDraft).not.toBeNull();
   });
 });
