@@ -123,22 +123,43 @@ ffmpeg -hwaccel auto -ss <chunk_start> -t <chunk_duration> -i input.mkv \
 
 **フォールバック**: GPU デコードに失敗した場合は `VideoProcessingError` を送出し、呼び出し元（`detector.py`）が自動で CPU モードにフォールバックする。
 
-### コーデック自動選択（#334, #414）
+### コーデック + vendor 自動選択（#334, #414, #546）
 
-`--gpu` / `--no-gpu` 未指定時は probe で取得した codec を元に GPU/CPU を自動選択する (`_resolve_gpu_mode`)。判定セットは `_GPU_PREFERRED_CODECS` に定義。
+`--gpu` / `--no-gpu` 未指定時は probe で取得した codec と GPU vendor を元に GPU/CPU を自動選択する (`_resolve_gpu_mode`)。判定セットは `_GPU_PREFERRED_CODECS` に定義。
+
+**codec × 推奨 GPU decode (参考)**
 
 | Codec | auto 選択 | NVDEC 要件 | Intel QSV 要件 | AMD VCN 要件 |
 |---|---|---|---|---|
 | H.264 | GPU | 全世代 | 全世代 | 全世代 |
 | HEVC | GPU | Maxwell GM206+ | Skylake+ | VCN 1.0+ |
 | AV1 | GPU (#414) | RTX 30 (Ampere) 以降 | Arc / Gen12 以降 | VCN 4.0 以降 |
-| VP9 | GPU (#414) — 実 decode は soft (#538) | N/A | N/A | N/A |
+| VP9 | GPU (#414) — NVIDIA は soft decode (#538), AMD は `vp9_amf` 利用可 | Maxwell 以降 (#538 で NVDEC 経路除外) | Gen9+ | VCN 1.0+ |
 | その他 (mpeg2video, vc1, prores 等) | CPU | — | — | — |
 
-- VP9 は `_GPU_PREFERRED_CODECS` に残すが `_CUVID_CODEC_MAP` から除外 (#538)。理由: ffmpeg 8.1 の `vp9_cuvid` は frame を `nv12 + csp:gbr` で tag し、後段の swscaler が gray 変換を `EOPNOTSUPP (-129)` として reject する。auto-select で GPU mode に振られても `_decode_chunk` は else branch (`-hwaccel auto`) を使い、ffmpeg 側で soft decode (native) が選ばれる (実測 speed 2.64x で chunk 並列に十分)。`vp9_cuvid` の ffmpeg 側修正が入った時点で復活検討。
-- ハードウェアが新 codec に未対応の場合、ffmpeg の `-hwaccel auto` が GPU decode に失敗 → 上記フォールバック経路で CPU に自動切替
+- VP9 は `_GPU_PREFERRED_CODECS` に残すが NVIDIA 経路 (`_GPU_DECODER_MAP["nvidia"]`) からは除外 (#538 / #549)。理由: ffmpeg 8.1 の `vp9_cuvid` は frame を `nv12 + csp:gbr` で tag し、後段の swscaler が gray 変換を `EOPNOTSUPP (-129)` として reject する。NVIDIA auto-select で GPU mode に振られても `_decode_chunk` は else branch (`-hwaccel auto`) を使い、ffmpeg 側で soft decode (native) が選ばれる (実測 speed 2.64x)。AMD AMF は csp:gbr 問題なし (実測 nv12+bt709) で `vp9_amf` 経由 GPU decode 可能。`vp9_cuvid` の ffmpeg 側修正が入った時点で NVIDIA 経路の復活検討。
+
+**vendor × codec 実装状況 (#546)**
+
+| Vendor | hwaccel | h264 | hevc | av1 | vp9 | 備考 |
+|---|---|---|---|---|---|---|
+| NVIDIA (NVDEC cuvid) | `cuda` | `h264_cuvid` | `hevc_cuvid` | `av1_cuvid` | (soft, #538/#549) | dGPU 想定、dual GPU では優先選択 |
+| AMD (AMF) | (未実装) | (未実装) | (未実装) | (未実装) | (未実装) | #553 で追跡中。AMF decoder 出力の pix_fmt が allaganeye の `fps -> scale -> format=gray` filter と非互換で swscaler reinit 失敗。`--gpu-vendor amd` は現在 exit 5 |
+| Intel (QSV) | (未実装) | (未実装) | (未実装) | (未実装) | (未対応) | #550 で実装予定。`--gpu-vendor intel` は現在 exit 5 |
+| Apple (VideoToolbox) | — | — | — | — | — | Windows ffmpeg 未同梱、別 issue 追跡 |
+
+**vendor 自動選択ロジック (`_resolve_gpu_mode` + `_select_gpu_vendor`)**
+
+1. `allaganeye.system_info.probe_gpu_vendors()` が platform 別 probe (nvidia-smi / wmic / lspci / system_profiler) で検出した vendor list を取得
+2. `--gpu-vendor <vendor>` explicit の場合: `available` に含まれない、または `_VENDOR_HWACCEL_MAP` に未登録 (amd / intel 等) なら `ConfigValidationError` (exit 5)
+3. `--gpu-vendor auto` (default) の場合: `_VENDOR_PREFERENCE = ("nvidia", "amd", "intel")` x `available` x 実装済み (`_VENDOR_HWACCEL_MAP` に含まれる) の最上位を選択。現時点で実装済みは NVIDIA のみ (AMD は #553, Intel は #550 で追跡)
+4. codec が `_GPU_PREFERRED_CODECS` に含まれない場合は CPU mode。vendor が None (GPU 検出失敗 / 未実装 vendor のみ検出) でも codec match なら `use_gpu=True` を返し、`scan_gpu` の legacy path (`-hwaccel auto`) に入る。ffmpeg 側で GPU decode 失敗時は上記フォールバック経路で CPU 自動切替 (#334 既存挙動を維持)
+
+**フォールバック経路**
+
+- ハードウェアが新 codec に未対応の場合、ffmpeg の `-hwaccel <hwaccel>` が GPU decode に失敗 → 上記フォールバック経路で CPU に自動切替
 - 明示的に GPU を使いたい場合は `--gpu` フラグで強制可能（対応しない codec では起動時に GPU decode 失敗で exit）
-- `_CUVID_CODEC_MAP` には mpeg2video / mpeg4 / vp8 / mpeg1video も登録済みだが、`_GPU_PREFERRED_CODECS` に含めず auto では CPU (`--gpu` 明示時のみ GPU decode 経路)
+- `_GPU_DECODER_MAP["nvidia"]` には mpeg2video / mpeg4 / vp8 / mpeg1video も登録済みだが、`_GPU_PREFERRED_CODECS` に含めず auto では CPU (`--gpu` 明示時のみ GPU decode 経路)
 
 ### スコアバーフィルタリング（Phase 3, #111）
 

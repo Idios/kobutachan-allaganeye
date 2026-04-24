@@ -1760,49 +1760,75 @@ class TestDiskSpaceCheck:
 
 
 class TestResolveGpuMode:
-    """Codec-based GPU/CPU auto-selection (#334)."""
+    """Codec-based GPU/CPU auto-selection (#334) + vendor selection (#546)."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_probe(self, monkeypatch):
+        """Default: NVIDIA only so vendor auto-select is deterministic."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["nvidia"],
+        )
 
     def test_explicit_gpu_true(self):
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        assert _resolve_gpu_mode(True, "av1", show=False, verbose=False) is True
+        use_gpu, vendor = _resolve_gpu_mode(
+            True, None, "av1", show=False, verbose=False
+        )
+        assert use_gpu is True
+        assert vendor == "nvidia"
 
     def test_explicit_gpu_false(self):
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        assert _resolve_gpu_mode(False, "h264", show=False, verbose=False) is False
+        use_gpu, _vendor = _resolve_gpu_mode(
+            False, None, "h264", show=False, verbose=False
+        )
+        assert use_gpu is False
 
     def test_auto_h264_selects_gpu(self):
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        assert _resolve_gpu_mode(None, "h264", show=False, verbose=False) is True
+        use_gpu, vendor = _resolve_gpu_mode(
+            None, None, "h264", show=False, verbose=False
+        )
+        assert use_gpu is True
+        assert vendor == "nvidia"
 
     def test_auto_hevc_selects_gpu(self):
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        assert _resolve_gpu_mode(None, "hevc", show=False, verbose=False) is True
+        use_gpu, _ = _resolve_gpu_mode(None, None, "hevc", show=False, verbose=False)
+        assert use_gpu is True
 
     def test_auto_av1_selects_gpu(self):
         """AV1 auto-selects GPU (#414: NVDEC AV1 = RTX 30+ / QSV AV1 = Gen12+ / VCN 4.0+)."""
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        assert _resolve_gpu_mode(None, "av1", show=False, verbose=False) is True
+        use_gpu, _ = _resolve_gpu_mode(None, None, "av1", show=False, verbose=False)
+        assert use_gpu is True
 
     def test_auto_vp9_selects_gpu(self):
         """VP9 auto-selects GPU (#414: widely supported NVDEC Maxwell+)."""
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        assert _resolve_gpu_mode(None, "vp9", show=False, verbose=False) is True
+        use_gpu, _ = _resolve_gpu_mode(None, None, "vp9", show=False, verbose=False)
+        assert use_gpu is True
 
     def test_auto_unknown_codec_selects_cpu(self):
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        assert _resolve_gpu_mode(None, None, show=False, verbose=False) is False
+        use_gpu, vendor = _resolve_gpu_mode(None, None, None, show=False, verbose=False)
+        assert use_gpu is False
+        # vendor が probe で見つかっても CPU 選択時は None にして vendor 情報を
+        # downstream (scan_gpu) に渡さない (GPU path を使わないため不要)
+        assert vendor is None
 
     def test_auto_verbose_shows_message(self, capsys):
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        _resolve_gpu_mode(None, "h264", show=True, verbose=True)
+        _resolve_gpu_mode(None, None, "h264", show=True, verbose=True)
         out = capsys.readouterr().out
         assert "Auto-selected GPU mode" in out
         assert "h264" in out
@@ -1816,7 +1842,7 @@ class TestResolveGpuMode:
         """
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        _resolve_gpu_mode(None, "mpeg2video", show=True, verbose=True)
+        _resolve_gpu_mode(None, None, "mpeg2video", show=True, verbose=True)
         out = capsys.readouterr().out
         assert "Auto-selected CPU mode" in out
         assert "mpeg2video" in out
@@ -1825,7 +1851,7 @@ class TestResolveGpuMode:
         """Non-verbose auto selection is silent (#334)."""
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        _resolve_gpu_mode(None, "h264", show=True, verbose=False)
+        _resolve_gpu_mode(None, None, "h264", show=True, verbose=False)
         out = capsys.readouterr().out
         assert "Auto-selected" not in out
 
@@ -1833,23 +1859,141 @@ class TestResolveGpuMode:
         """--quiet (show=False) silences auto-selection message even with verbose (#334)."""
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        _resolve_gpu_mode(None, "h264", show=False, verbose=True)
+        _resolve_gpu_mode(None, None, "h264", show=False, verbose=True)
         out = capsys.readouterr().out
         assert "Auto-selected" not in out
 
     def test_auto_codec_matching_is_case_insensitive(self):
-        """Codec name matching is case-insensitive (#334).
-
-        ffprobe normally returns lowercase codec_name, but downstream
-        callers or manual ProbeResult construction may pass "H264" /
-        "HEVC".  The set is compared via ``.lower()``; guards against a
-        future refactor dropping that normalization.
-        """
+        """Codec name matching is case-insensitive (#334)."""
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        assert _resolve_gpu_mode(None, "H264", show=False, verbose=False) is True
-        assert _resolve_gpu_mode(None, "HEVC", show=False, verbose=False) is True
-        assert _resolve_gpu_mode(None, "Hevc", show=False, verbose=False) is True
+        assert (
+            _resolve_gpu_mode(None, None, "H264", show=False, verbose=False)[0] is True
+        )
+        assert (
+            _resolve_gpu_mode(None, None, "HEVC", show=False, verbose=False)[0] is True
+        )
+        assert (
+            _resolve_gpu_mode(None, None, "Hevc", show=False, verbose=False)[0] is True
+        )
+
+    # ---- vendor selection (#546) ----
+
+    def test_vendor_auto_prefers_nvidia_in_dual_gpu(self, monkeypatch):
+        """Dual GPU 環境で auto は NVIDIA を優先選択 (_VENDOR_PREFERENCE 順)."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["nvidia", "amd"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        _, vendor = _resolve_gpu_mode(None, None, "av1", show=False, verbose=False)
+        assert vendor == "nvidia"
+
+    def test_vendor_auto_no_vendor_when_only_amd(self, monkeypatch):
+        """AMD iGPU のみ環境では vendor=None だが codec match で use_gpu=True.
+
+        AMD AMF decoder は #546 実装時点では _VENDOR_HWACCEL_MAP 未登録
+        (#553 で filter pipeline workaround 確定時に復活予定)。auto
+        選択で AMD は skip されるが、codec=av1 が `_GPU_PREFERRED_CODECS`
+        に含まれるため use_gpu=True を返し、scan_gpu の legacy path
+        (-hwaccel auto) で動作する (GPU decode 失敗時は ffmpeg が
+        CPU fallback)。
+        """
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["amd"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        use_gpu, vendor = _resolve_gpu_mode(
+            None, None, "av1", show=False, verbose=False
+        )
+        assert use_gpu is True
+        assert vendor is None
+
+    def test_vendor_explicit_amd_unimplemented_raises(self, monkeypatch):
+        """AMD は #553 で復活予定、explicit 要求は exit 5 (#546)."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["nvidia", "amd"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+        from allaganeye.exceptions import ConfigValidationError
+
+        with pytest.raises(ConfigValidationError, match="--gpu-vendor amd"):
+            _resolve_gpu_mode(None, "amd", "av1", show=False, verbose=False)
+
+    def test_vendor_explicit_unavailable_raises_config_error(self, monkeypatch):
+        """--gpu-vendor で probe に無い vendor を要求すると exit 5 (#546).
+
+        NVIDIA のみ実装済みなので nvidia の unavailability をテスト。
+        """
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["amd"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+        from allaganeye.exceptions import ConfigValidationError
+
+        with pytest.raises(ConfigValidationError, match="--gpu-vendor nvidia"):
+            _resolve_gpu_mode(None, "nvidia", "av1", show=False, verbose=False)
+
+    def test_vendor_explicit_intel_unimplemented_raises(self, monkeypatch):
+        """Intel は map 未定義なので explicit 要求は exit 5 (#550 で実装予定)."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["intel", "nvidia"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+        from allaganeye.exceptions import ConfigValidationError
+
+        with pytest.raises(ConfigValidationError, match="--gpu-vendor intel"):
+            _resolve_gpu_mode(None, "intel", "av1", show=False, verbose=False)
+
+    def test_vendor_auto_skips_unimplemented(self, monkeypatch):
+        """auto 選択では AMD / Intel (未実装) が available でも skip して NVIDIA を選ぶ (#546)."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["intel", "amd", "nvidia"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        _, vendor = _resolve_gpu_mode(None, None, "av1", show=False, verbose=False)
+        assert vendor == "nvidia"
+
+    def test_vendor_none_when_no_gpu_available(self, monkeypatch):
+        """GPU probe が空でも codec match なら use_gpu=True (legacy path).
+
+        vendor=None (probe 失敗 / Linux CI 等) でも scan_gpu の legacy
+        path (-hwaccel auto) で動作する。ffmpeg 側で GPU decode 失敗
+        した場合は CPU fallback (#334 既存挙動維持)。
+        """
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: [],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        use_gpu, vendor = _resolve_gpu_mode(
+            None, None, "av1", show=False, verbose=False
+        )
+        assert use_gpu is True
+        assert vendor is None
+
+    def test_vendor_auto_string_equivalent_to_none(self, monkeypatch):
+        """--gpu-vendor auto は指定なし (None) と同等の挙動."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["nvidia", "amd"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        _, none_vendor = _resolve_gpu_mode(None, None, "av1", show=False, verbose=False)
+        _, auto_vendor = _resolve_gpu_mode(
+            None, "auto", "av1", show=False, verbose=False
+        )
+        assert none_vendor == auto_vendor == "nvidia"
 
 
 class TestAudioScanIntegration:

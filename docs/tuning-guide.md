@@ -193,6 +193,25 @@ GPU 対応環境（NVIDIA CUDA, Intel QSV 等）では、暗転検知の処理�
 
 低コア数 CPU（4-8 コア）では、GPU モードが有利になりやすい傾向があります。
 
+#### GPU vendor の選択 (`--gpu-vendor`, #546)
+
+現時点で実装済み vendor は NVIDIA のみ (#546)。AMD / Intel は別 issue で追跡中。複数 GPU 環境では、デフォルトで NVIDIA dGPU が選択されます (`_VENDOR_PREFERENCE` = nvidia > amd > intel、未実装 vendor は auto 選択で skip)。明示的に vendor を指定したい場合は `--gpu-vendor` オプションを使ってください。
+
+```bash
+# NVIDIA GPU を明示使用 (dual GPU 環境で dGPU を強制)
+allaganeye split your_recording.mkv --gpu --gpu-vendor nvidia
+
+# 自動選択 (既定値、--gpu-vendor 省略時と同じ)
+allaganeye split your_recording.mkv --gpu --gpu-vendor auto
+```
+
+| Vendor | 対応状況 | 備考 |
+|---|---|---|
+| `nvidia` | 実装済み | NVDEC cuvid 経由、h264 / hevc / av1 対応 |
+| `amd` | 未実装 (#553) | AMF decoder の pix_fmt が allaganeye の filter pipeline と非互換。`--gpu-vendor amd` は現在 exit 5 |
+| `intel` | 未実装 (#550) | `--gpu-vendor intel` は現在 exit 5 |
+| `auto` | 自動選択 | probe 結果から NVIDIA を優先 (AMD / Intel 実装完了までは nvidia が事実上の唯一の選択肢) |
+
 #### ベンチマークで判断する
 
 自分の環境で最適なモードを判断するには、`--dry-run` で両方のモードを試して比較してください。`--dry-run` では動画の分割を行わないため、検知処理の速度だけを比較できます。
