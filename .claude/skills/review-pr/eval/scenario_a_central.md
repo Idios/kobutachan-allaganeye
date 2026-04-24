@@ -9,6 +9,7 @@
 **ラベル**: `[task]`, `l1-residual`, `P2-medium`
 
 **本文**:
+
 ```markdown
 ## 背景
 
@@ -42,6 +43,7 @@ WR→Fanfare 間隔による (B) 条件を追加する旨を予告している�
 **labels**: `[task]`, `l1-residual`
 
 **本文**:
+
 ```markdown
 ## 概要
 
@@ -72,7 +74,7 @@ WR→Fanfare 間隔による (B) 条件を追加する旨を予告している�
 
 ## 主要 diff 要約 (+380 / -72)
 
-```
+```text
 allaganeye/audio/refs/wr.npz        (new file, binary)
 allaganeye/audio/matcher.py         +45  -5    # detect_wr_peaks 追加
 allaganeye/audio/scan.py            +38  -18   # scan_audio_peaks へリネーム、戻り値拡張

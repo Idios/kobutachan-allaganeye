@@ -17,6 +17,7 @@
 **labels**: `[doc]`, `l2a-gui`
 
 **本文**:
+
 ```markdown
 ## 概要
 
@@ -36,7 +37,7 @@ GUI の動作確認手順ドキュメントで参照しているビルド成果�
 
 ## 主要 diff 要約 (+28 / -22)
 
-```
+```text
 docs/gui-development.md             +18 -15    # gui/dist → gui/src-tauri/target/release/bundle
 README.md                           +8  -5     # セットアップ手順のパス追従
 docs/design/README.md               +2  -2     # 関連する 1 箇所のパス追従

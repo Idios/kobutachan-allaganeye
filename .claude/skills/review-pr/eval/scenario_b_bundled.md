@@ -11,6 +11,7 @@
 **ラベル**: `[task]`, `l2a-gui`, `P3-low`
 
 **本文**:
+
 ```markdown
 ## 背景
 
@@ -33,6 +34,7 @@ Jotai の atom 粒度で最適化できるか評価したい。
 **ラベル**: `[refactor]`, `l2a-gui`, `P3-low`
 
 **本文**:
+
 ```markdown
 ## 背景
 
@@ -57,6 +59,7 @@ Jotai の atom 粒度で最適化できるか評価したい。
 **labels**: `[task]`, `[refactor]`, `l2a-gui`
 
 **本文**:
+
 ```markdown
 ## 概要
 
@@ -79,7 +82,7 @@ Jotai の atom 粒度で最適化できるか評価したい。
 
 ## 主要 diff 要約 (+420 / -530)
 
-```
+```text
 gui/src/state/appStateStore.ts      +105 -130   # Zustand → Jotai
 gui/src/state/metadataStore.ts      +95  -140   # Zustand → Jotai
 gui/src/components/RestoreButton.tsx  0  -85    # 削除
