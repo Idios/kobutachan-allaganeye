@@ -40,8 +40,23 @@ const ASSUMED_FPS = 60;
  *   Alt+arrow = +-1 frame, Space = play/pause on the active pane.
  * - The active pane's video.currentTime follows the editable start/end,
  *   giving frame-accurate seek preview.
+ * - Click on the video toggles play/pause on the active pane (UX item 4).
  * - FrameStrip still serves a cache of thumbnails around the boundary; the
  *   Rust side generates them through `generate_match_thumbnails`.
+ *
+ * ## Playback architecture (#465 review item 7)
+ *
+ * Preview uses **axum direct file serving** (HTML5 `<video>` + range
+ * request against the token-gated `127.0.0.1:random` endpoint) — not
+ * ffmpeg transcoding. As a consequence:
+ * - No ffmpeg subprocess is spawned while the user browses the preview
+ *   screen. `PROCESS_TRACKER` stays empty until export runs (#466).
+ * - The × close confirmation flow (#523) guards against in-flight
+ *   *export* ffmpeg processes, not preview. Verifying the flow requires
+ *   the export screen (#545 Phase 4).
+ * - Thumbnails are generated eagerly on pane mount via
+ *   `generate_match_thumbnails`; those ffmpeg calls exit before the user
+ *   interacts and are not tracked in `PROCESS_TRACKER`.
  */
 export function PreviewScreen() {
   const metadata = useMetadataStore((s) => s.metadata);
@@ -357,15 +372,29 @@ export function PreviewScreen() {
 
       <div className={styles.stepRow}>
         {[-10, -1, -1 / ASSUMED_FPS, 1 / ASSUMED_FPS, 1, 10].map((step, i) => {
-          const label =
+          const isFrame =
             Math.abs(step - 1 / ASSUMED_FPS) < 1e-6 ||
-            Math.abs(step + 1 / ASSUMED_FPS) < 1e-6
+            Math.abs(step + 1 / ASSUMED_FPS) < 1e-6;
+          const isTenSec = Math.abs(step) === 10;
+          const label = isFrame
+            ? step > 0
+              ? '+1F'
+              : '−1F'
+            : step > 0
+              ? `+${step}s`
+              : `${step}s`;
+          // #465 review: ツールチップでキーボード等価操作を明示 (UX item 3)。
+          const keyHint = isFrame
+            ? step > 0
+              ? 'Alt + →'
+              : 'Alt + ←'
+            : isTenSec
               ? step > 0
-                ? '+1F'
-                : '−1F'
+                ? 'Shift + →'
+                : 'Shift + ←'
               : step > 0
-                ? `+${step}s`
-                : `${step}s`;
+                ? '→'
+                : '←';
           return (
             <button
               key={i}
@@ -373,11 +402,30 @@ export function PreviewScreen() {
               className={styles.stepButton}
               onClick={() => nudge(step)}
               aria-label={`nudge ${label}`}
+              title={`${label} (${keyHint})`}
             >
               {label}
             </button>
           );
         })}
+      </div>
+
+      {/* #465 review: キーボードショートカット可視化 (UX item 3)。stepRow 下に
+       *  インライン hint を出し、はじめてのユーザーにも操作方法が伝わる。 */}
+      <div className={styles.keyHint} role="note" aria-label="keyboard shortcuts">
+        <span className={styles.keyHintItem}>
+          <kbd className={styles.kbd}>←</kbd>
+          <kbd className={styles.kbd}>→</kbd> 1s
+        </span>
+        <span className={styles.keyHintItem}>
+          <kbd className={styles.kbd}>Shift</kbd>+<kbd className={styles.kbd}>←→</kbd> 10s
+        </span>
+        <span className={styles.keyHintItem}>
+          <kbd className={styles.kbd}>Alt</kbd>+<kbd className={styles.kbd}>←→</kbd> 1F
+        </span>
+        <span className={styles.keyHintItem}>
+          <kbd className={styles.kbd}>Space</kbd> / クリック: 再生/停止
+        </span>
       </div>
 
       <div className={styles.strip}>
@@ -459,7 +507,23 @@ function Pane({
             controls={false}
             className={styles.paneVideoEl}
             aria-label={`${label} video`}
-            onClick={(e) => e.stopPropagation()}
+            title="クリックで再生/停止 (Space キーでも同じ)"
+            // #465 review: クリックで再生・停止 (UX item 4)。stopPropagation で
+            // Pane の activate 遷移は抑え、pane はすでに active な状態で
+            // play/pause を切り替える。inactive pane をクリックした場合は
+            // activate を先に呼ぶため、もう一度クリックで play/pause できる。
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!active) {
+                onActivate();
+                return;
+              }
+              const v = videoRef.current;
+              if (v) {
+                if (v.paused) void v.play().catch(() => undefined);
+                else v.pause();
+              }
+            }}
           />
         ) : videoError ? (
           <div className={styles.paneVideoError} role="alert">

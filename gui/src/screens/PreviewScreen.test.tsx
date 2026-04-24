@@ -179,4 +179,82 @@ describe('PreviewScreen', () => {
     // tc remains focused; ArrowRight is caret movement inside the input.
     expect(tc.value).toBe(initial);
   });
+
+  // #465 review (UX items 3/4): tooltip + visible key hint + click-to-play.
+
+  it('step buttons have tooltips with the keyboard equivalent', async () => {
+    render(<PreviewScreen />);
+    // ±1F / ±1s / ±10s ボタンそれぞれに対応するキー等価操作が title に含まれる
+    const plus1F = screen.getByRole('button', { name: /nudge \+1F/ });
+    expect(plus1F.getAttribute('title')).toContain('Alt');
+    expect(plus1F.getAttribute('title')).toContain('→');
+
+    const minus10s = screen.getByRole('button', { name: /nudge -10s/ });
+    expect(minus10s.getAttribute('title')).toContain('Shift');
+    expect(minus10s.getAttribute('title')).toContain('←');
+
+    const plus1s = screen.getByRole('button', { name: /nudge \+1s/ });
+    // ±1s は修飾キーなし
+    expect(plus1s.getAttribute('title')).toContain('→');
+    expect(plus1s.getAttribute('title')).not.toContain('Shift');
+    expect(plus1s.getAttribute('title')).not.toContain('Alt');
+  });
+
+  it('renders a visible keyboard hint bar describing the shortcuts', () => {
+    render(<PreviewScreen />);
+    const hint = screen.getByRole('note', { name: /keyboard shortcuts/i });
+    expect(hint).toBeInTheDocument();
+    // 主要キー名が hint に出ていること (視認性確保)
+    expect(hint.textContent).toMatch(/Shift/);
+    expect(hint.textContent).toMatch(/Alt/);
+    expect(hint.textContent).toMatch(/Space/);
+    expect(hint.textContent).toMatch(/1s/);
+    expect(hint.textContent).toMatch(/10s/);
+    expect(hint.textContent).toMatch(/1F/);
+  });
+
+  it('clicking the video on the active pane toggles play/pause', async () => {
+    render(<PreviewScreen />);
+    const video = (await screen.findByLabelText(
+      'IN (start) video',
+    )) as HTMLVideoElement;
+    // jsdom には play/pause のネイティブ実装が無いので spy を当てる
+    const playSpy = vi.spyOn(video, 'play').mockResolvedValue();
+    const pauseSpy = vi.spyOn(video, 'pause').mockImplementation(() => {});
+    // IN pane は default で active → クリックで play が呼ばれる
+    Object.defineProperty(video, 'paused', { value: true, configurable: true });
+    await userEvent.setup().click(video);
+    expect(playSpy).toHaveBeenCalledTimes(1);
+
+    // 再度クリック: 今度は paused=false にして pause が呼ばれる
+    Object.defineProperty(video, 'paused', { value: false, configurable: true });
+    await userEvent.setup().click(video);
+    expect(pauseSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('clicking the video on an INACTIVE pane activates it instead of play/pause', async () => {
+    render(<PreviewScreen />);
+    const outVideo = (await screen.findByLabelText(
+      'OUT (end) video',
+    )) as HTMLVideoElement;
+    const playSpy = vi.spyOn(outVideo, 'play').mockResolvedValue();
+    const pauseSpy = vi
+      .spyOn(outVideo, 'pause')
+      .mockImplementation(() => {});
+    Object.defineProperty(outVideo, 'paused', {
+      value: true,
+      configurable: true,
+    });
+    // OUT は default で inactive → クリックで activate のみ。play は呼ばれない
+    await userEvent.setup().click(outVideo);
+    expect(playSpy).not.toHaveBeenCalled();
+    expect(pauseSpy).not.toHaveBeenCalled();
+    // 2 回目のクリックで now-active な OUT が play へ
+    Object.defineProperty(outVideo, 'paused', {
+      value: true,
+      configurable: true,
+    });
+    await userEvent.setup().click(outVideo);
+    expect(playSpy).toHaveBeenCalledTimes(1);
+  });
 });

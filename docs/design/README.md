@@ -131,8 +131,10 @@ Electron / Tauri の両方で最小プロトタイプを構築し F1-F5 を計�
 ### Phase 3: preview 画面の本物化
 
 - `<video>` タグ + ffmpeg サムネキャッシュ (`~/.allaganeye/cache/<hash>/thumbs/*.webp`)
-- キーボードショートカット (←→ 1s / shift 10s / ⌥ 1F / space 再生)
+- キーボードショートカット (←→ 1s / shift 10s / ⌥ 1F / space 再生 / 画面クリックでも再生停止)
+- ショートカット hint を preview 画面下部にインライン表示 + stepper 各ボタンに tooltip
 - 編集の一時状態管理
+- **再生は axum 直接配信** (HTML5 `<video>` + range request → 127.0.0.1:random トークンゲート endpoint)。ffmpeg transcoding は preview では走らない。`PROCESS_TRACKER` は export 中のみ利用される。`× 閉じる` 時の in-flight ffmpeg 保護 (#523) は export 画面 (#545 Phase 4) で初めて発火する設計。サムネ生成の ffmpeg は pane mount 時に呼ばれ、プロセスは短命で追跡対象外
 
 ### Phase 4: export の本物化
 
@@ -167,9 +169,11 @@ Electron / Tauri の両方で最小プロトタイプを構築し F1-F5 を計�
 - **IN / OUT 2 画面** `<video>` タグ
 - 候補フレームストリップ (±3s, 12 frames @ 0.5s 間隔)
 - 微細タイムライン (±5s, 輝度 + 閾値)
-- ステッパー (−10s / −1s / −1F / +1F / +1s / +10s)
+- ステッパー (−10s / −1s / −1F / +1F / +1s / +10s) — 各ボタンに tooltip で対応キー表示
 - TC 数値入力 (HH:MM:SS.ff)
 - キーボード: ←→ 1s / shift ←→ 10s / ⌥ ←→ 1F / space 再生
+- クリック: video 領域クリックで active pane の再生/停止 (Space と等価)
+- 画面下部に視認可能な keyboard hint バー
 - 試合名 / type 編集可
 
 ### 5. export
