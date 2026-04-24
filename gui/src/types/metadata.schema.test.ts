@@ -140,4 +140,65 @@ describe('MetadataSchema', () => {
     const doc = { ...validMetadata(), schema_version: 1 };
     expect(MetadataSchema.safeParse(doc).success).toBe(false);
   });
+
+  // #520 — detection_params type violations.
+
+  it('rejects when detection_params number fields are non-number', () => {
+    const doc = validMetadata();
+    const numberFields: Array<keyof typeof doc.detection_params> = [
+      'sample_interval',
+      'blackout_threshold',
+      'min_match_duration',
+      'min_blackout_duration',
+    ];
+    for (const field of numberFields) {
+      const patched = {
+        ...doc,
+        detection_params: { ...doc.detection_params, [field]: '2' },
+      };
+      expect(MetadataSchema.safeParse(patched).success).toBe(false);
+    }
+  });
+
+  it('rejects when detection_params.no_audio is non-boolean', () => {
+    const doc = validMetadata();
+    for (const v of [0, 1, 'false', null]) {
+      const patched = {
+        ...doc,
+        detection_params: { ...doc.detection_params, no_audio: v },
+      };
+      expect(MetadataSchema.safeParse(patched).success).toBe(false);
+    }
+  });
+
+  it('rejects when detection_params.use_gpu is outside number | boolean | null', () => {
+    const doc = validMetadata();
+    for (const v of ['cuda', [], {}]) {
+      const patched = {
+        ...doc,
+        detection_params: { ...doc.detection_params, use_gpu: v },
+      };
+      expect(MetadataSchema.safeParse(patched).success).toBe(false);
+    }
+  });
+
+  it('rejects when detection_params.workers is outside number | null', () => {
+    const doc = validMetadata();
+    for (const v of [true, false, '4']) {
+      const patched = {
+        ...doc,
+        detection_params: { ...doc.detection_params, workers: v },
+      };
+      expect(MetadataSchema.safeParse(patched).success).toBe(false);
+    }
+  });
+
+  it('rejects when detection_params is missing or null', () => {
+    const doc = validMetadata() as Partial<ReturnType<typeof validMetadata>>;
+    delete doc.detection_params;
+    expect(MetadataSchema.safeParse(doc).success).toBe(false);
+
+    const nulled = { ...validMetadata(), detection_params: null };
+    expect(MetadataSchema.safeParse(nulled).success).toBe(false);
+  });
 });

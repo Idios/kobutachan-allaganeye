@@ -149,6 +149,7 @@ GUI による初回 `[適用]` 時のみ作成。
 |---|---|
 | metadata.json を削除 | GUI load でファイル未存在エラー。GUI は "No metadata. Run detect first." を表示 |
 | 不正な JSON (parse error) | GUI load で zod が fail → error 表示。CLI `split --from-metadata` は `InputFileError` で exit code 2 |
+| root が JSON object でない (array / 文字列等) | Rust `load_metadata` / Python `read_metadata` ともに "must be a JSON object" エラーで拒否 (挙動統一、#521) |
 | 必須フィールド欠落 (source / matches 等) | zod validation で拒否、GUI はエラー表示。CLI は `InputFileError` |
 | 意味不正 (negative time, end < start 等) | zod `.refine()` が検知 (GUI)、CLI は `float()` キャスト失敗で `InputFileError` |
 | source ファイル移動・削除 | CLI は `InputFileError` (`source video not found`) / GUI は `[書き出し]` 時に同様エラー |
