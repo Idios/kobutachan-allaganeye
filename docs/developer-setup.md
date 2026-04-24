@@ -208,6 +208,64 @@ pip install -e ".[dev]"
 deactivate
 ```
 
+### venv 作成が `Permission denied` で失敗するとき (Windows)
+
+`python -m venv .venv` 実行時に以下のようなエラーが出ることがあります。
+
+```text
+Error: [Errno 13] Permission denied: 'E:\tmp\...\.venv\Scripts\python.exe'
+```
+
+Windows は使用中ファイルのロックで上書き・削除を拒否するため、既存 `.venv` 内の `python.exe` を別プロセスが掴んでいると再作成が失敗します。
+
+**典型的な原因**:
+
+- 別ターミナルで同じ `.venv` を activate したまま残っている
+- VSCode / PyCharm 等の IDE が Python extension 経由で `.venv` を参照している
+- Antivirus / Windows Defender が一時的にファイルをスキャン中
+
+**解決手順** (上から順に試す):
+
+1. Python プロセスの確認と終了
+
+    ```powershell
+    Get-Process python -ErrorAction SilentlyContinue
+    ```
+
+    該当プロセスが見つかったら、他のターミナル / IDE を閉じるか `Stop-Process` で終了させる。
+
+1. VSCode / 他 IDE を完全に閉じてから再実行
+
+    IDE の Python extension が裏で `.venv\Scripts\python.exe` を開いていることがある。ウィンドウを閉じるだけでは解消しない場合、タスクマネージャで該当プロセスが残っていないか確認する。
+
+1. 既存 `.venv` を完全削除して再作成
+
+    ```powershell
+    # PowerShell
+    Remove-Item -Recurse -Force .venv
+    python -m venv .venv
+    ```
+
+    ```cmd
+    rem コマンドプロンプト
+    rmdir /s /q .venv
+    python -m venv .venv
+    ```
+
+    ```bash
+    # Git Bash / MSYS2
+    rm -rf .venv
+    python -m venv .venv
+    ```
+
+1. 別パスで切り分け
+
+    ```bash
+    python -m venv C:\temp\test_venv
+    ```
+
+    これが成功するなら原因はリポジトリ配下の `.venv` ロックに特定される。失敗するなら Antivirus / 権限周り (書き込み禁止フォルダ等) を疑う。
+
 ## 3. 更新
 
 ```bash
