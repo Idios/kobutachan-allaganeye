@@ -105,6 +105,34 @@ jobs:
             Pop-Location
           }
 
+      - name: Smoke test Level B (run launcher detect on 3s fixture)
+        shell: pwsh
+        run: |
+          $version = '${{ needs.version-check.outputs.version }}'
+          $payload = "build/portable/allaganeye-v$version"
+          $fixture = Join-Path $env:GITHUB_WORKSPACE 'tests\fixtures\smoke_3s.mp4'
+          if (-not (Test-Path $fixture)) {
+            throw "Fixture not found: $fixture"
+          }
+          Push-Location $payload
+          try {
+            $output = '' | & cmd.exe /c "allaganeye.bat detect `"$fixture`" -o smoke-output\" 2>&1
+            $exitCode = $LASTEXITCODE
+            $joined = $output | Out-String
+            Write-Host '--- allaganeye.bat detect output ---'
+            Write-Host $joined
+            Write-Host "--- exit code: $exitCode ---"
+            if ($exitCode -ne 0 -and $exitCode -ne 4) {
+              throw "allaganeye.bat detect exited with $exitCode (expected 0 or 4)"
+            }
+            if ($exitCode -eq 0 -and -not (Test-Path 'smoke-output\metadata.json')) {
+              throw "Expected smoke-output\metadata.json to exist for exit 0, but it is missing"
+            }
+          }
+          finally {
+            Pop-Location
+          }
+
       # Upload the expanded payload folder; actions/upload-artifact zips it once
       # on its own, which avoids the previous "zip inside a zip" artifact.
       - uses: actions/upload-artifact@v4

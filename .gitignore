@@ -46,6 +46,7 @@ package-lock.json
 
 # Project specific
 *.mp4
+!tests/fixtures/*.mp4
 *.mkv
 *.avi
 *.mov
