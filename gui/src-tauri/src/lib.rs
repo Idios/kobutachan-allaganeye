@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use axum::{
     extract::{Path as AxumPath, State},
@@ -16,6 +17,7 @@ use futures::future::join_all;
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{Mutex, Semaphore};
 use tower_http::services::ServeFile;
 use uuid::Uuid;
@@ -850,6 +852,452 @@ async fn force_exit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// #466 -- codec selection for a single-match export. `Copy` is fast and
+/// keyframe-aligned (no re-encode); `H264` re-encodes with libx264 for
+/// accurate seek boundaries at the cost of wall time.
+#[derive(Debug, serde::Deserialize)]
+pub enum ExportCodec {
+    #[serde(rename = "copy")]
+    Copy,
+    #[serde(rename = "h264")]
+    H264,
+}
+
+/// #466 -- terminal payload returned to the frontend when a single match
+/// finishes exporting. `duration_ms` is wall time; the frontend uses it to
+/// show "exported in Ns" per match.
+#[derive(Debug, serde::Serialize)]
+pub struct ExportResult {
+    pub match_index: u32,
+    pub output_path: String,
+    pub duration_ms: u64,
+}
+
+/// #466 -- progress event emitted on channel `export-progress`. One event
+/// per ffmpeg `out_time_ms` line during encoding, plus a terminal
+/// `stage="done"` on success or `stage="error"` on failure.
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct ExportProgress {
+    pub match_index: u32,
+    pub percent: f64,
+    pub stage: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// #466 -- pure validator for export arguments. Split out so unit tests can
+/// exercise the error paths without spawning ffmpeg. The caller is expected
+/// to pass the resolved `video_path` (no path-resolution done here).
+fn validate_export_request(
+    video_path: &Path,
+    start_seconds: f64,
+    end_seconds: f64,
+) -> Result<(), String> {
+    if !video_path.exists() {
+        return Err(format!(
+            "video file not found: {}",
+            video_path.display()
+        ));
+    }
+    let meta = fs::metadata(video_path)
+        .map_err(|e| format!("stat failed ({}): {}", video_path.display(), e))?;
+    if !meta.is_file() {
+        return Err(format!(
+            "video path is not a regular file: {}",
+            video_path.display()
+        ));
+    }
+    if !start_seconds.is_finite() || start_seconds < 0.0 {
+        return Err(format!(
+            "start_seconds must be >= 0 (got {})",
+            start_seconds
+        ));
+    }
+    if !end_seconds.is_finite() || end_seconds <= start_seconds {
+        return Err(format!(
+            "end_seconds must be > start_seconds (got start={}, end={})",
+            start_seconds, end_seconds
+        ));
+    }
+    Ok(())
+}
+
+/// #466 -- assemble the ffmpeg argv for a single export. Pulled out of
+/// `export_match` so unit tests can verify flag ordering and codec choices
+/// without spawning a process.
+///
+/// Note: `-ss` is placed BEFORE `-i` so ffmpeg does a fast keyframe-based
+/// seek rather than decoding from t=0. `-to` / `-t` interpretation after
+/// `-ss -i` is "duration from the seek point", so we pass
+/// `end_seconds - start_seconds` as a duration via `-t`.
+/// #466 review #4: 出力先の親ディレクトリが存在することを検証する。
+///
+/// 以前は `export_match` 内で `create_dir_all` を呼んでいたが、ユーザーが
+/// タイポしたパスに静かにディレクトリツリーが作られて混乱を招くため、
+/// 明示拒否に変更した。ディレクトリ作成はユーザーが事前に行う前提。
+///
+/// `output_path` がルート / 親なし (file_name only など) の場合は no-op で
+/// Ok を返す (現在のディレクトリを意味すると解釈)。
+fn validate_output_parent_exists(output_path: &Path) -> Result<(), String> {
+    if let Some(parent) = output_path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            return Err(format!(
+                "output directory does not exist: {}",
+                parent.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `open_folder_in_explorer` の path 検証ロジックを spawn から分離した
+/// 単体テスト用ヘルパ。
+///
+/// - 存在しない path は明示エラー
+/// - 非 Windows 環境では unsupported エラー
+/// - 上記をパスしたら Ok (caller は spawn を試みる)
+fn validate_open_folder_request(path: &str) -> Result<(), String> {
+    if !Path::new(path).exists() {
+        return Err(format!("path does not exist: {}", path));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        return Err(
+            "open_folder_in_explorer is only supported on Windows".to_string(),
+        );
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Ok(())
+    }
+}
+
+/// `path` をプラットフォーム固有のファイルマネージャ (Windows: explorer.exe)
+/// で開く。
+///
+/// 旧実装は `tauri-plugin-shell` の `open` を使っていたが、`shell:allow-open`
+/// permission の default scope が URL (`mailto:` / `tel:` / `https?://`) しか
+/// 許可せず、ローカル path は `Scoped command argument failed regex
+/// validation` で reject される。`open` の scope を path 許可に拡張する代わ
+/// りに、Windows の `explorer.exe` を直接 spawn する独自 command を用意して
+/// 確実に動かす (#545 review、2026-04-25)。
+///
+/// Windows のみ対応 (CLAUDE.md に「対応プラットフォーム: Windows のみ」と
+/// 明記)。将来 Linux / macOS 対応する際は `xdg-open` / `open` で分岐する。
+#[tauri::command]
+fn open_folder_in_explorer(path: String) -> Result<(), String> {
+    validate_open_folder_request(&path)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        Command::new("explorer.exe")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("failed to launch explorer: {}", e))?;
+    }
+
+    Ok(())
+}
+
+fn ffmpeg_args_for_export(
+    video_path: &Path,
+    start_seconds: f64,
+    end_seconds: f64,
+    output_path: &Path,
+    codec: &ExportCodec,
+) -> Vec<String> {
+    let duration = (end_seconds - start_seconds).max(0.0);
+    let start_str = format!("{:.3}", start_seconds.max(0.0));
+    let duration_str = format!("{:.3}", duration);
+
+    let mut args: Vec<String> = Vec::new();
+    args.push("-y".to_string());
+    args.push("-hide_banner".to_string());
+    args.push("-loglevel".to_string());
+    args.push("error".to_string());
+    args.push("-progress".to_string());
+    args.push("pipe:2".to_string());
+    args.push("-ss".to_string());
+    args.push(start_str);
+    args.push("-i".to_string());
+    args.push(video_path.to_string_lossy().to_string());
+    args.push("-t".to_string());
+    args.push(duration_str);
+
+    match codec {
+        ExportCodec::Copy => {
+            args.push("-c".to_string());
+            args.push("copy".to_string());
+            args.push("-avoid_negative_ts".to_string());
+            args.push("make_zero".to_string());
+        }
+        ExportCodec::H264 => {
+            args.push("-c:v".to_string());
+            args.push("libx264".to_string());
+            args.push("-crf".to_string());
+            args.push("18".to_string());
+            args.push("-preset".to_string());
+            args.push("medium".to_string());
+            args.push("-c:a".to_string());
+            args.push("copy".to_string());
+        }
+    }
+
+    args.push(output_path.to_string_lossy().to_string());
+    args
+}
+
+/// #466 -- insert a spawned ffmpeg child into the global PROCESS_TRACKER so
+/// the CloseRequested flow (#523) can kill it on app exit. Returns the UUID
+/// used as the map key; the caller must pass it back to `untrack_child` on
+/// process completion.
+async fn track_child(child: tokio::process::Child) -> Uuid {
+    let tracker = process_tracker();
+    let mut guard = tracker.lock().await;
+    let id = Uuid::new_v4();
+    guard.insert(id, child);
+    id
+}
+
+/// #466 -- remove a tracked child from PROCESS_TRACKER. Returns the child
+/// so the caller can still `.wait()` / `.kill()` it outside the tracker
+/// lock. Returns None if the entry was already drained (e.g. by
+/// `kill_tracked_processes`).
+async fn untrack_child(id: Uuid) -> Option<tokio::process::Child> {
+    let tracker = process_tracker();
+    let mut guard = tracker.lock().await;
+    guard.remove(&id)
+}
+
+/// #466 -- parse a single ffmpeg `-progress` line. ffmpeg emits key=value
+/// lines once per second (out_time, out_time_ms, speed, bitrate, ...) and
+/// a terminal `progress=end` or `progress=continue`. We only care about
+/// `out_time_ms` (for the percent bar) and `progress=end` (for the terminal
+/// event). Returns None for every other key.
+fn parse_progress_line(line: &str) -> Option<ProgressSignal> {
+    let line = line.trim();
+    if let Some(rest) = line.strip_prefix("out_time_ms=") {
+        rest.trim().parse::<i64>().ok().map(ProgressSignal::OutTimeMs)
+    } else if let Some(rest) = line.strip_prefix("out_time_us=") {
+        // Newer ffmpeg builds emit out_time_us instead of out_time_ms even
+        // though the unit is still microseconds. Accept both so we don't
+        // miss progress on future releases.
+        rest.trim().parse::<i64>().ok().map(ProgressSignal::OutTimeMs)
+    } else if line == "progress=end" {
+        Some(ProgressSignal::End)
+    } else {
+        None
+    }
+}
+
+/// #466 -- internal enum for parsed progress lines.
+#[derive(Debug, PartialEq)]
+enum ProgressSignal {
+    /// ffmpeg's `out_time_ms` is actually in microseconds (the name is a
+    /// historical artifact). Caller must divide by 1_000_000 to get seconds.
+    OutTimeMs(i64),
+    End,
+}
+
+/// #466 -- keep the last `max_bytes` bytes of `buf` as a UTF-8 lossy
+/// string. Used so the error message returned to the frontend stays
+/// bounded even if ffmpeg dumps pages of diagnostics.
+fn tail_string(buf: &[u8], max_bytes: usize) -> String {
+    let start = buf.len().saturating_sub(max_bytes);
+    String::from_utf8_lossy(&buf[start..]).trim().to_string()
+}
+
+/// #466 -- export a single match to `output_path` by invoking ffmpeg.
+///
+/// Spawns with stderr piped, reads `-progress pipe:2` lines, and emits one
+/// `export-progress` event per `out_time_ms=` or terminal `progress=end`
+/// line. Non-progress stderr lines (e.g. real ffmpeg errors under
+/// `-loglevel error`) are accumulated into a ring buffer and folded into
+/// the Err message on non-zero exit.
+///
+/// The spawned child is registered in PROCESS_TRACKER for the duration of
+/// the call so the CloseRequested flow can kill it before app exit.
+#[tauri::command]
+async fn export_match(
+    app: tauri::AppHandle,
+    video_path: String,
+    start_seconds: f64,
+    end_seconds: f64,
+    output_path: String,
+    codec: ExportCodec,
+    match_index: u32,
+) -> Result<ExportResult, String> {
+    let video = PathBuf::from(&video_path);
+    validate_export_request(&video, start_seconds, end_seconds)?;
+
+    let output = PathBuf::from(&output_path);
+    validate_output_parent_exists(&output)?;
+
+    let duration_seconds = end_seconds - start_seconds;
+    let args = ffmpeg_args_for_export(&video, start_seconds, end_seconds, &output, &codec);
+
+    let started = Instant::now();
+    let mut cmd = tokio::process::Command::new("ffmpeg");
+    for a in &args {
+        cmd.arg(a);
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("spawn ffmpeg failed: {}", e))?;
+
+    // Take stderr off the child before registering it in the tracker --
+    // `track_child` moves the Child and we need the pipe handle here.
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "failed to capture ffmpeg stderr".to_string())?;
+
+    let tracked_id = track_child(child).await;
+
+    let mut reader = BufReader::new(stderr).lines();
+    let mut stderr_tail: Vec<u8> = Vec::with_capacity(4096);
+    let max_tail = 2048; // 2 KB of tail context for error reporting
+    let mut saw_end = false;
+
+    loop {
+        match reader.next_line().await {
+            Ok(Some(line)) => {
+                match parse_progress_line(&line) {
+                    Some(ProgressSignal::OutTimeMs(us)) => {
+                        let seconds = (us as f64) / 1_000_000.0;
+                        let mut percent = if duration_seconds > 0.0 {
+                            seconds / duration_seconds * 100.0
+                        } else {
+                            0.0
+                        };
+                        if !percent.is_finite() {
+                            percent = 0.0;
+                        }
+                        if percent < 0.0 {
+                            percent = 0.0;
+                        }
+                        if percent > 100.0 {
+                            percent = 100.0;
+                        }
+                        let _ = app.emit(
+                            "export-progress",
+                            ExportProgress {
+                                match_index,
+                                percent,
+                                stage: "encoding".to_string(),
+                                message: None,
+                            },
+                        );
+                    }
+                    Some(ProgressSignal::End) => {
+                        saw_end = true;
+                        let _ = app.emit(
+                            "export-progress",
+                            ExportProgress {
+                                match_index,
+                                percent: 100.0,
+                                stage: "done".to_string(),
+                                message: None,
+                            },
+                        );
+                    }
+                    None => {
+                        // Non-progress stderr -- capture into ring buffer
+                        // for error reporting on non-zero exit.
+                        stderr_tail.extend_from_slice(line.as_bytes());
+                        stderr_tail.push(b'\n');
+                        if stderr_tail.len() > max_tail * 2 {
+                            let keep_from = stderr_tail.len() - max_tail;
+                            stderr_tail.drain(0..keep_from);
+                        }
+                    }
+                }
+            }
+            Ok(None) => break, // EOF
+            Err(e) => {
+                stderr_tail.extend_from_slice(
+                    format!("stderr read error: {}\n", e).as_bytes(),
+                );
+                break;
+            }
+        }
+    }
+
+    // Reclaim the child from the tracker so we can wait on it. If it was
+    // already drained by kill_tracked_processes, treat that as a
+    // user-initiated cancel and surface an error.
+    let mut child = match untrack_child(tracked_id).await {
+        Some(c) => c,
+        None => {
+            let msg = "export cancelled (process tracker drained)".to_string();
+            let _ = app.emit(
+                "export-progress",
+                ExportProgress {
+                    match_index,
+                    percent: 0.0,
+                    stage: "error".to_string(),
+                    message: Some(msg.clone()),
+                },
+            );
+            return Err(msg);
+        }
+    };
+
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| format!("wait ffmpeg failed: {}", e))?;
+
+    if !status.success() {
+        let tail = tail_string(&stderr_tail, max_tail);
+        let msg = if tail.is_empty() {
+            format!("ffmpeg exited with status {:?}", status.code())
+        } else {
+            format!("ffmpeg exited with status {:?}: {}", status.code(), tail)
+        };
+        let _ = app.emit(
+            "export-progress",
+            ExportProgress {
+                match_index,
+                percent: 0.0,
+                stage: "error".to_string(),
+                message: Some(msg.clone()),
+            },
+        );
+        return Err(msg);
+    }
+
+    // Some ffmpeg builds close stderr without flushing the final
+    // `progress=end` line -- synthesize a terminal "done" so the frontend
+    // always sees one.
+    if !saw_end {
+        let _ = app.emit(
+            "export-progress",
+            ExportProgress {
+                match_index,
+                percent: 100.0,
+                stage: "done".to_string(),
+                message: None,
+            },
+        );
+    }
+
+    let output_str = fs::canonicalize(&output)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| output.to_string_lossy().to_string());
+
+    Ok(ExportResult {
+        match_index,
+        output_path: output_str,
+        duration_ms: started.elapsed().as_millis() as u64,
+    })
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -880,6 +1328,8 @@ pub fn run() {
             is_process_running,
             kill_tracked_processes,
             force_exit_app,
+            export_match,
+            open_folder_in_explorer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1564,5 +2014,327 @@ mod tests {
             "unexpected error: {}",
             err
         );
+    }
+
+    /// #466 -- `copy` codec must emit `-c copy`, not `libx264`. The
+    /// `-avoid_negative_ts make_zero` flag prevents negative timestamp
+    /// errors common when seeking into a stream whose first packet after
+    /// the seek point has a non-zero PTS.
+    #[test]
+    fn ffmpeg_args_for_export_copy_uses_c_copy() {
+        let args = ffmpeg_args_for_export(
+            Path::new("C:/videos/in.mp4"),
+            10.0,
+            40.0,
+            Path::new("C:/out/match1.mp4"),
+            &ExportCodec::Copy,
+        );
+        let joined = args.join(" ");
+        assert!(joined.contains("-c copy"), "args: {}", joined);
+        assert!(
+            joined.contains("-avoid_negative_ts make_zero"),
+            "args: {}",
+            joined
+        );
+        assert!(!joined.contains("libx264"), "args: {}", joined);
+    }
+
+    /// #466 -- `h264` codec must use libx264 with the documented crf/preset
+    /// tuning so the frontend's "high quality" toggle lands a consistent
+    /// encode. Audio must be copied (not re-encoded) to avoid silent loss
+    /// of quality.
+    #[test]
+    fn ffmpeg_args_for_export_h264_uses_libx264() {
+        let args = ffmpeg_args_for_export(
+            Path::new("C:/videos/in.mp4"),
+            0.0,
+            30.0,
+            Path::new("C:/out/match1.mp4"),
+            &ExportCodec::H264,
+        );
+        let joined = args.join(" ");
+        assert!(joined.contains("-c:v libx264"), "args: {}", joined);
+        assert!(joined.contains("-crf 18"), "args: {}", joined);
+        assert!(joined.contains("-preset medium"), "args: {}", joined);
+        assert!(joined.contains("-c:a copy"), "args: {}", joined);
+    }
+
+    /// #466 -- ffmpeg's seek semantics differ dramatically depending on
+    /// whether `-ss` appears before or after `-i`. Before `-i`: fast
+    /// keyframe-based seek. After `-i`: slow decode-and-discard. We rely
+    /// on the fast path, so guard the ordering.
+    #[test]
+    fn ffmpeg_args_include_ss_before_input_for_keyframe_seek() {
+        let args = ffmpeg_args_for_export(
+            Path::new("C:/videos/in.mp4"),
+            15.5,
+            45.5,
+            Path::new("C:/out/match1.mp4"),
+            &ExportCodec::Copy,
+        );
+        let ss_pos = args.iter().position(|a| a == "-ss").expect("-ss present");
+        let i_pos = args.iter().position(|a| a == "-i").expect("-i present");
+        assert!(
+            ss_pos < i_pos,
+            "-ss (at {}) must precede -i (at {}): {:?}",
+            ss_pos,
+            i_pos,
+            args
+        );
+    }
+
+    /// #466 -- argv must include a `-t <duration>` pair whose value equals
+    /// `end_seconds - start_seconds`. This is the cross-check that
+    /// `export_match` actually delivers the requested clip length, not
+    /// trailing footage from the source.
+    #[test]
+    fn ffmpeg_args_encode_duration_as_t_flag() {
+        let args = ffmpeg_args_for_export(
+            Path::new("C:/videos/in.mp4"),
+            10.0,
+            40.5,
+            Path::new("C:/out/match1.mp4"),
+            &ExportCodec::Copy,
+        );
+        let t_pos = args.iter().position(|a| a == "-t").expect("-t present");
+        let duration = args.get(t_pos + 1).expect("value after -t");
+        let parsed: f64 = duration.parse().expect("parse duration");
+        assert!(
+            (parsed - 30.5).abs() < 1e-6,
+            "expected 30.5, got {} (all: {:?})",
+            parsed,
+            args
+        );
+    }
+
+    /// #466 -- a missing video path must fail validation before ffmpeg is
+    /// touched. The error message must contain "not found" so the frontend
+    /// can distinguish it from generic ffmpeg errors.
+    #[test]
+    fn export_match_rejects_missing_video_path() {
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("nope.mp4");
+        let err = validate_export_request(&missing, 0.0, 10.0).unwrap_err();
+        assert!(err.contains("not found"), "got: {}", err);
+    }
+
+    /// #466 -- `end <= start` must fail immediately (otherwise ffmpeg's
+    /// `-t` flag would receive 0 or negative and silently write an empty
+    /// file).
+    #[test]
+    fn export_match_rejects_end_le_start() {
+        let tmp = TempDir::new().unwrap();
+        let video = tmp.path().join("clip.mp4");
+        fs::write(&video, b"fake mp4").unwrap();
+        let err_equal = validate_export_request(&video, 10.0, 10.0).unwrap_err();
+        assert!(err_equal.contains("end_seconds"), "got: {}", err_equal);
+        let err_lt = validate_export_request(&video, 20.0, 10.0).unwrap_err();
+        assert!(err_lt.contains("end_seconds"), "got: {}", err_lt);
+    }
+
+    /// #466 -- negative start times are rejected. ffmpeg treats `-ss <0`
+    /// inconsistently across builds; better to refuse up front.
+    #[test]
+    fn export_match_rejects_negative_start() {
+        let tmp = TempDir::new().unwrap();
+        let video = tmp.path().join("clip.mp4");
+        fs::write(&video, b"fake mp4").unwrap();
+        let err = validate_export_request(&video, -1.0, 10.0).unwrap_err();
+        assert!(err.contains("start_seconds"), "got: {}", err);
+    }
+
+    /// #466 -- NaN / non-finite values are rejected (they would otherwise
+    /// propagate into ffmpeg argv as "NaN" and fail opaquely).
+    #[test]
+    fn export_match_rejects_non_finite_values() {
+        let tmp = TempDir::new().unwrap();
+        let video = tmp.path().join("clip.mp4");
+        fs::write(&video, b"fake mp4").unwrap();
+        let err_nan_start = validate_export_request(&video, f64::NAN, 10.0).unwrap_err();
+        assert!(err_nan_start.contains("start_seconds"), "got: {}", err_nan_start);
+        let err_inf_end = validate_export_request(&video, 0.0, f64::INFINITY).unwrap_err();
+        assert!(err_inf_end.contains("end_seconds"), "got: {}", err_inf_end);
+    }
+
+    /// #466 review #4: 出力先親ディレクトリが存在しなければエラー。
+    /// 以前の `create_dir_all` (silent mkdir) は廃止されたので、存在しない
+    /// パスを渡すと「does not exist」エラーを返す。
+    #[test]
+    fn validate_output_parent_exists_rejects_missing_parent() {
+        let tmp = TempDir::new().unwrap();
+        let nested = tmp.path().join("nope").join("clip.mp4");
+        let err = validate_output_parent_exists(&nested).unwrap_err();
+        assert!(err.contains("does not exist"), "got: {}", err);
+    }
+
+    /// #466 review #4: 親ディレクトリが存在すれば Ok。
+    #[test]
+    fn validate_output_parent_exists_accepts_existing_parent() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("clip.mp4");
+        validate_output_parent_exists(&target).unwrap();
+    }
+
+    /// #466 review #4: 親なしパス (filename だけ) は Ok (現在のディレクトリ)。
+    #[test]
+    fn validate_output_parent_exists_accepts_bare_filename() {
+        validate_output_parent_exists(Path::new("clip.mp4")).unwrap();
+    }
+
+    /// #545 review #6: 存在しないパスを渡したら明示エラー (explorer 起動前に
+    /// validate)。spawn を含まない validator の単体テスト。
+    #[test]
+    fn validate_open_folder_request_rejects_missing_path() {
+        let tmp = TempDir::new().unwrap();
+        let bogus = tmp.path().join("does-not-exist");
+        let err = validate_open_folder_request(&bogus.to_string_lossy()).unwrap_err();
+        assert!(err.contains("does not exist"), "got: {}", err);
+    }
+
+    /// #545 review #6: 存在するディレクトリは accept (Windows のみ Ok、
+    /// 非 Windows は unsupported エラー)。spawn 副作用なしで分岐確認。
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn validate_open_folder_request_accepts_existing_dir_on_windows() {
+        let tmp = TempDir::new().unwrap();
+        validate_open_folder_request(&tmp.path().to_string_lossy()).unwrap();
+    }
+
+    /// #545 review #6: 非 Windows 環境では path が存在しても unsupported
+    /// エラーを返す。CI (Linux) でも安定して走る回帰テスト。
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn validate_open_folder_request_returns_unsupported_on_non_windows() {
+        let tmp = TempDir::new().unwrap();
+        let err =
+            validate_open_folder_request(&tmp.path().to_string_lossy()).unwrap_err();
+        assert!(err.contains("Windows"), "got: {}", err);
+    }
+
+    /// #545 mystifying-ptolemy-d112b5 review (2026-04-25): track_child →
+    /// untrack_child の往復で正しく Some が返ること。`export_match` の
+    /// happy-path cleanup の core ロジック。
+    ///
+    /// Windows 用 dummy プロセスとして `cmd /c rem` を spawn (即終了 no-op)、
+    /// 非 Windows は `true` を spawn する。spawn 直後に track → untrack して
+    /// Some を確認、最後に kill して残留を防ぐ。
+    #[tokio::test]
+    async fn track_child_then_untrack_returns_some() {
+        // PROCESS_TRACKER は process-global の OnceCell なので、別 test の
+        // 残留を念のため drain。失敗しても無害。
+        let _ = kill_tracked_processes().await;
+
+        let mut spawn = if cfg!(target_os = "windows") {
+            tokio::process::Command::new("cmd")
+        } else {
+            tokio::process::Command::new("true")
+        };
+        if cfg!(target_os = "windows") {
+            spawn.args(["/c", "rem"]);
+        }
+        let child = spawn.spawn().expect("spawn dummy child failed");
+
+        let id = track_child(child).await;
+        let recovered = untrack_child(id).await;
+        assert!(
+            recovered.is_some(),
+            "untrack_child should return Some right after track"
+        );
+        // recovered Child は drop で OS 側に handle が返るが、念のため明示
+        // wait しておく (zombie 防止)。
+        if let Some(mut c) = recovered {
+            let _ = c.wait().await;
+        }
+    }
+
+    /// #545 mystifying-ptolemy-d112b5 review (2026-04-25): track_child のあと
+    /// `kill_tracked_processes` が drain した場合、untrack_child は None を
+    /// 返す。`export_match` の cancel 検出 (`untrack` 結果が None なら
+    /// 既に kill された = 中断) のセマンティクス確認。
+    #[tokio::test]
+    async fn untrack_child_after_kill_tracked_returns_none() {
+        // 別 test の残留があれば drain。
+        let _ = kill_tracked_processes().await;
+
+        let mut spawn = if cfg!(target_os = "windows") {
+            tokio::process::Command::new("cmd")
+        } else {
+            tokio::process::Command::new("true")
+        };
+        if cfg!(target_os = "windows") {
+            spawn.args(["/c", "rem"]);
+        }
+        let child = spawn.spawn().expect("spawn dummy child failed");
+
+        let id = track_child(child).await;
+        // kill_tracked_processes が tracker を drain して全 child を kill する
+        let _killed = kill_tracked_processes().await.unwrap();
+        let recovered = untrack_child(id).await;
+        assert!(
+            recovered.is_none(),
+            "untrack_child should return None after kill_tracked_processes drained the tracker"
+        );
+    }
+
+    /// #466 -- happy path: real file, sane start/end, validator returns Ok.
+    #[test]
+    fn export_match_accepts_valid_request() {
+        let tmp = TempDir::new().unwrap();
+        let video = tmp.path().join("clip.mp4");
+        fs::write(&video, b"fake mp4").unwrap();
+        validate_export_request(&video, 0.0, 10.0).unwrap();
+        validate_export_request(&video, 5.5, 6.25).unwrap();
+    }
+
+    /// #466 -- `out_time_ms=` (actually microseconds per the ffmpeg
+    /// `-progress` contract) parses to the numeric value. Leading/trailing
+    /// whitespace and a trailing `\r` (Windows line endings) are handled.
+    #[test]
+    fn parse_progress_line_accepts_out_time_ms() {
+        assert_eq!(
+            parse_progress_line("out_time_ms=1500000"),
+            Some(ProgressSignal::OutTimeMs(1_500_000))
+        );
+        assert_eq!(
+            parse_progress_line("  out_time_ms=42  "),
+            Some(ProgressSignal::OutTimeMs(42))
+        );
+        // Newer ffmpeg builds use out_time_us
+        assert_eq!(
+            parse_progress_line("out_time_us=2000000"),
+            Some(ProgressSignal::OutTimeMs(2_000_000))
+        );
+    }
+
+    /// #466 -- `progress=end` is the terminal signal; everything else
+    /// (bitrate, speed, fps, ...) must return None so we don't emit noise.
+    #[test]
+    fn parse_progress_line_detects_end_and_ignores_others() {
+        assert_eq!(parse_progress_line("progress=end"), Some(ProgressSignal::End));
+        assert_eq!(parse_progress_line("progress=continue"), None);
+        assert_eq!(parse_progress_line("bitrate=512.0kbits/s"), None);
+        assert_eq!(parse_progress_line("speed=1.5x"), None);
+        assert_eq!(parse_progress_line(""), None);
+        assert_eq!(parse_progress_line("random unrelated line"), None);
+    }
+
+    /// #466 -- `tail_string` must bound the returned length at `max_bytes`.
+    /// Exercising with a string larger than the bound ensures we always
+    /// drop the oldest bytes, never the newest (the tail is what matters
+    /// for error diagnostics).
+    #[test]
+    fn tail_string_respects_max_bytes() {
+        let big: Vec<u8> = (0..5000).map(|i| b'a' + (i % 26) as u8).collect();
+        let tail = tail_string(&big, 100);
+        assert!(tail.len() <= 100, "tail too long: {}", tail.len());
+        assert!(tail.ends_with(big[big.len() - 1] as char), "tail lost end");
+    }
+
+    /// #466 -- `tail_string` returns the whole buffer when it already fits
+    /// under the limit, with leading/trailing whitespace trimmed.
+    #[test]
+    fn tail_string_returns_whole_buffer_when_small() {
+        let buf = b"  short message\n";
+        assert_eq!(tail_string(buf, 2048), "short message");
     }
 }

@@ -48,6 +48,37 @@ describe('useAppStateStore.setSelectedVideoPath', () => {
     useAppStateStore.getState().setSelectedVideoPath(null);
     expect(useAppStateStore.getState().selectedVideoPath).toBeNull();
   });
+
+  // #545 review (2026-04-25): Tauri が Windows で返す `\\?\` extended-length
+  // path prefix を保存前に正規化する。
+  it('strips Windows \\\\?\\ extended-length prefix before storing', () => {
+    useAppStateStore
+      .getState()
+      .setSelectedVideoPath('\\\\?\\E:\\videos\\clip.mkv');
+    expect(useAppStateStore.getState().selectedVideoPath).toBe(
+      'E:\\videos\\clip.mkv',
+    );
+  });
+
+  it('converts \\\\?\\UNC\\ prefix into the standard \\\\ form', () => {
+    useAppStateStore
+      .getState()
+      .setSelectedVideoPath('\\\\?\\UNC\\server\\share\\clip.mkv');
+    expect(useAppStateStore.getState().selectedVideoPath).toBe(
+      '\\\\server\\share\\clip.mkv',
+    );
+  });
+
+  it('passes through paths without the prefix unchanged', () => {
+    useAppStateStore.getState().setSelectedVideoPath('E:\\videos\\clip.mkv');
+    expect(useAppStateStore.getState().selectedVideoPath).toBe(
+      'E:\\videos\\clip.mkv',
+    );
+    useAppStateStore.getState().setSelectedVideoPath('/home/user/file.mkv');
+    expect(useAppStateStore.getState().selectedVideoPath).toBe(
+      '/home/user/file.mkv',
+    );
+  });
 });
 
 describe('useAppStateStore.reset', () => {

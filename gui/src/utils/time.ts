@@ -55,3 +55,29 @@ export function fmtPreciseTime(seconds: number, fps = 60): string {
     `${String(frames).padStart(frameWidth, '0')}`
   );
 }
+
+/**
+ * Format seconds as `{m}m{ss}s` or `{h}h{mm}m` — mirror of CLI
+ * `_format_duration` in `allaganeye/commands/split_matches.py`.
+ *
+ * - <1h: `{m}m{ss:02}s` — e.g. `15m15s`, `5m49s`, `43m02s`
+ * - >=1h: `{h}h{mm:02}m` — e.g. `1h05m`, `2h30m`
+ *
+ * Negative / NaN input clamps to 0 (mirroring fmtTime). Used by ExportScreen
+ * list to recompute duration when `m.edited?.start_time` / `end_time` differ
+ * from the CLI-provided `m.duration_display` (#466 review, boundary
+ * propagation bug).
+ */
+export function fmtMatchDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    seconds = 0;
+  }
+  const total = Math.floor(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) {
+    return `${h}h${String(m).padStart(2, '0')}m`;
+  }
+  return `${m}m${String(s).padStart(2, '0')}s`;
+}

@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+import { stripExtendedPathPrefix } from '../utils/path';
+
 /**
  * The high-level screen the user is currently on. State transitions between
  * these screens are intentionally represented as an enum (not a URL-based
@@ -47,7 +49,18 @@ export const useAppStateStore = create<AppState>((set) => ({
   selectMatch: (selectedMatchIndex) => set({ selectedMatchIndex }),
   openPreviewFor: (index) =>
     set({ selectedMatchIndex: index, screen: 'preview' }),
-  setSelectedVideoPath: (selectedVideoPath) => set({ selectedVideoPath }),
+  // #545 review (2026-04-25): Tauri dialog/drag-drop が Windows で返す
+  // `\\?\` extended-length path prefix を保存前に正規化する。これで
+  // selectedVideoPath を読む全 consumer (ExportScreen の videoSource、
+  // PreviewScreen の register_video / generate_match_thumbnails、UI 表示)
+  // が一貫して prefix なしの path を扱える。
+  setSelectedVideoPath: (selectedVideoPath) =>
+    set({
+      selectedVideoPath:
+        selectedVideoPath === null
+          ? null
+          : stripExtendedPathPrefix(selectedVideoPath),
+    }),
   reset: () =>
     set({
       screen: 'drop',

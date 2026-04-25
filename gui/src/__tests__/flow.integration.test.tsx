@@ -121,6 +121,15 @@ function configureHappyInvoke() {
         return Promise.resolve(0);
       case 'force_exit_app':
         return Promise.resolve();
+      // #466 -- Phase 4 export
+      case 'export_match': {
+        const a = args as { matchIndex: number; outputPath: string };
+        return Promise.resolve({
+          match_index: a.matchIndex,
+          output_path: a.outputPath,
+          duration_ms: 100,
+        });
+      }
       default:
         return Promise.resolve();
     }
@@ -237,41 +246,48 @@ describe('flow G: detecting [中断] returns to drop', () => {
   });
 });
 
-describe('flow H: export dummy progress + cancel', () => {
-  it('starts export and cancels mid-flight', () => {
+describe('flow H: export cancel mid-flight (#466 + #523)', () => {
+  it('kill_tracked_processes is invoked when 中断 is clicked', async () => {
+    // Make export_match hang so we can observe the cancel path.
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'export_match') return new Promise(() => undefined);
+      if (cmd === 'kill_tracked_processes') return Promise.resolve(0);
+      return Promise.resolve(undefined);
+    });
     useMetadataStore.getState().loadSample();
+    useMetadataStore.setState({ filePath: '/tmp/x/metadata.json' });
     useAppStateStore.getState().navigate('export');
-    vi.useFakeTimers();
     render(<App />);
-    act(() => {
-      fireEvent.click(screen.getByRole('button', { name: /書き出し開始/ }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: /書き出し開始/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('export-screen').dataset.phase).toBe('running');
     });
-    expect(screen.getByTestId('export-screen').dataset.phase).toBe('running');
-    act(() => {
-      vi.advanceTimersByTime(400);
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: '中断' }));
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('kill_tracked_processes');
     });
-    act(() => {
-      fireEvent.click(screen.getByRole('button', { name: '中断' }));
-    });
-    expect(screen.getByTestId('export-screen').dataset.phase).toBe('idle');
   });
 });
 
-describe('flow I: export completes and opens folder', () => {
-  it('runs through progress to 100% and shows フォルダを開く', () => {
+describe('flow I: export completes (#466)', () => {
+  it('walks through every match and surfaces the フォルダを開く button', async () => {
+    configureHappyInvoke();
     useMetadataStore.getState().loadSample();
+    useMetadataStore.setState({ filePath: '/tmp/x/metadata.json' });
     useAppStateStore.getState().navigate('export');
-    vi.useFakeTimers();
     render(<App />);
-    act(() => {
-      fireEvent.click(screen.getByRole('button', { name: /書き出し開始/ }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: /書き出し開始/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('export-screen').dataset.phase).toBe(
+        'completed',
+      );
     });
-    act(() => {
-      vi.advanceTimersByTime(9000);
-    });
-    expect(screen.getByTestId('export-screen').dataset.phase).toBe(
-      'completed',
-    );
     expect(
       screen.getByRole('button', { name: /フォルダを開く/ }),
     ).toBeInTheDocument();
