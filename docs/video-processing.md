@@ -134,7 +134,7 @@ ffmpeg -hwaccel auto -ss <chunk_start> -t <chunk_duration> -i input.mkv \
 | H.264 | GPU | 全世代 | 全世代 | 全世代 |
 | HEVC | GPU | Maxwell GM206+ | Skylake+ | VCN 1.0+ |
 | AV1 | GPU (#414) | RTX 30 (Ampere) 以降 | Arc / Gen12 以降 | VCN 4.0 以降 |
-| VP9 | GPU (#414) — NVIDIA は soft decode (#538), AMD は `vp9_amf` 利用可 | Maxwell 以降 (#538 で NVDEC 経路除外) | Gen9+ | VCN 1.0+ |
+| VP9 | GPU (#414) — NVIDIA は soft decode (#538), AMD は dict 未登録で soft decode, Intel は `vp9_qsv` HW decode (#582) | Maxwell 以降 (#538 で NVDEC 経路除外) | Gen9+ (`vp9_qsv` は Tiger Lake 11th gen 以降検証済 #582) | VCN 1.0+ (`_GPU_DECODER_MAP["amd"]` 未登録、d3d11va soft path) |
 | その他 (mpeg2video, vc1, prores 等) | CPU | — | — | — |
 
 - VP9 は `_GPU_PREFERRED_CODECS` に残すが NVIDIA 経路 (`_GPU_DECODER_MAP["nvidia"]`) からは除外 (#538 / #549)。理由: ffmpeg 8.1 の `vp9_cuvid` は frame を `nv12 + csp:gbr` で tag し、後段の swscaler が gray 変換を `EOPNOTSUPP (-129)` として reject する。NVIDIA auto-select で GPU mode に振られても `_decode_chunk` は else branch (`-hwaccel auto`) を使い、ffmpeg 側で soft decode (native) が選ばれる (実測 speed 2.64x)。`vp9_cuvid` の ffmpeg 側修正が入った時点で NVIDIA 経路の復活検討。AMD は #553 で d3d11va 経路に統一しているため csp:gbr 問題なし (filter 先頭で `hwdownload,format=nv12` 経由で system memory に降ろす、ただし AMD 用 dict には vp9 未登録)。Intel は #582 で `vp9_qsv` を `_GPU_DECODER_MAP["intel"]` に追加 (QSV は decode 後の `hwdownload` で nv12 に明示 download するため csp:gbr 問題なし、Tiger Lake で 8.29x speed 実機確認)。
