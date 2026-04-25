@@ -1890,15 +1890,13 @@ class TestResolveGpuMode:
         _, vendor = _resolve_gpu_mode(None, None, "av1", show=False, verbose=False)
         assert vendor == "nvidia"
 
-    def test_vendor_auto_no_vendor_when_only_amd(self, monkeypatch):
-        """AMD iGPU のみ環境では vendor=None だが codec match で use_gpu=True.
+    def test_vendor_auto_selects_amd_when_only_amd(self, monkeypatch):
+        """AMD iGPU のみ環境では vendor=amd を返し d3d11va 経路で動作する (#553).
 
-        AMD AMF decoder は #546 実装時点では _VENDOR_HWACCEL_MAP 未登録
-        (#553 で filter pipeline workaround 確定時に復活予定)。auto
-        選択で AMD は skip されるが、codec=av1 が `_GPU_PREFERRED_CODECS`
-        に含まれるため use_gpu=True を返し、scan_gpu の legacy path
-        (-hwaccel auto) で動作する (GPU decode 失敗時は ffmpeg が
-        CPU fallback)。
+        #546 時点では AMD は AMF decoder の filter pipeline 不整合で skip
+        されていたが、#553 で d3d11va + hwdownload 経路を実装したことで
+        auto 選択でも AMD が選ばれる。codec=av1 は ``_GPU_PREFERRED_CODECS``
+        に含まれるため use_gpu=True。
         """
         monkeypatch.setattr(
             "allaganeye.system_info.probe_gpu_vendors",
@@ -1910,19 +1908,21 @@ class TestResolveGpuMode:
             None, None, "av1", show=False, verbose=False
         )
         assert use_gpu is True
-        assert vendor is None
+        assert vendor == "amd"
 
-    def test_vendor_explicit_amd_unimplemented_raises(self, monkeypatch):
-        """AMD は #553 で復活予定、explicit 要求は exit 5 (#546)."""
+    def test_vendor_explicit_amd_resolves(self, monkeypatch):
+        """AMD は #553 で d3d11va 経路として実装済み、explicit 要求も通る."""
         monkeypatch.setattr(
             "allaganeye.system_info.probe_gpu_vendors",
             lambda: ["nvidia", "amd"],
         )
         from allaganeye.commands.split_matches import _resolve_gpu_mode
-        from allaganeye.exceptions import ConfigValidationError
 
-        with pytest.raises(ConfigValidationError, match="--gpu-vendor amd"):
-            _resolve_gpu_mode(None, "amd", "av1", show=False, verbose=False)
+        use_gpu, vendor = _resolve_gpu_mode(
+            None, "amd", "av1", show=False, verbose=False
+        )
+        assert use_gpu is True
+        assert vendor == "amd"
 
     def test_vendor_explicit_unavailable_raises_config_error(self, monkeypatch):
         """--gpu-vendor で probe に無い vendor を要求すると exit 5 (#546).
@@ -1952,7 +1952,12 @@ class TestResolveGpuMode:
             _resolve_gpu_mode(None, "intel", "av1", show=False, verbose=False)
 
     def test_vendor_auto_skips_unimplemented(self, monkeypatch):
-        """auto 選択では AMD / Intel (未実装) が available でも skip して NVIDIA を選ぶ (#546)."""
+        """auto 選択は preference 順 (#546 / #553).
+
+        Intel (#550 未実装) は available でも skip。AMD (#553 で d3d11va
+        として実装済み) は preference で NVIDIA の次に位置するため、
+        NVIDIA が available なら NVIDIA が優先される。
+        """
         monkeypatch.setattr(
             "allaganeye.system_info.probe_gpu_vendors",
             lambda: ["intel", "amd", "nvidia"],

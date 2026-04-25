@@ -91,50 +91,113 @@ class TestDecodeChunk:
         assert cmd[cv_idx + 1] == "av1_cuvid"
 
     @patch("allaganeye.video.gpu_detector.subprocess.run")
-    def test_unimplemented_vendor_falls_back_to_hwaccel_auto(self, mock_run):
-        """vendor=amd / intel は _VENDOR_HWACCEL_MAP 未定義で
-        `-hwaccel auto` に fallback する (#546 / #550 / #553).
+    def test_hwaccel_d3d11va_for_amd_av1(self, mock_run):
+        """vendor=amd で AV1 は d3d11va + native av1 decoder + hwdownload (#553)."""
+        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
+        _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0, codec="av1", vendor="amd")
 
-        explicit `--gpu-vendor amd` の場合、CLI 層 (_resolve_gpu_mode)
-        が ConfigValidationError で先に拒否するので実際にはこの経路に
-        は入らない。ただし probe 結果から自動選択されたケース (今は
-        preference で skip される) や将来 _VENDOR_HWACCEL_MAP に
-        vendor を追加し忘れた際のガードとしてこの挙動を維持する。
+        cmd = mock_run.call_args[0][0]
+        hw_idx = cmd.index("-hwaccel")
+        assert cmd[hw_idx + 1] == "d3d11va"
+        # AMD は AMF decoder ではなく native decoder + d3d11va wrapping
+        cv_idx = cmd.index("-c:v")
+        assert cmd[cv_idx + 1] == "av1"
+        assert "av1_amf" not in cmd
+        # surface format を明示して hwdownload と整合
+        of_idx = cmd.index("-hwaccel_output_format")
+        assert cmd[of_idx + 1] == "d3d11"
+        # filter graph 先頭で system memory に降ろす
+        vf_idx = cmd.index("-vf")
+        assert cmd[vf_idx + 1].startswith("hwdownload,format=nv12,")
+
+    @patch("allaganeye.video.gpu_detector.subprocess.run")
+    def test_hwaccel_d3d11va_for_amd_h264(self, mock_run):
+        """vendor=amd / codec=h264 でも d3d11va 経路 (#553)."""
+        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
+        _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0, codec="h264", vendor="amd")
+
+        cmd = mock_run.call_args[0][0]
+        hw_idx = cmd.index("-hwaccel")
+        assert cmd[hw_idx + 1] == "d3d11va"
+        cv_idx = cmd.index("-c:v")
+        assert cmd[cv_idx + 1] == "h264"
+        assert "h264_amf" not in cmd
+
+    @patch("allaganeye.video.gpu_detector.subprocess.run")
+    def test_hwaccel_d3d11va_for_amd_hevc(self, mock_run):
+        """vendor=amd / codec=hevc でも d3d11va 経路 (#553)."""
+        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
+        _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0, codec="hevc", vendor="amd")
+
+        cmd = mock_run.call_args[0][0]
+        hw_idx = cmd.index("-hwaccel")
+        assert cmd[hw_idx + 1] == "d3d11va"
+        cv_idx = cmd.index("-c:v")
+        assert cmd[cv_idx + 1] == "hevc"
+
+    @patch("allaganeye.video.gpu_detector.subprocess.run")
+    def test_nvidia_path_skips_hwdownload(self, mock_run):
+        """NVIDIA cuvid 経路は hwdownload prefix を付けない (#553 回帰防止).
+
+        cuvid decoder は decode 結果を nv12 system memory に直接出力する
+        ため、d3d11va のような hwdownload は不要。filter chain 先頭が
+        ``fps=...`` で始まることを確認。
         """
         mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
-        for vendor in ("amd", "intel"):
-            mock_run.reset_mock()
-            _decode_chunk(
-                Path("test.mp4"),
-                0.0,
-                10.0,
-                1.0,
-                codec="av1",
-                vendor=vendor,
-            )
-            cmd = mock_run.call_args[0][0]
-            hw_idx = cmd.index("-hwaccel")
-            assert cmd[hw_idx + 1] == "auto", (
-                f"vendor={vendor} should fall back to -hwaccel auto, "
-                f"got -hwaccel {cmd[hw_idx + 1]}"
-            )
-            assert "av1_qsv" not in cmd
-            assert "av1_amf" not in cmd
-            assert "av1_cuvid" not in cmd
+        _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0, codec="av1", vendor="nvidia")
 
-    def test_select_gpu_vendor_auto_returns_nvidia_only_when_implemented(self):
-        """auto 選択は _VENDOR_HWACCEL_MAP 登録済みの vendor のみ返す (#546).
+        cmd = mock_run.call_args[0][0]
+        assert "-hwaccel_output_format" not in cmd
+        vf_idx = cmd.index("-vf")
+        assert cmd[vf_idx + 1].startswith("fps="), (
+            "NVIDIA cuvid path must not include hwdownload prefix"
+        )
 
-        現在 NVIDIA のみ実装。AMD (#553) / Intel (#550) は preference
-        内でも skip されて None または後続 vendor にフォールバックする。
+    @patch("allaganeye.video.gpu_detector.subprocess.run")
+    def test_unimplemented_vendor_falls_back_to_hwaccel_auto(self, mock_run):
+        """vendor=intel は _VENDOR_HWACCEL_MAP 未定義で
+        `-hwaccel auto` に fallback する (#550 で QSV 実装予定).
+
+        explicit `--gpu-vendor intel` の場合、CLI 層 (_resolve_gpu_mode)
+        が ConfigValidationError で先に拒否するので実際にはこの経路に
+        は入らない。ただし将来 _VENDOR_HWACCEL_MAP に vendor を追加
+        し忘れた際のガードとしてこの挙動を維持する。
+        AMD は #553 で d3d11va として実装済み。
+        """
+        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
+        _decode_chunk(
+            Path("test.mp4"),
+            0.0,
+            10.0,
+            1.0,
+            codec="av1",
+            vendor="intel",
+        )
+        cmd = mock_run.call_args[0][0]
+        hw_idx = cmd.index("-hwaccel")
+        assert cmd[hw_idx + 1] == "auto", (
+            f"vendor=intel should fall back to -hwaccel auto, "
+            f"got -hwaccel {cmd[hw_idx + 1]}"
+        )
+        assert "av1_qsv" not in cmd
+        assert "av1_cuvid" not in cmd
+
+    def test_select_gpu_vendor_auto_returns_nvidia_first(self):
+        """auto 選択は preference 順に _VENDOR_HWACCEL_MAP 登録済みを返す (#546 / #553).
+
+        NVIDIA dGPU 優先、AMD (#553 で d3d11va 実装済み) がフォールバック、
+        Intel (#550) は preference にあっても _VENDOR_HWACCEL_MAP 未登録
+        で skip される。
         """
         from allaganeye.video.gpu_detector import _select_gpu_vendor
 
+        # NVIDIA が available にあれば最優先
         assert _select_gpu_vendor(None, ["nvidia", "amd"]) == "nvidia"
         assert _select_gpu_vendor("auto", ["nvidia", "amd"]) == "nvidia"
-        # AMD / Intel only -> None (not implemented yet)
-        assert _select_gpu_vendor(None, ["amd", "intel"]) is None
-        assert _select_gpu_vendor(None, ["amd"]) is None
+        # NVIDIA 不在で AMD があれば AMD (#553)
+        assert _select_gpu_vendor(None, ["amd", "intel"]) == "amd"
+        assert _select_gpu_vendor(None, ["amd"]) == "amd"
+        # Intel のみ -> None (#550 まだ未実装)
         assert _select_gpu_vendor(None, ["intel"]) is None
         assert _select_gpu_vendor(None, []) is None
 
@@ -148,18 +211,17 @@ class TestDecodeChunk:
     def test_select_gpu_vendor_explicit_unavailable_returns_none(self):
         """explicit vendor が available に無い場合は None (#546).
 
-        実装済み vendor の「未検出」と未実装 vendor の両方カバー。
-        実行時は _resolve_gpu_mode が ConfigValidationError で
-        落とす仕組み。
+        実装済み vendor (NVIDIA #546, AMD #553) の「未検出」と未実装
+        vendor (Intel #550) の両方カバー。実行時は _resolve_gpu_mode が
+        ConfigValidationError で落とす仕組み。
         """
         from allaganeye.video.gpu_detector import _select_gpu_vendor
 
         assert _select_gpu_vendor("nvidia", ["amd"]) is None
-        # AMD / Intel は explicit request でもサポート外 (available に
-        # 含まれても _VENDOR_HWACCEL_MAP でないので scan_gpu 側で
-        # fallback、ここでは vendor 名を返すだけ)
+        # AMD は #553 で _VENDOR_HWACCEL_MAP=d3d11va で実装済み
         assert _select_gpu_vendor("amd", ["amd", "nvidia"]) == "amd"
         assert _select_gpu_vendor("amd", ["nvidia"]) is None
+        # Intel は #550 で QSV 実装予定 (現状は未実装 vendor)
         assert _select_gpu_vendor("intel", ["nvidia"]) is None
 
     @patch("allaganeye.video.gpu_detector.subprocess.run")
