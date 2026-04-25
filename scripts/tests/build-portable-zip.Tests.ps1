@@ -133,6 +133,18 @@ Describe 'Format-ReadmeContent' {
   }
 }
 
+Describe 'Get-LauncherTemplate' {
+  It 'preserves python exit code via EXIT_CODE save and endlocal & exit /b idiom (#580)' {
+    # Launcher must propagate python exit code so callers can chain
+    # `allaganeye.bat detect file.mp4 && next-step` and CI smoke (Level B in
+    # release.yml) can observe non-zero exit codes. CI smoke is the de-facto
+    # regression test; this unit test is the unit-level safety net (#583).
+    $template = Get-LauncherTemplate
+    $template | Should -Match 'set EXIT_CODE=%ERRORLEVEL%'
+    $template | Should -Match 'endlocal & exit /b %EXIT_CODE%'
+  }
+}
+
 Describe 'Script parameters' {
   It 'exposes -SkipArchive as a switch parameter' {
     # CI sets -SkipArchive so actions/upload-artifact can zip the payload
