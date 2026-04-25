@@ -517,6 +517,54 @@ describe('ExportScreen (Phase 4 #466)', () => {
     expect(screen.getByText(/残り/)).toBeInTheDocument();
   });
 
+  // 5 回目テスト #4 (2026-04-25): per-file 進捗を overall に合算して進捗バー
+  // を滑らかに動かす。旧実装は `doneCount / total` のみで 1 ファイル目 encode
+  // 中は 0% 固定だった。ffmpeg `out_time_ms` 由来の per-file percent を
+  // running 中の試合に対して加算する。
+  it('reflects per-file running progress in the overall progress bar', async () => {
+    let progressHandler: ((e: {
+      payload: {
+        match_index: number;
+        percent: number;
+        stage: string;
+        message?: string;
+      };
+    }) => void) | null = null;
+    listenMock.mockImplementation(
+      async (_name: string, handler: (e: unknown) => void) => {
+        progressHandler = handler as typeof progressHandler;
+        return () => undefined;
+      },
+    );
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'export_match') return new Promise(() => undefined); // never resolves
+      return Promise.resolve(undefined);
+    });
+    render(<ExportScreen />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /書き出し開始/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('export-screen').dataset.phase).toBe('running');
+    });
+    await waitFor(() => expect(progressHandler).not.toBeNull());
+    // match 1 が 50% encoding 中 → overall = 50 / 9 ≈ 6%
+    progressHandler!({
+      payload: { match_index: 1, percent: 50, stage: 'encoding' },
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/6%/)).toBeInTheDocument();
+    });
+    // match 1 が 100% (まだ done event は来ていない、percent だけ)
+    // → overall = 100 / 9 ≈ 11% (Rust 側 done event がないと status='running'
+    //    のまま、percent=100 を加算)
+    progressHandler!({
+      payload: { match_index: 1, percent: 100, stage: 'encoding' },
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/11%/)).toBeInTheDocument();
+    });
+  });
+
   it('errors surface as export-progress events update list items', async () => {
     let progressHandler: ((e: {
       payload: {

@@ -343,21 +343,38 @@ export function ExportScreen() {
   const errorCount = countedMatches.filter(
     (m) => matchStates[m.index]?.status === 'error',
   ).length;
+  // #545 review #7 / 5 回目テスト #4 (2026-04-25):
+  // 旧実装は `doneCount / total * 100` で「完了ファイル数のみ」ベースだった
+  // ため、1 ファイル目 encode 中は overall progress が 0% 固定で動かず、
+  // 「左下の進捗バーが機能していない」というユーザー体験になっていた。
+  // ffmpeg は `out_time_ms` を 1 秒間隔で emit するので Rust 側から
+  // export-progress event の `percent` (per-file %) が届く。これを overall
+  // に合算して滑らかに動かす。
+  const totalPercentSum = countedMatches.reduce((acc, m) => {
+    const s = matchStates[m.index];
+    if (!s) return acc;
+    if (s.status === 'done') return acc + 100;
+    if (s.status === 'running') return acc + s.percent;
+    // pending / skipped / error は 0 として扱う
+    return acc;
+  }, 0);
   const overallPercent = countedMatches.length === 0
     ? 0
-    : Math.round((doneCount / countedMatches.length) * 100);
+    : Math.round(totalPercentSum / countedMatches.length);
 
-  // #545 review #7: 経過 / 残り時間 (秒)。
+  // #545 review #7 / 5 回目テスト #4: 経過 / 残り時間 (秒)。
   // - 経過: `nowMs - exportStartMs` (running 中は 1s tick で更新)
-  // - 残り: `(elapsed / done) * remaining` の線形推定。done=0 のとき null
-  //   (= 表示は `—`)。完了 / 中断時も null。
+  // - 残り: `(elapsed / progress) * remaining` の線形推定。progress は
+  //   per-file 進捗込みの fractional unit (0..countedMatches.length)。
+  //   進捗 0 のとき null (= 表示は `—`)、完了 / 中断時も null。
   const elapsedSec =
     exportStartMs === null ? null : Math.max(0, (nowMs - exportStartMs) / 1000);
-  const remainingCount = Math.max(0, countedMatches.length - doneCount);
+  const totalProgressUnits = totalPercentSum / 100;
+  const remainingUnits = Math.max(0, countedMatches.length - totalProgressUnits);
   const remainingSec =
-    !running || elapsedSec === null || doneCount === 0
+    !running || elapsedSec === null || totalProgressUnits === 0
       ? null
-      : (elapsedSec / doneCount) * remainingCount;
+      : (elapsedSec / totalProgressUnits) * remainingUnits;
 
   return (
     <div className={styles.screen} data-testid="export-screen" data-phase={phase}>
