@@ -206,6 +206,19 @@
   box-shadow: none;
 }
 
+/*
+ * #545 review #7: 進捗バー直下の経過 / 残り時間 (design mock 準拠)。
+ * progressHeader と同じ font-family / 色だが少し小さく抑えてサブ情報感を出す。
+ */
+.progressTime {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-family: var(--ae-font-mono);
+  font-size: 9px;
+  color: var(--ae-text-dim);
+}
+
 .primaryButton {
   width: 100%;
   padding: 12px 16px;
@@ -254,13 +267,49 @@
   overflow: hidden;
 }
 
+/*
+ * #545 review #3: 一覧 caption の隣に bulk 操作ボタン (全選択/全解除) を
+ * 並べる横並びレイアウト。
+ */
+.listHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  padding: 4px 4px 0;
+}
+
 .listCaption {
   font-family: var(--ae-font-ui);
   font-size: 9px;
   letter-spacing: 2px;
   color: var(--ae-gold-dim);
-  margin-bottom: 6px;
-  padding: 4px 4px 0;
+}
+
+.listBulkActions {
+  display: flex;
+  gap: 4px;
+}
+
+.listBulkButton {
+  background: transparent;
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
+  color: var(--ae-gold);
+  padding: 2px 8px;
+  font-family: var(--ae-font-ui);
+  font-size: 9px;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+
+.listBulkButton:hover:not(:disabled) {
+  background: rgba(var(--ae-gold-rgb), 0.08);
+  color: var(--ae-gold-bright);
+}
+
+.listBulkButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .listBody {

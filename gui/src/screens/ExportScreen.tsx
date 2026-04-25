@@ -5,7 +5,7 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
-import { fmtMatchDuration } from '../utils/time';
+import { fmtMatchDuration, fmtTime } from '../utils/time';
 import { exportReducer } from './reducers/export';
 import type { ExportPhase } from './types';
 import styles from './ExportScreen.module.css';
@@ -107,6 +107,23 @@ export function ExportScreen() {
     () => new Set(),
   );
   const cancelRequestedRef = useRef(false);
+  // #545 review #7 (2026-04-25): progress bar 下の「経過 / 残り」時間表示用。
+  // START_CLICKED 時の wall-clock を記録し、`elapsedSec` / `remainingSec` を
+  // 描画ループで更新する。残り時間は `(elapsed / done) * remaining` の線形
+  // 推定 (done=0 のときは null = 「-」表示)。
+  const [exportStartMs, setExportStartMs] = useState<number | null>(null);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  // 1 秒間隔の wall-clock tick (running 中のみ)。完了 / 中断 / idle に
+  // なれば clearInterval。
+  useEffect(() => {
+    if (exportStartMs === null) return;
+    if (phase !== 'running') return;
+    const iv = setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [exportStartMs, phase]);
 
   function toggleMatchExclusion(matchIndex: number) {
     setExcludedIndexes((prev) => {
@@ -115,6 +132,30 @@ export function ExportScreen() {
         next.delete(matchIndex);
       } else {
         next.add(matchIndex);
+      }
+      return next;
+    });
+  }
+
+  /**
+   * #545 review #3 (2026-04-25): 一覧の全選択 / 全解除トグル。
+   * `type_override === 'skip'` (preview で永続 skip 設定済) は対象外
+   * (UI でも個別 checkbox が disabled なので、bulk からも除外する)。
+   *
+   * - select-all: excludedIndexes から bulk 対象 index を全 remove
+   * - deselect-all: bulk 対象 index を全 add
+   */
+  function toggleSelectAll(selectAll: boolean) {
+    if (!metadata) return;
+    setExcludedIndexes((prev) => {
+      const next = new Set(prev);
+      for (const m of metadata.matches) {
+        if (m.type_override === 'skip') continue;
+        if (selectAll) {
+          next.delete(m.index);
+        } else {
+          next.add(m.index);
+        }
       }
       return next;
     });
@@ -153,9 +194,12 @@ export function ExportScreen() {
   }, []);
 
   function formatName(index: number, type: string, startSec: number): string {
-    const startDisplay = Math.floor(startSec)
-      .toString()
-      .padStart(4, '0');
+    // #545 review #8 (2026-04-25): {start} は MM-SS / H-MM-SS 形式
+    // (design mock の `m.start_display.replace(/:/g, '-')` 準拠)。
+    // 旧実装は秒数 0 埋め (例: '0915') だったが、ユーザー視点で start_display
+    // (mm:ss) との対応が取れず混乱の元。Windows filename で `:` は使えない
+    // ので `-` 置換版を採用。
+    const startDisplay = formatStartForFilename(startSec);
     const today = new Date().toISOString().slice(0, 10);
     return namePattern
       .replace(/\{idx:03\}/g, String(index).padStart(3, '0'))
@@ -194,6 +238,10 @@ export function ExportScreen() {
       }
     }
     setMatchStates(nextStates);
+    // #545 review #7: 経過 / 残り時間計測の起点。
+    const startMs = Date.now();
+    setExportStartMs(startMs);
+    setNowMs(startMs);
     dispatch({ type: 'START_CLICKED' });
 
     let successCount = 0;
@@ -254,12 +302,18 @@ export function ExportScreen() {
   // 呼んでおり、Explorer が開く前に画面遷移してしまう (実態として開いて
   // いないように見える) 不具合があった。新実装は shell.open のみで
   // 画面遷移は行わない。`完了` ステータスは画面に残す。
+  //
+  // #545 review #6 (2026-04-25): shell.open は default scope が URL
+  // (`mailto:` / `tel:` / `https?://`) しか許可せず、ローカル path で
+  // `Scoped command argument failed regex validation` を返していた。
+  // Rust 側に `open_folder_in_explorer` 独自 command を追加して explorer.exe
+  // を直接 spawn する形に変更。
   const [openFolderError, setOpenFolderError] = useState<string | null>(null);
 
   async function handleOpenFolder() {
     setOpenFolderError(null);
     try {
-      await invoke('plugin:shell|open', { path: outDir });
+      await invoke('open_folder_in_explorer', { path: outDir });
     } catch (e) {
       setOpenFolderError(e instanceof Error ? e.message : String(e));
     }
@@ -291,6 +345,18 @@ export function ExportScreen() {
   const overallPercent = countedMatches.length === 0
     ? 0
     : Math.round((doneCount / countedMatches.length) * 100);
+
+  // #545 review #7: 経過 / 残り時間 (秒)。
+  // - 経過: `nowMs - exportStartMs` (running 中は 1s tick で更新)
+  // - 残り: `(elapsed / done) * remaining` の線形推定。done=0 のとき null
+  //   (= 表示は `—`)。完了 / 中断時も null。
+  const elapsedSec =
+    exportStartMs === null ? null : Math.max(0, (nowMs - exportStartMs) / 1000);
+  const remainingCount = Math.max(0, countedMatches.length - doneCount);
+  const remainingSec =
+    !running || elapsedSec === null || doneCount === 0
+      ? null
+      : (elapsedSec / doneCount) * remainingCount;
 
   return (
     <div className={styles.screen} data-testid="export-screen" data-phase={phase}>
@@ -403,6 +469,17 @@ export function ExportScreen() {
                     style={{ width: `${overallPercent}%` }}
                   />
                 </div>
+                {/* #545 review #7: 経過 / 残り時間 (design mock 準拠)。
+                    完了時は残りは `—` で固定、cancelling は経過のみ表示。 */}
+                {elapsedSec !== null && (
+                  <div className={styles.progressTime}>
+                    <span>経過 {fmtTime(elapsedSec)}</span>
+                    <span>
+                      残り{' '}
+                      {remainingSec !== null ? fmtTime(remainingSec) : '—'}
+                    </span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -470,18 +547,51 @@ export function ExportScreen() {
             {error && (
               <button
                 type="button"
-                className={styles.cancelButton}
-                onClick={() => dispatch({ type: 'DISMISS_ERROR' })}
+                className={styles.primaryButton}
+                title={
+                  '出力先 / 命名 / コーデック / 試合選択 を変更してから ' +
+                  '再度書き出しを試行します。'
+                }
+                onClick={() => {
+                  setMatchStates({});
+                  setOpenFolderError(null);
+                  dispatch({ type: 'DISMISS_ERROR' });
+                }}
               >
-                閉じる
+                設定変更して再試行
               </button>
             )}
           </div>
         </div>
 
         <div className={styles.listPanel}>
-          <div className={styles.listCaption}>
-            書き出し一覧 ⸱ {countedMatches.length} ファイル
+          <div className={styles.listHeaderRow}>
+            <div className={styles.listCaption}>
+              書き出し一覧 ⸱ {countedMatches.length} ファイル
+            </div>
+            {/* #545 review #3 (2026-04-25): 全選択 / 全解除トグル。
+                preview で永続 skip 設定済 (type_override === 'skip') の試合は
+                bulk 対象から除外。export 中は disable。 */}
+            <div className={styles.listBulkActions}>
+              <button
+                type="button"
+                className={styles.listBulkButton}
+                disabled={running || cancelling}
+                onClick={() => toggleSelectAll(true)}
+                aria-label="select all matches"
+              >
+                全選択
+              </button>
+              <button
+                type="button"
+                className={styles.listBulkButton}
+                disabled={running || cancelling}
+                onClick={() => toggleSelectAll(false)}
+                aria-label="deselect all matches"
+              >
+                全解除
+              </button>
+            </div>
           </div>
           <ul className={styles.listBody}>
             {metadata.matches.map((m) => {
@@ -567,6 +677,30 @@ export function ExportScreen() {
   );
 }
 
+/**
+ * #545 review #8 (2026-04-25): filename 用の `{start}` 変数を `MM-SS` /
+ * `H-MM-SS` 形式に format する。`fmtTime` の `:` を `-` に置換した形と等価
+ * (Windows filename で `:` が使えないため)。
+ *
+ * 例:
+ * - 0       → `00-00`
+ * - 915.5   → `15-15`
+ * - 5021.5  → `1-23-41`
+ */
+export function formatStartForFilename(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    seconds = 0;
+  }
+  const total = Math.floor(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) {
+    return `${h}-${String(m).padStart(2, '0')}-${String(s).padStart(2, '0')}`;
+  }
+  return `${String(m).padStart(2, '0')}-${String(s).padStart(2, '0')}`;
+}
+
 function joinPath(dir: string, name: string): string {
   const separator =
     dir.includes('\\') && !dir.includes('/') ? '\\' : '/';
@@ -575,17 +709,44 @@ function joinPath(dir: string, name: string): string {
 }
 
 /**
+ * Windows の extended-length path prefix (`\\?\`) を取り除く。
+ *
+ * Tauri の dialog::open() / drag-drop は Windows 上で `\\?\` 付き path を
+ * 返すことがあり、そのまま UI に表示すると一般的な `E:\videos\...` 表記
+ * との一貫性が崩れる。ffmpeg や Win32 API は両形式を解釈できるが、UI 表示
+ * 側で正規化するのがユーザー体験的に望ましいため、deriveDefaultOutDir で
+ * 親 dir を切り出す前に strip する (#545 review #2、2026-04-25)。
+ *
+ * - `\\?\C:\foo` → `C:\foo`
+ * - `\\?\UNC\server\share` → `\\server\share`
+ * - prefix なしの path は素通し
+ */
+export function stripExtendedPathPrefix(p: string): string {
+  if (p.startsWith('\\\\?\\UNC\\')) {
+    return '\\\\' + p.slice('\\\\?\\UNC\\'.length);
+  }
+  if (p.startsWith('\\\\?\\')) {
+    return p.slice('\\\\?\\'.length);
+  }
+  return p;
+}
+
+/**
  * #466 review #2: source video の親ディレクトリ + `/output` を default に。
  * `videoSource` から `dirname` 相当を抽出する (Windows は `\\` も許容)。
+ *
+ * #545 review #2 (2026-04-25): Windows の `\\?\` extended-length path prefix
+ * は UI 表示用に取り除く。
  */
 export function deriveDefaultOutDir(videoSource: string | null): string {
   if (!videoSource) return '';
-  const sep = videoSource.includes('\\') && !videoSource.includes('/') ? '\\' : '/';
+  const normalized = stripExtendedPathPrefix(videoSource);
+  const sep = normalized.includes('\\') && !normalized.includes('/') ? '\\' : '/';
   const idx = Math.max(
-    videoSource.lastIndexOf('/'),
-    videoSource.lastIndexOf('\\'),
+    normalized.lastIndexOf('/'),
+    normalized.lastIndexOf('\\'),
   );
   if (idx <= 0) return '';
-  const parent = videoSource.slice(0, idx);
+  const parent = normalized.slice(0, idx);
   return `${parent}${sep}output`;
 }

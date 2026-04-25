@@ -21,7 +21,12 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: openDialogMock,
 }));
 
-import { ExportScreen, deriveDefaultOutDir } from './ExportScreen';
+import {
+  ExportScreen,
+  deriveDefaultOutDir,
+  formatStartForFilename,
+  stripExtendedPathPrefix,
+} from './ExportScreen';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 
@@ -52,6 +57,66 @@ describe('deriveDefaultOutDir', () => {
   it('returns empty string when videoSource is null or has no separator', () => {
     expect(deriveDefaultOutDir(null)).toBe('');
     expect(deriveDefaultOutDir('clip.mkv')).toBe('');
+  });
+
+  // #545 review #2: extended-length path prefix を strip してから derive
+  it('strips Windows \\\\?\\ extended-length prefix before deriving', () => {
+    expect(deriveDefaultOutDir('\\\\?\\E:\\videos\\clip.mkv')).toBe(
+      'E:\\videos\\output',
+    );
+    expect(deriveDefaultOutDir('\\\\?\\C:\\foo\\bar.mp4')).toBe('C:\\foo\\output');
+  });
+
+  it('strips Windows \\\\?\\UNC\\ prefix to UNC form', () => {
+    expect(
+      deriveDefaultOutDir('\\\\?\\UNC\\server\\share\\clip.mkv'),
+    ).toBe('\\\\server\\share\\output');
+  });
+});
+
+// #545 review #2: extended-length path prefix strip helper
+describe('stripExtendedPathPrefix', () => {
+  it('strips \\\\?\\ from drive-letter paths', () => {
+    expect(stripExtendedPathPrefix('\\\\?\\C:\\foo')).toBe('C:\\foo');
+    expect(stripExtendedPathPrefix('\\\\?\\E:\\videos\\x.mkv')).toBe(
+      'E:\\videos\\x.mkv',
+    );
+  });
+
+  it('converts \\\\?\\UNC\\ to \\\\ form', () => {
+    expect(stripExtendedPathPrefix('\\\\?\\UNC\\server\\share\\foo')).toBe(
+      '\\\\server\\share\\foo',
+    );
+  });
+
+  it('passes through paths without the prefix', () => {
+    expect(stripExtendedPathPrefix('C:\\foo')).toBe('C:\\foo');
+    expect(stripExtendedPathPrefix('/home/user/file')).toBe('/home/user/file');
+    expect(stripExtendedPathPrefix('')).toBe('');
+  });
+});
+
+// #545 review #8: filename `{start}` の HH-MM format helper
+describe('formatStartForFilename', () => {
+  it('formats sub-hour seconds as MM-SS', () => {
+    expect(formatStartForFilename(0)).toBe('00-00');
+    expect(formatStartForFilename(49)).toBe('00-49');
+    expect(formatStartForFilename(60)).toBe('01-00');
+    expect(formatStartForFilename(915.5)).toBe('15-15');
+  });
+
+  it('formats hour-plus seconds as H-MM-SS', () => {
+    expect(formatStartForFilename(3600)).toBe('1-00-00');
+    expect(formatStartForFilename(5021.5)).toBe('1-23-41');
+  });
+
+  it('clamps NaN / negative to 0', () => {
+    expect(formatStartForFilename(Number.NaN)).toBe('00-00');
+    expect(formatStartForFilename(-1)).toBe('00-00');
+  });
+
+  it('truncates fractional seconds (floor semantics)', () => {
+    expect(formatStartForFilename(59.9)).toBe('00-59');
   });
 });
 
@@ -354,6 +419,123 @@ describe('ExportScreen (Phase 4 #466)', () => {
     expect(screen.getByText('15m59s')).toBeInTheDocument();
     // 元の値 "15m15s" は表示されていない (置換された)
     expect(screen.queryByText('15m15s')).not.toBeInTheDocument();
+  });
+
+  // #545 review #3: 全選択 / 全解除トグル
+  it('「全解除」 unchecks every match; 「全選択」 re-checks all', async () => {
+    render(<ExportScreen />);
+    const user = userEvent.setup();
+    expect(screen.getByText(/9 試合を書き出す/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'deselect all matches' }));
+    expect(screen.getByText(/0 試合を書き出す/)).toBeInTheDocument();
+    // 全 checkbox が unchecked
+    for (let i = 1; i <= 9; i++) {
+      const cb = screen.getByLabelText(`include match ${i}`) as HTMLInputElement;
+      expect(cb.checked).toBe(false);
+    }
+    await user.click(screen.getByRole('button', { name: 'select all matches' }));
+    expect(screen.getByText(/9 試合を書き出す/)).toBeInTheDocument();
+  });
+
+  it('全選択 / 全解除 buttons disable while running', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'export_match') return new Promise(() => undefined);
+      return Promise.resolve(undefined);
+    });
+    render(<ExportScreen />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /書き出し開始/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('export-screen').dataset.phase).toBe('running');
+    });
+    expect(
+      (screen.getByRole('button', { name: 'select all matches' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByRole('button', { name: 'deselect all matches' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
+
+  // #545 review #6: フォルダを開くは open_folder_in_explorer (独自 Rust
+  // command) を invoke する。`plugin:shell|open` は使わない (default scope の
+  // URL regex で reject されるため)。
+  it('completed [フォルダを開く] invokes open_folder_in_explorer with outDir', async () => {
+    invokeMock.mockImplementation((cmd: string, args: unknown) => {
+      if (cmd === 'export_match') {
+        const a = args as { matchIndex: number; outputPath: string };
+        return Promise.resolve({
+          match_index: a.matchIndex,
+          output_path: a.outputPath,
+          duration_ms: 100,
+        });
+      }
+      if (cmd === 'open_folder_in_explorer') return Promise.resolve(undefined);
+      return Promise.resolve(undefined);
+    });
+    render(<ExportScreen />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /書き出し開始/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('export-screen').dataset.phase).toBe('completed');
+    });
+    await user.click(screen.getByRole('button', { name: /フォルダを開く/ }));
+    expect(invokeMock).toHaveBeenCalledWith('open_folder_in_explorer', {
+      path: expect.any(String),
+    });
+    // shell.open は呼ばれていない
+    expect(
+      invokeMock.mock.calls.some((c) => c[0] === 'plugin:shell|open'),
+    ).toBe(false);
+  });
+
+  // #545 review #4: エラー時のボタンは「設定変更して再試行」(旧「閉じる」)。
+  // クリックで idle に戻り、再度書き出し可能。
+  it('error phase shows 「設定変更して再試行」 button that returns to idle', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'export_match') return Promise.reject(new Error('boom'));
+      return Promise.resolve(undefined);
+    });
+    render(<ExportScreen />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /書き出し開始/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('export-screen').dataset.phase).toBe('error');
+    });
+    expect(
+      screen.queryByRole('button', { name: '閉じる' }),
+    ).not.toBeInTheDocument();
+    const retryBtn = screen.getByRole('button', {
+      name: /設定変更して再試行/,
+    });
+    await user.click(retryBtn);
+    expect(screen.getByTestId('export-screen').dataset.phase).toBe('idle');
+  });
+
+  // #545 review #7: 進捗バー直下に「経過 0:00 / 残り —」が出る (running 中)。
+  // 完了後は両方の表示が残るが setInterval は止まる。
+  it('shows elapsed / remaining time line during running', async () => {
+    invokeMock.mockImplementation((cmd: string, args: unknown) => {
+      if (cmd === 'export_match') {
+        const a = args as { matchIndex: number; outputPath: string };
+        return Promise.resolve({
+          match_index: a.matchIndex,
+          output_path: a.outputPath,
+          duration_ms: 100,
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+    render(<ExportScreen />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /書き出し開始/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('export-screen').dataset.phase).toBe('completed');
+    });
+    // 「経過」「残り」ラベルが両方表示されている (running 後 completed まで)
+    expect(screen.getByText(/経過/)).toBeInTheDocument();
+    expect(screen.getByText(/残り/)).toBeInTheDocument();
   });
 
   it('errors surface as export-progress events update list items', async () => {

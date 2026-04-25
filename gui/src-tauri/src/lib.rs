@@ -950,6 +950,56 @@ fn validate_output_parent_exists(output_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// `open_folder_in_explorer` の path 検証ロジックを spawn から分離した
+/// 単体テスト用ヘルパ。
+///
+/// - 存在しない path は明示エラー
+/// - 非 Windows 環境では unsupported エラー
+/// - 上記をパスしたら Ok (caller は spawn を試みる)
+fn validate_open_folder_request(path: &str) -> Result<(), String> {
+    if !Path::new(path).exists() {
+        return Err(format!("path does not exist: {}", path));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        return Err(
+            "open_folder_in_explorer is only supported on Windows".to_string(),
+        );
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Ok(())
+    }
+}
+
+/// `path` をプラットフォーム固有のファイルマネージャ (Windows: explorer.exe)
+/// で開く。
+///
+/// 旧実装は `tauri-plugin-shell` の `open` を使っていたが、`shell:allow-open`
+/// permission の default scope が URL (`mailto:` / `tel:` / `https?://`) しか
+/// 許可せず、ローカル path は `Scoped command argument failed regex
+/// validation` で reject される。`open` の scope を path 許可に拡張する代わ
+/// りに、Windows の `explorer.exe` を直接 spawn する独自 command を用意して
+/// 確実に動かす (#545 review、2026-04-25)。
+///
+/// Windows のみ対応 (CLAUDE.md に「対応プラットフォーム: Windows のみ」と
+/// 明記)。将来 Linux / macOS 対応する際は `xdg-open` / `open` で分岐する。
+#[tauri::command]
+fn open_folder_in_explorer(path: String) -> Result<(), String> {
+    validate_open_folder_request(&path)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        Command::new("explorer.exe")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("failed to launch explorer: {}", e))?;
+    }
+
+    Ok(())
+}
+
 fn ffmpeg_args_for_export(
     video_path: &Path,
     start_seconds: f64,
@@ -1279,6 +1329,7 @@ pub fn run() {
             kill_tracked_processes,
             force_exit_app,
             export_match,
+            open_folder_in_explorer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -2128,6 +2179,36 @@ mod tests {
     #[test]
     fn validate_output_parent_exists_accepts_bare_filename() {
         validate_output_parent_exists(Path::new("clip.mp4")).unwrap();
+    }
+
+    /// #545 review #6: 存在しないパスを渡したら明示エラー (explorer 起動前に
+    /// validate)。spawn を含まない validator の単体テスト。
+    #[test]
+    fn validate_open_folder_request_rejects_missing_path() {
+        let tmp = TempDir::new().unwrap();
+        let bogus = tmp.path().join("does-not-exist");
+        let err = validate_open_folder_request(&bogus.to_string_lossy()).unwrap_err();
+        assert!(err.contains("does not exist"), "got: {}", err);
+    }
+
+    /// #545 review #6: 存在するディレクトリは accept (Windows のみ Ok、
+    /// 非 Windows は unsupported エラー)。spawn 副作用なしで分岐確認。
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn validate_open_folder_request_accepts_existing_dir_on_windows() {
+        let tmp = TempDir::new().unwrap();
+        validate_open_folder_request(&tmp.path().to_string_lossy()).unwrap();
+    }
+
+    /// #545 review #6: 非 Windows 環境では path が存在しても unsupported
+    /// エラーを返す。CI (Linux) でも安定して走る回帰テスト。
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn validate_open_folder_request_returns_unsupported_on_non_windows() {
+        let tmp = TempDir::new().unwrap();
+        let err =
+            validate_open_folder_request(&tmp.path().to_string_lossy()).unwrap_err();
+        assert!(err.contains("Windows"), "got: {}", err);
     }
 
     /// #466 -- happy path: real file, sane start/end, validator returns Ok.
