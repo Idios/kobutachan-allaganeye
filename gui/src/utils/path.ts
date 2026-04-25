@@ -23,3 +23,20 @@ export function stripExtendedPathPrefix(p: string): string {
   }
   return p;
 }
+
+/**
+ * `dir` と `name` を OS-appropriate なセパレータで連結する。
+ *
+ * separator 推定ルール:
+ * - dir に `\` のみ含まれる (Windows native) → `\` で連結
+ * - それ以外 (`/` 含む / 両方混在 / 分離なし) → `/` を優先
+ * - dir が `/` または `\` で終わっている場合は重複させない
+ *
+ * Windows extended-length path や POSIX path、混在パスのいずれでも一貫した
+ * 動作になる。ExportScreen の `outputPath` 組み立てに使用。
+ */
+export function joinPath(dir: string, name: string): string {
+  const separator = dir.includes('\\') && !dir.includes('/') ? '\\' : '/';
+  if (dir.endsWith('/') || dir.endsWith('\\')) return dir + name;
+  return dir + separator + name;
+}

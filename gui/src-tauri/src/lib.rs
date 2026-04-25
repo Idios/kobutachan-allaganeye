@@ -2211,6 +2211,71 @@ mod tests {
         assert!(err.contains("Windows"), "got: {}", err);
     }
 
+    /// #545 mystifying-ptolemy-d112b5 review (2026-04-25): track_child →
+    /// untrack_child の往復で正しく Some が返ること。`export_match` の
+    /// happy-path cleanup の core ロジック。
+    ///
+    /// Windows 用 dummy プロセスとして `cmd /c rem` を spawn (即終了 no-op)、
+    /// 非 Windows は `true` を spawn する。spawn 直後に track → untrack して
+    /// Some を確認、最後に kill して残留を防ぐ。
+    #[tokio::test]
+    async fn track_child_then_untrack_returns_some() {
+        // PROCESS_TRACKER は process-global の OnceCell なので、別 test の
+        // 残留を念のため drain。失敗しても無害。
+        let _ = kill_tracked_processes().await;
+
+        let mut spawn = if cfg!(target_os = "windows") {
+            tokio::process::Command::new("cmd")
+        } else {
+            tokio::process::Command::new("true")
+        };
+        if cfg!(target_os = "windows") {
+            spawn.args(["/c", "rem"]);
+        }
+        let child = spawn.spawn().expect("spawn dummy child failed");
+
+        let id = track_child(child).await;
+        let recovered = untrack_child(id).await;
+        assert!(
+            recovered.is_some(),
+            "untrack_child should return Some right after track"
+        );
+        // recovered Child は drop で OS 側に handle が返るが、念のため明示
+        // wait しておく (zombie 防止)。
+        if let Some(mut c) = recovered {
+            let _ = c.wait().await;
+        }
+    }
+
+    /// #545 mystifying-ptolemy-d112b5 review (2026-04-25): track_child のあと
+    /// `kill_tracked_processes` が drain した場合、untrack_child は None を
+    /// 返す。`export_match` の cancel 検出 (`untrack` 結果が None なら
+    /// 既に kill された = 中断) のセマンティクス確認。
+    #[tokio::test]
+    async fn untrack_child_after_kill_tracked_returns_none() {
+        // 別 test の残留があれば drain。
+        let _ = kill_tracked_processes().await;
+
+        let mut spawn = if cfg!(target_os = "windows") {
+            tokio::process::Command::new("cmd")
+        } else {
+            tokio::process::Command::new("true")
+        };
+        if cfg!(target_os = "windows") {
+            spawn.args(["/c", "rem"]);
+        }
+        let child = spawn.spawn().expect("spawn dummy child failed");
+
+        let id = track_child(child).await;
+        // kill_tracked_processes が tracker を drain して全 child を kill する
+        let _killed = kill_tracked_processes().await.unwrap();
+        let recovered = untrack_child(id).await;
+        assert!(
+            recovered.is_none(),
+            "untrack_child should return None after kill_tracked_processes drained the tracker"
+        );
+    }
+
     /// #466 -- happy path: real file, sane start/end, validator returns Ok.
     #[test]
     fn export_match_accepts_valid_request() {

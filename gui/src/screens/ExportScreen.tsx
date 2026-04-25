@@ -5,7 +5,7 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
-import { stripExtendedPathPrefix } from '../utils/path';
+import { joinPath, stripExtendedPathPrefix } from '../utils/path';
 import { fmtMatchDuration, fmtTime } from '../utils/time';
 import { exportReducer } from './reducers/export';
 import type { ExportPhase } from './types';
@@ -717,13 +717,6 @@ export function formatStartForFilename(seconds: number): string {
     return `${h}-${String(m).padStart(2, '0')}-${String(s).padStart(2, '0')}`;
   }
   return `${String(m).padStart(2, '0')}-${String(s).padStart(2, '0')}`;
-}
-
-function joinPath(dir: string, name: string): string {
-  const separator =
-    dir.includes('\\') && !dir.includes('/') ? '\\' : '/';
-  if (dir.endsWith('/') || dir.endsWith('\\')) return dir + name;
-  return dir + separator + name;
 }
 
 /**

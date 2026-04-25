@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,11 +11,11 @@ const { invokeMock, listenMock, openDialogMock } = vi.hoisted(() => ({
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
 }));
+// listenMock の戻り値を尊重する mock。デフォルトの unlisten fn は
+// `beforeEach` で default 設定する (互換性維持)。個別 test で
+// `mockResolvedValueOnce(spy)` すると spy 経由で unlisten 確認できる。
 vi.mock('@tauri-apps/api/event', () => ({
-  listen: (...args: unknown[]) => {
-    listenMock(...args);
-    return Promise.resolve(() => undefined);
-  },
+  listen: (...args: unknown[]) => listenMock(...args),
 }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: openDialogMock,
@@ -36,6 +36,10 @@ beforeEach(() => {
   // Default: any invoke resolves with undefined; the per-test callers
   // override `export_match` / `kill_tracked_processes` as needed.
   invokeMock.mockResolvedValue(undefined);
+  // Default: listen() returns a no-op unlisten function. 個別 test で
+  // `mockResolvedValueOnce(spy)` すると 1 回だけ override できる
+  // (mystifying-ptolemy-d112b5 review)。
+  listenMock.mockResolvedValue(() => undefined);
   useAppStateStore.getState().reset();
   useMetadataStore.getState().clear();
   useMetadataStore.getState().loadSample();
@@ -122,6 +126,35 @@ describe('ExportScreen (Phase 4 #466)', () => {
         expect.any(Function),
       );
     });
+  });
+
+  // #545 mystifying-ptolemy-d112b5 review (2026-04-25): unmount 時に
+  // listen() が返す unlisten 関数が呼ばれることをガード。漏れると memory
+  // leak / 二重イベント購読 (画面遷移を繰り返したとき) を招く。
+  it('calls the unlisten fn returned by listen on unmount', async () => {
+    const unlistenSpy = vi.fn();
+    // 1 回だけ unlistenSpy を返すよう listen mock を上書き
+    listenMock.mockResolvedValueOnce(unlistenSpy);
+    const { unmount } = render(<ExportScreen />);
+    // listen が登録されるのを待つ (subscribe は async)
+    await waitFor(() => {
+      expect(listenMock).toHaveBeenCalledWith(
+        'export-progress',
+        expect.any(Function),
+      );
+    });
+    // useEffect 内の async IIFE で `unlisten = await listen(...)` が完了
+    // するまで microtask 1 step 待つ。これをしないと unmount の cleanup
+    // 時点で unlisten=null のまま return されることがある。
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(unlistenSpy).not.toHaveBeenCalled();
+    // unmount → useEffect cleanup が走る
+    act(() => {
+      unmount();
+    });
+    expect(unlistenSpy).toHaveBeenCalledTimes(1);
   });
 
   it('[◀ プレビュー] returns to preview when idle', async () => {
