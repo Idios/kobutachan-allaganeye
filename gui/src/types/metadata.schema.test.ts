@@ -247,4 +247,37 @@ describe('MetadataSchema', () => {
     };
     expect(MetadataSchema.safeParse(doc).success).toBe(false);
   });
+
+  // #465 review: source_fps optional field
+
+  it('accepts a document with source_fps (60 / 119.88 / 240)', () => {
+    for (const fps of [60, 119.88, 240]) {
+      const doc = { ...validMetadata(), source_fps: fps };
+      const result = MetadataSchema.safeParse(doc);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.source_fps).toBe(fps);
+      }
+    }
+  });
+
+  it('accepts a document without source_fps (backward compat)', () => {
+    const doc = validMetadata();
+    expect('source_fps' in doc).toBe(false);
+    expect(MetadataSchema.safeParse(doc).success).toBe(true);
+  });
+
+  it('rejects a non-positive source_fps', () => {
+    for (const bad of [0, -30, -1]) {
+      const doc = { ...validMetadata(), source_fps: bad };
+      expect(MetadataSchema.safeParse(doc).success).toBe(false);
+    }
+  });
+
+  it('rejects a non-number source_fps', () => {
+    for (const bad of ['60', null, true, [60]]) {
+      const doc = { ...validMetadata(), source_fps: bad };
+      expect(MetadataSchema.safeParse(doc).success).toBe(false);
+    }
+  });
 });

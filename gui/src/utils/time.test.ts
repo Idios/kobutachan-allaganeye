@@ -57,4 +57,32 @@ describe('fmtPreciseTime', () => {
   it('handles NaN by falling back to 0', () => {
     expect(fmtPreciseTime(Number.NaN)).toBe('0:00:00.00');
   });
+
+  // #465 review: 120 / 240 fps 対応 — 3-digit frame portion + frame-grid 安定化
+
+  it('uses 3-digit frame portion at 120fps and 240fps', () => {
+    // 120fps: 0 ≤ frames ≤ 119 → 3 桁 padding
+    expect(fmtPreciseTime(0, 120)).toBe('0:00:00.000');
+    expect(fmtPreciseTime(0.5, 120)).toBe('0:00:00.060');
+    expect(fmtPreciseTime(1.0, 120)).toBe('0:00:01.000');
+    // 240fps: 0 ≤ frames ≤ 239 → 3 桁 padding
+    expect(fmtPreciseTime(0, 240)).toBe('0:00:00.000');
+    expect(fmtPreciseTime(0.5, 240)).toBe('0:00:00.120');
+  });
+
+  it('keeps 2-digit frame portion at <=99 fps', () => {
+    expect(fmtPreciseTime(0, 30)).toBe('0:00:00.00');
+    expect(fmtPreciseTime(0, 60)).toBe('0:00:00.00');
+  });
+
+  it('round-trips frame-grid times without losing 1 frame to float error', () => {
+    // 91 frames at 120fps = 0.7583... sec、IEEE 754 で 0.7583... * 120 ≒
+    // 90.99999996... だが epsilon adjustment で frame 91 を表示
+    expect(fmtPreciseTime(91 / 120, 120)).toBe('0:00:00.091');
+    // 同様の grid 値: 1 + 91/120 sec, 60 + 91/120 sec
+    expect(fmtPreciseTime(1 + 91 / 120, 120)).toBe('0:00:01.091');
+    expect(fmtPreciseTime(60 + 91 / 120, 120)).toBe('0:01:00.091');
+    // 240fps grid
+    expect(fmtPreciseTime(181 / 240, 240)).toBe('0:00:00.181');
+  });
 });

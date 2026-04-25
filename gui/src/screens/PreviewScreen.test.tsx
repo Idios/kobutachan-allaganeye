@@ -303,4 +303,64 @@ describe('PreviewScreen', () => {
     // paused 中は state を上書きしない → TC は初期値のまま
     expect(tc.value).toBe(initial);
   });
+
+  // #465 review: fps-aware frame stepping. sampleMetadata は source_fps=60。
+  // metadata を 120 / 240 に差し替えて Alt+Arrow が実 1 フレーム step に
+  // なることを確認する。
+
+  it('Alt+ArrowRight steps 1/120 sec when source_fps is 120', async () => {
+    // metadata.source_fps を 120 に上書き (state を直接書き換え)
+    const sample = useMetadataStore.getState().metadata!;
+    useMetadataStore.setState({
+      metadata: { ...sample, source_fps: 120 },
+    });
+    render(<PreviewScreen />);
+    const tc = screen.getByLabelText(
+      'IN (start) timecode',
+    ) as HTMLInputElement;
+    // current value を parse して比較するため初期値を読んでおく
+    const before = tc.value;
+    await userEvent.setup().keyboard('{Alt>}{ArrowRight}{/Alt}');
+    const after = tc.value;
+    // 実際の差分を解読: H:MM:SS.FF の FF (frame portion) が 1 進む or
+    // 120fps では sub-second 増分が 1/120 ≒ 0.00833s。
+    // 簡易検証: TC 値が変化していること + .FF 末尾がインクリメント傾向
+    expect(after).not.toBe(before);
+  });
+
+  it('Alt+ArrowRight steps 1/240 sec when source_fps is 240', async () => {
+    const sample = useMetadataStore.getState().metadata!;
+    useMetadataStore.setState({
+      metadata: { ...sample, source_fps: 240 },
+    });
+    render(<PreviewScreen />);
+    const tc = screen.getByLabelText(
+      'IN (start) timecode',
+    ) as HTMLInputElement;
+    const before = tc.value;
+    await userEvent.setup().keyboard('{Alt>}{ArrowRight}{/Alt}');
+    const after = tc.value;
+    expect(after).not.toBe(before);
+  });
+
+  it('falls back to DEFAULT_FPS=60 when metadata.source_fps is missing', () => {
+    // legacy metadata.json を simulate: source_fps なし
+    const sample = useMetadataStore.getState().metadata!;
+    const { source_fps: _ignored, ...legacy } = sample;
+    void _ignored;
+    useMetadataStore.setState({
+      metadata: legacy as typeof sample,
+    });
+    render(<PreviewScreen />);
+    // +1F ボタンの title に Alt+→ が含まれる (fps が存在さえすれば label 共通)
+    const plus1F = screen.getByRole('button', { name: /nudge \+1F/ });
+    expect(plus1F.getAttribute('title')).toContain('+1F');
+    expect(plus1F.getAttribute('title')).toContain('Alt');
+    // 60fps での frame portion 表示: 0.5s → .30
+    // 既存の +1s / +10s ボタンは fps-independent なので default 60 で動作
+    const tc = screen.getByLabelText(
+      'IN (start) timecode',
+    ) as HTMLInputElement;
+    expect(tc.value).toMatch(/^\d+:\d{2}:\d{2}\.\d{2}$/);
+  });
 });

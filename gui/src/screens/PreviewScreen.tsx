@@ -12,6 +12,7 @@ import { RestoreButton } from '../components/RestoreButton';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 import type { MatchType, TypeOverride } from '../types/metadata';
+import { DEFAULT_FPS } from '../types/metadata.schema';
 import { fmtPreciseTime } from '../utils/time';
 import styles from './PreviewScreen.module.css';
 
@@ -25,10 +26,15 @@ interface ThumbnailEntry {
   file_path: string;
 }
 
-/** Default assumption for ±1 frame stepping. Real fps would come from probe
- *  metadata, but Phase 3 keeps this as a simple constant until we expose fps
- *  through the metadata contract. */
-const ASSUMED_FPS = 60;
+/**
+ * #465 review: 1 フレームの step / TC display は録画固有の fps に従う。
+ * `metadata.source_fps` を最優先で読み、欠落時 (legacy metadata.json or
+ * sample mode) のみ {@link DEFAULT_FPS} (60) にフォールバック。
+ */
+function resolveFps(sourceFps: number | undefined): number {
+  if (sourceFps && sourceFps > 0) return sourceFps;
+  return DEFAULT_FPS;
+}
 
 /**
  * Phase 3 preview screen -- video playback + keyboard seek + thumbnails.
@@ -37,7 +43,10 @@ const ASSUMED_FPS = 60;
  * - Real `<video>` elements for IN and OUT panes, fed by the axum-backed
  *   `register_video` Tauri command (#465).
  * - Keyboard shortcuts: ArrowLeft/Right = +-1s, Shift+arrow = +-10s,
- *   Alt+arrow = +-1 frame, Space = play/pause on the active pane.
+ *   Alt+arrow = +-1 frame at the recording's source_fps (60 / 120 / 240
+ *   are all handled correctly via metadata.source_fps; legacy files
+ *   fall back to {@link DEFAULT_FPS}). Space = play/pause on the active
+ *   pane.
  * - The active pane's video.currentTime follows the editable start/end,
  *   giving frame-accurate seek preview.
  * - Click on the video toggles play/pause on the active pane (UX item 4).
@@ -91,6 +100,10 @@ export function PreviewScreen() {
   const [matchType, setMatchType] = useState<TypeOverride>(
     match ? (match.type_override ?? match.type) : 'fl_match',
   );
+
+  // #465 review: source-aware frame rate. Read once from metadata; legacy
+  // metadata.json (no `source_fps`) or sample mode falls back to DEFAULT_FPS.
+  const fps = resolveFps(metadata?.source_fps);
 
   // #465: per-mount video URL fetched from the axum server. One registration
   // covers both panes (HTMLVideoElement instances can share the same URL).
@@ -251,8 +264,24 @@ export function PreviewScreen() {
     [setCurrentT],
   );
 
+  // #465 review: frame-grid snap で 1F step を確実に進める。`t + 1/fps` は
+  // IEEE 754 の丸めで `Math.floor((t' - floor(t')) * fps)` が増分しない
+  // ことがある (例: 2438.75 + 1/120 → frame 表示 .90 のまま)。frame 番号
+  // ベースで step してから秒に戻すと丸め誤差を回避できる。
+  const nudgeFrame = useCallback(
+    (frames: number) => {
+      setCurrentT((t: number) => {
+        const currentFrame = Math.round(t * fps);
+        const nextFrame = Math.max(0, currentFrame + frames);
+        return nextFrame / fps;
+      });
+    },
+    [setCurrentT, fps],
+  );
+
   // #465: keyboard shortcuts. ArrowLeft/Right = +-1s, Shift = +-10s,
-  // Alt = +-1 frame at ASSUMED_FPS, Space = play/pause on the active pane.
+  // Alt = +-1 frame at fps (frame-grid snap), Space = play/pause on the
+  // active pane.
   useEffect(() => {
     const interactiveTags = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
     function handleKey(e: KeyboardEvent) {
@@ -262,8 +291,12 @@ export function PreviewScreen() {
 
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         const sign = e.key === 'ArrowLeft' ? -1 : 1;
-        const magnitude = e.shiftKey ? 10 : e.altKey ? 1 / ASSUMED_FPS : 1;
-        nudge(sign * magnitude);
+        if (e.altKey) {
+          nudgeFrame(sign);
+        } else {
+          const magnitude = e.shiftKey ? 10 : 1;
+          nudge(sign * magnitude);
+        }
         e.preventDefault();
         return;
       }
@@ -278,7 +311,7 @@ export function PreviewScreen() {
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [nudge, activeVideoRef]);
+  }, [nudge, nudgeFrame, activeVideoRef]);
 
   const matchLabel = useMemo(
     () => (match ? `match_${String(match.index).padStart(3, '0')}` : ''),
@@ -377,6 +410,7 @@ export function PreviewScreen() {
           videoUrl={videoUrl}
           videoError={videoError}
           videoRef={inVideoRef}
+          fps={fps}
         />
         <Pane
           label="OUT (end)"
@@ -387,32 +421,40 @@ export function PreviewScreen() {
           videoUrl={videoUrl}
           videoError={videoError}
           videoRef={outVideoRef}
+          fps={fps}
         />
       </div>
 
       <div className={styles.stepRow}>
-        {[-10, -1, -1 / ASSUMED_FPS, 1 / ASSUMED_FPS, 1, 10].map((step, i) => {
-          const isFrame =
-            Math.abs(step - 1 / ASSUMED_FPS) < 1e-6 ||
-            Math.abs(step + 1 / ASSUMED_FPS) < 1e-6;
-          const isTenSec = Math.abs(step) === 10;
+        {(
+          [
+            { kind: 'sec', value: -10 },
+            { kind: 'sec', value: -1 },
+            { kind: 'frame', value: -1 },
+            { kind: 'frame', value: 1 },
+            { kind: 'sec', value: 1 },
+            { kind: 'sec', value: 10 },
+          ] as const
+        ).map((step, i) => {
+          const isFrame = step.kind === 'frame';
+          const isTenSec = step.kind === 'sec' && Math.abs(step.value) === 10;
           const label = isFrame
-            ? step > 0
+            ? step.value > 0
               ? '+1F'
               : '−1F'
-            : step > 0
-              ? `+${step}s`
-              : `${step}s`;
+            : step.value > 0
+              ? `+${step.value}s`
+              : `${step.value}s`;
           // #465 review: ツールチップでキーボード等価操作を明示 (UX item 3)。
           const keyHint = isFrame
-            ? step > 0
+            ? step.value > 0
               ? 'Alt + →'
               : 'Alt + ←'
             : isTenSec
-              ? step > 0
+              ? step.value > 0
                 ? 'Shift + →'
                 : 'Shift + ←'
-              : step > 0
+              : step.value > 0
                 ? '→'
                 : '←';
           return (
@@ -420,7 +462,11 @@ export function PreviewScreen() {
               key={i}
               type="button"
               className={styles.stepButton}
-              onClick={() => nudge(step)}
+              onClick={() => {
+                // #465 review: frame ボタンは frame-grid snap、秒 step は累積
+                if (isFrame) nudgeFrame(step.value);
+                else nudge(step.value);
+              }}
               aria-label={`nudge ${label}`}
               title={`${label} (${keyHint})`}
             >
@@ -497,6 +543,8 @@ interface PaneProps {
   videoUrl: string | null;
   videoError: string | null;
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  /** #465 review: fps for TC formatting / parsing on this pane. */
+  fps: number;
 }
 
 function Pane({
@@ -508,6 +556,7 @@ function Pane({
   videoUrl,
   videoError,
   videoRef,
+  fps,
 }: PaneProps) {
   return (
     <button
@@ -567,9 +616,9 @@ function Pane({
       </div>
       <input
         className={styles.tcInput}
-        value={fmtPreciseTime(t)}
+        value={fmtPreciseTime(t, fps)}
         onChange={(e) => {
-          const parsed = parseTimecode(e.target.value);
+          const parsed = parseTimecode(e.target.value, fps);
           if (parsed !== null) onTChange(parsed);
         }}
         aria-label={`${label} timecode`}
@@ -579,14 +628,19 @@ function Pane({
   );
 }
 
-/** Parse H:MM:SS.FF back into seconds. Returns null on malformed input. */
-function parseTimecode(value: string): number | null {
+/**
+ * Parse H:MM:SS.FF back into seconds. Returns null on malformed input.
+ *
+ * #465 review: fps is required so 120 / 240 fps recordings parse the `.FF`
+ * portion as actual frame numbers in their respective denominator.
+ */
+function parseTimecode(value: string, fps: number): number | null {
   const match = value
     .trim()
     .match(/^(-)?(\d+):(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?$/);
   if (!match) return null;
   const [, sign, h, m, s, f] = match;
-  const frames = f ? parseInt(f, 10) / ASSUMED_FPS : 0;
+  const frames = f ? parseInt(f, 10) / fps : 0;
   let total =
     parseInt(h, 10) * 3600 + parseInt(m, 10) * 60 + parseInt(s, 10) + frames;
   if (sign === '-') total = -total;

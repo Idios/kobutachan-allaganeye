@@ -133,6 +133,8 @@ def test_pipeline_metadata_json_content(mock_probe, mock_detect, mock_split, tmp
     data = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
     assert data["source"] == "input.mp4"
     assert data["source_duration"] == 1800.0
+    # #465 review: source_fps is propagated from probe → metadata.json
+    assert data["source_fps"] == 30.0
     assert len(data["matches"]) == 2
     m1 = data["matches"][0]
     assert m1["index"] == 1

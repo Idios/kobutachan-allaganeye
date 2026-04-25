@@ -172,6 +172,7 @@ def run_detect(
     payload = _build_metadata_payload(
         video_path=video_path,
         source_duration=metadata["duration"],
+        source_fps=metadata["fps"],
         detected_at=detected_at,
         effective_interval=effective_interval,
         config=config,

@@ -60,6 +60,13 @@ export interface Metadata {
   source: string;
   source_duration: number;
   source_duration_display: string;
+  /**
+   * #465 review: source recording frame rate (e.g. 60, 119.88, 240).
+   * Optional because pre-0.2.0 metadata.json files omitted the field;
+   * readers default to {@link import('./metadata.schema').DEFAULT_FPS}
+   * (60) when absent.
+   */
+  source_fps?: number;
   detected_at: string;
   detection_params: DetectionParams;
   matches: Match[];

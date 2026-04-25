@@ -23,6 +23,7 @@ export const sampleMetadata: Metadata = {
   source: 'E:/videos/2026-04-08 21-14-05.mkv',
   source_duration: 10228.735,
   source_duration_display: '2:50:28',
+  source_fps: 60,
   detected_at: '2026-04-19T12:34:56Z',
   detection_params: {
     sample_interval: 2.0,
