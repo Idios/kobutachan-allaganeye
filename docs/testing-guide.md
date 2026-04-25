@@ -116,6 +116,34 @@ def _ffmpeg_interval(request: pytest.FixtureRequest) -> None:
 
 この症状が出た場合は、`_ffmpeg_interval` のスリープ時間を増やすか、テストを個別に実行して問題の再現性を確認する。
 
+## baseline drift の判定
+
+`tests/test_scorebar_regression.py::TestNoResolutionCompat` 系の baseline mismatch が発生した場合、(A) 検知ロジック退行 vs (B) ffmpeg version 依存差異 を以下の手順で判別する。
+
+### 背景
+
+`_scan_cpu` (および GPU chunked decode) の `fps` filter は ffmpeg version 依存でフレーム選択タイミングが変動し、極短 (< 1s) blackout を取りこぼすことがある (PR #575 で確定)。version upgrade のタイミングで他 baseline でも再発する可能性があるため、mismatch 発生時はまず差異の原因を判別する。
+
+### 判定 flow
+
+1. `allaganeye debug-brightness <video>` で per-frame `-ss` probe による実 brightness を CSV 出力
+2. baseline 乖離が発生した timestamp 周辺で、極短 (< 1s) blackout (brightness < `blackout_threshold=15`) が存在するか確認
+3. `_scan_cpu` の chunked fps filter 経路と比較する。`ffmpeg -vf "fps=N,showinfo" ...` で output PTS と実フレーム内容を `mean:[Y ...]` から確認できる
+4. **per-frame probe で blackout を捕捉するが fps filter で捕捉しない場合** → (B) ffmpeg version 依存差異
+   - `pytest -m "slow or baseline_regen"` で baseline を再生成し、現環境の正しい結果に固定する
+   - 検知ロジック自体は安定しているため、他の baseline (`20260116` / `20260119` 等) は引き続き pass することを確認
+5. **per-frame probe でも blackout を捕捉しない場合** → (A) 検知ロジック退行
+   - 該当コミットを `git bisect` または review で特定
+   - (B) と異なり baseline 更新で対処してはならない (退行を「正」と認めることになる)
+
+### 事例
+
+PR #575 / issue #560: ffmpeg 8.1 で `20260118` baseline の Match 8 end が 281s 乖離。per-frame probe で 6184.0-6184.8 の 0.8s 幅 blackout を捕捉できたが、`fps=0.5` filter は output PTS 6184 のラベルで実際は ~6185.1s 時点のフレーム (Y-mean=45) をサンプリングしていた (`showinfo` で確認)。(B) 案で baseline を `6184.0 → 6465.25` に更新して対応。fps filter 廃止による根本対策は #576 で検討中。
+
+### 検証データの保存場所
+
+PR #575 で取得した brightness 比較表 (per-frame probe vs chunked fps の対比) は [`docs/video-processing.md`](video-processing.md) §「ffmpeg fps filter の version 依存制約」に記録されている。
+
 ## プラットフォーム固有の注意点
 
 ### Windows
