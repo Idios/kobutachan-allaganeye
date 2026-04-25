@@ -94,6 +94,24 @@ function configureHappyInvoke() {
           url: 'http://127.0.0.1:0/video/test-token',
           token: 'test-token',
         });
+      case 'probe_video': {
+        // #465 review (B): drop が default で Tauri probe_video を呼ぶように
+        // なったので、テスト用 happy-path 値を返す。path は引数を echo back
+        // して selectedVideoPath assertion (dialog で resolve した値) と
+        // 一致させる。
+        const probePath =
+          (args as { path?: string } | undefined)?.path ?? 'C:/videos/x.mkv';
+        return Promise.resolve({
+          path: probePath,
+          fileName: probePath.split(/[/\\]/).pop() ?? probePath,
+          sizeBytes: 38 * 1024 * 1024 * 1024,
+          durationSeconds: 10228.735,
+          width: 1920,
+          height: 1080,
+          fps: 60,
+          codec: 'h264',
+        });
+      }
       case 'generate_match_thumbnails':
         return Promise.resolve([]);
       // #523
@@ -122,6 +140,9 @@ afterEach(() => {
 
 describe('flow A1: drop -> selected via [参照…]', () => {
   it('advances drop screen from idle through probing to selected', async () => {
+    // #465 review (B): drop が default で Tauri probe_video を呼ぶように
+    // なったので invoke happy mock が必須。
+    configureHappyInvoke();
     dialogOpenMock.mockResolvedValue('C:/videos/test.mkv');
     render(<App />);
     expect(screen.getByTestId('drop-screen')).toBeInTheDocument();
@@ -136,6 +157,7 @@ describe('flow A1: drop -> selected via [参照…]', () => {
 
 describe('flow A2: [OK] from selected -> detecting', () => {
   it('navigates to detecting and records the video path', async () => {
+    configureHappyInvoke();
     dialogOpenMock.mockResolvedValue('C:/videos/test.mkv');
     render(<App />);
 
@@ -186,6 +208,7 @@ describe('flow A4: complete <-> preview round-trip', () => {
 
 describe('flow F: drop [キャンセル] clears selection', () => {
   it('returns from selected to idle without setting selectedVideoPath', async () => {
+    configureHappyInvoke();
     dialogOpenMock.mockResolvedValue('C:/videos/test.mkv');
 
     render(<App />);

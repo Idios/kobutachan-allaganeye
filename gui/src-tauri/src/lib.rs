@@ -238,6 +238,150 @@ async fn register_video(path: String) -> Result<RegisteredVideo, String> {
     })
 }
 
+/// #465 review (B): drop で確定した video ファイルを ffprobe で読み、
+/// duration / fps / width / height / codec / size を返す。Phase 2 で
+/// `dummyProbeVideo` (固定値) を返していた経路をこの実装で置換する。
+///
+/// 実装は ffprobe を subprocess 起動し JSON で出力されるストリーム情報を
+/// パースする。Python 側 (`allaganeye/video/probe.py`) と同じ ffprobe
+/// 経路を踏襲しており、結果は detection 用 ProbeResult と概ね一致する
+/// (audio_codec は Phase 3 GUI には不要なので返さない)。
+#[derive(Serialize, Clone, Debug)]
+struct VideoProbeInfo {
+    path: String,
+    #[serde(rename = "fileName")]
+    file_name: String,
+    #[serde(rename = "sizeBytes")]
+    size_bytes: u64,
+    #[serde(rename = "durationSeconds")]
+    duration_seconds: f64,
+    width: u32,
+    height: u32,
+    fps: f64,
+    codec: String,
+}
+
+#[tauri::command]
+async fn probe_video(path: String) -> Result<VideoProbeInfo, String> {
+    let file_path = PathBuf::from(&path);
+    let canonical = validate_video_path(&file_path)?;
+    probe_video_with(&canonical, "ffprobe").await
+}
+
+/// Pure helper testable in cargo unit tests by injecting an ffprobe-like
+/// command (e.g. a fixture-emitting shell script).
+async fn probe_video_with(
+    path: &Path,
+    ffprobe: &str,
+) -> Result<VideoProbeInfo, String> {
+    let size_bytes = fs::metadata(path)
+        .map_err(|e| format!("stat failed ({}): {}", path.display(), e))?
+        .len();
+
+    let output = tokio::process::Command::new(ffprobe)
+        .arg("-v")
+        .arg("quiet")
+        .arg("-print_format")
+        .arg("json")
+        .arg("-show_format")
+        .arg("-show_streams")
+        .arg(path)
+        .output()
+        .await
+        .map_err(|e| format!("ffprobe spawn failed: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "ffprobe failed (exit {:?}): {}",
+            output.status.code(),
+            stderr.trim()
+        ));
+    }
+
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("ffprobe json parse failed: {e}"))?;
+
+    let streams = json
+        .get("streams")
+        .and_then(|s| s.as_array())
+        .ok_or_else(|| "ffprobe output missing 'streams' array".to_string())?;
+    let video_stream = streams
+        .iter()
+        .find(|s| s.get("codec_type").and_then(|v| v.as_str()) == Some("video"))
+        .ok_or_else(|| "no video stream in ffprobe output".to_string())?;
+
+    let width = video_stream
+        .get("width")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| "video stream missing width".to_string())? as u32;
+    let height = video_stream
+        .get("height")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| "video stream missing height".to_string())? as u32;
+    let codec = video_stream
+        .get("codec_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    // Frame rate: prefer r_frame_rate (e.g. "60/1" or "60000/1001"), fall
+    // back to avg_frame_rate. Mirrors Python's probe.py logic.
+    let fps = parse_frame_rate_str(
+        video_stream.get("r_frame_rate").and_then(|v| v.as_str()),
+    )
+    .or_else(|| {
+        parse_frame_rate_str(
+            video_stream.get("avg_frame_rate").and_then(|v| v.as_str()),
+        )
+    })
+    .ok_or_else(|| "cannot determine frame rate".to_string())?;
+
+    let duration_seconds = json
+        .get("format")
+        .and_then(|f| f.get("duration"))
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<f64>().ok())
+        .ok_or_else(|| "format.duration missing or unparseable".to_string())?;
+    if duration_seconds <= 0.0 {
+        return Err("duration is non-positive".to_string());
+    }
+
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    Ok(VideoProbeInfo {
+        path: path.to_string_lossy().to_string(),
+        file_name,
+        size_bytes,
+        duration_seconds,
+        width,
+        height,
+        fps,
+        codec,
+    })
+}
+
+/// Parse a frame rate string like "60/1" or "60000/1001". Returns None when
+/// the string is missing, malformed, or evaluates to <= 0.
+fn parse_frame_rate_str(s: Option<&str>) -> Option<f64> {
+    let raw = s?;
+    let (num, den) = raw.split_once('/')?;
+    let num: f64 = num.parse().ok()?;
+    let den: f64 = den.parse().ok()?;
+    if den == 0.0 {
+        return None;
+    }
+    let fps = num / den;
+    if fps > 0.0 {
+        Some(fps)
+    } else {
+        None
+    }
+}
+
 /// Validate that `path` points to an existing regular file and return the
 /// canonicalized absolute path on success.
 fn validate_video_path(path: &Path) -> Result<PathBuf, String> {
@@ -731,6 +875,7 @@ pub fn run() {
             restore_from_original,
             check_backup_exists,
             register_video,
+            probe_video,
             generate_match_thumbnails,
             is_process_running,
             kill_tracked_processes,
@@ -1363,5 +1508,61 @@ mod tests {
         assert_eq!(thumb_token(3, 452.5), "match003_t452500");
         assert_eq!(thumb_token(0, 0.0), "match000_t0");
         assert_eq!(thumb_token(999, 1.001), "match999_t1001");
+    }
+
+    // #465 review (B): probe_video の frame rate parser
+
+    #[test]
+    fn parse_frame_rate_str_handles_simple_ratio() {
+        assert!((parse_frame_rate_str(Some("60/1")).unwrap() - 60.0).abs() < 1e-9);
+        assert!((parse_frame_rate_str(Some("30/1")).unwrap() - 30.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn parse_frame_rate_str_handles_ntsc_ratio() {
+        // 60000/1001 ≒ 59.94
+        let fps = parse_frame_rate_str(Some("60000/1001")).unwrap();
+        assert!((fps - 59.94).abs() < 1e-2);
+    }
+
+    #[test]
+    fn parse_frame_rate_str_returns_none_for_zero_denominator() {
+        assert_eq!(parse_frame_rate_str(Some("60/0")), None);
+    }
+
+    #[test]
+    fn parse_frame_rate_str_returns_none_for_zero_numerator() {
+        // 0 fps は invalid (>0 でない)
+        assert_eq!(parse_frame_rate_str(Some("0/1")), None);
+    }
+
+    #[test]
+    fn parse_frame_rate_str_returns_none_for_malformed() {
+        assert_eq!(parse_frame_rate_str(Some("garbage")), None);
+        assert_eq!(parse_frame_rate_str(Some("60")), None); // no slash
+        assert_eq!(parse_frame_rate_str(Some("a/b")), None);
+        assert_eq!(parse_frame_rate_str(None), None);
+    }
+
+    /// #465 review (B): `probe_video_with` を inject 可能な ffprobe path で
+    /// 起動し、JSON 出力のパース → VideoProbeInfo マッピングを検証する。
+    /// 実 ffprobe の代わりに stdout に固定 JSON を出すスクリプト
+    /// (Windows なので cmd.exe + echo or python -c) を用意するのは複雑な
+    /// ので、ここでは ffprobe が無いケース (spawn 失敗 → エラー) のみを
+    /// 確認する。frame rate / JSON parse のロジックは parse_frame_rate_str
+    /// + serde_json の組み合わせとしてカバー済み。
+    #[tokio::test]
+    async fn probe_video_with_returns_error_when_ffprobe_missing() {
+        let tmp = TempDir::new().unwrap();
+        let video = tmp.path().join("dummy.mp4");
+        std::fs::write(&video, b"not a real video").unwrap();
+        let result = probe_video_with(&video, "this-binary-does-not-exist").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("ffprobe spawn failed") || err.contains("ffprobe failed"),
+            "unexpected error: {}",
+            err
+        );
     }
 }

@@ -119,7 +119,12 @@ export function PreviewScreen() {
   const inVideoRef = useRef<HTMLVideoElement>(null);
   const outVideoRef = useRef<HTMLVideoElement>(null);
 
-  const videoSource = metadata?.source ?? null;
+  // #465 review (C): drop で確定した実 path を最優先 source-of-truth として
+  // 使用する。sample mode (selectedVideoPath = null) では sampleMetadata.source
+  // にフォールバック、実フローでは drop が確定した実 path で
+  // register_video / generate_match_thumbnails を発行する。
+  const selectedVideoPath = useAppStateStore((s) => s.selectedVideoPath);
+  const videoSource = selectedVideoPath ?? metadata?.source ?? null;
 
   useEffect(() => {
     if (!videoSource) return;
