@@ -528,12 +528,13 @@ def _resolve_gpu_mode(
     show: bool,
     verbose: bool,
 ) -> tuple[bool, str | None]:
-    """Resolve GPU/CPU mode and vendor from user flags + probe (#334, #546).
+    """Resolve GPU/CPU mode and vendor from user flags + probe (#334, #546, #553, #550).
 
     - *use_gpu*: None で自動 codec 判定、True/False で明示指示。
     - *gpu_vendor_option*: None / "auto" で自動選択、"nvidia" / "amd" /
-      "intel" で明示指定。未実装 vendor (intel) や probe に見つからない
-      vendor を要求すると ``ConfigValidationError`` (exit 5)。
+      "intel" で明示指定。``_VENDOR_HWACCEL_MAP`` に未登録の vendor や
+      probe に見つからない vendor を要求すると ``ConfigValidationError``
+      (exit 5)。現時点で nvidia / amd / intel すべて実装済み。
 
     Returns ``(use_gpu_concrete, selected_vendor)`` tuple.  vendor が
     ``None`` の場合は GPU 経路で ``-hwaccel auto`` が使われる。
@@ -547,13 +548,15 @@ def _resolve_gpu_mode(
 
     available = probe_gpu_vendors()
 
-    # Explicit vendor request validation (#546): 未実装 or 未検出は exit 5
+    # Explicit vendor request validation (#546 / #553 / #550): 未実装 or 未検出は exit 5。
+    # 現時点で _VENDOR_HWACCEL_MAP は nvidia / amd / intel すべて含むので
+    # この分岐は config 側 (auto/nvidia/amd/intel) の validation を抜ける
+    # 将来の vendor 追加忘れに対する defensive guard。
     if gpu_vendor_option and gpu_vendor_option != "auto":
         if gpu_vendor_option not in _VENDOR_HWACCEL_MAP:
             raise ConfigValidationError(
-                f"--gpu-vendor {gpu_vendor_option}: 現在未実装です "
-                "(Intel QSV は #550 で追跡予定)。"
-                " --gpu-vendor auto / nvidia / amd のいずれかを使用してください。"
+                f"--gpu-vendor {gpu_vendor_option}: 現在未実装です。"
+                " --gpu-vendor auto / nvidia / amd / intel のいずれかを使用してください。"
             )
         if gpu_vendor_option not in available:
             raise ConfigValidationError(

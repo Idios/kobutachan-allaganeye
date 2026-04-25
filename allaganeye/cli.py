@@ -116,8 +116,9 @@ def split(
         typer.Option(
             "--gpu-vendor",
             help="GPU vendor for hardware decode. Choices: auto / nvidia / amd / intel. "
-            "'intel' is currently not implemented (tracked in #550) and returns exit 5. "
-            "Default: auto (probe-based, NVIDIA dGPU preferred). #546",
+            "All three vendors are implemented (nvidia=cuvid, amd=d3d11va, intel=qsv). "
+            "Default: auto (probe-based, _VENDOR_PREFERENCE = nvidia > amd > intel). "
+            "#546 / #553 / #550",
         ),
     ] = None,
     no_cache: Annotated[
@@ -285,8 +286,9 @@ def detect(
         typer.Option(
             "--gpu-vendor",
             help="GPU vendor for hardware decode. Choices: auto / nvidia / amd / intel. "
-            "'intel' is currently not implemented (tracked in #550) and returns exit 5. "
-            "Default: auto (probe-based, NVIDIA dGPU preferred). #546",
+            "All three vendors are implemented (nvidia=cuvid, amd=d3d11va, intel=qsv). "
+            "Default: auto (probe-based, _VENDOR_PREFERENCE = nvidia > amd > intel). "
+            "#546 / #553 / #550",
         ),
     ] = None,
     no_cache: Annotated[

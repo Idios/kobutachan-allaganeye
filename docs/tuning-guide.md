@@ -193,9 +193,9 @@ GPU 対応環境（NVIDIA CUDA, Intel QSV 等）では、暗転検知の処理�
 
 低コア数 CPU（4-8 コア）では、GPU モードが有利になりやすい傾向があります。
 
-#### GPU vendor の選択 (`--gpu-vendor`, #546 / #553)
+#### GPU vendor の選択 (`--gpu-vendor`, #546 / #553 / #550)
 
-実装済み vendor は NVIDIA (#546) と AMD (#553) の 2 つ。Intel (#550) は別 issue で追跡中。複数 GPU 環境では、デフォルトで NVIDIA dGPU が選択されます (`_VENDOR_PREFERENCE` = nvidia > amd > intel、未実装 vendor は auto 選択で skip)。明示的に vendor を指定したい場合は `--gpu-vendor` オプションを使ってください。
+実装済み vendor は NVIDIA (#546) / AMD (#553) / Intel (#550) の 3 つ。複数 GPU 環境では、デフォルトで NVIDIA dGPU が選択されます (`_VENDOR_PREFERENCE` = nvidia > amd > intel)。明示的に vendor を指定したい場合は `--gpu-vendor` オプションを使ってください。
 
 ```bash
 # NVIDIA GPU を明示使用 (dual GPU 環境で dGPU を強制)
@@ -203,6 +203,9 @@ allaganeye split your_recording.mkv --gpu --gpu-vendor nvidia
 
 # AMD iGPU / dGPU を明示使用 (NVIDIA 不在 or AMD-only 環境)
 allaganeye split your_recording.mkv --gpu --gpu-vendor amd
+
+# Intel iGPU を明示使用 (NVIDIA / AMD 不在 or Intel 単独環境)
+allaganeye split your_recording.mkv --gpu --gpu-vendor intel
 
 # 自動選択 (既定値、--gpu-vendor 省略時と同じ)
 allaganeye split your_recording.mkv --gpu --gpu-vendor auto
@@ -212,8 +215,10 @@ allaganeye split your_recording.mkv --gpu --gpu-vendor auto
 |---|---|---|
 | `nvidia` | 実装済み (#546) | NVDEC cuvid 経由、h264 / hevc / av1 対応 |
 | `amd` | 実装済み (#553) | d3d11va + native decoder + `hwdownload,format=nv12` 経由、h264 / hevc / av1 対応。RDNA2+ iGPU (Granite Ridge) で SW 比 3x 高速 |
-| `intel` | 未実装 (#550) | `--gpu-vendor intel` は現在 exit 5 |
-| `auto` | 自動選択 | probe 結果から `_VENDOR_PREFERENCE` 順に選択 (NVIDIA > AMD > Intel) |
+| `intel` | 実装済み (#550) | QSV 経由 (`-hwaccel qsv -hwaccel_output_format qsv` + `hwdownload,format=nv12`)、h264 / hevc / av1 対応。AV1 は Alder Lake (12th gen) / Arc 以降のハードウェアで decode 可能。Tiger Lake (11th gen Iris Xe) は av1_qsv 非対応のため AV1 入力時は自動で CPU fallback (h264/hevc は QSV decode 動作確認済み)。VP9 は本 issue ではスコープ外で除外 |
+| `auto` | 自動選択 | probe 結果から `_VENDOR_PREFERENCE` 順に実装済み vendor を選択 (NVIDIA > AMD > Intel) |
+
+**Intel QSV の追加引数 (実装メモ)**: Intel QSV は default で GPU surface (`pix_fmt=qsv`) を出力し、後段の swscaler が gray 変換時に `Function not implemented (-40)` で失敗します。`_decode_chunk` は AMD d3d11va と同じ `_HWACCELS_NEED_HWDOWNLOAD` 機構を再利用し、vendor=intel のとき自動で `-hwaccel_output_format qsv` を付与しつつ filter chain 先頭に `hwdownload,format=nv12,` を挿入します。実機ベンチでは i7-1185G7 / Iris Xe で h264_qsv 13.7x speed、hevc_qsv (720p) 3.76x speed を確認 (#550)。
 
 #### ベンチマークで判断する
 
