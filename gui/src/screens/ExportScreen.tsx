@@ -5,6 +5,7 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
+import { stripExtendedPathPrefix } from '../utils/path';
 import { fmtMatchDuration, fmtTime } from '../utils/time';
 import { exportReducer } from './reducers/export';
 import type { ExportPhase } from './types';
@@ -709,34 +710,14 @@ function joinPath(dir: string, name: string): string {
 }
 
 /**
- * Windows の extended-length path prefix (`\\?\`) を取り除く。
- *
- * Tauri の dialog::open() / drag-drop は Windows 上で `\\?\` 付き path を
- * 返すことがあり、そのまま UI に表示すると一般的な `E:\videos\...` 表記
- * との一貫性が崩れる。ffmpeg や Win32 API は両形式を解釈できるが、UI 表示
- * 側で正規化するのがユーザー体験的に望ましいため、deriveDefaultOutDir で
- * 親 dir を切り出す前に strip する (#545 review #2、2026-04-25)。
- *
- * - `\\?\C:\foo` → `C:\foo`
- * - `\\?\UNC\server\share` → `\\server\share`
- * - prefix なしの path は素通し
- */
-export function stripExtendedPathPrefix(p: string): string {
-  if (p.startsWith('\\\\?\\UNC\\')) {
-    return '\\\\' + p.slice('\\\\?\\UNC\\'.length);
-  }
-  if (p.startsWith('\\\\?\\')) {
-    return p.slice('\\\\?\\'.length);
-  }
-  return p;
-}
-
-/**
  * #466 review #2: source video の親ディレクトリ + `/output` を default に。
  * `videoSource` から `dirname` 相当を抽出する (Windows は `\\` も許容)。
  *
  * #545 review #2 (2026-04-25): Windows の `\\?\` extended-length path prefix
- * は UI 表示用に取り除く。
+ * は `stripExtendedPathPrefix` で取り除いてから親 dir を切り出す。
+ * (なお Tauri 側からの flow としては `appStateStore.setSelectedVideoPath`
+ * が pipeline 上の strip ポイントなので通常 prefix は来ないが、defense-in-depth
+ * として deriveDefaultOutDir 内でも適用しておく。)
  */
 export function deriveDefaultOutDir(videoSource: string | null): string {
   if (!videoSource) return '';

@@ -25,7 +25,6 @@ import {
   ExportScreen,
   deriveDefaultOutDir,
   formatStartForFilename,
-  stripExtendedPathPrefix,
 } from './ExportScreen';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
@@ -74,27 +73,7 @@ describe('deriveDefaultOutDir', () => {
   });
 });
 
-// #545 review #2: extended-length path prefix strip helper
-describe('stripExtendedPathPrefix', () => {
-  it('strips \\\\?\\ from drive-letter paths', () => {
-    expect(stripExtendedPathPrefix('\\\\?\\C:\\foo')).toBe('C:\\foo');
-    expect(stripExtendedPathPrefix('\\\\?\\E:\\videos\\x.mkv')).toBe(
-      'E:\\videos\\x.mkv',
-    );
-  });
-
-  it('converts \\\\?\\UNC\\ to \\\\ form', () => {
-    expect(stripExtendedPathPrefix('\\\\?\\UNC\\server\\share\\foo')).toBe(
-      '\\\\server\\share\\foo',
-    );
-  });
-
-  it('passes through paths without the prefix', () => {
-    expect(stripExtendedPathPrefix('C:\\foo')).toBe('C:\\foo');
-    expect(stripExtendedPathPrefix('/home/user/file')).toBe('/home/user/file');
-    expect(stripExtendedPathPrefix('')).toBe('');
-  });
-});
+// stripExtendedPathPrefix の単体テストは utils/path.test.ts に移動済。
 
 // #545 review #8: filename `{start}` の HH-MM format helper
 describe('formatStartForFilename', () => {
