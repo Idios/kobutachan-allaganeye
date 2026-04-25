@@ -127,6 +127,11 @@ jobs:
             # exit code が想定値でも step 全体が failure 扱いされる。
             $output = '' | & cmd.exe /c "allaganeye.bat detect `"$fixture`" -o smoke-output\ 2>&1"
             $exitCode = $LASTEXITCODE
+            # GitHub Actions の `pwsh` shell は script 末尾に
+            # `if (Test-Path variable:/LASTEXITCODE) { exit $LASTEXITCODE }` を
+            # 自動付加する。$LASTEXITCODE を消費直後に 0 にリセットしないと
+            # 想定値 (4) が step exit code として伝搬し step failure 扱いになる。
+            $LASTEXITCODE = 0
             $joined = $output | Out-String
             Write-Host '--- allaganeye.bat detect output ---'
             Write-Host $joined
