@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { fmtPreciseTime, fmtTime } from './time';
+import { fmtMatchDuration, fmtPreciseTime, fmtTime } from './time';
 
 describe('fmtTime', () => {
   it('formats sub-hour durations as MM:SS', () => {
@@ -84,5 +84,35 @@ describe('fmtPreciseTime', () => {
     expect(fmtPreciseTime(60 + 91 / 120, 120)).toBe('0:01:00.091');
     // 240fps grid
     expect(fmtPreciseTime(181 / 240, 240)).toBe('0:00:00.181');
+  });
+});
+
+// #466 review: ExportScreen 一覧 duration の edited 反映 (boundary 反映バグ)
+describe('fmtMatchDuration', () => {
+  it('formats sub-hour durations as `{m}m{ss:02}s`', () => {
+    expect(fmtMatchDuration(0)).toBe('0m00s');
+    expect(fmtMatchDuration(49)).toBe('0m49s');
+    expect(fmtMatchDuration(60)).toBe('1m00s');
+    // sample metadata の値で CLI 出力と完全一致するか
+    expect(fmtMatchDuration(915.5)).toBe('15m15s');
+    expect(fmtMatchDuration(349.375)).toBe('5m49s');
+    expect(fmtMatchDuration(2582.5)).toBe('43m02s');
+  });
+
+  it('formats hour-plus durations as `{h}h{mm:02}m`', () => {
+    expect(fmtMatchDuration(3600)).toBe('1h00m');
+    expect(fmtMatchDuration(3900)).toBe('1h05m');
+    expect(fmtMatchDuration(9000)).toBe('2h30m');
+  });
+
+  it('clamps negative / NaN / Infinity to 0', () => {
+    expect(fmtMatchDuration(-1)).toBe('0m00s');
+    expect(fmtMatchDuration(Number.NaN)).toBe('0m00s');
+    expect(fmtMatchDuration(Number.POSITIVE_INFINITY)).toBe('0m00s');
+  });
+
+  it('truncates fractional seconds (floor semantics, mirrors CLI int())', () => {
+    expect(fmtMatchDuration(59.9)).toBe('0m59s');
+    expect(fmtMatchDuration(60.999)).toBe('1m00s');
   });
 });

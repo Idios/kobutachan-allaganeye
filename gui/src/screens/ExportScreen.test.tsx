@@ -278,6 +278,84 @@ describe('ExportScreen (Phase 4 #466)', () => {
     ).toBe(false);
   });
 
+  // 2026-04-25 修正: dummy detect (loadSample のみ) で filePath=null のまま
+  // export 画面に来た場合でも、書き出し開始ボタンが disable されず、かつ
+  // クリックで export_match が走ること。Phase 3 dummy フローのバグ。
+  it('still triggers export_match when filePath is null but videoSource is set', async () => {
+    // beforeEach の filePath setState を打ち消して null にする (loadSample
+    // 直後の状態を再現)。selectedVideoPath は drop screen 経由でセット。
+    useMetadataStore.setState({ filePath: null });
+    useAppStateStore.getState().setSelectedVideoPath('C:/videos/x.mkv');
+    invokeMock.mockImplementation((cmd: string, args: unknown) => {
+      if (cmd === 'export_match') {
+        const a = args as { matchIndex: number; outputPath: string };
+        return Promise.resolve({
+          match_index: a.matchIndex,
+          output_path: a.outputPath,
+          duration_ms: 100,
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+    render(<ExportScreen />);
+    const startBtn = screen.getByRole('button', { name: /書き出し開始/ });
+    expect((startBtn as HTMLButtonElement).disabled).toBe(false);
+    const user = userEvent.setup();
+    await user.click(startBtn);
+    await waitFor(() => {
+      expect(screen.getByTestId('export-screen').dataset.phase).toBe('completed');
+    });
+    const calls = invokeMock.mock.calls.filter((c) => c[0] === 'export_match');
+    expect(calls.length).toBe(9);
+    // videoPath が selectedVideoPath を反映している
+    expect(calls[0][1]).toMatchObject({ videoPath: 'C:/videos/x.mkv' });
+  });
+
+  // 2026-04-25 修正: 書き出し開始ボタンは videoSource なし (selectedVideoPath
+  // も metadata.source も null) の場合のみ disable される。
+  it('disables [書き出し開始] button when both selectedVideoPath and metadata.source are absent', () => {
+    useMetadataStore.setState({ filePath: null });
+    // sampleMetadata.source は固定文字列が入っているので一旦 clear して
+    // 空 metadata を組み立てる
+    useMetadataStore.setState({
+      metadata: {
+        ...useMetadataStore.getState().metadata!,
+        source: '' as unknown as string,
+      },
+    });
+    useAppStateStore.getState().setSelectedVideoPath(null);
+    render(<ExportScreen />);
+    const startBtn = screen.getByRole('button', {
+      name: /書き出し開始/,
+    }) as HTMLButtonElement;
+    expect(startBtn.disabled).toBe(true);
+  });
+
+  // 2026-04-25 修正: preview で m.edited.end_time を変更したとき、export 一覧
+  // の duration 表示が再計算された値に更新される (古い m.duration_display を
+  // 表示し続けない)。
+  it('recomputes list duration display from m.edited (boundary reflection)', () => {
+    const meta = useMetadataStore.getState().metadata!;
+    // sample match 1: start=0, end=915.5, duration_display="15m15s"
+    // edited で end を 605 に変更 → 期待 duration "10m05s"
+    const edited = {
+      ...meta,
+      matches: meta.matches.map((m, i) =>
+        i === 0
+          ? { ...m, edited: { start_time: 0, end_time: 605 } }
+          : m,
+      ),
+    };
+    useMetadataStore.setState({ metadata: edited });
+    render(<ExportScreen />);
+    // 一覧の match_001 の duration が edited を反映している
+    expect(screen.getByText('10m05s')).toBeInTheDocument();
+    // 他の match (例: index 2) は edited なしなので元の値が出る
+    expect(screen.getByText('15m59s')).toBeInTheDocument();
+    // 元の値 "15m15s" は表示されていない (置換された)
+    expect(screen.queryByText('15m15s')).not.toBeInTheDocument();
+  });
+
   it('errors surface as export-progress events update list items', async () => {
     let progressHandler: ((e: {
       payload: {

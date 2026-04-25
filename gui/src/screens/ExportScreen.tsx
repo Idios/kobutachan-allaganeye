@@ -5,6 +5,7 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
+import { fmtMatchDuration } from '../utils/time';
 import { exportReducer } from './reducers/export';
 import type { ExportPhase } from './types';
 import styles from './ExportScreen.module.css';
@@ -64,10 +65,23 @@ interface ExportResult {
  * - **#7 (boundary)**: `m.edited?.start_time ?? m.start_time` を
  *   `export_match` の `startSeconds` に渡す (`end_time` も同様)。preview で
  *   調整した境界が export に反映される。
+ *
+ * ## 2026-04-25 追加修正 (#545 実機テスト)
+ *
+ * - **filePath 早期 return 廃止**: 旧実装は `if (!metadata || !filePath)
+ *   return` だったが、Phase 3 dummy detect が `loadSample()` のみで
+ *   `filePath = null` のまま preview/export に来るため、書き出し開始ボタンが
+ *   常に disable + クリックしても無反応になっていた。`export_match` invoke
+ *   は `filePath` (metadata.json の path) を必要とせず `videoSource` (実
+ *   video の path) だけで動くため、ガードを `!videoSource` に変更。
+ * - **list duration の edited 反映**: 旧実装は `m.duration_display` を
+ *   そのまま表示していたため、preview で `m.edited.end_time` を変えても
+ *   一覧の duration が CLI 初期値のまま固定だった。`m.edited` がある場合は
+ *   `effectiveEnd - effectiveStart` を {@link fmtMatchDuration} で再 format
+ *   して表示する (CLI `_format_duration` と同一フォーマット)。
  */
 export function ExportScreen() {
   const metadata = useMetadataStore((s) => s.metadata);
-  const filePath = useMetadataStore((s) => s.filePath);
   const navigate = useAppStateStore((s) => s.navigate);
 
   // #466 review (C): drop で確定した実 path を最優先で使用する。sample mode
@@ -159,7 +173,11 @@ export function ExportScreen() {
   }
 
   async function handleStartExport() {
-    if (!metadata || !filePath) return;
+    // 2026-04-25 修正: filePath は metadata.json の path であり、
+    // export_match invoke 自体は videoSource (実 video path) だけで動く。
+    // dummy detect で loadSample() のみ走った場合 filePath は null のため、
+    // 旧 `!filePath` early return + button disabled 条件は誤検知になる。
+    if (!metadata) return;
     if (!videoSource) return;
     cancelRequestedRef.current = false;
 
@@ -395,7 +413,7 @@ export function ExportScreen() {
                 onClick={() => {
                   void handleStartExport();
                 }}
-                disabled={running || cancelling || !filePath}
+                disabled={running || cancelling || !videoSource}
               >
                 {running
                   ? '書き出し中…'
@@ -471,11 +489,15 @@ export function ExportScreen() {
                 status: 'pending' as MatchStatus,
                 percent: 0,
               };
-              const name = formatName(
-                m.index,
-                m.type,
-                m.edited?.start_time ?? m.start_time,
-              );
+              // 2026-04-25 修正: preview で調整した境界 (m.edited) を一覧
+              // duration にも反映する。m.duration_display は CLI 初期値で
+              // 固定なので、edited がある場合は再計算した duration を表示。
+              const effectiveStart = m.edited?.start_time ?? m.start_time;
+              const effectiveEnd = m.edited?.end_time ?? m.end_time;
+              const durationDisplay = m.edited
+                ? fmtMatchDuration(effectiveEnd - effectiveStart)
+                : m.duration_display;
+              const name = formatName(m.index, m.type, effectiveStart);
               const mark =
                 s.status === 'done'
                   ? '✓'
@@ -516,7 +538,7 @@ export function ExportScreen() {
                     {mark}
                   </span>
                   <span className={styles.listName}>{name}</span>
-                  <span className={styles.listDur}>{m.duration_display}</span>
+                  <span className={styles.listDur}>{durationDisplay}</span>
                   {(running ||
                     completed ||
                     s.status === 'done' ||
