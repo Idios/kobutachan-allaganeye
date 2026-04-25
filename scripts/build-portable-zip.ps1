@@ -181,6 +181,59 @@ not apply to allaganeye itself.
 "@
 }
 
+function Get-LauncherTemplate {
+  <#
+  .SYNOPSIS
+  Returns the .bat launcher template embedded in the Portable ZIP.
+
+  Exposed as a function so Pester (#583) can verify the exit code propagation
+  idiom (#580: `set EXIT_CODE=%ERRORLEVEL%` + `endlocal & exit /b %EXIT_CODE%`)
+  without dot-sourcing the full build path.
+  #>
+  return @'
+@echo off
+setlocal
+set PAYLOAD=%~dp0
+set ALLAGANEYE_FFMPEG=%PAYLOAD%ffmpeg\ffmpeg.exe
+set PATH=%PAYLOAD%ffmpeg;%PATH%
+
+if "%~1"=="" (
+  echo.
+  echo allaganeye - FF14 Frontline video splitter
+  echo.
+  echo How to use:
+  echo   1. Drag a video file ^(.mkv / .mp4 / .avi / .mov^) onto allaganeye.bat
+  echo      to split it automatically.
+  echo   2. From a Command Prompt:
+  echo      allaganeye.bat split "C:\path\to\video.mkv"
+  echo.
+  echo Docs: https://github.com/Idios/kobutachan-allaganeye
+  echo.
+  pause
+  endlocal
+  exit /b 0
+)
+
+set EXT=%~x1
+set IS_VIDEO=
+if /i "%EXT%"==".mp4" set IS_VIDEO=1
+if /i "%EXT%"==".mkv" set IS_VIDEO=1
+if /i "%EXT%"==".avi" set IS_VIDEO=1
+if /i "%EXT%"==".mov" set IS_VIDEO=1
+
+if defined IS_VIDEO (
+  "%PAYLOAD%python\python.exe" -m allaganeye split %*
+) else (
+  "%PAYLOAD%python\python.exe" -m allaganeye %*
+)
+set EXIT_CODE=%ERRORLEVEL%
+
+echo.
+pause
+endlocal & exit /b %EXIT_CODE%
+'@
+}
+
 # Dot-sourced (no -Version): stop here so callers only get the function
 # definitions. Pester tests rely on this behaviour.
 if ([string]::IsNullOrEmpty($Version)) { return }
@@ -274,54 +327,9 @@ Get-ChildItem -Path $FFmpegLayout.Bin -Filter '*.dll' | Copy-Item -Destination $
 Copy-Item -Path $FFmpegLayout.License -Destination (Join-Path $FFmpegDest 'LICENSE.txt')
 
 # 5. Launcher
-# The launcher is ASCII-only so that it runs on any Windows code page without
-# chcp munging. Keep help text in English for the same reason.
-# Behaviour:
-#   - double-click (no args)       -> print help + pause
-#   - drag & drop of a video file  -> treat as `allaganeye split <file>` + pause
-#   - explicit args via cmd        -> pass through to allaganeye + pause
-$Launcher = @'
-@echo off
-setlocal
-set PAYLOAD=%~dp0
-set ALLAGANEYE_FFMPEG=%PAYLOAD%ffmpeg\ffmpeg.exe
-set PATH=%PAYLOAD%ffmpeg;%PATH%
-
-if "%~1"=="" (
-  echo.
-  echo allaganeye - FF14 Frontline video splitter
-  echo.
-  echo How to use:
-  echo   1. Drag a video file ^(.mkv / .mp4 / .avi / .mov^) onto allaganeye.bat
-  echo      to split it automatically.
-  echo   2. From a Command Prompt:
-  echo      allaganeye.bat split "C:\path\to\video.mkv"
-  echo.
-  echo Docs: https://github.com/Idios/kobutachan-allaganeye
-  echo.
-  pause
-  endlocal
-  exit /b 0
-)
-
-set EXT=%~x1
-set IS_VIDEO=
-if /i "%EXT%"==".mp4" set IS_VIDEO=1
-if /i "%EXT%"==".mkv" set IS_VIDEO=1
-if /i "%EXT%"==".avi" set IS_VIDEO=1
-if /i "%EXT%"==".mov" set IS_VIDEO=1
-
-if defined IS_VIDEO (
-  "%PAYLOAD%python\python.exe" -m allaganeye split %*
-) else (
-  "%PAYLOAD%python\python.exe" -m allaganeye %*
-)
-set EXIT_CODE=%ERRORLEVEL%
-
-echo.
-pause
-endlocal & exit /b %EXIT_CODE%
-'@
+# Template is defined as Get-LauncherTemplate (#583) so Pester can verify the
+# exit code propagation idiom (#580) without dot-sourcing the full build path.
+$Launcher = Get-LauncherTemplate
 Set-Content -Path (Join-Path $PayloadDir 'allaganeye.bat') -Value $Launcher -Encoding ASCII
 
 # 6. README
