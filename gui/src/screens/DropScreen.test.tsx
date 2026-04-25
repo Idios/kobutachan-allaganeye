@@ -6,6 +6,23 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),
 }));
 
+// #465 review (B): DropScreen の default probeFn は Tauri `probe_video`
+// command を invoke する。テスト環境では Tauri runtime がないので、
+// `invoke('probe_video', ...)` をデフォルトで成功させる mock を入れる。
+// 個別 test で override したい場合は `probeFn` props を渡す。
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn().mockResolvedValue({
+    path: 'C:/videos/x.mkv',
+    fileName: 'x.mkv',
+    sizeBytes: 38 * 1024 * 1024 * 1024,
+    durationSeconds: 10228.735,
+    width: 1920,
+    height: 1080,
+    fps: 60,
+    codec: 'h264',
+  }),
+}));
+
 import { DropScreen } from './DropScreen';
 import { useAppStateStore } from '../state/appStateStore';
 

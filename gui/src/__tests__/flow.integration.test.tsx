@@ -12,17 +12,32 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { invokeMock, dialogOpenMock } = vi.hoisted(() => ({
+const { invokeMock, dialogOpenMock, listenMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   dialogOpenMock: vi.fn(),
+  listenMock: vi.fn(),
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
+  // convertFileSrc is called by PreviewScreen to resolve cached thumbnails
+  // to URLs the browser can fetch. jsdom doesn't care about the scheme,
+  // so a simple passthrough is enough.
+  convertFileSrc: (p: string) => `asset://localhost/${p}`,
 }));
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: dialogOpenMock,
+}));
+
+// #523: ConfirmExitModal subscribes to the Tauri event bus on mount. The
+// real listen() reaches into Tauri's native shim which is absent under
+// vitest; stub it to a no-op that returns a no-op unsubscribe.
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: (...args: unknown[]) => {
+    listenMock(...args);
+    return Promise.resolve(() => undefined);
+  },
 }));
 
 import App from '../App';
@@ -73,6 +88,39 @@ function configureHappyInvoke() {
         return Promise.resolve();
       case 'check_backup_exists':
         return Promise.resolve(true);
+      // #465
+      case 'register_video':
+        return Promise.resolve({
+          url: 'http://127.0.0.1:0/video/test-token',
+          token: 'test-token',
+        });
+      case 'probe_video': {
+        // #465 review (B): drop が default で Tauri probe_video を呼ぶように
+        // なったので、テスト用 happy-path 値を返す。path は引数を echo back
+        // して selectedVideoPath assertion (dialog で resolve した値) と
+        // 一致させる。
+        const probePath =
+          (args as { path?: string } | undefined)?.path ?? 'C:/videos/x.mkv';
+        return Promise.resolve({
+          path: probePath,
+          fileName: probePath.split(/[/\\]/).pop() ?? probePath,
+          sizeBytes: 38 * 1024 * 1024 * 1024,
+          durationSeconds: 10228.735,
+          width: 1920,
+          height: 1080,
+          fps: 60,
+          codec: 'h264',
+        });
+      }
+      case 'generate_match_thumbnails':
+        return Promise.resolve([]);
+      // #523
+      case 'is_process_running':
+        return Promise.resolve(false);
+      case 'kill_tracked_processes':
+        return Promise.resolve(0);
+      case 'force_exit_app':
+        return Promise.resolve();
       default:
         return Promise.resolve();
     }
@@ -92,6 +140,9 @@ afterEach(() => {
 
 describe('flow A1: drop -> selected via [参照…]', () => {
   it('advances drop screen from idle through probing to selected', async () => {
+    // #465 review (B): drop が default で Tauri probe_video を呼ぶように
+    // なったので invoke happy mock が必須。
+    configureHappyInvoke();
     dialogOpenMock.mockResolvedValue('C:/videos/test.mkv');
     render(<App />);
     expect(screen.getByTestId('drop-screen')).toBeInTheDocument();
@@ -106,6 +157,7 @@ describe('flow A1: drop -> selected via [参照…]', () => {
 
 describe('flow A2: [OK] from selected -> detecting', () => {
   it('navigates to detecting and records the video path', async () => {
+    configureHappyInvoke();
     dialogOpenMock.mockResolvedValue('C:/videos/test.mkv');
     render(<App />);
 
@@ -156,6 +208,7 @@ describe('flow A4: complete <-> preview round-trip', () => {
 
 describe('flow F: drop [キャンセル] clears selection', () => {
   it('returns from selected to idle without setting selectedVideoPath', async () => {
+    configureHappyInvoke();
     dialogOpenMock.mockResolvedValue('C:/videos/test.mkv');
 
     render(<App />);

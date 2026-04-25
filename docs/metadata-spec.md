@@ -19,6 +19,7 @@
 | `source` | string | ✓ | 元動画ファイルの絶対パス (OS 表記そのまま) | 非空 |
 | `source_duration` | number | ✓ | 元動画の総秒数 | > 0 |
 | `source_duration_display` | string | ✓ | 人間可読な長さ表示 | `HH:MM:SS` または `MM:SS` |
+| `source_fps` | number | 新規書き込みは ✓ / 読み込み時は欠落許容 | 録画フレームレート (#465) | > 0。欠落時は GUI が `DEFAULT_FPS=60` で代替 |
 | `detected_at` | string | ✓ | 検知が実行された時刻 (UTC) | ISO 8601 (例: `2026-04-22T00:00:00Z`) |
 | `detection_params` | object | ✓ | 検知に使われたパラメータ (後述) | (object) |
 | `matches` | array | ✓ | 試合セグメント列 (0 件可) | |
@@ -120,7 +121,7 @@ GUI は以下のフィールドを in-memory で編集し、`[適用]` 時に `m
 
 以下は GUI では絶対に書き戻さない (CLI の観測記録として保全):
 
-- `source`, `source_duration`, `source_duration_display`
+- `source`, `source_duration`, `source_duration_display`, `source_fps`
 - `detected_at`, `detection_params`
 - `gaps` (CLI が計算、GUI は表示のみ)
 

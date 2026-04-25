@@ -64,12 +64,27 @@ export const WarningSchema = z.object({
   context: z.record(z.string(), z.unknown()).optional(),
 });
 
+/**
+ * #465 review: default frame rate when ``source_fps`` is missing. Pre-#465
+ * legacy metadata.json files don't include the field, so we keep a
+ * conservative 60fps assumption (the most common OBS recording cadence).
+ * GUI consumers should always read this constant rather than hardcoding 60
+ * so a future change of default propagates cleanly.
+ */
+export const DEFAULT_FPS = 60;
+
 export const MetadataSchema = z
   .object({
     schema_version: z.literal(SCHEMA_VERSION).optional(),
     source: z.string().min(1),
     source_duration: z.number().positive(),
     source_duration_display: z.string(),
+    /**
+     * #465 review: source recording frame rate (e.g. 60, 119.88, 240).
+     * Optional for backward compat with legacy metadata.json that omitted
+     * the field. Readers default to ``DEFAULT_FPS`` when absent.
+     */
+    source_fps: z.number().positive().optional(),
     detected_at: z.string().min(1),
     detection_params: DetectionParamsSchema,
     matches: z.array(MatchSchema),

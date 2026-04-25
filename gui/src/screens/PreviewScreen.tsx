@@ -1,29 +1,75 @@
-import { useState } from 'react';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
-import { FrameStrip } from '../components/FrameStrip';
-import { MatchThumb } from '../components/MatchThumb';
+import { FrameStrip, type FrameStripThumb } from '../components/FrameStrip';
 import { RestoreButton } from '../components/RestoreButton';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 import type { MatchType, TypeOverride } from '../types/metadata';
+import { DEFAULT_FPS } from '../types/metadata.schema';
 import { fmtPreciseTime } from '../utils/time';
 import styles from './PreviewScreen.module.css';
 
+interface RegisteredVideo {
+  url: string;
+  token: string;
+}
+
+interface ThumbnailEntry {
+  t_seconds: number;
+  file_path: string;
+}
+
 /**
- * Phase 2 preview screen — A1 Dual IN/OUT variant.
+ * #465 review: 1 フレームの step / TC display は録画固有の fps に従う。
+ * `metadata.source_fps` を最優先で読み、欠落時 (legacy metadata.json or
+ * sample mode) のみ {@link DEFAULT_FPS} (60) にフォールバック。
+ */
+function resolveFps(sourceFps: number | undefined): number {
+  if (sourceFps && sourceFps > 0) return sourceFps;
+  return DEFAULT_FPS;
+}
+
+/**
+ * Phase 3 preview screen -- video playback + keyboard seek + thumbnails.
  *
- * Local state:
- * - active 'start' | 'end' (which pane/timestamp is being edited)
- * - startT / endT (editable copies of the match boundaries)
- * - matchName / matchType (editable copies of the name and type override)
+ * Adds over Phase 2:
+ * - Real `<video>` elements for IN and OUT panes, fed by the axum-backed
+ *   `register_video` Tauri command (#465).
+ * - Keyboard shortcuts: ArrowLeft/Right = +-1s, Shift+arrow = +-10s,
+ *   Alt+arrow = +-1 frame at the recording's source_fps (60 / 120 / 240
+ *   are all handled correctly via metadata.source_fps; legacy files
+ *   fall back to {@link DEFAULT_FPS}). Space = play/pause on the active
+ *   pane.
+ * - The active pane's video.currentTime follows the editable start/end,
+ *   giving frame-accurate seek preview.
+ * - Click on the video toggles play/pause on the active pane (UX item 4).
+ * - TC display follows `video.currentTime` during playback (UX review
+ *   追加). Paused 中は nudge / manual input が t の source、playback 中は
+ *   video 側が source。境界の最終値 (edited.start_time / end_time) は
+ *   停止時の currentTime になる。
+ * - FrameStrip still serves a cache of thumbnails around the boundary; the
+ *   Rust side generates them through `generate_match_thumbnails`.
  *
- * On mount the local state is seeded from the store's current match (honoring
- * any prior `edited` / `name` / `type_override` patch). [適用] writes back via
- * updateMatch + apply. [一覧へ] navigates back (confirming if dirty). [元に戻す]
- * (#516) fires the restore flow and navigates back to complete.
+ * ## Playback architecture (#465 review item 7)
  *
- * Phase 3 (#465) will replace the <MatchThumb> with a real `<video>` player
- * fed by the axum HTTP server, and the FrameStrip with real decoded thumbnails.
+ * Preview uses **axum direct file serving** (HTML5 `<video>` + range
+ * request against the token-gated `127.0.0.1:random` endpoint) — not
+ * ffmpeg transcoding. As a consequence:
+ * - No ffmpeg subprocess is spawned while the user browses the preview
+ *   screen. `PROCESS_TRACKER` stays empty until export runs (#466).
+ * - The × close confirmation flow (#523) guards against in-flight
+ *   *export* ffmpeg processes, not preview. Verifying the flow requires
+ *   the export screen (#545 Phase 4).
+ * - Thumbnails are generated eagerly on pane mount via
+ *   `generate_match_thumbnails`; those ffmpeg calls exit before the user
+ *   interacts and are not tracked in `PROCESS_TRACKER`.
  */
 export function PreviewScreen() {
   const metadata = useMetadataStore((s) => s.metadata);
@@ -39,10 +85,6 @@ export function PreviewScreen() {
 
   const match = metadata?.matches.find((m) => m.index === selectedMatchIndex);
 
-  // All local draft state is initialized from the current match on first
-  // render. Resetting the draft on match change is handled by `key=` in the
-  // parent App.tsx (React remounts → fresh useState values), per the React 19
-  // "Avoid setState in effect" guidance.
   const [editing, setEditing] = useState<'start' | 'end'>('start');
   const [startT, setStartT] = useState<number>(
     match ? (match.edited?.start_time ?? match.start_time) : 0,
@@ -59,6 +101,228 @@ export function PreviewScreen() {
     match ? (match.type_override ?? match.type) : 'fl_match',
   );
 
+  // #465 review: source-aware frame rate. Read once from metadata; legacy
+  // metadata.json (no `source_fps`) or sample mode falls back to DEFAULT_FPS.
+  const fps = resolveFps(metadata?.source_fps);
+
+  // #465: per-mount video URL fetched from the axum server. One registration
+  // covers both panes (HTMLVideoElement instances can share the same URL).
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
+
+  // #465: thumbnail cache fetched from the Rust `generate_match_thumbnails`
+  // command (via ffmpeg). Keyed per boundary side; falls back to [] while
+  // the request is in-flight or when register_video failed.
+  const [inThumbs, setInThumbs] = useState<readonly FrameStripThumb[]>([]);
+  const [outThumbs, setOutThumbs] = useState<readonly FrameStripThumb[]>([]);
+
+  const inVideoRef = useRef<HTMLVideoElement>(null);
+  const outVideoRef = useRef<HTMLVideoElement>(null);
+
+  // #465 review (C): drop で確定した実 path を最優先 source-of-truth として
+  // 使用する。sample mode (selectedVideoPath = null) では sampleMetadata.source
+  // にフォールバック、実フローでは drop が確定した実 path で
+  // register_video / generate_match_thumbnails を発行する。
+  const selectedVideoPath = useAppStateStore((s) => s.selectedVideoPath);
+  const videoSource = selectedVideoPath ?? metadata?.source ?? null;
+
+  useEffect(() => {
+    if (!videoSource) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const registered = await invoke<RegisteredVideo>('register_video', {
+          path: videoSource,
+        });
+        if (!cancelled) {
+          setVideoUrl(registered.url);
+          setVideoError(null);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setVideoUrl(null);
+          setVideoError(e instanceof Error ? e.message : String(e));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [videoSource]);
+
+  // Keep each video's currentTime in sync with the edit buffer so a keyboard
+  // nudge immediately seeks the frame preview. We only seek when the numeric
+  // value actually changes to avoid feedback loops with timeupdate events.
+  //
+  // #465 review 追加: `v.paused` guard で playback 中は seek しない。再生中の
+  // onTimeUpdate が setStartT/setEndT を呼ぶため、もし guard が無いと
+  //   timeupdate → setStartT(cur) → effect 実行中に cur が advance →
+  //   effect は差分 > 0.001 を検出し backward seek
+  // というループで再生が揺れる。paused 中のみ state → video を反映する。
+  useEffect(() => {
+    const v = inVideoRef.current;
+    if (
+      v &&
+      v.paused &&
+      !Number.isNaN(startT) &&
+      Math.abs(v.currentTime - startT) > 0.001
+    ) {
+      try {
+        v.currentTime = startT;
+      } catch {
+        // ignore seek failure during initial load
+      }
+    }
+  }, [startT, videoUrl]);
+
+  useEffect(() => {
+    const v = outVideoRef.current;
+    if (
+      v &&
+      v.paused &&
+      !Number.isNaN(endT) &&
+      Math.abs(v.currentTime - endT) > 0.001
+    ) {
+      try {
+        v.currentTime = endT;
+      } catch {
+        // ignore
+      }
+    }
+  }, [endT, videoUrl]);
+
+  // #465: fetch candidate-frame thumbnails around the start boundary. Runs
+  // when the boundary moves by more than ~0.5s so ffmpeg calls aren't
+  // spammed on each single-frame nudge (cache hits handle the rest anyway).
+  useEffect(() => {
+    if (!videoSource || !videoUrl || !match) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const entries = await invoke<ThumbnailEntry[]>(
+          'generate_match_thumbnails',
+          {
+            videoPath: videoSource,
+            matchIndex: match.index,
+            boundaryTSeconds: match.edited?.start_time ?? match.start_time,
+            windowSeconds: 3,
+            count: 12,
+          },
+        );
+        if (!cancelled) {
+          setInThumbs(
+            entries.map((e) => ({
+              t: e.t_seconds,
+              url: convertFileSrc(e.file_path),
+            })),
+          );
+        }
+      } catch {
+        if (!cancelled) setInThumbs([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [videoSource, videoUrl, match]);
+
+  useEffect(() => {
+    if (!videoSource || !videoUrl || !match) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const entries = await invoke<ThumbnailEntry[]>(
+          'generate_match_thumbnails',
+          {
+            videoPath: videoSource,
+            matchIndex: match.index,
+            boundaryTSeconds: match.edited?.end_time ?? match.end_time,
+            windowSeconds: 3,
+            count: 12,
+          },
+        );
+        if (!cancelled) {
+          setOutThumbs(
+            entries.map((e) => ({
+              t: e.t_seconds,
+              url: convertFileSrc(e.file_path),
+            })),
+          );
+        }
+      } catch {
+        if (!cancelled) setOutThumbs([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [videoSource, videoUrl, match]);
+
+  const currentT = editing === 'start' ? startT : endT;
+  const setCurrentT = editing === 'start' ? setStartT : setEndT;
+  const activeVideoRef = editing === 'start' ? inVideoRef : outVideoRef;
+
+  const nudge = useCallback(
+    (sec: number) => {
+      setCurrentT((t: number) => Math.max(0, t + sec));
+    },
+    [setCurrentT],
+  );
+
+  // #465 review: frame-grid snap で 1F step を確実に進める。`t + 1/fps` は
+  // IEEE 754 の丸めで `Math.floor((t' - floor(t')) * fps)` が増分しない
+  // ことがある (例: 2438.75 + 1/120 → frame 表示 .90 のまま)。frame 番号
+  // ベースで step してから秒に戻すと丸め誤差を回避できる。
+  const nudgeFrame = useCallback(
+    (frames: number) => {
+      setCurrentT((t: number) => {
+        const currentFrame = Math.round(t * fps);
+        const nextFrame = Math.max(0, currentFrame + frames);
+        return nextFrame / fps;
+      });
+    },
+    [setCurrentT, fps],
+  );
+
+  // #465: keyboard shortcuts. ArrowLeft/Right = +-1s, Shift = +-10s,
+  // Alt = +-1 frame at fps (frame-grid snap), Space = play/pause on the
+  // active pane.
+  useEffect(() => {
+    const interactiveTags = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
+    function handleKey(e: KeyboardEvent) {
+      // Let the TC input and other fields own their typing.
+      const target = e.target as HTMLElement | null;
+      if (target && interactiveTags.has(target.tagName)) return;
+
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        const sign = e.key === 'ArrowLeft' ? -1 : 1;
+        if (e.altKey) {
+          nudgeFrame(sign);
+        } else {
+          const magnitude = e.shiftKey ? 10 : 1;
+          nudge(sign * magnitude);
+        }
+        e.preventDefault();
+        return;
+      }
+      if (e.key === ' ') {
+        const v = activeVideoRef.current;
+        if (v) {
+          if (v.paused) void v.play().catch(() => undefined);
+          else v.pause();
+        }
+        e.preventDefault();
+      }
+    }
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [nudge, nudgeFrame, activeVideoRef]);
+
+  const matchLabel = useMemo(
+    () => (match ? `match_${String(match.index).padStart(3, '0')}` : ''),
+    [match],
+  );
+
   if (!match) {
     return (
       <div className={styles.screen} data-testid="preview-screen">
@@ -66,11 +330,6 @@ export function PreviewScreen() {
       </div>
     );
   }
-
-  const currentT = editing === 'start' ? startT : endT;
-  const setCurrentT = editing === 'start' ? setStartT : setEndT;
-  const nudge = (sec: number) =>
-    setCurrentT((t: number) => Math.max(0, t + sec));
 
   async function handleApply() {
     updateMatch(match!.index, {
@@ -122,6 +381,7 @@ export function PreviewScreen() {
               className={styles.nameInput}
               value={matchName}
               onChange={(e) => setMatchName(e.target.value)}
+              placeholder={matchLabel}
               aria-label="match name"
             />
             <span className={styles.meta}>
@@ -150,42 +410,93 @@ export function PreviewScreen() {
           label="IN (start)"
           active={editing === 'start'}
           t={startT}
-          onClick={() => setEditing('start')}
+          onActivate={() => setEditing('start')}
           onTChange={(v) => setStartT(v)}
-          index={match.index}
+          videoUrl={videoUrl}
+          videoError={videoError}
+          videoRef={inVideoRef}
+          fps={fps}
         />
         <Pane
           label="OUT (end)"
           active={editing === 'end'}
           t={endT}
-          onClick={() => setEditing('end')}
+          onActivate={() => setEditing('end')}
           onTChange={(v) => setEndT(v)}
-          index={match.index}
+          videoUrl={videoUrl}
+          videoError={videoError}
+          videoRef={outVideoRef}
+          fps={fps}
         />
       </div>
 
       <div className={styles.stepRow}>
-        {[-10, -1, -1 / 60, 1 / 60, 1, 10].map((step, i) => {
-          const label =
-            Math.abs(step) === 1 / 60
-              ? step > 0
-                ? '+1F'
-                : '−1F'
-              : step > 0
-                ? `+${step}s`
-                : `${step}s`;
+        {(
+          [
+            { kind: 'sec', value: -10 },
+            { kind: 'sec', value: -1 },
+            { kind: 'frame', value: -1 },
+            { kind: 'frame', value: 1 },
+            { kind: 'sec', value: 1 },
+            { kind: 'sec', value: 10 },
+          ] as const
+        ).map((step, i) => {
+          const isFrame = step.kind === 'frame';
+          const isTenSec = step.kind === 'sec' && Math.abs(step.value) === 10;
+          const label = isFrame
+            ? step.value > 0
+              ? '+1F'
+              : '−1F'
+            : step.value > 0
+              ? `+${step.value}s`
+              : `${step.value}s`;
+          // #465 review: ツールチップでキーボード等価操作を明示 (UX item 3)。
+          const keyHint = isFrame
+            ? step.value > 0
+              ? 'Alt + →'
+              : 'Alt + ←'
+            : isTenSec
+              ? step.value > 0
+                ? 'Shift + →'
+                : 'Shift + ←'
+              : step.value > 0
+                ? '→'
+                : '←';
           return (
             <button
               key={i}
               type="button"
               className={styles.stepButton}
-              onClick={() => nudge(step)}
+              onClick={() => {
+                // #465 review: frame ボタンは frame-grid snap、秒 step は累積
+                if (isFrame) nudgeFrame(step.value);
+                else nudge(step.value);
+              }}
               aria-label={`nudge ${label}`}
+              title={`${label} (${keyHint})`}
             >
               {label}
             </button>
           );
         })}
+      </div>
+
+      {/* #465 review: キーボードショートカット可視化 (UX item 3)。stepRow 下に
+       *  インライン hint を出し、はじめてのユーザーにも操作方法が伝わる。 */}
+      <div className={styles.keyHint} role="note" aria-label="keyboard shortcuts">
+        <span className={styles.keyHintItem}>
+          <kbd className={styles.kbd}>←</kbd>
+          <kbd className={styles.kbd}>→</kbd> 1s
+        </span>
+        <span className={styles.keyHintItem}>
+          <kbd className={styles.kbd}>Shift</kbd>+<kbd className={styles.kbd}>←→</kbd> 10s
+        </span>
+        <span className={styles.keyHintItem}>
+          <kbd className={styles.kbd}>Alt</kbd>+<kbd className={styles.kbd}>←→</kbd> 1F
+        </span>
+        <span className={styles.keyHintItem}>
+          <kbd className={styles.kbd}>Space</kbd> / クリック: 再生/停止
+        </span>
       </div>
 
       <div className={styles.strip}>
@@ -195,6 +506,7 @@ export function PreviewScreen() {
           windowSec={3}
           count={12}
           onSelectFrame={(t) => setCurrentT(t)}
+          thumbs={editing === 'start' ? inThumbs : outThumbs}
         />
       </div>
 
@@ -231,28 +543,87 @@ interface PaneProps {
   label: string;
   active: boolean;
   t: number;
-  onClick: () => void;
+  onActivate: () => void;
   onTChange: (v: number) => void;
-  index: number;
+  videoUrl: string | null;
+  videoError: string | null;
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  /** #465 review: fps for TC formatting / parsing on this pane. */
+  fps: number;
 }
 
-function Pane({ label, active, t, onClick, onTChange, index }: PaneProps) {
+function Pane({
+  label,
+  active,
+  t,
+  onActivate,
+  onTChange,
+  videoUrl,
+  videoError,
+  videoRef,
+  fps,
+}: PaneProps) {
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={onActivate}
       className={`${styles.pane}${active ? ` ${styles.paneActive}` : ''}`}
       aria-pressed={active}
     >
       <div className={styles.paneCaption}>{label}</div>
       <div className={styles.paneVideo}>
-        <MatchThumb index={index} width="100%" height="100%" />
+        {videoUrl ? (
+          <video
+            ref={videoRef}
+            src={videoUrl}
+            preload="metadata"
+            playsInline
+            controls={false}
+            className={styles.paneVideoEl}
+            aria-label={`${label} video`}
+            title="クリックで再生/停止 (Space キーでも同じ)"
+            // #465 review: クリックで再生・停止 (UX item 4)。stopPropagation で
+            // Pane の activate 遷移は抑え、pane はすでに active な状態で
+            // play/pause を切り替える。inactive pane をクリックした場合は
+            // activate を先に呼ぶため、もう一度クリックで play/pause できる。
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!active) {
+                onActivate();
+                return;
+              }
+              const v = videoRef.current;
+              if (v) {
+                if (v.paused) void v.play().catch(() => undefined);
+                else v.pause();
+              }
+            }}
+            // #465 review 追加: 再生中は TC 表示 (onTChange) を video.currentTime
+            // に同期させる (UX 追加: ユーザー期待)。paused 中は nudge / 手入力
+            // した t を残したいので guard。paused 状態の最終 timeupdate も読む
+            // ので、pause 後の TC は「停止したフレームの時刻」になる。
+            // 逆方向の sync (t → video.currentTime) は外側の useEffect が 0.001
+            // 閾値付きで担当しており feedback loop は起きない。
+            onTimeUpdate={(e) => {
+              const v = e.currentTarget;
+              if (!v.paused) {
+                onTChange(v.currentTime);
+              }
+            }}
+          />
+        ) : videoError ? (
+          <div className={styles.paneVideoError} role="alert">
+            {videoError}
+          </div>
+        ) : (
+          <div className={styles.paneVideoLoading}>loading video…</div>
+        )}
       </div>
       <input
         className={styles.tcInput}
-        value={fmtPreciseTime(t)}
+        value={fmtPreciseTime(t, fps)}
         onChange={(e) => {
-          const parsed = parseTimecode(e.target.value);
+          const parsed = parseTimecode(e.target.value, fps);
           if (parsed !== null) onTChange(parsed);
         }}
         aria-label={`${label} timecode`}
@@ -262,13 +633,21 @@ function Pane({ label, active, t, onClick, onTChange, index }: PaneProps) {
   );
 }
 
-/** Parse H:MM:SS.FF back into seconds. Returns null on malformed input. */
-function parseTimecode(value: string): number | null {
-  const match = value.trim().match(/^(-)?(\d+):(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?$/);
+/**
+ * Parse H:MM:SS.FF back into seconds. Returns null on malformed input.
+ *
+ * #465 review: fps is required so 120 / 240 fps recordings parse the `.FF`
+ * portion as actual frame numbers in their respective denominator.
+ */
+function parseTimecode(value: string, fps: number): number | null {
+  const match = value
+    .trim()
+    .match(/^(-)?(\d+):(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?$/);
   if (!match) return null;
   const [, sign, h, m, s, f] = match;
-  const frames = f ? parseInt(f, 10) / 60 : 0;
-  let total = parseInt(h, 10) * 3600 + parseInt(m, 10) * 60 + parseInt(s, 10) + frames;
+  const frames = f ? parseInt(f, 10) / fps : 0;
+  let total =
+    parseInt(h, 10) * 3600 + parseInt(m, 10) * 60 + parseInt(s, 10) + frames;
   if (sign === '-') total = -total;
   return total;
 }

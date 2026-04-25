@@ -892,6 +892,7 @@ def _split_and_write_metadata(
     result = _build_metadata_payload(
         video_path=video_path,
         source_duration=source_duration,
+        source_fps=metadata["fps"],
         detected_at=detected_at,
         effective_interval=effective_interval,
         config=config,
@@ -912,6 +913,7 @@ def _build_metadata_payload(
     *,
     video_path: Path,
     source_duration: float,
+    source_fps: float,
     detected_at: str,
     effective_interval: float,
     config: SplitConfig,
@@ -927,12 +929,17 @@ def _build_metadata_payload(
     ``schema_version`` (#515) declares the payload revision so future
     readers can migrate or refuse older / newer files. v1 is the current
     schema; see ``docs/metadata-spec.md`` section "schema_version".
+
+    ``source_fps`` (#465 review): the recording frame rate from ffprobe.
+    GUI uses this to compute frame-accurate +-1F seek (formerly assumed
+    60 fps). 120fps / 240fps recordings now step by 1/120 / 1/240 sec.
     """
     return {
         "schema_version": "1",
         "source": str(video_path),
         "source_duration": source_duration,
         "source_duration_display": _format_timestamp(source_duration),
+        "source_fps": source_fps,
         "detected_at": detected_at,
         "detection_params": {
             "sample_interval": effective_interval,

@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useReducer, useState } from 'react';
 
@@ -15,27 +16,19 @@ const RECENT_DUMMY = [
 ];
 
 /**
- * Phase 2 dummy probe. Sleeps briefly and returns hard-coded video metadata.
- * Phase 3 (#465) replaces this with an actual `invoke('probe_video', { path })`.
- * Exposed as a module-level function so tests can vi.spyOn it.
+ * #465 review (B): drop で確定した path を Rust 側 `probe_video` Tauri
+ * command (ffprobe) に渡し、実 metadata を取得する。Phase 2 の
+ * `dummyProbeVideo` を置換した。
+ *
+ * テスト時は `DropScreen({ probeFn })` で別実装を inject できるので、
+ * この関数自体は本物 (Tauri 必須) を保つ。
  */
-export async function dummyProbeVideo(path: string): Promise<VideoProbeInfo> {
-  await new Promise<void>((r) => setTimeout(r, 30));
-  const fileName = path.split(/[/\\]/).pop() ?? path;
-  return {
-    path,
-    fileName,
-    sizeBytes: 38 * 1024 * 1024 * 1024,
-    durationSeconds: 10228.735,
-    width: 1920,
-    height: 1080,
-    fps: 60,
-    codec: 'h264',
-  };
+export async function probeVideo(path: string): Promise<VideoProbeInfo> {
+  return await invoke<VideoProbeInfo>('probe_video', { path });
 }
 
 export interface DropScreenProps {
-  /** Injection hook for tests / Phase 3. Defaults to dummyProbeVideo. */
+  /** Injection hook for tests. Defaults to {@link probeVideo} (real ffprobe via Tauri). */
   probeFn?: (path: string) => Promise<VideoProbeInfo>;
   /** Injection hook for tests. Defaults to @tauri-apps/plugin-dialog open(). */
   openDialogFn?: () => Promise<string | null>;
@@ -66,7 +59,7 @@ export function DropScreen({ probeFn, openDialogFn }: DropScreenProps = {}) {
     }
     dispatch({ type: 'FILE_PICKED' });
     try {
-      const info = await (probeFn ?? dummyProbeVideo)(selected);
+      const info = await (probeFn ?? probeVideo)(selected);
       setProbeInfo(info);
       dispatch({ type: 'PROBE_OK' });
     } catch (e) {

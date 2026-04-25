@@ -26,6 +26,12 @@ export function CompleteScreen() {
   const navigate = useAppStateStore((s) => s.navigate);
   const appReset = useAppStateStore((s) => s.reset);
 
+  // #465 review (A,C): drop で確定した実 path を MatchThumb に渡し、
+  // generate_match_thumbnails で実フレーム WebP を表示する。sample mode
+  // (selectedVideoPath = null) では metadata.source にフォールバック。
+  const selectedVideoPath = useAppStateStore((s) => s.selectedVideoPath);
+  const thumbVideoPath = selectedVideoPath ?? metadata?.source ?? null;
+
   // On mount, if nothing is selected and matches exist, select first.
   useEffect(() => {
     if (metadata && metadata.matches.length > 0 && selectedMatchIndex === null) {
@@ -130,7 +136,13 @@ export function CompleteScreen() {
                   data-testid={`match-row-${m.index}`}
                   data-selected={isSel ? 'true' : 'false'}
                 >
-                  <MatchThumb index={m.index} width={48} height={27} />
+                  <MatchThumb
+                    index={m.index}
+                    videoPath={thumbVideoPath}
+                    startTime={m.start_time}
+                    width={48}
+                    height={27}
+                  />
                   <div className={styles.listItemBody}>
                     <div className={styles.listItemTitle}>
                       {m.name ?? `MATCH_${String(m.index).padStart(3, '0')}`}
@@ -154,7 +166,13 @@ export function CompleteScreen() {
           <div className={styles.previewPane}>
             <AllaganFrame className={styles.previewFrame}>
               <div className={styles.previewInner}>
-                <MatchThumb index={selectedMatch.index} width="100%" height="100%" />
+                <MatchThumb
+                  index={selectedMatch.index}
+                  videoPath={thumbVideoPath}
+                  startTime={selectedMatch.start_time}
+                  width="100%"
+                  height="100%"
+                />
                 <div className={styles.previewPlayOverlay}>
                   <div className={styles.previewPlayBadge} aria-hidden="true">
                     ▶

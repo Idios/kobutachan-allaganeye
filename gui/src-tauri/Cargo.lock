@@ -22,11 +22,13 @@ name = "allaganeye-gui"
 version = "0.2.0"
 dependencies = [
  "axum",
+ "dirs",
  "futures",
  "hyper",
  "percent-encoding",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -37,6 +39,7 @@ dependencies = [
  "tokio-util",
  "tower-http",
  "urlencoding",
+ "uuid",
 ]
 
 [[package]]

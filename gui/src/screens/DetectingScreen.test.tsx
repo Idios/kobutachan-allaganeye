@@ -45,8 +45,12 @@ describe('DetectingScreen', () => {
     expect(useAppStateStore.getState().screen).toBe('complete');
     // sample metadata is loaded
     expect(useMetadataStore.getState().metadata).not.toBeNull();
-    // selectedVideoPath should be cleared after success
-    expect(useAppStateStore.getState().selectedVideoPath).toBeNull();
+    // #465 review (C): selectedVideoPath は detecting → preview / export まで
+    // 持ち越し、register_video / generate_match_thumbnails の引数として実 path
+    // を使う設計に変更。以前の null reset は廃止。
+    expect(useAppStateStore.getState().selectedVideoPath).toBe(
+      'C:/videos/test.mkv',
+    );
   });
 
   it('returns to drop when [中断] is clicked', () => {

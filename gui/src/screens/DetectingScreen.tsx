@@ -20,7 +20,6 @@ const TICKS_TO_COMPLETE = 100;
 export function DetectingScreen() {
   const navigate = useAppStateStore((s) => s.navigate);
   const selectedVideoPath = useAppStateStore((s) => s.selectedVideoPath);
-  const setSelectedVideoPath = useAppStateStore((s) => s.setSelectedVideoPath);
   const loadSample = useMetadataStore((s) => s.loadSample);
 
   const [phase, dispatch] = useReducer(detectingReducer, 'running' as DetectingPhase);
@@ -44,13 +43,16 @@ export function DetectingScreen() {
   }, [phase]);
 
   // completed → load sample data + move to complete
+  // #465 review (C): selectedVideoPath は detecting → preview / export まで
+  // 持ち越し、PreviewScreen の register_video / generate_match_thumbnails の
+  // 引数として実 path を渡せるようにする。以前は ここで null reset していたが、
+  // 「drop で確定した path を後段が利用する」設計と矛盾していたため削除。
   useEffect(() => {
     if (phase === 'completed') {
       loadSample();
-      setSelectedVideoPath(null);
       navigate('complete');
     }
-  }, [phase, loadSample, navigate, setSelectedVideoPath]);
+  }, [phase, loadSample, navigate]);
 
   // cancelled → back to drop
   useEffect(() => {

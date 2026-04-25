@@ -3,10 +3,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn().mockResolvedValue(undefined),
+  convertFileSrc: (p: string) => `asset://localhost/${p}`,
 }));
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),
+}));
+
+// #523: ConfirmExitModal calls listen() on mount; stub it so the App
+// test tree can render under jsdom.
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: () => Promise.resolve(() => undefined),
 }));
 
 import App from './App';
