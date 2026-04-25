@@ -63,20 +63,24 @@ _GPU_DECODER_MAP: dict[str, dict[str, str]] = {
         # 現状未登録。必要になったら追加。
     },
     "intel": {
-        # #550 で追加。Tiger Lake (11th gen Iris Xe) 以降は
-        # h264 / hevc / av1 を QSV decode 可能。`_HWACCELS_NEED_HWDOWNLOAD`
-        # に "qsv" を追加してあるので _decode_chunk が
-        # `-hwaccel_output_format qsv` + filter chain 先頭の
-        # `hwdownload,format=nv12,` を自動付与し、QSV surface を system
-        # memory に降ろしてから fps -> scale -> format=gray に渡す。
-        # VP9 は QSV decoder 自体は ffmpeg 8.1 に存在 (`vp9_qsv`) するが
-        # 本 issue ではスコープ外で除外 (将来別 issue で追加検討)。
-        # 古い世代 (Skylake 等) で av1_qsv が「unsupported (-3)」で
-        # 失敗するケースは _decode_chunk が VideoProcessingError を上げ、
-        # detect_match_boundaries が CPU fallback する (実機検証:
-        # i7-1185G7 / Iris Xe では av1_qsv 非対応で CPU fallback 動作確認済み)。
+        # #550 で追加 (h264/hevc/av1)、#582 で vp9 追加。Tiger Lake
+        # (11th gen Iris Xe) 以降は h264 / hevc / vp9 / av1 を QSV decode
+        # 可能。`_HWACCELS_NEED_HWDOWNLOAD` に "qsv" を追加してあるので
+        # _decode_chunk が `-hwaccel_output_format qsv` + filter chain
+        # 先頭の `hwdownload,format=nv12,` を自動付与し、QSV surface を
+        # system memory に降ろしてから fps -> scale -> format=gray に渡す。
+        # 古い世代で codec 非対応 (例: Tiger Lake で av1_qsv は
+        # 「unsupported (-3)」) のケースは _decode_chunk が
+        # VideoProcessingError を上げ、detect_match_boundaries が
+        # CPU fallback する (実機検証:
+        # - h264_qsv: i7-1185G7 / Iris Xe で 13.7x speed (#550)
+        # - hevc_qsv: 同 720p で 3.76x speed (#550)
+        # - vp9_qsv: 同 720p で 8.29x speed (#582)
+        # - av1_qsv: Tiger Lake 非対応で CPU fallback (#550)
+        # )。
         "h264": "h264_qsv",
         "hevc": "hevc_qsv",
+        "vp9": "vp9_qsv",
         "av1": "av1_qsv",
     },
 }

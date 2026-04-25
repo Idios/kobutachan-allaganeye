@@ -100,13 +100,19 @@ class TestDecodeChunk:
             ("av1", "av1_qsv"),
             ("hevc", "hevc_qsv"),
             ("h264", "h264_qsv"),
+            # #582 で追加。vp9_qsv は ffmpeg 8.1 に存在し、Tiger Lake
+            # 以降で QSV decode 対応 (実機 i7-1185G7 / Iris Xe で 8.29x
+            # speed @ 720p 確認)。NVIDIA vp9_cuvid (#538/#549 で除外) と
+            # 異なり QSV では csp:gbr 問題は発生せず、hwdownload 経由で
+            # 後段の fps/scale/format=gray と整合する。
+            ("vp9", "vp9_qsv"),
         ],
     )
     @patch("allaganeye.video.gpu_detector.subprocess.run")
     def test_hwaccel_qsv_for_intel_codecs(self, mock_run, codec, expected_decoder):
         """vendor=intel + codec で `-hwaccel qsv -hwaccel_output_format qsv
         -c:v {codec}_qsv` + `hwdownload,format=nv12,` filter prefix を
-        組み立てる (#550, #553 と同じ汎用機構を再利用).
+        組み立てる (#550 / #582, #553 と同じ汎用機構を再利用).
 
         QSV decoder は default で `pix_fmt=qsv` の GPU surface を出力し、
         後段の swscaler (`fps -> scale -> format=gray`) が `Function not
@@ -114,11 +120,12 @@ class TestDecodeChunk:
         "qsv" を加え、`-hwaccel_output_format qsv` で surface format を
         明示しつつ filter chain 先頭の `hwdownload,format=nv12,` で
         system memory に降ろすのが #550 実装の核心 (#553 の AMD d3d11va
-        と同じパターン)。
+        と同じパターン)。VP9 (#582) は同パターンで追加。
 
         実機検証 (i7-1185G7 / Iris Xe Graphics, ffmpeg 8.1):
         - h264_qsv: 13.7x speed (`-hwaccel_output_format qsv` + hwdownload)
         - hevc_qsv: 3.76x speed @ 720p
+        - vp9_qsv: 8.29x speed @ 720p (#582)
         - av1_qsv: Tiger Lake 非対応 -> VideoProcessingError -> CPU fallback
         """
         mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
@@ -148,20 +155,26 @@ class TestDecodeChunk:
 
     @patch("allaganeye.video.gpu_detector.subprocess.run")
     def test_hwaccel_auto_for_intel_unsupported_codec(self, mock_run):
-        """vendor=intel + 非対応 codec (vp9/mpeg2 等) は legacy
-        `-hwaccel auto` に fallback (#550).
+        """vendor=intel + `_GPU_DECODER_MAP["intel"]` 未登録 codec
+        (mpeg2video / mpeg4 / vc1 等) は legacy `-hwaccel auto` に
+        fallback (#550 / #582).
 
-        Intel QSV は VP9 decode 自体は対応しているが、本 issue では
-        スコープ外として `_GPU_DECODER_MAP["intel"]` から除外している。
-        将来別 issue で追加検討。
+        現時点で Intel 用 dict は h264 / hevc / vp9 / av1 を登録。それ以外の
+        codec (例: mpeg2video / mpeg4) は QSV decoder (`mpeg2_qsv` / `vc1_qsv`)
+        が ffmpeg に存在しても `_GPU_DECODER_MAP["intel"]` には未登録のため
+        legacy path (-hwaccel auto) に落ち、ffmpeg 側で soft / 自動 hwaccel
+        decode が選ばれる。VP9 は #582 で intel dict に登録済みなので、
+        本テストは mpeg2video で代替。
         """
         mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
-        _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0, codec="vp9", vendor="intel")
+        _decode_chunk(
+            Path("test.mp4"), 0.0, 10.0, 1.0, codec="mpeg2video", vendor="intel"
+        )
 
         cmd = mock_run.call_args[0][0]
         hw_idx = cmd.index("-hwaccel")
         assert cmd[hw_idx + 1] == "auto"
-        assert "vp9_qsv" not in cmd
+        assert "mpeg2_qsv" not in cmd
         assert "-hwaccel_output_format" not in cmd
 
     @patch("allaganeye.video.gpu_detector.subprocess.run")

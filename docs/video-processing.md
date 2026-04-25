@@ -137,15 +137,15 @@ ffmpeg -hwaccel auto -ss <chunk_start> -t <chunk_duration> -i input.mkv \
 | VP9 | GPU (#414) — NVIDIA は soft decode (#538), AMD は `vp9_amf` 利用可 | Maxwell 以降 (#538 で NVDEC 経路除外) | Gen9+ | VCN 1.0+ |
 | その他 (mpeg2video, vc1, prores 等) | CPU | — | — | — |
 
-- VP9 は `_GPU_PREFERRED_CODECS` に残すが NVIDIA 経路 (`_GPU_DECODER_MAP["nvidia"]`) からは除外 (#538 / #549)。理由: ffmpeg 8.1 の `vp9_cuvid` は frame を `nv12 + csp:gbr` で tag し、後段の swscaler が gray 変換を `EOPNOTSUPP (-129)` として reject する。NVIDIA auto-select で GPU mode に振られても `_decode_chunk` は else branch (`-hwaccel auto`) を使い、ffmpeg 側で soft decode (native) が選ばれる (実測 speed 2.64x)。`vp9_cuvid` の ffmpeg 側修正が入った時点で NVIDIA 経路の復活検討。AMD は #553 で d3d11va 経路に統一しているため csp:gbr 問題なし (filter 先頭で `hwdownload,format=nv12` 経由で system memory に降ろす)。
+- VP9 は `_GPU_PREFERRED_CODECS` に残すが NVIDIA 経路 (`_GPU_DECODER_MAP["nvidia"]`) からは除外 (#538 / #549)。理由: ffmpeg 8.1 の `vp9_cuvid` は frame を `nv12 + csp:gbr` で tag し、後段の swscaler が gray 変換を `EOPNOTSUPP (-129)` として reject する。NVIDIA auto-select で GPU mode に振られても `_decode_chunk` は else branch (`-hwaccel auto`) を使い、ffmpeg 側で soft decode (native) が選ばれる (実測 speed 2.64x)。`vp9_cuvid` の ffmpeg 側修正が入った時点で NVIDIA 経路の復活検討。AMD は #553 で d3d11va 経路に統一しているため csp:gbr 問題なし (filter 先頭で `hwdownload,format=nv12` 経由で system memory に降ろす、ただし AMD 用 dict には vp9 未登録)。Intel は #582 で `vp9_qsv` を `_GPU_DECODER_MAP["intel"]` に追加 (QSV は decode 後の `hwdownload` で nv12 に明示 download するため csp:gbr 問題なし、Tiger Lake で 8.29x speed 実機確認)。
 
-**vendor × codec 実装状況 (#546 / #553 / #550)**
+**vendor × codec 実装状況 (#546 / #553 / #550 / #582)**
 
 | Vendor | hwaccel | h264 | hevc | av1 | vp9 | 備考 |
 |---|---|---|---|---|---|---|
 | NVIDIA (NVDEC cuvid) | `cuda` | `h264_cuvid` | `hevc_cuvid` | `av1_cuvid` | (soft, #538/#549) | dGPU 想定、dual GPU では優先選択 |
 | AMD (d3d11va) | `d3d11va` | `h264` | `hevc` | `av1` | (未登録) | #553 で実装。AMF decoder ではなく d3d11va + native decoder + filter 先頭 `hwdownload,format=nv12` で allaganeye filter pipeline と整合させる。RDNA2+ iGPU (Granite Ridge) で実測 speed 23x (SW 7.6x 比 3x 高速) |
-| Intel (QSV) | `qsv` | `h264_qsv` | `hevc_qsv` | `av1_qsv` | (本 issue 範囲外) | #550 で実装。Tiger Lake (11th gen Iris Xe) 以降で QSV decode 対応。AV1 は **Alder Lake / Arc 以降**でハードウェア decode、Tiger Lake では `Error initializing the MFX video decoder: unsupported (-3)` で `_decode_chunk` が `VideoProcessingError` を上げ CPU fallback。AMD と同じく `_HWACCELS_NEED_HWDOWNLOAD` 経路を使用 (`-hwaccel_output_format qsv` + filter 先頭 `hwdownload,format=nv12`)。VP9 は QSV decoder 自体は存在 (`vp9_qsv`) するが本 issue ではスコープ外で除外 (将来別 issue) |
+| Intel (QSV) | `qsv` | `h264_qsv` | `hevc_qsv` | `av1_qsv` | `vp9_qsv` | #550 (h264/hevc/av1) + #582 (vp9) で実装。Tiger Lake (11th gen Iris Xe) 以降で QSV decode 対応。AV1 は **Alder Lake / Arc 以降**でハードウェア decode、Tiger Lake では `Error initializing the MFX video decoder: unsupported (-3)` で `_decode_chunk` が `VideoProcessingError` を上げ CPU fallback。VP9 は Tiger Lake で動作確認済み (実機 8.29x speed @ 720p)。AMD と同じく `_HWACCELS_NEED_HWDOWNLOAD` 経路を使用 (`-hwaccel_output_format qsv` + filter 先頭 `hwdownload,format=nv12`)。NVIDIA `vp9_cuvid` の csp:gbr 不整合 (#538/#549) は QSV decoder では発生しない (decode 後 `hwdownload` で nv12 に明示 download するため) |
 | Apple (VideoToolbox) | — | — | — | — | — | Windows ffmpeg 未同梱、別 issue 追跡 |
 
 **`-hwaccel_output_format` + `hwdownload` filter の vendor 別差分 (#553 / #550)**
