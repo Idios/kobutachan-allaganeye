@@ -105,11 +105,11 @@ nv12 system memory に直接出力するため不要。
 """
 
 _VENDOR_PREFERENCE: tuple[str, ...] = ("nvidia", "amd", "intel")
-"""Auto-select 時の vendor 優先順 (#546 / #550). dGPU (NVIDIA) を最優先、
-次に AMD (#553 で復活予定), 最後に Intel (#550 で実装済み)。AMD は現時点
-で未実装だが future-proof で preference に含める (_VENDOR_HWACCEL_MAP
-に無いので auto-select では skip される)。Intel は実装済みだが NVIDIA
-dGPU 環境では NVDEC を優先する想定。"""
+"""Auto-select 時の vendor 優先順 (#546 / #553 / #550). dGPU (NVIDIA) を最優先、
+次に AMD (#553 / #578 で d3d11va 経由実装済み), 最後に Intel
+(#550 で QSV 経由実装済み)。3 vendor すべて _VENDOR_HWACCEL_MAP に登録済みで
+auto-select の対象。NVIDIA dGPU + Intel iGPU / AMD APU + Intel iGPU のような
+組み合わせでは preference 順で上位 vendor が選ばれる。"""
 
 _HWACCEL_OUTPUT_FORMAT_MAP: dict[str, str] = {
     # `-hwaccel_output_format` の値マップ (#553 / #550)。
