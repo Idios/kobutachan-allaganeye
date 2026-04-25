@@ -144,6 +144,14 @@ jobs:
             }
           }
           finally {
+            # smoke-output/ が upload-artifact (path: build/portable/...) 配下に
+            # 残ると配布物 artifact に test 痕跡が混入する (現状 exit 4 経路では
+            # 未作成だが将来 exit 0 経路を通った場合の latent pollution risk)。
+            # cleanup 失敗 (ファイルロック等) で smoke-test 自体を fail 扱いに
+            # しないため -ErrorAction SilentlyContinue。
+            if (Test-Path 'smoke-output') {
+              Remove-Item -Recurse -Force 'smoke-output' -ErrorAction SilentlyContinue
+            }
             Pop-Location
           }
 
