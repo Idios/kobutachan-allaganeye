@@ -48,20 +48,38 @@ _GPU_DECODER_MAP: dict[str, dict[str, str]] = {
         "mpeg2video": "mpeg2_cuvid",
         "mpeg4": "mpeg4_cuvid",
     },
-    # "amd": {} は #553 (AMD AMF decoder + allaganeye filter pipeline
-    # 相性問題) で追跡中。AMF decoder 出力 pix_fmt `amf` が swscaler
-    # と不整合で `fps -> scale -> format=gray` が失敗するため、
-    # `--gpu-vendor amd` は #546 実装時点では option を受けるが
-    # _VENDOR_HWACCEL_MAP にも未登録 -> ConfigValidationError で exit 5。
-    # #553 で filter pipeline workaround が確定した時点で復活。
+    "amd": {
+        # AMD は AMF decoder ではなく d3d11va 経由で native decoder を
+        # ハードウェア化する (#553 結論)。AMF decoder の出力 pix_fmt
+        # `amf` は swscaler と不整合で `fps -> scale -> format=gray` が
+        # EOPNOTSUPP で fail するが、d3d11va は GPU 上 D3D11 surface に
+        # decode したあと filter graph 先頭の `hwdownload,format=nv12,...`
+        # で system memory に降ろせるので allaganeye の filter pipeline と
+        # 相性が取れる。
+        "h264": "h264",
+        "hevc": "hevc",
+        "av1": "av1",
+        # vp9 / mpeg* も d3d11va で動作可能だが OBS 録画では稀なので
+        # 現状未登録。必要になったら追加。
+    },
     # "intel": {} は #550 (Intel QSV 対応調査) で追加予定。
 }
 
 _VENDOR_HWACCEL_MAP: dict[str, str] = {
     "nvidia": "cuda",
-    # "amd": "amf" は #553 で filter pipeline 相性確定後に追加。
+    "amd": "d3d11va",  # #553 generic D3D11 hwaccel + native decoder
     # "intel": "qsv" は #550 で追加予定。
 }
+
+_HWACCELS_NEED_HWDOWNLOAD: frozenset[str] = frozenset({"d3d11va"})
+"""GPU memory に decode する hwaccel 一覧 (#553).
+
+これらの hwaccel は decoded frame を GPU surface のまま filter graph
+に送り込むため、CPU 側で動く ``fps``/``scale``/``format=gray`` filter に
+渡す前に ``hwdownload,format=nv12,`` を filter chain 先頭に挿入する
+必要がある。NVIDIA CUVID decoder (e.g. ``av1_cuvid``) は decode 結果を
+nv12 system memory に直接出力するため不要。
+"""
 
 _VENDOR_PREFERENCE: tuple[str, ...] = ("nvidia", "amd", "intel")
 """Auto-select 時の vendor 優先順 (#546). dGPU (NVIDIA) を最優先、
@@ -266,9 +284,12 @@ def _check_gpu_usage(
     stderr_text: str, codec: str | None, cuvid_decoder: str | None
 ) -> None:
     """Log GPU decode status based on ffmpeg stderr output."""
+    lowered = stderr_text.lower()
     if cuvid_decoder and cuvid_decoder in stderr_text:
         logger.info("GPU decode active: %s", cuvid_decoder)
-    elif "hwaccel" in stderr_text.lower() or "cuda" in stderr_text.lower():
+    elif "d3d11va" in lowered:
+        logger.info("GPU decode active (d3d11va)")
+    elif "hwaccel" in lowered or "cuda" in lowered:
         logger.info("GPU decode active (hwaccel auto)")
     else:
         logger.warning(
@@ -319,10 +340,22 @@ def _decode_chunk(
         if decoder:
             hwaccel_name = "cuda"
 
+    needs_hwdownload = (
+        hwaccel_name is not None and hwaccel_name in _HWACCELS_NEED_HWDOWNLOAD
+    )
     if decoder and hwaccel_name:
-        hwaccel_args = ["-hwaccel", hwaccel_name, "-c:v", decoder]
+        hwaccel_args = ["-hwaccel", hwaccel_name]
+        if needs_hwdownload:
+            # d3d11va は decode 結果を D3D11 surface に置くので、filter
+            # graph に渡す前に system memory への download が必要 (#553)。
+            # `-hwaccel_output_format d3d11` で surface format を明示し
+            # 後段の hwdownload と整合させる。
+            hwaccel_args += ["-hwaccel_output_format", "d3d11"]
+        hwaccel_args += ["-c:v", decoder]
     else:
         hwaccel_args = ["-hwaccel", "auto"]
+
+    vf_prefix = "hwdownload,format=nv12," if needs_hwdownload else ""
 
     cmd = [
         find_ffmpeg(),
@@ -334,7 +367,7 @@ def _decode_chunk(
         "-i",
         str(video_path),
         "-vf",
-        f"fps={fps_value},scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
+        f"{vf_prefix}fps={fps_value},scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
         "-f",
         "rawvideo",
         "-pix_fmt",

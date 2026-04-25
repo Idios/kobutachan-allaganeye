@@ -552,8 +552,8 @@ def _resolve_gpu_mode(
         if gpu_vendor_option not in _VENDOR_HWACCEL_MAP:
             raise ConfigValidationError(
                 f"--gpu-vendor {gpu_vendor_option}: 現在未実装です "
-                "(AMD AMF は #553, Intel QSV は #550 で追跡予定)。"
-                " --gpu-vendor auto / nvidia のいずれかを使用してください。"
+                "(Intel QSV は #550 で追跡予定)。"
+                " --gpu-vendor auto / nvidia / amd のいずれかを使用してください。"
             )
         if gpu_vendor_option not in available:
             raise ConfigValidationError(

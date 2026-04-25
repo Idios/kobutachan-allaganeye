@@ -151,7 +151,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 - GPU 初期化コストを分散し、1プロセスあたり多数フレームをデコードすることで効率化
 - Pass 1 以降の処理（transition expansion, Pass 2, フィルタリング）は CPU/GPU 共通
 - GPU 利用不可時は自動で CPU モードにフォールバック
-- vendor 自動選択 (#546): `allaganeye.system_info.probe_gpu_vendors()` で検出した GPU から `_VENDOR_PREFERENCE = ("nvidia", "amd", "intel")` 順で選択。現時点で実装済み vendor は NVIDIA のみ、AMD (#553 AMF filter pipeline 相性問題) / Intel (#550 QSV 対応調査) は `--gpu-vendor {amd,intel}` 指定で exit 5。default (auto) は NVIDIA を選ぶ挙動
+- vendor 自動選択 (#546 / #553): `allaganeye.system_info.probe_gpu_vendors()` で検出した GPU から `_VENDOR_PREFERENCE = ("nvidia", "amd", "intel")` 順で選択。実装済み vendor は NVIDIA (cuvid, #546) と AMD (d3d11va + hwdownload, #553) の 2 つ。Intel (#550 QSV 対応調査) は `--gpu-vendor intel` 指定で exit 5。default (auto) は NVIDIA > AMD > Intel の preference 順で実装済み vendor を選ぶ
 
 ### Exit Codes
 
