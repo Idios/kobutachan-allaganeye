@@ -931,7 +931,7 @@ def _build_metadata_payload(
     schema; see ``docs/metadata-spec.md`` section "schema_version".
 
     ``source_fps`` (#465 review): the recording frame rate from ffprobe.
-    GUI uses this to compute frame-accurate ±1F seek (formerly assumed
+    GUI uses this to compute frame-accurate +-1F seek (formerly assumed
     60 fps). 120fps / 240fps recordings now step by 1/120 / 1/240 sec.
     """
     return {
