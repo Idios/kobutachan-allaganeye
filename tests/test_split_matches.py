@@ -1941,11 +1941,25 @@ class TestResolveGpuMode:
         with pytest.raises(ConfigValidationError, match="--gpu-vendor nvidia"):
             _resolve_gpu_mode(None, "nvidia", "av1", show=False, verbose=False)
 
-    def test_vendor_explicit_intel_unimplemented_raises(self, monkeypatch):
-        """Intel は map 未定義なので explicit 要求は exit 5 (#550 で実装予定)."""
+    def test_vendor_explicit_intel_succeeds_when_available(self, monkeypatch):
+        """Intel は #550 で実装済み。explicit 要求 + available なら通る."""
         monkeypatch.setattr(
             "allaganeye.system_info.probe_gpu_vendors",
             lambda: ["intel", "nvidia"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        use_gpu, vendor = _resolve_gpu_mode(
+            None, "intel", "av1", show=False, verbose=False
+        )
+        assert use_gpu is True
+        assert vendor == "intel"
+
+    def test_vendor_explicit_intel_unavailable_raises(self, monkeypatch):
+        """Intel 実装済みでも probe で見つからなければ exit 5 (#550)."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["nvidia"],
         )
         from allaganeye.commands.split_matches import _resolve_gpu_mode
         from allaganeye.exceptions import ConfigValidationError
@@ -1953,12 +1967,13 @@ class TestResolveGpuMode:
         with pytest.raises(ConfigValidationError, match="--gpu-vendor intel"):
             _resolve_gpu_mode(None, "intel", "av1", show=False, verbose=False)
 
-    def test_vendor_auto_skips_unimplemented(self, monkeypatch):
-        """auto 選択は preference 順 (#546 / #553).
+    def test_vendor_auto_picks_preference_order(self, monkeypatch):
+        """auto 選択は `_VENDOR_PREFERENCE` (nvidia > amd > intel) 順で
+        実装済み vendor を選ぶ (#546 / #553 / #550).
 
-        Intel (#550 未実装) は available でも skip。AMD (#553 で d3d11va
-        として実装済み) は preference で NVIDIA の次に位置するため、
-        NVIDIA が available なら NVIDIA が優先される。
+        nvidia / amd / intel の 3 つが available で、いずれも実装済み
+        (nvidia=cuvid #546, amd=d3d11va #553, intel=qsv #550) のとき、
+        preference 順に NVIDIA dGPU が最優先される。
         """
         monkeypatch.setattr(
             "allaganeye.system_info.probe_gpu_vendors",
@@ -1968,6 +1983,39 @@ class TestResolveGpuMode:
 
         _, vendor = _resolve_gpu_mode(None, None, "av1", show=False, verbose=False)
         assert vendor == "nvidia"
+
+    def test_vendor_auto_picks_amd_when_no_nvidia(self, monkeypatch):
+        """NVIDIA 不在 + AMD + Intel 環境で auto は AMD を選ぶ (#553).
+
+        preference = nvidia > amd > intel。NVIDIA が無く AMD と Intel が
+        ある場合、preference 順で AMD が選ばれる (Intel iGPU を持つ AMD
+        dGPU/iGPU 環境を想定)。
+        """
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["amd", "intel"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        use_gpu, vendor = _resolve_gpu_mode(
+            None, None, "av1", show=False, verbose=False
+        )
+        assert use_gpu is True
+        assert vendor == "amd"
+
+    def test_vendor_auto_picks_intel_when_only_intel(self, monkeypatch):
+        """Intel iGPU 単独環境で auto は intel を選ぶ (#550)."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["intel"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        use_gpu, vendor = _resolve_gpu_mode(
+            None, None, "av1", show=False, verbose=False
+        )
+        assert use_gpu is True
+        assert vendor == "intel"
 
     def test_vendor_none_when_no_gpu_available(self, monkeypatch):
         """GPU probe が空でも codec match なら use_gpu=True (legacy path).

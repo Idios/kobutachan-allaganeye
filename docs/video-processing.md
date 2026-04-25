@@ -123,7 +123,7 @@ ffmpeg -hwaccel auto -ss <chunk_start> -t <chunk_duration> -i input.mkv \
 
 **フォールバック**: GPU デコードに失敗した場合は `VideoProcessingError` を送出し、呼び出し元（`detector.py`）が自動で CPU モードにフォールバックする。
 
-### コーデック + vendor 自動選択（#334, #414, #546）
+### コーデック + vendor 自動選択（#334, #414, #546, #550）
 
 `--gpu` / `--no-gpu` 未指定時は probe で取得した codec と GPU vendor を元に GPU/CPU を自動選択する (`_resolve_gpu_mode`)。判定セットは `_GPU_PREFERRED_CODECS` に定義。
 
@@ -139,20 +139,28 @@ ffmpeg -hwaccel auto -ss <chunk_start> -t <chunk_duration> -i input.mkv \
 
 - VP9 は `_GPU_PREFERRED_CODECS` に残すが NVIDIA 経路 (`_GPU_DECODER_MAP["nvidia"]`) からは除外 (#538 / #549)。理由: ffmpeg 8.1 の `vp9_cuvid` は frame を `nv12 + csp:gbr` で tag し、後段の swscaler が gray 変換を `EOPNOTSUPP (-129)` として reject する。NVIDIA auto-select で GPU mode に振られても `_decode_chunk` は else branch (`-hwaccel auto`) を使い、ffmpeg 側で soft decode (native) が選ばれる (実測 speed 2.64x)。`vp9_cuvid` の ffmpeg 側修正が入った時点で NVIDIA 経路の復活検討。AMD は #553 で d3d11va 経路に統一しているため csp:gbr 問題なし (filter 先頭で `hwdownload,format=nv12` 経由で system memory に降ろす)。
 
-**vendor × codec 実装状況 (#546 / #553)**
+**vendor × codec 実装状況 (#546 / #553 / #550)**
 
 | Vendor | hwaccel | h264 | hevc | av1 | vp9 | 備考 |
 |---|---|---|---|---|---|---|
 | NVIDIA (NVDEC cuvid) | `cuda` | `h264_cuvid` | `hevc_cuvid` | `av1_cuvid` | (soft, #538/#549) | dGPU 想定、dual GPU では優先選択 |
 | AMD (d3d11va) | `d3d11va` | `h264` | `hevc` | `av1` | (未登録) | #553 で実装。AMF decoder ではなく d3d11va + native decoder + filter 先頭 `hwdownload,format=nv12` で allaganeye filter pipeline と整合させる。RDNA2+ iGPU (Granite Ridge) で実測 speed 23x (SW 7.6x 比 3x 高速) |
-| Intel (QSV) | (未実装) | (未実装) | (未実装) | (未実装) | (未対応) | #550 で実装予定。`--gpu-vendor intel` は現在 exit 5 |
+| Intel (QSV) | `qsv` | `h264_qsv` | `hevc_qsv` | `av1_qsv` | (本 issue 範囲外) | #550 で実装。Tiger Lake (11th gen Iris Xe) 以降で QSV decode 対応。AV1 は **Alder Lake / Arc 以降**でハードウェア decode、Tiger Lake では `Error initializing the MFX video decoder: unsupported (-3)` で `_decode_chunk` が `VideoProcessingError` を上げ CPU fallback。AMD と同じく `_HWACCELS_NEED_HWDOWNLOAD` 経路を使用 (`-hwaccel_output_format qsv` + filter 先頭 `hwdownload,format=nv12`)。VP9 は QSV decoder 自体は存在 (`vp9_qsv`) するが本 issue ではスコープ外で除外 (将来別 issue) |
 | Apple (VideoToolbox) | — | — | — | — | — | Windows ffmpeg 未同梱、別 issue 追跡 |
+
+**`-hwaccel_output_format` + `hwdownload` filter の vendor 別差分 (#553 / #550)**
+
+- NVIDIA cuvid は default で nv12 (system memory) 出力するため追加引数不要
+- AMD d3d11va / Intel QSV は default で GPU surface (`pix_fmt=d3d11` / `pix_fmt=qsv`) 出力。後段の swscaler (`fps -> scale -> format=gray`) が surface format を変換できず filter init が `-40 (Function not implemented)` で失敗するため、`_HWACCELS_NEED_HWDOWNLOAD = frozenset({"d3d11va", "qsv"})` に該当する hwaccel では `_decode_chunk` が以下を自動付与する:
+  - 入力側に `-hwaccel_output_format <surface_fmt>` (`_HWACCEL_OUTPUT_FORMAT_MAP`: d3d11va→`d3d11`, qsv→`qsv`)
+  - filter chain 先頭に `hwdownload,format=nv12,` を挿入し system memory に降ろしてから fps/scale/format=gray に渡す
+- 引数順序は `-hwaccel <hwaccel> [-hwaccel_output_format <fmt>] -c:v <decoder> -ss ... -i ...`。ffmpeg は input option を `-i` より前に置く必要があるため厳守
 
 **vendor 自動選択ロジック (`_resolve_gpu_mode` + `_select_gpu_vendor`)**
 
 1. `allaganeye.system_info.probe_gpu_vendors()` が platform 別 probe (nvidia-smi / wmic / lspci / system_profiler) で検出した vendor list を取得
-2. `--gpu-vendor <vendor>` explicit の場合: `available` に含まれない、または `_VENDOR_HWACCEL_MAP` に未登録 (intel) なら `ConfigValidationError` (exit 5)
-3. `--gpu-vendor auto` (default) の場合: `_VENDOR_PREFERENCE = ("nvidia", "amd", "intel")` x `available` x 実装済み (`_VENDOR_HWACCEL_MAP` に含まれる) の最上位を選択。現時点で実装済みは NVIDIA + AMD (d3d11va, #553)。Intel は #550 で追跡
+2. `--gpu-vendor <vendor>` explicit の場合: `available` に含まれない、または `_VENDOR_HWACCEL_MAP` に未登録なら `ConfigValidationError` (exit 5)。現時点で nvidia / amd / intel すべて実装済みなので未登録分岐は将来の vendor 追加忘れガード
+3. `--gpu-vendor auto` (default) の場合: `_VENDOR_PREFERENCE = ("nvidia", "amd", "intel")` x `available` x 実装済み (`_VENDOR_HWACCEL_MAP` に含まれる) の最上位を選択。NVIDIA dGPU + Intel iGPU 環境では NVDEC が優先、AMD APU + Intel iGPU では AMD d3d11va が優先される
 4. codec が `_GPU_PREFERRED_CODECS` に含まれない場合は CPU mode。vendor が None (GPU 検出失敗 / 未実装 vendor のみ検出) でも codec match なら `use_gpu=True` を返し、`scan_gpu` の legacy path (`-hwaccel auto`) に入る。ffmpeg 側で GPU decode 失敗時は上記フォールバック経路で CPU 自動切替 (#334 既存挙動を維持)
 
 **フォールバック経路**
@@ -160,6 +168,7 @@ ffmpeg -hwaccel auto -ss <chunk_start> -t <chunk_duration> -i input.mkv \
 - ハードウェアが新 codec に未対応の場合、ffmpeg の `-hwaccel <hwaccel>` が GPU decode に失敗 → 上記フォールバック経路で CPU に自動切替
 - 明示的に GPU を使いたい場合は `--gpu` フラグで強制可能（対応しない codec では起動時に GPU decode 失敗で exit）
 - `_GPU_DECODER_MAP["nvidia"]` には mpeg2video / mpeg4 / vp8 / mpeg1video も登録済みだが、`_GPU_PREFERRED_CODECS` に含めず auto では CPU (`--gpu` 明示時のみ GPU decode 経路)
+- Intel QSV では Tiger Lake (11th gen) で `av1_qsv` が `unsupported (-3)` を返すなど世代別非対応がある。chunk decode が `VideoProcessingError` を投げると `detect_match_boundaries` が CPU mode (`_scan_cpu`) に自動切替するため動作は継続する (#550 実機検証済み: i7-1185G7 / Iris Xe)
 
 ### スコアバーフィルタリング（Phase 3, #111）
 

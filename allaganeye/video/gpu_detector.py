@@ -62,30 +62,63 @@ _GPU_DECODER_MAP: dict[str, dict[str, str]] = {
         # vp9 / mpeg* も d3d11va で動作可能だが OBS 録画では稀なので
         # 現状未登録。必要になったら追加。
     },
-    # "intel": {} は #550 (Intel QSV 対応調査) で追加予定。
+    "intel": {
+        # #550 で追加。Tiger Lake (11th gen Iris Xe) 以降は
+        # h264 / hevc / av1 を QSV decode 可能。`_HWACCELS_NEED_HWDOWNLOAD`
+        # に "qsv" を追加してあるので _decode_chunk が
+        # `-hwaccel_output_format qsv` + filter chain 先頭の
+        # `hwdownload,format=nv12,` を自動付与し、QSV surface を system
+        # memory に降ろしてから fps -> scale -> format=gray に渡す。
+        # VP9 は QSV decoder 自体は ffmpeg 8.1 に存在 (`vp9_qsv`) するが
+        # 本 issue ではスコープ外で除外 (将来別 issue で追加検討)。
+        # 古い世代 (Skylake 等) で av1_qsv が「unsupported (-3)」で
+        # 失敗するケースは _decode_chunk が VideoProcessingError を上げ、
+        # detect_match_boundaries が CPU fallback する (実機検証:
+        # i7-1185G7 / Iris Xe では av1_qsv 非対応で CPU fallback 動作確認済み)。
+        "h264": "h264_qsv",
+        "hevc": "hevc_qsv",
+        "av1": "av1_qsv",
+    },
 }
 
 _VENDOR_HWACCEL_MAP: dict[str, str] = {
     "nvidia": "cuda",
     "amd": "d3d11va",  # #553 generic D3D11 hwaccel + native decoder
-    # "intel": "qsv" は #550 で追加予定。
+    "intel": "qsv",  # #550 Intel Quick Sync Video
 }
 
-_HWACCELS_NEED_HWDOWNLOAD: frozenset[str] = frozenset({"d3d11va"})
-"""GPU memory に decode する hwaccel 一覧 (#553).
+_HWACCELS_NEED_HWDOWNLOAD: frozenset[str] = frozenset({"d3d11va", "qsv"})
+"""GPU memory に decode する hwaccel 一覧 (#553 / #550).
 
 これらの hwaccel は decoded frame を GPU surface のまま filter graph
 に送り込むため、CPU 側で動く ``fps``/``scale``/``format=gray`` filter に
 渡す前に ``hwdownload,format=nv12,`` を filter chain 先頭に挿入する
 必要がある。NVIDIA CUVID decoder (e.g. ``av1_cuvid``) は decode 結果を
 nv12 system memory に直接出力するため不要。
+
+`-hwaccel_output_format` の値は hwaccel 名と一致させる:
+- d3d11va -> ``d3d11`` (#553)
+- qsv -> ``qsv`` (#550)。実機検証 (i7-1185G7 / Iris Xe) で h264_qsv 13.7x speed。
+  ``-hwaccel_output_format nv12`` 直指定でも動くが、d3d11va と同じ
+  パターンに揃え hwdownload filter で system memory に降ろす方が
+  vendor 間の挙動を一本化できる
 """
 
 _VENDOR_PREFERENCE: tuple[str, ...] = ("nvidia", "amd", "intel")
-"""Auto-select 時の vendor 優先順 (#546). dGPU (NVIDIA) を最優先、
-次に AMD (#553 で復活予定), 最後に Intel (#550)。AMD / Intel は現時点
-で実装未完だが future-proof で preference に含める (_VENDOR_HWACCEL_MAP
-に無いので auto-select では skip される)."""
+"""Auto-select 時の vendor 優先順 (#546 / #550). dGPU (NVIDIA) を最優先、
+次に AMD (#553 で復活予定), 最後に Intel (#550 で実装済み)。AMD は現時点
+で未実装だが future-proof で preference に含める (_VENDOR_HWACCEL_MAP
+に無いので auto-select では skip される)。Intel は実装済みだが NVIDIA
+dGPU 環境では NVDEC を優先する想定。"""
+
+_HWACCEL_OUTPUT_FORMAT_MAP: dict[str, str] = {
+    # `-hwaccel_output_format` の値マップ (#553 / #550)。
+    # `_HWACCELS_NEED_HWDOWNLOAD` の各 hwaccel に対応する surface format。
+    # ffmpeg は `-hwaccel <X> -hwaccel_output_format <Y>` の <Y> として
+    # hwaccel 自身の surface format 名 (d3d11 / qsv 等) を要求する。
+    "d3d11va": "d3d11",
+    "qsv": "qsv",
+}
 
 # Backward-compat alias: 既存の `_CUVID_CODEC_MAP` 参照 (テスト等) を
 # 壊さないため NVIDIA 用 dict を指す。新規コードは `_GPU_DECODER_MAP`
@@ -289,6 +322,8 @@ def _check_gpu_usage(
         logger.info("GPU decode active: %s", cuvid_decoder)
     elif "d3d11va" in lowered:
         logger.info("GPU decode active (d3d11va)")
+    elif "qsv" in lowered:
+        logger.info("GPU decode active (qsv)")
     elif "hwaccel" in lowered or "cuda" in lowered:
         logger.info("GPU decode active (hwaccel auto)")
     else:
@@ -321,9 +356,17 @@ def _decode_chunk(
     compatibility with the unit tests that invoke the function directly.
 
     When *vendor* is provided (#546), the ffmpeg command uses the
-    vendor-specific decoder (e.g. ``-hwaccel amf -c:v av1_amf``).  When
+    vendor-specific decoder (e.g. ``-hwaccel qsv -c:v av1_qsv``).  When
     vendor is None, falls back to the legacy NVIDIA CUVID path to keep
     existing unit tests working.
+
+    For hwaccels in ``_HWACCELS_NEED_HWDOWNLOAD`` (currently d3d11va #553
+    and qsv #550), ffmpeg outputs frames to a GPU surface rather than
+    system memory.  The wrapper then adds
+    ``-hwaccel_output_format <surface_fmt>`` (mapped via
+    ``_HWACCEL_OUTPUT_FORMAT_MAP``) and prepends ``hwdownload,format=nv12,``
+    to the ``-vf`` chain so the subsequent fps/scale/format=gray filters
+    receive system-memory nv12 frames.
     """
     chunk_duration = chunk_end - chunk_start
     fps_value = 1.0 / sample_interval
@@ -346,11 +389,13 @@ def _decode_chunk(
     if decoder and hwaccel_name:
         hwaccel_args = ["-hwaccel", hwaccel_name]
         if needs_hwdownload:
-            # d3d11va は decode 結果を D3D11 surface に置くので、filter
-            # graph に渡す前に system memory への download が必要 (#553)。
-            # `-hwaccel_output_format d3d11` で surface format を明示し
-            # 後段の hwdownload と整合させる。
-            hwaccel_args += ["-hwaccel_output_format", "d3d11"]
+            # d3d11va / qsv は decode 結果を GPU surface に置くため、
+            # filter graph に渡す前に system memory への download が
+            # 必要 (#553 / #550)。`-hwaccel_output_format` で surface
+            # format を明示 (d3d11va -> d3d11, qsv -> qsv) し、後段の
+            # hwdownload filter と整合させる。
+            surface_fmt = _HWACCEL_OUTPUT_FORMAT_MAP.get(hwaccel_name, hwaccel_name)
+            hwaccel_args += ["-hwaccel_output_format", surface_fmt]
         hwaccel_args += ["-c:v", decoder]
     else:
         hwaccel_args = ["-hwaccel", "auto"]
