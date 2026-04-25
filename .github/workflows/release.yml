@@ -116,7 +116,11 @@ jobs:
           }
           Push-Location $payload
           try {
-            $output = '' | & cmd.exe /c "allaganeye.bat detect `"$fixture`" -o smoke-output\" 2>&1
+            # stderr redirect は cmd.exe 内で行う (`2>&1` を cmd 引数の内側に置く)。
+            # PowerShell 側で `2>&1` すると native command の stderr が
+            # NativeCommandError として PS の error stream に wrap され、
+            # exit code が想定値でも step 全体が failure 扱いされる。
+            $output = '' | & cmd.exe /c "allaganeye.bat detect `"$fixture`" -o smoke-output\ 2>&1"
             $exitCode = $LASTEXITCODE
             $joined = $output | Out-String
             Write-Host '--- allaganeye.bat detect output ---'
