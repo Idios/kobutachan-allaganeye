@@ -316,10 +316,11 @@ if defined IS_VIDEO (
 ) else (
   "%PAYLOAD%python\python.exe" -m allaganeye %*
 )
+set EXIT_CODE=%ERRORLEVEL%
 
 echo.
 pause
-endlocal
+endlocal & exit /b %EXIT_CODE%
 '@
 Set-Content -Path (Join-Path $PayloadDir 'allaganeye.bat') -Value $Launcher -Encoding ASCII
 

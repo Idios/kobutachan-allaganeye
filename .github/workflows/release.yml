@@ -105,6 +105,56 @@ jobs:
             Pop-Location
           }
 
+      - name: Smoke test Level B (run launcher detect on 3s fixture)
+        shell: pwsh
+        run: |
+          # GitHub Actions の `shell: pwsh` は暗黙的に
+          # `$PSNativeCommandUseErrorActionPreference = $true` を設定するため、
+          # native command (cmd.exe) が non-zero exit (今回 4) を返すと PS が
+          # auto-stop してしまう。Level B は exit 4 を想定値として扱うので無効化。
+          $PSNativeCommandUseErrorActionPreference = $false
+          $version = '${{ needs.version-check.outputs.version }}'
+          $payload = "build/portable/allaganeye-v$version"
+          $fixture = Join-Path $env:GITHUB_WORKSPACE 'tests\fixtures\smoke_3s.mp4'
+          if (-not (Test-Path $fixture)) {
+            throw "Fixture not found: $fixture"
+          }
+          Push-Location $payload
+          try {
+            # stderr redirect は cmd.exe 内で行う (`2>&1` を cmd 引数の内側に置く)。
+            # PowerShell 側で `2>&1` すると native command の stderr が
+            # NativeCommandError として PS の error stream に wrap され、
+            # exit code が想定値でも step 全体が failure 扱いされる。
+            $output = '' | & cmd.exe /c "allaganeye.bat detect `"$fixture`" -o smoke-output\ 2>&1"
+            $exitCode = $LASTEXITCODE
+            # GitHub Actions の `pwsh` shell は script 末尾に
+            # `if (Test-Path variable:/LASTEXITCODE) { exit $LASTEXITCODE }` を
+            # 自動付加する。$LASTEXITCODE を消費直後に 0 にリセットしないと
+            # 想定値 (4) が step exit code として伝搬し step failure 扱いになる。
+            $LASTEXITCODE = 0
+            $joined = $output | Out-String
+            Write-Host '--- allaganeye.bat detect output ---'
+            Write-Host $joined
+            Write-Host "--- exit code: $exitCode ---"
+            if ($exitCode -ne 0 -and $exitCode -ne 4) {
+              throw "allaganeye.bat detect exited with $exitCode (expected 0 or 4)"
+            }
+            if ($exitCode -eq 0 -and -not (Test-Path 'smoke-output\metadata.json')) {
+              throw "Expected smoke-output\metadata.json to exist for exit 0, but it is missing"
+            }
+          }
+          finally {
+            # smoke-output/ が upload-artifact (path: build/portable/...) 配下に
+            # 残ると配布物 artifact に test 痕跡が混入する (現状 exit 4 経路では
+            # 未作成だが将来 exit 0 経路を通った場合の latent pollution risk)。
+            # cleanup 失敗 (ファイルロック等) で smoke-test 自体を fail 扱いに
+            # しないため -ErrorAction SilentlyContinue。
+            if (Test-Path 'smoke-output') {
+              Remove-Item -Recurse -Force 'smoke-output' -ErrorAction SilentlyContinue
+            }
+            Pop-Location
+          }
+
       # Upload the expanded payload folder; actions/upload-artifact zips it once
       # on its own, which avoids the previous "zip inside a zip" artifact.
       - uses: actions/upload-artifact@v4
