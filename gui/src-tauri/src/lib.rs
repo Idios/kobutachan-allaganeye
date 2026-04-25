@@ -11,7 +11,7 @@ use axum::{
     routing::get,
     Router,
 };
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use futures::future::join_all;
 use serde::Serialize;
 use serde_json::Value;
@@ -646,8 +646,23 @@ async fn kill_tracked_processes() -> Result<u32, String> {
 /// terminate a running process. `on_window_event` always calls
 /// `prevent_close`, so the frontend must drive the actual exit through this
 /// command once it has finished cleanup.
+///
+/// #465 review: WebView2 / Chromium の cleanup race を緩和するため、
+/// `app.exit` の前に webview window を明示 destroy し短い yield を入れる。
+/// 何もしないと shutdown 時に
+///   `[ERROR:ui\gfx\win\window_impl.cc] Failed to unregister class
+///    Chrome_WidgetWin_0. Error = 1412`
+/// が stderr に出る。Error 1412 = ERROR_CLASS_DOES_NOT_EXIST で、Chromium
+/// の window class registration が既に消えている race。`destroy()` で
+/// `on_window_event` の `prevent_close` を bypass し、50ms yield で
+/// cleanup を進ませてから exit する。完全には消せない (benign warning) が
+/// 出現頻度が下がる。
 #[tauri::command]
 async fn force_exit_app(app: tauri::AppHandle) {
+    for (_, window) in app.webview_windows() {
+        let _ = window.destroy();
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     app.exit(0);
 }
 

@@ -133,6 +133,25 @@ Stop-Process -Id <pid> -Force
 
 → MSVC Build Tools が未インストール。Visual Studio Build Tools 2022 の「C++ build tools」ワークロードをインストールして PATH を通す。
 
+### `cargo` 起動時に `error finalizing incremental compilation session directory ... アクセスが拒否されました (os error 5)` warning
+
+→ Cargo の incremental compilation cache (`gui/src-tauri/target/debug/incremental/...`) を別プロセスがロックしているため、Cargo が finalize に失敗している (Windows 限定の既知 warning)。コンパイルは成功するので機能影響なし。
+
+主な原因プロセス: Windows Defender real-time protection / Search Indexer / OneDrive。
+
+消したい場合は以下のいずれかで対処:
+
+1. **Windows Defender の除外設定** (推奨): `gui/src-tauri/target/` を除外フォルダに追加
+   - 設定 → 更新とセキュリティ → Windows セキュリティ → ウイルスと脅威の防止 → 除外の追加または削除 → フォルダー
+2. `CARGO_INCREMENTAL=0` 環境変数: warning は消えるが clean build が遅くなる
+3. ローカル `.cargo/config.toml` で `[build] incremental = false` (個人設定、commit しない)
+
+### `npm run tauri dev` 終了時に `[ERROR:ui\gfx\win\window_impl.cc] Failed to unregister class Chrome_WidgetWin_0. Error = 1412`
+
+→ WebView2 / Chromium の shutdown 時に window class registration を unregister しようとして既に消えているケース (Error 1412 = ERROR_CLASS_DOES_NOT_EXIST)。Chromium 系アプリに広く出る既知 benign warning で機能影響なし。
+
+`force_exit_app` (#523) では webview を明示 `destroy()` した後 50ms 待ってから `app.exit()` を呼ぶことで出現頻度を抑えているが、Chromium 内部の cleanup 順序により稀に出ることがある。完全に消す手段は WebView2 / Tauri 側の修正待ち。
+
 ## バージョンポリシー
 
 - **strict pin**: `package.json` および `Cargo.toml` の全依存を `=x.y.z` で厳格ピン。Phase 0 (#468) で検証した挙動を再現可能にするため
