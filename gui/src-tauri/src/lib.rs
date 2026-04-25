@@ -647,22 +647,62 @@ async fn kill_tracked_processes() -> Result<u32, String> {
 /// `prevent_close`, so the frontend must drive the actual exit through this
 /// command once it has finished cleanup.
 ///
-/// #465 review: WebView2 / Chromium の cleanup race を緩和するため、
-/// `app.exit` の前に webview window を明示 destroy し短い yield を入れる。
-/// 何もしないと shutdown 時に
+/// #465 review: WebView2 / Chromium の cleanup race を緩和するため、各
+/// webview window の `WindowEvent::Destroyed` を oneshot で待ってから
+/// `app.exit(0)` を呼ぶ。何もしないと shutdown 時に
 ///   `[ERROR:ui\gfx\win\window_impl.cc] Failed to unregister class
 ///    Chrome_WidgetWin_0. Error = 1412`
-/// が stderr に出る。Error 1412 = ERROR_CLASS_DOES_NOT_EXIST で、Chromium
-/// の window class registration が既に消えている race。`destroy()` で
-/// `on_window_event` の `prevent_close` を bypass し、50ms yield で
-/// cleanup を進ませてから exit する。完全には消せない (benign warning) が
-/// 出現頻度が下がる。
+/// が stderr に出る (Error 1412 = ERROR_CLASS_DOES_NOT_EXIST、Chromium の
+/// window class registration が既に消えている race)。`destroy()` で
+/// `on_window_event` の `prevent_close` を bypass し、Tauri レベルの
+/// `Destroyed` を確認してから exit する。
+///
+/// **限界**: Tauri レベルの `Destroyed` は WebView2 内部の window class
+/// unregister 完了より先に fire するため、これを待っても 1412 を完全に
+/// は防げない (Chromium 内部の race は依然残る)。ただし固定 sleep より
+/// 厳密で、destroy 後の最低保証になる。500ms timeout fallback で永久
+/// 待ちは回避する。
 #[tauri::command]
 async fn force_exit_app(app: tauri::AppHandle) {
-    for (_, window) in app.webview_windows() {
+    use std::sync::{Arc, Mutex};
+    use tokio::sync::oneshot;
+
+    let windows: Vec<_> = app.webview_windows().into_values().collect();
+    if windows.is_empty() {
+        app.exit(0);
+        return;
+    }
+
+    let mut signals = Vec::with_capacity(windows.len());
+    for window in &windows {
+        let (tx, rx) = oneshot::channel::<()>();
+        // `on_window_event` callback may be re-invoked, so wrap the sender
+        // in `Option<Arc<Mutex>>` and `take()` it on first Destroyed.
+        let tx = Arc::new(Mutex::new(Some(tx)));
+        let tx_clone = Arc::clone(&tx);
+        window.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                if let Ok(mut guard) = tx_clone.lock() {
+                    if let Some(sender) = guard.take() {
+                        let _ = sender.send(());
+                    }
+                }
+            }
+        });
+        signals.push(rx);
+    }
+
+    for window in &windows {
         let _ = window.destroy();
     }
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // 500ms timeout で hang 回避。通常は数 ms 以内に Destroyed が fire する。
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        join_all(signals),
+    )
+    .await;
+
     app.exit(0);
 }
 

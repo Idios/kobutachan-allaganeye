@@ -150,7 +150,7 @@ Stop-Process -Id <pid> -Force
 
 → WebView2 / Chromium の shutdown 時に window class registration を unregister しようとして既に消えているケース (Error 1412 = ERROR_CLASS_DOES_NOT_EXIST)。Chromium 系アプリに広く出る既知 benign warning で機能影響なし。
 
-`force_exit_app` (#523) では webview を明示 `destroy()` した後 50ms 待ってから `app.exit()` を呼ぶことで出現頻度を抑えているが、Chromium 内部の cleanup 順序により稀に出ることがある。完全に消す手段は WebView2 / Tauri 側の修正待ち。
+`force_exit_app` (#523) では webview を明示 `destroy()` し、Tauri レベルの `WindowEvent::Destroyed` を oneshot で待ってから `app.exit()` を呼ぶ (500ms timeout fallback)。ただし `Destroyed` は Tauri 層の destroy 完了で fire し、その後 Chromium が独立して window class unregister を行うため race は依然残る。完全に消す手段は WebView2 / Tauri 側の修正待ち。
 
 ## バージョンポリシー
 
