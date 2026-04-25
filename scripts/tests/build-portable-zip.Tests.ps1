@@ -6,12 +6,17 @@ Run:
 
 CI: `.github/workflows/ci.yml` `installer-pester` job (windows runner).
 
-Scope (issue #528 / PR #528):
-  1. Invoke-Download verifies matching SHA256 and emits a "verified" message.
-  2. Invoke-Download throws on SHA256 mismatch.
-  3. Assert-FFmpegLayout throws when the extracted archive has no `bin/`.
-  4. Format-ReadmeContent includes the LGPLv3 attribution + BtbN / win64-lgpl
-     pointers required by the Portable ZIP license compliance.
+Scope (#528 / #551 / #583):
+  1. Invoke-Download verifies matching SHA256 / throws on mismatch.
+  2. Assert-FFmpegLayout throws when the extracted archive has no `bin/`,
+     returns Root/Bin/License paths when valid.
+  3. Get-FFmpegSourceCommit extracts the upstream commit from valid BtbN
+     asset names / throws on unexpected names.
+  4. Format-ReadmeContent includes the LGPLv3 attribution + BtbN /
+     win64-lgpl-shared pointers required by Portable ZIP license compliance.
+  5. Get-LauncherTemplate preserves the python exit code propagation idiom
+     (#580: `set EXIT_CODE=%ERRORLEVEL%` + `endlocal & exit /b %EXIT_CODE%`).
+  6. Script parameters: -SkipArchive switch / -Version optional for dot-source.
 
 We dot-source build-portable-zip.ps1 without -Version so it loads the helper
 functions and returns before running the real build.
