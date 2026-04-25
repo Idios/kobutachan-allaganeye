@@ -282,6 +282,22 @@
   color: var(--ae-text);
 }
 
+/*
+ * #466 review #1: per-match include/exclude checkbox。disabled 時は
+ * type_override === 'skip' (preview で永続 skip 設定済) を意味するので
+ * 視覚的に分かるよう dim にする。
+ */
+.listCheckbox {
+  margin: 0 4px 0 0;
+  accent-color: var(--ae-gold);
+  cursor: pointer;
+}
+
+.listCheckbox:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
 .listMark {
   color: var(--ae-gold);
   width: 16px;

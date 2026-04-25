@@ -930,6 +930,26 @@ fn validate_export_request(
 /// seek rather than decoding from t=0. `-to` / `-t` interpretation after
 /// `-ss -i` is "duration from the seek point", so we pass
 /// `end_seconds - start_seconds` as a duration via `-t`.
+/// #466 review #4: 出力先の親ディレクトリが存在することを検証する。
+///
+/// 以前は `export_match` 内で `create_dir_all` を呼んでいたが、ユーザーが
+/// タイポしたパスに静かにディレクトリツリーが作られて混乱を招くため、
+/// 明示拒否に変更した。ディレクトリ作成はユーザーが事前に行う前提。
+///
+/// `output_path` がルート / 親なし (file_name only など) の場合は no-op で
+/// Ok を返す (現在のディレクトリを意味すると解釈)。
+fn validate_output_parent_exists(output_path: &Path) -> Result<(), String> {
+    if let Some(parent) = output_path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            return Err(format!(
+                "output directory does not exist: {}",
+                parent.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn ffmpeg_args_for_export(
     video_path: &Path,
     start_seconds: f64,
@@ -1062,12 +1082,7 @@ async fn export_match(
     validate_export_request(&video, start_seconds, end_seconds)?;
 
     let output = PathBuf::from(&output_path);
-    if let Some(parent) = output.parent() {
-        if !parent.as_os_str().is_empty() && !parent.exists() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("create dir {} failed: {}", parent.display(), e))?;
-        }
-    }
+    validate_output_parent_exists(&output)?;
 
     let duration_seconds = end_seconds - start_seconds;
     let args = ffmpeg_args_for_export(&video, start_seconds, end_seconds, &output, &codec);
@@ -2088,6 +2103,31 @@ mod tests {
         assert!(err_nan_start.contains("start_seconds"), "got: {}", err_nan_start);
         let err_inf_end = validate_export_request(&video, 0.0, f64::INFINITY).unwrap_err();
         assert!(err_inf_end.contains("end_seconds"), "got: {}", err_inf_end);
+    }
+
+    /// #466 review #4: 出力先親ディレクトリが存在しなければエラー。
+    /// 以前の `create_dir_all` (silent mkdir) は廃止されたので、存在しない
+    /// パスを渡すと「does not exist」エラーを返す。
+    #[test]
+    fn validate_output_parent_exists_rejects_missing_parent() {
+        let tmp = TempDir::new().unwrap();
+        let nested = tmp.path().join("nope").join("clip.mp4");
+        let err = validate_output_parent_exists(&nested).unwrap_err();
+        assert!(err.contains("does not exist"), "got: {}", err);
+    }
+
+    /// #466 review #4: 親ディレクトリが存在すれば Ok。
+    #[test]
+    fn validate_output_parent_exists_accepts_existing_parent() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("clip.mp4");
+        validate_output_parent_exists(&target).unwrap();
+    }
+
+    /// #466 review #4: 親なしパス (filename だけ) は Ok (現在のディレクトリ)。
+    #[test]
+    fn validate_output_parent_exists_accepts_bare_filename() {
+        validate_output_parent_exists(Path::new("clip.mp4")).unwrap();
     }
 
     /// #466 -- happy path: real file, sane start/end, validator returns Ok.

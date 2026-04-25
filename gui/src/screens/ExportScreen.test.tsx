@@ -21,7 +21,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: openDialogMock,
 }));
 
-import { ExportScreen } from './ExportScreen';
+import { ExportScreen, deriveDefaultOutDir } from './ExportScreen';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 
@@ -37,6 +37,22 @@ beforeEach(() => {
   useMetadataStore.getState().loadSample();
   useMetadataStore.setState({ filePath: '/tmp/x/metadata.json' });
   useAppStateStore.getState().navigate('export');
+});
+
+// #466 review #2: default 出力先生成ヘルパ
+describe('deriveDefaultOutDir', () => {
+  it('appends /output to the parent dir of a forward-slash video path', () => {
+    expect(deriveDefaultOutDir('E:/videos/clip.mkv')).toBe('E:/videos/output');
+  });
+
+  it('appends \\output to the parent dir of a backslash video path', () => {
+    expect(deriveDefaultOutDir('E:\\videos\\clip.mkv')).toBe('E:\\videos\\output');
+  });
+
+  it('returns empty string when videoSource is null or has no separator', () => {
+    expect(deriveDefaultOutDir(null)).toBe('');
+    expect(deriveDefaultOutDir('clip.mkv')).toBe('');
+  });
 });
 
 describe('ExportScreen (Phase 4 #466)', () => {
@@ -173,6 +189,93 @@ describe('ExportScreen (Phase 4 #466)', () => {
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith('kill_tracked_processes');
     });
+  });
+
+  // #466 review #7: preview で調整した境界 (m.edited.start_time / end_time)
+  // が export_match の startSeconds / endSeconds に正しく渡される。
+  it('passes m.edited.start_time / end_time to export_match (boundary propagation)', async () => {
+    // sample の match 1 に edited 境界を設定
+    const meta = useMetadataStore.getState().metadata!;
+    const edited = {
+      ...meta,
+      matches: meta.matches.map((m, i) =>
+        i === 0
+          ? { ...m, edited: { start_time: 5.5, end_time: 12.25 } }
+          : m,
+      ),
+    };
+    useMetadataStore.setState({ metadata: edited });
+
+    invokeMock.mockImplementation((cmd: string, args: unknown) => {
+      if (cmd === 'export_match') {
+        const a = args as { matchIndex: number; outputPath: string };
+        return Promise.resolve({
+          match_index: a.matchIndex,
+          output_path: a.outputPath,
+          duration_ms: 100,
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+    render(<ExportScreen />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /書き出し開始/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('export-screen').dataset.phase).toBe('completed');
+    });
+    const calls = invokeMock.mock.calls.filter((c) => c[0] === 'export_match');
+    const m1Call = calls.find(
+      (c) => (c[1] as { matchIndex: number }).matchIndex === 1,
+    );
+    expect(m1Call).toBeDefined();
+    expect(m1Call![1]).toMatchObject({
+      startSeconds: 5.5,
+      endSeconds: 12.25,
+    });
+    // ほかの match (例: index 2) は edited なしなので元の start/end を使う
+    const m2Call = calls.find(
+      (c) => (c[1] as { matchIndex: number }).matchIndex === 2,
+    );
+    const m2 = edited.matches.find((m) => m.index === 2)!;
+    expect(m2Call![1]).toMatchObject({
+      startSeconds: m2.start_time,
+      endSeconds: m2.end_time,
+    });
+  });
+
+  // #466 review #1: per-match include/exclude checkbox (ad-hoc UI 選択)
+  it('excludes a match from export when its checkbox is unchecked', async () => {
+    invokeMock.mockImplementation((cmd: string, args: unknown) => {
+      if (cmd === 'export_match') {
+        const a = args as { matchIndex: number; outputPath: string };
+        return Promise.resolve({
+          match_index: a.matchIndex,
+          output_path: a.outputPath,
+          duration_ms: 100,
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+    render(<ExportScreen />);
+    const user = userEvent.setup();
+    // match 3 の checkbox を uncheck (ad-hoc exclude)
+    const checkbox3 = screen.getByLabelText('include match 3') as HTMLInputElement;
+    expect(checkbox3.checked).toBe(true);
+    await user.click(checkbox3);
+    expect(checkbox3.checked).toBe(false);
+
+    // 全試合書き出しヘッダ表示が 9 → 8 に減る
+    expect(screen.getByText(/8 試合を書き出す/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /書き出し開始/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('export-screen').dataset.phase).toBe('completed');
+    });
+    const calls = invokeMock.mock.calls.filter((c) => c[0] === 'export_match');
+    expect(calls.length).toBe(8); // 9 sample matches - 1 excluded
+    expect(
+      calls.some((c) => (c[1] as { matchIndex: number }).matchIndex === 3),
+    ).toBe(false);
   });
 
   it('errors surface as export-progress events update list items', async () => {

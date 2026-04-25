@@ -42,18 +42,69 @@ interface ExportResult {
  * #466 Phase 4 export screen. Real ffmpeg invocation driven by the Rust
  * `export_match` command; per-match progress arrives via the
  * `export-progress` Tauri event.
+ *
+ * ## review 反映 (2026-04-25)
+ *
+ * - **#1**: per-match の include/exclude チェックボックス (ad-hoc)。
+ *   `excludedIndexes` ローカル state が制御。`type_override === 'skip'`
+ *   (preview で永続設定) は強制 disable で別軸。
+ * - **#2**: 出力先 default は `<dirname(videoSource)>/output`
+ *   ({@link deriveDefaultOutDir})。videoSource は
+ *   `selectedVideoPath ?? metadata.source`。
+ * - **#3**: 参照ボタンは `@tauri-apps/plugin-dialog` の `open({directory})`
+ *   経由 (`dialog:allow-open` permission を `capabilities/default.json` に
+ *   明示)。
+ * - **#4**: 出力先親ディレクトリが存在しない場合は Rust 側で error。以前の
+ *   `create_dir_all` (silent mkdir) は廃止 (タイポ事故防止)。
+ * - **#5**: 「フォルダを開く」は `shell.open` のみで完了画面に navigate
+ *   しない。失敗時は `openFolderError` で UI に表示。
+ * - **#6 (再書き出し)**: 「設定変更して再書き出し」は同じ metadata を別設定
+ *   (出力先 / 命名 / コーデック / 試合選択) で再実行する用途。既存ファイル
+ *   は ffmpeg `-y` で silent overwrite される。
+ * - **#7 (boundary)**: `m.edited?.start_time ?? m.start_time` を
+ *   `export_match` の `startSeconds` に渡す (`end_time` も同様)。preview で
+ *   調整した境界が export に反映される。
  */
 export function ExportScreen() {
   const metadata = useMetadataStore((s) => s.metadata);
   const filePath = useMetadataStore((s) => s.filePath);
   const navigate = useAppStateStore((s) => s.navigate);
 
+  // #466 review (C): drop で確定した実 path を最優先で使用する。sample mode
+  // (selectedVideoPath = null) では metadata.source にフォールバック。
+  const selectedVideoPath = useAppStateStore((s) => s.selectedVideoPath);
+  const videoSource = selectedVideoPath ?? metadata?.source ?? null;
+
   const [phase, dispatch] = useReducer(exportReducer, 'idle' as ExportPhase);
-  const [outDir, setOutDir] = useState('./output');
+  // #466 review #2: default 出力先は source video の親ディレクトリ +
+  // `/output`。ファイルピックなしで動かしても物が散らばらない場所に出る。
+  // videoSource が無い場合 (sample mode で何も load してない等) は空文字列
+  // にしておき、ユーザーに必須選択させる。
+  const [outDir, setOutDir] = useState<string>(() => deriveDefaultOutDir(videoSource));
   const [codec, setCodec] = useState<Codec>('copy');
   const [namePattern, setNamePattern] = useState('match_{idx:03}.mp4');
   const [matchStates, setMatchStates] = useState<Record<number, MatchState>>({});
+  // #466 review #1: per-match の選択 (default: 全選択 = 全試合書き出し)。
+  // ユーザーは個別行のチェックボックスで除外でき、「1 試合だけ書き出す」
+  // ような ad-hoc な選択も可能。type_override === 'skip' (preview で永続
+  // 設定済み) は強制 exclude (UI でも切替不可)。本 set は ad-hoc な exclude
+  // のみ追跡。
+  const [excludedIndexes, setExcludedIndexes] = useState<ReadonlySet<number>>(
+    () => new Set(),
+  );
   const cancelRequestedRef = useRef(false);
+
+  function toggleMatchExclusion(matchIndex: number) {
+    setExcludedIndexes((prev) => {
+      const next = new Set(prev);
+      if (next.has(matchIndex)) {
+        next.delete(matchIndex);
+      } else {
+        next.add(matchIndex);
+      }
+      return next;
+    });
+  }
 
   // #466 -- listen for per-match progress updates emitted by Rust.
   useEffect(() => {
@@ -109,17 +160,15 @@ export function ExportScreen() {
 
   async function handleStartExport() {
     if (!metadata || !filePath) return;
+    if (!videoSource) return;
     cancelRequestedRef.current = false;
 
-    // Resolve source video path from metadata.source. Fall back to whatever
-    // is there; Rust side validates existence.
-    const videoSource = metadata.source;
-
-    // Initialize per-match state (skip entries explicitly marked as skip).
+    // Initialize per-match state. Skip = `type_override === 'skip'` (永続)
+    // または excludedIndexes に含まれる (ad-hoc UI 選択、#466 review #1)。
     const nextStates: Record<number, MatchState> = {};
     const queue: typeof metadata.matches = [];
     for (const m of metadata.matches) {
-      if (m.type_override === 'skip') {
+      if (m.type_override === 'skip' || excludedIndexes.has(m.index)) {
         nextStates[m.index] = { status: 'skipped', percent: 0 };
       } else {
         nextStates[m.index] = { status: 'pending', percent: 0 };
@@ -183,13 +232,19 @@ export function ExportScreen() {
     void invoke('kill_tracked_processes').catch(() => undefined);
   }
 
+  // #466 review #5: 旧実装は shell.open 後に navigate('complete') を必ず
+  // 呼んでおり、Explorer が開く前に画面遷移してしまう (実態として開いて
+  // いないように見える) 不具合があった。新実装は shell.open のみで
+  // 画面遷移は行わない。`完了` ステータスは画面に残す。
+  const [openFolderError, setOpenFolderError] = useState<string | null>(null);
+
   async function handleOpenFolder() {
+    setOpenFolderError(null);
     try {
       await invoke('plugin:shell|open', { path: outDir });
-    } catch {
-      // non-tauri test env: swallow
+    } catch (e) {
+      setOpenFolderError(e instanceof Error ? e.message : String(e));
     }
-    navigate('complete');
   }
 
   if (!metadata) {
@@ -205,8 +260,9 @@ export function ExportScreen() {
   const error = phase === 'error';
   const cancelling = phase === 'cancelling';
 
+  // #466 review #1: counted = 永続 skip 除外 + ad-hoc exclude 除外
   const countedMatches = metadata.matches.filter(
-    (m) => m.type_override !== 'skip',
+    (m) => m.type_override !== 'skip' && !excludedIndexes.has(m.index),
   );
   const doneCount = countedMatches.filter(
     (m) => matchStates[m.index]?.status === 'done',
@@ -370,16 +426,26 @@ export function ExportScreen() {
                 ✓ 完了 — フォルダを開く
               </button>
             )}
+            {completed && openFolderError && (
+              <div className={styles.errorMessage} role="alert">
+                フォルダを開けませんでした: {openFolderError}
+              </div>
+            )}
             {completed && (
               <button
                 type="button"
                 className={styles.cancelButton}
+                title={
+                  '同じ metadata を別設定 (出力先 / 命名 / コーデック / 試合選択) で再書き出しします。' +
+                  '既に出力先に同名ファイルがある場合は ffmpeg `-y` で上書きされます。'
+                }
                 onClick={() => {
                   setMatchStates({});
+                  setOpenFolderError(null);
                   dispatch({ type: 'RESTART' });
                 }}
               >
-                もう一度書き出す
+                設定変更して再書き出し
               </button>
             )}
 
@@ -426,8 +492,26 @@ export function ExportScreen() {
                   : s.status === 'error'
                     ? styles.listMarkError
                     : '';
+              // #466 review #1: 永続 skip は変更不可、ad-hoc exclude は
+              // checkbox で個別 toggle 可能。export 中は disabled。
+              const isPersistSkip = m.type_override === 'skip';
+              const isAdHocExcluded = excludedIndexes.has(m.index);
+              const isIncluded = !isPersistSkip && !isAdHocExcluded;
               return (
                 <li key={m.index} className={styles.listItem}>
+                  <input
+                    type="checkbox"
+                    className={styles.listCheckbox}
+                    checked={isIncluded}
+                    disabled={isPersistSkip || running || cancelling}
+                    onChange={() => toggleMatchExclusion(m.index)}
+                    aria-label={`include match ${m.index}`}
+                    title={
+                      isPersistSkip
+                        ? 'preview 画面で skip 設定済 (変更不可)'
+                        : '書き出し対象から除外/復帰'
+                    }
+                  />
                   <span className={`${styles.listMark} ${markClass}`}>
                     {mark}
                   </span>
@@ -466,4 +550,20 @@ function joinPath(dir: string, name: string): string {
     dir.includes('\\') && !dir.includes('/') ? '\\' : '/';
   if (dir.endsWith('/') || dir.endsWith('\\')) return dir + name;
   return dir + separator + name;
+}
+
+/**
+ * #466 review #2: source video の親ディレクトリ + `/output` を default に。
+ * `videoSource` から `dirname` 相当を抽出する (Windows は `\\` も許容)。
+ */
+export function deriveDefaultOutDir(videoSource: string | null): string {
+  if (!videoSource) return '';
+  const sep = videoSource.includes('\\') && !videoSource.includes('/') ? '\\' : '/';
+  const idx = Math.max(
+    videoSource.lastIndexOf('/'),
+    videoSource.lastIndexOf('\\'),
+  );
+  if (idx <= 0) return '';
+  const parent = videoSource.slice(0, idx);
+  return `${parent}${sep}output`;
 }
