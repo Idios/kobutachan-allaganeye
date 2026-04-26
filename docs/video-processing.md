@@ -123,6 +123,52 @@ ffmpeg -hwaccel auto -ss <chunk_start> -t <chunk_duration> -i input.mkv \
 
 **フォールバック**: GPU デコードに失敗した場合は `VideoProcessingError` を送出し、呼び出し元（`detector.py`）が自動で CPU モードにフォールバックする。
 
+### ffmpeg fps filter の version 依存制約（#577）
+
+`_scan_cpu` および GPU chunked decode で使用する `fps=N` filter は、ffmpeg version によりフレーム選択タイミングが変動する。極短時間 (< 1s) blackout の取りこぼしが起こりうる (PR #575 の root cause 分析で確定)。
+
+**検証データ (PR #575 / issue #560)**
+
+ffmpeg 8.1 / `sample_interval=2.0` で `20260118` video の同一 timestamp label を異なる経路で probe した結果:
+
+| timestamp label | per-frame `-ss` probe | `_scan_cpu` (chunked fps) | 差 |
+|---|---|---|---|
+| 6184.0 | **1.73 (BLACKOUT)** | 47.72 (transition) | -46 |
+| 6186.0 | 100.48 (normal) | 37.20 (transition) | +63 |
+
+per-frame `-ss` probe では 0.1s 解像度で 6184.0-6184.8 の **0.8s 幅 blackout** を捕捉できる:
+
+```text
+6184.00   1.73  <-- BLACKOUT
+6184.10   1.73
+6184.20   1.74
+...
+6184.70   1.88
+6184.80  13.54
+6184.90  23.79  <-- transition
+6185.10  43.82
+6185.30  59.06  <-- normal
+```
+
+しかし `_scan_cpu` の chunked decode は `fps=0.5` filter でこの 0.8s 短時間 blackout のサンプリングタイミングを外し、label "6184" に brightness 47.72 のフレーム (実際には video 時間 ~6185.1s) を割り当てる。`showinfo` filter の出力で挙動を確認可能:
+
+```text
+n: 4 pts:3092 pts_time:6184  mean:[45 127 128]  <-- output PTS 6184 のフレーム Y-mean=45
+```
+
+output PTS 6184 と称しながら ~1.1s 遅れた input frame をサンプリングしている (Y-mean=45 は実時間 6185.1s の brightness=43.82 と整合)。
+
+**影響**
+
+- `min(min_blackout_duration, _REFINED_MIN_BLACKOUT)=1.5s` 未満の極短 blackout は fps filter 経路で取りこぼされる
+- ffmpeg version upgrade で baseline drift が再発する可能性あり (#576 で `fps` filter 廃止 + chunk 内全フレームデコード→N-th sampling 方式が検討中)
+- Pass 2 精密計測 (#361 borderline refinement / 上方向ヒステリシス) は Pass 1 で取りこぼした blackout を救済できない (refine 対象に入らないため)
+- 一方、現環境の検知パスは安定しており、PR #575 では他 2 件の baseline (`20260116` / `20260119`) は引き続き完全一致を維持
+
+**判定 / 対応**
+
+baseline mismatch 発生時の判定 flow ((A) 検知ロジック退行 vs (B) ffmpeg version 依存差異) は [`docs/testing-guide.md`](testing-guide.md) §「baseline drift の判定」を参照。
+
 ### コーデック + vendor 自動選択（#334, #414, #546, #550）
 
 `--gpu` / `--no-gpu` 未指定時は probe で取得した codec と GPU vendor を元に GPU/CPU を自動選択する (`_resolve_gpu_mode`)。判定セットは `_GPU_PREFERRED_CODECS` に定義。
