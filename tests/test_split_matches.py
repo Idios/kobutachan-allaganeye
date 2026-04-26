@@ -2986,7 +2986,7 @@ def test_display_cache_hit_params_malformed_json_emits_unavailable(tmp_path, cap
 
 
 # ------------------------------------------------------------
-# G1-G5 unavailable fallback gap tests (#380 tester review)
+# G1-G5 unavailable fallback gap tests (#380 review)
 # ------------------------------------------------------------
 
 

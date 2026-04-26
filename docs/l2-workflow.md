@@ -1,15 +1,14 @@
 # L2 開発ワークフロー
 
-L1 で運用した「マルチセッション・ロール方式」 (director / lead-engineer / engineer / tester を別 worktree で並走) を廃止し、L2 では**単一ワークツリー + skill ベースディスパッチ**に移行する。
+L2 では**単一ワークツリー + skill ベースディスパッチ**で開発する。
 
 ## 背景
 
-L1 のロール方式は単一スコープ (試合分割) では機能したが、L2 の複数スコープ並行開発 (GUI / インストーラ + 周辺プロセス改善) では以下の問題が顕在化する:
+L2 の複数スコープ並行開発 (GUI / インストーラ + 周辺プロセス改善) では以下を満たす設計が必要:
 
-- 4 セッション × 3 スコープ = 12 ワークツリーとなり、ブランチ・コンフリクト管理が困難
-- ロール切り替え (`/assume-role`) の摩擦コストがセッション間往復で増える
-- #367 で顕在化した PR 不完全修正問題は、レビュー受け入れ基準が言語化されていなかったことが根本原因
-- 他 Anthropic ベストプラクティス (code.claude.com/docs/en/best-practices) は「単一セッション + 明確な計画」を推奨
+- 単一ワークツリーでブランチ・コンフリクト管理を簡素化する
+- #367 で顕在化した PR 不完全修正問題への対策として、レビュー受け入れ基準を明文化する
+- 他 Anthropic ベストプラクティス (code.claude.com/docs/en/best-practices) の「単一セッション + 明確な計画」推奨に整合する
 
 ## アーキテクチャ
 
@@ -55,18 +54,18 @@ main (リリースタグのみ)
 
 ## タスク種別と進め方
 
-旧ロール (director/lead-engineer/engineer/tester) に対応する機能を、既存 skill + CLAUDE.md / 本ドキュメントのガイダンスで代替する。粒度は「タスク種別ごと」で、役割ではなくアクションで分ける。
+タスクを「種別ごと」に skill + CLAUDE.md / 本ドキュメントのガイダンスへ振り分ける。粒度は役割ではなくアクションで分ける。
 
-| タスク種別 | 対応 skill / 手段 | 旧ロール対応 | 責務 |
-|---|---|---|---|
-| 計画立案 | Plan モード + AskUserQuestion + TodoWrite | director + lead-engineer | タスクの分解、リスク・曖昧点の事前洗い出し、実装前の計画合意 |
-| 実装 | Claude の通常ツール (Edit/Write/Bash) + TodoWrite | engineer | 実装 + unit/integration テスト + PR 作成。スコープ逸脱時は Plan モードに戻る |
-| PR レビュー | `/review-pr` | lead-engineer | PR レビュー + #367 受け入れ基準チェックリスト検証 + マージ判断 |
-| PR テスト | 通常セッション内で手動実行 + PR コメント記録 | tester | PR の実機テスト (UX、長時間動画、GPU mode 等)、結果を PR コメントで報告 |
-| issue 起票 | `/create-task` | director + lead-engineer | issue 起票 (定型テンプレート適用) |
-| リリース | `/release` | director | リリースタグ、CHANGELOG、main へのマージ |
+| タスク種別 | 対応 skill / 手段 | 責務 |
+|---|---|---|
+| 計画立案 | Plan モード + AskUserQuestion + TodoWrite | タスクの分解、リスク・曖昧点の事前洗い出し、実装前の計画合意 |
+| 実装 | Claude の通常ツール (Edit/Write/Bash) + TodoWrite | 実装 + unit/integration テスト + PR 作成。スコープ逸脱時は Plan モードに戻る |
+| PR レビュー | `/review-pr` | PR レビュー + #367 受け入れ基準チェックリスト検証 + マージ判断 |
+| PR テスト | 通常セッション内で手動実行 + PR コメント記録 | PR の実機テスト (UX、長時間動画、GPU mode 等)、結果を PR コメントで報告 |
+| issue 起票 | `/create-task` | issue 起票 (定型テンプレート適用) |
+| リリース | `/release` | リリースタグ、CHANGELOG、main へのマージ |
 
-旧ロールが持っていた「権限境界」(engineer は close 禁止、tester は コード変更禁止等) は**人間 = ユーザーが判断**する責任に戻す。Claude は曖昧点を `AskUserQuestion` でユーザーに確認する。
+権限境界 (close 操作、コード変更操作等) は**人間 = ユーザーが判断**する責任とする。Claude は曖昧点を `AskUserQuestion` でユーザーに確認する。
 
 反復利用される手順があれば、実運用でパターンが固まった時点で新規 skill を追加する (事前に空の skill は作らない)。
 
@@ -91,9 +90,9 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 - マージ後、PR 担当セッションが issue 本文の `- [ ]` を全チェックし、受け入れ条件を実測で満たしたことを確認してから `gh issue close`
 - 残タスクが判明した場合は新 issue を起票し、親 issue に link してからクローズ
 
-## タスク発見 (旧 /check-work の代替)
+## タスク発見
 
-旧ロール前提の `/check-work` は廃止。新規タスクは以下の手順で発見する:
+新規タスクは以下の手順で発見する:
 
 1. `gh issue list --state open --assignee Idios --sort updated` で最近更新された issue を確認
 2. スコープラベル (`l2a-gui`, `l2b-installer`, `l2-workflow`) でフィルタし、優先度 (`P1-high`) 順に並べる
@@ -200,24 +199,9 @@ prefix は strip されて `gh issue close 123` が実行される。`[preuse:by
 - `ALLAGANEYE_PREUSE_BYPASS=0` 等は認識されない (prefix 正規表現は `=1` 固定)
 - `.claude/settings.local.json` で `"pretooluse_gate": false` を設定すると gate 全体を無効化できる (緊急避難用、通常は true = デフォルト)
 
-## 移行前後の対応表
+## タスクフロー
 
-旧 → 新の変換:
-
-| 旧ロール/command | 新運用 |
-|---|---|
-| `/assume-role <role>` | 削除。ユーザーと Claude の 1 対 1 セッションのみ |
-| `/setup-session <role> <N>` | 削除。worktree は main 統合後の claude 自動 worktree のみ |
-| `/check-work` | 削除。「## タスク発見」節の手順で代替 |
-| director (戦略・方針) | ユーザー (Idios) 自身が判断。Claude は選択肢提示 |
-| lead-engineer (設計・レビュー) | Plan モード (設計) + `/review-pr` (レビュー) |
-| engineer (実装) | Claude の通常ツール (Edit/Write/Bash) + TodoWrite |
-| tester (テスト) | 通常セッション内で手動テスト実行 + PR コメント記録 |
-| `role:director` / `role:lead-engineer` / `role:engineer` / `role:tester` ラベル | スコープラベル (`l2-workflow`, `l2a-gui`, `l2b-installer` 等) で代替 |
-
-## タスクフロー (旧ロールハンドオフの代替)
-
-旧ワークフローでは PR 作成 → lead-engineer レビュー → tester テスト → director マージ の 4 ロール間でラベル付け替えが必要だった。新ワークフローでは**単一セッションが順次タスクを実行**するため、ハンドオフは不要:
+**単一セッションが順次タスクを実行**するため、フェーズ間のハンドオフは不要:
 
 ```text
 Plan モードで計画合意 → 実装 (TodoWrite で進捗管理) → PR 作成 → /review-pr → (修正あれば再実装) → テスト実行 → ユーザー承認 → ユーザーがマージ
@@ -227,7 +211,7 @@ Plan モードで計画合意 → 実装 (TodoWrite で進捗管理) → PR 作�
 
 修正が必要な場合の扱いは起動コンテキストで分ける:
 
-- **PR 作成と同一セッションで `/review-pr` を呼んだ場合**: 同セッション内で PR ブランチに追加コミットを積み、再度 `/review-pr` を呼び出す (旧ロールの engineer → lead-engineer 往復は発生しない)。
+- **PR 作成と同一セッションで `/review-pr` を呼んだ場合**: 同セッション内で PR ブランチに追加コミットを積み、再度 `/review-pr` を呼び出す。
 - **レビュー専用セッション (セッション先頭で `/review-pr` のみ実行) の場合**: PR ブランチへの `git checkout` / `Edit` / `commit` / `push` は一切行わず、PR コメントで PR 作成セッションに具体的な修正指示を依頼する。PR 作成セッションが修正 commit & push した後、別セッション or 同レビューセッションで `/review-pr` を再実行して受け入れ条件を再確認する。詳細は `.claude/skills/review-pr/SKILL.md` §「修正依頼コメント投稿」を参照。
 
 ## worktree メンテナンス (#477)

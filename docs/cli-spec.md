@@ -142,7 +142,7 @@ Detected 8 match(es) in recording.mkv (2:50:28) (cached)
   ...
 ```
 
-verbose モードの UX 目的 (= 情報取得) を優先する設計。silent return だと「verbose が効いていない」と誤認する恐れがあるため、ヘッダは常時 emit する (#380 tester review)。
+verbose モードの UX 目的 (= 情報取得) を優先する設計。silent return だと「verbose が効いていない」と誤認する恐れがあるため、ヘッダは常時 emit する (#380 review)。
 
 ### 検知フェーズの進捗バー (#368 / #393)
 

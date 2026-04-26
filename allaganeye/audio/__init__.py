@@ -12,7 +12,7 @@ Public API:
     sliding_cosine_similarity / find_match_peaks -- match a reference window
     BgmHit -- typed dict for matcher results
 
-Removal (director Q3 compliance, #284):
+Removal (Q3 compliance, #284):
     If this module ever needs to be stripped from the distribution, the
     package contains no irreversible coupling and can be excised in three
     discrete edits:
