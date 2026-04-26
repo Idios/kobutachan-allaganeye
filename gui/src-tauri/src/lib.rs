@@ -998,6 +998,14 @@ pub struct ExportProgress {
 /// wording -- when that happens, extend this match arm rather than
 /// loosening the matcher (loose matching would silently retry on
 /// unrelated failures).
+///
+/// QSV patterns include the post-PR-#596 verified ffmpeg 8.1 strings
+/// (`Error creating a MFX session` / `current mfx implementation is not
+/// supported` -- observed when QSV is forced on a non-Intel host) plus
+/// the older `Error initializing an internal MFX session` for older
+/// ffmpeg builds. The `Could not open encoder` line is generic but
+/// always preceded by `[h264_qsv @ ...]` in QSV failures, so we accept
+/// it inside the Qsv arm only.
 fn is_gpu_encoder_failure(stderr: &str, encoder: H264Encoder) -> bool {
     match encoder {
         H264Encoder::Libx264 => false,
@@ -1007,9 +1015,12 @@ fn is_gpu_encoder_failure(stderr: &str, encoder: H264Encoder) -> bool {
                 || stderr.contains("OpenEncodeSessionEx failed")
         }
         H264Encoder::Qsv => {
-            stderr.contains("Error initializing an internal MFX session")
+            stderr.contains("Error creating a MFX session")
+                || stderr.contains("Error initializing an internal MFX session")
+                || stderr.contains("current mfx implementation is not supported")
                 || stderr.contains("Cannot load libmfx")
                 || stderr.contains("MFXVideoENCODE_Init")
+                || (stderr.contains("h264_qsv") && stderr.contains("Could not open encoder"))
         }
         H264Encoder::Amf => {
             stderr.contains("AMF runtime not initialized")
@@ -2597,11 +2608,33 @@ mod tests {
         assert!(is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
     }
 
-    /// Intel QSV の MFX session 初期化失敗。
+    /// Intel QSV の MFX session 初期化失敗 (ffmpeg 7.x 系ワード)。
     #[test]
     fn is_gpu_encoder_failure_detects_qsv_init_error() {
         let stderr = "[h264_qsv] Error initializing an internal MFX session: -3\n";
         assert!(is_gpu_encoder_failure(stderr, H264Encoder::Qsv));
+    }
+
+    /// #591 PR review 実機検証: ffmpeg 8.1 の QSV failure stderr 実例
+    /// (RTX 5090 + AMD iGPU 環境で h264_qsv 強制起動 -> Intel iGPU 不在で
+    /// MFX session creation 失敗)。pre-fix の pattern では検出漏れし
+    /// libx264 retry が走らない bug があった。
+    #[test]
+    fn is_gpu_encoder_failure_detects_qsv_mfx_session_creation_error() {
+        let stderr = "\
+[h264_qsv @ 0x1] Error creating a MFX session: -9.\n\
+[h264_qsv @ 0x1] The current mfx implementation is not supported, try next mfx implementation.\n\
+[vost#0:0/h264_qsv @ 0x2] Could not open encoder before EOF\n";
+        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Qsv));
+    }
+
+    /// `Could not open encoder` は generic message なので、`h264_qsv`
+    /// context が無ければ Qsv の failure と扱わない (libx264 でこの
+    /// メッセージが出ても誤って GPU 失敗判定しないため)。
+    #[test]
+    fn is_gpu_encoder_failure_qsv_requires_h264_qsv_context_for_generic_open_error() {
+        let stderr_generic = "[some_codec] Could not open encoder before EOF\n";
+        assert!(!is_gpu_encoder_failure(stderr_generic, H264Encoder::Qsv));
     }
 
     /// AMD AMF runtime ロード失敗。
