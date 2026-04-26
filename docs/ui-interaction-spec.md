@@ -99,8 +99,8 @@
 
 | 節 | 画面 | 主要 UI 部品 | 進捗 |
 |---|---|---|---|
-| §2.1 | drop | D&D zone / [参照…] / 直近録画リスト / SelectedCard / probeError card | 本 PR で追加 |
-| §2.2 | detecting | 4 phase progress bar / live log / [中断] / 紋章アニメーション | TBD |
+| §2.1 | drop | D&D zone / [参照…] / 直近録画リスト / SelectedCard / probeError card | #598 で追加 |
+| §2.2 | detecting | AllaganSigil 回転 / Header / progressBadge / PhaseRow ×2 / live log / [中断] | 本 PR で追加 |
 | §2.3 | complete | 輝度タイムライン / 試合一覧行 / [境界を調整] / [全試合書き出し] / [元に戻す] / [× 閉じる] | TBD |
 | §2.4 | preview | IN/OUT 2 video / FrameStrip / stepper / TC input / 試合名・type input / [適用] / [元に戻す] / [◀ 一覧へ] / [書き出し] | TBD |
 | §2.5 | export | 出力先選択 / 命名規則 / コーデック選択 / [書き出し開始] / [中断] / 試合別 progress / [✓ フォルダを開く] / [もう一度書き出す] | TBD |
@@ -222,6 +222,94 @@
 | 遷移トリガー | `onClick` → `pickAndProbe()` → reducer `BROWSE_CLICKED` (phase=`probeError → selecting`) |
 | store mutation | なし (probe 成功時の流れは §2.1.2 と同じ) |
 | 例外 / edge case | 連続失敗時も常に [閉じる] で `idle` に戻れる。`pickAndProbe()` 内で `setError(null)` するので前回 error は消える |
+
+### §2.2 detecting
+
+**phase**: `running | cancelling | cancelled | completed | error` ([reducers/detecting.ts:16-40](../gui/src/screens/reducers/detecting.ts#L16))
+
+**store**: detecting screen は **`metadataStore.loadSample()` を `phase=completed` で 1 回だけ呼ぶ** ([DetectingScreen.tsx:50-55](../gui/src/screens/DetectingScreen.tsx#L50))。`appStateStore.navigate('drop' | 'complete')` で遷移し、`selectedVideoPath` は読むのみで mutation しない (drop で確定した path を後段が継承する設計、#465 review C)。
+
+**dirty / silent loss**: 編集対象 metadata が無いため §1.3 silent loss confirm の対象外。ただし [中断] → drop 遷移は確定済み video path を捨てる動線なので、Phase 2.5 (#569) で確認 dialog を入れるかは検討事項として残す ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) で議論)。
+
+**sample mode**: `loadSample()` を呼ぶのは detecting だが、これは sample 検出を「実 CLI が走った結果」として代替する Phase 2 の暫定動作。Phase 2.5 (#569) で実 CLI 結果に置き換えれば本画面で sample mode 起動経路は廃止される。
+
+**エラー表示**: §1.5 のうち本画面では現状 **toast を使わず drop へ navigate する Phase 2 暫定挙動** ([DetectingScreen.tsx:65-69](../gui/src/screens/DetectingScreen.tsx#L65))。Phase 2.5 (#569) で `error` phase 時に **toast 通知 + drop 遷移** に置換する。inline は本画面では採用しない (画面が観測フローに専念する設計のため)。
+
+**実装段階**:
+
+- 現状 (Phase 2): 80ms × 100 tick = 8s の dummy progress、log は progress 連動の hardcoded 3 行 ([DetectingScreen.tsx:11-12,118-133](../gui/src/screens/DetectingScreen.tsx#L11))
+- Phase 2.5 (#569): 実 CLI stdout streaming に差し替え、log は CLI からの行を逐次 append、`error` toast、`cancelling → cancelled` は実 ffmpeg `kill()` 完了で confirm
+- 関連: [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) (running 中の `× 閉じる` 確保) は本画面の cancel と同じ kill 経路を共有予定
+
+#### §2.2.1 AllaganSigil (回転アニメーション)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | 装飾 SVG ([DetectingScreen.tsx:85](../gui/src/screens/DetectingScreen.tsx#L85)、`<AllaganSigil size={84} rotating={phase === 'running'} />`) |
+| 状態 | `displayOnly`。phase=`running` のみ回転、それ以外は静止 |
+| 遷移トリガー | phase 変化に追従 (props `rotating` の derived value) |
+| store mutation | なし |
+| 例外 / edge case | アニメーション停止は phase 終端 (cancelled / completed / error) への到達を視覚的に通知する役割。a11y は `role` 未指定 (装飾扱い) |
+
+#### §2.2.2 Header (caption / fileName / meta)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | display block ([DetectingScreen.tsx:84-97](../gui/src/screens/DetectingScreen.tsx#L84)) |
+| 状態 | `displayOnly` |
+| 遷移トリガー | なし。`selectedVideoPath` 変化時に再 render (basename を抜き出して表示) |
+| store mutation | なし |
+| 例外 / edge case | `selectedVideoPath` が null の場合は `'(video)'` フォールバック ([:80](../gui/src/screens/DetectingScreen.tsx#L80))。Phase 2.5 (#569) で `meta` 行を「dummy probe · Phase 2 skeleton」から実 ffprobe 結果 (解像度 / fps / 長さ等) に差し替える |
+
+#### §2.2.3 progressBadge
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | display block ([DetectingScreen.tsx:91-96](../gui/src/screens/DetectingScreen.tsx#L91)) |
+| 状態 | `displayOnly`。`progress` (0-100) を四捨五入で表示 |
+| 遷移トリガー | local state `progress` 変化 (Phase 2 dummy interval、Phase 2.5 で CLI 進捗イベント) |
+| store mutation | なし |
+| 例外 / edge case | Phase 2 では `progressTiming` 行が `'Phase 2 dummy'` の固定文字列。Phase 2.5 で経過時間 / ETA に差し替え (#569 議論対象) |
+
+#### §2.2.4 PhaseRow.Detecting (粗スキャン)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | progress bar ([DetectingScreen.tsx:102-107](../gui/src/screens/DetectingScreen.tsx#L102)、`PhaseRow` コンポーネント) |
+| 状態 | bar fill: `pending` (pct=0) / `running` (0<pct<100) / `done` (pct≥100) ([DetectingScreen.tsx:156-178](../gui/src/screens/DetectingScreen.tsx#L156))。phase との対応は無く `pct1` (progress × 1.25) のみで決まる |
+| 遷移トリガー | `progress` 変化 (Phase 2 dummy、Phase 2.5 で CLI のフェーズ進捗) |
+| store mutation | なし |
+| 例外 / edge case | Phase 2 では `pct1` が 80% 時点で 100% 完了する見せ方 (粗スキャンは早く終わる演出)。Phase 2.5 で実フェーズに対応する pct 計算に差し替え |
+
+#### §2.2.5 PhaseRow.Refining (精密計測)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | progress bar ([DetectingScreen.tsx:108-113](../gui/src/screens/DetectingScreen.tsx#L108)、`PhaseRow` の 2 個目) |
+| 状態 | `pending` / `running` / `done` (§2.2.4 と同じ semantics) |
+| 遷移トリガー | `progress` 変化 (Phase 2 dummy では `pct2 = (progress - 40) × 1.67`、progress=40 から開始) |
+| store mutation | なし |
+| 例外 / edge case | Phase 2 では Detecting 完了相当のタイミング (progress=40) から start。Phase 2.5 で実フェーズ境界に置換 |
+
+#### §2.2.6 live log
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | append-only display list ([DetectingScreen.tsx:118-133](../gui/src/screens/DetectingScreen.tsx#L118))。`role="log"` + `aria-label="detect log"` で a11y 対応 |
+| 状態 | `displayOnly`。Phase 2 は progress 閾値 (0% / 30% / 60%) で 3 行を順次表示する hardcoded 動作 |
+| 遷移トリガー | progress 連動 (Phase 2 dummy)。Phase 2.5 で CLI stdout 行を逐次 append |
+| store mutation | なし |
+| 例外 / edge case | Phase 2.5 で実 CLI stdout に切替時、行数が長期間で増え続けるため scroll 制御 (auto-scroll、最大行数制限) を要設計。retention は描画にのみ影響し store には永続化しない (#569 議論対象) |
+
+#### §2.2.7 [中断] button
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button ([DetectingScreen.tsx:136-143](../gui/src/screens/DetectingScreen.tsx#L136)) |
+| 状態 | `idle` (phase=`running`) / `disabled` (phase=`cancelling/cancelled/completed/error`) |
+| 遷移トリガー | `onClick` → reducer `CANCEL_CLICKED` (phase=`running → cancelling`)。Phase 2 は副作用 effect で即座に `CANCEL_CONFIRMED` を発火し `cancelling → cancelled` 遷移 ([DetectingScreen.tsx:72-76](../gui/src/screens/DetectingScreen.tsx#L72))。Phase 2.5 で実 ffmpeg `kill()` 完了を待ってから `CANCEL_CONFIRMED` |
+| store mutation | なし (cancelled 検出後の effect で `appStateStore.navigate('drop')` のみ、[DetectingScreen.tsx:58-62](../gui/src/screens/DetectingScreen.tsx#L58)) |
+| 例外 / edge case | §1.2 disabled 理由表示について、現状 `disabled={phase !== 'running'}` のみで tooltip / inline hint 未実装 → 後続 PR で `title="検知実行中のみ中断できます"` 等を追加 (本 doc が source of truth)。`cancelling` 中の連打は disabled で物理的に防止 |
 
 ## 3. 既存 doc との分担
 
