@@ -95,29 +95,133 @@
 
 ## 2. 画面別 UI 部品状態機械
 
-§2 は 5 画面それぞれを **1 画面 = 1 PR** で順次追加する (#590 着手フローに従う)。本 PR では §1 と skeleton のみ。
+§2 は 5 画面それぞれを **1 画面 = 1 PR** で順次追加する (#590 着手フローに従う)。
 
-| 節 | 画面 | 主要 UI 部品 (予定) | 担当 issue ([#590](https://github.com/Idios/kobutachan-allaganeye/issues/590) sub-task) |
+| 節 | 画面 | 主要 UI 部品 | 進捗 |
 |---|---|---|---|
-| §2.1 | drop | D&D zone / [参照...] / 直近録画リスト / [OK] / [キャンセル] / [再試行] | TBD |
+| §2.1 | drop | D&D zone / [参照…] / 直近録画リスト / SelectedCard / probeError card | 本 PR で追加 |
 | §2.2 | detecting | 4 phase progress bar / live log / [中断] / 紋章アニメーション | TBD |
 | §2.3 | complete | 輝度タイムライン / 試合一覧行 / [境界を調整] / [全試合書き出し] / [元に戻す] / [× 閉じる] | TBD |
 | §2.4 | preview | IN/OUT 2 video / FrameStrip / stepper / TC input / 試合名・type input / [適用] / [元に戻す] / [◀ 一覧へ] / [書き出し] | TBD |
 | §2.5 | export | 出力先選択 / 命名規則 / コーデック選択 / [書き出し開始] / [中断] / 試合別 progress / [✓ フォルダを開く] / [もう一度書き出す] | TBD |
 
-各節の記述フォーマット (案):
+各部品節の記述フォーマット (canonical):
 
 ```text
-### §2.X.N <部品名>
+#### §2.X.N <部品名>
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | button / input / select / list item / drop zone / progress bar / etc |
-| 状態 | idle / focus / hover / disabled / loading / error / saving / readonly |
-| 遷移トリガー | onChange / onClick / store change / external file event |
-| store mutation | どの state を更新するか (ない場合は「なし」) |
-| 例外 / edge case | 該当 §1 共通原則の番号付き参照 |
+| 種類 | button / input / select / list item / drop zone / progress bar / card / etc |
+| 状態 | <部品ごとの enum、phase との対応関係を併記> |
+| 遷移トリガー | <reducer event 名 (例: `BROWSE_CLICKED`) または UI イベント> |
+| store mutation | <appStateStore / metadataStore のメソッド呼び出し、なければ「なし」> |
+| 例外 / edge case | <該当 §1 共通原則の番号 + 個別注記> |
 ```
+
+状態名・イベント名は **コードと 1:1 対応** させる ([drop reducer](../gui/src/screens/reducers/drop.ts) 等の event 名・phase 名をそのまま使う)。doc 上の文言は `code span` で表記し grep 可能にする。
+
+### §2.1 drop
+
+**phase**: `idle | selecting | probing | selected | probeError` ([reducers/drop.ts:21-48](../gui/src/screens/reducers/drop.ts#L21))
+
+**store**: drop screen は **`metadataStore` を触らない** (metadata.json はまだロードしていない段階)。`appStateStore.setSelectedVideoPath(path)` で実 path を確定し、`appStateStore.navigate('detecting')` で遷移する。`metadataStore.loadSample()` 等は detecting 完了後の load シーケンスで発火する。
+
+**dirty / silent loss**: 編集対象 metadata がないため §1.3 silent loss confirm の対象外。
+
+**sample mode**: drop screen 自身が sample mode (`filePath === null`) を解除する起点なので、§1.4 read-only 制約の対象外。
+
+**エラー表示**: §1.5 のうち本画面では **inline (phase=probeError card で画面メイン領域を置換)** を採用する。toast は使わない (probe 失敗は drop で完結する短い vertical flow であり、操作元から離れた箇所への影響がない)。
+
+#### §2.1.1 D&D zone
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | drop zone (div、Phase 3 で `onDrop` ハンドラを実装、現状は visual のみ) |
+| 状態 | `idle` (待受) / `dragOver` (Phase 3、ハイライト) / `disabled` (phase=`selecting/probing/selected/probeError` 時は受け付けない) |
+| 遷移トリガー | Phase 3: native HTML `drop` event → reducer `DND_DROPPED` → phase `idle → probing` ([#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) でハンドラ実装) |
+| store mutation | Phase 3: `setSelectedVideoPath(path)` (ハンドラ内、probe 成功後に発火) |
+| 例外 / edge case | 拡張子バリデーション (`.mp4 / .mkv / .avi / .mov`)、複数ファイルドロップ時は最初の 1 件のみ採用、フォルダドロップは reject。**Phase 3 (#465) で実装**: 現状は `RECENT_DUMMY` 表示のみで `onDrop` 未配線 |
+
+#### §2.1.2 [参照…] button
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button ([DropScreen.tsx:147-154](../gui/src/screens/DropScreen.tsx#L147)) |
+| 状態 | `idle` (phase=`idle/probeError`) / `disabled` (phase=`selecting/probing/selected`) |
+| 遷移トリガー | `onClick` → `pickAndProbe()` → reducer `BROWSE_CLICKED` (phase=`idle → selecting`) または `BROWSE_CLICKED` (phase=`probeError → selecting`) |
+| store mutation | probe 成功時のみ `appStateStore.setSelectedVideoPath(path)` (この時点ではまだ呼ばれない、§2.1.6 [OK] で発火) |
+| 例外 / edge case | 1.2 disabled 理由: selecting 中は `(選択中)` inline テキスト ([:155](../gui/src/screens/DropScreen.tsx#L155))、probing 中は `(解析中)` ([:156](../gui/src/screens/DropScreen.tsx#L156)) を併記。**現状 tooltip は未実装** — §1.2 準拠として `aria-describedby` + `title` を後続 PR で追加 (本 doc が source of truth) |
+
+#### §2.1.3 直近の録画 list
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | list (各 item は読み取り専用 row、Phase 3 で click ハンドラ追加予定) |
+| 状態 | `idle` / `hover` (Phase 3、装飾のみ) / `disabled` (phase=`selecting/probing/selected/probeError` 時は item click を無効化) |
+| 遷移トリガー | Phase 3: row `onClick` → 既存 metadata.json 検索 → `setSelectedVideoPath(item.path)` + `navigate('detecting')` (※ probe スキップ — 直近の録画は metadata 既存前提) |
+| store mutation | Phase 3: `appStateStore.setSelectedVideoPath` + `navigate('detecting')` |
+| 例外 / edge case | item の物理ファイルが移動・削除されている場合は item に「ファイルが見つかりません」inline error + 削除リンク表示。**Phase 3 (TBD)**: 現状は `RECENT_DUMMY` 定数 ([:12-16](../gui/src/screens/DropScreen.tsx#L12)) の 3 行 dummy 表示のみで click 未配線 |
+
+#### §2.1.4 SelectedCard (probe 結果カード)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | card (display container、phase=`selected` のときのみ render、[DropScreen.tsx:198-232](../gui/src/screens/DropScreen.tsx#L198)) |
+| 状態 | `selected` (probe 結果 + 確認ボタン表示) |
+| 遷移トリガー | reducer `PROBE_OK` で phase=`probing → selected` 後に出現 |
+| store mutation | カード自体は表示のみ、mutation なし (ボタンは §2.1.5 / §2.1.6) |
+| 例外 / edge case | `probeInfo` が null になり得るが、phase=`selected` 時は guard ([:115-116](../gui/src/screens/DropScreen.tsx#L115)) で render しないため不整合は発生しない |
+
+#### §2.1.5 [キャンセル] button (SelectedCard 内)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button ([DropScreen.tsx:223-225](../gui/src/screens/DropScreen.tsx#L223)) |
+| 状態 | `idle` (phase=`selected` のみ表示) |
+| 遷移トリガー | `onClick` → `cancelSelection()` → reducer `CANCEL_SELECTION` (phase=`selected → idle`) + `setProbeInfo(null)` |
+| store mutation | なし (`appStateStore.setSelectedVideoPath` は §2.1.6 でしか呼ばれていないので、リセットも不要) |
+| 例外 / edge case | confirm ダイアログなし (まだ §1.3 dirty 編集なし)。Phase 3 で D&D 経由 selection も同 phase に集約されるため挙動を共通化する |
+
+#### §2.1.6 [OK — 検知開始] button (SelectedCard 内)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button ([DropScreen.tsx:226-228](../gui/src/screens/DropScreen.tsx#L226)) |
+| 状態 | `idle` (phase=`selected` のみ表示。`probeInfo` が null の場合は `confirm()` 内で early return しているが、本ボタン自体は disabled にしていない — 不整合シナリオを防ぐ最終 guard として機能) |
+| 遷移トリガー | `onClick` → `confirm()` → `appStateStore.setSelectedVideoPath(probeInfo.path)` + `navigate('detecting')` |
+| store mutation | `appStateStore.setSelectedVideoPath(path)` ([DropScreen.tsx:73](../gui/src/screens/DropScreen.tsx#L73)) + `appStateStore.navigate('detecting')` ([:74](../gui/src/screens/DropScreen.tsx#L74)) |
+| 例外 / edge case | navigate 後の detecting 画面で metadata.json load を行うため、本ボタン押下時点ではまだ `metadataStore` は触られていない。`probeInfo` 不整合時は `confirm()` 内で no-op |
+
+#### §2.1.7 probeError card
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | card (display container、phase=`probeError` のときのみ render、[DropScreen.tsx:117-137](../gui/src/screens/DropScreen.tsx#L117))。`role="alert"` で a11y 通知 |
+| 状態 | `probeError` (error 表示 + dismiss / retry ボタン) |
+| 遷移トリガー | reducer `PROBE_FAIL` で phase=`probing → probeError` 後に出現 ([DropScreen.tsx:53,67](../gui/src/screens/DropScreen.tsx#L53)) |
+| store mutation | カード自体は表示のみ |
+| 例外 / edge case | error メッセージは `setError(e.message)` ([:52,66](../gui/src/screens/DropScreen.tsx#L52)) で local state に保存。dialog open 失敗 (file picker plugin のエラー) と probe 失敗 (ffprobe エラー) のいずれもこの card に集約。§1.5 文言指針に従い、ffprobe からの raw stderr ではなく行動指針付きで wrap することが望ましい (現状 raw メッセージ — 後続改善で wrap、本 doc が source of truth) |
+
+#### §2.1.8 [閉じる] button (probeError card 内)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button ([DropScreen.tsx:122-128](../gui/src/screens/DropScreen.tsx#L122)) |
+| 状態 | `idle` (phase=`probeError` のみ表示) |
+| 遷移トリガー | `onClick` → `dismissError()` → reducer `DISMISS_ERROR` (phase=`probeError → idle`) + `setError(null)` |
+| store mutation | なし |
+| 例外 / edge case | confirm ダイアログなし (編集なし)。idle に戻ると D&D zone と [参照…] が再度有効化される |
+
+#### §2.1.9 [再試行] button (probeError card 内)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button ([DropScreen.tsx:129-135](../gui/src/screens/DropScreen.tsx#L129)) |
+| 状態 | `idle` (phase=`probeError` のみ表示) |
+| 遷移トリガー | `onClick` → `pickAndProbe()` → reducer `BROWSE_CLICKED` (phase=`probeError → selecting`) |
+| store mutation | なし (probe 成功時の流れは §2.1.2 と同じ) |
+| 例外 / edge case | 連続失敗時も常に [閉じる] で `idle` に戻れる。`pickAndProbe()` 内で `setError(null)` するので前回 error は消える |
 
 ## 3. 既存 doc との分担
 
