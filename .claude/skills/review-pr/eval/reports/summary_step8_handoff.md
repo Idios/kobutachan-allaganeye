@@ -40,6 +40,7 @@ memory `feedback_skill_revision_empirical.md` の打ち切り基準: 構造的�
 精度 0.9375 → 1.00。要件 #8 (`/enforce-acceptance-criteria` 経由の逐条引用) が「部分的」→「○」に昇格。Iter 1 subagent は X4 補足 (issue 番号特定方法) と X3 補足 (MERGED フォールバック) によって PR/issue 整合性確認と Step 7/8 の境界判断を確実に実施できた。
 
 empirical 「収束判定」の参照 (`feedback_skill_revision_empirical.md`):
+
 - 精度改善 +6.25pt (飽和ではなく明確な改善) ✓
 - 構造的欠陥: Iter 0 で 4 件検出 → Iter 1 で全件解消 ✓
 - 新規不明瞭点: 5 件 → 2 件に減少 (うち 0 件が構造的、2 件が軽微境界) ✓

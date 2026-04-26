@@ -59,6 +59,7 @@
 ## 収束判定
 
 memory `feedback_skill_revision_empirical.md` の打ち切り基準:
+
 - 構造的欠陥 (新節欠落・判定基準不在レベル) が解消された時点で打ち切り可
 - 残る細部不明瞭点は deferred issue として追跡
 
