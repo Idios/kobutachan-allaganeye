@@ -630,4 +630,211 @@ describe('ExportScreen (Phase 4 #466)', () => {
       expect(items[0]).toBeTruthy();
     });
   });
+
+  // -- #591 -- H.264 encoder auto-select / fallback notice tests.
+
+  it('uses libx264 sub label when metadata.system_info is missing', async () => {
+    // sample metadata has no system_info -> default LIBX264_INFO state.
+    render(<ExportScreen />);
+    await waitFor(() => {
+      expect(
+        screen.getByText(/H\.264 再エンコード/).parentElement?.textContent,
+      ).toContain('libx264 (CPU)');
+    });
+  });
+
+  it('invokes select_h264_encoder_for_export and updates sub label when system_info is present', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'select_h264_encoder_for_export') {
+        return {
+          encoder: 'h264_nvenc',
+          display_label: 'NVENC',
+          encoder_kind: 'Nvenc',
+        };
+      }
+      return undefined;
+    });
+    // Inject system_info into the sample metadata.
+    const current = useMetadataStore.getState().metadata!;
+    useMetadataStore.setState({
+      metadata: {
+        ...current,
+        system_info: {
+          gpu_vendors_available: ['nvidia'],
+          gpu_vendor_used: 'nvidia',
+          vendor_preference: ['nvidia', 'amd', 'intel'],
+        },
+      },
+    });
+    render(<ExportScreen />);
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        'select_h264_encoder_for_export',
+        {
+          vendors: ['nvidia'],
+          preference: ['nvidia', 'amd', 'intel'],
+        },
+      );
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByText(/H\.264 再エンコード/).parentElement?.textContent,
+      ).toContain('NVENC');
+    });
+  });
+
+  it('falls back to libx264 sub label when select_h264_encoder_for_export rejects', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'select_h264_encoder_for_export') {
+        throw new Error('boom');
+      }
+      return undefined;
+    });
+    const current = useMetadataStore.getState().metadata!;
+    useMetadataStore.setState({
+      metadata: {
+        ...current,
+        system_info: {
+          gpu_vendors_available: ['nvidia'],
+          gpu_vendor_used: 'nvidia',
+          vendor_preference: ['nvidia', 'amd', 'intel'],
+        },
+      },
+    });
+    render(<ExportScreen />);
+    await waitFor(() => {
+      expect(
+        screen.getByText(/H\.264 再エンコード/).parentElement?.textContent,
+      ).toContain('libx264 (CPU)');
+    });
+  });
+
+  it('passes h264_encoder argument to export_match when codec is h264', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'select_h264_encoder_for_export') {
+        return {
+          encoder: 'h264_nvenc',
+          display_label: 'NVENC',
+          encoder_kind: 'Nvenc',
+        };
+      }
+      if (cmd === 'export_match') {
+        return { match_index: 1, output_path: '/tmp/match_001.mp4', duration_ms: 0 };
+      }
+      return undefined;
+    });
+    const current = useMetadataStore.getState().metadata!;
+    useMetadataStore.setState({
+      metadata: {
+        ...current,
+        system_info: {
+          gpu_vendors_available: ['nvidia'],
+          gpu_vendor_used: 'nvidia',
+          vendor_preference: ['nvidia', 'amd', 'intel'],
+        },
+      },
+    });
+    useAppStateStore.getState().setSelectedVideoPath('E:/videos/clip.mkv');
+    render(<ExportScreen />);
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith(
+        'select_h264_encoder_for_export',
+        expect.anything(),
+      ),
+    );
+    const user = userEvent.setup();
+    // Switch codec to h264.
+    await user.click(screen.getByRole('button', { name: /H\.264 再エンコード/ }));
+    await user.click(
+      screen.getByRole('button', { name: /書き出し開始/ }),
+    );
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        'export_match',
+        expect.objectContaining({
+          codec: 'h264',
+          h264Encoder: 'Nvenc',
+        }),
+      );
+    });
+  });
+
+  it('passes h264Encoder=null to export_match when codec is copy', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'select_h264_encoder_for_export') {
+        return {
+          encoder: 'h264_nvenc',
+          display_label: 'NVENC',
+          encoder_kind: 'Nvenc',
+        };
+      }
+      if (cmd === 'export_match') {
+        return { match_index: 1, output_path: '/tmp/match_001.mp4', duration_ms: 0 };
+      }
+      return undefined;
+    });
+    const current = useMetadataStore.getState().metadata!;
+    useMetadataStore.setState({
+      metadata: {
+        ...current,
+        system_info: {
+          gpu_vendors_available: ['nvidia'],
+          gpu_vendor_used: 'nvidia',
+          vendor_preference: ['nvidia', 'amd', 'intel'],
+        },
+      },
+    });
+    useAppStateStore.getState().setSelectedVideoPath('E:/videos/clip.mkv');
+    render(<ExportScreen />);
+    const user = userEvent.setup();
+    // Codec stays at default 'copy'.
+    await user.click(
+      screen.getByRole('button', { name: /書き出し開始/ }),
+    );
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        'export_match',
+        expect.objectContaining({
+          codec: 'copy',
+          h264Encoder: null,
+        }),
+      );
+    });
+  });
+
+  it('shows fallback notice when stage=fallback event arrives', async () => {
+    let progressHandler: ((e: {
+      payload: {
+        match_index: number;
+        percent: number;
+        stage: string;
+        message?: string;
+        fallback_from?: string;
+      };
+    }) => void) | null = null;
+    listenMock.mockImplementation(
+      async (_name: string, handler: (e: unknown) => void) => {
+        progressHandler = handler as typeof progressHandler;
+        return () => undefined;
+      },
+    );
+    render(<ExportScreen />);
+    await waitFor(() => expect(progressHandler).not.toBeNull());
+    act(() => {
+      progressHandler!({
+        payload: {
+          match_index: 1,
+          percent: 0,
+          stage: 'fallback',
+          message: 'NVENC の初期化に失敗したため libx264 で再試行します',
+          fallback_from: 'h264_nvenc -> libx264',
+        },
+      });
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('fallback-notice-1').textContent,
+      ).toContain('libx264');
+    });
+  });
 });

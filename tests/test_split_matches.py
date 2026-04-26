@@ -2051,6 +2051,139 @@ class TestResolveGpuMode:
         assert none_vendor == auto_vendor == "nvidia"
 
 
+class TestResolveGpuModeWithProbe:
+    """``_resolve_gpu_mode_with_probe`` returns the available vendor list (#591)."""
+
+    def test_returns_available_vendors(self, monkeypatch):
+        """probe で見つかった全 vendor が 3-tuple の 3 要素目に返る."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["nvidia", "amd"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode_with_probe
+
+        use_gpu, vendor, available = _resolve_gpu_mode_with_probe(
+            None, None, "av1", show=False, verbose=False
+        )
+        assert use_gpu is True
+        assert vendor == "nvidia"
+        assert available == ["nvidia", "amd"]
+
+    def test_returns_empty_when_probe_fails(self, monkeypatch):
+        """probe が空 list を返したら 3 要素目も空 list."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: [],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode_with_probe
+
+        use_gpu, vendor, available = _resolve_gpu_mode_with_probe(
+            None, None, "av1", show=False, verbose=False
+        )
+        # codec match なので use_gpu=True、ただし vendor は None
+        assert use_gpu is True
+        assert vendor is None
+        assert available == []
+
+    def test_legacy_2tuple_wrapper_still_works(self, monkeypatch):
+        """``_resolve_gpu_mode`` (2-tuple) はラッパとして機能する."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["intel"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        result = _resolve_gpu_mode(None, None, "h264", show=False, verbose=False)
+        assert len(result) == 2  # backward-compat 2-tuple
+        use_gpu, vendor = result
+        assert use_gpu is True
+        assert vendor == "intel"
+
+
+class TestBuildSystemInfo:
+    """``_build_system_info`` constructs the metadata.json system_info dict (#591)."""
+
+    def test_basic_payload(self):
+        from allaganeye.commands.split_matches import _build_system_info
+
+        info = _build_system_info(
+            available_vendors=["nvidia", "amd"],
+            vendor_used="nvidia",
+        )
+        assert info["gpu_vendors_available"] == ["nvidia", "amd"]
+        assert info["gpu_vendor_used"] == "nvidia"
+        assert info["vendor_preference"] == ["nvidia", "amd", "intel"]
+
+    def test_no_gpu_used_is_null(self):
+        """CPU 強制 / cache hit / split-only path では vendor_used=None."""
+        from allaganeye.commands.split_matches import _build_system_info
+
+        info = _build_system_info(
+            available_vendors=["nvidia"],
+            vendor_used=None,
+        )
+        assert info["gpu_vendor_used"] is None
+        assert info["gpu_vendors_available"] == ["nvidia"]
+
+    def test_empty_available_vendors(self):
+        """probe 失敗環境 (CPU only Linux CI など) でも payload を作れる."""
+        from allaganeye.commands.split_matches import _build_system_info
+
+        info = _build_system_info(
+            available_vendors=[],
+            vendor_used=None,
+        )
+        assert info["gpu_vendors_available"] == []
+        assert info["gpu_vendor_used"] is None
+        assert info["vendor_preference"] == ["nvidia", "amd", "intel"]
+
+    def test_preference_matches_gpu_detector_module(self):
+        """``vendor_preference`` は ``gpu_detector._VENDOR_PREFERENCE`` のスナップショット."""
+        from allaganeye.commands.split_matches import _build_system_info
+        from allaganeye.video.gpu_detector import _VENDOR_PREFERENCE
+
+        info = _build_system_info(available_vendors=[], vendor_used=None)
+        assert info["vendor_preference"] == list(_VENDOR_PREFERENCE)
+
+
+class TestBuildMetadataPayloadSystemInfo:
+    """``_build_metadata_payload`` includes the system_info field (#591)."""
+
+    def test_payload_includes_system_info(self, tmp_path):
+        from allaganeye.commands.split_matches import _build_metadata_payload
+        from allaganeye.config import SplitConfig
+        from allaganeye.video.detector import MatchBoundary
+
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 120.0, "type": "fl_match"},
+        ]
+        payload = _build_metadata_payload(
+            video_path=tmp_path / "input.mp4",
+            source_duration=120.0,
+            source_fps=60.0,
+            detected_at="2026-04-26T00:00:00Z",
+            effective_interval=1.0,
+            config=config,
+            boundaries=boundaries,
+            output_files=[tmp_path / "match_001.mp4"],
+            gaps=[],
+            system_info={
+                "gpu_vendors_available": ["nvidia"],
+                "gpu_vendor_used": "nvidia",
+                "vendor_preference": ["nvidia", "amd", "intel"],
+            },
+        )
+        assert "system_info" in payload
+        assert payload["system_info"]["gpu_vendors_available"] == ["nvidia"]
+        assert payload["system_info"]["gpu_vendor_used"] == "nvidia"
+        assert payload["system_info"]["vendor_preference"] == [
+            "nvidia",
+            "amd",
+            "intel",
+        ]
+
+
 class TestAudioScanIntegration:
     """Audio scan pipeline wiring in run_split and _run_audio_scan (#288)."""
 

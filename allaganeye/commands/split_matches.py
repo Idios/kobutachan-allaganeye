@@ -114,6 +114,16 @@ def run_split(
             _check_disk_space(
                 video_path, boundaries, metadata["duration"], config, show=show
             )
+            # #591 -- cache hit でも GUI export が使う system_info は
+            # 「現在の環境」を反映したい (録画から数日後に GPU 構成を
+            # 変えた可能性) ので、ここで probe し直す。vendor_used は
+            # cache hit のため None (今回 detect していない)。
+            from allaganeye.system_info import probe_gpu_vendors
+
+            cached_system_info = _build_system_info(
+                available_vendors=probe_gpu_vendors(),
+                vendor_used=None,
+            )
             split_start = time.monotonic()
             _split_and_write_metadata(
                 video_path,
@@ -123,6 +133,7 @@ def run_split(
                 config,
                 effective_interval=effective_interval,
                 detected_at=detected_at,
+                system_info=cached_system_info,
                 quiet=quiet,
             )
             _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
@@ -130,8 +141,10 @@ def run_split(
             return
 
     # Resolve GPU/CPU mode + vendor: auto-select based on codec + probe
-    # when not explicit (#334, #546)
-    use_gpu, gpu_vendor = _resolve_gpu_mode(
+    # when not explicit (#334, #546, #591). probe で検出された全 vendor は
+    # GUI export encoder 自動選択 (#591) で metadata.json system_info に
+    # 保存するため、3-tuple 版 ``_resolve_gpu_mode_with_probe`` を呼ぶ。
+    use_gpu, gpu_vendor, available_vendors = _resolve_gpu_mode_with_probe(
         config.use_gpu,
         config.gpu_vendor,
         metadata.get("codec"),
@@ -215,6 +228,12 @@ def run_split(
         return
 
     _check_disk_space(video_path, boundaries, metadata["duration"], config, show=show)
+    # #591 -- detect 経路で確定した vendor を vendor_used に記録。CPU
+    # 強制 (use_gpu=False) のときは vendor_used=None (実際使ってない)。
+    detected_system_info = _build_system_info(
+        available_vendors=available_vendors,
+        vendor_used=gpu_vendor if use_gpu else None,
+    )
     split_start = time.monotonic()
     _split_and_write_metadata(
         video_path,
@@ -224,6 +243,7 @@ def run_split(
         config,
         effective_interval=effective_interval,
         detected_at=detected_at,
+        system_info=detected_system_info,
         quiet=quiet,
     )
     _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
@@ -331,6 +351,16 @@ def run_split_from_metadata(
         typer.echo(f"  Source: {source_path}")
 
     _check_disk_space(source_path, boundaries, probe["duration"], config, show=show)
+    # #591 -- split-only path は detect しないので vendor_used=None。
+    # GUI export が encoder 選択に使う「現在の環境」を反映するため、
+    # ここで probe し直して metadata を更新する (前回 detect の値で
+    # 上書き)。
+    from allaganeye.system_info import probe_gpu_vendors
+
+    split_only_system_info = _build_system_info(
+        available_vendors=probe_gpu_vendors(),
+        vendor_used=None,
+    )
     split_start = time.monotonic()
     _split_and_write_metadata(
         source_path,
@@ -340,6 +370,7 @@ def run_split_from_metadata(
         config,
         effective_interval=effective_interval,
         detected_at=detected_at,
+        system_info=split_only_system_info,
         quiet=quiet,
     )
     _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
@@ -528,7 +559,26 @@ def _resolve_gpu_mode(
     show: bool,
     verbose: bool,
 ) -> tuple[bool, str | None]:
-    """Resolve GPU/CPU mode and vendor from user flags + probe (#334, #546, #553, #550).
+    """Resolve GPU/CPU mode and vendor (backward-compat 2-tuple wrapper).
+
+    新規呼び出し側 (#591 の system_info 構築など) は probe 結果も使うため
+    ``_resolve_gpu_mode_with_probe`` を呼ぶ。既存呼び出し / 既存テストは
+    引き続きこの薄い 2-tuple ラッパで動く。
+    """
+    use_gpu_concrete, vendor, _available = _resolve_gpu_mode_with_probe(
+        use_gpu, gpu_vendor_option, codec, show, verbose
+    )
+    return use_gpu_concrete, vendor
+
+
+def _resolve_gpu_mode_with_probe(
+    use_gpu: bool | None,
+    gpu_vendor_option: str | None,
+    codec: str | None,
+    show: bool,
+    verbose: bool,
+) -> tuple[bool, str | None, list[str]]:
+    """Resolve GPU/CPU mode and vendor from user flags + probe (#334, #546, #553, #550, #591).
 
     - *use_gpu*: None で自動 codec 判定、True/False で明示指示。
     - *gpu_vendor_option*: None / "auto" で自動選択、"nvidia" / "amd" /
@@ -536,8 +586,11 @@ def _resolve_gpu_mode(
       probe に見つからない vendor を要求すると ``ConfigValidationError``
       (exit 5)。現時点で nvidia / amd / intel すべて実装済み。
 
-    Returns ``(use_gpu_concrete, selected_vendor)`` tuple.  vendor が
-    ``None`` の場合は GPU 経路で ``-hwaccel auto`` が使われる。
+    Returns ``(use_gpu_concrete, selected_vendor, available_vendors)``
+    tuple.  *vendor* が ``None`` の場合は GPU 経路で ``-hwaccel auto`` が
+    使われる。*available_vendors* は ``probe_gpu_vendors()`` の生結果で、
+    GUI export が encoder 自動選択 (#591) に使うため metadata.json
+    ``system_info`` セクションに保存される。
     """
     from allaganeye.exceptions import ConfigValidationError
     from allaganeye.system_info import probe_gpu_vendors
@@ -570,7 +623,7 @@ def _resolve_gpu_mode(
     if use_gpu is not None:
         if show and verbose and use_gpu and vendor:
             typer.echo(f"  GPU vendor: {vendor}")
-        return use_gpu, vendor
+        return use_gpu, vendor, available
 
     codec_match = (codec or "").lower() in _GPU_PREFERRED_CODECS
     # Codec match is the primary signal (#334 の既存挙動を維持)。
@@ -584,7 +637,29 @@ def _resolve_gpu_mode(
         typer.echo(f"  Auto-selected {mode} mode (codec: {codec or 'unknown'})")
         if selected and vendor:
             typer.echo(f"  GPU vendor: {vendor}")
-    return selected, vendor if selected else None
+    return selected, vendor if selected else None, available
+
+
+def _build_system_info(
+    *,
+    available_vendors: list[str],
+    vendor_used: str | None,
+) -> dict:
+    """Build the ``system_info`` dict for ``metadata.json`` (#591).
+
+    GUI export 画面 (Phase 4 / `select_h264_encoder_for_export`) が
+    ``gpu_vendors_available`` と ``vendor_preference`` を読んで NVENC /
+    QSV / AMF / libx264 を auto-select する。``gpu_vendor_used`` は
+    実際 detect 経路で使った vendor (CPU 強制 / cache hit / split-only
+    では ``None``)。
+    """
+    from allaganeye.video.gpu_detector import _VENDOR_PREFERENCE
+
+    return {
+        "gpu_vendors_available": list(available_vendors),
+        "gpu_vendor_used": vendor_used,
+        "vendor_preference": list(_VENDOR_PREFERENCE),
+    }
 
 
 def _run_detection(
@@ -859,9 +934,10 @@ def _split_and_write_metadata(
     *,
     effective_interval: float,
     detected_at: str,
+    system_info: dict,
     quiet: bool = False,
 ) -> None:
-    """Split video and write metadata.json."""
+    """Split video and write metadata.json (#591: system_info required)."""
     show = not quiet
     source_duration = metadata["duration"]
 
@@ -902,6 +978,7 @@ def _split_and_write_metadata(
         boundaries=boundaries,
         output_files=output_files,
         gaps=gaps,
+        system_info=system_info,
     )
     metadata_path = config.output_dir / "metadata.json"
     write_metadata_atomic(metadata_path, result)
@@ -923,8 +1000,9 @@ def _build_metadata_payload(
     boundaries: list[MatchBoundary],
     output_files: list[Path],
     gaps: list[Gap],
+    system_info: dict,
 ) -> dict:
-    """Build the ``metadata.json`` payload dict (schema v1, #463).
+    """Build the ``metadata.json`` payload dict (schema v1, #463 / #591).
 
     Kept private to this module; ``commands.detect`` builds a variant
     (no ``output_files``) via its own helper.
@@ -936,6 +1014,11 @@ def _build_metadata_payload(
     ``source_fps`` (#465 review): the recording frame rate from ffprobe.
     GUI uses this to compute frame-accurate +-1F seek (formerly assumed
     60 fps). 120fps / 240fps recordings now step by 1/120 / 1/240 sec.
+
+    ``system_info`` (#591): GPU vendor probe snapshot used by GUI export
+    encoder selection (NVENC / QSV / AMF / libx264). Optional field added
+    in v1; readers without #591 simply ignore it. Build via
+    ``_build_system_info``.
     """
     return {
         "schema_version": "1",
@@ -953,6 +1036,7 @@ def _build_metadata_payload(
             "use_gpu": config.use_gpu,
             "workers": config.workers,
         },
+        "system_info": system_info,
         "matches": [
             {
                 "index": i + 1,

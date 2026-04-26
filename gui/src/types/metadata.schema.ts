@@ -65,6 +65,18 @@ export const WarningSchema = z.object({
 });
 
 /**
+ * #591 -- GPU vendor probe snapshot. Optional field on metadata.json
+ * (pre-#591 files don't carry it). Frontend uses
+ * `gpu_vendors_available` + `vendor_preference` to pick the H.264
+ * encoder via `select_h264_encoder_for_export`.
+ */
+export const SystemInfoSchema = z.object({
+  gpu_vendors_available: z.array(z.string()),
+  gpu_vendor_used: z.string().nullable(),
+  vendor_preference: z.array(z.string()),
+});
+
+/**
  * #465 review: default frame rate when ``source_fps`` is missing. Pre-#465
  * legacy metadata.json files don't include the field, so we keep a
  * conservative 60fps assumption (the most common OBS recording cadence).
@@ -90,5 +102,11 @@ export const MetadataSchema = z
     matches: z.array(MatchSchema),
     gaps: z.array(GapSchema),
     warnings: z.array(WarningSchema).optional(),
+    /**
+     * #591 -- GPU vendor probe snapshot. Optional because pre-#591
+     * metadata.json doesn't include it. ExportScreen falls back to
+     * libx264 when missing.
+     */
+    system_info: SystemInfoSchema.optional(),
   })
   .passthrough();

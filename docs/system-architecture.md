@@ -66,6 +66,8 @@ GUI は以下のタイミングで CLI を subprocess として呼び出す (本
 | DetectingScreen (本物化予定) | `allaganeye detect <video> -o <output>` | metadata.json | [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) Phase 3 |
 | ExportScreen (本物化予定) | `allaganeye split --from-metadata <meta>` | metadata.json + MP4 | [#466](https://github.com/Idios/kobutachan-allaganeye/issues/466) Phase 4 |
 
+ExportScreen の H.264 再エンコード時のエンコーダ選択 (#591) は subprocess 経路を使わない。 detect/split が metadata.json `system_info.gpu_vendors_available` に probe 結果を保存しているので、GUI 起動時はその値を `select_h264_encoder_for_export` Tauri command (Rust 内純関数) に渡して NVENC / QSV / AMF / libx264 を解決する。GPU 初期化失敗時のみ `export_match` 内で libx264 fallback retry が走る (CLI 呼び出しなし)。
+
 spawn された CLI プロセスは `ProcessMap` (Rust side、#523) に登録される。ユーザーがウィンドウを閉じる (`×`) 前にプロセスが走っていれば、GUI 側が `kill_tracked_processes` で中断する ([ui-architecture.md §ffmpeg 実行中の中断フロー](ui-architecture.md))。
 
 ### 2.4 GUI 内の video 配信 (subprocess ではない)
