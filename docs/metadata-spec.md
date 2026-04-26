@@ -64,6 +64,7 @@ GPU vendor probe スナップショット。`probe_gpu_vendors()` の結果と�
 | `vendor_preference` | array of string | ✓ | `gpu_detector._VENDOR_PREFERENCE` のスナップショット。現状 `["nvidia","amd","intel"]` |
 
 書き込みパス:
+
 - `allaganeye detect`: detect 経路で probe → vendor_used = 採用した vendor (CPU 強制なら null)
 - `allaganeye split <video>` (legacy): cache miss なら detect と同じ / cache hit は probe を実行し vendor_used = null
 - `allaganeye split --from-metadata`: probe を実行し vendor_used = null (split 時点では vendor を選ばないため)
