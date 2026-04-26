@@ -252,12 +252,11 @@ L2 からは**単一ワークツリー + skill ベースディスパッチ**を�
 
 詳細は `docs/l2-workflow.md` を参照。要約:
 
-- **PR 作成前**: ベースブランチをリベースし、Python 側は `ruff check .` / `ruff format --check .` / `pytest`、GUI (gui/) 変更を含む場合は追加で `npm run lint` / `npm run typecheck` / `npm test` / `cargo check` (src-tauri/) を通すこと
+- **PR 作成前**: ベースブランチをリベースし、Python 側は `ruff check .` / `ruff format --check .` / `pytest`、GUI (gui/) 変更を含む場合は追加で `npm run lint` / `npm run typecheck` / `npm test` / `cargo check` (src-tauri/) を通すこと。加えてロジック変更を含む場合は実機検証 (long-running / GPU / audio 統合等は mock 不可) を実施
 - ベースブランチ: `develop-x.x.x`（`main` ではない）
 - 作業ブランチ命名: `claude/<scope>-<short-description>` または `claude/<issue-N>-<slug>`
 - マージ方法: `gh pr merge <番号> --squash` (ユーザーが実行)
 - レビュー: `/review-pr` skill で受け入れ条件チェックリスト検証 (#367 対策)
-- コード変更は `/test-pr` skill で実機テスト実施
 - コミットメッセージに `[<session-id>]` を含める
 - **PR 本文・コミットメッセージで `Closes` / `Fixes` / `Resolves` キーワードを使わない**（issue のクローズは手動で行う）
 
