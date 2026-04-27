@@ -315,6 +315,17 @@ def detect(
             "-q", "--quiet", help="Suppress progress output (final result only)"
         ),
     ] = False,
+    progress_format: Annotated[
+        str,
+        typer.Option(
+            "--progress-format",
+            help="Progress output format. 'text' (default) renders human-"
+            "readable click progress bars and typer status lines. 'json' "
+            "emits one JSON object per line on stdout (phase / completed "
+            "/ total / elapsed_s) for the Tauri GUI wrapper, and "
+            "suppresses all human-readable text output (#569).",
+        ),
+    ] = "text",
 ) -> None:
     """Run detection only and write metadata.json (no split, #463).
 
@@ -326,6 +337,11 @@ def detect(
             raise ConfigValidationError("--quiet and --verbose are mutually exclusive")
         if gpu and no_gpu:
             raise ConfigValidationError("--gpu and --no-gpu are mutually exclusive")
+        if progress_format not in ("text", "json"):
+            raise ConfigValidationError(
+                f"Invalid --progress-format: {progress_format!r}. "
+                "Choices: 'text', 'json'."
+            )
 
         use_gpu: bool | None
         if gpu:
@@ -360,7 +376,13 @@ def detect(
 
         from allaganeye.commands.detect import run_detect
 
-        run_detect(video_path, config, verbose=verbose, quiet=quiet)
+        run_detect(
+            video_path,
+            config,
+            verbose=verbose,
+            quiet=quiet,
+            progress_format=progress_format,
+        )
 
     except AllaganEyeError as e:
         _report_app_error(e, verbose=verbose, quiet=quiet)
