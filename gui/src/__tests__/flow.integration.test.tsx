@@ -40,6 +40,16 @@ vi.mock('@tauri-apps/api/event', () => ({
   },
 }));
 
+// #568: DropScreen subscribes to webview onDragDropEvent on mount. The
+// real getCurrentWebview() reaches into Tauri's native shim which is
+// absent under vitest; stub it to a no-op that returns a no-op
+// unsubscribe so the integration flow tests don't crash on mount.
+vi.mock('@tauri-apps/api/webview', () => ({
+  getCurrentWebview: () => ({
+    onDragDropEvent: vi.fn().mockResolvedValue(() => undefined),
+  }),
+}));
+
 import App from '../App';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
