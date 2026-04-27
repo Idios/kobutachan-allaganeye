@@ -147,6 +147,10 @@ export function CompleteScreen() {
           matches={metadata.matches}
           selectedIndex={selectedMatch?.index ?? null}
           onSelectMatch={(i) => selectMatch(i)}
+          // #588: 検知時に使用された閾値で暗転帯を描画。legacy metadata
+          // (detection_params 無し) では 15 (BrightnessTimeline 既定) に
+          // フォールバックする。
+          threshold={metadata.detection_params?.blackout_threshold ?? 15}
         />
       </AllaganFrame>
 

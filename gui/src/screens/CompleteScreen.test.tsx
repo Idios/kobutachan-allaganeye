@@ -151,4 +151,43 @@ describe('CompleteScreen', () => {
       expect(valueDiv?.textContent).toBe('—');
     });
   });
+
+  // #588: BrightnessTimeline threshold が detection_params 連動。
+  describe('BrightnessTimeline threshold wiring', () => {
+    it('passes detection_params.blackout_threshold to BrightnessTimeline', () => {
+      const meta = useMetadataStore.getState().metadata;
+      if (!meta) throw new Error('expected sample metadata loaded');
+      // 検知時に閾値 30 で再検知された metadata を再現。
+      useMetadataStore.setState({
+        metadata: {
+          ...meta,
+          detection_params: {
+            ...meta.detection_params,
+            blackout_threshold: 30,
+          },
+        },
+      });
+      render(<CompleteScreen />);
+      // BrightnessTimeline は threshold ラベルを SVG <text> として描画する
+      // ので、その内容を直接検査する (mock 不要)。
+      const timeline = screen.getByTestId('brightness-timeline');
+      expect(timeline.textContent).toMatch(/threshold=30/);
+    });
+
+    it('falls back to threshold=15 when detection_params is missing (legacy)', () => {
+      const meta = useMetadataStore.getState().metadata;
+      if (!meta) throw new Error('expected sample metadata loaded');
+      // pre-#370 想定の legacy metadata を再現 (detection_params 無し)。
+      // zod schema は required だが、in-memory state には defensive に
+      // optional chaining + ?? 15 fallback を入れているので動作確認可能。
+      const legacyMeta = { ...meta } as Partial<typeof meta>;
+      delete legacyMeta.detection_params;
+      useMetadataStore.setState({
+        metadata: legacyMeta as typeof meta,
+      });
+      render(<CompleteScreen />);
+      const timeline = screen.getByTestId('brightness-timeline');
+      expect(timeline.textContent).toMatch(/threshold=15/);
+    });
+  });
 });
