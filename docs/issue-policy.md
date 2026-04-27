@@ -228,12 +228,18 @@ gh issue comment <番号> --body "完了: relaxed-mestorf-9807da → PR #42
 
 ### PR マージ後（クローズ）
 
-PR マージ後、受け入れ条件を実測で満たしたことを確認してから、ユーザー (Idios) またはマージ実行セッションが関連 issue をクローズする。
+PR マージ後、受け入れ条件を**マージ後 base ブランチで実測再検証**してから関連 issue をクローズする (Iron Law 4)。クローズは以下のいずれかのルートで実施する:
+
+- **`/close-issue <issue番号>` skill** (推奨、#594 で新設): マージ後の受け入れ条件実測再検証 + 残タスクトリアージ + ユーザー承認後の close を一気通貫で実施
+- **ユーザー (Idios) 手動クローズ**: 上記と同等の検証を手動で実施
 
 ```bash
+# 手動クローズ時のコマンド例
 gh issue close <番号> --repo Idios/kobutachan-allaganeye \
   --comment "マージ確認: <session-id> ← PR #番号"
 ```
+
+詳細は `docs/l2-workflow.md` §「Issue クローズルール」 / `.claude/skills/close-issue/SKILL.md` を参照。
 
 **例外: 未完了のチェックボックスがある場合**
 

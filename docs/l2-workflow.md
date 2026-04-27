@@ -63,6 +63,7 @@ main (リリースタグのみ)
 | 実装 | Claude の通常ツール (Edit/Write/Bash) + TodoWrite | engineer | 実装 + unit/integration テスト + 実機検証 (long-running / GPU / audio 統合は mock 不可) + PR 作成。スコープ逸脱時は Plan モードに戻る |
 | PR レビュー | `/review-pr` | lead-engineer | PR レビュー + #367 受け入れ基準チェックリスト検証 + マージ判断 |
 | issue 起票 | `/create-task` | director + lead-engineer | issue 起票 (定型テンプレート適用) |
+| issue クローズ | `/close-issue` | (新設、#594) | マージ後の受け入れ条件実測再検証 + 残タスクトリアージ + `gh issue close` 実行 (Iron Law 4 担保ルート)。`/review-pr` から責務分離 |
 | リリース | `/release` | director | リリースタグ、CHANGELOG、main へのマージ |
 
 旧ロールが持っていた「権限境界」(engineer は close 禁止、tester は コード変更禁止等) は**人間 = ユーザーが判断**する責任に戻す。Claude は曖昧点を `AskUserQuestion` でユーザーに確認する。
@@ -87,8 +88,19 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 ### Issue クローズルール
 
 - PR マージ = 自動クローズではない (`Closes`, `Fixes` キーワード**禁止**)
-- マージ後、PR 担当セッションが issue 本文の `- [ ]` を全チェックし、受け入れ条件を実測で満たしたことを確認してから `gh issue close`
-- 残タスクが判明した場合は新 issue を起票し、親 issue に link してからクローズ
+- `/review-pr` (レビューセッション) では `gh issue close` を実行しない (#594 で責務分離。レビュー専用セッションは「観察・指摘・依頼」に徹する原則と整合)
+- マージ後の issue クローズは専用 skill **`/close-issue <issue番号>`** で実施する。本 skill は Iron Law 4 (マージ後実測再検証) を担保する唯一のルート
+- `/close-issue` の責務:
+  1. 紐づく PR を全件マージ済み確認 (1:1 / 束ね PR / Phase 分割 の各ケース判定)
+  2. 受け入れ条件をマージ後 base ブランチ (main / develop-x.x.x) で実測再検証 (静的 grep + 短時間単体テスト + `/test-pr` 既実施確認)
+  3. issue 本文の未チェック `- [ ]` 全消化確認
+  4. 残タスクは (B) 新 issue 起票 / (C) 既存 issue 追記 にトリアージ (握り潰し禁止、Iron Law 1, 3)
+  5. ユーザー (Idios) 承認後に `gh issue close <番号> --comment "実測再検証完了 ... [<session-id>]"`
+- 運用フロー: `/review-pr` (レビュー & LGTM) → `gh pr merge --squash` → `/close-issue <番号>` (実測再検証 & クローズ)
+- **束ね PR** (1 PR で N issue close) は issue 単位で `/close-issue <番号>` を呼び分ける (各 issue の受け入れ条件を独立検証、Iron Law 1)
+- **Phase 分割** (N PR で 1 issue close) は最終 PR マージ後に 1 回呼び出す (全 PR 統合状態で受け入れ条件再検証。最終 PR 未マージなら close 不可)
+- 残タスクが判明した場合は (B) 新 issue 起票して親 issue に link、または (C) 既存 issue にコメント追記してから本 issue をクローズ
+- 詳細手順: `.claude/skills/close-issue/SKILL.md`
 
 ## タスク発見 (旧 /check-work の代替)
 
