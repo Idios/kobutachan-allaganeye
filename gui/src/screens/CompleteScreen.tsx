@@ -7,7 +7,27 @@ import { RestoreButton } from '../components/RestoreButton';
 import { sampleBrightness } from '../data/sampleMetadata';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
+import { fmtTime } from '../utils/time';
 import styles from './CompleteScreen.module.css';
+
+/**
+ * Render the elapsed detection wall-clock as a M:SS / H:MM:SS string,
+ * falling back to "—" when either timestamp is missing or unparseable
+ * (#586 受け入れ条件 #586-3 legacy fallback). Pure function: no store
+ * access, no side-effects, exported only for testing convenience.
+ */
+export function formatElapsed(
+  startedAt: string | undefined,
+  completedAt: string | undefined,
+): string {
+  if (!startedAt || !completedAt) return '—';
+  const startMs = Date.parse(startedAt);
+  const endMs = Date.parse(completedAt);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
+    return '—';
+  }
+  return fmtTime((endMs - startMs) / 1000);
+}
 
 /**
  * Phase 2 complete screen. Uses metadataStore for the list of matches and
@@ -71,6 +91,15 @@ export function CompleteScreen() {
           <div>
             <div className={styles.statLabel}>試合数</div>
             <div className={styles.statValue}>{metadata.matches.length}</div>
+          </div>
+          <div>
+            <div className={styles.statLabel}>所要</div>
+            <div className={styles.statValue}>
+              {formatElapsed(
+                metadata.detection_started_at,
+                metadata.detection_completed_at,
+              )}
+            </div>
           </div>
           <div>
             <div className={styles.statLabel}>総尺</div>

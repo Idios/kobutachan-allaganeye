@@ -89,6 +89,19 @@ export interface Metadata {
    */
   source_fps?: number;
   detected_at: string;
+  /**
+   * #586 -- 検知パイプライン開始直前のタイムスタンプ (ISO 8601 UTC `Z`)。
+   * 新規書き込み (post-#586) は ``detected_at`` と同値。pre-#586 metadata.json
+   * では存在しないため optional。CompleteScreen は欠落時に「所要」を `-`
+   * 表示にフォールバックする。
+   */
+  detection_started_at?: string;
+  /**
+   * #586 -- metadata.json 書き込み直前のタイムスタンプ (ISO 8601 UTC `Z`)。
+   * GUI CompleteScreen が ``completed - started`` で「所要」(elapsed) を
+   * 計算する。pre-#586 では存在しないため optional。
+   */
+  detection_completed_at?: string;
   detection_params: DetectionParams;
   matches: Match[];
   gaps: Gap[];

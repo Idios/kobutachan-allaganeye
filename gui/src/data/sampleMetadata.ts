@@ -25,6 +25,10 @@ export const sampleMetadata: Metadata = {
   source_duration_display: '2:50:28',
   source_fps: 60,
   detected_at: '2026-04-19T12:34:56Z',
+  // #586 -- detection_started_at は detected_at と同値、completed_at は
+  // +267s (= 4分27秒) で sampleMetadata の elapsed が「04:27」になるよう設定。
+  detection_started_at: '2026-04-19T12:34:56Z',
+  detection_completed_at: '2026-04-19T12:39:23Z',
   detection_params: {
     sample_interval: 2.0,
     blackout_threshold: 15.0,
