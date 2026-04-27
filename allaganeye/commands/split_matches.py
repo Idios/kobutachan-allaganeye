@@ -937,7 +937,15 @@ def _split_and_write_metadata(
     system_info: dict,
     quiet: bool = False,
 ) -> None:
-    """Split video and write metadata.json (#591: system_info required)."""
+    """Split video and write metadata.json (#591: system_info required).
+
+    ``detection_completed_at`` (#586) is captured *here* -- immediately
+    before metadata.json is written -- so it always reflects the wall-clock
+    end of the detect+split (or split-only) pipeline. Pairs with the
+    caller-supplied ``detected_at`` (= ``detection_started_at``) to let
+    GUI compute the「所要」elapsed time without storing a duration that
+    a future user-driven re-split would invalidate.
+    """
     show = not quiet
     source_duration = metadata["duration"]
 
@@ -968,11 +976,14 @@ def _split_and_write_metadata(
     # Write metadata (#463: ``note`` field retired; caveats documented in
     # docs/cli-spec.md and docs/metadata-spec.md instead of being embedded
     # in the payload)
+    detection_completed_at = _iso_utc_now()
     result = _build_metadata_payload(
         video_path=video_path,
         source_duration=source_duration,
         source_fps=metadata["fps"],
         detected_at=detected_at,
+        detection_started_at=detected_at,
+        detection_completed_at=detection_completed_at,
         effective_interval=effective_interval,
         config=config,
         boundaries=boundaries,
@@ -995,6 +1006,8 @@ def _build_metadata_payload(
     source_duration: float,
     source_fps: float,
     detected_at: str,
+    detection_started_at: str,
+    detection_completed_at: str,
     effective_interval: float,
     config: SplitConfig,
     boundaries: list[MatchBoundary],
@@ -1019,6 +1032,14 @@ def _build_metadata_payload(
     encoder selection (NVENC / QSV / AMF / libx264). Optional field added
     in v1; readers without #591 simply ignore it. Build via
     ``_build_system_info``.
+
+    ``detection_started_at`` / ``detection_completed_at`` (#586): wall-clock
+    ISO 8601 UTC timestamps bracketing the detect (or detect-skipped split)
+    pipeline. GUI ``CompleteScreen`` computes ``elapsed = completed -
+    started`` to display the「所要」column. ``detection_started_at`` is the
+    same value as ``detected_at`` (the legacy field is retained verbatim
+    for backward compatibility); ``detection_completed_at`` is captured
+    immediately before metadata.json is written.
     """
     return {
         "schema_version": "1",
@@ -1027,6 +1048,8 @@ def _build_metadata_payload(
         "source_duration_display": _format_timestamp(source_duration),
         "source_fps": source_fps,
         "detected_at": detected_at,
+        "detection_started_at": detection_started_at,
+        "detection_completed_at": detection_completed_at,
         "detection_params": {
             "sample_interval": effective_interval,
             "blackout_threshold": config.blackout_threshold,

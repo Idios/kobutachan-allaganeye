@@ -186,11 +186,18 @@ def run_detect(
         vendor_used=gpu_vendor if use_gpu else None,
     )
 
+    # #586: capture wall-clock end of the detect pipeline immediately
+    # before writing metadata.json, so GUI CompleteScreen can compute
+    # elapsed = detection_completed_at - detection_started_at without
+    # storing a stale duration.
+    detection_completed_at = _iso_utc_now()
     payload = _build_metadata_payload(
         video_path=video_path,
         source_duration=metadata["duration"],
         source_fps=metadata["fps"],
         detected_at=detected_at,
+        detection_started_at=detected_at,
+        detection_completed_at=detection_completed_at,
         effective_interval=effective_interval,
         config=config,
         boundaries=boundaries,
