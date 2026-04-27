@@ -66,11 +66,36 @@ jobs:
         with:
           python-version: '3.11.9'
 
+      # Node + Rust toolchain for Tauri GUI build (#570). bundle.active = false
+      # in tauri.conf.json so `npm run tauri build` only compiles the .exe and
+      # skips NSIS/MSI installer generation; the resulting allaganeye-gui.exe
+      # is renamed to "Allagan Eye.exe" inside scripts/build-portable-zip.ps1
+      # at packaging time.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+
       - name: Cache FFmpeg archive
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/build-cache
           key: btbn-ffmpeg-win64-lgpl-shared-8.1-fef865cab8a097f07f1dcba66d73be94742b79d952cf6fd8643bd42c18995034
+
+      - name: Install GUI dependencies (#570)
+        shell: pwsh
+        working-directory: gui
+        run: npm install --no-audit --no-fund
+
+      - name: Build Tauri GUI binary (#570)
+        shell: pwsh
+        working-directory: gui
+        run: npm run tauri build
 
       - name: Build Portable ZIP (skip archive)
         shell: pwsh

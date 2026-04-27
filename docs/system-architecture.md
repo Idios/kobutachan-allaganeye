@@ -48,7 +48,7 @@ Allagan Eye は **別 exe 方式**を採用する (2026-04-23 確定、#527)。�
 |---|---|---|---|
 | `allaganeye.bat` (Portable ZIP) | Cmd / PowerShell で引数付き実行 | 同梱 Python + `python -m allaganeye` | リリース済み (v0.1.1) |
 | `allaganeye` (Python venv 内) | `python -m allaganeye <cmd>` | pyproject.toml の console_scripts | 開発時 |
-| `Allagan Eye.exe` (Tauri bundle) | ダブルクリック / start menu | Tauri 2 ランタイム | 将来 (現在 `tauri.conf.json` の `bundle.active = false`) |
+| `Allagan Eye.exe` (Tauri bundle) | ダブルクリック / start menu | Tauri 2 ランタイム | v0.2.0 で対応 (#570)。Portable ZIP に同梱、`tauri.conf.json` の `bundle.active = false` のまま `.exe` 単体を生成し `scripts/build-portable-zip.ps1` で `allaganeye-gui.exe` → `Allagan Eye.exe` にリネームコピー。NSIS / MSI installer は現バージョンでは生成しない |
 
 ### 2.2 判断根拠
 

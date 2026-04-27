@@ -130,14 +130,47 @@ function Format-ReadmeContent {
   <#
   Produce the README.txt shipped inside the Portable ZIP. Exposing this as a
   function lets Pester assert the LGPLv3 attribution + source pointers are
-  present without running a full build.
+  present without running a full build. Pass -IncludeGui to add the GUI launch
+  + WebView2 dependency notice when the Tauri-built `Allagan Eye.exe` is bundled.
   #>
   param(
     [Parameter(Mandatory = $true)][string]$Version,
     [Parameter(Mandatory = $true)][string]$FFmpegVersion,
     [Parameter(Mandatory = $true)][string]$FFmpegBuildTag,
-    [Parameter(Mandatory = $true)][string]$FFmpegSourceCommit
+    [Parameter(Mandatory = $true)][string]$FFmpegSourceCommit,
+    [switch]$IncludeGui
   )
+  $guiSection = if ($IncludeGui) {
+@"
+
+### GUI: double-click ``Allagan Eye.exe``
+
+For a graphical interface, double-click ``Allagan Eye.exe`` in this folder. The
+GUI lets you drop a video file, review detected matches, fine-tune match
+boundaries, and export each match as MP4.
+
+NOTE: ``Allagan Eye.exe`` requires Microsoft Edge WebView2 Runtime, which is
+preinstalled on Windows 11 and recent Windows 10 builds. If the GUI fails to
+start with a missing-runtime dialog, install it from:
+
+    https://developer.microsoft.com/en-us/microsoft-edge/webview2/
+
+(``Evergreen Standalone Installer`` is sufficient and does not require admin
+rights for per-user install.)
+
+"@
+  }
+  else { '' }
+
+  $guiLicenseLine = if ($IncludeGui) {
+@"
+- Allagan Eye GUI (``Allagan Eye.exe``): MIT (built with Tauri 2.x + React 19)
+    WebView2 Runtime is loaded from the user's system at runtime, not redistributed.
+
+"@
+  }
+  else { '' }
+
   return @"
 # allaganeye v$Version (Portable ZIP for Windows)
 
@@ -161,13 +194,13 @@ this folder and run:
     allaganeye.bat split "C:\path\to\video.mkv"
     allaganeye.bat split "C:\path\to\video.mkv" --dry-run
     allaganeye.bat --version
-
+$guiSection
 See https://github.com/Idios/kobutachan-allaganeye for full documentation.
 
 ## Licenses
 
 - allaganeye: MIT (see the repository LICENSE file)
-- Python: PSF License (python\LICENSE.txt)
+$guiLicenseLine- Python: PSF License (python\LICENSE.txt)
 - FFmpeg: LGPLv3 (full text in ffmpeg\LICENSE.txt)
     Build:         ffmpeg n$FFmpegVersion win64-lgpl-shared build (BtbN/FFmpeg-Builds)
     Build tag:     $FFmpegBuildTag
@@ -332,15 +365,39 @@ Copy-Item -Path $FFmpegLayout.License -Destination (Join-Path $FFmpegDest 'LICEN
 $Launcher = Get-LauncherTemplate
 Set-Content -Path (Join-Path $PayloadDir 'allaganeye.bat') -Value $Launcher -Encoding ASCII
 
-# 6. README
+# 6. Tauri GUI bundle (optional, auto-detect)
+# Copy the Tauri-built GUI binary into the payload root and rename to
+# `Allagan Eye.exe` so users can double-click it (matches productName from
+# tauri.conf.json). The cargo binary itself is named `allaganeye-gui.exe`
+# because Cargo package names cannot contain spaces; we keep the cargo name
+# stable and rename only at packaging time.
+#
+# Build is the caller's responsibility: CI runs `npm install && npm run tauri build`
+# in a preceding workflow step, and the resulting exe lands at
+# gui/src-tauri/target/release/allaganeye-gui.exe. tauri.conf.json keeps
+# `bundle.active = false` because the Portable ZIP is the distribution form
+# and Tauri's NSIS/MSI bundles are not used. Local dry-run may skip the
+# Tauri build; if the exe is absent we log a warning and continue (CLI-only ZIP).
+$TauriExe = Join-Path $RepoRoot 'gui\src-tauri\target\release\allaganeye-gui.exe'
+$TauriIncluded = $false
+if (Test-Path $TauriExe) {
+  Copy-Item -Path $TauriExe -Destination (Join-Path $PayloadDir 'Allagan Eye.exe')
+  Write-Host "Bundled GUI: $TauriExe -> $PayloadDir\Allagan Eye.exe"
+  $TauriIncluded = $true
+} else {
+  Write-Warning "Tauri GUI build not found at $TauriExe - Portable ZIP will be built without Allagan Eye.exe. Run 'cd gui && npm install && npm run tauri build' first to include the GUI."
+}
+
+# 7. README (after Tauri detection so the GUI section is conditional)
 $Readme = Format-ReadmeContent `
   -Version $Version `
   -FFmpegVersion $FFmpegVersion `
   -FFmpegBuildTag $FFmpegBuildTag `
-  -FFmpegSourceCommit $FFmpegSourceCommit
+  -FFmpegSourceCommit $FFmpegSourceCommit `
+  -IncludeGui:$TauriIncluded
 Set-Content -Path (Join-Path $PayloadDir 'README.txt') -Value $Readme -Encoding UTF8
 
-# 7. Compress (skipped with -SkipArchive so CI can hand the payload folder
+# 8. Compress (skipped with -SkipArchive so CI can hand the payload folder
 # directly to actions/upload-artifact; upload-artifact zips it once instead of
 # producing a nested zip).
 if ($SkipArchive) {
