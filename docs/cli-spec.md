@@ -1,6 +1,6 @@
 # CLI コマンド仕様
 
-> **スコープ**: 本 doc は CLI (`allaganeye` サブコマンド) の構文を扱う。GUI (Allagan Eye.exe) と CLI の起動経路・全体像は [system-architecture.md](system-architecture.md) を参照。
+> **スコープ**: 本 doc は CLI (`allaganeye` サブコマンド) の構文を扱う。GUI (`allaganeye-gui.exe`) と CLI の起動経路・全体像は [system-architecture.md](system-architecture.md) を参照。
 
 CLI コマンド・引数・オプションの**構文**をまとめる。各オプション組み合わせごとの**出力側**の期待仕様は [`docs/output-spec.md`](output-spec.md) に分離して定義されており、新規 CLI オプション追加時はそちらのマトリクスも更新する (#405)。
 

@@ -17,7 +17,7 @@
 │                                                                  │
 │  L2b: Portable ZIP / Tauri bundle (配布形態)                    │
 │  ├── allaganeye.bat              ── CLI 起動 (Python ランタイム) │
-│  └── Allagan Eye.exe (future)    ── GUI 起動 (Tauri bundle)      │
+│  └── allaganeye-gui.exe (future)    ── GUI 起動 (Tauri bundle)      │
 │       │                                                           │
 │       └─ subprocess spawn ─► allaganeye.exe / allaganeye.bat     │
 │                                                                   │
@@ -48,7 +48,7 @@ Allagan Eye は **別 exe 方式**を採用する (2026-04-23 確定、#527)。�
 |---|---|---|---|
 | `allaganeye.bat` (Portable ZIP) | Cmd / PowerShell で引数付き実行 | 同梱 Python + `python -m allaganeye` | リリース済み (v0.1.1) |
 | `allaganeye` (Python venv 内) | `python -m allaganeye <cmd>` | pyproject.toml の console_scripts | 開発時 |
-| `Allagan Eye.exe` (Tauri bundle) | ダブルクリック / start menu | Tauri 2 ランタイム | v0.2.0 で対応 (#570)。Portable ZIP に同梱、`tauri.conf.json` の `bundle.active = false` のまま `.exe` 単体を生成し `scripts/build-portable-zip.ps1` で `allaganeye-gui.exe` → `Allagan Eye.exe` にリネームコピー。NSIS / MSI installer は現バージョンでは生成しない |
+| `allaganeye-gui.exe` (Tauri bundle) | ダブルクリック / start menu | Tauri 2 ランタイム | v0.2.0 で対応 (#570)。Portable ZIP に同梱、`tauri.conf.json` の `bundle.active = false` のまま `.exe` 単体を生成し `scripts/build-portable-zip.ps1` で `allaganeye-gui.exe` をそのまま payload にコピー (リネームなし、Cargo binary 名を直接使用)。productName "Allagan Eye" は Tauri のウィンドウタイトルにのみ使われる。NSIS / MSI installer は現バージョンでは生成しない |
 
 ### 2.2 判断根拠
 
@@ -83,7 +83,7 @@ preview 画面での `<video>` 再生には axum ベースの局所 HTTP サー�
 ```mermaid
 sequenceDiagram
     participant User
-    participant GUI as Allagan Eye.exe
+    participant GUI as allaganeye-gui.exe
     participant CLI as allaganeye detect/split
     participant Disk as metadata.json + MP4
 
@@ -131,7 +131,7 @@ sequenceDiagram
 - **metadata.json のスキーマ変更** → [metadata-spec.md §schema_version](metadata-spec.md) の migration policy に従う (#515)
 - **CLI の新サブコマンド** → [cli-spec.md](cli-spec.md) 更新 / GUI が spawn するなら本 doc §2.3 にも行追加
 - **GUI の新画面** → [ui-architecture.md §screen 遷移図](ui-architecture.md) の Mermaid 図更新
-- **起動経路の変更** (例: `Allagan Eye.exe` を別アーキでビルド) → 本 doc §2 の表を更新
+- **起動経路の変更** (例: `allaganeye-gui.exe` を別アーキでビルド) → 本 doc §2 の表を更新
 - **bundle 形態の変更** (例: MSIX 採用) → リリース戦略 ([release-strategy.md](release-strategy.md)) と本 doc §2.1 を同時更新
 
 ## 6. 関連 issue / doc

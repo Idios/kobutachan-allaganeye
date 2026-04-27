@@ -69,8 +69,9 @@ jobs:
       # Node + Rust toolchain for Tauri GUI build (#570). bundle.active = false
       # in tauri.conf.json so `npm run tauri build` only compiles the .exe and
       # skips NSIS/MSI installer generation; the resulting allaganeye-gui.exe
-      # is renamed to "Allagan Eye.exe" inside scripts/build-portable-zip.ps1
-      # at packaging time.
+      # is copied as-is into the Portable ZIP payload by
+      # scripts/build-portable-zip.ps1 at packaging time (no rename, the cargo
+      # binary name without whitespace is used directly).
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

@@ -131,7 +131,7 @@ function Format-ReadmeContent {
   Produce the README.txt shipped inside the Portable ZIP. Exposing this as a
   function lets Pester assert the LGPLv3 attribution + source pointers are
   present without running a full build. Pass -IncludeGui to add the GUI launch
-  + WebView2 dependency notice when the Tauri-built `Allagan Eye.exe` is bundled.
+  + WebView2 dependency notice when the Tauri-built `allaganeye-gui.exe` is bundled.
   #>
   param(
     [Parameter(Mandatory = $true)][string]$Version,
@@ -143,13 +143,13 @@ function Format-ReadmeContent {
   $guiSection = if ($IncludeGui) {
 @"
 
-### GUI: double-click ``Allagan Eye.exe``
+### GUI: double-click ``allaganeye-gui.exe``
 
-For a graphical interface, double-click ``Allagan Eye.exe`` in this folder. The
+For a graphical interface, double-click ``allaganeye-gui.exe`` in this folder. The
 GUI lets you drop a video file, review detected matches, fine-tune match
 boundaries, and export each match as MP4.
 
-NOTE: ``Allagan Eye.exe`` requires Microsoft Edge WebView2 Runtime, which is
+NOTE: ``allaganeye-gui.exe`` requires Microsoft Edge WebView2 Runtime, which is
 preinstalled on Windows 11 and recent Windows 10 builds. If the GUI fails to
 start with a missing-runtime dialog, install it from:
 
@@ -164,7 +164,7 @@ rights for per-user install.)
 
   $guiLicenseLine = if ($IncludeGui) {
 @"
-- Allagan Eye GUI (``Allagan Eye.exe``): MIT (built with Tauri 2.x + React 19)
+- Allagan Eye GUI (``allaganeye-gui.exe``): MIT (built with Tauri 2.x + React 19)
     WebView2 Runtime is loaded from the user's system at runtime, not redistributed.
 
 "@
@@ -366,11 +366,11 @@ $Launcher = Get-LauncherTemplate
 Set-Content -Path (Join-Path $PayloadDir 'allaganeye.bat') -Value $Launcher -Encoding ASCII
 
 # 6. Tauri GUI bundle (optional, auto-detect)
-# Copy the Tauri-built GUI binary into the payload root and rename to
-# `Allagan Eye.exe` so users can double-click it (matches productName from
-# tauri.conf.json). The cargo binary itself is named `allaganeye-gui.exe`
-# because Cargo package names cannot contain spaces; we keep the cargo name
-# stable and rename only at packaging time.
+# Copy the Tauri-built GUI binary (allaganeye-gui.exe) into the payload root
+# as-is. The cargo binary name has no whitespace so users / scripts can
+# reference it without quoting headaches; tauri.conf.json `productName`
+# ("Allagan Eye") is still used by Tauri for the window title at runtime,
+# but the executable filename stays in cargo/snake/dash form for portability.
 #
 # Build is the caller's responsibility: CI runs `npm install && npm run tauri build`
 # in a preceding workflow step, and the resulting exe lands at
@@ -381,11 +381,11 @@ Set-Content -Path (Join-Path $PayloadDir 'allaganeye.bat') -Value $Launcher -Enc
 $TauriExe = Join-Path $RepoRoot 'gui\src-tauri\target\release\allaganeye-gui.exe'
 $TauriIncluded = $false
 if (Test-Path $TauriExe) {
-  Copy-Item -Path $TauriExe -Destination (Join-Path $PayloadDir 'Allagan Eye.exe')
-  Write-Host "Bundled GUI: $TauriExe -> $PayloadDir\Allagan Eye.exe"
+  Copy-Item -Path $TauriExe -Destination (Join-Path $PayloadDir 'allaganeye-gui.exe')
+  Write-Host "Bundled GUI: $TauriExe -> $PayloadDir\allaganeye-gui.exe"
   $TauriIncluded = $true
 } else {
-  Write-Warning "Tauri GUI build not found at $TauriExe - Portable ZIP will be built without Allagan Eye.exe. Run 'cd gui && npm install && npm run tauri build' first to include the GUI."
+  Write-Warning "Tauri GUI build not found at $TauriExe - Portable ZIP will be built without the GUI binary. Run 'cd gui && npm install && npm run tauri build' first to include the GUI."
 }
 
 # 7. README (after Tauri detection so the GUI section is conditional)
