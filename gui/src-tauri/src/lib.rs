@@ -2706,6 +2706,29 @@ mod tests {
         assert!(is_gpu_encoder_failure(stderr, H264Encoder::Qsv));
     }
 
+    /// #604 false-positive 防止: NVENC pattern (`Cannot load nvcuda.dll`)
+    /// が AMF / QSV stderr context では false を返すこと (retry 暴走防止)。
+    /// QSV の `Could not open encoder` generic message に対する
+    /// `is_gpu_encoder_failure_qsv_requires_h264_qsv_context_for_generic_open_error`
+    /// と同種の cross-encoder context test。
+    #[test]
+    fn is_gpu_encoder_failure_nvenc_nvcuda_pattern_does_not_match_other_encoders() {
+        let stderr = "[h264_nvenc @ 0x1] Cannot load nvcuda.dll\n";
+        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
+        assert!(!is_gpu_encoder_failure(stderr, H264Encoder::Amf));
+        assert!(!is_gpu_encoder_failure(stderr, H264Encoder::Qsv));
+    }
+
+    /// #604 false-positive 防止: AMF pattern (`DLL amfrt64.dll failed to open`)
+    /// が NVENC / QSV stderr context では false を返すこと (retry 暴走防止)。
+    #[test]
+    fn is_gpu_encoder_failure_amf_amfrt64_pattern_does_not_match_other_encoders() {
+        let stderr = "[AMF @ 0x1] DLL amfrt64.dll failed to open\n";
+        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Amf));
+        assert!(!is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
+        assert!(!is_gpu_encoder_failure(stderr, H264Encoder::Qsv));
+    }
+
     /// ExportProgress::fallback_from が serde で正しく往復する。
     #[test]
     fn export_progress_fallback_from_serde_roundtrip() {
