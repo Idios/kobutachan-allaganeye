@@ -136,6 +136,49 @@ Describe 'Format-ReadmeContent' {
     # paragraph; assert the new dynamic-linking explanation is present.
     $readme | Should -Match 'shared-build DLLs'
   }
+
+  It '-IncludeGui:$true emits the GUI launch section and WebView2 runtime notice (#570)' {
+    # When the Tauri-built allaganeye-gui.exe is bundled (Portable ZIP includes
+    # both CLI .bat and GUI .exe), README.txt must instruct users to
+    # double-click and warn about WebView2 Runtime dependency on older Windows.
+    $readme = Format-ReadmeContent `
+      -Version '0.2.0' `
+      -FFmpegVersion '8.1' `
+      -FFmpegBuildTag 'autobuild-2026-04-22-13-15' `
+      -FFmpegSourceCommit '7f5c90f77e' `
+      -IncludeGui:$true
+    $readme | Should -Match 'double-click'
+    $readme | Should -Match 'WebView2 Runtime'
+    $readme | Should -Match 'developer\.microsoft\.com'
+  }
+
+  It '-IncludeGui:$true emits the Tauri 2 / React 19 license entry (#570)' {
+    # GUI license entry is required for the MIT + WebView2 + Tauri attribution
+    # so that the dual-license structure (CLI MIT / FFmpeg LGPLv3 / GUI MIT) is
+    # explicit in the user-facing README.
+    $readme = Format-ReadmeContent `
+      -Version '0.2.0' `
+      -FFmpegVersion '8.1' `
+      -FFmpegBuildTag 'autobuild-2026-04-22-13-15' `
+      -FFmpegSourceCommit '7f5c90f77e' `
+      -IncludeGui:$true
+    $readme | Should -Match 'Allagan Eye GUI'
+    $readme | Should -Match 'Tauri 2'
+  }
+
+  It '-IncludeGui:$false (default) omits the GUI section for CLI-only ZIPs (#570)' {
+    # Local dry-run / partial builds may produce CLI-only Portable ZIPs (no
+    # Tauri exe). README.txt must not advertise the GUI in that case to avoid
+    # user confusion. Default value of -IncludeGui is $false.
+    $readme = Format-ReadmeContent `
+      -Version '0.2.0' `
+      -FFmpegVersion '8.1' `
+      -FFmpegBuildTag 'autobuild-2026-04-22-13-15' `
+      -FFmpegSourceCommit '7f5c90f77e'
+    $readme | Should -Not -Match 'WebView2 Runtime'
+    $readme | Should -Not -Match 'Allagan Eye GUI'
+    $readme | Should -Not -Match 'allaganeye-gui\.exe'
+  }
 }
 
 Describe 'Get-LauncherTemplate' {

@@ -10,6 +10,16 @@ on:
       - 'scripts/build-portable-zip.ps1'
       - 'scripts/extract_release_notes.py'
       - 'pyproject.toml'
+      # GUI 関連: tauri build を release CI で実行するため (#570)。
+      # tauri.conf.json / Cargo.toml / Rust src / TS src / vite config の単独変更でも
+      # release CI を trigger し、Tauri build 失敗の検出が遅れないようにする。
+      - 'gui/package.json'
+      - 'gui/package-lock.json'
+      - 'gui/src-tauri/**'
+      - 'gui/src/**'
+      - 'gui/index.html'
+      - 'gui/vite.config.ts'
+      - 'gui/tsconfig*.json'
   workflow_dispatch:
     inputs:
       version_override:
@@ -66,15 +76,55 @@ jobs:
         with:
           python-version: '3.11.9'
 
+      # Node + Rust toolchain for Tauri GUI build (#570). bundle.active = false
+      # in tauri.conf.json so `npm run tauri build` only compiles the .exe and
+      # skips NSIS/MSI installer generation; the resulting allaganeye-gui.exe
+      # is copied as-is into the Portable ZIP payload by
+      # scripts/build-portable-zip.ps1 at packaging time (no rename, the cargo
+      # binary name without whitespace is used directly).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+
       - name: Cache FFmpeg archive
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/build-cache
           key: btbn-ffmpeg-win64-lgpl-shared-8.1-fef865cab8a097f07f1dcba66d73be94742b79d952cf6fd8643bd42c18995034
 
+      - name: Install GUI dependencies (#570)
+        shell: pwsh
+        working-directory: gui
+        run: npm install --no-audit --no-fund
+
+      - name: Build Tauri GUI binary (#570)
+        shell: pwsh
+        working-directory: gui
+        run: npm run tauri build
+
       - name: Build Portable ZIP (skip archive)
         shell: pwsh
         run: ./scripts/build-portable-zip.ps1 -Version '${{ needs.version-check.outputs.version }}' -SkipArchive
+
+      # build-portable-zip.ps1 は Tauri exe が見つからない場合 Write-Warning で
+      # 続行する (CLI-only ZIP として artifact 化) ため、payload に exe が含まれない
+      # 回帰を smoke test の前に明示 fail させる (#570 受け入れ条件 #3)。
+      - name: Verify allaganeye-gui.exe is bundled (#570)
+        shell: pwsh
+        run: |
+          $version = '${{ needs.version-check.outputs.version }}'
+          $exePath = "build/portable/allaganeye-v$version/allaganeye-gui.exe"
+          if (-not (Test-Path $exePath)) {
+            throw "allaganeye-gui.exe not found in payload: $exePath (build-portable-zip.ps1 may have hit the auto-detect Write-Warning path - check 'Build Tauri GUI binary' step)"
+          }
+          $size = (Get-Item $exePath).Length / 1MB
+          Write-Host "allaganeye-gui.exe bundled at $exePath ($([math]::Round($size, 2)) MB)"
 
       - name: Smoke test (run launcher --version from built payload)
         shell: pwsh
