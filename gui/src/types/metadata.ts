@@ -50,6 +50,27 @@ export interface MetadataWarning {
   context?: Record<string, unknown>;
 }
 
+/**
+ * #591 -- GPU vendor probe snapshot recorded by detect/split.
+ *
+ * - `gpu_vendors_available`: vendors detected via `probe_gpu_vendors()`
+ *   (subset of `{"nvidia","amd","intel"}`).
+ * - `gpu_vendor_used`: vendor actually consumed by GPU decode in this
+ *   detect run. `null` when CPU was forced (`--no-gpu`), the cache hit
+ *   skipped detection, or the run came from `split --from-metadata`.
+ * - `vendor_preference`: snapshot of `gpu_detector._VENDOR_PREFERENCE`
+ *   used to resolve auto-selection (currently
+ *   `["nvidia","amd","intel"]`).
+ *
+ * GUI export uses these to pick H.264 encoder via
+ * `select_h264_encoder_for_export` Tauri command.
+ */
+export interface SystemInfo {
+  gpu_vendors_available: string[];
+  gpu_vendor_used: string | null;
+  vendor_preference: string[];
+}
+
 export interface Metadata {
   /**
    * #515: schema revision declaration. Optional on the TS type because
@@ -73,4 +94,10 @@ export interface Metadata {
   gaps: Gap[];
   /** #518 -- optional on the TS type because legacy files don't emit it. */
   warnings?: MetadataWarning[];
+  /**
+   * #591 -- GPU vendor probe snapshot. Optional because pre-#591
+   * metadata.json files don't carry the field; ExportScreen falls back
+   * to libx264 when missing.
+   */
+  system_info?: SystemInfo;
 }

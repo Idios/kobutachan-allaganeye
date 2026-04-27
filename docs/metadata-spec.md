@@ -25,6 +25,7 @@
 | `matches` | array | ✓ | 試合セグメント列 (0 件可) | |
 | `gaps` | array | ✓ | 試合間の空白区間列 (0 件可) | |
 | `warnings` | array | 新規書き込みは ✓ (デフォルト `[]`) / 読み込み時は欠落許容 | 構造化警告一覧 (#518) | 個々のエントリは §warnings 参照 |
+| `system_info` | object | 新規書き込みは ✓ / 読み込み時は欠落許容 (#591) | GPU vendor probe スナップショット | 後述 §system_info 参照 |
 
 ### `detection_params` オブジェクト
 
@@ -51,6 +52,24 @@
 | `duration_display` | string | ✓ | 長さ表示 (例: `15m15s`) |
 | `type` | string | ✓ | `fl_match` または `unknown` |
 | `output_file` | string | ✓ | 出力 MP4 ファイル名 (相対パス、metadata.json と同ディレクトリ想定) |
+
+### `system_info` オブジェクト (#591)
+
+GPU vendor probe スナップショット。`probe_gpu_vendors()` の結果と、`_VENDOR_PREFERENCE` のスナップショット、実際 detect 経路で使った vendor を保存する。GUI export 画面が H.264 再エンコードのエンコーダ選択 (NVENC / QSV / AMF / libx264 fallback) に使用する。
+
+| フィールド | 型 | 必須 | 意味 |
+|---|---|---|---|
+| `gpu_vendors_available` | array of string | ✓ | probe で検出された vendor 識別子の集合。`{"nvidia","amd","intel"}` の subset。空配列はその環境に GPU が無い (CPU only) |
+| `gpu_vendor_used` | string \| null | ✓ | 実際 detect で使った vendor。CPU 強制 (`--no-gpu`) / cache hit / `split --from-metadata` では `null` |
+| `vendor_preference` | array of string | ✓ | `gpu_detector._VENDOR_PREFERENCE` のスナップショット。現状 `["nvidia","amd","intel"]` |
+
+書き込みパス:
+
+- `allaganeye detect`: detect 経路で probe → vendor_used = 採用した vendor (CPU 強制なら null)
+- `allaganeye split <video>` (legacy): cache miss なら detect と同じ / cache hit は probe を実行し vendor_used = null
+- `allaganeye split --from-metadata`: probe を実行し vendor_used = null (split 時点では vendor を選ばないため)
+
+GUI export 画面は `system_info.gpu_vendors_available` と `vendor_preference` を `select_h264_encoder_for_export` Tauri コマンドに渡し、`H264Encoder` enum (libx264 / NVENC / QSV / AMF) を解決する。`system_info` を持たない pre-#591 metadata.json は libx264 にフォールバックする。
 
 ### `Gap` オブジェクト (`gaps[]`)
 

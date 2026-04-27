@@ -22,6 +22,7 @@ import typer
 from allaganeye.commands.split_matches import (
     _auto_sample_interval,
     _build_metadata_payload,
+    _build_system_info,
     _display_cache_hit_params,
     _display_gaps,
     _display_results,
@@ -32,7 +33,7 @@ from allaganeye.commands.split_matches import (
     _load_cache,
     _print_environment_header,
     _print_detection_stats,
-    _resolve_gpu_mode,
+    _resolve_gpu_mode_with_probe,
     _run_audio_scan,
     _run_detection,
     _save_cache,
@@ -82,6 +83,9 @@ def run_detect(
 
     cache_path = config.output_dir / ".detection_cache.json"
     boundaries = None
+    use_gpu = False
+    gpu_vendor: str | None = None
+    available_vendors: list[str] = []
     if not config.no_cache:
         boundaries = _load_cache(cache_path, video_path, effective_interval, config)
         if boundaries is not None:
@@ -91,7 +95,7 @@ def run_detect(
                 _display_results(boundaries, metadata, video_path, verbose, cached=True)
 
     if boundaries is None:
-        use_gpu, gpu_vendor = _resolve_gpu_mode(
+        use_gpu, gpu_vendor, available_vendors = _resolve_gpu_mode_with_probe(
             config.use_gpu,
             config.gpu_vendor,
             metadata.get("codec"),
@@ -169,6 +173,19 @@ def run_detect(
         Path(f"match_{i + 1:03d}.mp4") for i, _ in enumerate(boundaries)
     ]
 
+    # #591 -- cache hit のときは _resolve_gpu_mode を通らないので
+    # available_vendors が空 list のまま。GUI export が「現在の環境」を
+    # 反映できるように probe し直す。cache miss path では既に
+    # _resolve_gpu_mode で probe 済みなのでその値を再利用する。
+    if not available_vendors:
+        from allaganeye.system_info import probe_gpu_vendors
+
+        available_vendors = probe_gpu_vendors()
+    system_info = _build_system_info(
+        available_vendors=available_vendors,
+        vendor_used=gpu_vendor if use_gpu else None,
+    )
+
     payload = _build_metadata_payload(
         video_path=video_path,
         source_duration=metadata["duration"],
@@ -179,6 +196,7 @@ def run_detect(
         boundaries=boundaries,
         output_files=placeholder_paths,
         gaps=gaps,
+        system_info=system_info,
     )
     metadata_path = config.output_dir / "metadata.json"
     write_metadata_atomic(metadata_path, payload)
