@@ -147,7 +147,7 @@ Electron / Tauri の両方で最小プロトタイプを構築し F1-F5 を計�
 
 ## 画面ごとの仕様
 
-各画面の詳細は handoff HTML の該当 jsx を参照。主要ポイント:
+各画面の **UI 部品ごとの操作 → 状態遷移 / store mutation / 例外処理** は [`../ui-interaction-spec.md`](../ui-interaction-spec.md) を参照。本節は機能仕様の概要のみで、詳細は handoff HTML の該当 jsx を参照。主要ポイント:
 
 ### 1. drop
 

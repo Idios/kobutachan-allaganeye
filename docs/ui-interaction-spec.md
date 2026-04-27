@@ -833,13 +833,15 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | store mutation | なし |
 | 例外 / edge case | 通常フロー (complete から [全試合書き出し] / preview から [書き出し →]) では到達しない。dev StateSwitcher 経由のみ表示。文言 / 戻り導線 ([参照…] / drop へ) は [#587](https://github.com/Idios/kobutachan-allaganeye/issues/587) a11y/polish で議論 |
 
-## 3. 既存 doc との分担
+## 3. 既存 doc との分担 + クロスリファレンス
+
+### 3.1 doc 分担
 
 | doc | スコープ |
 |---|---|
 | [ui-architecture.md](ui-architecture.md) | screen / phase 2 層 state machine、screen 間遷移、コンポーネント階層、CSS Modules 慣例、性能目標 |
 | [design/README.md](design/README.md) | デザインシステム (色 / タイポ)、画面レイアウト原本 (handoff bundle)、各画面の機能仕様 |
-| [metadata-spec.md](metadata-spec.md) | metadata.json スキーマ・読み書き契約 (CLI / GUI 共通)・排他管理 (#514) ・draft auto-save (#517) |
+| [metadata-spec.md](metadata-spec.md) | metadata.json スキーマ・読み書き契約 (CLI / GUI 共通)・排他管理 ([#514](https://github.com/Idios/kobutachan-allaganeye/issues/514)) ・draft auto-save ([#517](https://github.com/Idios/kobutachan-allaganeye/issues/517)) |
 | **本 doc** | **各画面 UI 部品ごとの操作 → store mutation → 例外処理の状態機械 + 共通原則** |
 
 責務の境界:
@@ -847,6 +849,33 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 - **画面間遷移は ui-architecture.md** が source of truth。本 doc は画面間遷移を再記述しない (「→ navigate('complete')」程度の参照のみ)
 - **ピクセル / 色 / タイポは design/README.md** が source of truth。本 doc は disabled の見た目等を「`var(--ae-text-dim)` 系」のような token 参照で記述
 - **metadata.json の field 仕様は metadata-spec.md** が source of truth。本 doc は store mutation の対象 field を field 名のみで参照
+
+### 3.2 状態名と mermaid 対応表
+
+5 画面の便宜状態名 (§2 各画面ヘッダで定義) と [ui-architecture.md](ui-architecture.md) §各画面 mermaid の状態を対応付ける。差異は意図的な分担 (§3.3 で集約) であり矛盾ではない。
+
+| 画面 | reducer | 本 doc 状態 (§2.x ヘッダ) | mermaid 状態 ([ui-architecture.md](ui-architecture.md)) | 差異 |
+|---|---|---|---|---|
+| drop (§2.1) | あり ([reducers/drop.ts](../gui/src/screens/reducers/drop.ts)) | `idle / selecting / probing / selected / probeError` | `drop_idle / drop_selecting / drop_probing / drop_selected / drop_probeError` | なし (本 doc は接頭辞 `drop_` 省略のみ) |
+| detecting (§2.2) | あり ([reducers/detecting.ts](../gui/src/screens/reducers/detecting.ts)) | `running / cancelling / cancelled / completed / error` | `detecting_running / detecting_cancelling / detecting_cancelled / detecting_completed / detecting_error` | なし (本 doc は接頭辞 `detecting_` 省略のみ) |
+| complete (§2.3) | なし | `complete_empty / complete_idle / complete_restoring` | `complete_idle / complete_restoring / complete_restoreError` | `complete_empty` は本 doc のみ (entry-time 特殊状態、§2.3.11 emptyNote と対応) / `complete_restoreError` は mermaid のみ (RestoreButton 共通 component 内 inline alert、§2.3.4 で扱う) |
+| preview (§2.4) | なし | `preview_empty / preview_idle / preview_applying / preview_applyError / preview_restoring` | `preview_idle / preview_applying / preview_applyError / preview_restoring / preview_restoreError` | `preview_empty` は本 doc のみ (§2.4.15 emptyNote) / `preview_restoreError` は mermaid のみ (§2.4.13 RestoreButton 共通 component) |
+| export (§2.5) | あり ([reducers/export.ts](../gui/src/screens/reducers/export.ts)) | `idle / running / cancelling / completed / error` | `export_idle / export_running / export_cancelling / export_completed / export_error` | 本 doc は接頭辞 `export_` 省略 (実装の `phase: ExportPhase` 直値に揃える)。mermaid `export_cancelling → export_idle: ffmpeg 停止` と内部 reducer `cancelling → idle (CANCEL_CONFIRMED)` は同形状簡略化 |
+
+### 3.3 「entry-time 特殊状態」「sub-component エラー」の扱い
+
+complete / preview の 2 画面で本 doc は 2 種の状態を **mermaid と非対称** に扱う:
+
+1. **`*_empty` (entry-time 特殊状態)**: `metadata === null` (complete §2.3.11) や `match` 解決失敗 (preview §2.4.15) を「画面 entry 時に発生しうる特殊 idle」として独立状態化。mermaid では entry エッジを暗黙化 (drop → detecting → complete の通常フローで到達しないため)。本 doc は §2.x.N emptyNote と対応付けて明示する
+2. **`*_restoreError` (sub-component エラー)**: RestoreButton ([components/RestoreButton.tsx](../gui/src/components/RestoreButton.tsx)) は `restoreError` を inline `role="alert"` で表示する共通 component。mermaid は画面レベル状態として記述するが、本 doc は §2.3.4 / §2.4.13 で RestoreButton 自身の状態 (`idle` / `busy` / `disabled`) として扱い、画面ヘッダの便宜状態列挙からは除外する
+
+両方とも意図的な分担で、**画面間遷移の正準は引き続き ui-architecture.md mermaid**。本 doc の §2.x ヘッダは「画面実装が明示的に持つ状態 + 表示が条件分岐する状態」を列挙する設計で揃えている。
+
+### 3.4 §1 共通原則の例外規定
+
+§2 画面別の記述から派生し、§1 共通原則の例外として明文化したもの:
+
+- **§1.1 例外 (export 画面の session-local config)**: `outDir` / `namePattern` / `codec` / `excludedIndexes` は match 編集ではない一時的な書き出し設定であり `metadataStore` に commit しない (§2.5 ヘッダで宣言)。同様の「画面マウント中のみ有効な session-local config」は今後追加する場合も local state で保持する。`updateMatch` 経由の §1.1 規律は **match 編集 (start/end/name/type) 限定** と読む
 
 ## 関連
 
