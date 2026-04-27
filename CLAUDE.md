@@ -104,7 +104,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `gui/src/components/` | 共通 UI コンポーネント (AllaganCorner / AllaganSigil / WindowChrome / BrightnessTimeline / RestoreButton / ConflictModal 等)。#464 で追加 |
 | `gui/src/state/` | Zustand store (`appStateStore` = screen + selection / `metadataStore` = load/apply/restore/loadSample) |
 | `gui/src/styles/tokens.css` | `aetherTheme` の CSS 変数定義 (#464 で追加) |
-| `gui/src-tauri/` | Tauri 2 Rust バックエンド (`load_metadata` / `apply_changes` / `restore_from_original` / `check_backup_exists` / `get_metadata_mtime` command、axum/tower-http による動画配信は #465 で実装予定) |
+| `gui/src-tauri/` | Tauri 2 Rust バックエンド (`load_metadata` / `apply_changes` / `restore_from_original` / `check_backup_exists` / `get_metadata_mtime` / `export_match` / `select_h264_encoder_for_export` (#591) command、axum/tower-http による動画配信は #465 で実装)。`H264Encoder` enum + `select_h264_encoder` + `is_gpu_encoder_failure` で GUI export の H.264 エンコーダ自動選択と libx264 fallback retry を実装 (#591) |
 
 ### 検知アルゴリズム（detector.py）
 
@@ -153,6 +153,8 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 - Pass 1 以降の処理（transition expansion, Pass 2, フィルタリング）は CPU/GPU 共通
 - GPU 利用不可時は自動で CPU モードにフォールバック
 - vendor 自動選択 (#546 / #553 / #550 / #582): `allaganeye.system_info.probe_gpu_vendors()` で検出した GPU から `_VENDOR_PREFERENCE = ("nvidia", "amd", "intel")` 順で選択。実装済み vendor は NVIDIA (cuvid, #546) / AMD (d3d11va + hwdownload, #553) / Intel (QSV + hwdownload, #550 h264/hevc/av1 + #582 vp9) の 3 つ。default (auto) は NVIDIA > AMD > Intel の preference 順で実装済み vendor を選ぶ
+- probe 結果は metadata.json `system_info` フィールドに記録され (#591)、GUI export 画面が H.264 再エンコードのエンコーダ選択 (NVENC / QSV / AMF / libx264 fallback) に使う。`--no-gpu` 指定時でも probe は実行し `gpu_vendors_available` を埋めるが、`gpu_vendor_used` は `null` になる
+- GUI export の H.264 再エンコード (#591): metadata の `system_info.gpu_vendors_available` + `vendor_preference` を `select_h264_encoder_for_export` Tauri コマンドで `H264Encoder` enum に解決し、ffmpeg を `h264_nvenc` / `h264_qsv` / `h264_amf` / `libx264` のいずれかで起動。GPU 初期化失敗 (NVENC `No NVENC capable devices found` 等) は `is_gpu_encoder_failure` で検知して libx264 で 1 回 retry し、`stage="fallback"` の `export-progress` イベントを emit (フロントエンドが per-match notice 表示)
 
 ### Exit Codes
 
@@ -211,7 +213,7 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 
 L2 からは**単一ワークツリー + skill ベースディスパッチ**を採用。詳細は `docs/l2-workflow.md` を参照。
 
-- 既存 skill: `/review-pr`, `/enforce-acceptance-criteria`, `/scope-guard`, `/create-task`, `/release`
+- 既存 skill: `/review-pr`, `/enforce-acceptance-criteria`, `/scope-guard`, `/create-task`, `/close-issue`, `/release`
 - 計画立案・実装・PR テストは Plan モード + 通常ツール + TodoWrite で代替
 - ユーザー (Idios) が戦略・方針を判断し、Claude は選択肢提示と実装を担う
 

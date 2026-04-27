@@ -195,6 +195,11 @@ def test_split_and_write_metadata_has_no_note_field(tmp_path):
             config,
             effective_interval=1.0,
             detected_at="2026-04-22T00:00:00Z",
+            system_info={
+                "gpu_vendors_available": [],
+                "gpu_vendor_used": None,
+                "vendor_preference": ["nvidia", "amd", "intel"],
+            },
             quiet=True,
         )
 
@@ -223,6 +228,11 @@ def test_split_and_write_metadata_contains_schema_version(tmp_path):
             config,
             effective_interval=1.0,
             detected_at="2026-04-22T00:00:00Z",
+            system_info={
+                "gpu_vendors_available": [],
+                "gpu_vendor_used": None,
+                "vendor_preference": ["nvidia", "amd", "intel"],
+            },
             quiet=True,
         )
 
@@ -255,6 +265,11 @@ def test_split_and_write_metadata_emits_empty_warnings_array(tmp_path):
             config,
             effective_interval=1.0,
             detected_at="2026-04-22T00:00:00Z",
+            system_info={
+                "gpu_vendors_available": [],
+                "gpu_vendor_used": None,
+                "vendor_preference": ["nvidia", "amd", "intel"],
+            },
             quiet=True,
         )
 

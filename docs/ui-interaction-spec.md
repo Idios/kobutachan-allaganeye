@@ -100,8 +100,8 @@
 | 節 | 画面 | 主要 UI 部品 | 進捗 |
 |---|---|---|---|
 | §2.1 | drop | D&D zone / [参照…] / 直近録画リスト / SelectedCard / probeError card | #598 で追加 |
-| §2.2 | detecting | AllaganSigil 回転 / Header / progressBadge / PhaseRow ×2 / live log / [中断] | 本 PR で追加 |
-| §2.3 | complete | 輝度タイムライン / 試合一覧行 / [境界を調整] / [全試合書き出し] / [元に戻す] / [× 閉じる] | TBD |
+| §2.2 | detecting | AllaganSigil 回転 / Header / progressBadge / PhaseRow ×2 / live log / [中断] | #600 で追加 |
+| §2.3 | complete | statusDot / sourceBox / stats / [元に戻す] / [境界を調整] / [全試合書き出し] / [× 閉じる] / BrightnessTimeline / listItem / previewPane / emptyNote | 本 PR で追加 |
 | §2.4 | preview | IN/OUT 2 video / FrameStrip / stepper / TC input / 試合名・type input / [適用] / [元に戻す] / [◀ 一覧へ] / [書き出し] | TBD |
 | §2.5 | export | 出力先選択 / 命名規則 / コーデック選択 / [書き出し開始] / [中断] / 試合別 progress / [✓ フォルダを開く] / [もう一度書き出す] | TBD |
 
@@ -310,6 +310,142 @@
 | 遷移トリガー | `onClick` → reducer `CANCEL_CLICKED` (phase=`running → cancelling`)。Phase 2 は副作用 effect で即座に `CANCEL_CONFIRMED` を発火し `cancelling → cancelled` 遷移 ([DetectingScreen.tsx:72-76](../gui/src/screens/DetectingScreen.tsx#L72))。Phase 2.5 で実 ffmpeg `kill()` 完了を待ってから `CANCEL_CONFIRMED` |
 | store mutation | なし (cancelled 検出後の effect で `appStateStore.navigate('drop')` のみ、[DetectingScreen.tsx:58-62](../gui/src/screens/DetectingScreen.tsx#L58)) |
 | 例外 / edge case | §1.2 disabled 理由表示について、現状 `disabled={phase !== 'running'}` のみで tooltip / inline hint 未実装 → 後続 PR で `title="検知実行中のみ中断できます"` 等を追加 (本 doc が source of truth)。`cancelling` 中の連打は disabled で物理的に防止 |
+
+### §2.3 complete
+
+**phase**: 専用 reducer なし。`metadataStore` と `appStateStore.selectedMatchIndex` の組合せで暗黙的に状態を表現する。便宜上の状態名:
+
+- `complete_empty` — `metadata === null` (emptyNote 表示)
+- `complete_idle` — metadata あり、操作待機
+- `complete_restoring` — RestoreButton が in-flight (`metadataStore.restoring=true`)
+
+**store**: 主に **読み取り** (`metadata` / `selectedMatchIndex` / `selectedVideoPath` / `hasBackup`)。書き込みは `selectMatch` (listItem / BrightnessTimeline 選択)、`openPreviewFor` ([境界を調整] / listItem 双 click)、`navigate` ([全試合書き出し] / [× 閉じる])、`metadataStore.clear` ([× 閉じる])、`appStateStore.reset` ([× 閉じる])。`metadataStore.restore` は RestoreButton 経由 (§2.3.4)。
+
+**dirty / silent loss**: §1.3 dirty consume 表に従う。complete 画面で dirty=true (preview から戻った直後等) 状態の consume 経路:
+
+- `[× 閉じる]` → `clear()` + `reset()` + drop: **confirm 必須** (現状未実装、後続で対応)
+- 別 match double-click / `[境界を調整]` → preview: **confirm 必須** (現状未実装、後続で対応)
+- `[全試合書き出し]` → export: **confirm 必須** (現状未実装、後続で対応)
+- `[元に戻す]` (RestoreButton): 自前で confirm dialog を持つ ([RestoreButton.tsx:42-50](../gui/src/components/RestoreButton.tsx#L42))
+
+**sample mode**: `metadataStore.filePath === null` の sample mode では `[元に戻す]` は `hasBackup=false` で disabled、編集系のない complete 画面では §1.4 の sample banner を上部 `topBar` 直下に表示する (本 doc が source of truth、現状未実装)。
+
+**エラー表示**: §1.5 inline + toast 併用。complete 画面の主要エラー源は `restoreError` ([RestoreButton.tsx:63-67](../gui/src/components/RestoreButton.tsx#L63), inline `role="alert"`)。Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) で global toast 表示先を兼任する設計に揃える。
+
+**実装段階**:
+
+- 現状 (Phase 2): 試合一覧 / BrightnessTimeline / プレビューサムネイル ([#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) で実 path に切替済) が動作。`brightness` は `sampleBrightness()` の固定波形 ([CompleteScreen.tsx:42](../gui/src/screens/CompleteScreen.tsx#L42))
+- Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)): 実 video からの brightness 抽出に置換、所要列 ([#586](https://github.com/Idios/kobutachan-allaganeye/issues/586))、a11y / polish ([#587](https://github.com/Idios/kobutachan-allaganeye/issues/587))、threshold 連動 ([#588](https://github.com/Idios/kobutachan-allaganeye/issues/588))、§1.3 dirty consume confirm 全経路を実装
+
+#### §2.3.1 statusDot
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | 装飾 (`<div aria-hidden="true">`、[CompleteScreen.tsx:65](../gui/src/screens/CompleteScreen.tsx#L65)) |
+| 状態 | `displayOnly` |
+| 遷移トリガー | なし (常時可視) |
+| store mutation | なし |
+| 例外 / edge case | 常時 gold 点。Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) で「sample mode は別色」「dirty 時は瞬き」等の議論余地あり (本 doc 範囲外、議論時は §1.4 / §1.3 と整合させる) |
+
+#### §2.3.2 sourceBox (caption + filename)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | display block ([CompleteScreen.tsx:66-69](../gui/src/screens/CompleteScreen.tsx#L66)) |
+| 状態 | `displayOnly`。`metadata.source` を full path で表示 |
+| 遷移トリガー | `metadata` 変化に追従 |
+| store mutation | なし |
+| 例外 / edge case | full path が長すぎる場合の overflow / ellipsis は CSS 任せ。a11y は plain text、screen reader はそのまま読み上げる。Phase 2.5 で basename + tooltip full path に変更する選択肢あり ([#587](https://github.com/Idios/kobutachan-allaganeye/issues/587)) |
+
+#### §2.3.3 stats (試合数 / 総尺)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | display group ([CompleteScreen.tsx:70-81](../gui/src/screens/CompleteScreen.tsx#L70)) |
+| 状態 | `displayOnly`。`metadata.matches.length` と `metadata.source_duration_display` を表示 |
+| 遷移トリガー | `metadata` 変化に追従 |
+| store mutation | なし |
+| 例外 / edge case | `matches.length === 0` の場合 `0` 表示 (後段の listItem は空、previewPane は非表示 = §2.3.10)。Phase 2.5 で「合計試合長」「FL 比率」等の追加列が議論対象 ([#586](https://github.com/Idios/kobutachan-allaganeye/issues/586)) |
+
+#### §2.3.4 [元に戻す] button (RestoreButton)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button + inline error ([RestoreButton.tsx:53-69](../gui/src/components/RestoreButton.tsx#L53)) |
+| 状態 | `idle` (`hasBackup=true` && `restoring=false`) / `busy` (`restoring=true`、ラベル `…`) / `disabled` (`hasBackup=false` または `restoring=true`) |
+| 遷移トリガー | `onClick` → `confirmFn(confirmMessage)` で確認 → OK なら `metadataStore.restore()` (atomic copy `metadata.original.json` → `metadata.json`) → 成功なら `onRestored?` callback |
+| store mutation | `metadataStore.restoring`, `metadataStore.metadata` (再 load), `metadataStore.dirty=false` (apply の rollback として), `metadataStore.hasBackup` (`refreshBackupStatus`) |
+| 例外 / edge case | confirm キャンセル → 何もしない。restore 失敗 → `restoreError` を inline `role="alert"` で表示。complete 画面では `onRestored` 未指定 (preview 画面は navigate('complete') を渡す)。§1.2 通り disabled 理由 tooltip ("バックアップが存在しません" / "復元中") は現状未実装、後続で追加 |
+
+#### §2.3.5 [境界を調整] button
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button ([CompleteScreen.tsx:84-94](../gui/src/screens/CompleteScreen.tsx#L84)) |
+| 状態 | `idle` (selectedMatch あり) / `disabled` (`!selectedMatch`、つまり `matches=[]`) |
+| 遷移トリガー | `onClick` → `appStateStore.openPreviewFor(selectedMatch.index)` (内部で `selectMatch` + `navigate('preview')`) |
+| store mutation | `appStateStore.selectedMatchIndex`, `appStateStore.screen='preview'` |
+| 例外 / edge case | §1.3 dirty=true 時の confirm が現状未実装 (canonical: 「未保存の変更があります。破棄して別の試合を開きますか？」)。後続で `if (dirty) confirm(...)` を入れる必要あり。§1.2 disabled 理由 tooltip ("試合が選択されていません") は現状未実装 |
+
+#### §2.3.6 [全試合書き出し] button
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button ([CompleteScreen.tsx:95-101](../gui/src/screens/CompleteScreen.tsx#L95)) |
+| 状態 | `idle` (現状無条件で活性) |
+| 遷移トリガー | `onClick` → `navigate('export')` |
+| store mutation | `appStateStore.screen='export'` |
+| 例外 / edge case | `matches.length === 0` でも活性 (export 画面で空状態を扱う想定)、Phase 2.5 で「試合 0 件のときは disabled + 理由表示」とするかは [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) で議論。§1.3 dirty=true confirm が未実装、後続で実装 (canonical: 「未保存の変更があります。破棄して書き出しへ進みますか？」) |
+
+#### §2.3.7 [× 閉じる] button
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button ([CompleteScreen.tsx:102-109](../gui/src/screens/CompleteScreen.tsx#L102)) |
+| 状態 | `idle` (現状無条件で活性) |
+| 遷移トリガー | `onClick` → `handleClose()` ([CompleteScreen.tsx:56-60](../gui/src/screens/CompleteScreen.tsx#L56)) → `clear()` + `appReset()` + `navigate('drop')` |
+| store mutation | `metadataStore` 全 reset、`appStateStore` 全 reset、`appStateStore.screen='drop'` |
+| 例外 / edge case | §1.3 dirty=true 時の confirm が未実装。**現状 silent loss する** ([#589](https://github.com/Idios/kobutachan-allaganeye/issues/589) 系の root cause)。canonical: 「未保存の変更があります。破棄してファイル選択へ戻りますか？」を後続で必須実装 |
+
+#### §2.3.8 BrightnessTimeline (match block click)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | SVG component ([BrightnessTimeline.tsx](../gui/src/components/BrightnessTimeline.tsx))。grid / threshold line / blackout bands / brightness line+fill / match blocks / time axis の合成 |
+| 状態 | `displayOnly` (子要素 grid / threshold / blackouts / line / axis) + interactive (match blocks)。match block の visual: `selectedIndex` 一致で opacity=1 + stroke、それ以外で opacity=0.55 |
+| 遷移トリガー | match block (`<g>`) `onClick` → `props.onSelectMatch(index)` → `appStateStore.selectMatch(index)` |
+| store mutation | `appStateStore.selectedMatchIndex` |
+| 例外 / edge case | `threshold` prop は現状 hardcoded default 15、Phase 2.5 ([#588](https://github.com/Idios/kobutachan-allaganeye/issues/588)) で `metadata.detection_params.blackout_threshold` 連動に置換予定。`samples` は Phase 2 で `sampleBrightness()` 固定、Phase 2.5 で実 video の brightness CSV / array に置換 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569))。selectedIndex の同期は listItem (§2.3.9) と双方向 |
+
+#### §2.3.9 試合一覧 listItem (single + double click)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | `<li>` ([CompleteScreen.tsx:128-160](../gui/src/screens/CompleteScreen.tsx#L128))。MatchThumb / 試合名 + 開始→終了 + duration / typeBadge (FL / ?) を内包 |
+| 状態 | `idle` / `active` (selectedMatchIndex 一致時 `listItemActive` クラス + `data-selected="true"`) |
+| 遷移トリガー | single `onClick` → `selectMatch(index)` (選択のみ) / `onDoubleClick` → `openPreviewFor(index)` (選択 + preview 遷移) |
+| store mutation | single click: `appStateStore.selectedMatchIndex` のみ。double click: 加えて `appStateStore.screen='preview'` |
+| 例外 / edge case | §1.3 dirty=true 時に別 match を double click すると編集破棄が発生 → confirm 必須 (現状未実装、§2.3.5 [境界を調整] と同等の対応)。listItem 内 typeBadge は表示専用で click 影響なし。`name` は `match.name ?? "MATCH_NNN"` フォールバック ([metadata-spec.md](metadata-spec.md) 編集契約により `name` は GUI 表示専用、metadata.json には書き戻さない) |
+
+#### §2.3.10 previewPane (display)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | display block ([CompleteScreen.tsx:165-208](../gui/src/screens/CompleteScreen.tsx#L165))。MatchThumb (large) + previewPlayOverlay + previewMeta (title + 開始 / 終了 / 長さ / 分類) |
+| 状態 | `displayOnly` (selectedMatch 存在時のみ render、`!selectedMatch` で section 全体非表示) |
+| 遷移トリガー | `selectedMatch` 変化に追従 (selectMatch / openPreviewFor / 1-match auto-select 経由) |
+| store mutation | なし |
+| 例外 / edge case | previewPlayOverlay は装飾のみで現状クリック無効 (preview 画面遷移は §2.3.5 / §2.3.9 経由)、Phase 2.5 で「サムネクリック → preview」を追加するかは [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) / [#587](https://github.com/Idios/kobutachan-allaganeye/issues/587) で議論。pane の右下に存在した `[境界を調整]` ボタンは [#464](https://github.com/Idios/kobutachan-allaganeye/issues/464) review でトップアクションバーに移動済み (短い viewport で fold 下に隠れるため) |
+
+#### §2.3.11 emptyNote
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | display ([CompleteScreen.tsx:44-50](../gui/src/screens/CompleteScreen.tsx#L44)) |
+| 状態 | `complete_empty` のみ表示 (`metadata === null`)。文言: `'No metadata. Run detect first.'` |
+| 遷移トリガー | `metadata` が null になった瞬間 (clear / 起動直後 / load 失敗後) |
+| store mutation | なし |
+| 例外 / edge case | 通常フロー (drop → detecting → complete) では到達しない (detecting 完了で `loadSample()` が必ず呼ばれる)。dev 用 StateSwitcher で複数 screen を試行する場合や、Phase 2.5 で `clear()` 経由で意図的に表示する経路が増えた場合の文言 / アクションリンク ([参照…] への戻り) は [#587](https://github.com/Idios/kobutachan-allaganeye/issues/587) で議論 |
 
 ## 3. 既存 doc との分担
 

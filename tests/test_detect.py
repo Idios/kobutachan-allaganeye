@@ -104,3 +104,59 @@ def test_detect_uses_cache_when_present(tmp_path):
 
     mock_detect.assert_not_called()
     assert (tmp_path / "metadata.json").exists()
+
+
+def test_detect_writes_system_info_to_metadata(tmp_path, monkeypatch):
+    """#591 -- detect で書き出した metadata.json に system_info が含まれる."""
+    monkeypatch.setattr(
+        "allaganeye.system_info.probe_gpu_vendors",
+        lambda: ["nvidia", "amd"],
+    )
+    probe, detect = _mock_detect_only(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with probe, detect:
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
+    assert "system_info" in payload
+    info = payload["system_info"]
+    assert info["gpu_vendors_available"] == ["nvidia", "amd"]
+    # detect は h264 codec -> use_gpu=True で auto 選択 -> vendor=nvidia
+    assert info["gpu_vendor_used"] == "nvidia"
+    assert info["vendor_preference"] == ["nvidia", "amd", "intel"]
+
+
+def test_detect_records_vendor_used_null_when_cpu_forced(tmp_path, monkeypatch):
+    """#591 -- --no-gpu (use_gpu=False) では vendor_used=None だが available は埋まる."""
+    monkeypatch.setattr(
+        "allaganeye.system_info.probe_gpu_vendors",
+        lambda: ["nvidia"],
+    )
+    probe, detect = _mock_detect_only(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, use_gpu=False)
+    with probe, detect:
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
+    info = payload["system_info"]
+    assert info["gpu_vendor_used"] is None
+    assert info["gpu_vendors_available"] == ["nvidia"]
+
+
+def test_detect_cache_hit_records_vendor_used_null(tmp_path, monkeypatch):
+    """#591 -- cache hit でも system_info を書く (vendor_used=None, probe は実行)."""
+    monkeypatch.setattr(
+        "allaganeye.system_info.probe_gpu_vendors",
+        lambda: ["intel"],
+    )
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._load_cache", return_value=BOUNDARIES),
+    ):
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
+    info = payload["system_info"]
+    assert info["gpu_vendor_used"] is None  # cache hit で detect していない
+    assert info["gpu_vendors_available"] == ["intel"]

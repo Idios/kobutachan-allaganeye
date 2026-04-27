@@ -13,11 +13,6 @@ import styles from './ExportScreen.module.css';
 
 type Codec = 'copy' | 'h264';
 
-const CODECS: { v: Codec; l: string; sub: string }[] = [
-  { v: 'copy', l: '無損失 copy', sub: '高速 / 前 I フレーム吸着' },
-  { v: 'h264', l: 'H.264 再エンコード', sub: '遅い / 正確な秒指定' },
-];
-
 type MatchStatus = 'pending' | 'running' | 'done' | 'error' | 'skipped';
 
 interface MatchState {
@@ -25,14 +20,43 @@ interface MatchState {
   percent: number;
   error?: string;
   outputPath?: string;
+  /**
+   * #591 -- non-null when the GPU encoder failed and the export was
+   * retried with libx264. Surfaced inline so the user understands why
+   * the run is slower than expected for this match.
+   */
+  fallbackNotice?: string;
 }
 
 interface ExportProgressPayload {
   match_index: number;
   percent: number;
-  stage: 'encoding' | 'done' | 'error';
+  stage: 'encoding' | 'done' | 'error' | 'fallback';
   message?: string;
+  /** #591 -- e.g. `"h264_nvenc -> libx264"`. Present when stage === 'fallback'. */
+  fallback_from?: string;
 }
+
+/**
+ * #591 -- payload returned by `select_h264_encoder_for_export` Tauri
+ * command. `encoder_kind` is the wire form sent back to `export_match`
+ * via the `h264_encoder` argument.
+ */
+interface EncoderInfo {
+  encoder: string;
+  display_label: string;
+  encoder_kind: 'Libx264' | 'Nvenc' | 'Qsv' | 'Amf';
+}
+
+/**
+ * #591 -- libx264 fallback used when metadata.json has no system_info
+ * (pre-#591 metadata) or the probe came back empty (CPU-only env).
+ */
+const LIBX264_INFO: EncoderInfo = {
+  encoder: 'libx264',
+  display_label: 'libx264 (CPU)',
+  encoder_kind: 'Libx264',
+};
 
 interface ExportResult {
   match_index: number;
@@ -97,6 +121,11 @@ export function ExportScreen() {
   // にしておき、ユーザーに必須選択させる。
   const [outDir, setOutDir] = useState<string>(() => deriveDefaultOutDir(videoSource));
   const [codec, setCodec] = useState<Codec>('copy');
+  // #591 -- H.264 encoder is auto-selected from metadata.system_info on
+  // mount. Initial value defaults to libx264 so the sub label and
+  // export_match argument are always defined; useEffect overwrites with
+  // the real probe-derived encoder once metadata is loaded.
+  const [encoderInfo, setEncoderInfo] = useState<EncoderInfo>(LIBX264_INFO);
   const [namePattern, setNamePattern] = useState('match_{idx:03}.mp4');
   const [matchStates, setMatchStates] = useState<Record<number, MatchState>>({});
   // #466 review #1: per-match の選択 (default: 全選択 = 全試合書き出し)。
@@ -125,6 +154,40 @@ export function ExportScreen() {
     }, 1000);
     return () => clearInterval(iv);
   }, [exportStartMs, phase]);
+
+  // #591 -- resolve the H.264 encoder from metadata.system_info on
+  // every metadata change. Falls back to libx264 silently when the
+  // probe is empty / missing or when the Tauri command rejects (e.g.
+  // sample mode without a backing system_info). The effect intentionally
+  // calls setEncoderInfo synchronously in the no-system_info branch so
+  // that switching from a probe-equipped metadata back to a sample
+  // (legacy) one resets the sub label; per-frame cascading renders are
+  // not a concern here (encoderInfo updates are bounded and infrequent).
+  useEffect(() => {
+    const info = metadata?.system_info;
+    if (!info) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setEncoderInfo(LIBX264_INFO);
+      return;
+    }
+    invoke<EncoderInfo>('select_h264_encoder_for_export', {
+      vendors: info.gpu_vendors_available,
+      preference: info.vendor_preference,
+    })
+      .then((resolved) => setEncoderInfo(resolved))
+      .catch(() => setEncoderInfo(LIBX264_INFO));
+  }, [metadata]);
+
+  // #591 -- CODECS list rebuilt from encoderInfo so the H.264 sub label
+  // reflects "(NVENC)" / "(QSV)" / "(AMF)" / "(libx264 (CPU))".
+  const codecs: { v: Codec; l: string; sub: string }[] = [
+    { v: 'copy', l: '無損失 copy', sub: '高速 / 前 I フレーム吸着' },
+    {
+      v: 'h264',
+      l: 'H.264 再エンコード',
+      sub: `遅い / 正確な秒指定 (${encoderInfo.display_label})`,
+    },
+  ];
 
   function toggleMatchExclusion(matchIndex: number) {
     setExcludedIndexes((prev) => {
@@ -163,6 +226,8 @@ export function ExportScreen() {
   }
 
   // #466 -- listen for per-match progress updates emitted by Rust.
+  // #591 -- also handle stage="fallback" events emitted when a GPU
+  // encoder fails to initialise and the export retries with libx264.
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
     (async () => {
@@ -177,6 +242,13 @@ export function ExportScreen() {
           if (p.stage === 'encoding') status = 'running';
           else if (p.stage === 'done') status = 'done';
           else if (p.stage === 'error') status = 'error';
+          // #591 -- "fallback" keeps the running status (the libx264
+          // attempt restarts encoding) but stamps the per-match notice
+          // so the UI can surface why this match is slower.
+          const fallbackNotice =
+            p.stage === 'fallback'
+              ? p.message ?? `${p.fallback_from ?? 'GPU encoder'} 失敗、libx264 で再試行`
+              : prior.fallbackNotice;
           return {
             ...prev,
             [p.match_index]: {
@@ -184,6 +256,7 @@ export function ExportScreen() {
               status,
               percent: p.percent,
               error: p.stage === 'error' ? p.message : prior.error,
+              fallbackNotice,
             },
           };
         });
@@ -258,6 +331,9 @@ export function ExportScreen() {
           endSeconds: m.edited?.end_time ?? m.end_time,
           outputPath,
           codec,
+          // #591 -- when codec === 'h264', Rust spawns ffmpeg with the
+          // resolved encoder. Copy codec ignores this value.
+          h264Encoder: codec === 'h264' ? encoderInfo.encoder_kind : null,
           matchIndex: m.index,
         });
         successCount += 1;
@@ -437,7 +513,7 @@ export function ExportScreen() {
           <div>
             <div className={styles.fieldLabel}>コーデック</div>
             <div className={styles.codecRow}>
-              {CODECS.map((c) => (
+              {codecs.map((c) => (
                 <button
                   key={c.v}
                   type="button"
@@ -683,6 +759,16 @@ export function ExportScreen() {
                   {s.status === 'error' && s.error && (
                     <span className={styles.listError} role="alert">
                       {s.error.slice(0, 120)}
+                    </span>
+                  )}
+                  {s.fallbackNotice && (
+                    <span
+                      className={styles.listError}
+                      role="status"
+                      data-testid={`fallback-notice-${m.index}`}
+                      style={{ color: 'var(--ae-accent)' }}
+                    >
+                      {s.fallbackNotice}
                     </span>
                   )}
                 </li>
