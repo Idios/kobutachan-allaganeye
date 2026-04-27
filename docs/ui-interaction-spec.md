@@ -459,6 +459,13 @@
 
 これらは `metadataStore` のフィールド合成で表現され、追加 reducer は持たない。
 
+**[ui-architecture.md](ui-architecture.md) §preview mermaid との対応**:
+
+- mermaid 図 ([ui-architecture.md](ui-architecture.md) §preview) は画面レベルの遷移を `preview_idle / preview_applying / preview_applyError / preview_restoring / preview_restoreError` の 5 状態で記述する
+- 本節は **(差異 1)** `preview_empty` を画面 entry 時の特殊状態として明示 (mermaid では entry 経路として暗黙、§2.4.15 emptyNote と対応)
+- **(差異 2)** `preview_restoreError` を §2.4 ヘッダから除外 (RestoreButton 共通 component 内のエラー表示として §2.3.4 / §2.4.13 で扱う。§2.4 ヘッダは preview 画面レベル状態のみ列挙)
+- 両者は意図的な分担であり矛盾ではない。後続 §3 (相互リンク + クロスリファレンス) で全画面の状態名と mermaid の対応関係を一括整理する
+
 **editing**: 編集対象パネルを示す local state `editing: 'start' | 'end'` ([PreviewScreen.tsx:88](../gui/src/screens/PreviewScreen.tsx#L88))。`editing` で `currentT` / `setCurrentT` / `activeVideoRef` が分岐し、stepRow / keyboard / FrameStrip の操作対象を決める。`editing` は phase とは独立で、画面マウント中は常に `'start' | 'end'` のいずれか。
 
 **store**: 読み書きは `metadataStore` の `metadata`, `dirty`, `applying`, `applyError`, `filePath`, `updateMatch`, `apply` と `appStateStore` の `selectedMatchIndex`, `navigate`, `selectedVideoPath`。書き込み経路は `updateMatch` ([適用] 押下時のみ、§1.1 違反 → 後述) / `apply` ([適用]) / `RestoreButton.restore` (§2.4.13) / `navigate` (back / export) のみ。
