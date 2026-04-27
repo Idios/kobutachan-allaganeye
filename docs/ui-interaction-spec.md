@@ -102,8 +102,8 @@
 | §2.1 | drop | D&D zone / [参照…] / 直近録画リスト / SelectedCard / probeError card | #598 で追加 |
 | §2.2 | detecting | AllaganSigil 回転 / Header / progressBadge / PhaseRow ×2 / live log / [中断] | #600 で追加 |
 | §2.3 | complete | statusDot / sourceBox / stats / [元に戻す] / [境界を調整] / [全試合書き出し] / [× 閉じる] / BrightnessTimeline / listItem / previewPane / emptyNote | #603 で追加 |
-| §2.4 | preview | [◀ 一覧へ] / match name input / type select / Pane (×2 IN/OUT) / Pane.video / Pane.tcInput / stepRow ×6 / keyHint / FrameStrip / [適用] / dirty indicator / applyError / [元に戻す] / [書き出し] / emptyNote | 本 PR で追加 |
-| §2.5 | export | 出力先選択 / 命名規則 / コーデック選択 / [書き出し開始] / [中断] / 試合別 progress / [✓ フォルダを開く] / [もう一度書き出す] | TBD |
+| §2.4 | preview | [◀ 一覧へ] / match name input / type select / Pane (×2 IN/OUT) / Pane.video / Pane.tcInput / stepRow ×6 / keyHint / FrameStrip / [適用] / dirty indicator / applyError / [元に戻す] / [書き出し] / emptyNote | #605 で追加 |
+| §2.5 | export | [◀ プレビュー] / header / 出力先 input + [参照…] / 命名規則 input / コーデック selector ×2 / errorMessage / progressBox / [書き出し開始] / [中断] / [✓ フォルダを開く] + openFolderError / [設定変更して再書き出し] / [設定変更して再試行] / listHeader + bulk / listItem / emptyNote | 本 PR で追加 |
 
 各部品節の記述フォーマット (canonical):
 
@@ -637,6 +637,201 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | 遷移トリガー | `selectedMatchIndex` または `metadata.matches` 変化で `match` が解決できなくなった時 |
 | store mutation | なし |
 | 例外 / edge case | 通常フロー (complete から double-click / [境界を調整]) では到達しない。dev StateSwitcher で preview に直接遷移したり、apply 後 matches 配列が変動して selectedMatchIndex が消えた場合に表示。文言と「complete へ戻る」リンクは [#587](https://github.com/Idios/kobutachan-allaganeye/issues/587) a11y/polish で議論 |
+
+### §2.5 export
+
+**phase**: 専用 reducer ([reducers/export.ts:19-48](../gui/src/screens/reducers/export.ts#L19))。`idle | running | cancelling | completed | error`
+
+- `idle` → `running` (`START_CLICKED`)
+- `running` → `cancelling` (`CANCEL_CLICKED`) / `completed` (`PROGRESS_COMPLETE`) / `error` (`EXPORT_ERROR`)
+- `cancelling` → `idle` (`CANCEL_CONFIRMED` または `EXPORT_ERROR`)
+- `completed` → `idle` (`RESTART`)
+- `error` → `idle` (`DISMISS_ERROR` / `RESTART`)
+
+**[ui-architecture.md](ui-architecture.md) §export mermaid との対応**:
+
+- mermaid 図は `export_idle / export_running / export_cancelling / export_completed / export_error` の 5 状態。本節は接頭辞 `export_` を省略した内部 reducer 名に揃えている (実装では `phase: ExportPhase` 直値を使う)
+- mermaid の `export_cancelling` 状態は ffmpeg 停止後 `export_idle` に直結し、終端の `cancelled` 状態は持たない (`export_cancelling → export_idle: ffmpeg 停止`)。内部 reducer の `cancelling → idle (CANCEL_CONFIRMED)` と同形状で、両者は意図的な簡略化として整合する。後続 §3 で全画面分の整理を行う
+
+**store**: 主に **読み取り** (`metadataStore.metadata`、`appStateStore.selectedVideoPath`)。書き込みは `appStateStore.navigate('preview')` ([◀ プレビュー]) のみ。export 自体は store ではなく **Tauri command `export_match`** + **event `export-progress`** + local state (`matchStates` / `excludedIndexes` / `outDir` / `namePattern` / `codec` / `encoderInfo` 等) で駆動する。
+
+**dirty / silent loss**: 編集対象 metadata なしのため §1.3 silent loss 対象外。export screen 上の設定 (`outDir` / `namePattern` / `codec` / `excludedIndexes`) は session-local config 扱いで confirm 不要。`running / cancelling` 中は [◀ プレビュー] が disabled になり物理的に navigate を防ぐ。
+
+**sample mode**: §1.4 通り。sample mode (`metadataStore.filePath === null`) でも `metadata.source` がフォールバック source として取得できれば `videoSource !== null` となり [書き出し開始] が活性化してしまう。実 ffmpeg は path 不正 → ffmpeg error で fail するが、ユーザー体験は不親切。本 doc canonical: sample mode で export 全体を read-only / 上部 banner 表示すべき (現状未実装、後続で対応)。
+
+**エラー表示**: §1.5 inline 中心。export 画面の主要エラー源:
+
+- `errorMessage` (phase=`error`、全試合 fail) → inline `role="alert"` ([ExportScreen.tsx:533-537](../gui/src/screens/ExportScreen.tsx#L533))
+- per-match `s.error` → listItem 内 inline `role="alert"` ([ExportScreen.tsx:759-763](../gui/src/screens/ExportScreen.tsx#L759)、120 文字 slice)
+- per-match `s.fallbackNotice` (#591 GPU encoder fallback 通知) → listItem 内 `role="status"` ([ExportScreen.tsx:764-773](../gui/src/screens/ExportScreen.tsx#L764)、エラーではなく info)
+- `openFolderError` ([フォルダを開く] 失敗) → primary button 直下に inline `role="alert"` ([ExportScreen.tsx:618-622](../gui/src/screens/ExportScreen.tsx#L618))
+
+global toast 未採用 (画面が log 中心で各情報源と表示位置が固定されているため、inline 集約で十分)。Phase 2.5 / [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) で他画面と統一した toast 方針が決まればそれに合わせる。
+
+**実装段階**:
+
+- 現状 (Phase 4 = [#466](https://github.com/Idios/kobutachan-allaganeye/issues/466) / [#545](https://github.com/Idios/kobutachan-allaganeye/pull/545) / [#591](https://github.com/Idios/kobutachan-allaganeye/issues/591) 完了): 実 ffmpeg 呼び出し + per-match progress event + GPU encoder auto-select + libx264 fallback + cancel kill ([#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) と共通の `kill_tracked_processes`) + `open_folder_in_explorer` (shell.open scope 制約回避) + `{start}` filename 用 MM-SS 表記 + 経過 / 残り時間表示 + 全選択 / 全解除 + per-match exclude
+- 残課題: §1.4 sample mode banner / §1.2 多数の disabled 理由 tooltip 未実装 → 後続で本 doc を source of truth として実装
+
+#### §2.5.1 [◀ プレビュー] back button
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button ([ExportScreen.tsx:458-465](../gui/src/screens/ExportScreen.tsx#L458)) |
+| 状態 | `idle` / `disabled` (`running \|\| cancelling`) |
+| 遷移トリガー | `onClick` → `navigate('preview')` |
+| store mutation | `appStateStore.screen='preview'` |
+| 例外 / edge case | running / cancelling 中の navigate を物理的に防ぐ (kill_tracked_processes が必要、§2.5.10 [中断] 経由でないと安全に止まれない)。§1.2 disabled 理由 tooltip 未実装 (canonical: 「書き出し中はプレビューに戻れません。先に [中断] してください」) |
+
+#### §2.5.2 header (caption + title)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | display block ([ExportScreen.tsx:466-471](../gui/src/screens/ExportScreen.tsx#L466))。caption "エクスポート" + title "{N} 試合を書き出す" |
+| 状態 | `displayOnly`。`countedMatches.length` (永続 skip + ad-hoc exclude を除外した数) を反映 |
+| 遷移トリガー | `metadata.matches` / `excludedIndexes` 変化に追従 |
+| store mutation | なし |
+| 例外 / edge case | `countedMatches.length === 0` のとき "0 試合を書き出す" 表示で無意味だが、画面全体としては start ボタン disabled (`!videoSource`) で実害なし。0 件時の専用文言 + start 無効化は [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) 議論対象 |
+
+#### §2.5.3 出力先 input
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | text input ([ExportScreen.tsx:481-487](../gui/src/screens/ExportScreen.tsx#L481))。`aria-label="output directory"` |
+| 状態 | `idle` / `disabled` (`running \|\| cancelling`) |
+| 遷移トリガー | `onChange` → 即時 `setOutDir(value)` (local state) |
+| store mutation | なし (session-local config、§1.1 例外: metadata 編集ではない設定値は store に上げない) |
+| 例外 / edge case | default 値は `deriveDefaultOutDir(videoSource)` ([ExportScreen.tsx:122](../gui/src/screens/ExportScreen.tsx#L122)、`<dirname(videoSource)>/output`)。videoSource 欠損時は空文字列で必須選択。Windows extended-length path prefix (`\\?\`) は `stripExtendedPathPrefix` で除去。親ディレクトリが存在しない場合は Rust 側で error (silent mkdir は廃止) |
+
+#### §2.5.4 [参照…] dir picker button
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button ([ExportScreen.tsx:488-495](../gui/src/screens/ExportScreen.tsx#L488)) |
+| 状態 | `idle` / `disabled` (`running \|\| cancelling`) |
+| 遷移トリガー | `onClick` → `openDialog({ directory: true, multiple: false })` (`@tauri-apps/plugin-dialog`) → 戻り値 string なら `setOutDir(picked)` |
+| store mutation | なし |
+| 例外 / edge case | `dialog:allow-open` permission を `capabilities/default.json` に明示済み。dialog cancel (戻り値 null) は何もしない。§1.2 disabled 理由 tooltip 未実装 |
+
+#### §2.5.5 命名規則 input + variables hint
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | text input + display hint ([ExportScreen.tsx:501-510](../gui/src/screens/ExportScreen.tsx#L501))。default `match_{idx:03}.mp4` |
+| 状態 | input: `idle` / `disabled` (`running \|\| cancelling`)。hint: `displayOnly` |
+| 遷移トリガー | input `onChange` → 即時 `setNamePattern(value)` |
+| store mutation | なし (session-local) |
+| 例外 / edge case | `formatName` で `{idx}` / `{idx:03}` / `{type}` / `{start}` / `{date}` を置換。`{start}` は `formatStartForFilename` で `MM-SS` / `H-MM-SS` 形式 (Windows filename で `:` 不可のため `-` 置換)。malformed pattern (置換キーなし等) は実体ファイル名がそのまま出るのみで error にしない。重複ファイル名は ffmpeg `-y` で silent overwrite |
+
+#### §2.5.6 コーデック selector (copy / h264 buttons)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button × 2 ([ExportScreen.tsx:516-528](../gui/src/screens/ExportScreen.tsx#L516))。`aria-pressed={codec === c.v}` で選択状態を提示 |
+| 状態 | 各ボタン: `inactive` / `active` (`codec === c.v` で `codecButtonActive`) / `disabled` (`running \|\| cancelling`) |
+| 遷移トリガー | `onClick` → 即時 `setCodec(value)` |
+| store mutation | なし |
+| 例外 / edge case | h264 ボタンの sub label に `encoderInfo.display_label` を埋め込み、auto-select 結果 (`NVENC` / `QSV` / `AMF` / `libx264 (CPU)`) を可視化 ([#591](https://github.com/Idios/kobutachan-allaganeye/issues/591))。`metadata.system_info` 欠損 / Tauri command reject 時は libx264 silent fallback。codec 未選択状態は無し (default `'copy'`) |
+
+#### §2.5.7 errorMessage (phase=error)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | inline alert ([ExportScreen.tsx:533-537](../gui/src/screens/ExportScreen.tsx#L533))。`role="alert"`、文言: `すべての試合の書き出しが失敗しました` |
+| 状態 | `displayOnly`。`phase === 'error'` のみ表示 (= `successCount === 0 && failureCount > 0`) |
+| 遷移トリガー | reducer `EXPORT_ERROR` 遷移時に表示開始、`DISMISS_ERROR` / `RESTART` で消える |
+| store mutation | なし |
+| 例外 / edge case | per-match の個別 error は §2.5.15 listItem 側で `s.error` が表示されるため、本 alert は overall failure のサマリ役。`successCount > 0` なら `completed` phase に遷移し本 alert は出ない (per-match error を listItem で確認させる設計) |
+
+#### §2.5.8 progressBox (label + counts + percent + bar + time)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | composite display ([ExportScreen.tsx:538-578](../gui/src/screens/ExportScreen.tsx#L538))。label / counts / overallPercent / progressBar / 経過 / 残り |
+| 状態 | `displayOnly`。`running \|\| completed \|\| cancelling` のいずれかで表示 |
+| 遷移トリガー | reducer phase 変化 / `matchStates` 変化 / 1s tick (`nowMs` 更新) |
+| store mutation | なし |
+| 例外 / edge case | overallPercent は `(Σ per-match percent) / countedMatches.length` (旧実装の `doneCount / total` 方式は 1 ファイル目 encoding 中 0% 固定問題があり廃止)。残り時間は `(elapsed / progress) * remaining` の線形推定、`progress=0` で `'—'` 表示。完了時 / cancelling 中は `remainingSec=null`。label は `running` / `cancelling` / `completed` で「分割・書き出し中」「中断中…」「完了」と切替 |
+
+#### §2.5.9 [⬦ 書き出し開始] primary button
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button ([ExportScreen.tsx:580-595](../gui/src/screens/ExportScreen.tsx#L580))。`!completed && !error` でのみ render |
+| 状態 | `idle` (label `⬦ 書き出し開始`) / `running` (label `書き出し中…`、disabled) / `cancelling` (label `中断中…`、disabled) / `disabled` (`!videoSource`) |
+| 遷移トリガー | `onClick` → `handleStartExport()` → `dispatch(START_CLICKED)` (idle→running) → `for (m of queue) await invoke('export_match', ...)` → 完了で `PROGRESS_COMPLETE` / 全失敗で `EXPORT_ERROR` / cancel で `CANCEL_CONFIRMED` |
+| store mutation | なし。`matchStates` / `exportStartMs` / `nowMs` / 内部 phase が更新 |
+| 例外 / edge case | `!metadata` または `!videoSource` で early return。永続 skip (`type_override === 'skip'`) または ad-hoc exclude (`excludedIndexes` 含む) は queue から除外。逐次 `for await` で 1 試合ずつ実行 (並列なし)。§1.2 disabled 理由 tooltip 未実装 (canonical: 「動画ファイルが選択されていません。drop 画面に戻って選択してください」) |
+
+#### §2.5.10 [中断] cancel button
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button ([ExportScreen.tsx:597-605](../gui/src/screens/ExportScreen.tsx#L597))。`running` のみ render |
+| 状態 | `idle` (running 中のみ render され activated) |
+| 遷移トリガー | `onClick` → `handleCancelClicked()` → `cancelRequestedRef.current = true` + `dispatch(CANCEL_CLICKED)` (running→cancelling) + `invoke('kill_tracked_processes')` |
+| store mutation | なし |
+| 例外 / edge case | for ループは次の `if (cancelRequestedRef.current) break` で抜ける。`kill_tracked_processes` は ffmpeg subprocess を即時 SIGKILL ([#523](https://github.com/Idios/kobutachan-allaganeye/issues/523))。失敗は silent (`.catch(() => undefined)`)。中断成功で `dispatch(CANCEL_CONFIRMED)` → idle 復帰、書き出し済み match は完了状態を保持 (途中 file は ffmpeg 側で破棄) |
+
+#### §2.5.11 [✓ 完了 — フォルダを開く] + openFolderError
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button + inline alert ([ExportScreen.tsx:607-622](../gui/src/screens/ExportScreen.tsx#L607))。`completed` のみ render |
+| 状態 | button: `idle` / inline alert: `displayOnly` (`openFolderError !== null` 時のみ) |
+| 遷移トリガー | `onClick` → `handleOpenFolder()` → `invoke('open_folder_in_explorer', { path: outDir })` → 失敗時 `setOpenFolderError(message)` |
+| store mutation | なし |
+| 例外 / edge case | `shell.open` は default scope が URL のみ許可で local path で正規表現 fail するため、Rust 側に専用 command `open_folder_in_explorer` を追加 (#545 review #6)。完了後 navigate しない (旧実装は `navigate('complete')` で Explorer が開く前に画面遷移する不具合あり)。§1.5 文言は技術詳細 (canonical: より行動指針的に「フォルダを開けませんでした: <理由>。手動で `<path>` を開いてください」) |
+
+#### §2.5.12 [設定変更して再書き出し] (completed)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button ([ExportScreen.tsx:623-639](../gui/src/screens/ExportScreen.tsx#L623))。`completed` のみ render |
+| 状態 | `idle` |
+| 遷移トリガー | `onClick` → `setMatchStates({})` + `setOpenFolderError(null)` + `dispatch(RESTART)` (completed→idle) |
+| store mutation | なし |
+| 例外 / edge case | `outDir` / `namePattern` / `codec` / `excludedIndexes` は保持されるため、ユーザーは画面上で再設定して再実行できる。既存ファイルは ffmpeg `-y` で silent overwrite。tooltip で「同じ metadata を別設定で再書き出し」+「既に同名ファイルがある場合は上書き」を明示 |
+
+#### §2.5.13 [設定変更して再試行] (error)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button ([ExportScreen.tsx:641-657](../gui/src/screens/ExportScreen.tsx#L641))。`error` のみ render |
+| 状態 | `idle` |
+| 遷移トリガー | `onClick` → `setMatchStates({})` + `setOpenFolderError(null)` + `dispatch(DISMISS_ERROR)` (error→idle) |
+| store mutation | なし |
+| 例外 / edge case | §2.5.12 と同じ semantics (`RESTART` も同じ idle 遷移)。tooltip 文言で「設定を変更してから再度書き出しを試行」を明示 |
+
+#### §2.5.14 listHeader + bulk actions [全選択] / [全解除]
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | display caption + button × 2 ([ExportScreen.tsx:662-689](../gui/src/screens/ExportScreen.tsx#L662)) |
+| 状態 | caption: `displayOnly` (`{N} ファイル`)。bulk button: `idle` / `disabled` (`running \|\| cancelling`) |
+| 遷移トリガー | `onClick` → `toggleSelectAll(true \| false)` → `excludedIndexes` から bulk 対象 (永続 skip 以外) を全 add/delete |
+| store mutation | なし |
+| 例外 / edge case | `type_override === 'skip'` (preview で永続設定) は bulk 対象外 (個別 checkbox も disabled)。bulk 対象 0 件時も「全選択」「全解除」は無害 (no-op)。§1.2 disabled 理由 tooltip 未実装 |
+
+#### §2.5.15 listItem (per-match row)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | composite `<li>` ([ExportScreen.tsx:691-776](../gui/src/screens/ExportScreen.tsx#L691))。checkbox / status mark / name / duration / per-match progress bar / per-match error / fallbackNotice |
+| 状態 | checkbox: `checked` (`isIncluded`) / `unchecked` (`isAdHocExcluded`) / `disabled` (`isPersistSkip \|\| running \|\| cancelling`)。statusMark: `pending(○) / running(●) / done(✓) / error(!) / skipped(—)`。per-match progress bar: `running \|\| completed \|\| done \|\| error` で表示 |
+| 遷移トリガー | checkbox `onChange` → `toggleMatchExclusion(matchIndex)` (`excludedIndexes` add/delete)。Tauri event `export-progress` payload `{match_index, percent, stage, message, fallback_from}` で `matchStates[index]` 更新 |
+| store mutation | なし |
+| 例外 / edge case | duration 表示は `m.edited` がある場合 `effectiveEnd - effectiveStart` を `fmtMatchDuration` で再計算 (旧実装は CLI 初期値 `m.duration_display` 固定、preview 編集が反映されないバグの修正)。`s.error` は 120 文字で slice (UI が崩れないため)。`fallbackNotice` は GPU encoder fail で libx264 retry した試合に `role="status"` で表示 (エラーではない info、color: `var(--ae-accent)`)。checkbox tooltip で永続 skip (`preview 画面で skip 設定済 (変更不可)`) と通常選択 (`書き出し対象から除外/復帰`) を区別 |
+
+#### §2.5.16 emptyNote
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | display ([ExportScreen.tsx:399-405](../gui/src/screens/ExportScreen.tsx#L399))。文言: `'No metadata loaded.'` |
+| 状態 | `displayOnly`。`metadata === null` のみ render |
+| 遷移トリガー | `metadata` が null になった瞬間 |
+| store mutation | なし |
+| 例外 / edge case | 通常フロー (complete から [全試合書き出し] / preview から [書き出し →]) では到達しない。dev StateSwitcher 経由のみ表示。文言 / 戻り導線 ([参照…] / drop へ) は [#587](https://github.com/Idios/kobutachan-allaganeye/issues/587) a11y/polish で議論 |
 
 ## 3. 既存 doc との分担
 
