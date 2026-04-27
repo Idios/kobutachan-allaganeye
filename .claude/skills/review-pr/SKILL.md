@@ -100,7 +100,7 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 **long-running / integration 検証観点**
 
 - 長時間動画 (2 時間以上) / GPU mode / audio 統合 / 大規模入力 等は mock 不可
-- レビュー側は「手動検証が必要」と明示し、PR 作成セッションに `/test-pr` 実施を依頼する (`docs/l2-workflow.md` §「タスク種別と進め方」の "PR テスト" 行参照)
+- レビュー側は「手動検証が必要」と明示し、PR 作成セッションが PR 提出前に実機検証済みであることを確認する。未実施なら受け入れ条件未充足として (A) PR コメントで再検証を要求 (`CLAUDE.md` §「PR 作成ルール」の「PR 作成前」要件参照)
 - 自動 CI で担保できる範囲と、手動検証が必須な範囲の境界を明示してユーザー / PR 作成セッションに伝達する
 
 ここで列挙した観点は Step 5b トリアージ表で必ず処置分類を付ける。観察コメントのみで終える (= 握り潰す) のは禁止。
@@ -184,7 +184,7 @@ Step 5b のトリアージ表を前提に `AskUserQuestion` で以下を提示�
 ## 検証推奨
 
 - **自動 (CI)**: `pytest tests/test_xxx.py::test_yyy` / `ruff check .`
-- **手動 (/test-pr)**: <long-running / GPU / audio 統合 の具体手順>
+- **手動検証 (PR 作成セッション側で実施済みのはず)**: <long-running / GPU / audio 統合 の具体手順>
 
 ## 判定
 
@@ -344,7 +344,7 @@ Step 5b のトリアージ表を前提に `AskUserQuestion` で以下を提示�
    - (i) grep が残存 import / 参照を検出 → (A) PR コメントで修正依頼
    - (ii) grep 結果なし + CI typecheck green (pyright / tsc) → 実質的に未使用と判定可、追加対応不要
    - (iii) grep 結果なし + CI typecheck 未設定 → typecheck 追加を (B) 別 issue 起票 or PR 作成セッションに依頼
-   - 動的 import (`importlib` / `import()` 実行時解決) は grep / typecheck だけでは検出不可。該当ソースに動的 import が含まれる場合は `/test-pr` で実機検証を依頼
+   - 動的 import (`importlib` / `import()` 実行時解決) は grep / typecheck だけでは検出不可。該当ソースに動的 import が含まれる場合は PR 作成セッションに実機検証を依頼
 
 ### §E. 参照ファイル追加 (バイナリ等) を伴う PR
 
@@ -384,7 +384,7 @@ Iron Law Red Flags と呼応。以下の合理化が浮かんだら LGTM 寸前�
 |---|---|
 | 「受け入れ条件は大体満たしてる」 | Iron Law 1 違反。逐条引用 + diff / test の対応付けが必須 |
 | 「明らかな diff だからレビュー簡略化でよい」 | Step 5a ギャップ分析 skip は NG。明示指示不要で自動実施 |
-| 「unit test pass だから手動検証不要」 | GPU / audio / 長時間動画は mock 不可。PR 作成セッションに `/test-pr` 依頼 |
+| 「unit test pass だから手動検証不要」 | GPU / audio / 長時間動画は mock 不可。PR 作成セッションに実機検証実施 (or 結果報告) を要求 |
 | 「観察コメントだけ残して別 issue にしない」 | #399 B 違反。観察で止めず、別 issue 起票または scope-guard で escalate |
 | 「スコープ対象外だから PR コメントも issue 化も不要」 | **握り潰しパターン**。Iron Law 3 違反。Step 5b トリアージで (B) 新規 issue か (C) 既存 issue 追記 のどちらかに必ず振り分ける。「対象外」という理由で沈めてはいけない |
 | 「軽微だから言及しなくてよい」「ついでに誰かが直すだろう」 | 摘出した瞬間にトリアージ対象。軽微度は処置分類 (A)/(B)/(C) の選択根拠であって、握り潰しの根拠にはならない |
@@ -403,7 +403,7 @@ Iron Law Red Flags と呼応。以下の合理化が浮かんだら LGTM 寸前�
 - **参照ファイル追加時の実体確認省略**: バイナリ追加を diff の name-only でしか確認せず、サイズ・次元・生成条件の PR 本文明記を要求しない → 環境制約 §E 違反。(A) PR コメントで追記要求する
 - **doc 変更 PR が CI 設定に与える波及を検証しない**: 「doc だから CI には関係ない」と判断して `.github/workflows/` / コード側参照の grep 確認を省略 → 環境制約 §D 違反。パス・識別子変更を含む doc 修正は波及確認が必須
 - **再レビュー時に前回指摘の全件追跡を省略**: Round 2 以降で「前回指摘の解消確認」と「本 Round 新出」を分けずに混在レポートする → Step 7a 違反。前 Round の (A) 課題を 1 件ずつ照合し、解消/未解消を明示する
-- **long-running 検証を自己判断で OK とする**: unit test pass = 全部 OK と誤解。GPU / 長時間動画 / audio 統合は mock 不可のため、PR 作成セッションに `/test-pr` 実施を明示依頼する
+- **long-running 検証を自己判断で OK とする**: unit test pass = 全部 OK と誤解。GPU / 長時間動画 / audio 統合は mock 不可のため、PR 作成セッションに実機検証実施 (or 結果報告) を明示要求する
 - **提示フォーマットを無視して口語で書く**: レビュー結果が PR コメントに混在して追跡困難 → Step 6 の「レビュー報告テンプレート」構造で投稿
 
 ## 参考

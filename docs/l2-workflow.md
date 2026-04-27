@@ -29,7 +29,7 @@ E:/projects/kobutachan-tools/kobutachan-allaganeye/  ← 唯一の worktree (mai
     └── docs/knowledge/              ← セッション横断の知見蓄積
 ```
 
-ユーザーは**単一セッション**で作業する。既存 skill は上記 5 件。計画立案・実装・PR テスト等は本ドキュメント (§タスク種別と進め方) の手順に従い、AskUserQuestion や Agent 呼び出し、TodoWrite で構成する。
+ユーザーは**単一セッション**で作業する。既存 skill は上記 5 件。計画立案・実装・PR 提出前の実機検証等は本ドキュメント (§タスク種別と進め方) の手順に従い、AskUserQuestion や Agent 呼び出し、TodoWrite で構成する。
 
 新規 skill の追加は**実際に反復利用されることが判明した時点**で行う (L2 実装開始後、同じプレイブックを 2-3 回使った段階等)。事前に空の skill ファイルは作らない。
 
@@ -59,9 +59,8 @@ main (リリースタグのみ)
 | タスク種別 | 対応 skill / 手段 | 責務 |
 |---|---|---|
 | 計画立案 | Plan モード + AskUserQuestion + TodoWrite | タスクの分解、リスク・曖昧点の事前洗い出し、実装前の計画合意 |
-| 実装 | Claude の通常ツール (Edit/Write/Bash) + TodoWrite | 実装 + unit/integration テスト + PR 作成。スコープ逸脱時は Plan モードに戻る |
+| 実装 | Claude の通常ツール (Edit/Write/Bash) + TodoWrite | 実装 + unit/integration テスト + 実機検証 (long-running / GPU / audio 統合は mock 不可) + PR 作成。スコープ逸脱時は Plan モードに戻る |
 | PR レビュー | `/review-pr` | PR レビュー + #367 受け入れ基準チェックリスト検証 + マージ判断 |
-| PR テスト | 通常セッション内で手動実行 + PR コメント記録 | PR の実機テスト (UX、長時間動画、GPU mode 等)、結果を PR コメントで報告 |
 | issue 起票 | `/create-task` | issue 起票 (定型テンプレート適用) |
 | リリース | `/release` | リリースタグ、CHANGELOG、main へのマージ |
 

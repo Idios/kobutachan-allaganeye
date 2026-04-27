@@ -142,6 +142,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 - 動作確認済み: ハイスペック PC（高速 SSD、高性能 GPU）での OBS 録画。試合間暗転 2-5 秒程度
 - 未検証: 低スペック環境でローディング画面が長い（10 秒超）ケース
 - 既知の制限: ローディング画面が純粋な黒画面でなく UI 要素（スピナー、ロゴ等）を含む場合、brightness が 15-55 の範囲で変動し暗転が分断されることがある。分断された各区間が `min_blackout_duration` 未満になると試合境界を検出できない
+- 既知の制限: ffmpeg `fps` filter のフレーム選択は version 依存。8.1 で output PTS と実フレーム内容に最大 ~1.1s のオフセットが発生する事例あり (#575)。極短 (< 1s) blackout の取りこぼしによる baseline drift は #576 で根本対策検討中。判定 flow は [`docs/testing-guide.md`](docs/testing-guide.md) §「baseline drift の判定」、検証データは [`docs/video-processing.md`](docs/video-processing.md) §「ffmpeg fps filter の version 依存制約」を参照
 
 **GPU モード** (`--gpu`)
 
@@ -250,12 +251,11 @@ L2 からは**単一ワークツリー + skill ベースディスパッチ**を�
 
 詳細は `docs/l2-workflow.md` を参照。要約:
 
-- **PR 作成前**: ベースブランチをリベースし、Python 側は `ruff check .` / `ruff format --check .` / `pytest`、GUI (gui/) 変更を含む場合は追加で `npm run lint` / `npm run typecheck` / `npm test` / `cargo check` (src-tauri/) を通すこと
+- **PR 作成前**: ベースブランチをリベースし、Python 側は `ruff check .` / `ruff format --check .` / `pytest`、GUI (gui/) 変更を含む場合は追加で `npm run lint` / `npm run typecheck` / `npm test` / `cargo check` (src-tauri/) を通すこと。加えてロジック変更を含む場合は実機検証 (long-running / GPU / audio 統合等は mock 不可) を実施
 - ベースブランチ: `develop-x.x.x`（`main` ではない）
 - 作業ブランチ命名: `claude/<scope>-<short-description>` または `claude/<issue-N>-<slug>`
 - マージ方法: `gh pr merge <番号> --squash` (ユーザーが実行)
 - レビュー: `/review-pr` skill で受け入れ条件チェックリスト検証 (#367 対策)
-- コード変更は `/test-pr` skill で実機テスト実施
 - コミットメッセージに `[<session-id>]` を含める
 - **PR 本文・コミットメッセージで `Closes` / `Fixes` / `Resolves` キーワードを使わない**（issue のクローズは手動で行う）
 
