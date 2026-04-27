@@ -651,7 +651,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 **[ui-architecture.md](ui-architecture.md) §export mermaid との対応**:
 
 - mermaid 図は `export_idle / export_running / export_cancelling / export_completed / export_error` の 5 状態。本節は接頭辞 `export_` を省略した内部 reducer 名に揃えている (実装では `phase: ExportPhase` 直値を使う)
-- mermaid の `export_cancelled` 状態は内部 reducer では `idle` に直結 (`CANCEL_CONFIRMED → idle`)。両者は意図的な簡略化であり矛盾ではない。後続 §3 で全画面分の整理を行う
+- mermaid の `export_cancelling` 状態は ffmpeg 停止後 `export_idle` に直結し、終端の `cancelled` 状態は持たない (`export_cancelling → export_idle: ffmpeg 停止`)。内部 reducer の `cancelling → idle (CANCEL_CONFIRMED)` と同形状で、両者は意図的な簡略化として整合する。後続 §3 で全画面分の整理を行う
 
 **store**: 主に **読み取り** (`metadataStore.metadata`、`appStateStore.selectedVideoPath`)。書き込みは `appStateStore.navigate('preview')` ([◀ プレビュー]) のみ。export 自体は store ではなく **Tauri command `export_match`** + **event `export-progress`** + local state (`matchStates` / `excludedIndexes` / `outDir` / `namePattern` / `codec` / `encoderInfo` 等) で駆動する。
 
