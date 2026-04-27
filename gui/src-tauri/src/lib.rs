@@ -1006,6 +1006,14 @@ pub struct ExportProgress {
 /// ffmpeg builds. The `Could not open encoder` line is generic but
 /// always preceded by `[h264_qsv @ ...]` in QSV failures, so we accept
 /// it inside the Qsv arm only.
+///
+/// NVENC and AMF were validated against ffmpeg 8.1 BtbN LGPL on an
+/// Intel-iGPU-only host (#604): `Cannot load nvcuda.dll` (NVENC) and
+/// `DLL amfrt64.dll failed to open` (AMF) are the strings ffmpeg 8.1
+/// emits when the respective vendor driver DLL is missing. Pre-#604
+/// the patterns targeted ffmpeg 7.x only and missed every line of the
+/// 8.1 stderr, so the libx264 fallback retry never fired -- the same
+/// version-drift class of bug PR #596 fixed for QSV.
 fn is_gpu_encoder_failure(stderr: &str, encoder: H264Encoder) -> bool {
     match encoder {
         H264Encoder::Libx264 => false,
@@ -1013,6 +1021,7 @@ fn is_gpu_encoder_failure(stderr: &str, encoder: H264Encoder) -> bool {
             stderr.contains("No NVENC capable devices found")
                 || stderr.contains("Cannot load nvEncodeAPI")
                 || stderr.contains("OpenEncodeSessionEx failed")
+                || stderr.contains("Cannot load nvcuda.dll")
         }
         H264Encoder::Qsv => {
             stderr.contains("Error creating a MFX session")
@@ -1026,6 +1035,7 @@ fn is_gpu_encoder_failure(stderr: &str, encoder: H264Encoder) -> bool {
             stderr.contains("AMF runtime not initialized")
                 || stderr.contains("DLL load failed")
                 || stderr.contains("Could not initialize AMFContext")
+                || stderr.contains("DLL amfrt64.dll failed to open")
         }
     }
 }
@@ -2608,6 +2618,19 @@ mod tests {
         assert!(is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
     }
 
+    /// #604 実機検証: ffmpeg 8.1 BtbN LGPL を Intel iGPU only host で
+    /// h264_nvenc 強制起動 -> NVIDIA driver 不在で nvcuda.dll が見つからず
+    /// 失敗。pre-#604 の pattern (`No NVENC capable devices found` /
+    /// `Cannot load nvEncodeAPI` / `OpenEncodeSessionEx failed`) は 1 つも
+    /// hit せず libx264 retry が走らない bug があった (#596 QSV と同型)。
+    #[test]
+    fn is_gpu_encoder_failure_detects_nvenc_nvcuda_dll_missing() {
+        let stderr = "\
+[h264_nvenc @ 0x1] Cannot load nvcuda.dll\n\
+[vost#0:0/h264_nvenc @ 0x2] Could not open encoder before EOF\n";
+        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
+    }
+
     /// Intel QSV の MFX session 初期化失敗 (ffmpeg 7.x 系ワード)。
     #[test]
     fn is_gpu_encoder_failure_detects_qsv_init_error() {
@@ -2641,6 +2664,20 @@ mod tests {
     #[test]
     fn is_gpu_encoder_failure_detects_amf_load_error() {
         let stderr = "[h264_amf] AMF runtime not initialized\n";
+        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Amf));
+    }
+
+    /// #604 実機検証: ffmpeg 8.1 BtbN LGPL を Intel iGPU only host で
+    /// h264_amf 強制起動 -> AMD driver 不在で amfrt64.dll が開けず失敗。
+    /// pre-#604 の pattern (`AMF runtime not initialized` / `DLL load
+    /// failed` / `Could not initialize AMFContext`) は 1 つも hit せず
+    /// libx264 retry が走らない bug があった (#596 QSV と同型)。
+    #[test]
+    fn is_gpu_encoder_failure_detects_amf_amfrt64_dll_missing() {
+        let stderr = "\
+[AMF @ 0x1] DLL amfrt64.dll failed to open\n\
+[h264_amf @ 0x2] Failed to create  hardware device context (AMF) : Unknown error occurred\n\
+[vost#0:0/h264_amf @ 0x3] Could not open encoder before EOF\n";
         assert!(is_gpu_encoder_failure(stderr, H264Encoder::Amf));
     }
 
