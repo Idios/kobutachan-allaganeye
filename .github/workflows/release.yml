@@ -10,6 +10,16 @@ on:
       - 'scripts/build-portable-zip.ps1'
       - 'scripts/extract_release_notes.py'
       - 'pyproject.toml'
+      # GUI 関連: tauri build を release CI で実行するため (#570)。
+      # tauri.conf.json / Cargo.toml / Rust src / TS src / vite config の単独変更でも
+      # release CI を trigger し、Tauri build 失敗の検出が遅れないようにする。
+      - 'gui/package.json'
+      - 'gui/package-lock.json'
+      - 'gui/src-tauri/**'
+      - 'gui/src/**'
+      - 'gui/index.html'
+      - 'gui/vite.config.ts'
+      - 'gui/tsconfig*.json'
   workflow_dispatch:
     inputs:
       version_override:
@@ -101,6 +111,20 @@ jobs:
       - name: Build Portable ZIP (skip archive)
         shell: pwsh
         run: ./scripts/build-portable-zip.ps1 -Version '${{ needs.version-check.outputs.version }}' -SkipArchive
+
+      # build-portable-zip.ps1 は Tauri exe が見つからない場合 Write-Warning で
+      # 続行する (CLI-only ZIP として artifact 化) ため、payload に exe が含まれない
+      # 回帰を smoke test の前に明示 fail させる (#570 受け入れ条件 #3)。
+      - name: Verify allaganeye-gui.exe is bundled (#570)
+        shell: pwsh
+        run: |
+          $version = '${{ needs.version-check.outputs.version }}'
+          $exePath = "build/portable/allaganeye-v$version/allaganeye-gui.exe"
+          if (-not (Test-Path $exePath)) {
+            throw "allaganeye-gui.exe not found in payload: $exePath (build-portable-zip.ps1 may have hit the auto-detect Write-Warning path - check 'Build Tauri GUI binary' step)"
+          }
+          $size = (Get-Item $exePath).Length / 1MB
+          Write-Host "allaganeye-gui.exe bundled at $exePath ($([math]::Round($size, 2)) MB)"
 
       - name: Smoke test (run launcher --version from built payload)
         shell: pwsh

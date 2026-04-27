@@ -17,7 +17,7 @@
 │                                                                  │
 │  L2b: Portable ZIP / Tauri bundle (配布形態)                    │
 │  ├── allaganeye.bat              ── CLI 起動 (Python ランタイム) │
-│  └── allaganeye-gui.exe (future)    ── GUI 起動 (Tauri bundle)      │
+│  └── allaganeye-gui.exe          ── GUI 起動 (Tauri bundle, v0.2.0+) │
 │       │                                                           │
 │       └─ subprocess spawn ─► allaganeye.exe / allaganeye.bat     │
 │                                                                   │
