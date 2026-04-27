@@ -213,7 +213,6 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 
 L2 からは**単一ワークツリー + skill ベースディスパッチ**を採用。詳細は `docs/l2-workflow.md` を参照。
 
-- 旧ロール体制 (director / lead-engineer / engineer / tester) は廃止
 - 既存 skill: `/review-pr`, `/enforce-acceptance-criteria`, `/scope-guard`, `/create-task`, `/close-issue`, `/release`
 - 計画立案・実装・PR テストは Plan モード + 通常ツール + TodoWrite で代替
 - ユーザー (Idios) が戦略・方針を判断し、Claude は選択肢提示と実装を担う

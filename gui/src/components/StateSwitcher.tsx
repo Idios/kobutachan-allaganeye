@@ -13,7 +13,7 @@ const SCREEN_LABELS: Record<AppScreen, string> = {
 const SCREENS: AppScreen[] = ['drop', 'detecting', 'complete', 'preview', 'export'];
 
 /**
- * Dev-only screen switcher. Lets the tester jump between the 5 screens without
+ * Dev-only screen switcher. Lets a developer jump between the 5 screens without
  * going through the real flow. Renders as a floating pill in the top-right.
  *
  * Mirror of FullStateSwitcher in docs/design/bundle/project/variants/aether-preview.jsx.

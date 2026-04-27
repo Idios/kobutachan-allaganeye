@@ -111,6 +111,6 @@ PR 作成直前に以下を PR 本文に明記:
 
 ## 参考
 
-- `docs/l2-workflow.md` §「ユーザー確認ルール」 §「強制メカニズム」
+- `docs/l2-workflow.md` §「ルールと強制メカニズム」
 - `docs/issue-policy.md` §「Issue のライフサイクル管理」
 - #367 — 関連する受け入れ条件チェック (enforce-acceptance-criteria skill)

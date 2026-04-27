@@ -272,7 +272,7 @@ close 後に追加情報 (関連 PR 番号 / 検証ログ / 残タスク子 issu
 
 - `/review-pr` SKILL.md Step 8 (本 skill へのハンドオフ元)
 - `docs/issue-policy.md` §7 「Issue のライフサイクル管理」 / §8 「Issue クローズポリシー」
-- `docs/l2-workflow.md` §「skill 連携」 (review-pr → /close-issue の運用フロー)
+- `docs/l2-workflow.md` §「レビュー受け入れ基準 (#367 対策)」 (review-pr → /close-issue の運用フロー、`### Issue クローズルール` サブセクション)
 - Iron Law 4 (`.claude/hooks/session-start.sh`)
 - 本 skill 改修経緯: #594
 - 先行事例 (empirical-prompt-tuning による skill 改修): #511 (review-pr ブラッシュアップ)
