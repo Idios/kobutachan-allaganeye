@@ -1,0 +1,7 @@
+# Force LF line endings on generated files so the CI diff check (#612)
+# stays stable across Windows / Linux contributors. Without this, a
+# Windows checkout writes CRLF on autocrlf=true and the codegen-output
+# diff would flag itself even when the schema is in sync.
+gui/src/types/metadata.generated.ts text eol=lf
+allaganeye/metadata_types.py text eol=lf
+schemas/metadata.schema.json text eol=lf

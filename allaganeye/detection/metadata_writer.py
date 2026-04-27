@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -30,8 +31,12 @@ from allaganeye.exceptions import AllaganEyeError, InputFileError
 __all__ = ["read_metadata", "write_metadata_atomic"]
 
 
-def write_metadata_atomic(path: Path, payload: dict[str, Any]) -> None:
+def write_metadata_atomic(path: Path, payload: Mapping[str, Any]) -> None:
     """Serialise ``payload`` to ``path`` atomically via a ``.tmp`` sibling.
+
+    Accepts any ``Mapping`` (incl. plain ``dict`` and TypedDict outputs
+    like ``allaganeye.metadata_types.Metadata``) so callers don't need to
+    cast the typed payload back to ``dict[str, Any]`` (#612).
 
     Raises :class:`AllaganEyeError` when the directory cannot be created or
     either write/rename fails.  Callers are responsible for shaping

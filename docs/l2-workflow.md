@@ -163,6 +163,39 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 
 **L2 → L3 昇格**: feedback が複数セッションで再利用される汎用知見に育ったら `docs/knowledge/` へ移動し、memory からは削除。
 
+## schema 編集ワークフロー (#612)
+
+`metadata.json` のスキーマは [`schemas/metadata.schema.json`](../schemas/metadata.schema.json) (draft-2020-12) を機械可読の正、[`docs/metadata-spec.md`](metadata-spec.md) を人間可読の正とする二層 SSoT 構造。フィールドを追加・変更する際は以下の手順で進める。
+
+### 編集手順
+
+1. **JSON Schema を編集**: `schemas/metadata.schema.json` の `properties` / `required` / `$defs` を更新
+2. **doc 同期**: 必要なら `docs/metadata-spec.md` のテーブル / 説明を更新
+3. **再生成**: `python scripts/codegen/generate.py` で `allaganeye/metadata_types.py` (TypedDict) と `gui/src/types/metadata.generated.ts` (interface) を一括再生成
+4. **zod 同期**: [`gui/src/types/metadata.schema.ts`](../gui/src/types/metadata.schema.ts) の field set / required / nullable を JSON Schema と完全一致させる (refine 制約は zod 側のみで残す)
+5. **payload builder 修正**: [`allaganeye/commands/split_matches.py`](../allaganeye/commands/split_matches.py) の `_build_metadata_payload` を新しい必須フィールドに合わせて更新 (pyright が型レベルで検出する)
+6. **生成物 commit**: `metadata_types.py` / `metadata.generated.ts` を必ず commit する。CI が `git diff --exit-code` で差分があれば fail する
+
+### CI ガード
+
+`.github/workflows/ci.yml`:
+
+- `python` ジョブ: `python scripts/codegen/generate.py --py` 実行 → `git diff --exit-code allaganeye/metadata_types.py`
+- `gui-frontend` ジョブ: `node gui/scripts/generate-ts.mjs` 実行 → `git diff --exit-code gui/src/types/metadata.generated.ts`
+
+差分が検出された場合は「JSON Schema を編集したら `python scripts/codegen/generate.py` を再実行して commit してください」のメッセージで build fail する。
+
+### refine 制約の扱い
+
+`end_time >= start_time` 等のセマンティック制約は JSON Schema では表現せず、zod (GUI) と CLI 側 InputFileError で個別に enforce する。reader 側の前方互換 (legacy `note` / 未知フィールドの passthrough) も同様で、JSON Schema は strict、zod が `.passthrough()` で緩く受ける二層構造になっている。
+
+### 関連ファイル
+
+- [`schemas/metadata.schema.json`](../schemas/metadata.schema.json) — 機械可読の正
+- [`scripts/codegen/generate.py`](../scripts/codegen/generate.py) — orchestrator
+- [`scripts/codegen/README.md`](../scripts/codegen/README.md) — 詳細手順とトラブルシューティング
+- [`gui/scripts/generate-ts.mjs`](../gui/scripts/generate-ts.mjs) — Node generator (TS)
+
 ## ルールと強制メカニズム
 
 本プロジェクトの基本ルールは **Iron Law** としてセッション開始時に全て注入される (`.claude/hooks/session-start.sh`)。詳細な条文はそのファイルを正とし、本ドキュメントでは重複記載しない。

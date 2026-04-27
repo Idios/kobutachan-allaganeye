@@ -24,6 +24,7 @@ from allaganeye.exceptions import (
     InputFileError,
     VideoProcessingError,
 )
+from allaganeye.metadata_types import Metadata, SystemInfo
 from allaganeye.video.detector import (
     DetectionStats,
     MatchBoundary,
@@ -644,7 +645,7 @@ def _build_system_info(
     *,
     available_vendors: list[str],
     vendor_used: str | None,
-) -> dict:
+) -> SystemInfo:
     """Build the ``system_info`` dict for ``metadata.json`` (#591).
 
     GUI export 画面 (Phase 4 / `select_h264_encoder_for_export`) が
@@ -934,7 +935,7 @@ def _split_and_write_metadata(
     *,
     effective_interval: float,
     detected_at: str,
-    system_info: dict,
+    system_info: SystemInfo,
     quiet: bool = False,
 ) -> None:
     """Split video and write metadata.json (#591: system_info required)."""
@@ -1000,8 +1001,8 @@ def _build_metadata_payload(
     boundaries: list[MatchBoundary],
     output_files: list[Path],
     gaps: list[Gap],
-    system_info: dict,
-) -> dict:
+    system_info: SystemInfo,
+) -> Metadata:
     """Build the ``metadata.json`` payload dict (schema v1, #463 / #591).
 
     Kept private to this module; ``commands.detect`` builds a variant
@@ -1019,6 +1020,12 @@ def _build_metadata_payload(
     encoder selection (NVENC / QSV / AMF / libx264). Optional field added
     in v1; readers without #591 simply ignore it. Build via
     ``_build_system_info``.
+
+    The return type is the auto-generated ``Metadata`` TypedDict from
+    ``allaganeye/metadata_types.py`` (regenerated from
+    ``schemas/metadata.schema.json`` via ``python scripts/codegen/generate.py``,
+    #612). Drift between this builder and the JSON Schema is caught
+    statically by pyright.
     """
     return {
         "schema_version": "1",
@@ -1046,7 +1053,11 @@ def _build_metadata_payload(
                 "end_display": _format_timestamp(b["end"]),
                 "duration": b["end"] - b["start"],
                 "duration_display": _format_duration(b["end"] - b["start"]),
-                "type": b.get("type", "unknown"),
+                # Narrow MatchBoundary's open-ended `type: str` (detector.py)
+                # to the JSON Schema literal so pyright accepts the assignment.
+                # Anything other than "fl_match" is normalized to "unknown"
+                # -- matches the prior dict.get fallback semantics.
+                "type": "fl_match" if b.get("type") == "fl_match" else "unknown",
                 "output_file": f.as_posix(),
             }
             for i, (b, f) in enumerate(zip(boundaries, output_files, strict=True))

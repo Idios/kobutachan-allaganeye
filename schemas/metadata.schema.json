@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Idios/kobutachan-allaganeye/schemas/metadata.schema.json",
+  "title": "Metadata",
+  "description": "metadata.json contract between allaganeye CLI and the L2a Tauri GUI (#463). Machine-readable source of truth (#612). The human-readable counterpart lives in docs/metadata-spec.md; refine-style semantic constraints (e.g. end_time >= start_time) are enforced by zod (GUI) and InputFileError checks (CLI), not by this schema.",
+  "type": "object",
+  "required": [
+    "source",
+    "source_duration",
+    "source_duration_display",
+    "detected_at",
+    "detection_params",
+    "matches",
+    "gaps"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "Payload schema revision (#515). New writes always emit \"1\"; missing field is interpreted as v1 for backward compat with pre-#515 outputs.",
+      "const": "1"
+    },
+    "source": {
+      "description": "Absolute path of the source video file as written by the OS that produced metadata.json.",
+      "type": "string",
+      "minLength": 1
+    },
+    "source_duration": {
+      "description": "Total length of the source video in seconds.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "source_duration_display": {
+      "description": "Human-readable duration (HH:MM:SS or MM:SS).",
+      "type": "string",
+      "minLength": 1
+    },
+    "source_fps": {
+      "description": "Source recording frame rate (#465). Optional for backward compat with pre-0.2.0 metadata.json that omitted the field; readers default to DEFAULT_FPS (60) when absent.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "detected_at": {
+      "description": "ISO 8601 UTC timestamp of when detection ran.",
+      "type": "string",
+      "minLength": 1
+    },
+    "detection_params": {
+      "$ref": "#/$defs/DetectionParams"
+    },
+    "matches": {
+      "description": "Match segments (zero or more).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Match"
+      }
+    },
+    "gaps": {
+      "description": "Inter-match idle gaps >= 5 minutes (zero or more).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Gap"
+      }
+    },
+    "warnings": {
+      "description": "Structured warnings emitted during detection (#518). New writers always emit an array (possibly empty); missing field is accepted for legacy compatibility.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/MetadataWarning"
+      }
+    },
+    "system_info": {
+      "$ref": "#/$defs/SystemInfo"
+    }
+  },
+  "$defs": {
+    "DetectionParams": {
+      "title": "DetectionParams",
+      "description": "Parameters used by the detector when this metadata.json was produced.",
+      "type": "object",
+      "required": [
+        "sample_interval",
+        "blackout_threshold",
+        "min_match_duration",
+        "min_blackout_duration",
+        "no_audio",
+        "use_gpu",
+        "workers"
+      ],
+      "properties": {
+        "sample_interval": {
+          "description": "Pass 1 sampling interval in seconds.",
+          "type": "number"
+        },
+        "blackout_threshold": {
+          "description": "Brightness threshold (0-255) below which a frame is considered blackout.",
+          "type": "number"
+        },
+        "min_match_duration": {
+          "description": "Minimum match duration in seconds.",
+          "type": "number"
+        },
+        "min_blackout_duration": {
+          "description": "Minimum blackout duration in seconds.",
+          "type": "number"
+        },
+        "no_audio": {
+          "description": "True when the audio promotion stage was skipped.",
+          "type": "boolean"
+        },
+        "use_gpu": {
+          "description": "GPU mode setting. number/boolean for explicit selection, null for auto.",
+          "type": ["number", "boolean", "null"]
+        },
+        "workers": {
+          "description": "Parallel worker count. number for explicit, null for auto.",
+          "type": ["number", "null"]
+        }
+      }
+    },
+    "Match": {
+      "title": "Match",
+      "description": "Single match segment. JSON Schema is the strict writer contract; reader-side passthrough for GUI-only edit fields (name / type_override / edited) is provided by zod (.passthrough() on MatchSchema) and only round-trips inside metadata.draft.json, never metadata.json proper.",
+      "type": "object",
+      "required": [
+        "index",
+        "start_time",
+        "end_time",
+        "start_display",
+        "end_display",
+        "duration",
+        "duration_display",
+        "type",
+        "output_file"
+      ],
+      "properties": {
+        "index": {
+          "description": "1-based ordinal of the match within the source video.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "start_time": {
+          "description": "Match start in seconds (>= 0).",
+          "type": "number",
+          "minimum": 0
+        },
+        "end_time": {
+          "description": "Match end in seconds (>= start_time; constraint enforced at runtime by zod / InputFileError, not by this schema).",
+          "type": "number",
+          "minimum": 0
+        },
+        "start_display": {
+          "description": "Human-readable start (MM:SS or H:MM:SS).",
+          "type": "string",
+          "minLength": 1
+        },
+        "end_display": {
+          "description": "Human-readable end.",
+          "type": "string",
+          "minLength": 1
+        },
+        "duration": {
+          "description": "Match length in seconds.",
+          "type": "number",
+          "minimum": 0
+        },
+        "duration_display": {
+          "description": "Human-readable duration (e.g. 15m15s).",
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "description": "Detected match classification.",
+          "type": "string",
+          "enum": ["fl_match", "unknown"]
+        },
+        "output_file": {
+          "description": "MP4 filename relative to the metadata.json directory.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "Gap": {
+      "title": "Gap",
+      "description": "Inter-match idle gap >= 5 minutes (min_gap=300.0).",
+      "type": "object",
+      "required": [
+        "start_time",
+        "end_time",
+        "start_display",
+        "end_display",
+        "duration",
+        "duration_display"
+      ],
+      "properties": {
+        "start_time": {
+          "type": "number",
+          "minimum": 0
+        },
+        "end_time": {
+          "description": "Gap end (>= start_time; constraint enforced at runtime, not by this schema).",
+          "type": "number",
+          "minimum": 0
+        },
+        "start_display": {
+          "type": "string",
+          "minLength": 1
+        },
+        "end_display": {
+          "type": "string",
+          "minLength": 1
+        },
+        "duration": {
+          "type": "number",
+          "minimum": 0
+        },
+        "duration_display": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "MetadataWarning": {
+      "title": "MetadataWarning",
+      "description": "Structured warning entry (#518). Future codes should be appended to allaganeye/detection/warnings.py::WARNING_CODES; readers must accept unknown codes (forward compat).",
+      "type": "object",
+      "required": ["code"],
+      "properties": {
+        "code": {
+          "description": "Warning code key (e.g. \"audio_skipped\").",
+          "type": "string",
+          "minLength": 1
+        },
+        "message_en": {
+          "description": "English message; readers fall back to WARNING_CODES lookup when omitted.",
+          "type": "string"
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["info", "warn", "error"]
+        },
+        "context": {
+          "description": "Code-specific extra information.",
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "SystemInfo": {
+      "title": "SystemInfo",
+      "description": "GPU vendor probe snapshot recorded by detect/split (#591). GUI export uses this to pick the H.264 encoder (NVENC / QSV / AMF / libx264). Optional at the root because pre-#591 metadata.json files don't carry it.",
+      "type": "object",
+      "required": ["gpu_vendors_available", "gpu_vendor_used", "vendor_preference"],
+      "properties": {
+        "gpu_vendors_available": {
+          "description": "Vendors detected via probe_gpu_vendors() — subset of {\"nvidia\",\"amd\",\"intel\"}. Empty array means CPU-only host.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "gpu_vendor_used": {
+          "description": "Vendor actually consumed by GPU decode in this run. null when CPU was forced (--no-gpu), the cache hit skipped detection, or the run came from split --from-metadata.",
+          "type": ["string", "null"]
+        },
+        "vendor_preference": {
+          "description": "Snapshot of gpu_detector._VENDOR_PREFERENCE (currently [\"nvidia\",\"amd\",\"intel\"]).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
