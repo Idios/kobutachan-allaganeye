@@ -280,4 +280,68 @@ describe('MetadataSchema', () => {
       expect(MetadataSchema.safeParse(doc).success).toBe(false);
     }
   });
+
+  // #569 -- brightness_samples optional field
+
+  it('accepts a document with brightness_samples', () => {
+    const doc = {
+      ...validMetadata(),
+      brightness_samples: {
+        interval_s: 25.0,
+        values: [85.3, 87.1, 6.2, 12.0, 95.0],
+      },
+    };
+    const result = MetadataSchema.safeParse(doc);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.brightness_samples?.values.length).toBe(5);
+    }
+  });
+
+  it('accepts a document without brightness_samples (backward compat)', () => {
+    const doc = validMetadata();
+    expect('brightness_samples' in doc).toBe(false);
+    expect(MetadataSchema.safeParse(doc).success).toBe(true);
+  });
+
+  it('rejects brightness_samples with non-positive interval_s', () => {
+    for (const interval_s of [0, -1]) {
+      const doc = {
+        ...validMetadata(),
+        brightness_samples: {
+          interval_s,
+          values: [10, 20],
+        },
+      };
+      expect(MetadataSchema.safeParse(doc).success).toBe(false);
+    }
+  });
+
+  it('rejects brightness_samples values outside 0-255', () => {
+    for (const bad of [-1, 256, 1000]) {
+      const doc = {
+        ...validMetadata(),
+        brightness_samples: {
+          interval_s: 1.0,
+          values: [10, bad, 20],
+        },
+      };
+      expect(MetadataSchema.safeParse(doc).success).toBe(false);
+    }
+  });
+
+  it('accepts an empty brightness_samples values array', () => {
+    // The CLI omits the field entirely when no Pass 1 ran (cache hit
+    // path), but a writer that emits {interval_s, values: []} still
+    // round-trips cleanly through the schema -- the GUI just renders
+    // the fallback curve.
+    const doc = {
+      ...validMetadata(),
+      brightness_samples: {
+        interval_s: 1.0,
+        values: [],
+      },
+    };
+    expect(MetadataSchema.safeParse(doc).success).toBe(true);
+  });
 });

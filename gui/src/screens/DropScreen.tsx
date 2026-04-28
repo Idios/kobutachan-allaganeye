@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open } from '@tauri-apps/plugin-dialog';
-import { useReducer, useRef, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 
 import { AllaganFrame } from '../components/AllaganFrame';
 import { AllaganSigil } from '../components/AllaganSigil';
@@ -11,6 +13,48 @@ import { useAppStateStore } from '../state/appStateStore';
 import { dropReducer } from './reducers/drop';
 import type { DropPhase, VideoProbeInfo } from './types';
 import styles from './DropScreen.module.css';
+
+/**
+ * #568: drop zone の drag state。Tauri webview の `onDragDropEvent` で
+ * 更新される。`over-valid` は受付可能な拡張子、`over-invalid` は非対応形式。
+ */
+type DragState = 'idle' | 'over-valid' | 'over-invalid';
+
+/**
+ * Tauri 2 webview onDragDropEvent の payload 型。
+ * `enter` と `drop` は `paths: string[]` (絶対 path) を含む。
+ */
+export type TauriDragDropEvent =
+  | { type: 'enter'; paths: string[]; position: { x: number; y: number } }
+  | { type: 'over'; position: { x: number; y: number } }
+  | { type: 'drop'; paths: string[]; position: { x: number; y: number } }
+  | { type: 'leave' };
+
+export type DragSubscriber = (
+  cb: (e: TauriDragDropEvent) => void,
+) => Promise<UnlistenFn>;
+
+const ACCEPTED_EXTENSIONS = ['.mp4', '.mkv', '.avi', '.mov'] as const;
+
+function isAcceptedVideoExtension(name: string): boolean {
+  const lower = name.toLowerCase();
+  return ACCEPTED_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+function pickFirstAcceptedPath(paths: readonly string[]): string | null {
+  for (const p of paths) {
+    if (isAcceptedVideoExtension(p)) return p;
+  }
+  return null;
+}
+
+async function defaultDragSubscriber(
+  cb: (e: TauriDragDropEvent) => void,
+): Promise<UnlistenFn> {
+  return getCurrentWebview().onDragDropEvent((event) => {
+    cb(event.payload as TauriDragDropEvent);
+  });
+}
 
 const RECENT_DUMMY = [
   { name: '2026-04-08 21-14-05.mkv', size: '38.2 GB', dur: '2:50:28' },
@@ -35,15 +79,38 @@ export interface DropScreenProps {
   probeFn?: (path: string) => Promise<VideoProbeInfo>;
   /** Injection hook for tests. Defaults to @tauri-apps/plugin-dialog open(). */
   openDialogFn?: () => Promise<string | null>;
+  /**
+   * Injection hook for tests. Defaults to subscribing the Tauri webview
+   * `onDragDropEvent`. Tests pass a controllable subscriber that captures
+   * the callback so they can synthesize drag-drop events.
+   */
+  dragSubscriber?: DragSubscriber;
 }
 
-export function DropScreen({ probeFn, openDialogFn }: DropScreenProps = {}) {
+export function DropScreen({
+  probeFn,
+  openDialogFn,
+  dragSubscriber,
+}: DropScreenProps = {}) {
   const navigate = useAppStateStore((s) => s.navigate);
   const setSelectedVideoPath = useAppStateStore((s) => s.setSelectedVideoPath);
 
   const [phase, dispatch] = useReducer(dropReducer, 'idle' as DropPhase);
   const [probeInfo, setProbeInfo] = useState<VideoProbeInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dragState, setDragState] = useState<DragState>('idle');
+
+  async function probeAndDispatch(path: string): Promise<void> {
+    setError(null);
+    try {
+      const info = await (probeFn ?? probeVideo)(path);
+      setProbeInfo(info);
+      dispatch({ type: 'PROBE_OK' });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      dispatch({ type: 'PROBE_FAIL' });
+    }
+  }
 
   async function pickAndProbe() {
     dispatch({ type: 'BROWSE_CLICKED' });
@@ -61,14 +128,84 @@ export function DropScreen({ probeFn, openDialogFn }: DropScreenProps = {}) {
       return;
     }
     dispatch({ type: 'FILE_PICKED' });
-    try {
-      const info = await (probeFn ?? probeVideo)(selected);
-      setProbeInfo(info);
-      dispatch({ type: 'PROBE_OK' });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      dispatch({ type: 'PROBE_FAIL' });
-    }
+    await probeAndDispatch(selected);
+  }
+
+  // #568: Tauri webview onDragDropEvent を購読し、drag-over の visual
+  // フィードバックと drop での probing 遷移を実装する。`dragDropEnabled`
+  // が default `true` のため OS-level drop は Tauri が intercept し
+  // HTML5 onDrop は実機で発火しない。HTML5 handler は jsdom テスト用
+  // fallback として併設している。
+  useEffect(() => {
+    const subscribe = dragSubscriber ?? defaultDragSubscriber;
+    let unlisten: UnlistenFn | null = null;
+    let cancelled = false;
+    void (async () => {
+      const u = await subscribe((e) => {
+        // phase が idle 以外は drag を ignore (probing 中の干渉防止 +
+        // probeError card 表示中に dragState が裏で更新されないように)。
+        if (phase !== 'idle') {
+          if (e.type === 'leave') setDragState('idle');
+          return;
+        }
+        switch (e.type) {
+          case 'enter':
+            setDragState(
+              pickFirstAcceptedPath(e.paths) ? 'over-valid' : 'over-invalid',
+            );
+            return;
+          case 'over':
+            // 'over' は paths を含まないことが多い (Tauri 2 仕様)。
+            // 'enter' で決めた dragState を維持する。
+            return;
+          case 'leave':
+            setDragState('idle');
+            return;
+          case 'drop': {
+            const path = pickFirstAcceptedPath(e.paths);
+            setDragState('idle');
+            if (!path) return; // invalid drop は phase 遷移しない
+            dispatch({ type: 'DND_DROPPED' });
+            void probeAndDispatch(path);
+            return;
+          }
+        }
+      });
+      if (cancelled) u();
+      else unlisten = u;
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragSubscriber, phase]);
+
+  function onDragOverHTML(e: React.DragEvent) {
+    e.preventDefault();
+    if (phase !== 'idle') return;
+    const items = Array.from(e.dataTransfer?.items ?? []);
+    const valid =
+      items.length > 0 &&
+      items.every(
+        (it) =>
+          it.kind === 'file' &&
+          (it.type.startsWith('video/') || it.type === ''),
+      );
+    setDragState(valid ? 'over-valid' : 'over-invalid');
+  }
+
+  function onDragLeaveHTML() {
+    if (phase !== 'idle') return;
+    setDragState('idle');
+  }
+
+  function onDropHTML(e: React.DragEvent) {
+    // 実機では Tauri が intercept するためここは発火しない。jsdom 上で
+    // のみ発火する経路で、path が取れないので visual のリセットだけ行う。
+    e.preventDefault();
+    e.stopPropagation();
+    setDragState('idle');
   }
 
   function confirm() {
@@ -122,23 +259,54 @@ export function DropScreen({ probeFn, openDialogFn }: DropScreenProps = {}) {
       ) : (
         <>
           <AllaganFrame style={{ width: '78%', padding: 2, zIndex: 2 }}>
-            <div className={styles.dropZone}>
-              <div className={styles.dropZoneLabel}>
-                ⬦ ここに録画ファイルをドロップ
-              </div>
-              <div className={styles.dropZoneHint}>
-                or{' '}
-                <button
-                  type="button"
-                  className={styles.browseButton}
-                  disabled={phase === 'selecting' || phase === 'probing'}
-                  onClick={pickAndProbe}
-                >
-                  参照…
-                </button>
-                {phase === 'selecting' && <LoadingSpinner label="選択中" />}
-                {phase === 'probing' && <LoadingSpinner label="解析中" />}
-              </div>
+            <div
+              className={[
+                styles.dropZone,
+                dragState === 'over-valid' ? styles.dropZoneDragOverValid : '',
+                dragState === 'over-invalid'
+                  ? styles.dropZoneDragOverInvalid
+                  : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              data-testid="drop-zone"
+              data-drag-state={dragState}
+              onDragOver={onDragOverHTML}
+              onDragLeave={onDragLeaveHTML}
+              onDrop={onDropHTML}
+            >
+              {dragState === 'over-invalid' ? (
+                <>
+                  <div className={styles.dropZoneIconReject} aria-hidden>
+                    ⊘
+                  </div>
+                  <div className={styles.dropZoneRejectMessage}>
+                    非対応形式 (.mp4 / .mkv / .avi / .mov のみ)
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className={styles.dropZoneLabel}>
+                    ⬦ ここに録画ファイルをドロップ
+                  </div>
+                  <div className={styles.dropZoneHint}>
+                    or{' '}
+                    <button
+                      type="button"
+                      className={styles.browseButton}
+                      disabled={phase === 'selecting' || phase === 'probing'}
+                      onClick={pickAndProbe}
+                    >
+                      参照…
+                    </button>
+                    {/* #587: replace plaintext "(選択中)/(解析中)" with the
+                        spinning sigil + label so progress is conveyed by
+                        motion, not just static parenthesized text. */}
+                    {phase === 'selecting' && <LoadingSpinner label="選択中" />}
+                    {phase === 'probing' && <LoadingSpinner label="解析中" />}
+                  </div>
+                </>
+              )}
             </div>
           </AllaganFrame>
 

@@ -60,7 +60,7 @@ stateDiagram-v2
     drop_idle --> drop_selecting: [参照...] 押下
     drop_selecting --> drop_idle: dialog cancel
     drop_selecting --> drop_probing: ファイル選択
-    drop_idle --> drop_probing: D&D (Phase 3)
+    drop_idle --> drop_probing: D&D
     drop_probing --> drop_selected: probe OK
     drop_probing --> drop_probeError: probe fail
     drop_selected --> drop_idle: [キャンセル]
@@ -173,7 +173,7 @@ Phase 2 は dummy なので `×` 即時 exit。Phase 3/4 では以下を実装 (
 |---|---|---|
 | 素の起動 | `drop_idle` | Phase 2 |
 | 動画を [参照...] | `drop_idle → selecting → probing → selected → detecting → completed → complete` | Phase 2 (detecting/probing は dummy) |
-| 動画を D&D | (Phase 3) `drop_idle → probing → selected → detecting → completed → complete` | #465 |
+| 動画を D&D | `drop_idle → probing → selected → detecting → completed → complete` | #568 |
 | argv に動画 path | (将来) | Phase 2 外 |
 | 前回 metadata 自動再現 | (将来) | #517 |
 
@@ -303,7 +303,6 @@ Phase 3 で追加される目標:
 
 | 場所 | Phase 2 状態 | Phase 3/4 での差し替え |
 |---|---|---|
-| DropScreen onDrop ハンドラ | UI のみ | #465: 動画ファイル D&D → detect 発火 |
 | DropScreen dummyProbeVideo | sleep + 固定値 | #465: `invoke('probe_video', { path })` |
 | DetectingScreen dummy progress | 80ms × 100 tick | #465: 実 CLI stdout イベント + event listener |
 | metadataStore.loadSample | Phase 2 専用 in-memory | #465: 実 `load_metadata(generatedPath)` に差し替え |

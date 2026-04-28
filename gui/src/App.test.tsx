@@ -16,6 +16,14 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: () => Promise.resolve(() => undefined),
 }));
 
+// #568: DropScreen subscribes to webview onDragDropEvent on mount; stub
+// it so the App test tree can render under jsdom.
+vi.mock('@tauri-apps/api/webview', () => ({
+  getCurrentWebview: () => ({
+    onDragDropEvent: vi.fn().mockResolvedValue(() => undefined),
+  }),
+}));
+
 import App from './App';
 import { useAppStateStore } from './state/appStateStore';
 import { useMetadataStore } from './state/metadataStore';

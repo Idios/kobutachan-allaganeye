@@ -14,6 +14,7 @@ module matures further we can hoist those helpers into
 
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 
@@ -37,9 +38,11 @@ from allaganeye.commands.split_matches import (
     _run_audio_scan,
     _run_detection,
     _save_cache,
+    build_brightness_samples,
 )
 from allaganeye.config import SplitConfig
 from allaganeye.detection.metadata_writer import write_metadata_atomic
+from allaganeye.detection.progress_emitter import ProgressEmitter
 from allaganeye.exceptions import DetectionError
 from allaganeye.video.detector import DetectionStats
 from allaganeye.video.probe import probe_video
@@ -51,6 +54,7 @@ def run_detect(
     *,
     verbose: bool = False,
     quiet: bool = False,
+    progress_format: str = "text",
 ) -> None:
     """Run detection and write ``metadata.json`` without splitting (#463).
 
@@ -58,8 +62,35 @@ def run_detect(
     (``match_NNN.mp4``) relative to ``config.output_dir`` so that a later
     ``allaganeye split --from-metadata`` produces the same filenames the
     legacy ``allaganeye split <video>`` flow would have used.
+
+    ``progress_format`` (#569) controls how progress is reported:
+
+    * ``"text"`` (default): the existing click progress bars + typer
+      status lines for human consumption.
+    * ``"json"``: one JSON object per line on stdout for the Tauri GUI
+      wrapper.  Suppresses every other stdout write (``Probing: ...``,
+      ``Metadata: ...``, etc.) so the GUI can parse cleanly.  Errors and
+      ``-v`` traceback still go to stderr.
     """
-    show = not quiet
+    json_mode = progress_format == "json"
+    # In json mode the GUI consumes stdout as a structured stream, so we
+    # treat every typer.echo call site as if --quiet were set (errors
+    # still flow through stderr via the cli.py error handlers).
+    show = not quiet and not json_mode
+    progress_emitter: ProgressEmitter | None = None
+    if json_mode:
+        progress_emitter = ProgressEmitter(enabled=True, stream=sys.stdout)
+        progress_emitter.emit("start", source=str(video_path))
+
+    captured_brightness: dict[float, float] = {}
+
+    def on_brightness(results: dict[float, float]) -> None:
+        # #569 -- single-shot capture: detector calls this once after
+        # Pass 1 with the full timestamp/brightness map. We cache it
+        # locally so the metadata.json writer can downsample for the
+        # complete-screen timeline.
+        captured_brightness.update(results)
+
     total_start = time.monotonic()
     detected_at = _iso_utc_now()
 
@@ -69,6 +100,15 @@ def run_detect(
     if show:
         typer.echo(f"Probing: {video_path.name}")
     metadata = probe_video(video_path)
+    if json_mode and progress_emitter is not None:
+        progress_emitter.emit(
+            "probing",
+            duration_s=metadata["duration"],
+            width=metadata["width"],
+            height=metadata["height"],
+            fps=metadata["fps"],
+            codec=metadata.get("codec"),
+        )
     if verbose and show:
         typer.echo(
             f"  Duration: {metadata['duration']:.1f}s, "
@@ -93,6 +133,11 @@ def run_detect(
                 _display_cache_hit_params(cache_path, config)
             if show:
                 _display_results(boundaries, metadata, video_path, verbose, cached=True)
+            if json_mode and progress_emitter is not None:
+                progress_emitter.emit(
+                    "cache_hit",
+                    boundaries=len(boundaries),
+                )
 
     if boundaries is None:
         use_gpu, gpu_vendor, available_vendors = _resolve_gpu_mode_with_probe(
@@ -124,6 +169,8 @@ def run_detect(
             stats=detect_stats,
             use_gpu=use_gpu,
             gpu_vendor=gpu_vendor,
+            progress_emitter=progress_emitter,
+            brightness_callback=on_brightness,
         )
 
         if not boundaries:
@@ -186,6 +233,11 @@ def run_detect(
         vendor_used=gpu_vendor if use_gpu else None,
     )
 
+    if progress_emitter is not None:
+        progress_emitter.emit("writing_metadata")
+
+    brightness_samples = build_brightness_samples(captured_brightness)
+
     payload = _build_metadata_payload(
         video_path=video_path,
         source_duration=metadata["duration"],
@@ -197,6 +249,7 @@ def run_detect(
         output_files=placeholder_paths,
         gaps=gaps,
         system_info=system_info,
+        brightness_samples=brightness_samples,
     )
     metadata_path = config.output_dir / "metadata.json"
     write_metadata_atomic(metadata_path, payload)
@@ -205,3 +258,10 @@ def run_detect(
         typer.echo(f"\nMetadata: {metadata_path}")
 
     _emit_total_time(total_start, verbose, show)
+
+    if progress_emitter is not None:
+        progress_emitter.emit(
+            "done",
+            metadata_path=str(metadata_path),
+            matches=len(boundaries),
+        )

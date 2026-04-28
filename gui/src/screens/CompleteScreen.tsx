@@ -40,7 +40,17 @@ export function CompleteScreen() {
     }
   }, [metadata, selectedMatchIndex, selectMatch]);
 
-  const brightness = useMemo(() => sampleBrightness(), []);
+  // #569 -- prefer the pre-rendered brightness timeline written by
+  // `allaganeye detect` (Pass 1 sampling), fall back to the in-memory
+  // sample curve only when metadata.json doesn't carry the field
+  // (sample mode after `loadSample()`, or detect cache hit before
+  // re-detection, or pre-#569 metadata files).
+  const brightness = useMemo(() => {
+    if (metadata?.brightness_samples?.values?.length) {
+      return metadata.brightness_samples.values;
+    }
+    return sampleBrightness();
+  }, [metadata?.brightness_samples]);
 
   if (!metadata) {
     return (
