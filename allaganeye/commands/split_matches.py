@@ -1344,7 +1344,7 @@ def _print_environment_header(
     from allaganeye.system_info import (
         get_cpu_info,
         get_disk_info,
-        get_gpu_info,
+        get_gpu_info_lines,
         get_memory_info,
     )
 
@@ -1356,7 +1356,15 @@ def _print_environment_header(
         f"{platform.system()} {platform.release()})"
     )
     typer.echo(f"  CPU: {get_cpu_info()}")
-    typer.echo(f"  GPU: {get_gpu_info()}")
+    gpus = get_gpu_info_lines()
+    if not gpus:
+        typer.echo("  GPU: (unavailable)")
+    elif len(gpus) == 1:
+        typer.echo(f"  GPU: {gpus[0]}")
+    else:
+        typer.echo("  GPU:")
+        for gpu in gpus:
+            typer.echo(f"    - {gpu}")
     typer.echo(f"  Memory: {get_memory_info()}")
     disk_target = output_dir if output_dir is not None else Path.cwd()
     typer.echo(f"  Disk: {get_disk_info(disk_target)}")
