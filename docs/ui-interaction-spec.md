@@ -227,19 +227,19 @@
 
 **phase**: `running | cancelling | cancelled | completed | error` ([reducers/detecting.ts:16-40](../gui/src/screens/reducers/detecting.ts#L16))
 
-**store**: detecting screen は **`metadataStore.loadSample()` を `phase=completed` で 1 回だけ呼ぶ** ([DetectingScreen.tsx:50-55](../gui/src/screens/DetectingScreen.tsx#L50))。`appStateStore.navigate('drop' | 'complete')` で遷移し、`selectedVideoPath` は読むのみで mutation しない (drop で確定した path を後段が継承する設計、#465 review C)。
+**store**: detecting screen は Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) で **`metadataStore.load(metadata_path)` を `start_detect` resolve 後に 1 回呼ぶ** 動作に切替済。`selectedVideoPath` が null の StateSwitcher dev mode 経路でのみ `loadSample()` にフォールバックする。`appStateStore.navigate('drop' | 'complete')` で遷移し、`selectedVideoPath` は読むのみで mutation しない (drop で確定した path を後段が継承する設計、#465 review C)。
 
-**dirty / silent loss**: 編集対象 metadata が無いため §1.3 silent loss confirm の対象外。ただし [中断] → drop 遷移は確定済み video path を捨てる動線なので、Phase 2.5 (#569) で確認 dialog を入れるかは検討事項として残す ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) で議論)。
+**dirty / silent loss**: 編集対象 metadata が無いため §1.3 silent loss confirm の対象外。ただし [中断] → drop 遷移は確定済み video path を捨てる動線なので、確認 dialog を入れるかは検討事項として残す (Phase 2.5 [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) では未対応、後続で議論)。
 
-**sample mode**: `loadSample()` を呼ぶのは detecting だが、これは sample 検出を「実 CLI が走った結果」として代替する Phase 2 の暫定動作。Phase 2.5 (#569) で実 CLI 結果に置き換えれば本画面で sample mode 起動経路は廃止される。
+**sample mode**: Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) で実 CLI 結果への切替が完了し、本画面の `loadSample()` 経路は **`selectedVideoPath` が null の StateSwitcher dev mode 専用フォールバック** に縮退した。プロダクションフロー (drop → detecting) では呼ばれない。
 
-**エラー表示**: §1.5 のうち本画面では現状 **toast を使わず drop へ navigate する Phase 2 暫定挙動** ([DetectingScreen.tsx:65-69](../gui/src/screens/DetectingScreen.tsx#L65))。Phase 2.5 (#569) で `error` phase 時に **toast 通知 + drop 遷移** に置換する。inline は本画面では採用しない (画面が観測フローに専念する設計のため)。
+**エラー表示**: §1.5 のうち本画面では現状 **toast を使わず drop へ navigate する暫定挙動**。Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) は CLI stdout streaming への差し替えまでで、`error` phase 時の **toast 通知** は [#614](https://github.com/Idios/kobutachan-allaganeye/issues/614) (panic / error / log 構造化) で `ErrorBoundary` / `ErrorModal` 兼任設計と合わせて実装する。本画面では inline は採用しない (画面が観測フローに専念する設計のため)。
 
 **実装段階**:
 
-- 現状 (Phase 2): 80ms × 100 tick = 8s の dummy progress、log は progress 連動の hardcoded 3 行 ([DetectingScreen.tsx:11-12,118-133](../gui/src/screens/DetectingScreen.tsx#L11))
-- Phase 2.5 (#569): 実 CLI stdout streaming に差し替え、log は CLI からの行を逐次 append、`error` toast、`cancelling → cancelled` は実 ffmpeg `kill()` 完了で confirm
-- 関連: [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) (running 中の `× 閉じる` 確保) は本画面の cancel と同じ kill 経路を共有予定
+- Phase 2 (#464): 80ms × 100 tick = 8s の dummy progress、log は progress 連動の hardcoded 3 行 (実装当時)
+- Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) **済**: 実 CLI (`allaganeye detect --progress-format json`) stdout streaming に差し替え、log は CLI 1 行 = 1 entry で逐次 append、最大 80 行で truncate、phase 別に `info` / `done` / `error` / `warn` の kind 色分け。meta 行は `probing` event の ffprobe 結果 (`width × height` / `fps` / `codec` / `duration`) に差し替え。`cancelling → cancelled` は **本画面では UI phase 遷移のみ** (実 ffmpeg `kill()` は [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) PR で実装、本 PR は process_tracker への track 登録までで scope を絞る)
+- 関連: [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) (running 中の `× 閉じる` 確保) は本画面の cancel と同じ `kill_tracked_processes` 経路を共有する
 
 #### §2.2.1 AllaganSigil (回転アニメーション)
 
@@ -259,7 +259,7 @@
 | 状態 | `displayOnly` |
 | 遷移トリガー | なし。`selectedVideoPath` 変化時に再 render (basename を抜き出して表示) |
 | store mutation | なし |
-| 例外 / edge case | `selectedVideoPath` が null の場合は `'(video)'` フォールバック ([:80](../gui/src/screens/DetectingScreen.tsx#L80))。Phase 2.5 (#569) で `meta` 行を「dummy probe · Phase 2 skeleton」から実 ffprobe 結果 (解像度 / fps / 長さ等) に差し替える |
+| 例外 / edge case | `selectedVideoPath` が null の場合は `'(video)'` フォールバック。Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) で `meta` 行を `probing` event payload (`width` × `height` / `fps` / `codec` / `duration_s`) から実 ffprobe 結果に差し替え済 (`probing` 受信前の数百 ms は暫定 `phase: …` を表示) |
 
 #### §2.2.3 progressBadge
 
@@ -269,7 +269,7 @@
 | 状態 | `displayOnly`。`progress` (0-100) を四捨五入で表示 |
 | 遷移トリガー | local state `progress` 変化 (Phase 2 dummy interval、Phase 2.5 で CLI 進捗イベント) |
 | store mutation | なし |
-| 例外 / edge case | Phase 2 では `progressTiming` 行が `'Phase 2 dummy'` の固定文字列。Phase 2.5 で経過時間 / ETA に差し替え (#569 議論対象) |
+| 例外 / edge case | Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) で `progressTiming` 行を経過時間 (`fmtElapsed(elapsed)`) と簡易 ETA (`computeEta(percent, elapsed)` の線形外挿、進捗 0% / 100% 付近では非表示) に差し替え済 |
 
 #### §2.2.4 PhaseRow.Detecting (粗スキャン)
 
@@ -299,7 +299,7 @@
 | 状態 | `displayOnly`。Phase 2 は progress 閾値 (0% / 30% / 60%) で 3 行を順次表示する hardcoded 動作 |
 | 遷移トリガー | progress 連動 (Phase 2 dummy)。Phase 2.5 で CLI stdout 行を逐次 append |
 | store mutation | なし |
-| 例外 / edge case | Phase 2.5 で実 CLI stdout に切替時、行数が長期間で増え続けるため scroll 制御 (auto-scroll、最大行数制限) を要設計。retention は描画にのみ影響し store には永続化しない (#569 議論対象) |
+| 例外 / edge case | Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) で実 CLI stdout 1 行 = 1 entry の append に切替済。`MAX_LOG_LINES = 80` で先頭から truncate、retention は描画にのみ影響し store には永続化しない。phase 別に `info` / `done` / `error` / `warn` の `kind` を CSS class (`logEntryDone` / `logEntryError` / `logEntryWarn`) で色分け (キーワード視認性確保) |
 
 #### §2.2.7 [中断] button
 
@@ -307,8 +307,8 @@
 |---|---|
 | 種類 | button ([DetectingScreen.tsx:136-143](../gui/src/screens/DetectingScreen.tsx#L136)) |
 | 状態 | `idle` (phase=`running`) / `disabled` (phase=`cancelling/cancelled/completed/error`) |
-| 遷移トリガー | `onClick` → reducer `CANCEL_CLICKED` (phase=`running → cancelling`)。Phase 2 は副作用 effect で即座に `CANCEL_CONFIRMED` を発火し `cancelling → cancelled` 遷移 ([DetectingScreen.tsx:72-76](../gui/src/screens/DetectingScreen.tsx#L72))。Phase 2.5 で実 ffmpeg `kill()` 完了を待ってから `CANCEL_CONFIRMED` |
-| store mutation | なし (cancelled 検出後の effect で `appStateStore.navigate('drop')` のみ、[DetectingScreen.tsx:58-62](../gui/src/screens/DetectingScreen.tsx#L58)) |
+| 遷移トリガー | `onClick` → reducer `CANCEL_CLICKED` (phase=`running → cancelling`)。Phase 2 / Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) は副作用 effect で即座に `CANCEL_CONFIRMED` を発火し `cancelling → cancelled` 遷移。実 ffmpeg `kill()` 完了同期は [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) で `kill_tracked_processes` 完了を待ってから `CANCEL_CONFIRMED` を発火する設計に拡張する (本 PR は phase 遷移のみで scope を絞る) |
+| store mutation | なし (cancelled 検出後の effect で `appStateStore.navigate('drop')` のみ) |
 | 例外 / edge case | §1.2 disabled 理由表示について、現状 `disabled={phase !== 'running'}` のみで tooltip / inline hint 未実装 → 後続 PR で `title="検知実行中のみ中断できます"` 等を追加 (本 doc が source of truth)。`cancelling` 中の連打は disabled で物理的に防止 |
 
 ### §2.3 complete
@@ -330,12 +330,13 @@
 
 **sample mode**: `metadataStore.filePath === null` の sample mode では `[元に戻す]` は `hasBackup=false` で disabled、編集系のない complete 画面では §1.4 の sample banner を上部 `topBar` 直下に表示する (本 doc が source of truth、現状未実装)。
 
-**エラー表示**: §1.5 inline + toast 併用。complete 画面の主要エラー源は `restoreError` ([RestoreButton.tsx:63-67](../gui/src/components/RestoreButton.tsx#L63), inline `role="alert"`)。Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) で global toast 表示先を兼任する設計に揃える。
+**エラー表示**: §1.5 inline + toast 併用。complete 画面の主要エラー源は `restoreError` ([RestoreButton.tsx:63-67](../gui/src/components/RestoreButton.tsx#L63), inline `role="alert"`)。global toast 兼任設計は [#614](https://github.com/Idios/kobutachan-allaganeye/issues/614) (panic / error / log 構造化、`ErrorBoundary` / `ErrorModal`) で実装する。
 
 **実装段階**:
 
-- 現状 (Phase 2): 試合一覧 / BrightnessTimeline / プレビューサムネイル ([#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) で実 path に切替済) が動作。`brightness` は `sampleBrightness()` の固定波形 ([CompleteScreen.tsx:42](../gui/src/screens/CompleteScreen.tsx#L42))
-- Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)): 実 video からの brightness 抽出に置換、所要列 ([#586](https://github.com/Idios/kobutachan-allaganeye/issues/586))、a11y / polish ([#587](https://github.com/Idios/kobutachan-allaganeye/issues/587))、threshold 連動 ([#588](https://github.com/Idios/kobutachan-allaganeye/issues/588))、§1.3 dirty consume confirm 全経路を実装
+- Phase 2 (#464): 試合一覧 / BrightnessTimeline / プレビューサムネイル ([#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) で実 path に切替済) が動作。`brightness` は `sampleBrightness()` の固定波形だった
+- Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) **済**: `metadata.brightness_samples?.values` (CLI が Pass 1 から 512 点に間引いて metadata.json に埋め込む `BrightnessSamples` 構造) を優先利用、欠落時のみ `sampleBrightness()` フォールバック
+- 後続: 所要列 ([#586](https://github.com/Idios/kobutachan-allaganeye/issues/586))、a11y / polish ([#587](https://github.com/Idios/kobutachan-allaganeye/issues/587))、threshold 連動 ([#588](https://github.com/Idios/kobutachan-allaganeye/issues/588))、§1.3 dirty consume confirm 全経路
 
 #### §2.3.1 statusDot
 

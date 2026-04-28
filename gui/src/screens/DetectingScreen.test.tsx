@@ -161,6 +161,17 @@ describe('DetectingScreen', () => {
   });
 
   it('updates progress label on detect-progress events', async () => {
+    // start_detect must hang here so the meta line stays visible long
+    // enough to assert (otherwise the happy-path mock auto-navigates
+    // to complete and unmounts the screen before getByText runs).
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      return Promise.resolve(null);
+    });
     render(<DetectingScreen />);
     await waitFor(() => {
       expect(listenMock).toHaveBeenCalled();
@@ -173,8 +184,79 @@ describe('DetectingScreen', () => {
         elapsed_s: 3.0,
       });
     });
-    // The header meta line includes "phase: scan"
+    // The header meta line includes "phase: scan" before any probing
+    // event arrives (probing is the trigger that switches the meta line
+    // to ffprobe metadata).
     expect(screen.getByText(/phase:\s*scan/)).toBeInTheDocument();
+  });
+
+  // #569 review Round 1 課題 1 -- meta line reflects probing payload.
+  it('renders meta line with ffprobe data after probing event', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(listenMock).toHaveBeenCalled();
+    });
+    act(() => {
+      emitDetectProgress({
+        phase: 'probing',
+        duration_s: 7215.371,
+        width: 1920,
+        height: 1080,
+        fps: 60.0,
+        codec: 'h264',
+        elapsed_s: 0.04,
+      });
+    });
+    const meta = screen.getByTestId('detecting-meta');
+    expect(meta.textContent).toContain('1920x1080');
+    expect(meta.textContent).toContain('60.00fps');
+    expect(meta.textContent).toContain('h264');
+    // fmtTime renders 7215.371s as "2:00:15".
+    expect(meta.textContent).toContain('2:00:15');
+  });
+
+  // #569 review Round 1 課題 2 -- log lines carry data-kind attribute
+  // and apply the matching colour-coding class.
+  it('renders log entries with kind-specific styling', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(listenMock).toHaveBeenCalled();
+    });
+    act(() => {
+      emitDetectProgress({
+        phase: 'cache_hit',
+        boundaries: 9,
+      });
+    });
+    const log = screen.getByRole('log');
+    const entries = log.querySelectorAll('[data-kind]');
+    const kinds = Array.from(entries).map((el) =>
+      el.getAttribute('data-kind'),
+    );
+    expect(kinds).toContain('warn');
+    // The cache_hit row gets the warn class applied (CSS Modules adds
+    // a hashed suffix, so we assert the className contains the literal
+    // CSS module key rather than an exact match).
+    const warnEntry = Array.from(entries).find(
+      (el) => el.getAttribute('data-kind') === 'warn',
+    );
+    expect(warnEntry?.className).toMatch(/logEntryWarn/);
   });
 
   it('returns to drop when [中断] is clicked', async () => {
@@ -316,31 +398,62 @@ describe('DetectingScreen helpers', () => {
     ).toBeNull();
   });
 
-  it('buildLogText logs scan milestones at every 10%', () => {
-    const text = buildLogText({
+  it('buildLogText logs scan milestones at every 10% with info kind', () => {
+    const entry = buildLogText({
       phase: 'scan',
       completed: 30,
       total: 100,
     });
-    expect(text).toContain('Pass 1 scan');
-    expect(text).toContain('30');
+    expect(entry).not.toBeNull();
+    expect(entry?.text).toContain('Pass 1 scan');
+    expect(entry?.text).toContain('30');
+    expect(entry?.kind).toBe('info');
   });
 
-  it('buildLogText surfaces error messages', () => {
-    expect(
-      buildLogText({
-        phase: 'error',
-        message: 'spawn failed',
-      }),
-    ).toContain('spawn failed');
+  // #569 review Round 1 課題 2 — kind colour-coding contract.
+  it('buildLogText returns kind=error for phase=error', () => {
+    const entry = buildLogText({
+      phase: 'error',
+      message: 'spawn failed',
+    });
+    expect(entry).not.toBeNull();
+    expect(entry?.text).toContain('spawn failed');
+    expect(entry?.kind).toBe('error');
   });
 
-  it('buildLogText surfaces done with match count', () => {
-    expect(
-      buildLogText({
-        phase: 'done',
-        matches: 5,
-      }),
-    ).toContain('5');
+  it('buildLogText returns kind=done for phase=done', () => {
+    const entry = buildLogText({
+      phase: 'done',
+      matches: 5,
+    });
+    expect(entry).not.toBeNull();
+    expect(entry?.text).toContain('5');
+    expect(entry?.kind).toBe('done');
+  });
+
+  it('buildLogText returns kind=warn for phase=cache_hit', () => {
+    const entry = buildLogText({
+      phase: 'cache_hit',
+      boundaries: 9,
+    });
+    expect(entry).not.toBeNull();
+    expect(entry?.text).toContain('キャッシュヒット');
+    expect(entry?.kind).toBe('warn');
+  });
+
+  it('buildLogText returns kind=info for routine progress phases', () => {
+    for (const phase of [
+      'start',
+      'probing',
+      'chunk_dispatch',
+      'refine',
+      'scorebar',
+      'audio',
+      'writing_metadata',
+    ] as const) {
+      const entry = buildLogText({ phase });
+      expect(entry).not.toBeNull();
+      expect(entry?.kind).toBe('info');
+    }
   });
 });

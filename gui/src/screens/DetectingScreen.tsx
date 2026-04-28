@@ -9,6 +9,7 @@ import {
   deriveDetectOutputDir,
   metadataPathFor,
 } from '../utils/detectOutputDir';
+import { fmtTime } from '../utils/time';
 import { detectingReducer } from './reducers/detecting';
 import type { DetectingPhase } from './types';
 import styles from './DetectingScreen.module.css';
@@ -87,27 +88,63 @@ function computeOverallPercent(event: DetectProgressEvent): number {
   return start + range * inner;
 }
 
+/**
+ * #569 Phase 2.5 (review Round 1 課題 2) -- log entry severity for the
+ * keyword colour-coding requirement. The CLI emits a `phase` string;
+ * `buildLogText` maps it to one of these four severities so the live
+ * log can highlight terminal / faulty / warned events without the user
+ * having to read every line.
+ *
+ * - `info`: routine progress (start / probing / scan / refine / scorebar / chunk* / audio / writing_metadata)
+ * - `done`: terminal success (`phase="done"`) -- styled cyan-bright
+ * - `error`: terminal failure (`phase="error"`) -- styled `--ae-danger`
+ * - `warn`: notable non-fatal events (`phase="cache_hit"` for now;
+ *   future expansions: scorebar warnings, audio scan skips, etc.) --
+ *   styled `--ae-gold-bright`
+ */
+type LogKind = 'info' | 'done' | 'error' | 'warn';
+
 interface LogEntry {
   ts: number;
   text: string;
+  kind: LogKind;
 }
 
-function buildLogText(event: DetectProgressEvent): string | null {
+interface BuildLogResult {
+  text: string;
+  kind: LogKind;
+}
+
+function buildLogText(event: DetectProgressEvent): BuildLogResult | null {
   switch (event.phase) {
     case 'start':
-      return 'detect 開始';
+      return { text: 'detect 開始', kind: 'info' };
     case 'probing':
       if (event.duration_s && event.codec) {
-        return `probe: duration=${event.duration_s.toFixed(1)}s codec=${event.codec} ${event.width ?? '?'}x${event.height ?? '?'}@${(event.fps ?? 0).toFixed(2)}fps`;
+        return {
+          text: `probe: duration=${event.duration_s.toFixed(1)}s codec=${event.codec} ${event.width ?? '?'}x${event.height ?? '?'}@${(event.fps ?? 0).toFixed(2)}fps`,
+          kind: 'info',
+        };
       }
-      return 'ffprobe 完了';
+      return { text: 'ffprobe 完了', kind: 'info' };
     case 'cache_hit':
-      return `キャッシュヒット (${event.boundaries ?? '?'} boundaries)`;
+      // cache_hit はエラーではないが、利用者には「Pass 1 / 2 を skip
+      // した」ことが伝わるべき非自明な分岐なので warn 色で目立たせる。
+      return {
+        text: `キャッシュヒット (${event.boundaries ?? '?'} boundaries)`,
+        kind: 'warn',
+      };
     case 'chunk_dispatch':
-      return `チャンク分割: ${event.chunks ?? '?'} 個を並列デコード`;
+      return {
+        text: `チャンク分割: ${event.chunks ?? '?'} 個を並列デコード`,
+        kind: 'info',
+      };
     case 'chunk':
       if (event.completed !== undefined && event.total !== undefined) {
-        return `チャンク完了 ${event.completed}/${event.total}`;
+        return {
+          text: `チャンク完了 ${event.completed}/${event.total}`,
+          kind: 'info',
+        };
       }
       return null;
     case 'scan':
@@ -119,31 +156,76 @@ function buildLogText(event: DetectProgressEvent): string | null {
       ) {
         const pct = (event.completed / event.total) * 100;
         if (pct % 10 < 0.5 || event.completed === event.total) {
-          return `Pass 1 scan: ${event.completed}/${event.total} (${pct.toFixed(0)}%)`;
+          return {
+            text: `Pass 1 scan: ${event.completed}/${event.total} (${pct.toFixed(0)}%)`,
+            kind: 'info',
+          };
         }
       }
       return null;
     case 'refine':
       if (event.completed !== undefined && event.total !== undefined) {
-        return `Pass 2 refine: ${event.completed}/${event.total}`;
+        return {
+          text: `Pass 2 refine: ${event.completed}/${event.total}`,
+          kind: 'info',
+        };
       }
-      return 'Pass 2 refine 開始';
+      return { text: 'Pass 2 refine 開始', kind: 'info' };
     case 'scorebar':
       if (event.completed !== undefined && event.total !== undefined) {
-        return `scorebar 分類: ${event.completed}/${event.total}`;
+        return {
+          text: `scorebar 分類: ${event.completed}/${event.total}`,
+          kind: 'info',
+        };
       }
-      return 'scorebar 分類';
+      return { text: 'scorebar 分類', kind: 'info' };
     case 'audio':
-      return 'audio Fanfare scan';
+      return { text: 'audio Fanfare scan', kind: 'info' };
     case 'writing_metadata':
-      return 'metadata.json 書き込み中…';
+      return { text: 'metadata.json 書き込み中…', kind: 'info' };
     case 'done':
-      return `完了: ${event.matches ?? '?'} matches`;
+      return { text: `完了: ${event.matches ?? '?'} matches`, kind: 'done' };
     case 'error':
-      return `エラー: ${event.message ?? 'unknown'}`;
+      return {
+        text: `エラー: ${event.message ?? 'unknown'}`,
+        kind: 'error',
+      };
     default:
       return null;
   }
+}
+
+/**
+ * #569 review Round 1 課題 1 -- ffprobe metadata captured from the
+ * `probing` event. Pre-#569 the meta line was a hard-coded "dummy
+ * probe · Phase 2 skeleton" string; now it reflects the actual
+ * resolution / fps / codec / duration the CLI just measured. `null`
+ * before the `probing` event arrives, so the line falls back to a
+ * `phase: ...` indicator in that brief window.
+ */
+interface ProbeInfo {
+  width?: number;
+  height?: number;
+  fps?: number;
+  codec?: string;
+  duration_s?: number;
+}
+
+function formatProbeMeta(info: ProbeInfo): string {
+  const parts: string[] = [];
+  if (info.width !== undefined && info.height !== undefined) {
+    parts.push(`${info.width}x${info.height}`);
+  }
+  if (info.fps !== undefined) {
+    parts.push(`${info.fps.toFixed(2)}fps`);
+  }
+  if (info.codec) {
+    parts.push(info.codec);
+  }
+  if (info.duration_s !== undefined) {
+    parts.push(fmtTime(info.duration_s));
+  }
+  return parts.join(' · ');
 }
 
 const MAX_LOG_LINES = 80;
@@ -191,6 +273,9 @@ export function DetectingScreen() {
   const [log, setLog] = useState<LogEntry[]>([]);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // #569 review Round 1 課題 1: probing event payload を保持して
+  // header meta 行を実 ffprobe 結果で render する。
+  const [probeInfo, setProbeInfo] = useState<ProbeInfo | null>(null);
   // Captured once on first mount via lazy initialiser so log entries
   // can compute their relative timestamp inside render. We never need
   // to update this value -- the screen unmounts when navigating away,
@@ -233,10 +318,27 @@ export function DetectingScreen() {
             const payload = event.payload;
             setPhaseLabel(payload.phase);
 
-            const text = buildLogText(payload);
-            if (text !== null) {
+            // #569 review Round 1 課題 1: probing event の ffprobe 結果を
+            // header meta 行用に保持。後続 phase でも維持されるので、
+            // detect 中ずっと「1920x1080 · 60.00fps · h264 · 02:00:14」
+            // のような実値が表示される。
+            if (payload.phase === 'probing') {
+              setProbeInfo({
+                width: payload.width,
+                height: payload.height,
+                fps: payload.fps,
+                codec: payload.codec,
+                duration_s: payload.duration_s,
+              });
+            }
+
+            const entry = buildLogText(payload);
+            if (entry !== null) {
               setLog((prev) => {
-                const next = [...prev, { ts: Date.now(), text }];
+                const next = [
+                  ...prev,
+                  { ts: Date.now(), text: entry.text, kind: entry.kind },
+                ];
                 return next.length > MAX_LOG_LINES
                   ? next.slice(next.length - MAX_LOG_LINES)
                   : next;
@@ -314,6 +416,10 @@ export function DetectingScreen() {
 
   const displayFile = selectedVideoPath?.split(/[/\\]/).pop() ?? '(video)';
   const eta = computeEta(progress, elapsed);
+  // #569 review Round 1 課題 1: probing event 受信後は実 ffprobe 結果を
+  // 表示。受信前 (起動直後の数百 ms) は暫定で `phase: ...` を出して
+  // 「meta 行が空」状態を回避する。
+  const metaText = probeInfo ? formatProbeMeta(probeInfo) : `phase: ${phaseLabel}`;
 
   return (
     <div className={styles.screen} data-testid="detecting-screen">
@@ -322,8 +428,8 @@ export function DetectingScreen() {
         <div className={styles.headerText}>
           <div className={styles.caption}>観測中</div>
           <div className={styles.fileName}>{displayFile}</div>
-          <div className={styles.meta}>
-            phase: {phaseLabel}
+          <div className={styles.meta} data-testid="detecting-meta">
+            {metaText}
             {error ? ` · error: ${error}` : ''}
           </div>
         </div>
@@ -355,8 +461,25 @@ export function DetectingScreen() {
           const tsRel = entry.ts - startedAt;
           const tsLabel = fmtElapsed(Math.max(0, Math.floor(tsRel / 1000)));
           const isLast = idx === log.length - 1;
+          // #569 review Round 1 課題 2: phase 別に行を色分けする。kind
+          // は `done`/`error`/`warn`/`info` の 4 値で、CSS class に対応。
+          // info は無 class (= デフォルト dim 色) を維持して既存の見た目
+          // を変えない。
+          const kindClass =
+            entry.kind === 'done'
+              ? styles.logEntryDone
+              : entry.kind === 'error'
+                ? styles.logEntryError
+                : entry.kind === 'warn'
+                  ? styles.logEntryWarn
+                  : '';
+          const lineClass = kindClass ? `${styles.logEntry} ${kindClass}` : styles.logEntry;
           return (
-            <div key={`${entry.ts}-${idx}`}>
+            <div
+              key={`${entry.ts}-${idx}`}
+              className={lineClass}
+              data-kind={entry.kind}
+            >
               <span
                 className={
                   isLast ? styles.logTimeActive : styles.logTime
