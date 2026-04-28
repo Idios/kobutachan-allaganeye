@@ -799,8 +799,23 @@ def _run_detection(
         )
         detecting_bar.__enter__()
         detecting_state = {"last_pos": 0, "closed": False}
-        refine_state: dict = {"bar": None, "last": 0}
-        scorebar_state: dict = {"bar": None, "last": 0}
+        # ``placeholder_present`` tracks whether the ``[waiting...]`` line
+        # for that phase is still on screen.  Set ``True`` only when the
+        # eager pre-print actually ran; flipped to ``False`` when the bar
+        # opens (placeholder erased) or the Pass 2 skip path replaces it
+        # with ``[skipped: no regions]``.  Used by the ``finally`` cleanup
+        # so a Pass 1 / Pass 2 exception doesn't leave stale ``[waiting]``
+        # text dangling above the traceback (#434 error path).
+        refine_state: dict = {
+            "bar": None,
+            "last": 0,
+            "placeholder_present": eager_phases,
+        }
+        scorebar_state: dict = {
+            "bar": None,
+            "last": 0,
+            "placeholder_present": eager_phases,
+        }
 
         def _close_detecting_if_open() -> None:
             """Emit newline after Pass 1 so the next bar starts cleanly."""
@@ -864,6 +879,7 @@ def _run_detection(
             if refine_state["bar"] is None:
                 _close_detecting_if_open()
                 _erase_current_line()  # erase ``Refining [waiting]`` placeholder
+                refine_state["placeholder_present"] = False
                 refine_state["bar"] = _eta_progressbar(total, "Refining")
                 refine_state["bar"].__enter__()
                 refine_state["last"] = 0
@@ -885,7 +901,9 @@ def _run_detection(
                     # advance one line to land on the Scorebar placeholder.
                     sys.stdout.write("\033[2KRefining   [skipped: no regions]\n")
                     sys.stdout.flush()
+                    refine_state["placeholder_present"] = False
                 _erase_current_line()  # erase ``Scorebar [waiting]`` placeholder
+                scorebar_state["placeholder_present"] = False
                 scorebar_state["bar"] = _eta_progressbar(total, "Scorebar")
                 scorebar_state["bar"].__enter__()
                 scorebar_state["last"] = 0
@@ -910,6 +928,21 @@ def _run_detection(
             _close_scorebar_if_open()
             _close_refine_if_open()
             _close_detecting_if_open()
+            # Clean up any ``[waiting...]`` placeholder lines still on
+            # screen so a Pass 1 / Pass 2 exception's traceback isn't
+            # printed below stale "waiting" text (#434 error path).
+            # The ``_close_*_if_open`` calls above land the cursor on the
+            # next un-rendered phase line, so erasing in order matches
+            # the cursor's downward march.
+            if refine_state["placeholder_present"]:
+                sys.stdout.write("\033[2K\n")
+            if scorebar_state["placeholder_present"]:
+                sys.stdout.write("\033[2K\n")
+            if (
+                refine_state["placeholder_present"]
+                or scorebar_state["placeholder_present"]
+            ):
+                sys.stdout.flush()
 
         return result
 
