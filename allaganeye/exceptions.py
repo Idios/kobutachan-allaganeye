@@ -2,6 +2,8 @@
 
 from typing import Any
 
+STDERR_TAIL_BYTES = 2000
+
 
 class AllaganEyeError(Exception):
     """Base exception for Allagan Eye.
