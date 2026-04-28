@@ -1,4 +1,5 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { ask } from '@tauri-apps/plugin-dialog';
 import {
   useCallback,
   useEffect,
@@ -10,11 +11,23 @@ import {
 import { FrameStrip, type FrameStripThumb } from '../components/FrameStrip';
 import { RestoreButton } from '../components/RestoreButton';
 import { useAppStateStore } from '../state/appStateStore';
-import { useMetadataStore } from '../state/metadataStore';
+import {
+  useMetadataStore,
+  type MatchEditPatch,
+} from '../state/metadataStore';
 import type { MatchType, TypeOverride } from '../types/metadata';
 import { DEFAULT_FPS } from '../types/metadata.schema';
 import { fmtPreciseTime } from '../utils/time';
 import styles from './PreviewScreen.module.css';
+
+/**
+ * #589: debounce window for scheduling `updateMatch` after a local-state edit.
+ * ui-interaction-spec.md §1.1 prescribes 200ms — short enough that the
+ * `● 未保存の変更` badge feels immediate, long enough to coalesce keystroke
+ * bursts on the matchName input. Independent from the 500ms draft auto-save
+ * inside metadataStore.
+ */
+const UPDATE_DEBOUNCE_MS = 200;
 
 interface RegisteredVideo {
   url: string;
@@ -79,6 +92,7 @@ export function PreviewScreen() {
   const filePath = useMetadataStore((s) => s.filePath);
   const updateMatch = useMetadataStore((s) => s.updateMatch);
   const apply = useMetadataStore((s) => s.apply);
+  const discardEdits = useMetadataStore((s) => s.discardEdits);
 
   const selectedMatchIndex = useAppStateStore((s) => s.selectedMatchIndex);
   const navigate = useAppStateStore((s) => s.navigate);
@@ -100,6 +114,90 @@ export function PreviewScreen() {
   const [matchType, setMatchType] = useState<TypeOverride>(
     match ? (match.type_override ?? match.type) : 'fl_match',
   );
+
+  // #589: debounced commit of matchName / startT / endT to the store. The
+  // schedule effect below depends on these state values, so its closure
+  // captures the freshest snapshot on every keystroke; the prior pending
+  // timer is cleared before a new one starts, so coalescence is automatic.
+  // matchType is committed eagerly in its onChange handler (single-select
+  // per ui-interaction-spec.md §1.1 example).
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingPatchRef = useRef<MatchEditPatch | null>(null);
+  // Suppress on initial mount and on selection-driven resync so neither path
+  // schedules a redundant updateMatch (which would flip dirty for a no-op).
+  const suppressScheduleRef = useRef(true);
+
+  // Resync local state when the selected match changes. We use the
+  // setState-in-render pattern (React docs: "you-might-not-need-an-effect"
+  // → adjusting state when a prop changes) so the new TC values appear in
+  // the same render that picks up the new selectedMatchIndex. Ref cleanup
+  // (timer + pending patch + schedule suppression) is kept in the effect
+  // below — touching refs during render is disallowed.
+  const matchIndex = match?.index;
+  const [prevMatchIndex, setPrevMatchIndex] = useState<number | undefined>(
+    matchIndex,
+  );
+  if (matchIndex !== prevMatchIndex) {
+    setPrevMatchIndex(matchIndex);
+    if (match) {
+      setStartT(match.edited?.start_time ?? match.start_time);
+      setEndT(match.edited?.end_time ?? match.end_time);
+      setMatchName(
+        match.name ?? `match_${String(match.index).padStart(3, '0')}`,
+      );
+      setMatchType(match.type_override ?? match.type);
+    }
+  }
+
+  // Reset debounce machinery when the selection changes. Declared before the
+  // schedule effect so it lands first on the same commit, ensuring the
+  // schedule effect that follows sees suppressScheduleRef === true and skips
+  // commiting the just-resynced values back into the store as if they were
+  // user edits.
+  useEffect(() => {
+    suppressScheduleRef.current = true;
+    if (debounceTimerRef.current !== null) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    pendingPatchRef.current = null;
+  }, [matchIndex]);
+
+  useEffect(() => {
+    if (matchIndex === undefined) return;
+    if (suppressScheduleRef.current) {
+      suppressScheduleRef.current = false;
+      return;
+    }
+    pendingPatchRef.current = {
+      ...pendingPatchRef.current,
+      name: matchName,
+      edited: { start_time: startT, end_time: endT },
+    };
+    if (debounceTimerRef.current !== null) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => {
+      if (pendingPatchRef.current) {
+        updateMatch(matchIndex, pendingPatchRef.current);
+        pendingPatchRef.current = null;
+      }
+      debounceTimerRef.current = null;
+    }, UPDATE_DEBOUNCE_MS);
+  }, [startT, endT, matchName, matchIndex, updateMatch]);
+
+  const flushUpdate = useCallback(() => {
+    if (debounceTimerRef.current !== null) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    if (pendingPatchRef.current && matchIndex !== undefined) {
+      updateMatch(matchIndex, pendingPatchRef.current);
+      pendingPatchRef.current = null;
+    }
+  }, [matchIndex, updateMatch]);
+
+  // Flush on unmount so a debounced edit isn't lost when the user navigates
+  // away through a path that doesn't go through handleBack/Export/Apply.
+  useEffect(() => () => flushUpdate(), [flushUpdate]);
 
   // #465 review: source-aware frame rate. Read once from metadata; legacy
   // metadata.json (no `source_fps`) or sample mode falls back to DEFAULT_FPS.
@@ -332,34 +430,50 @@ export function PreviewScreen() {
   }
 
   async function handleApply() {
-    updateMatch(match!.index, {
-      name: matchName,
-      type_override: matchType,
-      edited: { start_time: startT, end_time: endT },
-    });
+    // #589: edits already live in the store via the debounced updateMatch
+    // path. Flush any timer that hasn't fired yet, then persist to disk.
+    flushUpdate();
     if (filePath) {
       await apply();
     }
   }
 
-  function handleBack() {
-    if (dirty) {
-      const ok = window.confirm(
-        '未適用の変更があります。破棄して戻りますか？',
-      );
-      if (!ok) return;
+  // ui-interaction-spec.md §1.3: confirm-OK on a dirty preview must clear
+  // store edits via discardEdits() before navigating, so the destination
+  // screen sees the last persisted state. flushUpdate() runs first so any
+  // un-fired debounce contributes to the dirty check. Tauri 2's WebView2
+  // disables window.confirm() for security, so we go through plugin-dialog's
+  // `ask` (yes/no modal).
+  async function confirmAndNavigate(
+    target: 'complete' | 'export',
+    confirmMsg: string,
+  ) {
+    flushUpdate();
+    if (!useMetadataStore.getState().dirty) {
+      navigate(target);
+      return;
     }
-    navigate('complete');
+    const confirmed = await ask(confirmMsg, {
+      title: '未保存の変更',
+      kind: 'warning',
+    });
+    if (!confirmed) return;
+    await discardEdits();
+    navigate(target);
+  }
+
+  function handleBack() {
+    void confirmAndNavigate(
+      'complete',
+      '未保存の変更があります。破棄して一覧へ戻りますか？',
+    );
   }
 
   function handleExport() {
-    if (dirty) {
-      const ok = window.confirm(
-        '未適用の変更があります。破棄して書き出しに進みますか？',
-      );
-      if (!ok) return;
-    }
-    navigate('export');
+    void confirmAndNavigate(
+      'export',
+      '未保存の変更があります。破棄して書き出しへ進みますか？',
+    );
   }
 
   const selectable: MatchType[] = ['fl_match', 'unknown'];
@@ -393,7 +507,18 @@ export function PreviewScreen() {
         <select
           className={styles.typeSelect}
           value={matchType}
-          onChange={(e) => setMatchType(e.target.value as TypeOverride)}
+          onChange={(e) => {
+            const v = e.target.value as TypeOverride;
+            setMatchType(v);
+            // ui-interaction-spec.md §1.1 example: single-select inputs commit
+            // immediately rather than going through the 200ms debounce. Flush
+            // any pending matchName/startT/endT patch first so we don't fire
+            // two updateMatch calls back-to-back.
+            flushUpdate();
+            if (matchIndex !== undefined) {
+              updateMatch(matchIndex, { type_override: v });
+            }
+          }}
           aria-label="match type"
         >
           {selectable.map((v) => (

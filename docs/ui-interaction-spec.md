@@ -21,7 +21,7 @@
 | 即時 commit が必要な操作 | toggle (skip / type 切替) / 数値 stepper クリック / プルダウン選択 — debounce せず onChange で同期 commit |
 | 例外 (commit しない) | UI 一時表示専用 (フィルタ・検索・ソート選択等)。store に commit しない明示が必要な場合のみ local state でよい |
 
-**アンチパターン**: local state (`useState`) のみで保持し apply ボタン押下時に `updateMatch` を一括コールする設計。dirty バッジ・auto-save・confirm がすべて不発になる。`PreviewScreen` の #589 修正前 ([PreviewScreen.tsx:88-102](../gui/src/screens/PreviewScreen.tsx#L88), [PreviewScreen.tsx:334-343](../gui/src/screens/PreviewScreen.tsx#L334)) がこのパターンに該当した。
+**アンチパターン**: local state (`useState`) のみで保持し apply ボタン押下時に `updateMatch` を一括コールする設計。dirty バッジ・auto-save・confirm がすべて不発になる。`PreviewScreen` の #589 修正前がこのパターンに該当し、debounce 200ms 経由の `updateMatch` + flush-on-navigate に作り変えて解消した (現状は §2.4.2 / §2.4.6 / §2.4.7 が source of truth)。
 
 **Tip**: フォーカス維持や IME 確定途中に store re-render で input が破壊されるのを避けるため、display 用 controlled value は local state で持ち、onChange で local state を更新しつつ debounce で store に commit する 2 レイヤ実装でよい (local state を捨てるのではなく、commit 経路に乗せる)。
 
@@ -39,11 +39,11 @@
 - inline hint は赤字エラーではなく `var(--ae-text-dim)` 系の補助色。情報レベル
 - 理由文は **行動指針を含む形** (例:「サンプル動画では保存できません。実際の動画を選択してください。」)。否定形だけで終わらせない
 
-**アンチパターン**: 理由表示なしの disabled。ユーザーは原因不明で「壊れた」と認識する ([PreviewScreen.tsx:514-518](../gui/src/screens/PreviewScreen.tsx#L514), `applying || !filePath` の sample mode 永続 disabled が #589 該当ケース)。
+**アンチパターン**: 理由表示なしの disabled。ユーザーは原因不明で「壊れた」と認識する ([PreviewScreen.tsx:651-657](../gui/src/screens/PreviewScreen.tsx#L651) の `applying || !filePath` による sample mode 永続 disabled が #589 該当ケース、tooltip / inline hint / 上部 banner は #589 派生 issue で対応予定)。
 
 ### 1.3 silent loss 防止: dirty consume 側で confirm
 
-**原則**: `metadataStore.dirty === true` の状態で、編集破棄を伴う操作 (画面遷移・別 match 選択・元に戻す・アプリ終了) が発火する場合、必ず confirm ダイアログを挟む。confirm は標準 `window.confirm()` で十分 (Tauri のネイティブ dialog plugin でも可、ただし全画面で統一)。
+**原則**: `metadataStore.dirty === true` の状態で、編集破棄を伴う操作 (画面遷移・別 match 選択・元に戻す・アプリ終了) が発火する場合、必ず confirm ダイアログを挟む。confirm は **Tauri 2 plugin-dialog の `ask`** (`@tauri-apps/plugin-dialog`) を使う — Tauri 2 の WebView2 は security の都合で `window.confirm()` / `window.alert()` / `window.prompt()` を no-op にするため native dialog 経路必須。全画面で統一すること。`tauri-plugin-dialog` 側 capability に `dialog:allow-ask` を入れること (#589 で確認)。
 
 | consume 経路 | confirm メッセージ (canonical) | 出現画面 |
 |---|---|---|
@@ -61,7 +61,7 @@
 - confirm キャンセル → 編集保持、画面遷移なし
 - dirty=false (apply 直後 / 編集なし) → confirm スキップで即遷移
 
-**アンチパターン**: dirty=true なのに confirm せず遷移する設計 ([PreviewScreen.tsx:345-363](../gui/src/screens/PreviewScreen.tsx#L345) の handleBack / handleExport が #589 該当)。
+**アンチパターン**: dirty=true なのに confirm せず遷移する設計 (#589 修正前の `PreviewScreen` の handleBack / handleExport が該当、現在は §2.4.1 / §2.4.14 経由で §1.3 準拠 + canonical 文言統一済)。
 
 ### 1.4 sample mode (filePath==null) の read-only 明示
 
@@ -469,63 +469,63 @@
 - **(差異 2)** `preview_restoreError` を §2.4 ヘッダから除外 (RestoreButton 共通 component 内のエラー表示として §2.3.4 / §2.4.13 で扱う。§2.4 ヘッダは preview 画面レベル状態のみ列挙)
 - 両者は意図的な分担であり矛盾ではない。後続 §3 (相互リンク + クロスリファレンス) で全画面の状態名と mermaid の対応関係を一括整理する
 
-**editing**: 編集対象パネルを示す local state `editing: 'start' | 'end'` ([PreviewScreen.tsx:88](../gui/src/screens/PreviewScreen.tsx#L88))。`editing` で `currentT` / `setCurrentT` / `activeVideoRef` が分岐し、stepRow / keyboard / FrameStrip の操作対象を決める。`editing` は phase とは独立で、画面マウント中は常に `'start' | 'end'` のいずれか。
+**editing**: 編集対象パネルを示す local state `editing: 'start' | 'end'` ([PreviewScreen.tsx:101](../gui/src/screens/PreviewScreen.tsx#L101))。`editing` で `currentT` / `setCurrentT` / `activeVideoRef` が分岐し、stepRow / keyboard / FrameStrip の操作対象を決める。`editing` は phase とは独立で、画面マウント中は常に `'start' | 'end'` のいずれか。
 
-**store**: 読み書きは `metadataStore` の `metadata`, `dirty`, `applying`, `applyError`, `filePath`, `updateMatch`, `apply` と `appStateStore` の `selectedMatchIndex`, `navigate`, `selectedVideoPath`。書き込み経路は `updateMatch` ([適用] 押下時のみ、§1.1 違反 → 後述) / `apply` ([適用]) / `RestoreButton.restore` (§2.4.13) / `navigate` (back / export) のみ。
+**store**: 読み書きは `metadataStore` の `metadata`, `dirty`, `applying`, `applyError`, `filePath`, `updateMatch`, `apply`, `discardEdits` と `appStateStore` の `selectedMatchIndex`, `navigate`, `selectedVideoPath`。書き込み経路は `updateMatch` (matchName / startT / endT は debounce 200ms で coalesce、matchType は §1.1 例外で即時 commit) / `apply` ([適用]) / `discardEdits` (back / export confirm OK で最後の persisted 状態へ revert) / `RestoreButton.restore` (§2.4.13) / `navigate` (back / export / RestoreButton 成功) のみ。
 
-**dirty / silent loss**: §1.3 に従い `handleBack` / `handleExport` が `if (dirty) confirm(...)` を実装済み ([PreviewScreen.tsx:345-363](../gui/src/screens/PreviewScreen.tsx#L345))。**ただし §1.1 違反 (matchName / matchType / startT / endT が local state-only) のため `dirty` が立たず、confirm が `false` 経路に常時 fall-through し silent loss する** ([#589](https://github.com/Idios/kobutachan-allaganeye/issues/589) cascading)。後続の §1.1 修正で confirm が機能し始める設計。
+**dirty / silent loss**: §1.3 に従い `handleBack` / `handleExport` が `if (dirty) confirm(...)` → OK で `discardEdits()` 後 `navigate(...)` を実装 ([PreviewScreen.tsx:460-486](../gui/src/screens/PreviewScreen.tsx#L460))。各 input は §1.1 準拠で onChange → debounce 200ms → `updateMatch` → store dirty 即時反映。confirm 直前に `flushUpdate()` でタイマー残を即時 commit するため、`useMetadataStore.getState().dirty` の判定が常に最新の編集を反映する (#589 で確立)。
 
-**sample mode**: §1.4 通り `metadataStore.filePath === null` で sample 扱い。現状 [適用] のみ disabled ([PreviewScreen.tsx:518](../gui/src/screens/PreviewScreen.tsx#L518) の `applying || !filePath`) で、(1) 編集 input (matchName / matchType / startT / endT / TC) は disabled になっておらず、(2) 上部 sample banner が未表示、(3) [適用] disabled の理由 tooltip / inline hint が未表示 → §1.2 / §1.4 違反。後続で §1.4 完全準拠に揃える ([#589](https://github.com/Idios/kobutachan-allaganeye/issues/589) で対応)。
+**sample mode**: `metadataStore.filePath === null` で sample 扱い。現状 [適用] が `applying || !filePath` で disabled ([PreviewScreen.tsx:651](../gui/src/screens/PreviewScreen.tsx#L651)) で、編集 input (matchName / matchType / startT / endT / TC) と主要 CTA は依然活性のまま、上部 sample banner と [適用] disabled の理由 tooltip / inline hint も未表示 → §1.2 / §1.4 違反として **派生 issue で対応 (#589 では state flow / dirty / confirm のみ対象、sample 全面 read-only 化は別 issue 切り出し)**。サンプル状態で編集→confirm OK 経路を辿った場合、`discardEdits()` は `loadSample()` で fixture に戻すため不整合は出ない (#589 で実装)。
 
 **エラー表示**: §1.5 inline + toast 併用。preview 画面の主要エラー源:
 
-- `applyError` → inline `role="alert"` 表示済み ([PreviewScreen.tsx:524-528](../gui/src/screens/PreviewScreen.tsx#L524))
+- `applyError` → inline `role="alert"` 表示済み ([PreviewScreen.tsx:660-662](../gui/src/screens/PreviewScreen.tsx#L660))
 - `restoreError` → RestoreButton 内 inline `role="alert"` 表示済み (§2.3.4 と共通)
-- `videoError` (register_video 失敗) → Pane 内 inline `role="alert"` 表示済み ([PreviewScreen.tsx:614-617](../gui/src/screens/PreviewScreen.tsx#L614))
+- `videoError` (register_video 失敗) → Pane 内 inline `role="alert"` 表示済み ([PreviewScreen.tsx:750](../gui/src/screens/PreviewScreen.tsx#L750))
 
 global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) で complete 画面と統一する。
 
 **実装段階**:
 
-- 現状 (Phase 3 = [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) 完了): `<video>` + axum 配信、`requestVideoFrameCallback` ベースのフレームシーク、ffmpeg サムネキャッシュ、キーボードショートカット ←→ 1s / Shift 10s / Alt 1F / Space 再生、TC HH:MM:SS.FF 入力、frame-grid snap、source_fps 連動 (60/120/240) などが完成
-- 未対応 (#589 で解消予定): §1.1 state mutation / §1.2 disabled 理由 / §1.4 sample mode read-only — 本 §2.4 が source of truth
+- 現状 (Phase 3 = [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) + [#589](https://github.com/Idios/kobutachan-allaganeye/issues/589) 完了): `<video>` + axum 配信、`requestVideoFrameCallback` ベースのフレームシーク、ffmpeg サムネキャッシュ、キーボードショートカット ←→ 1s / Shift 10s / Alt 1F / Space 再生、TC HH:MM:SS.FF 入力、frame-grid snap、source_fps 連動 (60/120/240)、§1.1 / §1.3 準拠の state mutation flow + dirty consume confirm が完成
+- 未対応: §1.2 disabled 理由 tooltip / §1.4 sample mode 全面 read-only (上部 banner + 編集 input + 主要 CTA disabled + inline hint) — **#589 派生 issue で全画面 (complete §2.3 + preview §2.4 + export §2.5) 一括実装予定**。本 §2.4 が source of truth
 - ffmpeg 中断保護 ([#523](https://github.com/Idios/kobutachan-allaganeye/issues/523)): preview では subprocess を持たない (axum 直接配信、サムネは短命) ため、本画面は対象外
 
 #### §2.4.1 [◀ 一覧へ] back button
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | button ([PreviewScreen.tsx:370-376](../gui/src/screens/PreviewScreen.tsx#L370)) |
+| 種類 | button ([PreviewScreen.tsx:496](../gui/src/screens/PreviewScreen.tsx#L496)) |
 | 状態 | `idle` (常時活性) |
-| 遷移トリガー | `onClick` → `handleBack()` ([PreviewScreen.tsx:345-353](../gui/src/screens/PreviewScreen.tsx#L345)) → `if (dirty) confirm('未適用の変更があります。破棄して戻りますか？')` → OK で `navigate('complete')` |
-| store mutation | `appStateStore.screen='complete'` |
-| 例外 / edge case | §1.3 canonical 文言 (「未保存の変更があります。破棄して一覧へ戻りますか？」) と現行文言 (「未適用の変更があります。破棄して戻りますか？」) に差異あり、§1.3 表との表記統一を後続で検討。§1.1 修正前は `dirty=false` 常時で confirm 経路に入らず silent loss |
+| 遷移トリガー | `onClick` → `handleBack()` ([PreviewScreen.tsx:460-474](../gui/src/screens/PreviewScreen.tsx#L460)) → `flushUpdate()` で debounce 残を即時 commit → `if (useMetadataStore.getState().dirty) confirm('未保存の変更があります。破棄して一覧へ戻りますか？')` → OK で `discardEdits()` 後 `navigate('complete')`、cancel で preview 残留 |
+| store mutation | confirm OK 経路では `metadataStore.metadata` (load 経由で persisted 状態へ revert)、`metadataStore.dirty=false`、`metadataStore.draft.json` clear、`appStateStore.screen='complete'` (discardEdits 完了後)。dirty=false 経路は `appStateStore.screen='complete'` のみ |
+| 例外 / edge case | sample mode (filePath==null) では `discardEdits` が `loadSample()` 経路で fixture に戻す (load 経由ではない)。confirm cancel 時は flush だけ走り、編集は store に残ったまま (dirty=true 維持)。文言は §1.3 canonical に統一済 (#589) |
 
 #### §2.4.2 match name input
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | text input ([PreviewScreen.tsx:380-386](../gui/src/screens/PreviewScreen.tsx#L380)) |
-| 状態 | `idle` (常時活性、sample mode でも disabled になっていない → §1.4 違反) |
-| 遷移トリガー | `onChange` → local `setMatchName(value)` のみ。store には commit されない (#589 / §1.1 違反) |
-| store mutation | **現状なし** ([適用] 押下時にまとめて `updateMatch({ name })` される) |
-| 例外 / edge case | §1.1 canonical: onChange で `updateMatch(match.index, { name: value })` を debounce 200ms 経由で呼ぶ。`name` は metadata.json には書き戻されず GUI 表示専用 ([metadata-spec.md](metadata-spec.md))、placeholder は `match_NNN` フォールバック。空文字許容 (placeholder 表示) |
+| 種類 | text input ([PreviewScreen.tsx:505](../gui/src/screens/PreviewScreen.tsx#L505)) |
+| 状態 | `idle` (常時活性、sample mode の disable 化は派生 issue で全画面分対応予定 → §1.4) |
+| 遷移トリガー | `onChange` → local `setMatchName(value)` → schedule effect が pendingPatchRef に `{ name }` を merge → 200ms 後に `updateMatch(match.index, pendingPatch)` を 1 回 commit (§1.1 準拠、debounce で連打を coalesce) |
+| store mutation | debounce 完了時 `metadataStore.metadata.matches[i].name`、`metadataStore.dirty=true`、`metadataStore.draft.json` (#517 auto-save、別 debounce 500ms) |
+| 例外 / edge case | `name` は metadata.json には書き戻されず GUI 表示専用 ([metadata-spec.md](metadata-spec.md))、placeholder は `match_NNN` フォールバック。空文字許容 (placeholder 表示)。`flushUpdate()` (handleApply / handleBack / handleExport / unmount) で残タイマーを即時実行 |
 
 #### §2.4.3 type select
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | `<select>` ([PreviewScreen.tsx:393-405](../gui/src/screens/PreviewScreen.tsx#L393))。option: `fl_match` / `unknown` / `skip` |
-| 状態 | `idle` (常時活性、sample mode でも disabled になっていない → §1.4 違反) |
-| 遷移トリガー | `onChange` → local `setMatchType(value)` のみ。store には commit されない (§1.1 違反) |
-| store mutation | **現状なし** ([適用] 押下時にまとめて `updateMatch({ type_override })` される) |
-| 例外 / edge case | §1.1 canonical: onChange で `updateMatch(match.index, { type_override: value })` を **即時 commit** (toggle / 単一選択型は §1.1 例外で debounce しない)。`skip` は metadata.json に書き戻されない GUI ローカル情報 ([metadata-spec.md](metadata-spec.md) 編集契約) |
+| 種類 | `<select>` ([PreviewScreen.tsx:518](../gui/src/screens/PreviewScreen.tsx#L518))。option: `fl_match` / `unknown` / `skip` |
+| 状態 | `idle` (常時活性、sample mode の disable 化は派生 issue で全画面分対応予定 → §1.4) |
+| 遷移トリガー | `onChange` → local `setMatchType(value)` + `flushUpdate()` で先行 debounce を flush + `updateMatch(match.index, { type_override: value })` を **即時 commit** (§1.1 例外、単一選択型は debounce しない) |
+| store mutation | 即時 `metadataStore.metadata.matches[i].type_override`、`metadataStore.dirty=true`、`metadataStore.draft.json` (#517 auto-save 500ms debounce) |
+| 例外 / edge case | `skip` は normalizeForPersistence で metadata.json に書き戻されない GUI ローカル情報 ([metadata-spec.md](metadata-spec.md) 編集契約)。即時 commit のためタイピング途中の中間状態は持たず、ユーザーが選んだ瞬間に dirty バッジが点く |
 
 #### §2.4.4 Pane button (activate IN / OUT)
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | button ([PreviewScreen.tsx:567-572](../gui/src/screens/PreviewScreen.tsx#L567))。IN (start) / OUT (end) の 2 個。`aria-pressed={active}` |
+| 種類 | button ([PreviewScreen.tsx:682](../gui/src/screens/PreviewScreen.tsx#L682))。IN (start) / OUT (end) の 2 個。`aria-pressed={active}` |
 | 状態 | `inactive` / `active` (`editing === 'start'` で IN、`'end'` で OUT) |
 | 遷移トリガー | `onClick` → `props.onActivate()` → `setEditing('start' \| 'end')` |
 | store mutation | なし (local state) |
@@ -535,37 +535,37 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | `<video>` ([PreviewScreen.tsx:574-613](../gui/src/screens/PreviewScreen.tsx#L574))。axum 配信 URL を `src` に持つ HTML5 player、`controls={false}` |
+| 種類 | `<video>` ([PreviewScreen.tsx:710-748](../gui/src/screens/PreviewScreen.tsx#L710))。axum 配信 URL を `src` に持つ HTML5 player、`controls={false}` |
 | 状態 | `loading` (videoUrl null && videoError null → `loading video…` 表示) / `error` (videoError あり → inline `role="alert"`) / `paused` (default、currentTime ↔ startT/endT 双方向同期) / `playing` (`onTimeUpdate` で startT/endT を currentTime に追従) |
 | 遷移トリガー | `onClick` → stopPropagation。inactive なら `onActivate()` のみ、active なら `play()` / `pause()` toggle。`onTimeUpdate` (playing 時のみ) → `onTChange(v.currentTime)` で local state に sync |
-| store mutation | なし。local state `setStartT` / `setEndT` を介して TC を更新 |
-| 例外 / edge case | paused 中のみ state→video の seek effect ([PreviewScreen.tsx:162-192](../gui/src/screens/PreviewScreen.tsx#L162))。`v.paused` guard なしだと再生中の onTimeUpdate → setStartT → effect → backward seek の loop で再生がガタつく。Space キーでも再生 / 停止可 (global keyboard handler、§2.4.7 注記)。loading / error 時は `<video>` 自体が render されないため click / keyboard はパススルー |
+| store mutation | なし。local state `setStartT` / `setEndT` を介して TC を更新 (debounce 経由で 200ms 後に store dirty へ反映、§2.4.6 と同じ機構) |
+| 例外 / edge case | paused 中のみ state→video の seek effect ([PreviewScreen.tsx:279-309](../gui/src/screens/PreviewScreen.tsx#L279))。`v.paused` guard なしだと再生中の onTimeUpdate → setStartT → effect → backward seek の loop で再生がガタつく。Space キーでも再生 / 停止可 (global keyboard handler、§2.4.7 注記)。loading / error 時は `<video>` 自体が render されないため click / keyboard はパススルー |
 
 #### §2.4.6 Pane.tcInput (TC manual entry)
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | text input ([PreviewScreen.tsx:622-631](../gui/src/screens/PreviewScreen.tsx#L622))。`H:MM:SS.FF` 形式 (FF は frame portion、`source_fps` 連動) |
-| 状態 | `idle` (常時活性、sample mode でも disabled になっていない → §1.4 違反) |
-| 遷移トリガー | `onChange` → `parseTimecode(value, fps)` → 解析成功時 `onTChange(parsed)` (= local `setStartT` / `setEndT`)。`onClick` → stopPropagation で Pane の activate を抑止 |
-| store mutation | なし (local state)。§1.1 違反は §2.4.2 / §2.4.3 と同じ性質 |
+| 種類 | text input ([PreviewScreen.tsx:758](../gui/src/screens/PreviewScreen.tsx#L758))。`H:MM:SS.FF` 形式 (FF は frame portion、`source_fps` 連動) |
+| 状態 | `idle` (常時活性、sample mode の disable 化は派生 issue で全画面分対応予定 → §1.4) |
+| 遷移トリガー | `onChange` → `parseTimecode(value, fps)` → 解析成功時 `onTChange(parsed)` (= local `setStartT` / `setEndT`) → schedule effect が pendingPatchRef に `{ edited: { start_time, end_time } }` を merge → 200ms 後に `updateMatch` を 1 回 commit (§1.1 準拠)。`onClick` → stopPropagation で Pane の activate を抑止 |
+| store mutation | debounce 完了時 `metadataStore.metadata.matches[i].edited.start_time/end_time`、`dirty=true`、`draft.json` (#517 別 debounce 500ms) |
 | 例外 / edge case | `parseTimecode` が null を返す (malformed input) 場合は何もしない (input value は ユーザー編集中の状態を維持)。表示は `fmtPreciseTime(t, fps)` で常に正規化された TC を出すため、playback 中はフレーム単位で値が動く。frame portion は `parseInt(f, 10) / fps` で 60/120/240 fps に対応 |
 
 #### §2.4.7 stepRow buttons (×6)
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | button × 6 ([PreviewScreen.tsx:433-482](../gui/src/screens/PreviewScreen.tsx#L433))。`-10s / -1s / -1F / +1F / +1s / +10s`。`title="<label> (<key hint>)"` で keyboard 等価操作明示、`aria-label="nudge <label>"` |
+| 種類 | button × 6 ([PreviewScreen.tsx:594-617](../gui/src/screens/PreviewScreen.tsx#L594))。`-10s / -1s / -1F / +1F / +1s / +10s`。`title="<label> (<key hint>)"` で keyboard 等価操作明示、`aria-label="nudge <label>"` |
 | 状態 | `idle` (常時活性) |
-| 遷移トリガー | `onClick` → frame ボタンは `nudgeFrame(±1)` (frame-grid snap)、秒 ボタンは `nudge(±1 \| ±10)` (累積) → 内部で `setCurrentT(...)` |
-| store mutation | なし (local state) |
-| 例外 / edge case | global keyboard ([PreviewScreen.tsx:290-319](../gui/src/screens/PreviewScreen.tsx#L290)) が ←/→/Shift+←→/Alt+←→ に同等の `nudge` / `nudgeFrame` を割り当てる。INPUT/TEXTAREA/SELECT に focus 中はキーボードを `return` で吸わない (TC input への入力を妨げない)。frame-grid snap は IEEE 754 丸め誤差で `t + 1/fps` の frame portion が advance しないケースを回避するため frame 番号ベースで step (例: 2438.75 + 1/120 → frame .90 のままバグ) |
+| 遷移トリガー | `onClick` → frame ボタンは `nudgeFrame(±1)` (frame-grid snap)、秒 ボタンは `nudge(±1 \| ±10)` (累積) → 内部で `setCurrentT(...)` → schedule effect 経由で 200ms 後に `updateMatch({ edited })` commit |
+| store mutation | debounce 完了時 `metadataStore.metadata.matches[i].edited.start_time/end_time`、`dirty=true` |
+| 例外 / edge case | global keyboard ([PreviewScreen.tsx:407-436](../gui/src/screens/PreviewScreen.tsx#L407)) が ←/→/Shift+←→/Alt+←→ に同等の `nudge` / `nudgeFrame` を割り当てる。INPUT/TEXTAREA/SELECT に focus 中はキーボードを `return` で吸わない (TC input への入力を妨げない)。frame-grid snap は IEEE 754 丸め誤差で `t + 1/fps` の frame portion が advance しないケースを回避するため frame 番号ベースで step (例: 2438.75 + 1/120 → frame .90 のままバグ) |
 
 #### §2.4.8 keyHint display
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | display block ([PreviewScreen.tsx:486-500](../gui/src/screens/PreviewScreen.tsx#L486))。`role="note"` + `aria-label="keyboard shortcuts"`、`<kbd>` で各キー表示 |
+| 種類 | display block ([PreviewScreen.tsx:621-635](../gui/src/screens/PreviewScreen.tsx#L621))。`role="note"` + `aria-label="keyboard shortcuts"`、`<kbd>` で各キー表示 |
 | 状態 | `displayOnly` |
 | 遷移トリガー | なし (常時可視) |
 | store mutation | なし |
@@ -575,37 +575,37 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | sub-component ([PreviewScreen.tsx:502-511](../gui/src/screens/PreviewScreen.tsx#L502))。±3s 範囲、12 frames @ 0.5s 間隔、現境界中心の thumb 列 |
+| 種類 | sub-component ([PreviewScreen.tsx:638-647](../gui/src/screens/PreviewScreen.tsx#L638))。±3s 範囲、12 frames @ 0.5s 間隔、現境界中心の thumb 列 |
 | 状態 | `displayOnly` (frame の sample) + interactive (frame click) |
-| 遷移トリガー | thumb `onClick` → `props.onSelectFrame(t)` → `setCurrentT(t)` (= startT / endT 切替に応じて) |
-| store mutation | なし (local state) |
+| 遷移トリガー | thumb `onClick` → `props.onSelectFrame(t)` → `setCurrentT(t)` → schedule effect 経由で 200ms 後に `updateMatch({ edited })` commit |
+| store mutation | debounce 完了時 `metadataStore.metadata.matches[i].edited.start_time/end_time`、`dirty=true` |
 | 例外 / edge case | `editing` で `inThumbs` / `outThumbs` を切替表示。thumbs の生成は ffmpeg `generate_match_thumbnails` (Rust 経由) で、boundary が 0.5s 以上動いた時のみ再フェッチ。失敗時は空配列 (UI は空 strip 表示)、エラー文言は出さない (#465 設計判断) |
 
 #### §2.4.10 [適用] primary button
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | button ([PreviewScreen.tsx:514-522](../gui/src/screens/PreviewScreen.tsx#L514))。`aria-label="apply"` |
+| 種類 | button ([PreviewScreen.tsx:651-657](../gui/src/screens/PreviewScreen.tsx#L651))。`aria-label="apply"` |
 | 状態 | `idle` (`!applying && filePath !== null`) / `applying` (label = `'適用中…'`) / `disabled` (`applying \|\| !filePath`) |
-| 遷移トリガー | `onClick` → `handleApply()` ([PreviewScreen.tsx:334-343](../gui/src/screens/PreviewScreen.tsx#L334)) → `updateMatch(index, { name, type_override, edited })` で local state を一括 commit → `filePath` がある場合のみ `apply()` を await |
-| store mutation | `metadataStore.metadata.matches[i].name / type_override / edited`、`metadataStore.dirty=true` (`updateMatch` 経由)、`metadataStore.applying`、`metadataStore.applyError`、`metadataStore.loadedMtimeMs` (apply 成功時)、`metadataStore.hasBackup` (`refreshBackupStatus`)、`metadataStore.metadata.draft.json` clear ([#517](https://github.com/Idios/kobutachan-allaganeye/issues/517) draft auto-save 連携) |
-| 例外 / edge case | sample mode (`filePath === null`) では disabled。**§1.2 違反**: tooltip / inline hint で「サンプル動画では保存できません」を出す canonical を後続で実装。**§1.1 違反**: 本来 onChange ごとに `updateMatch` を debounce 200ms で commit しておき、handleApply は `apply()` だけ呼べばよい。現状の一括 commit は dirty バッジ・auto-save・confirm を全部不発にする設計上の罠 (#589 root cause)。conflict 時は ConflictModal ([metadata-spec.md](metadata-spec.md) §排他管理) が global で表示される (本画面では特段の追加処理なし) |
+| 遷移トリガー | `onClick` → `handleApply()` ([PreviewScreen.tsx:451-457](../gui/src/screens/PreviewScreen.tsx#L451)) → `flushUpdate()` で残 debounce を即時 commit → `filePath` がある場合のみ `apply()` を await。debounce 経路で既に store の dirty 編集が立っている前提で、handleApply は二重 commit を行わない (§1.1 #589 修正で確立) |
+| store mutation | `metadataStore.applying`、`metadataStore.applyError`、`metadataStore.loadedMtimeMs` (apply 成功時)、`metadataStore.dirty=false` (apply 完了)、`metadataStore.hasBackup` (`refreshBackupStatus`)、`metadataStore.metadata.draft.json` clear ([#517](https://github.com/Idios/kobutachan-allaganeye/issues/517) draft auto-save 連携)。matches 編集自体は debounce 経路で既に commit 済 |
+| 例外 / edge case | sample mode (`filePath === null`) では disabled。**§1.2 違反 残**: tooltip / inline hint で「サンプル動画では保存できません」を出す canonical は #589 派生 issue で対応予定。conflict 時は ConflictModal ([metadata-spec.md](metadata-spec.md) §排他管理) が global で表示される (本画面では特段の追加処理なし) |
 
 #### §2.4.11 dirty indicator
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | display badge ([PreviewScreen.tsx:523](../gui/src/screens/PreviewScreen.tsx#L523))。`● 未保存の変更` 文言 |
+| 種類 | display badge ([PreviewScreen.tsx:658](../gui/src/screens/PreviewScreen.tsx#L658))。`● 未保存の変更` 文言 |
 | 状態 | `displayOnly`。`dirty=true` のみ render |
 | 遷移トリガー | `metadataStore.dirty` 変化に追従 |
 | store mutation | なし |
-| 例外 / edge case | §1.1 違反のため **現状ほぼ表示されない** (handleApply の updateMatch でいったん true になるが、続く apply() が成功すると即 false)。§1.1 修正後は編集中常時表示される設計 (#589 受け入れ条件 B) |
+| 例外 / edge case | §1.1 準拠の debounce で onChange の ~200ms 後 (matchType は即時) に dirty=true へ flip し、編集中バッジが表示される (#589 修正で実現)。apply 完了で false に戻る |
 
 #### §2.4.12 applyError inline
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | inline error ([PreviewScreen.tsx:524-528](../gui/src/screens/PreviewScreen.tsx#L524))。`role="alert"` |
+| 種類 | inline error ([PreviewScreen.tsx:660-662](../gui/src/screens/PreviewScreen.tsx#L660))。`role="alert"` |
 | 状態 | `displayOnly`。`applyError !== null` のみ render |
 | 遷移トリガー | `metadataStore.applyError` 変化に追従 (apply 失敗で set、次の apply 試行で clear) |
 | store mutation | なし |
@@ -615,27 +615,27 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | RestoreButton 共通 component ([PreviewScreen.tsx:529](../gui/src/screens/PreviewScreen.tsx#L529))。`onRestored={() => navigate('complete')}` で復元成功後に complete へ戻る |
+| 種類 | RestoreButton 共通 component ([PreviewScreen.tsx:665](../gui/src/screens/PreviewScreen.tsx#L665))。`onRestored={() => navigate('complete')}` で復元成功後に complete へ戻る |
 | 状態 | §2.3.4 と共通 (`idle` / `busy` / `disabled`) |
 | 遷移トリガー | confirm → `restore()` → 成功で `onRestored` callback → `navigate('complete')` |
 | store mutation | §2.3.4 と共通。preview 画面では navigate('complete') が追加発火 |
-| 例外 / edge case | restore はディスク上の `metadata.json` を上書きするため、画面遷移を伴わずに preview に留まると編集中の local state (startT / endT 等) が新しい match と矛盾する。これを回避するため preview からは `onRestored` で必ず complete に戻す設計 (§2.3.4 では callback 未指定で同画面に留まる)。§1.2 disabled 理由 tooltip 未実装は §2.3.4 と同じ TODO |
+| 例外 / edge case | restore はディスク上の `metadata.json` を上書きするため、画面遷移を伴わずに preview に留まると編集中の local state (startT / endT 等) が新しい match と矛盾する。これを回避するため preview からは `onRestored` で必ず complete に戻す設計 (§2.3.4 では callback 未指定で同画面に留まる)。§1.2 disabled 理由 tooltip 未実装は §2.3.4 と同じ派生 issue で扱う |
 
 #### §2.4.14 [書き出し] secondary button
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | button ([PreviewScreen.tsx:530-536](../gui/src/screens/PreviewScreen.tsx#L530)) |
+| 種類 | button ([PreviewScreen.tsx:667-672](../gui/src/screens/PreviewScreen.tsx#L667)) |
 | 状態 | `idle` (常時活性) |
-| 遷移トリガー | `onClick` → `handleExport()` ([PreviewScreen.tsx:355-363](../gui/src/screens/PreviewScreen.tsx#L355)) → `if (dirty) confirm('未適用の変更があります。破棄して書き出しに進みますか？')` → OK で `navigate('export')` |
-| store mutation | `appStateStore.screen='export'` |
-| 例外 / edge case | §2.4.1 と同じく §1.3 canonical 文言と現行文言が異なり、§1.1 修正前は dirty=false 常時で confirm が機能せず silent loss。後続で文言統一 + §1.1 修正 |
+| 遷移トリガー | `onClick` → `handleExport()` ([PreviewScreen.tsx:476-486](../gui/src/screens/PreviewScreen.tsx#L476)) → `flushUpdate()` で debounce 残を即時 commit → `if (useMetadataStore.getState().dirty) confirm('未保存の変更があります。破棄して書き出しへ進みますか？')` → OK で `discardEdits()` 後 `navigate('export')`、cancel で preview 残留 |
+| store mutation | confirm OK 経路では §2.4.1 と同じく load 経由 revert + dirty=false + draft clear、`appStateStore.screen='export'` (discardEdits 完了後)。dirty=false 経路は `appStateStore.screen='export'` のみ |
+| 例外 / edge case | §2.4.1 と同形状 (sample mode discardEdits は loadSample 経路 / cancel で flush のみ + dirty 維持)。文言は §1.3 canonical 統一済 (#589) |
 
 #### §2.4.15 emptyNote
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | display ([PreviewScreen.tsx:326-332](../gui/src/screens/PreviewScreen.tsx#L326))。文言: `'No match selected.'` |
+| 種類 | display ([PreviewScreen.tsx:443-449](../gui/src/screens/PreviewScreen.tsx#L443))。文言: `'No match selected.'` |
 | 状態 | `preview_empty` のみ表示 (`match` が見つからない、つまり `selectedMatchIndex` が `metadata.matches` のどれとも一致しない) |
 | 遷移トリガー | `selectedMatchIndex` または `metadata.matches` 変化で `match` が解決できなくなった時 |
 | store mutation | なし |
