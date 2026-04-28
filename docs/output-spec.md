@@ -60,7 +60,7 @@ Error: --quiet and --verbose are mutually exclusive
 | 9 | 検知パラメータ summary (`interval=..., threshold=..., workers=auto(N), audio=frozen`) | [#384](https://github.com/Idios/kobutachan-allaganeye/issues/384), [#389](https://github.com/Idios/kobutachan-allaganeye/issues/389) | × | ◯ | × | × | ◯ | × | ❌ |
 | 10 | 進捗バー `Detecting` / `Refining` / `Scorebar` | [#368](https://github.com/Idios/kobutachan-allaganeye/issues/368), [#393](https://github.com/Idios/kobutachan-allaganeye/issues/393) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
 | 11 | 検知統計 (`Pass 1`, `Pass 2`, `Scorebar`, `Splitting` elapsed 含) | [#386](https://github.com/Idios/kobutachan-allaganeye/issues/386), [#387](https://github.com/Idios/kobutachan-allaganeye/issues/387) | × | ◯ | × | × | ◯ | × | ❌ |
-| 12 | Filter drop 内訳 (`Filter: N candidates -> M matches`) | [#388](https://github.com/Idios/kobutachan-allaganeye/issues/388) | × | ◯ | × | × | ◯ | × | ❌ |
+| 12 | Filter drop 内訳 + unknown match 行 (`Filter: N candidates -> M matches` + `+ N unknown match (録画途中試合)`) | [#388](https://github.com/Idios/kobutachan-allaganeye/issues/388), [#433](https://github.com/Idios/kobutachan-allaganeye/issues/433) | × | ◯ | × | × | ◯ | × | ❌ |
 | 13 | `Detected N match(es) ... (cached)` サフィックス含 | [#418](https://github.com/Idios/kobutachan-allaganeye/issues/418) (M) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
 | 14 | Match 一覧 (`[unknown]` / `[fl_match]` マーカー含) | [#382](https://github.com/Idios/kobutachan-allaganeye/issues/382) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
 | 15 | Gap 一覧 | - | × | ◯ | × | × | ◯ | × | ❌ |

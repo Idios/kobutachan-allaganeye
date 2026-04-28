@@ -168,7 +168,8 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
   Filter: 15 candidates -> 8 matches
     6 dropped (below min_match_duration)
     1 dropped (other)
-  Splitting: 8 matches, 1m02s
+  + 1 unknown match (録画途中試合)
+  Splitting: 9 matches, 1m02s
 ```
 
 | 行 | 内容 |
@@ -176,7 +177,7 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 | `Pass 1` | Pass 1 のサンプル数・暗転フレーム数・所要時間 |
 | `Pass 2` | Pass 2 精密計測の region 数・所要時間 (#366) |
 | `Scorebar` | Scorebar 分類 (match_boundary / in_match / non_fl / unknown) のカウントと所要時間 (#386) |
-| `Filter` | Scorebar 通過後の候補数 → 最終 match 数。`below_min_match_duration` / `other` が 0 より大きい場合のみ内訳を追加出力 (#388) |
+| `Filter` | Scorebar 通過後の候補数 → 最終 match 数。`below_min_match_duration` / `other` が 0 より大きい場合のみ内訳を追加出力 (#388)。録画途中で開始 / 終了する `unknown` 試合 (Detected には含まれるが Filter "kept" には含まれない) がある場合、内訳の直下に `+ N unknown match (録画途中試合)` 行を出力 (#433) |
 | `Splitting` | 分割フェーズの match 数・所要時間 (#387) |
 
 `Filter` セクションは候補数がゼロかつドロップがゼロの場合 (whole-video fallback により match が生成されたケース) は出力を省略する。`dropped (below min_match_duration)` は **セグメント長が `min_match_duration` に満たなかった数**、`dropped (other)` は短尺動画の whole-video 候補不適合等の残余カウント。`in_match` / `non_fl` はここに含まれず、上の Scorebar 行がそのカウントを担う (重複防止)。
