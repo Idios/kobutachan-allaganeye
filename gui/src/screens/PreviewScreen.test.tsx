@@ -78,11 +78,12 @@ describe('PreviewScreen', () => {
     expect(apply).toBeDisabled();
   });
 
-  it('editing name marks store dirty (via updateMatch)', async () => {
+  it('editing name flips store dirty after the 200ms debounce, then apply clears it', async () => {
     useMetadataStore.setState({ filePath: '/x' });
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === 'apply_changes') return Promise.resolve();
       if (cmd === 'check_backup_exists') return Promise.resolve(true);
+      if (cmd === 'save_draft') return Promise.resolve();
       if (cmd === 'load_metadata') return Promise.reject(new Error('not needed'));
       return Promise.reject(new Error(`unmocked: ${cmd}`));
     });
@@ -92,8 +93,14 @@ describe('PreviewScreen', () => {
     await user.click(input);
     await user.clear(input);
     await user.type(input, 'renamed');
-    // No dirty yet — changes are local until [適用]
-    expect(useMetadataStore.getState().dirty).toBe(false);
+    // #589: edits commit through the 200ms debounce, so dirty must flip true
+    // *during* editing (not only on [適用]).
+    await waitFor(
+      () => {
+        expect(useMetadataStore.getState().dirty).toBe(true);
+      },
+      { timeout: 1000 },
+    );
     await user.click(screen.getByRole('button', { name: 'apply' }));
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith(
@@ -105,6 +112,187 @@ describe('PreviewScreen', () => {
     await waitFor(() => {
       expect(useMetadataStore.getState().dirty).toBe(false);
     });
+  });
+
+  // #589 — state mutation flow / dirty consume / silent loss confirm.
+  // ui-interaction-spec.md §1.1 / §1.3 が canonical 仕様。
+
+  it('editing matchType eagerly flips store dirty (no debounce wait)', async () => {
+    useMetadataStore.setState({ filePath: '/x' });
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      if (cmd === 'save_draft') return Promise.resolve();
+      if (cmd === 'register_video')
+        return Promise.resolve({ url: 'http://x', token: 't' });
+      if (cmd === 'generate_match_thumbnails') return Promise.resolve([]);
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    render(<PreviewScreen />);
+    const user = userEvent.setup();
+    const select = screen.getByLabelText('match type') as HTMLSelectElement;
+    await user.selectOptions(select, 'unknown');
+    // §1.1 例外: 単一選択は即時 commit。debounce 待ちなしで dirty=true。
+    expect(useMetadataStore.getState().dirty).toBe(true);
+  });
+
+  it('stepRow +1s flips store dirty within the 200ms debounce window', async () => {
+    useMetadataStore.setState({ filePath: '/x' });
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      if (cmd === 'save_draft') return Promise.resolve();
+      if (cmd === 'register_video')
+        return Promise.resolve({ url: 'http://x', token: 't' });
+      if (cmd === 'generate_match_thumbnails') return Promise.resolve([]);
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    render(<PreviewScreen />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /nudge \+1s/ }));
+    await waitFor(
+      () => {
+        expect(useMetadataStore.getState().dirty).toBe(true);
+      },
+      { timeout: 1000 },
+    );
+  });
+
+  it('selectMatch resyncs the local TC state to the newly selected match', async () => {
+    render(<PreviewScreen />);
+    const before = (
+      screen.getByLabelText('IN (start) timecode') as HTMLInputElement
+    ).value;
+    // sample fixture には複数 match あり — index=4 の隣を選択
+    const otherIndex = useMetadataStore
+      .getState()
+      .metadata!.matches.find((m) => m.index !== 4)!.index;
+    useAppStateStore.getState().selectMatch(otherIndex);
+    await waitFor(() => {
+      const after = (
+        screen.getByLabelText('IN (start) timecode') as HTMLInputElement
+      ).value;
+      expect(after).not.toBe(before);
+    });
+  });
+
+  it('dirty + [◀ 一覧へ]: confirm cancel keeps the user on preview and preserves dirty', async () => {
+    useMetadataStore.setState({ filePath: '/x' });
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      if (cmd === 'save_draft') return Promise.resolve();
+      if (cmd === 'register_video')
+        return Promise.resolve({ url: 'http://x', token: 't' });
+      if (cmd === 'generate_match_thumbnails') return Promise.resolve([]);
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+    render(<PreviewScreen />);
+    const user = userEvent.setup();
+    const input = screen.getByLabelText('match name') as HTMLInputElement;
+    await user.clear(input);
+    await user.type(input, 'edit');
+    await waitFor(
+      () => {
+        expect(useMetadataStore.getState().dirty).toBe(true);
+      },
+      { timeout: 1000 },
+    );
+
+    await user.click(screen.getByRole('button', { name: /一覧へ/ }));
+    expect(confirmSpy).toHaveBeenCalledWith(
+      expect.stringContaining('未保存の変更'),
+    );
+    expect(useAppStateStore.getState().screen).toBe('preview');
+    expect(useMetadataStore.getState().dirty).toBe(true);
+    confirmSpy.mockRestore();
+  });
+
+  it('dirty + [◀ 一覧へ]: confirm OK calls discardEdits (clear_draft + load) and navigates', async () => {
+    useMetadataStore.setState({ filePath: '/x' });
+    const snapshot = useMetadataStore.getState().metadata!;
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      if (cmd === 'save_draft') return Promise.resolve();
+      if (cmd === 'clear_draft') return Promise.resolve();
+      if (cmd === 'load_metadata') return Promise.resolve(snapshot);
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(1700);
+      if (cmd === 'load_draft') return Promise.resolve(null);
+      if (cmd === 'register_video')
+        return Promise.resolve({ url: 'http://x', token: 't' });
+      if (cmd === 'generate_match_thumbnails') return Promise.resolve([]);
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(<PreviewScreen />);
+    const user = userEvent.setup();
+    const input = screen.getByLabelText('match name') as HTMLInputElement;
+    await user.clear(input);
+    await user.type(input, 'edit');
+    await waitFor(
+      () => {
+        expect(useMetadataStore.getState().dirty).toBe(true);
+      },
+      { timeout: 1000 },
+    );
+
+    await user.click(screen.getByRole('button', { name: /一覧へ/ }));
+    expect(confirmSpy).toHaveBeenCalledWith(
+      expect.stringContaining('未保存の変更'),
+    );
+    // discardEdits は draft を clear → metadata 再 load の順で呼ぶ
+    await waitFor(() => {
+      const calls = invokeMock.mock.calls.map((c) => c[0]);
+      expect(calls).toContain('clear_draft');
+      expect(calls).toContain('load_metadata');
+      expect(calls.indexOf('clear_draft')).toBeLessThan(
+        calls.indexOf('load_metadata'),
+      );
+    });
+    await waitFor(() => {
+      expect(useAppStateStore.getState().screen).toBe('complete');
+    });
+    expect(useMetadataStore.getState().dirty).toBe(false);
+    confirmSpy.mockRestore();
+  });
+
+  it('dirty + [書き出し]: confirm OK navigates to export with canonical wording', async () => {
+    useMetadataStore.setState({ filePath: '/x' });
+    const snapshot = useMetadataStore.getState().metadata!;
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      if (cmd === 'save_draft') return Promise.resolve();
+      if (cmd === 'clear_draft') return Promise.resolve();
+      if (cmd === 'load_metadata') return Promise.resolve(snapshot);
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(1700);
+      if (cmd === 'load_draft') return Promise.resolve(null);
+      if (cmd === 'register_video')
+        return Promise.resolve({ url: 'http://x', token: 't' });
+      if (cmd === 'generate_match_thumbnails') return Promise.resolve([]);
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(<PreviewScreen />);
+    const user = userEvent.setup();
+    const input = screen.getByLabelText('match name') as HTMLInputElement;
+    await user.clear(input);
+    await user.type(input, 'edit');
+    await waitFor(
+      () => {
+        expect(useMetadataStore.getState().dirty).toBe(true);
+      },
+      { timeout: 1000 },
+    );
+
+    await user.click(screen.getByRole('button', { name: /書き出し/ }));
+    expect(confirmSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/未保存の変更.*書き出し/),
+    );
+    await waitFor(() => {
+      expect(useAppStateStore.getState().screen).toBe('export');
+    });
+    confirmSpy.mockRestore();
   });
 
   it('stepper buttons adjust the active timestamp', async () => {
