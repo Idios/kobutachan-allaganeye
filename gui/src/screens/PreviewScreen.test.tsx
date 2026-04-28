@@ -135,6 +135,41 @@ describe('PreviewScreen', () => {
     expect(useMetadataStore.getState().dirty).toBe(true);
   });
 
+  it('matchType change while name edit is mid-debounce flushes the pending name first', async () => {
+    // #589 review: type select onChange does flushUpdate() before its own
+    // immediate updateMatch. If a debounced name patch is in flight, flush
+    // commits it BEFORE the type_override commit lands, so neither edit is
+    // lost regardless of how quickly the user toggles type after typing.
+    useMetadataStore.setState({ filePath: '/x' });
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      if (cmd === 'save_draft') return Promise.resolve();
+      if (cmd === 'register_video')
+        return Promise.resolve({ url: 'http://x', token: 't' });
+      if (cmd === 'generate_match_thumbnails') return Promise.resolve([]);
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    render(<PreviewScreen />);
+    const user = userEvent.setup();
+
+    // Type the name (debounce timer running, no commit yet).
+    const nameInput = screen.getByLabelText('match name') as HTMLInputElement;
+    await user.clear(nameInput);
+    await user.type(nameInput, 'edited-name');
+
+    // Immediately switch type before the 200ms debounce fires. The select
+    // handler flushes the pending name patch synchronously, then commits the
+    // type_override on top.
+    const select = screen.getByLabelText('match type') as HTMLSelectElement;
+    await user.selectOptions(select, 'unknown');
+
+    const state = useMetadataStore.getState();
+    const target = state.metadata!.matches.find((m) => m.index === 4)!;
+    expect(target.name).toBe('edited-name');
+    expect(target.type_override).toBe('unknown');
+    expect(state.dirty).toBe(true);
+  });
+
   it('stepRow +1s flips store dirty within the 200ms debounce window', async () => {
     useMetadataStore.setState({ filePath: '/x' });
     invokeMock.mockImplementation((cmd: string) => {
