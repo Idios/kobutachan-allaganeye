@@ -116,6 +116,7 @@ GUI は読み取った未知フィールドを書き戻しで保持する義務�
 - `source` フィールドで元動画を解決 (相対パスは `metadata.json` のディレクトリ起点)
 - split → `metadata.json` を **`config.output_dir`** に**書き直し**
 - 書き直し時に未知フィールド (legacy `note` 等) は**落ちる**。GUI で保持したい情報は GUI 側 state に保つ
+- **`detection_started_at` / `detection_completed_at` の保持** (#586): 再検知してないので元 metadata の値を pass-through し、GUI「所要」表示が「検知時の所要」を維持する。pre-#586 metadata (両フィールド欠落) では fresh capture (started=`detected_at` / completed=書き込み直前) で fallback し post-#586 形式に揃える
 
 ## 書き込み方針
 

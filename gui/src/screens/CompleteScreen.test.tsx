@@ -6,7 +6,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { CompleteScreen } from './CompleteScreen';
+import { CompleteScreen, formatElapsed } from './CompleteScreen';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 
@@ -149,6 +149,26 @@ describe('CompleteScreen', () => {
       const label = screen.getByText('所要');
       const valueDiv = label.nextSibling as HTMLElement | null;
       expect(valueDiv?.textContent).toBe('—');
+    });
+  });
+
+  // #586 Round 1: formatElapsed の defensive 分岐を直接検証。component
+  // 結合テストは [3][4] で legacy fallback (undefined) をカバーしているが、
+  // pure function として export されているため、不正 ISO 8601 / clock skew
+  // も unit test レベルで保証する。
+  describe('formatElapsed (pure function)', () => {
+    it('returns "—" for unparseable ISO 8601 (NaN guard, started side)', () => {
+      expect(formatElapsed('invalid-date', '2026-04-19T12:39:23Z')).toBe('—');
+    });
+
+    it('returns "—" for unparseable ISO 8601 (NaN guard, completed side)', () => {
+      expect(formatElapsed('2026-04-19T12:34:56Z', 'not-a-date')).toBe('—');
+    });
+
+    it('returns "—" when completed_at < started_at (clock skew)', () => {
+      expect(
+        formatElapsed('2026-04-19T12:39:23Z', '2026-04-19T12:34:56Z'),
+      ).toBe('—');
     });
   });
 
