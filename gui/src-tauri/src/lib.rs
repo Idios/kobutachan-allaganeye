@@ -2279,11 +2279,7 @@ mod tests {
     /// the ms timestamp so cached files are self-describing.
     #[test]
     fn thumb_token_formats_index_and_ms() {
-        assert_eq!(
-            thumb_token(3, 452.5),
-            "INTENTIONAL_FAIL_FOR_CI_RED_VERIFICATION_PR_622",
-            "intentional fail for CI red verification (PR #622, will be reverted in next commit)"
-        );
+        assert_eq!(thumb_token(3, 452.5), "match003_t452500");
         assert_eq!(thumb_token(0, 0.0), "match000_t0");
         assert_eq!(thumb_token(999, 1.001), "match999_t1001");
     }
