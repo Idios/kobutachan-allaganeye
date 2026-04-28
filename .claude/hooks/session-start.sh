@@ -30,6 +30,11 @@ cat <<'EOF'
    - 曖昧と認識している判断点は独断で prescribe せず AskUserQuestion で多肢選択
    - 「Recommended 付き 2-4 択」が標準
 
+6. **NO PR CREATION WITHOUT VERIFIED CHECKS**
+   - PR 作成前に変更ファイル path に応じた自動チェック (Python: `ruff check .` / `ruff format --check .` / `pyright` / `pytest`、GUI: `npm run lint` / `typecheck` / `test` / `build` / `cargo check`) を全 pass させる。「軽微だから skip」「Python のみだから GUI 側不要」は Red Flag (失敗パターン A 再発)
+   - ロジック変更 (`gpu_detector.py` / `audio/*.py` / `video/detector.py` / `gui/src-tauri/**` 等) を含む場合は、ユーザー (Idios) に実機検証 (GPU / audio / 長時間動画 / GUI Tauri 起動) を `AskUserQuestion` で依頼する。「mock テスト pass = 実機検証不要」は Red Flag (失敗パターン B 再発)
+   - PR 本文には machine-verified を `[x]` で、machine-unverifiable を plain bullet `-` で書き分ける (`feedback_pr_validate_checklist.md` 規約)。詳細手順は `feedback_pr_pre_creation_checks.md` / `feedback_user_realmachine_test_request.md` 参照
+
 ## Red Flags (この思考が浮かんだら STOP)
 
 | 浮かんだ思考 | 現実 |
@@ -40,6 +45,8 @@ cat <<'EOF'
 | 「受け入れ条件は大体満たしてる」 | Iron Law 1 違反。「大体」は NG。逐条検証必須 |
 | 「Closes を付ければ自動で閉じて便利」 | Iron Law 4 違反。手動クローズ厳守 |
 | 「観察 (修正不要) とコメントしておこう」 | #399 B 違反。別 issue 起票 or escalate |
+| 「ローカル lint 通ったから PR 出して大丈夫」 | Iron Law 6 違反。変更 path から必要 job を判定 (Python / GUI / installer / docs)。GUI 変更を含むなら `npm run lint` / `typecheck` / `test` / `build` / `cargo check` も実行 |
+| 「mock テスト pass = 実機検証不要」 | Iron Law 6 違反。GPU / audio / 長時間動画 / GUI Tauri は mock 不可。該当 path 変更時は `AskUserQuestion` で依頼 |
 
 詳細は `docs/l2-workflow.md` を参照。Iron Law が不明確な場合は先に l2-workflow.md を読むこと。
 </EXTREMELY_IMPORTANT>
