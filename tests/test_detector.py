@@ -808,6 +808,96 @@ class TestFilterDropsStats:
 
 
 # ============================================================
+# _filter_and_extract_segments: filter_unknown stat (#433)
+# ============================================================
+
+
+class TestFilterUnknownStats:
+    """Verify the stats param tracks unknown segment count (#433).
+
+    Recordings starting / ending mid-match produce ``type=unknown``
+    edge segments. Without a counter the verbose Filter "kept" formula
+    is structurally smaller than the Detected count and users assume a
+    counting bug.  ``stats["filter_unknown"]`` lets the caller emit a
+    ``+ N unknown match`` reconciliation line.
+    """
+
+    def test_zero_when_all_segments_are_fl_match(self):
+        """fl_match-only result -> filter_unknown == 0.
+
+        Two blackouts framed by classifications produce one between-segment
+        typed fl_match. before-first / after-last are absent because the
+        outer regions hug 0s and total_duration.
+        """
+        stats: dict = {}
+        regions = [(0.0, 5.0), (1500.0, 1505.0)]
+        classifications = ["match_boundary", "match_boundary"]
+        result = _filter_and_extract_segments(
+            regions,
+            1505.0,
+            300.0,
+            3.0,
+            classifications=classifications,
+            stats=stats,  # type: ignore[arg-type]
+        )
+        assert all(s["type"] == "fl_match" for s in result)
+        assert stats["filter_unknown"] == 0
+
+    def test_counts_before_first_unknown_edge(self):
+        """Recording started mid-match -> 1 unknown before first blackout."""
+        stats: dict = {}
+        # First blackout at 1000s leaves a 0-1000 unknown edge segment.
+        regions = [(1000.0, 1005.0), (1500.0, 1505.0)]
+        classifications = ["match_boundary", "match_boundary"]
+        result = _filter_and_extract_segments(
+            regions,
+            1800.0,
+            300.0,
+            3.0,
+            classifications=classifications,
+            stats=stats,  # type: ignore[arg-type]
+        )
+        unknowns = [s for s in result if s["type"] == "unknown"]
+        assert len(unknowns) == 1
+        assert stats["filter_unknown"] == 1
+
+    def test_counts_whole_video_fallback_unknown(self):
+        """No blackouts but video >= min_match -> 1 unknown whole-video segment."""
+        stats: dict = {}
+        result = _filter_and_extract_segments(
+            [],
+            1800.0,
+            300.0,
+            3.0,
+            stats=stats,  # type: ignore[arg-type]
+        )
+        assert len(result) == 1
+        assert result[0]["type"] == "unknown"
+        assert stats["filter_unknown"] == 1
+
+    def test_zero_on_empty_drop_path(self):
+        """No segments returned -> filter_unknown == 0 (defensive)."""
+        stats: dict = {}
+        # Whole-video shorter than min_match -> [] returned via 'other' drop.
+        result = _filter_and_extract_segments(
+            [],
+            100.0,
+            300.0,
+            3.0,
+            stats=stats,  # type: ignore[arg-type]
+        )
+        assert result == []
+        assert stats["filter_unknown"] == 0
+
+    def test_stats_none_runs_without_raising(self):
+        """When stats is None the unknown counter is silently skipped."""
+        # Backwards-compat with callers that don't pass stats.
+        result = _filter_and_extract_segments([(100.0, 105.0)], 1800.0, 300.0, 3.0)
+        # Result still contains unknown edges; just the stat isn't recorded.
+        assert any(s["type"] == "unknown" for s in result)
+
+
+# ============================================================
 # TestInferSegmentType
 # ============================================================
 

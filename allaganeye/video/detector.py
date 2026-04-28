@@ -49,6 +49,11 @@ class DetectionStats(TypedDict, total=False):
     # ``<candidates> -> <final matches>`` with breakdown.
     filter_candidates: int
     filter_drops: dict[str, int]  # keys: below_min_match_duration, other
+    # Count of segments returned with type=="unknown" (#433). Used by the
+    # verbose ``+ N unknown match`` line so the user can reconcile
+    # Filter "kept" with the larger Detected count when a recording
+    # starts / ends mid-match.
+    filter_unknown: int
 
 
 logger = logging.getLogger(__name__)
@@ -1351,13 +1356,20 @@ def _filter_and_extract_segments(
         if stats is not None:
             stats["filter_drops"][key] = stats["filter_drops"].get(key, 0) + 1
 
+    def _finalize(segments: list[MatchBoundary]) -> list[MatchBoundary]:
+        # Track unknown-typed segments so the verbose Filter section can
+        # explain the ``Detected = kept + unknown`` discrepancy (#433).
+        if stats is not None:
+            stats["filter_unknown"] = sum(1 for s in segments if s["type"] == "unknown")
+        return segments
+
     if not blackout_regions:
         if total_duration >= min_match_duration:
-            return [{"start": 0.0, "end": total_duration, "type": "unknown"}]
+            return _finalize([{"start": 0.0, "end": total_duration, "type": "unknown"}])
         # Whole video was shorter than min_match_duration -- count the
         # implicit whole-video candidate as dropped.
         _record_drop("other")
-        return []
+        return _finalize([])
 
     # Filter out short blackout regions (e.g. respawn blackouts 1-2s)
     if classifications is not None:
@@ -1381,9 +1393,9 @@ def _filter_and_extract_segments(
 
     if not blackout_regions:
         if total_duration >= min_match_duration:
-            return [{"start": 0.0, "end": total_duration, "type": "unknown"}]
+            return _finalize([{"start": 0.0, "end": total_duration, "type": "unknown"}])
         _record_drop("other")
-        return []
+        return _finalize([])
 
     # Extract segments between blackout regions
     segments: list[MatchBoundary] = []
@@ -1440,7 +1452,7 @@ def _filter_and_extract_segments(
     else:
         _record_drop("below_min_match_duration")
 
-    return segments
+    return _finalize(segments)
 
 
 def _padded_end(region: tuple[float, float]) -> float:

@@ -1506,6 +1506,16 @@ def _print_detection_stats(stats: DetectionStats) -> None:
         if drops.get("other", 0) > 0:
             typer.echo(f"    {drops['other']} dropped (other)")
 
+    # Unknown match accounting (#433): recordings starting / ending mid-match
+    # produce ``type=unknown`` segments at the timeline edges. They are part
+    # of Detected count but not of the Filter "kept" formula (candidates
+    # counts blackout boundaries, not edge segments), so without this line
+    # users see Filter=N / Detected=N+1 and assume a counting bug.
+    unknown_count = stats.get("filter_unknown", 0)
+    if unknown_count > 0:
+        label = "match" if unknown_count == 1 else "matches"
+        typer.echo(f"  + {unknown_count} unknown {label} (録画途中試合)")
+
 
 def _format_timestamp(seconds: float) -> str:
     """Format seconds as MM:SS or H:MM:SS."""
