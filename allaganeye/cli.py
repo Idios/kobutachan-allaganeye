@@ -5,6 +5,7 @@ import traceback
 from pathlib import Path
 from typing import Annotated
 
+import click
 import typer
 
 from allaganeye import __version__
@@ -31,7 +32,7 @@ def version_callback(value: bool) -> None:
 
 
 @app.callback()
-def main(
+def _root_callback(
     version: Annotated[
         bool | None,
         typer.Option(
@@ -516,3 +517,80 @@ def _report_unexpected_error(
 
     if show_hint:
         typer.echo(_VERBOSE_HINT, err=True)
+
+
+def _suggest_long_option_hint(argv: list[str]) -> str | None:
+    """Return ``--<name>`` candidate when argv has a single-dash long-option typo (#440).
+
+    typer / click parses ``-version`` as the short-option cluster
+    ``-v -e -r -s -i -o -n`` and raises ``NoSuchOption`` for the first
+    char.  We scan argv for a single-dash token of length >= 2 (e.g.
+    ``-version``) that, with the leading dash doubled, matches a known
+    long option of the typer app or any subcommand.  Returns ``None``
+    when no suitable candidate exists so we don't volunteer misleading
+    hints for unrelated typos.
+    """
+    cmd = typer.main.get_command(app)
+    # ``--help`` is added by click at parse time (``add_help_option=True``)
+    # so it is NOT in ``cmd.params``; seed the set so ``-help`` typos still
+    # get a hint.
+    known: set[str] = {"help"}
+    for param in cmd.params:
+        for opt in param.opts:
+            if opt.startswith("--"):
+                known.add(opt[2:])
+    if isinstance(cmd, click.Group):
+        for sub_cmd in cmd.commands.values():
+            for param in sub_cmd.params:
+                for opt in param.opts:
+                    if opt.startswith("--"):
+                        known.add(opt[2:])
+
+    for token in argv:
+        if not token.startswith("-") or token.startswith("--"):
+            continue
+        name = token.lstrip("-").split("=", 1)[0]
+        if len(name) >= 2 and name in known:
+            return f"--{name}"
+
+    return None
+
+
+def main() -> None:
+    """Console-script entry point that adds a hint for single-dash long-option typos (#440).
+
+    ``allaganeye -version`` parses as the cluster ``-v -e -r -s -i -o -n``
+    and click raises ``NoSuchOption`` for the first char.  Without
+    context the message ("No such option: -v") doesn't reveal that the
+    user typed ``-version``; we catch the error, let click print its
+    usual usage / boxed message via ``exc.show()``, and append a
+    ``Did you mean --version?`` line when the pattern matches a real
+    long option.
+
+    Uses ``standalone_mode=False`` so click re-raises ``ClickException``
+    subclasses for us to inspect (and converts ``Exit`` into a return
+    value containing its exit code).  Always finishes with ``sys.exit``
+    so the caller gets the same SystemExit semantics as the original
+    ``app()`` entry point.
+    """
+    rv: int = 0
+    try:
+        result = app(standalone_mode=False)
+        if isinstance(result, int):
+            rv = result
+    except click.exceptions.NoSuchOption as exc:
+        exc.show()
+        hint = _suggest_long_option_hint(sys.argv[1:])
+        if hint:
+            click.echo(f"Did you mean {hint}?", err=True)
+        rv = exc.exit_code
+    except click.exceptions.UsageError as exc:
+        exc.show()
+        rv = exc.exit_code
+    except click.exceptions.ClickException as exc:
+        exc.show()
+        rv = exc.exit_code
+    except click.exceptions.Abort:
+        click.echo("Aborted!", err=True)
+        rv = 1
+    sys.exit(rv)
