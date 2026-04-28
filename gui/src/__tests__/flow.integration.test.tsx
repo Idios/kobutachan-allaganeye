@@ -12,9 +12,10 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { invokeMock, dialogOpenMock, listenMock } = vi.hoisted(() => ({
+const { invokeMock, dialogOpenMock, dialogAskMock, listenMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   dialogOpenMock: vi.fn(),
+  dialogAskMock: vi.fn(),
   listenMock: vi.fn(),
 }));
 
@@ -28,6 +29,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: dialogOpenMock,
+  ask: dialogAskMock,
 }));
 
 // #523: ConfirmExitModal subscribes to the Tauri event bus on mount. The
@@ -139,6 +141,7 @@ function configureHappyInvoke() {
 beforeEach(() => {
   invokeMock.mockReset();
   dialogOpenMock.mockReset();
+  dialogAskMock.mockReset();
   useAppStateStore.getState().reset();
   useMetadataStore.getState().clear();
 });
@@ -383,17 +386,13 @@ describe('flow J: restore (#516)', () => {
     useAppStateStore.getState().navigate('complete');
     render(<App />);
 
-    // Stub window.confirm to say OK
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    try {
-      const user = userEvent.setup();
-      await user.click(screen.getByRole('button', { name: '元に戻す' }));
-      await waitFor(() => {
-        expect(restoreInvoked).toBe(true);
-      });
-    } finally {
-      confirmSpy.mockRestore();
-    }
+    // RestoreButton uses plugin-dialog `ask` (Tauri 2 disables window.confirm).
+    dialogAskMock.mockResolvedValueOnce(true);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '元に戻す' }));
+    await waitFor(() => {
+      expect(restoreInvoked).toBe(true);
+    });
   });
 });
 

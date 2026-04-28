@@ -2,10 +2,17 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+const { invokeMock, askMock } = vi.hoisted(() => ({
+  invokeMock: vi.fn(),
+  askMock: vi.fn(),
+}));
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
+}));
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  ask: askMock,
 }));
 
 import { PreviewScreen } from './PreviewScreen';
@@ -14,6 +21,7 @@ import { useMetadataStore } from '../state/metadataStore';
 
 beforeEach(() => {
   invokeMock.mockReset();
+  askMock.mockReset();
   // #465: PreviewScreen kicks off register_video on mount. Default the
   // mock so individual tests don't see "unmocked invoke" from that call.
   invokeMock.mockImplementation((cmd: string) => {
@@ -219,7 +227,7 @@ describe('PreviewScreen', () => {
       if (cmd === 'generate_match_thumbnails') return Promise.resolve([]);
       return Promise.reject(new Error(`unmocked: ${cmd}`));
     });
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    askMock.mockResolvedValueOnce(false);
 
     render(<PreviewScreen />);
     const user = userEvent.setup();
@@ -234,12 +242,14 @@ describe('PreviewScreen', () => {
     );
 
     await user.click(screen.getByRole('button', { name: /一覧へ/ }));
-    expect(confirmSpy).toHaveBeenCalledWith(
-      expect.stringContaining('未保存の変更'),
-    );
+    await waitFor(() => {
+      expect(askMock).toHaveBeenCalledWith(
+        expect.stringContaining('未保存の変更'),
+        expect.objectContaining({ kind: 'warning' }),
+      );
+    });
     expect(useAppStateStore.getState().screen).toBe('preview');
     expect(useMetadataStore.getState().dirty).toBe(true);
-    confirmSpy.mockRestore();
   });
 
   it('dirty + [◀ 一覧へ]: confirm OK calls discardEdits (clear_draft + load) and navigates', async () => {
@@ -257,7 +267,7 @@ describe('PreviewScreen', () => {
       if (cmd === 'generate_match_thumbnails') return Promise.resolve([]);
       return Promise.reject(new Error(`unmocked: ${cmd}`));
     });
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    askMock.mockResolvedValueOnce(true);
 
     render(<PreviewScreen />);
     const user = userEvent.setup();
@@ -272,9 +282,12 @@ describe('PreviewScreen', () => {
     );
 
     await user.click(screen.getByRole('button', { name: /一覧へ/ }));
-    expect(confirmSpy).toHaveBeenCalledWith(
-      expect.stringContaining('未保存の変更'),
-    );
+    await waitFor(() => {
+      expect(askMock).toHaveBeenCalledWith(
+        expect.stringContaining('未保存の変更'),
+        expect.objectContaining({ kind: 'warning' }),
+      );
+    });
     // discardEdits は draft を clear → metadata 再 load の順で呼ぶ
     await waitFor(() => {
       const calls = invokeMock.mock.calls.map((c) => c[0]);
@@ -288,7 +301,6 @@ describe('PreviewScreen', () => {
       expect(useAppStateStore.getState().screen).toBe('complete');
     });
     expect(useMetadataStore.getState().dirty).toBe(false);
-    confirmSpy.mockRestore();
   });
 
   it('dirty + [書き出し]: confirm OK navigates to export with canonical wording', async () => {
@@ -306,7 +318,7 @@ describe('PreviewScreen', () => {
       if (cmd === 'generate_match_thumbnails') return Promise.resolve([]);
       return Promise.reject(new Error(`unmocked: ${cmd}`));
     });
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    askMock.mockResolvedValueOnce(true);
 
     render(<PreviewScreen />);
     const user = userEvent.setup();
@@ -321,13 +333,15 @@ describe('PreviewScreen', () => {
     );
 
     await user.click(screen.getByRole('button', { name: /書き出し/ }));
-    expect(confirmSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/未保存の変更.*書き出し/),
-    );
+    await waitFor(() => {
+      expect(askMock).toHaveBeenCalledWith(
+        expect.stringMatching(/未保存の変更.*書き出し/),
+        expect.objectContaining({ kind: 'warning' }),
+      );
+    });
     await waitFor(() => {
       expect(useAppStateStore.getState().screen).toBe('export');
     });
-    confirmSpy.mockRestore();
   });
 
   it('stepper buttons adjust the active timestamp', async () => {

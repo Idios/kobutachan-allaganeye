@@ -1,5 +1,20 @@
+import { ask } from '@tauri-apps/plugin-dialog';
+
 import { useMetadataStore } from '../state/metadataStore';
 import styles from './RestoreButton.module.css';
+
+/**
+ * Default confirm dialog used in production. Tauri 2's WebView2 disables
+ * `window.confirm()` for security, so destructive actions must go through
+ * the dialog plugin's `ask` (yes/no modal). The confirmFn prop lets tests
+ * inject a sync stub.
+ */
+async function defaultConfirm(message: string): Promise<boolean> {
+  return await ask(message, {
+    title: '元に戻す',
+    kind: 'warning',
+  });
+}
 
 export interface RestoreButtonProps {
   /** Called after a successful restore (e.g. to navigate to another screen). */
@@ -9,10 +24,11 @@ export interface RestoreButtonProps {
   /** Button label override. */
   label?: string;
   /**
-   * Injection point for tests: confirm dialog. Defaults to window.confirm.
-   * Replace in tests with a vi.fn() to avoid native dialogs.
+   * Injection point for tests: confirm dialog. Defaults to {@link defaultConfirm}
+   * (Tauri plugin-dialog `ask`). Tests should pass `vi.fn(() => true|false)` or
+   * an async equivalent to avoid spawning native modals.
    */
-  confirmFn?: (message: string) => boolean;
+  confirmFn?: (message: string) => boolean | Promise<boolean>;
 }
 
 /**
@@ -40,7 +56,7 @@ export function RestoreButton({
   const disabled = !hasBackup || restoring;
 
   async function handleClick() {
-    const confirmed = (confirmFn ?? window.confirm)(confirmMessage);
+    const confirmed = await (confirmFn ?? defaultConfirm)(confirmMessage);
     if (!confirmed) return;
     await restore();
     // Only call onRestored when the store reports no error.

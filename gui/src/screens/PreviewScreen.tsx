@@ -1,4 +1,5 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { ask } from '@tauri-apps/plugin-dialog';
 import {
   useCallback,
   useEffect,
@@ -440,26 +441,36 @@ export function PreviewScreen() {
   // ui-interaction-spec.md §1.3: confirm-OK on a dirty preview must clear
   // store edits via discardEdits() before navigating, so the destination
   // screen sees the last persisted state. flushUpdate() runs first so any
-  // un-fired debounce contributes to the dirty check.
-  function confirmAndNavigate(target: 'complete' | 'export', confirmMsg: string) {
+  // un-fired debounce contributes to the dirty check. Tauri 2's WebView2
+  // disables window.confirm() for security, so we go through plugin-dialog's
+  // `ask` (yes/no modal).
+  async function confirmAndNavigate(
+    target: 'complete' | 'export',
+    confirmMsg: string,
+  ) {
     flushUpdate();
     if (!useMetadataStore.getState().dirty) {
       navigate(target);
       return;
     }
-    if (!window.confirm(confirmMsg)) return;
-    void discardEdits().then(() => navigate(target));
+    const confirmed = await ask(confirmMsg, {
+      title: '未保存の変更',
+      kind: 'warning',
+    });
+    if (!confirmed) return;
+    await discardEdits();
+    navigate(target);
   }
 
   function handleBack() {
-    confirmAndNavigate(
+    void confirmAndNavigate(
       'complete',
       '未保存の変更があります。破棄して一覧へ戻りますか？',
     );
   }
 
   function handleExport() {
-    confirmAndNavigate(
+    void confirmAndNavigate(
       'export',
       '未保存の変更があります。破棄して書き出しへ進みますか？',
     );
