@@ -86,13 +86,31 @@ Splitting  #################################### 100% 0:00:05
 ...
 ```
 
+#### マルチ CPU / マルチ GPU 環境の出力例 (#435 / #436)
+
+複数 CPU ソケットや iGPU + dGPU 構成の場合、`CPU:` / `GPU:` 行が以下の形式に切り替わる。シングル CPU + シングル GPU では上の単行表示が維持される。
+
+```text
+allaganeye 0.2.x (ffmpeg 8.1, Python 3.12.10, Windows 11)
+  CPU: AMD Ryzen 9 9950X3D 16-Core Processor (16C/32T)
+  GPU:
+    - NVIDIA GeForce RTX 5090 (32GB VRAM)
+    - AMD Radeon(TM) Graphics
+  Memory: 61.6 GB
+  Disk: 1359.5 / 3726.0 GB free on E:
+```
+
+- `CPU:` 同モデル N ソケット時: `AMD EPYC 7763 64-Core Processor x2 (128C/256T)` (`xN` 表記、コア数は全 CPU 合計)
+- `CPU:` 異モデル混在時: `Intel Xeon Gold 6154 + AMD EPYC 7763 (92C/128T)` (` + ` 連結)
+- `GPU:` 2 つ以上検出時: `GPU:` ヘッダ行 + `- <name>` の bullet 列挙 (4 スペース インデント、上の出力例参照)。NVIDIA は `(NGB VRAM)` が付与され、iGPU と dGPU が NVIDIA 名 ベースで重複排除される
+
 ヘッダ各行の意味:
 
 | 行 | 意味 | 取得失敗時 |
 |---|---|---|
 | 1 行目 | allaganeye / ffmpeg / Python / OS のバージョン | ffmpeg は `(unknown)` にフォールバック |
-| `CPU:` | CPU モデル + `(物理Core/論理Thread)` (#377) | `(unavailable)` / `(unknown CPU) (NT)` 等 |
-| `GPU:` | GPU モデル (+ NVIDIA のみ VRAM) (#377) | `(unavailable)` |
+| `CPU:` | CPU モデル + `(物理Core/論理Thread)` (#377)。マルチソケットは同モデル `xN` / 異モデル ` + ` 連結、コア数は全 CPU 合計 (#435) | `(unavailable)` / `(unknown CPU) (NT)` 等 |
+| `GPU:` | GPU モデル (+ NVIDIA のみ VRAM) (#377)。2 つ以上検出時は `GPU:` ヘッダ + bullet 列挙の multi-line block (#436) | `(unavailable)` |
 | `Memory:` | 物理メモリ総量 (#377) | `(unavailable)` |
 | `Disk:` | 出力先ディスクの空き / 総量 (#377) | `(unavailable)` |
 
