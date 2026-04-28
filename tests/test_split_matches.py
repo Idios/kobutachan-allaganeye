@@ -2635,6 +2635,164 @@ def test_verbose_filter_breakdown_absent_when_stats_missing_keys(
     assert "Filter:" not in out
 
 
+# --- unknown match accounting (#433) ---
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_emits_unknown_match_line_singular(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """1 unknown segment -> ``+ 1 unknown match`` reconciliation line (#433).
+
+    Reproduces the user-test scenario: ``Filter: 8 candidates -> 7 matches``
+    with ``Detected 8 match(es)`` due to a recording starting mid-match.
+    """
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 8
+            stats["pass2_elapsed_s"] = 1.0
+            stats["filter_candidates"] = 8
+            stats["filter_drops"] = {
+                "below_min_match_duration": 1,
+                "other": 0,
+            }
+            stats["filter_unknown"] = 1
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "Filter: 8 candidates -> 7 matches" in out
+    # Singular form for count==1.
+    assert "+ 1 unknown match" in out
+    assert "+ 1 unknown matches" not in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_emits_unknown_matches_line_plural(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """2+ unknown segments -> ``+ N unknown matches`` plural form (#433)."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 5
+            stats["pass2_elapsed_s"] = 1.0
+            stats["filter_candidates"] = 5
+            stats["filter_drops"] = {
+                "below_min_match_duration": 0,
+                "other": 0,
+            }
+            stats["filter_unknown"] = 2
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "+ 2 unknown matches" in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_omits_unknown_line_when_zero(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """filter_unknown == 0 -> no unknown line (terse output, #433)."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 3
+            stats["pass2_elapsed_s"] = 1.0
+            stats["filter_candidates"] = 3
+            stats["filter_drops"] = {
+                "below_min_match_duration": 0,
+                "other": 0,
+            }
+            stats["filter_unknown"] = 0
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "unknown match" not in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_unknown_line_absent_when_stat_missing(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Legacy stats without filter_unknown render without unknown line (#433).
+
+    Backwards-compat: older detect fixtures may not populate the new key
+    (the verbose Filter section was added in #388, this counter in #433).
+    """
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 3
+            stats["pass2_elapsed_s"] = 1.0
+            stats["filter_candidates"] = 3
+            stats["filter_drops"] = {
+                "below_min_match_duration": 0,
+                "other": 0,
+            }
+            # intentionally NOT setting filter_unknown
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "unknown match" not in out
+
+
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
