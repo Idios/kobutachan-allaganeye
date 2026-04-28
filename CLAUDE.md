@@ -251,9 +251,24 @@ L2 からは**単一ワークツリー + skill ベースディスパッチ**を�
 
 ## PR 作成ルール
 
-詳細は `docs/l2-workflow.md` を参照。要約:
+詳細は `docs/l2-workflow.md` を参照。Iron Law 6 (`.claude/hooks/session-start.sh`) と `feedback_pr_pre_creation_checks.md` / `feedback_user_realmachine_test_request.md` も参照。要約:
 
-- **PR 作成前**: ベースブランチをリベースし、Python 側は `ruff check .` / `ruff format --check .` / `pytest`、GUI (gui/) 変更を含む場合は追加で `npm run lint` / `npm run typecheck` / `npm test` / `cargo check` (src-tauri/) を通すこと。加えてロジック変更を含む場合は実機検証 (long-running / GPU / audio 統合等は mock 不可) を実施
+- **PR 作成前 (Iron Law 6)**: 変更ファイル path から必要な自動チェックを判定して全 pass させる:
+  - **python-core** (`allaganeye/**/*.py`, `tests/**/*.py`, `pyproject.toml`): `ruff check .` / `ruff format --check .` / `pyright` / `pytest`
+  - **gui-frontend** (`gui/src/**`, `gui/package.json`, `gui/tsconfig.json` 等): `cd gui && npm run lint` / `npm run typecheck` / `npm test` / `npm run build`
+  - **gui-rust** (`gui/src-tauri/**`): `cargo check --manifest-path gui/src-tauri/Cargo.toml`
+  - **installer-pester** (`scripts/**/*.ps1`, `scripts/tests/**`): `Invoke-Pester -Path scripts/tests/`
+  - **docs-only** (`docs/**/*.md`, `README.md`, `CLAUDE.md` のみ): `feedback_doc_section_ref_check.md` 規約 §「<旧名>」grep で残骸ゼロ確認
+  - 複数種別にまたがれば全部実行。「軽微だから skip」「Python のみだから GUI 側不要」は **Iron Law 6 違反 / 失敗パターン A 再発**
+- **ロジック変更時の実機検証 (Iron Law 6)**: 以下に該当する path 変更があれば `AskUserQuestion` で実機検証をユーザー (Idios) に依頼。「mock テスト pass = 実機検証不要」は **Iron Law 6 違反 / 失敗パターン B 再発**:
+  - `allaganeye/video/gpu_detector.py`, `system_info.py` → `pytest -m slow_gpu` (NVIDIA GPU 必須)
+  - `allaganeye/audio/scan.py`, `audio/matcher.py`, `audio/features.py` → `pytest -m slow tests/test_audio_integration.py` (`ALLAGANEYE_AUDIO_TEST_VIDEO` 必須)
+  - `allaganeye/video/detector.py` Pass 1 / scorebar 変更 → `pytest -m slow_detect` または `pytest -m "slow or baseline_regen"`
+  - `allaganeye/commands/split_matches.py` パイプライン変更 → `pytest -m slow_pipeline`
+  - `gui/src-tauri/**` Tauri command → `cd gui && npm run tauri dev` で手動 GUI 起動 + 該当 command 操作確認
+  - `gui/src/screens/**` UI 変更 → `npm run tauri dev` + 5 画面 (drop / detecting / complete / preview / export) 目視 + スクショ
+  - `gui/src-tauri/src/commands/export*.rs` H.264 エンコーダ → 実機 export (NVENC / QSV / AMF / libx264) 確認
+- **PR 本文の Self-Test Report**: machine-verified を `[x]` (validate-checklist が pass 判定)、machine-unverifiable を plain bullet `-` で書き分ける (`feedback_pr_validate_checklist.md` 規約)。「PR 提出時点では未実施 / レビュー時に実機確認」も plain bullet で明記すれば許容 (握り潰しではない)
 - ベースブランチ: `develop-x.x.x`（`main` ではない）
 - 作業ブランチ命名: `claude/<scope>-<short-description>` または `claude/<issue-N>-<slug>`
 - マージ方法: `gh pr merge <番号> --squash` (ユーザーが実行)
