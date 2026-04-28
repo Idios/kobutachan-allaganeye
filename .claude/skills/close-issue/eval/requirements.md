@@ -14,7 +14,7 @@
 
 ## シナリオ A (中央値): モック issue #911 + PR #921 (verbose mode)
 
-1. **[critical]** ケース A (1:1) と判定している (Step 2 で `closedByPullRequestsReferences` が 1 件 + `closingIssuesReferences` が 1 件と確認)
+1. **[critical]** ケース A (1:1) と判定している (Step 2 で 1 PR (Step 1 取得) + 1 issue (`closingIssuesReferences` または PR 本文 `Refs #911` 抽出) と確認)
 2. **[critical]** PR #921 を `gh pr view` で MERGED 確認している (`state: MERGED` / `mergedAt` を取得)
 3. **[critical]** issue #911 の受け入れ条件 5 項目を逐条引用している (項目 1-5 を独立に列挙)
 4. **[critical]** 受け入れ条件 5 項目目 (30GB MKV 目視確認) を「実測必要」マークし、`/test-pr` 既実施を確認するステップを SKILL.md に従って実行している (`/test-pr` 既実施の根拠が PR コメント / issue コメントにあるか確認)
@@ -29,7 +29,7 @@
 
 ## シナリオ B (束ね PR): モック issue #905 (検証対象) + PR #915 (#906 と束ね)
 
-1. **[critical]** ケース B (束ね PR) と判定している (Step 2 で PR の `closingIssuesReferences` が #905 + #906 の 2 件と確認)
+1. **[critical]** ケース B (束ね PR) と判定している (Step 2 で PR #915 が 2 issue (`closingIssuesReferences` または PR 本文 `Refs #905 #906` 抽出) を close する束ね PR と確認)
 2. **[critical]** issue #905 の受け入れ条件 4 項目のみを独立に逐条検証している (#906 用の受け入れ条件・実装は対象外と明示)
 3. **[critical]** PR #915 の diff に含まれる #906 用変更 (`tests/test_gpu_detector_logs.py` / `gpu_detector.py` のログ部 / CLAUDE.md §デバッグ) を #905 の対応 diff として誤って記録していない
 4. **[critical]** 「束ねた issue は条件が共通だろう」「#906 で検証済みなら本 issue でも済」を独断していない (Iron Law 1 引用 + 各 issue 独立検証の旨を明示)
@@ -44,7 +44,7 @@
 
 ## シナリオ C (Phase 分割): モック issue #907 + PR #917 (Phase 1) + PR #918 (Phase 1.5)
 
-1. **[critical]** ケース C (Phase 分割) と判定している (Step 2 で `closedByPullRequestsReferences` が 2 件と確認)
+1. **[critical]** ケース C (Phase 分割) と判定している (Step 2 で 2 PR (Step 1 取得) が同一 issue を close する Phase 分割と確認)
 2. **[critical]** 全 PR (#917 + #918) を `gh pr view` で MERGED 確認している (両件 `state: MERGED`)
 3. **[critical]** issue #907 の受け入れ条件 4 項目を全 PR 統合状態で検証している (Phase 1 PR #917 だけで判定していない)
 4. **[critical]** 受け入れ条件 4 項目の各々を「どの PR が満たすか」マッピング表で明示 (項目 1-2 → #917 / 項目 3-4 → #918)
