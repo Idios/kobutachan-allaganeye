@@ -287,7 +287,7 @@
 |---|---|
 | 種類 | button (panel body 末尾、右寄せ) |
 | 状態 | params == default のとき `disabled` (押下不可) / それ以外で active |
-| 遷移トリガー | `onClick` → `resetDetectionParams()` (全 4 フィールドを `DEFAULT_DETECTION_PARAMS` に戻す) |
+| 遷移トリガー | `onClick` → `resetDetectionParams()` (全 3 フィールドを `DEFAULT_DETECTION_PARAMS` に戻す) |
 | store mutation | `appStateStore.detectionParams` 全体を default に上書き (`selectedVideoPath` など他の state は触らない) |
 | 例外 / edge case | disabled 判定は `isDetectionParamsModified` ([utils/detection.ts](../gui/src/utils/detection.ts)) が三フィールドを default と等値判定で行う。`aria-label` に default 値を含める (例: `"reset to defaults (blackout 15, workers auto, gpu auto)"`) |
 
@@ -296,7 +296,7 @@
 - styling: 既存 ExportScreen の field/value pattern (`fieldLabel` + 入力要素) と同系統。色は token (`var(--ae-gold-dim)` / `var(--ae-cyan)` / `var(--ae-text)`) を再利用、新規追加なし
 - a11y:
   - header: `aria-expanded` / `aria-controls` で expand 状態を AT に通知
-  - 各 input: `<label htmlFor>` (slider / numeric / toggle) で関連付け、tri-state は `aria-label="gpu mode"` + `role="radio"`
+  - 各 input: `<label htmlFor>` (slider / numeric) で関連付け、tri-state は `aria-label="gpu mode"` + `role="radio"`
   - リセット button: `aria-label` で disabled 理由 (default 値) を明示
 - Tab order: header toggle → (展開時) blackout slider → workers numeric → gpu (auto/on/off の 3 button) → reset button → SelectedCard `[キャンセル]` → `[OK]`。drop flow 全体で natural forward tab を保つ
 - **`--no-audio` UI 不採用**: `allaganeye/commands/split_matches.py:525` で audio module は frozen 状態 (#327) のため `--no-audio` flag は実質 no-op。GUI 側でのみ控え (Rust `DetectParams.no_audio` field 自体は #569 で実装済み、#327 解凍時に再公開)
