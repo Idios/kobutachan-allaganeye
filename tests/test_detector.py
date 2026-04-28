@@ -980,6 +980,39 @@ class TestDetectMatchBoundaries:
             detect_match_boundaries(Path("test.mp4"), min_match_duration=100.0)
 
     @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_brightness_callback_receives_pass1_results(self, mock_chunk):
+        """#569 -- brightness_callback fires once with full Pass 1 map."""
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 50.0 + t for t in ts}
+        captured: list[dict[float, float]] = []
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=10.0,
+            sample_interval=1.0,
+            min_match_duration=1.0,
+            brightness_callback=captured.append,
+        )
+        # Exactly one fire (single-shot contract).
+        assert len(captured) == 1
+        # Captured map covers every sample timestamp.
+        results = captured[0]
+        assert len(results) == 10
+        assert results[0.0] == pytest.approx(50.0)
+        assert results[5.0] == pytest.approx(55.0)
+
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_brightness_callback_optional_default(self, mock_chunk):
+        """Omitting the callback is a no-op (preserves pre-#569 callers)."""
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 100.0 for t in ts}
+        # Should not raise even without the new kwarg.
+        result = detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=10.0,
+            sample_interval=1.0,
+            min_match_duration=1.0,
+        )
+        assert isinstance(result, list)
+
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_stats_populated_cpu(self, mock_chunk):
         """Verbose callers receive pipeline statistics (issue #336 Phase 1)."""
         from allaganeye.video.detector import DetectionStats

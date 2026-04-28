@@ -71,6 +71,18 @@ export interface SystemInfo {
   vendor_preference: string[];
 }
 
+/**
+ * #569 -- pre-rendered brightness timeline used by the complete screen.
+ *
+ * - `interval_s`: seconds represented by each `values[i]`.
+ * - `values`: 0-255 floats, chronological, length-capped to ~512 by
+ *   the CLI writer.
+ */
+export interface BrightnessSamples {
+  interval_s: number;
+  values: number[];
+}
+
 export interface Metadata {
   /**
    * #515: schema revision declaration. Optional on the TS type because
@@ -100,4 +112,10 @@ export interface Metadata {
    * to libx264 when missing.
    */
   system_info?: SystemInfo;
+  /**
+   * #569 -- pre-rendered brightness timeline. Optional because
+   * pre-#569 metadata.json and detect cache hits skip the field;
+   * CompleteScreen falls back to a sample curve when missing.
+   */
+  brightness_samples?: BrightnessSamples;
 }

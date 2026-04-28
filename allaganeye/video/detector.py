@@ -85,6 +85,7 @@ def detect_match_boundaries(
     chunk_progress_callback: Callable[[int, int, float], None] | None = None,
     chunk_dispatch_callback: Callable[[int], None] | None = None,
     gpu_vendor: str | None = None,
+    brightness_callback: Callable[[dict[float, float]], None] | None = None,
 ) -> list[MatchBoundary]:
     """Detect match boundaries by finding blackout frames.
 
@@ -111,6 +112,13 @@ def detect_match_boundaries(
             provided and scorebar filtering is active, blackouts
             classified as ``"in_match"`` but near a Fanfare hit are
             promoted to ``"match_boundary"``.
+        brightness_callback: Optional callback invoked once after Pass 1
+            completes with the full ``{timestamp_s: brightness}`` mapping.
+            Used by the GUI (#569) to render the complete-screen
+            brightness timeline without a second sampling pass.  The
+            mapping covers every timestamp between 0 and ``duration_hint``
+            at ``sample_interval`` spacing; non-blackout fallbacks (255.0)
+            are included so consumers can plot continuous data.
 
     Returns list of dicts with 'start' and 'end' keys (seconds).
     """
@@ -159,6 +167,12 @@ def detect_match_boundaries(
             progress_callback,
         )
     pass1_elapsed = time.monotonic() - pass1_start
+
+    # #569 -- hand the GUI the full brightness map before any further
+    # filtering / refinement so the complete-screen timeline can be
+    # rendered straight from metadata.json without re-running ffmpeg.
+    if brightness_callback is not None:
+        brightness_callback(results)
 
     if stats is not None:
         stats["mode"] = resolved_mode
