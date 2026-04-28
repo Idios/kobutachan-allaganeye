@@ -279,13 +279,14 @@ export function DetectingScreen() {
   // #569 review Round 1 課題 1: probing event payload を保持して
   // header meta 行を実 ffprobe 結果で render する。
   const [probeInfo, setProbeInfo] = useState<ProbeInfo | null>(null);
-  // Captured once on first mount via lazy initialiser so log entries
-  // can compute their relative timestamp inside render. We never need
-  // to update this value -- the screen unmounts when navigating away,
-  // and a fresh detect run remounts the component (App.tsx routes by
-  // screen). Avoids the react-hooks/set-state-in-effect lint warning
-  // a setState-in-effect initialiser would trip.
-  const [startedAt] = useState<number>(() => Date.now());
+  // can compute their relative timestamp inside render. Updated only
+  // from the [再試行] handler so a retried detect resets its elapsed
+  // timer baseline to "now". The lazy initialiser sidesteps the
+  // react-hooks/set-state-in-effect rule for the initial assignment.
+  const [startedAt, setStartedAt] = useState<number>(() => Date.now());
+  // #646 review Round 2 課題 2 -- bumping `runCount` is the dep change
+  // that re-fires the start_detect / listen effect for [再試行].
+  const [runCount, setRunCount] = useState(0);
   // #639 — pin the live-log scroll viewport so we can pull it back to
   // the bottom whenever a new entry arrives. The DOM ref talks to an
   // external system (scrollTop is browser state, not React state), so
@@ -419,11 +420,11 @@ export function DetectingScreen() {
       if (unlisten) unlisten();
     };
     // selectedVideoPath / loadMetadata / loadSample / navigate are
-    // store-bound and stable; we re-run only if the user re-enters the
-    // screen with a different video, which already remounts via the
-    // App.tsx screen switch.
+    // store-bound and stable; we re-run only when `runCount` bumps from
+    // the [再試行] handler (#646 review Round 2 課題 2). Initial mount
+    // also goes through this effect (runCount = 0).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [runCount]);
 
   // completed → navigate to complete (load happened above)
   useEffect(() => {
@@ -466,30 +467,30 @@ export function DetectingScreen() {
   // #646 -- error phase は detect 進行 UI を捨てて専用 error view に
   // 切り替える。Rust Err 内容 (start_detect の failure message や
   // CLI が emit した phase=error event の message) を `<pre>` で
-  // 改行保持して表示し、ユーザーが [drop へ戻る] を明示操作する
-  // までは画面遷移しない。
+  // 改行保持して表示し、ユーザーが [再試行] / [drop へ戻る] を明示
+  // 操作するまでは画面遷移しない。
+  // Round 2 課題 2 / 課題 3: retry / auto-focus / Esc handler を
+  // 切り出した DetectingErrorView 内で実装する。
+  function handleRetry(): void {
+    setError(null);
+    setProgress(0);
+    setLog([]);
+    setProbeInfo(null);
+    setPhaseLabel('start');
+    setElapsed(0);
+    setStartedAt(Date.now());
+    dispatch({ type: 'RETRY' });
+    setRunCount((c) => c + 1);
+  }
+
   if (phase === 'error') {
     return (
-      <div
-        className={styles.errorScreen}
-        data-testid="detecting-error"
-        role="alert"
-      >
-        <div className={styles.errorHeading}>検知に失敗しました</div>
-        <div className={styles.errorFile}>{displayFile}</div>
-        <pre className={styles.errorMessage} data-testid="detecting-error-message">
-          {error ?? 'unknown error'}
-        </pre>
-        <div className={styles.actions}>
-          <button
-            type="button"
-            className={styles.cancelButton}
-            onClick={() => navigate('drop')}
-          >
-            ← drop へ戻る
-          </button>
-        </div>
-      </div>
+      <DetectingErrorView
+        error={error}
+        displayFile={displayFile}
+        onRetry={handleRetry}
+        onBack={() => navigate('drop')}
+      />
     );
   }
 
@@ -620,6 +621,84 @@ function PhaseRow({ name, jp, pct, sub }: PhaseRowProps) {
       </div>
       <div className={styles.bar}>
         <div className={fillClass} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * #646 review Round 2 課題 2 / 課題 3 -- error view extracted into
+ * its own component so we can attach focus management + an Escape
+ * keyboard handler local to the error state without leaking listeners
+ * into the running view.
+ *
+ * - Auto-focus the [drop へ戻る] button on mount so screen readers
+ *   announce the error context and keyboard users land on a non-
+ *   destructive action by default
+ * - Escape returns to drop (the canonical "get me out" key on this
+ *   terminal screen)
+ * - Retry button restarts the detect run via the parent's `onRetry`,
+ *   which clears local state and bumps the run effect's dep counter
+ */
+interface DetectingErrorViewProps {
+  error: string | null;
+  displayFile: string;
+  onRetry: () => void;
+  onBack: () => void;
+}
+
+function DetectingErrorView({
+  error,
+  displayFile,
+  onRetry,
+  onBack,
+}: DetectingErrorViewProps) {
+  const backButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    backButtonRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    function handler(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onBack();
+      }
+    }
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onBack]);
+
+  return (
+    <div
+      className={styles.errorScreen}
+      data-testid="detecting-error"
+      role="alert"
+    >
+      <div className={styles.errorHeading}>検知に失敗しました</div>
+      <div className={styles.errorFile}>{displayFile}</div>
+      <pre className={styles.errorMessage} data-testid="detecting-error-message">
+        {error ?? 'unknown error'}
+      </pre>
+      <div className={styles.actions}>
+        <button
+          type="button"
+          className={styles.retryButton}
+          onClick={onRetry}
+          data-testid="detecting-error-retry"
+        >
+          ↻ 再試行
+        </button>
+        <button
+          ref={backButtonRef}
+          type="button"
+          className={styles.cancelButton}
+          onClick={onBack}
+          data-testid="detecting-error-back"
+        >
+          ← drop へ戻る
+        </button>
       </div>
     </div>
   );

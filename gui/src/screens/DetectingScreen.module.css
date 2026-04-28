@@ -291,3 +291,27 @@
   word-break: break-word;
   overflow-y: auto;
 }
+
+/*
+ * #646 review Round 2 課題 2 — error view の [再試行] ボタン。
+ * gold tint で「次の操作を促す」プライマリ寄りに見せ、隣の
+ * `.cancelButton` (drop 復帰、`--ae-danger` 縁取り) と視覚的に
+ * 区別する。
+ */
+.retryButton {
+  padding: 8px 18px;
+  background: transparent;
+  border: 1px solid var(--ae-gold);
+  color: var(--ae-gold);
+  font-family: var(--ae-font-ui);
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.retryButton:hover {
+  background: rgba(var(--ae-gold-rgb), 0.08);
+  color: var(--ae-gold-bright);
+  border-color: var(--ae-gold-bright);
+}

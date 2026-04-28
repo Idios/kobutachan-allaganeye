@@ -478,6 +478,84 @@ describe('DetectingScreen', () => {
     expect(useAppStateStore.getState().screen).toBe('drop');
   });
 
+  // #646 review Round 2 課題 2 -- retry button restarts the detect
+  // run by clearing local state and bumping the run effect's dep
+  // counter so start_detect is invoked a second time.
+  it('retry button restarts detection after error (#646)', async () => {
+    let callCount = 0;
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        callCount += 1;
+        if (callCount === 1) {
+          return Promise.reject(new Error('spawn allaganeye failed'));
+        }
+        // Second call hangs so we can observe the retry transitioned
+        // back into detecting (running) without being immediately
+        // resolved into complete by the happy-path mock.
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(screen.getByTestId('detecting-error')).toBeInTheDocument();
+    });
+    expect(callCount).toBe(1);
+
+    act(() => {
+      fireEvent.click(screen.getByTestId('detecting-error-retry'));
+    });
+
+    // After retry: error view replaced by the running detecting screen
+    // (the same data-testid='detecting-screen' container the running
+    // path uses) and start_detect invoked a second time.
+    await waitFor(() => {
+      expect(screen.getByTestId('detecting-screen')).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(callCount).toBe(2);
+    });
+  });
+
+  // #646 review Round 2 課題 3 -- a11y: error view auto-focuses the
+  // back button so screen readers announce the error context and
+  // keyboard users land on a non-destructive action by default.
+  it('auto-focuses [drop へ戻る] when entering error view (#646)', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return Promise.reject(new Error('boom'));
+      }
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(screen.getByTestId('detecting-error')).toBeInTheDocument();
+    });
+    const back = screen.getByTestId('detecting-error-back');
+    expect(document.activeElement).toBe(back);
+  });
+
+  // #646 review Round 2 課題 3 -- a11y: Escape key on the error view
+  // returns to drop without requiring mouse focus on the back button.
+  it('Escape on error view returns to drop (#646)', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return Promise.reject(new Error('boom'));
+      }
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(screen.getByTestId('detecting-error')).toBeInTheDocument();
+    });
+    act(() => {
+      fireEvent.keyDown(window, { key: 'Escape' });
+    });
+    expect(useAppStateStore.getState().screen).toBe('drop');
+  });
+
   // #646 -- CLI が emit した phase=error event 経路でも同じ error UI
   // が表示され、ユーザーは Rust が emit した stderr tail を見ながら
   // 操作で drop に戻る。
