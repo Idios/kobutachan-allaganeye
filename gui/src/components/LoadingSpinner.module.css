@@ -1,0 +1,26 @@
+/*
+ * LoadingSpinner — motion + label indicator. See LoadingSpinner.tsx and
+ * docs/a11y-policy.md. The @keyframes ae-spin definition lives in
+ * gui/src/styles/a11y.css and is gated by prefers-reduced-motion there.
+ */
+
+.wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  color: var(--ae-gold-dim);
+  letter-spacing: 0.05em;
+}
+
+.spin {
+  display: inline-block;
+  animation: ae-spin 1.4s linear infinite;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.label {
+  letter-spacing: 0.08em;
+}

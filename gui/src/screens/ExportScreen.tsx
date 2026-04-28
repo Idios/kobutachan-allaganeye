@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { useEffect, useReducer, useRef, useState } from 'react';
 
+import { DisabledTooltip } from '../components/DisabledTooltip';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 import { joinPath, stripExtendedPathPrefix } from '../utils/path';
@@ -455,14 +456,23 @@ export function ExportScreen() {
   return (
     <div className={styles.screen} data-testid="export-screen" data-phase={phase}>
       <div className={styles.header}>
-        <button
-          type="button"
-          className={styles.backButton}
+        {/* #587 §2.5.1: explain why [◀ プレビュー] is disabled mid-export. */}
+        <DisabledTooltip
           disabled={running || cancelling}
-          onClick={() => navigate('preview')}
+          reason="書き出し中はプレビューに戻れません。先に [中断] してください"
         >
-          ◀ プレビュー
-        </button>
+          {(p) => (
+            <button
+              type="button"
+              className={styles.backButton}
+              disabled={running || cancelling}
+              onClick={() => navigate('preview')}
+              {...p}
+            >
+              ◀ プレビュー
+            </button>
+          )}
+        </DisabledTooltip>
         <div>
           <div className={styles.caption}>エクスポート</div>
           <div className={styles.title}>
@@ -485,14 +495,23 @@ export function ExportScreen() {
                 aria-label="output directory"
                 disabled={running || cancelling}
               />
-              <button
-                type="button"
-                className={styles.pickButton}
-                onClick={handlePickDir}
+              {/* #587 §2.5.4: explain why [参照…] is disabled while running. */}
+              <DisabledTooltip
                 disabled={running || cancelling}
+                reason="書き出し中は出力先を変更できません"
               >
-                参照…
-              </button>
+                {(p) => (
+                  <button
+                    type="button"
+                    className={styles.pickButton}
+                    onClick={handlePickDir}
+                    disabled={running || cancelling}
+                    {...p}
+                  >
+                    参照…
+                  </button>
+                )}
+              </DisabledTooltip>
             </div>
           </div>
 
@@ -577,22 +596,44 @@ export function ExportScreen() {
               </div>
             )}
 
-            {!completed && !error && (
-              <button
-                type="button"
-                className={styles.primaryButton}
-                onClick={() => {
-                  void handleStartExport();
-                }}
-                disabled={running || cancelling || !videoSource}
-              >
-                {running
-                  ? '書き出し中…'
+            {!completed && !error && (() => {
+              // #587 §2.5.9: surface why [⬦ 書き出し開始] is disabled.
+              // Multi-condition reason picker, with a missing video source
+              // taking priority because that's the actionable case.
+              const startDisabled = running || cancelling || !videoSource;
+              const startReason = !videoSource
+                ? '動画ファイルが選択されていません。drop 画面に戻って選択してください'
+                : running
+                  ? '書き出し中です'
                   : cancelling
-                    ? '中断中…'
-                    : '⬦ 書き出し開始'}
-              </button>
-            )}
+                    ? '中断処理中です'
+                    : '';
+              return (
+                <DisabledTooltip
+                  disabled={startDisabled}
+                  reason={startReason}
+                  inlineHint
+                >
+                  {(p) => (
+                    <button
+                      type="button"
+                      className={styles.primaryButton}
+                      onClick={() => {
+                        void handleStartExport();
+                      }}
+                      disabled={startDisabled}
+                      {...p}
+                    >
+                      {running
+                        ? '書き出し中…'
+                        : cancelling
+                          ? '中断中…'
+                          : '⬦ 書き出し開始'}
+                    </button>
+                  )}
+                </DisabledTooltip>
+              );
+            })()}
 
             {running && (
               <button
@@ -667,24 +708,73 @@ export function ExportScreen() {
                 preview で永続 skip 設定済 (type_override === 'skip') の試合は
                 bulk 対象から除外。export 中は disable。 */}
             <div className={styles.listBulkActions}>
-              <button
-                type="button"
-                className={styles.listBulkButton}
-                disabled={running || cancelling}
-                onClick={() => toggleSelectAll(true)}
-                aria-label="select all matches"
-              >
-                全選択
-              </button>
-              <button
-                type="button"
-                className={styles.listBulkButton}
-                disabled={running || cancelling}
-                onClick={() => toggleSelectAll(false)}
-                aria-label="deselect all matches"
-              >
-                全解除
-              </button>
+              {/*
+               * #587 §2.5.14: surface why bulk toggles are disabled.
+               *
+               * - running / cancelling: "書き出し中は変更できません"
+               * - eligible (= matches not persist-skipped) length === 0:
+               *   the bulk toggle has nothing to act on.
+               *
+               * `countedMatches` reflects ad-hoc exclusion too (used for
+               * "N 試合を書き出す" copy), so we instead derive eligibility
+               * from the persist-skip filter, which doesn't change as the
+               * user toggles checkboxes.
+               */}
+              {(() => {
+                const eligibleCount = metadata.matches.filter(
+                  (mm) => mm.type_override !== 'skip',
+                ).length;
+                const bulkDisabled =
+                  running || cancelling || eligibleCount === 0;
+                const baseReason =
+                  running || cancelling ? '書き出し中は変更できません' : '';
+                const selectAllReason =
+                  eligibleCount === 0
+                    ? '対象が 0 件のため全選択できません'
+                    : baseReason;
+                const deselectAllReason =
+                  eligibleCount === 0
+                    ? '対象が 0 件のため全解除できません'
+                    : baseReason;
+                return (
+                  <>
+                    <DisabledTooltip
+                      disabled={bulkDisabled}
+                      reason={selectAllReason}
+                    >
+                      {(p) => (
+                        <button
+                          type="button"
+                          className={styles.listBulkButton}
+                          disabled={bulkDisabled}
+                          onClick={() => toggleSelectAll(true)}
+                          aria-label="select all matches"
+                          {...p}
+                        >
+                          全選択
+                        </button>
+                      )}
+                    </DisabledTooltip>
+                    <DisabledTooltip
+                      disabled={bulkDisabled}
+                      reason={deselectAllReason}
+                    >
+                      {(p) => (
+                        <button
+                          type="button"
+                          className={styles.listBulkButton}
+                          disabled={bulkDisabled}
+                          onClick={() => toggleSelectAll(false)}
+                          aria-label="deselect all matches"
+                          {...p}
+                        >
+                          全解除
+                        </button>
+                      )}
+                    </DisabledTooltip>
+                  </>
+                );
+              })()}
             </div>
           </div>
           <ul className={styles.listBody}>
@@ -725,19 +815,25 @@ export function ExportScreen() {
               const isIncluded = !isPersistSkip && !isAdHocExcluded;
               return (
                 <li key={m.index} className={styles.listItem}>
-                  <input
-                    type="checkbox"
-                    className={styles.listCheckbox}
-                    checked={isIncluded}
-                    disabled={isPersistSkip || running || cancelling}
-                    onChange={() => toggleMatchExclusion(m.index)}
-                    aria-label={`include match ${m.index}`}
-                    title={
-                      isPersistSkip
-                        ? 'preview 画面で skip 設定済 (変更不可)'
-                        : '書き出し対象から除外/復帰'
-                    }
-                  />
+                  {/* #587: skip-checkbox disabled reason (§1.2 + #587
+                      scope-extension #11). When the match isn't a persist
+                      skip the existing help title is preserved. */}
+                  <DisabledTooltip
+                    disabled={isPersistSkip}
+                    reason="preview で skip に設定されています"
+                  >
+                    {(p) => (
+                      <input
+                        type="checkbox"
+                        className={styles.listCheckbox}
+                        checked={isIncluded}
+                        disabled={isPersistSkip || running || cancelling}
+                        onChange={() => toggleMatchExclusion(m.index)}
+                        aria-label={`include match ${m.index}`}
+                        title={p.title ?? '書き出し対象から除外/復帰'}
+                      />
+                    )}
+                  </DisabledTooltip>
                   <span className={`${styles.listMark} ${markClass}`}>
                     {mark}
                   </span>

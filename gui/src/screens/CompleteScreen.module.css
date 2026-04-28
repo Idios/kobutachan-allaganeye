@@ -166,11 +166,22 @@
   cursor: pointer;
   background: transparent;
   border-left: 2px solid transparent;
+  transition: background 0.12s;
+}
+
+/* #587: hover feedback so the row visibly responds to the mouse. */
+.listItem:hover {
+  background: rgba(var(--ae-gold-rgb), 0.05);
 }
 
 .listItemActive {
   background: rgba(var(--ae-gold-rgb), 0.1);
   border-left-color: var(--ae-gold);
+}
+
+/* #587: keep the active highlight stronger than plain hover. */
+.listItemActive:hover {
+  background: rgba(var(--ae-gold-rgb), 0.14);
 }
 
 .listItemBody {
@@ -222,6 +233,8 @@
   padding: 8px;
   background: var(--ae-bg-deep);
   border: var(--ae-panel-border);
+  /* #587: subtle gold glow so the selected preview frame stands out. */
+  box-shadow: 0 0 12px rgba(var(--ae-gold-rgb), 0.18);
 }
 
 .previewInner {

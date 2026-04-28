@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { invokeMock, listenMock, openDialogMock } = vi.hoisted(() => ({
@@ -836,5 +837,64 @@ describe('ExportScreen (Phase 4 #466)', () => {
         screen.getByTestId('fallback-notice-1').textContent,
       ).toContain('libx264');
     });
+  });
+
+  // ---- #587 a11y polish ---------------------------------------------------
+
+  it('idle export screen has no axe violations (#587)', async () => {
+    const { container } = render(<ExportScreen />);
+    expect(await axe(container)).toHaveNoViolations();
+  });
+
+  it('[⬦ 書き出し開始] surfaces a no-video-source reason tooltip (#587)', () => {
+    // selectedVideoPath null + metadata.source falsy => no videoSource.
+    useAppStateStore.getState().setSelectedVideoPath(null);
+    useMetadataStore.setState((s) => ({
+      ...s,
+      metadata: { ...(s.metadata ?? {}), source: null } as never,
+    }));
+    render(<ExportScreen />);
+    const start = screen.getByRole('button', { name: /書き出し開始/ });
+    expect(start).toBeDisabled();
+    expect(start.getAttribute('title')).toContain('動画ファイルが選択されていません');
+  });
+
+  it('[全選択] / [全解除] surface a "書き出し中" reason while exporting (#587)', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'export_match') return new Promise(() => undefined);
+      return Promise.resolve(undefined);
+    });
+    render(<ExportScreen />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /書き出し開始/ }));
+    const selectAll = screen.getByRole('button', { name: 'select all matches' });
+    const deselectAll = screen.getByRole('button', { name: 'deselect all matches' });
+    expect(selectAll.getAttribute('title')).toBe('書き出し中は変更できません');
+    expect(deselectAll.getAttribute('title')).toBe('書き出し中は変更できません');
+  });
+
+  it('per-match skip checkbox tooltip shows skip reason while preserving help text (#587)', () => {
+    // Mark match 1 as persist-skip.
+    useMetadataStore.setState((s) => {
+      if (!s.metadata) return s;
+      return {
+        ...s,
+        metadata: {
+          ...s.metadata,
+          matches: s.metadata.matches.map((m) =>
+            m.index === 1 ? { ...m, type_override: 'skip' as const } : m,
+          ),
+        },
+      };
+    });
+    render(<ExportScreen />);
+    const cb1 = screen.getByLabelText('include match 1') as HTMLInputElement;
+    expect(cb1.disabled).toBe(true);
+    expect(cb1.getAttribute('title')).toBe(
+      'preview で skip に設定されています',
+    );
+    const cb2 = screen.getByLabelText('include match 2') as HTMLInputElement;
+    // Non-skip match keeps the original help title.
+    expect(cb2.getAttribute('title')).toBe('書き出し対象から除外/復帰');
   });
 });

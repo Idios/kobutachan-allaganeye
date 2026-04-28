@@ -92,4 +92,29 @@ describe('RestoreButton', () => {
     render(<RestoreButton />);
     expect(screen.getByRole('alert')).toHaveTextContent('disk full');
   });
+
+  it('shows a no-backup reason tooltip when hasBackup=false (#587)', () => {
+    useMetadataStore.setState({ filePath: '/x', hasBackup: false });
+    render(<RestoreButton />);
+    const button = screen.getByRole('button', { name: '元に戻す' });
+    expect(button.getAttribute('title')).toBe('バックアップが存在しません');
+  });
+
+  it('shows a "復元中" reason tooltip while restoring (#587)', () => {
+    useMetadataStore.setState({
+      filePath: '/x',
+      hasBackup: true,
+      restoring: true,
+    });
+    render(<RestoreButton />);
+    const button = screen.getByRole('button', { name: '元に戻す' });
+    expect(button.getAttribute('title')).toBe('復元中です');
+  });
+
+  it('drops the title attribute when enabled (#587)', () => {
+    useMetadataStore.setState({ filePath: '/x', hasBackup: true });
+    render(<RestoreButton />);
+    const button = screen.getByRole('button', { name: '元に戻す' });
+    expect(button.hasAttribute('title')).toBe(false);
+  });
 });

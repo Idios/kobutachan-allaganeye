@@ -1,7 +1,8 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, type KeyboardEvent } from 'react';
 
 import { AllaganFrame } from '../components/AllaganFrame';
 import { BrightnessTimeline } from '../components/BrightnessTimeline';
+import { DisabledTooltip } from '../components/DisabledTooltip';
 import { MatchThumb } from '../components/MatchThumb';
 import { RestoreButton } from '../components/RestoreButton';
 import { sampleBrightness } from '../data/sampleMetadata';
@@ -91,17 +92,27 @@ export function CompleteScreen() {
         </div>
         <div className={styles.actions}>
           <RestoreButton />
-          <button
-            type="button"
-            className={styles.adjustButton}
-            onClick={() =>
-              selectedMatch ? openPreviewFor(selectedMatch.index) : undefined
-            }
+          {/* #587 §2.3.5: explain why [境界を調整] is disabled when nothing is selected. */}
+          <DisabledTooltip
             disabled={!selectedMatch}
-            aria-label="境界を調整"
+            reason="試合が選択されていません"
+            inlineHint
           >
-            ⬦ 境界を調整
-          </button>
+            {(p) => (
+              <button
+                type="button"
+                className={styles.adjustButton}
+                onClick={() =>
+                  selectedMatch ? openPreviewFor(selectedMatch.index) : undefined
+                }
+                disabled={!selectedMatch}
+                aria-label="境界を調整"
+                {...p}
+              >
+                ⬦ 境界を調整
+              </button>
+            )}
+          </DisabledTooltip>
           <button
             type="button"
             className={styles.exportAllButton}
@@ -134,7 +145,40 @@ export function CompleteScreen() {
       <div className={styles.bottom}>
         <div className={styles.listCol}>
           <div className={styles.listHeader}>試合一覧 ⸱ MATCHES</div>
-          <ul className={styles.listBody}>
+          {/* #587: keyboard nav for the match list. ↑↓ shifts the
+              selection, Home/End jump to ends, Enter/Space opens preview. */}
+          <ul
+            className={styles.listBody}
+            tabIndex={0}
+            onKeyDown={(e: KeyboardEvent<HTMLUListElement>) => {
+              if (!metadata) return;
+              const matches = metadata.matches;
+              if (matches.length === 0) return;
+              const idx = matches.findIndex(
+                (mm) => mm.index === selectedMatch?.index,
+              );
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                const next = matches[Math.min(matches.length - 1, idx + 1)];
+                selectMatch(next.index);
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                const prev = matches[Math.max(0, idx - 1)];
+                selectMatch(prev.index);
+              } else if (e.key === 'Home') {
+                e.preventDefault();
+                selectMatch(matches[0].index);
+              } else if (e.key === 'End') {
+                e.preventDefault();
+                selectMatch(matches[matches.length - 1].index);
+              } else if (e.key === 'Enter' || e.key === ' ') {
+                if (selectedMatch) {
+                  e.preventDefault();
+                  openPreviewFor(selectedMatch.index);
+                }
+              }
+            }}
+          >
             {metadata.matches.map((m) => {
               const isSel = m.index === selectedMatch?.index;
               return (

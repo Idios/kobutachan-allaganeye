@@ -62,6 +62,7 @@ GUI のスタイルは CSS 変数 + CSS Modules で統一。詳細は [`ui-archi
 - 各 component は `Foo.tsx` / `Foo.module.css` / `Foo.test.tsx` の 3 点セット
 - CSS クラス名は camelCase (`container`, `topBar`)。modifier は base との空白区切り (`styles.button styles.buttonActive`)
 - hover / transition は CSS 疑似クラスで表現する (JS 側での切替は避ける)
+- focus-visible / `prefers-reduced-motion` 等の global a11y CSS は `gui/src/styles/a11y.css` に集約。詳細は [a11y-policy.md](a11y-policy.md#global-css-責務分離) を参照 (#587)
 
 ## テスト
 

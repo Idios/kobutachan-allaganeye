@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
@@ -49,6 +50,41 @@ describe('PreviewScreen', () => {
     expect(inPane.getAttribute('aria-pressed')).toBe('true');
     expect(outPane.getAttribute('aria-pressed')).toBe('false');
   });
+
+  it('panes are tagged data-pane="in" / "out" so CSS can color the active border (#587)', () => {
+    render(<PreviewScreen />);
+    const inPane = screen.getByRole('button', { name: /IN \(start\)/ });
+    const outPane = screen.getByRole('button', { name: /OUT \(end\)/ });
+    expect(inPane.getAttribute('data-pane')).toBe('in');
+    expect(outPane.getAttribute('data-pane')).toBe('out');
+  });
+
+  it(
+    'has no axe violations after register_video resolves (#587)',
+    async () => {
+      const { container } = render(<PreviewScreen />);
+      await waitFor(() => {
+        expect(
+          screen.getByRole('button', { name: /IN \(start\)/ }),
+        ).toBeInTheDocument();
+      });
+      // The Pane wraps a video element + timecode input inside a
+      // <button> so the whole pane area can activate on click. axe's
+      // nested-interactive rule flags that pattern, but screen-reader
+      // support is out of scope for this tool (see
+      // docs/a11y-policy.md), and the wrapping button is essential to
+      // the click-to-activate UX. Opt this rule out for the preview
+      // surface only.
+      expect(
+        await axe(container, {
+          rules: {
+            'nested-interactive': { enabled: false },
+          },
+        }),
+      ).toHaveNoViolations();
+    },
+    15000,
+  );
 
   it('clicking OUT pane activates end editing', async () => {
     render(<PreviewScreen />);
