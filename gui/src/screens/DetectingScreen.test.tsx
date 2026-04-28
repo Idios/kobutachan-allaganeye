@@ -436,7 +436,32 @@ describe('DetectingScreen', () => {
     });
   });
 
-  it('routes to drop when start_detect rejects', async () => {
+  // #646 -- start_detect reject から drop へは silent 復帰せず、error
+  // 表示 + 戻るボタンの明示操作で復帰する。Rust Err 内容が画面に出る。
+  it('shows error UI when start_detect rejects (#646)', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return Promise.reject(
+          new Error(
+            'spawn allaganeye failed (python -m allaganeye): not found',
+          ),
+        );
+      }
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(screen.getByTestId('detecting-error')).toBeInTheDocument();
+    });
+    // detecting screen は unmount されない (drop へは行かない)
+    expect(useAppStateStore.getState().screen).toBe('detecting');
+    // Rust Err 内容が画面に出る
+    const msg = screen.getByTestId('detecting-error-message');
+    expect(msg.textContent).toContain('spawn allaganeye failed');
+    expect(msg.textContent).toContain('python -m allaganeye');
+  });
+
+  it('back button on error view returns to drop (#646)', async () => {
     invokeMock.mockImplementation((cmd) => {
       if (cmd === 'start_detect') {
         return Promise.reject(new Error('spawn allaganeye failed'));
@@ -445,12 +470,18 @@ describe('DetectingScreen', () => {
     });
     render(<DetectingScreen />);
     await waitFor(() => {
-      expect(useAppStateStore.getState().screen).toBe('drop');
+      expect(screen.getByTestId('detecting-error')).toBeInTheDocument();
     });
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /drop へ戻る/ }));
+    });
+    expect(useAppStateStore.getState().screen).toBe('drop');
   });
 
-  it('routes to drop when CLI emits a phase=error event', async () => {
-    // Make start_detect hang so the only termination path is via error event.
+  // #646 -- CLI が emit した phase=error event 経路でも同じ error UI
+  // が表示され、ユーザーは Rust が emit した stderr tail を見ながら
+  // 操作で drop に戻る。
+  it('shows error UI when CLI emits a phase=error event (#646)', async () => {
     invokeMock.mockImplementation((cmd) => {
       if (cmd === 'start_detect') {
         return new Promise(() => {
@@ -470,8 +501,12 @@ describe('DetectingScreen', () => {
       });
     });
     await waitFor(() => {
-      expect(useAppStateStore.getState().screen).toBe('drop');
+      expect(screen.getByTestId('detecting-error')).toBeInTheDocument();
     });
+    expect(useAppStateStore.getState().screen).toBe('detecting');
+    expect(
+      screen.getByTestId('detecting-error-message').textContent,
+    ).toContain('No match boundaries detected.');
   });
 
   it('falls back to loadSample when no video is selected (StateSwitcher dev mode)', async () => {

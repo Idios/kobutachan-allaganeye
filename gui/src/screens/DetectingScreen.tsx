@@ -432,9 +432,14 @@ export function DetectingScreen() {
     }
   }, [phase, navigate]);
 
-  // cancelled / error → back to drop
+  // #646 -- cancelled は即時 drop へ復帰、error は **手動操作** で復帰。
+  // 以前は error も即時 navigate('drop') していたため、Rust 側 Err
+  // (例: spawn allaganeye failed / video file not found) がユーザーに
+  // 見えず silent で drop 画面に戻る挙動だった。今は error phase で
+  // 専用 view を render し、ユーザーが [drop へ戻る] を押すまで画面
+  // 遷移しない。
   useEffect(() => {
-    if (phase === 'cancelled' || phase === 'error') {
+    if (phase === 'cancelled') {
       navigate('drop');
     }
   }, [phase, navigate]);
@@ -457,6 +462,36 @@ export function DetectingScreen() {
   // 表示。受信前 (起動直後の数百 ms) は暫定で `phase: ...` を出して
   // 「meta 行が空」状態を回避する。
   const metaText = probeInfo ? formatProbeMeta(probeInfo) : `phase: ${phaseLabel}`;
+
+  // #646 -- error phase は detect 進行 UI を捨てて専用 error view に
+  // 切り替える。Rust Err 内容 (start_detect の failure message や
+  // CLI が emit した phase=error event の message) を `<pre>` で
+  // 改行保持して表示し、ユーザーが [drop へ戻る] を明示操作する
+  // までは画面遷移しない。
+  if (phase === 'error') {
+    return (
+      <div
+        className={styles.errorScreen}
+        data-testid="detecting-error"
+        role="alert"
+      >
+        <div className={styles.errorHeading}>検知に失敗しました</div>
+        <div className={styles.errorFile}>{displayFile}</div>
+        <pre className={styles.errorMessage} data-testid="detecting-error-message">
+          {error ?? 'unknown error'}
+        </pre>
+        <div className={styles.actions}>
+          <button
+            type="button"
+            className={styles.cancelButton}
+            onClick={() => navigate('drop')}
+          >
+            ← drop へ戻る
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.screen} data-testid="detecting-screen">
