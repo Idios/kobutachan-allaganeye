@@ -5,7 +5,11 @@ import subprocess
 from pathlib import Path
 from typing import TypedDict
 
-from allaganeye.exceptions import InputFileError, VideoProcessingError
+from allaganeye.exceptions import (
+    STDERR_TAIL_BYTES,
+    InputFileError,
+    VideoProcessingError,
+)
 from allaganeye.ffmpeg_path import find_ffprobe
 
 
@@ -67,7 +71,7 @@ def probe_video(video_path: Path) -> ProbeResult:
             context={
                 "command": " ".join(str(c) for c in e.cmd) if e.cmd else "",
                 "return_code": e.returncode,
-                "stderr_tail": stderr_text[-2000:] if stderr_text else "",
+                "stderr_tail": stderr_text[-STDERR_TAIL_BYTES:] if stderr_text else "",
             },
         ) from e
 

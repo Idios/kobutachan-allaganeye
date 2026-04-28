@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from allaganeye.exceptions import VideoProcessingError
+from allaganeye.exceptions import STDERR_TAIL_BYTES, VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
 from allaganeye.video.detector import (
     _FRAME_SIZE,
@@ -448,7 +448,7 @@ def _decode_chunk(
                 "command": " ".join(str(c) for c in cmd),
                 "return_code": proc.returncode,
                 "chunk": f"{chunk_start:.1f}-{chunk_end:.1f}",
-                "stderr_tail": stderr_text[-2000:],
+                "stderr_tail": stderr_text[-STDERR_TAIL_BYTES:],
             },
         )
 
