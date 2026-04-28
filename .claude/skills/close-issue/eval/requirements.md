@@ -22,6 +22,8 @@
 6. **[critical]** 残タスクを (B) 新 issue 起票 / (C) 既存 issue 追記 のいずれかにトリアージしている (Step 6、握り潰しゼロ)
 7. **[critical]** ユーザー (Idios) 承認なしに `gh issue close` を実行していない (Step 7 の AskUserQuestion を経由)
 8. close 実行する場合のコメントテンプレートに session-id と検証方法サマリ (静的 grep / 単体テスト pytest 等) を含めている
+9. **[critical]** `closedByPullRequestsReferences` 空の状態から Step 1 fallback (`gh api repos/.../issues/911/timeline` cross-referenced-event + `gh search prs '"Refs #911"'`) を経由して PR #921 を列挙している (両 fallback 段の挙動を明示的に言及。`closedByPullRequestsReferences` 空 → 「PR なし」の即断は失格)
+10. **[important]** Hybrid fallback の dedupe ポリシーを明示している (timeline の `state==closed` と search の `state==merged` が両方ヒットした場合は search の `merged` を真値として採用、または PR 番号で重複排除)
 
 ---
 
@@ -35,6 +37,8 @@
 6. **[critical]** ユーザー承認なしに close 実行していない (Step 7)
 7. close コメントで「#906 の close は別途 `/close-issue 906` で実施する」と明記または示唆している (本 skill 呼び分け運用に整合)
 8. PR 本文の「両者とも周辺だから 1 PR」記述を「条件共通」根拠として採用していない (合理化検出)
+9. **[critical]** `closingIssuesReferences` 空の状態から Step 2 ケース B fallback (PR #915 本文の `Refs #905 #906` を `gh pr view 915 --json body --jq '.body' | grep -oE '#[0-9]+' | sort -u` 等で抽出) を経由して #905, #906 の 2 件を列挙し、束ね PR (ケース B) と機械判定している (`closingIssuesReferences` 空 → ケース A 即断は失格)
+10. **[important]** PR 本文 `Refs #N` 抽出ルートで取得した issue 一覧に対し、本 issue (#905) のみ独立検証していることを明示 (#906 用変更を本 issue 検証に混入させていない)
 
 ---
 
@@ -48,3 +52,5 @@
 6. **[critical]** PR #917 の CLAUDE.md 更新箇所を「受け入れ条件外の追加変更」として正しく仕分け、close 判定の阻害要因にしていない
 7. **[critical]** 残タスクのトリアージ (B)/(C) を握り潰しゼロ (Step 6) + ユーザー承認なしに close 実行していない (Step 7)
 8. close コメントに紐づく全 PR (#917, #918) を明記 (Step 7 のテンプレート遵守)
+9. **[critical]** Step 1 fallback の timeline API (`gh api repos/.../issues/907/timeline`) で PR #917, #918 の 2 件を列挙 + 各 PR 本文 `Refs #907` 確認でケース C と判定している (`closedByPullRequestsReferences` 空でも独断ケース A に倒れない、PR 件数=2 を fallback ルート由来で取得していることを明示)
+10. **[important]** 全 PR (#917, #918) のマージ済み確認に Step 1 fallback で取得した PR 一覧を使い、`gh pr view` ループで各 PR を 1 件ずつ MERGED 確認している (どちらか 1 件しか確認しないでケース C 判定する誤りをしていない)
