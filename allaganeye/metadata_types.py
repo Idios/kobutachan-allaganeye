@@ -91,6 +91,8 @@ class Metadata(TypedDict):
     source_duration_display: str
     source_fps: NotRequired[float]
     detected_at: str
+    detection_started_at: NotRequired[str]
+    detection_completed_at: NotRequired[str]
     detection_params: DetectionParams
     matches: list[Match]
     gaps: list[Gap]

@@ -340,6 +340,18 @@ def run_split_from_metadata(
         detected_at_value if isinstance(detected_at_value, str) else _iso_utc_now()
     )
 
+    # #586 -- preserve detect timing across `--from-metadata` invocations.
+    # 再検知してないので元 metadata の検知開始/完了時刻を引き継ぎ、GUI
+    # 「所要」が「検知時の所要」を表示し続けるようにする。pre-#586 metadata
+    # では両フィールド欠落 -> None を渡して _split_and_write_metadata の
+    # fallback (started=detected_at / completed=_iso_utc_now()) に委譲。
+    old_started_at = payload.get("detection_started_at")
+    old_completed_at = payload.get("detection_completed_at")
+    preserve_started_at = old_started_at if isinstance(old_started_at, str) else None
+    preserve_completed_at = (
+        old_completed_at if isinstance(old_completed_at, str) else None
+    )
+
     detection_params = payload.get("detection_params")
     if isinstance(detection_params, dict):
         effective_interval = float(
@@ -373,6 +385,8 @@ def run_split_from_metadata(
         config,
         effective_interval=effective_interval,
         detected_at=detected_at,
+        detection_started_at=preserve_started_at,
+        detection_completed_at=preserve_completed_at,
         system_info=split_only_system_info,
         quiet=quiet,
     )
@@ -996,12 +1010,24 @@ def _split_and_write_metadata(
     *,
     effective_interval: float,
     detected_at: str,
+    detection_started_at: str | None = None,
+    detection_completed_at: str | None = None,
     system_info: SystemInfo,
     quiet: bool = False,
 ) -> None:
-    """Split video and write metadata.json (#591: system_info required)."""
+    """Split video and write metadata.json (#591: system_info required).
+
+    ``detection_started_at`` / ``detection_completed_at`` (#586): both
+    optional. ``None`` means "本ランで取得" (started = detected_at の値、
+    completed = writer 直前の ``_iso_utc_now()``)。``run_split`` は新規
+    検知なので両方 ``None`` を渡し fresh capture を使う。
+    ``run_split_from_metadata`` は元 metadata の値を保持して GUI
+    「所要」が「検知時の所要」を表示し続けるよう、明示的に値を渡す。
+    """
     show = not quiet
     source_duration = metadata["duration"]
+    if detection_started_at is None:
+        detection_started_at = detected_at
 
     try:
         config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -1029,12 +1055,18 @@ def _split_and_write_metadata(
 
     # Write metadata (#463: ``note`` field retired; caveats documented in
     # docs/cli-spec.md and docs/metadata-spec.md instead of being embedded
-    # in the payload)
+    # in the payload). #586: completed_at は明示指定がなければ writer 直前
+    # の ``_iso_utc_now()``。``--from-metadata`` 経路は元 metadata の値を
+    # caller (run_split_from_metadata) が引き継いで渡す。
+    if detection_completed_at is None:
+        detection_completed_at = _iso_utc_now()
     result = _build_metadata_payload(
         video_path=video_path,
         source_duration=source_duration,
         source_fps=metadata["fps"],
         detected_at=detected_at,
+        detection_started_at=detection_started_at,
+        detection_completed_at=detection_completed_at,
         effective_interval=effective_interval,
         config=config,
         boundaries=boundaries,
@@ -1057,6 +1089,8 @@ def _build_metadata_payload(
     source_duration: float,
     source_fps: float,
     detected_at: str,
+    detection_started_at: str,
+    detection_completed_at: str,
     effective_interval: float,
     config: SplitConfig,
     boundaries: list[MatchBoundary],
@@ -1065,7 +1099,7 @@ def _build_metadata_payload(
     system_info: SystemInfo,
     brightness_samples: BrightnessSamples | None = None,
 ) -> Metadata:
-    """Build the ``metadata.json`` payload dict (schema v1, #463 / #569 / #591).
+    """Build the ``metadata.json`` payload dict (schema v1, #463 / #569 / #586 / #591).
 
     Kept private to this module; ``commands.detect`` builds a variant
     (no ``output_files``) via its own helper.
@@ -1082,6 +1116,14 @@ def _build_metadata_payload(
     encoder selection (NVENC / QSV / AMF / libx264). Optional field added
     in v1; readers without #591 simply ignore it. Build via
     ``_build_system_info``.
+
+    ``detection_started_at`` / ``detection_completed_at`` (#586): wall-clock
+    ISO 8601 UTC timestamps bracketing the detect (or detect-skipped split)
+    pipeline. GUI ``CompleteScreen`` computes ``elapsed = completed -
+    started`` to display the「所要」column. ``detection_started_at`` is the
+    same value as ``detected_at`` (the legacy field is retained verbatim
+    for backward compatibility); ``detection_completed_at`` is captured
+    immediately before metadata.json is written.
 
     ``brightness_samples`` (#569): pre-rendered brightness timeline for
     the GUI complete screen.  Optional field; pre-#569 metadata files
@@ -1102,6 +1144,8 @@ def _build_metadata_payload(
         "source_duration_display": _format_timestamp(source_duration),
         "source_fps": source_fps,
         "detected_at": detected_at,
+        "detection_started_at": detection_started_at,
+        "detection_completed_at": detection_completed_at,
         "detection_params": {
             "sample_interval": effective_interval,
             "blackout_threshold": config.blackout_threshold,

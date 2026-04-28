@@ -29,6 +29,8 @@ def _valid_sample() -> dict[str, Any]:
         "source_duration_display": "02:00:00",
         "source_fps": 60,
         "detected_at": "2026-04-28T00:00:00Z",
+        "detection_started_at": "2026-04-28T00:00:00Z",
+        "detection_completed_at": "2026-04-28T00:01:30Z",
         "detection_params": {
             "sample_interval": 2.0,
             "blackout_threshold": 15,
@@ -89,10 +91,17 @@ def test_invalid_match_type_rejected():
 
 
 def test_optional_fields_omitted_accepted():
-    """pre-#515 / pre-#591 metadata.json must still validate."""
+    """pre-#515 / pre-#586 / pre-#591 metadata.json must still validate."""
     schema = _load_schema()
     minimal = _valid_sample()
-    for key in ("schema_version", "source_fps", "warnings", "system_info"):
+    for key in (
+        "schema_version",
+        "source_fps",
+        "warnings",
+        "system_info",
+        "detection_started_at",
+        "detection_completed_at",
+    ):
         del minimal[key]
     Draft202012Validator(schema).validate(minimal)
 

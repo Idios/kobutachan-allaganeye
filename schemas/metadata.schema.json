@@ -44,6 +44,16 @@
       "type": "string",
       "minLength": 1
     },
+    "detection_started_at": {
+      "description": "ISO 8601 UTC wall-clock timestamp captured at the start of the detect pipeline (#586). Equal to `detected_at` for backward compat. New writers always emit it; pre-#586 metadata.json may omit the field (readers fall back to `detected_at`).",
+      "type": "string",
+      "minLength": 1
+    },
+    "detection_completed_at": {
+      "description": "ISO 8601 UTC wall-clock timestamp captured immediately before metadata.json is written (#586). GUI CompleteScreen displays elapsed = completed - started in the「所要」column. Pre-#586 metadata.json may omit the field.",
+      "type": "string",
+      "minLength": 1
+    },
     "detection_params": {
       "$ref": "#/$defs/DetectionParams"
     },

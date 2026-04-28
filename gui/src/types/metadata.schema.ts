@@ -114,6 +114,13 @@ export const MetadataSchema = z
      */
     source_fps: z.number().positive().optional(),
     detected_at: z.string().min(1),
+    /**
+     * #586 -- wall-clock ISO 8601 timestamps bracketing the detect
+     * pipeline. Optional because pre-#586 metadata.json doesn't carry
+     * them; CompleteScreen falls back to ``detected_at`` when missing.
+     */
+    detection_started_at: z.string().min(1).optional(),
+    detection_completed_at: z.string().min(1).optional(),
     detection_params: DetectionParamsSchema,
     matches: z.array(MatchSchema),
     gaps: z.array(GapSchema),

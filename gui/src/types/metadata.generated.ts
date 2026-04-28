@@ -32,6 +32,14 @@ export interface Metadata {
    * ISO 8601 UTC timestamp of when detection ran.
    */
   detected_at: string;
+  /**
+   * ISO 8601 UTC wall-clock timestamp captured at the start of the detect pipeline (#586). Equal to `detected_at` for backward compat. New writers always emit it; pre-#586 metadata.json may omit the field (readers fall back to `detected_at`).
+   */
+  detection_started_at?: string;
+  /**
+   * ISO 8601 UTC wall-clock timestamp captured immediately before metadata.json is written (#586). GUI CompleteScreen displays elapsed = completed - started in the「所要」column. Pre-#586 metadata.json may omit the field.
+   */
+  detection_completed_at?: string;
   detection_params: DetectionParams;
   /**
    * Match segments (zero or more).

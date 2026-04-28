@@ -2163,6 +2163,8 @@ class TestBuildMetadataPayloadSystemInfo:
             source_duration=120.0,
             source_fps=60.0,
             detected_at="2026-04-26T00:00:00Z",
+            detection_started_at="2026-04-26T00:00:00Z",
+            detection_completed_at="2026-04-26T00:00:30Z",
             effective_interval=1.0,
             config=config,
             boundaries=boundaries,

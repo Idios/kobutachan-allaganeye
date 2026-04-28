@@ -33,6 +33,8 @@ function validSample(): Record<string, unknown> {
     source_duration_display: '02:00:00',
     source_fps: 60,
     detected_at: '2026-04-28T00:00:00Z',
+    detection_started_at: '2026-04-28T00:00:00Z',
+    detection_completed_at: '2026-04-28T00:01:30Z',
     detection_params: {
       sample_interval: 2.0,
       blackout_threshold: 15,
@@ -95,7 +97,7 @@ describe('JSON Schema validity (#612)', () => {
     expect(validate(broken)).toBe(false);
   });
 
-  it('accepts a payload omitting optional fields (pre-#515 backward compat)', () => {
+  it('accepts a payload omitting optional fields (pre-#515 / pre-#586 / pre-#591 backward compat)', () => {
     const ajv = makeAjv();
     const validate = ajv.compile(schema);
     const minimal = validSample();
@@ -103,6 +105,8 @@ describe('JSON Schema validity (#612)', () => {
     delete minimal.source_fps;
     delete minimal.warnings;
     delete minimal.system_info;
+    delete minimal.detection_started_at;
+    delete minimal.detection_completed_at;
     expect(validate(minimal)).toBe(true);
   });
 
