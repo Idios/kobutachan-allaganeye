@@ -1523,6 +1523,182 @@ def test_refining_and_scorebar_bars_do_not_overlap(
     )
 
 
+# --- multi-line eager phase display (#434) ---
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_eager_phases_off_by_default_in_non_tty(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Non-TTY stdout (capsys default) skips eager placeholders (#434).
+
+    Backwards-compat / log hygiene: redirected output and CI logs must
+    not leak ANSI escape sequences or ``[waiting...]`` placeholder text.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    output = capsys.readouterr().out
+    assert "[waiting for Pass 1 to finish]" not in output
+    assert "[waiting for Pass 2 to finish]" not in output
+    # No ANSI cursor-up escape (\x1b[3A) when eager mode is off.
+    assert "\x1b[3A" not in output
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_eager_phases_prints_waiting_placeholders_in_tty_mode(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys, monkeypatch
+):
+    """TTY stdout pre-prints Refining / Scorebar [waiting] placeholders (#434).
+
+    User intent (issue body): "Detecting / Refining / Scorebar"
+    visible from the start so the appearance of Refining mid-pipeline
+    no longer feels like a phase materialising out of thin air.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    monkeypatch.setattr(
+        f"{MODULE}._stdout_supports_eager_phases",
+        lambda: True,
+    )
+
+    run_split(Path("input.mp4"), config)
+    output = capsys.readouterr().out
+
+    assert "Refining" in output
+    assert "[waiting for Pass 1 to finish]" in output
+    assert "Scorebar" in output
+    assert "[waiting for Pass 2 to finish]" in output
+    # Cursor-up ANSI moves the next bar render onto the Detecting line.
+    assert "\x1b[3A" in output
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_eager_phases_marks_refining_skipped_when_pass2_empty(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys, monkeypatch
+):
+    """Pass 2 with no regions -> Refining placeholder updated to ``[skipped: no regions]`` (#434)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    def detect_side_effect(video_path, **kwargs):
+        # Pass 2 yields zero callbacks (no regions to refine), but
+        # scorebar still classifies whatever survived from Pass 1.
+        sb_cb = kwargs.get("scorebar_progress_callback")
+        if sb_cb:
+            sb_cb(1, 2)
+            sb_cb(2, 2)
+        return BOUNDARIES
+
+    mock_detect.side_effect = detect_side_effect
+    monkeypatch.setattr(
+        f"{MODULE}._stdout_supports_eager_phases",
+        lambda: True,
+    )
+
+    run_split(Path("input.mp4"), config)
+    output = capsys.readouterr().out
+
+    assert "Refining   [skipped: no regions]" in output
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_eager_phases_clears_placeholders_on_pass1_exception(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys, monkeypatch
+):
+    """Pass 1 で例外発生時に Refining/Scorebar placeholder を ANSI clear する (#434 error path).
+
+    Without cleanup, an exception during Pass 1 leaves stale
+    ``[waiting...]`` lines hanging above the traceback because the
+    Refining / Scorebar bars never opened to overwrite their
+    placeholders.  Reviewer (#594) flagged this as an error-path UX
+    regression of the multi-line layout introduced for #434.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    # Simulate a failure during Pass 1 before any refine / scorebar
+    # callback fires; the exception propagates out of run_split.
+    mock_detect.side_effect = VideoProcessingError("simulated Pass 1 failure")
+    monkeypatch.setattr(
+        f"{MODULE}._stdout_supports_eager_phases",
+        lambda: True,
+    )
+
+    with pytest.raises(VideoProcessingError):
+        run_split(Path("input.mp4"), config)
+    output = capsys.readouterr().out
+
+    # Both placeholders printed initially (sanity).
+    assert "[waiting for Pass 1 to finish]" in output
+    assert "[waiting for Pass 2 to finish]" in output
+    # Two cleanup escapes appended after the close calls so the
+    # waiting placeholders don't dangle above the traceback.
+    assert output.count("\x1b[2K\n") >= 2
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_eager_phases_clears_only_scorebar_placeholder_on_pass2_exception(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys, monkeypatch
+):
+    """Pass 2 中で例外発生時は Scorebar placeholder のみ cleanup する (#434 error path).
+
+    By the time Pass 2 raises, the Refining bar has already replaced
+    its waiting placeholder, so only the Scorebar placeholder needs
+    erasing.  Refining is closed by ``_close_refine_if_open`` which
+    advances the cursor onto the Scorebar waiting line.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    def detect_side_effect(video_path, **kwargs):
+        ref_cb = kwargs.get("refine_progress_callback")
+        if ref_cb:
+            ref_cb(1, 4)
+        # Raise after Refining bar opened but before Scorebar fires.
+        raise VideoProcessingError("simulated Pass 2 failure")
+
+    mock_detect.side_effect = detect_side_effect
+    monkeypatch.setattr(
+        f"{MODULE}._stdout_supports_eager_phases",
+        lambda: True,
+    )
+
+    with pytest.raises(VideoProcessingError):
+        run_split(Path("input.mp4"), config)
+    output = capsys.readouterr().out
+
+    # Refining waiting placeholder was already replaced by the
+    # Refining bar before the exception fired -> no cleanup needed
+    # for it.  Scorebar waiting placeholder still on screen.
+    assert "[waiting for Pass 2 to finish]" in output
+    # Exactly one trailing cleanup escape (Scorebar).  ``output.count``
+    # is more flexible than equality because click may emit additional
+    # cursor controls during bar teardown; the regression we guard
+    # against is "zero cleanups", not "more than one".
+    assert output.count("\x1b[2K\n") >= 1
+
+
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")

@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import shutil
+import sys
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -769,7 +770,7 @@ def _run_detection(
         total_duration = metadata["duration"]
         estimated_samples = max(1, int(total_duration / effective_interval))
 
-        # Three-bar progress design (#368 / #393):
+        # Three-bar progress design (#368 / #393 / #434):
         #
         # - Detecting (Pass 1 scan, known length = estimated_samples)
         # - Refining (Pass 2 probes, total published via first callback)
@@ -781,6 +782,30 @@ def _run_detection(
         # vanish, #368) and the Pass 2 -> Scorebar transition no longer
         # mixes units (100% -> 99% rollover, #393).  ``try/finally`` guards
         # against exceptions leaving a bar dangling on the TTY.
+        #
+        # #434 multi-line eager display: when stdout is a TTY we pre-print
+        # waiting placeholders for Refining / Scorebar BELOW the Detecting
+        # line so users see all three phases from the start.  Each
+        # placeholder is overwritten by its bar when the corresponding
+        # callback first fires.  Non-TTY (CI / redirected output) falls
+        # back to the historical sequential bars to avoid garbling logs
+        # with ANSI escapes.
+        eager_phases = _stdout_supports_eager_phases()
+        if eager_phases:
+            typer.echo("Detecting [starting...]".ljust(_PROGRESS_LABEL_WIDTH + 24))
+            typer.echo(
+                "Refining   [waiting for Pass 1 to finish]".ljust(
+                    _PROGRESS_LABEL_WIDTH + 30
+                )
+            )
+            typer.echo(
+                "Scorebar   [waiting for Pass 2 to finish]".ljust(
+                    _PROGRESS_LABEL_WIDTH + 30
+                )
+            )
+            sys.stdout.write("\033[3A")  # cursor up 3 lines back to Detecting
+            sys.stdout.flush()
+
         detecting_bar = _eta_progressbar(
             estimated_samples,
             "Detecting",
@@ -788,8 +813,23 @@ def _run_detection(
         )
         detecting_bar.__enter__()
         detecting_state = {"last_pos": 0, "closed": False}
-        refine_state: dict = {"bar": None, "last": 0}
-        scorebar_state: dict = {"bar": None, "last": 0}
+        # ``placeholder_present`` tracks whether the ``[waiting...]`` line
+        # for that phase is still on screen.  Set ``True`` only when the
+        # eager pre-print actually ran; flipped to ``False`` when the bar
+        # opens (placeholder erased) or the Pass 2 skip path replaces it
+        # with ``[skipped: no regions]``.  Used by the ``finally`` cleanup
+        # so a Pass 1 / Pass 2 exception doesn't leave stale ``[waiting]``
+        # text dangling above the traceback (#434 error path).
+        refine_state: dict = {
+            "bar": None,
+            "last": 0,
+            "placeholder_present": eager_phases,
+        }
+        scorebar_state: dict = {
+            "bar": None,
+            "last": 0,
+            "placeholder_present": eager_phases,
+        }
 
         def _close_detecting_if_open() -> None:
             """Emit newline after Pass 1 so the next bar starts cleanly."""
@@ -806,6 +846,16 @@ def _run_detection(
             if scorebar_state["bar"] is not None:
                 scorebar_state["bar"].__exit__(None, None, None)
                 scorebar_state["bar"] = None
+
+        def _erase_current_line() -> None:
+            """Clear the cursor's line so the next bar overwrites a placeholder.
+
+            No-op outside the eager-display path since there is no
+            placeholder to clear (#434).
+            """
+            if eager_phases:
+                sys.stdout.write("\033[2K")
+                sys.stdout.flush()
 
         def on_progress(completed: int, total: int, blackout_count: int) -> None:
             advance = completed - detecting_state["last_pos"]
@@ -842,6 +892,8 @@ def _run_detection(
             # open the Refining bar on a fresh line.
             if refine_state["bar"] is None:
                 _close_detecting_if_open()
+                _erase_current_line()  # erase ``Refining [waiting]`` placeholder
+                refine_state["placeholder_present"] = False
                 refine_state["bar"] = _eta_progressbar(total, "Refining")
                 refine_state["bar"].__enter__()
                 refine_state["last"] = 0
@@ -854,8 +906,18 @@ def _run_detection(
             # First scorebar callback: close Refining (or Detecting if
             # Pass 2 had no regions) and open the Scorebar bar fresh.
             if scorebar_state["bar"] is None:
+                refine_was_open = refine_state["bar"] is not None
                 _close_refine_if_open()
                 _close_detecting_if_open()
+                if eager_phases and not refine_was_open:
+                    # Pass 2 had no regions; cursor is on the Refining
+                    # placeholder. Replace it with a "skipped" marker and
+                    # advance one line to land on the Scorebar placeholder.
+                    sys.stdout.write("\033[2KRefining   [skipped: no regions]\n")
+                    sys.stdout.flush()
+                    refine_state["placeholder_present"] = False
+                _erase_current_line()  # erase ``Scorebar [waiting]`` placeholder
+                scorebar_state["placeholder_present"] = False
                 scorebar_state["bar"] = _eta_progressbar(total, "Scorebar")
                 scorebar_state["bar"].__enter__()
                 scorebar_state["last"] = 0
@@ -880,6 +942,21 @@ def _run_detection(
             _close_scorebar_if_open()
             _close_refine_if_open()
             _close_detecting_if_open()
+            # Clean up any ``[waiting...]`` placeholder lines still on
+            # screen so a Pass 1 / Pass 2 exception's traceback isn't
+            # printed below stale "waiting" text (#434 error path).
+            # The ``_close_*_if_open`` calls above land the cursor on the
+            # next un-rendered phase line, so erasing in order matches
+            # the cursor's downward march.
+            if refine_state["placeholder_present"]:
+                sys.stdout.write("\033[2K\n")
+            if scorebar_state["placeholder_present"]:
+                sys.stdout.write("\033[2K\n")
+            if (
+                refine_state["placeholder_present"]
+                or scorebar_state["placeholder_present"]
+            ):
+                sys.stdout.flush()
 
         return result
 
@@ -976,6 +1053,17 @@ def _check_disk_space(
 
 _PROGRESS_LABEL_WIDTH = 11
 """Column width for progress bar labels (Detecting/Refining/Splitting)."""
+
+
+def _stdout_supports_eager_phases() -> bool:
+    """Whether stdout is a TTY suitable for the multi-line eager phase display (#434).
+
+    Centralizing the check lets tests substitute behaviour with
+    ``monkeypatch`` without touching ``sys.stdout`` directly (capsys
+    replaces stdout with a non-TTY buffer, so the production-mode
+    check would always be false during tests).
+    """
+    return sys.stdout.isatty()
 
 
 def _eta_progressbar(length: int, label: str, *, suppress_click_eta: bool = False):  # type: ignore[no-untyped-def]
