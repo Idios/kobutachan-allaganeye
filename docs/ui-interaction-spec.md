@@ -101,7 +101,7 @@
 
 | 節 | 画面 | 主要 UI 部品 | 進捗 |
 |---|---|---|---|
-| §2.1 | drop | D&D zone / [参照…] / 直近録画リスト / SelectedCard / probeError card | #598 で追加 |
+| §2.1 | drop | D&D zone / [参照…] / 直近録画リスト / SelectedCard (詳細設定パネル含む、#613) / probeError card | #598 で追加 |
 | §2.2 | detecting | AllaganSigil 回転 / Header / progressBadge / PhaseRow ×2 / live log / [中断] | #600 で追加 |
 | §2.3 | complete | statusDot / sourceBox / stats / [元に戻す] / [境界を調整] / [全試合書き出し] / [× 閉じる] / BrightnessTimeline / listItem / previewPane / emptyNote | #603 で追加 |
 | §2.4 | preview | [◀ 一覧へ] / match name input / type select / Pane (×2 IN/OUT) / Pane.video / Pane.tcInput / stepRow ×6 / keyHint / FrameStrip / [適用] / dirty indicator / applyError / [元に戻す] / [書き出し] / emptyNote | #605 で追加 |
@@ -224,6 +224,89 @@
 | 遷移トリガー | `onClick` → `pickAndProbe()` → reducer `BROWSE_CLICKED` (phase=`probeError → selecting`) |
 | store mutation | なし (probe 成功時の流れは §2.1.2 と同じ) |
 | 例外 / edge case | 連続失敗時も常に [閉じる] で `idle` に戻れる。`pickAndProbe()` 内で `setError(null)` するので前回 error は消える |
+
+#### §2.1.10 詳細設定パネル (DetectionParamsPanel、SelectedCard 内)
+
+[#613](https://github.com/Idios/kobutachan-allaganeye/issues/613) で追加。SelectedCard (phase=`selected`) の meta 表 と `[OK]/[キャンセル]` actions の間に collapsible で配置 ([DetectionParamsPanel.tsx](../gui/src/screens/DetectionParamsPanel.tsx))。
+
+**目的**: `start_detect` (#569) に渡す検知パラメータを GUI 上で調整。値は `appStateStore.detectionParams` に保存され、`reset()` まで session 中保持される (localStorage 永続化なし、再起動時は default に戻る)。
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | collapsible panel (`<button aria-expanded={open} aria-controls={bodyId}>` header + 折り畳まれた body の `<div id={bodyId}>`) |
+| 状態 | `collapsed` (default、初期表示) / `expanded` (header click で toggle) |
+| 遷移トリガー | header `onClick` → local `setOpen` で toggle (store には影響なし) |
+| store mutation | 各 control が `setDetectionParams({...})` で patch、`[リセット]` で `resetDetectionParams()` |
+| 例外 / edge case | collapsed 時に default 以外の値があれば header 横に「(変更あり)」 hint を表示。`reset()` (アプリ全体の reset) からも default に戻る |
+
+##### §2.1.10.1 [▶ 詳細設定] / [▼ 詳細設定] header toggle
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button (`aria-expanded` / `aria-controls` 属性付き) |
+| 状態 | `collapsed` (▶) / `expanded` (▼) |
+| 遷移トリガー | `onClick` → local `setOpen((v) => !v)` |
+| store mutation | なし |
+| 例外 / edge case | collapsed + 値が default と異なる場合のみ `(変更あり)` chip を表示 (`<span aria-label="変更あり">`) |
+
+##### §2.1.10.2 検知しきい値 slider (blackoutThreshold)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | `<input type="range" min={0} max={50} step={1}>` + 値表示 |
+| 状態 | 0-50 (CLI 仕様は 0-255 だが UI では実用域 0-50 に絞る、default 15) |
+| 遷移トリガー | `onChange` → `setDetectionParams({ blackoutThreshold: number })` |
+| store mutation | `appStateStore.detectionParams.blackoutThreshold` |
+| 例外 / edge case | スライダ値はそのまま `start_detect` の `params.blackoutThreshold` として渡る (default 値 15 でも CLI は `--blackout-threshold 15` flag を構築する。実害なし) |
+
+##### §2.1.10.3 ワーカー数 numeric input (workers)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | `<input type="number" min={0} max={32} step={1}>` + `(自動)` hint (workers===0 のみ) |
+| 状態 | 0 (auto) / 1-32 (explicit) |
+| 遷移トリガー | `onChange` → `setDetectionParams({ workers: number })` (`Number.isFinite` ガード付き) |
+| store mutation | `appStateStore.detectionParams.workers` |
+| 例外 / edge case | `0` は UI 上の auto sentinel。`toStartDetectParams` で `workers: 0` → `null` に変換され、Rust 側 `DetectParams.workers: None` で `--workers` flag が省略される ([detection.ts:23-29](../gui/src/utils/detection.ts#L23)) |
+
+##### §2.1.10.4 音声解析 toggle (noAudio)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | `<input type="checkbox">` + label (チェックは「音声有効」、chk=true → noAudio=false) |
+| 状態 | `default 有効` (noAudio=false、checked) / `無効 (--no-audio)` (noAudio=true、unchecked) |
+| 遷移トリガー | `onChange` → `setDetectionParams({ noAudio: !checked })` |
+| store mutation | `appStateStore.detectionParams.noAudio` |
+| 例外 / edge case | UI label は「音声解析」(英語 noAudio の二重否定を避けるため、checkbox=有効/無効 の自然な意味付け)。`noAudio: true` のときのみ Rust 側で `--no-audio` flag が emit される |
+
+##### §2.1.10.5 GPU tri-state 選択 (gpu)
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button group (`role="radiogroup"` + 3 つの `role="radio"`) |
+| 状態 | `自動` (gpu=null、CLI omit) / `ON` (gpu=true、`--gpu`) / `OFF` (gpu=false、`--no-gpu`) |
+| 遷移トリガー | 各 button `onClick` → `setDetectionParams({ gpu: null \| true \| false })` |
+| store mutation | `appStateStore.detectionParams.gpu` |
+| 例外 / edge case | radiogroup pattern (`aria-checked` で active state を表現)。Rust 側 `DetectParams.gpu` が 3 値 `Option<bool>` を解釈し排他 flag に変換 |
+
+##### §2.1.10.6 [リセット] button
+
+| 項目 | 内容 |
+|---|---|
+| 種類 | button (panel body 末尾、右寄せ) |
+| 状態 | params == default のとき `disabled` (押下不可) / それ以外で active |
+| 遷移トリガー | `onClick` → `resetDetectionParams()` (全 4 フィールドを `DEFAULT_DETECTION_PARAMS` に戻す) |
+| store mutation | `appStateStore.detectionParams` 全体を default に上書き (`selectedVideoPath` など他の state は触らない) |
+| 例外 / edge case | disabled 判定は `isDetectionParamsModified` ([utils/detection.ts:34-41](../gui/src/utils/detection.ts#L34)) が四フィールドを default と等値判定で行う。`aria-label` に default 値を含める (例: `"reset to defaults (blackout 15, workers auto, audio enabled, gpu auto)"`) |
+
+##### §2.1.10.7 styling / a11y / Tab order
+
+- styling: 既存 ExportScreen の field/value pattern (`fieldLabel` + 入力要素) と同系統。色は token (`var(--ae-gold-dim)` / `var(--ae-cyan)` / `var(--ae-text)`) を再利用、新規追加なし
+- a11y:
+  - header: `aria-expanded` / `aria-controls` で expand 状態を AT に通知
+  - 各 input: `<label htmlFor>` (slider / numeric / toggle) で関連付け、tri-state は `aria-label="gpu mode"` + `role="radio"`
+  - リセット button: `aria-label` で disabled 理由 (default 値) を明示
+- Tab order: header toggle → (展開時) blackout slider → workers numeric → audio toggle → gpu (auto/on/off の 3 button) → reset button → SelectedCard `[キャンセル]` → `[OK]`。drop flow 全体で natural forward tab を保つ
 
 ### §2.2 detecting
 

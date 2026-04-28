@@ -10,6 +10,7 @@ import { LoadingSpinner } from '../components/LoadingSpinner';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useAppStateStore } from '../state/appStateStore';
+import { DetectionParamsPanel } from './DetectionParamsPanel';
 import { dropReducer } from './reducers/drop';
 import type { DropPhase, VideoProbeInfo } from './types';
 import styles from './DropScreen.module.css';
@@ -376,6 +377,7 @@ function SelectedCard({ info, onConfirm, onCancel }: SelectedCardProps) {
         <span className={styles.selectedMetaLabel}>コーデック</span>
         <span>{info.codec}</span>
       </div>
+      <DetectionParamsPanel />
       <div className={styles.actions}>
         <button type="button" className={styles.cancelButton} onClick={onCancel}>
           キャンセル

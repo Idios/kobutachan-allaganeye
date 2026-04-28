@@ -71,10 +71,12 @@ stateDiagram-v2
 - `drop_idle` 初期 — [参照...] と D&D エリア表示
 - `drop_selecting` file dialog 起動中 (`@tauri-apps/plugin-dialog.open`)
 - `drop_probing` ffprobe 実行中 (Phase 2 は dummy)
-- `drop_selected` 成功 — ファイル情報 + [OK]/[キャンセル]
+- `drop_selected` 成功 — ファイル情報 + 詳細設定パネル ([DetectionParamsPanel](../gui/src/screens/DetectionParamsPanel.tsx)、collapsible、#613) + [OK]/[キャンセル]
 - `drop_probeError` 失敗 — error + [再試行]
 
 Phase 3 での差し替え: `dummyProbeVideo(path)` → Rust `invoke('probe_video', { path })`。
+
+詳細設定パネル (#613) で調整した値は `appStateStore.detectionParams` に保持され、`[OK]` 後の `DetectingScreen` 起動時に `toStartDetectParams` ([utils/detection.ts](../gui/src/utils/detection.ts)) で Rust `start_detect` (#569) の `params` 引数に変換されて渡る。reset() でデフォルト復帰、永続化なし (in-memory のみ)。
 
 ### detecting (Phase 2 は dummy)
 
@@ -214,7 +216,7 @@ Windows title bar に一本化。`tauri.conf.json` の `title: "Allagan Eye"` �
 表示される)。
 
 state/
-├── appStateStore.ts  — screen + selectedMatchIndex + selectedVideoPath
+├── appStateStore.ts  — screen + selectedMatchIndex + selectedVideoPath + detectionParams (#613)
 └── metadataStore.ts  — metadata + dirty + apply / restore / loadSample
 
 screens/reducers/

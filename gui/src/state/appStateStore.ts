@@ -16,6 +16,37 @@ export type AppScreen =
   | 'preview'
   | 'export';
 
+/**
+ * #613: User-tunable detect parameters surfaced from the DropScreen "詳細設定"
+ * panel and forwarded to `start_detect` (Rust Tauri command, #569). All
+ * fields are optional in the sense that a value matching the default leaves
+ * the corresponding CLI flag off the argv (see `detect_command_args` in
+ * `gui/src-tauri/src/lib.rs`).
+ *
+ * Held in-memory only — `reset()` returns these to defaults; there is no
+ * localStorage persistence in #613 (deliberately deferred to a follow-up).
+ */
+export interface DetectionParams {
+  /** `--blackout-threshold {x}`. CLI default 15.0, valid range 0-255. */
+  blackoutThreshold: number;
+  /** `--workers {n}` when > 0; 0 means "auto" (omit flag, CLI picks). */
+  workers: number;
+  /** `--no-audio` when true. CLI default false (audio enabled). */
+  noAudio: boolean;
+  /**
+   * `--gpu` when `true`, `--no-gpu` when `false`, omit flag for `null` (auto
+   * — Rust side picks vendor by preference order).
+   */
+  gpu: boolean | null;
+}
+
+export const DEFAULT_DETECTION_PARAMS: DetectionParams = {
+  blackoutThreshold: 15.0,
+  workers: 0,
+  noAudio: false,
+  gpu: null,
+};
+
 export interface AppState {
   /** Currently rendered screen. */
   screen: AppScreen;
@@ -27,6 +58,11 @@ export interface AppState {
    * (#465) will implement.
    */
   selectedVideoPath: string | null;
+  /**
+   * #613: detect parameters tuned on the drop screen and forwarded to
+   * `start_detect`. In-memory only; `reset()` restores defaults.
+   */
+  detectionParams: DetectionParams;
 
   /** Switch to a different screen. */
   navigate: (screen: AppScreen) => void;
@@ -36,6 +72,10 @@ export interface AppState {
   openPreviewFor: (index: number) => void;
   /** Record / clear the in-flight video path that drop picked. */
   setSelectedVideoPath: (path: string | null) => void;
+  /** Patch one or more detect parameters. */
+  setDetectionParams: (patch: Partial<DetectionParams>) => void;
+  /** Restore detect parameters to defaults. */
+  resetDetectionParams: () => void;
   /** Reset everything back to a freshly launched state (screen = 'drop'). */
   reset: () => void;
 }
@@ -44,6 +84,7 @@ export const useAppStateStore = create<AppState>((set) => ({
   screen: 'drop',
   selectedMatchIndex: null,
   selectedVideoPath: null,
+  detectionParams: { ...DEFAULT_DETECTION_PARAMS },
 
   navigate: (screen) => set({ screen }),
   selectMatch: (selectedMatchIndex) => set({ selectedMatchIndex }),
@@ -61,10 +102,15 @@ export const useAppStateStore = create<AppState>((set) => ({
           ? null
           : stripExtendedPathPrefix(selectedVideoPath),
     }),
+  setDetectionParams: (patch) =>
+    set((s) => ({ detectionParams: { ...s.detectionParams, ...patch } })),
+  resetDetectionParams: () =>
+    set({ detectionParams: { ...DEFAULT_DETECTION_PARAMS } }),
   reset: () =>
     set({
       screen: 'drop',
       selectedMatchIndex: null,
       selectedVideoPath: null,
+      detectionParams: { ...DEFAULT_DETECTION_PARAMS },
     }),
 }));
