@@ -20,7 +20,9 @@
 | `source_duration` | number | ✓ | 元動画の総秒数 | > 0 |
 | `source_duration_display` | string | ✓ | 人間可読な長さ表示 | `HH:MM:SS` または `MM:SS` |
 | `source_fps` | number | 新規書き込みは ✓ / 読み込み時は欠落許容 | 録画フレームレート (#465) | > 0。欠落時は GUI が `DEFAULT_FPS=60` で代替 |
-| `detected_at` | string | ✓ | 検知が実行された時刻 (UTC) | ISO 8601 (例: `2026-04-22T00:00:00Z`) |
+| `detected_at` | string | ✓ | 検知パイプライン開始直前のタイムスタンプ (`detection_started_at` と同値、後方互換のため維持) | ISO 8601 (例: `2026-04-22T00:00:00Z`) |
+| `detection_started_at` | string | 新規書き込みは ✓ / 読み込み時は欠落許容 (#586) | 検知パイプライン開始直前のタイムスタンプ。`detected_at` と同値 (案 B 命名) | ISO 8601 |
+| `detection_completed_at` | string | 新規書き込みは ✓ / 読み込み時は欠落許容 (#586) | metadata.json 書き込み直前のタイムスタンプ。GUI CompleteScreen の「所要」表示に `completed - started` で使う | ISO 8601 |
 | `detection_params` | object | ✓ | 検知に使われたパラメータ (後述) | (object) |
 | `matches` | array | ✓ | 試合セグメント列 (0 件可) | |
 | `gaps` | array | ✓ | 試合間の空白区間列 (0 件可) | |
@@ -132,6 +134,7 @@ GUI は読み取った未知フィールドを書き戻しで保持する義務�
 - `source` フィールドで元動画を解決 (相対パスは `metadata.json` のディレクトリ起点)
 - split → `metadata.json` を **`config.output_dir`** に**書き直し**
 - 書き直し時に未知フィールド (legacy `note` 等) は**落ちる**。GUI で保持したい情報は GUI 側 state に保つ
+- **`detection_started_at` / `detection_completed_at` の保持** (#586): 再検知してないので元 metadata の値を pass-through し、GUI「所要」表示が「検知時の所要」を維持する。pre-#586 metadata (両フィールド欠落) では fresh capture (started=`detected_at` / completed=書き込み直前) で fallback し post-#586 形式に揃える
 
 ## 書き込み方針
 
@@ -159,7 +162,7 @@ GUI は以下のフィールドを in-memory で編集し、`[適用]` 時に `m
 以下は GUI では絶対に書き戻さない (CLI の観測記録として保全):
 
 - `source`, `source_duration`, `source_duration_display`, `source_fps`
-- `detected_at`, `detection_params`
+- `detected_at`, `detection_started_at`, `detection_completed_at`, `detection_params`
 - `gaps` (CLI が計算、GUI は表示のみ)
 
 ### 同一性保証

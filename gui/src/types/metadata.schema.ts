@@ -114,6 +114,17 @@ export const MetadataSchema = z
      */
     source_fps: z.number().positive().optional(),
     detected_at: z.string().min(1),
+    /**
+     * #586 -- 検知パイプライン開始直前のタイムスタンプ。pre-#586 metadata.json
+     * は持たないので optional。新規書き込みは ``detected_at`` と同値。
+     */
+    detection_started_at: z.string().min(1).optional(),
+    /**
+     * #586 -- metadata.json 書き込み直前のタイムスタンプ。GUI CompleteScreen
+     * は ``detection_completed_at - detection_started_at`` で「所要」を計算する。
+     * pre-#586 metadata.json には存在しないので optional (legacy では「-」表示)。
+     */
+    detection_completed_at: z.string().min(1).optional(),
     detection_params: DetectionParamsSchema,
     matches: z.array(MatchSchema),
     gaps: z.array(GapSchema),

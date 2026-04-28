@@ -7,7 +7,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { CompleteScreen } from './CompleteScreen';
+import { CompleteScreen, formatElapsed } from './CompleteScreen';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 
@@ -87,6 +87,7 @@ describe('CompleteScreen', () => {
     expect(useAppStateStore.getState().selectedMatchIndex).toBe(1);
   });
 
+  // #587: a11y polish (キーボードナビ / focus / axe / disabled tooltip)。
   it('ArrowDown advances the listbox selection (#587)', async () => {
     render(<CompleteScreen />);
     const list = screen.getByTestId('match-row-1').parentElement!;
@@ -168,35 +169,163 @@ describe('CompleteScreen', () => {
     expect(adjust.getAttribute('title')).toBe('試合が選択されていません');
   });
 
-  it('uses metadata.brightness_samples for the timeline when present (#569)', () => {
-    // Inject a recognisable brightness payload so we can assert the
-    // BrightnessTimeline received it (rather than the sampleBrightness
-    // fallback). 5 evenly-spaced points spanning sampleMetadata's
-    // 2:50 hour duration are enough to exercise the path.
-    const metadata = useMetadataStore.getState().metadata;
-    expect(metadata).not.toBeNull();
-    const fingerprint = [10.0, 80.0, 12.5, 90.0, 7.0];
-    useMetadataStore.setState({
-      metadata: {
-        ...metadata!,
-        brightness_samples: {
-          interval_s: metadata!.source_duration / fingerprint.length,
-          values: fingerprint,
-        },
-      },
+  // #586: 「所要」(elapsed) 列の追加 + legacy fallback。
+  describe('elapsed (所要) column', () => {
+    it('displays 試合数 / 所要 / 総尺 in three-column stats from sampleMetadata', () => {
+      render(<CompleteScreen />);
+      // sibling lookup keeps assertions tied to the stats column even when
+      // sample listItem rows happen to render the same value text (e.g.
+      // 2:50:28 also appears as match-9 end_display).
+      const matchesValue = screen.getByText('試合数').nextSibling as HTMLElement;
+      expect(matchesValue.textContent).toBe('9');
+      const elapsedValue = screen.getByText('所要').nextSibling as HTMLElement;
+      // sampleMetadata の started=12:34:56 / completed=12:39:23 (= 267s)
+      // → fmtTime で "04:27"
+      expect(elapsedValue.textContent).toBe('04:27');
+      const totalValue = screen.getByText('総尺').nextSibling as HTMLElement;
+      expect(totalValue.textContent).toBe('2:50:28');
     });
-    render(<CompleteScreen />);
-    // The BrightnessTimeline renders one match block per match; we
-    // confirm via the data-testid the timeline mounted (the brightness
-    // path is opaque DOM but exercised through the same render).
-    expect(screen.getByTestId('brightness-timeline')).toBeInTheDocument();
+
+    it('formats elapsed as H:MM:SS when >= 1 hour', () => {
+      const meta = useMetadataStore.getState().metadata;
+      if (!meta) throw new Error('expected sample metadata loaded');
+      // started = 2026-04-19T12:34:56Z, completed = +1h05m43s
+      useMetadataStore.setState({
+        metadata: {
+          ...meta,
+          detection_started_at: '2026-04-19T12:34:56Z',
+          detection_completed_at: '2026-04-19T13:40:39Z',
+        },
+      });
+      render(<CompleteScreen />);
+      expect(screen.getByText('1:05:43')).toBeInTheDocument();
+    });
+
+    it('shows "—" when detection_completed_at is missing (legacy)', () => {
+      const meta = useMetadataStore.getState().metadata;
+      if (!meta) throw new Error('expected sample metadata loaded');
+      useMetadataStore.setState({
+        metadata: {
+          ...meta,
+          detection_started_at: '2026-04-19T12:34:56Z',
+          detection_completed_at: undefined,
+        },
+      });
+      render(<CompleteScreen />);
+      // Find the 所要 cell and assert its sibling shows the fallback dash.
+      const label = screen.getByText('所要');
+      const valueDiv = label.nextSibling as HTMLElement | null;
+      expect(valueDiv?.textContent).toBe('—');
+    });
+
+    it('shows "—" when detection_started_at is missing (deeper legacy)', () => {
+      const meta = useMetadataStore.getState().metadata;
+      if (!meta) throw new Error('expected sample metadata loaded');
+      useMetadataStore.setState({
+        metadata: {
+          ...meta,
+          detection_started_at: undefined,
+          detection_completed_at: '2026-04-19T12:39:23Z',
+        },
+      });
+      render(<CompleteScreen />);
+      const label = screen.getByText('所要');
+      const valueDiv = label.nextSibling as HTMLElement | null;
+      expect(valueDiv?.textContent).toBe('—');
+    });
   });
 
-  it('falls back to sampleBrightness when metadata has no brightness_samples', () => {
-    // sampleMetadata loaded in beforeEach has no brightness_samples
-    // -> CompleteScreen must still render the timeline (using the
-    // in-memory sample curve).
-    render(<CompleteScreen />);
-    expect(screen.getByTestId('brightness-timeline')).toBeInTheDocument();
+  // #586 Round 1: formatElapsed の defensive 分岐を直接検証。component
+  // 結合テストは [3][4] で legacy fallback (undefined) をカバーしているが、
+  // pure function として export されているため、不正 ISO 8601 / clock skew
+  // も unit test レベルで保証する。
+  describe('formatElapsed (pure function)', () => {
+    it('returns "—" for unparseable ISO 8601 (NaN guard, started side)', () => {
+      expect(formatElapsed('invalid-date', '2026-04-19T12:39:23Z')).toBe('—');
+    });
+
+    it('returns "—" for unparseable ISO 8601 (NaN guard, completed side)', () => {
+      expect(formatElapsed('2026-04-19T12:34:56Z', 'not-a-date')).toBe('—');
+    });
+
+    it('returns "—" when completed_at < started_at (clock skew)', () => {
+      expect(
+        formatElapsed('2026-04-19T12:39:23Z', '2026-04-19T12:34:56Z'),
+      ).toBe('—');
+    });
+  });
+
+  // #588: BrightnessTimeline threshold が detection_params 連動。
+  describe('BrightnessTimeline threshold wiring', () => {
+    it('passes detection_params.blackout_threshold to BrightnessTimeline', () => {
+      const meta = useMetadataStore.getState().metadata;
+      if (!meta) throw new Error('expected sample metadata loaded');
+      // 検知時に閾値 30 で再検知された metadata を再現。
+      useMetadataStore.setState({
+        metadata: {
+          ...meta,
+          detection_params: {
+            ...meta.detection_params,
+            blackout_threshold: 30,
+          },
+        },
+      });
+      render(<CompleteScreen />);
+      // BrightnessTimeline は threshold ラベルを SVG <text> として描画する
+      // ので、その内容を直接検査する (mock 不要)。
+      const timeline = screen.getByTestId('brightness-timeline');
+      expect(timeline.textContent).toMatch(/threshold=30/);
+    });
+
+    it('falls back to threshold=15 when detection_params is missing (legacy)', () => {
+      const meta = useMetadataStore.getState().metadata;
+      if (!meta) throw new Error('expected sample metadata loaded');
+      // pre-#370 想定の legacy metadata を再現 (detection_params 無し)。
+      // zod schema は required だが、in-memory state には defensive に
+      // optional chaining + ?? 15 fallback を入れているので動作確認可能。
+      const legacyMeta = { ...meta } as Partial<typeof meta>;
+      delete legacyMeta.detection_params;
+      useMetadataStore.setState({
+        metadata: legacyMeta as typeof meta,
+      });
+      render(<CompleteScreen />);
+      const timeline = screen.getByTestId('brightness-timeline');
+      expect(timeline.textContent).toMatch(/threshold=15/);
+    });
+  });
+
+  // #569: brightness_samples 由来のタイムライン描画 / fallback。
+  describe('brightness_samples integration', () => {
+    it('uses metadata.brightness_samples for the timeline when present (#569)', () => {
+      // Inject a recognisable brightness payload so we can assert the
+      // BrightnessTimeline received it (rather than the sampleBrightness
+      // fallback). 5 evenly-spaced points spanning sampleMetadata's
+      // 2:50 hour duration are enough to exercise the path.
+      const metadata = useMetadataStore.getState().metadata;
+      expect(metadata).not.toBeNull();
+      const fingerprint = [10.0, 80.0, 12.5, 90.0, 7.0];
+      useMetadataStore.setState({
+        metadata: {
+          ...metadata!,
+          brightness_samples: {
+            interval_s: metadata!.source_duration / fingerprint.length,
+            values: fingerprint,
+          },
+        },
+      });
+      render(<CompleteScreen />);
+      // The BrightnessTimeline renders one match block per match; we
+      // confirm via the data-testid the timeline mounted (the brightness
+      // path is opaque DOM but exercised through the same render).
+      expect(screen.getByTestId('brightness-timeline')).toBeInTheDocument();
+    });
+
+    it('falls back to sampleBrightness when metadata has no brightness_samples', () => {
+      // sampleMetadata loaded in beforeEach has no brightness_samples
+      // -> CompleteScreen must still render the timeline (using the
+      // in-memory sample curve).
+      render(<CompleteScreen />);
+      expect(screen.getByTestId('brightness-timeline')).toBeInTheDocument();
+    });
   });
 });

@@ -64,6 +64,35 @@ def test_detect_writes_metadata_without_note(tmp_path):
     assert payload["matches"][1]["output_file"] == "match_002.mp4"
 
 
+def test_detect_writes_detection_started_and_completed_at(tmp_path):
+    """detect 経路でも detection_started_at / completed_at が書かれる (#586).
+
+    GUI CompleteScreen「所要」列が detect-only パスで生成された
+    metadata.json に対しても elapsed を計算できるよう、両フィールドが
+    payload に存在し、completed_at >= started_at であることを確認する。
+    """
+    from datetime import datetime
+
+    probe, detect = _mock_detect_only(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with probe, detect:
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+    started_at = payload["detection_started_at"]
+    completed_at = payload["detection_completed_at"]
+
+    assert isinstance(started_at, str) and started_at.endswith("Z")
+    assert isinstance(completed_at, str) and completed_at.endswith("Z")
+
+    started_parsed = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+    completed_parsed = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+    assert completed_parsed >= started_parsed
+
+    # started_at は detected_at と同値で書く (案 B 後方互換).
+    assert started_at == payload["detected_at"]
+
+
 def test_detect_does_not_call_split_video(tmp_path):
     probe, detect = _mock_detect_only(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)

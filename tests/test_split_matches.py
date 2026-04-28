@@ -494,6 +494,22 @@ def test_metadata_detection_params_present(
     delta = abs((datetime.now(UTC) - parsed).total_seconds())
     assert delta < 60, f"detected_at drifted from now by {delta}s"
 
+    # #586 -- detection_started_at / detection_completed_at are written
+    # for the GUI elapsed column. started_at is the same value as
+    # detected_at (legacy alias retained for backward compat); completed_at
+    # is captured immediately before the writer flushes metadata.json.
+    assert data["detection_started_at"] == detected_at
+    completed_at = data["detection_completed_at"]
+    assert isinstance(completed_at, str), "detection_completed_at must be string"
+    assert completed_at.endswith("Z"), (
+        f"detection_completed_at must end with 'Z': {completed_at!r}"
+    )
+    parsed_completed = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+    started_parsed = datetime.fromisoformat(detected_at.replace("Z", "+00:00"))
+    assert parsed_completed >= started_parsed, (
+        "detection_completed_at must be >= detection_started_at"
+    )
+
 
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
@@ -2163,6 +2179,8 @@ class TestBuildMetadataPayloadSystemInfo:
             source_duration=120.0,
             source_fps=60.0,
             detected_at="2026-04-26T00:00:00Z",
+            detection_started_at="2026-04-26T00:00:00Z",
+            detection_completed_at="2026-04-26T00:00:05Z",
             effective_interval=1.0,
             config=config,
             boundaries=boundaries,
@@ -2182,6 +2200,76 @@ class TestBuildMetadataPayloadSystemInfo:
             "amd",
             "intel",
         ]
+
+
+class TestBuildMetadataPayloadElapsedTimestamps:
+    """``_build_metadata_payload`` records detection_started_at /
+    detection_completed_at so GUI CompleteScreen can render the elapsed
+    column (#586)."""
+
+    def test_payload_includes_started_and_completed_timestamps(self, tmp_path):
+        from allaganeye.commands.split_matches import _build_metadata_payload
+        from allaganeye.config import SplitConfig
+        from allaganeye.video.detector import MatchBoundary
+
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 120.0, "type": "fl_match"},
+        ]
+        payload = _build_metadata_payload(
+            video_path=tmp_path / "input.mp4",
+            source_duration=120.0,
+            source_fps=60.0,
+            detected_at="2026-04-26T00:00:00Z",
+            detection_started_at="2026-04-26T00:00:00Z",
+            detection_completed_at="2026-04-26T00:00:42Z",
+            effective_interval=1.0,
+            config=config,
+            boundaries=boundaries,
+            output_files=[tmp_path / "match_001.mp4"],
+            gaps=[],
+            system_info={
+                "gpu_vendors_available": [],
+                "gpu_vendor_used": None,
+                "vendor_preference": ["nvidia", "amd", "intel"],
+            },
+        )
+        # Both new fields are present and serialised verbatim.
+        assert payload["detection_started_at"] == "2026-04-26T00:00:00Z"
+        assert payload["detection_completed_at"] == "2026-04-26T00:00:42Z"
+        # Legacy detected_at stays for backward compat (#586 case 案 B).
+        assert payload["detected_at"] == "2026-04-26T00:00:00Z"
+
+    def test_started_at_equals_detected_at_for_new_writes(self, tmp_path):
+        """検知開始時刻は detected_at と同値で書かれる (#586 案 B 後方互換)."""
+        from allaganeye.commands.split_matches import _build_metadata_payload
+        from allaganeye.config import SplitConfig
+        from allaganeye.video.detector import MatchBoundary
+
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 120.0, "type": "fl_match"},
+        ]
+        same_ts = "2026-04-28T01:23:45Z"
+        payload = _build_metadata_payload(
+            video_path=tmp_path / "input.mp4",
+            source_duration=120.0,
+            source_fps=60.0,
+            detected_at=same_ts,
+            detection_started_at=same_ts,
+            detection_completed_at="2026-04-28T01:24:30Z",
+            effective_interval=1.0,
+            config=config,
+            boundaries=boundaries,
+            output_files=[tmp_path / "match_001.mp4"],
+            gaps=[],
+            system_info={
+                "gpu_vendors_available": [],
+                "gpu_vendor_used": None,
+                "vendor_preference": ["nvidia", "amd", "intel"],
+            },
+        )
+        assert payload["detected_at"] == payload["detection_started_at"]
 
 
 class TestAudioScanIntegration:
