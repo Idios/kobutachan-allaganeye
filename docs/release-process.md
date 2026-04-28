@@ -71,6 +71,7 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 - `git push origin v0.x.0` すると [`.github/workflows/release.yml`](../.github/workflows/release.yml) が発火し、Windows Portable ZIP (`allaganeye-v<version>-windows.zip`) のビルドと GitHub Release への成果物自動添付を実行する (#461)
   - ビルドは [`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) で Python 3.11 embeddable + FFmpeg LGPLv3 shared (BtbN FFmpeg-Builds win64-lgpl-shared、libdav1d 入り) を同梱する
     - ダウンロードする外部バイナリ (Python embed / get-pip.py / FFmpeg) はスクリプト内に **SHA256 ダイジェストをハードコードして検証** する。ダイジェスト不一致時はビルドを fail。FFmpeg は BtbN の `autobuild-YYYY-MM-DD-HH-MM` タグと特定アセット名を URL にピン留めして再現性を確保する (`latest` タグは日次更新の可動ポインタなので不可)
+      - **`get-pip.py` のみ非バージョン管理 URL (`https://bootstrap.pypa.io/get-pip.py`) のため、PyPA の更新により hash drift が発生する** ([#649](https://github.com/Idios/kobutachan-allaganeye/issues/649))。drift 検知時の更新手順は [`docs/developer-setup.md` §「get-pip.py の hash drift 対応」](developer-setup.md) と [`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) の `$GetPipSha256` 周辺コメントを参照。長期対応 (versioned URL or `.sha256` sidecar) は [#649](https://github.com/Idios/kobutachan-allaganeye/issues/649) §長期対応で別途検討
     - 外部バイナリを更新する場合はスクリプト先頭の `$FFmpegBuildTag` / `$FFmpegAssetName` / `$*Sha256` 定数を更新する
   - Release 本文は [`scripts/extract_release_notes.py`](../scripts/extract_release_notes.py) が CHANGELOG.md から該当バージョンのセクションを抽出する
   - タグ名と `pyproject.toml` の `version` が一致しない場合、workflow は fail する
