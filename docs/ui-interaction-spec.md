@@ -181,7 +181,7 @@
 | 状態 | `idle` (phase=`selected` のみ表示) |
 | 遷移トリガー | `onClick` → `cancelSelection()` → reducer `CANCEL_SELECTION` (phase=`selected → idle`) + `setProbeInfo(null)` |
 | store mutation | なし (`appStateStore.setSelectedVideoPath` は §2.1.6 でしか呼ばれていないので、リセットも不要) |
-| 例外 / edge case | confirm ダイアログなし (まだ §1.3 dirty 編集なし)。Phase 3 で D&D 経由 selection も同 phase に集約されるため挙動を共通化する |
+| 例外 / edge case | confirm ダイアログなし (まだ §1.3 dirty 編集なし)。D&D 経由 selection も同 phase (`selected`) に集約済み (§2.1.1 D&D zone → reducer `DND_DROPPED` → `PROBE_OK` → `selected` で SelectedCard 共通経路、[#568](https://github.com/Idios/kobutachan-allaganeye/issues/568) で実装) |
 
 #### §2.1.6 [OK — 検知開始] button (SelectedCard 内)
 

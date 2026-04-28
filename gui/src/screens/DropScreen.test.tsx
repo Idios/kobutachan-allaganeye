@@ -239,6 +239,69 @@ describe('DropScreen', () => {
       expect(probeFn).toHaveBeenCalledWith('C:/b.mkv');
     });
 
+    it('accepts uppercase extension paths (.MKV / .MP4 / .AVI / .MOV)', async () => {
+      // 設計判断: 拡張子は大文字小文字非区別 (PR #625 / docs/ui-interaction-spec.md
+      // §2.1.1 例外/edge case)。実装は `lower.endsWith(ext)` で対応済みだが、
+      // T1-T9 がすべて小文字 fixture のため大文字回帰防止 test を別途追加する。
+      const mock = createMockDragSubscriber();
+      const probeFn = vi.fn().mockResolvedValue({
+        path: 'C:/videos/X.MKV',
+        fileName: 'X.MKV',
+        sizeBytes: 1,
+        durationSeconds: 1,
+        width: 1920,
+        height: 1080,
+        fps: 60,
+        codec: 'h264',
+      });
+      render(<DropScreen dragSubscriber={mock.subscribe} probeFn={probeFn} />);
+      await waitFor(() => expect(mock.isSubscribed()).toBe(true));
+      // enter で over-valid 判定されることを確認 (drag-over phase の回帰)
+      act(() =>
+        mock.fire({
+          type: 'enter',
+          paths: ['C:/videos/X.MKV'],
+          position: { x: 0, y: 0 },
+        }),
+      );
+      expect(screen.getByTestId('drop-zone').dataset.dragState).toBe(
+        'over-valid',
+      );
+      // drop で uppercase path が probe に渡されることを確認
+      act(() =>
+        mock.fire({
+          type: 'drop',
+          paths: ['C:/videos/X.MKV'],
+          position: { x: 0, y: 0 },
+        }),
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId('drop-selected-card')).toBeInTheDocument();
+      });
+      expect(probeFn).toHaveBeenCalledWith('C:/videos/X.MKV');
+    });
+
+    it.each([
+      { ext: '.MP4', path: 'C:/videos/Y.MP4' },
+      { ext: '.AVI', path: 'C:/videos/Y.AVI' },
+      { ext: '.MOV', path: 'C:/videos/Y.MOV' },
+      { ext: '.Mp4', path: 'C:/videos/Y.Mp4' }, // mixed case
+    ])('treats $ext as valid on drag-over', async ({ path }) => {
+      const mock = createMockDragSubscriber();
+      render(<DropScreen dragSubscriber={mock.subscribe} />);
+      await waitFor(() => expect(mock.isSubscribed()).toBe(true));
+      act(() =>
+        mock.fire({
+          type: 'enter',
+          paths: [path],
+          position: { x: 0, y: 0 },
+        }),
+      );
+      expect(screen.getByTestId('drop-zone').dataset.dragState).toBe(
+        'over-valid',
+      );
+    });
+
     it('rejects folder drop (no matching extension)', async () => {
       const mock = createMockDragSubscriber();
       const probeFn = vi.fn();
