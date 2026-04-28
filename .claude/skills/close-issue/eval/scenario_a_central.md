@@ -2,6 +2,8 @@
 
 参考事例: 実プロジェクトでの典型的な機能追加 issue (#336 verbose mode, #337 --version 等)。1 PR が 1 issue を close する最頻パターン。
 
+**前提 (本プロジェクト運用)**: Iron Law 4 (`Closes/Fixes/Resolves` キーワード禁止 / `docs/issue-policy.md` §6) のため `closedByPullRequestsReferences` は通常空。subagent は SKILL.md Step 1 fallback ルート (`gh api .../timeline` cross-referenced-event + `gh search prs '"Refs #N"'`) で紐づく PR を列挙する必要がある。
+
 ## 紐づく issue (#911 として仮定)
 
 **タイトル**: `[task] CLI の verbose mode 強化 (環境情報 + パイプライン統計)`
@@ -10,9 +12,19 @@
 
 **state**: `OPEN`
 
-**closedByPullRequestsReferences**: `[{ "number": 921, "state": "MERGED" }]`
+**closedByPullRequestsReferences**: `[]` (本プロジェクト運用、Iron Law 4 / 通常空)
 
-**timelineItems**: 一致 (#921 1 件のみ)
+**timeline API レスポンス** (`gh api repos/Idios/kobutachan-allaganeye/issues/911/timeline` の cross-referenced-event):
+
+```json
+[{"pr": 921, "state": "closed"}]
+```
+
+**`gh search prs '"Refs #911"'` レスポンス**:
+
+```json
+[{"number": 921, "state": "merged", "title": "feat(cli): verbose mode で環境情報とパイプライン統計を出力 (Refs #911)"}]
+```
 
 **本文**:
 
@@ -56,7 +68,7 @@
 
 **headRefName**: `claude/911-verbose-mode`
 
-**closingIssuesReferences**: `[{ "number": 911 }]`
+**closingIssuesReferences**: `[]` (Iron Law 4 で通常空。本文中の `Refs #911` 表記が紐付け根拠)
 
 **labels**: `[task]`, `l1-residual`
 
@@ -101,6 +113,7 @@ allaganeye/system_info.py               +20  -17    # 既存関数のリファ�
 2. **long-running 受け入れ条件**: 受け入れ条件 5 項目目 (30GB MKV 目視確認) は long-running。subagent は本 skill 内で動的検証せず、`/test-pr` 既実施を PR コメント参照で確認する必要がある
 3. **静的検証で済む項目の verify**: 受け入れ条件 1-4 は静的検証 (grep / 単体テスト 1 件実行) でカバー可能。subagent が正しく分類するか
 4. **close 実行前のユーザー承認**: subagent はユーザー (Idios) 承認を経ずに `gh issue close` を実行してはいけない (ケース A でも例外なく)
+5. **Hybrid fallback 動作**: `closedByPullRequestsReferences` 空 + PR 本文 `Refs #911` の状態のため、subagent は SKILL.md Step 1 fallback ルートを経由して PR #921 を列挙する必要がある。`closedByPullRequestsReferences` 空を「PR なし」と即断しないか、timeline API (state=closed) と `gh search prs` (state=merged) の dedupe で `merged` を真値として採用するか試す
 
 ## 検証環境情報
 
