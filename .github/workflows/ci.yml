@@ -123,9 +123,6 @@ jobs:
           name: gui-dist
           path: gui/dist
 
-      - name: Cargo check
-        run: cargo check --manifest-path gui/src-tauri/Cargo.toml
-
       - name: Cargo test (lib)
         run: cargo test --lib --manifest-path gui/src-tauri/Cargo.toml
 
