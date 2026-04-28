@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -84,5 +85,86 @@ describe('CompleteScreen', () => {
   it('auto-selects the first match on mount when none is selected', () => {
     render(<CompleteScreen />);
     expect(useAppStateStore.getState().selectedMatchIndex).toBe(1);
+  });
+
+  it('ArrowDown advances the listbox selection (#587)', async () => {
+    render(<CompleteScreen />);
+    const list = screen.getByTestId('match-row-1').parentElement!;
+    list.focus();
+    const user = userEvent.setup();
+    await user.keyboard('{ArrowDown}');
+    expect(useAppStateStore.getState().selectedMatchIndex).toBe(2);
+    await user.keyboard('{ArrowDown}');
+    expect(useAppStateStore.getState().selectedMatchIndex).toBe(3);
+  });
+
+  it('ArrowUp moves selection back, clamped at first (#587)', async () => {
+    useAppStateStore.getState().selectMatch(3);
+    render(<CompleteScreen />);
+    const list = screen.getByTestId('match-row-1').parentElement!;
+    list.focus();
+    const user = userEvent.setup();
+    await user.keyboard('{ArrowUp}');
+    expect(useAppStateStore.getState().selectedMatchIndex).toBe(2);
+    await user.keyboard('{ArrowUp}{ArrowUp}{ArrowUp}'); // clamps at 1
+    expect(useAppStateStore.getState().selectedMatchIndex).toBe(1);
+  });
+
+  it('Home / End jump selection to first / last (#587)', async () => {
+    render(<CompleteScreen />);
+    const list = screen.getByTestId('match-row-1').parentElement!;
+    list.focus();
+    const user = userEvent.setup();
+    await user.keyboard('{End}');
+    expect(useAppStateStore.getState().selectedMatchIndex).toBe(9);
+    await user.keyboard('{Home}');
+    expect(useAppStateStore.getState().selectedMatchIndex).toBe(1);
+  });
+
+  it('Enter on the focused list opens preview for the selected match (#587)', async () => {
+    useAppStateStore.getState().selectMatch(4);
+    render(<CompleteScreen />);
+    const list = screen.getByTestId('match-row-1').parentElement!;
+    list.focus();
+    const user = userEvent.setup();
+    await user.keyboard('{Enter}');
+    const state = useAppStateStore.getState();
+    expect(state.screen).toBe('preview');
+    expect(state.selectedMatchIndex).toBe(4);
+  });
+
+  it('has no axe violations with metadata loaded (#587)', async () => {
+    const { container } = render(<CompleteScreen />);
+    expect(await axe(container)).toHaveNoViolations();
+  });
+
+  it('[境界を調整] surfaces a disabled-reason tooltip when nothing is selected (#587)', () => {
+    // Force selectedMatch to null by clearing the metadata store and
+    // disabling the auto-select effect via empty matches.
+    useMetadataStore.setState({
+      metadata: {
+        source: 'x',
+        source_duration: 1,
+        source_duration_display: '0:01',
+        detected_at: '2026-04-22T00:00:00Z',
+        detection_params: {
+          sample_interval: 2,
+          blackout_threshold: 15,
+          min_match_duration: 300,
+          min_blackout_duration: 3,
+          no_audio: false,
+          use_gpu: null,
+          workers: null,
+        },
+        matches: [],
+        gaps: [],
+      },
+      hasBackup: false,
+    });
+    useAppStateStore.getState().selectMatch(null);
+    render(<CompleteScreen />);
+    const adjust = screen.getByRole('button', { name: '境界を調整' });
+    expect(adjust).toBeDisabled();
+    expect(adjust.getAttribute('title')).toBe('試合が選択されていません');
   });
 });

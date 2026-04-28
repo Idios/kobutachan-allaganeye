@@ -1,3 +1,7 @@
+import { useRef } from 'react';
+
+import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useMetadataStore } from '../state/metadataStore';
 import styles from './ConflictModal.module.css';
 
@@ -19,6 +23,14 @@ export function ConflictModal() {
   const reloadAfterConflict = useMetadataStore((s) => s.reloadAfterConflict);
   const dismissConflict = useMetadataStore((s) => s.dismissConflict);
 
+  // #587: trap Tab inside the modal and let Escape act as キャンセル. The
+  // hooks short-circuit when active === false so they cost nothing while
+  // the modal is closed.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const isOpen = !!conflictError;
+  useFocusTrap(panelRef, isOpen);
+  useEscapeKey(isOpen, dismissConflict);
+
   if (!conflictError) return null;
 
   return (
@@ -28,7 +40,7 @@ export function ConflictModal() {
       aria-modal="true"
       aria-labelledby="ae-conflict-title"
     >
-      <div className={styles.panel}>
+      <div ref={panelRef} className={styles.panel}>
         <h2 id="ae-conflict-title" className={styles.title}>
           metadata.json が外部で変更されました
         </h2>

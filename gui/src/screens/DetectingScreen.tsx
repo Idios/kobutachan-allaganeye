@@ -1,6 +1,7 @@
 import { useEffect, useReducer, useState } from 'react';
 
 import { AllaganSigil } from '../components/AllaganSigil';
+import { DisabledTooltip } from '../components/DisabledTooltip';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 import { detectingReducer } from './reducers/detecting';
@@ -133,14 +134,23 @@ export function DetectingScreen() {
       </div>
 
       <div className={styles.actions}>
-        <button
-          type="button"
-          className={styles.cancelButton}
+        {/* #587 §2.2.7: surface why [中断] is disabled while not actively running. */}
+        <DisabledTooltip
           disabled={phase !== 'running'}
-          onClick={() => dispatch({ type: 'CANCEL_CLICKED' })}
+          reason="検知実行中のみ中断できます"
         >
-          中断
-        </button>
+          {(p) => (
+            <button
+              type="button"
+              className={styles.cancelButton}
+              disabled={phase !== 'running'}
+              onClick={() => dispatch({ type: 'CANCEL_CLICKED' })}
+              {...p}
+            >
+              中断
+            </button>
+          )}
+        </DisabledTooltip>
       </div>
     </div>
   );

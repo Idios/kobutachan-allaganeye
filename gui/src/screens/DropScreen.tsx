@@ -1,9 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import { useReducer, useState } from 'react';
+import { useReducer, useRef, useState } from 'react';
 
 import { AllaganFrame } from '../components/AllaganFrame';
 import { AllaganSigil } from '../components/AllaganSigil';
+import { LoadingSpinner } from '../components/LoadingSpinner';
+import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useAppStateStore } from '../state/appStateStore';
 import { dropReducer } from './reducers/drop';
 import type { DropPhase, VideoProbeInfo } from './types';
@@ -115,26 +118,7 @@ export function DropScreen({ probeFn, openDialogFn }: DropScreenProps = {}) {
       {phase === 'selected' && probeInfo ? (
         <SelectedCard info={probeInfo} onConfirm={confirm} onCancel={cancelSelection} />
       ) : phase === 'probeError' ? (
-        <div className={styles.selectedCard} role="alert">
-          <div className={styles.selectedHeading}>エラー</div>
-          <div className={styles.error}>{error ?? 'probe failed'}</div>
-          <div className={styles.actions}>
-            <button
-              type="button"
-              className={styles.cancelButton}
-              onClick={dismissError}
-            >
-              閉じる
-            </button>
-            <button
-              type="button"
-              className={styles.okButton}
-              onClick={pickAndProbe}
-            >
-              再試行
-            </button>
-          </div>
-        </div>
+        <ErrorCard error={error} onDismiss={dismissError} onRetry={pickAndProbe} />
       ) : (
         <>
           <AllaganFrame style={{ width: '78%', padding: 2, zIndex: 2 }}>
@@ -152,8 +136,8 @@ export function DropScreen({ probeFn, openDialogFn }: DropScreenProps = {}) {
                 >
                   参照…
                 </button>
-                {phase === 'selecting' && <span className={styles.loading}> (選択中)</span>}
-                {phase === 'probing' && <span className={styles.loading}> (解析中)</span>}
+                {phase === 'selecting' && <LoadingSpinner label="選択中" />}
+                {phase === 'probing' && <LoadingSpinner label="解析中" />}
               </div>
             </div>
           </AllaganFrame>
@@ -196,6 +180,11 @@ interface SelectedCardProps {
 }
 
 function SelectedCard({ info, onConfirm, onCancel }: SelectedCardProps) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  // #587: trap Tab focus inside the card and dismiss on Escape so the
+  // user can complete the confirm flow with the keyboard alone.
+  useFocusTrap(cardRef, true);
+  useEscapeKey(true, onCancel);
   const sizeGB = (info.sizeBytes / 1024 / 1024 / 1024).toFixed(1);
   const durH = Math.floor(info.durationSeconds / 3600);
   const durM = Math.floor((info.durationSeconds % 3600) / 60);
@@ -204,7 +193,7 @@ function SelectedCard({ info, onConfirm, onCancel }: SelectedCardProps) {
     ? `${durH}:${String(durM).padStart(2, '0')}:${String(durS).padStart(2, '0')}`
     : `${String(durM).padStart(2, '0')}:${String(durS).padStart(2, '0')}`;
   return (
-    <div className={styles.selectedCard} data-testid="drop-selected-card">
+    <div ref={cardRef} className={styles.selectedCard} data-testid="drop-selected-card">
       <div className={styles.selectedHeading}>検知対象の確認</div>
       <div className={styles.selectedName}>{info.fileName}</div>
       <div className={styles.selectedMetaTable}>
@@ -225,6 +214,40 @@ function SelectedCard({ info, onConfirm, onCancel }: SelectedCardProps) {
         </button>
         <button type="button" className={styles.okButton} onClick={onConfirm}>
           OK — 検知開始
+        </button>
+      </div>
+    </div>
+  );
+}
+
+interface ErrorCardProps {
+  error: string | null;
+  onDismiss: () => void;
+  onRetry: () => void;
+}
+
+function ErrorCard({ error, onDismiss, onRetry }: ErrorCardProps) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  // #587: same dialog-like behavior as SelectedCard. Escape = dismiss.
+  // We keep the existing role="alert" for backward compat with tests
+  // and screen-reader announcement of the error text.
+  useFocusTrap(cardRef, true);
+  useEscapeKey(true, onDismiss);
+  return (
+    <div
+      ref={cardRef}
+      className={styles.selectedCard}
+      role="alert"
+      data-testid="drop-error-card"
+    >
+      <div className={styles.selectedHeading}>エラー</div>
+      <div className={styles.error}>{error ?? 'probe failed'}</div>
+      <div className={styles.actions}>
+        <button type="button" className={styles.cancelButton} onClick={onDismiss}>
+          閉じる
+        </button>
+        <button type="button" className={styles.okButton} onClick={onRetry}>
+          再試行
         </button>
       </div>
     </div>

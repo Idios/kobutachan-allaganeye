@@ -1,7 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import styles from './ConfirmExitModal.module.css';
 
 /**
@@ -70,6 +72,11 @@ export function ConfirmExitModal() {
     setError(null);
   }, []);
 
+  // #587: trap Tab inside the modal and let Escape act as キャンセル.
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef, pending);
+  useEscapeKey(pending, handleCancel);
+
   if (!pending) return null;
 
   return (
@@ -79,7 +86,7 @@ export function ConfirmExitModal() {
       aria-modal="true"
       aria-labelledby="ae-exit-title"
     >
-      <div className={styles.panel}>
+      <div ref={panelRef} className={styles.panel}>
         <h2 id="ae-exit-title" className={styles.title}>
           実行中のプロセスがあります
         </h2>

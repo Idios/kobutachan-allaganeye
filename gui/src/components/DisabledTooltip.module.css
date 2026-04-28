@@ -1,0 +1,20 @@
+/*
+ * DisabledTooltip — a small wrapper that surfaces the reason a control
+ * is disabled. See gui/src/components/DisabledTooltip.tsx and
+ * docs/a11y-policy.md.
+ */
+
+.wrapper {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.inlineHint {
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+  line-height: 1.3;
+  letter-spacing: 0.02em;
+}

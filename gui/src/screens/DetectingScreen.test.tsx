@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
+import { axe } from 'jest-axe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -60,5 +61,18 @@ describe('DetectingScreen', () => {
     });
     // reducer: running -> cancelling -> (auto) cancelled -> navigate('drop')
     expect(useAppStateStore.getState().screen).toBe('drop');
+  });
+
+  it('[中断] is enabled while running and has no disabled tooltip (#587)', () => {
+    render(<DetectingScreen />);
+    const cancelBtn = screen.getByRole('button', { name: '中断' });
+    expect(cancelBtn).not.toBeDisabled();
+    // While running, the button must NOT carry a title-attribute reason.
+    expect(cancelBtn.hasAttribute('title')).toBe(false);
+  });
+
+  it('has no axe violations while running (#587)', async () => {
+    const { container } = render(<DetectingScreen />);
+    expect(await axe(container)).toHaveNoViolations();
   });
 });

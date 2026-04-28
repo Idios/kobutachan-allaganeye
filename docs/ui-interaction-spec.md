@@ -1,6 +1,8 @@
 # Allagan Eye GUI — UI Interaction Spec
 
 > **スコープ**: 5 画面 (drop / detecting / complete / preview / export) の **UI 部品ごとの操作 → 状態遷移 / store mutation / 例外処理**を明文化する source of truth。画面間遷移は [ui-architecture.md](ui-architecture.md)、画面レイアウトとデザインシステムは [design/README.md](design/README.md)、metadata.json データ契約は [metadata-spec.md](metadata-spec.md) を参照。
+>
+> **a11y 方針**: focus visible / キーボード全機能操作 / disabled 理由表示 / screen reader scope 等の cross-cutting 方針は [a11y-policy.md](a11y-policy.md) を参照 (#587)。本 doc は UI 部品レベルの仕様、a11y-policy.md は application-wide 方針を担当。
 
 本 doc は [#590](https://github.com/Idios/kobutachan-allaganeye/issues/590) で起票し、[#589](https://github.com/Idios/kobutachan-allaganeye/issues/589) (PreviewScreen の state mutation flow / disabled 理由表示 / silent edit loss) の root cause を構造的に再発防止することが第一目的。
 

@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
@@ -127,5 +128,28 @@ describe('ConflictModal', () => {
     });
     expect(useMetadataStore.getState().conflictError).toBeNull();
     expect(useMetadataStore.getState().dirty).toBe(false);
+  });
+
+  it('Escape dismisses the modal (#587)', async () => {
+    useMetadataStore.setState({ conflictError: 'conflict: x' });
+    render(<ConflictModal />);
+    const user = userEvent.setup();
+    await user.keyboard('{Escape}');
+    expect(useMetadataStore.getState().conflictError).toBeNull();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('focus is trapped inside the modal panel (#587)', async () => {
+    useMetadataStore.setState({ conflictError: 'conflict: x' });
+    render(<ConflictModal />);
+    const dialog = screen.getByRole('dialog');
+    // After mount, focus must have moved into the panel.
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  it('has no axe violations when shown (#587)', async () => {
+    useMetadataStore.setState({ conflictError: 'conflict: x' });
+    const { container } = render(<ConflictModal />);
+    expect(await axe(container)).toHaveNoViolations();
   });
 });
