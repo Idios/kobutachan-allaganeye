@@ -1507,6 +1507,99 @@ def test_refining_and_scorebar_bars_do_not_overlap(
     )
 
 
+# --- multi-line eager phase display (#434) ---
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_eager_phases_off_by_default_in_non_tty(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Non-TTY stdout (capsys default) skips eager placeholders (#434).
+
+    Backwards-compat / log hygiene: redirected output and CI logs must
+    not leak ANSI escape sequences or ``[waiting...]`` placeholder text.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    output = capsys.readouterr().out
+    assert "[waiting for Pass 1 to finish]" not in output
+    assert "[waiting for Pass 2 to finish]" not in output
+    # No ANSI cursor-up escape (\x1b[3A) when eager mode is off.
+    assert "\x1b[3A" not in output
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_eager_phases_prints_waiting_placeholders_in_tty_mode(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys, monkeypatch
+):
+    """TTY stdout pre-prints Refining / Scorebar [waiting] placeholders (#434).
+
+    User intent (issue body): "Detecting / Refining / Scorebar"
+    visible from the start so the appearance of Refining mid-pipeline
+    no longer feels like a phase materialising out of thin air.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    monkeypatch.setattr(
+        f"{MODULE}._stdout_supports_eager_phases",
+        lambda: True,
+    )
+
+    run_split(Path("input.mp4"), config)
+    output = capsys.readouterr().out
+
+    assert "Refining" in output
+    assert "[waiting for Pass 1 to finish]" in output
+    assert "Scorebar" in output
+    assert "[waiting for Pass 2 to finish]" in output
+    # Cursor-up ANSI moves the next bar render onto the Detecting line.
+    assert "\x1b[3A" in output
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_eager_phases_marks_refining_skipped_when_pass2_empty(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys, monkeypatch
+):
+    """Pass 2 with no regions -> Refining placeholder updated to ``[skipped: no regions]`` (#434)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    def detect_side_effect(video_path, **kwargs):
+        # Pass 2 yields zero callbacks (no regions to refine), but
+        # scorebar still classifies whatever survived from Pass 1.
+        sb_cb = kwargs.get("scorebar_progress_callback")
+        if sb_cb:
+            sb_cb(1, 2)
+            sb_cb(2, 2)
+        return BOUNDARIES
+
+    mock_detect.side_effect = detect_side_effect
+    monkeypatch.setattr(
+        f"{MODULE}._stdout_supports_eager_phases",
+        lambda: True,
+    )
+
+    run_split(Path("input.mp4"), config)
+    output = capsys.readouterr().out
+
+    assert "Refining   [skipped: no regions]" in output
+
+
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
