@@ -312,6 +312,23 @@ export function DetectingScreen() {
     }
   }, [log]);
 
+  // #639 review (実機検証 3 回目) — window resize / 親 flex の高さ変動
+  // で log pane の viewport だけ縮んだ場合、`[log]` 依存の auto-scroll
+  // は再走しないため scrollTop が古い位置のまま残り「見切れ」が再発
+  // する。ResizeObserver で log 自身のサイズ変化を監視して都度末尾に
+  // 引き戻す。新エントリ追加経路と独立しているので 2 経路で末尾追従
+  // が担保される。
+  useEffect(() => {
+    const el = logRef.current;
+    if (!el) return;
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   // Subscribe to detect-progress, kick off start_detect.
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
