@@ -546,10 +546,14 @@ def test_detect_physical_cores_linux_returns_none_on_empty_file(_system):
 
 
 @patch("allaganeye.system_info.platform.system", return_value="Linux")
-@patch("allaganeye.system_info._detect_gpu_nvidia", return_value=None)
 @patch("allaganeye.system_info._run_text")
-def test_get_gpu_info_linux_parses_lspci_vga_line(mock_run, _nvidia, _system):
-    """Linux branch extracts the GPU name from a 'VGA compatible controller' line."""
+def test_get_gpu_info_linux_parses_lspci_vga_line(mock_run, _system):
+    """Linux branch extracts the GPU name from a 'VGA compatible controller' line.
+
+    `_detect_all_gpus_nvidia`'s strict CSV parser rejects the lspci-shaped
+    mock output (no comma + digit), so no separate ``_detect_gpu_nvidia``
+    patch is needed (#436 review).
+    """
     mock_run.return_value = (
         "00:00.0 Host bridge: Intel Corporation 12th Gen Core Host Bridge\n"
         "01:00.0 VGA compatible controller: "
@@ -561,9 +565,8 @@ def test_get_gpu_info_linux_parses_lspci_vga_line(mock_run, _nvidia, _system):
 
 
 @patch("allaganeye.system_info.platform.system", return_value="Linux")
-@patch("allaganeye.system_info._detect_gpu_nvidia", return_value=None)
 @patch("allaganeye.system_info._run_text")
-def test_get_gpu_info_linux_parses_lspci_3d_controller_line(mock_run, _nvidia, _system):
+def test_get_gpu_info_linux_parses_lspci_3d_controller_line(mock_run, _system):
     """Linux branch also matches '3D controller' lines (common on laptops)."""
     mock_run.return_value = (
         "00:02.0 VGA compatible controller: Intel Corporation UHD Graphics\n"
@@ -579,9 +582,8 @@ def test_get_gpu_info_linux_parses_lspci_3d_controller_line(mock_run, _nvidia, _
 
 
 @patch("allaganeye.system_info.platform.system", return_value="Darwin")
-@patch("allaganeye.system_info._detect_gpu_nvidia", return_value=None)
 @patch("allaganeye.system_info._run_text")
-def test_get_gpu_info_darwin_parses_chipset_model(mock_run, _nvidia, _system):
+def test_get_gpu_info_darwin_parses_chipset_model(mock_run, _system):
     """Darwin branch extracts 'Chipset Model: X' via regex."""
     mock_run.return_value = (
         "Graphics/Displays:\n\n"
@@ -594,11 +596,8 @@ def test_get_gpu_info_darwin_parses_chipset_model(mock_run, _nvidia, _system):
 
 
 @patch("allaganeye.system_info.platform.system", return_value="Darwin")
-@patch("allaganeye.system_info._detect_gpu_nvidia", return_value=None)
 @patch("allaganeye.system_info._run_text")
-def test_get_gpu_info_darwin_unavailable_when_no_chipset_line(
-    mock_run, _nvidia, _system
-):
+def test_get_gpu_info_darwin_unavailable_when_no_chipset_line(mock_run, _system):
     """Darwin branch falls back when system_profiler output lacks Chipset Model."""
     mock_run.return_value = "Graphics/Displays:\n\n    (info missing)\n"
     assert get_gpu_info() == _UNAVAILABLE
