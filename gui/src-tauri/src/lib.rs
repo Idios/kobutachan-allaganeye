@@ -14,7 +14,7 @@ use axum::{
 };
 use tauri::{Emitter, Manager};
 use futures::future::join_all;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -1621,6 +1621,333 @@ fn select_h264_encoder_for_export(
     }
 }
 
+/// #569 -- detect command parameters surfaced from the GUI's drop screen.
+///
+/// All fields are optional so the frontend can pass only the controls
+/// the user adjusted; missing values are translated into "use the CLI
+/// default" by leaving the corresponding `--option` off the argv.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectParams {
+    pub blackout_threshold: Option<f64>,
+    pub min_blackout_duration: Option<f64>,
+    pub min_match_duration: Option<f64>,
+    pub workers: Option<u32>,
+    pub no_audio: Option<bool>,
+    pub no_cache: Option<bool>,
+    /// `Some(true)` -> `--gpu`, `Some(false)` -> `--no-gpu`, `None` -> auto.
+    pub gpu: Option<bool>,
+    pub gpu_vendor: Option<String>,
+}
+
+/// #569 -- one progress event emitted on channel `detect-progress`.
+///
+/// The shape mirrors the CLI's JSON-line schema (see
+/// `allaganeye/detection/progress_emitter.py`).  Optional fields are
+/// `None` when the CLI omitted them from the wire payload (the emitter
+/// drops `None`-valued extras at the source so the frontend doesn't
+/// have to disambiguate `null` vs absent).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct DetectProgress {
+    pub phase: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_s: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eta_s: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blackout_frames: Option<u64>,
+    /// On the terminal `phase="done"` event the CLI sets this to the
+    /// path of the freshly-written metadata.json so the frontend can
+    /// `load_metadata` it without deriving the path itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matches: Option<u64>,
+    /// Free-form context (e.g. CLI stderr tail on `phase="error"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// Probing phase: video duration in seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_s: Option<f64>,
+    /// Probing phase: video width in pixels.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    /// Probing phase: video height in pixels.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    /// Probing phase: video frame rate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fps: Option<f64>,
+    /// Probing phase: video codec (h264 / hevc / ...).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codec: Option<String>,
+    /// `chunk_dispatch` phase: number of decode chunks pending.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chunks: Option<u32>,
+    /// `cache_hit` phase: number of boundaries restored from cache.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub boundaries: Option<u32>,
+    /// `start` phase: source video path (echoes the request).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+/// #569 -- terminal payload returned to the frontend when detect finishes.
+///
+/// The frontend reads `metadata_path` and calls `load_metadata` to populate
+/// the complete screen.
+#[derive(Debug, Clone, Serialize)]
+pub struct DetectResult {
+    pub metadata_path: String,
+    pub matches: u64,
+}
+
+/// #569 -- pure parser for one JSON-lines progress event.  Returns
+/// `None` for blank lines or lines that fail to deserialize so a stray
+/// stdout write from the CLI doesn't break the overall stream.
+fn parse_detect_progress_line(line: &str) -> Option<DetectProgress> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    serde_json::from_str(line).ok()
+}
+
+/// #569 -- locate the `allaganeye` CLI executable.
+///
+/// Resolution order:
+/// 1. `ALLAGANEYE_BIN` environment variable (must point at a real file).
+/// 2. The bare name `"allaganeye"` -- relies on `tokio::process::Command`'s
+///    PATH search.  Portable ZIP layouts add the bundled `allaganeye.bat`
+///    location to PATH at install time.
+fn resolve_allaganeye_bin() -> String {
+    if let Ok(path) = std::env::var("ALLAGANEYE_BIN") {
+        if !path.is_empty() {
+            return path;
+        }
+    }
+    "allaganeye".to_string()
+}
+
+/// #569 -- assemble argv for `allaganeye detect --progress-format json`.
+/// Pulled out of `start_detect` so unit tests can pin flag ordering and
+/// the plumbing of optional `DetectParams` -> CLI flags without spawning
+/// a subprocess.
+fn detect_command_args(
+    video_path: &str,
+    output_dir: &str,
+    params: &DetectParams,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "detect".to_string(),
+        video_path.to_string(),
+        "-o".to_string(),
+        output_dir.to_string(),
+        "--progress-format".to_string(),
+        "json".to_string(),
+    ];
+    if let Some(v) = params.blackout_threshold {
+        args.push("--blackout-threshold".to_string());
+        args.push(format!("{v}"));
+    }
+    if let Some(v) = params.min_blackout_duration {
+        args.push("--min-blackout-duration".to_string());
+        args.push(format!("{v}"));
+    }
+    if let Some(v) = params.min_match_duration {
+        args.push("--min-match-duration".to_string());
+        args.push(format!("{v}"));
+    }
+    if let Some(v) = params.workers {
+        args.push("--workers".to_string());
+        args.push(format!("{v}"));
+    }
+    if params.no_audio.unwrap_or(false) {
+        args.push("--no-audio".to_string());
+    }
+    if params.no_cache.unwrap_or(false) {
+        args.push("--no-cache".to_string());
+    }
+    match params.gpu {
+        Some(true) => args.push("--gpu".to_string()),
+        Some(false) => args.push("--no-gpu".to_string()),
+        None => {}
+    }
+    if let Some(vendor) = params.gpu_vendor.as_deref() {
+        if !vendor.is_empty() {
+            args.push("--gpu-vendor".to_string());
+            args.push(vendor.to_string());
+        }
+    }
+    args
+}
+
+/// #569 -- spawn `allaganeye detect --progress-format json` and stream
+/// progress events to the frontend.
+///
+/// The child is registered with [`process_tracker`] so the
+/// `CloseRequested` flow (#523) and the user-pressed cancel button (next
+/// PR, also #523) can kill it.  Cancellation by the user from the
+/// detecting screen is handled by the frontend dispatching a phase
+/// transition only -- the actual `kill_tracked_processes` invocation is
+/// deferred to #523's PR.
+#[tauri::command]
+async fn start_detect(
+    app: tauri::AppHandle,
+    video_path: String,
+    output_dir: String,
+    params: DetectParams,
+) -> Result<DetectResult, String> {
+    let video = PathBuf::from(&video_path);
+    if !video.exists() {
+        return Err(format!("video file not found: {}", video.display()));
+    }
+    let output_buf = PathBuf::from(&output_dir);
+    if let Err(e) = fs::create_dir_all(&output_buf) {
+        return Err(format!(
+            "create output dir failed ({}): {}",
+            output_buf.display(),
+            e
+        ));
+    }
+
+    let bin = resolve_allaganeye_bin();
+    let args = detect_command_args(&video_path, &output_dir, &params);
+
+    let mut cmd = tokio::process::Command::new(&bin);
+    for a in &args {
+        cmd.arg(a);
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("spawn allaganeye failed ({}): {}", bin, e))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "failed to capture allaganeye stdout".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "failed to capture allaganeye stderr".to_string())?;
+
+    let tracked_id = track_child(child).await;
+
+    // Stderr drains in parallel into a bounded tail buffer so the OS
+    // pipe doesn't fill up if the CLI is chatty under -v / verbose.
+    let stderr_handle = tokio::spawn(async move {
+        let max_tail = 2048usize;
+        let mut tail: Vec<u8> = Vec::with_capacity(4096);
+        let mut reader = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            tail.extend_from_slice(line.as_bytes());
+            tail.push(b'\n');
+            if tail.len() > max_tail * 2 {
+                let drop = tail.len() - max_tail;
+                tail.drain(0..drop);
+            }
+        }
+        tail
+    });
+
+    let mut metadata_path: Option<String> = None;
+    let mut total_matches: u64 = 0;
+    let mut reader = BufReader::new(stdout).lines();
+
+    loop {
+        match reader.next_line().await {
+            Ok(Some(line)) => {
+                if let Some(progress) = parse_detect_progress_line(&line) {
+                    if progress.phase == "done" {
+                        if let Some(ref p) = progress.metadata_path {
+                            metadata_path = Some(p.clone());
+                        }
+                        if let Some(m) = progress.matches {
+                            total_matches = m;
+                        }
+                    }
+                    let _ = app.emit("detect-progress", progress);
+                }
+            }
+            Ok(None) => break,
+            Err(e) => {
+                // stdout pipe hiccup -- still try to wait the child so
+                // we don't leak a zombie.  The error path below sets the
+                // error event.
+                let msg = format!("stdout read error: {e}");
+                let _ = app.emit(
+                    "detect-progress",
+                    DetectProgress {
+                        phase: "error".to_string(),
+                        message: Some(msg.clone()),
+                        ..Default::default()
+                    },
+                );
+                break;
+            }
+        }
+    }
+
+    let mut child = match untrack_child(tracked_id).await {
+        Some(c) => c,
+        None => {
+            // Drained by `kill_tracked_processes` -- treat as user cancel.
+            let _ = app.emit(
+                "detect-progress",
+                DetectProgress {
+                    phase: "cancelled".to_string(),
+                    ..Default::default()
+                },
+            );
+            return Err("detect cancelled".to_string());
+        }
+    };
+
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| format!("wait allaganeye failed: {e}"))?;
+    let stderr_tail = stderr_handle.await.unwrap_or_default();
+
+    if !status.success() {
+        let tail = String::from_utf8_lossy(&stderr_tail).trim().to_string();
+        let msg = if tail.is_empty() {
+            format!("allaganeye exited with status {:?}", status.code())
+        } else {
+            format!(
+                "allaganeye exited with status {:?}: {}",
+                status.code(),
+                tail
+            )
+        };
+        let _ = app.emit(
+            "detect-progress",
+            DetectProgress {
+                phase: "error".to_string(),
+                message: Some(msg.clone()),
+                ..Default::default()
+            },
+        );
+        return Err(msg);
+    }
+
+    let metadata_path = metadata_path.ok_or_else(|| {
+        "detect completed but no metadata_path was emitted".to_string()
+    })?;
+
+    Ok(DetectResult {
+        metadata_path,
+        matches: total_matches,
+    })
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -1654,6 +1981,7 @@ pub fn run() {
             export_match,
             select_h264_encoder_for_export,
             open_folder_in_explorer,
+            start_detect,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -2988,5 +3316,262 @@ mod tests {
     fn tail_string_returns_whole_buffer_when_small() {
         let buf = b"  short message\n";
         assert_eq!(tail_string(buf, 2048), "short message");
+    }
+
+    // -- #569 detect progress streaming -----------------------------------
+
+    #[test]
+    fn parse_detect_progress_line_handles_basic_event() {
+        let line = r#"{"phase":"scan","completed":12,"total":100,"elapsed_s":1.25}"#;
+        let parsed = parse_detect_progress_line(line).expect("should parse");
+        assert_eq!(parsed.phase, "scan");
+        assert_eq!(parsed.completed, Some(12));
+        assert_eq!(parsed.total, Some(100));
+        assert_eq!(parsed.elapsed_s, Some(1.25));
+    }
+
+    #[test]
+    fn parse_detect_progress_line_handles_done_with_metadata_path() {
+        let line = r#"{"phase":"done","metadata_path":"C:/out/metadata.json","matches":3,"elapsed_s":42.5}"#;
+        let parsed = parse_detect_progress_line(line).expect("should parse");
+        assert_eq!(parsed.phase, "done");
+        assert_eq!(
+            parsed.metadata_path.as_deref(),
+            Some("C:/out/metadata.json")
+        );
+        assert_eq!(parsed.matches, Some(3));
+    }
+
+    #[test]
+    fn parse_detect_progress_line_returns_none_for_blank_line() {
+        assert!(parse_detect_progress_line("").is_none());
+        assert!(parse_detect_progress_line("   \n").is_none());
+    }
+
+    #[test]
+    fn parse_detect_progress_line_returns_none_for_non_json() {
+        assert!(parse_detect_progress_line("Probing: video.mkv").is_none());
+        assert!(parse_detect_progress_line("not even close").is_none());
+    }
+
+    #[test]
+    fn parse_detect_progress_line_ignores_unknown_extra_fields() {
+        // Unknown extras must not abort parsing -- the CLI is allowed to
+        // grow new optional fields without breaking the GUI.
+        let line = r#"{"phase":"scan","completed":1,"total":2,"future_field":"hello"}"#;
+        let parsed = parse_detect_progress_line(line).expect("should parse");
+        assert_eq!(parsed.phase, "scan");
+    }
+
+    #[test]
+    fn parse_detect_progress_line_handles_probing_metadata() {
+        let line = r#"{"phase":"probing","duration_s":600.0,"width":1920,"height":1080,"fps":60.0,"codec":"h264","elapsed_s":0.4}"#;
+        let parsed = parse_detect_progress_line(line).expect("should parse");
+        assert_eq!(parsed.phase, "probing");
+        assert_eq!(parsed.duration_s, Some(600.0));
+        assert_eq!(parsed.width, Some(1920));
+        assert_eq!(parsed.fps, Some(60.0));
+        assert_eq!(parsed.codec.as_deref(), Some("h264"));
+    }
+
+    #[test]
+    fn detect_command_args_includes_required_flags() {
+        let args = detect_command_args(
+            "C:/videos/in.mkv",
+            "C:/out/run-01",
+            &DetectParams::default(),
+        );
+        assert_eq!(args[0], "detect");
+        assert_eq!(args[1], "C:/videos/in.mkv");
+        assert_eq!(args[2], "-o");
+        assert_eq!(args[3], "C:/out/run-01");
+        assert!(args.iter().any(|a| a == "--progress-format"));
+        assert!(args.iter().any(|a| a == "json"));
+    }
+
+    #[test]
+    fn detect_command_args_omits_optional_flags_when_unset() {
+        let args = detect_command_args(
+            "in.mkv",
+            "out",
+            &DetectParams::default(),
+        );
+        let joined = args.join(" ");
+        assert!(!joined.contains("--blackout-threshold"));
+        assert!(!joined.contains("--no-audio"));
+        assert!(!joined.contains("--no-cache"));
+        assert!(!joined.contains("--gpu"));
+        assert!(!joined.contains("--no-gpu"));
+        assert!(!joined.contains("--workers"));
+    }
+
+    #[test]
+    fn detect_command_args_emits_blackout_threshold_when_provided() {
+        let args = detect_command_args(
+            "in.mkv",
+            "out",
+            &DetectParams {
+                blackout_threshold: Some(20.0),
+                ..Default::default()
+            },
+        );
+        let idx = args
+            .iter()
+            .position(|a| a == "--blackout-threshold")
+            .expect("flag missing");
+        assert_eq!(args[idx + 1], "20");
+    }
+
+    #[test]
+    fn detect_command_args_translates_gpu_tristate() {
+        // Some(true) -> --gpu
+        let args_on = detect_command_args(
+            "in.mkv",
+            "out",
+            &DetectParams {
+                gpu: Some(true),
+                ..Default::default()
+            },
+        );
+        assert!(args_on.iter().any(|a| a == "--gpu"));
+        assert!(!args_on.iter().any(|a| a == "--no-gpu"));
+
+        // Some(false) -> --no-gpu
+        let args_off = detect_command_args(
+            "in.mkv",
+            "out",
+            &DetectParams {
+                gpu: Some(false),
+                ..Default::default()
+            },
+        );
+        assert!(args_off.iter().any(|a| a == "--no-gpu"));
+        assert!(!args_off.iter().any(|a| a == "--gpu"));
+
+        // None -> neither flag (CLI auto-selects)
+        let args_auto = detect_command_args(
+            "in.mkv",
+            "out",
+            &DetectParams::default(),
+        );
+        assert!(!args_auto.iter().any(|a| a == "--gpu" || a == "--no-gpu"));
+    }
+
+    #[test]
+    fn detect_command_args_emits_no_audio_only_when_true() {
+        let args_on = detect_command_args(
+            "in.mkv",
+            "out",
+            &DetectParams {
+                no_audio: Some(true),
+                ..Default::default()
+            },
+        );
+        assert!(args_on.iter().any(|a| a == "--no-audio"));
+
+        let args_off = detect_command_args(
+            "in.mkv",
+            "out",
+            &DetectParams {
+                no_audio: Some(false),
+                ..Default::default()
+            },
+        );
+        assert!(!args_off.iter().any(|a| a == "--no-audio"));
+    }
+
+    #[test]
+    fn detect_command_args_includes_workers_when_provided() {
+        let args = detect_command_args(
+            "in.mkv",
+            "out",
+            &DetectParams {
+                workers: Some(8),
+                ..Default::default()
+            },
+        );
+        let idx = args
+            .iter()
+            .position(|a| a == "--workers")
+            .expect("flag missing");
+        assert_eq!(args[idx + 1], "8");
+    }
+
+    #[test]
+    fn detect_command_args_includes_gpu_vendor_when_provided() {
+        let args = detect_command_args(
+            "in.mkv",
+            "out",
+            &DetectParams {
+                gpu_vendor: Some("nvidia".to_string()),
+                ..Default::default()
+            },
+        );
+        let idx = args
+            .iter()
+            .position(|a| a == "--gpu-vendor")
+            .expect("flag missing");
+        assert_eq!(args[idx + 1], "nvidia");
+    }
+
+    #[test]
+    fn detect_command_args_skips_empty_gpu_vendor() {
+        let args = detect_command_args(
+            "in.mkv",
+            "out",
+            &DetectParams {
+                gpu_vendor: Some(String::new()),
+                ..Default::default()
+            },
+        );
+        assert!(!args.iter().any(|a| a == "--gpu-vendor"));
+    }
+
+    /// `resolve_allaganeye_bin` reads `ALLAGANEYE_BIN`. cargo test is
+    /// multi-threaded by default and process env vars are shared across
+    /// threads, so split-out tests that all touch the same key would
+    /// race. Roll the three cases into one sequential test instead.
+    #[test]
+    fn resolve_allaganeye_bin_resolution_order() {
+        let key = "ALLAGANEYE_BIN";
+        let saved = std::env::var(key).ok();
+
+        // 1. Custom path wins when set.
+        std::env::set_var(key, "C:/custom/path/allaganeye.exe");
+        assert_eq!(resolve_allaganeye_bin(), "C:/custom/path/allaganeye.exe");
+
+        // 2. Empty value is treated as unset (PATH lookup fallback).
+        std::env::set_var(key, "");
+        assert_eq!(resolve_allaganeye_bin(), "allaganeye");
+
+        // 3. Unset env -> bare name (relies on PATH search at spawn time).
+        std::env::remove_var(key);
+        assert_eq!(resolve_allaganeye_bin(), "allaganeye");
+
+        // Restore prior env so other tests are unaffected.
+        match saved {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+    }
+
+    #[test]
+    fn detect_progress_skips_none_fields_in_json_serde() {
+        // Reuse the wire format in case some integration consumer
+        // round-trips the struct via JSON instead of the Tauri event
+        // bridge -- skip_serializing_if must drop None entries so we
+        // mirror the Python side's compact format.
+        let progress = DetectProgress {
+            phase: "scan".to_string(),
+            completed: Some(1),
+            total: Some(10),
+            ..Default::default()
+        };
+        let serialized = serde_json::to_string(&progress).unwrap();
+        assert!(serialized.contains("\"phase\":\"scan\""));
+        assert!(serialized.contains("\"completed\":1"));
+        assert!(!serialized.contains("metadata_path"));
+        assert!(!serialized.contains("\"matches\""));
+        assert!(!serialized.contains("\"message\""));
     }
 }

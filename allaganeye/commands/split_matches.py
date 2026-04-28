@@ -5,6 +5,7 @@ import logging
 import re
 import shutil
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypedDict
@@ -17,6 +18,7 @@ from allaganeye.detection.metadata_writer import (
     read_metadata,
     write_metadata_atomic,
 )
+from allaganeye.detection.progress_emitter import ProgressEmitter
 from allaganeye.detection.warnings import build_warnings
 from allaganeye.exceptions import (
     AllaganEyeError,
@@ -687,8 +689,21 @@ def _run_detection(
     stats: DetectionStats | None = None,
     use_gpu: bool = False,
     gpu_vendor: str | None = None,
+    progress_emitter: ProgressEmitter | None = None,
+    brightness_callback: Callable[[dict[float, float]], None] | None = None,
 ) -> list[MatchBoundary]:
-    """Run detection with progress bars for each phase (#328, #329, #331)."""
+    """Run detection with progress bars for each phase (#328, #329, #331).
+
+    #569 -- when *progress_emitter* is supplied (GUI / Tauri wrapper),
+    the click TTY progress bars are replaced by JSON-line events on the
+    emitter's stream.  ``quiet`` / ``progress_emitter`` are mutually
+    exclusive in spirit; if both are provided the emitter wins (so a
+    quiet-from-CLI-call-site GUI subprocess still emits events).
+    *brightness_callback* is forwarded transparently into
+    ``detect_match_boundaries`` so callers can capture the Pass 1
+    brightness map for downstream consumers (e.g. the GUI complete
+    screen's brightness timeline).
+    """
     detect_kwargs = {
         "duration_hint": metadata["duration"],
         "sample_interval": effective_interval,
@@ -702,7 +717,53 @@ def _run_detection(
         "codec": metadata.get("codec"),
         "audio_hits": audio_hits,
         "stats": stats,
+        "brightness_callback": brightness_callback,
     }
+
+    if progress_emitter is not None:
+        # GUI / json mode: wire the same callbacks but emit JSON lines
+        # instead of advancing click progressbars.  No TTY work at all.
+        total_duration = metadata["duration"]
+        estimated_samples = max(1, int(total_duration / effective_interval))
+
+        def gui_on_progress(completed: int, total: int, blackout_count: int) -> None:
+            progress_emitter.emit_progress(
+                "scan",
+                completed,
+                total,
+                blackout_frames=blackout_count,
+            )
+
+        def gui_on_chunk_dispatch(num_chunks: int) -> None:
+            progress_emitter.emit("chunk_dispatch", chunks=num_chunks)
+
+        def gui_on_chunk(done: int, total: int, eta_seconds: float) -> None:
+            progress_emitter.emit(
+                "chunk",
+                completed=done,
+                total=total,
+                eta_s=eta_seconds if eta_seconds > 0 else None,
+            )
+
+        def gui_on_refine(completed: int, total: int) -> None:
+            progress_emitter.emit_progress("refine", completed, total)
+
+        def gui_on_scorebar(completed: int, total: int) -> None:
+            progress_emitter.emit_progress("scorebar", completed, total)
+
+        # Announce Pass 1 entry so the GUI can pre-populate the bar at 0%
+        # before the first chunk completes (otherwise the bar sits empty
+        # until ~10s into a long video).
+        progress_emitter.emit_progress("scan", 0, estimated_samples)
+        return detect_match_boundaries(
+            video_path,
+            **detect_kwargs,
+            progress_callback=gui_on_progress,
+            refine_progress_callback=gui_on_refine,
+            scorebar_progress_callback=gui_on_scorebar,
+            chunk_progress_callback=gui_on_chunk,
+            chunk_dispatch_callback=gui_on_chunk_dispatch,
+        )
 
     if not quiet:
         total_duration = metadata["duration"]
@@ -1035,6 +1096,7 @@ def _build_metadata_payload(
     output_files: list[Path],
     gaps: list[Gap],
     system_info: dict,
+    brightness_samples: dict | None = None,
 ) -> dict:
     """Build the ``metadata.json`` payload dict (schema v1, #463 / #591).
 
@@ -1061,8 +1123,14 @@ def _build_metadata_payload(
     same value as ``detected_at`` (the legacy field is retained verbatim
     for backward compatibility); ``detection_completed_at`` is captured
     immediately before metadata.json is written.
+
+    ``brightness_samples`` (#569): pre-rendered brightness timeline for
+    the GUI complete screen.  Optional field; pre-#569 metadata files
+    don't carry it.  Shape is ``{"interval_s": float, "values":
+    list[float]}`` -- ``values[i]`` is the brightness (0-255) at
+    ``i * interval_s`` seconds.  Built via :func:`build_brightness_samples`.
     """
-    return {
+    payload: dict = {
         "schema_version": "1",
         "source": str(video_path),
         "source_duration": source_duration,
@@ -1107,6 +1175,57 @@ def _build_metadata_payload(
             for g in gaps
         ],
         "warnings": build_warnings(),
+    }
+    if brightness_samples is not None:
+        payload["brightness_samples"] = brightness_samples
+    return payload
+
+
+_BRIGHTNESS_TIMELINE_TARGET_SAMPLES = 512
+"""Target sample count for the GUI complete-screen timeline (#569).
+
+512 keeps the SVG path lightweight (well under the WebKit path-length
+limit on Windows + matches the existing dummy ``buildSampleBrightness``
+in the design prototype) while still capturing a 2:50 hour recording at
+~20 second granularity -- fine enough that match boundaries land on a
+distinct sample in practice.
+"""
+
+
+def build_brightness_samples(
+    raw_brightness: dict[float, float],
+    *,
+    target_samples: int = _BRIGHTNESS_TIMELINE_TARGET_SAMPLES,
+) -> dict[str, object] | None:
+    """Down-sample a Pass 1 ``{timestamp: brightness}`` map for metadata.json (#569).
+
+    The GUI complete screen draws a brightness timeline whose width is
+    fixed (~700px); rendering every probe (potentially tens of thousands
+    on a 3-hour video) would bloat metadata.json and yield more SVG path
+    points than the WebView can stroke smoothly.  We linearly stride the
+    sorted timestamps so the resulting array is at most
+    ``target_samples`` entries while preserving the start / end shape.
+
+    Returns ``None`` for empty input so callers can ``if samples is None:
+    skip`` rather than write a degenerate ``{interval_s: 0, values: []}``
+    object.
+    """
+    if not raw_brightness:
+        return None
+    timestamps = sorted(raw_brightness.keys())
+    n = len(timestamps)
+    stride = max(1, n // max(1, target_samples))
+    selected = timestamps[::stride]
+    if not selected:
+        return None
+    if len(selected) >= 2:
+        interval_s = float(selected[1] - selected[0])
+    else:
+        interval_s = float(timestamps[-1]) if timestamps[-1] > 0 else 1.0
+    values = [round(float(raw_brightness[t]), 3) for t in selected]
+    return {
+        "interval_s": round(interval_s, 6),
+        "values": values,
     }
 
 

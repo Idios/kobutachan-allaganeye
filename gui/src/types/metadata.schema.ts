@@ -77,6 +77,22 @@ export const SystemInfoSchema = z.object({
 });
 
 /**
+ * #569 -- pre-rendered brightness timeline used by the complete screen.
+ * Optional because pre-#569 files don't carry it and cache hits skip
+ * Pass 1 sampling. CompleteScreen falls back to the in-memory sample
+ * curve when the field is absent.
+ *
+ * - `interval_s`: seconds represented by each `values[i]` (so
+ *   `values[i]` is the brightness at `i * interval_s` seconds).
+ * - `values`: 0-255 floats, ordered chronologically, length capped to
+ *   ~512 by the CLI writer (`build_brightness_samples`).
+ */
+export const BrightnessSamplesSchema = z.object({
+  interval_s: z.number().positive(),
+  values: z.array(z.number().min(0).max(255)),
+});
+
+/**
  * #465 review: default frame rate when ``source_fps`` is missing. Pre-#465
  * legacy metadata.json files don't include the field, so we keep a
  * conservative 60fps assumption (the most common OBS recording cadence).
@@ -119,5 +135,11 @@ export const MetadataSchema = z
      * libx264 when missing.
      */
     system_info: SystemInfoSchema.optional(),
+    /**
+     * #569 -- pre-rendered brightness timeline. Optional because
+     * pre-#569 files and detect cache hits don't write it. The
+     * complete screen falls back to a sample curve when missing.
+     */
+    brightness_samples: BrightnessSamplesSchema.optional(),
   })
   .passthrough();
