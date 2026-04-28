@@ -107,3 +107,46 @@ def test_use_gpu_accepts_number_boolean_null(use_gpu_value):
     sample = _valid_sample()
     sample["detection_params"]["use_gpu"] = use_gpu_value
     Draft202012Validator(schema).validate(sample)
+
+
+def test_unknown_root_field_rejected():
+    """Writer contract: extra top-level keys must be rejected."""
+    schema = _load_schema()
+    broken = _valid_sample()
+    broken["unknown_root_field"] = "x"
+    validator = Draft202012Validator(schema)
+    assert not validator.is_valid(broken)
+
+
+def test_unknown_match_field_rejected():
+    """Writer contract: GUI-only edit fields (name / type_override / edited)
+    must never reach metadata.json proper (#612). zod's `.passthrough()`
+    keeps them in metadata.draft.json only."""
+    schema = _load_schema()
+    broken = _valid_sample()
+    broken["matches"][0]["name"] = "GUI-only edit field"
+    validator = Draft202012Validator(schema)
+    assert not validator.is_valid(broken)
+
+
+def test_unknown_detection_params_field_rejected():
+    schema = _load_schema()
+    broken = _valid_sample()
+    broken["detection_params"]["future_param"] = 1
+    validator = Draft202012Validator(schema)
+    assert not validator.is_valid(broken)
+
+
+def test_warning_context_accepts_arbitrary_keys():
+    """`MetadataWarning.context` is intentionally permissive so emitters
+    can attach diagnostic payloads without bumping the schema."""
+    schema = _load_schema()
+    sample = _valid_sample()
+    sample["warnings"] = [
+        {
+            "code": "audio_skipped",
+            "severity": "info",
+            "context": {"reason": "no_audio_track", "frame": 12345},
+        }
+    ]
+    Draft202012Validator(schema).validate(sample)

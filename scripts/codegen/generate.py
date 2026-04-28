@@ -25,6 +25,7 @@ Cross-platform notes:
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -66,6 +67,30 @@ def generate_python() -> None:
         PY_HEADER,
     ]
     subprocess.run(args, check=True, cwd=REPO_ROOT)
+
+    # Post-process the datamodel-code-generator output:
+    #
+    # 1. Strip `closed=True` from TypedDict declarations. The kwarg is
+    #    emitted whenever JSON Schema declares `additionalProperties:
+    #    false`, but PEP 728 / `typing.TypedDict[..., closed=True]` is
+    #    Python 3.13+ only and raises TypeError on our 3.11 support
+    #    floor. The strict-writer-contract semantics are conveyed by
+    #    the schema itself (ajv / jsonschema reject extras at validate
+    #    time); type-level enforcement is a future-3.13 concern.
+    #
+    # 2. Once `closed=True` is gone, the `typing_extensions.TypedDict`
+    #    import datamodel-code-generator added is unused — collapse it
+    #    back into the regular `from typing import ...` line so we
+    #    don't introduce a runtime dependency on typing_extensions
+    #    just because the generator likes to be conservative.
+    text = PYTHON_OUT.read_text(encoding="utf-8")
+    text = text.replace(", closed=True", "")
+    text = re.sub(
+        r"from typing import ([^\n]+)\n\nfrom typing_extensions import TypedDict\n",
+        r"from typing import \1, TypedDict\n",
+        text,
+    )
+    PYTHON_OUT.write_text(text, encoding="utf-8")
     print(f"generated: {PYTHON_OUT.relative_to(REPO_ROOT)}")
 
 

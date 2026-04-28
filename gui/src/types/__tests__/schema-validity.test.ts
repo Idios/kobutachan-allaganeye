@@ -105,4 +105,44 @@ describe('JSON Schema validity (#612)', () => {
     delete minimal.system_info;
     expect(validate(minimal)).toBe(true);
   });
+
+  it('rejects an unknown top-level field (writer contract is strict)', () => {
+    const ajv = makeAjv();
+    const validate = ajv.compile(schema);
+    const broken = validSample();
+    broken.unknown_root_field = 'x';
+    expect(validate(broken)).toBe(false);
+  });
+
+  it('rejects an unknown field on a Match (writer contract is strict)', () => {
+    const ajv = makeAjv();
+    const validate = ajv.compile(schema);
+    const broken = validSample();
+    (broken.matches as Array<Record<string, unknown>>)[0].name = 'GUI-only edit field';
+    expect(validate(broken)).toBe(false);
+  });
+
+  it('rejects an unknown field on detection_params', () => {
+    const ajv = makeAjv();
+    const validate = ajv.compile(schema);
+    const broken = validSample();
+    (broken.detection_params as Record<string, unknown>).future_param = 1;
+    expect(validate(broken)).toBe(false);
+  });
+
+  it('accepts arbitrary keys inside MetadataWarning.context (extension area)', () => {
+    const ajv = makeAjv();
+    const validate = ajv.compile(schema);
+    const sample = validSample();
+    (sample.warnings as Array<Record<string, unknown>>) = [
+      {
+        code: 'audio_skipped',
+        severity: 'info',
+        // context is intentionally permissive so emitters can attach
+        // arbitrary diagnostic payloads without bumping the schema.
+        context: { reason: 'no_audio_track', frame: 12345 },
+      },
+    ];
+    expect(validate(sample)).toBe(true);
+  });
 });

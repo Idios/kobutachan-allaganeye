@@ -4,6 +4,7 @@
   "title": "Metadata",
   "description": "metadata.json contract between allaganeye CLI and the L2a Tauri GUI (#463). Machine-readable source of truth (#612). The human-readable counterpart lives in docs/metadata-spec.md; refine-style semantic constraints (e.g. end_time >= start_time) are enforced by zod (GUI) and InputFileError checks (CLI), not by this schema.",
   "type": "object",
+  "additionalProperties": false,
   "required": [
     "source",
     "source_duration",
@@ -76,6 +77,7 @@
       "title": "DetectionParams",
       "description": "Parameters used by the detector when this metadata.json was produced.",
       "type": "object",
+      "additionalProperties": false,
       "required": [
         "sample_interval",
         "blackout_threshold",
@@ -120,6 +122,7 @@
       "title": "Match",
       "description": "Single match segment. JSON Schema is the strict writer contract; reader-side passthrough for GUI-only edit fields (name / type_override / edited) is provided by zod (.passthrough() on MatchSchema) and only round-trips inside metadata.draft.json, never metadata.json proper.",
       "type": "object",
+      "additionalProperties": false,
       "required": [
         "index",
         "start_time",
@@ -183,6 +186,7 @@
       "title": "Gap",
       "description": "Inter-match idle gap >= 5 minutes (min_gap=300.0).",
       "type": "object",
+      "additionalProperties": false,
       "required": [
         "start_time",
         "end_time",
@@ -223,6 +227,7 @@
       "title": "MetadataWarning",
       "description": "Structured warning entry (#518). Future codes should be appended to allaganeye/detection/warnings.py::WARNING_CODES; readers must accept unknown codes (forward compat).",
       "type": "object",
+      "additionalProperties": false,
       "required": ["code"],
       "properties": {
         "code": {
@@ -249,6 +254,7 @@
       "title": "SystemInfo",
       "description": "GPU vendor probe snapshot recorded by detect/split (#591). GUI export uses this to pick the H.264 encoder (NVENC / QSV / AMF / libx264). Optional at the root because pre-#591 metadata.json files don't carry it.",
       "type": "object",
+      "additionalProperties": false,
       "required": ["gpu_vendors_available", "gpu_vendor_used", "vendor_preference"],
       "properties": {
         "gpu_vendors_available": {
