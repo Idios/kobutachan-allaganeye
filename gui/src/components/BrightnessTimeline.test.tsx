@@ -109,4 +109,44 @@ describe('BrightnessTimeline', () => {
       .querySelector('text');
     expect(label?.textContent).toBe('threshold=10');
   });
+
+  it('makes each match block keyboard-focusable with role/aria-label (#587)', () => {
+    render(
+      <BrightnessTimeline
+        samples={[100, 100]}
+        duration={400}
+        matches={sampleMatches()}
+        selectedIndex={null}
+      />,
+    );
+    const block1 = screen.getByTestId('match-block-1');
+    expect(block1.getAttribute('tabindex')).toBe('0');
+    expect(block1.getAttribute('role')).toBe('button');
+    expect(block1.getAttribute('aria-label')).toContain('match 1');
+    expect(block1.getAttribute('aria-label')).toContain('FL');
+    const block2 = screen.getByTestId('match-block-2');
+    expect(block2.getAttribute('aria-label')).toContain('不明');
+  });
+
+  it('Enter / Space on a focused match block calls onSelectMatch (#587)', async () => {
+    const onSelect = vi.fn();
+    render(
+      <BrightnessTimeline
+        samples={[100, 100]}
+        duration={400}
+        matches={sampleMatches()}
+        selectedIndex={null}
+        onSelectMatch={onSelect}
+      />,
+    );
+    const block1 = screen.getByTestId('match-block-1');
+    block1.focus();
+    const user = userEvent.setup();
+    await user.keyboard('{Enter}');
+    expect(onSelect).toHaveBeenCalledWith(1);
+    onSelect.mockClear();
+    block1.focus();
+    await user.keyboard(' ');
+    expect(onSelect).toHaveBeenCalledWith(1);
+  });
 });

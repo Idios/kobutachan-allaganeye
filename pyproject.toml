@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-allaganeye = "allaganeye.cli:app"
+allaganeye = "allaganeye.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["allaganeye*"]

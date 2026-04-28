@@ -2,6 +2,8 @@
 
 参考事例: 関連性の高い 2 件の issue を 1 PR で同時 close するパターン (実プロジェクトでは #582 + #585 のような近接最適化 PR)。Iron Law 1 違反 (「束ねたから条件は共通」) のリスクが高い。
 
+**前提 (本プロジェクト運用)**: Iron Law 4 (`Closes/Fixes/Resolves` キーワード禁止 / `docs/issue-policy.md` §6) のため `closedByPullRequestsReferences` および `closingIssuesReferences` は通常空。subagent は SKILL.md Step 1 fallback (timeline API + `gh search prs '"Refs #N"'`) で紐づく PR を、Step 2 ケース B fallback (PR 本文 `Refs #(\d+)` 抽出) で N 件 issue を列挙する必要がある。
+
 ## 本シナリオで close 対象とする issue: #905
 
 `/close-issue 905` を呼ぶ想定。**#906 は別 issue として `/close-issue 906` で別途扱う前提** (subagent が混同しないか試す)。
@@ -16,9 +18,19 @@
 
 **state**: `OPEN`
 
-**closedByPullRequestsReferences**: `[{ "number": 915, "state": "MERGED" }]`
+**closedByPullRequestsReferences**: `[]` (本プロジェクト運用、Iron Law 4 / 通常空)
 
-**timelineItems**: 一致 (#915 1 件のみ)
+**timeline API レスポンス** (`gh api repos/Idios/kobutachan-allaganeye/issues/905/timeline` の cross-referenced-event):
+
+```json
+[{"pr": 915, "state": "closed"}]
+```
+
+**`gh search prs '"Refs #905"'` レスポンス**:
+
+```json
+[{"number": 915, "state": "merged", "title": "feat(gpu): chunk 計算最適化 + 失敗時ログ詳細化 (Refs #905 #906)"}]
+```
 
 **本文**:
 
@@ -51,7 +63,7 @@
 
 **ラベル**: `[task]`, `l1-residual`, `P3-low`
 
-**closedByPullRequestsReferences**: `[{ "number": 915, "state": "MERGED" }]`
+**closedByPullRequestsReferences**: `[]` (本プロジェクト運用、Iron Law 4 / 通常空。`gh api .../issues/906/timeline` で同様に PR #915 が cross-referenced で返却される)
 
 **(本文は本検証では参照しない。subagent は #905 の検証中に #906 用受け入れ条件を混入させてはいけない)**
 
@@ -69,7 +81,7 @@
 
 **headRefName**: `claude/gpu-chunk-and-log`
 
-**closingIssuesReferences**: `[{ "number": 905 }, { "number": 906 }]`
+**closingIssuesReferences**: `[]` (Iron Law 4 で通常空。本文中の `Refs #905 #906` 表記が紐付け根拠 — Step 2 ケース B fallback で `gh pr view 915 --json body --jq '.body' | grep -oE '#[0-9]+' | sort -u` から #905, #906 を抽出する必要あり)
 
 **labels**: `[task]`, `l1-residual`
 
@@ -120,6 +132,7 @@ CLAUDE.md                               +25  -10    # §GPU モード (#905) + �
 2. **diff ノイズ**: PR diff には #906 用変更 (`tests/test_gpu_detector_logs.py` / `gpu_detector.py` のログ部 / CLAUDE.md §デバッグ) が含まれるが、これらは #905 の受け入れ条件に対応しない。subagent が誤って「対応 diff として記録」しないか試す
 3. **PR 本文による合理化リスク**: PR 本文に「両者とも `gpu_detector.py` 周辺だから 1 PR レビューで完結できる」と書かれている。これを根拠に「条件も共通」と subagent が独断するリスク (Iron Law 1 違反パターン)
 4. **CLAUDE.md 同時更新**: CLAUDE.md は §GPU モード (#905) と §デバッグ (#906) の両方が更新されている。subagent は #905 用の更新箇所のみを受け入れ条件 4 項目目の verify として参照する必要あり
+5. **束ね PR 判定の Hybrid fallback**: `closingIssuesReferences` 空 (Iron Law 4) のため、subagent は SKILL.md Step 2 ケース B fallback (PR 本文 `Refs #(\d+)` 抽出: `gh pr view 915 --json body --jq '.body' | grep -oE '#[0-9]+' | sort -u`) で #905, #906 の 2 件を抽出してケース B と判定する必要あり。`closingIssuesReferences` 空を「単一 issue で 1:1」(ケース A) と誤判定しないか試す
 
 ## 検証環境情報
 

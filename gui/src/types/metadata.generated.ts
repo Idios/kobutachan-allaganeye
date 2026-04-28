@@ -46,6 +46,7 @@ export interface Metadata {
    */
   warnings?: MetadataWarning[];
   system_info?: SystemInfo;
+  brightness_samples?: BrightnessSamples;
 }
 /**
  * Parameters used by the detector when this metadata.json was produced.
@@ -171,4 +172,17 @@ export interface SystemInfo {
    * Snapshot of gpu_detector._VENDOR_PREFERENCE (currently ["nvidia","amd","intel"]).
    */
   vendor_preference: string[];
+}
+/**
+ * Pre-rendered Pass 1 brightness timeline (#569). The CLI writer caps `values` to ~512 entries via downsampling so the GUI complete screen can draw the SVG without recomputing. Optional at the root: pre-#569 metadata.json and detect cache hits skip the field; CompleteScreen falls back to a sample curve when missing.
+ */
+export interface BrightnessSamples {
+  /**
+   * Seconds represented by each `values[i]` (e.g. 25.0 means values[i] is the brightness at i * 25 seconds).
+   */
+  interval_s: number;
+  /**
+   * Average brightness (0-255) per sample, chronological. Length capped at 512 by the writer.
+   */
+  values: number[];
 }

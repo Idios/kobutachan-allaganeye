@@ -17,6 +17,7 @@ import type {
 } from './metadata.generated';
 
 export type {
+  BrightnessSamples,
   DetectionParams,
   Gap,
   MetadataWarning,

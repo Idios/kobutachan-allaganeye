@@ -164,6 +164,30 @@
   color: var(--ae-gold-bright);
 }
 
+/*
+ * #569 review Round 1 課題 2 — keyword colour-coding for the live log.
+ * The base `.logEntry` class keeps the dim default; the kind-specific
+ * modifiers override the body text colour so terminal "完了" rows stand
+ * out from routine progress and errors are visually impossible to miss.
+ * Time-stamp colours (`.logTime`/`.logTimeActive`) are left untouched
+ * so the most-recent-line indicator still works.
+ */
+.logEntry {
+  color: inherit;
+}
+
+.logEntryDone {
+  color: var(--ae-cyan-bright);
+}
+
+.logEntryError {
+  color: var(--ae-danger);
+}
+
+.logEntryWarn {
+  color: var(--ae-gold-bright);
+}
+
 .actions {
   display: flex;
   gap: 12px;

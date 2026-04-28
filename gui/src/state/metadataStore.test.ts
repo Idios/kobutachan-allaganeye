@@ -968,3 +968,88 @@ describe('useMetadataStore (#514 × #517 interaction)', () => {
     expect(useMetadataStore.getState().pendingDraft).not.toBeNull();
   });
 });
+
+// #589 — discardEdits action used by preview screen confirm-OK paths.
+
+describe('useMetadataStore.discardEdits (#589)', () => {
+  it('real mode: clears the on-disk draft and re-loads metadata.json (dirty=false)', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      get_metadata_mtime: 1700,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, {
+      name: 'edited-then-discarded',
+      edited: { start_time: 50, end_time: 800 },
+    });
+    expect(useMetadataStore.getState().dirty).toBe(true);
+
+    // After discard, the next load returns the original metadata, so the
+    // edit should disappear and dirty must reset.
+    invokeMock.mockClear();
+    configureInvoke({
+      load_metadata: validMetadata(),
+      get_metadata_mtime: 1900,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().discardEdits();
+
+    const state = useMetadataStore.getState();
+    expect(state.dirty).toBe(false);
+    expect(state.metadata?.matches[0].name).toBeUndefined();
+    expect(state.metadata?.matches[0].edited).toBeUndefined();
+    expect(state.loadedMtimeMs).toBe(1900);
+    // clearDraft is called BEFORE load so the trailing loadDraft() inside
+    // load() does not re-surface the discarded edits.
+    const calls = invokeMock.mock.calls.map((c) => c[0]);
+    const clearIdx = calls.indexOf('clear_draft');
+    const loadIdx = calls.indexOf('load_metadata');
+    expect(clearIdx).toBeGreaterThanOrEqual(0);
+    expect(loadIdx).toBeGreaterThanOrEqual(0);
+    expect(clearIdx).toBeLessThan(loadIdx);
+  });
+
+  it('sample mode: resets to the in-memory sample fixture (dirty=false)', async () => {
+    useMetadataStore.getState().loadSample();
+    // Mutate the sample to look "dirty"
+    useMetadataStore.getState().updateMatch(1, { name: 'sample-edit' });
+    expect(useMetadataStore.getState().dirty).toBe(true);
+
+    invokeMock.mockClear();
+    await useMetadataStore.getState().discardEdits();
+
+    const state = useMetadataStore.getState();
+    expect(state.dirty).toBe(false);
+    expect(state.filePath).toBeNull();
+    // No disk I/O in sample mode.
+    expect(invokeMock).not.toHaveBeenCalled();
+    // Sample fixture is restored — the previous name edit must be gone.
+    const target = state.metadata?.matches.find((m) => m.index === 1);
+    expect(target?.name).not.toBe('sample-edit');
+  });
+
+  it('real mode: tolerates clear_draft rejection and proceeds to load', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      get_metadata_mtime: 1700,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, { name: 'edit' });
+    expect(useMetadataStore.getState().dirty).toBe(true);
+
+    // Make clear_draft fail (e.g. file does not exist) — discardEdits must
+    // still complete the load and reset dirty.
+    configureInvoke({
+      load_metadata: validMetadata(),
+      get_metadata_mtime: 2000,
+      check_backup_exists: false,
+      clear_draft_error: new Error('ENOENT: draft missing'),
+    });
+    await useMetadataStore.getState().discardEdits();
+
+    expect(useMetadataStore.getState().dirty).toBe(false);
+    expect(useMetadataStore.getState().loadedMtimeMs).toBe(2000);
+  });
+});

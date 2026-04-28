@@ -91,6 +91,22 @@
   padding: 8px;
   background: var(--ae-bg-deep);
   border: var(--ae-panel-border);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+/*
+ * #587: cyan border when the IN pane is active, gold when OUT is active.
+ * Helps the user see at a glance which boundary they are editing —
+ * matches the cyan / gold motif used elsewhere for IN / OUT state.
+ */
+.paneActive[data-pane='in'] {
+  border-color: var(--ae-cyan);
+  box-shadow: 0 0 8px rgba(var(--ae-cyan-rgb), 0.15);
+}
+
+.paneActive[data-pane='out'] {
+  border-color: var(--ae-gold-bright);
+  box-shadow: 0 0 8px rgba(var(--ae-gold-rgb), 0.15);
 }
 
 .paneCaption {
@@ -200,6 +216,13 @@
   font-family: var(--ae-font-mono);
   font-size: 10px;
   cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+/* #587: hover feedback on the stepRow buttons. */
+.stepButton:hover:not(:disabled) {
+  background: rgba(var(--ae-gold-rgb), 0.1);
+  border-color: var(--ae-gold-bright);
 }
 
 /*

@@ -66,6 +66,7 @@ JSON Schema は writer 契約として strict (additional properties は受け�
 | `gaps` | array | ✓ | 試合間の空白区間列 (0 件可) | |
 | `warnings` | array | 新規書き込みは ✓ (デフォルト `[]`) / 読み込み時は欠落許容 | 構造化警告一覧 (#518) | 個々のエントリは §warnings 参照 |
 | `system_info` | object | 新規書き込みは ✓ / 読み込み時は欠落許容 (#591) | GPU vendor probe スナップショット | 後述 §system_info 参照 |
+| `brightness_samples` | object | 新規書き込みは Pass 1 が走った場合のみ ✓ / 読み込み時は欠落許容 (#569) | GUI complete 画面用の輝度タイムライン | 後述 §brightness_samples 参照 |
 
 ### `detection_params` オブジェクト
 
@@ -110,6 +111,23 @@ GPU vendor probe スナップショット。`probe_gpu_vendors()` の結果と�
 - `allaganeye split --from-metadata`: probe を実行し vendor_used = null (split 時点では vendor を選ばないため)
 
 GUI export 画面は `system_info.gpu_vendors_available` と `vendor_preference` を `select_h264_encoder_for_export` Tauri コマンドに渡し、`H264Encoder` enum (libx264 / NVENC / QSV / AMF) を解決する。`system_info` を持たない pre-#591 metadata.json は libx264 にフォールバックする。
+
+### `brightness_samples` オブジェクト (#569)
+
+GUI complete 画面の輝度タイムライン (`BrightnessTimeline` SVG) 用の事前計算済み輝度配列。Pass 1 のサンプリング結果 (timestamp → 平均輝度) を最大 512 点までダウンサンプルして埋め込む。GUI は metadata.json を読むだけでタイムラインを描画でき、`debug-brightness` を再実行する必要が無い。
+
+| フィールド | 型 | 必須 | 意味 |
+|---|---|---|---|
+| `interval_s` | number | ✓ | 配列の各要素が表す秒間隔 (例: `25.0` なら `values[i]` は `i * 25` 秒の輝度) |
+| `values` | array of number | ✓ | 平均輝度 (0-255 の float) を時系列順に並べたもの。最大 512 要素 |
+
+書き込みパス:
+
+- `allaganeye detect`: cache miss path で Pass 1 が走った場合に書き込む。cache hit / 空 (Pass 1 未実行) の場合はフィールド自体を省略 (`null` ではなく key 不在)
+- `allaganeye split <video>` (legacy): 同上。`run_split` 経由でも `brightness_callback` を渡せば書ける (#569 では detect コマンドのみ書き込み)
+- `allaganeye split --from-metadata`: 入力 metadata.json の値をそのまま転記 (再計算しない)
+
+GUI complete 画面は `metadata.brightness_samples?.values` を読み、欠落時はサンプルデータ (`buildSampleBrightness`) にフォールバックする。
 
 ### `Gap` オブジェクト (`gaps[]`)
 

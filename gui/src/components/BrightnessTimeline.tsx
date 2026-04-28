@@ -108,11 +108,25 @@ export function BrightnessTimeline({
         const x1 = (m.start_time / duration) * W;
         const x2 = (m.end_time / duration) * W;
         const isSel = m.index === selectedIndex;
+        const labelKind = m.type === 'fl_match' ? 'FL' : '不明';
+        // #587 a11y: each match block is interactive (click to select).
+        // tabIndex+role+aria-label make it keyboard-reachable and give
+        // axe a "button name" to satisfy. See docs/a11y-policy.md
+        // "scope policy" for the icon-only-button exception.
         return (
           <g
             key={m.index}
             className={styles.matchBlock}
             onClick={() => onSelectMatch?.(m.index)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onSelectMatch?.(m.index);
+              }
+            }}
+            tabIndex={0}
+            role="button"
+            aria-label={`match ${m.index} (${labelKind})`}
             data-testid={`match-block-${m.index}`}
           >
             <rect

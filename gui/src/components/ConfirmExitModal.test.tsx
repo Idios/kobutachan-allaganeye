@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { invokeMock, listenMock, unlistenSpy } = vi.hoisted(() => ({
@@ -133,5 +134,68 @@ describe('ConfirmExitModal', () => {
     );
     expect(killCalled).toBe(false);
     expect(exitCalled).toBe(false);
+  });
+
+  it('Escape dismisses the modal as if キャンセル was pressed (#587)', async () => {
+    let handler: () => void = () => undefined;
+    listenMock.mockImplementation(async (_: string, h: () => void) => {
+      handler = h;
+      return unlistenSpy;
+    });
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'is_process_running') return Promise.resolve(true);
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    render(<ConfirmExitModal />);
+    await waitFor(() => expect(listenMock).toHaveBeenCalled());
+    handler();
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).toBeInTheDocument(),
+    );
+    await userEvent.setup().keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    const killCalled = invokeMock.mock.calls.some(
+      (c) => c[0] === 'kill_tracked_processes',
+    );
+    expect(killCalled).toBe(false);
+  });
+
+  it('focus is trapped inside the panel while pending (#587)', async () => {
+    let handler: () => void = () => undefined;
+    listenMock.mockImplementation(async (_: string, h: () => void) => {
+      handler = h;
+      return unlistenSpy;
+    });
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'is_process_running') return Promise.resolve(true);
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    render(<ConfirmExitModal />);
+    await waitFor(() => expect(listenMock).toHaveBeenCalled());
+    handler();
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).toBeInTheDocument(),
+    );
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  it('has no axe violations when shown (#587)', async () => {
+    let handler: () => void = () => undefined;
+    listenMock.mockImplementation(async (_: string, h: () => void) => {
+      handler = h;
+      return unlistenSpy;
+    });
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'is_process_running') return Promise.resolve(true);
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    const { container } = render(<ConfirmExitModal />);
+    await waitFor(() => expect(listenMock).toHaveBeenCalled());
+    handler();
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).toBeInTheDocument(),
+    );
+    expect(await axe(container)).toHaveNoViolations();
   });
 });

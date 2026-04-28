@@ -12,9 +12,10 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { invokeMock, dialogOpenMock, listenMock } = vi.hoisted(() => ({
+const { invokeMock, dialogOpenMock, dialogAskMock, listenMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   dialogOpenMock: vi.fn(),
+  dialogAskMock: vi.fn(),
   listenMock: vi.fn(),
 }));
 
@@ -28,6 +29,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: dialogOpenMock,
+  ask: dialogAskMock,
 }));
 
 // #523: ConfirmExitModal subscribes to the Tauri event bus on mount. The
@@ -38,6 +40,16 @@ vi.mock('@tauri-apps/api/event', () => ({
     listenMock(...args);
     return Promise.resolve(() => undefined);
   },
+}));
+
+// #568: DropScreen subscribes to webview onDragDropEvent on mount. The
+// real getCurrentWebview() reaches into Tauri's native shim which is
+// absent under vitest; stub it to a no-op that returns a no-op
+// unsubscribe so the integration flow tests don't crash on mount.
+vi.mock('@tauri-apps/api/webview', () => ({
+  getCurrentWebview: () => ({
+    onDragDropEvent: vi.fn().mockResolvedValue(() => undefined),
+  }),
 }));
 
 import App from '../App';
@@ -130,6 +142,15 @@ function configureHappyInvoke() {
           duration_ms: 100,
         });
       }
+      // #569 -- Phase 2.5 detect
+      case 'start_detect': {
+        const a = args as { outputDir?: string } | undefined;
+        const out = a?.outputDir ?? 'C:/out';
+        return Promise.resolve({
+          metadata_path: `${out}/metadata.json`,
+          matches: 1,
+        });
+      }
       default:
         return Promise.resolve();
     }
@@ -139,6 +160,7 @@ function configureHappyInvoke() {
 beforeEach(() => {
   invokeMock.mockReset();
   dialogOpenMock.mockReset();
+  dialogAskMock.mockReset();
   useAppStateStore.getState().reset();
   useMetadataStore.getState().clear();
 });
@@ -177,24 +199,31 @@ describe('flow A2: [OK] from selected -> detecting', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /OK — 検知開始/ }));
-    expect(screen.getByTestId('detecting-screen')).toBeInTheDocument();
+    // #569: DetectingScreen now invokes start_detect on mount and
+    // navigates to complete when the promise resolves. We assert the
+    // selectedVideoPath landed before any awaits resolve, then wait
+    // for the full pipeline to settle (detecting transient may flush
+    // straight to complete in the mocked happy path).
     expect(useAppStateStore.getState().selectedVideoPath).toBe(
       'C:/videos/test.mkv',
     );
+    await waitFor(() => {
+      const screenName = useAppStateStore.getState().screen;
+      expect(['detecting', 'complete']).toContain(screenName);
+    });
   });
 });
 
 describe('flow A3: detecting auto-advances to complete', () => {
-  it('runs the dummy progress interval and ends at complete screen', () => {
-    vi.useFakeTimers();
+  it('start_detect promise resolution drives navigation to complete (#569)', async () => {
+    configureHappyInvoke();
     useAppStateStore.getState().setSelectedVideoPath('/x/video.mkv');
     useAppStateStore.getState().navigate('detecting');
     render(<App />);
     expect(screen.getByTestId('detecting-screen')).toBeInTheDocument();
-    act(() => {
-      vi.advanceTimersByTime(9000);
+    await waitFor(() => {
+      expect(useAppStateStore.getState().screen).toBe('complete');
     });
-    expect(useAppStateStore.getState().screen).toBe('complete');
     expect(useMetadataStore.getState().metadata).not.toBeNull();
   });
 });
@@ -234,7 +263,18 @@ describe('flow F: drop [キャンセル] clears selection', () => {
 });
 
 describe('flow G: detecting [中断] returns to drop', () => {
-  it('cancels the dummy detect and navigates to drop', () => {
+  it('cancel button transitions through cancelling -> cancelled -> drop (#569)', async () => {
+    // Make start_detect hang so the only termination path is the
+    // cancel button (otherwise the mocked happy path would auto-
+    // navigate to complete before we can click 中断).
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'start_detect') {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      return Promise.resolve();
+    });
     useAppStateStore.getState().setSelectedVideoPath('/x/video.mkv');
     useAppStateStore.getState().navigate('detecting');
     render(<App />);
@@ -242,7 +282,9 @@ describe('flow G: detecting [中断] returns to drop', () => {
     act(() => {
       fireEvent.click(screen.getByRole('button', { name: '中断' }));
     });
-    expect(useAppStateStore.getState().screen).toBe('drop');
+    await waitFor(() => {
+      expect(useAppStateStore.getState().screen).toBe('drop');
+    });
   });
 });
 
@@ -383,17 +425,13 @@ describe('flow J: restore (#516)', () => {
     useAppStateStore.getState().navigate('complete');
     render(<App />);
 
-    // Stub window.confirm to say OK
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    try {
-      const user = userEvent.setup();
-      await user.click(screen.getByRole('button', { name: '元に戻す' }));
-      await waitFor(() => {
-        expect(restoreInvoked).toBe(true);
-      });
-    } finally {
-      confirmSpy.mockRestore();
-    }
+    // RestoreButton uses plugin-dialog `ask` (Tauri 2 disables window.confirm).
+    dialogAskMock.mockResolvedValueOnce(true);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '元に戻す' }));
+    await waitFor(() => {
+      expect(restoreInvoked).toBe(true);
+    });
   });
 });
 

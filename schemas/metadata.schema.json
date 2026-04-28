@@ -70,6 +70,9 @@
     },
     "system_info": {
       "$ref": "#/$defs/SystemInfo"
+    },
+    "brightness_samples": {
+      "$ref": "#/$defs/BrightnessSamples"
     }
   },
   "$defs": {
@@ -273,6 +276,29 @@
           "type": "array",
           "items": {
             "type": "string"
+          }
+        }
+      }
+    },
+    "BrightnessSamples": {
+      "title": "BrightnessSamples",
+      "description": "Pre-rendered Pass 1 brightness timeline (#569). The CLI writer caps `values` to ~512 entries via downsampling so the GUI complete screen can draw the SVG without recomputing. Optional at the root: pre-#569 metadata.json and detect cache hits skip the field; CompleteScreen falls back to a sample curve when missing.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["interval_s", "values"],
+      "properties": {
+        "interval_s": {
+          "description": "Seconds represented by each `values[i]` (e.g. 25.0 means values[i] is the brightness at i * 25 seconds).",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "values": {
+          "description": "Average brightness (0-255) per sample, chronological. Length capped at 512 by the writer.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 255
           }
         }
       }

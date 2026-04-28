@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from allaganeye.commands.detect import run_detect
+from allaganeye.commands.split_matches import build_brightness_samples
 from allaganeye.config import SplitConfig
 from allaganeye.exceptions import DetectionError
 from allaganeye.video.detector import MatchBoundary
@@ -160,3 +161,140 @@ def test_detect_cache_hit_records_vendor_used_null(tmp_path, monkeypatch):
     info = payload["system_info"]
     assert info["gpu_vendor_used"] is None  # cache hit で detect していない
     assert info["gpu_vendors_available"] == ["intel"]
+
+
+# ---------------------------------------------------------------------------
+# #569 -- GUI integration: --progress-format json + brightness_samples
+# ---------------------------------------------------------------------------
+
+
+def test_build_brightness_samples_downsamples_to_target():
+    """`build_brightness_samples` should keep the array under the target."""
+    raw = {float(i): float(i % 256) for i in range(2048)}
+    out = build_brightness_samples(raw, target_samples=512)
+    assert out is not None
+    values = out["values"]
+    assert isinstance(values, list)
+    assert len(values) <= 512
+    # Stride must be deterministic and >= 1.
+    interval_s = out["interval_s"]
+    assert isinstance(interval_s, float)
+    assert interval_s >= 1.0
+
+
+def test_build_brightness_samples_returns_none_for_empty():
+    assert build_brightness_samples({}) is None
+
+
+def test_build_brightness_samples_preserves_order_and_values():
+    """Values must come out in timestamp order (sorted by key)."""
+    raw = {2.0: 50.0, 0.0: 10.0, 1.0: 30.0}
+    out = build_brightness_samples(raw, target_samples=10)
+    assert out is not None
+    assert out["values"] == [10.0, 30.0, 50.0]
+    assert out["interval_s"] == 1.0
+
+
+def test_detect_json_progress_emits_lifecycle_events(tmp_path, capsys):
+    """``--progress-format json`` produces start/probing/done JSON lines."""
+    probe, detect = _mock_detect_only(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with probe, detect:
+        run_detect(
+            Path("input.mp4"),
+            config,
+            quiet=False,
+            progress_format="json",
+        )
+
+    captured = capsys.readouterr().out
+    lines = [json.loads(line) for line in captured.splitlines() if line.strip()]
+    phases = [e["phase"] for e in lines]
+    # Always emits start (first) and done (last). probing fires after probe_video.
+    assert phases[0] == "start"
+    assert phases[-1] == "done"
+    assert "probing" in phases
+    # `done` must include the metadata path so the GUI can load_metadata.
+    done = next(e for e in lines if e["phase"] == "done")
+    assert done["metadata_path"].endswith("metadata.json")
+    assert done["matches"] == len(BOUNDARIES)
+
+
+def test_detect_json_progress_suppresses_human_text(tmp_path, capsys):
+    """json mode must not interleave ``Probing:`` / ``Metadata:`` with JSON.
+
+    The GUI's stdout parser scans line-by-line and skips non-JSON
+    lines, but a regression that puts a stray text line between two
+    JSON events would still confuse the eyeballed log view.
+    """
+    probe, detect = _mock_detect_only(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with probe, detect:
+        run_detect(
+            Path("input.mp4"),
+            config,
+            quiet=False,
+            progress_format="json",
+        )
+
+    captured = capsys.readouterr().out
+    for raw in captured.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        # Every non-blank stdout line must parse as JSON in json mode.
+        json.loads(line)
+
+
+def test_detect_text_mode_still_writes_human_status(tmp_path, capsys):
+    probe, detect = _mock_detect_only(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with probe, detect:
+        run_detect(
+            Path("input.mp4"),
+            config,
+            quiet=False,
+            progress_format="text",
+        )
+
+    captured = capsys.readouterr().out
+    assert "Probing:" in captured
+    assert "Metadata:" in captured
+
+
+def test_detect_writes_brightness_samples_when_callback_fires(tmp_path):
+    """When detection emits brightness, metadata.json carries the timeline."""
+
+    def _detect_with_brightness(*args, **kwargs):
+        cb = kwargs.get("brightness_callback")
+        if cb is not None:
+            # Synthesize a tiny brightness map that simulates Pass 1 output.
+            cb({0.0: 80.0, 1.0: 12.0, 2.0: 90.0, 3.0: 88.0})
+        return BOUNDARIES
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE_DETECT}._run_detection",
+            side_effect=_detect_with_brightness,
+        ),
+    ):
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
+    assert "brightness_samples" in payload
+    samples = payload["brightness_samples"]
+    assert samples["values"] == [80.0, 12.0, 90.0, 88.0]
+    assert samples["interval_s"] == 1.0
+
+
+def test_detect_omits_brightness_samples_when_callback_silent(tmp_path):
+    """No brightness data -> field is absent (don't write {values: []})."""
+    probe, detect = _mock_detect_only(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with probe, detect:
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
+    assert "brightness_samples" not in payload

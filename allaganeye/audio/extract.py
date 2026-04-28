@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from allaganeye.exceptions import VideoProcessingError
+from allaganeye.exceptions import STDERR_TAIL_BYTES, VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
 
 
@@ -60,7 +60,7 @@ def extract_pcm(
             context={
                 "command": " ".join(str(c) for c in cmd),
                 "return_code": proc.returncode,
-                "stderr_tail": stderr_text[-2000:],
+                "stderr_tail": stderr_text[-STDERR_TAIL_BYTES:],
             },
         )
 

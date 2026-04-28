@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import get_type_hints
+from typing import NotRequired, get_origin, get_type_hints
 
 from jsonschema import Draft202012Validator
 
@@ -61,9 +61,23 @@ def test_payload_validates_against_json_schema(tmp_path: Path):
 
 
 def test_payload_covers_required_typeddict_keys(tmp_path: Path):
-    """Every required Metadata key (i.e. not NotRequired) is populated."""
+    """Every required Metadata key (i.e. not NotRequired) is populated.
+
+    We can't rely on ``Metadata.__required_keys__`` because
+    ``from __future__ import annotations`` (emitted by
+    ``datamodel-code-generator``) stringifies every annotation; the
+    NotRequired markers are invisible to TypedDict's class-creation
+    introspection, so every key shows up as required at the class
+    level. Using ``get_type_hints`` re-resolves them to live ``typing``
+    objects and ``get_origin(NotRequired[T])`` then identifies the
+    optional keys correctly on Python 3.11+.
+    """
     hints = get_type_hints(Metadata, include_extras=True)
-    required = {key for key in hints if key in Metadata.__required_keys__}
+    required = {
+        key
+        for key, annotation in hints.items()
+        if get_origin(annotation) is not NotRequired
+    }
     payload = _build_payload(tmp_path)
     missing = required - set(payload.keys())
     assert not missing, f"required Metadata keys missing from payload: {missing}"

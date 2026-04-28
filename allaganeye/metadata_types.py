@@ -71,6 +71,15 @@ class SystemInfo(TypedDict):
     vendor_preference: list[str]
 
 
+class BrightnessSamples(TypedDict):
+    """
+    Pre-rendered Pass 1 brightness timeline (#569). The CLI writer caps `values` to ~512 entries via downsampling so the GUI complete screen can draw the SVG without recomputing. Optional at the root: pre-#569 metadata.json and detect cache hits skip the field; CompleteScreen falls back to a sample curve when missing.
+    """
+
+    interval_s: float
+    values: list[float]
+
+
 class Metadata(TypedDict):
     """
     metadata.json contract between allaganeye CLI and the L2a Tauri GUI (#463). Machine-readable source of truth (#612). The human-readable counterpart lives in docs/metadata-spec.md; refine-style semantic constraints (e.g. end_time >= start_time) are enforced by zod (GUI) and InputFileError checks (CLI), not by this schema.
@@ -87,3 +96,4 @@ class Metadata(TypedDict):
     gaps: list[Gap]
     warnings: NotRequired[list[MetadataWarning]]
     system_info: NotRequired[SystemInfo]
+    brightness_samples: NotRequired[BrightnessSamples]

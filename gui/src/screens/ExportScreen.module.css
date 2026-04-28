@@ -137,6 +137,13 @@
   font-size: 11px;
   cursor: pointer;
   text-align: left;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+/* #587: hover lift on the codec selector buttons. */
+.codecButton:hover:not(:disabled) {
+  background: rgba(var(--ae-gold-rgb), 0.06);
+  border-color: var(--ae-gold-bright);
 }
 
 .codecButtonActive {

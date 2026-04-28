@@ -1053,3 +1053,120 @@ def test_split_from_metadata_missing_file_exits_with_input_file_error(tmp_path):
         app, ["split", "--from-metadata", str(tmp_path / "nope.json")]
     )
     assert result.exit_code == 2  # InputFileError
+
+
+# --- single-dash long-option hint (#440) ---
+
+
+def test_suggest_long_option_hint_matches_top_level():
+    """``-version`` argv -> suggest ``--version`` (top-level option, #440)."""
+    from allaganeye.cli import _suggest_long_option_hint
+
+    assert _suggest_long_option_hint(["-version"]) == "--version"
+
+
+def test_suggest_long_option_hint_matches_subcommand_option():
+    """``-gpu`` argv -> suggest ``--gpu`` (subcommand-only option, #440).
+
+    Subcommand options like ``--gpu`` belong to ``split`` / ``detect``,
+    not the top-level group, so the helper must walk subcommands too.
+    """
+    from allaganeye.cli import _suggest_long_option_hint
+
+    assert _suggest_long_option_hint(["split", "-gpu"]) == "--gpu"
+
+
+def test_suggest_long_option_hint_skips_real_short_flag():
+    """``-V`` (real short alias, len 1) must NOT be treated as a typo (#440)."""
+    from allaganeye.cli import _suggest_long_option_hint
+
+    assert _suggest_long_option_hint(["-V"]) is None
+    assert _suggest_long_option_hint(["-v"]) is None
+
+
+def test_suggest_long_option_hint_skips_double_dash():
+    """``--version`` is already correct, return ``None`` (#440)."""
+    from allaganeye.cli import _suggest_long_option_hint
+
+    assert _suggest_long_option_hint(["--version"]) is None
+
+
+def test_suggest_long_option_hint_skips_unknown_token():
+    """``-xyz`` where ``--xyz`` isn't a real option -> no misleading hint (#440)."""
+    from allaganeye.cli import _suggest_long_option_hint
+
+    assert _suggest_long_option_hint(["-xyz"]) is None
+
+
+def test_suggest_long_option_hint_empty_argv():
+    """Empty argv -> ``None`` (defensive, #440)."""
+    from allaganeye.cli import _suggest_long_option_hint
+
+    assert _suggest_long_option_hint([]) is None
+
+
+def test_main_emits_hint_for_single_dash_version(monkeypatch, capsys):
+    """``allaganeye -version`` triggers ``Did you mean --version?`` (#440)."""
+    from allaganeye.cli import main
+
+    monkeypatch.setattr("sys.argv", ["allaganeye", "-version"])
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+    assert excinfo.value.code != 0
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "Did you mean --version?" in combined
+
+
+def test_main_emits_hint_for_single_dash_help(monkeypatch, capsys):
+    """``allaganeye -help`` triggers ``Did you mean --help?`` (#440)."""
+    from allaganeye.cli import main
+
+    monkeypatch.setattr("sys.argv", ["allaganeye", "-help"])
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+    assert excinfo.value.code != 0
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "Did you mean --help?" in combined
+
+
+def test_main_no_hint_when_double_dash_correct(monkeypatch, capsys):
+    """``--version`` works normally without spurious hint (#440 regression guard)."""
+    from allaganeye.cli import main
+
+    monkeypatch.setattr("sys.argv", ["allaganeye", "--version"])
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+    assert excinfo.value.code == 0
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "Did you mean" not in combined
+    assert "allaganeye" in combined  # version output present
+
+
+def test_main_short_alias_unchanged(monkeypatch, capsys):
+    """``-V`` short alias still prints version, no hint emitted (#440 regression guard)."""
+    from allaganeye.cli import main
+
+    monkeypatch.setattr("sys.argv", ["allaganeye", "-V"])
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+    assert excinfo.value.code == 0
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "Did you mean" not in combined
+    assert "allaganeye" in combined
+
+
+def test_main_no_misleading_hint_for_unrelated_typo(monkeypatch, capsys):
+    """``-xyz`` (no matching long option) prints click error WITHOUT a hint (#440)."""
+    from allaganeye.cli import main
+
+    monkeypatch.setattr("sys.argv", ["allaganeye", "-xyz"])
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+    assert excinfo.value.code != 0
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "Did you mean" not in combined

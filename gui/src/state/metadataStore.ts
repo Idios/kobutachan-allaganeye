@@ -101,6 +101,20 @@ export interface MetadataState {
   /** #517: drop `pendingDraft` and delete the on-disk draft file. */
   discardDraft: () => Promise<void>;
 
+  /**
+   * #589: drop in-memory edits and reset the store to the last persisted state.
+   * Used by preview screen `[◀ 一覧へ]` / `[書き出し →]` confirm-OK paths
+   * (silent loss prevention per ui-interaction-spec.md §1.3).
+   *
+   * Real mode (`filePath` あり): cancel any pending draft auto-save, drop the
+   * on-disk draft so the next `load()` does not re-surface it as
+   * `pendingDraft`, then re-load metadata.json. `dirty` becomes false.
+   *
+   * Sample mode (`filePath === null`): no disk to reload from — reset to the
+   * sample fixture so the next preview re-entry sees pristine values.
+   */
+  discardEdits: () => Promise<void>;
+
   /** Phase 2 only: load the in-memory sample metadata (no filePath set). */
   loadSample: () => void;
 }
@@ -431,6 +445,23 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
 
   discardDraft: async () => {
     await get().clearDraft();
+  },
+
+  discardEdits: async () => {
+    const { filePath } = get();
+    cancelDraftSave();
+    if (filePath) {
+      // #589: drop the on-disk draft first so the trailing loadDraft() inside
+      // load() does not re-surface the discarded edits as pendingDraft.
+      try {
+        await get().clearDraft();
+      } catch {
+        // draft may not exist; the subsequent load() is the source of truth
+      }
+      await get().load(filePath);
+    } else {
+      get().loadSample();
+    }
   },
 
   loadSample: () => {
