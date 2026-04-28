@@ -111,6 +111,81 @@ def test_run_split_from_metadata_skips_detection(tmp_path):
     assert [b["end"] for b in boundaries_arg] == [600.0, 1200.0]
 
 
+def test_run_split_from_metadata_preserves_detection_timestamps(tmp_path):
+    """post-#586 metadata では元の started/completed が保持される (Round 1 #586).
+
+    `--from-metadata` は再検知しないので、GUI「所要」表示が「検知時の所要」
+    を維持し続けるよう、元 metadata の detection_started_at /
+    detection_completed_at を pass-through する。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    payload = {
+        **_sample_metadata(str(source)),
+        "detection_started_at": "2026-04-22T00:00:00Z",
+        "detection_completed_at": "2026-04-22T00:04:27Z",
+    }
+    meta_path = _write_metadata(tmp_path, payload)
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                tmp_path / "out" / "match_001.mp4",
+                tmp_path / "out" / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    out_meta = tmp_path / "out" / "metadata.json"
+    fresh = json.loads(out_meta.read_text("utf-8"))
+    # 元の started/completed がそのまま再書き込みされる。
+    assert fresh["detection_started_at"] == "2026-04-22T00:00:00Z"
+    assert fresh["detection_completed_at"] == "2026-04-22T00:04:27Z"
+
+
+def test_run_split_from_metadata_legacy_falls_back_to_fresh_capture(tmp_path):
+    """pre-#586 metadata (両フィールド欠落) では fresh capture で fallback.
+
+    legacy metadata.json (#586 以前に生成) には detection_started_at /
+    detection_completed_at が無い。後方互換のため、_split_and_write_metadata
+    の None fallback (started=detected_at / completed=_iso_utc_now()) で
+    新規値を埋め、再書き込み後の metadata は post-#586 形式になる。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    # _sample_metadata は detection_started_at / completed_at を含めない =
+    # legacy 状態。detected_at だけある。
+    payload = _sample_metadata(str(source))
+    assert "detection_started_at" not in payload
+    assert "detection_completed_at" not in payload
+    meta_path = _write_metadata(tmp_path, payload)
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                tmp_path / "out" / "match_001.mp4",
+                tmp_path / "out" / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    out_meta = tmp_path / "out" / "metadata.json"
+    fresh = json.loads(out_meta.read_text("utf-8"))
+    # fallback: started = detected_at の値、completed = writer 直前の
+    # _iso_utc_now() (= 'Z' 終端 + parseable)。
+    assert fresh["detection_started_at"] == fresh["detected_at"]
+    completed_at = fresh["detection_completed_at"]
+    assert isinstance(completed_at, str) and completed_at.endswith("Z")
+
+
 def test_run_split_from_metadata_rewrites_metadata_without_note(tmp_path):
     source = tmp_path / "input.mp4"
     source.write_bytes(b"")

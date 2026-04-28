@@ -30,7 +30,8 @@ def format_duration(seconds: float) -> str:
 def iso_utc_now() -> str:
     """UTC timestamp in ISO 8601 with 'Z' suffix, e.g. '2026-04-19T12:34:56Z'.
 
-    Used for metadata.json ``detected_at`` (#370).  Second precision keeps the
+    Used for metadata.json ``detected_at`` / ``detection_started_at`` /
+    ``detection_completed_at`` (#370 / #586). Second precision keeps the
     string human-readable without losing practical reproducibility.
     """
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
