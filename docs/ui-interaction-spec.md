@@ -155,15 +155,15 @@
 | store mutation | probe 成功時のみ `appStateStore.setSelectedVideoPath(path)` (この時点ではまだ呼ばれない、§2.1.6 [OK] で発火) |
 | 例外 / edge case | 1.2 disabled 理由: selecting 中は `(選択中)` inline テキスト ([:155](../gui/src/screens/DropScreen.tsx#L155))、probing 中は `(解析中)` ([:156](../gui/src/screens/DropScreen.tsx#L156)) を併記。**現状 tooltip は未実装** — §1.2 準拠として `aria-describedby` + `title` を後続 PR で追加 (本 doc が source of truth) |
 
-#### §2.1.3 直近の録画 list
+#### §2.1.3 直近の録画 list (#571)
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | list (各 item は読み取り専用 row、Phase 3 で click ハンドラ追加予定) |
-| 状態 | `idle` / `hover` (Phase 3、装飾のみ) / `disabled` (phase=`selecting/probing/selected/probeError` 時は item click を無効化) |
-| 遷移トリガー | Phase 3: row `onClick` → 既存 metadata.json 検索 → `setSelectedVideoPath(item.path)` + `navigate('detecting')` (※ probe スキップ — 直近の録画は metadata 既存前提) |
-| store mutation | Phase 3: `appStateStore.setSelectedVideoPath` + `navigate('detecting')` |
-| 例外 / edge case | item の物理ファイルが移動・削除されている場合は item に「ファイルが見つかりません」inline error + 削除リンク表示。**Phase 3 (TBD)**: 現状は `RECENT_DUMMY` 定数 ([:12-16](../gui/src/screens/DropScreen.tsx#L12)) の 3 行 dummy 表示のみで click 未配線 |
+| 種類 | list (各 item は `<button>`、`recentStore.entries` から render) |
+| 状態 | `idle` (phase=`idle`) / `disabled` (phase=`selecting/probing/selected/probeError`) / `missing` (item の物理ファイル不在、grayed-out + 取消線) |
+| 遷移トリガー | `onClick` → `selectRecent(item)` → reducer `RECENT_PICKED` (phase=`idle → probing`) → `probeAndDispatch(item.path)`。drop と同じ probe 経路を辿るので、metadata 不整合 / 解像度差異もそこで再評価される |
+| store mutation | mount 時に `recentStore.load()` で `~/.allaganeye/recent.json` をロード。probe 成功時に `recentStore.add(path)` で履歴更新 (重複は最新化、最大 10 件)。click→probe 成功で `appStateStore.setSelectedVideoPath` (§2.1.6 [OK] と同じ経路、SelectedCard 経由で確認) |
+| 例外 / edge case | (1) 履歴ゼロ件: 「履歴はまだありません」placeholder ([recent-empty](../gui/src/screens/DropScreen.tsx))。(2) ファイル不在 (`exists=false`): grayed-out + 取消線 (`recentItemMissing`)、click で `recent-missing-notice` を 5s 表示 (probe 走らない)。(3) `recent.json` 破損: 空配列扱い (`read_recent_sync` が `unwrap_or_default`、Rust 側)。(4) 同 path 再選択: dedup でトップに移動 + mtime / addedAt 更新 (Windows は case-insensitive 比較) |
 
 #### §2.1.4 SelectedCard (probe 結果カード)
 

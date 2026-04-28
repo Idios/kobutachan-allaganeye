@@ -9,20 +9,45 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 
 // #465 review (B): DropScreen の default probeFn は Tauri `probe_video`
 // command を invoke する。テスト環境では Tauri runtime がないので、
-// `invoke('probe_video', ...)` をデフォルトで成功させる mock を入れる。
-// 個別 test で override したい場合は `probeFn` props を渡す。
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn().mockResolvedValue({
-    path: 'C:/videos/x.mkv',
-    fileName: 'x.mkv',
-    sizeBytes: 38 * 1024 * 1024 * 1024,
-    durationSeconds: 10228.735,
-    width: 1920,
-    height: 1080,
-    fps: 60,
-    codec: 'h264',
-  }),
+// `invoke` を command 名でディスパッチする mock を入れる。`probe_video`
+// をデフォルトで成功させ、`read_recent` (#571) は空配列、`add_recent`
+// (#571) は no-op で空配列を返す。個別 test で override したい場合は
+// `probeFn` props を渡すか、後述の `invokeMock.mockImplementation*Once` で。
+const { invokeMock } = vi.hoisted(() => ({
+  invokeMock: vi.fn(),
 }));
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: invokeMock,
+}));
+
+const PROBE_FIXTURE = {
+  path: 'C:/videos/x.mkv',
+  fileName: 'x.mkv',
+  sizeBytes: 38 * 1024 * 1024 * 1024,
+  durationSeconds: 10228.735,
+  width: 1920,
+  height: 1080,
+  fps: 60,
+  codec: 'h264',
+};
+
+function defaultInvokeImpl(cmd: string): Promise<unknown> {
+  switch (cmd) {
+    case 'probe_video':
+      return Promise.resolve(PROBE_FIXTURE);
+    case 'read_recent':
+      // Empty history by default — tests that need entries override per-test.
+      return Promise.resolve([]);
+    case 'add_recent':
+      // The drop-screen flow calls this fire-and-forget after a successful
+      // probe. We resolve with the synthetic single-entry list so the call
+      // is observable but doesn't disturb the in-memory store.
+      return Promise.resolve([]);
+    default:
+      return Promise.resolve(null);
+  }
+}
 
 // #568: DropScreen の default dragSubscriber は
 // `getCurrentWebview().onDragDropEvent` を呼ぶ。jsdom 上で安全に
@@ -36,6 +61,7 @@ vi.mock('@tauri-apps/api/webview', () => ({
 
 import { DropScreen, type TauriDragDropEvent } from './DropScreen';
 import { useAppStateStore } from '../state/appStateStore';
+import { useRecentStore } from '../state/recentStore';
 import type { VideoProbeInfo } from './types';
 
 function createMockDragSubscriber() {
@@ -54,7 +80,10 @@ function createMockDragSubscriber() {
 }
 
 beforeEach(() => {
+  invokeMock.mockReset();
+  invokeMock.mockImplementation(defaultInvokeImpl);
   useAppStateStore.getState().reset();
+  useRecentStore.getState().reset();
 });
 
 describe('DropScreen', () => {
@@ -65,9 +94,14 @@ describe('DropScreen', () => {
     expect(screen.getByRole('button', { name: /参照/ })).toBeInTheDocument();
   });
 
-  it('shows dummy recent recordings list in idle state', () => {
+  // #571: replaces the old "shows dummy recent recordings" test.
+  // RECENT_DUMMY is gone; the list is driven by the recentStore.
+  it('shows the empty-history placeholder when recent.json is empty (#571)', async () => {
     render(<DropScreen />);
-    expect(screen.getByText(/2026-04-08 21-14-05.mkv/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId('recent-empty')).toBeInTheDocument();
+    });
+    expect(screen.getByText('履歴はまだありません')).toBeInTheDocument();
   });
 
   it('flows idle -> selecting -> probing -> selected on [参照…]', async () => {
@@ -499,6 +533,164 @@ describe('DropScreen', () => {
       expect(zone.dataset.dragState).toBe('over-valid');
       fireEvent.dragLeave(zone);
       expect(zone.dataset.dragState).toBe('idle');
+    });
+  });
+
+  // #571: recent-videos history (RECENT_DUMMY → recent.json + Tauri commands).
+  describe('recent list (#571)', () => {
+    function recentEntry(
+      path: string,
+      fileName: string,
+      exists = true,
+      mtimeMs = 1_700_000_000_000,
+    ) {
+      return {
+        path,
+        fileName,
+        sizeBytes: 38 * 1024 * 1024 * 1024,
+        mtimeMs,
+        addedAtMs: mtimeMs,
+        exists,
+      };
+    }
+
+    it('hydrates the list from read_recent on mount', async () => {
+      invokeMock.mockImplementation((cmd: string) => {
+        if (cmd === 'read_recent') {
+          return Promise.resolve([
+            recentEntry('E:/videos/a.mkv', 'a.mkv'),
+            recentEntry('E:/videos/b.mkv', 'b.mkv'),
+          ]);
+        }
+        return defaultInvokeImpl(cmd);
+      });
+      render(<DropScreen />);
+      await waitFor(() => {
+        expect(screen.getAllByTestId('recent-item')).toHaveLength(2);
+      });
+      expect(screen.getByText('a.mkv')).toBeInTheDocument();
+      expect(screen.getByText('b.mkv')).toBeInTheDocument();
+      // The empty placeholder must be gone once entries arrived.
+      expect(screen.queryByTestId('recent-empty')).toBeNull();
+    });
+
+    it('clicking a present recent item probes and shows the SelectedCard', async () => {
+      invokeMock.mockImplementation((cmd: string) => {
+        if (cmd === 'read_recent') {
+          return Promise.resolve([recentEntry('E:/videos/a.mkv', 'a.mkv')]);
+        }
+        return defaultInvokeImpl(cmd);
+      });
+      const probeFn = vi.fn().mockResolvedValue({
+        path: 'E:/videos/a.mkv',
+        fileName: 'a.mkv',
+        sizeBytes: 1,
+        durationSeconds: 1,
+        width: 1920,
+        height: 1080,
+        fps: 60,
+        codec: 'h264',
+      });
+      render(<DropScreen probeFn={probeFn} />);
+      const user = userEvent.setup();
+      const item = await screen.findByRole('button', {
+        name: /直近の録画 a.mkv/,
+      });
+      await user.click(item);
+      await waitFor(() => {
+        expect(screen.getByTestId('drop-selected-card')).toBeInTheDocument();
+      });
+      expect(probeFn).toHaveBeenCalledWith('E:/videos/a.mkv');
+    });
+
+    it('clicking a missing recent item shows a warning notice instead of probing', async () => {
+      invokeMock.mockImplementation((cmd: string) => {
+        if (cmd === 'read_recent') {
+          return Promise.resolve([
+            recentEntry('E:/videos/ghost.mkv', 'ghost.mkv', false),
+          ]);
+        }
+        return defaultInvokeImpl(cmd);
+      });
+      const probeFn = vi.fn();
+      render(<DropScreen probeFn={probeFn} />);
+      const user = userEvent.setup();
+      const item = await screen.findByRole('button', {
+        name: /直近の録画 ghost.mkv/,
+      });
+      expect(item.dataset.missing).toBe('true');
+      await user.click(item);
+      // Notice surfaces, but we never advance to selected and never call probe.
+      const notice = await screen.findByTestId('recent-missing-notice');
+      expect(notice).toHaveTextContent('ghost.mkv');
+      expect(screen.getByTestId('drop-screen').dataset.phase).toBe('idle');
+      expect(probeFn).not.toHaveBeenCalled();
+    });
+
+    it('persists to add_recent after a successful probe via [参照…]', async () => {
+      const openDialog = vi.fn().mockResolvedValue('C:/videos/x.mkv');
+      render(<DropScreen openDialogFn={openDialog} />);
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: /参照/ }));
+      await waitFor(() => {
+        expect(screen.getByTestId('drop-selected-card')).toBeInTheDocument();
+      });
+      // The probe_video result above has path='C:/videos/x.mkv'; add_recent
+      // should be called with that exact path.
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith('add_recent', {
+          path: 'C:/videos/x.mkv',
+        });
+      });
+    });
+
+    it('does not call add_recent when the probe fails', async () => {
+      const openDialog = vi.fn().mockResolvedValue('C:/videos/x.mkv');
+      const probeFn = vi.fn().mockRejectedValue(new Error('bad file'));
+      render(<DropScreen openDialogFn={openDialog} probeFn={probeFn} />);
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: /参照/ }));
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toBeInTheDocument();
+      });
+      // No add_recent call must have been made — only read_recent at mount.
+      const addCalls = invokeMock.mock.calls.filter(
+        (c) => c[0] === 'add_recent',
+      );
+      expect(addCalls).toHaveLength(0);
+    });
+
+    it('renders missing recent items with a strike-through name and aria hint', async () => {
+      invokeMock.mockImplementation((cmd: string) => {
+        if (cmd === 'read_recent') {
+          return Promise.resolve([
+            recentEntry('E:/videos/ghost.mkv', 'ghost.mkv', false),
+          ]);
+        }
+        return defaultInvokeImpl(cmd);
+      });
+      render(<DropScreen />);
+      const item = await screen.findByRole('button', {
+        name: /ghost.mkv \(ファイルが見つかりません\)/,
+      });
+      expect(item.dataset.missing).toBe('true');
+    });
+
+    it('idle screen with recent entries has no axe violations', async () => {
+      invokeMock.mockImplementation((cmd: string) => {
+        if (cmd === 'read_recent') {
+          return Promise.resolve([
+            recentEntry('E:/videos/a.mkv', 'a.mkv'),
+            recentEntry('E:/videos/missing.mkv', 'missing.mkv', false),
+          ]);
+        }
+        return defaultInvokeImpl(cmd);
+      });
+      const { container } = render(<DropScreen />);
+      await waitFor(() => {
+        expect(screen.getAllByTestId('recent-item')).toHaveLength(2);
+      });
+      expect(await axe(container)).toHaveNoViolations();
     });
   });
 });

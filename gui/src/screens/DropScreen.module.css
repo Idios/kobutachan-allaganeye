@@ -159,6 +159,61 @@
   color: var(--ae-text-dim);
 }
 
+/*
+ * #571: recent-list interactivity. The persisted entries are rendered as
+ * <button> elements (one per row) so they're keyboard-accessible and pick
+ * up :focus-visible from the global a11y polish (#587). The button styling
+ * keeps the row layout from `.recentItem` while removing the default form
+ * affordances (background, border).
+ */
+.recentItemButton {
+  width: 100%;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.recentItemButton:hover:not(:disabled):not(.recentItemMissing) {
+  background: rgba(var(--ae-gold-rgb), 0.06);
+}
+
+.recentItemButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+/* Greyed-out state when the underlying file is missing — still clickable
+   so we can surface a "file not found" notice, but the visual cue tells
+   the user not to expect the click to load anything. */
+.recentItemMissing {
+  opacity: 0.45;
+  cursor: help;
+}
+
+.recentItemMissing .recentName {
+  text-decoration: line-through;
+}
+
+.recentEmpty {
+  padding: 12px;
+  font-family: var(--ae-font-body);
+  font-size: 11px;
+  color: var(--ae-text-dim);
+  text-align: center;
+}
+
+.recentMissingNotice {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--ae-danger);
+  background: rgba(200, 112, 88, 0.08);
+  font-family: var(--ae-font-body);
+  font-size: 11px;
+  color: var(--ae-danger);
+  text-align: center;
+}
+
 .selectedCard {
   width: 78%;
   background: var(--ae-bg-deep);

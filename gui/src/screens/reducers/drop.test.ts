@@ -11,6 +11,12 @@ describe('dropReducer', () => {
     expect(dropReducer('idle', { type: 'DND_DROPPED' })).toBe('probing');
   });
 
+  // #571: clicking a recent-list item also goes idle -> probing, but via a
+  // dedicated event so the reducer stays self-documenting.
+  it('goes idle -> probing on RECENT_PICKED (#571)', () => {
+    expect(dropReducer('idle', { type: 'RECENT_PICKED' })).toBe('probing');
+  });
+
   it('goes selecting -> idle on DIALOG_CANCELLED', () => {
     expect(dropReducer('selecting', { type: 'DIALOG_CANCELLED' })).toBe('idle');
   });

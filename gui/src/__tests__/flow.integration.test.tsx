@@ -55,6 +55,7 @@ vi.mock('@tauri-apps/api/webview', () => ({
 import App from '../App';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
+import { useRecentStore } from '../state/recentStore';
 
 /**
  * Shared invoke dispatcher used when tests don't need per-command overrides.
@@ -151,6 +152,15 @@ function configureHappyInvoke() {
           matches: 1,
         });
       }
+      // #571 -- recent.json history. Default is empty so the integration
+      // flow tests don't show a populated list; the persisted entry after
+      // a probe is harmless to assert as resolved.
+      case 'read_recent':
+        return Promise.resolve([]);
+      case 'add_recent':
+        return Promise.resolve([]);
+      case 'clear_recent':
+        return Promise.resolve();
       default:
         return Promise.resolve();
     }
@@ -163,6 +173,9 @@ beforeEach(() => {
   dialogAskMock.mockReset();
   useAppStateStore.getState().reset();
   useMetadataStore.getState().clear();
+  // #571: in-memory store reset so each integration test starts with a
+  // clean recent list; the disk-side mock returns [] above.
+  useRecentStore.getState().reset();
 });
 
 afterEach(() => {

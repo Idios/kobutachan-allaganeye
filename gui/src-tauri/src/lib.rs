@@ -215,6 +215,181 @@ async fn check_backup_exists(path: String) -> Result<bool, String> {
     Ok(parent.join("metadata.original.json").exists())
 }
 
+/// #571 — single entry of the recent-videos history persisted at
+/// `<home>/.allaganeye/recent.json`.
+///
+/// `path` is the absolute file path with the Windows extended-length `\\?\`
+/// prefix already stripped (see `setSelectedVideoPath` on the TS side).
+/// `mtime_ms` is the file's last-modified timestamp at insert time; the GUI
+/// uses it to decide whether the cached `recent.json` entry still points at
+/// the same content (subsequent edits to the same path bump mtime). The GUI
+/// re-checks `Path::exists` on every load so deleted files are surfaced as
+/// "not found" without us having to prune them eagerly.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RecentEntry {
+    pub path: String,
+    #[serde(rename = "fileName")]
+    pub file_name: String,
+    #[serde(rename = "sizeBytes")]
+    pub size_bytes: u64,
+    #[serde(rename = "mtimeMs")]
+    pub mtime_ms: u64,
+    #[serde(rename = "addedAtMs")]
+    pub added_at_ms: u64,
+}
+
+/// #571 — read_recent / add_recent return type. Wraps the persisted
+/// `RecentEntry` with a freshly-evaluated `exists` flag so the GUI can grey
+/// out items whose underlying file has been moved or deleted between drops.
+/// We keep `exists` out of the on-disk struct because it's an observation,
+/// not state — recomputing it on every load avoids the cache going stale.
+#[derive(Debug, Clone, Serialize)]
+pub struct RecentEntryView {
+    #[serde(flatten)]
+    pub entry: RecentEntry,
+    pub exists: bool,
+}
+
+const RECENT_LIMIT: usize = 10;
+
+/// #571 — resolve `<home>/.allaganeye/recent.json` without creating it.
+fn recent_path() -> Result<PathBuf, String> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| "failed to resolve user home directory".to_string())?;
+    Ok(home.join(".allaganeye").join("recent.json"))
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// #571 — load the persisted history. Returns an empty vec when the file is
+/// missing (fresh install) or when the JSON cannot be parsed (treat corrupt
+/// state as empty rather than blocking the drop screen).
+fn read_recent_sync(path: &Path) -> Vec<RecentEntry> {
+    if !path.exists() {
+        return Vec::new();
+    }
+    let Ok(content) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<RecentEntry>>(&content).unwrap_or_default()
+}
+
+/// #571 — push `entry` to the front of the history, dedup by `path`, and
+/// truncate to `RECENT_LIMIT`. Returns the post-write list so the caller
+/// (Zustand store) can mirror it without an extra `read_recent` round trip.
+fn add_recent_sync(path: &Path, entry: RecentEntry) -> Result<Vec<RecentEntry>, String> {
+    let mut list = read_recent_sync(path);
+    // Dedup: drop any prior occurrence of the same path (case-insensitive on
+    // Windows where the platform itself is case-insensitive). The drop happens
+    // before we push so the new entry's mtime / addedAt overwrite the stale
+    // ones — selecting an existing recent moves it to the top with refreshed
+    // metadata.
+    let key = entry.path.to_lowercase();
+    list.retain(|e| e.path.to_lowercase() != key);
+    list.insert(0, entry);
+    list.truncate(RECENT_LIMIT);
+    write_recent_atomic(path, &list)?;
+    Ok(list)
+}
+
+/// #571 — wipe the history (used by the GUI's "履歴をクリア" affordance and
+/// by tests). Treats "file already absent" as success so callers don't have
+/// to special-case the fresh-install state.
+fn clear_recent_sync(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    fs::remove_file(path)
+        .map_err(|e| format!("remove recent.json failed ({}): {}", path.display(), e))
+}
+
+fn write_recent_atomic(path: &Path, list: &[RecentEntry]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("recent path has no parent: {}", path.display()))?;
+    if !parent.exists() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("create dir {} failed: {}", parent.display(), e))?;
+    }
+    let mut tmp_path = path.to_path_buf();
+    let tmp_name = match path.file_name() {
+        Some(n) => format!("{}.tmp", n.to_string_lossy()),
+        None => return Err(format!("recent path has no file name: {}", path.display())),
+    };
+    tmp_path.set_file_name(tmp_name);
+    let serialized = serde_json::to_string_pretty(list)
+        .map_err(|e| format!("serialize recent failed: {}", e))?;
+    fs::write(&tmp_path, serialized)
+        .map_err(|e| format!("write tmp {} failed: {}", tmp_path.display(), e))?;
+    if let Err(e) = fs::rename(&tmp_path, path) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(format!(
+            "rename {} -> {} failed: {}",
+            tmp_path.display(),
+            path.display(),
+            e
+        ));
+    }
+    Ok(())
+}
+
+/// #571 — decorate persisted entries with `exists` so the GUI can grey out
+/// missing files. `Path::exists()` is cheap on Windows for local paths but
+/// we still cap the list at `RECENT_LIMIT` so cost stays O(constant).
+fn with_existence(entries: Vec<RecentEntry>) -> Vec<RecentEntryView> {
+    entries
+        .into_iter()
+        .map(|e| {
+            let exists = Path::new(&e.path).exists();
+            RecentEntryView { entry: e, exists }
+        })
+        .collect()
+}
+
+#[tauri::command]
+async fn read_recent() -> Result<Vec<RecentEntryView>, String> {
+    Ok(with_existence(read_recent_sync(&recent_path()?)))
+}
+
+#[tauri::command]
+async fn add_recent(path: String) -> Result<Vec<RecentEntryView>, String> {
+    let video_path = PathBuf::from(&path);
+    if !video_path.exists() {
+        return Err(format!("file not found: {}", video_path.display()));
+    }
+    let meta = fs::metadata(&video_path)
+        .map_err(|e| format!("stat failed ({}): {}", video_path.display(), e))?;
+    let size_bytes = meta.len();
+    let mtime_ms = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let file_name = video_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.clone());
+    let entry = RecentEntry {
+        path,
+        file_name,
+        size_bytes,
+        mtime_ms,
+        added_at_ms: now_ms(),
+    };
+    Ok(with_existence(add_recent_sync(&recent_path()?, entry)?))
+}
+
+#[tauri::command]
+async fn clear_recent() -> Result<(), String> {
+    clear_recent_sync(&recent_path()?)
+}
+
 /// #465 -- register a video file with the local HTTP server and return a
 /// playback URL for the GUI's `<video>` element.
 ///
@@ -1982,6 +2157,9 @@ pub fn run() {
             select_h264_encoder_for_export,
             open_folder_in_explorer,
             start_detect,
+            read_recent,
+            add_recent,
+            clear_recent,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -2134,6 +2312,178 @@ mod tests {
         assert!(backup.exists());
         let parent = meta.parent().unwrap();
         assert!(parent.join("metadata.original.json").exists());
+    }
+
+    // #571 — recent.json history persistence.
+
+    fn make_recent_entry(path: &str, file_name: &str) -> RecentEntry {
+        RecentEntry {
+            path: path.to_string(),
+            file_name: file_name.to_string(),
+            size_bytes: 1024,
+            mtime_ms: 1_700_000_000_000,
+            added_at_ms: 1_700_000_000_000,
+        }
+    }
+
+    #[test]
+    fn read_recent_returns_empty_when_file_missing() {
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        let list = read_recent_sync(&recent);
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn read_recent_returns_empty_when_file_is_corrupt_json() {
+        // A garbled file should not block the drop screen — corrupt history is
+        // treated as "no history" so the user can still drop a new video.
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        fs::write(&recent, "this is not json {[").unwrap();
+        let list = read_recent_sync(&recent);
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn add_recent_creates_file_and_returns_single_entry() {
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        let entry = make_recent_entry("E:\\videos\\a.mkv", "a.mkv");
+        let list = add_recent_sync(&recent, entry.clone()).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0], entry);
+        // Persisted to disk.
+        let on_disk = read_recent_sync(&recent);
+        assert_eq!(on_disk, list);
+    }
+
+    #[test]
+    fn add_recent_dedups_same_path_case_insensitive() {
+        // Windows treats `E:\videos\a.mkv` and `e:\Videos\A.mkv` as the same
+        // file. The second add must collapse into one entry — and the new
+        // metadata (mtime / addedAt) must win because the user just touched
+        // the file.
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        add_recent_sync(&recent, make_recent_entry("E:\\videos\\a.mkv", "a.mkv")).unwrap();
+        let mut second = make_recent_entry("e:\\Videos\\A.mkv", "A.mkv");
+        second.added_at_ms = 1_800_000_000_000;
+        let list = add_recent_sync(&recent, second.clone()).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].added_at_ms, 1_800_000_000_000);
+        assert_eq!(list[0].path, "e:\\Videos\\A.mkv");
+    }
+
+    #[test]
+    fn add_recent_moves_existing_entry_to_top() {
+        // Re-adding an existing path must move it to position 0 even when
+        // there are intervening entries — the user just selected it again
+        // and expects to see it at the top of the list.
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        add_recent_sync(&recent, make_recent_entry("E:\\a.mkv", "a.mkv")).unwrap();
+        add_recent_sync(&recent, make_recent_entry("E:\\b.mkv", "b.mkv")).unwrap();
+        add_recent_sync(&recent, make_recent_entry("E:\\c.mkv", "c.mkv")).unwrap();
+        // Re-add `a.mkv` — it should jump from position 2 to position 0.
+        let list = add_recent_sync(&recent, make_recent_entry("E:\\a.mkv", "a.mkv")).unwrap();
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].path, "E:\\a.mkv");
+        assert_eq!(list[1].path, "E:\\c.mkv");
+        assert_eq!(list[2].path, "E:\\b.mkv");
+    }
+
+    #[test]
+    fn add_recent_truncates_to_limit() {
+        // Inserting RECENT_LIMIT+5 distinct paths must keep exactly RECENT_LIMIT
+        // entries with the most recent at position 0 and the oldest at the
+        // bottom — the eldest 5 fall off the end.
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        for i in 0..(RECENT_LIMIT as u32 + 5) {
+            let p = format!("E:\\video_{:02}.mkv", i);
+            let n = format!("video_{:02}.mkv", i);
+            add_recent_sync(&recent, make_recent_entry(&p, &n)).unwrap();
+        }
+        let list = read_recent_sync(&recent);
+        assert_eq!(list.len(), RECENT_LIMIT);
+        // Newest first.
+        assert_eq!(list[0].path, format!("E:\\video_{:02}.mkv", RECENT_LIMIT + 4));
+        // Oldest still kept (5 fell off the bottom).
+        assert_eq!(list[RECENT_LIMIT - 1].path, "E:\\video_05.mkv");
+    }
+
+    #[test]
+    fn add_recent_creates_parent_dir_when_missing() {
+        // Fresh install: ~/.allaganeye/ doesn't exist yet. add_recent must
+        // create it so the very first drop doesn't error out.
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join(".allaganeye").join("recent.json");
+        assert!(!recent.parent().unwrap().exists());
+        add_recent_sync(&recent, make_recent_entry("E:\\a.mkv", "a.mkv")).unwrap();
+        assert!(recent.exists());
+    }
+
+    #[test]
+    fn clear_recent_removes_existing_file() {
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        add_recent_sync(&recent, make_recent_entry("E:\\a.mkv", "a.mkv")).unwrap();
+        assert!(recent.exists());
+        clear_recent_sync(&recent).unwrap();
+        assert!(!recent.exists());
+    }
+
+    #[test]
+    fn clear_recent_succeeds_when_file_missing() {
+        // Idempotent — a fresh install has no recent.json, calling clear must
+        // not blow up.
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        assert!(!recent.exists());
+        clear_recent_sync(&recent).unwrap();
+    }
+
+    #[test]
+    fn add_recent_no_stray_tmp_file() {
+        // The atomic-rename helper must clean up the .tmp sidecar on success
+        // (mirrors the metadata.json invariant).
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        add_recent_sync(&recent, make_recent_entry("E:\\a.mkv", "a.mkv")).unwrap();
+        assert!(!tmp.path().join("recent.json.tmp").exists());
+    }
+
+    #[test]
+    fn with_existence_marks_existing_and_missing_files() {
+        // `with_existence` is the bridge between persisted entries and the
+        // grey-out logic on the frontend. Existing files get `exists=true`,
+        // moved/deleted ones get `exists=false`.
+        let tmp = TempDir::new().unwrap();
+        let real_path = tmp.path().join("real.mkv");
+        fs::write(&real_path, b"x").unwrap();
+        let real_str = real_path.to_string_lossy().into_owned();
+        let entries = vec![
+            RecentEntry {
+                path: real_str.clone(),
+                file_name: "real.mkv".into(),
+                size_bytes: 1,
+                mtime_ms: 1,
+                added_at_ms: 1,
+            },
+            RecentEntry {
+                path: tmp.path().join("ghost.mkv").to_string_lossy().into_owned(),
+                file_name: "ghost.mkv".into(),
+                size_bytes: 1,
+                mtime_ms: 1,
+                added_at_ms: 1,
+            },
+        ];
+        let view = with_existence(entries);
+        assert_eq!(view.len(), 2);
+        assert!(view[0].exists);
+        assert!(!view[1].exists);
+        assert_eq!(view[0].entry.file_name, "real.mkv");
     }
 
     #[test]

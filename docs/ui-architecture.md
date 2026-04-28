@@ -61,6 +61,7 @@ stateDiagram-v2
     drop_selecting --> drop_idle: dialog cancel
     drop_selecting --> drop_probing: ファイル選択
     drop_idle --> drop_probing: D&D
+    drop_idle --> drop_probing: 直近録画クリック (#571)
     drop_probing --> drop_selected: probe OK
     drop_probing --> drop_probeError: probe fail
     drop_selected --> drop_idle: [キャンセル]
@@ -68,7 +69,7 @@ stateDiagram-v2
     drop_probeError --> drop_idle: [再試行]
 ```
 
-- `drop_idle` 初期 — [参照...] と D&D エリア表示
+- `drop_idle` 初期 — [参照...] / D&D エリア / 直近録画リスト (#571) を表示
 - `drop_selecting` file dialog 起動中 (`@tauri-apps/plugin-dialog.open`)
 - `drop_probing` ffprobe 実行中 (Phase 2 は dummy)
 - `drop_selected` 成功 — ファイル情報 + 詳細設定パネル ([DetectionParamsPanel](../gui/src/screens/DetectionParamsPanel.tsx)、collapsible、#613) + [OK]/[キャンセル]
@@ -77,6 +78,8 @@ stateDiagram-v2
 Phase 3 での差し替え: `dummyProbeVideo(path)` → Rust `invoke('probe_video', { path })`。
 
 詳細設定パネル (#613) で調整した値は `appStateStore.detectionParams` に保持され、`[OK]` 後の `DetectingScreen` 起動時に `toStartDetectParams` ([utils/detection.ts](../gui/src/utils/detection.ts)) で Rust `start_detect` (#569) の `params` 引数に変換されて渡る。reset() でデフォルト復帰、永続化なし (in-memory のみ)。
+
+直近録画リスト (#571) は `~/.allaganeye/recent.json` に永続化される (Rust `read_recent` / `add_recent` / `clear_recent` Tauri command + TS `useRecentStore`)。drop / [参照…] / 直近クリックいずれの経路でも probe 成功時に `add_recent` で履歴更新 (重複は最新化、最大 10 件)。click 経路は `RECENT_PICKED` event 経由で `idle → probing` に遷移し、SelectedCard で確認後に detecting へ進む。物理ファイル不在 entry は `RecentEntryView.exists=false` で grayed-out 表示し、click 時は inline notice (5s) を出して probe しない。
 
 ### detecting (Phase 2 は dummy)
 

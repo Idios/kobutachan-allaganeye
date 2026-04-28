@@ -10,6 +10,10 @@ import { LoadingSpinner } from '../components/LoadingSpinner';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useAppStateStore } from '../state/appStateStore';
+import {
+  type RecentEntryView,
+  useRecentStore,
+} from '../state/recentStore';
 import { DetectionParamsPanel } from './DetectionParamsPanel';
 import { dropReducer } from './reducers/drop';
 import type { DropPhase, VideoProbeInfo } from './types';
@@ -57,11 +61,21 @@ async function defaultDragSubscriber(
   });
 }
 
-const RECENT_DUMMY = [
-  { name: '2026-04-08 21-14-05.mkv', size: '38.2 GB', dur: '2:50:28' },
-  { name: '2026-04-05 20-02-11.mkv', size: '24.1 GB', dur: '1:45:12' },
-  { name: '2026-03-28 19-45-33.mkv', size: '52.8 GB', dur: '3:28:40' },
-];
+/** #571: format file size as GB with one decimal (mirrors SelectedCard). */
+function formatSizeGB(bytes: number): string {
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+/**
+ * #571: format the persisted mtime for the recent list. We display the
+ * recording date (not addedAtMs) so users recognize entries by when the
+ * video was made, not when they last opened it.
+ */
+function formatRecentDate(mtimeMs: number): string {
+  if (!Number.isFinite(mtimeMs) || mtimeMs <= 0) return '';
+  const d = new Date(mtimeMs);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 /**
  * #465 review (B): drop で確定した path を Rust 側 `probe_video` Tauri
@@ -96,10 +110,27 @@ export function DropScreen({
   const navigate = useAppStateStore((s) => s.navigate);
   const setSelectedVideoPath = useAppStateStore((s) => s.setSelectedVideoPath);
 
+  // #571: hydrate the recent-videos history once the screen mounts. The
+  // store keeps `loaded` true after the first round-trip so subsequent
+  // re-mounts (e.g. cancelled selection → return to drop_idle) do not refetch.
+  const recentEntries = useRecentStore((s) => s.entries);
+  const recentLoaded = useRecentStore((s) => s.loaded);
+  const loadRecent = useRecentStore((s) => s.load);
+  const addRecent = useRecentStore((s) => s.add);
+
+  useEffect(() => {
+    if (!recentLoaded) {
+      void loadRecent();
+    }
+  }, [recentLoaded, loadRecent]);
+
   const [phase, dispatch] = useReducer(dropReducer, 'idle' as DropPhase);
   const [probeInfo, setProbeInfo] = useState<VideoProbeInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragState, setDragState] = useState<DragState>('idle');
+  // #571: surfaced when the user clicks a recent-list entry whose backing
+  // file has been moved or deleted. Flash for ~5s then clear.
+  const [missingNotice, setMissingNotice] = useState<string | null>(null);
 
   async function probeAndDispatch(path: string): Promise<void> {
     setError(null);
@@ -107,10 +138,28 @@ export function DropScreen({
       const info = await (probeFn ?? probeVideo)(path);
       setProbeInfo(info);
       dispatch({ type: 'PROBE_OK' });
+      // #571: persist *after* probe succeeds so we don't pollute history
+      // with paths that turned out to be unreadable.
+      void addRecent(info.path);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       dispatch({ type: 'PROBE_FAIL' });
     }
+  }
+
+  // #571: handler shared between recent-list click and keyboard activation.
+  function selectRecent(item: RecentEntryView) {
+    if (phase !== 'idle') return;
+    if (!item.exists) {
+      setMissingNotice(`ファイルが見つかりません: ${item.fileName}`);
+      // The notice clears itself after 5s so it doesn't linger when the
+      // user moves on. (No toast library yet — inline status line.)
+      window.setTimeout(() => setMissingNotice(null), 5000);
+      return;
+    }
+    setMissingNotice(null);
+    dispatch({ type: 'RECENT_PICKED' });
+    void probeAndDispatch(item.path);
   }
 
   async function pickAndProbe() {
@@ -311,16 +360,61 @@ export function DropScreen({
             </div>
           </AllaganFrame>
 
-          <div className={styles.recent}>
+          <div className={styles.recent} data-testid="recent-list">
             <div className={styles.recentHeading}>──── 直近の録画 ────</div>
-            {RECENT_DUMMY.map((r) => (
-              <div key={r.name} className={styles.recentItem}>
-                <span className={styles.recentMark}>◈</span>
-                <span className={styles.recentName}>{r.name}</span>
-                <span className={styles.recentDur}>{r.dur}</span>
-                <span className={styles.recentSize}>{r.size}</span>
+            {recentEntries.length === 0 ? (
+              <div
+                className={styles.recentEmpty}
+                data-testid="recent-empty"
+              >
+                {recentLoaded
+                  ? '履歴はまだありません'
+                  : '読み込み中…'}
               </div>
-            ))}
+            ) : (
+              recentEntries.map((r) => (
+                <button
+                  key={r.path}
+                  type="button"
+                  className={[
+                    styles.recentItem,
+                    styles.recentItemButton,
+                    !r.exists ? styles.recentItemMissing : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  onClick={() => selectRecent(r)}
+                  disabled={phase !== 'idle'}
+                  data-testid="recent-item"
+                  data-missing={!r.exists}
+                  aria-label={
+                    r.exists
+                      ? `直近の録画 ${r.fileName}`
+                      : `直近の録画 ${r.fileName} (ファイルが見つかりません)`
+                  }
+                >
+                  <span className={styles.recentMark} aria-hidden>
+                    ◈
+                  </span>
+                  <span className={styles.recentName}>{r.fileName}</span>
+                  <span className={styles.recentDur}>
+                    {formatRecentDate(r.mtimeMs)}
+                  </span>
+                  <span className={styles.recentSize}>
+                    {formatSizeGB(r.sizeBytes)}
+                  </span>
+                </button>
+              ))
+            )}
+            {missingNotice && (
+              <div
+                className={styles.recentMissingNotice}
+                role="status"
+                data-testid="recent-missing-notice"
+              >
+                ⚠ {missingNotice}
+              </div>
+            )}
           </div>
         </>
       )}
