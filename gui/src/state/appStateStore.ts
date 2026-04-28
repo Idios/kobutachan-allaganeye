@@ -25,14 +25,17 @@ export type AppScreen =
  *
  * Held in-memory only — `reset()` returns these to defaults; there is no
  * localStorage persistence in #613 (deliberately deferred to a follow-up).
+ *
+ * NOTE: `--no-audio` is intentionally NOT exposed here. The audio module is
+ * frozen (`AUDIO_FROZEN` in `allaganeye/commands/split_matches.py:525`,
+ * #327), so the flag is a no-op until Fanfare scan ships. Re-add when
+ * #327 lands.
  */
 export interface DetectionParams {
   /** `--blackout-threshold {x}`. CLI default 15.0, valid range 0-255. */
   blackoutThreshold: number;
   /** `--workers {n}` when > 0; 0 means "auto" (omit flag, CLI picks). */
   workers: number;
-  /** `--no-audio` when true. CLI default false (audio enabled). */
-  noAudio: boolean;
   /**
    * `--gpu` when `true`, `--no-gpu` when `false`, omit flag for `null` (auto
    * — Rust side picks vendor by preference order).
@@ -43,7 +46,6 @@ export interface DetectionParams {
 export const DEFAULT_DETECTION_PARAMS: DetectionParams = {
   blackoutThreshold: 15.0,
   workers: 0,
-  noAudio: false,
   gpu: null,
 };
 

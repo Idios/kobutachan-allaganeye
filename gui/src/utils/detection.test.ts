@@ -31,17 +31,6 @@ describe('toStartDetectParams (#613)', () => {
     expect(args.workers).toBe(8);
   });
 
-  it('forwards noAudio boolean as-is', () => {
-    expect(
-      toStartDetectParams({ ...DEFAULT_DETECTION_PARAMS, noAudio: true })
-        .noAudio,
-    ).toBe(true);
-    expect(
-      toStartDetectParams({ ...DEFAULT_DETECTION_PARAMS, noAudio: false })
-        .noAudio,
-    ).toBe(false);
-  });
-
   it.each([
     { gpu: null as boolean | null, expected: null },
     { gpu: true as boolean | null, expected: true },
@@ -51,12 +40,11 @@ describe('toStartDetectParams (#613)', () => {
     expect(args.gpu).toBe(expected);
   });
 
-  it('produces all four expected keys', () => {
+  it('produces the three expected keys (noAudio omitted while audio module frozen, #327)', () => {
     const args = toStartDetectParams(DEFAULT_DETECTION_PARAMS);
     expect(Object.keys(args).sort()).toEqual([
       'blackoutThreshold',
       'gpu',
-      'noAudio',
       'workers',
     ]);
   });
@@ -70,7 +58,6 @@ describe('isDetectionParamsModified (#613)', () => {
   it.each<[string, Partial<DetectionParams>]>([
     ['blackoutThreshold', { blackoutThreshold: 14 }],
     ['workers', { workers: 8 }],
-    ['noAudio', { noAudio: true }],
     ['gpu (true)', { gpu: true }],
     ['gpu (false)', { gpu: false }],
   ])('returns true when only %s differs', (_label, patch) => {

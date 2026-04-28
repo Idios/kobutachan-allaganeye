@@ -148,7 +148,6 @@ describe('DetectingScreen', () => {
     useAppStateStore.getState().setDetectionParams({
       blackoutThreshold: 22,
       workers: 8,
-      noAudio: true,
       gpu: false,
     });
     render(<DetectingScreen />);
@@ -159,7 +158,6 @@ describe('DetectingScreen', () => {
           params: {
             blackoutThreshold: 22,
             workers: 8,
-            noAudio: true,
             gpu: false,
           },
         }),

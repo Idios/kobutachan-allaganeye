@@ -120,17 +120,15 @@ describe('useAppStateStore.detectionParams', () => {
     const dp = useAppStateStore.getState().detectionParams;
     expect(dp.blackoutThreshold).toBe(22);
     expect(dp.workers).toBe(DEFAULT_DETECTION_PARAMS.workers);
-    expect(dp.noAudio).toBe(DEFAULT_DETECTION_PARAMS.noAudio);
     expect(dp.gpu).toBe(DEFAULT_DETECTION_PARAMS.gpu);
   });
 
   it('setDetectionParams supports multiple fields in one call', () => {
     useAppStateStore
       .getState()
-      .setDetectionParams({ workers: 8, noAudio: true, gpu: true });
+      .setDetectionParams({ workers: 8, gpu: true });
     const dp = useAppStateStore.getState().detectionParams;
     expect(dp.workers).toBe(8);
-    expect(dp.noAudio).toBe(true);
     expect(dp.gpu).toBe(true);
   });
 

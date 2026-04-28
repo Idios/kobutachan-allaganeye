@@ -18,14 +18,15 @@ import {
  * - `blackoutThreshold` is always sent — the user always sees a concrete
  *   value on the slider, and the CLI default (15.0) is harmless when
  *   echoed back.
- * - `noAudio` is always sent — it is a plain boolean and the Rust side
- *   only emits `--no-audio` when `Some(true)`.
+ *
+ * NOTE: `noAudio` is intentionally not in `DetectionParams` (audio module
+ * frozen, #327 / split_matches.py:525). When #327 ships, re-add the flag
+ * here and to the panel UI.
  */
 export function toStartDetectParams(p: DetectionParams): Record<string, unknown> {
   return {
     blackoutThreshold: p.blackoutThreshold,
     workers: p.workers > 0 ? p.workers : null,
-    noAudio: p.noAudio,
     gpu: p.gpu,
   };
 }
@@ -38,7 +39,6 @@ export function isDetectionParamsModified(p: DetectionParams): boolean {
   return (
     p.blackoutThreshold !== DEFAULT_DETECTION_PARAMS.blackoutThreshold ||
     p.workers !== DEFAULT_DETECTION_PARAMS.workers ||
-    p.noAudio !== DEFAULT_DETECTION_PARAMS.noAudio ||
     p.gpu !== DEFAULT_DETECTION_PARAMS.gpu
   );
 }

@@ -231,6 +231,8 @@
 
 **目的**: `start_detect` (#569) に渡す検知パラメータを GUI 上で調整。値は `appStateStore.detectionParams` に保存され、`reset()` まで session 中保持される (localStorage 永続化なし、再起動時は default に戻る)。
 
+**スコープ (3 パラメータ)**: `blackout_threshold` / `workers` / `gpu`。`--no-audio` は audio module frozen (#327、`split_matches.py:525`) のため UI 不公開、#327 解凍後に再追加する。
+
 | 項目 | 内容 |
 |---|---|
 | 種類 | collapsible panel (`<button aria-expanded={open} aria-controls={bodyId}>` header + 折り畳まれた body の `<div id={bodyId}>`) |
@@ -269,17 +271,7 @@
 | store mutation | `appStateStore.detectionParams.workers` |
 | 例外 / edge case | `0` は UI 上の auto sentinel。`toStartDetectParams` で `workers: 0` → `null` に変換され、Rust 側 `DetectParams.workers: None` で `--workers` flag が省略される ([detection.ts:23-29](../gui/src/utils/detection.ts#L23)) |
 
-##### §2.1.10.4 音声解析 toggle (noAudio)
-
-| 項目 | 内容 |
-|---|---|
-| 種類 | `<input type="checkbox">` + label (チェックは「音声有効」、chk=true → noAudio=false) |
-| 状態 | `default 有効` (noAudio=false、checked) / `無効 (--no-audio)` (noAudio=true、unchecked) |
-| 遷移トリガー | `onChange` → `setDetectionParams({ noAudio: !checked })` |
-| store mutation | `appStateStore.detectionParams.noAudio` |
-| 例外 / edge case | UI label は「音声解析」(英語 noAudio の二重否定を避けるため、checkbox=有効/無効 の自然な意味付け)。`noAudio: true` のときのみ Rust 側で `--no-audio` flag が emit される |
-
-##### §2.1.10.5 GPU tri-state 選択 (gpu)
+##### §2.1.10.4 GPU tri-state 選択 (gpu)
 
 | 項目 | 内容 |
 |---|---|
@@ -289,7 +281,7 @@
 | store mutation | `appStateStore.detectionParams.gpu` |
 | 例外 / edge case | radiogroup pattern (`aria-checked` で active state を表現)。Rust 側 `DetectParams.gpu` が 3 値 `Option<bool>` を解釈し排他 flag に変換 |
 
-##### §2.1.10.6 [リセット] button
+##### §2.1.10.5 [リセット] button
 
 | 項目 | 内容 |
 |---|---|
@@ -297,16 +289,17 @@
 | 状態 | params == default のとき `disabled` (押下不可) / それ以外で active |
 | 遷移トリガー | `onClick` → `resetDetectionParams()` (全 4 フィールドを `DEFAULT_DETECTION_PARAMS` に戻す) |
 | store mutation | `appStateStore.detectionParams` 全体を default に上書き (`selectedVideoPath` など他の state は触らない) |
-| 例外 / edge case | disabled 判定は `isDetectionParamsModified` ([utils/detection.ts:34-41](../gui/src/utils/detection.ts#L34)) が四フィールドを default と等値判定で行う。`aria-label` に default 値を含める (例: `"reset to defaults (blackout 15, workers auto, audio enabled, gpu auto)"`) |
+| 例外 / edge case | disabled 判定は `isDetectionParamsModified` ([utils/detection.ts](../gui/src/utils/detection.ts)) が三フィールドを default と等値判定で行う。`aria-label` に default 値を含める (例: `"reset to defaults (blackout 15, workers auto, gpu auto)"`) |
 
-##### §2.1.10.7 styling / a11y / Tab order
+##### §2.1.10.6 styling / a11y / Tab order
 
 - styling: 既存 ExportScreen の field/value pattern (`fieldLabel` + 入力要素) と同系統。色は token (`var(--ae-gold-dim)` / `var(--ae-cyan)` / `var(--ae-text)`) を再利用、新規追加なし
 - a11y:
   - header: `aria-expanded` / `aria-controls` で expand 状態を AT に通知
   - 各 input: `<label htmlFor>` (slider / numeric / toggle) で関連付け、tri-state は `aria-label="gpu mode"` + `role="radio"`
   - リセット button: `aria-label` で disabled 理由 (default 値) を明示
-- Tab order: header toggle → (展開時) blackout slider → workers numeric → audio toggle → gpu (auto/on/off の 3 button) → reset button → SelectedCard `[キャンセル]` → `[OK]`。drop flow 全体で natural forward tab を保つ
+- Tab order: header toggle → (展開時) blackout slider → workers numeric → gpu (auto/on/off の 3 button) → reset button → SelectedCard `[キャンセル]` → `[OK]`。drop flow 全体で natural forward tab を保つ
+- **`--no-audio` UI 不採用**: `allaganeye/commands/split_matches.py:525` で audio module は frozen 状態 (#327) のため `--no-audio` flag は実質 no-op。GUI 側でのみ控え (Rust `DetectParams.no_audio` field 自体は #569 で実装済み、#327 解凍時に再公開)
 
 ### §2.2 detecting
 

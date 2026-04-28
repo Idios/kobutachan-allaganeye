@@ -23,7 +23,6 @@ export function DetectionParamsPanel() {
   const panelBodyId = useId();
   const blackoutId = useId();
   const workersId = useId();
-  const noAudioId = useId();
 
   const modified = isDetectionParamsModified(detectionParams);
 
@@ -105,26 +104,6 @@ export function DetectionParamsPanel() {
             </span>
           </div>
 
-          <span className={styles.fieldLabel}>音声解析</span>
-          <div className={styles.toggleRow}>
-            <input
-              id={noAudioId}
-              type="checkbox"
-              checked={!detectionParams.noAudio}
-              onChange={(e) =>
-                setDetectionParams({ noAudio: !e.target.checked })
-              }
-              className={styles.toggle}
-              aria-label="audio enabled"
-              data-testid="detection-params-no-audio"
-            />
-            <label htmlFor={noAudioId} className={styles.toggleLabel}>
-              {detectionParams.noAudio
-                ? '無効 (--no-audio)'
-                : '有効 (default)'}
-            </label>
-          </div>
-
           <span className={styles.fieldLabel}>GPU</span>
           <div
             className={styles.triStateRow}
@@ -170,7 +149,7 @@ export function DetectionParamsPanel() {
               className={styles.resetButton}
               onClick={resetDetectionParams}
               disabled={!modified}
-              aria-label={`reset to defaults (blackout ${DEFAULT_DETECTION_PARAMS.blackoutThreshold}, workers auto, audio enabled, gpu auto)`}
+              aria-label={`reset to defaults (blackout ${DEFAULT_DETECTION_PARAMS.blackoutThreshold}, workers auto, gpu auto)`}
               data-testid="detection-params-reset"
             >
               リセット

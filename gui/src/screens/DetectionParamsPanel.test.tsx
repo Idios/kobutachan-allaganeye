@@ -76,20 +76,6 @@ describe('DetectionParamsPanel (#613)', () => {
     expect(useAppStateStore.getState().detectionParams.workers).toBe(8);
   });
 
-  it('audio toggle (un)checks and flips the noAudio flag', async () => {
-    render(<DetectionParamsPanel />);
-    const user = userEvent.setup();
-    await user.click(screen.getByTestId('detection-params-toggle'));
-    // Default: audio enabled (noAudio = false), so checkbox is checked.
-    const cb = screen.getByTestId(
-      'detection-params-no-audio',
-    ) as HTMLInputElement;
-    expect(cb.checked).toBe(true);
-    await user.click(cb);
-    expect(useAppStateStore.getState().detectionParams.noAudio).toBe(true);
-    expect(cb.checked).toBe(false);
-  });
-
   it.each([
     {
       testid: 'detection-params-gpu-on',
@@ -126,7 +112,6 @@ describe('DetectionParamsPanel (#613)', () => {
     useAppStateStore.getState().setDetectionParams({
       blackoutThreshold: 30,
       workers: 8,
-      noAudio: true,
       gpu: false,
     });
     render(<DetectionParamsPanel />);
