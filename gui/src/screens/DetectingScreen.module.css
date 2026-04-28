@@ -144,16 +144,45 @@
   box-shadow: none;
 }
 
+/*
+ * #639 — log pane は flex 子なので `min-height: 0` を明示しないと
+ * `overflow-y: auto` が無効化される (内容が parent を押し広げて
+ * しまい結局スクロールできない、#569 実機検証で発覚)。
+ * gold tint のスクロールバーは WebView2 (Chromium) 用の
+ * `-webkit-scrollbar*` を主軸にし、Firefox 用に
+ * `scrollbar-color` / `scrollbar-width` も指定する。
+ */
 .log {
   flex: 1;
+  min-height: 0;
   background: var(--ae-bg-deep);
   padding: 12px;
   font-family: var(--ae-font-mono);
   font-size: 10px;
   color: var(--ae-text-dim);
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   line-height: 1.6;
   border: 1px solid rgba(var(--ae-gold-rgb), 0.08);
+  scrollbar-color: rgba(var(--ae-gold-rgb), 0.4) transparent;
+  scrollbar-width: thin;
+}
+
+.log::-webkit-scrollbar {
+  width: 6px;
+}
+
+.log::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.log::-webkit-scrollbar-thumb {
+  background: rgba(var(--ae-gold-rgb), 0.3);
+  border-radius: 3px;
+}
+
+.log::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--ae-gold-rgb), 0.55);
 }
 
 .logTime {

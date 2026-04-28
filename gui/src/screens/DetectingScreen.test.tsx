@@ -224,6 +224,54 @@ describe('DetectingScreen', () => {
     expect(meta.textContent).toContain('2:00:15');
   });
 
+  // #639 -- log viewport must auto-scroll to the bottom whenever a
+  // new entry arrives so the latest line is always visible without
+  // user interaction.
+  it('scrolls the log viewport to the bottom on new entries (#639)', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(listenMock).toHaveBeenCalled();
+    });
+
+    const log = screen.getByRole('log');
+    // jsdom doesn't lay out elements, so scrollHeight is always 0 by
+    // default. Stub the layout numbers so the auto-scroll effect has a
+    // non-trivial target to write into scrollTop.
+    Object.defineProperty(log, 'scrollHeight', {
+      configurable: true,
+      get: () => 1000,
+    });
+    Object.defineProperty(log, 'clientHeight', {
+      configurable: true,
+      get: () => 200,
+    });
+
+    // Drive a few events so the log array grows and the
+    // auto-scroll effect fires.
+    act(() => {
+      emitDetectProgress({ phase: 'start' });
+      emitDetectProgress({ phase: 'probing', duration_s: 600, codec: 'h264' });
+      emitDetectProgress({
+        phase: 'scan',
+        completed: 50,
+        total: 500,
+      });
+    });
+
+    // jsdom defaults scrollTop to 0; the effect should pull it to the
+    // current scrollHeight (1000) so the latest entry sits at the
+    // bottom of the visible viewport.
+    expect(log.scrollTop).toBe(1000);
+  });
+
   // #569 review Round 1 課題 2 -- log lines carry data-kind attribute
   // and apply the matching colour-coding class.
   it('renders log entries with kind-specific styling', async () => {
