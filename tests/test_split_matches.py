@@ -2410,9 +2410,12 @@ class TestBuildMetadataPayloadElapsedTimestamps:
                 "vendor_preference": ["nvidia", "amd", "intel"],
             },
         )
-        # Both new fields are present and serialised verbatim.
-        assert payload["detection_started_at"] == "2026-04-26T00:00:00Z"
-        assert payload["detection_completed_at"] == "2026-04-26T00:00:42Z"
+        # Both new fields are present and serialised verbatim. Use .get() because
+        # Metadata TypedDict marks them NotRequired (optional in JSON Schema for
+        # pre-#586 metadata.json compat); pyright otherwise warns on direct
+        # subscript access.
+        assert payload.get("detection_started_at") == "2026-04-26T00:00:00Z"
+        assert payload.get("detection_completed_at") == "2026-04-26T00:00:42Z"
         # Legacy detected_at stays for backward compat (#586 case 案 B).
         assert payload["detected_at"] == "2026-04-26T00:00:00Z"
 
@@ -2445,7 +2448,7 @@ class TestBuildMetadataPayloadElapsedTimestamps:
                 "vendor_preference": ["nvidia", "amd", "intel"],
             },
         )
-        assert payload["detected_at"] == payload["detection_started_at"]
+        assert payload["detected_at"] == payload.get("detection_started_at")
 
 
 class TestAudioScanIntegration:

@@ -2,6 +2,46 @@
 
 `metadata.json` は CLI (`allaganeye`) と GUI (L2a Tauri) の間の**唯一の契約**。#463 Phase 1 で確立。
 
+## SSoT 二層構造 (#612, 2026-04-28 確定)
+
+スキーマ定義は二層で SSoT を分担する:
+
+| 層 | 役割 | ファイル |
+|---|---|---|
+| 機械可読の正 | draft-2020-12 JSON Schema。型生成と writer 検証の根拠 | [`schemas/metadata.schema.json`](../schemas/metadata.schema.json) |
+| 人間可読の正 | フィールドの意味、書き込み契約、編集契約、ユーザー手動編集の挙動 | 本 doc |
+
+各言語の型は JSON Schema から自動生成する:
+
+| 言語 | 出力 | ツール | コマンド |
+|---|---|---|---|
+| Python | [`allaganeye/metadata_types.py`](../allaganeye/metadata_types.py) (`TypedDict`) | `datamodel-code-generator` | `python scripts/codegen/generate.py --py` |
+| TypeScript | [`gui/src/types/metadata.generated.ts`](../gui/src/types/metadata.generated.ts) (`interface`) | `json-schema-to-typescript` | `python scripts/codegen/generate.py --ts` (または `cd gui && npm run generate-types`) |
+| Rust | (生成しない) | — | `gui/src-tauri/src/lib.rs` は `serde_json::Value` で passthrough |
+
+zod schema ([`gui/src/types/metadata.schema.ts`](../gui/src/types/metadata.schema.ts)) は手書き継続。zod でしか表現できない refine 制約 (`end_time >= start_time` 等) があるため。zod の field set / required は CI の `zod-schema-integrity.test.ts` (#612) が JSON Schema と照合する。
+
+`gui/src/types/metadata.ts` は generated.ts からの re-export shim。GUI 編集フィールド (`name` / `type_override` / `edited`) は shim 側の `Match` interface で extend し、`normalizeForPersistence` (`metadataStore.ts`) が永続化前に剥がす。
+
+### JSON Schema は strict、reader は緩い (passthrough は別レイヤ)
+
+JSON Schema は writer 契約として strict (additional properties は受け付けない)。一方、読み取り側の前方互換性 (legacy `note` / 未知フィールドを落とさない) は reader レイヤで担保する:
+
+- GUI: zod の `.passthrough()` (root と Match)
+- CLI: Python `dict` は素通し (jsonschema validate は `tests/test_metadata_schema.py` でのみ実施、runtime read は dict のまま)
+
+この二層により、機械的契約の厳密性と運用上の forward-compat を両立する。
+
+### 編集ワークフロー
+
+1. `schemas/metadata.schema.json` を編集
+2. 必要に応じて本 doc (`docs/metadata-spec.md`) を更新
+3. `python scripts/codegen/generate.py` で両言語を再生成
+4. zod schema (`metadata.schema.ts`) の field set / required を JSON Schema に揃える (CI が integrity test で検出する)
+5. 生成物 (`metadata.generated.ts` / `metadata_types.py`) を commit
+
+詳細は [`docs/l2-workflow.md`](l2-workflow.md) §schema 編集ワークフロー を参照。
+
 ## 概要
 
 - **役割**: 検知結果 (match boundaries) とパラメータを構造化 JSON として保存。CLI `split --from-metadata` と GUI 双方が読み取り元とする。

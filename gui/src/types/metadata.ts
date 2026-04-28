@@ -1,134 +1,59 @@
+// Re-export shim for the auto-generated Metadata types (#612).
+//
+// The generated declarations live in `metadata.generated.ts` (sourced
+// from `schemas/metadata.schema.json` via `python scripts/codegen/generate.py`).
+// Existing GUI code imports `Match` / `Metadata` from this module and
+// expects them to include the in-memory edit fields (`name`,
+// `type_override`, `edited`) -- those live only in the GUI store and
+// metadata.draft.json (zod passthrough), not in metadata.json proper.
+//
+// Shape extension lives here so the generated file stays a faithful
+// projection of the JSON Schema. `normalizeForPersistence` strips the
+// edit fields back out before write (see metadataStore.ts).
+
+import type {
+  Match as PersistedMatch,
+  Metadata as PersistedMetadata,
+} from './metadata.generated';
+
+export type {
+  BrightnessSamples,
+  DetectionParams,
+  Gap,
+  MetadataWarning,
+  SystemInfo,
+} from './metadata.generated';
+
+/**
+ * The persisted, JSON-Schema-conformant Match shape (no edit fields).
+ * Re-exported for callers that explicitly want the `metadata.json`
+ * contract type (e.g. tests asserting normalize output).
+ */
+export type { Match as PersistedMatch } from './metadata.generated';
+
 export type MatchType = 'fl_match' | 'unknown';
 
 export type TypeOverride = MatchType | 'skip';
 
-export interface DetectionParams {
-  sample_interval: number;
-  blackout_threshold: number;
-  min_match_duration: number;
-  min_blackout_duration: number;
-  no_audio: boolean;
-  use_gpu: number | boolean | null;
-  workers: number | null;
-}
+export type WarningSeverity = 'info' | 'warn' | 'error';
 
-export interface Match {
-  index: number;
-  start_time: number;
-  end_time: number;
-  start_display: string;
-  end_display: string;
-  duration: number;
-  duration_display: string;
-  type: MatchType;
-  output_file: string;
+/**
+ * Match plus GUI-only edit fields. The default `Match` type used
+ * throughout the GUI; persistence strips the edit fields back out.
+ */
+export interface Match extends PersistedMatch {
   name?: string;
   type_override?: TypeOverride;
   edited?: { start_time: number; end_time: number };
 }
 
-export interface Gap {
-  start_time: number;
-  end_time: number;
-  start_display: string;
-  end_display: string;
-  duration: number;
-  duration_display: string;
-}
-
 /**
- * #518 -- structured warning scaffold. The writer currently emits `[]`;
- * future detection codes populate individual entries. Readers should
- * pass unknown `code` values through unchanged.
+ * Backward-compat alias. Some screens explicitly import this name to
+ * make the editable-vs-persisted distinction obvious; new code can
+ * pick whichever reads better.
  */
-export type WarningSeverity = 'info' | 'warn' | 'error';
+export type EditableMatch = Match;
 
-export interface MetadataWarning {
-  code: string;
-  message_en?: string;
-  severity?: WarningSeverity;
-  context?: Record<string, unknown>;
-}
-
-/**
- * #591 -- GPU vendor probe snapshot recorded by detect/split.
- *
- * - `gpu_vendors_available`: vendors detected via `probe_gpu_vendors()`
- *   (subset of `{"nvidia","amd","intel"}`).
- * - `gpu_vendor_used`: vendor actually consumed by GPU decode in this
- *   detect run. `null` when CPU was forced (`--no-gpu`), the cache hit
- *   skipped detection, or the run came from `split --from-metadata`.
- * - `vendor_preference`: snapshot of `gpu_detector._VENDOR_PREFERENCE`
- *   used to resolve auto-selection (currently
- *   `["nvidia","amd","intel"]`).
- *
- * GUI export uses these to pick H.264 encoder via
- * `select_h264_encoder_for_export` Tauri command.
- */
-export interface SystemInfo {
-  gpu_vendors_available: string[];
-  gpu_vendor_used: string | null;
-  vendor_preference: string[];
-}
-
-/**
- * #569 -- pre-rendered brightness timeline used by the complete screen.
- *
- * - `interval_s`: seconds represented by each `values[i]`.
- * - `values`: 0-255 floats, chronological, length-capped to ~512 by
- *   the CLI writer.
- */
-export interface BrightnessSamples {
-  interval_s: number;
-  values: number[];
-}
-
-export interface Metadata {
-  /**
-   * #515: schema revision declaration. Optional on the TS type because
-   * pre-0.2.0 files don't carry the field; readers treat missing as v1.
-   * New writes always emit `"1"`.
-   */
-  schema_version?: '1';
-  source: string;
-  source_duration: number;
-  source_duration_display: string;
-  /**
-   * #465 review: source recording frame rate (e.g. 60, 119.88, 240).
-   * Optional because pre-0.2.0 metadata.json files omitted the field;
-   * readers default to {@link import('./metadata.schema').DEFAULT_FPS}
-   * (60) when absent.
-   */
-  source_fps?: number;
-  detected_at: string;
-  /**
-   * #586 -- 検知パイプライン開始直前のタイムスタンプ (ISO 8601 UTC `Z`)。
-   * 新規書き込み (post-#586) は ``detected_at`` と同値。pre-#586 metadata.json
-   * では存在しないため optional。CompleteScreen は欠落時に「所要」を `-`
-   * 表示にフォールバックする。
-   */
-  detection_started_at?: string;
-  /**
-   * #586 -- metadata.json 書き込み直前のタイムスタンプ (ISO 8601 UTC `Z`)。
-   * GUI CompleteScreen が ``completed - started`` で「所要」(elapsed) を
-   * 計算する。pre-#586 では存在しないため optional。
-   */
-  detection_completed_at?: string;
-  detection_params: DetectionParams;
+export interface Metadata extends Omit<PersistedMetadata, 'matches'> {
   matches: Match[];
-  gaps: Gap[];
-  /** #518 -- optional on the TS type because legacy files don't emit it. */
-  warnings?: MetadataWarning[];
-  /**
-   * #591 -- GPU vendor probe snapshot. Optional because pre-#591
-   * metadata.json files don't carry the field; ExportScreen falls back
-   * to libx264 when missing.
-   */
-  system_info?: SystemInfo;
-  /**
-   * #569 -- pre-rendered brightness timeline. Optional because
-   * pre-#569 metadata.json and detect cache hits skip the field;
-   * CompleteScreen falls back to a sample curve when missing.
-   */
-  brightness_samples?: BrightnessSamples;
 }

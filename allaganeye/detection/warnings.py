@@ -14,11 +14,18 @@ Why introduce the scaffold now, before a concrete use case lands?
   touching the payload builder or the reader surface.
 
 See `docs/metadata-spec.md` section "warnings" for the contract.
+
+The `MetadataWarning` TypedDict itself moved to
+``allaganeye/metadata_types.py`` (auto-generated from
+``schemas/metadata.schema.json``, #612). It is re-exported from here so
+existing emitters keep working unchanged.
 """
 
 from __future__ import annotations
 
-from typing import Any, Literal, NotRequired, Required, TypedDict
+from typing import Literal
+
+from allaganeye.metadata_types import MetadataWarning
 
 __all__ = [
     "WARNING_CODES",
@@ -28,21 +35,9 @@ __all__ = [
 ]
 
 Severity = Literal["info", "warn", "error"]
-"""Allowed severity levels for an emitted warning."""
-
-
-class MetadataWarning(TypedDict):
-    """A single warning entry in metadata.json `warnings[]`.
-
-    `code` is required; the other fields are optional so emitters can
-    supply only what they have (e.g. a cheap code-only warning can omit
-    `message_en` and rely on a lookup table on the reader side).
-    """
-
-    code: Required[str]
-    message_en: NotRequired[str]
-    severity: NotRequired[Severity]
-    context: NotRequired[dict[str, Any]]
+"""Allowed severity levels for an emitted warning. Public alias for
+emitters; the canonical literal lives inline in
+:class:`allaganeye.metadata_types.MetadataWarning`."""
 
 
 WARNING_CODES: dict[str, str] = {}
