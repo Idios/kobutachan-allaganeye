@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { axe } from 'jest-axe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Metadata } from '../types/metadata';
@@ -455,5 +456,18 @@ describe('DetectingScreen helpers', () => {
       expect(entry).not.toBeNull();
       expect(entry?.kind).toBe('info');
     }
+  });
+
+  it('[中断] is enabled while running and has no disabled tooltip (#587)', () => {
+    render(<DetectingScreen />);
+    const cancelBtn = screen.getByRole('button', { name: '中断' });
+    expect(cancelBtn).not.toBeDisabled();
+    // While running, the button must NOT carry a title-attribute reason.
+    expect(cancelBtn.hasAttribute('title')).toBe(false);
+  });
+
+  it('has no axe violations while running (#587)', async () => {
+    const { container } = render(<DetectingScreen />);
+    expect(await axe(container)).toHaveNoViolations();
   });
 });

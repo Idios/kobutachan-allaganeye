@@ -1,4 +1,5 @@
 import { useMetadataStore } from '../state/metadataStore';
+import { DisabledTooltip } from './DisabledTooltip';
 import styles from './RestoreButton.module.css';
 
 export interface RestoreButtonProps {
@@ -38,6 +39,14 @@ export function RestoreButton({
   const restore = useMetadataStore((s) => s.restore);
 
   const disabled = !hasBackup || restoring;
+  // #587 §2.3.4 + §2.4.13: surface why [元に戻す] is disabled. Same
+  // RestoreButton is rendered from CompleteScreen and PreviewScreen, so
+  // wrapping here covers both spec sections at once.
+  const reason = !hasBackup
+    ? 'バックアップが存在しません'
+    : restoring
+      ? '復元中です'
+      : '';
 
   async function handleClick() {
     const confirmed = (confirmFn ?? window.confirm)(confirmMessage);
@@ -51,15 +60,20 @@ export function RestoreButton({
 
   return (
     <>
-      <button
-        type="button"
-        className={`${styles.button}${restoring ? ` ${styles.busy}` : ''}`}
-        disabled={disabled}
-        onClick={handleClick}
-        aria-label={label}
-      >
-        {restoring ? '…' : '⟲'} {label}
-      </button>
+      <DisabledTooltip disabled={disabled} reason={reason}>
+        {(p) => (
+          <button
+            type="button"
+            className={`${styles.button}${restoring ? ` ${styles.busy}` : ''}`}
+            disabled={disabled}
+            onClick={handleClick}
+            aria-label={label}
+            {...p}
+          >
+            {restoring ? '…' : '⟲'} {label}
+          </button>
+        )}
+      </DisabledTooltip>
       {restoreError && (
         <span className={styles.error} role="alert">
           {restoreError}

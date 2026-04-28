@@ -33,15 +33,46 @@
 
 - [ ] 本文・コミットメッセージに `Closes` / `Fixes` / `Resolves` キーワードが含まれていない (issue クローズは手動)
 
-### 品質ゲート
+### Iron Law 6: PR 作成前検証
 
-- [ ] 全テスト通過 (`pytest`)
-- [ ] Lint 通過 (`ruff check .` + `ruff format --check .`)
-- [ ] 型チェック通過 (`pyright`)
+#### Self-Test Report (machine-verified — 全件 `[x]` で validate-checklist 通過)
+
+<!--
+変更ファイル path に応じて該当する job のみ `[x]` 必須。
+該当しない場合は `[x]` + 「N/A: <理由>」 を付記 (例: `[x] cargo check — N/A: gui/src-tauri/ 変更なし`)。
+未実施の場合は `[ ]` のままで CI fail させる (Iron Law 6 違反として明示)。
+-->
+
+- [ ] `ruff check .` (python-core 変更時)
+- [ ] `ruff format --check .` (python-core 変更時)
+- [ ] `pyright` (python-core 変更時)
+- [ ] `pytest` (python-core 変更時、slow 除外)
+- [ ] `cd gui && npm run lint` (gui-frontend 変更時)
+- [ ] `cd gui && npm run typecheck` (gui-frontend 変更時)
+- [ ] `cd gui && npm test` (gui-frontend 変更時)
+- [ ] `cd gui && npm run build` (gui-frontend 変更時)
+- [ ] `cargo check --manifest-path gui/src-tauri/Cargo.toml` (gui-rust 変更時)
+- [ ] `Invoke-Pester -Path scripts/tests/` (installer-pester 変更時、Windows 上で)
+
+#### 関連ドキュメント / マトリクス更新
+
 - [ ] 関連ドキュメント更新 (`docs/cli-spec.md` / `docs/design-overview.md` / `README.md` 等) — 該当なしなら `[x]` + 理由付記
 - [ ] **新規 CLI オプション追加時**: [`docs/output-spec.md`](../docs/output-spec.md) のマトリクス更新 (#405) — 該当なしなら `[x]` + 理由付記
 - [ ] CLAUDE.md / `docs/l2-workflow.md` の更新要否確認 — 不要なら `[x]` + 理由付記
 - [ ] 出力書式を変更した場合、`docs/cli-spec.md` の該当出力例も更新 (再発防止: #343 系)
+- [ ] docs / 識別子のリネーム時は `feedback_doc_section_ref_check.md` 規約で §「<旧名>」grep し残骸ゼロ確認
+
+#### 実機検証 (machine-unverifiable — plain bullet で書く)
+
+<!--
+validate-checklist は plain bullet `-` を無視するため未実施でもブロックしない。
+ただし「未実施」を握り潰しせず明示する: 「PR 提出時点では未実施 / レビュー時に実機確認」と書く。
+該当 path 変更がない場合: 「- 該当なし (gpu_detector.py / audio/ / video/detector.py / gui/ 変更なし)」を 1 行書く。
+-->
+
+- (例) `pytest -m slow_gpu tests/test_gpu_detector.py` — PR 提出時点で実施済 (Windows + NVIDIA RTX 4070, ffmpeg 8.1, NVENC 動作確認)
+- (例) `npm run tauri dev` で export 画面の H.264 再エンコード目視確認 — PR 提出時点では未実施 (レビュー時にユーザー確認依頼)
+- (例) 該当なし (gpu_detector.py / audio/ / video/detector.py / gui/ 変更なし)
 
 ## 関連
 

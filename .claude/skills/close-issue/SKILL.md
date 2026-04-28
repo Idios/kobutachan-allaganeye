@@ -27,30 +27,71 @@ issue 番号 1 つに対して 1 回呼び出す。issue ⇔ PR の関係に応�
 
 ```bash
 gh issue view "$ARGUMENTS" --repo Idios/kobutachan-allaganeye \
-  --json title,body,state,assignees,labels,closedByPullRequestsReferences,timelineItems --comments
+  --json title,body,state,assignees,labels,closedByPullRequestsReferences --comments
 ```
 
 - `state == OPEN` を確認 (`CLOSED` の場合は本 skill 対象外、`AskUserQuestion` で再オープン or 別対応を確認)
 - `closedByPullRequestsReferences` で紐づく PR 一覧を取得
-- `timelineItems` も併せて確認 (古い PR 紐付けが closedByPullRequestsReferences に出ないケースの救済)
 - 本文末尾の `作成: <session-id>` で起票元セッション ID を確認 (close コメント記載に使用)。記載なし / 空欄の場合は close コメント本文での「起票元 session-id」言及は省略可
 - **本 skill 実行 session-id の取得**: `pwd` で現在のディレクトリパス (例: `.../.claude/worktrees/hopeful-darwin-616414`) を取得し、最終ディレクトリ名を session-id とする (例: `hopeful-darwin-616414`)。Step 7 の close コメントには**実行 session-id を必ず含める** (起票 session-id の有無に関わらず)
 
+#### Refs #N fallback (closedByPullRequestsReferences が空の場合)
+
+本プロジェクトは Iron Law 4 (`Closes/Fixes/Resolves` キーワード禁止 / `docs/issue-policy.md` §6) のため `closedByPullRequestsReferences` は**通常空**。fallback ルートが正規経路 (例外運用ではない)。Step 1 の bash 直後に以下を実行する:
+
+1. **timeline API (第 1 段)**:
+
+   ```bash
+   gh api repos/Idios/kobutachan-allaganeye/issues/"$ARGUMENTS"/timeline \
+     --jq '[.[] | select(.event=="cross-referenced") | select(.source.issue.pull_request != null) | {pr: .source.issue.number, state: .source.issue.state}]'
+   ```
+
+   - `cross-referenced` イベントから PR (`pull_request != null`) を列挙
+   - 返却される `state` は `closed` (実態は merged の近似情報)。確定的な merged 判定は Step 3 で `gh pr view` 経由で実施
+
+2. **`gh search prs` (第 2 段、timeline ゼロ件 or 補完用)**:
+
+   ```bash
+   gh search prs '"Refs #'"$ARGUMENTS"'"' --repo Idios/kobutachan-allaganeye --json number,state,title,url
+   ```
+
+   - PR 本文中の `Refs #N` 文字列で全 PR を検索
+   - `state==merged` を直接返すため state 判定が明確
+
+3. **dedupe ポリシー**: 両方ヒットした PR は **`gh search prs` の `state==merged` を真値**として採用 (timeline の `closed` は近似情報)。両ルート結果の和集合を取り、PR 番号で重複排除する。
+4. **`gh issue view` の `closedByPullRequestsReferences` が非空のケース**: 古い `Closes` 記述が残った issue や手動入力で稀にあるため、当該フィールドが返した PR と fallback 経路の結果を統合 (PR 番号で重複排除)。本プロジェクトでは fallback 経路結果が主、`closedByPullRequestsReferences` は補助的に扱う。
+
 ### 2. 紐づく PR の関係性判定 (ケース分岐)
+
+Step 1 で取得した PR 一覧 (closedByPullRequestsReferences または fallback 経路) の件数と、各 PR の close 対象 issue 件数 (closingIssuesReferences または PR 本文 `Refs #(\d+)` 抽出) でケース判定する。
 
 #### ケース A: 1:1 (issue 1 件 + PR 1 件)
 
-`closedByPullRequestsReferences` が 1 件で、その PR の `closingIssuesReferences` (`gh pr view <PR#> --json closingIssuesReferences`) が本 issue 1 件のみ。最も典型的なパターン。
+Step 1 で取得した PR 一覧が 1 件、かつその PR の close 対象 issue が本 issue 1 件のみ。最も典型的なパターン。
+
+- `closingIssuesReferences` (`gh pr view <PR#> --json closingIssuesReferences`) が本 issue 1 件のみ、または
+- `closingIssuesReferences` が空でも PR 本文 `Refs #(\d+)` 抽出結果が本 issue 1 件のみ (本プロジェクト運用)
 
 #### ケース B: 束ね PR (1 PR で N issue close)
 
-issue 1 件あたりの紐づく PR は 1 件だが、その PR が複数 issue を `closingIssuesReferences` として持つ。
+Step 1 で取得した PR 一覧が 1 件だが、その PR が複数 issue を close する。
 
 例: PR #500 が #401 と #402 を close する。
 
+**本プロジェクトでの判定** (Iron Law 4 で `Closes` 禁止のため `closingIssuesReferences` も通常空):
+
+- PR 本文から `Refs #(\d+)` 表記を正規表現で抽出する fallback ルートを使う:
+
+  ```bash
+  gh pr view <PR#> --repo Idios/kobutachan-allaganeye --json body --jq '.body' \
+    | grep -oE '#[0-9]+' | sort -u
+  ```
+
+- `closingIssuesReferences` が非空ならそれを優先、空なら PR 本文 `Refs` 抽出結果を採用
+
 #### ケース C: Phase 分割 (N PR で 1 issue close)
 
-issue 1 件に対し、`closedByPullRequestsReferences` が複数件返る。Phase 1 / Phase 2 のように複数 PR で 1 issue を分割消化する。
+Step 1 で取得した PR 一覧が複数件返る。Phase 1 / Phase 2 のように複数 PR で 1 issue を分割消化する。
 
 ### 3. 各 PR のマージ状態確認
 
@@ -249,11 +290,12 @@ close 後に追加情報 (関連 PR 番号 / 検証ログ / 残タスク子 issu
 | 「× 項目があるが軽微だから close してよい」 | Iron Law 3 違反。残タスクは (B)/(C) にトリアージ、握り潰し禁止 |
 | 「受け入れ条件節が無いから自分の判断で close 基準を決めよう」 | Iron Law 5 違反。`AskUserQuestion` でユーザー確認 (環境制約 §A) |
 | 「ユーザー承認なしで close したほうが速い」 | Iron Law 4 + Iron Law 5 違反。close は必ず Step 7 のユーザー承認を経由 |
+| 「`closedByPullRequestsReferences` 空 = 紐づく PR なし」と即断してよい | Iron Law 4 で `Closes` 禁止のため当該フィールドは通常空。Step 1 fallback ルート (`gh api .../timeline` cross-referenced-event + `gh search prs '"Refs #N"'`) で再列挙する (`Refs #N` fallback サブセクション) |
 
 ## よくある失敗
 
-- **`closedByPullRequestsReferences` のみで PR 件数判定**: 古い PR 紐付けが `timelineItems` のみに残るケースあり。両方確認する (Step 1)
-- **Phase 分割の見落とし**: 単一 PR で完結したつもりが、closing keyword 由来で複数 PR が立っているケースあり。`closedByPullRequestsReferences` の件数で機械判定する (Step 2 ケース C)
+- **`closedByPullRequestsReferences` のみで PR 件数判定**: 本プロジェクトは Iron Law 4 (`Closes` 禁止) のため当該フィールドは**通常空**。Step 1 fallback ルート (`gh api .../timeline` cross-referenced-event + `gh search prs '"Refs #N"'`) を経由して紐づく PR を列挙する。timeline API の state は `closed` (実態は merged の近似)、search の state は `merged` で明確 — dedupe 時は search の `merged` を真値として採用
+- **Phase 分割の見落とし**: 単一 PR で完結したつもりが、`Refs #N` 記述由来で複数 PR が立っているケースあり。Step 1 fallback で取得した PR 一覧の件数で機械判定する (Step 2 ケース C)
 - **束ね PR で他 issue 分の受け入れ条件まで検証**: ケース B では本 issue 分のみ抽出する。他 issue は別 `/close-issue` 呼び出しで扱う
 - **実測必要項目を skill 内で動的検証しようとする**: long-running は範囲外。ユーザーに `/test-pr` 既実施を確認するに留める (Step 5)
 - **× 項目を「軽微」と自己判定して close**: Iron Law 3 違反。トリアージ表で (B)/(C) に振り分ける (Step 6)
@@ -274,5 +316,5 @@ close 後に追加情報 (関連 PR 番号 / 検証ログ / 残タスク子 issu
 - `docs/issue-policy.md` §7 「Issue のライフサイクル管理」 / §8 「Issue クローズポリシー」
 - `docs/l2-workflow.md` §「レビュー受け入れ基準 (#367 対策)」 (review-pr → /close-issue の運用フロー、`### Issue クローズルール` サブセクション)
 - Iron Law 4 (`.claude/hooks/session-start.sh`)
-- 本 skill 改修経緯: #594
+- 本 skill 改修経緯: #594 (新設) / #607 (`Refs #N` fallback) / #606 (eval/reports 構造整理)
 - 先行事例 (empirical-prompt-tuning による skill 改修): #511 (review-pr ブラッシュアップ)

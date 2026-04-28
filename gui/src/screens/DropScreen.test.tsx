@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
@@ -35,6 +36,7 @@ vi.mock('@tauri-apps/api/webview', () => ({
 
 import { DropScreen, type TauriDragDropEvent } from './DropScreen';
 import { useAppStateStore } from '../state/appStateStore';
+import type { VideoProbeInfo } from './types';
 
 function createMockDragSubscriber() {
   let listener: ((e: TauriDragDropEvent) => void) | null = null;
@@ -129,6 +131,102 @@ describe('DropScreen', () => {
     await user.click(screen.getByRole('button', { name: '閉じる' }));
     expect(screen.getByTestId('drop-screen').dataset.phase).toBe('idle');
   });
+
+  it('Escape on the SelectedCard dismisses it (#587)', async () => {
+    const openDialog = vi.fn().mockResolvedValue('C:/videos/x.mkv');
+    render(<DropScreen openDialogFn={openDialog} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /参照/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('drop-selected-card')).toBeInTheDocument();
+    });
+    await user.keyboard('{Escape}');
+    expect(screen.getByTestId('drop-screen').dataset.phase).toBe('idle');
+    expect(useAppStateStore.getState().selectedVideoPath).toBeNull();
+  });
+
+  it('SelectedCard auto-focuses a focusable element inside (#587 focus trap)', async () => {
+    const openDialog = vi.fn().mockResolvedValue('C:/videos/x.mkv');
+    render(<DropScreen openDialogFn={openDialog} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /参照/ }));
+    const card = await screen.findByTestId('drop-selected-card');
+    // Auto-focus moves focus into the card. The first focusable in the
+    // card is the cancel button.
+    expect(card.contains(document.activeElement)).toBe(true);
+  });
+
+  it('Escape on the ErrorCard dismisses it (#587)', async () => {
+    const openDialog = vi.fn().mockResolvedValue('C:/videos/x.mkv');
+    const probeFn = vi.fn().mockRejectedValue(new Error('bad file'));
+    render(<DropScreen openDialogFn={openDialog} probeFn={probeFn} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /参照/ }));
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+    });
+    await user.keyboard('{Escape}');
+    expect(screen.getByTestId('drop-screen').dataset.phase).toBe('idle');
+  });
+
+  it('idle screen has no axe violations (#587)', async () => {
+    const { container } = render(<DropScreen />);
+    expect(await axe(container)).toHaveNoViolations();
+  });
+
+  it('SelectedCard has no axe violations (#587)', async () => {
+    const openDialog = vi.fn().mockResolvedValue('C:/videos/x.mkv');
+    const { container } = render(<DropScreen openDialogFn={openDialog} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /参照/ }));
+    await waitFor(() => screen.getByTestId('drop-selected-card'));
+    expect(await axe(container)).toHaveNoViolations();
+  });
+
+  it('ErrorCard has no axe violations (#587)', async () => {
+    const openDialog = vi.fn().mockResolvedValue('C:/videos/x.mkv');
+    const probeFn = vi.fn().mockRejectedValue(new Error('bad'));
+    const { container } = render(
+      <DropScreen openDialogFn={openDialog} probeFn={probeFn} />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /参照/ }));
+    await waitFor(() => screen.getByRole('alert'));
+    expect(await axe(container)).toHaveNoViolations();
+  });
+
+  it('shows the LoadingSpinner label while probing (#587)', async () => {
+    const openDialog = vi.fn().mockResolvedValue('C:/videos/x.mkv');
+    // Resolve the probe slowly so we can observe the probing phase.
+    let resolveProbe: ((value: VideoProbeInfo) => void) | undefined;
+    const probeFn = vi.fn(
+      () =>
+        new Promise<VideoProbeInfo>((resolve) => {
+          resolveProbe = resolve;
+        }),
+    );
+    render(<DropScreen openDialogFn={openDialog} probeFn={probeFn} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /参照/ }));
+    await waitFor(() => {
+      expect(screen.getByText('解析中')).toBeInTheDocument();
+    });
+    // Drain the pending probe to keep the suite clean.
+    resolveProbe?.({
+      path: 'C:/videos/x.mkv',
+      fileName: 'x.mkv',
+      sizeBytes: 0,
+      durationSeconds: 0,
+      width: 0,
+      height: 0,
+      fps: 0,
+      codec: 'h264',
+    });
+    await waitFor(() => {
+      expect(screen.queryByText('解析中')).toBeNull();
+    });
+  });
+
 
   // #568: D&D 機能 — Tauri webview onDragDropEvent 経由の挙動。
   describe('drag & drop (#568)', () => {

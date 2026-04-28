@@ -563,12 +563,17 @@ function Pane({
   videoRef,
   fps,
 }: PaneProps) {
+  // #587: data-pane drives the active border color (cyan for IN, gold
+  // for OUT) via CSS attribute selectors. The label is the single source
+  // of truth for which pane this is.
+  const paneKind = label.startsWith('IN') ? 'in' : 'out';
   return (
     <button
       type="button"
       onClick={onActivate}
       className={`${styles.pane}${active ? ` ${styles.paneActive}` : ''}`}
       aria-pressed={active}
+      data-pane={paneKind}
     >
       <div className={styles.paneCaption}>{label}</div>
       <div className={styles.paneVideo}>
