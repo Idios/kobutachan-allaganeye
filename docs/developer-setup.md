@@ -411,3 +411,16 @@ CI / Portable ZIP / 開発環境の 3 環境で Python と FFmpeg のバージ�
 | `.github/workflows/release.yml` (`Cache FFmpeg archive` ステップ) | cache `key` 内 SHA256 (win64-lgpl-shared 版、build-portable-zip.ps1 の SHA256 と同じ値) |
 | `docs/developer-setup.md` §1 | 「ffmpeg / ffprobe 8.1 LGPLv3 推奨」「推奨: ffmpeg 8.1 LGPLv3」の major version 記述 (系列変更時のみ) |
 | `docs/quickstart.md` §10 | 対応 FFmpeg コミット (例: `7f5c90f77e`) の記述 (upstream commit 変更時) |
+
+### get-pip.py の hash drift 対応 (#649)
+
+`$GetPipSha256` ([scripts/build-portable-zip.ps1](../scripts/build-portable-zip.ps1)) は非バージョン管理 URL `https://bootstrap.pypa.io/get-pip.py` を参照しているため、PyPA が pip をリリースするたびに hash が drift し `build-windows` が `SHA256 mismatch` で fail する。FFmpeg / Python embed は versioned URL でピン留めしているのでこの drift は発生しない (get-pip.py 固有の問題)。drift 検知時は以下で更新:
+
+```powershell
+Invoke-WebRequest https://bootstrap.pypa.io/get-pip.py -OutFile get-pip.py
+Get-FileHash get-pip.py -Algorithm SHA256
+```
+
+得られた SHA256 で `scripts/build-portable-zip.ps1` の `$GetPipSha256` を書き換え → develop-0.2.0 ベースで hotfix PR を先行マージ → 既存 PR を rebase で `build-windows` 復旧、という流れ ([#651](https://github.com/Idios/kobutachan-allaganeye/pull/651) が先例)。
+
+長期対応 (versioned URL `https://bootstrap.pypa.io/pip/24.0/get-pip.py` または `.sha256` sidecar の動的検証) は [#649](https://github.com/Idios/kobutachan-allaganeye/issues/649) §長期対応で検討中。
