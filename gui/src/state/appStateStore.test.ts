@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { useAppStateStore } from './appStateStore';
+import { DEFAULT_DETECTION_PARAMS, useAppStateStore } from './appStateStore';
 
 beforeEach(() => {
   useAppStateStore.getState().reset();
@@ -93,5 +93,54 @@ describe('useAppStateStore.reset', () => {
     expect(state.screen).toBe('drop');
     expect(state.selectedMatchIndex).toBeNull();
     expect(state.selectedVideoPath).toBeNull();
+  });
+
+  // #613: detect parameters tuned on the drop screen reset back to defaults.
+  it('resets detectionParams back to defaults', () => {
+    useAppStateStore
+      .getState()
+      .setDetectionParams({ blackoutThreshold: 30, gpu: false });
+    useAppStateStore.getState().reset();
+    expect(useAppStateStore.getState().detectionParams).toEqual(
+      DEFAULT_DETECTION_PARAMS,
+    );
+  });
+});
+
+// #613
+describe('useAppStateStore.detectionParams', () => {
+  it('starts at the default values', () => {
+    expect(useAppStateStore.getState().detectionParams).toEqual(
+      DEFAULT_DETECTION_PARAMS,
+    );
+  });
+
+  it('setDetectionParams patches a single field without touching others', () => {
+    useAppStateStore.getState().setDetectionParams({ blackoutThreshold: 22 });
+    const dp = useAppStateStore.getState().detectionParams;
+    expect(dp.blackoutThreshold).toBe(22);
+    expect(dp.workers).toBe(DEFAULT_DETECTION_PARAMS.workers);
+    expect(dp.gpu).toBe(DEFAULT_DETECTION_PARAMS.gpu);
+  });
+
+  it('setDetectionParams supports multiple fields in one call', () => {
+    useAppStateStore
+      .getState()
+      .setDetectionParams({ workers: 8, gpu: true });
+    const dp = useAppStateStore.getState().detectionParams;
+    expect(dp.workers).toBe(8);
+    expect(dp.gpu).toBe(true);
+  });
+
+  it('resetDetectionParams restores defaults without touching the rest of state', () => {
+    useAppStateStore.getState().setSelectedVideoPath('C:/video.mkv');
+    useAppStateStore
+      .getState()
+      .setDetectionParams({ blackoutThreshold: 30, gpu: false });
+    useAppStateStore.getState().resetDetectionParams();
+    const state = useAppStateStore.getState();
+    expect(state.detectionParams).toEqual(DEFAULT_DETECTION_PARAMS);
+    // selectedVideoPath must NOT be cleared by resetDetectionParams.
+    expect(state.selectedVideoPath).toBe('C:/video.mkv');
   });
 });

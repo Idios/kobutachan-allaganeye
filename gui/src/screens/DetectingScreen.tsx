@@ -6,6 +6,7 @@ import { AllaganSigil } from '../components/AllaganSigil';
 import { DisabledTooltip } from '../components/DisabledTooltip';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
+import { toStartDetectParams } from '../utils/detection';
 import {
   deriveDetectOutputDir,
   metadataPathFor,
@@ -262,6 +263,7 @@ function computeEta(percent: number, elapsed: number): number | null {
 export function DetectingScreen() {
   const navigate = useAppStateStore((s) => s.navigate);
   const selectedVideoPath = useAppStateStore((s) => s.selectedVideoPath);
+  const detectionParams = useAppStateStore((s) => s.detectionParams);
   const loadMetadata = useMetadataStore((s) => s.load);
   const loadSample = useMetadataStore((s) => s.loadSample);
 
@@ -362,7 +364,7 @@ export function DetectingScreen() {
         const result = await invoke<DetectResult>('start_detect', {
           videoPath: selectedVideoPath,
           outputDir,
-          params: {},
+          params: toStartDetectParams(detectionParams),
         });
         if (cancelled) return;
 

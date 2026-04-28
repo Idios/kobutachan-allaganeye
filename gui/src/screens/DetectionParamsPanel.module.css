@@ -1,0 +1,228 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid rgba(var(--ae-gold-rgb), 0.18);
+  padding-top: 10px;
+  margin-top: 4px;
+}
+
+.panelHeaderToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  padding: 4px 0;
+  margin: 0;
+  cursor: pointer;
+  font-family: var(--ae-font-ui);
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: var(--ae-gold-dim);
+  text-transform: uppercase;
+  text-align: left;
+}
+
+.panelHeaderToggle:hover,
+.panelHeaderToggle:focus-visible {
+  color: var(--ae-gold);
+  outline: none;
+}
+
+.panelHeaderChevron {
+  display: inline-block;
+  width: 10px;
+  font-family: var(--ae-font-mono);
+  color: var(--ae-gold-dim);
+}
+
+.panelHeaderToggle:hover .panelHeaderChevron,
+.panelHeaderToggle:focus-visible .panelHeaderChevron {
+  color: var(--ae-gold);
+}
+
+.panelHeaderModified {
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-cyan);
+  margin-left: 6px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.panelBody {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  column-gap: 12px;
+  row-gap: 10px;
+  align-items: center;
+  padding: 6px 4px 0 4px;
+}
+
+.fieldLabel {
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  color: var(--ae-text-dim);
+  text-align: right;
+}
+
+.sliderRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slider {
+  flex: 1;
+  appearance: none;
+  height: 2px;
+  background: rgba(var(--ae-gold-rgb), 0.3);
+  border: none;
+  cursor: pointer;
+  margin: 0;
+}
+
+.slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  background: var(--ae-gold);
+  border: 1px solid var(--ae-gold-bright);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: var(--ae-gold);
+  border: 1px solid var(--ae-gold-bright);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.slider:focus-visible {
+  outline: 1px solid var(--ae-cyan);
+  outline-offset: 4px;
+}
+
+.sliderValue {
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  color: var(--ae-text);
+  width: 38px;
+  text-align: right;
+}
+
+.numericRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.numericInput {
+  width: 60px;
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  color: var(--ae-text);
+  background: var(--ae-bg-deep);
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.3);
+  padding: 3px 6px;
+  outline: none;
+}
+
+.numericInput:focus-visible {
+  border-color: var(--ae-cyan);
+}
+
+.numericHint {
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+}
+
+.toggleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toggle {
+  appearance: auto;
+  cursor: pointer;
+  margin: 0;
+  accent-color: var(--ae-gold);
+}
+
+.toggleLabel {
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  color: var(--ae-text);
+}
+
+.triStateRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.triStateButton {
+  font-family: var(--ae-font-ui);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  color: var(--ae-gold-dim);
+  background: transparent;
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.3);
+  padding: 4px 10px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+
+.triStateButton:hover,
+.triStateButton:focus-visible {
+  color: var(--ae-gold);
+  border-color: var(--ae-gold);
+  outline: none;
+}
+
+.triStateButtonActive {
+  color: var(--ae-bg);
+  background: linear-gradient(180deg, var(--ae-gold), var(--ae-gold-dim));
+  border-color: var(--ae-gold);
+}
+
+.triStateButtonActive:hover,
+.triStateButtonActive:focus-visible {
+  color: var(--ae-bg);
+}
+
+.resetRow {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.resetButton {
+  font-family: var(--ae-font-ui);
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--ae-gold);
+  background: transparent;
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.33);
+  padding: 6px 14px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+
+.resetButton:hover,
+.resetButton:focus-visible {
+  color: var(--ae-gold-bright);
+  border-color: var(--ae-gold-bright);
+  outline: none;
+}
+
+.resetButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}

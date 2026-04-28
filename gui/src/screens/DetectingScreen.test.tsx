@@ -143,6 +143,42 @@ describe('DetectingScreen', () => {
     });
   });
 
+  // #613: detectionParams set on the drop screen are forwarded to start_detect.
+  it('forwards detectionParams from the store as start_detect params (#613)', async () => {
+    useAppStateStore.getState().setDetectionParams({
+      blackoutThreshold: 22,
+      workers: 8,
+      gpu: false,
+    });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        'start_detect',
+        expect.objectContaining({
+          params: {
+            blackoutThreshold: 22,
+            workers: 8,
+            gpu: false,
+          },
+        }),
+      );
+    });
+  });
+
+  // #613: workers=0 (auto sentinel) maps to null in the wire payload.
+  it('translates workers=0 (auto) to null in start_detect params (#613)', async () => {
+    useAppStateStore.getState().setDetectionParams({ workers: 0 });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        'start_detect',
+        expect.objectContaining({
+          params: expect.objectContaining({ workers: null }),
+        }),
+      );
+    });
+  });
+
   it('subscribes to detect-progress events on mount', async () => {
     render(<DetectingScreen />);
     await waitFor(() => {
