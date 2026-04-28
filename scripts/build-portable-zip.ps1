@@ -51,7 +51,15 @@ $PythonEmbedUrl = "https://www.python.org/ftp/python/$PythonVersion/python-$Pyth
 $PythonEmbedSha256 = '009D6BF7E3B2DDCA3D784FA09F90FE54336D5B60F0E0F305C37F400BF83CFD3B'
 
 $GetPipUrl = 'https://bootstrap.pypa.io/get-pip.py'
-$GetPipSha256 = 'FEBA1C697DF45BE1B539B40D93C102C9EE9DDE1D966303323B830B06F3FBCA3C'
+# #649 -- PyPA refreshes get-pip.py without versioning the URL, so the
+# pinned hash drifts whenever pip releases. When build-windows fails with
+# "SHA256 mismatch for https://bootstrap.pypa.io/get-pip.py", refresh the
+# pin via:
+#   Invoke-WebRequest https://bootstrap.pypa.io/get-pip.py -OutFile get-pip.py
+#   Get-FileHash get-pip.py -Algorithm SHA256
+# Long-term we should switch to a versioned URL (e.g. .../pip/24.0/get-pip.py)
+# or the bootstrap-served `.sha256` sidecar -- tracked in #649.
+$GetPipSha256 = '106AE019E371C7D8CB3699C75607A9B7A4D31E2B95C575362C8BCFE3D41353FD'
 
 # FFmpeg is pinned to a specific BtbN autobuild so the same allaganeye tag ships
 # the same binary and the LGPLv3 license applies uniformly across CI and Portable ZIP.
