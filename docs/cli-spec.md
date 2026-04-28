@@ -102,7 +102,7 @@ allaganeye 0.2.x (ffmpeg 8.1, Python 3.12.10, Windows 11)
 
 - `CPU:` 同モデル N ソケット時: `AMD EPYC 7763 64-Core Processor x2 (128C/256T)` (`xN` 表記、コア数は全 CPU 合計)
 - `CPU:` 異モデル混在時: `Intel Xeon Gold 6154 + AMD EPYC 7763 (92C/128T)` (` + ` 連結)
-- `GPU:` 2 つ以上検出時: `GPU:` ヘッダ行 + `    - <name>` の bullet 列挙 (multi-line block)。NVIDIA は `(NGB VRAM)` が付与され、iGPU と dGPU が NVIDIA 名 ベースで重複排除される
+- `GPU:` 2 つ以上検出時: `GPU:` ヘッダ行 + `- <name>` の bullet 列挙 (4 スペース インデント、上の出力例参照)。NVIDIA は `(NGB VRAM)` が付与され、iGPU と dGPU が NVIDIA 名 ベースで重複排除される
 
 ヘッダ各行の意味:
 
