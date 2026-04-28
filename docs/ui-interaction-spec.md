@@ -137,11 +137,11 @@
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | drop zone (div、Phase 3 で `onDrop` ハンドラを実装、現状は visual のみ) |
-| 状態 | `idle` (待受) / `dragOver` (Phase 3、ハイライト) / `disabled` (phase=`selecting/probing/selected/probeError` 時は受け付けない) |
-| 遷移トリガー | Phase 3: native HTML `drop` event → reducer `DND_DROPPED` → phase `idle → probing` ([#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) でハンドラ実装) |
-| store mutation | Phase 3: `setSelectedVideoPath(path)` (ハンドラ内、probe 成功後に発火) |
-| 例外 / edge case | 拡張子バリデーション (`.mp4 / .mkv / .avi / .mov`)、複数ファイルドロップ時は最初の 1 件のみ採用、フォルダドロップは reject。**Phase 3 (#465) で実装**: 現状は `RECENT_DUMMY` 表示のみで `onDrop` 未配線 |
+| 種類 | drop zone (div、Tauri webview `onDragDropEvent` 購読 + HTML5 D&D fallback。[#568](https://github.com/Idios/kobutachan-allaganeye/issues/568) で実装) |
+| 状態 | `idle` (待受、gold 破線) / `over-valid` (cyan 破線 + 薄背景、受付可能拡張子の drag-over 中) / `over-invalid` (danger 破線 + `⊘` icon + 「非対応形式 (.mp4 / .mkv / .avi / .mov のみ)」 inline、非対応形式の drag-over 中) / `disabled` (phase=`selecting/probing/selected/probeError` 時は drag を ignore、視覚不変) |
+| 遷移トリガー | Tauri webview `onDragDropEvent` (drop 種別) → 拡張子 validation pass → reducer `DND_DROPPED` → phase `idle → probing` → probe → `selected/probeError`。HTML5 経路は jsdom テスト fallback (`dragDropEnabled: true` (default) のため実機では Tauri が intercept して発火しない) |
+| store mutation | drop 経路は drop 後に `[OK — 検知開始]` 確定で `setSelectedVideoPath(path)` (`§2.1.6 [OK]` と同経路) |
+| 例外 / edge case | 拡張子は大文字小文字非区別 (`.mp4 / .mkv / .avi / .mov`)、複数ファイル drop は最初の valid 拡張子 1 件のみ採用、フォルダ drop は拡張子マッチなしで自動 reject (`probeFn` 未呼出 + phase 不変)。drag-over 中の拒否表示は drop zone 内 inline (toast なし)、drag-leave で復帰。`phase !== 'idle'` 時は drag を ignore (probing 中の干渉防止) |
 
 #### §2.1.2 [参照…] button
 
@@ -181,7 +181,7 @@
 | 状態 | `idle` (phase=`selected` のみ表示) |
 | 遷移トリガー | `onClick` → `cancelSelection()` → reducer `CANCEL_SELECTION` (phase=`selected → idle`) + `setProbeInfo(null)` |
 | store mutation | なし (`appStateStore.setSelectedVideoPath` は §2.1.6 でしか呼ばれていないので、リセットも不要) |
-| 例外 / edge case | confirm ダイアログなし (まだ §1.3 dirty 編集なし)。Phase 3 で D&D 経由 selection も同 phase に集約されるため挙動を共通化する |
+| 例外 / edge case | confirm ダイアログなし (まだ §1.3 dirty 編集なし)。D&D 経由 selection も同 phase (`selected`) に集約済み (§2.1.1 D&D zone → reducer `DND_DROPPED` → `PROBE_OK` → `selected` で SelectedCard 共通経路、[#568](https://github.com/Idios/kobutachan-allaganeye/issues/568) で実装) |
 
 #### §2.1.6 [OK — 検知開始] button (SelectedCard 内)
 

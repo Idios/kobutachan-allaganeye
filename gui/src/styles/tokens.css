@@ -55,6 +55,7 @@
   /* Rgba compositing tokens (used for hover/dim overlays) */
   --ae-gold-rgb: 200, 163, 92;
   --ae-cyan-rgb: 74, 195, 217;
+  --ae-danger-rgb: 200, 112, 88;
   --ae-bg-rgb: 10, 14, 20;
 }
 
