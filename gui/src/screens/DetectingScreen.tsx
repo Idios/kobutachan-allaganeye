@@ -271,22 +271,124 @@ export function DetectingScreen() {
     detectingReducer,
     'running' as DetectingPhase,
   );
+  const [error, setError] = useState<string | null>(null);
+  // #646 review Round 4 補足 #6 -- run-scoped state (progress / log /
+  // probeInfo / phaseLabel / elapsed / startedAt) は `DetectingRunningView`
+  // 内部に閉じ込め、retry 時は `key={runCount}` で remount して initial
+  // 値に戻す。親が個別 setState を列挙する旧設計だと「将来 state 追加
+  // で reset 漏れ」の visible regression を生むため、子 unmount で local
+  // state がまとめて捨てられる構造に変えた。
+  const [runCount, setRunCount] = useState(0);
+
+  const displayFile = selectedVideoPath?.split(/[/\\]/).pop() ?? '(video)';
+
+  // completed → navigate to complete (load happened in the running view)
+  useEffect(() => {
+    if (phase === 'completed') {
+      navigate('complete');
+    }
+  }, [phase, navigate]);
+
+  // #646 -- cancelled は即時 drop へ復帰、error は **手動操作** で復帰。
+  // 以前は error も即時 navigate('drop') していたため、Rust 側 Err
+  // (例: spawn allaganeye failed / video file not found) がユーザーに
+  // 見えず silent で drop 画面に戻る挙動だった。今は error phase で
+  // 専用 view を render し、ユーザーが [drop へ戻る] を押すまで画面
+  // 遷移しない。
+  useEffect(() => {
+    if (phase === 'cancelled') {
+      navigate('drop');
+    }
+  }, [phase, navigate]);
+
+  // Cancel button: phase transition only. Real ffmpeg kill ships in
+  // #523's PR via kill_tracked_processes; this PR keeps the issue's
+  // explicit scope ("UI phase transition only").
+  useEffect(() => {
+    if (phase === 'cancelling') {
+      dispatch({ type: 'CANCEL_CONFIRMED' });
+    }
+  }, [phase]);
+
+  // #646 -- error phase は detect 進行 UI を捨てて専用 error view に
+  // 切り替える。Rust Err 内容 (start_detect の failure message や
+  // CLI が emit した phase=error event の message) を `<pre>` で
+  // 改行保持して表示し、ユーザーが [再試行] / [drop へ戻る] を明示
+  // 操作するまでは画面遷移しない。
+  // Round 4 補足 #6: handleRetry は親 reducer の RETRY action と
+  // runCount bump のみ。run-scoped state の reset は `key={runCount}`
+  // による子 component remount で達成する。
+  function handleRetry(): void {
+    setError(null);
+    dispatch({ type: 'RETRY' });
+    setRunCount((c) => c + 1);
+  }
+
+  if (phase === 'error') {
+    return (
+      <DetectingErrorView
+        error={error}
+        displayFile={displayFile}
+        onRetry={handleRetry}
+        onBack={() => navigate('drop')}
+      />
+    );
+  }
+
+  return (
+    <DetectingRunningView
+      key={runCount}
+      phase={phase}
+      selectedVideoPath={selectedVideoPath}
+      detectionParams={detectionParams}
+      loadMetadata={loadMetadata}
+      loadSample={loadSample}
+      navigate={navigate}
+      onCancelClick={() => dispatch({ type: 'CANCEL_CLICKED' })}
+      onError={(msg) => {
+        setError(msg);
+        dispatch({ type: 'DETECT_ERROR' });
+      }}
+      onComplete={() => dispatch({ type: 'PROGRESS_COMPLETE' })}
+    />
+  );
+}
+
+interface DetectingRunningViewProps {
+  phase: DetectingPhase;
+  selectedVideoPath: string | null;
+  detectionParams: ReturnType<typeof useAppStateStore.getState>['detectionParams'];
+  loadMetadata: ReturnType<typeof useMetadataStore.getState>['load'];
+  loadSample: ReturnType<typeof useMetadataStore.getState>['loadSample'];
+  navigate: ReturnType<typeof useAppStateStore.getState>['navigate'];
+  onCancelClick: () => void;
+  onError: (message: string) => void;
+  onComplete: () => void;
+}
+
+function DetectingRunningView({
+  phase,
+  selectedVideoPath,
+  detectionParams,
+  loadMetadata,
+  loadSample,
+  navigate,
+  onCancelClick,
+  onError,
+  onComplete,
+}: DetectingRunningViewProps) {
   const [progress, setProgress] = useState(0);
   const [phaseLabel, setPhaseLabel] = useState<string>('start');
   const [log, setLog] = useState<LogEntry[]>([]);
   const [elapsed, setElapsed] = useState(0);
-  const [error, setError] = useState<string | null>(null);
   // #569 review Round 1 課題 1: probing event payload を保持して
   // header meta 行を実 ffprobe 結果で render する。
   const [probeInfo, setProbeInfo] = useState<ProbeInfo | null>(null);
-  // can compute their relative timestamp inside render. Updated only
-  // from the [再試行] handler so a retried detect resets its elapsed
-  // timer baseline to "now". The lazy initialiser sidesteps the
-  // react-hooks/set-state-in-effect rule for the initial assignment.
-  const [startedAt, setStartedAt] = useState<number>(() => Date.now());
-  // #646 review Round 2 課題 2 -- bumping `runCount` is the dep change
-  // that re-fires the start_detect / listen effect for [再試行].
-  const [runCount, setRunCount] = useState(0);
+  // Captured once on first mount via lazy initialiser so log entries
+  // can compute their relative timestamp inside render. The parent
+  // remounts this component (via `key={runCount}`) on retry, so a new
+  // run starts with a fresh `startedAt` baseline automatically.
+  const [startedAt] = useState<number>(() => Date.now());
   // #639 — pin the live-log scroll viewport so we can pull it back to
   // the bottom whenever a new entry arrives. The DOM ref talks to an
   // external system (scrollTop is browser state, not React state), so
@@ -333,6 +435,9 @@ export function DetectingScreen() {
   }, []);
 
   // Subscribe to detect-progress, kick off start_detect.
+  // Mount-once effect: the parent remounts this component on retry
+  // via `key={runCount}` so a new mount = a new detect run. No dep
+  // chasing needed for re-invocation.
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
     let cancelled = false;
@@ -384,8 +489,7 @@ export function DetectingScreen() {
             }
 
             if (payload.phase === 'error') {
-              setError(payload.message ?? 'unknown error');
-              dispatch({ type: 'DETECT_ERROR' });
+              onError(payload.message ?? 'unknown error');
               return;
             }
 
@@ -406,11 +510,10 @@ export function DetectingScreen() {
         setProgress(100);
         const metaPath = result.metadata_path || metadataPathFor(outputDir);
         await loadMetadata(metaPath);
-        dispatch({ type: 'PROGRESS_COMPLETE' });
+        onComplete();
       } catch (e) {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : String(e));
-        dispatch({ type: 'DETECT_ERROR' });
+        onError(e instanceof Error ? e.message : String(e));
       }
     }
 
@@ -419,40 +522,10 @@ export function DetectingScreen() {
       cancelled = true;
       if (unlisten) unlisten();
     };
-    // selectedVideoPath / loadMetadata / loadSample / navigate are
-    // store-bound and stable; we re-run only when `runCount` bumps from
-    // the [再試行] handler (#646 review Round 2 課題 2). Initial mount
-    // also goes through this effect (runCount = 0).
+    // Mount-once: store-bound props are stable across the same mount
+    // and a retry remounts the component (via parent's `key={runCount}`).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runCount]);
-
-  // completed → navigate to complete (load happened above)
-  useEffect(() => {
-    if (phase === 'completed') {
-      navigate('complete');
-    }
-  }, [phase, navigate]);
-
-  // #646 -- cancelled は即時 drop へ復帰、error は **手動操作** で復帰。
-  // 以前は error も即時 navigate('drop') していたため、Rust 側 Err
-  // (例: spawn allaganeye failed / video file not found) がユーザーに
-  // 見えず silent で drop 画面に戻る挙動だった。今は error phase で
-  // 専用 view を render し、ユーザーが [drop へ戻る] を押すまで画面
-  // 遷移しない。
-  useEffect(() => {
-    if (phase === 'cancelled') {
-      navigate('drop');
-    }
-  }, [phase, navigate]);
-
-  // Cancel button: phase transition only. Real ffmpeg kill ships in
-  // #523's PR via kill_tracked_processes; this PR keeps the issue's
-  // explicit scope ("UI phase transition only").
-  useEffect(() => {
-    if (phase === 'cancelling') {
-      dispatch({ type: 'CANCEL_CONFIRMED' });
-    }
-  }, [phase]);
+  }, []);
 
   const pct1 = Math.min(100, progress * (100 / 70)); // scan finishes at 70%
   const pct2 = Math.max(0, Math.min(100, ((progress - 70) * 100) / 18)); // refine fills 70-88
@@ -464,36 +537,6 @@ export function DetectingScreen() {
   // 「meta 行が空」状態を回避する。
   const metaText = probeInfo ? formatProbeMeta(probeInfo) : `phase: ${phaseLabel}`;
 
-  // #646 -- error phase は detect 進行 UI を捨てて専用 error view に
-  // 切り替える。Rust Err 内容 (start_detect の failure message や
-  // CLI が emit した phase=error event の message) を `<pre>` で
-  // 改行保持して表示し、ユーザーが [再試行] / [drop へ戻る] を明示
-  // 操作するまでは画面遷移しない。
-  // Round 2 課題 2 / 課題 3: retry / auto-focus / Esc handler を
-  // 切り出した DetectingErrorView 内で実装する。
-  function handleRetry(): void {
-    setError(null);
-    setProgress(0);
-    setLog([]);
-    setProbeInfo(null);
-    setPhaseLabel('start');
-    setElapsed(0);
-    setStartedAt(Date.now());
-    dispatch({ type: 'RETRY' });
-    setRunCount((c) => c + 1);
-  }
-
-  if (phase === 'error') {
-    return (
-      <DetectingErrorView
-        error={error}
-        displayFile={displayFile}
-        onRetry={handleRetry}
-        onBack={() => navigate('drop')}
-      />
-    );
-  }
-
   return (
     <div className={styles.screen} data-testid="detecting-screen">
       <div className={styles.header}>
@@ -503,7 +546,6 @@ export function DetectingScreen() {
           <div className={styles.fileName}>{displayFile}</div>
           <div className={styles.meta} data-testid="detecting-meta">
             {metaText}
-            {error ? ` · error: ${error}` : ''}
           </div>
         </div>
         <div className={styles.progressBadge}>
@@ -582,7 +624,7 @@ export function DetectingScreen() {
               type="button"
               className={styles.cancelButton}
               disabled={phase !== 'running'}
-              onClick={() => dispatch({ type: 'CANCEL_CLICKED' })}
+              onClick={onCancelClick}
               {...p}
             >
               中断
@@ -662,7 +704,6 @@ function DetectingErrorView({
   useEffect(() => {
     function handler(e: KeyboardEvent) {
       if (e.key === 'Escape') {
-        e.preventDefault();
         onBack();
       }
     }

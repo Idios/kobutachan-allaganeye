@@ -1907,6 +1907,15 @@ async fn start_detect(
     for a in &detect_args {
         cmd.arg(a);
     }
+    // #646 review Round 4 補足 #8 -- cwd は `python -m allaganeye`
+    // fallback のみで `Some(...)` になり、`find_worktree_root` で見つけた
+    // worktree root を anchor して `sys.path[0]` 経由で `allaganeye` パッケージ
+    // を import 可能にするためだけに設定する。Python 側 (allaganeye/ 配下)
+    // は video_path / output_dir を絶対 path で受けるため現状は cwd 非依存
+    // で動く。将来 Python 側で cwd-relative path 解決を追加する場合は、
+    // 本 fallback のときだけ cwd が worktree root になり挙動が静かに変わる
+    // 可能性があるので注意。env / bundle 経路では `cwd = None` なので
+    // OS デフォルト cwd で起動する。
     if let Some(cwd) = &cmd_spec.cwd {
         cmd.current_dir(cwd);
     }

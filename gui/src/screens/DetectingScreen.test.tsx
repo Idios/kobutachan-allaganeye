@@ -519,6 +519,82 @@ describe('DetectingScreen', () => {
     });
   });
 
+  // #646 review Round 4 補足 #6 -- retry remounts the running view via
+  // `key={runCount}`. After retry the run-scoped state (progress / log
+  // / probeInfo / phaseLabel / elapsed) must be back at initial values
+  // so the user does not see leftover data from the failed run. Pin
+  // this contract so future state additions on the running view either
+  // ride the remount automatically or trip this test.
+  it('retry resets run-scoped state on remount (#646 補足 #6)', async () => {
+    let callCount = 0;
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        callCount += 1;
+        // Both calls hang so the lifecycle is driven by detect-progress
+        // events: probing + scan populate state, then phase=error trips
+        // the error UI without invoke ever resolving.
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(lastDetectProgressHandler).not.toBeNull();
+    });
+
+    // Populate run-scoped state on the first run.
+    act(() => {
+      emitDetectProgress({
+        phase: 'probing',
+        width: 1920,
+        height: 1080,
+        fps: 60,
+        codec: 'h264',
+        duration_s: 600,
+      });
+      emitDetectProgress({ phase: 'scan', completed: 50, total: 100 });
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('detecting-meta').textContent).toContain(
+        '1920x1080',
+      );
+    });
+
+    // Drive into error UI via phase=error event.
+    act(() => {
+      emitDetectProgress({ phase: 'error', message: 'boom' });
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('detecting-error')).toBeInTheDocument();
+    });
+
+    act(() => {
+      fireEvent.click(screen.getByTestId('detecting-error-retry'));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('detecting-screen')).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(callCount).toBe(2);
+    });
+
+    // probeInfo cleared -> meta line falls back to "phase: start"
+    // (the phaseLabel initial value).
+    const meta = screen.getByTestId('detecting-meta');
+    expect(meta.textContent).toContain('phase: start');
+    expect(meta.textContent).not.toContain('1920x1080');
+    // progress badge + both PhaseRows display 0% on a fresh remount.
+    expect(screen.getAllByText('0%').length).toBeGreaterThan(0);
+    // log placeholder visible (log array empty).
+    expect(screen.getByText(/起動中…/)).toBeInTheDocument();
+    // elapsed back to 00:00 (timer reset on remount).
+    expect(screen.getByText(/経過 00:00/)).toBeInTheDocument();
+  });
+
   // #646 review Round 2 課題 3 -- a11y: error view auto-focuses the
   // back button so screen readers announce the error context and
   // keyboard users land on a non-destructive action by default.
