@@ -53,6 +53,8 @@ def probe_video(video_path: Path) -> ProbeResult:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
             timeout=30,
         )
