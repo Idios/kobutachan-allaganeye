@@ -42,4 +42,18 @@ describe('detectingReducer', () => {
       detectingReducer('error', { type: 'CANCEL_CLICKED' }),
     ).toBe('error');
   });
+
+  // #646 review Round 2 課題 2 -- RETRY action transitions error → running.
+  it('goes error -> running on RETRY', () => {
+    expect(detectingReducer('error', { type: 'RETRY' })).toBe('running');
+  });
+
+  it('ignores RETRY in non-error states', () => {
+    // RETRY should be a no-op anywhere except error to avoid restarting
+    // detection from inside a running / cancelling / cancelled / completed flow.
+    expect(detectingReducer('running', { type: 'RETRY' })).toBe('running');
+    expect(detectingReducer('cancelling', { type: 'RETRY' })).toBe('cancelling');
+    expect(detectingReducer('cancelled', { type: 'RETRY' })).toBe('cancelled');
+    expect(detectingReducer('completed', { type: 'RETRY' })).toBe('completed');
+  });
 });

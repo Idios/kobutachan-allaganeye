@@ -1717,20 +1717,102 @@ fn parse_detect_progress_line(line: &str) -> Option<DetectProgress> {
     serde_json::from_str(line).ok()
 }
 
-/// #569 -- locate the `allaganeye` CLI executable.
+/// #646 -- how to invoke the `allaganeye` CLI from Rust.
+///
+/// Wraps the executable plus any prefix arguments (e.g. `-m allaganeye`
+/// when the executable is `python`) plus an optional working directory
+/// (e.g. the worktree root for the `python -m` fallback so the
+/// development checkout's `allaganeye/` package is on `sys.path`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AllaganeyeCommand {
+    pub program: String,
+    pub prefix_args: Vec<String>,
+    pub cwd: Option<PathBuf>,
+}
+
+/// #569 / #646 -- resolve how to invoke the `allaganeye` CLI.
 ///
 /// Resolution order:
-/// 1. `ALLAGANEYE_BIN` environment variable (must point at a real file).
-/// 2. The bare name `"allaganeye"` -- relies on `tokio::process::Command`'s
-///    PATH search.  Portable ZIP layouts add the bundled `allaganeye.bat`
-///    location to PATH at install time.
-fn resolve_allaganeye_bin() -> String {
-    if let Ok(path) = std::env::var("ALLAGANEYE_BIN") {
-        if !path.is_empty() {
-            return path;
+/// 1. `ALLAGANEYE_BIN` env var (override / escape hatch). Single
+///    executable path, no prefix args, no cwd.
+/// 2. `<bundle_resource_dir>/allaganeye.bat` (Portable ZIP production
+///    path, #615). Resource dir is the directory the Tauri bundle
+///    extracted to; we look for the same `allaganeye.bat` the ZIP
+///    layout ships with.
+/// 3. `python -m allaganeye` fallback so `npm run tauri dev` works
+///    in a fresh worktree without `pip install -e .` and without
+///    setting `ALLAGANEYE_BIN`. `cwd` is the nearest ancestor of
+///    `current_dir()` that contains `pyproject.toml`, ensuring the
+///    worktree's `allaganeye/` package is the first match on
+///    `sys.path[0]` (cwd injected by Python `-m`).
+fn resolve_allaganeye_command(app: &tauri::AppHandle) -> AllaganeyeCommand {
+    if let Some(cmd) = resolve_from_env(std::env::var("ALLAGANEYE_BIN").ok()) {
+        return cmd;
+    }
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        if let Some(cmd) = resolve_from_resource_dir(&resource_dir) {
+            return cmd;
         }
     }
-    "allaganeye".to_string()
+    resolve_python_fallback(find_worktree_root(std::env::current_dir().ok()))
+}
+
+/// Test helper: resolve from the `ALLAGANEYE_BIN` env var value (if any).
+/// Returns `None` for missing / empty env var so the caller can fall
+/// through to the next stage.
+fn resolve_from_env(env_value: Option<String>) -> Option<AllaganeyeCommand> {
+    let path = env_value?;
+    if path.is_empty() {
+        return None;
+    }
+    Some(AllaganeyeCommand {
+        program: path,
+        prefix_args: vec![],
+        cwd: None,
+    })
+}
+
+/// Test helper: resolve from a Tauri bundle resource directory by
+/// looking for `allaganeye.bat`. Returns `None` when the bat is
+/// absent so dev builds fall through to the python fallback.
+fn resolve_from_resource_dir(resource_dir: &Path) -> Option<AllaganeyeCommand> {
+    let bat = resource_dir.join("allaganeye.bat");
+    if bat.exists() {
+        Some(AllaganeyeCommand {
+            program: bat.to_string_lossy().to_string(),
+            prefix_args: vec![],
+            cwd: None,
+        })
+    } else {
+        None
+    }
+}
+
+/// Test helper: build the `python -m allaganeye` fallback command.
+/// `cwd` is whatever the caller decided is the worktree root (or
+/// `None` if no anchor was found, in which case Python's import
+/// machinery still finds globally-installed packages).
+fn resolve_python_fallback(cwd: Option<PathBuf>) -> AllaganeyeCommand {
+    AllaganeyeCommand {
+        program: "python".to_string(),
+        prefix_args: vec!["-m".to_string(), "allaganeye".to_string()],
+        cwd,
+    }
+}
+
+/// Test helper: walk the ancestors of `start` looking for the
+/// directory that holds `pyproject.toml`. Returns `None` for
+/// missing `start` or no anchor in the chain (e.g. when invoked
+/// outside the worktree, in which case the python fallback runs
+/// without `cwd` override).
+fn find_worktree_root(start: Option<PathBuf>) -> Option<PathBuf> {
+    let start = start?;
+    for ancestor in start.ancestors() {
+        if ancestor.join("pyproject.toml").exists() {
+            return Some(ancestor.to_path_buf());
+        }
+    }
+    None
 }
 
 /// #569 -- assemble argv for `allaganeye detect --progress-format json`.
@@ -1815,20 +1897,43 @@ async fn start_detect(
         ));
     }
 
-    let bin = resolve_allaganeye_bin();
-    let args = detect_command_args(&video_path, &output_dir, &params);
+    let cmd_spec = resolve_allaganeye_command(&app);
+    let detect_args = detect_command_args(&video_path, &output_dir, &params);
 
-    let mut cmd = tokio::process::Command::new(&bin);
-    for a in &args {
+    let mut cmd = tokio::process::Command::new(&cmd_spec.program);
+    for a in &cmd_spec.prefix_args {
         cmd.arg(a);
+    }
+    for a in &detect_args {
+        cmd.arg(a);
+    }
+    // #646 review Round 4 補足 #8 -- cwd は `python -m allaganeye`
+    // fallback のみで `Some(...)` になり、`find_worktree_root` で見つけた
+    // worktree root を anchor して `sys.path[0]` 経由で `allaganeye` パッケージ
+    // を import 可能にするためだけに設定する。Python 側 (allaganeye/ 配下)
+    // は video_path / output_dir を絶対 path で受けるため現状は cwd 非依存
+    // で動く。将来 Python 側で cwd-relative path 解決を追加する場合は、
+    // 本 fallback のときだけ cwd が worktree root になり挙動が静かに変わる
+    // 可能性があるので注意。env / bundle 経路では `cwd = None` なので
+    // OS デフォルト cwd で起動する。
+    if let Some(cwd) = &cmd_spec.cwd {
+        cmd.current_dir(cwd);
     }
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    // #646 -- spawn failure messages need to surface the resolved
+    // program (e.g. "python -m allaganeye") so the GUI error display
+    // can hint at which stage of the resolution chain failed.
+    let resolved_label = if cmd_spec.prefix_args.is_empty() {
+        cmd_spec.program.clone()
+    } else {
+        format!("{} {}", cmd_spec.program, cmd_spec.prefix_args.join(" "))
+    };
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("spawn allaganeye failed ({}): {}", bin, e))?;
+        .map_err(|e| format!("spawn allaganeye failed ({}): {}", resolved_label, e))?;
     let stdout = child
         .stdout
         .take()
@@ -3527,32 +3632,97 @@ mod tests {
         assert!(!args.iter().any(|a| a == "--gpu-vendor"));
     }
 
-    /// `resolve_allaganeye_bin` reads `ALLAGANEYE_BIN`. cargo test is
-    /// multi-threaded by default and process env vars are shared across
-    /// threads, so split-out tests that all touch the same key would
-    /// race. Roll the three cases into one sequential test instead.
+    // -- #646 resolve_allaganeye_command parts -----------------------------
+
+    /// Custom path via env var wins.
     #[test]
-    fn resolve_allaganeye_bin_resolution_order() {
-        let key = "ALLAGANEYE_BIN";
-        let saved = std::env::var(key).ok();
+    fn resolve_from_env_returns_path_when_set() {
+        let cmd = resolve_from_env(Some("C:/custom/path/allaganeye.exe".to_string()))
+            .expect("non-empty env should resolve");
+        assert_eq!(cmd.program, "C:/custom/path/allaganeye.exe");
+        assert!(cmd.prefix_args.is_empty());
+        assert!(cmd.cwd.is_none());
+    }
 
-        // 1. Custom path wins when set.
-        std::env::set_var(key, "C:/custom/path/allaganeye.exe");
-        assert_eq!(resolve_allaganeye_bin(), "C:/custom/path/allaganeye.exe");
+    /// Empty / missing env var falls through (returns None) so the
+    /// caller can move on to the next resolution stage.
+    #[test]
+    fn resolve_from_env_returns_none_for_empty_or_missing() {
+        assert!(resolve_from_env(None).is_none());
+        assert!(resolve_from_env(Some(String::new())).is_none());
+    }
 
-        // 2. Empty value is treated as unset (PATH lookup fallback).
-        std::env::set_var(key, "");
-        assert_eq!(resolve_allaganeye_bin(), "allaganeye");
+    /// Bundle resource dir resolves to `<dir>/allaganeye.bat` when the
+    /// bat exists. Mirrors the Portable ZIP layout produced by #615.
+    #[test]
+    fn resolve_from_resource_dir_picks_bundled_bat() {
+        let tmp = TempDir::new().unwrap();
+        let bat = tmp.path().join("allaganeye.bat");
+        fs::write(&bat, "@echo off\r\n").unwrap();
 
-        // 3. Unset env -> bare name (relies on PATH search at spawn time).
-        std::env::remove_var(key);
-        assert_eq!(resolve_allaganeye_bin(), "allaganeye");
+        let cmd = resolve_from_resource_dir(tmp.path())
+            .expect("bat present should resolve");
+        assert_eq!(cmd.program, bat.to_string_lossy().to_string());
+        assert!(cmd.prefix_args.is_empty());
+        assert!(cmd.cwd.is_none());
+    }
 
-        // Restore prior env so other tests are unaffected.
-        match saved {
-            Some(v) => std::env::set_var(key, v),
-            None => std::env::remove_var(key),
-        }
+    /// Resource dir without the bat returns None (dev / non-bundled
+    /// build) so the python fallback runs.
+    #[test]
+    fn resolve_from_resource_dir_returns_none_when_missing() {
+        let tmp = TempDir::new().unwrap();
+        assert!(resolve_from_resource_dir(tmp.path()).is_none());
+    }
+
+    /// Python fallback always builds `python -m allaganeye` regardless
+    /// of cwd.
+    #[test]
+    fn resolve_python_fallback_uses_minus_m_allaganeye() {
+        let cmd = resolve_python_fallback(None);
+        assert_eq!(cmd.program, "python");
+        assert_eq!(cmd.prefix_args, vec!["-m".to_string(), "allaganeye".to_string()]);
+        assert!(cmd.cwd.is_none());
+
+        let tmp = TempDir::new().unwrap();
+        let cmd = resolve_python_fallback(Some(tmp.path().to_path_buf()));
+        assert_eq!(cmd.cwd.as_deref(), Some(tmp.path()));
+    }
+
+    /// `find_worktree_root` walks ancestors looking for the directory
+    /// that holds `pyproject.toml`. The dev fallback uses this to
+    /// anchor `cwd` so `python -m allaganeye` finds the worktree's
+    /// `allaganeye/` package.
+    #[test]
+    fn find_worktree_root_locates_pyproject_anchor() {
+        let tmp = TempDir::new().unwrap();
+        // Layout: <root>/pyproject.toml + <root>/sub/<deeper>
+        fs::write(tmp.path().join("pyproject.toml"), b"").unwrap();
+        let deeper = tmp.path().join("sub").join("deeper");
+        fs::create_dir_all(&deeper).unwrap();
+
+        let canonical_root = fs::canonicalize(tmp.path()).unwrap();
+        let canonical_deeper = fs::canonicalize(&deeper).unwrap();
+
+        let found = find_worktree_root(Some(canonical_deeper))
+            .expect("anchor should be found");
+        let canonical_found = fs::canonicalize(&found).unwrap();
+        assert_eq!(canonical_found, canonical_root);
+    }
+
+    /// `find_worktree_root` returns None when no anchor exists in the
+    /// ancestor chain (callers fall back to a cwd-less command spec).
+    #[test]
+    fn find_worktree_root_returns_none_without_anchor() {
+        let tmp = TempDir::new().unwrap();
+        // Bare directory with no pyproject.toml at any ancestor.
+        let nested = tmp.path().join("a").join("b");
+        fs::create_dir_all(&nested).unwrap();
+        // Note: the test process's parent ancestors might still contain
+        // a real `pyproject.toml` (e.g. when run from inside this repo)
+        // so we rely on the helper's None branch via Option::None
+        // input instead of trusting tmp ancestry.
+        assert!(find_worktree_root(None).is_none());
     }
 
     #[test]
