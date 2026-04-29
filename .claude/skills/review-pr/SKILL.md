@@ -181,7 +181,7 @@ Step 3 (受け入れ条件未達) / Step 4 (CI 失敗) / Step 5 (ロジック・
 
 **AskUserQuestion で処置選択肢を提示する場合**: (A) を必ず最初の選択肢として `(Recommended)` ラベル付きで表示する。**`(Recommended)` ラベルは表示順規約であって最終選択結果を強制するものではない**。(B) / (C) は限定例外 trigger を `description` フィールドに明記する。**(B) trigger 強該当時は description で具体的に該当根拠を説明** する (例: 「audio module は本 PR スコープ外 = 別レイヤー、独立 security 修正 → (B) 該当」)。例:
 
-```
+```js
 options: [
   { label: "(A) 本 PR 内で追加修正 (Recommended)", description: "本 PR の品質を底上げする修正は (A) で同梱が原則 (`feedback_pr_internal_fix_policy.md`)" },
   { label: "(B) 別 issue 起票 (別領域 / 大規模 / 外部依存のみ)", description: "本件は audio module で本 PR スコープ外 (detector/format) → 別領域 trigger 強該当、独立した security 修正" },
