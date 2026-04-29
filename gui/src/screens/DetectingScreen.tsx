@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { useEffect, useReducer, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 
 import { AllaganSigil } from '../components/AllaganSigil';
 import { DisabledTooltip } from '../components/DisabledTooltip';
@@ -286,6 +286,12 @@ export function DetectingScreen() {
   // screen). Avoids the react-hooks/set-state-in-effect lint warning
   // a setState-in-effect initialiser would trip.
   const [startedAt] = useState<number>(() => Date.now());
+  // #639 — pin the live-log scroll viewport so we can pull it back to
+  // the bottom whenever a new entry arrives. The DOM ref talks to an
+  // external system (scrollTop is browser state, not React state), so
+  // setting it inside an effect doesn't fall under the
+  // react-hooks/set-state-in-effect rule.
+  const logRef = useRef<HTMLDivElement | null>(null);
 
   // Wall-clock elapsed timer -- ticks once per second so the UI can
   // show "経過 00:42 / 残り ~01:30" without depending on event cadence.
@@ -296,6 +302,34 @@ export function DetectingScreen() {
     }, 1000);
     return () => clearInterval(id);
   }, [phase, startedAt]);
+
+  // #639 — auto-scroll the log viewport to the bottom whenever a new
+  // entry is appended so the most recent line is always visible. Scope
+  // out: pausing auto-scroll while the user is actively scrolling up
+  // (deferred per #639 §スコープ外).
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [log]);
+
+  // #639 review (実機検証 3 回目) — window resize / 親 flex の高さ変動
+  // で log pane の viewport だけ縮んだ場合、`[log]` 依存の auto-scroll
+  // は再走しないため scrollTop が古い位置のまま残り「見切れ」が再発
+  // する。ResizeObserver で log 自身のサイズ変化を監視して都度末尾に
+  // 引き戻す。新エントリ追加経路と独立しているので 2 経路で末尾追従
+  // が担保される。
+  useEffect(() => {
+    const el = logRef.current;
+    if (!el) return;
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   // Subscribe to detect-progress, kick off start_detect.
   useEffect(() => {
@@ -454,7 +488,12 @@ export function DetectingScreen() {
 
       <div className={styles.divider} />
 
-      <div className={styles.log} role="log" aria-label="detect log">
+      <div
+        ref={logRef}
+        className={styles.log}
+        role="log"
+        aria-label="detect log"
+      >
         {log.length === 0 && (
           <div>
             <span className={styles.logTime}>[--:--]</span> 起動中…

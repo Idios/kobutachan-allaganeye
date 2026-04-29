@@ -1,5 +1,12 @@
 .screen {
   flex: 1;
+  /*
+   * #639 review (Round 2 波及) — flex 子 (`App.module.css` の
+   * `.main > .screen`) なので `min-height: 0` を明示しないと内容に
+   * 押し広げられて viewport を超え、`overflow: auto` が無効化される
+   * (DetectingScreen `.screen` と同パターン)。
+   */
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;

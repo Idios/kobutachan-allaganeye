@@ -260,6 +260,122 @@ describe('DetectingScreen', () => {
     expect(meta.textContent).toContain('2:00:15');
   });
 
+  // #639 review (実機検証 3 回目) -- ResizeObserver で log pane の
+  // 縮小 (window resize / parent flex 変動) を検知して末尾に再追従
+  // させる。新エントリ追加経路と独立。
+  it('re-pins scrollTop to scrollHeight when log pane is resized (#639)', async () => {
+    let resizeCallback: ResizeObserverCallback | null = null;
+    const disconnect = vi.fn();
+    const originalRO = globalThis.ResizeObserver;
+    // jsdom does not implement ResizeObserver; install a minimal stub
+    // that captures the callback so the test can drive it.
+    class StubObserver {
+      constructor(cb: ResizeObserverCallback) {
+        resizeCallback = cb;
+      }
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {
+        disconnect();
+      }
+    }
+    globalThis.ResizeObserver =
+      StubObserver as unknown as typeof ResizeObserver;
+
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    try {
+      render(<DetectingScreen />);
+      await waitFor(() => {
+        expect(listenMock).toHaveBeenCalled();
+      });
+
+      const log = screen.getByRole('log');
+      // Stub layout numbers (jsdom default 0) so the resize handler
+      // has a non-trivial scrollHeight target.
+      Object.defineProperty(log, 'scrollHeight', {
+        configurable: true,
+        get: () => 1500,
+      });
+      // Place scrollTop at an outdated (mid) position simulating the
+      // "see-cut" state after resize before the observer fires.
+      log.scrollTop = 200;
+
+      // Trigger the observer's resize callback (jsdom doesn't lay
+      // anything out so we drive the callback synthetically; the
+      // assertion is about the handler logic, not jsdom layout).
+      expect(resizeCallback).not.toBeNull();
+      act(() => {
+        // ResizeObserver callback signature: (entries, observer)
+        resizeCallback!(
+          [] as unknown as ResizeObserverEntry[],
+          {} as unknown as ResizeObserver,
+        );
+      });
+
+      // Handler must pull scrollTop to the current scrollHeight so the
+      // most recent line lands inside the (now smaller) viewport.
+      expect(log.scrollTop).toBe(1500);
+    } finally {
+      globalThis.ResizeObserver = originalRO;
+    }
+  });
+
+  // #639 -- log viewport must auto-scroll to the bottom whenever a
+  // new entry arrives so the latest line is always visible without
+  // user interaction.
+  it('scrolls the log viewport to the bottom on new entries (#639)', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(listenMock).toHaveBeenCalled();
+    });
+
+    const log = screen.getByRole('log');
+    // jsdom doesn't lay out elements, so scrollHeight is always 0 by
+    // default. Stub the layout numbers so the auto-scroll effect has a
+    // non-trivial target to write into scrollTop.
+    Object.defineProperty(log, 'scrollHeight', {
+      configurable: true,
+      get: () => 1000,
+    });
+    Object.defineProperty(log, 'clientHeight', {
+      configurable: true,
+      get: () => 200,
+    });
+
+    // Drive a few events so the log array grows and the
+    // auto-scroll effect fires.
+    act(() => {
+      emitDetectProgress({ phase: 'start' });
+      emitDetectProgress({ phase: 'probing', duration_s: 600, codec: 'h264' });
+      emitDetectProgress({
+        phase: 'scan',
+        completed: 50,
+        total: 500,
+      });
+    });
+
+    // jsdom defaults scrollTop to 0; the effect should pull it to the
+    // current scrollHeight (1000) so the latest entry sits at the
+    // bottom of the visible viewport.
+    expect(log.scrollTop).toBe(1000);
+  });
+
   // #569 review Round 1 課題 2 -- log lines carry data-kind attribute
   // and apply the matching colour-coding class.
   it('renders log entries with kind-specific styling', async () => {
