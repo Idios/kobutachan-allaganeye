@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: PR をレビュー（base ブランチ確認・受け入れ条件ゲート・CI・ロジック/ドキュメント整合性・ギャップ分析・摘出課題トリアージ）し、摘出した全課題を PR コメント / 新規 issue / 既存 issue 追記 のいずれかに必ず振り分ける (握り潰し禁止)。受け入れ条件全満たし + 摘出課題 (A) ゼロ で LGTM 候補、そうでなければ修正依頼または派生 issue 起票。マージ後は紐づく issue クローズを `/close-issue` skill (または手動クローズ) にハンドオフする (本 skill 内では `gh issue close` を実行しない)。レビュー専用セッションのため PR ブランチへの編集・commit・push は行わない
+description: PR をレビュー（base ブランチ同期確認 = 最新化 + 直近マージ PR 影響 + 並行 worktree PR 重複、受け入れ条件ゲート、CI、ロジック/ドキュメント整合性、ギャップ分析、摘出課題トリアージ）し、摘出した全課題を (A) PR 内追加修正 (Recommended、デフォルト) / (B) 新規 issue 起票 (限定例外) / (C) 既存 issue 追記 (限定例外) のいずれかに必ず振り分ける (握り潰し禁止)。受け入れ条件全満たし + 摘出課題ゼロ で LGTM 候補、そうでなければ原則 (A) PR 内追加修正で完結する。マージ後は紐づく issue クローズを `/close-issue` skill (または手動クローズ) にハンドオフする (本 skill 内では `gh issue close` を実行しない)。レビュー専用セッションのため PR ブランチへの編集・commit・push は行わない
 user-invocable: true
 argument-hint: <PR番号>
 ---
@@ -22,10 +22,69 @@ gh pr view $ARGUMENTS --json title,body,headRefName,baseRefName,files,commits,la
 gh pr diff $ARGUMENTS
 ```
 
-### 2. ベースブランチ確認
+### 2. ベースブランチ同期確認
+
+CI green は **内部整合性のみ** を保証し、base 取り込み時の機能 regression や並行 worktree PR 重複は検出できない。Step 3 (受け入れ条件) に入る前に、base 最新化 + 直近マージ PR 影響 + 並行 PR 重複を必ず確認する。
+
+> read-only 操作のみで完結するため、本 SKILL 冒頭「重要」節 (PR ブランチ編集禁止) と整合する。`git checkout` / `git merge` / `git rebase` / `git push` は本 step でも一切実行しない。
+
+#### 2.1 ベースブランチ形式確認
 
 - `baseRefName` が `develop-x.x.x` 形式であることを確認 (`main` 直接は通常禁止)
 - 例外はホットフィックス PR のみ
+
+#### 2.2 base 最新化と直近マージ PR 列挙 (`feedback_pr_review_base_merge_regression.md` 昇格)
+
+```bash
+# base を最新化 (read-only 操作)
+git fetch origin <baseRefName>
+
+# PR メタを取得 (作成日時、base/head SHA、touched files、mergeStateStatus)
+gh pr view "$ARGUMENTS" --json createdAt,baseRefOid,headRefOid,changedFiles,files,mergeStateStatus
+
+# PR 作成日以降に同 base へマージされた他 PR を列挙
+gh pr list --base <baseRefName> --state merged \
+  --search "merged:>=<PR.createdAt>" \
+  --json number,title,mergedAt,files --limit 30
+```
+
+各列挙 PR の `files[].path` と当該 PR の `files[].path` を **交差判定** し、交差ありの PR を「影響候補」としてリスト化する。交差ゼロなら本 step は「影響候補なし」で 2.3 を skip 可。
+
+#### 2.3 base 同期判定と進め方確認 (影響候補がある場合のみ)
+
+- `mergeStateStatus` が `BEHIND` の場合、PR head は base 最新を取り込んでいない
+- 影響候補 PR がある + `BEHIND` の組合せでは、base / head の同ファイル grep 対比で develop 側追加機能 (新フィールド・関数引数・schema 変更・新規エクスポート等) の保持を逐条確認する。`gh api "repos/<owner>/<repo>/contents/<path>?ref=<ref>"` で base / PR head 双方を取得して `diff` で比較する手順は `feedback_pr_review_base_merge_regression.md` の §How to apply を参照
+- 結果を AskUserQuestion で 3 択提示する:
+  - **(A) PR 作成者に rebase / merge 取り込み + 再検証を依頼するコメントを投稿** (Recommended) — 機能 regression リスクあり時の既定
+  - **(B) 影響候補は確認済み・regression なしと判定し Step 3 へ進む** — base / head grep 対比で develop 側追加が PR head に保持されていることを実証できた場合
+  - **(C) 詳細調査を続ける** — 判定保留
+
+#### 2.4 並行 worktree 同 issue PR 重複確認 (`feedback_concurrent_worktree_pr_check.md` 昇格)
+
+```bash
+# PR が参照する元 issue 番号を抽出 (closingIssuesReferences + 本文 Refs #N)
+gh pr view "$ARGUMENTS" --json closingIssuesReferences,body
+
+# 各 issue について同 issue を参照する PR を全件検索 (open / merged / closed 含む)
+gh pr list --search "<元issue#>" --state all \
+  --json number,headRefName,state,createdAt,mergedAt --limit 20
+```
+
+当該 PR 以外に open or merged の PR が検出されたら AskUserQuestion で 3 択提示する:
+
+- **(A) 重複扱いで close 提案** (Recommended、明らかな機能重複時) — PR 作成者に方針相談コメントを投稿
+- **(B) スコープ分担で並走** — 各 PR がカバーする範囲を本 PR レビュー報告に明記
+- **(C) 既マージ済みで対象外** — 別 PR が既にマージ済みで本 PR が不要なら close 提案
+
+並行 PR 検出ゼロなら Step 6 レポート末尾に「並行 PR 確認: 検出ゼロ」と 1 行記録する。
+
+##### Red Flags
+
+| 浮かんだ思考 | 実態 |
+|---|---|
+| 「最近 fetch したから OK」 | 数分でも別 PR がマージされうる。Step 2.2 は毎レビュー実施 |
+| 「mergeStateStatus が CLEAN だから影響候補も問題なし」 | CLEAN は merge 可否のみで機能 regression は判定しない |
+| 「並行 PR は計画段階で確認済みのはずだから skip」 | 計画後に別 worktree が PR を提出するケースあり (#646 / PR #647)。Step 2.4 はレビュー時にも実施 |
 
 ### 3. 受け入れ条件チェックリスト (#367 対策)
 
@@ -105,15 +164,39 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 
 ここで列挙した観点は Step 5b トリアージ表で必ず処置分類を付ける。観察コメントのみで終える (= 握り潰す) のは禁止。
 
-### 5b. 摘出課題のトリアージ (二択強制、握り潰し禁止)
+### 5b. 摘出課題のトリアージ (握り潰し禁止、原則 (A) で完結)
 
 Step 3 (受け入れ条件未達) / Step 4 (CI 失敗) / Step 5 (ロジック・ドキュメント不整合) / Step 5a (ギャップ分析) で洗い出した**すべての摘出課題**を下記トリアージ表に記載する。各行は必ず処置分類 (A / B / C) のいずれかに割り当てる。**未分類 (観察のみ / 握り潰し / スコープ対象外と自己判断して無視) は禁止**。
 
-**処置分類 (3 択)**
+> **方針: 摘出問題は原則 (A) PR 内追加修正で PR を完結させる** (`feedback_pr_internal_fix_policy.md` 2026-04-27 PR #615 確定方針の skill 昇格)。**理由: レビュー摘出のたびに別 issue を起票すると issue が減らないどころか増え、運用が破綻する。本 PR 内で完結できる修正は本 PR で行う方が追跡コストが低い。** 別 issue 起票は後述の限定例外 trigger に該当する場合のみ。
 
-- **(A) PR コメント**: 本 PR のスコープ内で修正依頼する (Step 7 「修正依頼コメント投稿」で PR 作成セッションに依頼)
-- **(B) 新規 issue 起票**: 本 PR のスコープ外だが追跡必要な課題 (Step 7 完了後または Step 8 マージ後に `/create-task` で起票)
-- **(C) 既存 issue 追記**: 既存 issue の受け入れ条件・残タスクに該当するため、当該 issue にコメントで方針記録を追記
+**処置分類 (3 択、(A) Recommended)**
+
+- **(A) PR コメントで本 PR 内修正依頼 (Recommended、デフォルト)**: 本 PR 内で追加修正してマージまで進める。Step 7「修正依頼コメント投稿」で PR 作成セッションに依頼。**摘出課題はまずこの選択肢を検討する**
+- **(B) 新規 issue 起票 (限定例外)**: 以下の trigger のいずれかに該当する課題のみ。Step 7 完了後または Step 8 マージ後に `/create-task` で起票:
+  - **別領域・別機能** (例: 別ファイル群のセキュリティ問題、別レイヤー実装、別担当領域) で着手 issue スコープ外
+  - **大規模リファクタ** (独立設計が必要、工数 1 セッション超、本 PR に同梱すると diff が肥大化して受け入れ条件検証が破綻する)
+  - **外部依存・側チケット調整が必要** (上流ライブラリ変更、別リポ修正待ち等)
+- **(C) 既存 issue 追記 (限定例外)**: 既存 issue の受け入れ条件・残タスクに該当するため、当該 issue にコメントで方針記録を追記。同 issue の重複起票を避けるとき
+
+**AskUserQuestion で処置選択肢を提示する場合**: (A) を必ず最初の選択肢として `(Recommended)` ラベル付きで表示する。**`(Recommended)` ラベルは表示順規約であって最終選択結果を強制するものではない**。(B) / (C) は限定例外 trigger を `description` フィールドに明記する。**(B) trigger 強該当時は description で具体的に該当根拠を説明** する (例: 「audio module は本 PR スコープ外 = 別レイヤー、独立 security 修正 → (B) 該当」)。例:
+
+```
+options: [
+  { label: "(A) 本 PR 内で追加修正 (Recommended)", description: "本 PR の品質を底上げする修正は (A) で同梱が原則 (`feedback_pr_internal_fix_policy.md`)" },
+  { label: "(B) 別 issue 起票 (別領域 / 大規模 / 外部依存のみ)", description: "本件は audio module で本 PR スコープ外 (detector/format) → 別領域 trigger 強該当、独立した security 修正" },
+  { label: "(C) 既存 issue 追記", description: "既存 issue #N が同テーマで未クローズ → 重複起票回避" }
+]
+```
+
+**(A) を選ばない理由として NG な合理化** (これらが浮かんだら STOP):
+
+| 浮かんだ思考 | 実態 |
+|---|---|
+| 「PR が大きくなるから別 issue にしよう」 | (A) が原則。サイズだけを理由に (B) を選ばない。本当に diff が肥大化するなら「大規模リファクタ」trigger を満たすか先に判定 |
+| 「本 PR の受け入れ条件と直結しないから別 issue」 | (A) が原則。本 PR の品質を底上げする修正は (A) で同梱する。直結性ではなく「別領域・別機能」trigger を満たすかで判定 |
+| 「軽微だから別 issue で後でまとめて」 | (A) が原則。軽微なら本 PR 内で即時修正の方が安い。後回しにすると忘れる |
+| 「摘出課題が多いから一部は別 issue で分離」 | 件数では分離しない。各課題ごとに (A) / (B) trigger を独立判定する |
 
 **判定基準**
 
@@ -159,6 +242,13 @@ Step 5b のトリアージ表を前提に `AskUserQuestion` で以下を提示�
 - **前回差分**: <Round 2 以降のみ: 前 Round で指摘した課題のうち解消したもの / 未解消のもの>
 - **本 Round 新出**: <Round 2 以降のみ: 本 Round で新規に発見した課題>
 - (Round 1 では上記 2 行を省略可)
+
+## ベース同期確認 (Step 2)
+
+- **形式 (2.1)**: `baseRefName` = <name> (`develop-x.x.x` 形式の確認結果)
+- **base 最新化と直近マージ PR (2.2)**: `mergeStateStatus` = <CLEAN / BEHIND>、影響候補 PR = <なし / [#N (touched: `<path>`)]>
+- **同期判定 (2.3)**: skip (影響候補なし) / 確認済み・regression なし / 取り込み依頼コメント投稿 / 詳細調査
+- **並行 worktree PR (2.4)**: 検出ゼロ / [#M (理由: 重複 / 並走 / 既マージ)] (束ね PR の場合は `- #500: <結果>` `- #501: <結果>` のように issue ごとに bullet で列記)
 
 ## 受け入れ条件チェック (逐条)
 

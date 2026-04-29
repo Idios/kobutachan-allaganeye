@@ -251,8 +251,9 @@ L2 からは**単一ワークツリー + skill ベースディスパッチ**を�
 
 ## PR 作成ルール
 
-詳細は `docs/l2-workflow.md` を参照。Iron Law 6 (`.claude/hooks/session-start.sh`) と `feedback_pr_pre_creation_checks.md` / `feedback_user_realmachine_test_request.md` も参照。要約:
+詳細は `docs/l2-workflow.md` を参照。Iron Law 6 (`.claude/hooks/session-start.sh`) と `feedback_pr_pre_creation_checks.md` / `feedback_user_realmachine_test_request.md` / `feedback_pr_review_base_merge_regression.md` / `feedback_concurrent_worktree_pr_check.md` も参照。要約:
 
+- **PR 作成 Pre-flight (Iron Law 6 サブ条、#659)**: `git fetch origin <base>` → `git log HEAD..origin/<base> --oneline` で取り込み未済 commit 列挙 → `git diff --name-only` で当 PR と取り込み未済 commit の touched files 交差判定 (交差ありなら `git merge origin/<base>` で取り込み + 自動チェック再実行) → `gh pr list --search "<元issue#>" --state all` で並行 worktree PR 重複確認。結果は PR テンプレ §「ベース同期確認」 に plain bullet で記録。詳細は [docs/l2-workflow.md](docs/l2-workflow.md) §「PR 作成 Pre-flight」
 - **PR 作成前 (Iron Law 6)**: 変更ファイル path から必要な自動チェックを判定して全 pass させる:
   - **python-core** (`allaganeye/**/*.py`, `tests/**/*.py`, `pyproject.toml`): `ruff check .` / `ruff format --check .` / `pyright` / `pytest`
   - **gui-frontend** (`gui/src/**`, `gui/package.json`, `gui/tsconfig.json` 等): `cd gui && npm run lint` / `npm run typecheck` / `npm test` / `npm run build`
