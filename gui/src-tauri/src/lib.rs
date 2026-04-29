@@ -279,18 +279,29 @@ fn read_recent_sync(path: &Path) -> Vec<RecentEntry> {
     serde_json::from_str::<Vec<RecentEntry>>(&content).unwrap_or_default()
 }
 
+/// #571 — normalize a path string for the recent-list dedup key.
+///
+/// Two paths point at the same file on Windows when they differ only in
+/// (a) letter case (`E:\` ≡ `e:\`) or (b) directory separator (`/` vs `\`,
+/// the Tauri dialog usually returns `\` while D&D fixtures and CLI handoff
+/// can produce `/`). We collapse both so the dedup logic doesn't miss
+/// either form. Stays a private helper because the persisted entry keeps
+/// the original separators — only the comparison key is normalized.
+fn normalize_path_key(p: &str) -> String {
+    p.to_lowercase().replace('/', "\\")
+}
+
 /// #571 — push `entry` to the front of the history, dedup by `path`, and
 /// truncate to `RECENT_LIMIT`. Returns the post-write list so the caller
 /// (Zustand store) can mirror it without an extra `read_recent` round trip.
 fn add_recent_sync(path: &Path, entry: RecentEntry) -> Result<Vec<RecentEntry>, String> {
     let mut list = read_recent_sync(path);
-    // Dedup: drop any prior occurrence of the same path (case-insensitive on
-    // Windows where the platform itself is case-insensitive). The drop happens
-    // before we push so the new entry's mtime / addedAt overwrite the stale
-    // ones — selecting an existing recent moves it to the top with refreshed
-    // metadata.
-    let key = entry.path.to_lowercase();
-    list.retain(|e| e.path.to_lowercase() != key);
+    // Dedup via `normalize_path_key` (case-insensitive + separator-insensitive).
+    // The drop happens before we push so the new entry's mtime / addedAt
+    // overwrite the stale ones — selecting an existing recent moves it to
+    // the top with refreshed metadata.
+    let key = normalize_path_key(&entry.path);
+    list.retain(|e| normalize_path_key(&e.path) != key);
     list.insert(0, entry);
     list.truncate(RECENT_LIMIT);
     write_recent_atomic(path, &list)?;
@@ -2373,6 +2384,40 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].added_at_ms, 1_800_000_000_000);
         assert_eq!(list[0].path, "e:\\Videos\\A.mkv");
+    }
+
+    #[test]
+    fn add_recent_dedups_same_path_with_mixed_separators() {
+        // PR #655 review (Item 1): the Tauri dialog hands us `\` while D&D
+        // fixtures and the CLI handoff can produce `/`. Both forms refer to
+        // the same Windows file, so dedup must collapse them. Without
+        // separator normalization the second add silently produces a
+        // 2-entry list where `read_recent` returns the same recording twice.
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        add_recent_sync(&recent, make_recent_entry("E:\\videos\\a.mkv", "a.mkv")).unwrap();
+        let mut second = make_recent_entry("E:/Videos/A.mkv", "A.mkv");
+        second.added_at_ms = 1_800_000_000_000;
+        let list = add_recent_sync(&recent, second.clone()).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].added_at_ms, 1_800_000_000_000);
+        // The new entry's original separators are preserved on disk —
+        // only the key was normalized for comparison.
+        assert_eq!(list[0].path, "E:/Videos/A.mkv");
+    }
+
+    #[test]
+    fn normalize_path_key_collapses_case_and_separator() {
+        // Pinning the helper directly so a future refactor can't silently
+        // drop one of the two normalizations.
+        assert_eq!(
+            normalize_path_key("E:\\videos\\a.mkv"),
+            normalize_path_key("e:/Videos/A.mkv"),
+        );
+        assert_eq!(
+            normalize_path_key("C:/path/with/forward.mkv"),
+            "c:\\path\\with\\forward.mkv",
+        );
     }
 
     #[test]

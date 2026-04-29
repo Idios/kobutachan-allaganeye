@@ -692,5 +692,99 @@ describe('DropScreen', () => {
       });
       expect(await axe(container)).toHaveNoViolations();
     });
+
+    // PR #655 review (Item 2): the inline notice auto-dismisses after 5s,
+    // but a second click before that timeout fires must reset the clock so
+    // the user gets a full 5s on the new notice (rather than 5s minus the
+    // elapsed time on the previous notice).
+    //
+    // Pattern: render + wait for recent items under REAL timers (the recent
+    // store hydrates async via Tauri invoke and testing-library polling
+    // uses setTimeout). Only swap to fake timers once the DOM is in the
+    // post-hydrate state we want to assert against.
+    it('rescheduling auto-dismiss when a second missing item is clicked mid-notice', async () => {
+      invokeMock.mockImplementation((cmd: string) => {
+        if (cmd === 'read_recent') {
+          return Promise.resolve([
+            recentEntry('E:/ghost-a.mkv', 'ghost-a.mkv', false),
+            recentEntry('E:/ghost-b.mkv', 'ghost-b.mkv', false),
+          ]);
+        }
+        return defaultInvokeImpl(cmd);
+      });
+      render(<DropScreen />);
+      const items = await screen.findAllByTestId('recent-item');
+      vi.useFakeTimers();
+      try {
+        // Click the first missing item — notice shows.
+        act(() => {
+          items[0].click();
+        });
+        expect(screen.getByTestId('recent-missing-notice')).toHaveTextContent(
+          'ghost-a.mkv',
+        );
+        // Advance 3s — notice still up because cleanup is at 5s.
+        act(() => {
+          vi.advanceTimersByTime(3000);
+        });
+        expect(screen.getByTestId('recent-missing-notice')).toHaveTextContent(
+          'ghost-a.mkv',
+        );
+        // Click the second missing item — the new notice replaces the old.
+        act(() => {
+          items[1].click();
+        });
+        expect(screen.getByTestId('recent-missing-notice')).toHaveTextContent(
+          'ghost-b.mkv',
+        );
+        // 4s after the second click (i.e. at 7s total) the new notice MUST
+        // still be visible. Without rescheduling, the prior 5s timer would
+        // have already fired at 5s wall-clock and cleared it.
+        act(() => {
+          vi.advanceTimersByTime(4000);
+        });
+        expect(screen.getByTestId('recent-missing-notice')).toHaveTextContent(
+          'ghost-b.mkv',
+        );
+        // 1s more (8s total) — past the rescheduled 5s window, notice gone.
+        act(() => {
+          vi.advanceTimersByTime(1500);
+        });
+        expect(screen.queryByTestId('recent-missing-notice')).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('cancels the pending notice timer when DropScreen unmounts', async () => {
+      invokeMock.mockImplementation((cmd: string) => {
+        if (cmd === 'read_recent') {
+          return Promise.resolve([
+            recentEntry('E:/ghost.mkv', 'ghost.mkv', false),
+          ]);
+        }
+        return defaultInvokeImpl(cmd);
+      });
+      const { unmount } = render(<DropScreen />);
+      const item = await screen.findByTestId('recent-item');
+      vi.useFakeTimers();
+      try {
+        act(() => {
+          item.click();
+        });
+        expect(screen.getByTestId('recent-missing-notice')).toBeInTheDocument();
+        // Unmount before the 5s timeout fires. Advancing timers afterwards
+        // must not throw "setState on unmounted" — the component cleanup
+        // callback is responsible for clearing the handle.
+        unmount();
+        expect(() => {
+          act(() => {
+            vi.advanceTimersByTime(10_000);
+          });
+        }).not.toThrow();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

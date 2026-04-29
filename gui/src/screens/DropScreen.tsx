@@ -131,6 +131,21 @@ export function DropScreen({
   // #571: surfaced when the user clicks a recent-list entry whose backing
   // file has been moved or deleted. Flash for ~5s then clear.
   const [missingNotice, setMissingNotice] = useState<string | null>(null);
+  // PR #655 review (Item 2): hold the auto-dismiss handle so we can (a)
+  // cancel it on unmount to avoid setState-on-unmounted, and (b) cancel a
+  // prior pending dismiss when the user clicks a second missing item before
+  // the first 5s has elapsed (otherwise the older timer fires mid-display
+  // of the new notice and clears it early).
+  const noticeTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (noticeTimeoutRef.current !== null) {
+        window.clearTimeout(noticeTimeoutRef.current);
+        noticeTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   async function probeAndDispatch(path: string): Promise<void> {
     setError(null);
@@ -150,11 +165,22 @@ export function DropScreen({
   // #571: handler shared between recent-list click and keyboard activation.
   function selectRecent(item: RecentEntryView) {
     if (phase !== 'idle') return;
+    // PR #655 review (Item 2): always cancel any pending auto-dismiss
+    // before the next state change. Whether we're showing a new notice or
+    // clearing it for a successful pick, a stale 5s timer firing later
+    // would either clobber the new notice or try to setState after unmount.
+    if (noticeTimeoutRef.current !== null) {
+      window.clearTimeout(noticeTimeoutRef.current);
+      noticeTimeoutRef.current = null;
+    }
     if (!item.exists) {
       setMissingNotice(`ファイルが見つかりません: ${item.fileName}`);
       // The notice clears itself after 5s so it doesn't linger when the
       // user moves on. (No toast library yet — inline status line.)
-      window.setTimeout(() => setMissingNotice(null), 5000);
+      noticeTimeoutRef.current = window.setTimeout(() => {
+        setMissingNotice(null);
+        noticeTimeoutRef.current = null;
+      }, 5000);
       return;
     }
     setMissingNotice(null);
