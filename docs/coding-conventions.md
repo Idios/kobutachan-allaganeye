@@ -58,6 +58,13 @@ Conventional Commits 形式:
 - docstring・コメント内も同様に ASCII を推奨（pytest -v 等で出力される可能性があるため）
 - 日本語テキストは引き続き OK（コメント・docstring 内）
 
+### subprocess.run の text=True と encoding (#656)
+
+- `subprocess.run(text=True, ...)` を使う場合、**必ず** `encoding="utf-8", errors="replace"` を明示する
+- 省略すると Python は `locale.getpreferredencoding(False)` (Windows = cp932) を使い、ffmpeg/ffprobe の UTF-8 stderr に日本語含む path が含まれると `UnicodeDecodeError` で `_readerthread` (subprocess.py) が死に process が exit 1 で終了する (#656)
+- `errors="replace"` で異常 byte を U+FFFD で置換し reader thread の防御線とする
+- `text=False` (binary mode) の場合は decode が走らないため対象外 (例: `audio/extract.py` / `video/detector.py` / `video/gpu_detector.py`)
+
 ## エラーハンドリング
 
 - `allaganeye/exceptions.py` にエラークラスを定義
