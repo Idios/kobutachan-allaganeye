@@ -39,6 +39,8 @@ def _run_text(cmd: list[str], *, timeout: float = _SUBPROCESS_TIMEOUT_S) -> str 
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
             timeout=timeout,
         )

@@ -1399,6 +1399,8 @@ def _probe_ffmpeg_version() -> str:
             [find_ffmpeg(), "-version"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
             timeout=5,
         )
