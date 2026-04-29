@@ -56,7 +56,7 @@ cargo test           # Rust 単体テスト
 
 ## CSS 慣例 (Phase 2 以降)
 
-GUI のスタイルは CSS 変数 + CSS Modules で統一。詳細は [`ui-architecture.md` §9](ui-architecture.md#9-css-modules-慣例) を参照。要点:
+GUI のスタイルは CSS 変数 + CSS Modules で統一。詳細は [`ui-architecture.md` §10](ui-architecture.md#10-css-modules-慣例) を参照。要点:
 
 - 色・フォントは `gui/src/styles/tokens.css` の `:root` カスタムプロパティ (`--ae-bg`, `--ae-gold`, `--ae-font-ui` ...) 経由で参照する。リテラルの hex コードを component 内に書かない
 - 各 component は `Foo.tsx` / `Foo.module.css` / `Foo.test.tsx` の 3 点セット

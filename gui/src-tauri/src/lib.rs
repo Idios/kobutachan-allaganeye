@@ -22,6 +22,9 @@ use tokio::sync::{Mutex, Semaphore};
 use tower_http::services::ServeFile;
 use uuid::Uuid;
 
+mod error;
+mod logging;
+
 /// #465 -- per-token mapping from opaque UUID to absolute video file path.
 ///
 /// Shared between the axum server's handler state and the Tauri commands so
@@ -2053,11 +2056,56 @@ async fn start_detect(
     })
 }
 
+/// #614 -- Returns the install-directory log path (`<install_dir>/logs`) so the
+/// frontend ErrorModal can show the user where crash logs are written.
+#[tauri::command]
+fn get_log_dir() -> Result<String, String> {
+    logging::log_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| format!("could not resolve log dir: {}", e))
+}
+
+/// #614 -- Dev-only command that triggers a panic. Used by the frontend smoke
+/// test (DevTools console: `await __TAURI__.core.invoke('dev_force_panic')`)
+/// to verify the panic hook + ErrorModal end-to-end. Symbol is absent in
+/// release builds.
+#[cfg(debug_assertions)]
+#[tauri::command]
+fn dev_force_panic() -> Result<(), String> {
+    panic!("dev_force_panic invoked from frontend");
+}
+
 pub fn run() {
-    tauri::Builder::default()
+    // #614 -- Initialize tracing subscriber + rotate stale logs + detect
+    // unclean shutdown from the previous session, BEFORE the Tauri builder
+    // runs so panic_hook is the first hook installed.
+    let _tracing_guard = logging::install_tracing_subscriber();
+    if let Err(e) = logging::rotate_old_logs(7) {
+        eprintln!("warning: failed to rotate old logs: {}", e);
+    }
+    let restart_panic_msg = logging::detect_panic_from_previous_session();
+
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .setup(move |app| {
+            // #614 -- Install panic hook now that we have an AppHandle for
+            // best-effort emit. File log is the source of truth (panic emit
+            // may not arrive if WebView2 has died).
+            error::install_panic_hook(Some(app.handle().clone()));
+
+            // #614 -- If the previous session crashed within the last 60s,
+            // emit a warning event after webview is ready (small delay).
+            if let Some(panic_line) = restart_panic_msg.clone() {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                    let _ = app_handle.emit("panic-from-previous-session", panic_line);
+                });
+            }
+            Ok(())
+        })
         .on_window_event(|window, event| {
             // #523 -- intercept every CloseRequested. The frontend inspects
             // tracked processes on receipt: if none are running it calls
@@ -2067,29 +2115,59 @@ pub fn run() {
                 api.prevent_close();
                 let _ = window.emit("close-requested", ());
             }
-        })
-        .invoke_handler(tauri::generate_handler![
-            load_metadata,
-            get_metadata_mtime,
-            apply_changes,
-            save_draft,
-            load_draft,
-            clear_draft,
-            restore_from_original,
-            check_backup_exists,
-            register_video,
-            probe_video,
-            generate_match_thumbnails,
-            is_process_running,
-            kill_tracked_processes,
-            force_exit_app,
-            export_match,
-            select_h264_encoder_for_export,
-            open_folder_in_explorer,
-            start_detect,
-        ])
+        });
+
+    #[cfg(debug_assertions)]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        load_metadata,
+        get_metadata_mtime,
+        apply_changes,
+        save_draft,
+        load_draft,
+        clear_draft,
+        restore_from_original,
+        check_backup_exists,
+        register_video,
+        probe_video,
+        generate_match_thumbnails,
+        is_process_running,
+        kill_tracked_processes,
+        force_exit_app,
+        export_match,
+        select_h264_encoder_for_export,
+        open_folder_in_explorer,
+        start_detect,
+        get_log_dir,
+        dev_force_panic,
+    ]);
+    #[cfg(not(debug_assertions))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        load_metadata,
+        get_metadata_mtime,
+        apply_changes,
+        save_draft,
+        load_draft,
+        clear_draft,
+        restore_from_original,
+        check_backup_exists,
+        register_video,
+        probe_video,
+        generate_match_thumbnails,
+        is_process_running,
+        kill_tracked_processes,
+        force_exit_app,
+        export_match,
+        select_h264_encoder_for_export,
+        open_folder_in_explorer,
+        start_detect,
+        get_log_dir,
+    ]);
+
+    builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    drop(_tracing_guard);
 }
 
 #[cfg(test)]

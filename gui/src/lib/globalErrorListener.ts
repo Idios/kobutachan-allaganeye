@@ -1,0 +1,135 @@
+import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+
+import { useErrorStore } from '../state/errorStore';
+
+interface PanicPayload {
+  message?: string;
+  backtrace?: string;
+  timestamp?: string;
+  location?: string;
+}
+
+/**
+ * #614: Wires browser + Tauri error events into the errorStore.
+ *
+ * Sources:
+ *   - window.error: synchronous JS errors (script tag eval / setTimeout cb / etc)
+ *   - window.unhandledrejection: Promise rejections that nothing caught
+ *   - Tauri "panic" event: emitted by the Rust panic hook (best-effort, may
+ *     not arrive if WebView2 has died — the file log is the source of truth)
+ *   - Tauri "panic-from-previous-session" event: emitted on startup when
+ *     the panic hook detects a PANIC_MARKER in a recent log file
+ *
+ * Also fetches the log directory path via the get_log_dir command so the
+ * ErrorModal can show "ログフォルダを開く".
+ *
+ * Returns an unlistener for tests / hot-reload teardown. In production the
+ * listeners live for the entire app lifetime.
+ */
+export function installGlobalErrorListener(): () => void {
+  const showError = useErrorStore.getState().showError;
+  const setLogDir = useErrorStore.getState().setLogDir;
+
+  const onWindowError = (e: ErrorEvent) => {
+    showError({
+      errorMessage: e.message || 'Unknown error',
+      errorStack: e.error instanceof Error ? (e.error.stack ?? null) : null,
+      errorCategory: 'js-error',
+      isPanic: false,
+      isRecoverable: false,
+    });
+  };
+
+  const onUnhandledRejection = (e: PromiseRejectionEvent) => {
+    const reason = e.reason;
+    let message = 'Unhandled promise rejection';
+    let stack: string | null = null;
+    if (reason instanceof Error) {
+      message = reason.message || message;
+      stack = reason.stack ?? null;
+    } else if (typeof reason === 'string') {
+      message = reason;
+    } else if (reason && typeof reason === 'object') {
+      try {
+        message = JSON.stringify(reason);
+      } catch {
+        message = String(reason);
+      }
+    }
+    showError({
+      errorMessage: message,
+      errorStack: stack,
+      errorCategory: 'js-promise',
+      isPanic: false,
+      isRecoverable: false,
+    });
+  };
+
+  window.addEventListener('error', onWindowError);
+  window.addEventListener('unhandledrejection', onUnhandledRejection);
+
+  // Tauri events return Promise<UnlistenFn>; we hold them so we can detach
+  // in the unlistener. In production the unlistener is never called.
+  const tauriUnlistens: UnlistenFn[] = [];
+
+  void listen<PanicPayload>('panic', (event) => {
+    const payload = event.payload ?? {};
+    const message = payload.message || 'Rust panic occurred';
+    const stack = [
+      payload.location && `at ${payload.location}`,
+      payload.backtrace,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    showError({
+      errorMessage: message,
+      errorStack: stack || null,
+      errorCategory: 'panic',
+      isPanic: true,
+      isRecoverable: false,
+    });
+  })
+    .then((un) => tauriUnlistens.push(un))
+    .catch(() => {
+      // listen() can fail in non-Tauri test envs — not fatal
+    });
+
+  void listen<string>('panic-from-previous-session', (event) => {
+    showError({
+      errorTitle: '前回起動時にエラー終了しました',
+      errorMessage:
+        '前回のセッションが panic で終了した可能性があります。詳細はログファイルを参照してください。',
+      errorStack: typeof event.payload === 'string' ? event.payload : null,
+      errorHint:
+        '同じエラーが再発する場合は Issue で報告してください。',
+      errorCategory: 'previous-session-panic',
+      isPanic: false,
+      isRecoverable: true,
+    });
+  })
+    .then((un) => tauriUnlistens.push(un))
+    .catch(() => {
+      // not fatal in non-Tauri test envs
+    });
+
+  // Fetch log dir asynchronously; ErrorModal handles logDir being null
+  // gracefully.
+  void invoke<string>('get_log_dir')
+    .then((dir) => setLogDir(dir))
+    .catch(() => {
+      setLogDir(null);
+    });
+
+  return () => {
+    window.removeEventListener('error', onWindowError);
+    window.removeEventListener('unhandledrejection', onUnhandledRejection);
+    tauriUnlistens.forEach((un) => {
+      try {
+        un();
+      } catch {
+        // ignore
+      }
+    });
+  };
+}
