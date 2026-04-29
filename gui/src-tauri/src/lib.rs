@@ -427,7 +427,37 @@ async fn add_recent(path: String) -> Result<Vec<RecentEntry>, String> {
         mtime_ms,
         added_at_ms: now_ms(),
     };
-    add_recent_sync(&recent_path()?, entry)
+    let recent_p = recent_path()?;
+    add_recent_with_prune(&recent_p, entry)
+}
+
+/// PR #655 Round 4 — wrapper around `add_recent_sync` that also prunes
+/// stale neighbors before returning.
+///
+/// Round 3 verification surfaced a bug: when the user dragged in a fresh
+/// video while the existing list already contained an entry whose file had
+/// been moved/deleted, the stale neighbor stuck around. `read_recent`
+/// pruned on every call but `add_recent` only called the un-pruned
+/// `add_recent_sync`, so the just-returned list was the only thing the
+/// frontend's `recentStore.add` saw — and it kept the stale entry.
+///
+/// Splitting the prune into a thin wrapper keeps the pure
+/// `add_recent_sync` testable with synthetic paths (the existing 8 tests
+/// use `make_recent_entry("E:\\videos\\a.mkv", …)` paths that don't exist
+/// on disk; pruning inside `add_recent_sync` would empty the list out
+/// from under them). The just-inserted entry is guaranteed to exist
+/// (`add_recent` checks at the top), so it survives the prune.
+fn add_recent_with_prune(
+    path: &Path,
+    entry: RecentEntry,
+) -> Result<Vec<RecentEntry>, String> {
+    let inserted = add_recent_sync(path, entry)?;
+    let initial_len = inserted.len();
+    let pruned = prune_missing(inserted);
+    if pruned.len() != initial_len {
+        write_recent_atomic(path, &pruned)?;
+    }
+    Ok(pruned)
 }
 
 #[tauri::command]
@@ -2569,6 +2599,64 @@ mod tests {
         let pruned = prune_missing(entries);
         assert_eq!(pruned.len(), 1);
         assert_eq!(pruned[0].file_name, "real.mkv");
+    }
+
+    #[test]
+    fn add_recent_with_prune_drops_stale_siblings_after_insert() {
+        // PR #655 Round 4 regression: dragging in a fresh video while the
+        // list already had an entry pointing at a moved/deleted file used
+        // to leave the stale entry visible (the pre-fix `add_recent`
+        // command went through the un-pruning `add_recent_sync` only).
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+
+        // Pre-populate with a "ghost" — its backing file does not exist.
+        let ghost_path = tmp
+            .path()
+            .join("ghost.mkv")
+            .to_string_lossy()
+            .into_owned();
+        add_recent_sync(
+            &recent,
+            make_recent_entry(&ghost_path, "ghost.mkv"),
+        )
+        .unwrap();
+        assert_eq!(read_recent_sync(&recent).len(), 1);
+
+        // Now add a real file via the prune-aware wrapper.
+        let real_path = tmp.path().join("real.mkv");
+        fs::write(&real_path, b"x").unwrap();
+        let real_str = real_path.to_string_lossy().into_owned();
+        let result = add_recent_with_prune(
+            &recent,
+            make_recent_entry(&real_str, "real.mkv"),
+        )
+        .unwrap();
+
+        // Ghost dropped, only the real entry remains, persisted and in-memory.
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].file_name, "real.mkv");
+        let on_disk = read_recent_sync(&recent);
+        assert_eq!(on_disk, result);
+    }
+
+    #[test]
+    fn add_recent_with_prune_preserves_just_inserted_entry() {
+        // Belt-and-suspenders: the just-inserted entry is exists-checked
+        // upstream by `add_recent`, but make sure `prune_missing` doesn't
+        // over-eagerly drop it when the wrapper runs.
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        let real_path = tmp.path().join("only.mkv");
+        fs::write(&real_path, b"x").unwrap();
+        let real_str = real_path.to_string_lossy().into_owned();
+        let result = add_recent_with_prune(
+            &recent,
+            make_recent_entry(&real_str, "only.mkv"),
+        )
+        .unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].file_name, "only.mkv");
     }
 
     #[test]
