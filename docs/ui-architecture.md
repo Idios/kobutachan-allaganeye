@@ -79,7 +79,7 @@ Phase 3 での差し替え: `dummyProbeVideo(path)` → Rust `invoke('probe_vide
 
 詳細設定パネル (#613) で調整した値は `appStateStore.detectionParams` に保持され、`[OK]` 後の `DetectingScreen` 起動時に `toStartDetectParams` ([utils/detection.ts](../gui/src/utils/detection.ts)) で Rust `start_detect` (#569) の `params` 引数に変換されて渡る。reset() でデフォルト復帰、永続化なし (in-memory のみ)。
 
-直近録画リスト (#571) は `~/.allaganeye/recent.json` に永続化される (Rust `read_recent` / `add_recent` / `clear_recent` Tauri command + TS `useRecentStore`)。drop / [参照…] / 直近クリックいずれの経路でも probe 成功時に `add_recent` で履歴更新 (重複は最新化、最大 10 件)。click 経路は `RECENT_PICKED` event 経由で `idle → probing` に遷移し、SelectedCard で確認後に detecting へ進む。物理ファイル不在 entry は `RecentEntryView.exists=false` で grayed-out 表示し、click 時は inline notice (5s) を出して probe しない。
+直近録画リスト (#571) は `<install dir>/recent.json` (Portable ZIP 哲学に揃えて exe ディレクトリ配置、PR #655 Round 2) に永続化される (Rust `read_recent` / `add_recent` / `clear_recent` Tauri command + TS `useRecentStore`)。drop / [参照…] / 直近クリックいずれの経路でも probe 成功時に `add_recent` で履歴更新 (重複は最新化、最大 10 件、`\\?\` extended-length prefix は Rust 側 `strip_extended_path_prefix` で正規化)。click 経路は `RECENT_PICKED` event 経由で `idle → probing` に遷移し、SelectedCard で確認後に detecting へ進む。物理ファイル不在 entry は `read_recent` / `add_recent` が `Path::exists()` で検出して**自動 prune** + 永続化更新 (PR #655 Round 2: 旧 grayed-out + warning notice UX を撤廃、ユーザーがリネーム / 削除した動画は次回 drop 画面表示時に消える)。
 
 ### detecting (Phase 2 は dummy)
 

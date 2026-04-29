@@ -541,7 +541,6 @@ describe('DropScreen', () => {
     function recentEntry(
       path: string,
       fileName: string,
-      exists = true,
       mtimeMs = 1_700_000_000_000,
     ) {
       return {
@@ -550,7 +549,6 @@ describe('DropScreen', () => {
         sizeBytes: 38 * 1024 * 1024 * 1024,
         mtimeMs,
         addedAtMs: mtimeMs,
-        exists,
       };
     }
 
@@ -568,10 +566,38 @@ describe('DropScreen', () => {
       await waitFor(() => {
         expect(screen.getAllByTestId('recent-item')).toHaveLength(2);
       });
-      expect(screen.getByText('a.mkv')).toBeInTheDocument();
-      expect(screen.getByText('b.mkv')).toBeInTheDocument();
+      // PR #655 review (Round 2): full path is rendered as the visible
+      // text (with title tooltip + left-truncation CSS); fileName remains
+      // the screen-reader handle via aria-label.
+      expect(screen.getByText('E:/videos/a.mkv')).toBeInTheDocument();
+      expect(screen.getByText('E:/videos/b.mkv')).toBeInTheDocument();
       // The empty placeholder must be gone once entries arrived.
       expect(screen.queryByTestId('recent-empty')).toBeNull();
+    });
+
+    it('renders the full path with a title tooltip for hover (#655 Round 2)', async () => {
+      invokeMock.mockImplementation((cmd: string) => {
+        if (cmd === 'read_recent') {
+          return Promise.resolve([
+            recentEntry('E:/some/long/folder/2026-04-08 21-14-05.mkv', '2026-04-08 21-14-05.mkv'),
+          ]);
+        }
+        return defaultInvokeImpl(cmd);
+      });
+      render(<DropScreen />);
+      const pathSpan = await screen.findByText(
+        'E:/some/long/folder/2026-04-08 21-14-05.mkv',
+      );
+      expect(pathSpan).toHaveAttribute(
+        'title',
+        'E:/some/long/folder/2026-04-08 21-14-05.mkv',
+      );
+      // The aria-label on the parent button keeps the fileName-only form
+      // so screen readers don't read out the full path on every focus.
+      const button = await screen.findByRole('button', {
+        name: /直近の録画 2026-04-08 21-14-05.mkv/,
+      });
+      expect(button).toBeInTheDocument();
     });
 
     it('clicking a present recent item probes and shows the SelectedCard', async () => {
@@ -601,30 +627,6 @@ describe('DropScreen', () => {
         expect(screen.getByTestId('drop-selected-card')).toBeInTheDocument();
       });
       expect(probeFn).toHaveBeenCalledWith('E:/videos/a.mkv');
-    });
-
-    it('clicking a missing recent item shows a warning notice instead of probing', async () => {
-      invokeMock.mockImplementation((cmd: string) => {
-        if (cmd === 'read_recent') {
-          return Promise.resolve([
-            recentEntry('E:/videos/ghost.mkv', 'ghost.mkv', false),
-          ]);
-        }
-        return defaultInvokeImpl(cmd);
-      });
-      const probeFn = vi.fn();
-      render(<DropScreen probeFn={probeFn} />);
-      const user = userEvent.setup();
-      const item = await screen.findByRole('button', {
-        name: /直近の録画 ghost.mkv/,
-      });
-      expect(item.dataset.missing).toBe('true');
-      await user.click(item);
-      // Notice surfaces, but we never advance to selected and never call probe.
-      const notice = await screen.findByTestId('recent-missing-notice');
-      expect(notice).toHaveTextContent('ghost.mkv');
-      expect(screen.getByTestId('drop-screen').dataset.phase).toBe('idle');
-      expect(probeFn).not.toHaveBeenCalled();
     });
 
     it('persists to add_recent after a successful probe via [参照…]', async () => {
@@ -660,28 +662,12 @@ describe('DropScreen', () => {
       expect(addCalls).toHaveLength(0);
     });
 
-    it('renders missing recent items with a strike-through name and aria hint', async () => {
-      invokeMock.mockImplementation((cmd: string) => {
-        if (cmd === 'read_recent') {
-          return Promise.resolve([
-            recentEntry('E:/videos/ghost.mkv', 'ghost.mkv', false),
-          ]);
-        }
-        return defaultInvokeImpl(cmd);
-      });
-      render(<DropScreen />);
-      const item = await screen.findByRole('button', {
-        name: /ghost.mkv \(ファイルが見つかりません\)/,
-      });
-      expect(item.dataset.missing).toBe('true');
-    });
-
     it('idle screen with recent entries has no axe violations', async () => {
       invokeMock.mockImplementation((cmd: string) => {
         if (cmd === 'read_recent') {
           return Promise.resolve([
             recentEntry('E:/videos/a.mkv', 'a.mkv'),
-            recentEntry('E:/videos/missing.mkv', 'missing.mkv', false),
+            recentEntry('E:/videos/b.mkv', 'b.mkv'),
           ]);
         }
         return defaultInvokeImpl(cmd);
@@ -691,100 +677,6 @@ describe('DropScreen', () => {
         expect(screen.getAllByTestId('recent-item')).toHaveLength(2);
       });
       expect(await axe(container)).toHaveNoViolations();
-    });
-
-    // PR #655 review (Item 2): the inline notice auto-dismisses after 5s,
-    // but a second click before that timeout fires must reset the clock so
-    // the user gets a full 5s on the new notice (rather than 5s minus the
-    // elapsed time on the previous notice).
-    //
-    // Pattern: render + wait for recent items under REAL timers (the recent
-    // store hydrates async via Tauri invoke and testing-library polling
-    // uses setTimeout). Only swap to fake timers once the DOM is in the
-    // post-hydrate state we want to assert against.
-    it('rescheduling auto-dismiss when a second missing item is clicked mid-notice', async () => {
-      invokeMock.mockImplementation((cmd: string) => {
-        if (cmd === 'read_recent') {
-          return Promise.resolve([
-            recentEntry('E:/ghost-a.mkv', 'ghost-a.mkv', false),
-            recentEntry('E:/ghost-b.mkv', 'ghost-b.mkv', false),
-          ]);
-        }
-        return defaultInvokeImpl(cmd);
-      });
-      render(<DropScreen />);
-      const items = await screen.findAllByTestId('recent-item');
-      vi.useFakeTimers();
-      try {
-        // Click the first missing item — notice shows.
-        act(() => {
-          items[0].click();
-        });
-        expect(screen.getByTestId('recent-missing-notice')).toHaveTextContent(
-          'ghost-a.mkv',
-        );
-        // Advance 3s — notice still up because cleanup is at 5s.
-        act(() => {
-          vi.advanceTimersByTime(3000);
-        });
-        expect(screen.getByTestId('recent-missing-notice')).toHaveTextContent(
-          'ghost-a.mkv',
-        );
-        // Click the second missing item — the new notice replaces the old.
-        act(() => {
-          items[1].click();
-        });
-        expect(screen.getByTestId('recent-missing-notice')).toHaveTextContent(
-          'ghost-b.mkv',
-        );
-        // 4s after the second click (i.e. at 7s total) the new notice MUST
-        // still be visible. Without rescheduling, the prior 5s timer would
-        // have already fired at 5s wall-clock and cleared it.
-        act(() => {
-          vi.advanceTimersByTime(4000);
-        });
-        expect(screen.getByTestId('recent-missing-notice')).toHaveTextContent(
-          'ghost-b.mkv',
-        );
-        // 1s more (8s total) — past the rescheduled 5s window, notice gone.
-        act(() => {
-          vi.advanceTimersByTime(1500);
-        });
-        expect(screen.queryByTestId('recent-missing-notice')).toBeNull();
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('cancels the pending notice timer when DropScreen unmounts', async () => {
-      invokeMock.mockImplementation((cmd: string) => {
-        if (cmd === 'read_recent') {
-          return Promise.resolve([
-            recentEntry('E:/ghost.mkv', 'ghost.mkv', false),
-          ]);
-        }
-        return defaultInvokeImpl(cmd);
-      });
-      const { unmount } = render(<DropScreen />);
-      const item = await screen.findByTestId('recent-item');
-      vi.useFakeTimers();
-      try {
-        act(() => {
-          item.click();
-        });
-        expect(screen.getByTestId('recent-missing-notice')).toBeInTheDocument();
-        // Unmount before the 5s timeout fires. Advancing timers afterwards
-        // must not throw "setState on unmounted" — the component cleanup
-        // callback is responsible for clearing the handle.
-        unmount();
-        expect(() => {
-          act(() => {
-            vi.advanceTimersByTime(10_000);
-          });
-        }).not.toThrow();
-      } finally {
-        vi.useRealTimers();
-      }
     });
   });
 });

@@ -145,8 +145,22 @@
   color: var(--ae-gold);
 }
 
+/* PR #655 review (Round 2): full-path display with left-truncation. The
+ * box uses `direction: rtl` so `text-overflow: ellipsis` lands on the LEFT
+ * (= the parent-directory portion), keeping the file-name suffix visible.
+ * `unicode-bidi: plaintext` lets the LTR / Japanese characters in the path
+ * itself render in their natural left-to-right order — the rtl is only
+ * used to flip the truncation side. `min-width: 0` is required for the
+ * flex item's overflow to actually trigger inside the row layout. */
 .recentName {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: plaintext;
 }
 
 .recentSize {
@@ -174,7 +188,7 @@
   font: inherit;
 }
 
-.recentItemButton:hover:not(:disabled):not(.recentItemMissing) {
+.recentItemButton:hover:not(:disabled) {
   background: rgba(var(--ae-gold-rgb), 0.06);
 }
 
@@ -183,34 +197,11 @@
   opacity: 0.7;
 }
 
-/* Greyed-out state when the underlying file is missing — still clickable
-   so we can surface a "file not found" notice, but the visual cue tells
-   the user not to expect the click to load anything. */
-.recentItemMissing {
-  opacity: 0.45;
-  cursor: help;
-}
-
-.recentItemMissing .recentName {
-  text-decoration: line-through;
-}
-
 .recentEmpty {
   padding: 12px;
   font-family: var(--ae-font-body);
   font-size: 11px;
   color: var(--ae-text-dim);
-  text-align: center;
-}
-
-.recentMissingNotice {
-  margin-top: 10px;
-  padding: 8px 12px;
-  border: 1px solid var(--ae-danger);
-  background: rgba(200, 112, 88, 0.08);
-  font-family: var(--ae-font-body);
-  font-size: 11px;
-  color: var(--ae-danger);
   text-align: center;
 }
 

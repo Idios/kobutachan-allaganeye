@@ -11,7 +11,7 @@ import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useAppStateStore } from '../state/appStateStore';
 import {
-  type RecentEntryView,
+  type RecentEntry,
   useRecentStore,
 } from '../state/recentStore';
 import { DetectionParamsPanel } from './DetectionParamsPanel';
@@ -128,24 +128,6 @@ export function DropScreen({
   const [probeInfo, setProbeInfo] = useState<VideoProbeInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragState, setDragState] = useState<DragState>('idle');
-  // #571: surfaced when the user clicks a recent-list entry whose backing
-  // file has been moved or deleted. Flash for ~5s then clear.
-  const [missingNotice, setMissingNotice] = useState<string | null>(null);
-  // PR #655 review (Item 2): hold the auto-dismiss handle so we can (a)
-  // cancel it on unmount to avoid setState-on-unmounted, and (b) cancel a
-  // prior pending dismiss when the user clicks a second missing item before
-  // the first 5s has elapsed (otherwise the older timer fires mid-display
-  // of the new notice and clears it early).
-  const noticeTimeoutRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (noticeTimeoutRef.current !== null) {
-        window.clearTimeout(noticeTimeoutRef.current);
-        noticeTimeoutRef.current = null;
-      }
-    };
-  }, []);
 
   async function probeAndDispatch(path: string): Promise<void> {
     setError(null);
@@ -163,27 +145,11 @@ export function DropScreen({
   }
 
   // #571: handler shared between recent-list click and keyboard activation.
-  function selectRecent(item: RecentEntryView) {
+  // PR #655 Round 2: missing-file UX (grey-out + dismissable notice) was
+  // dropped per user feedback — Rust now prunes deleted files on every
+  // `read_recent`, so we only ever render entries that still exist.
+  function selectRecent(item: RecentEntry) {
     if (phase !== 'idle') return;
-    // PR #655 review (Item 2): always cancel any pending auto-dismiss
-    // before the next state change. Whether we're showing a new notice or
-    // clearing it for a successful pick, a stale 5s timer firing later
-    // would either clobber the new notice or try to setState after unmount.
-    if (noticeTimeoutRef.current !== null) {
-      window.clearTimeout(noticeTimeoutRef.current);
-      noticeTimeoutRef.current = null;
-    }
-    if (!item.exists) {
-      setMissingNotice(`ファイルが見つかりません: ${item.fileName}`);
-      // The notice clears itself after 5s so it doesn't linger when the
-      // user moves on. (No toast library yet — inline status line.)
-      noticeTimeoutRef.current = window.setTimeout(() => {
-        setMissingNotice(null);
-        noticeTimeoutRef.current = null;
-      }, 5000);
-      return;
-    }
-    setMissingNotice(null);
     dispatch({ type: 'RECENT_PICKED' });
     void probeAndDispatch(item.path);
   }
@@ -402,27 +368,26 @@ export function DropScreen({
                 <button
                   key={r.path}
                   type="button"
-                  className={[
-                    styles.recentItem,
-                    styles.recentItemButton,
-                    !r.exists ? styles.recentItemMissing : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
+                  className={`${styles.recentItem} ${styles.recentItemButton}`}
                   onClick={() => selectRecent(r)}
                   disabled={phase !== 'idle'}
                   data-testid="recent-item"
-                  data-missing={!r.exists}
-                  aria-label={
-                    r.exists
-                      ? `直近の録画 ${r.fileName}`
-                      : `直近の録画 ${r.fileName} (ファイルが見つかりません)`
-                  }
+                  aria-label={`直近の録画 ${r.fileName}`}
                 >
                   <span className={styles.recentMark} aria-hidden>
                     ◈
                   </span>
-                  <span className={styles.recentName}>{r.fileName}</span>
+                  {/* PR #655 review (Round 2): show full path so users with
+                      same-named recordings in different folders can tell
+                      them apart. The CSS truncates from the left so the
+                      file-name suffix stays visible; full path is also in
+                      the title attribute for hover. */}
+                  <span
+                    className={styles.recentName}
+                    title={r.path}
+                  >
+                    {r.path}
+                  </span>
                   <span className={styles.recentDur}>
                     {formatRecentDate(r.mtimeMs)}
                   </span>
@@ -431,15 +396,6 @@ export function DropScreen({
                   </span>
                 </button>
               ))
-            )}
-            {missingNotice && (
-              <div
-                className={styles.recentMissingNotice}
-                role="status"
-                data-testid="recent-missing-notice"
-              >
-                ⚠ {missingNotice}
-              </div>
             )}
           </div>
         </>

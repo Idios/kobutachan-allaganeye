@@ -160,10 +160,11 @@
 | 項目 | 内容 |
 |---|---|
 | 種類 | list (各 item は `<button>`、`recentStore.entries` から render) |
-| 状態 | `idle` (phase=`idle`) / `disabled` (phase=`selecting/probing/selected/probeError`) / `missing` (item の物理ファイル不在、grayed-out + 取消線) |
+| 状態 | `idle` (phase=`idle`) / `disabled` (phase=`selecting/probing/selected/probeError`) |
 | 遷移トリガー | `onClick` → `selectRecent(item)` → reducer `RECENT_PICKED` (phase=`idle → probing`) → `probeAndDispatch(item.path)`。drop と同じ probe 経路を辿るので、metadata 不整合 / 解像度差異もそこで再評価される |
-| store mutation | mount 時に `recentStore.load()` で `~/.allaganeye/recent.json` をロード。probe 成功時に `recentStore.add(path)` で履歴更新 (重複は最新化、最大 10 件)。click→probe 成功で `appStateStore.setSelectedVideoPath` (§2.1.6 [OK] と同じ経路、SelectedCard 経由で確認) |
-| 例外 / edge case | (1) 履歴ゼロ件: 「履歴はまだありません」placeholder ([recent-empty](../gui/src/screens/DropScreen.tsx))。(2) ファイル不在 (`exists=false`): grayed-out + 取消線 (`recentItemMissing`)、click で `recent-missing-notice` を 5s 表示 (probe 走らない)。(3) `recent.json` 破損: 空配列扱い (`read_recent_sync` が `unwrap_or_default`、Rust 側)。(4) 同 path 再選択: dedup でトップに移動 + mtime / addedAt 更新 (Windows は case-insensitive 比較) |
+| store mutation | mount 時に `recentStore.load()` で `<install dir>/recent.json` (PR #655 Round 2: Portable ZIP 哲学に揃えて exe ディレクトリ配置) をロード。probe 成功時に `recentStore.add(path)` で履歴更新 (重複は最新化、最大 10 件、`\\?\` extended-length prefix は Rust 側で strip) |
+| 例外 / edge case | (1) 履歴ゼロ件: 「履歴はまだありません」placeholder ([recent-empty](../gui/src/screens/DropScreen.tsx))。(2) ファイル不在: Rust `read_recent` / `add_recent` が `Path::exists()` で確認し、不在 entry を**自動 prune** + 永続化更新 (PR #655 Round 2: 旧 grayed-out + warning notice UX を撤廃)。(3) `recent.json` 破損: 空配列扱い (`read_recent_sync` が `unwrap_or_default`、Rust 側)。(4) 同 path 再選択: dedup でトップに移動 + mtime / addedAt 更新 (Windows は case-insensitive + separator-insensitive 比較) |
+| 表示 | 各 item は `[◈] [full path] [date] [GB]` の row。長い path は CSS の `direction: rtl` truncate で**左側を `…` で省略**して file-name 末尾を常に可視に保つ。hover で title tooltip にフルパス |
 
 #### §2.1.4 SelectedCard (probe 結果カード)
 

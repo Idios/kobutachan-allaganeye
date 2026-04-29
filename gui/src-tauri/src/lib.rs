@@ -238,25 +238,43 @@ pub struct RecentEntry {
     pub added_at_ms: u64,
 }
 
-/// #571 — read_recent / add_recent return type. Wraps the persisted
-/// `RecentEntry` with a freshly-evaluated `exists` flag so the GUI can grey
-/// out items whose underlying file has been moved or deleted between drops.
-/// We keep `exists` out of the on-disk struct because it's an observation,
-/// not state — recomputing it on every load avoids the cache going stale.
-#[derive(Debug, Clone, Serialize)]
-pub struct RecentEntryView {
-    #[serde(flatten)]
-    pub entry: RecentEntry,
-    pub exists: bool,
-}
-
 const RECENT_LIMIT: usize = 10;
 
-/// #571 — resolve `<home>/.allaganeye/recent.json` without creating it.
+/// #571 — strip the Windows extended-length path prefix (`\\?\` / `\\?\UNC\`).
+///
+/// Tauri's dialog and drag-drop sometimes hand back paths with the `\\?\`
+/// prefix (Win32's "long path" form). Storing those verbatim makes the UI
+/// inconsistent with normal `E:\…` rendering and breaks naive consumers
+/// (e.g. `Path::exists` mis-resolution noted in PR #655 review). This
+/// mirrors the TS-side `stripExtendedPathPrefix` (`gui/src/utils/path.ts`)
+/// so both the recent-list (`add_recent`) and the export output dir
+/// (`ExportScreen.handlePickDir`) end up with the same canonical form.
+fn strip_extended_path_prefix(p: &str) -> String {
+    if let Some(rest) = p.strip_prefix("\\\\?\\UNC\\") {
+        format!("\\\\{}", rest)
+    } else if let Some(rest) = p.strip_prefix("\\\\?\\") {
+        rest.to_string()
+    } else {
+        p.to_string()
+    }
+}
+
+/// #571 — resolve `<install dir>/recent.json` without creating it.
+///
+/// PR #655 Round 2 review: keep the recent-videos history alongside the
+/// executable so the tool is fully self-contained — Portable ZIP philosophy
+/// (extract = install, delete = uninstall, no leftover state in the user
+/// profile). Production = `<bundle install dir>/recent.json`, dev =
+/// `target/debug/recent.json` (gitignored). The same review also moved the
+/// thumbnail cache (`thumb_cache_dir`, #465) to `<install dir>/cache/`
+/// for the same philosophy.
 fn recent_path() -> Result<PathBuf, String> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| "failed to resolve user home directory".to_string())?;
-    Ok(home.join(".allaganeye").join("recent.json"))
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("failed to resolve current_exe: {}", e))?;
+    let dir = exe
+        .parent()
+        .ok_or_else(|| format!("current_exe has no parent: {}", exe.display()))?;
+    Ok(dir.join("recent.json"))
 }
 
 fn now_ms() -> u64 {
@@ -349,26 +367,37 @@ fn write_recent_atomic(path: &Path, list: &[RecentEntry]) -> Result<(), String> 
     Ok(())
 }
 
-/// #571 — decorate persisted entries with `exists` so the GUI can grey out
-/// missing files. `Path::exists()` is cheap on Windows for local paths but
-/// we still cap the list at `RECENT_LIMIT` so cost stays O(constant).
-fn with_existence(entries: Vec<RecentEntry>) -> Vec<RecentEntryView> {
+/// #571 — drop entries whose backing file no longer exists.
+///
+/// PR #655 review (Round 2): the original design rendered missing entries
+/// as grey-out + click → toast. The user feedback simplified that to "if
+/// the file is gone, just drop it from the list" — so this prune runs on
+/// every read and on every add. The cost is O(RECENT_LIMIT) `exists()`
+/// syscalls per command which is negligible at the 10-item cap.
+fn prune_missing(entries: Vec<RecentEntry>) -> Vec<RecentEntry> {
     entries
         .into_iter()
-        .map(|e| {
-            let exists = Path::new(&e.path).exists();
-            RecentEntryView { entry: e, exists }
-        })
+        .filter(|e| Path::new(&e.path).exists())
         .collect()
 }
 
 #[tauri::command]
-async fn read_recent() -> Result<Vec<RecentEntryView>, String> {
-    Ok(with_existence(read_recent_sync(&recent_path()?)))
+async fn read_recent() -> Result<Vec<RecentEntry>, String> {
+    let path = recent_path()?;
+    let raw = read_recent_sync(&path);
+    let original_len = raw.len();
+    let pruned = prune_missing(raw);
+    // Persist the prune so the user's `recent.json` doesn't keep accreting
+    // dead entries — but only when something actually changed, to avoid
+    // pointless mtime bumps on idle reads.
+    if pruned.len() != original_len {
+        write_recent_atomic(&path, &pruned)?;
+    }
+    Ok(pruned)
 }
 
 #[tauri::command]
-async fn add_recent(path: String) -> Result<Vec<RecentEntryView>, String> {
+async fn add_recent(path: String) -> Result<Vec<RecentEntry>, String> {
     let video_path = PathBuf::from(&path);
     if !video_path.exists() {
         return Err(format!("file not found: {}", video_path.display()));
@@ -382,18 +411,23 @@ async fn add_recent(path: String) -> Result<Vec<RecentEntryView>, String> {
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
+    // PR #655 review (Round 2): strip the Windows `\\?\` extended-length
+    // prefix before persisting. Tauri dialogs/drag-drop hand it to us but
+    // the rest of the app (UI display, dedup, downstream consumers) wants
+    // the canonical form. Mirrors `stripExtendedPathPrefix` on the TS side.
+    let canonical_path = strip_extended_path_prefix(&path);
     let file_name = video_path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.clone());
+        .unwrap_or_else(|| canonical_path.clone());
     let entry = RecentEntry {
-        path,
+        path: canonical_path,
         file_name,
         size_bytes,
         mtime_ms,
         added_at_ms: now_ms(),
     };
-    Ok(with_existence(add_recent_sync(&recent_path()?, entry)?))
+    add_recent_sync(&recent_path()?, entry)
 }
 
 #[tauri::command]
@@ -767,16 +801,23 @@ fn compute_video_cache_hash(video_path: &Path, mtime_ms: u64) -> String {
     hex
 }
 
-/// #465 -- resolve `<home>/.allaganeye/cache/<video_hash>/thumbs/`.
+/// #465 -- resolve `<install dir>/cache/<video_hash>/thumbs/`.
 ///
 /// Returns the path without creating it; callers that intend to write thumbs
-/// are responsible for `create_dir_all`. On Windows the home directory comes
-/// from `USERPROFILE` via `dirs::home_dir`; on Unix it reads `HOME`.
+/// are responsible for `create_dir_all`.
+///
+/// PR #655 Round 2: relocated from `~/.allaganeye/cache/...` to the exe
+/// directory to match the Portable ZIP philosophy already adopted by
+/// `recent.json` (#571). Tool deletion = folder deletion = no leftover
+/// state in the user profile. Production = `<bundle install dir>/cache/...`,
+/// dev = `target/debug/cache/...` (gitignored).
 fn thumb_cache_dir(video_hash: &str) -> Result<PathBuf, String> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| "failed to resolve user home directory".to_string())?;
-    Ok(home
-        .join(".allaganeye")
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("failed to resolve current_exe: {}", e))?;
+    let dir = exe
+        .parent()
+        .ok_or_else(|| format!("current_exe has no parent: {}", exe.display()))?;
+    Ok(dir
         .join("cache")
         .join(video_hash)
         .join("thumbs"))
@@ -2500,10 +2541,11 @@ mod tests {
     }
 
     #[test]
-    fn with_existence_marks_existing_and_missing_files() {
-        // `with_existence` is the bridge between persisted entries and the
-        // grey-out logic on the frontend. Existing files get `exists=true`,
-        // moved/deleted ones get `exists=false`.
+    fn prune_missing_drops_entries_whose_files_are_gone() {
+        // PR #655 Round 2: replaces the old `with_existence` flag-based
+        // approach. Entries whose backing file is gone must be removed
+        // from the returned list (they'll also be persisted out by
+        // `read_recent` on the next call).
         let tmp = TempDir::new().unwrap();
         let real_path = tmp.path().join("real.mkv");
         fs::write(&real_path, b"x").unwrap();
@@ -2524,11 +2566,67 @@ mod tests {
                 added_at_ms: 1,
             },
         ];
-        let view = with_existence(entries);
-        assert_eq!(view.len(), 2);
-        assert!(view[0].exists);
-        assert!(!view[1].exists);
-        assert_eq!(view[0].entry.file_name, "real.mkv");
+        let pruned = prune_missing(entries);
+        assert_eq!(pruned.len(), 1);
+        assert_eq!(pruned[0].file_name, "real.mkv");
+    }
+
+    #[test]
+    fn prune_missing_keeps_all_when_every_file_exists() {
+        let tmp = TempDir::new().unwrap();
+        let a = tmp.path().join("a.mkv");
+        let b = tmp.path().join("b.mkv");
+        fs::write(&a, b"x").unwrap();
+        fs::write(&b, b"x").unwrap();
+        let entries = vec![
+            RecentEntry {
+                path: a.to_string_lossy().into_owned(),
+                file_name: "a.mkv".into(),
+                size_bytes: 1,
+                mtime_ms: 1,
+                added_at_ms: 1,
+            },
+            RecentEntry {
+                path: b.to_string_lossy().into_owned(),
+                file_name: "b.mkv".into(),
+                size_bytes: 1,
+                mtime_ms: 1,
+                added_at_ms: 1,
+            },
+        ];
+        assert_eq!(prune_missing(entries).len(), 2);
+    }
+
+    // PR #655 Round 2: Windows `\\?\` extended-length prefix strip — the
+    // recent-list `add_recent` and (TS-side) export output-dir picker
+    // both saw the prefix leak through into displayed paths.
+
+    #[test]
+    fn strip_extended_path_prefix_strips_drive_form() {
+        assert_eq!(
+            strip_extended_path_prefix("\\\\?\\E:\\videos\\a.mkv"),
+            "E:\\videos\\a.mkv",
+        );
+    }
+
+    #[test]
+    fn strip_extended_path_prefix_strips_unc_form() {
+        assert_eq!(
+            strip_extended_path_prefix("\\\\?\\UNC\\server\\share\\a.mkv"),
+            "\\\\server\\share\\a.mkv",
+        );
+    }
+
+    #[test]
+    fn strip_extended_path_prefix_passes_through_when_absent() {
+        assert_eq!(
+            strip_extended_path_prefix("E:\\videos\\a.mkv"),
+            "E:\\videos\\a.mkv",
+        );
+        assert_eq!(
+            strip_extended_path_prefix("/home/user/a.mkv"),
+            "/home/user/a.mkv",
+        );
     }
 
     #[test]
@@ -2949,9 +3047,11 @@ mod tests {
         assert_ne!(h1, h2);
     }
 
-    /// #465 -- `thumb_cache_dir` must place the hash segment and the
-    /// literal `thumbs` leaf under `.allaganeye/cache/`. We check path
-    /// components to stay OS-separator-agnostic.
+    /// #465 / PR #655 Round 2 -- `thumb_cache_dir` must place the hash
+    /// segment and the literal `thumbs` leaf under `<install dir>/cache/`.
+    /// We check path components to stay OS-separator-agnostic. Relocated
+    /// from `~/.allaganeye/cache/...` to the exe directory in PR #655 Round
+    /// 2 (Portable ZIP philosophy).
     #[test]
     fn thumb_cache_dir_includes_hash_and_thumbs_suffix() {
         let hash = "deadbeef".repeat(8); // 64 chars like a real digest
@@ -2960,13 +3060,22 @@ mod tests {
             .components()
             .map(|c| c.as_os_str().to_string_lossy().to_string())
             .collect();
-        // Must end with ... / .allaganeye / cache / <hash> / thumbs
+        // Must end with ... / cache / <hash> / thumbs (no `.allaganeye`
+        // segment anymore — it lives next to the exe now).
         let n = components.len();
-        assert!(n >= 4, "path too short: {:?}", components);
+        assert!(n >= 3, "path too short: {:?}", components);
         assert_eq!(components[n - 1], "thumbs");
         assert_eq!(components[n - 2], hash);
         assert_eq!(components[n - 3], "cache");
-        assert_eq!(components[n - 4], ".allaganeye");
+        // Sanity: the dir must be sibling-of-exe, so its parent of
+        // `cache` should match the exe's parent.
+        let exe = std::env::current_exe().unwrap();
+        let exe_parent = exe.parent().unwrap();
+        let cache_parent = dir
+            .ancestors()
+            .nth(3) // dir / thumbs / hash / cache → exe parent
+            .expect("cache parent");
+        assert_eq!(cache_parent, exe_parent);
     }
 
     /// #465 -- timestamp grid is centred on the boundary, spans the full

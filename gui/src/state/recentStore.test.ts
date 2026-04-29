@@ -6,20 +6,15 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
 }));
 
-import { useRecentStore, type RecentEntryView } from './recentStore';
+import { useRecentStore, type RecentEntry } from './recentStore';
 
-function entry(
-  path: string,
-  fileName: string,
-  exists = true,
-): RecentEntryView {
+function entry(path: string, fileName: string): RecentEntry {
   return {
     path,
     fileName,
     sizeBytes: 1024,
     mtimeMs: 1_700_000_000_000,
     addedAtMs: 1_700_000_000_000,
-    exists,
   };
 }
 
