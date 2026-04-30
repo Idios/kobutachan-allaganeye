@@ -16,11 +16,6 @@ pub struct AppError {
 }
 
 impl AppError {
-    /// Builder used by `#[allow(dead_code)]`-tagged constructors below — kept
-    /// for the upcoming AppError migration of legacy commands (派生 issue).
-    /// Until that migration lands, all accessors are unused in production
-    /// (only the test module references them), hence the allowance.
-    #[allow(dead_code)]
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),
@@ -30,6 +25,13 @@ impl AppError {
         }
     }
 
+    /// `hint` フィールドを設定する builder。
+    ///
+    /// 将来用 — 現状 production code では未使用 (test のみ参照、PR #665 Round 2
+    /// 課題 5 (c) で保留決定)。lib.rs 側 AppError::new(...) の主要箇所に hint
+    /// を後付けで配るための小規模拡張で活用予定 (例: `state.mtime_conflict`
+    /// で「他プロセスでの書き換えを確認してください」等)。frontend 側 helper は
+    /// `gui/src/lib/appError.ts::appErrorHint` で同じく保留中。
     #[allow(dead_code)]
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
         self.hint = Some(hint.into());
@@ -42,17 +44,52 @@ impl AppError {
         self
     }
 
-    /// Serialize to a JSON string suitable for Tauri command `Result<T, String>` Err values.
-    /// Frontend should `try { JSON.parse(msg) } catch` to detect structured vs legacy raw strings.
-    #[allow(dead_code)]
-    pub fn to_wire_string(&self) -> String {
-        serde_json::to_string(self).unwrap_or_else(|_| self.message.clone())
-    }
 }
 
 impl fmt::Display for AppError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[{}] {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for AppError {}
+
+/// `?` 演算子で `std::io::Error` を AppError に自動変換する。code は
+/// `ErrorKind` から派生 (`NotFound` → `io.file_not_found`、`PermissionDenied`
+/// → `io.permission_denied` 等)、message は `e.to_string()`。
+/// call site で context-specific code に上書きしたい場合は
+/// `.map_err(|e| AppError::new("io.<specific_kind>", e.to_string()))`
+/// (例: `io.read_failed`、`io.write_failed` 等の domain.error_kind 形式) を使う。
+impl From<std::io::Error> for AppError {
+    fn from(e: std::io::Error) -> Self {
+        let code = match e.kind() {
+            std::io::ErrorKind::NotFound => "io.file_not_found",
+            std::io::ErrorKind::PermissionDenied => "io.permission_denied",
+            std::io::ErrorKind::AlreadyExists => "io.already_exists",
+            std::io::ErrorKind::WouldBlock => "io.would_block",
+            std::io::ErrorKind::TimedOut => "io.timed_out",
+            _ => "io.error",
+        };
+        AppError::new(code, e.to_string())
+    }
+}
+
+/// `?` 演算子で `serde_json::Error` を AppError に自動変換する。code は
+/// `parse.json_invalid` 固定。message は `e.to_string()` で line/column 情報を含む。
+impl From<serde_json::Error> for AppError {
+    fn from(e: serde_json::Error) -> Self {
+        AppError::new("parse.json_invalid", e.to_string())
+    }
+}
+
+/// `?` 演算子で `String` error を AppError として propagate するための impl。
+/// 主に `Result<_, String>` を返す内部 helper (例 `run_ffmpeg_export_attempt`)
+/// を `Result<_, AppError>` を返す Tauri command 内で `?` 経由で呼び出すケース
+/// で使われる。code は `internal.error` 固定。新規コードでは call site で
+/// `AppError::new("domain.error_kind", message)` を構築するのが望ましい。
+impl From<String> for AppError {
+    fn from(message: String) -> Self {
+        AppError::new("internal.error", message)
     }
 }
 
@@ -134,10 +171,11 @@ mod tests {
 
     #[test]
     fn serialize_app_error_roundtrips() {
+        // Tauri が AppError を frontend に渡す時と同じ serde Serialize 経路を
+        // 直接 test する (旧 to_wire_string は production 未使用で削除済)。
         let e = AppError::new("io.read_failed", "could not read file")
             .with_hint("check file permissions");
-        let s = e.to_wire_string();
-        let parsed: serde_json::Value = serde_json::from_str(&s).expect("valid json");
+        let parsed = serde_json::to_value(&e).expect("valid json");
         assert_eq!(parsed["code"], "io.read_failed");
         assert_eq!(parsed["message"], "could not read file");
         assert_eq!(parsed["hint"], "check file permissions");

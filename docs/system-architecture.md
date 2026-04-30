@@ -4,6 +4,7 @@
 
 - [CLI コマンド仕様](cli-spec.md) — `allaganeye` のサブコマンド / オプション
 - [GUI UI Architecture](ui-architecture.md) — L2a Tauri GUI の screen / phase state machine (Phase 2 基盤、Phase 3/4 で拡張)
+- [Tauri Commands リファレンス](tauri-commands.md) — `gui/src-tauri/src/lib.rs` 内の全 `#[tauri::command]` 一覧 (signature + 想定エラー + AppError code 推奨)
 - [metadata.json 仕様](metadata-spec.md) — CLI ↔ GUI の唯一の契約
 - [リリース戦略](release-strategy.md) — develop-x.x.x / main のブランチ運用
 
@@ -74,7 +75,7 @@ spawn された CLI プロセスは `ProcessMap` (Rust side、#523) に登録さ
 
 preview 画面での `<video>` 再生には axum ベースの局所 HTTP サーバ (#465) が使われる。これは **subprocess ではなく Rust プロセス内の async task** で、token ベースの path allowlisting で 127.0.0.1 にのみ bind する。ffmpeg は呼ばず (ブラウザの native decode)、Range リクエストに対応する。
 
-詳細: [ui-architecture.md §video playback](ui-architecture.md) / `gui/src-tauri/src/lib.rs` の `register_video` / `serve_video`。
+詳細: [ui-architecture.md §video playback](ui-architecture.md) / `gui/src-tauri/src/lib.rs` の `register_video` / `serve_video` ([tauri-commands.md](tauri-commands.md) #12 の signature と想定エラー参照)。
 
 ## 3. データフロー
 
@@ -142,4 +143,5 @@ sequenceDiagram
 - [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) ffmpeg 実行中の安全な中断 (ProcessMap)
 - [#466](https://github.com/Idios/kobutachan-allaganeye/issues/466) Phase 4 export 本物化 (subprocess 経路の本格利用)
 - [#451](https://github.com/Idios/kobutachan-allaganeye/issues/451) / [#452](https://github.com/Idios/kobutachan-allaganeye/issues/452) L2b installer (bundle 形態 / 配布)
-- [cli-spec.md](cli-spec.md) / [ui-architecture.md](ui-architecture.md) / [metadata-spec.md](metadata-spec.md) / [release-strategy.md](release-strategy.md)
+- [#619](https://github.com/Idios/kobutachan-allaganeye/issues/619) Tauri Commands リファレンス新設 ([tauri-commands.md](tauri-commands.md))
+- [cli-spec.md](cli-spec.md) / [ui-architecture.md](ui-architecture.md) / [tauri-commands.md](tauri-commands.md) / [metadata-spec.md](metadata-spec.md) / [release-strategy.md](release-strategy.md)

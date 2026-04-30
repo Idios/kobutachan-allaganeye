@@ -149,6 +149,29 @@ jobs:
       - name: Cargo test (lib)
         run: cargo test --lib --manifest-path gui/src-tauri/Cargo.toml
 
+  doc-tauri-commands-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tauri-commands.md drift vs lib.rs (name-level set-diff)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 1. lib.rs から #[tauri::command] 直後の関数名を抽出 (sync/async 両対応、awk で grep -P 不要)
+          awk '/^#\[tauri::command\]/{getline; sub(/^.*fn[[:space:]]+/, ""); sub(/[(].*$/, ""); print}' \
+            gui/src-tauri/src/lib.rs | sort -u > /tmp/lib_commands.txt
+          # 2. doc table 1 列目の command 名を抽出 (`backtick` 囲み)
+          grep -E "^\| [0-9]+ \|" docs/tauri-commands.md \
+            | awk -F'|' '{print $3}' | tr -d '` ' | sort -u > /tmp/doc_commands.txt
+          # 3. set 比較 — rename / 誤コピー / 行数だけ合致するケースも検出
+          if ! diff -u /tmp/lib_commands.txt /tmp/doc_commands.txt; then
+            echo "::error::docs/tauri-commands.md drift: command name mismatch. Update docs/tauri-commands.md to match gui/src-tauri/src/lib.rs (issue #619)."
+            exit 1
+          fi
+          LIB_COUNT=$(wc -l < /tmp/lib_commands.txt)
+          echo "OK: $LIB_COUNT tauri commands documented (name-level match)"
+
   installer-pester:
     runs-on: windows-latest
     steps:

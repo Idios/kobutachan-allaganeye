@@ -1,0 +1,85 @@
+# Tauri Commands リファレンス
+
+`gui/src-tauri/src/lib.rs` 内の全 `#[tauri::command]` の master 一覧。frontend (TypeScript) と backend (Rust) の error contract と invoke 経路を確定する doc。
+
+## エラー型 (migration 完了)
+
+- 戻り値型: **全 23 command が `Result<T, AppError>` または `bool` 直接 (`is_process_running`) を返す** (PR [#665](https://github.com/Idios/kobutachan-allaganeye/pull/665) で legacy `Result<T, String>` から完全 migration 済)
+- `AppError` 構造体 (`gui/src-tauri/src/error.rs`、PR [#661](https://github.com/Idios/kobutachan-allaganeye/pull/661) Refs [#614](https://github.com/Idios/kobutachan-allaganeye/issues/614) で導入) のフィールド: `code: String` (domain-specific identifier、例 `io.file_not_found`) / `message: String` / `hint: Option<String>` / `stacktrace: Option<String>`
+- `From<std::io::Error>` / `From<serde_json::Error>` / `From<String>` / `From<&str>` impl があり、`?` 演算子で自動変換される (PR #665 で追加)。`std::io::Error` は `ErrorKind` から domain code を派生 (例 `NotFound` → `io.file_not_found`)
+- frontend 側 narrowing: `gui/src/lib/appError.ts` の `appErrorMessage(e)` / `appErrorCodeIs(e, code)` / `isAppError(e)` ヘルパーを使う。Tauri は `AppError` を JSON object として frontend に渡し、invoke 失敗時 Promise.reject 値が AppError instance になる
+- 本 doc の「想定エラーケース / AppError code」列は実装と整合する domain.error_kind 命名 (例: `io.file_not_found`、`parse.json_invalid`、`state.mtime_conflict`)
+
+## 分類タグ
+
+| タグ | 説明 |
+|---|---|
+| `pure` | 入力から決定的に出力を計算、副作用なし |
+| `I/O` | ファイル読み書き / metadata 取得 |
+| `subprocess` | ffmpeg / ffprobe / python CLI / explorer 等の外部プロセス起動 |
+| `state-mutating` | in-memory registry 更新 / app exit / panic 誘発 等の副作用 |
+
+複数該当する場合は `+` で結合 (例: `subprocess + state-mutating`)。
+
+## 全 command 一覧
+
+| # | command | params | Result type | 分類 | 想定エラーケース | AppError code |
+|---|---|---|---|---|---|---|
+| 1 | `load_metadata` | `path: String` | `Result<Value, AppError>` | I/O | (a) ファイル不在、(b) JSON parse 失敗、(c) 読み取り権限なし、(d) JSON root が object でない | (a) `io.file_not_found`、(b) `parse.json_invalid`、(c) `io.permission_denied`、(d) `parse.schema_invalid` |
+| 2 | `get_metadata_mtime` | `path: String` | `Result<Option<u64>, AppError>` | I/O | (a) ファイル不在 (= None で返却)、(b) 読み取り権限なし | (b) `io.permission_denied` |
+| 3 | `apply_changes` | `path: String, metadata: Value, expected_mtime_ms: Option<u64>` | `Result<u64, AppError>` | I/O + state-mutating | (a) mtime conflict (外部書き換え検出)、(b) backup 作成失敗、(c) atomic write 失敗、(d) JSON serialize 失敗、(e) post-apply mtime 取得失敗 (extreme case、書き込み直後にファイルが消失/権限変更等) | (a) `state.mtime_conflict`、(b) `io.backup_failed`、(c) `io.write_failed`、(d) `parse.json_serialize_failed`、(e) `io.read_failed` |
+| 4 | `save_draft` | `path: String, draft: Value` | `Result<(), AppError>` | I/O + state-mutating | (a) sibling `.draft.json` への書き込み失敗 | (a) `io.write_failed` |
+| 5 | `load_draft` | `path: String` | `Result<Option<Value>, AppError>` | I/O | (a) draft ファイル不在 (= None で返却)、(b) JSON parse 失敗 | (b) `parse.json_invalid` |
+| 6 | `clear_draft` | `path: String` | `Result<(), AppError>` | I/O + state-mutating | (a) draft 削除失敗 (権限等) | (a) `io.delete_failed` |
+| 7 | `restore_from_original` | `path: String` | `Result<(), AppError>` | I/O + state-mutating | (a) backup 不在、(b) backup → original copy 失敗 | (a) `io.file_not_found`、(b) `io.copy_failed` |
+| 8 | `check_backup_exists` | `path: String` | `Result<bool, AppError>` | I/O | (常に bool で返却、エラーケースほぼなし) | - |
+| 9 | `read_recent` | (なし) | `Result<Vec<RecentEntry>, AppError>` | I/O | (a) `recent.json` parse 失敗、(b) 読み取り失敗 | (a) `parse.json_invalid`、(b) `io.read_failed` |
+| 10 | `add_recent` | `path: String` | `Result<Vec<RecentEntry>, AppError>` | I/O + state-mutating | (a) `recent.json` 書き込み失敗、(b) パス validate 失敗 | (a) `io.write_failed`、(b) `validation.path_invalid` |
+| 11 | `clear_recent` | (なし) | `Result<(), AppError>` | I/O + state-mutating | (a) `recent.json` 書き込み失敗 | (a) `io.write_failed` |
+| 12 | `register_video` | `path: String` | `Result<RegisteredVideo, AppError>` | state-mutating | (a) 動画ファイル不在、(b) directory pass、(c) 読み取り権限なし | (a) `io.file_not_found`、(b) `validation.not_a_file`、(c) `io.permission_denied` |
+| 13 | `probe_video` | `path: String` | `Result<VideoProbeInfo, AppError>` | subprocess | (a) ffprobe 不在、(b) ffprobe 起動失敗、(c) ffprobe 出力 parse 失敗 | (a) `ffmpeg.not_found`、(b) `subprocess.spawn_failed`、(c) `parse.ffprobe_output_invalid` |
+| 14 | `generate_match_thumbnails` | `video_path: String, match_index: u32, boundary_t_seconds: f64, window_seconds: f64, count: u32` | `Result<Vec<ThumbnailEntry>, AppError>` | subprocess + I/O | (a) ffmpeg 不在、(b) seek 範囲外、(c) thumbnail 書き込み失敗 | (a) `ffmpeg.not_found`、(b) `validation.range_invalid`、(c) `io.write_failed` |
+| 15 | `is_process_running` | (なし) | `bool` | pure | (返り値は bool 直接、エラーなし) | - |
+| 16 | `kill_tracked_processes` | (なし) | `Result<u32, AppError>` | subprocess + state-mutating | (a) kill コマンド失敗 | (a) `process.kill_failed` |
+| 17 | `force_exit_app` | `app: tauri::AppHandle` | (返り値なし) | state-mutating | (即時 app exit、エラーケースなし) | - |
+| 18 | `open_folder_in_explorer` | `path: String` | `Result<(), AppError>` | subprocess | (a) フォルダ不在、(b) explorer 起動失敗 | (a) `io.file_not_found`、(b) `subprocess.spawn_failed` |
+| 19 | `export_match` | `app: AppHandle, video_path: String, start_seconds: f64, end_seconds: f64, output_path: String, codec: ExportCodec, h264_encoder: Option<H264Encoder>, match_index: u32` | `Result<ExportResult, AppError>` | subprocess + I/O | (a) ffmpeg 不在、(b) GPU encoder 初期化失敗 (NVENC/QSV/AMF, libx264 fallback で recover)、(c) input video 不在、(d) output 書き込み失敗 | (a) `ffmpeg.not_found`、(b) `ffmpeg.encoder_init_failed`、(c) `io.file_not_found`、(d) `io.write_failed` |
+| 20 | `select_h264_encoder_for_export` | `vendors: Vec<String>, preference: Vec<String>` | `EncoderInfo` | pure | (純粋関数、エラーなし) | - |
+| 21 | `start_detect` | `app: AppHandle, video_path: String, output_dir: String, params: DetectParams` | `Result<DetectResult, AppError>` | subprocess | (a) python CLI 不在、(b) python -m fallback 失敗、(c) detect 実行中エラー | (a) `python.not_found`、(b) `subprocess.spawn_failed`、(c) `subprocess.exit_failed` |
+| 22 | `get_log_dir` | (なし) | `Result<String, AppError>` | pure | (a) install_dir 取得失敗 (極端ケース) | (a) `path.install_dir_unresolved` |
+| 23 | `dev_force_panic` | (なし) | `Result<(), AppError>` | state-mutating | **意図的 panic** (`#[cfg(debug_assertions)]` 限定、PR #661 E2E 検証用) | - (panic で異常終了が期待動作) |
+
+## 補足
+
+- すべての command は async / sync 問わず Tauri runtime で execute される
+- **frontend (TypeScript) 側の error narrowing**: `gui/src/lib/appError.ts` の `appErrorMessage(e)` / `appErrorCodeIs(e, code)` / `isAppError(e)` ヘルパーを使う。Tauri が `AppError` を JSON object として serialize するため、invoke 失敗時の Promise.reject 値は `{ code, message, hint?, stacktrace? }` の object になる
+- **`AppError` 構造**: `code: String` (domain-specific identifier) / `message: String` / `hint: Option<String>` / `stacktrace: Option<String>`。enum ではなく struct で、code 値は domain.error_kind 形式の自由文字列 (例: `io.file_not_found`、`parse.json_invalid`、`state.mtime_conflict`)
+- **`?` 演算子の自動変換**: Rust 側 `error.rs` に `From<std::io::Error>` / `From<serde_json::Error>` / `From<String>` / `From<&str>` impl があり、各 helper の error を `?` で AppError に variant-aware に自動変換できる。例: `std::io::Error::NotFound` → `AppError { code: "io.file_not_found" }`
+
+frontend narrowing の使用例:
+
+```ts
+import { appErrorCodeIs, appErrorMessage } from '../lib/appError';
+
+try {
+  await invoke('apply_changes', { path, metadata, expectedMtimeMs });
+} catch (e) {
+  if (appErrorCodeIs(e, 'state.mtime_conflict')) {
+    // 競合専用の UI 分岐
+  } else {
+    showError(appErrorMessage(e));
+  }
+}
+```
+
+## CI による doc 整合性検査
+
+`.github/workflows/ci.yml` の `doc-tauri-commands-drift` job が `gui/src-tauri/src/lib.rs` 内の `#[tauri::command]` 数と本 doc の table 行数を比較し、不一致時に CI を fail させる (本 doc 漏れ防止、issue [#619](https://github.com/Idios/kobutachan-allaganeye/issues/619) 受け入れ条件 2)。command を追加・削除した場合は本 doc の table 行も同時に更新すること。
+
+## 関連
+
+- 派生元: [#619](https://github.com/Idios/kobutachan-allaganeye/issues/619) 本 doc 新設 + 全 23 command の AppError migration (PR #665)
+- AppError 型定義: `gui/src-tauri/src/error.rs` (PR [#661](https://github.com/Idios/kobutachan-allaganeye/pull/661), Refs [#614](https://github.com/Idios/kobutachan-allaganeye/issues/614))
+- frontend narrowing helper: `gui/src/lib/appError.ts` (PR #665 で新設)
+- frontend invoke の主な利用箇所: `gui/src/state/metadataStore.ts` / `gui/src/state/recentStore.ts` / `gui/src/lib/globalErrorListener.ts`
+- 関連実装 PR: [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) (`register_video` / `probe_video` / `generate_match_thumbnails`) / [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) (`kill_tracked_processes`) / [#591](https://github.com/Idios/kobutachan-allaganeye/issues/591) (`select_h264_encoder_for_export`) / [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) (`start_detect`) / [#571](https://github.com/Idios/kobutachan-allaganeye/issues/571) (`read_recent` / `add_recent` / `clear_recent`)

@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { create } from 'zustand';
 
+import { appErrorCodeIs, appErrorMessage } from '../lib/appError';
 import { sampleMetadata } from '../data/sampleMetadata';
 import type { Match, Metadata, TypeOverride } from '../types/metadata';
 import { MetadataSchema } from '../types/metadata.schema';
@@ -201,8 +202,11 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       cancelDraftSave();
       await get().clearDraft();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.startsWith('conflict:')) {
+      const msg = appErrorMessage(e);
+      // #619: structured AppError 化以後は code-based 判定を優先。legacy raw
+      // String fallback として `msg.startsWith('conflict:')` も残す
+      // (古い command が migration 漏れしていても conflict UI を出せるよう)。
+      if (appErrorCodeIs(e, 'state.mtime_conflict') || msg.startsWith('conflict:')) {
         set({ applying: false, conflictError: msg });
       } else {
         set({ applying: false, applyError: msg });
@@ -260,7 +264,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         metadata: null,
         filePath: null,
         dirty: false,
-        loadError: e instanceof Error ? e.message : String(e),
+        loadError: appErrorMessage(e),
         hasBackup: false,
         loadedMtimeMs: null,
         conflictError: null,
@@ -331,7 +335,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
     } catch (e) {
       set({
         restoring: false,
-        restoreError: e instanceof Error ? e.message : String(e),
+        restoreError: appErrorMessage(e),
       });
     }
   },
@@ -380,7 +384,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
     } catch (e) {
       // Surface the failure via state — scheduleDraftSave's fire-and-forget
       // call would otherwise swallow the rejection silently (see F1 review).
-      set({ draftSaveError: e instanceof Error ? e.message : String(e) });
+      set({ draftSaveError: appErrorMessage(e) });
     } finally {
       set({ draftSaving: false });
     }
@@ -412,7 +416,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
     } catch (e) {
       set({
         pendingDraft: null,
-        draftLoadError: e instanceof Error ? e.message : String(e),
+        draftLoadError: appErrorMessage(e),
       });
     }
   },

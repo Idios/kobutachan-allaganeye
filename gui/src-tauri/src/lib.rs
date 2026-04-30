@@ -25,6 +25,8 @@ use uuid::Uuid;
 mod error;
 mod logging;
 
+use error::AppError;
+
 /// #465 -- per-token mapping from opaque UUID to absolute video file path.
 ///
 /// Shared between the axum server's handler state and the Tauri commands so
@@ -68,22 +70,36 @@ pub struct RegisteredVideo {
 }
 
 #[tauri::command]
-async fn load_metadata(path: String) -> Result<Value, String> {
+async fn load_metadata(path: String) -> Result<Value, AppError> {
     load_metadata_sync(&PathBuf::from(&path))
 }
 
-fn load_metadata_sync(meta_path: &Path) -> Result<Value, String> {
+fn load_metadata_sync(meta_path: &Path) -> Result<Value, AppError> {
     if !meta_path.exists() {
-        return Err(format!("metadata file not found: {}", meta_path.display()));
+        return Err(AppError::new(
+            "io.file_not_found",
+            format!("metadata file not found: {}", meta_path.display()),
+        ));
     }
-    let content = fs::read_to_string(meta_path)
-        .map_err(|e| format!("read failed ({}): {}", meta_path.display(), e))?;
-    let value: Value = serde_json::from_str(&content)
-        .map_err(|e| format!("invalid JSON in {}: {}", meta_path.display(), e))?;
+    let content = fs::read_to_string(meta_path).map_err(|e| {
+        AppError::new(
+            "io.read_failed",
+            format!("read failed ({}): {}", meta_path.display(), e),
+        )
+    })?;
+    let value: Value = serde_json::from_str(&content).map_err(|e| {
+        AppError::new(
+            "parse.json_invalid",
+            format!("invalid JSON in {}: {}", meta_path.display(), e),
+        )
+    })?;
     if !value.is_object() {
-        return Err(format!(
-            "metadata file {} root must be a JSON object",
-            meta_path.display()
+        return Err(AppError::new(
+            "parse.schema_invalid",
+            format!(
+                "metadata file {} root must be a JSON object",
+                meta_path.display()
+            ),
         ));
     }
     Ok(value)
@@ -93,7 +109,7 @@ fn load_metadata_sync(meta_path: &Path) -> Result<Value, String> {
 /// or `None` when the file is missing. Used by the GUI to detect external
 /// modifications between load and apply.
 #[tauri::command]
-async fn get_metadata_mtime(path: String) -> Result<Option<u64>, String> {
+async fn get_metadata_mtime(path: String) -> Result<Option<u64>, AppError> {
     Ok(file_mtime_ms(&PathBuf::from(&path)))
 }
 
@@ -110,13 +126,16 @@ async fn apply_changes(
     path: String,
     metadata: Value,
     expected_mtime_ms: Option<u64>,
-) -> Result<u64, String> {
+) -> Result<u64, AppError> {
     let meta_path = PathBuf::from(&path);
     apply_changes_sync(&meta_path, &metadata, expected_mtime_ms)?;
     file_mtime_ms(&meta_path).ok_or_else(|| {
-        format!(
-            "apply succeeded but could not read post-write mtime: {}",
-            meta_path.display()
+        AppError::new(
+            "io.read_failed",
+            format!(
+                "apply succeeded but could not read post-write mtime: {}",
+                meta_path.display()
+            ),
         )
     })
 }
@@ -124,49 +143,60 @@ async fn apply_changes(
 /// #517 — persist the in-memory edit buffer as `metadata.draft.json` next to
 /// the live `metadata.json`. Survives WebView reloads and app crashes.
 #[tauri::command]
-async fn save_draft(path: String, draft: Value) -> Result<(), String> {
+async fn save_draft(path: String, draft: Value) -> Result<(), AppError> {
     save_draft_sync(&PathBuf::from(&path), &draft)
 }
 
 /// #517 — reload the draft buffer if one exists. Returns `None` when no
 /// draft is on disk (fresh session or post-apply state).
 #[tauri::command]
-async fn load_draft(path: String) -> Result<Option<Value>, String> {
+async fn load_draft(path: String) -> Result<Option<Value>, AppError> {
     load_draft_sync(&PathBuf::from(&path))
 }
 
 /// #517 — delete the draft file. Called after a successful `apply` so a
 /// restart doesn't re-prompt about stale edits.
 #[tauri::command]
-async fn clear_draft(path: String) -> Result<(), String> {
+async fn clear_draft(path: String) -> Result<(), AppError> {
     clear_draft_sync(&PathBuf::from(&path))
 }
 
-fn draft_path_for(meta_path: &Path) -> Result<PathBuf, String> {
-    let parent = meta_path
-        .parent()
-        .ok_or_else(|| format!("metadata path has no parent: {}", meta_path.display()))?;
+fn draft_path_for(meta_path: &Path) -> Result<PathBuf, AppError> {
+    let parent = meta_path.parent().ok_or_else(|| {
+        AppError::new(
+            "validation.path_invalid",
+            format!("metadata path has no parent: {}", meta_path.display()),
+        )
+    })?;
     Ok(parent.join("metadata.draft.json"))
 }
 
-fn save_draft_sync(meta_path: &Path, draft: &Value) -> Result<(), String> {
+fn save_draft_sync(meta_path: &Path, draft: &Value) -> Result<(), AppError> {
     let draft_path = draft_path_for(meta_path)?;
     write_metadata_atomic(&draft_path, draft)
 }
 
-fn load_draft_sync(meta_path: &Path) -> Result<Option<Value>, String> {
+fn load_draft_sync(meta_path: &Path) -> Result<Option<Value>, AppError> {
     let draft_path = draft_path_for(meta_path)?;
     if !draft_path.exists() {
         return Ok(None);
     }
-    let content = fs::read_to_string(&draft_path)
-        .map_err(|e| format!("read draft failed ({}): {}", draft_path.display(), e))?;
-    let value: Value = serde_json::from_str(&content)
-        .map_err(|e| format!("invalid JSON in draft {}: {}", draft_path.display(), e))?;
+    let content = fs::read_to_string(&draft_path).map_err(|e| {
+        AppError::new(
+            "io.read_failed",
+            format!("read draft failed ({}): {}", draft_path.display(), e),
+        )
+    })?;
+    let value: Value = serde_json::from_str(&content).map_err(|e| {
+        AppError::new(
+            "parse.json_invalid",
+            format!("invalid JSON in draft {}: {}", draft_path.display(), e),
+        )
+    })?;
     Ok(Some(value))
 }
 
-fn clear_draft_sync(meta_path: &Path) -> Result<(), String> {
+fn clear_draft_sync(meta_path: &Path) -> Result<(), AppError> {
     let draft_path = draft_path_for(meta_path)?;
     if !draft_path.exists() {
         // Nothing to clear — treat as success so callers don't have to
@@ -174,34 +204,43 @@ fn clear_draft_sync(meta_path: &Path) -> Result<(), String> {
         return Ok(());
     }
     fs::remove_file(&draft_path).map_err(|e| {
-        format!("remove draft failed ({}): {}", draft_path.display(), e)
+        AppError::new(
+            "io.delete_failed",
+            format!("remove draft failed ({}): {}", draft_path.display(), e),
+        )
     })
 }
 
 /// #516 — atomically restore metadata.json from the first-Apply backup.
 #[tauri::command]
-async fn restore_from_original(path: String) -> Result<(), String> {
+async fn restore_from_original(path: String) -> Result<(), AppError> {
     restore_from_original_sync(&PathBuf::from(&path))
 }
 
-fn restore_from_original_sync(meta_path: &Path) -> Result<(), String> {
-    let parent = meta_path
-        .parent()
-        .ok_or_else(|| format!("metadata path has no parent: {}", meta_path.display()))?;
+fn restore_from_original_sync(meta_path: &Path) -> Result<(), AppError> {
+    let parent = meta_path.parent().ok_or_else(|| {
+        AppError::new(
+            "validation.path_invalid",
+            format!("metadata path has no parent: {}", meta_path.display()),
+        )
+    })?;
     let original_path = parent.join("metadata.original.json");
     if !original_path.exists() {
-        return Err(format!(
-            "no backup to restore: {}",
-            original_path.display()
+        return Err(AppError::new(
+            "io.file_not_found",
+            format!("no backup to restore: {}", original_path.display()),
         ));
     }
-    let content = fs::read_to_string(&original_path)
-        .map_err(|e| format!("read backup failed ({}): {}", original_path.display(), e))?;
+    let content = fs::read_to_string(&original_path).map_err(|e| {
+        AppError::new(
+            "io.read_failed",
+            format!("read backup failed ({}): {}", original_path.display(), e),
+        )
+    })?;
     let value: Value = serde_json::from_str(&content).map_err(|e| {
-        format!(
-            "parse backup failed ({}): {}",
-            original_path.display(),
-            e
+        AppError::new(
+            "parse.json_invalid",
+            format!("parse backup failed ({}): {}", original_path.display(), e),
         )
     })?;
     write_metadata_atomic(meta_path, &value)
@@ -210,11 +249,14 @@ fn restore_from_original_sync(meta_path: &Path) -> Result<(), String> {
 /// #516 — report whether a metadata.original.json exists next to the active
 /// metadata.json. Used by the GUI to enable/disable the [元に戻す] button.
 #[tauri::command]
-async fn check_backup_exists(path: String) -> Result<bool, String> {
+async fn check_backup_exists(path: String) -> Result<bool, AppError> {
     let meta_path = PathBuf::from(&path);
-    let parent = meta_path
-        .parent()
-        .ok_or_else(|| format!("metadata path has no parent: {}", meta_path.display()))?;
+    let parent = meta_path.parent().ok_or_else(|| {
+        AppError::new(
+            "validation.path_invalid",
+            format!("metadata path has no parent: {}", meta_path.display()),
+        )
+    })?;
     Ok(parent.join("metadata.original.json").exists())
 }
 
@@ -271,12 +313,19 @@ fn strip_extended_path_prefix(p: &str) -> String {
 /// `target/debug/recent.json` (gitignored). The same review also moved the
 /// thumbnail cache (`thumb_cache_dir`, #465) to `<install dir>/cache/`
 /// for the same philosophy.
-fn recent_path() -> Result<PathBuf, String> {
-    let exe = std::env::current_exe()
-        .map_err(|e| format!("failed to resolve current_exe: {}", e))?;
-    let dir = exe
-        .parent()
-        .ok_or_else(|| format!("current_exe has no parent: {}", exe.display()))?;
+fn recent_path() -> Result<PathBuf, AppError> {
+    let exe = std::env::current_exe().map_err(|e| {
+        AppError::new(
+            "path.install_dir_unresolved",
+            format!("failed to resolve current_exe: {}", e),
+        )
+    })?;
+    let dir = exe.parent().ok_or_else(|| {
+        AppError::new(
+            "path.install_dir_unresolved",
+            format!("current_exe has no parent: {}", exe.display()),
+        )
+    })?;
     Ok(dir.join("recent.json"))
 }
 
@@ -315,7 +364,7 @@ fn normalize_path_key(p: &str) -> String {
 /// #571 — push `entry` to the front of the history, dedup by `path`, and
 /// truncate to `RECENT_LIMIT`. Returns the post-write list so the caller
 /// (Zustand store) can mirror it without an extra `read_recent` round trip.
-fn add_recent_sync(path: &Path, entry: RecentEntry) -> Result<Vec<RecentEntry>, String> {
+fn add_recent_sync(path: &Path, entry: RecentEntry) -> Result<Vec<RecentEntry>, AppError> {
     let mut list = read_recent_sync(path);
     // Dedup via `normalize_path_key` (case-insensitive + separator-insensitive).
     // The drop happens before we push so the new entry's mtime / addedAt
@@ -332,39 +381,66 @@ fn add_recent_sync(path: &Path, entry: RecentEntry) -> Result<Vec<RecentEntry>, 
 /// #571 — wipe the history (used by the GUI's "履歴をクリア" affordance and
 /// by tests). Treats "file already absent" as success so callers don't have
 /// to special-case the fresh-install state.
-fn clear_recent_sync(path: &Path) -> Result<(), String> {
+fn clear_recent_sync(path: &Path) -> Result<(), AppError> {
     if !path.exists() {
         return Ok(());
     }
-    fs::remove_file(path)
-        .map_err(|e| format!("remove recent.json failed ({}): {}", path.display(), e))
+    fs::remove_file(path).map_err(|e| {
+        AppError::new(
+            "io.delete_failed",
+            format!("remove recent.json failed ({}): {}", path.display(), e),
+        )
+    })
 }
 
-fn write_recent_atomic(path: &Path, list: &[RecentEntry]) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("recent path has no parent: {}", path.display()))?;
+fn write_recent_atomic(path: &Path, list: &[RecentEntry]) -> Result<(), AppError> {
+    let parent = path.parent().ok_or_else(|| {
+        AppError::new(
+            "validation.path_invalid",
+            format!("recent path has no parent: {}", path.display()),
+        )
+    })?;
     if !parent.exists() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("create dir {} failed: {}", parent.display(), e))?;
+        fs::create_dir_all(parent).map_err(|e| {
+            AppError::new(
+                "io.write_failed",
+                format!("create dir {} failed: {}", parent.display(), e),
+            )
+        })?;
     }
     let mut tmp_path = path.to_path_buf();
     let tmp_name = match path.file_name() {
         Some(n) => format!("{}.tmp", n.to_string_lossy()),
-        None => return Err(format!("recent path has no file name: {}", path.display())),
+        None => {
+            return Err(AppError::new(
+                "validation.path_invalid",
+                format!("recent path has no file name: {}", path.display()),
+            ))
+        }
     };
     tmp_path.set_file_name(tmp_name);
-    let serialized = serde_json::to_string_pretty(list)
-        .map_err(|e| format!("serialize recent failed: {}", e))?;
-    fs::write(&tmp_path, serialized)
-        .map_err(|e| format!("write tmp {} failed: {}", tmp_path.display(), e))?;
+    let serialized = serde_json::to_string_pretty(list).map_err(|e| {
+        AppError::new(
+            "parse.json_serialize_failed",
+            format!("serialize recent failed: {}", e),
+        )
+    })?;
+    fs::write(&tmp_path, serialized).map_err(|e| {
+        AppError::new(
+            "io.write_failed",
+            format!("write tmp {} failed: {}", tmp_path.display(), e),
+        )
+    })?;
     if let Err(e) = fs::rename(&tmp_path, path) {
         let _ = fs::remove_file(&tmp_path);
-        return Err(format!(
-            "rename {} -> {} failed: {}",
-            tmp_path.display(),
-            path.display(),
-            e
+        return Err(AppError::new(
+            "io.write_failed",
+            format!(
+                "rename {} -> {} failed: {}",
+                tmp_path.display(),
+                path.display(),
+                e
+            ),
         ));
     }
     Ok(())
@@ -385,7 +461,7 @@ fn prune_missing(entries: Vec<RecentEntry>) -> Vec<RecentEntry> {
 }
 
 #[tauri::command]
-async fn read_recent() -> Result<Vec<RecentEntry>, String> {
+async fn read_recent() -> Result<Vec<RecentEntry>, AppError> {
     let path = recent_path()?;
     let raw = read_recent_sync(&path);
     let original_len = raw.len();
@@ -400,13 +476,20 @@ async fn read_recent() -> Result<Vec<RecentEntry>, String> {
 }
 
 #[tauri::command]
-async fn add_recent(path: String) -> Result<Vec<RecentEntry>, String> {
+async fn add_recent(path: String) -> Result<Vec<RecentEntry>, AppError> {
     let video_path = PathBuf::from(&path);
     if !video_path.exists() {
-        return Err(format!("file not found: {}", video_path.display()));
+        return Err(AppError::new(
+            "io.file_not_found",
+            format!("file not found: {}", video_path.display()),
+        ));
     }
-    let meta = fs::metadata(&video_path)
-        .map_err(|e| format!("stat failed ({}): {}", video_path.display(), e))?;
+    let meta = fs::metadata(&video_path).map_err(|e| {
+        AppError::new(
+            "io.read_failed",
+            format!("stat failed ({}): {}", video_path.display(), e),
+        )
+    })?;
     let size_bytes = meta.len();
     let mtime_ms = meta
         .modified()
@@ -453,7 +536,7 @@ async fn add_recent(path: String) -> Result<Vec<RecentEntry>, String> {
 fn add_recent_with_prune(
     path: &Path,
     entry: RecentEntry,
-) -> Result<Vec<RecentEntry>, String> {
+) -> Result<Vec<RecentEntry>, AppError> {
     let inserted = add_recent_sync(path, entry)?;
     let initial_len = inserted.len();
     let pruned = prune_missing(inserted);
@@ -464,7 +547,7 @@ fn add_recent_with_prune(
 }
 
 #[tauri::command]
-async fn clear_recent() -> Result<(), String> {
+async fn clear_recent() -> Result<(), AppError> {
     clear_recent_sync(&recent_path()?)
 }
 
@@ -476,7 +559,7 @@ async fn clear_recent() -> Result<(), String> {
 /// `http://127.0.0.1:{port}/video/{token}` and is only reachable from the
 /// same machine; the server binds exclusively to 127.0.0.1.
 #[tauri::command]
-async fn register_video(path: String) -> Result<RegisteredVideo, String> {
+async fn register_video(path: String) -> Result<RegisteredVideo, AppError> {
     let file_path = PathBuf::from(&path);
     let canonical = validate_video_path(&file_path)?;
 
@@ -517,7 +600,7 @@ struct VideoProbeInfo {
 }
 
 #[tauri::command]
-async fn probe_video(path: String) -> Result<VideoProbeInfo, String> {
+async fn probe_video(path: String) -> Result<VideoProbeInfo, AppError> {
     let file_path = PathBuf::from(&path);
     let canonical = validate_video_path(&file_path)?;
     probe_video_with(&canonical, "ffprobe").await
@@ -528,9 +611,14 @@ async fn probe_video(path: String) -> Result<VideoProbeInfo, String> {
 async fn probe_video_with(
     path: &Path,
     ffprobe: &str,
-) -> Result<VideoProbeInfo, String> {
+) -> Result<VideoProbeInfo, AppError> {
     let size_bytes = fs::metadata(path)
-        .map_err(|e| format!("stat failed ({}): {}", path.display(), e))?
+        .map_err(|e| {
+            AppError::new(
+                "io.read_failed",
+                format!("stat failed ({}): {}", path.display(), e),
+            )
+        })?
         .len();
 
     let output = tokio::process::Command::new(ffprobe)
@@ -543,37 +631,69 @@ async fn probe_video_with(
         .arg(path)
         .output()
         .await
-        .map_err(|e| format!("ffprobe spawn failed: {e}"))?;
+        .map_err(|e| {
+            AppError::new(
+                "subprocess.spawn_failed",
+                format!("ffprobe spawn failed: {e}"),
+            )
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "ffprobe failed (exit {:?}): {}",
-            output.status.code(),
-            stderr.trim()
+        return Err(AppError::new(
+            "subprocess.exit_failed",
+            format!(
+                "ffprobe failed (exit {:?}): {}",
+                output.status.code(),
+                stderr.trim()
+            ),
         ));
     }
 
-    let json: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| format!("ffprobe json parse failed: {e}"))?;
+    let json: Value = serde_json::from_slice(&output.stdout).map_err(|e| {
+        AppError::new(
+            "parse.ffprobe_output_invalid",
+            format!("ffprobe json parse failed: {e}"),
+        )
+    })?;
 
     let streams = json
         .get("streams")
         .and_then(|s| s.as_array())
-        .ok_or_else(|| "ffprobe output missing 'streams' array".to_string())?;
+        .ok_or_else(|| {
+            AppError::new(
+                "parse.ffprobe_output_invalid",
+                "ffprobe output missing 'streams' array",
+            )
+        })?;
     let video_stream = streams
         .iter()
         .find(|s| s.get("codec_type").and_then(|v| v.as_str()) == Some("video"))
-        .ok_or_else(|| "no video stream in ffprobe output".to_string())?;
+        .ok_or_else(|| {
+            AppError::new(
+                "parse.ffprobe_output_invalid",
+                "no video stream in ffprobe output",
+            )
+        })?;
 
     let width = video_stream
         .get("width")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| "video stream missing width".to_string())? as u32;
+        .ok_or_else(|| {
+            AppError::new(
+                "parse.ffprobe_output_invalid",
+                "video stream missing width",
+            )
+        })? as u32;
     let height = video_stream
         .get("height")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| "video stream missing height".to_string())? as u32;
+        .ok_or_else(|| {
+            AppError::new(
+                "parse.ffprobe_output_invalid",
+                "video stream missing height",
+            )
+        })? as u32;
     let codec = video_stream
         .get("codec_name")
         .and_then(|v| v.as_str())
@@ -590,16 +710,29 @@ async fn probe_video_with(
             video_stream.get("avg_frame_rate").and_then(|v| v.as_str()),
         )
     })
-    .ok_or_else(|| "cannot determine frame rate".to_string())?;
+    .ok_or_else(|| {
+        AppError::new(
+            "parse.ffprobe_output_invalid",
+            "cannot determine frame rate",
+        )
+    })?;
 
     let duration_seconds = json
         .get("format")
         .and_then(|f| f.get("duration"))
         .and_then(|v| v.as_str())
         .and_then(|s| s.parse::<f64>().ok())
-        .ok_or_else(|| "format.duration missing or unparseable".to_string())?;
+        .ok_or_else(|| {
+            AppError::new(
+                "parse.ffprobe_output_invalid",
+                "format.duration missing or unparseable",
+            )
+        })?;
     if duration_seconds <= 0.0 {
-        return Err("duration is non-positive".to_string());
+        return Err(AppError::new(
+            "validation.range_invalid",
+            "duration is non-positive",
+        ));
     }
 
     let file_name = path
@@ -639,20 +772,31 @@ fn parse_frame_rate_str(s: Option<&str>) -> Option<f64> {
 
 /// Validate that `path` points to an existing regular file and return the
 /// canonicalized absolute path on success.
-fn validate_video_path(path: &Path) -> Result<PathBuf, String> {
+fn validate_video_path(path: &Path) -> Result<PathBuf, AppError> {
     if !path.exists() {
-        return Err(format!("video file not found: {}", path.display()));
-    }
-    let meta = fs::metadata(path)
-        .map_err(|e| format!("stat failed ({}): {}", path.display(), e))?;
-    if !meta.is_file() {
-        return Err(format!(
-            "video path is not a regular file: {}",
-            path.display()
+        return Err(AppError::new(
+            "io.file_not_found",
+            format!("video file not found: {}", path.display()),
         ));
     }
-    fs::canonicalize(path)
-        .map_err(|e| format!("canonicalize failed ({}): {}", path.display(), e))
+    let meta = fs::metadata(path).map_err(|e| {
+        AppError::new(
+            "io.read_failed",
+            format!("stat failed ({}): {}", path.display(), e),
+        )
+    })?;
+    if !meta.is_file() {
+        return Err(AppError::new(
+            "validation.not_a_file",
+            format!("video path is not a regular file: {}", path.display()),
+        ));
+    }
+    fs::canonicalize(path).map_err(|e| {
+        AppError::new(
+            "io.read_failed",
+            format!("canonicalize failed ({}): {}", path.display(), e),
+        )
+    })
 }
 
 /// Pure helper: mint a new UUID, insert `(token, path)` into the token map,
@@ -667,15 +811,18 @@ fn register_video_sync(path: &Path, tokens: &mut HashMap<Uuid, PathBuf>) -> Uuid
 /// Ensure the local video server is listening on 127.0.0.1 and return the
 /// bound port. Idempotent: re-uses the existing port on every call after the
 /// first.
-async fn ensure_server_started() -> Result<u16, String> {
+async fn ensure_server_started() -> Result<u16, AppError> {
     let mut guard = video_server().lock().await;
     if let Some(port) = guard.port {
         return Ok(port);
     }
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .map_err(|e| format!("bind 127.0.0.1:0 failed: {}", e))?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.map_err(|e| {
+        AppError::new(
+            "subprocess.spawn_failed",
+            format!("bind 127.0.0.1:0 failed: {}", e),
+        )
+    })?;
     let addr = listener
         .local_addr()
         .map_err(|e| format!("local_addr failed: {}", e))?;
@@ -735,39 +882,51 @@ fn apply_changes_sync(
     meta_path: &Path,
     payload: &Value,
     expected_mtime_ms: Option<u64>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     // #514 — refuse to overwrite a file that has been modified externally
     // since the caller last loaded it. Target not existing is not a conflict
     // (treat as a fresh write).
     if let Some(expected) = expected_mtime_ms {
         if meta_path.exists() {
             let actual = file_mtime_ms(meta_path).ok_or_else(|| {
-                format!("cannot read mtime of {}", meta_path.display())
+                AppError::new(
+                    "io.read_failed",
+                    format!("cannot read mtime of {}", meta_path.display()),
+                )
             })?;
             if actual != expected {
-                return Err(format!(
-                    "conflict: external modification detected ({} expected mtime {}, got {})",
-                    meta_path.display(),
-                    expected,
-                    actual
+                return Err(AppError::new(
+                    "state.mtime_conflict",
+                    format!(
+                        "conflict: external modification detected ({} expected mtime {}, got {})",
+                        meta_path.display(),
+                        expected,
+                        actual
+                    ),
                 ));
             }
         }
     }
 
 
-    let parent = meta_path
-        .parent()
-        .ok_or_else(|| format!("metadata path has no parent: {}", meta_path.display()))?;
+    let parent = meta_path.parent().ok_or_else(|| {
+        AppError::new(
+            "validation.path_invalid",
+            format!("metadata path has no parent: {}", meta_path.display()),
+        )
+    })?;
     let original_path = parent.join("metadata.original.json");
 
     if meta_path.exists() && !original_path.exists() {
         fs::copy(meta_path, &original_path).map_err(|e| {
-            format!(
-                "failed to back up {} to {}: {}",
-                meta_path.display(),
-                original_path.display(),
-                e
+            AppError::new(
+                "io.backup_failed",
+                format!(
+                    "failed to back up {} to {}: {}",
+                    meta_path.display(),
+                    original_path.display(),
+                    e
+                ),
             )
         })?;
     }
@@ -775,32 +934,55 @@ fn apply_changes_sync(
     write_metadata_atomic(meta_path, payload)
 }
 
-fn write_metadata_atomic(path: &Path, payload: &Value) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("metadata path has no parent: {}", path.display()))?;
+fn write_metadata_atomic(path: &Path, payload: &Value) -> Result<(), AppError> {
+    let parent = path.parent().ok_or_else(|| {
+        AppError::new(
+            "validation.path_invalid",
+            format!("metadata path has no parent: {}", path.display()),
+        )
+    })?;
     if !parent.exists() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("create dir {} failed: {}", parent.display(), e))?;
+        fs::create_dir_all(parent).map_err(|e| {
+            AppError::new(
+                "io.write_failed",
+                format!("create dir {} failed: {}", parent.display(), e),
+            )
+        })?;
     }
     let mut tmp_path = path.to_path_buf();
     let tmp_name = match path.file_name() {
         Some(n) => format!("{}.tmp", n.to_string_lossy()),
-        None => return Err(format!("metadata path has no file name: {}", path.display())),
+        None => {
+            return Err(AppError::new(
+                "validation.path_invalid",
+                format!("metadata path has no file name: {}", path.display()),
+            ))
+        }
     };
     tmp_path.set_file_name(tmp_name);
 
-    let serialized = serde_json::to_string_pretty(payload)
-        .map_err(|e| format!("serialize failed: {}", e))?;
-    fs::write(&tmp_path, serialized)
-        .map_err(|e| format!("write tmp {} failed: {}", tmp_path.display(), e))?;
+    let serialized = serde_json::to_string_pretty(payload).map_err(|e| {
+        AppError::new(
+            "parse.json_serialize_failed",
+            format!("serialize failed: {}", e),
+        )
+    })?;
+    fs::write(&tmp_path, serialized).map_err(|e| {
+        AppError::new(
+            "io.write_failed",
+            format!("write tmp {} failed: {}", tmp_path.display(), e),
+        )
+    })?;
     if let Err(e) = fs::rename(&tmp_path, path) {
         let _ = fs::remove_file(&tmp_path);
-        return Err(format!(
-            "rename {} -> {} failed: {}",
-            tmp_path.display(),
-            path.display(),
-            e
+        return Err(AppError::new(
+            "io.write_failed",
+            format!(
+                "rename {} -> {} failed: {}",
+                tmp_path.display(),
+                path.display(),
+                e
+            ),
         ));
     }
     Ok(())
@@ -844,16 +1026,20 @@ fn compute_video_cache_hash(video_path: &Path, mtime_ms: u64) -> String {
 /// `recent.json` (#571). Tool deletion = folder deletion = no leftover
 /// state in the user profile. Production = `<bundle install dir>/cache/...`,
 /// dev = `target/debug/cache/...` (gitignored).
-fn thumb_cache_dir(video_hash: &str) -> Result<PathBuf, String> {
-    let exe = std::env::current_exe()
-        .map_err(|e| format!("failed to resolve current_exe: {}", e))?;
-    let dir = exe
-        .parent()
-        .ok_or_else(|| format!("current_exe has no parent: {}", exe.display()))?;
-    Ok(dir
-        .join("cache")
-        .join(video_hash)
-        .join("thumbs"))
+fn thumb_cache_dir(video_hash: &str) -> Result<PathBuf, AppError> {
+    let exe = std::env::current_exe().map_err(|e| {
+        AppError::new(
+            "path.install_dir_unresolved",
+            format!("failed to resolve current_exe: {}", e),
+        )
+    })?;
+    let dir = exe.parent().ok_or_else(|| {
+        AppError::new(
+            "path.install_dir_unresolved",
+            format!("current_exe has no parent: {}", exe.display()),
+        )
+    })?;
+    Ok(dir.join("cache").join(video_hash).join("thumbs"))
 }
 
 /// #465 -- compute the evenly-spaced timestamps for a given boundary window.
@@ -905,26 +1091,51 @@ async fn generate_match_thumbnails(
     boundary_t_seconds: f64,
     window_seconds: f64,
     count: u32,
-) -> Result<Vec<ThumbnailEntry>, String> {
+) -> Result<Vec<ThumbnailEntry>, AppError> {
     let video = PathBuf::from(&video_path);
     if !video.exists() {
-        return Err(format!("video file not found: {}", video.display()));
+        return Err(AppError::new(
+            "io.file_not_found",
+            format!("video file not found: {}", video.display()),
+        ));
     }
-    let meta = fs::metadata(&video)
-        .map_err(|e| format!("stat failed ({}): {}", video.display(), e))?;
+    let meta = fs::metadata(&video).map_err(|e| {
+        AppError::new(
+            "io.read_failed",
+            format!("stat failed ({}): {}", video.display(), e),
+        )
+    })?;
     let mtime_ms = meta
         .modified()
-        .map_err(|e| format!("mtime failed ({}): {}", video.display(), e))?
+        .map_err(|e| {
+            AppError::new(
+                "io.read_failed",
+                format!("mtime failed ({}): {}", video.display(), e),
+            )
+        })?
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
-        .map_err(|e| format!("mtime before epoch ({}): {}", video.display(), e))?;
-    let canonical = fs::canonicalize(&video)
-        .map_err(|e| format!("canonicalize failed ({}): {}", video.display(), e))?;
+        .map_err(|e| {
+            AppError::new(
+                "io.read_failed",
+                format!("mtime before epoch ({}): {}", video.display(), e),
+            )
+        })?;
+    let canonical = fs::canonicalize(&video).map_err(|e| {
+        AppError::new(
+            "io.read_failed",
+            format!("canonicalize failed ({}): {}", video.display(), e),
+        )
+    })?;
 
     let video_hash = compute_video_cache_hash(&canonical, mtime_ms);
     let cache_dir = thumb_cache_dir(&video_hash)?;
-    fs::create_dir_all(&cache_dir)
-        .map_err(|e| format!("create cache dir {} failed: {}", cache_dir.display(), e))?;
+    fs::create_dir_all(&cache_dir).map_err(|e| {
+        AppError::new(
+            "io.write_failed",
+            format!("create cache dir {} failed: {}", cache_dir.display(), e),
+        )
+    })?;
 
     let timestamps = compute_candidate_timestamps(boundary_t_seconds, window_seconds, count);
     let semaphore = Arc::new(Semaphore::new(4));
@@ -936,12 +1147,14 @@ async fn generate_match_thumbnails(
         let video_for_task = canonical.clone();
         let sem = Arc::clone(&semaphore);
         tasks.push(async move {
-            let _permit = sem
-                .acquire_owned()
-                .await
-                .map_err(|e| format!("semaphore closed: {}", e))?;
+            let _permit = sem.acquire_owned().await.map_err(|e| {
+                AppError::new(
+                    "internal.error",
+                    format!("semaphore closed: {}", e),
+                )
+            })?;
             ensure_thumbnail_exists(&video_for_task, t, &out_path).await?;
-            Ok::<ThumbnailEntry, String>(ThumbnailEntry {
+            Ok::<ThumbnailEntry, AppError>(ThumbnailEntry {
                 t_seconds: t,
                 file_path: out_path.to_string_lossy().to_string(),
             })
@@ -963,7 +1176,7 @@ async fn ensure_thumbnail_exists(
     video_path: &Path,
     t_seconds: f64,
     out_path: &Path,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     if let Ok(meta) = fs::metadata(out_path) {
         if meta.is_file() && meta.len() > 0 {
             return Ok(());
@@ -972,7 +1185,10 @@ async fn ensure_thumbnail_exists(
     if let Some(parent) = out_path.parent() {
         if !parent.exists() {
             fs::create_dir_all(parent).map_err(|e| {
-                format!("create dir {} failed: {}", parent.display(), e)
+                AppError::new(
+                    "io.write_failed",
+                    format!("create dir {} failed: {}", parent.display(), e),
+                )
             })?;
         }
     }
@@ -997,15 +1213,23 @@ async fn ensure_thumbnail_exists(
         .arg(out_path)
         .output()
         .await
-        .map_err(|e| format!("spawn ffmpeg failed at t={}: {}", t_arg, e))?;
+        .map_err(|e| {
+            AppError::new(
+                "subprocess.spawn_failed",
+                format!("spawn ffmpeg failed at t={}: {}", t_arg, e),
+            )
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "ffmpeg failed at t={} (exit={:?}): {}",
-            t_arg,
-            output.status.code(),
-            stderr.trim()
+        return Err(AppError::new(
+            "subprocess.exit_failed",
+            format!(
+                "ffmpeg failed at t={} (exit={:?}): {}",
+                t_arg,
+                output.status.code(),
+                stderr.trim()
+            ),
         ));
     }
     Ok(())
@@ -1038,7 +1262,7 @@ async fn is_process_running() -> bool {
 /// were alive at kill time. Best-effort -- already-dead children are silently
 /// skipped so partial kills don't block the exit flow.
 #[tauri::command]
-async fn kill_tracked_processes() -> Result<u32, String> {
+async fn kill_tracked_processes() -> Result<u32, AppError> {
     let tracker = process_tracker();
     let mut guard = tracker.lock().await;
     let count = guard.len() as u32;
@@ -1307,31 +1531,38 @@ fn validate_export_request(
     video_path: &Path,
     start_seconds: f64,
     end_seconds: f64,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     if !video_path.exists() {
-        return Err(format!(
-            "video file not found: {}",
-            video_path.display()
+        return Err(AppError::new(
+            "io.file_not_found",
+            format!("video file not found: {}", video_path.display()),
         ));
     }
-    let meta = fs::metadata(video_path)
-        .map_err(|e| format!("stat failed ({}): {}", video_path.display(), e))?;
+    let meta = fs::metadata(video_path).map_err(|e| {
+        AppError::new(
+            "io.read_failed",
+            format!("stat failed ({}): {}", video_path.display(), e),
+        )
+    })?;
     if !meta.is_file() {
-        return Err(format!(
-            "video path is not a regular file: {}",
-            video_path.display()
+        return Err(AppError::new(
+            "validation.not_a_file",
+            format!("video path is not a regular file: {}", video_path.display()),
         ));
     }
     if !start_seconds.is_finite() || start_seconds < 0.0 {
-        return Err(format!(
-            "start_seconds must be >= 0 (got {})",
-            start_seconds
+        return Err(AppError::new(
+            "validation.range_invalid",
+            format!("start_seconds must be >= 0 (got {})", start_seconds),
         ));
     }
     if !end_seconds.is_finite() || end_seconds <= start_seconds {
-        return Err(format!(
-            "end_seconds must be > start_seconds (got start={}, end={})",
-            start_seconds, end_seconds
+        return Err(AppError::new(
+            "validation.range_invalid",
+            format!(
+                "end_seconds must be > start_seconds (got start={}, end={})",
+                start_seconds, end_seconds
+            ),
         ));
     }
     Ok(())
@@ -1353,12 +1584,12 @@ fn validate_export_request(
 ///
 /// `output_path` がルート / 親なし (file_name only など) の場合は no-op で
 /// Ok を返す (現在のディレクトリを意味すると解釈)。
-fn validate_output_parent_exists(output_path: &Path) -> Result<(), String> {
+fn validate_output_parent_exists(output_path: &Path) -> Result<(), AppError> {
     if let Some(parent) = output_path.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
-            return Err(format!(
-                "output directory does not exist: {}",
-                parent.display()
+            return Err(AppError::new(
+                "io.file_not_found",
+                format!("output directory does not exist: {}", parent.display()),
             ));
         }
     }
@@ -1371,15 +1602,19 @@ fn validate_output_parent_exists(output_path: &Path) -> Result<(), String> {
 /// - 存在しない path は明示エラー
 /// - 非 Windows 環境では unsupported エラー
 /// - 上記をパスしたら Ok (caller は spawn を試みる)
-fn validate_open_folder_request(path: &str) -> Result<(), String> {
+fn validate_open_folder_request(path: &str) -> Result<(), AppError> {
     if !Path::new(path).exists() {
-        return Err(format!("path does not exist: {}", path));
+        return Err(AppError::new(
+            "io.file_not_found",
+            format!("path does not exist: {}", path),
+        ));
     }
     #[cfg(not(target_os = "windows"))]
     {
-        return Err(
-            "open_folder_in_explorer is only supported on Windows".to_string(),
-        );
+        return Err(AppError::new(
+            "platform.unsupported",
+            "open_folder_in_explorer is only supported on Windows",
+        ));
     }
     #[cfg(target_os = "windows")]
     {
@@ -1400,7 +1635,7 @@ fn validate_open_folder_request(path: &str) -> Result<(), String> {
 /// Windows のみ対応 (CLAUDE.md に「対応プラットフォーム: Windows のみ」と
 /// 明記)。将来 Linux / macOS 対応する際は `xdg-open` / `open` で分岐する。
 #[tauri::command]
-fn open_folder_in_explorer(path: String) -> Result<(), String> {
+fn open_folder_in_explorer(path: String) -> Result<(), AppError> {
     validate_open_folder_request(&path)?;
 
     #[cfg(target_os = "windows")]
@@ -1409,7 +1644,12 @@ fn open_folder_in_explorer(path: String) -> Result<(), String> {
         Command::new("explorer.exe")
             .arg(&path)
             .spawn()
-            .map_err(|e| format!("failed to launch explorer: {}", e))?;
+            .map_err(|e| {
+                AppError::new(
+                    "subprocess.spawn_failed",
+                    format!("failed to launch explorer: {}", e),
+                )
+            })?;
     }
 
     Ok(())
@@ -1667,7 +1907,7 @@ async fn export_match(
     codec: ExportCodec,
     h264_encoder: Option<H264Encoder>,
     match_index: u32,
-) -> Result<ExportResult, String> {
+) -> Result<ExportResult, AppError> {
     let video = PathBuf::from(&video_path);
     validate_export_request(&video, start_seconds, end_seconds)?;
 
@@ -1818,7 +2058,7 @@ async fn export_match(
                 fallback_from: None,
             },
         );
-        return Err(msg);
+        return Err(AppError::new("subprocess.exit_failed", msg));
     }
 
     // No retry -- surface the primary failure.
@@ -1838,7 +2078,7 @@ async fn export_match(
             fallback_from: None,
         },
     );
-    Err(msg)
+    Err(AppError::new("subprocess.exit_failed", msg))
 }
 
 fn build_export_result(output: &Path, match_index: u32, started: Instant) -> ExportResult {
@@ -2143,17 +2383,23 @@ async fn start_detect(
     video_path: String,
     output_dir: String,
     params: DetectParams,
-) -> Result<DetectResult, String> {
+) -> Result<DetectResult, AppError> {
     let video = PathBuf::from(&video_path);
     if !video.exists() {
-        return Err(format!("video file not found: {}", video.display()));
+        return Err(AppError::new(
+            "io.file_not_found",
+            format!("video file not found: {}", video.display()),
+        ));
     }
     let output_buf = PathBuf::from(&output_dir);
     if let Err(e) = fs::create_dir_all(&output_buf) {
-        return Err(format!(
-            "create output dir failed ({}): {}",
-            output_buf.display(),
-            e
+        return Err(AppError::new(
+            "io.write_failed",
+            format!(
+                "create output dir failed ({}): {}",
+                output_buf.display(),
+                e
+            ),
         ));
     }
 
@@ -2303,7 +2549,7 @@ async fn start_detect(
                     ..Default::default()
                 },
             );
-            return Err("detect cancelled".to_string());
+            return Err(AppError::new("subprocess.cancelled", "detect cancelled"));
         }
     };
 
@@ -2332,11 +2578,14 @@ async fn start_detect(
                 ..Default::default()
             },
         );
-        return Err(msg);
+        return Err(AppError::new("subprocess.exit_failed", msg));
     }
 
     let metadata_path = metadata_path.ok_or_else(|| {
-        "detect completed but no metadata_path was emitted".to_string()
+        AppError::new(
+            "internal.error",
+            "detect completed but no metadata_path was emitted",
+        )
     })?;
 
     Ok(DetectResult {
@@ -2348,10 +2597,15 @@ async fn start_detect(
 /// #614 -- Returns the install-directory log path (`<install_dir>/logs`) so the
 /// frontend ErrorModal can show the user where crash logs are written.
 #[tauri::command]
-fn get_log_dir() -> Result<String, String> {
+fn get_log_dir() -> Result<String, AppError> {
     logging::log_dir()
         .map(|p| p.to_string_lossy().to_string())
-        .map_err(|e| format!("could not resolve log dir: {}", e))
+        .map_err(|e| {
+            AppError::new(
+                "path.install_dir_unresolved",
+                format!("could not resolve log dir: {}", e),
+            )
+        })
 }
 
 /// #614 -- Dev-only command that triggers a panic. Used by the frontend smoke
@@ -2367,7 +2621,7 @@ fn get_log_dir() -> Result<String, String> {
 /// boundary, letting the WebView keep running.
 #[cfg(debug_assertions)]
 #[tauri::command]
-async fn dev_force_panic() -> Result<(), String> {
+async fn dev_force_panic() -> Result<(), AppError> {
     panic!("dev_force_panic invoked from frontend");
 }
 
@@ -2585,7 +2839,7 @@ mod tests {
         fs::write(&meta, r#"{"ok":true}"#).unwrap();
 
         let err = restore_from_original_sync(&meta).unwrap_err();
-        assert!(err.contains("no backup to restore"));
+        assert!(err.message.contains("no backup to restore"));
     }
 
     #[test]
@@ -2952,7 +3206,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let meta = tmp.path().join("metadata.json");
         let err = load_metadata_sync(&meta).unwrap_err();
-        assert!(err.contains("metadata file not found"));
+        assert!(err.message.contains("metadata file not found"));
     }
 
     #[test]
@@ -2961,7 +3215,7 @@ mod tests {
         let meta = tmp.path().join("metadata.json");
         fs::write(&meta, r#"{"source": "a.mkv", invalid"#).unwrap();
         let err = load_metadata_sync(&meta).unwrap_err();
-        assert!(err.contains("invalid JSON"));
+        assert!(err.message.contains("invalid JSON"));
     }
 
     #[test]
@@ -2981,7 +3235,7 @@ mod tests {
         // Valid JSON but root is an array — Python side's read_metadata also rejects this.
         fs::write(&meta, r#"["not", "an", "object"]"#).unwrap();
         let err = load_metadata_sync(&meta).unwrap_err();
-        assert!(err.contains("must be a JSON object"));
+        assert!(err.message.contains("must be a JSON object"));
     }
 
     // #514 — mtime-based exclusive control for apply_changes.
@@ -3010,7 +3264,7 @@ mod tests {
         let stale: u64 = 1;
 
         let err = apply_changes_sync(&meta, &json!({"v": 2}), Some(stale)).unwrap_err();
-        assert!(err.starts_with("conflict:"), "unexpected error: {err}");
+        assert!(err.message.starts_with("conflict:"), "unexpected error: {err}");
 
         // Conflict must not overwrite the file.
         let current: Value =
@@ -3085,7 +3339,7 @@ mod tests {
         // apply_changes_sync with the stale initial mtime must refuse the write.
         let err = apply_changes_sync(&meta, &json!({"v": 2}), Some(initial_mtime))
             .unwrap_err();
-        assert!(err.starts_with("conflict:"), "unexpected error: {err}");
+        assert!(err.message.starts_with("conflict:"), "unexpected error: {err}");
 
         // File still reflects the external write (not overwritten).
         let current: Value =
@@ -3121,7 +3375,7 @@ mod tests {
         // The original m1 is now stale — attempting to apply with it must fail
         // (regression guard: prevents accepting pre-first-apply handles).
         let err = apply_changes_sync(&meta, &json!({"v": 4}), Some(m1)).unwrap_err();
-        assert!(err.starts_with("conflict:"), "unexpected error: {err}");
+        assert!(err.message.starts_with("conflict:"), "unexpected error: {err}");
     }
 
     // #517 — draft auto-save tests.
@@ -3184,7 +3438,7 @@ mod tests {
         fs::write(&draft_file, r#"{"broken": invalid"#).unwrap();
 
         let err = load_draft_sync(&meta).unwrap_err();
-        assert!(err.contains("invalid JSON in draft"));
+        assert!(err.message.contains("invalid JSON in draft"));
     }
 
     #[test]
@@ -3265,7 +3519,7 @@ mod tests {
         let missing = tmp.path().join("does_not_exist.mp4");
         let err = validate_video_path(&missing).unwrap_err();
         assert!(
-            err.contains("not found"),
+            err.message.contains("not found"),
             "expected 'not found' in error, got: {}",
             err
         );
@@ -3279,7 +3533,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let err = validate_video_path(tmp.path()).unwrap_err();
         assert!(
-            err.contains("not a regular file"),
+            err.message.contains("not a regular file"),
             "expected 'not a regular file' in error, got: {}",
             err
         );
@@ -3484,7 +3738,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            err.contains("ffprobe spawn failed") || err.contains("ffprobe failed"),
+            err.message.contains("ffprobe spawn failed") || err.message.contains("ffprobe failed"),
             "unexpected error: {}",
             err
         );
@@ -3917,7 +4171,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let missing = tmp.path().join("nope.mp4");
         let err = validate_export_request(&missing, 0.0, 10.0).unwrap_err();
-        assert!(err.contains("not found"), "got: {}", err);
+        assert!(err.message.contains("not found"), "got: {}", err);
     }
 
     /// #466 -- `end <= start` must fail immediately (otherwise ffmpeg's
@@ -3929,9 +4183,9 @@ mod tests {
         let video = tmp.path().join("clip.mp4");
         fs::write(&video, b"fake mp4").unwrap();
         let err_equal = validate_export_request(&video, 10.0, 10.0).unwrap_err();
-        assert!(err_equal.contains("end_seconds"), "got: {}", err_equal);
+        assert!(err_equal.message.contains("end_seconds"), "got: {}", err_equal);
         let err_lt = validate_export_request(&video, 20.0, 10.0).unwrap_err();
-        assert!(err_lt.contains("end_seconds"), "got: {}", err_lt);
+        assert!(err_lt.message.contains("end_seconds"), "got: {}", err_lt);
     }
 
     /// #466 -- negative start times are rejected. ffmpeg treats `-ss <0`
@@ -3942,7 +4196,7 @@ mod tests {
         let video = tmp.path().join("clip.mp4");
         fs::write(&video, b"fake mp4").unwrap();
         let err = validate_export_request(&video, -1.0, 10.0).unwrap_err();
-        assert!(err.contains("start_seconds"), "got: {}", err);
+        assert!(err.message.contains("start_seconds"), "got: {}", err);
     }
 
     /// #466 -- NaN / non-finite values are rejected (they would otherwise
@@ -3953,9 +4207,9 @@ mod tests {
         let video = tmp.path().join("clip.mp4");
         fs::write(&video, b"fake mp4").unwrap();
         let err_nan_start = validate_export_request(&video, f64::NAN, 10.0).unwrap_err();
-        assert!(err_nan_start.contains("start_seconds"), "got: {}", err_nan_start);
+        assert!(err_nan_start.message.contains("start_seconds"), "got: {}", err_nan_start);
         let err_inf_end = validate_export_request(&video, 0.0, f64::INFINITY).unwrap_err();
-        assert!(err_inf_end.contains("end_seconds"), "got: {}", err_inf_end);
+        assert!(err_inf_end.message.contains("end_seconds"), "got: {}", err_inf_end);
     }
 
     /// #466 review #4: 出力先親ディレクトリが存在しなければエラー。
@@ -3966,7 +4220,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let nested = tmp.path().join("nope").join("clip.mp4");
         let err = validate_output_parent_exists(&nested).unwrap_err();
-        assert!(err.contains("does not exist"), "got: {}", err);
+        assert!(err.message.contains("does not exist"), "got: {}", err);
     }
 
     /// #466 review #4: 親ディレクトリが存在すれば Ok。
@@ -3990,7 +4244,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let bogus = tmp.path().join("does-not-exist");
         let err = validate_open_folder_request(&bogus.to_string_lossy()).unwrap_err();
-        assert!(err.contains("does not exist"), "got: {}", err);
+        assert!(err.message.contains("does not exist"), "got: {}", err);
     }
 
     /// #545 review #6: 存在するディレクトリは accept (Windows のみ Ok、
@@ -4010,7 +4264,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let err =
             validate_open_folder_request(&tmp.path().to_string_lossy()).unwrap_err();
-        assert!(err.contains("Windows"), "got: {}", err);
+        assert!(err.message.contains("Windows"), "got: {}", err);
     }
 
     /// #545 mystifying-ptolemy-d112b5 review (2026-04-25): track_child →
