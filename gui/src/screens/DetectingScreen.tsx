@@ -527,8 +527,20 @@ function DetectingRunningView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const pct1 = Math.min(100, progress * (100 / 70)); // scan finishes at 70%
-  const pct2 = Math.max(0, Math.min(100, ((progress - 70) * 100) / 18)); // refine fills 70-88
+  // #664 -- Refining bar は refine + scorebar を統合表示する。pct2 100%
+  // = refine + scorebar 両方完了。refine 完了 (progress=88) で bar ~67%
+  // 程度に達し、scorebar 進行で bar 67→100% に進む。PHASE_WINDOWS の
+  // 重み (refine 18 : scorebar 9 ≒ 67:33) は維持し全体 %/ETA に regression
+  // なし。定数二重管理を避けるため両 bar の終端を PHASE_WINDOWS から導出。
+  const scanEnd = PHASE_WINDOWS.scan[1];
+  const refineStart = PHASE_WINDOWS.refine[0];
+  const refiningEnd = PHASE_WINDOWS.scorebar[1];
+  const pct1 = Math.min(100, (progress * 100) / scanEnd);
+  const pct2 = Math.max(
+    0,
+    Math.min(100, ((progress - refineStart) * 100) / (refiningEnd - refineStart)),
+  );
+  const refiningSub = phaseLabel === 'scorebar' ? '分類' : 'refine';
 
   const displayFile = selectedVideoPath?.split(/[/\\]/).pop() ?? '(video)';
   const eta = computeEta(progress, elapsed);
@@ -561,7 +573,7 @@ function DetectingRunningView({
 
       <div className={styles.phases}>
         <PhaseRow name="Detecting" jp="粗スキャン" pct={pct1} sub="scan" />
-        <PhaseRow name="Refining" jp="精密計測" pct={pct2} sub="refine" />
+        <PhaseRow name="Refining" jp="精密計測" pct={pct2} sub={refiningSub} />
       </div>
 
       <div className={styles.divider} />
@@ -653,7 +665,10 @@ function PhaseRow({ name, jp, pct, sub }: PhaseRowProps) {
   const fillClass =
     pct >= 100 ? `${styles.barFill} ${styles.barFillDone}` : styles.barFill;
   return (
-    <div className={styles.phaseRow}>
+    <div
+      className={styles.phaseRow}
+      data-testid={`phase-row-${name.toLowerCase()}`}
+    >
       <div className={styles.phaseLabel}>
         <span className={`${styles.phaseName} ${className}`}>{name}</span>
         <span className={styles.phaseJp}>{jp}</span>
