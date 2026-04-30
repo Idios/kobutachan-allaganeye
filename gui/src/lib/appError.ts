@@ -52,8 +52,13 @@ export function appErrorCodeIs(e: unknown, expected: string): boolean {
 }
 
 /**
- * AppError の hint があれば返す。なければ null。UI で「対処ヒント」を出す
- * ときに使う想定。
+ * AppError の hint があれば返す。なければ null。UI で「対処ヒント」を出すための helper。
+ *
+ * **将来用** — 現状 production の Rust 側 AppError コンストラクタは hint を
+ * 設定しない (PR #665 Round 2 課題 5 (c) で保留決定)。lib.rs 側の主要
+ * AppError::new(...) 箇所に `with_hint(...)` を後付けで配る小規模拡張で活用
+ * 予定 (例: `state.mtime_conflict` で「他プロセスでの書き換えを確認して
+ * ください」、`io.permission_denied` で「ファイルの権限を確認してください」等)。
  */
 export function appErrorHint(e: unknown): string | null {
   return isAppError(e) && typeof e.hint === 'string' ? e.hint : null;

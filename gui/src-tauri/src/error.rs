@@ -25,6 +25,14 @@ impl AppError {
         }
     }
 
+    /// `hint` フィールドを設定する builder。
+    ///
+    /// 将来用 — 現状 production code では未使用 (test のみ参照、PR #665 Round 2
+    /// 課題 5 (c) で保留決定)。lib.rs 側 AppError::new(...) の主要箇所に hint
+    /// を後付けで配るための小規模拡張で活用予定 (例: `state.mtime_conflict`
+    /// で「他プロセスでの書き換えを確認してください」等)。frontend 側 helper は
+    /// `gui/src/lib/appError.ts::appErrorHint` で同じく保留中。
+    #[allow(dead_code)]
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
         self.hint = Some(hint.into());
         self
@@ -36,14 +44,6 @@ impl AppError {
         self
     }
 
-    /// Serialize to a JSON string. Used when interfacing with `Result<T, String>`
-    /// signature-bound APIs (legacy-shaped Err values). For Tauri commands that
-    /// declare `Result<T, AppError>` directly, Tauri's auto-serialize via the
-    /// `Serialize` derive is preferred — `to_wire_string` is unnecessary there.
-    #[allow(dead_code)]
-    pub fn to_wire_string(&self) -> String {
-        serde_json::to_string(self).unwrap_or_else(|_| self.message.clone())
-    }
 }
 
 impl fmt::Display for AppError {
@@ -54,10 +54,12 @@ impl fmt::Display for AppError {
 
 impl std::error::Error for AppError {}
 
-/// `?` 演算子で `std::io::Error` を AppError に自動変換する。code は default
-/// `io.error`、message は `e.to_string()`。call site で context-specific code
-/// に上書きしたい場合は `.map_err(|e| AppError::new("io.specific", e.to_string()))`
-/// を使う。
+/// `?` 演算子で `std::io::Error` を AppError に自動変換する。code は
+/// `ErrorKind` から派生 (`NotFound` → `io.file_not_found`、`PermissionDenied`
+/// → `io.permission_denied` 等)、message は `e.to_string()`。
+/// call site で context-specific code に上書きしたい場合は
+/// `.map_err(|e| AppError::new("io.<specific_kind>", e.to_string()))`
+/// (例: `io.read_failed`、`io.write_failed` 等の domain.error_kind 形式) を使う。
 impl From<std::io::Error> for AppError {
     fn from(e: std::io::Error) -> Self {
         let code = match e.kind() {
@@ -80,20 +82,14 @@ impl From<serde_json::Error> for AppError {
     }
 }
 
-/// 既存 `Err("...".to_string())` / `format!(...)` ベースの呼び出し箇所での後方互換 +
-/// `?` 演算子で String error を AppError として propagate するための From impl。
-/// code は `internal.error` 固定。call site が message に code を組み込むケース
-/// (例 `format!("io.read_failed: {}", e)`) は使わず、`AppError::new("io.read_failed", ...)`
-/// で構造化することを推奨。
+/// `?` 演算子で `String` error を AppError として propagate するための impl。
+/// 主に `Result<_, String>` を返す内部 helper (例 `run_ffmpeg_export_attempt`)
+/// を `Result<_, AppError>` を返す Tauri command 内で `?` 経由で呼び出すケース
+/// で使われる。code は `internal.error` 固定。新規コードでは call site で
+/// `AppError::new("domain.error_kind", message)` を構築するのが望ましい。
 impl From<String> for AppError {
     fn from(message: String) -> Self {
         AppError::new("internal.error", message)
-    }
-}
-
-impl From<&str> for AppError {
-    fn from(message: &str) -> Self {
-        AppError::new("internal.error", message.to_string())
     }
 }
 
@@ -175,10 +171,11 @@ mod tests {
 
     #[test]
     fn serialize_app_error_roundtrips() {
+        // Tauri が AppError を frontend に渡す時と同じ serde Serialize 経路を
+        // 直接 test する (旧 to_wire_string は production 未使用で削除済)。
         let e = AppError::new("io.read_failed", "could not read file")
             .with_hint("check file permissions");
-        let s = e.to_wire_string();
-        let parsed: serde_json::Value = serde_json::from_str(&s).expect("valid json");
+        let parsed = serde_json::to_value(&e).expect("valid json");
         assert_eq!(parsed["code"], "io.read_failed");
         assert_eq!(parsed["message"], "could not read file");
         assert_eq!(parsed["hint"], "check file permissions");
