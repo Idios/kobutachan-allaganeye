@@ -2176,6 +2176,11 @@ async fn start_detect(
     if let Some(cwd) = &cmd_spec.cwd {
         cmd.current_dir(cwd);
     }
+    // #656 -- Windows の Python は default で `sys.stdout.encoding=cp932`
+    // になるため、日本語含む path を JSON-line stream に乗せて出力すると
+    // Rust 側 (UTF-8 前提の reader) で decode 失敗する。`PYTHONIOENCODING`
+    // を utf-8 に固定して CLI 側 stdout/stderr を UTF-8 強制する。
+    cmd.env("PYTHONIOENCODING", "utf-8");
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -2204,16 +2209,27 @@ async fn start_detect(
 
     // Stderr drains in parallel into a bounded tail buffer so the OS
     // pipe doesn't fill up if the CLI is chatty under -v / verbose.
+    // #656 -- avoid `lines()` for the same UTF-8 強制 reason as stdout
+    // above. The tail is exposed only when the child exits non-zero, so
+    // line semantics are not load-bearing -- we just need the trailing
+    // bytes intact for the GUI error display.
     let stderr_handle = tokio::spawn(async move {
         let max_tail = 2048usize;
         let mut tail: Vec<u8> = Vec::with_capacity(4096);
-        let mut reader = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = reader.next_line().await {
-            tail.extend_from_slice(line.as_bytes());
-            tail.push(b'\n');
-            if tail.len() > max_tail * 2 {
-                let drop = tail.len() - max_tail;
-                tail.drain(0..drop);
+        let mut reader = BufReader::new(stderr);
+        let mut buf: Vec<u8> = Vec::with_capacity(1024);
+        loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    tail.extend_from_slice(&buf);
+                    if tail.len() > max_tail * 2 {
+                        let drop = tail.len() - max_tail;
+                        tail.drain(0..drop);
+                    }
+                }
+                Err(_) => break,
             }
         }
         tail
@@ -2221,11 +2237,26 @@ async fn start_detect(
 
     let mut metadata_path: Option<String> = None;
     let mut total_matches: u64 = 0;
-    let mut reader = BufReader::new(stdout).lines();
+    // #656 -- `AsyncBufReadExt::lines()` returns `String` and therefore
+    // imposes strict UTF-8 decoding on the Python child's stdout. On
+    // Windows the child's `sys.stdout.encoding` defaults to cp932 (or any
+    // ANSI code page), so a JSON-line stream containing 日本語 path bytes
+    // would kill the reader with `InvalidData`. We read raw bytes per
+    // newline and apply `String::from_utf8_lossy` so any stray non-UTF-8
+    // byte becomes U+FFFD instead of aborting the stream. `PYTHONIOENCODING
+    // = utf-8` set above is the primary fix; this is the defensive layer.
+    let mut reader = BufReader::new(stdout);
+    let mut line_buf: Vec<u8> = Vec::with_capacity(1024);
 
     loop {
-        match reader.next_line().await {
-            Ok(Some(line)) => {
+        line_buf.clear();
+        match reader.read_until(b'\n', &mut line_buf).await {
+            Ok(0) => break,
+            Ok(_) => {
+                while matches!(line_buf.last(), Some(b'\n') | Some(b'\r')) {
+                    line_buf.pop();
+                }
+                let line = String::from_utf8_lossy(&line_buf);
                 if let Some(progress) = parse_detect_progress_line(&line) {
                     if progress.phase == "done" {
                         if let Some(ref p) = progress.metadata_path {
@@ -2238,7 +2269,6 @@ async fn start_detect(
                     let _ = app.emit("detect-progress", progress);
                 }
             }
-            Ok(None) => break,
             Err(e) => {
                 // stdout pipe hiccup -- still try to wait the child so
                 // we don't leak a zombie.  The error path below sets the
