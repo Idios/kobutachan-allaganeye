@@ -16,11 +16,6 @@ pub struct AppError {
 }
 
 impl AppError {
-    /// Builder used by `#[allow(dead_code)]`-tagged constructors below — kept
-    /// for the upcoming AppError migration of legacy commands (派生 issue).
-    /// Until that migration lands, all accessors are unused in production
-    /// (only the test module references them), hence the allowance.
-    #[allow(dead_code)]
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),
@@ -30,7 +25,6 @@ impl AppError {
         }
     }
 
-    #[allow(dead_code)]
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
         self.hint = Some(hint.into());
         self
@@ -42,8 +36,10 @@ impl AppError {
         self
     }
 
-    /// Serialize to a JSON string suitable for Tauri command `Result<T, String>` Err values.
-    /// Frontend should `try { JSON.parse(msg) } catch` to detect structured vs legacy raw strings.
+    /// Serialize to a JSON string. Used when interfacing with `Result<T, String>`
+    /// signature-bound APIs (legacy-shaped Err values). For Tauri commands that
+    /// declare `Result<T, AppError>` directly, Tauri's auto-serialize via the
+    /// `Serialize` derive is preferred — `to_wire_string` is unnecessary there.
     #[allow(dead_code)]
     pub fn to_wire_string(&self) -> String {
         serde_json::to_string(self).unwrap_or_else(|_| self.message.clone())
@@ -53,6 +49,51 @@ impl AppError {
 impl fmt::Display for AppError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[{}] {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for AppError {}
+
+/// `?` 演算子で `std::io::Error` を AppError に自動変換する。code は default
+/// `io.error`、message は `e.to_string()`。call site で context-specific code
+/// に上書きしたい場合は `.map_err(|e| AppError::new("io.specific", e.to_string()))`
+/// を使う。
+impl From<std::io::Error> for AppError {
+    fn from(e: std::io::Error) -> Self {
+        let code = match e.kind() {
+            std::io::ErrorKind::NotFound => "io.file_not_found",
+            std::io::ErrorKind::PermissionDenied => "io.permission_denied",
+            std::io::ErrorKind::AlreadyExists => "io.already_exists",
+            std::io::ErrorKind::WouldBlock => "io.would_block",
+            std::io::ErrorKind::TimedOut => "io.timed_out",
+            _ => "io.error",
+        };
+        AppError::new(code, e.to_string())
+    }
+}
+
+/// `?` 演算子で `serde_json::Error` を AppError に自動変換する。code は
+/// `parse.json_invalid` 固定。message は `e.to_string()` で line/column 情報を含む。
+impl From<serde_json::Error> for AppError {
+    fn from(e: serde_json::Error) -> Self {
+        AppError::new("parse.json_invalid", e.to_string())
+    }
+}
+
+/// 既存 `Err("...".to_string())` / `format!(...)` ベースの呼び出し箇所での後方互換 +
+/// `?` 演算子で String error を AppError として propagate するための From impl。
+/// code は `internal.error` 固定。call site が message に code を組み込むケース
+/// (例 `format!("io.read_failed: {}", e)`) は使わず、`AppError::new("io.read_failed", ...)`
+/// で構造化することを推奨。
+impl From<String> for AppError {
+    fn from(message: String) -> Self {
+        AppError::new("internal.error", message)
+    }
+}
+
+impl From<&str> for AppError {
+    fn from(message: &str) -> Self {
+        AppError::new("internal.error", message.to_string())
     }
 }
 

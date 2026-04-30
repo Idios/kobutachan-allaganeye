@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import { create } from 'zustand';
 
+import { appErrorMessage } from '../lib/appError';
+
 /**
  * #571 — single entry in the persisted recent-videos history. Mirrors the
  * Rust `RecentEntry` struct (lib.rs).
@@ -56,7 +58,7 @@ export const useRecentStore = create<RecentState>((set) => ({
       set({ entries, loaded: true, loadError: null });
     } catch (e) {
       set({
-        loadError: e instanceof Error ? e.message : String(e),
+        loadError: appErrorMessage(e),
         loaded: true,
       });
     }
@@ -70,7 +72,7 @@ export const useRecentStore = create<RecentState>((set) => ({
         : [];
       set({ entries, addError: null });
     } catch (e) {
-      set({ addError: e instanceof Error ? e.message : String(e) });
+      set({ addError: appErrorMessage(e) });
     }
   },
 
