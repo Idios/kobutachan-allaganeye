@@ -17,7 +17,7 @@
 ### scope 外
 
 - **読み上げソフト (screen reader) 対応**: Allagan Eye の想定ユーザーは FF14 PvP プレイヤーで、screen reader 利用ユースケースが存在しないため、`aria-label` / `aria-live` / `aria-describedby` / `role="status"` / `role="alert"` / `role="img"` / `role="dialog"` 等の screen reader 専用属性は **新規追加しない**
-  - **既存実装は維持**: `role="dialog"` (ConflictModal / ConfirmExitModal) や `role="alert"` (ErrorCard) などの既存属性は削除しない (後方互換 + axe-core 違反回避)
+  - **既存実装は維持**: `role="dialog"` (ConflictModal / ConfirmExitModal / ErrorModal) や `role="alert"` (ErrorCard) などの既存属性は削除しない (後方互換 + axe-core 違反回避)
   - **例外: visible text のない icon-only button** (例: `gui/src/components/BrightnessTimeline.tsx` の SVG match block) は `aria-label` を最低限付与。**理由は「screen reader 対応」ではなく「axe-core button name 違反の回避」**
 - **サンプル動画モード固有 polish**: `filePath === null` の sample mode 固有の挙動仕様は #569 (Phase 2.5) / #589 (Phase 4) で進行中。本 a11y policy では sample mode 固有 UI の polish (例: [適用] ボタンの sample 理由 tooltip) は scope 外として扱う
 
@@ -53,9 +53,10 @@
 
 - Tab で全 button / input / checkbox に到達
 
-### Modal (ConflictModal / ConfirmExitModal)
+### Modal (ConflictModal / ConfirmExitModal / ErrorModal)
 
 - Tab で modal 内循環、Escape で「キャンセル」相当
+- ErrorModal (#614) は `isRecoverable === true` 時のみ Escape で `dismissError()`、`isPanic === true` 時は Escape を無効化 (パニック時は誤操作で閉じないよう、明示的に「アプリを終了」ボタン押下を要求)
 
 ## focus 視覚化
 

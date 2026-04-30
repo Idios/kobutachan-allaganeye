@@ -50,7 +50,59 @@ stateDiagram-v2
 
 **アプリ終了**: ウィンドウ右上 `×` (Tauri chrome) = 即時 app exit。任意の screen / phase から `[*]` への遷移は暗黙。Phase 2 では警告なし (dummy のため)。Phase 3/4 で running 中の confirm + process kill を追加予定 (**#523** で追跡)。
 
-## 4. 各画面の phase state
+## 4. エラー伝搬フロー (#614)
+
+GUI 内部で発生する想定外エラー (Rust panic / React 例外 / unhandled JS exception) は、ローカルログ追記 + ErrorModal 表示で集約する。Tauri command 失敗の recoverable error (例: `load_metadata` の I/O 失敗) は **既存 inline + toast UI** に流す ([ui-interaction-spec.md §1.5](ui-interaction-spec.md) 既存規約)。両者は排他で、同一画面内に重複しない。
+
+### 経路
+
+1. **Rust panic**
+   - [`gui/src-tauri/src/error.rs`](../gui/src-tauri/src/error.rs) の `install_panic_hook` が `std::panic::set_hook` で登録
+   - file write: `<install_dir>/logs/error-YYYYMMDD.log` に `PANIC_MARKER ts=... payload=... backtrace=...` を追記
+   - best-effort: Tauri event `panic` を frontend に emit (WebView2 がまだ生きていれば届く)
+   - 直前 panic hook (`prev_hook`) に委譲して default 動作 (process exit) を継続
+
+2. **React 内部例外** (render / hooks / lifecycle)
+   - [`gui/src/components/ErrorBoundary.tsx`](../gui/src/components/ErrorBoundary.tsx) (class component) が `componentDidCatch` で捕捉
+   - `useErrorStore.showError` を呼出 (`category: 'js-error'`, `isPanic: false`, `isRecoverable: false`)
+   - Boundary は `null` を render — 子 sub-tree は blank。`ErrorModal` は Boundary の **外側** ([`main.tsx`](../gui/src/main.tsx)) で render されるため、blank された後も visible
+
+3. **unhandled JS exception / promise rejection**
+   - [`gui/src/lib/globalErrorListener.ts`](../gui/src/lib/globalErrorListener.ts) が `window.addEventListener('error' / 'unhandledrejection')` で捕捉
+   - `useErrorStore.showError` (`category: 'js-error' | 'js-promise'`)
+
+4. **Tauri command 失敗** (load_metadata 等の I/O / parse failure)
+   - 既存 inline + toast UI で表示 (recoverable error)
+   - **ErrorModal は使わない** (二重表示回避、既存規約温存)
+
+### ログ管理
+
+- 場所: `<install_dir>/logs/` = アプリ実行ファイル (`allaganeye-gui.exe`) のあるフォルダ直下の `logs/` (Portable ZIP 哲学に整合 — 展開 = インストール / フォルダ削除 = アンインストール)
+- panic ログ: `error-YYYYMMDD.log` (`OpenOptions::append` で自前書込、追記は単一 `write_all` 内で完結し POSIX `O_APPEND` semantics で atomic、subscriber drop 中の panic でも機能)
+- 通常時 stderr: `eprintln!` (panic_hook 内の write/emit 結果、起動時 rotate / restart-detect の判定結果)。dev mode は `npm run tauri dev` の console、配布 ZIP では `cmd.exe` から起動した user に見える
+- 起動時 GC: `logging::rotate_old_logs(7)` で 7 日経過 file を unlink
+- 書き込み失敗 fallback: `eprintln!` warn のみで続行 (Program Files 配下展開等で write 不可なケース)
+
+### 起動時 restart-detected
+
+- `lib.rs::run()` 冒頭で `logging::detect_panic_from_previous_session()` を呼出し、直近 log の最終 `PANIC_MARKER` 行を検出
+- `now - mtime <= 24h` のときのみ true 判定 (古い panic は alert しない)。実装の閾値は [`logging.rs::PANIC_DETECT_WINDOW_SECS`](../gui/src-tauri/src/logging.rs)。日常起動 1 度目で warning が出る自然な UX に整合させ、7 日 rotation で file 自体が消えるため「数週間前の panic を resurface」することはない
+- webview ready 後 ~150ms に `panic-from-previous-session` event を emit
+- `globalErrorListener` が listen して、warning ErrorModal (`isRecoverable=true / isPanic=false`) を表示
+
+### ErrorModal の action 構成
+
+- 「詳細をコピー」: clipboard に `{message, stack, category, timestamp}` JSON を書込
+- 「ログフォルダを開く」: 既存 `open_folder_in_explorer` Tauri command 流用、`logDir` 表示
+- 「Issue で報告する」link: GitHub `bug_report.yml` template への外部 link
+- 「閉じる」: `isRecoverable === true` 時のみ。`dismissError()`
+- 「アプリを終了」: `isPanic === true` 時のみ。既存 `force_exit_app` Tauri command 流用 (再起動 button は配置しない)
+
+### バグ報告経路
+
+ErrorModal は [`docs/bug-report-guide.md`](bug-report-guide.md) §1.4 の「ログ取得」と連動する。ユーザーは ErrorModal の「ログフォルダを開く」→ 該当 `.log` ファイル → issue 添付という流れで bug report を提出する。詳細手順は bug-report-guide.md を参照。
+
+## 5. 各画面の phase state
 
 ### drop (動画ファイル選択)
 
@@ -162,7 +214,7 @@ stateDiagram-v2
 
 Phase 2 実装: 80ms interval のダミー progress。Phase 4 で実 ffmpeg 呼び出し + stderr パースに差し替え。
 
-## 5. ffmpeg 実行中の中断フロー (Phase 3/4、#523 で実装)
+## 6. ffmpeg 実行中の中断フロー (Phase 3/4、#523 で実装)
 
 Phase 2 は dummy なので `×` 即時 exit。Phase 3/4 では以下を実装 (**#523** で追跡):
 
@@ -172,7 +224,7 @@ Phase 2 は dummy なので `×` 即時 exit。Phase 3/4 では以下を実装 (
 4. OK → `tokio::process::Child.kill()` → 中間ファイルクリーンアップ → app exit
 5. Cancel → close request を prevent
 
-## 6. 起動パターン
+## 7. 起動パターン
 
 | シナリオ | 動線 | 実装 |
 |---|---|---|
@@ -182,7 +234,7 @@ Phase 2 は dummy なので `×` 即時 exit。Phase 3/4 では以下を実装 (
 | argv に動画 path | (将来) | Phase 2 外 |
 | 前回 metadata 自動再現 | (将来) | #517 |
 
-## 7. ウィンドウサイズとリサイズ方針
+## 8. ウィンドウサイズとリサイズ方針
 
 - **初期**: 1440×900 (`gui/src-tauri/tauri.conf.json`)
 - **最小**: 960×600
@@ -191,7 +243,7 @@ Phase 2 は dummy なので `×` 即時 exit。Phase 3/4 では以下を実装 (
   - BrightnessTimeline SVG は `preserveAspectRatio="none"` で横伸縮、縦固定
   - リスト/ログは `overflow: auto`
 
-## 8. コンポーネント階層
+## 9. コンポーネント階層
 
 ```text
 App (App.tsx)
@@ -235,7 +287,7 @@ utils/
 └── brightness.ts  — buildBrightnessPath / findBlackoutRegions / buildLocalBrightness
 ```
 
-## 9. CSS Modules 慣例
+## 10. CSS Modules 慣例
 
 ### tokens.css の役割
 
@@ -260,7 +312,7 @@ utils/
 - テーマ色は必ず `var(--ae-*)` 経由
 - hover / transition は CSS 疑似クラスで表現 (JS 側での切替は避ける)
 
-## 10. #516 [元に戻す] フロー
+## 11. #516 [元に戻す] フロー
 
 ```mermaid
 sequenceDiagram
@@ -290,7 +342,7 @@ sequenceDiagram
 - **TS store**: `restore()`, `refreshBackupStatus()`, fields `hasBackup` / `restoring` / `restoreError`
 - **UI**: `<RestoreButton>` — hasBackup=false で disabled、confirm 経由で restore 実行、`onRestored` で任意の後続処理
 
-## 11. 性能目標
+## 12. 性能目標
 
 | 指標 | 目標 (Phase 2) | 計測方法 |
 |---|---|---|
@@ -304,7 +356,7 @@ Phase 3 で追加される目標:
 - 2:50:28 録画での全操作 60fps
 - preview 1 フレームシーク 200ms 以内
 
-## 12. Phase 3/4 への引き継ぎポイント
+## 13. Phase 3/4 への引き継ぎポイント
 
 | 場所 | Phase 2 状態 | Phase 3/4 での差し替え |
 |---|---|---|
