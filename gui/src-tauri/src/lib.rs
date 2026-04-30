@@ -2182,8 +2182,10 @@ async fn start_detect(
     // #656 -- Windows の Python は default で `sys.stdout.encoding=cp932`
     // になるため、日本語含む path を JSON-line stream に乗せて出力すると
     // Rust 側 (UTF-8 前提の reader) で decode 失敗する。`PYTHONIOENCODING`
-    // を utf-8 に固定して CLI 側 stdout/stderr を UTF-8 強制する。
-    cmd.env("PYTHONIOENCODING", "utf-8");
+    // を `utf-8:replace` に固定して CLI 側 stdout/stderr を UTF-8 強制し、
+    // encode 不能 byte は U+FFFD で置換する (PR #657 Python 側
+    // `errors="replace"` と対称)。
+    cmd.env("PYTHONIOENCODING", "utf-8:replace");
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -4458,5 +4460,45 @@ mod tests {
         assert!(!serialized.contains("metadata_path"));
         assert!(!serialized.contains("\"matches\""));
         assert!(!serialized.contains("\"message\""));
+    }
+
+    /// #656 review Round 1 摘出 #3 -- detect 経路 stdout reader
+    /// (`start_detect` 内 `read_until` + 改行 trim + `from_utf8_lossy`)
+    /// の core logic を bytes 入力で再現し、invalid UTF-8 byte は U+FFFD
+    /// に置換され、CRLF は両方 trim されることを確認する。production
+    /// code は inline (関数抽出未) のため同型ロジックを test 内で再構築。
+    #[tokio::test]
+    async fn stdout_decode_replaces_invalid_utf8_and_trims_crlf() {
+        // 0x83, 0x84 は単独で UTF-8 invalid (continuation byte 領域)。
+        // cp932 では multi-byte の前半 byte で日本語 path に頻出する。
+        let raw: &[u8] = &[
+            b'h', b'i', 0x83, 0x84, b'\n', b'b', b'y', b'e', b'\r', b'\n',
+        ];
+        let mut reader = BufReader::new(raw);
+        let mut buf: Vec<u8> = Vec::new();
+
+        // line 1: invalid byte は from_utf8_lossy で U+FFFD に置換
+        let n = reader.read_until(b'\n', &mut buf).await.unwrap();
+        assert!(n > 0);
+        while matches!(buf.last(), Some(b'\n') | Some(b'\r')) {
+            buf.pop();
+        }
+        let line = String::from_utf8_lossy(&buf);
+        assert_eq!(line, "hi\u{FFFD}\u{FFFD}");
+
+        // line 2: CRLF (\r\n) は while ループで両方 pop
+        buf.clear();
+        let n = reader.read_until(b'\n', &mut buf).await.unwrap();
+        assert!(n > 0);
+        while matches!(buf.last(), Some(b'\n') | Some(b'\r')) {
+            buf.pop();
+        }
+        let line = String::from_utf8_lossy(&buf);
+        assert_eq!(line, "bye");
+
+        // EOF: read_until returns Ok(0)
+        buf.clear();
+        let n = reader.read_until(b'\n', &mut buf).await.unwrap();
+        assert_eq!(n, 0);
     }
 }
