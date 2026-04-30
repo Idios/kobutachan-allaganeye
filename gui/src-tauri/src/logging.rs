@@ -166,21 +166,6 @@ pub fn detect_panic_from_previous_session() -> Option<String> {
         .map(|l| l.to_string())
 }
 
-pub fn install_tracing_subscriber() -> Option<tracing_appender::non_blocking::WorkerGuard> {
-    let dir = ensure_log_dir().ok()?;
-    let file_appender = tracing_appender::rolling::daily(&dir, "info");
-    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(non_blocking)
-        .with_ansi(false)
-        .with_env_filter(env_filter)
-        .finish();
-    let _ = tracing::subscriber::set_global_default(subscriber);
-    Some(guard)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

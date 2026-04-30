@@ -2340,10 +2340,9 @@ async fn dev_force_panic() -> Result<(), String> {
 }
 
 pub fn run() {
-    // #614 -- Initialize tracing subscriber + rotate stale logs + detect
-    // unclean shutdown from the previous session, BEFORE the Tauri builder
-    // runs so panic_hook is the first hook installed.
-    let _tracing_guard = logging::install_tracing_subscriber();
+    // #614 -- Rotate stale panic logs (>7 days) and detect unclean shutdown
+    // from the previous session, BEFORE the Tauri builder runs so the
+    // restart-detected event is queued before any frontend listener attaches.
     match logging::rotate_old_logs(7) {
         Ok(removed) => eprintln!("[startup] rotated {} stale log(s)", removed),
         Err(e) => eprintln!("[startup] warning: failed to rotate old logs: {}", e),
@@ -2444,8 +2443,6 @@ pub fn run() {
     builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-
-    drop(_tracing_guard);
 }
 
 #[cfg(test)]

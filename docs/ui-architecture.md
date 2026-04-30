@@ -78,8 +78,8 @@ GUI 内部で発生する想定外エラー (Rust panic / React 例外 / unhandl
 ### ログ管理
 
 - 場所: `<install_dir>/logs/` = アプリ実行ファイル (`allaganeye-gui.exe`) のあるフォルダ直下の `logs/` (Portable ZIP 哲学に整合 — 展開 = インストール / フォルダ削除 = アンインストール)
-- panic ログ: `error-YYYYMMDD.log` (`OpenOptions::append` で自前書込、subscriber drop 中の panic でも機能)
-- 通常ログ: `info.YYYY-MM-DD` (`tracing-appender::rolling::daily` で daily rotation)
+- panic ログ: `error-YYYYMMDD.log` (`OpenOptions::append` で自前書込、追記は単一 `write_all` 内で完結し POSIX `O_APPEND` semantics で atomic、subscriber drop 中の panic でも機能)
+- 通常時 stderr: `eprintln!` (panic_hook 内の write/emit 結果、起動時 rotate / restart-detect の判定結果)。dev mode は `npm run tauri dev` の console、配布 ZIP では `cmd.exe` から起動した user に見える
 - 起動時 GC: `logging::rotate_old_logs(7)` で 7 日経過 file を unlink
 - 書き込み失敗 fallback: `eprintln!` warn のみで続行 (Program Files 配下展開等で write 不可なケース)
 
