@@ -287,7 +287,11 @@ export function ExportScreen() {
   async function handlePickDir() {
     const picked = await openDialog({ directory: true, multiple: false });
     if (typeof picked === 'string') {
-      setOutDir(picked);
+      // PR #655 Round 2: same `\\?\` prefix leak the recent-list saw —
+      // Tauri's directory picker hands back the extended-length form on
+      // Windows and it shows up verbatim in the textbox. Normalize before
+      // storing so display + ffmpeg invocation see the conventional form.
+      setOutDir(stripExtendedPathPrefix(picked));
     }
   }
 

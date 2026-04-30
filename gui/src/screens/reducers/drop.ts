@@ -12,6 +12,7 @@ export type DropEvent =
   | { type: 'DIALOG_CANCELLED' }
   | { type: 'FILE_PICKED' }
   | { type: 'DND_DROPPED' }
+  | { type: 'RECENT_PICKED' }
   | { type: 'PROBE_OK' }
   | { type: 'PROBE_FAIL' }
   | { type: 'CANCEL_SELECTION' }
@@ -23,6 +24,9 @@ export function dropReducer(phase: DropPhase, event: DropEvent): DropPhase {
     case 'idle':
       if (event.type === 'BROWSE_CLICKED') return 'selecting';
       if (event.type === 'DND_DROPPED') return 'probing';
+      // #571: clicking an item in the recent-videos list jumps straight to
+      // probing — no file dialog interim.
+      if (event.type === 'RECENT_PICKED') return 'probing';
       return phase;
 
     case 'selecting':
