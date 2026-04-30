@@ -69,6 +69,49 @@ main (リリースタグのみ)
 
 反復利用される手順があれば、実運用でパターンが固まった時点で新規 skill を追加する (事前に空の skill は作らない)。
 
+## PR 作成 Pre-flight (Iron Law 6 サブ条)
+
+PR 作成前に base 最新化と並行 worktree PR 重複を必ず確認する。`feedback_pr_review_base_merge_regression.md` (PR #627 Round 4 で発覚した base 取り込み機能 regression) と `feedback_concurrent_worktree_pr_check.md` (#646 / PR #647 並行作業重複) の skill / 規約昇格として運用化 (2026-04-29 #659)。
+
+### 4 ステップ手順
+
+```bash
+# 1. base 最新化 (read-only fetch)
+git fetch origin <base>            # <base> = develop-0.2.0 等
+
+# 2. 取り込み未済 commit 列挙
+git log HEAD..origin/<base> --oneline
+
+# 3. touched files 交差判定 (取り込み未済 commit が当 PR と同 path を触っていないか)
+#    - 当 PR の touched files
+git diff --name-only origin/<base>
+#    - 取り込み未済 commit の touched files
+git diff --name-only HEAD origin/<base>
+#    両者の交差ありなら、base 取り込み (merge or rebase) + 検証再実行が必要
+
+# 4. 並行 worktree 同 issue PR 重複確認
+gh pr list --search "<元issue#>" --state all \
+  --json number,headRefName,state,createdAt
+```
+
+### 判定
+
+- **取り込み未済 commit ゼロ**: そのまま PR 作成
+- **取り込み未済 commit あり、touched files 交差なし**: 取り込み不要、PR 作成 (base HEAD は Pre-flight 実施時点を記録)
+- **取り込み未済 commit あり、touched files 交差あり**: `git merge origin/<base>` (または rebase) で取り込み → Iron Law 6 自動チェック (`ruff` / `pyright` / `pytest` / `npm run lint`/`typecheck`/`test`/`build` / `cargo check` 等、変更 path に応じて) を再実行 → PR 作成
+- **並行 PR 検出**: 各 PR の状態 (open / merged) を確認。重複なら計画見直し or `AskUserQuestion` でユーザー判断
+
+確認結果は **PR テンプレート §「ベース同期確認」** (4 項目を plain bullet で) に記録する。validate-checklist は plain bullet を無視するため CI ゲートは増設しないが、レビュー時に `/review-pr` Step 2 が `gh pr view` 経由で機械的に再確認するため、握り潰しは禁止。
+
+### Red Flags
+
+| 浮かんだ思考 | 実態 |
+|---|---|
+| 「コンフリクト出ないから OK」 | merge 可否 (CONFLICT 不在) と機能 regression は別軸。base / head の同ファイル grep 対比が必要 |
+| 「最近 fetch したから OK」 | 数分でも別 PR がマージされうる。PR 作成直前に再 fetch する |
+| 「並行 PR は計画段階で確認したから skip」 | 計画後に別 worktree が PR を提出するケースあり (#646 / PR #647)。PR 作成時にも実施 |
+| 「Pre-flight で path 交差なしと判定したから自動チェック skip」 | path 交差判定と Iron Law 6 自動チェックは独立軸。Iron Law 6 は変更 path 別に毎 PR 作成時に実施 |
+
 ## レビュー受け入れ基準 (#367 対策)
 
 PR #343 のような「複数 Issue が不完全修正のままクローズされる」事故を防ぐため、`/review-pr` skill は以下を自動検証する:
