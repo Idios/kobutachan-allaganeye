@@ -53,20 +53,24 @@
 
 - すべての command は async / sync 問わず Tauri runtime で execute される
 - **frontend (TypeScript) 側の error narrowing**: `gui/src/lib/appError.ts` の `appErrorMessage(e)` / `appErrorCodeIs(e, code)` / `isAppError(e)` ヘルパーを使う。Tauri が `AppError` を JSON object として serialize するため、invoke 失敗時の Promise.reject 値は `{ code, message, hint?, stacktrace? }` の object になる
-  ```ts
-  import { appErrorCodeIs, appErrorMessage } from '../lib/appError';
-  try {
-    await invoke('apply_changes', { path, metadata, expectedMtimeMs });
-  } catch (e) {
-    if (appErrorCodeIs(e, 'state.mtime_conflict')) {
-      // 競合専用の UI 分岐
-    } else {
-      showError(appErrorMessage(e));
-    }
-  }
-  ```
 - **`AppError` 構造**: `code: String` (domain-specific identifier) / `message: String` / `hint: Option<String>` / `stacktrace: Option<String>`。enum ではなく struct で、code 値は domain.error_kind 形式の自由文字列 (例: `io.file_not_found`、`parse.json_invalid`、`state.mtime_conflict`)
 - **`?` 演算子の自動変換**: Rust 側 `error.rs` に `From<std::io::Error>` / `From<serde_json::Error>` / `From<String>` / `From<&str>` impl があり、各 helper の error を `?` で AppError に variant-aware に自動変換できる。例: `std::io::Error::NotFound` → `AppError { code: "io.file_not_found" }`
+
+frontend narrowing の使用例:
+
+```ts
+import { appErrorCodeIs, appErrorMessage } from '../lib/appError';
+
+try {
+  await invoke('apply_changes', { path, metadata, expectedMtimeMs });
+} catch (e) {
+  if (appErrorCodeIs(e, 'state.mtime_conflict')) {
+    // 競合専用の UI 分岐
+  } else {
+    showError(appErrorMessage(e));
+  }
+}
+```
 
 ## CI による doc 整合性検査
 
