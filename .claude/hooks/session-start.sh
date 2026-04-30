@@ -33,6 +33,7 @@ cat <<'EOF'
 6. **NO PR CREATION WITHOUT VERIFIED CHECKS**
    - PR 作成前に変更ファイル path に応じた自動チェック (Python: `ruff check .` / `ruff format --check .` / `pyright` / `pytest`、GUI: `npm run lint` / `typecheck` / `test` / `build` / `cargo check`) を全 pass させる。「軽微だから skip」「Python のみだから GUI 側不要」は Red Flag (失敗パターン A 再発)
    - ロジック変更 (`gpu_detector.py` / `audio/*.py` / `video/detector.py` / `gui/src-tauri/**` 等) を含む場合は、ユーザー (Idios) に実機検証 (GPU / audio / 長時間動画 / GUI Tauri 起動) を `AskUserQuestion` で依頼する。「mock テスト pass = 実機検証不要」は Red Flag (失敗パターン B 再発)
+   - **PR 作成 Pre-flight (#659 で運用化)**: `git fetch origin <base>` → `git log HEAD..origin/<base>` で取り込み未済 commit を確認 → 当 PR の touched files と交差するなら `git merge origin/<base>` で取り込み + 自動チェック再実行 → `gh pr list --search "<元issue#>" --state all` で並行 worktree PR 重複確認。「コンフリクト出ないから OK」「最近 fetch したから OK」は Red Flag (失敗パターン C 再発、`feedback_pr_review_base_merge_regression.md` / `feedback_concurrent_worktree_pr_check.md` 参照)
    - PR 本文には machine-verified を `[x]` で、machine-unverifiable を plain bullet `-` で書き分ける (`feedback_pr_validate_checklist.md` 規約)。詳細手順は `feedback_pr_pre_creation_checks.md` / `feedback_user_realmachine_test_request.md` 参照
 
 ## Red Flags (この思考が浮かんだら STOP)
@@ -47,6 +48,9 @@ cat <<'EOF'
 | 「観察 (修正不要) とコメントしておこう」 | #399 B 違反。別 issue 起票 or escalate |
 | 「ローカル lint 通ったから PR 出して大丈夫」 | Iron Law 6 違反。変更 path から必要 job を判定 (Python / GUI / installer / docs)。GUI 変更を含むなら `npm run lint` / `typecheck` / `test` / `build` / `cargo check` も実行 |
 | 「mock テスト pass = 実機検証不要」 | Iron Law 6 違反。GPU / audio / 長時間動画 / GUI Tauri は mock 不可。該当 path 変更時は `AskUserQuestion` で依頼 |
+| 「コンフリクト出ないから base 取り込み確認は不要」 | Iron Law 6 Pre-flight 違反。merge 可否と機能 regression は別軸。PR #627 Round 4 の失敗パターン C 再発 |
+| 「並行 worktree PR は計画段階で確認したから PR 作成時は skip」 | Iron Law 6 Pre-flight 違反。計画後に別 worktree が PR 提出するケースあり (#646 / #647)。PR 作成時にも実施 |
+| 「(A) PR 内修正は PR が大きくなるから別 issue にしよう」 | レビュー摘出問題は原則 (A) PR 内追加修正 (`feedback_pr_internal_fix_policy.md` 昇格)。サイズだけで (B) を選ばない |
 
 詳細は `docs/l2-workflow.md` を参照。Iron Law が不明確な場合は先に l2-workflow.md を読むこと。
 </EXTREMELY_IMPORTANT>

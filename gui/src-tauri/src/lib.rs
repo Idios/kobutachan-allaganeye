@@ -218,6 +218,256 @@ async fn check_backup_exists(path: String) -> Result<bool, String> {
     Ok(parent.join("metadata.original.json").exists())
 }
 
+/// #571 — single entry of the recent-videos history persisted at
+/// `<home>/.allaganeye/recent.json`.
+///
+/// `path` is the absolute file path with the Windows extended-length `\\?\`
+/// prefix already stripped (see `setSelectedVideoPath` on the TS side).
+/// `mtime_ms` is the file's last-modified timestamp at insert time; the GUI
+/// uses it to decide whether the cached `recent.json` entry still points at
+/// the same content (subsequent edits to the same path bump mtime). The GUI
+/// re-checks `Path::exists` on every load so deleted files are surfaced as
+/// "not found" without us having to prune them eagerly.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RecentEntry {
+    pub path: String,
+    #[serde(rename = "fileName")]
+    pub file_name: String,
+    #[serde(rename = "sizeBytes")]
+    pub size_bytes: u64,
+    #[serde(rename = "mtimeMs")]
+    pub mtime_ms: u64,
+    #[serde(rename = "addedAtMs")]
+    pub added_at_ms: u64,
+}
+
+const RECENT_LIMIT: usize = 10;
+
+/// #571 — strip the Windows extended-length path prefix (`\\?\` / `\\?\UNC\`).
+///
+/// Tauri's dialog and drag-drop sometimes hand back paths with the `\\?\`
+/// prefix (Win32's "long path" form). Storing those verbatim makes the UI
+/// inconsistent with normal `E:\…` rendering and breaks naive consumers
+/// (e.g. `Path::exists` mis-resolution noted in PR #655 review). This
+/// mirrors the TS-side `stripExtendedPathPrefix` (`gui/src/utils/path.ts`)
+/// so both the recent-list (`add_recent`) and the export output dir
+/// (`ExportScreen.handlePickDir`) end up with the same canonical form.
+fn strip_extended_path_prefix(p: &str) -> String {
+    if let Some(rest) = p.strip_prefix("\\\\?\\UNC\\") {
+        format!("\\\\{}", rest)
+    } else if let Some(rest) = p.strip_prefix("\\\\?\\") {
+        rest.to_string()
+    } else {
+        p.to_string()
+    }
+}
+
+/// #571 — resolve `<install dir>/recent.json` without creating it.
+///
+/// PR #655 Round 2 review: keep the recent-videos history alongside the
+/// executable so the tool is fully self-contained — Portable ZIP philosophy
+/// (extract = install, delete = uninstall, no leftover state in the user
+/// profile). Production = `<bundle install dir>/recent.json`, dev =
+/// `target/debug/recent.json` (gitignored). The same review also moved the
+/// thumbnail cache (`thumb_cache_dir`, #465) to `<install dir>/cache/`
+/// for the same philosophy.
+fn recent_path() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("failed to resolve current_exe: {}", e))?;
+    let dir = exe
+        .parent()
+        .ok_or_else(|| format!("current_exe has no parent: {}", exe.display()))?;
+    Ok(dir.join("recent.json"))
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// #571 — load the persisted history. Returns an empty vec when the file is
+/// missing (fresh install) or when the JSON cannot be parsed (treat corrupt
+/// state as empty rather than blocking the drop screen).
+fn read_recent_sync(path: &Path) -> Vec<RecentEntry> {
+    if !path.exists() {
+        return Vec::new();
+    }
+    let Ok(content) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<RecentEntry>>(&content).unwrap_or_default()
+}
+
+/// #571 — normalize a path string for the recent-list dedup key.
+///
+/// Two paths point at the same file on Windows when they differ only in
+/// (a) letter case (`E:\` ≡ `e:\`) or (b) directory separator (`/` vs `\`,
+/// the Tauri dialog usually returns `\` while D&D fixtures and CLI handoff
+/// can produce `/`). We collapse both so the dedup logic doesn't miss
+/// either form. Stays a private helper because the persisted entry keeps
+/// the original separators — only the comparison key is normalized.
+fn normalize_path_key(p: &str) -> String {
+    p.to_lowercase().replace('/', "\\")
+}
+
+/// #571 — push `entry` to the front of the history, dedup by `path`, and
+/// truncate to `RECENT_LIMIT`. Returns the post-write list so the caller
+/// (Zustand store) can mirror it without an extra `read_recent` round trip.
+fn add_recent_sync(path: &Path, entry: RecentEntry) -> Result<Vec<RecentEntry>, String> {
+    let mut list = read_recent_sync(path);
+    // Dedup via `normalize_path_key` (case-insensitive + separator-insensitive).
+    // The drop happens before we push so the new entry's mtime / addedAt
+    // overwrite the stale ones — selecting an existing recent moves it to
+    // the top with refreshed metadata.
+    let key = normalize_path_key(&entry.path);
+    list.retain(|e| normalize_path_key(&e.path) != key);
+    list.insert(0, entry);
+    list.truncate(RECENT_LIMIT);
+    write_recent_atomic(path, &list)?;
+    Ok(list)
+}
+
+/// #571 — wipe the history (used by the GUI's "履歴をクリア" affordance and
+/// by tests). Treats "file already absent" as success so callers don't have
+/// to special-case the fresh-install state.
+fn clear_recent_sync(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    fs::remove_file(path)
+        .map_err(|e| format!("remove recent.json failed ({}): {}", path.display(), e))
+}
+
+fn write_recent_atomic(path: &Path, list: &[RecentEntry]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("recent path has no parent: {}", path.display()))?;
+    if !parent.exists() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("create dir {} failed: {}", parent.display(), e))?;
+    }
+    let mut tmp_path = path.to_path_buf();
+    let tmp_name = match path.file_name() {
+        Some(n) => format!("{}.tmp", n.to_string_lossy()),
+        None => return Err(format!("recent path has no file name: {}", path.display())),
+    };
+    tmp_path.set_file_name(tmp_name);
+    let serialized = serde_json::to_string_pretty(list)
+        .map_err(|e| format!("serialize recent failed: {}", e))?;
+    fs::write(&tmp_path, serialized)
+        .map_err(|e| format!("write tmp {} failed: {}", tmp_path.display(), e))?;
+    if let Err(e) = fs::rename(&tmp_path, path) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(format!(
+            "rename {} -> {} failed: {}",
+            tmp_path.display(),
+            path.display(),
+            e
+        ));
+    }
+    Ok(())
+}
+
+/// #571 — drop entries whose backing file no longer exists.
+///
+/// PR #655 review (Round 2): the original design rendered missing entries
+/// as grey-out + click → toast. The user feedback simplified that to "if
+/// the file is gone, just drop it from the list" — so this prune runs on
+/// every read and on every add. The cost is O(RECENT_LIMIT) `exists()`
+/// syscalls per command which is negligible at the 10-item cap.
+fn prune_missing(entries: Vec<RecentEntry>) -> Vec<RecentEntry> {
+    entries
+        .into_iter()
+        .filter(|e| Path::new(&e.path).exists())
+        .collect()
+}
+
+#[tauri::command]
+async fn read_recent() -> Result<Vec<RecentEntry>, String> {
+    let path = recent_path()?;
+    let raw = read_recent_sync(&path);
+    let original_len = raw.len();
+    let pruned = prune_missing(raw);
+    // Persist the prune so the user's `recent.json` doesn't keep accreting
+    // dead entries — but only when something actually changed, to avoid
+    // pointless mtime bumps on idle reads.
+    if pruned.len() != original_len {
+        write_recent_atomic(&path, &pruned)?;
+    }
+    Ok(pruned)
+}
+
+#[tauri::command]
+async fn add_recent(path: String) -> Result<Vec<RecentEntry>, String> {
+    let video_path = PathBuf::from(&path);
+    if !video_path.exists() {
+        return Err(format!("file not found: {}", video_path.display()));
+    }
+    let meta = fs::metadata(&video_path)
+        .map_err(|e| format!("stat failed ({}): {}", video_path.display(), e))?;
+    let size_bytes = meta.len();
+    let mtime_ms = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    // PR #655 review (Round 2): strip the Windows `\\?\` extended-length
+    // prefix before persisting. Tauri dialogs/drag-drop hand it to us but
+    // the rest of the app (UI display, dedup, downstream consumers) wants
+    // the canonical form. Mirrors `stripExtendedPathPrefix` on the TS side.
+    let canonical_path = strip_extended_path_prefix(&path);
+    let file_name = video_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| canonical_path.clone());
+    let entry = RecentEntry {
+        path: canonical_path,
+        file_name,
+        size_bytes,
+        mtime_ms,
+        added_at_ms: now_ms(),
+    };
+    let recent_p = recent_path()?;
+    add_recent_with_prune(&recent_p, entry)
+}
+
+/// PR #655 Round 4 — wrapper around `add_recent_sync` that also prunes
+/// stale neighbors before returning.
+///
+/// Round 3 verification surfaced a bug: when the user dragged in a fresh
+/// video while the existing list already contained an entry whose file had
+/// been moved/deleted, the stale neighbor stuck around. `read_recent`
+/// pruned on every call but `add_recent` only called the un-pruned
+/// `add_recent_sync`, so the just-returned list was the only thing the
+/// frontend's `recentStore.add` saw — and it kept the stale entry.
+///
+/// Splitting the prune into a thin wrapper keeps the pure
+/// `add_recent_sync` testable with synthetic paths (the existing 8 tests
+/// use `make_recent_entry("E:\\videos\\a.mkv", …)` paths that don't exist
+/// on disk; pruning inside `add_recent_sync` would empty the list out
+/// from under them). The just-inserted entry is guaranteed to exist
+/// (`add_recent` checks at the top), so it survives the prune.
+fn add_recent_with_prune(
+    path: &Path,
+    entry: RecentEntry,
+) -> Result<Vec<RecentEntry>, String> {
+    let inserted = add_recent_sync(path, entry)?;
+    let initial_len = inserted.len();
+    let pruned = prune_missing(inserted);
+    if pruned.len() != initial_len {
+        write_recent_atomic(path, &pruned)?;
+    }
+    Ok(pruned)
+}
+
+#[tauri::command]
+async fn clear_recent() -> Result<(), String> {
+    clear_recent_sync(&recent_path()?)
+}
+
 /// #465 -- register a video file with the local HTTP server and return a
 /// playback URL for the GUI's `<video>` element.
 ///
@@ -584,16 +834,23 @@ fn compute_video_cache_hash(video_path: &Path, mtime_ms: u64) -> String {
     hex
 }
 
-/// #465 -- resolve `<home>/.allaganeye/cache/<video_hash>/thumbs/`.
+/// #465 -- resolve `<install dir>/cache/<video_hash>/thumbs/`.
 ///
 /// Returns the path without creating it; callers that intend to write thumbs
-/// are responsible for `create_dir_all`. On Windows the home directory comes
-/// from `USERPROFILE` via `dirs::home_dir`; on Unix it reads `HOME`.
+/// are responsible for `create_dir_all`.
+///
+/// PR #655 Round 2: relocated from `~/.allaganeye/cache/...` to the exe
+/// directory to match the Portable ZIP philosophy already adopted by
+/// `recent.json` (#571). Tool deletion = folder deletion = no leftover
+/// state in the user profile. Production = `<bundle install dir>/cache/...`,
+/// dev = `target/debug/cache/...` (gitignored).
 fn thumb_cache_dir(video_hash: &str) -> Result<PathBuf, String> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| "failed to resolve user home directory".to_string())?;
-    Ok(home
-        .join(".allaganeye")
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("failed to resolve current_exe: {}", e))?;
+    let dir = exe
+        .parent()
+        .ok_or_else(|| format!("current_exe has no parent: {}", exe.display()))?;
+    Ok(dir
         .join("cache")
         .join(video_hash)
         .join("thumbs"))
@@ -2129,6 +2386,9 @@ pub fn run() {
             }
         });
 
+    // #614: dev-only `dev_force_panic` is gated by `#[cfg(debug_assertions)]`.
+    // `tauri::generate_handler!` does not accept `#[cfg]` attributes on its
+    // arguments, so we build the handler list twice and pick at compile time.
     #[cfg(debug_assertions)]
     let builder = builder.invoke_handler(tauri::generate_handler![
         load_metadata,
@@ -2149,6 +2409,9 @@ pub fn run() {
         select_h264_encoder_for_export,
         open_folder_in_explorer,
         start_detect,
+        read_recent,
+        add_recent,
+        clear_recent,
         get_log_dir,
         dev_force_panic,
     ]);
@@ -2172,6 +2435,9 @@ pub fn run() {
         select_h264_encoder_for_export,
         open_folder_in_explorer,
         start_detect,
+        read_recent,
+        add_recent,
+        clear_recent,
         get_log_dir,
     ]);
 
@@ -2329,6 +2595,327 @@ mod tests {
         assert!(backup.exists());
         let parent = meta.parent().unwrap();
         assert!(parent.join("metadata.original.json").exists());
+    }
+
+    // #571 — recent.json history persistence.
+
+    fn make_recent_entry(path: &str, file_name: &str) -> RecentEntry {
+        RecentEntry {
+            path: path.to_string(),
+            file_name: file_name.to_string(),
+            size_bytes: 1024,
+            mtime_ms: 1_700_000_000_000,
+            added_at_ms: 1_700_000_000_000,
+        }
+    }
+
+    #[test]
+    fn read_recent_returns_empty_when_file_missing() {
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        let list = read_recent_sync(&recent);
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn read_recent_returns_empty_when_file_is_corrupt_json() {
+        // A garbled file should not block the drop screen — corrupt history is
+        // treated as "no history" so the user can still drop a new video.
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        fs::write(&recent, "this is not json {[").unwrap();
+        let list = read_recent_sync(&recent);
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn add_recent_creates_file_and_returns_single_entry() {
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        let entry = make_recent_entry("E:\\videos\\a.mkv", "a.mkv");
+        let list = add_recent_sync(&recent, entry.clone()).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0], entry);
+        // Persisted to disk.
+        let on_disk = read_recent_sync(&recent);
+        assert_eq!(on_disk, list);
+    }
+
+    #[test]
+    fn add_recent_dedups_same_path_case_insensitive() {
+        // Windows treats `E:\videos\a.mkv` and `e:\Videos\A.mkv` as the same
+        // file. The second add must collapse into one entry — and the new
+        // metadata (mtime / addedAt) must win because the user just touched
+        // the file.
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        add_recent_sync(&recent, make_recent_entry("E:\\videos\\a.mkv", "a.mkv")).unwrap();
+        let mut second = make_recent_entry("e:\\Videos\\A.mkv", "A.mkv");
+        second.added_at_ms = 1_800_000_000_000;
+        let list = add_recent_sync(&recent, second.clone()).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].added_at_ms, 1_800_000_000_000);
+        assert_eq!(list[0].path, "e:\\Videos\\A.mkv");
+    }
+
+    #[test]
+    fn add_recent_dedups_same_path_with_mixed_separators() {
+        // PR #655 review (Item 1): the Tauri dialog hands us `\` while D&D
+        // fixtures and the CLI handoff can produce `/`. Both forms refer to
+        // the same Windows file, so dedup must collapse them. Without
+        // separator normalization the second add silently produces a
+        // 2-entry list where `read_recent` returns the same recording twice.
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        add_recent_sync(&recent, make_recent_entry("E:\\videos\\a.mkv", "a.mkv")).unwrap();
+        let mut second = make_recent_entry("E:/Videos/A.mkv", "A.mkv");
+        second.added_at_ms = 1_800_000_000_000;
+        let list = add_recent_sync(&recent, second.clone()).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].added_at_ms, 1_800_000_000_000);
+        // The new entry's original separators are preserved on disk —
+        // only the key was normalized for comparison.
+        assert_eq!(list[0].path, "E:/Videos/A.mkv");
+    }
+
+    #[test]
+    fn normalize_path_key_collapses_case_and_separator() {
+        // Pinning the helper directly so a future refactor can't silently
+        // drop one of the two normalizations.
+        assert_eq!(
+            normalize_path_key("E:\\videos\\a.mkv"),
+            normalize_path_key("e:/Videos/A.mkv"),
+        );
+        assert_eq!(
+            normalize_path_key("C:/path/with/forward.mkv"),
+            "c:\\path\\with\\forward.mkv",
+        );
+    }
+
+    #[test]
+    fn add_recent_moves_existing_entry_to_top() {
+        // Re-adding an existing path must move it to position 0 even when
+        // there are intervening entries — the user just selected it again
+        // and expects to see it at the top of the list.
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        add_recent_sync(&recent, make_recent_entry("E:\\a.mkv", "a.mkv")).unwrap();
+        add_recent_sync(&recent, make_recent_entry("E:\\b.mkv", "b.mkv")).unwrap();
+        add_recent_sync(&recent, make_recent_entry("E:\\c.mkv", "c.mkv")).unwrap();
+        // Re-add `a.mkv` — it should jump from position 2 to position 0.
+        let list = add_recent_sync(&recent, make_recent_entry("E:\\a.mkv", "a.mkv")).unwrap();
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].path, "E:\\a.mkv");
+        assert_eq!(list[1].path, "E:\\c.mkv");
+        assert_eq!(list[2].path, "E:\\b.mkv");
+    }
+
+    #[test]
+    fn add_recent_truncates_to_limit() {
+        // Inserting RECENT_LIMIT+5 distinct paths must keep exactly RECENT_LIMIT
+        // entries with the most recent at position 0 and the oldest at the
+        // bottom — the eldest 5 fall off the end.
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        for i in 0..(RECENT_LIMIT as u32 + 5) {
+            let p = format!("E:\\video_{:02}.mkv", i);
+            let n = format!("video_{:02}.mkv", i);
+            add_recent_sync(&recent, make_recent_entry(&p, &n)).unwrap();
+        }
+        let list = read_recent_sync(&recent);
+        assert_eq!(list.len(), RECENT_LIMIT);
+        // Newest first.
+        assert_eq!(list[0].path, format!("E:\\video_{:02}.mkv", RECENT_LIMIT + 4));
+        // Oldest still kept (5 fell off the bottom).
+        assert_eq!(list[RECENT_LIMIT - 1].path, "E:\\video_05.mkv");
+    }
+
+    #[test]
+    fn add_recent_creates_parent_dir_when_missing() {
+        // Fresh install: ~/.allaganeye/ doesn't exist yet. add_recent must
+        // create it so the very first drop doesn't error out.
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join(".allaganeye").join("recent.json");
+        assert!(!recent.parent().unwrap().exists());
+        add_recent_sync(&recent, make_recent_entry("E:\\a.mkv", "a.mkv")).unwrap();
+        assert!(recent.exists());
+    }
+
+    #[test]
+    fn clear_recent_removes_existing_file() {
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        add_recent_sync(&recent, make_recent_entry("E:\\a.mkv", "a.mkv")).unwrap();
+        assert!(recent.exists());
+        clear_recent_sync(&recent).unwrap();
+        assert!(!recent.exists());
+    }
+
+    #[test]
+    fn clear_recent_succeeds_when_file_missing() {
+        // Idempotent — a fresh install has no recent.json, calling clear must
+        // not blow up.
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        assert!(!recent.exists());
+        clear_recent_sync(&recent).unwrap();
+    }
+
+    #[test]
+    fn add_recent_no_stray_tmp_file() {
+        // The atomic-rename helper must clean up the .tmp sidecar on success
+        // (mirrors the metadata.json invariant).
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        add_recent_sync(&recent, make_recent_entry("E:\\a.mkv", "a.mkv")).unwrap();
+        assert!(!tmp.path().join("recent.json.tmp").exists());
+    }
+
+    #[test]
+    fn prune_missing_drops_entries_whose_files_are_gone() {
+        // PR #655 Round 2: replaces the old `with_existence` flag-based
+        // approach. Entries whose backing file is gone must be removed
+        // from the returned list (they'll also be persisted out by
+        // `read_recent` on the next call).
+        let tmp = TempDir::new().unwrap();
+        let real_path = tmp.path().join("real.mkv");
+        fs::write(&real_path, b"x").unwrap();
+        let real_str = real_path.to_string_lossy().into_owned();
+        let entries = vec![
+            RecentEntry {
+                path: real_str.clone(),
+                file_name: "real.mkv".into(),
+                size_bytes: 1,
+                mtime_ms: 1,
+                added_at_ms: 1,
+            },
+            RecentEntry {
+                path: tmp.path().join("ghost.mkv").to_string_lossy().into_owned(),
+                file_name: "ghost.mkv".into(),
+                size_bytes: 1,
+                mtime_ms: 1,
+                added_at_ms: 1,
+            },
+        ];
+        let pruned = prune_missing(entries);
+        assert_eq!(pruned.len(), 1);
+        assert_eq!(pruned[0].file_name, "real.mkv");
+    }
+
+    #[test]
+    fn add_recent_with_prune_drops_stale_siblings_after_insert() {
+        // PR #655 Round 4 regression: dragging in a fresh video while the
+        // list already had an entry pointing at a moved/deleted file used
+        // to leave the stale entry visible (the pre-fix `add_recent`
+        // command went through the un-pruning `add_recent_sync` only).
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+
+        // Pre-populate with a "ghost" — its backing file does not exist.
+        let ghost_path = tmp
+            .path()
+            .join("ghost.mkv")
+            .to_string_lossy()
+            .into_owned();
+        add_recent_sync(
+            &recent,
+            make_recent_entry(&ghost_path, "ghost.mkv"),
+        )
+        .unwrap();
+        assert_eq!(read_recent_sync(&recent).len(), 1);
+
+        // Now add a real file via the prune-aware wrapper.
+        let real_path = tmp.path().join("real.mkv");
+        fs::write(&real_path, b"x").unwrap();
+        let real_str = real_path.to_string_lossy().into_owned();
+        let result = add_recent_with_prune(
+            &recent,
+            make_recent_entry(&real_str, "real.mkv"),
+        )
+        .unwrap();
+
+        // Ghost dropped, only the real entry remains, persisted and in-memory.
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].file_name, "real.mkv");
+        let on_disk = read_recent_sync(&recent);
+        assert_eq!(on_disk, result);
+    }
+
+    #[test]
+    fn add_recent_with_prune_preserves_just_inserted_entry() {
+        // Belt-and-suspenders: the just-inserted entry is exists-checked
+        // upstream by `add_recent`, but make sure `prune_missing` doesn't
+        // over-eagerly drop it when the wrapper runs.
+        let tmp = TempDir::new().unwrap();
+        let recent = tmp.path().join("recent.json");
+        let real_path = tmp.path().join("only.mkv");
+        fs::write(&real_path, b"x").unwrap();
+        let real_str = real_path.to_string_lossy().into_owned();
+        let result = add_recent_with_prune(
+            &recent,
+            make_recent_entry(&real_str, "only.mkv"),
+        )
+        .unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].file_name, "only.mkv");
+    }
+
+    #[test]
+    fn prune_missing_keeps_all_when_every_file_exists() {
+        let tmp = TempDir::new().unwrap();
+        let a = tmp.path().join("a.mkv");
+        let b = tmp.path().join("b.mkv");
+        fs::write(&a, b"x").unwrap();
+        fs::write(&b, b"x").unwrap();
+        let entries = vec![
+            RecentEntry {
+                path: a.to_string_lossy().into_owned(),
+                file_name: "a.mkv".into(),
+                size_bytes: 1,
+                mtime_ms: 1,
+                added_at_ms: 1,
+            },
+            RecentEntry {
+                path: b.to_string_lossy().into_owned(),
+                file_name: "b.mkv".into(),
+                size_bytes: 1,
+                mtime_ms: 1,
+                added_at_ms: 1,
+            },
+        ];
+        assert_eq!(prune_missing(entries).len(), 2);
+    }
+
+    // PR #655 Round 2: Windows `\\?\` extended-length prefix strip — the
+    // recent-list `add_recent` and (TS-side) export output-dir picker
+    // both saw the prefix leak through into displayed paths.
+
+    #[test]
+    fn strip_extended_path_prefix_strips_drive_form() {
+        assert_eq!(
+            strip_extended_path_prefix("\\\\?\\E:\\videos\\a.mkv"),
+            "E:\\videos\\a.mkv",
+        );
+    }
+
+    #[test]
+    fn strip_extended_path_prefix_strips_unc_form() {
+        assert_eq!(
+            strip_extended_path_prefix("\\\\?\\UNC\\server\\share\\a.mkv"),
+            "\\\\server\\share\\a.mkv",
+        );
+    }
+
+    #[test]
+    fn strip_extended_path_prefix_passes_through_when_absent() {
+        assert_eq!(
+            strip_extended_path_prefix("E:\\videos\\a.mkv"),
+            "E:\\videos\\a.mkv",
+        );
+        assert_eq!(
+            strip_extended_path_prefix("/home/user/a.mkv"),
+            "/home/user/a.mkv",
+        );
     }
 
     #[test]
@@ -2749,9 +3336,11 @@ mod tests {
         assert_ne!(h1, h2);
     }
 
-    /// #465 -- `thumb_cache_dir` must place the hash segment and the
-    /// literal `thumbs` leaf under `.allaganeye/cache/`. We check path
-    /// components to stay OS-separator-agnostic.
+    /// #465 / PR #655 Round 2 -- `thumb_cache_dir` must place the hash
+    /// segment and the literal `thumbs` leaf under `<install dir>/cache/`.
+    /// We check path components to stay OS-separator-agnostic. Relocated
+    /// from `~/.allaganeye/cache/...` to the exe directory in PR #655 Round
+    /// 2 (Portable ZIP philosophy).
     #[test]
     fn thumb_cache_dir_includes_hash_and_thumbs_suffix() {
         let hash = "deadbeef".repeat(8); // 64 chars like a real digest
@@ -2760,13 +3349,22 @@ mod tests {
             .components()
             .map(|c| c.as_os_str().to_string_lossy().to_string())
             .collect();
-        // Must end with ... / .allaganeye / cache / <hash> / thumbs
+        // Must end with ... / cache / <hash> / thumbs (no `.allaganeye`
+        // segment anymore — it lives next to the exe now).
         let n = components.len();
-        assert!(n >= 4, "path too short: {:?}", components);
+        assert!(n >= 3, "path too short: {:?}", components);
         assert_eq!(components[n - 1], "thumbs");
         assert_eq!(components[n - 2], hash);
         assert_eq!(components[n - 3], "cache");
-        assert_eq!(components[n - 4], ".allaganeye");
+        // Sanity: the dir must be sibling-of-exe, so its parent of
+        // `cache` should match the exe's parent.
+        let exe = std::env::current_exe().unwrap();
+        let exe_parent = exe.parent().unwrap();
+        let cache_parent = dir
+            .ancestors()
+            .nth(3) // dir / thumbs / hash / cache → exe parent
+            .expect("cache parent");
+        assert_eq!(cache_parent, exe_parent);
     }
 
     /// #465 -- timestamp grid is centred on the boundary, spans the full

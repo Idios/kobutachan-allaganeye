@@ -27,10 +27,14 @@ vi.mock('@tauri-apps/api/webview', () => ({
 import App from './App';
 import { useAppStateStore } from './state/appStateStore';
 import { useMetadataStore } from './state/metadataStore';
+import { useRecentStore } from './state/recentStore';
 
 beforeEach(() => {
   useAppStateStore.getState().reset();
   useMetadataStore.getState().clear();
+  // #571: drop screen hydrates the recent list on mount; reset between
+  // tests so state doesn't leak across the App routing suite.
+  useRecentStore.getState().reset();
 });
 
 describe('App routing', () => {

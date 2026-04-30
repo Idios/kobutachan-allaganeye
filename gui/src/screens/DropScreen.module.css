@@ -152,8 +152,22 @@
   color: var(--ae-gold);
 }
 
+/* PR #655 review (Round 2): full-path display with left-truncation. The
+ * box uses `direction: rtl` so `text-overflow: ellipsis` lands on the LEFT
+ * (= the parent-directory portion), keeping the file-name suffix visible.
+ * `unicode-bidi: plaintext` lets the LTR / Japanese characters in the path
+ * itself render in their natural left-to-right order — the rtl is only
+ * used to flip the truncation side. `min-width: 0` is required for the
+ * flex item's overflow to actually trigger inside the row layout. */
 .recentName {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: plaintext;
 }
 
 .recentSize {
@@ -164,6 +178,38 @@
 
 .recentDur {
   color: var(--ae-text-dim);
+}
+
+/*
+ * #571: recent-list interactivity. The persisted entries are rendered as
+ * <button> elements (one per row) so they're keyboard-accessible and pick
+ * up :focus-visible from the global a11y polish (#587). The button styling
+ * keeps the row layout from `.recentItem` while removing the default form
+ * affordances (background, border).
+ */
+.recentItemButton {
+  width: 100%;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.recentItemButton:hover:not(:disabled) {
+  background: rgba(var(--ae-gold-rgb), 0.06);
+}
+
+.recentItemButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.recentEmpty {
+  padding: 12px;
+  font-family: var(--ae-font-body);
+  font-size: 11px;
+  color: var(--ae-text-dim);
+  text-align: center;
 }
 
 .selectedCard {

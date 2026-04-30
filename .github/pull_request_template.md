@@ -35,6 +35,22 @@
 
 ### Iron Law 6: PR 作成前検証
 
+#### ベース同期確認 (Pre-flight、`feedback_pr_review_base_merge_regression.md` / `feedback_concurrent_worktree_pr_check.md` 昇格)
+
+<!--
+plain bullet `-` で記述する (validate-checklist は `[x]` 化を要求しない、CI ゲート増設なし)。
+PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成前 Pre-flight」参照):
+1. `git fetch origin <base>` で base 最新化
+2. `git log HEAD..origin/<base> --oneline` で取り込み未済 commit 列挙
+3. 取り込み未済 commit が当 PR の `git diff --name-only origin/<base>` と path 交差するなら取り込み + 検証再実行
+4. `gh pr list --search "<元issue#>" --state all` で並行 PR の有無確認
+-->
+
+- PR 作成時の base HEAD: `<sha>` (`git rev-parse origin/<base>` 出力)
+- PR head の base 取り込み: 取り込み不要 (base 進行なし) / merge 済み (commit `<sha>`) / rebase 済み
+- 直近マージ PR の影響: なし / [#N] (touched files 交差: `<path>` → 確認済み)
+- 並行 PR 確認 (`gh pr list --search "<元issue#>" --state all`): なし / [#N] (理由: 別スコープ並走 / 重複なし)
+
 #### Self-Test Report (machine-verified — 全件 `[x]` で validate-checklist 通過)
 
 <!--

@@ -102,9 +102,9 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `gui/` | L2a Tauri GUI (React 19 + TS + Vite + Zustand + zod)。`#483` で bootstrap、`#463` で data 層、`#464` で画面骨格 + CSS Modules、`#516` で `[元に戻す]` 機能、`#514` で排他管理 (mtime 検知 + ConflictModal)、`#587` で a11y polish (focus trap / Escape / DisabledTooltip / jest-axe)。詳細は [docs/gui-development.md](docs/gui-development.md) / [docs/design/README.md](docs/design/README.md) / [docs/ui-architecture.md](docs/ui-architecture.md) / [docs/ui-interaction-spec.md](docs/ui-interaction-spec.md) (#590, UI 部品ごとの操作 → 状態遷移 / store mutation / 例外処理) / [docs/a11y-policy.md](docs/a11y-policy.md) (#587, screen reader scope / キーボード全機能 / focus visible 等) |
 | `gui/src/screens/` | 5 画面 (drop / detecting / complete / preview / export) + phase reducer。#464 で追加 |
 | `gui/src/components/` | 共通 UI コンポーネント (AllaganCorner / AllaganSigil / WindowChrome / BrightnessTimeline / RestoreButton / ConflictModal 等)。#464 で追加 |
-| `gui/src/state/` | Zustand store (`appStateStore` = screen + selection / `metadataStore` = load/apply/restore/loadSample) |
+| `gui/src/state/` | Zustand store (`appStateStore` = screen + selection + detectionParams / `metadataStore` = load/apply/restore/loadSample / `recentStore` = `<install dir>/recent.json` 履歴 #571 + PR #655 Round 2 で exe ディレクトリ配置に変更) |
 | `gui/src/styles/tokens.css` | `aetherTheme` の CSS 変数定義 (#464 で追加) |
-| `gui/src-tauri/` | Tauri 2 Rust バックエンド (`load_metadata` / `apply_changes` / `restore_from_original` / `check_backup_exists` / `get_metadata_mtime` / `export_match` / `select_h264_encoder_for_export` (#591) command、axum/tower-http による動画配信は #465 で実装)。`H264Encoder` enum + `select_h264_encoder` + `is_gpu_encoder_failure` で GUI export の H.264 エンコーダ自動選択と libx264 fallback retry を実装 (#591) |
+| `gui/src-tauri/` | Tauri 2 Rust バックエンド (`load_metadata` / `apply_changes` / `restore_from_original` / `check_backup_exists` / `get_metadata_mtime` / `export_match` / `select_h264_encoder_for_export` (#591) / `read_recent` / `add_recent` / `clear_recent` (#571) command、axum/tower-http による動画配信は #465 で実装)。`H264Encoder` enum + `select_h264_encoder` + `is_gpu_encoder_failure` で GUI export の H.264 エンコーダ自動選択と libx264 fallback retry を実装 (#591) |
 
 ### 検知アルゴリズム（detector.py）
 
@@ -251,8 +251,9 @@ L2 からは**単一ワークツリー + skill ベースディスパッチ**を�
 
 ## PR 作成ルール
 
-詳細は `docs/l2-workflow.md` を参照。Iron Law 6 (`.claude/hooks/session-start.sh`) と `feedback_pr_pre_creation_checks.md` / `feedback_user_realmachine_test_request.md` も参照。要約:
+詳細は `docs/l2-workflow.md` を参照。Iron Law 6 (`.claude/hooks/session-start.sh`) と `feedback_pr_pre_creation_checks.md` / `feedback_user_realmachine_test_request.md` / `feedback_pr_review_base_merge_regression.md` / `feedback_concurrent_worktree_pr_check.md` も参照。要約:
 
+- **PR 作成 Pre-flight (Iron Law 6 サブ条、#659)**: `git fetch origin <base>` → `git log HEAD..origin/<base> --oneline` で取り込み未済 commit 列挙 → `git diff --name-only` で当 PR と取り込み未済 commit の touched files 交差判定 (交差ありなら `git merge origin/<base>` で取り込み + 自動チェック再実行) → `gh pr list --search "<元issue#>" --state all` で並行 worktree PR 重複確認。結果は PR テンプレ §「ベース同期確認」 に plain bullet で記録。詳細は [docs/l2-workflow.md](docs/l2-workflow.md) §「PR 作成 Pre-flight」
 - **PR 作成前 (Iron Law 6)**: 変更ファイル path から必要な自動チェックを判定して全 pass させる:
   - **python-core** (`allaganeye/**/*.py`, `tests/**/*.py`, `pyproject.toml`): `ruff check .` / `ruff format --check .` / `pyright` / `pytest`
   - **gui-frontend** (`gui/src/**`, `gui/package.json`, `gui/tsconfig.json` 等): `cd gui && npm run lint` / `npm run typecheck` / `npm test` / `npm run build`
