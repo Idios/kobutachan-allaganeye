@@ -2179,6 +2179,13 @@ async fn start_detect(
     if let Some(cwd) = &cmd_spec.cwd {
         cmd.current_dir(cwd);
     }
+    // #656 -- Windows の Python は default で `sys.stdout.encoding=cp932`
+    // になるため、日本語含む path を JSON-line stream に乗せて出力すると
+    // Rust 側 (UTF-8 前提の reader) で decode 失敗する。`PYTHONIOENCODING`
+    // を `utf-8:replace` に固定して CLI 側 stdout/stderr を UTF-8 強制し、
+    // encode 不能 byte は U+FFFD で置換する (PR #657 Python 側
+    // `errors="replace"` と対称)。
+    cmd.env("PYTHONIOENCODING", "utf-8:replace");
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -2207,16 +2214,27 @@ async fn start_detect(
 
     // Stderr drains in parallel into a bounded tail buffer so the OS
     // pipe doesn't fill up if the CLI is chatty under -v / verbose.
+    // #656 -- avoid `lines()` for the same UTF-8 強制 reason as stdout
+    // above. The tail is exposed only when the child exits non-zero, so
+    // line semantics are not load-bearing -- we just need the trailing
+    // bytes intact for the GUI error display.
     let stderr_handle = tokio::spawn(async move {
         let max_tail = 2048usize;
         let mut tail: Vec<u8> = Vec::with_capacity(4096);
-        let mut reader = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = reader.next_line().await {
-            tail.extend_from_slice(line.as_bytes());
-            tail.push(b'\n');
-            if tail.len() > max_tail * 2 {
-                let drop = tail.len() - max_tail;
-                tail.drain(0..drop);
+        let mut reader = BufReader::new(stderr);
+        let mut buf: Vec<u8> = Vec::with_capacity(1024);
+        loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    tail.extend_from_slice(&buf);
+                    if tail.len() > max_tail * 2 {
+                        let drop = tail.len() - max_tail;
+                        tail.drain(0..drop);
+                    }
+                }
+                Err(_) => break,
             }
         }
         tail
@@ -2224,11 +2242,26 @@ async fn start_detect(
 
     let mut metadata_path: Option<String> = None;
     let mut total_matches: u64 = 0;
-    let mut reader = BufReader::new(stdout).lines();
+    // #656 -- `AsyncBufReadExt::lines()` returns `String` and therefore
+    // imposes strict UTF-8 decoding on the Python child's stdout. On
+    // Windows the child's `sys.stdout.encoding` defaults to cp932 (or any
+    // ANSI code page), so a JSON-line stream containing 日本語 path bytes
+    // would kill the reader with `InvalidData`. We read raw bytes per
+    // newline and apply `String::from_utf8_lossy` so any stray non-UTF-8
+    // byte becomes U+FFFD instead of aborting the stream. `PYTHONIOENCODING
+    // = utf-8:replace` set above is the primary fix; this is the defensive layer.
+    let mut reader = BufReader::new(stdout);
+    let mut line_buf: Vec<u8> = Vec::with_capacity(1024);
 
     loop {
-        match reader.next_line().await {
-            Ok(Some(line)) => {
+        line_buf.clear();
+        match reader.read_until(b'\n', &mut line_buf).await {
+            Ok(0) => break,
+            Ok(_) => {
+                while matches!(line_buf.last(), Some(b'\n') | Some(b'\r')) {
+                    line_buf.pop();
+                }
+                let line = String::from_utf8_lossy(&line_buf);
                 if let Some(progress) = parse_detect_progress_line(&line) {
                     if progress.phase == "done" {
                         if let Some(ref p) = progress.metadata_path {
@@ -2241,7 +2274,6 @@ async fn start_detect(
                     let _ = app.emit("detect-progress", progress);
                 }
             }
-            Ok(None) => break,
             Err(e) => {
                 // stdout pipe hiccup -- still try to wait the child so
                 // we don't leak a zombie.  The error path below sets the
@@ -4428,5 +4460,45 @@ mod tests {
         assert!(!serialized.contains("metadata_path"));
         assert!(!serialized.contains("\"matches\""));
         assert!(!serialized.contains("\"message\""));
+    }
+
+    /// #656 review Round 1 摘出 #3 -- detect 経路 stdout reader
+    /// (`start_detect` 内 `read_until` + 改行 trim + `from_utf8_lossy`)
+    /// の core logic を bytes 入力で再現し、invalid UTF-8 byte は U+FFFD
+    /// に置換され、CRLF は両方 trim されることを確認する。production
+    /// code は inline (関数抽出未) のため同型ロジックを test 内で再構築。
+    #[tokio::test]
+    async fn stdout_decode_replaces_invalid_utf8_and_trims_crlf() {
+        // 0x83, 0x84 は単独で UTF-8 invalid (continuation byte 領域)。
+        // cp932 では multi-byte の前半 byte で日本語 path に頻出する。
+        let raw: &[u8] = &[
+            b'h', b'i', 0x83, 0x84, b'\n', b'b', b'y', b'e', b'\r', b'\n',
+        ];
+        let mut reader = BufReader::new(raw);
+        let mut buf: Vec<u8> = Vec::new();
+
+        // line 1: invalid byte は from_utf8_lossy で U+FFFD に置換
+        let n = reader.read_until(b'\n', &mut buf).await.unwrap();
+        assert!(n > 0);
+        while matches!(buf.last(), Some(b'\n') | Some(b'\r')) {
+            buf.pop();
+        }
+        let line = String::from_utf8_lossy(&buf);
+        assert_eq!(line, "hi\u{FFFD}\u{FFFD}");
+
+        // line 2: CRLF (\r\n) は while ループで両方 pop
+        buf.clear();
+        let n = reader.read_until(b'\n', &mut buf).await.unwrap();
+        assert!(n > 0);
+        while matches!(buf.last(), Some(b'\n') | Some(b'\r')) {
+            buf.pop();
+        }
+        let line = String::from_utf8_lossy(&buf);
+        assert_eq!(line, "bye");
+
+        // EOF: read_until returns Ok(0)
+        buf.clear();
+        let n = reader.read_until(b'\n', &mut buf).await.unwrap();
+        assert_eq!(n, 0);
     }
 }
