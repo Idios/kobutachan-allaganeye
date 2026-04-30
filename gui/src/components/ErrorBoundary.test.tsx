@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useErrorStore } from '../state/errorStore';
 import { ErrorBoundary } from './ErrorBoundary';
 
-function Thrower({ message }: { message: string }): JSX.Element {
+function Thrower({ message }: { message: string }): null {
   throw new Error(message);
 }
 

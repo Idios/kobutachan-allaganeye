@@ -85,10 +85,11 @@ describe('installGlobalErrorListener', () => {
   });
 
   it('panic event handler dispatches panic error', async () => {
-    let panicHandler: ((event: { payload: unknown }) => void) | null = null;
+    type PanicHandler = (event: { payload: unknown }) => void;
+    const captured: { panic?: PanicHandler } = {};
     listenMock.mockImplementation(
-      async (name: string, h: (event: { payload: unknown }) => void) => {
-        if (name === 'panic') panicHandler = h;
+      async (name: string, h: PanicHandler) => {
+        if (name === 'panic') captured.panic = h;
         return () => {};
       },
     );
@@ -96,8 +97,8 @@ describe('installGlobalErrorListener', () => {
     // Wait microtasks so listen() promise resolves
     await Promise.resolve();
     await Promise.resolve();
-    expect(panicHandler).not.toBeNull();
-    panicHandler?.({
+    expect(captured.panic).toBeDefined();
+    captured.panic!({
       payload: {
         message: 'rust boom',
         backtrace: 'frame 1\nframe 2',
@@ -114,18 +115,19 @@ describe('installGlobalErrorListener', () => {
   });
 
   it('previous-session-panic event handler shows recoverable warning', async () => {
-    let prevHandler: ((event: { payload: unknown }) => void) | null = null;
+    type PrevHandler = (event: { payload: unknown }) => void;
+    const captured: { prev?: PrevHandler } = {};
     listenMock.mockImplementation(
-      async (name: string, h: (event: { payload: unknown }) => void) => {
-        if (name === 'panic-from-previous-session') prevHandler = h;
+      async (name: string, h: PrevHandler) => {
+        if (name === 'panic-from-previous-session') captured.prev = h;
         return () => {};
       },
     );
     unlisten = installGlobalErrorListener();
     await Promise.resolve();
     await Promise.resolve();
-    expect(prevHandler).not.toBeNull();
-    prevHandler?.({ payload: 'PANIC_MARKER ts=... payload=oops' });
+    expect(captured.prev).toBeDefined();
+    captured.prev!({ payload: 'PANIC_MARKER ts=... payload=oops' });
     const state = useErrorStore.getState();
     expect(state.errorOpen).toBe(true);
     expect(state.errorCategory).toBe('previous-session-panic');
