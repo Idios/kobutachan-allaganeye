@@ -2249,7 +2249,7 @@ async fn start_detect(
     // would kill the reader with `InvalidData`. We read raw bytes per
     // newline and apply `String::from_utf8_lossy` so any stray non-UTF-8
     // byte becomes U+FFFD instead of aborting the stream. `PYTHONIOENCODING
-    // = utf-8` set above is the primary fix; this is the defensive layer.
+    // = utf-8:replace` set above is the primary fix; this is the defensive layer.
     let mut reader = BufReader::new(stdout);
     let mut line_buf: Vec<u8> = Vec::with_capacity(1024);
 
