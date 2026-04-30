@@ -149,6 +149,23 @@ jobs:
       - name: Cargo test (lib)
         run: cargo test --lib --manifest-path gui/src-tauri/Cargo.toml
 
+  doc-tauri-commands-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tauri-commands.md drift vs lib.rs
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIB_COUNT=$(grep -c "^#\[tauri::command\]" gui/src-tauri/src/lib.rs)
+          DOC_COUNT=$(grep -cE "^\| [0-9]+ \|" docs/tauri-commands.md)
+          if [ "$LIB_COUNT" -ne "$DOC_COUNT" ]; then
+            echo "::error::docs/tauri-commands.md drift: lib.rs has $LIB_COUNT #[tauri::command], doc table has $DOC_COUNT rows. Update docs/tauri-commands.md to match (issue #619)."
+            exit 1
+          fi
+          echo "OK: $LIB_COUNT tauri commands documented"
+
   installer-pester:
     runs-on: windows-latest
     steps:
