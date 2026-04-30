@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -14,6 +15,13 @@ if (import.meta.env.PROD) {
 // #614: install JS error / unhandledrejection / Tauri panic listeners
 // before React mounts so any error during initial render is captured.
 installGlobalErrorListener();
+
+// #614: expose `invoke` on window in DEV builds so the E2E verification
+// (DevTools Console: `await window.__aeInvoke('dev_force_panic')`) can drive
+// Tauri commands directly. Stripped in production (`import.meta.env.DEV`).
+if (import.meta.env.DEV) {
+  (window as unknown as { __aeInvoke?: typeof invoke }).__aeInvoke = invoke;
+}
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

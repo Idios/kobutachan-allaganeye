@@ -2066,12 +2066,19 @@ fn get_log_dir() -> Result<String, String> {
 }
 
 /// #614 -- Dev-only command that triggers a panic. Used by the frontend smoke
-/// test (DevTools console: `await __TAURI__.core.invoke('dev_force_panic')`)
-/// to verify the panic hook + ErrorModal end-to-end. Symbol is absent in
-/// release builds.
+/// test (DevTools console: `await window.__aeInvoke('dev_force_panic')`) to
+/// verify the panic hook + ErrorModal end-to-end. Symbol is absent in release
+/// builds.
+///
+/// Must be `async`: a sync `tauri::command` runs through an `extern "C"`
+/// boundary that does not allow unwinding, so a panic inside a sync command
+/// triggers a secondary "panic in a function that cannot unwind" abort that
+/// kills the process before the frontend can render the ErrorModal. async
+/// commands run on the tokio runtime which catches the panic at the task
+/// boundary, letting the WebView keep running.
 #[cfg(debug_assertions)]
 #[tauri::command]
-fn dev_force_panic() -> Result<(), String> {
+async fn dev_force_panic() -> Result<(), String> {
     panic!("dev_force_panic invoked from frontend");
 }
 
@@ -2080,10 +2087,15 @@ pub fn run() {
     // unclean shutdown from the previous session, BEFORE the Tauri builder
     // runs so panic_hook is the first hook installed.
     let _tracing_guard = logging::install_tracing_subscriber();
-    if let Err(e) = logging::rotate_old_logs(7) {
-        eprintln!("warning: failed to rotate old logs: {}", e);
+    match logging::rotate_old_logs(7) {
+        Ok(removed) => eprintln!("[startup] rotated {} stale log(s)", removed),
+        Err(e) => eprintln!("[startup] warning: failed to rotate old logs: {}", e),
     }
     let restart_panic_msg = logging::detect_panic_from_previous_session();
+    eprintln!(
+        "[startup] previous-session panic detected: {}",
+        restart_panic_msg.is_some()
+    );
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

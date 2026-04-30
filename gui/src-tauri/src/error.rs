@@ -16,6 +16,11 @@ pub struct AppError {
 }
 
 impl AppError {
+    /// Builder used by `#[allow(dead_code)]`-tagged constructors below — kept
+    /// for the upcoming AppError migration of legacy commands (派生 issue).
+    /// Until that migration lands, all accessors are unused in production
+    /// (only the test module references them), hence the allowance.
+    #[allow(dead_code)]
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),
@@ -39,6 +44,7 @@ impl AppError {
 
     /// Serialize to a JSON string suitable for Tauri command `Result<T, String>` Err values.
     /// Frontend should `try { JSON.parse(msg) } catch` to detect structured vs legacy raw strings.
+    #[allow(dead_code)]
     pub fn to_wire_string(&self) -> String {
         serde_json::to_string(self).unwrap_or_else(|_| self.message.clone())
     }
@@ -65,6 +71,8 @@ pub struct PanicPayload {
 pub fn install_panic_hook(app_handle: Option<tauri::AppHandle>) {
     let prev_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        eprintln!("[panic_hook] panic intercepted");
+
         let payload_str = if let Some(s) = info.payload().downcast_ref::<&str>() {
             (*s).to_string()
         } else if let Some(s) = info.payload().downcast_ref::<String>() {
@@ -84,7 +92,11 @@ pub fn install_panic_hook(app_handle: Option<tauri::AppHandle>) {
             timestamp, location, payload_str, backtrace_str
         );
 
-        let _ = logging::write_error_line("PANIC", &body);
+        eprintln!("[panic_hook] payload={} loc={}", payload_str, location);
+        match logging::write_error_line("PANIC", &body) {
+            Ok(()) => eprintln!("[panic_hook] log write OK"),
+            Err(e) => eprintln!("[panic_hook] log write failed: {}", e),
+        }
 
         if let Some(handle) = app_handle.as_ref() {
             let panic_payload = PanicPayload {
@@ -93,7 +105,10 @@ pub fn install_panic_hook(app_handle: Option<tauri::AppHandle>) {
                 timestamp: timestamp.clone(),
                 location: location.clone(),
             };
-            let _ = handle.emit("panic", panic_payload);
+            match handle.emit("panic", panic_payload) {
+                Ok(()) => eprintln!("[panic_hook] emit OK"),
+                Err(e) => eprintln!("[panic_hook] emit failed: {}", e),
+            }
         }
 
         prev_hook(info);

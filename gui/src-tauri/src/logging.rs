@@ -9,6 +9,7 @@ fn override_slot() -> &'static Mutex<Option<PathBuf>> {
     LOG_DIR_OVERRIDE.get_or_init(|| Mutex::new(None))
 }
 
+#[allow(dead_code)] // used by `error.rs::tests::panic_hook_writes_to_log_file` (cross-module test)
 pub fn set_log_dir_override(path: Option<PathBuf>) {
     *override_slot().lock().unwrap() = path;
 }
@@ -128,6 +129,13 @@ pub fn rotate_old_logs(retention_days: u64) -> std::io::Result<u32> {
     Ok(removed)
 }
 
+/// Window in which a recent PANIC_MARKER counts as "the previous session
+/// crashed". Set to 24 hours so the warning surfaces on the next user-driven
+/// startup regardless of how long they took to relaunch (manual rebuild,
+/// restart-after-coffee-break, etc.). The 7-day rotation removes the file
+/// itself eventually, so this can never resurface a panic from "weeks ago".
+const PANIC_DETECT_WINDOW_SECS: u64 = 24 * 60 * 60;
+
 pub fn detect_panic_from_previous_session() -> Option<String> {
     let dir = log_dir().ok()?;
     if !dir.exists() {
@@ -147,7 +155,7 @@ pub fn detect_panic_from_previous_session() -> Option<String> {
     let mtime = latest.metadata().ok()?.modified().ok()?;
     let now = std::time::SystemTime::now();
     let elapsed = now.duration_since(mtime).ok()?;
-    if elapsed.as_secs() > 60 {
+    if elapsed.as_secs() > PANIC_DETECT_WINDOW_SECS {
         return None;
     }
     let content = std::fs::read_to_string(latest.path()).ok()?;
@@ -277,8 +285,9 @@ mod tests {
             let date = current_ymd_compact();
             let path = dir.join(format!("error-{}.log", date));
             std::fs::write(&path, "[ts] [PANIC] PANIC_MARKER old crash\n").expect("write");
+            // 25 hours ago: outside the 24-hour PANIC_DETECT_WINDOW_SECS
             let old_mtime = std::time::SystemTime::now()
-                - std::time::Duration::from_secs(120);
+                - std::time::Duration::from_secs(25 * 60 * 60);
             let f = std::fs::File::options()
                 .write(true)
                 .open(&path)
