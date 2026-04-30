@@ -45,6 +45,7 @@ allaganeye 0.2.0 (ffmpeg 8.1, Python 3.12.10, Windows 11)
 
 - **エラー発生時**: `-v` / `--verbose` を付けて再実行し、traceback を含む詳細出力を取得
 - **検知 (暗転判定) 関連のバグ**: `allaganeye debug-brightness <video> > brightness.csv` で輝度 CSV を取得し、圧縮して添付 (動画本体よりサイズが小さく、個人情報も含まれない)
+- **GUI クラッシュ・エラー時** (#614): アプリのインストール先 (`allaganeye-gui.exe` があるフォルダ) の `logs/error-YYYYMMDD.log` に Rust panic や想定外エラーが追記されます。ErrorModal の `[ログフォルダを開く]` ボタンからも辿れます。7 日経過したログは起動時に自動削除されます (個人情報を残さないため)。issue にはログ末尾の関連箇所のみ抜粋して貼り付けるか、ログファイル全体を圧縮して添付してください。
 
 ## §2 動画添付時の注意
 

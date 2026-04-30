@@ -95,6 +95,8 @@
 
 **アンチパターン**: `console.error` のみで UI に出さない / `alert()` で flow を強制停止する / エラー内容を握りつぶして success 扱いにする。
 
+**ErrorModal との分離 (#614)**: `ErrorModal` は **想定外エラー (Rust panic / unhandled JS exception / React 内部例外) 専用** で、`isRecoverable=false` がデフォルト。recoverable error (`load_metadata` の I/O 失敗、`apply_changes` のネットワーク失敗等) は **本節で規定する inline + toast** に流す。両者は排他で、同一画面内に重複しない。詳細は [`ui-architecture.md` §4 エラー伝搬フロー](ui-architecture.md#4-エラー伝搬フロー-614) を参照。
+
 ## 2. 画面別 UI 部品状態機械
 
 §2 は 5 画面それぞれを **1 画面 = 1 PR** で順次追加する (#590 着手フローに従う)。

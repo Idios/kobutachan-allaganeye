@@ -56,6 +56,16 @@ body:
     validations:
       required: false
 
+  - type: textarea
+    id: log_file_attachment
+    attributes:
+      label: ログファイル (GUI クラッシュ時のみ)
+      description: |
+        GUI でクラッシュ・ErrorModal が出た場合、アプリのインストール先 (`allaganeye-gui.exe` があるフォルダ) の `logs/error-YYYYMMDD.log` の関連箇所を貼り付けるか、ファイルを添付してください。ErrorModal の `[ログフォルダを開く]` ボタンからも辿れます。
+      render: text
+    validations:
+      required: false
+
   - type: checkboxes
     id: consent
     attributes:
