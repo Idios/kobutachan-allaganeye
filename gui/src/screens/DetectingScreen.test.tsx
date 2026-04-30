@@ -663,6 +663,87 @@ describe('DetectingScreen', () => {
     ).toContain('No match boundaries detected.');
   });
 
+  // #664 -- Refining bar に scorebar 分類進捗を統合する。refine 完了
+  // (progress=88) では bar 100% に達せず ~67% で止まり、scorebar が
+  // 完了 (progress=97) して初めて bar 100% になる。pct1/pct2 の終端は
+  // PHASE_WINDOWS から導出する形に変更したため、PHASE_WINDOWS の重みを
+  // 後で再調整しても bar の式は追従する。
+  it('Refining bar reaches ~67% at refine completion (#664)', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(listenMock).toHaveBeenCalled();
+    });
+    act(() => {
+      // refine 完了 = progress 88 (PHASE_WINDOWS.refine[1])。
+      // pct2 = (88 - 70) / (97 - 70) * 100 ≈ 66.67% → round = 67%
+      emitDetectProgress({ phase: 'refine', completed: 4, total: 4 });
+    });
+    const refiningRow = screen.getByTestId('phase-row-refining');
+    expect(refiningRow.textContent).toContain('67%');
+    expect(refiningRow.textContent).not.toContain('100%');
+  });
+
+  it('Refining bar reaches 100% at scorebar completion (#664)', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(listenMock).toHaveBeenCalled();
+    });
+    act(() => {
+      // scorebar 完了 = progress 97 (PHASE_WINDOWS.scorebar[1])。
+      // pct2 = (97 - 70) / (97 - 70) * 100 = 100%
+      emitDetectProgress({ phase: 'scorebar', completed: 35, total: 35 });
+    });
+    const refiningRow = screen.getByTestId('phase-row-refining');
+    expect(refiningRow.textContent).toContain('100%');
+  });
+
+  it('Refining sub label switches refine -> 分類 across phases (#664)', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(listenMock).toHaveBeenCalled();
+    });
+
+    // refine phase 中: sub = "refine"
+    act(() => {
+      emitDetectProgress({ phase: 'refine', completed: 1, total: 4 });
+    });
+    let refiningRow = screen.getByTestId('phase-row-refining');
+    expect(refiningRow.textContent).toContain('refine');
+    expect(refiningRow.textContent).not.toContain('分類');
+
+    // scorebar phase に遷移すると sub が "分類" に切替
+    act(() => {
+      emitDetectProgress({ phase: 'scorebar', completed: 1, total: 35 });
+    });
+    refiningRow = screen.getByTestId('phase-row-refining');
+    expect(refiningRow.textContent).toContain('分類');
+    expect(refiningRow.textContent).not.toContain('refine');
+  });
+
   it('falls back to loadSample when no video is selected (StateSwitcher dev mode)', async () => {
     // Reset to a clean state without selectedVideoPath -- mimics the
     // StateSwitcher hopping straight into "detecting" without going
