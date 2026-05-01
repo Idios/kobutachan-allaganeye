@@ -71,3 +71,43 @@
 4. **URL 組立**: `RegisteredVideo { url: format!("http://127.0.0.1:{}/video/{}", port, token), token: token.to_string() }` を返却。frontend はこの `url` を `<video>` 要素の `src` に設定するだけで、HTTP Range seekable な再生が成立する。
 
 サーバ shutdown は明示的には行わない: `tokio::spawn` した background task はプロセス終了時に WebView2 / Tauri runtime と同時に解放される。tokens map もプロセス内 in-memory のみで永続化されない (再起動でリセット)。
+
+## §3 Token フォーマット + lifecycle
+
+### Token 形式
+
+- 型: `Uuid` (v4)
+- 発行ルール: `register_video_sync` 呼び出しごとに `Uuid::new_v4()` で生成 (`gui/src-tauri/src/lib.rs:805-809`)
+- 同一 path で複数回 `register_video` を呼んだ場合、毎回 distinct token が発行される。これは既存テスト `register_video_same_file_twice_yields_distinct_tokens` (`gui/src-tauri/src/lib.rs:3577-3590`) で保証される
+
+### lifecycle
+
+- 失効ルール: **GUI セッション中は保持、明示失効 API 無し** (現状実装)
+- 不備として認識: `register_video_sync` で insert した token は明示的な remove 経路が無く、process 終了まで `VIDEO_SERVER` の `tokens: HashMap<Uuid, PathBuf>` (`gui/src-tauri/src/lib.rs:35` + `:44`) に残る。長時間実行時の memory 増加リスクあり (Task 8 で軽微 / 重大を判定)
+- frontend → backend 受け渡し: `register_video` (`gui/src-tauri/src/lib.rs:573-576`) の戻り値 `RegisteredVideo` struct (`url: String`, `token: String`、`gui/src-tauri/src/lib.rs:67-70`) を frontend が受け、`<video src={url}>` に組み立てる (`url` は `format!("http://127.0.0.1:{}/video/{}", port, token)` で生成)
+
+### tokens HashMap 構造
+
+- `tokens: HashMap<Uuid, PathBuf>` で token → 解決 path をマップ
+- 型エイリアス: `type TokenMap = Arc<Mutex<HashMap<Uuid, PathBuf>>>` (`gui/src-tauri/src/lib.rs:35`、`tokio::sync::Mutex`)
+- lookup は `serve_video` route handler 内で実施 (`gui/src-tauri/src/lib.rs:852-879`)
+- axum handler state と Tauri command の双方が `Arc::clone` で同じ map を共有
+
+## §4 Range request 仕様
+
+### 準拠
+
+- RFC 7233 Range Requests に準拠
+- 実装: axum 既定ではなく **`tower_http::services::ServeFile` に委譲** (`use tower_http::services::ServeFile;` `gui/src-tauri/src/lib.rs:22`)
+
+### chunk size / partial content
+
+- HTML5 `<video>` 要素の seek パターン: 任意 byte range を要求
+- `ServeFile` が `Range` / `Content-Type` sniffing / `If-Range` を native ハンドル (`serve_video` 内コメント `// ServeFile handles Range, Content-Type sniffing, and If-Range. Forward the original request so the Range header survives.` `gui/src-tauri/src/lib.rs:869-870`)
+- 実装は `let mut svc = ServeFile::new(p); match svc.try_call(request).await { Ok(resp) => resp.into_response(), Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "serve failed").into_response(), }` (`gui/src-tauri/src/lib.rs:871-875`) で original request をそのまま forward し、`Range` header を ServeFile に届ける
+- chunk size の上限制限は無し (memory 圧迫リスクは preview 用途では実害ない領域)
+
+### EOF 扱い / status code
+
+- HTTP 206 (partial content) / 416 (Range Not Satisfiable) は `ServeFile` 内部で生成
+- 範囲が file 終端を超える場合の応答 (HTTP 416 / file 末尾までの partial content) は `ServeFile` 既定挙動に従う
