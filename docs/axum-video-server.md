@@ -83,7 +83,7 @@
 ### lifecycle
 
 - 失効ルール: **GUI セッション中は保持、明示失効 API 無し** (現状実装)
-- 不備として認識: `register_video_sync` で insert した token は明示的な remove 経路が無く、process 終了まで `VIDEO_SERVER` の `tokens: HashMap<Uuid, PathBuf>` (`gui/src-tauri/src/lib.rs:35` + `:44`) に残る。triage 課題 (failure to invalidate API; long-running session で memory growth、別 issue で改善検討)
+- 不備として認識: `register_video_sync` で insert した token は明示的な remove 経路が無く、process 終了まで `VIDEO_SERVER` の `tokens: HashMap<Uuid, PathBuf>` (`gui/src-tauri/src/lib.rs:35` + `:44`) に残る。triage 課題 (failure to invalidate API; long-running session で memory growth、[#670](https://github.com/Idios/kobutachan-allaganeye/issues/670) で改善検討)
 - frontend → backend 受け渡し: `register_video` (`gui/src-tauri/src/lib.rs:573-576`) の戻り値 `RegisteredVideo` struct (`url: String`, `token: String`、`gui/src-tauri/src/lib.rs:67-70`) を frontend が受け、`<video src={url}>` に組み立てる (`url` は `format!("http://127.0.0.1:{}/video/{}", port, token)` で生成)
 
 ### tokens HashMap 構造
@@ -196,7 +196,7 @@
 - 現状実装: tauri ウィンドウ close → process 終了 → spawn された tokio task は OS による強制終了
 - 明示的な shutdown signal 経路 (`tauri::Manager` の `RunEvent::Exit` 等) は **無し** (現状実装の制約。`gui/src-tauri/src/` 配下に `RunEvent::Exit` 使用箇所なし)
 - HTTP `<video>` stream 中の TCP connection は process 終了で OS が回収する。token map (in-memory `HashMap<Uuid, PathBuf>`) も同時に解放される
-- 改善余地: `RunEvent::Exit` で server に shutdown signal を送る経路の整備 (別 issue で改善検討)
+- 改善余地: `RunEvent::Exit` で server に shutdown signal を送る経路の整備 ([#670](https://github.com/Idios/kobutachan-allaganeye/issues/670) で改善検討)
 
 ### 単一インスタンス前提
 
@@ -208,7 +208,7 @@
 
 ### 想定 scenario
 
-- preview 画面で 2:50:28 録画 (h264 1080p / ~30 Mbps) を loopback 経由で seek + frame 送信
+- preview 画面で 2:50:28 録画 (h264 1080p / 60fps / ~30 Mbps) を loopback 経由で seek + frame 送信
 - 同時 2 stream の seek を想定 (preview 微細タイムライン [#645](https://github.com/Idios/kobutachan-allaganeye/issues/645) で導入予定)
 
 ### 見積もり値
@@ -223,7 +223,7 @@
 ### 注記
 
 - 上記は **推測値** (実機計測未実施)。`v0.3.0` で再計測予定
-- 計測手段: Windows リソースモニタ + `<video>` element の `currentTime` 移動回数 / 秒
+- 計測手段: Windows リソースモニタ (peak / sustained loopback bandwidth Mbps) + `<video>` element の `currentTime` 移動回数 / 秒 (seek throughput) を 30 秒 sliding window で計測
 - 「TBD」「後日計測」だけの placeholder は禁止 (本 spec の方針)
 
 ## §9 References
