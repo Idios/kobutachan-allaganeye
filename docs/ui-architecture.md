@@ -184,6 +184,8 @@ stateDiagram-v2
     preview_idle --> [*]: [書き出し] (dirty なら confirm)
 ```
 
+> 動画配信の axum HTTP server 仕様: [docs/axum-video-server.md](./axum-video-server.md)
+
 Phase 2 実装:
 
 - local state (`startT`, `endT`, `matchName`, `matchType`) は component マウント時に store から初期化
