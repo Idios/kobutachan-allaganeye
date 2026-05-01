@@ -13,14 +13,14 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
 ### 位置付け
 
 - `docs/release-process.md §94 v0.2.0 (L2: GUI サポート + ゼロ環境構築配布) 固有項目` のチェックリストから本 doc が必須参照される
-- 既存 §97 Portable ZIP smoke test を本 doc §3 T1 に置換 (集約)
+- 既存 §97 Portable ZIP smoke test を T1 (§3 で定義) に置換 (集約)
 - 自動化は v0.2.0 範囲外、別 issue で deferred
 
 ### 成功条件
 
 - T1 (基本フロー): 全 step expected 通過
 - T2 (エラーリカバリ): 全 step expected 通過
-- パフォーマンス目安: 検知 ≤ 10 min / export ≤ 3 min / GUI seek p95 ≤ 200 ms
+- パフォーマンス目安 (§5 で定義) を満たす
 - screenshot + evidence log が `logs/qa/v0.2.0/` 配下に保存
 
 ## §2 前提環境
@@ -36,7 +36,7 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
 ### 環境 variable
 
 - `ALLAGANEYE_SAMPLE_VIDEO_DIR`: ローカル録画ディレクトリの絶対 path
-- 起動時に未設定なら T1 step 3 を skip し、Idios 環境でのみ実施
+- 起動時に未設定なら動画 drop step (§3 T1.3 で定義) を skip し、Idios 環境でのみ実施
 
 ### 出力先
 
