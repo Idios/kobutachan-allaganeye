@@ -166,3 +166,75 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
 **Evidence:**
 
 - log: `ffprobe` 結果 + 差分計算結果 → `logs/qa/v0.2.0/T1-step6-duration-check.log`
+
+## §4 T2: エラーリカバリ
+
+> **障害注入手段**: 本 spec で **(a) export 中に Tauri × ボタンで process kill** を採用 (再現性高、`#523` と動作定義が連動)。別 (b) read-only path / (c) input 削除 は OS 依存で除外 (spec §4.3)
+>
+> **前提**: `#523` (ffmpeg 中断と graceful kill) の実装が前提。**`#523` 完了前は T2 を skip 可、ただし checklist 本体には記述しておく** (将来の T2 enable 時にすぐ実施可能)
+
+### T2.1 障害注入: export 中に Tauri × ボタンで process kill
+
+**操作:**
+
+1. T1.5 と同じ手順で export を開始 (9 試合の書き出し)
+2. **5 試合目以降の出力中** で Tauri ウィンドウの × ボタンをクリック
+3. confirm dialog (`#523` 実装) で `[OK]` を選択
+4. アプリが graceful kill → 終了
+
+**Expected:**
+
+- confirm dialog が表示される
+- `[OK]` で子 ffmpeg process が graceful kill (SIGTERM 相当)
+- アプリがクラッシュなく終了 (Rust panic / JS error なし)
+
+**Evidence:**
+
+- screenshot: `logs/qa/v0.2.0/T2-step1-confirm-dialog.png`, `T2-step1-cancelled.png`
+- log: `logs/error-YYYYMMDD.log` を copy → `logs/qa/v0.2.0/T2-step1-error.log` (panic / 例外なし確認)
+
+### T2.2 完成 MP4 の保護
+
+**操作:**
+
+1. `output/` ディレクトリを開く
+2. 既に書き出し完了済の MP4 (kill 直前まで完成していた試合) を確認
+
+**Expected:**
+
+- 完成済 MP4 (4-5 試合分相当) は破損なく残る
+- kill 時に出力中だった 1 試合分の MP4 は incomplete または 0 byte の可能性あり (許容)
+- 未着手の試合は `output/` に MP4 ファイルが存在しない
+
+**Evidence:**
+
+- log: `output/*.mp4` 一覧 + 各 MP4 の duration (`ffprobe`) → `logs/qa/v0.2.0/T2-step2-output-state.log`
+
+### T2.3 失敗試合のエラー表示 UI 検証
+
+**操作:**
+
+1. アプリを再起動 (`allaganeye-gui.exe` 再実行)
+2. 前回 metadata.json が自動 restore (#574 で実装予定、未実装なら手動で再 drop)
+3. ExportScreen を確認
+
+**Expected:**
+
+- 前回 export の状態が CompleteScreen / ExportScreen に反映される (`#574` 実装後)
+- 失敗 / 未完了試合に notice / fallback マーカーが表示される (#591 fallback notice + 本 spec の error UI 拡張)
+- ユーザーが失敗試合のみ再 export 可能
+
+**Evidence:**
+
+- screenshot: `logs/qa/v0.2.0/T2-step3-restored.png`, `T2-step3-error-ui.png`
+- log: `logs/error-YYYYMMDD.log` の最新 + 再起動後の起動 log → `logs/qa/v0.2.0/T2-step3-restart.log`
+
+### T2 skip 条件
+
+- `#523` 未マージ時は T2 全 step を skip し、checklist には「`#523` マージ後に実施」と注記
+- `#574` 未マージ時は T2.3 expected の「自動 restore」を「手動 drop で代替」と注記
+
+### T2 障害注入 (b) (c) を採用しない理由 (spec §4.3 抜粋)
+
+- (b) read-only path: OS / FS 依存 (NTFS read-only attribute, Windows ACL) で再現性低
+- (c) input 削除中: Windows FS lock により export 中の削除が拒否される可能性、再現困難
