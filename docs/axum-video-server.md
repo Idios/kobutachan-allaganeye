@@ -49,7 +49,7 @@
 | --- | --- | --- |
 | `VideoServer` struct | port (`Option<u16>`) と `TokenMap` を保持する process-global state | `OnceLock<Mutex<VideoServer>>` (`tokio::sync::Mutex` で多 Tauri command 間 await 可能) |
 | `VIDEO_SERVER` static | `OnceLock<Mutex<VideoServer>>` 一度だけ初期化される singleton | プロセス全体で 1 instance |
-| `TokenMap` | `Arc<Mutex<HashMap<Uuid, PathBuf>>>` (`tokio::sync::Mutex`)。axum handler state と Tauri command の双方が共有 | `Arc::clone` で複製、内部 lock は短命 |
+| `TokenMap` 型エイリアス | `Arc<Mutex<HashMap<Uuid, PathBuf>>>` (`tokio::sync::Mutex`)。axum handler state と Tauri command の双方が共有 | `Arc::clone` で複製、内部 lock は短命 |
 | `register_video` Tauri command | frontend からの登録要求を受け、`validate_video_path` → port 確保 → token 発行 → URL 返却 | Tauri runtime の async runtime |
 | `register_video_sync` helper | `Uuid::new_v4()` 発行 + `tokens` insert のみを行う pure 関数。axum を起動せず単体テスト可能 | テスト時はメイン thread |
 | `ensure_server_started` | port 未確保なら `127.0.0.1:0` で `TcpListener` を bind し `tokio::spawn` で axum を背景実行。確保済みならそのまま port を返す idempotent | 初回呼び出しで `tokio::spawn` 1 回、以降 no-op |
@@ -89,7 +89,7 @@
 ### tokens HashMap 構造
 
 - `tokens: HashMap<Uuid, PathBuf>` で token → 解決 path をマップ
-- 型エイリアス: `type TokenMap = Arc<Mutex<HashMap<Uuid, PathBuf>>>` (`gui/src-tauri/src/lib.rs:35`、`tokio::sync::Mutex`)
+- `TokenMap` 型エイリアス: `Arc<Mutex<HashMap<Uuid, PathBuf>>>` (`gui/src-tauri/src/lib.rs:35`、`tokio::sync::Mutex`)
 - lookup は `serve_video` route handler 内で実施 (`gui/src-tauri/src/lib.rs:852-879`)
 - axum handler state と Tauri command の双方が `Arc::clone` で同じ map を共有
 
@@ -114,7 +114,7 @@
   }
   ```
 
-- chunk size の上限制限は無し (memory 圧迫リスクは preview 用途では実害ない領域: single 試合 preview ≤ ~30 min、~4K まで実害ない領域)
+- chunk size の上限制限は無し (preview 用途 — single 試合 preview ≤ ~30 min、~4K まで — では memory 圧迫リスクは実害ない領域)
 
 ### EOF 扱い / status code
 
@@ -230,13 +230,13 @@
 
 ### Cross-references
 
-- [`docs/system-architecture.md` §2.4 GUI 内の video 配信](./system-architecture.md) — 配布物視点での位置付け
-- [`docs/ui-architecture.md` §5 preview](./ui-architecture.md) — preview 画面 UI 状態機械
+- [`docs/system-architecture.md` §2.4 GUI 内の video 配信](./system-architecture.md#24-gui-内の-video-配信-subprocess-ではない) — 配布物視点での位置付け
+- [`docs/ui-architecture.md` §5 preview](./ui-architecture.md#5-各画面の-phase-state) — preview 画面 UI 状態機械
 
 ### 関連 PR
 
 - [#540](https://github.com/Idios/kobutachan-allaganeye/pull/540) — 実装本体 (landed)
-- [#623](https://github.com/Idios/kobutachan-allaganeye/pull/623) — Phase 2.5 detecting/complete 本物化 (preview 遷移経路)
+- [#623](https://github.com/Idios/kobutachan-allaganeye/pull/623) — Phase 2.5 detecting/complete 本物化 (preview screen 到達経路の前段)
 
 ### 関連 issue
 
