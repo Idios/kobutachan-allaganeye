@@ -173,3 +173,55 @@
 - `127.0.0.1` bind により外部 NIC からは到達不能 (LAN 上の他端末や WAN からのアクセス経路無し)
 - 同一マシン内の他 user / 他プロセスからは loopback 経由でアクセス可能だが、token を知らなければ実害なし: Uuid v4 の 122-bit entropy + GUI セッション内保持 + 外部送信経路無しにより、別プロセスが有効な token を入手する経路は存在しない
 - 補足: Windows 上では loopback 通信に対する firewall 制約が緩いが、token 不知では `serve_video` が 404 を返すのみで file system 走査経路は無い (前述の §5 path allowlist 機構による)
+
+## §7 Async lifecycle
+
+### 背景 task の起動
+
+- `axum::serve(listener, app)` は `tokio::spawn` で背景 task として実行される (`gui/src-tauri/src/lib.rs:833-837`):
+
+  ```rust
+  tokio::spawn(async move {
+      if let Err(e) = axum::serve(listener, app).await {
+          eprintln!("video server error: {}", e);
+      }
+  });
+  ```
+
+- 起動失敗時は `eprintln!` で stderr に記録のみ (Tauri 側 ErrorModal には伝搬しない、現状実装の制約)
+- Tauri main runtime と同じ tokio runtime を共有するため、別 runtime の bootstrap は不要
+
+### GUI 終了時の graceful shutdown
+
+- 現状実装: tauri ウィンドウ close → process 終了 → spawn された tokio task は OS による強制終了
+- 明示的な shutdown signal 経路 (`tauri::Manager` の `RunEvent::Exit` 等) は **無し** (現状実装の制約。`gui/src-tauri/src/` 配下に `RunEvent::Exit` 使用箇所なし)
+- HTTP `<video>` stream 中の TCP connection は process 終了で OS が回収する。token map (in-memory `HashMap<Uuid, PathBuf>`) も同時に解放される
+- 改善余地: `RunEvent::Exit` で server に shutdown signal を送る経路の整備 (別 issue で改善検討)
+
+### 単一インスタンス前提
+
+- `VIDEO_SERVER: OnceLock<Mutex<VideoServer>>` (`gui/src-tauri/src/lib.rs:56`) により process 内で 1 つだけ
+- `video_server() -> &'static Mutex<VideoServer>` accessor (`gui/src-tauri/src/lib.rs:58-60`) が `OnceLock::get_or_init(|| Mutex::new(VideoServer::new()))` で初期化を冪等化
+- 複数 `register_video` 呼び出しは同一 server に token を追加するのみで、新たな bind / spawn は発生しない (`ensure_server_started` の idempotent 性、§2 起動シーケンス手順 2 参照)
+
+## §8 想定負荷見積
+
+### 想定 scenario
+
+- preview 画面で 2:50:28 録画 (h264 1080p / ~30 Mbps) を loopback 経由で seek + frame 送信
+- 同時 2 stream の seek を想定 (preview 微細タイムライン [#645](https://github.com/Idios/kobutachan-allaganeye/issues/645) で導入予定)
+
+### 見積もり値
+
+| 項目 | 想定値 | 計測有無 |
+| --- | --- | --- |
+| 1 stream bandwidth (peak) | ~30 Mbps | 推測値 (h264 1080p 60fps の典型 bitrate) |
+| 同時 2 stream bandwidth | ~60 Mbps | 推測値 |
+| loopback 帯域 | ~10 Gbps (Windows 標準) | OS 仕様 |
+| 余裕度 | 約 170 倍 | 実用上 bottleneck にならない |
+
+### 注記
+
+- 上記は **推測値** (実機計測未実施)。`v0.3.0` で再計測予定
+- 計測手段: Windows リソースモニタ + `<video>` element の `currentTime` 移動回数 / 秒
+- 「TBD」「後日計測」だけの placeholder は禁止 (本 spec の方針)
