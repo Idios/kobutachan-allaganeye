@@ -316,7 +316,7 @@ PR 本文・コミットメッセージに `Closes` / `Fixes` / `Resolves` キ�
 
 > originally from `feedback_doc_section_ref_check.md`, absorbed 2026-05-01
 
-doc の節構造を変える PR、**または `git merge` で他 skill / doc を取り込む PR** では、参照側 (`.claude/skills/`, `docs/`) から `§「<旧セクション名>」` を grep して残骸ゼロを確認し、加えて新 doc に対応する `## ` / `### ` 見出しが存在することまで verify する。
+doc の節構造を変える PR、**または `git merge` で他 skill / doc を取り込む PR** では、参照側 (`.claude/skills/`, `docs/`) から `§「<旧セクション名>」` を grep して残骸ゼロを確認し、加えて新 doc に対応する `##` / `###` 見出しが存在することまで verify する。
 
 ### Why
 
@@ -329,7 +329,7 @@ doc の節構造を変える PR、**または `git merge` で他 skill / doc を
 doc の節構造を変える PR、または merge 取り込み PR では以下を実行:
 
 1. `git grep -oE '§「[^」]+」' .claude/ docs/ | sort -u` で全 section reference を抽出
-2. 各 reference が target doc の `## ` または `### ` 見出しと文字列一致するか確認 (`grep -nE "^### ?<セクション名>" docs/<target>.md` 等)
+2. 各 reference が target doc の `##` または `###` 見出しと文字列一致するか確認 (`grep -nE "^### ?<セクション名>" docs/<target>.md` 等)
 3. 旧セクション名が確実に消えたら `git grep -n "<旧セクション名>"` で残骸ゼロを確認
 
 「相互参照は破綻していない」と PR Test plan に書く前に、上記 3 ステップを実施する。ファイル名 mention の grep だけでは不十分 (l2-workflow.md という mention は残るが、参照している節が統合・廃止されていることを検出できない)。
