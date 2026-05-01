@@ -225,3 +225,29 @@
 - 上記は **推測値** (実機計測未実施)。`v0.3.0` で再計測予定
 - 計測手段: Windows リソースモニタ + `<video>` element の `currentTime` 移動回数 / 秒
 - 「TBD」「後日計測」だけの placeholder は禁止 (本 spec の方針)
+
+## §9 References
+
+### Cross-references
+
+- [`docs/system-architecture.md` §2.4 GUI 内の video 配信](./system-architecture.md) — 配布物視点での位置付け
+- [`docs/ui-architecture.md` §5 preview](./ui-architecture.md) — preview 画面 UI 状態機械
+
+### 関連 PR
+
+- [#540](https://github.com/Idios/kobutachan-allaganeye/pull/540) — 実装本体 (landed)
+- [#623](https://github.com/Idios/kobutachan-allaganeye/pull/623) — Phase 2.5 detecting/complete 本物化 (preview 遷移経路)
+
+### 関連 issue
+
+- [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) — Phase 3 preview 本物化 (親 issue)
+- [#589](https://github.com/Idios/kobutachan-allaganeye/issues/589) — PreviewScreen state mutation flow (closed)
+- [#645](https://github.com/Idios/kobutachan-allaganeye/issues/645) — preview 微細タイムライン (open / 本 spec の Phase 3 拡張余地)
+
+### 既存テスト (回帰検出)
+
+- `gui/src-tauri/src/lib.rs:3517` — `register_video_rejects_missing_file`
+- `gui/src-tauri/src/lib.rs:3532` — `register_video_rejects_directory`
+- `gui/src-tauri/src/lib.rs:3545` — `validate_video_path_accepts_regular_file`
+- `gui/src-tauri/src/lib.rs:3557` — `register_video_returns_distinct_tokens_for_two_registrations`
+- `gui/src-tauri/src/lib.rs:3577` — `register_video_same_file_twice_yields_distinct_tokens`
