@@ -53,7 +53,7 @@ gh pr list --base <baseRefName> --state merged \
 #### 2.3 base 同期判定と進め方確認 (影響候補がある場合のみ)
 
 - `mergeStateStatus` が `BEHIND` の場合、PR head は base 最新を取り込んでいない
-- 影響候補 PR がある + `BEHIND` の組合せでは、base / head の同ファイル grep 対比で develop 側追加機能 (新フィールド・関数引数・schema 変更・新規エクスポート等) の保持を逐条確認する。`gh api "repos/<owner>/<repo>/contents/<path>?ref=<ref>"` で base / PR head 双方を取得して `diff` で比較する手順は `docs/l2-workflow.md` §「PR 作成 Pre-flight」 §「Pre-flight Red Flags」 を参照
+- 影響候補 PR がある + `BEHIND` の組合せでは、base / head の同ファイル grep 対比で develop 側追加機能 (新フィールド・関数引数・schema 変更・新規エクスポート等) の保持を逐条確認する。`gh api "repos/<owner>/<repo>/contents/<path>?ref=<ref>"` で base / PR head 双方を取得して `diff` で比較する手順は `docs/l2-workflow.md` §「PR 作成 Pre-flight」 §「Red Flags」 を参照
 - 結果を AskUserQuestion で 3 択提示する:
   - **(A) PR 作成者に rebase / merge 取り込み + 再検証を依頼するコメントを投稿** (Recommended) — 機能 regression リスクあり時の既定
   - **(B) 影響候補は確認済み・regression なしと判定し Step 3 へ進む** — base / head grep 対比で develop 側追加が PR head に保持されていることを実証できた場合

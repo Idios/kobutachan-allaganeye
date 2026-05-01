@@ -128,7 +128,7 @@ PR 作成前のローカル自動チェックは、変更ファイル path に�
 | **gui-frontend** | `gui/src/**`, `gui/package.json`, `gui/tsconfig.json`, `gui/vite.config.ts`, `gui/eslint.config.js` | `cd gui && npm run lint` / `npm run typecheck` / `npm test` / `npm run build` |
 | **gui-rust** | `gui/src-tauri/**` | `cargo check --manifest-path gui/src-tauri/Cargo.toml` |
 | **installer-pester** | `scripts/**/*.ps1`, `scripts/tests/**` | `Invoke-Pester -Path scripts/tests/` (Windows 上で) |
-| **docs-only** | `docs/**/*.md`, `README.md`, `CHANGELOG.md`, `CLAUDE.md` のみ。コードファイル 0 件 | `feedback_doc_section_ref_check.md` 規約: §「<旧名>」grep で残骸ゼロ確認 |
+| **docs-only** | `docs/**/*.md`, `README.md`, `CHANGELOG.md`, `CLAUDE.md` のみ。コードファイル 0 件 | 本 doc §「doc 節参照健全性確認」: §「<旧名>」grep で残骸ゼロ確認 |
 
 ### 複合判定ルール
 
@@ -274,6 +274,40 @@ PR 本文・コミットメッセージに `Closes` / `Fixes` / `Resolves` キ�
 
 - **Why**: `docs/release-process.md` のコミットルールに明記
 - **How**: 全コミットに `[<session-id>]` を付与 (例: `[admiring-gates-fcda42]`)
+
+## doc 節参照健全性確認 (§「セクション名」grep)
+
+> originally from `feedback_doc_section_ref_check.md`, absorbed 2026-05-01
+
+doc の節構造を変える PR、**または `git merge` で他 skill / doc を取り込む PR** では、参照側 (`.claude/skills/`, `docs/`) から `§「<旧セクション名>」` を grep して残骸ゼロを確認し、加えて新 doc に対応する `## ` / `### ` 見出しが存在することまで verify する。
+
+### Why
+
+2026-04-26 PR #597 (旧ロール用語 sweep) で `docs/l2-workflow.md` の節構造を再編 (旧 §「ユーザー確認ルール」 + §「強制メカニズム」 → 新 §「ルールと強制メカニズム」 に統合) した際、Test plan に「相互参照は破綻していない」と report した。しかし `.claude/skills/scope-guard/SKILL.md` が旧見出しを参照したまま残っており、レビューで指摘された。検証が「参照箇所が `docs/l2-workflow.md` を mention しているか」のファイル名一致レベルにとどまり、セクション名一致まで遡及していなかったのが原因。
+
+2026-04-27 PR #597 Round 3 では `git merge origin/develop-0.2.0` により取り込んだ `.claude/skills/close-issue/SKILL.md` の pre-existing broken reference を見落とし、Idios から再指摘。受け入れ条件「相互参照は破綻していない」は **merge 後の状態で** を意味するので、「pre-existing だから対象外」は厳密読みで違反になる。
+
+### How to apply
+
+doc の節構造を変える PR、または merge 取り込み PR では以下を実行:
+
+1. `git grep -oE '§「[^」]+」' .claude/ docs/ | sort -u` で全 section reference を抽出
+2. 各 reference が target doc の `## ` または `### ` 見出しと文字列一致するか確認 (`grep -nE "^### ?<セクション名>" docs/<target>.md` 等)
+3. 旧セクション名が確実に消えたら `git grep -n "<旧セクション名>"` で残骸ゼロを確認
+
+「相互参照は破綻していない」と PR Test plan に書く前に、上記 3 ステップを実施する。ファイル名 mention の grep だけでは不十分 (l2-workflow.md という mention は残るが、参照している節が統合・廃止されていることを検出できない)。
+
+### merge で取り込んだ「自分が書いていない」skill / doc も対象
+
+`git merge` 経由で取り込んだ pre-existing broken reference も含める。「pre-existing だから対象外」は厳密読みで違反。確認テンプレ:
+
+```bash
+# 全 section reference を抽出
+git grep -oE '§「[^」]+」' .claude/ docs/ | sort -u
+
+# 抽出結果の各 §「<名前>」が現行 doc に実在するか 1 件ずつ突き合わせる
+# (auto-merge で取り込んだ全ファイル含む)
+```
 
 ## レビュー受け入れ基準 (#367 対策)
 

@@ -76,7 +76,7 @@ PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成前 
 - [ ] **新規 CLI オプション追加時**: [`docs/output-spec.md`](../docs/output-spec.md) のマトリクス更新 (#405) — 該当なしなら `[x]` + 理由付記
 - [ ] CLAUDE.md / `docs/l2-workflow.md` の更新要否確認 — 不要なら `[x]` + 理由付記
 - [ ] 出力書式を変更した場合、`docs/cli-spec.md` の該当出力例も更新 (再発防止: #343 系)
-- [ ] docs / 識別子のリネーム時は `feedback_doc_section_ref_check.md` 規約で §「<旧名>」grep し残骸ゼロ確認
+- [ ] docs / 識別子のリネーム時は `docs/l2-workflow.md` §「doc 節参照健全性確認」 で §「<旧名>」grep し残骸ゼロ確認
 
 #### 実機検証 (machine-unverifiable — plain bullet で書く)
 
