@@ -7,7 +7,7 @@
 ## 生成対象
 
 | 言語 | 出力ファイル | ツール |
-|---|---|---|
+| --- | --- | --- |
 | Python | [`allaganeye/metadata_types.py`](../../allaganeye/metadata_types.py) | `datamodel-code-generator` (TypedDict) |
 | TypeScript | [`gui/src/types/metadata.generated.ts`](../../gui/src/types/metadata.generated.ts) | `json-schema-to-typescript` |
 

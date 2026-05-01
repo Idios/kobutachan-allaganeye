@@ -10,7 +10,7 @@
 ## サマリ
 
 | シナリオ | 精度 | [critical] | tool_uses | duration_ms | 再試行 |
-|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- |
 | A (中央値 1:1) | 10/10 = 1.00 | 8/8 ○ | 4 | 101,763 | 0 |
 | B (束ね PR) | 10/10 = 1.00 | 7/7 ○ | 3 | 97,619 | 0 |
 | C (Phase 分割) | 10/10 = 1.00 | 8/8 ○ | 3 | 106,144 | 0 |
@@ -38,7 +38,7 @@ duration 短縮 (-33%) は改修後の skill 記述 (Step 1 fallback サブセ�
 ### Iter 1 で解消済み欠陥の継続確認
 
 | Iter 1 で解消した欠陥 | Iter 2 状態 |
-|---|---|
+| --- | --- |
 | session-id 取得 / 空欄時フォールバック | ○ 維持 (Step 1 末尾の手順を能動参照) |
 | `AskUserQuestion` 強制 (Step 7 冒頭) | ○ 維持 (Step 7 で発行、close 未実行で stop) |
 | CI green は補助根拠扱い、静的検証必須 | ○ 維持 (静的 grep を各受け入れ条件で実行) |
@@ -48,7 +48,7 @@ duration 短縮 (-33%) は改修後の skill 記述 (Step 1 fallback サブセ�
 ### Iter 2 で追加検証された fallback 動作
 
 | 新 [critical] / [important] 項目 | 検証結果 |
-|---|---|
+| --- | --- |
 | [critical] 9: Hybrid fallback で PR #921 列挙 | ○ — timeline API (state=closed) + gh search prs (state=merged) を両段実行、search merged を真値採用 |
 | [important] 10: dedupe ポリシー明示 | ○ — timeline `closed` は近似情報、search `merged` を真値、PR 番号で重複排除 |
 
@@ -69,7 +69,7 @@ duration 短縮 (-33%) は改修後の skill 記述 (Step 1 fallback サブセ�
 ### Iter 1 で解消済み欠陥の継続確認
 
 | Iter 1 で解消した欠陥 | Iter 2 状態 |
-|---|---|
+| --- | --- |
 | 動的検証 vs 実測必要 の判定境界 | ○ 維持 (項目 2 を実測必要、項目 1/3/4 を静的+動的に分類) |
 | 受け入れ条件外 diff の仕分け | ○ 維持 (#906 用変更を補記欄に分離) |
 | ファイル内 section 粒度 (CLAUDE.md §GPU モード vs §デバッグ) | ○ 維持 (§GPU モードのみ #905 対応として参照) |
@@ -77,7 +77,7 @@ duration 短縮 (-33%) は改修後の skill 記述 (Step 1 fallback サブセ�
 ### Iter 2 で追加検証された fallback 動作
 
 | 新 [critical] / [important] 項目 | 検証結果 |
-|---|---|
+| --- | --- |
 | [critical] 9: ケース B fallback (PR 本文 Refs 抽出) で 2 件 issue 機械判定 | ○ — `gh pr view 915 --json body --jq '.body' \| grep -oE '#[0-9]+' \| sort -u` で `#905, #906` 抽出、ケース B 機械判定 |
 | [important] 10: 本 issue (#905) のみ独立検証 | ○ — Step 4 以降で #905 受け入れ条件のみ参照、#906 用変更を混入させていない |
 
@@ -98,7 +98,7 @@ duration 短縮 (-33%) は改修後の skill 記述 (Step 1 fallback サブセ�
 ### Iter 1 で解消済み欠陥の継続確認
 
 | Iter 1 で解消した欠陥 / Iter 0 で課題ゼロ判定 | Iter 2 状態 |
-|---|---|
+| --- | --- |
 | 動的検証 vs 実測必要 の判定境界 | ○ 維持 (項目 1-4 を静的/動的に分類) |
 | 受け入れ条件外 diff の仕分け (CLAUDE.md +18 補記欄) | ○ 維持 (Step 4 補記欄で分離) |
 | 全 PR の MERGED 確認ループ | ○ 維持 (#917 + #918 を両方 `gh pr view`) |
@@ -106,7 +106,7 @@ duration 短縮 (-33%) は改修後の skill 記述 (Step 1 fallback サブセ�
 ### Iter 2 で追加検証された fallback 動作
 
 | 新 [critical] / [important] 項目 | 検証結果 |
-|---|---|
+| --- | --- |
 | [critical] 9: Step 1 fallback の timeline API で PR 2 件列挙 + 各 PR 本文 `Refs #907` 確認 | ○ — timeline API レスポンス {917, 918} + search レスポンス両件 merged 確認、ケース C 機械判定の根拠を fallback 由来として明示 |
 | [important] 10: 全 PR MERGED 確認に fallback 取得一覧を使い、ループで 1 件ずつ確認 | ○ — fallback 取得 [#917, #918] を Step 3 で 1 件ずつ `gh pr view` で MERGED 確認 |
 

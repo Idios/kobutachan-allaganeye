@@ -361,7 +361,7 @@ allaganeye debug-brightness <video_path> --start 100 --end 200 --interval 0.5
 ## 7. 対応プラットフォーム
 
 | 優先度 | OS | 状態 | 備考 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | Windows | 対応済み | メイン開発・録画環境 |
 | 2 | Linux | 未検証 | CI では lint/型チェックのみ実行。実動画での動作確認なし |
 | 3 | macOS | 未検証 | Homebrew パス自動検索のコードはあるが動作確認なし |
@@ -383,7 +383,7 @@ CI / Portable ZIP / 開発環境の 3 環境で Python と FFmpeg のバージ�
 ### Python (現在 3.11.9 に固定)
 
 | 場所 | キー |
-|---|---|
+| --- | --- |
 | `.github/workflows/ci.yml` | `python-version: "3.11.9"` |
 | `.github/workflows/release.yml` (3 ジョブ) | `python-version: '3.11.9'` |
 | `scripts/build-portable-zip.ps1` | `$PythonVersion = '3.11.9'` + `$PythonEmbedSha256` |
@@ -405,7 +405,7 @@ CI / Portable ZIP / 開発環境の 3 環境で Python と FFmpeg のバージ�
 1. ローカルで Portable ZIP ビルドが緑になることを確認 (`pwsh ./scripts/build-portable-zip.ps1 -Version <version>`) し、PR で CI の `build-windows` と `python` ジョブ両方が通ることを確認する
 
 | 場所 | キー |
-|---|---|
+| --- | --- |
 | `scripts/build-portable-zip.ps1` | `$FFmpegBuildTag` / `$FFmpegAsset` / `$FFmpegSha256` (`$FFmpegSourceCommit` は asset 名から自動抽出) |
 | `.github/workflows/ci.yml` (`Cache FFmpeg archive` / `Download FFmpeg archive (cache miss)` / `Install ffmpeg` の 3 ステップ) | cache `key` 内 SHA256 + DL step の URL + install step の `FFMPEG_SHA256` (linux64-lgpl-shared 版) |
 | `.github/workflows/release.yml` (`Cache FFmpeg archive` ステップ) | cache `key` 内 SHA256 (win64-lgpl-shared 版、build-portable-zip.ps1 の SHA256 と同じ値) |

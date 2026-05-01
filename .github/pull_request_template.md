@@ -35,11 +35,11 @@
 
 ### Iron Law 6: PR 作成前検証
 
-#### ベース同期確認 (Pre-flight、`feedback_pr_review_base_merge_regression.md` / `feedback_concurrent_worktree_pr_check.md` 昇格)
+#### ベース同期確認 (Pre-flight、`docs/l2-workflow.md` §「PR 作成 Pre-flight」)
 
 <!--
 plain bullet `-` で記述する (validate-checklist は `[x]` 化を要求しない、CI ゲート増設なし)。
-PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成前 Pre-flight」参照):
+PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成 Pre-flight」参照):
 1. `git fetch origin <base>` で base 最新化
 2. `git log HEAD..origin/<base> --oneline` で取り込み未済 commit 列挙
 3. 取り込み未済 commit が当 PR の `git diff --name-only origin/<base>` と path 交差するなら取り込み + 検証再実行
@@ -76,7 +76,7 @@ PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成前 
 - [ ] **新規 CLI オプション追加時**: [`docs/output-spec.md`](../docs/output-spec.md) のマトリクス更新 (#405) — 該当なしなら `[x]` + 理由付記
 - [ ] CLAUDE.md / `docs/l2-workflow.md` の更新要否確認 — 不要なら `[x]` + 理由付記
 - [ ] 出力書式を変更した場合、`docs/cli-spec.md` の該当出力例も更新 (再発防止: #343 系)
-- [ ] docs / 識別子のリネーム時は `feedback_doc_section_ref_check.md` 規約で §「<旧名>」grep し残骸ゼロ確認
+- [ ] docs / 識別子のリネーム時は `docs/l2-workflow.md` §「doc 節参照健全性確認」 で §「<旧名>」grep し残骸ゼロ確認
 
 #### 実機検証 (machine-unverifiable — plain bullet で書く)
 

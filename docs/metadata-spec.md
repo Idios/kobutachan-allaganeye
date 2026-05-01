@@ -7,14 +7,14 @@
 スキーマ定義は二層で SSoT を分担する:
 
 | 層 | 役割 | ファイル |
-|---|---|---|
+| --- | --- | --- |
 | 機械可読の正 | draft-2020-12 JSON Schema。型生成と writer 検証の根拠 | [`schemas/metadata.schema.json`](../schemas/metadata.schema.json) |
 | 人間可読の正 | フィールドの意味、書き込み契約、編集契約、ユーザー手動編集の挙動 | 本 doc |
 
 各言語の型は JSON Schema から自動生成する:
 
 | 言語 | 出力 | ツール | コマンド |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Python | [`allaganeye/metadata_types.py`](../allaganeye/metadata_types.py) (`TypedDict`) | `datamodel-code-generator` | `python scripts/codegen/generate.py --py` |
 | TypeScript | [`gui/src/types/metadata.generated.ts`](../gui/src/types/metadata.generated.ts) (`interface`) | `json-schema-to-typescript` | `python scripts/codegen/generate.py --ts` (または `cd gui && npm run generate-types`) |
 | Rust | (生成しない) | — | `gui/src-tauri/src/lib.rs` は `serde_json::Value` で passthrough |
@@ -54,7 +54,7 @@ JSON Schema は writer 契約として strict (additional properties は受け�
 ルートは JSON オブジェクト。以下のフィールドを持つ。
 
 | フィールド | 型 | 必須 | 意味 | 範囲 / 形式 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `schema_version` | string | 新規書き込みは ✓ / 読み込み時は欠落許容 | ペイロードのスキーマ版数 (#515) | 現行は `"1"`。欠落時は v1 として解釈 |
 | `source` | string | ✓ | 元動画ファイルの絶対パス (OS 表記そのまま) | 非空 |
 | `source_duration` | number | ✓ | 元動画の総秒数 | > 0 |
@@ -73,7 +73,7 @@ JSON Schema は writer 契約として strict (additional properties は受け�
 ### `detection_params` オブジェクト
 
 | フィールド | 型 | 意味 |
-|---|---|---|
+| --- | --- | --- |
 | `sample_interval` | number | Pass 1 サンプリング間隔 (秒) |
 | `blackout_threshold` | number | 暗転判定輝度閾値 (0-255) |
 | `min_match_duration` | number | 最小試合長 (秒) |
@@ -85,7 +85,7 @@ JSON Schema は writer 契約として strict (additional properties は受け�
 ### `Match` オブジェクト (`matches[]`)
 
 | フィールド | 型 | 必須 | 意味 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `index` | integer | ✓ | 1 始まりの順序番号 |
 | `start_time` | number | ✓ | 試合開始秒 (>= 0) |
 | `end_time` | number | ✓ | 試合終了秒 (>= start_time) |
@@ -101,7 +101,7 @@ JSON Schema は writer 契約として strict (additional properties は受け�
 GPU vendor probe スナップショット。`probe_gpu_vendors()` の結果と、`_VENDOR_PREFERENCE` のスナップショット、実際 detect 経路で使った vendor を保存する。GUI export 画面が H.264 再エンコードのエンコーダ選択 (NVENC / QSV / AMF / libx264 fallback) に使用する。
 
 | フィールド | 型 | 必須 | 意味 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `gpu_vendors_available` | array of string | ✓ | probe で検出された vendor 識別子の集合。`{"nvidia","amd","intel"}` の subset。空配列はその環境に GPU が無い (CPU only) |
 | `gpu_vendor_used` | string \| null | ✓ | 実際 detect で使った vendor。CPU 強制 (`--no-gpu`) / cache hit / `split --from-metadata` では `null` |
 | `vendor_preference` | array of string | ✓ | `gpu_detector._VENDOR_PREFERENCE` のスナップショット。現状 `["nvidia","amd","intel"]` |
@@ -119,7 +119,7 @@ GUI export 画面は `system_info.gpu_vendors_available` と `vendor_preference`
 GUI complete 画面の輝度タイムライン (`BrightnessTimeline` SVG) 用の事前計算済み輝度配列。Pass 1 のサンプリング結果 (timestamp → 平均輝度) を最大 512 点までダウンサンプルして埋め込む。GUI は metadata.json を読むだけでタイムラインを描画でき、`debug-brightness` を再実行する必要が無い。
 
 | フィールド | 型 | 必須 | 意味 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `interval_s` | number | ✓ | 配列の各要素が表す秒間隔 (例: `25.0` なら `values[i]` は `i * 25` 秒の輝度) |
 | `values` | array of number | ✓ | 平均輝度 (0-255 の float) を時系列順に並べたもの。最大 512 要素 |
 
@@ -136,7 +136,7 @@ GUI complete 画面は `metadata.brightness_samples?.values` を読み、欠落�
 試合間の 5 分以上の空白 (5 分未満は含まれない、`min_gap=300.0` による)。
 
 | フィールド | 型 | 必須 | 意味 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `start_time` | number | ✓ | 空白開始秒 |
 | `end_time` | number | ✓ | 空白終了秒 |
 | `start_display` | string | ✓ | 開始表示 |
@@ -190,7 +190,7 @@ GUI は以下のフィールドを in-memory で編集し、`[適用]` 時に `m
 ### 編集可フィールド
 
 | GUI の一時フィールド | 書き戻し時の反映先 |
-|---|---|
+| --- | --- |
 | `Match.edited.start_time` | `Match.start_time` に上書き (`edited` 自体は落とす) |
 | `Match.edited.end_time` | `Match.end_time` に上書き |
 | `Match.type_override: fl_match` \| `unknown` | `Match.type` に上書き |
@@ -219,7 +219,7 @@ GUI は以下のフィールドを in-memory で編集し、`[適用]` 時に `m
 GUI による初回 `[適用]` 時のみ作成。
 
 | トリガー | 動作 |
-|---|---|
+| --- | --- |
 | GUI 初回 `[適用]` | `metadata.json` が存在し `metadata.original.json` が存在しない場合、前者を後者にコピーしてから書き戻す |
 | GUI 2 回目以降 `[適用]` | `metadata.original.json` には触らない (初回時の純粋な detect 結果を保持) |
 | `allaganeye detect` 再実行 | `metadata.json` を上書き、`metadata.original.json` には触らない (注: この場合 `.original` は古い状態のまま残り、ユーザーが手動管理) |
@@ -228,7 +228,7 @@ GUI による初回 `[適用]` 時のみ作成。
 ## ユーザー手動編集シナリオ
 
 | シナリオ | 期待動作 |
-|---|---|
+| --- | --- |
 | metadata.json を削除 | GUI load でファイル未存在エラー。GUI は "No metadata. Run detect first." を表示 |
 | 不正な JSON (parse error) | GUI load で zod が fail → error 表示。CLI `split --from-metadata` は `InputFileError` で exit code 2 |
 | root が JSON object でない (array / 文字列等) | Rust `load_metadata` / Python `read_metadata` ともに "must be a JSON object" エラーで拒否 (挙動統一、#521) |
@@ -244,7 +244,7 @@ GUI による初回 `[適用]` 時のみ作成。
 ### 版数の表
 
 | version | 状態 | 概要 |
-|---|---|---|
+| --- | --- | --- |
 | (欠落) | 読み込み時に v1 として解釈 | pre-#515 の出力。自動で v1 扱い、ファイルは書き換えない |
 | `"1"` | 現行 | `allaganeye detect` / `allaganeye split` が書き込む |
 | `"2"` 以降 | 未定義 | 将来のスキーマ拡張用。未実装版を読み込むと `InputFileError` で拒否 |
@@ -302,7 +302,7 @@ GUI の編集バッファを `metadata.draft.json` に自動保存し、WebView 
 ### ユーザー選択肢 (DraftRestoreModal)
 
 | ボタン | 動作 |
-|---|---|
+| --- | --- |
 | 復元 | `pendingDraft` を `metadata` に適用し `dirty=true`。ディスクには触らない (ユーザーが [適用] で永続化) |
 | 破棄 | `clearDraft()` を呼んで `metadata.draft.json` を削除し、`pendingDraft=null` |
 
@@ -352,7 +352,7 @@ interface MetadataWarning {
 以下は派生 issue で追跡する (本 Phase 1 では実装せず、設計余地だけ確保):
 
 | 拡張 | 追跡 issue | 内容 |
-|---|---|---|
+| --- | --- | --- |
 | ~~排他管理 (mtime 検知 / 同時編集警告)~~ | [#514](https://github.com/Idios/kobutachan-allaganeye/issues/514) (実装済み、上記 §排他管理 参照) | GUI load 時の mtime 記録、save 時の外部変更検知 UX |
 | ~~schema_version フィールド~~ | [#515](https://github.com/Idios/kobutachan-allaganeye/issues/515) (実装済み、上記 §schema_version 参照) | 明示的な版数管理 + migration 基盤 |
 | ~~`[元に戻す]` 機能~~ | [#516](https://github.com/Idios/kobutachan-allaganeye/issues/516) (Phase 2 で実装済み) | `metadata.original.json` → `metadata.json` 復元ボタン (Rust `restore_from_original` + `metadataStore.restore`) |

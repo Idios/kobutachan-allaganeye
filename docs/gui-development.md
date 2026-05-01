@@ -7,7 +7,7 @@ Allagan Eye の L2a GUI は [Tauri 2](https://v2.tauri.app/) + [React 19](https:
 ## 前提条件
 
 | ツール | 最小バージョン | インストール方法 (Windows) |
-|---|---|---|
+| --- | --- | --- |
 | Node.js | 22 LTS | [nodejs.org](https://nodejs.org/) / `winget install OpenJS.NodeJS.LTS` |
 | Rust | 1.80+ | [rustup.rs](https://rustup.rs/) (`rustup-init.exe`) |
 | Microsoft C++ Build Tools | Visual Studio 2022 相当 | `rustup` 初回実行時に案内あり / [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) |
@@ -81,7 +81,7 @@ GUI のスタイルは CSS 変数 + CSS Modules で統一。詳細は [`ui-archi
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) に 3 ジョブが定義されている:
 
 | ジョブ | OS | 役割 |
-|---|---|---|
+| --- | --- | --- |
 | `python` | ubuntu-latest | 既存: ruff / pyright / pytest |
 | `gui-frontend` | ubuntu-latest | npm ci → lint → typecheck → build → `gui/dist/` をアーティファクト保存 |
 | `gui-rust` | windows-latest | `gui-frontend` のアーティファクトを取得して `cargo check` |

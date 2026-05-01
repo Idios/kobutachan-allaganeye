@@ -5,16 +5,7 @@ user-invocable: true
 argument-hint: <PR番号>
 ---
 
-## Iron Law
-
-**NO PR MERGE WITHOUT ALL ACCEPTANCE CRITERIA CHECKED AND VERIFIED.**
-
-「大体満たしてる」「軽微な差分」で LGTM を出すのは厳禁。逐条検証できない項目が 1 件でもあれば、修正依頼を投稿してこのスキルを終了する。
-
-## 背景
-
-PR #343 系で複数 issue が不完全修正のままクローズされた事故 (#367) の再発防止。
-「機能呼び出しレベルのテスト」だけで済ませず、「ユーザー視点の出力が要件を満たしているか」まで確認する。
+> Iron Law 1 (`.claude/hooks/session-start.sh`) の手順実装。詳細な背景・条文は hook を参照。
 
 ## 呼び出しタイミング
 
@@ -40,7 +31,7 @@ gh issue view <ISSUE番号> --json body | python -c "import json,sys;b=json.load
 受け入れ条件の各 `- [ ]` 項目に対して、以下を全て明示する:
 
 | 条件 | 対応 diff | 対応 test | 実証方法 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | (逐条コピー) | `<ファイル:行範囲>` | `<test_*.py::test_*>` | 実行ログ or スクリーンショット |
 
 **条件 1 つでも「対応 diff/test が書けない」→ Iron Law 違反。LGTM 不可、修正依頼へ**。
@@ -88,7 +79,7 @@ gh pr comment $ARGUMENTS --body "修正依頼 (受け入れ条件未達) [<sessi
 ## Red Flags (以下の思考が浮かんだら STOP)
 
 | 浮かんだ思考 | 現実 | 取るべき行動 |
-|---|---|---|
+| --- | --- | --- |
 | 「大体満たしてる」 | 「大体」は NG。Iron Law は 100% | 未達項目を列挙して修正依頼 |
 | 「機能は動いてるからテストは後で」 | baseline FAIL 検証なしは NG | テスト追加を要求 |
 | 「UI 変更はスクショなしでも見れば分かる」 | レビュアは実行環境を持たない | 出力サンプル添付を要求 |

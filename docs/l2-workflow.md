@@ -57,7 +57,7 @@ main (リリースタグのみ)
 タスクを「種別ごと」に skill + CLAUDE.md / 本ドキュメントのガイダンスへ振り分ける。粒度は役割ではなくアクションで分ける。
 
 | タスク種別 | 対応 skill / 手段 | 責務 |
-|---|---|---|
+| --- | --- | --- |
 | 計画立案 | Plan モード + AskUserQuestion + TodoWrite | タスクの分解、リスク・曖昧点の事前洗い出し、実装前の計画合意 |
 | 実装 | Claude の通常ツール (Edit/Write/Bash) + TodoWrite | 実装 + unit/integration テスト + 実機検証 (long-running / GPU / audio 統合は mock 不可) + PR 作成。スコープ逸脱時は Plan モードに戻る |
 | PR レビュー | `/review-pr` | PR レビュー + #367 受け入れ基準チェックリスト検証 + マージ判断 |
@@ -106,11 +106,258 @@ gh pr list --search "<元issue#>" --state all \
 ### Red Flags
 
 | 浮かんだ思考 | 実態 |
-|---|---|
+| --- | --- |
 | 「コンフリクト出ないから OK」 | merge 可否 (CONFLICT 不在) と機能 regression は別軸。base / head の同ファイル grep 対比が必要 |
 | 「最近 fetch したから OK」 | 数分でも別 PR がマージされうる。PR 作成直前に再 fetch する |
 | 「並行 PR は計画段階で確認したから skip」 | 計画後に別 worktree が PR を提出するケースあり (#646 / PR #647)。PR 作成時にも実施 |
 | 「Pre-flight で path 交差なしと判定したから自動チェック skip」 | path 交差判定と Iron Law 6 自動チェックは独立軸。Iron Law 6 は変更 path 別に毎 PR 作成時に実施 |
+
+### 機能 regression 検出手順 (base 取り込み時 / レビュー時)
+
+> originally from `feedback_pr_review_base_merge_regression.md`, absorbed 2026-05-01
+
+**CI green は内部整合性のみを保証し、機能 regression の防御線にはならない**。base 取り込み merge commit を見たら、以下の手順で base / PR head の同ファイル比較を実施する (PR 作成時 + `/review-pr` Step 2.3 で実施)。
+
+#### 検証手順
+
+1. **base head sha 確認**:
+
+   ```bash
+   gh api repos/<owner>/<repo>/branches/<base>
+   ```
+
+2. **base / PR head 双方の同ファイル取得**:
+
+   ```bash
+   gh api "repos/<owner>/<repo>/contents/<path>?ref=<base>"        # base 側
+   gh api "repos/<owner>/<repo>/contents/<path>?ref=<PR-branch>"   # PR head 側
+   ```
+
+   または ローカルで `git show <base>:<path>` と `git show <PR-branch>:<path>` で取得して `diff` 比較。
+
+3. **重要な変更の保持確認** (`git log --oneline <base>..<PR-branch>` 起点に grep で対比):
+   - 新フィールド (例: metadata schema 追加項目)
+   - 関数引数 (例: `_build_metadata_payload` の新引数)
+   - schema 変更 (例: JSON Schema `properties` 追加)
+   - 新規エクスポート (例: 新型定義の `__all__` 追加)
+
+4. **特に注意すべきファイル**: メタデータ・schema・型定義 (`allaganeye/commands/split_matches.py` / `schemas/metadata.schema.json` / `docs/metadata-spec.md` / `gui/src/types/*.ts` / `allaganeye/metadata_types.py` 等) で base 側追加が PR head に保持されているか必ず確認。
+
+#### 例 (PR #627 Round 4 で発覚した規範ケース)
+
+base develop-0.2.0 が PR #626 でマージされ `_build_metadata_payload(detection_started_at, detection_completed_at)` 引数追加を含んでいた。本 PR (#627) は merge conflict 解消時にこの引数追加を取り込み忘れたが、test fixture / schema / 実装が内部整合性で揃っていたため CI 全 8 ジョブ pass。検出されないままマージしていれば GUI CompleteScreen「所要」列の元データが失われていた。
+
+→ 「CI green = OK」と即断せず、上記 grep 対比を実施することで機能 regression を捕捉する。
+
+> 注: 並行 worktree PR 重複確認 (step 4) は **計画立案セッションの Phase 1 Explore でも実施** する。`gh pr list --search "<issue#>" --state all` を Bash 並列起動の 1 つに含める。`git log --all` で別 worktree branch の commit が見えても、PR として open かどうかは別 — `gh pr list` が一次情報源。
+
+## PR 作成 path 別自動チェック (Iron Law 6 main 条)
+
+> originally from `feedback_pr_pre_creation_checks.md`, absorbed 2026-05-01
+
+PR 作成前のローカル自動チェックは、変更ファイル path に応じて **必要 job をすべて実行する**。「軽微だから skip」「Python のみだから GUI 側不要」は Iron Law 6 違反 / 失敗パターン A 再発。
+
+### path 分類表
+
+| 種別 | 判定パターン | 実行する自動チェック |
+| --- | --- | --- |
+| **python-core** | `allaganeye/**/*.py`, `tests/**/*.py`, `pyproject.toml` | `ruff check .` / `ruff format --check .` / `pyright` / `pytest` (slow 除外) |
+| **gui-frontend** | `gui/src/**`, `gui/package.json`, `gui/tsconfig.json`, `gui/vite.config.ts`, `gui/eslint.config.js` | `cd gui && npm run lint` / `npm run typecheck` / `npm test` / `npm run build` |
+| **gui-rust** | `gui/src-tauri/**` | `cargo check --manifest-path gui/src-tauri/Cargo.toml` |
+| **installer-pester** | `scripts/**/*.ps1`, `scripts/tests/**` | `Invoke-Pester -Path scripts/tests/` (Windows 上で) |
+| **docs-only** | `docs/**/*.md`, `README.md`, `CHANGELOG.md`, `CLAUDE.md` のみ。コードファイル 0 件 | `bash scripts/check-markdownlint.sh` (CI と同 version の markdownlint-cli2) + 本 doc §「doc 節参照健全性確認」: §「<旧名>」grep で残骸ゼロ確認 |
+
+### 複合判定ルール
+
+- 上記の複数種別にまたがれば **すべて実行** (例: python + gui-frontend なら 8 個の lint/test ジョブ全部)
+- 完全 docs-only でも path 識別子変更を含むなら `.github/workflows/` と `allaganeye/` への波及確認 (`/review-pr` の §D doc-only PR 検証手順と整合)
+- `.claude/hooks/`, `.claude/skills/`, `.claude/settings*.json` 変更は **メタ変更** として「skill 自体の eval が必要か」を `AskUserQuestion` で確認
+
+### fail 時の対応
+
+`(A) PR 内修正優先 規約` (本 doc §) に従い、`AskUserQuestion` で 3 択提示:
+
+- **(A) [Recommended]** 同セッションで修正して再実行
+- (B) PR 作成を中断して plan モードに戻る (大きな修正が必要と判明)
+- (C) 強制 skip (Self-Test Report の `[ ]` を残し validate-checklist で fail させる、Iron Law 6 違反の自覚を促す)
+
+### 例外
+
+- 既に同セッションで全 job pass している (rebase / 修正後の再実行不要) → skip 可
+- フィードバック自体への変更 (本 doc の編集) → 循環依存を避けるため `AskUserQuestion` でユーザー判断
+
+## 実機検証 trigger 表 (Iron Law 6 main 条)
+
+> originally from `feedback_user_realmachine_test_request.md`, absorbed 2026-05-01
+
+ロジック変更を含む PR では mock 不可領域 (GPU / audio / 長時間動画 / GUI Tauri 起動) をユーザー (Idios) に実機検証依頼する。「mock テスト pass = 全体 OK」は Iron Law 6 違反 / Red Flag。
+
+### trigger 表
+
+| 変更パス / 内容 | 必要な実機検証 | 根拠 / mock 不可理由 |
+| --- | --- | --- |
+| `allaganeye/video/gpu_detector.py`, `system_info.py` | `pytest -m slow_gpu` (NVIDIA GPU 必須環境) | GPU 初期化 / hwaccel が mock 不可。CI は ubuntu-latest で GPU なし |
+| `allaganeye/audio/scan.py`, `audio/matcher.py`, `audio/features.py` | `pytest -m slow tests/test_audio_integration.py` (`ALLAGANEYE_AUDIO_TEST_VIDEO` 必須) | Fanfare 検出は 39GB 録画ファイルが必要 |
+| `allaganeye/video/detector.py` Pass 1 / scorebar 関連 | `pytest -m slow_detect` または `pytest -m "slow or baseline_regen"` | 実動画 baseline 検証 |
+| `allaganeye/commands/split_matches.py` パイプライン変更 | `pytest -m slow_pipeline` | 全パイプライン統合動作 |
+| `gui/src-tauri/**` Tauri command 追加・変更 | `cd gui && npm run tauri dev` での手動 GUI 起動 + 該当 command の UI 操作確認 | ヘッドレスで Tauri 起動はできるが、ユーザーが GUI 操作で確認するのが本来の検証 |
+| `gui/src/screens/**` UI 変更 | `npm run tauri dev` + 画面 5 種 (drop / detecting / complete / preview / export) の目視確認 + スクリーンショット添付推奨 | `enforce-acceptance-criteria/SKILL.md` Step 3 と整合 |
+| `gui/src-tauri/src/commands/export*.rs` H.264 エンコーダ選択 | 実機 export (NVENC / QSV / AMF / libx264) | GPU encoder fallback は実機 stderr 依存 |
+| `.github/workflows/**` 変更 | (任意) act / 該当 job のドライラン | CI 動作の事前検証、必須ではないが推奨 |
+| `scripts/**/*.ps1` インストーラ変更 | Windows 上で `Invoke-Pester -Path scripts/tests/` 実行 | Linux runner 上では PowerShell 挙動が一部違う |
+
+### 該当時の AskUserQuestion テンプレ (Iron Law 5「Recommended 付き 2-4 択」標準)
+
+```text
+question: "本 PR には GPU 関連変更 (gpu_detector.py, system_info.py) が含まれます。
+以下のテストを実機 (Windows + NVIDIA GPU) で実行する必要があります:
+
+  pytest -m slow_gpu tests/test_gpu_detector.py
+  pytest -m slow tests/test_system_info.py::test_probe_gpu_vendors_real
+
+どう進めますか?"
+
+options:
+  A: "今すぐ実機で実行して結果を貼り付ける [Recommended]"
+     description: "PR 提出前に実機テスト pass を確認するのが本来。コマンド出力 (PASS/FAIL + 末尾 30 行) を次の AskUserQuestion 回答で貼ってください"
+  B: "実機テスト未実施で PR 作成 (Self-Test Report に plain bullet 明記)"
+     description: "ユーザーがレビュー時に実機検証する前提。Self-Test Report の machine-unverifiable 節に '- pytest -m slow_gpu (PR 提出時点では未実施 / レビュー時に実機確認)' と書く"
+  C: "PR 作成を中断して実機準備を整える"
+     description: "実機環境にアクセスできない / セッション中断が必要"
+```
+
+### 結果記録
+
+- **A の場合**: ユーザー (Idios) がコマンド実行 → 結果サマリ (PASS/FAIL + 末尾 30 行) を AskUserQuestion 回答に貼る → Self-Test Report の `### 実機検証 (machine-unverifiable)` 節に plain bullet で「PR 提出時点で実施済 (環境情報 + 結果概要)」と書く
+- **B の場合**: Self-Test Report の `### 実機検証 (machine-unverifiable)` 節に plain bullet で「PR 提出時点では未実施 / レビュー時に実機確認」と明記。`Self-Test Report 規約` (本 doc §) により plain bullet は CI ゲートで block されない
+- **C の場合**: PR 作成自体を中止 (Iron Law 6 違反を避ける)
+
+### 注意
+
+- Claude セッション側に GPU・録画ファイルへのアクセスが保証されているわけではない。**実機テストの代行実行はしない**。依頼と結果記録のみが Claude の責務
+- trigger 表に該当しない場合は実機検証不要。Self-Test Report に「該当なし (gpu_detector.py / audio/ / video/detector.py / gui/ 変更なし)」を 1 行書いて未実施を明示
+
+## Self-Test Report 規約 (validate-checklist CI ゲート)
+
+> originally from `feedback_pr_validate_checklist.md`, absorbed 2026-05-01
+
+PR 本文の checkbox (`- [ ]` / `- [x]`) は `validate-checklist` ジョブが counting している (`unchecked > 0` で fail)。マージ前ゲートで unchecked 項目があるとブロックされる。
+
+### Why
+
+ユーザーが Test plan を消化せずにマージするのを防ぐ品質ゲート。ただし「レビュー時に実機で確認する項目」も `- [ ]` で書くと「Claude が消化していない実機検証項目」までゲートで止まり、PR 提出時に CI fail する。
+
+### 構成
+
+PR 本文を以下の構成で書き分ける (PR #615 / PR #625 修正で確立):
+
+- **「## Test plan (本 PR 提出前にローカルで実行済)」セクション**: 自分が PR 提出前に実行した自動チェック (lint / typecheck / test / cargo check / build) のみを `- [x] ...` で列挙。全件チェック済が前提
+- **「## レビュー時の確認 (machine-unverifiable)」セクション**: `npm run tauri dev` での手動操作、UI 目視確認、レビュー時にユーザーが実施する項目を **plain bullet `-`** (checkbox なし) で列挙
+
+`- [ ]` を残すと PR 提出直後の CI で fail する。`gh pr edit <N> --body-file -` で書き直せば validate-checklist は再実行され直ちに pass する (commit 不要)。
+
+## (A) PR 内修正優先 規約
+
+> originally from `feedback_pr_internal_fix_policy.md`, absorbed 2026-05-01
+
+レビューで摘出した課題は、原則として該当 PR 内で全て対策する。`/review-pr` のトリアージ表で (B) 新規 issue 起票 / (C) 既存 issue 追記 を選びたくなる場面でも、まず (A) 本 PR 内修正を第一候補にする。
+
+### Why
+
+2026-04-27 PR #615 (Tauri bundle 有効化) のレビュー時、ユーザー (Idios) が方針確定。「PR で挙がった問題は原則そのPRですべて対策する」。レビュー側 SKILL のデフォルト判定ロジック (本 PR 受け入れ条件直結でない → (B) 別 issue) では分離する判断になっていたが、ユーザー方針はスコープ拡大による一括対応を優先する。
+
+### How to apply
+
+- `/review-pr` Step 5b トリアージ表で (B) 新規 issue / (C) 既存 issue 追記 を考えた瞬間、まず「本 PR 内で対応できないか」を検討する
+- 例外: スコープ逸脱が明らかに大きい (別レイヤー実装変更 / GPU 統合等で工数 1 セッション超 / 別担当領域) 場合のみ (B) を提案。その場合も `AskUserQuestion` で「(A) 本 PR 拡大 / (B) 別 issue」の選択肢を提示し、ユーザーに判断を委ねる
+- `AskUserQuestion` で (A) only / (A)+(B) 混合 / 個別調整 の選択肢を提示する場合、(A) only を **「Recommended」** として提示する
+- 例外的に (B) になる典型: 別 issue が既に存在し、まだクローズされていない場合 (重複防止) / scope-guard skill が「同 PR で対応すると Iron Law 3 違反」と判定した場合
+
+## PR 規約 (develop ベース / Closes 禁止 / exit_code 衝突 / 1 PR = 1 scope / session-id)
+
+> originally from `feedback_pr_rules.md`, absorbed 2026-05-01
+
+### develop-x.x.x ベース
+
+PR は `develop-x.x.x` ベースで作成する。`main` ベースは不可。
+
+- **Why**: `docs/release-process.md` に「各 PR は develop-x.x.x にマージする」と明記。`main` はリリース時のみ
+- **How**: `gh pr create --base develop-0.2.0` で作成。CI トリガーにも `develop-*` を含める
+
+### Closes / Fixes / Resolves キーワード禁止
+
+PR 本文・コミットメッセージに `Closes` / `Fixes` / `Resolves` キーワードを書かない。
+
+- **Why**: `docs/issue-policy.md` §「Issue のライフサイクル管理」 で禁止。クローズはマージ実行者が手動で行う (Iron Law 4)
+- **How**: PR 本文では `Refs #N` で参照のみ。コミットメッセージにも `#N` 参照のみ
+
+### exit_code 衝突回避
+
+新しい exit_code を追加する際は既存コードと衝突しないか確認する。
+
+- **Why**: 過去に `ConfigValidationError(exit_code=2)` が `InputFileError(exit_code=2)` と衝突してレビューで差し戻された
+- **How**: `allaganeye/exceptions.py` と CLAUDE.md の Exit Codes テーブルを確認し、未使用のコードを割り当てる
+
+### 1 PR = 1 scope
+
+進行中の PR にスコープ外の変更を追加しない。
+
+- **Why**: 過去に 9 件の Issue を 1 PR に詰め込んでレビューで分割を指示された
+- **How**: 計画段階で PR 分割を決め、各 PR のスコープを超えるコミットは別 PR にする (`scope-guard` skill 連携)
+
+### コミットメッセージ session-id
+
+コミットメッセージの末尾に `[<session-id>]` を含める。
+
+- **Why**: `docs/release-process.md` のコミットルールに明記
+- **How**: 全コミットに `[<session-id>]` を付与 (例: `[admiring-gates-fcda42]`)
+
+## doc 節参照健全性確認 (§「セクション名」grep)
+
+> originally from `feedback_doc_section_ref_check.md`, absorbed 2026-05-01
+
+doc の節構造を変える PR、**または `git merge` で他 skill / doc を取り込む PR** では、参照側 (`.claude/skills/`, `docs/`) から `§「<旧セクション名>」` を grep して残骸ゼロを確認し、加えて新 doc に対応する `##` / `###` 見出しが存在することまで verify する。
+
+### Why
+
+2026-04-26 PR #597 (旧ロール用語 sweep) で `docs/l2-workflow.md` の節構造を再編 (旧 §「ユーザー確認ルール」 + §「強制メカニズム」 → 新 §「ルールと強制メカニズム」 に統合) した際、Test plan に「相互参照は破綻していない」と report した。しかし `.claude/skills/scope-guard/SKILL.md` が旧見出しを参照したまま残っており、レビューで指摘された。検証が「参照箇所が `docs/l2-workflow.md` を mention しているか」のファイル名一致レベルにとどまり、セクション名一致まで遡及していなかったのが原因。
+
+2026-04-27 PR #597 Round 3 では `git merge origin/develop-0.2.0` により取り込んだ `.claude/skills/close-issue/SKILL.md` の pre-existing broken reference を見落とし、Idios から再指摘。受け入れ条件「相互参照は破綻していない」は **merge 後の状態で** を意味するので、「pre-existing だから対象外」は厳密読みで違反になる。
+
+### How to apply
+
+doc の節構造を変える PR、または merge 取り込み PR では以下を実行:
+
+1. `git grep -oE '§「[^」]+」' .claude/ docs/ | sort -u` で全 section reference を抽出
+2. 各 reference が target doc の `##` または `###` 見出しと文字列一致するか確認 (`grep -nE "^### ?<セクション名>" docs/<target>.md` 等)
+3. 旧セクション名が確実に消えたら `git grep -n "<旧セクション名>"` で残骸ゼロを確認
+
+「相互参照は破綻していない」と PR Test plan に書く前に、上記 3 ステップを実施する。ファイル名 mention の grep だけでは不十分 (l2-workflow.md という mention は残るが、参照している節が統合・廃止されていることを検出できない)。
+
+### merge で取り込んだ「自分が書いていない」skill / doc も対象
+
+`git merge` 経由で取り込んだ pre-existing broken reference も含める。「pre-existing だから対象外」は厳密読みで違反。確認テンプレ:
+
+```bash
+# 全 section reference を抽出
+git grep -oE '§「[^」]+」' .claude/ docs/ | sort -u
+
+# 抽出結果の各 §「<名前>」が現行 doc に実在するか 1 件ずつ突き合わせる
+# (auto-merge で取り込んだ全ファイル含む)
+```
+
+### content-level の inner reference も対象 (本 PR で内容を移動した時)
+
+`§「<親セクション>」` までは grep で機械的に追跡できるが、`§「<親>」の「<子>」要件参照` のような **content-level inner reference** (鉤括弧 + section prefix なし) は §「<...>」grep に引っかからない。本 PR で content を別 doc へ移動した場合、移動元 doc の同名ラベルが残骸 reference として stale になることがある (PR #667 Issue C で発覚)。
+
+確認手段:
+
+```bash
+# 本 PR で内容が移動した section / 概念のラベル (例: 「PR 作成前」要件) を grep
+git grep -nE 'の「PR 作成前」|の「<旧概念>」' .claude/ docs/ .github/ CLAUDE.md
+```
+
+該当ラベルが移動元 doc を pointing したまま残っていれば、移動先 doc / 新ラベルへ書き換える。move 完了の commit 前にこの grep を必ず実施する (move された時点で立ち枯れる stale reference を検出)。
 
 ## レビュー受け入れ基準 (#367 対策)
 
@@ -200,7 +447,7 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 3 層構造で知見を管理する:
 
 | 層 | 場所 | 寿命 | 内容 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | L1 | `CLAUDE.md`, `MEMORY.md` | 恒久 | プロジェクト規約、skill 索引、ワークフロー要約 |
 | L2 | `~/.claude/projects/<project>/memory/feedback_*.md` | 中期 | ユーザー指摘の蓄積、判断基準のチューニング |
 | L3 | `docs/knowledge/*.md` | 恒久 (プロジェクト共有) | セッション横断の調査結果、トラブルシュート |
@@ -249,7 +496,7 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 [obra/superpowers](https://github.com/obra/superpowers) の「Iron Law / Red Flags / Gate Function」パターンに倣い、ルールを書くだけでなく**エージェントが自己抑制せざるを得ない語彙と構造**を配置する。
 
 | 層 | 実装 | 役割 |
-|---|---|---|
+| --- | --- | --- |
 | 1 | `SessionStart` hook (`.claude/hooks/session-start.sh`) | セッション開始・`/clear`・compact 時に Iron Law + Red Flags を `<EXTREMELY_IMPORTANT>` で会話先頭に注入 |
 | 2 | `enforce-acceptance-criteria` skill | `/review-pr` から呼ばれる Gate Function。受け入れ条件の逐条検証 |
 | 3 | `scope-guard` skill | スコープ逸脱検知で AskUserQuestion を強制 |

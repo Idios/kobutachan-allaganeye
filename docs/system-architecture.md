@@ -46,7 +46,7 @@ Allagan Eye は **別 exe 方式**を採用する (2026-04-23 確定、#527)。�
 ### 2.1 配布物と起動コマンド
 
 | 起動ターゲット | 起動方法 | 実体 | 状態 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `allaganeye.bat` (Portable ZIP) | Cmd / PowerShell で引数付き実行 | 同梱 Python + `python -m allaganeye` | リリース済み (v0.1.1) |
 | `allaganeye` (Python venv 内) | `python -m allaganeye <cmd>` | pyproject.toml の console_scripts | 開発時 |
 | `allaganeye-gui.exe` (Tauri bundle) | ダブルクリック / start menu | Tauri 2 ランタイム | v0.2.0 で対応 (#570)。Portable ZIP に同梱、`tauri.conf.json` の `bundle.active = false` のまま `.exe` 単体を生成し `scripts/build-portable-zip.ps1` で `allaganeye-gui.exe` をそのまま payload にコピー (リネームなし、Cargo binary 名を直接使用)。productName "Allagan Eye" は Tauri のウィンドウタイトルにのみ使われる。NSIS / MSI installer は現バージョンでは生成しない |
@@ -63,7 +63,7 @@ Allagan Eye は **別 exe 方式**を採用する (2026-04-23 確定、#527)。�
 GUI は以下のタイミングで CLI を subprocess として呼び出す (本仕様は Phase 3/4 の本物化で `tokio::process::Command` で実装される):
 
 | GUI 画面 | subprocess 引数 | 生成物 | 実装 PR |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | DetectingScreen (本物化予定) | `allaganeye detect <video> -o <output>` | metadata.json | [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) Phase 3 |
 | ExportScreen (本物化予定) | `allaganeye split --from-metadata <meta>` | metadata.json + MP4 | [#466](https://github.com/Idios/kobutachan-allaganeye/issues/466) Phase 4 |
 
@@ -118,7 +118,7 @@ sequenceDiagram
 ## 4. 責務分離の原則
 
 | 原則 | 理由 |
-|---|---|
+| --- | --- |
 | **CLI は GUI に依存しない** | CLI 単体で実行 / テストできる。CLI のユニットテストで GUI 関連 subprocess は不要 |
 | **GUI は CLI を subprocess として呼び出す** | 重いロジック (ffmpeg / 検知) は CLI に集約。GUI 本体は UI に集中 |
 | **metadata.json を唯一の契約にする** | GUI と CLI が直接プロセス間通信 (IPC / RPC) しない。ファイルベースで疎結合 |

@@ -33,7 +33,7 @@ CI green は **内部整合性のみ** を保証し、base 取り込み時の機
 - `baseRefName` が `develop-x.x.x` 形式であることを確認 (`main` 直接は通常禁止)
 - 例外はホットフィックス PR のみ
 
-#### 2.2 base 最新化と直近マージ PR 列挙 (`feedback_pr_review_base_merge_regression.md` 昇格)
+#### 2.2 base 最新化と直近マージ PR 列挙
 
 ```bash
 # base を最新化 (read-only 操作)
@@ -53,7 +53,7 @@ gh pr list --base <baseRefName> --state merged \
 #### 2.3 base 同期判定と進め方確認 (影響候補がある場合のみ)
 
 - `mergeStateStatus` が `BEHIND` の場合、PR head は base 最新を取り込んでいない
-- 影響候補 PR がある + `BEHIND` の組合せでは、base / head の同ファイル grep 対比で develop 側追加機能 (新フィールド・関数引数・schema 変更・新規エクスポート等) の保持を逐条確認する。`gh api "repos/<owner>/<repo>/contents/<path>?ref=<ref>"` で base / PR head 双方を取得して `diff` で比較する手順は `feedback_pr_review_base_merge_regression.md` の §How to apply を参照
+- 影響候補 PR がある + `BEHIND` の組合せでは、base / head の同ファイル grep 対比で develop 側追加機能 (新フィールド・関数引数・schema 変更・新規エクスポート等) の保持を逐条確認する。具体的なコマンド (`gh api .../contents` + `diff` 比較 + 注意ファイル一覧) は `docs/l2-workflow.md` §「PR 作成 Pre-flight」 §「機能 regression 検出手順」 を参照
 - 結果を AskUserQuestion で 3 択提示する:
   - **(A) PR 作成者に rebase / merge 取り込み + 再検証を依頼するコメントを投稿** (Recommended) — 機能 regression リスクあり時の既定
   - **(B) 影響候補は確認済み・regression なしと判定し Step 3 へ進む** — base / head grep 対比で develop 側追加が PR head に保持されていることを実証できた場合
@@ -81,7 +81,7 @@ gh pr list --search "<元issue#>" --state all \
 ##### Red Flags
 
 | 浮かんだ思考 | 実態 |
-|---|---|
+| --- | --- |
 | 「最近 fetch したから OK」 | 数分でも別 PR がマージされうる。Step 2.2 は毎レビュー実施 |
 | 「mergeStateStatus が CLEAN だから影響候補も問題なし」 | CLEAN は merge 可否のみで機能 regression は判定しない |
 | 「並行 PR は計画段階で確認済みのはずだから skip」 | 計画後に別 worktree が PR を提出するケースあり (#646 / PR #647)。Step 2.4 はレビュー時にも実施 |
@@ -119,13 +119,30 @@ gh pr checks $ARGUMENTS
 
 ### 5. ロジック / ドキュメントレビュー
 
-PR の変更種別に応じて以下を確認する:
+PR の変更種別に応じて以下を確認する。**code quality (logic / architecture / security) 部分は plugin subagent に委譲し、project 固有の doc 整合性確認のみを本 skill で実施する**。
+
+#### 5.0 plugin subagent による code quality review (Skill `superpowers:requesting-code-review`)
+
+`superpowers:requesting-code-review` skill が dispatch する `superpowers:code-reviewer` subagent に code quality 観点 (logic correctness / architecture / security / code smell / best practices) のレビューを委譲する。subagent は本 skill の責務外の項目 (受け入れ条件 / base sync / 並行 PR / project doc 整合 / マージ後 handoff) には介入しない。
+
+入力に渡す情報:
+
+- PR 番号 (`$ARGUMENTS`)
+- PR タイトル / 本文 / diff (Step 1 で取得済み)
+- 重点観点: logic correctness / architecture (`CLAUDE.md` §モジュール構成、`docs/design-overview.md`) / security (subprocess 呼び出し / 外部入力 / 認証情報) / code smell
+
+戻り値の扱い:
+
+- subagent からは指摘リスト (各指摘 = 1 行: 観点 / 該当 path:line / 説明) が返る想定
+- 各指摘を Step 5b トリアージ表の 1 行として転記。出所列に「subagent: code quality (<観点>)」と前置 (例: `出所 = subagent: code quality (リネーム影響)`)
+- 重複指摘 (同一 path + 同一観点が project 固有 doc 整合性 (Step 5.1) と subagent 双方から出る) は **path + 観点** を de-dup キーとして 1 件に統合し、出所列に両方記載 (`出所 = subagent: code quality (<観点>) + Step 5.1`)
+- subagent の指摘も project の (A)/(B)/(C) 分類に従う。subagent が「観察のみ」を返した場合でも握り潰さず (A)/(B)/(C) いずれかに振り分ける (Iron Law 3)
+
+#### 5.1 project 固有 doc 整合性確認
 
 **共通観点**:
 
 - 変更の意図が PR の説明と一致しているか
-- アーキテクチャに沿っているか (`CLAUDE.md` §モジュール構成、`docs/design-overview.md`)
-- セキュリティモデルが守られているか (特に外部入力処理、subprocess 呼び出し)
 
 **ドキュメント変更 PR の場合**:
 
@@ -150,7 +167,7 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 **列挙プロセス (軸ごとに列挙し優先度付け)**
 
 | 軸 | 取り方 | シグナル |
-|---|---|---|
+| --- | --- | --- |
 | カバレッジ | 変更行のうち test が hit しない分岐を洗い出す | 未テスト分岐残数 |
 | 観点 | happy path / error path / edge case を網羅 | 観点欠落 |
 | エッジケース | 入力境界 (空 / null / 巨大) / 並行性 / resource 枯渇 | 想定外入力 |
@@ -159,7 +176,7 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 **long-running / integration 検証観点**
 
 - 長時間動画 (2 時間以上) / GPU mode / audio 統合 / 大規模入力 等は mock 不可
-- レビュー側は「手動検証が必要」と明示し、PR 作成セッションが PR 提出前に実機検証済みであることを確認する。未実施なら受け入れ条件未充足として (A) PR コメントで再検証を要求 (`CLAUDE.md` §「PR 作成ルール」の「PR 作成前」要件参照)
+- レビュー側は「手動検証が必要」と明示し、PR 作成セッションが PR 提出前に実機検証済みであることを確認する。未実施なら受け入れ条件未充足として (A) PR コメントで再検証を要求 (`docs/l2-workflow.md` §「実機検証 trigger 表」 参照)
 - 自動 CI で担保できる範囲と、手動検証が必須な範囲の境界を明示してユーザー / PR 作成セッションに伝達する
 
 ここで列挙した観点は Step 5b トリアージ表で必ず処置分類を付ける。観察コメントのみで終える (= 握り潰す) のは禁止。
@@ -168,7 +185,7 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 
 Step 3 (受け入れ条件未達) / Step 4 (CI 失敗) / Step 5 (ロジック・ドキュメント不整合) / Step 5a (ギャップ分析) で洗い出した**すべての摘出課題**を下記トリアージ表に記載する。各行は必ず処置分類 (A / B / C) のいずれかに割り当てる。**未分類 (観察のみ / 握り潰し / スコープ対象外と自己判断して無視) は禁止**。
 
-> **方針: 摘出問題は原則 (A) PR 内追加修正で PR を完結させる** (`feedback_pr_internal_fix_policy.md` 2026-04-27 PR #615 確定方針の skill 昇格)。**理由: レビュー摘出のたびに別 issue を起票すると issue が減らないどころか増え、運用が破綻する。本 PR 内で完結できる修正は本 PR で行う方が追跡コストが低い。** 別 issue 起票は後述の限定例外 trigger に該当する場合のみ。
+> **方針: 摘出問題は原則 (A) PR 内追加修正で PR を完結させる** (`docs/l2-workflow.md` §「(A) PR 内修正優先 規約」)。**理由: レビュー摘出のたびに別 issue を起票すると issue が減らないどころか増え、運用が破綻する。本 PR 内で完結できる修正は本 PR で行う方が追跡コストが低い。** 別 issue 起票は後述の限定例外 trigger に該当する場合のみ。
 
 **処置分類 (3 択、(A) Recommended)**
 
@@ -183,7 +200,7 @@ Step 3 (受け入れ条件未達) / Step 4 (CI 失敗) / Step 5 (ロジック・
 
 ```js
 options: [
-  { label: "(A) 本 PR 内で追加修正 (Recommended)", description: "本 PR の品質を底上げする修正は (A) で同梱が原則 (`feedback_pr_internal_fix_policy.md`)" },
+  { label: "(A) 本 PR 内で追加修正 (Recommended)", description: "本 PR の品質を底上げする修正は (A) で同梱が原則 (`docs/l2-workflow.md` §「(A) PR 内修正優先 規約」)" },
   { label: "(B) 別 issue 起票 (別領域 / 大規模 / 外部依存のみ)", description: "本件は audio module で本 PR スコープ外 (detector/format) → 別領域 trigger 強該当、独立した security 修正" },
   { label: "(C) 既存 issue 追記", description: "既存 issue #N が同テーマで未クローズ → 重複起票回避" }
 ]
@@ -192,7 +209,7 @@ options: [
 **(A) を選ばない理由として NG な合理化** (これらが浮かんだら STOP):
 
 | 浮かんだ思考 | 実態 |
-|---|---|
+| --- | --- |
 | 「PR が大きくなるから別 issue にしよう」 | (A) が原則。サイズだけを理由に (B) を選ばない。本当に diff が肥大化するなら「大規模リファクタ」trigger を満たすか先に判定 |
 | 「本 PR の受け入れ条件と直結しないから別 issue」 | (A) が原則。本 PR の品質を底上げする修正は (A) で同梱する。直結性ではなく「別領域・別機能」trigger を満たすかで判定 |
 | 「軽微だから別 issue で後でまとめて」 | (A) が原則。軽微なら本 PR 内で即時修正の方が安い。後回しにすると忘れる |
@@ -207,7 +224,7 @@ options: [
 **判定に迷いがちな典型ケース (baseline 評価で抽出)**
 
 | ケース | 推奨処置 | 補足 |
-|---|---|---|
+| --- | --- | --- |
 | PR 本文に記載のある軽微なスコープ外変更 (無関係な lint fix / 型リネーム 等) | **(A) revert 要求** または **(B) 別 issue 起票** を `AskUserQuestion` で確定 | Iron Law 3「軽微だから」の独断禁止。scope-guard skill に委譲可 |
 | スコープ外変更に伴う追従テスト不足 | 元変更の処置に連動: (A) revert → 追従テスト指摘は消滅 / (B) スコープ拡大合意 → 同 PR 内で (A) 追加要求 | 二重構造なので元スコープ判定を先に確定する |
 | 参照ファイル追加 (バイナリ等) の実体未検証 | **(A) PR コメント** (サイズ・次元・生成条件の PR 本文追記を要求) | enforce-acceptance-criteria §Step 3 チェック項目直結 |
@@ -218,7 +235,7 @@ options: [
 **トリアージ表テンプレート** (Step 6 のレビュー報告に必須で含める)
 
 | # | 摘出内容 | 出所 | 処置 | 根拠 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 1 | <具体的な課題> | 受け入れ条件 #N / CI / 5a カバレッジ / 5a 観点 / 5a エッジケース / 5 ロジック / 5 ドキュメント | (A) PR コメント / (B) 新規 issue / (C) 既存 #N 追記 | <なぜその分類か (受け入れ条件直結・PR 本文外・既存 issue と重複 等)> |
 
 表が空で終わるのは「本当に摘出課題ゼロ」の場合のみ。**1 件でも摘出したら必ず表に載せる**。
@@ -487,7 +504,7 @@ PR が既に `MERGED` 状態の場合 (例: ユーザーがマージ後に再度
 Iron Law Red Flags と呼応。以下の合理化が浮かんだら LGTM 寸前でも止まる。
 
 | 出てくる合理化 | 実態 |
-|---|---|
+| --- | --- |
 | 「受け入れ条件は大体満たしてる」 | Iron Law 1 違反。逐条引用 + diff / test の対応付けが必須 |
 | 「明らかな diff だからレビュー簡略化でよい」 | Step 5a ギャップ分析 skip は NG。明示指示不要で自動実施 |
 | 「unit test pass だから手動検証不要」 | GPU / audio / 長時間動画は mock 不可。PR 作成セッションに実機検証実施 (or 結果報告) を要求 |
