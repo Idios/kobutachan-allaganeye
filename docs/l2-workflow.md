@@ -346,6 +346,19 @@ git grep -oE '§「[^」]+」' .claude/ docs/ | sort -u
 # (auto-merge で取り込んだ全ファイル含む)
 ```
 
+### content-level の inner reference も対象 (本 PR で内容を移動した時)
+
+`§「<親セクション>」` までは grep で機械的に追跡できるが、`§「<親>」の「<子>」要件参照` のような **content-level inner reference** (鉤括弧 + section prefix なし) は §「<...>」grep に引っかからない。本 PR で content を別 doc へ移動した場合、移動元 doc の同名ラベルが残骸 reference として stale になることがある (PR #667 Issue C で発覚)。
+
+確認手段:
+
+```bash
+# 本 PR で内容が移動した section / 概念のラベル (例: 「PR 作成前」要件) を grep
+git grep -nE 'の「PR 作成前」|の「<旧概念>」' .claude/ docs/ .github/ CLAUDE.md
+```
+
+該当ラベルが移動元 doc を pointing したまま残っていれば、移動先 doc / 新ラベルへ書き換える。move 完了の commit 前にこの grep を必ず実施する (move された時点で立ち枯れる stale reference を検出)。
+
 ## レビュー受け入れ基準 (#367 対策)
 
 PR #343 のような「複数 Issue が不完全修正のままクローズされる」事故を防ぐため、`/review-pr` skill は以下を自動検証する:

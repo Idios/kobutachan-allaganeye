@@ -39,7 +39,7 @@
 
 <!--
 plain bullet `-` で記述する (validate-checklist は `[x]` 化を要求しない、CI ゲート増設なし)。
-PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成前 Pre-flight」参照):
+PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成 Pre-flight」参照):
 1. `git fetch origin <base>` で base 最新化
 2. `git log HEAD..origin/<base> --oneline` で取り込み未済 commit 列挙
 3. 取り込み未済 commit が当 PR の `git diff --name-only origin/<base>` と path 交差するなら取り込み + 検証再実行
