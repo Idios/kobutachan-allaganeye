@@ -35,7 +35,7 @@
 
 ### Iron Law 6: PR 作成前検証
 
-#### ベース同期確認 (Pre-flight、`feedback_pr_review_base_merge_regression.md` / `feedback_concurrent_worktree_pr_check.md` 昇格)
+#### ベース同期確認 (Pre-flight、`docs/l2-workflow.md` §「PR 作成 Pre-flight」)
 
 <!--
 plain bullet `-` で記述する (validate-checklist は `[x]` 化を要求しない、CI ゲート増設なし)。

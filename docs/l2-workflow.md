@@ -112,6 +112,169 @@ gh pr list --search "<元issue#>" --state all \
 | 「並行 PR は計画段階で確認したから skip」 | 計画後に別 worktree が PR を提出するケースあり (#646 / PR #647)。PR 作成時にも実施 |
 | 「Pre-flight で path 交差なしと判定したから自動チェック skip」 | path 交差判定と Iron Law 6 自動チェックは独立軸。Iron Law 6 は変更 path 別に毎 PR 作成時に実施 |
 
+> 注: 並行 worktree PR 重複確認 (step 4) は **計画立案セッションの Phase 1 Explore でも実施** する。`gh pr list --search "<issue#>" --state all` を Bash 並列起動の 1 つに含める。`git log --all` で別 worktree branch の commit が見えても、PR として open かどうかは別 — `gh pr list` が一次情報源。
+
+## PR 作成 path 別自動チェック (Iron Law 6 main 条)
+
+> originally from `feedback_pr_pre_creation_checks.md`, absorbed 2026-05-01
+
+PR 作成前のローカル自動チェックは、変更ファイル path に応じて **必要 job をすべて実行する**。「軽微だから skip」「Python のみだから GUI 側不要」は Iron Law 6 違反 / 失敗パターン A 再発。
+
+### path 分類表
+
+| 種別 | 判定パターン | 実行する自動チェック |
+|---|---|---|
+| **python-core** | `allaganeye/**/*.py`, `tests/**/*.py`, `pyproject.toml` | `ruff check .` / `ruff format --check .` / `pyright` / `pytest` (slow 除外) |
+| **gui-frontend** | `gui/src/**`, `gui/package.json`, `gui/tsconfig.json`, `gui/vite.config.ts`, `gui/eslint.config.js` | `cd gui && npm run lint` / `npm run typecheck` / `npm test` / `npm run build` |
+| **gui-rust** | `gui/src-tauri/**` | `cargo check --manifest-path gui/src-tauri/Cargo.toml` |
+| **installer-pester** | `scripts/**/*.ps1`, `scripts/tests/**` | `Invoke-Pester -Path scripts/tests/` (Windows 上で) |
+| **docs-only** | `docs/**/*.md`, `README.md`, `CHANGELOG.md`, `CLAUDE.md` のみ。コードファイル 0 件 | `feedback_doc_section_ref_check.md` 規約: §「<旧名>」grep で残骸ゼロ確認 |
+
+### 複合判定ルール
+
+- 上記の複数種別にまたがれば **すべて実行** (例: python + gui-frontend なら 8 個の lint/test ジョブ全部)
+- 完全 docs-only でも path 識別子変更を含むなら `.github/workflows/` と `allaganeye/` への波及確認 (`/review-pr` の §D doc-only PR 検証手順と整合)
+- `.claude/hooks/`, `.claude/skills/`, `.claude/settings*.json` 変更は **メタ変更** として「skill 自体の eval が必要か」を `AskUserQuestion` で確認
+
+### fail 時の対応
+
+`(A) PR 内修正優先 規約` (本 doc §) に従い、`AskUserQuestion` で 3 択提示:
+
+- **(A) [Recommended]** 同セッションで修正して再実行
+- (B) PR 作成を中断して plan モードに戻る (大きな修正が必要と判明)
+- (C) 強制 skip (Self-Test Report の `[ ]` を残し validate-checklist で fail させる、Iron Law 6 違反の自覚を促す)
+
+### 例外
+
+- 既に同セッションで全 job pass している (rebase / 修正後の再実行不要) → skip 可
+- フィードバック自体への変更 (本 doc の編集) → 循環依存を避けるため `AskUserQuestion` でユーザー判断
+
+## 実機検証 trigger 表 (Iron Law 6 main 条)
+
+> originally from `feedback_user_realmachine_test_request.md`, absorbed 2026-05-01
+
+ロジック変更を含む PR では mock 不可領域 (GPU / audio / 長時間動画 / GUI Tauri 起動) をユーザー (Idios) に実機検証依頼する。「mock テスト pass = 全体 OK」は Iron Law 6 違反 / Red Flag。
+
+### trigger 表
+
+| 変更パス / 内容 | 必要な実機検証 | 根拠 / mock 不可理由 |
+|---|---|---|
+| `allaganeye/video/gpu_detector.py`, `system_info.py` | `pytest -m slow_gpu` (NVIDIA GPU 必須環境) | GPU 初期化 / hwaccel が mock 不可。CI は ubuntu-latest で GPU なし |
+| `allaganeye/audio/scan.py`, `audio/matcher.py`, `audio/features.py` | `pytest -m slow tests/test_audio_integration.py` (`ALLAGANEYE_AUDIO_TEST_VIDEO` 必須) | Fanfare 検出は 39GB 録画ファイルが必要 |
+| `allaganeye/video/detector.py` Pass 1 / scorebar 関連 | `pytest -m slow_detect` または `pytest -m "slow or baseline_regen"` | 実動画 baseline 検証 |
+| `allaganeye/commands/split_matches.py` パイプライン変更 | `pytest -m slow_pipeline` | 全パイプライン統合動作 |
+| `gui/src-tauri/**` Tauri command 追加・変更 | `cd gui && npm run tauri dev` での手動 GUI 起動 + 該当 command の UI 操作確認 | ヘッドレスで Tauri 起動はできるが、ユーザーが GUI 操作で確認するのが本来の検証 |
+| `gui/src/screens/**` UI 変更 | `npm run tauri dev` + 画面 5 種 (drop / detecting / complete / preview / export) の目視確認 + スクリーンショット添付推奨 | `enforce-acceptance-criteria/SKILL.md` Step 3 と整合 |
+| `gui/src-tauri/src/commands/export*.rs` H.264 エンコーダ選択 | 実機 export (NVENC / QSV / AMF / libx264) | GPU encoder fallback は実機 stderr 依存 |
+| `.github/workflows/**` 変更 | (任意) act / 該当 job のドライラン | CI 動作の事前検証、必須ではないが推奨 |
+| `scripts/**/*.ps1` インストーラ変更 | Windows 上で `Invoke-Pester -Path scripts/tests/` 実行 | Linux runner 上では PowerShell 挙動が一部違う |
+
+### 該当時の AskUserQuestion テンプレ (Iron Law 5「Recommended 付き 2-4 択」標準)
+
+```text
+question: "本 PR には GPU 関連変更 (gpu_detector.py, system_info.py) が含まれます。
+以下のテストを実機 (Windows + NVIDIA GPU) で実行する必要があります:
+
+  pytest -m slow_gpu tests/test_gpu_detector.py
+  pytest -m slow tests/test_system_info.py::test_probe_gpu_vendors_real
+
+どう進めますか?"
+
+options:
+  A: "今すぐ実機で実行して結果を貼り付ける [Recommended]"
+     description: "PR 提出前に実機テスト pass を確認するのが本来。コマンド出力 (PASS/FAIL + 末尾 30 行) を次の AskUserQuestion 回答で貼ってください"
+  B: "実機テスト未実施で PR 作成 (Self-Test Report に plain bullet 明記)"
+     description: "ユーザーがレビュー時に実機検証する前提。Self-Test Report の machine-unverifiable 節に '- pytest -m slow_gpu (PR 提出時点では未実施 / レビュー時に実機確認)' と書く"
+  C: "PR 作成を中断して実機準備を整える"
+     description: "実機環境にアクセスできない / セッション中断が必要"
+```
+
+### 結果記録
+
+- **A の場合**: ユーザー (Idios) がコマンド実行 → 結果サマリ (PASS/FAIL + 末尾 30 行) を AskUserQuestion 回答に貼る → Self-Test Report の `### 実機検証 (machine-unverifiable)` 節に plain bullet で「PR 提出時点で実施済 (環境情報 + 結果概要)」と書く
+- **B の場合**: Self-Test Report の `### 実機検証 (machine-unverifiable)` 節に plain bullet で「PR 提出時点では未実施 / レビュー時に実機確認」と明記。`Self-Test Report 規約` (本 doc §) により plain bullet は CI ゲートで block されない
+- **C の場合**: PR 作成自体を中止 (Iron Law 6 違反を避ける)
+
+### 注意
+
+- Claude セッション側に GPU・録画ファイルへのアクセスが保証されているわけではない。**実機テストの代行実行はしない**。依頼と結果記録のみが Claude の責務
+- trigger 表に該当しない場合は実機検証不要。Self-Test Report に「該当なし (gpu_detector.py / audio/ / video/detector.py / gui/ 変更なし)」を 1 行書いて未実施を明示
+
+## Self-Test Report 規約 (validate-checklist CI ゲート)
+
+> originally from `feedback_pr_validate_checklist.md`, absorbed 2026-05-01
+
+PR 本文の checkbox (`- [ ]` / `- [x]`) は `validate-checklist` ジョブが counting している (`unchecked > 0` で fail)。マージ前ゲートで unchecked 項目があるとブロックされる。
+
+### Why
+
+ユーザーが Test plan を消化せずにマージするのを防ぐ品質ゲート。ただし「レビュー時に実機で確認する項目」も `- [ ]` で書くと「Claude が消化していない実機検証項目」までゲートで止まり、PR 提出時に CI fail する。
+
+### 構成
+
+PR 本文を以下の構成で書き分ける (PR #615 / PR #625 修正で確立):
+
+- **「## Test plan (本 PR 提出前にローカルで実行済)」セクション**: 自分が PR 提出前に実行した自動チェック (lint / typecheck / test / cargo check / build) のみを `- [x] ...` で列挙。全件チェック済が前提
+- **「## レビュー時の確認 (machine-unverifiable)」セクション**: `npm run tauri dev` での手動操作、UI 目視確認、レビュー時にユーザーが実施する項目を **plain bullet `-`** (checkbox なし) で列挙
+
+`- [ ]` を残すと PR 提出直後の CI で fail する。`gh pr edit <N> --body-file -` で書き直せば validate-checklist は再実行され直ちに pass する (commit 不要)。
+
+## (A) PR 内修正優先 規約
+
+> originally from `feedback_pr_internal_fix_policy.md`, absorbed 2026-05-01
+
+レビューで摘出した課題は、原則として該当 PR 内で全て対策する。`/review-pr` のトリアージ表で (B) 新規 issue 起票 / (C) 既存 issue 追記 を選びたくなる場面でも、まず (A) 本 PR 内修正を第一候補にする。
+
+### Why
+
+2026-04-27 PR #615 (Tauri bundle 有効化) のレビュー時、ユーザー (Idios) が方針確定。「PR で挙がった問題は原則そのPRですべて対策する」。レビュー側 SKILL のデフォルト判定ロジック (本 PR 受け入れ条件直結でない → (B) 別 issue) では分離する判断になっていたが、ユーザー方針はスコープ拡大による一括対応を優先する。
+
+### How to apply
+
+- `/review-pr` Step 5b トリアージ表で (B) 新規 issue / (C) 既存 issue 追記 を考えた瞬間、まず「本 PR 内で対応できないか」を検討する
+- 例外: スコープ逸脱が明らかに大きい (別レイヤー実装変更 / GPU 統合等で工数 1 セッション超 / 別担当領域) 場合のみ (B) を提案。その場合も `AskUserQuestion` で「(A) 本 PR 拡大 / (B) 別 issue」の選択肢を提示し、ユーザーに判断を委ねる
+- `AskUserQuestion` で (A) only / (A)+(B) 混合 / 個別調整 の選択肢を提示する場合、(A) only を **「Recommended」** として提示する
+- 例外的に (B) になる典型: 別 issue が既に存在し、まだクローズされていない場合 (重複防止) / scope-guard skill が「同 PR で対応すると Iron Law 3 違反」と判定した場合
+
+## PR 規約 (develop ベース / Closes 禁止 / exit_code 衝突 / 1 PR = 1 scope / session-id)
+
+> originally from `feedback_pr_rules.md`, absorbed 2026-05-01
+
+### develop-x.x.x ベース
+
+PR は `develop-x.x.x` ベースで作成する。`main` ベースは不可。
+
+- **Why**: `docs/release-process.md` に「各 PR は develop-x.x.x にマージする」と明記。`main` はリリース時のみ
+- **How**: `gh pr create --base develop-0.2.0` で作成。CI トリガーにも `develop-*` を含める
+
+### Closes / Fixes / Resolves キーワード禁止
+
+PR 本文・コミットメッセージに `Closes` / `Fixes` / `Resolves` キーワードを書かない。
+
+- **Why**: `docs/issue-policy.md` §「Issue のライフサイクル管理」 で禁止。クローズはマージ実行者が手動で行う (Iron Law 4)
+- **How**: PR 本文では `Refs #N` で参照のみ。コミットメッセージにも `#N` 参照のみ
+
+### exit_code 衝突回避
+
+新しい exit_code を追加する際は既存コードと衝突しないか確認する。
+
+- **Why**: 過去に `ConfigValidationError(exit_code=2)` が `InputFileError(exit_code=2)` と衝突してレビューで差し戻された
+- **How**: `allaganeye/exceptions.py` と CLAUDE.md の Exit Codes テーブルを確認し、未使用のコードを割り当てる
+
+### 1 PR = 1 scope
+
+進行中の PR にスコープ外の変更を追加しない。
+
+- **Why**: 過去に 9 件の Issue を 1 PR に詰め込んでレビューで分割を指示された
+- **How**: 計画段階で PR 分割を決め、各 PR のスコープを超えるコミットは別 PR にする (`scope-guard` skill 連携)
+
+### コミットメッセージ session-id
+
+コミットメッセージの末尾に `[<session-id>]` を含める。
+
+- **Why**: `docs/release-process.md` のコミットルールに明記
+- **How**: 全コミットに `[<session-id>]` を付与 (例: `[admiring-gates-fcda42]`)
+
 ## レビュー受け入れ基準 (#367 対策)
 
 PR #343 のような「複数 Issue が不完全修正のままクローズされる」事故を防ぐため、`/review-pr` skill は以下を自動検証する:

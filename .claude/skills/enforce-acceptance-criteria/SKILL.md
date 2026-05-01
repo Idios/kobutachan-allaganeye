@@ -5,16 +5,7 @@ user-invocable: true
 argument-hint: <PR番号>
 ---
 
-## Iron Law
-
-**NO PR MERGE WITHOUT ALL ACCEPTANCE CRITERIA CHECKED AND VERIFIED.**
-
-「大体満たしてる」「軽微な差分」で LGTM を出すのは厳禁。逐条検証できない項目が 1 件でもあれば、修正依頼を投稿してこのスキルを終了する。
-
-## 背景
-
-PR #343 系で複数 issue が不完全修正のままクローズされた事故 (#367) の再発防止。
-「機能呼び出しレベルのテスト」だけで済ませず、「ユーザー視点の出力が要件を満たしているか」まで確認する。
+> Iron Law 1 (`.claude/hooks/session-start.sh`) の手順実装。詳細な背景・条文は hook を参照。
 
 ## 呼び出しタイミング
 

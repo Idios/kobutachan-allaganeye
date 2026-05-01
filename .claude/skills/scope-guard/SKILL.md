@@ -4,18 +4,7 @@ description: 実装中の「ついでに直した」スコープ逸脱を検知�
 user-invocable: true
 ---
 
-## Iron Law
-
-**NO CHANGES OUTSIDE THE ISSUE SCOPE WITHOUT A NEW ISSUE.**
-
-着手している issue の範囲外の変更を「ついでに」commit することは禁止。
-気付いた問題があれば **作業を止めて** 新 issue を起票し、別 PR で対応する。
-
-## 背景
-
-複数スコープ (GUI / インストーラ / guard) が並行で動く L2 では、スコープ逸脱が
-レビュアの負荷を増やし、ロールバック時の範囲特定を困難にする。
-「軽微な改善」「ついでにリファクタ」で PR が肥大化する再発防止策。
+> Iron Law 3 (`.claude/hooks/session-start.sh`) の手順実装。詳細な背景・条文は hook を参照。
 
 ## 呼び出しタイミング
 

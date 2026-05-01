@@ -7,11 +7,11 @@ argument-hint: <issue番号>
 
 指定された issue を「マージ後の受け入れ条件実測再検証」を経てクローズする。
 
-## 重要: 本 skill は Iron Law 4 の唯一の担保ルート
+> Iron Law 4 (`.claude/hooks/session-start.sh`) 担保ルート。詳細な条文は hook を参照。
 
-`/review-pr` の Step 8 縮小により、レビューセッションは `gh issue close` を実行しなくなった (#594)。マージ後の受け入れ条件**実測**再検証は本 skill (またはユーザー手動クローズ) でしか実施されない。「PR diff 上の `- [ ]` 確認だけで close 可」は Iron Law 4 違反。
+## 制約
 
-**本 skill は PR ブランチへの編集・commit・push は行わない**。ただし base ブランチ (main / develop-x.x.x) の参照・read-only な検証コマンド (pytest / ruff check / grep) は実施する (`feedback_review_session_push_confirm.md` の制約は PR ブランチに対するもの。base ブランチの read-only 参照は対象外)。
+本 skill は PR ブランチへの編集・commit・push は行わない (レビュー専用セッションと同等の read-only 制約)。ただし base ブランチ (main / develop-x.x.x) への read-only な検証コマンド (pytest / ruff check / grep) は実施する。
 
 ## 起動
 

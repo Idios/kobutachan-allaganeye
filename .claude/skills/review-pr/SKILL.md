@@ -33,7 +33,7 @@ CI green は **内部整合性のみ** を保証し、base 取り込み時の機
 - `baseRefName` が `develop-x.x.x` 形式であることを確認 (`main` 直接は通常禁止)
 - 例外はホットフィックス PR のみ
 
-#### 2.2 base 最新化と直近マージ PR 列挙 (`feedback_pr_review_base_merge_regression.md` 昇格)
+#### 2.2 base 最新化と直近マージ PR 列挙
 
 ```bash
 # base を最新化 (read-only 操作)
@@ -53,7 +53,7 @@ gh pr list --base <baseRefName> --state merged \
 #### 2.3 base 同期判定と進め方確認 (影響候補がある場合のみ)
 
 - `mergeStateStatus` が `BEHIND` の場合、PR head は base 最新を取り込んでいない
-- 影響候補 PR がある + `BEHIND` の組合せでは、base / head の同ファイル grep 対比で develop 側追加機能 (新フィールド・関数引数・schema 変更・新規エクスポート等) の保持を逐条確認する。`gh api "repos/<owner>/<repo>/contents/<path>?ref=<ref>"` で base / PR head 双方を取得して `diff` で比較する手順は `feedback_pr_review_base_merge_regression.md` の §How to apply を参照
+- 影響候補 PR がある + `BEHIND` の組合せでは、base / head の同ファイル grep 対比で develop 側追加機能 (新フィールド・関数引数・schema 変更・新規エクスポート等) の保持を逐条確認する。`gh api "repos/<owner>/<repo>/contents/<path>?ref=<ref>"` で base / PR head 双方を取得して `diff` で比較する手順は `docs/l2-workflow.md` §「PR 作成 Pre-flight」 §「Pre-flight Red Flags」 を参照
 - 結果を AskUserQuestion で 3 択提示する:
   - **(A) PR 作成者に rebase / merge 取り込み + 再検証を依頼するコメントを投稿** (Recommended) — 機能 regression リスクあり時の既定
   - **(B) 影響候補は確認済み・regression なしと判定し Step 3 へ進む** — base / head grep 対比で develop 側追加が PR head に保持されていることを実証できた場合
@@ -119,13 +119,30 @@ gh pr checks $ARGUMENTS
 
 ### 5. ロジック / ドキュメントレビュー
 
-PR の変更種別に応じて以下を確認する:
+PR の変更種別に応じて以下を確認する。**code quality (logic / architecture / security) 部分は plugin subagent に委譲し、project 固有の doc 整合性確認のみを本 skill で実施する**。
+
+#### 5.0 plugin subagent による code quality review (Skill `superpowers:requesting-code-review`)
+
+`superpowers:requesting-code-review` skill が dispatch する `superpowers:code-reviewer` subagent に code quality 観点 (logic correctness / architecture / security / code smell / best practices) のレビューを委譲する。subagent は本 skill の責務外の項目 (受け入れ条件 / base sync / 並行 PR / project doc 整合 / マージ後 handoff) には介入しない。
+
+入力に渡す情報:
+
+- PR 番号 (`$ARGUMENTS`)
+- PR タイトル / 本文 / diff (Step 1 で取得済み)
+- 重点観点: logic correctness / architecture (`CLAUDE.md` §モジュール構成、`docs/design-overview.md`) / security (subprocess 呼び出し / 外部入力 / 認証情報) / code smell
+
+戻り値の扱い:
+
+- subagent からは指摘リスト (各指摘 = 1 行: 観点 / 該当 path:line / 説明) が返る想定
+- 各指摘を Step 5b トリアージ表の 1 行として転記。出所列に「subagent: code quality (<観点>)」と前置 (例: `出所 = subagent: code quality (リネーム影響)`)
+- 重複指摘 (同一 path + 同一観点が project 固有 doc 整合性 (Step 5.1) と subagent 双方から出る) は **path + 観点** を de-dup キーとして 1 件に統合し、出所列に両方記載 (`出所 = subagent: code quality (<観点>) + Step 5.1`)
+- subagent の指摘も project の (A)/(B)/(C) 分類に従う。subagent が「観察のみ」を返した場合でも握り潰さず (A)/(B)/(C) いずれかに振り分ける (Iron Law 3)
+
+#### 5.1 project 固有 doc 整合性確認
 
 **共通観点**:
 
 - 変更の意図が PR の説明と一致しているか
-- アーキテクチャに沿っているか (`CLAUDE.md` §モジュール構成、`docs/design-overview.md`)
-- セキュリティモデルが守られているか (特に外部入力処理、subprocess 呼び出し)
 
 **ドキュメント変更 PR の場合**:
 
@@ -168,7 +185,7 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 
 Step 3 (受け入れ条件未達) / Step 4 (CI 失敗) / Step 5 (ロジック・ドキュメント不整合) / Step 5a (ギャップ分析) で洗い出した**すべての摘出課題**を下記トリアージ表に記載する。各行は必ず処置分類 (A / B / C) のいずれかに割り当てる。**未分類 (観察のみ / 握り潰し / スコープ対象外と自己判断して無視) は禁止**。
 
-> **方針: 摘出問題は原則 (A) PR 内追加修正で PR を完結させる** (`feedback_pr_internal_fix_policy.md` 2026-04-27 PR #615 確定方針の skill 昇格)。**理由: レビュー摘出のたびに別 issue を起票すると issue が減らないどころか増え、運用が破綻する。本 PR 内で完結できる修正は本 PR で行う方が追跡コストが低い。** 別 issue 起票は後述の限定例外 trigger に該当する場合のみ。
+> **方針: 摘出問題は原則 (A) PR 内追加修正で PR を完結させる** (`docs/l2-workflow.md` §「(A) PR 内修正優先 規約」)。**理由: レビュー摘出のたびに別 issue を起票すると issue が減らないどころか増え、運用が破綻する。本 PR 内で完結できる修正は本 PR で行う方が追跡コストが低い。** 別 issue 起票は後述の限定例外 trigger に該当する場合のみ。
 
 **処置分類 (3 択、(A) Recommended)**
 
@@ -183,7 +200,7 @@ Step 3 (受け入れ条件未達) / Step 4 (CI 失敗) / Step 5 (ロジック・
 
 ```js
 options: [
-  { label: "(A) 本 PR 内で追加修正 (Recommended)", description: "本 PR の品質を底上げする修正は (A) で同梱が原則 (`feedback_pr_internal_fix_policy.md`)" },
+  { label: "(A) 本 PR 内で追加修正 (Recommended)", description: "本 PR の品質を底上げする修正は (A) で同梱が原則 (`docs/l2-workflow.md` §「(A) PR 内修正優先 規約」)" },
   { label: "(B) 別 issue 起票 (別領域 / 大規模 / 外部依存のみ)", description: "本件は audio module で本 PR スコープ外 (detector/format) → 別領域 trigger 強該当、独立した security 修正" },
   { label: "(C) 既存 issue 追記", description: "既存 issue #N が同テーマで未クローズ → 重複起票回避" }
 ]

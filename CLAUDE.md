@@ -191,6 +191,10 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 - サブディレクトリ（`20260116/` 等）: 手動で試合分割済みのMP4（`YYYYMMDD_N.mp4`）
 - 未設定の場合、`sample_video_dir` fixture を使うテスト（`slow` マーカー）はスキップされる
 
+## Portable ZIP 哲学
+
+ツール側はユーザー環境を変更しない。ファイル関連付け / レジストリ / PATH / 自動起動登録は提案禁止。展開 = インストール、削除 = アンインストール の Portable ZIP 哲学を維持する (2026-04-27 ユーザー方針確定)。
+
 ## セキュリティ検査（allaganeye-guard 運用連携）
 
 外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `allaganeye-guard` でセキュリティ検査を行う。**プログラムレベルでの結合は行わず**、エージェント (= Claude + 人間メンテナ Idios) が手動で `allaganeye-guard verify` を実行する運用ルールとする (2026-04-21 方針確定、#454 参照)。詳細は [`docs/guard-integration.md`](docs/guard-integration.md)、外部ユーザー向けバグ報告案内は [`docs/bug-report-guide.md`](docs/bug-report-guide.md) を参照。
@@ -202,12 +206,7 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 
 ## リリース戦略
 
-詳細は `docs/release-process.md` を参照。要約:
-
-- `develop-x.x.x` が日常の統合先、`main` はリリース時のみ更新
-- PR はすべて `develop-x.x.x` にマージ
-- リリース時に `develop-x.x.0 → main` マージ + タグ打ち
-- レイヤーごとに minor バージョン（L1=0.1, L2=0.2, L3=0.3, L4=0.4, L5=0.5）
+詳細は [`docs/release-process.md`](docs/release-process.md) を参照。
 
 ## 開発ワークフロー
 
@@ -234,6 +233,18 @@ L2 からは**単一ワークツリー + skill ベースディスパッチ**を�
 
 蓄積した基準を次セッション以降で読み返し、同じ訂正を繰り返さないようにする。個別セッションの一時状態 (進行中の PR 番号・作業中の issue 等) は memory ではなく TodoWrite / plan に残す。
 
+## Plugin との関係 (override 宣言)
+
+session 先頭で有効化されている plugin (`superpowers` v5.0.7 / `andrej-karpathy-skills` v1.0.0) のプロセス規律を以下のとおり全面採用する。本 project と plugin の見解が分かれる点は project 側の立場をここで明示する。
+
+- **TDD** (`superpowers:test-driven-development`): HARD-GATE を全面採用。Red-Green-Refactor (NO PRODUCTION CODE WITHOUT FAILING TEST FIRST) を遵守する
+- **Brainstorming** (`superpowers:brainstorming`): creative work (新規 feature / bug fix / refactor) 前に必ず invoke する
+- **Plan execution** (`superpowers:subagent-driven-development`): plan 実行時は fresh subagent + 2-stage review (spec + code quality) を採用する
+- **Code review** (`superpowers:requesting-code-review` subagent): `/review-pr` が code quality 部分を当 subagent に委譲する形で利用する。base sync / acceptance criteria gate / triage / post-merge handoff の project 固有部分は維持
+- **Worktree**: トリガー別に住み分け。
+  - Idios が新規セッションを立ち上げた場合: Claude Code session が自動生成する `.claude/worktrees/<name>/` を使用 (L2 workflow §単一ワークツリー)
+  - plugin のワークフロー (例: `superpowers:using-git-worktrees`) が worktree 作成を要求する場合: plugin の per-feature 手動 worktree を使用
+
 ## CLAUDE.md 継続改善
 
 ユーザーから「CLAUDE.md に追記して」等の指示があった場合、このファイルを即座に更新する。
@@ -241,41 +252,11 @@ L2 からは**単一ワークツリー + skill ベースディスパッチ**を�
 
 ## GitHub Issue 作成ルール
 
-詳細は `docs/issue-policy.md` を参照。要約:
-
-- プレフィックス: `[bug]`, `[doc]`, `[refactor]`, `[task]`, `[question]`, `[risk]`
-- Assignee: 常に `Idios`
-- 作成者明示: 本文末尾に `作成: <session-id>`
-- ラベル: prefix ラベル + スコープラベル (`l2a-gui` / `l2b-installer` / `l2-workflow` / `l2-decision` / `l1-residual` 等) + 優先度（`P1-high` / `P2-medium` / `P3-low`）
-- `Closes`/`Fixes` キーワードは使わない（クローズは手動）
+詳細は [`docs/issue-policy.md`](docs/issue-policy.md) を参照。
 
 ## PR 作成ルール
 
-詳細は `docs/l2-workflow.md` を参照。Iron Law 6 (`.claude/hooks/session-start.sh`) と `feedback_pr_pre_creation_checks.md` / `feedback_user_realmachine_test_request.md` / `feedback_pr_review_base_merge_regression.md` / `feedback_concurrent_worktree_pr_check.md` も参照。要約:
-
-- **PR 作成 Pre-flight (Iron Law 6 サブ条、#659)**: `git fetch origin <base>` → `git log HEAD..origin/<base> --oneline` で取り込み未済 commit 列挙 → `git diff --name-only` で当 PR と取り込み未済 commit の touched files 交差判定 (交差ありなら `git merge origin/<base>` で取り込み + 自動チェック再実行) → `gh pr list --search "<元issue#>" --state all` で並行 worktree PR 重複確認。結果は PR テンプレ §「ベース同期確認」 に plain bullet で記録。詳細は [docs/l2-workflow.md](docs/l2-workflow.md) §「PR 作成 Pre-flight」
-- **PR 作成前 (Iron Law 6)**: 変更ファイル path から必要な自動チェックを判定して全 pass させる:
-  - **python-core** (`allaganeye/**/*.py`, `tests/**/*.py`, `pyproject.toml`): `ruff check .` / `ruff format --check .` / `pyright` / `pytest`
-  - **gui-frontend** (`gui/src/**`, `gui/package.json`, `gui/tsconfig.json` 等): `cd gui && npm run lint` / `npm run typecheck` / `npm test` / `npm run build`
-  - **gui-rust** (`gui/src-tauri/**`): `cargo check --manifest-path gui/src-tauri/Cargo.toml`
-  - **installer-pester** (`scripts/**/*.ps1`, `scripts/tests/**`): `Invoke-Pester -Path scripts/tests/`
-  - **docs-only** (`docs/**/*.md`, `README.md`, `CLAUDE.md` のみ): `feedback_doc_section_ref_check.md` 規約 §「<旧名>」grep で残骸ゼロ確認
-  - 複数種別にまたがれば全部実行。「軽微だから skip」「Python のみだから GUI 側不要」は **Iron Law 6 違反 / 失敗パターン A 再発**
-- **ロジック変更時の実機検証 (Iron Law 6)**: 以下に該当する path 変更があれば `AskUserQuestion` で実機検証をユーザー (Idios) に依頼。「mock テスト pass = 実機検証不要」は **Iron Law 6 違反 / 失敗パターン B 再発**:
-  - `allaganeye/video/gpu_detector.py`, `system_info.py` → `pytest -m slow_gpu` (NVIDIA GPU 必須)
-  - `allaganeye/audio/scan.py`, `audio/matcher.py`, `audio/features.py` → `pytest -m slow tests/test_audio_integration.py` (`ALLAGANEYE_AUDIO_TEST_VIDEO` 必須)
-  - `allaganeye/video/detector.py` Pass 1 / scorebar 変更 → `pytest -m slow_detect` または `pytest -m "slow or baseline_regen"`
-  - `allaganeye/commands/split_matches.py` パイプライン変更 → `pytest -m slow_pipeline`
-  - `gui/src-tauri/**` Tauri command → `cd gui && npm run tauri dev` で手動 GUI 起動 + 該当 command 操作確認
-  - `gui/src/screens/**` UI 変更 → `npm run tauri dev` + 5 画面 (drop / detecting / complete / preview / export) 目視 + スクショ
-  - `gui/src-tauri/src/commands/export*.rs` H.264 エンコーダ → 実機 export (NVENC / QSV / AMF / libx264) 確認
-- **PR 本文の Self-Test Report**: machine-verified を `[x]` (validate-checklist が pass 判定)、machine-unverifiable を plain bullet `-` で書き分ける (`feedback_pr_validate_checklist.md` 規約)。「PR 提出時点では未実施 / レビュー時に実機確認」も plain bullet で明記すれば許容 (握り潰しではない)
-- ベースブランチ: `develop-x.x.x`（`main` ではない）
-- 作業ブランチ命名: `claude/<scope>-<short-description>` または `claude/<issue-N>-<slug>`
-- マージ方法: `gh pr merge <番号> --squash` (ユーザーが実行)
-- レビュー: `/review-pr` skill で受け入れ条件チェックリスト検証 (#367 対策)
-- コミットメッセージに `[<session-id>]` を含める
-- **PR 本文・コミットメッセージで `Closes` / `Fixes` / `Resolves` キーワードを使わない**（issue のクローズは手動で行う）
+PR Pre-flight・path 別自動チェック・実機検証 trigger・Self-Test Report 規約・(A) PR 内修正優先・PR 規約 (develop ベース / Closes 禁止 / 1 PR = 1 scope / session-id 等) は [`docs/l2-workflow.md`](docs/l2-workflow.md) 各 § を参照。Iron Law 6 (`.claude/hooks/session-start.sh`) も参照。
 
 ## ユーザー指示の短縮記法
 

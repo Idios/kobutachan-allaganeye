@@ -44,7 +44,7 @@ gh issue list --repo Idios/kobutachan-allaganeye --state open --label "deferred"
   - **[C] クローズ**: `gh issue close <番号> --comment "<理由>"` でクローズ
 - deferred issue が 0 件の場合のみ自動で次ステップに進む
 - 1 件以上ある場合: **必ずユーザーに判断を求めてから** 次に進む
-- 3 件以上の bulk 操作になる場合は CLAUDE.md §「自律判断マトリクス」に従い、実行前にサンプル 1 件を提示してユーザー確認を取る
+- 3 件以上の bulk 操作になる場合は Iron Law 2 (`.claude/hooks/session-start.sh`) に従い、実行前にサンプル 1 件を提示してユーザー確認を取る (3 択: 全件 OK / 個別調整 / やめる)
 
 ### Step 2: リリース準備
 
@@ -62,7 +62,7 @@ gh issue list --repo Idios/kobutachan-allaganeye --state open --label "deferred"
 
 ### Step 3: バージョンバンプと PR 作成
 
-1. **事前品質チェック** (CLAUDE.md PR 作成ルール):
+1. **事前品質チェック** ([`docs/l2-workflow.md`](../../../docs/l2-workflow.md) §「PR 作成 path 別自動チェック」):
 
    ```bash
    ruff check .
@@ -81,7 +81,7 @@ gh issue list --repo Idios/kobutachan-allaganeye --state open --label "deferred"
    git checkout -b release/v<新バージョン>
    ```
 
-4. 変更をコミット（session-id を含める、CLAUDE.md PR 作成ルール）:
+4. 変更をコミット（session-id を含める、[`docs/l2-workflow.md`](../../../docs/l2-workflow.md) §「PR 規約」 §「コミットメッセージ session-id」）:
 
    ```bash
    git add pyproject.toml

@@ -33,10 +33,4 @@ argument-hint: <タスクの概要（自然言語）>
 
 ## 注意事項
 
-- 1 issue = 1 つの問題・タスク。複数の問題をまとめない
-- ラベルは prefix に応じて設定する（`[risk]` は prefix ラベルなし）
-- 対応スコープが明確な場合はスコープラベル（`l2a-gui` / `l2b-installer` / `l2c-guard` / `l2-workflow` / `l2-decision` / `l1-residual` 等）を付ける（`docs/issue-policy.md` §2 参照）
-- 優先度が明確な場合は `P1-high` / `P2-medium` / `P3-low` ラベルを付ける（`docs/issue-policy.md` §2 参照）
-- タイトルは日本語で 40 文字以内
-- 本文の末尾に `作成: <session-id>` を記載する
-- `Closes` / `Fixes` / `Resolves` キーワードは本文中で使わない（クローズは手動）
+issue 規約 (粒度 / prefix ラベル / スコープラベル / 優先度ラベル / タイトル文字数 / `作成: <session-id>` / `Closes`/`Fixes`/`Resolves` 禁止 等) は [`docs/issue-policy.md`](../../../docs/issue-policy.md) を参照する。本 skill は手順実装に専念し、規約は restate しない。
