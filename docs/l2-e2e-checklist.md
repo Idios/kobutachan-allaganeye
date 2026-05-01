@@ -36,7 +36,7 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
 ### 環境 variable
 
 - `ALLAGANEYE_SAMPLE_VIDEO_DIR`: ローカル録画ディレクトリの絶対 path
-- 起動時に未設定なら動画 drop step (§3 T1.3 で定義) を skip し、Idios 環境でのみ実施
+- 未設定なら `[参照...]` ボタンで個別動画を選択 (T1.3 操作の代替経路)
 
 ### 出力先
 
@@ -112,7 +112,7 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
 
 - PreviewScreen で動画が再生可能 (axum video server 経由)
 - 境界調整後 `metadata.json` に変更が反映される
-- `[元に戻す]` で `metadata.original.json` から復元可能 (スコープ外、本 step では確認のみ)
+- `[元に戻す]` ボタンが **enabled 状態であることを visual で確認** (押下はしない、復元動作は本 step のスコープ外)
 
 **Evidence:**
 
@@ -131,7 +131,7 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
 
 - 9 試合分の MP4 が `output/` 配下に生成
 - export 時間: ≤ 3 min (copy mode、§5 パフォーマンス目安)
-- GPU encoder auto-select 表示が NVIDIA / Intel / AMD いずれかで反映 (環境依存)
+- ExportScreen 内 sub-label の text (`(NVENC)` / `(QSV)` / `(AMF)` / `libx264 (CPU)` のいずれか) を **visual 確認**、環境の GPU vendor と一致すること
 
 **Evidence:**
 
@@ -142,16 +142,22 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
 
 **操作:**
 
-1. 出力された 9 試合 MP4 の duration を `ffprobe` で取得:
+1. 出力された 9 試合 MP4 の duration 合計を `ffprobe` + `awk` で取得:
 
    ```bash
+   # 合計時間を計算 (ffprobe 出力を秒単位で sum)
    for f in output/*.mp4; do
      ffprobe -v error -show_entries format=duration -of csv=p=0 "$f"
-   done
+   done | awk '{sum += $1} END {print sum}'
    ```
 
-2. 合計時間を計算
-3. 元動画の試合領域 timestamp 合計 (metadata.json から) と差分計算
+2. 元動画の試合領域 timestamp 合計を `metadata.json` から `jq` で抽出:
+
+   ```bash
+   jq '[.matches[] | .end - .start] | add' output/metadata.json
+   ```
+
+3. 1 と 2 の差分を計算し、絶対値が ≤ 1.0 であることを確認
 
 **Expected:**
 
