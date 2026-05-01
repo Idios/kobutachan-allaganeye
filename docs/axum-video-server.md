@@ -120,3 +120,56 @@
 
 - HTTP 206 (partial content) / 416 (Range Not Satisfiable) は `ServeFile` 内部で生成
 - 範囲が file 終端を超える場合の応答 (HTTP 416 / file 末尾までの partial content) は `ServeFile` 既定挙動に従う
+
+## §5 Path allowlist 機構
+
+### allowlist 構造
+
+- `register_video` Tauri command (`gui/src-tauri/src/lib.rs:562-577`) で登録された path のみが serve 対象となる
+- 内部構造: `tokens: HashMap<Uuid, PathBuf>` (`gui/src-tauri/src/lib.rs:35` + `:44`、`TokenMap = Arc<Mutex<HashMap<Uuid, PathBuf>>>`)。token (Uuid v4) → canonical な `PathBuf` の lookup table
+- 未登録 path への直接アクセス経路は無い: `serve_video` route handler (`gui/src-tauri/src/lib.rs:852-879`) は受け取った URL path の `{token}` を `Uuid::parse_str` で validate し、`tokens` map から `PathBuf` を取得する。token が map に存在しなければ 404 を返し、URL path 自体は file system path として解決されない
+
+### canonical path 検証
+
+- `register_video` 内で `validate_video_path(&file_path)?` (`gui/src-tauri/src/lib.rs:564`) を呼び出す。`validate_video_path` ヘルパ (`gui/src-tauri/src/lib.rs:775-800`) は次の 3 段検証を実施する:
+  1. `path.exists()` で存在確認 (`io.file_not_found` AppError で reject)
+  2. `fs::metadata(path)?.is_file()` で regular file 判定 (`validation.not_a_file` AppError で reject)
+  3. `fs::canonicalize(path)?` で canonical 化 (失敗時は `io.read_failed` AppError で reject)
+- canonical 化された絶対 path のみが `tokens` map に insert される (`register_video_sync`、`gui/src-tauri/src/lib.rs:805-809`)
+- 既存 Rust テスト:
+  - `register_video_rejects_missing_file` (`gui/src-tauri/src/lib.rs:3517-3526`): 存在しない path を reject
+  - `register_video_rejects_directory` (`gui/src-tauri/src/lib.rs:3532-3540`): directory を reject
+  - `validate_video_path_accepts_regular_file` (`gui/src-tauri/src/lib.rs:3545-3552`): regular file を canonical 化された絶対 path に変換
+
+### 脅威モデル — Path traversal
+
+- 攻撃シナリオ: 外部 origin (もしくは loopback 経由でアクセスできる別プロセス) が `/video/{token}/../../etc/passwd` のような traversal を試行する
+- 防御: `serve_video` は URL path から token のみを抽出し、`tokens` map から取得する `PathBuf` を `ServeFile::new(p)` に渡す。token から得られる `PathBuf` は登録時に `validate_video_path` で canonical 化された絶対 path で固定されるため、URL path に traversal 文字が含まれても `tokens` lookup の結果は影響を受けない
+- 補強: axum の route definition は `/video/{token}` 単一 segment にのみマッチする (`build_router`、`gui/src-tauri/src/lib.rs:846-850`)。複数 segment や `..` を含む URL は route match 自体に失敗して 404 になる
+
+### 脅威モデル — Token leak
+
+- GUI セッション内保持 + 外部送信経路無しが前提
+- Uuid v4 の予測困難性: 122-bit entropy により総当たり推測は実用上不可能 (1 秒間に 10^9 推測でも全空間走破に 10^20 年規模)
+- frontend が `<video src={url}>` で組み立てた URL は WebView2 内でのみ参照され、外部送信経路は無い (Tauri WebView2 sandbox 内部での `file://` 代替経路)
+
+## §6 Bind + port
+
+### Bind address
+
+- **`127.0.0.1` 必須** — 外部 NIC への bind は禁止
+- 実装: `tokio::net::TcpListener::bind("127.0.0.1:0").await` (`gui/src-tauri/src/lib.rs:820`) で IPv4 loopback のみ
+- IPv6 loopback `::1` の扱い: 現状実装は IPv4 loopback only (`127.0.0.1` literal で bind しているため `::1` には listen していない)。dual stack 非対応
+
+### Port 動的割当
+
+- フィールド: `VideoServer` struct の `port: Option<u16>` (`gui/src-tauri/src/lib.rs:42-45`、初期値 `None`)
+- 起動時に OS から空き port を取得: `TcpListener::bind("127.0.0.1:0")` の `0` 指定で OS に動的割当を委譲し、`listener.local_addr()?.port()` で確定 port を読み取る (`gui/src-tauri/src/lib.rs:820-828`)
+- 単一インスタンス起動順序: `VIDEO_SERVER` static (`OnceLock<Mutex<VideoServer>>`、`gui/src-tauri/src/lib.rs:56-60`) を経由し、初回 `ensure_server_started().await` 呼び出し時に lazy init される (`guard.port` が `None` の場合のみ bind + spawn を実行、確保済みなら同じ port を即返却して idempotent)
+- port 割当後は `guard.port = Some(addr.port())` で永続化され、プロセス内では同一 port が再利用される (`gui/src-tauri/src/lib.rs:839`)
+
+### 脅威モデル — 外部 IF 経由攻撃
+
+- `127.0.0.1` bind により外部 NIC からは到達不能 (LAN 上の他端末や WAN からのアクセス経路無し)
+- 同一マシン内の他 user / 他プロセスからは loopback 経由でアクセス可能だが、token を知らなければ実害なし: Uuid v4 の 122-bit entropy + GUI セッション内保持 + 外部送信経路無しにより、別プロセスが有効な token を入手する経路は存在しない
+- 補足: Windows 上では loopback 通信に対する firewall 制約が緩いが、token 不知では `serve_video` が 404 を返すのみで file system 走査経路は無い (前述の §5 path allowlist 機構による)
