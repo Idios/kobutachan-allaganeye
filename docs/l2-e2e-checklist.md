@@ -2,7 +2,7 @@
 
 > **Status**: v0.2.0 リリース直前に Idios が手動実施
 > **本 doc の用途**: 2 スコープ (GUI / installer) 合流後のリグレッション検出。`docs/release-process.md §94` v0.2.0 固有項目から本 doc を必須参照
-> **CI 自動化方針**: 本 spec で **手動 checklist 主体** に確定。Playwright / Tauri mock driver の feasibility 検討は別 issue (本 PR の続作業で起票、起票後 §7 に番号 back-fill 予定) で v0.3.0+ に follow-up
+> **CI 自動化方針**: 本 spec で **手動 checklist 主体** に確定。Playwright / Tauri mock driver の feasibility 検討は [#671](https://github.com/Idios/kobutachan-allaganeye/issues/671) で v0.3.0+ に follow-up
 
 ## §1 Overview
 
@@ -273,7 +273,7 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
 
 - **Playwright** (Tauri webview 対応): browser context で assertion 可、cross-platform 制約あり
 - **Tauri mock driver** (公式提供): Phase 0 で feasibility 検証必要、frontend のみ vitest e2e に近い
-- 詳細: 別 issue (本 PR の続作業で起票、起票後 §7 末尾に番号 back-fill 予定) で v0.3.0+ に follow-up
+- 詳細: [#671](https://github.com/Idios/kobutachan-allaganeye/issues/671) で v0.3.0+ に follow-up
 
 ## §8 References
 
