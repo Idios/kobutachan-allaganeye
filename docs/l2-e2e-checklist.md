@@ -169,9 +169,9 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
 
 ## §4 T2: エラーリカバリ
 
-> **障害注入手段**: 本 spec で **(a) export 中に Tauri × ボタンで process kill** を採用 (再現性高、`#523` と動作定義が連動)。別 (b) read-only path / (c) input 削除 は OS 依存で除外 (spec §4.3)
+> **障害注入手段**: 本 spec で **(a) export 中に Tauri × ボタンで process kill** を採用 (再現性高、[#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) と動作定義が連動)。別 (b) read-only path / (c) input 削除 は OS 依存で除外 (spec §4.3)
 >
-> **前提**: `#523` (ffmpeg 中断と graceful kill) の実装が前提。**`#523` 完了前は T2 を skip 可、ただし checklist 本体には記述しておく** (将来の T2 enable 時にすぐ実施可能)
+> **前提**: [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) (ffmpeg 中断と graceful kill) の実装が前提。**[#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) 完了前は T2 を skip 可、ただし checklist 本体には記述しておく** (将来の T2 enable 時にすぐ実施可能)
 
 ### T2.1 障害注入: export 中に Tauri × ボタンで process kill
 
@@ -179,7 +179,7 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
 
 1. T1.5 と同じ手順で export を開始 (9 試合の書き出し)
 2. **5 試合目以降の出力中** で Tauri ウィンドウの × ボタンをクリック
-3. confirm dialog (`#523` 実装) で `[OK]` を選択
+3. confirm dialog ([#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) 実装) で `[OK]` を選択
 4. アプリが graceful kill → 終了
 
 **Expected:**
@@ -215,13 +215,13 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
 **操作:**
 
 1. アプリを再起動 (`allaganeye-gui.exe` 再実行)
-2. 前回 metadata.json が自動 restore (#574 で実装予定、未実装なら手動で再 drop)
+2. 前回 metadata.json が自動 restore ([#574](https://github.com/Idios/kobutachan-allaganeye/issues/574) で実装予定、未実装なら手動で再 drop)
 3. ExportScreen を確認
 
 **Expected:**
 
-- 前回 export の状態が CompleteScreen / ExportScreen に反映される (`#574` 実装後)
-- 失敗 / 未完了試合に notice / fallback マーカーが表示される (#591 fallback notice + 本 spec の error UI 拡張)
+- 前回 export の状態が CompleteScreen / ExportScreen に反映される ([#574](https://github.com/Idios/kobutachan-allaganeye/issues/574) 実装後)
+- 失敗 / 未完了試合に notice / fallback マーカーが表示される ([#591](https://github.com/Idios/kobutachan-allaganeye/issues/591) fallback notice + 本 spec の error UI 拡張)
 - ユーザーが失敗試合のみ再 export 可能
 
 **Evidence:**
@@ -231,10 +231,57 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
 
 ### T2 skip 条件
 
-- `#523` 未マージ時は T2 全 step を skip し、checklist には「`#523` マージ後に実施」と注記
-- `#574` 未マージ時は T2.3 expected の「自動 restore」を「手動 drop で代替」と注記
+- [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) 未マージ時は T2 全 step を skip し、checklist には「[#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) マージ後に実施」と注記
+- [#574](https://github.com/Idios/kobutachan-allaganeye/issues/574) 未マージ時は T2.3 expected の「自動 restore」を「手動 drop で代替」と注記
 
 ### T2 障害注入 (b) (c) を採用しない理由 (spec §4.3 抜粋)
 
 - (b) read-only path: OS / FS 依存 (NTFS read-only attribute, Windows ACL) で再現性低
 - (c) input 削除中: Windows FS lock により export 中の削除が拒否される可能性、再現困難
+
+## §5 パフォーマンス目安
+
+| 計測対象 | 目安 | 計測手段 |
+| --- | --- | --- |
+| 検知時間 (GPU mode) | ≤ 10 min | DetectingScreen の経過時間表示 + CLI verbose 出力 |
+| 9 試合 export (copy mode) | ≤ 3 min | ExportScreen 進捗 + CLI verbose |
+| GUI seek p95 | ≤ 200 ms | DevTools Performance タブで `<video>` element の `seeked` event 計測 |
+
+### 計測の record
+
+- 各値を `logs/qa/v0.2.0/perf-summary.log` に記載
+- 目安超過時は **目安充足ラインまでパフォーマンス改善** または **目安を緩和する根拠を Idios 判断で記録**
+
+## §6 成功基準
+
+- [ ] T1.1-T1.6 全て expected 通過
+- [ ] T2.1-T2.3 全て expected 通過 ([#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) 未マージ時は skip 注記)
+- [ ] §5 パフォーマンス目安 全項目を実測値で satisfy
+- [ ] 9 試合 MP4 が全て `output/` に生成
+- [ ] `logs/qa/v0.2.0/` 配下に screenshot + evidence log が保存される
+- [ ] T1.6 合計時間差分 ≤ 1s
+
+## §7 CI 自動化方針
+
+### v0.2.0 方針 (本 spec で確定)
+
+- **手動 checklist 主体** (本 doc) のみ
+- CI 実行は対象外
+- Idios 実機 (Windows + ALLAGANEYE_SAMPLE_VIDEO_DIR 設定済) で実施
+
+### v0.3.0+ で feasibility 検討 (別 issue で deferred 追跡)
+
+- **Playwright** (Tauri webview 対応): browser context で assertion 可、cross-platform 制約あり
+- **Tauri mock driver** (公式提供): Phase 0 で feasibility 検証必要、frontend のみ vitest e2e に近い
+- 詳細: 別 issue (本 PR の続作業で起票、起票後 §7 末尾に番号 back-fill 予定) で v0.3.0+ に follow-up
+
+## §8 References
+
+- [`docs/release-process.md` §94 v0.2.0 (L2: GUI サポート + ゼロ環境構築配布) 固有項目](./release-process.md#v020-l2-gui-サポート--ゼロ環境構築配布-固有項目) — 本 doc を必須参照
+- [`docs/l2-workflow.md` §実機検証 trigger 表](./l2-workflow.md) — 実機検証ルール
+- [`docs/ui-architecture.md` §5 preview](./ui-architecture.md#5-各画面の-phase-state) — preview 画面の状態機械
+- [`docs/axum-video-server.md`](./axum-video-server.md) — preview 画面の動画配信仕様 (T1.4 関連)
+- [#668](https://github.com/Idios/kobutachan-allaganeye/issues/668) — Portable ZIP 同梱バイナリ健全性 (本 doc 前提)
+- [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) — ffmpeg 実行中の安全な中断 (T2 障害注入 (a) の実装前提)
+- [#574](https://github.com/Idios/kobutachan-allaganeye/issues/574) — 前回 metadata 自動再現 (T2.3 expected の前提)
+- [#591](https://github.com/Idios/kobutachan-allaganeye/issues/591) — H.264 GPU encoder auto-select / fallback notice (T1.5 / T2.3 関連)
