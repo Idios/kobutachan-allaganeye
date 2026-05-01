@@ -77,7 +77,7 @@ ffmpeg -ss {timestamp} -i input.mkv -frames:v 1 -s 320x180 -pix_fmt gray -f rawv
 **背景**: 試合境界の暗転が短い（2-3s）場合、暗転の持続時間だけでは判別できないケースがある。しかし試合境界後にはロビー画面（brightness ~51）が 10-20s 続くのに対し、リスポーン後は即座に brightness 60+ に復帰する。この差異を利用し、暗転 + ロビー画面を一体の領域として扱うことで検知を可能にする。
 
 | 暗転タイプ | 暗転 | 直後の brightness | 拡張後 duration | 結果 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | リスポーン (1-1.5s) | < 15 | 即 60+ | 1-1.5s | 除外 |
 | 試合境界 + ロビー (2-3s) | < 15 | ~51 が 20s | 22-23s | **検出** |
 
@@ -88,7 +88,7 @@ ffmpeg -ss {timestamp} -i input.mkv -frames:v 1 -s 320x180 -pix_fmt gray -f rawv
 **背景**: interval=1.0s では 2.0s の暗転と 1.5s のリスポーン暗転が同じ計測値（1.0s）になり区別できない。transition expansion も発動しないパターン（暗転後すぐに明るい画面に復帰する試合境界）が存在する。
 
 | パス | interval | 目的 |
-|---|---|---|
+| --- | --- | --- |
 | Pass 1（既存） | 1.0-3.0s | 全区間スキャン → 暗転候補収集 |
 | Pass 2（精密計測） | 0.25s | 候補 ±5s を再プローブ → 正確な持続時間 |
 
@@ -132,7 +132,7 @@ ffmpeg -hwaccel auto -ss <chunk_start> -t <chunk_duration> -i input.mkv \
 ffmpeg 8.1 / `sample_interval=2.0` で `20260118` video の同一 timestamp label を異なる経路で probe した結果:
 
 | timestamp label | per-frame `-ss` probe | `_scan_cpu` (chunked fps) | 差 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 6184.0 | **1.73 (BLACKOUT)** | 47.72 (transition) | -46 |
 | 6186.0 | 100.48 (normal) | 37.20 (transition) | +63 |
 
@@ -176,7 +176,7 @@ baseline mismatch 発生時の判定 flow ((A) 検知ロジック退行 vs (B) f
 **codec × 推奨 GPU decode (参考)**
 
 | Codec | auto 選択 | NVDEC 要件 | Intel QSV 要件 | AMD VCN 要件 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | H.264 | GPU | 全世代 | 全世代 | 全世代 |
 | HEVC | GPU | Maxwell GM206+ | Skylake+ | VCN 1.0+ |
 | AV1 | GPU (#414) | RTX 30 (Ampere) 以降 | Arc / Gen12 以降 | VCN 4.0 以降 |
@@ -188,7 +188,7 @@ baseline mismatch 発生時の判定 flow ((A) 検知ロジック退行 vs (B) f
 **vendor × codec 実装状況 (#546 / #553 / #550 / #582)**
 
 | Vendor | hwaccel | h264 | hevc | av1 | vp9 | 備考 |
-|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- |
 | NVIDIA (NVDEC cuvid) | `cuda` | `h264_cuvid` | `hevc_cuvid` | `av1_cuvid` | (soft, #538/#549) | dGPU 想定、dual GPU では優先選択 |
 | AMD (d3d11va) | `d3d11va` | `h264` | `hevc` | `av1` | (未登録) | #553 で実装。AMF decoder ではなく d3d11va + native decoder + filter 先頭 `hwdownload,format=nv12` で allaganeye filter pipeline と整合させる。RDNA2+ iGPU (Granite Ridge) で実測 speed 23x (SW 7.6x 比 3x 高速) |
 | Intel (QSV) | `qsv` | `h264_qsv` | `hevc_qsv` | `av1_qsv` | `vp9_qsv` | #550 (h264/hevc/av1) + #582 (vp9) で実装。Tiger Lake (11th gen Iris Xe) 以降で QSV decode 対応。AV1 は **Alder Lake / Arc 以降**でハードウェア decode、Tiger Lake では `Error initializing the MFX video decoder: unsupported (-3)` で `_decode_chunk` が `VideoProcessingError` を上げ CPU fallback。VP9 は Tiger Lake で動作確認済み (実機 8.29x speed @ 720p)。AMD と同じく `_HWACCELS_NEED_HWDOWNLOAD` 経路を使用 (`-hwaccel_output_format qsv` + filter 先頭 `hwdownload,format=nv12`)。NVIDIA `vp9_cuvid` の csp:gbr 不整合 (#538/#549) は QSV decoder では発生しない (decode 後 `hwdownload` で nv12 に明示 download するため) |
@@ -225,7 +225,7 @@ baseline mismatch 発生時の判定 flow ((A) 検知ロジック退行 vs (B) f
 暗転前後のフレームを RGB でプローブし、スコアバー ROI（画面上部中央 35-65%、高さ 0-4%）の色特性を分析する。
 
 | 判定条件 | 閾値 | 根拠 |
-|---|---|---|
+| --- | --- | --- |
 | ROI 平均輝度 | 20 < brightness < 140 | FL 試合中の典型範囲。暗転 (<20) やリザルト (>140) を除外 |
 | 3 セクション RGB チャンネル std | max > 15.0 | FL スコアバーの 3GC 色分離（FL=26-48, lobby=4-5, queue=8-9） |
 
@@ -236,7 +236,7 @@ ROI を左・中央・右の 3 セクションに分割し、各セクション�
 各暗転リージョンの前後 3 フレーム（1 秒間隔）のスコアバー判定結果を多数決で集約し、4 種類に分類する。
 
 | 分類 | 条件 | 対応パターン | 処理 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `in_match` | 前後ともスコアバーあり | キャラダウン暗転 (#107)、FL 試合間境界 | < 3.5s → 除去、≥ 3.5s → 保持 |
 | `match_boundary` | 片側のみスコアバーあり | 試合開始/終了 | 保持 |
 | `non_fl` | 前後ともスコアバーなし | 非 FL コンテンツ境界 (#108/#109) | 除去 |
@@ -247,7 +247,7 @@ ROI を左・中央・右の 3 セクションに分割し、各セクション�
 `in_match` 分類のうち短い暗転（< `_IN_MATCH_MAX_DURATION=3.5s`）のみを除去する。
 
 | 種別 | Duration（精密計測値） | 処理 |
-|---|---|---|
+| --- | --- | --- |
 | キャラダウン暗転 | 1.0-2.0s | 除去 |
 | FL 試合間の短い境界 | 4.5s+ | 保持 |
 | FL 試合間の長い境界 | 7s+ | 保持 |
@@ -270,7 +270,7 @@ FL 試合 A → 暗転₁ (match_boundary) → ロビー/結果画面 → 暗転
 #### 閾値の根拠データ
 
 | パラメータ | 値 | 実測分布 |
-|---|---|---|
+| --- | --- | --- |
 | `_SCOREBAR_CHANNEL_STD_THRESHOLD` | 15.0 | lobby=4-5, queue=8-9, **FL=26-48** |
 | `_IN_MATCH_MAX_DURATION` | 3.5s | キャラダウン=1.0-2.0s, **境界=4.5s+** |
 | `_MERGE_GAP_MAX` | 600s | 結果画面=83-266s, lobby=232-468s |
@@ -285,7 +285,7 @@ FL 試合 A → 暗転₁ (match_boundary) → ロビー/結果画面 → 暗転
 ### 検知方式の選定
 
 | # | 方式 | 不採用理由 |
-|---|---|---|
+| --- | --- | --- |
 | 1 | OpenCV `VideoCapture` ランダムシーク | 大容量 MKV でシーク不安定。キーフレーム距離に依存し再現性が低い |
 | 2 | OpenCV 逐次 `grab()`/`read()` | 全フレームをデコード。60fps/2h で実用的な速度が出ない |
 | 3 | ffmpeg `select` フィルタ (`select='not(mod(t,N))'`) | フィルタ前に全フレームをデコードするため、方式 2 と同じボトルネック |
@@ -321,7 +321,7 @@ FL 試合 A → 暗転₁ (match_boundary) → ロビー/結果画面 → 暗転
 #### 検討したが不採用の手法
 
 | 手法 | 不採用理由 |
-|---|---|
+| --- | --- |
 | ヒストグラム比較 | カラープローブが必要でアーキテクチャ変更が大きい。L1 スコープ外 |
 | テンプレートマッチング | OpenCV 再導入 + UI バージョン依存。保守コスト高 |
 | 暗転前後の輝度変化率 | パターン C では前後とも ~79 で変化なし。効果なし |
@@ -348,7 +348,7 @@ FL 試合 A → 暗転₁ (match_boundary) → ロビー/結果画面 → 暗転
 #### 検討したが不採用・問題があった方式（Phase 3）
 
 | 方式 | 不採用理由 |
-|---|---|
+| --- | --- |
 | `in_match` 無条件除去（初期実装） | FL 試合間境界も `in_match` に分類されるため、7→3 試合の致命的退行 |
 | duration guard のみ (`_IN_MATCH_MAX_DURATION=5.0`) | `non_fl` 誤分類には効果なし。退行を部分的にしか修正できず（7→4） |
 | `_SCOREBAR_CHANNEL_STD_THRESHOLD=8.0`（初期値） | キュー画面 (ch_std=8-9) が FL と判定される偽陽性 |
@@ -366,7 +366,7 @@ FL 試合 A → 暗転₁ (match_boundary) → ロビー/結果画面 → 暗転
 37GB/2h AV1 MKV での実測に基づく最適化。詳細なベンチマーク結果は [`docs/benchmarks.md`](benchmarks.md) を参照。
 
 | 施策 | 変更 | 効果 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `max_workers` 引き上げ | 8 → `min(cpu_count, 24)` | ~3x スループット | 32コア環境で 8 は過少。ボトルネックは per-probe デコード |
 | `-threads 1` | ffmpeg プロセスに追加 | スレッド競合防止 | workers=24 × デフォルトスレッド数 = 768 スレッドで逆に遅くなる |
 | `sample_interval` 自動調整 | 1h+→2.0s, 2h+→3.0s | プローブ数半減-1/3 | 暗転区間 5s+ なので interval=3.0 でも検知可能 |

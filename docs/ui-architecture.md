@@ -227,7 +227,7 @@ Phase 2 は dummy なので `×` 即時 exit。Phase 3/4 では以下を実装 (
 ## 7. 起動パターン
 
 | シナリオ | 動線 | 実装 |
-|---|---|---|
+| --- | --- | --- |
 | 素の起動 | `drop_idle` | Phase 2 |
 | 動画を [参照...] | `drop_idle → selecting → probing → selected → detecting → completed → complete` | Phase 2 (detecting/probing は dummy) |
 | 動画を D&D | `drop_idle → probing → selected → detecting → completed → complete` | #568 |
@@ -345,7 +345,7 @@ sequenceDiagram
 ## 12. 性能目標
 
 | 指標 | 目標 (Phase 2) | 計測方法 |
-|---|---|---|
+| --- | --- | --- |
 | 画面遷移レイテンシ (navigate → render) | <50ms (jsdom 近似) / <16ms (実 WebView 60fps 目標) | `flow.integration.test.tsx` performance section |
 | 初回マウント時間 (App render → drop screen) | <250ms (jsdom) / <3s (実機) | 自動: vitest 内 / 手動: stopwatch |
 | BrightnessTimeline SVG path 生成 (512 samples × 1000 iter) | <500ms 総計 | vitest ベンチ |
@@ -359,7 +359,7 @@ Phase 3 で追加される目標:
 ## 13. Phase 3/4 への引き継ぎポイント
 
 | 場所 | Phase 2 状態 | Phase 3/4 での差し替え |
-|---|---|---|
+| --- | --- | --- |
 | DropScreen dummyProbeVideo | sleep + 固定値 | #465: `invoke('probe_video', { path })` |
 | DetectingScreen dummy progress | 80ms × 100 tick | #465: 実 CLI stdout イベント + event listener |
 | metadataStore.loadSample | Phase 2 専用 in-memory | #465: 実 `load_metadata(generatedPath)` に差し替え |

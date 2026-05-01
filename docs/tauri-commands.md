@@ -13,7 +13,7 @@
 ## 分類タグ
 
 | タグ | 説明 |
-|---|---|
+| --- | --- |
 | `pure` | 入力から決定的に出力を計算、副作用なし |
 | `I/O` | ファイル読み書き / metadata 取得 |
 | `subprocess` | ffmpeg / ffprobe / python CLI / explorer 等の外部プロセス起動 |
@@ -24,7 +24,7 @@
 ## 全 command 一覧
 
 | # | command | params | Result type | 分類 | 想定エラーケース | AppError code |
-|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- |
 | 1 | `load_metadata` | `path: String` | `Result<Value, AppError>` | I/O | (a) ファイル不在、(b) JSON parse 失敗、(c) 読み取り権限なし、(d) JSON root が object でない | (a) `io.file_not_found`、(b) `parse.json_invalid`、(c) `io.permission_denied`、(d) `parse.schema_invalid` |
 | 2 | `get_metadata_mtime` | `path: String` | `Result<Option<u64>, AppError>` | I/O | (a) ファイル不在 (= None で返却)、(b) 読み取り権限なし | (b) `io.permission_denied` |
 | 3 | `apply_changes` | `path: String, metadata: Value, expected_mtime_ms: Option<u64>` | `Result<u64, AppError>` | I/O + state-mutating | (a) mtime conflict (外部書き換え検出)、(b) backup 作成失敗、(c) atomic write 失敗、(d) JSON serialize 失敗、(e) post-apply mtime 取得失敗 (extreme case、書き込み直後にファイルが消失/権限変更等) | (a) `state.mtime_conflict`、(b) `io.backup_failed`、(c) `io.write_failed`、(d) `parse.json_serialize_failed`、(e) `io.read_failed` |

@@ -34,7 +34,7 @@ handoff bundle の元推奨 (Electron) は Phase 0 で Tauri と比較計測し�
 `bundle/project/variants/aether.jsx` の `aetherTheme` が正。抜粋:
 
 | トークン | 値 | 用途 |
-|---|---|---|
+| --- | --- | --- |
 | `bg` | `#0a0e14` | 基本背景 |
 | `bgDeep` | `#05070b` | サイドバー等の深い背景 |
 | `panel` | `linear-gradient(180deg, #0f1420 0%, #0a0e14 100%)` | パネル背景 |
@@ -47,7 +47,7 @@ handoff bundle の元推奨 (Electron) は Phase 0 で Tauri と比較計測し�
 | `danger` | `#c87058` | エラー・警告 |
 
 | フォント | 用途 |
-|---|---|
+| --- | --- |
 | `Cinzel` (`"Trajan Pro"`, `"Cormorant Garamond"` fallback) | UI 見出し (ceremonial) |
 | `Inter` (`"Segoe UI"` fallback) | 本文 |
 | `JetBrains Mono` (`"Consolas"` fallback) | コード・数値 |

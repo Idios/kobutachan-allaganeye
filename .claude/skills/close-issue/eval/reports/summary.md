@@ -26,7 +26,7 @@ memory `feedback_skill_revision_empirical.md` の打ち切り基準: 構造的�
 ## Iter 0 → Iter 1 → Iter 2 メトリクス比較
 
 | 指標 | Iter 0 | Iter 1 | Iter 2 | 変化 (0→2) |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | **平均精度** | 1.00 | 1.00 | **1.00** | 維持 |
 | **[critical] 成功率** | 3/3 | 3/3 | 3/3 | 維持 |
 | Scenario A 精度 | 8/8 (1.00) | 8/8 (1.00) | 10/10 (1.00) | 項目数 +2 (新 [critical] 9 + [important] 10) |

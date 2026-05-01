@@ -11,7 +11,7 @@
 試合中の UI 要素（スコアボード、ミニマップ、キルログ等）の位置や見た目を把握するための資料。L1（暗転検知）・L3（OCR）の設計に直接役立つ。
 
 | リソース | URL | 備考 |
-|---|---|---|
+| --- | --- | --- |
 | FF14 フロントラインの画面や操作の設定例【パッチ7.1/PvP】 | YouTube で「ぷちっとこなこな フロントライン 設定」検索 | HUD レイアウト・操作設定の実例。画面構成の理解に有用 |
 | フロントライン リザルト画面の見方 砕氷戦編 | [Lodestone ブログ](https://na.finalfantasyxiv.com/lodestone/character/12820627/blog/4252808/) | リザルト画面のスコア内訳を詳細解説。L3 OCR 対象の理解に有用 |
 | PvP用のHUDレイアウト | [エオキナ.com](https://www.mandra-queen.com/entry/pvp-starting-guide-4-ff14) | PvP 向け HUD 配置のガイド。UI 要素の標準位置を把握 |
@@ -31,7 +31,7 @@
 ```
 
 | リソース | URL | 備考 |
-|---|---|---|
+| --- | --- | --- |
 | フロントライン攻略（開放方法やルール） | [ゲームエイト](https://game8.jp/ff14/512268) | ルール・開始〜終了の流れを解説 |
 | フロントラインに行ってみよう！ | [note.com](https://note.com/dopelight/n/n6b3bc345a91a) | 初参加者向け、画面の流れが分かりやすい |
 
@@ -59,7 +59,7 @@
 ### よくあるハイライトパターン
 
 | パターン | 説明 | L4 評価での重み |
-|---|---|---|
+| --- | --- | --- |
 | マルチキル | 短時間に複数キル | 高 |
 | LB（リミットブレイク）キル | LB で敵集団を殲滅 | 高 |
 | 逆転劇 | スコア差を覆す | 高 |
@@ -72,7 +72,7 @@
 各マップの仕様を理解し、スコアボードの点数構造を把握するための資料。
 
 | リソース | URL | 備考 |
-|---|---|---|
+| --- | --- | --- |
 | AkhMorning Frontline Guide | [akhmorning.com](https://www.akhmorning.com/pvp/frontline/) | 全マップの詳細ガイド（英語） |
 | Olivia's Frontline Guide 2.21 | [公式フォーラム](https://forum.square-enix.com/ffxiv/threads/495504-Olivia-s-Frontline-Guide-2.21) | 戦術ガイド（英語） |
 | 公式 Frontline ページ | [Lodestone](https://na.finalfantasyxiv.com/lodestone/playguide/contentsguide/frontline/) | 公式ルール説明 |
@@ -85,7 +85,7 @@
 入力動画の特性（コーデック、解像度、フレームレート）を理解するための資料。
 
 | リソース | URL | 備考 |
-|---|---|---|
+| --- | --- | --- |
 | OBSでFF14配信 2023最新版 | [ブログ](https://ff14-0t0.blogspot.com/2023/01/obsff142023obsyoutube-studioff14.html) | OBS + YouTube Studio の設定例 |
 
 ---

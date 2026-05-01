@@ -17,7 +17,7 @@
 ## 検証対象フレームワーク
 
 | 候補 | 担当セクション | 備考 |
-|---|---|---|
+| --- | --- | --- |
 | Electron + React + TypeScript | 各 F 項目「Electron」 | handoff bundle jsx の 1:1 移植が容易 |
 | Tauri + React + TypeScript | 各 F 項目「Tauri」 | 配布サイズ ~10 MB、ただし #6375 の回避実装が必要 |
 
@@ -100,7 +100,7 @@
 Phase 0 完了後、以下を総合して #450 を確定する:
 
 | 観点 | 重み | 判断基準 |
-|---|---|---|
+| --- | --- | --- |
 | F3 seek 耐性 (長尺 OBS 録画) | 最重要 | 両 FW とも OK なら他の観点で比較、片方だけ OK ならそちらを採用 |
 | F2 フレーム精度 | 重要 | 目標 200ms 以内、超える場合 F4 代替案の成立を確認 |
 | F5 sidecar ストリーミング | 重要 | detecting 画面のライブログ成立が必須条件 |
@@ -136,7 +136,7 @@ Phase 0 完了後、以下を総合して #450 を確定する:
 - **計測**: 動画中央付近で 1/60s 刻み seek 100 サンプル、`requestVideoFrameCallback` 解決までの latency を記録
 
 | | Electron | Tauri asset | Tauri http (axum) |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | p50 | — | 151.2 ms | 150.6 ms |
 | p95 | 178.2 ms | 179.6 ms | 182.2 ms |
 | max | 183.2 ms | 355.7 ms | 184.4 ms |
@@ -154,7 +154,7 @@ Phase 0 完了後、以下を総合して #450 を確定する:
 - **計測**: 全域ランダム seek 100 回、各回 10s タイムアウト判定
 
 | | Electron (protocol.handle 206) | Tauri asset (convertFileSrc) | Tauri http (axum + tower-http) |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 成功 | 100/100 | 100/100 | 100/100 |
 | 失敗 (>10s) | 0 | 0 | 0 |
 | p50 | 114 ms | 385 ms | 106 ms |
@@ -181,7 +181,7 @@ Phase 0 完了後、以下を総合して #450 を確定する:
 #### Electron (`child_process.spawn` + PYTHONUNBUFFERED=1)
 
 | 項目 | 値 |
-|---|---|
+| --- | --- |
 | exit code | 0 |
 | duration | 706,233 ms (~11:46) |
 | first-line latency | 1,944 ms |
@@ -191,7 +191,7 @@ Phase 0 完了後、以下を総合して #450 を確定する:
 #### Tauri (`tokio::process::Command` + `app.emit`)
 
 | 項目 | PYTHONUNBUFFERED=1 | PYTHONUNBUFFERED=0 |
-|---|---|---|
+| --- | --- | --- |
 | exit code | 0 | 0 |
 | duration | 704,452 ms | 700,952 ms |
 | first-line latency | 1,722 ms | 1,280 ms |

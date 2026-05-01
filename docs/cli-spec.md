@@ -7,13 +7,13 @@ CLI コマンド・引数・オプションの**構文**をまとめる。各オ
 ## 前提条件
 
 | 要件 | 説明 |
-|---|---|
+| --- | --- |
 | ffmpeg / ffprobe 4.1+ | 以下の順序で自動検索: (1) PATH (`shutil.which`) (2) `ALLAGANEYE_FFMPEG` 環境変数で指定したディレクトリ (3) OS 別既知パス（Windows: winget `Gyan.FFmpeg`、macOS: Homebrew）。配布版・dev 環境ともに LGPLv3 版 (BtbN FFmpeg-Builds `win64-lgpl-shared`) の使用を推奨 (#508)。winget `Gyan.FFmpeg` は GPL 版で、後方互換 fallback として自動検索される |
 
 ## グローバルオプション
 
 | オプション | 説明 |
-|---|---|
+| --- | --- |
 | `--version` | バージョン表示 |
 | `--help` | ヘルプ表示 |
 
@@ -37,14 +37,14 @@ allaganeye split --from-metadata <metadata.json> [OPTIONS]
 ### 引数
 
 | 引数 | 必須 | 説明 |
-|---|---|---|
+| --- | --- | --- |
 | `video_path` | 下記いずれか | 入力動画ファイルのパス（MP4/MKV/AVI/MOV）。`--from-metadata` と排他 |
 | `--from-metadata` | 下記いずれか | `allaganeye detect` が出力した `metadata.json` のパス。指定時は検知をスキップし分割のみ実行 (#463)。`video_path` / `--dry-run` と排他 |
 
 ### オプション
 
 | オプション | デフォルト | 説明 |
-|---|---|---|
+| --- | --- | --- |
 | `-o`, `--output-dir` | `./output` | 出力ディレクトリ |
 | `--sample-interval` | `1.0` | フレームサンプリング間隔（秒） |
 | `--blackout-threshold` | `15.0` | 暗転検知の輝度閾値（0-255） |
@@ -107,7 +107,7 @@ allaganeye 0.2.x (ffmpeg 8.1, Python 3.12.10, Windows 11)
 ヘッダ各行の意味:
 
 | 行 | 意味 | 取得失敗時 |
-|---|---|---|
+| --- | --- | --- |
 | 1 行目 | allaganeye / ffmpeg / Python / OS のバージョン | ffmpeg は `(unknown)` にフォールバック |
 | `CPU:` | CPU モデル + `(物理Core/論理Thread)` (#377)。マルチソケットは同モデル `xN` / 異モデル ` + ` 連結、コア数は全 CPU 合計 (#435) | `(unavailable)` / `(unknown CPU) (NT)` 等 |
 | `GPU:` | GPU モデル (+ NVIDIA のみ VRAM) (#377)。2 つ以上検出時は `GPU:` ヘッダ + bullet 列挙の multi-line block (#436) | `(unavailable)` |
@@ -145,7 +145,7 @@ Total: 0m07s
 `_load_cache` 検証通過後でも race condition / 破損 / 権限変更等で helper 側の読み直しが失敗しうる。その場合はヘッダ (`Cache hit: detection params from ...`) を常に emit した上で、失敗理由を `(unavailable: ...)` 行で通知する。split 本体は妨げない (helper は raise しない):
 
 | シナリオ | 出力 |
-|---|---|
+| --- | --- |
 | JSON parse 失敗 (破損) | `(unavailable: cache file is not valid JSON)` |
 | `params` キー欠落 / `params` が dict でない / 空 dict | `(unavailable: cache file has no params section)` |
 | I/O エラー (削除・権限・ディスク障害) | `(unavailable: cache file unreadable - <ExceptionClassName>)` |
@@ -167,7 +167,7 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 検知パイプラインは 3 フェーズに分かれ、それぞれ独立した進捗バーを 1 行ずつ表示する:
 
 | バー | フェーズ | 進捗単位 |
-|---|---|---|
+| --- | --- | --- |
 | `Detecting` | Pass 1 の全区間粗スキャン | 推定サンプル数 |
 | `Refining` | Pass 2 の暗転候補精密計測 | プローブ件数 |
 | `Scorebar` | 暗転の in_match / non_fl 分類 | 対象領域数 |
@@ -191,7 +191,7 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 ```
 
 | 行 | 内容 |
-|---|---|
+| --- | --- |
 | `Pass 1` | Pass 1 のサンプル数・暗転フレーム数・所要時間 |
 | `Pass 2` | Pass 2 精密計測の region 数・所要時間 (#366) |
 | `Scorebar` | Scorebar 分類 (match_boundary / in_match / non_fl / unknown) のカウントと所要時間 (#386) |
@@ -211,7 +211,7 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 **トップレベル:**
 
 | フィールド | 型 | 説明 |
-|---|---|---|
+| --- | --- | --- |
 | `source` | string | 入力動画のファイルパス |
 | `source_duration` | float | 入力動画の総再生時間（秒） |
 | `source_duration_display` | string | 総再生時間の表示形式（MM:SS or H:MM:SS） |
@@ -225,7 +225,7 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 **matches[]:**
 
 | フィールド | 型 | 説明 |
-|---|---|---|
+| --- | --- | --- |
 | `index` | int | 1始まりの試合番号 |
 | `start_time` | float | 開始時刻（秒） |
 | `end_time` | float | 終了時刻（秒） |
@@ -239,7 +239,7 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 **gaps[]:**
 
 | フィールド | 型 | 説明 |
-|---|---|---|
+| --- | --- | --- |
 | `start_time` | float | ギャップ開始時刻（秒） |
 | `end_time` | float | ギャップ終了時刻（秒） |
 | `start_display` | string | ギャップ開始時刻の表示形式 |
@@ -252,7 +252,7 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 検知実行時の設定スナップショット。`.detection_cache.json` の `params` と重複するキーは同一値になる（互換性のため）。
 
 | フィールド | 型 | 説明 |
-|---|---|---|
+| --- | --- | --- |
 | `sample_interval` | float | 実効サンプリング間隔（秒）。長時間動画では `_auto_sample_interval` によってユーザー指定値から自動調整された値。`.detection_cache.json` の `params.sample_interval` と同じ値 |
 | `blackout_threshold` | float | 暗転検知の輝度閾値（0-255） |
 | `min_match_duration` | float | 最小試合時間（秒） |
@@ -274,7 +274,7 @@ allaganeye detect <video_path> [OPTIONS]
 ### 引数
 
 | 引数 | 必須 | 説明 |
-|---|---|---|
+| --- | --- | --- |
 | `video_path` | Yes | 入力動画ファイルのパス（MP4/MKV/AVI/MOV） |
 
 ### オプション
@@ -282,7 +282,7 @@ allaganeye detect <video_path> [OPTIONS]
 `split` と同じオプションセットだが `--dry-run` は存在しない (detect 自体が "dry-run 相当" のため)。
 
 | オプション | デフォルト | 説明 |
-|---|---|---|
+| --- | --- | --- |
 | `-o`, `--output-dir` | `./output` | 出力ディレクトリ (`metadata.json` の配置先) |
 | `--sample-interval` | `1.0` | フレームサンプリング間隔（秒） |
 | `--blackout-threshold` | `15.0` | 暗転検知の輝度閾値（0-255） |
@@ -332,13 +332,13 @@ allaganeye debug-brightness <video_path> [OPTIONS]
 ### 引数
 
 | 引数 | 必須 | 説明 |
-|---|---|---|
+| --- | --- | --- |
 | `video_path` | Yes | 入力動画ファイルのパス（MP4/MKV/AVI/MOV） |
 
 ### オプション
 
 | オプション | デフォルト | 説明 |
-|---|---|---|
+| --- | --- | --- |
 | `--start` | `0.0` | 開始時刻（秒） |
 | `--end` | 動画全長 | 終了時刻（秒） |
 | `--interval` | `1.0` | サンプリング間隔（秒） |
@@ -357,14 +357,14 @@ timestamp,brightness
 ```
 
 | フィールド | 型 | 説明 |
-|---|---|---|
+| --- | --- | --- |
 | `timestamp` | float | タイムスタンプ（秒、小数点1桁） |
 | `brightness` | float | フレームの平均輝度（0.0-255.0、小数点1桁） |
 
 ### Exit Codes
 
 | コード | 意味 |
-|---|---|
+| --- | --- |
 | 0 | 正常終了 |
 | 1 | 一般エラー |
 | 2 | 入力ファイル不正 |
@@ -377,7 +377,7 @@ timestamp,brightness
 `split` コマンドのエラーは `-v` / `-q` によって出力量が変わる。すべてのエラーは stderr に出力される (stdout は壊れたデータを残さないよう空のまま)。
 
 | モード | 出力形式 (AllaganEyeError 系) | 出力形式 (予期せぬ例外) |
-|---|---|---|
+| --- | --- | --- |
 | `-v` (19a) | `Error: <msg>` + `verbose_detail()` コンテキスト (ffmpeg stderr_tail 等) + full traceback | full traceback (``__cause__`` / ``__context__`` 含む) |
 | default (19b) | `Error: <msg>` + `(Run with -v / --verbose for full details)` 1 行 hint (実際は 2 スペースインデント) | `Unexpected error: <exc>` + 1 行 hint |
 | `-q` (19c) | `Error: <msg>` のみ | `Unexpected error: <exc>` のみ |

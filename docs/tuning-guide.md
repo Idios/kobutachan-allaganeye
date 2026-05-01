@@ -14,7 +14,7 @@
 ### うまく動作しない可能性があるケース
 
 | ケース | 理由 |
-|---|---|
+| --- | --- |
 | FL 以外のコンテンツ | 暗転パターンが異なるため検知できない |
 | 1 試合のみの録画 | 試合間の暗転がないため境界が見つからない |
 | 暗転が極端に短い録画 | サンプリング間隔で拾えない場合がある |
@@ -185,7 +185,7 @@ GPU 対応環境（NVIDIA CUDA, Intel QSV 等）では、暗転検知の処理�
 どちらが速いかは**コーデックと環境によって異なります**。一般的な傾向:
 
 | コーデック | 推奨モード | 理由 |
-|---|---|---|
+| --- | --- | --- |
 | H.264 | GPU (`--gpu`) | GPU デコード支援が最も成熟しており、恩恵が大きい |
 | HEVC (H.265) | GPU (`--gpu`) | GPU 支援あり。AV1 より効率的 |
 | AV1 | GPU (`--gpu`) (NVDEC RTX 30+ / QSV Arc・Gen12+ / VCN 4.0+) | #414 で GPU auto-select 対象に追加。対応 GPU で decode 成功、未対応環境では自動で CPU フォールバック |
@@ -212,7 +212,7 @@ allaganeye split your_recording.mkv --gpu --gpu-vendor auto
 ```
 
 | Vendor | 対応状況 | 備考 |
-|---|---|---|
+| --- | --- | --- |
 | `nvidia` | 実装済み (#546) | NVDEC cuvid 経由、h264 / hevc / av1 対応 |
 | `amd` | 実装済み (#553) | d3d11va + native decoder + `hwdownload,format=nv12` 経由、h264 / hevc / av1 対応。RDNA2+ iGPU (Granite Ridge) で SW 比 3x 高速 |
 | `intel` | 実装済み (#550 / #582) | QSV 経由 (`-hwaccel qsv -hwaccel_output_format qsv` + `hwdownload,format=nv12`)、h264 / hevc / vp9 / av1 対応。AV1 は Alder Lake (12th gen) / Arc 以降のハードウェアで decode 可能。Tiger Lake (11th gen Iris Xe) は av1_qsv 非対応のため AV1 入力時は自動で CPU fallback (h264 / hevc / vp9 は QSV decode 動作確認済み) |
@@ -241,7 +241,7 @@ allaganeye split your_recording.mkv --dry-run --gpu
 ## パラメータ一覧
 
 | パラメータ | デフォルト | 範囲 | 説明 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `--blackout-threshold` | 15.0 | 0.0 - 255.0 | 暗転と判定する明るさの上限。大きくすると検知が緩くなる |
 | `--min-match-duration` | 300.0 | 0 以上 | この秒数未満のセグメントを除外する |
 | `--min-blackout-duration` | 3.0 | 0 以上 | この秒数未満の暗転を無視する（リスポーン暗転の除外用） |

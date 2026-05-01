@@ -100,7 +100,7 @@ scope 外で扱う `aria-describedby` は使わず、title 属性 (mouse hover) 
 ## global CSS 責務分離
 
 | ファイル | 責務 |
-|---|---|
+| --- | --- |
 | `gui/src/styles/tokens.css` | aetherTheme の color / font tokens (`:root` カスタムプロパティ) + base reset (`html, body, #root`, box-sizing) |
 | `gui/src/styles/a11y.css` | global `:focus-visible` outline, `@keyframes ae-spin`, `prefers-reduced-motion` |
 
@@ -115,27 +115,27 @@ scope 外で扱う `aria-describedby` は使わず、title 属性 (mouse hover) 
 ### Hooks
 
 | パス | 役割 |
-|---|---|
+| --- | --- |
 | [`gui/src/hooks/useFocusTrap.ts`](../gui/src/hooks/useFocusTrap.ts) | dialog / カード表示中に Tab focus を内側で循環、解除時に previouslyFocused へ復元 |
 | [`gui/src/hooks/useEscapeKey.ts`](../gui/src/hooks/useEscapeKey.ts) | active=true の間 Escape で handler 発火 |
 
 ### Components
 
 | パス | 役割 |
-|---|---|
+| --- | --- |
 | [`gui/src/components/DisabledTooltip.tsx`](../gui/src/components/DisabledTooltip.tsx) | `disabled === true` の時に `title` 属性 + 任意 inline hint で理由を提示 (§1.2 準拠) |
 | [`gui/src/components/LoadingSpinner.tsx`](../gui/src/components/LoadingSpinner.tsx) | 回転 sigil + visible label。screen reader 用属性は付けない |
 
 ### Global CSS
 
 | パス | 役割 |
-|---|---|
+| --- | --- |
 | [`gui/src/styles/a11y.css`](../gui/src/styles/a11y.css) | global `:focus-visible` outline / `@keyframes ae-spin` / `prefers-reduced-motion` |
 
 ### 適用先サマリ
 
 | 画面 / modal | a11y 補強 |
-|---|---|
+| --- | --- |
 | DropScreen.SelectedCard / ErrorCard | useFocusTrap + useEscapeKey + LoadingSpinner |
 | DetectingScreen [中断] | DisabledTooltip |
 | CompleteScreen 試合一覧 | キーボード ↑↓ / Home / End / Enter / Space |

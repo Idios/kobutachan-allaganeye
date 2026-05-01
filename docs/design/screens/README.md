@@ -5,7 +5,7 @@ GUI プロトタイプ 5 画面 (drop / detecting / complete / preview / export)
 ## ファイル一覧
 
 | ファイル | 画面 | 状態 |
-|---|---|---|
+| --- | --- | --- |
 | [`01-drop.png`](01-drop.png) | ① インポート (Drop / Import) | state: drop |
 | [`02-detecting.png`](02-detecting.png) | ② 検知中 (Detecting) | state: detecting |
 | [`03-complete.png`](03-complete.png) | ③ 一覧 (Matches) | state: complete |

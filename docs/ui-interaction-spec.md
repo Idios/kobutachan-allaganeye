@@ -15,7 +15,7 @@
 **原則**: フォーム input (text / number / select / textarea / radio / checkbox) は onChange で `metadataStore` の `updateMatch` (もしくは同等 mutation) を **debounce 200ms 経由**で呼び、store の `dirty` フラグを即時に立てる。
 
 | 観点 | 規定 |
-|---|---|
+| --- | --- |
 | debounce 値 | 200ms (連続入力中の中間値で reducer / re-render が発火しすぎない最小値) |
 | auto-save (#517) との関係 | 独立。auto-save 側は別 debounce 500ms で `metadata.draft.json` に書く。UI dirty 反映 (200ms) と disk persist (500ms) を分離 |
 | 即時 commit が必要な操作 | toggle (skip / type 切替) / 数値 stepper クリック / プルダウン選択 — debounce せず onChange で同期 commit |
@@ -30,7 +30,7 @@
 **原則**: ボタン・input の `disabled=true` は必ず理由を表示する。表示は **(a) 当該要素の tooltip (`title` 属性 + `aria-describedby`)** と **(b) 近傍の inline hint (small text)** の両方を提供する。
 
 | 表示形式 | 用途 | 必須範囲 |
-|---|---|---|
+| --- | --- | --- |
 | tooltip 単独 | 副次ボタン (FrameStrip 内 stepper、行内アイコンボタン等) | 副次 UI |
 | inline hint 単独 | 主要 CTA 周辺で常時可視化したい理由 | 主要 CTA は inline 必須 |
 | tooltip + inline 併用 | 主要 CTA (適用 / 元に戻す / 書き出し開始 等) | **主要 CTA は両方必須** |
@@ -46,7 +46,7 @@
 **原則**: `metadataStore.dirty === true` の状態で、編集破棄を伴う操作 (画面遷移・別 match 選択・元に戻す・アプリ終了) が発火する場合、必ず confirm ダイアログを挟む。confirm は **Tauri 2 plugin-dialog の `ask`** (`@tauri-apps/plugin-dialog`) を使う — Tauri 2 の WebView2 は security の都合で `window.confirm()` / `window.alert()` / `window.prompt()` を no-op にするため native dialog 経路必須。全画面で統一すること。`tauri-plugin-dialog` 側 capability に `dialog:allow-ask` を入れること (#589 で確認)。
 
 | consume 経路 | confirm メッセージ (canonical) | 出現画面 |
-|---|---|---|
+| --- | --- | --- |
 | `[◀ 一覧へ]` (preview → complete) | 未保存の変更があります。破棄して一覧へ戻りますか？ | preview |
 | `[書き出し]` (preview → export) | 未保存の変更があります。破棄して書き出しへ進みますか？ | preview |
 | 別 match double-click / `[境界を調整]` | 未保存の変更があります。破棄して別の試合を開きますか？ | complete → preview |
@@ -68,7 +68,7 @@
 **原則**: `metadataStore.loadSample()` で読み込まれた sample metadata (`metadataStore.filePath === null`) は **編集不可 (read-only)** として扱い、編集系 UI 部品はすべて grayed out + 上部に常時 hint を表示する。
 
 | 部品種別 | sample mode の扱い |
-|---|---|
+| --- | --- |
 | 編集 input (start/end TC、name、type/type_override、skip toggle 等) | **disabled** (tooltip 理由表示) |
 | 主要 CTA (適用、元に戻す) | **disabled** + inline hint「サンプル動画では保存できません」 |
 | 編集を伴わないナビゲーション (画面遷移、行選択、stepper の表示更新等) | **操作可** (学習目的を阻害しない) |
@@ -82,7 +82,7 @@
 **原則**: 失敗系の表示は **(a) 失敗を引き起こした操作元の inline error** と **(b) 画面右上の global toast** の併用を基本とする。
 
 | 表示チャネル | 用途 | auto-dismiss |
-|---|---|---|
+| --- | --- | --- |
 | inline error (操作要素直下に赤地 small text) | 直前操作の失敗理由を文脈付きで提示。フォーカスを保持しやすい | しない (操作再試行 / 別操作で消える) |
 | global toast (画面右上、`<Toast>` placeholder) | 操作元から離れた箇所で発生したエラー、または短時間で消えてよい要約通知 | 5 秒 (操作要操の通知は permanent 寄り、bg 失敗は短く) |
 | inline + toast 併用 | apply / restore / export 等の主要操作の失敗。inline で原因明示 + toast で「保存に失敗しました」要約 | toast のみ 5s、inline は明示 dismiss まで残す |
@@ -102,7 +102,7 @@
 §2 は 5 画面それぞれを **1 画面 = 1 PR** で順次追加する (#590 着手フローに従う)。
 
 | 節 | 画面 | 主要 UI 部品 | 進捗 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | §2.1 | drop | D&D zone / [参照…] / 直近録画リスト / SelectedCard (詳細設定パネル含む、#613) / probeError card | #598 で追加 |
 | §2.2 | detecting | AllaganSigil 回転 / Header / progressBadge / PhaseRow ×2 / live log / [中断] | #600 で追加 |
 | §2.3 | complete | statusDot / sourceBox / stats / [元に戻す] / [境界を調整] / [全試合書き出し] / [× 閉じる] / BrightnessTimeline / listItem / previewPane / emptyNote | #603 で追加 |
@@ -140,7 +140,7 @@
 #### §2.1.1 D&D zone
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | drop zone (div、Tauri webview `onDragDropEvent` 購読 + HTML5 D&D fallback。[#568](https://github.com/Idios/kobutachan-allaganeye/issues/568) で実装) |
 | 状態 | `idle` (待受、gold 破線) / `over-valid` (cyan 破線 + 薄背景、受付可能拡張子の drag-over 中) / `over-invalid` (danger 破線 + `⊘` icon + 「非対応形式 (.mp4 / .mkv / .avi / .mov のみ)」 inline、非対応形式の drag-over 中) / `disabled` (phase=`selecting/probing/selected/probeError` 時は drag を ignore、視覚不変) |
 | 遷移トリガー | Tauri webview `onDragDropEvent` (drop 種別) → 拡張子 validation pass → reducer `DND_DROPPED` → phase `idle → probing` → probe → `selected/probeError`。HTML5 経路は jsdom テスト fallback (`dragDropEnabled: true` (default) のため実機では Tauri が intercept して発火しない) |
@@ -150,7 +150,7 @@
 #### §2.1.2 [参照…] button
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([DropScreen.tsx:147-154](../gui/src/screens/DropScreen.tsx#L147)) |
 | 状態 | `idle` (phase=`idle/probeError`) / `disabled` (phase=`selecting/probing/selected`) |
 | 遷移トリガー | `onClick` → `pickAndProbe()` → reducer `BROWSE_CLICKED` (phase=`idle → selecting`) または `BROWSE_CLICKED` (phase=`probeError → selecting`) |
@@ -160,7 +160,7 @@
 #### §2.1.3 直近の録画 list (#571)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | list (各 item は `<button>`、`recentStore.entries` から render) |
 | 状態 | `idle` (phase=`idle`) / `disabled` (phase=`selecting/probing/selected/probeError`) |
 | 遷移トリガー | `onClick` → `selectRecent(item)` → reducer `RECENT_PICKED` (phase=`idle → probing`) → `probeAndDispatch(item.path)`。drop と同じ probe 経路を辿るので、metadata 不整合 / 解像度差異もそこで再評価される |
@@ -171,7 +171,7 @@
 #### §2.1.4 SelectedCard (probe 結果カード)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | card (display container、phase=`selected` のときのみ render、[DropScreen.tsx:198-232](../gui/src/screens/DropScreen.tsx#L198)) |
 | 状態 | `selected` (probe 結果 + 確認ボタン表示) |
 | 遷移トリガー | reducer `PROBE_OK` で phase=`probing → selected` 後に出現 |
@@ -181,7 +181,7 @@
 #### §2.1.5 [キャンセル] button (SelectedCard 内)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([DropScreen.tsx:223-225](../gui/src/screens/DropScreen.tsx#L223)) |
 | 状態 | `idle` (phase=`selected` のみ表示) |
 | 遷移トリガー | `onClick` → `cancelSelection()` → reducer `CANCEL_SELECTION` (phase=`selected → idle`) + `setProbeInfo(null)` |
@@ -191,7 +191,7 @@
 #### §2.1.6 [OK — 検知開始] button (SelectedCard 内)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([DropScreen.tsx:226-228](../gui/src/screens/DropScreen.tsx#L226)) |
 | 状態 | `idle` (phase=`selected` のみ表示。`probeInfo` が null の場合は `confirm()` 内で early return しているが、本ボタン自体は disabled にしていない — 不整合シナリオを防ぐ最終 guard として機能) |
 | 遷移トリガー | `onClick` → `confirm()` → `appStateStore.setSelectedVideoPath(probeInfo.path)` + `navigate('detecting')` |
@@ -201,7 +201,7 @@
 #### §2.1.7 probeError card
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | card (display container、phase=`probeError` のときのみ render、[DropScreen.tsx:117-137](../gui/src/screens/DropScreen.tsx#L117))。`role="alert"` で a11y 通知 |
 | 状態 | `probeError` (error 表示 + dismiss / retry ボタン) |
 | 遷移トリガー | reducer `PROBE_FAIL` で phase=`probing → probeError` 後に出現 ([DropScreen.tsx:53,67](../gui/src/screens/DropScreen.tsx#L53)) |
@@ -211,7 +211,7 @@
 #### §2.1.8 [閉じる] button (probeError card 内)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([DropScreen.tsx:122-128](../gui/src/screens/DropScreen.tsx#L122)) |
 | 状態 | `idle` (phase=`probeError` のみ表示) |
 | 遷移トリガー | `onClick` → `dismissError()` → reducer `DISMISS_ERROR` (phase=`probeError → idle`) + `setError(null)` |
@@ -221,7 +221,7 @@
 #### §2.1.9 [再試行] button (probeError card 内)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([DropScreen.tsx:129-135](../gui/src/screens/DropScreen.tsx#L129)) |
 | 状態 | `idle` (phase=`probeError` のみ表示) |
 | 遷移トリガー | `onClick` → `pickAndProbe()` → reducer `BROWSE_CLICKED` (phase=`probeError → selecting`) |
@@ -237,7 +237,7 @@
 **スコープ (3 パラメータ)**: `blackout_threshold` / `workers` / `gpu`。`--no-audio` は audio module frozen (#327、`split_matches.py:525`) のため UI 不公開、#327 解凍後に再追加する。
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | collapsible panel (`<button aria-expanded={open} aria-controls={bodyId}>` header + 折り畳まれた body の `<div id={bodyId}>`) |
 | 状態 | `collapsed` (default、初期表示) / `expanded` (header click で toggle) |
 | 遷移トリガー | header `onClick` → local `setOpen` で toggle (store には影響なし) |
@@ -247,7 +247,7 @@
 ##### §2.1.10.1 [▶ 詳細設定] / [▼ 詳細設定] header toggle
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button (`aria-expanded` / `aria-controls` 属性付き) |
 | 状態 | `collapsed` (▶) / `expanded` (▼) |
 | 遷移トリガー | `onClick` → local `setOpen((v) => !v)` |
@@ -257,7 +257,7 @@
 ##### §2.1.10.2 検知しきい値 slider (blackoutThreshold)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | `<input type="range" min={0} max={50} step={1}>` + 値表示 |
 | 状態 | 0-50 (CLI 仕様は 0-255 だが UI では実用域 0-50 に絞る、default 15) |
 | 遷移トリガー | `onChange` → `setDetectionParams({ blackoutThreshold: number })` |
@@ -267,7 +267,7 @@
 ##### §2.1.10.3 ワーカー数 numeric input (workers)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | `<input type="number" min={0} max={32} step={1}>` + `(自動)` hint (workers===0 のみ) |
 | 状態 | 0 (auto) / 1-32 (explicit) |
 | 遷移トリガー | `onChange` → `setDetectionParams({ workers: number })` (`Number.isFinite` ガード付き) |
@@ -277,7 +277,7 @@
 ##### §2.1.10.4 GPU tri-state 選択 (gpu)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button group (`role="radiogroup"` + 3 つの `role="radio"`) |
 | 状態 | `自動` (gpu=null、CLI omit) / `ON` (gpu=true、`--gpu`) / `OFF` (gpu=false、`--no-gpu`) |
 | 遷移トリガー | 各 button `onClick` → `setDetectionParams({ gpu: null \| true \| false })` |
@@ -287,7 +287,7 @@
 ##### §2.1.10.5 [リセット] button
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button (panel body 末尾、右寄せ) |
 | 状態 | params == default のとき `disabled` (押下不可) / それ以外で active |
 | 遷移トリガー | `onClick` → `resetDetectionParams()` (全 3 フィールドを `DEFAULT_DETECTION_PARAMS` に戻す) |
@@ -325,7 +325,7 @@
 #### §2.2.1 AllaganSigil (回転アニメーション)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | 装飾 SVG ([DetectingScreen.tsx:85](../gui/src/screens/DetectingScreen.tsx#L85)、`<AllaganSigil size={84} rotating={phase === 'running'} />`) |
 | 状態 | `displayOnly`。phase=`running` のみ回転、それ以外は静止 |
 | 遷移トリガー | phase 変化に追従 (props `rotating` の derived value) |
@@ -335,7 +335,7 @@
 #### §2.2.2 Header (caption / fileName / meta)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | display block ([DetectingScreen.tsx:84-97](../gui/src/screens/DetectingScreen.tsx#L84)) |
 | 状態 | `displayOnly` |
 | 遷移トリガー | なし。`selectedVideoPath` 変化時に再 render (basename を抜き出して表示) |
@@ -345,7 +345,7 @@
 #### §2.2.3 progressBadge
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | display block ([DetectingScreen.tsx:91-96](../gui/src/screens/DetectingScreen.tsx#L91)) |
 | 状態 | `displayOnly`。`progress` (0-100) を四捨五入で表示 |
 | 遷移トリガー | local state `progress` 変化 (Phase 2 dummy interval、Phase 2.5 で CLI 進捗イベント) |
@@ -355,7 +355,7 @@
 #### §2.2.4 PhaseRow.Detecting (粗スキャン)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | progress bar ([DetectingScreen.tsx:102-107](../gui/src/screens/DetectingScreen.tsx#L102)、`PhaseRow` コンポーネント) |
 | 状態 | bar fill: `pending` (pct=0) / `running` (0<pct<100) / `done` (pct≥100) ([DetectingScreen.tsx:156-178](../gui/src/screens/DetectingScreen.tsx#L156))。phase との対応は無く `pct1` (progress × 1.25) のみで決まる |
 | 遷移トリガー | `progress` 変化 (Phase 2 dummy、Phase 2.5 で CLI のフェーズ進捗) |
@@ -365,7 +365,7 @@
 #### §2.2.5 PhaseRow.Refining (精密計測)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | progress bar ([DetectingScreen.tsx:108-113](../gui/src/screens/DetectingScreen.tsx#L108)、`PhaseRow` の 2 個目) |
 | 状態 | `pending` / `running` / `done` (§2.2.4 と同じ semantics) |
 | 遷移トリガー | `progress` 変化 (Phase 2 dummy では `pct2 = (progress - 40) × 1.67`、progress=40 から開始) |
@@ -375,7 +375,7 @@
 #### §2.2.6 live log
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | append-only display list ([DetectingScreen.tsx:118-133](../gui/src/screens/DetectingScreen.tsx#L118))。`role="log"` + `aria-label="detect log"` で a11y 対応 |
 | 状態 | `displayOnly`。Phase 2 は progress 閾値 (0% / 30% / 60%) で 3 行を順次表示する hardcoded 動作 |
 | 遷移トリガー | progress 連動 (Phase 2 dummy)。Phase 2.5 で CLI stdout 行を逐次 append |
@@ -385,7 +385,7 @@
 #### §2.2.7 [中断] button
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([DetectingScreen.tsx:136-143](../gui/src/screens/DetectingScreen.tsx#L136)) |
 | 状態 | `idle` (phase=`running`) / `disabled` (phase=`cancelling/cancelled/completed/error`) |
 | 遷移トリガー | `onClick` → reducer `CANCEL_CLICKED` (phase=`running → cancelling`)。Phase 2 / Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) は副作用 effect で即座に `CANCEL_CONFIRMED` を発火し `cancelling → cancelled` 遷移。実 ffmpeg `kill()` 完了同期は [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) で `kill_tracked_processes` 完了を待ってから `CANCEL_CONFIRMED` を発火する設計に拡張する (本 PR は phase 遷移のみで scope を絞る) |
@@ -422,7 +422,7 @@
 #### §2.3.1 statusDot
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | 装飾 (`<div aria-hidden="true">`、[CompleteScreen.tsx:65](../gui/src/screens/CompleteScreen.tsx#L65)) |
 | 状態 | `displayOnly` |
 | 遷移トリガー | なし (常時可視) |
@@ -432,7 +432,7 @@
 #### §2.3.2 sourceBox (caption + filename)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | display block ([CompleteScreen.tsx:66-69](../gui/src/screens/CompleteScreen.tsx#L66)) |
 | 状態 | `displayOnly`。`metadata.source` を full path で表示 |
 | 遷移トリガー | `metadata` 変化に追従 |
@@ -442,7 +442,7 @@
 #### §2.3.3 stats (試合数 / 総尺)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | display group ([CompleteScreen.tsx:70-81](../gui/src/screens/CompleteScreen.tsx#L70)) |
 | 状態 | `displayOnly`。`metadata.matches.length` と `metadata.source_duration_display` を表示 |
 | 遷移トリガー | `metadata` 変化に追従 |
@@ -452,7 +452,7 @@
 #### §2.3.4 [元に戻す] button (RestoreButton)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button + inline error ([RestoreButton.tsx:53-69](../gui/src/components/RestoreButton.tsx#L53)) |
 | 状態 | `idle` (`hasBackup=true` && `restoring=false`) / `busy` (`restoring=true`、ラベル `…`) / `disabled` (`hasBackup=false` または `restoring=true`) |
 | 遷移トリガー | `onClick` → `confirmFn(confirmMessage)` で確認 → OK なら `metadataStore.restore()` (atomic copy `metadata.original.json` → `metadata.json`) → 成功なら `onRestored?` callback |
@@ -462,7 +462,7 @@
 #### §2.3.5 [境界を調整] button
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([CompleteScreen.tsx:84-94](../gui/src/screens/CompleteScreen.tsx#L84)) |
 | 状態 | `idle` (selectedMatch あり) / `disabled` (`!selectedMatch`、つまり `matches=[]`) |
 | 遷移トリガー | `onClick` → `appStateStore.openPreviewFor(selectedMatch.index)` (内部で `selectMatch` + `navigate('preview')`) |
@@ -472,7 +472,7 @@
 #### §2.3.6 [全試合書き出し] button
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([CompleteScreen.tsx:95-101](../gui/src/screens/CompleteScreen.tsx#L95)) |
 | 状態 | `idle` (現状無条件で活性) |
 | 遷移トリガー | `onClick` → `navigate('export')` |
@@ -482,7 +482,7 @@
 #### §2.3.7 [× 閉じる] button
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([CompleteScreen.tsx:102-109](../gui/src/screens/CompleteScreen.tsx#L102)) |
 | 状態 | `idle` (現状無条件で活性) |
 | 遷移トリガー | `onClick` → `handleClose()` ([CompleteScreen.tsx:56-60](../gui/src/screens/CompleteScreen.tsx#L56)) → `clear()` + `appReset()` + `navigate('drop')` |
@@ -492,7 +492,7 @@
 #### §2.3.8 BrightnessTimeline (match block click)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | SVG component ([BrightnessTimeline.tsx](../gui/src/components/BrightnessTimeline.tsx))。grid / threshold line / blackout bands / brightness line+fill / match blocks / time axis の合成 |
 | 状態 | `displayOnly` (子要素 grid / threshold / blackouts / line / axis) + interactive (match blocks)。match block の visual: `selectedIndex` 一致で opacity=1 + stroke、それ以外で opacity=0.55 |
 | 遷移トリガー | match block (`<g>`) `onClick` → `props.onSelectMatch(index)` → `appStateStore.selectMatch(index)` |
@@ -502,7 +502,7 @@
 #### §2.3.9 試合一覧 listItem (single + double click)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | `<li>` ([CompleteScreen.tsx:128-160](../gui/src/screens/CompleteScreen.tsx#L128))。MatchThumb / 試合名 + 開始→終了 + duration / typeBadge (FL / ?) を内包 |
 | 状態 | `idle` / `active` (selectedMatchIndex 一致時 `listItemActive` クラス + `data-selected="true"`) |
 | 遷移トリガー | single `onClick` → `selectMatch(index)` (選択のみ) / `onDoubleClick` → `openPreviewFor(index)` (選択 + preview 遷移) |
@@ -512,7 +512,7 @@
 #### §2.3.10 previewPane (display)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | display block ([CompleteScreen.tsx:165-208](../gui/src/screens/CompleteScreen.tsx#L165))。MatchThumb (large) + previewPlayOverlay + previewMeta (title + 開始 / 終了 / 長さ / 分類) |
 | 状態 | `displayOnly` (selectedMatch 存在時のみ render、`!selectedMatch` で section 全体非表示) |
 | 遷移トリガー | `selectedMatch` 変化に追従 (selectMatch / openPreviewFor / 1-match auto-select 経由) |
@@ -522,7 +522,7 @@
 #### §2.3.11 emptyNote
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | display ([CompleteScreen.tsx:44-50](../gui/src/screens/CompleteScreen.tsx#L44)) |
 | 状態 | `complete_empty` のみ表示 (`metadata === null`)。文言: `'No metadata. Run detect first.'` |
 | 遷移トリガー | `metadata` が null になった瞬間 (clear / 起動直後 / load 失敗後) |
@@ -573,7 +573,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 #### §2.4.1 [◀ 一覧へ] back button
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([PreviewScreen.tsx:496](../gui/src/screens/PreviewScreen.tsx#L496)) |
 | 状態 | `idle` (常時活性) |
 | 遷移トリガー | `onClick` → `handleBack()` ([PreviewScreen.tsx:460-474](../gui/src/screens/PreviewScreen.tsx#L460)) → `flushUpdate()` で debounce 残を即時 commit → `if (useMetadataStore.getState().dirty) confirm('未保存の変更があります。破棄して一覧へ戻りますか？')` → OK で `discardEdits()` 後 `navigate('complete')`、cancel で preview 残留 |
@@ -583,7 +583,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 #### §2.4.2 match name input
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | text input ([PreviewScreen.tsx:505](../gui/src/screens/PreviewScreen.tsx#L505)) |
 | 状態 | `idle` (常時活性、sample mode の disable 化は派生 issue で全画面分対応予定 → §1.4) |
 | 遷移トリガー | `onChange` → local `setMatchName(value)` → schedule effect が pendingPatchRef に `{ name }` を merge → 200ms 後に `updateMatch(match.index, pendingPatch)` を 1 回 commit (§1.1 準拠、debounce で連打を coalesce) |
@@ -593,7 +593,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 #### §2.4.3 type select
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | `<select>` ([PreviewScreen.tsx:518](../gui/src/screens/PreviewScreen.tsx#L518))。option: `fl_match` / `unknown` / `skip` |
 | 状態 | `idle` (常時活性、sample mode の disable 化は派生 issue で全画面分対応予定 → §1.4) |
 | 遷移トリガー | `onChange` → local `setMatchType(value)` + `flushUpdate()` で先行 debounce を flush + `updateMatch(match.index, { type_override: value })` を **即時 commit** (§1.1 例外、単一選択型は debounce しない) |
@@ -603,7 +603,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 #### §2.4.4 Pane button (activate IN / OUT)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([PreviewScreen.tsx:682](../gui/src/screens/PreviewScreen.tsx#L682))。IN (start) / OUT (end) の 2 個。`aria-pressed={active}` |
 | 状態 | `inactive` / `active` (`editing === 'start'` で IN、`'end'` で OUT) |
 | 遷移トリガー | `onClick` → `props.onActivate()` → `setEditing('start' \| 'end')` |
@@ -613,7 +613,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 #### §2.4.5 Pane.video (`<video>`)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | `<video>` ([PreviewScreen.tsx:710-748](../gui/src/screens/PreviewScreen.tsx#L710))。axum 配信 URL を `src` に持つ HTML5 player、`controls={false}` |
 | 状態 | `loading` (videoUrl null && videoError null → `loading video…` 表示) / `error` (videoError あり → inline `role="alert"`) / `paused` (default、currentTime ↔ startT/endT 双方向同期) / `playing` (`onTimeUpdate` で startT/endT を currentTime に追従) |
 | 遷移トリガー | `onClick` → stopPropagation。inactive なら `onActivate()` のみ、active なら `play()` / `pause()` toggle。`onTimeUpdate` (playing 時のみ) → `onTChange(v.currentTime)` で local state に sync |
@@ -623,7 +623,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 #### §2.4.6 Pane.tcInput (TC manual entry)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | text input ([PreviewScreen.tsx:758](../gui/src/screens/PreviewScreen.tsx#L758))。`H:MM:SS.FF` 形式 (FF は frame portion、`source_fps` 連動) |
 | 状態 | `idle` (常時活性、sample mode の disable 化は派生 issue で全画面分対応予定 → §1.4) |
 | 遷移トリガー | `onChange` → `parseTimecode(value, fps)` → 解析成功時 `onTChange(parsed)` (= local `setStartT` / `setEndT`) → schedule effect が pendingPatchRef に `{ edited: { start_time, end_time } }` を merge → 200ms 後に `updateMatch` を 1 回 commit (§1.1 準拠)。`onClick` → stopPropagation で Pane の activate を抑止 |
@@ -633,7 +633,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 #### §2.4.7 stepRow buttons (×6)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button × 6 ([PreviewScreen.tsx:594-617](../gui/src/screens/PreviewScreen.tsx#L594))。`-10s / -1s / -1F / +1F / +1s / +10s`。`title="<label> (<key hint>)"` で keyboard 等価操作明示、`aria-label="nudge <label>"` |
 | 状態 | `idle` (常時活性) |
 | 遷移トリガー | `onClick` → frame ボタンは `nudgeFrame(±1)` (frame-grid snap)、秒 ボタンは `nudge(±1 \| ±10)` (累積) → 内部で `setCurrentT(...)` → schedule effect 経由で 200ms 後に `updateMatch({ edited })` commit |
@@ -643,7 +643,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 #### §2.4.8 keyHint display
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | display block ([PreviewScreen.tsx:621-635](../gui/src/screens/PreviewScreen.tsx#L621))。`role="note"` + `aria-label="keyboard shortcuts"`、`<kbd>` で各キー表示 |
 | 状態 | `displayOnly` |
 | 遷移トリガー | なし (常時可視) |
@@ -653,7 +653,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 #### §2.4.9 FrameStrip
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | sub-component ([PreviewScreen.tsx:638-647](../gui/src/screens/PreviewScreen.tsx#L638))。±3s 範囲、12 frames @ 0.5s 間隔、現境界中心の thumb 列 |
 | 状態 | `displayOnly` (frame の sample) + interactive (frame click) |
 | 遷移トリガー | thumb `onClick` → `props.onSelectFrame(t)` → `setCurrentT(t)` → schedule effect 経由で 200ms 後に `updateMatch({ edited })` commit |
@@ -663,7 +663,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 #### §2.4.10 [適用] primary button
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([PreviewScreen.tsx:651-657](../gui/src/screens/PreviewScreen.tsx#L651))。`aria-label="apply"` |
 | 状態 | `idle` (`!applying && filePath !== null`) / `applying` (label = `'適用中…'`) / `disabled` (`applying \|\| !filePath`) |
 | 遷移トリガー | `onClick` → `handleApply()` ([PreviewScreen.tsx:451-457](../gui/src/screens/PreviewScreen.tsx#L451)) → `flushUpdate()` で残 debounce を即時 commit → `filePath` がある場合のみ `apply()` を await。debounce 経路で既に store の dirty 編集が立っている前提で、handleApply は二重 commit を行わない (§1.1 #589 修正で確立) |
@@ -673,7 +673,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 #### §2.4.11 dirty indicator
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | display badge ([PreviewScreen.tsx:658](../gui/src/screens/PreviewScreen.tsx#L658))。`● 未保存の変更` 文言 |
 | 状態 | `displayOnly`。`dirty=true` のみ render |
 | 遷移トリガー | `metadataStore.dirty` 変化に追従 |
@@ -683,7 +683,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 #### §2.4.12 applyError inline
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | inline error ([PreviewScreen.tsx:660-662](../gui/src/screens/PreviewScreen.tsx#L660))。`role="alert"` |
 | 状態 | `displayOnly`。`applyError !== null` のみ render |
 | 遷移トリガー | `metadataStore.applyError` 変化に追従 (apply 失敗で set、次の apply 試行で clear) |
@@ -693,7 +693,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 #### §2.4.13 [元に戻す] (RestoreButton)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | RestoreButton 共通 component ([PreviewScreen.tsx:665](../gui/src/screens/PreviewScreen.tsx#L665))。`onRestored={() => navigate('complete')}` で復元成功後に complete へ戻る |
 | 状態 | §2.3.4 と共通 (`idle` / `busy` / `disabled`) |
 | 遷移トリガー | confirm → `restore()` → 成功で `onRestored` callback → `navigate('complete')` |
@@ -703,7 +703,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 #### §2.4.14 [書き出し] secondary button
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([PreviewScreen.tsx:667-672](../gui/src/screens/PreviewScreen.tsx#L667)) |
 | 状態 | `idle` (常時活性) |
 | 遷移トリガー | `onClick` → `handleExport()` ([PreviewScreen.tsx:476-486](../gui/src/screens/PreviewScreen.tsx#L476)) → `flushUpdate()` で debounce 残を即時 commit → `if (useMetadataStore.getState().dirty) confirm('未保存の変更があります。破棄して書き出しへ進みますか？')` → OK で `discardEdits()` 後 `navigate('export')`、cancel で preview 残留 |
@@ -713,7 +713,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 #### §2.4.15 emptyNote
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | display ([PreviewScreen.tsx:443-449](../gui/src/screens/PreviewScreen.tsx#L443))。文言: `'No match selected.'` |
 | 状態 | `preview_empty` のみ表示 (`match` が見つからない、つまり `selectedMatchIndex` が `metadata.matches` のどれとも一致しない) |
 | 遷移トリガー | `selectedMatchIndex` または `metadata.matches` 変化で `match` が解決できなくなった時 |
@@ -758,7 +758,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 #### §2.5.1 [◀ プレビュー] back button
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([ExportScreen.tsx:458-465](../gui/src/screens/ExportScreen.tsx#L458)) |
 | 状態 | `idle` / `disabled` (`running \|\| cancelling`) |
 | 遷移トリガー | `onClick` → `navigate('preview')` |
@@ -768,7 +768,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 #### §2.5.2 header (caption + title)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | display block ([ExportScreen.tsx:466-471](../gui/src/screens/ExportScreen.tsx#L466))。caption "エクスポート" + title "{N} 試合を書き出す" |
 | 状態 | `displayOnly`。`countedMatches.length` (永続 skip + ad-hoc exclude を除外した数) を反映 |
 | 遷移トリガー | `metadata.matches` / `excludedIndexes` 変化に追従 |
@@ -778,7 +778,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 #### §2.5.3 出力先 input
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | text input ([ExportScreen.tsx:481-487](../gui/src/screens/ExportScreen.tsx#L481))。`aria-label="output directory"` |
 | 状態 | `idle` / `disabled` (`running \|\| cancelling`) |
 | 遷移トリガー | `onChange` → 即時 `setOutDir(value)` (local state) |
@@ -788,7 +788,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 #### §2.5.4 [参照…] dir picker button
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([ExportScreen.tsx:488-495](../gui/src/screens/ExportScreen.tsx#L488)) |
 | 状態 | `idle` / `disabled` (`running \|\| cancelling`) |
 | 遷移トリガー | `onClick` → `openDialog({ directory: true, multiple: false })` (`@tauri-apps/plugin-dialog`) → 戻り値 string なら `setOutDir(picked)` |
@@ -798,7 +798,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 #### §2.5.5 命名規則 input + variables hint
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | text input + display hint ([ExportScreen.tsx:501-510](../gui/src/screens/ExportScreen.tsx#L501))。default `match_{idx:03}.mp4` |
 | 状態 | input: `idle` / `disabled` (`running \|\| cancelling`)。hint: `displayOnly` |
 | 遷移トリガー | input `onChange` → 即時 `setNamePattern(value)` |
@@ -808,7 +808,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 #### §2.5.6 コーデック selector (copy / h264 buttons)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button × 2 ([ExportScreen.tsx:516-528](../gui/src/screens/ExportScreen.tsx#L516))。`aria-pressed={codec === c.v}` で選択状態を提示 |
 | 状態 | 各ボタン: `inactive` / `active` (`codec === c.v` で `codecButtonActive`) / `disabled` (`running \|\| cancelling`) |
 | 遷移トリガー | `onClick` → 即時 `setCodec(value)` |
@@ -818,7 +818,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 #### §2.5.7 errorMessage (phase=error)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | inline alert ([ExportScreen.tsx:533-537](../gui/src/screens/ExportScreen.tsx#L533))。`role="alert"`、文言: `すべての試合の書き出しが失敗しました` |
 | 状態 | `displayOnly`。`phase === 'error'` のみ表示 (= `successCount === 0 && failureCount > 0`) |
 | 遷移トリガー | reducer `EXPORT_ERROR` 遷移時に表示開始、`DISMISS_ERROR` / `RESTART` で消える |
@@ -828,7 +828,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 #### §2.5.8 progressBox (label + counts + percent + bar + time)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | composite display ([ExportScreen.tsx:538-578](../gui/src/screens/ExportScreen.tsx#L538))。label / counts / overallPercent / progressBar / 経過 / 残り |
 | 状態 | `displayOnly`。`running \|\| completed \|\| cancelling` のいずれかで表示 |
 | 遷移トリガー | reducer phase 変化 / `matchStates` 変化 / 1s tick (`nowMs` 更新) |
@@ -838,7 +838,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 #### §2.5.9 [⬦ 書き出し開始] primary button
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([ExportScreen.tsx:580-595](../gui/src/screens/ExportScreen.tsx#L580))。`!completed && !error` でのみ render |
 | 状態 | `idle` (label `⬦ 書き出し開始`) / `running` (label `書き出し中…`、disabled) / `cancelling` (label `中断中…`、disabled) / `disabled` (`!videoSource`) |
 | 遷移トリガー | `onClick` → `handleStartExport()` → `dispatch(START_CLICKED)` (idle→running) → `for (m of queue) await invoke('export_match', ...)` → 完了で `PROGRESS_COMPLETE` / 全失敗で `EXPORT_ERROR` / cancel で `CANCEL_CONFIRMED` |
@@ -848,7 +848,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 #### §2.5.10 [中断] cancel button
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([ExportScreen.tsx:597-605](../gui/src/screens/ExportScreen.tsx#L597))。`running` のみ render |
 | 状態 | `idle` (running 中のみ render され activated) |
 | 遷移トリガー | `onClick` → `handleCancelClicked()` → `cancelRequestedRef.current = true` + `dispatch(CANCEL_CLICKED)` (running→cancelling) + `invoke('kill_tracked_processes')` |
@@ -858,7 +858,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 #### §2.5.11 [✓ 完了 — フォルダを開く] + openFolderError
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button + inline alert ([ExportScreen.tsx:607-622](../gui/src/screens/ExportScreen.tsx#L607))。`completed` のみ render |
 | 状態 | button: `idle` / inline alert: `displayOnly` (`openFolderError !== null` 時のみ) |
 | 遷移トリガー | `onClick` → `handleOpenFolder()` → `invoke('open_folder_in_explorer', { path: outDir })` → 失敗時 `setOpenFolderError(message)` |
@@ -868,7 +868,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 #### §2.5.12 [設定変更して再書き出し] (completed)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([ExportScreen.tsx:623-639](../gui/src/screens/ExportScreen.tsx#L623))。`completed` のみ render |
 | 状態 | `idle` |
 | 遷移トリガー | `onClick` → `setMatchStates({})` + `setOpenFolderError(null)` + `dispatch(RESTART)` (completed→idle) |
@@ -878,7 +878,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 #### §2.5.13 [設定変更して再試行] (error)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | button ([ExportScreen.tsx:641-657](../gui/src/screens/ExportScreen.tsx#L641))。`error` のみ render |
 | 状態 | `idle` |
 | 遷移トリガー | `onClick` → `setMatchStates({})` + `setOpenFolderError(null)` + `dispatch(DISMISS_ERROR)` (error→idle) |
@@ -888,7 +888,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 #### §2.5.14 listHeader + bulk actions [全選択] / [全解除]
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | display caption + button × 2 ([ExportScreen.tsx:662-689](../gui/src/screens/ExportScreen.tsx#L662)) |
 | 状態 | caption: `displayOnly` (`{N} ファイル`)。bulk button: `idle` / `disabled` (`running \|\| cancelling`) |
 | 遷移トリガー | `onClick` → `toggleSelectAll(true \| false)` → `excludedIndexes` から bulk 対象 (永続 skip 以外) を全 add/delete |
@@ -898,7 +898,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 #### §2.5.15 listItem (per-match row)
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | composite `<li>` ([ExportScreen.tsx:691-776](../gui/src/screens/ExportScreen.tsx#L691))。checkbox / status mark / name / duration / per-match progress bar / per-match error / fallbackNotice |
 | 状態 | checkbox: `checked` (`isIncluded`) / `unchecked` (`isAdHocExcluded`) / `disabled` (`isPersistSkip \|\| running \|\| cancelling`)。statusMark: `pending(○) / running(●) / done(✓) / error(!) / skipped(—)`。per-match progress bar: `running \|\| completed \|\| done \|\| error` で表示 |
 | 遷移トリガー | checkbox `onChange` → `toggleMatchExclusion(matchIndex)` (`excludedIndexes` add/delete)。Tauri event `export-progress` payload `{match_index, percent, stage, message, fallback_from}` で `matchStates[index]` 更新 |
@@ -908,7 +908,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 #### §2.5.16 emptyNote
 
 | 項目 | 内容 |
-|---|---|
+| --- | --- |
 | 種類 | display ([ExportScreen.tsx:399-405](../gui/src/screens/ExportScreen.tsx#L399))。文言: `'No metadata loaded.'` |
 | 状態 | `displayOnly`。`metadata === null` のみ render |
 | 遷移トリガー | `metadata` が null になった瞬間 |
@@ -920,7 +920,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 ### 3.1 doc 分担
 
 | doc | スコープ |
-|---|---|
+| --- | --- |
 | [ui-architecture.md](ui-architecture.md) | screen / phase 2 層 state machine、screen 間遷移、コンポーネント階層、CSS Modules 慣例、性能目標 |
 | [design/README.md](design/README.md) | デザインシステム (色 / タイポ)、画面レイアウト原本 (handoff bundle)、各画面の機能仕様 |
 | [metadata-spec.md](metadata-spec.md) | metadata.json スキーマ・読み書き契約 (CLI / GUI 共通)・排他管理 ([#514](https://github.com/Idios/kobutachan-allaganeye/issues/514)) ・draft auto-save ([#517](https://github.com/Idios/kobutachan-allaganeye/issues/517)) |
@@ -937,7 +937,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 5 画面の便宜状態名 (§2 各画面ヘッダで定義) と [ui-architecture.md](ui-architecture.md) §各画面 mermaid の状態を対応付ける。差異は意図的な分担 (§3.3 で集約) であり矛盾ではない。
 
 | 画面 | reducer | 本 doc 状態 (§2.x ヘッダ) | mermaid 状態 ([ui-architecture.md](ui-architecture.md)) | 差異 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | drop (§2.1) | あり ([reducers/drop.ts](../gui/src/screens/reducers/drop.ts)) | `idle / selecting / probing / selected / probeError` | `drop_idle / drop_selecting / drop_probing / drop_selected / drop_probeError` | なし (本 doc は接頭辞 `drop_` 省略のみ) |
 | detecting (§2.2) | あり ([reducers/detecting.ts](../gui/src/screens/reducers/detecting.ts)) | `running / cancelling / cancelled / completed / error` | `detecting_running / detecting_cancelling / detecting_cancelled / detecting_completed / detecting_error` | なし (本 doc は接頭辞 `detecting_` 省略のみ) |
 | complete (§2.3) | なし | `complete_empty / complete_idle / complete_restoring` | `complete_idle / complete_restoring / complete_restoreError` | `complete_empty` は本 doc のみ (entry-time 特殊状態、§2.3.11 emptyNote と対応) / `complete_restoreError` は mermaid のみ (RestoreButton 共通 component 内 inline alert、§2.3.4 で扱う) |

@@ -15,7 +15,7 @@ Phase 0 で実測した Tauri 2.10.3 の挙動:
 ## ハマり箇所 (先に読んでおくと数時間節約)
 
 | 症状 | 原因 | 修正 |
-|---|---|---|
+| --- | --- | --- |
 | `tauri` dependency features mismatch, `protocol-asset` feature を要求 | tauri.conf.json で `assetProtocol.enable: true` だが Cargo.toml で features 未指定 | `tauri = { version = "2", features = ["protocol-asset"] }` |
 | `Permission fs:allow-read-meta not found` | 存在しないパーミッション名 | `fs:allow-stat` を使う |
 | `icons/icon.ico not found` | bundle inactive でも Windows resource 生成で必須 | ダミー ICO を PowerShell で生成し `tauri.conf.json > bundle > icon: ["icons/icon.ico"]` に登録 |

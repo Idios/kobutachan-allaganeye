@@ -15,7 +15,7 @@
 同時指定すると **exit code 5** (ConfigValidationError) で終了する (#419):
 
 | 排他ペア | 理由 |
-|---|---|
+| --- | --- |
 | `-q` + `-v` | 「進捗出力抑制」と「詳細出力」は根本的に矛盾するため |
 | `--gpu` + `--no-gpu` | GPU 強制と GPU 無効化は矛盾するため |
 
@@ -30,7 +30,7 @@ Error: --quiet and --verbose are mutually exclusive
 以下のフラグは主軸 (`default` / `-v` / `-q` / `--dry-run`) と**直交**して重畳可能。マトリクスを簡潔に保つため各主軸列とは別軸として扱う:
 
 | 直交フラグ | マトリクスへの影響 |
-|---|---|
+| --- | --- |
 | `--gpu` / `--no-gpu` | 行 8 (Auto-selected GPU/CPU mode) のテキストが `Auto-selected ...` → `Forced GPU` / `Forced CPU` に変化。他行は影響なし。`--gpu` と `--no-gpu` は相互排他 (#419) |
 | `--no-cache` | 行 7 (Cache hit params) と行 13 の `(cached)` サフィックスが常に非出力。他行は影響なし |
 | `--no-audio` | 行 9 (検知パラメータ summary) の `audio=frozen` / `audio=off` トークンに反映。現状 AUDIO_FROZEN=True のため値に関わらず `frozen` 表示 (#384) |
@@ -48,7 +48,7 @@ Error: --quiet and --verbose are mutually exclusive
 - **❌** = exit 5 排他エラー (行そのものに到達しない)
 
 | # | 出力項目 | 関連Issue | default | `-v` | `-q` | `--dry-run` | `-v --dry-run` | `-q --dry-run` | `-v -q` |
-|---|---|---|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 環境ヘッダ (allaganeye/ffmpeg/Python/OS) | - | × | ◯ | × | × | ◯ | × | ❌ |
 | 2 | HW info (CPU/GPU/Memory/Disk) | [#377](https://github.com/Idios/kobutachan-allaganeye/issues/377) | × | ◯ | × | × | ◯ | × | ❌ |
 | 3 | `Probing: <filename>` | - | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
@@ -96,7 +96,7 @@ Metadata: <metadata.json path>
 詳細は [`docs/cli-spec.md` §「エラー表示 (#428 / #405 matrix v2)」](cli-spec.md) を参照。要約:
 
 | モード | AllaganEyeError | 予期せぬ例外 |
-|---|---|---|
+| --- | --- | --- |
 | `-v` (19a) | `Error: <msg>` + context 展開 + full traceback | full traceback (`__cause__` chain 含) |
 | default (19b) | `Error: <msg>` + `(Run with -v / --verbose for full details)` | `Unexpected error: <exc>` + hint |
 | `-q` (19c) | `Error: <msg>` のみ | `Unexpected error: <exc>` のみ |

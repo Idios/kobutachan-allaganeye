@@ -9,7 +9,7 @@ FF14 PvPコンテンツ「フロントライン」の長時間録画動画（OBS
 **コアレイヤー（L1〜L5）**
 
 | レイヤー | 処理 | 技術 | 状態 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | L1: 試合分割 | 暗転検知で試合単位に分割 | FFmpeg（検知+分割） | **リリース済み** (v0.1.0-preview 2026-04-17, v0.1.1 2026-04-20) |
 | L2: 配布・統合 | GUI + ゼロ環境構築配布 | Tauri 2.x + React 19 + TS | **開発中** |
 | L3: メタデータ化 | キルログ・音声・チャットをタイムスタンプ化 | Tesseract / Whisper | 未着手 |
@@ -19,7 +19,7 @@ FF14 PvPコンテンツ「フロントライン」の長時間録画動画（OBS
 **拡張レイヤー（L6、暫定）**
 
 | レイヤー | 処理 | 状態 |
-|---|---|---|
+| --- | --- | --- |
 | L6: プライバシー・精密分割 | プレイヤー名ぼかし、再エンコード分割 | 計画中 |
 
 **設計原則**: ツールの独立性・ポータビリティを保つため、Web 経由のサービスや大規模モデルをツールの実行時依存に含めない。AI（LLM）はツール自体の設計と評価にのみ用いる。動画編集・変換は FFmpeg/OpenCV 等のライブラリで実行する。ローカル ML（scikit-learn 等の軽量モデル）は信号処理・分類で必要に応じて使用してよい。
@@ -40,6 +40,7 @@ pytest tests/test_detector.py   # 単体テスト
 ruff check .
 ruff format --check .
 pyright
+bash scripts/check-markdownlint.sh   # markdownlint (CI と同 version で全 .md チェック、--fix で自動修正)
 
 # CLI
 allaganeye detect <video_path>                          # 検知のみ (metadata.json 出力、#463)
@@ -80,7 +81,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 ### モジュール構成
 
 | モジュール | 責務 |
-|---|---|
+| --- | --- |
 | `cli.py` | Typer CLIエントリポイント。コマンドルーティング |
 | `config.py` | 設定管理（検知閾値、出力パス等） |
 | `exceptions.py` | エラークラス + exit code マッピング |
@@ -159,7 +160,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 ### Exit Codes
 
 | コード | 意味 |
-|---|---|
+| --- | --- |
 | 0 | 正常終了 |
 | 1 | 一般エラー |
 | 2 | 入力ファイル不正（存在しない、未対応形式） |
@@ -265,7 +266,7 @@ PR Pre-flight・path 別自動チェック・実機検証 trigger・Self-Test Re
 ## ユーザー指示の短縮記法
 
 | 記法 | 展開 |
-|---|---|
+| --- | --- |
 | `is<N>` | GitHub Issue #N を参照 |
 | `pr<N>` | GitHub PR #N を参照 |
 | `issue#<N>` | GitHub Issue #N を参照 |

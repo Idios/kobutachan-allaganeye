@@ -57,7 +57,7 @@ main (リリースタグのみ)
 タスクを「種別ごと」に skill + CLAUDE.md / 本ドキュメントのガイダンスへ振り分ける。粒度は役割ではなくアクションで分ける。
 
 | タスク種別 | 対応 skill / 手段 | 責務 |
-|---|---|---|
+| --- | --- | --- |
 | 計画立案 | Plan モード + AskUserQuestion + TodoWrite | タスクの分解、リスク・曖昧点の事前洗い出し、実装前の計画合意 |
 | 実装 | Claude の通常ツール (Edit/Write/Bash) + TodoWrite | 実装 + unit/integration テスト + 実機検証 (long-running / GPU / audio 統合は mock 不可) + PR 作成。スコープ逸脱時は Plan モードに戻る |
 | PR レビュー | `/review-pr` | PR レビュー + #367 受け入れ基準チェックリスト検証 + マージ判断 |
@@ -106,7 +106,7 @@ gh pr list --search "<元issue#>" --state all \
 ### Red Flags
 
 | 浮かんだ思考 | 実態 |
-|---|---|
+| --- | --- |
 | 「コンフリクト出ないから OK」 | merge 可否 (CONFLICT 不在) と機能 regression は別軸。base / head の同ファイル grep 対比が必要 |
 | 「最近 fetch したから OK」 | 数分でも別 PR がマージされうる。PR 作成直前に再 fetch する |
 | 「並行 PR は計画段階で確認したから skip」 | 計画後に別 worktree が PR を提出するケースあり (#646 / PR #647)。PR 作成時にも実施 |
@@ -160,12 +160,12 @@ PR 作成前のローカル自動チェックは、変更ファイル path に�
 ### path 分類表
 
 | 種別 | 判定パターン | 実行する自動チェック |
-|---|---|---|
+| --- | --- | --- |
 | **python-core** | `allaganeye/**/*.py`, `tests/**/*.py`, `pyproject.toml` | `ruff check .` / `ruff format --check .` / `pyright` / `pytest` (slow 除外) |
 | **gui-frontend** | `gui/src/**`, `gui/package.json`, `gui/tsconfig.json`, `gui/vite.config.ts`, `gui/eslint.config.js` | `cd gui && npm run lint` / `npm run typecheck` / `npm test` / `npm run build` |
 | **gui-rust** | `gui/src-tauri/**` | `cargo check --manifest-path gui/src-tauri/Cargo.toml` |
 | **installer-pester** | `scripts/**/*.ps1`, `scripts/tests/**` | `Invoke-Pester -Path scripts/tests/` (Windows 上で) |
-| **docs-only** | `docs/**/*.md`, `README.md`, `CHANGELOG.md`, `CLAUDE.md` のみ。コードファイル 0 件 | 本 doc §「doc 節参照健全性確認」: §「<旧名>」grep で残骸ゼロ確認 |
+| **docs-only** | `docs/**/*.md`, `README.md`, `CHANGELOG.md`, `CLAUDE.md` のみ。コードファイル 0 件 | `bash scripts/check-markdownlint.sh` (CI と同 version の markdownlint-cli2) + 本 doc §「doc 節参照健全性確認」: §「<旧名>」grep で残骸ゼロ確認 |
 
 ### 複合判定ルール
 
@@ -195,7 +195,7 @@ PR 作成前のローカル自動チェックは、変更ファイル path に�
 ### trigger 表
 
 | 変更パス / 内容 | 必要な実機検証 | 根拠 / mock 不可理由 |
-|---|---|---|
+| --- | --- | --- |
 | `allaganeye/video/gpu_detector.py`, `system_info.py` | `pytest -m slow_gpu` (NVIDIA GPU 必須環境) | GPU 初期化 / hwaccel が mock 不可。CI は ubuntu-latest で GPU なし |
 | `allaganeye/audio/scan.py`, `audio/matcher.py`, `audio/features.py` | `pytest -m slow tests/test_audio_integration.py` (`ALLAGANEYE_AUDIO_TEST_VIDEO` 必須) | Fanfare 検出は 39GB 録画ファイルが必要 |
 | `allaganeye/video/detector.py` Pass 1 / scorebar 関連 | `pytest -m slow_detect` または `pytest -m "slow or baseline_regen"` | 実動画 baseline 検証 |
@@ -434,7 +434,7 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 3 層構造で知見を管理する:
 
 | 層 | 場所 | 寿命 | 内容 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | L1 | `CLAUDE.md`, `MEMORY.md` | 恒久 | プロジェクト規約、skill 索引、ワークフロー要約 |
 | L2 | `~/.claude/projects/<project>/memory/feedback_*.md` | 中期 | ユーザー指摘の蓄積、判断基準のチューニング |
 | L3 | `docs/knowledge/*.md` | 恒久 (プロジェクト共有) | セッション横断の調査結果、トラブルシュート |
@@ -483,7 +483,7 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 [obra/superpowers](https://github.com/obra/superpowers) の「Iron Law / Red Flags / Gate Function」パターンに倣い、ルールを書くだけでなく**エージェントが自己抑制せざるを得ない語彙と構造**を配置する。
 
 | 層 | 実装 | 役割 |
-|---|---|---|
+| --- | --- | --- |
 | 1 | `SessionStart` hook (`.claude/hooks/session-start.sh`) | セッション開始・`/clear`・compact 時に Iron Law + Red Flags を `<EXTREMELY_IMPORTANT>` で会話先頭に注入 |
 | 2 | `enforce-acceptance-criteria` skill | `/review-pr` から呼ばれる Gate Function。受け入れ条件の逐条検証 |
 | 3 | `scope-guard` skill | スコープ逸脱検知で AskUserQuestion を強制 |
