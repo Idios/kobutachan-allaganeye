@@ -108,11 +108,13 @@ T1.1 〜 T1.6 + T2.1 〜 T2.3 を同形式で展開。
 - 既に出力済みの試合 MP4 は残る、kill 時に出力中だった試合は incomplete
 
 **Expected**:
+
 - 残り未出力の 4-5 試合は処理されない (kill 後 GUI 終了のため)
 - `output/` には 4-5 試合分の完成 MP4 + 1 試合分の incomplete (途中で kill された) または 0 件 (graceful kill が完成済 MP4 の保護を満たす)
 - アプリ再起動 → metadata.json は restore (前回 state)、未完了の export は再実行可
 
 **Evidence**:
+
 - screenshot: `logs/qa/v0.2.0/T2-step1-cancelled.png`
 - ffprobe 結果: 各 MP4 の duration 確認 log
 

@@ -568,7 +568,7 @@
 
   内容指針 (spec §4.2 フォーマットで T1.1 〜 T1.6 を全展開):
 
-  ```markdown
+  ````markdown
   ## §3 T1: 基本フロー (正常系)
 
   ### T1.1 Portable ZIP 展開
@@ -660,15 +660,17 @@
      done
      ```
 
-  2. 合計時間を計算
-  3. 元動画の試合領域 timestamp 合計 (metadata.json から) と差分計算
+  1. 合計時間を計算
+  1. 元動画の試合領域 timestamp 合計 (metadata.json から) と差分計算
 
   **Expected:**
   - 差分 ≤ 1s (合計時間ベース)
 
   **Evidence:**
+
   - log: `ffprobe` 結果 + 差分計算結果 → `logs/qa/v0.2.0/T1-step6-duration-check.log`
-  ```
+
+  ````
 
 - [ ] **Step 2:** markdownlint check: `bash scripts/check-markdownlint.sh`。Expected: pass。
 
