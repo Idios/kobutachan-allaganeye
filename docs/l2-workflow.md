@@ -112,6 +112,43 @@ gh pr list --search "<元issue#>" --state all \
 | 「並行 PR は計画段階で確認したから skip」 | 計画後に別 worktree が PR を提出するケースあり (#646 / PR #647)。PR 作成時にも実施 |
 | 「Pre-flight で path 交差なしと判定したから自動チェック skip」 | path 交差判定と Iron Law 6 自動チェックは独立軸。Iron Law 6 は変更 path 別に毎 PR 作成時に実施 |
 
+### 機能 regression 検出手順 (base 取り込み時 / レビュー時)
+
+> originally from `feedback_pr_review_base_merge_regression.md`, absorbed 2026-05-01
+
+**CI green は内部整合性のみを保証し、機能 regression の防御線にはならない**。base 取り込み merge commit を見たら、以下の手順で base / PR head の同ファイル比較を実施する (PR 作成時 + `/review-pr` Step 2.3 で実施)。
+
+#### 検証手順
+
+1. **base head sha 確認**:
+
+   ```bash
+   gh api repos/<owner>/<repo>/branches/<base>
+   ```
+
+2. **base / PR head 双方の同ファイル取得**:
+
+   ```bash
+   gh api "repos/<owner>/<repo>/contents/<path>?ref=<base>"        # base 側
+   gh api "repos/<owner>/<repo>/contents/<path>?ref=<PR-branch>"   # PR head 側
+   ```
+
+   または ローカルで `git show <base>:<path>` と `git show <PR-branch>:<path>` で取得して `diff` 比較。
+
+3. **重要な変更の保持確認** (`git log --oneline <base>..<PR-branch>` 起点に grep で対比):
+   - 新フィールド (例: metadata schema 追加項目)
+   - 関数引数 (例: `_build_metadata_payload` の新引数)
+   - schema 変更 (例: JSON Schema `properties` 追加)
+   - 新規エクスポート (例: 新型定義の `__all__` 追加)
+
+4. **特に注意すべきファイル**: メタデータ・schema・型定義 (`allaganeye/commands/split_matches.py` / `schemas/metadata.schema.json` / `docs/metadata-spec.md` / `gui/src/types/*.ts` / `allaganeye/metadata_types.py` 等) で base 側追加が PR head に保持されているか必ず確認。
+
+#### 例 (PR #627 Round 4 で発覚した規範ケース)
+
+base develop-0.2.0 が PR #626 でマージされ `_build_metadata_payload(detection_started_at, detection_completed_at)` 引数追加を含んでいた。本 PR (#627) は merge conflict 解消時にこの引数追加を取り込み忘れたが、test fixture / schema / 実装が内部整合性で揃っていたため CI 全 8 ジョブ pass。検出されないままマージしていれば GUI CompleteScreen「所要」列の元データが失われていた。
+
+→ 「CI green = OK」と即断せず、上記 grep 対比を実施することで機能 regression を捕捉する。
+
 > 注: 並行 worktree PR 重複確認 (step 4) は **計画立案セッションの Phase 1 Explore でも実施** する。`gh pr list --search "<issue#>" --state all` を Bash 並列起動の 1 つに含める。`git log --all` で別 worktree branch の commit が見えても、PR として open かどうかは別 — `gh pr list` が一次情報源。
 
 ## PR 作成 path 別自動チェック (Iron Law 6 main 条)
