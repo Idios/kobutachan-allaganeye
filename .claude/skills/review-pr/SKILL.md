@@ -28,7 +28,7 @@ gh pr diff $ARGUMENTS
 
 CI green は **内部整合性のみ** を保証し、base 取り込み時の機能 regression や並行 worktree PR 重複は検出できない。Step 3 (受け入れ条件) に入る前に、base 最新化 + 直近マージ PR 影響 + 並行 PR 重複を必ず確認する。
 
-> read-only 操作のみで完結するため、本 SKILL 冒頭「重要」節 (PR ブランチ編集禁止) と整合する。`git checkout` / `git merge` / `git rebase` / `git push` は本 step でも一切実行しない。
+> read-only 操作のみで完結するため、本 SKILL 冒頭「重要」節 (PR ブランチ書き込み禁止) と整合する。`git merge` / `git rebase` / `git push` は本 step でも一切実行しない。`git checkout` は冒頭の方針に従い read 目的でのみ許可だが、Step 2 (base 同期確認) は `gh` / `git fetch` / `git log` で完結するため checkout する必要はない。
 
 #### 2.1 ベースブランチ形式確認
 

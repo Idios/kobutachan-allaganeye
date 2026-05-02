@@ -547,7 +547,7 @@ Plan モードで計画合意 → 実装 (TodoWrite で進捗管理) → PR 作�
 修正が必要な場合の扱いは起動コンテキストで分ける:
 
 - **PR 作成と同一セッションで `/review-pr` を呼んだ場合**: 同セッション内で PR ブランチに追加コミットを積み、再度 `/review-pr` を呼び出す。
-- **レビュー専用セッション (セッション先頭で `/review-pr` のみ実行) の場合**: PR ブランチへの `git checkout` / `Edit` / `commit` / `push` は一切行わず、PR コメントで PR 作成セッションに具体的な修正指示を依頼する。PR 作成セッションが修正 commit & push した後、別セッション or 同レビューセッションで `/review-pr` を再実行して受け入れ条件を再確認する。詳細は `.claude/skills/review-pr/SKILL.md` §「修正依頼コメント投稿」を参照。
+- **レビュー専用セッション (セッション先頭で `/review-pr` のみ実行) の場合**: PR ブランチへの **書き込み系操作 (`Edit` / `commit` / `push`) は一切行わず**、PR コメントで PR 作成セッションに具体的な修正指示を依頼する (`git checkout` 自体は read 目的なら可。詳細は `.claude/skills/review-pr/SKILL.md` 冒頭「重要」節参照)。PR 作成セッションが修正 commit & push した後、別セッション or 同レビューセッションで `/review-pr` を再実行して受け入れ条件を再確認する。詳細は `.claude/skills/review-pr/SKILL.md` §「修正依頼コメント投稿」を参照。
 
 ## worktree メンテナンス (#477)
 
