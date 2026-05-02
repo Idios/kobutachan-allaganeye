@@ -19,6 +19,13 @@ const SCREENS: AppScreen[] = ['drop', 'detecting', 'complete', 'preview', 'expor
  * Mirror of FullStateSwitcher in docs/design/bundle/project/variants/aether-preview.jsx.
  */
 export function StateSwitcher() {
+  // #653 -- production build (Tauri bundle / Portable ZIP) では
+  // render しない。CompleteScreen topBar との z-index 重複を原理的に
+  // 解消する (spec 2026-05-03-l2-tier1-stateswitcher-dev-only-design.md §3)。
+  // import.meta.env.DEV は Vite が build mode で `true` (dev) /
+  // `false` (production) に inline 展開し、production build では
+  // dead code elimination で本 component が tree から除去される。
+  if (!import.meta.env.DEV) return null;
   const screen = useAppStateStore((s) => s.screen);
   const navigate = useAppStateStore((s) => s.navigate);
   return (
