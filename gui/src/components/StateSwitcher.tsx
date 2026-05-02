@@ -25,9 +25,9 @@ export function StateSwitcher() {
   // import.meta.env.DEV は Vite が build mode で `true` (dev) /
   // `false` (production) に inline 展開し、production build では
   // dead code elimination で本 component が tree から除去される。
-  if (!import.meta.env.DEV) return null;
   const screen = useAppStateStore((s) => s.screen);
   const navigate = useAppStateStore((s) => s.navigate);
+  if (!import.meta.env.DEV) return null;
   return (
     <div
       className={styles.switcher}

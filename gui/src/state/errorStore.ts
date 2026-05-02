@@ -60,7 +60,7 @@ export const useErrorStore = create<ErrorState>((set, get) => ({
     // don't replace it — the user should triage the original failure first.
     // Subsequent errors are dropped (logged to console for the dev only).
     if (get().errorOpen) {
-      // eslint-disable-next-line no-console
+       
       console.warn('[errorStore] error already open, skipping showError', spec);
       return;
     }

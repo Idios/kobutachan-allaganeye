@@ -41,7 +41,8 @@ describe('StateSwitcher production gating', () => {
     // import.meta.env.DEV を falsy 値 (空文字列) に上書きして production を simulate。
     // Vite が DEV を boolean として配布する一方、vi.stubEnv は string で受け取る。
     // `if (!import.meta.env.DEV)` は falsy 判定なので空文字列で OK。
-    vi.stubEnv('DEV', '');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.stubEnv('DEV', '' as any);
   });
   afterEach(() => {
     vi.unstubAllEnvs();
