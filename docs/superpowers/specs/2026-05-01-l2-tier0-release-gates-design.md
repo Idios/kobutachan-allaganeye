@@ -173,3 +173,52 @@ T1.1 〜 T1.6 + T2.1 〜 T2.3 を同形式で展開。
 - 既存 doc: `docs/system-architecture.md` / `docs/ui-architecture.md` / `docs/release-process.md` / `docs/l2-workflow.md`
 - 関連 issue: `#618` / `#484` / `#465` (Phase 3 preview 実装) / `#523` (ffmpeg 中断) / `#589` (PreviewScreen state flow) / `#645` (preview 微細タイムライン) / `#668` (Portable ZIP 同梱物健全性、本 spec の前提条件 cross-link)
 - 関連 PR: `#540` (#465 実装本体) / `#623` (Phase 2.5 detecting/complete 本物化、関連)
+
+---
+
+## Implementation Status (post-merge, 2026-05-02)
+
+### 結果サマリ
+
+- **PR**: [#672](https://github.com/Idios/kobutachan-allaganeye/pull/672) **MERGED** at 2026-05-02T02:39:34Z, merge commit `3951917a93a7f7740e182f3c70c2d35d2ba80556` to `develop-0.2.0`
+- **plan**: [docs/superpowers/plans/2026-05-01-l2-tier0-release-gates-implementation.md](../plans/2026-05-01-l2-tier0-release-gates-implementation.md) — 16 task subagent-driven (Execution Status section に詳細記録)
+- **作成 worktree**: `dazzling-mestorf-10914f` (branch `claude/dazzling-mestorf-10914f`)
+
+### 出力 deliverable
+
+| 種別 | path | 状態 |
+| --- | --- | --- |
+| 新規 doc | `docs/axum-video-server.md` | 254 行、§1-9 + 脅威モデル、commit 3951917 配下 |
+| 新規 doc | `docs/l2-e2e-checklist.md` | ~298 行 (Round 1 fix 後)、§1-8 + T1/T2 詳細 + 障害注入 (a) |
+| 更新 doc | `docs/release-process.md` §94 | 新 doc 2 件チェック + §97 を l2-e2e-checklist.md §3 T1 に置換 |
+| 更新 doc | `docs/system-architecture.md` §2.4 | axum-video-server.md への blockquote cross-ref |
+| 更新 doc | `docs/ui-architecture.md` §5 preview | 同上 |
+
+### 起票済 deferred follow-up issue
+
+- [#670](https://github.com/Idios/kobutachan-allaganeye/issues/670): axum video server 改善 (token 失効 API + graceful shutdown)、`task` / `l2a-gui` / `deferred` / `P3-low`、parent #618
+- [#671](https://github.com/Idios/kobutachan-allaganeye/issues/671): E2E test 自動化 feasibility 検討 (Playwright / Tauri mock driver)、`task` / `l2a-gui` / `deferred` / `P3-low`、parent #484
+
+### Round 1 review (Idios `relaxed-yalow-564511`) 5 件指摘 → fix 完了 (commit `1335861`)
+
+1. **Critical** (jq field): `.start`/`.end` → `.start_time`/`.end_time` (実 schema は `docs/metadata-spec.md` §Match line 90-91 / `allaganeye/metadata_types.py:30-31`)
+2. **Important** (T1.2 CLI smoke): `allaganeye.bat --version` を T1.2 に追加し「CLI smoke + GUI 起動」化 ([#527](https://github.com/Idios/kobutachan-allaganeye/issues/527) 別 exe 方式整合)
+3. **Minor** (T1.6 metadata path): `metadata.json` 出力先を blockquote で明示 + `$METADATA_JSON` 変数化
+4. **Minor** (T2.3 alt expected): #574 実装後 / 未実装時 (手動 drop) の 2 経路で記述
+5. **Minor** (§5 seek p95): 30 random seek + P95 (28 番目) + DevTools record で計測条件を pin
+
+### close-issue 残作業 (compact 後の次セッション)
+
+- `/close-issue 618` 起動: 受け入れ条件 5/5 (うち #5 plan ID literal は Idios review で容認済 △→○ 振替)。詳細手順は plan の Execution Status section 参照
+- `/close-issue 484` 起動: 受け入れ条件 4/5 (1 件 △ T1/T2 実機実施はリリース直前)。skill 内で抽出 + 検証
+- worktree cleanup: project policy で Idios 手動 (`.claude/worktrees/dazzling-mestorf-10914f/` 削除)
+
+### Final reviewer (subagent-driven-development) Approve メモ
+
+3 件 Minor (post-merge polish、blocker でない):
+
+- M1: `docs/axum-video-server.md:233-234` の anchor format (system-architecture.md / ui-architecture.md) は GitHub-style で生成済だが、render 結果は post-merge で要確認
+- M2: `docs/release-process.md:96` と `:98` の "Idios 実機で全件実施" 表現が部分重複 (line 96 = 実行 gate、line 98 = doc 新設 gate で意図は分かれる)
+- M3: `docs/l2-e2e-checklist.md:258` §6 成功基準で T2 skip 条件が `#523` のみ言及、`#574` も明示すると ambiguity 削減 (parenthetical "(#574 未マージ時は手動 drop 代替)" 追加可能)
+
+これらは別 PR で polish 可能 (本 PR スコープ外)。

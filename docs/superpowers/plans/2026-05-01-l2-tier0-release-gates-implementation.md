@@ -1219,3 +1219,117 @@ ambiguity ゼロ。
 2. **Inline Execution**: 本セッション内で `superpowers:executing-plans` を使い batch 実行 + checkpoint
 
 **Which approach?**
+
+---
+
+## Execution Status (post-merge, 2026-05-02 記録 / context compact 跨ぎ用)
+
+### 実施結果
+
+- 実行方式: **Subagent-Driven** (ユーザー選択、auto mode 厳格 skill 遵守)
+- 実行 worktree: `dazzling-mestorf-10914f` (branch `claude/dazzling-mestorf-10914f`、base `develop-0.2.0`)
+- Task 1-16 全完了 + final code reviewer Approve
+- PR #672 提出 → Round 1 review (Idios `relaxed-yalow-564511`) → Round 1 fix 5 件適用 → **2026-05-02T02:39:34Z merged** (merge commit `3951917a93a7f7740e182f3c70c2d35d2ba80556`)
+
+### commit 履歴 (claude/dazzling-mestorf-10914f, 19 commits + 1 fix)
+
+| commit | 内容 | Task |
+| --- | --- | --- |
+| `0fd8f82` | brainstorming spec 新設 | (brainstorming) |
+| `f325824` | implementation plan 新設 | (writing-plans) |
+| `4cdb005` | axum-video-server.md §1-2 | Task 3 |
+| `b886dce` | axum-video-server.md §3-4 | Task 4 |
+| `d4f7e26` | Task 4 reviewer fix (forward ref / collision / fenced block / bound) | Task 4 fix |
+| `41718a4` | axum-video-server.md §5-6 (Path allowlist + Bind) | Task 5 |
+| `aec1c4d` | axum-video-server.md §7-8 (Async lifecycle + 想定負荷) | Task 6 |
+| `b368afb` | axum-video-server.md §9 References (doc 完成) | Task 7 |
+| `6981e2b` | Task 7 reviewer fix (anchor link / 用語整合 / "実害ない領域" / PR #623 説明) | Task 7 fix |
+| `3cc059a` | Task 8 不備チェック + #670 起票 + back-fill + minor fix | Task 8 |
+| `c65f054` | l2-e2e-checklist.md §1-2 | Task 9 |
+| `9c243c0` | Task 9 spec reviewer fix (パフォーマンス値 leak / forward ref) | Task 9 fix |
+| `dda8ab7` | l2-e2e-checklist.md §3 T1 6 step | Task 10 |
+| `8c0293e` | Task 10 reviewer fix (T1.4 enabled / T1.6 ffprobe+jq+awk / §2 skip / T1.5 GPU) | Task 10 fix |
+| `47bd458` | l2-e2e-checklist.md §4 T2 + 障害注入 (a) | Task 11 |
+| `5664376` | l2-e2e-checklist.md §5-8 + #NNN markdown link 統一 (doc 完成) | Task 12 |
+| `53fa568` | 既存 doc 3 件 update (release-process / system-architecture / ui-architecture) | Task 13 |
+| `6b6ebeb` | plan/spec markdownlint 6 errors fix (全 69 file 0 errors) | Task 14 |
+| `0913891` | l2-e2e-checklist.md §7 に #671 back-fill | Task 15 |
+| `1335861` | PR #672 Round 1 fix 5 件 (Critical: jq field / Important: T1.2 CLI smoke / 3 Minor) | Round 1 fix |
+
+### 起票済 deferred follow-up issue
+
+- **[#670](https://github.com/Idios/kobutachan-allaganeye/issues/670)** (2026-05-01 起票): axum video server 改善 (token 失効 API + graceful shutdown)、`task` / `l2a-gui` / `deferred` / `P3-low`、parent #618
+- **[#671](https://github.com/Idios/kobutachan-allaganeye/issues/671)** (2026-05-01 起票): E2E test 自動化 feasibility 検討 (Playwright / Tauri mock driver)、`task` / `l2a-gui` / `deferred` / `P3-low`、parent #484
+
+### #618 受け入れ条件 検証結果 (close-issue skill 中断時点)
+
+| # | 受け入れ条件 | 判定 | 検証根拠 |
+| --- | --- | --- | --- |
+| 1 | `docs/axum-video-server.md` 新設 (Range / token / path allowlist / 127.0.0.1 / async lifecycle) | ○ | `docs/axum-video-server.md` §1-9 + 脅威モデル節 (commit 3951917 配下) |
+| 2 | 想定負荷見積を追記 (preview 2:50:28 同時 2 stream) | ○ | §8 想定負荷見積 (推測値 + v0.3.0 再計測注記) |
+| 3 | `system-architecture.md` §2.4 + `ui-architecture.md` から本 doc への参照リンク | ○ | Task 13 で blockquote 形式で追加 |
+| 4 | PR review checklist として spec 適合確認できる節構造 | ○ | §1-9 各節独立、line refs 正確 |
+| 5 | 本 doc が plan: ethereal-skipping-goose の Wave 1 W1-8 で実施 | △ | **plan ID literal 違い**: 実施 plan は `dazzling-mestorf-10914f` の brainstorming/writing-plans output (`docs/superpowers/{specs,plans}/2026-05-01-l2-tier0-release-gates-*.md`)。Idios Round 1 review で「8/9 (1 件 △ plan ID literal、後述 (C))」と容認済 — close 時に Idios 判断で ○ に振り替える運用 |
+
+#### close-issue #618 残作業 (skill 再開時の手順)
+
+1. AskUserQuestion で「受け入れ条件 #5 plan ID literal の処置」を確認:
+   - (a) ○ と判定して close (機能要件満たす、Idios review で容認済)
+   - (b) (B) 別 issue 起票 (literal mismatch の補足 task)
+2. 承認後 `gh issue close 618` (HEREDOC で日本語 close コメント、worktree session-id `dazzling-mestorf-10914f` を含める)
+3. close コメントに含める情報:
+   - マージ済 PR: #672 (merge commit 3951917)
+   - 受け入れ条件 #1-#4 ○ + #5 △→○ (plan ID literal、Idios 容認)
+   - 関連起票: #670 (axum 改善 deferred)
+   - 検証方法: 静的検証 (commit 3951917 配下の `docs/axum-video-server.md` + `docs/system-architecture.md` §2.4 + `docs/ui-architecture.md` §5 preview を Read / Grep で確認) + Round 1 review pass
+
+### #484 受け入れ条件 検証結果 (skill 未起動)
+
+issue #484 受け入れ条件は別途 skill 内で抽出する。本 plan を input として `/close-issue 484` を起動する流れ。
+
+#### Idios Round 1 review メモ (#484 関連)
+
+- 「#484 が 4/5 (1 件 △ Phase 分割で T1-T2 実機実施はリリース直前)」と review コメントで言及
+- 実機 T1/T2 実施は v0.2.0 リリース直前 の Idios 操作 (本 PR スコープ外、`docs/l2-e2e-checklist.md` を checklist として使用)
+
+### 残作業 (compact 後の次セッション)
+
+1. `/close-issue 618` 再起動 → 上記の AskUserQuestion + close
+2. `/close-issue 484` 起動 → 受け入れ条件抽出 + 実測再検証 + AskUserQuestion + close
+3. PR #672 後の worktree cleanup: `.claude/worktrees/dazzling-mestorf-10914f/` を Idios 手動で削除 (project standard、auto-cleanup なし)
+4. (optional) PR #672 final reviewer Approve 時の 3 件 Minor (anchor 検証 / §94 §97 phrasing / T2.3 #574 conditional tracking) を別 PR で polish (post-merge optional)
+
+### key files for next session
+
+- 本 plan: `docs/superpowers/plans/2026-05-01-l2-tier0-release-gates-implementation.md` (Execution Status 含む)
+- spec: `docs/superpowers/specs/2026-05-01-l2-tier0-release-gates-design.md` (Implementation Status section に補足あり)
+- 完成 doc: `docs/axum-video-server.md` (254 行) / `docs/l2-e2e-checklist.md` (~298 行 with Round 1 fixes)
+- 既存 doc 更新先: `docs/release-process.md` §94 / `docs/system-architecture.md` §2.4 / `docs/ui-architecture.md` §5 preview
+- 関連起票 issue: #670 (axum 改善) / #671 (E2E 自動化検討)
+- review session-id: `relaxed-yalow-564511` (Idios Round 1 review)
+
+### Idios Round 1 review コメント全文 (重要参照)
+
+PR #672 [Round 1 review コメント](https://github.com/Idios/kobutachan-allaganeye/pull/672) 内:
+
+- 受け入れ条件: #618 が 8/9 (1 件 △ plan ID literal)、#484 が 4/5 (1 件 △ T1/T2 実機実施はリリース直前)
+- 5 件指摘 (Critical: jq field / Important: T1.2 CLI smoke / Minor 3: metadata path / T2.3 alt expected / seek p95)
+- 検証推奨: markdownlint pass / jq クエリ動作確認 / force push せず通常 commit
+- Round 1 fix 完了報告コメント: <https://github.com/Idios/kobutachan-allaganeye/pull/672#issuecomment-4362301988>
+
+### compact 後の継続コマンド
+
+```bash
+# session-id 確認
+pwd  # → .../dazzling-mestorf-10914f
+
+# 状態確認
+git log --oneline | head -5
+gh pr view 672 --repo Idios/kobutachan-allaganeye --json state,mergedAt
+gh issue view 618 --repo Idios/kobutachan-allaganeye --json state
+gh issue view 484 --repo Idios/kobutachan-allaganeye --json state
+
+# close-issue 再開
+# /close-issue 618
+# /close-issue 484
+```
