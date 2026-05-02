@@ -93,10 +93,10 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 
 ### v0.2.0 (L2: GUI サポート + ゼロ環境構築配布) 固有項目
 
-- [ ] [#484](https://github.com/Idios/kobutachan-allaganeye/issues/484) L2 E2E 統合テストチェックリスト全 PASS (`docs/l2-e2e-checklist.md`)
-- [ ] Portable ZIP (`allaganeye-v0.2.0-windows.zip`) の手動 smoke を実施:
-  - `allaganeye.bat --version` (CLI 起動) で正しい version 表示
-  - `allaganeye-gui.exe` (GUI 起動) でウィンドウ表示 + version 表示
+- [ ] [#484](https://github.com/Idios/kobutachan-allaganeye/issues/484) L2 E2E 統合テストチェックリスト全 PASS ([`docs/l2-e2e-checklist.md`](./l2-e2e-checklist.md) を Idios 実機で全件実施)
+- [ ] [`docs/axum-video-server.md`](./axum-video-server.md) 新設 + 内容確認 (Range / token / async lifecycle / 脅威モデルの記述完備)
+- [ ] [`docs/l2-e2e-checklist.md`](./l2-e2e-checklist.md) 新設 + 全 PASS 確認 (Idios 実機実施、smoke / E2E / 性能 / 配布物検証)
+- [ ] Portable ZIP (`allaganeye-v0.2.0-windows.zip`) の手動 smoke は [`docs/l2-e2e-checklist.md §3 T1`](./l2-e2e-checklist.md) を参照 (CLI / GUI 起動確認は同チェックリストに集約済)
 - [ ] `l1-residual` ラベル全件 ([#412](https://github.com/Idios/kobutachan-allaganeye/issues/412) / [#413](https://github.com/Idios/kobutachan-allaganeye/issues/413) / [#433](https://github.com/Idios/kobutachan-allaganeye/issues/433) / [#434](https://github.com/Idios/kobutachan-allaganeye/issues/434) / [#435](https://github.com/Idios/kobutachan-allaganeye/issues/435) / [#436](https://github.com/Idios/kobutachan-allaganeye/issues/436) / [#440](https://github.com/Idios/kobutachan-allaganeye/issues/440) / [#553](https://github.com/Idios/kobutachan-allaganeye/issues/553) / [#576](https://github.com/Idios/kobutachan-allaganeye/issues/576)) の deferred 判断完了 (close または `deferred` ラベル付与)
 - [ ] `l2a-gui` / `l2b-installer` / `l2-workflow` スコープラベルの open issue で `P1-high` がゼロ
 - [ ] `docs/guard-integration.md` §5 「外部動画データの検査」運用が成立 (allaganeye-guard 独立リポジトリの最新版が利用可能)

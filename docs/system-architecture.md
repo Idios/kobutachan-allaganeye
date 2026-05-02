@@ -75,6 +75,8 @@ spawn された CLI プロセスは `ProcessMap` (Rust side、#523) に登録さ
 
 preview 画面での `<video>` 再生には axum ベースの局所 HTTP サーバ (#465) が使われる。これは **subprocess ではなく Rust プロセス内の async task** で、token ベースの path allowlisting で 127.0.0.1 にのみ bind する。ffmpeg は呼ばず (ブラウザの native decode)、Range リクエストに対応する。
 
+> 詳細仕様: [docs/axum-video-server.md](./axum-video-server.md) (Range / token / async lifecycle / 脅威モデル)
+
 詳細: [ui-architecture.md §video playback](ui-architecture.md) / `gui/src-tauri/src/lib.rs` の `register_video` / `serve_video` ([tauri-commands.md](tauri-commands.md) #12 の signature と想定エラー参照)。
 
 ## 3. データフロー
