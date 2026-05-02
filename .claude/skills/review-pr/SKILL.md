@@ -9,9 +9,11 @@ argument-hint: <PR番号>
 
 ## 重要: このスキルは「レビュー専用セッション」として動作する
 
-`/review-pr` で起動されたセッションは PR ブランチへの `git checkout` / `Edit` / `Write` / `git commit` / `git push` を一切行わない。指摘事項は PR コメントで PR 作成セッションに依頼する (セッション間の責務分離を維持する)。
+`/review-pr` で起動されたセッションは PR ブランチへの **書き込み系操作 (`Edit` / `Write` / `git commit` / `git push`) を一切行わない**。指摘事項は PR コメントで PR 作成セッションに依頼する (セッション間の責務分離を維持する)。
 
-背景: 2026-04-22 PR #490 / #495 レビュー時、レビューセッションが合意なく修正 commit & push を実施したため明示的な訂正を受けた。PR ブランチ・PR 本文は PR 作成セッションの作業領域で、レビューセッションは観察・指摘・依頼に徹する。
+`git checkout` 自体は read 系操作のため、**ソースを読む目的でのみ許可する** (例: `gh pr diff` だけでは追えない複数ファイル横断の相互参照を IDE で開いて読みたい場合)。ただし checkout 後も `Edit` / `Write` / `git commit` / `git push` は依然禁止。現 worktree のブランチを切り替えたくない場合は `git worktree add ../<name> <PR-branch>` で別 worktree を立てて読む方法も取れる。
+
+背景: 2026-04-22 PR #490 / #495 レビュー時、レビューセッションが合意なく修正 commit & push を実施したため明示的な訂正を受けた (#505)。PR ブランチ・PR 本文は PR 作成セッションの作業領域で、レビューセッションは観察・指摘・依頼に徹する。本質は「書き込みによる責務分離破り」を防ぐことで、checkout 単体は責務分離を破らないため #673 で read 目的に限り許可へ緩和した。
 
 ## 手順
 
@@ -307,7 +309,7 @@ Step 5b のトリアージ表を前提に `AskUserQuestion` で以下を提示�
 
 ### 修正依頼コメント投稿 (修正依頼時)
 
-レビュー専用セッションは PR ブランチを編集せず、PR コメントで PR 作成セッションに修正を依頼する。**`git checkout <PR-branch>` / `Edit` / `Write` / `git commit` / `git push` は行わない**。
+レビュー専用セッションは PR ブランチを編集せず、PR コメントで PR 作成セッションに修正を依頼する。**`Edit` / `Write` / `git commit` / `git push` は行わない** (書き込み系の禁止)。`git checkout <PR-branch>` 自体は read 目的なら可だが、checkout 後も `Edit` / `Write` / `git commit` / `git push` に滑らないこと (詳細は本ファイル冒頭「重要」節参照)。
 
 1. PR コメントで具体的な修正指示を記録する。コメント本文には次の要素を含める:
 
