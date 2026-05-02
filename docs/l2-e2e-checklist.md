@@ -62,20 +62,25 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
 - screenshot: `logs/qa/v0.2.0/T1-step1-extracted.png` (展開後ディレクトリ)
 - log: なし
 
-### T1.2 GUI 起動
+### T1.2 CLI smoke + GUI 起動
+
+> **背景**: Portable ZIP は別 exe 方式 ([#527](https://github.com/Idios/kobutachan-allaganeye/issues/527) 確定) で `allaganeye.bat` = CLI / `allaganeye-gui.exe` = GUI。両経路の起動 smoke を本 step で集約 (`docs/release-process.md §94` line 99 と整合)。
 
 **操作:**
 
-1. `allaganeye-gui.exe` をダブルクリックで起動
+1. `allaganeye.bat --version` を実行 (CLI 起動 smoke)
+2. `allaganeye-gui.exe` をダブルクリックで起動 (GUI 起動 smoke)
 
 **Expected:**
 
-- Tauri ウィンドウが開く (DropScreen 表示)
+- 1 で正しい version 文字列 (`allaganeye 0.2.0`) が stdout に表示
+- 2 で Tauri ウィンドウが開く (DropScreen 表示)
 - [#668](https://github.com/Idios/kobutachan-allaganeye/issues/668) 健全性 check が PASS した状態でモーダル表示なし
 - `logs/error-YYYYMMDD.log` にエラー記録なし
 
 **Evidence:**
 
+- log: `allaganeye.bat --version` の stdout → `logs/qa/v0.2.0/T1-step2-cli-version.log`
 - screenshot: `logs/qa/v0.2.0/T1-step2-launched.png` (起動直後の DropScreen)
 - log: `allaganeye-gui.exe` 起動直後の `logs/error-YYYYMMDD.log` を copy → `logs/qa/v0.2.0/T1-step2-startup.log`
 
@@ -142,6 +147,8 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
 
 **操作:**
 
+> **`metadata.json` の場所**: `allaganeye split` で `-o output/` 指定時は `output/metadata.json` に書かれる (CLI default)。GUI workflow では入力動画と同じディレクトリの `metadata.json` を参照する場合があるため、本 step では実際の path を確認してから `$METADATA_JSON` 変数に代入して使う (例: `export METADATA_JSON=output/metadata.json`)。
+
 1. 出力された 9 試合 MP4 の duration 合計を `ffprobe` + `awk` で取得:
 
    ```bash
@@ -151,10 +158,10 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
    done | awk '{sum += $1} END {print sum}'
    ```
 
-2. 元動画の試合領域 timestamp 合計を `metadata.json` から `jq` で抽出:
+2. 元動画の試合領域 timestamp 合計を `metadata.json` から `jq` で抽出 (実 schema は `docs/metadata-spec.md` §Match line 90-91 で `start_time` / `end_time`):
 
    ```bash
-   jq '[.matches[] | .end - .start] | add' output/metadata.json
+   jq '[.matches[] | .end_time - .start_time] | add' "$METADATA_JSON"
    ```
 
 3. 1 と 2 の差分を計算し、絶対値が ≤ 1.0 であることを確認
@@ -220,8 +227,8 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
 
 **Expected:**
 
-- 前回 export の状態が CompleteScreen / ExportScreen に反映される ([#574](https://github.com/Idios/kobutachan-allaganeye/issues/574) 実装後)
-- 失敗 / 未完了試合に notice / fallback マーカーが表示される ([#591](https://github.com/Idios/kobutachan-allaganeye/issues/591) fallback notice + 本 spec の error UI 拡張)
+- **[#574](https://github.com/Idios/kobutachan-allaganeye/issues/574) 実装後**: 前回 export の状態が CompleteScreen / ExportScreen に自動 restore される
+- **[#574](https://github.com/Idios/kobutachan-allaganeye/issues/574) 未実装時 (代替: 手動 drop)**: アプリ再起動後、サンプル動画を再 drop し ExportScreen に到達。前回失敗 / 未完了試合に notice / fallback マーカー ([#591](https://github.com/Idios/kobutachan-allaganeye/issues/591) fallback notice + 本 spec の error UI 拡張) が表示される
 - ユーザーが失敗試合のみ再 export 可能
 
 **Evidence:**
@@ -245,7 +252,7 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
 | --- | --- | --- |
 | 検知時間 (GPU mode) | ≤ 10 min | DetectingScreen の経過時間表示 + CLI verbose 出力 |
 | 9 試合 export (copy mode) | ≤ 3 min | ExportScreen 進捗 + CLI verbose |
-| GUI seek p95 | ≤ 200 ms | DevTools Performance タブで `<video>` element の `seeked` event 計測 |
+| GUI seek p95 | ≤ 200 ms | PreviewScreen で 1 試合ロード → 試合内一様分布で 30 random seek を実施し、各 seek の `seeking` event 発火から対応する `seeked` event 着火までの interval を 30 サンプル取得 → P95 (= 28 番目に小さい値) を採用。DevTools Performance タブで record |
 
 ### 計測の record
 
