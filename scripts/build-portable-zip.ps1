@@ -69,10 +69,10 @@ $GetPipSha256 = '66904BCCB878E363DB6236EA900E6935E507DCB887E9F178F6212EDFE7F46A7
 # CI workflows (`.github/workflows/ci.yml`) must be updated with the matching
 # linux64-lgpl-shared asset at the same build tag; see docs/developer-setup.md § 9.
 $FFmpegVersion = '8.1'
-$FFmpegBuildTag = 'autobuild-2026-04-22-13-15'
-$FFmpegAsset = 'ffmpeg-n8.1-10-g7f5c90f77e-win64-lgpl-shared-8.1'
+$FFmpegBuildTag = 'autobuild-2026-05-06-13-32'
+$FFmpegAsset = 'ffmpeg-n8.1.1-win64-lgpl-shared-8.1'
 $FFmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/$FFmpegBuildTag/$FFmpegAsset.zip"
-$FFmpegSha256 = 'FEF865CAB8A097F07F1DCBA66D73BE94742B79D952CF6FD8643BD42C18995034'
+$FFmpegSha256 = '16F409AB737538778F9CD4BFC69953E2E1DC2558F6DC5CA17CC72083D60DC735'
 
 function Invoke-Download {
   param(
@@ -119,19 +119,40 @@ function Assert-FFmpegLayout {
   }
 }
 
-function Get-FFmpegSourceCommit {
+function Get-FFmpegSourceRef {
   <#
-  Extract the upstream FFmpeg git commit hash from a BtbN asset name.
-  BtbN assets embed it as: ffmpeg-n<version>-<count>-g<commit>-<target>-<variant>
-  So users can fetch the exact source under LGPLv3 obligations.
+  Extract the upstream FFmpeg source ref (commit hash or release tag) from a
+  BtbN asset name. Both refs let users fetch the exact source under LGPLv3
+  obligations (commit hash via `git checkout <hash>`, release tag via
+  `git checkout n8.1.1` from the FFmpeg upstream repo).
+
+  BtbN embeds it as one of two formats:
+    - Old (autobuild-YYYY-MM-DD prior to BtbN's patch-release naming switch
+      ca. 2026-05-06): ffmpeg-n<version>-<count>-g<commit>-<target>-<variant>
+      (e.g. ffmpeg-n8.1-10-g7f5c90f77e-win64-lgpl-shared-8.1)
+      -> returns commit hash "7f5c90f77e"
+    - New (BtbN switched to bare patch-release tags, no count + commit hash
+      in the name): ffmpeg-n<version>-<target>-<variant>
+      (e.g. ffmpeg-n8.1.1-win64-lgpl-shared-8.1)
+      -> returns release tag "n8.1.1"
+
+  Renamed from `Get-FFmpegSourceCommit` (PR #683 review #9) so the function
+  name reflects the post-rename semantics ("source ref" covers both commit
+  hash and release tag, consistent with BtbN's two naming formats).
   #>
   param(
     [Parameter(Mandatory = $true)][string]$AssetName
   )
-  if ($AssetName -match '^ffmpeg-n[^-]+-[^-]+-g([0-9a-f]+)-') {
+  # Old format first: extract commit hash from the trailing -g<hex>- segment.
+  if ($AssetName -match '^ffmpeg-n[^-]+-[0-9]+-g([0-9a-f]+)-') {
     return $matches[1]
   }
-  throw "Cannot extract upstream source commit from asset name: $AssetName"
+  # New format: bare release tag (n<version>) immediately followed by the
+  # target/variant segment (alphabetic prefix like "win64", "linux64").
+  if ($AssetName -match '^ffmpeg-(n\d+(?:\.\d+)+)-[A-Za-z]') {
+    return $matches[1]
+  }
+  throw "Cannot extract upstream source ref (commit hash or release tag) from asset name: $AssetName"
 }
 
 function Format-ReadmeContent {
@@ -145,7 +166,7 @@ function Format-ReadmeContent {
     [Parameter(Mandatory = $true)][string]$Version,
     [Parameter(Mandatory = $true)][string]$FFmpegVersion,
     [Parameter(Mandatory = $true)][string]$FFmpegBuildTag,
-    [Parameter(Mandatory = $true)][string]$FFmpegSourceCommit,
+    [Parameter(Mandatory = $true)][string]$FFmpegSourceRef,
     [switch]$IncludeGui
   )
   $guiSection = if ($IncludeGui) {
@@ -212,7 +233,7 @@ $guiLicenseLine- Python: PSF License (python\LICENSE.txt)
 - FFmpeg: LGPLv3 (full text in ffmpeg\LICENSE.txt)
     Build:         ffmpeg n$FFmpegVersion win64-lgpl-shared build (BtbN/FFmpeg-Builds)
     Build tag:     $FFmpegBuildTag
-    Source:        https://git.ffmpeg.org/ffmpeg.git (commit $FFmpegSourceCommit)
+    Source:        https://git.ffmpeg.org/ffmpeg.git (ref $FFmpegSourceRef)
     Build scripts: https://github.com/BtbN/FFmpeg-Builds
 
 allaganeye (MIT) invokes the FFmpeg binary as a separate subprocess only.
@@ -357,7 +378,7 @@ if (-not (Test-Path $FFmpegZip)) {
 $FFmpegExtract = Join-Path $BuildDir 'ffmpeg-extracted'
 Expand-Archive -Path $FFmpegZip -DestinationPath $FFmpegExtract -Force
 $FFmpegLayout = Assert-FFmpegLayout -ExtractDir $FFmpegExtract
-$FFmpegSourceCommit = Get-FFmpegSourceCommit -AssetName $FFmpegAsset
+$FFmpegSourceRef = Get-FFmpegSourceRef -AssetName $FFmpegAsset
 $FFmpegDest = Join-Path $PayloadDir 'ffmpeg'
 New-Item -ItemType Directory -Force -Path $FFmpegDest | Out-Null
 # Shared build: copy ffmpeg.exe, ffprobe.exe, and all DLLs. ffplay.exe is excluded
@@ -401,7 +422,7 @@ $Readme = Format-ReadmeContent `
   -Version $Version `
   -FFmpegVersion $FFmpegVersion `
   -FFmpegBuildTag $FFmpegBuildTag `
-  -FFmpegSourceCommit $FFmpegSourceCommit `
+  -FFmpegSourceRef $FFmpegSourceRef `
   -IncludeGui:$TauriIncluded
 Set-Content -Path (Join-Path $PayloadDir 'README.txt') -Value $Readme -Encoding UTF8
 

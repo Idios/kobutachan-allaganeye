@@ -389,7 +389,7 @@ CI / Portable ZIP / 開発環境の 3 環境で Python と FFmpeg のバージ�
 | `scripts/build-portable-zip.ps1` | `$PythonVersion = '3.11.9'` + `$PythonEmbedSha256` |
 | `docs/developer-setup.md` §1 | 「Python 3.11 (3.11.9 推奨)」の記載 |
 
-### FFmpeg (現在 BtbN LGPLv3 n8.1 shared / `autobuild-2026-04-22-13-15` に固定)
+### FFmpeg (現在 BtbN LGPLv3 n8.1 shared / `autobuild-2026-05-06-13-32` に固定)
 
 更新手順:
 
@@ -406,11 +406,11 @@ CI / Portable ZIP / 開発環境の 3 環境で Python と FFmpeg のバージ�
 
 | 場所 | キー |
 | --- | --- |
-| `scripts/build-portable-zip.ps1` | `$FFmpegBuildTag` / `$FFmpegAsset` / `$FFmpegSha256` (`$FFmpegSourceCommit` は asset 名から自動抽出) |
+| `scripts/build-portable-zip.ps1` | `$FFmpegBuildTag` / `$FFmpegAsset` / `$FFmpegSha256` (`$FFmpegSourceRef` は asset 名から自動抽出) |
 | `.github/workflows/ci.yml` (`Cache FFmpeg archive` / `Download FFmpeg archive (cache miss)` / `Install ffmpeg` の 3 ステップ) | cache `key` 内 SHA256 + DL step の URL + install step の `FFMPEG_SHA256` (linux64-lgpl-shared 版) |
 | `.github/workflows/release.yml` (`Cache FFmpeg archive` ステップ) | cache `key` 内 SHA256 (win64-lgpl-shared 版、build-portable-zip.ps1 の SHA256 と同じ値) |
 | `docs/developer-setup.md` §1 | 「ffmpeg / ffprobe 8.1 LGPLv3 推奨」「推奨: ffmpeg 8.1 LGPLv3」の major version 記述 (系列変更時のみ) |
-| `docs/quickstart.md` §10 | 対応 FFmpeg コミット (例: `7f5c90f77e`) の記述 (upstream commit 変更時) |
+| `docs/quickstart.md` §10 | 対応 FFmpeg ソース ref (例: `n8.1.1` release tag、または旧 format での commit hash `7f5c90f77e`) の記述 (upstream ref 変更時) |
 
 ### get-pip.py の hash drift 対応 (#649)
 
