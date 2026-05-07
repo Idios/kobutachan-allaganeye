@@ -106,14 +106,26 @@ Describe 'Assert-FFmpegLayout' {
 }
 
 Describe 'Get-FFmpegSourceCommit' {
-  It 'extracts the upstream commit from a valid BtbN asset name' {
-    $commit = Get-FFmpegSourceCommit -AssetName 'ffmpeg-n8.1-123-g7f5c90f77e-win64-lgpl-shared.zip'
-    $commit | Should -Be '7f5c90f77e'
+  It 'extracts the upstream commit from a valid BtbN asset name (old format: count + commit hash)' {
+    # Old BtbN naming: ffmpeg-n<version>-<count>-g<commit>-<target>-<variant>.
+    # Function returns the commit hash so README.txt can point users at the
+    # exact source under LGPLv3 obligations.
+    $ref = Get-FFmpegSourceCommit -AssetName 'ffmpeg-n8.1-123-g7f5c90f77e-win64-lgpl-shared.zip'
+    $ref | Should -Be '7f5c90f77e'
+  }
+
+  It 'extracts the release tag from a valid BtbN asset name (new format: bare patch release)' {
+    # New BtbN naming (since ca. 2026-05-06): ffmpeg-n<version>-<target>-<variant>.
+    # Function returns the release tag (n<version>) since the commit hash is
+    # no longer embedded in the asset name. Both refs let users fetch the
+    # exact source under LGPLv3 obligations.
+    $ref = Get-FFmpegSourceCommit -AssetName 'ffmpeg-n8.1.1-win64-lgpl-shared-8.1.zip'
+    $ref | Should -Be 'n8.1.1'
   }
 
   It 'throws when the asset name does not match the BtbN pattern' {
     { Get-FFmpegSourceCommit -AssetName 'unexpected-name.zip' } |
-      Should -Throw -ExpectedMessage '*Cannot extract upstream source commit*'
+      Should -Throw -ExpectedMessage '*Cannot extract upstream source ref*'
   }
 }
 
