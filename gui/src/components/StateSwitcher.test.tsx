@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAppStateStore } from '../state/appStateStore';
 import { StateSwitcher } from './StateSwitcher';
@@ -30,5 +30,26 @@ describe('StateSwitcher', () => {
     render(<StateSwitcher />);
     await user.click(screen.getByRole('button', { name: '一覧' }));
     expect(useAppStateStore.getState().screen).toBe('complete');
+  });
+});
+
+// #653 -- production build (Tauri bundle / Portable ZIP) では
+// StateSwitcher を render しない。dev only に絞って topBar との
+// z-index 重複を原理的に解消する (spec 2026-05-03-l2-tier1-stateswitcher-dev-only-design.md §3)。
+describe('StateSwitcher production gating', () => {
+  beforeEach(() => {
+    // import.meta.env.DEV / PROD は Vite が build-time に boolean として inline 展開する。
+    // vitest の vi.stubEnv は DEV/PROD/SSR 特殊キーで boolean 値を受け取る (vitest 4.x 型定義)。
+    // production build の真の状態 (DEV=false かつ PROD=true) を再現する。
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('PROD', true);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('returns null when import.meta.env.DEV is falsy (production build)', () => {
+    const { container } = render(<StateSwitcher />);
+    expect(container).toBeEmptyDOMElement();
   });
 });
