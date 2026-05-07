@@ -33,14 +33,18 @@ PR #641 実機検証で発覚:
 
 ### Gating 位置
 
-- **`gui/src/components/StateSwitcher.tsx` 関数本体先頭** に early return を追加:
+- **`gui/src/components/StateSwitcher.tsx` の hook call の後** に early return を追加 (React rules-of-hooks 整合):
 
   ```tsx
   export function StateSwitcher() {
+    const screen = useAppStateStore((s) => s.screen);
+    const navigate = useAppStateStore((s) => s.navigate);
     if (!import.meta.env.DEV) return null;
     // ... 既存の dev 用 5 タブ render
   }
   ```
+
+  > **rules-of-hooks 解説**: hook (`useAppStateStore`) は条件付き early return の**後**に置けない (条件分岐で hook が呼ばれない場合 hook order が乱れ React が壊れる)。よって hook は unconditional に call した上で early return を置く。production build では hook subscription は esbuild 保守的温存により残るが、App 直下 1 回 mount のみで実害なし。
 
 - 採用理由 (component-local 責務):
   - component 自身が production で no-op となり、callsite (`App.tsx`) は不変

@@ -38,11 +38,11 @@ describe('StateSwitcher', () => {
 // z-index 重複を原理的に解消する (spec 2026-05-03-l2-tier1-stateswitcher-dev-only-design.md §3)。
 describe('StateSwitcher production gating', () => {
   beforeEach(() => {
-    // import.meta.env.DEV を falsy 値 (空文字列) に上書きして production を simulate。
-    // Vite が DEV を boolean として配布する一方、vi.stubEnv は string で受け取る。
-    // `if (!import.meta.env.DEV)` は falsy 判定なので空文字列で OK。
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    vi.stubEnv('DEV', '' as any);
+    // import.meta.env.DEV / PROD は Vite が build-time に boolean として inline 展開する。
+    // vitest の vi.stubEnv は DEV/PROD/SSR 特殊キーで boolean 値を受け取る (vitest 4.x 型定義)。
+    // production build の真の状態 (DEV=false かつ PROD=true) を再現する。
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('PROD', true);
   });
   afterEach(() => {
     vi.unstubAllEnvs();

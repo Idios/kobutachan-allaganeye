@@ -141,7 +141,7 @@
 
   Read tool で `gui/src/components/StateSwitcher.tsx` 全体を読み、line 21 の関数定義 + line 24 の return を確認する。
 
-- [ ] **Step 2: 関数本体先頭に DEV gate early return を追加**
+- [ ] **Step 2: hook call の後に DEV gate early return を追加 (rules-of-hooks 整合)**
 
   Edit tool で line 21-23 を以下のように更新:
 
@@ -161,14 +161,17 @@
     // render しない。CompleteScreen topBar との z-index 重複を原理的に
     // 解消する (spec 2026-05-03-l2-tier1-stateswitcher-dev-only-design.md §3)。
     // import.meta.env.DEV は Vite が build mode で `true` (dev) /
-    // `false` (production) に inline 展開し、production build では
-    // dead code elimination で本 component が tree から除去される。
-    if (!import.meta.env.DEV) return null;
+    // `false` (production) に inline 展開され、production build では
+    // 本 component の return 後 JSX が dead code elimination で除去される。
+    // 注: early return より前の hook subscription は esbuild が保守的に
+    // 温存するが、App 直下に 1 回 mount されるだけなので実害なし
+    // (callsite-level gating で完全 tree shake する代替案は spec §3 を参照)。
     const screen = useAppStateStore((s) => s.screen);
     const navigate = useAppStateStore((s) => s.navigate);
+    if (!import.meta.env.DEV) return null;
   ```
 
-  注: hook (`useAppStateStore`) は early return より**後**に call する必要があるため、early return を hook より先に置く。React rules-of-hooks に整合 (条件分岐前 hook call では production で hook order が不一致になる、現状の DEV-only render では早期 return で問題なし)。
+  注: React rules-of-hooks では hook を**unconditional に call**することが必須 (条件分岐の後ろに hook を置くと、条件で hook が呼ばれないケースで hook order が乱れ React が壊れる)。よって hook (`useAppStateStore`) を関数本体の先頭で unconditional に call した上で early return を置く。production build では hook subscription は esbuild 保守的温存により残るが、App 直下 1 回 mount のみで実害なし。
 
 - [ ] **Step 3: 全 test を実行し全 PASS を確認 (TDD green)**
 
