@@ -119,7 +119,7 @@ function Assert-FFmpegLayout {
   }
 }
 
-function Get-FFmpegSourceCommit {
+function Get-FFmpegSourceRef {
   <#
   Extract the upstream FFmpeg source ref (commit hash or release tag) from a
   BtbN asset name. Both refs let users fetch the exact source under LGPLv3
@@ -136,9 +136,9 @@ function Get-FFmpegSourceCommit {
       (e.g. ffmpeg-n8.1.1-win64-lgpl-shared-8.1)
       -> returns release tag "n8.1.1"
 
-  Function name kept as `Get-FFmpegSourceCommit` for back-compat with the
-  Format-ReadmeContent caller; semantics generalised to "source ref" so the
-  README LGPLv3 attribution stays correct under both naming formats.
+  Renamed from `Get-FFmpegSourceCommit` (PR #683 review #9) so the function
+  name reflects the post-rename semantics ("source ref" covers both commit
+  hash and release tag, consistent with BtbN's two naming formats).
   #>
   param(
     [Parameter(Mandatory = $true)][string]$AssetName
@@ -166,7 +166,7 @@ function Format-ReadmeContent {
     [Parameter(Mandatory = $true)][string]$Version,
     [Parameter(Mandatory = $true)][string]$FFmpegVersion,
     [Parameter(Mandatory = $true)][string]$FFmpegBuildTag,
-    [Parameter(Mandatory = $true)][string]$FFmpegSourceCommit,
+    [Parameter(Mandatory = $true)][string]$FFmpegSourceRef,
     [switch]$IncludeGui
   )
   $guiSection = if ($IncludeGui) {
@@ -233,7 +233,7 @@ $guiLicenseLine- Python: PSF License (python\LICENSE.txt)
 - FFmpeg: LGPLv3 (full text in ffmpeg\LICENSE.txt)
     Build:         ffmpeg n$FFmpegVersion win64-lgpl-shared build (BtbN/FFmpeg-Builds)
     Build tag:     $FFmpegBuildTag
-    Source:        https://git.ffmpeg.org/ffmpeg.git (ref $FFmpegSourceCommit)
+    Source:        https://git.ffmpeg.org/ffmpeg.git (ref $FFmpegSourceRef)
     Build scripts: https://github.com/BtbN/FFmpeg-Builds
 
 allaganeye (MIT) invokes the FFmpeg binary as a separate subprocess only.
@@ -378,7 +378,7 @@ if (-not (Test-Path $FFmpegZip)) {
 $FFmpegExtract = Join-Path $BuildDir 'ffmpeg-extracted'
 Expand-Archive -Path $FFmpegZip -DestinationPath $FFmpegExtract -Force
 $FFmpegLayout = Assert-FFmpegLayout -ExtractDir $FFmpegExtract
-$FFmpegSourceCommit = Get-FFmpegSourceCommit -AssetName $FFmpegAsset
+$FFmpegSourceRef = Get-FFmpegSourceRef -AssetName $FFmpegAsset
 $FFmpegDest = Join-Path $PayloadDir 'ffmpeg'
 New-Item -ItemType Directory -Force -Path $FFmpegDest | Out-Null
 # Shared build: copy ffmpeg.exe, ffprobe.exe, and all DLLs. ffplay.exe is excluded
@@ -422,7 +422,7 @@ $Readme = Format-ReadmeContent `
   -Version $Version `
   -FFmpegVersion $FFmpegVersion `
   -FFmpegBuildTag $FFmpegBuildTag `
-  -FFmpegSourceCommit $FFmpegSourceCommit `
+  -FFmpegSourceRef $FFmpegSourceRef `
   -IncludeGui:$TauriIncluded
 Set-Content -Path (Join-Path $PayloadDir 'README.txt') -Value $Readme -Encoding UTF8
 

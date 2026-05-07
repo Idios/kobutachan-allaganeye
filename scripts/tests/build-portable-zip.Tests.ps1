@@ -10,8 +10,9 @@ Scope (#528 / #551 / #583):
   1. Invoke-Download verifies matching SHA256 / throws on mismatch.
   2. Assert-FFmpegLayout throws when the extracted archive has no `bin/`,
      returns Root/Bin/License paths when valid.
-  3. Get-FFmpegSourceCommit extracts the upstream commit from valid BtbN
-     asset names / throws on unexpected names.
+  3. Get-FFmpegSourceRef extracts the upstream commit (old BtbN naming) or
+     release tag (new BtbN naming) from valid BtbN asset names / throws on
+     unexpected names.
   4. Format-ReadmeContent includes the LGPLv3 attribution + BtbN /
      win64-lgpl-shared pointers required by Portable ZIP license compliance.
   5. Get-LauncherTemplate preserves the python exit code propagation idiom
@@ -105,12 +106,12 @@ Describe 'Assert-FFmpegLayout' {
   }
 }
 
-Describe 'Get-FFmpegSourceCommit' {
+Describe 'Get-FFmpegSourceRef' {
   It 'extracts the upstream commit from a valid BtbN asset name (old format: count + commit hash)' {
     # Old BtbN naming: ffmpeg-n<version>-<count>-g<commit>-<target>-<variant>.
     # Function returns the commit hash so README.txt can point users at the
     # exact source under LGPLv3 obligations.
-    $ref = Get-FFmpegSourceCommit -AssetName 'ffmpeg-n8.1-123-g7f5c90f77e-win64-lgpl-shared.zip'
+    $ref = Get-FFmpegSourceRef -AssetName 'ffmpeg-n8.1-123-g7f5c90f77e-win64-lgpl-shared.zip'
     $ref | Should -Be '7f5c90f77e'
   }
 
@@ -119,12 +120,12 @@ Describe 'Get-FFmpegSourceCommit' {
     # Function returns the release tag (n<version>) since the commit hash is
     # no longer embedded in the asset name. Both refs let users fetch the
     # exact source under LGPLv3 obligations.
-    $ref = Get-FFmpegSourceCommit -AssetName 'ffmpeg-n8.1.1-win64-lgpl-shared-8.1.zip'
+    $ref = Get-FFmpegSourceRef -AssetName 'ffmpeg-n8.1.1-win64-lgpl-shared-8.1.zip'
     $ref | Should -Be 'n8.1.1'
   }
 
   It 'throws when the asset name does not match the BtbN pattern' {
-    { Get-FFmpegSourceCommit -AssetName 'unexpected-name.zip' } |
+    { Get-FFmpegSourceRef -AssetName 'unexpected-name.zip' } |
       Should -Throw -ExpectedMessage '*Cannot extract upstream source ref*'
   }
 }
@@ -135,7 +136,7 @@ Describe 'Format-ReadmeContent' {
       -Version '0.2.0' `
       -FFmpegVersion '8.1' `
       -FFmpegBuildTag 'autobuild-2026-04-22-13-15' `
-      -FFmpegSourceCommit '7f5c90f77e'
+      -FFmpegSourceRef '7f5c90f77e'
 
     $readme | Should -Match 'LGPLv3'
     $readme | Should -Match 'BtbN/FFmpeg-Builds'
@@ -157,7 +158,7 @@ Describe 'Format-ReadmeContent' {
       -Version '0.2.0' `
       -FFmpegVersion '8.1' `
       -FFmpegBuildTag 'autobuild-2026-04-22-13-15' `
-      -FFmpegSourceCommit '7f5c90f77e' `
+      -FFmpegSourceRef '7f5c90f77e' `
       -IncludeGui:$true
     $readme | Should -Match 'double-click'
     $readme | Should -Match 'WebView2 Runtime'
@@ -172,7 +173,7 @@ Describe 'Format-ReadmeContent' {
       -Version '0.2.0' `
       -FFmpegVersion '8.1' `
       -FFmpegBuildTag 'autobuild-2026-04-22-13-15' `
-      -FFmpegSourceCommit '7f5c90f77e' `
+      -FFmpegSourceRef '7f5c90f77e' `
       -IncludeGui:$true
     $readme | Should -Match 'Allagan Eye GUI'
     $readme | Should -Match 'Tauri 2'
@@ -186,10 +187,23 @@ Describe 'Format-ReadmeContent' {
       -Version '0.2.0' `
       -FFmpegVersion '8.1' `
       -FFmpegBuildTag 'autobuild-2026-04-22-13-15' `
-      -FFmpegSourceCommit '7f5c90f77e'
+      -FFmpegSourceRef '7f5c90f77e'
     $readme | Should -Not -Match 'WebView2 Runtime'
     $readme | Should -Not -Match 'Allagan Eye GUI'
     $readme | Should -Not -Match 'allaganeye-gui\.exe'
+  }
+
+  It 'embeds release tag as source ref for new BtbN naming format (#683)' {
+    # 新 BtbN naming (n8.1.1) では Get-FFmpegSourceRef が release tag を返し、
+    # README には (ref n8.1.1) で記述される。`(commit ...)` の旧文言が残らない
+    # ことも併せて verify (PR #683 review #10)。
+    $readme = Format-ReadmeContent `
+      -Version '0.2.0' `
+      -FFmpegVersion '8.1' `
+      -FFmpegBuildTag 'autobuild-2026-05-06-13-32' `
+      -FFmpegSourceRef 'n8.1.1'
+    $readme | Should -Match '\(ref n8\.1\.1\)'
+    $readme | Should -Not -Match '\(commit n8\.1\.1\)'
   }
 }
 

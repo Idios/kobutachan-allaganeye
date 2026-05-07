@@ -148,6 +148,6 @@ Portable ZIP には以下のソフトウェアが同梱されています。詳�
 - **Python**: PSF License (`python\LICENSE.txt`)
 - **FFmpeg**: LGPLv3 (`ffmpeg\LICENSE.txt` に全文)
   - ビルド: [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) の win64-lgpl-shared build
-  - 対応 FFmpeg コミット: [git.ffmpeg.org](https://git.ffmpeg.org/ffmpeg.git) の commit `7f5c90f77e` (v8.1 系列)
+  - 対応 FFmpeg ソース ref: [git.ffmpeg.org](https://git.ffmpeg.org/ffmpeg.git) の release tag `n8.1.1` (v8.1 系列)
 
 allaganeye 本体 (MIT) は FFmpeg バイナリをサブプロセスとしてのみ呼び出しているため、LGPLv3 の linking 制約は allaganeye 本体には及びません。同梱している shared-build DLL は FFmpeg 実行ファイルが動的にロードし、LGPLv3 の配布条件は同梱ライセンステキストで充足しています。
