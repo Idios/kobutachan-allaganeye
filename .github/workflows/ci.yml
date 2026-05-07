@@ -19,20 +19,23 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/ffmpeg.tar.xz
-          key: btbn-ffmpeg-linux64-lgpl-shared-8.1-d3b400378b8180fcc59249331ce03c75520404d9e62f950e4eb827f810cc7c53
+          key: btbn-ffmpeg-linux64-lgpl-shared-8.1-ec7546052026c12079e5bc4c69ff811c40f5b44610d8854cca17dda8e192529f
 
       - name: Download FFmpeg archive (cache miss)
         if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL -o /tmp/ffmpeg.tar.xz "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-04-22-13-15/ffmpeg-n8.1-10-g7f5c90f77e-linux64-lgpl-shared-8.1.tar.xz"
+          # BtbN は nightly autobuild を一定期間で削除するため URL pin が陳腐化する。
+          # 上流が `n8.1.1` (FFmpeg patch release) に切り替わった (2026-05-06 build)。
+          # 長期対応は #681 (versioned URL or .sha256 動的検証) で追跡。短期 fix のみ本 PR で実施。
+          curl -fsSL -o /tmp/ffmpeg.tar.xz "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-05-06-13-32/ffmpeg-n8.1.1-linux64-lgpl-shared-8.1.tar.xz"
 
       - name: Install ffmpeg (BtbN LGPLv3 n8.1 shared, pinned)
         shell: bash
         run: |
           set -euo pipefail
-          FFMPEG_SHA256="d3b400378b8180fcc59249331ce03c75520404d9e62f950e4eb827f810cc7c53"
+          FFMPEG_SHA256="ec7546052026c12079e5bc4c69ff811c40f5b44610d8854cca17dda8e192529f"
           echo "$FFMPEG_SHA256  /tmp/ffmpeg.tar.xz" | sha256sum -c -
           mkdir -p /tmp/ffmpeg
           tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg --strip-components=1
