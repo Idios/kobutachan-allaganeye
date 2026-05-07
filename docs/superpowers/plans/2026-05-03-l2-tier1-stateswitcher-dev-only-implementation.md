@@ -4,7 +4,7 @@
 
 **Goal:** `StateSwitcher` を `import.meta.env.DEV` で gate し、production 配布版で render させない。`CompleteScreen` topBar との z-index 重複 ([#653](https://github.com/Idios/kobutachan-allaganeye/issues/653)) を原理的に解消する。
 
-**Architecture:** `gui/src/components/StateSwitcher.tsx` 関数本体先頭に early return (`if (!import.meta.env.DEV) return null;`) を 1 行追加する component-local gating。`App.tsx` callsite と `StateSwitcher.module.css` は不変。vitest で PROD gate test (`vi.stubEnv('DEV', '')`) を新規追加し、既存 DEV render test と並走で regression guard。
+**Architecture:** `gui/src/components/StateSwitcher.tsx` の hook call の後に early return (`if (!import.meta.env.DEV) return null;`) を 1 行追加する component-local gating (rules-of-hooks 整合)。`App.tsx` callsite と `StateSwitcher.module.css` は不変。vitest で PROD gate test (`vi.stubEnv('DEV', false); vi.stubEnv('PROD', true);`) を新規追加し、既存 DEV render test と並走で regression guard。
 
 **Tech Stack:** React 19 / TypeScript / Vite / Vitest 1.x / `import.meta.env.DEV` (Vite build mode flag)
 
@@ -14,7 +14,7 @@
 
 | 区分 | path | 責務 |
 | --- | --- | --- |
-| Modify | `gui/src/components/StateSwitcher.tsx` | 関数本体先頭に DEV gate を追加 |
+| Modify | `gui/src/components/StateSwitcher.tsx` | hook call の後に DEV gate を追加 (rules-of-hooks 整合) |
 | Modify | `gui/src/components/StateSwitcher.test.tsx` | PROD gate failing test を追加 (既存 DEV render test は維持) |
 | Unchanged | `gui/src/components/StateSwitcher.module.css` | z-index / position は dev で従来通り維持 |
 | Unchanged | `gui/src/App.tsx` | callsite 不変 (`<StateSwitcher />`) |
@@ -193,13 +193,12 @@
   git commit -m "$(cat <<'EOF'
   fix: StateSwitcher を dev only に絞り topBar との z-index 重複を解消 (#653)
 
-  関数本体先頭に `if (!import.meta.env.DEV) return null;` を追加。
-  production build では dead code elimination で本 component が
-  tree から除去され、CompleteScreen topBar (z-index 重複) との
-  物理的衝突が原理的に消滅。
-
-  hook (useAppStateStore) は early return より後で call するため
-  React rules-of-hooks に整合。
+  hook call の後に `if (!import.meta.env.DEV) return null;` を追加
+  (React rules-of-hooks 整合)。production build では本 component の
+  return 後 JSX が dead code elimination で除去され、CompleteScreen
+  topBar (z-index 重複) との物理的衝突が原理的に消滅。
+  早期 return より前の hook subscription は esbuild 保守的温存により
+  残るが、App 直下 1 回 mount のみで実害なし。
 
   PR #641 実機検証で発覚した bug (元設計 "Dev-only screen switcher"
   コメントと常時 render の乖離) を解消。
@@ -351,8 +350,8 @@
 
   `StateSwitcher` を `import.meta.env.DEV` で gate し、production 配布版 (Tauri bundle / Portable ZIP) で render させないことで、`CompleteScreen` topBar との z-index 重複 (#653) を原理的に解消する。
 
-  - `gui/src/components/StateSwitcher.tsx` 関数本体先頭に `if (!import.meta.env.DEV) return null;` 追加
-  - `gui/src/components/StateSwitcher.test.tsx` に PROD gate failing test (`vi.stubEnv('DEV', '')`) を追加し、既存 DEV render test 3 件と並走で regression guard
+  - `gui/src/components/StateSwitcher.tsx` の hook call の後に `if (!import.meta.env.DEV) return null;` 追加 (rules-of-hooks 整合)
+  - `gui/src/components/StateSwitcher.test.tsx` に PROD gate failing test (`vi.stubEnv('DEV', false); vi.stubEnv('PROD', true);`) を追加し、既存 DEV render test 3 件と並走で regression guard
   - `App.tsx` callsite / `StateSwitcher.module.css` は不変
 
   ## Spec / Plan

@@ -59,7 +59,7 @@ $GetPipUrl = 'https://bootstrap.pypa.io/get-pip.py'
 #   Get-FileHash get-pip.py -Algorithm SHA256
 # Long-term we should switch to a versioned URL (e.g. .../pip/24.0/get-pip.py)
 # or the bootstrap-served `.sha256` sidecar -- tracked in #649.
-$GetPipSha256 = '106AE019E371C7D8CB3699C75607A9B7A4D31E2B95C575362C8BCFE3D41353FD'
+$GetPipSha256 = '66904BCCB878E363DB6236EA900E6935E507DCB887E9F178F6212EDFE7F46A76'
 
 # FFmpeg is pinned to a specific BtbN autobuild so the same allaganeye tag ships
 # the same binary and the LGPLv3 license applies uniformly across CI and Portable ZIP.
