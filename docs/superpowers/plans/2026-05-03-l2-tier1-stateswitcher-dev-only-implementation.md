@@ -81,10 +81,11 @@
   // z-index 重複を原理的に解消する (spec 2026-05-03-l2-tier1-stateswitcher-dev-only-design.md §3)。
   describe('StateSwitcher production gating', () => {
     beforeEach(() => {
-      // import.meta.env.DEV を falsy 値 (空文字列) に上書きして production を simulate。
-      // Vite が DEV を boolean として配布する一方、vi.stubEnv は string で受け取る。
-      // `if (!import.meta.env.DEV)` は falsy 判定なので空文字列で OK。
-      vi.stubEnv('DEV', '');
+      // import.meta.env.DEV / PROD は Vite が build-time に boolean として inline 展開する。
+      // vitest の vi.stubEnv は DEV/PROD/SSR 特殊キーで boolean 値を受け取る (vitest 4.x 型定義)。
+      // production build の真の状態 (DEV=false かつ PROD=true) を再現する。
+      vi.stubEnv('DEV', false);
+      vi.stubEnv('PROD', true);
     });
     afterEach(() => {
       vi.unstubAllEnvs();
@@ -109,7 +110,7 @@
   - 既存 3 件 PASS (`renders all 5 screen labels` / `marks the active tab` / `navigates the app store on click`)
   - 新規 1 件 FAIL: `returns null when import.meta.env.DEV is falsy (production build)` (現状 StateSwitcher は DEV gate を持たないので、`container` には switcher の `<div>` が render される → `toBeEmptyDOMElement()` が fail する)
 
-  注: もし `vi.stubEnv('DEV', '')` が import.meta.env.DEV に伝搬しない (Vitest version 依存) 場合、 `vi.stubEnv('MODE', 'production')` に切り替えて再実行する。Vitest 1.x では `stubEnv` が `import.meta.env` の `DEV`/`PROD`/`MODE` 特殊キーに同期する仕様。
+  注: `vi.stubEnv('DEV', false)` は vitest 4.x の `name = 'DEV' | 'PROD' | 'SSR'` 特殊キー boolean 仕様に整合する。古い vitest 1.x では `import.meta.env.MODE` 経由の伝搬挙動が異なるため、もし version mismatch で本 stub が `import.meta.env.DEV` に伝搬しない場合は vitest version を確認すること (現プロジェクトは vitest 4.x)。
 
 - [ ] **Step 4: red 確認後 commit (実装前のテスト追加 = 先行 commit)**
 
@@ -118,9 +119,9 @@
   git commit -m "$(cat <<'EOF'
   test: StateSwitcher production gating の failing test を追加 (#653)
 
-  vi.stubEnv('DEV', '') で production build を simulate し、
-  StateSwitcher が null を返すことを assert。現状実装は gate を
-  持たないため fail する (TDD red)。
+  vi.stubEnv('DEV', false) + vi.stubEnv('PROD', true) で production
+  build の真の状態を simulate し、StateSwitcher が null を返すことを
+  assert。現状実装は gate を持たないため fail する (TDD red)。
 
   Refs #653
 
@@ -241,7 +242,7 @@
 
   Expected:
   - vite が `gui/dist/` を生成、ビルドエラーなし
-  - bundle size 確認 (StateSwitcher が production tree から除去されることでわずかに減少、ただし数値検証は不要)
+  - bundle size 確認 (production build では StateSwitcher の return 後 JSX が dead code elimination で除去されるためわずかに減少、ただし early return 前の hook subscription は esbuild 保守的温存により残るため厳密な削減は限定的、数値検証は不要)
 
 - [ ] **Step 3: cargo check (Rust 側変更なしの regression 担保)**
 
