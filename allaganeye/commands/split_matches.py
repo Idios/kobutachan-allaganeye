@@ -1111,9 +1111,9 @@ class _ETAProgressBar(_ClickProgressBar):
         bar = self.format_bar()
         pct = self.format_pct()
         if self.show_eta and not self.finished:
-            # eta_known=False (update 未呼び出し / 1 秒以内) のとき format_eta()
-            # は空文字列を返すので、'--:--:--' placeholder で常時 ETA を表示する
-            # (Idios feedback: pre-update でも ETA を出す改善、#365)。
+            # eta_known=False (update 未呼び出し / make_step の 1 秒 debounce gate 内)
+            # のとき format_eta() は空文字列を返すので、'--:--:--' placeholder で
+            # 常時 ETA を表示する (Idios feedback: pre-update でも ETA を出す改善、#365)。
             eta = self.format_eta() or "--:--:--"
             return f"{self.label}{bar} {pct} ETA: {eta}"
         return f"{self.label}{bar} {pct}"
