@@ -237,3 +237,63 @@ Describe 'Script parameters' {
       ForEach-Object { $_.Mandatory | Should -BeFalse }
   }
 }
+
+Describe 'New-IntegrityManifest' {
+  BeforeAll {
+    $script:ManifestTmpDir = Join-Path ([System.IO.Path]::GetTempPath()) "manifest-test-$(New-Guid)"
+    New-Item -ItemType Directory -Force -Path $script:ManifestTmpDir | Out-Null
+  }
+
+  AfterAll {
+    if (Test-Path $script:ManifestTmpDir) {
+      Remove-Item -Recurse -Force $script:ManifestTmpDir
+    }
+  }
+
+  It 'enumerates files and produces valid JSON with required fields' {
+    # Arrange: create a payload with files at different depths
+    $f1 = Join-Path $script:ManifestTmpDir 'allaganeye.bat'
+    Set-Content -Path $f1 -Value 'fake' -Encoding ASCII
+
+    $ffDir = Join-Path $script:ManifestTmpDir 'ffmpeg'
+    New-Item -ItemType Directory -Force -Path $ffDir | Out-Null
+    $f2 = Join-Path $ffDir 'ffmpeg.exe'
+    Set-Content -Path $f2 -Value 'fake binary' -Encoding ASCII
+
+    $libDir = Join-Path $script:ManifestTmpDir 'lib\allaganeye\audio\refs'
+    New-Item -ItemType Directory -Force -Path $libDir | Out-Null
+    $f3 = Join-Path $libDir 'fanfare.npz'
+    Set-Content -Path $f3 -Value 'fake npz' -Encoding ASCII
+
+    # Act
+    $json = New-IntegrityManifest -PayloadDir $script:ManifestTmpDir
+    $manifest = $json | ConvertFrom-Json
+
+    # Assert: schema
+    $manifest.version | Should -Be 1
+    $manifest.generated_at | Should -Match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$'
+    $manifest.files | Should -Not -BeNullOrEmpty
+
+    # POSIX-style separators in path field
+    $paths = @($manifest.files | ForEach-Object { $_.path })
+    $paths | Should -Contain 'allaganeye.bat'
+    $paths | Should -Contain 'ffmpeg/ffmpeg.exe'
+    $paths | Should -Contain 'lib/allaganeye/audio/refs/fanfare.npz'
+
+    # Each entry has size > 0 and tolerance_bytes = 0
+    foreach ($entry in $manifest.files) {
+      $entry.size | Should -BeGreaterThan 0
+      $entry.tolerance_bytes | Should -Be 0
+    }
+  }
+
+  It 'excludes integrity-manifest.json itself from the enumeration' {
+    $extra = Join-Path $script:ManifestTmpDir 'integrity-manifest.json'
+    Set-Content -Path $extra -Value '{}' -Encoding UTF8
+
+    $json = New-IntegrityManifest -PayloadDir $script:ManifestTmpDir
+    $manifest = $json | ConvertFrom-Json
+    $paths = @($manifest.files | ForEach-Object { $_.path })
+    $paths | Should -Not -Contain 'integrity-manifest.json'
+  }
+}

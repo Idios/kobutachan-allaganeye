@@ -296,6 +296,47 @@ endlocal & exit /b %EXIT_CODE%
 '@
 }
 
+function New-IntegrityManifest {
+  <#
+  .SYNOPSIS
+  Generate integrity-manifest.json content by enumerating the payload directory (#668).
+
+  .DESCRIPTION
+  Walks ``$PayloadDir`` recursively, records each file's POSIX-style relative
+  path and size with ``tolerance_bytes = 0`` (strict matching), and returns a JSON
+  string. The manifest file itself (``integrity-manifest.json``) is excluded
+  so its presence/size doesn't break the check that consumes it.
+
+  Exposed as a function so Pester can verify the JSON shape and exclusion
+  logic without dot-sourcing the full build path.
+  #>
+  param(
+    [Parameter(Mandatory = $true)][string]$PayloadDir
+  )
+
+  $manifestName = 'integrity-manifest.json'
+  $entries = @()
+  $base = (Resolve-Path $PayloadDir).Path
+  Get-ChildItem -Path $PayloadDir -Recurse -File | ForEach-Object {
+    if ($_.Name -eq $manifestName) { return }
+    $rel = $_.FullName.Substring($base.Length).TrimStart('\', '/')
+    $relPosix = $rel -replace '\\', '/'
+    $entries += [pscustomobject]@{
+      path = $relPosix
+      size = $_.Length
+      tolerance_bytes = 0
+    }
+  }
+
+  $generatedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+  $manifest = [ordered]@{
+    version = 1
+    generated_at = $generatedAt
+    files = @($entries)
+  }
+  return ($manifest | ConvertTo-Json -Depth 4)
+}
+
 # Dot-sourced (no -Version): stop here so callers only get the function
 # definitions. Pester tests rely on this behaviour.
 if ([string]::IsNullOrEmpty($Version)) { return }
@@ -425,6 +466,13 @@ $Readme = Format-ReadmeContent `
   -FFmpegSourceRef $FFmpegSourceRef `
   -IncludeGui:$TauriIncluded
 Set-Content -Path (Join-Path $PayloadDir 'README.txt') -Value $Readme -Encoding UTF8
+
+# 7.5 Integrity manifest (#668)
+# Generated after all payload steps complete so it reflects the actual files
+# Tauri build / pip install / FFmpeg copy / launcher / README produced.
+$ManifestPath = Join-Path $PayloadDir 'integrity-manifest.json'
+Set-Content -Path $ManifestPath -Value (New-IntegrityManifest -PayloadDir $PayloadDir) -Encoding UTF8
+Write-Host "Generated $ManifestPath"
 
 # 8. Compress (skipped with -SkipArchive so CI can hand the payload folder
 # directly to actions/upload-artifact; upload-artifact zips it once instead of
