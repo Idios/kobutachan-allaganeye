@@ -266,8 +266,11 @@ export function ExportScreen() {
               error: p.stage === 'error' ? p.message : prior.error,
               // #663 — `export-progress` event payload does not currently
               // carry an AppError hint (Rust-side enhancement is future
-              // work); keep whatever the prior catch-block stamped so the
-              // event handler does not clear it on stage transitions.
+              // work). errorHint の最終 source of truth は catch handler
+              // (catch handler が MatchState を全置換するため、progress
+              // event 時点では prior.errorHint は基本 undefined のまま
+              // preserved。この event handler は errorHint を能動的に
+              // セットせず、catch handler の結果が後から確定する形)。
               errorHint: prior.errorHint,
               fallbackNotice,
             },

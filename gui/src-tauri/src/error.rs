@@ -98,9 +98,14 @@ impl From<serde_json::Error> for AppError {
 /// を `Result<_, AppError>` を返す Tauri command 内で `?` 経由で呼び出すケース
 /// で使われる。code は `internal.error` 固定。新規コードでは call site で
 /// `AppError::new("domain.error_kind", message)` を構築するのが望ましい。
+///
+/// `.with_default_hint()` chain は future-proof のため (`From<io::Error>` /
+/// `From<serde_json::Error>` と同 contract で integrity を保つ。現状
+/// `internal.error` は hint None だが、将来 hint を追加した場合の silent
+/// bypass を防ぐ)。lib.rs 全 80 site の hint chain 規律と整合 (#663)。
 impl From<String> for AppError {
     fn from(message: String) -> Self {
-        AppError::new("internal.error", message)
+        AppError::new("internal.error", message).with_default_hint()
     }
 }
 
