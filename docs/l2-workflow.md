@@ -245,14 +245,14 @@ PR 本文の checkbox (`- [ ]` / `- [x]`) は `validate-checklist` ジョブが 
 
 ### Why
 
-ユーザーが Test plan を消化せずにマージするのを防ぐ品質ゲート。ただし「レビュー時に実機で確認する項目」も `- [ ]` で書くと「Claude が消化していない実機検証項目」までゲートで止まり、PR 提出時に CI fail する。
+ユーザーが Self-Test Report を消化せずにマージするのを防ぐ品質ゲート。ただし「レビュー時に実機で確認する項目」も `- [ ]` で書くと「Claude が消化していない実機検証項目」までゲートで止まり、PR 提出時に CI fail する。
 
 ### 構成
 
-PR 本文を以下の構成で書き分ける (PR #615 / PR #625 修正で確立):
+PR 本文を以下の構成で書き分ける (PR #615 / PR #625 修正で確立、PR template `.github/pull_request_template.md` で運用):
 
-- **「## Test plan (本 PR 提出前にローカルで実行済)」セクション**: 自分が PR 提出前に実行した自動チェック (lint / typecheck / test / cargo check / build) のみを `- [x] ...` で列挙。全件チェック済が前提
-- **「## レビュー時の確認 (machine-unverifiable)」セクション**: `npm run tauri dev` での手動操作、UI 目視確認、レビュー時にユーザーが実施する項目を **plain bullet `-`** (checkbox なし) で列挙
+- **「## Self-Test Report (本 PR 提出前にローカルで実行済)」セクション** (PR template では `#### Self-Test Report (machine-verified — 全件 [x] で validate-checklist 通過)` h4 として配置): 自分が PR 提出前に実行した自動チェック (lint / typecheck / test / cargo check / build) のみを `- [x] ...` で列挙。全件チェック済が前提
+- **「## 実機検証 (machine-unverifiable)」セクション** (PR template では `#### 実機検証 (machine-unverifiable — plain bullet で書く)` h4): `npm run tauri dev` での手動操作、UI 目視確認、レビュー時にユーザーが実施する項目を **plain bullet `-`** (checkbox なし) で列挙
 
 `- [ ]` を残すと PR 提出直後の CI で fail する。`gh pr edit <N> --body-file -` で書き直せば validate-checklist は再実行され直ちに pass する (commit 不要)。
 
@@ -320,7 +320,7 @@ doc の節構造を変える PR、**または `git merge` で他 skill / doc を
 
 ### Why
 
-2026-04-26 PR #597 (旧ロール用語 sweep) で `docs/l2-workflow.md` の節構造を再編 (旧 §「ユーザー確認ルール」 + §「強制メカニズム」 → 新 §「ルールと強制メカニズム」 に統合) した際、Test plan に「相互参照は破綻していない」と report した。しかし `.claude/skills/scope-guard/SKILL.md` が旧見出しを参照したまま残っており、レビューで指摘された。検証が「参照箇所が `docs/l2-workflow.md` を mention しているか」のファイル名一致レベルにとどまり、セクション名一致まで遡及していなかったのが原因。
+2026-04-26 PR #597 (旧ロール用語 sweep) で `docs/l2-workflow.md` の節構造を再編 (旧 §「ユーザー確認ルール」 + §「強制メカニズム」 → 新 §「ルールと強制メカニズム」 に統合) した際、Self-Test Report (当時の名称: Test plan) に「相互参照は破綻していない」と report した。しかし `.claude/skills/scope-guard/SKILL.md` が旧見出しを参照したまま残っており、レビューで指摘された。検証が「参照箇所が `docs/l2-workflow.md` を mention しているか」のファイル名一致レベルにとどまり、セクション名一致まで遡及していなかったのが原因。
 
 2026-04-27 PR #597 Round 3 では `git merge origin/develop-0.2.0` により取り込んだ `.claude/skills/close-issue/SKILL.md` の pre-existing broken reference を見落とし、Idios から再指摘。受け入れ条件「相互参照は破綻していない」は **merge 後の状態で** を意味するので、「pre-existing だから対象外」は厳密読みで違反になる。
 
@@ -332,7 +332,7 @@ doc の節構造を変える PR、または merge 取り込み PR では以下�
 2. 各 reference が target doc の `##` または `###` 見出しと文字列一致するか確認 (`grep -nE "^### ?<セクション名>" docs/<target>.md` 等)
 3. 旧セクション名が確実に消えたら `git grep -n "<旧セクション名>"` で残骸ゼロを確認
 
-「相互参照は破綻していない」と PR Test plan に書く前に、上記 3 ステップを実施する。ファイル名 mention の grep だけでは不十分 (l2-workflow.md という mention は残るが、参照している節が統合・廃止されていることを検出できない)。
+「相互参照は破綻していない」と PR Self-Test Report に書く前に、上記 3 ステップを実施する。ファイル名 mention の grep だけでは不十分 (l2-workflow.md という mention は残るが、参照している節が統合・廃止されていることを検出できない)。
 
 ### merge で取り込んだ「自分が書いていない」skill / doc も対象
 
