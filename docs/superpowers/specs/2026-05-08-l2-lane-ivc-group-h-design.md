@@ -50,7 +50,7 @@ return click.progressbar(
 )
 ```
 
-click 8.x の `%(info)s` は `<percent>  <eta>` をラベルなしで展開するだけ。`ETA: ` を含む format には `%(eta)s` placeholder の独自展開、または `format_progress_line` の override が必要。
+click 8.x の `%(info)s` は `<percent>  <eta>` をラベルなしで展開するだけ。`ETA:` を含む format には `%(eta)s` placeholder の独自展開、または `format_progress_line` の override が必要。
 
 **影響範囲**: `_eta_progressbar` を使う全 progress bar = `Detecting` / `Refining` / `Scorebar` / `Splitting` の 4 bar 全て (caller は `split_matches.py:810 / 898 / 922 / 1130`)。
 
@@ -188,7 +188,7 @@ Group H: lint / CLI 系 polish (1 spec / 2 章 / 2 PR)
 ### 4.3 受け入れ条件マッピング (Iron Law 1 担保)
 
 | issue 受け入れ条件 | この設計で対応する箇所 |
-|---|---|
+| --- | --- |
 | `gui/eslint.config.js` (or 等価) に `no-restricted-globals` 相当の rule 追加 | §4.1 patch の `no-restricted-globals` block |
 | エラーメッセージに plugin-dialog 代替 API + `docs/ui-interaction-spec.md` §1.3 リンクを含める | §4.1 各 rule の `message` field に「Use `import { ... } from "@tauri-apps/plugin-dialog"`」+ 「See docs/ui-interaction-spec.md §1.3」を含む |
 | 故意に `window.confirm` を含むコードを書いた branch で CI lint が fail することを確認 | §6.2 の「ESLint 違反検証 PR」フロー (検証 PR の CI run URL を本流 PR の Self-Test Report に machine-verified として記録) |
@@ -269,7 +269,7 @@ def _eta_progressbar(
 ### 5.3 4 bar の format 統一確認
 
 | caller | 該当行 | bar instance | label | 期待 line (format 統一の確認、ETA 値は例) |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `_run_detection_with_refine_bar` | `split_matches.py:810` | `_eta_progressbar(total, "Detecting")` | `"Detecting "` | `Detecting  #####---  50% ETA: 0:00:10` |
 | `_run_refine_progress` | `split_matches.py:898` | `_eta_progressbar(total, "Refining")` | `"Refining  "` | `Refining   #####---  50% ETA: 0:00:10` |
 | `_run_scorebar_filter` | `split_matches.py:922` | `_eta_progressbar(total, "Scorebar")` | `"Scorebar  "` | `Scorebar   #####---  50% ETA: 0:00:10` |
@@ -289,7 +289,7 @@ def _eta_progressbar(
 issue [#365](https://github.com/Idios/kobutachan-allaganeye/issues/365) には明示的な `## 受け入れ条件` セクションが無く、「期待動作」と「根本原因分析」セクションが実質的な受け入れ基準。逐条マッピング:
 
 | issue 期待動作 / 根本原因対応 | この設計で対応する箇所 |
-|---|---|
+| --- | --- |
 | 期待動作: `Detecting ####---  93% ETA: 0:00:22` 形式 | §5.1 `_ETAProgressBar.format_progress_line` で `f"{self.label}{bar} {pct} ETA: {eta}"` |
 | 影響範囲全 4 bar (`Detecting`, `Refining`, `Scorebar`, `Splitting`) | §5.3 表で `_eta_progressbar` の戻り型を `_ETAProgressBar` に変えるだけで全 caller が新 format を享受 |
 | 直接原因 (`%(info)s` でラベルなし展開) の解消 | §5.1 で `bar_template=""` + `format_progress_line` override により click の組み込み templating を bypass |
@@ -402,7 +402,7 @@ ESLint config の自動 test 化はせず、**違反コードを含む検証 PR 
 ### 6.4 CI 統合
 
 | job | 既存で走るか | 本 PR の追加 |
-|---|---|---|
+| --- | --- | --- |
 | `pytest` (`.github/workflows/python.yml`) | ✓ | §6.1 の新 4 test を自動 pickup |
 | `npm run lint` (gui-frontend job) | ✓ | §4.1 の新 rule を自動適用 (既存 src/ は全 PASS 想定、§6.2 検証 PR で違反コード時の fail evidence 取得) |
 | `ruff check` / `ruff format --check` / `pyright` | ✓ | 影響なし |

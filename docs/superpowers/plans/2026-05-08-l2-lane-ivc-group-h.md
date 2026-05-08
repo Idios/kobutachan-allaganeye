@@ -60,6 +60,7 @@ Expected: branch 切り替え完了。`git log --oneline origin/develop-0.2.0..H
 ### Task 2: ESLint rules + docs 追加
 
 **Files:**
+
 - Modify: `gui/eslint.config.js` (既存 24 行に rules を追記)
 - Modify: `docs/ui-interaction-spec.md` (§1.3 末尾に段落追加)
 
@@ -347,12 +348,12 @@ Expected: `.git/plan-tmp/pr1_body.md` に body が書き出される (Task 6 Ste
 gh pr create --base develop-0.2.0 --head claude/musing-davinci-38136f-eslint --title "feat(gui): ESLint で window.confirm/alert/prompt を block (Refs #643)" --body-file .git/plan-tmp/pr1_body.md
 ```
 
-Expected: PR 作成成功、PR URL 出力。**PR 番号を記録** (以降の step で `<PR1>` と参照)。
+Expected: PR 作成成功、PR URL 出力。**PR 番号を記録** (以降の step で `#684` と参照)。
 
 - [ ] **Step 6: CI 待機 + PASS 確認**
 
 ```bash
-gh pr checks <PR1> --watch
+gh pr checks #684 --watch
 ```
 
 Expected: 全 job PASS (`python` / `gui-frontend` / その他)。失敗が出た場合は失敗 job log を確認し、原因を切り分け。
@@ -362,6 +363,7 @@ Expected: 全 job PASS (`python` / `gui-frontend` / その他)。失敗が出た
 ### Task 5: 違反検証 PR で CI fail evidence 取得
 
 **Files:**
+
 - Create: `gui/src/__verify_eslint_643__.tsx` (検証 branch のみ、close 後削除)
 
 - [ ] **Step 1: 検証 branch を切る**
@@ -413,7 +415,7 @@ git commit -m "$(cat <<'EOF'
 test: verify ESLint blocks Tauri 2 silent loss patterns (Refs #643)
 
 This commit intentionally introduces 6 violations of the no-restricted-globals
-+ no-restricted-properties rules added in PR #<PR1> to demonstrate that CI
++ no-restricted-properties rules added in PR #684 to demonstrate that CI
 gui-frontend lint job blocks the violations.
 
 This branch / PR is for CI fail evidence ONLY and MUST NOT be merged.
@@ -434,11 +436,11 @@ Expected: push 成功。
 gh pr create --base develop-0.2.0 --head claude/musing-davinci-38136f-eslint-verify --title "test: verify ESLint blocks Tauri 2 silent loss patterns (Refs #643, expected to fail CI)" --body-file - <<'EOF'
 ## 目的
 
-PR #<PR1> (Refs #643) で追加した `no-restricted-globals` + `no-restricted-properties` rule が、`window.confirm/alert/prompt` の bare global / member access 両経路を CI で block することを **CI fail evidence** として記録する検証 PR。
+PR #684 (Refs #643) で追加した `no-restricted-globals` + `no-restricted-properties` rule が、`window.confirm/alert/prompt` の bare global / member access 両経路を CI で block することを **CI fail evidence** として記録する検証 PR。
 
 ## ⚠️ この PR は merge しない
 
-`gui/src/__verify_eslint_643__.tsx` に 6 件の違反コードを意図的に追加してある。CI gui-frontend lint job が exit 1 + 6 errors を報告することを確認したら、本 PR は **close without merge** する (実装は本流 PR #<PR1> で merge)。
+`gui/src/__verify_eslint_643__.tsx` に 6 件の違反コードを意図的に追加してある。CI gui-frontend lint job が exit 1 + 6 errors を報告することを確認したら、本 PR は **close without merge** する (実装は本流 PR #684 で merge)。
 
 ## 期待する CI 挙動
 
@@ -450,19 +452,19 @@ PR #<PR1> (Refs #643) で追加した `no-restricted-globals` + `no-restricted-p
 
 ## 関連
 
-- 本流 PR: #<PR1>
+- 本流 PR: #684
 - spec: `docs/superpowers/specs/2026-05-08-l2-lane-ivc-group-h-design.md` §6.2
 
 session-id: musing-davinci-38136f-eslint-verify
 EOF
 ```
 
-Expected: PR 作成成功、PR URL + 番号を記録 (以降 `<PR_VERIFY>`)。
+Expected: PR 作成成功、PR URL + 番号を記録 (以降 `#685`)。
 
 - [ ] **Step 6: CI 結果待機 (FAIL を期待)**
 
 ```bash
-gh pr checks <PR_VERIFY> --watch
+gh pr checks #685 --watch
 ```
 
 Expected: `gui-frontend` job が **FAIL**。Other jobs (`python` 等) は PASS で OK (Python 側に変更なし)。
@@ -470,7 +472,7 @@ Expected: `gui-frontend` job が **FAIL**。Other jobs (`python` 等) は PASS �
 - [ ] **Step 7: CI fail log で 6 violations を確認**
 
 ```bash
-gh pr view <PR_VERIFY> --json statusCheckRollup --jq '.statusCheckRollup[] | select(.conclusion == "FAILURE")'
+gh pr view #685 --json statusCheckRollup --jq '.statusCheckRollup[] | select(.conclusion == "FAILURE")'
 gh run view --log-failed --job=<failed_job_id> | grep -E '(no-restricted-globals|no-restricted-properties)' | head -20
 ```
 
@@ -479,14 +481,14 @@ Expected: 6 行 (各違反 1 行)、または該当 job log で 6 errors の詳�
 - [ ] **Step 8: 検証 PR を close without merge**
 
 ```bash
-gh pr close <PR_VERIFY> --comment "$(cat <<'EOF'
+gh pr close #685 --comment "$(cat <<'EOF'
 CI fail evidence captured: gui-frontend lint job reports 6 violations
 (3 no-restricted-globals + 3 no-restricted-properties) as expected.
 
-CI run URL: <CI_RUN_URL>
+CI run URL: https://github.com/Idios/kobutachan-allaganeye/actions/runs/25529744519
 
 Closing this verification PR without merge. The actual rule additions
-are merged via PR #<PR1>. The verification file
+are merged via PR #684. The verification file
 gui/src/__verify_eslint_643__.tsx is contained to this branch and is
 not propagated to develop-0.2.0.
 EOF
@@ -513,10 +515,10 @@ git switch claude/musing-davinci-38136f-eslint
 
 ```bash
 # 検証 PR 行を [x] + URL 入りに置換
-sed -i 's|^- \[ \] 違反コード検証 PR の CI fail evidence.*$|- [x] 違反コード検証 PR #<PR_VERIFY> (closed without merge): CI run <CI_RUN_URL> で no-restricted-globals 3 件 + no-restricted-properties 3 件 = 計 6 violation を block することを確認|' .git/plan-tmp/pr1_body.md
+sed -i 's|^- \[ \] 違反コード検証 PR の CI fail evidence.*$|- [x] 違反コード検証 PR #685 (closed without merge): CI run https://github.com/Idios/kobutachan-allaganeye/actions/runs/25529744519 で no-restricted-globals 3 件 + no-restricted-properties 3 件 = 計 6 violation を block することを確認|' .git/plan-tmp/pr1_body.md
 ```
 
-`<PR_VERIFY>` を Task 5 Step 5 で記録した検証 PR 番号、`<CI_RUN_URL>` を Task 5 Step 7 で記録した failed CI run URL に置換 (上記コマンド内の `<...>` 文字列を実際の値に書き換えてから sed 実行)。
+`#685` を Task 5 Step 5 で記録した検証 PR 番号、`https://github.com/Idios/kobutachan-allaganeye/actions/runs/25529744519` を Task 5 Step 7 で記録した failed CI run URL に置換 (上記コマンド内の `<...>` 文字列を実際の値に書き換えてから sed 実行)。
 
 - [ ] **Step 3: 書き換え結果を確認**
 
@@ -529,7 +531,7 @@ Expected: 該当行が `- [x] 違反コード検証 PR #<実数> (closed without
 - [ ] **Step 4: gh pr edit で本文再投稿**
 
 ```bash
-gh pr edit <PR1> --body-file .git/plan-tmp/pr1_body.md
+gh pr edit #684 --body-file .git/plan-tmp/pr1_body.md
 ```
 
 Expected: PR body 更新成功。
@@ -537,7 +539,7 @@ Expected: PR body 更新成功。
 - [ ] **Step 5: PR view で Self-Test Report が全 `[x]` になっていることを確認**
 
 ```bash
-gh pr view <PR1> --json body --jq .body | grep -A20 "Self-Test Report"
+gh pr view #684 --json body --jq .body | grep -A20 "Self-Test Report"
 ```
 
 Expected: machine-verified セクションの全項目が `[x]`、特に検証 PR 行に CI run URL が埋まっていること。
@@ -557,11 +559,11 @@ Expected: 一時ファイル削除。`.git/plan-tmp/` は git ignore 配下な�
 
 Phase 2 に進む前に以下を確認:
 
-- [ ] PR #<PR1> の CI 全 job PASS
-- [ ] PR #<PR1> Self-Test Report の machine-verified 項目全 `[x]`
-- [ ] PR #<PR_VERIFY> が CLOSED (not MERGED) かつ CI run URL が PR #<PR1> 本文に記載
+- [ ] PR #684 の CI 全 job PASS
+- [ ] PR #684 Self-Test Report の machine-verified 項目全 `[x]`
+- [ ] PR #685 が CLOSED (not MERGED) かつ CI run URL が PR #684 本文に記載
 
-PR #<PR1> の **review / merge は本 plan の対象外** (`/review-pr` skill 経由で別途実施、merge 後 `/close-issue` で issue #643 を base 再検証して close)。
+PR #684 の **review / merge は本 plan の対象外** (`/review-pr` skill 経由で別途実施、merge 後 `/close-issue` で issue #643 を base 再検証して close)。
 
 ---
 
@@ -613,6 +615,7 @@ Expected: branch 切り替え (Phase 1 commit を含まない、純粋に develo
 ### Task 8: TDD cycle 1 Red — 4 bar parametrize test
 
 **Files:**
+
 - Modify: `tests/test_split_matches.py` (test 追加のみ、実装はまだ)
 
 - [ ] **Step 1: 既存 test_split_matches.py の構造確認**
@@ -699,6 +702,7 @@ Expected: **FAIL** (4 bar 全てで失敗)。Error は `ImportError: cannot impo
 ### Task 9: TDD cycle 1 Green — `_ETAProgressBar` minimal 実装
 
 **Files:**
+
 - Modify: `allaganeye/commands/split_matches.py` (`_eta_progressbar` を refactor)
 
 - [ ] **Step 1: 現行 `_eta_progressbar` の周辺を確認**
@@ -844,6 +848,7 @@ Expected: 既存 43 test + 新 4 parametrize = 47 PASS (Phase 2 後続 cycle で
 ### Task 10: TDD cycle 2 Red — GPU mode test
 
 **Files:**
+
 - Modify: `tests/test_split_matches.py` (新 test を append)
 
 - [ ] **Step 1: GPU mode test を追加**
@@ -879,6 +884,7 @@ Expected: **PASS** (Task 9 の `_ETAProgressBar` 実装で `if self.show_eta and
 ### Task 11: TDD cycle 3 Red — eta_known=False test
 
 **Files:**
+
 - Modify: `tests/test_split_matches.py` (新 test を append)
 
 - [ ] **Step 1: eta_known=False test を追加**
@@ -1122,12 +1128,12 @@ Expected: `.git/plan-tmp/pr2_body.md` に body が書き出される。
 gh pr create --base develop-0.2.0 --head claude/musing-davinci-38136f-progress-bar --title "fix(cli): 進捗バー ETA 表示に 'ETA: ' ラベルを付与 (Refs #365)" --body-file .git/plan-tmp/pr2_body.md
 ```
 
-Expected: PR 作成成功、PR URL + 番号を記録 (以降 `<PR2>`)。
+Expected: PR 作成成功、PR URL + 番号を記録 (以降 `#687`)。
 
 - [ ] **Step 6: CI 待機 + PASS 確認**
 
 ```bash
-gh pr checks <PR2> --watch
+gh pr checks #687 --watch
 ```
 
 Expected: 全 job PASS。
@@ -1143,7 +1149,7 @@ Expected: 全 job PASS。
 `AskUserQuestion` で以下:
 
 ```text
-Question: PR #<PR2> (#365 ETA label) は CLI 進捗表示の format 変更で、
+Question: PR #687 (#365 ETA label) は CLI 進捗表示の format 変更で、
 検知ロジック不変ですが、4 bar の表示確認は機械化できないため Idios
 実機検証を依頼します。
 
@@ -1162,7 +1168,7 @@ Question: PR #<PR2> (#365 ETA label) は CLI 進捗表示の format 変更で、
 (c) 後で実施 — 現時点では PR review/merge は保留
 ```
 
-- [ ] **Step 2: 結果を PR #<PR2> Self-Test Report に反映**
+- [ ] **Step 2: 結果を PR #687 Self-Test Report に反映**
 
 **(a) 完了 (3 項目 OK) を選択した場合**:
 
@@ -1186,7 +1192,7 @@ Expected: 3 行全てが `- [x]` で始まり、末尾に「Idios 実機 YYYY-MM
 PR body を再投稿:
 
 ```bash
-gh pr edit <PR2> --body-file .git/plan-tmp/pr2_body.md
+gh pr edit #687 --body-file .git/plan-tmp/pr2_body.md
 ```
 
 最後に一時ファイルを削除:
@@ -1204,11 +1210,11 @@ rmdir --ignore-fail-on-non-empty .git/plan-tmp 2>/dev/null || true
 
 **(c) 後で実施 (保留) を選択した場合**:
 
-- PR #<PR2> は open のまま放置、本 plan の Phase 2 を **machine-unverifiable 未消化のまま保留完了** 扱いにする
+- PR #687 は open のまま放置、本 plan の Phase 2 を **machine-unverifiable 未消化のまま保留完了** 扱いにする
 - Idios が後日実機検証を実施する際の手順を PR comment に書いておく:
 
 ```bash
-gh pr comment <PR2> --body "$(cat <<'EOF'
+gh pr comment #687 --body "$(cat <<'EOF'
 ## machine-unverifiable 実機検証 (Idios 後日実施)
 
 短い sample 動画 (例: `videos/short_sample.mkv`) で以下 3 項目を確認してください:
@@ -1228,18 +1234,18 @@ Expected: PR comment 投稿成功、Idios が後日実機検証可能な状態�
 
 ## Phase 2 完了基準
 
-- [ ] PR #<PR2> の CI 全 job PASS
-- [ ] PR #<PR2> Self-Test Report の machine-verified 全 `[x]`
+- [ ] PR #687 の CI 全 job PASS
+- [ ] PR #687 Self-Test Report の machine-verified 全 `[x]`
 - [ ] Idios 実機検証 (machine-unverifiable) が完了 or 保留状態を明記
 
-PR #<PR2> の **review / merge は本 plan の対象外** (`/review-pr` skill 経由で別途実施、merge 後 `/close-issue` で issue #365 を base 再検証して close)。
+PR #687 の **review / merge は本 plan の対象外** (`/review-pr` skill 経由で別途実施、merge 後 `/close-issue` で issue #365 を base 再検証して close)。
 
 ---
 
 ## 全体完了基準 (Lane IV-c Group H)
 
-- [ ] Phase 1 完了 (PR #<PR1> CI PASS + 検証 PR #<PR_VERIFY> closed without merge + Self-Test Report 完了)
-- [ ] Phase 2 完了 (PR #<PR2> CI PASS + Idios 実機検証完了 / 保留)
+- [ ] Phase 1 完了 (PR #684 CI PASS + 検証 PR #685 closed without merge + Self-Test Report 完了)
+- [ ] Phase 2 完了 (PR #687 CI PASS + Idios 実機検証完了 / 保留)
 - [ ] 両 PR の `/review-pr` 実行 + `/close-issue` への引き渡しは別 session で実施
 
 ## 関連 doc
