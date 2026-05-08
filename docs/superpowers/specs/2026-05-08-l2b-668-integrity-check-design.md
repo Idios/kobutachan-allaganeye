@@ -54,13 +54,24 @@ build 時に実 file から manifest を生成するため drift 0、両言語�
   "version": 1,
   "generated_at": "2026-05-08T12:34:56Z",
   "files": [
-    { "path": "ffmpeg/bin/ffmpeg.exe",  "size": 12345678, "tolerance_bytes": 0 },
-    { "path": "ffmpeg/bin/ffprobe.exe", "size": 1234567,  "tolerance_bytes": 0 },
-    { "path": "audio/refs/fanfare.npz", "size": 12345,    "tolerance_bytes": 0 },
-    { "path": "allaganeye-gui.exe",     "size": 5678901,  "tolerance_bytes": 0 }
+    { "path": "ffmpeg/ffmpeg.exe",                       "size": 12345678, "tolerance_bytes": 0 },
+    { "path": "ffmpeg/ffprobe.exe",                      "size": 1234567,  "tolerance_bytes": 0 },
+    { "path": "lib/allaganeye/audio/refs/fanfare.npz",   "size": 12345,    "tolerance_bytes": 0 },
+    { "path": "python/python.exe",                       "size": 100000,   "tolerance_bytes": 0 },
+    { "path": "python/python311.dll",                    "size": 5000000,  "tolerance_bytes": 0 },
+    { "path": "allaganeye-gui.exe",                      "size": 5678901,  "tolerance_bytes": 0 }
   ]
 }
 ```
+
+> **Payload 構造**: build script (`scripts/build-portable-zip.ps1`) は以下を生成:
+> - `python/` … Python 3.11 embeddable (python.exe / python311.dll / 標準 dll)
+> - `lib/allaganeye/...` … `pip install --target lib` で site-packages を置く (allaganeye パッケージ + ref ファイル含む)
+> - `ffmpeg/` … `ffmpeg.exe` / `ffprobe.exe` / dll / `LICENSE.txt` (bin/ サブディレクトリ無し、build script が直接コピー)
+> - `allaganeye-gui.exe` … Tauri release build 結果
+> - `allaganeye.bat` … 起動 launcher
+> - `README.txt` … 説明書
+> - `integrity-manifest.json` (本 spec で新設)
 
 ### フィールド規約
 
@@ -103,10 +114,10 @@ fail if any "missing" or "size_mismatch"
 | Python test | `tests/test_integrity.py` (新規) | unit test (mock manifest + missing/oversized + env_skip) |
 | Rust | `gui/src-tauri/src/integrity.rs` (新規) | manifest load + 検証 (serde_json)、`#[cfg(not(debug_assertions))]` 配下 |
 | Rust | `gui/src-tauri/src/lib.rs` | 起動 hook で `integrity::check()`、fail 時 frontend に payload 送出 |
-| TS | `gui/src/components/IntegrityErrorModal.tsx` (新規) | blocking modal、`ErrorModal` の visual 踏襲 |
-| TS | `gui/src/components/IntegrityErrorModal.module.css` (新規) | modal スタイル |
-| TS | `gui/src/components/IntegrityErrorModal.test.tsx` (新規) | vitest 単体 test |
-| TS | `gui/src/App.tsx` 等 | Tauri event 受信 → modal 表示 |
+| TS | `gui/src/state/errorStore.ts` (修正) | `ErrorCategory` enum に `'integrity'` 追加 |
+| TS | `gui/src/components/ErrorModal.tsx` (修正) | `errorCategory === 'integrity'` 時の表示分岐 (失敗 file 一覧 + 「再展開してください」案内) |
+| TS | `gui/src/components/ErrorModal.test.tsx` (修正) | integrity category 用 vitest 追加 |
+| TS | `gui/src/App.tsx` 等 (修正) | Tauri `integrity-error` event 受信 → `useErrorStore.showError({errorCategory:'integrity', isPanic:true, isRecoverable:false, logDir:...})` |
 | doc | `docs/system-architecture.md` | §配布 に integrity 仕様追記 |
 | doc | `docs/cli-spec.md` | exit code 表に `7` 追記 |
 | CI | `.github/workflows/release.yml` | `build-windows` job に E2E step 追加 (zip 解凍 → file 削除 → CLI exit 7 assert) |
@@ -152,13 +163,13 @@ success    fail                     success    fail
 
 ### GUI 路
 
-- `IntegrityErrorModal`: **blocking only**、override option なし
-- modal body: 「同梱物の検証に失敗しました。Portable ZIP を再展開してください。」 + 失敗 file 一覧 (missing / size_mismatch を区分表示)
-- 2 button:
-  1. **「ログを開く」** = `<install dir>/logs/error-YYYYMMDD.log` を notepad で開く (`open::that` 等)。modal は閉じない
-  2. **「閉じる」** = アプリ終了 (`std::process::exit` 相当)
-- 起動時に integrity check 失敗 → modal 表示 → ユーザーが「閉じる」または window close button → app exit、検証失敗状態でアプリ動作を許容しない
-- visual: PR #661 の `ErrorModal` を踏襲、`IntegrityErrorModal` は `ErrorModal` を extends する形 (writing-plans で具体構造確定)
+- **既存 `ErrorModal` を拡張** (DRY、PR #661 の useErrorStore + a11y / focus trap / Escape 処理を全 reuse)
+- `ErrorCategory` enum (`gui/src/state/errorStore.ts`) に `'integrity'` 追加
+- Rust `integrity::check()` 失敗 → Tauri event `integrity-error` を emit (payload: `{ missing: string[], size_mismatch: {path,expected,actual}[], log_path: string }`)
+- frontend が event 受信 → `useErrorStore.showError({ errorCategory: 'integrity', errorTitle: '同梱物の検証に失敗しました', errorMessage: '<失敗 file 一覧>', errorHint: 'Portable ZIP を再展開してください。', isPanic: true, isRecoverable: false })` + `setLogDir('<install dir>/logs')`
+- `ErrorModal` の表示: `isPanic: true` で **「アプリを終了」** ボタンが表示 (= `force_exit_app` Tauri command で exit)、`isRecoverable: false` で **「閉じる」** ボタンは非表示、`logDir` 設定で **「ログフォルダを開く」** ボタンが表示 (= `open_folder_in_explorer`)
+- `errorCategory === 'integrity'` 時の専用挙動: errorMessage に missing / size_mismatch を区分整形した本文、errorHint に再展開案内
+- 検証失敗状態でアプリ動作を許容しない (override option なし、blocking only)
 
 ### CLI 路
 
@@ -216,10 +227,20 @@ CI では **release profile build を CI 内で実走** することで Rust の
     # 概念例。実際の zip 名 / 解凍先 / Start-Process 呼出方は
     # writing-plans / 実装段階で確定する (PR #686 の artifact 名規則
     # 反映 / pwsh native command 罠回避テンプレ適用)
-    Expand-Archive -Path "artifact/allaganeye-portable-windows-v*.zip" -DestinationPath "verify/"
-    Remove-Item "verify/allaganeye-*/audio/refs/fanfare.npz" -Force
-    & "verify/allaganeye-*/allaganeye.bat" "--version"
-    if ($LASTEXITCODE -ne 7) { throw "integrity check did not produce exit code 7 (got $LASTEXITCODE)" }
+    # build-windows job では既に build/portable/allaganeye-v$version/ に
+    # payload が展開されている (-SkipArchive 経由)。新たに verify-copy を作って
+    # そこから 1 file 削除 → CLI 起動 → exit 7 を assert する流れ:
+    Copy-Item -Recurse "build/portable/allaganeye-v$version" "verify/" -Force
+    Remove-Item "verify/lib/allaganeye/audio/refs/fanfare.npz" -Force
+    Push-Location verify
+    try {
+      $output = '' | & cmd.exe /c "allaganeye.bat --version 2>&1"
+      $code = $LASTEXITCODE
+      $LASTEXITCODE = 0  # release.yml 既存 idiom: native 戻り値を step 末尾の auto-exit に伝播させない
+      if ($code -ne 7) { throw "integrity check did not produce exit code 7 (got $code)`n$output" }
+    } finally {
+      Pop-Location
+    }
 ```
 
 これで:
@@ -284,57 +305,56 @@ Invoke-Pester scripts/tests/build-portable-zip.Tests.ps1
 
 ## §11 Writing-plans 持ち越し事項
 
-writing-plans skill で詳細化する未確定項目:
+writing-plans skill で plan 内に直接記述する未確定項目 (本 spec 段階では持ち越し、plan 内で確定):
 
-1. **検証対象 file list の確定列挙**
-   - Python embed の必須 dll の actual list (build script 出力を見て enumeration)
-   - ffmpeg/bin/ 配下の必須 dll (avcodec / avfilter / avformat / avutil / avdevice / swscale / swresample / postproc)
-   - allaganeye Python 配下の必須 ref ファイル (`audio/refs/fanfare.npz` 以外があるか確認)
+1. **検証対象 file list の確定 enum**
+   - 採用方針: `build-portable-zip.ps1` が payload 構築完了時点で `Get-ChildItem -Recurse` で payload 全 file を列挙し、各 path / size を manifest に書く (固定 list ではなく自動 enum)
+   - 必ず含むもの: `python/python.exe` / `python/python311.dll` / `ffmpeg/ffmpeg.exe` / `ffmpeg/ffprobe.exe` / `lib/allaganeye/__init__.py` / `lib/allaganeye/audio/refs/fanfare.npz` / `allaganeye-gui.exe` (存在時) / `allaganeye.bat`
+   - 自動 enum で全 dll / 全 .py を含めるため build/run 一致が保証される
 
 2. **`integrity-manifest.json` 生成 step の `build-portable-zip.ps1` 内位置**
-   - payload 構築 (Copy-Item 等) 完了後、ZIP 圧縮直前
-   - PowerShell `Get-ChildItem -Recurse` + `Get-Item -Path | %{ @{ path=...; size=$_.Length; tolerance_bytes=0 } }` で enum
+   - 確定: `# 7. README` の後 + `# 8. Compress` の前 (payload 構築完了後、ZIP 圧縮前)
+   - 自動 enum では `Get-ChildItem -Path $PayloadDir -Recurse -File` で全 file 取得 → relative path + size を manifest 化
 
 3. **ffmpeg バージョン bump 時の挙動**
-   - 現状方針: BtbN tag 変更 → CI 再走 → manifest 再生成 → drift 0
-   - 開発 local build では Python `--version` が新 ffmpeg を見て一時的に fail する可能性 → `ALLAGANEYE_INTEGRITY_SKIP=1` で回避
+   - 確定: BtbN tag 変更 → CI 再走 → 自動 enum manifest 再生成 → drift 0
+   - 開発 local build では Python `--version` が新 ffmpeg を見て一時的に fail する可能性 → `ALLAGANEYE_INTEGRITY_SKIP=1` で回避可能
 
-4. **`IntegrityErrorModal` の文言 / レイアウト詳細**
-   - PR #661 `ErrorModal` の現行 props/CSS を読み、extends か新規かを決定
-   - 文言案: 「同梱物の検証に失敗しました。Portable ZIP を再展開してください。」+ 失敗 file 列挙 + 3 button
+4. **GUI Modal extension** (writing-plans で確定済、§6 GUI 路 参照)
+   - 既存 `ErrorModal` 拡張、`ErrorCategory` に `'integrity'` 追加、`isPanic: true` + `isRecoverable: false` で動作
 
 5. **Log 書込失敗時の fallback**
-   - install dir が read-only (Program Files 等) の場合の挙動
-   - 案 (a): silent fail (modal/exit code は出る)、案 (b): stderr のみに短メッセージ追加
+   - 採用方針: silent fail (modal/exit code は出す、log 書込失敗を理由に新たな modal を出さない)
+   - 理由: log は補助情報、modal/exit code が一次 channel
 
-6. **Tauri event 経由の payload 設計**
-   - Rust `integrity.rs` → frontend `App.tsx` で modal 開く際の payload schema
-   - 例: `{ status: "fail", missing: [...], size_mismatch: [{path, expected, actual}], log_path: "..." }`
+6. **Tauri event payload schema** (writing-plans で確定済、§6 GUI 路 参照)
+   - event 名: `integrity-error`
+   - payload: `{ missing: string[], size_mismatch: {path: string, expected: number, actual: number}[], log_path: string }`
 
 ## §12 影響範囲
 
 ### 修正対象 file
 
 ```
-allaganeye/exceptions.py        (修正、+ IntegrityError class)
-allaganeye/integrity.py         (新規)
+allaganeye/exceptions.py        (修正、+ IntegrityError class、exit_code = 7)
+allaganeye/integrity.py         (新規、manifest load + check + skip 判定)
 allaganeye/cli.py               (修正、version_callback 内で integrity 呼出)
-tests/test_integrity.py         (新規)
+tests/test_integrity.py         (新規、unit tests)
 
-gui/src-tauri/src/integrity.rs  (新規)
-gui/src-tauri/src/lib.rs        (修正、起動 hook + Tauri event)
-gui/src/components/IntegrityErrorModal.tsx        (新規)
-gui/src/components/IntegrityErrorModal.module.css (新規)
-gui/src/components/IntegrityErrorModal.test.tsx   (新規)
-gui/src/App.tsx 等              (修正、Tauri event listener)
+gui/src-tauri/src/integrity.rs  (新規、manifest load + check)
+gui/src-tauri/src/lib.rs        (修正、setup hook で integrity::check() + integrity-error event emit)
+gui/src/state/errorStore.ts     (修正、ErrorCategory に 'integrity' 追加)
+gui/src/components/ErrorModal.tsx        (修正、'integrity' category 用 表示分岐)
+gui/src/components/ErrorModal.test.tsx   (修正、'integrity' category テスト追加)
+gui/src/App.tsx 等              (修正、'integrity-error' Tauri event listener 追加)
 
-scripts/build-portable-zip.ps1  (修正、manifest 生成 step 追加)
-scripts/tests/build-portable-zip.Tests.ps1 (修正、Pester test 追加)
+scripts/build-portable-zip.ps1  (修正、# 7 と # 8 の間で manifest 生成 step 追加)
+scripts/tests/build-portable-zip.Tests.ps1 (修正、manifest 生成 logic Pester test 追加)
 
-.github/workflows/release.yml   (修正、build-windows job E2E step 追加)
+.github/workflows/release.yml   (修正、build-windows job に integrity E2E step 追加)
 
 docs/system-architecture.md     (修正、§配布 追記)
-docs/cli-spec.md                (修正、exit code 7 追記)
+docs/cli-spec.md                (修正、exit code 表に 7 追記)
 ```
 
 ### 並行 lane との衝突
@@ -351,7 +371,7 @@ docs/cli-spec.md                (修正、exit code 7 追記)
 | size 範囲 check の検出力 | SHA256 より弱い | 「~50ms 以内」と「ユーザー操作起因の欠損検知」目的に整合、SHA は意図的に対象外 (元 issue) |
 | dev mode skip の Rust cfg 限定 | release で env による一時 skip 不可 | CI で release profile build を実走して fall-through を verify、debug は `cargo build` 経由で skip 可能 |
 | log 書込失敗 (read-only install dir) | log が残らない bug report 困難化 | writing-plans で fallback (silent / stderr) を決定 |
-| `IntegrityErrorModal` 実装 | PR #661 ErrorModal の API 変更があれば追従コスト | writing-plans で ErrorModal の現行構造を確認、extends の妥当性を判定 |
+| `ErrorModal` 拡張方針 | 既存 component の `ErrorCategory` enum 追加 + `errorCategory === 'integrity'` 分岐で対応。新 file 不要、a11y / focus trap / Escape 処理を全 reuse | writing-plans で確定済 (§6 GUI 路) |
 | Tauri startup hook の error 経路 | hook 失敗が deadlock するリスク | Rust `integrity::check()` は I/O のみ (file stat + JSON parse)、panic 化させない設計 (Result return) |
 
 ## §14 参考 doc / 関連 issue
