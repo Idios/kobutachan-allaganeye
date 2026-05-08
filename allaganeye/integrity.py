@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +26,7 @@ from allaganeye.exceptions import IntegrityError
 
 _MANIFEST_NAME = "integrity-manifest.json"
 _SKIP_ENV = "ALLAGANEYE_INTEGRITY_SKIP"
+_LOG_DIR_NAME = "logs"
 
 # Resolved at import time so monkeypatch.setattr can override for tests
 # without touching the real ``__file__`` (which would also affect other
@@ -73,6 +76,30 @@ def load_manifest(path: Path) -> dict[str, Any]:
     return data
 
 
+def _write_log(
+    install_dir: Path,
+    missing: list[str],
+    size_mismatch: list[dict[str, Any]],
+) -> None:
+    """Append an integrity-failure record to ``<install dir>/logs/error-YYYYMMDD.log``.
+
+    Format: ``{ISO8601 UTC} [error] integrity check failed: missing=<JSON>; size_mismatch=<JSON>``.
+
+    Caller catches exceptions silently -- the modal/exit code is the
+    primary user channel; log is supplementary (#668 section 6 Log fallback).
+    """
+    log_dir = install_dir / _LOG_DIR_NAME
+    log_dir.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(UTC)
+    log_path = log_dir / f"error-{now.strftime('%Y%m%d')}.log"
+    line = (
+        f"{now.strftime('%Y-%m-%dT%H:%M:%SZ')} [error] integrity check failed: "
+        f"missing={json.dumps(missing)}; size_mismatch={json.dumps(size_mismatch)}\n"
+    )
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(line)
+
+
 def check(
     manifest_path: Path | None = None, *, install_dir: Path | None = None
 ) -> None:
@@ -110,6 +137,13 @@ def check(
                 }
             )
     if missing or size_mismatch:
+        try:
+            _write_log(install_dir, missing, size_mismatch)
+        except OSError:
+            # Silent fail -- modal/exit code is the primary channel,
+            # log is supplementary. Do not let a broken logs/ dir block
+            # the integrity-failure surface.
+            pass
         raise IntegrityError(
             f"integrity check failed: {len(missing)} missing, "
             f"{len(size_mismatch)} size mismatch",

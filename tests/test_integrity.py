@@ -269,7 +269,9 @@ def test_check_tolerance_default_zero(tmp_path: Path) -> None:
     assert check(manifest, install_dir=install) is None
 
 
-def test_check_skips_when_env_set(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_check_skips_when_env_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """ALLAGANEYE_INTEGRITY_SKIP=1 makes check() a no-op even with missing manifest."""
     from allaganeye.integrity import check
 
@@ -294,3 +296,64 @@ def test_check_does_not_skip_when_env_set_to_other_value(
 
     with pytest.raises(IntegrityError):
         check(fake_manifest, install_dir=tmp_path)
+
+
+def test_log_written_on_failure(tmp_path: Path) -> None:
+    """check() failure appends a record to <install dir>/logs/error-YYYYMMDD.log."""
+    from allaganeye.integrity import check
+
+    install = tmp_path / "install"
+    install.mkdir()
+    manifest = install / "integrity-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "generated_at": "2026-05-08T00:00:00Z",
+                "files": [{"path": "absent.bin", "size": 100, "tolerance_bytes": 0}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(IntegrityError):
+        check(manifest, install_dir=install)
+
+    logs_dir = install / "logs"
+    assert logs_dir.exists()
+    log_files = list(logs_dir.glob("error-*.log"))
+    assert len(log_files) == 1
+    content = log_files[0].read_text(encoding="utf-8")
+    assert "integrity check failed" in content
+    assert '"absent.bin"' in content  # JSON-encoded path inside the record
+
+
+def test_log_silent_fail_when_dir_creation_blocked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Log write failure does not change the modal/exit code path (silent fail)."""
+    import allaganeye.integrity as integ
+    from allaganeye.integrity import check
+
+    def boom(*_args, **_kwargs):
+        raise PermissionError("readonly install dir")
+
+    monkeypatch.setattr(integ, "_write_log", boom)
+
+    install = tmp_path / "install"
+    install.mkdir()
+    manifest = install / "integrity-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "generated_at": "2026-05-08T00:00:00Z",
+                "files": [{"path": "absent.bin", "size": 1, "tolerance_bytes": 0}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # check() must still raise IntegrityError even when _write_log explodes.
+    with pytest.raises(IntegrityError):
+        check(manifest, install_dir=install)
