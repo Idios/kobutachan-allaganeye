@@ -45,13 +45,15 @@ gh pr list --search "643 in:title,body" --state all
 
 Expected: 既存 PR が無いこと (もしあれば本 plan を中止して既存 PR の状態を確認)。
 
-- [ ] **Step 4: branch 切り**
+- [ ] **Step 4: branch 切り (origin/develop-0.2.0 から派生明示、worktree branch の plan/spec commits を取り込まないこと)**
 
 ```bash
-git switch -c claude/musing-davinci-38136f-eslint
+git switch -c claude/musing-davinci-38136f-eslint origin/develop-0.2.0
 ```
 
-Expected: branch 切り替え完了。
+Expected: branch 切り替え完了。`git log --oneline origin/develop-0.2.0..HEAD` が空 (ahead-by-0)。
+
+**注意**: worktree session の現在 branch (`claude/musing-davinci-38136f`) には plan/spec commits が含まれているため、`git switch -c <new-branch>` だけだとそれらを inherit してしまう。`origin/develop-0.2.0` を明示することで Phase 1 の PR scope を本質的な実装変更のみに保つ (Iron Law 3 担保)。Unit P1-A 実行時に同問題で markdownlint FAIL + plan/spec docs scope creep を発生させた経緯あり (rebase で fix 済)。
 
 ---
 
