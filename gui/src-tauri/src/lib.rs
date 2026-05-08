@@ -79,19 +79,22 @@ fn load_metadata_sync(meta_path: &Path) -> Result<Value, AppError> {
         return Err(AppError::new(
             "io.file_not_found",
             format!("metadata file not found: {}", meta_path.display()),
-        ));
+        )
+        .with_default_hint());
     }
     let content = fs::read_to_string(meta_path).map_err(|e| {
         AppError::new(
             "io.read_failed",
             format!("read failed ({}): {}", meta_path.display(), e),
         )
+        .with_default_hint()
     })?;
     let value: Value = serde_json::from_str(&content).map_err(|e| {
         AppError::new(
             "parse.json_invalid",
             format!("invalid JSON in {}: {}", meta_path.display(), e),
         )
+        .with_default_hint()
     })?;
     if !value.is_object() {
         return Err(AppError::new(
@@ -100,7 +103,8 @@ fn load_metadata_sync(meta_path: &Path) -> Result<Value, AppError> {
                 "metadata file {} root must be a JSON object",
                 meta_path.display()
             ),
-        ));
+        )
+        .with_default_hint());
     }
     Ok(value)
 }
@@ -137,6 +141,7 @@ async fn apply_changes(
                 meta_path.display()
             ),
         )
+        .with_default_hint()
     })
 }
 
@@ -167,6 +172,7 @@ fn draft_path_for(meta_path: &Path) -> Result<PathBuf, AppError> {
             "validation.path_invalid",
             format!("metadata path has no parent: {}", meta_path.display()),
         )
+        .with_default_hint()
     })?;
     Ok(parent.join("metadata.draft.json"))
 }
@@ -186,12 +192,14 @@ fn load_draft_sync(meta_path: &Path) -> Result<Option<Value>, AppError> {
             "io.read_failed",
             format!("read draft failed ({}): {}", draft_path.display(), e),
         )
+        .with_default_hint()
     })?;
     let value: Value = serde_json::from_str(&content).map_err(|e| {
         AppError::new(
             "parse.json_invalid",
             format!("invalid JSON in draft {}: {}", draft_path.display(), e),
         )
+        .with_default_hint()
     })?;
     Ok(Some(value))
 }
@@ -208,6 +216,7 @@ fn clear_draft_sync(meta_path: &Path) -> Result<(), AppError> {
             "io.delete_failed",
             format!("remove draft failed ({}): {}", draft_path.display(), e),
         )
+        .with_default_hint()
     })
 }
 
@@ -223,25 +232,29 @@ fn restore_from_original_sync(meta_path: &Path) -> Result<(), AppError> {
             "validation.path_invalid",
             format!("metadata path has no parent: {}", meta_path.display()),
         )
+        .with_default_hint()
     })?;
     let original_path = parent.join("metadata.original.json");
     if !original_path.exists() {
         return Err(AppError::new(
             "io.file_not_found",
             format!("no backup to restore: {}", original_path.display()),
-        ));
+        )
+        .with_default_hint());
     }
     let content = fs::read_to_string(&original_path).map_err(|e| {
         AppError::new(
             "io.read_failed",
             format!("read backup failed ({}): {}", original_path.display(), e),
         )
+        .with_default_hint()
     })?;
     let value: Value = serde_json::from_str(&content).map_err(|e| {
         AppError::new(
             "parse.json_invalid",
             format!("parse backup failed ({}): {}", original_path.display(), e),
         )
+        .with_default_hint()
     })?;
     write_metadata_atomic(meta_path, &value)
 }
@@ -256,6 +269,7 @@ async fn check_backup_exists(path: String) -> Result<bool, AppError> {
             "validation.path_invalid",
             format!("metadata path has no parent: {}", meta_path.display()),
         )
+        .with_default_hint()
     })?;
     Ok(parent.join("metadata.original.json").exists())
 }
@@ -319,12 +333,14 @@ fn recent_path() -> Result<PathBuf, AppError> {
             "path.install_dir_unresolved",
             format!("failed to resolve current_exe: {}", e),
         )
+        .with_default_hint()
     })?;
     let dir = exe.parent().ok_or_else(|| {
         AppError::new(
             "path.install_dir_unresolved",
             format!("current_exe has no parent: {}", exe.display()),
         )
+        .with_default_hint()
     })?;
     Ok(dir.join("recent.json"))
 }
@@ -390,6 +406,7 @@ fn clear_recent_sync(path: &Path) -> Result<(), AppError> {
             "io.delete_failed",
             format!("remove recent.json failed ({}): {}", path.display(), e),
         )
+        .with_default_hint()
     })
 }
 
@@ -399,6 +416,7 @@ fn write_recent_atomic(path: &Path, list: &[RecentEntry]) -> Result<(), AppError
             "validation.path_invalid",
             format!("recent path has no parent: {}", path.display()),
         )
+        .with_default_hint()
     })?;
     if !parent.exists() {
         fs::create_dir_all(parent).map_err(|e| {
@@ -406,6 +424,7 @@ fn write_recent_atomic(path: &Path, list: &[RecentEntry]) -> Result<(), AppError
                 "io.write_failed",
                 format!("create dir {} failed: {}", parent.display(), e),
             )
+            .with_default_hint()
         })?;
     }
     let mut tmp_path = path.to_path_buf();
@@ -415,7 +434,8 @@ fn write_recent_atomic(path: &Path, list: &[RecentEntry]) -> Result<(), AppError
             return Err(AppError::new(
                 "validation.path_invalid",
                 format!("recent path has no file name: {}", path.display()),
-            ))
+            )
+            .with_default_hint())
         }
     };
     tmp_path.set_file_name(tmp_name);
@@ -424,12 +444,14 @@ fn write_recent_atomic(path: &Path, list: &[RecentEntry]) -> Result<(), AppError
             "parse.json_serialize_failed",
             format!("serialize recent failed: {}", e),
         )
+        .with_default_hint()
     })?;
     fs::write(&tmp_path, serialized).map_err(|e| {
         AppError::new(
             "io.write_failed",
             format!("write tmp {} failed: {}", tmp_path.display(), e),
         )
+        .with_default_hint()
     })?;
     if let Err(e) = fs::rename(&tmp_path, path) {
         let _ = fs::remove_file(&tmp_path);
@@ -441,7 +463,8 @@ fn write_recent_atomic(path: &Path, list: &[RecentEntry]) -> Result<(), AppError
                 path.display(),
                 e
             ),
-        ));
+        )
+        .with_default_hint());
     }
     Ok(())
 }
@@ -482,13 +505,15 @@ async fn add_recent(path: String) -> Result<Vec<RecentEntry>, AppError> {
         return Err(AppError::new(
             "io.file_not_found",
             format!("file not found: {}", video_path.display()),
-        ));
+        )
+        .with_default_hint());
     }
     let meta = fs::metadata(&video_path).map_err(|e| {
         AppError::new(
             "io.read_failed",
             format!("stat failed ({}): {}", video_path.display(), e),
         )
+        .with_default_hint()
     })?;
     let size_bytes = meta.len();
     let mtime_ms = meta
@@ -618,6 +643,7 @@ async fn probe_video_with(
                 "io.read_failed",
                 format!("stat failed ({}): {}", path.display(), e),
             )
+            .with_default_hint()
         })?
         .len();
 
@@ -636,6 +662,7 @@ async fn probe_video_with(
                 "subprocess.spawn_failed",
                 format!("ffprobe spawn failed: {e}"),
             )
+            .with_default_hint()
         })?;
 
     if !output.status.success() {
@@ -647,7 +674,8 @@ async fn probe_video_with(
                 output.status.code(),
                 stderr.trim()
             ),
-        ));
+        )
+        .with_default_hint());
     }
 
     let json: Value = serde_json::from_slice(&output.stdout).map_err(|e| {
@@ -655,6 +683,7 @@ async fn probe_video_with(
             "parse.ffprobe_output_invalid",
             format!("ffprobe json parse failed: {e}"),
         )
+        .with_default_hint()
     })?;
 
     let streams = json
@@ -665,6 +694,7 @@ async fn probe_video_with(
                 "parse.ffprobe_output_invalid",
                 "ffprobe output missing 'streams' array",
             )
+            .with_default_hint()
         })?;
     let video_stream = streams
         .iter()
@@ -674,6 +704,7 @@ async fn probe_video_with(
                 "parse.ffprobe_output_invalid",
                 "no video stream in ffprobe output",
             )
+            .with_default_hint()
         })?;
 
     let width = video_stream
@@ -684,6 +715,7 @@ async fn probe_video_with(
                 "parse.ffprobe_output_invalid",
                 "video stream missing width",
             )
+            .with_default_hint()
         })? as u32;
     let height = video_stream
         .get("height")
@@ -693,6 +725,7 @@ async fn probe_video_with(
                 "parse.ffprobe_output_invalid",
                 "video stream missing height",
             )
+            .with_default_hint()
         })? as u32;
     let codec = video_stream
         .get("codec_name")
@@ -715,6 +748,7 @@ async fn probe_video_with(
             "parse.ffprobe_output_invalid",
             "cannot determine frame rate",
         )
+        .with_default_hint()
     })?;
 
     let duration_seconds = json
@@ -727,12 +761,14 @@ async fn probe_video_with(
                 "parse.ffprobe_output_invalid",
                 "format.duration missing or unparseable",
             )
+            .with_default_hint()
         })?;
     if duration_seconds <= 0.0 {
         return Err(AppError::new(
             "validation.range_invalid",
             "duration is non-positive",
-        ));
+        )
+        .with_default_hint());
     }
 
     let file_name = path
@@ -777,25 +813,29 @@ fn validate_video_path(path: &Path) -> Result<PathBuf, AppError> {
         return Err(AppError::new(
             "io.file_not_found",
             format!("video file not found: {}", path.display()),
-        ));
+        )
+        .with_default_hint());
     }
     let meta = fs::metadata(path).map_err(|e| {
         AppError::new(
             "io.read_failed",
             format!("stat failed ({}): {}", path.display(), e),
         )
+        .with_default_hint()
     })?;
     if !meta.is_file() {
         return Err(AppError::new(
             "validation.not_a_file",
             format!("video path is not a regular file: {}", path.display()),
-        ));
+        )
+        .with_default_hint());
     }
     fs::canonicalize(path).map_err(|e| {
         AppError::new(
             "io.read_failed",
             format!("canonicalize failed ({}): {}", path.display(), e),
         )
+        .with_default_hint()
     })
 }
 
@@ -822,6 +862,7 @@ async fn ensure_server_started() -> Result<u16, AppError> {
             "subprocess.spawn_failed",
             format!("bind 127.0.0.1:0 failed: {}", e),
         )
+        .with_default_hint()
     })?;
     let addr = listener
         .local_addr()
@@ -893,6 +934,7 @@ fn apply_changes_sync(
                     "io.read_failed",
                     format!("cannot read mtime of {}", meta_path.display()),
                 )
+                .with_default_hint()
             })?;
             if actual != expected {
                 return Err(AppError::new(
@@ -903,7 +945,8 @@ fn apply_changes_sync(
                         expected,
                         actual
                     ),
-                ));
+                )
+                .with_default_hint());
             }
         }
     }
@@ -914,6 +957,7 @@ fn apply_changes_sync(
             "validation.path_invalid",
             format!("metadata path has no parent: {}", meta_path.display()),
         )
+        .with_default_hint()
     })?;
     let original_path = parent.join("metadata.original.json");
 
@@ -928,6 +972,7 @@ fn apply_changes_sync(
                     e
                 ),
             )
+            .with_default_hint()
         })?;
     }
 
@@ -940,6 +985,7 @@ fn write_metadata_atomic(path: &Path, payload: &Value) -> Result<(), AppError> {
             "validation.path_invalid",
             format!("metadata path has no parent: {}", path.display()),
         )
+        .with_default_hint()
     })?;
     if !parent.exists() {
         fs::create_dir_all(parent).map_err(|e| {
@@ -947,6 +993,7 @@ fn write_metadata_atomic(path: &Path, payload: &Value) -> Result<(), AppError> {
                 "io.write_failed",
                 format!("create dir {} failed: {}", parent.display(), e),
             )
+            .with_default_hint()
         })?;
     }
     let mut tmp_path = path.to_path_buf();
@@ -956,7 +1003,8 @@ fn write_metadata_atomic(path: &Path, payload: &Value) -> Result<(), AppError> {
             return Err(AppError::new(
                 "validation.path_invalid",
                 format!("metadata path has no file name: {}", path.display()),
-            ))
+            )
+            .with_default_hint())
         }
     };
     tmp_path.set_file_name(tmp_name);
@@ -966,12 +1014,14 @@ fn write_metadata_atomic(path: &Path, payload: &Value) -> Result<(), AppError> {
             "parse.json_serialize_failed",
             format!("serialize failed: {}", e),
         )
+        .with_default_hint()
     })?;
     fs::write(&tmp_path, serialized).map_err(|e| {
         AppError::new(
             "io.write_failed",
             format!("write tmp {} failed: {}", tmp_path.display(), e),
         )
+        .with_default_hint()
     })?;
     if let Err(e) = fs::rename(&tmp_path, path) {
         let _ = fs::remove_file(&tmp_path);
@@ -983,7 +1033,8 @@ fn write_metadata_atomic(path: &Path, payload: &Value) -> Result<(), AppError> {
                 path.display(),
                 e
             ),
-        ));
+        )
+        .with_default_hint());
     }
     Ok(())
 }
@@ -1032,12 +1083,14 @@ fn thumb_cache_dir(video_hash: &str) -> Result<PathBuf, AppError> {
             "path.install_dir_unresolved",
             format!("failed to resolve current_exe: {}", e),
         )
+        .with_default_hint()
     })?;
     let dir = exe.parent().ok_or_else(|| {
         AppError::new(
             "path.install_dir_unresolved",
             format!("current_exe has no parent: {}", exe.display()),
         )
+        .with_default_hint()
     })?;
     Ok(dir.join("cache").join(video_hash).join("thumbs"))
 }
@@ -1097,13 +1150,15 @@ async fn generate_match_thumbnails(
         return Err(AppError::new(
             "io.file_not_found",
             format!("video file not found: {}", video.display()),
-        ));
+        )
+        .with_default_hint());
     }
     let meta = fs::metadata(&video).map_err(|e| {
         AppError::new(
             "io.read_failed",
             format!("stat failed ({}): {}", video.display(), e),
         )
+        .with_default_hint()
     })?;
     let mtime_ms = meta
         .modified()
@@ -1112,6 +1167,7 @@ async fn generate_match_thumbnails(
                 "io.read_failed",
                 format!("mtime failed ({}): {}", video.display(), e),
             )
+            .with_default_hint()
         })?
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -1120,12 +1176,14 @@ async fn generate_match_thumbnails(
                 "io.read_failed",
                 format!("mtime before epoch ({}): {}", video.display(), e),
             )
+            .with_default_hint()
         })?;
     let canonical = fs::canonicalize(&video).map_err(|e| {
         AppError::new(
             "io.read_failed",
             format!("canonicalize failed ({}): {}", video.display(), e),
         )
+        .with_default_hint()
     })?;
 
     let video_hash = compute_video_cache_hash(&canonical, mtime_ms);
@@ -1135,6 +1193,7 @@ async fn generate_match_thumbnails(
             "io.write_failed",
             format!("create cache dir {} failed: {}", cache_dir.display(), e),
         )
+        .with_default_hint()
     })?;
 
     let timestamps = compute_candidate_timestamps(boundary_t_seconds, window_seconds, count);
@@ -1152,6 +1211,7 @@ async fn generate_match_thumbnails(
                     "internal.error",
                     format!("semaphore closed: {}", e),
                 )
+                .with_default_hint()
             })?;
             ensure_thumbnail_exists(&video_for_task, t, &out_path).await?;
             Ok::<ThumbnailEntry, AppError>(ThumbnailEntry {
@@ -1189,6 +1249,7 @@ async fn ensure_thumbnail_exists(
                     "io.write_failed",
                     format!("create dir {} failed: {}", parent.display(), e),
                 )
+                .with_default_hint()
             })?;
         }
     }
@@ -1218,6 +1279,7 @@ async fn ensure_thumbnail_exists(
                 "subprocess.spawn_failed",
                 format!("spawn ffmpeg failed at t={}: {}", t_arg, e),
             )
+            .with_default_hint()
         })?;
 
     if !output.status.success() {
@@ -1230,7 +1292,8 @@ async fn ensure_thumbnail_exists(
                 output.status.code(),
                 stderr.trim()
             ),
-        ));
+        )
+        .with_default_hint());
     }
     Ok(())
 }
@@ -1536,25 +1599,29 @@ fn validate_export_request(
         return Err(AppError::new(
             "io.file_not_found",
             format!("video file not found: {}", video_path.display()),
-        ));
+        )
+        .with_default_hint());
     }
     let meta = fs::metadata(video_path).map_err(|e| {
         AppError::new(
             "io.read_failed",
             format!("stat failed ({}): {}", video_path.display(), e),
         )
+        .with_default_hint()
     })?;
     if !meta.is_file() {
         return Err(AppError::new(
             "validation.not_a_file",
             format!("video path is not a regular file: {}", video_path.display()),
-        ));
+        )
+        .with_default_hint());
     }
     if !start_seconds.is_finite() || start_seconds < 0.0 {
         return Err(AppError::new(
             "validation.range_invalid",
             format!("start_seconds must be >= 0 (got {})", start_seconds),
-        ));
+        )
+        .with_default_hint());
     }
     if !end_seconds.is_finite() || end_seconds <= start_seconds {
         return Err(AppError::new(
@@ -1563,7 +1630,8 @@ fn validate_export_request(
                 "end_seconds must be > start_seconds (got start={}, end={})",
                 start_seconds, end_seconds
             ),
-        ));
+        )
+        .with_default_hint());
     }
     Ok(())
 }
@@ -1590,7 +1658,8 @@ fn validate_output_parent_exists(output_path: &Path) -> Result<(), AppError> {
             return Err(AppError::new(
                 "io.file_not_found",
                 format!("output directory does not exist: {}", parent.display()),
-            ));
+            )
+            .with_default_hint());
         }
     }
     Ok(())
@@ -1607,14 +1676,16 @@ fn validate_open_folder_request(path: &str) -> Result<(), AppError> {
         return Err(AppError::new(
             "io.file_not_found",
             format!("path does not exist: {}", path),
-        ));
+        )
+        .with_default_hint());
     }
     #[cfg(not(target_os = "windows"))]
     {
         return Err(AppError::new(
             "platform.unsupported",
             "open_folder_in_explorer is only supported on Windows",
-        ));
+        )
+        .with_default_hint());
     }
     #[cfg(target_os = "windows")]
     {
@@ -1649,6 +1720,7 @@ fn open_folder_in_explorer(path: String) -> Result<(), AppError> {
                     "subprocess.spawn_failed",
                     format!("failed to launch explorer: {}", e),
                 )
+                .with_default_hint()
             })?;
     }
 
@@ -2058,7 +2130,7 @@ async fn export_match(
                 fallback_from: None,
             },
         );
-        return Err(AppError::new("subprocess.exit_failed", msg));
+        return Err(AppError::new("subprocess.exit_failed", msg).with_default_hint());
     }
 
     // No retry -- surface the primary failure.
@@ -2078,7 +2150,7 @@ async fn export_match(
             fallback_from: None,
         },
     );
-    Err(AppError::new("subprocess.exit_failed", msg))
+    Err(AppError::new("subprocess.exit_failed", msg).with_default_hint())
 }
 
 fn build_export_result(output: &Path, match_index: u32, started: Instant) -> ExportResult {
@@ -2389,7 +2461,8 @@ async fn start_detect(
         return Err(AppError::new(
             "io.file_not_found",
             format!("video file not found: {}", video.display()),
-        ));
+        )
+        .with_default_hint());
     }
     let output_buf = PathBuf::from(&output_dir);
     if let Err(e) = fs::create_dir_all(&output_buf) {
@@ -2400,7 +2473,8 @@ async fn start_detect(
                 output_buf.display(),
                 e
             ),
-        ));
+        )
+        .with_default_hint());
     }
 
     let cmd_spec = resolve_allaganeye_command(&app);
@@ -2549,7 +2623,7 @@ async fn start_detect(
                     ..Default::default()
                 },
             );
-            return Err(AppError::new("subprocess.cancelled", "detect cancelled"));
+            return Err(AppError::new("subprocess.cancelled", "detect cancelled").with_default_hint());
         }
     };
 
@@ -2578,7 +2652,7 @@ async fn start_detect(
                 ..Default::default()
             },
         );
-        return Err(AppError::new("subprocess.exit_failed", msg));
+        return Err(AppError::new("subprocess.exit_failed", msg).with_default_hint());
     }
 
     let metadata_path = metadata_path.ok_or_else(|| {
@@ -2586,6 +2660,7 @@ async fn start_detect(
             "internal.error",
             "detect completed but no metadata_path was emitted",
         )
+        .with_default_hint()
     })?;
 
     Ok(DetectResult {
@@ -2605,6 +2680,7 @@ fn get_log_dir() -> Result<String, AppError> {
                 "path.install_dir_unresolved",
                 format!("could not resolve log dir: {}", e),
             )
+            .with_default_hint()
         })
 }
 
