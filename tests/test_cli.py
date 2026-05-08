@@ -22,14 +22,17 @@ MODULE = "allaganeye.commands.split_matches.run_split"
 # --- Basic tests ---
 
 
-def test_version():
+def test_version(monkeypatch: pytest.MonkeyPatch):
+    """--version returns 0 with version output (integrity check skipped for tests)."""
+    monkeypatch.setenv("ALLAGANEYE_INTEGRITY_SKIP", "1")
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
     assert "allaganeye" in result.stdout
 
 
-def test_version_short_flag():
+def test_version_short_flag(monkeypatch: pytest.MonkeyPatch):
     """-V should be an alias for --version (issue #337)."""
+    monkeypatch.setenv("ALLAGANEYE_INTEGRITY_SKIP", "1")
     result = runner.invoke(app, ["-V"])
     assert result.exit_code == 0
     assert "allaganeye" in result.stdout
@@ -1135,6 +1138,7 @@ def test_main_no_hint_when_double_dash_correct(monkeypatch, capsys):
     """``--version`` works normally without spurious hint (#440 regression guard)."""
     from allaganeye.cli import main
 
+    monkeypatch.setenv("ALLAGANEYE_INTEGRITY_SKIP", "1")
     monkeypatch.setattr("sys.argv", ["allaganeye", "--version"])
     with pytest.raises(SystemExit) as excinfo:
         main()
@@ -1149,6 +1153,7 @@ def test_main_short_alias_unchanged(monkeypatch, capsys):
     """``-V`` short alias still prints version, no hint emitted (#440 regression guard)."""
     from allaganeye.cli import main
 
+    monkeypatch.setenv("ALLAGANEYE_INTEGRITY_SKIP", "1")
     monkeypatch.setattr("sys.argv", ["allaganeye", "-V"])
     with pytest.raises(SystemExit) as excinfo:
         main()
@@ -1170,3 +1175,57 @@ def test_main_no_misleading_hint_for_unrelated_typo(monkeypatch, capsys):
     captured = capsys.readouterr()
     combined = captured.out + captured.err
     assert "Did you mean" not in combined
+
+
+# --- Version callback integrity check tests (#668) ---
+
+
+def test_version_callback_exits_zero_when_integrity_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--version exit 0 + version output when integrity passes."""
+    import typer
+
+    from allaganeye import cli
+
+    monkeypatch.setenv("ALLAGANEYE_INTEGRITY_SKIP", "1")
+
+    with pytest.raises(typer.Exit) as exc_info:
+        cli.version_callback(True)
+
+    assert (exc_info.value.exit_code or 0) == 0
+
+
+def test_version_callback_exits_seven_when_integrity_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--version exit 7 when integrity fails, with stderr message."""
+    import typer
+
+    from allaganeye import cli, integrity
+    from allaganeye.exceptions import IntegrityError
+
+    def fake_check() -> None:
+        raise IntegrityError(
+            "integrity check failed: 1 missing, 0 size mismatch",
+            context={
+                "missing": ["lib/allaganeye/audio/refs/fanfare.npz"],
+                "size_mismatch": [],
+            },
+        )
+
+    monkeypatch.setattr(integrity, "check", fake_check)
+
+    with pytest.raises(typer.Exit) as exc_info:
+        cli.version_callback(True)
+
+    assert exc_info.value.exit_code == 7
+    captured = capsys.readouterr()
+    assert "integrity check failed" in captured.err
+
+
+def test_version_callback_returns_when_value_false() -> None:
+    """value=False (no --version flag) returns silently."""
+    from allaganeye import cli
+
+    assert cli.version_callback(False) is None
