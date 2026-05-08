@@ -66,6 +66,142 @@ pub fn load_manifest(path: &Path) -> Result<Manifest, String> {
     })
 }
 
+use std::io::Write as _;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Convert seconds since UNIX epoch into (year, month, day, hour, min, sec).
+///
+/// Self-contained Gregorian calendar arithmetic so we don't pull in the
+/// chrono / time crate just for log-file naming. Tested against known
+/// Unix timestamps including leap years.
+#[allow(dead_code)] // used transitively via write_log; direct callers added in Task 14
+fn epoch_to_components(secs: u64) -> (u32, u32, u32, u32, u32, u32) {
+    let sec = (secs % 60) as u32;
+    let total_min = secs / 60;
+    let min = (total_min % 60) as u32;
+    let total_hour = total_min / 60;
+    let hour = (total_hour % 24) as u32;
+    let total_days = total_hour / 24;
+
+    let mut year = 1970u32;
+    let mut day_of_year = total_days as u32;
+    loop {
+        let dim = if is_leap(year) { 366 } else { 365 };
+        if day_of_year < dim {
+            break;
+        }
+        day_of_year -= dim;
+        year += 1;
+    }
+    let mut month = 1u32;
+    let mut day = day_of_year + 1;
+    let months_days: [u32; 12] = if is_leap(year) {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+    for &md in &months_days {
+        if day <= md {
+            break;
+        }
+        day -= md;
+        month += 1;
+    }
+    (year, month, day, hour, min, sec)
+}
+
+fn is_leap(year: u32) -> bool {
+    year.is_multiple_of(400) || (year.is_multiple_of(4) && !year.is_multiple_of(100))
+}
+
+#[allow(dead_code)] // used transitively via write_log; direct callers added in Task 14
+fn now_components() -> (u32, u32, u32, u32, u32, u32) {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    epoch_to_components(secs)
+}
+
+#[allow(dead_code)] // used transitively via write_log; direct callers added in Task 14
+fn log_filename() -> String {
+    let (y, mo, d, _, _, _) = now_components();
+    format!("error-{:04}{:02}{:02}.log", y, mo, d)
+}
+
+#[allow(dead_code)] // used transitively via write_log; direct callers added in Task 14
+fn iso8601_now() -> String {
+    let (y, mo, d, h, mi, s) = now_components();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        y, mo, d, h, mi, s
+    )
+}
+
+#[allow(dead_code)] // used transitively via check_install_dir_with_paths; wired in Task 14
+fn log_path(install_dir: &Path) -> std::path::PathBuf {
+    install_dir.join("logs").join(log_filename())
+}
+
+/// Append an integrity-failure record to <install dir>/logs/error-YYYYMMDD.log.
+#[allow(dead_code)] // called by check_install_dir_with_paths; wired to lib.rs in Task 14
+pub(crate) fn write_log(
+    install_dir: &Path,
+    missing: &[String],
+    size_mismatch: &[SizeMismatch],
+) -> std::io::Result<()> {
+    let logs_dir = install_dir.join("logs");
+    fs::create_dir_all(&logs_dir)?;
+    let path = logs_dir.join(log_filename());
+    let mut f = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    let now = iso8601_now();
+    let missing_json = serde_json::to_string(missing).unwrap_or_else(|_| "[]".into());
+    let size_json = serde_json::to_string(size_mismatch).unwrap_or_else(|_| "[]".into());
+    writeln!(
+        f,
+        "{} [error] integrity check failed: missing={}; size_mismatch={}",
+        now, missing_json, size_json
+    )?;
+    Ok(())
+}
+
+/// Production-side wrapper: resolves the install dir from `current_exe`,
+/// runs `check`, writes the log on failure, and fills `log_path`.
+///
+/// Returns `None` on success / skip / when install dir cannot be resolved
+/// (best-effort fallback so a misconfigured launcher doesn't deadlock the
+/// app -- debug builds always go through this None path via the cfg gate
+/// in `lib.rs::run`).
+#[allow(dead_code)] // called from lib.rs::run in Task 14
+pub fn check_install_dir() -> Option<IntegrityErrorPayload> {
+    let exe = std::env::current_exe().ok()?;
+    let install_dir = exe.parent()?.to_path_buf();
+    let manifest_path = install_dir.join("integrity-manifest.json");
+    check_install_dir_with_paths(&manifest_path, &install_dir)
+}
+
+/// Test-friendly variant: explicit manifest_path / install_dir args so the
+/// integration tests can drive the full path without invoking
+/// `current_exe`.
+#[allow(dead_code)] // used by tests in mod tests; production path goes through check_install_dir
+pub(crate) fn check_install_dir_with_paths(
+    manifest_path: &Path,
+    install_dir: &Path,
+) -> Option<IntegrityErrorPayload> {
+    match check(manifest_path, install_dir) {
+        Ok(()) => None,
+        Err(mut payload) => {
+            // Best-effort log write; failure does not change the outcome.
+            let _ = write_log(install_dir, &payload.missing, &payload.size_mismatch);
+            payload.log_path = log_path(install_dir).to_string_lossy().into_owned();
+            Some(payload)
+        }
+    }
+}
+
 /// Run integrity check.
 /// - `Ok(())` when all manifest entries match.
 /// - `Err(IntegrityErrorPayload)` when any file is missing or its size is
@@ -234,5 +370,86 @@ mod tests {
             r#"{"version": 1, "generated_at": "2026-05-08T00:00:00Z", "files": [{"path": "buffered.bin", "size": 100, "tolerance_bytes": 10}]}"#,
         );
         check(&manifest_path, install).expect("within tolerance should pass");
+    }
+
+    #[test]
+    fn epoch_to_components_handles_known_epoch_seconds() {
+        // 2026-05-08T12:34:56Z = 1778243696 seconds since epoch
+        let (y, mo, d, h, mi, s) = epoch_to_components(1778243696);
+        assert_eq!((y, mo, d, h, mi, s), (2026, 5, 8, 12, 34, 56));
+    }
+
+    #[test]
+    fn epoch_to_components_handles_leap_year_feb_29() {
+        // 2024-02-29T00:00:00Z = 1709164800 seconds since epoch
+        let (y, mo, d, _h, _mi, _s) = epoch_to_components(1709164800);
+        assert_eq!((y, mo, d), (2024, 2, 29));
+    }
+
+    #[test]
+    fn write_log_creates_logs_dir_and_appends_record() {
+        let dir = TempDir::new().unwrap();
+        let install = dir.path();
+        let missing = vec!["absent.bin".to_string()];
+        let size_mismatch = vec![];
+        write_log(install, &missing, &size_mismatch).expect("should write");
+
+        let logs = install.join("logs");
+        assert!(logs.exists(), "logs dir should be created");
+        let log_files: Vec<_> = fs::read_dir(&logs).unwrap().collect();
+        assert_eq!(log_files.len(), 1);
+        let path = log_files[0].as_ref().unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert!(
+            name.starts_with("error-") && name.ends_with(".log"),
+            "filename format: {}",
+            name
+        );
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("integrity check failed"));
+        assert!(content.contains("\"absent.bin\""));
+    }
+
+    #[test]
+    fn check_install_dir_returns_none_on_success() {
+        // Mock install dir with manifest pointing to a file that exists
+        let dir = TempDir::new().unwrap();
+        let install = dir.path();
+        let target = install.join("a.bin");
+        fs::write(&target, b"x").unwrap();
+        let manifest = install.join("integrity-manifest.json");
+        fs::write(
+            &manifest,
+            r#"{"version": 1, "generated_at": "2026-05-08T00:00:00Z", "files": [{"path": "a.bin", "size": 1, "tolerance_bytes": 0}]}"#,
+        )
+        .unwrap();
+
+        // We need to invoke through the wrapper, not check() directly, to
+        // verify the wrapper routes through check() and back.
+        let result = check_install_dir_with_paths(&manifest, install);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn check_install_dir_returns_payload_with_log_path_on_failure() {
+        let dir = TempDir::new().unwrap();
+        let install = dir.path();
+        let manifest = install.join("integrity-manifest.json");
+        fs::write(
+            &manifest,
+            r#"{"version": 1, "generated_at": "2026-05-08T00:00:00Z", "files": [{"path": "absent.bin", "size": 1, "tolerance_bytes": 0}]}"#,
+        )
+        .unwrap();
+
+        let payload = check_install_dir_with_paths(&manifest, install).expect("should fail");
+        assert_eq!(payload.missing, vec!["absent.bin".to_string()]);
+        assert!(
+            payload.log_path.contains("logs"),
+            "log_path should reference logs dir: {}",
+            payload.log_path
+        );
+        // Log file should also exist on disk
+        let logs = install.join("logs");
+        assert!(logs.exists());
     }
 }
