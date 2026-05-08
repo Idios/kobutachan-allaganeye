@@ -23,6 +23,7 @@ use tower_http::services::ServeFile;
 use uuid::Uuid;
 
 mod error;
+mod integrity;
 mod logging;
 
 use error::AppError;
