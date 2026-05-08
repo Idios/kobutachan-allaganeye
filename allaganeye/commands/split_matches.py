@@ -1087,9 +1087,9 @@ class _ETAProgressBar(_ClickProgressBar):
 
         Detecting  ###################---  93% ETA: 0:00:22
 
-    ``eta_known=False`` (update 未呼び出し / 1 秒以内) のときも ETA
-    セクションを出し ``ETA: --:--:--`` placeholder を表示する (Idios
-    feedback for #365: pre-update でも ETA を出す改善)。
+    ``eta_known=False`` (update 未呼び出し / make_step の 1 秒 debounce
+    gate 内) のときも ETA セクションを出し ``ETA: --:--:--`` placeholder
+    を表示する (Idios feedback for #365: pre-update でも ETA を出す改善)。
 
     ``show_eta=False`` (GPU mode #438 の ``suppress_click_eta=True``
     経路) では ETA セクションを出さず percent のみ表示。caller 側が
@@ -1137,6 +1137,14 @@ def _eta_progressbar(
         length=length,
         label=label.ljust(_PROGRESS_LABEL_WIDTH),
         bar_template="",  # 未使用 (format_progress_line を override したため)
+        # click.progressbar() factory 経由では empty_char='-' / width=36 が default
+        # だが、ProgressBar.__init__ class 直接インスタンス化では empty_char=' ' /
+        # width=30 と異なる default を持つ。issue #365 期待動作
+        # `Detecting  ####---  93% ETA: 0:00:22` の `####---` (dash empty char +
+        # 36 width) を維持するため明示する (PR #687 review feedback #1+#2 対応)。
+        fill_char="#",
+        empty_char="-",
+        width=36,
         show_eta=not suppress_click_eta,
         show_percent=True,
     )

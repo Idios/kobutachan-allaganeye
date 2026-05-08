@@ -672,7 +672,9 @@ def test_progressbar_shows_eta_label(mock_probe, mock_detect, mock_split, tmp_pa
     """Progress bars enable ETA and percent display in CPU mode (#329).
 
     Guards the contract from issue #329: the user must be able to tell
-    that the time shown is ETA, via ``show_eta=True`` on click.progressbar.
+    that the time shown is ETA, via ``show_eta=True`` on the
+    ``_ETAProgressBar`` subclass (refactored from ``click.progressbar``
+    factory in #365).
     GPU mode deliberately suppresses click's ETA on the Detecting bar
     (#438); that variant is covered by
     :func:`test_progressbar_suppresses_click_eta_on_detecting_in_gpu_mode`.
@@ -4049,3 +4051,35 @@ def test_eta_progressbar_gpu_dispatching_label_with_eta_placeholder() -> None:
     # subclass は show_eta=False で ETA tail を出さない (二重表示防止 #438)
     # ETA は label 内 1 つのみ
     assert line.count("ETA:") == 1, f"expected single ETA occurrence in: {line!r}"
+
+
+def test_eta_progressbar_bar_visual_uses_dashes_and_36_width() -> None:
+    """bar visual (empty_char='-' + width=36) が click.progressbar() factory baseline を維持すること (#365).
+
+    `_eta_progressbar` を `click.progressbar()` factory から `_ETAProgressBar(...)`
+    class 直接インスタンス化に refactor した際、factory と class の defaults 差異
+    (empty_char='-' vs ' '、width=36 vs 30) で silent visual regression が起きうる。
+    issue #365 期待動作 `Detecting  ####---  93% ETA: 0:00:22` の `####---` 部分
+    (dash empty char) を保持するための regression test (PR #687 review feedback #3 対応)。
+    """
+    bar = _eta_progressbar(100, "Detecting")
+    _drive_to_known_eta(bar, 50)
+
+    line = bar.format_progress_line()
+
+    # empty char が '-' (issue #365 期待動作 ####--- に整合)
+    assert "-" in line, f"expected '-' as empty char in: {line!r}"
+    # width=36 で 50% 進捗 → 18 fill + 18 empty
+    assert "#" * 18 in line, f"expected 18 fills (width=36, 50%): {line!r}"
+    assert "-" * 18 in line, f"expected 18 dashes (width=36, 50%): {line!r}"
+
+
+def test_eta_progressbar_finished_no_eta_tail() -> None:
+    """100% 完了時 (finished=True) は 'ETA: ' tail を出さない (commit 9bc3788 仕様、#365、PR #687 review feedback #6 対応)."""
+    bar = _eta_progressbar(100, "Splitting")
+    _drive_to_known_eta(bar, 100)  # 100% で finished=True
+
+    line = bar.format_progress_line()
+
+    assert "ETA:" not in line, f"100% で ETA tail が残存: {line!r}"
+    assert "100%" in line
