@@ -159,8 +159,14 @@ function Format-ReadmeContent {
   <#
   Produce the README.txt shipped inside the Portable ZIP. Exposing this as a
   function lets Pester assert the LGPLv3 attribution + source pointers are
-  present without running a full build. Pass -IncludeGui to add the GUI launch
-  + WebView2 dependency notice when the Tauri-built `allaganeye-gui.exe` is bundled.
+  present without running a full build.
+
+  -IncludeGui:$true (when the Tauri-built `allaganeye-gui.exe` is bundled, #570)
+  emits a "Easiest: double-click `allaganeye.bat`" section as the FIRST usage
+  entry, followed by drag-drop and Command Prompt sections (#617). The WebView2
+  Runtime dependency note moves into this section. -IncludeGui:$false (default,
+  CLI-only ZIP) keeps drag-drop as the first usage entry without any GUI
+  references.
   #>
   param(
     [Parameter(Mandatory = $true)][string]$Version,
@@ -170,24 +176,24 @@ function Format-ReadmeContent {
     [switch]$IncludeGui
   )
   $guiSection = if ($IncludeGui) {
-@"
+@'
 
-### GUI: double-click ``allaganeye-gui.exe``
+### Easiest: double-click `allaganeye.bat`
 
-For a graphical interface, double-click ``allaganeye-gui.exe`` in this folder. The
-GUI lets you drop a video file, review detected matches, fine-tune match
-boundaries, and export each match as MP4.
+Double-click `allaganeye.bat` in this folder to launch the GUI
+(`allaganeye-gui.exe`). The GUI lets you drop a video file, review detected
+matches, fine-tune match boundaries, and export each match as MP4.
 
-NOTE: ``allaganeye-gui.exe`` requires Microsoft Edge WebView2 Runtime, which is
-preinstalled on Windows 11 and recent Windows 10 builds. If the GUI fails to
-start with a missing-runtime dialog, install it from:
+NOTE: The GUI requires Microsoft Edge WebView2 Runtime, which is preinstalled
+on Windows 11 and recent Windows 10 builds. If the GUI fails to start with a
+missing-runtime dialog, install it from:
 
     https://developer.microsoft.com/en-us/microsoft-edge/webview2/
 
-(``Evergreen Standalone Installer`` is sufficient and does not require admin
+(`Evergreen Standalone Installer` is sufficient and does not require admin
 rights for per-user install.)
 
-"@
+'@
   }
   else { '' }
 
@@ -206,8 +212,8 @@ rights for per-user install.)
 Python 3.11 and FFmpeg LGPL binaries are bundled alongside allaganeye.
 
 ## Usage
-
-### Basic: drag-and-drop
+$guiSection
+### Drag-and-drop a video file
 
 Drop a video file (.mkv / .mp4 / .avi / .mov) onto ``allaganeye.bat`` and it
 will split the video automatically. The command window stays open at the end so
@@ -215,7 +221,7 @@ you can read the result -- press any key to close it.
 
 Output MP4 files and metadata.json land under ``output\`` inside this folder.
 
-### Advanced: from a Command Prompt
+### From a Command Prompt
 
 If you want to pass options such as --dry-run or -o, open a Command Prompt in
 this folder and run:
@@ -223,7 +229,7 @@ this folder and run:
     allaganeye.bat split "C:\path\to\video.mkv"
     allaganeye.bat split "C:\path\to\video.mkv" --dry-run
     allaganeye.bat --version
-$guiSection
+
 See https://github.com/Idios/kobutachan-allaganeye for full documentation.
 
 ## Licenses
@@ -251,29 +257,63 @@ function Get-LauncherTemplate {
   Exposed as a function so Pester (#583) can verify the exit code propagation
   idiom (#580: `set EXIT_CODE=%ERRORLEVEL%` + `endlocal & exit /b %EXIT_CODE%`)
   without dot-sourcing the full build path.
+
+  -IncludeGui:$true (when allaganeye-gui.exe is bundled in the ZIP) emits help
+  text that mentions ".bat double-click -> GUI" as the primary entry. -IncludeGui:$false
+  (default, CLI-only ZIP) omits the GUI mention so users are not directed to a
+  non-existent exe. Symmetric with Format-ReadmeContent -IncludeGui (#570).
+
+  Branch order in the template (top-down, first match wins, #617):
+    1. --help / -h / /?               -> :show_help (explicit help flags always reach help)
+    2. no args + GUI exe exists       -> start "" "%PAYLOAD%allaganeye-gui.exe" + exit /b 0
+    3. no args + GUI exe absent       -> :show_help (CLI-only ZIP fallback)
+    4. video file extension           -> python -m allaganeye split %*  (existing pre-#617 behavior)
+    5. other args                     -> python -m allaganeye %*        (existing pre-#617 behavior)
+
+  The runtime `if exist "%PAYLOAD%allaganeye-gui.exe"` check is a defensive
+  fallback that handles the (rare) case where a user manually deletes the GUI
+  exe from a -IncludeGui:$true ZIP. -IncludeGui only controls the help text.
   #>
-  return @'
+  param(
+    [switch]$IncludeGui
+  )
+
+  $helpUsageLines = if ($IncludeGui) {
+@'
+echo   1. Double-click allaganeye.bat to launch the GUI (allaganeye-gui.exe).
+echo   2. Drag a video file (.mkv / .mp4 / .avi / .mov) onto allaganeye.bat
+echo      to split it automatically.
+echo   3. From a Command Prompt:
+echo      allaganeye.bat split "C:\path\to\video.mkv"
+'@
+  }
+  else {
+@'
+echo   1. Drag a video file (.mkv / .mp4 / .avi / .mov) onto allaganeye.bat
+echo      to split it automatically.
+echo   2. From a Command Prompt:
+echo      allaganeye.bat split "C:\path\to\video.mkv"
+'@
+  }
+
+  return @"
 @echo off
 setlocal
 set PAYLOAD=%~dp0
 set ALLAGANEYE_FFMPEG=%PAYLOAD%ffmpeg\ffmpeg.exe
 set PATH=%PAYLOAD%ffmpeg;%PATH%
 
+if /i "%~1"=="--help" goto :show_help
+if /i "%~1"=="-h" goto :show_help
+if "%~1"=="/?" goto :show_help
+
 if "%~1"=="" (
-  echo.
-  echo allaganeye - FF14 Frontline video splitter
-  echo.
-  echo How to use:
-  echo   1. Drag a video file ^(.mkv / .mp4 / .avi / .mov^) onto allaganeye.bat
-  echo      to split it automatically.
-  echo   2. From a Command Prompt:
-  echo      allaganeye.bat split "C:\path\to\video.mkv"
-  echo.
-  echo Docs: https://github.com/Idios/kobutachan-allaganeye
-  echo.
-  pause
-  endlocal
-  exit /b 0
+  if exist "%PAYLOAD%allaganeye-gui.exe" (
+    start "" "%PAYLOAD%allaganeye-gui.exe"
+    endlocal
+    exit /b 0
+  )
+  goto :show_help
 )
 
 set EXT=%~x1
@@ -293,7 +333,20 @@ set EXIT_CODE=%ERRORLEVEL%
 echo.
 pause
 endlocal & exit /b %EXIT_CODE%
-'@
+
+:show_help
+echo.
+echo allaganeye - FF14 Frontline video splitter
+echo.
+echo How to use:
+$helpUsageLines
+echo.
+echo Docs: https://github.com/Idios/kobutachan-allaganeye
+echo.
+pause
+endlocal
+exit /b 0
+"@
 }
 
 # Dot-sourced (no -Version): stop here so callers only get the function
@@ -388,13 +441,10 @@ Copy-Item -Path (Join-Path $FFmpegLayout.Bin 'ffprobe.exe') -Destination $FFmpeg
 Get-ChildItem -Path $FFmpegLayout.Bin -Filter '*.dll' | Copy-Item -Destination $FFmpegDest
 Copy-Item -Path $FFmpegLayout.License -Destination (Join-Path $FFmpegDest 'LICENSE.txt')
 
-# 5. Launcher
-# Template is defined as Get-LauncherTemplate (#583) so Pester can verify the
-# exit code propagation idiom (#580) without dot-sourcing the full build path.
-$Launcher = Get-LauncherTemplate
-Set-Content -Path (Join-Path $PayloadDir 'allaganeye.bat') -Value $Launcher -Encoding ASCII
-
-# 6. Tauri GUI bundle (optional, auto-detect)
+# 5. Tauri GUI bundle (optional, auto-detect)
+# This block runs BEFORE the launcher (step 6, #617) so $TauriIncluded is
+# available to Get-LauncherTemplate -IncludeGui and Format-ReadmeContent -IncludeGui.
+#
 # Copy the Tauri-built GUI binary (allaganeye-gui.exe) into the payload root
 # as-is. The cargo binary name has no whitespace so users / scripts can
 # reference it without quoting headaches; tauri.conf.json `productName`
@@ -416,6 +466,13 @@ if (Test-Path $TauriExe) {
 } else {
   Write-Warning "Tauri GUI build not found at $TauriExe - Portable ZIP will be built without the GUI binary. Run 'cd gui && npm install && npm run tauri build' first to include the GUI."
 }
+
+# 6. Launcher (after Tauri detection so the .bat help text and runtime branch
+# can reflect whether allaganeye-gui.exe is bundled, #617).
+# Template is defined as Get-LauncherTemplate (#583) so Pester can verify the
+# exit code propagation idiom (#580) without dot-sourcing the full build path.
+$Launcher = Get-LauncherTemplate -IncludeGui:$TauriIncluded
+Set-Content -Path (Join-Path $PayloadDir 'allaganeye.bat') -Value $Launcher -Encoding ASCII
 
 # 7. README (after Tauri detection so the GUI section is conditional)
 $Readme = Format-ReadmeContent `
