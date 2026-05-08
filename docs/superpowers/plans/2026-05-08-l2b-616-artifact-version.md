@@ -14,7 +14,7 @@
 
 ---
 
-### Task 1: Iron Law 6 PR Pre-flight check
+## Task 1: Iron Law 6 PR Pre-flight check
 
 **Files:** なし (git / gh CLI 操作のみ)
 
@@ -47,7 +47,7 @@ Expected: conflict なし、もしくは解決後に commit。コンフリクト
 
 ---
 
-### Task 2: yml 修正 (build-windows.upload-artifact)
+## Task 2: yml 修正 (build-windows.upload-artifact)
 
 **Files:**
 
@@ -96,7 +96,7 @@ Edit tool で:
 
 ---
 
-### Task 3: yml 修正 (release.download-artifact)
+## Task 3: yml 修正 (release.download-artifact)
 
 **Files:**
 
@@ -141,7 +141,7 @@ Edit tool で:
 
 ---
 
-### Task 4: ローカル yml syntax check
+## Task 4: ローカル yml syntax check
 
 **Files:** なし (read-only verification)
 
@@ -170,7 +170,7 @@ Expected output:
 
 ---
 
-### Task 5: Commit
+## Task 5: Commit
 
 **Files:** stage 済 `.github/workflows/release.yml`
 
@@ -209,7 +209,7 @@ Expected: commit 成功 (1 file changed, 2 insertions(+), 2 deletions(-))。
 
 ---
 
-### Task 6: PR 作成 + Self-Test Report
+## Task 6: PR 作成 + Self-Test Report
 
 **Files:** なし (gh CLI 操作 + PR 本文)
 
