@@ -79,6 +79,37 @@ preview 画面での `<video>` 再生には axum ベースの局所 HTTP サー�
 
 詳細: [ui-architecture.md §video playback](ui-architecture.md) / `gui/src-tauri/src/lib.rs` の `register_video` / `serve_video` ([tauri-commands.md](tauri-commands.md) #12 の signature と想定エラー参照)。
 
+### 2.5 Portable ZIP 起動時健全性チェック (#668)
+
+Portable ZIP 内の `integrity-manifest.json` を起動時に読み、同梱物
+(ffmpeg / Python embed / fanfare.npz / GUI exe / CLI Python パッケージ)
+の存在と size を高速 check (~50ms 以内、SHA256 等は対象外) する。
+
+- **build 時**: `scripts/build-portable-zip.ps1` の `New-IntegrityManifest`
+  関数が payload 全 file を `Get-ChildItem -Recurse -File` で自動 enum
+  し、relative path / size / `tolerance_bytes=0` の JSON を生成。manifest
+  自身は除外。
+- **GUI (Rust release build only)**: `gui/src-tauri/src/integrity.rs::check_install_dir`
+  が `<install dir>/integrity-manifest.json` を読み、失敗時は Tauri
+  event `integrity-error` を `tokio::async_runtime::spawn` + 150ms +
+  `app.emit` で frontend に飛ばす。frontend
+  `gui/src/lib/globalErrorListener.ts` が listen して
+  `useErrorStore.showError({errorCategory:'integrity', isPanic:true,
+  isRecoverable:false})` に integrate、既存 `ErrorModal` が「アプリを
+  終了」「ログフォルダを開く」 button 付きで blocking 表示。
+- **CLI (Python)**: `allaganeye/integrity.py::check` が同 manifest を
+  読み、`allaganeye/cli.py::version_callback` が `--version` 実行時に
+  呼ぶ。失敗時は `IntegrityError(exit_code=7)` raise → CLI は
+  exit code 7 + stderr 短メッセージ + log 書込 + `sys.exit(7)`。
+- **dev mode skip**: Rust = `#[cfg(not(debug_assertions))]` (release
+  build のみ動作)、Python = env `ALLAGANEYE_INTEGRITY_SKIP=1`。
+- **log**: `<install dir>/logs/error-YYYYMMDD.log` (plain text、append、
+  Python / Rust で同 record format)。書込み失敗は silent fail (modal /
+  exit code が primary channel)。
+- **CI 担保**: `.github/workflows/release.yml` build-windows job で payload
+  を copy → 1 file 削除 → `allaganeye.bat --version` → exit code 7 を
+  assert する E2E step。
+
 ## 3. データフロー
 
 ### 3.1 detect → preview → export の典型フロー
@@ -137,38 +168,7 @@ sequenceDiagram
 - **起動経路の変更** (例: `allaganeye-gui.exe` を別アーキでビルド) → 本 doc §2 の表を更新
 - **bundle 形態の変更** (例: MSIX 採用) → リリース戦略 ([release-strategy.md](release-strategy.md)) と本 doc §2.1 を同時更新
 
-## 6. Portable ZIP 起動時健全性チェック (#668)
-
-Portable ZIP 内の `integrity-manifest.json` を起動時に読み、同梱物
-(ffmpeg / Python embed / fanfare.npz / GUI exe / CLI Python パッケージ)
-の存在と size を高速 check (~50ms 以内、SHA256 等は対象外) する。
-
-- **build 時**: `scripts/build-portable-zip.ps1` の `New-IntegrityManifest`
-  関数が payload 全 file を `Get-ChildItem -Recurse -File` で自動 enum
-  し、relative path / size / `tolerance_bytes=0` の JSON を生成。manifest
-  自身は除外。
-- **GUI (Rust release build only)**: `gui/src-tauri/src/integrity.rs::check_install_dir`
-  が `<install dir>/integrity-manifest.json` を読み、失敗時は Tauri
-  event `integrity-error` を `tokio::async_runtime::spawn` + 150ms +
-  `app.emit` で frontend に飛ばす。frontend
-  `gui/src/lib/globalErrorListener.ts` が listen して
-  `useErrorStore.showError({errorCategory:'integrity', isPanic:true,
-  isRecoverable:false})` に integrate、既存 `ErrorModal` が「アプリを
-  終了」「ログフォルダを開く」 button 付きで blocking 表示。
-- **CLI (Python)**: `allaganeye/integrity.py::check` が同 manifest を
-  読み、`allaganeye/cli.py::version_callback` が `--version` 実行時に
-  呼ぶ。失敗時は `IntegrityError(exit_code=7)` raise → CLI は
-  exit code 7 + stderr 短メッセージ + log 書込 + `sys.exit(7)`。
-- **dev mode skip**: Rust = `#[cfg(not(debug_assertions))]` (release
-  build のみ動作)、Python = env `ALLAGANEYE_INTEGRITY_SKIP=1`。
-- **log**: `<install dir>/logs/error-YYYYMMDD.log` (plain text、append、
-  Python / Rust で同 record format)。書込み失敗は silent fail (modal /
-  exit code が primary channel)。
-- **CI 担保**: `.github/workflows/release.yml` build-windows job で payload
-  を copy → 1 file 削除 → `allaganeye.bat --version` → exit code 7 を
-  assert する E2E step。
-
-## 7. 関連 issue / doc
+## 6. 関連 issue / doc
 
 - [#527](https://github.com/Idios/kobutachan-allaganeye/issues/527) 本 doc の起票元 (GUI 限定性明記 + dispatch 仕様文書化)
 - [#463](https://github.com/Idios/kobutachan-allaganeye/issues/463) Phase 1 data layer (metadata.json 契約)
