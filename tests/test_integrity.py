@@ -185,3 +185,85 @@ def test_check_aggregates_multiple_missing(tmp_path: Path) -> None:
         check(manifest, install_dir=install)
 
     assert sorted(exc_info.value.context["missing"]) == ["a.bin", "b.bin"]
+
+
+def test_check_detects_size_mismatch_outside_tolerance(tmp_path: Path) -> None:
+    """check() reports size_mismatch for files whose size differs > tolerance_bytes."""
+    from allaganeye.integrity import check
+
+    install = tmp_path / "install"
+    install.mkdir()
+    target = install / "tiny.bin"
+    target.write_bytes(b"x" * 50)  # actual 50, expected 100, tolerance 0 -> fail
+
+    manifest = install / "integrity-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "generated_at": "2026-05-08T00:00:00Z",
+                "files": [{"path": "tiny.bin", "size": 100, "tolerance_bytes": 0}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(IntegrityError) as exc_info:
+        check(manifest, install_dir=install)
+
+    sm = exc_info.value.context["size_mismatch"]
+    assert len(sm) == 1
+    assert sm[0]["path"] == "tiny.bin"
+    assert sm[0]["expected"] == 100
+    assert sm[0]["actual"] == 50
+
+
+def test_check_passes_within_tolerance(tmp_path: Path) -> None:
+    """check() accepts size within tolerance_bytes window."""
+    from allaganeye.integrity import check
+
+    install = tmp_path / "install"
+    install.mkdir()
+    target = install / "buffered.bin"
+    target.write_bytes(b"x" * 105)  # actual 105, expected 100, tolerance 10 -> pass
+
+    manifest = install / "integrity-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "generated_at": "2026-05-08T00:00:00Z",
+                "files": [{"path": "buffered.bin", "size": 100, "tolerance_bytes": 10}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Should not raise
+    assert check(manifest, install_dir=install) is None
+
+
+def test_check_tolerance_default_zero(tmp_path: Path) -> None:
+    """tolerance_bytes is treated as 0 when absent from the entry."""
+    from allaganeye.integrity import check
+
+    install = tmp_path / "install"
+    install.mkdir()
+    target = install / "exact.bin"
+    target.write_bytes(b"x" * 100)
+
+    manifest = install / "integrity-manifest.json"
+    # entry omits tolerance_bytes
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "generated_at": "2026-05-08T00:00:00Z",
+                "files": [{"path": "exact.bin", "size": 100}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # exact match -> pass
+    assert check(manifest, install_dir=install) is None

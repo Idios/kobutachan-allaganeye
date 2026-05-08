@@ -94,13 +94,14 @@ def check(
         if not target.exists():
             missing.append(rel_path)
             continue
-        # size_mismatch detection comes in Task 6
         actual = target.stat().st_size
-        if actual != int(entry["size"]):
+        expected = int(entry["size"])
+        tolerance = int(entry.get("tolerance_bytes", 0))
+        if abs(actual - expected) > tolerance:
             size_mismatch.append(
                 {
                     "path": rel_path,
-                    "expected": int(entry["size"]),
+                    "expected": expected,
                     "actual": actual,
                 }
             )
