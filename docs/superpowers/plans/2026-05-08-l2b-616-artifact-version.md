@@ -295,7 +295,7 @@ Expected: 全 jobs PASS (`build-windows`, `installer-pester`, `markdownlint`, `v
 
 CI 全 PASS を確認後、Idios に `AskUserQuestion` で:
 
-> 「PR Actions tab を開いて、artifact 名が `allaganeye-portable-windows-vX.Y.Z.zip` 形式 (X.Y.Z は pyproject.toml の現行 version) になっているか目視確認してください。」
+> 「PR Actions tab → **Release workflow** の最新 run (build-windows job を含む、CI workflow ではない) → ページ下部の Artifacts セクションを開き、artifact 名が `allaganeye-portable-windows-vX.Y.Z` 形式 (X.Y.Z は `pyproject.toml` の現行 version、UI 上は `.zip` 拡張子なしで表示される) になっているか目視確認してください。CI workflow の run には `gui-dist` 等の中間 artifact があり、混同しないこと。」
 
 選択肢:
 
