@@ -11,8 +11,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypedDict
 
-from click._termui_impl import ProgressBar as _ClickProgressBar  # subclass 用 (#365)
 import typer
+from click._termui_impl import ProgressBar as _ClickProgressBar  # subclass 用 (#365)
 
 from allaganeye.audio.matcher import BgmHit
 from allaganeye.config import SplitConfig
@@ -1096,7 +1096,7 @@ class _ETAProgressBar(_ClickProgressBar):
     def format_progress_line(self) -> str:
         bar = self.format_bar()
         pct = self.format_pct()
-        if self.show_eta and self.eta_known:
+        if self.show_eta and self.eta_known and not self.finished:
             eta = self.format_eta()
             return f"{self.label}{bar} {pct} ETA: {eta}"
         return f"{self.label}{bar} {pct}"

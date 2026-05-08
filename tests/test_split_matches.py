@@ -3974,7 +3974,7 @@ def test_quiet_no_cache_only_output_listing(
 # #365: progress bar ETA ラベル付与の format 検証
 # ============================================================
 
-_ETA_LINE_PATTERN = re.compile(r"\b\d{1,3}%\s+ETA:\s+\d+:\d{2}:\d{2}\b")
+_ETA_LINE_PATTERN = re.compile(r"\b\d{1,3}%\s+ETA:\s+(?:\d+d\s+)?\d+:\d{2}:\d{2}\b")
 
 
 def _drive_to_known_eta(bar: _ETAProgressBar, completed: int) -> None:
@@ -4019,7 +4019,7 @@ def test_eta_progressbar_suppresses_eta_in_gpu_mode() -> None:
 def test_eta_progressbar_no_eta_before_first_update() -> None:
     """update 前 (eta_known=False) は ETA tail を出さず percent のみ."""
     bar = _eta_progressbar(100, "Detecting")
-    # _drive_to_known_eta を呼ばない -- start_time=None / eta_known=False のまま
+    # _drive_to_known_eta を呼ばない -- eta_known=False のまま (start は初期化済みだが update 未実行で eta_known は False)
 
     line = bar.format_progress_line()
 
