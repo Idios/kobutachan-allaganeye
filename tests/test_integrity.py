@@ -267,3 +267,30 @@ def test_check_tolerance_default_zero(tmp_path: Path) -> None:
 
     # exact match -> pass
     assert check(manifest, install_dir=install) is None
+
+
+def test_check_skips_when_env_set(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """ALLAGANEYE_INTEGRITY_SKIP=1 makes check() a no-op even with missing manifest."""
+    from allaganeye.integrity import check
+
+    monkeypatch.setenv("ALLAGANEYE_INTEGRITY_SKIP", "1")
+
+    # Manifest does not exist; without env this would raise.
+    fake_manifest = tmp_path / "no-such.json"
+    fake_install = tmp_path / "fake-install"
+
+    assert check(fake_manifest, install_dir=fake_install) is None
+
+
+def test_check_does_not_skip_when_env_set_to_other_value(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only literal '1' triggers skip; '0' / 'false' / unset run the check."""
+    from allaganeye.integrity import check
+
+    monkeypatch.setenv("ALLAGANEYE_INTEGRITY_SKIP", "0")
+
+    fake_manifest = tmp_path / "no-such.json"
+
+    with pytest.raises(IntegrityError):
+        check(fake_manifest, install_dir=tmp_path)

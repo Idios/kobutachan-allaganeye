@@ -16,12 +16,14 @@ Skip in dev / pytest by setting ``ALLAGANEYE_INTEGRITY_SKIP=1``.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from allaganeye.exceptions import IntegrityError
 
 _MANIFEST_NAME = "integrity-manifest.json"
+_SKIP_ENV = "ALLAGANEYE_INTEGRITY_SKIP"
 
 # Resolved at import time so monkeypatch.setattr can override for tests
 # without touching the real ``__file__`` (which would also affect other
@@ -80,6 +82,8 @@ def check(
     caller (CLI / GUI emit) can show all failures at once instead of
     one-at-a-time.
     """
+    if os.environ.get(_SKIP_ENV) == "1":
+        return None
     if manifest_path is None:
         manifest_path = _default_manifest_path()
     if install_dir is None:
