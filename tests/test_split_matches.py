@@ -1,13 +1,18 @@
 """Tests for split_matches pipeline orchestration."""
 
 import json
+import re
+import time
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from allaganeye.commands.split_matches import (
+    _ETAProgressBar,
+    _PROGRESS_LABEL_WIDTH,
     _auto_sample_interval,
+    _eta_progressbar,
     _load_cache,
     _save_cache,
     run_split,
@@ -648,7 +653,7 @@ def test_splitting_bar_shown_in_normal_run(
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    with patch("click.progressbar") as mock_bar:
+    with patch(f"{MODULE}._ETAProgressBar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
@@ -679,7 +684,7 @@ def test_progressbar_shows_eta_label(mock_probe, mock_detect, mock_split, tmp_pa
     # (which would suppress click ETA on Detecting per #438).
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, use_gpu=False)
 
-    with patch("click.progressbar") as mock_bar:
+    with patch(f"{MODULE}._ETAProgressBar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
@@ -713,7 +718,7 @@ def test_progressbar_suppresses_click_eta_on_detecting_in_gpu_mode(
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, use_gpu=True)
 
-    with patch("click.progressbar") as mock_bar:
+    with patch(f"{MODULE}._ETAProgressBar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
@@ -1131,7 +1136,7 @@ def test_progressbar_length(mock_probe, mock_detect, mock_split, tmp_path):
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    with patch("click.progressbar") as mock_bar:
+    with patch(f"{MODULE}._ETAProgressBar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
@@ -1154,7 +1159,7 @@ def test_progressbar_tiny_video(mock_probe, mock_detect, mock_split, tmp_path):
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    with patch("click.progressbar") as mock_bar:
+    with patch(f"{MODULE}._ETAProgressBar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
@@ -1176,7 +1181,7 @@ def test_progressbar_auto_interval(mock_probe, mock_detect, mock_split, tmp_path
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    with patch("click.progressbar") as mock_bar:
+    with patch(f"{MODULE}._ETAProgressBar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
@@ -3963,3 +3968,60 @@ def test_quiet_no_cache_only_output_listing(
     assert f"Output: {tmp_path}" in out
     assert "match_001.mp4" in out
     assert "Metadata:" in out
+
+
+# ============================================================
+# #365: progress bar ETA ラベル付与の format 検証
+# ============================================================
+
+_ETA_LINE_PATTERN = re.compile(r"\b\d{1,3}%\s+ETA:\s+\d+:\d{2}:\d{2}\b")
+
+
+def _drive_to_known_eta(bar: _ETAProgressBar, completed: int) -> None:
+    """Force eta_known by simulating elapsed time + progress.
+
+    click ProgressBar は ``start`` / ``last_eta`` が現在時刻で初期化され、
+    ``make_step`` 内の ``time.time() - self.last_eta < 1.0`` 条件が True の
+    間は ``eta_known`` が更新されない。テストでは ``start`` と ``last_eta``
+    を 10 秒前に巻き戻した上で update() し、``make_step`` 内の条件を
+    満たして ``eta_known=True`` にする。
+    """
+    past = time.time() - 10.0  # 10s 前から動いていた体
+    bar.start = past
+    bar.last_eta = past
+    bar.update(completed)
+
+
+@pytest.mark.parametrize("label", ["Detecting", "Refining", "Scorebar", "Splitting"])
+def test_eta_progressbar_label_present_for_all_bars(label: str) -> None:
+    """4 bar 全てで 'ETA: H:MM:SS' label を出すこと (#365)."""
+    bar = _eta_progressbar(100, label)
+    _drive_to_known_eta(bar, 50)
+
+    line = bar.format_progress_line()
+
+    assert line.startswith(label.ljust(_PROGRESS_LABEL_WIDTH))
+    assert "ETA: " in line, f"missing 'ETA: ' label in: {line!r}"
+    assert _ETA_LINE_PATTERN.search(line), f"format mismatch: {line!r}"
+
+
+def test_eta_progressbar_suppresses_eta_in_gpu_mode() -> None:
+    """suppress_click_eta=True (GPU mode #438) では ETA tail を出さず percent のみ."""
+    bar = _eta_progressbar(100, "Detecting", suppress_click_eta=True)
+    _drive_to_known_eta(bar, 50)
+
+    line = bar.format_progress_line()
+
+    assert "ETA: " not in line
+    assert re.search(r"\b\d{1,3}%\s*$", line.rstrip()), line
+
+
+def test_eta_progressbar_no_eta_before_first_update() -> None:
+    """update 前 (eta_known=False) は ETA tail を出さず percent のみ."""
+    bar = _eta_progressbar(100, "Detecting")
+    # _drive_to_known_eta を呼ばない -- start_time=None / eta_known=False のまま
+
+    line = bar.format_progress_line()
+
+    assert "ETA: " not in line
+    assert "0%" in line

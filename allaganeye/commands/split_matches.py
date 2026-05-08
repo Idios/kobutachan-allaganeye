@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypedDict
 
+from click._termui_impl import ProgressBar as _ClickProgressBar  # subclass 用 (#365)
 import typer
 
 from allaganeye.audio.matcher import BgmHit
@@ -1067,23 +1068,58 @@ def _stdout_supports_eager_phases() -> bool:
     return sys.stdout.isatty()
 
 
-def _eta_progressbar(length: int, label: str, *, suppress_click_eta: bool = False):  # type: ignore[no-untyped-def]
-    """Create a progress bar with explicit ETA label (#329).
+class _ETAProgressBar(_ClickProgressBar):
+    """Progress bar with explicit 'ETA: H:MM:SS' label (#365).
+
+    click のデフォルト ``%(info)s`` placeholder は ``<percent>  <eta>``
+    をラベルなしで展開するだけのため、ユーザーには時刻文字列だけが見え、
+    経過時間/残り時間/動画内位置のどれか判別できない (#329 元 issue,
+    PR #343 不完全修正、#365 で再対応)。
+
+    本 subclass は ``format_progress_line`` を override し以下に統一:
+
+        Detecting  ###################---  93% ETA: 0:00:22
+
+    ``show_eta=False`` (GPU mode #438 の ``suppress_click_eta=True``
+    経路) では ETA セクションを出さず percent のみ表示。caller 側が
+    self-computed ETA を label に組み込む既存挙動と互換。
+
+    依存する click 8.x の public method:
+      - ``format_bar()``    -- bar 文字列
+      - ``format_pct()``    -- "  N%" or "NN%" (左 padding あり)
+      - ``format_eta()``    -- "H:MM:SS" or "" (eta_known=False / show_eta=False のとき空)
+      - ``self.label``      -- ljust 済みラベル
+      - ``self.show_eta``   -- ETA 表示フラグ
+      - ``self.eta_known``  -- ETA 計算可能フラグ (1 update 後に True)
+    """
+
+    def format_progress_line(self) -> str:
+        bar = self.format_bar()
+        pct = self.format_pct()
+        if self.show_eta and self.eta_known:
+            eta = self.format_eta()
+            return f"{self.label}{bar} {pct} ETA: {eta}"
+        return f"{self.label}{bar} {pct}"
+
+
+def _eta_progressbar(
+    length: int, label: str, *, suppress_click_eta: bool = False
+) -> _ETAProgressBar:
+    """Create a progress bar with explicit ETA label (#329 / #365).
 
     Labels are left-justified to ``_PROGRESS_LABEL_WIDTH`` so that
-    Detecting / Refining / Splitting bars align vertically.
+    Detecting / Refining / Scorebar / Splitting bars align vertically.
 
     When ``suppress_click_eta`` is True (GPU mode, #438), click's own
-    ETA is hidden.  GPU chunk completion is non-linear so click's rate
-    estimator produces nonsense (e.g. ``3d 08:08:52``); the caller
-    supplies a self-computed ETA in the label instead.
+    ETA is hidden (``show_eta=False``); caller supplies a self-computed
+    ETA in the label instead. ``_ETAProgressBar.format_progress_line``
+    consumes ``show_eta`` to skip the 'ETA: ' tail in that path.
     """
-    import click
-
-    return click.progressbar(
+    return _ETAProgressBar(
+        iterable=None,
         length=length,
         label=label.ljust(_PROGRESS_LABEL_WIDTH),
-        bar_template="%(label)s%(bar)s %(info)s",
+        bar_template="",  # 未使用 (format_progress_line を override したため)
         show_eta=not suppress_click_eta,
         show_percent=True,
     )
