@@ -4,13 +4,18 @@ import { create } from 'zustand';
  * #614: Categorizes the source of an unrecoverable error so the ErrorModal
  * can pick an appropriate title / hint, and analytics-style log entries can
  * tell paths apart.
+ *
+ * #668: 'integrity' added for bundled-file corruption detection at startup
+ * (Rust integrity::check / Python allaganeye.integrity.check). Treated as
+ * isPanic=true (modal close exits the app) + isRecoverable=false.
  */
 export type ErrorCategory =
   | 'panic'
   | 'js-error'
   | 'js-promise'
   | 'tauri-command'
-  | 'previous-session-panic';
+  | 'previous-session-panic'
+  | 'integrity';
 
 export interface ErrorSpec {
   errorTitle?: string | null;
@@ -60,7 +65,7 @@ export const useErrorStore = create<ErrorState>((set, get) => ({
     // don't replace it — the user should triage the original failure first.
     // Subsequent errors are dropped (logged to console for the dev only).
     if (get().errorOpen) {
-      // eslint-disable-next-line no-console
+       
       console.warn('[errorStore] error already open, skipping showError', spec);
       return;
     }

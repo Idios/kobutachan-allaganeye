@@ -110,3 +110,23 @@ describe('errorStore', () => {
     expect(useErrorStore.getState().logDir).toBeNull();
   });
 });
+
+describe('errorStore integrity category (#668)', () => {
+  beforeEach(() => {
+    useErrorStore.getState().dismissError();
+  });
+
+  it("accepts errorCategory: 'integrity'", () => {
+    useErrorStore.getState().showError({
+      errorTitle: '同梱物の検証に失敗しました',
+      errorMessage: '1 missing, 0 size mismatch',
+      errorCategory: 'integrity',
+      isPanic: true,
+      isRecoverable: false,
+    });
+
+    expect(useErrorStore.getState().errorCategory).toBe('integrity');
+    expect(useErrorStore.getState().isPanic).toBe(true);
+    expect(useErrorStore.getState().isRecoverable).toBe(false);
+  });
+});
