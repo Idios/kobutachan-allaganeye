@@ -1,14 +1,22 @@
 // .github/scripts/check-pr-checklist.js
 
 /**
- * Fenced code block (` ``` ... ``` `) を空文字で除去する。
+ * Fenced code block (` ``` ... ``` ` / `~~~ ... ~~~`) を空文字で除去する。
  * PR 本文に skill spec / template 抜粋を貼ると本文中の `## 受け入れ条件` 等が
  * code block 内 heading として扱われる場合があるため、heading 検出前に除去する。
- * non-greedy + multiline で行頭フェンス対のみ対象とする (closed fence のみ除去、
+ *
+ * CommonMark §4.5 fenced code blocks に準拠 (PR #688 R2-1 / R2-2 対応):
+ * - backtick fence (3+ 個) と tilde fence (3+ 個) の両方に対応
+ * - 0-3 space indent (list 内 fence 等) を許容
+ * - 4+ space indent は CommonMark で「indented code block」扱いになるため対象外
+ *
+ * non-greedy + multiline で行頭フェンス対のみ対象 (closed fence のみ除去、
  * 不対称な open fence は残す)。
  */
 function stripFencedBlocks(body) {
-  return body.replace(/^```[\s\S]*?^```/gm, '');
+  return body
+    .replace(/^[ ]{0,3}```[\s\S]*?^[ ]{0,3}```/gm, '')   // backtick fence (0-3 space indent)
+    .replace(/^[ ]{0,3}~~~[\s\S]*?^[ ]{0,3}~~~/gm, '');  // tilde fence (0-3 space indent)
 }
 
 function countAcceptanceCriteriaCheckboxes(body) {

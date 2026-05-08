@@ -177,3 +177,42 @@ test('uppercase - [X] is counted as checked (case-insensitive gi flag)', () => {
   assert.equal(result.unchecked, 0);
   assert.equal(result.checked, 2);
 });
+
+test('tilde fence (~~~) is stripped from heading detection', () => {
+  // CommonMark §4.5 valid な tilde fence も strip 対象 (PR #688 R2-1)
+  const body = `
+## 受け入れ条件
+
+- [x] outer item
+
+~~~markdown
+## 受け入れ条件
+
+- [ ] tilde fence inside
+~~~
+`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+  assert.equal(result.checked, 1);
+  assert.equal(result.hasAnySection, true);
+});
+
+test('indented backtick fence (0-3 space indent within list) is stripped', () => {
+  // list 内 fence (CommonMark §4.5 で 0-3 space indent 許容) も strip 対象 (PR #688 R2-2)
+  const body = `
+## 受け入れ条件
+
+- [x] outer item
+
+  \`\`\`markdown
+  ## 受け入れ条件
+
+  - [ ] indented fence inside
+  - [ ] another inside
+  \`\`\`
+`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+  assert.equal(result.checked, 1);
+  assert.equal(result.hasAnySection, true);
+});
