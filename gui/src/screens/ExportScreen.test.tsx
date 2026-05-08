@@ -526,6 +526,34 @@ describe('ExportScreen (Phase 4 #466)', () => {
     expect(screen.getByTestId('export-screen').dataset.phase).toBe('idle');
   });
 
+  // #663 — Phase 4: when export_match rejects with an AppError-shaped
+  // object (`{ code, message, hint }`), the per-match list error renders
+  // the hint as a 2nd line below the primary message. The sample
+  // metadata has 9 matches and the mock fails every export, so we expect
+  // 9 message + 9 hint nodes. Asserting on getAllByText keeps the test
+  // robust to fixture-size changes (just checks ≥1).
+  it('renders per-match error hint when export_match rejects with AppError (#663)', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'export_match') {
+        return Promise.reject({
+          code: 'subprocess.spawn_failed',
+          message: 'ffmpeg spawn failed',
+          hint: 'reinstall ffmpeg',
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+    render(<ExportScreen />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /書き出し開始/ }));
+    await waitFor(() => {
+      expect(screen.getAllByText(/ffmpeg spawn failed/).length).toBeGreaterThan(
+        0,
+      );
+    });
+    expect(screen.getAllByText(/reinstall ffmpeg/).length).toBeGreaterThan(0);
+  });
+
   // #545 review #7: 進捗バー直下に「経過 0:00 / 残り —」が出る (running 中)。
   // 完了後は両方の表示が残るが setInterval は止まる。
   it('shows elapsed / remaining time line during running', async () => {

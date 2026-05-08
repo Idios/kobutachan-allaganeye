@@ -56,25 +56,29 @@ function validMetadata(): Metadata {
  * Set up an invoke mock that dispatches per command name. Tests can override
  * specific commands via .mockImplementationOnce(...) or by configuring this
  * map further.
+ *
+ * #663: `*_error` fields accept arbitrary reject values (Error instances or
+ * AppError-shaped objects `{ code, message, hint? }`) so tests can simulate
+ * the structured error path that Tauri uses post PR #665.
  */
 interface MockConfig {
   load_metadata?: unknown;
-  load_metadata_error?: Error;
+  load_metadata_error?: unknown;
   get_metadata_mtime?: number | null;
-  get_metadata_mtime_error?: Error;
+  get_metadata_mtime_error?: unknown;
   apply_changes?: number;
-  apply_changes_error?: Error;
+  apply_changes_error?: unknown;
   restore_from_original?: unknown;
-  restore_from_original_error?: Error;
+  restore_from_original_error?: unknown;
   check_backup_exists?: boolean;
-  check_backup_exists_error?: Error;
+  check_backup_exists_error?: unknown;
   // #517
   save_draft?: unknown;
-  save_draft_error?: Error;
+  save_draft_error?: unknown;
   load_draft?: unknown;
-  load_draft_error?: Error;
+  load_draft_error?: unknown;
   clear_draft?: unknown;
-  clear_draft_error?: Error;
+  clear_draft_error?: unknown;
 }
 
 function configureInvoke(cfg: MockConfig) {
@@ -431,12 +435,16 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
   });
 
   it('surfaces conflict errors in conflictError, not applyError', async () => {
+    // #663: PR #665 で全 23 commands が AppError 化済のため、conflict は
+    // structured AppError ({ code: 'state.mtime_conflict', ... }) として届く。
     configureInvoke({
       load_metadata: validMetadata(),
       get_metadata_mtime: 1700,
-      apply_changes_error: new Error(
-        'conflict: external modification detected (expected mtime 1700, got 1800)',
-      ),
+      apply_changes_error: {
+        code: 'state.mtime_conflict',
+        message:
+          'external modification detected (expected mtime 1700, got 1800)',
+      },
       check_backup_exists: false,
     });
     await useMetadataStore.getState().load('p');
@@ -446,7 +454,7 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
     const state = useMetadataStore.getState();
     expect(state.applying).toBe(false);
     expect(state.applyError).toBeNull();
-    expect(state.conflictError).toContain('conflict:');
+    expect(state.conflictError).toContain('external modification');
     // Store retains dirty edits so the user can choose to overwrite.
     expect(state.dirty).toBe(true);
   });
@@ -487,16 +495,17 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
 
   it('reloadAfterConflict re-loads metadata.json from disk', async () => {
     // First load with mtime 1700, then `conflictError` is set.
+    // #663: structured AppError ({ code: 'state.mtime_conflict', ... }) で reject
     configureInvoke({
       load_metadata: validMetadata(),
       get_metadata_mtime: 1700,
-      apply_changes_error: new Error('conflict: stale'),
+      apply_changes_error: { code: 'state.mtime_conflict', message: 'stale' },
       check_backup_exists: false,
     });
     await useMetadataStore.getState().load('p');
     useMetadataStore.getState().updateMatch(1, { name: 'dirty' });
     await useMetadataStore.getState().apply();
-    expect(useMetadataStore.getState().conflictError).toContain('conflict');
+    expect(useMetadataStore.getState().conflictError).toContain('stale');
 
     // Reload now returns a fresh validMetadata (no `name` edit) + new mtime.
     configureInvoke({
@@ -520,7 +529,7 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
   });
 
   it('dismissConflict clears the modal state without reloading or reapplying', () => {
-    useMetadataStore.setState({ conflictError: 'conflict: x', dirty: true });
+    useMetadataStore.setState({ conflictError: 'x', dirty: true });
     useMetadataStore.getState().dismissConflict();
     const state = useMetadataStore.getState();
     expect(state.conflictError).toBeNull();
@@ -543,18 +552,20 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
   // proves the next apply completes with the rotated mtime (regression guard).
   it('conflict → reload → apply completes the full recovery flow', async () => {
     // Step 1: initial load + apply triggers conflict.
+    // #663: structured AppError ({ code: 'state.mtime_conflict', ... }) で reject
     configureInvoke({
       load_metadata: validMetadata(),
       get_metadata_mtime: 1700,
-      apply_changes_error: new Error(
-        'conflict: external modification detected (expected 1700, got 1800)',
-      ),
+      apply_changes_error: {
+        code: 'state.mtime_conflict',
+        message: 'external modification detected (expected 1700, got 1800)',
+      },
       check_backup_exists: false,
     });
     await useMetadataStore.getState().load('p');
     useMetadataStore.getState().updateMatch(1, { name: 'pending-edit' });
     await useMetadataStore.getState().apply();
-    expect(useMetadataStore.getState().conflictError).toContain('conflict');
+    expect(useMetadataStore.getState().conflictError).toContain('external');
 
     // Step 2: reload → fresh mtime, conflictError cleared.
     configureInvoke({
@@ -620,6 +631,21 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
     };
     expect(args.expectedMtimeMs).toBe(2500);
     expect(useMetadataStore.getState().loadedMtimeMs).toBe(3300);
+  });
+
+  it('legacy raw-string Error("conflict: ...") routes to applyError, not conflictError (#663)', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      get_metadata_mtime: 1700,
+      apply_changes_error: new Error('conflict: legacy raw string'),
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, { name: 'x' });
+    await useMetadataStore.getState().apply();
+    const s = useMetadataStore.getState();
+    expect(s.conflictError).toBeNull();
+    expect(s.applyError).toContain('conflict:');
   });
 });
 
@@ -942,7 +968,7 @@ describe('useMetadataStore (#514 × #517 interaction)', () => {
     });
     await useMetadataStore.getState().load('p');
     // conflict 発火を simulate
-    useMetadataStore.setState({ conflictError: 'conflict: external' });
+    useMetadataStore.setState({ conflictError: 'external' });
     await useMetadataStore.getState().reloadAfterConflict();
     expect(useMetadataStore.getState().pendingDraft?.matches[0].name).toBe(
       'rescued',
@@ -963,7 +989,7 @@ describe('useMetadataStore (#514 × #517 interaction)', () => {
     });
     await useMetadataStore.getState().load('p');
     expect(useMetadataStore.getState().pendingDraft).not.toBeNull();
-    useMetadataStore.setState({ conflictError: 'conflict: external' });
+    useMetadataStore.setState({ conflictError: 'external' });
     expect(useMetadataStore.getState().conflictError).toBeTruthy();
     expect(useMetadataStore.getState().pendingDraft).not.toBeNull();
   });
@@ -1051,5 +1077,121 @@ describe('useMetadataStore.discardEdits (#589)', () => {
 
     expect(useMetadataStore.getState().dirty).toBe(false);
     expect(useMetadataStore.getState().loadedMtimeMs).toBe(2000);
+  });
+});
+
+// #663 — AppError hint pair. Each error-state field gains a sibling `*Hint`
+// that carries the AppError.hint when the underlying invoke rejected with a
+// structured AppError object. legacy raw Error rejection keeps the hint null.
+describe('AppError hint pair (#663)', () => {
+  beforeEach(() => {
+    useMetadataStore.getState().clear();
+  });
+
+  it('apply path: applyErrorHint is set when AppError carries hint', async () => {
+    invokeMock.mockImplementation(async (cmd) => {
+      if (cmd === 'apply_changes') {
+        // Tauri rejects with the AppError-shaped object directly
+        throw {
+          code: 'io.write_failed',
+          message: 'disk full',
+          hint: 'check free disk space',
+        };
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+    useMetadataStore.setState({
+      metadata: { source: 'x', matches: [] } as never,
+      filePath: '/tmp/m.json',
+      loadedMtimeMs: 1000,
+    });
+    await useMetadataStore.getState().apply();
+    const s = useMetadataStore.getState();
+    expect(s.applyError).toBe('disk full');
+    expect(s.applyErrorHint).toBe('check free disk space');
+  });
+
+  it('load path: loadErrorHint is set when AppError carries hint', async () => {
+    invokeMock.mockImplementation(async () => {
+      throw {
+        code: 'io.file_not_found',
+        message: 'no such file',
+        hint: 'check path',
+      };
+    });
+    await useMetadataStore.getState().load('/tmp/missing.json');
+    const s = useMetadataStore.getState();
+    expect(s.loadError).toBe('no such file');
+    expect(s.loadErrorHint).toBe('check path');
+  });
+
+  it('restore path: restoreErrorHint is set', async () => {
+    invokeMock.mockImplementation(async (cmd) => {
+      if (cmd === 'restore_from_original') {
+        throw {
+          code: 'io.backup_failed',
+          message: 'no backup',
+          hint: 'create backup first',
+        };
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+    useMetadataStore.setState({ filePath: '/tmp/m.json' });
+    await useMetadataStore.getState().restore();
+    const s = useMetadataStore.getState();
+    expect(s.restoreError).toBe('no backup');
+    expect(s.restoreErrorHint).toBe('create backup first');
+  });
+
+  it('saveDraft path: draftSaveErrorHint is set', async () => {
+    invokeMock.mockImplementation(async (cmd) => {
+      if (cmd === 'save_draft') {
+        throw {
+          code: 'io.write_failed',
+          message: 'disk full',
+          hint: 'free space',
+        };
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+    useMetadataStore.setState({
+      filePath: '/tmp/m.json',
+      metadata: { source: 'x', matches: [] } as never,
+    });
+    await useMetadataStore.getState().saveDraft();
+    const s = useMetadataStore.getState();
+    expect(s.draftSaveError).toBe('disk full');
+    expect(s.draftSaveErrorHint).toBe('free space');
+  });
+
+  it('loadDraft path: draftLoadErrorHint is set', async () => {
+    invokeMock.mockImplementation(async (cmd) => {
+      if (cmd === 'load_draft') {
+        throw {
+          code: 'parse.json_invalid',
+          message: 'bad json',
+          hint: 'corrupt draft',
+        };
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+    useMetadataStore.setState({
+      filePath: '/tmp/m.json',
+      metadata: { source: 'x', matches: [] } as never,
+    });
+    await useMetadataStore.getState().loadDraft();
+    const s = useMetadataStore.getState();
+    expect(s.draftLoadError).toBe('bad json');
+    expect(s.draftLoadErrorHint).toBe('corrupt draft');
+  });
+
+  it('legacy raw-Error reject keeps hint null', async () => {
+    invokeMock.mockImplementation(async () => {
+      throw new Error('plain error string');
+    });
+    await useMetadataStore.getState().load('/tmp/x.json');
+    const s = useMetadataStore.getState();
+    expect(s.loadError).toBe('plain error string');
+    expect(s.loadErrorHint).toBeNull();
   });
 });

@@ -461,6 +461,33 @@ describe('DetectingScreen', () => {
     expect(msg.textContent).toContain('python -m allaganeye');
   });
 
+  // #663 — Phase 4: when start_detect rejects with an AppError-shaped
+  // object (`{ code, message, hint }`), the error view renders the hint
+  // as a 2nd line below `errorMessage`. Bare Error throws keep the
+  // existing single-line UX (appErrorHint returns null).
+  it('renders error hint as 2nd line when start_detect rejects with AppError (#663)', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return Promise.reject({
+          code: 'subprocess.spawn_failed',
+          message: 'failed to spawn allaganeye CLI',
+          hint: 'verify Python install',
+        });
+      }
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(screen.getByTestId('detecting-error')).toBeInTheDocument();
+    });
+    expect(
+      screen.getByTestId('detecting-error-message').textContent,
+    ).toContain('failed to spawn allaganeye CLI');
+    expect(screen.getByTestId('detecting-error-hint').textContent).toContain(
+      'verify Python install',
+    );
+  });
+
   it('back button on error view returns to drop (#646)', async () => {
     invokeMock.mockImplementation((cmd) => {
       if (cmd === 'start_detect') {

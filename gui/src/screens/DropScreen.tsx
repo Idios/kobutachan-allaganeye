@@ -9,6 +9,7 @@ import { AllaganSigil } from '../components/AllaganSigil';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { appErrorHint, appErrorMessage } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import {
   type RecentEntry,
@@ -127,10 +128,15 @@ export function DropScreen({
   const [phase, dispatch] = useReducer(dropReducer, 'idle' as DropPhase);
   const [probeInfo, setProbeInfo] = useState<VideoProbeInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // #663: AppError hint rendered as a 2nd line below `error` inside
+  // the ErrorCard. `appErrorHint` returns null for legacy `new Error()`
+  // throws so the existing single-line UX is preserved.
+  const [errorHint, setErrorHint] = useState<string | null>(null);
   const [dragState, setDragState] = useState<DragState>('idle');
 
   async function probeAndDispatch(path: string): Promise<void> {
     setError(null);
+    setErrorHint(null);
     try {
       const info = await (probeFn ?? probeVideo)(path);
       setProbeInfo(info);
@@ -139,7 +145,8 @@ export function DropScreen({
       // with paths that turned out to be unreadable.
       void addRecent(info.path);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(appErrorMessage(e));
+      setErrorHint(appErrorHint(e));
       dispatch({ type: 'PROBE_FAIL' });
     }
   }
@@ -157,11 +164,13 @@ export function DropScreen({
   async function pickAndProbe() {
     dispatch({ type: 'BROWSE_CLICKED' });
     setError(null);
+    setErrorHint(null);
     let selected: string | null;
     try {
       selected = await (openDialogFn ?? defaultOpenDialog)();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(appErrorMessage(e));
+      setErrorHint(appErrorHint(e));
       dispatch({ type: 'PROBE_FAIL' });
       return;
     }
@@ -263,6 +272,7 @@ export function DropScreen({
 
   function dismissError() {
     setError(null);
+    setErrorHint(null);
     dispatch({ type: 'DISMISS_ERROR' });
   }
 
@@ -297,7 +307,12 @@ export function DropScreen({
       {phase === 'selected' && probeInfo ? (
         <SelectedCard info={probeInfo} onConfirm={confirm} onCancel={cancelSelection} />
       ) : phase === 'probeError' ? (
-        <ErrorCard error={error} onDismiss={dismissError} onRetry={pickAndProbe} />
+        <ErrorCard
+          error={error}
+          errorHint={errorHint}
+          onDismiss={dismissError}
+          onRetry={pickAndProbe}
+        />
       ) : (
         <>
           <AllaganFrame style={{ width: '78%', padding: 2, zIndex: 2 }}>
@@ -468,11 +483,13 @@ function SelectedCard({ info, onConfirm, onCancel }: SelectedCardProps) {
 
 interface ErrorCardProps {
   error: string | null;
+  /** #663 — corrective hint rendered as a 2nd line below `error` when non-null. */
+  errorHint: string | null;
   onDismiss: () => void;
   onRetry: () => void;
 }
 
-function ErrorCard({ error, onDismiss, onRetry }: ErrorCardProps) {
+function ErrorCard({ error, errorHint, onDismiss, onRetry }: ErrorCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   // #587: same dialog-like behavior as SelectedCard. Escape = dismiss.
   // We keep the existing role="alert" for backward compat with tests
@@ -488,6 +505,9 @@ function ErrorCard({ error, onDismiss, onRetry }: ErrorCardProps) {
     >
       <div className={styles.selectedHeading}>エラー</div>
       <div className={styles.error}>{error ?? 'probe failed'}</div>
+      {errorHint && (
+        <div className={styles.errorHint}>💡 {errorHint}</div>
+      )}
       <div className={styles.actions}>
         <button type="button" className={styles.cancelButton} onClick={onDismiss}>
           閉じる

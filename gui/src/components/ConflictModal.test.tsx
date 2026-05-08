@@ -57,12 +57,14 @@ describe('ConflictModal', () => {
   });
 
   it('renders dialog + 3 action buttons when conflictError is set', () => {
+    // #663: structured AppError 化以後、conflictError には raw message
+    // (prefix 無し) が入る。
     useMetadataStore.setState({
-      conflictError: 'conflict: external modification detected',
+      conflictError: 'external modification detected',
     });
     render(<ConflictModal />);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByText(/conflict: external/)).toBeInTheDocument();
+    expect(screen.getByText(/external modification/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '上書き' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'リロード' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'キャンセル' })).toBeInTheDocument();
@@ -70,7 +72,7 @@ describe('ConflictModal', () => {
 
   it('cancel dismisses the modal without side effects', async () => {
     useMetadataStore.setState({
-      conflictError: 'conflict: x',
+      conflictError: 'x',
       dirty: true,
     });
     render(<ConflictModal />);
@@ -84,7 +86,7 @@ describe('ConflictModal', () => {
 
   it('overwrite invokes apply_changes with expectedMtimeMs=null', async () => {
     useMetadataStore.setState({
-      conflictError: 'conflict: x',
+      conflictError: 'x',
       metadata: seedMetadata(),
       filePath: '/tmp/metadata.json',
       loadedMtimeMs: 1700,
@@ -108,7 +110,7 @@ describe('ConflictModal', () => {
 
   it('reload re-invokes load_metadata + get_metadata_mtime', async () => {
     useMetadataStore.setState({
-      conflictError: 'conflict: x',
+      conflictError: 'x',
       metadata: seedMetadata(),
       filePath: '/tmp/metadata.json',
       loadedMtimeMs: 1700,
@@ -131,7 +133,7 @@ describe('ConflictModal', () => {
   });
 
   it('Escape dismisses the modal (#587)', async () => {
-    useMetadataStore.setState({ conflictError: 'conflict: x' });
+    useMetadataStore.setState({ conflictError: 'x' });
     render(<ConflictModal />);
     const user = userEvent.setup();
     await user.keyboard('{Escape}');
@@ -140,7 +142,7 @@ describe('ConflictModal', () => {
   });
 
   it('focus is trapped inside the modal panel (#587)', async () => {
-    useMetadataStore.setState({ conflictError: 'conflict: x' });
+    useMetadataStore.setState({ conflictError: 'x' });
     render(<ConflictModal />);
     const dialog = screen.getByRole('dialog');
     // After mount, focus must have moved into the panel.
@@ -148,7 +150,7 @@ describe('ConflictModal', () => {
   });
 
   it('has no axe violations when shown (#587)', async () => {
-    useMetadataStore.setState({ conflictError: 'conflict: x' });
+    useMetadataStore.setState({ conflictError: 'x' });
     const { container } = render(<ConflictModal />);
     expect(await axe(container)).toHaveNoViolations();
   });

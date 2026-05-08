@@ -44,6 +44,17 @@ impl AppError {
         self
     }
 
+    /// code に対する default hint を attach する。すでに hint が設定されている場合は
+    /// 上書きせず保持する (call site で `.with_hint("...")` を先に書いた場合の override
+    /// が効く設計、将来 Approach C への hybrid 移行時に必要)。
+    pub fn with_default_hint(mut self) -> Self {
+        if self.hint.is_some() {
+            return self;
+        }
+        self.hint = default_hint_for_code(&self.code).map(String::from);
+        self
+    }
+
 }
 
 impl fmt::Display for AppError {
@@ -70,7 +81,7 @@ impl From<std::io::Error> for AppError {
             std::io::ErrorKind::TimedOut => "io.timed_out",
             _ => "io.error",
         };
-        AppError::new(code, e.to_string())
+        AppError::new(code, e.to_string()).with_default_hint()
     }
 }
 
@@ -78,7 +89,7 @@ impl From<std::io::Error> for AppError {
 /// `parse.json_invalid` 固定。message は `e.to_string()` で line/column 情報を含む。
 impl From<serde_json::Error> for AppError {
     fn from(e: serde_json::Error) -> Self {
-        AppError::new("parse.json_invalid", e.to_string())
+        AppError::new("parse.json_invalid", e.to_string()).with_default_hint()
     }
 }
 
@@ -87,9 +98,97 @@ impl From<serde_json::Error> for AppError {
 /// を `Result<_, AppError>` を返す Tauri command 内で `?` 経由で呼び出すケース
 /// で使われる。code は `internal.error` 固定。新規コードでは call site で
 /// `AppError::new("domain.error_kind", message)` を構築するのが望ましい。
+///
+/// `.with_default_hint()` chain は future-proof のため (`From<io::Error>` /
+/// `From<serde_json::Error>` と同 contract で integrity を保つ。現状
+/// `internal.error` は hint None だが、将来 hint を追加した場合の silent
+/// bypass を防ぐ)。lib.rs 全 80 site の hint chain 規律と整合 (#663)。
 impl From<String> for AppError {
     fn from(message: String) -> Self {
-        AppError::new("internal.error", message)
+        AppError::new("internal.error", message).with_default_hint()
+    }
+}
+
+/// AppError code に対する日本語 default hint を返す。未登録 code は None。
+/// 22 entries (現在の lib.rs inventory: io.* / parse.* / state.* / subprocess.* /
+/// validation.* / path.* / platform.* / internal.*)。
+/// 文言は `docs/tauri-commands.md` の AppError default hint mapping table と一致させる
+/// (本 fn が source of truth、docs は mirror)。
+fn default_hint_for_code(code: &str) -> Option<&'static str> {
+    match code {
+        // state
+        "state.mtime_conflict" => Some(
+            "metadata.json が他のプロセスで書き換えられました。「リロード」で最新を読み直すか、「上書き」で現在の編集を強制適用してください"
+        ),
+        // io (manual call site)
+        "io.file_not_found" => Some(
+            "ファイルが見つかりません。パスを確認するか、allaganeye split を再実行してください"
+        ),
+        "io.read_failed" => Some(
+            "ファイルの読み込みに失敗しました。ディスク状況・ファイルロック状態を確認してください"
+        ),
+        "io.write_failed" => Some(
+            "ファイルの書き込みに失敗しました。空き容量と書き込み権限 (Portable ZIP の install dir が user-writable か) を確認してください"
+        ),
+        "io.delete_failed" => Some(
+            "ファイル / フォルダの削除に失敗しました。他プロセスでロックされていないか確認してください"
+        ),
+        "io.backup_failed" => Some(
+            "バックアップファイルの作成に失敗しました。allaganeye 出力フォルダの空き容量と書き込み権限を確認してください"
+        ),
+        // io (auto from std::io::Error::ErrorKind via From impl)
+        "io.permission_denied" => Some(
+            "ファイルへのアクセス権限がありません。Portable ZIP install dir が user-writable な場所か、ファイル / フォルダが読み取り専用でないか確認してください"
+        ),
+        "io.already_exists" => Some(
+            "ファイルが既に存在します。出力先を変更するか既存ファイルを削除してください"
+        ),
+        "io.would_block" | "io.timed_out" => Some(
+            "I/O 処理がタイムアウト / ブロックされました。少し時間をおいて再試行してください"
+        ),
+        "io.error" => Some(
+            "I/O エラーが発生しました。詳細は logs フォルダを確認してください"
+        ),
+        // parse
+        "parse.json_invalid" => Some(
+            "JSON ファイルが破損しています。バックアップ (.bak) からの復元か allaganeye split のやり直しを検討してください"
+        ),
+        "parse.json_serialize_failed" => Some(
+            "JSON 書き出しに失敗しました。同梱 issue テンプレートでバグ報告してください"
+        ),
+        "parse.schema_invalid" => Some(
+            "metadata.json の構造が期待形式と異なります。allaganeye のバージョンと metadata 生成バージョンが一致しているか確認してください"
+        ),
+        "parse.ffprobe_output_invalid" => Some(
+            "ffprobe の出力を解釈できませんでした。ffmpeg / ffprobe を最新の BtbN LGPL ビルドに更新してください"
+        ),
+        // subprocess
+        "subprocess.spawn_failed" => Some(
+            "外部プロセスの起動に失敗しました。ffmpeg / Python / 同梱 runtime が壊れていないか確認してください"
+        ),
+        "subprocess.exit_failed" => Some(
+            "外部プロセスが異常終了しました。logs フォルダの最新ログから詳細を確認してください"
+        ),
+        "subprocess.cancelled" => None, // ユーザー操作によるキャンセルは hint 不要 (UI 側で「キャンセルされました」を表示で十分)
+        // validation
+        "validation.path_invalid" => Some(
+            "入力されたパスが不正です。ファイル名と拡張子を確認してください (対応: mp4 / mkv / mov / m4v)"
+        ),
+        "validation.not_a_file" => Some(
+            "指定されたパスはファイルではありません (フォルダや symlink ではなく動画ファイルを選択してください)"
+        ),
+        "validation.range_invalid" => Some(
+            "入力された数値が許容範囲外です。フォーム下のヒント表示を確認してください"
+        ),
+        // path / platform / internal
+        "path.install_dir_unresolved" => Some(
+            "Portable ZIP の install dir を特定できませんでした。allaganeye-gui.exe を ZIP 展開後の元のフォルダ構成のまま起動してください"
+        ),
+        "platform.unsupported" => Some(
+            "本機能は現在の OS では未対応です。Windows での起動が必要です"
+        ),
+        "internal.error" => None, // 内部エラーで具体的アクションがない (詳細は logs 参照を message 側で示す方針)
+        _ => None,
     }
 }
 
@@ -186,5 +285,64 @@ mod tests {
     fn app_error_display_format() {
         let e = AppError::new("net.timeout", "request timed out");
         assert_eq!(format!("{}", e), "[net.timeout] request timed out");
+    }
+
+    #[test]
+    fn default_hint_covers_all_known_codes() {
+        let with_hint = [
+            "state.mtime_conflict",
+            "io.file_not_found", "io.read_failed", "io.write_failed",
+            "io.delete_failed", "io.backup_failed",
+            "io.permission_denied", "io.already_exists",
+            "io.would_block", "io.timed_out", "io.error",
+            "parse.json_invalid", "parse.json_serialize_failed",
+            "parse.schema_invalid", "parse.ffprobe_output_invalid",
+            "subprocess.spawn_failed", "subprocess.exit_failed",
+            "validation.path_invalid", "validation.not_a_file", "validation.range_invalid",
+            "path.install_dir_unresolved", "platform.unsupported",
+        ];
+        for code in with_hint {
+            assert!(default_hint_for_code(code).is_some(), "missing hint for code: {}", code);
+        }
+        assert!(default_hint_for_code("subprocess.cancelled").is_none());
+        assert!(default_hint_for_code("internal.error").is_none());
+        assert!(default_hint_for_code("unknown.code").is_none());
+    }
+
+    #[test]
+    fn with_default_hint_attaches_known_code() {
+        let e = AppError::new("io.read_failed", "could not read").with_default_hint();
+        assert!(e.hint.is_some());
+        assert!(e.hint.unwrap().contains("ディスク状況"));
+    }
+
+    #[test]
+    fn with_default_hint_does_not_overwrite_explicit_hint() {
+        let e = AppError::new("io.read_failed", "msg")
+            .with_hint("custom hint")
+            .with_default_hint();
+        assert_eq!(e.hint.as_deref(), Some("custom hint"));
+    }
+
+    #[test]
+    fn with_default_hint_returns_no_hint_for_unknown_code() {
+        let e = AppError::new("unknown.code", "msg").with_default_hint();
+        assert!(e.hint.is_none());
+    }
+
+    #[test]
+    fn from_io_error_attaches_default_hint() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "x");
+        let e: AppError = io_err.into();
+        assert_eq!(e.code, "io.file_not_found");
+        assert!(e.hint.is_some());
+    }
+
+    #[test]
+    fn from_serde_json_error_attaches_default_hint() {
+        let json_err = serde_json::from_str::<serde_json::Value>("{ invalid").unwrap_err();
+        let e: AppError = json_err.into();
+        assert_eq!(e.code, "parse.json_invalid");
+        assert!(e.hint.is_some());
     }
 }

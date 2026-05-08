@@ -166,6 +166,27 @@ describe('DropScreen', () => {
     expect(screen.getByTestId('drop-screen').dataset.phase).toBe('idle');
   });
 
+  // #663 — Phase 4: when the probe rejects with an AppError-shaped object
+  // (`{ code, message, hint }`), the ErrorCard renders the hint as a 2nd
+  // line below the message so users get a recommended next action. Bare
+  // Error instances (`new Error(...)`) keep the existing single-line UX
+  // because `appErrorHint` returns null for them.
+  it('renders probe error hint as 2nd line when probe rejects with AppError (#663)', async () => {
+    const openDialog = vi.fn().mockResolvedValue('C:/videos/x.mkv');
+    const probeFn = vi.fn().mockRejectedValue({
+      code: 'parse.ffprobe_output_invalid',
+      message: 'ffprobe failed',
+      hint: 'check ffmpeg version',
+    });
+    render(<DropScreen openDialogFn={openDialog} probeFn={probeFn} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /参照/ }));
+    await waitFor(() => {
+      expect(screen.getByText('ffprobe failed')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/check ffmpeg version/)).toBeInTheDocument();
+  });
+
   it('Escape on the SelectedCard dismisses it (#587)', async () => {
     const openDialog = vi.fn().mockResolvedValue('C:/videos/x.mkv');
     render(<DropScreen openDialogFn={openDialog} />);
