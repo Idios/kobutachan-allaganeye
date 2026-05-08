@@ -71,14 +71,14 @@ def load_manifest(path: Path) -> dict[str, Any]:
     return data
 
 
-def check(manifest_path: Path | None = None, *, install_dir: Path | None = None) -> None:
+def check(
+    manifest_path: Path | None = None, *, install_dir: Path | None = None
+) -> None:
     """Verify all bundled files match the manifest.
 
-    Default arguments (production): manifest at ``<install dir>/integrity-manifest.json``,
-    install_dir is the manifest's parent directory. Tests pass explicit paths.
-
-    Currently happy path only -- missing/size detection is added in
-    later tasks. Returns ``None`` on success.
+    Aggregates ``missing`` paths into the IntegrityError context so the
+    caller (CLI / GUI emit) can show all failures at once instead of
+    one-at-a-time.
     """
     if manifest_path is None:
         manifest_path = _default_manifest_path()
@@ -86,24 +86,28 @@ def check(manifest_path: Path | None = None, *, install_dir: Path | None = None)
         install_dir = manifest_path.parent
 
     data = load_manifest(manifest_path)
+    missing: list[str] = []
+    size_mismatch: list[dict[str, Any]] = []
     for entry in data.get("files", []):
         rel_path = entry["path"]
         target = install_dir / rel_path
-        # happy path: file must exist and size match. Branches for failure
-        # paths come in subsequent tasks.
-        actual = target.stat().st_size  # raises FileNotFoundError if missing
+        if not target.exists():
+            missing.append(rel_path)
+            continue
+        # size_mismatch detection comes in Task 6
+        actual = target.stat().st_size
         if actual != int(entry["size"]):
-            raise IntegrityError(
-                "integrity check failed (size_mismatch placeholder)",
-                context={
-                    "missing": [],
-                    "size_mismatch": [
-                        {
-                            "path": rel_path,
-                            "expected": int(entry["size"]),
-                            "actual": actual,
-                        }
-                    ],
-                },
+            size_mismatch.append(
+                {
+                    "path": rel_path,
+                    "expected": int(entry["size"]),
+                    "actual": actual,
+                }
             )
+    if missing or size_mismatch:
+        raise IntegrityError(
+            f"integrity check failed: {len(missing)} missing, "
+            f"{len(size_mismatch)} size mismatch",
+            context={"missing": missing, "size_mismatch": size_mismatch},
+        )
     return None

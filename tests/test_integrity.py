@@ -132,3 +132,56 @@ def test_check_happy_path_returns_none(tmp_path: Path) -> None:
 
     # Expected: returns None, does not raise
     assert check(manifest, install_dir=install) is None
+
+
+def test_check_detects_missing_file(tmp_path: Path) -> None:
+    """check() raises IntegrityError listing missing path."""
+    from allaganeye.integrity import check
+
+    install = tmp_path / "install"
+    install.mkdir()
+    manifest = install / "integrity-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "generated_at": "2026-05-08T00:00:00Z",
+                "files": [{"path": "absent.bin", "size": 100, "tolerance_bytes": 0}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(IntegrityError) as exc_info:
+        check(manifest, install_dir=install)
+
+    ctx = exc_info.value.context
+    assert ctx["missing"] == ["absent.bin"]
+    assert ctx["size_mismatch"] == []
+
+
+def test_check_aggregates_multiple_missing(tmp_path: Path) -> None:
+    """check() reports every missing entry, not just the first."""
+    from allaganeye.integrity import check
+
+    install = tmp_path / "install"
+    install.mkdir()
+    manifest = install / "integrity-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "generated_at": "2026-05-08T00:00:00Z",
+                "files": [
+                    {"path": "a.bin", "size": 1, "tolerance_bytes": 0},
+                    {"path": "b.bin", "size": 1, "tolerance_bytes": 0},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(IntegrityError) as exc_info:
+        check(manifest, install_dir=install)
+
+    assert sorted(exc_info.value.context["missing"]) == ["a.bin", "b.bin"]
