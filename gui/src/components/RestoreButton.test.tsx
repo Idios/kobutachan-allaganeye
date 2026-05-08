@@ -117,4 +117,52 @@ describe('RestoreButton', () => {
     const button = screen.getByRole('button', { name: '元に戻す' });
     expect(button.hasAttribute('title')).toBe(false);
   });
+
+  // #663 — Phase 4: render the AppError hint as a 2nd line after the
+  // existing inline error message so the user sees both the failure and
+  // the recommended next step. Hint stays inside the role="alert"
+  // wrapper to avoid double-announcement by screen readers.
+  describe('hint rendering (#663)', () => {
+    it('renders restoreErrorHint as 2nd line when present', () => {
+      useMetadataStore.setState({
+        filePath: '/x',
+        hasBackup: true,
+        restoring: false,
+        restoreError: 'backup not found',
+        restoreErrorHint: 'create backup first',
+      });
+      render(<RestoreButton />);
+      expect(screen.getByText('backup not found')).toBeInTheDocument();
+      expect(screen.getByText(/create backup first/)).toBeInTheDocument();
+    });
+
+    it('does not render hint when restoreErrorHint is null', () => {
+      useMetadataStore.setState({
+        filePath: '/x',
+        hasBackup: true,
+        restoring: false,
+        restoreError: 'plain message',
+        restoreErrorHint: null,
+      });
+      render(<RestoreButton />);
+      expect(screen.getByText('plain message')).toBeInTheDocument();
+      expect(screen.queryByText(/💡/)).not.toBeInTheDocument();
+    });
+
+    it('hint stays inside the role="alert" wrapper for screen-reader continuity (#663)', () => {
+      useMetadataStore.setState({
+        filePath: '/x',
+        hasBackup: true,
+        restoring: false,
+        restoreError: 'backup not found',
+        restoreErrorHint: 'create backup first',
+      });
+      render(<RestoreButton />);
+      const alert = screen.getByRole('alert');
+      // Both message and hint should be DOM-descendants of the same alert region,
+      // so the screen reader announces them as one update.
+      expect(alert).toHaveTextContent('backup not found');
+      expect(alert).toHaveTextContent(/create backup first/);
+    });
+  });
 });

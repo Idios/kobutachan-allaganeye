@@ -386,6 +386,23 @@
   white-space: nowrap;
 }
 
+/* #663 — 2nd-line hint rendered after `.listError`. Stays inside the
+   alert wrapper so screen readers read message + hint as one announcement.
+   The parent `.listError` clamps message text to a single line via
+   `max-width: 240px; overflow: hidden; text-overflow: ellipsis;
+   white-space: nowrap`. The hint must override all three so multi-line
+   Japanese hints are not truncated mid-character. */
+.listErrorHint {
+  display: block;
+  color: var(--ae-text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+  margin-top: 2px;
+  white-space: normal;
+  max-width: 100%;
+  overflow: visible;
+}
+
 .listName {
   flex: 1;
   overflow: hidden;

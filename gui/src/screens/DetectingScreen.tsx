@@ -4,6 +4,7 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 
 import { AllaganSigil } from '../components/AllaganSigil';
 import { DisabledTooltip } from '../components/DisabledTooltip';
+import { appErrorHint, appErrorMessage } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 import { toStartDetectParams } from '../utils/detection';
@@ -272,6 +273,10 @@ export function DetectingScreen() {
     'running' as DetectingPhase,
   );
   const [error, setError] = useState<string | null>(null);
+  // #663 — AppError hint rendered as 2nd line under the primary message
+  // in `DetectingErrorView`. Kept on the parent (alongside `error`) so the
+  // child running view's `onError` callback can stamp both at once.
+  const [errorHint, setErrorHint] = useState<string | null>(null);
   // #646 review Round 4 補足 #6 -- run-scoped state (progress / log /
   // probeInfo / phaseLabel / elapsed / startedAt) は `DetectingRunningView`
   // 内部に閉じ込め、retry 時は `key={runCount}` で remount して initial
@@ -320,6 +325,7 @@ export function DetectingScreen() {
   // による子 component remount で達成する。
   function handleRetry(): void {
     setError(null);
+    setErrorHint(null);
     dispatch({ type: 'RETRY' });
     setRunCount((c) => c + 1);
   }
@@ -328,6 +334,7 @@ export function DetectingScreen() {
     return (
       <DetectingErrorView
         error={error}
+        errorHint={errorHint}
         displayFile={displayFile}
         onRetry={handleRetry}
         onBack={() => navigate('drop')}
@@ -345,8 +352,9 @@ export function DetectingScreen() {
       loadSample={loadSample}
       navigate={navigate}
       onCancelClick={() => dispatch({ type: 'CANCEL_CLICKED' })}
-      onError={(msg) => {
+      onError={(msg, hint) => {
         setError(msg);
+        setErrorHint(hint);
         dispatch({ type: 'DETECT_ERROR' });
       }}
       onComplete={() => dispatch({ type: 'PROGRESS_COMPLETE' })}
@@ -362,7 +370,11 @@ interface DetectingRunningViewProps {
   loadSample: ReturnType<typeof useMetadataStore.getState>['loadSample'];
   navigate: ReturnType<typeof useAppStateStore.getState>['navigate'];
   onCancelClick: () => void;
-  onError: (message: string) => void;
+  /**
+   * #663 — `hint` is the AppError corrective hint (null when the error came
+   * from a `phase=error` progress event or a non-AppError throw).
+   */
+  onError: (message: string, hint: string | null) => void;
   onComplete: () => void;
 }
 
@@ -489,7 +501,10 @@ function DetectingRunningView({
             }
 
             if (payload.phase === 'error') {
-              onError(payload.message ?? 'unknown error');
+              // #663 — progress events from the CLI carry no AppError hint
+              // (`phase=error` only conveys `message`). Pass null so the
+              // error view shows just the primary message.
+              onError(payload.message ?? 'unknown error', null);
               return;
             }
 
@@ -513,7 +528,9 @@ function DetectingRunningView({
         onComplete();
       } catch (e) {
         if (cancelled) return;
-        onError(e instanceof Error ? e.message : String(e));
+        // #663 — AppError-shaped throws (Tauri command rejection) carry
+        // a corrective hint that we render as the error view's 2nd line.
+        onError(appErrorMessage(e), appErrorHint(e));
       }
     }
 
@@ -699,6 +716,12 @@ function PhaseRow({ name, jp, pct, sub }: PhaseRowProps) {
  */
 interface DetectingErrorViewProps {
   error: string | null;
+  /**
+   * #663 — corrective hint rendered as a 2nd line below the primary
+   * error message. Sourced from AppError throw sites; null for legacy
+   * progress-event errors and bare `Error` instances.
+   */
+  errorHint: string | null;
   displayFile: string;
   onRetry: () => void;
   onBack: () => void;
@@ -706,6 +729,7 @@ interface DetectingErrorViewProps {
 
 function DetectingErrorView({
   error,
+  errorHint,
   displayFile,
   onRetry,
   onBack,
@@ -737,6 +761,11 @@ function DetectingErrorView({
       <pre className={styles.errorMessage} data-testid="detecting-error-message">
         {error ?? 'unknown error'}
       </pre>
+      {errorHint && (
+        <div className={styles.errorHint} data-testid="detecting-error-hint">
+          💡 {errorHint}
+        </div>
+      )}
       <div className={styles.actions}>
         <button
           type="button"
