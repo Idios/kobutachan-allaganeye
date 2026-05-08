@@ -4069,7 +4069,7 @@ def test_eta_progressbar_bar_visual_uses_dashes_and_36_width() -> None:
 
     # empty char が '-' (issue #365 期待動作 ####--- に整合)
     assert "-" in line, f"expected '-' as empty char in: {line!r}"
-    # width=36 で 50% 進捗 → 18 fill + 18 empty
+    # width=36 で 50% 進捗 -> 18 fill + 18 empty
     assert "#" * 18 in line, f"expected 18 fills (width=36, 50%): {line!r}"
     assert "-" * 18 in line, f"expected 18 dashes (width=36, 50%): {line!r}"
 
