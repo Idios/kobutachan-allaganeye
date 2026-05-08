@@ -11,6 +11,45 @@ interface PanicPayload {
 }
 
 /**
+ * #668: Payload sent from Rust `integrity::check_install_dir` via the
+ * `integrity-error` Tauri event. Field names are camelCase (Rust side
+ * uses #[serde(rename_all = "camelCase")]).
+ */
+interface IntegritySizeMismatch {
+  path: string;
+  expected: number;
+  actual: number;
+}
+
+interface IntegrityErrorPayload {
+  missing: string[];
+  sizeMismatch: IntegritySizeMismatch[];
+  logPath: string;
+}
+
+function formatIntegrityMessage(payload: IntegrityErrorPayload): string {
+  const lines: string[] = [];
+  if (payload.missing.length > 0) {
+    lines.push(`欠落しているファイル (${payload.missing.length} 件):`);
+    for (const p of payload.missing) {
+      lines.push(`  - ${p}`);
+    }
+  }
+  if (payload.sizeMismatch.length > 0) {
+    lines.push(`サイズ不一致 (${payload.sizeMismatch.length} 件):`);
+    for (const sm of payload.sizeMismatch) {
+      lines.push(`  - ${sm.path} (expected ${sm.expected} bytes, actual ${sm.actual} bytes)`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function logDirOf(logPath: string): string {
+  const idx = Math.max(logPath.lastIndexOf('/'), logPath.lastIndexOf('\\'));
+  return idx >= 0 ? logPath.slice(0, idx) : logPath;
+}
+
+/**
  * #614: Wires browser + Tauri error events into the errorStore.
  *
  * Sources:
@@ -107,6 +146,23 @@ export function installGlobalErrorListener(): () => void {
       isPanic: false,
       isRecoverable: true,
     });
+  })
+    .then((un) => tauriUnlistens.push(un))
+    .catch(() => {
+      // not fatal in non-Tauri test envs
+    });
+
+  void listen<IntegrityErrorPayload>('integrity-error', (event) => {
+    const payload = event.payload;
+    showError({
+      errorTitle: '同梱物の検証に失敗しました',
+      errorMessage: formatIntegrityMessage(payload),
+      errorHint: 'Portable ZIP を再展開してください。',
+      errorCategory: 'integrity',
+      isPanic: true,
+      isRecoverable: false,
+    });
+    setLogDir(logDirOf(payload.logPath));
   })
     .then((un) => tauriUnlistens.push(un))
     .catch(() => {
