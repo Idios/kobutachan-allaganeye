@@ -68,3 +68,35 @@ def test_load_manifest_raises_when_files_key_missing(tmp_path: Path) -> None:
         load_manifest(bad)
 
     assert "files" in str(exc_info.value)
+
+
+def test_resolve_install_dir_from_package_init(tmp_path: Path) -> None:
+    """_resolve_install_dir walks 3 levels up from package __init__.
+
+    Portable ZIP layout: <install dir>/lib/allaganeye/__init__.py
+    """
+    from allaganeye.integrity import _resolve_install_dir
+
+    init_path = tmp_path / "lib" / "allaganeye" / "__init__.py"
+    init_path.parent.mkdir(parents=True)
+    init_path.write_text("", encoding="utf-8")
+
+    assert _resolve_install_dir(init_path) == tmp_path
+
+
+def test_default_manifest_path_under_install_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_default_manifest_path returns <install dir>/integrity-manifest.json.
+
+    Patches the module-level Path-from-__file__ resolution so the test is
+    independent of where pytest finds the actual package.
+    """
+    import allaganeye.integrity as integ
+
+    fake_init = tmp_path / "lib" / "allaganeye" / "__init__.py"
+    fake_init.parent.mkdir(parents=True)
+    fake_init.write_text("", encoding="utf-8")
+    monkeypatch.setattr(integ, "_PACKAGE_INIT", fake_init)
+
+    assert integ._default_manifest_path() == tmp_path / "integrity-manifest.json"

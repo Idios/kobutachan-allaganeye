@@ -23,6 +23,27 @@ from allaganeye.exceptions import IntegrityError
 
 _MANIFEST_NAME = "integrity-manifest.json"
 
+# Resolved at import time so monkeypatch.setattr can override for tests
+# without touching the real ``__file__`` (which would also affect other
+# tests). Production callers use ``_default_manifest_path()`` which reads
+# this constant.
+_PACKAGE_INIT: Path = Path(__file__).resolve().parent / "__init__.py"
+
+
+def _resolve_install_dir(package_init: Path) -> Path:
+    """Compute install dir from ``allaganeye/__init__.py`` path.
+
+    Portable ZIP layout: ``<install dir>/lib/allaganeye/__init__.py``,
+    so the install dir is 3 ancestors up from ``__init__.py``.
+    """
+    return package_init.resolve().parent.parent.parent
+
+
+def _default_manifest_path() -> Path:
+    """Return ``<install dir>/integrity-manifest.json`` for production use."""
+    install_dir = _resolve_install_dir(_PACKAGE_INIT)
+    return install_dir / _MANIFEST_NAME
+
 
 def load_manifest(path: Path) -> dict[str, Any]:
     """Load and validate the integrity manifest JSON.
