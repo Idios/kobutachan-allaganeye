@@ -4016,12 +4016,12 @@ def test_eta_progressbar_suppresses_eta_in_gpu_mode() -> None:
     assert re.search(r"\b\d{1,3}%\s*$", line.rstrip()), line
 
 
-def test_eta_progressbar_no_eta_before_first_update() -> None:
-    """update 前 (eta_known=False) は ETA tail を出さず percent のみ."""
+def test_eta_progressbar_placeholder_eta_before_first_update() -> None:
+    """update 前 (eta_known=False) は 'ETA: --:--:--' placeholder を出す (#365 Idios feedback)."""
     bar = _eta_progressbar(100, "Detecting")
     # _drive_to_known_eta を呼ばない -- eta_known=False のまま (start は初期化済みだが update 未実行で eta_known は False)
 
     line = bar.format_progress_line()
 
-    assert "ETA: " not in line
+    assert "ETA: --:--:--" in line, f"missing placeholder in: {line!r}"
     assert "0%" in line

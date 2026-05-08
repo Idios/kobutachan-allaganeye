@@ -1080,9 +1080,16 @@ class _ETAProgressBar(_ClickProgressBar):
 
         Detecting  ###################---  93% ETA: 0:00:22
 
+    ``eta_known=False`` (update 未呼び出し / 1 秒以内) のときも ETA
+    セクションを出し ``ETA: --:--:--`` placeholder を表示する (Idios
+    feedback for #365: pre-update でも ETA を出す改善)。
+
     ``show_eta=False`` (GPU mode #438 の ``suppress_click_eta=True``
     経路) では ETA セクションを出さず percent のみ表示。caller 側が
     self-computed ETA を label に組み込む既存挙動と互換。
+
+    ``finished=True`` (100% 完了) では ETA: 00:00:00 を出さず percent
+    のみ表示 (click 親 class と整合)。
 
     依存する click 8.x の public method:
       - ``format_bar()``    -- bar 文字列
@@ -1096,8 +1103,11 @@ class _ETAProgressBar(_ClickProgressBar):
     def format_progress_line(self) -> str:
         bar = self.format_bar()
         pct = self.format_pct()
-        if self.show_eta and self.eta_known and not self.finished:
-            eta = self.format_eta()
+        if self.show_eta and not self.finished:
+            # eta_known=False (update 未呼び出し / 1 秒以内) のとき format_eta()
+            # は空文字列を返すので、'--:--:--' placeholder で常時 ETA を表示する
+            # (Idios feedback: pre-update でも ETA を出す改善、#365)。
+            eta = self.format_eta() or "--:--:--"
             return f"{self.label}{bar} {pct} ETA: {eta}"
         return f"{self.label}{bar} {pct}"
 
