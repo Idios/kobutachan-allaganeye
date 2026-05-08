@@ -97,6 +97,19 @@
 
 **ErrorModal との分離 (#614)**: `ErrorModal` は **想定外エラー (Rust panic / unhandled JS exception / React 内部例外) 専用** で、`isRecoverable=false` がデフォルト。recoverable error (`load_metadata` の I/O 失敗、`apply_changes` のネットワーク失敗等) は **本節で規定する inline + toast** に流す。両者は排他で、同一画面内に重複しない。詳細は [`ui-architecture.md` §4 エラー伝搬フロー](ui-architecture.md#4-エラー伝搬フロー-614) を参照。
 
+#### AppError `code` ベースの分岐ルール (#663)
+
+Tauri command 失敗時の error 表示は以下を厳守する:
+
+1. `appErrorCodeIs(e, 'state.mtime_conflict')` で apply path → ConflictModal (modal 表示)
+2. その他の AppError code → inline error
+   - 1 行目: `appErrorMessage(e)` (赤系: `var(--ae-danger)` ないし screen 固有 error 色)
+   - 2 行目: `appErrorHint(e)` (灰系: `var(--ae-text-dim)`、`💡` 等の prefix で
+     アクション提示と分かるように)
+3. catch ブロック以外で error を扱わない (`alert()` / `console.error` のみは禁止)
+4. globalErrorListener が拾うのは uncaught (window.error / unhandledrejection /
+   panic) のみ。catch 済 Tauri command error は ErrorModal に出さない (規約)
+
 ## 2. 画面別 UI 部品状態機械
 
 §2 は 5 画面それぞれを **1 画面 = 1 PR** で順次追加する (#590 着手フローに従う)。

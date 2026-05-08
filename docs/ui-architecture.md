@@ -102,6 +102,22 @@ GUI 内部で発生する想定外エラー (Rust panic / React 例外 / unhandl
 
 ErrorModal は [`docs/bug-report-guide.md`](bug-report-guide.md) §1.4 の「ログ取得」と連動する。ユーザーは ErrorModal の「ログフォルダを開く」→ 該当 `.log` ファイル → issue 添付という流れで bug report を提出する。詳細手順は bug-report-guide.md を参照。
 
+### AppError code 体系と inline error の使い分け (#663)
+
+Tauri command の `Result<T, AppError>` で frontend に届く構造化 error は、
+[`docs/tauri-commands.md`](tauri-commands.md) で master 一覧化されている。inline error 表示時は
+`appErrorMessage(e)` を 1 行目に、`appErrorHint(e)` を 2 行目 (`var(--ae-text-dim)`)
+に render する規約。code → default hint の mapping は
+[`gui/src-tauri/src/error.rs`](../gui/src-tauri/src/error.rs) の `default_hint_for_code` で一元管理。
+
+#### 主な分岐ルール
+
+- `code === 'state.mtime_conflict'` → ConflictModal を出す (apply path のみ)
+- それ以外の `code` → inline error (2 行目に hint があれば render)
+- legacy raw String (= AppError 化前の commands) → `appErrorMessage` で
+  message のみ取得、hint は null になる (PR #663 で legacy raw を返す
+  command は存在しないが、helper の互換性として温存)
+
 ## 5. 各画面の phase state
 
 ### drop (動画ファイル選択)
