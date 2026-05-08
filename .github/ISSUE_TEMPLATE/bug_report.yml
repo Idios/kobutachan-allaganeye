@@ -12,7 +12,8 @@ body:
 
         動画ファイルを添付する場合は、プライバシー・機密情報の混入がないことを事前にご確認ください (下のチェックボックス参照)。
 
-        ErrorModal の `[GitHub Issue を作成]` ボタンを使うと一部項目 (実際の動作 / 環境情報 / ログファイル) が自動入力されます (公開後)。
+        <!-- ErrorModal 連動 note (Group D #669 マージで rendered 化、それまで外部 reporter には非表示):
+        ErrorModal の `[GitHub Issue を作成]` ボタンを使うと一部項目 (実際の動作 / 環境情報 / ログファイル) が自動入力されます。 -->
 
         詳細は [`docs/bug-report-guide.md`](../../blob/develop-0.2.0/docs/bug-report-guide.md) を参照してください (公開までしばらくお待ちください)。
 
@@ -39,7 +40,8 @@ body:
     id: actual
     attributes:
       label: 実際の動作
-      description: エラーメッセージ全文やログがあれば貼り付けてください (ErrorModal から自動入力される場合あり)
+      # Group D #669 マージ後は ErrorModal から自動入力される。それまでは下記 description のみ表示。
+      description: エラーメッセージ全文やログがあれば貼り付けてください
     validations:
       required: true
 
@@ -62,10 +64,10 @@ body:
     id: log_file_attachment
     attributes:
       label: ログファイル (GUI クラッシュ時のみ)
+      # Group D #669 マージ後は ErrorModal から自動入力 (末尾抜粋のみ) される。完全なログが必要な場合は手動添付。
+      # 上記 note は外部 reporter には Group D マージまで表示せず (yaml comment は GitHub UI に出ない)。
       description: |
         GUI でクラッシュ・ErrorModal が出た場合、アプリのインストール先 (`allaganeye-gui.exe` があるフォルダ) の `logs/error-YYYYMMDD.log` の関連箇所を貼り付けるか、ファイルを添付してください。ErrorModal の `[ログフォルダを開く]` ボタンからも辿れます。
-
-        ErrorModal から自動入力される場合は末尾抜粋のみ。完全なログファイルが必要な場合は手動添付してください。
       render: text
     validations:
       required: false
