@@ -262,7 +262,6 @@ Report 末尾に追記予定)。
 
 - [x] gui/eslint.config.js に no-restricted-globals 相当の rule 追加
 - [x] エラーメッセージに plugin-dialog 代替 API + ui-interaction-spec.md §1.3 リンク
-- [ ] 違反コード branch で CI lint fail (検証 PR で別途実証、本 PR Self-Test Report 末尾追記)
 - [x] CI grep check 不要判断 (理由: ESLint で IDE + CI 両方カバー、grep はコメント false positive)
 - [x] docs/ui-interaction-spec.md §1.3 末尾に lint 強制段落追加
 
@@ -272,6 +271,8 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
+
+<!-- Note: machine-verified の `[x]` チェックは PR body のみで管理し、commit message には include しない。Task 5 Step 8 / Task 6 で PR body 側の検証 PR CI evidence を更新すること。 -->
 
 Expected: commit 成功、`[claude/musing-davinci-38136f-eslint <hash>]` 表示。
 
@@ -473,7 +474,9 @@ Expected: `gui-frontend` job が **FAIL**。Other jobs (`python` 等) は PASS �
 
 ```bash
 gh pr view #685 --json statusCheckRollup --jq '.statusCheckRollup[] | select(.conclusion == "FAILURE")'
-gh run view --log-failed --job=<failed_job_id> | grep -E '(no-restricted-globals|no-restricted-properties)' | head -20
+# failed_job_id を gh api で取得してから log を確認:
+FAILED_JOB_ID=$(gh pr view '#685' --json statusCheckRollup --jq '.statusCheckRollup[] | select(.conclusion == "FAILURE") | .databaseId' | head -1)
+gh run view --log-failed --job="$FAILED_JOB_ID" | grep -E '(no-restricted-globals|no-restricted-properties)' | head -20
 ```
 
 Expected: 6 行 (各違反 1 行)、または該当 job log で 6 errors の詳細を確認。CI run URL を記録 (Task 6 で本流 PR Self-Test Report に追記)。
@@ -485,6 +488,8 @@ gh pr close #685 --comment "$(cat <<'EOF'
 CI fail evidence captured: gui-frontend lint job reports 6 violations
 (3 no-restricted-globals + 3 no-restricted-properties) as expected.
 
+# 以下は本 plan 実行時に記録された実数 URL を引用 (historical record)。
+# 新規 plan で再利用する場合は実行時の URL に書き換える必要あり。
 CI run URL: https://github.com/Idios/kobutachan-allaganeye/actions/runs/25529744519
 
 Closing this verification PR without merge. The actual rule additions
@@ -513,12 +518,19 @@ git switch claude/musing-davinci-38136f-eslint
 
 `gh pr edit` は body 全文置換のため、Task 4 Step 4 で書き出した一時ファイルを sed で書き換えて再投稿する。
 
+<!-- Historical reference: 本 plan 実行時の実数 (#685, 25529744519) を記録。以下は参考のみ。 -->
+
+<!-- sed コマンドは wording 変化で silently fail するため、実際の更新には Claude Code の Edit tool で old_string/new_string 完全一致で書き換えること (Edit tool 推奨)。以下は historical reference として残す: -->
+
 ```bash
-# 検証 PR 行を [x] + URL 入りに置換
-sed -i 's|^- \[ \] 違反コード検証 PR の CI fail evidence.*$|- [x] 違反コード検証 PR #685 (closed without merge): CI run https://github.com/Idios/kobutachan-allaganeye/actions/runs/25529744519 で no-restricted-globals 3 件 + no-restricted-properties 3 件 = 計 6 violation を block することを確認|' .git/plan-tmp/pr1_body.md
+# 検証 PR 行を [x] + URL 入りに置換 (historical record、実行時は Edit tool 推奨)
+# sed -i 's|...|...|' .git/plan-tmp/pr1_body.md
 ```
 
-`#685` を Task 5 Step 5 で記録した検証 PR 番号、`https://github.com/Idios/kobutachan-allaganeye/actions/runs/25529744519` を Task 5 Step 7 で記録した failed CI run URL に置換 (上記コマンド内の `<...>` 文字列を実際の値に書き換えてから sed 実行)。
+`#685` を Task 5 Step 5 で記録した検証 PR 番号、failed CI run URL を Task 5 Step 7 で記録した URL に置換して Edit tool で更新する。以下は本 plan 実行時の historical record (以後の再利用時は実行時の値に書き換えること):
+
+- 検証 PR 番号: `#685`
+- CI run URL: `https://github.com/Idios/kobutachan-allaganeye/actions/runs/25529744519`
 
 - [ ] **Step 3: 書き換え結果を確認**
 
@@ -587,11 +599,10 @@ Expected: 0 commit、または取り込み未済が touched files (`allaganeye/c
 交差ありなら:
 
 ```bash
-git switch develop-0.2.0
-git pull
+git fetch origin develop-0.2.0
 ```
 
-その後 Phase 1 の `claude/musing-davinci-38136f-eslint` を merge せずに、新 branch を develop-0.2.0 から切る (Phase 2 は Phase 1 と独立 PR)。
+交差なしなら skip。Phase 1 の `claude/musing-davinci-38136f-eslint` は merge しない (Phase 2 は Phase 1 と独立 PR)。
 
 - [ ] **Step 3: 並行 worktree PR 重複確認**
 
@@ -601,14 +612,15 @@ gh pr list --search "365 in:title,body" --state all
 
 Expected: 既存 PR が無いこと。
 
-- [ ] **Step 4: branch 切り (develop-0.2.0 base)**
+- [ ] **Step 4: branch 切り (origin/develop-0.2.0 から派生明示、worktree branch の plan/spec commits を取り込まないこと)**
 
 ```bash
-git switch develop-0.2.0
-git switch -c claude/musing-davinci-38136f-progress-bar
+git switch -c claude/musing-davinci-38136f-progress-bar origin/develop-0.2.0
 ```
 
-Expected: branch 切り替え (Phase 1 commit を含まない、純粋に develop-0.2.0 から)。
+Expected: branch 切り替え完了。`git log --oneline origin/develop-0.2.0..HEAD` が空 (ahead-by-0)。
+
+**注意**: worktree session の現在 branch (`claude/musing-davinci-38136f`) には plan/spec commits が含まれているため、`git switch -c <new-branch>` だけだとそれらを inherit してしまう。`origin/develop-0.2.0` を明示することで Phase 2 の PR scope を本質的な実装変更のみに保つ (Iron Law 3 担保)。
 
 ---
 
@@ -658,17 +670,19 @@ from allaganeye.commands.split_matches import (
 # #365: progress bar ETA ラベル付与の format 検証
 # ============================================================
 
-_ETA_LINE_PATTERN = re.compile(r"\b\d{1,3}%\s+ETA:\s+\d+:\d{2}:\d{2}\b")
+_ETA_LINE_PATTERN = re.compile(r"\b\d{1,3}%\s+ETA:\s+(?:\d+d\s+)?\d+:\d{2}:\d{2}\b")
 
 
 def _drive_to_known_eta(bar: _ETAProgressBar, completed: int) -> None:
     """Force eta_known by simulating elapsed time + progress.
 
-    click ProgressBar は ``start_time`` が None / update 未実行の間
+    click ProgressBar は ``start`` / ``last_eta`` が None / update 未実行の間
     ``eta_known=False`` のまま 'ETA: --' 相当を出す。テストでは過去
     timestamp + update() で eta_known=True を満たす。
     """
-    bar.start_time = time.time() - 10.0  # 10s 前から動いていた体
+    past = time.time() - 10.0
+    bar.start = past
+    bar.last_eta = past
     bar.update(completed)
 
 
@@ -745,7 +759,7 @@ def _eta_progressbar(length: int, label: str, *, suppress_click_eta: bool = Fals
 `new_string`:
 
 ```python
-class _ETAProgressBar(click.ProgressBar):
+class _ETAProgressBar(_ClickProgressBar):
     """Progress bar with explicit 'ETA: H:MM:SS' label (#365).
 
     click のデフォルト ``%(info)s`` placeholder は ``<percent>  <eta>``
@@ -755,13 +769,13 @@ class _ETAProgressBar(click.ProgressBar):
 
     本 subclass は ``format_progress_line`` を override し以下に統一:
 
-        Detecting  ###################---  93% ETA: 0:00:22
+        Detecting  ###################---  93% ETA: 00:00:22
 
     ``show_eta=False`` (GPU mode #438 の ``suppress_click_eta=True``
     経路) では ETA セクションを出さず percent のみ表示。caller 側が
     self-computed ETA を label に組み込む既存挙動と互換。
 
-    依存する click 8.x の public method:
+    依存する `click._termui_impl` module の `ProgressBar` class が提供するメソッド (click 8.x の internal だが API surface は安定):
       - ``format_bar()``    -- bar 文字列
       - ``format_pct()``    -- "  N%" or "NN%" (左 padding あり)
       - ``format_eta()``    -- "H:MM:SS" or "" (eta_known=False / show_eta=False のとき空)
@@ -802,9 +816,9 @@ def _eta_progressbar(
     )
 ```
 
-- [ ] **Step 3: `click` import を module top に昇格 (旧 `_eta_progressbar` 内 `import click` の代替)**
+- [ ] **Step 3: `_ClickProgressBar` import を module top に追加 (旧 `_eta_progressbar` 内 `import click` の代替)**
 
-旧実装は関数内で `import click` していた (lazy import)。新 class 定義は module top レベルで `click` を参照するため、ファイル冒頭の import section に `click` を昇格する必要がある。
+旧実装は関数内で `import click` していた (lazy import)。新 `_ETAProgressBar` class は `_ClickProgressBar` を継承するため、ファイル冒頭の import section に追加する必要がある。
 
 `allaganeye/commands/split_matches.py` の冒頭 import 群を確認:
 
@@ -812,10 +826,13 @@ def _eta_progressbar(
 head -30 allaganeye/commands/split_matches.py | grep -n "^import\|^from"
 ```
 
-`import click` または `import click as click` が既に top level にあれば skip。無ければ Edit tool で追加 (既存 import 群の適切な位置に):
+`from click._termui_impl import ProgressBar as _ClickProgressBar` が既に top level になければ Edit tool で追加 (既存 import 群の適切な位置に):
 
 ```python
-import click  # progressbar / ProgressBar subclass で使用
+import typer
+from click._termui_impl import ProgressBar as _ClickProgressBar  # subclass 用 (#365)
+
+from allaganeye.audio.matcher import BgmHit
 ```
 
 - [ ] **Step 4: 4 bar test を実行して PASS を確認**
@@ -1000,7 +1017,7 @@ bar_template が `%(info)s` を使っていたため click は "<percent>  <eta>
 
 - 新 class `_ETAProgressBar(click.ProgressBar)` を追加し、
   `format_progress_line()` を override して以下の format に統一:
-    Detecting  ###################---  93% ETA: 0:00:22
+    Detecting  ###################---  93% ETA: 00:00:22
 - `_eta_progressbar()` の戻り型を `_ETAProgressBar` に refactor。
   4 bar (Detecting / Refining / Scorebar / Splitting) で format 統一。
 - GPU mode (suppress_click_eta=True → show_eta=False、PR #438 経路) は
@@ -1035,7 +1052,7 @@ test を 3 種追加:
 issue [#365](https://github.com/Idios/kobutachan-allaganeye/issues/365) には明示
 の `## 受け入れ条件` 節がないため「期待動作」「根本原因分析」から逐条:
 
-- [x] 期待動作: `Detecting ####---  93% ETA: 0:00:22` 形式
+- [x] 期待動作: `Detecting ####---  93% ETA: 00:00:22` 形式
       → _ETAProgressBar.format_progress_line で実現
 - [x] 影響範囲全 4 bar: Detecting / Refining / Scorebar / Splitting
       → _eta_progressbar 戻り型変更で全 caller が新 format
@@ -1070,7 +1087,7 @@ cat > .git/plan-tmp/pr2_body.md <<'EOF'
 
 PR #343 (#329 修正) で `show_eta=True` を click.progressbar に渡したものの、`bar_template` が `%(info)s` を使っていたため click は `<percent>  <eta>` をラベルなしで展開し、ユーザーには時刻だけが見えて意味が伝わらない不完全修正で merge されていた ([#365](https://github.com/Idios/kobutachan-allaganeye/issues/365))。
 
-`_eta_progressbar` を `_ETAProgressBar(click.ProgressBar)` subclass + `format_progress_line()` override に refactor し、4 bar (Detecting / Refining / Scorebar / Splitting) で `93% ETA: 0:00:22` 形式に統一する。
+`_eta_progressbar` を `_ETAProgressBar(click.ProgressBar)` subclass + `format_progress_line()` override に refactor し、4 bar (Detecting / Refining / Scorebar / Splitting) で `93% ETA: 00:00:22` 形式に統一する。
 
 ## 変更ファイル
 
@@ -1081,7 +1098,7 @@ PR #343 (#329 修正) で `show_eta=True` を click.progressbar に渡したも�
 
 issue [#365](https://github.com/Idios/kobutachan-allaganeye/issues/365) には明示的な `## 受け入れ条件` セクションが無いため、「期待動作」と「根本原因分析」を逐条検証:
 
-- [x] **期待動作**: `Detecting ####---  93% ETA: 0:00:22` 形式
+- [x] **期待動作**: `Detecting ####---  93% ETA: 00:00:22` 形式
   → `_ETAProgressBar.format_progress_line` で `f"{self.label}{bar} {pct} ETA: {eta}"` を生成
 - [x] **影響範囲全 4 bar** (`Detecting`, `Refining`, `Scorebar`, `Splitting`)
   → `_eta_progressbar` の戻り型を `_ETAProgressBar` に変えるだけで全 caller (split_matches.py:810/898/922/1130) が新 format を享受
@@ -1172,14 +1189,22 @@ Question: PR #687 (#365 ETA label) は CLI 進捗表示の format 変更で、
 
 **(a) 完了 (3 項目 OK) を選択した場合**:
 
-`.git/plan-tmp/pr2_body.md` (Task 13 Step 4 で書き出し済) の `### machine-unverifiable (Idios 実機検証)` セクション 3 行を sed で `- [x]` 切替する:
+`.git/plan-tmp/pr2_body.md` (Task 13 Step 4 で書き出し済) の `### machine-unverifiable (Idios 実機検証)` セクション 3 行を `- [x]` 切替する。
+
+**重要**: `sed -i` は wording 変化で silently fail するため、**Claude Code の Edit tool で `old_string` / `new_string` を完全一致で書き換えること** (sed の brittle anchor を避けるため Edit tool 推奨)。以下の sed コマンドは historical reference として残すが、実際の更新は Edit tool で行うこと:
 
 ```bash
-# 3 行を [x] 化 + 検証日付を追記
-sed -i 's|^- 短い sample 動画で `allaganeye split.*$|- [x] 短い sample 動画で `allaganeye split <video> --dry-run` 実行 → Detecting / Refining / Scorebar / Splitting 4 bar 全てに `ETA: H:MM:SS` 表示 (Idios 実機 2026-05-08 確認)|' .git/plan-tmp/pr2_body.md
-sed -i 's|^- `--gpu` で sample 動画 → ETA 二重表示が起きないこと.*$|- [x] `--gpu` で sample 動画 → ETA 二重表示が起きないこと (GPU mode #438 互換、Idios 実機 2026-05-08 確認)|' .git/plan-tmp/pr2_body.md
-sed -i 's|^- 既存 metadata.json と diff なし.*$|- [x] 既存 metadata.json と diff なし (検知ロジック regression なし、Idios 実機 2026-05-08 確認)|' .git/plan-tmp/pr2_body.md
+# historical reference (実行時は Edit tool 推奨):
+# sed -i 's|^- 短い sample 動画で.*$|- [x] ...|' .git/plan-tmp/pr2_body.md
+# sed -i 's|^- `--gpu` で sample 動画.*$|- [x] ...|' .git/plan-tmp/pr2_body.md
+# sed -i 's|^- 既存 metadata.json.*$|- [x] ...|' .git/plan-tmp/pr2_body.md
 ```
+
+Edit tool での変更対象は以下の 3 行 (末尾に「Idios 実機 YYYY-MM-DD 確認」を追記):
+
+- `- 短い sample 動画で ...` → `- [x] 短い sample 動画で ... (Idios 実機 2026-05-08 確認)`
+- `- \`--gpu\` で sample 動画 → ETA 二重表示が起きないこと ...` → `- [x] ... (Idios 実機 2026-05-08 確認)`
+- `- 既存 metadata.json と diff なし ...` → `- [x] ... (Idios 実機 2026-05-08 確認)`
 
 書き換え結果を確認:
 

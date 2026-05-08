@@ -68,7 +68,7 @@ click 8.x の `%(info)s` は `<percent>  <eta>` をラベルなしで展開す�
 
 ### 2.2 #365 (章 2)
 
-- Detecting / Refining / Scorebar / Splitting の 4 bar 全てで `93% ETA: 0:00:22` 形式に統一
+- Detecting / Refining / Scorebar / Splitting の 4 bar 全てで `93% ETA: 00:00:22` 形式に統一
 - GPU mode (`suppress_click_eta=True` → `show_eta=False`、PR [#438](https://github.com/Idios/kobutachan-allaganeye/pull/438) 経路) でも ETA 二重表示が起きないこと
 - 進捗バー出力に対する `format_progress_line()` ダイレクト assertion を unit test に追加し、PR #343 で起きた「テスト無しで不完全 merge」の再発を防ぐ
 
@@ -103,7 +103,7 @@ Group H: lint / CLI 系 polish (1 spec / 2 章 / 2 PR)
 | 1: 受け入れ条件逐条 | §4 / §5 の「受け入れ条件マッピング」表で各 PR review 時に逐条 evidence |
 | 3: scope creep 禁止 | 1 PR = 1 issue を厳守。ESLint config と progress bar を 1 PR にまとめない |
 | 4: Closes/Fixes/Resolves 禁止 | PR 本文・commit に `Refs #643` / `Refs #365` のみ。close は別途 `/close-issue` skill |
-| 6: PR Pre-flight | 各 PR で `git fetch origin develop-0.2.0` + 取り込み未済 commit 確認 + `gh pr list --search "<num>" --state all` で並行 worktree PR 重複確認 |
+| 6: PR Pre-flight | 各 PR で `git fetch origin develop-0.2.0` + 取り込み未済 commit 確認 + `gh pr list --search "<元 issue#> in:title,body" --state all` (例: `gh pr list --search "643 in:title,body" --state all`) で並行 worktree PR 重複確認 |
 | 6: 自動チェック (path 別) | 章 1 = `npm run lint` / `typecheck` / `test` / `build` + `cargo check`、章 2 = `pytest` / `ruff check` / `ruff format --check` / `pyright` |
 | 6: 実機検証 trigger | 章 1 = config-only で実機不要 (検証 PR で CI evidence)、章 2 = 短い動画 1 回 + GPU mode 1 回の表示確認を AskUserQuestion で依頼 |
 
@@ -201,8 +201,10 @@ Group H: lint / CLI 系 polish (1 spec / 2 章 / 2 PR)
 
 `allaganeye/commands/split_matches.py` の `_eta_progressbar` を click.ProgressBar subclass + override 方式に refactor:
 
+実装は `from click._termui_impl import ProgressBar as _ClickProgressBar` 経由で `_ClickProgressBar` alias として import (`click.ProgressBar` は click 8.x の public API として export されていないため)。
+
 ```python
-class _ETAProgressBar(click.ProgressBar):
+class _ETAProgressBar(_ClickProgressBar):
     """Progress bar with explicit 'ETA: H:MM:SS' label (#365).
 
     click のデフォルト ``%(info)s`` placeholder は ``<percent>  <eta>``
@@ -212,13 +214,13 @@ class _ETAProgressBar(click.ProgressBar):
 
     本 subclass は ``format_progress_line`` を override し以下に統一:
 
-        Detecting  ###################---  93% ETA: 0:00:22
+        Detecting  ###################---  93% ETA: 00:00:22
 
     ``show_eta=False`` (GPU mode #438 の ``suppress_click_eta=True``
     経路) では ETA セクションを出さず percent のみ表示。caller 側が
     self-computed ETA を label に組み込む既存挙動と互換。
 
-    依存する click 8.x の public method:
+    依存する `click._termui_impl` module の `ProgressBar` class が提供するメソッド (click 8.x の internal だが API surface は安定):
       - ``format_bar()``    -- bar 文字列
       - ``format_pct()``    -- "  N%" or "NN%" (左 padding あり)
       - ``format_eta()``    -- "H:MM:SS" or "" (eta_known=False / show_eta=False のとき空)
@@ -270,10 +272,10 @@ def _eta_progressbar(
 
 | caller | 該当行 | bar instance | label | 期待 line (format 統一の確認、ETA 値は例) |
 | --- | --- | --- | --- | --- |
-| `_run_detection_with_refine_bar` | `split_matches.py:810` | `_eta_progressbar(total, "Detecting")` | `"Detecting "` | `Detecting  #####---  50% ETA: 0:00:10` |
-| `_run_refine_progress` | `split_matches.py:898` | `_eta_progressbar(total, "Refining")` | `"Refining  "` | `Refining   #####---  50% ETA: 0:00:10` |
-| `_run_scorebar_filter` | `split_matches.py:922` | `_eta_progressbar(total, "Scorebar")` | `"Scorebar  "` | `Scorebar   #####---  50% ETA: 0:00:10` |
-| `_split_and_write_metadata` | `split_matches.py:1130` | `_eta_progressbar(total, "Splitting")` | `"Splitting "` | `Splitting  #####---  50% ETA: 0:00:10` |
+| `_run_detection_with_refine_bar` | `split_matches.py:810` | `_eta_progressbar(total, "Detecting")` | `"Detecting "` | `Detecting  #####---  50% ETA: 00:00:10` |
+| `_run_refine_progress` | `split_matches.py:898` | `_eta_progressbar(total, "Refining")` | `"Refining  "` | `Refining   #####---  50% ETA: 00:00:10` |
+| `_run_scorebar_filter` | `split_matches.py:922` | `_eta_progressbar(total, "Scorebar")` | `"Scorebar  "` | `Scorebar   #####---  50% ETA: 00:00:10` |
+| `_split_and_write_metadata` | `split_matches.py:1130` | `_eta_progressbar(total, "Splitting")` | `"Splitting "` | `Splitting  #####---  50% ETA: 00:00:10` |
 
 `_PROGRESS_LABEL_WIDTH` の ljust によって 4 bar 共通幅で揃う。実際の ETA 値は各 phase の処理量・経過時間によって異なるが、`<label><bar> NN% ETA: H:MM:SS` という format は 4 bar 共通。
 
@@ -290,7 +292,7 @@ issue [#365](https://github.com/Idios/kobutachan-allaganeye/issues/365) には�
 
 | issue 期待動作 / 根本原因対応 | この設計で対応する箇所 |
 | --- | --- |
-| 期待動作: `Detecting ####---  93% ETA: 0:00:22` 形式 | §5.1 `_ETAProgressBar.format_progress_line` で `f"{self.label}{bar} {pct} ETA: {eta}"` |
+| 期待動作: `Detecting ####---  93% ETA: 00:00:22` 形式 | §5.1 `_ETAProgressBar.format_progress_line` で `f"{self.label}{bar} {pct} ETA: {eta}"` |
 | 影響範囲全 4 bar (`Detecting`, `Refining`, `Scorebar`, `Splitting`) | §5.3 表で `_eta_progressbar` の戻り型を `_ETAProgressBar` に変えるだけで全 caller が新 format を享受 |
 | 直接原因 (`%(info)s` でラベルなし展開) の解消 | §5.1 で `bar_template=""` + `format_progress_line` override により click の組み込み templating を bypass |
 | 検出漏れ (PR #343 のテスト不足) の再発防止 | §6.1 で `format_progress_line()` の出力に対する parametrize test (4 bar) + regex 一致 + GPU mode 経路 test を追加 |
@@ -310,17 +312,19 @@ from allaganeye.commands.split_matches import (
     _PROGRESS_LABEL_WIDTH,
 )
 
-_ETA_LINE_PATTERN = re.compile(r"\b\d{1,3}%\s+ETA:\s+\d+:\d{2}:\d{2}\b")
+_ETA_LINE_PATTERN = re.compile(r"\b\d{1,3}%\s+ETA:\s+(?:\d+d\s+)?\d+:\d{2}:\d{2}\b")
 
 
 def _drive_to_known_eta(bar: _ETAProgressBar, completed: int) -> None:
     """Force eta_known by simulating elapsed time + progress.
 
-    click ProgressBar は ``start_time`` が None / update 未実行の間
+    click ProgressBar は ``start`` / ``last_eta`` が None / update 未実行の間
     ``eta_known=False`` のまま 'ETA: --' 相当を出す。テストでは過去
     timestamp + update() で eta_known=True を満たす。
     """
-    bar.start_time = time.time() - 10.0  # 10s 前から動いていた体
+    past = time.time() - 10.0
+    bar.start = past
+    bar.last_eta = past
     bar.update(completed)
 
 
@@ -363,7 +367,7 @@ def test_eta_progressbar_no_eta_before_first_update():
 **狙い**:
 
 - 4 bar parametrize で「全 caller で format 統一」を 1 test で担保
-- regex `\b\d{1,3}%\s+ETA:\s+\d+:\d{2}:\d{2}\b` で **`93% ETA: 0:00:22` 完全形を検証** (PR #343 の test 不足の根本原因対策)
+- regex `\b\d{1,3}%\s+ETA:\s+(?:\d+d\s+)?\d+:\d{2}:\d{2}\b` で **`93% ETA: 00:00:22` 完全形を検証** (`Nd HH:MM:SS` 形式 / 日付なし `HH:MM:SS` 形式 どちらにも対応、PR #343 の test 不足の根本原因対策)
 - GPU mode 経路 (suppress_click_eta=True) を独立 test で担保 → #438 既存挙動の互換性
 - update 前 (eta_known=False) を test して click upgrade での挙動変化を早期検知
 
@@ -395,7 +399,7 @@ ESLint config の自動 test 化はせず、**違反コードを含む検証 PR 
 
 ### 6.3 既存テスト回帰確認
 
-- `tests/test_split_matches.py` の既存 43 test は context manager protocol (`with bar as progress: progress.update(1)`) のみ依存。`_eta_progressbar` の戻り型を `_ETAProgressBar` (click.ProgressBar subclass) に変えても method 互換性は完全保持
+- `tests/test_split_matches.py` の既存 43 test は context manager protocol (`with bar as progress: progress.update(1)`) のみ依存。`_eta_progressbar` の戻り型を `_ETAProgressBar` (click.ProgressBar subclass) に変えても context manager protocol (`with bar as progress: progress.update(1)`) は維持される。ただし `click.progressbar` factory を直接 monkeypatch している既存 test (test_split_matches.py 内 6 件) は `_ETAProgressBar` への patch 対象変更が必要 (PR #687 で `patch("click.progressbar")` → `patch(f"{MODULE}._ETAProgressBar")` に更新)。
 - 実装時に `grep -n 'click.progressbar' tests/` を走らせ、`click.progressbar` を直接 monkeypatch する箇所が無いか確認
 - `tests/test_regression_330.py` (進捗バー regression test) と `tests/test_progress_emitter.py` も影響範囲として実装時に走査
 
