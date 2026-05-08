@@ -4025,3 +4025,27 @@ def test_eta_progressbar_placeholder_eta_before_first_update() -> None:
 
     assert "ETA: --:--:--" in line, f"missing placeholder in: {line!r}"
     assert "0%" in line
+
+
+def test_eta_progressbar_gpu_dispatching_label_with_eta_placeholder() -> None:
+    """GPU mode dispatching 段階の label に 'ETA: --:--:--' を含む format を verify (#365).
+
+    Caller (on_chunk_dispatch) が更新する label の expected string を bar に
+    直接設定し、format_progress_line() 出力に 'ETA: --:--:--' が含まれる
+    + subclass は ETA tail を出さない (show_eta=False) ことを確認する。
+    chunk 1 完了後は on_chunk が label を上書きするため、この ETA は
+    dispatching 段階にのみ表示される。
+    """
+    bar = _eta_progressbar(100, "Detecting", suppress_click_eta=True)
+    # caller (on_chunk_dispatch) が更新する label 文字列の expected
+    bar.label = "Detecting [dispatching 32 chunks, ETA: --:--:--]".ljust(
+        _PROGRESS_LABEL_WIDTH
+    )
+
+    line = bar.format_progress_line()
+
+    # caller label 内の placeholder を確認
+    assert "ETA: --:--:--" in line, f"caller label placeholder missing in: {line!r}"
+    # subclass は show_eta=False で ETA tail を出さない (二重表示防止 #438)
+    # ETA は label 内 1 つのみ
+    assert line.count("ETA:") == 1, f"expected single ETA occurrence in: {line!r}"

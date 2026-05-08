@@ -870,9 +870,16 @@ def _run_detection(
             # Long videos (2h+) used to sit at "Detecting 0%" for 2-3
             # minutes while the first chunk decoded; this shows users
             # the work has started and how many chunks to expect.
+            # Include "ETA: --:--:--" placeholder so users see a consistent
+            # ETA position from dispatch through chunk completion (#365
+            # Idios feedback: pre-update でも ETA を出す改善、CPU mode
+            # の commit 6e48381 と一貫する). Once the first chunk
+            # completes, ``on_chunk`` overwrites this label with the
+            # caller-computed ETA.
             detecting_bar.label = (
-                f"Detecting [dispatching {num_chunks} chunks, "
-                f"first result pending...]".ljust(_PROGRESS_LABEL_WIDTH)
+                f"Detecting [dispatching {num_chunks} chunks, ETA: --:--:--]".ljust(
+                    _PROGRESS_LABEL_WIDTH
+                )
             )
             detecting_bar.render_progress()
 
