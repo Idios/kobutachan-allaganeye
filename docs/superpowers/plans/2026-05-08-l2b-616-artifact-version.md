@@ -248,7 +248,7 @@ PR の Actions tab からダウンロードする CI artifact zip 名にバー�
 - [x] CI `build-windows` job: PASS (yml syntax valid + artifact upload + smoke tests A/B)
 - [x] CI `installer-pester` job: PASS (regression なし)
 - [x] CI `markdownlint` job: PASS
-- [x] CI `pr-checklist` job: PASS
+- [x] CI `validate-checklist` job: PASS
 
 ### Machine-unverifiable (Idios 目視)
 
@@ -289,7 +289,7 @@ Expected: PR URL が出力される。`Closes/Fixes/Resolves` キーワード未
 gh pr checks --watch
 ```
 
-Expected: 全 jobs PASS (`build-windows`, `installer-pester`, `markdownlint`, `pr-checklist`)。fail があれば該当 job log で原因確認。
+Expected: 全 jobs PASS (`build-windows`, `installer-pester`, `markdownlint`, `validate-checklist`)。fail があれば該当 job log で原因確認。
 
 - [ ] **Step 5: Idios に artifact 名目視確認依頼 (AskUserQuestion)**
 
