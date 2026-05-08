@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { create } from 'zustand';
 
-import { appErrorMessage } from '../lib/appError';
+import { appErrorHint, appErrorMessage } from '../lib/appError';
 
 /**
  * #571 — single entry in the persisted recent-videos history. Mirrors the
@@ -27,8 +27,12 @@ export interface RecentState {
   loaded: boolean;
   /** Last load failure, surfaced for tests / debug log; the drop screen ignores it (history is best-effort). */
   loadError: string | null;
+  /** #663: hint for loadError, if AppError carried one. */
+  loadErrorHint: string | null;
   /** Last add failure, e.g. when the user dropped a file that was deleted before we could stat it. */
   addError: string | null;
+  /** #663: hint for addError, if AppError carried one. */
+  addErrorHint: string | null;
 
   /** Read history from disk. Idempotent — safe to call on every DropScreen mount. */
   load: () => Promise<void>;
@@ -44,7 +48,9 @@ export const useRecentStore = create<RecentState>((set) => ({
   entries: [],
   loaded: false,
   loadError: null,
+  loadErrorHint: null,
   addError: null,
+  addErrorHint: null,
 
   async load() {
     try {
@@ -55,10 +61,11 @@ export const useRecentStore = create<RecentState>((set) => ({
       const entries: RecentEntry[] = Array.isArray(result)
         ? (result as RecentEntry[])
         : [];
-      set({ entries, loaded: true, loadError: null });
+      set({ entries, loaded: true, loadError: null, loadErrorHint: null });
     } catch (e) {
       set({
         loadError: appErrorMessage(e),
+        loadErrorHint: appErrorHint(e),
         loaded: true,
       });
     }
@@ -70,18 +77,31 @@ export const useRecentStore = create<RecentState>((set) => ({
       const entries: RecentEntry[] = Array.isArray(result)
         ? (result as RecentEntry[])
         : [];
-      set({ entries, addError: null });
+      set({ entries, addError: null, addErrorHint: null });
     } catch (e) {
-      set({ addError: appErrorMessage(e) });
+      set({ addError: appErrorMessage(e), addErrorHint: appErrorHint(e) });
     }
   },
 
   async clear() {
     await invoke<void>('clear_recent');
-    set({ entries: [], loadError: null, addError: null });
+    set({
+      entries: [],
+      loadError: null,
+      loadErrorHint: null,
+      addError: null,
+      addErrorHint: null,
+    });
   },
 
   reset() {
-    set({ entries: [], loaded: false, loadError: null, addError: null });
+    set({
+      entries: [],
+      loaded: false,
+      loadError: null,
+      loadErrorHint: null,
+      addError: null,
+      addErrorHint: null,
+    });
   },
 }));

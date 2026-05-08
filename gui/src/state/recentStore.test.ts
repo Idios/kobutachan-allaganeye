@@ -115,3 +115,40 @@ describe('useRecentStore.reset (#571)', () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });
+
+// #663 — AppError hint pair. `loadError` / `addError` gain sibling `*Hint`
+// fields populated from AppError.hint when invoke rejects with a structured
+// AppError object.
+describe('AppError hint pair (#663)', () => {
+  beforeEach(() => {
+    useRecentStore.getState().reset();
+  });
+
+  it('load path: loadErrorHint is set when AppError carries hint', async () => {
+    invokeMock.mockImplementation(async () => {
+      throw {
+        code: 'io.read_failed',
+        message: 'broken recent.json',
+        hint: 'delete the file and restart',
+      };
+    });
+    await useRecentStore.getState().load();
+    const s = useRecentStore.getState();
+    expect(s.loadError).toBe('broken recent.json');
+    expect(s.loadErrorHint).toBe('delete the file and restart');
+  });
+
+  it('add path: addErrorHint is set when AppError carries hint', async () => {
+    invokeMock.mockImplementation(async () => {
+      throw {
+        code: 'io.write_failed',
+        message: 'recent.json write failed',
+        hint: 'check disk space',
+      };
+    });
+    await useRecentStore.getState().add('/tmp/x.mp4');
+    const s = useRecentStore.getState();
+    expect(s.addError).toBe('recent.json write failed');
+    expect(s.addErrorHint).toBe('check disk space');
+  });
+});

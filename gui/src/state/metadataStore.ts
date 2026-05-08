@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { create } from 'zustand';
 
-import { appErrorCodeIs, appErrorMessage } from '../lib/appError';
+import { appErrorCodeIs, appErrorHint, appErrorMessage } from '../lib/appError';
 import { sampleMetadata } from '../data/sampleMetadata';
 import type { Match, Metadata, TypeOverride } from '../types/metadata';
 import { MetadataSchema } from '../types/metadata.schema';
@@ -28,8 +28,12 @@ export interface MetadataState {
   filePath: string | null;
   dirty: boolean;
   loadError: string | null;
+  /** #663: hint for loadError, if AppError carried one. */
+  loadErrorHint: string | null;
   applying: boolean;
   applyError: string | null;
+  /** #663: hint for applyError, if AppError carried one. */
+  applyErrorHint: string | null;
 
   /** #516: flips true after a successful `apply()` that created metadata.original.json. */
   hasBackup: boolean;
@@ -37,6 +41,8 @@ export interface MetadataState {
   restoring: boolean;
   /** #516: last restore error message, if any. */
   restoreError: string | null;
+  /** #663: hint for restoreError, if AppError carried one. */
+  restoreErrorHint: string | null;
 
   /**
    * #514: mtime (ms since epoch) of metadata.json recorded at load time.
@@ -60,6 +66,8 @@ export interface MetadataState {
   pendingDraft: Metadata | null;
   /** #517: last draft load error (corrupt draft / parse failure). */
   draftLoadError: string | null;
+  /** #663: hint for draftLoadError, if AppError carried one. */
+  draftLoadErrorHint: string | null;
   /** #517: true while an auto-save (debounced saveDraft) is in flight. */
   draftSaving: boolean;
   /**
@@ -70,6 +78,8 @@ export interface MetadataState {
    * (a save that never landed cannot be restored).
    */
   draftSaveError: string | null;
+  /** #663: hint for draftSaveError, if AppError carried one. */
+  draftSaveErrorHint: string | null;
 
   load: (path: string) => Promise<void>;
   updateMatch: (index: number, patch: MatchEditPatch) => void;
@@ -180,7 +190,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
   async function runApply(overwrite: boolean): Promise<void> {
     const { metadata, filePath, loadedMtimeMs } = get();
     if (!metadata || !filePath) return;
-    set({ applying: true, applyError: null, conflictError: null });
+    set({ applying: true, applyError: null, applyErrorHint: null, conflictError: null });
     try {
       const normalized = normalizeForPersistence(metadata);
       const newMtime = await invoke<number>('apply_changes', {
@@ -193,6 +203,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         dirty: false,
         applying: false,
         applyError: null,
+        applyErrorHint: null,
         loadedMtimeMs: newMtime,
         conflictError: null,
       });
@@ -203,13 +214,14 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       await get().clearDraft();
     } catch (e) {
       const msg = appErrorMessage(e);
-      // #619: structured AppError 化以後は code-based 判定を優先。legacy raw
-      // String fallback として `msg.startsWith('conflict:')` も残す
-      // (古い command が migration 漏れしていても conflict UI を出せるよう)。
-      if (appErrorCodeIs(e, 'state.mtime_conflict') || msg.startsWith('conflict:')) {
+      const hint = appErrorHint(e);
+      // #663: PR #665 で全 23 commands が AppError 化済のため、legacy raw String
+      // fallback (msg.startsWith('conflict:')) は廃止する。code === 'state.mtime_conflict'
+      // のみで分岐する。
+      if (appErrorCodeIs(e, 'state.mtime_conflict')) {
         set({ applying: false, conflictError: msg });
       } else {
-        set({ applying: false, applyError: msg });
+        set({ applying: false, applyError: msg, applyErrorHint: hint });
       }
     }
   }
@@ -219,19 +231,24 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
   filePath: null,
   dirty: false,
   loadError: null,
+  loadErrorHint: null,
   applying: false,
   applyError: null,
+  applyErrorHint: null,
 
   hasBackup: false,
   restoring: false,
   restoreError: null,
+  restoreErrorHint: null,
 
   loadedMtimeMs: null,
   conflictError: null,
   pendingDraft: null,
   draftLoadError: null,
+  draftLoadErrorHint: null,
   draftSaving: false,
   draftSaveError: null,
+  draftSaveErrorHint: null,
 
   load: async (path) => {
     try {
@@ -246,13 +263,18 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         filePath: path,
         dirty: false,
         loadError: null,
+        loadErrorHint: null,
         applyError: null,
+        applyErrorHint: null,
         restoreError: null,
+        restoreErrorHint: null,
         loadedMtimeMs: mtime ?? null,
         conflictError: null,
         pendingDraft: null,
         draftLoadError: null,
+        draftLoadErrorHint: null,
         draftSaveError: null,
+        draftSaveErrorHint: null,
       });
       await get().refreshBackupStatus();
       // #517: automatically probe for a draft after a successful load. If one
@@ -265,12 +287,15 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         filePath: null,
         dirty: false,
         loadError: appErrorMessage(e),
+        loadErrorHint: appErrorHint(e),
         hasBackup: false,
         loadedMtimeMs: null,
         conflictError: null,
         pendingDraft: null,
         draftLoadError: null,
+        draftLoadErrorHint: null,
         draftSaveError: null,
+        draftSaveErrorHint: null,
       });
     }
   },
@@ -309,24 +334,29 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       filePath: null,
       dirty: false,
       loadError: null,
+      loadErrorHint: null,
       applying: false,
       applyError: null,
+      applyErrorHint: null,
       hasBackup: false,
       restoring: false,
       restoreError: null,
+      restoreErrorHint: null,
       loadedMtimeMs: null,
       conflictError: null,
       pendingDraft: null,
       draftLoadError: null,
+      draftLoadErrorHint: null,
       draftSaving: false,
       draftSaveError: null,
+      draftSaveErrorHint: null,
     });
   },
 
   restore: async () => {
     const { filePath } = get();
     if (!filePath) return;
-    set({ restoring: true, restoreError: null });
+    set({ restoring: true, restoreError: null, restoreErrorHint: null });
     try {
       await invoke('restore_from_original', { path: filePath });
       // Reload metadata from disk; load() also refreshes hasBackup.
@@ -336,6 +366,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       set({
         restoring: false,
         restoreError: appErrorMessage(e),
+        restoreErrorHint: appErrorHint(e),
       });
     }
   },
@@ -378,13 +409,16 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
     const { filePath, metadata } = get();
     if (!filePath || !metadata) return;
     // Clear any prior save error up-front so consumers see a fresh attempt.
-    set({ draftSaving: true, draftSaveError: null });
+    set({ draftSaving: true, draftSaveError: null, draftSaveErrorHint: null });
     try {
       await invoke('save_draft', { path: filePath, draft: metadata });
     } catch (e) {
       // Surface the failure via state — scheduleDraftSave's fire-and-forget
       // call would otherwise swallow the rejection silently (see F1 review).
-      set({ draftSaveError: appErrorMessage(e) });
+      set({
+        draftSaveError: appErrorMessage(e),
+        draftSaveErrorHint: appErrorHint(e),
+      });
     } finally {
       set({ draftSaving: false });
     }
@@ -396,7 +430,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
     try {
       const raw = await invoke<unknown>('load_draft', { path: filePath });
       if (raw === null || raw === undefined) {
-        set({ pendingDraft: null, draftLoadError: null });
+        set({ pendingDraft: null, draftLoadError: null, draftLoadErrorHint: null });
         return;
       }
       const parsed = MetadataSchema.parse(raw) as unknown as Metadata;
@@ -409,14 +443,15 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         normalizeSourcePath(metadata.source)
       ) {
         await invoke('clear_draft', { path: filePath });
-        set({ pendingDraft: null, draftLoadError: null });
+        set({ pendingDraft: null, draftLoadError: null, draftLoadErrorHint: null });
         return;
       }
-      set({ pendingDraft: parsed, draftLoadError: null });
+      set({ pendingDraft: parsed, draftLoadError: null, draftLoadErrorHint: null });
     } catch (e) {
       set({
         pendingDraft: null,
         draftLoadError: appErrorMessage(e),
+        draftLoadErrorHint: appErrorHint(e),
       });
     }
   },
@@ -475,17 +510,22 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       filePath: null,
       dirty: false,
       loadError: null,
+      loadErrorHint: null,
       applying: false,
       applyError: null,
+      applyErrorHint: null,
       hasBackup: false,
       restoring: false,
       restoreError: null,
+      restoreErrorHint: null,
       loadedMtimeMs: null,
       conflictError: null,
       pendingDraft: null,
       draftLoadError: null,
+      draftLoadErrorHint: null,
       draftSaving: false,
       draftSaveError: null,
+      draftSaveErrorHint: null,
     });
   },
   };
