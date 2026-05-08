@@ -51,6 +51,20 @@ describe('PreviewScreen', () => {
     expect(screen.getByText(/#004 · of 9/)).toBeInTheDocument();
   });
 
+  // #663 — Phase 4: when applyError is set in the store, render the
+  // companion applyErrorHint as a 2nd line so the user sees the
+  // recommended next step. Hint stays inside the existing role="alert"
+  // wrapper so a screen reader announces message + hint as one update.
+  it('renders applyErrorHint inline when present (#663)', () => {
+    useMetadataStore.setState({
+      applyError: 'disk full',
+      applyErrorHint: 'free up space',
+    });
+    render(<PreviewScreen />);
+    expect(screen.getByText('disk full')).toBeInTheDocument();
+    expect(screen.getByText(/free up space/)).toBeInTheDocument();
+  });
+
   it('renders 2 panes (IN, OUT) with IN active by default', () => {
     render(<PreviewScreen />);
     const inPane = screen.getByRole('button', { name: /IN \(start\)/ });

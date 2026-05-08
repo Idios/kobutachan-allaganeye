@@ -4,6 +4,7 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { useEffect, useReducer, useRef, useState } from 'react';
 
 import { DisabledTooltip } from '../components/DisabledTooltip';
+import { appErrorHint, appErrorMessage } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 import { joinPath, stripExtendedPathPrefix } from '../utils/path';
@@ -20,6 +21,12 @@ interface MatchState {
   status: MatchStatus;
   percent: number;
   error?: string;
+  /**
+   * #663 — corrective hint rendered as a 2nd line below `error` in the
+   * per-match list. Sourced from AppError throw sites; absent for
+   * progress-event errors and bare `Error` instances.
+   */
+  errorHint?: string;
   outputPath?: string;
   /**
    * #591 -- non-null when the GPU encoder failed and the export was
@@ -257,6 +264,14 @@ export function ExportScreen() {
               status,
               percent: p.percent,
               error: p.stage === 'error' ? p.message : prior.error,
+              // #663 — `export-progress` event payload does not currently
+              // carry an AppError hint (Rust-side enhancement is future
+              // work). errorHint の最終 source of truth は catch handler
+              // (catch handler が MatchState を全置換するため、progress
+              // event 時点では prior.errorHint は基本 undefined のまま
+              // preserved。この event handler は errorHint を能動的に
+              // セットせず、catch handler の結果が後から確定する形)。
+              errorHint: prior.errorHint,
               fallbackNotice,
             },
           };
@@ -352,10 +367,20 @@ export function ExportScreen() {
         }));
       } catch (e) {
         failureCount += 1;
-        const msg = e instanceof Error ? e.message : String(e);
+        // #663 — AppError-shaped throws (Tauri command rejection) carry
+        // a corrective hint that we render as the per-match list's 2nd
+        // error line. `appErrorHint` returns null for legacy `new Error`,
+        // which we collapse to undefined so MatchState stays clean.
+        const msg = appErrorMessage(e);
+        const hint = appErrorHint(e);
         setMatchStates((prev) => ({
           ...prev,
-          [m.index]: { status: 'error', percent: 0, error: msg },
+          [m.index]: {
+            status: 'error',
+            percent: 0,
+            error: msg,
+            errorHint: hint ?? undefined,
+          },
         }));
       }
     }
@@ -859,6 +884,11 @@ export function ExportScreen() {
                   {s.status === 'error' && s.error && (
                     <span className={styles.listError} role="alert">
                       {s.error.slice(0, 120)}
+                      {s.errorHint && (
+                        <span className={styles.listErrorHint}>
+                          💡 {s.errorHint}
+                        </span>
+                      )}
                     </span>
                   )}
                   {s.fallbackNotice && (

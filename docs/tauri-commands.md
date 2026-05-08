@@ -76,6 +76,38 @@ try {
 
 `.github/workflows/ci.yml` の `doc-tauri-commands-drift` job が `gui/src-tauri/src/lib.rs` 内の `#[tauri::command]` 数と本 doc の table 行数を比較し、不一致時に CI を fail させる (本 doc 漏れ防止、issue [#619](https://github.com/Idios/kobutachan-allaganeye/issues/619) 受け入れ条件 2)。command を追加・削除した場合は本 doc の table 行も同時に更新すること。
 
+## AppError default hint mapping (`gui/src-tauri/src/error.rs::default_hint_for_code`)
+
+> 本 table の文言は `gui/src-tauri/src/error.rs` の `default_hint_for_code()` と
+> 完全一致させる (CI integrity check は今回入れないが、文言変更時は両方を
+> 同 PR で更新する規約)。
+
+| code | hint |
+| --- | --- |
+| `state.mtime_conflict` | metadata.json が他のプロセスで書き換えられました。「リロード」で最新を読み直すか、「上書き」で現在の編集を強制適用してください |
+| `io.file_not_found` | ファイルが見つかりません。パスを確認するか、allaganeye split を再実行してください |
+| `io.read_failed` | ファイルの読み込みに失敗しました。ディスク状況・ファイルロック状態を確認してください |
+| `io.write_failed` | ファイルの書き込みに失敗しました。空き容量と書き込み権限 (Portable ZIP の install dir が user-writable か) を確認してください |
+| `io.delete_failed` | ファイル / フォルダの削除に失敗しました。他プロセスでロックされていないか確認してください |
+| `io.backup_failed` | バックアップファイルの作成に失敗しました。allaganeye 出力フォルダの空き容量と書き込み権限を確認してください |
+| `io.permission_denied` | ファイルへのアクセス権限がありません。Portable ZIP install dir が user-writable な場所か、ファイル / フォルダが読み取り専用でないか確認してください |
+| `io.already_exists` | ファイルが既に存在します。出力先を変更するか既存ファイルを削除してください |
+| `io.would_block` / `io.timed_out` | I/O 処理がタイムアウト / ブロックされました。少し時間をおいて再試行してください |
+| `io.error` | I/O エラーが発生しました。詳細は logs フォルダを確認してください |
+| `parse.json_invalid` | JSON ファイルが破損しています。バックアップ (.bak) からの復元か allaganeye split のやり直しを検討してください |
+| `parse.json_serialize_failed` | JSON 書き出しに失敗しました。同梱 issue テンプレートでバグ報告してください |
+| `parse.schema_invalid` | metadata.json の構造が期待形式と異なります。allaganeye のバージョンと metadata 生成バージョンが一致しているか確認してください |
+| `parse.ffprobe_output_invalid` | ffprobe の出力を解釈できませんでした。ffmpeg / ffprobe を最新の BtbN LGPL ビルドに更新してください |
+| `subprocess.spawn_failed` | 外部プロセスの起動に失敗しました。ffmpeg / Python / 同梱 runtime が壊れていないか確認してください |
+| `subprocess.exit_failed` | 外部プロセスが異常終了しました。logs フォルダの最新ログから詳細を確認してください |
+| `subprocess.cancelled` | (hint なし: ユーザー操作によるキャンセルは UI 側で十分な情報を出す) |
+| `validation.path_invalid` | 入力されたパスが不正です。ファイル名と拡張子を確認してください (対応: mp4 / mkv / mov / m4v) |
+| `validation.not_a_file` | 指定されたパスはファイルではありません (フォルダや symlink ではなく動画ファイルを選択してください) |
+| `validation.range_invalid` | 入力された数値が許容範囲外です。フォーム下のヒント表示を確認してください |
+| `path.install_dir_unresolved` | Portable ZIP の install dir を特定できませんでした。allaganeye-gui.exe を ZIP 展開後の元のフォルダ構成のまま起動してください |
+| `platform.unsupported` | 本機能は現在の OS では未対応です。Windows での起動が必要です |
+| `internal.error` | (hint なし: 内部エラーで具体的アクションがない、message 側で logs 参照を案内) |
+
 ## 関連
 
 - 派生元: [#619](https://github.com/Idios/kobutachan-allaganeye/issues/619) 本 doc 新設 + 全 23 command の AppError migration (PR #665)

@@ -129,7 +129,7 @@ describe('DraftRestoreModal', () => {
   it('does not render while conflictError is set (ConflictModal takes priority)', () => {
     useMetadataStore.setState({
       pendingDraft: seedMetadata(),
-      conflictError: 'conflict: external modification detected',
+      conflictError: 'external modification detected',
       filePath: '/tmp/metadata.json',
     });
     const { container } = render(<DraftRestoreModal />);

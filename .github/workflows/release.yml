@@ -209,7 +209,7 @@ jobs:
       # on its own, which avoids the previous "zip inside a zip" artifact.
       - uses: actions/upload-artifact@v4
         with:
-          name: allaganeye-portable-windows
+          name: allaganeye-portable-windows-v${{ needs.version-check.outputs.version }}
           path: build/portable/allaganeye-v${{ needs.version-check.outputs.version }}
           if-no-files-found: error
 
@@ -228,7 +228,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: allaganeye-portable-windows
+          name: allaganeye-portable-windows-v${{ needs.version-check.outputs.version }}
           path: dist/allaganeye-v${{ needs.version-check.outputs.version }}
 
       # Re-create the single release archive from the payload folder. Keeping

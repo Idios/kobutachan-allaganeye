@@ -60,3 +60,39 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 6. ハンドオフコメントが Step 6 のレビュー報告本文末尾に含まれている、または別 PR コメントとして投稿用テンプレート (HEREDOC など) で提示されている
 7. レビュー報告テンプレート (Step 6) で Round 1 報告構造 (受け入れ条件チェック + ギャップ分析 + 摘出課題トリアージ) を維持している
 8. issue #931 の受け入れ条件 4 項目を Step 4 (`/enforce-acceptance-criteria` 経由) で逐条引用している
+
+---
+
+## シナリオ E (sweep 中央値): モック PR #951 (feat(audio): WR 検出失敗時の fallback テスト追加)
+
+1. **[critical]** root cause (`_scan_fanfare_peaks_raw` → `_scan_fanfare_raw` リネームの残存 literal) を Step 5 / 5a で識別している
+2. **[critical]** `grep -nE '_scan_fanfare_peaks_raw'` (または同等の全件 sweep) コマンドを Step 5a で提示している
+3. **[critical]** hits 分布表に記載された全 9 hits (`tests/audio/test_scan.py` 4 + `docs/audio-detection.md` 3 + `CHANGELOG.md` 2) を Step 5b トリアージ表に全件列挙している (explicit な代表箇所のみ列挙ではない)
+4. **[critical]** 「explicit N 箇所だけ列挙して全件 grep を要求しない」に相当する sweep 規約 (Step 5c) を引用、またはそれに従った行動をとっている
+5. Round 1 で全 9 hits を捕捉している (Round 2/3 への divergence がない)
+6. 摘出課題を Step 5b トリアージ表に (A)/(B)/(C) で分類している
+7. CI / Lint ステータスを確認している
+8. PR ブランチへの commit/push をしていない (レビュー専用セッション契約)
+
+---
+
+## シナリオ E2 (sweep 複数 root cause 混在): モック PR #952 (refactor(metadata): schema v3 移行)
+
+1. **[critical]** 3 種類の root cause (Root Cause 1: `additionalProperties: false` → `true` 誤変更 / Root Cause 2: `gpu_vendors_available` 5 ファイル欠落 base regression / Root Cause 3: `vi.stubEnv` 旧 API 3 箇所) を個別に識別している
+2. **[critical]** 各 root cause について `grep` 全件 sweep コマンドを Step 5a で 3 個提示している
+3. **[critical]** PR #627 Round 4 CRITICAL regression / PR #675 Round 1 `vi.stubEnv` 旧 API 等の「よくある失敗」同種事例への参照または同等の認識を含む
+4. **[critical]** 全 hits (Root Cause 1 = 1 / Root Cause 2 = 5 / Root Cause 3 = 3) を Step 5b トリアージ表に全件列挙し握り潰しゼロ
+5. Root Cause 2 (base regression: `gpu_vendors_available` 5 ファイル欠落) を CRITICAL として分類している
+6. Round 1 で全件捕捉している (Round 2/3 への divergence がない)
+7. LGTM ではなく修正依頼を出している (受け入れ条件 §1 `additionalProperties: false` 違反のため)
+
+---
+
+## シナリオ E3 (sweep doc-only literal 散在): モック PR #953 (docs: l2-workflow.md の Self-Test Report 規約 v2 化)
+
+1. **[critical]** doc-only でも root cause (旧用語 literal の他ファイル残存) を Step 5 で識別している (「doc だから sweep 不要」と判定していない)
+2. **[critical]** `grep -rn` 全件 sweep コマンドを Step 5a で提示している (5 ファイルに散在する 12 hits を全件捕捉)
+3. **[critical]** 12 hits を Step 5b トリアージ表に全件列挙している (`docs/superpowers/specs/` 3 + `docs/superpowers/plans/` 2 + `CLAUDE.md` 2 + `eval/requirements.md` 3 + `SKILL.md` 2)
+4. **[critical]** 「軽微な doc 修正だから一部対応で OK」「diff にない他ファイルは手動で順次反映で OK」のような握り潰しを Red Flag として識別している
+5. 環境制約 §D (doc-only PR の CI 波及検証) に従って `bash scripts/check-markdownlint.sh` で全 .md をスキャンし、残存ファイルの markdownlint 状態を実測している
+6. LGTM ではなく修正依頼を出している

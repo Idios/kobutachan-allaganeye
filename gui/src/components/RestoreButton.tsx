@@ -52,6 +52,10 @@ export function RestoreButton({
   const hasBackup = useMetadataStore((s) => s.hasBackup);
   const restoring = useMetadataStore((s) => s.restoring);
   const restoreError = useMetadataStore((s) => s.restoreError);
+  // #663: hint rendered as a 2nd line below the error message. Kept
+  // inside the same role="alert" wrapper so screen readers announce
+  // message + hint as a single update.
+  const restoreErrorHint = useMetadataStore((s) => s.restoreErrorHint);
   const restore = useMetadataStore((s) => s.restore);
 
   const disabled = !hasBackup || restoring;
@@ -93,6 +97,9 @@ export function RestoreButton({
       {restoreError && (
         <span className={styles.error} role="alert">
           {restoreError}
+          {restoreErrorHint && (
+            <span className={styles.errorHint}>💡 {restoreErrorHint}</span>
+          )}
         </span>
       )}
     </>
