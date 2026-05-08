@@ -100,3 +100,35 @@ def test_default_manifest_path_under_install_dir(
     monkeypatch.setattr(integ, "_PACKAGE_INIT", fake_init)
 
     assert integ._default_manifest_path() == tmp_path / "integrity-manifest.json"
+
+
+def test_check_happy_path_returns_none(tmp_path: Path) -> None:
+    """check() with all manifest entries present and exact size returns None."""
+    from allaganeye.integrity import check
+
+    install = tmp_path / "install"
+    install.mkdir()
+    target = install / "ffmpeg" / "ffmpeg.exe"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"x" * 100)
+
+    manifest = install / "integrity-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "generated_at": "2026-05-08T00:00:00Z",
+                "files": [
+                    {
+                        "path": "ffmpeg/ffmpeg.exe",
+                        "size": 100,
+                        "tolerance_bytes": 0,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Expected: returns None, does not raise
+    assert check(manifest, install_dir=install) is None
