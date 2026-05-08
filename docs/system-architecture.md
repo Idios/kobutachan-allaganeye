@@ -17,7 +17,7 @@
 │ Allagan Eye                                                     │
 │                                                                  │
 │  L2b: Portable ZIP / Tauri bundle (配布形態)                    │
-│  ├── allaganeye.bat              ── CLI 起動 (Python ランタイム) │
+│  ├── allaganeye.bat              ── 引数なし: GUI / 引数あり: CLI │
 │  └── allaganeye-gui.exe          ── GUI 起動 (Tauri bundle, v0.2.0+) │
 │       │                                                           │
 │       └─ subprocess spawn ─► allaganeye.exe / allaganeye.bat     │
@@ -47,7 +47,8 @@ Allagan Eye は **別 exe 方式**を採用する (2026-04-23 確定、#527)。�
 
 | 起動ターゲット | 起動方法 | 実体 | 状態 |
 | --- | --- | --- | --- |
-| `allaganeye.bat` (Portable ZIP) | Cmd / PowerShell で引数付き実行 | 同梱 Python + `python -m allaganeye` | リリース済み (v0.1.1) |
+| `allaganeye.bat` 引数なし (Portable ZIP) | ダブルクリック | `start "" allaganeye-gui.exe` で GUI 起動 (CLI-only ZIP 時はヘルプ表示にフォールバック) | v0.2.0 で対応 (#617) |
+| `allaganeye.bat` 引数付き (Portable ZIP) | Cmd / PowerShell で `allaganeye.bat <subcommand>` または動画ドラッグ | 同梱 Python + `python -m allaganeye` | リリース済み (v0.1.1) |
 | `allaganeye` (Python venv 内) | `python -m allaganeye <cmd>` | pyproject.toml の console_scripts | 開発時 |
 | `allaganeye-gui.exe` (Tauri bundle) | ダブルクリック / start menu | Tauri 2 ランタイム | v0.2.0 で対応 (#570)。Portable ZIP に同梱、`tauri.conf.json` の `bundle.active = false` のまま `.exe` 単体を生成し `scripts/build-portable-zip.ps1` で `allaganeye-gui.exe` をそのまま payload にコピー (リネームなし、Cargo binary 名を直接使用)。productName "Allagan Eye" は Tauri のウィンドウタイトルにのみ使われる。NSIS / MSI installer は現バージョンでは生成しない |
 

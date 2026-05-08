@@ -28,7 +28,7 @@ FF14 PvPコンテンツ「フロントライン」の長時間録画動画（OBS
 
 詳細は [`docs/testing-guide.md`](docs/testing-guide.md) を参照（GPU テスト間インターバル、サンプルデータ設定等）。CLI 構文は [`docs/cli-spec.md`](docs/cli-spec.md)、オプション組み合わせごとの出力仕様は [`docs/output-spec.md`](docs/output-spec.md) (#405 マトリクス v2)、CLI と GUI の全体構成・起動経路は [`docs/system-architecture.md`](docs/system-architecture.md) (#527) を参照。
 
-> **配布物の起動経路**: Portable ZIP の `allaganeye.bat` = CLI 起動 / Tauri bundle の `allaganeye-gui.exe` (v0.2.0+) = GUI 起動。**別 exe 方式** (#527 で確定)。
+> **配布物の起動経路**: Portable ZIP の `allaganeye.bat` 引数なしダブルクリック (v0.2.0+ #617) = GUI (`allaganeye-gui.exe`) 起動 / `allaganeye.bat <args>` = CLI 起動 / Tauri bundle の `allaganeye-gui.exe` 直接 = GUI 起動。**別 exe 方式** (#527 で確定)。
 
 ```bash
 # テスト
