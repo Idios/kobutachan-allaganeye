@@ -6,12 +6,15 @@
 
 <!-- 主要な変更を箇条書きで。ファイル単位ではなく「何を・なぜ」 -->
 
-## 受け入れ基準 / 確認項目 (Iron Law 1: 逐条検証)
+## 受け入れ条件
 
 <!--
+Iron Law 1: 逐条検証
 元 issue の `## 受け入れ条件` を逐条コピーし、各項目に対応する diff / test を明示する。
 `/enforce-acceptance-criteria` skill が機械的に検証するので、曖昧な記述は避ける。
 スコープ外の項目も [x] にして理由を付記すること。
+heading 名は `pr-checklist.yml` workflow の section-aware regex と完全一致させる必要があるため変更不可
+(`.github/scripts/check-pr-checklist.js` 参照)。
 -->
 
 - [ ] (条件 1 を逐条記入) — 対応 diff: `<file:lines>` / 対応 test: `<test_*.py::test_*>`
