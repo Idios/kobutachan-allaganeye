@@ -114,7 +114,7 @@ test('hasAnySection is false when no 受け入れ条件 / Acceptance criteria se
 });
 
 test('blockquote-inner - [ ] inside 受け入れ条件 is currently counted (spec note)', () => {
-  // spec §7.1 で「blockquote 内も grep される、現状仕様と同等」と明記されている
+  // 現状仕様: blockquote 内も grep される (spec docs/superpowers/specs/2026-05-08-lane-iv-b-group-g-design.md §7.1)
   const body = `
 ## 受け入れ条件
 
@@ -122,4 +122,58 @@ test('blockquote-inner - [ ] inside 受け入れ条件 is currently counted (spe
 `;
   const result = countAcceptanceCriteriaCheckboxes(body);
   assert.equal(result.unchecked, 1);
+});
+
+test('fenced code blocks are excluded from heading detection', () => {
+  // PR 本文に skill spec / template 抜粋を貼ると code block 内 heading が誤 match していた問題を修正 (PR #688 P2-1)
+  const body = `
+## 受け入れ条件
+
+- [x] item 1
+
+\`\`\`markdown
+## 受け入れ条件
+
+- [ ] this should NOT be counted (inside code block)
+- [ ] another fake item inside code block
+\`\`\`
+`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  // code block 内の `## 受け入れ条件` は section として認識されない
+  // また code block 内の `- [ ]` × 2 はカウントされない
+  assert.equal(result.unchecked, 0);
+  assert.equal(result.checked, 1);
+  assert.equal(result.hasAnySection, true);
+});
+
+test('suffix-付き heading は skip される (e.g., `## 受け入れ条件 (追加)`)', () => {
+  // spec で完全一致 regex を採用 (Q5 (A) 採択)。suffix 付き heading は対象外として凍結。
+  const body = `
+## 受け入れ条件 (追加)
+
+- [ ] this should NOT be counted (suffix variant excluded)
+- [x] also excluded
+
+## 受け入れ条件
+
+- [x] valid item
+`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  // 完全一致のみ対象、suffix 付きは無視
+  assert.equal(result.unchecked, 0);
+  assert.equal(result.checked, 1);
+  assert.equal(result.hasAnySection, true);
+});
+
+test('uppercase - [X] is counted as checked (case-insensitive gi flag)', () => {
+  // spec で `gi` flag 採用、大文字 `[X]` も checked として認識される挙動を凍結
+  const body = `
+## 受け入れ条件
+
+- [X] uppercase X
+- [x] lowercase x
+`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+  assert.equal(result.checked, 2);
 });
