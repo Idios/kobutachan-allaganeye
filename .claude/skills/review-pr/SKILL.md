@@ -234,6 +234,8 @@ options: [
 | 束ね PR で分離推奨と判断 | **(A) 分離依頼** (束ねの合理性を問い、分離 or 合理性説明を要求) | 束ね合理性が明記されていれば合意可、なければ分離優先 |
 | 予告文 (「今後実装」「追加予定」) の実装に該当する PR での予告文更新漏れ | **(A) PR コメント** (本 skill Step 5 にも明記された修正依頼対象) | CLAUDE.md / docs の予告文更新は受け入れ条件レベル |
 
+**root cause 識別時は Step 5c (同種パターン sweep 規約) に従う**: explicit N 箇所のみ列挙ではなく、`grep -nE '...'` 全件 sweep の hits を本表に転記すること。
+
 **トリアージ表テンプレート** (Step 6 のレビュー報告に必須で含める)
 
 | # | 摘出内容 | 出所 | 処置 | 根拠 |
@@ -241,6 +243,16 @@ options: [
 | 1 | <具体的な課題> | 受け入れ条件 #N / CI / 5a カバレッジ / 5a 観点 / 5a エッジケース / 5 ロジック / 5 ドキュメント | (A) PR コメント / (B) 新規 issue / (C) 既存 #N 追記 | <なぜその分類か (受け入れ条件直結・PR 本文外・既存 issue と重複 等)> |
 
 表が空で終わるのは「本当に摘出課題ゼロ」の場合のみ。**1 件でも摘出したら必ず表に載せる**。
+
+### 5c. 同種パターン全件 sweep 規約 (Refs #682)
+
+Step 5 / 5a / 5b で root cause (literal mismatch / 古い API 残存 / DCE 誇張表現 等) を識別したら、explicit な N 箇所だけを列挙して implementer に依頼するのは **Red Flag** (PR #675 で 3 round 分散の実害)。以下を必須化する:
+
+1. **全件 grep 提示**: `grep -nE 'pattern1|pattern2|...'` で repo 全体から hits を抽出
+2. **トリアージ表に grep hits を全件転記**: Step 5b の表に各 hit を 1 行ずつ記載 (file:line + 該当パターン + 処置分類)
+3. **修正依頼本文に grep コマンドと hits を同梱**: PR コメントの修正依頼にも grep コマンドを引用
+
+「explicit な 4 箇所」を依頼すると implementer が同 file 内の他 hits を見落とし、Round 2/3 で再指摘するパターンが発生する (#682 issue 本文 PR #675 経緯参照)。
 
 ### 6. レビュー結果をユーザーに報告
 
@@ -518,6 +530,7 @@ Iron Law Red Flags と呼応。以下の合理化が浮かんだら LGTM 寸前�
 | 「doc-only だから CI 影響は検証しなくてよい」 | 環境制約 §D 違反。パス・識別子変更を含む doc PR は `.github/workflows/` / コード側参照に波及し得る。grep 検証が必須 |
 | 「参照ファイル (バイナリ) の存在は diff で確認したから実体検証は不要」 | 環境制約 §E 違反。サイズ・次元・生成条件の PR 本文明記を (A) PR コメントで要求する |
 | 「PR ブランチを checkout して自分で修正した方が速い」 | レビュー専用セッション違反。PR コメントで PR 作成セッションに依頼 (本ファイル冒頭「重要」節参照) |
+| 「explicit N 箇所だけ列挙して全件 grep を要求しない」 | divergence 原因。1 round で完了せず Round 2/3 に分散する。root cause 識別時は `grep -nE 'pattern'` 全件 sweep が必須 (Step 5c 参照、PR #675 で 3 round 必要だった失敗パターン) |
 
 ## よくある失敗
 
@@ -530,6 +543,7 @@ Iron Law Red Flags と呼応。以下の合理化が浮かんだら LGTM 寸前�
 - **再レビュー時に前回指摘の全件追跡を省略**: Round 2 以降で「前回指摘の解消確認」と「本 Round 新出」を分けずに混在レポートする → Step 7a 違反。前 Round の (A) 課題を 1 件ずつ照合し、解消/未解消を明示する
 - **long-running 検証を自己判断で OK とする**: unit test pass = 全部 OK と誤解。GPU / 長時間動画 / audio 統合は mock 不可のため、PR 作成セッションに実機検証実施 (or 結果報告) を明示要求する
 - **提示フォーマットを無視して口語で書く**: レビュー結果が PR コメントに混在して追跡困難 → Step 6 の「レビュー報告テンプレート」構造で投稿
+- **explicit N 箇所だけ列挙して全件 grep を要求しない (PR #675 Round 1/3 divergence)**: PR #675 で literal「関数本体先頭」訂正 + 旧 API `vi.stubEnv('DEV', '' as any)` + DCE 誇張表現 の 3 種類の root cause が複数 file に散在していたが、各 Round で explicit な N 箇所のみ列挙したため Round 1 → 2 → 3 と divergence 発生。Round 1 で `grep -nE '関数本体先頭|stubEnv.*DEV|DCE で完全削除'` 全件 sweep していれば 1 Round で完了していた → Step 5c (同種パターン sweep 規約) に従う。
 
 ## 参考
 
