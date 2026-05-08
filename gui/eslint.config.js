@@ -27,6 +27,49 @@ export default [
     plugins: { 'react-hooks': reactHooks },
     rules: {
       ...reactHooks.configs.recommended.rules,
+
+      // #643: Tauri 2 WebView2 disables window.confirm/alert/prompt as no-op.
+      // Catch both bare global calls and `window.X` member access.
+      // See docs/ui-interaction-spec.md §1.3.
+      'no-restricted-globals': [
+        'error',
+        {
+          name: 'confirm',
+          message:
+            'Tauri 2 WebView2 disables window.confirm. Use `import { ask } from "@tauri-apps/plugin-dialog"` instead. See docs/ui-interaction-spec.md §1.3.',
+        },
+        {
+          name: 'alert',
+          message:
+            'Tauri 2 WebView2 disables window.alert. Use `import { message } from "@tauri-apps/plugin-dialog"` instead. See docs/ui-interaction-spec.md §1.3.',
+        },
+        {
+          name: 'prompt',
+          message:
+            'Tauri 2 WebView2 disables window.prompt. Use plugin-dialog equivalents instead. See docs/ui-interaction-spec.md §1.3.',
+        },
+      ],
+      'no-restricted-properties': [
+        'error',
+        {
+          object: 'window',
+          property: 'confirm',
+          message:
+            'Tauri 2 WebView2 disables window.confirm. Use `import { ask } from "@tauri-apps/plugin-dialog"` instead. See docs/ui-interaction-spec.md §1.3.',
+        },
+        {
+          object: 'window',
+          property: 'alert',
+          message:
+            'Tauri 2 WebView2 disables window.alert. Use `import { message } from "@tauri-apps/plugin-dialog"` instead. See docs/ui-interaction-spec.md §1.3.',
+        },
+        {
+          object: 'window',
+          property: 'prompt',
+          message:
+            'Tauri 2 WebView2 disables window.prompt. Use plugin-dialog equivalents instead. See docs/ui-interaction-spec.md §1.3.',
+        },
+      ],
     },
   },
   {
