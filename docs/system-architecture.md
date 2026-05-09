@@ -55,7 +55,7 @@ Allagan Eye は **別 exe 方式**を採用する (2026-04-23 確定、#527)。�
 ### 2.2 判断根拠
 
 - **ユーザー体験**: ダブルクリックで GUI が立ち上がるのは一般的な Windows アプリの感覚。CLI が混ざると「シェル出力を期待した」「GUI が出てほしい」の混乱が起きる
-- **Portable ZIP との整合**: `allaganeye.bat` は既存の Python ランタイム呼び出しラッパ。Windows Defender / SmartScreen で弾かれる運用課題が `.bat` 経由で抽象化済み (#507)
+- **Portable ZIP との整合**: `allaganeye.bat` は引数なし (ダブルクリック) で `allaganeye-gui.exe` を `start` 起動する GUI launcher、引数付きで Python ランタイムを呼ぶ CLI ラッパとして dual 役割 (v0.2.0+ #617)。Windows Defender / SmartScreen で弾かれる運用課題が `.bat` 経由で抽象化済み (#507)
 - **bundle の独立性**: Tauri bundle は別 `.exe` なので、CLI の `.bat` と衝突しない。将来 MSIX 等のパッケージ化でも両者を並列同梱可能
 - **開発工数**: 単一バイナリ化するには Rust 側に Python interpreter embedding が必要。実質的に別実装と同等のコストで benefit が薄い
 
