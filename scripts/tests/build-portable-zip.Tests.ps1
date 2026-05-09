@@ -271,7 +271,11 @@ Describe 'New-IntegrityManifest' {
 
     # Assert: schema
     $manifest.version | Should -Be 1
-    $manifest.generated_at | Should -Match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$'
+    # New-IntegrityManifest emits "yyyy-MM-ddTHH:mm:ssZ" (no fractional secs).
+    # PS 7 ConvertFrom-Json may auto-parse ISO strings into DateTime, then
+    # `Should -Match` coerces back via the round-trip "o" format which adds
+    # `.fffffff` (PR #702 CI repro). Accept both shapes.
+    $manifest.generated_at | Should -Match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$'
     $manifest.files | Should -Not -BeNullOrEmpty
 
     # POSIX-style separators in path field

@@ -16,7 +16,7 @@
 
 このリポジトリは **kobutachan-allaganeye** (FF14 Frontline 動画から試合分割・ハイライト抽出する Python CLI + Tauri 2 GUI)。L2 (v0.2.0) は Portable ZIP 配布形式 (`scripts/build-portable-zip.ps1` が `dist/allaganeye-vX.Y.Z-windows.zip` を生成) で、展開すると以下のレイアウト:
 
-```
+```text
 allaganeye-vX.Y.Z/                   (= <install dir>)
 ├── allaganeye-gui.exe                (Tauri release build)
 ├── allaganeye.bat                    (CLI launcher)
@@ -85,6 +85,7 @@ allaganeye-vX.Y.Z/                   (= <install dir>)
 ## Task 1: `IntegrityError(exit_code=7)` を `exceptions.py` に追加
 
 **Files:**
+
 - Modify: [allaganeye/exceptions.py](../../../allaganeye/exceptions.py)
 - Test: [tests/test_exceptions.py](../../../tests/test_exceptions.py)
 
@@ -171,6 +172,7 @@ EOF
 ## Task 2: `integrity.load_manifest` 関数
 
 **Files:**
+
 - Create: `allaganeye/integrity.py`
 - Test: `tests/test_integrity.py`
 
@@ -347,6 +349,7 @@ EOF
 `allaganeye/integrity.py` は Portable ZIP 内では `<install dir>/lib/allaganeye/integrity.py` の path に置かれる (`pip install --target lib`)。`Path(__file__).resolve()` から `<install dir>` を逆算する helper を追加し、テストできるよう関数化する。
 
 **Files:**
+
 - Modify: `allaganeye/integrity.py`
 - Test: `tests/test_integrity.py`
 
@@ -449,6 +452,7 @@ EOF
 ## Task 4: `integrity.check` happy path
 
 **Files:**
+
 - Modify: `allaganeye/integrity.py`
 - Test: `tests/test_integrity.py`
 
@@ -568,6 +572,7 @@ EOF
 ## Task 5: `integrity.check` missing detection
 
 **Files:**
+
 - Modify: `allaganeye/integrity.py`
 - Test: `tests/test_integrity.py`
 
@@ -712,6 +717,7 @@ EOF
 ## Task 6: `integrity.check` size_mismatch + tolerance_bytes
 
 **Files:**
+
 - Modify: `allaganeye/integrity.py`
 - Test: `tests/test_integrity.py`
 
@@ -858,6 +864,7 @@ EOF
 ## Task 7: `integrity.check` env skip (`ALLAGANEYE_INTEGRITY_SKIP=1`)
 
 **Files:**
+
 - Modify: `allaganeye/integrity.py`
 - Test: `tests/test_integrity.py`
 
@@ -951,6 +958,7 @@ EOF
 ## Task 8: `_write_log` + check() 失敗時の log emission
 
 **Files:**
+
 - Modify: `allaganeye/integrity.py`
 - Test: `tests/test_integrity.py`
 
@@ -1112,6 +1120,7 @@ EOF
 ## Task 9: `cli.py` `version_callback` で integrity check
 
 **Files:**
+
 - Modify: `allaganeye/cli.py:28-31`, `allaganeye/cli.py:13-17` (import block)
 - Test: `tests/test_cli.py` (既存 file への追加)
 
@@ -1251,6 +1260,7 @@ EOF
 build script の payload 構築完了後 (`# 7. README` の後 + `# 8. Compress` の前) に manifest を生成する。`Get-ChildItem -Recurse -File` で全 file を自動 enum し、manifest 自身は除外する。Pester で関数単体を test。
 
 **Files:**
+
 - Modify: `scripts/build-portable-zip.ps1`
 - Modify: `scripts/tests/build-portable-zip.Tests.ps1`
 
@@ -1430,6 +1440,7 @@ EOF
 Rust 側 manifest loader の骨格。`Manifest` / `ManifestEntry` / `IntegrityErrorPayload` / `SizeMismatch` 構造を定義し、`load_manifest` を実装。Tauri の `serde_json` (Cargo.toml に既存) を使う。新規 dependency は追加しない (date helper は Task 13 で manual 実装)。
 
 **Files:**
+
 - Create: `gui/src-tauri/src/integrity.rs`
 - (Rust の cargo test は同一 file 内 `#[cfg(test)] mod tests` で書く既存 convention に倣う)
 
@@ -1605,6 +1616,7 @@ EOF
 `check(manifest_path: &Path, install_dir: &Path) -> Result<(), IntegrityErrorPayload>` を実装。Python 側と同じ aggregate 集計 + tolerance_bytes 判定。log は Task 13 で別途。
 
 **Files:**
+
 - Modify: `gui/src-tauri/src/integrity.rs`
 
 - [ ] **Step 1: Write the failing test**
@@ -1785,6 +1797,7 @@ EOF
 ログファイル名生成 (`error-YYYYMMDD.log`) と record format を Python 側と一致させる。新 dep 追加を避けるため、`SystemTime::duration_since(UNIX_EPOCH)` から手書き計算。
 
 **Files:**
+
 - Modify: `gui/src-tauri/src/integrity.rs`
 
 - [ ] **Step 1: Write the failing test**
@@ -2055,6 +2068,7 @@ EOF
 `mod integrity;` を追加し、`pub fn run()` 内で `#[cfg(not(debug_assertions))]` ガードのもとで `integrity::check_install_dir()` を呼ぶ。失敗時は `panic-from-previous-session` と同パターンで `tokio::async_runtime::spawn` + 150ms sleep + `app_handle.emit("integrity-error", payload)`。
 
 **Files:**
+
 - Modify: `gui/src-tauri/src/lib.rs`
 
 - [ ] **Step 1: Write the failing test**
@@ -2164,6 +2178,7 @@ EOF
 ## Task 15: `errorStore.ts` `ErrorCategory` に `'integrity'` 追加
 
 **Files:**
+
 - Modify: `gui/src/state/errorStore.ts:8-13`
 - Test: `gui/src/state/errorStore.test.ts`
 
@@ -2260,6 +2275,7 @@ EOF
 ## Task 16: `ErrorModal.tsx` `errorCategory==='integrity'` 表示分岐
 
 `integrity` category 時には:
+
 - title: 「同梱物の検証に失敗しました」 (errorTitle で上書き済なら spec 通り採用)
 - hint: 「Portable ZIP を再展開してください。」を `errorHint` で受けて表示
 - 追加 description: missing / size_mismatch を errorMessage に整形して受ける (Task 17 で formatter)
@@ -2267,6 +2283,7 @@ EOF
 既存 modal は `isPanic=true` で「アプリを終了」 button 表示、`isRecoverable=false` で「閉じる」 button 非表示。`logDir` set で「ログフォルダを開く」表示。これらは reuse して、文言だけ category 対応にする。
 
 **Files:**
+
 - Modify: `gui/src/components/ErrorModal.tsx`
 - Test: `gui/src/components/ErrorModal.test.tsx`
 
@@ -2396,6 +2413,7 @@ EOF
 Tauri event `integrity-error` を受けて `IntegrityErrorPayload` を modal payload に整形 + `setLogDir`。既存 `previous-session-panic` listener の pattern に倣う。
 
 **Files:**
+
 - Modify: `gui/src/lib/globalErrorListener.ts`
 - Test: `gui/src/lib/globalErrorListener.test.ts`
 
@@ -2598,6 +2616,7 @@ EOF
 build-windows job の Smoke test 後に、payload を別ディレクトリにコピー → 1 file 削除 → CLI `--version` で exit code 7 を assert する step を追加。
 
 **Files:**
+
 - Modify: `.github/workflows/release.yml`
 
 - [ ] **Step 1: 設計レビュー (yaml は TDD 不可)**
@@ -2711,6 +2730,7 @@ EOF
 ## Task 19: docs `system-architecture.md` + `cli-spec.md` 更新
 
 **Files:**
+
 - Modify: `docs/system-architecture.md` (§配布 セクション)
 - Modify: `docs/cli-spec.md` (exit code 表)
 
@@ -2823,7 +2843,7 @@ git merge origin/develop-0.2.0
 gh pr list --search "668" --state all
 ```
 
-#668 を扱う他 PR がないことを確認。
+上記コマンドで #668 を扱う他 PR がないことを確認する。
 
 - [ ] **Pre-flight 3: Path 別自動チェック (全 path 対応)**
 

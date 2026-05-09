@@ -65,6 +65,7 @@ build 時に実 file から manifest を生成するため drift 0、両言語�
 ```
 
 > **Payload 構造**: build script (`scripts/build-portable-zip.ps1`) は以下を生成:
+>
 > - `python/` … Python 3.11 embeddable (python.exe / python311.dll / 標準 dll)
 > - `lib/allaganeye/...` … `pip install --target lib` で site-packages を置く (allaganeye パッケージ + ref ファイル含む)
 > - `ffmpeg/` … `ffmpeg.exe` / `ffprobe.exe` / dll / `LICENSE.txt` (bin/ サブディレクトリ無し、build script が直接コピー)
@@ -86,7 +87,7 @@ build 時に実 file から manifest を生成するため drift 0、両言語�
 
 ### 検証ロジック
 
-```
+```text
 for entry in manifest.files:
     actual = stat(install_dir / entry.path)
     if not actual.exists:
@@ -124,7 +125,7 @@ fail if any "missing" or "size_mismatch"
 
 ## §5 Data flow
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │ build (CI / local)                                              │
 │   build-portable-zip.ps1                                        │
@@ -182,11 +183,13 @@ success    fail                     success    fail
 - path: `<install dir>/logs/error-YYYYMMDD.log` (Portable ZIP 内)
 - format: plain text、append 形式
 - record 例 (1 起動につき 1 行 append):
-  ```
+
+  ```text
   2026-05-08T12:34:56Z [error] integrity check failed: missing=["audio/refs/fanfare.npz"]; size_mismatch=[]
   2026-05-08T12:35:42Z [error] integrity check failed: missing=[]; size_mismatch=[{"path":"ffmpeg/bin/ffmpeg.exe","expected":12345678,"actual":0}]
   2026-05-08T12:36:18Z [error] integrity check failed: missing=["audio/refs/fanfare.npz","ffmpeg/bin/ffmpeg.exe"]; size_mismatch=[{"path":"ffmpeg/bin/ffprobe.exe","expected":1234567,"actual":1000000}]
   ```
+
 - record format: `{ISO8601 UTC} [error] integrity check failed: missing=<JSON array of paths>; size_mismatch=<JSON array of {path,expected,actual}>` (両 list は空でも `[]` 表記、JSON parse 可能な体)
 - write 不可 (read-only install dir) 時の fallback は writing-plans で詳細化 (現状方針: log 書込失敗は silent でも modal/exit code は出す)
 
@@ -244,6 +247,7 @@ CI では **release profile build を CI 内で実走** することで Rust の
 ```
 
 これで:
+
 1. Rust release build (`cargo build --release` 経由 Tauri build) で `#[cfg(not(debug_assertions))]` が有効化
 2. 同梱物 1 つ削除 → CLI `allaganeye.bat --version` 実走 → exit code 7 verify
 3. release profile fall-through が CI で常時保証
@@ -269,7 +273,7 @@ GUI 側 (Tauri 起動 + modal 表示) は CI 自動化困難なため Idios 実�
 
 ### PR 作成 Pre-flight (`docs/l2-workflow.md` §「PR 作成 Pre-flight」)
 
-```
+```bash
 git fetch origin develop-0.2.0
 git log HEAD..origin/develop-0.2.0 --oneline
 # 取り込み未済 commit が touched files (lib.rs / cli.py / build-portable-zip.ps1 等) と交差すれば
@@ -335,7 +339,7 @@ writing-plans skill で plan 内に直接記述する未確定項目 (本 spec �
 
 ### 修正対象 file
 
-```
+```text
 allaganeye/exceptions.py        (修正、+ IntegrityError class、exit_code = 7)
 allaganeye/integrity.py         (新規、manifest load + check + skip 判定)
 allaganeye/cli.py               (修正、version_callback 内で integrity 呼出)
