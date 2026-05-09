@@ -315,6 +315,9 @@ writing-plans skill で plan 内に直接記述する未確定項目 (本 spec �
    - 採用方針: `build-portable-zip.ps1` が payload 構築完了時点で `Get-ChildItem -Recurse` で payload 全 file を列挙し、各 path / size を manifest に書く (固定 list ではなく自動 enum)
    - 必ず含むもの: `python/python.exe` / `python/python311.dll` / `ffmpeg/ffmpeg.exe` / `ffmpeg/ffprobe.exe` / `lib/allaganeye/__init__.py` / `lib/allaganeye/audio/refs/fanfare.npz` / `allaganeye-gui.exe` (存在時) / `allaganeye.bat`
    - 自動 enum で全 dll / 全 .py を含めるため build/run 一致が保証される
+   - **除外** (PR #702 実機検証 で発覚した false positive 対策、Round 3 で追加):
+     - `*.pyc` (Python が import 時に再生成、build と runtime で bytes が異なる)
+     - dotfile / dotdir セグメントを含む path (例: `.gitignore` / `lib/typer/.agents/...` / `setuptools/_vendor/.lock`)。`actions/upload-artifact@v4` の default `include-hidden-files: false` が ZIP 化時に silent strip するため、users が手にする artifact には存在しない
 
 2. **`integrity-manifest.json` 生成 step の `build-portable-zip.ps1` 内位置**
    - 確定: `# 7. README` の後 + `# 8. Compress` の前 (payload 構築完了後、ZIP 圧縮前)

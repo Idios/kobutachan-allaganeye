@@ -304,4 +304,53 @@ Describe 'New-IntegrityManifest' {
     $paths = @($manifest.files | ForEach-Object { $_.path })
     $paths | Should -Not -Contain 'integrity-manifest.json'
   }
+
+  It 'excludes *.pyc files (PR #702 実機検証 で発覚: Python が import 時に再生成 → size_mismatch)' {
+    # Simulate setuptools' compiled bytecode that triggered the regression.
+    $pycDir = Join-Path $script:ManifestTmpDir 'python\Lib\site-packages\_distutils_hack\__pycache__'
+    New-Item -ItemType Directory -Force -Path $pycDir | Out-Null
+    Set-Content -Path (Join-Path $pycDir '__init__.cpython-311.pyc') -Value 'fake bytecode' -Encoding ASCII
+
+    # Also drop a non-pyc sibling under the same dir to confirm we only filter .pyc, not the dir.
+    Set-Content -Path (Join-Path $pycDir 'sibling.txt') -Value 'kept' -Encoding ASCII
+
+    $json = New-IntegrityManifest -PayloadDir $script:ManifestTmpDir
+    $manifest = $json | ConvertFrom-Json
+    $paths = @($manifest.files | ForEach-Object { $_.path })
+    @($paths | Where-Object { $_ -like '*.pyc' }) | Should -BeNullOrEmpty
+    $paths | Should -Contain 'python/Lib/site-packages/_distutils_hack/__pycache__/sibling.txt'
+  }
+
+  It 'excludes dotfile and dotdir-segment paths (PR #702 実機検証 で発覚: actions/upload-artifact strip hidden default)' {
+    # Root-level dotfile.
+    Set-Content -Path (Join-Path $script:ManifestTmpDir '.gitignore') -Value 'fake' -Encoding ASCII
+    # Dotfile deep in a tree (mimics setuptools/_vendor/.lock).
+    $vendorDir = Join-Path $script:ManifestTmpDir 'python\Lib\site-packages\setuptools\_vendor'
+    New-Item -ItemType Directory -Force -Path $vendorDir | Out-Null
+    Set-Content -Path (Join-Path $vendorDir '.lock') -Value 'fake' -Encoding ASCII
+    # File under a dotdir segment (mimics typer/.agents/skills/typer/SKILL.md).
+    $dotDir = Join-Path $script:ManifestTmpDir 'lib\typer\.agents\skills\typer'
+    New-Item -ItemType Directory -Force -Path $dotDir | Out-Null
+    Set-Content -Path (Join-Path $dotDir 'SKILL.md') -Value 'fake' -Encoding ASCII
+    # Sibling normal file at the same depth as the dotdir (must be kept).
+    $normalDir = Join-Path $script:ManifestTmpDir 'lib\typer\notdot'
+    New-Item -ItemType Directory -Force -Path $normalDir | Out-Null
+    Set-Content -Path (Join-Path $normalDir 'kept.md') -Value 'fake' -Encoding ASCII
+    # Filename containing dots (extension) at non-leading position must be kept.
+    Set-Content -Path (Join-Path $script:ManifestTmpDir 'normal.txt') -Value 'fake' -Encoding ASCII
+
+    $json = New-IntegrityManifest -PayloadDir $script:ManifestTmpDir
+    $manifest = $json | ConvertFrom-Json
+    $paths = @($manifest.files | ForEach-Object { $_.path })
+
+    # Excluded
+    $paths | Should -Not -Contain '.gitignore'
+    $paths | Should -Not -Contain 'python/Lib/site-packages/setuptools/_vendor/.lock'
+    $paths | Should -Not -Contain 'lib/typer/.agents/skills/typer/SKILL.md'
+    @($paths | Where-Object { $_ -match '(^|/)\.' }) | Should -BeNullOrEmpty
+
+    # Kept
+    $paths | Should -Contain 'lib/typer/notdot/kept.md'
+    $paths | Should -Contain 'normal.txt'
+  }
 }

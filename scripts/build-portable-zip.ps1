@@ -303,12 +303,22 @@ function New-IntegrityManifest {
 
   .DESCRIPTION
   Walks ``$PayloadDir`` recursively, records each file's POSIX-style relative
-  path and size with ``tolerance_bytes = 0`` (strict matching), and returns a JSON
-  string. The manifest file itself (``integrity-manifest.json``) is excluded
-  so its presence/size doesn't break the check that consumes it.
+  path and size with ``tolerance_bytes = 0`` (strict matching), and returns a
+  JSON string. The following are excluded so the runtime check does not raise
+  false positives:
+  - ``integrity-manifest.json`` itself (chicken-and-egg).
+  - ``*.pyc`` files. Python regenerates bytecode on first import, so the
+    bytes in the downloaded ZIP differ from the build-time manifest entry.
+    PR #702 実機検証 で発覚 (size_mismatch on
+    ``python/Lib/site-packages/_distutils_hack/__pycache__/__init__.cpython-311.pyc``).
+  - Any path containing a dotfile/dotdir segment (e.g. ``.agents/``,
+    ``.lock``, ``.f2py_f2cmap``). ``actions/upload-artifact@v4`` has
+    ``include-hidden-files: false`` by default, so these files are silently
+    stripped from the ZIP that users actually receive.
+    PR #702 実機検証 で発覚 (4 missing dotfile entries).
 
-  Exposed as a function so Pester can verify the JSON shape and exclusion
-  logic without dot-sourcing the full build path.
+  Exposed as a function so Pester can verify the JSON shape and the
+  exclusion rules without dot-sourcing the full build path.
   #>
   param(
     [Parameter(Mandatory = $true)][string]$PayloadDir
@@ -319,8 +329,13 @@ function New-IntegrityManifest {
   $base = (Resolve-Path $PayloadDir).Path
   Get-ChildItem -Path $PayloadDir -Recurse -File | ForEach-Object {
     if ($_.Name -eq $manifestName) { return }
+    # PR #702 実機検証: skip Python bytecode (non-deterministic regen on import).
+    if ($_.Extension -eq '.pyc') { return }
     $rel = $_.FullName.Substring($base.Length).TrimStart('\', '/')
     $relPosix = $rel -replace '\\', '/'
+    # PR #702 実機検証: skip dotfile / dotdir paths (artifact upload strips
+    # hidden files). Matches `.gitignore` at root or `.agents/...` deeper.
+    if ($relPosix -match '(^|/)\.[^/]') { return }
     $entries += [pscustomobject]@{
       path = $relPosix
       size = $_.Length

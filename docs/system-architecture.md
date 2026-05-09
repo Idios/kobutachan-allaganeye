@@ -87,8 +87,13 @@ Portable ZIP 内の `integrity-manifest.json` を起動時に読み、同梱物
 
 - **build 時**: `scripts/build-portable-zip.ps1` の `New-IntegrityManifest`
   関数が payload 全 file を `Get-ChildItem -Recurse -File` で自動 enum
-  し、relative path / size / `tolerance_bytes=0` の JSON を生成。manifest
-  自身は除外。
+  し、relative path / size / `tolerance_bytes=0` の JSON を生成。
+  除外対象: manifest 自身 / `*.pyc` (Python が import 時に再生成して
+  bytes 非決定) / dotfile / dotdir セグメント (`actions/upload-artifact@v4`
+  の default `include-hidden-files: false` で ZIP 化時に strip されるため、
+  users が手にする artifact には存在しない)。
+  PR [#702](https://github.com/Idios/kobutachan-allaganeye/pull/702) Round 3
+  で実機検証から発覚し追加。
 - **GUI (Rust release build only)**: `gui/src-tauri/src/integrity.rs::check_install_dir`
   が `<install dir>/integrity-manifest.json` を読み、失敗時は Tauri
   event `integrity-error` を `tokio::async_runtime::spawn` + 150ms +
