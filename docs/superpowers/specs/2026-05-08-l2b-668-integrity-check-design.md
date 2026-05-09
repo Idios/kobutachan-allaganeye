@@ -175,8 +175,8 @@ success    fail                     success    fail
 ### CLI 路
 
 - `IntegrityError(exit_code=7)` raise → CLI 標準処理経路で stderr に短メッセージ + log 書込 + `sys.exit(7)`
-- 短メッセージ例: `integrity check failed: 2 file(s) missing or size mismatch — see logs/error-YYYYMMDD.log`
-- verbose mode (`-v`) では context dict (missing list / size_mismatch list) も stderr に出力
+- 短メッセージ例: `integrity check failed: 2 file(s) missing or size mismatch -- see logs/error-YYYYMMDD.log`
+- 注: `--version` は Typer の `is_eager=True` の eager callback で評価されるため、`-v` フラグの値は callback 内で参照不可 (Typer の eager callback 制約)。よって本 path では context dict (missing / size_mismatch list) を default で stderr 出力する。短メッセージ仕様は他 error path = 通常 command 経由分のみに適用する (PR #702 review #2、`docs/output-spec.md` matrix v2 19a/b/c との部分的不整合は本 spec 注記で正当化)。
 
 ### Log
 

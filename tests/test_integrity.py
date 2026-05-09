@@ -357,3 +357,51 @@ def test_log_silent_fail_when_dir_creation_blocked(
     # check() must still raise IntegrityError even when _write_log explodes.
     with pytest.raises(IntegrityError):
         check(manifest, install_dir=install)
+
+
+def test_log_written_when_manifest_missing(tmp_path: Path) -> None:
+    """check() writes log even when integrity-manifest.json itself is missing.
+
+    PR #702 review (#1): Rust check_install_dir_with_paths logs manifest
+    corruption as missing=[manifest_path]. Python must mirror so bug-report
+    flow gives a consistent "attach logs/error-YYYYMMDD.log" instruction
+    regardless of failure path.
+    """
+    from allaganeye.integrity import check
+
+    install = tmp_path / "install"
+    install.mkdir()
+    missing_manifest = install / "integrity-manifest.json"
+    # File is absent: load_manifest will raise IntegrityError(not found)
+
+    with pytest.raises(IntegrityError) as exc_info:
+        check(missing_manifest, install_dir=install)
+    assert "not found" in str(exc_info.value)
+
+    log_files = list((install / "logs").glob("error-*.log"))
+    assert len(log_files) == 1
+    content = log_files[0].read_text(encoding="utf-8")
+    assert "integrity check failed" in content
+    # Log encodes path via json.dumps so Windows backslashes become \\.
+    # Basename containment is enough proof the manifest path is logged.
+    assert missing_manifest.name in content
+
+
+def test_log_written_when_manifest_invalid_json(tmp_path: Path) -> None:
+    """check() writes log when integrity-manifest.json is malformed JSON."""
+    from allaganeye.integrity import check
+
+    install = tmp_path / "install"
+    install.mkdir()
+    manifest = install / "integrity-manifest.json"
+    manifest.write_text("not json", encoding="utf-8")
+
+    with pytest.raises(IntegrityError) as exc_info:
+        check(manifest, install_dir=install)
+    assert "invalid JSON" in str(exc_info.value)
+
+    log_files = list((install / "logs").glob("error-*.log"))
+    assert len(log_files) == 1
+    content = log_files[0].read_text(encoding="utf-8")
+    # JSON-encoded path: basename containment is the cross-platform assertion.
+    assert manifest.name in content

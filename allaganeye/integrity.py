@@ -116,7 +116,20 @@ def check(
     if install_dir is None:
         install_dir = manifest_path.parent
 
-    data = load_manifest(manifest_path)
+    # PR #702 review (#1): manifest 自体の missing/壊れた JSON 時も log 書込み。
+    # Rust 側 (gui/src-tauri/src/integrity.rs::check_install_dir_with_paths)
+    # は manifest 破損を `missing: [manifest_path]` として treat し log を書く。
+    # bug-report flow で「allaganeye --version で error -> logs/error-YYYYMMDD.log
+    # を添付」と一貫した instruction を出すには Python 側も全 failure path で
+    # log 書込みが必要。
+    try:
+        data = load_manifest(manifest_path)
+    except IntegrityError:
+        try:
+            _write_log(install_dir, [str(manifest_path)], [])
+        except OSError:
+            pass
+        raise
     missing: list[str] = []
     size_mismatch: list[dict[str, Any]] = []
     for entry in data.get("files", []):
