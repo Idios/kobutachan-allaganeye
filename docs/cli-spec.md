@@ -79,10 +79,10 @@ allaganeye 0.1.1 (ffmpeg 8.1, Python 3.12.10, Windows 11)
 Probing: recording.mkv
   Duration: 10228.7s, Resolution: 1920x1080, FPS: 60.00, Codec: h264
 Detecting match boundaries (interval=3.0s, threshold=15.0, workers=auto, min_match=300.0s, min_blackout=3.0s, audio=frozen)
-Detecting  #################################### 100% 0:00:22
-Refining   #################################### 100% 0:00:15
-Scorebar   #################################### 100% 0:00:08
-Splitting  #################################### 100% 0:00:05
+Detecting  #################################### 100%
+Refining   #################################### 100%
+Scorebar   #################################### 100%
+Splitting  #################################### 100%
 ...
 ```
 
@@ -133,7 +133,7 @@ Cache hit: detection params from .detection_cache.json
 Detected 8 match(es) in recording.mkv (2:50:28) (cached)
   Match 1:   00:00 -   15:17  (15m17s)  [unknown]
   ...
-Splitting  #################################### 100% 0:00:05
+Splitting  #################################### 100%
   Splitting: 8 matches, 0m05s
 Total: 0m07s
 ```
