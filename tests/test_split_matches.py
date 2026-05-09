@@ -1,13 +1,18 @@
 """Tests for split_matches pipeline orchestration."""
 
 import json
+import re
+import time
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from allaganeye.commands.split_matches import (
+    _ETAProgressBar,
+    _PROGRESS_LABEL_WIDTH,
     _auto_sample_interval,
+    _eta_progressbar,
     _load_cache,
     _save_cache,
     run_split,
@@ -648,7 +653,7 @@ def test_splitting_bar_shown_in_normal_run(
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    with patch("click.progressbar") as mock_bar:
+    with patch(f"{MODULE}._ETAProgressBar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
@@ -667,7 +672,9 @@ def test_progressbar_shows_eta_label(mock_probe, mock_detect, mock_split, tmp_pa
     """Progress bars enable ETA and percent display in CPU mode (#329).
 
     Guards the contract from issue #329: the user must be able to tell
-    that the time shown is ETA, via ``show_eta=True`` on click.progressbar.
+    that the time shown is ETA, via ``show_eta=True`` on the
+    ``_ETAProgressBar`` subclass (refactored from ``click.progressbar``
+    factory in #365).
     GPU mode deliberately suppresses click's ETA on the Detecting bar
     (#438); that variant is covered by
     :func:`test_progressbar_suppresses_click_eta_on_detecting_in_gpu_mode`.
@@ -679,7 +686,7 @@ def test_progressbar_shows_eta_label(mock_probe, mock_detect, mock_split, tmp_pa
     # (which would suppress click ETA on Detecting per #438).
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, use_gpu=False)
 
-    with patch("click.progressbar") as mock_bar:
+    with patch(f"{MODULE}._ETAProgressBar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
@@ -713,7 +720,7 @@ def test_progressbar_suppresses_click_eta_on_detecting_in_gpu_mode(
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, use_gpu=True)
 
-    with patch("click.progressbar") as mock_bar:
+    with patch(f"{MODULE}._ETAProgressBar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
@@ -1131,7 +1138,7 @@ def test_progressbar_length(mock_probe, mock_detect, mock_split, tmp_path):
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    with patch("click.progressbar") as mock_bar:
+    with patch(f"{MODULE}._ETAProgressBar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
@@ -1154,7 +1161,7 @@ def test_progressbar_tiny_video(mock_probe, mock_detect, mock_split, tmp_path):
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    with patch("click.progressbar") as mock_bar:
+    with patch(f"{MODULE}._ETAProgressBar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
@@ -1176,7 +1183,7 @@ def test_progressbar_auto_interval(mock_probe, mock_detect, mock_split, tmp_path
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    with patch("click.progressbar") as mock_bar:
+    with patch(f"{MODULE}._ETAProgressBar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
@@ -3963,3 +3970,116 @@ def test_quiet_no_cache_only_output_listing(
     assert f"Output: {tmp_path}" in out
     assert "match_001.mp4" in out
     assert "Metadata:" in out
+
+
+# ============================================================
+# #365: progress bar ETA ラベル付与の format 検証
+# ============================================================
+
+_ETA_LINE_PATTERN = re.compile(r"\b\d{1,3}%\s+ETA:\s+(?:\d+d\s+)?\d+:\d{2}:\d{2}\b")
+
+
+def _drive_to_known_eta(bar: _ETAProgressBar, completed: int) -> None:
+    """Force eta_known by simulating elapsed time + progress.
+
+    click ProgressBar は ``start`` / ``last_eta`` が現在時刻で初期化され、
+    ``make_step`` 内の ``time.time() - self.last_eta < 1.0`` 条件が True の
+    間は ``eta_known`` が更新されない。テストでは ``start`` と ``last_eta``
+    を 10 秒前に巻き戻した上で update() し、``make_step`` 内の条件を
+    満たして ``eta_known=True`` にする。
+    """
+    past = time.time() - 10.0  # 10s 前から動いていた体
+    bar.start = past
+    bar.last_eta = past
+    bar.update(completed)
+
+
+@pytest.mark.parametrize("label", ["Detecting", "Refining", "Scorebar", "Splitting"])
+def test_eta_progressbar_label_present_for_all_bars(label: str) -> None:
+    """4 bar 全てで 'ETA: H:MM:SS' label を出すこと (#365)."""
+    bar = _eta_progressbar(100, label)
+    _drive_to_known_eta(bar, 50)
+
+    line = bar.format_progress_line()
+
+    assert line.startswith(label.ljust(_PROGRESS_LABEL_WIDTH))
+    assert "ETA: " in line, f"missing 'ETA: ' label in: {line!r}"
+    assert _ETA_LINE_PATTERN.search(line), f"format mismatch: {line!r}"
+
+
+def test_eta_progressbar_suppresses_eta_in_gpu_mode() -> None:
+    """suppress_click_eta=True (GPU mode #438) では ETA tail を出さず percent のみ."""
+    bar = _eta_progressbar(100, "Detecting", suppress_click_eta=True)
+    _drive_to_known_eta(bar, 50)
+
+    line = bar.format_progress_line()
+
+    assert "ETA: " not in line
+    assert re.search(r"\b\d{1,3}%\s*$", line.rstrip()), line
+
+
+def test_eta_progressbar_placeholder_eta_before_first_update() -> None:
+    """update 前 (eta_known=False) は 'ETA: --:--:--' placeholder を出す (#365 Idios feedback)."""
+    bar = _eta_progressbar(100, "Detecting")
+    # _drive_to_known_eta を呼ばない -- eta_known=False のまま (start は初期化済みだが update 未実行で eta_known は False)
+
+    line = bar.format_progress_line()
+
+    assert "ETA: --:--:--" in line, f"missing placeholder in: {line!r}"
+    assert "0%" in line
+
+
+def test_eta_progressbar_gpu_dispatching_label_with_eta_placeholder() -> None:
+    """GPU mode dispatching 段階の label に 'ETA: --:--:--' を含む format を verify (#365).
+
+    Caller (on_chunk_dispatch) が更新する label の expected string を bar に
+    直接設定し、format_progress_line() 出力に 'ETA: --:--:--' が含まれる
+    + subclass は ETA tail を出さない (show_eta=False) ことを確認する。
+    chunk 1 完了後は on_chunk が label を上書きするため、この ETA は
+    dispatching 段階にのみ表示される。
+    """
+    bar = _eta_progressbar(100, "Detecting", suppress_click_eta=True)
+    # caller (on_chunk_dispatch) が更新する label 文字列の expected
+    bar.label = "Detecting [dispatching 32 chunks, ETA: --:--:--]".ljust(
+        _PROGRESS_LABEL_WIDTH
+    )
+
+    line = bar.format_progress_line()
+
+    # caller label 内の placeholder を確認
+    assert "ETA: --:--:--" in line, f"caller label placeholder missing in: {line!r}"
+    # subclass は show_eta=False で ETA tail を出さない (二重表示防止 #438)
+    # ETA は label 内 1 つのみ
+    assert line.count("ETA:") == 1, f"expected single ETA occurrence in: {line!r}"
+
+
+def test_eta_progressbar_bar_visual_uses_dashes_and_36_width() -> None:
+    """bar visual (empty_char='-' + width=36) が click.progressbar() factory baseline を維持すること (#365).
+
+    `_eta_progressbar` を `click.progressbar()` factory から `_ETAProgressBar(...)`
+    class 直接インスタンス化に refactor した際、factory と class の defaults 差異
+    (empty_char='-' vs ' '、width=36 vs 30) で silent visual regression が起きうる。
+    issue #365 期待動作 `Detecting  ####---  93% ETA: 0:00:22` の `####---` 部分
+    (dash empty char) を保持するための regression test (PR #687 review feedback #3 対応)。
+    """
+    bar = _eta_progressbar(100, "Detecting")
+    _drive_to_known_eta(bar, 50)
+
+    line = bar.format_progress_line()
+
+    # empty char が '-' (issue #365 期待動作 ####--- に整合)
+    assert "-" in line, f"expected '-' as empty char in: {line!r}"
+    # width=36 で 50% 進捗 -> 18 fill + 18 empty
+    assert "#" * 18 in line, f"expected 18 fills (width=36, 50%): {line!r}"
+    assert "-" * 18 in line, f"expected 18 dashes (width=36, 50%): {line!r}"
+
+
+def test_eta_progressbar_finished_no_eta_tail() -> None:
+    """100% 完了時 (finished=True) は 'ETA: ' tail を出さない (commit 9bc3788 仕様、#365、PR #687 review feedback #6 対応)."""
+    bar = _eta_progressbar(100, "Splitting")
+    _drive_to_known_eta(bar, 100)  # 100% で finished=True
+
+    line = bar.format_progress_line()
+
+    assert "ETA:" not in line, f"100% で ETA tail が残存: {line!r}"
+    assert "100%" in line

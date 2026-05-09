@@ -205,6 +205,41 @@ Describe 'Format-ReadmeContent' {
     $readme | Should -Match '\(ref n8\.1\.1\)'
     $readme | Should -Not -Match '\(commit n8\.1\.1\)'
   }
+
+  It '-IncludeGui:$true README documents .bat double-click as the primary GUI entry (#617)' {
+    # README must explain that `.bat` double-click launches the GUI when
+    # GUI exe is bundled. The phrase "Double-click" + "allaganeye.bat" must
+    # appear together so the new UX (issue #617) is documented for users
+    # who read README.txt before running anything.
+    $readme = Format-ReadmeContent `
+      -Version '0.2.0' `
+      -FFmpegVersion '8.1' `
+      -FFmpegBuildTag 'autobuild-2026-05-06-13-32' `
+      -FFmpegSourceRef 'n8.1.1' `
+      -IncludeGui:$true
+    $readme | Should -Match 'Double-click `?allaganeye\.bat`?'
+  }
+
+  It '-IncludeGui:$true README orders GUI section before drag-drop and Command Prompt sections (#617)' {
+    # Per spec §3 + issue #617 doc requirement: ".bat double-click → GUI"
+    # comes first, drag-drop and Command Prompt are 2-3.
+    # We assert relative ordering by comparing IndexOf positions.
+    $readme = Format-ReadmeContent `
+      -Version '0.2.0' `
+      -FFmpegVersion '8.1' `
+      -FFmpegBuildTag 'autobuild-2026-05-06-13-32' `
+      -FFmpegSourceRef 'n8.1.1' `
+      -IncludeGui:$true
+    $idxBatDoubleClick = $readme.IndexOf('Double-click')
+    $idxDragDrop = $readme.IndexOf('Drop a video file')
+    $idxCommandPrompt = $readme.IndexOf('Command Prompt')
+
+    $idxBatDoubleClick | Should -BeGreaterThan -1
+    $idxDragDrop | Should -BeGreaterThan -1
+    $idxCommandPrompt | Should -BeGreaterThan -1
+    $idxBatDoubleClick | Should -BeLessThan $idxDragDrop
+    $idxDragDrop | Should -BeLessThan $idxCommandPrompt
+  }
 }
 
 Describe 'Get-LauncherTemplate' {
@@ -216,6 +251,73 @@ Describe 'Get-LauncherTemplate' {
     $template = Get-LauncherTemplate
     $template | Should -Match 'set EXIT_CODE=%ERRORLEVEL%'
     $template | Should -Match 'endlocal & exit /b %EXIT_CODE%'
+  }
+
+  It 'no-args branch launches GUI via start when allaganeye-gui.exe exists (#617)' {
+    # When user double-clicks .bat without args and the GUI exe is present at
+    # runtime, the dispatcher must launch the GUI asynchronously (start "") so
+    # the cmd window does not linger, then exit with code 0. The if-exist +
+    # start block is generated in BOTH -IncludeGui:$true (GUI bundled) and
+    # -IncludeGui:$false (CLI-only) templates as a defensive runtime check;
+    # -IncludeGui only controls the help text content. Default call here
+    # exercises the structural element common to both variants.
+    $template = Get-LauncherTemplate
+    $template | Should -Match 'if exist "%PAYLOAD%allaganeye-gui\.exe"'
+    $template | Should -Match 'start "" "%PAYLOAD%allaganeye-gui\.exe"'
+  }
+
+  It 'no-args + GUI absent falls back to :show_help label (#617)' {
+    # CLI-only ZIP fallback: if allaganeye-gui.exe is not bundled,
+    # double-click should still display the help text + pause (preserves
+    # the pre-#617 UX for that case).
+    $template = Get-LauncherTemplate
+    $template | Should -Match 'goto :show_help'
+    $template | Should -Match '(?m)^:show_help\s*$'
+  }
+
+  It 'recognizes --help, -h, and /? as explicit help flags (#617)' {
+    # Explicit help flags must reach :show_help even when GUI exe is bundled,
+    # otherwise `allaganeye.bat --help` would silently launch the GUI.
+    $template = Get-LauncherTemplate
+    $template | Should -Match 'if /i "%~1"=="--help"'
+    $template | Should -Match 'if /i "%~1"=="-h"'
+    $template | Should -Match 'if "%~1"=="/\?"'
+  }
+
+  It 'preserves case-insensitive video drag-drop dispatch (regression)' {
+    # The video drag-drop branch (existing pre-#617 behavior) must remain.
+    # All four video extensions are case-insensitive (if /i) and the script
+    # invokes `python -m allaganeye split %*` to preserve full arg pass-through.
+    $template = Get-LauncherTemplate
+    $template | Should -Match 'if /i "%EXT%"==".mp4"'
+    $template | Should -Match 'if /i "%EXT%"==".mkv"'
+    $template | Should -Match 'if /i "%EXT%"==".avi"'
+    $template | Should -Match 'if /i "%EXT%"==".mov"'
+    $template | Should -Match '"%PAYLOAD%python\\python\.exe" -m allaganeye split %\*'
+  }
+
+  It 'preserves CLI passthrough for non-video args (regression)' {
+    # Non-video args (e.g. allaganeye.bat detect <file>, --version) must
+    # still be dispatched to `python -m allaganeye %*`.
+    $template = Get-LauncherTemplate
+    $template | Should -Match '"%PAYLOAD%python\\python\.exe" -m allaganeye %\*'
+  }
+
+  It '-IncludeGui:$true emits help text mentioning .bat double-click as the first option (#617)' {
+    # When GUI exe is bundled, help text must mention .bat double-click as
+    # the easiest entry. The literal "Double-click" + "allaganeye.bat" is
+    # the canonical phrase users will read in `allaganeye.bat --help`.
+    $template = Get-LauncherTemplate -IncludeGui:$true
+    $template | Should -Match 'Double-click allaganeye\.bat'
+  }
+
+  It '-IncludeGui:$false (default) omits Double-click GUI mention from help text (#617)' {
+    # CLI-only ZIP: help text MUST NOT advertise GUI double-click since the
+    # GUI exe is not bundled. The runtime `if exist` check still appears in
+    # the template as a defensive fallback, but the help text must be free
+    # of the user-facing "Double-click" advertisement.
+    $template = Get-LauncherTemplate
+    $template | Should -Not -Match 'Double-click allaganeye\.bat'
   }
 }
 

@@ -64,17 +64,19 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
 
 ### T1.2 CLI smoke + GUI 起動
 
-> **背景**: Portable ZIP は別 exe 方式 ([#527](https://github.com/Idios/kobutachan-allaganeye/issues/527) 確定) で `allaganeye.bat` = CLI / `allaganeye-gui.exe` = GUI。両経路の起動 smoke を本 step で集約 (`docs/release-process.md §94` line 99 と整合)。
+> **背景**: Portable ZIP は別 exe 方式 ([#527](https://github.com/Idios/kobutachan-allaganeye/issues/527) 確定) で `allaganeye.bat` 引数なし (ダブルクリック) = GUI 起動 (v0.2.0+ [#617](https://github.com/Idios/kobutachan-allaganeye/issues/617)) / `allaganeye.bat <args>` = CLI / `allaganeye-gui.exe` 直接 = GUI。両経路の起動 smoke を本 step で集約 (`docs/release-process.md §94` line 99 と整合)。
 
 **操作:**
 
 1. `allaganeye.bat --version` を実行 (CLI 起動 smoke)
-2. `allaganeye-gui.exe` をダブルクリックで起動 (GUI 起動 smoke)
+2. `allaganeye-gui.exe` をダブルクリックで起動 (GUI 直接起動 smoke)
+3. `allaganeye.bat` をダブルクリック (引数なし) で GUI が起動することを確認 ([#617](https://github.com/Idios/kobutachan-allaganeye/issues/617) 経路 smoke)
 
 **Expected:**
 
 - 1 で正しい version 文字列 (`allaganeye 0.2.0`) が stdout に表示
 - 2 で Tauri ウィンドウが開く (DropScreen 表示)
+- 3 で `allaganeye.bat` ダブルクリック後 cmd ウィンドウが残らず Tauri ウィンドウが開く (DropScreen 表示)、引数なしダブルクリック経路 ([#617](https://github.com/Idios/kobutachan-allaganeye/issues/617)) が動作
 - [#668](https://github.com/Idios/kobutachan-allaganeye/issues/668) 健全性 check が PASS した状態でモーダル表示なし
 - `logs/error-YYYYMMDD.log` にエラー記録なし
 
@@ -83,6 +85,7 @@ L2 (v0.2.0) の 2 スコープ (`l2a-gui` / `l2b-installer`) が合流したリ�
 - log: `allaganeye.bat --version` の stdout → `logs/qa/v0.2.0/T1-step2-cli-version.log`
 - screenshot: `logs/qa/v0.2.0/T1-step2-launched.png` (起動直後の DropScreen)
 - log: `allaganeye-gui.exe` 起動直後の `logs/error-YYYYMMDD.log` を copy → `logs/qa/v0.2.0/T1-step2-startup.log`
+- screenshot: `logs/qa/v0.2.0/T1-step2-bat-double-click.png` (`allaganeye.bat` ダブルクリック → GUI 起動の cmd 残らない確認、[#617](https://github.com/Idios/kobutachan-allaganeye/issues/617))
 
 ### T1.3 サンプル動画 drop → detecting → complete
 
