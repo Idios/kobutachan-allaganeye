@@ -199,7 +199,7 @@ Group H: lint / CLI 系 polish (1 spec / 2 章 / 2 PR)
 
 ### 5.1 `_ETAProgressBar` subclass 実装
 
-`allaganeye/commands/split_matches.py` の `_eta_progressbar` を click.ProgressBar subclass + override 方式に refactor:
+`allaganeye/commands/split_matches.py` の `_eta_progressbar` を `_ClickProgressBar` (= `click._termui_impl.ProgressBar`) subclass + override 方式に refactor:
 
 実装は `from click._termui_impl import ProgressBar as _ClickProgressBar` 経由で `_ClickProgressBar` alias として import (`click.ProgressBar` は click 8.x の public API として export されていないため)。
 
@@ -216,24 +216,38 @@ class _ETAProgressBar(_ClickProgressBar):
 
         Detecting  ###################---  93% ETA: 00:00:22
 
+    ``eta_known=False`` (update 未呼び出し / make_step の 1 秒 debounce
+    gate 内) のときも ETA セクションを出し ``ETA: --:--:--`` placeholder
+    を表示する (Idios feedback for #365: pre-update でも ETA を出す改善)。
+
     ``show_eta=False`` (GPU mode #438 の ``suppress_click_eta=True``
     経路) では ETA セクションを出さず percent のみ表示。caller 側が
     self-computed ETA を label に組み込む既存挙動と互換。
 
-    依存する `click._termui_impl` module の `ProgressBar` class が提供するメソッド (click 8.x の internal だが API surface は安定):
+    ``finished=True`` (100% 完了) では ETA: 00:00:00 を出さず percent
+    のみ表示 (click 親 class と整合)。
+
+    依存する `click._termui_impl` module の `ProgressBar` class が提供する
+    メソッド / attribute (click 8.x の internal だが API surface は安定):
       - ``format_bar()``    -- bar 文字列
       - ``format_pct()``    -- "  N%" or "NN%" (左 padding あり)
-      - ``format_eta()``    -- "H:MM:SS" or "" (eta_known=False / show_eta=False のとき空)
+      - ``format_eta()``    -- "H:MM:SS" or "" (eta_known=False のとき空、本 subclass では '--:--:--' で fallback)
       - ``self.label``      -- ljust 済みラベル
       - ``self.show_eta``   -- ETA 表示フラグ
       - ``self.eta_known``  -- ETA 計算可能フラグ (1 update 後に True)
+      - ``self.finished``   -- 100% 完了フラグ (本 subclass で ETA suppression に使用)
+      - ``self.start``      -- 開始時刻 (test の time travel に使用)
+      - ``self.last_eta``   -- 直近 ETA 計算時刻 (test の time travel に使用)
     """
 
     def format_progress_line(self) -> str:
         bar = self.format_bar()
         pct = self.format_pct()
-        if self.show_eta and self.eta_known:
-            eta = self.format_eta()
+        if self.show_eta and not self.finished:
+            # eta_known=False (update 未呼び出し / make_step の 1 秒 debounce gate 内)
+            # のとき format_eta() は空文字列を返すので、'--:--:--' placeholder で
+            # 常時 ETA を表示する (Idios feedback: pre-update でも ETA を出す改善、#365)。
+            eta = self.format_eta() or "--:--:--"
             return f"{self.label}{bar} {pct} ETA: {eta}"
         return f"{self.label}{bar} {pct}"
 
@@ -354,14 +368,33 @@ def test_eta_progressbar_suppresses_eta_in_gpu_mode():
     assert re.search(r"\b\d{1,3}%\s*$", line.rstrip()), line
 
 
-def test_eta_progressbar_no_eta_before_first_update():
-    """update 前 (eta_known=False) は ETA tail を出さず percent のみ."""
+def test_eta_progressbar_placeholder_eta_before_first_update() -> None:
+    """update 前 (eta_known=False) は 'ETA: --:--:--' placeholder を出す (#365 Idios feedback)."""
     bar = _eta_progressbar(100, "Detecting")
+    # _drive_to_known_eta を呼ばない -- eta_known=False のまま
 
     line = bar.format_progress_line()
 
-    assert "ETA: " not in line
+    assert "ETA: --:--:--" in line, f"missing placeholder in: {line!r}"
     assert "0%" in line
+
+
+def test_eta_progressbar_gpu_dispatching_label_with_eta_placeholder() -> None:
+    """GPU mode dispatching 段階の label に 'ETA: --:--:--' を含む format を verify (#365).
+
+    Caller (on_chunk_dispatch) が更新する label の expected string を bar に
+    直接設定し、format_progress_line() 出力に 'ETA: --:--:--' が含まれる
+    + subclass は ETA tail を出さない (show_eta=False) ことを確認する。
+    """
+    bar = _eta_progressbar(100, "Detecting", suppress_click_eta=True)
+    bar.label = "Detecting [dispatching 32 chunks, ETA: --:--:--]".ljust(
+        _PROGRESS_LABEL_WIDTH + 50
+    )
+
+    line = bar.format_progress_line()
+
+    assert "ETA: --:--:--" in line, f"caller label placeholder missing in: {line!r}"
+    assert line.count("ETA:") == 1, f"expected single ETA occurrence in: {line!r}"
 ```
 
 **狙い**:
@@ -369,7 +402,8 @@ def test_eta_progressbar_no_eta_before_first_update():
 - 4 bar parametrize で「全 caller で format 統一」を 1 test で担保
 - regex `\b\d{1,3}%\s+ETA:\s+(?:\d+d\s+)?\d+:\d{2}:\d{2}\b` で **`93% ETA: 00:00:22` 完全形を検証** (`Nd HH:MM:SS` 形式 / 日付なし `HH:MM:SS` 形式 どちらにも対応、PR #343 の test 不足の根本原因対策)
 - GPU mode 経路 (suppress_click_eta=True) を独立 test で担保 → #438 既存挙動の互換性
-- update 前 (eta_known=False) を test して click upgrade での挙動変化を早期検知
+- update 前 (eta_known=False) では `ETA: --:--:--` placeholder を表示する (Idios feedback #365)
+- GPU dispatching 段階の caller label 内 placeholder + 二重 ETA 表示防止を verify
 
 ### 6.2 #643 ESLint 違反検証 PR (CI fail evidence)
 
@@ -399,7 +433,7 @@ ESLint config の自動 test 化はせず、**違反コードを含む検証 PR 
 
 ### 6.3 既存テスト回帰確認
 
-- `tests/test_split_matches.py` の既存 43 test は context manager protocol (`with bar as progress: progress.update(1)`) のみ依存。`_eta_progressbar` の戻り型を `_ETAProgressBar` (click.ProgressBar subclass) に変えても context manager protocol (`with bar as progress: progress.update(1)`) は維持される。ただし `click.progressbar` factory を直接 monkeypatch している既存 test (test_split_matches.py 内 6 件) は `_ETAProgressBar` への patch 対象変更が必要 (PR #687 で `patch("click.progressbar")` → `patch(f"{MODULE}._ETAProgressBar")` に更新)。
+- `tests/test_split_matches.py` の既存 43 test は context manager protocol (`with bar as progress: progress.update(1)`) のみ依存。`_eta_progressbar` の戻り型を `_ETAProgressBar` (`_ClickProgressBar` (= `click._termui_impl.ProgressBar`) の subclass) に変えても context manager protocol (`with bar as progress: progress.update(1)`) は維持される。ただし `click.progressbar` factory を直接 monkeypatch している既存 test (test_split_matches.py 内 6 件) は `_ETAProgressBar` への patch 対象変更が必要 (PR #687 で `patch("click.progressbar")` → `patch(f"{MODULE}._ETAProgressBar")` に更新)。
 - 実装時に `grep -n 'click.progressbar' tests/` を走らせ、`click.progressbar` を直接 monkeypatch する箇所が無いか確認
 - `tests/test_regression_330.py` (進捗バー regression test) と `tests/test_progress_emitter.py` も影響範囲として実装時に走査
 

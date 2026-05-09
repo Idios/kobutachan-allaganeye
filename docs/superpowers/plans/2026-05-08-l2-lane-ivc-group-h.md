@@ -4,7 +4,7 @@
 
 **Goal:** v0.2.0 wave 0 の Lane IV-c (Group H = lint / CLI 系 polish) を 2 PR 構成で完了させる。Phase 1 = ESLint で Tauri 2 silent loss を予防 (#643)、Phase 2 = CLI progress bar の ETA ラベル付与 (#365)。
 
-**Architecture:** Phase 1 は ESLint flat config の `rules` block に `no-restricted-globals` + `no-restricted-properties` を追加し、`window.confirm/alert/prompt` の bare global と member access の両経路を block。Phase 2 は `_eta_progressbar` を `_ETAProgressBar(click.ProgressBar)` subclass + `format_progress_line()` override に refactor し、4 bar (Detecting / Refining / Scorebar / Splitting) で `NN% ETA: H:MM:SS` 形式に統一。
+**Architecture:** Phase 1 は ESLint flat config の `rules` block に `no-restricted-globals` + `no-restricted-properties` を追加し、`window.confirm/alert/prompt` の bare global と member access の両経路を block。Phase 2 は `_eta_progressbar` を `_ETAProgressBar(_ClickProgressBar)` subclass + `format_progress_line()` override に refactor し、4 bar (Detecting / Refining / Scorebar / Splitting) で `NN% ETA: H:MM:SS` 形式に統一。
 
 **Tech Stack:** ESLint v9 flat config (Phase 1) / Click 8.x ProgressBar (Phase 2) / pytest parametrize + regex (Phase 2 test) / `superpowers:test-driven-development` HARD-GATE 適用 (Phase 2)
 
@@ -322,7 +322,6 @@ issue [#643](https://github.com/Idios/kobutachan-allaganeye/issues/643) の受�
 - [x] `cd gui && npm test`
 - [x] `cd gui && npm run build`
 - [x] `cd gui/src-tauri && cargo check`
-- [ ] 違反コード検証 PR の CI fail evidence (Task 5 で本 PR 本文末尾に CI run URL を追記)
 
 ### machine-unverifiable
 
@@ -771,24 +770,38 @@ class _ETAProgressBar(_ClickProgressBar):
 
         Detecting  ###################---  93% ETA: 00:00:22
 
+    ``eta_known=False`` (update 未呼び出し / make_step の 1 秒 debounce
+    gate 内) のときも ETA セクションを出し ``ETA: --:--:--`` placeholder
+    を表示する (Idios feedback for #365: pre-update でも ETA を出す改善)。
+
     ``show_eta=False`` (GPU mode #438 の ``suppress_click_eta=True``
     経路) では ETA セクションを出さず percent のみ表示。caller 側が
     self-computed ETA を label に組み込む既存挙動と互換。
 
-    依存する `click._termui_impl` module の `ProgressBar` class が提供するメソッド (click 8.x の internal だが API surface は安定):
+    ``finished=True`` (100% 完了) では ETA: 00:00:00 を出さず percent
+    のみ表示 (click 親 class と整合)。
+
+    依存する `click._termui_impl` module の `ProgressBar` class が提供する
+    メソッド / attribute (click 8.x の internal だが API surface は安定):
       - ``format_bar()``    -- bar 文字列
       - ``format_pct()``    -- "  N%" or "NN%" (左 padding あり)
-      - ``format_eta()``    -- "H:MM:SS" or "" (eta_known=False / show_eta=False のとき空)
+      - ``format_eta()``    -- "H:MM:SS" or "" (eta_known=False のとき空、本 subclass では '--:--:--' で fallback)
       - ``self.label``      -- ljust 済みラベル
       - ``self.show_eta``   -- ETA 表示フラグ
       - ``self.eta_known``  -- ETA 計算可能フラグ (1 update 後に True)
+      - ``self.finished``   -- 100% 完了フラグ (本 subclass で ETA suppression に使用)
+      - ``self.start``      -- 開始時刻 (test の time travel に使用)
+      - ``self.last_eta``   -- 直近 ETA 計算時刻 (test の time travel に使用)
     """
 
     def format_progress_line(self) -> str:
         bar = self.format_bar()
         pct = self.format_pct()
-        if self.show_eta and self.eta_known:
-            eta = self.format_eta()
+        if self.show_eta and not self.finished:
+            # eta_known=False (update 未呼び出し / make_step の 1 秒 debounce gate 内)
+            # のとき format_eta() は空文字列を返すので、'--:--:--' placeholder で
+            # 常時 ETA を表示する (Idios feedback: pre-update でも ETA を出す改善、#365)。
+            eta = self.format_eta() or "--:--:--"
             return f"{self.label}{bar} {pct} ETA: {eta}"
         return f"{self.label}{bar} {pct}"
 
@@ -846,8 +859,8 @@ Expected: **PASS** (4 parametrize 全て)。format `Detecting  ###---  50% ETA: 
 もし FAIL (例: `format_pct()` の output に `%` が含まれない / `format_eta()` が `--` を返す等の click version 差異) なら、click 8.x の実装をローカルで確認:
 
 ```bash
-python -c "import click; help(click.ProgressBar.format_pct)"
-python -c "import click; help(click.ProgressBar.format_eta)"
+python -c "from click._termui_impl import ProgressBar as _ClickProgressBar; help(_ClickProgressBar.format_pct)"
+python -c "from click._termui_impl import ProgressBar as _ClickProgressBar; help(_ClickProgressBar.format_eta)"
 ```
 
 挙動が想定と異なれば spec §5.1 の API 依存を再確認。
@@ -890,7 +903,7 @@ def test_eta_progressbar_suppresses_eta_in_gpu_mode() -> None:
 pytest tests/test_split_matches.py::test_eta_progressbar_suppresses_eta_in_gpu_mode -v
 ```
 
-Expected: **PASS** (Task 9 の `_ETAProgressBar` 実装で `if self.show_eta and self.eta_known:` 条件分岐が既に GPU mode を扱うため)。
+Expected: **PASS** (Task 9 の `_ETAProgressBar` 実装で `if self.show_eta and not self.finished:` 条件分岐が GPU mode の `show_eta=False` を扱うため、ETA tail を出さず percent のみ)。
 
 これは厳密 TDD の Red→Green サイクルとしては「Green by accident」だが、本 test は **既存挙動を保護する verification test** として価値があり、Task 9 の minimal 実装が正しく GPU mode を扱っていることの **regression guard** になる。click upgrade で挙動が変わった場合や、将来 `_ETAProgressBar.format_progress_line` を別目的で改修した時に、本 test が GPU mode の互換性 break を検出する。
 
@@ -909,24 +922,42 @@ Expected: **PASS** (Task 9 の `_ETAProgressBar` 実装で `if self.show_eta and
 `tests/test_split_matches.py` の末尾に Edit tool で append:
 
 ```python
-def test_eta_progressbar_no_eta_before_first_update() -> None:
-    """update 前 (eta_known=False) は ETA tail を出さず percent のみ."""
+def test_eta_progressbar_placeholder_eta_before_first_update() -> None:
+    """update 前 (eta_known=False) は 'ETA: --:--:--' placeholder を出す (#365 Idios feedback)."""
     bar = _eta_progressbar(100, "Detecting")
-    # _drive_to_known_eta を呼ばない -- start_time=None / eta_known=False のまま
+    # _drive_to_known_eta を呼ばない -- eta_known=False のまま
 
     line = bar.format_progress_line()
 
-    assert "ETA: " not in line
+    assert "ETA: --:--:--" in line, f"missing placeholder in: {line!r}"
     assert "0%" in line
+
+
+def test_eta_progressbar_gpu_dispatching_label_with_eta_placeholder() -> None:
+    """GPU mode dispatching 段階の label に 'ETA: --:--:--' を含む format を verify (#365).
+
+    Caller (on_chunk_dispatch) が更新する label の expected string を bar に
+    直接設定し、format_progress_line() 出力に 'ETA: --:--:--' が含まれる
+    + subclass は ETA tail を出さない (show_eta=False) ことを確認する。
+    """
+    bar = _eta_progressbar(100, "Detecting", suppress_click_eta=True)
+    bar.label = "Detecting [dispatching 32 chunks, ETA: --:--:--]".ljust(
+        _PROGRESS_LABEL_WIDTH + 50
+    )
+
+    line = bar.format_progress_line()
+
+    assert "ETA: --:--:--" in line, f"caller label placeholder missing in: {line!r}"
+    assert line.count("ETA:") == 1, f"expected single ETA occurrence in: {line!r}"
 ```
 
 - [ ] **Step 2: test を実行**
 
 ```bash
-pytest tests/test_split_matches.py::test_eta_progressbar_no_eta_before_first_update -v
+pytest tests/test_split_matches.py::test_eta_progressbar_placeholder_eta_before_first_update -v
 ```
 
-Expected: **PASS** (Task 9 の `_ETAProgressBar.format_progress_line` の `if self.show_eta and self.eta_known:` 条件で `self.eta_known=False` 時に ETA を skip)。
+Expected: **PASS** (Task 9 の `_ETAProgressBar.format_progress_line` の `if self.show_eta and not self.finished:` 条件で eta_known=False 時に format_eta() の空文字列を `--:--:--` で fallback して `ETA: --:--:--` placeholder を表示)。
 
 Task 10 と同様、これも minimal 実装が完全版である本 plan では verification 役割。click 8.x で `eta_known` 属性の semantics が変わった場合や、将来 `format_progress_line` の条件分岐を改修した場合に、本 test が破壊的変更を検出する。
 
@@ -1015,7 +1046,7 @@ bar_template が `%(info)s` を使っていたため click は "<percent>  <eta>
 
 ### allaganeye/commands/split_matches.py
 
-- 新 class `_ETAProgressBar(click.ProgressBar)` を追加し、
+- 新 class `_ETAProgressBar(_ClickProgressBar)` を追加し、
   `format_progress_line()` を override して以下の format に統一:
     Detecting  ###################---  93% ETA: 00:00:22
 - `_eta_progressbar()` の戻り型を `_ETAProgressBar` に refactor。
@@ -1023,20 +1054,22 @@ bar_template が `%(info)s` を使っていたため click は "<percent>  <eta>
 - GPU mode (suppress_click_eta=True → show_eta=False、PR #438 経路) は
   ETA tail を出さず percent のみ。caller の self-computed ETA を label
   に組み込む既存挙動と互換。
-- `import click` を module top に昇格 (旧実装は関数内 lazy import)。
+- `_ClickProgressBar` import を module top に追加 (`from click._termui_impl import ProgressBar as _ClickProgressBar`)。旧 `_eta_progressbar` 内 `import click` は class 定義のため module top レベルに移動。
 
 ### tests/test_split_matches.py
 
 PR #343 の test 不足 (進捗バー出力に対する snapshot / 部分文字列 assert
 不在) を反省し、`format_progress_line()` の出力を直接 assert する unit
-test を 3 種追加:
+test を 4 種追加:
 
 1. `test_eta_progressbar_label_present_for_all_bars` (4 parametrize)
    -- 4 bar 全てで `\b\d{1,3}%\s+ETA:\s+\d+:\d{2}:\d{2}\b` regex 一致
 2. `test_eta_progressbar_suppresses_eta_in_gpu_mode`
    -- GPU mode で 'ETA: ' tail を出さない (#438 互換)
-3. `test_eta_progressbar_no_eta_before_first_update`
-   -- update 前 (eta_known=False) は ETA tail を出さず percent のみ
+3. `test_eta_progressbar_placeholder_eta_before_first_update`
+   -- update 前 (eta_known=False) は 'ETA: --:--:--' placeholder を表示 (Idios feedback)
+4. `test_eta_progressbar_gpu_dispatching_label_with_eta_placeholder`
+   -- GPU mode dispatching label に 'ETA: --:--:--' を含む format verify (二重 ETA 防止)
 
 ## 影響範囲
 
@@ -1087,12 +1120,12 @@ cat > .git/plan-tmp/pr2_body.md <<'EOF'
 
 PR #343 (#329 修正) で `show_eta=True` を click.progressbar に渡したものの、`bar_template` が `%(info)s` を使っていたため click は `<percent>  <eta>` をラベルなしで展開し、ユーザーには時刻だけが見えて意味が伝わらない不完全修正で merge されていた ([#365](https://github.com/Idios/kobutachan-allaganeye/issues/365))。
 
-`_eta_progressbar` を `_ETAProgressBar(click.ProgressBar)` subclass + `format_progress_line()` override に refactor し、4 bar (Detecting / Refining / Scorebar / Splitting) で `93% ETA: 00:00:22` 形式に統一する。
+`_eta_progressbar` を `_ETAProgressBar(_ClickProgressBar)` subclass + `format_progress_line()` override に refactor し、4 bar (Detecting / Refining / Scorebar / Splitting) で `93% ETA: 00:00:22` 形式に統一する。
 
 ## 変更ファイル
 
-- `allaganeye/commands/split_matches.py`: `_ETAProgressBar` 追加、`_eta_progressbar` refactor、`import click` を top 昇格
-- `tests/test_split_matches.py`: `format_progress_line()` の直接 assert test 3 種 (4 bar parametrize + GPU mode + eta_known=False)
+- `allaganeye/commands/split_matches.py`: `_ETAProgressBar` 追加、`_eta_progressbar` refactor、`_ClickProgressBar` import を module top に追加
+- `tests/test_split_matches.py`: `format_progress_line()` の直接 assert test 4 種 (4 bar parametrize + GPU mode + placeholder eta + GPU dispatching placeholder)
 
 ## 受け入れ条件マッピング (Iron Law 1)
 
@@ -1105,7 +1138,7 @@ issue [#365](https://github.com/Idios/kobutachan-allaganeye/issues/365) には�
 - [x] **直接原因** (`%(info)s` でラベルなし展開) の解消
   → `bar_template=""` + `format_progress_line` override で click の組み込み templating を bypass
 - [x] **検出漏れ** (PR #343 のテスト不足) の再発防止
-  → `format_progress_line()` の出力に対する parametrize test (4 bar) + regex 一致 + GPU mode 経路 test + eta_known=False test の 3 種を追加
+  → `format_progress_line()` の出力に対する parametrize test (4 bar) + regex 一致 + GPU mode 経路 test + placeholder eta test + GPU dispatching placeholder test の 4 種を追加
 
 ## Self-Test Report
 
@@ -1230,7 +1263,7 @@ rmdir --ignore-fail-on-non-empty .git/plan-tmp 2>/dev/null || true
 **(b) NG あり を選択した場合**:
 
 - Idios から詳細 (どの bar / どの mode で何が起きたか) を `AskUserQuestion` で詳細聴取
-- Phase 2 の Task 9-12 のいずれかに戻って実装修正 (例: 4 bar の format ズレなら Task 9 Step 2、GPU mode 二重表示なら Task 9 の `if self.show_eta and self.eta_known:` 条件を再確認)
+- Phase 2 の Task 9-12 のいずれかに戻って実装修正 (例: 4 bar の format ズレなら Task 9 Step 2、GPU mode 二重表示なら Task 9 の `if self.show_eta and not self.finished:` 条件 + caller label と subclass の ETA 表示重複を再確認)
 - 修正後 Task 12 (自動チェック) → Task 13 Step 2-3 (commit + push) → Task 13 Step 6 (CI 再確認) → Task 14 Step 1 (再依頼)
 
 **(c) 後で実施 (保留) を選択した場合**:
