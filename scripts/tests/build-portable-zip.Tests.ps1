@@ -237,3 +237,22 @@ Describe 'Script parameters' {
       ForEach-Object { $_.Mandatory | Should -BeFalse }
   }
 }
+
+Describe 'GetPip pinning (#681)' {
+  It 'pins $GetPipUrl to a versioned pypa/get-pip GitHub raw URL' {
+    # bootstrap.pypa.io/get-pip.py is unversioned and PyPA refreshes it without
+    # notice, drifting our hardcoded SHA pin and breaking build-windows CI
+    # (#649, PR #675 Round 2). #681 pins the URL to a versioned pypa/get-pip
+    # GitHub raw URL whose content is immutable per release tag.
+    # This regression test guards against accidental rollback to the
+    # unversioned bootstrap.pypa.io URL.
+    $GetPipUrl | Should -Match '^https://raw\.githubusercontent\.com/pypa/get-pip/[\w.\-]+/public/get-pip\.py$'
+  }
+
+  It 'pins $GetPipSha256 to a syntactically valid SHA256' {
+    # SHA256 verify (Invoke-Download) stays as defense-in-depth even with the
+    # immutable URL: catches the (very unlikely) force-push scenario on the
+    # upstream pypa/get-pip release tag.
+    $GetPipSha256 | Should -Match '^[A-Fa-f0-9]{64}$'
+  }
+}
