@@ -28,7 +28,9 @@ jobs:
           set -euo pipefail
           # BtbN は nightly autobuild を一定期間で削除するため URL pin が陳腐化する。
           # 上流が `n8.1.1` (FFmpeg patch release) に切り替わった (2026-05-06 build)。
-          # 長期対応は #681 (versioned URL or .sha256 動的検証) で追跡。短期 fix のみ本 PR で実施。
+          # BtbN URL aging の長期対応は別 issue で追跡予定 (Lane IV-a の 5 章目)。
+          # #681 は get-pip.py SHA pin の versioned URL 切替に scope 限定 (PR #703)。
+          # 本 PR (#683) では BtbN 側の短期 fix のみ実施。
           curl -fsSL -o /tmp/ffmpeg.tar.xz "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-05-06-13-32/ffmpeg-n8.1.1-linux64-lgpl-shared-8.1.tar.xz"
 
       - name: Install ffmpeg (BtbN LGPLv3 n8.1 shared, pinned)

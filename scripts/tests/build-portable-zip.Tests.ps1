@@ -249,10 +249,12 @@ Describe 'GetPip pinning (#681)' {
     $GetPipUrl | Should -Match '^https://raw\.githubusercontent\.com/pypa/get-pip/[\w.\-]+/public/get-pip\.py$'
   }
 
-  It 'pins $GetPipSha256 to a syntactically valid SHA256' {
+  It 'pins $GetPipSha256 to the literal value matching the pypa/get-pip 26.1.1 tag' {
     # SHA256 verify (Invoke-Download) stays as defense-in-depth even with the
     # immutable URL: catches the (very unlikely) force-push scenario on the
     # upstream pypa/get-pip release tag.
-    $GetPipSha256 | Should -Match '^[A-Fa-f0-9]{64}$'
+    # value-equality lock so any accidental SHA edit without a corresponding
+    # URL tag bump is caught at test time, not at CI build-windows time.
+    $GetPipSha256 | Should -Be '66904BCCB878E363DB6236EA900E6935E507DCB887E9F178F6212EDFE7F46A76'
   }
 }
