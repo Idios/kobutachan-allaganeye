@@ -271,11 +271,15 @@ Describe 'New-IntegrityManifest' {
 
     # Assert: schema
     $manifest.version | Should -Be 1
-    # New-IntegrityManifest emits "yyyy-MM-ddTHH:mm:ssZ" (no fractional secs).
-    # PS 7 ConvertFrom-Json may auto-parse ISO strings into DateTime, then
-    # `Should -Match` coerces back via the round-trip "o" format which adds
-    # `.fffffff` (PR #702 CI repro). Accept both shapes.
-    $manifest.generated_at | Should -Match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$'
+    # New-IntegrityManifest emits "yyyy-MM-ddTHH:mm:ssZ" verbatim into the
+    # JSON string. We assert against the raw $json text rather than
+    # $manifest.generated_at because PS 7 ConvertFrom-Json auto-parses ISO
+    # strings into [DateTime], and `Should -Match` then coerces via culture-
+    # specific ToString (e.g. "5/9/2026 2:38:26 AM" on en-US runners) which
+    # the regex would reject — even though Pester's error formatter then
+    # displays the value via the "o" round-trip format, masking the cause
+    # (PR #702 CI repro).
+    $json | Should -Match '"generated_at":\s*"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"'
     $manifest.files | Should -Not -BeNullOrEmpty
 
     # POSIX-style separators in path field
