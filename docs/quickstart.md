@@ -40,7 +40,7 @@ allaganeye-vX.Y.Z\
 
 ## 2. 基本の使い方
 
-`allaganeye.bat` を **ダブルクリック** すると使い方のヘルプが表示されます。動画ファイル（`.mkv` / `.mp4`）を `allaganeye.bat` の上にドラッグ＆ドロップすると分割が始まります。
+`allaganeye.bat` を **ダブルクリック** すると Allagan Eye の **GUI** (`allaganeye-gui.exe`) が起動します（v0.2.0 以降、[#617](https://github.com/Idios/kobutachan-allaganeye/issues/617)）。動画ファイル（`.mkv` / `.mp4`）を `allaganeye.bat` の上にドラッグ＆ドロップすると分割が始まります。GUI を使わずヘルプを見たい場合は `allaganeye.bat --help` で表示できます。
 
 分割された動画は `allaganeye-vX.Y.Z\output\` フォルダに `match_001.mp4` のような形式で保存されます。
 

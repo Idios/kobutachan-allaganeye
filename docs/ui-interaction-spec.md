@@ -63,6 +63,8 @@
 
 **アンチパターン**: dirty=true なのに confirm せず遷移する設計 (#589 修正前の `PreviewScreen` の handleBack / handleExport が該当、現在は §2.4.1 / §2.4.14 経由で §1.3 準拠 + canonical 文言統一済)。
 
+**lint 強制 ([#643](https://github.com/Idios/kobutachan-allaganeye/issues/643))**: 上記 canonical 違反 (`window.confirm` / `window.alert` / `window.prompt` の bare 呼び出しおよび `window.X` 経由 member access) は `gui/eslint.config.js` の `no-restricted-globals` + `no-restricted-properties` で **error として block** する。`npm run lint` / CI gui-frontend job が fail し、IDE 上でも即時警告される。エラーメッセージに plugin-dialog 代替 API へのリンクを含める。
+
 ### 1.4 sample mode (filePath==null) の read-only 明示
 
 **原則**: `metadataStore.loadSample()` で読み込まれた sample metadata (`metadataStore.filePath === null`) は **編集不可 (read-only)** として扱い、編集系 UI 部品はすべて grayed out + 上部に常時 hint を表示する。
