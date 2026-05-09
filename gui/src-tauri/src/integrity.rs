@@ -14,17 +14,14 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-/// Schema for `integrity-manifest.json`.
-#[allow(dead_code)] // used in Task 12+ (check/log/setup hook)
+/// Schema for `integrity-manifest.json`. `version` is validated against
+/// `SUPPORTED_MANIFEST_VERSION` in `load_manifest`.
 #[derive(Debug, Deserialize)]
 pub struct Manifest {
-    #[allow(dead_code)] // recorded for forward-compat; only `files` is used now
     pub version: u32,
     #[serde(default)]
     pub files: Vec<ManifestEntry>,
 }
-
-#[allow(dead_code)] // used in Task 12+ (check/log/setup hook)
 #[derive(Debug, Deserialize)]
 pub struct ManifestEntry {
     pub path: String,
@@ -36,16 +33,22 @@ pub struct ManifestEntry {
 /// Sent to the frontend via `integrity-error` Tauri event when `check`
 /// reports failures. Field names are camelCase via serde rename so the
 /// JS payload matches `useErrorStore.showError` consumer expectations.
-#[allow(dead_code)] // used in Task 12+ (check/log/setup hook)
+///
+/// `manifest_error` (PR #702 review #4) carries the diagnostic message
+/// returned by `load_manifest` when the manifest itself is missing or
+/// has malformed JSON. `None` for normal "files in the bundle were
+/// missing or wrong size" failures. The frontend can show this to the
+/// maintainer to disambiguate "fanfare.npz が消えた" from
+/// "integrity-manifest.json が JSON parse 失敗".
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IntegrityErrorPayload {
     pub missing: Vec<String>,
     pub size_mismatch: Vec<SizeMismatch>,
     pub log_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manifest_error: Option<String>,
 }
-
-#[allow(dead_code)] // used in Task 12+ (check/log/setup hook)
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SizeMismatch {
@@ -54,16 +57,32 @@ pub struct SizeMismatch {
     pub actual: u64,
 }
 
+/// Schema version we know how to interpret. Bumping the manifest schema
+/// in the future requires raising this and adding migration code in
+/// `load_manifest`.
+const SUPPORTED_MANIFEST_VERSION: u32 = 1;
+
 /// Load the manifest. Returns `Err(String)` describing the issue so callers
 /// can route it through the same notification path as integrity failures.
-#[allow(dead_code)] // used in Task 12+ (check/log/setup hook)
 pub fn load_manifest(path: &Path) -> Result<Manifest, String> {
     let text = fs::read_to_string(path).map_err(|e| {
         format!("integrity manifest read failed ({}): {}", path.display(), e)
     })?;
-    serde_json::from_str(&text).map_err(|e| {
+    let manifest: Manifest = serde_json::from_str(&text).map_err(|e| {
         format!("integrity manifest invalid JSON ({}): {}", path.display(), e)
-    })
+    })?;
+    // PR #702 review #3 follow-up: validate the schema version so the
+    // `Manifest.version` field is genuinely read (no allow(dead_code) needed)
+    // and so future schema bumps fail-fast rather than silently mis-decoding.
+    if manifest.version != SUPPORTED_MANIFEST_VERSION {
+        return Err(format!(
+            "integrity manifest version {} unsupported (expected {}): {}",
+            manifest.version,
+            SUPPORTED_MANIFEST_VERSION,
+            path.display()
+        ));
+    }
+    Ok(manifest)
 }
 
 use std::io::Write as _;
@@ -74,7 +93,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Self-contained Gregorian calendar arithmetic so we don't pull in the
 /// chrono / time crate just for log-file naming. Tested against known
 /// Unix timestamps including leap years.
-#[allow(dead_code)] // used transitively via write_log; direct callers added in Task 14
 fn epoch_to_components(secs: u64) -> (u32, u32, u32, u32, u32, u32) {
     let sec = (secs % 60) as u32;
     let total_min = secs / 60;
@@ -113,8 +131,6 @@ fn epoch_to_components(secs: u64) -> (u32, u32, u32, u32, u32, u32) {
 fn is_leap(year: u32) -> bool {
     year.is_multiple_of(400) || (year.is_multiple_of(4) && !year.is_multiple_of(100))
 }
-
-#[allow(dead_code)] // used transitively via write_log; direct callers added in Task 14
 fn now_components() -> (u32, u32, u32, u32, u32, u32) {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -122,14 +138,10 @@ fn now_components() -> (u32, u32, u32, u32, u32, u32) {
         .unwrap_or(0);
     epoch_to_components(secs)
 }
-
-#[allow(dead_code)] // used transitively via write_log; direct callers added in Task 14
 fn log_filename() -> String {
     let (y, mo, d, _, _, _) = now_components();
     format!("error-{:04}{:02}{:02}.log", y, mo, d)
 }
-
-#[allow(dead_code)] // used transitively via write_log; direct callers added in Task 14
 fn iso8601_now() -> String {
     let (y, mo, d, h, mi, s) = now_components();
     format!(
@@ -137,14 +149,11 @@ fn iso8601_now() -> String {
         y, mo, d, h, mi, s
     )
 }
-
-#[allow(dead_code)] // used transitively via check_install_dir_with_paths; wired in Task 14
 fn log_path(install_dir: &Path) -> std::path::PathBuf {
     install_dir.join("logs").join(log_filename())
 }
 
 /// Append an integrity-failure record to <install dir>/logs/error-YYYYMMDD.log.
-#[allow(dead_code)] // called by check_install_dir_with_paths; wired to lib.rs in Task 14
 pub(crate) fn write_log(
     install_dir: &Path,
     missing: &[String],
@@ -175,7 +184,6 @@ pub(crate) fn write_log(
 /// (best-effort fallback so a misconfigured launcher doesn't deadlock the
 /// app -- debug builds always go through this None path via the cfg gate
 /// in `lib.rs::run`).
-#[allow(dead_code)] // called from lib.rs::run in Task 14
 pub fn check_install_dir() -> Option<IntegrityErrorPayload> {
     let exe = std::env::current_exe().ok()?;
     let install_dir = exe.parent()?.to_path_buf();
@@ -186,7 +194,6 @@ pub fn check_install_dir() -> Option<IntegrityErrorPayload> {
 /// Test-friendly variant: explicit manifest_path / install_dir args so the
 /// integration tests can drive the full path without invoking
 /// `current_exe`.
-#[allow(dead_code)] // used by tests in mod tests; production path goes through check_install_dir
 pub(crate) fn check_install_dir_with_paths(
     manifest_path: &Path,
     install_dir: &Path,
@@ -211,11 +218,14 @@ pub(crate) fn check_install_dir_with_paths(
 /// Manifest read failure (missing/malformed JSON) is also surfaced as an
 /// error payload listing the manifest itself in `missing`. This lets the
 /// frontend treat a corrupt manifest the same as a corrupt bundle.
-#[allow(dead_code)] // used in Task 13+ (check_install_dir wrapper)
 pub fn check(manifest_path: &Path, install_dir: &Path) -> Result<(), IntegrityErrorPayload> {
     let manifest = match load_manifest(manifest_path) {
         Ok(m) => m,
-        Err(_msg) => {
+        Err(msg) => {
+            // PR #702 review #4: surface the load_manifest diagnostic so the
+            // frontend can show the maintainer whether the manifest is
+            // missing or has malformed JSON. Users still see the same
+            // generic "再展開してください" hint either way.
             return Err(IntegrityErrorPayload {
                 missing: vec![manifest_path.to_string_lossy().into_owned()],
                 size_mismatch: vec![],
@@ -223,6 +233,7 @@ pub fn check(manifest_path: &Path, install_dir: &Path) -> Result<(), IntegrityEr
                 // Empty here is acceptable for tests; production callers go
                 // through the wrapper.
                 log_path: String::new(),
+                manifest_error: Some(msg),
             });
         }
     };
@@ -255,6 +266,7 @@ pub fn check(manifest_path: &Path, install_dir: &Path) -> Result<(), IntegrityEr
         missing,
         size_mismatch,
         log_path: String::new(),
+        manifest_error: None,
     })
 }
 
@@ -448,8 +460,38 @@ mod tests {
             "log_path should reference logs dir: {}",
             payload.log_path
         );
+        // Bundle missing (not manifest), so manifest_error stays None.
+        assert!(payload.manifest_error.is_none());
         // Log file should also exist on disk
         let logs = install.join("logs");
         assert!(logs.exists());
+    }
+
+    #[test]
+    fn check_payload_carries_manifest_error_when_manifest_is_corrupt() {
+        // PR #702 review #4: corrupt manifest must surface the load_manifest
+        // diagnostic via IntegrityErrorPayload.manifest_error so frontend can
+        // show "manifest が壊れた JSON" vs "bundle file が削除された".
+        let dir = TempDir::new().unwrap();
+        let install = dir.path();
+        let manifest_path = write_manifest(&dir, "not json");
+
+        let err = check(&manifest_path, install).expect_err("should fail on bad JSON");
+        assert!(err.size_mismatch.is_empty());
+        assert_eq!(err.missing.len(), 1);
+        assert!(err.missing[0].ends_with("integrity-manifest.json"));
+        let me = err.manifest_error.expect("manifest_error should be Some");
+        assert!(me.contains("invalid JSON"), "got: {}", me);
+    }
+
+    #[test]
+    fn check_payload_carries_manifest_error_when_manifest_is_missing() {
+        let dir = TempDir::new().unwrap();
+        let install = dir.path();
+        let manifest_path = install.join("does-not-exist.json");
+
+        let err = check(&manifest_path, install).expect_err("should fail on missing manifest");
+        let me = err.manifest_error.expect("manifest_error should be Some");
+        assert!(me.contains("read failed"), "got: {}", me);
     }
 }

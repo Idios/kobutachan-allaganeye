@@ -25,6 +25,11 @@ interface IntegrityErrorPayload {
   missing: string[];
   sizeMismatch: IntegritySizeMismatch[];
   logPath: string;
+  // PR #702 review #4: Rust load_manifest() の error message を Some(...) で
+  // 受け取り (manifest 自体 missing / 壊れた JSON 時のみ)、modal で
+  // 「fanfare.npz が消えた」と「integrity-manifest.json が JSON parse 失敗」
+  // を maintainer 視点で区別できるよう表示する。
+  manifestError?: string | null;
 }
 
 function formatIntegrityMessage(payload: IntegrityErrorPayload): string {
@@ -40,6 +45,10 @@ function formatIntegrityMessage(payload: IntegrityErrorPayload): string {
     for (const sm of payload.sizeMismatch) {
       lines.push(`  - ${sm.path} (expected ${sm.expected} bytes, actual ${sm.actual} bytes)`);
     }
+  }
+  if (payload.manifestError) {
+    lines.push(`Manifest エラー (#702 review #4):`);
+    lines.push(`  ${payload.manifestError}`);
   }
   return lines.join('\n');
 }
