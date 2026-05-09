@@ -270,6 +270,14 @@ def _eta_progressbar(
         length=length,
         label=label.ljust(_PROGRESS_LABEL_WIDTH),
         bar_template="",  # 未使用 (format_progress_line を override したため)
+        # click.progressbar() factory 経由では empty_char='-' / width=36 が default
+        # だが、ProgressBar.__init__ class 直接インスタンス化では empty_char=' ' /
+        # width=30 と異なる default を持つ。issue #365 期待動作
+        # `Detecting  ####---  93% ETA: 0:00:22` の `####---` (dash empty char +
+        # 36 width) を維持するため明示する (PR #687 review feedback #1+#2 対応)。
+        fill_char="#",
+        empty_char="-",
+        width=36,
         show_eta=not suppress_click_eta,
         show_percent=True,
     )
@@ -281,6 +289,7 @@ def _eta_progressbar(
 - `self.eta_known` / `self.show_eta` 属性も同期間で stable
 - `pyproject.toml` に明示的な click pin は無く、typer (本 project の dependency) 経由依存。typer 0.9+ は click 8.x を要求するため major upgrade は typer 側 release で同期される
 - → **本 PR では click 上限 pin を追加しない**。代わりに §6.1 の unit test (4 parametrize) が click upgrade 時の API 互換性 regression を即座に検出する
+- **factory baseline 差異 (PR #687 review feedback #1+#2)**: `_eta_progressbar` は `_ETAProgressBar(_ClickProgressBar)` を class direct instantiate するため、`click.progressbar()` factory とは `empty_char` (`' '` vs `'-'`) / `width` (`30` vs `36`) の default が異なる。`####---` factory baseline を維持するために `fill_char='#'` / `empty_char='-'` / `width=36` を明示する必要がある (§5.1 return 部参照)。
 
 ### 5.3 4 bar の format 統一確認
 
@@ -395,6 +404,29 @@ def test_eta_progressbar_gpu_dispatching_label_with_eta_placeholder() -> None:
 
     assert "ETA: --:--:--" in line, f"caller label placeholder missing in: {line!r}"
     assert line.count("ETA:") == 1, f"expected single ETA occurrence in: {line!r}"
+
+
+def test_eta_progressbar_bar_visual_uses_dashes_and_36_width() -> None:
+    """Bar should use '-' for empty cells and 36-char width
+    (factory baseline #365 期待動作の `####---` を維持、PR #687 review feedback #1+#2)."""
+    bar = _eta_progressbar(100, "Detecting")
+    _drive_to_known_eta(bar, 50)
+    line = bar.format_progress_line()
+    # bar 部分: "########----...----" (50% で 18 # + 18 -)
+    assert "----" in line, f"empty char should be '-': {line!r}"
+    # 36-char total (空白 30 ではない)
+    bar_part = line.split("Detecting", 1)[1].strip().split(" ")[0]
+    assert len(bar_part) == 36, f"bar width should be 36: {bar_part!r}"
+
+
+def test_eta_progressbar_finished_no_eta_tail() -> None:
+    """finished=True (100%) は ETA tail を出さない (click 親 class 整合)."""
+    bar = _eta_progressbar(100, "Detecting")
+    _drive_to_known_eta(bar, 100)  # 100% complete
+    assert bar.finished is True, "bar should be finished after 100% update"
+    line = bar.format_progress_line()
+    assert "ETA:" not in line, f"finished bar should not show ETA: {line!r}"
+    assert "100%" in line
 ```
 
 **狙い**:
@@ -404,6 +436,8 @@ def test_eta_progressbar_gpu_dispatching_label_with_eta_placeholder() -> None:
 - GPU mode 経路 (suppress_click_eta=True) を独立 test で担保 → #438 既存挙動の互換性
 - update 前 (eta_known=False) では `ETA: --:--:--` placeholder を表示する (Idios feedback #365)
 - GPU dispatching 段階の caller label 内 placeholder + 二重 ETA 表示防止を verify
+- factory baseline `####---` (`empty_char='-'`, `width=36`) を `_ETAProgressBar(...)` class direct instantiate でも維持していることを `test_eta_progressbar_bar_visual_uses_dashes_and_36_width` で test
+- `finished=True` (100% 完了) で ETA tail を出さないことを `test_eta_progressbar_finished_no_eta_tail` で test (click 親 class 整合)
 
 ### 6.2 #643 ESLint 違反検証 PR (CI fail evidence)
 
@@ -502,6 +536,15 @@ PR #2 (#365 ETA label) は CLI 進捗表示の format 変更です。検知ロ�
 (b) GPU mode (--gpu) で同 sample 動画 → ETA 二重表示が起きないこと
 (c) 既存 metadata.json と diff なし (検知ロジック regression なし)
 ```
+
+### 6.7 `docs/cli-spec.md` 出力例の追従 (100% 行 ETA 抑止仕様)
+
+実装 refactor で `finished=True` (100% 完了) 時に ETA tail を出さない仕様 (`if self.show_eta and not self.finished:` guard) に変更したため、`docs/cli-spec.md` の `Detecting / Refining / Scorebar / Splitting` 100% 行を `Detecting  #################################### 100%` 形式 (ETA tail なし) に更新する必要がある。`docs/cli-spec.md` は本 spec/plan の scope 外だが、PR #2 (#365) 内で同梱修正する (CI doc-tauri-commands-drift / 出力 contract test の整合性のため)。
+
+具体的な変更:
+
+- before (旧仕様、ETA tail あり): `Detecting  #################################### 100% ETA: 0:00:22`
+- after (新仕様、ETA 抑止): `Detecting  #################################### 100%`
 
 ## §7 着手順序 / 実装 lane
 

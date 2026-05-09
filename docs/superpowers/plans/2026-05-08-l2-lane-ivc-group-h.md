@@ -824,6 +824,14 @@ def _eta_progressbar(
         length=length,
         label=label.ljust(_PROGRESS_LABEL_WIDTH),
         bar_template="",  # 未使用 (format_progress_line を override したため)
+        # click.progressbar() factory 経由では empty_char='-' / width=36 が default
+        # だが、ProgressBar.__init__ class 直接インスタンス化では empty_char=' ' /
+        # width=30 と異なる default を持つ。issue #365 期待動作
+        # `Detecting  ####---  93% ETA: 0:00:22` の `####---` (dash empty char +
+        # 36 width) を維持するため明示する (PR #687 review feedback #1+#2 対応)。
+        fill_char="#",
+        empty_char="-",
+        width=36,
         show_eta=not suppress_click_eta,
         show_percent=True,
     )
@@ -963,6 +971,69 @@ Task 10 と同様、これも minimal 実装が完全版である本 plan では
 
 ---
 
+### Task 11.1: TDD cycle 4 — bar visual factory baseline test (PR #687 review feedback #1+#2)
+
+**Files:**
+
+- Modify: `tests/test_split_matches.py` (新 test を append)
+
+- [ ] **Step 1: bar visual test を追加**
+
+`tests/test_split_matches.py` の末尾に Edit tool で append:
+
+```python
+def test_eta_progressbar_bar_visual_uses_dashes_and_36_width() -> None:
+    """Bar should use '-' for empty cells and 36-char width
+    (factory baseline #365 期待動作の `####---` を維持、PR #687 review feedback #1+#2)."""
+    bar = _eta_progressbar(100, "Detecting")
+    _drive_to_known_eta(bar, 50)
+    line = bar.format_progress_line()
+    assert "----" in line, f"empty char should be '-': {line!r}"
+    bar_part = line.split("Detecting", 1)[1].strip().split(" ")[0]
+    assert len(bar_part) == 36, f"bar width should be 36: {bar_part!r}"
+```
+
+- [ ] **Step 2: test を実行**
+
+```bash
+pytest tests/test_split_matches.py::test_eta_progressbar_bar_visual_uses_dashes_and_36_width -v
+```
+
+Expected: **PASS** (`fill_char="#"` / `empty_char="-"` / `width=36` を明示したため `####----` 形式 36 width で描画)。
+
+---
+
+### Task 11.2: TDD cycle 5 — finished=True ETA suppression test (PR #687 review feedback)
+
+**Files:**
+
+- Modify: `tests/test_split_matches.py` (新 test を append)
+
+- [ ] **Step 1: finished ETA suppression test を追加**
+
+`tests/test_split_matches.py` の末尾に Edit tool で append:
+
+```python
+def test_eta_progressbar_finished_no_eta_tail() -> None:
+    """finished=True (100%) は ETA tail を出さない (click 親 class 整合)."""
+    bar = _eta_progressbar(100, "Detecting")
+    _drive_to_known_eta(bar, 100)
+    assert bar.finished is True
+    line = bar.format_progress_line()
+    assert "ETA:" not in line, f"finished bar should not show ETA: {line!r}"
+    assert "100%" in line
+```
+
+- [ ] **Step 2: test を実行**
+
+```bash
+pytest tests/test_split_matches.py::test_eta_progressbar_finished_no_eta_tail -v
+```
+
+Expected: **PASS** (`format_progress_line` の `if self.show_eta and not self.finished:` 条件で `finished=True` 時に ETA tail を出さずに percent のみ表示)。
+
+---
+
 ### Task 12: 既存 test 回帰確認 + 自動チェック
 
 **Files:** (検査のみ)
@@ -973,7 +1044,7 @@ Task 10 と同様、これも minimal 実装が完全版である本 plan では
 pytest tests/test_split_matches.py -v
 ```
 
-Expected: 既存 43 + 新 4 parametrize + GPU mode 1 + eta_known=False 1 = 49 test PASS。
+Expected: 既存 43 + 新 4 parametrize + GPU mode 1 + eta_known=False 1 + bar_visual 1 + finished 1 = 51 test PASS。
 
 - [ ] **Step 2: progress bar 関連 regression test を走査**
 
@@ -1030,6 +1101,16 @@ git diff --stat
 
 Expected: `allaganeye/commands/split_matches.py` と `tests/test_split_matches.py` の 2 file 変更のみ。
 
+- [ ] **Step 1.5 (R3 追加): `docs/cli-spec.md` 100% 行を新仕様に追従**
+
+`Detecting / Refining / Scorebar / Splitting` 100% 行で ETA tail を抑止する仕様変更に追従して `docs/cli-spec.md` を更新:
+
+```bash
+grep -nE "Detecting.*100%|Refining.*100%|Scorebar.*100%|Splitting.*100%" docs/cli-spec.md
+```
+
+各行を `Detecting  #################################### 100%` 形式 (ETA tail なし) に Edit tool で置換。
+
 - [ ] **Step 2: commit**
 
 ```bash
@@ -1060,7 +1141,7 @@ bar_template が `%(info)s` を使っていたため click は "<percent>  <eta>
 
 PR #343 の test 不足 (進捗バー出力に対する snapshot / 部分文字列 assert
 不在) を反省し、`format_progress_line()` の出力を直接 assert する unit
-test を 4 種追加:
+test を 6 種追加:
 
 1. `test_eta_progressbar_label_present_for_all_bars` (4 parametrize)
    -- 4 bar 全てで `\b\d{1,3}%\s+ETA:\s+\d+:\d{2}:\d{2}\b` regex 一致
@@ -1070,6 +1151,10 @@ test を 4 種追加:
    -- update 前 (eta_known=False) は 'ETA: --:--:--' placeholder を表示 (Idios feedback)
 4. `test_eta_progressbar_gpu_dispatching_label_with_eta_placeholder`
    -- GPU mode dispatching label に 'ETA: --:--:--' を含む format verify (二重 ETA 防止)
+5. `test_eta_progressbar_bar_visual_uses_dashes_and_36_width`
+   -- factory baseline `####---` (`empty_char='-'`, `width=36`) を維持 (PR #687 review feedback #1+#2)
+6. `test_eta_progressbar_finished_no_eta_tail`
+   -- finished=True (100%) で ETA tail を出さない (PR #687 review feedback)
 
 ## 影響範囲
 
@@ -1092,7 +1177,7 @@ issue [#365](https://github.com/Idios/kobutachan-allaganeye/issues/365) には�
 - [x] 直接原因 (`%(info)s` ラベルなし展開) の解消
       → bar_template="" + format_progress_line override で bypass
 - [x] 検出漏れ (PR #343 test 不足) の再発防止
-      → 3 test x 4 parametrize = 6 assertion 追加
+      → 6 種 test (4 bar parametrize + GPU mode + placeholder eta + GPU dispatching placeholder + bar visual factory baseline + finished ETA suppression) 追加
 
 session-id: musing-davinci-38136f
 
@@ -1125,7 +1210,7 @@ PR #343 (#329 修正) で `show_eta=True` を click.progressbar に渡したも�
 ## 変更ファイル
 
 - `allaganeye/commands/split_matches.py`: `_ETAProgressBar` 追加、`_eta_progressbar` refactor、`_ClickProgressBar` import を module top に追加
-- `tests/test_split_matches.py`: `format_progress_line()` の直接 assert test 4 種 (4 bar parametrize + GPU mode + placeholder eta + GPU dispatching placeholder)
+- `tests/test_split_matches.py`: `format_progress_line()` の直接 assert test 6 種 (4 bar parametrize + GPU mode + placeholder eta + GPU dispatching placeholder + bar visual factory baseline + finished ETA suppression)
 
 ## 受け入れ条件マッピング (Iron Law 1)
 
@@ -1138,13 +1223,13 @@ issue [#365](https://github.com/Idios/kobutachan-allaganeye/issues/365) には�
 - [x] **直接原因** (`%(info)s` でラベルなし展開) の解消
   → `bar_template=""` + `format_progress_line` override で click の組み込み templating を bypass
 - [x] **検出漏れ** (PR #343 のテスト不足) の再発防止
-  → `format_progress_line()` の出力に対する parametrize test (4 bar) + regex 一致 + GPU mode 経路 test + placeholder eta test + GPU dispatching placeholder test の 4 種を追加
+  → `format_progress_line()` の出力に対する parametrize test (4 bar) + regex 一致 + GPU mode 経路 test + placeholder eta test + GPU dispatching placeholder test + bar visual factory baseline test + finished ETA suppression test の 6 種を追加
 
 ## Self-Test Report
 
 ### machine-verified
 
-- [x] `pytest tests/test_split_matches.py` (新 6 assertion 含む全 PASS、49 test)
+- [x] `pytest tests/test_split_matches.py` (新 6 種 test 含む全 PASS、51 test)
 - [x] `pytest tests/test_regression_330.py tests/test_progress_emitter.py` (regression PASS)
 - [x] `pytest -m "not slow and not baseline_regen"` (全 unit test PASS)
 - [x] `ruff check .`
