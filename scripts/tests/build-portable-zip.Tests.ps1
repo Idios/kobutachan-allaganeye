@@ -353,4 +353,14 @@ Describe 'New-IntegrityManifest' {
     $paths | Should -Contain 'lib/typer/notdot/kept.md'
     $paths | Should -Contain 'normal.txt'
   }
+
+  It 'enumerates files in deterministic order (PR #702 review #5: Sort-Object FullName)' {
+    # Two manifest generations on the same payload must produce byte-identical
+    # JSON so build artifacts are reproducible and git diffs stay quiet.
+    $json1 = New-IntegrityManifest -PayloadDir $script:ManifestTmpDir
+    $json2 = New-IntegrityManifest -PayloadDir $script:ManifestTmpDir
+    # generated_at timestamps differ between calls; strip them before compare.
+    $stripGen = { param($s) ($s -replace '"generated_at"\s*:\s*"[^"]*"', '"generated_at":"_"') }
+    (& $stripGen $json1) | Should -Be (& $stripGen $json2)
+  }
 }

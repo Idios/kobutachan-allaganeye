@@ -327,7 +327,11 @@ function New-IntegrityManifest {
   $manifestName = 'integrity-manifest.json'
   $entries = @()
   $base = (Resolve-Path $PayloadDir).Path
-  Get-ChildItem -Path $PayloadDir -Recurse -File | ForEach-Object {
+  # PR #702 review #5: Sort by FullName for deterministic enumeration order.
+  # Get-ChildItem の order は filesystem / locale 依存で local Windows と CI
+  # runner で異なる可能性がある。manifest JSON の git diff noisy 化と build
+  # 再現性低下を避けるため明示 sort する。
+  Get-ChildItem -Path $PayloadDir -Recurse -File | Sort-Object FullName | ForEach-Object {
     if ($_.Name -eq $manifestName) { return }
     # PR #702 実機検証: skip Python bytecode (non-deterministic regen on import).
     if ($_.Extension -eq '.pyc') { return }

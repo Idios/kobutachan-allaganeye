@@ -251,10 +251,10 @@ jobs:
           }
           finally {
             Pop-Location
+            # PR #702 review #6: cleanup を finally に移動して throw 時 (exit code != 7) も
+            # verify/ が残らないようにする (act 等の local CI 実行で害が出ないため)。
+            if (Test-Path verify) { Remove-Item -Recurse -Force verify }
           }
-
-          # Cleanup so the verify copy doesn't pollute the actions/upload-artifact step.
-          Remove-Item -Recurse -Force verify
 
       # Upload the expanded payload folder; actions/upload-artifact zips it once
       # on its own, which avoids the previous "zip inside a zip" artifact.
