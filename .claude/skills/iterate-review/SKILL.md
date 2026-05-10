@@ -114,4 +114,25 @@ Agent tool の戻り値 markdown から `## findings_table` セクションの�
 - 1 度目: 主セッションが subagent に対して具体的に欠陥を伝えて再 dispatch (Agent tool 再実行)。具体例: 「Step 5b 表 5 行目の (B) は trigger 根拠が `スコープ外` のみで 3 条件 AND 不成立。(A) に再分類して return せよ」
 - 2 度目: AskUserQuestion で user に「subagent が分類規約を満たさない findings を返している。手動でトリアージするか abort するか」を提示
 
+#### Step 2.3 Round summary AskUserQuestion (1 round 1 回のみ)
+
+Round N の集計表示 + AskUserQuestion 2 択。Round 開始時に user 介入を集約する唯一の gate。
+
+提示内容:
+
+````text
+Round N findings:
+- (A): <件数>
+- (B): <件数>
+- (C): <件数>
+- 受け入れ条件 (Step 3): <全 ✓ / 部分 / 全 ×>
+- ambiguous_judgments: <件数> (詳細は別途展開)
+
+選択:
+- (i) proceed (本 round の findings を処理) (Recommended、ambiguous なし時)
+- (ii) abort (loop 中断、現状で /create-task など手作業に切替)
+````
+
+`ambiguous_judgments` がある場合、追加 AskUserQuestion でユーザー判断を仰ぐ。1 AskUserQuestion call は最大 4 questions まで束ねられる仕様 (= AskUserQuestion tool 上限) を活用し、5 件以上は複数 call に分割。1 round あたりの AskUserQuestion 呼び出し総数は「Round summary 1 + ambiguous_judgments の必要分」を上限とする。
+
 `<N>` には PR 番号 ($ARGUMENTS) を埋める。`<handoff_state を箇条書き>` には Step 1 で初期化した `handoff_state` の内容 (空なら "(なし)") を埋める。
