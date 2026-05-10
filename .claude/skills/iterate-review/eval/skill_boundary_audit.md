@@ -143,3 +143,66 @@ audit 終了。境界整合性は **修正必要** (2 件: C1 HIGH + C2 MEDIUM)�
 - 観点 4 (誤誘導): contract 不整合 2 件 (C1 HIGH + C2 MEDIUM) — **修正必要**
 
 iter_2 で C1・C2 を修正し、再確認する。
+
+## iter_2 修正実施 (audit を受けて)
+
+実施日: 2026-05-10 / session: quizzical-goldstine-f91cfb
+
+### C1 修正: `(A)*` token 統一
+
+**修正箇所 1 — `/iterate-review` Step 2.2 validation rule 1**
+
+変更前:
+```
+処置列が `(A)` / `(B)` / `(C)` / `ambiguous` のいずれか
+```
+
+変更後:
+```
+処置列が `(A)` / `(A)*` / `(B)` / `(C)` のいずれか。`(A)*` は ambiguous_judgments セクションとの cross-reference が必須。`ambiguous` 単独記載は禁止
+```
+
+**修正箇所 2 — `/iterate-review` Step 2.1 prompt template (item 6 末尾)**
+
+変更前:
+```
+判定に迷う finding は `(A)` を default に置き、ambiguous_judgments に記載
+```
+
+変更後:
+```
+判定に迷う finding は `(A)*` と記載し、ambiguous_judgments に詳述する (`ambiguous` 単独記載は禁止。`(A)*` が正式記法 = §G.2.1 item 5 準拠)
+```
+
+これにより `/review-pr` §G.2.1 item 5 (canonical) と `/iterate-review` の valid token 定義が一致した。
+
+### C2 修正: (B) trigger 非対称明示
+
+**修正箇所 3 — `/iterate-review` Step 2.5 冒頭 blockquote**
+
+`(B) 起票は限定例外` blockquote に以下の注記を追加:
+
+```
+注 (C2 設計意図): 本 skill が dispatch する subagent mode では §G.2.1 通り AND 3 条件で厳格判定する。standalone `/review-pr` 単体使用時は OR 3 択を許容する。この非対称は意図的設計: standalone は人間レビュアーが文脈判断するため柔軟性を持つ、subagent mode は機械処理のため parse error リスクを減らすべく厳格化している。
+```
+
+**修正箇所 4 — `/review-pr` §G.2.1 item 3 末尾**
+
+`(B) は厳格 3 条件 AND` の説明末尾に以下の注記を追加:
+
+```
+注 (C2 設計意図): subagent mode (本項) は AND 3 条件で厳格判定。standalone `/review-pr` 単体使用時は Step 5b の OR 3 択 trigger を継続する。この非対称は意図的設計
+```
+
+両箇所の注記により、standalone OR vs. subagent AND の非対称が **意図的設計** であることが明文化され、今後の読者が混乱しない状態になった。
+
+### 修正後の整合性確認
+
+| contract | 修正前 | 修正後 |
+| --- | --- | --- |
+| `/iterate-review` Step 2.2 rule 1 valid tokens | `(A)/(B)/(C)/ambiguous` | `(A)/(A)*/(B)/(C)` (`ambiguous` 除外、`(A)*` 追加) |
+| `/iterate-review` Step 2.1 ambiguous 記法 | 「`(A)` を default に置き」 | 「`(A)*` と記載し ambiguous_judgments に詳述」 |
+| `/review-pr` §G.2.1 item 5 との整合 | 不整合 (`(A)*` vs `ambiguous`) | 整合 (両方 `(A)*` 記法に統一) |
+| standalone vs. subagent (B) trigger 差異 | 未明文化 | 両 SKILL.md に意図的設計の注記追加 |
+
+**結論**: C1 (HIGH) + C2 (MEDIUM) ともに解消。audit 完了。

@@ -467,7 +467,7 @@ Subagent mode で Step 5b の (A)/(B)/(C) 自動分類を行う際の厳格規�
 
 1. **すべての finding に必ず分類を付与する**: 観察コメントのみ・スコープ対象外と自己判断・軽微だから無視 は **すべて NG** (orchestrator 側 parse error として再 dispatch される)
 2. **default は (A)**: 「指摘は原則すべて PR 内対応」を継承。CI failure / latent type error / 隣接ファイル lint 違反 / 古い API 残存 / 古い doc 記述 / 環境起因の問題 等は全部 (A)
-3. **(B) は厳格 3 条件 AND**: `別領域・別機能` AND `1 セッション超の独立設計が必要` AND `本 PR 同梱で受け入れ条件検証が破綻` の **すべて満たす場合のみ** (B)。1 つでも欠ければ (A)。**サイズ単独 / scope-out 単独 / 受け入れ条件直結性単独では (B) 化不可**
+3. **(B) は厳格 3 条件 AND**: `別領域・別機能` AND `1 セッション超の独立設計が必要` AND `本 PR 同梱で受け入れ条件検証が破綻` の **すべて満たす場合のみ** (B)。1 つでも欠ければ (A)。**サイズ単独 / scope-out 単独 / 受け入れ条件直結性単独では (B) 化不可**。**注 (C2 設計意図)**: subagent mode (本項) は AND 3 条件で厳格判定 (機械処理のため parse error リスク低減を優先)。standalone `/review-pr` 単体使用時は Step 5b の OR 3 択 trigger (`外部依存・側チケット調整が必要` 単独でも (B) 有効) を継続する。この非対称は意図的設計
 4. **(C) は重複起票回避 trigger のみ**: 同テーマの既存 issue が存在する場合のみ。「新規 issue を作るべきだが既存に書いた方が綺麗」は不可
 5. **判定に迷う finding**: findings_table の処置列に `(A)*` と記載し (default は (A))、`ambiguous_judgments` セクションに当該 finding を詳述する。findings_table に `ambiguous` 単独で記載することは禁止 (`(A)*` + ambiguous_judgments 補足が正式記法、orchestrator はこの行を ambiguous_judgments セクションと cross-reference してユーザー gate に bubble する)
 6. **rationale 列に判定根拠を必ず記載**: (B) を選ぶ場合は 3 条件 AND 該当根拠、(C) を選ぶ場合は既存 issue 番号、(A) は省略可

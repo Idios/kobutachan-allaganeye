@@ -76,7 +76,7 @@ PR #<N> を review してください。`/review-pr` skill を invoke します�
    - **(A) を最優先**: CI failure / latent type error / 隣接ファイル lint 違反 等は全部 (A)
    - **(B) は厳格 3 条件 AND 必須**: `別領域・別機能` AND `1 セッション超の独立設計が必要` AND `本 PR 同梱で受け入れ条件検証が破綻`。**サイズ単独 / scope-out 単独 / 受け入れ条件直結性単独では (B) 化不可**
    - **(C) は同テーマ既存 issue が存在する場合のみ**
-   - 判定に迷う finding は `(A)` を default に置き、ambiguous_judgments に記載
+   - 判定に迷う finding は `(A)*` と記載し、ambiguous_judgments に詳述する (`ambiguous` 単独記載は禁止。`(A)*` が正式記法 = §G.2.1 item 5 準拠)
 7. final message は以下の構造で return:
 
    ```markdown
@@ -105,7 +105,7 @@ Agent tool の戻り値 markdown から `## findings_table` セクションの�
 
 **抽出時の必須 validation (握り潰し防止)**:
 
-1. **全 finding に classification がある**: 各行の処置列が `(A)` / `(B)` / `(C)` / `ambiguous` のいずれか。空欄 / 「観察のみ」 / 「対象外」等は **parse error**。Round 2+ で `handoff_state` に既登録の topic が再度 findings_table に含まれる場合も **parse error** (= subagent が exclusion を尊重していない)
+1. **全 finding に classification がある**: 各行の処置列が `(A)` / `(A)*` / `(B)` / `(C)` のいずれか。`(A)*` は ambiguous_judgments セクションとの cross-reference が必須 (subagent が自動判断できなかった finding に使用、`ambiguous` 単独記載は禁止)。空欄 / 「観察のみ」 / 「対象外」/ `ambiguous` 単独等は **parse error**。Round 2+ で `handoff_state` に既登録の topic が再度 findings_table に含まれる場合も **parse error** (= subagent が exclusion を尊重していない)
 2. **(B) 主張行には trigger 根拠列がある**: rationale 列に「別領域・別機能 AND 1 セッション超 AND 受け入れ条件検証破綻」3 条件への該当言及があるか。1 条件のみの (B) は **parse error** (= subagent が誤分類)
 3. **subagent return に「無視」「観察のみ」「スコープ対象外」のキーワードを単独で含む行がない**: 文字列 grep で検出、ヒットしたら **parse error**
 4. **`ambiguous_judgments` セクションが存在する** (空でもセクション自体は必須): 不在は parse error
@@ -154,6 +154,8 @@ Round N findings:
 #### Step 2.5 (B) findings handoff (新規 issue 起票、限定例外パス)
 
 > **(B) 起票は限定例外 (Iron Law 3 担保)**: 「指摘は原則すべて PR 内対応」(§1 (A) 強優先方針) に従い、ほとんどの finding は (A) で消化される。本 step に来るのは Step 2.2 validation を通過した「真に (B) trigger 3 条件 AND 該当」の finding のみ。スコープ単独・サイズ単独・受け入れ条件直結性単独で (B) 化された finding はここに到達しない (= validation で reject される)。scope-creep の受け皿は Iron Law 3 担保。
+>
+> **注 (C2 設計意図)**: 本 skill が dispatch する **subagent mode では §G.2.1 通り AND 3 条件** (`別領域・別機能` AND `1 セッション超の独立設計が必要` AND `本 PR 同梱で受け入れ条件検証が破綻`) で厳格判定する。**standalone `/review-pr` 単体使用時は OR 3 択** (`外部依存・側チケット調整が必要` 単独でも (B) trigger として有効) を許容する。この非対称は **意図的設計**: standalone は人間レビュアーが文脈判断するため柔軟性を持つ、subagent mode は機械処理のため parse error リスクを減らすべく厳格化している。
 
 各 (B) に対し:
 
