@@ -32,7 +32,11 @@ mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 
   if [[ -x "$SCRIPT" ]] || [[ -f "$SCRIPT" ]]; then
     echo "  cleanup-worktrees.sh: present"
-    output=$(bash "$SCRIPT" --apply 2>&1) || true
+    # trailing `|| true` を付けると `$?` が `true` (=0) に上書きされ、cleanup
+    # script の non-zero exit を取りこぼす (review-pr Round 1 Finding #1)。
+    # `set -e` は使っていない (set -u のみ) ため、command substitution が
+    # non-zero でも shell は継続する。よって `|| true` 不要。
+    output=$(bash "$SCRIPT" --apply 2>&1)
     rc=$?
     echo "  cleanup exit=$rc"
     echo "  --- cleanup output ---"
