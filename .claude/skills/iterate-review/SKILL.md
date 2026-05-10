@@ -98,4 +98,20 @@ PR #<N> を review してください。`/review-pr` skill を invoke します�
    ```
 ````
 
+#### Step 2.2 Findings parse + 握り潰し防止 validation
+
+Agent tool の戻り値 markdown から `## findings_table` セクションの表行を抽出。各行を `{round, n, finding, source, classification, rationale}` として `findings_history[round]` に蓄積。
+
+**抽出時の必須 validation (握り潰し防止)**:
+
+1. **全 finding に classification がある**: 各行の処置列が `(A)` / `(B)` / `(C)` / `ambiguous` のいずれか。空欄 / 「観察のみ」 / 「対象外」等は **parse error**
+2. **(B) 主張行には trigger 根拠列がある**: rationale 列に「別領域・別機能 AND 1 セッション超 AND 受け入れ条件検証破綻」3 条件への該当言及があるか。1 条件のみの (B) は **parse error** (= subagent が誤分類)
+3. **subagent return に「無視」「観察のみ」「スコープ対象外」のキーワードを単独で含む行がない**: 文字列 grep で検出、ヒットしたら **parse error**
+4. **`ambiguous_judgments` セクションが存在する** (空でもセクション自体は必須): 不在は parse error
+
+**parse error 時の対処**:
+
+- 1 度目: 主セッションが subagent に対して具体的に欠陥を伝えて再 dispatch (Agent tool 再実行)。具体例: 「Step 5b 表 5 行目の (B) は trigger 根拠が `スコープ外` のみで 3 条件 AND 不成立。(A) に再分類して return せよ」
+- 2 度目: AskUserQuestion で user に「subagent が分類規約を満たさない findings を返している。手動でトリアージするか abort するか」を提示
+
 `<N>` には PR 番号 ($ARGUMENTS) を埋める。`<handoff_state を箇条書き>` には Step 1 で初期化した `handoff_state` の内容 (空なら "(なし)") を埋める。
