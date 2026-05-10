@@ -174,3 +174,24 @@ Round N findings:
    <!-- iterate-review:deferred:end -->
    EOF
    ```
+
+#### Step 2.6 (C) findings handoff (既存 issue 追記)
+
+1. 既存 issue へ `gh issue comment <既存 issue#> --body-file -` で方針記録 (HEREDOC、UTF-8 対策。`feedback_gh_command_ja_heredoc.md` 準拠):
+
+   ```bash
+   gh issue comment <既存 issue#> --body-file - <<'EOF'
+   ## /iterate-review Round <N> 由来の追記
+
+   PR #<PR#> をレビュー中に本 issue (#<既存 issue#>) と関連する課題を発見。
+   
+   - **finding**: <topic 50 字以内>
+   - **本 PR スコープ判定**: (C) 既存 issue 追記 (重複起票回避)
+   
+   詳細は PR #<PR#> 内で議論。
+   
+   [<session-id>]
+   EOF
+   ```
+
+2. `handoff_state` 追加 + PR body deferred block 更新 (Step 2.5 同様)
