@@ -50,15 +50,21 @@ $PythonVersion = '3.11.9'
 $PythonEmbedUrl = "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVersion-embed-amd64.zip"
 $PythonEmbedSha256 = '009D6BF7E3B2DDCA3D784FA09F90FE54336D5B60F0E0F305C37F400BF83CFD3B'
 
-$GetPipUrl = 'https://bootstrap.pypa.io/get-pip.py'
-# #649 -- PyPA refreshes get-pip.py without versioning the URL, so the
-# pinned hash drifts whenever pip releases. When build-windows fails with
-# "SHA256 mismatch for https://bootstrap.pypa.io/get-pip.py", refresh the
-# pin via:
-#   Invoke-WebRequest https://bootstrap.pypa.io/get-pip.py -OutFile get-pip.py
-#   Get-FileHash get-pip.py -Algorithm SHA256
-# Long-term we should switch to a versioned URL (e.g. .../pip/24.0/get-pip.py)
-# or the bootstrap-served `.sha256` sidecar -- tracked in #649.
+$GetPipUrl = 'https://raw.githubusercontent.com/pypa/get-pip/26.1.1/public/get-pip.py'
+# #681 -- Pin get-pip.py via the pypa/get-pip GitHub raw URL with a release
+# tag (immutable per tag), not bootstrap.pypa.io/get-pip.py (unversioned;
+# drifts whenever PyPA refreshes pip and breaks build-windows CI -- see
+# #649 short-term fix and PR #675 Round 2 follow-up).
+#
+# To bump pip when a new release is required:
+#   1. Pick a new tag from https://github.com/pypa/get-pip/tags (e.g. 26.1.2)
+#   2. Update the URL above and the SHA below:
+#        Invoke-WebRequest `
+#          "https://raw.githubusercontent.com/pypa/get-pip/<tag>/public/get-pip.py" `
+#          -OutFile get-pip.py
+#        Get-FileHash get-pip.py -Algorithm SHA256
+#   3. Verify the regression test still passes:
+#        Invoke-Pester -Path scripts/tests/build-portable-zip.Tests.ps1
 $GetPipSha256 = '66904BCCB878E363DB6236EA900E6935E507DCB887E9F178F6212EDFE7F46A76'
 
 # FFmpeg is pinned to a specific BtbN autobuild so the same allaganeye tag ships

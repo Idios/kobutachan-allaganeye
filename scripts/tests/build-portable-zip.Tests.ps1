@@ -466,3 +466,24 @@ Describe 'New-IntegrityManifest' {
     (& $stripGen $json1) | Should -Be (& $stripGen $json2)
   }
 }
+
+Describe 'GetPip pinning (#681)' {
+  It 'pins $GetPipUrl to a versioned pypa/get-pip GitHub raw URL' {
+    # bootstrap.pypa.io/get-pip.py is unversioned and PyPA refreshes it without
+    # notice, drifting our hardcoded SHA pin and breaking build-windows CI
+    # (#649, PR #675 Round 2). #681 pins the URL to a versioned pypa/get-pip
+    # GitHub raw URL whose content is immutable per release tag.
+    # This regression test guards against accidental rollback to the
+    # unversioned bootstrap.pypa.io URL.
+    $GetPipUrl | Should -Match '^https://raw\.githubusercontent\.com/pypa/get-pip/[\w.\-]+/public/get-pip\.py$'
+  }
+
+  It 'pins $GetPipSha256 to the literal value matching the pypa/get-pip 26.1.1 tag' {
+    # SHA256 verify (Invoke-Download) stays as defense-in-depth even with the
+    # immutable URL: catches the (very unlikely) force-push scenario on the
+    # upstream pypa/get-pip release tag.
+    # value-equality lock so any accidental SHA edit without a corresponding
+    # URL tag bump is caught at test time, not at CI build-windows time.
+    $GetPipSha256 | Should -Be '66904BCCB878E363DB6236EA900E6935E507DCB887E9F178F6212EDFE7F46A76'
+  }
+}

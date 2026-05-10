@@ -412,15 +412,16 @@ CI / Portable ZIP / 開発環境の 3 環境で Python と FFmpeg のバージ�
 | `docs/developer-setup.md` §1 | 「ffmpeg / ffprobe 8.1 LGPLv3 推奨」「推奨: ffmpeg 8.1 LGPLv3」の major version 記述 (系列変更時のみ) |
 | `docs/quickstart.md` §10 | 対応 FFmpeg ソース ref (例: `n8.1.1` release tag、または旧 format での commit hash `7f5c90f77e`) の記述 (upstream ref 変更時) |
 
-### get-pip.py の hash drift 対応 (#649)
+### get-pip.py のピン留め (#681)
 
-`$GetPipSha256` ([scripts/build-portable-zip.ps1](../scripts/build-portable-zip.ps1)) は非バージョン管理 URL `https://bootstrap.pypa.io/get-pip.py` を参照しているため、PyPA が pip をリリースするたびに hash が drift し `build-windows` が `SHA256 mismatch` で fail する。FFmpeg / Python embed は versioned URL でピン留めしているのでこの drift は発生しない (get-pip.py 固有の問題)。drift 検知時は以下で更新:
+`$GetPipUrl` ([scripts/build-portable-zip.ps1](../scripts/build-portable-zip.ps1)) は `pypa/get-pip` GitHub release tag (例: `26.1.1`) を指す versioned URL でピン留めする (#681 / PR #703 で確定)。release tag の content は immutable per release のため、PyPA が `bootstrap.pypa.io/get-pip.py` を更新しても本 URL は影響を受けず SHA drift は構造的に発生しない。
 
-```powershell
-Invoke-WebRequest https://bootstrap.pypa.io/get-pip.py -OutFile get-pip.py
-Get-FileHash get-pip.py -Algorithm SHA256
-```
+pip 新版を bundle したい場合の bump 手順:
 
-得られた SHA256 で `scripts/build-portable-zip.ps1` の `$GetPipSha256` を書き換え → develop-0.2.0 ベースで hotfix PR を先行マージ → 既存 PR を rebase で `build-windows` 復旧、という流れ ([#651](https://github.com/Idios/kobutachan-allaganeye/pull/651) が先例)。
+1. <https://github.com/pypa/get-pip/tags> から新 tag を選択 (例: `26.1.2`)
+2. `scripts/build-portable-zip.ps1` の `$GetPipUrl` の tag 部分と `$GetPipSha256` を新値に更新
+3. `Invoke-Pester -Path scripts/tests/build-portable-zip.Tests.ps1` で regression test pass を確認
 
-長期対応 (versioned URL `https://bootstrap.pypa.io/pip/24.0/get-pip.py` または `.sha256` sidecar の動的検証) は [#649](https://github.com/Idios/kobutachan-allaganeye/issues/649) §長期対応で検討中。
+詳細は [`scripts/build-portable-zip.ps1:54-67`](../scripts/build-portable-zip.ps1) のコメントを参照。
+
+> **履歴**: 旧 URL `https://bootstrap.pypa.io/get-pip.py` (unversioned) は PyPA 側更新で SHA pin が drift する問題があり、[#649](https://github.com/Idios/kobutachan-allaganeye/issues/649) (PR [#651](https://github.com/Idios/kobutachan-allaganeye/pull/651)) と [PR #675](https://github.com/Idios/kobutachan-allaganeye/pull/675) Round 2 #7 で短期 fix を行った後、#681 / PR #703 で本構造に移行した。
