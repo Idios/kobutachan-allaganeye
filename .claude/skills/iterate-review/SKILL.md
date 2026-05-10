@@ -148,3 +148,29 @@ Round N findings:
    - GUI (`gui/src/**`, `gui/src-tauri/**`): `npm run lint && npm run typecheck && npm test && npm run build && cargo check`
    - Markdown (`docs/**.md`, `*.md`): `bash scripts/check-markdownlint.sh`
 4. **1 round = 1 commit** で集約: 全 (A) を 1 つの commit にまとめる (round 単位の atomicity を確保、Round 別 SHA を summary コメントで参照しやすくするため)。message テンプレ: `fix(round-N): <要約> (Refs #<元 issue>)`。例外として、push 失敗で reset → 再 commit が必要な場合のみ複数 commit になる可能性を許容
+
+#### Step 2.5 (B) findings handoff (新規 issue 起票、限定例外パス)
+
+> **(B) 起票は限定例外**: 「指摘は原則すべて PR 内対応」(§1 (A) 強優先方針) に従い、ほとんどの finding は (A) で消化される。本 step に来るのは Step 2.2 validation を通過した「真に (B) trigger 3 条件 AND 該当」の finding のみ。スコープ単独・サイズ単独・受け入れ条件直結性単独で (B) 化された finding はここに到達しない (= validation で reject される)。
+
+各 (B) に対し:
+
+1. **(B) trigger 3 条件 AND 達成** を再確認: `別領域・別機能` AND `1 セッション超の独立設計が必要` AND `本 PR 同梱で受け入れ条件検証が破綻` の **すべて満たす** ことを rationale で確認。1 つでも欠ける場合は (A) に再分類して Step 2.4 へ戻す
+2. **3 件以上の (B) は Iron Law 2 に従い AskUserQuestion で全件確認** (1 件 sample 提示 + 「全件 OK / 個別調整 / やめる」3 択)。3 件以上の (B) が一度に出るのは **設計疑い** のシグナルであり、user に「PR スコープが大きすぎる可能性」を提示
+3. 2 件以下はそのまま `/create-task` で起票
+4. 起票後の issue 番号を `handoff_state` に追加
+5. PR body の deferred block を更新:
+
+   ```bash
+   gh pr edit $ARGUMENTS --body-file - <<'EOF'
+   <既存 body>
+
+   <!-- iterate-review:deferred:start -->
+   ## Deferred Findings (managed by /iterate-review)
+
+   - [B] Round 1: <topic 50 字以内> → deferred-to: #708 (新規)
+   - [C] Round 2: <topic> → deferred-to: #680 (既存)
+
+   <!-- iterate-review:deferred:end -->
+   EOF
+   ```
