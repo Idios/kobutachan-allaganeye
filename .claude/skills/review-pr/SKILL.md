@@ -431,6 +431,51 @@ PR がマージ済みで本 skill が呼ばれた場合 (= 確認用の事後レ
 3. Step 6 テンプレートの「受け入れ条件チェック」表を issue ごとに節分け (`### Issue #N` / `### Issue #M`)
 4. 束ね合理性が PR 本文に明記されているか Step 3 補助チェックで確認。明記なしなら (A) PR コメントで合理性説明または分離を要求
 
+### §G. Subagent invocation mode
+
+`/iterate-review` から subagent として呼ばれた場合の動作契約。
+
+#### G.1 Mode 検出
+
+呼び出し prompt に以下のマーカーが含まれている場合 subagent mode:
+
+`__ITERATE_REVIEW_SUBAGENT_MODE__`
+
+(`/iterate-review` Step 2.1 の prompt template に固定文字列として埋め込む)
+
+#### G.2 動作差分
+
+| 観点 | Standalone mode | Subagent mode |
+| --- | --- | --- |
+| Step 2.3 base sync AskUserQuestion | 通常通り | skip: 影響候補ありなら findings に「需 user 判断: base regression」と記載 |
+| Step 2.4 並行 PR AskUserQuestion | 通常通り | skip: 検出されたら findings に記載 |
+| Step 5b 摘出 AskUserQuestion (個別 (A)/(B)/(C)) | 通常通り | skip: skill 内基準で auto 分類、ambiguous case のみ findings の `ambiguous_judgments` に明示 |
+| Step 6 報告 | conversation 内 presenting | final message に markdown で含める |
+| Step 7 次のアクション提案 | user に提示 | skip: orchestrator (`/iterate-review`) が代行 |
+| Step 8 マージ後 handoff | 必要なら実行 | skip |
+| `gh pr comment` 投稿 | 一切しない (本 skill 改訂後) | 一切しない (subagent mode でも禁止) |
+
+#### G.2.1 Subagent mode 自動分類規約 ((A) 強優先 + 握り潰し禁止)
+
+Subagent mode で Step 5b の (A)/(B)/(C) 自動分類を行う際の厳格規約:
+
+1. **すべての finding に必ず分類を付与する**: 観察コメントのみ・スコープ対象外と自己判断・軽微だから無視 は **すべて NG** (orchestrator 側 parse error として再 dispatch される)
+2. **default は (A)**: 「指摘は原則すべて PR 内対応」を継承。CI failure / latent type error / 隣接ファイル lint 違反 / 古い API 残存 / 古い doc 記述 / 環境起因の問題 等は全部 (A)
+3. **(B) は厳格 3 条件 AND**: `別領域・別機能` AND `1 セッション超の独立設計が必要` AND `本 PR 同梱で受け入れ条件検証が破綻` の **すべて満たす場合のみ** (B)。1 つでも欠ければ (A)。**サイズ単独 / scope-out 単独 / 受け入れ条件直結性単独では (B) 化不可**
+4. **(C) は重複起票回避 trigger のみ**: 同テーマの既存 issue が存在する場合のみ。「新規 issue を作るべきだが既存に書いた方が綺麗」は不可
+5. **判定に迷う finding**: `(A)` を default として置き、`ambiguous_judgments` セクションに該当 finding を記載 (orchestrator 側で user gate)
+6. **rationale 列に判定根拠を必ず記載**: (B) を選ぶ場合は 3 条件 AND 該当根拠、(C) を選ぶ場合は既存 issue 番号、(A) は省略可
+
+#### G.3 戻り値構造 (subagent → orchestrator)
+
+final message に以下のセクションを順序固定で含める:
+
+1. `## acceptance_criteria_status` (各条件 ✓/×/部分的 + evidence)
+2. `## findings_table` (Step 5b トリアージ表 markdown、各行に分類必須)
+3. `## ambiguous_judgments` (auto 判断できなかった点。空でもセクション自体は必須記載)
+4. `## recommendation` (LGTM / fix-required / divergent)
+5. `## meta` (mergeStateStatus / 並行 PR 状態 / CI 状態。round 番号は `/iterate-review` 側管理のため不要)
+
 ## 呼び出し例
 
 ```text
