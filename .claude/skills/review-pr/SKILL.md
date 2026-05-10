@@ -332,31 +332,11 @@ PR コメント投稿が必要な特殊ケース (例: 別レビュアーへ正�
 
 根拠: scope-guard skill は Iron Law 3 の執行機構として人間メンテナの判断 (a)/(b)/(c) を強制するゲートであり、PR 作成セッション側に判断権限はない (`scope-guard/SKILL.md` §Step 3 参照)。
 
-### 7a. 再レビューラウンド管理 (Round 2+)
+### 7a. 再レビューラウンド管理 (`/iterate-review` に移管)
 
-修正依頼 → PR 作成セッション修正 → 再レビュー のループを Round N で追跡する。各 Round で Step 6 テンプレートの `# Review Round N` ヘッダと「前回差分 / 本 Round 新出」を必ず記録する。
+Round 2+ の再レビュー管理 (収束判定 / 発散判定 / 打ち切り判断) は `/iterate-review` skill (新規) に移管した。本 skill は単一 round の review エンジンとしてのみ動作する。
 
-**Round の数え方**
-
-- Round 1: 初回レビュー (LGTM 出るか修正依頼かを初判定)
-- Round 2+: 修正依頼後の再レビュー。「前 Round で指摘した課題の解消確認」+「本 Round 新出課題」を分けて記録する
-
-**収束判定 (Round N → LGTM)**
-
-- [critical] 連続 2 Round で次を**全て**満たすこと:
-  - 前 Round 指摘課題の (A) がすべて解消
-  - 本 Round 新出課題なし、または新出があっても (B)/(C) 処置で本 PR にブロックしない
-  - CI green が維持されている
-- 上記を満たせば LGTM 候補。ユーザー承認で `--squash` マージへ進める
-
-**発散判定 (設計疑い)**
-
-- 3 Round 以上かけても (A) 課題が減らない、または Round ごとに新出 (A) が増え続ける場合、PR 設計自体を疑う
-- 判断: (i) PR を分割する (束ね PR の場合) / (ii) 実装方針を再設計する / (iii) scope-guard skill で PR スコープを縮小する — いずれも `AskUserQuestion` でユーザーに選択肢として提示
-
-**打ち切り判断**
-
-- Round 5 を超えても収束しない場合、レビューコストが実装コストを上回る可能性。別 issue に残タスクを切り出して一旦マージする判断を `AskUserQuestion` で提示
+複数 round 自動実行が必要な場合は `/iterate-review <PR#>` を invoke すること。
 
 ### 8. マージ後のハンドオフ
 
