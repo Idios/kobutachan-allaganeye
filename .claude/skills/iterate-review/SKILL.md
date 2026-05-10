@@ -195,3 +195,13 @@ Round N findings:
    ```
 
 2. `handoff_state` 追加 + PR body deferred block 更新 (Step 2.5 同様)
+
+#### Step 2.7 Push + CI wait
+
+- `git push origin <head-branch>`
+- `gh pr checks $ARGUMENTS --watch` で CI 状態確定 (success / failure) を 15 分まで待機
+- **CI green (success)**: 次 round へ進める
+- **CI red (failure)**: 本 step では abort しない。次 round の `/review-pr` Step 4 が CI 失敗を findings に拾う前提 (`/review-pr` Step 4 「失敗あり: 失敗ジョブ名と概要を user に報告」を踏襲)。CI red が複数 round 連続で再発生する場合は §2.6 divergence 検知で打切り判定
+- **timeout (15 分超)**: AskUserQuestion 3 択 (待ち続ける / CI 無視で次 round / abort)
+
+実装ノート: `gh pr checks --watch` の timeout は CLI 側で直接制御できないため、`timeout` コマンド (Linux/macOS) または PowerShell の `Start-Job` + `Wait-Job -Timeout` で wrap する。Windows + Git Bash では `timeout 900 gh pr checks ...` で OK。
