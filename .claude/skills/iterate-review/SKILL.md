@@ -23,3 +23,30 @@ PR 作成後の review → fix → review ループを自動化する。指定�
 
 詳細仕様: [docs/superpowers/specs/2026-05-10-iterate-review-and-review-pr-redesign.md](../../docs/superpowers/specs/2026-05-10-iterate-review-and-review-pr-redesign.md)
 
+## 手順
+
+### Step 0: Pre-flight
+
+PR の状態を確認し、ループ可能か判定する。
+
+```bash
+gh pr view $ARGUMENTS --json state,isDraft,headRefName,baseRefName,closingIssuesReferences
+```
+
+判定:
+- `state == CLOSED` または `state == MERGED` → 「ループ対象外」エラー終了
+- `isDraft == true` → AskUserQuestion 3 択 (draft でも進める / draft 解除を待つ / abort)
+- それ以外 (state == OPEN + isDraft == false) → Step 1 へ
+
+#### Base sync + 並行 PR 確認
+
+base 最新化 + 直近マージ PR + 並行 worktree PR 重複確認は `/review-pr` Step 2 を踏襲。本 skill では `/review-pr` Step 2 へリンクし、subagent dispatch (Step 2.1) 内で実行されることに依拠して再掲しない。Pre-flight 段階では `gh pr view` の取得のみで十分。
+
+### Step 1: ループ初期化
+
+会話 context 内で以下を保持:
+
+- `Round = 1`
+- `handoff_state = []` (要素: `{topic, classification, issue_number, round}`)
+- `findings_history = {}` (key: round 番号, value: Step 5b 表)
+- `divergence_counter = 0`
