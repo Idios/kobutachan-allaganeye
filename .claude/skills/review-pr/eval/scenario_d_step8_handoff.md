@@ -1,6 +1,6 @@
-# シナリオ D: edge - LGTM 後 Step 8 ハンドオフ (close-issue 分離検証 / #594)
+# シナリオ D: edge - MERGED state 事後レビュー + Step 8 ハンドオフ検証
 
-参考事例: 軽微修正 PR で LGTM が出るパターン。本シナリオは review-pr の **新 Step 8 (ハンドオフ専用化、#594 で改修)** が機能するかを検証する。既存 scenario A/B/C はいずれも「LGTM が出ない (修正依頼/孤立)」流れで Step 8 まで到達しないため、Step 8 挙動の検証は本シナリオで担う。
+本シナリオは **PR が MERGED 状態でレビューされる「確認用の事後レビュー」** のケースを検証する。新 Step 8 (MERGED 限定ハンドオフ) が正しく動作するか、`gh pr comment` per-finding 投稿が皆無であるかを確認する。既存 scenario A/B/C はいずれも `OPEN` 状態 (Step 8 を skip) の流れのため、Step 8 挙動の検証は本シナリオで担う。
 
 ## 紐づく issue (#931 として仮定)
 
@@ -90,10 +90,36 @@ CHANGELOG.md                       +18 -18    # フォーマット統一のみ (
 - `/enforce-acceptance-criteria` gate: 受け入れ条件全 ○ で PASS 想定
 - `/test-pr`: 該当なし (doc-only、long-running なし)
 
+## 期待される出力と挙動
+
+### Step 1-7 (通常フロー)
+
+- Step 6: **レビュー報告 markdown を生成して presenting する** (`AskUserQuestion` は呼ばない)
+- Step 7: 次のアクション提案を user に提示する
+  - 本 PR は MERGED 状態かつ摘出課題 (A) ゼロのため、判定: LGTM
+  - `/iterate-review` 起動推奨は不要 (MERGED state かつ課題ゼロ)
+  - `gh pr comment` per-finding 投稿は**皆無** (仕様)
+
+### Step 8 (MERGED state — 本シナリオの主目的)
+
+- PR が MERGED 状態であることを確認し、Step 8 を実行する
+- 受け入れ条件最終検証 (Step 3) を実施
+- `gh pr view <PR#> --json closingIssuesReferences,body` で紐づく issue #931 を抽出
+- ユーザーに `/close-issue 931` を案内する (本 skill では `gh issue close` を実行しない — Iron Law 4)
+- 検証結果の summary コメント (1 個) 投稿を user に提案する:
+  - `AskUserQuestion`「投稿する / 投稿しない」で **user 承認を得てから**投稿 (任意)
+  - 自動投稿はしない。これは仕様 (任意確認)
+
+### per-finding comment 投稿しない
+
+- `gh pr comment` per-finding 投稿は Step 7 でも Step 8 でも**一切行わない**
+- Step 8 の summary コメント投稿のみ、user 承認後に 1 個だけ許容
+
 ### subagent が判断すべき論点
 
 - LGTM 候補と判断できるか (受け入れ条件全項目 ○ + 摘出課題 (A) ゼロ)
+- PR が MERGED 状態 (= 事後レビュー) であることを検知し Step 8 を実行できるか
 - Step 8 で `gh issue close` を**実行しない**判断ができるか (旧挙動への記憶引きずり防止)
-- `/close-issue 931` ハンドオフ提案を Step 8 サンプルテンプレートに沿って出力できるか
-- Step 8 縮小が冒頭「重要」節と整合する旨を理解しているか
+- `/close-issue 931` ハンドオフ提案を出力できるか
+- summary コメント投稿を `AskUserQuestion` で user に確認してから行うか (自動投稿しない)
 - マージ実行・close 実行の両方を「ユーザー (Idios) 裁量」と認識しているか

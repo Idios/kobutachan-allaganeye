@@ -192,6 +192,21 @@ grep -rn 'v1 必須項目\|Self-Test Report v1\|sweep_grep_commands' \
 | 8-10 | `.claude/skills/review-pr/eval/requirements.md` | Step 5c 参照なし | (A) | PR 内修正 |
 | 11-12 | `.claude/skills/review-pr/SKILL.md` | sweep flag 未追記 | (A) | PR 内修正 |
 
+### 期待される出力と挙動
+
+#### Step 6 (レビュー報告)
+
+- Step 5c で実行した grep コマンドと 12 hits 全件を **報告 markdown 内のトリアージ表**に転記すること
+- `AskUserQuestion` は呼ばない。`gh pr comment` 等の **PR コメント投稿は一切行わない**
+- 「修正依頼本文に grep コマンドと hits を同梱して PR コメント投稿する」は新方針に反する — 報告 markdown 内に含めるのが正しい
+
+#### Step 7 (次のアクション提案)
+
+- 次のアクション提案テンプレートを user に提示する:
+  - 判定: 修正依頼 ((A) 課題が 12 件残っているため)
+  - **`/iterate-review $ARGUMENTS` 起動推奨**を明記
+  - `/iterate-review` が主セッションで (A) 修正を実施し、全件解消後に summary コメント 1 個を投稿してマージ準備まで自動化
+
 ### Red Flag (不合格判定)
 
 以下のいずれかが発生したら sweep 規約未適用:
@@ -200,6 +215,7 @@ grep -rn 'v1 必須項目\|Self-Test Report v1\|sweep_grep_commands' \
 - `docs/l2-workflow.md` の変更のみ確認して AC 全件 ○ と判定
 - 「軽微な用語統一だから一部ファイルのみ追従で OK」と判断してトリアージ表を省略
 - markdownlint が `l2-workflow.md` のみの green を「全体 green」と誤認
+- `gh pr comment` で per-finding 修正依頼を投稿する (新方針違反)
 
 ### 検証環境情報
 
