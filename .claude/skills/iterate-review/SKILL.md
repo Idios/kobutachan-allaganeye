@@ -205,3 +205,37 @@ Round N findings:
 - **timeout (15 分超)**: AskUserQuestion 3 択 (待ち続ける / CI 無視で次 round / abort)
 
 実装ノート: `gh pr checks --watch` の timeout は CLI 側で直接制御できないため、`timeout` コマンド (Linux/macOS) または PowerShell の `Start-Job` + `Wait-Job -Timeout` で wrap する。Windows + Git Bash では `timeout 900 gh pr checks ...` で OK。
+
+### Step 3: 収束 / 発散 / 打ち切り判定
+
+#### Step 3.1 収束 (success path)
+
+(A)/(B)/(C) all 0 → Step 4 (Final summary comment) へ。
+
+#### Step 3.2 発散検知
+
+- `divergence_counter` 管理:
+  - Round N の (A) 件数 `>=` 前 round の (A) 件数 (= 減少していない、増えた場合も含む) → `counter++`
+  - Round N の (A) 件数 `<` 前 round の (A) 件数 (= 減少) → `counter = 0` にリセット
+  - Round 1 (前 round 不在) の場合は counter 初期値 0 のまま
+- `counter == 3` (= 3 round 連続で減少なし) → user gate 2 択
+
+#### Step 3.3 ラウンドキャップ
+
+Round == 5 + 未収束 → user gate 2 択。
+
+#### Step 3.4 user gate 2 択 (発散・キャップ共通)
+
+```text
+- (i) PR 破棄 + scope 整理 + 再 PR (Recommended)
+    → 現 PR を `gh pr close` (branch 維持、後続調査用に残す)
+    → /scope-guard で残課題を整理し sub-PR に分割
+    → /create-task で必要なら子 issue を整備
+    → 各 sub-PR を順次作成 → /iterate-review で個別収束
+    → user 主導の workflow、本 skill は abort して引き継ぐ
+- (ii) abort (state を残して手動介入)
+    → /iterate-review は終了、PR / branch は現状維持
+    → user が手動で残 finding を判断 (merge する / 修正続行 / scope-guard 等)
+```
+
+> **(iii) 残 (A) 別 issue 化選択肢の不採用**: 「残 (A) を別 issue 化して merge」は issue 数収束方針 と矛盾するため**選択肢から除外**。Round 5 まで来たということは PR スコープが大きすぎたか実装方針が不適切のため、PR 単位での再構成 (i) が筋。
