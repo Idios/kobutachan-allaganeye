@@ -338,37 +338,24 @@ Round 2+ の再レビュー管理 (収束判定 / 発散判定 / 打ち切り判
 
 複数 round 自動実行が必要な場合は `/iterate-review <PR#>` を invoke すること。
 
-### 8. マージ後のハンドオフ
+### 8. マージ後の close-issue handoff (PR が MERGED 状態の場合)
 
-レビューセッションは `gh issue close` を**実行しない** (冒頭「重要」節 = レビュー専用セッション契約)。issue クローズは Iron Law 4 が要求する**マージ後の受け入れ条件実測再検証**を含むため、専用 skill `/close-issue <issue番号>` または手動クローズで実施する。本 skill は「クローズ依頼の提案」までを担当する。
+PR がマージ済みで本 skill が呼ばれた場合 (= 確認用の事後レビュー) のみ意味がある節。マージ前の課題ハンドオフは `/iterate-review` Step 5 (LGTM 候補通知) で吸収する。
 
-**PR に紐づく issue がある場合**:
+#### 手順
 
-1. **issue 番号の特定**: `gh pr view <PR#> --json closingIssuesReferences` で取得、または PR 本文の `Refs #N` / `#N` 参照から抽出する (両方確認して両者の差分があれば AskUserQuestion でユーザー確認)。複数 issue が紐づく場合は束ね PR としてケース 4 の運用に従う
+1. 受け入れ条件最終検証 (Step 3) を実施
+2. 紐づく issue 番号を抽出 (`gh pr view <PR#> --json closingIssuesReferences,body` + 本文 `Refs #N` 抽出)
+3. ユーザーに `/close-issue <番号>` を案内 (本 skill では実行しない、Iron Law 4)
+4. 検証結果を summary コメント (1 個) として PR に投稿することを user に提案 (`AskUserQuestion`「投稿する / 投稿しない」、フォーマットは `/iterate-review` Step 4 の summary template と同一 = `docs/superpowers/specs/2026-05-10-iterate-review-and-review-pr-redesign.md` §4.2 参照)
 
-2. ユーザー (Idios) または PR 作成セッションに `/close-issue <issue番号>` 実行を提案する。提案コメントは **Step 6 のレビュー報告本文末尾に含めることを優先** とする (二重投稿防止)。Step 6 本文末尾に含めた場合は別 PR コメント投稿は省略可。サンプル:
+#### マージ前 (`OPEN` state) で本 skill が呼ばれた場合
 
-   ```text
-   マージ後 issue クローズは `/close-issue <番号>` で実測再検証してから実施してください
-   (本セッションでは close を実行しません)。
-   ```
+通常フロー (Step 1-7) のみ実施し、本 Step 8 は skip する。残課題対応は `/iterate-review` 推奨を Step 7 で提示済み。
 
-   Step 6 本文に含めなかった場合のみ、上記サンプルを別 PR コメントとして投稿する。
+#### 孤立 PR (issue 紐付けなし) の場合
 
-3. **本セッションでは `gh issue close` を実行しない** (= レビュー専用セッション契約に基づく。本 skill 内で close を実行すると、Iron Law 4 が要求する「マージ後の実測再検証」が `/close-issue` ルートを経由しないまま進むことになる)。受け入れ条件のマージ後実測再検証は `/close-issue` の責務 (Iron Law 4 担保ルート)
-4. issue 本文の未チェック `- [ ]` の確認・残タスク子 issue 起票・受け入れ条件実測再検証は `/close-issue` 側で扱う (本 skill の責務外)
-5. 束ね PR (1 PR で複数 issue close) の場合は、PR 作成セッション or ユーザーが各 issue に対し `/close-issue <番号>` を呼び分ける運用 (本 skill 側で issue 番号列挙だけ済ませてもよい)
-
-**マージ済み状態で本 skill が呼ばれた場合のフォールバック**:
-
-PR が既に `MERGED` 状態の場合 (例: ユーザーがマージ後に再度レビュー確認のため呼び出した場合)、Step 7 の LGTM コメント投稿は省略可 (事後投稿は混乱を招く)。Step 8 のハンドオフ提案 (`/close-issue <番号>` への誘導) のみを別 PR コメントで投稿する。Step 1-6 の検証は通常通り実施し、検証結果も同コメントに含める。
-
-**PR に紐づく issue がない場合 (孤立 PR)**:
-
-1. Step 5b トリアージ表の (B) (C) 処置行をすべて実行完了したか確認
-2. (B) 新規 issue 起票が必要なら `/create-task` で実施
-3. (C) 既存 issue 追記が必要なら該当 issue にコメント投稿
-4. skill 運用上の気付き (doc 不整合・フォールバック手順欠落 等) が見つかっていれば skill 改善 issue を (B) 枠で起票
+`/close-issue` 案内は省略可 (issue がないため)。Step 7 で提示した「次のアクション」に従う。
 
 ## 環境制約とフォールバック
 
