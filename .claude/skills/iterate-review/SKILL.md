@@ -239,3 +239,88 @@ Round == 5 + 未収束 → user gate 2 択。
 ```
 
 > **(iii) 残 (A) 別 issue 化選択肢の不採用**: 「残 (A) を別 issue 化して merge」は issue 数収束方針 と矛盾するため**選択肢から除外**。Round 5 まで来たということは PR スコープが大きすぎたか実装方針が不適切のため、PR 単位での再構成 (i) が筋。
+
+### Step 4: Final summary comment
+
+(A)/(B)/(C) all 0 で収束したら、1 PR コメントを投稿する。
+
+#### 4.1 投稿前 user 承認
+
+AskUserQuestion 3 択:
+- (i) 投稿する (Recommended)
+- (ii) 微調整して投稿 (markdown を user に提示 → 修正 → 再承認)
+- (iii) skip 投稿 (loop は終了、コメントは残さない)
+
+#### 4.2 summary template
+
+`````markdown
+# /iterate-review Summary
+
+PR は <R> ラウンドの review-fix で収束。全 findings 解消完了。
+
+## Findings by Round
+
+| Round | (A) | (B) | (C) | 主な topic |
+|---|---|---|---|---|
+| 1 | <n> | <n> | <n> | <"; "区切り 30 字以内> |
+| <R> | 0 | 0 | 0 | 収束 |
+
+## Resolutions
+
+### (A) PR 内修正
+- Round <R> #<n>: `path:line` <topic 50 字以内> → `<commit SHA[:7]>`
+
+### (B) 別 issue 起票
+- Round <R>: <topic> → #<新規 issue#> (新規)
+
+### (C) 既存 issue 追記
+- Round <R>: <topic> → #<既存 issue#> (追記コメント link)
+
+(各 section 該当なしなら "(なし)" のみ)
+
+## Final 受け入れ条件 (acceptance criteria)
+
+| # | 条件 | 実証 | 判定 |
+|---|---|---|---|
+| 1 | <条件> | `path:line` / `test_name` / CI log | ✓ |
+
+## Final State
+
+- CI: ✓ green (last commit `<SHA[:7]>`)
+- 受け入れ条件: 全 ✓
+- (A) 残: 0 / (B) handoff: <#N1, #N2 or なし> / (C) handoff: <#M1 or なし>
+- 並行 PR: <検出ゼロ / [#X handled]>
+- base sync: <CLEAN / 取り込み済み>
+
+[<session-id>]
+`````
+
+#### 4.3 投稿コマンド (HEREDOC + `--body-file -`)
+
+```bash
+gh pr comment <PR#> --body-file - <<'EOF'
+# /iterate-review Summary
+...
+EOF
+```
+
+inline `--body "..."` は日本語が UTF-8 破損するため禁止 (`feedback_gh_command_ja_heredoc.md`)。
+
+#### 4.4 length 対策
+
+Round 数 5 + findings 多数で極端に長くなる場合:
+- `<details>` で Round 詳細を折り畳み
+- topic 文字数制限 (30 / 50 字)
+
+`<details>` 適用例:
+
+```markdown
+<details>
+<summary>Round 1 詳細 (4 件)</summary>
+
+| # | Finding | Class | Resolution |
+|---|---|---|---|
+| 1 | ... | (A) | ... |
+
+</details>
+```
