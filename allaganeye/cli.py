@@ -14,6 +14,7 @@ from allaganeye.exceptions import (
     AllaganEyeError,
     ConfigValidationError,
     InputFileError,
+    IntegrityError,
 )
 
 _VERBOSE_HINT = "  (Run with -v / --verbose for full details)"
@@ -26,9 +27,23 @@ app = typer.Typer(
 
 
 def version_callback(value: bool) -> None:
-    if value:
-        typer.echo(f"allaganeye {__version__}")
-        raise typer.Exit()
+    if not value:
+        return
+    # #668 -- verify bundled files before reporting version. Skipped via
+    # ``ALLAGANEYE_INTEGRITY_SKIP=1`` for dev installs (handled inside
+    # integrity.check). Production Portable ZIP runs the check and exits
+    # with code 7 on bundled-file corruption / deletion.
+    from allaganeye import integrity
+
+    try:
+        integrity.check()
+    except IntegrityError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        if exc.context:
+            typer.echo(exc.verbose_detail(), err=True)
+        raise typer.Exit(code=exc.exit_code) from None
+    typer.echo(f"allaganeye {__version__}")
+    raise typer.Exit()
 
 
 @app.callback()

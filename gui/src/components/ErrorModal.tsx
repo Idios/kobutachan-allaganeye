@@ -48,9 +48,15 @@ export function ErrorModal() {
 
   if (!errorOpen) return null;
 
-  const defaultTitle = isPanic
-    ? 'アプリ内部でエラーが発生しました'
-    : '予期しないエラーが発生しました';
+  // #614 / #668: per-category default titles. errorTitle override always wins.
+  let defaultTitle: string;
+  if (errorCategory === 'integrity') {
+    defaultTitle = '同梱物の検証に失敗しました';
+  } else if (isPanic) {
+    defaultTitle = 'アプリ内部でエラーが発生しました';
+  } else {
+    defaultTitle = '予期しないエラーが発生しました';
+  }
   const title = errorTitle || defaultTitle;
 
   function handleCopyDetails() {

@@ -340,6 +340,133 @@ Describe 'Script parameters' {
   }
 }
 
+Describe 'New-IntegrityManifest' {
+  BeforeAll {
+    $script:ManifestTmpDir = Join-Path ([System.IO.Path]::GetTempPath()) "manifest-test-$(New-Guid)"
+    New-Item -ItemType Directory -Force -Path $script:ManifestTmpDir | Out-Null
+  }
+
+  AfterAll {
+    if (Test-Path $script:ManifestTmpDir) {
+      Remove-Item -Recurse -Force $script:ManifestTmpDir
+    }
+  }
+
+  It 'enumerates files and produces valid JSON with required fields' {
+    # Arrange: create a payload with files at different depths
+    $f1 = Join-Path $script:ManifestTmpDir 'allaganeye.bat'
+    Set-Content -Path $f1 -Value 'fake' -Encoding ASCII
+
+    $ffDir = Join-Path $script:ManifestTmpDir 'ffmpeg'
+    New-Item -ItemType Directory -Force -Path $ffDir | Out-Null
+    $f2 = Join-Path $ffDir 'ffmpeg.exe'
+    Set-Content -Path $f2 -Value 'fake binary' -Encoding ASCII
+
+    $libDir = Join-Path $script:ManifestTmpDir 'lib\allaganeye\audio\refs'
+    New-Item -ItemType Directory -Force -Path $libDir | Out-Null
+    $f3 = Join-Path $libDir 'fanfare.npz'
+    Set-Content -Path $f3 -Value 'fake npz' -Encoding ASCII
+
+    # Act
+    $json = New-IntegrityManifest -PayloadDir $script:ManifestTmpDir
+    $manifest = $json | ConvertFrom-Json
+
+    # Assert: schema
+    $manifest.version | Should -Be 1
+    # New-IntegrityManifest emits "yyyy-MM-ddTHH:mm:ssZ" verbatim into the
+    # JSON string. We assert against the raw $json text rather than
+    # $manifest.generated_at because PS 7 ConvertFrom-Json auto-parses ISO
+    # strings into [DateTime], and `Should -Match` then coerces via culture-
+    # specific ToString (e.g. "5/9/2026 2:38:26 AM" on en-US runners) which
+    # the regex would reject — even though Pester's error formatter then
+    # displays the value via the "o" round-trip format, masking the cause
+    # (PR #702 CI repro).
+    $json | Should -Match '"generated_at":\s*"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"'
+    $manifest.files | Should -Not -BeNullOrEmpty
+
+    # POSIX-style separators in path field
+    $paths = @($manifest.files | ForEach-Object { $_.path })
+    $paths | Should -Contain 'allaganeye.bat'
+    $paths | Should -Contain 'ffmpeg/ffmpeg.exe'
+    $paths | Should -Contain 'lib/allaganeye/audio/refs/fanfare.npz'
+
+    # Each entry has size > 0 and tolerance_bytes = 0
+    foreach ($entry in $manifest.files) {
+      $entry.size | Should -BeGreaterThan 0
+      $entry.tolerance_bytes | Should -Be 0
+    }
+  }
+
+  It 'excludes integrity-manifest.json itself from the enumeration' {
+    $extra = Join-Path $script:ManifestTmpDir 'integrity-manifest.json'
+    Set-Content -Path $extra -Value '{}' -Encoding UTF8
+
+    $json = New-IntegrityManifest -PayloadDir $script:ManifestTmpDir
+    $manifest = $json | ConvertFrom-Json
+    $paths = @($manifest.files | ForEach-Object { $_.path })
+    $paths | Should -Not -Contain 'integrity-manifest.json'
+  }
+
+  It 'excludes *.pyc files (PR #702 実機検証 で発覚: Python が import 時に再生成 → size_mismatch)' {
+    # Simulate setuptools' compiled bytecode that triggered the regression.
+    $pycDir = Join-Path $script:ManifestTmpDir 'python\Lib\site-packages\_distutils_hack\__pycache__'
+    New-Item -ItemType Directory -Force -Path $pycDir | Out-Null
+    Set-Content -Path (Join-Path $pycDir '__init__.cpython-311.pyc') -Value 'fake bytecode' -Encoding ASCII
+
+    # Also drop a non-pyc sibling under the same dir to confirm we only filter .pyc, not the dir.
+    Set-Content -Path (Join-Path $pycDir 'sibling.txt') -Value 'kept' -Encoding ASCII
+
+    $json = New-IntegrityManifest -PayloadDir $script:ManifestTmpDir
+    $manifest = $json | ConvertFrom-Json
+    $paths = @($manifest.files | ForEach-Object { $_.path })
+    @($paths | Where-Object { $_ -like '*.pyc' }) | Should -BeNullOrEmpty
+    $paths | Should -Contain 'python/Lib/site-packages/_distutils_hack/__pycache__/sibling.txt'
+  }
+
+  It 'excludes dotfile and dotdir-segment paths (PR #702 実機検証 で発覚: actions/upload-artifact strip hidden default)' {
+    # Root-level dotfile.
+    Set-Content -Path (Join-Path $script:ManifestTmpDir '.gitignore') -Value 'fake' -Encoding ASCII
+    # Dotfile deep in a tree (mimics setuptools/_vendor/.lock).
+    $vendorDir = Join-Path $script:ManifestTmpDir 'python\Lib\site-packages\setuptools\_vendor'
+    New-Item -ItemType Directory -Force -Path $vendorDir | Out-Null
+    Set-Content -Path (Join-Path $vendorDir '.lock') -Value 'fake' -Encoding ASCII
+    # File under a dotdir segment (mimics typer/.agents/skills/typer/SKILL.md).
+    $dotDir = Join-Path $script:ManifestTmpDir 'lib\typer\.agents\skills\typer'
+    New-Item -ItemType Directory -Force -Path $dotDir | Out-Null
+    Set-Content -Path (Join-Path $dotDir 'SKILL.md') -Value 'fake' -Encoding ASCII
+    # Sibling normal file at the same depth as the dotdir (must be kept).
+    $normalDir = Join-Path $script:ManifestTmpDir 'lib\typer\notdot'
+    New-Item -ItemType Directory -Force -Path $normalDir | Out-Null
+    Set-Content -Path (Join-Path $normalDir 'kept.md') -Value 'fake' -Encoding ASCII
+    # Filename containing dots (extension) at non-leading position must be kept.
+    Set-Content -Path (Join-Path $script:ManifestTmpDir 'normal.txt') -Value 'fake' -Encoding ASCII
+
+    $json = New-IntegrityManifest -PayloadDir $script:ManifestTmpDir
+    $manifest = $json | ConvertFrom-Json
+    $paths = @($manifest.files | ForEach-Object { $_.path })
+
+    # Excluded
+    $paths | Should -Not -Contain '.gitignore'
+    $paths | Should -Not -Contain 'python/Lib/site-packages/setuptools/_vendor/.lock'
+    $paths | Should -Not -Contain 'lib/typer/.agents/skills/typer/SKILL.md'
+    @($paths | Where-Object { $_ -match '(^|/)\.' }) | Should -BeNullOrEmpty
+
+    # Kept
+    $paths | Should -Contain 'lib/typer/notdot/kept.md'
+    $paths | Should -Contain 'normal.txt'
+  }
+
+  It 'enumerates files in deterministic order (PR #702 review #5: Sort-Object FullName)' {
+    # Two manifest generations on the same payload must produce byte-identical
+    # JSON so build artifacts are reproducible and git diffs stay quiet.
+    $json1 = New-IntegrityManifest -PayloadDir $script:ManifestTmpDir
+    $json2 = New-IntegrityManifest -PayloadDir $script:ManifestTmpDir
+    # generated_at timestamps differ between calls; strip them before compare.
+    $stripGen = { param($s) ($s -replace '"generated_at"\s*:\s*"[^"]*"', '"generated_at":"_"') }
+    (& $stripGen $json1) | Should -Be (& $stripGen $json2)
+  }
+}
+
 Describe 'GetPip pinning (#681)' {
   It 'pins $GetPipUrl to a versioned pypa/get-pip GitHub raw URL' {
     # bootstrap.pypa.io/get-pip.py is unversioned and PyPA refreshes it without

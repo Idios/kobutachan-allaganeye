@@ -355,6 +355,66 @@ exit /b 0
 "@
 }
 
+function New-IntegrityManifest {
+  <#
+  .SYNOPSIS
+  Generate integrity-manifest.json content by enumerating the payload directory (#668).
+
+  .DESCRIPTION
+  Walks ``$PayloadDir`` recursively, records each file's POSIX-style relative
+  path and size with ``tolerance_bytes = 0`` (strict matching), and returns a
+  JSON string. The following are excluded so the runtime check does not raise
+  false positives:
+  - ``integrity-manifest.json`` itself (chicken-and-egg).
+  - ``*.pyc`` files. Python regenerates bytecode on first import, so the
+    bytes in the downloaded ZIP differ from the build-time manifest entry.
+    PR #702 実機検証 で発覚 (size_mismatch on
+    ``python/Lib/site-packages/_distutils_hack/__pycache__/__init__.cpython-311.pyc``).
+  - Any path containing a dotfile/dotdir segment (e.g. ``.agents/``,
+    ``.lock``, ``.f2py_f2cmap``). ``actions/upload-artifact@v4`` has
+    ``include-hidden-files: false`` by default, so these files are silently
+    stripped from the ZIP that users actually receive.
+    PR #702 実機検証 で発覚 (4 missing dotfile entries).
+
+  Exposed as a function so Pester can verify the JSON shape and the
+  exclusion rules without dot-sourcing the full build path.
+  #>
+  param(
+    [Parameter(Mandatory = $true)][string]$PayloadDir
+  )
+
+  $manifestName = 'integrity-manifest.json'
+  $entries = @()
+  $base = (Resolve-Path $PayloadDir).Path
+  # PR #702 review #5: Sort by FullName for deterministic enumeration order.
+  # Get-ChildItem の order は filesystem / locale 依存で local Windows と CI
+  # runner で異なる可能性がある。manifest JSON の git diff noisy 化と build
+  # 再現性低下を避けるため明示 sort する。
+  Get-ChildItem -Path $PayloadDir -Recurse -File | Sort-Object FullName | ForEach-Object {
+    if ($_.Name -eq $manifestName) { return }
+    # PR #702 実機検証: skip Python bytecode (non-deterministic regen on import).
+    if ($_.Extension -eq '.pyc') { return }
+    $rel = $_.FullName.Substring($base.Length).TrimStart('\', '/')
+    $relPosix = $rel -replace '\\', '/'
+    # PR #702 実機検証: skip dotfile / dotdir paths (artifact upload strips
+    # hidden files). Matches `.gitignore` at root or `.agents/...` deeper.
+    if ($relPosix -match '(^|/)\.[^/]') { return }
+    $entries += [pscustomobject]@{
+      path = $relPosix
+      size = $_.Length
+      tolerance_bytes = 0
+    }
+  }
+
+  $generatedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+  $manifest = [ordered]@{
+    version = 1
+    generated_at = $generatedAt
+    files = @($entries)
+  }
+  return ($manifest | ConvertTo-Json -Depth 4)
+}
+
 # Dot-sourced (no -Version): stop here so callers only get the function
 # definitions. Pester tests rely on this behaviour.
 if ([string]::IsNullOrEmpty($Version)) { return }
@@ -488,6 +548,13 @@ $Readme = Format-ReadmeContent `
   -FFmpegSourceRef $FFmpegSourceRef `
   -IncludeGui:$TauriIncluded
 Set-Content -Path (Join-Path $PayloadDir 'README.txt') -Value $Readme -Encoding UTF8
+
+# 7.5 Integrity manifest (#668)
+# Generated after all payload steps complete so it reflects the actual files
+# Tauri build / pip install / FFmpeg copy / launcher / README produced.
+$ManifestPath = Join-Path $PayloadDir 'integrity-manifest.json'
+Set-Content -Path $ManifestPath -Value (New-IntegrityManifest -PayloadDir $PayloadDir) -Encoding UTF8
+Write-Host "Generated $ManifestPath"
 
 # 8. Compress (skipped with -SkipArchive so CI can hand the payload folder
 # directly to actions/upload-artifact; upload-artifact zips it once instead of

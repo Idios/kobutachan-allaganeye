@@ -62,3 +62,14 @@ class DetectionError(AllaganEyeError):
     """No match boundaries detected in the video."""
 
     exit_code = 4
+
+
+class IntegrityError(AllaganEyeError):
+    """Bundled binary/asset integrity check failed (#668).
+
+    Raised by :func:`allaganeye.integrity.check` when a file listed in
+    ``integrity-manifest.json`` is missing or has unexpected size beyond
+    its ``tolerance_bytes`` allowance. CLI maps this to exit code 7.
+    """
+
+    exit_code = 7

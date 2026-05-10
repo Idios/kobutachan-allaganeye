@@ -157,3 +157,29 @@ def test_detection_error_context_includes_audio_hits():
     ctx = excinfo.value.context
     assert "audio_hits" in ctx
     assert ctx["audio_hits"] == "disabled"
+
+
+def test_integrity_error_exit_code_seven():
+    """IntegrityError reports exit_code 7 (#668)."""
+    from allaganeye.exceptions import IntegrityError
+
+    exc = IntegrityError("bundled file missing")
+    assert exc.exit_code == 7
+    assert isinstance(exc, AllaganEyeError)
+    assert exc.context == {}
+
+
+def test_integrity_error_context_renders_in_verbose():
+    """IntegrityError uses base verbose_detail for context dicts (#668)."""
+    from allaganeye.exceptions import IntegrityError
+
+    exc = IntegrityError(
+        "integrity check failed",
+        context={
+            "missing": ["lib/allaganeye/audio/refs/fanfare.npz"],
+            "size_mismatch": [],
+        },
+    )
+    detail = exc.verbose_detail()
+    assert "missing:" in detail
+    assert "size_mismatch:" in detail

@@ -146,3 +146,88 @@ describe('installGlobalErrorListener', () => {
     expect(useErrorStore.getState().logDir).toBe('C:\\install\\logs');
   });
 });
+
+describe('integrity-error event (#668)', () => {
+  let unlisten: (() => void) | null = null;
+
+  beforeEach(() => {
+    useErrorStore.getState().dismissError();
+    useErrorStore.getState().setLogDir(null);
+    invokeMock.mockReset();
+    listenMock.mockReset();
+    invokeMock.mockResolvedValue('C:\\install\\logs');
+    listenMock.mockResolvedValue(() => {});
+    unlisten = null;
+  });
+
+  afterEach(() => {
+    if (unlisten) {
+      try {
+        unlisten();
+      } catch {
+        // ignore
+      }
+      unlisten = null;
+    }
+  });
+
+  it('shows ErrorModal with integrity category when integrity-error fires', async () => {
+    type IntegrityHandler = (event: { payload: unknown }) => void;
+    const captured: { integrity?: IntegrityHandler } = {};
+    listenMock.mockImplementation(
+      async (name: string, h: IntegrityHandler) => {
+        if (name === 'integrity-error') captured.integrity = h;
+        return () => {};
+      },
+    );
+    unlisten = installGlobalErrorListener();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(captured.integrity).toBeDefined();
+    captured.integrity!({
+      payload: {
+        missing: ['lib/allaganeye/audio/refs/fanfare.npz'],
+        sizeMismatch: [],
+        logPath: '/install/logs/error-20260508.log',
+      },
+    });
+
+    const state = useErrorStore.getState();
+    expect(state.errorOpen).toBe(true);
+    expect(state.errorCategory).toBe('integrity');
+    expect(state.isPanic).toBe(true);
+    expect(state.isRecoverable).toBe(false);
+    expect(state.errorMessage).toContain('lib/allaganeye/audio/refs/fanfare.npz');
+    expect(state.logDir).toContain('/install/logs');
+  });
+
+  it('formats both missing and size_mismatch arrays in errorMessage', async () => {
+    type IntegrityHandler = (event: { payload: unknown }) => void;
+    const captured: { integrity?: IntegrityHandler } = {};
+    listenMock.mockImplementation(
+      async (name: string, h: IntegrityHandler) => {
+        if (name === 'integrity-error') captured.integrity = h;
+        return () => {};
+      },
+    );
+    unlisten = installGlobalErrorListener();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(captured.integrity).toBeDefined();
+    captured.integrity!({
+      payload: {
+        missing: ['ffmpeg/ffmpeg.exe'],
+        sizeMismatch: [
+          { path: 'allaganeye-gui.exe', expected: 1000, actual: 500 },
+        ],
+        logPath: '/install/logs/error-20260508.log',
+      },
+    });
+
+    const msg = useErrorStore.getState().errorMessage ?? '';
+    expect(msg).toContain('ffmpeg/ffmpeg.exe');
+    expect(msg).toContain('allaganeye-gui.exe');
+    expect(msg).toContain('1000');
+    expect(msg).toContain('500');
+  });
+});

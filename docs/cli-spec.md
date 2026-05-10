@@ -371,6 +371,7 @@ timestamp,brightness
 | 3 | FFmpeg / ffprobe エラー |
 | 4 | 試合境界が見つからない |
 | 5 | 設定値不正（パラメータの範囲外等） |
+| 7 | 同梱物欠損 (Portable ZIP integrity-manifest.json で listed file が missing / size 不一致) #668 |
 
 ### エラー表示 (#428 / #405 matrix v2)
 

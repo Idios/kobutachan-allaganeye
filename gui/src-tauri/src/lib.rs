@@ -23,6 +23,7 @@ use tower_http::services::ServeFile;
 use uuid::Uuid;
 
 mod error;
+mod integrity;
 mod logging;
 
 use error::AppError;
@@ -2715,6 +2716,25 @@ pub fn run() {
         restart_panic_msg.is_some()
     );
 
+    // #668 -- Integrity check (release builds only). The check itself runs
+    // synchronously here so the result is captured for the setup hook to
+    // emit after the webview is ready. Debug builds always get None so
+    // `npm run tauri dev` works without a built payload.
+    //
+    // PR #702 review #3: use a runtime `cfg!()` guard rather than a
+    // compile-time `#[cfg(...)]` so clippy on debug builds still considers
+    // every integrity item "used" (the call site is a real expression in
+    // both branches). Compiler optimises the dead branch out in debug.
+    let integrity_failure: Option<integrity::IntegrityErrorPayload> = if cfg!(not(debug_assertions)) {
+        integrity::check_install_dir()
+    } else {
+        None
+    };
+    eprintln!(
+        "[startup] integrity-check failure: {}",
+        integrity_failure.is_some()
+    );
+
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -2732,6 +2752,17 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
                     let _ = app_handle.emit("panic-from-previous-session", panic_line);
+                });
+            }
+
+            // #668 -- emit integrity-error after the webview has had a
+            // chance to attach its listener (same 150ms idiom as the
+            // panic-from-previous-session emit above).
+            if let Some(payload) = integrity_failure.clone() {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                    let _ = app_handle.emit("integrity-error", payload);
                 });
             }
             Ok(())

@@ -167,6 +167,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | 3 | FFmpeg / ffprobe エラー |
 | 4 | 検知失敗（試合境界が見つからない） |
 | 5 | 設定値不正（パラメータの範囲外等） |
+| 7 | 同梱物欠損 (Portable ZIP integrity-manifest.json で listed file が missing / size 不一致、#668) |
 
 ### 外部依存
 

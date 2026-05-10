@@ -230,3 +230,54 @@ describe('ErrorModal', () => {
     expect(dialog?.getAttribute('aria-labelledby')).toBe('ae-error-title');
   });
 });
+
+describe('ErrorModal integrity category (#668)', () => {
+  beforeEach(() => {
+    useErrorStore.getState().dismissError();
+    useErrorStore.getState().setLogDir(null);
+  });
+
+  it('renders integrity-specific default title when no override given', () => {
+    useErrorStore.getState().showError({
+      errorMessage: '1 missing, 0 size mismatch',
+      errorCategory: 'integrity',
+      isPanic: true,
+      isRecoverable: false,
+    });
+
+    render(<ErrorModal />);
+
+    // Default title for integrity category
+    expect(screen.getByText('同梱物の検証に失敗しました')).toBeInTheDocument();
+  });
+
+  it('shows the close-app button (isPanic) and hides the dismiss button (isRecoverable=false)', () => {
+    useErrorStore.getState().showError({
+      errorTitle: '同梱物の検証に失敗しました',
+      errorMessage: '1 missing, 0 size mismatch',
+      errorHint: 'Portable ZIP を再展開してください。',
+      errorCategory: 'integrity',
+      isPanic: true,
+      isRecoverable: false,
+    });
+
+    render(<ErrorModal />);
+
+    expect(screen.getByRole('button', { name: 'アプリを終了' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '閉じる' })).not.toBeInTheDocument();
+  });
+
+  it('displays the re-extract hint from errorHint', () => {
+    useErrorStore.getState().showError({
+      errorMessage: '1 missing',
+      errorHint: 'Portable ZIP を再展開してください。',
+      errorCategory: 'integrity',
+      isPanic: true,
+      isRecoverable: false,
+    });
+
+    render(<ErrorModal />);
+
+    expect(screen.getByText('Portable ZIP を再展開してください。')).toBeInTheDocument();
+  });
+});
