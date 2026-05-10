@@ -214,9 +214,13 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 
 L2 からは**単一ワークツリー + skill ベースディスパッチ**を採用。詳細は `docs/l2-workflow.md` を参照。
 
-- 既存 skill: `/review-pr`, `/enforce-acceptance-criteria`, `/scope-guard`, `/create-task`, `/close-issue`, `/release`
+- 既存 skill: `/review-pr`, `/iterate-review`, `/enforce-acceptance-criteria`, `/scope-guard`, `/create-task`, `/close-issue`, `/release`
 - 計画立案・実装・PR テストは Plan モード + 通常ツール + TodoWrite で代替
 - ユーザー (Idios) が戦略・方針を判断し、Claude は選択肢提示と実装を担う
+
+### `/iterate-review` workflow と (A) 強優先方針
+
+PR 作成後は `/iterate-review <PR#>` で review-fix ループを自走させる (user 手動 or agent 自動)。本 skill は **「指摘は原則すべて PR 内対応」** の (A) 強優先方針 + (B) 厳格 3 条件 AND + 握り潰し防止 validation により、CI failure / latent issue / 隣接 lint 違反 等を当 PR 内で消化し、派生 issue 数を最小化する (issue 数収束)。
 
 ### Iron Law と強制メカニズム
 

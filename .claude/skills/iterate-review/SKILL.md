@@ -1,0 +1,376 @@
+---
+name: iterate-review
+description: PR 作成後の review-fix ループを subagent dispatch で自動化する。`/review-pr` を fresh subagent で実行し findings を構造化 return させ、主セッションが (A) 修正 / (B)(C) handoff / push / CI wait を行い、Step 5b 表が全ゼロまたは Round 5 / 発散検知まで繰り返す。収束時は summary コメント 1 個を投稿。`/review-pr` の per-finding comment 投稿は本 skill が代替する形で廃止する。
+user-invocable: true
+argument-hint: <PR番号>
+---
+
+PR 作成後の review → fix → review ループを自動化する。指定された PR をレビューと修正のループで収束させ、最終的に summary コメントを投稿する。
+
+## 起動経路 (2 系統)
+
+- **user 手動**: `/iterate-review <PR#>` を Idios が直接 invoke
+- **agent 自動**: PR 作成セッション (= 実装した主セッション) が PR 作成完了直後に `/iterate-review <PR#>` を skill として自走呼出。Iron Law 6 Pre-flight 通過後に呼ぶ前提
+
+## 主要フロー (overview)
+
+1. Step 0: Pre-flight (PR open / draft / state 確認のみ。base sync は subagent dispatch 内 /review-pr Step 2 に委譲)
+2. Step 1: ループ初期化 (Round=1, handoff_state=[], findings_history={}, divergence_counter=0)
+3. Step 2: Round N 実行 (subagent dispatch → parse → AskUserQuestion → fix/handoff → push → CI wait)
+4. Step 3: 判定 (収束 / 発散 / 打ち切り)
+5. Step 4: Final summary comment (HEREDOC で投稿、AskUserQuestion 3 択で承認)
+6. Step 5: LGTM 候補通知 (user merge → /close-issue handoff)
+
+詳細仕様: [docs/superpowers/specs/2026-05-10-iterate-review-and-review-pr-redesign.md](../../docs/superpowers/specs/2026-05-10-iterate-review-and-review-pr-redesign.md)
+
+## 手順
+
+### Step 0: Pre-flight
+
+PR の状態を確認し、ループ可能か判定する。
+
+```bash
+gh pr view $ARGUMENTS --json state,isDraft,headRefName,baseRefName,closingIssuesReferences
+```
+
+判定:
+
+- `state == CLOSED` または `state == MERGED` → 「ループ対象外」エラー終了
+- `isDraft == true` → AskUserQuestion 3 択 (draft でも進める / draft 解除を待つ / abort)
+- それ以外 (state == OPEN + isDraft == false) → Step 1 へ
+
+#### Base sync + 並行 PR 確認
+
+base 最新化 + 直近マージ PR + 並行 worktree PR 重複確認は `/review-pr` Step 2 を踏襲。本 skill では `/review-pr` Step 2 へリンクし、subagent dispatch (Step 2.1) 内で実行されることに依拠して再掲しない。Pre-flight 段階では `gh pr view` の取得のみで十分。
+
+### Step 1: ループ初期化
+
+会話 context 内で以下を保持:
+
+- `Round = 1`
+- `handoff_state = []` (要素: `{topic, classification, issue_number, round}`)
+- `findings_history = {}` (key: round 番号, value: Step 5b 表)
+- `divergence_counter = 0`
+
+### Step 2: Round N 実行
+
+#### Step 2.1 Subagent dispatch
+
+`Agent` tool (subagent_type: `general-purpose`) で fresh subagent を spawn。**毎ラウンド新しい subagent** を起動 (context 汚染回避)。
+
+prompt template (固定):
+
+````text
+__ITERATE_REVIEW_SUBAGENT_MODE__
+
+PR #<N> を review してください。`/review-pr` skill を invoke しますが、以下の特例を必ず適用してください:
+
+1. Step 6 / Step 7 の AskUserQuestion / `gh pr comment` 投稿 を SKIP
+2. Step 5b トリアージ表を markdown 表形式で final message に含める
+3. 以下の deferred topics は findings から exclude:
+   <handoff_state を箇条書き、空なら "(なし)">
+4. PR body の `<!-- iterate-review:deferred:start --> ... <!-- iterate-review:deferred:end -->` ブロック内 topics も exclude
+5. Step 3 の受け入れ条件逐条検証結果 (`/enforce-acceptance-criteria`) も final message に含める
+6. **(A) 強優先方針 + 握り潰し禁止**:
+   - **すべての finding に必ず分類 (A) / (A)* / (B) / (C) のいずれかを付与** (`(A)*` は ambiguous case の cross-reference 記法)
+   - **指摘は原則すべて PR 内対応 (Iron Law 1 担保)**: 観察コメントのみ / スコープ対象外と自己判断 / 軽微だから無視 は **すべて NG** (parse error として orchestrator が再 dispatch)
+   - **(A) を最優先**: CI failure / latent type error / 隣接ファイル lint 違反 等は全部 (A)
+   - **(B) は厳格 3 条件 AND 必須**: `別領域・別機能` AND `1 セッション超の独立設計が必要` AND `本 PR 同梱で受け入れ条件検証が破綻`。**サイズ単独 / scope-out 単独 / 受け入れ条件直結性単独では (B) 化不可**
+   - **(C) は同テーマ既存 issue が存在する場合のみ**
+   - 判定に迷う finding は `(A)*` と記載し、ambiguous_judgments に詳述する (`ambiguous` 単独記載は禁止。`(A)*` が正式記法 = §G.2.1 item 5 準拠)
+7. final message は以下の構造で return:
+
+   ```markdown
+   ## acceptance_criteria_status
+   | # | 条件 | 実証 | 判定 |
+
+   ## findings_table
+   | # | 摘出内容 | 出所 | 処置 | 根拠 |
+
+   ## ambiguous_judgments
+   - <subagent が auto 判断できなかった点。空でもセクション自体は必須記載>
+
+   ## recommendation
+   <LGTM / fix-required / divergent>
+
+   ## meta
+   - mergeStateStatus: <CLEAN/BEHIND/...>
+   - 並行 PR: <検出ゼロ / [#X handled]>
+   - CI status: <green/failing/pending>
+   ```
+````
+
+#### Step 2.2 Findings parse + 握り潰し防止 validation
+
+Agent tool の戻り値 markdown から `## findings_table` セクションの表行を抽出。各行を `{round, n, finding, source, classification, rationale}` として `findings_history[round]` に蓄積。
+
+**抽出時の必須 validation (握り潰し防止)**:
+
+1. **全 finding に classification がある**: 各行の処置列が `(A)` / `(A)*` / `(B)` / `(C)` のいずれか。`(A)*` は ambiguous_judgments セクションとの cross-reference が必須 (subagent が自動判断できなかった finding に使用、`ambiguous` 単独記載は禁止)。空欄 / 「観察のみ」 / 「対象外」/ `ambiguous` 単独等は **parse error**。Round 2+ で `handoff_state` に既登録の topic が再度 findings_table に含まれる場合も **parse error** (= subagent が exclusion を尊重していない)
+2. **(B) 主張行には trigger 根拠列がある**: rationale 列に「別領域・別機能 AND 1 セッション超 AND 受け入れ条件検証破綻」3 条件への該当言及があるか。1 条件のみの (B) は **parse error** (= subagent が誤分類)
+3. **subagent return に「無視」「観察のみ」「スコープ対象外」のキーワードを単独で含む行がない**: 文字列 grep で検出、ヒットしたら **parse error**
+4. **`ambiguous_judgments` セクションが存在する** (空でもセクション自体は必須): 不在は parse error
+5. **(A) 強優先方針違反検出**: `latent issue / CI failure / 隣接ファイル lint 違反 / 古い API 残存 / 古い doc 記述` 等の典型 (A) trigger を含む finding が (A) 以外 ((A)* / (B) / (C)) に分類されている場合は **parse error**
+
+**parse error 時の対処**:
+
+- 1 度目: 主セッションが subagent に対して具体的に欠陥を伝えて再 dispatch (Agent tool 再実行)。具体例: 「Step 5b 表 5 行目の (B) は trigger 根拠が `スコープ外` のみで 3 条件 AND 不成立。(A) に再分類して return せよ」
+- 2 度目: AskUserQuestion で user に「subagent が分類規約を満たさない findings を返している。手動でトリアージするか abort するか」を提示
+
+#### Step 2.3 Round summary AskUserQuestion (1 round 1 回のみ)
+
+Round N の集計表示 + AskUserQuestion 2 択。Round 開始時の主要 gate (例外: Step 2.5 (B) 3+ bulk Iron Law 2 gate / Step 2.7 timeout gate / ambiguous_judgments 拡張)。
+
+提示内容:
+
+````text
+Round N findings:
+- (A): <件数>
+- (B): <件数>
+- (C): <件数>
+- 受け入れ条件 (Step 3): <全 ✓ / 部分 / 全 ×>
+- ambiguous_judgments: <件数> (詳細は別途展開)
+
+選択:
+- (i) proceed (本 round の findings を処理) (Recommended、ambiguous なし時)
+- (ii) abort (loop 中断、現状で /create-task など手作業に切替)
+````
+
+`ambiguous_judgments` がある場合、追加 AskUserQuestion でユーザー判断を仰ぐ。1 AskUserQuestion call は最大 4 questions まで束ねられる仕様 (= AskUserQuestion tool 上限) を活用し、5 件以上は複数 call に分割。1 round あたりの AskUserQuestion 呼び出し総数は「Round summary 1 + ambiguous_judgments の必要分 + Step 2.5/2.7 の例外 gate」を上限とする。
+
+`<N>` には PR 番号 ($ARGUMENTS) を埋める。`<handoff_state を箇条書き>` には Step 1 で初期化した `handoff_state` の内容 (空なら "(なし)") を埋める。
+
+#### Step 2.4 (A) findings 修正
+
+各 (A) に対し主セッションが:
+
+1. 該当 path:line を Read で内容確認
+2. Edit で修正
+3. 変更 path に応じた local check (Iron Law 6 サブ条 = `docs/l2-workflow.md` §「PR 作成 path 別自動チェック」):
+   - Python (`*.py`): `ruff check . && ruff format --check . && pyright && pytest`
+   - GUI (`gui/src/**`, `gui/src-tauri/**`): `npm run lint && npm run typecheck && npm test && npm run build && cargo check`
+   - Markdown (`docs/**.md`, `*.md`): `bash scripts/check-markdownlint.sh`
+4. **1 round = 1 commit** で集約: 全 (A) を 1 つの commit にまとめる (round 単位の atomicity を確保、Round 別 SHA を summary コメントで参照しやすくするため)。message テンプレ: `fix(round-N): <要約> (Refs #<元 issue>)`。例外として、push 失敗で reset → 再 commit が必要な場合のみ複数 commit になる可能性を許容
+
+#### Step 2.5 (B) findings handoff (新規 issue 起票、限定例外パス)
+
+> **(B) 起票は限定例外 (Iron Law 3 担保)**: 「指摘は原則すべて PR 内対応」(§1 (A) 強優先方針) に従い、ほとんどの finding は (A) で消化される。本 step に来るのは Step 2.2 validation を通過した「真に (B) trigger 3 条件 AND 該当」の finding のみ。スコープ単独・サイズ単独・受け入れ条件直結性単独で (B) 化された finding はここに到達しない (= validation で reject される)。scope-creep の受け皿は Iron Law 3 担保。
+>
+> **注 (C2 設計意図)**: 本 skill が dispatch する **subagent mode では §G.2.1 通り AND 3 条件** (`別領域・別機能` AND `1 セッション超の独立設計が必要` AND `本 PR 同梱で受け入れ条件検証が破綻`) で厳格判定する。**standalone `/review-pr` 単体使用時は OR 3 択** (`外部依存・側チケット調整が必要` 単独でも (B) trigger として有効) を許容する。この非対称は **意図的設計**: standalone は人間レビュアーが文脈判断するため柔軟性を持つ、subagent mode は機械処理のため parse error リスクを減らすべく厳格化している。
+
+各 (B) に対し:
+
+1. **(B) trigger 3 条件 AND 達成** を再確認: `別領域・別機能` AND `1 セッション超の独立設計が必要` AND `本 PR 同梱で受け入れ条件検証が破綻` の **すべて満たす** ことを rationale で確認。1 つでも欠ける場合は (A) に再分類して Step 2.4 へ戻す
+2. **3 件以上の (B) は Iron Law 2 に従い AskUserQuestion で全件確認** (1 件 sample 提示 + 「全件 OK / 個別調整 / やめる」3 択)。3 件以上の (B) が一度に出るのは **設計疑い** のシグナルであり、user に「PR スコープが大きすぎる可能性」を提示
+3. 2 件以下はそのまま `/create-task` で起票
+4. 起票後の issue 番号を `handoff_state` に追加
+5. PR body の deferred block を更新:
+
+   ```bash
+   gh pr edit $ARGUMENTS --body-file - <<'EOF'
+   <既存 body>
+
+   <!-- iterate-review:deferred:start -->
+   ## Deferred Findings (managed by /iterate-review)
+
+   - [B] Round 1: <topic 50 字以内> → deferred-to: #708 (新規)
+   - [C] Round 2: <topic> → deferred-to: #680 (既存)
+
+   <!-- iterate-review:deferred:end -->
+   EOF
+   ```
+
+#### Step 2.6 (C) findings handoff (既存 issue 追記、Iron Law 3 担保)
+
+1. 既存 issue へ `gh issue comment <既存 issue#> --body-file -` で方針記録 (HEREDOC、UTF-8 対策。`feedback_gh_command_ja_heredoc.md` 準拠):
+
+   ```bash
+   gh issue comment <既存 issue#> --body-file - <<'EOF'
+   ## /iterate-review Round <N> 由来の追記
+
+   PR #<PR#> をレビュー中に本 issue (#<既存 issue#>) と関連する課題を発見。
+   
+   - **finding**: <topic 50 字以内>
+   - **本 PR スコープ判定**: (C) 既存 issue 追記 (重複起票回避)
+   
+   詳細は PR #<PR#> 内で議論。
+   
+   [<session-id>]
+   EOF
+   ```
+
+2. `handoff_state` 追加 + PR body deferred block 更新 (Step 2.5 同様)
+
+#### Step 2.7 Push + CI wait
+
+- `git push origin <head-branch>`
+- `gh pr checks $ARGUMENTS --watch` で CI 状態確定 (success / failure) を 15 分まで待機
+- **CI green (success)**: 次 round へ進める
+- **CI red (failure)**: 本 step では abort しない。次 round の `/review-pr` Step 4 が CI 失敗を findings に拾う前提 (`/review-pr` Step 4 「失敗あり: 失敗ジョブ名と概要を user に報告」を踏襲)。CI red が複数 round 連続で再発生する場合は §2.6 divergence 検知で打切り判定
+- **timeout (15 分超)**: AskUserQuestion 3 択 (待ち続ける (timeout 30 分に延長して poll 継続) / CI 無視で次 round / abort)
+
+実装ノート: `gh pr checks --watch` の timeout は CLI 側で直接制御できないため、以下のいずれかで wrap する:
+
+- **Linux / macOS**: `timeout 900 gh pr checks ...`
+- **Windows + Git Bash (coreutils 版 timeout 利用可能時)**: `timeout 900 gh pr checks ...` (Git Bash 環境で `which timeout` が `/usr/bin/timeout` 等を指すこと、Windows 標準の `timeout.exe` ではないことを確認)
+- **PowerShell (Windows 標準)**: `Start-Job -ScriptBlock { gh pr checks $args[0] --watch } -ArgumentList <PR#> | Wait-Job -Timeout 900`
+
+### Step 3: 収束 / 発散 / 打ち切り判定
+
+#### Step 3.1 収束 (success path)
+
+(A)/(B)/(C) all 0 → Step 4 (Final summary comment) へ。
+
+#### Step 3.2 発散検知
+
+- `divergence_counter` 管理:
+  - Round N の (A) 件数 `>=` 前 round の (A) 件数 (= 減少していない、増えた場合も含む) → `counter++`
+  - Round N の (A) 件数 `<` 前 round の (A) 件数 (= 減少) → `counter = 0` にリセット
+  - Round 1 (前 round 不在) の場合は counter 初期値 0 のまま
+- `counter == 3` (= 3 round 連続で減少なし) → user gate 2 択
+
+#### Step 3.3 ラウンドキャップ
+
+Round == 5 + 未収束 → user gate 2 択。
+
+#### Step 3.4 user gate 2 択 (発散・キャップ共通)
+
+```text
+- (i) PR 破棄 + scope 整理 + 再 PR (Recommended)
+    → user に `gh pr close` (branch 維持、後続調査用に残す) を**提案** (skill は実行しない、Iron Law 4 担保)
+    → /scope-guard で残課題を整理し sub-PR に分割
+    → /create-task で必要なら子 issue を整備
+    → 各 sub-PR を順次作成 → /iterate-review で個別収束
+    → user 主導の workflow、本 skill は abort して引き継ぐ
+- (ii) abort (state を残して手動介入)
+    → /iterate-review は終了、PR / branch は現状維持
+    → user が手動で残 finding を判断 (merge する / 修正続行 / scope-guard 等)
+```
+
+> **(iii) 残 (A) 別 issue 化選択肢の不採用**: 「残 (A) を別 issue 化して merge」は issue 数収束方針 と矛盾するため**選択肢から除外**。Round 5 まで来たということは PR スコープが大きすぎたか実装方針が不適切のため、PR 単位での再構成 (i) が筋。残 (A) を逃がし弁にしないことで「(A) 内消化」原則を機構的に担保する (Iron Law 3 担保)。
+>
+> **(ii) abort 選択後の運用**: user が手動で残 finding を判断する (merge する / 修正続行 / /scope-guard 等)。/iterate-review は終了し PR / branch は現状維持のため、user 主導の workflow に切り替わる。
+
+### Step 4: Final summary comment
+
+(A)/(B)/(C) all 0 で収束したら、1 PR コメントを投稿する。
+
+#### 4.1 投稿前 user 承認
+
+> Round 1 で 0 findings (即収束) でも summary 投稿は実施推奨。skip 選択肢 (iii) は loop 終了のみで、コメント未投稿の場合 PR の review-fix 履歴が残らない。受け入れ条件実証記録としての価値があるため (i) が Recommended。
+
+AskUserQuestion 3 択:
+
+- (i) 投稿する (Recommended)
+- (ii) 微調整して投稿 (markdown を user に提示 → 修正 → 再承認)
+- (iii) skip 投稿 (loop は終了、コメントは残さない)
+
+#### 4.2 summary template
+
+`````markdown
+# /iterate-review Summary
+
+PR は <R> ラウンドの review-fix で収束。全 findings 解消完了。
+
+## Findings by Round
+
+| Round | (A) | (B) | (C) | 主な topic |
+|---|---|---|---|---|
+| 1 | <n> | <n> | <n> | <"; "区切り 30 字以内> |
+| <R> | 0 | 0 | 0 | 収束 |
+
+## Resolutions
+
+### (A) PR 内修正
+- Round <R> #<n>: `path:line` <topic 50 字以内> → `<commit SHA[:7]>`
+
+### (B) 別 issue 起票
+- Round <R>: <topic> → #<新規 issue#> (新規)
+
+### (C) 既存 issue 追記
+- Round <R>: <topic> → #<既存 issue#> (追記コメント link)
+
+(各 section 該当なしなら "(なし)" のみ)
+
+## Final 受け入れ条件 (acceptance criteria)
+
+| # | 条件 | 実証 | 判定 |
+|---|---|---|---|
+| 1 | <条件> | `path:line` / `test_name` / CI log | ✓ |
+
+## Final State
+
+- CI: ✓ green (last commit `<SHA[:7]>`)
+- 受け入れ条件: 全 ✓
+- (A) 残: 0 / (B) handoff: <#N1, #N2 or なし> / (C) handoff: <#M1 or なし>
+- 並行 PR: <検出ゼロ / [#X handled]>
+- base sync: <CLEAN / 取り込み済み>
+
+[<session-id>]
+`````
+
+#### 4.3 投稿コマンド (HEREDOC + `--body-file -`)
+
+```bash
+gh pr comment <PR#> --body-file - <<'EOF'
+# /iterate-review Summary
+...
+EOF
+```
+
+inline `--body "..."` は日本語が UTF-8 破損するため禁止 (`feedback_gh_command_ja_heredoc.md`)。
+
+#### 4.4 length 対策
+
+Round 数 5 + findings 多数で極端に長くなる場合:
+
+- `<details>` で Round 詳細を折り畳み
+- topic 文字数制限 (30 / 50 字)
+
+`<details>` 適用例:
+
+```markdown
+<details>
+<summary>Round 1 詳細 (4 件)</summary>
+
+| # | Finding | Class | Resolution |
+|---|---|---|---|
+| 1 | ... | (A) | ... |
+
+</details>
+```
+
+### Step 5: 次の handoff
+
+「LGTM 候補です。`gh pr merge $ARGUMENTS --squash` で merge してください。マージ後は `/close-issue <issue#>` で実測再検証してから手動クローズしてください」を user に提示。
+
+本 skill 内で merge / close は実行しない (Iron Law 4 + 5 担保)。
+
+## 環境制約・フォールバック
+
+- **§A 孤立 PR (issue 紐付けなし)**: `/review-pr` §A を継承。subagent prompt に「孤立 PR fallback 適用」と明記
+- **§B `/enforce-acceptance-criteria` 実行不可**: subagent 側で fallback、本 skill は subagent 結果に従う
+- **session crash mid-loop**: state は会話 + PR body deferred block。再 invoke で deferred block + 残 commit から推論して継続可能 (PR body は永続)
+
+## Red Flags (本 skill 固有、Iron Law Red Flags と呼応)
+
+| 浮かんだ思考 | 実態 |
+| --- | --- |
+| 「subagent の findings を信じすぎず、自分で再判定」 | Iron Law 5 違反。subagent が Step 5b で出した分類は尊重する。再判定は user gate のみ |
+| 「Round 6 で打ち切らずあと 1 回」 | divergence パターン。skill 規定の cap (5) を破らない |
+| 「(A) 修正で副次的に (B) trigger 該当の変更が発生」 | scope-guard 案件。Step 2.4 中に追加 (B) 判定なら次 round へ持ち越さず即 handoff (ただし 3 条件 AND 厳格判定) |
+| 「summary コメント前に LGTM コメントを別途投稿」 | 二重投稿。final summary が LGTM の役割も兼ねる |
+| 「per-finding でコメント投稿した方が個別追跡しやすい」 | 仕様違反。per-finding 投稿は本設計で全廃 (ユーザー指示) |
+| 「軽微な指摘だから observe 表記で済ませよう」 | **握り潰しパターン**。Step 2.2 validation で parse error。すべての finding は (A)/(A)*/(B)/(C) のいずれかに必ず分類 |
+| 「scope 外だから (B) 起票しよう」 | (A) 強優先方針違反。scope 外単独は (B) trigger 不成立。3 条件 AND を確認、満たさなければ (A) |
+| 「CI が flaky / 環境起因だから無視で OK」 | 仕様違反。CI failure / latent issue / 環境起因問題はすべて (A) で PR 内対応 |
+| 「Round 5 で残った 1 件くらい別 issue にしておこう」 | (iii) 不採用方針違反。残 (A) を別 issue に逃がさず、PR 破棄 (i) または手動 abort (ii) のいずれかで対応 |
+| 「issue 数を増やしたくないが、本件は scope-out なので例外」 | (B) trigger 3 条件 AND を再確認。1 つでも欠ければ (A)。「例外」が頻発するのは判定基準のブレ |
+
+## 呼び出し例
+
+```text
+/iterate-review 443
+```
+
+ユーザーが PR 番号を指定して呼び出す、または PR 作成セッションが skill として自走呼出する。

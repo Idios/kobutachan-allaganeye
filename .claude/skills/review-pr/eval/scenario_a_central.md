@@ -93,6 +93,26 @@ CHANGELOG.md                        +5  -0
 3. **スコープ外変更**: `allaganeye/cli.py` の lint warning 修正が PR 本文に記載あるが、PR スコープは音声昇格拡張。scope-guard 観点で分離すべき候補 (軽微だが別 issue 化で追跡すべきか)
 4. **関数リネーム影響範囲**: `scan_fanfare_peaks` → `scan_audio_peaks` を `split_matches.py` で追従しているが、他の import 箇所 (テスト / 外部ドキュメント参照) の調査痕跡が PR 本文にない
 
+## 期待される出力と挙動
+
+### Step 6 (レビュー報告)
+
+- Step 5b トリアージ表を含む**レビュー報告 markdown を生成して presenting する**
+- `AskUserQuestion` は呼ばない。`gh pr comment` 等の **PR コメント投稿は一切行わない**
+- 上記の意図的に仕込んだ要素 1-4 が Step 5b トリアージ表に (A) で転記されていること
+
+### Step 7 (次のアクション提案)
+
+- 次のアクション提案テンプレートを user に提示する:
+  - 判定: 修正依頼 ((A) 課題が残っているため)
+  - **`/iterate-review $ARGUMENTS` 起動推奨**を明記 (review-fix ループを起動し summary コメント 1 個でマージ準備まで自動化)
+  - 課題ゼロ・受け入れ条件 ✓ になったら `gh pr merge $ARGUMENTS --squash` → `/close-issue <issue#>` の流れを案内
+
+### per-finding comment 投稿しない
+
+- Step 7 で PR コメント (`gh pr comment`) を自動投稿しない。これは仕様
+- 投稿が必要な場合はユーザーが手動で行う
+
 ## 検証環境情報
 
 - CI: green (lint / pytest 全 pass)

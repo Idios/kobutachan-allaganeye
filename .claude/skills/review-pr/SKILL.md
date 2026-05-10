@@ -191,11 +191,14 @@ Step 3 (受け入れ条件未達) / Step 4 (CI 失敗) / Step 5 (ロジック・
 
 **処置分類 (3 択、(A) Recommended)**
 
-- **(A) PR コメントで本 PR 内修正依頼 (Recommended、デフォルト)**: 本 PR 内で追加修正してマージまで進める。Step 7「修正依頼コメント投稿」で PR 作成セッションに依頼。**摘出課題はまずこの選択肢を検討する**
+- **(A) PR コメントで本 PR 内修正依頼 (Recommended、デフォルト)**: 本 PR 内で追加修正してマージまで進める。Step 7 の次のアクション提案で `/iterate-review` ループを起動し PR 作成セッションに依頼。**摘出課題はまずこの選択肢を検討する**
 - **(B) 新規 issue 起票 (限定例外)**: 以下の trigger のいずれかに該当する課題のみ。Step 7 完了後または Step 8 マージ後に `/create-task` で起票:
   - **別領域・別機能** (例: 別ファイル群のセキュリティ問題、別レイヤー実装、別担当領域) で着手 issue スコープ外
   - **大規模リファクタ** (独立設計が必要、工数 1 セッション超、本 PR に同梱すると diff が肥大化して受け入れ条件検証が破綻する)
   - **外部依存・側チケット調整が必要** (上流ライブラリ変更、別リポ修正待ち等)
+
+  > ※ subagent mode (`/iterate-review` 経由) 時は §G.2.1 item 3 の AND 3 条件が優先 (機械処理 parse error 抑止)。standalone mode と subagent mode の非対称は意図的設計。
+
 - **(C) 既存 issue 追記 (限定例外)**: 既存 issue の受け入れ条件・残タスクに該当するため、当該 issue にコメントで方針記録を追記。同 issue の重複起票を避けるとき
 
 **AskUserQuestion で処置選択肢を提示する場合**: (A) を必ず最初の選択肢として `(Recommended)` ラベル付きで表示する。**`(Recommended)` ラベルは表示順規約であって最終選択結果を強制するものではない**。(B) / (C) は限定例外 trigger を `description` フィールドに明記する。**(B) trigger 強該当時は description で具体的に該当根拠を説明** する (例: 「audio module は本 PR スコープ外 = 別レイヤー、独立 security 修正 → (B) 該当」)。例:
@@ -254,14 +257,11 @@ Step 5 / 5a / 5b で root cause (literal mismatch / 古い API 残存 / DCE 誇�
 
 「explicit な 4 箇所」を依頼すると implementer が同 file 内の他 hits を見落とし、Round 2/3 で再指摘するパターンが発生する (#682 issue 本文 PR #675 経緯参照)。
 
+**複数 root cause が混在する場合** (literal mismatch / 古い API 残存 / DCE 誇張表現 / **base regression (他 PR 由来フィールド欠落)** 等の異なる種類が同一 PR で発生): 各 root cause を最初に個別識別し、root cause ごとに独立した grep コマンドを生成する。base regression は Step 2.2 で列挙した影響候補 PR のフィールド・関数引数・新規エクスポートが本 PR の変更対象ファイルに統合されているか確認することで検出する。異なる root cause を同一 grep パターンで混在させると sweep 漏れが発生するため、root cause 数 = grep コマンド数を原則とする。
+
 ### 6. レビュー結果をユーザーに報告
 
-Step 5b のトリアージ表を前提に `AskUserQuestion` で以下を提示する:
-
-- **LGTM (摘出課題ゼロ)**: トリアージ表が空。ユーザーに `--squash` マージを提案
-- **修正依頼のみ**: トリアージ表が (A) のみ。PR コメント投稿を提案
-- **修正依頼 + 派生 issue 起票**: (A) と (B)/(C) が混在。両方の処置を順次実行
-- **LGTM + 派生 issue 起票**: (A) なし、(B)/(C) のみ。本 PR は LGTM だが別課題を追跡
+Step 5b のトリアージ表を前提に、以下のテンプレート構造で**レビュー報告 markdown を生成して presenting する** (`AskUserQuestion` は呼ばない、PR コメント投稿もしない)。Step 7 / 8 へ自動進行する。
 
 **重要**: 「課題はあるがスコープ外だから放置」の選択肢は存在しない。摘出課題は必ず表経由で (A)/(B)/(C) に振り分ける。
 
@@ -314,58 +314,22 @@ Step 5b のトリアージ表を前提に `AskUserQuestion` で以下を提示�
 [<session-id>]
 ````
 
-### 7. ユーザー承認後のアクション
+### 7. 次のアクション提案 (PR コメント投稿は廃止)
 
-- **LGTM 承認**: `gh pr comment $ARGUMENTS --body "LGTM. <簡潔な理由> [<session-id>]"` → ユーザーが `gh pr merge $ARGUMENTS --squash` 実行
-- **修正依頼**: 下記「修正依頼コメント投稿」に従う
+本 skill は Step 6 のレビュー報告を user に提示するのみで、`gh pr comment` 等の **PR コメント投稿は一切行わない**。代わりに次のアクション提案を以下のテンプレートで user に提示する:
 
-### 修正依頼コメント投稿 (修正依頼時)
+```markdown
+## 次のアクション提案
 
-レビュー専用セッションは PR ブランチを編集せず、PR コメントで PR 作成セッションに修正を依頼する。**`Edit` / `Write` / `git commit` / `git push` は行わない** (書き込み系の禁止)。`git checkout <PR-branch>` 自体は read 目的なら可だが、checkout 後も `Edit` / `Write` / `git commit` / `git push` に滑らないこと (詳細は本ファイル冒頭「重要」節参照)。
+判定: <LGTM / 修正依頼 / ブロッカー>
 
-1. PR コメントで具体的な修正指示を記録する。コメント本文には次の要素を含める:
+### 推奨フロー
+- **(A) 修正依頼が残っている場合**: `/iterate-review $ARGUMENTS` で review-fix ループを起動し、最終 summary コメントを 1 個投稿してマージ準備まで自動化
+- **(A) 課題ゼロかつ受け入れ条件 ✓**: ユーザーが `gh pr merge $ARGUMENTS --squash` で squash merge → 紐づく issue は `/close-issue <issue#>` でクローズ
+- **発散・スコープ問題が疑われる場合**: scope-guard skill / 設計再検討
+```
 
-   - **該当ファイル・行**: `path/to/file.py:123` 形式
-   - **現状**: 現在のコードや出力
-   - **修正案**: 言語タグ付きコードブロックで提示 (下記サンプル参照)
-   - **理由**: 受け入れ条件 X 未達 / ロジック誤り / ドキュメント不整合 等
-   - **ローカル検証コマンド**: `pytest tests/test_xxx.py::test_yyy` 等
-   - **セッション署名**: 本文末尾に `[セッションID]`
-
-   日本語本文は HEREDOC で `--body-file -` に渡す (Windows + Git Bash で inline `--body` は UTF-8 破損するため)。
-
-   コメント本文サンプル (外フェンスは 4 バッククォート、内側の修正案 fenced block は 3 バッククォート):
-
-   ````markdown
-   <指摘タイトル>
-
-   - **該当ファイル・行**: `path/to/file.py:123`
-   - **現状**: `<現在のコード片または出力>`
-   - **修正案**:
-
-     ```python
-     <修正後のコード>
-     ```
-
-   - **理由**: <受け入れ条件 X 未達 / ロジック誤り / ドキュメント不整合 等>
-   - **ローカル検証コマンド**: `pytest tests/test_xxx.py::test_yyy`
-
-   [セッションID]
-   ````
-
-   送信コマンド:
-
-   ```bash
-   gh pr comment "$ARGUMENTS" --body-file - <<'EOF'
-   (上記サンプル本文を貼る)
-   EOF
-   ```
-
-2. PR 作成セッション側で修正 commit & push が行われた後、別セッション or 同レビューセッションで `/review-pr $ARGUMENTS` を再実行して受け入れ条件達成を検証する。
-
-3. PR 本文 (`gh pr edit --body`) の書き換えは、修正完了を前提とする内容であれば慎重に。未達状態で「完了前提」に書き換えると不整合を生むため、現状維持が安全。
-
-4. issue 側への方針記録コメント (受け入れ条件 #N の合意内容など) はレビューセッションで行って OK (PR コード編集とは別粒度のアクション)。
+PR コメント投稿が必要な特殊ケース (例: 別レビュアーへ正式に依頼書を残したい) は **ユーザーが手動で行う**。skill が自動投稿することはない。
 
 **補足: scope-guard 発動時の AskUserQuestion 投げ先**
 
@@ -373,63 +337,32 @@ Step 5b のトリアージ表を前提に `AskUserQuestion` で以下を提示�
 
 根拠: scope-guard skill は Iron Law 3 の執行機構として人間メンテナの判断 (a)/(b)/(c) を強制するゲートであり、PR 作成セッション側に判断権限はない (`scope-guard/SKILL.md` §Step 3 参照)。
 
-### 7a. 再レビューラウンド管理 (Round 2+)
+### 7a. 再レビューラウンド管理 (`/iterate-review` に移管)
 
-修正依頼 → PR 作成セッション修正 → 再レビュー のループを Round N で追跡する。各 Round で Step 6 テンプレートの `# Review Round N` ヘッダと「前回差分 / 本 Round 新出」を必ず記録する。
+Round 2+ の再レビュー管理 (収束判定 / 発散判定 / 打ち切り判断) は `/iterate-review` skill (新規) に移管した。本 skill は単一 round の review エンジンとしてのみ動作する。
 
-**Round の数え方**
+複数 round 自動実行が必要な場合は `/iterate-review <PR#>` を invoke すること。
 
-- Round 1: 初回レビュー (LGTM 出るか修正依頼かを初判定)
-- Round 2+: 修正依頼後の再レビュー。「前 Round で指摘した課題の解消確認」+「本 Round 新出課題」を分けて記録する
+### 8. マージ後の close-issue handoff (PR が MERGED 状態の場合)
 
-**収束判定 (Round N → LGTM)**
+本 skill はレビュー専用セッション契約のため `gh issue close` / `gh pr merge` を一切実行しない (冒頭「重要」節と同じ責務分離原則に基づく、Iron Law 4 担保)。close 操作は専用 skill `/close-issue <番号>` または手動で実施すること。
 
-- [critical] 連続 2 Round で次を**全て**満たすこと:
-  - 前 Round 指摘課題の (A) がすべて解消
-  - 本 Round 新出課題なし、または新出があっても (B)/(C) 処置で本 PR にブロックしない
-  - CI green が維持されている
-- 上記を満たせば LGTM 候補。ユーザー承認で `--squash` マージへ進める
+PR がマージ済みで本 skill が呼ばれた場合 (= 確認用の事後レビュー) のみ意味がある節。マージ前の課題ハンドオフは `/iterate-review` Step 5 (LGTM 候補通知) で吸収する。
 
-**発散判定 (設計疑い)**
+#### 手順
 
-- 3 Round 以上かけても (A) 課題が減らない、または Round ごとに新出 (A) が増え続ける場合、PR 設計自体を疑う
-- 判断: (i) PR を分割する (束ね PR の場合) / (ii) 実装方針を再設計する / (iii) scope-guard skill で PR スコープを縮小する — いずれも `AskUserQuestion` でユーザーに選択肢として提示
+1. 受け入れ条件最終検証 (Step 3) を実施
+2. 紐づく issue 番号を抽出 (`gh pr view <PR#> --json closingIssuesReferences,body` + 本文 `Refs #N` 抽出)
+3. ユーザーに `/close-issue <番号>` を案内 (本 skill では実行しない、Iron Law 4)
+4. 検証結果を summary コメント (1 個) として PR に投稿することを user に提案 (`AskUserQuestion`「投稿する / 投稿しない」、フォーマットは `/iterate-review` Step 4 の summary template と同一 = `docs/superpowers/specs/2026-05-10-iterate-review-and-review-pr-redesign.md` §4.2 参照)
 
-**打ち切り判断**
+#### マージ前 (`OPEN` state) で本 skill が呼ばれた場合
 
-- Round 5 を超えても収束しない場合、レビューコストが実装コストを上回る可能性。別 issue に残タスクを切り出して一旦マージする判断を `AskUserQuestion` で提示
+通常フロー (Step 1-7) のみ実施し、本 Step 8 は skip する。残課題対応は `/iterate-review` 推奨を Step 7 で提示済み。
 
-### 8. マージ後のハンドオフ
+#### 孤立 PR (issue 紐付けなし) の場合
 
-レビューセッションは `gh issue close` を**実行しない** (冒頭「重要」節 = レビュー専用セッション契約)。issue クローズは Iron Law 4 が要求する**マージ後の受け入れ条件実測再検証**を含むため、専用 skill `/close-issue <issue番号>` または手動クローズで実施する。本 skill は「クローズ依頼の提案」までを担当する。
-
-**PR に紐づく issue がある場合**:
-
-1. **issue 番号の特定**: `gh pr view <PR#> --json closingIssuesReferences` で取得、または PR 本文の `Refs #N` / `#N` 参照から抽出する (両方確認して両者の差分があれば AskUserQuestion でユーザー確認)。複数 issue が紐づく場合は束ね PR としてケース 4 の運用に従う
-
-2. ユーザー (Idios) または PR 作成セッションに `/close-issue <issue番号>` 実行を提案する。提案コメントは **Step 6 のレビュー報告本文末尾に含めることを優先** とする (二重投稿防止)。Step 6 本文末尾に含めた場合は別 PR コメント投稿は省略可。サンプル:
-
-   ```text
-   マージ後 issue クローズは `/close-issue <番号>` で実測再検証してから実施してください
-   (本セッションでは close を実行しません)。
-   ```
-
-   Step 6 本文に含めなかった場合のみ、上記サンプルを別 PR コメントとして投稿する。
-
-3. **本セッションでは `gh issue close` を実行しない** (= レビュー専用セッション契約に基づく。本 skill 内で close を実行すると、Iron Law 4 が要求する「マージ後の実測再検証」が `/close-issue` ルートを経由しないまま進むことになる)。受け入れ条件のマージ後実測再検証は `/close-issue` の責務 (Iron Law 4 担保ルート)
-4. issue 本文の未チェック `- [ ]` の確認・残タスク子 issue 起票・受け入れ条件実測再検証は `/close-issue` 側で扱う (本 skill の責務外)
-5. 束ね PR (1 PR で複数 issue close) の場合は、PR 作成セッション or ユーザーが各 issue に対し `/close-issue <番号>` を呼び分ける運用 (本 skill 側で issue 番号列挙だけ済ませてもよい)
-
-**マージ済み状態で本 skill が呼ばれた場合のフォールバック**:
-
-PR が既に `MERGED` 状態の場合 (例: ユーザーがマージ後に再度レビュー確認のため呼び出した場合)、Step 7 の LGTM コメント投稿は省略可 (事後投稿は混乱を招く)。Step 8 のハンドオフ提案 (`/close-issue <番号>` への誘導) のみを別 PR コメントで投稿する。Step 1-6 の検証は通常通り実施し、検証結果も同コメントに含める。
-
-**PR に紐づく issue がない場合 (孤立 PR)**:
-
-1. Step 5b トリアージ表の (B) (C) 処置行をすべて実行完了したか確認
-2. (B) 新規 issue 起票が必要なら `/create-task` で実施
-3. (C) 既存 issue 追記が必要なら該当 issue にコメント投稿
-4. skill 運用上の気付き (doc 不整合・フォールバック手順欠落 等) が見つかっていれば skill 改善 issue を (B) 枠で起票
+`/close-issue` 案内は省略可 (issue がないため)。Step 7 で提示した「次のアクション」に従う。
 
 ## 環境制約とフォールバック
 
@@ -483,6 +416,8 @@ PR が既に `MERGED` 状態の場合 (例: ユーザーがマージ後に再度
    - (iii) grep 結果なし + CI typecheck 未設定 → typecheck 追加を (B) 別 issue 起票 or PR 作成セッションに依頼
    - 動的 import (`importlib` / `import()` 実行時解決) は grep / typecheck だけでは検出不可。該当ソースに動的 import が含まれる場合は PR 作成セッションに実機検証を依頼
 
+**doc-only PR での旧用語 literal sweep**: doc-only PR であっても用語 / フィールド名 / コマンド名が変更された場合 (パス変更を含まない場合でも)、他ファイルへの旧用語残存を root cause として識別し Step 5c sweep を適用する。本 §D の「パス・識別子変更」はパス名に限らず PR で変更された任意のキーワード (用語 / フィールド名 / 関数名) を含む。旧用語が他ファイルに散在している場合は用語統一の root cause として Step 5c 全件 sweep が必要。
+
 ### §E. 参照ファイル追加 (バイナリ等) を伴う PR
 
 対象: 特徴量ファイル / 画像 / 音声参照 / sample data 等のバイナリを PR で追加する場合。
@@ -504,6 +439,51 @@ PR が既に `MERGED` 状態の場合 (例: ユーザーがマージ後に再度
 2. `gh issue view <番号>` を各 issue に対し実行し、受け入れ条件を独立に取得
 3. Step 6 テンプレートの「受け入れ条件チェック」表を issue ごとに節分け (`### Issue #N` / `### Issue #M`)
 4. 束ね合理性が PR 本文に明記されているか Step 3 補助チェックで確認。明記なしなら (A) PR コメントで合理性説明または分離を要求
+
+### §G. Subagent invocation mode
+
+`/iterate-review` から subagent として呼ばれた場合の動作契約。
+
+#### G.1 Mode 検出
+
+呼び出し prompt に以下のマーカーが含まれている場合 subagent mode:
+
+`__ITERATE_REVIEW_SUBAGENT_MODE__`
+
+(`/iterate-review` Step 2.1 の prompt template に固定文字列として埋め込む)
+
+#### G.2 動作差分
+
+| 観点 | Standalone mode | Subagent mode |
+| --- | --- | --- |
+| Step 2.3 base sync AskUserQuestion | 通常通り | skip: 影響候補ありなら findings に「需 user 判断: base regression」と記載 |
+| Step 2.4 並行 PR AskUserQuestion | 通常通り | skip: 検出されたら findings に記載 |
+| Step 5b 摘出 AskUserQuestion (個別 (A)/(B)/(C)) | 通常通り | skip: skill 内基準で auto 分類、ambiguous case のみ findings の `ambiguous_judgments` に明示 |
+| Step 6 報告 | conversation 内 presenting | final message に markdown で含める |
+| Step 7 次のアクション提案 | user に提示 | skip: orchestrator (`/iterate-review`) が代行 |
+| Step 8 マージ後 handoff | 必要なら実行 | skip |
+| `gh pr comment` 投稿 | 一切しない (本 skill 改訂後) | 一切しない (subagent mode でも禁止) |
+
+#### G.2.1 Subagent mode 自動分類規約 ((A) 強優先 + 握り潰し禁止)
+
+Subagent mode で Step 5b の (A)/(B)/(C) 自動分類を行う際の厳格規約:
+
+1. **すべての finding に必ず分類を付与する**: 観察コメントのみ・スコープ対象外と自己判断・軽微だから無視 は **すべて NG** (orchestrator 側 parse error として再 dispatch される)
+2. **default は (A)**: 「指摘は原則すべて PR 内対応」を継承。CI failure / latent type error / 隣接ファイル lint 違反 / 古い API 残存 / 古い doc 記述 / 環境起因の問題 等は全部 (A)
+3. **(B) は厳格 3 条件 AND**: `別領域・別機能` AND `1 セッション超の独立設計が必要` AND `本 PR 同梱で受け入れ条件検証が破綻` の **すべて満たす場合のみ** (B)。1 つでも欠ければ (A)。**サイズ単独 / scope-out 単独 / 受け入れ条件直結性単独では (B) 化不可**。**注 (C2 設計意図)**: subagent mode (本項) は AND 3 条件で厳格判定 (機械処理のため parse error リスク低減を優先)。standalone `/review-pr` 単体使用時は Step 5b の OR 3 択 trigger (`外部依存・側チケット調整が必要` 単独でも (B) 有効) を継続する。この非対称は意図的設計
+4. **(C) は重複起票回避 trigger のみ**: 同テーマの既存 issue が存在する場合のみ。「新規 issue を作るべきだが既存に書いた方が綺麗」は不可
+5. **判定に迷う finding**: findings_table の処置列に `(A)*` と記載し (default は (A))、`ambiguous_judgments` セクションに当該 finding を詳述する。findings_table に `ambiguous` 単独で記載することは禁止 (`(A)*` + ambiguous_judgments 補足が正式記法、orchestrator はこの行を ambiguous_judgments セクションと cross-reference してユーザー gate に bubble する)
+6. **rationale 列に判定根拠を必ず記載**: (B) を選ぶ場合は 3 条件 AND 該当根拠、(C) を選ぶ場合は既存 issue 番号、(A) は省略可
+
+#### G.3 戻り値構造 (subagent → orchestrator)
+
+final message に以下のセクションを順序固定で含める:
+
+1. `## acceptance_criteria_status` (各条件 ✓/×/部分的 + evidence)
+2. `## findings_table` (Step 5b トリアージ表 markdown、各行に分類必須)
+3. `## ambiguous_judgments` (auto 判断できなかった点。空でもセクション自体は必須記載)
+4. `## recommendation` (LGTM / fix-required / divergent)
+5. `## meta` (mergeStateStatus / 並行 PR 状態 / CI 状態。round 番号は `/iterate-review` 側管理のため不要)
 
 ## 呼び出し例
 
@@ -529,8 +509,9 @@ Iron Law Red Flags と呼応。以下の合理化が浮かんだら LGTM 寸前�
 | 「孤立 PR (issue なし) だから受け入れ条件ゲートは skip してよい」 | 環境制約 §A 違反。skip ではなく fallback (PR 本文の目的記述を代替として逐条検証) を適用する |
 | 「doc-only だから CI 影響は検証しなくてよい」 | 環境制約 §D 違反。パス・識別子変更を含む doc PR は `.github/workflows/` / コード側参照に波及し得る。grep 検証が必須 |
 | 「参照ファイル (バイナリ) の存在は diff で確認したから実体検証は不要」 | 環境制約 §E 違反。サイズ・次元・生成条件の PR 本文明記を (A) PR コメントで要求する |
-| 「PR ブランチを checkout して自分で修正した方が速い」 | レビュー専用セッション違反。PR コメントで PR 作成セッションに依頼 (本ファイル冒頭「重要」節参照) |
 | 「explicit N 箇所だけ列挙して全件 grep を要求しない」 | divergence 原因。詳細は **Step 5c (同種パターン sweep 規約、canonical)** 参照。PR #675 で 3 round 必要だった失敗パターン |
+| 「standalone mode で findings を PR コメントで投稿しよう」 | 本 skill は comment 投稿しない契約 (改訂ルール)。投稿が必要な場合のみ user が手動で行う |
+| 「subagent mode で AskUserQuestion を呼ぼう」 | `/iterate-review` には届かない。findings の `ambiguous_judgments` に記載するのが正しい (§G.3) |
 
 ## よくある失敗
 
@@ -540,7 +521,7 @@ Iron Law Red Flags と呼応。以下の合理化が浮かんだら LGTM 寸前�
 - **束ね PR を 1 件として扱い各 issue の独立検証を省略**: 「束ねているから条件は共通」「1 つ検証すれば代表として OK」と判断して 1 件分の受け入れ条件のみチェック → Iron Law 1 違反。Step 3 束ね PR 節 / 環境制約 §F に従い、各 issue の受け入れ条件を独立に逐条検証する
 - **参照ファイル追加時の実体確認省略**: バイナリ追加を diff の name-only でしか確認せず、サイズ・次元・生成条件の PR 本文明記を要求しない → 環境制約 §E 違反。(A) PR コメントで追記要求する
 - **doc 変更 PR が CI 設定に与える波及を検証しない**: 「doc だから CI には関係ない」と判断して `.github/workflows/` / コード側参照の grep 確認を省略 → 環境制約 §D 違反。パス・識別子変更を含む doc 修正は波及確認が必須
-- **再レビュー時に前回指摘の全件追跡を省略**: Round 2 以降で「前回指摘の解消確認」と「本 Round 新出」を分けずに混在レポートする → Step 7a 違反。前 Round の (A) 課題を 1 件ずつ照合し、解消/未解消を明示する
+- **再レビュー時に前回指摘の全件追跡を省略**: Round 2 以降で「前回指摘の解消確認」と「本 Round 新出」を分けずに混在レポートする → /iterate-review Step 3 (収束 / 発散判定) 違反。前 Round の (A) 課題を findings_history で 1 件ずつ照合し解消/未解消を明示する
 - **long-running 検証を自己判断で OK とする**: unit test pass = 全部 OK と誤解。GPU / 長時間動画 / audio 統合は mock 不可のため、PR 作成セッションに実機検証実施 (or 結果報告) を明示要求する
 - **提示フォーマットを無視して口語で書く**: レビュー結果が PR コメントに混在して追跡困難 → Step 6 の「レビュー報告テンプレート」構造で投稿
 - **explicit N 箇所だけ列挙して全件 grep を要求しない (PR #675 Round 1/3 divergence)**: PR #675 で 3 種類の root cause (literal「関数本体先頭」訂正 / 旧 API `vi.stubEnv('DEV', '' as any)` / DCE 誇張表現) が複数 file に散在し、各 Round で explicit な N 箇所のみ列挙したため Round 1 → 2 → 3 と divergence 発生。詳細手順 (grep 全件 sweep / トリアージ表全件転記 / 修正依頼本文に grep 同梱) は **Step 5c (同種パターン sweep 規約、canonical)** 参照。

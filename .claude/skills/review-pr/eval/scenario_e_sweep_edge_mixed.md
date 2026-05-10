@@ -245,6 +245,22 @@ grep -rn "stubEnv.*'' as any" gui/src/
 | 2-6 | gpu_vendors_available 欠落 (base regression) | schema + 4 impl files | (A) CRITICAL | PR 内修正 (全 5 ファイル) |
 | 7-9 | `vi.stubEnv` 旧 API | gui tests 2 ファイル | (A) | PR 内修正 |
 
+### 期待される出力と挙動
+
+#### Step 6 (レビュー報告)
+
+- Step 5c で実行した 3 種類の grep コマンドと全 9 hits を **報告 markdown 内のトリアージ表**に転記すること
+- `AskUserQuestion` は呼ばない。`gh pr comment` 等の **PR コメント投稿は一切行わない**
+- 「修正依頼本文に grep コマンドと hits を同梱して PR コメント投稿する」は新方針に反する — 報告 markdown 内に含めるのが正しい
+
+#### Step 7 (次のアクション提案)
+
+- 次のアクション提案テンプレートを user に提示する:
+  - 判定: 修正依頼 (CRITICAL (A) 課題が残っているため)
+  - **`/iterate-review $ARGUMENTS` 起動推奨**を明記
+  - CRITICAL な `additionalProperties` 誤変更と base regression は特に優先対応を促す
+  - `/iterate-review` が主セッションで (A) 修正を実施し、全件解消後に summary コメント 1 個を投稿してマージ準備まで自動化
+
 ### Red Flag (不合格判定)
 
 以下のいずれかが発生したら sweep 規約未適用:
@@ -255,6 +271,7 @@ grep -rn "stubEnv.*'' as any" gui/src/
   `metadata.ts` / `metadataSchema.ts` / `detect.py` / `schema.json` への波及確認なし
 - Root Cause 3 で `DropScreen.test.tsx` 2 箇所のみ指摘し、
   `ExportScreen.test.tsx` 1 箇所が残存
+- `gh pr comment` で per-finding 修正依頼を投稿する (新方針違反)
 
 ### 検証環境情報
 

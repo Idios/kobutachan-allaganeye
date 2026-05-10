@@ -103,6 +103,28 @@ gui/package-lock.json               +生成差分
 4. **テスト不足**: 型リネームに伴う screen 層 (5 ファイル) の変更に対して、screen 層の単体テストは追加されていない
 5. **再 review ラウンド想定**: このモック は「Round 1 後に出された新指摘」の位置づけで、Round N 記法の必要性を subagent が認識するか確認する
 
+## 期待される出力と挙動
+
+### Step 6 (レビュー報告)
+
+- Step 5b トリアージ表を含む**レビュー報告 markdown を生成して presenting する**
+- `AskUserQuestion` は呼ばない。`gh pr comment` 等の **PR コメント投稿は一切行わない**
+- 上記の意図的に仕込んだ要素 1-5 が Step 5b トリアージ表に適切な分類 (A)/(B) で転記されていること
+- #910 受け入れ条件の部分未達 (Playwright profile 比較未実施) は (A) 修正依頼として転記
+- `MetadataEntry → MetadataRecord` 型リネームのスコープ外変更は AskUserQuestion で (A) revert 要求 / (B) 別 issue の選択肢をユーザーに提示
+
+### Step 7 (次のアクション提案)
+
+- 次のアクション提案テンプレートを user に提示する:
+  - 判定: 修正依頼 ((A) 課題が残っているため)
+  - **`/iterate-review $ARGUMENTS` 起動推奨**を明記 (review-fix ループを起動し summary コメント 1 個でマージ準備まで自動化)
+  - 束ね PR の場合、発散リスクが高ければ scope-guard skill / 分離再 PR の選択肢も提示
+
+### per-finding comment 投稿しない
+
+- Step 7 で PR コメント (`gh pr comment`) を自動投稿しない。これは仕様
+- 投稿が必要な場合はユーザーが手動で行う
+
 ## 検証環境情報
 
 - CI: green (vitest / eslint / typecheck 全 pass、cargo check は該当なし)

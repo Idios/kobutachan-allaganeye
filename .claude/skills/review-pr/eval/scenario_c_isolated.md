@@ -60,9 +60,38 @@ docs/design/README.md               +2  -2     # 関連する 1 箇所のパス�
 - `/enforce-acceptance-criteria` gate: 実行不可 (受け入れ条件が存在しない)
 - `/test-pr`: 該当なし (doc-only)
 
+## 期待される出力と挙動
+
+### §A フォールバック適用 (孤立 PR)
+
+- 環境制約節 §A (孤立 PR) のフォールバックを適用すること
+- `/enforce-acceptance-criteria` は issue 未紐付けのため実行不可 → 代替: PR 本文の目的記述を受け入れ条件の代替として逐条検証
+- Step 6 テンプレートの「受け入れ条件チェック」セクションは「該当なし (issue 未紐付け)」と明記し、代替判定根拠を箇条書き
+- Step 8 は「紐づく issue がない場合」の分岐に従い `/close-issue` 案内は省略可
+
+### Step 6 (レビュー報告)
+
+- Step 5b トリアージ表を含む**レビュー報告 markdown を生成して presenting する**
+- `AskUserQuestion` は呼ばない。`gh pr comment` 等の **PR コメント投稿は一切行わない**
+- `CLAUDE.md` 内の `gui/dist/` 未更新箇所 (仕込み要素 2) は (A) として転記
+- `.github/workflows/` CI 設定への波及リスク (仕込み要素 2) も (A) として転記
+- トリアージ表を省略しない (「軽微」「doc-only」を理由に握り潰さない)
+
+### Step 7 (次のアクション提案)
+
+- 次のアクション提案テンプレートを user に提示する:
+  - 判定: 修正依頼 ((A) 課題が残っているため) または LGTM (課題ゼロの場合)
+  - 修正依頼の場合: **`/iterate-review $ARGUMENTS` 起動推奨**を明記
+  - 孤立 PR では `/close-issue` 案内省略可 (Step 8 分岐に従う)
+
+### per-finding comment 投稿しない
+
+- Step 7 で PR コメント (`gh pr comment`) を自動投稿しない。これは仕様
+- 投稿が必要な場合はユーザーが手動で行う
+
 ### subagent が判断すべき論点
 
-- 孤立 PR (issue なし) に対して受け入れ条件ゲートをどう扱うか
+- 孤立 PR (issue なし) に対して受け入れ条件ゲートをどう扱うか (§A フォールバック適用)
 - doc 修正に潜む実装コード / CI 設定への波及リスクをどこまで追跡するか
 - 「軽微」ラベルを理由に Step 5b トリアージ表を省略していないか
 - LGTM 判定の閾値: 明確な不整合が 2 箇所あるが、「doc-only のスコープでは OK」とするか「修正依頼」とするか

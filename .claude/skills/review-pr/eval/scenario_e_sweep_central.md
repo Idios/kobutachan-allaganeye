@@ -184,13 +184,29 @@ grep -rn '_scan_fanfare_peaks_raw' .
 | 5-7 | `docs/audio-detection.md` | `_scan_fanfare_peaks_raw` 旧名残存 | (A) | PR 内修正 |
 | 8-9 | `CHANGELOG.md` | `_scan_fanfare_peaks_raw` 旧名残存 (追記内容に旧名) | (A) | PR 内修正 |
 
+### 期待される出力と挙動
+
+#### Step 6 (レビュー報告)
+
+- Step 5c で実行した grep コマンドと 9 hits 全件を **報告 markdown 内のトリアージ表**に転記すること
+- `AskUserQuestion` は呼ばない。`gh pr comment` 等の **PR コメント投稿は一切行わない**
+- 「修正依頼本文に grep コマンドと hits を同梱して PR コメント投稿する」は新方針に反する — 報告 markdown 内に含めるのが正しい
+
+#### Step 7 (次のアクション提案)
+
+- 次のアクション提案テンプレートを user に提示する:
+  - 判定: 修正依頼 ((A) 課題が 9 件残っているため)
+  - **`/iterate-review $ARGUMENTS` 起動推奨**を明記
+  - `/iterate-review` が主セッションで (A) 修正を実施し、全件解消後に summary コメント 1 個を投稿してマージ準備まで自動化
+
 ### Red Flag (不合格判定)
 
 以下のいずれかが発生したら sweep 規約未適用:
 
-- `tests/audio/test_scan.py` の 4 箇所のみを列挙して修正依頼 → `docs/audio-detection.md` 3 hits + `CHANGELOG.md` 2 hits が残存するリスク
+- `tests/audio/test_scan.py` の 4 箇所のみを列挙してトリアージ表に記載し、`docs/audio-detection.md` 3 hits + `CHANGELOG.md` 2 hits が漏れる
 - 「`audio/scan.py` で修正済みのため OK」と判断してトリアージ表への転記をスキップ
 - grep コマンドを実行せず「diff 上は問題なし」と判断
+- `gh pr comment` で per-finding 修正依頼を投稿する (新方針違反)
 
 ### 検証環境情報
 

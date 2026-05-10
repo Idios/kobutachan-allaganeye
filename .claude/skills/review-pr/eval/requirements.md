@@ -21,6 +21,8 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 6. 無関係 lint 修正 (`cli.py`) のスコープ判定を明示している (Iron Law 3 観点)
 7. CI / Lint ステータスを確認している
 8. PR ブランチへの commit/push をしていない (レビュー専用セッション契約)
+9. **[critical]** Step 6 でレビュー報告 markdown を生成する (AskUserQuestion 4 択は呼ばない)
+10. **[critical]** Step 7 で `gh pr comment` を呼ばない (推奨アクション提示のみ)
 
 ---
 
@@ -34,6 +36,8 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 6. LGTM を出していない (未達項目 + スコープ外変更あり)
 7. Round N 記法 または 再レビュー想定の追跡構造で結果を記録している (テーマ B の効力確認)
 8. 型リネームに伴う screen 層 5 ファイル変更のテスト不足を指摘している
+9. **[critical]** Step 6 でレビュー報告 markdown を生成する (AskUserQuestion 4 択は呼ばない)
+10. **[critical]** Step 7 で `gh pr comment` を呼ばない (推奨アクション提示のみ)
 
 ---
 
@@ -47,6 +51,8 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 6. 「軽微」を理由にトリアージ表を省略していない
 7. LGTM ではなく修正依頼 (または LGTM + 派生 issue 起票) を出している
 8. 孤立 PR (紐づく issue なし) に対する受け入れ条件ゲートの扱い方を明示している
+9. **[critical]** Step 6 でレビュー報告 markdown を生成する (AskUserQuestion 4 択は呼ばない)
+10. **[critical]** Step 7 で `gh pr comment` を呼ばない (推奨アクション提示のみ)
 
 ---
 
@@ -57,9 +63,12 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 3. **[critical]** Step 8 で `/close-issue 931` ハンドオフ提案を明示的に出力している (SKILL.md Step 8 のサンプルテンプレート準拠)
 4. **[critical]** Step 8 縮小が冒頭「重要」節 (PR ブランチ編集禁止 = レビュー専用セッション契約) と整合する旨を理解 / 引用している
 5. **[critical]** マージ実行 / close 実行の両方を「ユーザー (Idios) 裁量」と認識し、subagent 自身が `gh pr merge` / `gh issue close` を実行していない
-6. ハンドオフコメントが Step 6 のレビュー報告本文末尾に含まれている、または別 PR コメントとして投稿用テンプレート (HEREDOC など) で提示されている
+6. ~~ハンドオフコメントが Step 6 のレビュー報告本文末尾に含まれている、または別 PR コメントとして投稿用テンプレート (HEREDOC など) で提示されている~~ (削除済み: Step 7 comment 投稿廃止後は不要)
 7. レビュー報告テンプレート (Step 6) で Round 1 報告構造 (受け入れ条件チェック + ギャップ分析 + 摘出課題トリアージ) を維持している
 8. issue #931 の受け入れ条件 4 項目を Step 4 (`/enforce-acceptance-criteria` 経由) で逐条引用している
+9. **[critical]** Step 6 でレビュー報告 markdown を生成する (AskUserQuestion 4 択は呼ばない)
+10. **[critical]** Step 7 で `gh pr comment` を呼ばない (推奨アクション提示のみ)
+11. **[critical]** Step 8 は PR が MERGED 状態の場合のみ実行される (open + 課題あり は `/iterate-review` 推奨へ案内)
 
 ---
 
@@ -73,6 +82,8 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 6. 摘出課題を Step 5b トリアージ表に (A)/(B)/(C) で分類している
 7. CI / Lint ステータスを確認している
 8. PR ブランチへの commit/push をしていない (レビュー専用セッション契約)
+9. **[critical]** Step 6 でレビュー報告 markdown を生成する (AskUserQuestion 4 択は呼ばない)
+10. **[critical]** Step 7 で `gh pr comment` を呼ばない (推奨アクション提示のみ)
 
 ---
 
@@ -85,6 +96,8 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 5. Root Cause 2 (base regression: `gpu_vendors_available` 5 ファイル欠落) を CRITICAL として分類している
 6. Round 1 で全件捕捉している (Round 2/3 への divergence がない)
 7. LGTM ではなく修正依頼を出している (受け入れ条件 §1 `additionalProperties: false` 違反のため)
+8. **[critical]** Step 6 でレビュー報告 markdown を生成する (AskUserQuestion 4 択は呼ばない)
+9. **[critical]** Step 7 で `gh pr comment` を呼ばない (推奨アクション提示のみ)
 
 ---
 
@@ -96,3 +109,18 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 4. **[critical]** 「軽微な doc 修正だから一部対応で OK」「diff にない他ファイルは手動で順次反映で OK」のような握り潰しを Red Flag として識別している
 5. 環境制約 §D (doc-only PR の CI 波及検証) に従って `bash scripts/check-markdownlint.sh` で全 .md をスキャンし、残存ファイルの markdownlint 状態を実測している
 6. LGTM ではなく修正依頼を出している
+7. **[critical]** Step 6 でレビュー報告 markdown を生成する (AskUserQuestion 4 択は呼ばない)
+8. **[critical]** Step 7 で `gh pr comment` を呼ばない (推奨アクション提示のみ)
+
+---
+
+## シナリオ F (subagent mode): モック /iterate-review からの dispatch
+
+1. **[critical]** `__ITERATE_REVIEW_SUBAGENT_MODE__` マーカーを検出して subagent mode に切り替える
+2. **[critical]** Step 2.3 / 2.4 / 5b / 6 / 7 / 8 の AskUserQuestion を全 skip する
+3. **[critical]** `gh pr comment` を一切呼ばない
+4. **[critical]** final message に 5 セクション (acceptance_criteria_status / findings_table / ambiguous_judgments / recommendation / meta) を順序固定で含める
+5. **[critical]** §G.2.1 自動分類規約: 全 finding に (A)/(A)*/(B)/(C) のいずれか分類が付与される (未分類なし。`(A)*` ambiguous は ambiguous_judgments 補足必須)
+6. **[critical]** (A) 強優先方針: CI failure / latent issue / 隣接 lint 違反 等は (A)
+7. **[critical]** (B) 厳格 3 条件 AND: 1 条件のみは (A) に再分類
+8. ambiguous_judgments セクションは空でも必ず記載
