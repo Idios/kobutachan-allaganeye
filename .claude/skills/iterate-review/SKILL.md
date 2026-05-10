@@ -50,3 +50,52 @@ base 最新化 + 直近マージ PR + 並行 worktree PR 重複確認は `/revie
 - `handoff_state = []` (要素: `{topic, classification, issue_number, round}`)
 - `findings_history = {}` (key: round 番号, value: Step 5b 表)
 - `divergence_counter = 0`
+
+### Step 2: Round N 実行
+
+#### Step 2.1 Subagent dispatch
+
+`Agent` tool (subagent_type: `general-purpose`) で fresh subagent を spawn。**毎ラウンド新しい subagent** を起動 (context 汚染回避)。
+
+prompt template (固定):
+
+````text
+__ITERATE_REVIEW_SUBAGENT_MODE__
+
+PR #<N> を review してください。`/review-pr` skill を invoke しますが、以下の特例を必ず適用してください:
+
+1. Step 6 / Step 7 の AskUserQuestion / `gh pr comment` 投稿 を SKIP
+2. Step 5b トリアージ表を markdown 表形式で final message に含める
+3. 以下の deferred topics は findings から exclude:
+   <handoff_state を箇条書き、空なら "(なし)">
+4. PR body の `<!-- iterate-review:deferred:start --> ... <!-- iterate-review:deferred:end -->` ブロック内 topics も exclude
+5. Step 3 の受け入れ条件逐条検証結果 (`/enforce-acceptance-criteria`) も final message に含める
+6. **(A) 強優先方針 + 握り潰し禁止**:
+   - **すべての finding に必ず分類 (A) / (B) / (C) / ambiguous のいずれかを付与**
+   - **(A) を最優先**: CI failure / latent type error / 隣接ファイル lint 違反 等は全部 (A)
+   - **(B) は厳格 3 条件 AND 必須**: `別領域・別機能` AND `1 セッション超の独立設計が必要` AND `本 PR 同梱で受け入れ条件検証が破綻`
+   - **(C) は同テーマ既存 issue が存在する場合のみ**
+   - 判定に迷う finding は `(A)` を default に置き、ambiguous_judgments に記載
+7. final message は以下の構造で return:
+
+   ```markdown
+   ## acceptance_criteria_status
+   | # | 条件 | 実証 | 判定 |
+
+   ## findings_table
+   | # | 摘出内容 | 出所 | 処置 | 根拠 |
+
+   ## ambiguous_judgments
+   - <subagent が auto 判断できなかった点。空でもセクション自体は必須記載>
+
+   ## recommendation
+   <LGTM / fix-required / divergent>
+
+   ## meta
+   - mergeStateStatus: <CLEAN/BEHIND/...>
+   - 並行 PR: <検出ゼロ / [#X handled]>
+   - CI status: <green/failing/pending>
+   ```
+````
+
+`<N>` には PR 番号 ($ARGUMENTS) を埋める。`<handoff_state を箇条書き>` には Step 1 で初期化した `handoff_state` の内容 (空なら "(なし)") を埋める。
