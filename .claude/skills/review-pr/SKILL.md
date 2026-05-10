@@ -500,8 +500,9 @@ Iron Law Red Flags と呼応。以下の合理化が浮かんだら LGTM 寸前�
 | 「孤立 PR (issue なし) だから受け入れ条件ゲートは skip してよい」 | 環境制約 §A 違反。skip ではなく fallback (PR 本文の目的記述を代替として逐条検証) を適用する |
 | 「doc-only だから CI 影響は検証しなくてよい」 | 環境制約 §D 違反。パス・識別子変更を含む doc PR は `.github/workflows/` / コード側参照に波及し得る。grep 検証が必須 |
 | 「参照ファイル (バイナリ) の存在は diff で確認したから実体検証は不要」 | 環境制約 §E 違反。サイズ・次元・生成条件の PR 本文明記を (A) PR コメントで要求する |
-| 「PR ブランチを checkout して自分で修正した方が速い」 | レビュー専用セッション違反。PR コメントで PR 作成セッションに依頼 (本ファイル冒頭「重要」節参照) |
 | 「explicit N 箇所だけ列挙して全件 grep を要求しない」 | divergence 原因。詳細は **Step 5c (同種パターン sweep 規約、canonical)** 参照。PR #675 で 3 round 必要だった失敗パターン |
+| 「standalone mode で findings を PR コメントで投稿しよう」 | 本 skill は comment 投稿しない契約 (改訂ルール)。投稿が必要な場合のみ user が手動で行う |
+| 「subagent mode で AskUserQuestion を呼ぼう」 | `/iterate-review` には届かない。findings の `ambiguous_judgments` に記載するのが正しい (§G.3) |
 
 ## よくある失敗
 
