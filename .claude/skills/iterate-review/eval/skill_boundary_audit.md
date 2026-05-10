@@ -154,13 +154,13 @@ iter_2 で C1・C2 を修正し、再確認する。
 
 変更前:
 
-```
+```text
 処置列が `(A)` / `(B)` / `(C)` / `ambiguous` のいずれか
 ```
 
 変更後:
 
-```
+```text
 処置列が `(A)` / `(A)*` / `(B)` / `(C)` のいずれか。`(A)*` は ambiguous_judgments セクションとの cross-reference が必須。`ambiguous` 単独記載は禁止
 ```
 
@@ -168,13 +168,13 @@ iter_2 で C1・C2 を修正し、再確認する。
 
 変更前:
 
-```
+```text
 判定に迷う finding は `(A)` を default に置き、ambiguous_judgments に記載
 ```
 
 変更後:
 
-```
+```text
 判定に迷う finding は `(A)*` と記載し、ambiguous_judgments に詳述する (`ambiguous` 単独記載は禁止。`(A)*` が正式記法 = §G.2.1 item 5 準拠)
 ```
 
@@ -186,7 +186,7 @@ iter_2 で C1・C2 を修正し、再確認する。
 
 `(B) 起票は限定例外` blockquote に以下の注記を追加:
 
-```
+```text
 注 (C2 設計意図): 本 skill が dispatch する subagent mode では §G.2.1 通り AND 3 条件で厳格判定する。standalone `/review-pr` 単体使用時は OR 3 択を許容する。この非対称は意図的設計: standalone は人間レビュアーが文脈判断するため柔軟性を持つ、subagent mode は機械処理のため parse error リスクを減らすべく厳格化している。
 ```
 
@@ -194,7 +194,7 @@ iter_2 で C1・C2 を修正し、再確認する。
 
 `(B) は厳格 3 条件 AND` の説明末尾に以下の注記を追加:
 
-```
+```text
 注 (C2 設計意図): subagent mode (本項) は AND 3 条件で厳格判定。standalone `/review-pr` 単体使用時は Step 5b の OR 3 択 trigger を継続する。この非対称は意図的設計
 ```
 

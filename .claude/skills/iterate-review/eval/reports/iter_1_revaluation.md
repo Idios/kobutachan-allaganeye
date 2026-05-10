@@ -80,7 +80,7 @@
 ### scenario_a_simple_fix
 
 | # | 内容 | iter_1 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | Round summary AskUserQuestion が 1 round 1 回のみ | ○ | line 119-138: 変更なし、継続 ○ |
 | 2 | 1 round = 1 commit (3 件 (A) を 1 commit にまとめる) | ○ | line 152: 変更なし、継続 ○ |
 | 3 | Step 2.2 validation で全 finding 分類確認 | ○ | line 106-112: validation 5 条件に拡張済み、継続 ○ (強化) |
@@ -95,7 +95,7 @@
 ### scenario_b_divergence
 
 | # | 内容 | iter_1 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | divergence_counter が `(A) 件数 >= 前 round` で increment | ○ | line 220: 変更なし、継続 ○ |
 | 2 | counter == 3 で発動 (4 や 2 では発動しない) | ○ | line 223: 変更なし、継続 ○ |
 | 3 | AskUserQuestion 2 択のみ (3 択 / 4 択ではない) | ○ | line 231-241: user gate は (i)/(ii) 2 択のみ、継続 ○ |
@@ -108,7 +108,7 @@
 ### scenario_c_round_cap
 
 | # | 内容 | iter_1 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | Round 5 で cap 発動 | ○ | line 227: 変更なし、継続 ○ |
 | 2 | 2 択 (発散と共通) | ○ | line 229-241: 変更なし (GAP-3 note 追加のみ)、継続 ○ |
 | 3 | Round 6 への進行が不可 | ○ | line 227: 変更なし、継続 ○ |
@@ -120,7 +120,7 @@
 ### scenario_d_lgtm_first
 
 | # | 内容 | iter_1 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | 0 findings 即収束 (Round 2 回さない) | ○ | line 215: 変更なし、継続 ○ |
 | 2 | summary 投稿は実施 (skip しない、ただし AskUserQuestion 3 択は確認) | ○ | **iter_0 △ → ○**: line 253 の callout「0 findings (即収束) でも summary 投稿は実施推奨。…受け入れ条件実証記録としての価値があるため (i) が Recommended」が追加。0 findings 時でも (i) が Recommended であることが明示された |
 | 3 | Step 5 で /close-issue 案内 | ○ | line 336: 変更なし、継続 ○ |
@@ -132,7 +132,7 @@
 ### scenario_e_bc_handoff
 
 | # | 内容 | iter_1 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | (B) 3 件で bulk AskUserQuestion 発動 | ○ | line 161: 変更なし、継続 ○ |
 | 2 | (B) 各件が 3 条件 AND 満たすことを確認 | ○ | line 160: 変更なし、継続 ○ |
 | 3 | PR body deferred block が更新される | ○ | line 164-178: 変更なし、継続 ○ |
@@ -146,7 +146,7 @@
 ### scenario_f_ci_timeout
 
 | # | 内容 | iter_1 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | 15 分 timeout 検出 | ○ | line 209: 変更なし、継続 ○ |
 | 2 | AskUserQuestion 3 択 | ○ | line 207: 変更なし (「待ち続ける」「CI 無視で次 round」「abort」)、継続 ○ |
 
@@ -157,7 +157,7 @@
 ### scenario_g_subagent_mode
 
 | # | 内容 | iter_1 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | prompt template に `__ITERATE_REVIEW_SUBAGENT_MODE__` マーカーが含まれる | ○ | line 63: 変更なし、継続 ○ |
 | 2 | 5 セクション (acceptance_criteria_status / findings_table / ambiguous_judgments / recommendation / meta) で受け取れる | ○ | line 80-99: 変更なし、継続 ○ |
 | 3 | ambiguous_judgments セクションが空でも parse 通る | ○ | line 90, 111: 変更なし、継続 ○ |
@@ -169,7 +169,7 @@
 ### scenario_h_summary_format
 
 | # | 内容 | iter_1 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | summary template の必須 5 要素 (Findings by Round / Resolutions / 受け入れ条件 / Final State / session-id) | ○ | line 262-302: 変更なし、継続 ○ |
 | 2 | 投稿前 AskUserQuestion 3 択 | ○ | line 255-258: 変更なし、継続 ○ |
 | 3 | HEREDOC + `--body-file -` (UTF-8 対策) | ○ | line 306-311: 変更なし、継続 ○ |
@@ -181,7 +181,7 @@
 ### scenario_i_anti_sweep
 
 | # | 内容 | iter_1 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | 分類欄空の行を parse error で reject | ○ | line 108: 変更なし、継続 ○ |
 | 2 | (B) で 3 条件 AND 不成立を parse error で reject | ○ | line 109: 変更なし、継続 ○ |
 | 3 | 「無視」「観察のみ」「対象外」キーワード単独行を parse error で reject | ○ | line 110: 「スコープ対象外」grep による detection は変更なし。「対象外」単独の部分一致問題は iter_0 △ だったが、validation #1 の `空欄 / 「観察のみ」 / 「対象外」等は parse error` (line 108 末尾) が「対象外」を直接列挙することで明確化された |
@@ -204,7 +204,7 @@
 ## 判定サマリ (精度算出 iter_1)
 
 | scenario | [critical] 件数 | ○ | △ | × | iter_0 → iter_1 変化 |
-|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- |
 | a | 6 | 6 | 0 | 0 | 変化なし (全 ○ 維持) |
 | b | 4 | 4 | 0 | 0 | 変化なし (全 ○ 維持)、GAP-3 補強 |
 | c | 3 | 3 | 0 | 0 | 変化なし (全 ○ 維持)、GAP-3 補強 |

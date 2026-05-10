@@ -1,6 +1,6 @@
 # /iterate-review empirical-prompt-tuning Summary
 
-実施日: 2026-05-XX / session: <session-id>
+実施日: 2026-05-XX / session: (session-id)
 
 ## 経過
 
@@ -15,7 +15,7 @@
 ## 解消した 9 gaps
 
 | GAP | 種別 | iter_0 | iter_1 | 反映方法 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 1 | prompt template (A) slogan | △ | ○ | "PR 内対応 (Iron Law 1 担保)" 追記 |
 | 2 | prompt template (B) negative example | △ | ○ | "(B) 化不可" 3 件追記 |
 | 3 | Step 3.4 (iii) abort 後運用 | △ | ○ | 段落追加 |

@@ -1,6 +1,6 @@
 # /review-pr post-redesign empirical-prompt-tuning Summary
 
-実施日: 2026-05-XX / session: <session-id>
+実施日: 2026-05-XX / session: (session-id)
 
 ## 背景
 
@@ -26,7 +26,7 @@
 ## 解消した 4 gaps
 
 | GAP | scenario | iter_0 | iter_1 | 反映方法 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 1 | D item 4 | × | ○ | Step 8 冒頭に責務分離原則明記 |
 | 2 | E_edge_mixed item 1 | × | ○ | Step 5c 末尾「複数 root cause 混在時」追記 |
 | 3 | E_edge_doc_only item 2 | △ | ○ | §D 末尾「doc-only PR 旧用語 sweep」追記 |

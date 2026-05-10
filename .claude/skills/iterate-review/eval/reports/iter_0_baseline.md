@@ -18,7 +18,7 @@
 [critical] 項目 5/6 達成 (scenario 固有の [critical] リスト、グローバル要件 1/3/6/14/15/17/19/21 と重複)
 
 | # | 内容 | 判定 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | Round summary AskUserQuestion が 1 round 1 回のみ | ○ | line 117-136: Step 2.3「Round summary AskUserQuestion (1 round 1 回のみ)」と明記。1 round あたりの AskUserQuestion 呼び出し総数制限を line 136 に明記 |
 | 2 | 1 round = 1 commit (3 件 (A) を 1 commit にまとめる) | ○ | line 150: 「1 round = 1 commit で集約: 全 (A) を 1 つの commit にまとめる」と明記 |
 | 3 | Step 2.2 validation で全 finding 分類確認 | ○ | line 101-115: validation 規則 4 点すべて明記 |
@@ -35,7 +35,7 @@
 [critical] 項目 4/4 達成
 
 | # | 内容 | 判定 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | divergence_counter が `(A) 件数 >= 前 round` で increment | ○ | line 218-221: 「Round N の (A) 件数 >= 前 round の (A) 件数 → counter++」と明記 |
 | 2 | counter == 3 で発動 (4 や 2 では発動しない) | ○ | line 221: 「counter == 3 (= 3 round 連続で減少なし) → user gate 2 択」と明記 |
 | 3 | AskUserQuestion 2 択のみ (3 択 / 4 択ではない) | ○ | line 229-239: 2 択 (i)/(ii) のみ明記。3 択なし |
@@ -50,7 +50,7 @@
 [critical] 項目 3/3 達成
 
 | # | 内容 | 判定 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | Round 5 で cap 発動 | ○ | line 225: 「Round == 5 + 未収束 → user gate 2 択」と明記 |
 | 2 | 2 択 (発散と共通) | ○ | line 228-239: 発散と同じ user gate 2 択、「(発散・キャップ共通)」と明記 |
 | 3 | Round 6 への進行が不可 | ○ | line 225: Round == 5 で gate 発動、継続不可。Red Flag line 344 にも「Round 6 で打ち切らずあと 1 回」= divergence パターンと明記 |
@@ -64,7 +64,7 @@
 [critical] 項目 2/3 達成
 
 | # | 内容 | 判定 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | 0 findings 即収束 (Round 2 回さない) | ○ | line 213: 「(A)/(B)/(C) all 0 → Step 4 へ」。Round 2 不要が論理的に確定 |
 | 2 | summary 投稿は実施 (skip しない、ただし AskUserQuestion 3 択は確認) | △ | line 249-252: 3 択に (iii) skip 選択肢があり、投稿は user が選択する。「0 findings でも投稿を実施する」という積極的な推奨文が欠如。(i) Recommended 表記はあるが、lgtm_first 特有の「0 findings でも summary を残す意義」の説明がない |
 | 3 | Step 5 で /close-issue 案内 | ○ | line 330-333: 「/close-issue <issue#> で実測再検証してから手動クローズしてください」明記 |
@@ -80,7 +80,7 @@
 [critical] 項目 4/5 達成
 
 | # | 内容 | 判定 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | (B) 3 件で bulk AskUserQuestion 発動 | ○ | line 159: 「3 件以上の (B) は Iron Law 2 に従い AskUserQuestion で全件確認」明記 |
 | 2 | (B) 各件が 3 条件 AND 満たすことを確認 | ○ | line 158-159: 「3 件以上 → AskUserQuestion」の前に line 155 で「真に (B) trigger 3 条件 AND 該当」のみ本 step に来ることを明記 |
 | 3 | PR body deferred block が更新される | ○ | line 164-176: `<!-- iterate-review:deferred:start --> ... <!-- iterate-review:deferred:end -->` ブロック更新の HEREDOC 例示あり |
@@ -98,7 +98,7 @@
 [critical] 項目 2/2 達成
 
 | # | 内容 | 判定 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | 15 分 timeout 検出 | ○ | line 207: 「`timeout 900 gh pr checks ...` で OK」と具体値明記 |
 | 2 | AskUserQuestion 3 択 | ○ | line 205: 「AskUserQuestion 3 択 (待ち続ける / CI 無視で次 round / abort)」明記 |
 
@@ -113,7 +113,7 @@
 [critical] 項目 3/3 達成
 
 | # | 内容 | 判定 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | prompt template に `__ITERATE_REVIEW_SUBAGENT_MODE__` マーカーが含まれる | ○ | line 63: prompt template 冒頭に `__ITERATE_REVIEW_SUBAGENT_MODE__` 明記 |
 | 2 | 5 セクション (acceptance_criteria_status / findings_table / ambiguous_judgments / recommendation / meta) で受け取れる | ○ | line 79-98: final message 構造 5 セクション全員を明記 |
 | 3 | ambiguous_judgments セクションが空でも parse 通る | ○ | line 88: 「空でもセクション自体は必須記載」明記。Step 2.2 validation line 111: 「`ambiguous_judgments` セクションが存在する (空でもセクション自体は必須): 不在は parse error」と対称 |
@@ -127,7 +127,7 @@
 [critical] 項目 3/3 達成
 
 | # | 内容 | 判定 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | summary template の必須 5 要素 (Findings by Round / Resolutions / 受け入れ条件 / Final State / session-id) | ○ | line 257-296: template に Findings by Round 表 / Resolutions / Final 受け入れ条件 / Final State / `[<session-id>]` の全 5 要素を含む |
 | 2 | 投稿前 AskUserQuestion 3 択 | ○ | line 249-252: Step 4.1 で明記 |
 | 3 | HEREDOC + `--body-file -` (UTF-8 対策) | ○ | line 299-305: `gh pr comment <PR#> --body-file - <<'EOF'` の HEREDOC 例示あり。line 307: 「inline `--body "..."` は日本語が UTF-8 破損するため禁止」明記 |
@@ -141,7 +141,7 @@
 [critical] 項目 5/7 達成
 
 | # | 内容 | 判定 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | 分類欄空の行を parse error で reject | ○ | line 106-107: validation #1「各行の処置列が (A)/(B)/(C)/ambiguous のいずれか。空欄 / 「観察のみ」/ 「対象外」等は parse error」明記 |
 | 2 | (B) で 3 条件 AND 不成立を parse error で reject | ○ | line 108-109: validation #2「rationale 列に「別領域・別機能 AND 1 セッション超 AND 受け入れ条件検証破綻」3 条件への該当言及があるか。1 条件のみの (B) は parse error」明記 |
 | 3 | 「無視」「観察のみ」「対象外」キーワード単独行を parse error で reject | △ | line 110: 「subagent return に「無視」「観察のみ」「スコープ対象外」のキーワードを単独で含む行がない」と明記。ただし scenario_i は「対象外」も期待するが、SKILL.md は「スコープ対象外」と記載しており、「対象外」単独 (「スコープ対象外」の部分文字列) が別途 grep で捕捉されるかは不明。正規表現/部分一致か完全一致かの仕様が未明確 |
@@ -271,7 +271,7 @@
 ## ギャップ一覧
 
 | # | 種別 | 概要 | 既知/新規 | 影響 scenario | 判定 |
-|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- |
 | GAP-1 | prompt template 省略 | (A) priority bullet の「PR 内対応」slogan 欠落 | 既知 Minor 1 | a, e, i | △ |
 | GAP-2 | prompt template 省略 | (B) bullet の negative example 例示欠落 | 既知 Minor 2 | e, i | △ |
 | GAP-3 | Step 3.4 note 省略 | (iii) note の手動 abort 後運用段落欠落 | 既知 Minor 3 | b, c | △ |
@@ -355,7 +355,7 @@
 全 [critical] 項目数を scenario 別に積算:
 
 | scenario | [critical] 件数 | ○ | △ | × |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | a | 6 (scenario 固有) | 6 | 0 | 0 |
 | b | 4 | 4 | 0 | 0 |
 | c | 3 | 3 | 0 | 0 |

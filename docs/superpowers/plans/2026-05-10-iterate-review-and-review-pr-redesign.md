@@ -137,7 +137,7 @@ spec §3.4 参照。
 
 PR コメント投稿が必要な特殊ケース (例: 別レビュアーへ正式に依頼書を残したい) は **ユーザーが手動で行う**。skill が自動投稿することはない。
 
-```
+```text
 
 「補足: scope-guard 発動時の AskUserQuestion 投げ先」サブ節は**維持**。
 
@@ -534,7 +534,7 @@ PR #902 を review してください。`/review-pr` skill を invoke します�
 7. Step 3 受け入れ条件逐条検証 (`/enforce-acceptance-criteria` 経由) は subagent mode でも実行される
 8. deferred-list に含まれた topic は findings から除外される
 
-````
+````text
 
 - [ ] **Step 2: ファイルが正しく作成されたか確認**
 
@@ -710,7 +710,7 @@ base 最新化 + 直近マージ PR + 並行 worktree PR 重複確認は `/revie
 - `findings_history = {}` (key: round 番号, value: Step 5b 表)
 - `divergence_counter = 0`
 
-```
+```text
 
 - [ ] **Step 2: 確認**
 
@@ -787,7 +787,7 @@ PR #<N> を review してください。`/review-pr` skill を invoke します�
    - CI status: <green/failing/pending>
    ```
 
-````
+````text
 
 `<N>` には PR 番号 ($ARGUMENTS) を埋める。`<handoff_state を箇条書き>` には Step 1 で初期化した `handoff_state` の内容 (空なら "(なし)") を埋める。
 ```
@@ -890,7 +890,7 @@ Round N findings:
 
 `ambiguous_judgments` がある場合、追加 AskUserQuestion でユーザー判断を仰ぐ。1 AskUserQuestion call は最大 4 questions まで束ねられる仕様 (= AskUserQuestion tool 上限) を活用し、5 件以上は複数 call に分割。1 round あたりの AskUserQuestion 呼び出し総数は「Round summary 1 + ambiguous_judgments の必要分」を上限とする。
 
-```
+```text
 
 - [ ] **Step 2: 確認**
 
@@ -989,7 +989,7 @@ spec §2.5 Step 2.5 参照。
    EOF
    ```
 
-```
+```text
 
 - [ ] **Step 2: 確認**
 
@@ -1042,7 +1042,7 @@ spec §2.5 Step 2.6 参照。
 
 1. `handoff_state` 追加 + PR body deferred block 更新 (Step 2.5 同様)
 
-```
+```text
 
 - [ ] **Step 2: 確認**
 
@@ -1148,7 +1148,7 @@ Round == 5 + 未収束 → user gate 2 択。
 
 > **(iii) 残 (A) 別 issue 化選択肢の不採用**: 「残 (A) を別 issue 化して merge」は issue 数収束方針 と矛盾するため**選択肢から除外**。Round 5 まで来たということは PR スコープが大きすぎたか実装方針が不適切のため、PR 単位での再構成 (i) が筋。
 
-```
+```text
 
 - [ ] **Step 2: 確認**
 
@@ -1266,7 +1266,7 @@ Round 数 5 + findings 多数で極端に長くなる場合:
 </details>
 ```
 
-```
+```text
 
 - [ ] **Step 2: 確認**
 
@@ -1333,7 +1333,7 @@ spec §2.8 / §2.9 / §2.10 参照。
 
 ユーザーが PR 番号を指定して呼び出す、または PR 作成セッションが skill として自走呼出する。
 
-```
+```text
 
 - [ ] **Step 2: 確認**
 
