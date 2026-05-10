@@ -254,6 +254,8 @@ Step 5 / 5a / 5b で root cause (literal mismatch / 古い API 残存 / DCE 誇�
 
 「explicit な 4 箇所」を依頼すると implementer が同 file 内の他 hits を見落とし、Round 2/3 で再指摘するパターンが発生する (#682 issue 本文 PR #675 経緯参照)。
 
+**複数 root cause が混在する場合** (literal mismatch / 古い API 残存 / DCE 誇張表現 / **base regression (他 PR 由来フィールド欠落)** 等の異なる種類が同一 PR で発生): 各 root cause を最初に個別識別し、root cause ごとに独立した grep コマンドを生成する。base regression は Step 2.2 で列挙した影響候補 PR のフィールド・関数引数・新規エクスポートが本 PR の変更対象ファイルに統合されているか確認することで検出する。異なる root cause を同一 grep パターンで混在させると sweep 漏れが発生するため、root cause 数 = grep コマンド数を原則とする。
+
 ### 6. レビュー結果をユーザーに報告
 
 Step 5b のトリアージ表を前提に、以下のテンプレート構造で**レビュー報告 markdown を生成して presenting する** (`AskUserQuestion` は呼ばない、PR コメント投稿もしない)。Step 7 / 8 へ自動進行する。
@@ -340,6 +342,8 @@ Round 2+ の再レビュー管理 (収束判定 / 発散判定 / 打ち切り判
 
 ### 8. マージ後の close-issue handoff (PR が MERGED 状態の場合)
 
+本 skill はレビュー専用セッション契約のため `gh issue close` / `gh pr merge` を一切実行しない (冒頭「重要」節と同じ責務分離原則に基づく、Iron Law 4 担保)。close 操作は専用 skill `/close-issue <番号>` または手動で実施すること。
+
 PR がマージ済みで本 skill が呼ばれた場合 (= 確認用の事後レビュー) のみ意味がある節。マージ前の課題ハンドオフは `/iterate-review` Step 5 (LGTM 候補通知) で吸収する。
 
 #### 手順
@@ -409,6 +413,8 @@ PR がマージ済みで本 skill が呼ばれた場合 (= 確認用の事後レ
    - (iii) grep 結果なし + CI typecheck 未設定 → typecheck 追加を (B) 別 issue 起票 or PR 作成セッションに依頼
    - 動的 import (`importlib` / `import()` 実行時解決) は grep / typecheck だけでは検出不可。該当ソースに動的 import が含まれる場合は PR 作成セッションに実機検証を依頼
 
+**doc-only PR での旧用語 literal sweep**: doc-only PR であっても用語 / フィールド名 / コマンド名が変更された場合 (パス変更を含まない場合でも)、他ファイルへの旧用語残存を root cause として識別し Step 5c sweep を適用する。本 §D の「パス・識別子変更」はパス名に限らず PR で変更された任意のキーワード (用語 / フィールド名 / 関数名) を含む。旧用語が他ファイルに散在している場合は用語統一の root cause として Step 5c 全件 sweep が必要。
+
 ### §E. 参照ファイル追加 (バイナリ等) を伴う PR
 
 対象: 特徴量ファイル / 画像 / 音声参照 / sample data 等のバイナリを PR で追加する場合。
@@ -463,7 +469,7 @@ Subagent mode で Step 5b の (A)/(B)/(C) 自動分類を行う際の厳格規�
 2. **default は (A)**: 「指摘は原則すべて PR 内対応」を継承。CI failure / latent type error / 隣接ファイル lint 違反 / 古い API 残存 / 古い doc 記述 / 環境起因の問題 等は全部 (A)
 3. **(B) は厳格 3 条件 AND**: `別領域・別機能` AND `1 セッション超の独立設計が必要` AND `本 PR 同梱で受け入れ条件検証が破綻` の **すべて満たす場合のみ** (B)。1 つでも欠ければ (A)。**サイズ単独 / scope-out 単独 / 受け入れ条件直結性単独では (B) 化不可**
 4. **(C) は重複起票回避 trigger のみ**: 同テーマの既存 issue が存在する場合のみ。「新規 issue を作るべきだが既存に書いた方が綺麗」は不可
-5. **判定に迷う finding**: `(A)` を default として置き、`ambiguous_judgments` セクションに該当 finding を記載 (orchestrator 側で user gate)
+5. **判定に迷う finding**: findings_table の処置列に `(A)*` と記載し (default は (A))、`ambiguous_judgments` セクションに当該 finding を詳述する。findings_table に `ambiguous` 単独で記載することは禁止 (`(A)*` + ambiguous_judgments 補足が正式記法、orchestrator はこの行を ambiguous_judgments セクションと cross-reference してユーザー gate に bubble する)
 6. **rationale 列に判定根拠を必ず記載**: (B) を選ぶ場合は 3 条件 AND 該当根拠、(C) を選ぶ場合は既存 issue 番号、(A) は省略可
 
 #### G.3 戻り値構造 (subagent → orchestrator)
