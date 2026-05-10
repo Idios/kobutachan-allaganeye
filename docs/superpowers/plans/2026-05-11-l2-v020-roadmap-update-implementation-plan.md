@@ -136,7 +136,6 @@ Use Write tool:
 - 旧 plan 「Group G workflow 3 件」のうち 2 件 DONE。残 #458 (bug_report.yml) は本 plan で Lane IV-b' に統合
 - 旧 plan 「Group H lint/CLI 2 件」DONE。ESLint window.confirm/alert/prompt block + CLI 進捗バー ETA 表示改善が production
 - 旧 plan 注釈「[#365](https://github.com/Idios/kobutachan-allaganeye/issues/365) は v0.2.0 内取り込み disposition」消化済 (#365 closed via PR #687)
-- 旧 plan 「[#106](https://github.com/Idios/kobutachan-allaganeye/issues/106) ゼロ環境構築配布親 issue」CLOSED (Wave 0 期間中に handle 済)
 
 ## 2. v0.2.0 残作業 — 11 brainstorming groups (A-K)
 
@@ -384,7 +383,9 @@ issue: #412 / #576 / #634 / #652 / #654 / #658 — `l1-residual` ラベル付与
 
 ### L3+ 将来 layer (多数)
 
-issue: #28 / #32 / #63 / #125-#137 / #139-#152 / #326 / #372-#373 / #376 / #479-#481 — L3 OCR / L4 ML / L5 自動編集 / 拡張 layer (旧 plan の [#106](https://github.com/Idios/kobutachan-allaganeye/issues/106) ゼロ環境構築配布親 issue は CLOSED)
+issue: #28 / #32 / #63 / #125-#137 / #139-#152 / #326 / #372-#373 / #376 / #479-#481 — L3 OCR / L4 ML / L5 自動編集 / 拡張 layer
+
+注: 旧 plan は [#106](https://github.com/Idios/kobutachan-allaganeye/issues/106) を「Wave 0 で CLOSED」と記述しているが、本 PR の review (PR #709 Round 1) で fact 確認した結果 OPEN (P2-medium、closedAt: null) と判明。Group F (Wave 0) の 4 件で実質的に substantial portion が消化済だが parent issue は未 close のため、本 PR では旧 plan の誤記を継承せず削除した。
 
 ## 5. 関連 doc / Iron Law 整合
 
@@ -541,7 +542,7 @@ docs: L2 v0.2.0 roadmap update implementation plan (writing-plans 出力)
 
 brainstorming spec (commit c41fb6c) → writing-plans 出力。
 新 roadmap 作成 (Task 2) + 旧 plan supersede (Task 1) + lint (Task 4)
-+ PR 作成 (Task 5/6) を docs-only で完結する 5 task 構成。
++ PR 作成 (Task 5/6) を docs-only で完結する 6 task 構成。
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
