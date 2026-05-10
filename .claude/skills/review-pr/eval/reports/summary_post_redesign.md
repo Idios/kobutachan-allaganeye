@@ -5,6 +5,7 @@
 ## 背景
 
 `/review-pr` skill を `/iterate-review` 新規追加と整合させるための改訂 (Tasks 2-7):
+
 - Step 6 AskUserQuestion 4 択 削除
 - Step 7 per-finding comment 投稿 全廃
 - Step 7a 再レビューラウンド管理 移管 note 化

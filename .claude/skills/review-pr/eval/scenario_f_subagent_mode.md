@@ -39,10 +39,12 @@ PR #902 を review してください。`/review-pr` skill を invoke します�
 ## 期待 output
 
 ### G.1 Mode 検出
+
 - prompt 内の `__ITERATE_REVIEW_SUBAGENT_MODE__` マーカーを検出
 - subagent mode に切り替え
 
 ### G.2 動作差分
+
 - Step 2.3 / 2.4 の AskUserQuestion を **skip** (`gh pr view`/`gh pr list` での確認のみ実施)
 - Step 5b の (A)/(B)/(C) 個別振り分け AskUserQuestion を **skip**、§G.2.1 規約に従って自動分類
 - Step 6 報告を final message に markdown で含める (conversation 内 presenting でなく)
@@ -50,12 +52,14 @@ PR #902 を review してください。`/review-pr` skill を invoke します�
 - `gh pr comment` 呼び出し **皆無**
 
 ### G.2.1 自動分類規約適用
+
 - 全 finding に分類 (A) / (B) / (C) / ambiguous のいずれかを付与 (なしは禁止)
 - (A) を default、`関数リネーム他箇所影響調査痕跡欠如` 等は (A) に分類
 - (B) は 3 条件 AND を rationale 列で根拠示し
 - 「無視」「観察のみ」「対象外」キーワードを含む行は出力しない
 
 ### G.3 戻り値構造
+
 - 5 セクション順序固定: acceptance_criteria_status / findings_table / ambiguous_judgments / recommendation / meta
 - `ambiguous_judgments` セクションは空でも必ず記載
 - meta に mergeStateStatus / 並行 PR 状態 / CI 状態を含める

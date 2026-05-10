@@ -136,6 +136,7 @@ spec §3.4 参照。
 ```
 
 PR コメント投稿が必要な特殊ケース (例: 別レビュアーへ正式に依頼書を残したい) は **ユーザーが手動で行う**。skill が自動投稿することはない。
+
 ```
 
 「補足: scope-guard 発動時の AskUserQuestion 投げ先」サブ節は**維持**。
@@ -489,10 +490,12 @@ PR #902 を review してください。`/review-pr` skill を invoke します�
 ## 期待 output
 
 ### G.1 Mode 検出
+
 - prompt 内の `__ITERATE_REVIEW_SUBAGENT_MODE__` マーカーを検出
 - subagent mode に切り替え
 
 ### G.2 動作差分
+
 - Step 2.3 / 2.4 の AskUserQuestion を **skip** (`gh pr view`/`gh pr list` での確認のみ実施)
 - Step 5b の (A)/(B)/(C) 個別振り分け AskUserQuestion を **skip**、§G.2.1 規約に従って自動分類
 - Step 6 報告を final message に markdown で含める (conversation 内 presenting でなく)
@@ -500,12 +503,14 @@ PR #902 を review してください。`/review-pr` skill を invoke します�
 - `gh pr comment` 呼び出し **皆無**
 
 ### G.2.1 自動分類規約適用
+
 - 全 finding に分類 (A) / (B) / (C) / ambiguous のいずれかを付与 (なしは禁止)
 - (A) を default、`関数リネーム他箇所影響調査痕跡欠如` 等は (A) に分類
 - (B) は 3 条件 AND を rationale 列で根拠示し
 - 「無視」「観察のみ」「対象外」キーワードを含む行は出力しない
 
 ### G.3 戻り値構造
+
 - 5 セクション順序固定: acceptance_criteria_status / findings_table / ambiguous_judgments / recommendation / meta
 - `ambiguous_judgments` セクションは空でも必ず記載
 - meta に mergeStateStatus / 並行 PR 状態 / CI 状態を含める
@@ -528,6 +533,7 @@ PR #902 を review してください。`/review-pr` skill を invoke します�
 6. **[critical]** ambiguous_judgments セクションが空でも必ず記載される
 7. Step 3 受け入れ条件逐条検証 (`/enforce-acceptance-criteria` 経由) は subagent mode でも実行される
 8. deferred-list に含まれた topic は findings から除外される
+
 ````
 
 - [ ] **Step 2: ファイルが正しく作成されたか確認**
@@ -686,6 +692,7 @@ gh pr view $ARGUMENTS --json state,isDraft,headRefName,baseRefName,closingIssues
 ```
 
 判定:
+
 - `state == CLOSED` または `state == MERGED` → 「ループ対象外」エラー終了
 - `isDraft == true` → AskUserQuestion 3 択 (draft でも進める / draft 解除を待つ / abort)
 - それ以外 (state == OPEN + isDraft == false) → Step 1 へ
@@ -702,6 +709,7 @@ base 最新化 + 直近マージ PR + 並行 worktree PR 重複確認は `/revie
 - `handoff_state = []` (要素: `{topic, classification, issue_number, round}`)
 - `findings_history = {}` (key: round 番号, value: Step 5b 表)
 - `divergence_counter = 0`
+
 ```
 
 - [ ] **Step 2: 確認**
@@ -778,6 +786,7 @@ PR #<N> を review してください。`/review-pr` skill を invoke します�
    - 並行 PR: <検出ゼロ / [#X handled]>
    - CI status: <green/failing/pending>
    ```
+
 ````
 
 `<N>` には PR 番号 ($ARGUMENTS) を埋める。`<handoff_state を箇条書き>` には Step 1 で初期化した `handoff_state` の内容 (空なら "(なし)") を埋める。
@@ -880,6 +889,7 @@ Round N findings:
 ````
 
 `ambiguous_judgments` がある場合、追加 AskUserQuestion でユーザー判断を仰ぐ。1 AskUserQuestion call は最大 4 questions まで束ねられる仕様 (= AskUserQuestion tool 上限) を活用し、5 件以上は複数 call に分割。1 round あたりの AskUserQuestion 呼び出し総数は「Round summary 1 + ambiguous_judgments の必要分」を上限とする。
+
 ```
 
 - [ ] **Step 2: 確認**
@@ -978,6 +988,7 @@ spec §2.5 Step 2.5 参照。
    <!-- iterate-review:deferred:end -->
    EOF
    ```
+
 ```
 
 - [ ] **Step 2: 確認**
@@ -1029,7 +1040,8 @@ spec §2.5 Step 2.6 参照。
    EOF
    ```
 
-2. `handoff_state` 追加 + PR body deferred block 更新 (Step 2.5 同様)
+1. `handoff_state` 追加 + PR body deferred block 更新 (Step 2.5 同様)
+
 ```
 
 - [ ] **Step 2: 確認**
@@ -1135,6 +1147,7 @@ Round == 5 + 未収束 → user gate 2 択。
 ```
 
 > **(iii) 残 (A) 別 issue 化選択肢の不採用**: 「残 (A) を別 issue 化して merge」は issue 数収束方針 と矛盾するため**選択肢から除外**。Round 5 まで来たということは PR スコープが大きすぎたか実装方針が不適切のため、PR 単位での再構成 (i) が筋。
+
 ```
 
 - [ ] **Step 2: 確認**
@@ -1236,6 +1249,7 @@ inline `--body "..."` は日本語が UTF-8 破損するため禁止 (`feedback_
 #### 4.4 length 対策
 
 Round 数 5 + findings 多数で極端に長くなる場合:
+
 - `<details>` で Round 詳細を折り畳み
 - topic 文字数制限 (30 / 50 字)
 
@@ -1251,6 +1265,7 @@ Round 数 5 + findings 多数で極端に長くなる場合:
 
 </details>
 ```
+
 ```
 
 - [ ] **Step 2: 確認**
@@ -1317,6 +1332,7 @@ spec §2.8 / §2.9 / §2.10 参照。
 ```
 
 ユーザーが PR 番号を指定して呼び出す、または PR 作成セッションが skill として自走呼出する。
+
 ```
 
 - [ ] **Step 2: 確認**
@@ -1929,6 +1945,7 @@ iter_0 で記録した修正方針を 1 つずつ SKILL.md に反映する。
 - [ ] **Step 2: 各ギャップに対する修正を SKILL.md に適用**
 
 例 (実際のギャップは iter_0 で確定):
+
 - ギャップ「subagent mode 検出ロジックの曖昧さ」→ §G.1 に検出時の具体動作 (例: prompt 受信直後にマーカー grep する step) を追記
 - ギャップ「Step 5b の自動分類規約が散らばっている」→ §G.2.1 内に集約
 
@@ -2005,6 +2022,7 @@ git commit -m "test(iterate-review): iter_0 baseline 完了"
 - [ ] **Step 2 (Task 31): /iterate-review SKILL.md 改善**
 
 iter_0 ギャップに基づき SKILL.md を修正。例:
+
 - 「Step 2.2 validation の parse error 復帰手順が曖昧」→ 具体例を追加
 - 「Step 3.2 divergence_counter の reset タイミングが不明確」→ counter リセット条件を強調
 
@@ -2415,12 +2433,14 @@ writing-plans の self-review section に従い、以下を確認:
 すべて対応済み。
 
 **2. Placeholder scan**: TODO / TBD / `<...>` などのプレースホルダーは:
+
 - spec 参照 (`spec §X.Y 参照`) は意図的、これは「detailed content is in spec」を意味
 - iter_0 ギャップ抽出は実行時にしか確定しないため Task 27-32 で「ギャップに応じて」と書いてあるのは適切 (空 placeholder ではない)
 
 その他のプレースホルダーは無し。
 
 **3. Type consistency**: 用語の一貫性:
+
 - `__ITERATE_REVIEW_SUBAGENT_MODE__` マーカー: Task 6 (review-pr §G), Task 13 (iterate-review Step 2.1), Task 23-25 (eval scenarios) で一貫
 - `handoff_state` / `findings_history` / `divergence_counter`: Task 12, 14, 17, 18, 20 で一貫
 - 「(A) 強優先方針」 / 「(B) 厳格 3 条件 AND」: Phase A-B 全体で一貫

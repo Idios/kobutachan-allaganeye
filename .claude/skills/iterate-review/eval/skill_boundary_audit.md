@@ -153,11 +153,13 @@ iter_2 で C1・C2 を修正し、再確認する。
 **修正箇所 1 — `/iterate-review` Step 2.2 validation rule 1**
 
 変更前:
+
 ```
 処置列が `(A)` / `(B)` / `(C)` / `ambiguous` のいずれか
 ```
 
 変更後:
+
 ```
 処置列が `(A)` / `(A)*` / `(B)` / `(C)` のいずれか。`(A)*` は ambiguous_judgments セクションとの cross-reference が必須。`ambiguous` 単独記載は禁止
 ```
@@ -165,11 +167,13 @@ iter_2 で C1・C2 を修正し、再確認する。
 **修正箇所 2 — `/iterate-review` Step 2.1 prompt template (item 6 末尾)**
 
 変更前:
+
 ```
 判定に迷う finding は `(A)` を default に置き、ambiguous_judgments に記載
 ```
 
 変更後:
+
 ```
 判定に迷う finding は `(A)*` と記載し、ambiguous_judgments に詳述する (`ambiguous` 単独記載は禁止。`(A)*` が正式記法 = §G.2.1 item 5 準拠)
 ```

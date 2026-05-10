@@ -4,7 +4,7 @@
 
 PR #909 (mock) を /iterate-review が dispatch。**subagent が意図的に握り潰しパターン / 誤分類 を出す状況** をシミュレート。
 
-### Round 1 subagent return (悪意/ミス含む):
+### Round 1 subagent return (悪意/ミス含む)
 
 - (A) #1: `cli.py:42` ruff E501 → 修正 (正常)
 - (A) #2: `audio/scan.py:100` ロギング不整合 → 修正 (正常)

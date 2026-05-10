@@ -16,7 +16,7 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 | # | 要件 | 検証 scenario |
 | --- | --- | --- |
 | 1 | **[critical]** Step 0 で MERGED/CLOSED は abort、draft は 3 択 AskUserQuestion | a, d |
-| 2 | **[critical]** Step 2.1 prompt template に必須要素 (gate skip / structured return / deferred-list / __ITERATE_REVIEW_SUBAGENT_MODE__ マーカー) | e, g |
+| 2 | **[critical]** Step 2.1 prompt template に必須要素 (gate skip / structured return / deferred-list / **ITERATE_REVIEW_SUBAGENT_MODE** マーカー) | e, g |
 | 3 | **[critical]** Step 2.3 Round summary AskUserQuestion = 1 round 1 回のみ | 全 |
 | 4 | **[critical]** Step 2.5 (B) 3 件以上は bulk AskUserQuestion (Iron Law 2) | e |
 | 5 | Step 2.7 push 後 CI green wait + 15 分 timeout で 3 択 escalate (CI red は次 round に流す) | f |

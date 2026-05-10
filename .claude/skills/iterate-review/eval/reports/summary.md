@@ -35,6 +35,7 @@
 ## 結論
 
 empirical-prompt-tuning iter_1 で完了。skill は全要件を満たす状態に到達。後続:
+
 - Task 34-35: post-tuning skill boundary audit (/review-pr との境界整合性)
 - Task 36-37: docs 更新
 - Task 38-40: PR 作成 + 手動 review

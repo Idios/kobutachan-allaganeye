@@ -70,6 +70,7 @@
 | 3 | Step 5 で /close-issue 案内 | ○ | line 330-333: 「/close-issue <issue#> で実測再検証してから手動クローズしてください」明記 |
 
 **不明瞭点**:
+
 - [critical] #2 (△): 「summary 投稿は実施」は 3 択の (iii) skip があるため、0 findings 時に (iii) skip が推奨になる余地がある。SKILL.md は 0 findings でも (i) が Recommended であることを明示していない
 
 ---
@@ -87,6 +88,7 @@
 | 5 | 再 flag 防止: Round 2 で同 topic の findings が出ない | △ | line 67-70: exclusion 伝達手順は明記。ただし「subagent が exclusion を尊重しなかった場合の fallback」が未記載。Step 2.2 validation で grep 検出するが、deferred topic の再登場を検出する validation は明示されていない |
 
 **不明瞭点**:
+
 - [critical] #5 (△): 再 flag 防止は exclusion 伝達に依拠しているが、subagent が deferred topic を再 flag した場合の主セッション側 detection/rejection 手順が未記載
 
 ---
@@ -149,6 +151,7 @@
 | 7 | latent issue / CI failure / 隣接 lint 違反は (A) | × | line 77: 「(A) を最優先: CI failure / latent type error / 隣接ファイル lint 違反 等は全部 (A)」と subagent prompt に含まれている。しかし **主セッション側** での validation / enforcement として「latent issue を (A) 以外で返した場合を parse error とする」条件は Step 2.2 validation に **明示されていない**。Step 2.2 validation は「空欄」「(B) の根拠不足」「無視キーワード」「ambiguous セクション欠落」の 4 条件のみ。「latent issue が (B) や (C) として返ってきた場合」を parse error として catch する validation 条件が欠落 |
 
 **不明瞭点**:
+
 - [critical] #3 (△): 「対象外」単独行の検出に「スコープ対象外」を grep することで十分かが不明確
 - [critical] #5 (△): 再 dispatch 時に主セッションが「default (A) を採用せよ」を再強調する手順が未記載
 - [critical] #7 (×): latent issue の (A) 強制は subagent prompt の instruction のみで、主セッション側の validation に入っていない
@@ -373,10 +376,12 @@
 失敗 scenario (1 つ以上 △/×): d, e, i (3/9)
 
 **×判定の [critical] 項目 (最優先修正対象)**:
+
 1. scenario_i [critical] #7: latent issue を (A) 以外で返した場合の validation 欠落 → iter_1-FIX-5 で対応
 2. scenario_i 内包の GAP-6 に同じ
 
 **△判定の [critical] 項目 (要改善)**:
+
 - scenario_d [critical] #2: 0 findings 時 summary 推奨文脈 → iter_1-FIX-8
 - scenario_e [critical] #5: deferred topic 再 flag 時の rejection 手順 → iter_1-FIX-6
 - scenario_i [critical] #3: 「対象外」grep の明確化 → iter_1-FIX に追加検討

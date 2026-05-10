@@ -34,6 +34,7 @@ gh pr view $ARGUMENTS --json state,isDraft,headRefName,baseRefName,closingIssues
 ```
 
 判定:
+
 - `state == CLOSED` または `state == MERGED` → 「ループ対象外」エラー終了
 - `isDraft == true` → AskUserQuestion 3 択 (draft でも進める / draft 解除を待つ / abort)
 - それ以外 (state == OPEN + isDraft == false) → Step 1 へ
@@ -255,6 +256,7 @@ Round == 5 + 未収束 → user gate 2 択。
 > Round 1 で 0 findings (即収束) でも summary 投稿は実施推奨。skip 選択肢 (iii) は loop 終了のみで、コメント未投稿の場合 PR の review-fix 履歴が残らない。受け入れ条件実証記録としての価値があるため (i) が Recommended。
 
 AskUserQuestion 3 択:
+
 - (i) 投稿する (Recommended)
 - (ii) 微調整して投稿 (markdown を user に提示 → 修正 → 再承認)
 - (iii) skip 投稿 (loop は終了、コメントは残さない)
@@ -317,6 +319,7 @@ inline `--body "..."` は日本語が UTF-8 破損するため禁止 (`feedback_
 #### 4.4 length 対策
 
 Round 数 5 + findings 多数で極端に長くなる場合:
+
 - `<details>` で Round 詳細を折り畳み
 - topic 文字数制限 (30 / 50 字)
 

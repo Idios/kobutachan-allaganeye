@@ -316,6 +316,7 @@ SKILL.md §G.2.1 (line 466 付近) を以下に改訂:
 注: requirements.md の判定規則「[critical] 項目が全て ○ のときのみ成功」に準拠。△ は 0.5 点として精度計算に使用。全 [critical] 55 項目のうち requirements.md 上の実定義は requirements.md に記載の項目数に準拠 (A:10→6 [critical], B:10→6, C:10→6, D:11→7, E:10→6, F:8→6 等)。
 
 全 [critical] 総数 (requirements.md 定義): A:6 + B:6 + C:6 + D:7 + E_central:6 + E_edge_mixed:6 + E_edge_doc_only:6 + F:6 = **49 項目**
+
 - ○: 38 / △: 8 / ×: 3
 - 精度: (38 + 8×0.5) / 49 = 42 / 49 = **85.7%**
 - シナリオ成功数: 5 / 8 (A, B, C, E_central, E_edge_doc_only — ただし △ を ○ 相当として計算)
