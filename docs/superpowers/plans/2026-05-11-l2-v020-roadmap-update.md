@@ -85,7 +85,7 @@
 
 | # | priority | 概要 |
 | --- | --- | --- |
-| #694 | P3 (refactor) | `*Error` / `*ErrorHint` 並列構造を unified `*ErrorState: AppError|null` に集約 |
+| #694 | P3 (refactor) | `*Error` / `*ErrorHint` 並列構造を unified `*ErrorState: AppError\|null` に集約 |
 | #691 | P3 (refactor) | metadataStore catch path の hint clear 範囲整理 (5 catch path) |
 | #693 | P3 | hint UI の `💡` emoji prefix を 5 site 共通化 (`InlineErrorHint` 案) |
 | #695 | P3 | ConflictModal で `state.mtime_conflict` の AppError hint 表示 |
