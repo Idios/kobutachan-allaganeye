@@ -14,7 +14,7 @@ PR 作成後の review → fix → review ループを自動化する。指定�
 
 ## 主要フロー (overview)
 
-1. Step 0: Pre-flight (PR open / base sync / 並行 worktree PR)
+1. Step 0: Pre-flight (PR open / draft / state 確認のみ。base sync は subagent dispatch 内 /review-pr Step 2 に委譲)
 2. Step 1: ループ初期化 (Round=1, handoff_state=[], findings_history={}, divergence_counter=0)
 3. Step 2: Round N 実行 (subagent dispatch → parse → AskUserQuestion → fix/handoff → push → CI wait)
 4. Step 3: 判定 (収束 / 発散 / 打ち切り)
@@ -72,7 +72,7 @@ PR #<N> を review してください。`/review-pr` skill を invoke します�
 4. PR body の `<!-- iterate-review:deferred:start --> ... <!-- iterate-review:deferred:end -->` ブロック内 topics も exclude
 5. Step 3 の受け入れ条件逐条検証結果 (`/enforce-acceptance-criteria`) も final message に含める
 6. **(A) 強優先方針 + 握り潰し禁止**:
-   - **すべての finding に必ず分類 (A) / (B) / (C) / ambiguous のいずれかを付与**
+   - **すべての finding に必ず分類 (A) / (A)* / (B) / (C) のいずれかを付与** (`(A)*` は ambiguous case の cross-reference 記法)
    - **指摘は原則すべて PR 内対応 (Iron Law 1 担保)**: 観察コメントのみ / スコープ対象外と自己判断 / 軽微だから無視 は **すべて NG** (parse error として orchestrator が再 dispatch)
    - **(A) を最優先**: CI failure / latent type error / 隣接ファイル lint 違反 等は全部 (A)
    - **(B) は厳格 3 条件 AND 必須**: `別領域・別機能` AND `1 セッション超の独立設計が必要` AND `本 PR 同梱で受け入れ条件検証が破綻`。**サイズ単独 / scope-out 単独 / 受け入れ条件直結性単独では (B) 化不可**
@@ -110,7 +110,7 @@ Agent tool の戻り値 markdown から `## findings_table` セクションの�
 2. **(B) 主張行には trigger 根拠列がある**: rationale 列に「別領域・別機能 AND 1 セッション超 AND 受け入れ条件検証破綻」3 条件への該当言及があるか。1 条件のみの (B) は **parse error** (= subagent が誤分類)
 3. **subagent return に「無視」「観察のみ」「スコープ対象外」のキーワードを単独で含む行がない**: 文字列 grep で検出、ヒットしたら **parse error**
 4. **`ambiguous_judgments` セクションが存在する** (空でもセクション自体は必須): 不在は parse error
-5. **(A) 強優先方針違反検出**: `latent issue / CI failure / 隣接ファイル lint 違反 / 古い API 残存 / 古い doc 記述` 等の典型 (A) trigger を含む finding が (A) 以外 ((B) / (C) / ambiguous) に分類されている場合は **parse error**
+5. **(A) 強優先方針違反検出**: `latent issue / CI failure / 隣接ファイル lint 違反 / 古い API 残存 / 古い doc 記述` 等の典型 (A) trigger を含む finding が (A) 以外 ((A)* / (B) / (C)) に分類されている場合は **parse error**
 
 **parse error 時の対処**:
 
@@ -119,7 +119,7 @@ Agent tool の戻り値 markdown から `## findings_table` セクションの�
 
 #### Step 2.3 Round summary AskUserQuestion (1 round 1 回のみ)
 
-Round N の集計表示 + AskUserQuestion 2 択。Round 開始時に user 介入を集約する唯一の gate。
+Round N の集計表示 + AskUserQuestion 2 択。Round 開始時の主要 gate (例外: Step 2.5 (B) 3+ bulk Iron Law 2 gate / Step 2.7 timeout gate / ambiguous_judgments 拡張)。
 
 提示内容:
 
@@ -136,7 +136,7 @@ Round N findings:
 - (ii) abort (loop 中断、現状で /create-task など手作業に切替)
 ````
 
-`ambiguous_judgments` がある場合、追加 AskUserQuestion でユーザー判断を仰ぐ。1 AskUserQuestion call は最大 4 questions まで束ねられる仕様 (= AskUserQuestion tool 上限) を活用し、5 件以上は複数 call に分割。1 round あたりの AskUserQuestion 呼び出し総数は「Round summary 1 + ambiguous_judgments の必要分」を上限とする。
+`ambiguous_judgments` がある場合、追加 AskUserQuestion でユーザー判断を仰ぐ。1 AskUserQuestion call は最大 4 questions まで束ねられる仕様 (= AskUserQuestion tool 上限) を活用し、5 件以上は複数 call に分割。1 round あたりの AskUserQuestion 呼び出し総数は「Round summary 1 + ambiguous_judgments の必要分 + Step 2.5/2.7 の例外 gate」を上限とする。
 
 `<N>` には PR 番号 ($ARGUMENTS) を埋める。`<handoff_state を箇条書き>` には Step 1 で初期化した `handoff_state` の内容 (空なら "(なし)") を埋める。
 
@@ -209,7 +209,11 @@ Round N findings:
 - **CI red (failure)**: 本 step では abort しない。次 round の `/review-pr` Step 4 が CI 失敗を findings に拾う前提 (`/review-pr` Step 4 「失敗あり: 失敗ジョブ名と概要を user に報告」を踏襲)。CI red が複数 round 連続で再発生する場合は §2.6 divergence 検知で打切り判定
 - **timeout (15 分超)**: AskUserQuestion 3 択 (待ち続ける (timeout 30 分に延長して poll 継続) / CI 無視で次 round / abort)
 
-実装ノート: `gh pr checks --watch` の timeout は CLI 側で直接制御できないため、`timeout` コマンド (Linux/macOS) または PowerShell の `Start-Job` + `Wait-Job -Timeout` で wrap する。Windows + Git Bash では `timeout 900 gh pr checks ...` で OK。
+実装ノート: `gh pr checks --watch` の timeout は CLI 側で直接制御できないため、以下のいずれかで wrap する:
+
+- **Linux / macOS**: `timeout 900 gh pr checks ...`
+- **Windows + Git Bash (coreutils 版 timeout 利用可能時)**: `timeout 900 gh pr checks ...` (Git Bash 環境で `which timeout` が `/usr/bin/timeout` 等を指すこと、Windows 標準の `timeout.exe` ではないことを確認)
+- **PowerShell (Windows 標準)**: `Start-Job -ScriptBlock { gh pr checks $args[0] --watch } -ArgumentList <PR#> | Wait-Job -Timeout 900`
 
 ### Step 3: 収束 / 発散 / 打ち切り判定
 
@@ -233,7 +237,7 @@ Round == 5 + 未収束 → user gate 2 択。
 
 ```text
 - (i) PR 破棄 + scope 整理 + 再 PR (Recommended)
-    → 現 PR を `gh pr close` (branch 維持、後続調査用に残す)
+    → user に `gh pr close` (branch 維持、後続調査用に残す) を**提案** (skill は実行しない、Iron Law 4 担保)
     → /scope-guard で残課題を整理し sub-PR に分割
     → /create-task で必要なら子 issue を整備
     → 各 sub-PR を順次作成 → /iterate-review で個別収束
@@ -357,7 +361,7 @@ Round 数 5 + findings 多数で極端に長くなる場合:
 | 「(A) 修正で副次的に (B) trigger 該当の変更が発生」 | scope-guard 案件。Step 2.4 中に追加 (B) 判定なら次 round へ持ち越さず即 handoff (ただし 3 条件 AND 厳格判定) |
 | 「summary コメント前に LGTM コメントを別途投稿」 | 二重投稿。final summary が LGTM の役割も兼ねる |
 | 「per-finding でコメント投稿した方が個別追跡しやすい」 | 仕様違反。per-finding 投稿は本設計で全廃 (ユーザー指示) |
-| 「軽微な指摘だから observe 表記で済ませよう」 | **握り潰しパターン**。Step 2.2 validation で parse error。すべての finding は (A)/(B)/(C)/ambiguous のいずれかに必ず分類 |
+| 「軽微な指摘だから observe 表記で済ませよう」 | **握り潰しパターン**。Step 2.2 validation で parse error。すべての finding は (A)/(A)*/(B)/(C) のいずれかに必ず分類 |
 | 「scope 外だから (B) 起票しよう」 | (A) 強優先方針違反。scope 外単独は (B) trigger 不成立。3 条件 AND を確認、満たさなければ (A) |
 | 「CI が flaky / 環境起因だから無視で OK」 | 仕様違反。CI failure / latent issue / 環境起因問題はすべて (A) で PR 内対応 |
 | 「Round 5 で残った 1 件くらい別 issue にしておこう」 | (iii) 不採用方針違反。残 (A) を別 issue に逃がさず、PR 破棄 (i) または手動 abort (ii) のいずれかで対応 |

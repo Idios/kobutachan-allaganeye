@@ -196,6 +196,9 @@ Step 3 (受け入れ条件未達) / Step 4 (CI 失敗) / Step 5 (ロジック・
   - **別領域・別機能** (例: 別ファイル群のセキュリティ問題、別レイヤー実装、別担当領域) で着手 issue スコープ外
   - **大規模リファクタ** (独立設計が必要、工数 1 セッション超、本 PR に同梱すると diff が肥大化して受け入れ条件検証が破綻する)
   - **外部依存・側チケット調整が必要** (上流ライブラリ変更、別リポ修正待ち等)
+
+  > ※ subagent mode (`/iterate-review` 経由) 時は §G.2.1 item 3 の AND 3 条件が優先 (機械処理 parse error 抑止)。standalone mode と subagent mode の非対称は意図的設計。
+
 - **(C) 既存 issue 追記 (限定例外)**: 既存 issue の受け入れ条件・残タスクに該当するため、当該 issue にコメントで方針記録を追記。同 issue の重複起票を避けるとき
 
 **AskUserQuestion で処置選択肢を提示する場合**: (A) を必ず最初の選択肢として `(Recommended)` ラベル付きで表示する。**`(Recommended)` ラベルは表示順規約であって最終選択結果を強制するものではない**。(B) / (C) は限定例外 trigger を `description` フィールドに明記する。**(B) trigger 強該当時は description で具体的に該当根拠を説明** する (例: 「audio module は本 PR スコープ外 = 別レイヤー、独立 security 修正 → (B) 該当」)。例:
@@ -518,7 +521,7 @@ Iron Law Red Flags と呼応。以下の合理化が浮かんだら LGTM 寸前�
 - **束ね PR を 1 件として扱い各 issue の独立検証を省略**: 「束ねているから条件は共通」「1 つ検証すれば代表として OK」と判断して 1 件分の受け入れ条件のみチェック → Iron Law 1 違反。Step 3 束ね PR 節 / 環境制約 §F に従い、各 issue の受け入れ条件を独立に逐条検証する
 - **参照ファイル追加時の実体確認省略**: バイナリ追加を diff の name-only でしか確認せず、サイズ・次元・生成条件の PR 本文明記を要求しない → 環境制約 §E 違反。(A) PR コメントで追記要求する
 - **doc 変更 PR が CI 設定に与える波及を検証しない**: 「doc だから CI には関係ない」と判断して `.github/workflows/` / コード側参照の grep 確認を省略 → 環境制約 §D 違反。パス・識別子変更を含む doc 修正は波及確認が必須
-- **再レビュー時に前回指摘の全件追跡を省略**: Round 2 以降で「前回指摘の解消確認」と「本 Round 新出」を分けずに混在レポートする → Step 7a 違反。前 Round の (A) 課題を 1 件ずつ照合し、解消/未解消を明示する
+- **再レビュー時に前回指摘の全件追跡を省略**: Round 2 以降で「前回指摘の解消確認」と「本 Round 新出」を分けずに混在レポートする → /iterate-review Step 3 (収束 / 発散判定) 違反。前 Round の (A) 課題を findings_history で 1 件ずつ照合し解消/未解消を明示する
 - **long-running 検証を自己判断で OK とする**: unit test pass = 全部 OK と誤解。GPU / 長時間動画 / audio 統合は mock 不可のため、PR 作成セッションに実機検証実施 (or 結果報告) を明示要求する
 - **提示フォーマットを無視して口語で書く**: レビュー結果が PR コメントに混在して追跡困難 → Step 6 の「レビュー報告テンプレート」構造で投稿
 - **explicit N 箇所だけ列挙して全件 grep を要求しない (PR #675 Round 1/3 divergence)**: PR #675 で 3 種類の root cause (literal「関数本体先頭」訂正 / 旧 API `vi.stubEnv('DEV', '' as any)` / DCE 誇張表現) が複数 file に散在し、各 Round で explicit な N 箇所のみ列挙したため Round 1 → 2 → 3 と divergence 発生。詳細手順 (grep 全件 sweep / トリアージ表全件転記 / 修正依頼本文に grep 同梱) は **Step 5c (同種パターン sweep 規約、canonical)** 参照。

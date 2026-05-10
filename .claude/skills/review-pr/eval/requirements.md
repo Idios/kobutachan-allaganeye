@@ -120,7 +120,7 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 2. **[critical]** Step 2.3 / 2.4 / 5b / 6 / 7 / 8 の AskUserQuestion を全 skip する
 3. **[critical]** `gh pr comment` を一切呼ばない
 4. **[critical]** final message に 5 セクション (acceptance_criteria_status / findings_table / ambiguous_judgments / recommendation / meta) を順序固定で含める
-5. **[critical]** §G.2.1 自動分類規約: 全 finding に (A)/(B)/(C)/ambiguous のいずれか分類が付与される (未分類なし)
+5. **[critical]** §G.2.1 自動分類規約: 全 finding に (A)/(A)*/(B)/(C) のいずれか分類が付与される (未分類なし。`(A)*` ambiguous は ambiguous_judgments 補足必須)
 6. **[critical]** (A) 強優先方針: CI failure / latent issue / 隣接 lint 違反 等は (A)
 7. **[critical]** (B) 厳格 3 条件 AND: 1 条件のみは (A) に再分類
 8. ambiguous_judgments セクションは空でも必ず記載

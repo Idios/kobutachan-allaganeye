@@ -37,12 +37,14 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 | 20 | Iron Law 4: skill 内で `gh pr merge` / `gh issue close` 実行禁止 | 全 |
 | 21 | Iron Law 5: 曖昧点で AskUserQuestion (subagent `ambiguous_judgments` bubble) | a |
 | 22 | Iron Law 6: push 前 local check pass + CI green wait | a, f |
-| 23 | Red Flag 違反パターンが skill 文中に明記 (新規 11 項目含む) | static check |
+| 23 | Red Flag 違反パターンが skill 文中に明記 (新規 10 項目含む) | static check |
 | 24 | agent 自動起動 (PR 作成セッションが skill として呼ぶ) でも Standalone と同等動作 | scenario_a の agent-trigger variant |
 
 ---
 
 ## シナリオ別評価項目
+
+注: 以下の `[critical]:` 数字はグローバル要件 # の参照 (scenario 内 [critical] 数とは別軸)。
 
 ### シナリオ A: simple_fix (1-2 round で収束する単純 (A) 修正)
 

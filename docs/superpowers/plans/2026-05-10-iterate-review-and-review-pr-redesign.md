@@ -304,7 +304,7 @@ Subagent mode で Step 5b の (A)/(B)/(C) 自動分類を行う際の厳格規�
 2. **default は (A)**: 「指摘は原則すべて PR 内対応」を継承。CI failure / latent type error / 隣接ファイル lint 違反 / 古い API 残存 / 古い doc 記述 / 環境起因の問題 等は全部 (A)
 3. **(B) は厳格 3 条件 AND**: `別領域・別機能` AND `1 セッション超の独立設計が必要` AND `本 PR 同梱で受け入れ条件検証が破綻` の **すべて満たす場合のみ** (B)。1 つでも欠ければ (A)。**サイズ単独 / scope-out 単独 / 受け入れ条件直結性単独では (B) 化不可**
 4. **(C) は重複起票回避 trigger のみ**: 同テーマの既存 issue が存在する場合のみ。「新規 issue を作るべきだが既存に書いた方が綺麗」は不可
-5. **判定に迷う finding**: `(A)` を default として置き、`ambiguous_judgments` セクションに該当 finding を記載 (orchestrator 側で user gate)
+5. **判定に迷う finding**: `(A)*` と記載し、`ambiguous_judgments` セクションに詳述する (`ambiguous` 単独記載は禁止。`(A)*` が正式記法。orchestrator 側で user gate)
 6. **rationale 列に判定根拠を必ず記載**: (B) を選ぶ場合は 3 条件 AND 該当根拠、(C) を選ぶ場合は既存 issue 番号、(A) は省略可
 
 #### G.3 戻り値構造 (subagent → orchestrator)
@@ -504,7 +504,7 @@ PR #902 を review してください。`/review-pr` skill を invoke します�
 
 ### G.2.1 自動分類規約適用
 
-- 全 finding に分類 (A) / (B) / (C) / ambiguous のいずれかを付与 (なしは禁止)
+- 全 finding に分類 (A) / (A)* / (B) / (C) のいずれかを付与 (なしは禁止。`(A)*` ambiguous は ambiguous_judgments 補足必須)
 - (A) を default、`関数リネーム他箇所影響調査痕跡欠如` 等は (A) に分類
 - (B) は 3 条件 AND を rationale 列で根拠示し
 - 「無視」「観察のみ」「対象外」キーワードを含む行は出力しない
@@ -577,7 +577,7 @@ spec §5.3「既存ファイル更新」参照。
 2. **[critical]** Step 2.3 / 2.4 / 5b / 6 / 7 / 8 の AskUserQuestion を全 skip する
 3. **[critical]** `gh pr comment` を一切呼ばない
 4. **[critical]** final message に 5 セクション (acceptance_criteria_status / findings_table / ambiguous_judgments / recommendation / meta) を順序固定で含める
-5. **[critical]** §G.2.1 自動分類規約: 全 finding に (A)/(B)/(C)/ambiguous のいずれか分類が付与される (未分類なし)
+5. **[critical]** §G.2.1 自動分類規約: 全 finding に (A)/(A)*/(B)/(C) のいずれか分類が付与される (未分類なし。`(A)*` ambiguous は ambiguous_judgments 補足必須)
 6. **[critical]** (A) 強優先方針: CI failure / latent issue / 隣接 lint 違反 等は (A)
 7. **[critical]** (B) 厳格 3 条件 AND: 1 条件のみは (A) に再分類
 8. ambiguous_judgments セクションは空でも必ず記載
@@ -761,11 +761,11 @@ PR #<N> を review してください。`/review-pr` skill を invoke します�
 4. PR body の `<!-- iterate-review:deferred:start --> ... <!-- iterate-review:deferred:end -->` ブロック内 topics も exclude
 5. Step 3 の受け入れ条件逐条検証結果 (`/enforce-acceptance-criteria`) も final message に含める
 6. **(A) 強優先方針 + 握り潰し禁止**:
-   - **すべての finding に必ず分類 (A) / (B) / (C) / ambiguous のいずれかを付与**
+   - **すべての finding に必ず分類 (A) / (A)* / (B) / (C) のいずれかを付与** (`(A)*` は ambiguous case の cross-reference 記法)
    - **(A) を最優先**: CI failure / latent type error / 隣接ファイル lint 違反 等は全部 (A)
    - **(B) は厳格 3 条件 AND 必須**: `別領域・別機能` AND `1 セッション超の独立設計が必要` AND `本 PR 同梱で受け入れ条件検証が破綻`
    - **(C) は同テーマ既存 issue が存在する場合のみ**
-   - 判定に迷う finding は `(A)` を default に置き、ambiguous_judgments に記載
+   - 判定に迷う finding は `(A)*` と記載し、ambiguous_judgments に詳述する (`ambiguous` 単独記載は禁止。`(A)*` が正式記法 = §G.2.1 item 5 準拠)
 7. final message は以下の構造で return:
 
    ```markdown
@@ -828,7 +828,7 @@ Agent tool の戻り値 markdown から `## findings_table` セクションの�
 
 **抽出時の必須 validation (握り潰し防止)**:
 
-1. **全 finding に classification がある**: 各行の処置列が `(A)` / `(B)` / `(C)` / `ambiguous` のいずれか。空欄 / 「観察のみ」 / 「対象外」等は **parse error**
+1. **全 finding に classification がある**: 各行の処置列が `(A)` / `(A)*` / `(B)` / `(C)` のいずれか。空欄 / 「観察のみ」 / 「対象外」/ `ambiguous` 単独等は **parse error**
 2. **(B) 主張行には trigger 根拠列がある**: rationale 列に「別領域・別機能 AND 1 セッション超 AND 受け入れ条件検証破綻」3 条件への該当言及があるか。1 条件のみの (B) は **parse error** (= subagent が誤分類)
 3. **subagent return に「無視」「観察のみ」「スコープ対象外」のキーワードを単独で含む行がない**: 文字列 grep で検出、ヒットしたら **parse error**
 4. **`ambiguous_judgments` セクションが存在する** (空でもセクション自体は必須): 不在は parse error
@@ -1319,7 +1319,7 @@ spec §2.8 / §2.9 / §2.10 参照。
 | 「(A) 修正で副次的に (B) trigger 該当の変更が発生」 | scope-guard 案件。Step 2.4 中に追加 (B) 判定なら次 round へ持ち越さず即 handoff (ただし 3 条件 AND 厳格判定) |
 | 「summary コメント前に LGTM コメントを別途投稿」 | 二重投稿。final summary が LGTM の役割も兼ねる |
 | 「per-finding でコメント投稿した方が個別追跡しやすい」 | 仕様違反。per-finding 投稿は本設計で全廃 (ユーザー指示) |
-| 「軽微な指摘だから observe 表記で済ませよう」 | **握り潰しパターン**。Step 2.2 validation で parse error。すべての finding は (A)/(B)/(C)/ambiguous のいずれかに必ず分類 |
+| 「軽微な指摘だから observe 表記で済ませよう」 | **握り潰しパターン**。Step 2.2 validation で parse error。すべての finding は (A)/(A)*/(B)/(C) のいずれかに必ず分類 |
 | 「scope 外だから (B) 起票しよう」 | (A) 強優先方針違反。scope 外単独は (B) trigger 不成立。3 条件 AND を確認、満たさなければ (A) |
 | 「CI が flaky / 環境起因だから無視で OK」 | 仕様違反。CI failure / latent issue / 環境起因問題はすべて (A) で PR 内対応 |
 | 「Round 5 で残った 1 件くらい別 issue にしておこう」 | (iii) 不採用方針違反。残 (A) を別 issue に逃がさず、PR 破棄 (i) または手動 abort (ii) のいずれかで対応 |

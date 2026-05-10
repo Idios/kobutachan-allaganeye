@@ -53,7 +53,7 @@ PR #902 を review してください。`/review-pr` skill を invoke します�
 
 ### G.2.1 自動分類規約適用
 
-- 全 finding に分類 (A) / (B) / (C) / ambiguous のいずれかを付与 (なしは禁止)
+- 全 finding に分類 (A) / (A)* / (B) / (C) のいずれかを付与 (なしは禁止。`(A)*` ambiguous は ambiguous_judgments 補足必須)
 - (A) を default、`関数リネーム他箇所影響調査痕跡欠如` 等は (A) に分類
 - (B) は 3 条件 AND を rationale 列で根拠示し
 - 「無視」「観察のみ」「対象外」キーワードを含む行は出力しない
