@@ -91,6 +91,7 @@ for d in "$WT_DIR"/*/; do
       echo "  kept $name (directory not empty; inspect manually)"
     fi
   else
+    # shellcheck disable=SC2012  # ls -A is intentional: simpler than find for empty-dir check
     if [[ -z "$(ls -A "$d" 2>/dev/null)" ]]; then
       echo "  would remove $name (empty)"
     else

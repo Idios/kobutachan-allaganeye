@@ -89,7 +89,7 @@ git status
 
 - [ ] **Step 2: Read the spec for full context**
 
-Read `docs/superpowers/specs/2026-05-08-l2-appError-migration-completion-design.md` end-to-end. The spec is the source of truth for all design decisions (22 hint codes, 4-layer architecture, scope boundaries).
+Read `docs/superpowers/specs/2026-05-08-l2-appError-migration-completion-design.md` end-to-end. The spec is the source of truth for all design decisions (24 codes (or-pattern 展開後 #692) を hint mapping に集約, 4-layer architecture, scope boundaries).
 
 - [ ] **Step 3: Verify Iron Law base sync**
 
@@ -161,10 +161,11 @@ Add the following just before the existing `#[derive(Debug, Clone, Serialize)] p
 
 ```rust
 /// AppError code に対する日本語 default hint を返す。未登録 code は None。
-/// 22 entries (現在の lib.rs inventory: io.* / parse.* / state.* / subprocess.* /
-/// validation.* / path.* / platform.* / internal.*)。
+/// 24 codes (or-pattern `io.would_block | io.timed_out` を 2 codes に展開後、22 hint
+/// + 2 None = 24)。現在の lib.rs inventory: io.* / parse.* / state.* / subprocess.* /
+/// validation.* / path.* / platform.* / internal.*。
 /// 文言は `docs/tauri-commands.md` の AppError default hint mapping table と一致させる
-/// (本 fn が source of truth、docs は mirror)。
+/// (本 fn が source of truth、docs は mirror、#692 で CI integrity check 化済)。
 fn default_hint_for_code(code: &str) -> Option<&'static str> {
     match code {
         // state
@@ -420,14 +421,14 @@ git add gui/src-tauri/src/error.rs
 git commit -m "$(cat <<'EOF'
 feat(gui): AppError::default_hint_for_code helper を追加 (Refs #663)
 
-PR #665 で Result<T, AppError> migration が完了済の状態を踏まえ、22 codes
+PR #665 で Result<T, AppError> migration が完了済の状態を踏まえ、24 codes (or-pattern 展開後 #692)
 (state / io.manual / io.auto / parse / subprocess / validation / path /
 platform / internal) に対する日本語 default hint を error.rs の 1 mapping
 table に集約。
 
 主な追加:
 
-- default_hint_for_code(code: &str) -> Option<&'static str> (22 entries)
+- default_hint_for_code(code: &str) -> Option<&'static str> (24 codes、or-pattern 展開後 #692)
 - AppError::with_default_hint(self) -> Self (既存 hint があれば上書きしない)
 - From<std::io::Error> / From<serde_json::Error> impl 内で
   .with_default_hint() を chain (?演算子で自動 hint 付与)
@@ -1885,8 +1886,8 @@ Append the following section after the existing master command table (verify exa
 ## AppError default hint mapping (`gui/src-tauri/src/error.rs::default_hint_for_code`)
 
 > 本 table の文言は `gui/src-tauri/src/error.rs` の `default_hint_for_code()` と
-> 完全一致させる (CI integrity check は今回入れないが、文言変更時は両方を
-> 同 PR で更新する規約)。
+> 完全一致させる (#692 で CI integrity check 化済 = `.github/scripts/check-error-hint-drift.sh`
+> + `doc-error-hint-drift` job、文言変更時は両方を同 PR で更新する規約)。
 
 | code | hint |
 | --- | --- |
@@ -2021,7 +2022,7 @@ PR #665 (`ea9bca9`) で `gui/src-tauri/src/lib.rs` の全 23 Tauri commands が
 - [ ] (A) `metadataStore.ts:209` の `|| msg.startsWith('"'"'conflict:'"'"')` が削除されている
 - [ ] (A) `metadataStore.test.ts` の `'"'"'conflict: ...'"'"'` raw String テストが AppError object 形式に書き換わっている
 - [ ] (A) `ConflictModal.test.tsx` の test data から `'"'"'conflict:'"'"'` prefix が消えている
-- [ ] (B) `error.rs` に `default_hint_for_code()` + `with_default_hint()` が追加され、22 codes 分の日本語 hint が table に存在する
+- [ ] (B) `error.rs` に `default_hint_for_code()` + `with_default_hint()` が追加され、24 codes (or-pattern 展開後 #692) 分の日本語 hint が table に存在する
 - [ ] (B) `From<std::io::Error>` / `From<serde_json::Error>` の impl 内で `.with_default_hint()` が呼ばれている
 - [ ] (B) `lib.rs` の全 80 site の `AppError::new(code, msg)` に `.with_default_hint()` が chain されている
 - [ ] (C) `metadataStore` に `loadErrorHint` / `applyErrorHint` / `restoreErrorHint` / `draftSaveErrorHint` / `draftLoadErrorHint` の 5 state が追加されている
@@ -2069,7 +2070,7 @@ git add docs/tauri-commands.md docs/ui-architecture.md docs/ui-interaction-spec.
 git commit -m "$(cat <<'EOF'
 docs: AppError default hint mapping を docs に整合させる (Refs #663)
 
-Phase 1-4 で追加した default_hint_for_code mapping (22 codes) と frontend
+Phase 1-4 で追加した default_hint_for_code mapping (24 codes (or-pattern 展開後 #692)) と frontend
 hint 表示規約を docs に明文化。docs/tauri-commands.md は error.rs の
 mapping を mirror、ui-architecture.md / ui-interaction-spec.md は
 inline error の 2 行構成と code-based 分岐ルールを規定。
@@ -2077,7 +2078,7 @@ inline error の 2 行構成と code-based 分岐ルールを規定。
 主な追加:
 
 - docs/tauri-commands.md: 末尾に AppError default hint mapping table
-  (22 entries、`error.rs::default_hint_for_code` と完全一致)
+  (24 codes、or-pattern 展開後 #692、`error.rs::default_hint_for_code` と完全一致)
 - docs/ui-architecture.md §4.x: AppError code 体系と inline error の
   使い分け、ConflictModal 経路と inline 経路の分岐ルール
 - docs/ui-interaction-spec.md §1.5.x: appErrorCodeIs / appErrorMessage /
@@ -2214,7 +2215,7 @@ Lane I-A (wave 0 起点)。spec [docs/superpowers/specs/2026-05-08-l2-appError-m
 
 ### Phase 1: Rust `error.rs` (default hint helper)
 
-- `default_hint_for_code(code)` (22 entries) + `with_default_hint()` 追加
+- `default_hint_for_code(code)` (24 codes、or-pattern 展開後 #692) + `with_default_hint()` 追加
 - `From<io::Error>` / `From<serde_json::Error>` impl で hint chain
 - 6 件の TDD 新 test (155 件 pass)
 
@@ -2238,7 +2239,7 @@ Lane I-A (wave 0 起点)。spec [docs/superpowers/specs/2026-05-08-l2-appError-m
 
 ### Phase 5: Docs + issue body
 
-- `docs/tauri-commands.md`: AppError default hint mapping table (22 entries)
+- `docs/tauri-commands.md`: AppError default hint mapping table (24 codes、or-pattern 展開後 #692)
 - `docs/ui-architecture.md` §4.x: AppError code 体系と inline 使い分け
 - `docs/ui-interaction-spec.md` §1.5.x: error.code ベース分岐ルール
 - Issue #663 body を実態に合わせて update (gh issue edit)
@@ -2248,7 +2249,7 @@ Lane I-A (wave 0 起点)。spec [docs/superpowers/specs/2026-05-08-l2-appError-m
 - [x] (A) `metadataStore.ts:209` の `|| msg.startsWith('"'"'conflict:'"'"')` が削除されている
 - [x] (A) `metadataStore.test.ts` の `'"'"'conflict: ...'"'"'` raw String テストが AppError object 形式に書き換え
 - [x] (A) `ConflictModal.test.tsx` の test data から `'"'"'conflict:'"'"'` prefix が消えている
-- [x] (B) `error.rs` に `default_hint_for_code()` + `with_default_hint()` 追加、22 codes 日本語 hint
+- [x] (B) `error.rs` に `default_hint_for_code()` + `with_default_hint()` 追加、24 codes (or-pattern 展開後 #692) 日本語 hint
 - [x] (B) `From<std::io::Error>` / `From<serde_json::Error>` で `.with_default_hint()`
 - [x] (B) `lib.rs` 全 80 site の `AppError::new(...)` に `.with_default_hint()`
 - [x] (C) `metadataStore` に 5 `*ErrorHint` state、`recentStore` に 2 hint pair 追加
