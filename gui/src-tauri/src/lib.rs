@@ -25,6 +25,7 @@ use uuid::Uuid;
 mod error;
 mod integrity;
 mod logging;
+mod process_util;
 
 use error::AppError;
 
@@ -648,23 +649,22 @@ async fn probe_video_with(
         })?
         .len();
 
-    let output = tokio::process::Command::new(ffprobe)
-        .arg("-v")
+    let mut cmd = tokio::process::Command::new(ffprobe);
+    cmd.arg("-v")
         .arg("quiet")
         .arg("-print_format")
         .arg("json")
         .arg("-show_format")
         .arg("-show_streams")
-        .arg(path)
-        .output()
-        .await
-        .map_err(|e| {
-            AppError::new(
-                "subprocess.spawn_failed",
-                format!("ffprobe spawn failed: {e}"),
-            )
-            .with_default_hint()
-        })?;
+        .arg(path);
+    process_util::apply_no_window(&mut cmd);
+    let output = cmd.output().await.map_err(|e| {
+        AppError::new(
+            "subprocess.spawn_failed",
+            format!("ffprobe spawn failed: {e}"),
+        )
+        .with_default_hint()
+    })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1256,8 +1256,8 @@ async fn ensure_thumbnail_exists(
     }
 
     let t_arg = format!("{:.3}", t_seconds.max(0.0));
-    let output = tokio::process::Command::new("ffmpeg")
-        .arg("-y")
+    let mut cmd = tokio::process::Command::new("ffmpeg");
+    cmd.arg("-y")
         .arg("-ss")
         .arg(&t_arg)
         .arg("-i")
@@ -1272,16 +1272,15 @@ async fn ensure_thumbnail_exists(
         .arg("webp")
         .arg("-loglevel")
         .arg("error")
-        .arg(out_path)
-        .output()
-        .await
-        .map_err(|e| {
-            AppError::new(
-                "subprocess.spawn_failed",
-                format!("spawn ffmpeg failed at t={}: {}", t_arg, e),
-            )
-            .with_default_hint()
-        })?;
+        .arg(out_path);
+    process_util::apply_no_window(&mut cmd);
+    let output = cmd.output().await.map_err(|e| {
+        AppError::new(
+            "subprocess.spawn_failed",
+            format!("spawn ffmpeg failed at t={}: {}", t_arg, e),
+        )
+        .with_default_hint()
+    })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1875,6 +1874,7 @@ async fn run_ffmpeg_export_attempt(
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
+    process_util::apply_no_window(&mut cmd);
 
     let mut child = cmd
         .spawn()
@@ -2510,6 +2510,7 @@ async fn start_detect(
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    process_util::apply_no_window(&mut cmd);
 
     // #646 -- spawn failure messages need to surface the resolved
     // program (e.g. "python -m allaganeye") so the GUI error display
