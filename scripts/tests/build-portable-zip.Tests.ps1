@@ -194,6 +194,8 @@ Describe 'Format-ReadmeContent' {
   }
 
   It 'embeds release tag as source ref for new BtbN naming format (#683)' {
+    # fixture (`autobuild-2026-05-06-13-32` + `n8.1.1`) は NEW format parse
+    # coverage 用で、実 `$FFmpegBuildTag` とは独立 (現 pin と drift していても OK)。
     # 新 BtbN naming (n8.1.1) では Get-FFmpegSourceRef が release tag を返し、
     # README には (ref n8.1.1) で記述される。`(commit ...)` の旧文言が残らない
     # ことも併せて verify (PR #683 review #10)。

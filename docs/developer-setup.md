@@ -402,7 +402,7 @@ CI / Portable ZIP / 開発環境の 3 環境で Python と FFmpeg のバージ�
    ```
 
    2 行出力 = 各 asset の SHA256 + ファイル名。BtbN naming は monthly snapshot のタイミングで OLD format (`ffmpeg-n<ver>-<count>-g<commit>-...`) と NEW format (`ffmpeg-n<ver>-...`) のどちらにもなりうる。`Get-FFmpegSourceRef` は両対応済 (`scripts/tests/build-portable-zip.Tests.ps1` の `Describe 'Get-FFmpegSourceRef'` 参照)。
-1. 以下 **4 箇所** を**同一タグ・同一 SHA256 系列で**更新 (下表参照)。major version 系列変更 (例: 8.x → 9.x) 時は docs の major version 記述も揃える。cache key に SHA256 が埋め込まれているので、SHA256 を変更すれば CI / release 両方のキャッシュが自動で invalidate される。
+1. 以下の場所を**同一タグ・同一 SHA256 系列で**更新する (下表、常時更新の 3 行 + 条件付き 2 行 = 計 5 行)。major version 系列変更 (例: 8.x → 9.x) 時は docs の major version 記述 (下表 4-5 行目) も揃える。cache key に SHA256 が埋め込まれているので、SHA256 を変更すれば CI / release 両方のキャッシュが自動で invalidate される。
 1. ローカルで Portable ZIP build が緑になることを確認 (`pwsh ./scripts/build-portable-zip.ps1 -Version <version> -SkipArchive`) し、PR で CI の `build-windows` と `python` と `installer-pester` ジョブが全て通ることを確認する
 
 | 場所 | キー |

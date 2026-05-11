@@ -88,9 +88,10 @@ $GetPipSha256 = '66904BCCB878E363DB6236EA900E6935E507DCB887E9F178F6212EDFE7F46A7
 #   3. Update the win64 SHA256 below and `$FFmpegBuildTag` / `$FFmpegAsset`,
 #      and update the matching linux64 SHA256 + URL in
 #      `.github/workflows/ci.yml` (3 steps: Cache, Download, Install) and the
-#      win64 SHA256 in `.github/workflows/release.yml` (Cache step). All four
-#      locations must move together (drift is caught by the cache key
-#      mismatch). See `docs/developer-setup.md` § 9 for the full checklist.
+#      win64 SHA256 in `.github/workflows/release.yml` (Cache step). All these
+#      locations (4 SHA256 sites across 3 files + 1 URL in ci.yml Download)
+#      must move together — drift is caught by the cache key mismatch. See
+#      `docs/developer-setup.md` § 9 for the full checklist.
 #   4. Verify regressions:
 #        Invoke-Pester -Path scripts/tests/build-portable-zip.Tests.ps1
 #        pwsh -File scripts/build-portable-zip.ps1 -Version 0.2.0-test -SkipArchive
