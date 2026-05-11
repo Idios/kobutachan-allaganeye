@@ -78,7 +78,9 @@
 | --- | --- | --- |
 | #458 | P2 | bug_report.yml (同意チェック付き) 新設 — 外部ユーザー受け入れ準備 |
 
-**並行安全度**: high (`.github/ISSUE_TEMPLATE/bug_report.yml` 独立) / **brainstorming 単位**: 本 issue は Lane IV-b' から scope-out (PR #497 + PR #688 で実装完了済、残るは L2 release 後の UI 実測のみ、release gate 後に `/close-issue` で handoff)。Lane IV-b' は Group J 単独 (1 spec / 2 章)
+**本 release (v0.2.0) Wave 1 での実装作業なし** — §4 参照 (実装完了済 PR #497 + PR #688、残作業は release gate 後の `/close-issue` handoff のみ)。
+
+**並行安全度**: high (`.github/ISSUE_TEMPLATE/bug_report.yml` 独立) / **brainstorming 単位**: Lane IV-b' から scope-out。Lane IV-b' は Group J 単独 (1 spec / 2 章)
 
 ### Group I: post-#663 GUI cleanup (7 件、新規、Lane V 3 phase)
 
