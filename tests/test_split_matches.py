@@ -4177,3 +4177,52 @@ def test_run_split_omits_brightness_samples_when_callback_silent(
         "callback が silent (Pass 1 skip / cache hit 相当) なら "
         "brightness_samples キーは書かないはず"
     )
+
+
+@patch("allaganeye.system_info.probe_gpu_vendors", return_value=[])
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}._load_cache")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_cache_hit_omits_brightness_samples(
+    mock_probe,
+    mock_split,
+    mock_load_cache,
+    mock_run_detection,
+    mock_probe_gpu,
+    tmp_path,
+):
+    """#644 -- cache hit 経路では Pass 1 が走らず brightness_samples キー
+    が metadata.json から欠落する (cache に brightness を含めない設計と整合)。
+
+    run_split: cache hit early-return branch (line 100-146) を直接 exercise し、
+    `_run_detection` が呼ばれないこと + metadata.json に key 不在を assert。
+    Round 1 F1 (subagent finding): callback_silent test では `_run_detection`
+    レベルで mock するため cache hit branch そのものを exercise せず、ここで
+    補完する。
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_load_cache.return_value = BOUNDARIES  # cache hit -> Pass 1 skip
+
+    output_dir = tmp_path / "out_cache_hit"
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    run_split(video, config, verbose=False, quiet=True)
+
+    # cache hit branch は _run_detection を skip するはず
+    mock_run_detection.assert_not_called()
+
+    metadata_path = output_dir / "metadata.json"
+    assert metadata_path.exists()
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert "brightness_samples" not in payload, (
+        "cache hit 経路では Pass 1 を skip するため brightness_samples キー"
+        "は欠落するはず (#644、metadata-spec.md 書き込みパス表と整合)"
+    )
