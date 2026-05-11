@@ -146,7 +146,9 @@ describe('ConflictModal', () => {
     render(<ConflictModal />);
     const dialog = screen.getByRole('dialog');
     // After mount, focus must have moved into the panel.
-    expect(dialog.contains(document.activeElement)).toBe(true);
+    await waitFor(() =>
+      expect(dialog.contains(document.activeElement)).toBe(true),
+    );
   });
 
   it('has no axe violations when shown (#587)', async () => {
