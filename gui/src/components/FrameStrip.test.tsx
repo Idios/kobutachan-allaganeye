@@ -42,4 +42,39 @@ describe('FrameStrip', () => {
     // First cell t = 100 - 3 + 0 = 97
     expect(onSelect.mock.calls[0][0]).toBeCloseTo(97, 5);
   });
+
+  // #645 Chapter 2 (overlay pivot): brightness samples + threshold + blackout
+  // bands + waveform path render as an absolutely-positioned SVG overlay on
+  // top of the thumbnail buttons. Decorative (aria-hidden) and pointer-events
+  // none — clicks still pass through to the buttons.
+  it('renders brightness overlay when brightnessSamples is provided', () => {
+    const samples = Array.from({ length: 60 }, (_, i) =>
+      i >= 25 && i <= 35 ? 5 : 200,
+    );
+    render(
+      <FrameStrip
+        boundaryT={100}
+        windowSec={3}
+        brightnessSamples={samples}
+        brightnessThreshold={15}
+        brightnessWindowSeconds={6}
+      />,
+    );
+    const overlay = screen.getByTestId('frame-strip-brightness-overlay');
+    expect(overlay).toBeInTheDocument();
+    expect(overlay.getAttribute('aria-hidden')).toBe('true');
+    // threshold line + waveform path + at least one blackout band
+    expect(overlay.querySelector('[data-testid="threshold-line"]')).not.toBeNull();
+    expect(overlay.querySelector('[data-testid="waveform-path"]')).not.toBeNull();
+    expect(
+      overlay.querySelectorAll('[data-testid="blackout-band"]').length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
+  it('does not render brightness overlay when brightnessSamples is omitted', () => {
+    render(<FrameStrip boundaryT={100} windowSec={3} />);
+    expect(
+      screen.queryByTestId('frame-strip-brightness-overlay'),
+    ).toBeNull();
+  });
 });

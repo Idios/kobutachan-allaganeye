@@ -825,12 +825,14 @@ describe('PreviewScreen sample mode disabled (Task 1.5)', () => {
   });
 });
 
-// Task 2.4 (#645) — PreviewScreen に MicroTimeline 統合。
-// extract_brightness_window 経由で ±5s の brightness 波形を取得し、
-// MicroTimeline component で描画する。失敗時はインライン error で message + hint
-// を表示。sample mode (filePath === null) では invoke せず buildLocalBrightness
-// の合成波形で代替する。
-describe('PreviewScreen MicroTimeline', () => {
+// #645 Chapter 2 (overlay pivot) — brightness data is now an SVG overlay
+// rendered ON TOP of FrameStrip thumbnails (single combined widget) rather
+// than a separate MicroTimeline above. The fetch is debounced (200ms) and
+// recentered on `currentT` (= startT initially = match.start_time = 100, so
+// ±3 → 97/103). Sample mode synthesizes via buildLocalBrightness without
+// invoking the Tauri command. Failures hide the overlay but surface a small
+// inline error diagnostic below FrameStrip for debugging.
+describe('PreviewScreen FrameStrip brightness overlay', () => {
   beforeEach(() => {
     // 外側 beforeEach で invokeMock.mockImplementation が register_video /
     // generate_match_thumbnails / check_backup_exists を返すよう設定済み。
@@ -868,7 +870,7 @@ describe('PreviewScreen MicroTimeline', () => {
     useAppStateStore.setState({ selectedMatchIndex: 1 });
   });
 
-  it('invokes extract_brightness_window with ±5s window', async () => {
+  it('invokes extract_brightness_window with ±3s window centered on currentT', async () => {
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === 'register_video') {
         return Promise.resolve({ url: 'http://x', token: 't' });
@@ -877,26 +879,27 @@ describe('PreviewScreen MicroTimeline', () => {
       if (cmd === 'check_backup_exists') return Promise.resolve(false);
       if (cmd === 'extract_brightness_window') {
         return Promise.resolve({
-          samples: Array.from({ length: 100 }, () => 200),
-          t_start: 95,
-          t_end: 105,
+          samples: Array.from({ length: 60 }, () => 200),
+          t_start: 97,
+          t_end: 103,
           fps: 10,
         });
       }
       return Promise.reject(new Error(`unmocked: ${cmd}`));
     });
     render(<PreviewScreen />);
+    // Wait for the 200ms debounce + invoke; default waitFor timeout is ~1s.
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith('extract_brightness_window', {
         videoPath: '/some/video.mp4',
-        tStart: 95, // 100 - 5
-        tEnd: 105, // 100 + 5
+        tStart: 97, // currentT (=100) - 3
+        tEnd: 103, // currentT (=100) + 3
         fps: 10.0,
       });
     });
   });
 
-  it('renders MicroTimeline after invoke success', async () => {
+  it('renders brightness overlay on FrameStrip after invoke success', async () => {
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === 'register_video') {
         return Promise.resolve({ url: 'http://x', token: 't' });
@@ -905,19 +908,24 @@ describe('PreviewScreen MicroTimeline', () => {
       if (cmd === 'check_backup_exists') return Promise.resolve(false);
       if (cmd === 'extract_brightness_window') {
         return Promise.resolve({
-          samples: Array.from({ length: 100 }, () => 200),
-          t_start: 95,
-          t_end: 105,
+          samples: Array.from({ length: 60 }, () => 200),
+          t_start: 97,
+          t_end: 103,
           fps: 10,
         });
       }
       return Promise.reject(new Error(`unmocked: ${cmd}`));
     });
     render(<PreviewScreen />);
-    expect(await screen.findByTestId('micro-timeline')).toBeInTheDocument();
+    expect(
+      await screen.findByTestId('frame-strip-brightness-overlay'),
+    ).toBeInTheDocument();
   });
 
-  it('renders inline error on invoke failure', async () => {
+  // #645 Chapter 2: when the fetch fails the overlay is silently omitted
+  // (non-fatal — FrameStrip remains fully interactive) and a small inline
+  // diagnostic surfaces the message + hint below the strip for debugging.
+  it('hides overlay and renders inline diagnostic on invoke failure', async () => {
     const appError = {
       code: 'subprocess.spawn_failed',
       message: 'ffmpeg spawn failed: ENOENT',
@@ -941,9 +949,13 @@ describe('PreviewScreen MicroTimeline', () => {
     expect(
       await screen.findByText(/外部プロセスの起動に失敗しました/),
     ).toBeInTheDocument();
+    // overlay should NOT be rendered on failure
+    expect(
+      screen.queryByTestId('frame-strip-brightness-overlay'),
+    ).toBeNull();
   });
 
-  it('renders synthetic in sample mode (no invoke)', async () => {
+  it('renders synthetic overlay in sample mode (no invoke)', async () => {
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === 'register_video') {
         return Promise.resolve({ url: 'http://x', token: 't' });
@@ -983,12 +995,12 @@ describe('PreviewScreen MicroTimeline', () => {
     });
     render(<PreviewScreen />);
     await waitFor(() => {
-      expect(screen.getByTestId('micro-timeline')).toBeInTheDocument();
+      expect(
+        screen.getByTestId('frame-strip-brightness-overlay'),
+      ).toBeInTheDocument();
     });
-    // extract_brightness_window は呼ばれていない
+    // extract_brightness_window は呼ばれていない (sample mode は synthetic)
     const allCalls = invokeMock.mock.calls.map((c) => c[0]);
     expect(allCalls).not.toContain('extract_brightness_window');
-    // サンプル波形であることを示すラベル
-    expect(screen.getByText(/サンプル波形/)).toBeInTheDocument();
   });
 });

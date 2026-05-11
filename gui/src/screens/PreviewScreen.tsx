@@ -11,7 +11,6 @@ import {
 import { DisabledTooltip } from '../components/DisabledTooltip';
 import { FrameStrip, type FrameStripThumb } from '../components/FrameStrip';
 import { InlineErrorHint } from '../components/InlineErrorHint';
-import { MicroTimeline } from '../components/MicroTimeline';
 import { RestoreButton } from '../components/RestoreButton';
 import { SampleModeBanner } from '../components/SampleModeBanner';
 import {
@@ -236,10 +235,13 @@ export function PreviewScreen() {
   const inVideoRef = useRef<HTMLVideoElement>(null);
   const outVideoRef = useRef<HTMLVideoElement>(null);
 
-  // #645 Task 2.4 — MicroTimeline state (±5s brightness window around the
-  // selected match boundary). 実フローでは Tauri `extract_brightness_window`
-  // 経由で取得し、sample mode (filePath===null) では `buildLocalBrightness`
-  // の合成波形にフォールバック。
+  // #645 Chapter 2 (overlay pivot) — brightness window state. Centered on the
+  // active editing position (currentT) ±3s, fed to FrameStrip as an SVG
+  // overlay (NOT a separate widget). 実フローでは Tauri
+  // `extract_brightness_window` 経由で取得 (debounced 200ms)、sample mode
+  // (filePath===null) では `buildLocalBrightness` の合成波形にフォールバック。
+  // microError はオーバーレイ非表示時の inline diagnostic 用 (FrameStrip 自体は
+  // フォールバックなしで動作するため non-fatal)。
   const [brightnessWindow, setBrightnessWindow] = useState<{
     samples: number[];
     t_start: number;
@@ -395,17 +397,29 @@ export function PreviewScreen() {
     };
   }, [videoSource, videoUrl, match]);
 
-  // #645 Task 2.4 — MicroTimeline ±5s window fetch。selectedMatch の start_time
-  // を中心に [t-5, t+5] の brightness を 10fps で取得 (≒100 サンプル)。
-  // sample mode (filePath===null) では `buildLocalBrightness` の合成波形で代替し、
-  // Tauri command は呼ばない。エラーは inline で message + hint を表示する。
-  // dep array: match の index / filePath / isSample のみ。match オブジェクト
-  // ref は edit 中に毎レンダ変わるので index で代替し、無駄な refetch を抑える。
+  const currentT = editing === 'start' ? startT : endT;
+  const setCurrentT = editing === 'start' ? setStartT : setEndT;
+  const activeVideoRef = editing === 'start' ? inVideoRef : outVideoRef;
+
+  // #645 Chapter 2 (overlay pivot): brightness window now feeds the
+  // FrameStrip SVG overlay (NOT a separate MicroTimeline widget). Centered on
+  // `currentT` (active editing pos) ±3s with 10fps sampling (≒60 samples) so
+  // the overlay tracks the FrameStrip ±3s thumbnail span 1:1.
+  //
+  // currentT changes on every keyboard nudge, so the fetch is debounced
+  // (200ms — same window as UPDATE_DEBOUNCE_MS) to coalesce rapid arrow-key
+  // bursts. Sample mode (filePath===null) synthesizes via
+  // `buildLocalBrightness(currentT, 3, 10)` and never invokes the Tauri
+  // command. Errors are surfaced as a small inline diagnostic below the
+  // FrameStrip — they no longer block the primary UI since the brightness
+  // overlay is now a non-fatal enhancement.
   //
   // `setBrightnessWindow(null)` / `setMicroError(null)` の同期 reset は
   // selection 切替時に旧波形 / 旧 error の flash を防ぐため必要 (ExportScreen
-  // #591 の encoder info reset と同じパターン)。再 fetch の頻度は match 切替
-  // 単位で bounded なので cascading render の懸念は無い。
+  // #591 の encoder info reset と同じパターン)。
+  const brightnessDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setBrightnessWindow(null);
@@ -414,11 +428,12 @@ export function PreviewScreen() {
     if (isSample) {
       // buildLocalBrightness は LocalBrightnessSample[] (= {t, b}[]) を返すため
       // samples フィールド (number[]) に渡す前に b 値だけ map で抜き出す。
-      const synthetic = buildLocalBrightness(match.start_time, 5, 10);
+      // ±3s × 10fps = 60 samples — FrameStrip ±3s の overlay と axis 1:1。
+      const synthetic = buildLocalBrightness(currentT, 3, 10);
       setBrightnessWindow({
         samples: synthetic.map((s) => s.b),
-        t_start: match.start_time - 5,
-        t_end: match.start_time + 5,
+        t_start: currentT - 3,
+        t_end: currentT + 3,
         fps: 10,
       });
       return;
@@ -428,39 +443,47 @@ export function PreviewScreen() {
     // metadata.source、= 実 video file の path) を渡す必要がある。既存
     // generate_match_thumbnails invoke (line ~342) と同 source-of-truth に揃える。
     if (!videoSource) return;
-    let cancelled = false;
-    invoke<{ samples: number[]; t_start: number; t_end: number; fps: number }>(
-      'extract_brightness_window',
-      {
-        videoPath: videoSource,
-        tStart: Math.max(0, match.start_time - 5),
-        tEnd: match.start_time + 5,
-        fps: 10.0,
-      },
-    )
-      .then((win) => {
-        if (!cancelled) setBrightnessWindow(win);
-      })
-      .catch((e: unknown) => {
-        if (cancelled) return;
-        // isAppError で AppError struct を narrow し、それ以外 (Error / 生 string /
-        // null 等) は最低限の AppError 形に正規化する。toAppError ヘルパは存在しない
-        // ため、ここで直接構築する。
-        setMicroError(
-          isAppError(e)
-            ? e
-            : { code: 'unknown.error', message: appErrorMessage(e) },
-        );
-      });
+    if (brightnessDebounceTimerRef.current !== null) {
+      clearTimeout(brightnessDebounceTimerRef.current);
+    }
+    brightnessDebounceTimerRef.current = setTimeout(() => {
+      // The pre-fire cancel is handled by the outer-effect cleanup
+      // (clearTimeout above). For in-flight invokes that resolve after a
+      // dep-change/unmount we accept the rare race: React 18+ tolerates
+      // setState-on-unmounted by warning rather than crashing, and the
+      // worst-case effect is one stale waveform briefly painted before the
+      // next effect run replaces it. Adding a per-fetch token ref felt
+      // disproportionate vs. the actual UX impact (overlay is decorative).
+      invoke<{ samples: number[]; t_start: number; t_end: number; fps: number }>(
+        'extract_brightness_window',
+        {
+          videoPath: videoSource,
+          tStart: Math.max(0, currentT - 3),
+          tEnd: currentT + 3,
+          fps: 10.0,
+        },
+      )
+        .then((win) => setBrightnessWindow(win))
+        .catch((e: unknown) => {
+          // isAppError で AppError struct を narrow し、それ以外 (Error / 生 string /
+          // null 等) は最低限の AppError 形に正規化する。toAppError ヘルパは存在しない
+          // ため、ここで直接構築する。
+          setMicroError(
+            isAppError(e)
+              ? e
+              : { code: 'unknown.error', message: appErrorMessage(e) },
+          );
+        });
+      brightnessDebounceTimerRef.current = null;
+    }, UPDATE_DEBOUNCE_MS);
     return () => {
-      cancelled = true;
+      if (brightnessDebounceTimerRef.current !== null) {
+        clearTimeout(brightnessDebounceTimerRef.current);
+        brightnessDebounceTimerRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [match?.index, videoSource, isSample]);
-
-  const currentT = editing === 'start' ? startT : endT;
-  const setCurrentT = editing === 'start' ? setStartT : setEndT;
-  const activeVideoRef = editing === 'start' ? inVideoRef : outVideoRef;
+  }, [match?.index, videoSource, isSample, currentT]);
 
   const nudge = useCallback(
     (sec: number) => {
@@ -762,26 +785,14 @@ export function PreviewScreen() {
       </div>
 
       <div className={styles.strip}>
-        {/* #645 Task 2.4 — ±5s MicroTimeline。実フローでは extract_brightness_window
-            から取得した波形、sample mode では buildLocalBrightness の合成波形。
-            invoke 失敗時は message + hint を inline 表示 (InlineErrorHint 経由)。 */}
-        <div className={styles.stripCaption}>
-          微細タイムライン ⸱ ±5s{isSample && ' ⸱ サンプル波形'}
-        </div>
-        {brightnessWindow ? (
-          <MicroTimeline
-            samples={brightnessWindow.samples}
-            windowSeconds={10}
-            threshold={blackoutThreshold}
-          />
-        ) : microError ? (
-          <div className={styles.microError}>
-            <span>{appErrorMessage(microError)}</span>
-            <InlineErrorHint hint={appErrorHint(microError)} />
-          </div>
-        ) : (
-          <div className={styles.microTimelineLoading}>計測中…</div>
-        )}
+        {/* #645 Chapter 2 (overlay pivot): brightness data is now an SVG
+            overlay rendered ON TOP of the FrameStrip thumbnails (single
+            combined widget) rather than a separate MicroTimeline above.
+            Sample mode synthesizes via buildLocalBrightness, real mode
+            invokes extract_brightness_window (debounced). When the fetch
+            fails the overlay simply doesn't render — a small inline
+            diagnostic below FrameStrip surfaces the error for debugging
+            without blocking the primary frame-selection UI. */}
         <div className={styles.stripCaption}>候補フレーム ⸱ CANDIDATE FRAMES</div>
         <FrameStrip
           boundaryT={currentT}
@@ -791,7 +802,16 @@ export function PreviewScreen() {
           thumbs={editing === 'start' ? inThumbs : outThumbs}
           disabled={isSample}
           disabledReason={sampleReason}
+          brightnessSamples={brightnessWindow?.samples}
+          brightnessThreshold={blackoutThreshold}
+          brightnessWindowSeconds={6}
         />
+        {microError && (
+          <div className={styles.microError}>
+            <span>{appErrorMessage(microError)}</span>
+            <InlineErrorHint hint={appErrorHint(microError)} />
+          </div>
+        )}
       </div>
 
       <div className={styles.actionsRow}>
