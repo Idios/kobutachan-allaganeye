@@ -46,7 +46,7 @@ mod tests {
         // followed by `cmd.arg(...)`. On Windows the helper calls
         // `cmd.creation_flags(CREATE_NO_WINDOW)`; on non-Windows it's a
         // no-op identity. We pin the compilable + non-panicking smoke
-        // here; the `lib_rs_applies_apply_no_window_at_all_four_spawn_sites`
+        // here; the `lib_rs_applies_apply_no_window_at_all_spawn_sites`
         // test below pins adoption at the call sites.
         let mut cmd = tokio::process::Command::new("true");
         apply_no_window(&mut cmd);

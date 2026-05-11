@@ -1301,8 +1301,16 @@ async fn ensure_thumbnail_exists(
 /// #645 -- response payload of `extract_brightness_window`. `samples` is the
 /// per-frame average brightness in `[0.0, 255.0]` (gray plane byte averaged
 /// across a 320x180 downscaled frame). `t_start` / `t_end` / `fps` echo the
-/// request so the frontend can correlate the response with the issuing
-/// MicroTimeline call site without trusting only the call ordering.
+/// **requested** values so the frontend can correlate the response with the
+/// issuing MicroTimeline call site without trusting only the call ordering.
+///
+/// Note on the `t_start` echo: if the request had `t_start < 0` the helper
+/// clamps the ffmpeg `-ss` argument to `0.0`, but the response still echoes
+/// the original (negative) `t_start`. PreviewScreen always passes a match
+/// boundary minus 5 seconds, so this only matters for boundaries within the
+/// first 5 seconds of a video (rare for FL matches). Consumers that may
+/// receive `t_start < 0` should treat the actual sample window as
+/// `[max(0.0, t_start), t_end]`.
 #[derive(Debug, Clone, Serialize)]
 pub struct BrightnessWindow {
     pub samples: Vec<f64>,
