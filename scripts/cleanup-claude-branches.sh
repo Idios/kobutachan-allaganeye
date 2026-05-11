@@ -95,9 +95,23 @@ for branch in "${BRANCHES[@]}"; do
     continue
   fi
 
-  # 全 AND 満足 — 削除対象 (--apply は Task 5 で追加)
-  echo "  would delete $branch"
-  kept=$((kept + 1))
+  # 全 AND 満足 — 削除対象
+  if [[ "$APPLY" -eq 1 ]]; then
+    # >/dev/null 2>&1 で `git branch -D` の stdout 成功メッセージ
+    # (`Deleted branch X (was Y).`) も含めて完全抑制し、本 script の output 契約
+    # (`deleted <branch>` / `delete failed: <branch>` / `would delete <branch>` /
+    # `kept <branch> (reason: ...)`) のみが log に残るようにする (spec §6.1)。
+    if git -C "$REPO_ROOT" branch -D "$branch" >/dev/null 2>&1; then
+      echo "  deleted $branch"
+      deleted=$((deleted + 1))
+    else
+      echo "  delete failed: $branch"
+      kept=$((kept + 1))
+    fi
+  else
+    echo "  would delete $branch"
+    deleted=$((deleted + 1))
+  fi
 done
 
 echo "summary: $deleted deleted / $kept kept / ${#BRANCHES[@]} total"
