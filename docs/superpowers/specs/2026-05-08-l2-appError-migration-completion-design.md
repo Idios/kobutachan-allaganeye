@@ -568,7 +568,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 - [ ] (D) issue #663 body が PR #665 後の状態を反映する形に書き換わっている
 - [ ] cargo check / cargo test --lib (新 6 件 + 既存 149 件 = 155 件 pass)
 - [ ] npm run lint / typecheck / test (新 13-15 件 + 既存 ~566 件 = ~580 件 pass) / build
-- [ ] CI 全 8 job pass (gui-rust / gui-frontend / build-windows / installer-pester / python / markdownlint / validate-checklist / version-check)
+- [ ] CI PR 全 7 job pass (`python` / `gui-frontend` / `gui-rust` / `doc-tauri-commands-drift` / `installer-pester` / `markdownlint` / `validate-checklist`) ※ `build-windows` / `version-check` は `release.yml` 専用で PR CI には含まれない
 - [ ] Iron Law 6 実機検証 5 経路 (§9.3) を Idios が PASS 確認
 
 ## §13 Risks & 対策
@@ -581,7 +581,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 | **Iron Law 3 scope creep**: hint 文言を整える過程で「ついでに message も整える」誘惑 | scope-guard skill 適用、message 変更は別 issue 起票 |
 | **Iron Law 6 PR Pre-flight**: Lane I-A 起点だが他 lane と並行する可能性 | base merge 取り込み + `gh pr list --search "#663"` 並行確認、PR 作成時に再確認 |
 | **Iron Law 6 実機検証**: gui/src-tauri/** + state 系の変更で実機検証必要 | §9.3 5 経路を `AskUserQuestion` で Idios に依頼 |
-| **CI 全 8 job pass**: gui-rust / gui-frontend / build-windows / installer-pester / python / markdownlint / validate-checklist / version-check | PR pre-flight で全 job のローカル相当チェックを通す |
+| **CI PR 全 7 job pass**: `python` / `gui-frontend` / `gui-rust` / `doc-tauri-commands-drift` / `installer-pester` / `markdownlint` / `validate-checklist` (`build-windows` / `version-check` は `release.yml` 専用) | PR pre-flight で全 job のローカル相当チェックを通す |
 | **legacy fallback の test 削除で「想定外 input でも動いていた挙動」を失う** | issue body に明記 (string prefix 判定撤廃 = legacy form は明示的に非サポート)。helper の `appErrorMessage` / `appErrorHint` が legacy raw String / Error instance を null hint で受け流す互換性は温存 |
 | **`with_hint` 直接呼び出しの混在**: production 全 site は `.with_default_hint()` chain を使うため `with_hint` は test と将来 hybrid 移行用 API として残る | §5.1 で `#[allow(dead_code)]` 温存と確定。test (`error.rs::tests`) では `with_hint` を使い続ける |
 

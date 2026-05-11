@@ -36,6 +36,13 @@
   line-height: 1.5;
 }
 
+.errorHint {
+  display: block;
+  font-size: 0.9em;
+  opacity: 0.85;
+  margin-top: 0.25rem;
+}
+
 .hint {
   font-family: var(--ae-font-body);
   font-size: 12px;
