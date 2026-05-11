@@ -32,7 +32,7 @@ in_section && /^\| `/ {
     process_row($0)
 }
 
-function process_row(line,    code_cell, hint_cell, codes, code, hint, pipe_idx, second_pipe_idx, third_pipe_idx, rest, rest2) {
+function process_row(line,    code_cell, hint_cell, code, hint, pipe_idx, second_pipe_idx, third_pipe_idx, rest, rest2) {
     pipe_idx = index(line, "|")
     if (pipe_idx != 1) return  # row must start with |
     rest = substr(line, 2)
