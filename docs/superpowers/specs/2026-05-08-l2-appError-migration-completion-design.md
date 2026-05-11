@@ -376,6 +376,11 @@ if (appErrorCodeIs(e, 'state.mtime_conflict')) {
 
 `add_recent` / `clear_recent` / `read_recent` の catch path で同パターンを適用 (state field 名は実コード参照、追加方針は metadataStore と同じ「error + errorHint pair」)。
 
+- Lane V Phase 1 #691 (PR #716) で 5 catch path × 5 `*ErrorHint` の clear matrix
+  を test で pin、規約を明文化。本 spec で残された non-symmetric pattern
+  (load() catch の partial clear) は採用案 **X** (symmetric 化) で削除し、各
+  catch path を self-only に揃えた。
+
 ## §8 Layer 4 設計: Frontend UI (inline error 2-line render)
 
 ### §8.1 影響 component と変更内容

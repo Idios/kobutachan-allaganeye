@@ -191,6 +191,17 @@ import { InlineErrorHint } from '../components/InlineErrorHint';
   を override (`white-space: normal` + `max-width: 100%` + `overflow: visible`)
 - 他 3 site (RestoreButton / DropScreen / DetectingScreen) は wrapper class 不要
 
+### §4.8 metadataStore \*ErrorHint lifecycle 規約 (#691)
+
+各 catch path (`load()` / `runApply()` / `restore()` / `saveDraft()` / `loadDraft()`)
+は自身の `*Error` / `*ErrorHint` のみを `set` し、他経路の error state は touch
+しない (案 X、PR #691 で symmetric 化)。lifecycle 終端 (`clear()` / `loadSample()`)
+でのみ全 5 `*Error` + 5 `*ErrorHint` を null reset する。
+
+この規約は `metadataStore.test.ts` の `#691: catch path lifecycle pinning`
+describe block で test で pin されている。将来 catch path 追加時は同 describe
+block に test を追加し、self-only 規約を継承する。
+
 ## 5. 各画面の phase state
 
 ### drop (動画ファイル選択)
