@@ -32,13 +32,15 @@ GUI Tauri アプリの release bundle (`cargo tauri build`) で detect / export 
 
 **影響 spawn 箇所** (issue 本文の調査):
 
-| 関数 | 行 (develop-0.2.0) | spawn 対象 |
+| 関数 | 行 (issue 本文時点の調査値、現行 develop-0.2.0 では差異あり) | spawn 対象 |
 | --- | --- | --- |
-| `start_detect` | [lib.rs:~2409](../../gui/src-tauri/src/lib.rs#L2409) | allaganeye CLI (Python) |
-| `probe_video_with` | [lib.rs:~624](../../gui/src-tauri/src/lib.rs#L624) | ffprobe |
-| `generate_match_thumbnails` | [lib.rs:~1197](../../gui/src-tauri/src/lib.rs#L1197) | ffmpeg (thumbnail) |
-| `export_match` | [lib.rs:~1798](../../gui/src-tauri/src/lib.rs#L1798) | ffmpeg (export) |
-| `open_folder_in_explorer` | [lib.rs:~1644](../../gui/src-tauri/src/lib.rs#L1644) | **除外** (`std::process::Command` で `explorer.exe` 起動、Windows UI を開くため意図通り) |
+| `start_detect` | `lib.rs:~2409` | allaganeye CLI (Python) |
+| `probe_video_with` | `lib.rs:~624` | ffprobe |
+| `generate_match_thumbnails` | `lib.rs:~1197` | ffmpeg (thumbnail) |
+| `export_match` | `lib.rs:~1798` | ffmpeg (export) |
+| `open_folder_in_explorer` | `lib.rs:~1644` | **除外** (`std::process::Command` で `explorer.exe` 起動、Windows UI を開くため意図通り) |
+
+> 上表の line 番号は issue 起票時の調査スナップショットで、現行 develop-0.2.0 では一部 drift 済。実装適用先 (= ffmpeg を実際に spawn している関数) と最新 line 番号は §5.2 の table を参照すること。hyperlink を付けないのは drift により broken link 化するのを避けるため。
 
 ### 1.2 #648 — parse_detect_progress_line の silent skip (P3-low, bug)
 
@@ -46,12 +48,15 @@ GUI Tauri アプリの release bundle (`cargo tauri build`) で detect / export 
 
 ```rust
 fn parse_detect_progress_line(line: &str) -> Option<DetectProgress> {
+    let line = line.trim();
     if line.is_empty() {
         return None;
     }
     serde_json::from_str(line).ok()
 }
 ```
+
+(spec §1.2 の本 snippet は lib.rs:2285-2291 の実装と一致。authoritative な Find/Replace 用 snippet は plan Task 2.2 を参照。)
 
 呼び出し側 ([lib.rs:~2586](../../gui/src-tauri/src/lib.rs#L2586)) は `Option::None` を読み飛ばして次の行へ進むため、CLI 側に schema 不整合があった場合に GUI 側に何も伝わらず、開発者の troubleshooting 手段がない。
 
