@@ -73,6 +73,29 @@ try {
 }
 ```
 
+## `start_detect` stdout schema と parse 失敗時の挙動 (#648)
+
+`start_detect` が spawn する `allaganeye detect --progress-format json` の stdout は **1 行 1 JSON object の stream** (UTF-8、LF separator)。GUI 側は `parse_detect_progress_line` で 1 行ずつ deserialize する。
+
+**許容パターン (silent skip)**:
+
+- 空行 (改行のみの LF flush 等)
+- 空白のみ行
+
+**想定外パターン (warn 出力)**:
+
+- malformed JSON (debug print 混入、schema 不整合)
+- 上記の場合、`parse_detect_progress_line` は `eprintln!` で
+  `[parse_detect_progress_line] malformed JSON (len=N): "<escaped truncated line>"`
+  形式の warn を stderr に出力する。先頭 64 文字で truncate、制御文字 (TAB/LF/CR 以外) は `\xNN` escape
+
+**観察可能範囲**:
+
+- **dev build** (`cargo tauri dev`): `windows_subsystem` が default = `console` のため、`eprintln!` は terminal stderr に届く
+- **release build** (`cargo tauri build`): `windows_subsystem = "windows"` で console を切り離しているため、`eprintln!` は **失われる** (Windows OS が stderr を dev null 相当に向ける)。release で観察可能にしたい場合は `tauri-plugin-log` 導入 (post-Lane I-B 別 issue) で file output 化する
+
+**設計選択 (#648 spec)**: `phase=error` event 発火による DetectingScreen の error UI 接続は採用していない (UX 過剰、roadmap で却下)。silent skip → warn 化のみで UX に影響なし。
+
 ## CI による doc 整合性検査
 
 `.github/workflows/ci.yml` の `doc-tauri-commands-drift` job が `gui/src-tauri/src/lib.rs` 内の `#[tauri::command]` 数と本 doc の table 行数を比較し、不一致時に CI を fail させる (本 doc 漏れ防止、issue [#619](https://github.com/Idios/kobutachan-allaganeye/issues/619) 受け入れ条件 2)。command を追加・削除した場合は本 doc の table 行も同時に更新すること。
