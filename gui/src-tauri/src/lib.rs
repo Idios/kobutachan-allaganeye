@@ -2702,6 +2702,73 @@ async fn dev_force_panic() -> Result<(), AppError> {
     panic!("dev_force_panic invoked from frontend");
 }
 
+/// #669 -- Returns the tail of the install-dir log file
+/// (`<install_dir>/logs/error-YYYYMMDD.log`). Falls back to previous day's log
+/// if today's is missing or empty. Returns `""` when neither today nor
+/// yesterday has a log (not an error).
+///
+/// Used by the frontend ErrorModal to pre-fill the bug_report.yml
+/// `log_file_attachment` field.
+#[tauri::command]
+fn read_error_log_tail(line_count: usize) -> Result<String, AppError> {
+    let log_dir = logging::log_dir().map_err(|e| {
+        AppError::new(
+            "path.install_dir_unresolved",
+            format!("could not resolve log dir: {}", e),
+        )
+        .with_default_hint()
+    })?;
+    read_error_log_tail_inner(&log_dir, line_count)
+}
+
+/// Pure inner function for unit testing without log_dir() side effects. Tries
+/// today's log first, then falls back to yesterday's. Returns `""` when both
+/// are missing or empty (not an error). `line_count == 0` short-circuits to
+/// `""` (avoids unbounded growth of the tail buffer).
+fn read_error_log_tail_inner(
+    log_dir: &std::path::Path,
+    line_count: usize,
+) -> Result<String, AppError> {
+    use std::collections::VecDeque;
+    use std::io::{BufRead, BufReader};
+
+    if line_count == 0 {
+        return Ok(String::new());
+    }
+
+    let today = logging::current_ymd_compact();
+    let yesterday = logging::ymd_compact_yesterday();
+
+    for date in [today, yesterday].iter() {
+        let path = log_dir.join(format!("error-{}.log", date));
+        if !path.exists() {
+            continue;
+        }
+        let file = std::fs::File::open(&path).map_err(|e| {
+            AppError::new("io.read_failed", format!("read log failed: {}", e))
+                .with_default_hint()
+        })?;
+        let reader = BufReader::new(file);
+        let mut tail: VecDeque<String> = VecDeque::with_capacity(line_count);
+        for line in reader.lines() {
+            let line = line.map_err(|e| {
+                AppError::new("io.read_failed", format!("read line failed: {}", e))
+                    .with_default_hint()
+            })?;
+            if tail.len() == line_count {
+                tail.pop_front();
+            }
+            tail.push_back(line);
+        }
+        if !tail.is_empty() {
+            let joined: Vec<String> = tail.into_iter().collect();
+            return Ok(joined.join("\n"));
+        }
+        // empty file → try next date
+    }
+    Ok(String::new())
+}
+
 pub fn run() {
     // #614 -- Rotate stale panic logs (>7 days) and detect unclean shutdown
     // from the previous session, BEFORE the Tauri builder runs so the
@@ -2805,6 +2872,7 @@ pub fn run() {
         add_recent,
         clear_recent,
         get_log_dir,
+        read_error_log_tail,
         dev_force_panic,
     ]);
     #[cfg(not(debug_assertions))]
@@ -2831,6 +2899,7 @@ pub fn run() {
         add_recent,
         clear_recent,
         get_log_dir,
+        read_error_log_tail,
     ]);
 
     builder
@@ -4861,5 +4930,109 @@ mod tests {
         buf.clear();
         let n = reader.read_until(b'\n', &mut buf).await.unwrap();
         assert_eq!(n, 0);
+    }
+
+    // ----------------------------------------------------------------
+    // #669 -- read_error_log_tail
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn read_error_log_tail_returns_last_n_lines() {
+        use std::io::Write;
+        let tmp = TempDir::new().expect("tempdir");
+        let log_dir = tmp.path();
+        let date = logging::current_ymd_compact();
+        let log_path = log_dir.join(format!("error-{}.log", date));
+        {
+            let mut f = std::fs::File::create(&log_path).unwrap();
+            for i in 0..500 {
+                writeln!(f, "line {}", i).unwrap();
+            }
+        }
+        let result = read_error_log_tail_inner(log_dir, 300).unwrap();
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines.len(), 300);
+        assert_eq!(lines[0], "line 200");
+        assert_eq!(lines[299], "line 499");
+    }
+
+    #[test]
+    fn read_error_log_tail_returns_full_log_when_shorter_than_count() {
+        use std::io::Write;
+        let tmp = TempDir::new().expect("tempdir");
+        let log_dir = tmp.path();
+        let date = logging::current_ymd_compact();
+        let log_path = log_dir.join(format!("error-{}.log", date));
+        {
+            let mut f = std::fs::File::create(&log_path).unwrap();
+            for i in 0..50 {
+                writeln!(f, "line {}", i).unwrap();
+            }
+        }
+        let result = read_error_log_tail_inner(log_dir, 300).unwrap();
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines.len(), 50);
+        assert_eq!(lines[0], "line 0");
+        assert_eq!(lines[49], "line 49");
+    }
+
+    #[test]
+    fn read_error_log_tail_falls_back_to_previous_day() {
+        use std::io::Write;
+        let tmp = TempDir::new().expect("tempdir");
+        let log_dir = tmp.path();
+        let yesterday = logging::ymd_compact_yesterday();
+        let log_path = log_dir.join(format!("error-{}.log", yesterday));
+        {
+            let mut f = std::fs::File::create(&log_path).unwrap();
+            writeln!(f, "yesterday line").unwrap();
+        }
+        // 当日 log は存在しない → 前日 log にフォールバック
+        let result = read_error_log_tail_inner(log_dir, 300).unwrap();
+        assert!(result.contains("yesterday line"));
+    }
+
+    #[test]
+    fn read_error_log_tail_skips_empty_today_to_yesterday() {
+        use std::io::Write;
+        let tmp = TempDir::new().expect("tempdir");
+        let log_dir = tmp.path();
+        // 当日 log は空 (0 byte)
+        let today = logging::current_ymd_compact();
+        std::fs::File::create(log_dir.join(format!("error-{}.log", today))).unwrap();
+        // 前日 log は内容あり
+        let yesterday = logging::ymd_compact_yesterday();
+        {
+            let mut f = std::fs::File::create(log_dir.join(format!("error-{}.log", yesterday)))
+                .unwrap();
+            writeln!(f, "yesterday line").unwrap();
+        }
+        let result = read_error_log_tail_inner(log_dir, 300).unwrap();
+        assert!(result.contains("yesterday line"));
+    }
+
+    #[test]
+    fn read_error_log_tail_returns_empty_for_missing_log() {
+        let tmp = TempDir::new().expect("tempdir");
+        let log_dir = tmp.path();
+        // 当日も前日も log なし → 空文字列 (エラーでなく)
+        let result = read_error_log_tail_inner(log_dir, 300).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn read_error_log_tail_zero_lines_returns_empty() {
+        use std::io::Write;
+        let tmp = TempDir::new().expect("tempdir");
+        let log_dir = tmp.path();
+        let date = logging::current_ymd_compact();
+        let log_path = log_dir.join(format!("error-{}.log", date));
+        {
+            let mut f = std::fs::File::create(&log_path).unwrap();
+            writeln!(f, "line").unwrap();
+        }
+        // line_count=0 を要求された場合は空文字列を返す (loop 暴走防止)
+        let result = read_error_log_tail_inner(log_dir, 0).unwrap();
+        assert_eq!(result, "");
     }
 }

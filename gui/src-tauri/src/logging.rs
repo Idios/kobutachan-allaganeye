@@ -64,6 +64,18 @@ pub fn current_ymd_compact() -> String {
     format!("{:04}{:02}{:02}", y, m, d)
 }
 
+/// #669 -- Returns yesterday's date in YYYYMMDD compact format (UTC, since
+/// `current_ymd_compact()` is also UTC). Used by `read_error_log_tail` for the
+/// 1-day fallback when today's log is missing or empty.
+pub fn ymd_compact_yesterday() -> String {
+    let now = now_unix_secs();
+    // saturating_sub avoids underflow if the clock is at epoch
+    let yesterday_secs = now.saturating_sub(86400);
+    let days = (yesterday_secs / 86400) as i64;
+    let (y, m, d) = days_to_ymd(days);
+    format!("{:04}{:02}{:02}", y, m, d)
+}
+
 pub fn current_timestamp_iso() -> String {
     let now = now_unix_secs();
     let days = (now / 86400) as i64;
