@@ -70,7 +70,7 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 - コマンド: `git tag -a v0.x.0 -m "Release v0.x.0: <レイヤー名>"`
 - `git push origin v0.x.0` すると [`.github/workflows/release.yml`](../.github/workflows/release.yml) が発火し、Windows Portable ZIP (`allaganeye-v<version>-windows.zip`) のビルドと GitHub Release への成果物自動添付を実行する (#461)
   - ビルドは [`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) で Python 3.11 embeddable + FFmpeg LGPLv3 shared (BtbN FFmpeg-Builds win64-lgpl-shared、libdav1d 入り) を同梱する
-    - ダウンロードする外部バイナリ (Python embed / get-pip.py / FFmpeg) はスクリプト内に **SHA256 ダイジェストをハードコードして検証** する。ダイジェスト不一致時はビルドを fail。FFmpeg は BtbN の `autobuild-YYYY-MM-DD-HH-MM` タグと特定アセット名を URL にピン留めして再現性を確保する (`latest` タグは日次更新の可動ポインタなので不可)
+    - ダウンロードする外部バイナリ (Python embed / get-pip.py / FFmpeg) はスクリプト内に **SHA256 ダイジェストをハードコードして検証** する。ダイジェスト不一致時はビルドを fail。FFmpeg は BtbN の **monthly snapshot タグ** (`autobuild-YYYY-MM-{28,29,30,31}-*`、~24 ヶ月 retention) と特定アセット名を URL にピン留めして再現性を確保する (`latest` タグは日次更新の可動ポインタなので不可、daily 中間タグは ~14 日で GC されるため不可。詳細 #705)
       - `get-pip.py` は `pypa/get-pip` GitHub release tag (`26.1.1`) を指す versioned URL でピン留め ([#681](https://github.com/Idios/kobutachan-allaganeye/issues/681) / PR [#703](https://github.com/Idios/kobutachan-allaganeye/pull/703))。release tag は immutable per release のため SHA drift は構造的に発生しない。pip 新版 bundle 時の bump 手順は [`docs/developer-setup.md` §「get-pip.py のピン留め (#681)」](developer-setup.md) と [`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) の `$GetPipUrl` 周辺コメントを参照
     - 外部バイナリを更新する場合はスクリプト先頭の `$FFmpegBuildTag` / `$FFmpegAssetName` / `$*Sha256` 定数を更新する
   - Release 本文は [`scripts/extract_release_notes.py`](../scripts/extract_release_notes.py) が CHANGELOG.md から該当バージョンのセクションを抽出する

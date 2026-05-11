@@ -216,7 +216,7 @@ Use Write tool:
 
 | # | priority | 概要 |
 | --- | --- | --- |
-| #692 | P3 | error.rs hint table drift check job 追加 (CI で `error.rs::default_hint_for_code` 22 entries と `docs/tauri-commands.md` の文言一致を保証) |
+| #692 | P3 | error.rs hint table drift check job 追加 (CI で `error.rs::default_hint_for_code` 24 codes (or-pattern 展開後) と `docs/tauri-commands.md` の文言一致を保証) |
 | #700 | P3 (bug) | markdownlint ignore で nested `gui/node_modules` を除外 (`.markdownlint-cli2.yaml`) |
 
 **並行安全度**: high (CI yml + markdownlint config 独立) / **brainstorming 単位**: Lane IV-b' で Group G #458 と統合 (1 spec / 3 章)

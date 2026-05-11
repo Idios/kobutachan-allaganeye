@@ -96,7 +96,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/build-cache
-          key: btbn-ffmpeg-win64-lgpl-shared-8.1-16f409ab737538778f9cd4bfc69953e2e1dc2558f6dc5ca17cc72083d60dc735
+          key: btbn-ffmpeg-win64-lgpl-shared-8.1-e27598e612078f25d3e9cf245ce5042990f2602146e5a6f8287b143b0dce0e95
 
       - name: Install GUI dependencies (#570)
         shell: pwsh

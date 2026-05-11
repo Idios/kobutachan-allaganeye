@@ -2,6 +2,7 @@ import { ask } from '@tauri-apps/plugin-dialog';
 
 import { useMetadataStore } from '../state/metadataStore';
 import { DisabledTooltip } from './DisabledTooltip';
+import { InlineErrorHint } from './InlineErrorHint';
 import styles from './RestoreButton.module.css';
 
 /**
@@ -104,9 +105,7 @@ export function RestoreButton({
       {restoreError && (
         <span className={styles.error} role="alert">
           {restoreError}
-          {restoreErrorHint && (
-            <span className={styles.errorHint}>💡 {restoreErrorHint}</span>
-          )}
+          <InlineErrorHint hint={restoreErrorHint} />
         </span>
       )}
     </>

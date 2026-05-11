@@ -106,8 +106,9 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 1. `appErrorCodeIs(e, 'state.mtime_conflict')` で apply path → ConflictModal (modal 表示)
 2. その他の AppError code → inline error
    - 1 行目: `appErrorMessage(e)` (赤系: `var(--ae-danger)` ないし screen 固有 error 色)
-   - 2 行目: `appErrorHint(e)` (灰系: `var(--ae-text-dim)`、`💡` 等の prefix で
-     アクション提示と分かるように)
+   - 2 行目: `appErrorHint(e)` を `<InlineErrorHint hint={...} />` component で表示
+     (PR #693 で共通化、`💡` prefix + `var(--ae-text-dim)` を 1 箇所に集約。
+     詳細は [ui-architecture.md §4.7](ui-architecture.md#§47-inlineerrorhint-component-693) 参照)
 3. catch ブロック以外で error を扱わない (`alert()` / `console.error` のみは禁止)
 4. globalErrorListener が拾うのは uncaught (window.error / unhandledrejection /
    panic) のみ。catch 済 Tauri command error は ErrorModal に出さない (規約)
