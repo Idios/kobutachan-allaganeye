@@ -487,3 +487,16 @@ Describe 'GetPip pinning (#681)' {
     $GetPipSha256 | Should -Be '66904BCCB878E363DB6236EA900E6935E507DCB887E9F178F6212EDFE7F46A76'
   }
 }
+
+Describe 'File encoding (#704)' {
+  It 'is saved as UTF-8 with BOM so PowerShell 5.1 (powershell.exe) can parse non-ASCII comments' {
+    # Without a BOM, Windows PowerShell 5.1 (default ANSI / CP932 in JP locale)
+    # interprets non-ASCII comments as Shift-JIS, causing parse errors. The CI
+    # `installer-pester` job uses `pwsh -NoProfile` (PS7.x, UTF-8 default), so
+    # local PS5.1 regression coverage relies on a BOM marker. See #704.
+    $bytes = [System.IO.File]::ReadAllBytes($PSCommandPath)
+    $bytes[0] | Should -Be 0xEF
+    $bytes[1] | Should -Be 0xBB
+    $bytes[2] | Should -Be 0xBF
+  }
+}
