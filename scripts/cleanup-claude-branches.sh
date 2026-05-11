@@ -73,8 +73,21 @@ for branch in "${BRANCHES[@]}"; do
     continue
   fi
 
-  # AND 1 / AND 3 は後続 Task で追加。本 Task では「active 以外は keep (skeleton)」のまま。
-  echo "  would delete $branch (skeleton, AND 1/3 not yet implemented)"
+  # AND 1: merged 判定 (origin/develop-0.2.0 OR origin/main の祖先)
+  merged=0
+  if git -C "$REPO_ROOT" merge-base --is-ancestor "$branch" "origin/develop-0.2.0" 2>/dev/null; then
+    merged=1
+  elif git -C "$REPO_ROOT" merge-base --is-ancestor "$branch" "origin/main" 2>/dev/null; then
+    merged=1
+  fi
+  if [[ "$merged" -eq 0 ]]; then
+    echo "  kept $branch (reason: not-merged)"
+    kept=$((kept + 1))
+    continue
+  fi
+
+  # AND 3 は後続 Task で追加、本 Task では merged + active なし = skeleton fall-through
+  echo "  would delete $branch (skeleton, AND 3 not yet implemented)"
   kept=$((kept + 1))
 done
 
