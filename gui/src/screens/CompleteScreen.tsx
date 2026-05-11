@@ -5,6 +5,7 @@ import { BrightnessTimeline } from '../components/BrightnessTimeline';
 import { DisabledTooltip } from '../components/DisabledTooltip';
 import { MatchThumb } from '../components/MatchThumb';
 import { RestoreButton } from '../components/RestoreButton';
+import { SampleModeBanner } from '../components/SampleModeBanner';
 import { sampleBrightness } from '../data/sampleMetadata';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
@@ -92,6 +93,7 @@ export function CompleteScreen() {
 
   return (
     <div className={styles.screen} data-testid="complete-screen">
+      <SampleModeBanner />
       <div className={styles.topBar}>
         <div className={styles.statusDot} aria-hidden="true" />
         <div className={styles.sourceBox}>
