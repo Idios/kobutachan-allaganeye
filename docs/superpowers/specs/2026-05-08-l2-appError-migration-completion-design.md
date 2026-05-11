@@ -115,8 +115,9 @@ impl AppError {
 }
 
 /// AppError code に対する日本語 default hint を返す。未登録 code は None。
-/// 22 entries (現在の lib.rs inventory: io.* / parse.* / state.* / subprocess.* /
-/// validation.* / path.* / platform.* / internal.*)。
+/// 24 codes (or-pattern `io.would_block | io.timed_out` を 2 codes に展開後、22 hint
+/// + 2 None = 24)。現在の lib.rs inventory: io.* / parse.* / state.* / subprocess.* /
+/// validation.* / path.* / platform.* / internal.*。
 fn default_hint_for_code(code: &str) -> Option<&'static str> {
     match code {
         // state

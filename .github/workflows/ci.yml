@@ -196,7 +196,6 @@ jobs:
         with:
           severity: warning
           scandir: '.'
-          additional_files: '.github/scripts/*.sh tests/scripts/*.sh scripts/*.sh'
 
   installer-pester:
     runs-on: windows-latest
