@@ -701,3 +701,84 @@ describe('DropScreen', () => {
     });
   });
 });
+
+describe('#698: recentStore error notice (A-minimal)', () => {
+  beforeEach(() => {
+    useRecentStore.setState({
+      entries: [],
+      loaded: true,
+      loadError: null,
+      loadErrorHint: null,
+      addError: null,
+      addErrorHint: null,
+    });
+  });
+
+  it('displays notice with message + hint when loadError is set', () => {
+    useRecentStore.setState({
+      loadError: 'failed to read recent.json',
+      loadErrorHint: 'recent.json が破損している可能性があります',
+    });
+
+    render(<DropScreen />);
+
+    expect(screen.getByText('failed to read recent.json')).toBeInTheDocument();
+    expect(
+      screen.getByText('💡 recent.json が破損している可能性があります')
+    ).toBeInTheDocument();
+  });
+
+  it('displays notice when addError is set (loadError null)', () => {
+    useRecentStore.setState({
+      addError: 'failed to stat dropped file',
+      addErrorHint: 'ファイルが削除された可能性があります',
+    });
+
+    render(<DropScreen />);
+
+    expect(screen.getByText('failed to stat dropped file')).toBeInTheDocument();
+    expect(
+      screen.getByText('💡 ファイルが削除された可能性があります')
+    ).toBeInTheDocument();
+  });
+
+  it('prefers loadError over addError when both are set', () => {
+    useRecentStore.setState({
+      loadError: 'load failed',
+      loadErrorHint: 'load hint',
+      addError: 'add failed',
+      addErrorHint: 'add hint',
+    });
+
+    render(<DropScreen />);
+
+    expect(screen.getByText('load failed')).toBeInTheDocument();
+    expect(screen.queryByText('add failed')).not.toBeInTheDocument();
+    expect(screen.getByText('💡 load hint')).toBeInTheDocument();
+    expect(screen.queryByText('💡 add hint')).not.toBeInTheDocument();
+  });
+
+  it('does not display notice when both loadError and addError are null', () => {
+    useRecentStore.setState({
+      loadError: null,
+      addError: null,
+    });
+
+    render(<DropScreen />);
+
+    expect(screen.queryByText(/💡/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('recent-notice')).not.toBeInTheDocument();
+  });
+
+  it('notice has role="alert" + data-testid for stable selection', () => {
+    useRecentStore.setState({
+      loadError: 'msg',
+      loadErrorHint: 'hint',
+    });
+
+    render(<DropScreen />);
+
+    const notice = screen.getByTestId('recent-notice');
+    expect(notice).toHaveAttribute('role', 'alert');
+  });
+});

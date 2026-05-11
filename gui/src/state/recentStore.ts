@@ -25,11 +25,19 @@ export interface RecentState {
   entries: RecentEntry[];
   /** Set true after the first successful `load()` so the UI can skip the empty-state flicker on subsequent re-mounts. */
   loaded: boolean;
-  /** Last load failure, surfaced for tests / debug log; the drop screen ignores it (history is best-effort). */
+  /**
+   * Last load failure. #698: DropScreen 上部に inline notice として表示される
+   * (history は best-effort UI fluff だが、user に履歴失敗を気づかせるため告知)。
+   * dismiss なし、次回 load 成功で自動消去 (recentStore lifecycle)。
+   */
   loadError: string | null;
   /** #663: hint for loadError, if AppError carried one. */
   loadErrorHint: string | null;
-  /** Last add failure, e.g. when the user dropped a file that was deleted before we could stat it. */
+  /**
+   * Last add failure. #698: DropScreen 上部に notice として表示 (loadError 不在
+   * 時の fallback)。e.g. when the user dropped a file that was deleted before
+   * we could stat it. dismiss なし、次回 add 成功で自動消去。
+   */
   addError: string | null;
   /** #663: hint for addError, if AppError carried one. */
   addErrorHint: string | null;
