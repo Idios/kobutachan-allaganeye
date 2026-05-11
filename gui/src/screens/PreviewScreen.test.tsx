@@ -431,6 +431,87 @@ describe('PreviewScreen', () => {
       .toBe(true);
   });
 
+  // #678 Lane II-b §2.1 — register_video catch path: AppError struct +
+  // legacy Error + raw string + null/undefined reject の 4 系統を
+  // appErrorMessage(e) で扱えていることを確認。
+  // 旧実装 `e instanceof Error ? e.message : String(e)` では AppError struct
+  // が `[object Object]` になるバグを TDD で検出するための test。
+  // PreviewScreen は videoErrorHint 枠なし (spec §2.1 規約「既存枠なし → message のみ」)
+  // のため hint UI 関連 assert は不要。
+  describe('PreviewScreen register_video catch (#678)', () => {
+    it('renders AppError struct message (not [object Object]) (#678)', async () => {
+      const appError = {
+        code: 'io.read_failed',
+        message: '動画を開けませんでした',
+        hint: 'ファイルを確認',
+      };
+      invokeMock.mockImplementation((cmd: string) => {
+        if (cmd === 'register_video') return Promise.reject(appError);
+        if (cmd === 'check_backup_exists') return Promise.resolve(false);
+        return Promise.reject(new Error(`unmocked: ${cmd}`));
+      });
+      render(<PreviewScreen />);
+      const alerts = await screen.findAllByRole('alert');
+      expect(
+        alerts.some((el) =>
+          el.textContent?.includes('動画を開けませんでした'),
+        ),
+      ).toBe(true);
+      // [object Object] 化していないことを念押し
+      for (const alertEl of alerts) {
+        expect(alertEl.textContent).not.toContain('[object Object]');
+      }
+      // hint は PreviewScreen に既存枠なし → 表示しない (spec §2.1 規約)
+      expect(screen.queryByText('ファイルを確認')).not.toBeInTheDocument();
+    });
+
+    it('renders Error instance message (#678)', async () => {
+      invokeMock.mockImplementation((cmd: string) => {
+        if (cmd === 'register_video')
+          return Promise.reject(new Error('Some error'));
+        if (cmd === 'check_backup_exists') return Promise.resolve(false);
+        return Promise.reject(new Error(`unmocked: ${cmd}`));
+      });
+      render(<PreviewScreen />);
+      const alerts = await screen.findAllByRole('alert');
+      expect(alerts.some((el) => el.textContent?.includes('Some error'))).toBe(
+        true,
+      );
+    });
+
+    it('renders String(e) result for raw string reject (#678)', async () => {
+      invokeMock.mockImplementation((cmd: string) => {
+        if (cmd === 'register_video') return Promise.reject('simple string');
+        if (cmd === 'check_backup_exists') return Promise.resolve(false);
+        return Promise.reject(new Error(`unmocked: ${cmd}`));
+      });
+      render(<PreviewScreen />);
+      const alerts = await screen.findAllByRole('alert');
+      expect(
+        alerts.some((el) => el.textContent?.includes('simple string')),
+      ).toBe(true);
+    });
+
+    it('does not render [object Object] for null reject (#678)', async () => {
+      invokeMock.mockImplementation((cmd: string) => {
+        if (cmd === 'register_video') return Promise.reject(null);
+        if (cmd === 'check_backup_exists') return Promise.resolve(false);
+        return Promise.reject(new Error(`unmocked: ${cmd}`));
+      });
+      render(<PreviewScreen />);
+      // appErrorMessage(null) = String(null) = "null". alert 要素は出る
+      // (paneVideoError の role="alert" は 2 pane 分) が、文字列は
+      // `[object Object]` ではない。
+      await waitFor(() => {
+        const alerts = screen.queryAllByRole('alert');
+        expect(alerts.length).toBeGreaterThan(0);
+        for (const alertEl of alerts) {
+          expect(alertEl.textContent).not.toContain('[object Object]');
+        }
+      });
+    });
+  });
+
   it('ArrowRight key nudges the active timestamp forward by 1s', async () => {
     render(<PreviewScreen />);
     const before = (

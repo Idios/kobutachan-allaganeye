@@ -11,7 +11,7 @@
 - **Wave 0 完走** (4 lane / 9 issue 完了): Lane I-A (Group A) / Lane IV-a (Group F 4 件) / Lane IV-b 部分 (Group G 2/3) / Lane IV-c (Group H 2 件) が merge 済 (PR #684 #686 #687 #688 #689 #701 #702 #703 #706)
 - **post-#663 cleanup 12 件発生** (PR #689 review 派生): Group I (post-#663 GUI cleanup, 当初 8 件 → §2 採用方針 (a) で #696 を Group D に fold した結果 7 件) / Group J (post-#663 workflow polish, 2 件) / Group K (l2b cleanup, 2 件) が新規 issue として登録済 ([#691](https://github.com/Idios/kobutachan-allaganeye/issues/691) [#692](https://github.com/Idios/kobutachan-allaganeye/issues/692) [#693](https://github.com/Idios/kobutachan-allaganeye/issues/693) [#694](https://github.com/Idios/kobutachan-allaganeye/issues/694) [#695](https://github.com/Idios/kobutachan-allaganeye/issues/695) [#696](https://github.com/Idios/kobutachan-allaganeye/issues/696) [#697](https://github.com/Idios/kobutachan-allaganeye/issues/697) [#698](https://github.com/Idios/kobutachan-allaganeye/issues/698) [#699](https://github.com/Idios/kobutachan-allaganeye/issues/699) [#700](https://github.com/Idios/kobutachan-allaganeye/issues/700) [#704](https://github.com/Idios/kobutachan-allaganeye/issues/704) [#705](https://github.com/Idios/kobutachan-allaganeye/issues/705))
 - **Wave 1 未着手**: 旧 plan の Wave 1 (Lane I-B / II-a / II-b、main 3 lane) は未開始
-- **Group G 残**: [#458](https://github.com/Idios/kobutachan-allaganeye/issues/458) (P2、bug_report.yml 同意チェック付き) が OPEN のまま
+- **Group G 残**: [#458](https://github.com/Idios/kobutachan-allaganeye/issues/458) (P2、bug_report.yml 同意チェック付き) が OPEN のまま — 更新後 plan で Lane IV-b' から scope-out (実装完了済、release gate 後 handoff)
 
 更新後の roadmap は 23 件 / 11 group / 3 wave / 最大 6 lane 並行の構造を採る。
 
@@ -59,7 +59,7 @@
 | **D** | **ErrorModal / Export UX (拡張)** | **4** | OPEN | [#678](https://github.com/Idios/kobutachan-allaganeye/issues/678) (P2) → [#669](https://github.com/Idios/kobutachan-allaganeye/issues/669) → [#680](https://github.com/Idios/kobutachan-allaganeye/issues/680) → **[#696](https://github.com/Idios/kobutachan-allaganeye/issues/696) (新規 fold)** |
 | **E** | **横断 UI bugs** | **1** | OPEN | [#676](https://github.com/Idios/kobutachan-allaganeye/issues/676) ([#680](https://github.com/Idios/kobutachan-allaganeye/issues/680) は D に fold 済) |
 | F | l2b 配布 | 4 | ✅ DONE | [#617](https://github.com/Idios/kobutachan-allaganeye/issues/617) [#616](https://github.com/Idios/kobutachan-allaganeye/issues/616) [#668](https://github.com/Idios/kobutachan-allaganeye/issues/668) [#681](https://github.com/Idios/kobutachan-allaganeye/issues/681) |
-| **G** | **l2-workflow 残** | **1** | OPEN | [#458](https://github.com/Idios/kobutachan-allaganeye/issues/458) (P2) |
+| **G** | **l2-workflow 残** | **1** | OPEN | [#458](https://github.com/Idios/kobutachan-allaganeye/issues/458) (P2) — Lane IV-b' から scope-out (release gate 後 handoff) |
 | H | lint / CLI polish | 2 | ✅ DONE | [#643](https://github.com/Idios/kobutachan-allaganeye/issues/643) [#365](https://github.com/Idios/kobutachan-allaganeye/issues/365) |
 | **★ I** | **post-#663 GUI cleanup** | **7** | OPEN (新規) | Phase 1: [#691](https://github.com/Idios/kobutachan-allaganeye/issues/691) // [#693](https://github.com/Idios/kobutachan-allaganeye/issues/693) // [#695](https://github.com/Idios/kobutachan-allaganeye/issues/695) // [#697](https://github.com/Idios/kobutachan-allaganeye/issues/697) // [#698](https://github.com/Idios/kobutachan-allaganeye/issues/698) → Phase 2: [#694](https://github.com/Idios/kobutachan-allaganeye/issues/694) → Phase 3: [#699](https://github.com/Idios/kobutachan-allaganeye/issues/699) |
 | **★ J** | **post-#663 workflow polish** | **2** | OPEN (新規) | [#692](https://github.com/Idios/kobutachan-allaganeye/issues/692) // [#700](https://github.com/Idios/kobutachan-allaganeye/issues/700) |
@@ -106,10 +106,12 @@ WAVE 1  (CURRENT — 最大 6 lane 並行可)
                 #699 docstring 更新 (refactor 結果反映)
               1 spec / 7 章 (3 phase 構成)
 
-  Lane IV-b'  Group G remainder + Group J 統合 (workflow / CI / docs polish)
-              #458 (P2、bug_report.yml) // #692 (error.rs hint drift CI) // #700 (markdownlint nested ignore)
+  Lane IV-b'  Group J 単独 (workflow / CI / docs polish)
+              #692 (error.rs hint drift CI) // #700 (markdownlint nested ignore)
               file 完全独立、PR 並行可
-              1 spec / 3 章
+              1 spec / 2 章
+
+              ※ Group G #458 は本 lane から scope-out (実装完了済、release gate 後 /close-issue handoff)
 
   Lane IV-e   Group K (l2b cleanup)
               #704 (Pester PS5.1 BOM) // #705 (BtbN URL 陳腐化対策、旧 plan 「5 章目」)
@@ -142,7 +144,7 @@ WAVE 3  (release gate)
 | V Phase 1 (5 件) | | ✓ #691 | | | | | ✓ #695 | ✓ #697 | ✓ #698 | | | | | | | |
 | V Phase 2 (#694) | | ✓ refactor | (consumer) | (consumer) | | (consumer) | (consumer) | (consumer) | (consumer) | ✓ refactor | | | | | | |
 | V Phase 3 (#699) | | | | | | | | | | | | | | | | (docstring) |
-| IV-b' (#458 #692 #700) | | | | | | | | | | | ✓ #692 | ✓ #692 | ✓ #458 | ✓ #700 | | |
+| IV-b' (#692 #700) | | | | | | | | | | | ✓ #692 | ✓ #692 | | ✓ #700 | | |
 | IV-e (#704 #705) | | | | | | | | | | | | | | | ✓ #704 | ✓ #705 |
 
 **衝突注意点**:
@@ -180,7 +182,7 @@ WAVE 3  (release gate)
 /superpowers:brainstorming Lane V Phase 3: Group I #699 docstring 更新 (#694 merge 後)
 
 # Wave 1 polish - Lane IV (workflow / CI / installer)
-/superpowers:brainstorming Lane IV-b': Group G #458 + Group J #692 #700 (workflow / CI / docs polish)
+/superpowers:brainstorming Lane IV-b': Group J #692 #700 (workflow / CI / docs polish、#458 は scope-out)
 /superpowers:brainstorming Lane IV-e: Group K の問題を解決したい (#704 #705 l2b cleanup)
 
 # Wave 2 (Wave 1 完走後)

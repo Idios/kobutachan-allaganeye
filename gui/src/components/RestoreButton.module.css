@@ -34,14 +34,3 @@
   margin-left: 8px;
 }
 
-/* #663 — 2nd-line hint shown after `.error`. Uses the dim text token so it
-   visually de-emphasises the corrective hint below the red error message. */
-.errorHint {
-  font-family: var(--ae-font-body);
-  font-size: 10px;
-  color: var(--ae-text-dim);
-  margin-left: 8px;
-  margin-top: 2px;
-  display: block;
-  line-height: 1.5;
-}

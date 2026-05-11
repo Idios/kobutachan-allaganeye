@@ -1,0 +1,11 @@
+# shellcheck で scan しない path (CI .github/workflows/ci.yml shellcheck job 用)
+#
+# 本 file は `ludeeus/action-shellcheck@2.0.0` (`scandir: '.'`) が repo 全体を
+# scan する際の除外指定。Q5 (Lane IV-b' brainstorming session) で確定した
+# 「repo 全体 .sh」の意図は、本 lane で追加・既存の作業 script (.github/scripts/,
+# tests/scripts/, scripts/) を CI で守ることに限定する。
+#
+# .claude/hooks/*.sh は Claude Code agent infrastructure で本 PR の scope 外。
+# 個別に shellcheck warning level に揃える作業は別 lane で扱う。
+
+.claude/hooks/

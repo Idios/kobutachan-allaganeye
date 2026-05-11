@@ -4,6 +4,7 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { useEffect, useReducer, useRef, useState } from 'react';
 
 import { DisabledTooltip } from '../components/DisabledTooltip';
+import { InlineErrorHint } from '../components/InlineErrorHint';
 import { appErrorHint, appErrorMessage } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
@@ -415,14 +416,23 @@ export function ExportScreen() {
   // `Scoped command argument failed regex validation` を返していた。
   // Rust 側に `open_folder_in_explorer` 独自 command を追加して explorer.exe
   // を直接 spawn する形に変更。
+  // #678 Lane II-b §2.1 — catch path で `e instanceof Error ? e.message :
+  // String(e)` を使うと AppError struct (`{code, message, hint}`) が
+  // `[object Object]` に化ける。`appErrorMessage(e)` / `appErrorHint(e)`
+  // helper に置き換え、hint がある場合は 2 行目として並べる。
   const [openFolderError, setOpenFolderError] = useState<string | null>(null);
+  const [openFolderErrorHint, setOpenFolderErrorHint] = useState<string | null>(
+    null,
+  );
 
   async function handleOpenFolder() {
     setOpenFolderError(null);
+    setOpenFolderErrorHint(null);
     try {
       await invoke('open_folder_in_explorer', { path: outDir });
     } catch (e) {
-      setOpenFolderError(e instanceof Error ? e.message : String(e));
+      setOpenFolderError(appErrorMessage(e));
+      setOpenFolderErrorHint(appErrorHint(e));
     }
   }
 
@@ -685,9 +695,28 @@ export function ExportScreen() {
                 ✓ 完了 — フォルダを開く
               </button>
             )}
+            {/*
+             * #678 Lane II-b §2.1: AppError struct から取り出した
+             * `message` を 1 行目、`hint` を 2 行目として表示する。
+             * 各テキストを個別 span に分けることで `getByText` の exact
+             * match が message / hint 単独で機能する (旧実装の
+             * 「フォルダを開けませんでした: <msg>」連結だと exact match
+             * が成立せず TDD test も書けなかった)。
+             */}
             {completed && openFolderError && (
-              <div className={styles.errorMessage} role="alert">
-                フォルダを開けませんでした: {openFolderError}
+              <div className={styles.openFolderError} role="alert">
+                <span className={styles.openFolderErrorPrefix}>
+                  フォルダを開けませんでした:
+                </span>
+                <span>{openFolderError}</span>
+                {openFolderErrorHint && (
+                  <span
+                    className={styles.openFolderErrorHint}
+                    data-testid="open-folder-error-hint"
+                  >
+                    <InlineErrorHint hint={openFolderErrorHint} />
+                  </span>
+                )}
               </div>
             )}
             {completed && (
@@ -701,6 +730,7 @@ export function ExportScreen() {
                 onClick={() => {
                   setMatchStates({});
                   setOpenFolderError(null);
+                  setOpenFolderErrorHint(null);
                   dispatch({ type: 'RESTART' });
                 }}
               >
@@ -719,6 +749,7 @@ export function ExportScreen() {
                 onClick={() => {
                   setMatchStates({});
                   setOpenFolderError(null);
+                  setOpenFolderErrorHint(null);
                   dispatch({ type: 'DISMISS_ERROR' });
                 }}
               >
@@ -886,7 +917,7 @@ export function ExportScreen() {
                       {s.error.slice(0, 120)}
                       {s.errorHint && (
                         <span className={styles.listErrorHint}>
-                          💡 {s.errorHint}
+                          <InlineErrorHint hint={s.errorHint} />
                         </span>
                       )}
                     </span>
