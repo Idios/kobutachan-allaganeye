@@ -1504,11 +1504,12 @@ Expected: 全 CI job pass。
 
 ### PR-2 メタ情報
 
-- PR URL: [TBD]
-- PR 番号: [TBD]
-- 作成時刻: [TBD]
-- CI 結果: [TBD]
-- merge 時刻: [TBD]
+- PR URL: <https://github.com/Idios/kobutachan-allaganeye/pull/717>
+- PR 番号: #717
+- 作成時刻: 2026-05-11 (worktree `lane-iv-b-prime-pr2`、session `tender-moore-2a5d2f` derived)
+- CI 結果: **全 7 jobs PASS** ✅ (`markdownlint` 7s / `gui-frontend` 58s / `gui-rust` 4m46s / `installer-pester` 42s / `python` 1m7s / `validate-checklist` 4s / `doc-tauri-commands-drift` 6s)
+- merge 時刻: [TBD — レビュー後]
+- 注: PR-2 は `develop-0.2.0` base のため、PR-1 #715 で追加した `doc-error-hint-drift` / `shellcheck` job は本 PR-2 の CI ではまだ動かない (PR-1 マージ後に rebase すれば動く)。本 PR-2 scope (markdownlint config 1 行) は既存 `markdownlint` job で pass 確認済
 
 ---
 
