@@ -326,16 +326,11 @@
   margin-left: 8px;
 }
 
-/* #663 — 2nd-line hint rendered after `.applyError`. Uses the dim text
-   token so corrective hints are visually subordinate to the red message.
-   `display: block` forces the hint onto a new line; without it the parent
-   span renders message + hint on a single line. */
+/* #693 — InlineErrorHint の wrapper として、改行を担保 (display: block)。
+   font-size / color / family は InlineErrorHint 側に委譲。 */
 .applyErrorHint {
   display: block;
-  color: var(--ae-text-dim);
-  font-size: 11px;
-  margin-left: 8px;
-  line-height: 1.5;
+  margin-top: 2px;
 }
 
 .emptyNote {

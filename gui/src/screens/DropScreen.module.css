@@ -287,15 +287,6 @@
   font-size: 11px;
 }
 
-/* #663 — 2nd-line hint rendered below `.error` inside the ErrorCard.
-   Dim text token de-emphasises the corrective hint vs the red message. */
-.errorHint {
-  color: var(--ae-text-dim);
-  font-size: 12px;
-  margin-top: 6px;
-  line-height: 1.5;
-}
-
 .loading {
   font-family: var(--ae-font-mono);
   font-size: 11px;

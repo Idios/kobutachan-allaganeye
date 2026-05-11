@@ -315,7 +315,7 @@ Install-Module Pester -MinimumVersion 5.0.0 -Scope CurrentUser -Force -SkipPubli
 Invoke-Pester -Path scripts/tests/ -Output Detailed
 ```
 
-テスト対象: `Invoke-Download` の SHA256 検証、`Assert-FFmpegLayout` の BtbN 展開レイアウト検証、`Format-ReadmeContent` の LGPLv3 文言。詳細は [`scripts/tests/build-portable-zip.Tests.ps1`](../scripts/tests/build-portable-zip.Tests.ps1)。
+テスト対象: `Invoke-Download` の SHA256 検証、`Assert-FFmpegLayout` の BtbN 展開レイアウト検証、`Format-ReadmeContent` の LGPLv3 文言、`File encoding (#704)` の BOM 検証 (PS5.1 + 日本語コメント parse 担保)。詳細は [`scripts/tests/build-portable-zip.Tests.ps1`](../scripts/tests/build-portable-zip.Tests.ps1)。
 
 ## 5. サンプル動画データ
 

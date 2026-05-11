@@ -1,4 +1,4 @@
-<#
+﻿<#
 Pester v5 tests for scripts/build-portable-zip.ps1.
 
 Run:
@@ -485,5 +485,30 @@ Describe 'GetPip pinning (#681)' {
     # value-equality lock so any accidental SHA edit without a corresponding
     # URL tag bump is caught at test time, not at CI build-windows time.
     $GetPipSha256 | Should -Be '66904BCCB878E363DB6236EA900E6935E507DCB887E9F178F6212EDFE7F46A76'
+  }
+}
+
+Describe 'File encoding (#704)' {
+  It 'is saved as UTF-8 with BOM so PowerShell 5.1 (powershell.exe) can parse non-ASCII comments' {
+    # Without a BOM, Windows PowerShell 5.1 (default ANSI / CP932 in JP locale)
+    # interprets non-ASCII comments as Shift-JIS, causing parse errors. The CI
+    # `installer-pester` job uses `pwsh -NoProfile` (PS7.x, UTF-8 default), so
+    # local PS5.1 regression coverage relies on a BOM marker. See #704.
+    $bytes = [System.IO.File]::ReadAllBytes($PSCommandPath)
+    $bytes[0] | Should -Be 0xEF
+    $bytes[1] | Should -Be 0xBB
+    $bytes[2] | Should -Be 0xBF
+  }
+
+  It 'build-portable-zip.ps1 is also saved as UTF-8 with BOM so PowerShell 5.1 can dot-source it (Round 2 extension #704)' {
+    # build-portable-zip.ps1 contains 8 lines of non-ASCII Japanese comments
+    # (around L93 §, L391-419 monthly snapshot bump comments). PS5.1 dot-source
+    # via this Tests.ps1's BeforeAll would parse-fail without BOM, exactly the
+    # same way Tests.ps1 itself failed before its BOM was added. Empirical scope
+    # extension found during /iterate-review Round 2.
+    $bytes = [System.IO.File]::ReadAllBytes($script:BuildScript)
+    $bytes[0] | Should -Be 0xEF
+    $bytes[1] | Should -Be 0xBB
+    $bytes[2] | Should -Be 0xBF
   }
 }

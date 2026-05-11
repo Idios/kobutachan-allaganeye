@@ -1,0 +1,6 @@
+internal.error	<<NONE>>
+io.file_not_found	ファイルが見つかりません。パスを確認してください
+io.timed_out	I/O 処理がタイムアウト / ブロックされました。少し時間をおいて再試行してください
+io.would_block	I/O 処理がタイムアウト / ブロックされました。少し時間をおいて再試行してください
+state.mtime_conflict	metadata.json が他のプロセスで書き換えられました。「リロード」で最新を読み直すか、「上書き」で現在の編集を強制適用してください
+subprocess.cancelled	<<NONE>>

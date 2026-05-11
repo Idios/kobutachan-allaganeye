@@ -33,7 +33,7 @@
 ## §2 Goals
 
 1. legacy raw String error を許容する `startsWith('conflict:')` fallback を完全に撤去し、`appErrorCodeIs(e, 'state.mtime_conflict')` のみで分岐させる (PR #663 の核心受け入れ条件)
-2. 22 個の AppError code に対する default 日本語 hint を `error.rs` の 1 つの mapping table に集約し、全 80 site の `AppError::new(...)` に `.with_default_hint()` を chain する (= site 個別の hint 揺れを発生させずに 80 site 網羅)
+2. 24 codes (or-pattern 展開後 #692) の AppError code に対する default 日本語 hint を `error.rs` の 1 つの mapping table に集約し、全 80 site の `AppError::new(...)` に `.with_default_hint()` を chain する (= site 個別の hint 揺れを発生させずに 80 site 網羅)
 3. frontend が AppError の `code` で error 種別を判定し、hint があれば inline error の 2 行目に表示する規約を確立する
 4. AppError code 体系と使い分けを `docs/tauri-commands.md` / `ui-architecture.md` § 4 / `ui-interaction-spec.md` § 1.5 に明文化し、新規 command 追加時の指針を残す
 5. 元 issue 本文を「PR #665 後の残作業として何を完遂したか」が読み取れる形に書き換える (Iron Law 4 整合: PR / commit には Closes/Fixes 禁止、issue 本体に記録を残す)
@@ -55,7 +55,7 @@
 │ Layer 1: Rust error.rs (pure helper module)                              │
 │   - default_hint_for_code(code: &str) -> Option<&'static str>             │
 │   - AppError::with_default_hint(self) -> Self                             │
-│   - 22 codes への日本語 hint mapping table                                │
+│   - 24 codes (or-pattern 展開後 #692) への日本語 hint mapping table                                │
 └──────────────────────────────────────────────────────────────────────────┘
                               ↓ chain
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -115,8 +115,9 @@ impl AppError {
 }
 
 /// AppError code に対する日本語 default hint を返す。未登録 code は None。
-/// 22 entries (現在の lib.rs inventory: io.* / parse.* / state.* / subprocess.* /
-/// validation.* / path.* / platform.* / internal.*)。
+/// 24 codes (or-pattern `io.would_block | io.timed_out` を 2 codes に展開後、22 hint
+/// + 2 None = 24)。現在の lib.rs inventory: io.* / parse.* / state.* / subprocess.* /
+/// validation.* / path.* / platform.* / internal.*。
 fn default_hint_for_code(code: &str) -> Option<&'static str> {
     match code {
         // state
@@ -424,7 +425,7 @@ a11y: `role="alert"` は wrapper に維持、hint は補足情報として `<p>`
 
 | test name | 検証内容 |
 | --- | --- |
-| `default_hint_covers_all_known_codes` (新) | 22 codes 全部 + 例外で None |
+| `default_hint_covers_all_known_codes` (新) | 24 codes (or-pattern 展開後 #692) 全部 + 例外で None |
 | `with_default_hint_attaches_known_code` (新) | hint chain 成功 |
 | `with_default_hint_does_not_overwrite_explicit_hint` (新) | guard logic |
 | `with_default_hint_returns_no_hint_for_unknown_code` (新) | 未登録 code |
@@ -463,7 +464,7 @@ a11y: `role="alert"` は wrapper に維持、hint は補足情報として `<p>`
 
 ### §10.1 [docs/tauri-commands.md](docs/tauri-commands.md)
 
-既存 master table に hint 列を加えるか、末尾に「AppError default hint mapping」 section を追加し、22 codes 全件を 1 表にまとめる (本 spec § 5.2 が source of truth、tauri-commands.md はその外部 mirror)。
+既存 master table に hint 列を加えるか、末尾に「AppError default hint mapping」 section を追加し、24 codes (or-pattern 展開後 #692) 全件を 1 表にまとめる (本 spec § 5.2 が source of truth、tauri-commands.md はその外部 mirror)。
 
 ```markdown
 ## AppError default hint mapping (`gui/src-tauri/src/error.rs::default_hint_for_code`)
@@ -556,7 +557,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 - [ ] (A) [gui/src/state/metadataStore.ts:209](gui/src/state/metadataStore.ts:209) の `|| msg.startsWith('conflict:')` が削除されている
 - [ ] (A) `metadataStore.test.ts` の `'conflict: ...'` raw String テストが AppError object 形式に書き換わっている
 - [ ] (A) `ConflictModal.test.tsx` の test data から `'conflict:'` prefix が消えている
-- [ ] (B) [gui/src-tauri/src/error.rs](gui/src-tauri/src/error.rs) に `default_hint_for_code()` + `with_default_hint()` が追加され、22 codes 分の日本語 hint が table に存在する
+- [ ] (B) [gui/src-tauri/src/error.rs](gui/src-tauri/src/error.rs) に `default_hint_for_code()` + `with_default_hint()` が追加され、24 codes (or-pattern 展開後 #692) 分の日本語 hint が table に存在する
 - [ ] (B) `From<std::io::Error>` / `From<serde_json::Error>` の impl 内で `.with_default_hint()` が呼ばれている
 - [ ] (B) [gui/src-tauri/src/lib.rs](gui/src-tauri/src/lib.rs) の全 80 site の `AppError::new(code, msg)` に `.with_default_hint()` が chain されている
 - [ ] (C) `metadataStore` に `loadErrorHint` / `applyErrorHint` / `restoreErrorHint` / `draftSaveErrorHint` / `draftLoadErrorHint` の 5 state が追加されている
@@ -576,7 +577,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 | Risk | 対策 |
 | --- | --- |
 | **80 site への chain 追加で diff 大きい (lib.rs +80 行)** | mechanical change なのでレビュー負担は文言の方に集中。`docs/tauri-commands.md` の hint table で文言を 1 ヶ所に集約 |
-| **22 codes の日本語 hint 文言の言い回し review が散在する** | spec self-review で文言を 1 表に集約、user review で一括承認/差し戻し、本 spec § 5.2 が source of truth |
+| **24 codes (or-pattern 展開後 #692) の日本語 hint 文言の言い回し review が散在する** | spec self-review で文言を 1 表に集約、user review で一括承認/差し戻し、本 spec § 5.2 が source of truth |
 | **既存 metadataStore.test.ts / ConflictModal.test.tsx の rewrite で regression リスク** | TDD 順序 (red→green) で書き換え、削除前後で test 件数が同等以上であることを確認 |
 | **Iron Law 3 scope creep**: hint 文言を整える過程で「ついでに message も整える」誘惑 | scope-guard skill 適用、message 変更は別 issue 起票 |
 | **Iron Law 6 PR Pre-flight**: Lane I-A 起点だが他 lane と並行する可能性 | base merge 取り込み + `gh pr list --search "#663"` 並行確認、PR 作成時に再確認 |

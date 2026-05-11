@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Build the allaganeye Portable ZIP for Windows.
 
