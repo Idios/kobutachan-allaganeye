@@ -365,7 +365,8 @@ components/
 ├── MatchThumb                                    (サムネ placeholder)
 ├── BrightnessTimeline                            (complete 用 SVG)
 ├── FrameStrip                                    (preview 用候補フレーム)
-└── RestoreButton                                 (#516)
+├── RestoreButton                                 (#516)
+└── SampleModeBanner                              (sample mode 起動時の上部 inline banner (#633))
 
 注: **カスタム title bar は無し** (prototype の WindowChrome は handoff 時点の
 MacOS 風デザインだったが、L2 は Windows-only (#451) のため Tauri のネイティブ

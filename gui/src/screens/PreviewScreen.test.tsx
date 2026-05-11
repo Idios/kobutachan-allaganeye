@@ -123,7 +123,9 @@ describe('PreviewScreen', () => {
     expect(useAppStateStore.getState().screen).toBe('complete');
   });
 
-  it('[書き出し] navigates to export when not dirty', async () => {
+  it('[書き出し] navigates to export when not dirty (non-sample mode)', async () => {
+    // Exit sample mode so the button is enabled (sample mode disables it; see Task 1.6)
+    useMetadataStore.setState({ filePath: '/x' });
     render(<PreviewScreen />);
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /書き出し/ }));
@@ -395,6 +397,8 @@ describe('PreviewScreen', () => {
   });
 
   it('stepper buttons adjust the active timestamp', async () => {
+    // Exit sample mode so buttons are enabled (sample mode disables them; see Task 1.5)
+    useMetadataStore.setState({ filePath: '/x' });
     render(<PreviewScreen />);
     const user = userEvent.setup();
     const initial = (
@@ -537,6 +541,8 @@ describe('PreviewScreen', () => {
   });
 
   it('keyboard shortcuts do not fire while the TC input is focused', async () => {
+    // Exit sample mode so the TC input is enabled and focusable (sample mode disables it; see Task 1.5)
+    useMetadataStore.setState({ filePath: '/x' });
     render(<PreviewScreen />);
     const tc = screen.getByLabelText(
       'IN (start) timecode',
@@ -551,6 +557,8 @@ describe('PreviewScreen', () => {
   // #465 review (UX items 3/4): tooltip + visible key hint + click-to-play.
 
   it('step buttons have tooltips with the keyboard equivalent', async () => {
+    // Exit sample mode so buttons show their keyboard-hint title (sample mode overrides title; see Task 1.5)
+    useMetadataStore.setState({ filePath: '/x' });
     render(<PreviewScreen />);
     // ±1F / ±1s / ±10s ボタンそれぞれに対応するキー等価操作が title に含まれる
     const plus1F = screen.getByRole('button', { name: /nudge \+1F/ });
@@ -712,6 +720,8 @@ describe('PreviewScreen', () => {
   });
 
   it('falls back to DEFAULT_FPS=60 when metadata.source_fps is missing', () => {
+    // Exit sample mode so buttons show keyboard-hint title (sample mode overrides title; see Task 1.5)
+    useMetadataStore.setState({ filePath: '/x' });
     // legacy metadata.json を simulate: source_fps なし
     const sample = useMetadataStore.getState().metadata!;
     const { source_fps: _ignored, ...legacy } = sample;
@@ -730,5 +740,87 @@ describe('PreviewScreen', () => {
       'IN (start) timecode',
     ) as HTMLInputElement;
     expect(tc.value).toMatch(/^\d+:\d{2}:\d{2}\.\d{2}$/);
+  });
+});
+
+describe('PreviewScreen sample mode banner + main CTAs (Task 1.6)', () => {
+  beforeEach(() => {
+    useMetadataStore.getState().clear();
+    useMetadataStore.getState().loadSample();
+    useAppStateStore.setState({ selectedMatchIndex: 1 });
+  });
+
+  it('renders SampleModeBanner in sample mode', () => {
+    render(<PreviewScreen />);
+    expect(screen.getByText('サンプル動画です。実際の動画を選択すると保存できます。')).toBeInTheDocument();
+  });
+
+  it('disables [適用] CTA with sample tooltip + inline hint', () => {
+    render(<PreviewScreen />);
+    const applyBtn = screen.getByRole('button', { name: 'apply' });
+    expect(applyBtn).toBeDisabled();
+    expect(applyBtn).toHaveAttribute('title', 'サンプル動画では保存できません');
+    // inline hint span: DisabledTooltip with inlineHint=true renders the reason as visible text
+    const hints = screen.getAllByText('サンプル動画では保存できません');
+    expect(hints.length).toBeGreaterThanOrEqual(1); // inline hint span (title attr not in textContent)
+  });
+
+  it('disables [書き出し] navigate CTA with sample tooltip + inline hint', () => {
+    render(<PreviewScreen />);
+    const exportBtn = screen.getByRole('button', { name: /書き出し/ });
+    expect(exportBtn).toBeDisabled();
+    expect(exportBtn).toHaveAttribute('title', 'サンプル動画では保存できません');
+  });
+});
+
+describe('PreviewScreen sample mode disabled (Task 1.5)', () => {
+  // The outer beforeEach already calls loadSample() (filePath=null) and selectMatch(4).
+  // That means isSample = (filePath===null && metadata!==null) = true.
+  // No additional setup needed — sample mode is the default state.
+
+  it('disables matchName input with sample tooltip', () => {
+    render(<PreviewScreen />);
+    const input = screen.getByLabelText('match name') as HTMLInputElement;
+    expect(input).toBeDisabled();
+    expect(input).toHaveAttribute('title', 'サンプル動画では保存できません');
+  });
+
+  it('disables matchType select with sample tooltip', () => {
+    render(<PreviewScreen />);
+    const select = screen.getByLabelText('match type') as HTMLSelectElement;
+    expect(select).toBeDisabled();
+    expect(select).toHaveAttribute('title', 'サンプル動画では保存できません');
+  });
+
+  it('disables stepRow buttons (×6) with sample tooltip', () => {
+    render(<PreviewScreen />);
+    // stepRow buttons use aria-label like "nudge +1s", "nudge −1F", etc.
+    const stepButtons = screen.getAllByRole('button', { name: /^nudge /i });
+    expect(stepButtons.length).toBeGreaterThanOrEqual(6);
+    stepButtons.forEach((btn) => {
+      expect(btn).toBeDisabled();
+      expect(btn).toHaveAttribute('title', 'サンプル動画では保存できません');
+    });
+  });
+
+  it('disables Pane tcInput (×2 IN/OUT) with sample tooltip', () => {
+    render(<PreviewScreen />);
+    // Pane tcInputs are labeled "IN (start) timecode" and "OUT (end) timecode"
+    const tcInputs = screen.getAllByLabelText(/timecode$/i);
+    expect(tcInputs.length).toBe(2);
+    tcInputs.forEach((input) => {
+      expect(input).toBeDisabled();
+      expect(input).toHaveAttribute('title', 'サンプル動画では保存できません');
+    });
+  });
+
+  it('disables FrameStrip frame click in sample mode', () => {
+    render(<PreviewScreen />);
+    // FrameStrip thumbs render as buttons with aria-label "frame H:MM:SS.FF"
+    const frames = screen.queryAllByRole('button', { name: /^frame /i });
+    // All present frames should be disabled
+    frames.forEach((f) => {
+      expect(f).toBeDisabled();
+    });
   });
 });

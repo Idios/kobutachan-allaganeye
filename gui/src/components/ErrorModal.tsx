@@ -96,7 +96,9 @@ export function ErrorModal() {
    * excerpt as Markdown) and copy it to the clipboard. The user then opens
    * the form via the "Issue で報告する" link and pastes. probe / log fetch
    * failures degrade gracefully (the corresponding section uses
-   * `(unavailable)`-style placeholders from the helpers).
+   * `formatSystemInfo` sentinels — `(unknown)` / `(none detected)` /
+   * `(no environment info)` — from the helper, or log section is omitted
+   * when the excerpt is empty).
    */
   function handleCopyIssueBody() {
     if (copyBodyBusy) return;

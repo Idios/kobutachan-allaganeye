@@ -360,9 +360,12 @@ describe('ExportScreen (Phase 4 #466)', () => {
   // export 画面に来た場合でも、書き出し開始ボタンが disable されず、かつ
   // クリックで export_match が走ること。Phase 3 dummy フローのバグ。
   it('still triggers export_match when filePath is null but videoSource is set', async () => {
-    // beforeEach の filePath setState を打ち消して null にする (loadSample
-    // 直後の状態を再現)。selectedVideoPath は drop screen 経由でセット。
-    useMetadataStore.setState({ filePath: null });
+    // 2026-04-25 修正の検証: export_match は filePath (metadata.json path) ではなく
+    // videoSource (実 video path) を使う。filePath=null は sample mode (Task 1.7)
+    // で disabled になるため、このテストは filePath を '/tmp/x/metadata.json'
+    // (beforeEach の値) のまま維持しつつ selectedVideoPath を上書きして、
+    // videoPath 引数が selectedVideoPath を優先することを確認する。
+    // (filePath=null のケースは sample mode なので export 不可が正しい動作)
     useAppStateStore.getState().setSelectedVideoPath('C:/videos/x.mkv');
     invokeMock.mockImplementation((cmd: string, args: unknown) => {
       if (cmd === 'export_match') {
@@ -1021,5 +1024,71 @@ describe('ExportScreen (Phase 4 #466)', () => {
     const cb2 = screen.getByLabelText('include match 2') as HTMLInputElement;
     // Non-skip match keeps the original help title.
     expect(cb2.getAttribute('title')).toBe('書き出し対象から除外/復帰');
+  });
+});
+
+describe('ExportScreen sample mode (Task 1.7)', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    listenMock.mockReset();
+    openDialogMock.mockReset();
+    invokeMock.mockResolvedValue(undefined);
+    listenMock.mockResolvedValue(() => undefined);
+    useAppStateStore.getState().reset();
+    useMetadataStore.getState().clear();
+    useMetadataStore.getState().loadSample();
+    // filePath stays null (loadSample does not set filePath) → isSample = true
+    useAppStateStore.getState().navigate('export');
+  });
+
+  it('renders SampleModeBanner', () => {
+    render(<ExportScreen />);
+    expect(
+      screen.getByText('サンプル動画です。実際の動画を選択すると保存できます。'),
+    ).toBeInTheDocument();
+  });
+
+  it('disables [⬦ 書き出し開始] with sample tooltip + inline hint', () => {
+    // Set a video source so the only disable reason is sample mode.
+    useAppStateStore.getState().setSelectedVideoPath('C:/videos/x.mkv');
+    render(<ExportScreen />);
+    const startBtn = screen.getByRole('button', { name: /書き出し開始/ });
+    expect(startBtn).toBeDisabled();
+    expect(startBtn).toHaveAttribute('title', 'サンプル動画では保存できません');
+  });
+
+  it('disables 出力先 input', () => {
+    render(<ExportScreen />);
+    const input = screen.getByLabelText('output directory');
+    expect(input).toBeDisabled();
+    expect(input).toHaveAttribute('title', 'サンプル動画では保存できません');
+  });
+
+  it('disables 命名規則 input', () => {
+    render(<ExportScreen />);
+    const input = screen.getByLabelText('name pattern');
+    expect(input).toBeDisabled();
+  });
+
+  it('disables コーデック buttons', () => {
+    render(<ExportScreen />);
+    const codecBtns = screen.getAllByLabelText(/コーデック/i);
+    expect(codecBtns.length).toBeGreaterThanOrEqual(1);
+    codecBtns.forEach((b) => expect(b).toBeDisabled());
+  });
+
+  it('disables per-match exclude checkbox', () => {
+    render(<ExportScreen />);
+    const checkboxes = screen.getAllByRole('checkbox');
+    expect(checkboxes.length).toBeGreaterThanOrEqual(1);
+    checkboxes.forEach((cb) => expect(cb).toBeDisabled());
+  });
+
+  it('disables [全選択] / [全解除] buttons', () => {
+    render(<ExportScreen />);
+    const allBtn = screen.getByRole('button', { name: 'select all matches' });
+    const noneBtn = screen.getByRole('button', { name: 'deselect all matches' });
+    expect(allBtn).toBeDisabled();
+    expect(noneBtn).toBeDisabled();
   });
 });

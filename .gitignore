@@ -63,3 +63,6 @@ gui/.vite/
 # Rust / Tauri (gui/src-tauri/)
 gui/src-tauri/target/
 gui/src-tauri/gen/schemas/
+
+# superpowers brainstorming session artifacts (visual companion mockups)
+.superpowers/

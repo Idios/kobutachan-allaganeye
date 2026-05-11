@@ -5,6 +5,7 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 
 import { DisabledTooltip } from '../components/DisabledTooltip';
 import { InlineErrorHint } from '../components/InlineErrorHint';
+import { SampleModeBanner } from '../components/SampleModeBanner';
 import { appErrorHint, appErrorMessage } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
@@ -122,6 +123,12 @@ export function ExportScreen() {
   // (selectedVideoPath = null) では metadata.source にフォールバック。
   const selectedVideoPath = useAppStateStore((s) => s.selectedVideoPath);
   const videoSource = selectedVideoPath ?? metadata?.source ?? null;
+
+  // #633 / Task 1.7: sample mode disables all write operations.
+  const isSample = useMetadataStore(
+    (s) => s.filePath === null && s.metadata !== null,
+  );
+  const sampleReason = 'サンプル動画では保存できません';
 
   const [phase, dispatch] = useReducer(exportReducer, 'idle' as ExportPhase);
   // #466 review #2: default 出力先は source video の親ディレクトリ +
@@ -494,6 +501,7 @@ export function ExportScreen() {
 
   return (
     <div className={styles.screen} data-testid="export-screen" data-phase={phase}>
+      <SampleModeBanner />
       <div className={styles.header}>
         {/* #587 §2.5.1: explain why [◀ プレビュー] is disabled mid-export. */}
         <DisabledTooltip
@@ -527,13 +535,22 @@ export function ExportScreen() {
           <div>
             <div className={styles.fieldLabel}>出力先</div>
             <div className={styles.outDirRow}>
-              <input
-                className={styles.outDirInput}
-                value={outDir}
-                onChange={(e) => setOutDir(e.target.value)}
-                aria-label="output directory"
-                disabled={running || cancelling}
-              />
+              <DisabledTooltip
+                disabled={isSample}
+                reason={sampleReason}
+                inlineHint={true}
+              >
+                {(p) => (
+                  <input
+                    className={styles.outDirInput}
+                    value={outDir}
+                    onChange={(e) => setOutDir(e.target.value)}
+                    aria-label="output directory"
+                    disabled={isSample || running || cancelling}
+                    {...p}
+                  />
+                )}
+              </DisabledTooltip>
               {/* #587 §2.5.4: explain why [参照…] is disabled while running. */}
               <DisabledTooltip
                 disabled={running || cancelling}
@@ -556,13 +573,22 @@ export function ExportScreen() {
 
           <div>
             <div className={styles.fieldLabel}>命名規則</div>
-            <input
-              className={styles.nameInput}
-              value={namePattern}
-              onChange={(e) => setNamePattern(e.target.value)}
-              aria-label="name pattern"
-              disabled={running || cancelling}
-            />
+            <DisabledTooltip
+              disabled={isSample}
+              reason={sampleReason}
+              inlineHint={true}
+            >
+              {(p) => (
+                <input
+                  className={styles.nameInput}
+                  value={namePattern}
+                  onChange={(e) => setNamePattern(e.target.value)}
+                  aria-label="name pattern"
+                  disabled={isSample || running || cancelling}
+                  {...p}
+                />
+              )}
+            </DisabledTooltip>
             <div className={styles.nameHint}>
               変数: {'{idx}'} {'{idx:03}'} {'{start}'} {'{type}'} {'{date}'}
             </div>
@@ -572,17 +598,27 @@ export function ExportScreen() {
             <div className={styles.fieldLabel}>コーデック</div>
             <div className={styles.codecRow}>
               {codecs.map((c) => (
-                <button
+                <DisabledTooltip
                   key={c.v}
-                  type="button"
-                  aria-pressed={codec === c.v}
-                  onClick={() => setCodec(c.v)}
-                  disabled={running || cancelling}
-                  className={`${styles.codecButton}${codec === c.v ? ` ${styles.codecButtonActive}` : ''}`}
+                  disabled={isSample}
+                  reason={sampleReason}
+                  inlineHint={true}
                 >
-                  <div className={styles.codecLabel}>{c.l}</div>
-                  <div className={styles.codecSub}>{c.sub}</div>
-                </button>
+                  {(p) => (
+                    <button
+                      type="button"
+                      aria-label={`コーデック: ${c.l}`}
+                      aria-pressed={codec === c.v}
+                      onClick={() => setCodec(c.v)}
+                      disabled={isSample || running || cancelling}
+                      className={`${styles.codecButton}${codec === c.v ? ` ${styles.codecButtonActive}` : ''}`}
+                      {...p}
+                    >
+                      <div className={styles.codecLabel}>{c.l}</div>
+                      <div className={styles.codecSub}>{c.sub}</div>
+                    </button>
+                  )}
+                </DisabledTooltip>
               ))}
             </div>
           </div>
@@ -637,16 +673,18 @@ export function ExportScreen() {
 
             {!completed && !error && (() => {
               // #587 §2.5.9: surface why [⬦ 書き出し開始] is disabled.
-              // Multi-condition reason picker, with a missing video source
-              // taking priority because that's the actionable case.
-              const startDisabled = running || cancelling || !videoSource;
-              const startReason = !videoSource
-                ? '動画ファイルが選択されていません。drop 画面に戻って選択してください'
-                : running
-                  ? '書き出し中です'
-                  : cancelling
-                    ? '中断処理中です'
-                    : '';
+              // Multi-condition reason picker. Sample mode takes priority
+              // (#633 / Task 1.7); missing video source is next.
+              const startDisabled = isSample || running || cancelling || !videoSource;
+              const startReason = isSample
+                ? sampleReason
+                : !videoSource
+                  ? '動画ファイルが選択されていません。drop 画面に戻って選択してください'
+                  : running
+                    ? '書き出し中です'
+                    : cancelling
+                      ? '中断処理中です'
+                      : '';
               return (
                 <DisabledTooltip
                   disabled={startDisabled}
@@ -661,6 +699,7 @@ export function ExportScreen() {
                         void handleStartExport();
                       }}
                       disabled={startDisabled}
+                      aria-label="書き出し開始"
                       {...p}
                     >
                       {running
@@ -785,15 +824,18 @@ export function ExportScreen() {
                   (mm) => mm.type_override !== 'skip',
                 ).length;
                 const bulkDisabled =
-                  running || cancelling || eligibleCount === 0;
-                const baseReason =
-                  running || cancelling ? '書き出し中は変更できません' : '';
+                  isSample || running || cancelling || eligibleCount === 0;
+                const baseReason = isSample
+                  ? sampleReason
+                  : running || cancelling
+                    ? '書き出し中は変更できません'
+                    : '';
                 const selectAllReason =
-                  eligibleCount === 0
+                  !isSample && eligibleCount === 0
                     ? '対象が 0 件のため全選択できません'
                     : baseReason;
                 const deselectAllReason =
-                  eligibleCount === 0
+                  !isSample && eligibleCount === 0
                     ? '対象が 0 件のため全解除できません'
                     : baseReason;
                 return (
@@ -877,17 +919,22 @@ export function ExportScreen() {
                 <li key={m.index} className={styles.listItem}>
                   {/* #587: skip-checkbox disabled reason (§1.2 + #587
                       scope-extension #11). When the match isn't a persist
-                      skip the existing help title is preserved. */}
+                      skip the existing help title is preserved.
+                      #633 / Task 1.7: sample mode also disables checkbox. */}
                   <DisabledTooltip
-                    disabled={isPersistSkip}
-                    reason="preview で skip に設定されています"
+                    disabled={isSample || isPersistSkip}
+                    reason={
+                      isSample
+                        ? sampleReason
+                        : 'preview で skip に設定されています'
+                    }
                   >
                     {(p) => (
                       <input
                         type="checkbox"
                         className={styles.listCheckbox}
                         checked={isIncluded}
-                        disabled={isPersistSkip || running || cancelling}
+                        disabled={isSample || isPersistSkip || running || cancelling}
                         onChange={() => toggleMatchExclusion(m.index)}
                         aria-label={`include match ${m.index}`}
                         title={p.title ?? '書き出し対象から除外/復帰'}
