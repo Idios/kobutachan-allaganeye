@@ -74,22 +74,24 @@ try {
 }
 ```
 
-## #669 -- ErrorModal Issue 報告 link pre-fill 関連 command
+## #669 -- ErrorModal Issue 本文クリップボード関連 command
 
-PR #669 で追加した 2 command (`read_error_log_tail` / `probe_environment_info`) は ErrorModal の `[Issue で報告する]` link が `bug_report.yml` form の pre-fill URL を組み立てるために使う。両方 best-effort (失敗しても base URL で form は開く)。
+PR #669 で追加した 2 command (`read_error_log_tail` / `probe_environment_info`) は ErrorModal の `[Issue 本文をコピー]` button が `bug_report.yml` form 用 Markdown 本文を組み立てるために使う。両方 best-effort (失敗してもコピー処理自体は継続、対応 section が "(unavailable)"-style sentinel になる)。
+
+> **設計上の経緯**: 初期実装では GitHub Issue Forms (`.yml`) の URL query string pre-fill (`?actual=...&environment=...&log_file_attachment=...`) を狙ったが、PR #669 の実機検証で GitHub Issue Forms はカスタム textarea field の URL pre-fill を honor しないことが確認された (`?template=bug_report.yml&actual=HELLO` でも form は空のまま、参考: <https://github.com/orgs/community/discussions/22335>)。Plan B として clipboard 経由のコピー & ペースト方式 (`navigator.clipboard.writeText`) に変更。生成された Markdown 本文を user が form の `実際の動作` textarea にそのまま貼り付ける運用。
 
 ### `read_error_log_tail`
 
-- **用途**: `bug_report.yml` の `log_file_attachment` field を pre-fill するため、`<install_dir>/logs/error-YYYYMMDD.log` の末尾 N 行を取得
+- **用途**: clipboard body の「ログファイル (末尾抜粋)」section を埋めるため、`<install_dir>/logs/error-YYYYMMDD.log` の末尾 N 行を取得
 - **Fallback 規則**:
   - 当日 (YYYYMMDD) の log file が存在しない / 空 → 前日 log にフォールバック (1 日のみ)
-  - 前日 log も存在しない / 空 → 空文字列 (`""`) を返す (エラーでなく、frontend 側で「log なし」として graceful 表示)
+  - 前日 log も存在しない / 空 → 空文字列 (`""`) を返す (エラーでなく、frontend 側で「ログ section を省略」)
   - `line_count == 0` → 空文字列を即返す (loop 暴走防止)
-- **frontend caller**: `gui/src/components/ErrorModal.tsx` の useEffect (`errorOpen=true` タイミング)
+- **frontend caller**: `gui/src/components/ErrorModal.tsx::handleCopyIssueBody` (button click 時)
 
 ### `probe_environment_info`
 
-- **用途**: `bug_report.yml` の `environment` field を pre-fill するため、OS / CPU / Memory / Disk 情報を `sysinfo` crate 経由で probe
+- **用途**: clipboard body の「環境情報」section を埋めるため、OS / CPU / Memory / Disk 情報を `sysinfo` crate 経由で probe
 - **戻り値**: `EnvironmentProbe { allaganeye_version, os_name, cpu_info, memory_total_gb, disk_free_gb, disk_total_gb, disk_drive }` (snake_case で frontend 側 `gui/src/lib/systemInfo.ts` の type と一致)
 - **設計理由**: 既存 `metadata.system_info` (Python `_build_system_info` 由来) は GPU 3 field のみ書く。bug_report.yml `environment` placeholder の format (`allaganeye 0.2.0 (Windows 11) / CPU: ... / Memory: ...`) を満たすため Tauri 側で live probe する (PR #669 の plan 修正、Option B 採用)
 - **frontend 側 helper**: `gui/src/lib/systemInfo.ts` `formatSystemInfo(probe, metadata.system_info)` で probe + GPU vendor list を結合し environment 文字列を組み立てる

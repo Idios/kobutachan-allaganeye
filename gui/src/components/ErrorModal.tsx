@@ -1,30 +1,17 @@
 import { invoke } from '@tauri-apps/api/core';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useFocusTrap } from '../hooks/useFocusTrap';
-import { BUG_REPORT_BASE_URL, buildIssueReportUrl } from '../lib/issueReportUrl';
+import { BUG_REPORT_BASE_URL, buildIssueReportBody } from '../lib/issueReportBody';
 import { type EnvironmentProbe, formatSystemInfo } from '../lib/systemInfo';
 import { useErrorStore } from '../state/errorStore';
 import { useMetadataStore } from '../state/metadataStore';
 import styles from './ErrorModal.module.css';
 
 /** Number of trailing log lines fetched from `read_error_log_tail` when
- * pre-filling the bug_report.yml `log_file_attachment` field (#669). */
+ * the user clicks "Issue 本文をコピー" (#669). */
 const LOG_TAIL_LINE_COUNT = 300;
-
-/** Today's date in YYYYMMDD format (UTC), matching the file name written by
- * Rust `logging::write_error_line` (`error-YYYYMMDD.log`). Used by ErrorModal
- * to build the truncation-notice path when log_file_attachment is shortened
- * (#669). */
-function todayYmdCompact(): string {
-  const d = new Date();
-  return (
-    d.getUTCFullYear().toString().padStart(4, '0') +
-    (d.getUTCMonth() + 1).toString().padStart(2, '0') +
-    d.getUTCDate().toString().padStart(2, '0')
-  );
-}
 
 /**
  * #614: surfaced when an unrecoverable error occurs:
@@ -38,6 +25,10 @@ function todayYmdCompact(): string {
  *
  * Action buttons:
  *   - 詳細をコピー: copy {message, stack, category, timestamp} to clipboard
+ *   - Issue 本文をコピー (#669): copy Markdown-formatted body (actual /
+ *     environment / log excerpt) to clipboard. The user pastes this into
+ *     the bug_report.yml form opened via "Issue で報告する" link, because
+ *     GitHub Issue Forms do not support URL pre-fill for custom fields.
  *   - ログフォルダを開く: invoke open_folder_in_explorer
  *   - 閉じる: dismissError() — only when isRecoverable === true
  *   - アプリを終了: invoke force_exit_app — only when isPanic === true
@@ -59,52 +50,13 @@ export function ErrorModal() {
 
   const panelRef = useRef<HTMLDivElement>(null);
   const [copyAck, setCopyAck] = useState(false);
-  // #669: starts as the base URL (no pre-fill) so even if the probe / log
-  // fetch fail the link still navigates to the bug report form. useEffect
-  // upgrades it to a pre-filled URL once the async probes resolve.
-  const [reportUrl, setReportUrl] = useState<string>(BUG_REPORT_BASE_URL);
+  const [copyBodyAck, setCopyBodyAck] = useState(false);
+  const [copyBodyBusy, setCopyBodyBusy] = useState(false);
 
   // Escape closes only when the error is recoverable; for panic we want the
   // user to acknowledge with a deliberate click on "アプリを終了".
   useFocusTrap(panelRef, errorOpen);
   useEscapeKey(errorOpen && isRecoverable, dismissError);
-
-  // #669: build the bug_report.yml pre-fill URL when the modal opens. Both
-  // probe and log fetch are best-effort: a failure of either falls back to
-  // a partially-filled URL (or the base URL if both fail), so the user can
-  // always click through to the form.
-  useEffect(() => {
-    if (!errorOpen) return;
-
-    const actual =
-      (errorMessage ?? '') + (errorStack ? `\n\nStack:\n${errorStack}` : '');
-    const buildUrl = (env: string, log: string, logPath: string) =>
-      buildIssueReportUrl({ actual, environment: env, logExcerpt: log, logPath });
-
-    let cancelled = false;
-    Promise.all([
-      invoke<EnvironmentProbe>('probe_environment_info').catch(() => null),
-      invoke<string>('read_error_log_tail', { lineCount: LOG_TAIL_LINE_COUNT }).catch(
-        () => '',
-      ),
-    ])
-      .then(([probe, log]) => {
-        if (cancelled) return;
-        const environment = formatSystemInfo(probe, metadata?.system_info ?? null);
-        const logPath = logDir
-          ? `${logDir}\\error-${todayYmdCompact()}.log`
-          : '(unknown log path)';
-        setReportUrl(buildUrl(environment, log ?? '', logPath));
-      })
-      .catch(() => {
-        // Promise.all itself can't reject because both are .catch'd above;
-        // this is here only to satisfy floating-promise lint.
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [errorOpen, errorMessage, errorStack, metadata, logDir]);
 
   if (!errorOpen) return null;
 
@@ -135,6 +87,47 @@ export function ErrorModal() {
       })
       .catch(() => {
         setCopyAck(false);
+      });
+  }
+
+  /**
+   * #669 — Build the bug_report.yml body (actual / environment / log
+   * excerpt as Markdown) and copy it to the clipboard. The user then opens
+   * the form via the "Issue で報告する" link and pastes. probe / log fetch
+   * failures degrade gracefully (the corresponding section uses
+   * `(unavailable)`-style placeholders from the helpers).
+   */
+  function handleCopyIssueBody() {
+    if (copyBodyBusy) return;
+    setCopyBodyBusy(true);
+
+    const actual =
+      (errorMessage ?? '') + (errorStack ? `\n\nStack:\n${errorStack}` : '');
+
+    Promise.all([
+      invoke<EnvironmentProbe>('probe_environment_info').catch(() => null),
+      invoke<string>('read_error_log_tail', { lineCount: LOG_TAIL_LINE_COUNT }).catch(
+        () => '',
+      ),
+    ])
+      .then(([probe, log]) => {
+        const environment = formatSystemInfo(probe, metadata?.system_info ?? null);
+        const body = buildIssueReportBody({
+          actual,
+          environment,
+          logExcerpt: log ?? '',
+        });
+        return navigator.clipboard.writeText(body);
+      })
+      .then(() => {
+        setCopyBodyAck(true);
+        setTimeout(() => setCopyBodyAck(false), 1500);
+      })
+      .catch(() => {
+        setCopyBodyAck(false);
+      })
+      .finally(() => {
+        setCopyBodyBusy(false);
       });
   }
 
@@ -176,11 +169,21 @@ export function ErrorModal() {
           {errorHint && <p>{errorHint}</p>}
           <p>
             問題が継続する場合は{' '}
-            <a href={reportUrl} target="_blank" rel="noopener noreferrer">
+            <button
+              type="button"
+              className={styles.linkButton}
+              onClick={handleCopyIssueBody}
+              disabled={copyBodyBusy}
+            >
+              Issue 本文をコピー
+            </button>
+            {' '}してから{' '}
+            <a href={BUG_REPORT_BASE_URL} target="_blank" rel="noopener noreferrer">
               Issue で報告する
             </a>
             {' '}か、バグ報告ガイドを参照してください。
           </p>
+          {copyBodyAck && <p className={styles.copyAck}>Issue 本文をコピーしました</p>}
           {logDir && (
             <div className={styles.logPathRow}>
               <span className={styles.logPath}>ログ場所: {logDir}</span>

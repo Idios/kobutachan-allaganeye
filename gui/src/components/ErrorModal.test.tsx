@@ -284,7 +284,9 @@ describe('ErrorModal integrity category (#668)', () => {
   });
 });
 
-describe('ErrorModal Issue 報告 link pre-fill (#669)', () => {
+describe('ErrorModal Issue 本文をコピー button (#669, Plan B clipboard)', () => {
+  let writeTextSpy: ReturnType<typeof vi.fn>;
+
   beforeEach(() => {
     useErrorStore.getState().dismissError();
     useErrorStore.getState().setLogDir('C:\\install\\logs');
@@ -318,9 +320,43 @@ describe('ErrorModal Issue 報告 link pre-fill (#669)', () => {
       }
       return undefined;
     });
+    writeTextSpy = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: writeTextSpy },
+      writable: true,
+      configurable: true,
+    });
   });
 
-  it('builds pre-fill URL with actual / environment / log_file_attachment after errorOpen', async () => {
+  it('"Issue で報告する" link points to the base bug_report.yml URL (no pre-fill query)', () => {
+    useErrorStore.getState().showError({
+      errorMessage: 'panic',
+      errorCategory: 'panic',
+      isPanic: true,
+      isRecoverable: false,
+    });
+    render(<ErrorModal />);
+    const link = screen.getByText('Issue で報告する') as HTMLAnchorElement;
+    expect(link.href).toBe(
+      'https://github.com/Idios/kobutachan-allaganeye/issues/new?template=bug_report.yml',
+    );
+    // 旧設計 (pre-fill URL) の query 残骸が無いことも assert
+    expect(link.href).not.toContain('actual=');
+    expect(link.href).not.toContain('environment=');
+  });
+
+  it('renders "Issue 本文をコピー" button', () => {
+    useErrorStore.getState().showError({
+      errorMessage: 'panic',
+      errorCategory: 'panic',
+      isPanic: true,
+      isRecoverable: false,
+    });
+    render(<ErrorModal />);
+    expect(screen.getByRole('button', { name: 'Issue 本文をコピー' })).toBeInTheDocument();
+  });
+
+  it('copying the body writes Markdown sections (actual/environment/log) to clipboard', async () => {
     useErrorStore.getState().showError({
       errorMessage: 'panic: x',
       errorStack: 'stack trace here',
@@ -329,27 +365,39 @@ describe('ErrorModal Issue 報告 link pre-fill (#669)', () => {
       isRecoverable: false,
     });
     render(<ErrorModal />);
+    fireEvent.click(screen.getByRole('button', { name: 'Issue 本文をコピー' }));
 
     await waitFor(() => {
-      const link = screen.getByText('Issue で報告する') as HTMLAnchorElement;
-      expect(link.href).toContain('actual=');
-      expect(link.href).toContain('environment=');
-      expect(link.href).toContain('log_file_attachment=');
+      expect(writeTextSpy).toHaveBeenCalledOnce();
     });
-
-    const link = screen.getByText('Issue で報告する') as HTMLAnchorElement;
-    const url = new URL(link.href);
-    const params = new URLSearchParams(url.search);
-    expect(params.get('actual')).toContain('panic: x');
-    expect(params.get('actual')).toContain('stack trace here');
-    expect(params.get('environment')).toContain('allaganeye 0.2.0');
-    expect(params.get('environment')).toContain('CPU: AMD Ryzen 9 9950X3D');
-    expect(params.get('environment')).toContain('GPU: nvidia');
-    expect(params.get('log_file_attachment')).toContain('last log line A');
-    expect(params.get('log_file_attachment')).toContain('last log line B');
+    const body = writeTextSpy.mock.calls[0][0] as string;
+    expect(body).toContain('## 実際の動作');
+    expect(body).toContain('panic: x');
+    expect(body).toContain('stack trace here');
+    expect(body).toContain('## 環境情報');
+    expect(body).toContain('allaganeye 0.2.0');
+    expect(body).toContain('CPU: AMD Ryzen 9 9950X3D');
+    expect(body).toContain('GPU: nvidia');
+    expect(body).toContain('## ログファイル (末尾抜粋)');
+    expect(body).toContain('last log line A');
   });
 
-  it('falls back to base URL with actual+environment when read_error_log_tail fails', async () => {
+  it('shows "Issue 本文をコピーしました" ack after a successful copy', async () => {
+    useErrorStore.getState().showError({
+      errorMessage: 'panic',
+      errorCategory: 'panic',
+      isPanic: true,
+      isRecoverable: false,
+    });
+    render(<ErrorModal />);
+    fireEvent.click(screen.getByRole('button', { name: 'Issue 本文をコピー' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Issue 本文をコピーしました')).toBeInTheDocument();
+    });
+  });
+
+  it('still copies a body when log fetch fails (graceful — log section omitted)', async () => {
     invokeMock.mockImplementation(async (cmd: string) => {
       if (cmd === 'probe_environment_info') {
         return {
@@ -374,17 +422,18 @@ describe('ErrorModal Issue 報告 link pre-fill (#669)', () => {
       isRecoverable: false,
     });
     render(<ErrorModal />);
+    fireEvent.click(screen.getByRole('button', { name: 'Issue 本文をコピー' }));
 
     await waitFor(() => {
-      const link = screen.getByText('Issue で報告する') as HTMLAnchorElement;
-      // even on log fetch failure, actual + environment are pre-filled
-      expect(link.href).toContain('template=bug_report.yml');
-      expect(link.href).toContain('actual=');
-      expect(link.href).toContain('environment=');
+      expect(writeTextSpy).toHaveBeenCalledOnce();
     });
+    const body = writeTextSpy.mock.calls[0][0] as string;
+    expect(body).toContain('## 環境情報');
+    expect(body).toContain('Windows 11');
+    expect(body).not.toContain('## ログファイル');
   });
 
-  it('falls back to base URL when both probe_environment_info and read_error_log_tail fail', async () => {
+  it('still copies when both probe and log fetch fail (degraded but useful)', async () => {
     invokeMock.mockImplementation(async (cmd: string) => {
       if (cmd === 'probe_environment_info') {
         throw new Error('probe failed');
@@ -401,9 +450,15 @@ describe('ErrorModal Issue 報告 link pre-fill (#669)', () => {
       isRecoverable: false,
     });
     render(<ErrorModal />);
+    fireEvent.click(screen.getByRole('button', { name: 'Issue 本文をコピー' }));
 
-    // initial render gets base URL; useEffect failure leaves base URL.
-    const link = screen.getByText('Issue で報告する') as HTMLAnchorElement;
-    expect(link.href).toContain('template=bug_report.yml');
+    await waitFor(() => {
+      expect(writeTextSpy).toHaveBeenCalledOnce();
+    });
+    const body = writeTextSpy.mock.calls[0][0] as string;
+    expect(body).toContain('## 実際の動作');
+    expect(body).toContain('panic');
+    // environment は (no environment info) sentinel になる (probe + GPU 双方失敗)
+    expect(body).toContain('## 環境情報');
   });
 });

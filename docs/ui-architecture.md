@@ -102,19 +102,46 @@ GUI 内部で発生する想定外エラー (Rust panic / React 例外 / unhandl
 
 ErrorModal は [`docs/bug-report-guide.md`](bug-report-guide.md) §1.4 の「ログ取得」と連動する。ユーザーは ErrorModal の「ログフォルダを開く」→ 該当 `.log` ファイル → issue 添付という流れで bug report を提出する。詳細手順は bug-report-guide.md を参照。
 
-#### Issue 報告 link の自動 pre-fill (#669)
+#### Issue 本文を clipboard にコピー (#669)
 
-ErrorModal の `[Issue で報告する]` link は `bug_report.yml` の URL に query string で以下 3 field を pre-fill する (Group G PR [#688](https://github.com/Idios/kobutachan-allaganeye/pull/688) で凍結された field id):
+ErrorModal の `[Issue 本文をコピー]` button は `bug_report.yml` form 用の Markdown 本文を生成し `navigator.clipboard.writeText` で clipboard に書き込む。user は隣接の `[Issue で報告する]` link で form を別ブラウザに開いてから、`実際の動作` textarea にペーストする運用。
+
+コピーされる本文の format ([`gui/src/lib/issueReportBody.ts`](../gui/src/lib/issueReportBody.ts) `buildIssueReportBody`):
+
+````markdown
+## 実際の動作
+
+<errorMessage>
+(stack trace がある場合)
+Stack:
+<errorStack>
+
+## 環境情報
+
+allaganeye <version> (<os_name>)
+  CPU: <cpu_info>
+  GPU: <gpu vendors comma-separated>
+  Memory: <N> GB
+  Disk: <free> / <total> GB free on <drive>
+
+## ログファイル (末尾抜粋)
+
+```text
+<logs/error-YYYYMMDD.log の末尾 300 行>
+```
+````
+
+データソース:
 
 - `actual` ← ErrorModal の `errorMessage` + (`errorStack` があれば `\n\nStack:\n{stack}`)
-- `environment` ← Tauri `probe_environment_info` で取得した OS/CPU/Memory/Disk 情報 + `metadata.system_info` の GPU vendor list を [`gui/src/lib/systemInfo.ts`](../gui/src/lib/systemInfo.ts) `formatSystemInfo()` で renders
-- `log_file_attachment` ← 新 Tauri command `read_error_log_tail(line_count: 300)` で `<install_dir>/logs/error-YYYYMMDD.log` 末尾 300 行を取得 (当日 log 不存在 → 前日 fallback)
+- `environment` ← Tauri `probe_environment_info` で取得した OS/CPU/Memory/Disk + `metadata.system_info` の GPU vendor list を [`gui/src/lib/systemInfo.ts`](../gui/src/lib/systemInfo.ts) `formatSystemInfo()` で renders
+- `log_file_attachment` ← Tauri `read_error_log_tail(line_count: 300)` で `<install_dir>/logs/error-YYYYMMDD.log` 末尾 300 行を取得 (当日 log 不存在 → 前日 fallback)
 
-URL 全長 8KB safe budget (7800 bytes) を超える場合は [`gui/src/lib/issueReportUrl.ts`](../gui/src/lib/issueReportUrl.ts) の `truncateLogToBudget()` で `log_file_attachment` を `LOG_LINE_STEPS = [300, 150, 75, 50, 0]` で段階削減し、末尾に「ログが切り詰められました — 完全なログは {logPath} を参照してください」notice を追加する。0 line でも budget に収まらない場合は `log_file_attachment` field を URL から省略する (actual + environment は維持される)。
+probe / log fetch が失敗してもコピー処理自体は継続する (該当 section は `(unknown)` / `(no environment info)` 等の sentinel で表示、log section は空のときに丸ごと省略)。
 
-`probe_environment_info` / `read_error_log_tail` が失敗しても link は base URL ([`gui/src/lib/issueReportUrl.ts`](../gui/src/lib/issueReportUrl.ts) `BUG_REPORT_BASE_URL`) で必ず開ける (graceful fallback、useEffect 内で個別 catch)。
-
-> **#458 (同意チェック新設) 着手時の調整メモ**: 本機能の URL builder は現状 `actual` / `environment` / `log_file_attachment` の 3 field のみ pre-fill する。#458 で同意必須 field (`consent`) が `bug_report.yml` form に追加された場合、その field の pre-fill 要否を再評価し、必要なら [`gui/src/lib/issueReportUrl.ts`](../gui/src/lib/issueReportUrl.ts) の builder にも追加する。
+> **設計上の経緯**: 初期実装は `bug_report.yml` URL に query string で 3 field を pre-fill する設計だったが、PR #669 の実機検証で GitHub Issue Forms (`.yml` 形式) は custom textarea field の URL pre-fill を honor しないことが確認された (`?template=bug_report.yml&actual=HELLO_WORLD` でも form は空、参考: [GitHub Community discussion #22335](https://github.com/orgs/community/discussions/22335))。Plan B として clipboard 経由のコピー & ペースト方式に変更した。
+>
+> **#458 (同意チェック新設) 着手時の調整メモ**: 本機能の body builder は現状 `actual` / `environment` / `log_file_attachment` の 3 section のみ生成する。#458 で同意必須 field (`consent`) が `bug_report.yml` form に追加された場合、Markdown body 形式での扱い (例: section として加えるべきか、form の checkbox は手動入力が前提か) を再評価する。
 
 ### AppError code 体系と inline error の使い分け (#663)
 
