@@ -65,7 +65,9 @@ export const useRecentStore = create<RecentState>((set) => ({
       const result = await invoke<unknown>('read_recent');
       // Defensive: a stray mock or future schema drift could hand us a
       // non-array. Coerce to [] rather than letting `.length` blow up the
-      // drop screen — the history is best-effort UI fluff.
+      // drop screen. (Tauri command 自体が AppError reject した場合は #698 で
+      // DropScreen 上部の inline notice として user に告知される — `read_recent`
+      // が値を返している本 path では非対称 fallback として coerce のみ。)
       const entries: RecentEntry[] = Array.isArray(result)
         ? (result as RecentEntry[])
         : [];
