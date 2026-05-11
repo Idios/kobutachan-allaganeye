@@ -338,3 +338,27 @@
   text-align: center;
   color: var(--ae-text-dim);
 }
+
+/* #645 Task 2.4 — MicroTimeline 周辺の inline error / loading 表示。
+   .applyError と同じ trauma (danger 色) を使うが、strip 内に center 配置するため
+   margin-left 横方向ずれは外し、flex-column の小さなブロックとして 1 行目に
+   message、2 行目に InlineErrorHint (💡 hint) を並べる。
+   .applyErrorHint と同じ block 配置 strategy を踏襲。 */
+.microError {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 4px;
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-danger);
+}
+
+.microTimelineLoading {
+  padding: 6px 4px;
+  text-align: center;
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+}

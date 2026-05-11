@@ -11,9 +11,15 @@ import {
 import { DisabledTooltip } from '../components/DisabledTooltip';
 import { FrameStrip, type FrameStripThumb } from '../components/FrameStrip';
 import { InlineErrorHint } from '../components/InlineErrorHint';
+import { MicroTimeline } from '../components/MicroTimeline';
 import { RestoreButton } from '../components/RestoreButton';
 import { SampleModeBanner } from '../components/SampleModeBanner';
-import { appErrorMessage } from '../lib/appError';
+import {
+  appErrorHint,
+  appErrorMessage,
+  isAppError,
+  type AppError,
+} from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import {
   useMetadataStore,
@@ -21,6 +27,7 @@ import {
 } from '../state/metadataStore';
 import type { MatchType, TypeOverride } from '../types/metadata';
 import { DEFAULT_FPS } from '../types/metadata.schema';
+import { buildLocalBrightness } from '../utils/brightness';
 import { fmtPreciseTime } from '../utils/time';
 import styles from './PreviewScreen.module.css';
 
@@ -229,6 +236,21 @@ export function PreviewScreen() {
   const inVideoRef = useRef<HTMLVideoElement>(null);
   const outVideoRef = useRef<HTMLVideoElement>(null);
 
+  // #645 Task 2.4 — MicroTimeline state (±5s brightness window around the
+  // selected match boundary). 実フローでは Tauri `extract_brightness_window`
+  // 経由で取得し、sample mode (filePath===null) では `buildLocalBrightness`
+  // の合成波形にフォールバック。
+  const [brightnessWindow, setBrightnessWindow] = useState<{
+    samples: number[];
+    t_start: number;
+    t_end: number;
+    fps: number;
+  } | null>(null);
+  const [microError, setMicroError] = useState<AppError | null>(null);
+  const blackoutThreshold = useMetadataStore(
+    (s) => s.metadata?.detection_params?.blackout_threshold ?? 15,
+  );
+
   // #465 review (C): drop で確定した実 path を最優先 source-of-truth として
   // 使用する。sample mode (selectedVideoPath = null) では sampleMetadata.source
   // にフォールバック、実フローでは drop が確定した実 path で
@@ -372,6 +394,65 @@ export function PreviewScreen() {
       cancelled = true;
     };
   }, [videoSource, videoUrl, match]);
+
+  // #645 Task 2.4 — MicroTimeline ±5s window fetch。selectedMatch の start_time
+  // を中心に [t-5, t+5] の brightness を 10fps で取得 (≒100 サンプル)。
+  // sample mode (filePath===null) では `buildLocalBrightness` の合成波形で代替し、
+  // Tauri command は呼ばない。エラーは inline で message + hint を表示する。
+  // dep array: match の index / filePath / isSample のみ。match オブジェクト
+  // ref は edit 中に毎レンダ変わるので index で代替し、無駄な refetch を抑える。
+  //
+  // `setBrightnessWindow(null)` / `setMicroError(null)` の同期 reset は
+  // selection 切替時に旧波形 / 旧 error の flash を防ぐため必要 (ExportScreen
+  // #591 の encoder info reset と同じパターン)。再 fetch の頻度は match 切替
+  // 単位で bounded なので cascading render の懸念は無い。
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setBrightnessWindow(null);
+    setMicroError(null);
+    if (!match) return;
+    if (isSample) {
+      // buildLocalBrightness は LocalBrightnessSample[] (= {t, b}[]) を返すため
+      // samples フィールド (number[]) に渡す前に b 値だけ map で抜き出す。
+      const synthetic = buildLocalBrightness(match.start_time, 5, 10);
+      setBrightnessWindow({
+        samples: synthetic.map((s) => s.b),
+        t_start: match.start_time - 5,
+        t_end: match.start_time + 5,
+        fps: 10,
+      });
+      return;
+    }
+    if (!filePath) return;
+    let cancelled = false;
+    invoke<{ samples: number[]; t_start: number; t_end: number; fps: number }>(
+      'extract_brightness_window',
+      {
+        videoPath: filePath,
+        tStart: Math.max(0, match.start_time - 5),
+        tEnd: match.start_time + 5,
+        fps: 10.0,
+      },
+    )
+      .then((win) => {
+        if (!cancelled) setBrightnessWindow(win);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        // isAppError で AppError struct を narrow し、それ以外 (Error / 生 string /
+        // null 等) は最低限の AppError 形に正規化する。toAppError ヘルパは存在しない
+        // ため、ここで直接構築する。
+        setMicroError(
+          isAppError(e)
+            ? e
+            : { code: 'unknown.error', message: appErrorMessage(e) },
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [match?.index, filePath, isSample]);
 
   const currentT = editing === 'start' ? startT : endT;
   const setCurrentT = editing === 'start' ? setStartT : setEndT;
@@ -677,6 +758,26 @@ export function PreviewScreen() {
       </div>
 
       <div className={styles.strip}>
+        {/* #645 Task 2.4 — ±5s MicroTimeline。実フローでは extract_brightness_window
+            から取得した波形、sample mode では buildLocalBrightness の合成波形。
+            invoke 失敗時は message + hint を inline 表示 (InlineErrorHint 経由)。 */}
+        <div className={styles.stripCaption}>
+          微細タイムライン ⸱ ±5s{isSample && ' ⸱ サンプル波形'}
+        </div>
+        {brightnessWindow ? (
+          <MicroTimeline
+            samples={brightnessWindow.samples}
+            windowSeconds={10}
+            threshold={blackoutThreshold}
+          />
+        ) : microError ? (
+          <div className={styles.microError}>
+            <span>{appErrorMessage(microError)}</span>
+            <InlineErrorHint hint={appErrorHint(microError)} />
+          </div>
+        ) : (
+          <div className={styles.microTimelineLoading}>計測中…</div>
+        )}
         <div className={styles.stripCaption}>候補フレーム ⸱ CANDIDATE FRAMES</div>
         <FrameStrip
           boundaryT={currentT}

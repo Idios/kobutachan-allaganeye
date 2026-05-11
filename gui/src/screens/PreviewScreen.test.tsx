@@ -824,3 +824,171 @@ describe('PreviewScreen sample mode disabled (Task 1.5)', () => {
     });
   });
 });
+
+// Task 2.4 (#645) — PreviewScreen に MicroTimeline 統合。
+// extract_brightness_window 経由で ±5s の brightness 波形を取得し、
+// MicroTimeline component で描画する。失敗時はインライン error で message + hint
+// を表示。sample mode (filePath === null) では invoke せず buildLocalBrightness
+// の合成波形で代替する。
+describe('PreviewScreen MicroTimeline', () => {
+  beforeEach(() => {
+    // 外側 beforeEach で invokeMock.mockImplementation が register_video /
+    // generate_match_thumbnails / check_backup_exists を返すよう設定済み。
+    // 本 describe では「extract_brightness_window 経路」を主に検証するので、
+    // mockImplementation を上書きして cmd ごとに分岐させる。
+    invokeMock.mockReset();
+    useMetadataStore.setState({
+      filePath: '/some/video.mp4',
+      metadata: {
+        source: '/some/video.mp4',
+        source_duration: 300,
+        source_duration_display: '0:05:00',
+        detected_at: '2026-05-11T00:00:00',
+        detection_params: {
+          blackout_threshold: 15,
+          min_blackout_duration: 1.0,
+          sample_interval: 1.0,
+          no_audio: false,
+          use_gpu: null,
+          workers: null,
+        },
+        matches: [
+          {
+            index: 1,
+            start_time: 100,
+            end_time: 200,
+            type: 'fl_match',
+          },
+        ],
+        gaps: [],
+      } as unknown as ReturnType<
+        typeof useMetadataStore.getState
+      >['metadata'],
+    });
+    useAppStateStore.setState({ selectedMatchIndex: 1 });
+  });
+
+  it('invokes extract_brightness_window with ±5s window', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'register_video') {
+        return Promise.resolve({ url: 'http://x', token: 't' });
+      }
+      if (cmd === 'generate_match_thumbnails') return Promise.resolve([]);
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      if (cmd === 'extract_brightness_window') {
+        return Promise.resolve({
+          samples: Array.from({ length: 100 }, () => 200),
+          t_start: 95,
+          t_end: 105,
+          fps: 10,
+        });
+      }
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    render(<PreviewScreen />);
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('extract_brightness_window', {
+        videoPath: '/some/video.mp4',
+        tStart: 95, // 100 - 5
+        tEnd: 105, // 100 + 5
+        fps: 10.0,
+      });
+    });
+  });
+
+  it('renders MicroTimeline after invoke success', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'register_video') {
+        return Promise.resolve({ url: 'http://x', token: 't' });
+      }
+      if (cmd === 'generate_match_thumbnails') return Promise.resolve([]);
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      if (cmd === 'extract_brightness_window') {
+        return Promise.resolve({
+          samples: Array.from({ length: 100 }, () => 200),
+          t_start: 95,
+          t_end: 105,
+          fps: 10,
+        });
+      }
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    render(<PreviewScreen />);
+    expect(await screen.findByTestId('micro-timeline')).toBeInTheDocument();
+  });
+
+  it('renders inline error on invoke failure', async () => {
+    const appError = {
+      code: 'subprocess.spawn_failed',
+      message: 'ffmpeg spawn failed: ENOENT',
+      hint: '外部プロセスの起動に失敗しました。ffmpeg / Python / 同梱 runtime が壊れていないか確認してください',
+    };
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'register_video') {
+        return Promise.resolve({ url: 'http://x', token: 't' });
+      }
+      if (cmd === 'generate_match_thumbnails') return Promise.resolve([]);
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      if (cmd === 'extract_brightness_window') {
+        return Promise.reject(appError);
+      }
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    render(<PreviewScreen />);
+    expect(
+      await screen.findByText(/ffmpeg spawn failed/),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(/外部プロセスの起動に失敗しました/),
+    ).toBeInTheDocument();
+  });
+
+  it('renders synthetic in sample mode (no invoke)', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'register_video') {
+        return Promise.resolve({ url: 'http://x', token: 't' });
+      }
+      if (cmd === 'generate_match_thumbnails') return Promise.resolve([]);
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    // sample mode: filePath === null
+    useMetadataStore.setState({
+      filePath: null,
+      metadata: {
+        source: '/some/video.mp4',
+        source_duration: 300,
+        source_duration_display: '0:05:00',
+        detected_at: '2026-05-11T00:00:00',
+        detection_params: {
+          blackout_threshold: 15,
+          min_blackout_duration: 1.0,
+          sample_interval: 1.0,
+          no_audio: false,
+          use_gpu: null,
+          workers: null,
+        },
+        matches: [
+          {
+            index: 1,
+            start_time: 100,
+            end_time: 200,
+            type: 'fl_match',
+          },
+        ],
+        gaps: [],
+      } as unknown as ReturnType<
+        typeof useMetadataStore.getState
+      >['metadata'],
+    });
+    render(<PreviewScreen />);
+    await waitFor(() => {
+      expect(screen.getByTestId('micro-timeline')).toBeInTheDocument();
+    });
+    // extract_brightness_window は呼ばれていない
+    const allCalls = invokeMock.mock.calls.map((c) => c[0]);
+    expect(allCalls).not.toContain('extract_brightness_window');
+    // サンプル波形であることを示すラベル
+    expect(screen.getByText(/サンプル波形/)).toBeInTheDocument();
+  });
+});
