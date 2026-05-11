@@ -19,25 +19,25 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/ffmpeg.tar.xz
-          key: btbn-ffmpeg-linux64-lgpl-shared-8.1-ec7546052026c12079e5bc4c69ff811c40f5b44610d8854cca17dda8e192529f
+          key: btbn-ffmpeg-linux64-lgpl-shared-8.1-b31223cb8074205dd9f908aa032f68826adaefbaee40fcb6be8e34f9b8cb72c4
 
       - name: Download FFmpeg archive (cache miss)
         if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
-          # BtbN は nightly autobuild を一定期間で削除するため URL pin が陳腐化する。
-          # 上流が `n8.1.1` (FFmpeg patch release) に切り替わった (2026-05-06 build)。
-          # BtbN URL aging の長期対応は別 issue で追跡予定 (Lane IV-a の 5 章目)。
-          # #681 は get-pip.py SHA pin の versioned URL 切替に scope 限定 (PR #703)。
-          # 本 PR (#683) では BtbN 側の短期 fix のみ実施。
-          curl -fsSL -o /tmp/ffmpeg.tar.xz "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-05-06-13-32/ffmpeg-n8.1.1-linux64-lgpl-shared-8.1.tar.xz"
+          # BtbN は daily autobuild を ~14 日で GC するため、daily pin は ~14 日で 404 する。
+          # 各月末日 daily (autobuild-YYYY-MM-{28,29,30,31}-*) は ~24 ヶ月保持されるため
+          # monthly snapshot に pin する (#705 で確定、本 PR で daily → monthly に切替)。
+          # 2026-04-30 monthly は upstream FFmpeg n8.1 + 11 commits (g75d37c499d、OLD format)。
+          # bump 手順 + checksums.sha256 取得方法は scripts/build-portable-zip.ps1 line 70-95 参照。
+          curl -fsSL -o /tmp/ffmpeg.tar.xz "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-04-30-13-44/ffmpeg-n8.1-11-g75d37c499d-linux64-lgpl-shared-8.1.tar.xz"
 
-      - name: Install ffmpeg (BtbN LGPLv3 n8.1 shared, pinned)
+      - name: Install ffmpeg (BtbN LGPLv3 n8.1 shared, pinned monthly)
         shell: bash
         run: |
           set -euo pipefail
-          FFMPEG_SHA256="ec7546052026c12079e5bc4c69ff811c40f5b44610d8854cca17dda8e192529f"
+          FFMPEG_SHA256="b31223cb8074205dd9f908aa032f68826adaefbaee40fcb6be8e34f9b8cb72c4"
           echo "$FFMPEG_SHA256  /tmp/ffmpeg.tar.xz" | sha256sum -c -
           mkdir -p /tmp/ffmpeg
           tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg --strip-components=1
