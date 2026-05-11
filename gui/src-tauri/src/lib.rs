@@ -2279,15 +2279,56 @@ pub struct DetectResult {
     pub matches: u64,
 }
 
+/// #648 -- truncate `line` to at most `max_chars` Unicode chars and escape
+/// non-printable control characters (except `\t` / `\n` / `\r`) as `\xNN`
+/// so they don't inject terminal escape sequences into stderr.
+fn truncate_and_escape(line: &str, max_chars: usize) -> String {
+    line.chars()
+        .take(max_chars)
+        .map(|c| match c {
+            '\t' | '\n' | '\r' => c.to_string(),
+            c if (c as u32) < 0x20 => format!("\\x{:02X}", c as u32),
+            c => c.to_string(),
+        })
+        .collect()
+}
+
 /// #569 -- pure parser for one JSON-lines progress event.  Returns
 /// `None` for blank lines or lines that fail to deserialize so a stray
 /// stdout write from the CLI doesn't break the overall stream.
+///
+/// #648 -- malformed JSON (non-empty / non-whitespace lines that fail to
+/// deserialize) は silent skip ではなく `eprintln!` で warn 出力するよう
+/// 拡張済。空行 / 空白のみ行 (LF flush 等で発生) は引き続き silent skip。
+/// public signature は変えていない (戻り値も呼び出し側も既存通り)。
 fn parse_detect_progress_line(line: &str) -> Option<DetectProgress> {
-    let line = line.trim();
-    if line.is_empty() {
+    parse_detect_progress_line_with_warn(line, |msg| eprintln!("{}", msg))
+}
+
+/// #648 -- testable variant: takes a `on_warn` closure to capture warn
+/// output, so cargo test can assert on the warning content without
+/// touching the real stderr stream. Production wrapper above passes
+/// `eprintln!`.
+fn parse_detect_progress_line_with_warn(
+    line: &str,
+    mut on_warn: impl FnMut(&str),
+) -> Option<DetectProgress> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
         return None;
     }
-    serde_json::from_str(line).ok()
+    match serde_json::from_str(trimmed) {
+        Ok(p) => Some(p),
+        Err(_) => {
+            let escaped = truncate_and_escape(trimmed, 64);
+            on_warn(&format!(
+                "[parse_detect_progress_line] malformed JSON (len={}): \"{}\"",
+                trimmed.len(),
+                escaped,
+            ));
+            None
+        }
+    }
 }
 
 /// #646 -- how to invoke the `allaganeye` CLI from Rust.
@@ -4556,6 +4597,112 @@ mod tests {
         assert_eq!(parsed.width, Some(1920));
         assert_eq!(parsed.fps, Some(60.0));
         assert_eq!(parsed.codec.as_deref(), Some("h264"));
+    }
+
+    // -- #648 truncate_and_escape (parse_detect_progress_line warn 出力前処理)
+
+    #[test]
+    fn truncate_and_escape_empty_returns_empty() {
+        assert_eq!(truncate_and_escape("", 64), "");
+    }
+
+    #[test]
+    fn truncate_and_escape_zero_max_returns_empty() {
+        assert_eq!(truncate_and_escape("hello", 0), "");
+    }
+
+    #[test]
+    fn truncate_and_escape_short_ascii_returned_verbatim() {
+        assert_eq!(truncate_and_escape("hello", 64), "hello");
+    }
+
+    #[test]
+    fn truncate_and_escape_truncates_long_input_at_char_boundary() {
+        let long = "a".repeat(128);
+        assert_eq!(truncate_and_escape(&long, 64).chars().count(), 64);
+    }
+
+    #[test]
+    fn truncate_and_escape_preserves_tab_newline_cr() {
+        assert_eq!(truncate_and_escape("a\tb\nc\rd", 64), "a\tb\nc\rd");
+    }
+
+    #[test]
+    fn truncate_and_escape_escapes_other_control_chars() {
+        assert_eq!(truncate_and_escape("a\x01b", 64), "a\\x01b");
+        assert_eq!(truncate_and_escape("a\x1Fb", 64), "a\\x1Fb");
+    }
+
+    #[test]
+    fn truncate_and_escape_handles_multibyte_char_boundary() {
+        // "まったく" は 4 chars (各 3 bytes UTF-8 = 12 bytes)。
+        // max_chars=3 で 3 chars 取得・byte boundary で panic しないことを確認。
+        assert_eq!(truncate_and_escape("まったく", 3).chars().count(), 3);
+    }
+
+    // -- #648 parse_detect_progress_line_with_warn (DI variant)
+
+    #[test]
+    fn parse_with_warn_empty_line_no_warn() {
+        let mut warns: Vec<String> = Vec::new();
+        let result = parse_detect_progress_line_with_warn("", |m| warns.push(m.to_string()));
+        assert!(result.is_none());
+        assert!(warns.is_empty());
+    }
+
+    #[test]
+    fn parse_with_warn_whitespace_only_no_warn() {
+        let mut warns: Vec<String> = Vec::new();
+        let result =
+            parse_detect_progress_line_with_warn("   \n", |m| warns.push(m.to_string()));
+        assert!(result.is_none());
+        assert!(warns.is_empty());
+    }
+
+    #[test]
+    fn parse_with_warn_valid_json_no_warn() {
+        let mut warns: Vec<String> = Vec::new();
+        let line = r#"{"phase":"scan","completed":12,"total":100,"elapsed_s":1.25}"#;
+        let result =
+            parse_detect_progress_line_with_warn(line, |m| warns.push(m.to_string()));
+        assert!(result.is_some());
+        assert!(warns.is_empty());
+    }
+
+    #[test]
+    fn parse_with_warn_malformed_json_emits_warn() {
+        let mut warns: Vec<String> = Vec::new();
+        let result =
+            parse_detect_progress_line_with_warn("not json", |m| warns.push(m.to_string()));
+        assert!(result.is_none());
+        assert_eq!(warns.len(), 1);
+        assert!(warns[0].contains("malformed JSON"));
+        assert!(warns[0].contains("\"not json\""));
+        assert!(warns[0].contains("len=8"));
+    }
+
+    #[test]
+    fn parse_with_warn_long_malformed_json_truncated_and_escaped() {
+        let mut warns: Vec<String> = Vec::new();
+        // 70 chars + 制御文字 \x01
+        let line = format!("{}{}", "x".repeat(63), "\x01yyy");
+        let result =
+            parse_detect_progress_line_with_warn(&line, |m| warns.push(m.to_string()));
+        assert!(result.is_none());
+        assert_eq!(warns.len(), 1);
+        // 64 char truncate (\x01 escape の 4 char を含む、x 63 + control の 1 char = 64 char、escape は format 後に 4 char に膨れる)
+        // よって warn message 内には `\\x01` が現れる
+        assert!(
+            warns[0].contains("\\x01"),
+            "expected escaped control char in warn message: {}",
+            warns[0]
+        );
+        // 元 len は 67 (63 + 4)
+        assert!(
+            warns[0].contains(&format!("len={}", line.len())),
+            "expected original length in warn message: {}",
+            warns[0]
+        );
     }
 
     #[test]
