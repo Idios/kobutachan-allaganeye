@@ -70,7 +70,7 @@ Stop hook 発火
 [Step 2 (NEW): cleanup-claude-branches.sh --apply]
    - git -C $main_root branch --list 'claude/*' → 対象 enumerate
    - git -C $main_root worktree list --porcelain → active 参照集合
-   - 各 claude/<name>:
+   - 各 claude/<name> (概念的 AND 列挙、実評価順序は §6.1 step 4 通り AND 2 → AND 1 → AND 3):
        AND 1: is-ancestor(develop-0.2.0) OR is-ancestor(main)
        AND 2: ∉ active 参照集合
        AND 3: log -1 ct < (now - 24*3600)
@@ -99,7 +99,7 @@ scripts/cleanup-claude-branches.sh -h        # help
 1. `git rev-parse --git-common-dir` → main checkout root を解決 (worktree path から呼ばれても OK)
 2. `git -C $ROOT worktree list --porcelain` を parse して `refs/heads/<branch>` 集合を作成 (active 参照集合)
 3. `git -C $ROOT branch --list 'claude/*' --format='%(refname:short)'` で対象 branch 列挙
-4. 各 `claude/<name>` について判定 (**評価順序: AND 1 → AND 2 → AND 3**。最初に fail した時点で評価終了し、その条件名を reason に確定):
+4. 各 `claude/<name>` について判定 (**評価順序: AND 2 → AND 1 → AND 3** — cost-efficient: AND 2 は local hash lookup で安価、AND 1 / AND 3 は git subprocess を spawn するため後回し。最初に fail した時点で評価終了し、その条件名を reason に確定):
    - **AND 1 (merged)**: `git -C $ROOT merge-base --is-ancestor "<branch>" "origin/develop-0.2.0"` OR `... "origin/main"` (いずれか成功で OK)。両方とも非 ancestor / 両方とも ref 未存在の場合 fail → reason `not-merged`
    - **AND 2 (active 不在)**: active 参照集合に `refs/heads/<branch>` が含まれない。含まれる場合 fail → reason `active`
    - **AND 3 (cooldown)**: `git -C $ROOT log -1 --format=%ct "<branch>"` (unix timestamp) が `$(date +%s) - 86400` より小さい (= 24h より前)。新しい場合 fail → reason `cooldown`
@@ -197,7 +197,7 @@ dry-run と `--apply` の各 script 例を併記。
 
 ### 9.4 §「安全性」追記
 
-> branch 削除も AND 4 条件下で実行され、merged 保証により data loss しない。fetch されていない remote ref は `is-ancestor` false に倒れて keep (= 安全側)。
+> branch 削除も AND 3 条件 (merged + active 参照なし + 24h cooldown) + `claude/` prefix 限定下で実行され、merged 保証により data loss しない。fetch されていない remote ref は `is-ancestor` false に倒れて keep (= 安全側)。
 
 ## 10. Scope 外 (本 PR で扱わない)
 
@@ -211,7 +211,7 @@ dry-run と `--apply` の各 script 例を併記。
 | Iron Law | 整合方針 |
 | --- | --- |
 | 1 (NO PR MERGE WITHOUT ALL ACCEPTANCE CRITERIA CHECKED) | PR body の Self-Test Report に 5 シナリオ実行結果を逐条記載 |
-| 2 (NO BULK OPERATION WITHOUT AskUserQuestion CONFIRMATION) | Stop hook は非対話だが、AND 4 条件で「明らかに安全な branch (= merged + active なし + 24h 以上前)」のみ自動削除する設計に厳格限定することで Iron Law 2 の趣旨 (= ユーザー意図に反する破壊的操作を防ぐ) と整合 |
+| 2 (NO BULK OPERATION WITHOUT AskUserQuestion CONFIRMATION) | Stop hook は非対話だが、AND 3 条件 (merged + active なし + 24h cooldown) + `claude/` prefix 限定で「明らかに安全な branch」のみ自動削除する設計に厳格限定することで Iron Law 2 の趣旨 (= ユーザー意図に反する破壊的操作を防ぐ) と整合 |
 | 3 (NO SCOPE CREEP WITHOUT NEW ISSUE) | bats / pytest 化や H3 関連改修は本 PR scope 外、#710 / 別 issue で扱う旨を明記 |
 | 4 (NO Closes / Fixes / Resolves KEYWORDS) | PR 本文 / commit message は `Refs #708` 形式 |
 | 5 (NO INDEPENDENT JUDGMENT ON AMBIGUOUS POINTS) | brainstorming で trigger / safety / base / log / test / doc / script 配置 の 7 軸を AskUserQuestion で逐条確認済 |

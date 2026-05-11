@@ -840,7 +840,7 @@ new_string:
 - **prefix 限定**: `claude/` のみ (= `feature/xxx` 等の手動 branch は対象外)
 - **24h cooldown**: 最終 commit (`git log -1 --format=%ct`) が 24h 以上前
 
-評価順序は AND 1 → AND 2 → AND 3。最初に fail した条件が `kept <branch> (reason: not-merged | active | cooldown)` の reason として記録される。
+評価順序は AND 2 → AND 1 → AND 3 (cost-efficient: AND 2 は local hash lookup で安価、AND 1 / AND 3 は git subprocess を spawn するため後回し)。最初に fail した条件が `kept <branch> (reason: not-merged | active | cooldown)` の reason として記録される。
 
 `origin/develop-0.2.0` / `origin/main` が未 fetch だと `merge-base --is-ancestor` が false に倒れて keep される = 安全側。`git fetch` は hook 内で実行せず、user の通常運用 (`git pull`) を前提とする。
 
