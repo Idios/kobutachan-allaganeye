@@ -299,7 +299,11 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         loadErrorHint: appErrorHint(e),
         hasBackup: false,
         loadedMtimeMs: null,
+        // #695: conflictError/conflictErrorHint pair atomicity (load() 失敗時の
+        // file-state リセットの一部、#691 案 X self-only 規約とは別軸 = file-state
+        // 関連の state は touch する慣習を継承)。conflictErrorHint も pair で reset。
         conflictError: null,
+        conflictErrorHint: null,
         pendingDraft: null,
       });
     }
@@ -401,7 +405,10 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
   reloadAfterConflict: async () => {
     const { filePath } = get();
     if (!filePath) {
-      set({ conflictError: null });
+      // #695: conflictError/conflictErrorHint pair atomicity。filePath が無い場合
+      // (sample mode 等) は load() を呼べないので、ここで両方を null reset する
+      // (plan §5.3 reloadAfterConflict() lifecycle 規約)。
+      set({ conflictError: null, conflictErrorHint: null });
       return;
     }
     await get().load(filePath);
