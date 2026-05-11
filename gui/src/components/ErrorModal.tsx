@@ -27,8 +27,9 @@ const LOG_TAIL_LINE_COUNT = 300;
  *   - 詳細をコピー: copy {message, stack, category, timestamp} to clipboard
  *   - Issue 本文をコピー (#669): copy Markdown-formatted body (actual /
  *     environment / log excerpt) to clipboard. The user pastes this into
- *     the bug_report.yml form opened via "Issue で報告する" link, because
- *     GitHub Issue Forms do not support URL pre-fill for custom fields.
+ *     the bug_report.yml form opened via "Issue で報告する" link. The
+ *     clipboard approach is robust regardless of whether the form template
+ *     is rendered (see issueReportBody.ts header for the design rationale).
  *   - ログフォルダを開く: invoke open_folder_in_explorer
  *   - 閉じる: dismissError() — only when isRecoverable === true
  *   - アプリを終了: invoke force_exit_app — only when isPanic === true

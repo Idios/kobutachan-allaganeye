@@ -78,7 +78,7 @@ try {
 
 PR #669 で追加した 2 command (`read_error_log_tail` / `probe_environment_info`) は ErrorModal の `[Issue 本文をコピー]` button が `bug_report.yml` form 用 Markdown 本文を組み立てるために使う。両方 best-effort (失敗してもコピー処理自体は継続、対応 section が "(unavailable)"-style sentinel になる)。
 
-> **設計上の経緯**: 初期実装では GitHub Issue Forms (`.yml`) の URL query string pre-fill (`?actual=...&environment=...&log_file_attachment=...`) を狙ったが、PR #669 の実機検証で GitHub Issue Forms はカスタム textarea field の URL pre-fill を honor しないことが確認された (`?template=bug_report.yml&actual=HELLO` でも form は空のまま、参考: <https://github.com/orgs/community/discussions/22335>)。Plan B として clipboard 経由のコピー & ペースト方式 (`navigator.clipboard.writeText`) に変更。生成された Markdown 本文を user が form の `実際の動作` textarea にそのまま貼り付ける運用。
+> **設計上の経緯**: 初期実装では GitHub Issue Forms (`.yml`) の URL query string pre-fill (`?actual=...&environment=...&log_file_attachment=...`) を狙ったが、PR #669 の実機検証で form が空のまま開く現象を確認。**真の原因は `bug_report.yml` が repository default branch (`main`) に不在で template 自体がロードされておらず、`?template=bug_report.yml` URL が free-form ページに silently fallback していた点** ([#728](https://github.com/Idios/kobutachan-allaganeye/issues/728) で追跡)。GitHub Issue Forms が custom textarea field の URL pre-fill を honor するかどうかは template が rendered な状態で再検証が必要 (公式仕様の解説については GitHub Community discussion <https://github.com/orgs/community/discussions/22335> を参照)。Plan B (clipboard 経由のコピー & ペースト方式、`navigator.clipboard.writeText`) は template 状態に依存せず動作する robust 設計のため、#728 の解決を待たずに採用。生成された Markdown 本文を user が form の `実際の動作` textarea にそのまま貼り付ける運用。
 
 ### `read_error_log_tail`
 

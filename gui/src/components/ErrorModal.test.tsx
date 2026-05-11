@@ -461,4 +461,32 @@ describe('ErrorModal Issue 本文をコピー button (#669, Plan B clipboard)', 
     // environment は (no environment info) sentinel になる (probe + GPU 双方失敗)
     expect(body).toContain('## 環境情報');
   });
+
+  it('still copies a body when metadata is null (e.g. panic before metadata load, GPU section -> "(unknown)")', async () => {
+    // /iterate-review Round 1 #6: ErrorModal panic は metadata load 完了前にも
+    // 発火しうるため、metadata=null 状態を component レベルで smoke test する。
+    // helper level の同 path test は systemInfo.test.ts の null branch でカバー
+    // 済みだが、E2E flow で button click → clipboard write の path が落ちない
+    // ことを guard したい (regression 検知)。
+    useMetadataStore.setState({ metadata: null });
+    useErrorStore.getState().showError({
+      errorMessage: 'panic before metadata load',
+      errorCategory: 'panic',
+      isPanic: true,
+      isRecoverable: false,
+    });
+    render(<ErrorModal />);
+    fireEvent.click(screen.getByRole('button', { name: 'Issue 本文をコピー' }));
+
+    await waitFor(() => {
+      expect(writeTextSpy).toHaveBeenCalledOnce();
+    });
+    const body = writeTextSpy.mock.calls[0][0] as string;
+    expect(body).toContain('## 実際の動作');
+    expect(body).toContain('panic before metadata load');
+    expect(body).toContain('## 環境情報');
+    // metadata=null path: GPU vendor list は formatSystemInfo() で "(unknown)"
+    // sentinel になる (systemInfo.ts の null branch)
+    expect(body).toContain('GPU: (unknown)');
+  });
 });

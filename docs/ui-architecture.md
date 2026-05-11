@@ -139,7 +139,7 @@ allaganeye <version> (<os_name>)
 
 probe / log fetch が失敗してもコピー処理自体は継続する (該当 section は `(unknown)` / `(no environment info)` 等の sentinel で表示、log section は空のときに丸ごと省略)。
 
-> **設計上の経緯**: 初期実装は `bug_report.yml` URL に query string で 3 field を pre-fill する設計だったが、PR #669 の実機検証で GitHub Issue Forms (`.yml` 形式) は custom textarea field の URL pre-fill を honor しないことが確認された (`?template=bug_report.yml&actual=HELLO_WORLD` でも form は空、参考: [GitHub Community discussion #22335](https://github.com/orgs/community/discussions/22335))。Plan B として clipboard 経由のコピー & ペースト方式に変更した。
+> **設計上の経緯**: 初期実装は `bug_report.yml` URL に query string で 3 field を pre-fill する設計だったが、PR #669 の実機検証で form が空のまま開く現象を確認した。**真の原因は `bug_report.yml` が repository default branch (`main`) に不在で template 自体がロードされておらず、`?template=bug_report.yml` URL が free-form 「Create new issue」ページに silently fallback していた点** ([#728](https://github.com/Idios/kobutachan-allaganeye/issues/728) で追跡)。GitHub Issue Forms が custom textarea field の URL pre-fill を honor するかどうかは template が rendered な状態での再検証が必要 (関連 context は [GitHub Community discussion #22335](https://github.com/orgs/community/discussions/22335) を参照)。Plan B (clipboard 経由のコピー & ペースト方式) は template 状態に依存せず動作する robust 設計のため、#728 の解決を待たずに採用した。
 >
 > **#458 (同意チェック新設) 着手時の調整メモ**: 本機能の body builder は現状 `actual` / `environment` / `log_file_attachment` の 3 section のみ生成する。#458 で同意必須 field (`consent`) が `bug_report.yml` form に追加された場合、Markdown body 形式での扱い (例: section として加えるべきか、form の checkbox は手動入力が前提か) を再評価する。
 

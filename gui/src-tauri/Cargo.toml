@@ -25,11 +25,12 @@ percent-encoding = "=2.3.2"
 uuid = { version = "=1.23.1", features = ["v4"] }
 sha2 = "=0.10.9"
 dirs = "=6.0.0"
-# #669 -- ErrorModal の bug_report URL pre-fill で `environment` field を組み立てる
-# ために OS / CPU / Memory / Disk 情報を probe する。Tauri command
-# `probe_environment_info` から使用。`metadata.system_info` (GPU 3 field のみ)
-# だけでは bug_report.yml `environment` placeholder の format を満たせないため
-# 追加 (plan/spec の "metadata.system_info に OS/CPU/etc が入っている" 仮定の修正)。
+# #669 -- ErrorModal `[Issue 本文をコピー]` button が clipboard に書き込む Markdown
+# 本文の `## 環境情報` section を組み立てるために OS / CPU / Memory / Disk 情報を
+# probe する。Tauri command `probe_environment_info` から使用。`metadata.system_info`
+# (GPU 3 field のみ) だけでは bug_report.yml `environment` placeholder の format を
+# 満たせないため追加 (plan/spec の "metadata.system_info に OS/CPU/etc が入っている"
+# 仮定の修正)。
 sysinfo = "=0.39.1"
 
 [dev-dependencies]

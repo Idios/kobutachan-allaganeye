@@ -2703,9 +2703,10 @@ async fn dev_force_panic() -> Result<(), AppError> {
 }
 
 /// #669 -- Snapshot of `probe_environment_info` output. Sent to the frontend
-/// to populate the `environment` field of the `bug_report.yml` pre-fill URL
-/// (`gui/src/lib/issueReportUrl.ts`). Combined with `metadata.system_info`
-/// GPU vendor data on the TS side by `formatSystemInfo()`.
+/// where `formatSystemInfo()` (`gui/src/lib/systemInfo.ts`) renders it as the
+/// `## 環境情報` section of the Markdown body that the ErrorModal
+/// `[Issue 本文をコピー]` button writes to the clipboard. Combined with
+/// `metadata.system_info` GPU vendor data at render time.
 ///
 /// Snake-case field names match the existing `metadata.system_info` JSON
 /// convention (see `gui/src/types/metadata.generated.ts::SystemInfo`).
@@ -2725,9 +2726,9 @@ pub struct EnvironmentProbe {
 }
 
 /// #669 -- Probes OS / CPU / Memory / Disk info via the `sysinfo` crate so
-/// the ErrorModal Issue 報告 link can pre-fill the `bug_report.yml`
-/// `environment` field with values matching the placeholder format
-/// (`allaganeye 0.2.0 (Windows 11) / CPU: ... / Memory: ... GB`).
+/// the ErrorModal `[Issue 本文をコピー]` button can fill the `bug_report.yml`
+/// `## 環境情報` Markdown section with values matching the form's placeholder
+/// format (`allaganeye 0.2.0 (Windows 11) / CPU: ... / Memory: ... GB`).
 ///
 /// Disk metrics come from the disk that contains the install dir
 /// (`<exe-parent>`). When that disk cannot be matched, all `disk_*` fields
@@ -2844,8 +2845,9 @@ fn strip_trailing_separator(s: &str) -> String {
 /// if today's is missing or empty. Returns `""` when neither today nor
 /// yesterday has a log (not an error).
 ///
-/// Used by the frontend ErrorModal to pre-fill the bug_report.yml
-/// `log_file_attachment` field.
+/// Used by the frontend ErrorModal's `[Issue 本文をコピー]` button to fill
+/// the `## ログファイル (末尾抜粋)` section of the Markdown body it writes
+/// to the clipboard.
 #[tauri::command]
 fn read_error_log_tail(line_count: usize) -> Result<String, AppError> {
     let log_dir = logging::log_dir().map_err(|e| {

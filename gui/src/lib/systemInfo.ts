@@ -3,8 +3,9 @@ import type { SystemInfo } from '../types/metadata.generated';
 /**
  * #669 — Snapshot of OS / CPU / Memory / Disk info returned by the Tauri
  * `probe_environment_info` command. Combined with `metadata.system_info`
- * (GPU vendor list) by `formatSystemInfo()` to populate the `bug_report.yml`
- * `environment` field of the ErrorModal Issue 報告 link.
+ * (GPU vendor list) by `formatSystemInfo()` to render the `## 環境情報`
+ * section of the Markdown body that the ErrorModal `[Issue 本文をコピー]`
+ * button writes to the clipboard (see `issueReportBody.ts`).
  *
  * Snake-case keys mirror the Rust `EnvironmentProbe` struct in
  * `gui/src-tauri/src/lib.rs` (Tauri serializes Rust struct field names
@@ -42,8 +43,9 @@ export interface EnvironmentProbe {
  * Missing data degrades gracefully: nullable disk/memory fields skip their
  * line entirely; empty GPU vendor list shows `(none detected)`; a null
  * `systemInfo` shows `(unknown)`. When BOTH inputs are null the function
- * returns `(no environment info)` (an explicit sentinel so the URL builder
- * can still pre-fill *something* in the bug report).
+ * returns `(no environment info)` (an explicit sentinel so the body builder
+ * still emits *something* under the `## 環境情報` heading in the clipboard
+ * body — see `issueReportBody.ts::buildIssueReportBody`).
  */
 export function formatSystemInfo(
   probe: EnvironmentProbe | null,

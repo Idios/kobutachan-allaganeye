@@ -4,13 +4,21 @@
  * `bug_report.yml` form via the "Issue で報告する" link and pastes this body
  * into the form.
  *
- * Why clipboard instead of URL pre-fill: GitHub Issue Forms (.yml schema)
- * do not honor URL query parameters for custom textarea/input fields by
- * `id` — only `template` / `title` / `labels` / `assignees` / `projects`
- * are supported. Custom field pre-fill via URL was abandoned in PR #669
- * after live verification confirmed `?actual=HELLO_WORLD&environment=…`
- * is silently dropped by GitHub (see GitHub Community discussion
- * https://github.com/orgs/community/discussions/22335).
+ * Why clipboard instead of URL pre-fill: PR #669 originally tried to pre-fill
+ * via `?template=bug_report.yml&actual=…&environment=…&log_file_attachment=…`,
+ * but live verification found the form opened blank. The root cause turned
+ * out to be that `bug_report.yml` does not yet exist on the repository's
+ * default branch (`main`) — it lives only on `develop-0.2.0` until the
+ * v0.2.0 release. GitHub Issue Templates are loaded from the default
+ * branch, so `?template=bug_report.yml` silently falls back to the
+ * free-form "Create new issue" page where any `?actual=…` etc. params are
+ * meaningless. (Issue #728 tracks moving the template to `main`. Whether
+ * GitHub Issue Forms honor URL pre-fill for custom textarea fields once
+ * the template renders is a separate question that was not conclusively
+ * tested here — see GitHub Community discussion
+ * https://github.com/orgs/community/discussions/22335 for the surrounding
+ * context.) Clipboard copy works regardless of template state, so Plan B
+ * was adopted instead of waiting for #728.
  *
  * The body uses the same field labels that `bug_report.yml` shows to
  * reporters, so the user can either paste the whole block into the
