@@ -423,12 +423,16 @@ export function PreviewScreen() {
       });
       return;
     }
-    if (!filePath) return;
+    // #645 bug fix (実機検証で発覚): videoPath 引数には useMetadataStore.filePath
+    // (= metadata.json の path) ではなく、`videoSource` (= selectedVideoPath ??
+    // metadata.source、= 実 video file の path) を渡す必要がある。既存
+    // generate_match_thumbnails invoke (line ~342) と同 source-of-truth に揃える。
+    if (!videoSource) return;
     let cancelled = false;
     invoke<{ samples: number[]; t_start: number; t_end: number; fps: number }>(
       'extract_brightness_window',
       {
-        videoPath: filePath,
+        videoPath: videoSource,
         tStart: Math.max(0, match.start_time - 5),
         tEnd: match.start_time + 5,
         fps: 10.0,
@@ -452,7 +456,7 @@ export function PreviewScreen() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [match?.index, filePath, isSample]);
+  }, [match?.index, videoSource, isSample]);
 
   const currentT = editing === 'start' ? startT : endT;
   const setCurrentT = editing === 'start' ? setStartT : setEndT;
