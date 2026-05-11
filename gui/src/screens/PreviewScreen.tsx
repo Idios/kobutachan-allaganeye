@@ -8,9 +8,11 @@ import {
   useState,
 } from 'react';
 
+import { DisabledTooltip } from '../components/DisabledTooltip';
 import { FrameStrip, type FrameStripThumb } from '../components/FrameStrip';
 import { InlineErrorHint } from '../components/InlineErrorHint';
 import { RestoreButton } from '../components/RestoreButton';
+import { SampleModeBanner } from '../components/SampleModeBanner';
 import { appErrorMessage } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import {
@@ -101,6 +103,11 @@ export function PreviewScreen() {
 
   const selectedMatchIndex = useAppStateStore((s) => s.selectedMatchIndex);
   const navigate = useAppStateStore((s) => s.navigate);
+
+  // sample mode: filePath===null means no real file on disk (loadSample()).
+  // All edit controls should be disabled in this state.
+  const isSample = useMetadataStore((s) => s.filePath === null && s.metadata !== null);
+  const sampleReason = 'サンプル動画では保存できません';
 
   const match = metadata?.matches.find((m) => m.index === selectedMatchIndex);
 
@@ -488,8 +495,21 @@ export function PreviewScreen() {
 
   const selectable: MatchType[] = ['fl_match', 'unknown'];
 
+  const applyDisabled = applying || !filePath || isSample;
+  const applyReason = applying
+    ? '適用中…'
+    : isSample
+      ? sampleReason
+      : !filePath
+        ? 'ファイルが選択されていません'
+        : '';
+
+  const exportNavDisabled = isSample;
+  const exportNavReason = isSample ? sampleReason : '';
+
   return (
     <div className={styles.screen} data-testid="preview-screen">
+      <SampleModeBanner />
       <div className={styles.header}>
         <button
           type="button"
@@ -501,43 +521,55 @@ export function PreviewScreen() {
         <div className={styles.headerInfo}>
           <div className={styles.caption}>境界調整 ⸱ BOUNDARY CALIBRATION</div>
           <div className={styles.nameRow}>
-            <input
-              className={styles.nameInput}
-              value={matchName}
-              onChange={(e) => setMatchName(e.target.value)}
-              placeholder={matchLabel}
-              aria-label="match name"
-            />
+            <DisabledTooltip disabled={isSample} reason={sampleReason}>
+              {(p) => (
+                <input
+                  className={styles.nameInput}
+                  value={matchName}
+                  onChange={(e) => setMatchName(e.target.value)}
+                  placeholder={matchLabel}
+                  aria-label="match name"
+                  disabled={isSample}
+                  {...p}
+                />
+              )}
+            </DisabledTooltip>
             <span className={styles.meta}>
               #{String(match.index).padStart(3, '0')} · of{' '}
               {metadata!.matches.length}
             </span>
           </div>
         </div>
-        <select
-          className={styles.typeSelect}
-          value={matchType}
-          onChange={(e) => {
-            const v = e.target.value as TypeOverride;
-            setMatchType(v);
-            // ui-interaction-spec.md §1.1 example: single-select inputs commit
-            // immediately rather than going through the 200ms debounce. Flush
-            // any pending matchName/startT/endT patch first so we don't fire
-            // two updateMatch calls back-to-back.
-            flushUpdate();
-            if (matchIndex !== undefined) {
-              updateMatch(matchIndex, { type_override: v });
-            }
-          }}
-          aria-label="match type"
-        >
-          {selectable.map((v) => (
-            <option key={v} value={v}>
-              {v}
-            </option>
-          ))}
-          <option value="skip">skip</option>
-        </select>
+        <DisabledTooltip disabled={isSample} reason={sampleReason}>
+          {(p) => (
+            <select
+              className={styles.typeSelect}
+              value={matchType}
+              onChange={(e) => {
+                const v = e.target.value as TypeOverride;
+                setMatchType(v);
+                // ui-interaction-spec.md §1.1 example: single-select inputs commit
+                // immediately rather than going through the 200ms debounce. Flush
+                // any pending matchName/startT/endT patch first so we don't fire
+                // two updateMatch calls back-to-back.
+                flushUpdate();
+                if (matchIndex !== undefined) {
+                  updateMatch(matchIndex, { type_override: v });
+                }
+              }}
+              aria-label="match type"
+              disabled={isSample}
+              {...p}
+            >
+              {selectable.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+              <option value="skip">skip</option>
+            </select>
+          )}
+        </DisabledTooltip>
       </div>
 
       <div className={styles.panes}>
@@ -551,6 +583,8 @@ export function PreviewScreen() {
           videoError={videoError}
           videoRef={inVideoRef}
           fps={fps}
+          disabled={isSample}
+          disabledReason={sampleReason}
         />
         <Pane
           label="OUT (end)"
@@ -562,6 +596,8 @@ export function PreviewScreen() {
           videoError={videoError}
           videoRef={outVideoRef}
           fps={fps}
+          disabled={isSample}
+          disabledReason={sampleReason}
         />
       </div>
 
@@ -598,20 +634,26 @@ export function PreviewScreen() {
                 ? '→'
                 : '←';
           return (
-            <button
-              key={i}
-              type="button"
-              className={styles.stepButton}
-              onClick={() => {
-                // #465 review: frame ボタンは frame-grid snap、秒 step は累積
-                if (isFrame) nudgeFrame(step.value);
-                else nudge(step.value);
-              }}
-              aria-label={`nudge ${label}`}
-              title={`${label} (${keyHint})`}
-            >
-              {label}
-            </button>
+            <DisabledTooltip key={i} disabled={isSample} reason={sampleReason}>
+              {(p) => (
+                <button
+                  type="button"
+                  className={styles.stepButton}
+                  onClick={() => {
+                    // #465 review: frame ボタンは frame-grid snap、秒 step は累積
+                    if (isFrame) nudgeFrame(step.value);
+                    else nudge(step.value);
+                  }}
+                  aria-label={`nudge ${label}`}
+                  disabled={isSample}
+                  {...p}
+                  // In sample mode p.title=sampleReason; otherwise show the keyboard hint.
+                  title={p.title ?? `${label} (${keyHint})`}
+                >
+                  {label}
+                </button>
+              )}
+            </DisabledTooltip>
           );
         })}
       </div>
@@ -642,19 +684,26 @@ export function PreviewScreen() {
           count={12}
           onSelectFrame={(t) => setCurrentT(t)}
           thumbs={editing === 'start' ? inThumbs : outThumbs}
+          disabled={isSample}
+          disabledReason={sampleReason}
         />
       </div>
 
       <div className={styles.actionsRow}>
-        <button
-          type="button"
-          className={styles.primaryButton}
-          onClick={handleApply}
-          disabled={applying || !filePath}
-          aria-label="apply"
-        >
-          {applying ? '適用中…' : '⬦ 適用'}
-        </button>
+        <DisabledTooltip disabled={applyDisabled} reason={applyReason} inlineHint={true}>
+          {(p) => (
+            <button
+              type="button"
+              className={styles.primaryButton}
+              onClick={handleApply}
+              disabled={applyDisabled}
+              aria-label="apply"
+              {...p}
+            >
+              {applying ? '適用中…' : '⬦ 適用'}
+            </button>
+          )}
+        </DisabledTooltip>
         {dirty && <span className={styles.dirty}>● 未保存の変更</span>}
         {applyError && (
           <span className={styles.applyError} role="alert">
@@ -667,13 +716,19 @@ export function PreviewScreen() {
           </span>
         )}
         <RestoreButton onRestored={() => navigate('complete')} />
-        <button
-          type="button"
-          className={styles.secondaryButton}
-          onClick={handleExport}
-        >
-          書き出し →
-        </button>
+        <DisabledTooltip disabled={exportNavDisabled} reason={exportNavReason} inlineHint={true}>
+          {(p) => (
+            <button
+              type="button"
+              className={styles.secondaryButton}
+              onClick={handleExport}
+              disabled={exportNavDisabled}
+              {...p}
+            >
+              書き出し →
+            </button>
+          )}
+        </DisabledTooltip>
       </div>
     </div>
   );
@@ -690,6 +745,10 @@ interface PaneProps {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   /** #465 review: fps for TC formatting / parsing on this pane. */
   fps: number;
+  /** When true, the timecode input is read-only (sample mode). */
+  disabled?: boolean;
+  /** Tooltip reason shown on the timecode input when disabled. */
+  disabledReason?: string;
 }
 
 function Pane({
@@ -702,6 +761,8 @@ function Pane({
   videoError,
   videoRef,
   fps,
+  disabled = false,
+  disabledReason = '',
 }: PaneProps) {
   // #587: data-pane drives the active border color (cyan for IN, gold
   // for OUT) via CSS attribute selectors. The label is the single source
@@ -764,16 +825,22 @@ function Pane({
           <div className={styles.paneVideoLoading}>loading video…</div>
         )}
       </div>
-      <input
-        className={styles.tcInput}
-        value={fmtPreciseTime(t, fps)}
-        onChange={(e) => {
-          const parsed = parseTimecode(e.target.value, fps);
-          if (parsed !== null) onTChange(parsed);
-        }}
-        aria-label={`${label} timecode`}
-        onClick={(e) => e.stopPropagation()}
-      />
+      <DisabledTooltip disabled={disabled} reason={disabledReason}>
+        {(p) => (
+          <input
+            className={styles.tcInput}
+            value={fmtPreciseTime(t, fps)}
+            onChange={(e) => {
+              const parsed = parseTimecode(e.target.value, fps);
+              if (parsed !== null) onTChange(parsed);
+            }}
+            aria-label={`${label} timecode`}
+            onClick={(e) => e.stopPropagation()}
+            disabled={disabled}
+            {...p}
+          />
+        )}
+      </DisabledTooltip>
     </button>
   );
 }
