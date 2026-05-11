@@ -4684,7 +4684,8 @@ mod tests {
     #[test]
     fn parse_with_warn_long_malformed_json_truncated_and_escaped() {
         let mut warns: Vec<String> = Vec::new();
-        // 70 chars + 制御文字 \x01
+        // 67 chars (63 x + 制御文字 \x01 + 3 y) を作り、64 char truncate と
+        // \x01 → \\x01 escape の両方が warn message に現れることを確認する
         let line = format!("{}{}", "x".repeat(63), "\x01yyy");
         let result =
             parse_detect_progress_line_with_warn(&line, |m| warns.push(m.to_string()));
