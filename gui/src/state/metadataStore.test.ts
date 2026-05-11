@@ -523,9 +523,16 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
   });
 
   it('reloadAfterConflict is a no-op when filePath is null (sample mode)', async () => {
-    useMetadataStore.setState({ conflictError: 'stale' });
+    // #695: conflictError と conflictErrorHint の pair atomicity (Round 1 fix c929aae)。
+    // sample mode (filePath === null) では load() を呼べず、両 state を直接 null reset する。
+    useMetadataStore.setState({
+      conflictError: 'stale',
+      conflictErrorHint: 'stale hint',
+    });
     await useMetadataStore.getState().reloadAfterConflict();
-    expect(useMetadataStore.getState().conflictError).toBeNull();
+    const state = useMetadataStore.getState();
+    expect(state.conflictError).toBeNull();
+    expect(state.conflictErrorHint).toBeNull();
   });
 
   it('dismissConflict clears the modal state without reloading or reapplying', () => {
@@ -538,12 +545,19 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
 
   it('load that fails clears loadedMtimeMs and conflictError', async () => {
     // Seed with prior state
-    useMetadataStore.setState({ loadedMtimeMs: 999, conflictError: 'stale' });
+    // #695: conflictError と conflictErrorHint の pair atomicity (Round 1 fix c929aae)。
+    // load() 失敗時は file-state リセットの一部として両 state を null reset。
+    useMetadataStore.setState({
+      loadedMtimeMs: 999,
+      conflictError: 'stale',
+      conflictErrorHint: 'stale hint',
+    });
     configureInvoke({ load_metadata_error: new Error('io error') });
     await useMetadataStore.getState().load('p');
     const state = useMetadataStore.getState();
     expect(state.loadedMtimeMs).toBeNull();
     expect(state.conflictError).toBeNull();
+    expect(state.conflictErrorHint).toBeNull();
     expect(state.loadError).toContain('io error');
   });
 
