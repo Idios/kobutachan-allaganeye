@@ -294,6 +294,23 @@ describe('CompleteScreen', () => {
     });
   });
 
+  // #633: SampleModeBanner 統合。
+  it('renders SampleModeBanner in sample mode', () => {
+    useMetadataStore.getState().clear();
+    useMetadataStore.getState().loadSample();
+    render(<CompleteScreen />);
+    expect(screen.getByText('サンプル動画です。実際の動画を選択すると保存できます。')).toBeInTheDocument();
+  });
+
+  it('does not render SampleModeBanner in real-file mode', () => {
+    useMetadataStore.getState().clear();
+    useMetadataStore.getState().loadSample();
+    // override filePath to simulate real file mode (metadata still loaded but filePath !== null)
+    useMetadataStore.setState({ filePath: '/some/path.mp4' });
+    render(<CompleteScreen />);
+    expect(screen.queryByText('サンプル動画です。実際の動画を選択すると保存できます。')).toBeNull();
+  });
+
   // #569: brightness_samples 由来のタイムライン描画 / fallback。
   describe('brightness_samples integration', () => {
     it('uses metadata.brightness_samples for the timeline when present (#569)', () => {

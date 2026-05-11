@@ -118,6 +118,33 @@ describe('RestoreButton', () => {
     expect(button.hasAttribute('title')).toBe(false);
   });
 
+  it('shows sample mode reason when filePath=null && metadata=non-null', async () => {
+    // sample mode setup: loadSample で metadata 設定後 hasBackup=false に
+    useMetadataStore.getState().clear();
+    useMetadataStore.getState().loadSample();
+    useMetadataStore.setState({ hasBackup: false, restoring: false });
+
+    render(<RestoreButton />);
+    const btn = screen.getByRole('button', { name: /元に戻す/ });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute('title', 'サンプル動画では保存できません');
+    // inline hint も表示される (§1.2 主要 CTA 規約)
+    // DisabledTooltip の inline hint span に reason 文字列が出る
+    // title 属性は DOM textContent に現れないため getAllByText は inline hint span のみ検出
+    const hints = screen.getAllByText('サンプル動画では保存できません');
+    expect(hints.length).toBeGreaterThanOrEqual(1); // inline hint span
+  });
+
+  it('prefers restoring reason over sample mode', () => {
+    useMetadataStore.getState().clear();
+    useMetadataStore.getState().loadSample();
+    useMetadataStore.setState({ hasBackup: true, restoring: true });
+
+    render(<RestoreButton />);
+    const btn = screen.getByRole('button', { name: /元に戻す/ });
+    expect(btn).toHaveAttribute('title', '復元中です');
+  });
+
   // #663 — Phase 4: render the AppError hint as a 2nd line after the
   // existing inline error message so the user sees both the failure and
   // the recommended next step. Hint stays inside the role="alert"
