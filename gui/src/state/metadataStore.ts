@@ -282,6 +282,10 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       // modal via `pendingDraft`.
       await get().loadDraft();
     } catch (e) {
+      // #691 案 X: catch path は self-only (loadError/loadErrorHint のみ set)。
+      // apply / restore / draft 系の旧 error は別経路の文脈なので保持する
+      // (load 失敗時に user に見せる context を消さない設計、lifecycle 終端
+      // clear() / loadSample() でのみ全 *ErrorHint を null reset する規約)。
       set({
         metadata: null,
         filePath: null,
@@ -292,10 +296,6 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         loadedMtimeMs: null,
         conflictError: null,
         pendingDraft: null,
-        draftLoadError: null,
-        draftLoadErrorHint: null,
-        draftSaveError: null,
-        draftSaveErrorHint: null,
       });
     }
   },
