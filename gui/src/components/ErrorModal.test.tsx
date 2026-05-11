@@ -1,7 +1,9 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useErrorStore } from '../state/errorStore';
+import { useMetadataStore } from '../state/metadataStore';
+import type { Metadata } from '../types/metadata';
 import { ErrorModal } from './ErrorModal';
 
 const invokeMock = vi.fn();
@@ -279,5 +281,129 @@ describe('ErrorModal integrity category (#668)', () => {
     render(<ErrorModal />);
 
     expect(screen.getByText('Portable ZIP を再展開してください。')).toBeInTheDocument();
+  });
+});
+
+describe('ErrorModal Issue 報告 link pre-fill (#669)', () => {
+  beforeEach(() => {
+    useErrorStore.getState().dismissError();
+    useErrorStore.getState().setLogDir('C:\\install\\logs');
+    useMetadataStore.setState({
+      metadata: {
+        version: 'v2',
+        source: 'sample.mkv',
+        matches: [],
+        system_info: {
+          gpu_vendors_available: ['nvidia'],
+          gpu_vendor_used: 'nvidia',
+          vendor_preference: ['nvidia', 'amd', 'intel'],
+        },
+      } as unknown as Metadata,
+    });
+    invokeMock.mockReset();
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'probe_environment_info') {
+        return {
+          allaganeye_version: '0.2.0',
+          os_name: 'Microsoft Windows 11 (Build 22631)',
+          cpu_info: 'AMD Ryzen 9 9950X3D (16C/32T)',
+          memory_total_gb: 61.6,
+          disk_free_gb: 1359.5,
+          disk_total_gb: 3726.0,
+          disk_drive: 'E:',
+        };
+      }
+      if (cmd === 'read_error_log_tail') {
+        return 'last log line A\nlast log line B';
+      }
+      return undefined;
+    });
+  });
+
+  it('builds pre-fill URL with actual / environment / log_file_attachment after errorOpen', async () => {
+    useErrorStore.getState().showError({
+      errorMessage: 'panic: x',
+      errorStack: 'stack trace here',
+      errorCategory: 'panic',
+      isPanic: true,
+      isRecoverable: false,
+    });
+    render(<ErrorModal />);
+
+    await waitFor(() => {
+      const link = screen.getByText('Issue で報告する') as HTMLAnchorElement;
+      expect(link.href).toContain('actual=');
+      expect(link.href).toContain('environment=');
+      expect(link.href).toContain('log_file_attachment=');
+    });
+
+    const link = screen.getByText('Issue で報告する') as HTMLAnchorElement;
+    const url = new URL(link.href);
+    const params = new URLSearchParams(url.search);
+    expect(params.get('actual')).toContain('panic: x');
+    expect(params.get('actual')).toContain('stack trace here');
+    expect(params.get('environment')).toContain('allaganeye 0.2.0');
+    expect(params.get('environment')).toContain('CPU: AMD Ryzen 9 9950X3D');
+    expect(params.get('environment')).toContain('GPU: nvidia');
+    expect(params.get('log_file_attachment')).toContain('last log line A');
+    expect(params.get('log_file_attachment')).toContain('last log line B');
+  });
+
+  it('falls back to base URL with actual+environment when read_error_log_tail fails', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'probe_environment_info') {
+        return {
+          allaganeye_version: '0.2.0',
+          os_name: 'Windows 11',
+          cpu_info: 'CPU',
+          memory_total_gb: 16.0,
+          disk_free_gb: null,
+          disk_total_gb: null,
+          disk_drive: null,
+        };
+      }
+      if (cmd === 'read_error_log_tail') {
+        throw new Error('I/O failure');
+      }
+      return undefined;
+    });
+    useErrorStore.getState().showError({
+      errorMessage: 'panic',
+      errorCategory: 'panic',
+      isPanic: true,
+      isRecoverable: false,
+    });
+    render(<ErrorModal />);
+
+    await waitFor(() => {
+      const link = screen.getByText('Issue で報告する') as HTMLAnchorElement;
+      // even on log fetch failure, actual + environment are pre-filled
+      expect(link.href).toContain('template=bug_report.yml');
+      expect(link.href).toContain('actual=');
+      expect(link.href).toContain('environment=');
+    });
+  });
+
+  it('falls back to base URL when both probe_environment_info and read_error_log_tail fail', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'probe_environment_info') {
+        throw new Error('probe failed');
+      }
+      if (cmd === 'read_error_log_tail') {
+        throw new Error('I/O');
+      }
+      return undefined;
+    });
+    useErrorStore.getState().showError({
+      errorMessage: 'panic',
+      errorCategory: 'panic',
+      isPanic: true,
+      isRecoverable: false,
+    });
+    render(<ErrorModal />);
+
+    // initial render gets base URL; useEffect failure leaves base URL.
+    const link = screen.getByText('Issue で報告する') as HTMLAnchorElement;
+    expect(link.href).toContain('template=bug_report.yml');
   });
 });

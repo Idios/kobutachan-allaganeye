@@ -1,13 +1,30 @@
 import { invoke } from '@tauri-apps/api/core';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { BUG_REPORT_BASE_URL, buildIssueReportUrl } from '../lib/issueReportUrl';
+import { type EnvironmentProbe, formatSystemInfo } from '../lib/systemInfo';
 import { useErrorStore } from '../state/errorStore';
+import { useMetadataStore } from '../state/metadataStore';
 import styles from './ErrorModal.module.css';
 
-const ISSUE_REPORT_URL =
-  'https://github.com/Idios/kobutachan-allaganeye/issues/new?template=bug_report.yml';
+/** Number of trailing log lines fetched from `read_error_log_tail` when
+ * pre-filling the bug_report.yml `log_file_attachment` field (#669). */
+const LOG_TAIL_LINE_COUNT = 300;
+
+/** Today's date in YYYYMMDD format (UTC), matching the file name written by
+ * Rust `logging::write_error_line` (`error-YYYYMMDD.log`). Used by ErrorModal
+ * to build the truncation-notice path when log_file_attachment is shortened
+ * (#669). */
+function todayYmdCompact(): string {
+  const d = new Date();
+  return (
+    d.getUTCFullYear().toString().padStart(4, '0') +
+    (d.getUTCMonth() + 1).toString().padStart(2, '0') +
+    d.getUTCDate().toString().padStart(2, '0')
+  );
+}
 
 /**
  * #614: surfaced when an unrecoverable error occurs:
@@ -38,13 +55,56 @@ export function ErrorModal() {
   const timestamp = useErrorStore((s) => s.timestamp);
   const dismissError = useErrorStore((s) => s.dismissError);
 
+  const metadata = useMetadataStore((s) => s.metadata);
+
   const panelRef = useRef<HTMLDivElement>(null);
   const [copyAck, setCopyAck] = useState(false);
+  // #669: starts as the base URL (no pre-fill) so even if the probe / log
+  // fetch fail the link still navigates to the bug report form. useEffect
+  // upgrades it to a pre-filled URL once the async probes resolve.
+  const [reportUrl, setReportUrl] = useState<string>(BUG_REPORT_BASE_URL);
 
   // Escape closes only when the error is recoverable; for panic we want the
   // user to acknowledge with a deliberate click on "アプリを終了".
   useFocusTrap(panelRef, errorOpen);
   useEscapeKey(errorOpen && isRecoverable, dismissError);
+
+  // #669: build the bug_report.yml pre-fill URL when the modal opens. Both
+  // probe and log fetch are best-effort: a failure of either falls back to
+  // a partially-filled URL (or the base URL if both fail), so the user can
+  // always click through to the form.
+  useEffect(() => {
+    if (!errorOpen) return;
+
+    const actual =
+      (errorMessage ?? '') + (errorStack ? `\n\nStack:\n${errorStack}` : '');
+    const buildUrl = (env: string, log: string, logPath: string) =>
+      buildIssueReportUrl({ actual, environment: env, logExcerpt: log, logPath });
+
+    let cancelled = false;
+    Promise.all([
+      invoke<EnvironmentProbe>('probe_environment_info').catch(() => null),
+      invoke<string>('read_error_log_tail', { lineCount: LOG_TAIL_LINE_COUNT }).catch(
+        () => '',
+      ),
+    ])
+      .then(([probe, log]) => {
+        if (cancelled) return;
+        const environment = formatSystemInfo(probe, metadata?.system_info ?? null);
+        const logPath = logDir
+          ? `${logDir}\\error-${todayYmdCompact()}.log`
+          : '(unknown log path)';
+        setReportUrl(buildUrl(environment, log ?? '', logPath));
+      })
+      .catch(() => {
+        // Promise.all itself can't reject because both are .catch'd above;
+        // this is here only to satisfy floating-promise lint.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [errorOpen, errorMessage, errorStack, metadata, logDir]);
 
   if (!errorOpen) return null;
 
@@ -116,7 +176,7 @@ export function ErrorModal() {
           {errorHint && <p>{errorHint}</p>}
           <p>
             問題が継続する場合は{' '}
-            <a href={ISSUE_REPORT_URL} target="_blank" rel="noopener noreferrer">
+            <a href={reportUrl} target="_blank" rel="noopener noreferrer">
               Issue で報告する
             </a>
             {' '}か、バグ報告ガイドを参照してください。
