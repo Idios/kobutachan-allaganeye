@@ -2744,6 +2744,226 @@ async fn dev_force_panic() -> Result<(), AppError> {
     panic!("dev_force_panic invoked from frontend");
 }
 
+/// #669 -- Snapshot of `probe_environment_info` output. Sent to the frontend
+/// where `formatSystemInfo()` (`gui/src/lib/systemInfo.ts`) renders it as the
+/// `## 環境情報` section of the Markdown body that the ErrorModal
+/// `[Issue 本文をコピー]` button writes to the clipboard. Combined with
+/// `metadata.system_info` GPU vendor data at render time.
+///
+/// Snake-case field names match the existing `metadata.system_info` JSON
+/// convention (see `gui/src/types/metadata.generated.ts::SystemInfo`).
+///
+/// Why a separate Tauri probe: the original spec/plan assumed
+/// `metadata.system_info` already contained OS/CPU/Memory/Disk; in reality
+/// the Python side only writes 3 GPU fields there (#669 plan revision).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EnvironmentProbe {
+    pub allaganeye_version: String,
+    pub os_name: String,
+    pub cpu_info: String,
+    pub memory_total_gb: Option<f64>,
+    pub disk_free_gb: Option<f64>,
+    pub disk_total_gb: Option<f64>,
+    pub disk_drive: Option<String>,
+}
+
+/// #669 -- Probes OS / CPU / Memory / Disk info via the `sysinfo` crate so
+/// the ErrorModal `[Issue 本文をコピー]` button can fill the `bug_report.yml`
+/// `## 環境情報` Markdown section with values matching the form's placeholder
+/// format (`allaganeye 0.2.0 (Windows 11) / CPU: ... / Memory: ... GB`).
+///
+/// Disk metrics come from the disk that contains the install dir
+/// (`<exe-parent>`). When that disk cannot be matched, all `disk_*` fields
+/// are `None` (graceful — the caller renders a partial `environment` block).
+///
+/// Always succeeds (returns the struct directly, never `Result`); individual
+/// optional fields fall back to `None` rather than failing the whole probe.
+#[tauri::command]
+fn probe_environment_info() -> EnvironmentProbe {
+    probe_environment_info_inner()
+}
+
+/// Pure inner function (no Tauri wrapping) for unit testing.
+fn probe_environment_info_inner() -> EnvironmentProbe {
+    use sysinfo::{CpuRefreshKind, Disks, MemoryRefreshKind, RefreshKind, System};
+
+    let allaganeye_version = env!("CARGO_PKG_VERSION").to_string();
+
+    // OS name: prefer long_os_version() ("Microsoft Windows 11 ..."), then
+    // fall back to "<name> <version>", then to std::env::consts::OS.
+    let os_name = match System::long_os_version() {
+        Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => match (System::name(), System::os_version()) {
+            (Some(n), Some(v)) => format!("{} {}", n.trim(), v.trim())
+                .trim()
+                .to_string(),
+            (Some(n), None) => n.trim().to_string(),
+            _ => std::env::consts::OS.to_string(),
+        },
+    };
+
+    // CPU + Memory
+    let mut sys = System::new_with_specifics(
+        RefreshKind::nothing()
+            .with_cpu(CpuRefreshKind::nothing())
+            .with_memory(MemoryRefreshKind::nothing().with_ram()),
+    );
+    sys.refresh_cpu_list(CpuRefreshKind::nothing());
+    sys.refresh_memory();
+
+    let cpus = sys.cpus();
+    let logical = cpus.len();
+    let cpu_brand = cpus.first().map(|c| c.brand().trim().to_string());
+    let physical = System::physical_core_count();
+    let cpu_info = match cpu_brand.as_deref() {
+        Some(brand) if !brand.is_empty() => match physical {
+            Some(p) if p != logical && logical > 0 => format!("{} ({}C/{}T)", brand, p, logical),
+            _ if logical > 0 => format!("{} ({}T)", brand, logical),
+            _ => brand.to_string(),
+        },
+        _ if logical > 0 => format!("{} threads", logical),
+        _ => "(unknown CPU)".to_string(),
+    };
+
+    let total_mem_bytes = sys.total_memory();
+    let memory_total_gb = if total_mem_bytes > 0 {
+        Some(bytes_to_gb(total_mem_bytes))
+    } else {
+        None
+    };
+
+    // Disk: pick the disk whose mount_point is the longest prefix of the install dir
+    let install_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(std::path::Path::to_path_buf));
+    let disks = Disks::new_with_refreshed_list();
+
+    let (disk_free_gb, disk_total_gb, disk_drive) = match install_dir {
+        Some(install) => {
+            let best = disks
+                .iter()
+                .filter(|d| install.starts_with(d.mount_point()))
+                .max_by_key(|d| d.mount_point().as_os_str().len());
+            match best {
+                Some(d) => (
+                    Some(bytes_to_gb(d.available_space())),
+                    Some(bytes_to_gb(d.total_space())),
+                    Some(strip_trailing_separator(
+                        &d.mount_point().to_string_lossy(),
+                    )),
+                ),
+                None => (None, None, None),
+            }
+        }
+        None => (None, None, None),
+    };
+
+    EnvironmentProbe {
+        allaganeye_version,
+        os_name,
+        cpu_info,
+        memory_total_gb,
+        disk_free_gb,
+        disk_total_gb,
+        disk_drive,
+    }
+}
+
+#[inline]
+fn bytes_to_gb(bytes: u64) -> f64 {
+    (bytes as f64) / (1024.0 * 1024.0 * 1024.0)
+}
+
+/// Strip a trailing `/` or `\` from a path string. Used for disk_drive so the
+/// frontend can render `"E:"` (matching `bug_report.yml` placeholder `on E:`)
+/// instead of the OS-native `"E:\\"`.
+fn strip_trailing_separator(s: &str) -> String {
+    let trimmed = s.trim_end_matches(['\\', '/']);
+    if trimmed.is_empty() { s.to_string() } else { trimmed.to_string() }
+}
+
+/// #669 -- Returns the tail of the install-dir log file
+/// (`<install_dir>/logs/error-YYYYMMDD.log`). Falls back to previous day's log
+/// if today's is missing or empty. Returns `""` when neither today nor
+/// yesterday has a log (not an error).
+///
+/// Used by the frontend ErrorModal's `[Issue 本文をコピー]` button to fill
+/// the `## ログファイル (末尾抜粋)` section of the Markdown body it writes
+/// to the clipboard.
+#[tauri::command]
+fn read_error_log_tail(line_count: usize) -> Result<String, AppError> {
+    let log_dir = logging::log_dir().map_err(|e| {
+        AppError::new(
+            "path.install_dir_unresolved",
+            format!("could not resolve log dir: {}", e),
+        )
+        .with_default_hint()
+    })?;
+    read_error_log_tail_inner(&log_dir, line_count)
+}
+
+/// Defense-in-depth upper bound for `read_error_log_tail`'s `line_count`
+/// argument. The only current caller (`ErrorModal.tsx::LOG_TAIL_LINE_COUNT`)
+/// hardcodes 300, so this cap is unreachable today, but it prevents future
+/// callers (or a malicious extension reaching the Tauri IPC) from triggering
+/// an allocation panic via `VecDeque::with_capacity(usize::MAX)`. The chosen
+/// ceiling (10000) is far above any practical "log tail" use case yet small
+/// enough to fit comfortably in memory.
+const MAX_TAIL_LINES: usize = 10000;
+
+/// Pure inner function for unit testing without log_dir() side effects. Tries
+/// today's log first, then falls back to yesterday's. Returns `""` when both
+/// are missing or empty (not an error). `line_count == 0` short-circuits to
+/// `""` (avoids unbounded growth of the tail buffer); `line_count` greater
+/// than `MAX_TAIL_LINES` is silently capped.
+fn read_error_log_tail_inner(
+    log_dir: &std::path::Path,
+    line_count: usize,
+) -> Result<String, AppError> {
+    use std::collections::VecDeque;
+    use std::io::{BufRead, BufReader};
+
+    if line_count == 0 {
+        return Ok(String::new());
+    }
+    // #669 -- /iterate-review Round 2 #2: defense-in-depth cap to avoid
+    // `VecDeque::with_capacity(usize::MAX)` allocation panic if a future
+    // caller forgets to bound the input.
+    let line_count = line_count.min(MAX_TAIL_LINES);
+
+    let today = logging::current_ymd_compact();
+    let yesterday = logging::ymd_compact_yesterday();
+
+    for date in [today, yesterday].iter() {
+        let path = log_dir.join(format!("error-{}.log", date));
+        if !path.exists() {
+            continue;
+        }
+        let file = std::fs::File::open(&path).map_err(|e| {
+            AppError::new("io.read_failed", format!("read log failed: {}", e))
+                .with_default_hint()
+        })?;
+        let reader = BufReader::new(file);
+        let mut tail: VecDeque<String> = VecDeque::with_capacity(line_count);
+        for line in reader.lines() {
+            let line = line.map_err(|e| {
+                AppError::new("io.read_failed", format!("read line failed: {}", e))
+                    .with_default_hint()
+            })?;
+            if tail.len() == line_count {
+                tail.pop_front();
+            }
+            tail.push_back(line);
+        }
+        if !tail.is_empty() {
+            let joined: Vec<String> = tail.into_iter().collect();
+            return Ok(joined.join("\n"));
+        }
+        // empty file → try next date
+    }
+    Ok(String::new())
+}
+
 pub fn run() {
     // #614 -- Rotate stale panic logs (>7 days) and detect unclean shutdown
     // from the previous session, BEFORE the Tauri builder runs so the
@@ -2847,6 +3067,8 @@ pub fn run() {
         add_recent,
         clear_recent,
         get_log_dir,
+        read_error_log_tail,
+        probe_environment_info,
         dev_force_panic,
     ]);
     #[cfg(not(debug_assertions))]
@@ -2873,6 +3095,8 @@ pub fn run() {
         add_recent,
         clear_recent,
         get_log_dir,
+        read_error_log_tail,
+        probe_environment_info,
     ]);
 
     builder
@@ -5010,5 +5234,198 @@ mod tests {
         buf.clear();
         let n = reader.read_until(b'\n', &mut buf).await.unwrap();
         assert_eq!(n, 0);
+    }
+
+    // ----------------------------------------------------------------
+    // #669 -- read_error_log_tail
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn read_error_log_tail_returns_last_n_lines() {
+        use std::io::Write;
+        let tmp = TempDir::new().expect("tempdir");
+        let log_dir = tmp.path();
+        let date = logging::current_ymd_compact();
+        let log_path = log_dir.join(format!("error-{}.log", date));
+        {
+            let mut f = std::fs::File::create(&log_path).unwrap();
+            for i in 0..500 {
+                writeln!(f, "line {}", i).unwrap();
+            }
+        }
+        let result = read_error_log_tail_inner(log_dir, 300).unwrap();
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines.len(), 300);
+        assert_eq!(lines[0], "line 200");
+        assert_eq!(lines[299], "line 499");
+    }
+
+    #[test]
+    fn read_error_log_tail_returns_full_log_when_shorter_than_count() {
+        use std::io::Write;
+        let tmp = TempDir::new().expect("tempdir");
+        let log_dir = tmp.path();
+        let date = logging::current_ymd_compact();
+        let log_path = log_dir.join(format!("error-{}.log", date));
+        {
+            let mut f = std::fs::File::create(&log_path).unwrap();
+            for i in 0..50 {
+                writeln!(f, "line {}", i).unwrap();
+            }
+        }
+        let result = read_error_log_tail_inner(log_dir, 300).unwrap();
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines.len(), 50);
+        assert_eq!(lines[0], "line 0");
+        assert_eq!(lines[49], "line 49");
+    }
+
+    #[test]
+    fn read_error_log_tail_falls_back_to_previous_day() {
+        use std::io::Write;
+        let tmp = TempDir::new().expect("tempdir");
+        let log_dir = tmp.path();
+        let yesterday = logging::ymd_compact_yesterday();
+        let log_path = log_dir.join(format!("error-{}.log", yesterday));
+        {
+            let mut f = std::fs::File::create(&log_path).unwrap();
+            writeln!(f, "yesterday line").unwrap();
+        }
+        // 当日 log は存在しない → 前日 log にフォールバック
+        let result = read_error_log_tail_inner(log_dir, 300).unwrap();
+        assert!(result.contains("yesterday line"));
+    }
+
+    #[test]
+    fn read_error_log_tail_skips_empty_today_to_yesterday() {
+        use std::io::Write;
+        let tmp = TempDir::new().expect("tempdir");
+        let log_dir = tmp.path();
+        // 当日 log は空 (0 byte)
+        let today = logging::current_ymd_compact();
+        std::fs::File::create(log_dir.join(format!("error-{}.log", today))).unwrap();
+        // 前日 log は内容あり
+        let yesterday = logging::ymd_compact_yesterday();
+        {
+            let mut f = std::fs::File::create(log_dir.join(format!("error-{}.log", yesterday)))
+                .unwrap();
+            writeln!(f, "yesterday line").unwrap();
+        }
+        let result = read_error_log_tail_inner(log_dir, 300).unwrap();
+        assert!(result.contains("yesterday line"));
+    }
+
+    #[test]
+    fn read_error_log_tail_returns_empty_for_missing_log() {
+        let tmp = TempDir::new().expect("tempdir");
+        let log_dir = tmp.path();
+        // 当日も前日も log なし → 空文字列 (エラーでなく)
+        let result = read_error_log_tail_inner(log_dir, 300).unwrap();
+        assert_eq!(result, "");
+    }
+
+    // ----------------------------------------------------------------
+    // #669 -- probe_environment_info
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn probe_environment_info_returns_non_empty_basics() {
+        let probe = probe_environment_info_inner();
+        assert_eq!(probe.allaganeye_version, env!("CARGO_PKG_VERSION"));
+        assert!(!probe.os_name.is_empty(), "os_name should be non-empty");
+        assert!(!probe.cpu_info.is_empty(), "cpu_info should be non-empty");
+        // memory_total_gb は実機 (CI / dev) では必ず >0 になるはず
+        assert!(
+            probe.memory_total_gb.is_some_and(|m| m > 0.0),
+            "memory_total_gb should be Some(>0.0), got {:?}",
+            probe.memory_total_gb
+        );
+    }
+
+    #[test]
+    fn probe_environment_info_cpu_info_contains_thread_count() {
+        let probe = probe_environment_info_inner();
+        // cpu_info は "<brand> (<N>C/<M>T)" or "<brand> (<N>T)" or "<N> threads" format
+        assert!(
+            probe.cpu_info.contains('T') || probe.cpu_info.contains("threads"),
+            "cpu_info should mention thread count, got '{}'",
+            probe.cpu_info
+        );
+    }
+
+    #[test]
+    fn probe_environment_info_serializes_with_snake_case_keys() {
+        // Frontend (TS) expects snake_case (matches metadata.generated.ts SystemInfo pattern)
+        let probe = EnvironmentProbe {
+            allaganeye_version: "0.2.0".to_string(),
+            os_name: "Test OS 11".to_string(),
+            cpu_info: "Test CPU (16C/32T)".to_string(),
+            memory_total_gb: Some(64.0),
+            disk_free_gb: Some(100.0),
+            disk_total_gb: Some(500.0),
+            disk_drive: Some("E:".to_string()),
+        };
+        let json = serde_json::to_value(&probe).unwrap();
+        assert_eq!(json["allaganeye_version"], "0.2.0");
+        assert_eq!(json["os_name"], "Test OS 11");
+        assert_eq!(json["cpu_info"], "Test CPU (16C/32T)");
+        assert_eq!(json["memory_total_gb"], 64.0);
+        assert_eq!(json["disk_drive"], "E:");
+    }
+
+    #[test]
+    fn probe_environment_info_disk_drive_strips_trailing_separator() {
+        // Windows sysinfo の mount_point は "C:\\" 形式。disk_drive は trailing
+        // separator なし ("C:") であること (bug_report.yml placeholder の "on E:" 形式)。
+        let probe = probe_environment_info_inner();
+        if let Some(drive) = probe.disk_drive {
+            assert!(
+                !drive.ends_with('\\') && !drive.ends_with('/'),
+                "disk_drive should not end with separator, got '{}'",
+                drive
+            );
+        }
+    }
+
+    #[test]
+    fn read_error_log_tail_zero_lines_returns_empty() {
+        use std::io::Write;
+        let tmp = TempDir::new().expect("tempdir");
+        let log_dir = tmp.path();
+        let date = logging::current_ymd_compact();
+        let log_path = log_dir.join(format!("error-{}.log", date));
+        {
+            let mut f = std::fs::File::create(&log_path).unwrap();
+            writeln!(f, "line").unwrap();
+        }
+        // line_count=0 を要求された場合は空文字列を返す (loop 暴走防止)
+        let result = read_error_log_tail_inner(log_dir, 0).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn read_error_log_tail_caps_at_max_tail_lines() {
+        // /iterate-review Round 2 #2: line_count が MAX_TAIL_LINES (10000) を
+        // 超えても allocation panic せず、ファイル全行 (実際は MAX 以下) を
+        // 返すことを確認 (defense-in-depth)。
+        use std::io::Write;
+        let tmp = TempDir::new().expect("tempdir");
+        let log_dir = tmp.path();
+        let date = logging::current_ymd_compact();
+        let log_path = log_dir.join(format!("error-{}.log", date));
+        {
+            let mut f = std::fs::File::create(&log_path).unwrap();
+            // 500 行のみ書く (MAX=10000 より少ない、cap 適用 path を確認しつつ
+            // 全行返却を assert)
+            for i in 0..500 {
+                writeln!(f, "line {}", i).unwrap();
+            }
+        }
+        // 巨大な line_count を渡しても panic せず 500 行返る (= ファイル全体)
+        let result = read_error_log_tail_inner(log_dir, usize::MAX).unwrap();
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines.len(), 500);
+        assert_eq!(lines[0], "line 0");
+        assert_eq!(lines[499], "line 499");
     }
 }

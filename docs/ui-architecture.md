@@ -102,6 +102,47 @@ GUI 内部で発生する想定外エラー (Rust panic / React 例外 / unhandl
 
 ErrorModal は [`docs/bug-report-guide.md`](bug-report-guide.md) §1.4 の「ログ取得」と連動する。ユーザーは ErrorModal の「ログフォルダを開く」→ 該当 `.log` ファイル → issue 添付という流れで bug report を提出する。詳細手順は bug-report-guide.md を参照。
 
+#### Issue 本文を clipboard にコピー (#669)
+
+ErrorModal の `[Issue 本文をコピー]` button は `bug_report.yml` form 用の Markdown 本文を生成し `navigator.clipboard.writeText` で clipboard に書き込む。user は隣接の `[Issue で報告する]` link で form を別ブラウザに開いてから、`実際の動作` textarea にペーストする運用。
+
+コピーされる本文の format ([`gui/src/lib/issueReportBody.ts`](../gui/src/lib/issueReportBody.ts) `buildIssueReportBody`):
+
+````markdown
+## 実際の動作
+
+<errorMessage>
+(stack trace がある場合)
+Stack:
+<errorStack>
+
+## 環境情報
+
+allaganeye <version> (<os_name>)
+  CPU: <cpu_info>
+  GPU: <gpu vendors comma-separated>
+  Memory: <N> GB
+  Disk: <free> / <total> GB free on <drive>
+
+## ログファイル (末尾抜粋)
+
+```text
+<logs/error-YYYYMMDD.log の末尾 300 行>
+```
+````
+
+データソース:
+
+- `actual` ← ErrorModal の `errorMessage` + (`errorStack` があれば `\n\nStack:\n{stack}`)
+- `environment` ← Tauri `probe_environment_info` で取得した OS/CPU/Memory/Disk + `metadata.system_info` の GPU vendor list を [`gui/src/lib/systemInfo.ts`](../gui/src/lib/systemInfo.ts) `formatSystemInfo()` で renders
+- `log_file_attachment` ← Tauri `read_error_log_tail(line_count: 300)` で `<install_dir>/logs/error-YYYYMMDD.log` 末尾 300 行を取得 (当日 log 不存在 → 前日 fallback)
+
+probe / log fetch が失敗してもコピー処理自体は継続する (該当 section は `(unknown)` / `(no environment info)` 等の sentinel で表示、log section は空のときに丸ごと省略)。
+
+> **設計上の経緯**: 初期実装は `bug_report.yml` URL に query string で 3 field を pre-fill する設計だったが、PR #669 の実機検証で form が空のまま開く現象を確認した。**真の原因は `bug_report.yml` が repository default branch (`main`) に不在で template 自体がロードされておらず、`?template=bug_report.yml` URL が free-form 「Create new issue」ページに silently fallback していた点** ([#728](https://github.com/Idios/kobutachan-allaganeye/issues/728) で追跡)。GitHub Issue Forms が custom textarea field の URL pre-fill を honor するかどうかは template が rendered な状態での再検証が必要 (関連 context は [GitHub Community discussion #22335](https://github.com/orgs/community/discussions/22335) を参照)。Plan B (clipboard 経由のコピー & ペースト方式) は template 状態に依存せず動作する robust 設計のため、#728 の解決を待たずに採用した。
+>
+> **#458 (同意チェック新設) 着手時の調整メモ**: 本機能の body builder は現状 `actual` / `environment` / `log_file_attachment` の 3 section のみ生成する。#458 で同意必須 field (`consent`) が `bug_report.yml` form に追加された場合、Markdown body 形式での扱い (例: section として加えるべきか、form の checkbox は手動入力が前提か) を再評価する。
+
 ### AppError code 体系と inline error の使い分け (#663)
 
 Tauri command の `Result<T, AppError>` で frontend に届く構造化 error は、
