@@ -1472,3 +1472,116 @@ describe('#691: catch path lifecycle pinning', () => {
     expect(state.draftSaveErrorHint).toBeNull();
   });
 });
+
+describe('#695: conflictErrorHint lifecycle', () => {
+  beforeEach(() => {
+    useMetadataStore.setState({
+      metadata: null,
+      filePath: null,
+      dirty: false,
+      loadError: null,
+      loadErrorHint: null,
+      applying: false,
+      applyError: null,
+      applyErrorHint: null,
+      hasBackup: false,
+      restoring: false,
+      restoreError: null,
+      restoreErrorHint: null,
+      loadedMtimeMs: null,
+      conflictError: null,
+      conflictErrorHint: null,
+      pendingDraft: null,
+      draftLoadError: null,
+      draftLoadErrorHint: null,
+      draftSaving: false,
+      draftSaveError: null,
+      draftSaveErrorHint: null,
+    });
+  });
+
+  it('runApply() catch (conflict) sets conflictErrorHint', async () => {
+    useMetadataStore.setState({
+      metadata: { source: '/test.mp4', matches: [] } as any,
+      filePath: '/test.mp4',
+    });
+
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'apply_changes') {
+        throw {
+          code: 'state.mtime_conflict',
+          message: 'metadata.json was modified',
+          hint: 'リロード or 上書き',
+        };
+      }
+      throw new Error(`unexpected: ${cmd}`);
+    });
+
+    await useMetadataStore.getState().apply();
+
+    const state = useMetadataStore.getState();
+    expect(state.conflictError).toBeTruthy();
+    expect(state.conflictErrorHint).toBe('リロード or 上書き');
+  });
+
+  it('dismissConflict() clears both conflictError and conflictErrorHint', () => {
+    useMetadataStore.setState({
+      conflictError: 'msg',
+      conflictErrorHint: 'hint',
+    });
+
+    useMetadataStore.getState().dismissConflict();
+
+    const state = useMetadataStore.getState();
+    expect(state.conflictError).toBeNull();
+    expect(state.conflictErrorHint).toBeNull();
+  });
+
+  it('clear() resets conflictErrorHint', () => {
+    useMetadataStore.setState({
+      conflictError: 'msg',
+      conflictErrorHint: 'hint',
+    });
+
+    useMetadataStore.getState().clear();
+
+    const state = useMetadataStore.getState();
+    expect(state.conflictErrorHint).toBeNull();
+  });
+
+  it('loadSample() resets conflictErrorHint', () => {
+    useMetadataStore.setState({
+      conflictError: 'msg',
+      conflictErrorHint: 'hint',
+    });
+
+    useMetadataStore.getState().loadSample();
+
+    const state = useMetadataStore.getState();
+    expect(state.conflictErrorHint).toBeNull();
+  });
+
+  it('applyOverwrite() success path resets conflictErrorHint', async () => {
+    // applyOverwrite calls runApply(true) which clears conflictError/conflictErrorHint
+    // in the initial set({ applying: true, ... }) before invoking apply_changes.
+    useMetadataStore.setState({
+      metadata: { source: '/test.mp4', matches: [] } as any,
+      filePath: '/test.mp4',
+      conflictError: 'prev conflict',
+      conflictErrorHint: 'prev hint',
+    });
+
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'apply_changes') return 12345; // new mtime ms
+      if (cmd === 'check_backup_exists') return true;
+      if (cmd === 'clear_draft') return undefined;
+      throw new Error(`unexpected: ${cmd}`);
+    });
+
+    await useMetadataStore.getState().applyOverwrite();
+
+    const state = useMetadataStore.getState();
+    expect(state.conflictError).toBeNull();
+    expect(state.conflictErrorHint).toBeNull();
+  });
+});
