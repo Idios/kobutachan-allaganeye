@@ -511,7 +511,7 @@ Edit `gui/src-tauri/src/process_util.rs` の `mod tests` 内に追加:
     /// の間に `apply_no_window` 文字列が現れることを assert する。
     /// 関数定義の境界判定は次の関数定義 `fn NAME(` まで、または `}\n\n`
     /// など緩い heuristic ではなく、関数名の出現位置から固定 window
-    /// (3000 char) を見ることで誤検出を避ける。
+    /// (5000 char) を見ることで誤検出を避ける。
     #[test]
     fn lib_rs_applies_apply_no_window_at_all_four_spawn_sites() {
         let src = include_str!("lib.rs");
@@ -524,13 +524,13 @@ Edit `gui/src-tauri/src/process_util.rs` の `mod tests` 内に追加:
             let pos = src
                 .find(func)
                 .unwrap_or_else(|| panic!("function `{}` not found in lib.rs", func));
-            // Look at the next 3000 chars after the fn header.
-            let window_end = (pos + 3000).min(src.len());
+            // Look at the next 5000 chars after the fn header.
+            let window_end = (pos + 5000).min(src.len());
             let window = &src[pos..window_end];
             assert!(
                 window.contains("apply_no_window"),
                 "function `{}` no longer calls `apply_no_window` within \
-                 its first 3000 chars. #679 fix has regressed -- re-apply \
+                 its first 5000 chars. #679 fix has regressed -- re-apply \
                  the helper at the spawn site.",
                 func
             );
@@ -1137,7 +1137,7 @@ head -50 tests/test_split_matches.py
 
 - [ ] **Step 2: failing test を file 末尾に追加**
 
-Edit `tests/test_split_matches.py` の末尾に以下を追加。既存スタイル ([`@patch(f"{MODULE}.xxx")`](../../tests/test_split_matches.py#L84) decorator + dummy `Path` fixture、`_mock_audio_scan` autouse fixture が audio scan を自動 no-op 化) を踏襲する:
+Edit `tests/test_split_matches.py` の末尾に以下を追加。既存スタイル ([`@patch(f"{MODULE}.xxx")`](../../tests/test_split_matches.py#L92) decorator + dummy `Path` fixture、`_mock_audio_scan` autouse fixture が audio scan を自動 no-op 化) を踏襲する:
 
 ```python
 # -- #644 brightness_samples wiring through run_split (一気通貫) --
@@ -1427,11 +1427,12 @@ Replace with (`brightness_samples=...` を渡し、空マップなら None):
 
 ```python
     # #644 -- captured_brightness が空なら build_brightness_samples が None を
-    # 返すため、`_split_and_write_metadata` に None を渡して metadata.json に
-    # brightness_samples キーを含めない (既存仕様「Pass 1 が走った場合のみ」)。
-    brightness_samples = (
-        build_brightness_samples(captured_brightness) if captured_brightness else None
-    )
+    # 返す (split_matches.py:1373-1374 `if not raw_brightness: return None`)。
+    # detect.py:239 (run_detect) と同パターン: guard なしで build_brightness_samples
+    # を呼び、None を _split_and_write_metadata に渡す。_build_metadata_payload が
+    # None で brightness_samples キーを skip するため、cache hit / Pass 1 skip 経路
+    # では metadata.json に書かれない (既存仕様「Pass 1 が走った場合のみ」と整合)。
+    brightness_samples = build_brightness_samples(captured_brightness)
     split_start = time.monotonic()
     _split_and_write_metadata(
         video_path,

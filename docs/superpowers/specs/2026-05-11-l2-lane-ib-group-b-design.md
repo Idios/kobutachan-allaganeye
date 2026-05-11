@@ -333,17 +333,21 @@ fn truncate_and_escape(line: &str, max_chars: usize) -> String {
 
 ### 6.6 testing
 
-- **unit test** (4 + 4 ケース):
+- **unit test** (5 + 7 = 12 ケース、詳細は plan Task 2.1 / 2.3 を参照):
   - `parse_detect_progress_line_with_warn` 経由 (closure で `Vec<String>` に push して warning capture):
     - 空行 → `None`、warn 呼ばれない
+    - 空白のみ行 (`"   \n"`) → `None`、warn 呼ばれない
     - valid JSON → `Some(DetectProgress)`、warn 呼ばれない
     - malformed JSON (`"not json"`) → `None`、warn 1 回呼ばれ message が `malformed JSON` を含む
     - 制御文字含む長文 (>64 char + `\x01` 混入) → warn message に escape 済 + truncate 済 line が含まれる
   - `truncate_and_escape` の境界 test:
     - empty string → `""`
-    - ASCII control (`\x01` 含む) → escape
-    - multibyte char (日本語) で boundary が char boundary に揃う
     - `max_chars = 0` → empty
+    - short ASCII → verbatim 返却
+    - 64 char より長い ASCII → char 数 64 で truncate
+    - TAB / LF / CR は escape せず保持
+    - その他 ASCII control (`\x01` / `\x1F` 等) → `\xNN` escape
+    - multibyte char (日本語) で boundary が char boundary に揃う
 - **regression**: `cargo test --lib` で全 test pass、既存 171 件 (うち `parse_detect_progress_line_*` 6 件) と整合
 
 ### 6.7 AppError 統合
@@ -364,7 +368,7 @@ fn truncate_and_escape(line: &str, max_chars: usize) -> String {
 
 | 関数 | 行 (develop-0.2.0) | 変更内容 |
 | --- | --- | --- |
-| `run_split` | [split_matches.py:54](../../allaganeye/commands/split_matches.py#L54) | `captured_brightness: dict[float, float] = {}` ローカル変数 + `_on_brightness` callback 追加、`_run_detection(..., brightness_callback=_on_brightness)` で配線、後続で `brightness_samples = build_brightness_samples(captured_brightness) if captured_brightness else None` を計算し `_split_and_write_metadata` に渡す |
+| `run_split` | [split_matches.py:54](../../allaganeye/commands/split_matches.py#L54) | `captured_brightness: dict[float, float] = {}` ローカル変数 + `_on_brightness` callback 追加、`_run_detection(..., brightness_callback=_on_brightness)` で配線、後続で `brightness_samples = build_brightness_samples(captured_brightness)` を計算し `_split_and_write_metadata` に渡す (`build_brightness_samples` は empty dict で `None` を返す。`detect.py:239` の `run_detect` と同パターン) |
 | `_split_and_write_metadata` | [split_matches.py:1153](../../allaganeye/commands/split_matches.py#L1153) | signature に `brightness_samples: BrightnessSamples \| None = None` 引数追加、`_build_metadata_payload(..., brightness_samples=brightness_samples)` に pass-through |
 | `run_split_from_metadata` | [split_matches.py:258](../../allaganeye/commands/split_matches.py#L258) | 元 metadata.json から `brightness_samples` を読み取り、`_split_and_write_metadata(brightness_samples=preserved)` に渡す (preserve 方針、PR #626 の `detection_started_at` preserve と同パターン) |
 
@@ -395,9 +399,11 @@ boundaries = _run_detection(
 )
 
 # ... boundary 処理後、_split_and_write_metadata 呼び出し直前
-brightness_samples = (
-    build_brightness_samples(captured_brightness) if captured_brightness else None
-)
+# build_brightness_samples は empty dict で None を返す
+# (split_matches.py:1373-1374 `if not raw_brightness: return None`)。
+# detect.py:239 (run_detect) と同パターン: guard なしで呼び、None なら
+# _build_metadata_payload が brightness_samples キーを skip する。
+brightness_samples = build_brightness_samples(captured_brightness)
 ```
 
 ### 7.3 cache hit 挙動
