@@ -27,7 +27,7 @@
 | 軸 | 決定 |
 | --- | --- |
 | Trigger | **Stop hook 自動削除** (非対話) |
-| Safety AND セット | `is-ancestor(origin/develop-0.2.0 OR origin/main)` AND `active 参照なし` AND `claude/` prefix AND `24h cooldown` |
+| Safety AND セット | `is-ancestor(origin/develop-0.2.0 OR origin/main)` AND `active 参照なし` AND `24h cooldown` (列挙 filter: `claude/` prefix 限定) |
 | `git fetch` | hook 内では走らせない (user の通常 `git pull` 運用前提、未 fetch なら is-ancestor false で keep = 安全側) |
 | Script 配置 | 別 script `scripts/cleanup-claude-branches.sh` を新設 (SRP / 既存 cleanup-worktrees.sh は touched せず) |
 | Log 統合 | PR #707 で追加した `.claude/state/stop-hook.log` に `--- branch cleanup ---` block を追記 (1 ファイル統合) |
@@ -70,10 +70,10 @@ Stop hook 発火
 [Step 2 (NEW): cleanup-claude-branches.sh --apply]
    - git -C $main_root branch --list 'claude/*' → 対象 enumerate
    - git -C $main_root worktree list --porcelain → active 参照集合
-   - 各 claude/<name> (概念的 AND 列挙、実評価順序は §6.1 step 4 通り AND 2 → AND 1 → AND 3):
-       AND 1: is-ancestor(develop-0.2.0) OR is-ancestor(main)
-       AND 2: ∉ active 参照集合
-       AND 3: log -1 ct < (now - 24*3600)
+   - 各 claude/<name> を **評価順 AND 2 → AND 1 → AND 3** で判定 (cost-efficient: AND 2 は local hash lookup で安価、AND 1/3 は git subprocess を spawn):
+       AND 2 (1st check): ∉ active 参照集合
+       AND 1 (2nd check): is-ancestor(develop-0.2.0) OR is-ancestor(main)
+       AND 3 (3rd check): log -1 ct < (now - 24*3600)
        → all satisfy: git branch -D
        → any fail:    keep (reason: not-merged | active | cooldown)
    - per-branch 結果 + summary を出力

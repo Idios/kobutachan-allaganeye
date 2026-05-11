@@ -88,7 +88,9 @@ for branch in "${BRANCHES[@]}"; do
   fi
 
   # AND 3: cooldown (最終 commit が 24h 以上前か)
-  last_ct=$(git -C "$REPO_ROOT" log -1 --format=%ct "$branch" 2>/dev/null || echo "")
+  # `-- ` separator で git DWIM (branch 名 vs path) の曖昧性を明示排除
+  # (claude/ prefix で path 衝突はほぼ理論上のみだが defensive depth)。
+  last_ct=$(git -C "$REPO_ROOT" log -1 --format=%ct "$branch" -- 2>/dev/null || echo "")
   if [[ -z "$last_ct" ]] || [[ "$last_ct" -ge "$COOLDOWN_THRESHOLD" ]]; then
     echo "  kept $branch (reason: cooldown)"
     kept=$((kept + 1))
@@ -101,11 +103,14 @@ for branch in "${BRANCHES[@]}"; do
     # (`Deleted branch X (was Y).`) も含めて完全抑制し、本 script の output 契約
     # (`deleted <branch>` / `delete failed: <branch>` / `would delete <branch>` /
     # `kept <branch> (reason: ...)`) のみが log に残るようにする (spec §6.1)。
-    if git -C "$REPO_ROOT" branch -D "$branch" >/dev/null 2>&1; then
+    git -C "$REPO_ROOT" branch -D "$branch" >/dev/null 2>&1
+    rc=$?
+    if [[ "$rc" -eq 0 ]]; then
       echo "  deleted $branch"
       deleted=$((deleted + 1))
     else
-      echo "  delete failed: $branch"
+      # exit=N で原因切り分け補助 (spec §7 通り)
+      echo "  delete failed: $branch (exit=$rc)"
       kept=$((kept + 1))
     fi
   else
