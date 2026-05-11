@@ -386,21 +386,15 @@
   white-space: nowrap;
 }
 
-/* #663 — 2nd-line hint rendered after `.listError`. Stays inside the
-   alert wrapper so screen readers read message + hint as one announcement.
-   The parent `.listError` clamps message text to a single line via
-   `max-width: 240px; overflow: hidden; text-overflow: ellipsis;
-   white-space: nowrap`. The hint must override all three so multi-line
-   Japanese hints are not truncated mid-character. */
+/* #693 — InlineErrorHint の wrapper として、parent .listError nowrap /
+   overflow:hidden を override し長い hint を折り返し可能にする。
+   font-* 系は InlineErrorHint 側に委譲。 */
 .listErrorHint {
   display: block;
-  color: var(--ae-text-dim);
-  font-size: 11px;
-  line-height: 1.5;
-  margin-top: 2px;
   white-space: normal;
   max-width: 100%;
   overflow: visible;
+  margin-top: 2px;
 }
 
 .listName {
@@ -467,10 +461,11 @@
   letter-spacing: 1px;
 }
 
+/* #693: InlineErrorHint wrapper として block 表示 (改行 + margin) と
+   parent .openFolderError の inline 配置 override を担保。font-size / color は
+   InlineErrorHint 側に委譲。 */
 .openFolderErrorHint {
   display: block;
-  font-size: 0.9em;
-  opacity: 0.85;
   margin-top: 0.25rem;
-  color: var(--ae-text-dim);
+  opacity: 0.85;
 }

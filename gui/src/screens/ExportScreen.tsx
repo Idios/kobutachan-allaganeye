@@ -4,6 +4,7 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { useEffect, useReducer, useRef, useState } from 'react';
 
 import { DisabledTooltip } from '../components/DisabledTooltip';
+import { InlineErrorHint } from '../components/InlineErrorHint';
 import { appErrorHint, appErrorMessage } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
@@ -713,8 +714,7 @@ export function ExportScreen() {
                     className={styles.openFolderErrorHint}
                     data-testid="open-folder-error-hint"
                   >
-                    <span aria-hidden="true">💡 </span>
-                    <span>{openFolderErrorHint}</span>
+                    <InlineErrorHint hint={openFolderErrorHint} />
                   </span>
                 )}
               </div>
@@ -917,7 +917,7 @@ export function ExportScreen() {
                       {s.error.slice(0, 120)}
                       {s.errorHint && (
                         <span className={styles.listErrorHint}>
-                          💡 {s.errorHint}
+                          <InlineErrorHint hint={s.errorHint} />
                         </span>
                       )}
                     </span>

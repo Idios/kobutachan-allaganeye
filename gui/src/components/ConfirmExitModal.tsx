@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { appErrorHint, appErrorMessage } from '../lib/appError';
+import { InlineErrorHint } from './InlineErrorHint';
 import styles from './ConfirmExitModal.module.css';
 
 /**
@@ -104,8 +105,7 @@ export function ConfirmExitModal() {
             <span>{error}</span>
             {errorHint && (
               <span className={styles.errorHint}>
-                <span aria-hidden="true">💡 </span>
-                <span>{errorHint}</span>
+                <InlineErrorHint hint={errorHint} />
               </span>
             )}
           </p>

@@ -9,6 +9,7 @@ import {
 } from 'react';
 
 import { FrameStrip, type FrameStripThumb } from '../components/FrameStrip';
+import { InlineErrorHint } from '../components/InlineErrorHint';
 import { RestoreButton } from '../components/RestoreButton';
 import { appErrorMessage } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
@@ -660,7 +661,7 @@ export function PreviewScreen() {
             {applyError}
             {applyErrorHint && (
               <span className={styles.applyErrorHint}>
-                💡 {applyErrorHint}
+                <InlineErrorHint hint={applyErrorHint} />
               </span>
             )}
           </span>

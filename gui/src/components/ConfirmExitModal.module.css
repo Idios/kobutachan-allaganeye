@@ -36,11 +36,13 @@
   line-height: 1.5;
 }
 
+/* #693: InlineErrorHint wrapper として block 表示 (改行 + margin) と
+   modal 内 layout 用 opacity override を担保。font-size / color は
+   InlineErrorHint 側に委譲。 */
 .errorHint {
   display: block;
-  font-size: 0.9em;
-  opacity: 0.85;
   margin-top: 0.25rem;
+  opacity: 0.85;
 }
 
 .hint {
