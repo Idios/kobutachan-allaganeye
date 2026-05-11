@@ -1,5 +1,6 @@
 import { useMetadataStore } from '../state/metadataStore';
 import styles from './DraftRestoreModal.module.css';
+import { InlineErrorHint } from './InlineErrorHint';
 
 /**
  * #517: modal offered on mount / after load when a `metadata.draft.json`
@@ -11,6 +12,7 @@ import styles from './DraftRestoreModal.module.css';
 export function DraftRestoreModal() {
   const pendingDraft = useMetadataStore((s) => s.pendingDraft);
   const draftLoadError = useMetadataStore((s) => s.draftLoadError);
+  const draftLoadErrorHint = useMetadataStore((s) => s.draftLoadErrorHint);
   const conflictError = useMetadataStore((s) => s.conflictError);
   const restoreDraft = useMetadataStore((s) => s.restoreDraft);
   const discardDraft = useMetadataStore((s) => s.discardDraft);
@@ -34,6 +36,7 @@ export function DraftRestoreModal() {
             draft を読み取れませんでした
           </h2>
           <p className={styles.message}>{draftLoadError}</p>
+          <InlineErrorHint hint={draftLoadErrorHint} />
           <p className={styles.hint}>
             metadata.draft.json が破損しているか schema が一致しません。破棄して続行します。
           </p>
