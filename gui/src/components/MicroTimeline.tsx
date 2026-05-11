@@ -31,7 +31,7 @@ export function MicroTimeline({
 
   const path = useMemo(
     () => buildBrightnessPath(samples, W, H),
-    [samples],
+    [samples, W, H],
   );
   const blackouts = useMemo(
     () => findBlackoutRegions(samples, windowSeconds, threshold),
