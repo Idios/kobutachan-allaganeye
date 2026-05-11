@@ -123,11 +123,16 @@ GUI complete 画面の輝度タイムライン (`BrightnessTimeline` SVG) 用の
 | `interval_s` | number | ✓ | 配列の各要素が表す秒間隔 (例: `25.0` なら `values[i]` は `i * 25` 秒の輝度) |
 | `values` | array of number | ✓ | 平均輝度 (0-255 の float) を時系列順に並べたもの。最大 512 要素 |
 
-書き込みパス:
+**書き込みパス別の挙動 (#569 + #644)**:
 
-- `allaganeye detect`: cache miss path で Pass 1 が走った場合に書き込む。cache hit / 空 (Pass 1 未実行) の場合はフィールド自体を省略 (`null` ではなく key 不在)
-- `allaganeye split <video>` (legacy): 同上。`run_split` 経由でも `brightness_callback` を渡せば書ける (#569 では detect コマンドのみ書き込み)
-- `allaganeye split --from-metadata`: 入力 metadata.json の値をそのまま転記 (再計算しない)
+| 経路 | 書き込み |
+| --- | --- |
+| `allaganeye detect` (Pass 1 走行) | ✓ 書く (#569) |
+| `allaganeye split` (新規検知、Pass 1 走行) | ✓ 書く (#644 で `brightness_callback` 配線) |
+| `allaganeye split` (cache hit、Pass 1 skip) | ✗ 欠落 (cache に brightness を含めない設計) |
+| `allaganeye split --from-metadata` | 元 metadata から **preserve** (元が欠落なら欠落、PR #626 detection_started_at と同パターン) |
+
+cache hit / Pass 1 未実行の場合は key 自体を省略する (`null` ではなく key 不在)。GUI 側は欠落許容済 (#569) のため、欠落時は `sampleBrightness()` 固定波形 fallback で描画する。`allaganeye split --no-cache` を使えば常に Pass 1 を走らせて書ける。
 
 GUI complete 画面は `metadata.brightness_samples?.values` を読み、欠落時はサンプルデータ (`buildSampleBrightness`) にフォールバックする。
 
