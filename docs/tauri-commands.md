@@ -4,7 +4,7 @@
 
 ## エラー型 (migration 完了)
 
-- 戻り値型: **全 23 command が `Result<T, AppError>` または `bool` 直接 (`is_process_running`) を返す** (PR [#665](https://github.com/Idios/kobutachan-allaganeye/pull/665) で legacy `Result<T, String>` から完全 migration 済)
+- 戻り値型: **全 25 command が `Result<T, AppError>` または `bool` / 値直接 (`is_process_running` / `probe_environment_info`) を返す** (PR [#665](https://github.com/Idios/kobutachan-allaganeye/pull/665) で legacy `Result<T, String>` から完全 migration 済、PR #669 で `read_error_log_tail` / `probe_environment_info` 追加)
 - `AppError` 構造体 (`gui/src-tauri/src/error.rs`、PR [#661](https://github.com/Idios/kobutachan-allaganeye/pull/661) Refs [#614](https://github.com/Idios/kobutachan-allaganeye/issues/614) で導入) のフィールド: `code: String` (domain-specific identifier、例 `io.file_not_found`) / `message: String` / `hint: Option<String>` / `stacktrace: Option<String>`
 - `From<std::io::Error>` / `From<serde_json::Error>` / `From<String>` / `From<&str>` impl があり、`?` 演算子で自動変換される (PR #665 で追加)。`std::io::Error` は `ErrorKind` から domain code を派生 (例 `NotFound` → `io.file_not_found`)
 - frontend 側 narrowing: `gui/src/lib/appError.ts` の `appErrorMessage(e)` / `appErrorCodeIs(e, code)` / `isAppError(e)` ヘルパーを使う。Tauri は `AppError` を JSON object として frontend に渡し、invoke 失敗時 Promise.reject 値が AppError instance になる
@@ -47,7 +47,9 @@
 | 20 | `select_h264_encoder_for_export` | `vendors: Vec<String>, preference: Vec<String>` | `EncoderInfo` | pure | (純粋関数、エラーなし) | - |
 | 21 | `start_detect` | `app: AppHandle, video_path: String, output_dir: String, params: DetectParams` | `Result<DetectResult, AppError>` | subprocess | (a) python CLI 不在、(b) python -m fallback 失敗、(c) detect 実行中エラー | (a) `python.not_found`、(b) `subprocess.spawn_failed`、(c) `subprocess.exit_failed` |
 | 22 | `get_log_dir` | (なし) | `Result<String, AppError>` | pure | (a) install_dir 取得失敗 (極端ケース) | (a) `path.install_dir_unresolved` |
-| 23 | `dev_force_panic` | (なし) | `Result<(), AppError>` | state-mutating | **意図的 panic** (`#[cfg(debug_assertions)]` 限定、PR #661 E2E 検証用) | - (panic で異常終了が期待動作) |
+| 23 | `read_error_log_tail` | `line_count: usize` | `Result<String, AppError>` | I/O | (a) install_dir 取得失敗、(b) log file の open / read 失敗 | (a) `path.install_dir_unresolved`、(b) `io.read_failed` |
+| 24 | `probe_environment_info` | (なし) | `EnvironmentProbe` | pure | (常に struct で返却、エラーケースなし — 個別 field は `None` で degrade) | - |
+| 25 | `dev_force_panic` | (なし) | `Result<(), AppError>` | state-mutating | **意図的 panic** (`#[cfg(debug_assertions)]` 限定、PR #661 E2E 検証用) | - (panic で異常終了が期待動作) |
 
 ## 補足
 
@@ -71,6 +73,27 @@ try {
   }
 }
 ```
+
+## #669 -- ErrorModal Issue 報告 link pre-fill 関連 command
+
+PR #669 で追加した 2 command (`read_error_log_tail` / `probe_environment_info`) は ErrorModal の `[Issue で報告する]` link が `bug_report.yml` form の pre-fill URL を組み立てるために使う。両方 best-effort (失敗しても base URL で form は開く)。
+
+### `read_error_log_tail`
+
+- **用途**: `bug_report.yml` の `log_file_attachment` field を pre-fill するため、`<install_dir>/logs/error-YYYYMMDD.log` の末尾 N 行を取得
+- **Fallback 規則**:
+  - 当日 (YYYYMMDD) の log file が存在しない / 空 → 前日 log にフォールバック (1 日のみ)
+  - 前日 log も存在しない / 空 → 空文字列 (`""`) を返す (エラーでなく、frontend 側で「log なし」として graceful 表示)
+  - `line_count == 0` → 空文字列を即返す (loop 暴走防止)
+- **frontend caller**: `gui/src/components/ErrorModal.tsx` の useEffect (`errorOpen=true` タイミング)
+
+### `probe_environment_info`
+
+- **用途**: `bug_report.yml` の `environment` field を pre-fill するため、OS / CPU / Memory / Disk 情報を `sysinfo` crate 経由で probe
+- **戻り値**: `EnvironmentProbe { allaganeye_version, os_name, cpu_info, memory_total_gb, disk_free_gb, disk_total_gb, disk_drive }` (snake_case で frontend 側 `gui/src/lib/systemInfo.ts` の type と一致)
+- **設計理由**: 既存 `metadata.system_info` (Python `_build_system_info` 由来) は GPU 3 field のみ書く。bug_report.yml `environment` placeholder の format (`allaganeye 0.2.0 (Windows 11) / CPU: ... / Memory: ...`) を満たすため Tauri 側で live probe する (PR #669 の plan 修正、Option B 採用)
+- **frontend 側 helper**: `gui/src/lib/systemInfo.ts` `formatSystemInfo(probe, metadata.system_info)` で probe + GPU vendor list を結合し environment 文字列を組み立てる
+- **Disk metrics**: install dir (`<exe-parent>`) を含む disk を `mount_point` の longest prefix で選択。マッチしない場合は disk_* fields 全て `None`
 
 ## CI による doc 整合性検査
 

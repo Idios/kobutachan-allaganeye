@@ -102,6 +102,20 @@ GUI 内部で発生する想定外エラー (Rust panic / React 例外 / unhandl
 
 ErrorModal は [`docs/bug-report-guide.md`](bug-report-guide.md) §1.4 の「ログ取得」と連動する。ユーザーは ErrorModal の「ログフォルダを開く」→ 該当 `.log` ファイル → issue 添付という流れで bug report を提出する。詳細手順は bug-report-guide.md を参照。
 
+#### Issue 報告 link の自動 pre-fill (#669)
+
+ErrorModal の `[Issue で報告する]` link は `bug_report.yml` の URL に query string で以下 3 field を pre-fill する (Group G PR [#688](https://github.com/Idios/kobutachan-allaganeye/pull/688) で凍結された field id):
+
+- `actual` ← ErrorModal の `errorMessage` + (`errorStack` があれば `\n\nStack:\n{stack}`)
+- `environment` ← Tauri `probe_environment_info` で取得した OS/CPU/Memory/Disk 情報 + `metadata.system_info` の GPU vendor list を [`gui/src/lib/systemInfo.ts`](../gui/src/lib/systemInfo.ts) `formatSystemInfo()` で renders
+- `log_file_attachment` ← 新 Tauri command `read_error_log_tail(line_count: 300)` で `<install_dir>/logs/error-YYYYMMDD.log` 末尾 300 行を取得 (当日 log 不存在 → 前日 fallback)
+
+URL 全長 8KB safe budget (7800 bytes) を超える場合は [`gui/src/lib/issueReportUrl.ts`](../gui/src/lib/issueReportUrl.ts) の `truncateLogToBudget()` で `log_file_attachment` を `LOG_LINE_STEPS = [300, 150, 75, 50, 0]` で段階削減し、末尾に「ログが切り詰められました — 完全なログは {logPath} を参照してください」notice を追加する。0 line でも budget に収まらない場合は `log_file_attachment` field を URL から省略する (actual + environment は維持される)。
+
+`probe_environment_info` / `read_error_log_tail` が失敗しても link は base URL ([`gui/src/lib/issueReportUrl.ts`](../gui/src/lib/issueReportUrl.ts) `BUG_REPORT_BASE_URL`) で必ず開ける (graceful fallback、useEffect 内で個別 catch)。
+
+> **#458 (同意チェック新設) 着手時の調整メモ**: 本機能の URL builder は現状 `actual` / `environment` / `log_file_attachment` の 3 field のみ pre-fill する。#458 で同意必須 field (`consent`) が `bug_report.yml` form に追加された場合、その field の pre-fill 要否を再評価し、必要なら [`gui/src/lib/issueReportUrl.ts`](../gui/src/lib/issueReportUrl.ts) の builder にも追加する。
+
 ### AppError code 体系と inline error の使い分け (#663)
 
 Tauri command の `Result<T, AppError>` で frontend に届く構造化 error は、
