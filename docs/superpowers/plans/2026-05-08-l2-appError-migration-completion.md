@@ -2032,7 +2032,7 @@ PR #665 (`ea9bca9`) で `gui/src-tauri/src/lib.rs` の全 23 Tauri commands が
 - [ ] (D) `docs/ui-interaction-spec.md` § 1.5 に `error.code` ベース分岐ルール節 (§1.5.x) が追加されている
 - [ ] cargo check / cargo test --lib (新 6 件 + 既存 149 件 = 155 件 pass)
 - [ ] npm run lint / typecheck / test (新 13-15 件 + 既存 ~566 件 = ~580 件 pass) / build
-- [ ] CI 全 8 job pass (gui-rust / gui-frontend / build-windows / installer-pester / python / markdownlint / validate-checklist / version-check)
+- [ ] CI PR 全 7 job pass (`python` / `gui-frontend` / `gui-rust` / `doc-tauri-commands-drift` / `installer-pester` / `markdownlint` / `validate-checklist`) ※ `build-windows` / `version-check` は `release.yml` 専用で PR CI には含まれない
 - [ ] Iron Law 6 実機検証 5 経路 (state.mtime_conflict / io.permission_denied / io.file_not_found / parse.json_invalid / subprocess.spawn_failed) を Idios が PASS 確認
 
 ## スコープ外
