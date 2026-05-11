@@ -10,6 +10,7 @@ import {
 
 import { FrameStrip, type FrameStripThumb } from '../components/FrameStrip';
 import { RestoreButton } from '../components/RestoreButton';
+import { appErrorMessage } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import {
   useMetadataStore,
@@ -242,7 +243,12 @@ export function PreviewScreen() {
       } catch (e) {
         if (!cancelled) {
           setVideoUrl(null);
-          setVideoError(e instanceof Error ? e.message : String(e));
+          // #678 Lane II-b §2.1 — AppError struct (Tauri Result<T, AppError>) /
+          // Error / raw string / null/undefined を appErrorMessage で統一処理。
+          // 旧実装 `e instanceof Error ? e.message : String(e)` は AppError 流入時に
+          // `[object Object]` 表示になっていた。
+          // PreviewScreen には videoErrorHint 枠なし → hint UI は追加しない (spec §2.1 規約)。
+          setVideoError(appErrorMessage(e));
         }
       }
     })();

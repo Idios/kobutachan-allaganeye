@@ -438,3 +438,39 @@
   text-align: center;
   color: var(--ae-text-dim);
 }
+
+/*
+ * #678 Lane II-b §2.1: handleOpenFolder catch path の 2 行 error 表示。
+ * 既存 `.errorMessage` の色味 / borderを継承しつつ、message と hint を縦
+ * 並びで表示する。
+ *
+ * - `.openFolderError`: container (block 表示 + flex column)
+ * - `.openFolderErrorPrefix`: 「フォルダを開けませんでした:」固定 prefix
+ * - `.openFolderErrorHint`: AppError.hint (`appErrorHint(e)`) があるときの 2
+ *   行目
+ */
+.openFolderError {
+  padding: 8px;
+  background: rgba(200, 112, 88, 0.1);
+  border: 1px solid var(--ae-danger);
+  color: var(--ae-danger);
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.openFolderErrorPrefix {
+  color: var(--ae-text-dim);
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+.openFolderErrorHint {
+  display: block;
+  font-size: 0.9em;
+  opacity: 0.85;
+  margin-top: 0.25rem;
+  color: var(--ae-text-dim);
+}
