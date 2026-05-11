@@ -1496,11 +1496,11 @@ Expected: 全 CI job pass。
 
 ### PR-1 メタ情報
 
-- PR URL: [TBD]
-- PR 番号: [TBD]
-- 作成時刻: [TBD]
-- CI 結果: [TBD]
-- merge 時刻: [TBD]
+- PR URL: <https://github.com/Idios/kobutachan-allaganeye/pull/715>
+- PR 番号: #715
+- 作成時刻: 2026-05-11 (session `tender-moore-2a5d2f`)
+- CI 結果: **全 9 jobs PASS** ✅ (`doc-error-hint-drift` 6s / `shellcheck` 7s / `markdownlint` 8s / `validate-checklist` 7s / `doc-tauri-commands-drift` 6s / `gui-frontend` 1m5s / `gui-rust` 4m12s / `installer-pester` 33s / `python` 1m0s)
+- merge 時刻: [TBD — レビュー後]
 
 ### PR-2 メタ情報
 
