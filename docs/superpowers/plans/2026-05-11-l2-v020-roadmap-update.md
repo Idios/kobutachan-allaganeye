@@ -21,7 +21,7 @@
 
 - 旧 plan 「Group A AppError 起点」(Lane I-A) が DONE。Group B (Lane I-B) は `with_default_hint()` chain 経由で AppError 経路に乗る前提が成立
 - 旧 plan 「Group F l2b 配布 4 件」全件 DONE。`allaganeye.bat` GUI 起動 / portable ZIP versioned 名 / 同梱物 integrity check / `get-pip.py` SHA pin が production
-- 旧 plan 「Group G workflow 3 件」のうち 2 件 DONE。残 #458 (bug_report.yml) は本 plan で Lane IV-b' に統合
+- 旧 plan 「Group G workflow 3 件」のうち 2 件 DONE。残 #458 (bug_report.yml) は当初 Lane IV-b' に統合予定だったが本 plan 確定時に scope-out (実装完了済、release gate 後 handoff)
 - 旧 plan 「Group H lint/CLI 2 件」DONE。ESLint window.confirm/alert/prompt block + CLI 進捗バー ETA 表示改善が production
 - 旧 plan 注釈「[#365](https://github.com/Idios/kobutachan-allaganeye/issues/365) は v0.2.0 内取り込み disposition」消化済 (#365 closed via PR #687)
 
@@ -72,13 +72,13 @@
 **並行安全度**: low (全画面 path レイアウト) / **brainstorming 単位**: 1 spec / 1 章
 **注**: #680 は Group D に fold 済 (旧 plan 「Group E #680」)
 
-### Group G: l2-workflow 残 (1 件、Lane IV-b' で Group J と統合)
+### Group G: l2-workflow 残 (1 件、Lane IV-b' から scope-out)
 
 | # | priority | 概要 |
 | --- | --- | --- |
 | #458 | P2 | bug_report.yml (同意チェック付き) 新設 — 外部ユーザー受け入れ準備 |
 
-**並行安全度**: high (`.github/ISSUE_TEMPLATE/bug_report.yml` 独立) / **brainstorming 単位**: Lane IV-b' で Group J と統合 (1 spec / 3 章)
+**並行安全度**: high (`.github/ISSUE_TEMPLATE/bug_report.yml` 独立) / **brainstorming 単位**: 本 issue は Lane IV-b' から scope-out (PR #497 + PR #688 で実装完了済、残るは L2 release 後の UI 実測のみ、release gate 後に `/close-issue` で handoff)。Lane IV-b' は Group J 単独 (1 spec / 2 章)
 
 ### Group I: post-#663 GUI cleanup (7 件、新規、Lane V 3 phase)
 
@@ -100,14 +100,14 @@
 - Phase 2 (Wave 1 main 3 lanes merge 後): #694 unified ErrorState refactor (5 screen + 3 modal consumer 一括 refactor)
 - Phase 3 (#694 merge 後): #699 docstring (refactor 結果反映)
 
-### Group J: post-#663 workflow polish (2 件、新規、Lane IV-b' 統合)
+### Group J: post-#663 workflow polish (2 件、新規、Lane IV-b' 単独)
 
 | # | priority | 概要 |
 | --- | --- | --- |
 | #692 | P3 | error.rs hint table drift check job 追加 (CI で `error.rs::default_hint_for_code` 22 entries と `docs/tauri-commands.md` の文言一致を保証) |
 | #700 | P3 (bug) | markdownlint ignore で nested `gui/node_modules` を除外 (`.markdownlint-cli2.yaml`) |
 
-**並行安全度**: high (CI yml + markdownlint config 独立) / **brainstorming 単位**: Lane IV-b' で Group G #458 と統合 (1 spec / 3 章)
+**並行安全度**: high (CI yml + markdownlint config 独立) / **brainstorming 単位**: Lane IV-b' 単独 (1 spec / 2 章、#458 は scope-out)
 
 ### Group K: l2b cleanup (2 件、新規、Lane IV-e)
 
@@ -157,10 +157,12 @@ WAVE 1  (CURRENT — 最大 6 lane 並行可、bandwidth に応じて選択)
                 #699 docstring 更新 (refactor 結果反映)
               1 spec / 7 章 (3 phase 構成)
 
-  Lane IV-b'  Group G remainder + Group J 統合 (workflow / CI / docs polish)
-              #458 (P2、bug_report.yml) // #692 (error.rs hint drift CI) // #700 (markdownlint nested ignore)
+  Lane IV-b'  Group J 単独 (workflow / CI / docs polish)
+              #692 (error.rs hint drift CI) // #700 (markdownlint nested ignore)
               file 完全独立、PR 並行可
-              1 spec / 3 章
+              1 spec / 2 章
+
+              ※ Group G #458 は本 lane から scope-out (実装完了済、release gate 後 /close-issue handoff)
 
   Lane IV-e   Group K (l2b cleanup)
               #704 (Pester PS5.1 BOM) // #705 (BtbN URL 陳腐化対策、旧 plan 「5 章目」消化)
@@ -197,7 +199,7 @@ WAVE 3  (release gate)
 /superpowers:brainstorming Lane V Phase 3: Group I #699 docstring 更新 (#694 merge 後)
 
 # Wave 1 polish - Lane IV (workflow / CI / installer)
-/superpowers:brainstorming Lane IV-b': Group G #458 + Group J #692 #700 (workflow / CI / docs polish)
+/superpowers:brainstorming Lane IV-b': Group J #692 #700 (workflow / CI / docs polish、#458 は scope-out)
 /superpowers:brainstorming Lane IV-e: Group K の問題を解決したい (#704 #705 l2b cleanup)
 
 # Wave 2 (Wave 1 完走後)
@@ -218,7 +220,7 @@ WAVE 3  (release gate)
 | V Phase 1 (5 件) | | ✓ #691 | | | | | ✓ #695 | ✓ #697 | ✓ #698 | | | | | | | |
 | V Phase 2 (#694) | | ✓ refactor | (consumer) | (consumer) | | (consumer) | (consumer) | (consumer) | (consumer) | ✓ refactor | | | | | | |
 | V Phase 3 (#699) | | | | | | | | | | | | | | | | (docstring) |
-| IV-b' (#458 #692 #700) | | | | | | | | | | | ✓ #692 | ✓ #692 | ✓ #458 | ✓ #700 | | |
+| IV-b' (#692 #700) | | | | | | | | | | | ✓ #692 | ✓ #692 | | ✓ #700 | | |
 | IV-e (#704 #705) | | | | | | | | | | | | | | | ✓ #704 | ✓ #705 |
 | III (#676) | | | (path) | (path) | | 全画面 path | | | (path) | | | | | | | |
 
@@ -253,6 +255,12 @@ WAVE 3  (release gate)
 6. **Lane V Phase 1 #698 / Lane II-a #633 の DropScreen 衝突**: 先着優先 + rebase で吸収
 
 ## 4. deferred / v0.2.0 対象外
+
+### Group G #458 — Lane IV-b' から scope-out (handoff)
+
+[#458](https://github.com/Idios/kobutachan-allaganeye/issues/458) (P2、bug_report.yml) は本 plan 公開時点で実装作業完了済 (PR #497 + PR #688)、残る受け入れ条件 1 件「New issue UI からテンプレ選択可能」は L2 release (`develop-0.2.0 → main` マージ) 後に main 反映済みの環境で実測する必要があるため、Lane IV-b' (Wave 1) から scope-out した。
+
+release gate (Wave 3) 後、L3 初期に `/close-issue` skill で実測 → close する handoff path で運用する。
 
 ### v0.2.0 外確定 (deferred ラベル維持、6 件)
 
