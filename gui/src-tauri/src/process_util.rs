@@ -38,26 +38,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn apply_no_window_returns_same_mut_reference() {
-        // Smoke test: helper must chain (return the same `&mut Command`)
-        // so call sites can write either:
-        //   apply_no_window(&mut cmd);
-        //   cmd.arg(...);
-        // or:
-        //   let cmd = apply_no_window(&mut cmd);
-        //   cmd.arg(...);
+    fn apply_no_window_does_not_panic_on_default_command() {
+        // Smoke test: helper must not panic when applied to a freshly
+        // constructed Command. Helper's `&mut Command -> &mut Command`
+        // return type (= chain support) is enforced by the type system
+        // at call sites such as `process_util::apply_no_window(&mut cmd);`
+        // followed by `cmd.arg(...)`. On Windows the helper calls
+        // `cmd.creation_flags(CREATE_NO_WINDOW)`; on non-Windows it's a
+        // no-op identity. We pin the compilable + non-panicking smoke
+        // here; the `lib_rs_applies_apply_no_window_at_all_four_spawn_sites`
+        // test below pins adoption at the call sites.
         let mut cmd = tokio::process::Command::new("true");
-        let returned = apply_no_window(&mut cmd);
-        // `as *mut _` strips lifetime/type so we can compare the raw addr
-        // without re-borrowing.
-        let returned_ptr = returned as *mut tokio::process::Command;
-        // Build a fresh ref to original to compare; since `apply_no_window`
-        // returns the same exclusive borrow, this should be address-equal.
-        // (We can't hold both refs simultaneously due to borrow checker,
-        // so we capture the address via the returned ref alone.)
-        let _ = returned_ptr; // suppress unused if pointer comparison is omitted on some toolchain
-        // On Windows the helper must not panic; on non-Windows it's no-op.
-        // The compilable + non-panicking smoke is what we pin.
+        apply_no_window(&mut cmd);
     }
 
     #[test]
