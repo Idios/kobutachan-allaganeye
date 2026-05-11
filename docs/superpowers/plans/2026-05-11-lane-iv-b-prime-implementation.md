@@ -1472,12 +1472,19 @@ Expected: 全 CI job pass。
 
 実装フェーズで追記する記録。各 task 完了時に状況を memo。
 
-### Task 0 結果
+### Task 0 結果 (2026-05-11 session `tender-moore-2a5d2f`)
 
-- 取り込み未済 commit: [TBD - 実装時記入]
-- 並行 worktree PR: [TBD]
-- shellcheck pass 状況: [TBD - pass / 軽微 N 件 / 多数 N 件、各 file 別の件数]
-- 多数の場合の AskUserQuestion 結果: [該当時のみ TBD]
+- 取り込み未済 commit: **なし** (worktree は `origin/develop-0.2.0` と同期)
+- 並行 worktree PR: **なし** (`gh pr list --state open --search "#692 OR #700 OR Lane IV-b"` 出力 `[]`)
+- shellcheck install: **NOT_INSTALLED** (Windows local + sandbox 制限で winget / WSL apt の install attempt 不可)
+- shellcheck local 実行: **skip** (未 install のため、subagent 環境では install できず)
+- Manual static analysis (代替):
+  - `scripts/check-markdownlint.sh` (27 lines): 0 issues estimated (set -euo pipefail / BASH_SOURCE / quote 全て clean)
+  - `scripts/cleanup-worktrees.sh` (108 lines): 1 warning estimated (line 94 `[[ -z "$(ls -A "$d" 2>/dev/null)" ]]` で SC2012 `Use find instead of ls`)
+  - 合計 estimated: 1 warning (軽微 1-3 範囲)
+- **判定: 軽微 1-3 件 branch を採用** — Task 7 で shellcheck job 追加 + 既存 script に必要最小限の修正 (SC2012 pragma or `find` 置換、本 PR 内で透明化)
+- shellcheck CI 上動作: `ludeeus/action-shellcheck@master` (または pinned version) が `ubuntu-latest` で shellcheck を auto-install して実行するため、local 未 install は CI 動作に影響なし。Task 7 「local shellcheck で repo 全体 .sh が pass」step は CI 実証 (PR-1 push 時) で代替する
+- 多数 (4+) でなかったため AskUserQuestion 発動なし
 
 ### Task 4 結果 (実機 drift run)
 
