@@ -38,8 +38,12 @@ Spec: docs/superpowers/specs/2026-05-11-lane-iv-b-prime-design.md §3.4
 
 検証を再実行したい場合は本 log の各 red ケースに記載した sed pattern をそのまま適用すれば再現できる。手順:
 
-1. `git diff --quiet docs/tauri-commands.md` で事前 clean 確認
-2. 該当 red ケースの sed コマンドを `-i.bak` 付きで実行
-3. `bash .github/scripts/check-error-hint-drift.sh` で exit 1 を確認
+1. `git diff --quiet docs/tauri-commands.md` で事前 clean 確認 (exit 0)
+2. backup を退避してから sed で書き換え:
+   - 安全な統一方法: `cp docs/tauri-commands.md docs/tauri-commands.md.bak` で先に backup を作成し、続けて該当 red ケースの sed pattern を `sed -i 's/.../.../' docs/tauri-commands.md` で適用 (GNU sed 前提、Linux / Git Bash / WSL)
+   - 等価で 1 コマンドに圧縮する場合: `sed -i.bak 's/.../.../' docs/tauri-commands.md` でも同じ結果になる (GNU sed が in-place edit 前に `.bak` を残す)。BSD sed (macOS 既定) では挙動が異なるので `sed -i '' -e '...'` が必要 — 本 project は Windows + Git Bash (GNU sed) 想定で、CI も `ubuntu-latest` (GNU sed) のため通常は気にしなくて良い
+3. `bash .github/scripts/check-error-hint-drift.sh` で exit 1 を確認 (`UNEXPECTED PASS` が出ないこと)
 4. `mv docs/tauri-commands.md.bak docs/tauri-commands.md` で revert
-5. `bash .github/scripts/check-error-hint-drift.sh` で exit 0 を確認
+5. `bash .github/scripts/check-error-hint-drift.sh` で exit 0 を確認、加えて `git diff --quiet docs/tauri-commands.md` で差分なしを確認
+
+以上 3 ケースで spec §3.4 が要求する drift detection 仕様 (文言変更 / or-pattern code 削除 / None sentinel 変更) を完全に検証した。
