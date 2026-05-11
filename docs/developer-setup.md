@@ -315,7 +315,7 @@ Install-Module Pester -MinimumVersion 5.0.0 -Scope CurrentUser -Force -SkipPubli
 Invoke-Pester -Path scripts/tests/ -Output Detailed
 ```
 
-テスト対象: `Invoke-Download` の SHA256 検証、`Assert-FFmpegLayout` の BtbN 展開レイアウト検証、`Format-ReadmeContent` の LGPLv3 文言。詳細は [`scripts/tests/build-portable-zip.Tests.ps1`](../scripts/tests/build-portable-zip.Tests.ps1)。
+テスト対象: `Invoke-Download` の SHA256 検証、`Assert-FFmpegLayout` の BtbN 展開レイアウト検証、`Format-ReadmeContent` の LGPLv3 文言、`File encoding (#704)` の BOM 検証 (PS5.1 + 日本語コメント parse 担保)。詳細は [`scripts/tests/build-portable-zip.Tests.ps1`](../scripts/tests/build-portable-zip.Tests.ps1)。
 
 ## 5. サンプル動画データ
 
@@ -389,20 +389,21 @@ CI / Portable ZIP / 開発環境の 3 環境で Python と FFmpeg のバージ�
 | `scripts/build-portable-zip.ps1` | `$PythonVersion = '3.11.9'` + `$PythonEmbedSha256` |
 | `docs/developer-setup.md` §1 | 「Python 3.11 (3.11.9 推奨)」の記載 |
 
-### FFmpeg (現在 BtbN LGPLv3 n8.1 shared / `autobuild-2026-05-06-13-32` に固定)
+### FFmpeg (現在 BtbN LGPLv3 n8.1 shared / `autobuild-2026-04-30-13-44` monthly snapshot に固定)
 
-更新手順:
+更新手順 (#705 monthly snapshot policy):
 
-1. [BtbN/FFmpeg-Builds/releases](https://github.com/BtbN/FFmpeg-Builds/releases) で新しい `autobuild-YYYY-MM-DD-HH-MM` タグを選ぶ
-1. 必要な 2 資産 (win64-lgpl-shared-8.1.zip / linux64-lgpl-shared-8.1.tar.xz) の SHA256 を取得:
+1. [BtbN/FFmpeg-Builds/releases](https://github.com/BtbN/FFmpeg-Builds/releases) で **monthly snapshot** = タグ名が `autobuild-YYYY-MM-{28,29,30,31}-*` (各月末日 daily が survive したもの) を選ぶ。**daily 中間タグ (例: `autobuild-2026-05-06-13-32`) は禁止** (~14 日で BtbN GC、Pester `BtbN pinning policy (#705)` regression test で reject される)。
+1. その release の `checksums.sha256` から win64 + linux64 の 2 資産 SHA256 を取得:
 
    ```bash
-   gh api repos/BtbN/FFmpeg-Builds/releases/tags/<タグ名> \
-     --jq '.assets[] | select(.name | test("n8[.]1.*(win64-lgpl-shared-8[.]1[.]zip|linux64-lgpl-shared-8[.]1[.]tar[.]xz)$")) | {name, digest}'
+   curl -sL "https://github.com/BtbN/FFmpeg-Builds/releases/download/<タグ名>/checksums.sha256" \
+     | grep -E 'win64-lgpl-shared-8\.1\.zip$|linux64-lgpl-shared-8\.1\.tar\.xz$'
    ```
 
-1. 以下を**同一タグ・同一 autobuild 系列で**更新 (下表参照)。major version 系列変更 (例: 8.x → 9.x) 時は docs の major version 記述も揃える。cache key に SHA256 が埋め込まれているので、SHA256 を変更すれば CI / release 両方のキャッシュが自動で invalidate される
-1. ローカルで Portable ZIP ビルドが緑になることを確認 (`pwsh ./scripts/build-portable-zip.ps1 -Version <version>`) し、PR で CI の `build-windows` と `python` ジョブ両方が通ることを確認する
+   2 行出力 = 各 asset の SHA256 + ファイル名。BtbN naming は monthly snapshot のタイミングで OLD format (`ffmpeg-n<ver>-<count>-g<commit>-...`) と NEW format (`ffmpeg-n<ver>-...`) のどちらにもなりうる。`Get-FFmpegSourceRef` は両対応済 (`scripts/tests/build-portable-zip.Tests.ps1` の `Describe 'Get-FFmpegSourceRef'` 参照)。
+1. 以下の場所を**同一タグ・同一 SHA256 系列で**更新する (下表、常時更新の 3 行 + 条件付き 2 行 = 計 5 行)。major version 系列変更 (例: 8.x → 9.x) 時は docs の major version 記述 (下表 4-5 行目) も揃える。cache key に SHA256 が埋め込まれているので、SHA256 を変更すれば CI / release 両方のキャッシュが自動で invalidate される。
+1. ローカルで Portable ZIP build が緑になることを確認 (`pwsh ./scripts/build-portable-zip.ps1 -Version <version> -SkipArchive`) し、PR で CI の `build-windows` と `python` と `installer-pester` ジョブが全て通ることを確認する
 
 | 場所 | キー |
 | --- | --- |
@@ -410,7 +411,7 @@ CI / Portable ZIP / 開発環境の 3 環境で Python と FFmpeg のバージ�
 | `.github/workflows/ci.yml` (`Cache FFmpeg archive` / `Download FFmpeg archive (cache miss)` / `Install ffmpeg` の 3 ステップ) | cache `key` 内 SHA256 + DL step の URL + install step の `FFMPEG_SHA256` (linux64-lgpl-shared 版) |
 | `.github/workflows/release.yml` (`Cache FFmpeg archive` ステップ) | cache `key` 内 SHA256 (win64-lgpl-shared 版、build-portable-zip.ps1 の SHA256 と同じ値) |
 | `docs/developer-setup.md` §1 | 「ffmpeg / ffprobe 8.1 LGPLv3 推奨」「推奨: ffmpeg 8.1 LGPLv3」の major version 記述 (系列変更時のみ) |
-| `docs/quickstart.md` §10 | 対応 FFmpeg ソース ref (例: `n8.1.1` release tag、または旧 format での commit hash `7f5c90f77e`) の記述 (upstream ref 変更時) |
+| `docs/quickstart.md` §10 | 対応 FFmpeg ソース ref (commit hash の場合は `g<commit>`、release tag の場合は `n<version>`) の記述 (upstream ref 変更時) |
 
 ### get-pip.py のピン留め (#681)
 

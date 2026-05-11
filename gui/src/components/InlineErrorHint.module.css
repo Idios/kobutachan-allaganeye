@@ -1,0 +1,14 @@
+/* #693: 5 site 共通の hint 2 行目 style。Phase 4 #689 で確立した規約 (`💡` prefix +
+   `var(--ae-text-dim)`) を component に集約。consumer 側 `role="alert"` wrapper の
+   内側に nest する規約 (component 自身は role を持たない、a11y violation 回避)。
+
+   サイト固有の表示制御 (PreviewScreen `display: block` / ExportScreen
+   `white-space: normal` + `max-width: 100%` + `overflow: visible` 等) は consumer
+   側 wrapper class で維持し、本 component は最小 layout のみ提供する。 */
+.hint {
+  font-family: var(--ae-font-body);
+  font-size: 11px;
+  color: var(--ae-text-dim);
+  display: block;
+  line-height: 1.5;
+}

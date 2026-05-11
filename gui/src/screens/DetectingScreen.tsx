@@ -4,6 +4,7 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 
 import { AllaganSigil } from '../components/AllaganSigil';
 import { DisabledTooltip } from '../components/DisabledTooltip';
+import { InlineErrorHint } from '../components/InlineErrorHint';
 import { appErrorHint, appErrorMessage } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
@@ -762,8 +763,8 @@ function DetectingErrorView({
         {error ?? 'unknown error'}
       </pre>
       {errorHint && (
-        <div className={styles.errorHint} data-testid="detecting-error-hint">
-          💡 {errorHint}
+        <div data-testid="detecting-error-hint">
+          <InlineErrorHint hint={errorHint} />
         </div>
       )}
       <div className={styles.actions}>

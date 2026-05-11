@@ -292,16 +292,6 @@
   overflow-y: auto;
 }
 
-/* #663 — 2nd-line hint rendered after `.errorMessage` in the error view.
-   Dim text token de-emphasises the corrective hint relative to the
-   primary failure message above. */
-.errorHint {
-  color: var(--ae-text-dim);
-  font-size: 12px;
-  margin-top: 8px;
-  line-height: 1.5;
-}
-
 /*
  * #646 review Round 2 課題 2 — error view の [再試行] ボタン。
  * gold tint で「次の操作を促す」プライマリ寄りに見せ、隣の

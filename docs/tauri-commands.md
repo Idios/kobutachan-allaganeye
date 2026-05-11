@@ -79,7 +79,8 @@ try {
 ## AppError default hint mapping (`gui/src-tauri/src/error.rs::default_hint_for_code`)
 
 > 本 table の文言は `gui/src-tauri/src/error.rs` の `default_hint_for_code()` と
-> 完全一致させる (CI integrity check は今回入れないが、文言変更時は両方を
+> 完全一致させる (CI integrity check は `.github/scripts/check-error-hint-drift.sh`
+> および `doc-error-hint-drift` job で自動保証されている (#692)。文言変更時は両方を
 > 同 PR で更新する規約)。
 
 | code | hint |

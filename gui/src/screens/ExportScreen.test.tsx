@@ -554,6 +554,103 @@ describe('ExportScreen (Phase 4 #466)', () => {
     expect(screen.getAllByText(/reinstall ffmpeg/).length).toBeGreaterThan(0);
   });
 
+  // #678 Lane II-b §2.1 — handleOpenFolder catch path: AppError struct +
+  // legacy Error + raw value + null/undefined reject の 4 系統を
+  // appErrorMessage(e) + appErrorHint(e) で扱えていることを確認。
+  // 旧実装 `e instanceof Error ? e.message : String(e)` では AppError struct
+  // が `[object Object]` になるバグを TDD で検出するための test。
+  describe('ExportScreen handleOpenFolder catch (#678)', () => {
+    // open_folder_in_explorer を reject 値別に mock 化し、完了画面まで遷移
+    // させてから [フォルダを開く] をクリックする共通 helper。export_match は
+    // 通常通り resolve させて completed phase まで持っていく。
+    async function setupAndClickOpenFolder(
+      openFolderReject: unknown,
+      user: ReturnType<typeof userEvent.setup>,
+    ) {
+      invokeMock.mockImplementation((cmd: string, args: unknown) => {
+        if (cmd === 'export_match') {
+          const a = args as { matchIndex: number; outputPath: string };
+          return Promise.resolve({
+            match_index: a.matchIndex,
+            output_path: a.outputPath,
+            duration_ms: 100,
+          });
+        }
+        if (cmd === 'open_folder_in_explorer') {
+          return Promise.reject(openFolderReject);
+        }
+        return Promise.resolve(undefined);
+      });
+      render(<ExportScreen />);
+      await user.click(screen.getByRole('button', { name: /書き出し開始/ }));
+      await waitFor(() => {
+        expect(screen.getByTestId('export-screen').dataset.phase).toBe('completed');
+      });
+      await user.click(screen.getByRole('button', { name: /フォルダを開く/ }));
+    }
+
+    it('renders AppError struct message + hint as 2-line error (#678)', async () => {
+      const appError = {
+        code: 'io.file_not_found',
+        message: '指定された出力先が見つかりません',
+        hint: 'パスを確認してください',
+      };
+      const user = userEvent.setup();
+      await setupAndClickOpenFolder(appError, user);
+      await waitFor(() => {
+        expect(
+          screen.getByText('指定された出力先が見つかりません'),
+        ).toBeInTheDocument();
+      });
+      // #693 InlineErrorHint refactor: hint は `💡 {hint}` の形で 1 span に render される
+      expect(screen.getByText('💡 パスを確認してください')).toBeInTheDocument();
+      expect(screen.getByTestId('open-folder-error-hint')).toBeInTheDocument();
+    });
+
+    it('renders Error instance message only when no hint (#678)', async () => {
+      const err = new Error('Some error');
+      const user = userEvent.setup();
+      await setupAndClickOpenFolder(err, user);
+      await waitFor(() => {
+        expect(screen.getByText('Some error')).toBeInTheDocument();
+      });
+      // hint は無いので hint 要素が rendered されない
+      expect(
+        screen.queryByTestId('open-folder-error-hint'),
+      ).not.toBeInTheDocument();
+    });
+
+    it('renders String(e) result for raw value (#678)', async () => {
+      const user = userEvent.setup();
+      await setupAndClickOpenFolder('simple string', user);
+      await waitFor(() => {
+        expect(screen.getByText('simple string')).toBeInTheDocument();
+      });
+      expect(
+        screen.queryByTestId('open-folder-error-hint'),
+      ).not.toBeInTheDocument();
+    });
+
+    it('renders Unknown error for null/undefined reject (#678)', async () => {
+      const user = userEvent.setup();
+      await setupAndClickOpenFolder(null, user);
+      await waitFor(() => {
+        // alert 要素は表示されるが、内容は `[object Object]` ではない
+        // (`appErrorMessage(null)` は `String(null)` = `"null"` を返す)。
+        // open_folder_in_explorer の alert は完了画面の 1 つだけ
+        // (per-match error が無い phase=completed のため)。
+        const alerts = screen.queryAllByRole('alert');
+        expect(alerts.length).toBeGreaterThan(0);
+        for (const alertEl of alerts) {
+          expect(alertEl.textContent).not.toBe('[object Object]');
+        }
+      });
+      expect(
+        screen.queryByTestId('open-folder-error-hint'),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   // #545 review #7: 進捗バー直下に「経過 0:00 / 残り —」が出る (running 中)。
   // 完了後は両方の表示が残るが setInterval は止まる。
   it('shows elapsed / remaining time line during running', async () => {

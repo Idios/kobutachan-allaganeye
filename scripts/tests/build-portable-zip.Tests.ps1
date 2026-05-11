@@ -1,4 +1,4 @@
-<#
+﻿<#
 Pester v5 tests for scripts/build-portable-zip.ps1.
 
 Run:
@@ -194,6 +194,8 @@ Describe 'Format-ReadmeContent' {
   }
 
   It 'embeds release tag as source ref for new BtbN naming format (#683)' {
+    # fixture (`autobuild-2026-05-06-13-32` + `n8.1.1`) は NEW format parse
+    # coverage 用で、実 `$FFmpegBuildTag` とは独立 (現 pin と drift していても OK)。
     # 新 BtbN naming (n8.1.1) では Get-FFmpegSourceRef が release tag を返し、
     # README には (ref n8.1.1) で記述される。`(commit ...)` の旧文言が残らない
     # ことも併せて verify (PR #683 review #10)。
@@ -485,5 +487,48 @@ Describe 'GetPip pinning (#681)' {
     # value-equality lock so any accidental SHA edit without a corresponding
     # URL tag bump is caught at test time, not at CI build-windows time.
     $GetPipSha256 | Should -Be '66904BCCB878E363DB6236EA900E6935E507DCB887E9F178F6212EDFE7F46A76'
+  }
+}
+
+Describe 'File encoding (#704)' {
+  It 'is saved as UTF-8 with BOM so PowerShell 5.1 (powershell.exe) can parse non-ASCII comments' {
+    # Without a BOM, Windows PowerShell 5.1 (default ANSI / CP932 in JP locale)
+    # interprets non-ASCII comments as Shift-JIS, causing parse errors. The CI
+    # `installer-pester` job uses `pwsh -NoProfile` (PS7.x, UTF-8 default), so
+    # local PS5.1 regression coverage relies on a BOM marker. See #704.
+    $bytes = [System.IO.File]::ReadAllBytes($PSCommandPath)
+    $bytes[0] | Should -Be 0xEF
+    $bytes[1] | Should -Be 0xBB
+    $bytes[2] | Should -Be 0xBF
+  }
+
+  It 'build-portable-zip.ps1 is also saved as UTF-8 with BOM so PowerShell 5.1 can dot-source it (Round 2 extension #704)' {
+    # build-portable-zip.ps1 contains 8 lines of non-ASCII Japanese comments
+    # (around L93 §, L391-419 monthly snapshot bump comments). PS5.1 dot-source
+    # via this Tests.ps1's BeforeAll would parse-fail without BOM, exactly the
+    # same way Tests.ps1 itself failed before its BOM was added. Empirical scope
+    # extension found during /iterate-review Round 2.
+    $bytes = [System.IO.File]::ReadAllBytes($script:BuildScript)
+    $bytes[0] | Should -Be 0xEF
+    $bytes[1] | Should -Be 0xBB
+    $bytes[2] | Should -Be 0xBF
+  }
+}
+
+
+Describe 'BtbN pinning policy (#705)' {
+  It 'pins $FFmpegBuildTag to a BtbN monthly snapshot (end-of-month daily survivor)' {
+    # BtbN GCs daily autobuild tags after ~14 days but keeps end-of-month
+    # snapshots (autobuild-YYYY-MM-{29,30,31}-*) for ~24 months. Pinning to
+    # a monthly snapshot gives the Portable ZIP build a ~24-month retention
+    # buffer instead of ~14 days. See #705 for the empirical study.
+    # Allowed day suffixes: 28 (Feb non-leap fallback), 29-31.
+    $FFmpegBuildTag | Should -Match '^autobuild-\d{4}-\d{2}-(28|29|30|31)-\d{2}-\d{2}$'
+  }
+
+  It 'pins $FFmpegAsset to a win64-lgpl-shared variant matching the build tag epoch' {
+    # Defense-in-depth: catches accidental rollback to a stale asset name
+    # that doesn't exist in the new monthly tag.
+    $FFmpegAsset | Should -Match '^ffmpeg-n[\d.]+(-\d+-g[0-9a-f]+)?-win64-lgpl-shared-[\d.]+$'
   }
 }

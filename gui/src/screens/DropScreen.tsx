@@ -6,6 +6,7 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 
 import { AllaganFrame } from '../components/AllaganFrame';
 import { AllaganSigil } from '../components/AllaganSigil';
+import { InlineErrorHint } from '../components/InlineErrorHint';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useFocusTrap } from '../hooks/useFocusTrap';
@@ -505,9 +506,7 @@ function ErrorCard({ error, errorHint, onDismiss, onRetry }: ErrorCardProps) {
     >
       <div className={styles.selectedHeading}>エラー</div>
       <div className={styles.error}>{error ?? 'probe failed'}</div>
-      {errorHint && (
-        <div className={styles.errorHint}>💡 {errorHint}</div>
-      )}
+      <InlineErrorHint hint={errorHint} />
       <div className={styles.actions}>
         <button type="button" className={styles.cancelButton} onClick={onDismiss}>
           閉じる

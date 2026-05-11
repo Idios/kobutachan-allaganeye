@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { appErrorHint, appErrorMessage } from '../lib/appError';
+import { InlineErrorHint } from './InlineErrorHint';
 import styles from './ConfirmExitModal.module.css';
 
 /**
@@ -25,6 +27,7 @@ export function ConfirmExitModal() {
   const [pending, setPending] = useState<boolean>(false);
   const [busy, setBusy] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorHint, setErrorHint] = useState<string | null>(null);
 
   const handleCloseRequested = useCallback(async () => {
     try {
@@ -38,7 +41,8 @@ export function ConfirmExitModal() {
       // Defensive: if the probe itself fails, show the modal so the user
       // can still pick between kill + exit vs cancel rather than leaving
       // them unable to close the window.
-      setError(e instanceof Error ? e.message : String(e));
+      setError(appErrorMessage(e));
+      setErrorHint(appErrorHint(e));
       setPending(true);
     }
   }, []);
@@ -58,18 +62,21 @@ export function ConfirmExitModal() {
   const handleKillAndExit = useCallback(async () => {
     setBusy(true);
     setError(null);
+    setErrorHint(null);
     try {
       await invoke('kill_tracked_processes');
       await invoke('force_exit_app');
     } catch (e) {
       setBusy(false);
-      setError(e instanceof Error ? e.message : String(e));
+      setError(appErrorMessage(e));
+      setErrorHint(appErrorHint(e));
     }
   }, []);
 
   const handleCancel = useCallback(() => {
     setPending(false);
     setError(null);
+    setErrorHint(null);
   }, []);
 
   // #587: trap Tab inside the modal and let Escape act as キャンセル.
@@ -95,7 +102,12 @@ export function ConfirmExitModal() {
         </p>
         {error && (
           <p className={styles.message} role="alert">
-            {error}
+            <span>{error}</span>
+            {errorHint && (
+              <span className={styles.errorHint}>
+                <InlineErrorHint hint={errorHint} />
+              </span>
+            )}
           </p>
         )}
         <div className={styles.actions}>

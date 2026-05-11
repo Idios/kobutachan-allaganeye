@@ -118,6 +118,49 @@ Tauri command の `Result<T, AppError>` で frontend に届く構造化 error �
   message のみ取得、hint は null になる (PR #663 で legacy raw を返す
   command は存在しないが、helper の互換性として温存)
 
+### §4.7 InlineErrorHint component (#693)
+
+PR #693 で導入された共通 component。hint UI の `💡` prefix と `var(--ae-text-dim)`
+スタイルを 1 箇所に集約する。既存 5 site (RestoreButton / DropScreen ErrorCard /
+DetectingScreen / PreviewScreen / ExportScreen) 及び後続 3 site
+(ConflictModal #695 / DraftRestoreModal #697 / DropScreen recentNotice #698)
+で共有する。
+
+**Usage**:
+
+```tsx
+import { InlineErrorHint } from '../components/InlineErrorHint';
+
+<span role="alert">
+  {errorMessage}
+  <InlineErrorHint hint={errorHint} />
+</span>
+```
+
+**a11y 規約**:
+
+- consumer 側で `role="alert"` wrapper を提供する (本 component 自身は role を持たない)
+- 親の role を維持することで、screen reader は「message + hint」を 1 つの alert
+  update として読み上げる
+
+**Wrapper class での site-specific override**:
+
+- PreviewScreen `.applyErrorHint`: `display: block` で改行担保
+- ExportScreen `.listErrorHint`: parent `.listError` の `nowrap` / `overflow:hidden`
+  を override (`white-space: normal` + `max-width: 100%` + `overflow: visible`)
+- 他 3 site (RestoreButton / DropScreen / DetectingScreen) は wrapper class 不要
+
+### §4.8 metadataStore \*ErrorHint lifecycle 規約 (#691)
+
+各 catch path (`load()` / `runApply()` / `restore()` / `saveDraft()` / `loadDraft()`)
+は自身の `*Error` / `*ErrorHint` のみを `set` し、他経路の error state は touch
+しない (案 X、PR #691 で symmetric 化)。lifecycle 終端 (`clear()` / `loadSample()`)
+でのみ全 5 `*Error` + 5 `*ErrorHint` を null reset する。
+
+この規約は `metadataStore.test.ts` の `#691: catch path lifecycle pinning`
+describe block で test で pin されている。将来 catch path 追加時は同 describe
+block に test を追加し、self-only 規約を継承する。
+
 ## 5. 各画面の phase state
 
 ### drop (動画ファイル選択)
