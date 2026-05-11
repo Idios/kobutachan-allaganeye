@@ -714,8 +714,7 @@ export function ExportScreen() {
                     className={styles.openFolderErrorHint}
                     data-testid="open-folder-error-hint"
                   >
-                    <span aria-hidden="true">💡 </span>
-                    <span>{openFolderErrorHint}</span>
+                    <InlineErrorHint hint={openFolderErrorHint} />
                   </span>
                 )}
               </div>

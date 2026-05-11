@@ -461,10 +461,11 @@
   letter-spacing: 1px;
 }
 
+/* #693: InlineErrorHint wrapper として block 表示 (改行 + margin) と
+   parent .openFolderError の inline 配置 override を担保。font-size / color は
+   InlineErrorHint 側に委譲。 */
 .openFolderErrorHint {
   display: block;
-  font-size: 0.9em;
-  opacity: 0.85;
   margin-top: 0.25rem;
-  color: var(--ae-text-dim);
+  opacity: 0.85;
 }

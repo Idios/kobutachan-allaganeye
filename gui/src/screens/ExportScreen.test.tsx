@@ -602,7 +602,8 @@ describe('ExportScreen (Phase 4 #466)', () => {
           screen.getByText('指定された出力先が見つかりません'),
         ).toBeInTheDocument();
       });
-      expect(screen.getByText('パスを確認してください')).toBeInTheDocument();
+      // #693 InlineErrorHint refactor: hint は `💡 {hint}` の形で 1 span に render される
+      expect(screen.getByText('💡 パスを確認してください')).toBeInTheDocument();
       expect(screen.getByTestId('open-folder-error-hint')).toBeInTheDocument();
     });
 
