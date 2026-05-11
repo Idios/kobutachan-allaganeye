@@ -118,6 +118,17 @@ Tauri command の `Result<T, AppError>` で frontend に届く構造化 error �
   message のみ取得、hint は null になる (PR #663 で legacy raw を返す
   command は存在しないが、helper の互換性として温存)
 
+### §4.7 metadataStore \*ErrorHint lifecycle 規約 (#691)
+
+各 catch path (`load()` / `runApply()` / `restore()` / `saveDraft()` / `loadDraft()`)
+は自身の `*Error` / `*ErrorHint` のみを `set` し、他経路の error state は touch
+しない (案 X、PR #691 で symmetric 化)。lifecycle 終端 (`clear()` / `loadSample()`)
+でのみ全 5 `*Error` + 5 `*ErrorHint` を null reset する。
+
+この規約は `metadataStore.test.ts` の `#691: catch path lifecycle pinning`
+describe block で test で pin されている。将来 catch path 追加時は同 describe
+block に test を追加し、self-only 規約を継承する。
+
 ## 5. 各画面の phase state
 
 ### drop (動画ファイル選択)
