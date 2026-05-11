@@ -512,3 +512,21 @@ Describe 'File encoding (#704)' {
     $bytes[2] | Should -Be 0xBF
   }
 }
+
+
+Describe 'BtbN pinning policy (#705)' {
+  It 'pins $FFmpegBuildTag to a BtbN monthly snapshot (end-of-month daily survivor)' {
+    # BtbN GCs daily autobuild tags after ~14 days but keeps end-of-month
+    # snapshots (autobuild-YYYY-MM-{29,30,31}-*) for ~24 months. Pinning to
+    # a monthly snapshot gives the Portable ZIP build a ~24-month retention
+    # buffer instead of ~14 days. See #705 for the empirical study.
+    # Allowed day suffixes: 28 (Feb non-leap fallback), 29-31.
+    $FFmpegBuildTag | Should -Match '^autobuild-\d{4}-\d{2}-(28|29|30|31)-\d{2}-\d{2}$'
+  }
+
+  It 'pins $FFmpegAsset to a win64-lgpl-shared variant matching the build tag epoch' {
+    # Defense-in-depth: catches accidental rollback to a stale asset name
+    # that doesn't exist in the new monthly tag.
+    $FFmpegAsset | Should -Match '^ffmpeg-n[\d.]+(-\d+-g[0-9a-f]+)?-win64-lgpl-shared-[\d.]+$'
+  }
+}
