@@ -51,3 +51,5 @@ ignores:
   - ".pytest_cache/**"
   - ".ruff_cache/**"
   - "**/kobutachan_allaganeye.egg-info/**"
+  - "build/**"  # Portable ZIP build dry-run 出力 (third-party LICENSE/SKILL 誤検出回避、#723)
+  - "build-cache/**"  # Portable ZIP build キャッシュ ($env:ALLAGANEYE_BUILD_CACHE_DIR、third-party LICENSE 誤検出回避、#723 sweep)
