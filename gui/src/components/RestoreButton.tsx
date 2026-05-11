@@ -57,16 +57,23 @@ export function RestoreButton({
   // message + hint as a single update.
   const restoreErrorHint = useMetadataStore((s) => s.restoreErrorHint);
   const restore = useMetadataStore((s) => s.restore);
+  // #633 / §1.4: sample mode (filePath=null + metadata=non-null) で disabled
+  const isSample = useMetadataStore(
+    (s) => s.filePath === null && s.metadata !== null,
+  );
 
-  const disabled = !hasBackup || restoring;
-  // #587 §2.3.4 + §2.4.13: surface why [元に戻す] is disabled. Same
-  // RestoreButton is rendered from CompleteScreen and PreviewScreen, so
-  // wrapping here covers both spec sections at once.
-  const reason = !hasBackup
-    ? 'バックアップが存在しません'
-    : restoring
-      ? '復元中です'
-      : '';
+  const disabled = !hasBackup || restoring || isSample;
+  // #633 / §1.2 主要 CTA: tooltip + inline hint 必須。reason 優先順:
+  //   1. restoring (in-flight)
+  //   2. isSample (サンプル動画)
+  //   3. !hasBackup (バックアップなし)
+  const reason = restoring
+    ? '復元中です'
+    : isSample
+      ? 'サンプル動画では保存できません'
+      : !hasBackup
+        ? 'バックアップが存在しません'
+        : '';
 
   async function handleClick() {
     const confirmed = await (confirmFn ?? defaultConfirm)(confirmMessage);
@@ -80,7 +87,7 @@ export function RestoreButton({
 
   return (
     <>
-      <DisabledTooltip disabled={disabled} reason={reason}>
+      <DisabledTooltip disabled={disabled} reason={reason} inlineHint={true}>
         {(p) => (
           <button
             type="button"
