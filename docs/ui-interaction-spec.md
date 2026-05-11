@@ -736,6 +736,16 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | store mutation | なし |
 | 例外 / edge case | 通常フロー (complete から double-click / [境界を調整]) では到達しない。dev StateSwitcher で preview に直接遷移したり、apply 後 matches 配列が変動して selectedMatchIndex が消えた場合に表示。文言と「complete へ戻る」リンクは [#587](https://github.com/Idios/kobutachan-allaganeye/issues/587) a11y/polish で議論 |
 
+#### §2.4.16 MicroTimeline (±5s 微細タイムライン) — #645
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | SVG display (read-only、interaction なし) |
+| 状態 | `loading` (取得中) / `loaded` (波形描画) / `error` (inline error) / `sample` (synthetic 波形 + 「サンプル波形」caption) |
+| 遷移トリガー | selectedMatch 変更 / filePath 変更 / isSample 変更で useEffect 再発火。real file → invoke('extract_brightness_window') → loaded or error。sample mode → buildLocalBrightness synthetic |
+| store mutation | なし (PreviewScreen 内 local state、`brightnessWindow` / `microError`) |
+| 例外 / edge case | (1) ffmpeg spawn failed / exit nonzero → §1.5 inline error 表示 (appErrorMessage + appErrorHint)。 (2) sample mode は ffmpeg 不可なので synthetic 一律使用、caption に「サンプル波形」付与。 (3) selectedMatch=null → 何も表示しない |
+
 ### §2.5 export
 
 **phase**: 専用 reducer ([reducers/export.ts:19-48](../gui/src/screens/reducers/export.ts#L19))。`idle | running | cancelling | completed | error`

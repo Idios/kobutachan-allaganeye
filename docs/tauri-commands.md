@@ -48,6 +48,7 @@
 | 21 | `start_detect` | `app: AppHandle, video_path: String, output_dir: String, params: DetectParams` | `Result<DetectResult, AppError>` | subprocess | (a) python CLI 不在、(b) python -m fallback 失敗、(c) detect 実行中エラー | (a) `python.not_found`、(b) `subprocess.spawn_failed`、(c) `subprocess.exit_failed` |
 | 22 | `get_log_dir` | (なし) | `Result<String, AppError>` | pure | (a) install_dir 取得失敗 (極端ケース) | (a) `path.install_dir_unresolved` |
 | 23 | `dev_force_panic` | (なし) | `Result<(), AppError>` | state-mutating | **意図的 panic** (`#[cfg(debug_assertions)]` 限定、PR #661 E2E 検証用) | - (panic で異常終了が期待動作) |
+| 24 | `extract_brightness_window` | `video_path: String, t_start: f64, t_end: f64, fps: f64` | `Result<BrightnessWindow, AppError>` | subprocess | (a) ffmpeg 不在/起動失敗、(b) ffmpeg 異常終了 | (a) `subprocess.spawn_failed`、(b) `subprocess.exit_failed` |
 
 ## 補足
 
