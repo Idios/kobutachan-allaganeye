@@ -1486,11 +1486,13 @@ Expected: 全 CI job pass。
 - shellcheck CI 上動作: `ludeeus/action-shellcheck@master` (または pinned version) が `ubuntu-latest` で shellcheck を auto-install して実行するため、local 未 install は CI 動作に影響なし。Task 7 「local shellcheck で repo 全体 .sh が pass」step は CI 実証 (PR-1 push 時) で代替する
 - 多数 (4+) でなかったため AskUserQuestion 発動なし
 
-### Task 4 結果 (実機 drift run)
+### Task 4 結果 (実機 drift run、2026-05-11)
 
-- exit code: [TBD - 0 (sync) or 1 (drift)]
-- entries 数: [TBD - 24 entries 想定]
-- drift 検出時の AskUserQuestion 結果: [該当時のみ TBD]
+- exit code: **0 (sync)**
+- 出力: `OK: error.rs ↔ docs/tauri-commands.md hint mapping in sync (24 entries)`
+- entries 数: **24** (or-pattern `io.would_block | io.timed_out` を 2 code に展開した結果、22 hint + 2 None = 24 codes)
+- drift 検出なし、AskUserQuestion 発動なし
+- 確認 commit base: `405c3c6` (Task 3 完了時点)
 
 ### PR-1 メタ情報
 
