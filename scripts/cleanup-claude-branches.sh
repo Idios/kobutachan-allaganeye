@@ -54,6 +54,7 @@ fi
 
 deleted=0
 kept=0
+COOLDOWN_THRESHOLD=$(($(date +%s) - 86400))
 
 # active worktree が参照する branch 集合 (refs/heads/<name> 形式) を構築。
 # detached HEAD worktree は `branch` 行を emit しない (`HEAD <sha>` のみ) ため、
@@ -86,8 +87,16 @@ for branch in "${BRANCHES[@]}"; do
     continue
   fi
 
-  # AND 3 は後続 Task で追加、本 Task では merged + active なし = skeleton fall-through
-  echo "  would delete $branch (skeleton, AND 3 not yet implemented)"
+  # AND 3: cooldown (最終 commit が 24h 以上前か)
+  last_ct=$(git -C "$REPO_ROOT" log -1 --format=%ct "$branch" 2>/dev/null || echo "")
+  if [[ -z "$last_ct" ]] || [[ "$last_ct" -ge "$COOLDOWN_THRESHOLD" ]]; then
+    echo "  kept $branch (reason: cooldown)"
+    kept=$((kept + 1))
+    continue
+  fi
+
+  # 全 AND 満足 — 削除対象 (--apply は Task 5 で追加)
+  echo "  would delete $branch"
   kept=$((kept + 1))
 done
 
