@@ -1195,3 +1195,280 @@ describe('AppError hint pair (#663)', () => {
     expect(s.loadErrorHint).toBeNull();
   });
 });
+
+describe('#691: catch path lifecycle pinning', () => {
+  beforeEach(() => {
+    // Reset to clean state
+    useMetadataStore.setState({
+      metadata: null,
+      filePath: null,
+      dirty: false,
+      loadError: null,
+      loadErrorHint: null,
+      applying: false,
+      applyError: null,
+      applyErrorHint: null,
+      hasBackup: false,
+      restoring: false,
+      restoreError: null,
+      restoreErrorHint: null,
+      loadedMtimeMs: null,
+      conflictError: null,
+      pendingDraft: null,
+      draftLoadError: null,
+      draftLoadErrorHint: null,
+      draftSaving: false,
+      draftSaveError: null,
+      draftSaveErrorHint: null,
+    });
+  });
+
+  it('案 X: load() catch sets load*Error/Hint only, leaves apply/restore/draft *Error/Hint untouched', async () => {
+    // pre-condition: 全 path の *ErrorHint が non-null
+    useMetadataStore.setState({
+      applyError: 'old apply error',
+      applyErrorHint: 'old apply hint',
+      restoreError: 'old restore error',
+      restoreErrorHint: 'old restore hint',
+      draftLoadError: 'old draft load error',
+      draftLoadErrorHint: 'old draft load hint',
+      draftSaveError: 'old draft save error',
+      draftSaveErrorHint: 'old draft save hint',
+    });
+
+    invokeMock.mockImplementation(async () => {
+      throw {
+        code: 'io.file_not_found',
+        message: 'file not found',
+        hint: 'check path',
+      };
+    });
+
+    await useMetadataStore.getState().load('/non-existent');
+
+    const state = useMetadataStore.getState();
+    // self set
+    expect(state.loadError).toBe('file not found');
+    expect(state.loadErrorHint).toBe('check path');
+    // 案 X: other paths' *Error / *ErrorHint untouched
+    expect(state.applyError).toBe('old apply error');
+    expect(state.applyErrorHint).toBe('old apply hint');
+    expect(state.restoreError).toBe('old restore error');
+    expect(state.restoreErrorHint).toBe('old restore hint');
+    expect(state.draftLoadError).toBe('old draft load error');
+    expect(state.draftLoadErrorHint).toBe('old draft load hint');
+    expect(state.draftSaveError).toBe('old draft save error');
+    expect(state.draftSaveErrorHint).toBe('old draft save hint');
+  });
+
+  it('runApply() non-conflict catch sets applyError/Hint only', async () => {
+    useMetadataStore.setState({
+      metadata: { source: '/test.mp4', matches: [] } as never,
+      filePath: '/test.mp4',
+      loadedMtimeMs: 1000,
+      loadError: 'old load error',
+      loadErrorHint: 'old load hint',
+      restoreError: 'old restore error',
+      restoreErrorHint: 'old restore hint',
+    });
+
+    invokeMock.mockImplementation(async (cmd) => {
+      if (cmd === 'apply_changes') {
+        throw {
+          code: 'io.permission_denied',
+          message: 'denied',
+          hint: 'check write permission',
+        };
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    await useMetadataStore.getState().apply();
+
+    const state = useMetadataStore.getState();
+    expect(state.applyError).toBe('denied');
+    expect(state.applyErrorHint).toBe('check write permission');
+    expect(state.loadError).toBe('old load error');
+    expect(state.loadErrorHint).toBe('old load hint');
+    expect(state.restoreError).toBe('old restore error');
+    expect(state.restoreErrorHint).toBe('old restore hint');
+  });
+
+  it('runApply() conflict catch sets conflictError only, leaves *Error/Hint untouched', async () => {
+    useMetadataStore.setState({
+      metadata: { source: '/test.mp4', matches: [] } as never,
+      filePath: '/test.mp4',
+      loadedMtimeMs: 1000,
+      applyError: 'old apply error',
+      applyErrorHint: 'old apply hint',
+      loadError: 'old load error',
+      loadErrorHint: 'old load hint',
+    });
+
+    invokeMock.mockImplementation(async (cmd) => {
+      if (cmd === 'apply_changes') {
+        throw {
+          code: 'state.mtime_conflict',
+          message: 'mtime conflict',
+          hint: 'reload or overwrite',
+        };
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    await useMetadataStore.getState().apply();
+
+    const state = useMetadataStore.getState();
+    expect(state.conflictError).toBe('mtime conflict');
+    // runApply initial set clears applyError/applyErrorHint/conflictError before invoke
+    // conflict catch then only sets { applying: false, conflictError: msg }
+    // so applyError/applyErrorHint are null from the initial set (not 'old' anymore)
+    expect(state.loadError).toBe('old load error');
+    expect(state.loadErrorHint).toBe('old load hint');
+  });
+
+  it('restore() catch sets restoreError/Hint only', async () => {
+    useMetadataStore.setState({
+      filePath: '/test.mp4',
+      loadError: 'old load error',
+      loadErrorHint: 'old load hint',
+      applyError: 'old apply error',
+      applyErrorHint: 'old apply hint',
+    });
+
+    invokeMock.mockImplementation(async (cmd) => {
+      if (cmd === 'restore_from_original') {
+        throw {
+          code: 'io.backup_failed',
+          message: 'backup failed',
+          hint: 'check disk',
+        };
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    await useMetadataStore.getState().restore();
+
+    const state = useMetadataStore.getState();
+    expect(state.restoreError).toBe('backup failed');
+    expect(state.restoreErrorHint).toBe('check disk');
+    expect(state.loadError).toBe('old load error');
+    expect(state.loadErrorHint).toBe('old load hint');
+    expect(state.applyError).toBe('old apply error');
+    expect(state.applyErrorHint).toBe('old apply hint');
+  });
+
+  it('saveDraft() catch sets draftSaveError/Hint only', async () => {
+    useMetadataStore.setState({
+      metadata: { source: '/test.mp4', matches: [] } as never,
+      filePath: '/test.mp4',
+      loadError: 'old load error',
+      loadErrorHint: 'old load hint',
+    });
+
+    invokeMock.mockImplementation(async (cmd) => {
+      if (cmd === 'save_draft') {
+        throw {
+          code: 'io.write_failed',
+          message: 'write failed',
+          hint: 'check space',
+        };
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    await useMetadataStore.getState().saveDraft();
+
+    const state = useMetadataStore.getState();
+    expect(state.draftSaveError).toBe('write failed');
+    expect(state.draftSaveErrorHint).toBe('check space');
+    expect(state.loadError).toBe('old load error');
+    expect(state.loadErrorHint).toBe('old load hint');
+  });
+
+  it('loadDraft() catch sets draftLoadError/Hint only', async () => {
+    useMetadataStore.setState({
+      metadata: { source: '/test.mp4', matches: [] } as never,
+      filePath: '/test.mp4',
+      applyError: 'old apply error',
+      applyErrorHint: 'old apply hint',
+    });
+
+    invokeMock.mockImplementation(async (cmd) => {
+      if (cmd === 'load_draft') {
+        throw {
+          code: 'parse.json_invalid',
+          message: 'json invalid',
+          hint: 'restore from backup',
+        };
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    await useMetadataStore.getState().loadDraft();
+
+    const state = useMetadataStore.getState();
+    expect(state.draftLoadError).toBe('json invalid');
+    expect(state.draftLoadErrorHint).toBe('restore from backup');
+    expect(state.applyError).toBe('old apply error');
+    expect(state.applyErrorHint).toBe('old apply hint');
+  });
+
+  it('clear() resets all *Error and *ErrorHint to null', () => {
+    useMetadataStore.setState({
+      loadError: 'a',
+      loadErrorHint: 'A',
+      applyError: 'b',
+      applyErrorHint: 'B',
+      restoreError: 'c',
+      restoreErrorHint: 'C',
+      draftLoadError: 'd',
+      draftLoadErrorHint: 'D',
+      draftSaveError: 'e',
+      draftSaveErrorHint: 'E',
+    });
+
+    useMetadataStore.getState().clear();
+
+    const state = useMetadataStore.getState();
+    expect(state.loadError).toBeNull();
+    expect(state.loadErrorHint).toBeNull();
+    expect(state.applyError).toBeNull();
+    expect(state.applyErrorHint).toBeNull();
+    expect(state.restoreError).toBeNull();
+    expect(state.restoreErrorHint).toBeNull();
+    expect(state.draftLoadError).toBeNull();
+    expect(state.draftLoadErrorHint).toBeNull();
+    expect(state.draftSaveError).toBeNull();
+    expect(state.draftSaveErrorHint).toBeNull();
+  });
+
+  it('loadSample() resets all *Error and *ErrorHint to null', () => {
+    useMetadataStore.setState({
+      loadError: 'a',
+      loadErrorHint: 'A',
+      applyError: 'b',
+      applyErrorHint: 'B',
+      restoreError: 'c',
+      restoreErrorHint: 'C',
+      draftLoadError: 'd',
+      draftLoadErrorHint: 'D',
+      draftSaveError: 'e',
+      draftSaveErrorHint: 'E',
+    });
+
+    useMetadataStore.getState().loadSample();
+
+    const state = useMetadataStore.getState();
+    expect(state.loadError).toBeNull();
+    expect(state.loadErrorHint).toBeNull();
+    expect(state.applyError).toBeNull();
+    expect(state.applyErrorHint).toBeNull();
+    expect(state.restoreError).toBeNull();
+    expect(state.restoreErrorHint).toBeNull();
+    expect(state.draftLoadError).toBeNull();
+    expect(state.draftLoadErrorHint).toBeNull();
+    expect(state.draftSaveError).toBeNull();
+    expect(state.draftSaveErrorHint).toBeNull();
+  });
+});
