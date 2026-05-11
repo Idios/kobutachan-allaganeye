@@ -186,6 +186,18 @@ jobs:
         shell: bash
         run: bash .github/scripts/check-error-hint-drift.sh
 
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run shellcheck on all .sh files
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          severity: warning
+          scandir: '.'
+          additional_files: '.github/scripts/*.sh tests/scripts/*.sh scripts/*.sh'
+
   installer-pester:
     runs-on: windows-latest
     steps:
