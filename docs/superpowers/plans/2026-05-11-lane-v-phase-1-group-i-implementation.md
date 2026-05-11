@@ -1344,6 +1344,27 @@ describe('#695: conflictErrorHint lifecycle', () => {
     const state = useMetadataStore.getState();
     expect(state.conflictErrorHint).toBeNull();
   });
+
+  it('applyOverwrite() success path resets conflictErrorHint', async () => {
+    // applyOverwrite calls runApply(true) which clears conflictError/conflictErrorHint
+    // in the initial set({ applying: true, ... }) before invoking apply_changes.
+    useMetadataStore.setState({
+      metadata: { /* valid */ } as any,
+      filePath: '/test.mp4',
+      conflictError: 'prev conflict',
+      conflictErrorHint: 'prev hint',
+    });
+
+    vi.mocked(invoke).mockResolvedValueOnce(12345); // new mtime ms from apply_changes
+    vi.mocked(invoke).mockResolvedValueOnce(true);  // refreshBackupStatus
+    vi.mocked(invoke).mockResolvedValueOnce(undefined); // clear_draft
+
+    await useMetadataStore.getState().applyOverwrite();
+
+    const state = useMetadataStore.getState();
+    expect(state.conflictError).toBeNull();
+    expect(state.conflictErrorHint).toBeNull();
+  });
 });
 ```
 
@@ -1416,7 +1437,7 @@ After:
         conflictErrorHint: null,
 ```
 
-- [ ] **Step 5: dismissConflict / reloadAfterConflict で clear**
+- [ ] **Step 5: dismissConflict / applyOverwrite / reloadAfterConflict で clear**
 
 `dismissConflict` (line 404-406):
 
@@ -1426,7 +1447,9 @@ After:
   },
 ```
 
-`reloadAfterConflict` は `load()` 呼ぶので、`load()` success/catch で扱う。
+`applyOverwrite` は `runApply(true)` を呼び、`runApply` の冒頭で `set({ applying: true, ..., conflictError: null, conflictErrorHint: null })` を実行する (Step 4 で追加した初期 set)。これにより applyOverwrite 実行時に conflictError + conflictErrorHint が clear される。明示的な追加実装は不要。
+
+`reloadAfterConflict` は `load()` 呼ぶので、`load()` success/catch で扱う (Step 6 / Step 7)。
 
 - [ ] **Step 6: load() success path で clear**
 

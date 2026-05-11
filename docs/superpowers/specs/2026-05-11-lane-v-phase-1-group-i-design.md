@@ -81,24 +81,26 @@ WAVE 1.2  (PR 1 merge 後、3 PR 並行可)
 各 PR は独立 worktree (`.claude/worktrees/<auto-name>/`) で進行する。**PR 2 (#691) は UI / InlineErrorHint に非依存**のため Wave 1.1 で PR 1 と完全並行 (PR 提出・merge 順は問わない)。一方 **PR 3-5 は `InlineErrorHint` を consume するため PR 1 merge 後**に `git merge origin/develop-0.2.0` で base 同期して着手する。worktree 数の最大は 5 (全 PR の worktree を同時に存在させてもよいが、PR 3-5 の PR 提出は Wave 1.2 へ後回し)。
 
 ```text
-                                 PR 1 (#693)
-                            ┌──────────────────┐
-                            │ InlineErrorHint  │
-                            │ component 新設    │
-                            │ + 既存 5 site     │
-                            │ refactor          │
-                            └─────────┬────────┘
-                                      │ merge to develop-0.2.0
-                                      │
-                ┌─────────────────────┼─────────────────────┐
-                │                     │                     │
-                ▼                     ▼                     ▼
-            PR 2 (#691)           PR 3 (#695)           PR 4 (#697)           PR 5 (#698)
-        ┌──────────────┐     ┌──────────────┐      ┌──────────────┐      ┌──────────────┐
-        │ metadataStore│     │ ConflictModal│      │ DraftRestore │      │ DropScreen   │
-        │ lifecycle    │     │ AppError hint│      │ Modal hint   │      │ recent notice│
-        │ pinning      │     │ (C 案 採用)   │      │ UI 追加      │      │ (A-minimal)  │
-        └──────────────┘     └──────────────┘      └──────────────┘      └──────────────┘
+        ┌──────────────────────┐    ┌──────────────────────┐
+        │ PR 1 (#693)          │    │ PR 2 (#691)          │
+        │ InlineErrorHint      │    │ metadataStore        │
+        │ component 新設        │    │ lifecycle pinning    │
+        │ + 既存 5 site refactor│    │ (案 X、UI 非依存)    │
+        │ (Wave 1.1 lead)      │    │ (Wave 1.1 並行)      │
+        └──────────┬───────────┘    └──────────────────────┘
+                   │ merge to develop-0.2.0
+                   │
+        ┌──────────┼─────────────────┐
+        │          │                 │
+        ▼          ▼                 ▼
+   PR 3 (#695)  PR 4 (#697)     PR 5 (#698)
+  ┌──────────┐ ┌────────────┐  ┌──────────────┐
+  │Conflict  │ │DraftRestore│  │DropScreen    │
+  │Modal     │ │Modal hint  │  │recent notice │
+  │AppError  │ │UI 追加     │  │(A-minimal)   │
+  │hint      │ │            │  │              │
+  │(C 案 採用)│ │            │  │              │
+  └──────────┘ └────────────┘  └──────────────┘
 ```
 
 ## §5 各 PR 章 (5 章)
@@ -358,15 +360,15 @@ const recentAddHint = useRecentStore((s) => s.addErrorHint);
 
 PR 作成時に `AskUserQuestion` で Idios に依頼。
 
-### §6.5 CI 8 job 整合
+### §6.5 CI 7 job 整合
 
-5 PR すべてで全 8 job (gui-rust / gui-frontend / build-windows / installer-pester / python / markdownlint / validate-checklist / version-check) を pass する想定:
+5 PR すべてで PR CI 全 7 job (`python` / `gui-frontend` / `gui-rust` / `doc-tauri-commands-drift` / `installer-pester` / `markdownlint` / `validate-checklist`) を pass する想定 (`build-windows` / `version-check` は `release.yml` 専用で PR CI には含まれない):
 
 - `gui-frontend`: 各 PR の主戦場、必ず pass
 - `gui-rust`: Rust 変更なしを想定だが regression check 必須
-- `build-windows`: 既存 build 維持
+- `doc-tauri-commands-drift`: `docs/tauri-commands.md` と `error.rs` 等の drift 検査、本 lane では Rust 変更なしのため pass 維持
 - `markdownlint`: docs 更新 PR (#691 / #693 / #695 / #698) で関係
-- `python` / `installer-pester` / `version-check`: 影響なし、pass 維持
+- `python` / `installer-pester` / `validate-checklist`: 影響なし、pass 維持
 
 ### §6.6 Iron Law 1〜6 整合
 
