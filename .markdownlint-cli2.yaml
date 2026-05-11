@@ -45,6 +45,7 @@ globs:
 
 ignores:
   - "node_modules/**"
+  - "**/node_modules/**"  # nested (gui/node_modules 等) も除外 (#700)
   - ".venv/**"
   - ".git/**"
   - ".pytest_cache/**"
