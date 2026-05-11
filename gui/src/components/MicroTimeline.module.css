@@ -1,6 +1,13 @@
+/* #645 layout: SVG + HTML axis labels (実機検証 fix で SVG 内 text を移動) */
+.wrap {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
 .timeline {
   width: 100%;
-  height: 50px;
+  height: 36px;
   background: var(--ae-bg-deep);
   display: block;
 }
@@ -28,7 +35,15 @@
   stroke-dasharray: 1, 1;
 }
 
+/* axis labels (HTML span、SVG 外。preserveAspectRatio による水平 stretch を受けない) */
+.axisLabels {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 4px 0;
+  font-size: 10px;
+}
+
 .axisLabel {
-  fill: var(--ae-text-dim);
+  color: var(--ae-text-dim);
   font-family: var(--ae-font-mono);
 }
