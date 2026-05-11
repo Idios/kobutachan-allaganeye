@@ -118,6 +118,38 @@ Tauri command の `Result<T, AppError>` で frontend に届く構造化 error �
   message のみ取得、hint は null になる (PR #663 で legacy raw を返す
   command は存在しないが、helper の互換性として温存)
 
+### §4.7 InlineErrorHint component (#693)
+
+PR #693 で導入された共通 component。hint UI の `💡` prefix と `var(--ae-text-dim)`
+スタイルを 1 箇所に集約する。既存 5 site (RestoreButton / DropScreen ErrorCard /
+DetectingScreen / PreviewScreen / ExportScreen) 及び後続 3 site
+(ConflictModal #695 / DraftRestoreModal #697 / DropScreen recentNotice #698)
+で共有する。
+
+**Usage**:
+
+```tsx
+import { InlineErrorHint } from '../components/InlineErrorHint';
+
+<span role="alert">
+  {errorMessage}
+  <InlineErrorHint hint={errorHint} />
+</span>
+```
+
+**a11y 規約**:
+
+- consumer 側で `role="alert"` wrapper を提供する (本 component 自身は role を持たない)
+- 親の role を維持することで、screen reader は「message + hint」を 1 つの alert
+  update として読み上げる
+
+**Wrapper class での site-specific override**:
+
+- PreviewScreen `.applyErrorHint`: `display: block` で改行担保
+- ExportScreen `.listErrorHint`: parent `.listError` の `nowrap` / `overflow:hidden`
+  を override (`white-space: normal` + `max-width: 100%` + `overflow: visible`)
+- 他 3 site (RestoreButton / DropScreen / DetectingScreen) は wrapper class 不要
+
 ## 5. 各画面の phase state
 
 ### drop (動画ファイル選択)
