@@ -67,18 +67,39 @@ $GetPipUrl = 'https://raw.githubusercontent.com/pypa/get-pip/26.1.1/public/get-p
 #        Invoke-Pester -Path scripts/tests/build-portable-zip.Tests.ps1
 $GetPipSha256 = '66904BCCB878E363DB6236EA900E6935E507DCB887E9F178F6212EDFE7F46A76'
 
-# FFmpeg is pinned to a specific BtbN autobuild so the same allaganeye tag ships
-# the same binary and the LGPLv3 license applies uniformly across CI and Portable ZIP.
-# We use the shared variant (wrapper exe + individual avcodec/avfilter/... DLLs)
-# rather than the static build to keep Portable ZIP size down (~200 MB vs ~330 MB).
-# To update: bump $FFmpegBuildTag / $FFmpegAsset / $FFmpegSha256 together.
-# CI workflows (`.github/workflows/ci.yml`) must be updated with the matching
-# linux64-lgpl-shared asset at the same build tag; see docs/developer-setup.md § 9.
+# FFmpeg is pinned to a BtbN MONTHLY snapshot (the end-of-month daily that
+# survives BtbN's ~14-day GC of regular dailies, kept for ~24 months). Daily
+# autobuilds are GC'd after ~14 days, so daily pins go 404 in less than a
+# month. Only autobuild-YYYY-MM-{28,29,30,31}-* tags survive long enough for
+# the Portable ZIP build to remain reproducible. See #705.
+# We use the LGPLv3 shared variant (wrapper exe + individual
+# avcodec/avfilter/... DLLs) rather than the static build to keep Portable ZIP
+# size down (~200 MB vs ~330 MB).
+#
+# To bump (typically once per year, well before the 24-month retention runs out):
+#   1. Pick the latest monthly survivor from
+#      https://github.com/BtbN/FFmpeg-Builds/releases (a tag matching
+#      autobuild-YYYY-MM-{28,29,30,31}-*; daily tags are forbidden by the
+#      `BtbN pinning policy (#705)` Pester regression test).
+#   2. Fetch checksums.sha256 from that release and grep for the win64 +
+#      linux64 lgpl-shared-8.1 assets to get both SHA256 values:
+#        curl -sL "https://github.com/BtbN/FFmpeg-Builds/releases/download/<tag>/checksums.sha256" \
+#          | grep -E 'win64-lgpl-shared-8\.1\.zip$|linux64-lgpl-shared-8\.1\.tar\.xz$'
+#   3. Update the win64 SHA256 below and `$FFmpegBuildTag` / `$FFmpegAsset`,
+#      and update the matching linux64 SHA256 + URL in
+#      `.github/workflows/ci.yml` (3 steps: Cache, Download, Install) and the
+#      win64 SHA256 in `.github/workflows/release.yml` (Cache step). All these
+#      locations (4 SHA256 sites across 3 files + 1 URL in ci.yml Download)
+#      must move together — drift is caught by the cache key mismatch. See
+#      `docs/developer-setup.md` § 9 for the full checklist.
+#   4. Verify regressions:
+#        Invoke-Pester -Path scripts/tests/build-portable-zip.Tests.ps1
+#        pwsh -File scripts/build-portable-zip.ps1 -Version 0.2.0-test -SkipArchive
 $FFmpegVersion = '8.1'
-$FFmpegBuildTag = 'autobuild-2026-05-06-13-32'
-$FFmpegAsset = 'ffmpeg-n8.1.1-win64-lgpl-shared-8.1'
+$FFmpegBuildTag = 'autobuild-2026-04-30-13-44'
+$FFmpegAsset = 'ffmpeg-n8.1-11-g75d37c499d-win64-lgpl-shared-8.1'
 $FFmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/$FFmpegBuildTag/$FFmpegAsset.zip"
-$FFmpegSha256 = '16F409AB737538778F9CD4BFC69953E2E1DC2558F6DC5CA17CC72083D60DC735'
+$FFmpegSha256 = 'E27598E612078F25D3E9CF245CE5042990F2602146E5A6F8287B143B0DCE0E95'
 
 function Invoke-Download {
   param(

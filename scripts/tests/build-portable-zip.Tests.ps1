@@ -194,6 +194,8 @@ Describe 'Format-ReadmeContent' {
   }
 
   It 'embeds release tag as source ref for new BtbN naming format (#683)' {
+    # fixture (`autobuild-2026-05-06-13-32` + `n8.1.1`) は NEW format parse
+    # coverage 用で、実 `$FFmpegBuildTag` とは独立 (現 pin と drift していても OK)。
     # 新 BtbN naming (n8.1.1) では Get-FFmpegSourceRef が release tag を返し、
     # README には (ref n8.1.1) で記述される。`(commit ...)` の旧文言が残らない
     # ことも併せて verify (PR #683 review #10)。
@@ -510,5 +512,23 @@ Describe 'File encoding (#704)' {
     $bytes[0] | Should -Be 0xEF
     $bytes[1] | Should -Be 0xBB
     $bytes[2] | Should -Be 0xBF
+  }
+}
+
+
+Describe 'BtbN pinning policy (#705)' {
+  It 'pins $FFmpegBuildTag to a BtbN monthly snapshot (end-of-month daily survivor)' {
+    # BtbN GCs daily autobuild tags after ~14 days but keeps end-of-month
+    # snapshots (autobuild-YYYY-MM-{29,30,31}-*) for ~24 months. Pinning to
+    # a monthly snapshot gives the Portable ZIP build a ~24-month retention
+    # buffer instead of ~14 days. See #705 for the empirical study.
+    # Allowed day suffixes: 28 (Feb non-leap fallback), 29-31.
+    $FFmpegBuildTag | Should -Match '^autobuild-\d{4}-\d{2}-(28|29|30|31)-\d{2}-\d{2}$'
+  }
+
+  It 'pins $FFmpegAsset to a win64-lgpl-shared variant matching the build tag epoch' {
+    # Defense-in-depth: catches accidental rollback to a stale asset name
+    # that doesn't exist in the new monthly tag.
+    $FFmpegAsset | Should -Match '^ffmpeg-n[\d.]+(-\d+-g[0-9a-f]+)?-win64-lgpl-shared-[\d.]+$'
   }
 }
