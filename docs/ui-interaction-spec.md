@@ -39,7 +39,7 @@
 - inline hint は赤字エラーではなく `var(--ae-text-dim)` 系の補助色。情報レベル
 - 理由文は **行動指針を含む形** (例:「サンプル動画では保存できません。実際の動画を選択してください。」)。否定形だけで終わらせない
 
-**アンチパターン**: 理由表示なしの disabled。ユーザーは原因不明で「壊れた」と認識する ([PreviewScreen.tsx:651-657](../gui/src/screens/PreviewScreen.tsx#L651) の `applying || !filePath` による sample mode 永続 disabled が #589 該当ケース、tooltip / inline hint / 上部 banner は #589 派生 issue で対応予定)。
+**アンチパターン**: 理由表示なしの disabled。ユーザーは原因不明で「壊れた」と認識する ([PreviewScreen.tsx:651-657](../gui/src/screens/PreviewScreen.tsx#L651) の `applying || !filePath` による sample mode 永続 disabled が #589 該当ケース。[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で tooltip / inline hint / 上部 banner を実装し解消済)。
 
 ### 1.3 silent loss 防止: dirty consume 側で confirm
 
@@ -424,7 +424,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 - `[全試合書き出し]` → export: **confirm 必須** (現状未実装、後続で対応)
 - `[元に戻す]` (RestoreButton): 自前で confirm dialog を持つ ([RestoreButton.tsx:42-50](../gui/src/components/RestoreButton.tsx#L42))
 
-**sample mode**: `metadataStore.filePath === null` の sample mode では `[元に戻す]` は `hasBackup=false` で disabled、編集系のない complete 画面では §1.4 の sample banner を上部 `topBar` 直下に表示する (本 doc が source of truth、現状未実装)。
+**sample mode**: `metadataStore.filePath === null` の sample mode では `[元に戻す]` は `hasBackup=false` で disabled、complete 画面では `SampleModeBanner` を上部 `topBar` 直下に表示する ([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済)。
 
 **エラー表示**: §1.5 inline + toast 併用。complete 画面の主要エラー源は `restoreError` ([RestoreButton.tsx:63-67](../gui/src/components/RestoreButton.tsx#L63), inline `role="alert"`)。global toast 兼任設計は [#614](https://github.com/Idios/kobutachan-allaganeye/issues/614) (panic / error / log 構造化、`ErrorBoundary` / `ErrorModal`) で実装する。
 
@@ -472,7 +472,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 | 状態 | `idle` (`hasBackup=true` && `restoring=false`) / `busy` (`restoring=true`、ラベル `…`) / `disabled` (`hasBackup=false` または `restoring=true`) |
 | 遷移トリガー | `onClick` → `confirmFn(confirmMessage)` で確認 → OK なら `metadataStore.restore()` (atomic copy `metadata.original.json` → `metadata.json`) → 成功なら `onRestored?` callback |
 | store mutation | `metadataStore.restoring`, `metadataStore.metadata` (再 load), `metadataStore.dirty=false` (apply の rollback として), `metadataStore.hasBackup` (`refreshBackupStatus`) |
-| 例外 / edge case | confirm キャンセル → 何もしない。restore 失敗 → `restoreError` を inline `role="alert"` で表示。complete 画面では `onRestored` 未指定 (preview 画面は navigate('complete') を渡す)。§1.2 通り disabled 理由 tooltip ("バックアップが存在しません" / "復元中") は現状未実装、後続で追加 |
+| 例外 / edge case | confirm キャンセル → 何もしない。restore 失敗 → `restoreError` を inline `role="alert"` で表示。complete 画面では `onRestored` 未指定 (preview 画面は navigate('complete') を渡す)。§1.2 通り disabled 理由は priority 順: `restoring` → `isSample` (理由: 'サンプル動画では保存できません') → `!hasBackup` (理由: 'バックアップが存在しません') で tooltip + inline hint を表示 ([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済) |
 
 #### §2.3.5 [境界を調整] button
 
@@ -569,7 +569,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 
 **dirty / silent loss**: §1.3 に従い `handleBack` / `handleExport` が `if (dirty) confirm(...)` → OK で `discardEdits()` 後 `navigate(...)` を実装 ([PreviewScreen.tsx:460-486](../gui/src/screens/PreviewScreen.tsx#L460))。各 input は §1.1 準拠で onChange → debounce 200ms → `updateMatch` → store dirty 即時反映。confirm 直前に `flushUpdate()` でタイマー残を即時 commit するため、`useMetadataStore.getState().dirty` の判定が常に最新の編集を反映する (#589 で確立)。
 
-**sample mode**: `metadataStore.filePath === null` で sample 扱い。現状 [適用] が `applying || !filePath` で disabled ([PreviewScreen.tsx:651](../gui/src/screens/PreviewScreen.tsx#L651)) で、編集 input (matchName / matchType / startT / endT / TC) と主要 CTA は依然活性のまま、上部 sample banner と [適用] disabled の理由 tooltip / inline hint も未表示 → §1.2 / §1.4 違反として **派生 issue で対応 (#589 では state flow / dirty / confirm のみ対象、sample 全面 read-only 化は別 issue 切り出し)**。サンプル状態で編集→confirm OK 経路を辿った場合、`discardEdits()` は `loadSample()` で fixture に戻すため不整合は出ない (#589 で実装)。
+**sample mode**: `metadataStore.filePath === null` で sample 扱い。[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で全面 read-only 化を実装: 編集 input (matchName / matchType / startT / endT / TC) はすべて disabled、[適用] は `applying → isSample → !filePath` の priority 順で disabled + inline hint 「サンプル動画では保存できません」、上部に `SampleModeBanner` を常時表示。サンプル状態で `discardEdits()` を辿った場合は `loadSample()` で fixture に戻す (#589 で実装済)。
 
 **エラー表示**: §1.5 inline + toast 併用。preview 画面の主要エラー源:
 
@@ -582,7 +582,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 **実装段階**:
 
 - 現状 (Phase 3 = [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) + [#589](https://github.com/Idios/kobutachan-allaganeye/issues/589) 完了): `<video>` + axum 配信、`requestVideoFrameCallback` ベースのフレームシーク、ffmpeg サムネキャッシュ、キーボードショートカット ←→ 1s / Shift 10s / Alt 1F / Space 再生、TC HH:MM:SS.FF 入力、frame-grid snap、source_fps 連動 (60/120/240)、§1.1 / §1.3 準拠の state mutation flow + dirty consume confirm が完成
-- 未対応: §1.2 disabled 理由 tooltip / §1.4 sample mode 全面 read-only (上部 banner + 編集 input + 主要 CTA disabled + inline hint) — **#589 派生 issue で全画面 (complete §2.3 + preview §2.4 + export §2.5) 一括実装予定**。本 §2.4 が source of truth
+- [#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で §1.4 sample mode 全面 read-only (上部 `SampleModeBanner` + 編集 input disabled + 主要 CTA disabled + inline hint) を全画面 (complete §2.3 + preview §2.4 + export §2.5) 一括実装済。§1.2 準拠の disabled 理由表示も各部品節に記載のとおり実装済
 - ffmpeg 中断保護 ([#523](https://github.com/Idios/kobutachan-allaganeye/issues/523)): preview では subprocess を持たない (axum 直接配信、サムネは短命) ため、本画面は対象外
 
 #### §2.4.1 [◀ 一覧へ] back button
@@ -600,7 +600,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | text input ([PreviewScreen.tsx:505](../gui/src/screens/PreviewScreen.tsx#L505)) |
-| 状態 | `idle` (常時活性、sample mode の disable 化は派生 issue で全画面分対応予定 → §1.4) |
+| 状態 | `idle` / `disabled` (sample mode: `isSample=true` で disabled + tooltip 理由「サンプル動画では保存できません」、[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済 → §1.4) |
 | 遷移トリガー | `onChange` → local `setMatchName(value)` → schedule effect が pendingPatchRef に `{ name }` を merge → 200ms 後に `updateMatch(match.index, pendingPatch)` を 1 回 commit (§1.1 準拠、debounce で連打を coalesce) |
 | store mutation | debounce 完了時 `metadataStore.metadata.matches[i].name`、`metadataStore.dirty=true`、`metadataStore.draft.json` (#517 auto-save、別 debounce 500ms) |
 | 例外 / edge case | `name` は metadata.json には書き戻されず GUI 表示専用 ([metadata-spec.md](metadata-spec.md))、placeholder は `match_NNN` フォールバック。空文字許容 (placeholder 表示)。`flushUpdate()` (handleApply / handleBack / handleExport / unmount) で残タイマーを即時実行 |
@@ -610,7 +610,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | `<select>` ([PreviewScreen.tsx:518](../gui/src/screens/PreviewScreen.tsx#L518))。option: `fl_match` / `unknown` / `skip` |
-| 状態 | `idle` (常時活性、sample mode の disable 化は派生 issue で全画面分対応予定 → §1.4) |
+| 状態 | `idle` / `disabled` (sample mode: `isSample=true` で disabled + tooltip 理由「サンプル動画では保存できません」、[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済 → §1.4) |
 | 遷移トリガー | `onChange` → local `setMatchType(value)` + `flushUpdate()` で先行 debounce を flush + `updateMatch(match.index, { type_override: value })` を **即時 commit** (§1.1 例外、単一選択型は debounce しない) |
 | store mutation | 即時 `metadataStore.metadata.matches[i].type_override`、`metadataStore.dirty=true`、`metadataStore.draft.json` (#517 auto-save 500ms debounce) |
 | 例外 / edge case | `skip` は normalizeForPersistence で metadata.json に書き戻されない GUI ローカル情報 ([metadata-spec.md](metadata-spec.md) 編集契約)。即時 commit のためタイピング途中の中間状態は持たず、ユーザーが選んだ瞬間に dirty バッジが点く |
@@ -640,7 +640,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | text input ([PreviewScreen.tsx:758](../gui/src/screens/PreviewScreen.tsx#L758))。`H:MM:SS.FF` 形式 (FF は frame portion、`source_fps` 連動) |
-| 状態 | `idle` (常時活性、sample mode の disable 化は派生 issue で全画面分対応予定 → §1.4) |
+| 状態 | `idle` / `disabled` (sample mode: `isSample=true` で disabled + tooltip 理由「サンプル動画では保存できません」、[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済 → §1.4) |
 | 遷移トリガー | `onChange` → `parseTimecode(value, fps)` → 解析成功時 `onTChange(parsed)` (= local `setStartT` / `setEndT`) → schedule effect が pendingPatchRef に `{ edited: { start_time, end_time } }` を merge → 200ms 後に `updateMatch` を 1 回 commit (§1.1 準拠)。`onClick` → stopPropagation で Pane の activate を抑止 |
 | store mutation | debounce 完了時 `metadataStore.metadata.matches[i].edited.start_time/end_time`、`dirty=true`、`draft.json` (#517 別 debounce 500ms) |
 | 例外 / edge case | `parseTimecode` が null を返す (malformed input) 場合は何もしない (input value は ユーザー編集中の状態を維持)。表示は `fmtPreciseTime(t, fps)` で常に正規化された TC を出すため、playback 中はフレーム単位で値が動く。frame portion は `parseInt(f, 10) / fps` で 60/120/240 fps に対応 |
@@ -650,7 +650,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | button × 6 ([PreviewScreen.tsx:594-617](../gui/src/screens/PreviewScreen.tsx#L594))。`-10s / -1s / -1F / +1F / +1s / +10s`。`title="<label> (<key hint>)"` で keyboard 等価操作明示、`aria-label="nudge <label>"` |
-| 状態 | `idle` (常時活性) |
+| 状態 | `idle` / `disabled` (sample mode: `isSample=true` で disabled + tooltip 理由「サンプル動画では保存できません」、[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済 → §1.4) |
 | 遷移トリガー | `onClick` → frame ボタンは `nudgeFrame(±1)` (frame-grid snap)、秒 ボタンは `nudge(±1 \| ±10)` (累積) → 内部で `setCurrentT(...)` → schedule effect 経由で 200ms 後に `updateMatch({ edited })` commit |
 | store mutation | debounce 完了時 `metadataStore.metadata.matches[i].edited.start_time/end_time`、`dirty=true` |
 | 例外 / edge case | global keyboard ([PreviewScreen.tsx:407-436](../gui/src/screens/PreviewScreen.tsx#L407)) が ←/→/Shift+←→/Alt+←→ に同等の `nudge` / `nudgeFrame` を割り当てる。INPUT/TEXTAREA/SELECT に focus 中はキーボードを `return` で吸わない (TC input への入力を妨げない)。frame-grid snap は IEEE 754 丸め誤差で `t + 1/fps` の frame portion が advance しないケースを回避するため frame 番号ベースで step (例: 2438.75 + 1/120 → frame .90 のままバグ) |
@@ -670,7 +670,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | sub-component ([PreviewScreen.tsx:638-647](../gui/src/screens/PreviewScreen.tsx#L638))。±3s 範囲、12 frames @ 0.5s 間隔、現境界中心の thumb 列 |
-| 状態 | `displayOnly` (frame の sample) + interactive (frame click) |
+| 状態 | `displayOnly` (frame の sample) + interactive (frame click)。sample mode: thumb click は no-op (isSample=true で `onSelectFrame` を呼ばない、[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) → §1.4) |
 | 遷移トリガー | thumb `onClick` → `props.onSelectFrame(t)` → `setCurrentT(t)` → schedule effect 経由で 200ms 後に `updateMatch({ edited })` commit |
 | store mutation | debounce 完了時 `metadataStore.metadata.matches[i].edited.start_time/end_time`、`dirty=true` |
 | 例外 / edge case | `editing` で `inThumbs` / `outThumbs` を切替表示。thumbs の生成は ffmpeg `generate_match_thumbnails` (Rust 経由) で、boundary が 0.5s 以上動いた時のみ再フェッチ。失敗時は空配列 (UI は空 strip 表示)、エラー文言は出さない (#465 設計判断) |
@@ -680,10 +680,10 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | button ([PreviewScreen.tsx:651-657](../gui/src/screens/PreviewScreen.tsx#L651))。`aria-label="apply"` |
-| 状態 | `idle` (`!applying && filePath !== null`) / `applying` (label = `'適用中…'`) / `disabled` (`applying \|\| !filePath`) |
+| 状態 | `idle` (`!applying && !isSample && filePath !== null`) / `applying` (label = `'適用中…'`) / `disabled` (priority: `applying` → `isSample` → `!filePath`) |
 | 遷移トリガー | `onClick` → `handleApply()` ([PreviewScreen.tsx:451-457](../gui/src/screens/PreviewScreen.tsx#L451)) → `flushUpdate()` で残 debounce を即時 commit → `filePath` がある場合のみ `apply()` を await。debounce 経路で既に store の dirty 編集が立っている前提で、handleApply は二重 commit を行わない (§1.1 #589 修正で確立) |
 | store mutation | `metadataStore.applying`、`metadataStore.applyError`、`metadataStore.loadedMtimeMs` (apply 成功時)、`metadataStore.dirty=false` (apply 完了)、`metadataStore.hasBackup` (`refreshBackupStatus`)、`metadataStore.metadata.draft.json` clear ([#517](https://github.com/Idios/kobutachan-allaganeye/issues/517) draft auto-save 連携)。matches 編集自体は debounce 経路で既に commit 済 |
-| 例外 / edge case | sample mode (`filePath === null`) では disabled。**§1.2 違反 残**: tooltip / inline hint で「サンプル動画では保存できません」を出す canonical は #589 派生 issue で対応予定。conflict 時は ConflictModal ([metadata-spec.md](metadata-spec.md) §排他管理) が global で表示される (本画面では特段の追加処理なし) |
+| 例外 / edge case | sample mode (`isSample=true`) では disabled + tooltip 「サンプル動画では保存できません」 + inline hint を同時表示 ([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で §1.2 準拠実装済)。conflict 時は ConflictModal ([metadata-spec.md](metadata-spec.md) §排他管理) が global で表示される (本画面では特段の追加処理なし) |
 
 #### §2.4.11 dirty indicator
 
@@ -713,7 +713,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | 状態 | §2.3.4 と共通 (`idle` / `busy` / `disabled`) |
 | 遷移トリガー | confirm → `restore()` → 成功で `onRestored` callback → `navigate('complete')` |
 | store mutation | §2.3.4 と共通。preview 画面では navigate('complete') が追加発火 |
-| 例外 / edge case | restore はディスク上の `metadata.json` を上書きするため、画面遷移を伴わずに preview に留まると編集中の local state (startT / endT 等) が新しい match と矛盾する。これを回避するため preview からは `onRestored` で必ず complete に戻す設計 (§2.3.4 では callback 未指定で同画面に留まる)。§1.2 disabled 理由 tooltip 未実装は §2.3.4 と同じ派生 issue で扱う |
+| 例外 / edge case | restore はディスク上の `metadata.json` を上書きするため、画面遷移を伴わずに preview に留まると編集中の local state (startT / endT 等) が新しい match と矛盾する。これを回避するため preview からは `onRestored` で必ず complete に戻す設計 (§2.3.4 では callback 未指定で同画面に留まる)。§1.2 disabled 理由 tooltip / inline hint (priority: `restoring` → `isSample` → `!hasBackup`) は §2.3.4 と共通の実装で [#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) 対応済 |
 
 #### §2.4.14 [書き出し] secondary button
 
@@ -754,7 +754,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 
 **dirty / silent loss**: 編集対象 metadata なしのため §1.3 silent loss 対象外。export screen 上の設定 (`outDir` / `namePattern` / `codec` / `excludedIndexes`) は session-local config 扱いで confirm 不要。`running / cancelling` 中は [◀ プレビュー] が disabled になり物理的に navigate を防ぐ。
 
-**sample mode**: §1.4 通り。sample mode (`metadataStore.filePath === null`) でも `metadata.source` がフォールバック source として取得できれば `videoSource !== null` となり [書き出し開始] が活性化してしまう。実 ffmpeg は path 不正 → ffmpeg error で fail するが、ユーザー体験は不親切。本 doc canonical: sample mode で export 全体を read-only / 上部 banner 表示すべき (現状未実装、後続で対応)。
+**sample mode**: §1.4 通り。[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で export 画面にも `SampleModeBanner` を追加し、export 設定入力 (出力先 / 命名規則 / コーデック) と [書き出し開始] を sample mode で disabled にして read-only 化済。`metadata.source` がフォールバックで `videoSource !== null` になってしまう経路も sample mode disabled で遮断される。
 
 **エラー表示**: §1.5 inline 中心。export 画面の主要エラー源:
 
@@ -768,7 +768,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 **実装段階**:
 
 - 現状 (Phase 4 = [#466](https://github.com/Idios/kobutachan-allaganeye/issues/466) / [#545](https://github.com/Idios/kobutachan-allaganeye/pull/545) / [#591](https://github.com/Idios/kobutachan-allaganeye/issues/591) 完了): 実 ffmpeg 呼び出し + per-match progress event + GPU encoder auto-select + libx264 fallback + cancel kill ([#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) と共通の `kill_tracked_processes`) + `open_folder_in_explorer` (shell.open scope 制約回避) + `{start}` filename 用 MM-SS 表記 + 経過 / 残り時間表示 + 全選択 / 全解除 + per-match exclude
-- 残課題: §1.4 sample mode banner / §1.2 多数の disabled 理由 tooltip 未実装 → 後続で本 doc を source of truth として実装
+- [#633](https://github.com/Idios/kobutachan-allaganeye/issues/633): §1.4 sample mode `SampleModeBanner` + 8 disabled CTA の read-only 化 + §1.2 準拠 disabled 理由 tooltip を実装済。各部品節を参照
 
 #### §2.5.1 [◀ プレビュー] back button
 
@@ -778,7 +778,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | `idle` / `disabled` (`running \|\| cancelling`) |
 | 遷移トリガー | `onClick` → `navigate('preview')` |
 | store mutation | `appStateStore.screen='preview'` |
-| 例外 / edge case | running / cancelling 中の navigate を物理的に防ぐ (kill_tracked_processes が必要、§2.5.10 [中断] 経由でないと安全に止まれない)。§1.2 disabled 理由 tooltip 未実装 (canonical: 「書き出し中はプレビューに戻れません。先に [中断] してください」) |
+| 例外 / edge case | running / cancelling 中の navigate を物理的に防ぐ (kill_tracked_processes が必要、§2.5.10 [中断] 経由でないと安全に止まれない)。§1.2 disabled 理由 tooltip「書き出し中はプレビューに戻れません。先に [中断] してください」 ([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済) |
 
 #### §2.5.2 header (caption + title)
 
@@ -795,7 +795,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | text input ([ExportScreen.tsx:481-487](../gui/src/screens/ExportScreen.tsx#L481))。`aria-label="output directory"` |
-| 状態 | `idle` / `disabled` (`running \|\| cancelling`) |
+| 状態 | `idle` / `disabled` (`running \|\| cancelling \|\| isSample`。sample mode disabled + tooltip 理由「サンプル動画では保存できません」、[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) → §1.4) |
 | 遷移トリガー | `onChange` → 即時 `setOutDir(value)` (local state) |
 | store mutation | なし (session-local config、§1.1 例外: metadata 編集ではない設定値は store に上げない) |
 | 例外 / edge case | default 値は `deriveDefaultOutDir(videoSource)` ([ExportScreen.tsx:122](../gui/src/screens/ExportScreen.tsx#L122)、`<dirname(videoSource)>/output`)。videoSource 欠損時は空文字列で必須選択。Windows extended-length path prefix (`\\?\`) は `stripExtendedPathPrefix` で除去。親ディレクトリが存在しない場合は Rust 側で error (silent mkdir は廃止) |
@@ -808,14 +808,14 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | `idle` / `disabled` (`running \|\| cancelling`) |
 | 遷移トリガー | `onClick` → `openDialog({ directory: true, multiple: false })` (`@tauri-apps/plugin-dialog`) → 戻り値 string なら `setOutDir(picked)` |
 | store mutation | なし |
-| 例外 / edge case | `dialog:allow-open` permission を `capabilities/default.json` に明示済み。dialog cancel (戻り値 null) は何もしない。§1.2 disabled 理由 tooltip 未実装 |
+| 例外 / edge case | `dialog:allow-open` permission を `capabilities/default.json` に明示済み。dialog cancel (戻り値 null) は何もしない。§1.2 disabled 理由 tooltip (「書き出し中は変更できません」/ sample: 「サンプル動画では保存できません」) [#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済 |
 
 #### §2.5.5 命名規則 input + variables hint
 
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | text input + display hint ([ExportScreen.tsx:501-510](../gui/src/screens/ExportScreen.tsx#L501))。default `match_{idx:03}.mp4` |
-| 状態 | input: `idle` / `disabled` (`running \|\| cancelling`)。hint: `displayOnly` |
+| 状態 | input: `idle` / `disabled` (`running \|\| cancelling \|\| isSample`。sample mode disabled + tooltip 理由「サンプル動画では保存できません」、[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) → §1.4)。hint: `displayOnly` |
 | 遷移トリガー | input `onChange` → 即時 `setNamePattern(value)` |
 | store mutation | なし (session-local) |
 | 例外 / edge case | `formatName` で `{idx}` / `{idx:03}` / `{type}` / `{start}` / `{date}` を置換。`{start}` は `formatStartForFilename` で `MM-SS` / `H-MM-SS` 形式 (Windows filename で `:` 不可のため `-` 置換)。malformed pattern (置換キーなし等) は実体ファイル名がそのまま出るのみで error にしない。重複ファイル名は ffmpeg `-y` で silent overwrite |
@@ -825,7 +825,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | button × 2 ([ExportScreen.tsx:516-528](../gui/src/screens/ExportScreen.tsx#L516))。`aria-pressed={codec === c.v}` で選択状態を提示 |
-| 状態 | 各ボタン: `inactive` / `active` (`codec === c.v` で `codecButtonActive`) / `disabled` (`running \|\| cancelling`) |
+| 状態 | 各ボタン: `inactive` / `active` (`codec === c.v` で `codecButtonActive`) / `disabled` (`running \|\| cancelling \|\| isSample`。sample mode disabled + tooltip 理由「サンプル動画では保存できません」、[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) → §1.4) |
 | 遷移トリガー | `onClick` → 即時 `setCodec(value)` |
 | store mutation | なし |
 | 例外 / edge case | h264 ボタンの sub label に `encoderInfo.display_label` を埋め込み、auto-select 結果 (`NVENC` / `QSV` / `AMF` / `libx264 (CPU)`) を可視化 ([#591](https://github.com/Idios/kobutachan-allaganeye/issues/591))。`metadata.system_info` 欠損 / Tauri command reject 時は libx264 silent fallback。codec 未選択状態は無し (default `'copy'`) |
@@ -858,7 +858,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | `idle` (label `⬦ 書き出し開始`) / `running` (label `書き出し中…`、disabled) / `cancelling` (label `中断中…`、disabled) / `disabled` (`!videoSource`) |
 | 遷移トリガー | `onClick` → `handleStartExport()` → `dispatch(START_CLICKED)` (idle→running) → `for (m of queue) await invoke('export_match', ...)` → 完了で `PROGRESS_COMPLETE` / 全失敗で `EXPORT_ERROR` / cancel で `CANCEL_CONFIRMED` |
 | store mutation | なし。`matchStates` / `exportStartMs` / `nowMs` / 内部 phase が更新 |
-| 例外 / edge case | `!metadata` または `!videoSource` で early return。永続 skip (`type_override === 'skip'`) または ad-hoc exclude (`excludedIndexes` 含む) は queue から除外。逐次 `for await` で 1 試合ずつ実行 (並列なし)。§1.2 disabled 理由 tooltip 未実装 (canonical: 「動画ファイルが選択されていません。drop 画面に戻って選択してください」) |
+| 例外 / edge case | `!metadata` または `!videoSource` で early return。永続 skip (`type_override === 'skip'`) または ad-hoc exclude (`excludedIndexes` 含む) は queue から除外。逐次 `for await` で 1 試合ずつ実行 (並列なし)。§1.2 disabled 理由: sample mode は「サンプル動画では保存できません」/ `!videoSource` は「動画ファイルが選択されていません。drop 画面に戻って選択してください」/ running / cancelling は当該ボタン非表示で代替。([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で sample mode 対応実装済) |
 
 #### §2.5.10 [中断] cancel button
 
@@ -908,7 +908,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | caption: `displayOnly` (`{N} ファイル`)。bulk button: `idle` / `disabled` (`running \|\| cancelling`) |
 | 遷移トリガー | `onClick` → `toggleSelectAll(true \| false)` → `excludedIndexes` から bulk 対象 (永続 skip 以外) を全 add/delete |
 | store mutation | なし |
-| 例外 / edge case | `type_override === 'skip'` (preview で永続設定) は bulk 対象外 (個別 checkbox も disabled)。bulk 対象 0 件時も「全選択」「全解除」は無害 (no-op)。§1.2 disabled 理由 tooltip 未実装 |
+| 例外 / edge case | `type_override === 'skip'` (preview で永続設定) は bulk 対象外 (個別 checkbox も disabled)。bulk 対象 0 件時も「全選択」「全解除」は無害 (no-op)。§1.2 disabled 理由 tooltip「書き出し中は変更できません」 ([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済) |
 
 #### §2.5.15 listItem (per-match row)
 
