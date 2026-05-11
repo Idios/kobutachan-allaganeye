@@ -14,7 +14,7 @@ export function SampleModeBanner() {
   );
   if (!isSample) return null;
   return (
-    <div className={styles.banner} role="status" aria-live="polite">
+    <div className={styles.banner}>
       サンプル動画です。実際の動画を選択すると保存できます。
     </div>
   );
