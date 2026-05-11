@@ -499,4 +499,16 @@ Describe 'File encoding (#704)' {
     $bytes[1] | Should -Be 0xBB
     $bytes[2] | Should -Be 0xBF
   }
+
+  It 'build-portable-zip.ps1 is also saved as UTF-8 with BOM so PowerShell 5.1 can dot-source it (Round 2 extension #704)' {
+    # build-portable-zip.ps1 contains 8 lines of non-ASCII Japanese comments
+    # (around L93 §, L391-419 monthly snapshot bump comments). PS5.1 dot-source
+    # via this Tests.ps1's BeforeAll would parse-fail without BOM, exactly the
+    # same way Tests.ps1 itself failed before its BOM was added. Empirical scope
+    # extension found during /iterate-review Round 2.
+    $bytes = [System.IO.File]::ReadAllBytes($script:BuildScript)
+    $bytes[0] | Should -Be 0xEF
+    $bytes[1] | Should -Be 0xBB
+    $bytes[2] | Should -Be 0xBF
+  }
 }
