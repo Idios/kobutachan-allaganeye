@@ -1502,7 +1502,7 @@ describe('#695: conflictErrorHint lifecycle', () => {
 
   it('runApply() catch (conflict) sets conflictErrorHint', async () => {
     useMetadataStore.setState({
-      metadata: { source: '/test.mp4', matches: [] } as any,
+      metadata: { source: '/test.mp4', matches: [] } as never,
       filePath: '/test.mp4',
     });
 
@@ -1565,7 +1565,7 @@ describe('#695: conflictErrorHint lifecycle', () => {
     // applyOverwrite calls runApply(true) which clears conflictError/conflictErrorHint
     // in the initial set({ applying: true, ... }) before invoking apply_changes.
     useMetadataStore.setState({
-      metadata: { source: '/test.mp4', matches: [] } as any,
+      metadata: { source: '/test.mp4', matches: [] } as never,
       filePath: '/test.mp4',
       conflictError: 'prev conflict',
       conflictErrorHint: 'prev hint',
