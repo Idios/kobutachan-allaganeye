@@ -2860,10 +2860,20 @@ fn read_error_log_tail(line_count: usize) -> Result<String, AppError> {
     read_error_log_tail_inner(&log_dir, line_count)
 }
 
+/// Defense-in-depth upper bound for `read_error_log_tail`'s `line_count`
+/// argument. The only current caller (`ErrorModal.tsx::LOG_TAIL_LINE_COUNT`)
+/// hardcodes 300, so this cap is unreachable today, but it prevents future
+/// callers (or a malicious extension reaching the Tauri IPC) from triggering
+/// an allocation panic via `VecDeque::with_capacity(usize::MAX)`. The chosen
+/// ceiling (10000) is far above any practical "log tail" use case yet small
+/// enough to fit comfortably in memory.
+const MAX_TAIL_LINES: usize = 10000;
+
 /// Pure inner function for unit testing without log_dir() side effects. Tries
 /// today's log first, then falls back to yesterday's. Returns `""` when both
 /// are missing or empty (not an error). `line_count == 0` short-circuits to
-/// `""` (avoids unbounded growth of the tail buffer).
+/// `""` (avoids unbounded growth of the tail buffer); `line_count` greater
+/// than `MAX_TAIL_LINES` is silently capped.
 fn read_error_log_tail_inner(
     log_dir: &std::path::Path,
     line_count: usize,
@@ -2874,6 +2884,10 @@ fn read_error_log_tail_inner(
     if line_count == 0 {
         return Ok(String::new());
     }
+    // #669 -- /iterate-review Round 2 #2: defense-in-depth cap to avoid
+    // `VecDeque::with_capacity(usize::MAX)` allocation panic if a future
+    // caller forgets to bound the input.
+    let line_count = line_count.min(MAX_TAIL_LINES);
 
     let today = logging::current_ymd_compact();
     let yesterday = logging::ymd_compact_yesterday();
@@ -5238,5 +5252,31 @@ mod tests {
         // line_count=0 を要求された場合は空文字列を返す (loop 暴走防止)
         let result = read_error_log_tail_inner(log_dir, 0).unwrap();
         assert_eq!(result, "");
+    }
+
+    #[test]
+    fn read_error_log_tail_caps_at_max_tail_lines() {
+        // /iterate-review Round 2 #2: line_count が MAX_TAIL_LINES (10000) を
+        // 超えても allocation panic せず、ファイル全行 (実際は MAX 以下) を
+        // 返すことを確認 (defense-in-depth)。
+        use std::io::Write;
+        let tmp = TempDir::new().expect("tempdir");
+        let log_dir = tmp.path();
+        let date = logging::current_ymd_compact();
+        let log_path = log_dir.join(format!("error-{}.log", date));
+        {
+            let mut f = std::fs::File::create(&log_path).unwrap();
+            // 500 行のみ書く (MAX=10000 より少ない、cap 適用 path を確認しつつ
+            // 全行返却を assert)
+            for i in 0..500 {
+                writeln!(f, "line {}", i).unwrap();
+            }
+        }
+        // 巨大な line_count を渡しても panic せず 500 行返る (= ファイル全体)
+        let result = read_error_log_tail_inner(log_dir, usize::MAX).unwrap();
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines.len(), 500);
+        assert_eq!(lines[0], "line 0");
+        assert_eq!(lines[499], "line 499");
     }
 }

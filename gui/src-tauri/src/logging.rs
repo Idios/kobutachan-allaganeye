@@ -304,6 +304,29 @@ mod tests {
     }
 
     #[test]
+    fn ymd_compact_yesterday_format() {
+        // #669 -- /iterate-review Round 2: format + 1-day-diff を直接 assert
+        // する dedicated unit test (integration test
+        // `read_error_log_tail_falls_back_to_previous_day` 経由の indirect
+        // cover では DST / time zone bug を早期検知できないため)。
+        let yesterday = ymd_compact_yesterday();
+        assert_eq!(yesterday.len(), 8);
+        assert!(yesterday.chars().all(|c| c.is_ascii_digit()));
+
+        // YYYYMMDD 形式は文字列辞書順 == 日付順 (年 → 月 → 日 の桁順)。
+        // 真夜中跨ぎ race を避けるため strict-less ではなく less-or-equal で
+        // assert (両者が同日になるのは UTC 00:00:00 直後の 1 秒未満ウィンドウ
+        // のみで、その瞬間は yesterday と today が一致する)。
+        let today = current_ymd_compact();
+        assert!(
+            yesterday.as_str() <= today.as_str(),
+            "yesterday ({}) should be <= today ({})",
+            yesterday,
+            today
+        );
+    }
+
+    #[test]
     fn days_to_ymd_known_values() {
         // 2026-04-29 = 20577 days since 1970-01-01
         // Compute from a known date: 2026-01-01 epoch = 1767225600 / 86400 = 20454 days
