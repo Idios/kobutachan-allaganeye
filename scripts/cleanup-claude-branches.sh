@@ -54,9 +54,27 @@ fi
 
 deleted=0
 kept=0
+
+# active worktree が参照する branch 集合 (refs/heads/<name> 形式) を構築。
+# detached HEAD worktree は `branch` 行を emit しない (`HEAD <sha>` のみ) ため、
+# 名前付き branch を保持していない = 自動削除対象外として安全にスキップされる。
+declare -A ACTIVE_BRANCHES=()
+while IFS= read -r line; do
+  if [[ "$line" == "branch refs/heads/"* ]]; then
+    ACTIVE_BRANCHES["${line#branch refs/heads/}"]=1
+  fi
+done < <(git -C "$REPO_ROOT" worktree list --porcelain)
+
 for branch in "${BRANCHES[@]}"; do
-  # 後続 Task で AND 1/2/3 を埋める。skeleton では全 branch を keep (placeholder)。
-  echo "  would delete $branch (skeleton, all conditions assumed satisfied)"
+  # AND 2: active 不在判定
+  if [[ -n "${ACTIVE_BRANCHES[$branch]:-}" ]]; then
+    echo "  kept $branch (reason: active)"
+    kept=$((kept + 1))
+    continue
+  fi
+
+  # AND 1 / AND 3 は後続 Task で追加。本 Task では「active 以外は keep (skeleton)」のまま。
+  echo "  would delete $branch (skeleton, AND 1/3 not yet implemented)"
   kept=$((kept + 1))
 done
 
