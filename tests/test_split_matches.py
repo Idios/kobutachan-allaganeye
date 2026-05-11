@@ -4083,3 +4083,97 @@ def test_eta_progressbar_finished_no_eta_tail() -> None:
 
     assert "ETA:" not in line, f"100% で ETA tail が残存: {line!r}"
     assert "100%" in line
+
+
+# -- #644 brightness_samples wiring through run_split (一気通貫) --
+
+# `MODULE` / `PROBE_RESULT` / `BOUNDARIES` / `_mock_audio_scan` (autouse)
+# は file 冒頭で既定義。`mock_pipeline` fixture は `detect_match_boundaries`
+# を mock するが、本ケースは `_run_detection` を直接 patch して
+# `brightness_callback` の wiring を assert したいため、`mock_pipeline` は
+# 使わず個別に patch する。
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_writes_brightness_samples_when_callback_fires(
+    mock_probe, mock_split, mock_run_detection, tmp_path
+):
+    """#644 -- run_split (一気通貫) で Pass 1 が走ったら brightness_samples
+    が metadata.json に書かれること。`_run_detection` に渡される
+    `brightness_callback` を fake_run_detection から call して輝度 sample
+    を注入し、最終 metadata.json に payload が現れることを assert する。
+    """
+    mock_probe.return_value = PROBE_RESULT
+
+    def fake_run_detection(*args, **kwargs):
+        cb = kwargs.get("brightness_callback")
+        assert cb is not None, (
+            "run_split must pass brightness_callback to _run_detection (#644)"
+        )
+        cb({0.0: 10.5, 0.5: 12.3, 1.0: 14.1})
+        return BOUNDARIES
+
+    mock_run_detection.side_effect = fake_run_detection
+
+    output_dir = tmp_path / "out"
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    run_split(video, config, verbose=False, quiet=True)
+
+    metadata_path = output_dir / "metadata.json"
+    assert metadata_path.exists()
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert "brightness_samples" in payload, (
+        "run_split で Pass 1 が走った時 brightness_samples が metadata.json に "
+        "書かれているはず (#644)"
+    )
+    samples = payload["brightness_samples"]
+    assert isinstance(samples, dict)
+    assert "values" in samples and isinstance(samples["values"], list)
+    assert len(samples["values"]) > 0
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_omits_brightness_samples_when_callback_silent(
+    mock_probe, mock_split, mock_run_detection, tmp_path
+):
+    """#644 -- `_run_detection` が callback を呼ばない (例: cache hit 経路と
+    同じ意味の no-op detection) 場合は brightness_samples キーを書かない。
+    """
+    mock_probe.return_value = PROBE_RESULT
+
+    def fake_run_detection(*args, **kwargs):
+        # callback を呼ばない (Pass 1 走っていない想定)
+        return BOUNDARIES
+
+    mock_run_detection.side_effect = fake_run_detection
+
+    output_dir = tmp_path / "out2"
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    run_split(video, config, verbose=False, quiet=True)
+
+    metadata_path = output_dir / "metadata.json"
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert "brightness_samples" not in payload, (
+        "callback が silent (Pass 1 skip / cache hit 相当) なら "
+        "brightness_samples キーは書かないはず"
+    )

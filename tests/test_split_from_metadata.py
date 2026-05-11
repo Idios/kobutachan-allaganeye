@@ -388,3 +388,76 @@ def test_run_split_from_metadata_rejects_future_schema_version(tmp_path):
     config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
     with pytest.raises(InputFileError, match="unsupported schema_version"):
         run_split_from_metadata(meta_path, config, quiet=True)
+
+
+# -- #644 brightness_samples preserve through --from-metadata --
+
+
+def test_run_split_from_metadata_preserves_brightness_samples(tmp_path):
+    """#644 -- --from-metadata 経路で元 metadata.json の brightness_samples
+    が新 metadata.json に preserve されること (PR #626 の detection_started_at
+    preserve と同パターン)。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    original_samples = {
+        "interval_s": 0.5,
+        "values": [10.0, 12.5, 15.0, 17.5],
+    }
+    payload = {
+        **_sample_metadata(str(source)),
+        "brightness_samples": original_samples,
+    }
+    meta_path = _write_metadata(tmp_path, payload)
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                tmp_path / "out" / "match_001.mp4",
+                tmp_path / "out" / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    out_meta = tmp_path / "out" / "metadata.json"
+    fresh = json.loads(out_meta.read_text("utf-8"))
+    assert "brightness_samples" in fresh, (
+        "--from-metadata は元 metadata の brightness_samples を新 metadata に "
+        "preserve するはず (#644 / PR #626 同パターン)"
+    )
+    assert fresh["brightness_samples"] == original_samples
+
+
+def test_run_split_from_metadata_omits_brightness_samples_when_source_lacks(tmp_path):
+    """#644 -- --from-metadata 経路で元 metadata に brightness_samples が
+    無い場合、新 metadata.json にも無いまま (legacy / cache hit 互換)。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    # _sample_metadata はデフォルトで brightness_samples を含めない
+    payload = _sample_metadata(str(source))
+    assert "brightness_samples" not in payload
+    meta_path = _write_metadata(tmp_path, payload)
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                tmp_path / "out" / "match_001.mp4",
+                tmp_path / "out" / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    out_meta = tmp_path / "out" / "metadata.json"
+    fresh = json.loads(out_meta.read_text("utf-8"))
+    assert "brightness_samples" not in fresh, (
+        "元 metadata に brightness_samples が無いなら新 metadata にも書かない"
+    )
