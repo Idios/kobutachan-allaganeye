@@ -11,6 +11,7 @@ import {
 import { DisabledTooltip } from '../components/DisabledTooltip';
 import { FrameStrip, type FrameStripThumb } from '../components/FrameStrip';
 import { RestoreButton } from '../components/RestoreButton';
+import { SampleModeBanner } from '../components/SampleModeBanner';
 import { useAppStateStore } from '../state/appStateStore';
 import {
   useMetadataStore,
@@ -487,8 +488,21 @@ export function PreviewScreen() {
 
   const selectable: MatchType[] = ['fl_match', 'unknown'];
 
+  const applyDisabled = applying || !filePath || isSample;
+  const applyReason = applying
+    ? '適用中…'
+    : isSample
+      ? sampleReason
+      : !filePath
+        ? 'ファイルが選択されていません'
+        : '';
+
+  const exportNavDisabled = isSample;
+  const exportNavReason = isSample ? sampleReason : '';
+
   return (
     <div className={styles.screen} data-testid="preview-screen">
+      <SampleModeBanner />
       <div className={styles.header}>
         <button
           type="button"
@@ -668,15 +682,20 @@ export function PreviewScreen() {
       </div>
 
       <div className={styles.actionsRow}>
-        <button
-          type="button"
-          className={styles.primaryButton}
-          onClick={handleApply}
-          disabled={applying || !filePath}
-          aria-label="apply"
-        >
-          {applying ? '適用中…' : '⬦ 適用'}
-        </button>
+        <DisabledTooltip disabled={applyDisabled} reason={applyReason} inlineHint={true}>
+          {(p) => (
+            <button
+              type="button"
+              className={styles.primaryButton}
+              onClick={handleApply}
+              disabled={applyDisabled}
+              aria-label="apply"
+              {...p}
+            >
+              {applying ? '適用中…' : '⬦ 適用'}
+            </button>
+          )}
+        </DisabledTooltip>
         {dirty && <span className={styles.dirty}>● 未保存の変更</span>}
         {applyError && (
           <span className={styles.applyError} role="alert">
@@ -689,13 +708,19 @@ export function PreviewScreen() {
           </span>
         )}
         <RestoreButton onRestored={() => navigate('complete')} />
-        <button
-          type="button"
-          className={styles.secondaryButton}
-          onClick={handleExport}
-        >
-          書き出し →
-        </button>
+        <DisabledTooltip disabled={exportNavDisabled} reason={exportNavReason} inlineHint={true}>
+          {(p) => (
+            <button
+              type="button"
+              className={styles.secondaryButton}
+              onClick={handleExport}
+              disabled={exportNavDisabled}
+              {...p}
+            >
+              書き出し →
+            </button>
+          )}
+        </DisabledTooltip>
       </div>
     </div>
   );

@@ -123,7 +123,9 @@ describe('PreviewScreen', () => {
     expect(useAppStateStore.getState().screen).toBe('complete');
   });
 
-  it('[書き出し] navigates to export when not dirty', async () => {
+  it('[書き出し] navigates to export when not dirty (non-sample mode)', async () => {
+    // Exit sample mode so the button is enabled (sample mode disables it; see Task 1.6)
+    useMetadataStore.setState({ filePath: '/x' });
     render(<PreviewScreen />);
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /書き出し/ }));
@@ -657,6 +659,36 @@ describe('PreviewScreen', () => {
       'IN (start) timecode',
     ) as HTMLInputElement;
     expect(tc.value).toMatch(/^\d+:\d{2}:\d{2}\.\d{2}$/);
+  });
+});
+
+describe('PreviewScreen sample mode banner + main CTAs (Task 1.6)', () => {
+  beforeEach(() => {
+    useMetadataStore.getState().clear();
+    useMetadataStore.getState().loadSample();
+    useAppStateStore.setState({ selectedMatchIndex: 1 });
+  });
+
+  it('renders SampleModeBanner in sample mode', () => {
+    render(<PreviewScreen />);
+    expect(screen.getByText('サンプル動画です。実際の動画を選択すると保存できます。')).toBeInTheDocument();
+  });
+
+  it('disables [適用] CTA with sample tooltip + inline hint', () => {
+    render(<PreviewScreen />);
+    const applyBtn = screen.getByRole('button', { name: 'apply' });
+    expect(applyBtn).toBeDisabled();
+    expect(applyBtn).toHaveAttribute('title', 'サンプル動画では保存できません');
+    // inline hint span: DisabledTooltip with inlineHint=true renders the reason as visible text
+    const hints = screen.getAllByText('サンプル動画では保存できません');
+    expect(hints.length).toBeGreaterThanOrEqual(1); // inline hint span (title attr not in textContent)
+  });
+
+  it('disables [書き出し] navigate CTA with sample tooltip + inline hint', () => {
+    render(<PreviewScreen />);
+    const exportBtn = screen.getByRole('button', { name: /書き出し/ });
+    expect(exportBtn).toBeDisabled();
+    expect(exportBtn).toHaveAttribute('title', 'サンプル動画では保存できません');
   });
 });
 
