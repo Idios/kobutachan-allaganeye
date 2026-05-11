@@ -203,11 +203,13 @@ pub(crate) fn apply_no_window(
 
 | 関数 | 行 | spawn 対象 | 修正 |
 | --- | --- | --- | --- |
-| `start_detect` | [lib.rs:~2409](../../gui/src-tauri/src/lib.rs#L2409) | allaganeye CLI (Python) | `Command::new(...).args(...)` chain の **`spawn()` 直前**に `process_util::apply_no_window(&mut cmd);` |
-| `probe_video_with` | [lib.rs:~624](../../gui/src-tauri/src/lib.rs#L624) | ffprobe | 同上 |
-| `generate_match_thumbnails` | [lib.rs:~1197](../../gui/src-tauri/src/lib.rs#L1197) | ffmpeg (thumbnail) | 同上 |
-| `export_match` | [lib.rs:~1798](../../gui/src-tauri/src/lib.rs#L1798) | ffmpeg (export) | 同上 |
+| `start_detect` | [lib.rs:~2484](../../gui/src-tauri/src/lib.rs#L2484) | allaganeye CLI (Python) | `Command::new(...).args(...)` chain の **`spawn()` 直前**に `process_util::apply_no_window(&mut cmd);` |
+| `probe_video_with` | [lib.rs:~651](../../gui/src-tauri/src/lib.rs#L651) | ffprobe | 同上 |
+| `ensure_thumbnail_exists` (`generate_match_thumbnails` から呼出) | [lib.rs:~1259](../../gui/src-tauri/src/lib.rs#L1259) | ffmpeg (thumbnail) | 同上 |
+| `run_ffmpeg_export_attempt` (`export_match` から呼出) | [lib.rs:~1871](../../gui/src-tauri/src/lib.rs#L1871) | ffmpeg (export) | 同上 |
 | ~~`open_folder_in_explorer`~~ | [lib.rs:~1644](../../gui/src-tauri/src/lib.rs#L1644) | **除外** (`std::process::Command`、`explorer.exe`) | **変更なし** |
+
+§1.1 の調査表 (issue 本文 POV) では `generate_match_thumbnails` / `export_match` を spawn site として挙げているが、実 spawn は内部で呼び出される `ensure_thumbnail_exists` / `run_ffmpeg_export_attempt` で行われる (`tokio::process::Command::new("ffmpeg")` の chain 配置位置)。本表は実装適用先 (= ffmpeg を実際に spawn している関数) を示す。
 
 ### 5.3 data flow / error handling
 
@@ -221,10 +223,10 @@ pub(crate) fn apply_no_window(
   - Windows: `apply_no_window` 適用後 Command が **chain で同 mutable reference を返す** (smoke test、`creation_flags` の read API は public でないため副作用直接検証不可、helper の **chain 化 / 引数受け取り** を pinning)
   - 非 Windows: 同様に identity 返却の no-op smoke test
 - **call-site adoption check** (将来の merge で適用漏れを検知する目的):
-  - Option a (Recommended): `process_util.rs` 内 `#[cfg(test)]` で `include_str!("lib.rs")` または `include_str!("../src/lib.rs")` (workspace 構造による) で lib.rs 全体を文字列取り込みし、4 関数名 (`start_detect` / `probe_video_with` / `generate_match_thumbnails` / `export_match`) 直近に `apply_no_window` 文字列が現れることを assert
+  - Option a (Recommended、本 spec 採用): `process_util.rs` 内 `#[cfg(test)]` で `include_str!("lib.rs")` (process_util.rs と同階層) で lib.rs 全体を文字列取り込みし、実 spawn を行う 4 関数名 (`probe_video_with` / `ensure_thumbnail_exists` / `run_ffmpeg_export_attempt` / `start_detect`) 直近に `apply_no_window` 文字列が現れることを assert
   - Option b: 各 spawn site を小さな helper 関数に extract し、unit test で helper 単独に `apply_no_window` 呼び出しを pinning
   - Option c: テストでカバーせず PR review + Iron Law 6 実機確認に委ねる (本章 P2-medium につき非推奨)
-  - 実装者は a / b から選択。c は本章では採用しない
+  - 本 spec は **Option a を採用** (b は採用せず、c は非推奨)。実装手順は plan Task 1.7 を参照
 - **Iron Law 6 実機検証 (Idios)**:
   - [ ] `cd gui && cargo tauri build` で release bundle 作成
   - [ ] release exe 起動 → DropScreen で動画選択 → detect 実行 → **CMD 窓非表示**
@@ -342,7 +344,7 @@ fn truncate_and_escape(line: &str, max_chars: usize) -> String {
     - ASCII control (`\x01` 含む) → escape
     - multibyte char (日本語) で boundary が char boundary に揃う
     - `max_chars = 0` → empty
-- **regression**: `cargo test --lib` で全 test pass、既存 156 件と整合
+- **regression**: `cargo test --lib` で全 test pass、既存 171 件 (うち `parse_detect_progress_line_*` 6 件) と整合
 
 ### 6.7 AppError 統合
 

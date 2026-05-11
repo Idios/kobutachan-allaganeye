@@ -23,7 +23,7 @@
 | `_run_detection(..., brightness_callback)` 引数 | [split_matches.py:684-696](../../allaganeye/commands/split_matches.py#L684) | 3 |
 | `_build_metadata_payload(..., brightness_samples)` 引数 + payload set | [split_matches.py:1235-1340](../../allaganeye/commands/split_matches.py#L1235) | 3 |
 | `build_brightness_samples()` helper | [split_matches.py:1355](../../allaganeye/commands/split_matches.py#L1355) | 3 |
-| `parse_detect_progress_line` 既存 unit test 5 件 | [lib.rs:4507-4557](../../gui/src-tauri/src/lib.rs#L4507) | 2 (refactor 後も全 pass 必須) |
+| `parse_detect_progress_line` 既存 unit test 6 件 | [lib.rs:4507-4557](../../gui/src-tauri/src/lib.rs#L4507) | 2 (refactor 後も全 pass 必須) |
 | AppError `subprocess.spawn_failed` + `.with_default_hint()` | PR #689 で migrate 済 | 1 (error path 不変) |
 
 ### File Structure (overview)
@@ -226,7 +226,7 @@ Run:
 cd gui/src-tauri && cargo test --lib 2>&1 | tail -10
 ```
 
-Expected: `test result: ok` で既存 156 件 + 新 2 件 = 158 件 pass。
+Expected: `test result: ok` で既存 171 件 + 新 2 件 = 173 件 pass (`develop-0.2.0` で `cargo test --lib` を走らせた現状値を基準。実装着手時の最新値で読み替え)。
 
 ### Task 1.3: probe_video_with に apply_no_window を適用
 
@@ -297,7 +297,7 @@ Run:
 cd gui/src-tauri && cargo test --lib 2>&1 | tail -10
 ```
 
-Expected: 158 件 pass (前回と同数、regression なし)。
+Expected: 173 件 pass (前回と同数、regression なし)。
 
 ### Task 1.4: ensure_thumbnail_exists に apply_no_window を適用
 
@@ -378,7 +378,7 @@ Run:
 cd gui/src-tauri && cargo check && cargo test --lib 2>&1 | tail -10
 ```
 
-Expected: 158 件 pass (regression なし)。
+Expected: 173 件 pass (regression なし)。
 
 ### Task 1.5: run_ffmpeg_export_attempt に apply_no_window を適用
 
@@ -429,7 +429,7 @@ Run:
 cd gui/src-tauri && cargo check && cargo test --lib 2>&1 | tail -10
 ```
 
-Expected: 158 件 pass。
+Expected: 173 件 pass。
 
 ### Task 1.6: start_detect に apply_no_window を適用
 
@@ -490,7 +490,7 @@ Run:
 cd gui/src-tauri && cargo check && cargo test --lib 2>&1 | tail -10
 ```
 
-Expected: 158 件 pass。
+Expected: 173 件 pass。
 
 ### Task 1.7: call-site adoption pinning test
 
@@ -556,7 +556,7 @@ Run:
 cd gui/src-tauri && cargo test --lib 2>&1 | tail -10
 ```
 
-Expected: 159 件 pass (新 pinning test +1)。
+Expected: 174 件 pass (新 pinning test +1)。
 
 ### Task 1.8: Pre-PR verification + commit + PR 作成
 
@@ -641,7 +641,7 @@ Plan: [docs/superpowers/plans/2026-05-11-l2-lane-ib-group-b.md](docs/superpowers
 - [x] `git fetch origin develop-0.2.0` + `git log HEAD..origin/develop-0.2.0` (取り込み未済 commit なし)
 - [x] `gh pr list --search "#679"` 並行 worktree PR 重複なし
 - [x] `cd gui/src-tauri && cargo check`
-- [x] `cd gui/src-tauri && cargo test --lib` (159 件 pass、新 3 件 + 既存 156 件)
+- [x] `cd gui/src-tauri && cargo test --lib` (174 件 pass、新 3 件 + 既存 171 件)
 - [x] `cd gui && npm run lint && npm run typecheck && npm test -- --run && npm run build`
 - [x] `bash scripts/check-markdownlint.sh` (本 PR は docs 編集なし)
 
@@ -929,7 +929,7 @@ cd gui/src-tauri && cargo test --lib parse_with_warn 2>&1 | tail -15
 
 Expected: 5 件 pass。
 
-- [ ] **Step 3: 既存 parse_detect_progress_line test 群 (5 件) も regression なし**
+- [ ] **Step 3: 既存 parse_detect_progress_line test 群 (6 件) も regression なし**
 
 Run:
 
@@ -937,7 +937,7 @@ Run:
 cd gui/src-tauri && cargo test --lib parse_detect_progress_line 2>&1 | tail -15
 ```
 
-Expected: 10 件 pass (既存 5 件 + 新 5 件)。
+Expected: 11 件 pass (既存 6 件 + 新 5 件)。
 
 ### Task 2.4: docs/tauri-commands.md に追記
 
@@ -1001,7 +1001,7 @@ cd gui && npm run lint && npm run typecheck && npm test -- --run && npm run buil
 bash scripts/check-markdownlint.sh docs/tauri-commands.md 2>&1 | tail -3
 ```
 
-Expected: 全 pass (Rust test は 章 1 PR merge 後 base なら 159 件 + 章 2 新 12 件 = 171 件 pass)。
+Expected: 全 pass (Rust test は 章 1 PR merge 後 base なら 174 件 + 章 2 新 12 件 = 186 件 pass)。
 
 - [ ] **Step 2: commit**
 
@@ -1025,7 +1025,7 @@ CLI が --progress-format json で emit する stdout の malformed JSON は
 dev console (cargo tauri dev) で warn 観察可。release は windows_subsystem
 = "windows" で stderr が失われるため別 issue で tauri-plugin-log 検討。
 
-unit test: 5 + 7 = 12 件 (既存 5 件は unchanged)
+unit test: 5 + 7 = 12 件 (既存 6 件は unchanged)
 
 Refs #648
 Spec: docs/superpowers/specs/2026-05-11-l2-lane-ib-group-b-design.md §6
@@ -1061,7 +1061,7 @@ Plan: [docs/superpowers/plans/2026-05-11-l2-lane-ib-group-b.md](docs/superpowers
 - [x] malformed JSON は warn 出力 (truncate + control char escape 込み)
 - [x] dev console で warn 観察可能、release では stderr が失われる旨を doc 化
 - [x] `phase=error` 化しない (UX 変更なし)
-- [x] unit test 7 + 5 = 12 件追加 (既存 5 件は維持)
+- [x] unit test 7 + 5 = 12 件追加 (既存 6 件は維持)
 
 ## Self-Test Report
 
@@ -1137,79 +1137,50 @@ head -50 tests/test_split_matches.py
 
 - [ ] **Step 2: failing test を file 末尾に追加**
 
-Edit `tests/test_split_matches.py` の末尾に以下を追加 (既存パターン: [tests/test_detect.py:294](../../tests/test_detect.py#L294) の `test_detect_writes_brightness_samples_when_callback_fires` を参考に `run_split` 経路向けにアレンジ):
+Edit `tests/test_split_matches.py` の末尾に以下を追加。既存スタイル ([`@patch(f"{MODULE}.xxx")`](../../tests/test_split_matches.py#L84) decorator + dummy `Path` fixture、`_mock_audio_scan` autouse fixture が audio scan を自動 no-op 化) を踏襲する:
 
 ```python
 # -- #644 brightness_samples wiring through run_split (一気通貫) --
 
-import json
-
-from allaganeye.commands.split_matches import run_split
-
-
-def _make_minimal_video_fixture(tmp_path):
-    """1 秒程度の最小 mkv fixture を返す (実 ffmpeg で生成、test 専用)。
-
-    既存の sample_video_dir fixture が無いケースでも回せるよう、tmp_path
-    内に短い動画を 1 本作る。ffmpeg が PATH にない環境では skip 相当の
-    挙動を caller に委ねる (本 test は slow マーカーに include しない)。
-    """
-    import subprocess
-
-    video_path = tmp_path / "tiny.mkv"
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-f", "lavfi",
-        "-i", "color=c=black:s=160x90:d=1",
-        "-c:v", "libx264",
-        "-t", "1",
-        str(video_path),
-    ]
-    subprocess.run(cmd, check=True, capture_output=True)
-    return video_path
+# `MODULE` / `PROBE_RESULT` / `BOUNDARIES` / `_mock_audio_scan` (autouse)
+# は file 冒頭で既定義。`mock_pipeline` fixture は `detect_match_boundaries`
+# を mock するが、本ケースは `_run_detection` を直接 patch して
+# `brightness_callback` の wiring を assert したいため、`mock_pipeline` は
+# 使わず個別に patch する。
 
 
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
 def test_run_split_writes_brightness_samples_when_callback_fires(
-    tmp_path, monkeypatch
+    mock_probe, mock_split, mock_run_detection, tmp_path
 ):
     """#644 -- run_split (一気通貫) で Pass 1 が走ったら brightness_samples
-    が metadata.json に書かれること。
+    が metadata.json に書かれること。`_run_detection` に渡される
+    `brightness_callback` を fake_run_detection から call して輝度 sample
+    を注入し、最終 metadata.json に payload が現れることを assert する。
     """
-    from allaganeye.commands import split_matches as sm
-    from allaganeye.config import SplitConfig
+    mock_probe.return_value = PROBE_RESULT
 
-    # _run_detection を mock し、brightness_callback を 3 sample で呼ぶ
     def fake_run_detection(*args, **kwargs):
         cb = kwargs.get("brightness_callback")
-        assert cb is not None, "run_split must pass brightness_callback to _run_detection"
+        assert cb is not None, (
+            "run_split must pass brightness_callback to _run_detection (#644)"
+        )
         cb({0.0: 10.5, 0.5: 12.3, 1.0: 14.1})
-        return [
-            {"start": 0.0, "end": 1.0, "type": "fl_match"},
-        ]
+        return BOUNDARIES
 
-    monkeypatch.setattr(sm, "_run_detection", fake_run_detection)
+    mock_run_detection.side_effect = fake_run_detection
 
-    # split / cache / audio scan を no-op に
-    monkeypatch.setattr(sm, "_load_cache", lambda *a, **kw: None)
-    monkeypatch.setattr(sm, "_save_cache", lambda *a, **kw: None)
-    monkeypatch.setattr(sm, "_run_audio_scan", lambda *a, **kw: None)
-    monkeypatch.setattr(sm, "split_video", lambda *a, **kw: [tmp_path / "1.mp4"])
-    monkeypatch.setattr(sm, "_check_disk_space", lambda *a, **kw: None)
-
-    video = _make_minimal_video_fixture(tmp_path)
     output_dir = tmp_path / "out"
-    config = SplitConfig(
-        output_dir=output_dir,
-        sample_interval=0.5,
-        blackout_threshold=15.0,
-        min_match_duration=1.0,
-        min_blackout_duration=0.1,
-        no_audio=True,
-        use_gpu=False,
-        dry_run=False,
-        workers=1,
-    )
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
 
     run_split(video, config, verbose=False, quiet=True)
 
@@ -1226,39 +1197,32 @@ def test_run_split_writes_brightness_samples_when_callback_fires(
     assert len(samples["values"]) > 0
 
 
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
 def test_run_split_omits_brightness_samples_when_callback_silent(
-    tmp_path, monkeypatch
+    mock_probe, mock_split, mock_run_detection, tmp_path
 ):
-    """#644 -- callback が呼ばれない (例: cache hit 経路と同じ意味の no-op
-    detection) 場合は brightness_samples キーを書かない。
+    """#644 -- `_run_detection` が callback を呼ばない (例: cache hit 経路と
+    同じ意味の no-op detection) 場合は brightness_samples キーを書かない。
     """
-    from allaganeye.commands import split_matches as sm
-    from allaganeye.config import SplitConfig
+    mock_probe.return_value = PROBE_RESULT
 
     def fake_run_detection(*args, **kwargs):
         # callback を呼ばない (Pass 1 走っていない想定)
-        return [{"start": 0.0, "end": 1.0, "type": "fl_match"}]
+        return BOUNDARIES
 
-    monkeypatch.setattr(sm, "_run_detection", fake_run_detection)
-    monkeypatch.setattr(sm, "_load_cache", lambda *a, **kw: None)
-    monkeypatch.setattr(sm, "_save_cache", lambda *a, **kw: None)
-    monkeypatch.setattr(sm, "_run_audio_scan", lambda *a, **kw: None)
-    monkeypatch.setattr(sm, "split_video", lambda *a, **kw: [tmp_path / "1.mp4"])
-    monkeypatch.setattr(sm, "_check_disk_space", lambda *a, **kw: None)
+    mock_run_detection.side_effect = fake_run_detection
 
-    video = _make_minimal_video_fixture(tmp_path)
     output_dir = tmp_path / "out2"
-    config = SplitConfig(
-        output_dir=output_dir,
-        sample_interval=0.5,
-        blackout_threshold=15.0,
-        min_match_duration=1.0,
-        min_blackout_duration=0.1,
-        no_audio=True,
-        use_gpu=False,
-        dry_run=False,
-        workers=1,
-    )
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
 
     run_split(video, config, verbose=False, quiet=True)
 
@@ -1269,6 +1233,13 @@ def test_run_split_omits_brightness_samples_when_callback_silent(
         "brightness_samples キーは書かないはず"
     )
 ```
+
+**スタイル整合のポイント** (既存 `test_pipeline_happy_path` 等と同じ):
+
+- `@patch(f"{MODULE}.xxx")` decorator で `probe_video` / `split_video` / `_run_detection` を mock (実 ffmpeg 起動なし)
+- video fixture は `tmp_path / "input.mp4"` + `write_bytes(b"")` で dummy (`_make_minimal_video_fixture` のような実 ffmpeg subprocess は使わない)
+- `_mock_audio_scan` autouse fixture が file 冒頭で audio scan を自動 no-op 化しているため `_run_audio_scan` の明示 mock は不要
+- `_load_cache` / `_save_cache` / `_check_disk_space` も既存 happy path test 群が mock せず動くため明示 patch 不要
 
 - [ ] **Step 3: test を実行して fail を確認**
 
@@ -1514,202 +1485,89 @@ head -30 tests/test_split_from_metadata.py
 
 - [ ] **Step 2: failing test を末尾に追加**
 
-Edit `tests/test_split_from_metadata.py` の末尾に追加:
+Edit `tests/test_split_from_metadata.py` の末尾に追加。既存スタイル ([test_run_split_from_metadata_preserves_detection_timestamps](../../tests/test_split_from_metadata.py#L114) と同じ pattern: `_sample_metadata` / `_write_metadata` helper を使い、`with (patch(...), patch(...))` context manager で `probe_video` / `split_video` を mock。実 ffmpeg 起動は不要):
 
 ```python
 # -- #644 brightness_samples preserve through --from-metadata --
 
-import json
 
-from allaganeye.commands.split_matches import run_split_from_metadata
-
-
-def _write_minimal_metadata(metadata_path, source_path, brightness_samples=None):
-    """Pre-existing metadata.json を作る test helper。"""
-    payload = {
-        "schema_version": "1",
-        "source": str(source_path),
-        "source_duration": 1.0,
-        "source_duration_display": "00:01",
-        "source_fps": 30.0,
-        "detected_at": "2026-05-11T00:00:00Z",
-        "detection_started_at": "2026-05-11T00:00:00Z",
-        "detection_completed_at": "2026-05-11T00:00:01Z",
-        "detection_params": {
-            "sample_interval": 0.5,
-            "blackout_threshold": 15.0,
-            "min_match_duration": 1.0,
-            "min_blackout_duration": 0.1,
-            "no_audio": True,
-            "use_gpu": False,
-            "workers": 1,
-        },
-        "system_info": {
-            "gpu_vendors_available": [],
-            "gpu_vendor_used": None,
-        },
-        "matches": [
-            {
-                "index": 1,
-                "start_time": 0.0,
-                "end_time": 1.0,
-                "start_display": "00:00",
-                "end_display": "00:01",
-                "duration": 1.0,
-                "duration_display": "00:01",
-                "type": "fl_match",
-                "output_file": "1.mp4",
-            }
-        ],
-        "gaps": [],
-        "warnings": [],
-    }
-    if brightness_samples is not None:
-        payload["brightness_samples"] = brightness_samples
-    metadata_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
-
-def test_run_split_from_metadata_preserves_brightness_samples(
-    tmp_path, monkeypatch
-):
+def test_run_split_from_metadata_preserves_brightness_samples(tmp_path):
     """#644 -- --from-metadata 経路で元 metadata.json の brightness_samples
-    が新 metadata.json に preserve されること。
+    が新 metadata.json に preserve されること (PR #626 の detection_started_at
+    preserve と同パターン)。
     """
-    from allaganeye.commands import split_matches as sm
-    from allaganeye.config import SplitConfig
-
-    # source video fixture
-    source = tmp_path / "src.mkv"
-    import subprocess
-
-    subprocess.run(
-        [
-            "ffmpeg", "-y",
-            "-f", "lavfi", "-i", "color=c=black:s=160x90:d=1",
-            "-c:v", "libx264", "-t", "1",
-            str(source),
-        ],
-        check=True,
-        capture_output=True,
-    )
-
-    # 元 metadata に brightness_samples を含めて書く
-    src_meta = tmp_path / "src_meta.json"
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
     original_samples = {
         "interval_s": 0.5,
         "values": [10.0, 12.5, 15.0, 17.5],
     }
-    _write_minimal_metadata(src_meta, source, brightness_samples=original_samples)
+    payload = {
+        **_sample_metadata(str(source)),
+        "brightness_samples": original_samples,
+    }
+    meta_path = _write_metadata(tmp_path, payload)
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
 
-    # split / disk check は no-op
-    monkeypatch.setattr(sm, "split_video", lambda *a, **kw: [tmp_path / "1.mp4"])
-    monkeypatch.setattr(sm, "_check_disk_space", lambda *a, **kw: None)
-    monkeypatch.setattr(
-        sm, "probe_video",
-        lambda *a, **kw: {
-            "duration": 1.0,
-            "width": 160,
-            "height": 90,
-            "fps": 30.0,
-            "codec": "h264",
-        },
-    )
-    # GPU vendor probe を no-op に
-    from allaganeye import system_info as si_mod
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                tmp_path / "out" / "match_001.mp4",
+                tmp_path / "out" / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
 
-    monkeypatch.setattr(si_mod, "probe_gpu_vendors", lambda: [])
-
-    output_dir = tmp_path / "out"
-    config = SplitConfig(
-        output_dir=output_dir,
-        sample_interval=0.5,
-        blackout_threshold=15.0,
-        min_match_duration=1.0,
-        min_blackout_duration=0.1,
-        no_audio=True,
-        use_gpu=False,
-        dry_run=False,
-        workers=1,
-    )
-
-    run_split_from_metadata(src_meta, config, quiet=True)
-
-    new_meta = output_dir / "metadata.json"
-    assert new_meta.exists()
-    payload = json.loads(new_meta.read_text(encoding="utf-8"))
-    assert "brightness_samples" in payload, (
+    out_meta = tmp_path / "out" / "metadata.json"
+    fresh = json.loads(out_meta.read_text("utf-8"))
+    assert "brightness_samples" in fresh, (
         "--from-metadata は元 metadata の brightness_samples を新 metadata に "
         "preserve するはず (#644 / PR #626 同パターン)"
     )
-    assert payload["brightness_samples"] == original_samples
+    assert fresh["brightness_samples"] == original_samples
 
 
-def test_run_split_from_metadata_omits_brightness_samples_when_source_lacks(
-    tmp_path, monkeypatch
-):
+def test_run_split_from_metadata_omits_brightness_samples_when_source_lacks(tmp_path):
     """#644 -- --from-metadata 経路で元 metadata に brightness_samples が
-    無い場合、新 metadata.json にも無いまま。
+    無い場合、新 metadata.json にも無いまま (legacy / cache hit 互換)。
     """
-    from allaganeye.commands import split_matches as sm
-    from allaganeye.config import SplitConfig
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    # _sample_metadata はデフォルトで brightness_samples を含めない
+    payload = _sample_metadata(str(source))
+    assert "brightness_samples" not in payload
+    meta_path = _write_metadata(tmp_path, payload)
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
 
-    source = tmp_path / "src.mkv"
-    import subprocess
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                tmp_path / "out" / "match_001.mp4",
+                tmp_path / "out" / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
 
-    subprocess.run(
-        [
-            "ffmpeg", "-y",
-            "-f", "lavfi", "-i", "color=c=black:s=160x90:d=1",
-            "-c:v", "libx264", "-t", "1",
-            str(source),
-        ],
-        check=True,
-        capture_output=True,
-    )
-
-    # 元 metadata に brightness_samples を **含めない**
-    src_meta = tmp_path / "src_meta.json"
-    _write_minimal_metadata(src_meta, source, brightness_samples=None)
-
-    monkeypatch.setattr(sm, "split_video", lambda *a, **kw: [tmp_path / "1.mp4"])
-    monkeypatch.setattr(sm, "_check_disk_space", lambda *a, **kw: None)
-    monkeypatch.setattr(
-        sm, "probe_video",
-        lambda *a, **kw: {
-            "duration": 1.0,
-            "width": 160,
-            "height": 90,
-            "fps": 30.0,
-            "codec": "h264",
-        },
-    )
-    from allaganeye import system_info as si_mod
-
-    monkeypatch.setattr(si_mod, "probe_gpu_vendors", lambda: [])
-
-    output_dir = tmp_path / "out2"
-    config = SplitConfig(
-        output_dir=output_dir,
-        sample_interval=0.5,
-        blackout_threshold=15.0,
-        min_match_duration=1.0,
-        min_blackout_duration=0.1,
-        no_audio=True,
-        use_gpu=False,
-        dry_run=False,
-        workers=1,
-    )
-
-    run_split_from_metadata(src_meta, config, quiet=True)
-
-    new_meta = output_dir / "metadata.json"
-    payload = json.loads(new_meta.read_text(encoding="utf-8"))
-    assert "brightness_samples" not in payload, (
+    out_meta = tmp_path / "out" / "metadata.json"
+    fresh = json.loads(out_meta.read_text("utf-8"))
+    assert "brightness_samples" not in fresh, (
         "元 metadata に brightness_samples が無いなら新 metadata にも書かない"
     )
 ```
+
+**スタイル整合のポイント** (既存 `test_run_split_from_metadata_preserves_detection_timestamps` 等と同じ):
+
+- `source = tmp_path / "input.mp4"` + `source.write_bytes(b"")` で dummy video (実 ffmpeg 起動なし)
+- 既存 helper `_sample_metadata(str(source))` を再利用し、`**_sample_metadata(...), "brightness_samples": ...` で追加 field を merge
+- 既存 helper `_write_metadata(tmp_path, payload)` で metadata.json 書き込み
+- `with (patch(...), patch(...)):` context manager で `probe_video` / `split_video` のみ mock (`run_split_from_metadata` は detect を呼ばないため `detect_match_boundaries` の mock 不要)
+- GPU vendor probe / disk check 等の追加 patch は既存テストでも不要なため省略
 
 - [ ] **Step 3: test を実行して fail を確認**
 
