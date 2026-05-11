@@ -4,6 +4,7 @@ import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useMetadataStore } from '../state/metadataStore';
 import styles from './ConflictModal.module.css';
+import { InlineErrorHint } from './InlineErrorHint';
 
 /**
  * #514: modal surfaced when `apply_changes` returns a conflict error because
@@ -18,6 +19,7 @@ import styles from './ConflictModal.module.css';
  */
 export function ConflictModal() {
   const conflictError = useMetadataStore((s) => s.conflictError);
+  const conflictErrorHint = useMetadataStore((s) => s.conflictErrorHint);
   const applying = useMetadataStore((s) => s.applying);
   const applyOverwrite = useMetadataStore((s) => s.applyOverwrite);
   const reloadAfterConflict = useMetadataStore((s) => s.reloadAfterConflict);
@@ -45,8 +47,9 @@ export function ConflictModal() {
           metadata.json が外部で変更されました
         </h2>
         <p className={styles.message}>{conflictError}</p>
-        <p className={styles.hint}>
-          「上書き」で外部変更を破棄し GUI の編集を適用、「リロード」で最新の metadata.json を読み直し (編集は破棄)、「キャンセル」で何もせずこのモーダルを閉じます。
+        <InlineErrorHint hint={conflictErrorHint} />
+        <p className={styles.cancelHint}>
+          「キャンセル」で何もせずこのモーダルを閉じます。
         </p>
         <div className={styles.actions}>
           <button

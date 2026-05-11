@@ -36,7 +36,7 @@
   line-height: 1.5;
 }
 
-.hint {
+.cancelHint {
   font-family: var(--ae-font-body);
   font-size: 12px;
   color: var(--ae-text-dim);

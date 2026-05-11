@@ -113,6 +113,21 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 4. globalErrorListener が拾うのは uncaught (window.error / unhandledrejection /
    panic) のみ。catch 済 Tauri command error は ErrorModal に出さない (規約)
 
+#### §1.5.1 ConflictModal の hint slot 規約 (#695、C 案)
+
+`state.mtime_conflict` の ConflictModal では、AppError hint を主表示し、modal
+局所文言 (キャンセル ボタン挙動説明) は補足 1 行として別 paragraph に表示する規約:
+
+- 1 行目 (`<p>{conflictError}</p>`): AppError.message を danger 色で表示
+- 2 行目 (`<InlineErrorHint hint={conflictErrorHint} />`): AppError.hint を `💡`
+  prefix + `var(--ae-text-dim)` で表示 (hint null 時は非表示)
+- 3 行目 (`<p>{cancel 補足}</p>`): 「「キャンセル」で何もせずこのモーダルを閉じます。」
+  を常時表示 (modal 局所文言、上書き / リロード の挙動は AppError hint がカバー)
+
+旧 compose hint (3 button 全説明) は削除済 (PR #695)。AppError hint と modal
+文言の重複を避けるため、modal 局所文言は modal-only な action (キャンセル 等) に
+限定する規約。
+
 ## 2. 画面別 UI 部品状態機械
 
 §2 は 5 画面それぞれを **1 画面 = 1 PR** で順次追加する (#590 着手フローに従う)。
