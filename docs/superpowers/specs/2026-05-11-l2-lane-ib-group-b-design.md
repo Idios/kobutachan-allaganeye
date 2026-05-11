@@ -42,7 +42,7 @@ GUI Tauri アプリの release bundle (`cargo tauri build`) で detect / export 
 
 ### 1.2 #648 — parse_detect_progress_line の silent skip (P3-low, bug)
 
-[`gui/src-tauri/src/lib.rs:~1712-1718`](../../gui/src-tauri/src/lib.rs#L1712) の `parse_detect_progress_line` は CLI が `--progress-format json` で emit した stdout 各行を JSON parse するが、parse 失敗 (malformed JSON / debug print 混入等) を `serde_json::from_str(line).ok()` で `None` 化して **silent skip** する:
+[`gui/src-tauri/src/lib.rs:~2285-2291`](../../gui/src-tauri/src/lib.rs#L2285) の `parse_detect_progress_line` は CLI が `--progress-format json` で emit した stdout 各行を JSON parse するが、parse 失敗 (malformed JSON / debug print 混入等) を `serde_json::from_str(line).ok()` で `None` 化して **silent skip** する:
 
 ```rust
 fn parse_detect_progress_line(line: &str) -> Option<DetectProgress> {
@@ -53,7 +53,7 @@ fn parse_detect_progress_line(line: &str) -> Option<DetectProgress> {
 }
 ```
 
-呼び出し側 ([lib.rs:~1953-1965](../../gui/src-tauri/src/lib.rs#L1953)) は `Option::None` を読み飛ばして次の行へ進むため、CLI 側に schema 不整合があった場合に GUI 側に何も伝わらず、開発者の troubleshooting 手段がない。
+呼び出し側 ([lib.rs:~2586](../../gui/src-tauri/src/lib.rs#L2586)) は `Option::None` を読み飛ばして次の行へ進むため、CLI 側に schema 不整合があった場合に GUI 側に何も伝わらず、開発者の troubleshooting 手段がない。
 
 **設計選択**: issue 本文 Option 1 (Recommended) では `phase=error` 化 + PR #647 error UI 経路への接続を提案していたが、Roadmap 2026-05-11 update では「`log::warn` + 既知 prefix doc 化」(より軽量) に方針を確定。本 spec はこの roadmap 方針を採用 (Lane I-B brainstorming 2026-05-11 で再確認済)。
 
@@ -135,7 +135,7 @@ GUI のメインフロー (`start_detect` → `run_detect`) は問題なし。**
 │                                                                          │
 │  章 2: #648 [P3-low] parse_detect_progress_line silent skip            │
 │    ┌──────────────────────────────────────────────────────────┐         │
-│    │ lib.rs:1712 parse_detect_progress_line を分離              │         │
+│    │ lib.rs:2285 parse_detect_progress_line を分離              │         │
 │    │   fn parse_detect_progress_line(line: &str)                │         │
 │    │     -> Option<DetectProgress>  (signature 不変、private)    │         │
 │    │   fn parse_detect_progress_line_with_warn(                 │         │
@@ -319,7 +319,7 @@ fn truncate_and_escape(line: &str, max_chars: usize) -> String {
 ```
 
 - 公開 signature `parse_detect_progress_line(line: &str) -> Option<DetectProgress>` **不変**
-- 呼び出し側 ([lib.rs:~1953-1965](../../gui/src-tauri/src/lib.rs#L1953)) **無変更**
+- 呼び出し側 ([lib.rs:~2586](../../gui/src-tauri/src/lib.rs#L2586)) **無変更**
 - UX 改変なし (`phase=error` 化しない、roadmap 通り)
 
 ### 6.5 doc 化
