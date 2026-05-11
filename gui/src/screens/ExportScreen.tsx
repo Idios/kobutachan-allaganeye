@@ -897,7 +897,6 @@ export function ExportScreen() {
                         ? sampleReason
                         : 'preview で skip に設定されています'
                     }
-                    inlineHint={isSample}
                   >
                     {(p) => (
                       <input

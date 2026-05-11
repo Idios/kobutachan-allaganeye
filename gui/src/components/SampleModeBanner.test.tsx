@@ -13,19 +13,19 @@ describe('SampleModeBanner', () => {
   it('renders banner in sample mode (filePath=null + metadata=non-null)', () => {
     useMetadataStore.getState().loadSample();
     render(<SampleModeBanner />);
-    expect(screen.getByText(/サンプル動画/)).toBeInTheDocument();
+    expect(screen.getByText('サンプル動画です。実際の動画を選択すると保存できます。')).toBeInTheDocument();
   });
 
   it('does not render in real-file mode (filePath=non-null)', () => {
     useMetadataStore.getState().loadSample();
     useMetadataStore.setState({ filePath: '/some/path.mp4' });
     render(<SampleModeBanner />);
-    expect(screen.queryByText(/サンプル動画/)).toBeNull();
+    expect(screen.queryByText('サンプル動画です。実際の動画を選択すると保存できます。')).toBeNull();
   });
 
   it('does not render in initial idle (metadata=null)', () => {
     useMetadataStore.setState({ filePath: null, metadata: null });
     render(<SampleModeBanner />);
-    expect(screen.queryByText(/サンプル動画/)).toBeNull();
+    expect(screen.queryByText('サンプル動画です。実際の動画を選択すると保存できます。')).toBeNull();
   });
 });

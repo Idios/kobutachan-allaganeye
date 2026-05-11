@@ -628,7 +628,7 @@ export function PreviewScreen() {
                 : '←';
           return (
             <DisabledTooltip key={i} disabled={isSample} reason={sampleReason}>
-              {() => (
+              {(p) => (
                 <button
                   type="button"
                   className={styles.stepButton}
@@ -638,9 +638,10 @@ export function PreviewScreen() {
                     else nudge(step.value);
                   }}
                   aria-label={`nudge ${label}`}
-                  // In sample mode use the sample tooltip; otherwise show the keyboard hint.
-                  title={isSample ? sampleReason : `${label} (${keyHint})`}
                   disabled={isSample}
+                  {...p}
+                  // In sample mode p.title=sampleReason; otherwise show the keyboard hint.
+                  title={p.title ?? `${label} (${keyHint})`}
                 >
                   {label}
                 </button>
