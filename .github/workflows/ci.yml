@@ -177,6 +177,15 @@ jobs:
           LIB_COUNT=$(wc -l < /tmp/lib_commands.txt)
           echo "OK: $LIB_COUNT tauri commands documented (name-level match)"
 
+  doc-error-hint-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check error.rs ↔ docs/tauri-commands.md hint mapping drift
+        shell: bash
+        run: bash .github/scripts/check-error-hint-drift.sh
+
   installer-pester:
     runs-on: windows-latest
     steps:
