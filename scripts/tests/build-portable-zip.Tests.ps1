@@ -1,4 +1,4 @@
-<#
+﻿<#
 Pester v5 tests for scripts/build-portable-zip.ps1.
 
 Run:
