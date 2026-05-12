@@ -174,7 +174,8 @@ export function FrameStrip({
       {frames.map((f, i) => {
         const thumbUrl = nearestThumbUrl(thumbs, f.t);
         return (
-          <DisabledTooltip key={i} disabled={disabled} reason={disabledReason}>
+          <div key={i} className={styles.cellSlot}>
+          <DisabledTooltip disabled={disabled} reason={disabledReason}>
             {(p) => (
               <button
                 type="button"
@@ -212,6 +213,7 @@ export function FrameStrip({
               </button>
             )}
           </DisabledTooltip>
+          </div>
         );
       })}
       {brightnessSamples && (
@@ -222,13 +224,15 @@ export function FrameStrip({
           data-testid="frame-strip-brightness-overlay"
           aria-hidden="true"
         >
-          {/* threshold line */}
+          {/* threshold line。`vector-effect="non-scaling-stroke"` で viewBox stretch
+              による線の細り化を回避し、CSS stroke-width 通りの px 太さを保つ。 */}
           <line
             x1={0}
             x2={overlayWidth}
             y1={overlayThresholdY}
             y2={overlayThresholdY}
             className={styles.thresholdLine}
+            vectorEffect="non-scaling-stroke"
             data-testid="threshold-line"
           />
 
@@ -254,6 +258,7 @@ export function FrameStrip({
             <path
               d={overlayPath}
               className={styles.waveformPath}
+              vectorEffect="non-scaling-stroke"
               data-testid="waveform-path"
             />
           )}
