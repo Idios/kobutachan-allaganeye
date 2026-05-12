@@ -208,7 +208,9 @@ describe('DropScreen', () => {
     const card = await screen.findByTestId('drop-selected-card');
     // Auto-focus moves focus into the card. The first focusable in the
     // card is the cancel button.
-    expect(card.contains(document.activeElement)).toBe(true);
+    await waitFor(() =>
+      expect(card.contains(document.activeElement)).toBe(true),
+    );
   });
 
   it('Escape on the ErrorCard dismisses it (#587)', async () => {

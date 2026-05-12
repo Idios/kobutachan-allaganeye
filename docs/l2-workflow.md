@@ -558,9 +558,27 @@ Claude Code のセッション用 worktree はセッション終了時に `git w
 
 ### 自動実行 (Stop hook)
 
-セッション終了時に `.claude/hooks/stop.sh` が `scripts/cleanup-worktrees.sh --apply` を起動し、空ディレクトリを rmdir で除去する。`rmdir` のみを使うため未保存ファイルを含むディレクトリは絶対に削除されず、セッション中の作業が消失することはない。
+セッション終了時に `.claude/hooks/stop.sh` が **2 つの cleanup script を順次起動**する:
+
+1. `scripts/cleanup-worktrees.sh --apply` — 空ディレクトリを `rmdir` で除去 (非空 dir は touch しない)
+2. `scripts/cleanup-claude-branches.sh --apply` — 安全 AND 条件を満たす `claude/*` ローカルブランチを `git branch -D` (#708)
+
+両 script とも明示的に安全な条件下のみ操作するため、未保存ファイルや作業中ブランチが誤って消失することはない。
 
 設定箇所: `.claude/settings.json` の `hooks.Stop` セクション。
+
+### branch cleanup の安全条件 (AND)
+
+`scripts/cleanup-claude-branches.sh --apply` が `git branch -D` で削除する条件 (#708):
+
+- **AND 1 (merged)**: `origin/develop-0.2.0` または `origin/main` の祖先 (`git merge-base --is-ancestor`)
+- **AND 2 (active 参照なし)**: `git worktree list --porcelain` の `branch refs/heads/...` 集合に含まれない
+- **AND 3 (24h cooldown)**: 最終 commit (`git log -1 --format=%ct`) が 24h 以上前
+- **prefix 限定**: `claude/` のみ (= `feature/xxx` 等の手動 branch は対象外)
+
+**評価順序**: AND 2 → AND 1 → AND 3 (cost-efficient: AND 2 は local hash lookup で安価、AND 1 / AND 3 は git subprocess を spawn するため後回し)。最初に fail した条件が `kept <branch> (reason: not-merged | active | cooldown)` の reason として記録される。
+
+`origin/develop-0.2.0` / `origin/main` が未 fetch だと `merge-base --is-ancestor` が false に倒れて keep される = 安全側。`git fetch` は hook 内で実行せず、user の通常運用 (`git pull`) を前提とする。
 
 ### 手動実行
 
@@ -569,9 +587,11 @@ Claude Code のセッション用 worktree はセッション終了時に `git w
 ```bash
 # 削除候補を表示するだけ (dry-run, デフォルト)
 scripts/cleanup-worktrees.sh
+scripts/cleanup-claude-branches.sh
 
-# 実際に rmdir を実行 (非空ディレクトリは触らない)
+# 実際に rmdir / branch -D を実行 (安全条件を満たすもののみ)
 scripts/cleanup-worktrees.sh --apply
+scripts/cleanup-claude-branches.sh --apply
 ```
 
 ### 動作
@@ -598,6 +618,8 @@ Stop hook は**自セッションのディレクトリを sweep しない**。�
 ### 安全性
 
 `rmdir` のみを使用するため、アクティブな worktree や何らかのファイルが残っているディレクトリは**削除されない**。想定外のファイルが残っているディレクトリは出力で明示されるため、必要に応じて手動で確認する。Stop hook が起動中のセッションのアクティブ worktree は `.git` 参照で保護されるため安全に skip される。Windows のディレクトリハンドル保持問題 (#477 コメント) は上記 2 段階設計により回避している。
+
+`cleanup-claude-branches.sh` も同様に明示的に安全な AND 3 条件 (merged + active 参照なし + 24h cooldown) + `claude/` prefix 限定下でのみ `git branch -D` を実行し、merged 保証により data loss しない。`origin/develop-0.2.0` / `origin/main` が未 fetch なら `is-ancestor` false に倒れて keep する設計のため、fetch されていない開発環境でも安全に動作する。
 
 ## 参考
 

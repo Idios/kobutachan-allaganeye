@@ -177,7 +177,9 @@ describe('ConfirmExitModal', () => {
       expect(screen.queryByRole('dialog')).toBeInTheDocument(),
     );
     const dialog = screen.getByRole('dialog');
-    expect(dialog.contains(document.activeElement)).toBe(true);
+    await waitFor(() =>
+      expect(dialog.contains(document.activeElement)).toBe(true),
+    );
   });
 
   it('has no axe violations when shown (#587)', async () => {
