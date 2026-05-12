@@ -162,3 +162,29 @@
   align-self: center;
   margin-right: auto;
 }
+
+/* #669 — Inline-link-styled button (used for "Issue 本文をコピー" in the
+   hint paragraph alongside the "Issue で報告する" anchor). Keeps the
+   surrounding sentence on one logical line with the same color / underline
+   affordance as the anchor, instead of breaking out into the action row. */
+.linkButton {
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--ae-gold);
+  font-family: inherit;
+  font-size: inherit;
+  letter-spacing: inherit;
+  text-transform: none;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.linkButton:hover:not(:disabled) {
+  color: var(--ae-gold-bright);
+}
+
+.linkButton:disabled {
+  color: var(--ae-gold-dim);
+  cursor: not-allowed;
+}

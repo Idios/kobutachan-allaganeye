@@ -25,11 +25,19 @@ export interface RecentState {
   entries: RecentEntry[];
   /** Set true after the first successful `load()` so the UI can skip the empty-state flicker on subsequent re-mounts. */
   loaded: boolean;
-  /** Last load failure, surfaced for tests / debug log; the drop screen ignores it (history is best-effort). */
+  /**
+   * Last load failure. #698: DropScreen 上部に inline notice として表示される
+   * (history は best-effort UI fluff だが、user に履歴失敗を気づかせるため告知)。
+   * dismiss なし、次回 load 成功で自動消去 (recentStore lifecycle)。
+   */
   loadError: string | null;
   /** #663: hint for loadError, if AppError carried one. */
   loadErrorHint: string | null;
-  /** Last add failure, e.g. when the user dropped a file that was deleted before we could stat it. */
+  /**
+   * Last add failure. #698: DropScreen 上部に notice として表示 (loadError 不在
+   * 時の fallback)。e.g. when the user dropped a file that was deleted before
+   * we could stat it. dismiss なし、次回 add 成功で自動消去。
+   */
   addError: string | null;
   /** #663: hint for addError, if AppError carried one. */
   addErrorHint: string | null;
@@ -57,7 +65,9 @@ export const useRecentStore = create<RecentState>((set) => ({
       const result = await invoke<unknown>('read_recent');
       // Defensive: a stray mock or future schema drift could hand us a
       // non-array. Coerce to [] rather than letting `.length` blow up the
-      // drop screen — the history is best-effort UI fluff.
+      // drop screen. (Tauri command 自体が AppError reject した場合は #698 で
+      // DropScreen 上部の inline notice として user に告知される — `read_recent`
+      // が値を返している本 path では非対称 fallback として coerce のみ。)
       const entries: RecentEntry[] = Array.isArray(result)
         ? (result as RecentEntry[])
         : [];

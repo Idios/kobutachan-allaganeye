@@ -146,12 +146,76 @@ describe('ConflictModal', () => {
     render(<ConflictModal />);
     const dialog = screen.getByRole('dialog');
     // After mount, focus must have moved into the panel.
-    expect(dialog.contains(document.activeElement)).toBe(true);
+    await waitFor(() =>
+      expect(dialog.contains(document.activeElement)).toBe(true),
+    );
   });
 
   it('has no axe violations when shown (#587)', async () => {
     useMetadataStore.setState({ conflictError: 'x' });
     const { container } = render(<ConflictModal />);
     expect(await axe(container)).toHaveNoViolations();
+  });
+});
+
+describe('#695: AppError hint display (C 案)', () => {
+  it('renders InlineErrorHint when conflictErrorHint is set', () => {
+    useMetadataStore.setState({
+      conflictError: 'metadata.json was modified',
+      conflictErrorHint: 'リロード or 上書き',
+    });
+
+    render(<ConflictModal />);
+
+    expect(screen.getByText('💡 リロード or 上書き')).toBeInTheDocument();
+  });
+
+  it('does not render InlineErrorHint when conflictErrorHint is null', () => {
+    useMetadataStore.setState({
+      conflictError: 'metadata.json was modified',
+      conflictErrorHint: null,
+    });
+
+    render(<ConflictModal />);
+
+    expect(screen.queryByText(/💡/)).not.toBeInTheDocument();
+  });
+
+  it('always renders the cancel hint regardless of conflictErrorHint', () => {
+    useMetadataStore.setState({
+      conflictError: 'msg',
+      conflictErrorHint: 'hint',
+    });
+
+    render(<ConflictModal />);
+
+    expect(
+      screen.getByText('「キャンセル」で何もせずこのモーダルを閉じます。')
+    ).toBeInTheDocument();
+  });
+
+  it('does NOT render the legacy compose hint (旧 3 button 全説明)', () => {
+    useMetadataStore.setState({
+      conflictError: 'msg',
+      conflictErrorHint: 'hint',
+    });
+
+    render(<ConflictModal />);
+
+    expect(
+      screen.queryByText(/「上書き」で外部変更を破棄し GUI の編集を適用/)
+    ).not.toBeInTheDocument();
+  });
+
+  it('hint inside role="dialog" passes jest-axe', async () => {
+    useMetadataStore.setState({
+      conflictError: 'msg',
+      conflictErrorHint: 'hint',
+    });
+
+    const { container } = render(<ConflictModal />);
+
+    const results = await axe(container);
+    expect(results).toHaveNoViolations();
   });
 });

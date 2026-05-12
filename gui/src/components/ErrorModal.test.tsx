@@ -1,7 +1,9 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useErrorStore } from '../state/errorStore';
+import { useMetadataStore } from '../state/metadataStore';
+import type { Metadata } from '../types/metadata';
 import { ErrorModal } from './ErrorModal';
 
 const invokeMock = vi.fn();
@@ -279,5 +281,212 @@ describe('ErrorModal integrity category (#668)', () => {
     render(<ErrorModal />);
 
     expect(screen.getByText('Portable ZIP を再展開してください。')).toBeInTheDocument();
+  });
+});
+
+describe('ErrorModal Issue 本文をコピー button (#669, Plan B clipboard)', () => {
+  let writeTextSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    useErrorStore.getState().dismissError();
+    useErrorStore.getState().setLogDir('C:\\install\\logs');
+    useMetadataStore.setState({
+      metadata: {
+        version: 'v2',
+        source: 'sample.mkv',
+        matches: [],
+        system_info: {
+          gpu_vendors_available: ['nvidia'],
+          gpu_vendor_used: 'nvidia',
+          vendor_preference: ['nvidia', 'amd', 'intel'],
+        },
+      } as unknown as Metadata,
+    });
+    invokeMock.mockReset();
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'probe_environment_info') {
+        return {
+          allaganeye_version: '0.2.0',
+          os_name: 'Microsoft Windows 11 (Build 22631)',
+          cpu_info: 'AMD Ryzen 9 9950X3D (16C/32T)',
+          memory_total_gb: 61.6,
+          disk_free_gb: 1359.5,
+          disk_total_gb: 3726.0,
+          disk_drive: 'E:',
+        };
+      }
+      if (cmd === 'read_error_log_tail') {
+        return 'last log line A\nlast log line B';
+      }
+      return undefined;
+    });
+    writeTextSpy = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: writeTextSpy },
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  it('"Issue で報告する" link points to the base bug_report.yml URL (no pre-fill query)', () => {
+    useErrorStore.getState().showError({
+      errorMessage: 'panic',
+      errorCategory: 'panic',
+      isPanic: true,
+      isRecoverable: false,
+    });
+    render(<ErrorModal />);
+    const link = screen.getByText('Issue で報告する') as HTMLAnchorElement;
+    expect(link.href).toBe(
+      'https://github.com/Idios/kobutachan-allaganeye/issues/new?template=bug_report.yml',
+    );
+    // 旧設計 (pre-fill URL) の query 残骸が無いことも assert
+    expect(link.href).not.toContain('actual=');
+    expect(link.href).not.toContain('environment=');
+  });
+
+  it('renders "Issue 本文をコピー" button', () => {
+    useErrorStore.getState().showError({
+      errorMessage: 'panic',
+      errorCategory: 'panic',
+      isPanic: true,
+      isRecoverable: false,
+    });
+    render(<ErrorModal />);
+    expect(screen.getByRole('button', { name: 'Issue 本文をコピー' })).toBeInTheDocument();
+  });
+
+  it('copying the body writes Markdown sections (actual/environment/log) to clipboard', async () => {
+    useErrorStore.getState().showError({
+      errorMessage: 'panic: x',
+      errorStack: 'stack trace here',
+      errorCategory: 'panic',
+      isPanic: true,
+      isRecoverable: false,
+    });
+    render(<ErrorModal />);
+    fireEvent.click(screen.getByRole('button', { name: 'Issue 本文をコピー' }));
+
+    await waitFor(() => {
+      expect(writeTextSpy).toHaveBeenCalledOnce();
+    });
+    const body = writeTextSpy.mock.calls[0][0] as string;
+    expect(body).toContain('## 実際の動作');
+    expect(body).toContain('panic: x');
+    expect(body).toContain('stack trace here');
+    expect(body).toContain('## 環境情報');
+    expect(body).toContain('allaganeye 0.2.0');
+    expect(body).toContain('CPU: AMD Ryzen 9 9950X3D');
+    expect(body).toContain('GPU: nvidia');
+    expect(body).toContain('## ログファイル (末尾抜粋)');
+    expect(body).toContain('last log line A');
+  });
+
+  it('shows "Issue 本文をコピーしました" ack after a successful copy', async () => {
+    useErrorStore.getState().showError({
+      errorMessage: 'panic',
+      errorCategory: 'panic',
+      isPanic: true,
+      isRecoverable: false,
+    });
+    render(<ErrorModal />);
+    fireEvent.click(screen.getByRole('button', { name: 'Issue 本文をコピー' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Issue 本文をコピーしました')).toBeInTheDocument();
+    });
+  });
+
+  it('still copies a body when log fetch fails (graceful — log section omitted)', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'probe_environment_info') {
+        return {
+          allaganeye_version: '0.2.0',
+          os_name: 'Windows 11',
+          cpu_info: 'CPU',
+          memory_total_gb: 16.0,
+          disk_free_gb: null,
+          disk_total_gb: null,
+          disk_drive: null,
+        };
+      }
+      if (cmd === 'read_error_log_tail') {
+        throw new Error('I/O failure');
+      }
+      return undefined;
+    });
+    useErrorStore.getState().showError({
+      errorMessage: 'panic',
+      errorCategory: 'panic',
+      isPanic: true,
+      isRecoverable: false,
+    });
+    render(<ErrorModal />);
+    fireEvent.click(screen.getByRole('button', { name: 'Issue 本文をコピー' }));
+
+    await waitFor(() => {
+      expect(writeTextSpy).toHaveBeenCalledOnce();
+    });
+    const body = writeTextSpy.mock.calls[0][0] as string;
+    expect(body).toContain('## 環境情報');
+    expect(body).toContain('Windows 11');
+    expect(body).not.toContain('## ログファイル');
+  });
+
+  it('still copies when both probe and log fetch fail (degraded but useful)', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'probe_environment_info') {
+        throw new Error('probe failed');
+      }
+      if (cmd === 'read_error_log_tail') {
+        throw new Error('I/O');
+      }
+      return undefined;
+    });
+    useErrorStore.getState().showError({
+      errorMessage: 'panic',
+      errorCategory: 'panic',
+      isPanic: true,
+      isRecoverable: false,
+    });
+    render(<ErrorModal />);
+    fireEvent.click(screen.getByRole('button', { name: 'Issue 本文をコピー' }));
+
+    await waitFor(() => {
+      expect(writeTextSpy).toHaveBeenCalledOnce();
+    });
+    const body = writeTextSpy.mock.calls[0][0] as string;
+    expect(body).toContain('## 実際の動作');
+    expect(body).toContain('panic');
+    // environment は (no environment info) sentinel になる (probe + GPU 双方失敗)
+    expect(body).toContain('## 環境情報');
+  });
+
+  it('still copies a body when metadata is null (e.g. panic before metadata load, GPU section -> "(unknown)")', async () => {
+    // /iterate-review Round 1 #6: ErrorModal panic は metadata load 完了前にも
+    // 発火しうるため、metadata=null 状態を component レベルで smoke test する。
+    // helper level の同 path test は systemInfo.test.ts の null branch でカバー
+    // 済みだが、E2E flow で button click → clipboard write の path が落ちない
+    // ことを guard したい (regression 検知)。
+    useMetadataStore.setState({ metadata: null });
+    useErrorStore.getState().showError({
+      errorMessage: 'panic before metadata load',
+      errorCategory: 'panic',
+      isPanic: true,
+      isRecoverable: false,
+    });
+    render(<ErrorModal />);
+    fireEvent.click(screen.getByRole('button', { name: 'Issue 本文をコピー' }));
+
+    await waitFor(() => {
+      expect(writeTextSpy).toHaveBeenCalledOnce();
+    });
+    const body = writeTextSpy.mock.calls[0][0] as string;
+    expect(body).toContain('## 実際の動作');
+    expect(body).toContain('panic before metadata load');
+    expect(body).toContain('## 環境情報');
+    // metadata=null path: GPU vendor list は formatSystemInfo() で "(unknown)"
+    // sentinel になる (systemInfo.ts の null branch)
+    expect(body).toContain('GPU: (unknown)');
   });
 });

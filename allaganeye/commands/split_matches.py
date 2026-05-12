@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TypedDict
+from typing import TypedDict, cast
 
 import typer
 from click._termui_impl import ProgressBar as _ClickProgressBar  # subclass 用 (#365)
@@ -181,6 +181,16 @@ def run_split(
 
     detect_stats: DetectionStats | None = {} if verbose else None
 
+    # #644 -- Pass 1 で計測された輝度マップを捕捉して metadata.json に書く
+    # ため、`_run_detection` に brightness_callback を渡す。detect.py の
+    # run_detect (line 230-260) と同じパターン。callback が呼ばれない経路
+    # (cache hit や Pass 1 skip) では captured_brightness が空のまま残り、
+    # `_split_and_write_metadata` 呼び出し時に None を渡す。
+    captured_brightness: dict[float, float] = {}
+
+    def _on_brightness(samples: dict[float, float]) -> None:
+        captured_brightness.update(samples)
+
     boundaries = _run_detection(
         video_path,
         metadata,
@@ -191,6 +201,7 @@ def run_split(
         stats=detect_stats,
         use_gpu=use_gpu,
         gpu_vendor=gpu_vendor,
+        brightness_callback=_on_brightness,
     )
 
     if not boundaries:
@@ -239,6 +250,13 @@ def run_split(
         available_vendors=available_vendors,
         vendor_used=gpu_vendor if use_gpu else None,
     )
+    # #644 -- captured_brightness が空なら build_brightness_samples が None を
+    # 返す (split_matches.py:1373-1374 `if not raw_brightness: return None`)。
+    # detect.py:239 (run_detect) と同パターン: guard なしで build_brightness_samples
+    # を呼び、None を _split_and_write_metadata に渡す。_build_metadata_payload が
+    # None で brightness_samples キーを skip するため、cache hit / Pass 1 skip 経路
+    # では metadata.json に書かれない (既存仕様「Pass 1 が走った場合のみ」と整合)。
+    brightness_samples = build_brightness_samples(captured_brightness)
     split_start = time.monotonic()
     _split_and_write_metadata(
         video_path,
@@ -249,6 +267,7 @@ def run_split(
         effective_interval=effective_interval,
         detected_at=detected_at,
         system_info=detected_system_info,
+        brightness_samples=brightness_samples,
         quiet=quiet,
     )
     _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
@@ -354,6 +373,21 @@ def run_split_from_metadata(
         old_completed_at if isinstance(old_completed_at, str) else None
     )
 
+    # #644 -- preserve brightness_samples across `--from-metadata`.
+    # 元 metadata に brightness_samples があれば新 metadata にもそのまま
+    # コピーする。PR #626 の detection_started_at / detection_completed_at
+    # と同じ preserve パターン。元に無ければ None を渡して新 metadata でも
+    # 欠落させる (cache hit / pre-#569 metadata 経路と同じ挙動)。
+    # JSON payload は Any 型なので isinstance チェック後に cast で
+    # BrightnessSamples (TypedDict) に narrow する。schema 検証は
+    # _build_metadata_payload 側の TypedDict 構造に委譲。
+    old_brightness_samples = payload.get("brightness_samples")
+    preserve_brightness_samples: BrightnessSamples | None = (
+        cast("BrightnessSamples", old_brightness_samples)
+        if isinstance(old_brightness_samples, dict)
+        else None
+    )
+
     detection_params = payload.get("detection_params")
     if isinstance(detection_params, dict):
         effective_interval = float(
@@ -390,6 +424,7 @@ def run_split_from_metadata(
         detection_started_at=preserve_started_at,
         detection_completed_at=preserve_completed_at,
         system_info=split_only_system_info,
+        brightness_samples=preserve_brightness_samples,
         quiet=quiet,
     )
     _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
@@ -1162,6 +1197,7 @@ def _split_and_write_metadata(
     detection_started_at: str | None = None,
     detection_completed_at: str | None = None,
     system_info: SystemInfo,
+    brightness_samples: BrightnessSamples | None = None,
     quiet: bool = False,
 ) -> None:
     """Split video and write metadata.json (#591: system_info required).
@@ -1222,6 +1258,7 @@ def _split_and_write_metadata(
         output_files=output_files,
         gaps=gaps,
         system_info=system_info,
+        brightness_samples=brightness_samples,
     )
     metadata_path = config.output_dir / "metadata.json"
     write_metadata_atomic(metadata_path, result)

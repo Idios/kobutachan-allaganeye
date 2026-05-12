@@ -57,6 +57,8 @@ export interface MetadataState {
    * `applyOverwrite` / `reloadAfterConflict` / `dismissConflict`.
    */
   conflictError: string | null;
+  /** #695: hint for conflictError (state.mtime_conflict AppError), if carried one. */
+  conflictErrorHint: string | null;
   /**
    * #517: a draft snapshot loaded from metadata.draft.json that differs from
    * the live metadata on disk. Non-null means the UI should ask the user
@@ -190,7 +192,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
   async function runApply(overwrite: boolean): Promise<void> {
     const { metadata, filePath, loadedMtimeMs } = get();
     if (!metadata || !filePath) return;
-    set({ applying: true, applyError: null, applyErrorHint: null, conflictError: null });
+    set({ applying: true, applyError: null, applyErrorHint: null, conflictError: null, conflictErrorHint: null });
     try {
       const normalized = normalizeForPersistence(metadata);
       const newMtime = await invoke<number>('apply_changes', {
@@ -206,6 +208,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         applyErrorHint: null,
         loadedMtimeMs: newMtime,
         conflictError: null,
+        conflictErrorHint: null,
       });
       await get().refreshBackupStatus();
       // #517: successful apply means the on-disk state caught up with our
@@ -219,7 +222,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       // fallback (msg.startsWith('conflict:')) は廃止する。code === 'state.mtime_conflict'
       // のみで分岐する。
       if (appErrorCodeIs(e, 'state.mtime_conflict')) {
-        set({ applying: false, conflictError: msg });
+        set({ applying: false, conflictError: msg, conflictErrorHint: hint });
       } else {
         set({ applying: false, applyError: msg, applyErrorHint: hint });
       }
@@ -243,6 +246,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
 
   loadedMtimeMs: null,
   conflictError: null,
+  conflictErrorHint: null,
   pendingDraft: null,
   draftLoadError: null,
   draftLoadErrorHint: null,
@@ -270,6 +274,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         restoreErrorHint: null,
         loadedMtimeMs: mtime ?? null,
         conflictError: null,
+        conflictErrorHint: null,
         pendingDraft: null,
         draftLoadError: null,
         draftLoadErrorHint: null,
@@ -294,7 +299,11 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         loadErrorHint: appErrorHint(e),
         hasBackup: false,
         loadedMtimeMs: null,
+        // #695: conflictError/conflictErrorHint pair atomicity (load() 失敗時の
+        // file-state リセットの一部、#691 案 X self-only 規約とは別軸 = file-state
+        // 関連の state は touch する慣習を継承)。conflictErrorHint も pair で reset。
         conflictError: null,
+        conflictErrorHint: null,
         pendingDraft: null,
       });
     }
@@ -344,6 +353,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       restoreErrorHint: null,
       loadedMtimeMs: null,
       conflictError: null,
+      conflictErrorHint: null,
       pendingDraft: null,
       draftLoadError: null,
       draftLoadErrorHint: null,
@@ -395,14 +405,17 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
   reloadAfterConflict: async () => {
     const { filePath } = get();
     if (!filePath) {
-      set({ conflictError: null });
+      // #695: conflictError/conflictErrorHint pair atomicity。filePath が無い場合
+      // (sample mode 等) は load() を呼べないので、ここで両方を null reset する
+      // (plan §5.3 reloadAfterConflict() lifecycle 規約)。
+      set({ conflictError: null, conflictErrorHint: null });
       return;
     }
     await get().load(filePath);
   },
 
   dismissConflict: () => {
-    set({ conflictError: null });
+    set({ conflictError: null, conflictErrorHint: null });
   },
 
   saveDraft: async () => {
@@ -520,6 +533,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       restoreErrorHint: null,
       loadedMtimeMs: null,
       conflictError: null,
+      conflictErrorHint: null,
       pendingDraft: null,
       draftLoadError: null,
       draftLoadErrorHint: null,

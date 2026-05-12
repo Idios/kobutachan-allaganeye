@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
@@ -134,5 +135,52 @@ describe('DraftRestoreModal', () => {
     });
     const { container } = render(<DraftRestoreModal />);
     expect(container.firstChild).toBeNull();
+  });
+});
+
+describe('#697: draftLoadErrorHint display', () => {
+  beforeEach(() => {
+    useMetadataStore.setState({
+      pendingDraft: null,
+      draftLoadError: null,
+      draftLoadErrorHint: null,
+      conflictError: null,
+    });
+  });
+
+  it('renders InlineErrorHint when draftLoadErrorHint is set', () => {
+    useMetadataStore.setState({
+      draftLoadError: 'metadata.draft.json corrupt',
+      draftLoadErrorHint: 'バックアップから復元してください',
+    });
+
+    render(<DraftRestoreModal />);
+
+    expect(
+      screen.getByText('💡 バックアップから復元してください')
+    ).toBeInTheDocument();
+  });
+
+  it('does not render InlineErrorHint when draftLoadErrorHint is null', () => {
+    useMetadataStore.setState({
+      draftLoadError: 'corrupt',
+      draftLoadErrorHint: null,
+    });
+
+    render(<DraftRestoreModal />);
+
+    expect(screen.queryByText(/💡/)).not.toBeInTheDocument();
+  });
+
+  it('hint inside role="dialog" passes jest-axe', async () => {
+    useMetadataStore.setState({
+      draftLoadError: 'corrupt',
+      draftLoadErrorHint: 'some hint',
+    });
+
+    const { container } = render(<DraftRestoreModal />);
+
+    const results = await axe(container);
+    expect(results).toHaveNoViolations();
   });
 });

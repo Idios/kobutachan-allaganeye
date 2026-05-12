@@ -64,6 +64,18 @@ pub fn current_ymd_compact() -> String {
     format!("{:04}{:02}{:02}", y, m, d)
 }
 
+/// #669 -- Returns yesterday's date in YYYYMMDD compact format (UTC, since
+/// `current_ymd_compact()` is also UTC). Used by `read_error_log_tail` for the
+/// 1-day fallback when today's log is missing or empty.
+pub fn ymd_compact_yesterday() -> String {
+    let now = now_unix_secs();
+    // saturating_sub avoids underflow if the clock is at epoch
+    let yesterday_secs = now.saturating_sub(86400);
+    let days = (yesterday_secs / 86400) as i64;
+    let (y, m, d) = days_to_ymd(days);
+    format!("{:04}{:02}{:02}", y, m, d)
+}
+
 pub fn current_timestamp_iso() -> String {
     let now = now_unix_secs();
     let days = (now / 86400) as i64;
@@ -289,6 +301,29 @@ mod tests {
         let s = current_ymd_compact();
         assert_eq!(s.len(), 8);
         assert!(s.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn ymd_compact_yesterday_format() {
+        // #669 -- /iterate-review Round 2: format + 1-day-diff を直接 assert
+        // する dedicated unit test (integration test
+        // `read_error_log_tail_falls_back_to_previous_day` 経由の indirect
+        // cover では DST / time zone bug を早期検知できないため)。
+        let yesterday = ymd_compact_yesterday();
+        assert_eq!(yesterday.len(), 8);
+        assert!(yesterday.chars().all(|c| c.is_ascii_digit()));
+
+        // YYYYMMDD 形式は文字列辞書順 == 日付順 (年 → 月 → 日 の桁順)。
+        // 真夜中跨ぎ race を避けるため strict-less ではなく less-or-equal で
+        // assert (両者が同日になるのは UTC 00:00:00 直後の 1 秒未満ウィンドウ
+        // のみで、その瞬間は yesterday と today が一致する)。
+        let today = current_ymd_compact();
+        assert!(
+            yesterday.as_str() <= today.as_str(),
+            "yesterday ({}) should be <= today ({})",
+            yesterday,
+            today
+        );
     }
 
     #[test]

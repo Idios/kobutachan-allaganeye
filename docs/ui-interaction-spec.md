@@ -113,6 +113,21 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 4. globalErrorListener が拾うのは uncaught (window.error / unhandledrejection /
    panic) のみ。catch 済 Tauri command error は ErrorModal に出さない (規約)
 
+#### §1.5.1 ConflictModal の hint slot 規約 (#695、C 案)
+
+`state.mtime_conflict` の ConflictModal では、AppError hint を主表示し、modal
+局所文言 (キャンセル ボタン挙動説明) は補足 1 行として別 paragraph に表示する規約:
+
+- 1 行目 (`<p>{conflictError}</p>`): AppError.message を danger 色で表示
+- 2 行目 (`<InlineErrorHint hint={conflictErrorHint} />`): AppError.hint を `💡`
+  prefix + `var(--ae-text-dim)` で表示 (hint null 時は非表示)
+- 3 行目 (`<p>{cancel 補足}</p>`): 「「キャンセル」で何もせずこのモーダルを閉じます。」
+  を常時表示 (modal 局所文言、上書き / リロード の挙動は AppError hint がカバー)
+
+旧 compose hint (3 button 全説明) は削除済 (PR #695)。AppError hint と modal
+文言の重複を避けるため、modal 局所文言は modal-only な action (キャンセル 等) に
+限定する規約。
+
 ## 2. 画面別 UI 部品状態機械
 
 §2 は 5 画面それぞれを **1 画面 = 1 PR** で順次追加する (#590 着手フローに従う)。
@@ -181,7 +196,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 | 状態 | `idle` (phase=`idle`) / `disabled` (phase=`selecting/probing/selected/probeError`) |
 | 遷移トリガー | `onClick` → `selectRecent(item)` → reducer `RECENT_PICKED` (phase=`idle → probing`) → `probeAndDispatch(item.path)`。drop と同じ probe 経路を辿るので、metadata 不整合 / 解像度差異もそこで再評価される |
 | store mutation | mount 時に `recentStore.load()` で `<install dir>/recent.json` (PR #655 Round 2: Portable ZIP 哲学に揃えて exe ディレクトリ配置) をロード。probe 成功時に `recentStore.add(path)` で履歴更新 (重複は最新化、最大 10 件、`\\?\` extended-length prefix は Rust 側で strip) |
-| 例外 / edge case | (1) 履歴ゼロ件: 「履歴はまだありません」placeholder ([recent-empty](../gui/src/screens/DropScreen.tsx))。(2) ファイル不在: Rust `read_recent` / `add_recent` が `Path::exists()` で確認し、不在 entry を**自動 prune** + 永続化更新 (PR #655 Round 2: 旧 grayed-out + warning notice UX を撤廃)。(3) `recent.json` 破損: 空配列扱い (`read_recent_sync` が `unwrap_or_default`、Rust 側)。(4) 同 path 再選択: dedup でトップに移動 + mtime / addedAt 更新 (Windows は case-insensitive + separator-insensitive 比較) |
+| 例外 / edge case | (1) 履歴ゼロ件: 「履歴はまだありません」placeholder ([recent-empty](../gui/src/screens/DropScreen.tsx))。(2) ファイル不在: Rust `read_recent` / `add_recent` が `Path::exists()` で確認し、不在 entry を**自動 prune** + 永続化更新 (PR #655 Round 2: 旧 grayed-out + warning notice UX を撤廃)。(3) `recent.json` 破損: 空配列扱い (`read_recent_sync` が `unwrap_or_default`、Rust 側)。(4) 同 path 再選択: dedup でトップに移動 + mtime / addedAt 更新 (Windows は case-insensitive + separator-insensitive 比較)。(5) `read_recent` / `add_recent` の Tauri command 自体が AppError で reject された場合 (Rust 側の I/O 例外等): `recentStore.loadError` / `addError` に message + `loadErrorHint` / `addErrorHint` に AppError hint がセットされ、`recentHeading` 直後に inline notice (`<InlineErrorHint>` 経由、`role="alert"` + `data-testid="recent-notice"`) を表示。`loadError` 優先、両 null で非表示、dismiss なし、次回 load/add 成功で自動消去 (#698 A-minimal、PR #733) |
 | 表示 | 各 item は `[◈] [full path] [date] [GB]` の row。長い path は CSS の `direction: rtl` truncate で**左側を `…` で省略**して file-name 末尾を常に可視に保つ。hover で title tooltip にフルパス |
 
 #### §2.1.4 SelectedCard (probe 結果カード)
