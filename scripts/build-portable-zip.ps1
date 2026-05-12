@@ -568,7 +568,14 @@ $Readme = Format-ReadmeContent `
   -FFmpegBuildTag $FFmpegBuildTag `
   -FFmpegSourceRef $FFmpegSourceRef `
   -IncludeGui:$TauriIncluded
-Set-Content -Path (Join-Path $PayloadDir 'README.txt') -Value $Readme -Encoding UTF8
+# #729 Round 1: README.txt も BOM-less UTF-8 で書き出す (consistency with L587 manifest write).
+# README.txt は機能的に BOM が問題になる parser を持たないが、Portable ZIP 内ファイルの
+# encoding 一貫性のため [IO.File]::WriteAllText に揃える。詳細は L577-585 の comment 参照。
+[System.IO.File]::WriteAllText(
+    (Join-Path $PayloadDir 'README.txt'),
+    $Readme,
+    [System.Text.UTF8Encoding]::new($false)
+)
 
 # 7.5 Integrity manifest (#668)
 # Generated after all payload steps complete so it reflects the actual files

@@ -400,8 +400,12 @@ Describe 'New-IntegrityManifest' {
   }
 
   It 'excludes integrity-manifest.json itself from the enumeration' {
+    # #729 Round 1: align fake-manifest fixture encoding with sibling fixtures
+    # (L360/L365/L370 all use ASCII). The exclusion test enumerates by name,
+    # so the fake manifest's content / encoding is irrelevant to the assertion;
+    # ASCII is the simplest consistent choice for '{}'.
     $extra = Join-Path $script:ManifestTmpDir 'integrity-manifest.json'
-    Set-Content -Path $extra -Value '{}' -Encoding UTF8
+    Set-Content -Path $extra -Value '{}' -Encoding ASCII
 
     $json = New-IntegrityManifest -PayloadDir $script:ManifestTmpDir
     $manifest = $json | ConvertFrom-Json
