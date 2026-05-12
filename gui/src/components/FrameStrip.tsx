@@ -175,44 +175,44 @@ export function FrameStrip({
         const thumbUrl = nearestThumbUrl(thumbs, f.t);
         return (
           <div key={i} className={styles.cellSlot}>
-          <DisabledTooltip disabled={disabled} reason={disabledReason}>
-            {(p) => (
-              <button
-                type="button"
-                onClick={() => onSelectFrame?.(f.t)}
-                className={`${styles.cell}${f.isBoundary ? ` ${styles.cellBoundary}` : ''}`}
-                aria-label={`frame ${fmtPreciseTime(f.t)}`}
-                data-boundary={f.isBoundary ? 'true' : 'false'}
-                disabled={disabled}
-                {...p}
-              >
-                {thumbUrl ? (
-                  <img
-                    className={styles.thumb}
-                    src={thumbUrl}
-                    alt=""
-                    loading="lazy"
-                    draggable={false}
-                  />
-                ) : (
-                  <div
-                    className={styles.shimmer}
-                    style={{
-                      background: `radial-gradient(ellipse at ${40 + i * 3}% ${50 + (i % 3) * 10}%, rgba(232, 196, 122, ${f.brightness * 0.6}), transparent 60%)`,
-                      backgroundColor: `rgba(var(--ae-gold-rgb), ${f.brightness * 0.4})`,
-                    }}
-                  />
-                )}
-                {!thumbUrl && f.brightness < 0.15 && (
-                  <div className={styles.blackOverlay} />
-                )}
-                {f.isBoundary && <div className={styles.boundaryBar} />}
-                <div className={styles.label}>
-                  {fmtPreciseTime(f.t).split('.')[0].split(':').slice(-2).join(':')}
-                </div>
-              </button>
-            )}
-          </DisabledTooltip>
+            <DisabledTooltip disabled={disabled} reason={disabledReason}>
+              {(p) => (
+                <button
+                  type="button"
+                  onClick={() => onSelectFrame?.(f.t)}
+                  className={`${styles.cell}${f.isBoundary ? ` ${styles.cellBoundary}` : ''}`}
+                  aria-label={`frame ${fmtPreciseTime(f.t)}`}
+                  data-boundary={f.isBoundary ? 'true' : 'false'}
+                  disabled={disabled}
+                  {...p}
+                >
+                  {thumbUrl ? (
+                    <img
+                      className={styles.thumb}
+                      src={thumbUrl}
+                      alt=""
+                      loading="lazy"
+                      draggable={false}
+                    />
+                  ) : (
+                    <div
+                      className={styles.shimmer}
+                      style={{
+                        background: `radial-gradient(ellipse at ${40 + i * 3}% ${50 + (i % 3) * 10}%, rgba(232, 196, 122, ${f.brightness * 0.6}), transparent 60%)`,
+                        backgroundColor: `rgba(var(--ae-gold-rgb), ${f.brightness * 0.4})`,
+                      }}
+                    />
+                  )}
+                  {!thumbUrl && f.brightness < 0.15 && (
+                    <div className={styles.blackOverlay} />
+                  )}
+                  {f.isBoundary && <div className={styles.boundaryBar} />}
+                  <div className={styles.label}>
+                    {fmtPreciseTime(f.t).split('.')[0].split(':').slice(-2).join(':')}
+                  </div>
+                </button>
+              )}
+            </DisabledTooltip>
           </div>
         );
       })}

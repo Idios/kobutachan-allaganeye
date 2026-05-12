@@ -1302,15 +1302,15 @@ async fn ensure_thumbnail_exists(
 /// per-frame average brightness in `[0.0, 255.0]` (gray plane byte averaged
 /// across a 320x180 downscaled frame). `t_start` / `t_end` / `fps` echo the
 /// **requested** values so the frontend can correlate the response with the
-/// issuing MicroTimeline call site without trusting only the call ordering.
+/// issuing FrameStrip overlay call site without trusting only the call ordering.
 ///
 /// Note on the `t_start` echo: if the request had `t_start < 0` the helper
 /// clamps the ffmpeg `-ss` argument to `0.0`, but the response still echoes
-/// the original (negative) `t_start`. PreviewScreen always passes a match
-/// boundary minus 5 seconds, so this only matters for boundaries within the
-/// first 5 seconds of a video (rare for FL matches). Consumers that may
-/// receive `t_start < 0` should treat the actual sample window as
-/// `[max(0.0, t_start), t_end]`.
+/// the original (negative) `t_start`. PreviewScreen passes the active
+/// editing position (currentT) minus 3 seconds, so this only matters for
+/// boundaries within the first 3 seconds of a video (rare for FL matches).
+/// Consumers that may receive `t_start < 0` should treat the actual sample
+/// window as `[max(0.0, t_start), t_end]`.
 #[derive(Debug, Clone, Serialize)]
 pub struct BrightnessWindow {
     pub samples: Vec<f64>,
@@ -1321,13 +1321,15 @@ pub struct BrightnessWindow {
 
 /// #645 -- extract per-frame average brightness for a `[t_start, t_end]`
 /// window of `video_path` at the requested `fps`. Used by the PreviewScreen
-/// MicroTimeline (±5s zoom around a match boundary): the frontend invokes
-/// this on selectedMatch change and renders the returned `samples` as a
-/// brightness curve under the timeline scrubber.
+/// FrameStrip brightness overlay (±3s zoom around currentT): the frontend
+/// invokes this on selectedMatch / currentT change (200ms debounced) and
+/// renders the returned `samples` as a semi-transparent SVG overlay
+/// (waveform + threshold + blackout band) on top of the candidate frame
+/// thumbnails.
 ///
 /// **Why on-demand instead of reading `metadata.brightness_samples`**:
 /// the existing pipeline-wide samples cap at 512 for the entire video,
-/// which is too sparse for a ±5s zoom (we need ~100 samples in 10 s).
+/// which is too sparse for a ±3s zoom (we need ~60 samples in 6 s).
 /// Sampling on demand at 10 fps gives the right density without bloating
 /// `metadata.json`.
 ///

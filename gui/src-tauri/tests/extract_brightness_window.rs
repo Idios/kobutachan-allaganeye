@@ -1,8 +1,10 @@
 //! #645 -- Integration tests for the `extract_brightness_window_impl`
-//! Tauri command helper. The helper backs the PreviewScreen MicroTimeline
-//! (±5s zoom around a match boundary): the frontend invokes it on
-//! selectedMatch change and renders the returned `samples` as a brightness
-//! curve. The two tests below pin:
+//! Tauri command helper. The helper backs the PreviewScreen FrameStrip
+//! brightness overlay (±3s zoom around currentT): the frontend invokes it
+//! on selectedMatch / currentT change (200ms debounced) and renders the
+//! returned `samples` as a semi-transparent SVG overlay (waveform +
+//! threshold + blackout band) on top of the candidate frame thumbnails.
+//! The two tests below pin:
 //!
 //! 1. happy path against a real video (gated on `ALLAGANEYE_AUDIO_TEST_VIDEO`,
 //!    `#[ignore]` so CI skips it but local devs can run with
