@@ -573,8 +573,23 @@ Set-Content -Path (Join-Path $PayloadDir 'README.txt') -Value $Readme -Encoding 
 # 7.5 Integrity manifest (#668)
 # Generated after all payload steps complete so it reflects the actual files
 # Tauri build / pip install / FFmpeg copy / launcher / README produced.
+#
+# #729: Set-Content -Encoding UTF8 is PS-version-dependent for BOM emission:
+#   - Windows PowerShell 5.1 (powershell.exe): emits UTF-8 with BOM (EF BB BF)
+#   - PowerShell 6.0+ (pwsh): emits BOM-less UTF-8 (default changed in 6.0)
+# Both Rust serde_json::from_str and Python json.loads reject the leading BOM
+# as invalid JSON. CI release.yml uses pwsh 7 so smoke tests masked this bug
+# for any user invoking the build script with powershell.exe. Write the
+# manifest via the .NET API with explicit BOM-less UTF8Encoding to remove
+# the PS-version dependency entirely. Tests.ps1 already uses [IO.File]
+# helpers for the same cross-version compat reason.
 $ManifestPath = Join-Path $PayloadDir 'integrity-manifest.json'
-Set-Content -Path $ManifestPath -Value (New-IntegrityManifest -PayloadDir $PayloadDir) -Encoding UTF8
+$ManifestJson = New-IntegrityManifest -PayloadDir $PayloadDir
+[System.IO.File]::WriteAllText(
+    $ManifestPath,
+    $ManifestJson,
+    [System.Text.UTF8Encoding]::new($false)
+)
 Write-Host "Generated $ManifestPath"
 
 # 8. Compress (skipped with -SkipArchive so CI can hand the payload folder
