@@ -345,10 +345,10 @@
    the overlay; this small block keeps the diagnostic visible for debugging
    without blocking the primary frame-selection UI.
 
-   .microTimelineLoading was removed alongside the standalone MicroTimeline:
-   the strip stays interactive while the overlay loads, so a "計測中…"
-   placeholder no longer adds value. */
-.microError {
+   class 名は元 `microError` だったが Round 2 F3 で `overlayError` に rename
+   (MicroTimeline 廃止後の命名遺産整理)。同じく削除済の MicroTimeline 由来
+   loading placeholder は overlay 設計では interactive 維持のため不要。 */
+.overlayError {
   display: flex;
   flex-direction: column;
   align-items: flex-start;

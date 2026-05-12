@@ -240,7 +240,7 @@ export function PreviewScreen() {
   // overlay (NOT a separate widget). 実フローでは Tauri
   // `extract_brightness_window` 経由で取得 (debounced 200ms)、sample mode
   // (filePath===null) では `buildLocalBrightness` の合成波形にフォールバック。
-  // microError はオーバーレイ非表示時の inline diagnostic 用 (FrameStrip 自体は
+  // overlayError はオーバーレイ非表示時の inline diagnostic 用 (FrameStrip 自体は
   // フォールバックなしで動作するため non-fatal)。
   const [brightnessWindow, setBrightnessWindow] = useState<{
     samples: number[];
@@ -248,7 +248,7 @@ export function PreviewScreen() {
     t_end: number;
     fps: number;
   } | null>(null);
-  const [microError, setMicroError] = useState<AppError | null>(null);
+  const [overlayError, setOverlayError] = useState<AppError | null>(null);
   const blackoutThreshold = useMetadataStore(
     (s) => s.metadata?.detection_params?.blackout_threshold ?? 15,
   );
@@ -414,7 +414,7 @@ export function PreviewScreen() {
   // FrameStrip — they no longer block the primary UI since the brightness
   // overlay is now a non-fatal enhancement.
   //
-  // `setBrightnessWindow(null)` / `setMicroError(null)` の同期 reset は
+  // `setBrightnessWindow(null)` / `setOverlayError(null)` の同期 reset は
   // selection 切替時に旧波形 / 旧 error の flash を防ぐため必要 (ExportScreen
   // #591 の encoder info reset と同じパターン)。
   const brightnessDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -423,7 +423,7 @@ export function PreviewScreen() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setBrightnessWindow(null);
-    setMicroError(null);
+    setOverlayError(null);
     if (!match) return;
     if (isSample) {
       // buildLocalBrightness は LocalBrightnessSample[] (= {t, b}[]) を返すため
@@ -468,7 +468,7 @@ export function PreviewScreen() {
           // isAppError で AppError struct を narrow し、それ以外 (Error / 生 string /
           // null 等) は最低限の AppError 形に正規化する。toAppError ヘルパは存在しない
           // ため、ここで直接構築する。
-          setMicroError(
+          setOverlayError(
             isAppError(e)
               ? e
               : { code: 'unknown.error', message: appErrorMessage(e) },
@@ -806,10 +806,10 @@ export function PreviewScreen() {
           brightnessThreshold={blackoutThreshold}
           brightnessWindowSeconds={6}
         />
-        {microError && (
-          <div className={styles.microError}>
-            <span>{appErrorMessage(microError)}</span>
-            <InlineErrorHint hint={appErrorHint(microError)} />
+        {overlayError && (
+          <div className={styles.overlayError}>
+            <span>{appErrorMessage(overlayError)}</span>
+            <InlineErrorHint hint={appErrorHint(overlayError)} />
           </div>
         )}
       </div>
