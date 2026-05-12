@@ -315,6 +315,30 @@ mod tests {
     }
 
     #[test]
+    fn load_manifest_returns_err_for_bom_prefixed_json() {
+        // #729: build-portable-zip.ps1 used Set-Content -Encoding UTF8 which
+        // emits UTF-8 with BOM on Windows PowerShell 5.1 (PS 6.0+ emits BOM-less).
+        // serde_json rejects the leading BOM as an invalid JSON character. The
+        // build script was fixed in #729 to emit BOM-less UTF-8 via
+        // [IO.File]::WriteAllText regardless of PS version. This test pins the
+        // Rust read side's BOM rejection behavior so that a future accidental
+        // regression in the build script gets caught at `cargo test` time in
+        // addition to the Pester / pytest layers.
+        let dir = TempDir::new().unwrap();
+        let p = dir.path().join("integrity-manifest.json");
+        let mut f = fs::File::create(&p).unwrap();
+        f.write_all(&[0xEF, 0xBB, 0xBF]).unwrap();
+        f.write_all(
+            br#"{"version": 1, "generated_at": "2026-05-12T00:00:00Z", "files": []}"#,
+        )
+        .unwrap();
+        drop(f);
+
+        let err = load_manifest(&p).unwrap_err();
+        assert!(err.contains("invalid JSON"), "got: {}", err);
+    }
+
+    #[test]
     fn manifest_entry_tolerance_bytes_defaults_to_zero() {
         let dir = TempDir::new().unwrap();
         let path = write_manifest(

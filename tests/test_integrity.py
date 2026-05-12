@@ -405,3 +405,34 @@ def test_log_written_when_manifest_invalid_json(tmp_path: Path) -> None:
     content = log_files[0].read_text(encoding="utf-8")
     # JSON-encoded path: basename containment is the cross-platform assertion.
     assert manifest.name in content
+
+
+def test_load_manifest_raises_on_bom_prefixed_json(tmp_path: Path) -> None:
+    """BOM-prefixed manifest -> IntegrityError (#729 latent bug pin).
+
+    scripts/build-portable-zip.ps1 used Set-Content -Encoding UTF8 which
+    emits UTF-8 with BOM on Windows PowerShell 5.1 (PS 6.0+ emits BOM-less).
+    json.loads rejects the leading U+FEFF as `Unexpected UTF-8 BOM`. The
+    build script was fixed in #729 to emit BOM-less UTF-8 via
+    [IO.File]::WriteAllText regardless of PS version. This test pins the
+    Python read side's BOM rejection behavior so that a future accidental
+    regression in the build script gets caught at pytest time in addition
+    to the Pester / Rust layers.
+
+    Detected during #729 root cause analysis (CLAUDE.md セクション バグ修正時の方針:
+    同種バグの横展開チェック). The Python integrity check would also have
+    failed on BOM-prefixed manifest, but CI smoke (release.yml shell: pwsh)
+    never produced BOM-prefixed manifest so the failure path was untested.
+    """
+    bad = tmp_path / "bom.json"
+    bad.write_bytes(
+        b"\xef\xbb\xbf" + json.dumps({"version": 1, "files": []}).encode("utf-8")
+    )
+
+    with pytest.raises(IntegrityError) as exc_info:
+        load_manifest(bad)
+
+    assert "invalid JSON" in str(exc_info.value)
+    assert "json_error" in exc_info.value.context
+    # JSONDecodeError の message に "BOM" が含まれることまでは assert しない
+    # (Python version 差で文言が変わる可能性があるため、failure category だけ pin)
