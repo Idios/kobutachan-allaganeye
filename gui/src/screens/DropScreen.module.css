@@ -292,3 +292,23 @@
   font-size: 11px;
   color: var(--ae-gold-dim);
 }
+
+/* #698: recent list 上部の error notice (A-minimal 案)。loadError or addError
+   発生時に表示 (loadError 優先)、両 null で非表示。dismiss なし、次回 load/add
+   成功で自動消去 (recentStore lifecycle に従う)。best-effort fluff tone を維持
+   する控えめ design (border-left + padding)。 */
+.recentNotice {
+  padding: 8px 12px;
+  border-left: 2px solid var(--ae-danger);
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.recentNoticeMessage {
+  color: var(--ae-danger);
+  font-size: 11px;
+  font-family: var(--ae-font-mono);
+  word-break: break-all;
+}

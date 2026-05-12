@@ -17,7 +17,7 @@
 ### scope 外
 
 - **読み上げソフト (screen reader) 対応**: Allagan Eye の想定ユーザーは FF14 PvP プレイヤーで、screen reader 利用ユースケースが存在しないため、`aria-label` / `aria-live` / `aria-describedby` / `role="status"` / `role="alert"` / `role="img"` / `role="dialog"` 等の screen reader 専用属性は **新規追加しない**
-  - **既存実装は維持**: `role="dialog"` (ConflictModal / ConfirmExitModal / ErrorModal) や `role="alert"` (ErrorCard) などの既存属性は削除しない (後方互換 + axe-core 違反回避)
+  - **既存実装は維持**: `role="dialog"` (ConflictModal / ConfirmExitModal / ErrorModal) や `role="alert"` (ErrorCard / DropScreen recentNotice (#698)) などの既存属性は削除しない (後方互換 + axe-core 違反回避)。**recentNotice (#698)** は ErrorCard と同じ DropScreen 内の error 通知パターンを踏襲する追加であり、新規 screen reader 専用追加ではなく既存パターン適用として位置付ける
   - **例外: visible text のない icon-only button** (例: `gui/src/components/BrightnessTimeline.tsx` の SVG match block) は `aria-label` を最低限付与。**理由は「screen reader 対応」ではなく「axe-core button name 違反の回避」**
 - **サンプル動画モード固有 polish**: `filePath === null` の sample mode 固有の挙動仕様は #569 (Phase 2.5) / #589 (Phase 4) で進行中。本 a11y policy では sample mode 固有 UI の polish (例: [適用] ボタンの sample 理由 tooltip) は scope 外として扱う
 
