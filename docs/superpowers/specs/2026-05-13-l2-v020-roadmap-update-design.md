@@ -63,7 +63,7 @@
 2026-05-11 plan 冒頭 (title 直後) に以下を挿入 (chain 方式、immediate successor を指す):
 
 ```markdown
-> **⚠️ Superseded (2026-05-13)**: 本 plan は `docs/superpowers/plans/2026-05-13-l2-v020-roadmap-update.md` で更新されています。Wave 1 lanes の大半完走 (旧 plan 23 件中 14 件 CLOSED + 2 件 pending close) + 新規 4 件 (Group G ext + Group L + Group M) 追加を反映。本ファイルは history (2026-05-11 時点の判断) として保存。
+> **⚠️ Superseded (2026-05-13)**: 本 plan は `docs/superpowers/plans/2026-05-13-l2-v020-roadmap-update.md` で更新されています。Wave 1 lanes の大半完走 (旧 plan 23 件中 14 件 CLOSED + 3 件 pending close 含 #458 scope-out) + 新規 4 件 (Group G ext + Group L + Group M) 追加を反映。本ファイルは history (2026-05-11 時点の判断) として保存。
 ```
 
 2026-05-07 旧 plan は不変 (既に 2026-05-11 への Superseded ヘッダ済、chain 構造で audit trail 維持)。
