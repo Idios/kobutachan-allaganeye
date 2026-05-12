@@ -400,8 +400,12 @@ Describe 'New-IntegrityManifest' {
   }
 
   It 'excludes integrity-manifest.json itself from the enumeration' {
+    # #729 Round 1: align fake-manifest fixture encoding with sibling fixtures
+    # (L360/L365/L370 all use ASCII). The exclusion test enumerates by name,
+    # so the fake manifest's content / encoding is irrelevant to the assertion;
+    # ASCII is the simplest consistent choice for '{}'.
     $extra = Join-Path $script:ManifestTmpDir 'integrity-manifest.json'
-    Set-Content -Path $extra -Value '{}' -Encoding UTF8
+    Set-Content -Path $extra -Value '{}' -Encoding ASCII
 
     $json = New-IntegrityManifest -PayloadDir $script:ManifestTmpDir
     $manifest = $json | ConvertFrom-Json
@@ -530,5 +534,42 @@ Describe 'BtbN pinning policy (#705)' {
     # Defense-in-depth: catches accidental rollback to a stale asset name
     # that doesn't exist in the new monthly tag.
     $FFmpegAsset | Should -Match '^ffmpeg-n[\d.]+(-\d+-g[0-9a-f]+)?-win64-lgpl-shared-[\d.]+$'
+  }
+}
+
+Describe 'Integrity manifest encoding (#729)' {
+  BeforeAll {
+    $script:EncodingTmpDir = Join-Path ([System.IO.Path]::GetTempPath()) "manifest-enc-test-$(New-Guid)"
+    New-Item -ItemType Directory -Force -Path $script:EncodingTmpDir | Out-Null
+    # Minimal payload so New-IntegrityManifest has at least one entry to emit.
+    Set-Content -Path (Join-Path $script:EncodingTmpDir 'allaganeye.bat') -Value 'fake' -Encoding ASCII
+  }
+
+  AfterAll {
+    if (Test-Path $script:EncodingTmpDir) {
+      Remove-Item -Recurse -Force $script:EncodingTmpDir
+    }
+  }
+
+  It 'writes integrity-manifest.json without UTF-8 BOM so serde_json / json.loads can parse it (#729)' {
+    # build-portable-zip.ps1 L577 で Set-Content -Encoding UTF8 を使うと PS 5.1
+    # では UTF-8 with BOM (EF BB BF) になり、Rust serde_json も Python json.loads
+    # も先頭 BOM を invalid JSON として reject する。修正後の
+    # [IO.File]::WriteAllText + UTF8Encoding(false) で BOM が消えることを
+    # byte-level で固定する。Set-Content -Encoding UTF8 への意図しない退行を
+    # CI で即検出するための pinning test。
+    $manifestPath = Join-Path $script:EncodingTmpDir 'integrity-manifest.json'
+    $json = New-IntegrityManifest -PayloadDir $script:EncodingTmpDir
+    [System.IO.File]::WriteAllText(
+      $manifestPath,
+      $json,
+      [System.Text.UTF8Encoding]::new($false)
+    )
+
+    $bytes = [System.IO.File]::ReadAllBytes($manifestPath)
+    # First byte must be `{` (0x7B), not `EF` (start of BOM).
+    $bytes[0] | Should -Be 0x7B
+    # Defense in depth: explicitly assert the BOM byte sequence is absent.
+    ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) | Should -BeFalse
   }
 }
