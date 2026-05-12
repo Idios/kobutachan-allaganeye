@@ -338,3 +338,23 @@
   text-align: center;
   color: var(--ae-text-dim);
 }
+
+/* #645 Chapter 2 (overlay pivot): inline error diagnostic shown below the
+   FrameStrip when extract_brightness_window fails. The brightness overlay is
+   now a non-fatal enhancement on top of FrameStrip — failure simply omits
+   the overlay; this small block keeps the diagnostic visible for debugging
+   without blocking the primary frame-selection UI.
+
+   class 名は元 `microError` だったが Round 2 F3 で `overlayError` に rename
+   (MicroTimeline 廃止後の命名遺産整理)。同じく削除済の MicroTimeline 由来
+   loading placeholder は overlay 設計では interactive 維持のため不要。 */
+.overlayError {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 4px;
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-danger);
+}

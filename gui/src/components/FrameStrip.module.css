@@ -2,11 +2,39 @@
   display: flex;
   gap: 2px;
   width: 100%;
+  /* #645 Chapter 2 (overlay pivot): the SVG brightness overlay positions
+     itself absolutely on top of the thumbnail row. Without `position:
+     relative` here the overlay would resolve relative to the nearest
+     positioned ancestor and miss the strip. */
+  position: relative;
+}
+
+/* #645 fix: 各 cell を flex sizing 強制する slot で包む。DisabledTooltip の
+   inline-flex wrapper が flex 子になると wrapper 自体が 0 幅になり、
+   button の flex:1 + aspect-ratio が機能しなくなる pre-existing bug の修正。
+   cellSlot が strip の flex 子として等分幅を取得し、内部に DisabledTooltip
+   wrapper (span) を flex 1 で stretch、その中の button が cellSlot 全幅を
+   継承する。 */
+.cellSlot {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  aspect-ratio: 16 / 9;
+}
+
+/* DisabledTooltip の wrapper span (display: inline-flex) を override し、
+   cellSlot 全幅を取得させる。cellSlot の唯一の direct child という前提。 */
+.cellSlot > span {
+  flex: 1 1 0;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
 }
 
 .cell {
-  flex: 1;
-  aspect-ratio: 16 / 9;
+  width: 100%;
+  height: 100%;
   position: relative;
   cursor: pointer;
   overflow: hidden;
@@ -62,4 +90,44 @@
   font-size: 7px;
   color: rgba(255, 255, 255, 0.7);
   pointer-events: none;
+}
+
+/* #645 Chapter 2 (overlay pivot): brightness overlay rendered on top of the
+   thumbnail row. `pointer-events: none` lets clicks pass through to the
+   underlying buttons; `aria-hidden="true"` on the SVG keeps it out of the
+   accessibility tree (decorative, the buttons remain the interactive
+   primitives). */
+.brightnessOverlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  /* #645: subtle dark tint so overlay strokes (waveform / threshold)
+     remain visible against bright thumbnail content. */
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.thresholdLine {
+  stroke: var(--ae-danger);
+  stroke-dasharray: 6, 4;
+  stroke-width: 2;
+  opacity: 1;
+}
+
+.blackoutBand {
+  fill: var(--ae-cyan);
+  opacity: 0.55;
+}
+
+.waveformPath {
+  fill: none;
+  stroke: var(--ae-gold-bright);
+  stroke-width: 2;
+  opacity: 1;
+  /* drop-shadow で薄い glow をつけて thumbnail 上でも視認性確保 */
+  filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.85));
 }

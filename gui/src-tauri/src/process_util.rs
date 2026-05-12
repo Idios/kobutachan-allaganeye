@@ -46,7 +46,7 @@ mod tests {
         // followed by `cmd.arg(...)`. On Windows the helper calls
         // `cmd.creation_flags(CREATE_NO_WINDOW)`; on non-Windows it's a
         // no-op identity. We pin the compilable + non-panicking smoke
-        // here; the `lib_rs_applies_apply_no_window_at_all_four_spawn_sites`
+        // here; the `lib_rs_applies_apply_no_window_at_all_spawn_sites`
         // test below pins adoption at the call sites.
         let mut cmd = tokio::process::Command::new("true");
         apply_no_window(&mut cmd);
@@ -65,7 +65,7 @@ mod tests {
     }
 
     /// #679 spec §5.4 Option a: adoption の retention を CI で pin する。
-    /// 将来の merge で 4 spawn site のいずれかから `apply_no_window`
+    /// 将来の merge で各 spawn site のいずれかから `apply_no_window`
     /// 呼び出しが落ちると、本 test が source 文字列マッチで気付ける。
     ///
     /// 各 spawn 経路の **関数名直後** ~ **`.spawn()` / `.output()`**
@@ -73,14 +73,19 @@ mod tests {
     /// 関数定義の境界判定は次の関数定義 `fn NAME(` まで、または `}\n\n`
     /// など緩い heuristic ではなく、関数名の出現位置から固定 window
     /// (5000 char) を見ることで誤検出を避ける。
+    ///
+    /// #645 で `extract_brightness_window_impl` を 5 番目の spawn site
+    /// として追加。`impl` 関数は `pub` (integration test から呼ぶため)
+    /// なので `pub async fn ...` で match する。
     #[test]
-    fn lib_rs_applies_apply_no_window_at_all_four_spawn_sites() {
+    fn lib_rs_applies_apply_no_window_at_all_spawn_sites() {
         let src = include_str!("lib.rs");
         for func in [
             "fn probe_video_with",
             "async fn ensure_thumbnail_exists",
             "async fn run_ffmpeg_export_attempt",
             "async fn start_detect",
+            "pub async fn extract_brightness_window_impl",
         ] {
             let pos = src
                 .find(func)

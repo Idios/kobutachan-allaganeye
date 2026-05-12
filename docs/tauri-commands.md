@@ -49,7 +49,8 @@
 | 22 | `get_log_dir` | (なし) | `Result<String, AppError>` | pure | (a) install_dir 取得失敗 (極端ケース) | (a) `path.install_dir_unresolved` |
 | 23 | `read_error_log_tail` | `line_count: usize` | `Result<String, AppError>` | I/O | (a) install_dir 取得失敗、(b) log file の open / read 失敗 | (a) `path.install_dir_unresolved`、(b) `io.read_failed` |
 | 24 | `probe_environment_info` | (なし) | `EnvironmentProbe` | pure | (常に struct で返却、エラーケースなし — 個別 field は `None` で degrade) | - |
-| 25 | `dev_force_panic` | (なし) | `Result<(), AppError>` | state-mutating | **意図的 panic** (`#[cfg(debug_assertions)]` 限定、PR #661 E2E 検証用) | - (panic で異常終了が期待動作) |
+| 25 | `extract_brightness_window` | `video_path: String, t_start: f64, t_end: f64, fps: f64` | `Result<BrightnessWindow, AppError>` | subprocess | (a) ffmpeg 不在/起動失敗、(b) ffmpeg 異常終了 | (a) `subprocess.spawn_failed`、(b) `subprocess.exit_failed` |
+| 26 | `dev_force_panic` | (なし) | `Result<(), AppError>` | state-mutating | **意図的 panic** (`#[cfg(debug_assertions)]` 限定、PR #661 E2E 検証用) | - (panic で異常終了が期待動作) |
 
 ## 補足
 

@@ -1298,6 +1298,140 @@ async fn ensure_thumbnail_exists(
     Ok(())
 }
 
+/// #645 -- response payload of `extract_brightness_window`. `samples` is the
+/// per-frame average brightness in `[0.0, 255.0]` (gray plane byte averaged
+/// across a 320x180 downscaled frame). `t_start` / `t_end` / `fps` echo the
+/// **requested** values so the frontend can correlate the response with the
+/// issuing FrameStrip overlay call site without trusting only the call ordering.
+///
+/// Note on the `t_start` echo: if the request had `t_start < 0` the helper
+/// clamps the ffmpeg `-ss` argument to `0.0`, but the response still echoes
+/// the original (negative) `t_start`. PreviewScreen passes the active
+/// editing position (currentT) minus 3 seconds, so this only matters for
+/// boundaries within the first 3 seconds of a video (rare for FL matches).
+/// Consumers that may receive `t_start < 0` should treat the actual sample
+/// window as `[max(0.0, t_start), t_end]`.
+#[derive(Debug, Clone, Serialize)]
+pub struct BrightnessWindow {
+    pub samples: Vec<f64>,
+    pub t_start: f64,
+    pub t_end: f64,
+    pub fps: f64,
+}
+
+/// #645 -- extract per-frame average brightness for a `[t_start, t_end]`
+/// window of `video_path` at the requested `fps`. Used by the PreviewScreen
+/// FrameStrip brightness overlay (±3s zoom around currentT): the frontend
+/// invokes this on selectedMatch / currentT change (200ms debounced) and
+/// renders the returned `samples` as a semi-transparent SVG overlay
+/// (waveform + threshold + blackout band) on top of the candidate frame
+/// thumbnails.
+///
+/// **Why on-demand instead of reading `metadata.brightness_samples`**:
+/// the existing pipeline-wide samples cap at 512 for the entire video,
+/// which is too sparse for a ±3s zoom (we need ~60 samples in 6 s).
+/// Sampling on demand at 10 fps gives the right density without bloating
+/// `metadata.json`.
+///
+/// **ffmpeg invocation**: `ffmpeg -ss {t_start} -i {video} -t {dur}
+/// -vf fps={fps},scale=320:180,format=gray -f rawvideo -`. stdout is a
+/// concatenation of `320 * 180 = 57600`-byte gray frames; we average each
+/// frame's bytes to a single `f64`. Any trailing partial frame (stdout len
+/// not a multiple of `FRAME_BYTES`) is implicitly dropped by the integer
+/// chunk iteration.
+///
+/// `pub` (not `pub(crate)`) so the integration test under
+/// `gui/src-tauri/tests/extract_brightness_window.rs` can invoke this
+/// helper directly without going through the Tauri command runtime. The
+/// Tauri command `extract_brightness_window` below stays private and is
+/// registered via `tauri::generate_handler!`.
+pub async fn extract_brightness_window_impl(
+    video_path: String,
+    t_start: f64,
+    t_end: f64,
+    fps: f64,
+) -> Result<BrightnessWindow, AppError> {
+    const WIDTH: usize = 320;
+    const HEIGHT: usize = 180;
+    const FRAME_BYTES: usize = WIDTH * HEIGHT; // 57600
+
+    let t_start_clamped = t_start.max(0.0);
+    let duration = (t_end - t_start_clamped).max(0.0);
+    let ss_arg = format!("{:.3}", t_start_clamped);
+    let dur_arg = format!("{:.3}", duration);
+    let fps_arg = format!("{}", fps);
+    let vf_arg = format!("fps={fps_arg},scale={WIDTH}:{HEIGHT},format=gray");
+
+    let mut cmd = tokio::process::Command::new("ffmpeg");
+    cmd.arg("-ss")
+        .arg(&ss_arg)
+        .arg("-i")
+        .arg(&video_path)
+        .arg("-t")
+        .arg(&dur_arg)
+        .arg("-vf")
+        .arg(&vf_arg)
+        .arg("-f")
+        .arg("rawvideo")
+        .arg("-loglevel")
+        .arg("error")
+        .arg("-")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    process_util::apply_no_window(&mut cmd);
+    let output = cmd.output().await.map_err(|e| {
+        AppError::new(
+            "subprocess.spawn_failed",
+            format!("ffmpeg spawn failed: {e}"),
+        )
+        .with_default_hint()
+    })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::new(
+            "subprocess.exit_failed",
+            format!(
+                "ffmpeg failed (exit {:?}) extracting brightness window [{}, {}] @ {} fps: {}",
+                output.status.code(),
+                ss_arg,
+                t_end,
+                fps_arg,
+                stderr.trim()
+            ),
+        )
+        .with_default_hint());
+    }
+
+    let samples: Vec<f64> = output
+        .stdout
+        .chunks_exact(FRAME_BYTES)
+        .map(|frame| {
+            let sum: u64 = frame.iter().map(|&b| b as u64).sum();
+            sum as f64 / FRAME_BYTES as f64
+        })
+        .collect();
+
+    Ok(BrightnessWindow {
+        samples,
+        t_start,
+        t_end,
+        fps,
+    })
+}
+
+/// #645 -- Tauri command wrapper around `extract_brightness_window_impl`.
+/// Private; surface to the frontend through `tauri::generate_handler!` only.
+#[tauri::command]
+async fn extract_brightness_window(
+    video_path: String,
+    t_start: f64,
+    t_end: f64,
+    fps: f64,
+) -> Result<BrightnessWindow, AppError> {
+    extract_brightness_window_impl(video_path, t_start, t_end, fps).await
+}
+
 /// #523 -- tracker for long-running external processes (detecting /export
 /// ffmpeg invocations). Phase 3 preview itself does not spawn persistent
 /// children, but detecting (Phase 3) and export (Phase 4) will register
@@ -3056,6 +3190,7 @@ pub fn run() {
         register_video,
         probe_video,
         generate_match_thumbnails,
+        extract_brightness_window,
         is_process_running,
         kill_tracked_processes,
         force_exit_app,
@@ -3084,6 +3219,7 @@ pub fn run() {
         register_video,
         probe_video,
         generate_match_thumbnails,
+        extract_brightness_window,
         is_process_running,
         kill_tracked_processes,
         force_exit_app,

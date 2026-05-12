@@ -685,11 +685,11 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 
 | 項目 | 内容 |
 | --- | --- |
-| 種類 | sub-component ([PreviewScreen.tsx:638-647](../gui/src/screens/PreviewScreen.tsx#L638))。±3s 範囲、12 frames @ 0.5s 間隔、現境界中心の thumb 列 |
-| 状態 | `displayOnly` (frame の sample) + interactive (frame click)。sample mode: thumb click は no-op (isSample=true で `onSelectFrame` を呼ばない、[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) → §1.4) |
-| 遷移トリガー | thumb `onClick` → `props.onSelectFrame(t)` → `setCurrentT(t)` → schedule effect 経由で 200ms 後に `updateMatch({ edited })` commit |
-| store mutation | debounce 完了時 `metadataStore.metadata.matches[i].edited.start_time/end_time`、`dirty=true` |
-| 例外 / edge case | `editing` で `inThumbs` / `outThumbs` を切替表示。thumbs の生成は ffmpeg `generate_match_thumbnails` (Rust 経由) で、boundary が 0.5s 以上動いた時のみ再フェッチ。失敗時は空配列 (UI は空 strip 表示)、エラー文言は出さない (#465 設計判断) |
+| 種類 | sub-component ([PreviewScreen.tsx:638-647](../gui/src/screens/PreviewScreen.tsx#L638))。±3s 範囲、12 frames @ 0.5s 間隔、現境界中心の thumb 列 + #645 で **brightness overlay** (SVG semi-transparent、`pointer-events: none` で thumbnail click を阻害しない) を追加 |
+| 状態 | `displayOnly` (frame の sample) + interactive (frame click)。`brightness overlay` は thumb 上に半透明 SVG layer を重ねる: 輝度波形 (gold) / 閾値線 (red dashed) / blackout band (cyan)。 sample mode: thumb click は no-op (isSample=true で `onSelectFrame` を呼ばない、[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) → §1.4)。brightness data は currentT ±3s で `extract_brightness_window` invoke (200ms debounce、currentT 変動に追従) |
+| 遷移トリガー | thumb `onClick` → `props.onSelectFrame(t)` → `setCurrentT(t)` → schedule effect 経由で 200ms 後に `updateMatch({ edited })` commit。brightness fetch は currentT / videoSource / isSample / match.index 変更で再発火 (200ms debounce) |
+| store mutation | debounce 完了時 `metadataStore.metadata.matches[i].edited.start_time/end_time`、`dirty=true`。brightness overlay は store mutation なし (PreviewScreen 内 local state、`brightnessWindow` / `overlayError`) |
+| 例外 / edge case | `editing` で `inThumbs` / `outThumbs` を切替表示。thumbs の生成は ffmpeg `generate_match_thumbnails` (Rust 経由) で、boundary が 0.5s 以上動いた時のみ再フェッチ。失敗時は空配列 (UI は空 strip 表示)、エラー文言は出さない (#465 設計判断)。brightness overlay は data なし or fetch 失敗時に SVG 自体が render されない (back-compat、優雅な degrade); fetch 失敗時は inline 診断メッセージを strip 直下に表示 (`appErrorMessage` + `InlineErrorHint`)。sample mode (`filePath===null`) は invoke せず `buildLocalBrightness(currentT, 3, 10).map(s => s.b)` で synthetic 波形 |
 
 #### §2.4.10 [適用] primary button
 
