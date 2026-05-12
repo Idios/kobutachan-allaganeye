@@ -589,10 +589,13 @@ npx --yes markdownlint-cli2 \
 Expected: exit 0 / `Summary: 0 error(s)` (4 file 全て pass)
 
 注 1: project 全体の `bash scripts/check-markdownlint.sh` は #700 (markdownlint ignore で nested gui/node_modules) が修正済だが、本 task では変更 file 限定でチェックする
+
 注 2: `markdownlint-cli2` は cwd の `.markdownlint-cli2.yaml` を自動検出
+
 注 3: 既知の typical violation を事前に回避済:
-  - MD028 (連続 blockquote 空行) → 旧 plan supersede header は `>` 行で連結 (Task 1 Step 2 の `new_string` 内)
-  - MD056 (table cell `|` を separator として誤解釈) → Group I #694 row の `AppError\|null` 等で `\|` escape 適用済
+
+- MD028 (連続 blockquote 空行) → 旧 plan supersede header は `>` 行で連結 (Task 1 Step 2 の `new_string` 内)
+- MD056 (table cell `|` を separator として誤解釈) → Group I #694 row の `AppError\|null` 等で `\|` escape 適用済
 
 - [ ] **Step 2: error がある場合は修正**
 
