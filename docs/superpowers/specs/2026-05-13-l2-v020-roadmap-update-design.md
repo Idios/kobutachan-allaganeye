@@ -20,8 +20,8 @@
   - Group I Phase 1 (Lane V Phase 1): 5/5 CLOSED (#691 ✓ / #693 ✓ / #695 ✓ / #697 ✓ / #698 ✓)
   - Group J (Lane IV-b' part): #692 ✓ / #700 ✓ CLOSED
   - Group K (Lane IV-e): #704 ✓ / #705 ✓ CLOSED
-- **manual close pending 2 件**: [#648](https://github.com/Idios/kobutachan-allaganeye/issues/648) (PR #731 merged) / [#644](https://github.com/Idios/kobutachan-allaganeye/issues/644) (PR #734 merged) — Iron Law 4 /close-issue 待ち
-- **truly OPEN 旧 plan 7 件**: [#677](https://github.com/Idios/kobutachan-allaganeye/issues/677) (Group C) / [#680](https://github.com/Idios/kobutachan-allaganeye/issues/680) [#696](https://github.com/Idios/kobutachan-allaganeye/issues/696) (Group D) / [#694](https://github.com/Idios/kobutachan-allaganeye/issues/694) [#699](https://github.com/Idios/kobutachan-allaganeye/issues/699) (Group I Phase 2-3) / [#458](https://github.com/Idios/kobutachan-allaganeye/issues/458) (Group G) / [#676](https://github.com/Idios/kobutachan-allaganeye/issues/676) (Group E)
+- **manual close pending 3 件**: [#648](https://github.com/Idios/kobutachan-allaganeye/issues/648) (PR #731 merged) / [#644](https://github.com/Idios/kobutachan-allaganeye/issues/644) (PR #734 merged) / **[#458](https://github.com/Idios/kobutachan-allaganeye/issues/458) (PR #497 / PR #688 で実装完了、修正版 2026-05-11 plan で scope-out 確定)** — Iron Law 4 /close-issue 待ち
+- **truly OPEN 旧 plan 6 件**: [#677](https://github.com/Idios/kobutachan-allaganeye/issues/677) (Group C) / [#680](https://github.com/Idios/kobutachan-allaganeye/issues/680) [#696](https://github.com/Idios/kobutachan-allaganeye/issues/696) (Group D) / [#694](https://github.com/Idios/kobutachan-allaganeye/issues/694) [#699](https://github.com/Idios/kobutachan-allaganeye/issues/699) (Group I Phase 2-3) / [#676](https://github.com/Idios/kobutachan-allaganeye/issues/676) (Group E)
 
 ### 新規 4 件の追加 (2026-05-10〜11 作成)
 
@@ -32,7 +32,7 @@
 | [#727](https://github.com/Idios/kobutachan-allaganeye/issues/727) | P3 (refactor) | gui spawn 統一 (lib.rs 5 spawn site) | [#679](https://github.com/Idios/kobutachan-allaganeye/issues/679) PR #720 spec §5.5 派生 |
 | [#728](https://github.com/Idios/kobutachan-allaganeye/issues/728) | P2 (l2-workflow) | bug_report.yml が main 不在で template ロード失敗 | [#458](https://github.com/Idios/kobutachan-allaganeye/issues/458) follow-up (同 file) |
 
-更新後の roadmap は 13 group (A-M) / 3 wave / 13 OPEN issue (11 truly OPEN + 2 manual close pending) / 最大 5 lane 並行の構造を採る。
+更新後の roadmap は 13 group (A-M) / 3 wave / 13 OPEN issue (10 truly OPEN + 3 manual close pending) / 最大 5 lane 並行の構造を採る。
 
 ## 2. 採用方針 (brainstorming で決定)
 
@@ -80,7 +80,7 @@
 | **D** | **ErrorModal / Export UX** | **4** | **部分完了 (2/4、2 OPEN)** | [#678](https://github.com/Idios/kobutachan-allaganeye/issues/678) ✓ / [#669](https://github.com/Idios/kobutachan-allaganeye/issues/669) ✓ / **[#680](https://github.com/Idios/kobutachan-allaganeye/issues/680) OPEN** / **[#696](https://github.com/Idios/kobutachan-allaganeye/issues/696) OPEN** |
 | **E** | **横断 UI bugs** | **1** | OPEN | **[#676](https://github.com/Idios/kobutachan-allaganeye/issues/676)** |
 | F | l2b 配布 | 4 | ✅ DONE | (Wave 0) |
-| **G** | **l2-workflow (extended)** | **2** (新規 [#728](https://github.com/Idios/kobutachan-allaganeye/issues/728) 統合) | OPEN | **[#458](https://github.com/Idios/kobutachan-allaganeye/issues/458) → [#728](https://github.com/Idios/kobutachan-allaganeye/issues/728)** (同 file 直列) |
+| **G** | **l2-workflow (extended)** | **2** (#458 pending close + #728 OPEN) | 部分完了 | [#458](https://github.com/Idios/kobutachan-allaganeye/issues/458) ⏳ (PR #497 / #688 で実装完了、Wave 2 で /close-issue) / **[#728](https://github.com/Idios/kobutachan-allaganeye/issues/728) OPEN** (#458 implementation の main branch 配置 fix) |
 | H | lint / CLI polish | 2 | ✅ DONE | (Wave 0) |
 | **I** | **post-#663 GUI cleanup** | **7** | **部分完了 (Phase 1 5/5 完了、Phase 2-3 残)** | Phase 1: 5/5 ✓ / **Phase 2: [#694](https://github.com/Idios/kobutachan-allaganeye/issues/694) OPEN** / **Phase 3: [#699](https://github.com/Idios/kobutachan-allaganeye/issues/699) OPEN** |
 | J | post-#663 workflow polish | 2 | ✅ DONE | (Wave 1 完走) |
@@ -88,7 +88,7 @@
 | **★ L** | **workflow infra 続き** | **2 (新)** | OPEN | **[#710](https://github.com/Idios/kobutachan-allaganeye/issues/710)** P3 // **[#722](https://github.com/Idios/kobutachan-allaganeye/issues/722)** P2 |
 | **★ M** | **gui spawn 統一** | **1 (新)** | OPEN | **[#727](https://github.com/Idios/kobutachan-allaganeye/issues/727)** P3 |
 
-**v0.2.0 残 OPEN**: 1 (C) + 2 (D) + 1 (E) + 2 (G ext) + 2 (I Phase 2-3) + 2 (L) + 1 (M) = **11 件** + manual close pending 2 (B) = **13 件 in scope**
+**v0.2.0 残 OPEN active**: 1 (C) + 2 (D) + 1 (E) + 1 (G ext = #728 のみ) + 2 (I Phase 2-3) + 2 (L) + 1 (M) = **10 件** + manual close pending 3 (B 2 + G #458) = **13 件 in scope**
 
 ### 4.2 Wave / Lane 構造 (3 wave / 最大 5 lane 並行)
 
@@ -97,7 +97,7 @@
 WAVE 0  (DONE 2026-05-08〜13)
 ═══════════════════════════════════════════════════════════════════════════
   ✓ Lane I-A           Group A (#663)                  PR #689
-  ✓ Lane I-B           Group B (3/3 完走、2/3 CLOSED)  PR #720 / #731 / #734
+  ✓ Lane I-B           Group B (3/3 完走、1/3 CLOSED)  PR #720 / #731 / #734
                        └ #648 / #644 manual close 待ち (Wave 2 で /close-issue)
   ✓ Lane II-a Phase 1  Group C 2/3 (#633 / #645)       PR #719 / #735
   ✓ Lane II-b Phase 1  Group D 2/4 (#678 / #669)       PR #718 / #726
@@ -106,12 +106,14 @@ WAVE 0  (DONE 2026-05-08〜13)
   ✓ Lane IV-c          Group H (2/2)                   PR #684 / #687
   ✓ Lane V Phase 1     Group I 5/7                     PR #714 / #716 / #725 / #730 / #733
   ✓ Lane IV-b' Group J Group J (2/2)                   PR #715 / #717
+  ✓ Lane IV-b' Group G #458 (pending close)            PR #497 / #688
+                       └ /close-issue handoff のみ残 (Wave 2)
   ✓ Lane IV-e          Group K (2/2)                   PR #713 / #721
 
-  既消化合計: 10 lane / 14 issue CLOSED + 2 pending close
+  既消化合計: 10 lane / 14 issue CLOSED + 3 pending close
 
 ═══════════════════════════════════════════════════════════════════════════
-WAVE 1  (CURRENT — 残 11 OPEN issue / 7 lane / max 5 並行 + sub-ordering)
+WAVE 1  (CURRENT — 残 10 OPEN active issue / 8 lane / max 5 並行 + sub-ordering)
 ═══════════════════════════════════════════════════════════════════════════
   ── Initial parallel batch (5 lane、即時並行可) ──
 
@@ -123,10 +125,10 @@ WAVE 1  (CURRENT — 残 11 OPEN issue / 7 lane / max 5 並行 + sub-ordering)
                ExportScreen / ErrorModal serial
                1 spec / 2 章
 
-  Lane IV-b''  Group G ext (#458 → #728)
-               #458 (bug_report.yml 作成) → #728 (main branch deployment)
-               同 file (.github/ISSUE_TEMPLATE/bug_report.yml) serial
-               1 spec / 2 章
+  Lane IV-b''  Group G ext (#728 単件)
+               #728 (bug_report.yml main branch deployment fix)
+               #458 は実装完了済 (pending /close-issue、Wave 2 handoff)
+               1 spec / 1 章
 
   Lane VI      ★ Group L (#710 // #722)
                #710 P3 (.claude/hooks test infra) // #722 P2 (docs/l2-workflow.md
@@ -159,7 +161,7 @@ WAVE 1  (CURRENT — 残 11 OPEN issue / 7 lane / max 5 並行 + sub-ordering)
 ═══════════════════════════════════════════════════════════════════════════
 WAVE 2  (release gate)
 ═══════════════════════════════════════════════════════════════════════════
-  - manual close pending 2 件 (#648 / #644) を /close-issue で実測再検証
+  - manual close pending 3 件 (#648 / #644 / #458) を /close-issue で実測再検証
   - docs/l2-e2e-checklist.md 全項目 PASS (Idios 実機検証)
   - 全 PR マージ確認 + base sync
   - /release skill で v0.2.0 タグ + GitHub Release
@@ -173,7 +175,7 @@ WAVE 2  (release gate)
 | II-a' (#677) | | | | ✓ | | | | | | |
 | II-b' (#680) | ✓ | | | | | | | | | |
 | II-b' (#696) | | ✓ | | | | | | | | |
-| IV-b'' (#458 #728) | | | | | ✓ | | | | | |
+| IV-b'' (#728) | | | | | ✓ | | | | | |
 | VI #710 | | | | | | ✓ | | | | |
 | VI #722 | | | | | | | ✓ | | | |
 | VII (#727) | | | | | | | | ✓ | | |
@@ -195,7 +197,7 @@ WAVE 2  (release gate)
 # Initial parallel batch (5 lane、即時並行可)
 /superpowers:brainstorming Lane II-a': Group C 残 (#677 SideRail icon)
 /superpowers:brainstorming Lane II-b': Group D 残 (#680 Export default folder → #696 ErrorModal AppError fallback)
-/superpowers:brainstorming Lane IV-b'': Group G ext (#458 bug_report.yml 作成 → #728 main 不在 fix)
+/superpowers:brainstorming Lane IV-b'': Group G ext (#728 bug_report.yml main 不在 fix、#458 は実装完了済 Wave 2 で /close-issue)
 /superpowers:brainstorming Lane VI: Group L (#710 hook test infra // #722 resume-plan handoff 規約)
 /superpowers:brainstorming Lane VII: Group M (#727 gui spawn 統一、#679 派生)
 
@@ -209,7 +211,7 @@ WAVE 2  (release gate)
 
 ### 4.5 bandwidth 別運用例
 
-- 1 lane: P2 から順次 (#722 → #696 → #677 → #458 → #680 → #710 → #727 → #694 → #699 → #676 → #728)
+- 1 lane: P2 から順次 (#722 → #696 → #728 → #677 → #680 → #710 → #727 → #694 → #699 → #676)
 - 3 lane: II-a' + II-b' + IV-b'' 並行
 - 5 lane (max): 5 main 並行、V Phase 2 / Phase 3 / Lane III は後段
 - ピーク = **5 (initial batch)**
@@ -240,7 +242,7 @@ WAVE 2  (release gate)
 - **Iron Law 1**: 各 issue の受け入れ条件全項目を逐条検証 — group 内の各章で担保
 - **Iron Law 2**: 3 件以上の bulk 操作は AskUserQuestion 必須 (本 plan は doc 更新のみで bulk 操作なし)
 - **Iron Law 3**: scope creep 禁止 — group 内でも 1 PR = 1 章 (= 1 issue) を原則
-- **Iron Law 4**: PR / commit に Closes / Fixes / Resolves 禁止、`Refs #N` のみ。マージ後 `/close-issue` で実測再検証 (Wave 2 で #648 / #644 に適用)
+- **Iron Law 4**: PR / commit に Closes / Fixes / Resolves 禁止、`Refs #N` のみ。マージ後 `/close-issue` で実測再検証 (Wave 2 で #648 / #644 / #458 に適用)
 - **Iron Law 6**: PR 作成 Pre-flight (`git fetch origin develop-0.2.0` + 取り込み未済 commit 確認 + 並行 worktree PR 重複確認) 必須
 
 ### Memory feedback (前回 + 3 件追加)
@@ -266,15 +268,15 @@ WAVE 2  (release gate)
 - [ ] 着手 group 内に `gui/src/screens/PreviewScreen.tsx` 共有 issue があれば直列順を確認 (Lane II-a' = Group C 残)
 - [ ] **Lane V Phase 2 (#694) を着手する場合、Lane II-b' #680 (ExportScreen) の merge 完了を確認** (file 衝突 matrix §4.3 参照)
 - [ ] **Lane III (#676 横断 file path) を着手する場合、Lane V Phase 2 (#694) の merge 完了を確認** (5 screen 横断衝突回避)
-- [ ] **★ Group G ext 着手時、Lane IV-b'' 内 #458 → #728 の serial 順序を確認** (同 file bug_report.yml) ← 新規
+- [ ] **★ Group G ext (Lane IV-b'') 着手時、#458 が既に実装完了 (pending /close-issue、Wave 2 handoff) であることを念頭に #728 (main branch 配置) を独立 task として扱う** ← 新規
 
 ## 8. 受け入れ条件 (本 design の)
 
 本 design に基づく writing-plans 実行で、以下が満たされること:
 
-- [ ] 新規 plan file `docs/superpowers/plans/2026-05-13-l2-v020-roadmap-update.md` が作成され、§4 構造 (13 group / 3 wave / 7 lane wave 1 / file 衝突 matrix) を完全に表現している
+- [ ] 新規 plan file `docs/superpowers/plans/2026-05-13-l2-v020-roadmap-update.md` が作成され、§4 構造 (13 group / 3 wave / 8 lane wave 1 / file 衝突 matrix) を完全に表現している
 - [ ] 旧 plan file `docs/superpowers/plans/2026-05-11-l2-v020-roadmap-update.md` の冒頭に §3.3 の Superseded ヘッダが追加され、本文は維持されている
-- [ ] 新規 plan に Group A-M の全 13 group が漏れなく列挙され、各 issue の状態 (✅ DONE / ⏳ pending close / OPEN) と優先度 (P2 / P3-low) が明記されている
+- [ ] 新規 plan に Group A-M の全 13 group が漏れなく列挙され、各 issue の状態 (✅ DONE / ⏳ pending close / OPEN) と優先度 (P2 / P3-low) が明記されている (特に #458 を pending close として §1 に明記、Wave 1 active scope からは除外)
 - [ ] 新規 plan に Wave 1 brainstorming 入り口 8 entry (II-a' / II-b' / IV-b'' / VI / VII / V Phase 2 / V Phase 3 / III) が列挙されている
 - [ ] file 衝突 matrix が wave 1 全 lane × 主要 file path で記載され、V Phase 2 ↔ II-b' #680 / Lane III 衝突注意点が明記されている
 - [ ] deferred / L1 residual / L3+ §5 が 2026-05-11 plan からの変更点 (Group J/K 完走の反映) を反映している
@@ -287,7 +289,7 @@ WAVE 2  (release gate)
 - v0.3.0 / v0.2.1 等の将来 release 計画: deferred 6 件 + L1 residual 6 件 の post-v0.2.0 取り扱いは別途
 - Iron Law / l2-workflow.md 本体の更新: Lane VI #722 で扱うが本 design では既存条文への参照のみ
 - skill (`/iterate-review` / `/review-pr` 等) の改訂: 本 design 対象外 (関連 memory feedback は §6 で記録のみ)
-- manual close pending 2 件 (#648 / #644) の即時 close 実行: Wave 2 で /close-issue 経由、本 design execution の scope 外
+- manual close pending 3 件 (#648 / #644 / #458) の即時 close 実行: Wave 2 で /close-issue 経由、本 design execution の scope 外
 
 ## 10. リスク / 対応
 
@@ -295,7 +297,7 @@ WAVE 2  (release gate)
 | --- | --- | --- |
 | Lane V Phase 2 (#694) と Lane II-b' #680 の ExportScreen 衝突 | merge conflict | Pre-flight checklist §7 で II-b' #680 merge 後の V Phase 2 着手を強制 |
 | Lane V Phase 2 (#694) と Lane III (#676) の 5 screen 横断衝突 | merge conflict | Pre-flight checklist §7 で V Phase 2 merge 後の Lane III 着手を強制 |
-| Lane IV-b'' (#458 + #728) で main branch deployment 失敗 | bug_report.yml が UI から見えない | #458 で template 内容確定後、#728 で main branch 配置確認 (cherry-pick or branch promotion) を Pre-flight に含める |
+| Lane IV-b'' (#728) で main branch deployment 失敗 | bug_report.yml が UI から見えない | #458 実装 (PR #497 / #688) を踏まえ #728 で main branch 配置確認 (cherry-pick or branch promotion) を Pre-flight に含める |
 | 5 lane 同時運用時の bandwidth 枯渇 | session 管理コスト増 | roadmap で「最大 5、bandwidth 別運用 (1-5)」を明記、強制しない (2026-05-11 plan 同様) |
 | Group M (#727 lib.rs spawn) と将来 Rust lane (なし、Group B 完走済) の file 衝突 | なし | Group B 全 PR merged 済、lib.rs に other Wave 1 lane 触らないため衝突なし |
 | 新規 4 件 (#710/#722/#727/#728) を v0.2.0 に含めることで release が遅れる | release timing | brainstorming で確定 (§2 (a))。release 直前の品質一段上を優先 |
