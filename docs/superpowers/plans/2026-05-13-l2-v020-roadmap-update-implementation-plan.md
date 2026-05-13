@@ -465,7 +465,7 @@ tail -n 15 docs/superpowers/plans/2026-05-13-l2-v020-roadmap-update.md
 wc -l docs/superpowers/plans/2026-05-13-l2-v020-roadmap-update.md
 ```
 
-Expected: §6 Pre-flight checklist の 8 項目 (うち末尾 3 項目が「Lane V Phase 2 / Lane III / Group G ext gating」)、line count ~320
+Expected: §6 Pre-flight checklist の 8 項目 (うち末尾 3 項目が「Lane V Phase 2 / Lane III / Group G ext gating」)、line count ~335
 
 - [ ] **Step 4: 必須セクション存在確認 (Grep)**
 
@@ -537,7 +537,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
 ```
 
-Expected: `[claude/affectionate-pare-1619e2 <SHA>] docs: L2 v0.2.0 roadmap update ...` の 1 commit、`1 file changed, ~320 insertions(+)`
+Expected: `[claude/affectionate-pare-1619e2 <SHA>] docs: L2 v0.2.0 roadmap update ...` の 1 commit、`1 file changed, ~335 insertions(+)`
 
 ---
 
