@@ -82,11 +82,4 @@ describe('App routing', () => {
       screen.queryByRole('navigation', { name: 'Allagan Eye navigation' }),
     ).toBeNull();
   });
-
-  it('renders the side rail on every screen', () => {
-    render(<App />);
-    expect(
-      screen.getByRole('navigation', { name: 'Allagan Eye navigation' }),
-    ).toBeInTheDocument();
-  });
 });

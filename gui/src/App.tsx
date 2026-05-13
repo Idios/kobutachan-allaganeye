@@ -1,7 +1,6 @@
 import { ConfirmExitModal } from './components/ConfirmExitModal';
 import { ConflictModal } from './components/ConflictModal';
 import { DraftRestoreModal } from './components/DraftRestoreModal';
-import { SideRail } from './components/SideRail';
 import { StateSwitcher } from './components/StateSwitcher';
 import { CompleteScreen } from './screens/CompleteScreen';
 import { DetectingScreen } from './screens/DetectingScreen';
@@ -12,7 +11,7 @@ import { useAppStateStore } from './state/appStateStore';
 import styles from './App.module.css';
 
 /**
- * Root component. Wires the fixed shell (SideRail + StateSwitcher) and
+ * Root component. Wires the fixed shell (StateSwitcher + global modals) and
  * switches the main content based on useAppStateStore.screen.
  *
  * The Tauri native Windows title bar is used as-is — no in-app chrome.
@@ -32,7 +31,6 @@ export default function App() {
     <div className={styles.root}>
       <StateSwitcher />
       <div className={styles.body}>
-        <SideRail />
         <main className={styles.main}>
           {screen === 'drop' && <DropScreen />}
           {screen === 'detecting' && <DetectingScreen />}
