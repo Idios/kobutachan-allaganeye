@@ -202,6 +202,14 @@ import { InlineErrorHint } from '../components/InlineErrorHint';
 describe block で test で pin されている。将来 catch path 追加時は同 describe
 block に test を追加し、self-only 規約を継承する。
 
+### §4.9 catch 漏れ AppError fallback (#696)
+
+screen 側 invoke catch で受け止められなかった AppError (Promise を投げ捨て / async race / try-catch 漏れ等) は [`globalErrorListener.onUnhandledRejection`](../gui/src/lib/globalErrorListener.ts) が `isAppError(reason)` で判定し、`errorCategory: 'tauri-command'` / `errorTitle: '処理中に予期しないエラーが発生しました'` / `errorHint: reason.hint ?? null` / `isPanic: false` / `isRecoverable: true` で ErrorModal に表示する。
+
+screen 自身の recoverable inline error UI (各 screen の local state による表示、§4.7 / §4.8) とは独立した最終 fallback として機能し、modal は `閉じる` button で dismiss 可。`errorStore` の first-write-wins 規約により、既に他カテゴリの modal が open 中であれば本 fallback は dropped される。
+
+PR #689 (Phase 4 of #663) で `'tauri-command'` カテゴリ自体は `errorStore` の union に予約済だったが、populate 経路 (本 fallback) は #696 で追加された。
+
 ## 5. 各画面の phase state
 
 ### drop (動画ファイル選択)
