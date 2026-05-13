@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Idios/kobutachan-allaganeye/schemas/cleanup-output.schema.json",
+  "title": "Cleanup script NDJSON event",
+  "description": "One JSON object per line emitted by scripts/cleanup-*.sh on stdout (Refs #710). Each line MUST match exactly one of the variants below.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["event", "script", "apply", "repo_root"],
+      "properties": {
+        "event": {"const": "start"},
+        "script": {"enum": ["cleanup-worktrees", "cleanup-claude-branches"]},
+        "apply": {"type": "boolean"},
+        "repo_root": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["event", "script", "name"],
+      "properties": {
+        "event": {"enum": ["removed", "deleted", "would_remove", "would_delete"]},
+        "script": {"enum": ["cleanup-worktrees", "cleanup-claude-branches"]},
+        "name": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["event", "script", "name", "reason"],
+      "properties": {
+        "event": {"enum": ["kept", "would_skip", "skip"]},
+        "script": {"enum": ["cleanup-worktrees", "cleanup-claude-branches"]},
+        "name": {"type": "string"},
+        "reason": {"enum": ["not-empty", "active", "not-merged", "cooldown"]}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["event", "script", "name", "exit_code"],
+      "properties": {
+        "event": {"const": "delete_failed"},
+        "script": {"const": "cleanup-claude-branches"},
+        "name": {"type": "string"},
+        "exit_code": {"type": "integer"}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["event", "script", "apply", "total"],
+      "properties": {
+        "event": {"const": "summary"},
+        "script": {"enum": ["cleanup-worktrees", "cleanup-claude-branches"]},
+        "apply": {"type": "boolean"},
+        "total": {"type": "integer"},
+        "removed": {"type": "integer"},
+        "kept": {"type": "integer"},
+        "orphan_candidates": {"type": "integer"},
+        "deleted": {"type": "integer"}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["event", "script", "message"],
+      "properties": {
+        "event": {"const": "error"},
+        "script": {"enum": ["cleanup-worktrees", "cleanup-claude-branches"]},
+        "message": {"type": "string"},
+        "exit_code": {"type": "integer"}
+      },
+      "additionalProperties": false
+    }
+  ]
+}

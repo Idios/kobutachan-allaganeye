@@ -1,27 +1,45 @@
 #!/usr/bin/env bash
-# cleanup-claude-branches.sh — Delete safe `claude/*` local branches (Refs #708).
+# cleanup-claude-branches.sh — Delete safe `claude/*` local branches (Refs #708 / #710).
 #
-# 安全 AND 条件:
-#   1. merged: origin/develop-0.2.0 または origin/main の祖先
-#   2. active 不在: git worktree list 内で参照されていない
-#   3. cooldown: 最終 commit が 24h 以上前
-#   (prefix: claude/ のみ列挙対象)
+# Output: stdout NDJSON (one JSON object per line). Schema: schemas/cleanup-output.schema.json.
 #
-# 使い方:
-#   scripts/cleanup-claude-branches.sh           # dry-run (default)
-#   scripts/cleanup-claude-branches.sh --apply   # 実削除
+# Safety AND conditions (unchanged from pre-#710):
+#   1. merged: ancestor of origin/develop-0.2.0 or origin/main
+#   2. active 不在: not referenced by any active worktree
+#   3. cooldown: last commit ≥ 24h ago
+#   (prefix filter: claude/* only is listed)
 #
-# 仕様:
-#   - rmdir 同様、削除は明確に安全な条件下のみ (data loss なし保証)
-#   - git common dir 解決により worktree 内から呼ばれても main checkout を操作
-#   - exit 0: 正常 / 1: 引数エラー / 2: not a git repo
-#   - 削除失敗は exit 0 維持 (hook 全体を妨げない)
+# Usage:
+#   scripts/cleanup-claude-branches.sh           # dry-run
+#   scripts/cleanup-claude-branches.sh --apply   # actually delete
+#
+# Exit: 0 normal / 1 arg error / 2 not a git repo.
 
 set -u
 
+_SCRIPT_NAME="cleanup-claude-branches"
+
+_emit() {
+  local out='{'
+  out+="\"event\":\"$1\""; shift
+  out+=",\"script\":\"$_SCRIPT_NAME\""
+  for kv in "$@"; do
+    local k="${kv%%=*}"
+    local v="${kv#*=}"
+    if [[ "$v" =~ ^-?[0-9]+$ ]] || [[ "$v" == "true" || "$v" == "false" ]]; then
+      out+=",\"$k\":$v"
+    else
+      v="${v//\\/\\\\}"; v="${v//\"/\\\"}"
+      out+=",\"$k\":\"$v\""
+    fi
+  done
+  out+='}'
+  printf '%s\n' "$out"
+}
+
 COMMON_GIT_DIR="$(git rev-parse --git-common-dir 2>/dev/null || true)"
 if [[ -z "$COMMON_GIT_DIR" ]]; then
-  echo "error: not a git repo (run from within the allaganeye checkout)" >&2
+  _emit error message="not a git repo (run from within the allaganeye checkout)" exit_code=2 >&2
   exit 2
 fi
 COMMON_GIT_DIR="$(cd "$COMMON_GIT_DIR" && pwd)"
@@ -36,29 +54,26 @@ while (( $# > 0 )); do
       exit 0
       ;;
     *)
-      echo "error: unknown arg '$1'" >&2
+      _emit error message="unknown arg '$1'" exit_code=1 >&2
       exit 1
       ;;
   esac
   shift
 done
 
-echo "== scan claude/* branches in $REPO_ROOT =="
-mapfile -t BRANCHES < <(git -C "$REPO_ROOT" branch --list 'claude/*' --format='%(refname:short)')
-
-if (( ${#BRANCHES[@]} == 0 )); then
-  echo "  no claude/* branches found"
-  echo "summary: 0 deleted / 0 kept / 0 total"
-  exit 0
+if (( APPLY )); then
+  _emit start apply=true repo_root="$REPO_ROOT"
+else
+  _emit start apply=false repo_root="$REPO_ROOT"
 fi
+
+mapfile -t BRANCHES < <(git -C "$REPO_ROOT" branch --list 'claude/*' --format='%(refname:short)')
 
 deleted=0
 kept=0
 COOLDOWN_THRESHOLD=$(($(date +%s) - 86400))
 
-# active worktree が参照する branch 集合 (refs/heads/<name> 形式) を構築。
-# detached HEAD worktree は `branch` 行を emit しない (`HEAD <sha>` のみ) ため、
-# 名前付き branch を保持していない = 自動削除対象外として安全にスキップされる。
+# Build active-branch set from worktree list.
 declare -A ACTIVE_BRANCHES=()
 while IFS= read -r line; do
   if [[ "$line" == "branch refs/heads/"* ]]; then
@@ -69,12 +84,12 @@ done < <(git -C "$REPO_ROOT" worktree list --porcelain)
 for branch in "${BRANCHES[@]}"; do
   # AND 2: active 不在判定
   if [[ -n "${ACTIVE_BRANCHES[$branch]:-}" ]]; then
-    echo "  kept $branch (reason: active)"
+    _emit kept name="$branch" reason=active
     kept=$((kept + 1))
     continue
   fi
 
-  # AND 1: merged 判定 (origin/develop-0.2.0 OR origin/main の祖先)
+  # AND 1: merged 判定
   merged=0
   if git -C "$REPO_ROOT" merge-base --is-ancestor "$branch" "origin/develop-0.2.0" 2>/dev/null; then
     merged=1
@@ -82,42 +97,36 @@ for branch in "${BRANCHES[@]}"; do
     merged=1
   fi
   if [[ "$merged" -eq 0 ]]; then
-    echo "  kept $branch (reason: not-merged)"
+    _emit kept name="$branch" reason=not-merged
     kept=$((kept + 1))
     continue
   fi
 
-  # AND 3: cooldown (最終 commit が 24h 以上前か)
-  # `-- ` separator で git DWIM (branch 名 vs path) の曖昧性を明示排除
-  # (claude/ prefix で path 衝突はほぼ理論上のみだが defensive depth)。
+  # AND 3: cooldown
   last_ct=$(git -C "$REPO_ROOT" log -1 --format=%ct "$branch" -- 2>/dev/null || echo "")
   if [[ -z "$last_ct" ]] || [[ "$last_ct" -ge "$COOLDOWN_THRESHOLD" ]]; then
-    echo "  kept $branch (reason: cooldown)"
+    _emit kept name="$branch" reason=cooldown
     kept=$((kept + 1))
     continue
   fi
 
   # 全 AND 満足 — 削除対象
   if [[ "$APPLY" -eq 1 ]]; then
-    # >/dev/null 2>&1 で `git branch -D` の stdout 成功メッセージ
-    # (`Deleted branch X (was Y).`) も含めて完全抑制し、本 script の output 契約
-    # (`deleted <branch>` / `delete failed: <branch>` / `would delete <branch>` /
-    # `kept <branch> (reason: ...)`) のみが log に残るようにする (spec §6.1)。
     git -C "$REPO_ROOT" branch -D "$branch" >/dev/null 2>&1
     rc=$?
     if [[ "$rc" -eq 0 ]]; then
-      echo "  deleted $branch"
+      _emit deleted name="$branch"
       deleted=$((deleted + 1))
     else
-      # exit=N で原因切り分け補助 (spec §7 通り)
-      echo "  delete failed: $branch (exit=$rc)"
+      _emit delete_failed name="$branch" exit_code="$rc"
       kept=$((kept + 1))
     fi
   else
-    echo "  would delete $branch"
+    _emit would_delete name="$branch"
     deleted=$((deleted + 1))
   fi
 done
 
-echo "summary: $deleted deleted / $kept kept / ${#BRANCHES[@]} total"
+_emit summary apply="$([[ $APPLY -eq 1 ]] && echo true || echo false)" \
+              total="${#BRANCHES[@]}" deleted="$deleted" kept="$kept"
 exit 0
