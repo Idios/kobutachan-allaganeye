@@ -1,5 +1,7 @@
 # L2 (v0.2.0) 残作業 roadmap (2026-05-11 update) — 11 brainstorming groups (A-K)
 
+> **⚠️ Superseded (2026-05-13)**: 本 plan は `docs/superpowers/plans/2026-05-13-l2-v020-roadmap-update.md` で更新されています。Wave 1 lanes の大半完走 (旧 plan 23 件中 14 件 CLOSED + 3 件 pending close 含 #458 scope-out) + 新規 4 件 (Group G ext + Group L + Group M) 追加を反映。本ファイルは history (2026-05-11 時点の判断) として保存。
+>
 > **Status**: v0.2.0 release ゲート向け、Wave 0 完走 + post-#663 cleanup 12 件追加に伴う再編成
 > **作成**: 2026-05-11 / session `affectionate-pare-1619e2`
 > **Supersedes**: [docs/superpowers/plans/2026-05-07-l2-v020-roadmap.md](2026-05-07-l2-v020-roadmap.md)
