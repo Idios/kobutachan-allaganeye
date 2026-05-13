@@ -23,7 +23,7 @@ Group L (Lane VI) は L2 (v0.2.0) workflow infra 拡張 1 round を扱う。ス�
 | --- | --- | --- | --- |
 | Test framework (#710) | (A) bats / (B) pytest + subprocess + tmp git repo / (C) 独自 shell mock script | **(B) pytest + subprocess + tmp git repo** | 既存 pytest infra に統合、CI (ubuntu) ready、新 CI dep ゼロ、assertion 表現力高。bash と Python の言語不一致は black-box behavior testing で問題なし |
 | Test scope (#710) | (A) stop.sh のみ / (B) hooks + cleanup scripts / (C) hooks + cleanup + preuse.py pytest 化 | **(B) hooks + cleanup scripts** | #710 受け入れ条件「output 契約定義」を満たすには cleanup scripts も対象、preuse.py の pytest 化は 1 セッション超で scope creep (Iron Law 3) |
-| Log schema (#710) | (A) human-readable 維持 + side-channel JSON / (B) JSON Lines (NDJSON) / (C) TSV | **(B) JSON Lines (draft-07 schema)** | source of truth 一本、`jq` / Python json で parse、event 追加で schema 拡張容易、dual emit 不要 (formatter helper で人間読みに変換) |
+| Log schema (#710) | (A) human-readable 維持 + side-channel JSON / (B) JSON Lines (NDJSON) / (C) TSV | **(B) JSON Lines (draft 2020-12 schema)** | source of truth 一本、`jq` / Python json で parse、event 追加で schema 拡張容易、dual emit 不要 (formatter helper で人間読みに変換) |
 | EXECUTOR ディレクティブ書式 (#722) | (A) prompt 先頭 1 行 directive / (B) YAML frontmatter / (C) Markdown blockquote badge | **(A) prompt 先頭 1 行 directive** | parse 簡単 (`line.startswith("EXECUTOR:")`)、copy-paste 時に user / 受信 session の両方が即座に判別、frontmatter は markdown parser 文化と乖離 |
 | Iron Law 6 強化レベル (#722) | (A) docs だけ / (B) docs + session-start hook 自動検出 / (C) docs + hook + /iterate-review skill 多重 | **(B) docs + session-start hook 自動検出** | 「Claude が気付く」頼みを排除、skill 拡張は #710 scope 超 (scope creep 予防)、defense-in-depth の hook 側 1 層で十分 |
 | PR 分割 | (A) 2 並行 PR / (B) 1 結合 PR / (C) 連次 2 PR | **(B) 1 結合 PR** | session-start.sh が共通 touch ファイル、workflow infra round N の logical scope として 1 PR = 1 scope 規約を保ちつつ「1 PR = 1 issue」運用とは別軸 |
@@ -193,7 +193,7 @@ mock cleanup script は fixture が `tmp_repo/scripts/cleanup-*.sh` を一時 st
 
 ### 5.1 schema ファイル
 
-`schemas/cleanup-output.schema.json` (新規)。既存 `schemas/metadata.schema.json` と同階層。**draft-07** 採用 (project 既存 schema と同 version)。
+`schemas/cleanup-output.schema.json` (新規)。既存 `schemas/metadata.schema.json` と同階層。**draft 2020-12** 採用 (project 既存 schema と同 version、`https://json-schema.org/draft/2020-12/schema`)。
 
 ### 5.2 event 一覧
 
@@ -222,11 +222,11 @@ mock cleanup script は fixture が `tmp_repo/scripts/cleanup-*.sh` を一時 st
 - `exit_code`: int (delete-failed 時の `git branch -D` exit code)
 - `total` / `removed` / `kept` / `orphan_candidates` / `deleted`: int
 
-### 5.4 schema 構造 (JSON Schema draft-07 oneOf)
+### 5.4 schema 構造 (JSON Schema draft 2020-12 oneOf)
 
 ```json
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Idios/kobutachan-allaganeye/schemas/cleanup-output.schema.json",
   "title": "Cleanup script NDJSON event",
   "description": "One JSON object per line emitted by scripts/cleanup-*.sh on stdout (Refs #710).",
@@ -550,7 +550,7 @@ gh コマンドの mock は `$PATH` 先頭に `tmp_repo/bin/gh` shim を置く�
       - name: Install jq (for format-cleanup-log.sh smoke test)
         run: sudo apt-get update && sudo apt-get install -y jq
       - name: Verify NDJSON schema is valid JSON Schema
-        run: python -c "import json, jsonschema; jsonschema.Draft7Validator.check_schema(json.load(open('schemas/cleanup-output.schema.json')))"
+        run: python -c "import json, jsonschema; jsonschema.Draft202012Validator.check_schema(json.load(open('schemas/cleanup-output.schema.json')))"
       - name: Run hook tests
         run: pytest tests/hooks/ -v --tb=short
 ```
@@ -674,7 +674,7 @@ pyproject.toml                         # conditional: testpaths 既設定なら 
 | --- | --- | --- |
 | 採用 test framework の決定 (A/B/C) | §4 (B: pytest + subprocess + tmp git repo) | `tests/hooks/` 存在 |
 | テスト対象 hook の範囲決定 | §4 (hooks + cleanup scripts) | `tests/hooks/test_*.py` 4 ファイル存在 |
-| 構造化ログ schema 設計 | §5 (JSON Lines / draft-07 schema) | `schemas/cleanup-output.schema.json` 存在 + CI で JSON Schema validate |
+| 構造化ログ schema 設計 | §5 (JSON Lines / draft 2020-12 schema) | `schemas/cleanup-output.schema.json` 存在 + CI で JSON Schema validate |
 | `cleanup-worktrees.sh` と `stop.sh` の output 契約定義 | §5 (event 一覧 + field 値域) | schema 内の oneOf + bash `_emit()` helper |
 | PR #707 mock 試験フローを test case 化 | §4.5 (test_stop_hook.py 4 test) | hook-test job pass |
 | PR #732 mock 5 シナリオを test case 化 (追加項目) | §4.3 (test_cleanup_claude_branches.py 5 test) | hook-test job pass |
@@ -710,7 +710,7 @@ pyproject.toml                         # conditional: testpaths 既設定なら 
 - [x] `pyright` pass
 - [x] `pytest -m "not slow"` pass (tests/hooks/ を含む)
 - [x] `pytest tests/hooks/ -v` pass (新規 4 ファイル、合計 N test)
-- [x] `python -c "import json, jsonschema; jsonschema.Draft7Validator.check_schema(json.load(open('schemas/cleanup-output.schema.json')))"` pass
+- [x] `python -c "import json, jsonschema; jsonschema.Draft202012Validator.check_schema(json.load(open('schemas/cleanup-output.schema.json')))"` pass
 - [x] `bash scripts/cleanup-worktrees.sh` (dry-run) stdout が `cleanup-output.schema.json` に validate
 - [x] `bash scripts/cleanup-claude-branches.sh` (dry-run) stdout が schema validate
 - [x] `bash scripts/format-cleanup-log.sh < tests/hooks/fixtures/sample.ndjson` で人間読み出力
