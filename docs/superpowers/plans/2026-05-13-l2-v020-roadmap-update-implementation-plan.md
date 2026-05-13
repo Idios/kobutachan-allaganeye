@@ -17,9 +17,9 @@
 | path | action | size (approx) | role |
 | --- | --- | --- | --- |
 | `docs/superpowers/plans/2026-05-11-l2-v020-roadmap-update.md` | edit (3 行 insert) | +3 lines | 旧 plan 冒頭に Superseded ヘッダ追加 (audit trail 保全、chain 方式) |
-| `docs/superpowers/plans/2026-05-13-l2-v020-roadmap-update.md` | create | ~320 lines | 更新後 roadmap 本体 (13 group / 3 wave / 8 lane wave 1) |
-| `docs/superpowers/plans/2026-05-13-l2-v020-roadmap-update-implementation-plan.md` | create (本 file) | ~650 lines | 本 implementation plan (writing-plans 出力) |
-| `docs/superpowers/specs/2026-05-13-l2-v020-roadmap-update-design.md` | (already committed: `78d639c` → `47fbfc6` → `5980e60`) | 302 lines | 原 spec (brainstorming 出力) |
+| `docs/superpowers/plans/2026-05-13-l2-v020-roadmap-update.md` | create | ~335 lines | 更新後 roadmap 本体 (13 group / 3 wave / 8 lane wave 1) |
+| `docs/superpowers/plans/2026-05-13-l2-v020-roadmap-update-implementation-plan.md` | create (本 file) | ~870 lines | 本 implementation plan (writing-plans 出力) |
+| `docs/superpowers/specs/2026-05-13-l2-v020-roadmap-update-design.md` | (already committed: `78d639c` → `47fbfc6` → `5980e60`) | ~304 lines | 原 spec (brainstorming 出力) |
 
 ---
 
@@ -134,7 +134,7 @@ Use Write tool:
 | Lane V Phase 1 | Group I 5/7 (#691 / #693 / #695 / #697 / #698) | ✅ DONE | [PR #714](https://github.com/Idios/kobutachan-allaganeye/pull/714) / [PR #716](https://github.com/Idios/kobutachan-allaganeye/pull/716) / [PR #725](https://github.com/Idios/kobutachan-allaganeye/pull/725) / [PR #730](https://github.com/Idios/kobutachan-allaganeye/pull/730) / [PR #733](https://github.com/Idios/kobutachan-allaganeye/pull/733) |
 | Lane IV-e | Group K (2/2) | ✅ DONE | [PR #713](https://github.com/Idios/kobutachan-allaganeye/pull/713) / [PR #721](https://github.com/Idios/kobutachan-allaganeye/pull/721) |
 
-**既消化合計**: 10 lane / 14 issue CLOSED + 3 pending close
+**既消化合計**: Wave 0 全期間 23 issue CLOSED + 3 pending close (11 lane row、うち Lane IV-b' は Group G #458 と Group J で 2 row 占有 = 10 logical lane)。本日までの 2 日間 delta は 14 件 CLOSED + 3 件 pending close (詳細は次節「2026-05-11 plan からの主要進捗」)。
 
 ### 2026-05-11 plan からの主要進捗
 
@@ -252,7 +252,7 @@ WAVE 0  (DONE 2026-05-08〜13)
   ✓ Lane IV-b' (J)     Group J (2/2)                   PR #715 / #717
   ✓ Lane IV-e          Group K (2/2)                   PR #713 / #721
 
-  既消化合計: 10 lane / 14 issue CLOSED + 3 pending close
+  既消化合計: Wave 0 全期間 23 issue CLOSED + 3 pending close (11 lane row = 10 logical lane)
 
 ═══════════════════════════════════════════════════════════════════════════
 WAVE 1  (CURRENT — 残 10 OPEN active issue / 8 lane / max 5 並行 + sub-ordering)
@@ -439,7 +439,7 @@ issue: #28 / #32 / #63 / #125-#137 / #139-#152 / #326 / #372-#376 / #479-#481 �
 - [ ] `git fetch origin develop-0.2.0 && git log HEAD..origin/develop-0.2.0 --oneline` で取り込み未済 commit 確認 (Iron Law 6)
 - [ ] `gh pr list --search "<元 issue#>" --state all` で並行 worktree PR 重複確認 (Iron Law 6)
 - [ ] 着手 group 内に `gui/src-tauri/src/lib.rs` 共有 issue があれば直列順を確認 (Lane VII = Group M、Group B 完走済)
-- [ ] 着手 group 内に `gui/src/screens/PreviewScreen.tsx` 共有 issue があれば直列順を確認 (Lane II-a' = Group C 残のみ)
+- [ ] 着手 group 内に `gui/src/screens/PreviewScreen.tsx` 共有 issue があれば直列順を確認 (Lane II-a' = Group C 残 #677)
 - [ ] **Lane V Phase 2 (#694) を着手する場合、Lane II-b' #680 (ExportScreen) の merge 完了を確認** (file 衝突 matrix §3-bis 参照)
 - [ ] **Lane III (#676 横断 file path) を着手する場合、Lane V Phase 2 (#694) の merge 完了を確認** (5 screen 横断衝突回避)
 - [ ] **★ Group G ext (Lane IV-b'') 着手時、#458 が既に実装完了 (pending /close-issue、Wave 2 handoff) であることを念頭に #728 (main branch 配置) を独立 task として扱う**
