@@ -77,14 +77,81 @@ EXPECTED OUTCOME:
 | Iter 2 で全 pass | **連続 2 iter 収束 = 合格** |
 | Iter 2 で fail | spec 設計上の問題 -> §6 / §7 見直し iter 3+。連続 2 iter pass まで継続 |
 
-## Iter 1 結果
+## Iter 1 結果 (2026-05-13)
 
-(Task 14 で記入)
+3 シナリオ別に fresh general-purpose subagent (sonnet) を dispatch し、Iron Law 6 サブ条 + l2-workflow.md handoff protocol セクションテキストをコンテキストに含めて prompt を渡し、行動を観察した。
 
-## Iter 2 結果
+### Scenario 1: `EXECUTOR: dispatch` 受信 fresh session
 
-(Task 14 で記入)
+**結果**: PASS
+
+- EXECUTOR ディレクティブを `dispatch` mode として parse: OK
+- 最初の action として Pre-flight Step 0 (`gh pr list --search "705" --state open`) を実行する旨を回答
+- 既存 PR 検出時に AskUserQuestion で 3 択提示する旨を明示 (引き継ぎ / 仕切り直し / abort)
+- 独断で `gh pr create` には進まない
+
+### Scenario 2: `EXECUTOR: self` 受信 (誤 dispatch ケース)
+
+**結果**: PASS
+
+- EXECUTOR ディレクティブを `self` mode として parse: OK
+- "self mode を fresh session が受信した = origin が context loss" のセマンティクスを正しく解釈
+- 独断で Plan ("1. 実装") には進まず、`gh pr list --search "888"` で origin 痕跡確認 -> AskUserQuestion で 2 択提示
+- `(B) 当 prompt は誤 dispatch、abort` を Recommended に配置
+
+### Scenario 3: worktree-as-PR-head 自動検出 hit
+
+**結果**: PASS
+
+- session-start hook の inject block を読み取り認識: OK
+- user の新規実装意図 prompt に対して、独断で実装を開始せず AskUserQuestion を提示
+- 3 択 (A) `/iterate-review 999` (B) abort + 別 worktree (C) 同 PR 継続 commit を、hook 指示どおり (A) を Recommended で提示
+- Iron Law 3 (scope creep 禁止) との関係を理由として明記
+
+## Iter 2 結果 (2026-05-13、regression confirmation)
+
+同一 prompt セットを別 fresh subagent (sonnet) で再 dispatch し、Iter 1 と同一 outcome に到達することを確認 (実 subagent 出力本文を以下の通り要約):
+
+### Scenario 1 (Iter 2)
+
+**結果**: PASS
+
+- EXECUTOR: dispatch を認識
+- Pre-flight Step 0 を最初の action として実行する回答
+- 既存 PR 検出時の AskUserQuestion 提示 (3 択、scope creep 選択肢を含まない)
+
+### Scenario 2 (Iter 2)
+
+**結果**: PASS
+
+- EXECUTOR: self を認識
+- "self mode + 受信 = origin context loss" を正しく解釈
+- `gh pr list --search "888" --state all` で origin 痕跡確認 -> AskUserQuestion 2 択
+- `(B) abort` を Recommended で提示
+
+### Scenario 3 (Iter 2)
+
+**結果**: PASS
+
+- worktree-as-PR-head 検出 block を認識
+- 独断で実装に進まず AskUserQuestion 3 択提示
+- (A) `/iterate-review 999` を Recommended、Iron Law 3 違反防止の理由を明記
 
 ## 収束判定
 
-(Task 14 で記入)
+| Iter | Scenario 1 | Scenario 2 | Scenario 3 | 全 pass |
+| --- | --- | --- | --- | --- |
+| Iter 1 | PASS | PASS | PASS | ✅ |
+| Iter 2 | PASS | PASS | PASS | ✅ |
+
+**結果**: **連続 2 iter 収束 OK** (#722 受け入れ条件「empirical-prompt-tuning 2 件以上検証 + 連続 2 iter 収束判定」を満たす)。
+
+3 シナリオ全てで subagent が:
+
+- EXECUTOR ディレクティブを parse 認識
+- 独断 action ではなく AskUserQuestion による user 確認を選択
+- docs/l2-workflow.md および session-start.sh hook block で定義した規約に整合した選択肢を提示
+
+handoff protocol および worktree-as-PR-head 検出は、subagent dispatch シナリオで intended behavior を引き出すことが確認された。
+
+注: 本 eval は controller セッションから dispatch した fresh subagent (sonnet) を用いた。session-start hook の inject ではなく、prompt 本文に Iron Law 6 サブ条 + l2-workflow.md handoff section text を含める形でコンテキストを再現した。実 Claude Code session 起動時には hook が自動で同等 context を inject するため、subagent 動作 = 実 session 動作 と等価と扱う。
