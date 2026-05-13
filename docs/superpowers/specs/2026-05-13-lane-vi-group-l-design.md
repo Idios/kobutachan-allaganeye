@@ -233,7 +233,7 @@ mock cleanup script は fixture が `tmp_repo/scripts/cleanup-*.sh` を一時 st
   "oneOf": [
     {
       "type": "object",
-      "required": ["event", "script"],
+      "required": ["event", "script", "apply", "repo_root"],
       "properties": {
         "event": {"const": "start"},
         "script": {"enum": ["cleanup-worktrees", "cleanup-claude-branches"]},
@@ -265,7 +265,12 @@ mock cleanup script は fixture が `tmp_repo/scripts/cleanup-*.sh` を一時 st
        "removed": {"type": "integer"},
        "kept": {"type": "integer"},
        "orphan_candidates": {"type": "integer"},
-       "deleted": {"type": "integer"}}, "additionalProperties": false}
+       "deleted": {"type": "integer"}}, "additionalProperties": false},
+    {"type": "object", "required": ["event", "script", "message"], "properties": {
+       "event": {"const": "error"},
+       "script": {"enum": ["cleanup-worktrees", "cleanup-claude-branches"]},
+       "message": {"type": "string"},
+       "exit_code": {"type": "integer"}}, "additionalProperties": false}
   ]
 }
 ```
