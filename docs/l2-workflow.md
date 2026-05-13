@@ -137,7 +137,7 @@ template 内の各節は既存実装と整合する位置取り。Iron Law 4 (Cl
 
 PR 作成前に base 最新化と並行 worktree PR 重複を必ず確認する。`feedback_pr_review_base_merge_regression.md` (PR #627 Round 4 で発覚した base 取り込み機能 regression) と `feedback_concurrent_worktree_pr_check.md` (#646 / PR #647 並行作業重複) の skill / 規約昇格として運用化 (2026-04-29 #659)。2026-05-13 #722 で Step 0 ハードゲートを追加 (build/verify 前に `gh pr list --search "<元issue#>" --state open` を <1s で実行、PR #721 で発生した 49s redundant work 再発を防止)。Step 0 と Step 4 は検出 window が異なるため両方とも実施する。
 
-### 4 ステップ手順
+### 5 ステップ手順 (Step 0-4)
 
 ```bash
 # 0. ★ ハードゲート (#722 で追加): <1s で実行、build/verify の前に置く
