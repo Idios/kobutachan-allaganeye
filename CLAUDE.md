@@ -268,6 +268,8 @@ session 先頭で有効化されている plugin (`superpowers` v5.0.7 / `andrej
 
 PR Pre-flight・path 別自動チェック・実機検証 trigger・Self-Test Report 規約・(A) PR 内修正優先・PR 規約 (develop ベース / Closes 禁止 / 1 PR = 1 scope / session-id 等) は [`docs/l2-workflow.md`](docs/l2-workflow.md) 各 § を参照。Iron Law 6 (`.claude/hooks/session-start.sh`) も参照。
 
+resume task prompt 生成 (skill / session が user に dispatch 用 prompt を提示する場面) は [`docs/l2-workflow.md`](docs/l2-workflow.md) §「resume-plan handoff protocol」 で定義した `EXECUTOR: self|dispatch (origin=..., generated=...)` ディレクティブを遵守する (#722)。
+
 ## ユーザー指示の短縮記法
 
 | 記法 | 展開 |
