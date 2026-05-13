@@ -1014,8 +1014,12 @@ export function formatStartForFilename(seconds: number): string {
 }
 
 /**
- * #466 review #2: source video の親ディレクトリ + `/output` を default に。
- * `videoSource` から `dirname` 相当を抽出する (Windows は `\\` も許容)。
+ * #680: source video の親ディレクトリを default 出力先に。
+ * 旧実装 (#466 review #2) は `<parent>/output` を返していたが、Export 画面
+ * 到達時点では `<parent>/output` が物理的に存在しない (Rust 側
+ * `start_detect` は detect 出力先のみ create_dir_all する) ため、ユーザーが
+ * 「存在しないフォルダが default にプリセットされている」と混乱した。
+ * <parent> のみへ変更し、必ず存在するフォルダを default とする。
  *
  * #545 review #2 (2026-04-25): Windows の `\\?\` extended-length path prefix
  * は `stripExtendedPathPrefix` で取り除いてから親 dir を切り出す。
@@ -1026,12 +1030,10 @@ export function formatStartForFilename(seconds: number): string {
 export function deriveDefaultOutDir(videoSource: string | null): string {
   if (!videoSource) return '';
   const normalized = stripExtendedPathPrefix(videoSource);
-  const sep = normalized.includes('\\') && !normalized.includes('/') ? '\\' : '/';
   const idx = Math.max(
     normalized.lastIndexOf('/'),
     normalized.lastIndexOf('\\'),
   );
   if (idx <= 0) return '';
-  const parent = normalized.slice(0, idx);
-  return `${parent}${sep}output`;
+  return normalized.slice(0, idx);
 }
