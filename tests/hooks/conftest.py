@@ -92,7 +92,7 @@ def make_claude_branch(tmp_repo: Path) -> Callable[..., str]:
         # Make a commit with a forged committer date.
         # Stage only the test file (not scripts/ or .claude/hooks/ which are
         # wired in from PROJECT_ROOT and must not be tracked by the tmp repo's
-        # git history — if tracked, `git checkout develop-0.2.0` for a
+        # git history -- if tracked, `git checkout develop-0.2.0` for a
         # merged=False branch would delete them from the working tree).
         (tmp_repo / f"{slug}.txt").write_text("x")
         subprocess.run(["git", "add", "--", f"{slug}.txt"], cwd=tmp_repo, check=True)
@@ -132,9 +132,9 @@ def make_worktree_dir(tmp_repo: Path) -> Callable[..., Path]:
     """Create .claude/worktrees/<name>/ in one of 3 states.
 
     state:
-      "empty"     — empty directory (cleanup target)
-      "non_empty" — has a stray.txt inside (skipped, rmdir would fail)
-      "active"   — has .git file referencing tmp_repo's main .git (active worktree)
+      "empty"     -- empty directory (cleanup target)
+      "non_empty" -- has a stray.txt inside (skipped, rmdir would fail)
+      "active"   -- has .git file referencing tmp_repo's main .git (active worktree)
     """
 
     def _make(name: str, state: Literal["empty", "non_empty", "active"]) -> Path:

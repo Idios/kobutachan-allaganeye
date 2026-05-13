@@ -20,7 +20,7 @@ def _read_log(tmp_repo: Path) -> str:
 def test_stop_hook_logs_normal_cleanup(
     tmp_repo: Path, run_hook,
 ) -> None:
-    """Both cleanup scripts present and succeed → log records both blocks
+    """Both cleanup scripts present and succeed -> log records both blocks
     + NDJSON lines from each.
     """
     result = run_hook(".claude/hooks/stop.sh")
@@ -38,7 +38,7 @@ def test_stop_hook_logs_normal_cleanup(
 def test_stop_hook_logs_cleanup_script_failure(
     tmp_repo: Path, run_hook,
 ) -> None:
-    """Replace cleanup-worktrees.sh with a stub that exits 42 → log records
+    """Replace cleanup-worktrees.sh with a stub that exits 42 -> log records
     `cleanup exit=42`. stop.sh still exits 0.
     """
     # Replace the symlink/copy with a stub.
@@ -59,7 +59,7 @@ def test_stop_hook_logs_cleanup_script_failure(
 def test_stop_hook_handles_missing_cleanup_script(
     tmp_repo: Path, run_hook,
 ) -> None:
-    """Remove cleanup-claude-branches.sh → log records `NOT FOUND at <path>`."""
+    """Remove cleanup-claude-branches.sh -> log records `NOT FOUND at <path>`."""
     target = tmp_repo / "scripts" / "cleanup-claude-branches.sh"
     if target.is_symlink():
         target.unlink()

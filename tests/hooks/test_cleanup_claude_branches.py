@@ -1,6 +1,6 @@
 """Tests for scripts/cleanup-claude-branches.sh after NDJSON migration (Refs #710 / #732).
 
-PR #732 mock scenarios 5 件 × 2 modes (dry-run / apply) + summary consistency.
+PR #732 mock scenarios 5 件 x 2 modes (dry-run / apply) + summary consistency.
 """
 
 from pathlib import Path
@@ -10,7 +10,7 @@ def _of_event(events, evt):
     return [e for e in events if e.get("event") == evt]
 
 
-# ---------- Scenario 1: merged + 古い + active なし → deleted ----------
+# ---------- Scenario 1: merged + 古い + active なし -> deleted ----------
 
 def test_merged_old_inactive_apply_deletes(
     make_claude_branch, run_hook, assert_valid_ndjson,
@@ -32,7 +32,7 @@ def test_merged_old_inactive_dry_run_would_delete(
     assert any(e["name"] == "claude/scenario1b" for e in wd), result.stdout
 
 
-# ---------- Scenario 2: not merged → kept, reason=not-merged ----------
+# ---------- Scenario 2: not merged -> kept, reason=not-merged ----------
 
 def test_not_merged_kept(
     make_claude_branch, run_hook, assert_valid_ndjson,
@@ -46,7 +46,7 @@ def test_not_merged_kept(
     ), result.stdout
 
 
-# ---------- Scenario 3: active worktree が参照 → kept, reason=active ----------
+# ---------- Scenario 3: active worktree が参照 -> kept, reason=active ----------
 
 def test_active_worktree_kept(
     tmp_repo: Path, make_claude_branch, run_hook, assert_valid_ndjson,
@@ -67,12 +67,12 @@ def test_active_worktree_kept(
     ), result.stdout
 
 
-# ---------- Scenario 4: 24h cooldown 内 → kept, reason=cooldown ----------
+# ---------- Scenario 4: 24h cooldown 内 -> kept, reason=cooldown ----------
 
 def test_cooldown_kept(
     make_claude_branch, run_hook, assert_valid_ndjson,
 ) -> None:
-    # age_seconds=600 (10 minutes ago) — well within 24h cooldown
+    # age_seconds=600 (10 minutes ago) -- well within 24h cooldown
     make_claude_branch("scenario4", merged=True, age_seconds=600)
     result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
     assert_valid_ndjson(result.ndjson)
@@ -82,7 +82,7 @@ def test_cooldown_kept(
     ), result.stdout
 
 
-# ---------- Scenario 5: prefix 違い (feature/xxx) → 列挙対象外 ----------
+# ---------- Scenario 5: prefix 違い (feature/xxx) -> 列挙対象外 ----------
 
 def test_non_claude_prefix_ignored(
     tmp_repo: Path, run_hook, assert_valid_ndjson,

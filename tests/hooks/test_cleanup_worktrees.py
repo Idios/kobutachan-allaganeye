@@ -1,6 +1,6 @@
 """Tests for scripts/cleanup-worktrees.sh after NDJSON migration (Refs #710).
 
-Covers 3 directory states × 2 modes (dry-run / apply) + schema conformance.
+Covers 3 directory states x 2 modes (dry-run / apply) + schema conformance.
 """
 
 from pathlib import Path

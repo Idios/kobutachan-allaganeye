@@ -47,7 +47,7 @@ def test_session_start_mentions_step_zero_pre_flight(
 def test_worktree_pr_head_detected_when_pr_open(
     tmp_repo: Path, run_hook, with_gh_stub,
 ) -> None:
-    """gh stub returns non-empty JSON → extra EXTREMELY_IMPORTANT block is emitted."""
+    """gh stub returns non-empty JSON -> extra EXTREMELY_IMPORTANT block is emitted."""
     # Put tmp_repo on a claude/* branch
     subprocess.run(
         ["git", "checkout", "-q", "-b", "claude/some-pr-head"],
@@ -65,7 +65,7 @@ def test_worktree_pr_head_detected_when_pr_open(
 def test_worktree_pr_head_skipped_when_no_pr(
     tmp_repo: Path, run_hook, with_gh_stub,
 ) -> None:
-    """gh stub returns [] → only the base Iron Law block is emitted."""
+    """gh stub returns [] -> only the base Iron Law block is emitted."""
     subprocess.run(
         ["git", "checkout", "-q", "-b", "claude/no-pr-yet"],
         cwd=tmp_repo, check=True,
@@ -81,8 +81,8 @@ def test_worktree_pr_head_skipped_when_no_pr(
 def test_worktree_pr_head_skipped_for_non_claude_branch(
     tmp_repo: Path, run_hook, with_gh_stub,
 ) -> None:
-    """Branch not starting with `claude/` → detection skipped entirely (no gh call)."""
-    # tmp_repo's default branch is develop-0.2.0 — already non-claude
+    """Branch not starting with `claude/` -> detection skipped entirely (no gh call)."""
+    # tmp_repo's default branch is develop-0.2.0 -- already non-claude
     with_gh_stub('[{"number":999,"title":"should not appear"}]')
     result = run_hook(".claude/hooks/session-start.sh")
     assert result.exit_code == 0
@@ -93,7 +93,7 @@ def test_worktree_pr_head_skipped_for_non_claude_branch(
 def test_worktree_pr_head_silent_skip_when_gh_missing(
     tmp_repo: Path, run_hook, monkeypatch,
 ) -> None:
-    """gh not on PATH → fail-soft: Iron Law still emitted, no extra block, exit 0."""
+    """gh not on PATH -> fail-soft: Iron Law still emitted, no extra block, exit 0."""
     import shutil as _shutil
 
     subprocess.run(

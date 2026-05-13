@@ -31,7 +31,7 @@ def test_make_claude_branch_and_run_hook(make_claude_branch, run_hook) -> None:
 
 
 def test_format_cleanup_log_smoke(tmp_path, run_hook, make_worktree_dir, tmp_repo):
-    """End-to-end: NDJSON from cleanup-worktrees.sh → format-cleanup-log.sh →
+    """End-to-end: NDJSON from cleanup-worktrees.sh -> format-cleanup-log.sh ->
     human-readable lines.
     """
     import subprocess
