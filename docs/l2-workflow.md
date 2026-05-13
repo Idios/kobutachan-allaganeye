@@ -110,7 +110,7 @@ EXECUTOR: dispatch (origin=<session-id>, generated=<ISO-8601>)
 ### 受信側 (dispatch された fresh session) のルール
 
 1. 受け取った prompt の 1 行目を上記正規表現で parse
-2. parse fail → `AskUserQuestion` で「(A) legacy prompt として扱う (handoff 規約適用前と仮定して着手) / (B) prompt 不正のため当 session を abort、user に prompt 再生成を依頼」
+2. parse fail → `AskUserQuestion` で「(A) legacy prompt として扱う (handoff 規約適用前と仮定して着手) / (B) prompt 不正のため当 session を abort、user に prompt 再生成を依頼 [Recommended]」 (Iron Law 5「Recommended 付き 2-4 択標準」整合)
 3. `EXECUTOR: dispatch` → そのまま着手
 4. `EXECUTOR: self` → 上記「self / dispatch のセマンティクス」表の self 行のフローを実行 (`gh pr list --search` で origin 痕跡確認 → AskUserQuestion)
 

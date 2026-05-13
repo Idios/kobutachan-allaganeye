@@ -365,7 +365,7 @@ EXECUTOR: dispatch (origin=<session-id>, generated=<ISO-8601>)
 
 | mode | origin session の状態 | user の期待 action | 受信した session の振る舞い |
 | --- | --- | --- | --- |
-| `self` | **継続中**。prompt は context loss 時の保険文書 | 何もしない (origin が走る)。context loss を検知した場合のみ手動 dispatch | (通常はこの prompt を受け取らない)。受け取った場合 = origin が context loss した想定 → `gh pr list --search "<元 issue#>" --state all` で origin 痕跡確認 → AskUserQuestion で「(A) origin 痕跡なしで仕切り直し / (B) 当 prompt は誤 dispatch、abort」 |
+| `self` | **継続中**。prompt は context loss 時の保険文書 | 何もしない (origin が走る)。context loss を検知した場合のみ手動 dispatch | (通常はこの prompt を受け取らない)。受け取った場合 = origin が context loss した想定 → `gh pr list --search "<元 issue#>" --state all` で origin 痕跡確認 → AskUserQuestion で「(A) origin 痕跡なしで仕切り直し / (B) 当 prompt は誤 dispatch、abort [Recommended]」 |
 | `dispatch` | **abort 済み** | 新規 session に dispatch | origin が abort 済 = fresh start。Iron Law 6 Pre-flight 通常実施 |
 
 ### 6.4 生成側 (origin session) のルール
@@ -378,7 +378,7 @@ EXECUTOR: dispatch (origin=<session-id>, generated=<ISO-8601>)
 ### 6.5 受信側 (dispatch された fresh session) のルール
 
 1. 受け取った prompt の 1 行目を正規表現 (§6.2) で parse
-2. parse fail → AskUserQuestion で「(A) legacy prompt として扱う (handoff 規約適用前の prompt と仮定して着手) / (B) prompt 不正のため当 session を abort、user に prompt 再生成を依頼」
+2. parse fail → AskUserQuestion で「(A) legacy prompt として扱う (handoff 規約適用前の prompt と仮定して着手) / (B) prompt 不正のため当 session を abort、user に prompt 再生成を依頼 [Recommended]」
 3. `EXECUTOR: dispatch` → そのまま着手
 4. `EXECUTOR: self` → §6.3 self 行のフローを実行
 
