@@ -72,13 +72,83 @@ main (リリースタグのみ)
 
 反復利用される手順があれば、実運用でパターンが固まった時点で新規 skill を追加する (事前に空の skill は作らない)。
 
+## resume-plan handoff protocol (Iron Law 6 サブ条、#722)
+
+> 2026-05-13 #722 で導入。PR #721 (#705 BtbN monthly pin) で発生した race condition の再発防止。
+
+session が contingency 用 resume task prompt を生成して user に提示する際は、prompt の **1 行目** に EXECUTOR ディレクティブを必ず記述する。書式は固定で、機械パース可能・人間も即座に判別可能とする。
+
+### EXECUTOR ディレクティブ書式
+
+```text
+EXECUTOR: self (origin=<session-id>, generated=<ISO-8601>)
+EXECUTOR: dispatch (origin=<session-id>, generated=<ISO-8601>)
+```
+
+| field | 意味 | 例 |
+| --- | --- | --- |
+| `EXECUTOR` | `self` または `dispatch` | `dispatch` |
+| `origin` | prompt 生成 session の worktree dir 名 (session-id 相当) | `exciting-northcutt-a3f7b8` |
+| `generated` | prompt 生成時刻 (ISO-8601 + tz、`date -Iseconds` 出力) | `2026-05-13T22:14:33+09:00` |
+
+正規表現 (受信側 parse 用): `^EXECUTOR: (self|dispatch) \(origin=([^,]+), generated=(.+)\)$`
+
+### self / dispatch のセマンティクス
+
+| mode | origin session の状態 | user の期待 action | 受信した session の振る舞い |
+| --- | --- | --- | --- |
+| `self` | **継続中**。prompt は context loss 時の保険文書 | 何もしない (origin が走る)。context loss を検知した場合のみ手動 dispatch | (通常は受け取らない)。受け取った場合 = origin が context loss した想定 → `gh pr list --search "<元 issue#>" --state all` で origin 痕跡確認 → `AskUserQuestion` で「(A) origin 痕跡なしで仕切り直し / (B) 当 prompt は誤 dispatch、abort [Recommended]」を提示 (Iron Law 5「Recommended 付き 2-4 択標準」整合) |
+| `dispatch` | **abort 済み** | 新規 session に dispatch | origin が abort 済 = fresh start。Iron Law 6 Pre-flight 通常実施 |
+
+### 生成側 (origin session) のルール
+
+1. prompt 生成 **時点で** どちらの mode かを明示的に決定
+2. dispatch mode で生成した直後、origin session は当該 PR 作成 / 実装作業を **stop** する (= abort confirmation)
+3. self mode 生成は user 透過の contingency 文書として扱い、origin は実行を継続
+4. 1 session が同一 issue について self と dispatch の **両方** の prompt を user に提示することはしない (PR #721 race condition の原因)
+
+### 受信側 (dispatch された fresh session) のルール
+
+1. 受け取った prompt の 1 行目を上記正規表現で parse
+2. parse fail → `AskUserQuestion` で「(A) legacy prompt として扱う (handoff 規約適用前と仮定して着手) / (B) prompt 不正のため当 session を abort、user に prompt 再生成を依頼 [Recommended]」 (Iron Law 5「Recommended 付き 2-4 択標準」整合)
+3. `EXECUTOR: dispatch` → そのまま着手
+4. `EXECUTOR: self` → 上記「self / dispatch のセマンティクス」表の self 行のフローを実行 (`gh pr list --search` で origin 痕跡確認 → AskUserQuestion)
+
+### prompt template 例
+
+```text
+EXECUTOR: dispatch (origin=exciting-northcutt-a3f7b8, generated=2026-05-13T22:14:33+09:00)
+
+# Resume: <タスク表題> (issue #<N>)
+
+## Context
+<原 issue 状況、関連 PR、最終決定事項を 5-10 行>
+
+## Acceptance criteria
+<受け入れ条件をフルコピー>
+
+## Plan
+<手順を箇条書き、最後の "STOP and ask user" 点を明示>
+```
+
+template 内の各節は既存実装と整合する位置取り。Iron Law 4 (Closes 禁止) 適用。
+
 ## PR 作成 Pre-flight (Iron Law 6 サブ条)
 
-PR 作成前に base 最新化と並行 worktree PR 重複を必ず確認する。`feedback_pr_review_base_merge_regression.md` (PR #627 Round 4 で発覚した base 取り込み機能 regression) と `feedback_concurrent_worktree_pr_check.md` (#646 / PR #647 並行作業重複) の skill / 規約昇格として運用化 (2026-04-29 #659)。
+PR 作成前に base 最新化と並行 worktree PR 重複を必ず確認する。`feedback_pr_review_base_merge_regression.md` (PR #627 Round 4 で発覚した base 取り込み機能 regression) と `feedback_concurrent_worktree_pr_check.md` (#646 / PR #647 並行作業重複) の skill / 規約昇格として運用化 (2026-04-29 #659)。2026-05-13 #722 で Step 0 ハードゲートを追加 (build/verify 前に `gh pr list --search "<元issue#>" --state open` を <1s で実行、PR #721 で発生した 49s redundant work 再発を防止)。Step 0 と Step 4 は検出 window が異なるため両方とも実施する。
 
-### 4 ステップ手順
+### 5 ステップ手順 (Step 0-4)
 
 ```bash
+# 0. ★ ハードゲート (#722 で追加): <1s で実行、build/verify の前に置く
+gh pr list --search "<元issue#>" --state open \
+  --json number,headRefName,state,createdAt
+# hit ≥ 1 件 → 即時 abort、AskUserQuestion で
+#   (A) 当該 PR を review/iterate に切替 [Recommended]
+#   (B) 別 worktree のため当 session abort
+#   (C) ユーザー判断 (詳細確認)
+# hit 0 件 → Step 1 へ
+
 # 1. base 最新化 (read-only fetch)
 git fetch origin <base>            # <base> = develop-0.2.0 等
 
@@ -92,7 +162,7 @@ git diff --name-only origin/<base>
 git diff --name-only HEAD origin/<base>
 #    両者の交差ありなら、base 取り込み (merge or rebase) + 検証再実行が必要
 
-# 4. 並行 worktree 同 issue PR 重複確認
+# 4. 並行 worktree 同 issue PR 重複確認 (Step 0 と検出 window が異なるため再実行必須)
 gh pr list --search "<元issue#>" --state all \
   --json number,headRefName,state,createdAt
 ```
@@ -114,6 +184,7 @@ gh pr list --search "<元issue#>" --state all \
 | 「最近 fetch したから OK」 | 数分でも別 PR がマージされうる。PR 作成直前に再 fetch する |
 | 「並行 PR は計画段階で確認したから skip」 | 計画後に別 worktree が PR を提出するケースあり (#646 / PR #647)。PR 作成時にも実施 |
 | 「Pre-flight で path 交差なしと判定したから自動チェック skip」 | path 交差判定と Iron Law 6 自動チェックは独立軸。Iron Law 6 は変更 path 別に毎 PR 作成時に実施 |
+| 「Step 0 で 0 件だったから Step 4 skip」 | Step 0 と Step 4 は検出 window が異なる。両 step 間に別 worktree が PR 提出する race window あり (PR #721 事例)。両 step とも必須 |
 
 ### 機能 regression 検出手順 (base 取り込み時 / レビュー時)
 
