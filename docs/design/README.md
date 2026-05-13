@@ -215,6 +215,10 @@ docs/design/
             └── ops.jsx               — C variant (参考、採用しない)
 ```
 
+注: 実装側では #677 で SideRail コンポーネントを削除済 (handoff
+snapshot としての `aether.jsx` は変更不可ポリシーにより保持、production
+実装と乖離あり)。
+
 ## `gui/` — Tauri GUI 実装ディレクトリ (L2)
 
 `#483` bootstrap で作成した Tauri 2 プロジェクト。`repo-root/gui/` に配置。

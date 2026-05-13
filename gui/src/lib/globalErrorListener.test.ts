@@ -231,3 +231,83 @@ describe('integrity-error event (#668)', () => {
     expect(msg).toContain('500');
   });
 });
+
+describe('unhandledrejection AppError fallback (#696)', () => {
+  let unlisten: (() => void) | null = null;
+
+  beforeEach(() => {
+    useErrorStore.getState().dismissError();
+    useErrorStore.getState().setLogDir(null);
+    invokeMock.mockReset();
+    listenMock.mockReset();
+    invokeMock.mockResolvedValue('C:\\install\\logs');
+    listenMock.mockResolvedValue(() => {});
+    unlisten = null;
+  });
+
+  afterEach(() => {
+    if (unlisten) {
+      try {
+        unlisten();
+      } catch {
+        // ignore
+      }
+      unlisten = null;
+    }
+  });
+
+  it('routes AppError reason to tauri-command category with hint', () => {
+    unlisten = installGlobalErrorListener();
+    const evt = new Event('unhandledrejection') as PromiseRejectionEvent;
+    Object.defineProperty(evt, 'reason', {
+      value: {
+        code: 'io.permission_denied',
+        message: 'Permission denied',
+        hint: 'ファイル権限を確認してください',
+      },
+    });
+    Object.defineProperty(evt, 'promise', { value: Promise.resolve() });
+    window.dispatchEvent(evt);
+
+    const state = useErrorStore.getState();
+    expect(state.errorOpen).toBe(true);
+    expect(state.errorCategory).toBe('tauri-command');
+    expect(state.errorTitle).toBe('処理中に予期しないエラーが発生しました');
+    expect(state.errorMessage).toBe('Permission denied');
+    expect(state.errorHint).toBe('ファイル権限を確認してください');
+    expect(state.isPanic).toBe(false);
+    expect(state.isRecoverable).toBe(true);
+  });
+
+  it('routes AppError reason without hint to tauri-command (errorHint null)', () => {
+    unlisten = installGlobalErrorListener();
+    const evt = new Event('unhandledrejection') as PromiseRejectionEvent;
+    Object.defineProperty(evt, 'reason', {
+      value: {
+        code: 'state.invalid',
+        message: 'Invalid state',
+      },
+    });
+    Object.defineProperty(evt, 'promise', { value: Promise.resolve() });
+    window.dispatchEvent(evt);
+
+    const state = useErrorStore.getState();
+    expect(state.errorCategory).toBe('tauri-command');
+    expect(state.errorMessage).toBe('Invalid state');
+    expect(state.errorHint).toBeNull();
+  });
+
+  it('non-AppError object reason still uses js-promise path (regression guard)', () => {
+    unlisten = installGlobalErrorListener();
+    const evt = new Event('unhandledrejection') as PromiseRejectionEvent;
+    Object.defineProperty(evt, 'reason', {
+      value: { foo: 'bar' },
+    });
+    Object.defineProperty(evt, 'promise', { value: Promise.resolve() });
+    window.dispatchEvent(evt);
+
+    const state = useErrorStore.getState();
+    expect(state.errorCategory).toBe('js-promise');
+    expect(state.errorMessage).toBe('{"foo":"bar"}');
+  });
+});

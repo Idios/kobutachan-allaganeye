@@ -1837,16 +1837,38 @@ fn validate_open_folder_request(path: &str) -> Result<(), AppError> {
 /// りに、Windows の `explorer.exe` を直接 spawn する独自 command を用意して
 /// 確実に動かす (#545 review、2026-04-25)。
 ///
+/// **#727 (2026-05-13)**: 元 `std::process::Command` から `tokio::process::Command`
+/// に切り替え、lib.rs 内 6 spawn site (probe_video_with / ensure_thumbnail_exists
+/// / run_ffmpeg_export_attempt / start_detect / extract_brightness_window_impl
+/// / 本関数) を `tokio::process::Command` 系で統一する refactor (gui spawn 統一)。
+///
+/// **apply_no_window 非適用**: explorer.exe は Win32 GUI subsystem アプリで
+/// そもそも console window を生成しないため、`process_util::apply_no_window`
+/// (= CREATE_NO_WINDOW flag) の purpose (windows_subsystem="windows" 親で
+/// release 時の console 割当抑止) と一致しない。本関数は `process_util.rs`
+/// adoption test (`lib_rs_applies_apply_no_window_at_all_spawn_sites`) の検査
+/// 対象外として扱う。
+///
+/// **PROCESS_TRACKER 非登録**: explorer.exe はユーザーの file manager UI
+/// であり、本 app が close されても残るべき。`track_child` を呼ばないことで
+/// `kill_tracked_processes` (CloseRequested flow #523) の影響を受けない。
+///
 /// Windows のみ対応 (CLAUDE.md に「対応プラットフォーム: Windows のみ」と
 /// 明記)。将来 Linux / macOS 対応する際は `xdg-open` / `open` で分岐する。
 #[tauri::command]
-fn open_folder_in_explorer(path: String) -> Result<(), AppError> {
+async fn open_folder_in_explorer(path: String) -> Result<(), AppError> {
     validate_open_folder_request(&path)?;
 
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
-        Command::new("explorer.exe")
+        // #727 -- spawn explorer.exe via tokio::process::Command for parity
+        // with the other 5 spawn sites (probe_video_with /
+        // ensure_thumbnail_exists / run_ffmpeg_export_attempt / start_detect
+        // / extract_brightness_window_impl). The returned Child is dropped
+        // immediately: explorer.exe is the user's file manager UI and should
+        // outlive this Tauri app; Windows has no zombie process model so
+        // the drop is safe.
+        tokio::process::Command::new("explorer.exe")
             .arg(&path)
             .spawn()
             .map_err(|e| {
