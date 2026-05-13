@@ -14,7 +14,8 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Literal
+from collections.abc import Callable
+from typing import Literal
 
 import pytest
 
@@ -79,6 +80,9 @@ def make_claude_branch(tmp_repo: Path) -> Callable[..., str]:
       age_seconds: forge committer date to `now - age_seconds`
 
     Returns: full branch ref (`claude/<slug>`).
+
+    Post-condition: HEAD is always on `develop-0.2.0` after the call,
+    regardless of the `merged` param. Composable across multiple invocations.
     """
 
     def _make(slug: str, *, merged: bool, age_seconds: int) -> str:
@@ -176,14 +180,14 @@ def run_hook(tmp_repo: Path) -> Callable[..., HookResult]:
     return _run
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def cleanup_schema() -> dict:
-    """Load schemas/cleanup-output.schema.json once per test session-equivalent."""
+    """Load schemas/cleanup-output.schema.json once per test session."""
     return json.loads(SCHEMA_PATH.read_text())
 
 
-@pytest.fixture
-def assert_valid_ndjson(cleanup_schema):
+@pytest.fixture(scope="session")
+def assert_valid_ndjson(cleanup_schema: dict) -> Callable[[list[dict]], None]:
     """Validate a list of NDJSON event dicts against the cleanup-output schema."""
     from jsonschema import Draft202012Validator
 
