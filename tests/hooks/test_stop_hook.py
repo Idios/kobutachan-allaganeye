@@ -18,7 +18,8 @@ def _read_log(tmp_repo: Path) -> str:
 
 
 def test_stop_hook_logs_normal_cleanup(
-    tmp_repo: Path, run_hook,
+    tmp_repo: Path,
+    run_hook,
 ) -> None:
     """Both cleanup scripts present and succeed -> log records both blocks
     + NDJSON lines from each.
@@ -36,7 +37,8 @@ def test_stop_hook_logs_normal_cleanup(
 
 
 def test_stop_hook_logs_cleanup_script_failure(
-    tmp_repo: Path, run_hook,
+    tmp_repo: Path,
+    run_hook,
 ) -> None:
     """Replace cleanup-worktrees.sh with a stub that exits 42 -> log records
     `cleanup exit=42`. stop.sh still exits 0.
@@ -57,7 +59,8 @@ def test_stop_hook_logs_cleanup_script_failure(
 
 
 def test_stop_hook_handles_missing_cleanup_script(
-    tmp_repo: Path, run_hook,
+    tmp_repo: Path,
+    run_hook,
 ) -> None:
     """Remove cleanup-claude-branches.sh -> log records `NOT FOUND at <path>`."""
     target = tmp_repo / "scripts" / "cleanup-claude-branches.sh"
@@ -73,7 +76,8 @@ def test_stop_hook_handles_missing_cleanup_script(
 
 
 def test_stop_hook_swallows_errors_and_exits_zero(
-    tmp_repo: Path, run_hook,
+    tmp_repo: Path,
+    run_hook,
 ) -> None:
     """Even when both cleanup scripts fail, stop.sh exits 0."""
     for name in ("cleanup-worktrees.sh", "cleanup-claude-branches.sh"):

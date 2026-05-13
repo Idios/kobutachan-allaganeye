@@ -35,14 +35,22 @@ def test_format_cleanup_log_smoke(tmp_path, run_hook, make_worktree_dir, tmp_rep
     human-readable lines.
     """
     import subprocess
+
     make_worktree_dir("foo", state="empty")
     cleanup = subprocess.run(
         ["bash", str(tmp_repo / "scripts" / "cleanup-worktrees.sh"), "--apply"],
-        cwd=tmp_repo, capture_output=True, text=True, check=True,
+        cwd=tmp_repo,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     fmt = subprocess.run(
         ["bash", str(tmp_repo / "scripts" / "format-cleanup-log.sh")],
-        input=cleanup.stdout, cwd=tmp_repo, capture_output=True, text=True, check=True,
+        input=cleanup.stdout,
+        cwd=tmp_repo,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert "[cleanup-worktrees] removed foo" in fmt.stdout
     assert "[cleanup-worktrees] summary:" in fmt.stdout

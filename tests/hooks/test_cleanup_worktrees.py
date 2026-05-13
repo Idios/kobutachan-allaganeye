@@ -11,7 +11,10 @@ def _of_event(events: list[dict], evt: str) -> list[dict]:
 
 
 def test_empty_dir_dry_run_emits_would_remove(
-    tmp_repo: Path, make_worktree_dir, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    make_worktree_dir,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     make_worktree_dir("foo", state="empty")
     result = run_hook("scripts/cleanup-worktrees.sh")
@@ -21,7 +24,10 @@ def test_empty_dir_dry_run_emits_would_remove(
 
 
 def test_empty_dir_apply_emits_removed(
-    tmp_repo: Path, make_worktree_dir, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    make_worktree_dir,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     make_worktree_dir("foo", state="empty")
     result = run_hook("scripts/cleanup-worktrees.sh", "--apply")
@@ -33,39 +39,57 @@ def test_empty_dir_apply_emits_removed(
 
 
 def test_non_empty_dir_dry_run_emits_would_skip(
-    tmp_repo: Path, make_worktree_dir, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    make_worktree_dir,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     make_worktree_dir("bar", state="non_empty")
     result = run_hook("scripts/cleanup-worktrees.sh")
     assert_valid_ndjson(result.ndjson)
     ws = _of_event(result.ndjson, "would_skip")
-    assert any(e["name"] == "bar" and e["reason"] == "not-empty" for e in ws), result.stdout
+    assert any(e["name"] == "bar" and e["reason"] == "not-empty" for e in ws), (
+        result.stdout
+    )
 
 
 def test_non_empty_dir_apply_emits_kept(
-    tmp_repo: Path, make_worktree_dir, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    make_worktree_dir,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     make_worktree_dir("bar", state="non_empty")
     result = run_hook("scripts/cleanup-worktrees.sh", "--apply")
     assert_valid_ndjson(result.ndjson)
     kept = _of_event(result.ndjson, "kept")
-    assert any(e["name"] == "bar" and e["reason"] == "not-empty" for e in kept), result.stdout
+    assert any(e["name"] == "bar" and e["reason"] == "not-empty" for e in kept), (
+        result.stdout
+    )
     # Directory survives
     assert (tmp_repo / ".claude" / "worktrees" / "bar").exists()
 
 
 def test_active_worktree_emits_skip(
-    tmp_repo: Path, make_worktree_dir, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    make_worktree_dir,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     make_worktree_dir("baz", state="active")
     result = run_hook("scripts/cleanup-worktrees.sh", "--apply")
     assert_valid_ndjson(result.ndjson)
     skip = _of_event(result.ndjson, "skip")
-    assert any(e["name"] == "baz" and e["reason"] == "active" for e in skip), result.stdout
+    assert any(e["name"] == "baz" and e["reason"] == "active" for e in skip), (
+        result.stdout
+    )
 
 
 def test_summary_event_is_emitted_last_with_counts(
-    tmp_repo: Path, make_worktree_dir, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    make_worktree_dir,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     make_worktree_dir("e1", state="empty")
     make_worktree_dir("e2", state="empty")

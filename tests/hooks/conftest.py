@@ -58,9 +58,18 @@ def tmp_repo(tmp_path: Path) -> Path:
     (repo / "README.md").write_text("test\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
     subprocess.run(
-        ["git", "-c", "user.email=t@t.invalid", "-c", "user.name=t",
-         "commit", "-qm", "init"],
-        cwd=repo, check=True,
+        [
+            "git",
+            "-c",
+            "user.email=t@t.invalid",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "init",
+        ],
+        cwd=repo,
+        check=True,
     )
 
     # Wire in real scripts/ + .claude/hooks/ via symlink (fallback: copy).
@@ -88,7 +97,9 @@ def make_claude_branch(tmp_repo: Path) -> Callable[..., str]:
     def _make(slug: str, *, merged: bool, age_seconds: int) -> str:
         branch = f"claude/{slug}"
         # Create branch from develop-0.2.0
-        subprocess.run(["git", "checkout", "-q", "-b", branch], cwd=tmp_repo, check=True)
+        subprocess.run(
+            ["git", "checkout", "-q", "-b", branch], cwd=tmp_repo, check=True
+        )
         # Make a commit with a forged committer date.
         # Stage only the test file (not scripts/ or .claude/hooks/ which are
         # wired in from PROJECT_ROOT and must not be tracked by the tmp repo's
@@ -97,30 +108,59 @@ def make_claude_branch(tmp_repo: Path) -> Callable[..., str]:
         (tmp_repo / f"{slug}.txt").write_text("x")
         subprocess.run(["git", "add", "--", f"{slug}.txt"], cwd=tmp_repo, check=True)
         forged_ts = int(time.time()) - age_seconds
-        env = {**os.environ,
-               "GIT_COMMITTER_DATE": f"@{forged_ts} +0000",
-               "GIT_AUTHOR_DATE": f"@{forged_ts} +0000"}
+        env = {
+            **os.environ,
+            "GIT_COMMITTER_DATE": f"@{forged_ts} +0000",
+            "GIT_AUTHOR_DATE": f"@{forged_ts} +0000",
+        }
         subprocess.run(
-            ["git", "-c", "user.email=t@t.invalid", "-c", "user.name=t",
-             "commit", "-qm", f"work {slug}"],
-            cwd=tmp_repo, env=env, check=True,
+            [
+                "git",
+                "-c",
+                "user.email=t@t.invalid",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-qm",
+                f"work {slug}",
+            ],
+            cwd=tmp_repo,
+            env=env,
+            check=True,
         )
         if merged:
             # Merge into develop-0.2.0
-            subprocess.run(["git", "checkout", "-q", "develop-0.2.0"], cwd=tmp_repo, check=True)
             subprocess.run(
-                ["git", "-c", "user.email=t@t.invalid", "-c", "user.name=t",
-                 "merge", "-q", "--no-ff", branch, "-m", f"merge {branch}"],
-                cwd=tmp_repo, check=True,
+                ["git", "checkout", "-q", "develop-0.2.0"], cwd=tmp_repo, check=True
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.email=t@t.invalid",
+                    "-c",
+                    "user.name=t",
+                    "merge",
+                    "-q",
+                    "--no-ff",
+                    branch,
+                    "-m",
+                    f"merge {branch}",
+                ],
+                cwd=tmp_repo,
+                check=True,
             )
         else:
-            subprocess.run(["git", "checkout", "-q", "develop-0.2.0"], cwd=tmp_repo, check=True)
+            subprocess.run(
+                ["git", "checkout", "-q", "develop-0.2.0"], cwd=tmp_repo, check=True
+            )
 
         # cleanup-claude-branches.sh requires an `origin/develop-0.2.0` ref to test
         # ancestor-ship. Mirror local develop-0.2.0 into refs/remotes/origin/.
         subprocess.run(
             ["git", "update-ref", "refs/remotes/origin/develop-0.2.0", "HEAD"],
-            cwd=tmp_repo, check=True,
+            cwd=tmp_repo,
+            check=True,
         )
         return branch
 
@@ -165,8 +205,12 @@ def run_hook(tmp_repo: Path) -> Callable[..., HookResult]:
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_repo)}
         proc = subprocess.run(
             ["bash", str(tmp_repo / script), *args],
-            cwd=tmp_repo, env=env, capture_output=True, text=True,
-            encoding="utf-8", timeout=30,
+            cwd=tmp_repo,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
         )
         ndjson: list[dict] = []
         for line in proc.stdout.splitlines():
@@ -178,8 +222,10 @@ def run_hook(tmp_repo: Path) -> Callable[..., HookResult]:
             except json.JSONDecodeError:
                 continue
         return HookResult(
-            stdout=proc.stdout, stderr=proc.stderr,
-            exit_code=proc.returncode, ndjson=ndjson,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+            exit_code=proc.returncode,
+            ndjson=ndjson,
         )
 
     return _run

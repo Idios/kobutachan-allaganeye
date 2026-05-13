@@ -23,7 +23,8 @@ def test_session_start_outputs_iron_law_block(tmp_repo: Path, run_hook) -> None:
 
 
 def test_session_start_includes_handoff_subclause(
-    tmp_repo: Path, run_hook,
+    tmp_repo: Path,
+    run_hook,
 ) -> None:
     """Iron Law 6 includes the new handoff sub-clause (#722)."""
     result = run_hook(".claude/hooks/session-start.sh")
@@ -33,7 +34,8 @@ def test_session_start_includes_handoff_subclause(
 
 
 def test_session_start_mentions_step_zero_pre_flight(
-    tmp_repo: Path, run_hook,
+    tmp_repo: Path,
+    run_hook,
 ) -> None:
     """Iron Law 6 sub-clause references Step 0 hard-gate (#722)."""
     result = run_hook(".claude/hooks/session-start.sh")
@@ -45,13 +47,16 @@ def test_session_start_mentions_step_zero_pre_flight(
 
 
 def test_worktree_pr_head_detected_when_pr_open(
-    tmp_repo: Path, run_hook, with_gh_stub,
+    tmp_repo: Path,
+    run_hook,
+    with_gh_stub,
 ) -> None:
     """gh stub returns non-empty JSON -> extra EXTREMELY_IMPORTANT block is emitted."""
     # Put tmp_repo on a claude/* branch
     subprocess.run(
         ["git", "checkout", "-q", "-b", "claude/some-pr-head"],
-        cwd=tmp_repo, check=True,
+        cwd=tmp_repo,
+        check=True,
     )
     with_gh_stub('[{"number":999,"title":"test","headRefName":"claude/some-pr-head"}]')
     result = run_hook(".claude/hooks/session-start.sh")
@@ -63,12 +68,15 @@ def test_worktree_pr_head_detected_when_pr_open(
 
 
 def test_worktree_pr_head_skipped_when_no_pr(
-    tmp_repo: Path, run_hook, with_gh_stub,
+    tmp_repo: Path,
+    run_hook,
+    with_gh_stub,
 ) -> None:
     """gh stub returns [] -> only the base Iron Law block is emitted."""
     subprocess.run(
         ["git", "checkout", "-q", "-b", "claude/no-pr-yet"],
-        cwd=tmp_repo, check=True,
+        cwd=tmp_repo,
+        check=True,
     )
     with_gh_stub("[]")
     result = run_hook(".claude/hooks/session-start.sh")
@@ -79,7 +87,9 @@ def test_worktree_pr_head_skipped_when_no_pr(
 
 
 def test_worktree_pr_head_skipped_for_non_claude_branch(
-    tmp_repo: Path, run_hook, with_gh_stub,
+    tmp_repo: Path,
+    run_hook,
+    with_gh_stub,
 ) -> None:
     """Branch not starting with `claude/` -> detection skipped entirely (no gh call)."""
     # tmp_repo's default branch is develop-0.2.0 -- already non-claude
@@ -91,14 +101,17 @@ def test_worktree_pr_head_skipped_for_non_claude_branch(
 
 
 def test_worktree_pr_head_silent_skip_when_gh_missing(
-    tmp_repo: Path, run_hook, monkeypatch,
+    tmp_repo: Path,
+    run_hook,
+    monkeypatch,
 ) -> None:
     """gh not on PATH -> fail-soft: Iron Law still emitted, no extra block, exit 0."""
     import shutil as _shutil
 
     subprocess.run(
         ["git", "checkout", "-q", "-b", "claude/no-gh-env"],
-        cwd=tmp_repo, check=True,
+        cwd=tmp_repo,
+        check=True,
     )
     # Build a PATH that keeps bash (required by run_hook) but excludes gh.
     # On POSIX, standard system dirs are tried; on Windows we must keep the
