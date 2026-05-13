@@ -84,8 +84,9 @@ interface ExportResult {
  * - **#1**: per-match の include/exclude チェックボックス (ad-hoc)。
  *   `excludedIndexes` ローカル state が制御。`type_override === 'skip'`
  *   (preview で永続設定) は強制 disable で別軸。
- * - **#2**: 出力先 default は `<dirname(videoSource)>/output`
- *   ({@link deriveDefaultOutDir})。videoSource は
+ * - **#2**: 出力先 default は `<dirname(videoSource)>` のみ
+ *   (#680 で旧 `<dirname>/output` から変更、存在しないフォルダの
+ *   プリセット問題を解消、{@link deriveDefaultOutDir})。videoSource は
  *   `selectedVideoPath ?? metadata.source`。
  * - **#3**: 参照ボタンは `@tauri-apps/plugin-dialog` の `open({directory})`
  *   経由 (`dialog:allow-open` permission を `capabilities/default.json` に
@@ -131,8 +132,9 @@ export function ExportScreen() {
   const sampleReason = 'サンプル動画では保存できません';
 
   const [phase, dispatch] = useReducer(exportReducer, 'idle' as ExportPhase);
-  // #466 review #2: default 出力先は source video の親ディレクトリ +
-  // `/output`。ファイルピックなしで動かしても物が散らばらない場所に出る。
+  // #680 (旧 #466 review #2): default 出力先は source video の親ディレクトリ
+  // のみ (存在保証のある既存フォルダを preset)。旧 `<parent>/output` 仕様は
+  // 存在しないフォルダがプリセットされる UX 問題のため #680 で廃止。
   // videoSource が無い場合 (sample mode で何も load してない等) は空文字列
   // にしておき、ユーザーに必須選択させる。
   const [outDir, setOutDir] = useState<string>(() => deriveDefaultOutDir(videoSource));
@@ -1014,8 +1016,12 @@ export function formatStartForFilename(seconds: number): string {
 }
 
 /**
- * #466 review #2: source video の親ディレクトリ + `/output` を default に。
- * `videoSource` から `dirname` 相当を抽出する (Windows は `\\` も許容)。
+ * #680: source video の親ディレクトリを default 出力先に。
+ * 旧実装 (#466 review #2) は `<parent>/output` を返していたが、Export 画面
+ * 到達時点では `<parent>/output` が物理的に存在しない (Rust 側
+ * `start_detect` は detect 出力先のみ create_dir_all する) ため、ユーザーが
+ * 「存在しないフォルダが default にプリセットされている」と混乱した。
+ * <parent> のみへ変更し、必ず存在するフォルダを default とする。
  *
  * #545 review #2 (2026-04-25): Windows の `\\?\` extended-length path prefix
  * は `stripExtendedPathPrefix` で取り除いてから親 dir を切り出す。
@@ -1026,12 +1032,10 @@ export function formatStartForFilename(seconds: number): string {
 export function deriveDefaultOutDir(videoSource: string | null): string {
   if (!videoSource) return '';
   const normalized = stripExtendedPathPrefix(videoSource);
-  const sep = normalized.includes('\\') && !normalized.includes('/') ? '\\' : '/';
   const idx = Math.max(
     normalized.lastIndexOf('/'),
     normalized.lastIndexOf('\\'),
   );
   if (idx <= 0) return '';
-  const parent = normalized.slice(0, idx);
-  return `${parent}${sep}output`;
+  return normalized.slice(0, idx);
 }

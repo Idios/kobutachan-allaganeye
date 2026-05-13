@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
+import { isAppError } from './appError';
 import { useErrorStore } from '../state/errorStore';
 
 interface PanicPayload {
@@ -91,6 +92,23 @@ export function installGlobalErrorListener(): () => void {
 
   const onUnhandledRejection = (e: PromiseRejectionEvent) => {
     const reason = e.reason;
+    // #696: AppError-shaped reject (Tauri command の catch 漏れ) を
+    // ErrorModal の最終 fallback として表示する。screen 側 invoke catch
+    // 規約 (`appErrorMessage` + `appErrorHint`) が正しく書かれていれば本
+    // 分岐は通らないが、Promise を投げ捨て / async race / try-catch 漏れ
+    // 等の caught-miss シナリオで recoverable な modal を出す。
+    if (isAppError(reason)) {
+      showError({
+        errorTitle: '処理中に予期しないエラーが発生しました',
+        errorMessage: reason.message,
+        errorHint: reason.hint ?? null,
+        errorStack: null,
+        errorCategory: 'tauri-command',
+        isPanic: false,
+        isRecoverable: true,
+      });
+      return;
+    }
     let message = 'Unhandled promise rejection';
     let stack: string | null = null;
     if (reason instanceof Error) {

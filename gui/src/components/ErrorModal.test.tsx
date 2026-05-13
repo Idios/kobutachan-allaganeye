@@ -231,6 +231,33 @@ describe('ErrorModal', () => {
     expect(dialog?.getAttribute('aria-modal')).toBe('true');
     expect(dialog?.getAttribute('aria-labelledby')).toBe('ae-error-title');
   });
+
+  // #696: tauri-command category
+  it('renders tauri-command title from errorTitle override (#696)', () => {
+    useErrorStore.getState().showError({
+      errorTitle: '処理中に予期しないエラーが発生しました',
+      errorMessage: 'Permission denied',
+      errorHint: 'ファイル権限を確認してください',
+      errorCategory: 'tauri-command',
+      isPanic: false,
+      isRecoverable: true,
+    });
+    render(<ErrorModal />);
+    expect(screen.getByText('処理中に予期しないエラーが発生しました')).toBeTruthy();
+    expect(screen.getByText('Permission denied')).toBeTruthy();
+    expect(screen.getByText('ファイル権限を確認してください')).toBeTruthy();
+  });
+
+  it('uses tauri-command default title when errorTitle omitted (#696 defensive)', () => {
+    useErrorStore.getState().showError({
+      errorMessage: 'Invalid state',
+      errorCategory: 'tauri-command',
+      isPanic: false,
+      isRecoverable: true,
+    });
+    render(<ErrorModal />);
+    expect(screen.getByText('処理中に予期しないエラーが発生しました')).toBeTruthy();
+  });
 });
 
 describe('ErrorModal integrity category (#668)', () => {
