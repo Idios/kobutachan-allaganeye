@@ -6,10 +6,6 @@ Covers 3 directory states × 2 modes (dry-run / apply) + schema conformance.
 from pathlib import Path
 
 
-def _events(result) -> list[dict]:
-    return result.ndjson
-
-
 def _of_event(events: list[dict], evt: str) -> list[dict]:
     return [e for e in events if e.get("event") == evt]
 
@@ -84,5 +80,6 @@ def test_summary_event_is_emitted_last_with_counts(
     assert s["removed"] == 2
     assert s["kept"] == 1
     assert s["total"] == 3
+    assert s["orphan_candidates"] == 3
     # summary is the LAST event
     assert result.ndjson[-1]["event"] == "summary"
