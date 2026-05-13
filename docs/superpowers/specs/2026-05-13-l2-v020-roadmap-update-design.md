@@ -110,7 +110,7 @@ WAVE 0  (DONE 2026-05-08〜13)
                        └ /close-issue handoff のみ残 (Wave 2)
   ✓ Lane IV-e          Group K (2/2)                   PR #713 / #721
 
-  既消化合計: 10 lane / 14 issue CLOSED + 3 pending close
+  既消化合計: Wave 0 全期間 23 issue CLOSED + 3 pending close (11 lane row = 10 logical lane)
 
 ═══════════════════════════════════════════════════════════════════════════
 WAVE 1  (CURRENT — 残 10 OPEN active issue / 8 lane / max 5 並行 + sub-ordering)
