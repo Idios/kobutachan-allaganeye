@@ -135,11 +135,20 @@ template 内の各節は既存実装と整合する位置取り。Iron Law 4 (Cl
 
 ## PR 作成 Pre-flight (Iron Law 6 サブ条)
 
-PR 作成前に base 最新化と並行 worktree PR 重複を必ず確認する。`feedback_pr_review_base_merge_regression.md` (PR #627 Round 4 で発覚した base 取り込み機能 regression) と `feedback_concurrent_worktree_pr_check.md` (#646 / PR #647 並行作業重複) の skill / 規約昇格として運用化 (2026-04-29 #659)。
+PR 作成前に base 最新化と並行 worktree PR 重複を必ず確認する。`feedback_pr_review_base_merge_regression.md` (PR #627 Round 4 で発覚した base 取り込み機能 regression) と `feedback_concurrent_worktree_pr_check.md` (#646 / PR #647 並行作業重複) の skill / 規約昇格として運用化 (2026-04-29 #659)。2026-05-13 #722 で Step 0 ハードゲートを追加 (build/verify 前に `gh pr list --search "<元issue#>" --state open` を <1s で実行、PR #721 で発生した 49s redundant work 再発を防止)。Step 0 と Step 4 は検出 window が異なるため両方とも実施する。
 
 ### 4 ステップ手順
 
 ```bash
+# 0. ★ ハードゲート (#722 で追加): <1s で実行、build/verify の前に置く
+gh pr list --search "<元issue#>" --state open \
+  --json number,headRefName,state,createdAt
+# hit ≥ 1 件 → 即時 abort、AskUserQuestion で
+#   (A) 当該 PR を review/iterate に切替 [Recommended]
+#   (B) 別 worktree のため当 session abort
+#   (C) ユーザー判断 (詳細確認)
+# hit 0 件 → Step 1 へ
+
 # 1. base 最新化 (read-only fetch)
 git fetch origin <base>            # <base> = develop-0.2.0 等
 
@@ -153,7 +162,7 @@ git diff --name-only origin/<base>
 git diff --name-only HEAD origin/<base>
 #    両者の交差ありなら、base 取り込み (merge or rebase) + 検証再実行が必要
 
-# 4. 並行 worktree 同 issue PR 重複確認
+# 4. 並行 worktree 同 issue PR 重複確認 (Step 0 と検出 window が異なるため再実行必須)
 gh pr list --search "<元issue#>" --state all \
   --json number,headRefName,state,createdAt
 ```
@@ -175,6 +184,7 @@ gh pr list --search "<元issue#>" --state all \
 | 「最近 fetch したから OK」 | 数分でも別 PR がマージされうる。PR 作成直前に再 fetch する |
 | 「並行 PR は計画段階で確認したから skip」 | 計画後に別 worktree が PR を提出するケースあり (#646 / PR #647)。PR 作成時にも実施 |
 | 「Pre-flight で path 交差なしと判定したから自動チェック skip」 | path 交差判定と Iron Law 6 自動チェックは独立軸。Iron Law 6 は変更 path 別に毎 PR 作成時に実施 |
+| 「Step 0 で 0 件だったから Step 4 skip」 | Step 0 と Step 4 は検出 window が異なる。両 step 間に別 worktree が PR 提出する race window あり (PR #721 事例)。両 step とも必須 |
 
 ### 機能 regression 検出手順 (base 取り込み時 / レビュー時)
 
