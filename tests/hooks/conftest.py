@@ -165,7 +165,8 @@ def run_hook(tmp_repo: Path) -> Callable[..., HookResult]:
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_repo)}
         proc = subprocess.run(
             ["bash", str(tmp_repo / script), *args],
-            cwd=tmp_repo, env=env, capture_output=True, text=True, timeout=30,
+            cwd=tmp_repo, env=env, capture_output=True, text=True,
+            encoding="utf-8", timeout=30,
         )
         ndjson: list[dict] = []
         for line in proc.stdout.splitlines():
