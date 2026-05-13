@@ -341,7 +341,7 @@ Phase 2 は dummy なので `×` 即時 exit。Phase 3/4 では以下を実装 (
 - **初期**: 1440×900 (`gui/src-tauri/tauri.conf.json`)
 - **最小**: 960×600
 - **リサイズ**: `100vw` / `100vh` + `flex` で fluid 追従
-  - SideRail 48px 固定、メイン領域 `flex: 1`
+  - メイン領域 `flex: 1` (body 全幅、旧 SideRail は #677 で削除済)
   - BrightnessTimeline SVG は `preserveAspectRatio="none"` で横伸縮、縦固定
   - リスト/ログは `overflow: auto`
 
@@ -351,7 +351,6 @@ Phase 2 は dummy なので `×` 即時 exit。Phase 3/4 では以下を実装 (
 App (App.tsx)
 ├── StateSwitcher           (dev 用 5 タブ、absolute 配置で右上に float)
 └── body
-    ├── SideRail            (ALLAGAN + 4 アイコン)
     └── main
         └── (screen === 'drop') DropScreen
         └── (screen === 'detecting') DetectingScreen
@@ -361,7 +360,7 @@ App (App.tsx)
 
 components/
 ├── AllaganCorner / AllaganFrame / AllaganSigil   (装飾)
-├── SideRail / StateSwitcher                      (shell)
+├── StateSwitcher                                 (shell)
 ├── MatchThumb                                    (サムネ placeholder)
 ├── BrightnessTimeline                            (complete 用 SVG)
 ├── FrameStrip                                    (preview 用候補フレーム)
@@ -372,6 +371,11 @@ components/
 MacOS 風デザインだったが、L2 は Windows-only (#451) のため Tauri のネイティブ
 Windows title bar に一本化。`tauri.conf.json` の `title: "Allagan Eye"` が
 表示される)。
+
+注: **SideRail (旧 ALLAGAN + 4 装飾アイコン) は削除済** (#677、2026-05-13)。
+`body` の唯一の子は `main` で、48px 帯はなくなり main が body 全幅。
+`docs/design/bundle/project/variants/aether.jsx` の mock には残るが handoff
+snapshot として保持しており、production 実装からは削除されている。
 
 state/
 ├── appStateStore.ts  — screen + selectedMatchIndex + selectedVideoPath + detectionParams (#613)
