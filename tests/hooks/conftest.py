@@ -207,3 +207,26 @@ def assert_valid_ndjson(cleanup_schema: dict) -> Callable[[list[dict]], None]:
             )
 
     return _assert
+
+
+@pytest.fixture
+def with_gh_stub(tmp_repo: Path, monkeypatch):
+    """Provide a `gh` stub on PATH that echoes a canned response.
+
+    Args of the returned callable:
+      response: literal string the stub will print on stdout.
+
+    Returns: None (callable side-effect).
+    """
+    stub_src = PROJECT_ROOT / "tests" / "hooks" / "_gh_stub.sh"
+
+    def _install(response: str) -> None:
+        bin_dir = tmp_repo / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        gh_target = bin_dir / "gh"
+        shutil.copy2(stub_src, gh_target)
+        gh_target.chmod(0o755)
+        monkeypatch.setenv("GH_STUB_RESPONSE", response)
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    return _install
