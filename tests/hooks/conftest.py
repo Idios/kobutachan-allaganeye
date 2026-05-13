@@ -90,8 +90,12 @@ def make_claude_branch(tmp_repo: Path) -> Callable[..., str]:
         # Create branch from develop-0.2.0
         subprocess.run(["git", "checkout", "-q", "-b", branch], cwd=tmp_repo, check=True)
         # Make a commit with a forged committer date.
+        # Stage only the test file (not scripts/ or .claude/hooks/ which are
+        # wired in from PROJECT_ROOT and must not be tracked by the tmp repo's
+        # git history — if tracked, `git checkout develop-0.2.0` for a
+        # merged=False branch would delete them from the working tree).
         (tmp_repo / f"{slug}.txt").write_text("x")
-        subprocess.run(["git", "add", "."], cwd=tmp_repo, check=True)
+        subprocess.run(["git", "add", "--", f"{slug}.txt"], cwd=tmp_repo, check=True)
         forged_ts = int(time.time()) - age_seconds
         env = {**os.environ,
                "GIT_COMMITTER_DATE": f"@{forged_ts} +0000",
