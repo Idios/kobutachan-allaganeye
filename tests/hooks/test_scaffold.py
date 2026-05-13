@@ -28,3 +28,21 @@ def test_make_claude_branch_and_run_hook(make_claude_branch, run_hook) -> None:
     # (NDJSON migration happens in Task 4). This smoke test asserts only that
     # the script runs and the fixture wiring works, not the output format.
     assert result.exit_code == 0
+
+
+def test_format_cleanup_log_smoke(tmp_path, run_hook, make_worktree_dir, tmp_repo):
+    """End-to-end: NDJSON from cleanup-worktrees.sh → format-cleanup-log.sh →
+    human-readable lines.
+    """
+    import subprocess
+    make_worktree_dir("foo", state="empty")
+    cleanup = subprocess.run(
+        ["bash", str(tmp_repo / "scripts" / "cleanup-worktrees.sh"), "--apply"],
+        cwd=tmp_repo, capture_output=True, text=True, check=True,
+    )
+    fmt = subprocess.run(
+        ["bash", str(tmp_repo / "scripts" / "format-cleanup-log.sh")],
+        input=cleanup.stdout, cwd=tmp_repo, capture_output=True, text=True, check=True,
+    )
+    assert "[cleanup-worktrees] removed foo" in fmt.stdout
+    assert "[cleanup-worktrees] summary:" in fmt.stdout
