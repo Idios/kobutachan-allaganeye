@@ -61,9 +61,11 @@ export function ErrorModal() {
 
   if (!errorOpen) return null;
 
-  // #614 / #668: per-category default titles. errorTitle override always wins.
+  // #614 / #668 / #696: per-category default titles. errorTitle override always wins.
   let defaultTitle: string;
-  if (errorCategory === 'integrity') {
+  if (errorCategory === 'tauri-command') {
+    defaultTitle = '処理中に予期しないエラーが発生しました';
+  } else if (errorCategory === 'integrity') {
     defaultTitle = '同梱物の検証に失敗しました';
   } else if (isPanic) {
     defaultTitle = 'アプリ内部でエラーが発生しました';
