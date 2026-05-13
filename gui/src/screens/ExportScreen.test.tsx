@@ -48,14 +48,14 @@ beforeEach(() => {
   useAppStateStore.getState().navigate('export');
 });
 
-// #466 review #2: default 出力先生成ヘルパ
+// #680 (旧 #466 review #2): default 出力先生成ヘルパ
 describe('deriveDefaultOutDir', () => {
-  it('appends /output to the parent dir of a forward-slash video path', () => {
-    expect(deriveDefaultOutDir('E:/videos/clip.mkv')).toBe('E:/videos/output');
+  it('returns the parent dir of a forward-slash video path', () => {
+    expect(deriveDefaultOutDir('E:/videos/clip.mkv')).toBe('E:/videos');
   });
 
-  it('appends \\output to the parent dir of a backslash video path', () => {
-    expect(deriveDefaultOutDir('E:\\videos\\clip.mkv')).toBe('E:\\videos\\output');
+  it('returns the parent dir of a backslash video path', () => {
+    expect(deriveDefaultOutDir('E:\\videos\\clip.mkv')).toBe('E:\\videos');
   });
 
   it('returns empty string when videoSource is null or has no separator', () => {
@@ -66,15 +66,15 @@ describe('deriveDefaultOutDir', () => {
   // #545 review #2: extended-length path prefix を strip してから derive
   it('strips Windows \\\\?\\ extended-length prefix before deriving', () => {
     expect(deriveDefaultOutDir('\\\\?\\E:\\videos\\clip.mkv')).toBe(
-      'E:\\videos\\output',
+      'E:\\videos',
     );
-    expect(deriveDefaultOutDir('\\\\?\\C:\\foo\\bar.mp4')).toBe('C:\\foo\\output');
+    expect(deriveDefaultOutDir('\\\\?\\C:\\foo\\bar.mp4')).toBe('C:\\foo');
   });
 
   it('strips Windows \\\\?\\UNC\\ prefix to UNC form', () => {
     expect(
       deriveDefaultOutDir('\\\\?\\UNC\\server\\share\\clip.mkv'),
-    ).toBe('\\\\server\\share\\output');
+    ).toBe('\\\\server\\share');
   });
 });
 
