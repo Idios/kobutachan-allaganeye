@@ -76,6 +76,13 @@ describe('App routing', () => {
     expect(screen.queryByTestId('window-chrome')).toBeNull();
   });
 
+  it('does not render a side rail (SideRail removed in #677)', () => {
+    render(<App />);
+    expect(
+      screen.queryByRole('navigation', { name: 'Allagan Eye navigation' }),
+    ).toBeNull();
+  });
+
   it('renders the side rail on every screen', () => {
     render(<App />);
     expect(
