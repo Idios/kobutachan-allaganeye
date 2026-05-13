@@ -84,8 +84,9 @@ interface ExportResult {
  * - **#1**: per-match の include/exclude チェックボックス (ad-hoc)。
  *   `excludedIndexes` ローカル state が制御。`type_override === 'skip'`
  *   (preview で永続設定) は強制 disable で別軸。
- * - **#2**: 出力先 default は `<dirname(videoSource)>/output`
- *   ({@link deriveDefaultOutDir})。videoSource は
+ * - **#2**: 出力先 default は `<dirname(videoSource)>` のみ
+ *   (#680 で旧 `<dirname>/output` から変更、存在しないフォルダの
+ *   プリセット問題を解消、{@link deriveDefaultOutDir})。videoSource は
  *   `selectedVideoPath ?? metadata.source`。
  * - **#3**: 参照ボタンは `@tauri-apps/plugin-dialog` の `open({directory})`
  *   経由 (`dialog:allow-open` permission を `capabilities/default.json` に
@@ -131,8 +132,9 @@ export function ExportScreen() {
   const sampleReason = 'サンプル動画では保存できません';
 
   const [phase, dispatch] = useReducer(exportReducer, 'idle' as ExportPhase);
-  // #466 review #2: default 出力先は source video の親ディレクトリ +
-  // `/output`。ファイルピックなしで動かしても物が散らばらない場所に出る。
+  // #680 (旧 #466 review #2): default 出力先は source video の親ディレクトリ
+  // のみ (存在保証のある既存フォルダを preset)。旧 `<parent>/output` 仕様は
+  // 存在しないフォルダがプリセットされる UX 問題のため #680 で廃止。
   // videoSource が無い場合 (sample mode で何も load してない等) は空文字列
   // にしておき、ユーザーに必須選択させる。
   const [outDir, setOutDir] = useState<string>(() => deriveDefaultOutDir(videoSource));
