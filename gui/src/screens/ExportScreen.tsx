@@ -6,7 +6,7 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 import { DisabledTooltip } from '../components/DisabledTooltip';
 import { InlineErrorHint } from '../components/InlineErrorHint';
 import { SampleModeBanner } from '../components/SampleModeBanner';
-import { appErrorHint, appErrorMessage } from '../lib/appError';
+import { toErrorState } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 import { joinPath, stripExtendedPathPrefix } from '../utils/path';
@@ -381,8 +381,9 @@ export function ExportScreen() {
         // a corrective hint that we render as the per-match list's 2nd
         // error line. `appErrorHint` returns null for legacy `new Error`,
         // which we collapse to undefined so MatchState stays clean.
-        const msg = appErrorMessage(e);
-        const hint = appErrorHint(e);
+        const errorState = toErrorState(e);
+        const msg = errorState.message;
+        const hint = errorState.hint;
         setMatchStates((prev) => ({
           ...prev,
           [m.index]: {
@@ -440,8 +441,9 @@ export function ExportScreen() {
     try {
       await invoke('open_folder_in_explorer', { path: outDir });
     } catch (e) {
-      setOpenFolderError(appErrorMessage(e));
-      setOpenFolderErrorHint(appErrorHint(e));
+      const errorState = toErrorState(e);
+      setOpenFolderError(errorState.message);
+      setOpenFolderErrorHint(errorState.hint);
     }
   }
 
