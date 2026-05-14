@@ -147,17 +147,19 @@ probe / log fetch が失敗してもコピー処理自体は継続する (該当
 
 Tauri command の `Result<T, AppError>` で frontend に届く構造化 error は、
 [`docs/tauri-commands.md`](tauri-commands.md) で master 一覧化されている。inline error 表示時は
-`appErrorMessage(e)` を 1 行目に、`appErrorHint(e)` を 2 行目 (`var(--ae-text-dim)`)
+`ErrorState.message` を 1 行目に、`ErrorState.hint` を 2 行目 (`var(--ae-text-dim)`)
 に render する規約。code → default hint の mapping は
 [`gui/src-tauri/src/error.rs`](../gui/src-tauri/src/error.rs) の `default_hint_for_code` で一元管理。
 
+catch path では `toErrorState(e)` を 1 回呼び、結果の `ErrorState` を store の
+`*ErrorState` field に set する。`ErrorState` interface (`{ message, hint, code }`) は
+[`gui/src/lib/appError.ts`](../gui/src/lib/appError.ts) で定義。AppError / Error /
+raw String / null/undefined を正規化した単一 `ErrorState | null` に変換する。
+
 #### 主な分岐ルール
 
-- `code === 'state.mtime_conflict'` → ConflictModal を出す (apply path のみ)
-- それ以外の `code` → inline error (2 行目に hint があれば render)
-- legacy raw String (= AppError 化前の commands) → `appErrorMessage` で
-  message のみ取得、hint は null になる (PR #663 で legacy raw を返す
-  command は存在しないが、helper の互換性として温存)
+- `appErrorCodeIs(e, 'state.mtime_conflict')` → ConflictModal を出す (apply path のみ)
+- それ以外の `code` → inline error (hint があれば `ErrorState.hint` を 2 行目に render)
 
 ### §4.7 InlineErrorHint component (#693)
 
@@ -173,8 +175,8 @@ DetectingScreen / PreviewScreen / ExportScreen) 及び後続 3 site
 import { InlineErrorHint } from '../components/InlineErrorHint';
 
 <span role="alert">
-  {errorMessage}
-  <InlineErrorHint hint={errorHint} />
+  {errorState?.message}
+  <InlineErrorHint hint={errorState?.hint ?? null} />
 </span>
 ```
 
@@ -191,12 +193,16 @@ import { InlineErrorHint } from '../components/InlineErrorHint';
   を override (`white-space: normal` + `max-width: 100%` + `overflow: visible`)
 - 他 3 site (RestoreButton / DropScreen / DetectingScreen) は wrapper class 不要
 
-### §4.8 metadataStore \*ErrorHint lifecycle 規約 (#691)
+### §4.8 metadataStore \*ErrorState lifecycle 規約 (#691 / #694)
 
 各 catch path (`load()` / `runApply()` / `restore()` / `saveDraft()` / `loadDraft()`)
-は自身の `*Error` / `*ErrorHint` のみを `set` し、他経路の error state は touch
-しない (案 X、PR #691 で symmetric 化)。lifecycle 終端 (`clear()` / `loadSample()`)
-でのみ全 5 `*Error` + 5 `*ErrorHint` を null reset する。
+は自身の `*ErrorState: ErrorState | null` のみを `set` し、他経路の error state は
+touch しない (案 X、PR #691 で symmetric 化)。lifecycle 終端 (`clear()` /
+`loadSample()`) でのみ全 5 `*ErrorState` を null reset する。
+
+Phase 2 (#694) で `*Error: string | null` + `*ErrorHint: string | null` の並列構造を
+`*ErrorState: ErrorState | null` 単一 field に集約。型レベルで message と hint の
+pair atomicity を保証し、catch path での `toErrorState(e)` 1 行 set に統一した。
 
 この規約は `metadataStore.test.ts` の `#691: catch path lifecycle pinning`
 describe block で test で pin されている。将来 catch path 追加時は同 describe
