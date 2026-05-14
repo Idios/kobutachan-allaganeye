@@ -245,6 +245,10 @@ export function PreviewScreen() {
     fps: number;
   } | null>(null);
   const [overlayError, setOverlayError] = useState<AppError | null>(null);
+  // #694 round 1 fix: precompute overlayState outside JSX to avoid IIFE
+  // pattern in render. `toErrorState` is called at most once per `overlayError`
+  // change (essentially every render but the value is a stable object).
+  const overlayState = overlayError ? toErrorState(overlayError) : null;
   const blackoutThreshold = useMetadataStore(
     (s) => s.metadata?.detection_params?.blackout_threshold ?? 15,
   );
@@ -802,15 +806,12 @@ export function PreviewScreen() {
           brightnessThreshold={blackoutThreshold}
           brightnessWindowSeconds={6}
         />
-        {overlayError && (() => {
-          const overlayState = toErrorState(overlayError);
-          return (
-            <div className={styles.overlayError}>
-              <span>{overlayState.message}</span>
-              <InlineErrorHint hint={overlayState.hint} />
-            </div>
-          );
-        })()}
+        {overlayState && (
+          <div className={styles.overlayError}>
+            <span>{overlayState.message}</span>
+            <InlineErrorHint hint={overlayState.hint} />
+          </div>
+        )}
       </div>
 
       <div className={styles.actionsRow}>

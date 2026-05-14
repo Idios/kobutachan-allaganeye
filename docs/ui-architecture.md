@@ -161,23 +161,29 @@ raw String / null/undefined を正規化した単一 `ErrorState | null` に変�
 - `appErrorCodeIs(e, 'state.mtime_conflict')` → ConflictModal を出す (apply path のみ)
 - それ以外の `code` → inline error (hint があれば `ErrorState.hint` を 2 行目に render)
 
-### §4.7 InlineErrorHint component (#693)
+### §4.7 InlineErrorHint component (#693 / #694)
 
 PR #693 で導入された共通 component。hint UI の `💡` prefix と `var(--ae-text-dim)`
-スタイルを 1 箇所に集約する。既存 5 site (RestoreButton / DropScreen ErrorCard /
-DetectingScreen / PreviewScreen / ExportScreen) 及び後続 3 site
-(ConflictModal #695 / DraftRestoreModal #697 / DropScreen recentNotice #698)
-で共有する。
+スタイルを 1 箇所に集約する。Phase 1 で 5 site (RestoreButton / DropScreen
+ErrorCard / DetectingScreen / PreviewScreen / ExportScreen) + 3 site
+(ConflictModal #695 / DraftRestoreModal #697 / DropScreen recentNotice #698) の
+計 8 site で共有し、Phase 2 (#694) で全 store consumer が `*ErrorState` 形に
+集約された後も component API (`hint: string \| null \| undefined`) は不変、
+consumer 側 wrapper class での site-specific override も保持されている。
 
-**Usage**:
+**Usage** (typical consumer pattern; store からの selector + guard 後の non-null 形):
 
 ```tsx
 import { InlineErrorHint } from '../components/InlineErrorHint';
 
-<span role="alert">
-  {errorState?.message}
-  <InlineErrorHint hint={errorState?.hint ?? null} />
-</span>
+const errorState = useMetadataStore((s) => s.restoreErrorState);
+// ...
+{errorState && (
+  <span role="alert">
+    {errorState.message}
+    <InlineErrorHint hint={errorState.hint} />
+  </span>
+)}
 ```
 
 **a11y 規約**:

@@ -121,6 +121,10 @@ export function DropScreen({
   const addRecent = useRecentStore((s) => s.add);
   const recentLoadErrorState = useRecentStore((s) => s.loadErrorState);
   const recentAddErrorState = useRecentStore((s) => s.addErrorState);
+  // #694 round 1 fix: precompute notice state outside JSX to avoid IIFE +
+  // non-null assertion in render. `loadErrorState` takes priority over
+  // `addErrorState` (load 失敗は user が「履歴が出ない」と気づきやすい)。
+  const recentNoticeState = recentLoadErrorState ?? recentAddErrorState;
 
   useEffect(() => {
     if (!recentLoaded) {
@@ -374,21 +378,18 @@ export function DropScreen({
 
           <div className={styles.recent} data-testid="recent-list">
             <div className={styles.recentHeading}>──── 直近の録画 ────</div>
-            {(recentLoadErrorState ?? recentAddErrorState) && (() => {
-              const noticeState = recentLoadErrorState ?? recentAddErrorState;
-              return (
-                <div
-                  className={styles.recentNotice}
-                  role="alert"
-                  data-testid="recent-notice"
-                >
-                  <span className={styles.recentNoticeMessage}>
-                    {noticeState!.message}
-                  </span>
-                  <InlineErrorHint hint={noticeState!.hint} />
-                </div>
-              );
-            })()}
+            {recentNoticeState && (
+              <div
+                className={styles.recentNotice}
+                role="alert"
+                data-testid="recent-notice"
+              >
+                <span className={styles.recentNoticeMessage}>
+                  {recentNoticeState.message}
+                </span>
+                <InlineErrorHint hint={recentNoticeState.hint} />
+              </div>
+            )}
             {recentEntries.length === 0 ? (
               <div
                 className={styles.recentEmpty}

@@ -7,6 +7,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 import { useMetadataStore } from './metadataStore';
+import type { ErrorState } from '../lib/appError';
 import type { Metadata } from '../types/metadata';
 
 function validMetadata(): Metadata {
@@ -50,6 +51,21 @@ function validMetadata(): Metadata {
     ],
     gaps: [],
   };
+}
+
+/**
+ * #694 round 1 fix: typed fixture builder for `ErrorState`. Existing tests
+ * use object literals `{ message, hint, code }` whose shape is inferred from
+ * the store's setState argument type. This helper makes the intent explicit
+ * (`ErrorState` import is used here) and trims call-site boilerplate where
+ * tests need many ErrorState fixtures.
+ */
+function mkErrorState(
+  message: string,
+  hint: string | null = null,
+  code: string | null = null,
+): ErrorState {
+  return { message, hint, code };
 }
 
 /**
@@ -263,14 +279,14 @@ describe('useMetadataStore.clear', () => {
       metadata: validMetadata(),
       filePath: '/tmp/x/metadata.json',
       dirty: true,
-      loadErrorState: { message: 'prev error', hint: null, code: null },
+      loadErrorState: mkErrorState('prev error'),
       applying: true,
-      applyErrorState: { message: 'prev apply error', hint: null, code: null },
+      applyErrorState: mkErrorState('prev apply error'),
       hasBackup: true,
       restoring: true,
-      restoreErrorState: { message: 'prev restore error', hint: null, code: null },
+      restoreErrorState: mkErrorState('prev restore error'),
       loadedMtimeMs: 12345,
-      conflictErrorState: { message: 'prev conflict', hint: null, code: null },
+      conflictErrorState: mkErrorState('prev conflict'),
     });
 
     useMetadataStore.getState().clear();
