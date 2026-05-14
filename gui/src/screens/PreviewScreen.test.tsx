@@ -51,14 +51,13 @@ describe('PreviewScreen', () => {
     expect(screen.getByText(/#004 · of 9/)).toBeInTheDocument();
   });
 
-  // #663 — Phase 4: when applyError is set in the store, render the
-  // companion applyErrorHint as a 2nd line so the user sees the
+  // #663 — Phase 4 / #694 — *ErrorState form: when applyErrorState is set in the
+  // store, render message + companion hint as 2nd line so the user sees the
   // recommended next step. Hint stays inside the existing role="alert"
   // wrapper so a screen reader announces message + hint as one update.
-  it('renders applyErrorHint inline when present (#663)', () => {
+  it('renders applyErrorState message + hint inline when present (#663 / #694)', () => {
     useMetadataStore.setState({
-      applyError: 'disk full',
-      applyErrorHint: 'free up space',
+      applyErrorState: { message: 'disk full', hint: 'free up space', code: null },
     });
     render(<PreviewScreen />);
     expect(screen.getByText('disk full')).toBeInTheDocument();

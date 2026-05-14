@@ -83,11 +83,11 @@ describe('RestoreButton', () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
-  it('renders an alert when restoreError is set in the store', () => {
+  it('renders an alert when restoreErrorState is set in the store', () => {
     useMetadataStore.setState({
       filePath: '/x',
       hasBackup: true,
-      restoreError: 'disk full',
+      restoreErrorState: { message: 'disk full', hint: null, code: null },
     });
     render(<RestoreButton />);
     expect(screen.getByRole('alert')).toHaveTextContent('disk full');
@@ -145,31 +145,29 @@ describe('RestoreButton', () => {
     expect(btn).toHaveAttribute('title', '復元中です');
   });
 
-  // #663 — Phase 4: render the AppError hint as a 2nd line after the
-  // existing inline error message so the user sees both the failure and
-  // the recommended next step. Hint stays inside the role="alert"
+  // #663 — Phase 4 / #694 — *ErrorState form: render the AppError hint as a
+  // 2nd line after the existing inline error message so the user sees both
+  // the failure and the recommended next step. Hint stays inside the role="alert"
   // wrapper to avoid double-announcement by screen readers.
-  describe('hint rendering (#663)', () => {
-    it('renders restoreErrorHint as 2nd line when present', () => {
+  describe('hint rendering (#663 / #694 *ErrorState)', () => {
+    it('renders restoreErrorState.hint as 2nd line when present', () => {
       useMetadataStore.setState({
         filePath: '/x',
         hasBackup: true,
         restoring: false,
-        restoreError: 'backup not found',
-        restoreErrorHint: 'create backup first',
+        restoreErrorState: { message: 'backup not found', hint: 'create backup first', code: null },
       });
       render(<RestoreButton />);
       expect(screen.getByText('backup not found')).toBeInTheDocument();
       expect(screen.getByText(/create backup first/)).toBeInTheDocument();
     });
 
-    it('does not render hint when restoreErrorHint is null', () => {
+    it('does not render hint when restoreErrorState.hint is null', () => {
       useMetadataStore.setState({
         filePath: '/x',
         hasBackup: true,
         restoring: false,
-        restoreError: 'plain message',
-        restoreErrorHint: null,
+        restoreErrorState: { message: 'plain message', hint: null, code: null },
       });
       render(<RestoreButton />);
       expect(screen.getByText('plain message')).toBeInTheDocument();
@@ -181,8 +179,7 @@ describe('RestoreButton', () => {
         filePath: '/x',
         hasBackup: true,
         restoring: false,
-        restoreError: 'backup not found',
-        restoreErrorHint: 'create backup first',
+        restoreErrorState: { message: 'backup not found', hint: 'create backup first', code: null },
       });
       render(<RestoreButton />);
       const alert = screen.getByRole('alert');

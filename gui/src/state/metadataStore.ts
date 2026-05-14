@@ -1,7 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { create } from 'zustand';
 
-import { appErrorCodeIs, appErrorHint, appErrorMessage } from '../lib/appError';
+import {
+  appErrorCodeIs,
+  toErrorState,
+  type ErrorState,
+} from '../lib/appError';
 import { sampleMetadata } from '../data/sampleMetadata';
 import type { Match, Metadata, TypeOverride } from '../types/metadata';
 import { MetadataSchema } from '../types/metadata.schema';
@@ -27,22 +31,18 @@ export interface MetadataState {
   metadata: Metadata | null;
   filePath: string | null;
   dirty: boolean;
-  loadError: string | null;
-  /** #663: hint for loadError, if AppError carried one. */
-  loadErrorHint: string | null;
+  /** #694 (Phase 2): load 失敗時の error 構造。`AppError.code` も保持される。 */
+  loadErrorState: ErrorState | null;
   applying: boolean;
-  applyError: string | null;
-  /** #663: hint for applyError, if AppError carried one. */
-  applyErrorHint: string | null;
+  /** #694: apply 失敗時の error 構造。`state.mtime_conflict` は別 slot (conflictErrorState) に分岐。 */
+  applyErrorState: ErrorState | null;
 
   /** #516: flips true after a successful `apply()` that created metadata.original.json. */
   hasBackup: boolean;
   /** #516: in-flight restore flag. */
   restoring: boolean;
-  /** #516: last restore error message, if any. */
-  restoreError: string | null;
-  /** #663: hint for restoreError, if AppError carried one. */
-  restoreErrorHint: string | null;
+  /** #694: restore 失敗時の error 構造。 */
+  restoreErrorState: ErrorState | null;
 
   /**
    * #514: mtime (ms since epoch) of metadata.json recorded at load time.
@@ -52,13 +52,10 @@ export interface MetadataState {
    */
   loadedMtimeMs: number | null;
   /**
-   * #514: last conflict error produced by apply. Non-null means the UI must
-   * surface the "overwrite / reload / cancel" modal. Resolved via
-   * `applyOverwrite` / `reloadAfterConflict` / `dismissConflict`.
+   * #514: external mtime conflict の error 構造 (#694 でフィールド名 + 型を変更)。
+   * Non-null means the UI must surface the "overwrite / reload / cancel" modal.
    */
-  conflictError: string | null;
-  /** #695: hint for conflictError (state.mtime_conflict AppError), if carried one. */
-  conflictErrorHint: string | null;
+  conflictErrorState: ErrorState | null;
   /**
    * #517: a draft snapshot loaded from metadata.draft.json that differs from
    * the live metadata on disk. Non-null means the UI should ask the user
@@ -66,22 +63,17 @@ export interface MetadataState {
    * `discardDraft()`.
    */
   pendingDraft: Metadata | null;
-  /** #517: last draft load error (corrupt draft / parse failure). */
-  draftLoadError: string | null;
-  /** #663: hint for draftLoadError, if AppError carried one. */
-  draftLoadErrorHint: string | null;
+  /** #694: draft 読み込み失敗時の error 構造。 */
+  draftLoadErrorState: ErrorState | null;
   /** #517: true while an auto-save (debounced saveDraft) is in flight. */
   draftSaving: boolean;
   /**
-   * #517: last draft save error (disk full / permission denied / atomic
-   * rename failure). Cleared on the next successful save. Surfacing this in
-   * state lets the UI notify the user — otherwise save failures are silent
-   * unhandled rejections and the "restore after crash" contract is weakened
-   * (a save that never landed cannot be restored).
+   * #694: draft 保存失敗時の error 構造。
+   * Surfacing this in state lets the UI notify the user — otherwise save
+   * failures are silent unhandled rejections and the "restore after crash"
+   * contract is weakened (a save that never landed cannot be restored).
    */
-  draftSaveError: string | null;
-  /** #663: hint for draftSaveError, if AppError carried one. */
-  draftSaveErrorHint: string | null;
+  draftSaveErrorState: ErrorState | null;
 
   load: (path: string) => Promise<void>;
   updateMatch: (index: number, patch: MatchEditPatch) => void;
@@ -192,7 +184,11 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
   async function runApply(overwrite: boolean): Promise<void> {
     const { metadata, filePath, loadedMtimeMs } = get();
     if (!metadata || !filePath) return;
-    set({ applying: true, applyError: null, applyErrorHint: null, conflictError: null, conflictErrorHint: null });
+    set({
+      applying: true,
+      applyErrorState: null,
+      conflictErrorState: null,
+    });
     try {
       const normalized = normalizeForPersistence(metadata);
       const newMtime = await invoke<number>('apply_changes', {
@@ -204,11 +200,9 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         metadata: normalized,
         dirty: false,
         applying: false,
-        applyError: null,
-        applyErrorHint: null,
+        applyErrorState: null,
         loadedMtimeMs: newMtime,
-        conflictError: null,
-        conflictErrorHint: null,
+        conflictErrorState: null,
       });
       await get().refreshBackupStatus();
       // #517: successful apply means the on-disk state caught up with our
@@ -216,15 +210,14 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       cancelDraftSave();
       await get().clearDraft();
     } catch (e) {
-      const msg = appErrorMessage(e);
-      const hint = appErrorHint(e);
+      const errorState = toErrorState(e);
       // #663: PR #665 で全 23 commands が AppError 化済のため、legacy raw String
       // fallback (msg.startsWith('conflict:')) は廃止する。code === 'state.mtime_conflict'
       // のみで分岐する。
       if (appErrorCodeIs(e, 'state.mtime_conflict')) {
-        set({ applying: false, conflictError: msg, conflictErrorHint: hint });
+        set({ applying: false, conflictErrorState: errorState });
       } else {
-        set({ applying: false, applyError: msg, applyErrorHint: hint });
+        set({ applying: false, applyErrorState: errorState });
       }
     }
   }
@@ -233,26 +226,20 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
   metadata: null,
   filePath: null,
   dirty: false,
-  loadError: null,
-  loadErrorHint: null,
+  loadErrorState: null,
   applying: false,
-  applyError: null,
-  applyErrorHint: null,
+  applyErrorState: null,
 
   hasBackup: false,
   restoring: false,
-  restoreError: null,
-  restoreErrorHint: null,
+  restoreErrorState: null,
 
   loadedMtimeMs: null,
-  conflictError: null,
-  conflictErrorHint: null,
+  conflictErrorState: null,
   pendingDraft: null,
-  draftLoadError: null,
-  draftLoadErrorHint: null,
+  draftLoadErrorState: null,
   draftSaving: false,
-  draftSaveError: null,
-  draftSaveErrorHint: null,
+  draftSaveErrorState: null,
 
   load: async (path) => {
     try {
@@ -266,20 +253,14 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         metadata: parsed as unknown as Metadata,
         filePath: path,
         dirty: false,
-        loadError: null,
-        loadErrorHint: null,
-        applyError: null,
-        applyErrorHint: null,
-        restoreError: null,
-        restoreErrorHint: null,
+        loadErrorState: null,
+        applyErrorState: null,
+        restoreErrorState: null,
         loadedMtimeMs: mtime ?? null,
-        conflictError: null,
-        conflictErrorHint: null,
+        conflictErrorState: null,
         pendingDraft: null,
-        draftLoadError: null,
-        draftLoadErrorHint: null,
-        draftSaveError: null,
-        draftSaveErrorHint: null,
+        draftLoadErrorState: null,
+        draftSaveErrorState: null,
       });
       await get().refreshBackupStatus();
       // #517: automatically probe for a draft after a successful load. If one
@@ -287,23 +268,19 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       // modal via `pendingDraft`.
       await get().loadDraft();
     } catch (e) {
-      // #691 案 X: catch path は self-only (loadError/loadErrorHint のみ set)。
-      // apply / restore / draft 系の旧 error は別経路の文脈なので保持する
+      // #691 案 X 継承: catch path は self-only (loadErrorState のみ set)。
+      // apply / restore / draft 系の旧 errorState は別経路の文脈なので保持する
       // (load 失敗時に user に見せる context を消さない設計、lifecycle 終端
-      // clear() / loadSample() でのみ全 *ErrorHint を null reset する規約)。
+      // clear() / loadSample() でのみ全 *ErrorState を null reset する規約)。
+      // #695 file-state 例外: conflictErrorState は file-state リセットの一部として touch。
       set({
         metadata: null,
         filePath: null,
         dirty: false,
-        loadError: appErrorMessage(e),
-        loadErrorHint: appErrorHint(e),
+        loadErrorState: toErrorState(e),
         hasBackup: false,
         loadedMtimeMs: null,
-        // #695: conflictError/conflictErrorHint pair atomicity (load() 失敗時の
-        // file-state リセットの一部、#691 案 X self-only 規約とは別軸 = file-state
-        // 関連の state は touch する慣習を継承)。conflictErrorHint も pair で reset。
-        conflictError: null,
-        conflictErrorHint: null,
+        conflictErrorState: null,
         pendingDraft: null,
       });
     }
@@ -342,42 +319,32 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       metadata: null,
       filePath: null,
       dirty: false,
-      loadError: null,
-      loadErrorHint: null,
+      loadErrorState: null,
       applying: false,
-      applyError: null,
-      applyErrorHint: null,
+      applyErrorState: null,
       hasBackup: false,
       restoring: false,
-      restoreError: null,
-      restoreErrorHint: null,
+      restoreErrorState: null,
       loadedMtimeMs: null,
-      conflictError: null,
-      conflictErrorHint: null,
+      conflictErrorState: null,
       pendingDraft: null,
-      draftLoadError: null,
-      draftLoadErrorHint: null,
+      draftLoadErrorState: null,
       draftSaving: false,
-      draftSaveError: null,
-      draftSaveErrorHint: null,
+      draftSaveErrorState: null,
     });
   },
 
   restore: async () => {
     const { filePath } = get();
     if (!filePath) return;
-    set({ restoring: true, restoreError: null, restoreErrorHint: null });
+    set({ restoring: true, restoreErrorState: null });
     try {
       await invoke('restore_from_original', { path: filePath });
       // Reload metadata from disk; load() also refreshes hasBackup.
       await get().load(filePath);
       set({ restoring: false });
     } catch (e) {
-      set({
-        restoring: false,
-        restoreError: appErrorMessage(e),
-        restoreErrorHint: appErrorHint(e),
-      });
+      set({ restoring: false, restoreErrorState: toErrorState(e) });
     }
   },
 
@@ -405,33 +372,30 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
   reloadAfterConflict: async () => {
     const { filePath } = get();
     if (!filePath) {
-      // #695: conflictError/conflictErrorHint pair atomicity。filePath が無い場合
-      // (sample mode 等) は load() を呼べないので、ここで両方を null reset する
+      // #695: conflictErrorState atomicity。filePath が無い場合
+      // (sample mode 等) は load() を呼べないので、ここで null reset する
       // (plan §5.3 reloadAfterConflict() lifecycle 規約)。
-      set({ conflictError: null, conflictErrorHint: null });
+      set({ conflictErrorState: null });
       return;
     }
     await get().load(filePath);
   },
 
   dismissConflict: () => {
-    set({ conflictError: null, conflictErrorHint: null });
+    set({ conflictErrorState: null });
   },
 
   saveDraft: async () => {
     const { filePath, metadata } = get();
     if (!filePath || !metadata) return;
     // Clear any prior save error up-front so consumers see a fresh attempt.
-    set({ draftSaving: true, draftSaveError: null, draftSaveErrorHint: null });
+    set({ draftSaving: true, draftSaveErrorState: null });
     try {
       await invoke('save_draft', { path: filePath, draft: metadata });
     } catch (e) {
       // Surface the failure via state — scheduleDraftSave's fire-and-forget
       // call would otherwise swallow the rejection silently (see F1 review).
-      set({
-        draftSaveError: appErrorMessage(e),
-        draftSaveErrorHint: appErrorHint(e),
-      });
+      set({ draftSaveErrorState: toErrorState(e) });
     } finally {
       set({ draftSaving: false });
     }
@@ -443,7 +407,7 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
     try {
       const raw = await invoke<unknown>('load_draft', { path: filePath });
       if (raw === null || raw === undefined) {
-        set({ pendingDraft: null, draftLoadError: null, draftLoadErrorHint: null });
+        set({ pendingDraft: null, draftLoadErrorState: null });
         return;
       }
       const parsed = MetadataSchema.parse(raw) as unknown as Metadata;
@@ -456,15 +420,14 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         normalizeSourcePath(metadata.source)
       ) {
         await invoke('clear_draft', { path: filePath });
-        set({ pendingDraft: null, draftLoadError: null, draftLoadErrorHint: null });
+        set({ pendingDraft: null, draftLoadErrorState: null });
         return;
       }
-      set({ pendingDraft: parsed, draftLoadError: null, draftLoadErrorHint: null });
+      set({ pendingDraft: parsed, draftLoadErrorState: null });
     } catch (e) {
       set({
         pendingDraft: null,
-        draftLoadError: appErrorMessage(e),
-        draftLoadErrorHint: appErrorHint(e),
+        draftLoadErrorState: toErrorState(e),
       });
     }
   },
@@ -522,24 +485,18 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       metadata: sampleMetadata,
       filePath: null,
       dirty: false,
-      loadError: null,
-      loadErrorHint: null,
+      loadErrorState: null,
       applying: false,
-      applyError: null,
-      applyErrorHint: null,
+      applyErrorState: null,
       hasBackup: false,
       restoring: false,
-      restoreError: null,
-      restoreErrorHint: null,
+      restoreErrorState: null,
       loadedMtimeMs: null,
-      conflictError: null,
-      conflictErrorHint: null,
+      conflictErrorState: null,
       pendingDraft: null,
-      draftLoadError: null,
-      draftLoadErrorHint: null,
+      draftLoadErrorState: null,
       draftSaving: false,
-      draftSaveError: null,
-      draftSaveErrorHint: null,
+      draftSaveErrorState: null,
     });
   },
   };

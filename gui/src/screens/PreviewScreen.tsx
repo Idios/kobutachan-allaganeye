@@ -98,10 +98,7 @@ export function PreviewScreen() {
   const metadata = useMetadataStore((s) => s.metadata);
   const dirty = useMetadataStore((s) => s.dirty);
   const applying = useMetadataStore((s) => s.applying);
-  const applyError = useMetadataStore((s) => s.applyError);
-  // #663 — corrective hint rendered as a 2nd line under `applyError` so
-  // the user sees both the failure and the recommended next step.
-  const applyErrorHint = useMetadataStore((s) => s.applyErrorHint);
+  const applyErrorState = useMetadataStore((s) => s.applyErrorState);
   const filePath = useMetadataStore((s) => s.filePath);
   const updateMatch = useMetadataStore((s) => s.updateMatch);
   const apply = useMetadataStore((s) => s.apply);
@@ -830,12 +827,12 @@ export function PreviewScreen() {
           )}
         </DisabledTooltip>
         {dirty && <span className={styles.dirty}>● 未保存の変更</span>}
-        {applyError && (
+        {applyErrorState && (
           <span className={styles.applyError} role="alert">
-            {applyError}
-            {applyErrorHint && (
+            {applyErrorState.message}
+            {applyErrorState.hint && (
               <span className={styles.applyErrorHint}>
-                <InlineErrorHint hint={applyErrorHint} />
+                <InlineErrorHint hint={applyErrorState.hint} />
               </span>
             )}
           </span>

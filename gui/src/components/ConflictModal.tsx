@@ -18,8 +18,7 @@ import { InlineErrorHint } from './InlineErrorHint';
  * Global modal — rendered once in App.tsx regardless of the current screen.
  */
 export function ConflictModal() {
-  const conflictError = useMetadataStore((s) => s.conflictError);
-  const conflictErrorHint = useMetadataStore((s) => s.conflictErrorHint);
+  const conflictErrorState = useMetadataStore((s) => s.conflictErrorState);
   const applying = useMetadataStore((s) => s.applying);
   const applyOverwrite = useMetadataStore((s) => s.applyOverwrite);
   const reloadAfterConflict = useMetadataStore((s) => s.reloadAfterConflict);
@@ -29,11 +28,11 @@ export function ConflictModal() {
   // hooks short-circuit when active === false so they cost nothing while
   // the modal is closed.
   const panelRef = useRef<HTMLDivElement>(null);
-  const isOpen = !!conflictError;
+  const isOpen = !!conflictErrorState;
   useFocusTrap(panelRef, isOpen);
   useEscapeKey(isOpen, dismissConflict);
 
-  if (!conflictError) return null;
+  if (!conflictErrorState) return null;
 
   return (
     <div
@@ -46,8 +45,8 @@ export function ConflictModal() {
         <h2 id="ae-conflict-title" className={styles.title}>
           metadata.json が外部で変更されました
         </h2>
-        <p className={styles.message}>{conflictError}</p>
-        <InlineErrorHint hint={conflictErrorHint} />
+        <p className={styles.message}>{conflictErrorState.message}</p>
+        <InlineErrorHint hint={conflictErrorState.hint} />
         <p className={styles.cancelHint}>
           「キャンセル」で何もせずこのモーダルを閉じます。
         </p>
