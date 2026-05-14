@@ -11,18 +11,17 @@ import { InlineErrorHint } from './InlineErrorHint';
  */
 export function DraftRestoreModal() {
   const pendingDraft = useMetadataStore((s) => s.pendingDraft);
-  const draftLoadError = useMetadataStore((s) => s.draftLoadError);
-  const draftLoadErrorHint = useMetadataStore((s) => s.draftLoadErrorHint);
-  const conflictError = useMetadataStore((s) => s.conflictError);
+  const draftLoadErrorState = useMetadataStore((s) => s.draftLoadErrorState);
+  const conflictErrorState = useMetadataStore((s) => s.conflictErrorState);
   const restoreDraft = useMetadataStore((s) => s.restoreDraft);
   const discardDraft = useMetadataStore((s) => s.discardDraft);
 
   // #517 × #514: ConflictModal は metadata 本体の同期が優先。draft restore は
   // conflict 解消後に提示する (Modal 同時表示による UX 崩壊を回避)。
-  if (conflictError) return null;
-  if (!pendingDraft && !draftLoadError) return null;
+  if (conflictErrorState) return null;
+  if (!pendingDraft && !draftLoadErrorState) return null;
 
-  if (draftLoadError) {
+  if (draftLoadErrorState) {
     // Draft existed but could not be parsed — offer discard only.
     return (
       <div
@@ -35,8 +34,8 @@ export function DraftRestoreModal() {
           <h2 id="ae-draft-error-title" className={styles.title}>
             draft を読み取れませんでした
           </h2>
-          <p className={styles.message}>{draftLoadError}</p>
-          <InlineErrorHint hint={draftLoadErrorHint} />
+          <p className={styles.message}>{draftLoadErrorState.message}</p>
+          <InlineErrorHint hint={draftLoadErrorState.hint} />
           <p className={styles.hint}>
             metadata.draft.json が破損しているか schema が一致しません。破棄して続行します。
           </p>

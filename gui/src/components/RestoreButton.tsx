@@ -52,11 +52,7 @@ export function RestoreButton({
 }: RestoreButtonProps) {
   const hasBackup = useMetadataStore((s) => s.hasBackup);
   const restoring = useMetadataStore((s) => s.restoring);
-  const restoreError = useMetadataStore((s) => s.restoreError);
-  // #663: hint rendered as a 2nd line below the error message. Kept
-  // inside the same role="alert" wrapper so screen readers announce
-  // message + hint as a single update.
-  const restoreErrorHint = useMetadataStore((s) => s.restoreErrorHint);
+  const restoreErrorState = useMetadataStore((s) => s.restoreErrorState);
   const restore = useMetadataStore((s) => s.restore);
   // #633 / §1.4: sample mode (filePath=null + metadata=non-null) で disabled
   const isSample = useMetadataStore(
@@ -81,7 +77,7 @@ export function RestoreButton({
     if (!confirmed) return;
     await restore();
     // Only call onRestored when the store reports no error.
-    if (useMetadataStore.getState().restoreError === null && onRestored) {
+    if (useMetadataStore.getState().restoreErrorState === null && onRestored) {
       onRestored();
     }
   }
@@ -102,10 +98,10 @@ export function RestoreButton({
           </button>
         )}
       </DisabledTooltip>
-      {restoreError && (
+      {restoreErrorState && (
         <span className={styles.error} role="alert">
-          {restoreError}
-          <InlineErrorHint hint={restoreErrorHint} />
+          {restoreErrorState.message}
+          <InlineErrorHint hint={restoreErrorState.hint} />
         </span>
       )}
     </>

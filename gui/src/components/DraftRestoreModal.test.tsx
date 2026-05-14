@@ -108,9 +108,9 @@ describe('DraftRestoreModal', () => {
     });
   });
 
-  it('shows error-only modal when draftLoadError is set', () => {
+  it('shows error-only modal when draftLoadErrorState is set', () => {
     useMetadataStore.setState({
-      draftLoadError: 'parse error: invalid JSON',
+      draftLoadErrorState: { message: 'parse error: invalid JSON', hint: null, code: null },
       filePath: '/tmp/metadata.json',
     });
     render(<DraftRestoreModal />);
@@ -127,10 +127,10 @@ describe('DraftRestoreModal', () => {
   // Review 指摘 2-2 (#517 × #514): ConflictModal が前に出ている間は
   // DraftRestoreModal を描画しない。両 Modal の同時表示で backdrop が
   // 重なる UX 崩壊を防ぐ (ConflictModal の 3 択を先に解消させる)。
-  it('does not render while conflictError is set (ConflictModal takes priority)', () => {
+  it('does not render while conflictErrorState is set (ConflictModal takes priority)', () => {
     useMetadataStore.setState({
       pendingDraft: seedMetadata(),
-      conflictError: 'external modification detected',
+      conflictErrorState: { message: 'external modification detected', hint: null, code: null },
       filePath: '/tmp/metadata.json',
     });
     const { container } = render(<DraftRestoreModal />);
@@ -138,20 +138,18 @@ describe('DraftRestoreModal', () => {
   });
 });
 
-describe('#697: draftLoadErrorHint display', () => {
+describe('#697: draftLoadErrorState hint display (#694 *ErrorState form)', () => {
   beforeEach(() => {
     useMetadataStore.setState({
       pendingDraft: null,
-      draftLoadError: null,
-      draftLoadErrorHint: null,
-      conflictError: null,
+      draftLoadErrorState: null,
+      conflictErrorState: null,
     });
   });
 
-  it('renders InlineErrorHint when draftLoadErrorHint is set', () => {
+  it('renders InlineErrorHint when draftLoadErrorState.hint is set', () => {
     useMetadataStore.setState({
-      draftLoadError: 'metadata.draft.json corrupt',
-      draftLoadErrorHint: 'バックアップから復元してください',
+      draftLoadErrorState: { message: 'metadata.draft.json corrupt', hint: 'バックアップから復元してください', code: null },
     });
 
     render(<DraftRestoreModal />);
@@ -161,10 +159,9 @@ describe('#697: draftLoadErrorHint display', () => {
     ).toBeInTheDocument();
   });
 
-  it('does not render InlineErrorHint when draftLoadErrorHint is null', () => {
+  it('does not render InlineErrorHint when draftLoadErrorState.hint is null', () => {
     useMetadataStore.setState({
-      draftLoadError: 'corrupt',
-      draftLoadErrorHint: null,
+      draftLoadErrorState: { message: 'corrupt', hint: null, code: null },
     });
 
     render(<DraftRestoreModal />);
@@ -174,8 +171,7 @@ describe('#697: draftLoadErrorHint display', () => {
 
   it('hint inside role="dialog" passes jest-axe', async () => {
     useMetadataStore.setState({
-      draftLoadError: 'corrupt',
-      draftLoadErrorHint: 'some hint',
+      draftLoadErrorState: { message: 'corrupt', hint: 'some hint', code: null },
     });
 
     const { container } = render(<DraftRestoreModal />);

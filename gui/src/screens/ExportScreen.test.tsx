@@ -559,7 +559,7 @@ describe('ExportScreen (Phase 4 #466)', () => {
 
   // #678 Lane II-b §2.1 — handleOpenFolder catch path: AppError struct +
   // legacy Error + raw value + null/undefined reject の 4 系統を
-  // appErrorMessage(e) + appErrorHint(e) で扱えていることを確認。
+  // toErrorState(e) の .message / .hint で扱えていることを確認。
   // 旧実装 `e instanceof Error ? e.message : String(e)` では AppError struct
   // が `[object Object]` になるバグを TDD で検出するための test。
   describe('ExportScreen handleOpenFolder catch (#678)', () => {
@@ -639,7 +639,7 @@ describe('ExportScreen (Phase 4 #466)', () => {
       await setupAndClickOpenFolder(null, user);
       await waitFor(() => {
         // alert 要素は表示されるが、内容は `[object Object]` ではない
-        // (`appErrorMessage(null)` は `String(null)` = `"null"` を返す)。
+        // (`toErrorState(null).message` は `String(null)` = `"null"` を返す)。
         // open_folder_in_explorer の alert は完了画面の 1 つだけ
         // (per-match error が無い phase=completed のため)。
         const alerts = screen.queryAllByRole('alert');

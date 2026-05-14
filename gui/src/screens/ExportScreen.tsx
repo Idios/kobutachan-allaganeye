@@ -6,7 +6,7 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 import { DisabledTooltip } from '../components/DisabledTooltip';
 import { InlineErrorHint } from '../components/InlineErrorHint';
 import { SampleModeBanner } from '../components/SampleModeBanner';
-import { appErrorHint, appErrorMessage } from '../lib/appError';
+import { toErrorState } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 import { joinPath, stripExtendedPathPrefix } from '../utils/path';
@@ -379,10 +379,11 @@ export function ExportScreen() {
         failureCount += 1;
         // #663 — AppError-shaped throws (Tauri command rejection) carry
         // a corrective hint that we render as the per-match list's 2nd
-        // error line. `appErrorHint` returns null for legacy `new Error`,
+        // error line. `errorState.hint` is null for legacy `new Error`,
         // which we collapse to undefined so MatchState stays clean.
-        const msg = appErrorMessage(e);
-        const hint = appErrorHint(e);
+        const errorState = toErrorState(e);
+        const msg = errorState.message;
+        const hint = errorState.hint;
         setMatchStates((prev) => ({
           ...prev,
           [m.index]: {
@@ -427,8 +428,8 @@ export function ExportScreen() {
   // を直接 spawn する形に変更。
   // #678 Lane II-b §2.1 — catch path で `e instanceof Error ? e.message :
   // String(e)` を使うと AppError struct (`{code, message, hint}`) が
-  // `[object Object]` に化ける。`appErrorMessage(e)` / `appErrorHint(e)`
-  // helper に置き換え、hint がある場合は 2 行目として並べる。
+  // `[object Object]` に化ける。`toErrorState(e)` の戻り値 `.message` / `.hint`
+  // で統一処理し、hint がある場合は 2 行目として並べる。
   const [openFolderError, setOpenFolderError] = useState<string | null>(null);
   const [openFolderErrorHint, setOpenFolderErrorHint] = useState<string | null>(
     null,
@@ -440,8 +441,9 @@ export function ExportScreen() {
     try {
       await invoke('open_folder_in_explorer', { path: outDir });
     } catch (e) {
-      setOpenFolderError(appErrorMessage(e));
-      setOpenFolderErrorHint(appErrorHint(e));
+      const errorState = toErrorState(e);
+      setOpenFolderError(errorState.message);
+      setOpenFolderErrorHint(errorState.hint);
     }
   }
 

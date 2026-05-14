@@ -440,7 +440,7 @@
  *
  * - `.openFolderError`: container (block 表示 + flex column)
  * - `.openFolderErrorPrefix`: 「フォルダを開けませんでした:」固定 prefix
- * - `.openFolderErrorHint`: AppError.hint (`appErrorHint(e)`) があるときの 2
+ * - `.openFolderErrorHint`: AppError.hint (`toErrorState(e).hint`) があるときの 2
  *   行目
  */
 .openFolderError {

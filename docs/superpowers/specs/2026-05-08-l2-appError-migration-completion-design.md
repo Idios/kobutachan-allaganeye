@@ -704,6 +704,9 @@ ruff check . && ruff format --check . && pyright && pytest
 - PR [#661](https://github.com/Idios/kobutachan-allaganeye/pull/661) — `AppError` struct 導入
 - PR [#665](https://github.com/Idios/kobutachan-allaganeye/pull/665) — `Result<T, AppError>` 23 commands migration (本 spec の前提)
 - Iron Law (`.claude/hooks/session-start.sh`) — 1 (受け入れ条件) / 3 (scope creep) / 4 (Closes 禁止) / 5 (曖昧 AskUserQuestion) / 6 (PR Pre-flight + 実機検証)
+- [docs/superpowers/specs/2026-05-14-lane-v-phase-2-group-i-design.md](2026-05-14-lane-v-phase-2-group-i-design.md)
+  — Phase 2: `*ErrorState` unified refactor (Issue #694)。本 spec で構築した
+  `*ErrorHint` 並列構造を unified `*ErrorState: ErrorState | null` に集約する後段
 
 ## §19 Memory feedback / 関連メモ
 

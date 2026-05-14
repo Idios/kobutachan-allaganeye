@@ -10,7 +10,7 @@ import { InlineErrorHint } from '../components/InlineErrorHint';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useFocusTrap } from '../hooks/useFocusTrap';
-import { appErrorHint, appErrorMessage } from '../lib/appError';
+import { toErrorState } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import {
   type RecentEntry,
@@ -119,10 +119,12 @@ export function DropScreen({
   const recentLoaded = useRecentStore((s) => s.loaded);
   const loadRecent = useRecentStore((s) => s.load);
   const addRecent = useRecentStore((s) => s.add);
-  const recentLoadError = useRecentStore((s) => s.loadError);
-  const recentLoadErrorHint = useRecentStore((s) => s.loadErrorHint);
-  const recentAddError = useRecentStore((s) => s.addError);
-  const recentAddErrorHint = useRecentStore((s) => s.addErrorHint);
+  const recentLoadErrorState = useRecentStore((s) => s.loadErrorState);
+  const recentAddErrorState = useRecentStore((s) => s.addErrorState);
+  // #694 round 1 fix: precompute notice state outside JSX to avoid IIFE +
+  // non-null assertion in render. `loadErrorState` takes priority over
+  // `addErrorState` (load 失敗は user が「履歴が出ない」と気づきやすい)。
+  const recentNoticeState = recentLoadErrorState ?? recentAddErrorState;
 
   useEffect(() => {
     if (!recentLoaded) {
@@ -134,7 +136,7 @@ export function DropScreen({
   const [probeInfo, setProbeInfo] = useState<VideoProbeInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   // #663: AppError hint rendered as a 2nd line below `error` inside
-  // the ErrorCard. `appErrorHint` returns null for legacy `new Error()`
+  // the ErrorCard. `toErrorState(e).hint` returns null for legacy `new Error()`
   // throws so the existing single-line UX is preserved.
   const [errorHint, setErrorHint] = useState<string | null>(null);
   const [dragState, setDragState] = useState<DragState>('idle');
@@ -150,8 +152,9 @@ export function DropScreen({
       // with paths that turned out to be unreadable.
       void addRecent(info.path);
     } catch (e) {
-      setError(appErrorMessage(e));
-      setErrorHint(appErrorHint(e));
+      const errorState = toErrorState(e);
+      setError(errorState.message);
+      setErrorHint(errorState.hint);
       dispatch({ type: 'PROBE_FAIL' });
     }
   }
@@ -174,8 +177,9 @@ export function DropScreen({
     try {
       selected = await (openDialogFn ?? defaultOpenDialog)();
     } catch (e) {
-      setError(appErrorMessage(e));
-      setErrorHint(appErrorHint(e));
+      const errorState = toErrorState(e);
+      setError(errorState.message);
+      setErrorHint(errorState.hint);
       dispatch({ type: 'PROBE_FAIL' });
       return;
     }
@@ -374,18 +378,16 @@ export function DropScreen({
 
           <div className={styles.recent} data-testid="recent-list">
             <div className={styles.recentHeading}>──── 直近の録画 ────</div>
-            {(recentLoadError || recentAddError) && (
+            {recentNoticeState && (
               <div
                 className={styles.recentNotice}
                 role="alert"
                 data-testid="recent-notice"
               >
                 <span className={styles.recentNoticeMessage}>
-                  {recentLoadError ?? recentAddError}
+                  {recentNoticeState.message}
                 </span>
-                <InlineErrorHint
-                  hint={recentLoadError ? recentLoadErrorHint : recentAddErrorHint}
-                />
+                <InlineErrorHint hint={recentNoticeState.hint} />
               </div>
             )}
             {recentEntries.length === 0 ? (

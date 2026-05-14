@@ -14,9 +14,8 @@ import { InlineErrorHint } from '../components/InlineErrorHint';
 import { RestoreButton } from '../components/RestoreButton';
 import { SampleModeBanner } from '../components/SampleModeBanner';
 import {
-  appErrorHint,
-  appErrorMessage,
   isAppError,
+  toErrorState,
   type AppError,
 } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
@@ -98,10 +97,7 @@ export function PreviewScreen() {
   const metadata = useMetadataStore((s) => s.metadata);
   const dirty = useMetadataStore((s) => s.dirty);
   const applying = useMetadataStore((s) => s.applying);
-  const applyError = useMetadataStore((s) => s.applyError);
-  // #663 — corrective hint rendered as a 2nd line under `applyError` so
-  // the user sees both the failure and the recommended next step.
-  const applyErrorHint = useMetadataStore((s) => s.applyErrorHint);
+  const applyErrorState = useMetadataStore((s) => s.applyErrorState);
   const filePath = useMetadataStore((s) => s.filePath);
   const updateMatch = useMetadataStore((s) => s.updateMatch);
   const apply = useMetadataStore((s) => s.apply);
@@ -249,6 +245,10 @@ export function PreviewScreen() {
     fps: number;
   } | null>(null);
   const [overlayError, setOverlayError] = useState<AppError | null>(null);
+  // #694 round 1 fix: precompute overlayState outside JSX to avoid IIFE
+  // pattern in render. `toErrorState` is called at most once per `overlayError`
+  // change (essentially every render but the value is a stable object).
+  const overlayState = overlayError ? toErrorState(overlayError) : null;
   const blackoutThreshold = useMetadataStore(
     (s) => s.metadata?.detection_params?.blackout_threshold ?? 15,
   );
@@ -276,11 +276,11 @@ export function PreviewScreen() {
         if (!cancelled) {
           setVideoUrl(null);
           // #678 Lane II-b §2.1 — AppError struct (Tauri Result<T, AppError>) /
-          // Error / raw string / null/undefined を appErrorMessage で統一処理。
+          // Error / raw string / null/undefined を toErrorState で統一処理。
           // 旧実装 `e instanceof Error ? e.message : String(e)` は AppError 流入時に
           // `[object Object]` 表示になっていた。
           // PreviewScreen には videoErrorHint 枠なし → hint UI は追加しない (spec §2.1 規約)。
-          setVideoError(appErrorMessage(e));
+          setVideoError(toErrorState(e).message);
         }
       }
     })();
@@ -471,7 +471,7 @@ export function PreviewScreen() {
           setOverlayError(
             isAppError(e)
               ? e
-              : { code: 'unknown.error', message: appErrorMessage(e) },
+              : { code: 'unknown.error', message: toErrorState(e).message },
           );
         });
       brightnessDebounceTimerRef.current = null;
@@ -806,10 +806,10 @@ export function PreviewScreen() {
           brightnessThreshold={blackoutThreshold}
           brightnessWindowSeconds={6}
         />
-        {overlayError && (
+        {overlayState && (
           <div className={styles.overlayError}>
-            <span>{appErrorMessage(overlayError)}</span>
-            <InlineErrorHint hint={appErrorHint(overlayError)} />
+            <span>{overlayState.message}</span>
+            <InlineErrorHint hint={overlayState.hint} />
           </div>
         )}
       </div>
@@ -830,12 +830,12 @@ export function PreviewScreen() {
           )}
         </DisabledTooltip>
         {dirty && <span className={styles.dirty}>● 未保存の変更</span>}
-        {applyError && (
+        {applyErrorState && (
           <span className={styles.applyError} role="alert">
-            {applyError}
-            {applyErrorHint && (
+            {applyErrorState.message}
+            {applyErrorState.hint && (
               <span className={styles.applyErrorHint}>
-                <InlineErrorHint hint={applyErrorHint} />
+                <InlineErrorHint hint={applyErrorState.hint} />
               </span>
             )}
           </span>

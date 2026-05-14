@@ -170,7 +170,7 @@ describe('DropScreen', () => {
   // (`{ code, message, hint }`), the ErrorCard renders the hint as a 2nd
   // line below the message so users get a recommended next action. Bare
   // Error instances (`new Error(...)`) keep the existing single-line UX
-  // because `appErrorHint` returns null for them.
+  // because `toErrorState(e).hint` is null for them.
   it('renders probe error hint as 2nd line when probe rejects with AppError (#663)', async () => {
     const openDialog = vi.fn().mockResolvedValue('C:/videos/x.mkv');
     const probeFn = vi.fn().mockRejectedValue({
@@ -709,17 +709,18 @@ describe('#698: recentStore error notice (A-minimal)', () => {
     useRecentStore.setState({
       entries: [],
       loaded: true,
-      loadError: null,
-      loadErrorHint: null,
-      addError: null,
-      addErrorHint: null,
+      loadErrorState: null,
+      addErrorState: null,
     });
   });
 
-  it('displays notice with message + hint when loadError is set', () => {
+  it('displays notice with message + hint when loadErrorState is set', () => {
     useRecentStore.setState({
-      loadError: 'failed to read recent.json',
-      loadErrorHint: 'recent.json が破損している可能性があります',
+      loadErrorState: {
+        message: 'failed to read recent.json',
+        hint: 'recent.json が破損している可能性があります',
+        code: null,
+      },
     });
 
     render(<DropScreen />);
@@ -730,10 +731,13 @@ describe('#698: recentStore error notice (A-minimal)', () => {
     ).toBeInTheDocument();
   });
 
-  it('displays notice when addError is set (loadError null)', () => {
+  it('displays notice when addErrorState is set (loadErrorState null)', () => {
     useRecentStore.setState({
-      addError: 'failed to stat dropped file',
-      addErrorHint: 'ファイルが削除された可能性があります',
+      addErrorState: {
+        message: 'failed to stat dropped file',
+        hint: 'ファイルが削除された可能性があります',
+        code: null,
+      },
     });
 
     render(<DropScreen />);
@@ -744,12 +748,10 @@ describe('#698: recentStore error notice (A-minimal)', () => {
     ).toBeInTheDocument();
   });
 
-  it('prefers loadError over addError when both are set', () => {
+  it('prefers loadErrorState over addErrorState when both are set', () => {
     useRecentStore.setState({
-      loadError: 'load failed',
-      loadErrorHint: 'load hint',
-      addError: 'add failed',
-      addErrorHint: 'add hint',
+      loadErrorState: { message: 'load failed', hint: 'load hint', code: null },
+      addErrorState: { message: 'add failed', hint: 'add hint', code: null },
     });
 
     render(<DropScreen />);
@@ -760,10 +762,10 @@ describe('#698: recentStore error notice (A-minimal)', () => {
     expect(screen.queryByText('💡 add hint')).not.toBeInTheDocument();
   });
 
-  it('does not display notice when both loadError and addError are null', () => {
+  it('does not display notice when both loadErrorState and addErrorState are null', () => {
     useRecentStore.setState({
-      loadError: null,
-      addError: null,
+      loadErrorState: null,
+      addErrorState: null,
     });
 
     render(<DropScreen />);
@@ -774,8 +776,7 @@ describe('#698: recentStore error notice (A-minimal)', () => {
 
   it('notice has role="alert" + data-testid for stable selection', () => {
     useRecentStore.setState({
-      loadError: 'msg',
-      loadErrorHint: 'hint',
+      loadErrorState: { message: 'msg', hint: 'hint', code: null },
     });
 
     render(<DropScreen />);

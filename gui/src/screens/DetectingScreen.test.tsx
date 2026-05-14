@@ -464,7 +464,7 @@ describe('DetectingScreen', () => {
   // #663 — Phase 4: when start_detect rejects with an AppError-shaped
   // object (`{ code, message, hint }`), the error view renders the hint
   // as a 2nd line below `errorMessage`. Bare Error throws keep the
-  // existing single-line UX (appErrorHint returns null).
+  // existing single-line UX (toErrorState(e).hint is null for legacy errors).
   it('renders error hint as 2nd line when start_detect rejects with AppError (#663)', async () => {
     invokeMock.mockImplementation((cmd) => {
       if (cmd === 'start_detect') {

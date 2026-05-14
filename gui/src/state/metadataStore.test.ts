@@ -7,6 +7,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 import { useMetadataStore } from './metadataStore';
+import type { ErrorState } from '../lib/appError';
 import type { Metadata } from '../types/metadata';
 
 function validMetadata(): Metadata {
@@ -50,6 +51,21 @@ function validMetadata(): Metadata {
     ],
     gaps: [],
   };
+}
+
+/**
+ * #694 round 1 fix: typed fixture builder for `ErrorState`. Existing tests
+ * use object literals `{ message, hint, code }` whose shape is inferred from
+ * the store's setState argument type. This helper makes the intent explicit
+ * (`ErrorState` import is used here) and trims call-site boilerplate where
+ * tests need many ErrorState fixtures.
+ */
+function mkErrorState(
+  message: string,
+  hint: string | null = null,
+  code: string | null = null,
+): ErrorState {
+  return { message, hint, code };
 }
 
 /**
@@ -132,7 +148,7 @@ describe('useMetadataStore.load', () => {
     expect(state.metadata).not.toBeNull();
     expect(state.filePath).toBe('C:/videos/out/metadata.json');
     expect(state.dirty).toBe(false);
-    expect(state.loadError).toBeNull();
+    expect(state.loadErrorState).toBeNull();
     expect(state.hasBackup).toBe(false);
     expect(invokeMock).toHaveBeenCalledWith('load_metadata', {
       path: 'C:/videos/out/metadata.json',
@@ -148,20 +164,20 @@ describe('useMetadataStore.load', () => {
     expect(useMetadataStore.getState().hasBackup).toBe(true);
   });
 
-  it('sets loadError when invoke rejects', async () => {
+  it('sets loadErrorState when invoke rejects', async () => {
     configureInvoke({ load_metadata_error: new Error('nope') });
     await useMetadataStore.getState().load('C:/missing/metadata.json');
     const state = useMetadataStore.getState();
     expect(state.metadata).toBeNull();
-    expect(state.loadError).toContain('nope');
+    expect(state.loadErrorState?.message).toContain('nope');
     expect(state.hasBackup).toBe(false);
   });
 
-  it('sets loadError when schema validation fails', async () => {
+  it('sets loadErrorState when schema validation fails', async () => {
     configureInvoke({ load_metadata: { bogus: true } });
     await useMetadataStore.getState().load('x');
     expect(useMetadataStore.getState().metadata).toBeNull();
-    expect(useMetadataStore.getState().loadError).toBeTruthy();
+    expect(useMetadataStore.getState().loadErrorState).toBeTruthy();
   });
 });
 
@@ -206,7 +222,7 @@ describe('useMetadataStore.apply', () => {
     await useMetadataStore.getState().apply();
     const state = useMetadataStore.getState();
     expect(state.dirty).toBe(false);
-    expect(state.applyError).toBeNull();
+    expect(state.applyErrorState).toBeNull();
     expect(state.hasBackup).toBe(true);
     const applyCall = invokeMock.mock.calls.find((c) => c[0] === 'apply_changes');
     expect(applyCall).toBeDefined();
@@ -235,7 +251,7 @@ describe('useMetadataStore.apply', () => {
     expect(match.type).toBe('fl_match');
   });
 
-  it('sets applyError when invoke rejects', async () => {
+  it('sets applyErrorState when invoke rejects', async () => {
     configureInvoke({
       load_metadata: validMetadata(),
       apply_changes_error: new Error('write failed'),
@@ -246,7 +262,7 @@ describe('useMetadataStore.apply', () => {
     await useMetadataStore.getState().apply();
     const state = useMetadataStore.getState();
     expect(state.applying).toBe(false);
-    expect(state.applyError).toContain('write failed');
+    expect(state.applyErrorState?.message).toContain('write failed');
     expect(state.dirty).toBe(true);
   });
 
@@ -263,14 +279,14 @@ describe('useMetadataStore.clear', () => {
       metadata: validMetadata(),
       filePath: '/tmp/x/metadata.json',
       dirty: true,
-      loadError: 'prev error',
+      loadErrorState: mkErrorState('prev error'),
       applying: true,
-      applyError: 'prev apply error',
+      applyErrorState: mkErrorState('prev apply error'),
       hasBackup: true,
       restoring: true,
-      restoreError: 'prev restore error',
+      restoreErrorState: mkErrorState('prev restore error'),
       loadedMtimeMs: 12345,
-      conflictError: 'prev conflict',
+      conflictErrorState: mkErrorState('prev conflict'),
     });
 
     useMetadataStore.getState().clear();
@@ -279,14 +295,14 @@ describe('useMetadataStore.clear', () => {
     expect(s.metadata).toBeNull();
     expect(s.filePath).toBeNull();
     expect(s.dirty).toBe(false);
-    expect(s.loadError).toBeNull();
+    expect(s.loadErrorState).toBeNull();
     expect(s.applying).toBe(false);
-    expect(s.applyError).toBeNull();
+    expect(s.applyErrorState).toBeNull();
     expect(s.hasBackup).toBe(false);
     expect(s.restoring).toBe(false);
-    expect(s.restoreError).toBeNull();
+    expect(s.restoreErrorState).toBeNull();
     expect(s.loadedMtimeMs).toBeNull();
-    expect(s.conflictError).toBeNull();
+    expect(s.conflictErrorState).toBeNull();
   });
 });
 
@@ -324,7 +340,7 @@ describe('useMetadataStore.restore (#516)', () => {
 
     const state = useMetadataStore.getState();
     expect(state.restoring).toBe(false);
-    expect(state.restoreError).toBeNull();
+    expect(state.restoreErrorState).toBeNull();
     expect(state.dirty).toBe(false);
     // metadata was reloaded fresh (no longer dirty name)
     expect(state.metadata?.matches[0].name).toBeUndefined();
@@ -334,7 +350,7 @@ describe('useMetadataStore.restore (#516)', () => {
     expect(restoreCall?.[1]).toEqual({ path: 'p' });
   });
 
-  it('sets restoreError when the invoke rejects', async () => {
+  it('sets restoreErrorState when the invoke rejects', async () => {
     configureInvoke({
       load_metadata: validMetadata(),
       restore_from_original_error: new Error('no backup'),
@@ -344,7 +360,7 @@ describe('useMetadataStore.restore (#516)', () => {
     await useMetadataStore.getState().restore();
     const state = useMetadataStore.getState();
     expect(state.restoring).toBe(false);
-    expect(state.restoreError).toContain('no backup');
+    expect(state.restoreErrorState?.message).toContain('no backup');
   });
 
   it('no-ops when filePath is null (e.g. after loadSample)', async () => {
@@ -390,9 +406,9 @@ describe('useMetadataStore.loadSample', () => {
     expect(state.dirty).toBe(false);
     expect(state.hasBackup).toBe(false);
     expect(state.loadedMtimeMs).toBeNull();
-    expect(state.conflictError).toBeNull();
+    expect(state.conflictErrorState).toBeNull();
     expect(state.pendingDraft).toBeNull();
-    expect(state.draftLoadError).toBeNull();
+    expect(state.draftLoadErrorState).toBeNull();
   });
 });
 
@@ -408,7 +424,7 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
     await useMetadataStore.getState().load('p');
     const state = useMetadataStore.getState();
     expect(state.loadedMtimeMs).toBe(1700);
-    expect(state.conflictError).toBeNull();
+    expect(state.conflictErrorState).toBeNull();
     // get_metadata_mtime is called alongside load_metadata.
     expect(invokeMock).toHaveBeenCalledWith('get_metadata_mtime', { path: 'p' });
   });
@@ -431,10 +447,10 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
 
     // Post-apply mtime rotates forward so the next apply uses the fresh value.
     expect(useMetadataStore.getState().loadedMtimeMs).toBe(2500);
-    expect(useMetadataStore.getState().conflictError).toBeNull();
+    expect(useMetadataStore.getState().conflictErrorState).toBeNull();
   });
 
-  it('surfaces conflict errors in conflictError, not applyError', async () => {
+  it('surfaces conflict errors in conflictErrorState, not applyErrorState', async () => {
     // #663: PR #665 で全 23 commands が AppError 化済のため、conflict は
     // structured AppError ({ code: 'state.mtime_conflict', ... }) として届く。
     configureInvoke({
@@ -453,13 +469,13 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
 
     const state = useMetadataStore.getState();
     expect(state.applying).toBe(false);
-    expect(state.applyError).toBeNull();
-    expect(state.conflictError).toContain('external modification');
+    expect(state.applyErrorState).toBeNull();
+    expect(state.conflictErrorState?.message).toContain('external modification');
     // Store retains dirty edits so the user can choose to overwrite.
     expect(state.dirty).toBe(true);
   });
 
-  it('routes non-conflict errors to applyError and leaves conflictError null', async () => {
+  it('routes non-conflict errors to applyErrorState and leaves conflictErrorState null', async () => {
     configureInvoke({
       load_metadata: validMetadata(),
       get_metadata_mtime: 1700,
@@ -471,8 +487,8 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
     await useMetadataStore.getState().apply();
 
     const state = useMetadataStore.getState();
-    expect(state.applyError).toContain('disk full');
-    expect(state.conflictError).toBeNull();
+    expect(state.applyErrorState?.message).toContain('disk full');
+    expect(state.conflictErrorState).toBeNull();
   });
 
   it('applyOverwrite re-runs apply with expectedMtimeMs=null', async () => {
@@ -494,7 +510,7 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
   });
 
   it('reloadAfterConflict re-loads metadata.json from disk', async () => {
-    // First load with mtime 1700, then `conflictError` is set.
+    // First load with mtime 1700, then `conflictErrorState` is set.
     // #663: structured AppError ({ code: 'state.mtime_conflict', ... }) で reject
     configureInvoke({
       load_metadata: validMetadata(),
@@ -505,7 +521,7 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
     await useMetadataStore.getState().load('p');
     useMetadataStore.getState().updateMatch(1, { name: 'dirty' });
     await useMetadataStore.getState().apply();
-    expect(useMetadataStore.getState().conflictError).toContain('stale');
+    expect(useMetadataStore.getState().conflictErrorState?.message).toContain('stale');
 
     // Reload now returns a fresh validMetadata (no `name` edit) + new mtime.
     configureInvoke({
@@ -516,49 +532,48 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
     await useMetadataStore.getState().reloadAfterConflict();
 
     const state = useMetadataStore.getState();
-    expect(state.conflictError).toBeNull();
+    expect(state.conflictErrorState).toBeNull();
     expect(state.loadedMtimeMs).toBe(1900);
     expect(state.metadata?.matches[0].name).toBeUndefined();
     expect(state.dirty).toBe(false);
   });
 
   it('reloadAfterConflict is a no-op when filePath is null (sample mode)', async () => {
-    // #695: conflictError と conflictErrorHint の pair atomicity (Round 1 fix c929aae)。
-    // sample mode (filePath === null) では load() を呼べず、両 state を直接 null reset する。
+    // #695: conflictErrorState pair atomicity (Round 1 fix c929aae).
+    // sample mode (filePath === null) では load() を呼べず、conflictErrorState を直接 null reset する。
     useMetadataStore.setState({
-      conflictError: 'stale',
-      conflictErrorHint: 'stale hint',
+      conflictErrorState: { message: 'stale', hint: 'stale hint', code: null },
     });
     await useMetadataStore.getState().reloadAfterConflict();
     const state = useMetadataStore.getState();
-    expect(state.conflictError).toBeNull();
-    expect(state.conflictErrorHint).toBeNull();
+    expect(state.conflictErrorState).toBeNull();
   });
 
   it('dismissConflict clears the modal state without reloading or reapplying', () => {
-    useMetadataStore.setState({ conflictError: 'x', dirty: true });
+    useMetadataStore.setState({
+      conflictErrorState: { message: 'x', hint: null, code: null },
+      dirty: true,
+    });
     useMetadataStore.getState().dismissConflict();
     const state = useMetadataStore.getState();
-    expect(state.conflictError).toBeNull();
+    expect(state.conflictErrorState).toBeNull();
     expect(state.dirty).toBe(true); // edits are retained
   });
 
-  it('load that fails clears loadedMtimeMs and conflictError', async () => {
+  it('load that fails clears loadedMtimeMs and conflictErrorState', async () => {
     // Seed with prior state
-    // #695: conflictError と conflictErrorHint の pair atomicity (Round 1 fix c929aae)。
-    // load() 失敗時は file-state リセットの一部として両 state を null reset。
+    // #695: conflictErrorState pair atomicity (Round 1 fix c929aae).
+    // load() 失敗時は file-state リセットの一部として conflictErrorState を null reset。
     useMetadataStore.setState({
       loadedMtimeMs: 999,
-      conflictError: 'stale',
-      conflictErrorHint: 'stale hint',
+      conflictErrorState: { message: 'stale', hint: 'stale hint', code: null },
     });
     configureInvoke({ load_metadata_error: new Error('io error') });
     await useMetadataStore.getState().load('p');
     const state = useMetadataStore.getState();
     expect(state.loadedMtimeMs).toBeNull();
-    expect(state.conflictError).toBeNull();
-    expect(state.conflictErrorHint).toBeNull();
-    expect(state.loadError).toContain('io error');
+    expect(state.conflictErrorState).toBeNull();
+    expect(state.loadErrorState?.message).toContain('io error');
   });
 
   // Review 指摘 3: end-to-end recovery — conflict → reload → re-apply succeeds.
@@ -579,9 +594,9 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
     await useMetadataStore.getState().load('p');
     useMetadataStore.getState().updateMatch(1, { name: 'pending-edit' });
     await useMetadataStore.getState().apply();
-    expect(useMetadataStore.getState().conflictError).toContain('external');
+    expect(useMetadataStore.getState().conflictErrorState?.message).toContain('external');
 
-    // Step 2: reload → fresh mtime, conflictError cleared.
+    // Step 2: reload → fresh mtime, conflictErrorState cleared.
     configureInvoke({
       load_metadata: validMetadata(),
       get_metadata_mtime: 1900,
@@ -589,7 +604,7 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
     });
     await useMetadataStore.getState().reloadAfterConflict();
     expect(useMetadataStore.getState().loadedMtimeMs).toBe(1900);
-    expect(useMetadataStore.getState().conflictError).toBeNull();
+    expect(useMetadataStore.getState().conflictErrorState).toBeNull();
 
     // Step 3: re-edit and re-apply with the fresh mtime → success.
     useMetadataStore.getState().updateMatch(1, { name: 'retry' });
@@ -605,7 +620,7 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
     const lastApply = applyCalls[applyCalls.length - 1];
     const args = lastApply[1] as { expectedMtimeMs: number | null };
     expect(args.expectedMtimeMs).toBe(1900);
-    expect(useMetadataStore.getState().conflictError).toBeNull();
+    expect(useMetadataStore.getState().conflictErrorState).toBeNull();
     expect(useMetadataStore.getState().loadedMtimeMs).toBe(2100);
     expect(useMetadataStore.getState().dirty).toBe(false);
   });
@@ -647,7 +662,7 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
     expect(useMetadataStore.getState().loadedMtimeMs).toBe(3300);
   });
 
-  it('legacy raw-string Error("conflict: ...") routes to applyError, not conflictError (#663)', async () => {
+  it('legacy raw-string Error("conflict: ...") routes to applyErrorState, not conflictErrorState (#663)', async () => {
     configureInvoke({
       load_metadata: validMetadata(),
       get_metadata_mtime: 1700,
@@ -658,8 +673,8 @@ describe('useMetadataStore (#514 mtime + conflict)', () => {
     useMetadataStore.getState().updateMatch(1, { name: 'x' });
     await useMetadataStore.getState().apply();
     const s = useMetadataStore.getState();
-    expect(s.conflictError).toBeNull();
-    expect(s.applyError).toContain('conflict:');
+    expect(s.conflictErrorState).toBeNull();
+    expect(s.applyErrorState?.message).toContain('conflict:');
   });
 });
 
@@ -702,7 +717,7 @@ describe('useMetadataStore (#517 draft)', () => {
     const state = useMetadataStore.getState();
     expect(state.pendingDraft).not.toBeNull();
     expect(state.pendingDraft?.matches[0].name).toBe('restored');
-    expect(state.draftLoadError).toBeNull();
+    expect(state.draftLoadErrorState).toBeNull();
   });
 
   it('loadDraft discards drafts whose source does not match the loaded file', async () => {
@@ -723,7 +738,7 @@ describe('useMetadataStore (#517 draft)', () => {
     expect(clearCall).toBeDefined();
   });
 
-  it('loadDraft sets draftLoadError on parse failure', async () => {
+  it('loadDraft sets draftLoadErrorState on parse failure', async () => {
     configureInvoke({
       load_metadata: validMetadata(),
       check_backup_exists: false,
@@ -733,7 +748,7 @@ describe('useMetadataStore (#517 draft)', () => {
     await useMetadataStore.getState().loadDraft();
     const state = useMetadataStore.getState();
     expect(state.pendingDraft).toBeNull();
-    expect(state.draftLoadError).toBeTruthy();
+    expect(state.draftLoadErrorState).toBeTruthy();
   });
 
   it('loadDraft is a no-op when no draft exists on disk', async () => {
@@ -746,7 +761,7 @@ describe('useMetadataStore (#517 draft)', () => {
     await useMetadataStore.getState().loadDraft();
     const state = useMetadataStore.getState();
     expect(state.pendingDraft).toBeNull();
-    expect(state.draftLoadError).toBeNull();
+    expect(state.draftLoadErrorState).toBeNull();
   });
 
   it('restoreDraft applies pendingDraft to metadata and marks dirty', async () => {
@@ -832,16 +847,16 @@ describe('useMetadataStore (#517 draft)', () => {
   it('clear() resets all draft state', () => {
     useMetadataStore.setState({
       pendingDraft: validMetadata(),
-      draftLoadError: 'prev',
+      draftLoadErrorState: { message: 'prev', hint: null, code: null },
       draftSaving: true,
-      draftSaveError: 'prev-save-err',
+      draftSaveErrorState: { message: 'prev-save-err', hint: null, code: null },
     });
     useMetadataStore.getState().clear();
     const state = useMetadataStore.getState();
     expect(state.pendingDraft).toBeNull();
-    expect(state.draftLoadError).toBeNull();
+    expect(state.draftLoadErrorState).toBeNull();
     expect(state.draftSaving).toBe(false);
-    expect(state.draftSaveError).toBeNull();
+    expect(state.draftSaveErrorState).toBeNull();
   });
 
   // Review 指摘 A: path normalization. Platform is Windows-only (CLAUDE.md),
@@ -875,7 +890,7 @@ describe('useMetadataStore (#517 draft)', () => {
     expect(useMetadataStore.getState().pendingDraft).not.toBeNull();
   });
 
-  // Review 指摘 B: schema_version unknown → draft parse fails → draftLoadError.
+  // Review 指摘 B: schema_version unknown → draft parse fails → draftLoadErrorState.
   // Proves 受け入れ条件 #3 is exercised through the schema_version axis.
   // Guards against a silent regression when v2 migration is introduced.
   it('loadDraft surfaces an error when the draft schema_version is unknown', async () => {
@@ -890,15 +905,15 @@ describe('useMetadataStore (#517 draft)', () => {
     await useMetadataStore.getState().loadDraft();
     const state = useMetadataStore.getState();
     expect(state.pendingDraft).toBeNull();
-    expect(state.draftLoadError).toBeTruthy();
+    expect(state.draftLoadErrorState).toBeTruthy();
   });
 
-  // Review 指摘 F1: saveDraft failures must surface via draftSaveError.
+  // Review 指摘 F1: saveDraft failures must surface via draftSaveErrorState.
   // scheduleDraftSave calls saveDraft fire-and-forget, so without this guard
   // disk-full / permission-denied failures would be silent unhandled
   // rejections. A save that never landed breaks the "restore after crash"
   // contract — users need a way to detect it.
-  it('saveDraft surfaces invoke errors via draftSaveError state', async () => {
+  it('saveDraft surfaces invoke errors via draftSaveErrorState state', async () => {
     configureInvoke({
       load_metadata: validMetadata(),
       check_backup_exists: false,
@@ -908,11 +923,11 @@ describe('useMetadataStore (#517 draft)', () => {
     useMetadataStore.getState().updateMatch(1, { name: 'x' });
     await useMetadataStore.getState().saveDraft();
     const state = useMetadataStore.getState();
-    expect(state.draftSaveError).toContain('disk full');
+    expect(state.draftSaveErrorState?.message).toContain('disk full');
     expect(state.draftSaving).toBe(false);
   });
 
-  it('saveDraft clears previous draftSaveError on next success', async () => {
+  it('saveDraft clears previous draftSaveErrorState on next success', async () => {
     configureInvoke({
       load_metadata: validMetadata(),
       check_backup_exists: false,
@@ -920,7 +935,7 @@ describe('useMetadataStore (#517 draft)', () => {
     });
     await useMetadataStore.getState().load('p');
     await useMetadataStore.getState().saveDraft();
-    expect(useMetadataStore.getState().draftSaveError).toBeTruthy();
+    expect(useMetadataStore.getState().draftSaveErrorState).toBeTruthy();
 
     // Next save succeeds → error cleared.
     configureInvoke({
@@ -928,7 +943,7 @@ describe('useMetadataStore (#517 draft)', () => {
       check_backup_exists: false,
     });
     await useMetadataStore.getState().saveDraft();
-    expect(useMetadataStore.getState().draftSaveError).toBeNull();
+    expect(useMetadataStore.getState().draftSaveErrorState).toBeNull();
   });
 });
 
@@ -982,19 +997,21 @@ describe('useMetadataStore (#514 × #517 interaction)', () => {
     });
     await useMetadataStore.getState().load('p');
     // conflict 発火を simulate
-    useMetadataStore.setState({ conflictError: 'external' });
+    useMetadataStore.setState({
+      conflictErrorState: { message: 'external', hint: null, code: null },
+    });
     await useMetadataStore.getState().reloadAfterConflict();
     expect(useMetadataStore.getState().pendingDraft?.matches[0].name).toBe(
       'rescued',
     );
-    expect(useMetadataStore.getState().conflictError).toBeNull();
+    expect(useMetadataStore.getState().conflictErrorState).toBeNull();
   });
 
-  // 4-4: state 層では conflictError と pendingDraft が共存できる。排他制御は
-  // UI 層 (DraftRestoreModal が conflictError 非 null 時に return null) が担う。
+  // 4-4: state 層では conflictErrorState と pendingDraft が共存できる。排他制御は
+  // UI 層 (DraftRestoreModal が conflictErrorState 非 null 時に return null) が担う。
   // store に排他条件を入れると「conflict 解消後に draft modal が復活する」
   // 挙動を壊してしまう。
-  it('conflictError and pendingDraft can coexist in state (resolved at render layer)', async () => {
+  it('conflictErrorState and pendingDraft can coexist in state (resolved at render layer)', async () => {
     const meta = validMetadata();
     configureInvoke({
       load_metadata: meta,
@@ -1003,8 +1020,10 @@ describe('useMetadataStore (#514 × #517 interaction)', () => {
     });
     await useMetadataStore.getState().load('p');
     expect(useMetadataStore.getState().pendingDraft).not.toBeNull();
-    useMetadataStore.setState({ conflictError: 'external' });
-    expect(useMetadataStore.getState().conflictError).toBeTruthy();
+    useMetadataStore.setState({
+      conflictErrorState: { message: 'external', hint: null, code: null },
+    });
+    expect(useMetadataStore.getState().conflictErrorState).toBeTruthy();
     expect(useMetadataStore.getState().pendingDraft).not.toBeNull();
   });
 });
@@ -1097,12 +1116,13 @@ describe('useMetadataStore.discardEdits (#589)', () => {
 // #663 — AppError hint pair. Each error-state field gains a sibling `*Hint`
 // that carries the AppError.hint when the underlying invoke rejected with a
 // structured AppError object. legacy raw Error rejection keeps the hint null.
-describe('AppError hint pair (#663)', () => {
+// #694 — *ErrorState form: *Error + *ErrorHint collapsed into single *ErrorState object.
+describe('AppError hint pair (#663 / #694 *ErrorState)', () => {
   beforeEach(() => {
     useMetadataStore.getState().clear();
   });
 
-  it('apply path: applyErrorHint is set when AppError carries hint', async () => {
+  it('apply path: applyErrorState carries message + hint when AppError carries hint', async () => {
     invokeMock.mockImplementation(async (cmd) => {
       if (cmd === 'apply_changes') {
         // Tauri rejects with the AppError-shaped object directly
@@ -1121,11 +1141,14 @@ describe('AppError hint pair (#663)', () => {
     });
     await useMetadataStore.getState().apply();
     const s = useMetadataStore.getState();
-    expect(s.applyError).toBe('disk full');
-    expect(s.applyErrorHint).toBe('check free disk space');
+    expect(s.applyErrorState).toEqual({
+      message: 'disk full',
+      hint: 'check free disk space',
+      code: 'io.write_failed',
+    });
   });
 
-  it('load path: loadErrorHint is set when AppError carries hint', async () => {
+  it('load path: loadErrorState carries message + hint when AppError carries hint', async () => {
     invokeMock.mockImplementation(async () => {
       throw {
         code: 'io.file_not_found',
@@ -1135,11 +1158,14 @@ describe('AppError hint pair (#663)', () => {
     });
     await useMetadataStore.getState().load('/tmp/missing.json');
     const s = useMetadataStore.getState();
-    expect(s.loadError).toBe('no such file');
-    expect(s.loadErrorHint).toBe('check path');
+    expect(s.loadErrorState).toEqual({
+      message: 'no such file',
+      hint: 'check path',
+      code: 'io.file_not_found',
+    });
   });
 
-  it('restore path: restoreErrorHint is set', async () => {
+  it('restore path: restoreErrorState carries message + hint', async () => {
     invokeMock.mockImplementation(async (cmd) => {
       if (cmd === 'restore_from_original') {
         throw {
@@ -1153,11 +1179,14 @@ describe('AppError hint pair (#663)', () => {
     useMetadataStore.setState({ filePath: '/tmp/m.json' });
     await useMetadataStore.getState().restore();
     const s = useMetadataStore.getState();
-    expect(s.restoreError).toBe('no backup');
-    expect(s.restoreErrorHint).toBe('create backup first');
+    expect(s.restoreErrorState).toEqual({
+      message: 'no backup',
+      hint: 'create backup first',
+      code: 'io.backup_failed',
+    });
   });
 
-  it('saveDraft path: draftSaveErrorHint is set', async () => {
+  it('saveDraft path: draftSaveErrorState carries message + hint', async () => {
     invokeMock.mockImplementation(async (cmd) => {
       if (cmd === 'save_draft') {
         throw {
@@ -1174,11 +1203,14 @@ describe('AppError hint pair (#663)', () => {
     });
     await useMetadataStore.getState().saveDraft();
     const s = useMetadataStore.getState();
-    expect(s.draftSaveError).toBe('disk full');
-    expect(s.draftSaveErrorHint).toBe('free space');
+    expect(s.draftSaveErrorState).toEqual({
+      message: 'disk full',
+      hint: 'free space',
+      code: 'io.write_failed',
+    });
   });
 
-  it('loadDraft path: draftLoadErrorHint is set', async () => {
+  it('loadDraft path: draftLoadErrorState carries message + hint', async () => {
     invokeMock.mockImplementation(async (cmd) => {
       if (cmd === 'load_draft') {
         throw {
@@ -1195,18 +1227,24 @@ describe('AppError hint pair (#663)', () => {
     });
     await useMetadataStore.getState().loadDraft();
     const s = useMetadataStore.getState();
-    expect(s.draftLoadError).toBe('bad json');
-    expect(s.draftLoadErrorHint).toBe('corrupt draft');
+    expect(s.draftLoadErrorState).toEqual({
+      message: 'bad json',
+      hint: 'corrupt draft',
+      code: 'parse.json_invalid',
+    });
   });
 
-  it('legacy raw-Error reject keeps hint null', async () => {
+  it('legacy raw-Error reject keeps hint null and code null', async () => {
     invokeMock.mockImplementation(async () => {
       throw new Error('plain error string');
     });
     await useMetadataStore.getState().load('/tmp/x.json');
     const s = useMetadataStore.getState();
-    expect(s.loadError).toBe('plain error string');
-    expect(s.loadErrorHint).toBeNull();
+    expect(s.loadErrorState).toEqual({
+      message: 'plain error string',
+      hint: null,
+      code: null,
+    });
   });
 });
 
@@ -1217,37 +1255,28 @@ describe('#691: catch path lifecycle pinning', () => {
       metadata: null,
       filePath: null,
       dirty: false,
-      loadError: null,
-      loadErrorHint: null,
+      loadErrorState: null,
       applying: false,
-      applyError: null,
-      applyErrorHint: null,
+      applyErrorState: null,
       hasBackup: false,
       restoring: false,
-      restoreError: null,
-      restoreErrorHint: null,
+      restoreErrorState: null,
       loadedMtimeMs: null,
-      conflictError: null,
+      conflictErrorState: null,
       pendingDraft: null,
-      draftLoadError: null,
-      draftLoadErrorHint: null,
+      draftLoadErrorState: null,
       draftSaving: false,
-      draftSaveError: null,
-      draftSaveErrorHint: null,
+      draftSaveErrorState: null,
     });
   });
 
-  it('案 X: load() catch sets load*Error/Hint only, leaves apply/restore/draft *Error/Hint untouched', async () => {
-    // pre-condition: 全 path の *ErrorHint が non-null
+  it('案 X: load() catch sets loadErrorState only, leaves apply/restore/draft *ErrorState untouched', async () => {
+    // pre-condition: 全 path の *ErrorState が non-null
     useMetadataStore.setState({
-      applyError: 'old apply error',
-      applyErrorHint: 'old apply hint',
-      restoreError: 'old restore error',
-      restoreErrorHint: 'old restore hint',
-      draftLoadError: 'old draft load error',
-      draftLoadErrorHint: 'old draft load hint',
-      draftSaveError: 'old draft save error',
-      draftSaveErrorHint: 'old draft save hint',
+      applyErrorState: { message: 'old apply error', hint: 'old apply hint', code: null },
+      restoreErrorState: { message: 'old restore error', hint: 'old restore hint', code: null },
+      draftLoadErrorState: { message: 'old draft load error', hint: 'old draft load hint', code: null },
+      draftSaveErrorState: { message: 'old draft save error', hint: 'old draft save hint', code: null },
     });
 
     invokeMock.mockImplementation(async () => {
@@ -1262,28 +1291,25 @@ describe('#691: catch path lifecycle pinning', () => {
 
     const state = useMetadataStore.getState();
     // self set
-    expect(state.loadError).toBe('file not found');
-    expect(state.loadErrorHint).toBe('check path');
-    // 案 X: other paths' *Error / *ErrorHint untouched
-    expect(state.applyError).toBe('old apply error');
-    expect(state.applyErrorHint).toBe('old apply hint');
-    expect(state.restoreError).toBe('old restore error');
-    expect(state.restoreErrorHint).toBe('old restore hint');
-    expect(state.draftLoadError).toBe('old draft load error');
-    expect(state.draftLoadErrorHint).toBe('old draft load hint');
-    expect(state.draftSaveError).toBe('old draft save error');
-    expect(state.draftSaveErrorHint).toBe('old draft save hint');
+    expect(state.loadErrorState).toEqual({
+      message: 'file not found',
+      hint: 'check path',
+      code: 'io.file_not_found',
+    });
+    // 案 X: other paths' *ErrorState untouched
+    expect(state.applyErrorState).toEqual({ message: 'old apply error', hint: 'old apply hint', code: null });
+    expect(state.restoreErrorState).toEqual({ message: 'old restore error', hint: 'old restore hint', code: null });
+    expect(state.draftLoadErrorState).toEqual({ message: 'old draft load error', hint: 'old draft load hint', code: null });
+    expect(state.draftSaveErrorState).toEqual({ message: 'old draft save error', hint: 'old draft save hint', code: null });
   });
 
-  it('runApply() non-conflict catch sets applyError/Hint only', async () => {
+  it('runApply() non-conflict catch sets applyErrorState only', async () => {
     useMetadataStore.setState({
       metadata: { source: '/test.mp4', matches: [] } as never,
       filePath: '/test.mp4',
       loadedMtimeMs: 1000,
-      loadError: 'old load error',
-      loadErrorHint: 'old load hint',
-      restoreError: 'old restore error',
-      restoreErrorHint: 'old restore hint',
+      loadErrorState: { message: 'old load error', hint: 'old load hint', code: null },
+      restoreErrorState: { message: 'old restore error', hint: 'old restore hint', code: null },
     });
 
     invokeMock.mockImplementation(async (cmd) => {
@@ -1300,23 +1326,22 @@ describe('#691: catch path lifecycle pinning', () => {
     await useMetadataStore.getState().apply();
 
     const state = useMetadataStore.getState();
-    expect(state.applyError).toBe('denied');
-    expect(state.applyErrorHint).toBe('check write permission');
-    expect(state.loadError).toBe('old load error');
-    expect(state.loadErrorHint).toBe('old load hint');
-    expect(state.restoreError).toBe('old restore error');
-    expect(state.restoreErrorHint).toBe('old restore hint');
+    expect(state.applyErrorState).toEqual({
+      message: 'denied',
+      hint: 'check write permission',
+      code: 'io.permission_denied',
+    });
+    expect(state.loadErrorState).toEqual({ message: 'old load error', hint: 'old load hint', code: null });
+    expect(state.restoreErrorState).toEqual({ message: 'old restore error', hint: 'old restore hint', code: null });
   });
 
-  it('runApply() conflict catch sets conflictError only, leaves *Error/Hint untouched', async () => {
+  it('runApply() conflict catch sets conflictErrorState only, leaves *ErrorState untouched', async () => {
     useMetadataStore.setState({
       metadata: { source: '/test.mp4', matches: [] } as never,
       filePath: '/test.mp4',
       loadedMtimeMs: 1000,
-      applyError: 'old apply error',
-      applyErrorHint: 'old apply hint',
-      loadError: 'old load error',
-      loadErrorHint: 'old load hint',
+      applyErrorState: { message: 'old apply error', hint: 'old apply hint', code: null },
+      loadErrorState: { message: 'old load error', hint: 'old load hint', code: null },
     });
 
     invokeMock.mockImplementation(async (cmd) => {
@@ -1333,21 +1358,22 @@ describe('#691: catch path lifecycle pinning', () => {
     await useMetadataStore.getState().apply();
 
     const state = useMetadataStore.getState();
-    expect(state.conflictError).toBe('mtime conflict');
-    // runApply initial set clears applyError/applyErrorHint/conflictError before invoke
-    // conflict catch then only sets { applying: false, conflictError: msg }
-    // so applyError/applyErrorHint are null from the initial set (not 'old' anymore)
-    expect(state.loadError).toBe('old load error');
-    expect(state.loadErrorHint).toBe('old load hint');
+    expect(state.conflictErrorState).toEqual({
+      message: 'mtime conflict',
+      hint: 'reload or overwrite',
+      code: 'state.mtime_conflict',
+    });
+    // runApply initial set clears applyErrorState/conflictErrorState before invoke
+    // conflict catch then only sets { applying: false, conflictErrorState: errorState }
+    // so applyErrorState is null from the initial set (not 'old' anymore)
+    expect(state.loadErrorState).toEqual({ message: 'old load error', hint: 'old load hint', code: null });
   });
 
-  it('restore() catch sets restoreError/Hint only', async () => {
+  it('restore() catch sets restoreErrorState only', async () => {
     useMetadataStore.setState({
       filePath: '/test.mp4',
-      loadError: 'old load error',
-      loadErrorHint: 'old load hint',
-      applyError: 'old apply error',
-      applyErrorHint: 'old apply hint',
+      loadErrorState: { message: 'old load error', hint: 'old load hint', code: null },
+      applyErrorState: { message: 'old apply error', hint: 'old apply hint', code: null },
     });
 
     invokeMock.mockImplementation(async (cmd) => {
@@ -1364,20 +1390,20 @@ describe('#691: catch path lifecycle pinning', () => {
     await useMetadataStore.getState().restore();
 
     const state = useMetadataStore.getState();
-    expect(state.restoreError).toBe('backup failed');
-    expect(state.restoreErrorHint).toBe('check disk');
-    expect(state.loadError).toBe('old load error');
-    expect(state.loadErrorHint).toBe('old load hint');
-    expect(state.applyError).toBe('old apply error');
-    expect(state.applyErrorHint).toBe('old apply hint');
+    expect(state.restoreErrorState).toEqual({
+      message: 'backup failed',
+      hint: 'check disk',
+      code: 'io.backup_failed',
+    });
+    expect(state.loadErrorState).toEqual({ message: 'old load error', hint: 'old load hint', code: null });
+    expect(state.applyErrorState).toEqual({ message: 'old apply error', hint: 'old apply hint', code: null });
   });
 
-  it('saveDraft() catch sets draftSaveError/Hint only', async () => {
+  it('saveDraft() catch sets draftSaveErrorState only', async () => {
     useMetadataStore.setState({
       metadata: { source: '/test.mp4', matches: [] } as never,
       filePath: '/test.mp4',
-      loadError: 'old load error',
-      loadErrorHint: 'old load hint',
+      loadErrorState: { message: 'old load error', hint: 'old load hint', code: null },
     });
 
     invokeMock.mockImplementation(async (cmd) => {
@@ -1394,18 +1420,19 @@ describe('#691: catch path lifecycle pinning', () => {
     await useMetadataStore.getState().saveDraft();
 
     const state = useMetadataStore.getState();
-    expect(state.draftSaveError).toBe('write failed');
-    expect(state.draftSaveErrorHint).toBe('check space');
-    expect(state.loadError).toBe('old load error');
-    expect(state.loadErrorHint).toBe('old load hint');
+    expect(state.draftSaveErrorState).toEqual({
+      message: 'write failed',
+      hint: 'check space',
+      code: 'io.write_failed',
+    });
+    expect(state.loadErrorState).toEqual({ message: 'old load error', hint: 'old load hint', code: null });
   });
 
-  it('loadDraft() catch sets draftLoadError/Hint only', async () => {
+  it('loadDraft() catch sets draftLoadErrorState only', async () => {
     useMetadataStore.setState({
       metadata: { source: '/test.mp4', matches: [] } as never,
       filePath: '/test.mp4',
-      applyError: 'old apply error',
-      applyErrorHint: 'old apply hint',
+      applyErrorState: { message: 'old apply error', hint: 'old apply hint', code: null },
     });
 
     invokeMock.mockImplementation(async (cmd) => {
@@ -1422,99 +1449,75 @@ describe('#691: catch path lifecycle pinning', () => {
     await useMetadataStore.getState().loadDraft();
 
     const state = useMetadataStore.getState();
-    expect(state.draftLoadError).toBe('json invalid');
-    expect(state.draftLoadErrorHint).toBe('restore from backup');
-    expect(state.applyError).toBe('old apply error');
-    expect(state.applyErrorHint).toBe('old apply hint');
+    expect(state.draftLoadErrorState).toEqual({
+      message: 'json invalid',
+      hint: 'restore from backup',
+      code: 'parse.json_invalid',
+    });
+    expect(state.applyErrorState).toEqual({ message: 'old apply error', hint: 'old apply hint', code: null });
   });
 
-  it('clear() resets all *Error and *ErrorHint to null', () => {
+  it('clear() resets all *ErrorState to null', () => {
     useMetadataStore.setState({
-      loadError: 'a',
-      loadErrorHint: 'A',
-      applyError: 'b',
-      applyErrorHint: 'B',
-      restoreError: 'c',
-      restoreErrorHint: 'C',
-      draftLoadError: 'd',
-      draftLoadErrorHint: 'D',
-      draftSaveError: 'e',
-      draftSaveErrorHint: 'E',
+      loadErrorState: { message: 'a', hint: 'A', code: null },
+      applyErrorState: { message: 'b', hint: 'B', code: null },
+      restoreErrorState: { message: 'c', hint: 'C', code: null },
+      draftLoadErrorState: { message: 'd', hint: 'D', code: null },
+      draftSaveErrorState: { message: 'e', hint: 'E', code: null },
     });
 
     useMetadataStore.getState().clear();
 
     const state = useMetadataStore.getState();
-    expect(state.loadError).toBeNull();
-    expect(state.loadErrorHint).toBeNull();
-    expect(state.applyError).toBeNull();
-    expect(state.applyErrorHint).toBeNull();
-    expect(state.restoreError).toBeNull();
-    expect(state.restoreErrorHint).toBeNull();
-    expect(state.draftLoadError).toBeNull();
-    expect(state.draftLoadErrorHint).toBeNull();
-    expect(state.draftSaveError).toBeNull();
-    expect(state.draftSaveErrorHint).toBeNull();
+    expect(state.loadErrorState).toBeNull();
+    expect(state.applyErrorState).toBeNull();
+    expect(state.restoreErrorState).toBeNull();
+    expect(state.draftLoadErrorState).toBeNull();
+    expect(state.draftSaveErrorState).toBeNull();
   });
 
-  it('loadSample() resets all *Error and *ErrorHint to null', () => {
+  it('loadSample() resets all *ErrorState to null', () => {
     useMetadataStore.setState({
-      loadError: 'a',
-      loadErrorHint: 'A',
-      applyError: 'b',
-      applyErrorHint: 'B',
-      restoreError: 'c',
-      restoreErrorHint: 'C',
-      draftLoadError: 'd',
-      draftLoadErrorHint: 'D',
-      draftSaveError: 'e',
-      draftSaveErrorHint: 'E',
+      loadErrorState: { message: 'a', hint: 'A', code: null },
+      applyErrorState: { message: 'b', hint: 'B', code: null },
+      restoreErrorState: { message: 'c', hint: 'C', code: null },
+      draftLoadErrorState: { message: 'd', hint: 'D', code: null },
+      draftSaveErrorState: { message: 'e', hint: 'E', code: null },
     });
 
     useMetadataStore.getState().loadSample();
 
     const state = useMetadataStore.getState();
-    expect(state.loadError).toBeNull();
-    expect(state.loadErrorHint).toBeNull();
-    expect(state.applyError).toBeNull();
-    expect(state.applyErrorHint).toBeNull();
-    expect(state.restoreError).toBeNull();
-    expect(state.restoreErrorHint).toBeNull();
-    expect(state.draftLoadError).toBeNull();
-    expect(state.draftLoadErrorHint).toBeNull();
-    expect(state.draftSaveError).toBeNull();
-    expect(state.draftSaveErrorHint).toBeNull();
+    expect(state.loadErrorState).toBeNull();
+    expect(state.applyErrorState).toBeNull();
+    expect(state.restoreErrorState).toBeNull();
+    expect(state.draftLoadErrorState).toBeNull();
+    expect(state.draftSaveErrorState).toBeNull();
   });
 });
 
-describe('#695: conflictErrorHint lifecycle', () => {
+describe('#695: conflictErrorState lifecycle (#694 *ErrorState form)', () => {
   beforeEach(() => {
     useMetadataStore.setState({
       metadata: null,
       filePath: null,
       dirty: false,
-      loadError: null,
-      loadErrorHint: null,
+      loadErrorState: null,
       applying: false,
-      applyError: null,
-      applyErrorHint: null,
+      applyErrorState: null,
       hasBackup: false,
       restoring: false,
-      restoreError: null,
-      restoreErrorHint: null,
+      restoreErrorState: null,
       loadedMtimeMs: null,
-      conflictError: null,
-      conflictErrorHint: null,
+      conflictErrorState: null,
       pendingDraft: null,
-      draftLoadError: null,
-      draftLoadErrorHint: null,
+      draftLoadErrorState: null,
       draftSaving: false,
-      draftSaveError: null,
-      draftSaveErrorHint: null,
+      draftSaveErrorState: null,
     });
   });
 
-  it('runApply() catch (conflict) sets conflictErrorHint', async () => {
+  it('runApply() catch (conflict) sets conflictErrorState with hint', async () => {
     useMetadataStore.setState({
       metadata: { source: '/test.mp4', matches: [] } as never,
       filePath: '/test.mp4',
@@ -1534,55 +1537,53 @@ describe('#695: conflictErrorHint lifecycle', () => {
     await useMetadataStore.getState().apply();
 
     const state = useMetadataStore.getState();
-    expect(state.conflictError).toBeTruthy();
-    expect(state.conflictErrorHint).toBe('リロード or 上書き');
+    expect(state.conflictErrorState).toEqual({
+      message: 'metadata.json was modified',
+      hint: 'リロード or 上書き',
+      code: 'state.mtime_conflict',
+    });
   });
 
-  it('dismissConflict() clears both conflictError and conflictErrorHint', () => {
+  it('dismissConflict() clears conflictErrorState', () => {
     useMetadataStore.setState({
-      conflictError: 'msg',
-      conflictErrorHint: 'hint',
+      conflictErrorState: { message: 'msg', hint: 'hint', code: null },
     });
 
     useMetadataStore.getState().dismissConflict();
 
     const state = useMetadataStore.getState();
-    expect(state.conflictError).toBeNull();
-    expect(state.conflictErrorHint).toBeNull();
+    expect(state.conflictErrorState).toBeNull();
   });
 
-  it('clear() resets conflictErrorHint', () => {
+  it('clear() resets conflictErrorState', () => {
     useMetadataStore.setState({
-      conflictError: 'msg',
-      conflictErrorHint: 'hint',
+      conflictErrorState: { message: 'msg', hint: 'hint', code: null },
     });
 
     useMetadataStore.getState().clear();
 
     const state = useMetadataStore.getState();
-    expect(state.conflictErrorHint).toBeNull();
+    expect(state.conflictErrorState).toBeNull();
   });
 
-  it('loadSample() resets conflictErrorHint', () => {
+  it('loadSample() resets conflictErrorState', () => {
     useMetadataStore.setState({
-      conflictError: 'msg',
-      conflictErrorHint: 'hint',
+      conflictErrorState: { message: 'msg', hint: 'hint', code: null },
     });
 
     useMetadataStore.getState().loadSample();
 
     const state = useMetadataStore.getState();
-    expect(state.conflictErrorHint).toBeNull();
+    expect(state.conflictErrorState).toBeNull();
   });
 
-  it('applyOverwrite() success path resets conflictErrorHint', async () => {
-    // applyOverwrite calls runApply(true) which clears conflictError/conflictErrorHint
+  it('applyOverwrite() success path resets conflictErrorState', async () => {
+    // applyOverwrite calls runApply(true) which clears conflictErrorState
     // in the initial set({ applying: true, ... }) before invoking apply_changes.
     useMetadataStore.setState({
       metadata: { source: '/test.mp4', matches: [] } as never,
       filePath: '/test.mp4',
-      conflictError: 'prev conflict',
-      conflictErrorHint: 'prev hint',
+      conflictErrorState: { message: 'prev conflict', hint: 'prev hint', code: null },
     });
 
     invokeMock.mockImplementation(async (cmd: string) => {
@@ -1595,7 +1596,6 @@ describe('#695: conflictErrorHint lifecycle', () => {
     await useMetadataStore.getState().applyOverwrite();
 
     const state = useMetadataStore.getState();
-    expect(state.conflictError).toBeNull();
-    expect(state.conflictErrorHint).toBeNull();
+    expect(state.conflictErrorState).toBeNull();
   });
 });
