@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { create } from 'zustand';
 
-import { appErrorHint, appErrorMessage } from '../lib/appError';
+import { toErrorState, type ErrorState } from '../lib/appError';
 
 /**
  * #571 — single entry in the persisted recent-videos history. Mirrors the
@@ -26,21 +26,15 @@ export interface RecentState {
   /** Set true after the first successful `load()` so the UI can skip the empty-state flicker on subsequent re-mounts. */
   loaded: boolean;
   /**
-   * Last load failure. #698: DropScreen 上部に inline notice として表示される
-   * (history は best-effort UI fluff だが、user に履歴失敗を気づかせるため告知)。
-   * dismiss なし、次回 load 成功で自動消去 (recentStore lifecycle)。
+   * Last load failure. #698: DropScreen 上部に inline notice として表示される。
+   * dismiss なし、次回 load 成功で自動消去。#694 で ErrorState 型に集約。
    */
-  loadError: string | null;
-  /** #663: hint for loadError, if AppError carried one. */
-  loadErrorHint: string | null;
+  loadErrorState: ErrorState | null;
   /**
    * Last add failure. #698: DropScreen 上部に notice として表示 (loadError 不在
-   * 時の fallback)。e.g. when the user dropped a file that was deleted before
-   * we could stat it. dismiss なし、次回 add 成功で自動消去。
+   * 時の fallback)。#694 で ErrorState 型に集約。
    */
-  addError: string | null;
-  /** #663: hint for addError, if AppError carried one. */
-  addErrorHint: string | null;
+  addErrorState: ErrorState | null;
 
   /** Read history from disk. Idempotent — safe to call on every DropScreen mount. */
   load: () => Promise<void>;
@@ -55,10 +49,8 @@ export interface RecentState {
 export const useRecentStore = create<RecentState>((set) => ({
   entries: [],
   loaded: false,
-  loadError: null,
-  loadErrorHint: null,
-  addError: null,
-  addErrorHint: null,
+  loadErrorState: null,
+  addErrorState: null,
 
   async load() {
     try {
@@ -71,13 +63,9 @@ export const useRecentStore = create<RecentState>((set) => ({
       const entries: RecentEntry[] = Array.isArray(result)
         ? (result as RecentEntry[])
         : [];
-      set({ entries, loaded: true, loadError: null, loadErrorHint: null });
+      set({ entries, loaded: true, loadErrorState: null });
     } catch (e) {
-      set({
-        loadError: appErrorMessage(e),
-        loadErrorHint: appErrorHint(e),
-        loaded: true,
-      });
+      set({ loadErrorState: toErrorState(e), loaded: true });
     }
   },
 
@@ -87,31 +75,18 @@ export const useRecentStore = create<RecentState>((set) => ({
       const entries: RecentEntry[] = Array.isArray(result)
         ? (result as RecentEntry[])
         : [];
-      set({ entries, addError: null, addErrorHint: null });
+      set({ entries, addErrorState: null });
     } catch (e) {
-      set({ addError: appErrorMessage(e), addErrorHint: appErrorHint(e) });
+      set({ addErrorState: toErrorState(e) });
     }
   },
 
   async clear() {
     await invoke<void>('clear_recent');
-    set({
-      entries: [],
-      loadError: null,
-      loadErrorHint: null,
-      addError: null,
-      addErrorHint: null,
-    });
+    set({ entries: [], loadErrorState: null, addErrorState: null });
   },
 
   reset() {
-    set({
-      entries: [],
-      loaded: false,
-      loadError: null,
-      loadErrorHint: null,
-      addError: null,
-      addErrorHint: null,
-    });
+    set({ entries: [], loaded: false, loadErrorState: null, addErrorState: null });
   },
 }));

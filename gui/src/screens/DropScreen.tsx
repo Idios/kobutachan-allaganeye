@@ -119,10 +119,8 @@ export function DropScreen({
   const recentLoaded = useRecentStore((s) => s.loaded);
   const loadRecent = useRecentStore((s) => s.load);
   const addRecent = useRecentStore((s) => s.add);
-  const recentLoadError = useRecentStore((s) => s.loadError);
-  const recentLoadErrorHint = useRecentStore((s) => s.loadErrorHint);
-  const recentAddError = useRecentStore((s) => s.addError);
-  const recentAddErrorHint = useRecentStore((s) => s.addErrorHint);
+  const recentLoadErrorState = useRecentStore((s) => s.loadErrorState);
+  const recentAddErrorState = useRecentStore((s) => s.addErrorState);
 
   useEffect(() => {
     if (!recentLoaded) {
@@ -374,20 +372,21 @@ export function DropScreen({
 
           <div className={styles.recent} data-testid="recent-list">
             <div className={styles.recentHeading}>──── 直近の録画 ────</div>
-            {(recentLoadError || recentAddError) && (
-              <div
-                className={styles.recentNotice}
-                role="alert"
-                data-testid="recent-notice"
-              >
-                <span className={styles.recentNoticeMessage}>
-                  {recentLoadError ?? recentAddError}
-                </span>
-                <InlineErrorHint
-                  hint={recentLoadError ? recentLoadErrorHint : recentAddErrorHint}
-                />
-              </div>
-            )}
+            {(recentLoadErrorState ?? recentAddErrorState) && (() => {
+              const noticeState = recentLoadErrorState ?? recentAddErrorState;
+              return (
+                <div
+                  className={styles.recentNotice}
+                  role="alert"
+                  data-testid="recent-notice"
+                >
+                  <span className={styles.recentNoticeMessage}>
+                    {noticeState!.message}
+                  </span>
+                  <InlineErrorHint hint={noticeState!.hint} />
+                </div>
+              );
+            })()}
             {recentEntries.length === 0 ? (
               <div
                 className={styles.recentEmpty}

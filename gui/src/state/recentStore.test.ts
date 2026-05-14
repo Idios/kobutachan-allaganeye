@@ -28,7 +28,7 @@ describe('useRecentStore.load (#571)', () => {
     const state = useRecentStore.getState();
     expect(state.entries).toEqual([]);
     expect(state.loaded).toBe(false);
-    expect(state.loadError).toBeNull();
+    expect(state.loadErrorState).toBeNull();
   });
 
   it('populates entries from read_recent and flips loaded=true', async () => {
@@ -38,19 +38,23 @@ describe('useRecentStore.load (#571)', () => {
     const state = useRecentStore.getState();
     expect(state.entries).toEqual(fixture);
     expect(state.loaded).toBe(true);
-    expect(state.loadError).toBeNull();
+    expect(state.loadErrorState).toBeNull();
     expect(invokeMock).toHaveBeenCalledWith('read_recent');
   });
 
   it('keeps a previous error from blocking subsequent successful loads', async () => {
     invokeMock.mockRejectedValueOnce(new Error('disk read failed'));
     await useRecentStore.getState().load();
-    expect(useRecentStore.getState().loadError).toBe('disk read failed');
+    expect(useRecentStore.getState().loadErrorState).toEqual({
+      message: 'disk read failed',
+      hint: null,
+      code: null,
+    });
     invokeMock.mockResolvedValueOnce([entry('E:/a.mkv', 'a.mkv')]);
     await useRecentStore.getState().load();
     const state = useRecentStore.getState();
     expect(state.entries).toHaveLength(1);
-    expect(state.loadError).toBeNull();
+    expect(state.loadErrorState).toBeNull();
   });
 });
 
@@ -64,22 +68,28 @@ describe('useRecentStore.add (#571)', () => {
     ]);
   });
 
-  it('records addError when add_recent fails (e.g. file deleted)', async () => {
+  it('records addErrorState when add_recent fails (e.g. file deleted)', async () => {
     invokeMock.mockRejectedValueOnce(new Error('file not found: E:/a.mkv'));
     await useRecentStore.getState().add('E:/a.mkv');
-    expect(useRecentStore.getState().addError).toBe(
-      'file not found: E:/a.mkv',
-    );
+    expect(useRecentStore.getState().addErrorState).toEqual({
+      message: 'file not found: E:/a.mkv',
+      hint: null,
+      code: null,
+    });
     expect(useRecentStore.getState().entries).toEqual([]);
   });
 
-  it('clears addError after a subsequent successful add', async () => {
+  it('clears addErrorState after a subsequent successful add', async () => {
     invokeMock.mockRejectedValueOnce(new Error('boom'));
     await useRecentStore.getState().add('E:/a.mkv');
-    expect(useRecentStore.getState().addError).toBe('boom');
+    expect(useRecentStore.getState().addErrorState).toEqual({
+      message: 'boom',
+      hint: null,
+      code: null,
+    });
     invokeMock.mockResolvedValueOnce([entry('E:/b.mkv', 'b.mkv')]);
     await useRecentStore.getState().add('E:/b.mkv');
-    expect(useRecentStore.getState().addError).toBeNull();
+    expect(useRecentStore.getState().addErrorState).toBeNull();
   });
 });
 
@@ -102,29 +112,29 @@ describe('useRecentStore.reset (#571)', () => {
     useRecentStore.setState({
       entries: [entry('E:/a.mkv', 'a.mkv')],
       loaded: true,
-      loadError: 'old error',
-      addError: 'old add error',
+      loadErrorState: { message: 'old error', hint: null, code: null },
+      addErrorState: { message: 'old add error', hint: null, code: null },
     });
     useRecentStore.getState().reset();
     const state = useRecentStore.getState();
     expect(state.entries).toEqual([]);
     expect(state.loaded).toBe(false);
-    expect(state.loadError).toBeNull();
-    expect(state.addError).toBeNull();
+    expect(state.loadErrorState).toBeNull();
+    expect(state.addErrorState).toBeNull();
     // reset() must not call invoke (it's a pure in-memory operation).
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });
 
-// #663 — AppError hint pair. `loadError` / `addError` gain sibling `*Hint`
-// fields populated from AppError.hint when invoke rejects with a structured
+// #663 / #694 — AppError hint pair → ErrorState. `loadErrorState` / `addErrorState`
+// fields populated from AppError.hint/code when invoke rejects with a structured
 // AppError object.
-describe('AppError hint pair (#663)', () => {
+describe('AppError ErrorState (#663 / #694)', () => {
   beforeEach(() => {
     useRecentStore.getState().reset();
   });
 
-  it('load path: loadErrorHint is set when AppError carries hint', async () => {
+  it('load path: loadErrorState carries hint and code from AppError', async () => {
     invokeMock.mockImplementation(async () => {
       throw {
         code: 'io.read_failed',
@@ -134,11 +144,14 @@ describe('AppError hint pair (#663)', () => {
     });
     await useRecentStore.getState().load();
     const s = useRecentStore.getState();
-    expect(s.loadError).toBe('broken recent.json');
-    expect(s.loadErrorHint).toBe('delete the file and restart');
+    expect(s.loadErrorState).toEqual({
+      message: 'broken recent.json',
+      hint: 'delete the file and restart',
+      code: 'io.read_failed',
+    });
   });
 
-  it('add path: addErrorHint is set when AppError carries hint', async () => {
+  it('add path: addErrorState carries hint and code from AppError', async () => {
     invokeMock.mockImplementation(async () => {
       throw {
         code: 'io.write_failed',
@@ -148,7 +161,10 @@ describe('AppError hint pair (#663)', () => {
     });
     await useRecentStore.getState().add('/tmp/x.mp4');
     const s = useRecentStore.getState();
-    expect(s.addError).toBe('recent.json write failed');
-    expect(s.addErrorHint).toBe('check disk space');
+    expect(s.addErrorState).toEqual({
+      message: 'recent.json write failed',
+      hint: 'check disk space',
+      code: 'io.write_failed',
+    });
   });
 });
