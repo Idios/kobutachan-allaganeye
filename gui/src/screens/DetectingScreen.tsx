@@ -5,7 +5,7 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 import { AllaganSigil } from '../components/AllaganSigil';
 import { DisabledTooltip } from '../components/DisabledTooltip';
 import { InlineErrorHint } from '../components/InlineErrorHint';
-import { appErrorHint, appErrorMessage } from '../lib/appError';
+import { toErrorState } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 import { toStartDetectParams } from '../utils/detection';
@@ -531,7 +531,8 @@ function DetectingRunningView({
         if (cancelled) return;
         // #663 — AppError-shaped throws (Tauri command rejection) carry
         // a corrective hint that we render as the error view's 2nd line.
-        onError(appErrorMessage(e), appErrorHint(e));
+        const errorState = toErrorState(e);
+        onError(errorState.message, errorState.hint);
       }
     }
 
