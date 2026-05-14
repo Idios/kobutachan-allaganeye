@@ -77,9 +77,14 @@ SINGLE PR (1/1)  —  Issue #694, Lane V Phase 2
             → 2 pair → 2 *ErrorState
             → catch path / lifecycle / clear / reset 移行
   commit 4: gui/src/components/*.tsx + gui/src/screens/*.tsx + 各 .test.tsx
-            → 8 consumer site の selector / 条件 render / message 表示移行
+            → 5 store-level consumer (RestoreButton / ConflictModal / DraftRestoreModal /
+              DropScreen recent notice / PreviewScreen applyError) の selector 移行
+            → 7 file (metadataStore / recentStore は commit 2-3 で対応済、DetectingScreen /
+              DropScreen / ExportScreen / PreviewScreen / ConfirmExitModal) で
+              appErrorMessage / appErrorHint callsite を toErrorState 経由に migration
+            → appErrorMessage / appErrorHint helper 削除 + appError.ts / .test.ts 整理
             → InlineErrorHint API 不変、consumer wrapper class 維持
-            → flow.integration.test.tsx の assertion 名更新
+            → flow.integration.test.tsx に assertion 変更があれば更新 (現状 store error 参照なし)
             → docs/ui-architecture.md §4 lifecycle 規約更新
             → docs/superpowers/specs/2026-05-08-l2-appError-migration-completion-design.md §7 に Phase 2 Refs 追加
 ```
@@ -334,18 +339,31 @@ reset() {
 | `clear()` 終端 | null | null | `entries=[]` |
 | `reset()` 終端 | null | null | `entries=[]` / `loaded=false` |
 
-### §5.5 Consumer 8 site 変更
+### §5.5 Store-level consumer 5 site 変更
+
+実コード調査の結果、store-level `*Error` / `*ErrorHint` を直接 `useMetadataStore` / `useRecentStore` selector で取り出している consumer は **5 site**。残り 3 site (DetectingScreen / ExportScreen / CompleteScreen) は store-level error 表示には参加せず、それぞれ local `useState` (`[error, errorHint]` pair) で error 管理しているため、本 refactor の selector 変更対象外 (§5.6 helper callsite migration には含まれる)。
 
 | site | selector 変更 | 表示変更 |
 | --- | --- | --- |
-| [DropScreen.tsx](../../../gui/src/screens/DropScreen.tsx) | `useRecentStore` の `loadErrorState` / `addErrorState` | `loadErrorState ?? addErrorState` で優先順位、`state?.message` 1 行目 + `<InlineErrorHint hint={state?.hint ?? null} />` 2 行目 |
-| [DetectingScreen.tsx](../../../gui/src/screens/DetectingScreen.tsx) | `useMetadataStore` の `loadErrorState` | `state.message` + `<InlineErrorHint hint={state.hint} />` |
-| [PreviewScreen.tsx](../../../gui/src/screens/PreviewScreen.tsx) | `useMetadataStore` の `applyErrorState` | 同 (wrapper class `.applyErrorHint` の `display: block` 維持) |
-| [ExportScreen.tsx](../../../gui/src/screens/ExportScreen.tsx) | `useMetadataStore` の `applyErrorState` 等 | 同 (wrapper class `.listErrorHint` の `white-space: normal` 等維持) |
-| [CompleteScreen.tsx](../../../gui/src/screens/CompleteScreen.tsx) | 軽量 (selector 名変更のみ) | (該当 error 表示があれば同 pattern) |
-| [RestoreButton.tsx](../../../gui/src/components/RestoreButton.tsx) | `restoreErrorState` | 同 |
-| [ConflictModal.tsx](../../../gui/src/components/ConflictModal.tsx) | `conflictErrorState` | `state?.message` 1 行目 + `<InlineErrorHint hint={state?.hint ?? null} />` 2 行目 + `.cancelHint` 補足 1 行 (Phase 1 PR #725 layout 継承) |
-| [DraftRestoreModal.tsx](../../../gui/src/components/DraftRestoreModal.tsx) | `draftLoadErrorState` | 同 (Phase 1 PR #730 pattern 継承) |
+| [DropScreen.tsx](../../../gui/src/screens/DropScreen.tsx) (recent notice) | `useRecentStore` の `loadErrorState` / `addErrorState` (4 selector → 2) | `loadErrorState ?? addErrorState` で優先順位、`state?.message` 1 行目 + `<InlineErrorHint hint={state?.hint ?? null} />` 2 行目 |
+| [PreviewScreen.tsx](../../../gui/src/screens/PreviewScreen.tsx) (applyError) | `useMetadataStore` の `applyErrorState` (2 selector → 1) | `state.message` + `<InlineErrorHint hint={state.hint} />` (wrapper class `.applyErrorHint` の `display: block` 維持) |
+| [RestoreButton.tsx](../../../gui/src/components/RestoreButton.tsx) | `useMetadataStore` の `restoreErrorState` | `state.message` + `<InlineErrorHint hint={state.hint} />` |
+| [ConflictModal.tsx](../../../gui/src/components/ConflictModal.tsx) | `useMetadataStore` の `conflictErrorState` | `state?.message` 1 行目 + `<InlineErrorHint hint={state?.hint ?? null} />` 2 行目 + `.cancelHint` 補足 1 行 (Phase 1 PR #725 layout 継承) |
+| [DraftRestoreModal.tsx](../../../gui/src/components/DraftRestoreModal.tsx) | `useMetadataStore` の `draftLoadErrorState` + `conflictError` condition → `conflictErrorState` | `state?.message` + `<InlineErrorHint hint={state?.hint ?? null} />` (Phase 1 PR #730 pattern 継承) |
+
+### §5.6 Helper callsite 7 file migration
+
+`appErrorMessage` / `appErrorHint` 削除に伴い、全 callsite を `toErrorState` 経由に置換する。local `useState` の `[error, errorHint]` pair pattern 自体は touch しない (Iron Law 3 — scope creep 防止、必要なら別 issue として #694 完了後に検討)。
+
+| file | callsite 数 | 変換 pattern |
+| --- | --- | --- |
+| `gui/src/state/metadataStore.ts` | 5 catch path (load / runApply / restore / saveDraft / loadDraft) | `const s = toErrorState(e); set({ <slot>ErrorState: s })` (conflict 分岐は `appErrorCodeIs(e, ...)` で同様に判定) |
+| `gui/src/state/recentStore.ts` | 2 catch path (load / add) | `const s = toErrorState(e); set({ <slot>ErrorState: s, ... })` |
+| `gui/src/screens/DetectingScreen.tsx` | 1 onError callsite (`onError(appErrorMessage(e), appErrorHint(e))`) | `const s = toErrorState(e); onError(s.message, s.hint)` (local pair pattern 保持) |
+| `gui/src/screens/DropScreen.tsx` | 2 catch path (local useState `setError` / `setErrorHint`) | `const s = toErrorState(e); setError(s.message); setErrorHint(s.hint)` |
+| `gui/src/screens/ExportScreen.tsx` | 3 callsite (per-match catch + openFolder catch 含む) | 同 (local pair pattern 保持) |
+| `gui/src/screens/PreviewScreen.tsx` | 4 callsite (`setVideoError` / overlayError 表示 / AppError-shape `message: appErrorMessage(e)` 構築 等) | local useState 系は同 pattern、AppError-shape construction (`{ code: 'unknown.error', message: appErrorMessage(e) }`) は `message: toErrorState(e).message` |
+| `gui/src/components/ConfirmExitModal.tsx` | 2 catch path (local useState) | 同 |
 
 代表 consumer 例 (PreviewScreen `applyError`):
 
@@ -396,23 +414,26 @@ Iron Law 3 (scope creep 禁止): Refactor phase で「ついでに」 lifecycle 
 
 ### §6.2 影響を受ける test ファイル
 
-| file | 主な assertion 変更 | 既存件数 | 新規 |
-| --- | --- | --- | --- |
-| `gui/src/lib/appError.test.ts` | `appErrorMessage` / `appErrorHint` test 削除、`toErrorState` test 追加 | 既存数件 | 3-4 |
-| `gui/src/state/metadataStore.test.ts` | 6 catch path + lifecycle 規約 pin (PR #714 由来)、`*ErrorState` 形に書換 | ~80 件 | 0 (assertion 名のみ) |
-| `gui/src/state/recentStore.test.ts` | `loadErrorState` / `addErrorState` set / clear | ~15 件 | 0 |
-| `gui/src/components/RestoreButton.test.tsx` | `restoreErrorState.message` / `.hint` render | 既存数件 | 0 |
-| `gui/src/components/ConflictModal.test.tsx` | `conflictErrorState.message` / `.hint` + キャンセル補足 | 既存数件 | 0 |
-| `gui/src/components/DraftRestoreModal.test.tsx` | `draftLoadErrorState.message` / `.hint` render | 既存数件 | 0 |
-| `gui/src/components/InlineErrorHint.test.tsx` | 変更なし (API 不変) | 3-4 件 | 0 |
-| `gui/src/screens/DropScreen.test.tsx` | recent notice 表示 (`loadErrorState` / `addErrorState` 優先順位) | 既存数件 | 0 |
-| `gui/src/screens/DetectingScreen.test.tsx` | `loadErrorState` render | 既存数件 | 0 |
-| `gui/src/screens/PreviewScreen.test.tsx` | `applyErrorState` render | 既存数件 | 0 |
-| `gui/src/screens/ExportScreen.test.tsx` | `applyErrorState` 等 list error render | 既存数件 | 0 |
-| `gui/src/screens/CompleteScreen.test.tsx` | (selector 名変更のみ) | 軽量 | 0 |
-| `gui/src/__tests__/flow.integration.test.tsx` | flow 経由 error 表示の selector 名変更 | 既存数件 | 0 |
+実コード調査で確認した、本 refactor で touch する test file:
 
-合計 **12-13 file** が touch される。新規 test は `toErrorState` の 3-4 件のみ、既存 baseline (~605 件) は維持し合計 ~608-609 件 pass を目標とする。
+| file | 主な assertion 変更 | 種別 |
+| --- | --- | --- |
+| `gui/src/lib/appError.test.ts` | `appErrorMessage` / `appErrorHint` test 削除、`toErrorState` test 追加 (3-4 件) | helper |
+| `gui/src/state/metadataStore.test.ts` | 6 catch path + lifecycle 規約 pin (PR #714 由来)、`*ErrorState` 形に書換 | store |
+| `gui/src/state/recentStore.test.ts` | `loadErrorState` / `addErrorState` set / clear | store |
+| `gui/src/components/RestoreButton.test.tsx` | `restoreErrorState.message` / `.hint` render | store consumer |
+| `gui/src/components/ConflictModal.test.tsx` | `conflictErrorState.message` / `.hint` + キャンセル補足 | store consumer |
+| `gui/src/components/DraftRestoreModal.test.tsx` | `draftLoadErrorState.message` / `.hint` render | store consumer |
+| `gui/src/components/ConfirmExitModal.test.tsx` | helper migration 後の挙動 retain (local useState 維持) | helper callsite |
+| `gui/src/screens/DropScreen.test.tsx` | recent notice 表示 (`loadErrorState` / `addErrorState` 優先順位) + local useState helper migration | store consumer + helper |
+| `gui/src/screens/PreviewScreen.test.tsx` | `applyErrorState` render + local useState helper migration + AppError shape construction | store consumer + helper |
+| `gui/src/screens/DetectingScreen.test.tsx` | onError callsite の helper migration | helper callsite |
+| `gui/src/screens/ExportScreen.test.tsx` | local useState helper migration | helper callsite |
+| `gui/src/components/InlineErrorHint.test.tsx` | 変更なし (API 不変) | (touch なし) |
+| `gui/src/screens/CompleteScreen.test.tsx` | 変更なし (store error 参照なし) | (touch なし) |
+| `gui/src/__tests__/flow.integration.test.tsx` | 変更なし (store error 参照なし、要確認) | (touch なし想定) |
+
+合計 **11 file** が touch される (touch なし想定 3 file を除く)。新規 test は `toErrorState` の 3-4 件のみ、既存 baseline は維持し合計「baseline + 3-4 件 pass」を目標とする。
 
 ### §6.3 自動チェック (Iron Law 6 PR Pre-flight)
 
@@ -484,11 +505,13 @@ PR CI 全 7 job (`python` / `gui-frontend` / `gui-rust` / `doc-tauri-commands-dr
 - [ ] `gui/src/state/recentStore.ts` が 2 個の `*ErrorState: ErrorState \| null` field に集約され、4 個の `*Error` / `*ErrorHint` field が削除されている (load / add)
 - [ ] `gui/src/state/metadataStore.test.ts` で §5.4 matrix が `*ErrorState` 形で pin されている (Phase 1 PR #714 規約継承)、既存件数維持
 - [ ] `gui/src/state/recentStore.test.ts` で `loadErrorState` / `addErrorState` の set / clear が pin されている、既存件数維持
-- [ ] 5 screen (DropScreen / DetectingScreen / PreviewScreen / ExportScreen / CompleteScreen) が `*ErrorState` selector に切り替わっている
-- [ ] 3 modal/component (RestoreButton / ConflictModal / DraftRestoreModal) が `*ErrorState` selector に切り替わっている
+- [ ] **5 store-level consumer** (RestoreButton / ConflictModal / DraftRestoreModal / DropScreen recent notice / PreviewScreen applyError) が `*ErrorState` selector に切り替わっている
+- [ ] **7 file の helper callsite** (metadataStore / recentStore / DetectingScreen / DropScreen / ExportScreen / PreviewScreen / ConfirmExitModal) で `appErrorMessage` / `appErrorHint` が `toErrorState` 経由に migration されている
+- [ ] `appErrorMessage` / `appErrorHint` は repo 全体で callsite ゼロ、helper file からも削除されている
+- [ ] local `useState` の `[error, errorHint]` pair pattern は (Iron Law 3 のため) touch されていない (DetectingScreen / DropScreen / ExportScreen / PreviewScreen / ConfirmExitModal の local state)
 - [ ] `InlineErrorHint` component API (`hint: string \| null \| undefined`) は不変、consumer 側 wrapper class (`.applyErrorHint` / `.listErrorHint` 等の site-specific overflow 制御) は保持されている
-- [ ] `gui/src/__tests__/flow.integration.test.tsx` の関連 assertion が新形に更新されている
-- [ ] 既存 ~605 test baseline が pass、`toErrorState` の新規 3-4 件で合計 ~608-609 件 pass
+- [ ] `gui/src/__tests__/flow.integration.test.tsx` の関連 assertion を確認 (現状 store error 参照なしのため touch なし想定、要 PR 内検証)
+- [ ] 既存 test baseline が pass、`toErrorState` の新規 3-4 件で合計「baseline + 3-4 件 pass」
 - [ ] `docs/ui-architecture.md` §4 の lifecycle 規約節が `*ErrorState` 形に更新されている (Pair atomicity 規約 → 単一 field 規約)
 - [ ] `docs/superpowers/specs/2026-05-08-l2-appError-migration-completion-design.md` §7 に Phase 2 完遂 Refs リンク追加
 - [ ] PR 本文に Issue #694 body の 5 pair 誤記 (Phase 1 PR #725 で conflict pair 追加済) を訂正記録
