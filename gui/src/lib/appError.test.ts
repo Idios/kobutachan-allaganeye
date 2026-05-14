@@ -5,6 +5,7 @@ import {
   appErrorHint,
   appErrorMessage,
   isAppError,
+  toErrorState,
 } from './appError';
 
 describe('isAppError', () => {
@@ -129,5 +130,76 @@ describe('appErrorHint', () => {
         hint: 42 as unknown as string,
       }),
     ).toBeNull();
+  });
+});
+
+describe('toErrorState', () => {
+  it('normalizes AppError into ErrorState (with code / hint)', () => {
+    const result = toErrorState({
+      code: 'io.file_not_found',
+      message: 'metadata.json not found',
+      hint: 'ファイルパスを確認してください',
+    });
+    expect(result).toEqual({
+      message: 'metadata.json not found',
+      hint: 'ファイルパスを確認してください',
+      code: 'io.file_not_found',
+    });
+  });
+
+  it('coerces hint:undefined to null when AppError has no hint', () => {
+    const result = toErrorState({
+      code: 'io.read_failed',
+      message: 'read fail',
+    });
+    expect(result).toEqual({
+      message: 'read fail',
+      hint: null,
+      code: 'io.read_failed',
+    });
+  });
+
+  it('coerces non-string hint to null (defensive)', () => {
+    const result = toErrorState({
+      code: 'io.read_failed',
+      message: 'read fail',
+      hint: 42 as unknown as string,
+    });
+    expect(result).toEqual({
+      message: 'read fail',
+      hint: null,
+      code: 'io.read_failed',
+    });
+  });
+
+  it('extracts Error.message with null hint / null code', () => {
+    const result = toErrorState(new Error('boom'));
+    expect(result).toEqual({
+      message: 'boom',
+      hint: null,
+      code: null,
+    });
+  });
+
+  it('coerces raw string to string with null hint / null code (legacy fallback)', () => {
+    const result = toErrorState('legacy raw error');
+    expect(result).toEqual({
+      message: 'legacy raw error',
+      hint: null,
+      code: null,
+    });
+  });
+
+  it('coerces null / undefined to their string representation', () => {
+    expect(toErrorState(null)).toEqual({
+      message: 'null',
+      hint: null,
+      code: null,
+    });
+    expect(toErrorState(undefined)).toEqual({
+      message: 'undefined',
+      hint: null,
+      code: null,
+    });
   });
 });

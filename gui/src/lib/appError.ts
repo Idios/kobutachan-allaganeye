@@ -52,6 +52,42 @@ export function appErrorCodeIs(e: unknown, expected: string): boolean {
 }
 
 /**
+ * Store の inline error slot に詰める正規化済み構造。AppError と異なり:
+ * - `hint` / `code` は legacy raw String や `Error` instance では `null`
+ * - `stacktrace` は inline UI 用途では運ばない (ErrorModal 等の別経路で扱う)
+ *
+ * #694 で導入 (Lane V Phase 2)。catch path で
+ * `set({ loadErrorState: toErrorState(e) })` の 1 行に短縮するための型。
+ */
+export interface ErrorState {
+  message: string;
+  hint: string | null;
+  code: string | null;
+}
+
+/**
+ * invoke の reject value (AppError / Error / raw String / null/undefined) を
+ * ErrorState に正規化する。
+ *
+ * - AppError → `{ message, hint: hint ?? null, code }`
+ * - Error instance → `{ message: e.message, hint: null, code: null }`
+ * - その他 (raw String / null / undefined) → `{ message: String(e), hint: null, code: null }`
+ */
+export function toErrorState(e: unknown): ErrorState {
+  if (isAppError(e)) {
+    return {
+      message: e.message,
+      hint: typeof e.hint === 'string' ? e.hint : null,
+      code: e.code,
+    };
+  }
+  if (e instanceof Error) {
+    return { message: e.message, hint: null, code: null };
+  }
+  return { message: String(e), hint: null, code: null };
+}
+
+/**
  * AppError の hint があれば返す。なければ null。UI で「対処ヒント」を出すための helper。
  *
  * **将来用** — 現状 production の Rust 側 AppError コンストラクタは hint を
