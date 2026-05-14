@@ -170,7 +170,7 @@ describe('DropScreen', () => {
   // (`{ code, message, hint }`), the ErrorCard renders the hint as a 2nd
   // line below the message so users get a recommended next action. Bare
   // Error instances (`new Error(...)`) keep the existing single-line UX
-  // because `appErrorHint` returns null for them.
+  // because `toErrorState(e).hint` is null for them.
   it('renders probe error hint as 2nd line when probe rejects with AppError (#663)', async () => {
     const openDialog = vi.fn().mockResolvedValue('C:/videos/x.mkv');
     const probeFn = vi.fn().mockRejectedValue({

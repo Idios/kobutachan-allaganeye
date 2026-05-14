@@ -379,7 +379,7 @@ export function ExportScreen() {
         failureCount += 1;
         // #663 — AppError-shaped throws (Tauri command rejection) carry
         // a corrective hint that we render as the per-match list's 2nd
-        // error line. `appErrorHint` returns null for legacy `new Error`,
+        // error line. `errorState.hint` is null for legacy `new Error`,
         // which we collapse to undefined so MatchState stays clean.
         const errorState = toErrorState(e);
         const msg = errorState.message;
@@ -428,8 +428,8 @@ export function ExportScreen() {
   // を直接 spawn する形に変更。
   // #678 Lane II-b §2.1 — catch path で `e instanceof Error ? e.message :
   // String(e)` を使うと AppError struct (`{code, message, hint}`) が
-  // `[object Object]` に化ける。`appErrorMessage(e)` / `appErrorHint(e)`
-  // helper に置き換え、hint がある場合は 2 行目として並べる。
+  // `[object Object]` に化ける。`toErrorState(e)` の戻り値 `.message` / `.hint`
+  // で統一処理し、hint がある場合は 2 行目として並べる。
   const [openFolderError, setOpenFolderError] = useState<string | null>(null);
   const [openFolderErrorHint, setOpenFolderErrorHint] = useState<string | null>(
     null,

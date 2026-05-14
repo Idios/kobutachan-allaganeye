@@ -436,7 +436,7 @@ describe('PreviewScreen', () => {
 
   // #678 Lane II-b §2.1 — register_video catch path: AppError struct +
   // legacy Error + raw string + null/undefined reject の 4 系統を
-  // appErrorMessage(e) で扱えていることを確認。
+  // toErrorState(e).message で扱えていることを確認。
   // 旧実装 `e instanceof Error ? e.message : String(e)` では AppError struct
   // が `[object Object]` になるバグを TDD で検出するための test。
   // PreviewScreen は videoErrorHint 枠なし (spec §2.1 規約「既存枠なし → message のみ」)
@@ -502,7 +502,7 @@ describe('PreviewScreen', () => {
         return Promise.reject(new Error(`unmocked: ${cmd}`));
       });
       render(<PreviewScreen />);
-      // appErrorMessage(null) = String(null) = "null". alert 要素は出る
+      // toErrorState(null).message = String(null) = "null". alert 要素は出る
       // (paneVideoError の role="alert" は 2 pane 分) が、文字列は
       // `[object Object]` ではない。
       await waitFor(() => {
