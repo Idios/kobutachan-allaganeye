@@ -44,6 +44,7 @@ Expected: 取り込み未済 commit があれば内容を確認、本 PR の tou
 ## Task 1: `ErrorState` interface + `toErrorState` helper を追加 (additive)
 
 **Files:**
+
 - Modify: `gui/src/lib/appError.ts`
 - Modify: `gui/src/lib/appError.test.ts`
 
@@ -205,6 +206,7 @@ git commit -m "$(printf 'feat(gui): #694 ErrorState interface + toErrorState hel
 ## Task 2: `metadataStore.ts` を `*ErrorState` 形に migration
 
 **Files:**
+
 - Modify: `gui/src/state/metadataStore.ts` (state interface + 5 catch path + 5 success path + lifecycle 終端)
 - Modify: `gui/src/state/metadataStore.test.ts` (~80 assertion 書き換え)
 
@@ -578,6 +580,7 @@ git commit -m "$(printf 'refactor(gui): #694 metadataStore を *ErrorState 形�
 ## Task 3: `recentStore.ts` を `*ErrorState` 形に migration
 
 **Files:**
+
 - Modify: `gui/src/state/recentStore.ts` (state interface + 2 catch path + 2 success path + lifecycle 終端)
 - Modify: `gui/src/state/recentStore.test.ts` (assertion 書き換え)
 
@@ -721,6 +724,7 @@ git commit -m "$(printf 'refactor(gui): #694 recentStore を *ErrorState 形に 
 ## Task 4: `RestoreButton.tsx` を `restoreErrorState` selector に migration
 
 **Files:**
+
 - Modify: `gui/src/components/RestoreButton.tsx` (selector + render path)
 - Modify: `gui/src/components/RestoreButton.test.tsx` (assertion + setState)
 
@@ -805,6 +809,7 @@ git commit -m "$(printf 'refactor(gui): #694 RestoreButton を restoreErrorState
 ## Task 5: `ConflictModal.tsx` を `conflictErrorState` selector に migration
 
 **Files:**
+
 - Modify: `gui/src/components/ConflictModal.tsx`
 - Modify: `gui/src/components/ConflictModal.test.tsx`
 
@@ -882,6 +887,7 @@ git commit -m "$(printf 'refactor(gui): #694 ConflictModal を conflictErrorStat
 ## Task 6: `DraftRestoreModal.tsx` を `draftLoadErrorState` + `conflictErrorState` 条件に migration
 
 **Files:**
+
 - Modify: `gui/src/components/DraftRestoreModal.tsx`
 - Modify: `gui/src/components/DraftRestoreModal.test.tsx`
 
@@ -966,6 +972,7 @@ git commit -m "$(printf 'refactor(gui): #694 DraftRestoreModal を draftLoadErro
 ## Task 7: `DropScreen.tsx` を `loadErrorState` / `addErrorState` selector + helper callsite に migration
 
 **Files:**
+
 - Modify: `gui/src/screens/DropScreen.tsx` (recent notice selector + 2 catch path で `appErrorMessage` / `appErrorHint` → `toErrorState`)
 - Modify: `gui/src/screens/DropScreen.test.tsx`
 
@@ -1058,6 +1065,7 @@ git commit -m "$(printf 'refactor(gui): #694 DropScreen を *ErrorState selector
 ## Task 8: `PreviewScreen.tsx` を `applyErrorState` selector + helper callsite に migration
 
 **Files:**
+
 - Modify: `gui/src/screens/PreviewScreen.tsx` (applyError selector + 4 helper callsite)
 - Modify: `gui/src/screens/PreviewScreen.test.tsx`
 
@@ -1181,6 +1189,7 @@ git commit -m "$(printf 'refactor(gui): #694 PreviewScreen を applyErrorState s
 ## Task 9: `DetectingScreen.tsx` の helper callsite を `toErrorState` に migration
 
 **Files:**
+
 - Modify: `gui/src/screens/DetectingScreen.tsx` (onError callsite 1 個)
 - Modify: `gui/src/screens/DetectingScreen.test.tsx` (該当 test があれば)
 
@@ -1232,6 +1241,7 @@ git commit -m "$(printf 'refactor(gui): #694 DetectingScreen の onError callsit
 ## Task 10: `ExportScreen.tsx` の helper callsite を `toErrorState` に migration
 
 **Files:**
+
 - Modify: `gui/src/screens/ExportScreen.tsx` (3 callsite)
 - Modify: `gui/src/screens/ExportScreen.test.tsx` (該当 test があれば)
 
@@ -1290,6 +1300,7 @@ git commit -m "$(printf 'refactor(gui): #694 ExportScreen の 3 helper callsite 
 ## Task 11: `ConfirmExitModal.tsx` の helper callsite を `toErrorState` に migration
 
 **Files:**
+
 - Modify: `gui/src/components/ConfirmExitModal.tsx` (2 catch path)
 - Modify: `gui/src/components/ConfirmExitModal.test.tsx` (該当 test があれば)
 
@@ -1342,6 +1353,7 @@ git commit -m "$(printf 'refactor(gui): #694 ConfirmExitModal の 2 helper calls
 ## Task 12: `appErrorMessage` / `appErrorHint` helper 削除 + appError.test.ts cleanup
 
 **Files:**
+
 - Modify: `gui/src/lib/appError.ts` (helper 2 個削除)
 - Modify: `gui/src/lib/appError.test.ts` (describe ブロック 2 個削除)
 
@@ -1398,6 +1410,7 @@ git commit -m "$(printf 'refactor(gui): #694 appErrorMessage / appErrorHint help
 ## Task 13: docs update (ui-architecture.md + spec Refs)
 
 **Files:**
+
 - Modify: `docs/ui-architecture.md` (§4 lifecycle 規約節を `*ErrorState` 形に書換)
 - Modify: `docs/superpowers/specs/2026-05-08-l2-appError-migration-completion-design.md` (§7 に Phase 2 Refs 追加)
 
@@ -1437,6 +1450,7 @@ git commit -m "$(printf 'docs: #694 ui-architecture.md §4 と #663 spec §7 を
 ## Task 14: PR Pre-flight + PR 作成 + 実機検証依頼
 
 **Files:**
+
 - No edits — verification + PR creation
 
 - [ ] **Step 14-1: Pre-flight Step 0 (ハードゲート、再確認)**
