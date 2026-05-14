@@ -10,7 +10,7 @@ import { InlineErrorHint } from '../components/InlineErrorHint';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useFocusTrap } from '../hooks/useFocusTrap';
-import { appErrorHint, appErrorMessage } from '../lib/appError';
+import { toErrorState } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import {
   type RecentEntry,
@@ -132,7 +132,7 @@ export function DropScreen({
   const [probeInfo, setProbeInfo] = useState<VideoProbeInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   // #663: AppError hint rendered as a 2nd line below `error` inside
-  // the ErrorCard. `appErrorHint` returns null for legacy `new Error()`
+  // the ErrorCard. `toErrorState(e).hint` returns null for legacy `new Error()`
   // throws so the existing single-line UX is preserved.
   const [errorHint, setErrorHint] = useState<string | null>(null);
   const [dragState, setDragState] = useState<DragState>('idle');
@@ -148,8 +148,9 @@ export function DropScreen({
       // with paths that turned out to be unreadable.
       void addRecent(info.path);
     } catch (e) {
-      setError(appErrorMessage(e));
-      setErrorHint(appErrorHint(e));
+      const errorState = toErrorState(e);
+      setError(errorState.message);
+      setErrorHint(errorState.hint);
       dispatch({ type: 'PROBE_FAIL' });
     }
   }
@@ -172,8 +173,9 @@ export function DropScreen({
     try {
       selected = await (openDialogFn ?? defaultOpenDialog)();
     } catch (e) {
-      setError(appErrorMessage(e));
-      setErrorHint(appErrorHint(e));
+      const errorState = toErrorState(e);
+      setError(errorState.message);
+      setErrorHint(errorState.hint);
       dispatch({ type: 'PROBE_FAIL' });
       return;
     }
