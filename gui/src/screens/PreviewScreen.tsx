@@ -14,9 +14,8 @@ import { InlineErrorHint } from '../components/InlineErrorHint';
 import { RestoreButton } from '../components/RestoreButton';
 import { SampleModeBanner } from '../components/SampleModeBanner';
 import {
-  appErrorHint,
-  appErrorMessage,
   isAppError,
+  toErrorState,
   type AppError,
 } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
@@ -277,7 +276,7 @@ export function PreviewScreen() {
           // 旧実装 `e instanceof Error ? e.message : String(e)` は AppError 流入時に
           // `[object Object]` 表示になっていた。
           // PreviewScreen には videoErrorHint 枠なし → hint UI は追加しない (spec §2.1 規約)。
-          setVideoError(appErrorMessage(e));
+          setVideoError(toErrorState(e).message);
         }
       }
     })();
@@ -468,7 +467,7 @@ export function PreviewScreen() {
           setOverlayError(
             isAppError(e)
               ? e
-              : { code: 'unknown.error', message: appErrorMessage(e) },
+              : { code: 'unknown.error', message: toErrorState(e).message },
           );
         });
       brightnessDebounceTimerRef.current = null;
@@ -803,12 +802,15 @@ export function PreviewScreen() {
           brightnessThreshold={blackoutThreshold}
           brightnessWindowSeconds={6}
         />
-        {overlayError && (
-          <div className={styles.overlayError}>
-            <span>{appErrorMessage(overlayError)}</span>
-            <InlineErrorHint hint={appErrorHint(overlayError)} />
-          </div>
-        )}
+        {overlayError && (() => {
+          const overlayState = toErrorState(overlayError);
+          return (
+            <div className={styles.overlayError}>
+              <span>{overlayState.message}</span>
+              <InlineErrorHint hint={overlayState.hint} />
+            </div>
+          );
+        })()}
       </div>
 
       <div className={styles.actionsRow}>
