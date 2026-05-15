@@ -74,12 +74,13 @@ async fn extract_brightness_window_handles_missing_file() {
     .await;
     assert!(result.is_err(), "missing file must surface as Err");
 
-    // Pin the error contract so frontend `appErrorHint` can rely on it: the
-    // failure path is ffmpeg returning non-zero exit (the binary is spawned
-    // successfully but cannot open the input). `subprocess.exit_failed` is
-    // the canonical code for that case in lib.rs (see ensure_thumbnail_exists
-    // and probe_video_with). If ffmpeg itself is missing from PATH the code
-    // is `subprocess.spawn_failed` — accept either, both have default hints.
+    // Pin the error contract so the frontend hint rendering (`toErrorState`
+    // → `ErrorState.hint`) can rely on it: the failure path is ffmpeg
+    // returning non-zero exit (the binary is spawned successfully but cannot
+    // open the input). `subprocess.exit_failed` is the canonical code for
+    // that case in lib.rs (see ensure_thumbnail_exists and probe_video_with).
+    // If ffmpeg itself is missing from PATH the code is `subprocess.spawn_failed`
+    // — accept either, both have default hints.
     //
     // `AppError` Display fmt is `[code] message` (see error.rs `impl Display`),
     // so we match on the `[code]` prefix rather than reaching into private
