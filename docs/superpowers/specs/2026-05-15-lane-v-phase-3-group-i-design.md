@@ -292,4 +292,28 @@ brainstorming の 2 件の AskUserQuestion (§7 Q1 / Q2) で scope は確定済�
 
 ---
 
+## §12 Amendment Log
+
+### 2026-05-15: Phase C Amendment — sweep 範囲 expand
+
+Phase C subagent の repo-wide scan (`git grep -nE "appErrorMessage|appErrorHint" -- ':!docs/superpowers/'`) で brainstorming sweep に漏れていた dangling 参照 2 file を検出:
+
+- `docs/ui-interaction-spec.md:693` (§2.4.9 FrameStrip overlay の inline 診断メッセージ記述) — Phase C 中に commit `a752fc0` で fix 済
+- `docs/tauri-commands.md` lines 10 / 58 / 65 / 73 (frontend narrowing helper 列挙 + code example の 4 箇所) — Phase D で fix
+
+user 承認 (AskUserQuestion 2026-05-15) のもと spec §8 AC「repo 全体で残っていない」を honor するため上記 5 site を本 PR scope に追加。本 spec §3 / §5 / §8 は brainstorming 時点の理解 (3 file) を記録した snapshot として保持し、最終的な PR scope は本 Amendment Log を併せて参照する。
+
+追加 AC (本 PR 完遂条件に追加):
+
+- [ ] `docs/ui-interaction-spec.md:693` (§2.4.9 FrameStrip overlay) の `appErrorMessage` + `InlineErrorHint` 参照が `toErrorState(e)` 経由の `overlayState.message` / `overlayState.hint` に更新されている (commit `a752fc0`)
+- [ ] `docs/tauri-commands.md` line 10 / 58 / 65 / 73 の `appErrorMessage` 参照 4 箇所が `toErrorState` (および code example では `toErrorState(e).message`) に更新されている (Phase D)
+- [ ] `git grep -nE "appErrorMessage|appErrorHint" -- ':!docs/superpowers/'` が 0 件 (repo-wide dangling-ref ゼロを実測確認)
+
+学んだこと:
+
+- brainstorming sweep は対象キーワードを限定して grep するだけでは不十分。`git grep -nE "<symbol>" -- ':!<exclude>'` を repo-wide で実行して全件確認するのがより堅実。次回類似 task では Q1 提示前に full grep を実施する
+- spec §8 で「repo 全体で残っていない」と書いた AC は強い (完全達成の証明を要求する)。AC 文言を緩めるか、AC を honor して全件 fix するかが Phase C/D で問われた選択
+
+---
+
 **brainstorming 完了**。本 spec を起点に `writing-plans` skill で実装計画を策定する。

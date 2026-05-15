@@ -659,4 +659,19 @@ spec §2 Goals (4 項) と spec §8 受け入れ条件 (15 項) が plan の Tas
 
 ---
 
+## Phase D Amendment (2026-05-15)
+
+Phase C subagent の repo-wide scan で brainstorming sweep に漏れていた dangling 参照 2 file (`docs/ui-interaction-spec.md:693` / `docs/tauri-commands.md` lines 10/58/65/73) を検出。user 承認のもと sweep を expand。詳細は spec [§12 Amendment Log](../specs/2026-05-15-lane-v-phase-3-group-i-design.md#§12-amendment-log) 参照。
+
+追加 Task:
+
+- **Phase C 中** (subagent 独断): `docs/ui-interaction-spec.md:693` を `toErrorState(e)` 経由に更新 (commit `a752fc0`)
+- **Phase D**: `docs/tauri-commands.md` 4 line を `toErrorState` に置換 (本 Phase D で commit)、spec + plan に Amendment Log 追記、PR body 更新
+
+最終 repo-wide acceptance:
+
+- `git grep -nE "appErrorMessage|appErrorHint" -- ':!docs/superpowers/'` 0 件 (Phase D 完遂後実測)
+
+---
+
 **Plan complete.** 起点 commit: spec `35e884e` (本 plan は別 commit)。
