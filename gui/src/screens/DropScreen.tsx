@@ -16,9 +16,11 @@ import {
   type RecentEntry,
   useRecentStore,
 } from '../state/recentStore';
+import { splitPath } from '../utils/path';
 import { DetectionParamsPanel } from './DetectionParamsPanel';
 import { dropReducer } from './reducers/drop';
 import type { DropPhase, VideoProbeInfo } from './types';
+import pathStyles from '../styles/path-display.module.css';
 import styles from './DropScreen.module.css';
 
 /**
@@ -476,7 +478,21 @@ function SelectedCard({ info, onConfirm, onCancel }: SelectedCardProps) {
   return (
     <div ref={cardRef} className={styles.selectedCard} data-testid="drop-selected-card">
       <div className={styles.selectedHeading}>検知対象の確認</div>
-      <div className={styles.selectedName}>{info.fileName}</div>
+      {(() => {
+        const { fileName, parentDir } = splitPath(info.path);
+        return (
+          <div
+            className={pathStyles.pathDisplay}
+            title={info.path}
+            data-testid="drop-selected-path"
+          >
+            <div className={styles.selectedName}>{fileName || '(video)'}</div>
+            {parentDir && (
+              <div className={pathStyles.pathSecondary}>{parentDir}</div>
+            )}
+          </div>
+        );
+      })()}
       <div className={styles.selectedMetaTable}>
         <span className={styles.selectedMetaLabel}>解像度</span>
         <span>{info.width}×{info.height}</span>

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -783,5 +783,42 @@ describe('#698: recentStore error notice (A-minimal)', () => {
 
     const notice = screen.getByTestId('recent-notice');
     expect(notice).toHaveAttribute('role', 'alert');
+  });
+});
+
+describe('#676 SelectedCard path display', () => {
+  it('shows fileName primary and parentDir secondary with full path in title', async () => {
+    const probe: VideoProbeInfo = {
+      path: 'E:\\videos\\20260116\\2026-01-16 21-14-05.mkv',
+      fileName: '2026-01-16 21-14-05.mkv',
+      width: 1920,
+      height: 1080,
+      fps: 60,
+      durationSeconds: 7200,
+      sizeBytes: 30_000_000_000,
+      codec: 'h264',
+    };
+    const openDialog = vi.fn().mockResolvedValue(probe.path);
+    const probeFn = vi.fn().mockResolvedValue(probe);
+    const { findByTestId } = render(
+      <DropScreen openDialogFn={openDialog} probeFn={probeFn} />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /参照/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('drop-selected-card')).toBeInTheDocument();
+    });
+
+    const container = await findByTestId('drop-selected-path');
+    expect(container).toHaveAttribute(
+      'title',
+      'E:\\videos\\20260116\\2026-01-16 21-14-05.mkv',
+    );
+    expect(
+      within(container).getByText('2026-01-16 21-14-05.mkv'),
+    ).toBeInTheDocument();
+    expect(
+      within(container).getByText('E:\\videos\\20260116'),
+    ).toBeInTheDocument();
   });
 });

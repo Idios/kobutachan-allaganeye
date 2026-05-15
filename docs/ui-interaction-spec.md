@@ -240,7 +240,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 | 状態 | `selected` (probe 結果 + 確認ボタン表示) |
 | 遷移トリガー | reducer `PROBE_OK` で phase=`probing → selected` 後に出現 |
 | store mutation | カード自体は表示のみ、mutation なし (ボタンは §2.1.5 / §2.1.6) |
-| 例外 / edge case | `probeInfo` が null になり得るが、phase=`selected` 時は guard ([:115-116](../gui/src/screens/DropScreen.tsx#L115)) で render しないため不整合は発生しない |
+| 例外 / edge case | `probeInfo` が null になり得るが、phase=`selected` 時は guard ([:115-116](../gui/src/screens/DropScreen.tsx#L115)) で render しないため不整合は発生しない。**§1.6 ファイルパス表示の原則に準拠** — `info.path` を `splitPath()` で分解、primary `.selectedName` (fileName) + secondary `.pathSecondary` (parentDir 左側省略) + container `title={info.path}` の 2 段構造 (`data-testid="drop-selected-path"`、#676) |
 
 #### §2.1.5 [キャンセル] button (SelectedCard 内)
 
