@@ -7,7 +7,7 @@
 - 戻り値型: **全 25 command が `Result<T, AppError>` または `bool` / 値直接 (`is_process_running` / `probe_environment_info`) を返す** (PR [#665](https://github.com/Idios/kobutachan-allaganeye/pull/665) で legacy `Result<T, String>` から完全 migration 済、PR #669 で `read_error_log_tail` / `probe_environment_info` 追加)
 - `AppError` 構造体 (`gui/src-tauri/src/error.rs`、PR [#661](https://github.com/Idios/kobutachan-allaganeye/pull/661) Refs [#614](https://github.com/Idios/kobutachan-allaganeye/issues/614) で導入) のフィールド: `code: String` (domain-specific identifier、例 `io.file_not_found`) / `message: String` / `hint: Option<String>` / `stacktrace: Option<String>`
 - `From<std::io::Error>` / `From<serde_json::Error>` / `From<String>` / `From<&str>` impl があり、`?` 演算子で自動変換される (PR #665 で追加)。`std::io::Error` は `ErrorKind` から domain code を派生 (例 `NotFound` → `io.file_not_found`)
-- frontend 側 narrowing: `gui/src/lib/appError.ts` の `appErrorMessage(e)` / `appErrorCodeIs(e, code)` / `isAppError(e)` ヘルパーを使う。Tauri は `AppError` を JSON object として frontend に渡し、invoke 失敗時 Promise.reject 値が AppError instance になる
+- frontend 側 narrowing: `gui/src/lib/appError.ts` の `toErrorState(e)` / `appErrorCodeIs(e, code)` / `isAppError(e)` ヘルパーを使う。Tauri は `AppError` を JSON object として frontend に渡し、invoke 失敗時 Promise.reject 値が AppError instance になる
 - 本 doc の「想定エラーケース / AppError code」列は実装と整合する domain.error_kind 命名 (例: `io.file_not_found`、`parse.json_invalid`、`state.mtime_conflict`)
 
 ## 分類タグ
@@ -55,14 +55,14 @@
 ## 補足
 
 - すべての command は async / sync 問わず Tauri runtime で execute される
-- **frontend (TypeScript) 側の error narrowing**: `gui/src/lib/appError.ts` の `appErrorMessage(e)` / `appErrorCodeIs(e, code)` / `isAppError(e)` ヘルパーを使う。Tauri が `AppError` を JSON object として serialize するため、invoke 失敗時の Promise.reject 値は `{ code, message, hint?, stacktrace? }` の object になる
+- **frontend (TypeScript) 側の error narrowing**: `gui/src/lib/appError.ts` の `toErrorState(e)` / `appErrorCodeIs(e, code)` / `isAppError(e)` ヘルパーを使う。Tauri が `AppError` を JSON object として serialize するため、invoke 失敗時の Promise.reject 値は `{ code, message, hint?, stacktrace? }` の object になる
 - **`AppError` 構造**: `code: String` (domain-specific identifier) / `message: String` / `hint: Option<String>` / `stacktrace: Option<String>`。enum ではなく struct で、code 値は domain.error_kind 形式の自由文字列 (例: `io.file_not_found`、`parse.json_invalid`、`state.mtime_conflict`)
 - **`?` 演算子の自動変換**: Rust 側 `error.rs` に `From<std::io::Error>` / `From<serde_json::Error>` / `From<String>` / `From<&str>` impl があり、各 helper の error を `?` で AppError に variant-aware に自動変換できる。例: `std::io::Error::NotFound` → `AppError { code: "io.file_not_found" }`
 
 frontend narrowing の使用例:
 
 ```ts
-import { appErrorCodeIs, appErrorMessage } from '../lib/appError';
+import { appErrorCodeIs, toErrorState } from '../lib/appError';
 
 try {
   await invoke('apply_changes', { path, metadata, expectedMtimeMs });
@@ -70,7 +70,7 @@ try {
   if (appErrorCodeIs(e, 'state.mtime_conflict')) {
     // 競合専用の UI 分岐
   } else {
-    showError(appErrorMessage(e));
+    showError(toErrorState(e).message);
   }
 }
 ```
