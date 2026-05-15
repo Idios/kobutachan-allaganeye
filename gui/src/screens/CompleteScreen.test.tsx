@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -344,5 +344,81 @@ describe('CompleteScreen', () => {
       render(<CompleteScreen />);
       expect(screen.getByTestId('brightness-timeline')).toBeInTheDocument();
     });
+  });
+});
+
+describe('#676 CompleteScreen topBar path display', () => {
+  beforeEach(() => {
+    useAppStateStore.getState().reset();
+    useMetadataStore.getState().clear();
+    useAppStateStore.getState().navigate('complete');
+  });
+
+  it('shows fileName primary and parentDir secondary with title (videoSource = selectedVideoPath)', async () => {
+    const fullPath = 'E:\\videos\\20260116\\2026-01-16 21-14-05.mkv';
+    useMetadataStore.setState({
+      metadata: {
+        source: 'C:\\different\\path.mkv',
+        source_duration: 100,
+        source_duration_display: '1:40',
+        detected_at: '2026-04-22T00:00:00Z',
+        detection_params: {
+          sample_interval: 2,
+          blackout_threshold: 15,
+          min_match_duration: 300,
+          min_blackout_duration: 3,
+          no_audio: false,
+          use_gpu: null,
+          workers: null,
+        },
+        matches: [],
+        gaps: [],
+      },
+      hasBackup: false,
+    });
+    useAppStateStore.setState({ selectedVideoPath: fullPath });
+
+    const { findByTestId } = render(<CompleteScreen />);
+
+    const container = await findByTestId('complete-path');
+    expect(container).toHaveAttribute('title', fullPath);
+    expect(
+      within(container).getByText('2026-01-16 21-14-05.mkv'),
+    ).toBeInTheDocument();
+    expect(
+      within(container).getByText('E:\\videos\\20260116'),
+    ).toBeInTheDocument();
+  });
+
+  it('falls back to metadata.source when selectedVideoPath is null (sample mode)', async () => {
+    const metadataSource = 'C:\\sample\\demo.mkv';
+    useMetadataStore.setState({
+      metadata: {
+        source: metadataSource,
+        source_duration: 100,
+        source_duration_display: '1:40',
+        detected_at: '2026-04-22T00:00:00Z',
+        detection_params: {
+          sample_interval: 2,
+          blackout_threshold: 15,
+          min_match_duration: 300,
+          min_blackout_duration: 3,
+          no_audio: false,
+          use_gpu: null,
+          workers: null,
+        },
+        matches: [],
+        gaps: [],
+      },
+      hasBackup: false,
+    });
+    useAppStateStore.setState({ selectedVideoPath: null });
+
+    const { findByTestId } = render(<CompleteScreen />);
+
+    const container = await findByTestId('complete-path');
+    expect(container).toHaveAttribute('title', metadataSource);
+    expect(within(container).getByText('demo.mkv')).toBeInTheDocument();
+    expect(within(container).getByText('C:\\sample')).toBeInTheDocument();
   });
 });

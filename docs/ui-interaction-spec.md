@@ -511,7 +511,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 | 状態 | `displayOnly`。`metadata.source` を full path で表示 |
 | 遷移トリガー | `metadata` 変化に追従 |
 | store mutation | なし |
-| 例外 / edge case | full path が長すぎる場合の overflow / ellipsis は CSS 任せ。a11y は plain text、screen reader はそのまま読み上げる。Phase 2.5 で basename + tooltip full path に変更する選択肢あり ([#587](https://github.com/Idios/kobutachan-allaganeye/issues/587)) |
+| 例外 / edge case | **§1.6 ファイルパス表示の原則に準拠** — `videoSource` (= `selectedVideoPath ?? metadata.source`) を `splitPath()` で分解、primary `.sourceName` (13px / text-bright) + secondary `.pathSecondary` (parentDir 左側省略) + container `title={videoSource}` (`data-testid="complete-path"`、#676)。sample mode 等 `selectedVideoPath` 不在時は `metadata.source` にフォールバックして同一構造で表示 |
 
 #### §2.3.3 stats (試合数 / 総尺)
 

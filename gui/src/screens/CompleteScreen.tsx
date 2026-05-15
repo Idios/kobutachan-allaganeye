@@ -9,7 +9,9 @@ import { SampleModeBanner } from '../components/SampleModeBanner';
 import { sampleBrightness } from '../data/sampleMetadata';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
+import { splitPath } from '../utils/path';
 import { fmtTime } from '../utils/time';
+import pathStyles from '../styles/path-display.module.css';
 import styles from './CompleteScreen.module.css';
 
 /**
@@ -98,7 +100,22 @@ export function CompleteScreen() {
         <div className={styles.statusDot} aria-hidden="true" />
         <div className={styles.sourceBox}>
           <div className={styles.sourceCaption}>観測完了</div>
-          <div className={styles.sourceName}>{metadata.source}</div>
+          {(() => {
+            const src = selectedVideoPath ?? metadata.source;
+            const { fileName, parentDir } = splitPath(src);
+            return (
+              <div
+                className={pathStyles.pathDisplay}
+                title={src}
+                data-testid="complete-path"
+              >
+                <div className={styles.sourceName}>{fileName || '(video)'}</div>
+                {parentDir && (
+                  <div className={pathStyles.pathSecondary}>{parentDir}</div>
+                )}
+              </div>
+            );
+          })()}
         </div>
         <div className={styles.stats}>
           <div>
