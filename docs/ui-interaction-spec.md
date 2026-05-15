@@ -857,7 +857,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | `displayOnly`。`countedMatches.length` (永続 skip + ad-hoc exclude を除外した数) を反映 |
 | 遷移トリガー | `metadata.matches` / `excludedIndexes` 変化に追従 |
 | store mutation | なし |
-| 例外 / edge case | `countedMatches.length === 0` のとき "0 試合を書き出す" 表示で無意味だが、画面全体としては start ボタン disabled (`!videoSource`) で実害なし。0 件時の専用文言 + start 無効化は [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) 議論対象 |
+| 例外 / edge case | `countedMatches.length === 0` のとき "0 試合を書き出す" 表示で無意味だが、画面全体としては start ボタン disabled (`!videoSource`) で実害なし。0 件時の専用文言 + start 無効化は [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) 議論対象。**§1.6 ファイルパス表示の原則に準拠** — header caption/title の上に `videoSource` 由来の 2 段 path display を render (primary `.headerFileName` (13px) + secondary `.pathSecondary` 左側省略 + container `title={videoSource}`、`data-testid="export-path"`、#676)。`videoSource === null` で領域全体を非表示 |
 
 #### §2.5.3 出力先 input
 

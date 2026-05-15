@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1090,5 +1090,61 @@ describe('ExportScreen sample mode (Task 1.7)', () => {
     const noneBtn = screen.getByRole('button', { name: 'deselect all matches' });
     expect(allBtn).toBeDisabled();
     expect(noneBtn).toBeDisabled();
+  });
+});
+
+describe('#676 ExportScreen header path display', () => {
+  function renderExportScreenWith({
+    selectedVideoPath,
+    metadataSource,
+  }: {
+    selectedVideoPath: string | null;
+    metadataSource: string | null;
+  }) {
+    invokeMock.mockResolvedValue(undefined);
+    listenMock.mockResolvedValue(() => undefined);
+    useAppStateStore.getState().reset();
+    useMetadataStore.getState().clear();
+    useMetadataStore.getState().loadSample();
+    // Override source in metadata (null clears it to force videoSource=null)
+    const currentMeta = useMetadataStore.getState().metadata;
+    if (currentMeta) {
+      useMetadataStore.setState({
+        metadata: {
+          ...currentMeta,
+          source: metadataSource ?? (null as unknown as string),
+        },
+      });
+    }
+    useMetadataStore.setState({ filePath: '/tmp/x/metadata.json' });
+    useAppStateStore.getState().navigate('export');
+    useAppStateStore.setState({ selectedVideoPath });
+    return render(<ExportScreen />);
+  }
+
+  it('shows fileName primary and parentDir secondary with title (videoSource)', async () => {
+    const fullPath = 'E:\\videos\\20260116\\2026-01-16 21-14-05.mkv';
+    const { findByTestId } = renderExportScreenWith({
+      selectedVideoPath: fullPath,
+      metadataSource: 'C:\\different\\path.mkv',
+    });
+
+    const container = await findByTestId('export-path');
+    expect(container).toHaveAttribute('title', fullPath);
+    expect(
+      within(container).getByText('2026-01-16 21-14-05.mkv'),
+    ).toBeInTheDocument();
+    expect(
+      within(container).getByText('E:\\videos\\20260116'),
+    ).toBeInTheDocument();
+  });
+
+  it('does not render path display when videoSource is null', async () => {
+    const { queryByTestId } = renderExportScreenWith({
+      selectedVideoPath: null,
+      metadataSource: null,
+    });
+
+    expect(queryByTestId('export-path')).not.toBeInTheDocument();
   });
 });
