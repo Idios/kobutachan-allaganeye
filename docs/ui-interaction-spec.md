@@ -794,6 +794,16 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | store mutation | なし |
 | 例外 / edge case | 通常フロー (complete から double-click / [境界を調整]) では到達しない。dev StateSwitcher で preview に直接遷移したり、apply 後 matches 配列が変動して selectedMatchIndex が消えた場合に表示。文言と「complete へ戻る」リンクは [#587](https://github.com/Idios/kobutachan-allaganeye/issues/587) a11y/polish で議論 |
 
+#### §2.4.16 header path display (#676)
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | display block ([PreviewScreen.tsx:629](../gui/src/screens/PreviewScreen.tsx#L629) `.headerInfo` 内、`.caption` の上に配置) |
+| 状態 | `displayOnly`。`videoSource` 不在 (sample mode 等で `selectedVideoPath` も `metadata.source` も null) のとき非 render |
+| 遷移トリガー | `videoSource` (= `selectedVideoPath ?? metadata?.source ?? null`) 変化に追従 |
+| store mutation | なし |
+| 例外 / edge case | **§1.6 ファイルパス表示の原則に準拠** — `videoSource` を `splitPath()` で分解、primary `.headerFileName` (13px / text-bright、PreviewScreen.module.css 新設) + secondary `.pathSecondary` (parentDir 左側省略) + container `title={videoSource}` (`data-testid="preview-path"`、#676)。`videoSource === null` で領域全体を非表示 (条件付き render) |
+
 ### §2.5 export
 
 **phase**: 専用 reducer ([reducers/export.ts:19-48](../gui/src/screens/reducers/export.ts#L19))。`idle | running | cancelling | completed | error`

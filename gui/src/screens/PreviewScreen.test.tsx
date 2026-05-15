@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1001,5 +1001,66 @@ describe('PreviewScreen FrameStrip brightness overlay', () => {
     // extract_brightness_window は呼ばれていない (sample mode は synthetic)
     const allCalls = invokeMock.mock.calls.map((c) => c[0]);
     expect(allCalls).not.toContain('extract_brightness_window');
+  });
+});
+
+describe('#676 PreviewScreen header path display', () => {
+  function renderPreviewScreenWith({
+    selectedVideoPath,
+    metadataSource,
+  }: {
+    selectedVideoPath: string | null;
+    metadataSource: string | null;
+  }) {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'register_video')
+        return Promise.resolve({ url: 'http://127.0.0.1:0/video/test-token', token: 'test-token' });
+      if (cmd === 'generate_match_thumbnails') return Promise.resolve([]);
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    useAppStateStore.getState().reset();
+    useMetadataStore.getState().clear();
+    useMetadataStore.getState().loadSample();
+    // Override source in metadata (null clears it to force videoSource=null)
+    const currentMeta = useMetadataStore.getState().metadata;
+    if (currentMeta) {
+      useMetadataStore.setState({
+        metadata: {
+          ...currentMeta,
+          source: metadataSource ?? (null as unknown as string),
+        },
+      });
+    }
+    useAppStateStore.getState().selectMatch(4);
+    useAppStateStore.getState().navigate('preview');
+    useAppStateStore.setState({ selectedVideoPath });
+    return render(<PreviewScreen />);
+  }
+
+  it('shows fileName primary and parentDir secondary with title (videoSource)', async () => {
+    const fullPath = 'E:\\videos\\20260116\\2026-01-16 21-14-05.mkv';
+    const { findByTestId } = renderPreviewScreenWith({
+      selectedVideoPath: fullPath,
+      metadataSource: 'C:\\different\\path.mkv',
+    });
+
+    const container = await findByTestId('preview-path');
+    expect(container).toHaveAttribute('title', fullPath);
+    expect(
+      within(container).getByText('2026-01-16 21-14-05.mkv'),
+    ).toBeInTheDocument();
+    expect(
+      within(container).getByText('E:\\videos\\20260116'),
+    ).toBeInTheDocument();
+  });
+
+  it('does not render path display when videoSource is null', async () => {
+    const { queryByTestId } = renderPreviewScreenWith({
+      selectedVideoPath: null,
+      metadataSource: null,
+    });
+
+    expect(queryByTestId('preview-path')).not.toBeInTheDocument();
   });
 });
