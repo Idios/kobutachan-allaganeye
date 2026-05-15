@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { axe } from 'jest-axe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -918,5 +918,52 @@ describe('DetectingScreen helpers', () => {
   it('has no axe violations while running (#587)', async () => {
     const { container } = render(<DetectingScreen />);
     expect(await axe(container)).toHaveNoViolations();
+  });
+});
+
+describe('#676 DetectingScreen path display', () => {
+  it('running header shows fileName primary and parentDir secondary with full path title', async () => {
+    const fullPath = 'E:\\videos\\20260116\\2026-01-16 21-14-05.mkv';
+    // Pin start_detect so the screen stays in running phase long enough to assert
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      return Promise.resolve(null);
+    });
+    useAppStateStore.getState().setSelectedVideoPath(fullPath);
+    const { findByTestId } = render(<DetectingScreen />);
+
+    const container = await findByTestId('detecting-path');
+    expect(container).toHaveAttribute('title', fullPath);
+    expect(
+      within(container).getByText('2026-01-16 21-14-05.mkv'),
+    ).toBeInTheDocument();
+    expect(
+      within(container).getByText('E:\\videos\\20260116'),
+    ).toBeInTheDocument();
+  });
+
+  it('error view shows fileName primary and parentDir secondary with full path title', async () => {
+    const fullPath = 'E:\\videos\\20260116\\2026-01-16 21-14-05.mkv';
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return Promise.reject(new Error('spawn allaganeye failed'));
+      }
+      return Promise.resolve(null);
+    });
+    useAppStateStore.getState().setSelectedVideoPath(fullPath);
+    const { findByTestId } = render(<DetectingScreen />);
+
+    const container = await findByTestId('detecting-error-path');
+    expect(container).toHaveAttribute('title', fullPath);
+    expect(
+      within(container).getByText('2026-01-16 21-14-05.mkv'),
+    ).toBeInTheDocument();
+    expect(
+      within(container).getByText('E:\\videos\\20260116'),
+    ).toBeInTheDocument();
   });
 });

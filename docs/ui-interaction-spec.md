@@ -404,7 +404,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 | 状態 | `displayOnly` |
 | 遷移トリガー | なし。`selectedVideoPath` 変化時に再 render (basename を抜き出して表示) |
 | store mutation | なし |
-| 例外 / edge case | `selectedVideoPath` が null の場合は `'(video)'` フォールバック。Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) で `meta` 行を `probing` event payload (`width` × `height` / `fps` / `codec` / `duration_s`) から実 ffprobe 結果に差し替え済 (`probing` 受信前の数百 ms は暫定 `phase: …` を表示) |
+| 例外 / edge case | `selectedVideoPath` が null の場合は fileName `'(video)'` フォールバック (parentDir は空文字列で secondary 行非表示)。Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) で `meta` 行を `probing` event payload (`width` × `height` / `fps` / `codec` / `duration_s`) から実 ffprobe 結果に差し替え済 (`probing` 受信前の数百 ms は暫定 `phase: …` を表示)。**§1.6 ファイルパス表示の原則に準拠** — `selectedVideoPath` を `splitPath()` で分解、primary `.fileName` (14px) + secondary `.pathSecondary` (parentDir 左側省略) + container `title={selectedVideoPath}` (`data-testid="detecting-path"`、#676) |
 
 #### §2.2.3 progressBadge
 
@@ -455,6 +455,16 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 | 遷移トリガー | `onClick` → reducer `CANCEL_CLICKED` (phase=`running → cancelling`)。Phase 2 / Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) は副作用 effect で即座に `CANCEL_CONFIRMED` を発火し `cancelling → cancelled` 遷移。実 ffmpeg `kill()` 完了同期は [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) で `kill_tracked_processes` 完了を待ってから `CANCEL_CONFIRMED` を発火する設計に拡張する (本 PR は phase 遷移のみで scope を絞る) |
 | store mutation | なし (cancelled 検出後の effect で `appStateStore.navigate('drop')` のみ) |
 | 例外 / edge case | §1.2 disabled 理由表示について、現状 `disabled={phase !== 'running'}` のみで tooltip / inline hint 未実装 → 後続 PR で `title="検知実行中のみ中断できます"` 等を追加 (本 doc が source of truth)。`cancelling` 中の連打は disabled で物理的に防止 |
+
+#### §2.2.8 Detecting error view path display (#676)
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | display block ([DetectingScreen.tsx:732-792](../gui/src/screens/DetectingScreen.tsx#L732) `DetectingErrorView` 内、`role="alert"` の error card 内部) |
+| 状態 | `displayOnly`。phase=`error` のときのみ render される (error view) |
+| 遷移トリガー | なし。`selectedVideoPath` 由来の `displayPath` prop に追従 |
+| store mutation | なし |
+| 例外 / edge case | **§1.6 ファイルパス表示の原則に準拠** — `selectedVideoPath` を `splitPath()` で分解、primary `.errorFile` (13px / text-bright) + secondary `.pathSecondary` (parentDir 左側省略) + container `title={selectedVideoPath}` (`data-testid="detecting-error-path"`)。`selectedVideoPath` が null の場合は fileName `'(video)'` + secondary 行非表示にフォールバック |
 
 ### §2.3 complete
 
