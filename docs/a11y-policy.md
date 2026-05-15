@@ -82,6 +82,11 @@
 
 scope 外で扱う `aria-describedby` は使わず、title 属性 (mouse hover) と visible inline text のみで構成する。
 
+## ファイルパス表示の `title` 属性
+
+5 画面の path 表示は **[ui-interaction-spec.md §1.6](ui-interaction-spec.md)** が source of truth。
+`title` 属性 (hover tooltip) で full path を出し、`aria-label` は新規追加しない方針 (a11y-policy 「scope 外」整合)。
+
 ## 動きの抑止 (prefers-reduced-motion)
 
 ```css
