@@ -189,11 +189,11 @@ function Format-ReadmeContent {
   present without running a full build.
 
   -IncludeGui:$true (when the Tauri-built `allaganeye-gui.exe` is bundled, #570)
-  emits a "Easiest: double-click `allaganeye.bat`" section as the FIRST usage
-  entry, followed by drag-drop and Command Prompt sections (#617). The WebView2
-  Runtime dependency note moves into this section. -IncludeGui:$false (default,
-  CLI-only ZIP) keeps drag-drop as the first usage entry without any GUI
-  references.
+  emits a "最も簡単: `allaganeye.bat` をダブルクリック" section as the FIRST
+  usage entry, followed by drag-drop and Command Prompt sections (#617). The
+  WebView2 Runtime dependency note moves into this section. -IncludeGui:$false
+  (default, CLI-only ZIP) keeps drag-drop as the first usage entry without any
+  GUI references. README body is Japanese since #749 (see PR #767).
   #>
   param(
     [Parameter(Mandatory = $true)][string]$Version,
@@ -289,6 +289,9 @@ function Get-LauncherTemplate {
   text that mentions ".bat double-click -> GUI" as the primary entry. -IncludeGui:$false
   (default, CLI-only ZIP) omits the GUI mention so users are not directed to a
   non-existent exe. Symmetric with Format-ReadmeContent -IncludeGui (#570).
+
+  Launcher help text intentionally stays English (cmd.exe + CP932 console can
+  garble multi-byte glyphs); README.txt body is Japanese as of #749 (PR #767).
 
   Branch order in the template (top-down, first match wins, #617):
     1. --help / -h / /?               -> :show_help (explicit help flags always reach help)
