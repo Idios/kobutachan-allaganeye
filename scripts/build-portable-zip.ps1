@@ -205,20 +205,20 @@ function Format-ReadmeContent {
   $guiSection = if ($IncludeGui) {
 @'
 
-### Easiest: double-click `allaganeye.bat`
+### 最も簡単: `allaganeye.bat` をダブルクリック
 
-Double-click `allaganeye.bat` in this folder to launch the GUI
-(`allaganeye-gui.exe`). The GUI lets you drop a video file, review detected
-matches, fine-tune match boundaries, and export each match as MP4.
+このフォルダの `allaganeye.bat` をダブルクリックすると GUI
+(`allaganeye-gui.exe`) が起動します。GUI に動画ファイルをドロップして、
+検出された試合を確認・微調整し、各試合を MP4 でエクスポートできます。
 
-NOTE: The GUI requires Microsoft Edge WebView2 Runtime, which is preinstalled
-on Windows 11 and recent Windows 10 builds. If the GUI fails to start with a
-missing-runtime dialog, install it from:
+NOTE: GUI は Microsoft Edge WebView2 Runtime を必要とします (Windows 11 と
+最近の Windows 10 にはプリインストール済み)。GUI が起動せず runtime missing
+のダイアログが出た場合は以下からインストールしてください:
 
     https://developer.microsoft.com/en-us/microsoft-edge/webview2/
 
-(`Evergreen Standalone Installer` is sufficient and does not require admin
-rights for per-user install.)
+(`Evergreen Standalone Installer` で十分。管理者権限なしで per-user
+インストール可能です。)
 
 '@
   }
@@ -234,45 +234,45 @@ rights for per-user install.)
   else { '' }
 
   return @"
-# allaganeye v$Version (Portable ZIP for Windows)
+# allaganeye v$Version (Windows 向け Portable ZIP)
 
-Python 3.11 and FFmpeg LGPL binaries are bundled alongside allaganeye.
+allaganeye と一緒に Python 3.11 と FFmpeg LGPL バイナリが同梱されています。
 
-## Usage
+## 使い方
 $guiSection
-### Drag-and-drop a video file
+### 動画ファイルをドラッグ＆ドロップ
 
-Drop a video file (.mkv / .mp4 / .avi / .mov) onto ``allaganeye.bat`` and it
-will split the video automatically. The command window stays open at the end so
-you can read the result -- press any key to close it.
+動画ファイル (.mkv / .mp4 / .avi / .mov) を ``allaganeye.bat`` にドロップすると、
+自動で試合分割が始まります。処理結果を確認できるようにコマンドウィンドウは
+終了後も開いたままになります -- 何かキーを押すと閉じます。
 
-Output MP4 files and metadata.json land under ``output\`` inside this folder.
+出力された MP4 と metadata.json はこのフォルダ内の ``output\`` に保存されます。
 
-### From a Command Prompt
+### コマンドプロンプトから実行
 
-If you want to pass options such as --dry-run or -o, open a Command Prompt in
-this folder and run:
+--dry-run や -o などのオプションを指定したい場合は、このフォルダで
+コマンドプロンプトを開き、以下のように実行してください:
 
     allaganeye.bat split "C:\path\to\video.mkv"
     allaganeye.bat split "C:\path\to\video.mkv" --dry-run
     allaganeye.bat --version
 
-See https://github.com/Idios/kobutachan-allaganeye for full documentation.
+詳細なドキュメントは https://github.com/Idios/kobutachan-allaganeye を参照してください。
 
-## Licenses
+## ライセンス
 
-- allaganeye: MIT (see the repository LICENSE file)
+- allaganeye: MIT (リポジトリの LICENSE ファイル参照)
 $guiLicenseLine- Python: PSF License (python\LICENSE.txt)
-- FFmpeg: LGPLv3 (full text in ffmpeg\LICENSE.txt)
+- FFmpeg: LGPLv3 (全文は ffmpeg\LICENSE.txt)
     Build:         ffmpeg n$FFmpegVersion win64-lgpl-shared build (BtbN/FFmpeg-Builds)
     Build tag:     $FFmpegBuildTag
     Source:        https://git.ffmpeg.org/ffmpeg.git (ref $FFmpegSourceRef)
     Build scripts: https://github.com/BtbN/FFmpeg-Builds
 
-allaganeye (MIT) invokes the FFmpeg binary as a separate subprocess only.
-The shared-build DLLs are loaded dynamically by the FFmpeg executables and are
-redistributed under LGPLv3 alongside the license text; LGPLv3 therefore does
-not apply to allaganeye itself.
+allaganeye (MIT) は FFmpeg バイナリを独立したサブプロセスとして呼び出すのみです。
+shared-build DLLs は FFmpeg 実行ファイルが動的にロードし、LGPLv3 のライセンス本文と
+ともに LGPLv3 のもとで再配布しています。したがって LGPLv3 は allaganeye 本体には
+適用されません。
 "@
 }
 
