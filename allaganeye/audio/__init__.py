@@ -12,7 +12,7 @@ Public API:
     sliding_cosine_similarity / find_match_peaks -- match a reference window
     BgmHit -- typed dict for matcher results
 
-Removal (director Q3 compliance, #284):
+Removal (Q3 compliance, #284):
     If this module ever needs to be stripped from the distribution, the
     package contains no irreversible coupling and can be excised in three
     discrete edits:
@@ -41,7 +41,7 @@ from allaganeye.audio.matcher import (
 )
 from allaganeye.audio.scan import scan_fanfare_hits
 
-# Audio module freeze flag (#327, l1-detection-redesign.md).
+# Audio module freeze flag (#327, docs/archive/l1-detection-redesign.md).
 # Fanfare scan alone produces false positives (#303); the module is
 # frozen until compound-signal integration is ready.  Set to False
 # to re-enable audio promotion as the default behaviour.

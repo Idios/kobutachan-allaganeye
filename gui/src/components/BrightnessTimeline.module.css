@@ -1,0 +1,60 @@
+.timeline {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.gridLine {
+  stroke: var(--ae-gold);
+  stroke-opacity: 0.08;
+  stroke-width: 0.5;
+}
+
+.thresholdLine {
+  stroke: var(--ae-danger);
+  stroke-opacity: 0.4;
+  stroke-dasharray: 3 3;
+  stroke-width: 0.5;
+}
+
+.thresholdLabel {
+  fill: var(--ae-danger);
+  font-family: var(--ae-font-mono);
+}
+
+.blackoutBand {
+  fill: var(--ae-cyan);
+  fill-opacity: 0.12;
+}
+
+.brightnessLine {
+  stroke: var(--ae-gold);
+  stroke-width: 0.8;
+  fill: none;
+  opacity: 0.9;
+}
+
+.brightnessFill {
+  fill: var(--ae-gold);
+  fill-opacity: 0.06;
+}
+
+.matchBlock {
+  cursor: pointer;
+}
+
+.matchLabel {
+  fill: var(--ae-bg);
+  font-family: var(--ae-font-mono);
+  font-weight: 600;
+}
+
+.tickMark {
+  stroke: var(--ae-gold-dim);
+  stroke-width: 0.5;
+}
+
+.tickLabel {
+  fill: var(--ae-text-dim);
+  font-family: var(--ae-font-mono);
+}

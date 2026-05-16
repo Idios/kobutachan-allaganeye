@@ -384,7 +384,26 @@ _BASELINES_DIR = Path(__file__).parent / "baselines"
 
 
 def _load_baseline(name: str) -> dict | None:
+    """Load the canonical (scorebar-on) baseline.
+
+    Since #529 the main baseline records FL matches AFTER scorebar V2
+    filtering.  Tests that need the pre-scorebar raw detection output
+    (e.g. TestNoResolutionCompat) should use ``_load_legacy_baseline``.
+    """
     path = _BASELINES_DIR / f"{name}.json"
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_legacy_baseline(name: str) -> dict | None:
+    """Load the legacy raw-detection baseline (no scorebar, pre-#529).
+
+    Retained in ``tests/baselines/_legacy/`` to keep the backward-compat
+    check (``TestNoResolutionCompat``) meaningful after the main baseline
+    migrated to scorebar-on output in #529.
+    """
+    path = _BASELINES_DIR / "_legacy" / f"{name}.json"
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
@@ -393,31 +412,37 @@ def _load_baseline(name: str) -> dict | None:
 @pytest.mark.slow_detect
 @pytest.mark.baseline_regen
 class TestNoResolutionCompat:
-    """When src_resolution is omitted, behavior must be identical to pre-#124."""
+    """When src_resolution is omitted, behavior must match raw (pre-scorebar) baseline.
+
+    Uses the ``_legacy/`` baselines that still capture the raw-detection
+    output (no scorebar filtering).  Keeps the #124 backward-compat check
+    valid after #529 migrated the main baseline to scorebar-on semantics.
+    """
 
     def test_same_count_as_baseline(
         self, target_recording: tuple[str, Path], detection_without_scorebar: dict
     ):
-        """Detection without src_resolution matches saved baseline count."""
+        """Detection without src_resolution matches saved legacy baseline count."""
         name, _ = target_recording
-        baseline = _load_baseline(name)
+        baseline = _load_legacy_baseline(name)
         if baseline is None:
-            pytest.skip(f"No baseline for {name}")
+            pytest.skip(f"No legacy baseline for {name}")
 
         detected = detection_without_scorebar["match_count"]
         baseline_count = baseline["match_count"]
         assert detected == baseline_count, (
-            f"{name}: without scorebar got {detected}, baseline was {baseline_count}"
+            f"{name}: without scorebar got {detected}, "
+            f"legacy baseline was {baseline_count}"
         )
 
     def test_boundaries_match_baseline(
         self, target_recording: tuple[str, Path], detection_without_scorebar: dict
     ):
-        """Each boundary timestamp matches baseline within 5s tolerance."""
+        """Each boundary timestamp matches legacy baseline within 5s tolerance."""
         name, _ = target_recording
-        baseline = _load_baseline(name)
+        baseline = _load_legacy_baseline(name)
         if baseline is None:
-            pytest.skip(f"No baseline for {name}")
+            pytest.skip(f"No legacy baseline for {name}")
 
         detected = detection_without_scorebar["boundaries"]
         baseline_b = baseline["boundaries"]
@@ -478,8 +503,12 @@ class TestBaselineComparison:
                     f"({bb['start']:.0f}-{bb['end']:.0f}s) not covered"
                 )
 
-        # Allow up to 3 uncovered: some baseline matches may be non-FL
-        # content that scorebar correctly removes
+        # Allow up to 3 uncovered to absorb small detection drift between
+        # baseline-generation time and now (#529 migrated the baseline to
+        # scorebar-on semantics, so in the healthy case all baseline matches
+        # should be covered; the tolerance guards against future regressions
+        # in scorebar V2 emblem detection or the upstream Pass 1/Pass 2
+        # pipeline).
         assert len(uncovered) <= 3, (
             f"{name}: {len(uncovered)} baseline matches lost:\n" + "\n".join(uncovered)
         )

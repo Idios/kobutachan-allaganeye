@@ -1,0 +1,314 @@
+.screen {
+  flex: 1;
+  /*
+   * #639 review (Round 2 波及) — flex 子 (`App.module.css` の
+   * `.main > .screen`) なので `min-height: 0` を明示しないと内容に
+   * 押し広げられて viewport を超え、`overflow: auto` が無効化される
+   * (DetectingScreen `.screen` と同パターン)。
+   */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 40px;
+  position: relative;
+  overflow: auto;
+}
+
+.etching {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.08;
+  pointer-events: none;
+}
+
+.heading {
+  text-align: center;
+  z-index: 2;
+}
+
+.kicker {
+  font-family: var(--ae-font-ui);
+  font-size: 11px;
+  letter-spacing: 4px;
+  color: var(--ae-gold-dim);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.title {
+  font-family: var(--ae-font-ui);
+  font-size: 28px;
+  font-weight: 500;
+  color: var(--ae-gold-bright);
+  letter-spacing: 2px;
+  margin-bottom: 6px;
+}
+
+.subtitle {
+  font-family: var(--ae-font-body);
+  font-size: 13px;
+  color: var(--ae-text-dim);
+}
+
+.frame {
+  width: 78%;
+  padding: 2px;
+  z-index: 2;
+}
+
+.dropZone {
+  border: 1px dashed var(--ae-gold);
+  padding: 28px 40px;
+  text-align: center;
+  background: rgba(var(--ae-gold-rgb), 0.03);
+}
+
+.dropZoneDragOverValid {
+  border: 1px dashed var(--ae-cyan);
+  background: rgba(var(--ae-cyan-rgb), 0.06);
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.dropZoneDragOverInvalid {
+  border: 1px dashed var(--ae-danger);
+  background: rgba(var(--ae-danger-rgb), 0.06);
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.dropZoneIconReject {
+  font-family: var(--ae-font-ui);
+  font-size: 28px;
+  color: var(--ae-danger);
+  margin-bottom: 4px;
+  line-height: 1;
+}
+
+.dropZoneRejectMessage {
+  font-family: var(--ae-font-body);
+  font-size: 13px;
+  color: var(--ae-danger);
+}
+
+.dropZoneLabel {
+  font-family: var(--ae-font-body);
+  font-size: 13px;
+  color: var(--ae-gold);
+  margin-bottom: 4px;
+}
+
+.dropZoneHint {
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+}
+
+.browseButton {
+  color: var(--ae-cyan);
+  text-decoration: underline;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.browseButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.recent {
+  width: 78%;
+  z-index: 2;
+}
+
+.recentHeading {
+  font-family: var(--ae-font-ui);
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: var(--ae-gold-dim);
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.recentItem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(var(--ae-gold-rgb), 0.08);
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  color: var(--ae-text);
+}
+
+.recentMark {
+  color: var(--ae-gold);
+}
+
+/* PR #655 review (Round 2): full-path display with left-truncation. The
+ * box uses `direction: rtl` so `text-overflow: ellipsis` lands on the LEFT
+ * (= the parent-directory portion), keeping the file-name suffix visible.
+ * `unicode-bidi: plaintext` lets the LTR / Japanese characters in the path
+ * itself render in their natural left-to-right order — the rtl is only
+ * used to flip the truncation side. `min-width: 0` is required for the
+ * flex item's overflow to actually trigger inside the row layout. */
+.recentName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: plaintext;
+}
+
+.recentSize {
+  color: var(--ae-text-dim);
+  width: 60px;
+  text-align: right;
+}
+
+.recentDur {
+  color: var(--ae-text-dim);
+}
+
+/*
+ * #571: recent-list interactivity. The persisted entries are rendered as
+ * <button> elements (one per row) so they're keyboard-accessible and pick
+ * up :focus-visible from the global a11y polish (#587). The button styling
+ * keeps the row layout from `.recentItem` while removing the default form
+ * affordances (background, border).
+ */
+.recentItemButton {
+  width: 100%;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.recentItemButton:hover:not(:disabled) {
+  background: rgba(var(--ae-gold-rgb), 0.06);
+}
+
+.recentItemButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.recentEmpty {
+  padding: 12px;
+  font-family: var(--ae-font-body);
+  font-size: 11px;
+  color: var(--ae-text-dim);
+  text-align: center;
+}
+
+.selectedCard {
+  width: 78%;
+  background: var(--ae-bg-deep);
+  border: var(--ae-panel-border);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 2;
+}
+
+.selectedHeading {
+  font-family: var(--ae-font-ui);
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: var(--ae-gold-dim);
+  text-transform: uppercase;
+}
+
+.selectedName {
+  font-family: var(--ae-font-body);
+  font-size: 16px;
+  color: var(--ae-text-bright);
+}
+
+.selectedMetaTable {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  column-gap: 8px;
+  row-gap: 4px;
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  color: var(--ae-text);
+}
+
+.selectedMetaLabel {
+  color: var(--ae-text-dim);
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.okButton {
+  padding: 10px 18px;
+  background: linear-gradient(180deg, var(--ae-gold), var(--ae-gold-dim));
+  border: none;
+  color: var(--ae-bg);
+  font-family: var(--ae-font-ui);
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.cancelButton {
+  padding: 10px 18px;
+  background: transparent;
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.33);
+  color: var(--ae-gold);
+  font-family: var(--ae-font-ui);
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.error {
+  color: var(--ae-danger);
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+}
+
+.loading {
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  color: var(--ae-gold-dim);
+}
+
+/* #698: recent list 上部の error notice (A-minimal 案)。loadError or addError
+   発生時に表示 (loadError 優先)、両 null で非表示。dismiss なし、次回 load/add
+   成功で自動消去 (recentStore lifecycle に従う)。best-effort fluff tone を維持
+   する控えめ design (border-left + padding)。 */
+.recentNotice {
+  padding: 8px 12px;
+  border-left: 2px solid var(--ae-danger);
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.recentNoticeMessage {
+  color: var(--ae-danger);
+  font-size: 11px;
+  font-family: var(--ae-font-mono);
+  word-break: break-all;
+}

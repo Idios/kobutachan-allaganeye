@@ -202,6 +202,11 @@ def pipeline_result(
             config,
             effective_interval=config.sample_interval,
             detected_at="1970-01-01T00:00:00Z",
+            system_info={
+                "gpu_vendors_available": [],
+                "gpu_vendor_used": None,
+                "vendor_preference": ["nvidia", "amd", "intel"],
+            },
         )
     else:
         name = source_mkv.parent.name

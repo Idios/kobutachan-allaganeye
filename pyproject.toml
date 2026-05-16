@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kobutachan-allaganeye"
-version = "0.1.1"
+version = "0.2.0"
 description = "FF14 Frontline video auto-highlight extraction tool"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
     "typer>=0.9",
@@ -16,7 +16,10 @@ dependencies = [
 ]
 
 [project.scripts]
-allaganeye = "allaganeye.cli:app"
+allaganeye = "allaganeye.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["allaganeye*"]
 
 [tool.setuptools.package-data]
 "allaganeye.audio.refs" = ["*.npz"]
@@ -26,6 +29,8 @@ dev = [
     "pytest>=8",
     "ruff>=0.4",
     "pyright>=1.1",
+    "datamodel-code-generator>=0.25",
+    "jsonschema>=4",
 ]
 
 [tool.pytest.ini_options]

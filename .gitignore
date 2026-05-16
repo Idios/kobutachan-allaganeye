@@ -37,13 +37,32 @@ htmlcov/
 .claude/settings.local.json
 .claude/worktrees/
 .claude/state/
+.claude/scheduled_tasks.lock
 .env
 ROLE
 
+# Node.js (markdownlint-cli2 など、`npx -y` のキャッシュ想定)
+node_modules/
+package-lock.json
+
 # Project specific
 *.mp4
+!tests/fixtures/*.mp4
 *.mkv
 *.avi
 *.mov
 output/
 tmp/
+build-cache/
+
+# Node / GUI (gui/)
+node_modules/
+gui/dist/
+gui/.vite/
+
+# Rust / Tauri (gui/src-tauri/)
+gui/src-tauri/target/
+gui/src-tauri/gen/schemas/
+
+# superpowers brainstorming session artifacts (visual companion mockups)
+.superpowers/

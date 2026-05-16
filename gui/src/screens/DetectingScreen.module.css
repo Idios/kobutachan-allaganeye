@@ -1,0 +1,317 @@
+.screen {
+  flex: 1;
+  /*
+   * #639 review (実機検証 2 回目) — `.screen` 自身も flex 子
+   * (`App.module.css` の `.main > .screen`) なので `min-height: 0`
+   * を明示しないと内容に押し広げられて viewport を超え、子の
+   * `.log` の `overflow-y: auto` が機能しない。`.log` 単体修正で
+   * は不十分で、ここまで chain で伝播させる必要がある。
+   */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 24px;
+  gap: 20px;
+  position: relative;
+}
+
+.header {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+}
+
+.headerText {
+  flex: 1;
+}
+
+.caption {
+  font-family: var(--ae-font-ui);
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: var(--ae-gold-dim);
+  text-transform: uppercase;
+}
+
+.fileName {
+  font-family: var(--ae-font-body);
+  font-size: 14px;
+  color: var(--ae-text-bright);
+  margin-top: 4px;
+}
+
+.meta {
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+  margin-top: 3px;
+}
+
+.progressBadge {
+  text-align: right;
+}
+
+.progressNum {
+  font-family: var(--ae-font-ui);
+  font-size: 32px;
+  color: var(--ae-gold-bright);
+  letter-spacing: 1px;
+}
+
+.progressTiming {
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+}
+
+.divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--ae-gold), transparent);
+  opacity: 0.4;
+}
+
+.phases {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.phaseRow {
+  display: flex;
+  flex-direction: column;
+}
+
+.phaseLabel {
+  display: flex;
+  align-items: baseline;
+  margin-bottom: 6px;
+  gap: 12px;
+  font-family: var(--ae-font-body);
+  font-size: 12px;
+}
+
+.phaseName {
+  font-family: var(--ae-font-ui);
+  letter-spacing: 1.5px;
+  width: 90px;
+}
+
+.phaseNameRunning {
+  color: var(--ae-gold-bright);
+}
+
+.phaseNameDone {
+  color: var(--ae-cyan);
+}
+
+.phaseNamePending {
+  color: var(--ae-text-dim);
+}
+
+.phaseJp {
+  color: var(--ae-text-dim);
+  font-size: 11px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.phaseSub {
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+}
+
+.phaseTime {
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-gold);
+  width: 40px;
+  text-align: right;
+}
+
+.bar {
+  height: 4px;
+  background: rgba(var(--ae-gold-rgb), 0.1);
+  position: relative;
+  overflow: hidden;
+}
+
+.barFill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, var(--ae-gold-dim), var(--ae-gold-bright));
+  box-shadow: 0 0 8px var(--ae-gold);
+}
+
+.barFillDone {
+  background: linear-gradient(90deg, var(--ae-cyan), var(--ae-cyan-bright));
+  box-shadow: none;
+}
+
+/*
+ * #639 — log pane は flex 子なので `min-height: 0` を明示しないと
+ * `overflow-y: auto` が無効化される (内容が parent を押し広げて
+ * しまい結局スクロールできない、#569 実機検証で発覚)。
+ * gold tint のスクロールバーは WebView2 (Chromium) 用の
+ * `-webkit-scrollbar*` を主軸にし、Firefox 用に
+ * `scrollbar-color` / `scrollbar-width` も指定する。
+ */
+.log {
+  flex: 1;
+  min-height: 0;
+  background: var(--ae-bg-deep);
+  padding: 12px;
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+  overflow-y: auto;
+  overflow-x: hidden;
+  line-height: 1.6;
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.08);
+  scrollbar-color: rgba(var(--ae-gold-rgb), 0.4) transparent;
+  scrollbar-width: thin;
+}
+
+.log::-webkit-scrollbar {
+  width: 6px;
+}
+
+.log::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.log::-webkit-scrollbar-thumb {
+  background: rgba(var(--ae-gold-rgb), 0.3);
+  border-radius: 3px;
+}
+
+.log::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--ae-gold-rgb), 0.55);
+}
+
+.logTime {
+  color: var(--ae-cyan);
+}
+
+.logTimeActive {
+  color: var(--ae-gold-bright);
+}
+
+/*
+ * #569 review Round 1 課題 2 — keyword colour-coding for the live log.
+ * The base `.logEntry` class keeps the dim default; the kind-specific
+ * modifiers override the body text colour so terminal "完了" rows stand
+ * out from routine progress and errors are visually impossible to miss.
+ * Time-stamp colours (`.logTime`/`.logTimeActive`) are left untouched
+ * so the most-recent-line indicator still works.
+ */
+.logEntry {
+  color: inherit;
+}
+
+.logEntryDone {
+  color: var(--ae-cyan-bright);
+}
+
+.logEntryError {
+  color: var(--ae-danger);
+}
+
+.logEntryWarn {
+  color: var(--ae-gold-bright);
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+}
+
+.cancelButton {
+  padding: 8px 18px;
+  background: transparent;
+  border: 1px solid var(--ae-danger);
+  color: var(--ae-danger);
+  font-family: var(--ae-font-ui);
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.cancelButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/*
+ * #646 — start_detect Err 表示ビュー。Rust 側の失敗メッセージを
+ * `<pre>` で改行保持してそのまま見せる。ユーザーが [drop へ戻る]
+ * を明示操作するまで画面遷移しないので、ログから原因 (例:
+ * "spawn allaganeye failed (python -m allaganeye): ...") を読
+ * み取る時間を確保する。
+ */
+.errorScreen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 32px;
+  gap: 18px;
+}
+
+.errorHeading {
+  font-family: var(--ae-font-ui);
+  font-size: 16px;
+  letter-spacing: 2px;
+  color: var(--ae-danger);
+  text-transform: uppercase;
+}
+
+.errorFile {
+  font-family: var(--ae-font-body);
+  font-size: 13px;
+  color: var(--ae-text-bright);
+}
+
+.errorMessage {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 14px 16px;
+  background: var(--ae-bg-deep);
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.18);
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ae-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-y: auto;
+}
+
+/*
+ * #646 review Round 2 課題 2 — error view の [再試行] ボタン。
+ * gold tint で「次の操作を促す」プライマリ寄りに見せ、隣の
+ * `.cancelButton` (drop 復帰、`--ae-danger` 縁取り) と視覚的に
+ * 区別する。
+ */
+.retryButton {
+  padding: 8px 18px;
+  background: transparent;
+  border: 1px solid var(--ae-gold);
+  color: var(--ae-gold);
+  font-family: var(--ae-font-ui);
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.retryButton:hover {
+  background: rgba(var(--ae-gold-rgb), 0.08);
+  color: var(--ae-gold-bright);
+  border-color: var(--ae-gold-bright);
+}

@@ -16,14 +16,14 @@
 
 ## 2. タイトル形式
 
-```
+```json
 [prefix] 概要を簡潔に（〜40文字以内）
 ```
 
 ### prefix 一覧
 
 | prefix | 意味 | GitHub ラベル |
-|--------|------|--------------|
+| -------- | ------ | -------------- |
 | `[bug]` | 動作が仕様・期待と異なる不具合 | `bug` |
 | `[doc]` | ドキュメントの誤記・矛盾・欠落 | `doc` |
 | `[refactor]` | 振る舞いを変えないコード改善 | `refactor` |
@@ -31,39 +31,34 @@
 | `[risk]` | セキュリティ・運用上のリスク・懸念 | `risk` |
 | `[task]` | 調査・確認・セットアップ作業 | `task` |
 
-### ロールラベル
+### スコープラベル
 
-上記の prefix ラベルに加えて、対応すべきロールが明確な場合は `role:*` ラベルを付与する。prefix ラベルとの併用が可能。
+上記の prefix ラベルに加えて、対象スコープに応じて以下のラベルを付与する。
 
-| ラベル | 対象ロール |
-|--------|-----------|
-| `role:director` | ディレクター |
-| `role:lead-engineer` | リードエンジニア |
-| `role:engineer` | エンジニア |
-| `role:tester` | テスター |
+| ラベル | 対象スコープ |
+| -------- | ----------- |
+| `l2a-gui` | L2 GUI 関連 (#105 系) |
+| `l2b-installer` | L2 インストーラ関連 (#106 系) |
+| `l2-workflow` | 開発プロセス改善 + allaganeye-guard 運用連携 doc 整備 |
+| `l2-decision` | 方針判断が必要な issue |
+| `l1-residual` | L1 残課題 (#412-#440 系) |
 
-- `[bug]`/`[refactor]` issue は **初期ラベルを `role:lead-engineer` にする**（リードエンジニアの方針コメントが必要なため）。方針決定後、リードエンジニアが `role:engineer` に付替える
-- `[task]` issue は対象ロールの `role:*` ラベルを必ず付ける（prefix だけではどのロール向けか判別できないため）
-- `[question]` issue は回答を求めるロールの `role:*` ラベルを付ける
-- `[doc]` issue は内容に応じて起票者がロールを選択する:
-  - typo 修正、手順追記、記述の誤り → `role:engineer`
-  - バージョン要件、設計文書、方針策定 → `role:lead-engineer`
-  - プロジェクト方針、ロール定義、連携プロトコル → `role:director`
-- `[risk]` issue は `role:lead-engineer` ラベルを付ける（リスク評価はリードエンジニアが行う）
-- PR にも同様に、レビュー担当ロールの `role:*` ラベルを付ける（`docs/roles/protocol.md` 参照）
+> `l2c-guard` ラベルは 2026-04-21 廃止 (guard との program integration 構想を破棄、#454 参照)。関連 doc 整備は `l2-workflow` で追跡。
+
+L3 以降のレイヤーは着手時に適切なスコープラベルを新設する。
 
 ### 優先度ラベル
 
 issue の優先度を示すラベル。全 issue に必須ではなく、優先順位の判断が必要な場合に付与する。
 
 | ラベル | 意味 | 付与基準 |
-|--------|------|----------|
+| -------- | ------ | ---------- |
 | `P1-high` | 高: 後続タスクの前提条件となる | 他の issue やリリースがこの完了を待っている |
 | `P2-medium` | 中: 計画内で対応すべき | ロードマップ上のタスク、品質改善 |
 | `P3-low` | 低: 余裕があれば対応 | 技術的負債、改善提案、調査 |
 
-- 優先度の判断はディレクターまたはリードエンジニアが行う
-- 優先度ラベルは prefix ラベル・ロールラベルと併用する
+- 優先度の判断はユーザー (Idios) が行う。Claude は `AskUserQuestion` で選択肢を提示
+- 優先度ラベルは prefix ラベル・スコープラベルと併用する
 - 判断が難しい場合はラベルなしでよい（未付与 = 未判定）
 
 ---
@@ -194,7 +189,7 @@ prefix に応じて以下のテンプレートを使用する。
 
 issue に関連するコミットを作成する場合、コミットメッセージに `#番号` を含める。
 
-```
+```text
 fix: total_assets=0 のとき誤フォールバックする不具合を修正 (#7)
 ```
 
@@ -208,7 +203,7 @@ fix: total_assets=0 のとき誤フォールバックする不具合を修正 (#
 
 ## 7. Issue のライフサイクル管理
 
-Issue の `role:*` ラベルは「次に誰が行動すべきか」を示す。作業の進行に合わせてラベルを付替え、check-work による作業検索が正しく機能するようにする。
+Issue のスコープラベル (`l2a-gui`, `l2b-installer` 等) と優先度で作業対象を特定する。
 
 ### コメント確認原則
 
@@ -216,58 +211,39 @@ issue の状態を判断する前に、**必ずコメント全文を確認する
 
 ### 着手時
 
-- issue にコメント `着手: <session-id>` を投稿する（排他制御の詳細は `docs/roles/protocol.md` 参照）
-- 他セッションが `着手:` コメント済みの issue には着手しない
+- issue にコメント `着手: <session-id>` を投稿する（監査・トレーサビリティ用に worktree 名を記録）
 
 ### 完了時（PR 作成時）
 
 作業完了後に PR を提出したら、以下を行う:
 
 1. **issue にコメント**: `完了: <session-id> → PR #番号`（対応内容の要約を添える）
-2. **`role:*` ラベルを次の担当ロールに付替える**
-3. **チェックボックスの更新**: issue 本文にチェックボックス（`- [ ]`）がある場合、完了した項目にチェックを入れる（`gh issue edit <番号> --body "..."` で本文を更新）
-
-| 作業者ロール | 付替え先（次の担当） |
-|---|---|
-| ディレクター | `role:lead-engineer` |
-| リードエンジニア | `role:director` |
-| エンジニア | `role:lead-engineer` |
-| テスター | `role:lead-engineer` |
-
-> PR のレビュー担当ロールと一致させる（`docs/roles/protocol.md` の PR レビュー表参照）。
+2. **チェックボックスの更新**: issue 本文にチェックボックス（`- [ ]`）がある場合、完了した項目にチェックを入れる（`gh issue edit <番号> --body "..."` で本文を更新）
 
 ```bash
-# ラベル付替えの例（engineer → lead-engineer）
-gh issue edit <番号> --remove-label "role:engineer" --add-label "role:lead-engineer"
-
 # 完了コメントの例
-gh issue comment <番号> --body "完了: engineer-1 → PR #42
+gh issue comment <番号> --body "完了: relaxed-mestorf-9807da → PR #42
 暗転検知の閾値パラメータを追加"
 ```
 
 ### PR マージ後（クローズ）
 
-マージ実行者（= レビュー担当）が、関連 issue を **クローズ** する。
+PR マージ後、受け入れ条件を**マージ後 base ブランチで実測再検証**してから関連 issue をクローズする (Iron Law 4)。クローズは以下のいずれかのルートで実施する:
+
+- **`/close-issue <issue番号>` skill** (推奨、#594 で新設): マージ後の受け入れ条件実測再検証 + 残タスクトリアージ + ユーザー承認後の close を一気通貫で実施
+- **ユーザー (Idios) 手動クローズ**: 上記と同等の検証を手動で実施
 
 ```bash
+# 手動クローズ時のコマンド例
 gh issue close <番号> --repo Idios/kobutachan-allaganeye \
   --comment "マージ確認: <session-id> ← PR #番号"
 ```
 
+詳細は `docs/l2-workflow.md` §「Issue クローズルール」 / `.claude/skills/close-issue/SKILL.md` を参照。
+
 **例外: 未完了のチェックボックスがある場合**
 
-issue 本文に未チェックの項目（`- [ ]`）が残っている場合、クローズせずに issue 作成者のロールにラベルを付替える（部分的な対応のため、残作業の判断を作成者に委ねる）。
-
-作成者ロールは issue 本文末尾の `作成: <session-id>` から判定する:
-
-| session-id プレフィックス | 付替え先 |
-|---|---|
-| `director-*` | `role:director` |
-| `lead-*` | `role:lead-engineer` |
-| `engineer-*` | `role:engineer` |
-| `tester-*` | `role:tester` |
-
-- `作成:` の記載がない古い issue → `role:*` ラベルを除去する
+issue 本文に未チェックの項目（`- [ ]`）が残っている場合、クローズせず残作業を継続する。残タスクが別スコープになる場合は子 issue を新規起票し、親 issue 本文に子 issue 番号を記載する (#367 対策)。
 
 ---
 
@@ -276,7 +252,7 @@ issue 本文に未チェックの項目（`- [ ]`）が残っている場合、�
 ### クローズしてよいケース
 
 | ケース | 例 |
-|---|---|
+| --- | --- |
 | 問題が解決した | PR マージにより修正完了 |
 | 重複 | 別 issue で対応済み |
 | 対応不要と最終判断 | 仕様通り（won't fix）、再現不能 |
@@ -285,18 +261,17 @@ issue 本文に未チェックの項目（`- [ ]`）が残っている場合、�
 ### クローズしてはいけないケース
 
 | ケース | 代わりの対応 |
-|---|---|
+| --- | --- |
 | 現バージョンのスコープ外 | `deferred` ラベルを付与して open のまま残す |
 | 優先度が低い | `P3-low` ラベルのまま open |
-| 担当ロールが不在 | `role:*` ラベルをつけたまま open |
 
 **「スコープ外 ≠ クローズ」が原則**。未解決の issue をクローズすると将来の再検討漏れにつながる。
 
 ### `deferred` ラベルの運用
 
 - **付与タイミング**: 現バージョンのスコープ外と判断した時点で付与する
-- **見直しタイミング**: バージョンリリース（タグ打ち）時に director が全 `deferred` issue をレビューし、次バージョンのスコープに含めるか判断する
-- **スコープに含める場合**: `deferred` を外し、適切な `role:*` + 優先度ラベルに変更する
+- **見直しタイミング**: バージョンリリース（タグ打ち）時にユーザー (Idios) が全 `deferred` issue をレビューし、次バージョンのスコープに含めるか判断する
+- **スコープに含める場合**: `deferred` を外し、適切なスコープラベル + 優先度ラベルに変更する
 - **引き続き先送りの場合**: そのまま残す
 
 ---
@@ -304,20 +279,20 @@ issue 本文に未チェックの項目（`- [ ]`）が残っている場合、�
 ## 9. gh コマンド例
 
 ```bash
-# [bug] は初期ラベルを role:lead-engineer にする（方針コメントが必要）
+# [bug] の例
 gh issue create \
   --repo Idios/kobutachan-allaganeye \
   --title "[bug] ○○が△△のとき誤動作する" \
   --body "..." \
-  --label "bug" --label "role:lead-engineer" \
+  --label "bug" --label "P1-high" \
   --assignee "Idios"
 
-# [task] は対象ロールの role:* ラベルを必ず付ける
+# [task] の例 (L2 GUI スコープ)
 gh issue create \
   --repo Idios/kobutachan-allaganeye \
   --title "[task] ○○を調査する" \
   --body "..." \
-  --label "role:engineer" \
+  --label "task" --label "l2a-gui" --label "P2-medium" \
   --assignee "Idios"
 ```
 

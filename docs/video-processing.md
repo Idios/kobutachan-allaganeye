@@ -11,6 +11,7 @@ L1 の動画処理は以下の3段階で構成される:
 ## probe（メタデータ取得）
 
 ffprobe を使用して以下の情報を取得:
+
 - コーデック（映像/音声）
 - 解像度
 - フレームレート（r_frame_rate → avg_frame_rate フォールバック）
@@ -36,7 +37,7 @@ ffprobe を使用して以下の情報を取得:
 
 **方式**: ffmpeg の `-ss`（入力シーク）で各タイムスタンプに直接ジャンプし、1フレームのみデコード。
 
-```
+```bash
 ffmpeg -ss {timestamp} -i input.mkv -frames:v 1 -s 320x180 -pix_fmt gray -f rawvideo pipe:1
 ```
 
@@ -76,7 +77,7 @@ ffmpeg -ss {timestamp} -i input.mkv -frames:v 1 -s 320x180 -pix_fmt gray -f rawv
 **背景**: 試合境界の暗転が短い（2-3s）場合、暗転の持続時間だけでは判別できないケースがある。しかし試合境界後にはロビー画面（brightness ~51）が 10-20s 続くのに対し、リスポーン後は即座に brightness 60+ に復帰する。この差異を利用し、暗転 + ロビー画面を一体の領域として扱うことで検知を可能にする。
 
 | 暗転タイプ | 暗転 | 直後の brightness | 拡張後 duration | 結果 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | リスポーン (1-1.5s) | < 15 | 即 60+ | 1-1.5s | 除外 |
 | 試合境界 + ロビー (2-3s) | < 15 | ~51 が 20s | 22-23s | **検出** |
 
@@ -87,11 +88,12 @@ ffmpeg -ss {timestamp} -i input.mkv -frames:v 1 -s 320x180 -pix_fmt gray -f rawv
 **背景**: interval=1.0s では 2.0s の暗転と 1.5s のリスポーン暗転が同じ計測値（1.0s）になり区別できない。transition expansion も発動しないパターン（暗転後すぐに明るい画面に復帰する試合境界）が存在する。
 
 | パス | interval | 目的 |
-|---|---|---|
+| --- | --- | --- |
 | Pass 1（既存） | 1.0-3.0s | 全区間スキャン → 暗転候補収集 |
 | Pass 2（精密計測） | 0.25s | 候補 ±5s を再プローブ → 正確な持続時間 |
 
 精密計測後は `_REFINED_MIN_BLACKOUT=1.5s` で判定:
+
 - 2.0s 暗転 → 計測 1.5-1.75s ≥ 1.5 → **検出**
 - 1.5s リスポーン → 計測 1.0-1.25s < 1.5 → **除外**
 
@@ -101,9 +103,14 @@ ffmpeg -ss {timestamp} -i input.mkv -frames:v 1 -s 320x180 -pix_fmt gray -f rawv
 
 `--gpu` オプションにより Pass 1 の粗いスキャンを GPU チャンク並列デコードで実行できる（`gpu_detector.py`）。
 
-**方式**: 動画を N チャンク（`min(cpu_count, 16)`）に分割し、各チャンクで長寿命の ffmpeg プロセスを並列実行する。
+**方式**: 動画を N チャンクに分割し、各チャンクで長寿命の ffmpeg プロセスを並列実行する。chunk 数は動画長に応じて動的調整される (#437):
 
-```
+- 短動画 (目安: 24 分以下): `max_parallel = min(cpu_count, 16)` を chunk 数として使用（従来通り）
+- 長動画: `math.ceil(duration / _TARGET_CHUNK_WALL_SECS)` (90s/chunk 目安) で細分化、上限 `_MAX_CHUNKS=32`
+- ffmpeg 並列上限は常に `max_parallel` で固定。chunks > max_parallel の場合は wave 実行となり、chunk 完了ごとのラベル更新頻度を確保する
+- 最初の chunk が完了する前に `chunk_dispatch_callback` で `Detecting [dispatching N chunks, ...]` を表示し、長時間動画での 0% 停滞誤解を回避
+
+```bash
 ffmpeg -hwaccel auto -ss <chunk_start> -t <chunk_duration> -i input.mkv \
   -vf "fps=1/{interval},scale=320:180,format=gray" -f rawvideo pipe:1
 ```
@@ -116,6 +123,99 @@ ffmpeg -hwaccel auto -ss <chunk_start> -t <chunk_duration> -i input.mkv \
 
 **フォールバック**: GPU デコードに失敗した場合は `VideoProcessingError` を送出し、呼び出し元（`detector.py`）が自動で CPU モードにフォールバックする。
 
+### ffmpeg fps filter の version 依存制約（#577）
+
+`_scan_cpu` および GPU chunked decode で使用する `fps=N` filter は、ffmpeg version によりフレーム選択タイミングが変動する。極短時間 (< 1s) blackout の取りこぼしが起こりうる (PR #575 の root cause 分析で確定)。
+
+**検証データ (PR #575 / issue #560)**
+
+ffmpeg 8.1 / `sample_interval=2.0` で `20260118` video の同一 timestamp label を異なる経路で probe した結果:
+
+| timestamp label | per-frame `-ss` probe | `_scan_cpu` (chunked fps) | 差 |
+| --- | --- | --- | --- |
+| 6184.0 | **1.73 (BLACKOUT)** | 47.72 (transition) | -46 |
+| 6186.0 | 100.48 (normal) | 37.20 (transition) | +63 |
+
+per-frame `-ss` probe では 0.1s 解像度で 6184.0-6184.8 の **0.8s 幅 blackout** を捕捉できる:
+
+```text
+6184.00   1.73  <-- BLACKOUT
+6184.10   1.73
+6184.20   1.74
+...
+6184.70   1.88
+6184.80  13.54
+6184.90  23.79  <-- transition
+6185.10  43.82
+6185.30  59.06  <-- normal
+```
+
+しかし `_scan_cpu` の chunked decode は `fps=0.5` filter でこの 0.8s 短時間 blackout のサンプリングタイミングを外し、label "6184" に brightness 47.72 のフレーム (実際には video 時間 ~6185.1s) を割り当てる。`showinfo` filter の出力で挙動を確認可能:
+
+```text
+n: 4 pts:3092 pts_time:6184  mean:[45 127 128]  <-- output PTS 6184 のフレーム Y-mean=45
+```
+
+output PTS 6184 と称しながら ~1.1s 遅れた input frame をサンプリングしている (Y-mean=45 は実時間 6185.1s の brightness=43.82 と整合)。
+
+**影響**
+
+- `min(min_blackout_duration, _REFINED_MIN_BLACKOUT)=1.5s` 未満の極短 blackout は fps filter 経路で取りこぼされる
+- ffmpeg version upgrade で baseline drift が再発する可能性あり (#576 で `fps` filter 廃止 + chunk 内全フレームデコード→N-th sampling 方式が検討中)
+- Pass 2 精密計測 (#361 borderline refinement / 上方向ヒステリシス) は Pass 1 で取りこぼした blackout を救済できない (refine 対象に入らないため)
+- 一方、現環境の検知パスは安定しており、PR #575 では他 2 件の baseline (`20260116` / `20260119`) は引き続き完全一致を維持
+
+**判定 / 対応**
+
+baseline mismatch 発生時の判定 flow ((A) 検知ロジック退行 vs (B) ffmpeg version 依存差異) は [`docs/testing-guide.md`](testing-guide.md) §「baseline drift の判定」を参照。
+
+### コーデック + vendor 自動選択（#334, #414, #546, #550）
+
+`--gpu` / `--no-gpu` 未指定時は probe で取得した codec と GPU vendor を元に GPU/CPU を自動選択する (`_resolve_gpu_mode`)。判定セットは `_GPU_PREFERRED_CODECS` に定義。
+
+**codec × 推奨 GPU decode (参考)**
+
+| Codec | auto 選択 | NVDEC 要件 | Intel QSV 要件 | AMD VCN 要件 |
+| --- | --- | --- | --- | --- |
+| H.264 | GPU | 全世代 | 全世代 | 全世代 |
+| HEVC | GPU | Maxwell GM206+ | Skylake+ | VCN 1.0+ |
+| AV1 | GPU (#414) | RTX 30 (Ampere) 以降 | Arc / Gen12 以降 | VCN 4.0 以降 |
+| VP9 | GPU (#414) — NVIDIA は soft decode (#538), AMD は dict 未登録で soft decode, Intel は `vp9_qsv` HW decode (#582) | Maxwell 以降 (#538 で NVDEC 経路除外) | Gen9+ (`vp9_qsv` は Tiger Lake 11th gen 以降検証済 #582) | VCN 1.0+ (`_GPU_DECODER_MAP["amd"]` 未登録、d3d11va soft path) |
+| その他 (mpeg2video, vc1, prores 等) | CPU | — | — | — |
+
+- VP9 は `_GPU_PREFERRED_CODECS` に残すが NVIDIA 経路 (`_GPU_DECODER_MAP["nvidia"]`) からは除外 (#538 / #549)。理由: ffmpeg 8.1 の `vp9_cuvid` は frame を `nv12 + csp:gbr` で tag し、後段の swscaler が gray 変換を `EOPNOTSUPP (-129)` として reject する。NVIDIA auto-select で GPU mode に振られても `_decode_chunk` は else branch (`-hwaccel auto`) を使い、ffmpeg 側で soft decode (native) が選ばれる (実測 speed 2.64x)。`vp9_cuvid` の ffmpeg 側修正が入った時点で NVIDIA 経路の復活検討。AMD は #553 で d3d11va 経路に統一しているため csp:gbr 問題なし (filter 先頭で `hwdownload,format=nv12` 経由で system memory に降ろす、ただし AMD 用 dict には vp9 未登録)。Intel は #582 で `vp9_qsv` を `_GPU_DECODER_MAP["intel"]` に追加 (QSV は decode 後の `hwdownload` で nv12 に明示 download するため csp:gbr 問題なし、Tiger Lake で 8.29x speed 実機確認)。
+
+**vendor × codec 実装状況 (#546 / #553 / #550 / #582)**
+
+| Vendor | hwaccel | h264 | hevc | av1 | vp9 | 備考 |
+| --- | --- | --- | --- | --- | --- | --- |
+| NVIDIA (NVDEC cuvid) | `cuda` | `h264_cuvid` | `hevc_cuvid` | `av1_cuvid` | (soft, #538/#549) | dGPU 想定、dual GPU では優先選択 |
+| AMD (d3d11va) | `d3d11va` | `h264` | `hevc` | `av1` | (未登録) | #553 で実装。AMF decoder ではなく d3d11va + native decoder + filter 先頭 `hwdownload,format=nv12` で allaganeye filter pipeline と整合させる。RDNA2+ iGPU (Granite Ridge) で実測 speed 23x (SW 7.6x 比 3x 高速) |
+| Intel (QSV) | `qsv` | `h264_qsv` | `hevc_qsv` | `av1_qsv` | `vp9_qsv` | #550 (h264/hevc/av1) + #582 (vp9) で実装。Tiger Lake (11th gen Iris Xe) 以降で QSV decode 対応。AV1 は **Alder Lake / Arc 以降**でハードウェア decode、Tiger Lake では `Error initializing the MFX video decoder: unsupported (-3)` で `_decode_chunk` が `VideoProcessingError` を上げ CPU fallback。VP9 は Tiger Lake で動作確認済み (実機 8.29x speed @ 720p)。AMD と同じく `_HWACCELS_NEED_HWDOWNLOAD` 経路を使用 (`-hwaccel_output_format qsv` + filter 先頭 `hwdownload,format=nv12`)。NVIDIA `vp9_cuvid` の csp:gbr 不整合 (#538/#549) は QSV decoder では発生しない (decode 後 `hwdownload` で nv12 に明示 download するため) |
+| Apple (VideoToolbox) | — | — | — | — | — | Windows ffmpeg 未同梱、別 issue 追跡 |
+
+**`-hwaccel_output_format` + `hwdownload` filter の vendor 別差分 (#553 / #550)**
+
+- NVIDIA cuvid は default で nv12 (system memory) 出力するため追加引数不要
+- AMD d3d11va / Intel QSV は default で GPU surface (`pix_fmt=d3d11` / `pix_fmt=qsv`) 出力。後段の swscaler (`fps -> scale -> format=gray`) が surface format を変換できず filter init が `-40 (Function not implemented)` で失敗するため、`_HWACCELS_NEED_HWDOWNLOAD = frozenset({"d3d11va", "qsv"})` に該当する hwaccel では `_decode_chunk` が以下を自動付与する:
+  - 入力側に `-hwaccel_output_format <surface_fmt>` (`_HWACCEL_OUTPUT_FORMAT_MAP`: d3d11va→`d3d11`, qsv→`qsv`)
+  - filter chain 先頭に `hwdownload,format=nv12,` を挿入し system memory に降ろしてから fps/scale/format=gray に渡す
+- 引数順序は `-hwaccel <hwaccel> [-hwaccel_output_format <fmt>] -c:v <decoder> -ss ... -i ...`。ffmpeg は input option を `-i` より前に置く必要があるため厳守
+
+**vendor 自動選択ロジック (`_resolve_gpu_mode` + `_select_gpu_vendor`)**
+
+1. `allaganeye.system_info.probe_gpu_vendors()` が platform 別 probe (nvidia-smi / wmic / lspci / system_profiler) で検出した vendor list を取得
+2. `--gpu-vendor <vendor>` explicit の場合: `available` に含まれない、または `_VENDOR_HWACCEL_MAP` に未登録なら `ConfigValidationError` (exit 5)。現時点で nvidia / amd / intel すべて実装済みなので未登録分岐は将来の vendor 追加忘れガード
+3. `--gpu-vendor auto` (default) の場合: `_VENDOR_PREFERENCE = ("nvidia", "amd", "intel")` x `available` x 実装済み (`_VENDOR_HWACCEL_MAP` に含まれる) の最上位を選択。NVIDIA dGPU + Intel iGPU 環境では NVDEC が優先、AMD APU + Intel iGPU では AMD d3d11va が優先される
+4. codec が `_GPU_PREFERRED_CODECS` に含まれない場合は CPU mode。vendor が None (GPU 検出失敗 / 未実装 vendor のみ検出) でも codec match なら `use_gpu=True` を返し、`scan_gpu` の legacy path (`-hwaccel auto`) に入る。ffmpeg 側で GPU decode 失敗時は上記フォールバック経路で CPU 自動切替 (#334 既存挙動を維持)
+
+**フォールバック経路**
+
+- ハードウェアが新 codec に未対応の場合、ffmpeg の `-hwaccel <hwaccel>` が GPU decode に失敗 → 上記フォールバック経路で CPU に自動切替
+- 明示的に GPU を使いたい場合は `--gpu` フラグで強制可能（対応しない codec では起動時に GPU decode 失敗で exit）
+- `_GPU_DECODER_MAP["nvidia"]` には mpeg2video / mpeg4 / vp8 / mpeg1video も登録済みだが、`_GPU_PREFERRED_CODECS` に含めず auto では CPU (`--gpu` 明示時のみ GPU decode 経路)
+- Intel QSV では Tiger Lake (11th gen) で `av1_qsv` が `unsupported (-3)` を返すなど世代別非対応がある。chunk decode が `VideoProcessingError` を投げると `detect_match_boundaries` が CPU mode (`_scan_cpu`) に自動切替するため動作は継続する (#550 実機検証済み: i7-1185G7 / Iris Xe)
+
 ### スコアバーフィルタリング（Phase 3, #111）
 
 暗転検知だけでは分類できない暗転パターンを、フロントラインのスコアバー（画面上部の 3GC 得点バー）の有無で判別する。`src_resolution` が `detect_match_boundaries` に渡された場合に有効化される。
@@ -125,7 +225,7 @@ ffmpeg -hwaccel auto -ss <chunk_start> -t <chunk_duration> -i input.mkv \
 暗転前後のフレームを RGB でプローブし、スコアバー ROI（画面上部中央 35-65%、高さ 0-4%）の色特性を分析する。
 
 | 判定条件 | 閾値 | 根拠 |
-|---|---|---|
+| --- | --- | --- |
 | ROI 平均輝度 | 20 < brightness < 140 | FL 試合中の典型範囲。暗転 (<20) やリザルト (>140) を除外 |
 | 3 セクション RGB チャンネル std | max > 15.0 | FL スコアバーの 3GC 色分離（FL=26-48, lobby=4-5, queue=8-9） |
 
@@ -136,7 +236,7 @@ ROI を左・中央・右の 3 セクションに分割し、各セクション�
 各暗転リージョンの前後 3 フレーム（1 秒間隔）のスコアバー判定結果を多数決で集約し、4 種類に分類する。
 
 | 分類 | 条件 | 対応パターン | 処理 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `in_match` | 前後ともスコアバーあり | キャラダウン暗転 (#107)、FL 試合間境界 | < 3.5s → 除去、≥ 3.5s → 保持 |
 | `match_boundary` | 片側のみスコアバーあり | 試合開始/終了 | 保持 |
 | `non_fl` | 前後ともスコアバーなし | 非 FL コンテンツ境界 (#108/#109) | 除去 |
@@ -147,7 +247,7 @@ ROI を左・中央・右の 3 セクションに分割し、各セクション�
 `in_match` 分類のうち短い暗転（< `_IN_MATCH_MAX_DURATION=3.5s`）のみを除去する。
 
 | 種別 | Duration（精密計測値） | 処理 |
-|---|---|---|
+| --- | --- | --- |
 | キャラダウン暗転 | 1.0-2.0s | 除去 |
 | FL 試合間の短い境界 | 4.5s+ | 保持 |
 | FL 試合間の長い境界 | 7s+ | 保持 |
@@ -158,7 +258,7 @@ ROI を左・中央・右の 3 セクションに分割し、各セクション�
 
 FL 試合間の遷移は 2 つの暗転を伴うことがある:
 
-```
+```text
 FL 試合 A → 暗転₁ (match_boundary) → ロビー/結果画面 → 暗転₂ (match_boundary) → FL 試合 B
 ```
 
@@ -170,7 +270,7 @@ FL 試合 A → 暗転₁ (match_boundary) → ロビー/結果画面 → 暗転
 #### 閾値の根拠データ
 
 | パラメータ | 値 | 実測分布 |
-|---|---|---|
+| --- | --- | --- |
 | `_SCOREBAR_CHANNEL_STD_THRESHOLD` | 15.0 | lobby=4-5, queue=8-9, **FL=26-48** |
 | `_IN_MATCH_MAX_DURATION` | 3.5s | キャラダウン=1.0-2.0s, **境界=4.5s+** |
 | `_MERGE_GAP_MAX` | 600s | 結果画面=83-266s, lobby=232-468s |
@@ -185,7 +285,7 @@ FL 試合 A → 暗転₁ (match_boundary) → ロビー/結果画面 → 暗転
 ### 検知方式の選定
 
 | # | 方式 | 不採用理由 |
-|---|---|---|
+| --- | --- | --- |
 | 1 | OpenCV `VideoCapture` ランダムシーク | 大容量 MKV でシーク不安定。キーフレーム距離に依存し再現性が低い |
 | 2 | OpenCV 逐次 `grab()`/`read()` | 全フレームをデコード。60fps/2h で実用的な速度が出ない |
 | 3 | ffmpeg `select` フィルタ (`select='not(mod(t,N))'`) | フィルタ前に全フレームをデコードするため、方式 2 と同じボトルネック |
@@ -221,7 +321,7 @@ FL 試合 A → 暗転₁ (match_boundary) → ロビー/結果画面 → 暗転
 #### 検討したが不採用の手法
 
 | 手法 | 不採用理由 |
-|---|---|
+| --- | --- |
 | ヒストグラム比較 | カラープローブが必要でアーキテクチャ変更が大きい。L1 スコープ外 |
 | テンプレートマッチング | OpenCV 再導入 + UI バージョン依存。保守コスト高 |
 | 暗転前後の輝度変化率 | パターン C では前後とも ~79 で変化なし。効果なし |
@@ -248,7 +348,7 @@ FL 試合 A → 暗転₁ (match_boundary) → ロビー/結果画面 → 暗転
 #### 検討したが不採用・問題があった方式（Phase 3）
 
 | 方式 | 不採用理由 |
-|---|---|
+| --- | --- |
 | `in_match` 無条件除去（初期実装） | FL 試合間境界も `in_match` に分類されるため、7→3 試合の致命的退行 |
 | duration guard のみ (`_IN_MATCH_MAX_DURATION=5.0`) | `non_fl` 誤分類には効果なし。退行を部分的にしか修正できず（7→4） |
 | `_SCOREBAR_CHANNEL_STD_THRESHOLD=8.0`（初期値） | キュー画面 (ch_std=8-9) が FL と判定される偽陽性 |
@@ -266,7 +366,7 @@ FL 試合 A → 暗転₁ (match_boundary) → ロビー/結果画面 → 暗転
 37GB/2h AV1 MKV での実測に基づく最適化。詳細なベンチマーク結果は [`docs/benchmarks.md`](benchmarks.md) を参照。
 
 | 施策 | 変更 | 効果 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `max_workers` 引き上げ | 8 → `min(cpu_count, 24)` | ~3x スループット | 32コア環境で 8 は過少。ボトルネックは per-probe デコード |
 | `-threads 1` | ffmpeg プロセスに追加 | スレッド競合防止 | workers=24 × デフォルトスレッド数 = 768 スレッドで逆に遅くなる |
 | `sample_interval` 自動調整 | 1h+→2.0s, 2h+→3.0s | プローブ数半減-1/3 | 暗転区間 5s+ なので interval=3.0 でも検知可能 |
@@ -288,7 +388,7 @@ ffmpeg -y -ss <start> -i input.mkv -to <duration> -c copy -avoid_negative_ts mak
 
 ### 出力命名規則
 
-```
+```text
 match_001.mp4
 match_002.mp4
 ...

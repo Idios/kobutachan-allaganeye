@@ -22,14 +22,17 @@ MODULE = "allaganeye.commands.split_matches.run_split"
 # --- Basic tests ---
 
 
-def test_version():
+def test_version(monkeypatch: pytest.MonkeyPatch):
+    """--version returns 0 with version output (integrity check skipped for tests)."""
+    monkeypatch.setenv("ALLAGANEYE_INTEGRITY_SKIP", "1")
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
     assert "allaganeye" in result.stdout
 
 
-def test_version_short_flag():
+def test_version_short_flag(monkeypatch: pytest.MonkeyPatch):
     """-V should be an alias for --version (issue #337)."""
+    monkeypatch.setenv("ALLAGANEYE_INTEGRITY_SKIP", "1")
     result = runner.invoke(app, ["-V"])
     assert result.exit_code == 0
     assert "allaganeye" in result.stdout
@@ -977,3 +980,252 @@ class TestCliOptionCombinations:
         config = mock_run_split.call_args[0][1]
         assert config.dry_run is True
         assert config.no_cache is True
+
+
+# --- detect command + split --from-metadata (#463) ---
+
+
+def test_detect_help():
+    result = runner.invoke(app, ["detect", "--help"])
+    assert result.exit_code == 0
+    assert "detect" in result.stdout.lower()
+    # --dry-run removed from detect (it *is* the dry-run)
+    assert "--dry-run" not in result.stdout
+
+
+@patch("allaganeye.commands.detect.run_detect")
+def test_detect_invokes_run_detect(mock_run_detect, fake_video):
+    result = runner.invoke(app, ["detect", str(fake_video), "-o", "out"])
+    assert result.exit_code == 0, result.stdout
+    mock_run_detect.assert_called_once()
+    args, _kwargs = mock_run_detect.call_args
+    assert args[0] == fake_video
+
+
+@patch("allaganeye.commands.detect.run_detect")
+def test_detect_missing_file_exits_with_input_file_error(mock_run_detect, tmp_path):
+    result = runner.invoke(app, ["detect", str(tmp_path / "missing.mp4")])
+    assert result.exit_code == 2  # InputFileError
+    mock_run_detect.assert_not_called()
+
+
+@patch("allaganeye.commands.detect.run_detect")
+def test_detect_rejects_unsupported_format(mock_run_detect, tmp_path):
+    bad = tmp_path / "input.txt"
+    bad.write_bytes(b"x")
+    result = runner.invoke(app, ["detect", str(bad)])
+    assert result.exit_code == 2  # InputFileError (unsupported)
+    mock_run_detect.assert_not_called()
+
+
+@patch("allaganeye.commands.split_matches.run_split_from_metadata")
+def test_split_from_metadata_invokes_split_from_metadata(mock_run_from_meta, tmp_path):
+    meta = tmp_path / "metadata.json"
+    meta.write_text("{}", encoding="utf-8")
+    result = runner.invoke(app, ["split", "--from-metadata", str(meta)])
+    assert result.exit_code == 0, result.stdout
+    mock_run_from_meta.assert_called_once()
+
+
+def test_split_from_metadata_and_video_path_mutually_exclusive(fake_video, tmp_path):
+    meta = tmp_path / "metadata.json"
+    meta.write_text("{}", encoding="utf-8")
+    result = runner.invoke(
+        app, ["split", str(fake_video), "--from-metadata", str(meta)]
+    )
+    assert result.exit_code == 5  # ConfigValidationError
+
+
+def test_split_requires_one_of_video_path_or_from_metadata():
+    result = runner.invoke(app, ["split"])
+    # typer shows help and exits when neither is given, or our mutex error
+    assert result.exit_code != 0
+
+
+@patch("allaganeye.commands.split_matches.run_split_from_metadata")
+def test_split_from_metadata_dry_run_rejected(mock_run_from_meta, tmp_path):
+    meta = tmp_path / "metadata.json"
+    meta.write_text("{}", encoding="utf-8")
+    result = runner.invoke(app, ["split", "--from-metadata", str(meta), "--dry-run"])
+    assert result.exit_code == 5  # ConfigValidationError
+    mock_run_from_meta.assert_not_called()
+
+
+def test_split_from_metadata_missing_file_exits_with_input_file_error(tmp_path):
+    result = runner.invoke(
+        app, ["split", "--from-metadata", str(tmp_path / "nope.json")]
+    )
+    assert result.exit_code == 2  # InputFileError
+
+
+# --- single-dash long-option hint (#440) ---
+
+
+def test_suggest_long_option_hint_matches_top_level():
+    """``-version`` argv -> suggest ``--version`` (top-level option, #440)."""
+    from allaganeye.cli import _suggest_long_option_hint
+
+    assert _suggest_long_option_hint(["-version"]) == "--version"
+
+
+def test_suggest_long_option_hint_matches_subcommand_option():
+    """``-gpu`` argv -> suggest ``--gpu`` (subcommand-only option, #440).
+
+    Subcommand options like ``--gpu`` belong to ``split`` / ``detect``,
+    not the top-level group, so the helper must walk subcommands too.
+    """
+    from allaganeye.cli import _suggest_long_option_hint
+
+    assert _suggest_long_option_hint(["split", "-gpu"]) == "--gpu"
+
+
+def test_suggest_long_option_hint_skips_real_short_flag():
+    """``-V`` (real short alias, len 1) must NOT be treated as a typo (#440)."""
+    from allaganeye.cli import _suggest_long_option_hint
+
+    assert _suggest_long_option_hint(["-V"]) is None
+    assert _suggest_long_option_hint(["-v"]) is None
+
+
+def test_suggest_long_option_hint_skips_double_dash():
+    """``--version`` is already correct, return ``None`` (#440)."""
+    from allaganeye.cli import _suggest_long_option_hint
+
+    assert _suggest_long_option_hint(["--version"]) is None
+
+
+def test_suggest_long_option_hint_skips_unknown_token():
+    """``-xyz`` where ``--xyz`` isn't a real option -> no misleading hint (#440)."""
+    from allaganeye.cli import _suggest_long_option_hint
+
+    assert _suggest_long_option_hint(["-xyz"]) is None
+
+
+def test_suggest_long_option_hint_empty_argv():
+    """Empty argv -> ``None`` (defensive, #440)."""
+    from allaganeye.cli import _suggest_long_option_hint
+
+    assert _suggest_long_option_hint([]) is None
+
+
+def test_main_emits_hint_for_single_dash_version(monkeypatch, capsys):
+    """``allaganeye -version`` triggers ``Did you mean --version?`` (#440)."""
+    from allaganeye.cli import main
+
+    monkeypatch.setattr("sys.argv", ["allaganeye", "-version"])
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+    assert excinfo.value.code != 0
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "Did you mean --version?" in combined
+
+
+def test_main_emits_hint_for_single_dash_help(monkeypatch, capsys):
+    """``allaganeye -help`` triggers ``Did you mean --help?`` (#440)."""
+    from allaganeye.cli import main
+
+    monkeypatch.setattr("sys.argv", ["allaganeye", "-help"])
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+    assert excinfo.value.code != 0
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "Did you mean --help?" in combined
+
+
+def test_main_no_hint_when_double_dash_correct(monkeypatch, capsys):
+    """``--version`` works normally without spurious hint (#440 regression guard)."""
+    from allaganeye.cli import main
+
+    monkeypatch.setenv("ALLAGANEYE_INTEGRITY_SKIP", "1")
+    monkeypatch.setattr("sys.argv", ["allaganeye", "--version"])
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+    assert excinfo.value.code == 0
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "Did you mean" not in combined
+    assert "allaganeye" in combined  # version output present
+
+
+def test_main_short_alias_unchanged(monkeypatch, capsys):
+    """``-V`` short alias still prints version, no hint emitted (#440 regression guard)."""
+    from allaganeye.cli import main
+
+    monkeypatch.setenv("ALLAGANEYE_INTEGRITY_SKIP", "1")
+    monkeypatch.setattr("sys.argv", ["allaganeye", "-V"])
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+    assert excinfo.value.code == 0
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "Did you mean" not in combined
+    assert "allaganeye" in combined
+
+
+def test_main_no_misleading_hint_for_unrelated_typo(monkeypatch, capsys):
+    """``-xyz`` (no matching long option) prints click error WITHOUT a hint (#440)."""
+    from allaganeye.cli import main
+
+    monkeypatch.setattr("sys.argv", ["allaganeye", "-xyz"])
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+    assert excinfo.value.code != 0
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "Did you mean" not in combined
+
+
+# --- Version callback integrity check tests (#668) ---
+
+
+def test_version_callback_exits_zero_when_integrity_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--version exit 0 + version output when integrity passes."""
+    import typer
+
+    from allaganeye import cli
+
+    monkeypatch.setenv("ALLAGANEYE_INTEGRITY_SKIP", "1")
+
+    with pytest.raises(typer.Exit) as exc_info:
+        cli.version_callback(True)
+
+    assert (exc_info.value.exit_code or 0) == 0
+
+
+def test_version_callback_exits_seven_when_integrity_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--version exit 7 when integrity fails, with stderr message."""
+    import typer
+
+    from allaganeye import cli, integrity
+    from allaganeye.exceptions import IntegrityError
+
+    def fake_check() -> None:
+        raise IntegrityError(
+            "integrity check failed: 1 missing, 0 size mismatch",
+            context={
+                "missing": ["lib/allaganeye/audio/refs/fanfare.npz"],
+                "size_mismatch": [],
+            },
+        )
+
+    monkeypatch.setattr(integrity, "check", fake_check)
+
+    with pytest.raises(typer.Exit) as exc_info:
+        cli.version_callback(True)
+
+    assert exc_info.value.exit_code == 7
+    captured = capsys.readouterr()
+    assert "integrity check failed" in captured.err
+
+
+def test_version_callback_returns_when_value_false() -> None:
+    """value=False (no --version flag) returns silently."""
+    from allaganeye import cli
+
+    assert cli.version_callback(False) is None

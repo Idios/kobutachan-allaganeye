@@ -1,13 +1,18 @@
 """Tests for split_matches pipeline orchestration."""
 
 import json
+import re
+import time
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from allaganeye.commands.split_matches import (
+    _ETAProgressBar,
+    _PROGRESS_LABEL_WIDTH,
     _auto_sample_interval,
+    _eta_progressbar,
     _load_cache,
     _save_cache,
     run_split,
@@ -133,6 +138,8 @@ def test_pipeline_metadata_json_content(mock_probe, mock_detect, mock_split, tmp
     data = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
     assert data["source"] == "input.mp4"
     assert data["source_duration"] == 1800.0
+    # #465 review: source_fps is propagated from probe -> metadata.json
+    assert data["source_fps"] == 30.0
     assert len(data["matches"]) == 2
     m1 = data["matches"][0]
     assert m1["index"] == 1
@@ -492,6 +499,22 @@ def test_metadata_detection_params_present(
     delta = abs((datetime.now(UTC) - parsed).total_seconds())
     assert delta < 60, f"detected_at drifted from now by {delta}s"
 
+    # #586 -- detection_started_at / detection_completed_at are written
+    # for the GUI elapsed column. started_at is the same value as
+    # detected_at (legacy alias retained for backward compat); completed_at
+    # is captured immediately before the writer flushes metadata.json.
+    assert data["detection_started_at"] == detected_at
+    completed_at = data["detection_completed_at"]
+    assert isinstance(completed_at, str), "detection_completed_at must be string"
+    assert completed_at.endswith("Z"), (
+        f"detection_completed_at must end with 'Z': {completed_at!r}"
+    )
+    parsed_completed = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+    started_parsed = datetime.fromisoformat(detected_at.replace("Z", "+00:00"))
+    assert parsed_completed >= started_parsed, (
+        "detection_completed_at must be >= detection_started_at"
+    )
+
 
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
@@ -630,7 +653,7 @@ def test_splitting_bar_shown_in_normal_run(
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    with patch("click.progressbar") as mock_bar:
+    with patch(f"{MODULE}._ETAProgressBar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
@@ -646,17 +669,24 @@ def test_splitting_bar_shown_in_normal_run(
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
 def test_progressbar_shows_eta_label(mock_probe, mock_detect, mock_split, tmp_path):
-    """Progress bars enable ETA and percent display (#329).
+    """Progress bars enable ETA and percent display in CPU mode (#329).
 
     Guards the contract from issue #329: the user must be able to tell
-    that the time shown is ETA, via ``show_eta=True`` on click.progressbar.
+    that the time shown is ETA, via ``show_eta=True`` on the
+    ``_ETAProgressBar`` subclass (refactored from ``click.progressbar``
+    factory in #365).
+    GPU mode deliberately suppresses click's ETA on the Detecting bar
+    (#438); that variant is covered by
+    :func:`test_progressbar_suppresses_click_eta_on_detecting_in_gpu_mode`.
     """
     mock_probe.return_value = PROBE_RESULT
     mock_detect.return_value = BOUNDARIES
     mock_split.return_value = _output_files(tmp_path)
-    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    # CPU mode explicitly -- avoid codec auto-select pulling in GPU path
+    # (which would suppress click ETA on Detecting per #438).
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, use_gpu=False)
 
-    with patch("click.progressbar") as mock_bar:
+    with patch(f"{MODULE}._ETAProgressBar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
@@ -669,6 +699,69 @@ def test_progressbar_shows_eta_label(mock_probe, mock_detect, mock_split, tmp_pa
             f"Expected show_eta=True, got {call.kwargs}"
         )
         assert call.kwargs.get("show_percent") is True
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_progressbar_suppresses_click_eta_on_detecting_in_gpu_mode(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """GPU mode sets ``show_eta=False`` on the Detecting bar only (#438).
+
+    GPU chunk completion is non-linear (long stall, then burst) so
+    click's rate estimator produces absurd ETAs like ``3d 08:08:52``.
+    The Detecting bar supplies its own ETA in the label; click's
+    built-in ETA must be off.  Refining / Scorebar / Splitting stay
+    at ``show_eta=True`` because their progress is linear.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, use_gpu=True)
+
+    with patch(f"{MODULE}._ETAProgressBar") as mock_bar:
+        mock_bar.return_value.__enter__ = lambda s: s
+        mock_bar.return_value.__exit__ = lambda s, *a: None
+        mock_bar.return_value.update = lambda n: None
+        run_split(Path("input.mp4"), config)
+
+    assert mock_bar.call_count >= 1
+
+    # Partition bar creations by label prefix for cleaner assertions.
+    detecting_calls = [
+        c
+        for c in mock_bar.call_args_list
+        if c.kwargs.get("label", "").strip().startswith("Detecting")
+    ]
+    non_detecting_calls = [
+        c
+        for c in mock_bar.call_args_list
+        if not c.kwargs.get("label", "").strip().startswith("Detecting")
+    ]
+
+    assert detecting_calls, "Detecting bar was not created"
+    for call in detecting_calls:
+        assert call.kwargs.get("show_eta") is False, (
+            "GPU mode must disable click's built-in ETA on Detecting "
+            f"(#438); got {call.kwargs}"
+        )
+
+    for call in non_detecting_calls:
+        assert call.kwargs.get("show_eta") is True, (
+            f"Non-Detecting bars keep click ETA even in GPU mode (got {call.kwargs})"
+        )
+
+
+def test_eta_progressbar_suppress_click_eta_flag():
+    """_eta_progressbar(suppress_click_eta=True) toggles click's show_eta off (#438)."""
+    from allaganeye.commands.split_matches import _eta_progressbar
+
+    suppressed = _eta_progressbar(100, "Detecting", suppress_click_eta=True)
+    default = _eta_progressbar(100, "Detecting")
+
+    assert suppressed.show_eta is False
+    assert default.show_eta is True
 
 
 @patch(f"{MODULE}.split_video")
@@ -1045,7 +1138,7 @@ def test_progressbar_length(mock_probe, mock_detect, mock_split, tmp_path):
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    with patch("click.progressbar") as mock_bar:
+    with patch(f"{MODULE}._ETAProgressBar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
@@ -1068,7 +1161,7 @@ def test_progressbar_tiny_video(mock_probe, mock_detect, mock_split, tmp_path):
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    with patch("click.progressbar") as mock_bar:
+    with patch(f"{MODULE}._ETAProgressBar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
@@ -1090,7 +1183,7 @@ def test_progressbar_auto_interval(mock_probe, mock_detect, mock_split, tmp_path
     mock_split.return_value = _output_files(tmp_path)
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
-    with patch("click.progressbar") as mock_bar:
+    with patch(f"{MODULE}._ETAProgressBar") as mock_bar:
         mock_bar.return_value.__enter__ = lambda s: s
         mock_bar.return_value.__exit__ = lambda s, *a: None
         mock_bar.return_value.update = lambda n: None
@@ -1437,6 +1530,182 @@ def test_refining_and_scorebar_bars_do_not_overlap(
     )
 
 
+# --- multi-line eager phase display (#434) ---
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_eager_phases_off_by_default_in_non_tty(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Non-TTY stdout (capsys default) skips eager placeholders (#434).
+
+    Backwards-compat / log hygiene: redirected output and CI logs must
+    not leak ANSI escape sequences or ``[waiting...]`` placeholder text.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    output = capsys.readouterr().out
+    assert "[waiting for Pass 1 to finish]" not in output
+    assert "[waiting for Pass 2 to finish]" not in output
+    # No ANSI cursor-up escape (\x1b[3A) when eager mode is off.
+    assert "\x1b[3A" not in output
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_eager_phases_prints_waiting_placeholders_in_tty_mode(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys, monkeypatch
+):
+    """TTY stdout pre-prints Refining / Scorebar [waiting] placeholders (#434).
+
+    User intent (issue body): "Detecting / Refining / Scorebar"
+    visible from the start so the appearance of Refining mid-pipeline
+    no longer feels like a phase materialising out of thin air.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    monkeypatch.setattr(
+        f"{MODULE}._stdout_supports_eager_phases",
+        lambda: True,
+    )
+
+    run_split(Path("input.mp4"), config)
+    output = capsys.readouterr().out
+
+    assert "Refining" in output
+    assert "[waiting for Pass 1 to finish]" in output
+    assert "Scorebar" in output
+    assert "[waiting for Pass 2 to finish]" in output
+    # Cursor-up ANSI moves the next bar render onto the Detecting line.
+    assert "\x1b[3A" in output
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_eager_phases_marks_refining_skipped_when_pass2_empty(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys, monkeypatch
+):
+    """Pass 2 with no regions -> Refining placeholder updated to ``[skipped: no regions]`` (#434)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    def detect_side_effect(video_path, **kwargs):
+        # Pass 2 yields zero callbacks (no regions to refine), but
+        # scorebar still classifies whatever survived from Pass 1.
+        sb_cb = kwargs.get("scorebar_progress_callback")
+        if sb_cb:
+            sb_cb(1, 2)
+            sb_cb(2, 2)
+        return BOUNDARIES
+
+    mock_detect.side_effect = detect_side_effect
+    monkeypatch.setattr(
+        f"{MODULE}._stdout_supports_eager_phases",
+        lambda: True,
+    )
+
+    run_split(Path("input.mp4"), config)
+    output = capsys.readouterr().out
+
+    assert "Refining   [skipped: no regions]" in output
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_eager_phases_clears_placeholders_on_pass1_exception(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys, monkeypatch
+):
+    """Pass 1 で例外発生時に Refining/Scorebar placeholder を ANSI clear する (#434 error path).
+
+    Without cleanup, an exception during Pass 1 leaves stale
+    ``[waiting...]`` lines hanging above the traceback because the
+    Refining / Scorebar bars never opened to overwrite their
+    placeholders.  Reviewer (#594) flagged this as an error-path UX
+    regression of the multi-line layout introduced for #434.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    # Simulate a failure during Pass 1 before any refine / scorebar
+    # callback fires; the exception propagates out of run_split.
+    mock_detect.side_effect = VideoProcessingError("simulated Pass 1 failure")
+    monkeypatch.setattr(
+        f"{MODULE}._stdout_supports_eager_phases",
+        lambda: True,
+    )
+
+    with pytest.raises(VideoProcessingError):
+        run_split(Path("input.mp4"), config)
+    output = capsys.readouterr().out
+
+    # Both placeholders printed initially (sanity).
+    assert "[waiting for Pass 1 to finish]" in output
+    assert "[waiting for Pass 2 to finish]" in output
+    # Two cleanup escapes appended after the close calls so the
+    # waiting placeholders don't dangle above the traceback.
+    assert output.count("\x1b[2K\n") >= 2
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_eager_phases_clears_only_scorebar_placeholder_on_pass2_exception(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys, monkeypatch
+):
+    """Pass 2 中で例外発生時は Scorebar placeholder のみ cleanup する (#434 error path).
+
+    By the time Pass 2 raises, the Refining bar has already replaced
+    its waiting placeholder, so only the Scorebar placeholder needs
+    erasing.  Refining is closed by ``_close_refine_if_open`` which
+    advances the cursor onto the Scorebar waiting line.
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    def detect_side_effect(video_path, **kwargs):
+        ref_cb = kwargs.get("refine_progress_callback")
+        if ref_cb:
+            ref_cb(1, 4)
+        # Raise after Refining bar opened but before Scorebar fires.
+        raise VideoProcessingError("simulated Pass 2 failure")
+
+    mock_detect.side_effect = detect_side_effect
+    monkeypatch.setattr(
+        f"{MODULE}._stdout_supports_eager_phases",
+        lambda: True,
+    )
+
+    with pytest.raises(VideoProcessingError):
+        run_split(Path("input.mp4"), config)
+    output = capsys.readouterr().out
+
+    # Refining waiting placeholder was already replaced by the
+    # Refining bar before the exception fired -> no cleanup needed
+    # for it.  Scorebar waiting placeholder still on screen.
+    assert "[waiting for Pass 2 to finish]" in output
+    # Exactly one trailing cleanup escape (Scorebar).  ``output.count``
+    # is more flexible than equality because click may emit additional
+    # cursor controls during bar teardown; the regression we guard
+    # against is "zero cleanups", not "more than one".
+    assert output.count("\x1b[2K\n") >= 1
+
+
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
@@ -1692,47 +1961,75 @@ class TestDiskSpaceCheck:
 
 
 class TestResolveGpuMode:
-    """Codec-based GPU/CPU auto-selection (#334)."""
+    """Codec-based GPU/CPU auto-selection (#334) + vendor selection (#546)."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_probe(self, monkeypatch):
+        """Default: NVIDIA only so vendor auto-select is deterministic."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["nvidia"],
+        )
 
     def test_explicit_gpu_true(self):
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        assert _resolve_gpu_mode(True, "av1", show=False, verbose=False) is True
+        use_gpu, vendor = _resolve_gpu_mode(
+            True, None, "av1", show=False, verbose=False
+        )
+        assert use_gpu is True
+        assert vendor == "nvidia"
 
     def test_explicit_gpu_false(self):
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        assert _resolve_gpu_mode(False, "h264", show=False, verbose=False) is False
+        use_gpu, _vendor = _resolve_gpu_mode(
+            False, None, "h264", show=False, verbose=False
+        )
+        assert use_gpu is False
 
     def test_auto_h264_selects_gpu(self):
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        assert _resolve_gpu_mode(None, "h264", show=False, verbose=False) is True
+        use_gpu, vendor = _resolve_gpu_mode(
+            None, None, "h264", show=False, verbose=False
+        )
+        assert use_gpu is True
+        assert vendor == "nvidia"
 
     def test_auto_hevc_selects_gpu(self):
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        assert _resolve_gpu_mode(None, "hevc", show=False, verbose=False) is True
+        use_gpu, _ = _resolve_gpu_mode(None, None, "hevc", show=False, verbose=False)
+        assert use_gpu is True
 
-    def test_auto_av1_selects_cpu(self):
+    def test_auto_av1_selects_gpu(self):
+        """AV1 auto-selects GPU (#414: NVDEC AV1 = RTX 30+ / QSV AV1 = Gen12+ / VCN 4.0+)."""
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        assert _resolve_gpu_mode(None, "av1", show=False, verbose=False) is False
+        use_gpu, _ = _resolve_gpu_mode(None, None, "av1", show=False, verbose=False)
+        assert use_gpu is True
 
-    def test_auto_vp9_selects_cpu(self):
+    def test_auto_vp9_selects_gpu(self):
+        """VP9 auto-selects GPU (#414: widely supported NVDEC Maxwell+)."""
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        assert _resolve_gpu_mode(None, "vp9", show=False, verbose=False) is False
+        use_gpu, _ = _resolve_gpu_mode(None, None, "vp9", show=False, verbose=False)
+        assert use_gpu is True
 
     def test_auto_unknown_codec_selects_cpu(self):
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        assert _resolve_gpu_mode(None, None, show=False, verbose=False) is False
+        use_gpu, vendor = _resolve_gpu_mode(None, None, None, show=False, verbose=False)
+        assert use_gpu is False
+        # vendor が probe で見つかっても CPU 選択時は None にして vendor 情報を
+        # downstream (scan_gpu) に渡さない (GPU path を使わないため不要)
+        assert vendor is None
 
     def test_auto_verbose_shows_message(self, capsys):
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        _resolve_gpu_mode(None, "h264", show=True, verbose=True)
+        _resolve_gpu_mode(None, None, "h264", show=True, verbose=True)
         out = capsys.readouterr().out
         assert "Auto-selected GPU mode" in out
         assert "h264" in out
@@ -1741,21 +2038,21 @@ class TestResolveGpuMode:
         """CPU auto-selection also emits a verbose notice (#334).
 
         Guards the else-branch of the mode resolution -- users on
-        AV1/VP9 recordings need to see that CPU mode was chosen
-        intentionally (not just because GPU failed).
+        legacy codecs (mpeg2video etc.) need to see that CPU mode was
+        chosen intentionally (not just because GPU failed).
         """
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        _resolve_gpu_mode(None, "av1", show=True, verbose=True)
+        _resolve_gpu_mode(None, None, "mpeg2video", show=True, verbose=True)
         out = capsys.readouterr().out
         assert "Auto-selected CPU mode" in out
-        assert "av1" in out
+        assert "mpeg2video" in out
 
     def test_auto_non_verbose_suppresses_message(self, capsys):
         """Non-verbose auto selection is silent (#334)."""
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        _resolve_gpu_mode(None, "h264", show=True, verbose=False)
+        _resolve_gpu_mode(None, None, "h264", show=True, verbose=False)
         out = capsys.readouterr().out
         assert "Auto-selected" not in out
 
@@ -1763,23 +2060,402 @@ class TestResolveGpuMode:
         """--quiet (show=False) silences auto-selection message even with verbose (#334)."""
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        _resolve_gpu_mode(None, "h264", show=False, verbose=True)
+        _resolve_gpu_mode(None, None, "h264", show=False, verbose=True)
         out = capsys.readouterr().out
         assert "Auto-selected" not in out
 
     def test_auto_codec_matching_is_case_insensitive(self):
-        """Codec name matching is case-insensitive (#334).
-
-        ffprobe normally returns lowercase codec_name, but downstream
-        callers or manual ProbeResult construction may pass "H264" /
-        "HEVC".  The set is compared via ``.lower()``; guards against a
-        future refactor dropping that normalization.
-        """
+        """Codec name matching is case-insensitive (#334)."""
         from allaganeye.commands.split_matches import _resolve_gpu_mode
 
-        assert _resolve_gpu_mode(None, "H264", show=False, verbose=False) is True
-        assert _resolve_gpu_mode(None, "HEVC", show=False, verbose=False) is True
-        assert _resolve_gpu_mode(None, "Hevc", show=False, verbose=False) is True
+        assert (
+            _resolve_gpu_mode(None, None, "H264", show=False, verbose=False)[0] is True
+        )
+        assert (
+            _resolve_gpu_mode(None, None, "HEVC", show=False, verbose=False)[0] is True
+        )
+        assert (
+            _resolve_gpu_mode(None, None, "Hevc", show=False, verbose=False)[0] is True
+        )
+
+    # ---- vendor selection (#546) ----
+
+    def test_vendor_auto_prefers_nvidia_in_dual_gpu(self, monkeypatch):
+        """Dual GPU 環境で auto は NVIDIA を優先選択 (_VENDOR_PREFERENCE 順)."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["nvidia", "amd"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        _, vendor = _resolve_gpu_mode(None, None, "av1", show=False, verbose=False)
+        assert vendor == "nvidia"
+
+    def test_vendor_auto_selects_amd_when_only_amd(self, monkeypatch):
+        """AMD iGPU のみ環境では vendor=amd を返し d3d11va 経路で動作する (#553).
+
+        #546 時点では AMD は AMF decoder の filter pipeline 不整合で skip
+        されていたが、#553 で d3d11va + hwdownload 経路を実装したことで
+        auto 選択でも AMD が選ばれる。codec=av1 は ``_GPU_PREFERRED_CODECS``
+        に含まれるため use_gpu=True。
+        """
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["amd"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        use_gpu, vendor = _resolve_gpu_mode(
+            None, None, "av1", show=False, verbose=False
+        )
+        assert use_gpu is True
+        assert vendor == "amd"
+
+    def test_vendor_explicit_amd_resolves(self, monkeypatch):
+        """AMD は #553 で d3d11va 経路として実装済み、explicit 要求も通る."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["nvidia", "amd"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        use_gpu, vendor = _resolve_gpu_mode(
+            None, "amd", "av1", show=False, verbose=False
+        )
+        assert use_gpu is True
+        assert vendor == "amd"
+
+    def test_vendor_explicit_unavailable_raises_config_error(self, monkeypatch):
+        """--gpu-vendor で probe に無い vendor を要求すると exit 5 (#546).
+
+        NVIDIA のみ実装済みなので nvidia の unavailability をテスト。
+        """
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["amd"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+        from allaganeye.exceptions import ConfigValidationError
+
+        with pytest.raises(ConfigValidationError, match="--gpu-vendor nvidia"):
+            _resolve_gpu_mode(None, "nvidia", "av1", show=False, verbose=False)
+
+    def test_vendor_explicit_intel_succeeds_when_available(self, monkeypatch):
+        """Intel は #550 で実装済み。explicit 要求 + available なら通る."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["intel", "nvidia"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        use_gpu, vendor = _resolve_gpu_mode(
+            None, "intel", "av1", show=False, verbose=False
+        )
+        assert use_gpu is True
+        assert vendor == "intel"
+
+    def test_vendor_explicit_intel_unavailable_raises(self, monkeypatch):
+        """Intel 実装済みでも probe で見つからなければ exit 5 (#550)."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["nvidia"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+        from allaganeye.exceptions import ConfigValidationError
+
+        with pytest.raises(ConfigValidationError, match="--gpu-vendor intel"):
+            _resolve_gpu_mode(None, "intel", "av1", show=False, verbose=False)
+
+    def test_vendor_auto_picks_preference_order(self, monkeypatch):
+        """auto 選択は `_VENDOR_PREFERENCE` (nvidia > amd > intel) 順で
+        実装済み vendor を選ぶ (#546 / #553 / #550).
+
+        nvidia / amd / intel の 3 つが available で、いずれも実装済み
+        (nvidia=cuvid #546, amd=d3d11va #553, intel=qsv #550) のとき、
+        preference 順に NVIDIA dGPU が最優先される。
+        """
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["intel", "amd", "nvidia"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        _, vendor = _resolve_gpu_mode(None, None, "av1", show=False, verbose=False)
+        assert vendor == "nvidia"
+
+    def test_vendor_auto_picks_amd_when_no_nvidia(self, monkeypatch):
+        """NVIDIA 不在 + AMD + Intel 環境で auto は AMD を選ぶ (#553).
+
+        preference = nvidia > amd > intel。NVIDIA が無く AMD と Intel が
+        ある場合、preference 順で AMD が選ばれる (Intel iGPU を持つ AMD
+        dGPU/iGPU 環境を想定)。
+        """
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["amd", "intel"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        use_gpu, vendor = _resolve_gpu_mode(
+            None, None, "av1", show=False, verbose=False
+        )
+        assert use_gpu is True
+        assert vendor == "amd"
+
+    def test_vendor_auto_picks_intel_when_only_intel(self, monkeypatch):
+        """Intel iGPU 単独環境で auto は intel を選ぶ (#550)."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["intel"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        use_gpu, vendor = _resolve_gpu_mode(
+            None, None, "av1", show=False, verbose=False
+        )
+        assert use_gpu is True
+        assert vendor == "intel"
+
+    def test_vendor_none_when_no_gpu_available(self, monkeypatch):
+        """GPU probe が空でも codec match なら use_gpu=True (legacy path).
+
+        vendor=None (probe 失敗 / Linux CI 等) でも scan_gpu の legacy
+        path (-hwaccel auto) で動作する。ffmpeg 側で GPU decode 失敗
+        した場合は CPU fallback (#334 既存挙動維持)。
+        """
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: [],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        use_gpu, vendor = _resolve_gpu_mode(
+            None, None, "av1", show=False, verbose=False
+        )
+        assert use_gpu is True
+        assert vendor is None
+
+    def test_vendor_auto_string_equivalent_to_none(self, monkeypatch):
+        """--gpu-vendor auto は指定なし (None) と同等の挙動."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["nvidia", "amd"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        _, none_vendor = _resolve_gpu_mode(None, None, "av1", show=False, verbose=False)
+        _, auto_vendor = _resolve_gpu_mode(
+            None, "auto", "av1", show=False, verbose=False
+        )
+        assert none_vendor == auto_vendor == "nvidia"
+
+
+class TestResolveGpuModeWithProbe:
+    """``_resolve_gpu_mode_with_probe`` returns the available vendor list (#591)."""
+
+    def test_returns_available_vendors(self, monkeypatch):
+        """probe で見つかった全 vendor が 3-tuple の 3 要素目に返る."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["nvidia", "amd"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode_with_probe
+
+        use_gpu, vendor, available = _resolve_gpu_mode_with_probe(
+            None, None, "av1", show=False, verbose=False
+        )
+        assert use_gpu is True
+        assert vendor == "nvidia"
+        assert available == ["nvidia", "amd"]
+
+    def test_returns_empty_when_probe_fails(self, monkeypatch):
+        """probe が空 list を返したら 3 要素目も空 list."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: [],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode_with_probe
+
+        use_gpu, vendor, available = _resolve_gpu_mode_with_probe(
+            None, None, "av1", show=False, verbose=False
+        )
+        # codec match なので use_gpu=True、ただし vendor は None
+        assert use_gpu is True
+        assert vendor is None
+        assert available == []
+
+    def test_legacy_2tuple_wrapper_still_works(self, monkeypatch):
+        """``_resolve_gpu_mode`` (2-tuple) はラッパとして機能する."""
+        monkeypatch.setattr(
+            "allaganeye.system_info.probe_gpu_vendors",
+            lambda: ["intel"],
+        )
+        from allaganeye.commands.split_matches import _resolve_gpu_mode
+
+        result = _resolve_gpu_mode(None, None, "h264", show=False, verbose=False)
+        assert len(result) == 2  # backward-compat 2-tuple
+        use_gpu, vendor = result
+        assert use_gpu is True
+        assert vendor == "intel"
+
+
+class TestBuildSystemInfo:
+    """``_build_system_info`` constructs the metadata.json system_info dict (#591)."""
+
+    def test_basic_payload(self):
+        from allaganeye.commands.split_matches import _build_system_info
+
+        info = _build_system_info(
+            available_vendors=["nvidia", "amd"],
+            vendor_used="nvidia",
+        )
+        assert info["gpu_vendors_available"] == ["nvidia", "amd"]
+        assert info["gpu_vendor_used"] == "nvidia"
+        assert info["vendor_preference"] == ["nvidia", "amd", "intel"]
+
+    def test_no_gpu_used_is_null(self):
+        """CPU 強制 / cache hit / split-only path では vendor_used=None."""
+        from allaganeye.commands.split_matches import _build_system_info
+
+        info = _build_system_info(
+            available_vendors=["nvidia"],
+            vendor_used=None,
+        )
+        assert info["gpu_vendor_used"] is None
+        assert info["gpu_vendors_available"] == ["nvidia"]
+
+    def test_empty_available_vendors(self):
+        """probe 失敗環境 (CPU only Linux CI など) でも payload を作れる."""
+        from allaganeye.commands.split_matches import _build_system_info
+
+        info = _build_system_info(
+            available_vendors=[],
+            vendor_used=None,
+        )
+        assert info["gpu_vendors_available"] == []
+        assert info["gpu_vendor_used"] is None
+        assert info["vendor_preference"] == ["nvidia", "amd", "intel"]
+
+    def test_preference_matches_gpu_detector_module(self):
+        """``vendor_preference`` は ``gpu_detector._VENDOR_PREFERENCE`` のスナップショット."""
+        from allaganeye.commands.split_matches import _build_system_info
+        from allaganeye.video.gpu_detector import _VENDOR_PREFERENCE
+
+        info = _build_system_info(available_vendors=[], vendor_used=None)
+        assert info["vendor_preference"] == list(_VENDOR_PREFERENCE)
+
+
+class TestBuildMetadataPayloadSystemInfo:
+    """``_build_metadata_payload`` includes the system_info field (#591)."""
+
+    def test_payload_includes_system_info(self, tmp_path):
+        from allaganeye.commands.split_matches import _build_metadata_payload
+        from allaganeye.config import SplitConfig
+        from allaganeye.video.detector import MatchBoundary
+
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 120.0, "type": "fl_match"},
+        ]
+        payload = _build_metadata_payload(
+            video_path=tmp_path / "input.mp4",
+            source_duration=120.0,
+            source_fps=60.0,
+            detected_at="2026-04-26T00:00:00Z",
+            detection_started_at="2026-04-26T00:00:00Z",
+            detection_completed_at="2026-04-26T00:00:05Z",
+            effective_interval=1.0,
+            config=config,
+            boundaries=boundaries,
+            output_files=[tmp_path / "match_001.mp4"],
+            gaps=[],
+            system_info={
+                "gpu_vendors_available": ["nvidia"],
+                "gpu_vendor_used": "nvidia",
+                "vendor_preference": ["nvidia", "amd", "intel"],
+            },
+        )
+        assert "system_info" in payload
+        assert payload["system_info"]["gpu_vendors_available"] == ["nvidia"]
+        assert payload["system_info"]["gpu_vendor_used"] == "nvidia"
+        assert payload["system_info"]["vendor_preference"] == [
+            "nvidia",
+            "amd",
+            "intel",
+        ]
+
+
+class TestBuildMetadataPayloadElapsedTimestamps:
+    """``_build_metadata_payload`` records detection_started_at /
+    detection_completed_at so GUI CompleteScreen can render the elapsed
+    column (#586)."""
+
+    def test_payload_includes_started_and_completed_timestamps(self, tmp_path):
+        from allaganeye.commands.split_matches import _build_metadata_payload
+        from allaganeye.config import SplitConfig
+        from allaganeye.video.detector import MatchBoundary
+
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 120.0, "type": "fl_match"},
+        ]
+        payload = _build_metadata_payload(
+            video_path=tmp_path / "input.mp4",
+            source_duration=120.0,
+            source_fps=60.0,
+            detected_at="2026-04-26T00:00:00Z",
+            detection_started_at="2026-04-26T00:00:00Z",
+            detection_completed_at="2026-04-26T00:00:42Z",
+            effective_interval=1.0,
+            config=config,
+            boundaries=boundaries,
+            output_files=[tmp_path / "match_001.mp4"],
+            gaps=[],
+            system_info={
+                "gpu_vendors_available": [],
+                "gpu_vendor_used": None,
+                "vendor_preference": ["nvidia", "amd", "intel"],
+            },
+        )
+        # Both new fields are present and serialised verbatim. Use .get() because
+        # Metadata TypedDict marks them NotRequired (optional in JSON Schema for
+        # pre-#586 metadata.json compat); pyright otherwise warns on direct
+        # subscript access.
+        assert payload.get("detection_started_at") == "2026-04-26T00:00:00Z"
+        assert payload.get("detection_completed_at") == "2026-04-26T00:00:42Z"
+        # Legacy detected_at stays for backward compat (#586 case 案 B).
+        assert payload["detected_at"] == "2026-04-26T00:00:00Z"
+
+    def test_started_at_equals_detected_at_for_new_writes(self, tmp_path):
+        """検知開始時刻は detected_at と同値で書かれる (#586 案 B 後方互換)."""
+        from allaganeye.commands.split_matches import _build_metadata_payload
+        from allaganeye.config import SplitConfig
+        from allaganeye.video.detector import MatchBoundary
+
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 120.0, "type": "fl_match"},
+        ]
+        same_ts = "2026-04-28T01:23:45Z"
+        payload = _build_metadata_payload(
+            video_path=tmp_path / "input.mp4",
+            source_duration=120.0,
+            source_fps=60.0,
+            detected_at=same_ts,
+            detection_started_at=same_ts,
+            detection_completed_at="2026-04-28T01:24:30Z",
+            effective_interval=1.0,
+            config=config,
+            boundaries=boundaries,
+            output_files=[tmp_path / "match_001.mp4"],
+            gaps=[],
+            system_info={
+                "gpu_vendors_available": [],
+                "gpu_vendor_used": None,
+                "vendor_preference": ["nvidia", "amd", "intel"],
+            },
+        )
+        assert payload["detected_at"] == payload.get("detection_started_at")
 
 
 class TestAudioScanIntegration:
@@ -2231,6 +2907,164 @@ def test_verbose_filter_breakdown_absent_when_stats_missing_keys(
     run_split(Path("input.mp4"), config, verbose=True)
     out = capsys.readouterr().out
     assert "Filter:" not in out
+
+
+# --- unknown match accounting (#433) ---
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_emits_unknown_match_line_singular(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """1 unknown segment -> ``+ 1 unknown match`` reconciliation line (#433).
+
+    Reproduces the user-test scenario: ``Filter: 8 candidates -> 7 matches``
+    with ``Detected 8 match(es)`` due to a recording starting mid-match.
+    """
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 8
+            stats["pass2_elapsed_s"] = 1.0
+            stats["filter_candidates"] = 8
+            stats["filter_drops"] = {
+                "below_min_match_duration": 1,
+                "other": 0,
+            }
+            stats["filter_unknown"] = 1
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "Filter: 8 candidates -> 7 matches" in out
+    # Singular form for count==1.
+    assert "+ 1 unknown match" in out
+    assert "+ 1 unknown matches" not in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_emits_unknown_matches_line_plural(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """2+ unknown segments -> ``+ N unknown matches`` plural form (#433)."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 5
+            stats["pass2_elapsed_s"] = 1.0
+            stats["filter_candidates"] = 5
+            stats["filter_drops"] = {
+                "below_min_match_duration": 0,
+                "other": 0,
+            }
+            stats["filter_unknown"] = 2
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "+ 2 unknown matches" in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_omits_unknown_line_when_zero(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """filter_unknown == 0 -> no unknown line (terse output, #433)."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 3
+            stats["pass2_elapsed_s"] = 1.0
+            stats["filter_candidates"] = 3
+            stats["filter_drops"] = {
+                "below_min_match_duration": 0,
+                "other": 0,
+            }
+            stats["filter_unknown"] = 0
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "unknown match" not in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_unknown_line_absent_when_stat_missing(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """Legacy stats without filter_unknown render without unknown line (#433).
+
+    Backwards-compat: older detect fixtures may not populate the new key
+    (the verbose Filter section was added in #388, this counter in #433).
+    """
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 3
+            stats["pass2_elapsed_s"] = 1.0
+            stats["filter_candidates"] = 3
+            stats["filter_drops"] = {
+                "below_min_match_duration": 0,
+                "other": 0,
+            }
+            # intentionally NOT setting filter_unknown
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "unknown match" not in out
 
 
 @patch(f"{MODULE}.split_video")
@@ -2717,7 +3551,7 @@ def test_display_cache_hit_params_malformed_json_emits_unavailable(tmp_path, cap
 
 
 # ------------------------------------------------------------
-# G1-G5 unavailable fallback gap tests (#380 tester review)
+# G1-G5 unavailable fallback gap tests (#380 review)
 # ------------------------------------------------------------
 
 
@@ -2945,6 +3779,12 @@ def test_probe_ffmpeg_version_returns_unknown_on_failure():
         ),
         # BtbN 'n' prefix (common on nightly CI builds)
         ("ffmpeg version n7.1 Copyright (c) 2000-2024", "7.1"),
+        # BtbN LGPL autobuild (shipped with Portable ZIP since #508 / #531;
+        # date matches $FFmpegBuildTag = autobuild-2026-04-22-13-15)
+        (
+            "ffmpeg version n8.1-10-g7f5c90f77e-20260422 Copyright (c) 2000-2026",
+            "8.1",
+        ),
         # essentials_build variant
         ("ffmpeg version 6.0-essentials_build-www.gyan.dev", "6.0"),
         # Bare version (macOS Homebrew style)
@@ -3130,3 +3970,259 @@ def test_quiet_no_cache_only_output_listing(
     assert f"Output: {tmp_path}" in out
     assert "match_001.mp4" in out
     assert "Metadata:" in out
+
+
+# ============================================================
+# #365: progress bar ETA ラベル付与の format 検証
+# ============================================================
+
+_ETA_LINE_PATTERN = re.compile(r"\b\d{1,3}%\s+ETA:\s+(?:\d+d\s+)?\d+:\d{2}:\d{2}\b")
+
+
+def _drive_to_known_eta(bar: _ETAProgressBar, completed: int) -> None:
+    """Force eta_known by simulating elapsed time + progress.
+
+    click ProgressBar は ``start`` / ``last_eta`` が現在時刻で初期化され、
+    ``make_step`` 内の ``time.time() - self.last_eta < 1.0`` 条件が True の
+    間は ``eta_known`` が更新されない。テストでは ``start`` と ``last_eta``
+    を 10 秒前に巻き戻した上で update() し、``make_step`` 内の条件を
+    満たして ``eta_known=True`` にする。
+    """
+    past = time.time() - 10.0  # 10s 前から動いていた体
+    bar.start = past
+    bar.last_eta = past
+    bar.update(completed)
+
+
+@pytest.mark.parametrize("label", ["Detecting", "Refining", "Scorebar", "Splitting"])
+def test_eta_progressbar_label_present_for_all_bars(label: str) -> None:
+    """4 bar 全てで 'ETA: H:MM:SS' label を出すこと (#365)."""
+    bar = _eta_progressbar(100, label)
+    _drive_to_known_eta(bar, 50)
+
+    line = bar.format_progress_line()
+
+    assert line.startswith(label.ljust(_PROGRESS_LABEL_WIDTH))
+    assert "ETA: " in line, f"missing 'ETA: ' label in: {line!r}"
+    assert _ETA_LINE_PATTERN.search(line), f"format mismatch: {line!r}"
+
+
+def test_eta_progressbar_suppresses_eta_in_gpu_mode() -> None:
+    """suppress_click_eta=True (GPU mode #438) では ETA tail を出さず percent のみ."""
+    bar = _eta_progressbar(100, "Detecting", suppress_click_eta=True)
+    _drive_to_known_eta(bar, 50)
+
+    line = bar.format_progress_line()
+
+    assert "ETA: " not in line
+    assert re.search(r"\b\d{1,3}%\s*$", line.rstrip()), line
+
+
+def test_eta_progressbar_placeholder_eta_before_first_update() -> None:
+    """update 前 (eta_known=False) は 'ETA: --:--:--' placeholder を出す (#365 Idios feedback)."""
+    bar = _eta_progressbar(100, "Detecting")
+    # _drive_to_known_eta を呼ばない -- eta_known=False のまま (start は初期化済みだが update 未実行で eta_known は False)
+
+    line = bar.format_progress_line()
+
+    assert "ETA: --:--:--" in line, f"missing placeholder in: {line!r}"
+    assert "0%" in line
+
+
+def test_eta_progressbar_gpu_dispatching_label_with_eta_placeholder() -> None:
+    """GPU mode dispatching 段階の label に 'ETA: --:--:--' を含む format を verify (#365).
+
+    Caller (on_chunk_dispatch) が更新する label の expected string を bar に
+    直接設定し、format_progress_line() 出力に 'ETA: --:--:--' が含まれる
+    + subclass は ETA tail を出さない (show_eta=False) ことを確認する。
+    chunk 1 完了後は on_chunk が label を上書きするため、この ETA は
+    dispatching 段階にのみ表示される。
+    """
+    bar = _eta_progressbar(100, "Detecting", suppress_click_eta=True)
+    # caller (on_chunk_dispatch) が更新する label 文字列の expected
+    bar.label = "Detecting [dispatching 32 chunks, ETA: --:--:--]".ljust(
+        _PROGRESS_LABEL_WIDTH
+    )
+
+    line = bar.format_progress_line()
+
+    # caller label 内の placeholder を確認
+    assert "ETA: --:--:--" in line, f"caller label placeholder missing in: {line!r}"
+    # subclass は show_eta=False で ETA tail を出さない (二重表示防止 #438)
+    # ETA は label 内 1 つのみ
+    assert line.count("ETA:") == 1, f"expected single ETA occurrence in: {line!r}"
+
+
+def test_eta_progressbar_bar_visual_uses_dashes_and_36_width() -> None:
+    """bar visual (empty_char='-' + width=36) が click.progressbar() factory baseline を維持すること (#365).
+
+    `_eta_progressbar` を `click.progressbar()` factory から `_ETAProgressBar(...)`
+    class 直接インスタンス化に refactor した際、factory と class の defaults 差異
+    (empty_char='-' vs ' '、width=36 vs 30) で silent visual regression が起きうる。
+    issue #365 期待動作 `Detecting  ####---  93% ETA: 0:00:22` の `####---` 部分
+    (dash empty char) を保持するための regression test (PR #687 review feedback #3 対応)。
+    """
+    bar = _eta_progressbar(100, "Detecting")
+    _drive_to_known_eta(bar, 50)
+
+    line = bar.format_progress_line()
+
+    # empty char が '-' (issue #365 期待動作 ####--- に整合)
+    assert "-" in line, f"expected '-' as empty char in: {line!r}"
+    # width=36 で 50% 進捗 -> 18 fill + 18 empty
+    assert "#" * 18 in line, f"expected 18 fills (width=36, 50%): {line!r}"
+    assert "-" * 18 in line, f"expected 18 dashes (width=36, 50%): {line!r}"
+
+
+def test_eta_progressbar_finished_no_eta_tail() -> None:
+    """100% 完了時 (finished=True) は 'ETA: ' tail を出さない (commit 9bc3788 仕様、#365、PR #687 review feedback #6 対応)."""
+    bar = _eta_progressbar(100, "Splitting")
+    _drive_to_known_eta(bar, 100)  # 100% で finished=True
+
+    line = bar.format_progress_line()
+
+    assert "ETA:" not in line, f"100% で ETA tail が残存: {line!r}"
+    assert "100%" in line
+
+
+# -- #644 brightness_samples wiring through run_split (一気通貫) --
+
+# `MODULE` / `PROBE_RESULT` / `BOUNDARIES` / `_mock_audio_scan` (autouse)
+# は file 冒頭で既定義。`mock_pipeline` fixture は `detect_match_boundaries`
+# を mock するが、本ケースは `_run_detection` を直接 patch して
+# `brightness_callback` の wiring を assert したいため、`mock_pipeline` は
+# 使わず個別に patch する。
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_writes_brightness_samples_when_callback_fires(
+    mock_probe, mock_split, mock_run_detection, tmp_path
+):
+    """#644 -- run_split (一気通貫) で Pass 1 が走ったら brightness_samples
+    が metadata.json に書かれること。`_run_detection` に渡される
+    `brightness_callback` を fake_run_detection から call して輝度 sample
+    を注入し、最終 metadata.json に payload が現れることを assert する。
+    """
+    mock_probe.return_value = PROBE_RESULT
+
+    def fake_run_detection(*args, **kwargs):
+        cb = kwargs.get("brightness_callback")
+        assert cb is not None, (
+            "run_split must pass brightness_callback to _run_detection (#644)"
+        )
+        cb({0.0: 10.5, 0.5: 12.3, 1.0: 14.1})
+        return BOUNDARIES
+
+    mock_run_detection.side_effect = fake_run_detection
+
+    output_dir = tmp_path / "out"
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    run_split(video, config, verbose=False, quiet=True)
+
+    metadata_path = output_dir / "metadata.json"
+    assert metadata_path.exists()
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert "brightness_samples" in payload, (
+        "run_split で Pass 1 が走った時 brightness_samples が metadata.json に "
+        "書かれているはず (#644)"
+    )
+    samples = payload["brightness_samples"]
+    assert isinstance(samples, dict)
+    assert "values" in samples and isinstance(samples["values"], list)
+    assert len(samples["values"]) > 0
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_omits_brightness_samples_when_callback_silent(
+    mock_probe, mock_split, mock_run_detection, tmp_path
+):
+    """#644 -- `_run_detection` が callback を呼ばない (例: cache hit 経路と
+    同じ意味の no-op detection) 場合は brightness_samples キーを書かない。
+    """
+    mock_probe.return_value = PROBE_RESULT
+
+    def fake_run_detection(*args, **kwargs):
+        # callback を呼ばない (Pass 1 走っていない想定)
+        return BOUNDARIES
+
+    mock_run_detection.side_effect = fake_run_detection
+
+    output_dir = tmp_path / "out2"
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    run_split(video, config, verbose=False, quiet=True)
+
+    metadata_path = output_dir / "metadata.json"
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert "brightness_samples" not in payload, (
+        "callback が silent (Pass 1 skip / cache hit 相当) なら "
+        "brightness_samples キーは書かないはず"
+    )
+
+
+@patch("allaganeye.system_info.probe_gpu_vendors", return_value=[])
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}._load_cache")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_cache_hit_omits_brightness_samples(
+    mock_probe,
+    mock_split,
+    mock_load_cache,
+    mock_run_detection,
+    mock_probe_gpu,
+    tmp_path,
+):
+    """#644 -- cache hit 経路では Pass 1 が走らず brightness_samples キー
+    が metadata.json から欠落する (cache に brightness を含めない設計と整合)。
+
+    run_split: cache hit early-return branch (line 100-146) を直接 exercise し、
+    `_run_detection` が呼ばれないこと + metadata.json に key 不在を assert。
+    Round 1 F1 (subagent finding): callback_silent test では `_run_detection`
+    レベルで mock するため cache hit branch そのものを exercise せず、ここで
+    補完する。
+    """
+    mock_probe.return_value = PROBE_RESULT
+    mock_load_cache.return_value = BOUNDARIES  # cache hit -> Pass 1 skip
+
+    output_dir = tmp_path / "out_cache_hit"
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    run_split(video, config, verbose=False, quiet=True)
+
+    # cache hit branch は _run_detection を skip するはず
+    mock_run_detection.assert_not_called()
+
+    metadata_path = output_dir / "metadata.json"
+    assert metadata_path.exists()
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert "brightness_samples" not in payload, (
+        "cache hit 経路では Pass 1 を skip するため brightness_samples キー"
+        "は欠落するはず (#644、metadata-spec.md 書き込みパス表と整合)"
+    )

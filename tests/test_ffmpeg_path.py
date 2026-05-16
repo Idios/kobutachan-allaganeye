@@ -1,6 +1,7 @@
 """Tests for ffmpeg/ffprobe path resolution."""
 
 import os
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -9,6 +10,7 @@ from allaganeye.exceptions import VideoProcessingError
 from allaganeye.ffmpeg_path import (
     _ENV_VAR,
     _check_dir,
+    _error_message,
     _find_binary,
     _search_macos_known_paths,
     _search_windows_known_paths,
@@ -86,6 +88,33 @@ class TestFindBinary:
         ):
             result = _find_binary("ffmpeg")
         assert result == "/usr/bin/ffmpeg"
+
+
+class TestErrorMessage:
+    """Tests for the install-instructions error message (#508)."""
+
+    def test_generic_recommends_lgpl(self):
+        msg = _error_message("ffmpeg")
+        assert "LGPL" in msg
+        assert _ENV_VAR in msg
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows-specific guidance")
+    def test_windows_recommends_btbn_lgpl_and_keeps_winget_fallback(self):
+        """Windows message surfaces BtbN LGPL as primary and Gyan.FFmpeg as fallback.
+
+        Distribution ships BtbN LGPLv3 since #508. Devs should match licensing,
+        but existing winget `Gyan.FFmpeg` (GPL) installs are still auto-discovered
+        so the message documents that path as a backward-compat fallback.
+        """
+        msg = _error_message("ffmpeg")
+        assert "BtbN" in msg
+        assert "win64-lgpl-shared" in msg
+        assert "Gyan.FFmpeg" in msg
+
+    @pytest.mark.skipif(sys.platform != "darwin", reason="macOS-specific guidance")
+    def test_macos_mentions_homebrew(self):
+        msg = _error_message("ffmpeg")
+        assert "brew install ffmpeg" in msg
 
 
 class TestCheckDir:

@@ -20,8 +20,11 @@ from allaganeye.video.detector import (
     _EMBLEM_EDGE_THRESHOLD,
     _EMBLEM_POSITIONS,
     _EMBLEM_SAT_THRESHOLD,
+    _SCOREBAR_SCAN_MAX_GAP_PX,
+    _SCOREBAR_SCAN_MIN_WIDTH_PX,
     _SCOREBAR_V2_PROBE_HEIGHT,
     _SCOREBAR_V2_PROBE_WIDTH,
+    _find_scorebar_horizontal_range,
     _has_scorebar_v2,
     _probe_frame_rgb_hires,
 )
@@ -43,6 +46,7 @@ def _make_hires_frame_with_emblems(
     emblem_color: tuple[int, int, int] = (200, 30, 30),
     use_emblems: tuple[bool, bool, bool] = (True, True, True),
     bg_color: tuple[int, int, int] = (40, 40, 40),
+    include_scorebar_strip: bool = True,
 ) -> bytes:
     """Build a 1920x1080 RGB frame with optional per-emblem high-feature regions.
 
@@ -53,6 +57,13 @@ def _make_hires_frame_with_emblems(
     pattern which sums to zero with a 3x3 Sobel kernel).
     Bytes layout matches what ``_probe_frame_rgb_hires`` would produce:
     row-major RGB24.
+
+    By default also paints a saturated scorebar strip (single-color, low
+    edge) from the leftmost emblem's x1 to the rightmost emblem's x2 so
+    that ``_find_scorebar_horizontal_range`` detects a span covering all
+    3 emblem positions.  Pass ``include_scorebar_strip=False`` to build
+    a frame that exercises the span-detection fallback (no scorebar
+    outline -> ``_has_scorebar_v2`` returns ``None``).
     """
     width = _SCOREBAR_V2_PROBE_WIDTH
     height = _SCOREBAR_V2_PROBE_HEIGHT
@@ -60,6 +71,16 @@ def _make_hires_frame_with_emblems(
     frame[:, :, 0] = bg_color[0]
     frame[:, :, 1] = bg_color[1]
     frame[:, :, 2] = bg_color[2]
+
+    if include_scorebar_strip:
+        # Saturated blue strip spanning the emblems' horizontal extent.
+        # Single-color (no stripe) -> high sat but low edge density, so
+        # non-emblem positions within the strip fail the per-emblem AND.
+        strip_x1 = _EMBLEM_POSITIONS[0][1]
+        strip_x2 = _EMBLEM_POSITIONS[2][3]
+        frame[0:45, strip_x1 : strip_x2 + 1, 0] = 50
+        frame[0:45, strip_x1 : strip_x2 + 1, 1] = 50
+        frame[0:45, strip_x1 : strip_x2 + 1, 2] = 200
 
     for (_, x1, y1, x2, y2), enable in zip(_EMBLEM_POSITIONS, use_emblems, strict=True):
         if not enable:
@@ -81,6 +102,178 @@ def _make_hires_frame_with_emblems(
     return frame.tobytes()
 
 
+def _make_hires_frame_with_emblems_at_layout(
+    x_left: int,
+    x_right: int,
+    emblem_color: tuple[int, int, int] = (200, 30, 30),
+    use_emblems: tuple[bool, bool, bool] = (True, True, True),
+    bg_color: tuple[int, int, int] = (40, 40, 40),
+) -> bytes:
+    """Build a frame simulating a scorebar at [x_left, x_right] with dynamic emblems.
+
+    Paints a saturated strip over ``y=0..45`` spanning ``x_left..x_right``
+    and overlays striped emblems at positions computed from
+    ``_EMBLEM_RELATIVE_POSITIONS`` and the given horizontal range, so the
+    3-point AND detection logic is exercised at layouts other than the
+    default 1080p OBS one (e.g. the narrower 4K Game DVR scorebar).
+    """
+    from allaganeye.video.detector import _EMBLEM_RELATIVE_POSITIONS
+
+    width = _SCOREBAR_V2_PROBE_WIDTH
+    height = _SCOREBAR_V2_PROBE_HEIGHT
+    frame = np.zeros((height, width, 3), dtype=np.uint8)
+    frame[:, :, 0] = bg_color[0]
+    frame[:, :, 1] = bg_color[1]
+    frame[:, :, 2] = bg_color[2]
+
+    # Saturated single-color strip (high sat, low edge).
+    frame[0:45, x_left : x_right + 1, 0] = 50
+    frame[0:45, x_left : x_right + 1, 1] = 50
+    frame[0:45, x_left : x_right + 1, 2] = 200
+
+    bar_width = x_right - x_left
+    for (_, cx_rel, hw_rel, y1, y2), enable in zip(
+        _EMBLEM_RELATIVE_POSITIONS, use_emblems, strict=True
+    ):
+        if not enable:
+            continue
+        cx = x_left + cx_rel * bar_width
+        half = hw_rel * bar_width
+        ex1 = int(cx - half)
+        ex2 = int(cx + half)
+        region = frame[y1:y2, ex1:ex2, :]
+        for col in range(region.shape[1]):
+            block = (col // 2) % 2
+            if block == 0:
+                region[:, col, 0] = emblem_color[0]
+                region[:, col, 1] = emblem_color[1]
+                region[:, col, 2] = emblem_color[2]
+            else:
+                region[:, col, :] = 0
+
+    return frame.tobytes()
+
+
+def _make_hires_frame_with_strips(
+    x_ranges: list[tuple[int, int]],
+    y_start: int = 0,
+    y_end: int = 45,
+    saturated_color: tuple[int, int, int] = (200, 30, 30),
+    bg_color: tuple[int, int, int] = (40, 40, 40),
+) -> bytes:
+    """Build a 1920x1080 RGB frame with saturated horizontal strips.
+
+    Each ``(x_start, x_end)`` range is filled inclusive on both ends with
+    ``saturated_color`` at rows ``y_start``..``y_end``.  Used to simulate
+    scorebar outlines in ``_find_scorebar_horizontal_range`` tests.
+    """
+    width = _SCOREBAR_V2_PROBE_WIDTH
+    height = _SCOREBAR_V2_PROBE_HEIGHT
+    frame = np.zeros((height, width, 3), dtype=np.uint8)
+    frame[:, :, 0] = bg_color[0]
+    frame[:, :, 1] = bg_color[1]
+    frame[:, :, 2] = bg_color[2]
+    for x_start, x_end in x_ranges:
+        frame[y_start:y_end, x_start : x_end + 1, 0] = saturated_color[0]
+        frame[y_start:y_end, x_start : x_end + 1, 1] = saturated_color[1]
+        frame[y_start:y_end, x_start : x_end + 1, 2] = saturated_color[2]
+    return frame.tobytes()
+
+
+def _make_hires_frame_with_strip(
+    x_start: int,
+    x_end: int,
+    y_start: int = 0,
+    y_end: int = 45,
+    saturated_color: tuple[int, int, int] = (200, 30, 30),
+    bg_color: tuple[int, int, int] = (40, 40, 40),
+) -> bytes:
+    """Convenience wrapper for a single saturated strip."""
+    return _make_hires_frame_with_strips(
+        [(x_start, x_end)], y_start, y_end, saturated_color, bg_color
+    )
+
+
+# ---------------------------------------------------------------------------
+# _find_scorebar_horizontal_range
+# ---------------------------------------------------------------------------
+
+
+class TestFindScorebarHorizontalRange:
+    """Dynamic scorebar horizontal range detection (#522)."""
+
+    def test_full_width_band_returns_full_range(self):
+        """Wide saturated band (1080p OBS-like) -> range matches."""
+        frame = _make_hires_frame_with_strip(500, 1400)
+        result = _find_scorebar_horizontal_range(frame)
+        assert result == (500, 1400)
+
+    def test_narrower_centered_band_returns_narrower_range(self):
+        """4K DVR-like narrow band -> narrow range detected."""
+        frame = _make_hires_frame_with_strip(700, 1300)
+        result = _find_scorebar_horizontal_range(frame)
+        assert result == (700, 1300)
+
+    def test_no_saturated_region_returns_none(self):
+        """Empty / low-saturation frame (lobby-like) -> None."""
+        assert _find_scorebar_horizontal_range(_empty_hires_frame()) is None
+
+    def test_too_narrow_region_returns_none(self):
+        """Saturated band narrower than MIN_WIDTH_PX -> None."""
+        # Width 301 < 400 (_SCOREBAR_SCAN_MIN_WIDTH_PX)
+        frame = _make_hires_frame_with_strip(500, 800)
+        assert _SCOREBAR_SCAN_MIN_WIDTH_PX > 301
+        assert _find_scorebar_horizontal_range(frame) is None
+
+    def test_two_disjoint_regions_returns_longest(self):
+        """Two far-apart regions -> only the larger one returned."""
+        # (100, 700) width 601 + (1200, 1400) width 201
+        # gap = 1200 - 700 - 1 = 499 > MAX_GAP_PX (80) -> not bridged.
+        frame = _make_hires_frame_with_strips([(100, 700), (1200, 1400)])
+        result = _find_scorebar_horizontal_range(frame)
+        assert result == (100, 700)
+
+    def test_small_gap_is_bridged(self):
+        """Gap within MAX_GAP_PX -> runs merged into one span."""
+        # (500, 900) + (950, 1400), gap = 49 <= 80 -> bridged.
+        frame = _make_hires_frame_with_strips([(500, 900), (950, 1400)])
+        assert _SCOREBAR_SCAN_MAX_GAP_PX >= 49
+        result = _find_scorebar_horizontal_range(frame)
+        assert result == (500, 1400)
+
+    def test_large_gap_not_bridged(self):
+        """Gap > MAX_GAP_PX -> runs not merged; longest returned."""
+        # (500, 1000) width 501 + (1200, 1500) width 301
+        # gap = 1200 - 1000 - 1 = 199 > 80 -> not merged.
+        # Longest = (500, 1000) width 501 >= MIN_WIDTH_PX.
+        frame = _make_hires_frame_with_strips([(500, 1000), (1200, 1500)])
+        assert _SCOREBAR_SCAN_MAX_GAP_PX < 199
+        result = _find_scorebar_horizontal_range(frame)
+        assert result == (500, 1000)
+
+    def test_opencv_unavailable_returns_none(self):
+        """ImportError on cv2 -> None (lets caller fall back to V1)."""
+        import builtins
+        import sys
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "cv2":
+                raise ImportError("simulated missing cv2")
+            return real_import(name, *args, **kwargs)
+
+        saved = sys.modules.pop("cv2", None)
+        try:
+            with patch("builtins.__import__", side_effect=fake_import):
+                frame = _make_hires_frame_with_strip(500, 1400)
+                result = _find_scorebar_horizontal_range(frame)
+            assert result is None
+        finally:
+            if saved is not None:
+                sys.modules["cv2"] = saved
+
+
 # ---------------------------------------------------------------------------
 # _has_scorebar_v2
 # ---------------------------------------------------------------------------
@@ -92,8 +285,38 @@ class TestHasScorebarV2:
         assert _has_scorebar_v2(None) is None
 
     def test_empty_frame_returns_false(self):
-        """All-zero frame -> 0 sat, 0 edge -> False (first emblem fails)."""
+        """All-zero frame -> absolute fallback -> 0 sat, 0 edge -> False.
+
+        #522 hybrid: when dynamic scorebar span detection fails, V2 falls
+        back to absolute ``_EMBLEM_POSITIONS`` instead of returning None.
+        For an empty frame this fallback still fails on the first emblem
+        (sat=0, edge=0) -> False.  This preserves the pre-#522 empty-
+        frame contract.
+        """
         assert _has_scorebar_v2(_empty_hires_frame()) is False
+
+    @pytest.mark.parametrize("x_left,x_right", [(500, 1400), (700, 1300)])
+    def test_detects_scorebar_at_dynamic_layout(self, x_left, x_right):
+        """Scorebar at non-default horizontal layouts is detected correctly.
+
+        Covers the 1080p-full-width and 4K-DVR-narrow layouts using
+        ``_EMBLEM_RELATIVE_POSITIONS`` to place emblems inside the given
+        span (#522).
+        """
+        frame = _make_hires_frame_with_emblems_at_layout(x_left, x_right)
+        assert _has_scorebar_v2(frame) is True
+
+    def test_frame_without_scorebar_strip_returns_true_via_absolute(self):
+        """Frame with emblems but no scorebar outline -> absolute fallback -> True.
+
+        Exercises the hybrid fallback path (#522): when
+        ``_find_scorebar_horizontal_range`` returns None (no saturated
+        outline), V2 evaluates ``_EMBLEM_POSITIONS`` absolutely.  The
+        emblems are placed at the same absolute coordinates, so the
+        3-point AND still passes.
+        """
+        frame = _make_hires_frame_with_emblems(include_scorebar_strip=False)
+        assert _has_scorebar_v2(frame) is True
 
     def test_all_three_emblems_present_returns_true(self):
         """All 3 emblems with high sat + high edge -> True."""

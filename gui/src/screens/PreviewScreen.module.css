@@ -1,0 +1,367 @@
+.screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  /*
+   * #465 review: StateSwitcher (position: absolute; top: 8px; right: 8px)
+   * が右上を覆い `fl_match ▼` と overlap するため、padding-top を増量して
+   * switcher 下に header を押し下げる。switcher の実効高 ≒ 8 + 4(padding)
+   * + 22(tab) + 4(padding) + border ≒ 40-44px。余裕を見て 56px を確保。
+   */
+  padding: 56px 18px 18px;
+  gap: 12px;
+  position: relative;
+  min-height: 0;
+  overflow: auto;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.backButton {
+  background: transparent;
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
+  color: var(--ae-gold);
+  padding: 5px 10px;
+  font-family: var(--ae-font-ui);
+  font-size: 10px;
+  letter-spacing: 2px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+
+.headerInfo {
+  flex: 1;
+}
+
+.headerFileName {
+  font-family: var(--ae-font-body);
+  font-size: 13px;
+  color: var(--ae-text-bright);
+  margin-bottom: 4px;
+}
+
+.caption {
+  font-family: var(--ae-font-ui);
+  font-size: 9px;
+  letter-spacing: 3px;
+  color: var(--ae-gold-dim);
+  text-transform: uppercase;
+}
+
+.nameRow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 3px;
+}
+
+.nameInput {
+  background: transparent;
+  border: none;
+  border-bottom: 1px dashed var(--ae-gold-dim);
+  color: var(--ae-gold-bright);
+  font-family: var(--ae-font-ui);
+  font-size: 18px;
+  letter-spacing: 1px;
+  padding: 2px 0;
+  outline: none;
+  width: 220px;
+}
+
+.meta {
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+}
+
+.typeSelect {
+  background: var(--ae-bg-deep);
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
+  color: var(--ae-gold);
+  padding: 5px 10px;
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  outline: none;
+}
+
+.panes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.pane {
+  padding: 8px;
+  background: var(--ae-bg-deep);
+  border: var(--ae-panel-border);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+/*
+ * #587: cyan border when the IN pane is active, gold when OUT is active.
+ * Helps the user see at a glance which boundary they are editing —
+ * matches the cyan / gold motif used elsewhere for IN / OUT state.
+ */
+.paneActive[data-pane='in'] {
+  border-color: var(--ae-cyan);
+  box-shadow: 0 0 8px rgba(var(--ae-cyan-rgb), 0.15);
+}
+
+.paneActive[data-pane='out'] {
+  border-color: var(--ae-gold-bright);
+  box-shadow: 0 0 8px rgba(var(--ae-gold-rgb), 0.15);
+}
+
+.paneCaption {
+  font-family: var(--ae-font-ui);
+  font-size: 9px;
+  letter-spacing: 2.5px;
+  color: var(--ae-gold-dim);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.paneVideo {
+  aspect-ratio: 16 / 9;
+  background: #000;
+  position: relative;
+  overflow: hidden;
+}
+
+.paneVideoEl {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  background: #000;
+}
+
+.paneVideoError {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ae-danger);
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  padding: 12px;
+  text-align: center;
+  word-break: break-all;
+}
+
+.paneVideoLoading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ae-text-dim);
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+}
+
+.tcInput {
+  margin-top: 6px;
+  width: 100%;
+  background: var(--ae-bg);
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
+  color: var(--ae-text);
+  padding: 6px 8px;
+  font-family: var(--ae-font-mono);
+  font-size: 12px;
+  outline: none;
+  text-align: center;
+}
+
+.paneActive .tcInput {
+  border-color: var(--ae-gold-bright);
+  background: rgba(var(--ae-gold-rgb), 0.08);
+  color: var(--ae-gold-bright);
+}
+
+.paneToggle {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.toggleButton {
+  flex: 1;
+  padding: 6px;
+  background: transparent;
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
+  color: var(--ae-text-dim);
+  font-family: var(--ae-font-ui);
+  font-size: 10px;
+  letter-spacing: 2px;
+  cursor: pointer;
+}
+
+.toggleButtonActive {
+  background: rgba(var(--ae-gold-rgb), 0.13);
+  border-color: var(--ae-gold-bright);
+  color: var(--ae-gold-bright);
+}
+
+.stepRow {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 6px;
+}
+
+.stepButton {
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
+  color: var(--ae-gold);
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+/* #587: hover feedback on the stepRow buttons. */
+.stepButton:hover:not(:disabled) {
+  background: rgba(var(--ae-gold-rgb), 0.1);
+  border-color: var(--ae-gold-bright);
+}
+
+/*
+ * #465 review: キーボードショートカット hint (UX item 3)。stepRow の下に
+ * 薄めに表示しユーザーに操作方法を伝える。kbd は実際のキー入力を模した
+ * boxed スタイル。
+ */
+.keyHint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: center;
+  align-items: center;
+  margin-top: 4px;
+  padding: 4px 8px;
+  font-family: var(--ae-font-ui);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+}
+
+.keyHintItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  letter-spacing: 0.5px;
+}
+
+.kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  background: var(--ae-bg-deep);
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
+  border-radius: 3px;
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-gold);
+  line-height: 1.3;
+}
+
+.strip {
+  background: var(--ae-bg-deep);
+  border: var(--ae-panel-border);
+  padding: 8px;
+}
+
+.stripCaption {
+  font-family: var(--ae-font-ui);
+  font-size: 9px;
+  letter-spacing: 2.5px;
+  color: var(--ae-gold-dim);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.actionsRow {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.primaryButton {
+  padding: 10px 18px;
+  background: linear-gradient(180deg, var(--ae-gold), var(--ae-gold-dim));
+  border: none;
+  color: var(--ae-bg);
+  font-family: var(--ae-font-ui);
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.primaryButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.secondaryButton {
+  padding: 10px 18px;
+  background: transparent;
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
+  color: var(--ae-gold);
+  font-family: var(--ae-font-ui);
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.dirty {
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-gold-bright);
+}
+
+.applyError {
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-danger);
+  margin-left: 8px;
+}
+
+/* #693 — InlineErrorHint の wrapper として、改行を担保 (display: block)。
+   font-size / color / family は InlineErrorHint 側に委譲。 */
+.applyErrorHint {
+  display: block;
+  margin-top: 2px;
+}
+
+.emptyNote {
+  padding: 24px;
+  text-align: center;
+  color: var(--ae-text-dim);
+}
+
+/* #645 Chapter 2 (overlay pivot): inline error diagnostic shown below the
+   FrameStrip when extract_brightness_window fails. The brightness overlay is
+   now a non-fatal enhancement on top of FrameStrip — failure simply omits
+   the overlay; this small block keeps the diagnostic visible for debugging
+   without blocking the primary frame-selection UI.
+
+   class 名は元 `microError` だったが Round 2 F3 で `overlayError` に rename
+   (MicroTimeline 廃止後の命名遺産整理)。同じく削除済の MicroTimeline 由来
+   loading placeholder は overlay 設計では interactive 維持のため不要。 */
+.overlayError {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 4px;
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-danger);
+}

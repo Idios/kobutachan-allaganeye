@@ -1,20 +1,22 @@
-# システムアーキテクチャ
+# システム設計概要 (レイヤ構造)
+
+> **スコープ**: 本 doc はレイヤ (L1〜L6) の役割と段階的ロードマップを扱う。現時点での CLI / GUI / installer の組み合わせ構成と起動経路は [system-architecture.md](system-architecture.md) を参照。
 
 ## 概要
 
-Allagan Eye は FF14 フロントラインの長時間録画動画を段階的に処理するCLIツール。
+Allagan Eye は FF14 フロントラインの長時間録画動画を段階的に処理するツール (L1 CLI / L2a GUI / L2b installer)。
 
 ## 段階的アーキテクチャ
 
-```
+```text
 ┌─────────────────────────────────────────────────┐
 │  L1: 試合分割                                     │
 │  入力: OBS録画 (MP4/MKV)                          │
 │  処理: ffmpeg 暗転検知 → FFmpeg 無劣化分割          │
 │  出力: 試合ごとの MP4 + metadata.json              │
 ├─────────────────────────────────────────────────┤
-│  L2: GUI（将来）                                   │
-│  GUI サポート                                      │
+│  L2: 配布・統合（開発中）                            │
+│  GUI サポート + ゼロ環境構築配布                     │
 ├─────────────────────────────────────────────────┤
 │  L3: メタデータ化（将来）                           │
 │  入力: L1 出力の試合動画                           │
@@ -31,18 +33,12 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 │  処理: MoviePy/FFmpeg で切り出し + サムネイル生成   │
 │  出力: 投稿用動画 + メタデータ + 投稿提案           │
 ├─────────────────────────────────────────────────┤
-│  L6: guard 連携（拡張）                             │
-│  allaganeye-guard 統合（--verify）                  │
-├─────────────────────────────────────────────────┤
-│  L7: 配布（拡張）                                  │
-│  ゼロ環境構築配布                                  │
-├─────────────────────────────────────────────────┤
-│  L8: プライバシー・精密分割（拡張）                  │
+│  L6: プライバシー・精密分割（拡張）                  │
 │  プレイヤー名ぼかし、再エンコード分割モード          │
 └─────────────────────────────────────────────────┘
 ```
 
-> L6〜L8 は暫定計画。詳細は `docs/release-strategy.md` を参照。
+> L6 は暫定計画。詳細は `docs/release-process.md` を参照。
 
 ## L1: 試合分割の設計
 
@@ -60,7 +56,7 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 試合境界の暗転には 3 パターンがあり、それぞれ異なる戦略で対応する:
 
 | パターン | 特徴 | 対応戦略 |
-|---|---|---|
+| --- | --- | --- |
 | A: 長い暗転 | 7.0s 暗転 | Pass 1 の粗いスキャン + min_blackout_duration |
 | B: 短い暗転 + ロビー | 2.5s 暗転 + ~51 brightness が 20s | transition expansion |
 | C: 短い暗転 + 明るい画面 | 2.0s 暗転 + 即 brightness 79 | 2パス精密計測 |
@@ -85,7 +81,7 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 **暗転分類**: 前後 3 フレーム（1 秒間隔）の多数決で 4 種に分類:
 
 | 分類 | 条件 | 処理 |
-|---|---|---|
+| --- | --- | --- |
 | `in_match` | 前後ともスコアバーあり | < 3.5s → 除去、≥ 3.5s → 保持 |
 | `match_boundary` | 片側のみスコアバーあり | 保持 |
 | `non_fl` | 前後ともスコアバーなし | 除去 |
@@ -94,7 +90,7 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 **セグメント type**: 隣接する暗転の分類からセグメントの種別を推論し、metadata.json に記録:
 
 | 条件 | type |
-|---|---|
+| --- | --- |
 | 両隣が `match_boundary` or `in_match` | `"fl_match"` |
 | それ以外（先頭/末尾、unknown 隣接等） | `"unknown"` |
 
@@ -152,7 +148,7 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 ## 外部ツール依存
 
 | ツール | 用途 | 必須 | 検索方法 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | ffmpeg 4.1+ | 動画分割・暗転検知プローブ | Yes | PATH -> `ALLAGANEYE_FFMPEG` 環境変数 -> OS 別既知パス（自動検索） |
 | ffprobe 4.1+ | 動画メタデータ取得 | Yes | 同上 |
 | typer (Python) | CLI フレームワーク | Yes | pip |
@@ -165,19 +161,18 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 全モジュールが OS 非依存（subprocess + pathlib + numpy + scipy + opencv）。ffmpeg のパス検索のみ OS 別ロジックあり（`ffmpeg_path.py`）。
 
 | 優先度 | OS | 状態 | ffmpeg 自動検索 |
-|---|---|---|---|
-| 1 | Windows | 対応済み | winget (`Gyan.FFmpeg`) |
+| --- | --- | --- | --- |
+| 1 | Windows | 対応済み | `ALLAGANEYE_FFMPEG` で BtbN LGPLv3 shared (#508 推奨) または winget (`Gyan.FFmpeg`, GPL、後方互換 fallback) |
 | 2 | Linux | 未検証 | パッケージマネージャで PATH に入る（CI は lint/型チェックのみ） |
 | 3 | macOS | 未検証 | Homebrew (`/opt/homebrew/bin`, `/usr/local/bin`) |
 
-## セキュリティ検査（allaganeye-guard）
+## セキュリティ検査（allaganeye-guard 運用連携）
 
-外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `kobutachan-allaganeye-guard` でセキュリティ検査を行う。
+外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `kobutachan-allaganeye-guard` でセキュリティ検査を行う。**プログラムレベルでの結合は行わず**、エージェント (Claude + 人間メンテナ Idios) が手動で `allaganeye-guard verify` を実行する運用ルールとする (2026-04-21 方針確定、#454 参照)。
 
-- **リポジトリ**: `Idios/kobutachan-allaganeye-guard`（独立パッケージ）
-- **依存方向**: allaganeye → guard（一方向。guard は allaganeye に依存しない）
-- **連携方式**: subprocess 呼び出し（`allaganeye-guard verify --json <file>`）
-- **オプション依存**: `pip install allaganeye[guard]` で一緒にインストール可能。なくても動作する
+- **リポジトリ**: `Idios/kobutachan-allaganeye-guard` (独立パッケージ)
+- **依存方向**: 運用上のみ一方向 (guard verify 先行 → allaganeye split 後続)。パッケージ依存関係としては**完全独立** (import / optional-deps / 統合 exit code を持たない)
+- **運用**: `allaganeye-guard verify <file>` → PASS (exit 0 / 1) 後に `allaganeye split` で処理
 
 詳細は `docs/guard-integration.md` を参照。
 
