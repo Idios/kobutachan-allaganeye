@@ -160,7 +160,7 @@ Describe 'Format-ReadmeContent' {
       -FFmpegBuildTag 'autobuild-2026-04-22-13-15' `
       -FFmpegSourceRef '7f5c90f77e' `
       -IncludeGui:$true
-    $readme | Should -Match 'double-click'
+    $readme | Should -Match 'ダブルクリック'
     $readme | Should -Match 'WebView2 Runtime'
     $readme | Should -Match 'developer\.microsoft\.com'
   }
@@ -210,31 +210,32 @@ Describe 'Format-ReadmeContent' {
 
   It '-IncludeGui:$true README documents .bat double-click as the primary GUI entry (#617)' {
     # README must explain that `.bat` double-click launches the GUI when
-    # GUI exe is bundled. The phrase "Double-click" + "allaganeye.bat" must
+    # GUI exe is bundled. The phrase "ダブルクリック" + "allaganeye.bat" must
     # appear together so the new UX (issue #617) is documented for users
-    # who read README.txt before running anything.
+    # who read README.txt before running anything. README は #749 で日本語化済み。
     $readme = Format-ReadmeContent `
       -Version '0.2.0' `
       -FFmpegVersion '8.1' `
       -FFmpegBuildTag 'autobuild-2026-05-06-13-32' `
       -FFmpegSourceRef 'n8.1.1' `
       -IncludeGui:$true
-    $readme | Should -Match 'Double-click `?allaganeye\.bat`?'
+    $readme | Should -Match '`allaganeye\.bat`.*ダブルクリック'
   }
 
   It '-IncludeGui:$true README orders GUI section before drag-drop and Command Prompt sections (#617)' {
     # Per spec §3 + issue #617 doc requirement: ".bat double-click → GUI"
     # comes first, drag-drop and Command Prompt are 2-3.
     # We assert relative ordering by comparing IndexOf positions.
+    # README は #749 で日本語化済みのため IndexOf 検索キーも日本語化。
     $readme = Format-ReadmeContent `
       -Version '0.2.0' `
       -FFmpegVersion '8.1' `
       -FFmpegBuildTag 'autobuild-2026-05-06-13-32' `
       -FFmpegSourceRef 'n8.1.1' `
       -IncludeGui:$true
-    $idxBatDoubleClick = $readme.IndexOf('Double-click')
-    $idxDragDrop = $readme.IndexOf('Drop a video file')
-    $idxCommandPrompt = $readme.IndexOf('Command Prompt')
+    $idxBatDoubleClick = $readme.IndexOf('最も簡単')
+    $idxDragDrop = $readme.IndexOf('ドラッグ＆ドロップ')
+    $idxCommandPrompt = $readme.IndexOf('コマンドプロンプトから実行')
 
     $idxBatDoubleClick | Should -BeGreaterThan -1
     $idxDragDrop | Should -BeGreaterThan -1
