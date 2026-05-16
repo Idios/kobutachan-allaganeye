@@ -232,7 +232,7 @@ main (タグ v0.2.0)
   - `windows-rs` (または `winapi`) crate を deps に追加
   - `start_detect` 等の spawn site で `CreateJobObject` + `SetInformationJobObject` (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) + `AssignProcessToJobObject` を実装
   - `kill_tracked_processes` で Job handle を drop することで子孫プロセスを一括 kill
-- Option B (`taskkill /T /F /PID`) は fallback として保持 (Job Object 設定 fail 時用)
+- Option B (`taskkill /T /F /PID`) fallback は採用しない方針に変更 (Track B-2 実装 PR #772 / [docs/process-tree-orphan-audit.md](../../process-tree-orphan-audit.md) §3 参照): Job Object は親 app crash 時にも kernel が handle release で `KILL_ON_JOB_CLOSE` を発火するため `taskkill` より cleanup 保証が強い。Job 作成失敗時は warning ログ + detect 続行 (defensive、既存 `apply_no_window` posture と整合) で、taskkill fallback は導入しない
 
 #### Audit document (#743)
 

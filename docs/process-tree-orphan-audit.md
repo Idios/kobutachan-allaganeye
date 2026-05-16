@@ -13,7 +13,7 @@ L2a GUI (`gui/src-tauri/src/lib.rs`) は外部プロセスを 6 箇所で spawn 
 | 5 | **`start_detect` (`lib.rs:~2708`)** | Python `allaganeye detect` | **ffmpeg N 個 (GPU detector で 16-32、`gpu_detector.py`)** | **あり (#756 root cause)** | yes | **yes** | 本 PR の対応対象。`TrackedChild { child, job: Some(_) }` |
 | 6 | `open_folder_in_explorer` (`lib.rs:~1899`) | explorer.exe | (Windows shell process) | N/A (意図的 detach) | **no** | no | UI、本 app 終了後も残るべき |
 
-> 行番号は本 PR (#769) merge 時のスナップショット。将来の追記で drift しうるため、必ず関数名で grep して現在位置を確認すること。
+> 行番号は本 PR (#772) merge 時のスナップショット。将来の追記で drift しうるため、必ず関数名で grep して現在位置を確認すること。
 
 ## §2 #756 fix の挙動 (start_detect だけ Job 化)
 
