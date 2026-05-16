@@ -11,7 +11,7 @@
 v0.2.0 リリース後に発生した課題を v0.2.1 patch リリースで一括解消する:
 
 1. **Security alerts (Dependabot) 5 件** + Dependabot PR 1 件 ([#758](https://github.com/Idios/kobutachan-allaganeye/pull/758))
-2. **UX 影響のある deferred bug 4 件** ([#374](https://github.com/Idios/kobutachan-allaganeye/issues/374) / [#743](https://github.com/Idios/kobutachan-allaganeye/issues/743) / [#749](https://github.com/Idios/kobutachan-allaganeye/issues/749) / [#756](https://github.com/Idios/kobutachan-allaganeye/issues/756))
+2. **UX 影響のある deferred bug / task 5 件** ([#374](https://github.com/Idios/kobutachan-allaganeye/issues/374) / [#458](https://github.com/Idios/kobutachan-allaganeye/issues/458) / [#743](https://github.com/Idios/kobutachan-allaganeye/issues/743) / [#749](https://github.com/Idios/kobutachan-allaganeye/issues/749) / [#756](https://github.com/Idios/kobutachan-allaganeye/issues/756))
 3. **今後の GitHub security 指摘を PR マージ前に自前で検出する仕組み**: cargo audit + npm audit を CI workflow に組み込む
 
 `main` から `develop-0.2.1` 統合ブランチを新規 cut し、Track 別作業ブランチからの PR を統合した後、`develop-0.2.1 → main` で v0.2.1 リリースする。
@@ -43,16 +43,19 @@ v0.2.0 リリース後に発生した課題を v0.2.1 patch リリースで一�
 
 high severity (fast-uri) は dev-only のため配布ユーザーへの影響なし。runtime ユーザー観点で最重要は tauri (Origin Confusion)。
 
-### 2.4 取り込み対象 UX issue (4 件、すべて deferred)
+### 2.4 取り込み対象 UX issue (5 件、すべて deferred)
 
 | # | Severity | Scope | 概要 |
 | --- | --- | --- | --- |
 | 756 | P2-medium, bug | l2a-gui | detecting 中の GUI 終了で ffmpeg 子孫プロセスが残留 (Windows process tree orphan)。Python CLI 経由で spawn された ffmpeg が孫プロセスとして orphan 化し、CPU/disk リソースを消費し続ける |
+| 458 | P2-medium, task | l2-workflow | bug_report.yml UI 動作確認 (L3 初期残作業) + `.github/ISSUE_TEMPLATE/bug_report.yml:18` の link を `../../blob/develop-0.2.0/...` から `../../blob/main/...` に修正 + 「(公開までしばらくお待ちください)」placeholder 削除 (v0.2.0 main マージで bug-report-guide.md は公開済) |
 | 743 | P3-low, task | role:lead-engineer | Windows process group orphan 挙動 audit (#727 派生 (3))。6 spawn site の振る舞いを実機検証 + audit document 作成 |
 | 374 | P3-low, bug | (none) | metadata.json の `note` フィールドが H.264 想定 (2s) で固定。AV1 等の codec で誤情報 |
 | 749 | P3-low, doc | l2b-installer | Portable ZIP 内 `README.txt` が英語のまま。ターゲットユーザー (日本語話者) 向けに日本語化が必要 |
 
 **#743 と #756 の関係**: #756 は #743 の audit 対象 (process orphan) の具体的 bug。#756 の fix で #743 の audit が完了する形にできる (1 Track 内で両方クローズ)。
+
+**#458 の特殊性**: 既に PR #497 / #498 で実装本体は完了し develop-0.2.0 → main マージ済 (v0.2.0)。残作業は (a) bug_report.yml 内 link の `develop-0.2.0` → `main` 更新 + placeholder 削除、(b) GitHub UI での実測検証 (issue template 選択 / 必須項目 block / 自動付与 label / blank 経路併存) の 2 点。前者はコード修正、後者は Idios の実機検証で完了。
 
 ### 2.5 Pre-merge security check の現状
 
@@ -82,7 +85,7 @@ high severity (fast-uri) は dev-only のため配布ユーザーへの影響な
 | --- | --- | --- |
 | Q1: 対応単位とリリース戦略 | **(A) v0.2.1 patch リリースで全部対応** | 配布物の medium 脆弱性 + UX deferred bug を同一 patch リリースで解消。Iron Law 1 / 4 の手動レビュー・close フローと整合 |
 | Q2: Security 部分の PR 構造 | **(C) 細粒度 commit 分割** | 単一 PR (security Track) 内で commit を 5 本に分けて各 alert との対応をトレース可能にする。`cargo update` を 1 段で実行しつつ commit を分離 |
-| Q3: UX 取り込み範囲 | **4 件 (#374 / #743 / #756 / #749)** | Idios が v0.2.1 に取り込むと判断した deferred bug。`docs/release-process.md` §共通項目 deferred ラベル全件レビューと整合 |
+| Q3: UX 取り込み範囲 | **5 件 (#374 / #458 / #743 / #756 / #749)** | Idios が v0.2.1 に取り込むと判断した deferred bug / task。`docs/release-process.md` §共通項目 deferred ラベル全件レビューと整合。#458 は v0.2.0 main マージ後に link 更新と UI 検証残作業を実施 |
 | Q4: Pre-merge check の仕組み | **cargo audit + npm audit を CI ジョブに追加** | 軽量、既存 Actions 拡張のみ、Dependabot と補完関係。CodeQL や Dependabot 設定見直しは後続検討に deferred |
 | Q5: 統合ブランチ | **`develop-0.2.1` を main から新規 cut** | release-process.md §ブランチ戦略の `develop-x.x.x` 命名規約と整合。複数 Track の PR を統合する標準フロー |
 
@@ -114,6 +117,13 @@ high severity (fast-uri) は dev-only のため配布ユーザーへの影響な
 - `scripts/tests/build-portable-zip.Tests.ps1` の Pester assertion を日本語見出しに更新
 - 影響範囲: PS script + Pester test
 
+#### Track B-4: #458 bug_report.yml link 修正 + UI 検証
+
+- `.github/ISSUE_TEMPLATE/bug_report.yml:18` の link を `../../blob/develop-0.2.0/...` から `../../blob/main/...` に変更
+- 「(公開までしばらくお待ちください)」placeholder を削除 (v0.2.0 main マージで bug-report-guide.md は公開済)
+- L3 初期残作業の UI 動作確認チェックリスト (#458 §「L3 初期残作業」) を Idios 実機で実施し、結果を PR 本文に Self-Test Report として記載
+- 影響範囲: GitHub Issue Template + 実機 UI 検証
+
 #### Track C: Pre-merge security audit CI 追加
 
 - `.github/workflows/security-audit.yml` を新規追加 (cargo audit + npm audit を PR ごとに実行)
@@ -142,12 +152,13 @@ high severity (fast-uri) は dev-only のため配布ユーザーへの影響な
 ```text
 main (タグ v0.2.0)
  └── develop-0.2.1 (本 spec で main から新規 cut、v0.2.1 統合ブランチ)
-       ├── claude/<scope>-deps (Track A)        → PR → develop-0.2.1
-       ├── claude/issue-374-codec-note          → PR → develop-0.2.1
-       ├── claude/issue-743-756-process-orphan  → PR → develop-0.2.1
-       ├── claude/issue-749-readme-ja           → PR → develop-0.2.1
-       ├── claude/ci-security-audit             → PR → develop-0.2.1
-       └── claude/release-v0.2.1 (Track D)      → PR → develop-0.2.1
+       ├── claude/<scope>-deps (Track A)            → PR → develop-0.2.1
+       ├── claude/issue-374-codec-note (Track B-1)  → PR → develop-0.2.1
+       ├── claude/issue-743-756-orphan (Track B-2)  → PR → develop-0.2.1
+       ├── claude/issue-749-readme-ja (Track B-3)   → PR → develop-0.2.1
+       ├── claude/issue-458-bug-template (Track B-4) → PR → develop-0.2.1
+       ├── claude/ci-security-audit (Track C)       → PR → develop-0.2.1
+       └── claude/release-v0.2.1 (Track D)          → PR → develop-0.2.1
               └── 全 Track 統合後 develop-0.2.1 → main PR
                      └── マージ + git tag v0.2.1
                             └── release.yml 発火 → Portable ZIP + GitHub Release
@@ -314,11 +325,13 @@ jobs:
   ### Changed
 
   - #749: Portable ZIP 内 `README.txt` を日本語化
+  - #458: `.github/ISSUE_TEMPLATE/bug_report.yml` の `docs/bug-report-guide.md` link を `develop-0.2.0` から `main` に更新、未公開 placeholder を削除
 
   ### CI / Infrastructure
 
   - cargo audit + npm audit を `.github/workflows/security-audit.yml` で PR ごとに実行
   - #743: Windows process tree orphan audit を `docs/process-tree-orphan-audit.md` として整理
+  - #458: GitHub Issue Template の UI 動作 (template 選択 / 必須項目 block / 自動付与 / blank 経路併存) を実機検証完了
   ```
 
 ## 7. Verification (Iron Law 6 準拠)
@@ -342,6 +355,7 @@ jobs:
 | B-1 | 短い MKV (AV1 サンプルあれば) で split → metadata.json の note 文言確認 |
 | B-2 | detecting 中に GUI を × で閉じて ffmpeg 子孫プロセスが Task Manager で 5 秒以内に全消去されることを実機確認。`open_folder_in_explorer` 経由で開いた Explorer は kill されないことも併せて確認 |
 | B-3 | Portable ZIP build → 展開後 README.txt が日本語表示されることを Notepad で確認 |
+| B-4 | `https://github.com/Idios/kobutachan-allaganeye/issues/new/choose` を開いて bug 報告テンプレ表示確認、必須 textarea / checkbox 未入力時の submit block、自動付与 (title prefix / labels / assignees)、blank 経路併存、`docs/bug-report-guide.md` link が 200 で開けることを実測 |
 | D | local Portable ZIP build (`pwsh ./scripts/build-portable-zip.ps1 -Version 0.2.1`) で ZIP 生成 + `docs/l2-e2e-checklist.md §3 T1` smoke |
 
 ### 7.3 受け入れ条件 (Iron Law 1 準拠)
@@ -357,6 +371,7 @@ jobs:
 - [ ] #743 受け入れ条件 (5 件): audit document 作成、kill_tracked_processes 実機検証、親 app crash 時の挙動確認、orphan risk fix を本 PR に統合 (= #756)、audit 結果を `docs/` 配下に記録
 - [ ] #749 受け入れ条件: Portable ZIP README.txt が日本語、Pester assertion で日本語見出し検証
 - [ ] #756 受け入れ条件: ffmpeg 子孫プロセスが GUI 終了時に Windows Task Manager で 5 秒以内に全消去
+- [ ] #458 受け入れ条件: bug_report.yml の link が `main` を指し placeholder 削除済、L3 初期残作業チェックリスト (UI 動作確認 7 項目) すべて pass
 
 #### CI 強化 (Track C)
 
@@ -373,7 +388,7 @@ jobs:
 ## 8. Release Flow
 
 1. main から `develop-0.2.1` を cut + push (`git checkout main && git pull && git checkout -b develop-0.2.1 && git push -u origin develop-0.2.1`)
-2. 各 Track の作業ブランチ → PR → `develop-0.2.1` マージ (Track 並列実施可能。推奨順: **C → A → B-1 / B-2 / B-3 (並列) → D**)
+2. 各 Track の作業ブランチ → PR → `develop-0.2.1` マージ (Track 並列実施可能。推奨順: **C → A → B-1 / B-2 / B-3 / B-4 (並列) → D**)
 3. 全 Track 統合後、PR `develop-0.2.1 → main` を作成
 4. PR `develop-0.2.1 → main` をマージ
 5. `main` HEAD にタグ: `git tag -a v0.2.1 -m "Release v0.2.1: Patch release"` + `git push origin v0.2.1`
@@ -384,7 +399,7 @@ jobs:
 7. PR 作者 (Claude or Idios) が以下を手動確認:
    - Dependabot alerts 5 件の auto-close 状態
    - PR #758 の close 状態
-   - UX issue 4 件 (#374 / #743 / #749 / #756) の close (`/close-issue` skill で受け入れ条件再検証 + 手動クローズ、Iron Law 4)
+   - UX issue 5 件 (#374 / #458 / #743 / #749 / #756) の close (`/close-issue` skill で受け入れ条件再検証 + 手動クローズ、Iron Law 4)
    - GitHub Release ページに ZIP + release notes が掲載
 8. `main` から `develop-0.3.0` 新規 cut + version 0.3.0 bump コミット (release-process.md §レイヤー間移行手順)
 
@@ -410,6 +425,8 @@ jobs:
 - [PR #758](https://github.com/Idios/kobutachan-allaganeye/pull/758) — Dependabot fast-uri 3.1.2 PR
 - [Release v0.2.0](https://github.com/Idios/kobutachan-allaganeye/releases/tag/v0.2.0)
 - [Issue #374](https://github.com/Idios/kobutachan-allaganeye/issues/374) — metadata.json note codec
+- [Issue #458](https://github.com/Idios/kobutachan-allaganeye/issues/458) — bug_report.yml 同意 checkbox 付き UI 検証残作業
 - [Issue #743](https://github.com/Idios/kobutachan-allaganeye/issues/743) — Windows process group orphan audit
 - [Issue #749](https://github.com/Idios/kobutachan-allaganeye/issues/749) — Portable ZIP README.txt 日本語化
 - [Issue #756](https://github.com/Idios/kobutachan-allaganeye/issues/756) — ffmpeg 子孫プロセス残留
+- [docs/bug-report-guide.md](../../bug-report-guide.md) — Track B-4 link 先 (Idios 提供)
