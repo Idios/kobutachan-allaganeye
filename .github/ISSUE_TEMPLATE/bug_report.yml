@@ -15,7 +15,7 @@ body:
         <!-- ErrorModal 連動 note (Group D #669 マージで rendered 化、それまで外部 reporter には非表示):
         ErrorModal の `[GitHub Issue を作成]` ボタンを使うと一部項目 (実際の動作 / 環境情報 / ログファイル) が自動入力されます。 -->
 
-        詳細は [`docs/bug-report-guide.md`](../../blob/develop-0.2.0/docs/bug-report-guide.md) を参照してください (公開までしばらくお待ちください)。
+        詳細は [`docs/bug-report-guide.md`](../../blob/main/docs/bug-report-guide.md) を参照してください。
 
   - type: textarea
     id: reproduction

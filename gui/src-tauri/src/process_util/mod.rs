@@ -1,9 +1,19 @@
 //! Cross-platform process-related helpers.
 //!
-//! Currently the only inhabitant is [`apply_no_window`] (#679), which sets
+//! Originally the only inhabitant was [`apply_no_window`] (#679), which sets
 //! Windows' `CREATE_NO_WINDOW` flag on a `tokio::process::Command` so that
 //! the `windows_subsystem = "windows"` release bundle doesn't spawn a
 //! console window for each ffmpeg / ffprobe / allaganeye child.
+//!
+//! #756 added [`job_object`] (Windows-only): a wrapper around Win32 Job
+//! Objects with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` so that closing the
+//! Job handle kills the assigned process AND every descendant it has
+//! spawned. Used by `start_detect` to reap the Python CLI plus the N
+//! ffmpeg children the GPU detector spawns when the user cancels detection
+//! or closes the GUI (`kill_tracked_processes`).
+
+#[cfg(windows)]
+pub mod job_object;
 
 /// Apply `CREATE_NO_WINDOW` (`0x0800_0000`) on Windows so that the spawned
 /// child doesn't get its own console window. No-op on other platforms.
@@ -79,7 +89,10 @@ mod tests {
     /// なので `pub async fn ...` で match する。
     #[test]
     fn lib_rs_applies_apply_no_window_at_all_spawn_sites() {
-        let src = include_str!("lib.rs");
+        // #756 -- after `process_util.rs` was promoted to a directory module
+        // (`process_util/mod.rs` + `process_util/job_object.rs`), `lib.rs`
+        // lives one level up.
+        let src = include_str!("../lib.rs");
         for func in [
             "fn probe_video_with",
             "async fn ensure_thumbnail_exists",

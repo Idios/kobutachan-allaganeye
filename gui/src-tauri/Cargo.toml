@@ -1,20 +1,30 @@
 [package]
 name = "allaganeye-gui"
-version = "0.2.0"
+version = "0.2.1"
 description = "Allagan Eye GUI shell (Tauri 2 + React)"
 edition = "2021"
 
 [build-dependencies]
-tauri-build = { version = "=2.5.6", features = [] }
+tauri-build = { version = "=2.6.1", features = [] }
 
 [dependencies]
-tauri = { version = "=2.10.3", features = ["protocol-asset"] }
-tauri-plugin-dialog = "=2.7.0"
-tauri-plugin-fs = "=2.5.0"
+tauri = { version = "=2.11.1", features = ["protocol-asset"] }
+tauri-plugin-dialog = "=2.7.1"
+tauri-plugin-fs = "=2.5.1"
 tauri-plugin-shell = "=2.3.5"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.149"
-tokio = { version = "=1.52.1", features = ["full"] }
+# #767 -- "full" feature set から実使用分のみに絞ってビルドコストを削減
+# (cargo dep graph 縮小)。grep で確認した実使用箇所:
+#   - rt-multi-thread: tokio::spawn / runtime
+#   - macros: #[tokio::test]
+#   - process: tokio::process::{Command, Child}
+#   - sync: tokio::sync::{Mutex, Semaphore, oneshot}
+#   - io-util: AsyncBufReadExt, BufReader
+#   - net: tokio::net::TcpListener (axum server bind)
+#   - time: tokio::time::{sleep, timeout}
+# bytes / fs / io-std / mio / parking_lot / signal / socket2 / tracing は未使用。
+tokio = { version = "=1.52.1", features = ["rt-multi-thread", "macros", "process", "sync", "io-util", "net", "time"] }
 tokio-util = { version = "=0.7.18", features = ["io"] }
 axum = { version = "=0.8.9", features = ["macros"] }
 tower-http = { version = "=0.6.8", features = ["fs"] }
@@ -32,6 +42,21 @@ dirs = "=6.0.0"
 # 満たせないため追加 (plan/spec の "metadata.system_info に OS/CPU/etc が入っている"
 # 仮定の修正)。
 sysinfo = "=0.39.1"
+
+# #756 -- Windows Job Object wrapper used to kill the `start_detect`
+# process and all its descendants (Python CLI + the N ffmpeg children it
+# spawns) when the user cancels detection or closes the GUI. `TerminateProcess`
+# / tokio's `Child::kill().await` only terminate the direct child, leaving
+# ffmpeg children as orphans; assigning the Python process to a Job created
+# with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` lets the kernel reap the whole
+# tree when the Job handle is closed (on PROCESS_TRACKER drain or process
+# exit). Version pinned to 0.61.3 to align with tauri 2.11.1's existing
+# `windows` dependency (resolved via tao 0.35.2 → windows-core 0.61) and
+# avoid adding a third major to the dep tree for this PR. Note that
+# `windows 0.62.x` is pre-existing transitively via sysinfo 0.39.1 (see
+# Cargo.lock); we deliberately do not bump or unify here.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "=0.61.3", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tempfile = "=3.27.0"
