@@ -14,7 +14,17 @@ tauri-plugin-fs = "=2.5.1"
 tauri-plugin-shell = "=2.3.5"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.149"
-tokio = { version = "=1.52.1", features = ["full"] }
+# #767 -- "full" feature set から実使用分のみに絞ってビルドコストを削減
+# (cargo dep graph 縮小)。grep で確認した実使用箇所:
+#   - rt-multi-thread: tokio::spawn / runtime
+#   - macros: #[tokio::test]
+#   - process: tokio::process::{Command, Child}
+#   - sync: tokio::sync::{Mutex, Semaphore, oneshot}
+#   - io-util: AsyncBufReadExt, BufReader
+#   - net: tokio::net::TcpListener (axum server bind)
+#   - time: tokio::time::{sleep, timeout}
+# bytes / fs / io-std / mio / parking_lot / signal / socket2 / tracing は未使用。
+tokio = { version = "=1.52.1", features = ["rt-multi-thread", "macros", "process", "sync", "io-util", "net", "time"] }
 tokio-util = { version = "=0.7.18", features = ["io"] }
 axum = { version = "=0.8.9", features = ["macros"] }
 tower-http = { version = "=0.6.8", features = ["fs"] }

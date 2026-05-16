@@ -1,8 +1,22 @@
 name: CI
 
 on:
+  # #767 -- main / develop-* への push でも CI を走らせて Swatinem/rust-cache の
+  # canonical キャッシュを生成する。pull_request only だと main / develop ブランチ
+  # 上で CI が走らないため GitHub Actions Cache 上に branch 由来のキャッシュが
+  # 存在せず、PR ごとに rust-cache が "No cache found." で毎回フルビルドしていた
+  # (gui-rust 228s)。push で warm された cache を PR が restore-key prefix
+  # fallback で継承することで incremental build (~30-60s) に短縮する。
+  push:
+    branches: [main, "develop-*"]
   pull_request:
     branches: [main, "develop-*"]
+
+concurrency:
+  # 同一 ref への連続 push は前 run を cancel して無駄を省く。ただし main /
+  # develop-* は cache warm-up が目的なので cancel しない (PR の場合のみ cancel)。
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   python:
@@ -150,7 +164,11 @@ jobs:
 
   gui-rust:
     runs-on: windows-latest
-    needs: gui-frontend
+    # #767 -- needs: gui-frontend を削除して並列実行可能に (~60s wall clock 短縮)。
+    # cargo test --lib は frontend assets (gui/dist) を参照しないため、
+    # gui-frontend の build artifact に依存する必要がない (lib test 内に
+    # include_dir! / include_str!(...dist) / frontendDist / AssetResolver の
+    # 使用が無いことを grep で確認済)。
     steps:
       - uses: actions/checkout@v4
 
@@ -170,14 +188,12 @@ jobs:
         working-directory: gui
         run: npm ci
 
-      - name: Download dist artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: gui-dist
-          path: gui/dist
-
+      # #767 -- --no-default-features で default feature "custom-protocol"
+      # (tauri release-mode bundling 用) を無効化。lib test は custom_protocol /
+      # asset_resolver / AssetResolver を参照しないことを grep で確認済。
+      # build 時間短縮 + cargo dependency graph 縮小に寄与する。
       - name: Cargo test (lib)
-        run: cargo test --lib --manifest-path gui/src-tauri/Cargo.toml
+        run: cargo test --lib --no-default-features --manifest-path gui/src-tauri/Cargo.toml
 
   doc-tauri-commands-drift:
     runs-on: ubuntu-latest
