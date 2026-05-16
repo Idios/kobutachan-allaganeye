@@ -26,7 +26,9 @@ import {
 import type { MatchType, TypeOverride } from '../types/metadata';
 import { DEFAULT_FPS } from '../types/metadata.schema';
 import { buildLocalBrightness } from '../utils/brightness';
+import { splitPath } from '../utils/path';
 import { fmtPreciseTime } from '../utils/time';
+import pathStyles from '../styles/path-display.module.css';
 import styles from './PreviewScreen.module.css';
 
 /**
@@ -627,6 +629,21 @@ export function PreviewScreen() {
           ◀ 一覧へ
         </button>
         <div className={styles.headerInfo}>
+          {videoSource && (() => {
+            const { fileName, parentDir } = splitPath(videoSource);
+            return (
+              <div
+                className={pathStyles.pathDisplay}
+                title={videoSource}
+                data-testid="preview-path"
+              >
+                <div className={styles.headerFileName}>{fileName || '(video)'}</div>
+                {parentDir && (
+                  <div className={pathStyles.pathSecondary}>{parentDir}</div>
+                )}
+              </div>
+            );
+          })()}
           <div className={styles.caption}>境界調整 ⸱ BOUNDARY CALIBRATION</div>
           <div className={styles.nameRow}>
             <DisabledTooltip disabled={isSample} reason={sampleReason}>

@@ -129,6 +129,39 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 文言の重複を避けるため、modal 局所文言は modal-only な action (キャンセル 等) に
 限定する規約。
 
+### 1.6 ファイルパス表示の原則 (#676)
+
+**原則**: ユーザーが現在扱っている動画ファイルを「どのフォルダのどのファイルか」識別できるよう、
+5 画面 (drop / detecting / complete / preview / export) のすべての主要表示領域で
+**絶対 path** を可視化する。fileName だけの表示は禁止 (同名ファイル区別不能のため)。
+
+| 観点 | 規定 |
+| --- | --- |
+| 表示形式 | **fileName 主表示 (primary) + 親ディレクトリ副表示 (secondary)** の 2 段構造 |
+| primary 行 | fileName のみ。font-size は各画面のタイポグラフィ階層に従う (13-16px、`--ae-text-bright`) |
+| secondary 行 | parent dir のみ。`gui/src/styles/path-display.module.css` の `.pathSecondary` クラスを使用 (11px / `--ae-text-dim` / `--ae-font-mono`) |
+| truncate | secondary 行は左側省略 (RTL ellipsis + `unicode-bidi:plaintext`)。`.pathSecondary` に集約 |
+| hover ツールチップ | 必ず container `<div>` に `title={fullPath}` を付与。primary/secondary 個別ではなく container 1 個 |
+| path source-of-truth | drop=`info.path` / detecting=`selectedVideoPath` / complete・preview・export=`videoSource` (= `selectedVideoPath ?? metadata.source`) |
+| path 分解 | `gui/src/utils/path.ts` の `splitPath(absPath)` で `{fileName, parentDir}` を取得 (例外不投げ) |
+| parentDir 空 | drive root などで parentDir が空文字列のとき、secondary 行は非表示 (primary 単独) |
+| data-testid | container に `<screen>-path` を基本とする。1 画面に複数 path 表示があるとき or phase 固有のとき context 接尾辞を入れる (例: `drop-selected-path` は `phase=selected` 限定 / `detecting-path` (running) と `detecting-error-path` (error view) で区別) |
+| a11y | `aria-label` 等の screen reader 専用属性は新規追加しない (a11y-policy.md 準拠)。`title` 属性 + visible text のみで識別性を担保 |
+| recent list (§2.1.3) | **例外**: 行 layout 上 1 行 (フルパス + 左側省略) を維持。PR #655 で確立した `.recentName` をそのまま使用。本 §1.6 の 2 段構造は適用しない |
+
+**アンチパターン**:
+
+- fileName のみで親 dir を表示しない (#676 報告の SelectedCard / Detecting の旧実装が該当)
+- `metadata.source` を直に文字列バインドし truncate / title を付けない (#676 報告の CompleteScreen 旧実装が該当)
+- 画面ごとに truncate ルールを CSS にコピペ (drift の温床、共通 module で集約)
+
+**参考実装**: 直近の録画リスト ([DropScreen.tsx:421-426](../gui/src/screens/DropScreen.tsx#L421), PR #655 Round 2) —
+1 行版だが「直近 path 識別」の同種要求への先行解。本 §1.6 は SelectedCard を含む他全画面用の 2 段版。
+
+**画面別適用箇所**: §2.1.4 (Drop SelectedCard) / §2.2.2 (Detecting Header) / §2.2.8 (Detecting error view、新規) /
+§2.3.2 (Complete sourceBox) / §2.4.16 (Preview header path display、新規) / §2.5.2 (Export header) — 各節に「§1.6 準拠」リンク。
+新規サブセクション (§2.2.8 / §2.4.16) は既存 anchor 互換のため各 §2 の末尾に追加する。
+
 ## 2. 画面別 UI 部品状態機械
 
 §2 は 5 画面それぞれを **1 画面 = 1 PR** で順次追加する (#590 着手フローに従う)。
@@ -208,7 +241,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 | 状態 | `selected` (probe 結果 + 確認ボタン表示) |
 | 遷移トリガー | reducer `PROBE_OK` で phase=`probing → selected` 後に出現 |
 | store mutation | カード自体は表示のみ、mutation なし (ボタンは §2.1.5 / §2.1.6) |
-| 例外 / edge case | `probeInfo` が null になり得るが、phase=`selected` 時は guard ([:115-116](../gui/src/screens/DropScreen.tsx#L115)) で render しないため不整合は発生しない |
+| 例外 / edge case | `probeInfo` が null になり得るが、phase=`selected` 時は guard ([:115-116](../gui/src/screens/DropScreen.tsx#L115)) で render しないため不整合は発生しない。**§1.6 ファイルパス表示の原則に準拠** — `info.path` を `splitPath()` で分解、primary `.selectedName` (fileName) + secondary `.pathSecondary` (parentDir 左側省略) + container `title={info.path}` の 2 段構造 (`data-testid="drop-selected-path"`、#676) |
 
 #### §2.1.5 [キャンセル] button (SelectedCard 内)
 
@@ -372,7 +405,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 | 状態 | `displayOnly` |
 | 遷移トリガー | なし。`selectedVideoPath` 変化時に再 render (basename を抜き出して表示) |
 | store mutation | なし |
-| 例外 / edge case | `selectedVideoPath` が null の場合は `'(video)'` フォールバック。Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) で `meta` 行を `probing` event payload (`width` × `height` / `fps` / `codec` / `duration_s`) から実 ffprobe 結果に差し替え済 (`probing` 受信前の数百 ms は暫定 `phase: …` を表示) |
+| 例外 / edge case | `selectedVideoPath` が null の場合は fileName `'(video)'` フォールバック (parentDir は空文字列で secondary 行非表示)。Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) で `meta` 行を `probing` event payload (`width` × `height` / `fps` / `codec` / `duration_s`) から実 ffprobe 結果に差し替え済 (`probing` 受信前の数百 ms は暫定 `phase: …` を表示)。**§1.6 ファイルパス表示の原則に準拠** — `selectedVideoPath` を `splitPath()` で分解、primary `.fileName` (14px) + secondary `.pathSecondary` (parentDir 左側省略) + container `title={selectedVideoPath}` (`data-testid="detecting-path"`、#676) |
 
 #### §2.2.3 progressBadge
 
@@ -424,6 +457,16 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 | store mutation | なし (cancelled 検出後の effect で `appStateStore.navigate('drop')` のみ) |
 | 例外 / edge case | §1.2 disabled 理由表示について、現状 `disabled={phase !== 'running'}` のみで tooltip / inline hint 未実装 → 後続 PR で `title="検知実行中のみ中断できます"` 等を追加 (本 doc が source of truth)。`cancelling` 中の連打は disabled で物理的に防止 |
 
+#### §2.2.8 Detecting error view path display (#676)
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | display block ([DetectingScreen.tsx:732-792](../gui/src/screens/DetectingScreen.tsx#L732) `DetectingErrorView` 内、`role="alert"` の error card 内部) |
+| 状態 | `displayOnly`。phase=`error` のときのみ render される (error view) |
+| 遷移トリガー | なし。`selectedVideoPath` 由来の `displayPath` prop に追従 |
+| store mutation | なし |
+| 例外 / edge case | **§1.6 ファイルパス表示の原則に準拠** — `selectedVideoPath` を `splitPath()` で分解、primary `.errorFile` (13px / text-bright) + secondary `.pathSecondary` (parentDir 左側省略) + container `title={selectedVideoPath}` (`data-testid="detecting-error-path"`)。`selectedVideoPath` が null の場合は fileName `'(video)'` + secondary 行非表示にフォールバック |
+
 ### §2.3 complete
 
 **phase**: 専用 reducer なし。`metadataStore` と `appStateStore.selectedMatchIndex` の組合せで暗黙的に状態を表現する。便宜上の状態名:
@@ -469,7 +512,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 | 状態 | `displayOnly`。`metadata.source` を full path で表示 |
 | 遷移トリガー | `metadata` 変化に追従 |
 | store mutation | なし |
-| 例外 / edge case | full path が長すぎる場合の overflow / ellipsis は CSS 任せ。a11y は plain text、screen reader はそのまま読み上げる。Phase 2.5 で basename + tooltip full path に変更する選択肢あり ([#587](https://github.com/Idios/kobutachan-allaganeye/issues/587)) |
+| 例外 / edge case | **§1.6 ファイルパス表示の原則に準拠** — `videoSource` (= `selectedVideoPath ?? metadata.source`) を `splitPath()` で分解、primary `.sourceName` (13px / text-bright) + secondary `.pathSecondary` (parentDir 左側省略) + container `title={videoSource}` (`data-testid="complete-path"`、#676)。sample mode 等 `selectedVideoPath` 不在時は `metadata.source` にフォールバックして同一構造で表示 |
 
 #### §2.3.3 stats (試合数 / 総尺)
 
@@ -752,6 +795,16 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | store mutation | なし |
 | 例外 / edge case | 通常フロー (complete から double-click / [境界を調整]) では到達しない。dev StateSwitcher で preview に直接遷移したり、apply 後 matches 配列が変動して selectedMatchIndex が消えた場合に表示。文言と「complete へ戻る」リンクは [#587](https://github.com/Idios/kobutachan-allaganeye/issues/587) a11y/polish で議論 |
 
+#### §2.4.16 header path display (#676)
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | display block ([PreviewScreen.tsx:629](../gui/src/screens/PreviewScreen.tsx#L629) `.headerInfo` 内、`.caption` の上に配置) |
+| 状態 | `displayOnly`。`videoSource` 不在 (sample mode 等で `selectedVideoPath` も `metadata.source` も null) のとき非 render |
+| 遷移トリガー | `videoSource` (= `selectedVideoPath ?? metadata?.source ?? null`) 変化に追従 |
+| store mutation | なし |
+| 例外 / edge case | **§1.6 ファイルパス表示の原則に準拠** — `videoSource` を `splitPath()` で分解、primary `.headerFileName` (13px / text-bright、PreviewScreen.module.css 新設) + secondary `.pathSecondary` (parentDir 左側省略) + container `title={videoSource}` (`data-testid="preview-path"`、#676)。`videoSource === null` で領域全体を非表示 (条件付き render) |
+
 ### §2.5 export
 
 **phase**: 専用 reducer ([reducers/export.ts:19-48](../gui/src/screens/reducers/export.ts#L19))。`idle | running | cancelling | completed | error`
@@ -805,7 +858,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | `displayOnly`。`countedMatches.length` (永続 skip + ad-hoc exclude を除外した数) を反映 |
 | 遷移トリガー | `metadata.matches` / `excludedIndexes` 変化に追従 |
 | store mutation | なし |
-| 例外 / edge case | `countedMatches.length === 0` のとき "0 試合を書き出す" 表示で無意味だが、画面全体としては start ボタン disabled (`!videoSource`) で実害なし。0 件時の専用文言 + start 無効化は [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) 議論対象 |
+| 例外 / edge case | `countedMatches.length === 0` のとき "0 試合を書き出す" 表示で無意味だが、画面全体としては start ボタン disabled (`!videoSource`) で実害なし。0 件時の専用文言 + start 無効化は [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) 議論対象。**§1.6 ファイルパス表示の原則に準拠** — header caption/title の上に `videoSource` 由来の 2 段 path display を render (primary `.headerFileName` (13px) + secondary `.pathSecondary` 左側省略 + container `title={videoSource}`、`data-testid="export-path"`、#676)。`videoSource === null` で領域全体を非表示 |
 
 #### §2.5.3 出力先 input
 

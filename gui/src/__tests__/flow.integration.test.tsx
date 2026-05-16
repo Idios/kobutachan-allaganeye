@@ -507,3 +507,86 @@ describe('performance: brightness path build (512 samples x 1000 iterations)', (
     expect(elapsed).toBeLessThan(500);
   });
 });
+
+/* ------------------------------------------------------------------------ */
+/* #676: cross-screen path display continuity                                */
+/* Verifies that each screen's data-testid="<screen>-path" container holds  */
+/* the same full path in its `title` attribute throughout the entire flow.   */
+/* ------------------------------------------------------------------------ */
+
+describe('#676 cross-screen path display continuity', () => {
+  it('keeps the full path visible across drop → detect → complete → preview → export', async () => {
+    const fullPath = 'E:\\videos\\20260116\\2026-01-16 21-14-05.mkv';
+    const expectedFileName = '2026-01-16 21-14-05.mkv';
+    const expectedParentDir = 'E:\\videos\\20260116';
+
+    configureHappyInvoke();
+    dialogOpenMock.mockResolvedValue(fullPath);
+    render(<App />);
+
+    // ── 1. Drop: open dialog → wait for SelectedCard → assert drop-selected-path ──
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /参照/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('drop-selected-card')).toBeInTheDocument();
+    });
+    {
+      const c = screen.getByTestId('drop-selected-path');
+      expect(c).toHaveAttribute('title', fullPath);
+      expect(c).toHaveTextContent(expectedFileName);
+      expect(c).toHaveTextContent(expectedParentDir);
+    }
+
+    // ── 2. Detecting: click OK → screen transitions to detecting or complete ──
+    await user.click(screen.getByRole('button', { name: /OK — 検知開始/ }));
+    // selectedVideoPath is now set in the store (set synchronously in confirm()).
+    expect(useAppStateStore.getState().selectedVideoPath).toBe(fullPath);
+
+    // Wait for detecting screen (may flash straight to complete in mocked path).
+    // We check detecting-path only if we land on detecting before complete.
+    await waitFor(() => {
+      const s = useAppStateStore.getState().screen;
+      expect(['detecting', 'complete']).toContain(s);
+    });
+    if (useAppStateStore.getState().screen === 'detecting') {
+      const c = screen.getByTestId('detecting-path');
+      expect(c).toHaveAttribute('title', fullPath);
+      // Wait for complete before continuing.
+      await waitFor(() => {
+        expect(useAppStateStore.getState().screen).toBe('complete');
+      });
+    }
+
+    // ── 3. Complete: assert complete-path ──
+    {
+      const c = screen.getByTestId('complete-path');
+      expect(c).toHaveAttribute('title', fullPath);
+    }
+
+    // ── 4. Preview: navigate via store mutation (same as flow A4 double-click) ──
+    // openPreviewFor sets selectedMatchIndex + screen='preview' atomically.
+    act(() => {
+      useAppStateStore.getState().openPreviewFor(1);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-screen')).toBeInTheDocument();
+    });
+    {
+      const c = screen.getByTestId('preview-path');
+      expect(c).toHaveAttribute('title', fullPath);
+    }
+
+    // ── 5. Export: navigate via store mutation (same as flow I) ──
+    act(() => {
+      useMetadataStore.setState({ filePath: '/tmp/x/metadata.json' });
+      useAppStateStore.getState().navigate('export');
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('export-screen')).toBeInTheDocument();
+    });
+    {
+      const c = screen.getByTestId('export-path');
+      expect(c).toHaveAttribute('title', fullPath);
+    }
+  });
+});

@@ -13,9 +13,11 @@ import {
   deriveDetectOutputDir,
   metadataPathFor,
 } from '../utils/detectOutputDir';
+import { splitPath } from '../utils/path';
 import { fmtTime } from '../utils/time';
 import { detectingReducer } from './reducers/detecting';
 import type { DetectingPhase } from './types';
+import pathStyles from '../styles/path-display.module.css';
 import styles from './DetectingScreen.module.css';
 
 /**
@@ -286,7 +288,9 @@ export function DetectingScreen() {
   // state がまとめて捨てられる構造に変えた。
   const [runCount, setRunCount] = useState(0);
 
-  const displayFile = selectedVideoPath?.split(/[/\\]/).pop() ?? '(video)';
+  const displayPath = selectedVideoPath
+    ? { ...splitPath(selectedVideoPath), full: selectedVideoPath }
+    : { fileName: '(video)', parentDir: '', full: '' };
 
   // completed → navigate to complete (load happened in the running view)
   useEffect(() => {
@@ -336,7 +340,7 @@ export function DetectingScreen() {
       <DetectingErrorView
         error={error}
         errorHint={errorHint}
-        displayFile={displayFile}
+        displayPath={displayPath}
         onRetry={handleRetry}
         onBack={() => navigate('drop')}
       />
@@ -348,6 +352,7 @@ export function DetectingScreen() {
       key={runCount}
       phase={phase}
       selectedVideoPath={selectedVideoPath}
+      displayPath={displayPath}
       detectionParams={detectionParams}
       loadMetadata={loadMetadata}
       loadSample={loadSample}
@@ -366,6 +371,7 @@ export function DetectingScreen() {
 interface DetectingRunningViewProps {
   phase: DetectingPhase;
   selectedVideoPath: string | null;
+  displayPath: { fileName: string; parentDir: string; full: string };
   detectionParams: ReturnType<typeof useAppStateStore.getState>['detectionParams'];
   loadMetadata: ReturnType<typeof useMetadataStore.getState>['load'];
   loadSample: ReturnType<typeof useMetadataStore.getState>['loadSample'];
@@ -382,6 +388,7 @@ interface DetectingRunningViewProps {
 function DetectingRunningView({
   phase,
   selectedVideoPath,
+  displayPath,
   detectionParams,
   loadMetadata,
   loadSample,
@@ -561,7 +568,6 @@ function DetectingRunningView({
   );
   const refiningSub = phaseLabel === 'scorebar' ? '分類' : 'refine';
 
-  const displayFile = selectedVideoPath?.split(/[/\\]/).pop() ?? '(video)';
   const eta = computeEta(progress, elapsed);
   // #569 review Round 1 課題 1: probing event 受信後は実 ffprobe 結果を
   // 表示。受信前 (起動直後の数百 ms) は暫定で `phase: ...` を出して
@@ -574,7 +580,16 @@ function DetectingRunningView({
         <AllaganSigil size={84} rotating={phase === 'running'} />
         <div className={styles.headerText}>
           <div className={styles.caption}>観測中</div>
-          <div className={styles.fileName}>{displayFile}</div>
+          <div
+            className={pathStyles.pathDisplay}
+            title={displayPath.full}
+            data-testid="detecting-path"
+          >
+            <div className={styles.fileName}>{displayPath.fileName}</div>
+            {displayPath.parentDir && (
+              <div className={pathStyles.pathSecondary}>{displayPath.parentDir}</div>
+            )}
+          </div>
           <div className={styles.meta} data-testid="detecting-meta">
             {metaText}
           </div>
@@ -724,7 +739,7 @@ interface DetectingErrorViewProps {
    * progress-event errors and bare `Error` instances.
    */
   errorHint: string | null;
-  displayFile: string;
+  displayPath: { fileName: string; parentDir: string; full: string };
   onRetry: () => void;
   onBack: () => void;
 }
@@ -732,7 +747,7 @@ interface DetectingErrorViewProps {
 function DetectingErrorView({
   error,
   errorHint,
-  displayFile,
+  displayPath,
   onRetry,
   onBack,
 }: DetectingErrorViewProps) {
@@ -759,7 +774,16 @@ function DetectingErrorView({
       role="alert"
     >
       <div className={styles.errorHeading}>検知に失敗しました</div>
-      <div className={styles.errorFile}>{displayFile}</div>
+      <div
+        className={pathStyles.pathDisplay}
+        title={displayPath.full}
+        data-testid="detecting-error-path"
+      >
+        <div className={styles.errorFile}>{displayPath.fileName}</div>
+        {displayPath.parentDir && (
+          <div className={pathStyles.pathSecondary}>{displayPath.parentDir}</div>
+        )}
+      </div>
       <pre className={styles.errorMessage} data-testid="detecting-error-message">
         {error ?? 'unknown error'}
       </pre>

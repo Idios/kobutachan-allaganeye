@@ -9,7 +9,8 @@ import { SampleModeBanner } from '../components/SampleModeBanner';
 import { toErrorState } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
-import { joinPath, stripExtendedPathPrefix } from '../utils/path';
+import { joinPath, splitPath, stripExtendedPathPrefix } from '../utils/path';
+import pathStyles from '../styles/path-display.module.css';
 import { fmtMatchDuration, fmtTime } from '../utils/time';
 import { exportReducer } from './reducers/export';
 import type { ExportPhase } from './types';
@@ -525,6 +526,21 @@ export function ExportScreen() {
           )}
         </DisabledTooltip>
         <div>
+          {videoSource && (() => {
+            const { fileName, parentDir } = splitPath(videoSource);
+            return (
+              <div
+                className={pathStyles.pathDisplay}
+                title={videoSource}
+                data-testid="export-path"
+              >
+                <div className={styles.headerFileName}>{fileName || '(video)'}</div>
+                {parentDir && (
+                  <div className={pathStyles.pathSecondary}>{parentDir}</div>
+                )}
+              </div>
+            );
+          })()}
           <div className={styles.caption}>エクスポート</div>
           <div className={styles.title}>
             {countedMatches.length} 試合を書き出す

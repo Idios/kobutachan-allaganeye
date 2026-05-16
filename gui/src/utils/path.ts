@@ -40,3 +40,33 @@ export function joinPath(dir: string, name: string): string {
   if (dir.endsWith('/') || dir.endsWith('\\')) return dir + name;
   return dir + separator + name;
 }
+
+/**
+ * 絶対 path を fileName (basename) と parentDir に分解する。
+ * Windows `\\?\` 拡張長 prefix は内部で {@link stripExtendedPathPrefix} を通す。
+ * セパレータ末尾 / セパレータなし / parentDir 空 (= drive root) の edge case
+ * もすべて空文字列にフォールバックする (例外を投げない、UI 表示用)。
+ *
+ * #676 — 5 画面 (drop / detecting / complete / preview / export) のファイルパス
+ * 表示で共通利用。詳細は docs/ui-interaction-spec.md §1.6 参照。
+ *
+ * 例:
+ *  - "E:\\videos\\foo.mkv"  → { fileName: "foo.mkv",  parentDir: "E:\\videos" }
+ *  - "/tmp/foo.mp4"         → { fileName: "foo.mp4",  parentDir: "/tmp" }
+ *  - "\\\\?\\C:\\foo.mkv"   → { fileName: "foo.mkv",  parentDir: "C:" }
+ *  - "foo.mkv"              → { fileName: "foo.mkv",  parentDir: "" }
+ *  - ""                     → { fileName: "",         parentDir: "" }
+ */
+export function splitPath(absPath: string): { fileName: string; parentDir: string } {
+  if (!absPath) return { fileName: '', parentDir: '' };
+  const normalized = stripExtendedPathPrefix(absPath);
+  const idx = Math.max(
+    normalized.lastIndexOf('/'),
+    normalized.lastIndexOf('\\'),
+  );
+  if (idx < 0) return { fileName: normalized, parentDir: '' };
+  return {
+    fileName: normalized.slice(idx + 1),
+    parentDir: normalized.slice(0, idx),
+  };
+}

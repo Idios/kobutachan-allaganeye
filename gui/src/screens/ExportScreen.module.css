@@ -38,6 +38,13 @@
   cursor: not-allowed;
 }
 
+.headerFileName {
+  font-family: var(--ae-font-body);
+  font-size: 13px;
+  color: var(--ae-text-bright);
+  margin-bottom: 4px;
+}
+
 .caption {
   font-family: var(--ae-font-ui);
   font-size: 9px;
