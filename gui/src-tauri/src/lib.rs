@@ -1437,7 +1437,35 @@ async fn extract_brightness_window(
 /// children, but detecting (Phase 3) and export (Phase 4) will register
 /// their children here so the Close-Requested handler can kill them before
 /// exit.
-type ProcessMap = Arc<Mutex<HashMap<Uuid, tokio::process::Child>>>;
+///
+/// #756 -- value type is [`TrackedChild`], which carries both the
+/// `tokio::process::Child` and an optional Windows Job Object handle. The
+/// Job is only populated for `start_detect` (the Python CLI spawns N
+/// ffmpeg descendants that `TerminateProcess` cannot reach); other spawn
+/// sites pass `job: None`. Dropping the `TrackedChild` (on
+/// `kill_tracked_processes` drain) drops the Job handle, which fires
+/// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and reaps the whole tree.
+pub struct TrackedChild {
+    pub child: tokio::process::Child,
+    #[cfg(windows)]
+    #[allow(dead_code)] // held purely for its Drop side effect
+    pub job: Option<process_util::job_object::ProcessJob>,
+}
+
+impl TrackedChild {
+    /// Wrap a freshly-spawned child with no Job Object association.
+    /// Use this at spawn sites that have no descendants to reap (ffmpeg /
+    /// ffprobe single invocations).
+    pub fn no_job(child: tokio::process::Child) -> Self {
+        Self {
+            child,
+            #[cfg(windows)]
+            job: None,
+        }
+    }
+}
+
+type ProcessMap = Arc<Mutex<HashMap<Uuid, TrackedChild>>>;
 
 static PROCESS_TRACKER: OnceLock<ProcessMap> = OnceLock::new();
 
@@ -1458,13 +1486,25 @@ async fn is_process_running() -> bool {
 /// #523 -- kill every tracked child. Returns the number of processes that
 /// were alive at kill time. Best-effort -- already-dead children are silently
 /// skipped so partial kills don't block the exit flow.
+///
+/// #756 -- for entries whose [`TrackedChild`] carries a `Job` (currently
+/// only `start_detect`), `child.kill().await` terminates the direct child
+/// (Python CLI) and the implicit drop of the Job at the end of the loop
+/// iteration fires `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, terminating every
+/// ffmpeg descendant the Python CLI had spawned. Entries with `job =
+/// None` (export ffmpeg, etc.) behave exactly as before.
 #[tauri::command]
 async fn kill_tracked_processes() -> Result<u32, AppError> {
     let tracker = process_tracker();
     let mut guard = tracker.lock().await;
     let count = guard.len() as u32;
-    for (_, mut child) in guard.drain() {
-        let _ = child.kill().await;
+    for (_, mut tracked) in guard.drain() {
+        // Kill the direct child first; the Job handle drop below (when
+        // `tracked` goes out of scope at the end of this loop iteration)
+        // reaps the descendant tree on Windows. Doing both is intentional
+        // belt-and-suspenders: `child.kill()` is platform-portable and
+        // also handles the non-Windows case where `job` is absent.
+        let _ = tracked.child.kill().await;
     }
     Ok(count)
 }
@@ -1939,11 +1979,16 @@ fn ffmpeg_args_for_export(
 /// the CloseRequested flow (#523) can kill it on app exit. Returns the UUID
 /// used as the map key; the caller must pass it back to `untrack_child` on
 /// process completion.
-async fn track_child(child: tokio::process::Child) -> Uuid {
+///
+/// #756 -- the value type is now [`TrackedChild`] (child + optional Job
+/// Object handle). Callers that don't need tree-kill protection should
+/// pass `TrackedChild::no_job(child)`; only `start_detect` builds a Job
+/// and passes `TrackedChild { child, job: Some(job) }`.
+async fn track_child(tracked: TrackedChild) -> Uuid {
     let tracker = process_tracker();
     let mut guard = tracker.lock().await;
     let id = Uuid::new_v4();
-    guard.insert(id, child);
+    guard.insert(id, tracked);
     id
 }
 
@@ -1951,10 +1996,18 @@ async fn track_child(child: tokio::process::Child) -> Uuid {
 /// so the caller can still `.wait()` / `.kill()` it outside the tracker
 /// lock. Returns None if the entry was already drained (e.g. by
 /// `kill_tracked_processes`).
+///
+/// #756 -- discards the Job Object handle (if any) when extracting the
+/// child. On the **happy path** (process completed normally and we now
+/// want to `.wait()` it) the Python CLI has already exited, so the Job is
+/// empty and dropping the handle is a no-op. On the **cancellation path**
+/// `untrack_child` returns `None` because `kill_tracked_processes` has
+/// already drained the tracker (dropping both the child and the Job),
+/// fire-ing tree kill via `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
 async fn untrack_child(id: Uuid) -> Option<tokio::process::Child> {
     let tracker = process_tracker();
     let mut guard = tracker.lock().await;
-    guard.remove(&id)
+    guard.remove(&id).map(|tracked| tracked.child)
 }
 
 /// #466 -- parse a single ffmpeg `-progress` line. ffmpeg emits key=value
@@ -2041,7 +2094,11 @@ async fn run_ffmpeg_export_attempt(
         .take()
         .ok_or_else(|| "failed to capture ffmpeg stderr".to_string())?;
 
-    let tracked_id = track_child(child).await;
+    // #756 -- export ffmpeg has no descendants to reap, so wrap with
+    // `TrackedChild::no_job`. The Job Object path is reserved for
+    // `start_detect` (Python CLI with N ffmpeg children); see
+    // `docs/process-tree-orphan-audit.md`.
+    let tracked_id = track_child(TrackedChild::no_job(child)).await;
 
     let mut reader = BufReader::new(stderr).lines();
     let mut stderr_tail: Vec<u8> = Vec::with_capacity(4096);
@@ -2729,7 +2786,43 @@ async fn start_detect(
         .take()
         .ok_or_else(|| "failed to capture allaganeye stderr".to_string())?;
 
-    let tracked_id = track_child(child).await;
+    // #756 -- attach Windows Job Object so cancelling detect reaps the
+    // Python CLI plus the N ffmpeg children spawned by the GPU detector
+    // (`gpu_detector.py`). On non-Windows this is a no-op (`job = None`).
+    // Failure to create/assign the Job is downgraded to a warning: detect
+    // proceeds without tree-kill protection rather than failing outright,
+    // matching the existing `apply_no_window` defensive posture.
+    #[cfg(windows)]
+    let job: Option<process_util::job_object::ProcessJob> = {
+        match process_util::job_object::ProcessJob::new() {
+            Ok(j) => {
+                if let Some(raw) = child.raw_handle() {
+                    if let Err(e) = j.assign(raw) {
+                        eprintln!(
+                            "warning: AssignProcessToJobObject failed: {} \
+                             (detect descendants may be orphaned on cancel)",
+                            e
+                        );
+                    }
+                }
+                Some(j)
+            }
+            Err(e) => {
+                eprintln!(
+                    "warning: CreateJobObject failed: {} \
+                     (detect descendants may be orphaned on cancel)",
+                    e
+                );
+                None
+            }
+        }
+    };
+    let tracked_id = track_child(TrackedChild {
+        child,
+        #[cfg(windows)]
+        job,
+    })
+    .await;
 
     // Stderr drains in parallel into a bounded tail buffer so the OS
     // pipe doesn't fill up if the CLI is chatty under -v / verbose.
@@ -4821,7 +4914,7 @@ mod tests {
         }
         let child = spawn.spawn().expect("spawn dummy child failed");
 
-        let id = track_child(child).await;
+        let id = track_child(TrackedChild::no_job(child)).await;
         let recovered = untrack_child(id).await;
         assert!(
             recovered.is_some(),
@@ -4853,7 +4946,7 @@ mod tests {
         }
         let child = spawn.spawn().expect("spawn dummy child failed");
 
-        let id = track_child(child).await;
+        let id = track_child(TrackedChild::no_job(child)).await;
         // kill_tracked_processes が tracker を drain して全 child を kill する
         let _killed = kill_tracked_processes().await.unwrap();
         let recovered = untrack_child(id).await;
