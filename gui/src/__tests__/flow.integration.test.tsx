@@ -171,6 +171,10 @@ beforeEach(() => {
   invokeMock.mockReset();
   dialogOpenMock.mockReset();
   dialogAskMock.mockReset();
+  // #756 -- flow N relies on inspecting `listenMock.mock.calls` to grab
+  // the close-requested handler ConfirmExitModal registers on mount.
+  // Reset so prior tests don't leak captured handlers across cases.
+  listenMock.mockReset();
   useAppStateStore.getState().reset();
   useMetadataStore.getState().clear();
   // #571: in-memory store reset so each integration test starts with a
@@ -324,6 +328,62 @@ describe('flow H: export cancel mid-flight (#466 + #523)', () => {
       .click(screen.getByRole('button', { name: '中断' }));
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith('kill_tracked_processes');
+    });
+  });
+});
+
+describe('flow N: detecting cancel triggers kill_tracked_processes (#756)', () => {
+  it('CloseRequested -> ConfirmExitModal [終了] invokes kill_tracked_processes + force_exit_app', async () => {
+    // Tauri-side spawn keeps `start_detect` hanging so the GUI is still in
+    // the detecting state when the user (or OS) closes the window; this is
+    // exactly the orphan-prone state that #756's Job Object change is
+    // meant to clean up. We can't observe the kernel-side tree kill from
+    // jsdom, but we can pin the frontend wiring: CloseRequested ->
+    // is_process_running -> ConfirmExitModal -> kill_tracked_processes ->
+    // force_exit_app, exactly what the Rust side relies on to trigger the
+    // PROCESS_TRACKER drain that drops the Job handle.
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'start_detect') return new Promise(() => undefined);
+      if (cmd === 'is_process_running') return Promise.resolve(true);
+      if (cmd === 'kill_tracked_processes') return Promise.resolve(1);
+      if (cmd === 'force_exit_app') return Promise.resolve();
+      return Promise.resolve(undefined);
+    });
+    useAppStateStore.getState().setSelectedVideoPath('/x/video.mkv');
+    useAppStateStore.getState().navigate('detecting');
+    render(<App />);
+    expect(screen.getByTestId('detecting-screen')).toBeInTheDocument();
+
+    // ConfirmExitModal registers its `close-requested` handler on mount.
+    // Wait until the listen() side-effect has run before pulling the
+    // handler out of the captured mock calls.
+    await waitFor(() => {
+      const closeReqCall = listenMock.mock.calls.find(
+        (c) => c[0] === 'close-requested',
+      );
+      expect(closeReqCall).toBeDefined();
+    });
+    const closeReqCall = listenMock.mock.calls.find(
+      (c) => c[0] === 'close-requested',
+    );
+    const handler = closeReqCall?.[1] as (...args: unknown[]) => unknown;
+
+    // Fire the simulated close-requested event the same way the Rust
+    // `on_window_event(CloseRequested)` handler would in production.
+    await act(async () => {
+      await handler();
+    });
+
+    // is_process_running returns true -> modal surfaces.
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeInTheDocument();
+    });
+
+    // [終了] -> kill_tracked_processes + force_exit_app.
+    await userEvent.setup().click(screen.getByRole('button', { name: '終了' }));
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('kill_tracked_processes');
+      expect(invokeMock).toHaveBeenCalledWith('force_exit_app');
     });
   });
 });
