@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-05-17
+
+v0.2.0 リリース直後の patch リリース。Dependabot security alerts 解消と既存 deferred UX issue 5 件の対応、PR マージ前の cargo/npm audit CI 追加 + Windows process tree orphan の Job Object 化を含む。Track A/B-1/B-2/B-3/B-4/C/D 構成 (`docs/superpowers/specs/2026-05-16-security-alerts-response-design.md`)。
+
+### Security
+
+- tauri 2.10.3 → 2.11.1 (medium: Origin Confusion / Remote→Local IPC invocation、GHSA-7gmj-67g7-phm9) (#760)
+- fast-uri 3.1.0 → 3.1.2 (high × 2: GHSA-v39h-62p7-jpjc / GHSA-q3j6-qgpj-74h6、dev-only deps via ajv) (#760)
+- glib transitive 0.18.5 / rand transitive 0.7.3 は deferred (tauri 上流の kuchikiki / phf_generator 移行待ち、配布物 (Windows Portable ZIP の `allaganeye-gui.exe`) への runtime 影響なし。glib は Linux/macOS GTK 系のみ、rand は build-dep のみ。詳細は `gui/src-tauri/Cargo.lock` および audit log `docs/audit-logs/2026-05-16-v0.2.1-audit.log` 参照) (#760)
+
+### Fixed
+
+- detecting 中の GUI 終了で ffmpeg 子孫プロセスが残留する問題を Windows Job Object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) で解消。`start_detect` の spawn site に `ProcessJob` RAII wrapper を適用し、`kill_tracked_processes` で Job handle drop → kernel が tree kill (#756, #772)
+- `.github/ISSUE_TEMPLATE/bug_report.yml` の `docs/bug-report-guide.md` link を `develop-0.2.0` から `main` に更新、未公開 placeholder を削除 (#458, #764)
+- `docs/design-overview.md` の metadata.json example から stale な `note` 行を削除 (実装本体は #463 で既に retired) (#374, #766)
+
+### Changed
+
+- Portable ZIP 内 `README.txt` を日本語化 (`scripts/build-portable-zip.ps1` Format-ReadmeContent + Pester assertion 更新、法的引用は原文保持) (#749, #768)
+- Windows process tree 6 spawn site の audit document を `docs/process-tree-orphan-audit.md` として整理 (#743, #772)
+
+### CI / Infrastructure
+
+- cargo audit + npm audit を PR マージ前に実行する `.github/workflows/security-audit.yml` を追加 (Track C、tauri 2.11 transitive の 19 deferred warnings を考慮し vulnerability のみ fail 設定) (#763)
+- `docs/ci-security-audit.md` を新設 (workflow 運用 note) (#763)
+
 ## [0.2.0] - 2026-05-16
 
 L2 (GUI + Portable 配布) リリース。Tauri ベースの GUI を新設し、Portable ZIP 配布で zero-environment setup を実現。GPU decode を Intel QSV / AMD d3d11va に拡張、CLI/GUI で metadata.json schema を統一、warnings 基盤を導入。L2 開発プロセスとして markdownlint 導入、Iron Law 6 (PR 作成前ゲート)、`/iterate-review` / `/close-issue` skill 等の workflow / docs / test infra を全般強化。
