@@ -1885,7 +1885,7 @@ fn validate_open_folder_request(path: &str) -> Result<(), AppError> {
 /// **apply_no_window 非適用**: explorer.exe は Win32 GUI subsystem アプリで
 /// そもそも console window を生成しないため、`process_util::apply_no_window`
 /// (= CREATE_NO_WINDOW flag) の purpose (windows_subsystem="windows" 親で
-/// release 時の console 割当抑止) と一致しない。本関数は `process_util.rs`
+/// release 時の console 割当抑止) と一致しない。本関数は `process_util/mod.rs`
 /// adoption test (`lib_rs_applies_apply_no_window_at_all_spawn_sites`) の検査
 /// 対象外として扱う。
 ///
