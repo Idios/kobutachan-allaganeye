@@ -1,0 +1,57 @@
+name: Security Audit
+
+on:
+  pull_request:
+    paths:
+      - 'gui/src-tauri/Cargo.lock'
+      - 'gui/src-tauri/Cargo.toml'
+      - 'gui/package-lock.json'
+      - 'gui/package.json'
+      - '.github/workflows/security-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  cargo-audit:
+    name: cargo audit (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked --version "^0.22"
+
+      - name: Run cargo audit
+        working-directory: gui/src-tauri
+        # default: vulnerability 検出時のみ fail。warning (unmaintained / unsound)
+        # は通過させる (現状 19 件の deferred warnings が存在、tauri 上流 patch 待ち)
+        run: cargo audit
+
+  npm-audit:
+    name: npm audit (JavaScript)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: gui
+        run: npm ci
+
+      - name: Run npm audit
+        working-directory: gui
+        # high 以上で fail。dev-only の moderate/low は通過 (現状 ajv moderate
+        # ReDoS が deferred 状態、Track A で fast-uri は 3.1.2 解消済)
+        run: npm audit --audit-level=high
