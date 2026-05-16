@@ -674,4 +674,21 @@ Phase C subagent の repo-wide scan で brainstorming sweep に漏れていた d
 
 ---
 
+## Round 1 Amendment (2026-05-16)
+
+/iterate-review (PR #746) Round 1 で `error.rs:31` 新規書き下ろし docstring の「lib.rs 全 80 site に適用済」が実測 85 と乖離していると subagent が (A) で flag。user 承認 (AskUserQuestion 2026-05-16) のもと近似表記「80+ site」に修正、Q3 で pre-existing L107 (`From<String>` impl docstring) も同時修正に同意。詳細は spec [§12 Round 1 Amendment](../specs/2026-05-15-lane-v-phase-3-group-i-design.md#2026-05-16-round-1-amendment--iterate-review-l31--l107-number-drift-fix) 参照。
+
+Round 1 Task:
+
+- `error.rs:31` (with_hint docstring) `80 site` → `80+ site`
+- `error.rs:107` (`From<String>` impl docstring) 同 (Q3 同時修正)
+- spec + plan に Round 1 Amendment 節を追記
+- Finding #2 (C): `recentStore.ts:34` は #699 pre-tracked のため deferred (PR body deferred block + handoff_state)
+
+最終 Round 1 acceptance:
+
+- `git grep -nE "全 80 site" -- gui/src-tauri/src/error.rs` 0 件 (実測、`80+` への置換完全性確認)
+
+---
+
 **Plan complete.** 起点 commit: spec `35e884e` (本 plan は別 commit)。

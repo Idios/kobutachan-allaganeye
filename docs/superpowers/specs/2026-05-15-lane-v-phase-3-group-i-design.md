@@ -314,6 +314,27 @@ user 承認 (AskUserQuestion 2026-05-15) のもと spec §8 AC「repo 全体で�
 - brainstorming sweep は対象キーワードを限定して grep するだけでは不十分。`git grep -nE "<symbol>" -- ':!<exclude>'` を repo-wide で実行して全件確認するのがより堅実。次回類似 task では Q1 提示前に full grep を実施する
 - spec §8 で「repo 全体で残っていない」と書いた AC は強い (完全達成の証明を要求する)。AC 文言を緩めるか、AC を honor して全件 fix するかが Phase C/D で問われた選択
 
+### 2026-05-16: Round 1 Amendment — /iterate-review L31 + L107 number drift fix
+
+/iterate-review (PR #746) Round 1 で `error.rs:31` 新規書き下ろし docstring の「lib.rs 全 80 site に適用済」が実測 85 と乖離していることを subagent が (A) で flag。user 承認 (AskUserQuestion 2026-05-16) のもと:
+
+- **Finding #1 (A)**: `error.rs:31` の「80 site」→「80+ site」(count drift 耐性のある近似表記、Q2 で選択)
+- **Q3 で「L31 + L107 同時修正」選択**: pre-existing `error.rs:107` `From<String>` impl docstring の同じ inaccuracy も併修
+- **Finding #2 (C)**: `gui/src/state/recentStore.ts:34` JSDoc が旧 field 名 `loadError` を参照 (正は `loadErrorState`)。#699 コメントに 2 件 pre-tracked 済 (2026-05-14 PR #745 review + /close-issue (#694) Step 5 由来) のため (C) で deferred、本 PR scope 外
+
+spec §5.4 は L107 (`error.rs:96-105 From<String> impl docstring`) を「touch しない」と記述していたが、Round 1 で touch することに retroactive 同意。spec §5.4 本体は brainstorming-time snapshot として保持し、最終 PR scope は本 Amendment Log を併せて参照する。
+
+追加 AC (Round 1 由来):
+
+- [ ] `error.rs:31` (with_hint docstring) の「80 site」が「80+ site」に修正されている
+- [ ] `error.rs:107` (`From<String>` impl docstring) の「80 site」が「80+ site」に修正されている
+- [ ] `git grep -nE "全 80 site" -- gui/src-tauri/src/error.rs` で 0 件 (実測、`80+` への置換が完全であることを確認)
+
+学んだこと:
+
+- /iterate-review subagent は doc-only PR でも新規書き下ろし行の factual accuracy 違反を (A) で flag する。Phase A code quality review の「minor 非 actionable」判断より strict (より正しい選択)
+- 近似表記 (`80+ site`) は exact (`85 site`) より count drift 耐性が高く、保守負債を増やさない。次回類似 docstring 起草時は最初から近似表記を採用する
+
 ---
 
 **brainstorming 完了**。本 spec を起点に `writing-plans` skill で実装計画を策定する。
