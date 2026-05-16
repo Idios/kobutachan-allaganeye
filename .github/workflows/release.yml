@@ -1,9 +1,35 @@
 name: Release
 
 on:
+  # #770 -- main / develop-* への push でも release CI を走らせて
+  # Swatinem/rust-cache の canonical キャッシュを生成する。pull_request + tags
+  # only だと main / develop ブランチ上で CI が走らないため GitHub Actions Cache
+  # 上に branch 由来のキャッシュが存在せず、build-windows の rust-cache が
+  # "No cache found." で毎回フルビルド (398s の tauri build)。push で warm された
+  # cache を PR が restore-key prefix fallback で継承することで incremental
+  # build (~30-60s) に短縮する。
+  #
+  # GitHub Actions の AND 仕様により paths filter は branch push と tag push の
+  # 両方に適用される。release tag commit は pyproject.toml の version bump 等を
+  # 含む (v0.2.0 実績で paths 対象を多数 touch) ため tag push 時の paths filter は
+  # 実用上問題ない。万一 paths にマッチしない tag commit が必要になった場合は
+  # workflow_dispatch で手動実行できる。
   push:
+    branches: [main, "develop-*"]
     tags:
       - 'v*.*.*'
+    paths:
+      - '.github/workflows/release.yml'
+      - 'scripts/build-portable-zip.ps1'
+      - 'scripts/extract_release_notes.py'
+      - 'pyproject.toml'
+      - 'gui/package.json'
+      - 'gui/package-lock.json'
+      - 'gui/src-tauri/**'
+      - 'gui/src/**'
+      - 'gui/index.html'
+      - 'gui/vite.config.ts'
+      - 'gui/tsconfig*.json'
   pull_request:
     paths:
       - '.github/workflows/release.yml'
@@ -82,9 +108,13 @@ jobs:
       # is copied as-is into the Portable ZIP payload by
       # scripts/build-portable-zip.ps1 at packaging time (no rename, the cargo
       # binary name without whitespace is used directly).
+      # #770 -- npm cache を有効化して `npm install` の registry fetch 時間を短縮
+      # (22s → ~10s)。gui-rust ジョブ (ci.yml) と同じ cache key で共有される。
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: gui/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -98,10 +128,13 @@ jobs:
           path: ${{ github.workspace }}/build-cache
           key: btbn-ffmpeg-win64-lgpl-shared-8.1-e27598e612078f25d3e9cf245ce5042990f2602146e5a6f8287b143b0dce0e95
 
+      # #770 -- npm install (lock loose) から npm ci (lock strict) に変更。
+      # release CI では package-lock.json と一致する厳密な再現を保証したい。
+      # npm cache (setup-node) と組み合わせて再現性向上 + 速度向上。
       - name: Install GUI dependencies (#570)
         shell: pwsh
         working-directory: gui
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Build Tauri GUI binary (#570)
         shell: pwsh
@@ -258,7 +291,12 @@ jobs:
 
       # Upload the expanded payload folder; actions/upload-artifact zips it once
       # on its own, which avoids the previous "zip inside a zip" artifact.
+      #
+      # #770 -- main / develop-* への branch push は rust-cache warm-up が目的で
+      # release artifact は不要なため skip する。tag push (release tag) と
+      # pull_request (build 確認用) では従来通り upload する。
       - uses: actions/upload-artifact@v4
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
         with:
           name: allaganeye-windows-v${{ needs.version-check.outputs.version }}
           path: build/portable/allaganeye-v${{ needs.version-check.outputs.version }}
