@@ -4,8 +4,16 @@ Usage:
     python tests/generate_baselines.py
 
 Requires ALLAGANEYE_SAMPLE_VIDEO_DIR to be set.
-Runs detection WITHOUT scorebar filtering (src_resolution=None)
-and saves results to tests/baselines/<name>.json.
+Runs detection WITH scorebar filtering (src_resolution from probe)
+and saves the filtered match set to tests/baselines/<name>.json (#529).
+
+The baseline records "the expected FL match set after scorebar V2 filtering"
+so that regression tests (test_scorebar_regression.py) verify ongoing
+detection output stays aligned with this canonical set.  An earlier version
+of this script ran detection without scorebar, producing a baseline that
+included non-FL content (e.g., Limsa duty-queue interludes for 20260118 that
+scorebar V2 correctly removes).  That drift caused baseline failures once
+scorebar V2 emblem detection (#522) landed; see #529 for the migration.
 """
 
 import json
@@ -54,7 +62,7 @@ def main() -> None:
             blackout_threshold=15.0,
             min_match_duration=300.0,
             min_blackout_duration=3.0,
-            # src_resolution omitted -> no scorebar filtering
+            src_resolution=(meta["width"], meta["height"]),  # scorebar filter (#529)
         )
         elapsed = time.monotonic() - start
 

@@ -1,0 +1,55 @@
+# markdownlint-cli2 configuration (#474).
+#
+# 段階導入方針: 既存ドキュメントで違反のあるルールは全て disable して CI を
+# green な状態で開始し、段階的に解除する (#474 follow-up)。新規コミット時に
+# 有効化済みルールが違反を検出すれば CI が失敗する。
+#
+# フェーズ進捗:
+# - フェーズ 1: MD022/MD031/MD032/MD040 を有効化済み (PR #501)
+# - フェーズ 2 (本 PR): MD029/MD038/MD028 を有効化 (MD041/MD036 は構造的理由で
+#   permanent disable に移行)
+# - フェーズ 3: MD024 (siblings_only: true で有効化済み、PR #500)
+# - フェーズ 4: MD013 (完全 disable 維持で方針確定)
+#
+# 残り disable 項目は「プロジェクトの意図的な書き方」に依拠するため
+# permanent disable とする。フェーズ 3 完了後の follow-up 有効化予定は MD024 のみ。
+
+config:
+  # MD013 (line-length, 既存 317 件): 日本語ドキュメントは自動折り返し非対応の
+  # エディタが多く、80 文字制限は実情に合わない。#474 フェーズ 4 方針判断で
+  # 「完全 disable 維持」を確定 (分布: p50=114 / p75=151 / p90=197 / max=385)。
+  # リーダビリティはコンテンツカーブ (VS Code の word wrap 等) に委ねる。
+  MD013: false
+
+  # MD024 (no-duplicate-heading, #474 Phase 3 で有効化): CHANGELOG の複数
+  # バージョン節で重複見出し (`### Changed` 等) が構造上必要なため、
+  # `siblings_only: true` で同階層 (同じ親見出し直下) の重複のみを禁止する。
+  # 異なる `## [x.y.z]` セクション間の `### Changed` 重複は許容される。
+  MD024:
+    siblings_only: true
+
+  # MD041 (first-line-h1, permanent disable): SKILL.md はフロントマター直後に
+  # `## ...` から始まる構造、`.github/pull_request_template.md` は `## 概要` 起点。
+  # いずれも正当な理由で H1 を持たないため、本ルールは常時 disable。
+  MD041: false
+
+  # MD036 (no-emphasis-as-heading, permanent disable): CLAUDE.md 等で
+  # `**ラベル**` 形式の強調をアルゴリズム段階表示・表の caption に使っている。
+  # H4 を避けることで番号付きリスト (MD029) の連続性を維持する意図的なスタイル。
+  MD036: false
+
+# 対象ファイル: リポジトリ配下の全 .md を対象にし、依存物 / キャッシュ / 生成物を
+# 除外する。markdownlint-cli2 は引数未指定時に globs を参照する。
+globs:
+  - "**/*.md"
+
+ignores:
+  - "node_modules/**"
+  - "**/node_modules/**"  # nested (gui/node_modules 等) も除外 (#700)
+  - ".venv/**"
+  - ".git/**"
+  - ".pytest_cache/**"
+  - ".ruff_cache/**"
+  - "**/kobutachan_allaganeye.egg-info/**"
+  - "build/**"  # Portable ZIP build dry-run 出力 (third-party LICENSE/SKILL 誤検出回避、#723)
+  - "build-cache/**"  # Portable ZIP build キャッシュ ($env:ALLAGANEYE_BUILD_CACHE_DIR、third-party LICENSE 誤検出回避、#723 sweep)

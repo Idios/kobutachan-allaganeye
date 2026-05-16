@@ -1,0 +1,33 @@
+/*
+ * gui/src/styles/path-display.module.css
+ *
+ * #676 — 5 画面 (drop / detecting / complete / preview / export) で共通の
+ * 「ファイル名 + 親ディレクトリ」2 段表示。primary 側のフォントサイズは
+ * 画面側 (e.g. DropScreen.module.css `.selectedName`) で指定し、本 module
+ * は色味と truncate 規約のみ提供する。
+ *
+ * docs/ui-interaction-spec.md §1.6 「ファイルパス表示の原則」も参照。
+ */
+
+.pathDisplay {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0; /* flex 子のとき overflow を効かせるため */
+}
+
+.pathSecondary {
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  color: var(--ae-text-dim);
+  /* left-side truncation (PR #655 .recentName と同設計):
+     direction:rtl で ellipsis 位置を左に / unicode-bidi:plaintext で
+     文字自体は LTR 描画を維持 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: plaintext;
+  min-width: 0;
+}

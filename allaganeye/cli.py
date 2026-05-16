@@ -5,6 +5,7 @@ import traceback
 from pathlib import Path
 from typing import Annotated
 
+import click
 import typer
 
 from allaganeye import __version__
@@ -13,6 +14,7 @@ from allaganeye.exceptions import (
     AllaganEyeError,
     ConfigValidationError,
     InputFileError,
+    IntegrityError,
 )
 
 _VERBOSE_HINT = "  (Run with -v / --verbose for full details)"
@@ -25,13 +27,27 @@ app = typer.Typer(
 
 
 def version_callback(value: bool) -> None:
-    if value:
-        typer.echo(f"allaganeye {__version__}")
-        raise typer.Exit()
+    if not value:
+        return
+    # #668 -- verify bundled files before reporting version. Skipped via
+    # ``ALLAGANEYE_INTEGRITY_SKIP=1`` for dev installs (handled inside
+    # integrity.check). Production Portable ZIP runs the check and exits
+    # with code 7 on bundled-file corruption / deletion.
+    from allaganeye import integrity
+
+    try:
+        integrity.check()
+    except IntegrityError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        if exc.context:
+            typer.echo(exc.verbose_detail(), err=True)
+        raise typer.Exit(code=exc.exit_code) from None
+    typer.echo(f"allaganeye {__version__}")
+    raise typer.Exit()
 
 
 @app.callback()
-def main(
+def _root_callback(
     version: Annotated[
         bool | None,
         typer.Option(
@@ -49,8 +65,21 @@ def main(
 @app.command()
 def split(
     video_path: Annotated[
-        Path, typer.Argument(help="Input video file (MP4/MKV/AVI/MOV)")
-    ],
+        Path | None,
+        typer.Argument(
+            help="Input video file (MP4/MKV/AVI/MOV). Mutually exclusive "
+            "with --from-metadata."
+        ),
+    ] = None,
+    from_metadata: Annotated[
+        Path | None,
+        typer.Option(
+            "--from-metadata",
+            help="Path to a metadata.json produced by `allaganeye detect`. "
+            "When given, detection is skipped and only the ffmpeg split "
+            "phase runs. Mutually exclusive with VIDEO_PATH (#463).",
+        ),
+    ] = None,
     output_dir: Annotated[
         Path, typer.Option("-o", "--output-dir", help="Output directory")
     ] = Path("./output"),
@@ -75,7 +104,12 @@ def split(
         typer.Option(help="Number of parallel workers for detection (default: auto)"),
     ] = None,
     dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="Detect only, do not split")
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Detect only, do not split. Consider using `allaganeye detect` "
+            "instead (#463).",
+        ),
     ] = False,
     gpu: Annotated[
         bool,
@@ -93,6 +127,16 @@ def split(
             "Mutually exclusive with --gpu.",
         ),
     ] = False,
+    gpu_vendor: Annotated[
+        str | None,
+        typer.Option(
+            "--gpu-vendor",
+            help="GPU vendor for hardware decode. Choices: auto / nvidia / amd / intel. "
+            "All three vendors are implemented (nvidia=cuvid, amd=d3d11va, intel=qsv). "
+            "Default: auto (probe-based, _VENDOR_PREFERENCE = nvidia > amd > intel). "
+            "#546 / #553 / #550",
+        ),
+    ] = None,
     no_cache: Annotated[
         bool,
         typer.Option("--no-cache", help="Ignore cached detection results"),
@@ -120,18 +164,201 @@ def split(
 ) -> None:
     """Split a long recording into per-match video files."""
     try:
-        # Mutual exclusion checks (#419). Raised before any file / config
+        # Mutual exclusion checks (#419 / #463). Raised before any file / config
         # validation so users get a single, deterministic error even when
         # their command would otherwise fail for other reasons too.
         if verbose and quiet:
             raise ConfigValidationError("--quiet and --verbose are mutually exclusive")
         if gpu and no_gpu:
             raise ConfigValidationError("--gpu and --no-gpu are mutually exclusive")
+        if video_path is not None and from_metadata is not None:
+            raise ConfigValidationError(
+                "VIDEO_PATH and --from-metadata are mutually exclusive"
+            )
+        if video_path is None and from_metadata is None:
+            raise ConfigValidationError(
+                "One of VIDEO_PATH or --from-metadata must be provided"
+            )
+        if from_metadata is not None and dry_run:
+            raise ConfigValidationError(
+                "--dry-run is not compatible with --from-metadata "
+                "(use `allaganeye detect` to regenerate metadata)"
+            )
 
         # Collapse the two independent flags back into the tri-state
         # (True / False / None=auto) that SplitConfig.use_gpu expects.
         # The independent-flag split (vs Typer's "--gpu/--no-gpu" form) is
         # what lets us detect simultaneous specification above (#419).
+        use_gpu: bool | None
+        if gpu:
+            use_gpu = True
+        elif no_gpu:
+            use_gpu = False
+        else:
+            use_gpu = None
+
+        if from_metadata is not None:
+            if not from_metadata.exists():
+                raise InputFileError(f"Metadata file not found: {from_metadata}")
+            config = SplitConfig(
+                output_dir=output_dir,
+                sample_interval=sample_interval,
+                blackout_threshold=blackout_threshold,
+                min_match_duration=min_match_duration,
+                min_blackout_duration=min_blackout_duration,
+                dry_run=False,
+                use_gpu=use_gpu,
+                workers=workers,
+                no_cache=no_cache,
+                no_audio=no_audio,
+            )
+            from allaganeye.commands.split_matches import run_split_from_metadata
+
+            run_split_from_metadata(from_metadata, config, verbose=verbose, quiet=quiet)
+            return
+
+        assert video_path is not None  # for type-checker; mutex-checked above
+        if not video_path.exists():
+            raise InputFileError(f"File not found: {video_path}")
+
+        if video_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            raise InputFileError(
+                f"Unsupported format: {video_path.suffix}. "
+                f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
+            )
+
+        config = SplitConfig(
+            output_dir=output_dir,
+            sample_interval=sample_interval,
+            blackout_threshold=blackout_threshold,
+            min_match_duration=min_match_duration,
+            min_blackout_duration=min_blackout_duration,
+            dry_run=dry_run,
+            use_gpu=use_gpu,
+            gpu_vendor=gpu_vendor,
+            workers=workers,
+            no_cache=no_cache,
+            no_audio=no_audio,
+        )
+
+        from allaganeye.commands.split_matches import run_split
+
+        run_split(video_path, config, verbose=verbose, quiet=quiet)
+
+    except AllaganEyeError as e:
+        _report_app_error(e, verbose=verbose, quiet=quiet)
+        raise typer.Exit(code=e.exit_code) from None
+    except Exception:
+        _report_unexpected_error(verbose=verbose, quiet=quiet)
+        raise typer.Exit(code=1) from None
+
+
+@app.command()
+def detect(
+    video_path: Annotated[
+        Path, typer.Argument(help="Input video file (MP4/MKV/AVI/MOV)")
+    ],
+    output_dir: Annotated[
+        Path, typer.Option("-o", "--output-dir", help="Output directory")
+    ] = Path("./output"),
+    sample_interval: Annotated[
+        float, typer.Option(help="Frame sampling interval in seconds")
+    ] = 1.0,
+    blackout_threshold: Annotated[
+        float, typer.Option(help="Blackout detection brightness threshold (0-255)")
+    ] = 15.0,
+    min_match_duration: Annotated[
+        float, typer.Option(help="Minimum match duration in seconds")
+    ] = 300.0,
+    min_blackout_duration: Annotated[
+        float,
+        typer.Option(
+            help="Minimum blackout duration to treat as match boundary (seconds). "
+            "Shorter blackouts (e.g. respawn) are ignored."
+        ),
+    ] = 3.0,
+    workers: Annotated[
+        int | None,
+        typer.Option(help="Number of parallel workers for detection (default: auto)"),
+    ] = None,
+    gpu: Annotated[
+        bool,
+        typer.Option(
+            "--gpu",
+            help="Force GPU-accelerated detection. Falls back to CPU if "
+            "GPU is unavailable. Mutually exclusive with --no-gpu.",
+        ),
+    ] = False,
+    no_gpu: Annotated[
+        bool,
+        typer.Option(
+            "--no-gpu",
+            help="Force CPU detection, disabling GPU acceleration. "
+            "Mutually exclusive with --gpu.",
+        ),
+    ] = False,
+    gpu_vendor: Annotated[
+        str | None,
+        typer.Option(
+            "--gpu-vendor",
+            help="GPU vendor for hardware decode. Choices: auto / nvidia / amd / intel. "
+            "All three vendors are implemented (nvidia=cuvid, amd=d3d11va, intel=qsv). "
+            "Default: auto (probe-based, _VENDOR_PREFERENCE = nvidia > amd > intel). "
+            "#546 / #553 / #550",
+        ),
+    ] = None,
+    no_cache: Annotated[
+        bool,
+        typer.Option("--no-cache", help="Ignore cached detection results"),
+    ] = False,
+    no_audio: Annotated[
+        bool,
+        typer.Option(
+            "--no-audio",
+            help="Disable audio-based match boundary promotion (Fanfare scan). "
+            "Currently frozen: audio scan is always skipped regardless of this flag.",
+        ),
+    ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "-v", "--verbose", help="Verbose output (metadata details, gap info)"
+        ),
+    ] = False,
+    quiet: Annotated[
+        bool,
+        typer.Option(
+            "-q", "--quiet", help="Suppress progress output (final result only)"
+        ),
+    ] = False,
+    progress_format: Annotated[
+        str,
+        typer.Option(
+            "--progress-format",
+            help="Progress output format. 'text' (default) renders human-"
+            "readable click progress bars and typer status lines. 'json' "
+            "emits one JSON object per line on stdout (phase / completed "
+            "/ total / elapsed_s) for the Tauri GUI wrapper, and "
+            "suppresses all human-readable text output (#569).",
+        ),
+    ] = "text",
+) -> None:
+    """Run detection only and write metadata.json (no split, #463).
+
+    Subsequent ``allaganeye split --from-metadata <metadata.json>`` can use
+    the output to produce match files without redetecting.
+    """
+    try:
+        if verbose and quiet:
+            raise ConfigValidationError("--quiet and --verbose are mutually exclusive")
+        if gpu and no_gpu:
+            raise ConfigValidationError("--gpu and --no-gpu are mutually exclusive")
+        if progress_format not in ("text", "json"):
+            raise ConfigValidationError(
+                f"Invalid --progress-format: {progress_format!r}. "
+                "Choices: 'text', 'json'."
+            )
+
         use_gpu: bool | None
         if gpu:
             use_gpu = True
@@ -155,16 +382,23 @@ def split(
             blackout_threshold=blackout_threshold,
             min_match_duration=min_match_duration,
             min_blackout_duration=min_blackout_duration,
-            dry_run=dry_run,
+            dry_run=False,
             use_gpu=use_gpu,
+            gpu_vendor=gpu_vendor,
             workers=workers,
             no_cache=no_cache,
             no_audio=no_audio,
         )
 
-        from allaganeye.commands.split_matches import run_split
+        from allaganeye.commands.detect import run_detect
 
-        run_split(video_path, config, verbose=verbose, quiet=quiet)
+        run_detect(
+            video_path,
+            config,
+            verbose=verbose,
+            quiet=quiet,
+            progress_format=progress_format,
+        )
 
     except AllaganEyeError as e:
         _report_app_error(e, verbose=verbose, quiet=quiet)
@@ -298,3 +532,80 @@ def _report_unexpected_error(
 
     if show_hint:
         typer.echo(_VERBOSE_HINT, err=True)
+
+
+def _suggest_long_option_hint(argv: list[str]) -> str | None:
+    """Return ``--<name>`` candidate when argv has a single-dash long-option typo (#440).
+
+    typer / click parses ``-version`` as the short-option cluster
+    ``-v -e -r -s -i -o -n`` and raises ``NoSuchOption`` for the first
+    char.  We scan argv for a single-dash token of length >= 2 (e.g.
+    ``-version``) that, with the leading dash doubled, matches a known
+    long option of the typer app or any subcommand.  Returns ``None``
+    when no suitable candidate exists so we don't volunteer misleading
+    hints for unrelated typos.
+    """
+    cmd = typer.main.get_command(app)
+    # ``--help`` is added by click at parse time (``add_help_option=True``)
+    # so it is NOT in ``cmd.params``; seed the set so ``-help`` typos still
+    # get a hint.
+    known: set[str] = {"help"}
+    for param in cmd.params:
+        for opt in param.opts:
+            if opt.startswith("--"):
+                known.add(opt[2:])
+    if isinstance(cmd, click.Group):
+        for sub_cmd in cmd.commands.values():
+            for param in sub_cmd.params:
+                for opt in param.opts:
+                    if opt.startswith("--"):
+                        known.add(opt[2:])
+
+    for token in argv:
+        if not token.startswith("-") or token.startswith("--"):
+            continue
+        name = token.lstrip("-").split("=", 1)[0]
+        if len(name) >= 2 and name in known:
+            return f"--{name}"
+
+    return None
+
+
+def main() -> None:
+    """Console-script entry point that adds a hint for single-dash long-option typos (#440).
+
+    ``allaganeye -version`` parses as the cluster ``-v -e -r -s -i -o -n``
+    and click raises ``NoSuchOption`` for the first char.  Without
+    context the message ("No such option: -v") doesn't reveal that the
+    user typed ``-version``; we catch the error, let click print its
+    usual usage / boxed message via ``exc.show()``, and append a
+    ``Did you mean --version?`` line when the pattern matches a real
+    long option.
+
+    Uses ``standalone_mode=False`` so click re-raises ``ClickException``
+    subclasses for us to inspect (and converts ``Exit`` into a return
+    value containing its exit code).  Always finishes with ``sys.exit``
+    so the caller gets the same SystemExit semantics as the original
+    ``app()`` entry point.
+    """
+    rv: int = 0
+    try:
+        result = app(standalone_mode=False)
+        if isinstance(result, int):
+            rv = result
+    except click.exceptions.NoSuchOption as exc:
+        exc.show()
+        hint = _suggest_long_option_hint(sys.argv[1:])
+        if hint:
+            click.echo(f"Did you mean {hint}?", err=True)
+        rv = exc.exit_code
+    except click.exceptions.UsageError as exc:
+        exc.show()
+        rv = exc.exit_code
+    except click.exceptions.ClickException as exc:
+        exc.show()
+        rv = exc.exit_code
+    except click.exceptions.Abort:
+        click.echo("Aborted!", err=True)
+        rv = 1
+    sys.exit(rv)

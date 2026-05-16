@@ -1,6 +1,7 @@
 """GPU-accelerated match detection using chunked parallel ffmpeg decode."""
 
 import logging
+import math
 import os
 import subprocess
 import time
@@ -10,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from allaganeye.exceptions import VideoProcessingError
+from allaganeye.exceptions import STDERR_TAIL_BYTES, VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
 from allaganeye.video.detector import (
     _FRAME_SIZE,
@@ -21,16 +22,135 @@ from allaganeye.video.detector import (
 
 logger = logging.getLogger(__name__)
 
-_CUVID_CODEC_MAP: dict[str, str] = {
-    "h264": "h264_cuvid",
-    "hevc": "hevc_cuvid",
-    "av1": "av1_cuvid",
-    "vp9": "vp9_cuvid",
-    "vp8": "vp8_cuvid",
-    "mpeg1video": "mpeg1_cuvid",
-    "mpeg2video": "mpeg2_cuvid",
-    "mpeg4": "mpeg4_cuvid",
+# Target wall-time per chunk for dynamic chunk sizing (#437).
+# Long videos would otherwise wait 2-3 minutes before the first chunk
+# completes with the old fixed 16 chunks; chopping into smaller pieces
+# lets the progress bar label update more frequently.
+_TARGET_CHUNK_WALL_SECS = 90.0
+
+# Upper bound on the number of chunks (#437). Too many chunks pay fixed
+# ffmpeg startup cost per chunk and can overwhelm GPU scheduling.
+_MAX_CHUNKS = 32
+
+_GPU_DECODER_MAP: dict[str, dict[str, str]] = {
+    "nvidia": {
+        "h264": "h264_cuvid",
+        "hevc": "hevc_cuvid",
+        "av1": "av1_cuvid",
+        # vp9: #538 / #549 で除外。ffmpeg 8.1 の vp9_cuvid が
+        # nv12 + csp:gbr を出力し swscaler gray 変換が
+        # EOPNOTSUPP で失敗するため、NVIDIA 経路から外す。
+        # soft decode (else branch -hwaccel auto) は実測
+        # speed 2.64x で chunk 並列に十分。ffmpeg 側の修正が
+        # 入った時点で復活検討。
+        "vp8": "vp8_cuvid",
+        "mpeg1video": "mpeg1_cuvid",
+        "mpeg2video": "mpeg2_cuvid",
+        "mpeg4": "mpeg4_cuvid",
+    },
+    "amd": {
+        # AMD は AMF decoder ではなく d3d11va 経由で native decoder を
+        # ハードウェア化する (#553 結論)。AMF decoder の出力 pix_fmt
+        # `amf` は swscaler と不整合で `fps -> scale -> format=gray` が
+        # EOPNOTSUPP で fail するが、d3d11va は GPU 上 D3D11 surface に
+        # decode したあと filter graph 先頭の `hwdownload,format=nv12,...`
+        # で system memory に降ろせるので allaganeye の filter pipeline と
+        # 相性が取れる。
+        "h264": "h264",
+        "hevc": "hevc",
+        "av1": "av1",
+        # vp9 / mpeg* も d3d11va で動作可能だが OBS 録画では稀なので
+        # 現状未登録。必要になったら追加。
+    },
+    "intel": {
+        # #550 で追加 (h264/hevc/av1)、#582 で vp9 追加。Tiger Lake
+        # (11th gen Iris Xe) 以降は h264 / hevc / vp9 / av1 を QSV decode
+        # 可能。`_HWACCELS_NEED_HWDOWNLOAD` に "qsv" を追加してあるので
+        # _decode_chunk が `-hwaccel_output_format qsv` + filter chain
+        # 先頭の `hwdownload,format=nv12,` を自動付与し、QSV surface を
+        # system memory に降ろしてから fps -> scale -> format=gray に渡す。
+        # 古い世代で codec 非対応 (例: Tiger Lake で av1_qsv は
+        # 「unsupported (-3)」) のケースは _decode_chunk が
+        # VideoProcessingError を上げ、detect_match_boundaries が
+        # CPU fallback する (実機検証:
+        # - h264_qsv: i7-1185G7 / Iris Xe で 13.7x speed (#550)
+        # - hevc_qsv: 同 720p で 3.76x speed (#550)
+        # - vp9_qsv: 同 720p で 8.29x speed (#582)
+        # - av1_qsv: Tiger Lake 非対応で CPU fallback (#550)
+        # )。
+        "h264": "h264_qsv",
+        "hevc": "hevc_qsv",
+        "vp9": "vp9_qsv",
+        "av1": "av1_qsv",
+    },
 }
+
+_VENDOR_HWACCEL_MAP: dict[str, str] = {
+    "nvidia": "cuda",
+    "amd": "d3d11va",  # #553 generic D3D11 hwaccel + native decoder
+    "intel": "qsv",  # #550 Intel Quick Sync Video
+}
+
+_HWACCELS_NEED_HWDOWNLOAD: frozenset[str] = frozenset({"d3d11va", "qsv"})
+"""GPU memory に decode する hwaccel 一覧 (#553 / #550).
+
+これらの hwaccel は decoded frame を GPU surface のまま filter graph
+に送り込むため、CPU 側で動く ``fps``/``scale``/``format=gray`` filter に
+渡す前に ``hwdownload,format=nv12,`` を filter chain 先頭に挿入する
+必要がある。NVIDIA CUVID decoder (e.g. ``av1_cuvid``) は decode 結果を
+nv12 system memory に直接出力するため不要。
+
+`-hwaccel_output_format` の値は hwaccel 名と一致させる:
+- d3d11va -> ``d3d11`` (#553)
+- qsv -> ``qsv`` (#550)。実機検証 (i7-1185G7 / Iris Xe) で h264_qsv 13.7x speed。
+  ``-hwaccel_output_format nv12`` 直指定でも動くが、d3d11va と同じ
+  パターンに揃え hwdownload filter で system memory に降ろす方が
+  vendor 間の挙動を一本化できる
+"""
+
+_VENDOR_PREFERENCE: tuple[str, ...] = ("nvidia", "amd", "intel")
+"""Auto-select 時の vendor 優先順 (#546 / #553 / #550). dGPU (NVIDIA) を最優先、
+次に AMD (#553 / #578 で d3d11va 経由実装済み), 最後に Intel
+(#550 で QSV 経由実装済み)。3 vendor すべて _VENDOR_HWACCEL_MAP に登録済みで
+auto-select の対象。NVIDIA dGPU + Intel iGPU / AMD APU + Intel iGPU のような
+組み合わせでは preference 順で上位 vendor が選ばれる。"""
+
+_HWACCEL_OUTPUT_FORMAT_MAP: dict[str, str] = {
+    # `-hwaccel_output_format` の値マップ (#553 / #550)。
+    # `_HWACCELS_NEED_HWDOWNLOAD` の各 hwaccel に対応する surface format。
+    # ffmpeg は `-hwaccel <X> -hwaccel_output_format <Y>` の <Y> として
+    # hwaccel 自身の surface format 名 (d3d11 / qsv 等) を要求する。
+    "d3d11va": "d3d11",
+    "qsv": "qsv",
+}
+
+# Backward-compat alias: 既存の `_CUVID_CODEC_MAP` 参照 (テスト等) を
+# 壊さないため NVIDIA 用 dict を指す。新規コードは `_GPU_DECODER_MAP`
+# を使用 (#546)。L3 以降で削除検討。
+_CUVID_CODEC_MAP: dict[str, str] = _GPU_DECODER_MAP["nvidia"]
+
+
+def _select_gpu_vendor(
+    requested: str | None,
+    available: list[str],
+    *,
+    preference: tuple[str, ...] = _VENDOR_PREFERENCE,
+) -> str | None:
+    """Resolve the vendor to use (#546).
+
+    - ``requested`` が ``None`` / ``"auto"``: ``available`` x ``preference``
+      かつ実装済み (``_VENDOR_HWACCEL_MAP`` に含まれる) の最上位を選ぶ。
+    - ``requested`` が explicit vendor: ``available`` に含まれればそれを
+      返す。含まれなければ ``None`` (呼び出し側で ConfigValidationError)。
+    """
+    if not requested or requested == "auto":
+        for pref in preference:
+            if pref in available and pref in _VENDOR_HWACCEL_MAP:
+                return pref
+        return None
+    if requested in available:
+        return requested
+    return None
 
 
 def scan_gpu(
@@ -41,6 +161,8 @@ def scan_gpu(
     progress_callback: Callable[[int, int, int], None] | None = None,
     codec: str | None = None,
     chunk_progress_callback: Callable[[int, int, float], None] | None = None,
+    chunk_dispatch_callback: Callable[[int], None] | None = None,
+    vendor: str | None = None,
 ) -> dict[float, float]:
     """GPU mode: chunked parallel decode with cuvid hardware decoder.
 
@@ -57,9 +179,30 @@ def scan_gpu(
     completions.  Emitted BEFORE the per-frame ``progress_callback``
     burst so the UI label updates before the bar jumps (#333).
 
+    ``chunk_dispatch_callback`` is called once with the final chunk count
+    immediately BEFORE the decode threads start, so the caller can show
+    "[dispatching N chunks, first result pending...]" while users wait
+    for the first chunk to complete (#437, which was an incomplete fix
+    for #333 on long videos).
+
+    Chunk count scales with duration: long videos are broken into more
+    pieces so the UI label updates every ~90s wall time (controlled by
+    ``_TARGET_CHUNK_WALL_SECS``) capped at ``_MAX_CHUNKS``.  Short videos
+    keep the historical behavior (``min(cpu_count, 16)``) so their
+    dispatch overhead isn't inflated.
+
     Raises VideoProcessingError if GPU decode fails for all chunks.
     """
-    num_chunks = min(os.cpu_count() or 4, 16)
+    # Parallelism cap: number of ffmpeg processes running concurrently.
+    # Bounded by CPU count and 16 to keep GPU memory pressure sane.
+    max_parallel = min(os.cpu_count() or 4, 16)
+    # Chunk count: may exceed ``max_parallel`` for long videos, in which
+    # case chunks are processed in waves.  More chunks = more label
+    # updates during Pass 1 (#437).
+    target_from_duration = (
+        math.ceil(duration / _TARGET_CHUNK_WALL_SECS) if duration > 0 else 1
+    )
+    num_chunks = min(max(max_parallel, target_from_duration), _MAX_CHUNKS)
     chunk_duration = duration / num_chunks
 
     # Pre-compute the global sample grid (same one ``_scan_cpu`` uses) so
@@ -92,11 +235,21 @@ def scan_gpu(
     gpu_failed = False
     fallback_checked = False
 
-    cuvid_decoder = _CUVID_CODEC_MAP.get(codec or "")
+    # Resolve decoder for the selected vendor (#546). Falls back to the
+    # legacy NVIDIA-only map when ``vendor`` is None so existing callers
+    # (unit tests that invoke scan_gpu without vendor) keep working.
+    vendor_map = _GPU_DECODER_MAP.get(vendor or "nvidia", _GPU_DECODER_MAP["nvidia"])
+    hw_decoder = vendor_map.get(codec or "")
     scan_start = time.monotonic()
     chunks_done = 0
 
-    with ThreadPoolExecutor(max_workers=num_chunks) as pool:
+    # #437: Notify the UI layer BEFORE any chunk starts so long-video
+    # users see movement (label update) instead of 0% stall for 2-3
+    # minutes while the first chunk decodes.
+    if chunk_dispatch_callback is not None:
+        chunk_dispatch_callback(num_chunks)
+
+    with ThreadPoolExecutor(max_workers=max_parallel) as pool:
         futures = {
             pool.submit(
                 _decode_chunk,
@@ -106,6 +259,7 @@ def scan_gpu(
                 sample_interval,
                 codec,
                 chunk_timestamps,
+                vendor,
             ): (chunk_start, chunk_end)
             for chunk_start, chunk_end, chunk_timestamps in chunks
         }
@@ -121,7 +275,7 @@ def scan_gpu(
             # Check GPU usage from the first completed chunk
             if not fallback_checked:
                 fallback_checked = True
-                _check_gpu_usage(stderr_text, codec, cuvid_decoder)
+                _check_gpu_usage(stderr_text, codec, hw_decoder)
 
             chunks_done += 1
             if chunk_progress_callback is not None:
@@ -146,6 +300,20 @@ def scan_gpu(
     if gpu_failed:
         raise VideoProcessingError("GPU decode failed, falling back to CPU")
 
+    # #439: Force the progress bar to 100% when GPU chunk-boundary
+    # rounding leaves a few frames short of ``total_expected``.  Without
+    # this emit, the Detecting bar freezes at 99% until Refining opens
+    # on the next line -- cosmetic but confusing.
+    if progress_callback is not None and completed < total_expected:
+        dropped = total_expected - completed
+        logger.info(
+            "GPU decode returned %d of %d frames (%d boundary drop(s))",
+            completed,
+            total_expected,
+            dropped,
+        )
+        progress_callback(total_expected, total_expected, blackout_count)
+
     return results
 
 
@@ -153,9 +321,14 @@ def _check_gpu_usage(
     stderr_text: str, codec: str | None, cuvid_decoder: str | None
 ) -> None:
     """Log GPU decode status based on ffmpeg stderr output."""
+    lowered = stderr_text.lower()
     if cuvid_decoder and cuvid_decoder in stderr_text:
         logger.info("GPU decode active: %s", cuvid_decoder)
-    elif "hwaccel" in stderr_text.lower() or "cuda" in stderr_text.lower():
+    elif "d3d11va" in lowered:
+        logger.info("GPU decode active (d3d11va)")
+    elif "qsv" in lowered:
+        logger.info("GPU decode active (qsv)")
+    elif "hwaccel" in lowered or "cuda" in lowered:
         logger.info("GPU decode active (hwaccel auto)")
     else:
         logger.warning(
@@ -171,6 +344,7 @@ def _decode_chunk(
     sample_interval: float,
     codec: str | None = None,
     chunk_timestamps: list[float] | None = None,
+    vendor: str | None = None,
 ) -> tuple[dict[float, float], str]:
     """Decode a single chunk using GPU-accelerated ffmpeg.
 
@@ -184,15 +358,53 @@ def _decode_chunk(
     identically on the same physical content.  Falls back to the chunk-
     local formula when ``chunk_timestamps`` is None for backwards
     compatibility with the unit tests that invoke the function directly.
+
+    When *vendor* is provided (#546), the ffmpeg command uses the
+    vendor-specific decoder (e.g. ``-hwaccel qsv -c:v av1_qsv``).  When
+    vendor is None, falls back to the legacy NVIDIA CUVID path to keep
+    existing unit tests working.
+
+    For hwaccels in ``_HWACCELS_NEED_HWDOWNLOAD`` (currently d3d11va #553
+    and qsv #550), ffmpeg outputs frames to a GPU surface rather than
+    system memory.  The wrapper then adds
+    ``-hwaccel_output_format <surface_fmt>`` (mapped via
+    ``_HWACCEL_OUTPUT_FORMAT_MAP``) and prepends ``hwdownload,format=nv12,``
+    to the ``-vf`` chain so the subsequent fps/scale/format=gray filters
+    receive system-memory nv12 frames.
     """
     chunk_duration = chunk_end - chunk_start
     fps_value = 1.0 / sample_interval
 
-    cuvid_decoder = _CUVID_CODEC_MAP.get(codec or "")
-    if cuvid_decoder:
-        hwaccel_args = ["-hwaccel", "cuda", "-c:v", cuvid_decoder]
+    decoder: str | None = None
+    hwaccel_name: str | None = None
+    if vendor and codec:
+        decoder = _GPU_DECODER_MAP.get(vendor, {}).get(codec)
+        hwaccel_name = _VENDOR_HWACCEL_MAP.get(vendor)
+    # Legacy path: vendor=None -> NVIDIA CUVID (tests call _decode_chunk
+    # directly without vendor, so keep the historical behavior).
+    if decoder is None and vendor is None:
+        decoder = _CUVID_CODEC_MAP.get(codec or "")
+        if decoder:
+            hwaccel_name = "cuda"
+
+    needs_hwdownload = (
+        hwaccel_name is not None and hwaccel_name in _HWACCELS_NEED_HWDOWNLOAD
+    )
+    if decoder and hwaccel_name:
+        hwaccel_args = ["-hwaccel", hwaccel_name]
+        if needs_hwdownload:
+            # d3d11va / qsv は decode 結果を GPU surface に置くため、
+            # filter graph に渡す前に system memory への download が
+            # 必要 (#553 / #550)。`-hwaccel_output_format` で surface
+            # format を明示 (d3d11va -> d3d11, qsv -> qsv) し、後段の
+            # hwdownload filter と整合させる。
+            surface_fmt = _HWACCEL_OUTPUT_FORMAT_MAP.get(hwaccel_name, hwaccel_name)
+            hwaccel_args += ["-hwaccel_output_format", surface_fmt]
+        hwaccel_args += ["-c:v", decoder]
     else:
         hwaccel_args = ["-hwaccel", "auto"]
+
+    vf_prefix = "hwdownload,format=nv12," if needs_hwdownload else ""
 
     cmd = [
         find_ffmpeg(),
@@ -204,7 +416,7 @@ def _decode_chunk(
         "-i",
         str(video_path),
         "-vf",
-        f"fps={fps_value},scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
+        f"{vf_prefix}fps={fps_value},scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
         "-f",
         "rawvideo",
         "-pix_fmt",
@@ -236,7 +448,7 @@ def _decode_chunk(
                 "command": " ".join(str(c) for c in cmd),
                 "return_code": proc.returncode,
                 "chunk": f"{chunk_start:.1f}-{chunk_end:.1f}",
-                "stderr_tail": stderr_text[-2000:],
+                "stderr_tail": stderr_text[-STDERR_TAIL_BYTES:],
             },
         )
 

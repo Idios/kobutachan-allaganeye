@@ -15,13 +15,13 @@
 同時指定すると **exit code 5** (ConfigValidationError) で終了する (#419):
 
 | 排他ペア | 理由 |
-|---|---|
+| --- | --- |
 | `-q` + `-v` | 「進捗出力抑制」と「詳細出力」は根本的に矛盾するため |
 | `--gpu` + `--no-gpu` | GPU 強制と GPU 無効化は矛盾するため |
 
 排他違反時は stderr に以下を出力し split 処理は開始しない:
 
-```
+```text
 Error: --quiet and --verbose are mutually exclusive
 ```
 
@@ -30,24 +30,25 @@ Error: --quiet and --verbose are mutually exclusive
 以下のフラグは主軸 (`default` / `-v` / `-q` / `--dry-run`) と**直交**して重畳可能。マトリクスを簡潔に保つため各主軸列とは別軸として扱う:
 
 | 直交フラグ | マトリクスへの影響 |
-|---|---|
+| --- | --- |
 | `--gpu` / `--no-gpu` | 行 8 (Auto-selected GPU/CPU mode) のテキストが `Auto-selected ...` → `Forced GPU` / `Forced CPU` に変化。他行は影響なし。`--gpu` と `--no-gpu` は相互排他 (#419) |
 | `--no-cache` | 行 7 (Cache hit params) と行 13 の `(cached)` サフィックスが常に非出力。他行は影響なし |
 | `--no-audio` | 行 9 (検知パラメータ summary) の `audio=frozen` / `audio=off` トークンに反映。現状 AUDIO_FROZEN=True のため値に関わらず `frozen` 表示 (#384) |
 | `-o`, `--sample-interval`, `--blackout-threshold`, etc. | 出力項目自体の有無には影響せず、値のみ変化 |
 
-直交フラグ × 主軸組合せの全網羅 (例: `--gpu × 8 = 16 組合せ`) は **tester 系統的検証チェックリスト (#409)** で補完する。
+直交フラグ × 主軸組合せの全網羅 (例: `--gpu × 8 = 16 組合せ`) は **系統的検証チェックリスト (#409)** で補完する。
 
 ## マトリクス v2
 
 凡例:
+
 - **◯** = 出力する
 - **×** = 出力しない
 - **-** = 該当せず (split 処理に到達しないため)
 - **❌** = exit 5 排他エラー (行そのものに到達しない)
 
 | # | 出力項目 | 関連Issue | default | `-v` | `-q` | `--dry-run` | `-v --dry-run` | `-q --dry-run` | `-v -q` |
-|---|---|---|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 環境ヘッダ (allaganeye/ffmpeg/Python/OS) | - | × | ◯ | × | × | ◯ | × | ❌ |
 | 2 | HW info (CPU/GPU/Memory/Disk) | [#377](https://github.com/Idios/kobutachan-allaganeye/issues/377) | × | ◯ | × | × | ◯ | × | ❌ |
 | 3 | `Probing: <filename>` | - | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
@@ -59,7 +60,7 @@ Error: --quiet and --verbose are mutually exclusive
 | 9 | 検知パラメータ summary (`interval=..., threshold=..., workers=auto(N), audio=frozen`) | [#384](https://github.com/Idios/kobutachan-allaganeye/issues/384), [#389](https://github.com/Idios/kobutachan-allaganeye/issues/389) | × | ◯ | × | × | ◯ | × | ❌ |
 | 10 | 進捗バー `Detecting` / `Refining` / `Scorebar` | [#368](https://github.com/Idios/kobutachan-allaganeye/issues/368), [#393](https://github.com/Idios/kobutachan-allaganeye/issues/393) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
 | 11 | 検知統計 (`Pass 1`, `Pass 2`, `Scorebar`, `Splitting` elapsed 含) | [#386](https://github.com/Idios/kobutachan-allaganeye/issues/386), [#387](https://github.com/Idios/kobutachan-allaganeye/issues/387) | × | ◯ | × | × | ◯ | × | ❌ |
-| 12 | Filter drop 内訳 (`Filter: N candidates -> M matches`) | [#388](https://github.com/Idios/kobutachan-allaganeye/issues/388) | × | ◯ | × | × | ◯ | × | ❌ |
+| 12 | Filter drop 内訳 + unknown match 行 (`Filter: N candidates -> M matches` + `+ N unknown match (録画途中試合)`) | [#388](https://github.com/Idios/kobutachan-allaganeye/issues/388), [#433](https://github.com/Idios/kobutachan-allaganeye/issues/433) | × | ◯ | × | × | ◯ | × | ❌ |
 | 13 | `Detected N match(es) ... (cached)` サフィックス含 | [#418](https://github.com/Idios/kobutachan-allaganeye/issues/418) (M) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
 | 14 | Match 一覧 (`[unknown]` / `[fl_match]` マーカー含) | [#382](https://github.com/Idios/kobutachan-allaganeye/issues/382) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
 | 15 | Gap 一覧 | - | × | ◯ | × | × | ◯ | × | ❌ |
@@ -81,7 +82,7 @@ Error: --quiet and --verbose are mutually exclusive
 
 `-q` モードでは `#418` 対応 (マトリクス行 3, 6, 7, 13 が全て `×`) により、以下のみが stdout に出力される:
 
-```
+```text
 Output: <output_dir>
   <match_001.mp4>
   ...
@@ -95,7 +96,7 @@ Metadata: <metadata.json path>
 詳細は [`docs/cli-spec.md` §「エラー表示 (#428 / #405 matrix v2)」](cli-spec.md) を参照。要約:
 
 | モード | AllaganEyeError | 予期せぬ例外 |
-|---|---|---|
+| --- | --- | --- |
 | `-v` (19a) | `Error: <msg>` + context 展開 + full traceback | full traceback (`__cause__` chain 含) |
 | default (19b) | `Error: <msg>` + `(Run with -v / --verbose for full details)` | `Unexpected error: <exc>` + hint |
 | `-q` (19c) | `Error: <msg>` のみ | `Unexpected error: <exc>` のみ |
@@ -137,7 +138,7 @@ Metadata: <metadata.json path>
 ### マトリクスと実装の差分検出
 
 - 実装変更 PR で出力書式を変える場合、本マトリクスの該当セルも同 PR で更新する
-- tester は本マトリクスを基準に系統的検証チェックリスト (#409) を組み、実機検証で差分を検出する
+- 本マトリクスを基準に系統的検証チェックリスト (#409) を実施し、実機検証で差分を検出する
 - 差分を発見した場合は `[bug]` issue として起票し `Refs #405` で本ドキュメントへ紐付ける
 
 ### 出力例の維持

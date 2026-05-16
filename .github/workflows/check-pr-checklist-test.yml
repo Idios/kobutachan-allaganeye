@@ -1,0 +1,24 @@
+name: check-pr-checklist unit tests
+
+on:
+  pull_request:
+    paths:
+      - '.github/scripts/check-pr-checklist.js'
+      - '.github/scripts/check-pr-checklist.test.js'
+      - '.github/workflows/check-pr-checklist-test.yml'
+  push:
+    branches: [develop-0.2.0, main]
+    paths:
+      - '.github/scripts/check-pr-checklist.js'
+      - '.github/scripts/check-pr-checklist.test.js'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run check-pr-checklist unit tests
+        run: node --test .github/scripts/check-pr-checklist.test.js

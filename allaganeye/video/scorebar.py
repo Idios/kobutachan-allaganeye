@@ -247,6 +247,16 @@ def classify_blackout(
     ``"match_boundary"``.  This prevents loading screens that pass the
     A1+A2 checks from being misclassified as in-match.  (#201)
 
+    Re-probe fallback (#524): when both pre and post probes return
+    ``False`` or ``None`` (i.e. the region would classify as ``non_fl``
+    or ``unknown``), re-probes pre/post symmetrically at
+    ``region_width + 1/2/3s`` further out.  4K Windows Game DVR has a
+    ~3s fade-in/out that pushes ``+1/2/3s`` probes inside the blackout,
+    causing scorebar detection to fail.  Offsetting by ``region_width``
+    pushes the probes safely past the fade.  Re-probe results override
+    the original only when not ``None``; sides that already returned
+    ``True`` are not re-probed.
+
     Returns one of:
     - ``"in_match"``: both sides have scorebar -> in-match blackout (#107)
     - ``"match_boundary"``: one side has scorebar -> match start/end
@@ -265,6 +275,66 @@ def classify_blackout(
 
     pre_has = _majority_scorebar(pre_results)
     post_has = _majority_scorebar(post_results)
+
+    # Re-probe fallback when neither side detected scorebar (#524).
+    # Long fade-in/out on 4K Game DVR pushes the +1/2/3s probes inside
+    # the blackout; offsetting by region_width clears the fade band.
+    if pre_has is not True and post_has is not True:
+        region_width = region[1] - region[0]
+        existing_pre_ts = set(pre_timestamps)
+        existing_post_ts = set(post_timestamps)
+        pre_re_timestamps = [
+            t
+            for t in sorted(
+                set(max(0.0, region[0] - (region_width + d)) for d in (3.0, 2.0, 1.0))
+            )
+            if t not in existing_pre_ts
+        ]
+        post_re_timestamps = [
+            t
+            for t in sorted(
+                set(
+                    min(duration, region[1] + (region_width + d))
+                    for d in (1.0, 2.0, 3.0)
+                )
+            )
+            if t not in existing_post_ts
+        ]
+
+        pre_re_results: list[bool | None] = []
+        post_re_results: list[bool | None] = []
+        if pre_re_timestamps:
+            pre_re_results, _ = _probe_scorebar_context(
+                video_path, pre_re_timestamps, height, workers
+            )
+        if post_re_timestamps:
+            post_re_results, _ = _probe_scorebar_context(
+                video_path, post_re_timestamps, height, workers
+            )
+        pre_has_re = _majority_scorebar(pre_re_results)
+        post_has_re = _majority_scorebar(post_re_results)
+
+        if pre_has_re is not None:
+            pre_has = pre_has_re
+        if post_has_re is not None:
+            post_has = post_has_re
+
+        logger.debug(
+            "classify re-probe region [%.1f-%.1f] (%.1fs): "
+            "pre_re_ts=%s pre_re=%s votes=%s "
+            "post_re_ts=%s post_re=%s votes=%s -> pre=%s post=%s",
+            region[0],
+            region[1],
+            region_width,
+            pre_re_timestamps,
+            pre_has_re,
+            pre_re_results,
+            post_re_timestamps,
+            post_has_re,
+            post_re_results,
+            pre_has,
+            post_has,
+        )
 
     # Override scorebar detection on static screens (loading/result).
     # Loading screens can pass _has_scorebar A1+A2 checks due to complex

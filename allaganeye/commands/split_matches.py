@@ -4,16 +4,31 @@ import json
 import logging
 import re
 import shutil
+import sys
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TypedDict
+from typing import TypedDict, cast
 
 import typer
+from click._termui_impl import ProgressBar as _ClickProgressBar  # subclass 用 (#365)
 
 from allaganeye.audio.matcher import BgmHit
 from allaganeye.config import SplitConfig
-from allaganeye.exceptions import AllaganEyeError, DetectionError, VideoProcessingError
+from allaganeye.detection.metadata_writer import (
+    read_metadata,
+    write_metadata_atomic,
+)
+from allaganeye.detection.progress_emitter import ProgressEmitter
+from allaganeye.detection.warnings import build_warnings
+from allaganeye.exceptions import (
+    AllaganEyeError,
+    DetectionError,
+    InputFileError,
+    VideoProcessingError,
+)
+from allaganeye.metadata_types import BrightnessSamples, Metadata, SystemInfo
 from allaganeye.video.detector import (
     DetectionStats,
     MatchBoundary,
@@ -104,6 +119,16 @@ def run_split(
             _check_disk_space(
                 video_path, boundaries, metadata["duration"], config, show=show
             )
+            # #591 -- cache hit でも GUI export が使う system_info は
+            # 「現在の環境」を反映したい (録画から数日後に GPU 構成を
+            # 変えた可能性) ので、ここで probe し直す。vendor_used は
+            # cache hit のため None (今回 detect していない)。
+            from allaganeye.system_info import probe_gpu_vendors
+
+            cached_system_info = _build_system_info(
+                available_vendors=probe_gpu_vendors(),
+                vendor_used=None,
+            )
             split_start = time.monotonic()
             _split_and_write_metadata(
                 video_path,
@@ -113,14 +138,24 @@ def run_split(
                 config,
                 effective_interval=effective_interval,
                 detected_at=detected_at,
+                system_info=cached_system_info,
                 quiet=quiet,
             )
             _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
             _emit_total_time(total_start, verbose, show)
             return
 
-    # Resolve GPU/CPU mode: auto-select based on codec when not explicit (#334)
-    use_gpu = _resolve_gpu_mode(config.use_gpu, metadata.get("codec"), show, verbose)
+    # Resolve GPU/CPU mode + vendor: auto-select based on codec + probe
+    # when not explicit (#334, #546, #591). probe で検出された全 vendor は
+    # GUI export encoder 自動選択 (#591) で metadata.json system_info に
+    # 保存するため、3-tuple 版 ``_resolve_gpu_mode_with_probe`` を呼ぶ。
+    use_gpu, gpu_vendor, available_vendors = _resolve_gpu_mode_with_probe(
+        config.use_gpu,
+        config.gpu_vendor,
+        metadata.get("codec"),
+        show,
+        verbose,
+    )
 
     # Step 2: Detect match boundaries
     if verbose and show:
@@ -146,6 +181,16 @@ def run_split(
 
     detect_stats: DetectionStats | None = {} if verbose else None
 
+    # #644 -- Pass 1 で計測された輝度マップを捕捉して metadata.json に書く
+    # ため、`_run_detection` に brightness_callback を渡す。detect.py の
+    # run_detect (line 230-260) と同じパターン。callback が呼ばれない経路
+    # (cache hit や Pass 1 skip) では captured_brightness が空のまま残り、
+    # `_split_and_write_metadata` 呼び出し時に None を渡す。
+    captured_brightness: dict[float, float] = {}
+
+    def _on_brightness(samples: dict[float, float]) -> None:
+        captured_brightness.update(samples)
+
     boundaries = _run_detection(
         video_path,
         metadata,
@@ -155,6 +200,8 @@ def run_split(
         quiet=quiet,
         stats=detect_stats,
         use_gpu=use_gpu,
+        gpu_vendor=gpu_vendor,
+        brightness_callback=_on_brightness,
     )
 
     if not boundaries:
@@ -197,6 +244,19 @@ def run_split(
         return
 
     _check_disk_space(video_path, boundaries, metadata["duration"], config, show=show)
+    # #591 -- detect 経路で確定した vendor を vendor_used に記録。CPU
+    # 強制 (use_gpu=False) のときは vendor_used=None (実際使ってない)。
+    detected_system_info = _build_system_info(
+        available_vendors=available_vendors,
+        vendor_used=gpu_vendor if use_gpu else None,
+    )
+    # #644 -- captured_brightness が空なら build_brightness_samples が None を
+    # 返す (split_matches.py:1373-1374 `if not raw_brightness: return None`)。
+    # detect.py:239 (run_detect) と同パターン: guard なしで build_brightness_samples
+    # を呼び、None を _split_and_write_metadata に渡す。_build_metadata_payload が
+    # None で brightness_samples キーを skip するため、cache hit / Pass 1 skip 経路
+    # では metadata.json に書かれない (既存仕様「Pass 1 が走った場合のみ」と整合)。
+    brightness_samples = build_brightness_samples(captured_brightness)
     split_start = time.monotonic()
     _split_and_write_metadata(
         video_path,
@@ -206,6 +266,165 @@ def run_split(
         config,
         effective_interval=effective_interval,
         detected_at=detected_at,
+        system_info=detected_system_info,
+        brightness_samples=brightness_samples,
+        quiet=quiet,
+    )
+    _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
+    _emit_total_time(total_start, verbose, show)
+
+
+def run_split_from_metadata(
+    metadata_path: Path,
+    config: SplitConfig,
+    *,
+    verbose: bool = False,
+    quiet: bool = False,
+) -> None:
+    """Split a video using a previously generated ``metadata.json`` (#463).
+
+    Reads the JSON produced by ``allaganeye detect <video>`` (or a legacy
+    ``allaganeye split <video>`` run), resolves the source video path, and
+    runs only the ffmpeg ``-c copy`` split phase.  Detection is skipped.
+
+    The source path stored in ``metadata.json`` is resolved relative to the
+    metadata file's directory when it is not absolute, so a metadata file
+    that travels alongside its output directory keeps working after a move.
+
+    Output files are written into ``config.output_dir`` (not necessarily the
+    metadata file's directory), and the metadata file is **rewritten** with
+    updated ``output_file`` entries that reflect the new paths.
+    """
+    show = not quiet
+    total_start = time.monotonic()
+
+    payload = read_metadata(metadata_path)
+
+    source_value = payload.get("source")
+    if not isinstance(source_value, str) or not source_value:
+        raise InputFileError(
+            f"metadata file {metadata_path} missing required field 'source'"
+        )
+    source_path = Path(source_value)
+    if not source_path.is_absolute():
+        source_path = (metadata_path.parent / source_path).resolve()
+    if not source_path.exists():
+        raise InputFileError(
+            f"source video referenced by {metadata_path} not found: {source_path}"
+        )
+
+    matches = payload.get("matches")
+    if not isinstance(matches, list) or not matches:
+        raise InputFileError(
+            f"metadata file {metadata_path} has no match entries to split"
+        )
+
+    boundaries: list[MatchBoundary] = []
+    for entry in matches:
+        if not isinstance(entry, dict):
+            raise InputFileError(
+                f"metadata file {metadata_path} has a non-object match entry"
+            )
+        try:
+            start = float(entry["start_time"])
+            end = float(entry["end_time"])
+        except (KeyError, TypeError, ValueError) as e:
+            raise InputFileError(
+                f"metadata file {metadata_path} has a match entry missing "
+                f"start_time/end_time: {e}"
+            ) from e
+        type_value = entry.get("type", "unknown")
+        boundaries.append({"start": start, "end": end, "type": type_value})
+
+    gaps_raw = payload.get("gaps", [])
+    gaps: list[Gap] = []
+    if isinstance(gaps_raw, list):
+        for g in gaps_raw:
+            if not isinstance(g, dict):
+                continue
+            try:
+                gaps.append(
+                    {
+                        "start": float(g["start_time"]),
+                        "end": float(g["end_time"]),
+                        "duration": float(g["duration"]),
+                    }
+                )
+            except (KeyError, TypeError, ValueError):
+                # Forgiving: gaps are informational only.
+                continue
+
+    probe = probe_video(source_path)
+
+    detected_at_value = payload.get("detected_at")
+    detected_at = (
+        detected_at_value if isinstance(detected_at_value, str) else _iso_utc_now()
+    )
+
+    # #586 -- preserve detect timing across `--from-metadata` invocations.
+    # 再検知してないので元 metadata の検知開始/完了時刻を引き継ぎ、GUI
+    # 「所要」が「検知時の所要」を表示し続けるようにする。pre-#586 metadata
+    # では両フィールド欠落 -> None を渡して _split_and_write_metadata の
+    # fallback (started=detected_at / completed=_iso_utc_now()) に委譲。
+    old_started_at = payload.get("detection_started_at")
+    old_completed_at = payload.get("detection_completed_at")
+    preserve_started_at = old_started_at if isinstance(old_started_at, str) else None
+    preserve_completed_at = (
+        old_completed_at if isinstance(old_completed_at, str) else None
+    )
+
+    # #644 -- preserve brightness_samples across `--from-metadata`.
+    # 元 metadata に brightness_samples があれば新 metadata にもそのまま
+    # コピーする。PR #626 の detection_started_at / detection_completed_at
+    # と同じ preserve パターン。元に無ければ None を渡して新 metadata でも
+    # 欠落させる (cache hit / pre-#569 metadata 経路と同じ挙動)。
+    # JSON payload は Any 型なので isinstance チェック後に cast で
+    # BrightnessSamples (TypedDict) に narrow する。schema 検証は
+    # _build_metadata_payload 側の TypedDict 構造に委譲。
+    old_brightness_samples = payload.get("brightness_samples")
+    preserve_brightness_samples: BrightnessSamples | None = (
+        cast("BrightnessSamples", old_brightness_samples)
+        if isinstance(old_brightness_samples, dict)
+        else None
+    )
+
+    detection_params = payload.get("detection_params")
+    if isinstance(detection_params, dict):
+        effective_interval = float(
+            detection_params.get("sample_interval", config.sample_interval)
+        )
+    else:
+        effective_interval = config.sample_interval
+
+    if show:
+        typer.echo(f"Splitting {len(boundaries)} match(es) from {metadata_path.name}")
+    if verbose and show:
+        typer.echo(f"  Source: {source_path}")
+
+    _check_disk_space(source_path, boundaries, probe["duration"], config, show=show)
+    # #591 -- split-only path は detect しないので vendor_used=None。
+    # GUI export が encoder 選択に使う「現在の環境」を反映するため、
+    # ここで probe し直して metadata を更新する (前回 detect の値で
+    # 上書き)。
+    from allaganeye.system_info import probe_gpu_vendors
+
+    split_only_system_info = _build_system_info(
+        available_vendors=probe_gpu_vendors(),
+        vendor_used=None,
+    )
+    split_start = time.monotonic()
+    _split_and_write_metadata(
+        source_path,
+        boundaries,
+        gaps,
+        probe,
+        config,
+        effective_interval=effective_interval,
+        detected_at=detected_at,
+        detection_started_at=preserve_started_at,
+        detection_completed_at=preserve_completed_at,
+        system_info=split_only_system_info,
+        brightness_samples=preserve_brightness_samples,
         quiet=quiet,
     )
     _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
@@ -379,29 +598,122 @@ def _run_audio_scan(
 
 
 # Codecs where GPU decode is typically faster than CPU parallel probing.
-_GPU_PREFERRED_CODECS = {"h264", "hevc"}
+# AV1 / VP9 added per #414. Hardware requirements:
+# - NVDEC AV1 = RTX 30 series or later
+# - Intel QSV AV1 = Arc / Gen12 or later
+# - AMD VCN AV1 = VCN 4.0 or later
+# VP9 is widely supported on older GPU generations (NVDEC Maxwell+).
+_GPU_PREFERRED_CODECS = {"h264", "hevc", "av1", "vp9"}
 
 
 def _resolve_gpu_mode(
     use_gpu: bool | None,
+    gpu_vendor_option: str | None,
     codec: str | None,
     show: bool,
     verbose: bool,
-) -> bool:
-    """Resolve GPU/CPU mode from explicit flag or codec auto-detection (#334).
+) -> tuple[bool, str | None]:
+    """Resolve GPU/CPU mode and vendor (backward-compat 2-tuple wrapper).
 
-    When *use_gpu* is ``None`` (no ``--gpu``/``--no-gpu`` given), selects
-    GPU for H.264/HEVC (mature GPU decode support) and CPU for everything
-    else (AV1, VP9, etc.).  Returns a concrete ``bool``.
+    新規呼び出し側 (#591 の system_info 構築など) は probe 結果も使うため
+    ``_resolve_gpu_mode_with_probe`` を呼ぶ。既存呼び出し / 既存テストは
+    引き続きこの薄い 2-tuple ラッパで動く。
     """
-    if use_gpu is not None:
-        return use_gpu
+    use_gpu_concrete, vendor, _available = _resolve_gpu_mode_with_probe(
+        use_gpu, gpu_vendor_option, codec, show, verbose
+    )
+    return use_gpu_concrete, vendor
 
-    selected = (codec or "").lower() in _GPU_PREFERRED_CODECS
+
+def _resolve_gpu_mode_with_probe(
+    use_gpu: bool | None,
+    gpu_vendor_option: str | None,
+    codec: str | None,
+    show: bool,
+    verbose: bool,
+) -> tuple[bool, str | None, list[str]]:
+    """Resolve GPU/CPU mode and vendor from user flags + probe (#334, #546, #553, #550, #591).
+
+    - *use_gpu*: None で自動 codec 判定、True/False で明示指示。
+    - *gpu_vendor_option*: None / "auto" で自動選択、"nvidia" / "amd" /
+      "intel" で明示指定。``_VENDOR_HWACCEL_MAP`` に未登録の vendor や
+      probe に見つからない vendor を要求すると ``ConfigValidationError``
+      (exit 5)。現時点で nvidia / amd / intel すべて実装済み。
+
+    Returns ``(use_gpu_concrete, selected_vendor, available_vendors)``
+    tuple.  *vendor* が ``None`` の場合は GPU 経路で ``-hwaccel auto`` が
+    使われる。*available_vendors* は ``probe_gpu_vendors()`` の生結果で、
+    GUI export が encoder 自動選択 (#591) に使うため metadata.json
+    ``system_info`` セクションに保存される。
+    """
+    from allaganeye.exceptions import ConfigValidationError
+    from allaganeye.system_info import probe_gpu_vendors
+    from allaganeye.video.gpu_detector import (
+        _VENDOR_HWACCEL_MAP,
+        _select_gpu_vendor,
+    )
+
+    available = probe_gpu_vendors()
+
+    # Explicit vendor request validation (#546 / #553 / #550): 未実装 or 未検出は exit 5。
+    # 現時点で _VENDOR_HWACCEL_MAP は nvidia / amd / intel すべて含むので
+    # この分岐は config 側 (auto/nvidia/amd/intel) の validation を抜ける
+    # 将来の vendor 追加忘れに対する defensive guard。
+    if gpu_vendor_option and gpu_vendor_option != "auto":
+        if gpu_vendor_option not in _VENDOR_HWACCEL_MAP:
+            raise ConfigValidationError(
+                f"--gpu-vendor {gpu_vendor_option}: 現在未実装です。"
+                " --gpu-vendor auto / nvidia / amd / intel のいずれかを使用してください。"
+            )
+        if gpu_vendor_option not in available:
+            raise ConfigValidationError(
+                f"--gpu-vendor {gpu_vendor_option} を要求されましたが、"
+                f"環境で検出された GPU vendor は {available or '(なし)'} です。"
+                " --gpu-vendor auto または --no-gpu を使用してください。"
+            )
+
+    vendor = _select_gpu_vendor(gpu_vendor_option, available)
+
+    if use_gpu is not None:
+        if show and verbose and use_gpu and vendor:
+            typer.echo(f"  GPU vendor: {vendor}")
+        return use_gpu, vendor, available
+
+    codec_match = (codec or "").lower() in _GPU_PREFERRED_CODECS
+    # Codec match is the primary signal (#334 の既存挙動を維持)。
+    # vendor=None (probe_gpu_vendors() が空 / 未実装 vendor のみ検出)
+    # でも use_gpu=True を返し、scan_gpu の legacy path
+    # (-hwaccel auto) に入る。ffmpeg 側で GPU decode に失敗した場合は
+    # CPU fallback される (既存の動作)。
+    selected = codec_match
     if show and verbose:
         mode = "GPU" if selected else "CPU"
         typer.echo(f"  Auto-selected {mode} mode (codec: {codec or 'unknown'})")
-    return selected
+        if selected and vendor:
+            typer.echo(f"  GPU vendor: {vendor}")
+    return selected, vendor if selected else None, available
+
+
+def _build_system_info(
+    *,
+    available_vendors: list[str],
+    vendor_used: str | None,
+) -> SystemInfo:
+    """Build the ``system_info`` dict for ``metadata.json`` (#591).
+
+    GUI export 画面 (Phase 4 / `select_h264_encoder_for_export`) が
+    ``gpu_vendors_available`` と ``vendor_preference`` を読んで NVENC /
+    QSV / AMF / libx264 を auto-select する。``gpu_vendor_used`` は
+    実際 detect 経路で使った vendor (CPU 強制 / cache hit / split-only
+    では ``None``)。
+    """
+    from allaganeye.video.gpu_detector import _VENDOR_PREFERENCE
+
+    return {
+        "gpu_vendors_available": list(available_vendors),
+        "gpu_vendor_used": vendor_used,
+        "vendor_preference": list(_VENDOR_PREFERENCE),
+    }
 
 
 def _run_detection(
@@ -414,27 +726,88 @@ def _run_detection(
     quiet: bool = False,
     stats: DetectionStats | None = None,
     use_gpu: bool = False,
+    gpu_vendor: str | None = None,
+    progress_emitter: ProgressEmitter | None = None,
+    brightness_callback: Callable[[dict[float, float]], None] | None = None,
 ) -> list[MatchBoundary]:
-    """Run detection with progress bars for each phase (#328, #329, #331)."""
+    """Run detection with progress bars for each phase (#328, #329, #331).
+
+    #569 -- when *progress_emitter* is supplied (GUI / Tauri wrapper),
+    the click TTY progress bars are replaced by JSON-line events on the
+    emitter's stream.  ``quiet`` / ``progress_emitter`` are mutually
+    exclusive in spirit; if both are provided the emitter wins (so a
+    quiet-from-CLI-call-site GUI subprocess still emits events).
+    *brightness_callback* is forwarded transparently into
+    ``detect_match_boundaries`` so callers can capture the Pass 1
+    brightness map for downstream consumers (e.g. the GUI complete
+    screen's brightness timeline).
+    """
     detect_kwargs = {
         "duration_hint": metadata["duration"],
         "sample_interval": effective_interval,
         "blackout_threshold": config.blackout_threshold,
         "min_match_duration": config.min_match_duration,
         "min_blackout_duration": config.min_blackout_duration,
+        "gpu_vendor": gpu_vendor,
         "use_gpu": use_gpu,
         "workers": config.workers,
         "src_resolution": (metadata["width"], metadata["height"]),
         "codec": metadata.get("codec"),
         "audio_hits": audio_hits,
         "stats": stats,
+        "brightness_callback": brightness_callback,
     }
+
+    if progress_emitter is not None:
+        # GUI / json mode: wire the same callbacks but emit JSON lines
+        # instead of advancing click progressbars.  No TTY work at all.
+        total_duration = metadata["duration"]
+        estimated_samples = max(1, int(total_duration / effective_interval))
+
+        def gui_on_progress(completed: int, total: int, blackout_count: int) -> None:
+            progress_emitter.emit_progress(
+                "scan",
+                completed,
+                total,
+                blackout_frames=blackout_count,
+            )
+
+        def gui_on_chunk_dispatch(num_chunks: int) -> None:
+            progress_emitter.emit("chunk_dispatch", chunks=num_chunks)
+
+        def gui_on_chunk(done: int, total: int, eta_seconds: float) -> None:
+            progress_emitter.emit(
+                "chunk",
+                completed=done,
+                total=total,
+                eta_s=eta_seconds if eta_seconds > 0 else None,
+            )
+
+        def gui_on_refine(completed: int, total: int) -> None:
+            progress_emitter.emit_progress("refine", completed, total)
+
+        def gui_on_scorebar(completed: int, total: int) -> None:
+            progress_emitter.emit_progress("scorebar", completed, total)
+
+        # Announce Pass 1 entry so the GUI can pre-populate the bar at 0%
+        # before the first chunk completes (otherwise the bar sits empty
+        # until ~10s into a long video).
+        progress_emitter.emit_progress("scan", 0, estimated_samples)
+        return detect_match_boundaries(
+            video_path,
+            **detect_kwargs,
+            progress_callback=gui_on_progress,
+            refine_progress_callback=gui_on_refine,
+            scorebar_progress_callback=gui_on_scorebar,
+            chunk_progress_callback=gui_on_chunk,
+            chunk_dispatch_callback=gui_on_chunk_dispatch,
+        )
 
     if not quiet:
         total_duration = metadata["duration"]
         estimated_samples = max(1, int(total_duration / effective_interval))
 
-        # Three-bar progress design (#368 / #393):
+        # Three-bar progress design (#368 / #393 / #434):
         #
         # - Detecting (Pass 1 scan, known length = estimated_samples)
         # - Refining (Pass 2 probes, total published via first callback)
@@ -446,11 +819,54 @@ def _run_detection(
         # vanish, #368) and the Pass 2 -> Scorebar transition no longer
         # mixes units (100% -> 99% rollover, #393).  ``try/finally`` guards
         # against exceptions leaving a bar dangling on the TTY.
-        detecting_bar = _eta_progressbar(estimated_samples, "Detecting")
+        #
+        # #434 multi-line eager display: when stdout is a TTY we pre-print
+        # waiting placeholders for Refining / Scorebar BELOW the Detecting
+        # line so users see all three phases from the start.  Each
+        # placeholder is overwritten by its bar when the corresponding
+        # callback first fires.  Non-TTY (CI / redirected output) falls
+        # back to the historical sequential bars to avoid garbling logs
+        # with ANSI escapes.
+        eager_phases = _stdout_supports_eager_phases()
+        if eager_phases:
+            typer.echo("Detecting [starting...]".ljust(_PROGRESS_LABEL_WIDTH + 24))
+            typer.echo(
+                "Refining   [waiting for Pass 1 to finish]".ljust(
+                    _PROGRESS_LABEL_WIDTH + 30
+                )
+            )
+            typer.echo(
+                "Scorebar   [waiting for Pass 2 to finish]".ljust(
+                    _PROGRESS_LABEL_WIDTH + 30
+                )
+            )
+            sys.stdout.write("\033[3A")  # cursor up 3 lines back to Detecting
+            sys.stdout.flush()
+
+        detecting_bar = _eta_progressbar(
+            estimated_samples,
+            "Detecting",
+            suppress_click_eta=use_gpu,
+        )
         detecting_bar.__enter__()
         detecting_state = {"last_pos": 0, "closed": False}
-        refine_state: dict = {"bar": None, "last": 0}
-        scorebar_state: dict = {"bar": None, "last": 0}
+        # ``placeholder_present`` tracks whether the ``[waiting...]`` line
+        # for that phase is still on screen.  Set ``True`` only when the
+        # eager pre-print actually ran; flipped to ``False`` when the bar
+        # opens (placeholder erased) or the Pass 2 skip path replaces it
+        # with ``[skipped: no regions]``.  Used by the ``finally`` cleanup
+        # so a Pass 1 / Pass 2 exception doesn't leave stale ``[waiting]``
+        # text dangling above the traceback (#434 error path).
+        refine_state: dict = {
+            "bar": None,
+            "last": 0,
+            "placeholder_present": eager_phases,
+        }
+        scorebar_state: dict = {
+            "bar": None,
+            "last": 0,
+            "placeholder_present": eager_phases,
+        }
 
         def _close_detecting_if_open() -> None:
             """Emit newline after Pass 1 so the next bar starts cleanly."""
@@ -468,11 +884,39 @@ def _run_detection(
                 scorebar_state["bar"].__exit__(None, None, None)
                 scorebar_state["bar"] = None
 
+        def _erase_current_line() -> None:
+            """Clear the cursor's line so the next bar overwrites a placeholder.
+
+            No-op outside the eager-display path since there is no
+            placeholder to clear (#434).
+            """
+            if eager_phases:
+                sys.stdout.write("\033[2K")
+                sys.stdout.flush()
+
         def on_progress(completed: int, total: int, blackout_count: int) -> None:
             advance = completed - detecting_state["last_pos"]
             if advance > 0:
                 detecting_bar.update(advance)
             detecting_state["last_pos"] = completed
+
+        def on_chunk_dispatch(num_chunks: int) -> None:
+            # First feedback before any chunk completes (#437).
+            # Long videos (2h+) used to sit at "Detecting 0%" for 2-3
+            # minutes while the first chunk decoded; this shows users
+            # the work has started and how many chunks to expect.
+            # Include "ETA: --:--:--" placeholder so users see a consistent
+            # ETA position from dispatch through chunk completion (#365
+            # Idios feedback: pre-update でも ETA を出す改善、CPU mode
+            # の commit 6e48381 と一貫する). Once the first chunk
+            # completes, ``on_chunk`` overwrites this label with the
+            # caller-computed ETA.
+            detecting_bar.label = (
+                f"Detecting [dispatching {num_chunks} chunks, ETA: --:--:--]".ljust(
+                    _PROGRESS_LABEL_WIDTH
+                )
+            )
+            detecting_bar.render_progress()
 
         def on_chunk(done: int, total: int, eta_seconds: float) -> None:
             # Update label so users see movement between chunk completions
@@ -492,6 +936,8 @@ def _run_detection(
             # open the Refining bar on a fresh line.
             if refine_state["bar"] is None:
                 _close_detecting_if_open()
+                _erase_current_line()  # erase ``Refining [waiting]`` placeholder
+                refine_state["placeholder_present"] = False
                 refine_state["bar"] = _eta_progressbar(total, "Refining")
                 refine_state["bar"].__enter__()
                 refine_state["last"] = 0
@@ -504,8 +950,18 @@ def _run_detection(
             # First scorebar callback: close Refining (or Detecting if
             # Pass 2 had no regions) and open the Scorebar bar fresh.
             if scorebar_state["bar"] is None:
+                refine_was_open = refine_state["bar"] is not None
                 _close_refine_if_open()
                 _close_detecting_if_open()
+                if eager_phases and not refine_was_open:
+                    # Pass 2 had no regions; cursor is on the Refining
+                    # placeholder. Replace it with a "skipped" marker and
+                    # advance one line to land on the Scorebar placeholder.
+                    sys.stdout.write("\033[2KRefining   [skipped: no regions]\n")
+                    sys.stdout.flush()
+                    refine_state["placeholder_present"] = False
+                _erase_current_line()  # erase ``Scorebar [waiting]`` placeholder
+                scorebar_state["placeholder_present"] = False
                 scorebar_state["bar"] = _eta_progressbar(total, "Scorebar")
                 scorebar_state["bar"].__enter__()
                 scorebar_state["last"] = 0
@@ -522,6 +978,7 @@ def _run_detection(
                 refine_progress_callback=on_refine,
                 scorebar_progress_callback=on_scorebar,
                 chunk_progress_callback=on_chunk,
+                chunk_dispatch_callback=on_chunk_dispatch,
             )
         finally:
             # Close in reverse open-order; if detection raised we still
@@ -529,6 +986,21 @@ def _run_detection(
             _close_scorebar_if_open()
             _close_refine_if_open()
             _close_detecting_if_open()
+            # Clean up any ``[waiting...]`` placeholder lines still on
+            # screen so a Pass 1 / Pass 2 exception's traceback isn't
+            # printed below stale "waiting" text (#434 error path).
+            # The ``_close_*_if_open`` calls above land the cursor on the
+            # next un-rendered phase line, so erasing in order matches
+            # the cursor's downward march.
+            if refine_state["placeholder_present"]:
+                sys.stdout.write("\033[2K\n")
+            if scorebar_state["placeholder_present"]:
+                sys.stdout.write("\033[2K\n")
+            if (
+                refine_state["placeholder_present"]
+                or scorebar_state["placeholder_present"]
+            ):
+                sys.stdout.flush()
 
         return result
 
@@ -627,19 +1099,88 @@ _PROGRESS_LABEL_WIDTH = 11
 """Column width for progress bar labels (Detecting/Refining/Splitting)."""
 
 
-def _eta_progressbar(length: int, label: str):  # type: ignore[no-untyped-def]
-    """Create a progress bar with explicit ETA label (#329).
+def _stdout_supports_eager_phases() -> bool:
+    """Whether stdout is a TTY suitable for the multi-line eager phase display (#434).
+
+    Centralizing the check lets tests substitute behaviour with
+    ``monkeypatch`` without touching ``sys.stdout`` directly (capsys
+    replaces stdout with a non-TTY buffer, so the production-mode
+    check would always be false during tests).
+    """
+    return sys.stdout.isatty()
+
+
+class _ETAProgressBar(_ClickProgressBar):
+    """Progress bar with explicit 'ETA: H:MM:SS' label (#365).
+
+    click のデフォルト ``%(info)s`` placeholder は ``<percent>  <eta>``
+    をラベルなしで展開するだけのため、ユーザーには時刻文字列だけが見え、
+    経過時間/残り時間/動画内位置のどれか判別できない (#329 元 issue,
+    PR #343 不完全修正、#365 で再対応)。
+
+    本 subclass は ``format_progress_line`` を override し以下に統一:
+
+        Detecting  ###################---  93% ETA: 0:00:22
+
+    ``eta_known=False`` (update 未呼び出し / make_step の 1 秒 debounce
+    gate 内) のときも ETA セクションを出し ``ETA: --:--:--`` placeholder
+    を表示する (Idios feedback for #365: pre-update でも ETA を出す改善)。
+
+    ``show_eta=False`` (GPU mode #438 の ``suppress_click_eta=True``
+    経路) では ETA セクションを出さず percent のみ表示。caller 側が
+    self-computed ETA を label に組み込む既存挙動と互換。
+
+    ``finished=True`` (100% 完了) では ETA: 00:00:00 を出さず percent
+    のみ表示 (click 親 class と整合)。
+
+    依存する click 8.x の public method:
+      - ``format_bar()``    -- bar 文字列
+      - ``format_pct()``    -- "  N%" or "NN%" (左 padding あり)
+      - ``format_eta()``    -- "H:MM:SS" or "" (eta_known=False / show_eta=False のとき空)
+      - ``self.label``      -- ljust 済みラベル
+      - ``self.show_eta``   -- ETA 表示フラグ
+      - ``self.eta_known``  -- ETA 計算可能フラグ (1 update 後に True)
+    """
+
+    def format_progress_line(self) -> str:
+        bar = self.format_bar()
+        pct = self.format_pct()
+        if self.show_eta and not self.finished:
+            # eta_known=False (update 未呼び出し / make_step の 1 秒 debounce gate 内)
+            # のとき format_eta() は空文字列を返すので、'--:--:--' placeholder で
+            # 常時 ETA を表示する (Idios feedback: pre-update でも ETA を出す改善、#365)。
+            eta = self.format_eta() or "--:--:--"
+            return f"{self.label}{bar} {pct} ETA: {eta}"
+        return f"{self.label}{bar} {pct}"
+
+
+def _eta_progressbar(
+    length: int, label: str, *, suppress_click_eta: bool = False
+) -> _ETAProgressBar:
+    """Create a progress bar with explicit ETA label (#329 / #365).
 
     Labels are left-justified to ``_PROGRESS_LABEL_WIDTH`` so that
-    Detecting / Refining / Splitting bars align vertically.
-    """
-    import click
+    Detecting / Refining / Scorebar / Splitting bars align vertically.
 
-    return click.progressbar(
+    When ``suppress_click_eta`` is True (GPU mode, #438), click's own
+    ETA is hidden (``show_eta=False``); caller supplies a self-computed
+    ETA in the label instead. ``_ETAProgressBar.format_progress_line``
+    consumes ``show_eta`` to skip the 'ETA: ' tail in that path.
+    """
+    return _ETAProgressBar(
+        iterable=None,
         length=length,
         label=label.ljust(_PROGRESS_LABEL_WIDTH),
-        bar_template="%(label)s%(bar)s %(info)s",
-        show_eta=True,
+        bar_template="",  # 未使用 (format_progress_line を override したため)
+        # click.progressbar() factory 経由では empty_char='-' / width=36 が default
+        # だが、ProgressBar.__init__ class 直接インスタンス化では empty_char=' ' /
+        # width=30 と異なる default を持つ。issue #365 期待動作
+        # `Detecting  ####---  93% ETA: 0:00:22` の `####---` (dash empty char +
+        # 36 width) を維持するため明示する (PR #687 review feedback #1+#2 対応)。
+        fill_char="#",
+        empty_char="-",
+        width=36,
+        show_eta=not suppress_click_eta,
         show_percent=True,
     )
 
@@ -653,11 +1194,25 @@ def _split_and_write_metadata(
     *,
     effective_interval: float,
     detected_at: str,
+    detection_started_at: str | None = None,
+    detection_completed_at: str | None = None,
+    system_info: SystemInfo,
+    brightness_samples: BrightnessSamples | None = None,
     quiet: bool = False,
 ) -> None:
-    """Split video and write metadata.json."""
+    """Split video and write metadata.json (#591: system_info required).
+
+    ``detection_started_at`` / ``detection_completed_at`` (#586): both
+    optional. ``None`` means「本ランで取得」(started = detected_at の値、
+    completed = writer 直前の ``_iso_utc_now()``)。``run_split`` /
+    ``run_detect`` は新規検知なので両方 ``None`` を渡し fresh capture を
+    使う。``run_split_from_metadata`` は元 metadata の値を保持して GUI
+    「所要」が「検知時の所要」を表示し続けるよう、明示的に値を渡す。
+    """
     show = not quiet
     source_duration = metadata["duration"]
+    if detection_started_at is None:
+        detection_started_at = detected_at
 
     try:
         config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -683,17 +1238,100 @@ def _split_and_write_metadata(
     else:
         output_files = split_video(video_path, boundaries, config.output_dir)
 
-    # Write metadata
-    result = {
+    # Write metadata (#463: ``note`` field retired; caveats documented in
+    # docs/cli-spec.md and docs/metadata-spec.md instead of being embedded
+    # in the payload). #586: completed_at は明示指定がなければ writer 直前
+    # の ``_iso_utc_now()``。``--from-metadata`` 経路は元 metadata の値を
+    # caller (run_split_from_metadata) が引き継いで渡す。
+    if detection_completed_at is None:
+        detection_completed_at = _iso_utc_now()
+    result = _build_metadata_payload(
+        video_path=video_path,
+        source_duration=source_duration,
+        source_fps=metadata["fps"],
+        detected_at=detected_at,
+        detection_started_at=detection_started_at,
+        detection_completed_at=detection_completed_at,
+        effective_interval=effective_interval,
+        config=config,
+        boundaries=boundaries,
+        output_files=output_files,
+        gaps=gaps,
+        system_info=system_info,
+        brightness_samples=brightness_samples,
+    )
+    metadata_path = config.output_dir / "metadata.json"
+    write_metadata_atomic(metadata_path, result)
+
+    typer.echo(f"\nOutput: {config.output_dir}")
+    for f in output_files:
+        typer.echo(f"  {f.name}")
+    typer.echo(f"Metadata: {metadata_path}")
+
+
+def _build_metadata_payload(
+    *,
+    video_path: Path,
+    source_duration: float,
+    source_fps: float,
+    detected_at: str,
+    detection_started_at: str,
+    detection_completed_at: str,
+    effective_interval: float,
+    config: SplitConfig,
+    boundaries: list[MatchBoundary],
+    output_files: list[Path],
+    gaps: list[Gap],
+    system_info: SystemInfo,
+    brightness_samples: BrightnessSamples | None = None,
+) -> Metadata:
+    """Build the ``metadata.json`` payload dict (schema v1, #463 / #569 / #586 / #591).
+
+    Kept private to this module; ``commands.detect`` builds a variant
+    (no ``output_files``) via its own helper.
+
+    ``schema_version`` (#515) declares the payload revision so future
+    readers can migrate or refuse older / newer files. v1 is the current
+    schema; see ``docs/metadata-spec.md`` section "schema_version".
+
+    ``source_fps`` (#465 review): the recording frame rate from ffprobe.
+    GUI uses this to compute frame-accurate +-1F seek (formerly assumed
+    60 fps). 120fps / 240fps recordings now step by 1/120 / 1/240 sec.
+
+    ``system_info`` (#591): GPU vendor probe snapshot used by GUI export
+    encoder selection (NVENC / QSV / AMF / libx264). Optional field added
+    in v1; readers without #591 simply ignore it. Build via
+    ``_build_system_info``.
+
+    ``detection_started_at`` / ``detection_completed_at`` (#586): wall-clock
+    ISO 8601 UTC timestamps bracketing the detect (or detect-skipped split)
+    pipeline. GUI ``CompleteScreen`` computes ``elapsed = completed -
+    started`` to display the「所要」column. ``detection_started_at`` is the
+    same value as ``detected_at`` (the legacy field is retained verbatim
+    for backward compatibility); ``detection_completed_at`` is captured
+    immediately before metadata.json is written.
+
+    ``brightness_samples`` (#569): pre-rendered brightness timeline for
+    the GUI complete screen.  Optional field; pre-#569 metadata files
+    don't carry it.  Shape is ``{"interval_s": float, "values":
+    list[float]}`` -- ``values[i]`` is the brightness (0-255) at
+    ``i * interval_s`` seconds.  Built via :func:`build_brightness_samples`.
+
+    The return type is the auto-generated ``Metadata`` TypedDict from
+    ``allaganeye/metadata_types.py`` (regenerated from
+    ``schemas/metadata.schema.json`` via ``python scripts/codegen/generate.py``,
+    #612). Drift between this builder and the JSON Schema is caught
+    statically by pyright.
+    """
+    payload: Metadata = {
+        "schema_version": "1",
         "source": str(video_path),
         "source_duration": source_duration,
         "source_duration_display": _format_timestamp(source_duration),
-        "note": (
-            "Split times are approximate due to keyframe-aligned copy mode. "
-            "Actual start/end may differ by up to the source keyframe interval "
-            "(typically 2s for OBS recordings)."
-        ),
+        "source_fps": source_fps,
         "detected_at": detected_at,
+        "detection_started_at": detection_started_at,
+        "detection_completed_at": detection_completed_at,
         "detection_params": {
             "sample_interval": effective_interval,
             "blackout_threshold": config.blackout_threshold,
@@ -703,6 +1341,7 @@ def _split_and_write_metadata(
             "use_gpu": config.use_gpu,
             "workers": config.workers,
         },
+        "system_info": system_info,
         "matches": [
             {
                 "index": i + 1,
@@ -712,7 +1351,11 @@ def _split_and_write_metadata(
                 "end_display": _format_timestamp(b["end"]),
                 "duration": b["end"] - b["start"],
                 "duration_display": _format_duration(b["end"] - b["start"]),
-                "type": b.get("type", "unknown"),
+                # Narrow MatchBoundary's open-ended `type: str` (detector.py)
+                # to the JSON Schema literal so pyright accepts the assignment.
+                # Anything other than "fl_match" is normalized to "unknown"
+                # -- matches the prior dict.get fallback semantics.
+                "type": "fl_match" if b.get("type") == "fl_match" else "unknown",
                 "output_file": f.as_posix(),
             }
             for i, (b, f) in enumerate(zip(boundaries, output_files, strict=True))
@@ -728,19 +1371,59 @@ def _split_and_write_metadata(
             }
             for g in gaps
         ],
+        "warnings": build_warnings(),
     }
-    metadata_path = config.output_dir / "metadata.json"
-    try:
-        metadata_path.write_text(
-            json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-    except OSError as e:
-        raise AllaganEyeError(f"Cannot write metadata to {metadata_path}: {e}") from e
+    if brightness_samples is not None:
+        payload["brightness_samples"] = brightness_samples
+    return payload
 
-    typer.echo(f"\nOutput: {config.output_dir}")
-    for f in output_files:
-        typer.echo(f"  {f.name}")
-    typer.echo(f"Metadata: {metadata_path}")
+
+_BRIGHTNESS_TIMELINE_TARGET_SAMPLES = 512
+"""Target sample count for the GUI complete-screen timeline (#569).
+
+512 keeps the SVG path lightweight (well under the WebKit path-length
+limit on Windows + matches the existing dummy ``buildSampleBrightness``
+in the design prototype) while still capturing a 2:50 hour recording at
+~20 second granularity -- fine enough that match boundaries land on a
+distinct sample in practice.
+"""
+
+
+def build_brightness_samples(
+    raw_brightness: dict[float, float],
+    *,
+    target_samples: int = _BRIGHTNESS_TIMELINE_TARGET_SAMPLES,
+) -> BrightnessSamples | None:
+    """Down-sample a Pass 1 ``{timestamp: brightness}`` map for metadata.json (#569).
+
+    The GUI complete screen draws a brightness timeline whose width is
+    fixed (~700px); rendering every probe (potentially tens of thousands
+    on a 3-hour video) would bloat metadata.json and yield more SVG path
+    points than the WebView can stroke smoothly.  We linearly stride the
+    sorted timestamps so the resulting array is at most
+    ``target_samples`` entries while preserving the start / end shape.
+
+    Returns ``None`` for empty input so callers can ``if samples is None:
+    skip`` rather than write a degenerate ``{interval_s: 0, values: []}``
+    object.
+    """
+    if not raw_brightness:
+        return None
+    timestamps = sorted(raw_brightness.keys())
+    n = len(timestamps)
+    stride = max(1, n // max(1, target_samples))
+    selected = timestamps[::stride]
+    if not selected:
+        return None
+    if len(selected) >= 2:
+        interval_s = float(selected[1] - selected[0])
+    else:
+        interval_s = float(timestamps[-1]) if timestamps[-1] > 0 else 1.0
+    values = [round(float(raw_brightness[t]), 3) for t in selected]
+    return {
+        "interval_s": round(interval_s, 6),
+        "values": values,
+    }
 
 
 def _print_environment_header(
@@ -759,7 +1442,7 @@ def _print_environment_header(
     from allaganeye.system_info import (
         get_cpu_info,
         get_disk_info,
-        get_gpu_info,
+        get_gpu_info_lines,
         get_memory_info,
     )
 
@@ -771,7 +1454,15 @@ def _print_environment_header(
         f"{platform.system()} {platform.release()})"
     )
     typer.echo(f"  CPU: {get_cpu_info()}")
-    typer.echo(f"  GPU: {get_gpu_info()}")
+    gpus = get_gpu_info_lines()
+    if not gpus:
+        typer.echo("  GPU: (unavailable)")
+    elif len(gpus) == 1:
+        typer.echo(f"  GPU: {gpus[0]}")
+    else:
+        typer.echo("  GPU:")
+        for gpu in gpus:
+            typer.echo(f"    - {gpu}")
     typer.echo(f"  Memory: {get_memory_info()}")
     disk_target = output_dir if output_dir is not None else Path.cwd()
     typer.echo(f"  Disk: {get_disk_info(disk_target)}")
@@ -806,6 +1497,8 @@ def _probe_ffmpeg_version() -> str:
             [find_ffmpeg(), "-version"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
             timeout=5,
         )
@@ -912,6 +1605,16 @@ def _print_detection_stats(stats: DetectionStats) -> None:
             )
         if drops.get("other", 0) > 0:
             typer.echo(f"    {drops['other']} dropped (other)")
+
+    # Unknown match accounting (#433): recordings starting / ending mid-match
+    # produce ``type=unknown`` segments at the timeline edges. They are part
+    # of Detected count but not of the Filter "kept" formula (candidates
+    # counts blackout boundaries, not edge segments), so without this line
+    # users see Filter=N / Detected=N+1 and assume a counting bug.
+    unknown_count = stats.get("filter_unknown", 0)
+    if unknown_count > 0:
+        label = "match" if unknown_count == 1 else "matches"
+        typer.echo(f"  + {unknown_count} unknown {label} (録画途中試合)")
 
 
 def _format_timestamp(seconds: float) -> str:

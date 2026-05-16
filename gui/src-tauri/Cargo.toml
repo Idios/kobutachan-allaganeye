@@ -1,0 +1,45 @@
+[package]
+name = "allaganeye-gui"
+version = "0.2.0"
+description = "Allagan Eye GUI shell (Tauri 2 + React)"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "=2.5.6", features = [] }
+
+[dependencies]
+tauri = { version = "=2.10.3", features = ["protocol-asset"] }
+tauri-plugin-dialog = "=2.7.0"
+tauri-plugin-fs = "=2.5.0"
+tauri-plugin-shell = "=2.3.5"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.149"
+tokio = { version = "=1.52.1", features = ["full"] }
+tokio-util = { version = "=0.7.18", features = ["io"] }
+axum = { version = "=0.8.9", features = ["macros"] }
+tower-http = { version = "=0.6.8", features = ["fs"] }
+hyper = "=1.9.0"
+futures = "=0.3.32"
+urlencoding = "=2.1.3"
+percent-encoding = "=2.3.2"
+uuid = { version = "=1.23.1", features = ["v4"] }
+sha2 = "=0.10.9"
+dirs = "=6.0.0"
+# #669 -- ErrorModal `[Issue 本文をコピー]` button が clipboard に書き込む Markdown
+# 本文の `## 環境情報` section を組み立てるために OS / CPU / Memory / Disk 情報を
+# probe する。Tauri command `probe_environment_info` から使用。`metadata.system_info`
+# (GPU 3 field のみ) だけでは bug_report.yml `environment` placeholder の format を
+# 満たせないため追加 (plan/spec の "metadata.system_info に OS/CPU/etc が入っている"
+# 仮定の修正)。
+sysinfo = "=0.39.1"
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[lib]
+name = "allaganeye_gui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]

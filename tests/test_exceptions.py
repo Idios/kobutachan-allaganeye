@@ -1,6 +1,7 @@
 """Tests for AllaganEyeError context/verbose_detail (issue #351)."""
 
 from allaganeye.exceptions import (
+    STDERR_TAIL_BYTES,
     AllaganEyeError,
     DetectionError,
     VideoProcessingError,
@@ -80,11 +81,11 @@ def test_probe_video_error_attaches_command_and_stderr():
     assert "Invalid data" in ctx["stderr_tail"]
 
 
-def test_stderr_tail_truncated_to_2000_chars():
-    """Long stderr output is truncated to last 2000 chars (#351).
+def test_stderr_tail_truncated_to_constant_cap():
+    """Long stderr output is truncated to last ``STDERR_TAIL_BYTES`` chars (#351, #413).
 
-    Guards against silent bloat of context if someone changes
-    ``[-2000:]`` to a larger slice or removes it entirely.  Verified via
+    Guards against silent bloat of context if someone raises
+    ``STDERR_TAIL_BYTES`` or removes the slice entirely.  Verified via
     the probe.py raise site which is representative of all three (probe
     / gpu / extract) that share the same cap.
     """
@@ -96,7 +97,7 @@ def test_stderr_tail_truncated_to_2000_chars():
 
     from allaganeye.video.probe import probe_video
 
-    huge_stderr = "x" * 5000 + "END"
+    huge_stderr = "x" * (STDERR_TAIL_BYTES + 3000) + "END"
     err = subprocess.CalledProcessError(
         returncode=1, cmd=["ffprobe"], stderr=huge_stderr
     )
@@ -108,7 +109,7 @@ def test_stderr_tail_truncated_to_2000_chars():
             probe_video(Path("bad.mkv"))
 
     tail = excinfo.value.context["stderr_tail"]
-    assert len(tail) == 2000
+    assert len(tail) == STDERR_TAIL_BYTES
     # Ensure we kept the tail (not the head): the final marker survives
     assert tail.endswith("END")
 
@@ -156,3 +157,29 @@ def test_detection_error_context_includes_audio_hits():
     ctx = excinfo.value.context
     assert "audio_hits" in ctx
     assert ctx["audio_hits"] == "disabled"
+
+
+def test_integrity_error_exit_code_seven():
+    """IntegrityError reports exit_code 7 (#668)."""
+    from allaganeye.exceptions import IntegrityError
+
+    exc = IntegrityError("bundled file missing")
+    assert exc.exit_code == 7
+    assert isinstance(exc, AllaganEyeError)
+    assert exc.context == {}
+
+
+def test_integrity_error_context_renders_in_verbose():
+    """IntegrityError uses base verbose_detail for context dicts (#668)."""
+    from allaganeye.exceptions import IntegrityError
+
+    exc = IntegrityError(
+        "integrity check failed",
+        context={
+            "missing": ["lib/allaganeye/audio/refs/fanfare.npz"],
+            "size_mismatch": [],
+        },
+    )
+    detail = exc.verbose_detail()
+    assert "missing:" in detail
+    assert "size_mismatch:" in detail

@@ -1,0 +1,303 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'scripts/build-portable-zip.ps1'
+      - 'scripts/extract_release_notes.py'
+      - 'pyproject.toml'
+      # GUI 関連: tauri build を release CI で実行するため (#570)。
+      # tauri.conf.json / Cargo.toml / Rust src / TS src / vite config の単独変更でも
+      # release CI を trigger し、Tauri build 失敗の検出が遅れないようにする。
+      - 'gui/package.json'
+      - 'gui/package-lock.json'
+      - 'gui/src-tauri/**'
+      - 'gui/src/**'
+      - 'gui/index.html'
+      - 'gui/vite.config.ts'
+      - 'gui/tsconfig*.json'
+  workflow_dispatch:
+    inputs:
+      version_override:
+        description: 'Version string used for dry-run build. Defaults to pyproject.toml version.'
+        required: false
+        type: string
+
+jobs:
+  version-check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.parse.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.9'
+
+      - name: Resolve and verify version
+        id: parse
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYPROJECT_VERSION=$(python -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')
+          echo "pyproject.toml version: $PYPROJECT_VERSION"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "tag version: $TAG_VERSION"
+            if [[ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]]; then
+              echo "::error::Tag v$TAG_VERSION does not match pyproject.toml version $PYPROJECT_VERSION"
+              exit 1
+            fi
+            VERSION="$TAG_VERSION"
+          else
+            OVERRIDE='${{ inputs.version_override }}'
+            VERSION="${OVERRIDE:-$PYPROJECT_VERSION}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Using version: $VERSION"
+
+  build-windows:
+    needs: version-check
+    runs-on: windows-latest
+    env:
+      # build-portable-zip.ps1 reuses the BtbN FFmpeg zip from this directory
+      # when the digest matches, and saves freshly downloaded copies here.
+      # actions/cache persists the directory across runs keyed by asset SHA256.
+      ALLAGANEYE_BUILD_CACHE_DIR: ${{ github.workspace }}/build-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.9'
+
+      # Node + Rust toolchain for Tauri GUI build (#570). bundle.active = false
+      # in tauri.conf.json so `npm run tauri build` only compiles the .exe and
+      # skips NSIS/MSI installer generation; the resulting allaganeye-gui.exe
+      # is copied as-is into the Portable ZIP payload by
+      # scripts/build-portable-zip.ps1 at packaging time (no rename, the cargo
+      # binary name without whitespace is used directly).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+
+      - name: Cache FFmpeg archive
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/build-cache
+          key: btbn-ffmpeg-win64-lgpl-shared-8.1-e27598e612078f25d3e9cf245ce5042990f2602146e5a6f8287b143b0dce0e95
+
+      - name: Install GUI dependencies (#570)
+        shell: pwsh
+        working-directory: gui
+        run: npm install --no-audit --no-fund
+
+      - name: Build Tauri GUI binary (#570)
+        shell: pwsh
+        working-directory: gui
+        run: npm run tauri build
+
+      - name: Build Portable ZIP (skip archive)
+        shell: pwsh
+        run: ./scripts/build-portable-zip.ps1 -Version '${{ needs.version-check.outputs.version }}' -SkipArchive
+
+      # build-portable-zip.ps1 は Tauri exe が見つからない場合 Write-Warning で
+      # 続行する (CLI-only ZIP として artifact 化) ため、payload に exe が含まれない
+      # 回帰を smoke test の前に明示 fail させる (#570 受け入れ条件 #3)。
+      - name: Verify allaganeye-gui.exe is bundled (#570)
+        shell: pwsh
+        run: |
+          $version = '${{ needs.version-check.outputs.version }}'
+          $exePath = "build/portable/allaganeye-v$version/allaganeye-gui.exe"
+          if (-not (Test-Path $exePath)) {
+            throw "allaganeye-gui.exe not found in payload: $exePath (build-portable-zip.ps1 may have hit the auto-detect Write-Warning path - check 'Build Tauri GUI binary' step)"
+          }
+          $size = (Get-Item $exePath).Length / 1MB
+          Write-Host "allaganeye-gui.exe bundled at $exePath ($([math]::Round($size, 2)) MB)"
+
+      - name: Smoke test (run launcher --version from built payload)
+        shell: pwsh
+        run: |
+          $version = '${{ needs.version-check.outputs.version }}'
+          $payload = "build/portable/allaganeye-v$version"
+          if (-not (Test-Path $payload)) {
+            throw "Payload directory not found: $payload"
+          }
+          Push-Location $payload
+          try {
+            # cmd.exe -c so the .bat runs end-to-end (including final pause).
+            # Empty stdin via '' | pipes a newline that releases the pause.
+            $output = '' | & cmd.exe /c "allaganeye.bat --version" 2>&1
+            $exitCode = $LASTEXITCODE
+            $joined = $output | Out-String
+            Write-Host '--- allaganeye.bat --version output ---'
+            Write-Host $joined
+            Write-Host "--- exit code: $exitCode ---"
+            if ($exitCode -ne 0) {
+              throw "allaganeye.bat --version exited with $exitCode"
+            }
+            if ($joined -notmatch 'allaganeye') {
+              throw "Expected 'allaganeye' marker in version output, got: $joined"
+            }
+          }
+          finally {
+            Pop-Location
+          }
+
+      - name: Smoke test Level B (run launcher detect on 3s fixture)
+        shell: pwsh
+        run: |
+          # GitHub Actions の `shell: pwsh` は暗黙的に
+          # `$PSNativeCommandUseErrorActionPreference = $true` を設定するため、
+          # native command (cmd.exe) が non-zero exit (今回 4) を返すと PS が
+          # auto-stop してしまう。Level B は exit 4 を想定値として扱うので無効化。
+          $PSNativeCommandUseErrorActionPreference = $false
+          $version = '${{ needs.version-check.outputs.version }}'
+          $payload = "build/portable/allaganeye-v$version"
+          $fixture = Join-Path $env:GITHUB_WORKSPACE 'tests\fixtures\smoke_3s.mp4'
+          if (-not (Test-Path $fixture)) {
+            throw "Fixture not found: $fixture"
+          }
+          Push-Location $payload
+          try {
+            # stderr redirect は cmd.exe 内で行う (`2>&1` を cmd 引数の内側に置く)。
+            # PowerShell 側で `2>&1` すると native command の stderr が
+            # NativeCommandError として PS の error stream に wrap され、
+            # exit code が想定値でも step 全体が failure 扱いされる。
+            $output = '' | & cmd.exe /c "allaganeye.bat detect `"$fixture`" -o smoke-output\ 2>&1"
+            $exitCode = $LASTEXITCODE
+            # GitHub Actions の `pwsh` shell は script 末尾に
+            # `if (Test-Path variable:/LASTEXITCODE) { exit $LASTEXITCODE }` を
+            # 自動付加する。$LASTEXITCODE を消費直後に 0 にリセットしないと
+            # 想定値 (4) が step exit code として伝搬し step failure 扱いになる。
+            $LASTEXITCODE = 0
+            $joined = $output | Out-String
+            Write-Host '--- allaganeye.bat detect output ---'
+            Write-Host $joined
+            Write-Host "--- exit code: $exitCode ---"
+            if ($exitCode -ne 0 -and $exitCode -ne 4) {
+              throw "allaganeye.bat detect exited with $exitCode (expected 0 or 4)"
+            }
+            if ($exitCode -eq 0 -and -not (Test-Path 'smoke-output\metadata.json')) {
+              throw "Expected smoke-output\metadata.json to exist for exit 0, but it is missing"
+            }
+          }
+          finally {
+            # smoke-output/ が upload-artifact (path: build/portable/...) 配下に
+            # 残ると配布物 artifact に test 痕跡が混入する (現状 exit 4 経路では
+            # 未作成だが将来 exit 0 経路を通った場合の latent pollution risk)。
+            # cleanup 失敗 (ファイルロック等) で smoke-test 自体を fail 扱いに
+            # しないため -ErrorAction SilentlyContinue。
+            if (Test-Path 'smoke-output') {
+              Remove-Item -Recurse -Force 'smoke-output' -ErrorAction SilentlyContinue
+            }
+            Pop-Location
+          }
+
+      # #668 -- Verify integrity-check fall-through in release builds:
+      # copy payload, remove a known bundled file, run --version, assert
+      # exit code 7. Confirms `#[cfg(not(debug_assertions))]` guard is
+      # active for release profile builds and that
+      # `integrity-manifest.json` is generated by the build script.
+      - name: Smoke test (integrity-check fall-through, expect exit 7)
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $version = '${{ needs.version-check.outputs.version }}'
+          $payload = "build/portable/allaganeye-v$version"
+          $verifyDir = "verify/allaganeye-v$version"
+
+          # Copy payload to a sibling dir so artifact upload is unaffected.
+          if (Test-Path verify) { Remove-Item -Recurse -Force verify }
+          New-Item -ItemType Directory -Force -Path verify | Out-Null
+          Copy-Item -Recurse "$payload" "verify/" -Force
+
+          # Sanity: integrity-manifest.json must exist in the verify copy.
+          $manifest = Join-Path $verifyDir 'integrity-manifest.json'
+          if (-not (Test-Path $manifest)) {
+            throw "integrity-manifest.json not found in built payload: $manifest"
+          }
+
+          # Remove a bundled file the manifest is known to track.
+          $victim = Join-Path $verifyDir 'lib\allaganeye\audio\refs\fanfare.npz'
+          if (-not (Test-Path $victim)) {
+            throw "expected bundled file not present (build broken?): $victim"
+          }
+          Remove-Item -Force $victim
+
+          # Drive --version and capture the exit code without auto-stop.
+          Push-Location $verifyDir
+          try {
+            $output = '' | & cmd.exe /c "allaganeye.bat --version 2>&1"
+            $exitCode = $LASTEXITCODE
+            $LASTEXITCODE = 0  # release.yml 既存 idiom: native 戻り値を step 末尾 auto-exit に伝播させない
+            Write-Host '--- integrity-check --version output ---'
+            Write-Host ($output | Out-String)
+            Write-Host "--- exit code: $exitCode (expected 7) ---"
+            if ($exitCode -ne 7) {
+              throw "integrity check did not produce exit code 7 (got $exitCode)"
+            }
+          }
+          finally {
+            Pop-Location
+            # PR #702 review #6: cleanup を finally に移動して throw 時 (exit code != 7) も
+            # verify/ が残らないようにする (act 等の local CI 実行で害が出ないため)。
+            if (Test-Path verify) { Remove-Item -Recurse -Force verify }
+          }
+
+      # Upload the expanded payload folder; actions/upload-artifact zips it once
+      # on its own, which avoids the previous "zip inside a zip" artifact.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: allaganeye-windows-v${{ needs.version-check.outputs.version }}
+          path: build/portable/allaganeye-v${{ needs.version-check.outputs.version }}
+          if-no-files-found: error
+
+  release:
+    needs: [version-check, build-windows]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.9'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: allaganeye-windows-v${{ needs.version-check.outputs.version }}
+          path: dist/allaganeye-v${{ needs.version-check.outputs.version }}
+
+      # Re-create the single release archive from the payload folder. Keeping
+      # the top-level allaganeye-v<version>/ directory inside the zip preserves
+      # the extraction layout users have relied on since v0.1.0.
+      - name: Create release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          zip -r "allaganeye-v${{ needs.version-check.outputs.version }}-windows.zip" "allaganeye-v${{ needs.version-check.outputs.version }}"
+
+      - name: Extract release notes from CHANGELOG
+        shell: bash
+        run: python scripts/extract_release_notes.py '${{ needs.version-check.outputs.version }}' release-notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/allaganeye-v*-windows.zip
+          body_path: release-notes.md
+          generate_release_notes: false

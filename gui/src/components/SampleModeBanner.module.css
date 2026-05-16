@@ -1,0 +1,9 @@
+.banner {
+  background: var(--ae-gold-dim);
+  color: var(--ae-bg);
+  padding: 8px 16px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--ae-gold);
+  text-align: center;
+  font-family: var(--ae-font-ui);
+}

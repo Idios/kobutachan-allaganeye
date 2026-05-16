@@ -33,38 +33,159 @@ def test_get_cpu_info_returns_non_empty_string():
     assert result != ""
 
 
-@patch("allaganeye.system_info._detect_cpu_model", return_value="AMD Ryzen 9 9950X3D")
+@patch(
+    "allaganeye.system_info._detect_cpu_models",
+    return_value=["AMD Ryzen 9 9950X3D"],
+)
 @patch("allaganeye.system_info._detect_physical_cores", return_value=16)
 @patch("allaganeye.system_info.os.cpu_count", return_value=32)
-def test_get_cpu_info_includes_physical_and_logical_counts(_logical, _physical, _model):
+def test_get_cpu_info_includes_physical_and_logical_counts(
+    _logical, _physical, _models
+):
     result = get_cpu_info()
     assert result == "AMD Ryzen 9 9950X3D (16C/32T)"
 
 
-@patch("allaganeye.system_info._detect_cpu_model", return_value="Apple M1")
+@patch("allaganeye.system_info._detect_cpu_models", return_value=["Apple M1"])
 @patch("allaganeye.system_info._detect_physical_cores", return_value=8)
 @patch("allaganeye.system_info.os.cpu_count", return_value=8)
 def test_get_cpu_info_collapses_when_physical_equals_logical(
-    _logical, _physical, _model
+    _logical, _physical, _models
 ):
     """When physical == logical, show only one count (``8T``) to reduce noise."""
     result = get_cpu_info()
     assert result == "Apple M1 (8T)"
 
 
-@patch("allaganeye.system_info._detect_cpu_model", return_value=None)
+@patch("allaganeye.system_info._detect_cpu_models", return_value=None)
 @patch("allaganeye.system_info.os.cpu_count", return_value=None)
-def test_get_cpu_info_unavailable_when_nothing_works(_model, _cores):
+def test_get_cpu_info_unavailable_when_nothing_works(_models, _cores):
     assert get_cpu_info() == _UNAVAILABLE
 
 
-@patch("allaganeye.system_info._detect_cpu_model", return_value=None)
+@patch("allaganeye.system_info._detect_cpu_models", return_value=None)
 @patch("allaganeye.system_info._detect_physical_cores", return_value=None)
 @patch("allaganeye.system_info.os.cpu_count", return_value=8)
-def test_get_cpu_info_uses_fallback_model_when_unknown(_logical, _physical, _model):
+def test_get_cpu_info_uses_fallback_model_when_unknown(_logical, _physical, _models):
     result = get_cpu_info()
     assert "(unknown CPU)" in result
     assert "(8T)" in result
+
+
+# --- #435: multi-CPU aggregation ---
+
+
+@patch(
+    "allaganeye.system_info._detect_cpu_models",
+    return_value=["AMD EPYC 7763 64-Core Processor", "AMD EPYC 7763 64-Core Processor"],
+)
+@patch("allaganeye.system_info._detect_physical_cores", return_value=128)
+@patch("allaganeye.system_info.os.cpu_count", return_value=256)
+def test_get_cpu_info_dual_socket_same_model(_logical, _physical, _models):
+    """Dual-socket same model uses xN notation (#435)."""
+    result = get_cpu_info()
+    assert result == "AMD EPYC 7763 64-Core Processor x2 (128C/256T)"
+
+
+@patch(
+    "allaganeye.system_info._detect_cpu_models",
+    return_value=["Intel Xeon Gold 6154", "AMD EPYC 7763"],
+)
+@patch("allaganeye.system_info._detect_physical_cores", return_value=92)
+@patch("allaganeye.system_info.os.cpu_count", return_value=128)
+def test_get_cpu_info_mixed_models_uses_plus_join(_logical, _physical, _models):
+    """Mixed-model multi-CPU joins with ' + ' (#435)."""
+    result = get_cpu_info()
+    assert result == "Intel Xeon Gold 6154 + AMD EPYC 7763 (92C/128T)"
+
+
+@patch("allaganeye.system_info._detect_cpu_models", return_value=["AMD EPYC 7763"])
+@patch("allaganeye.system_info._detect_physical_cores", return_value=64)
+@patch("allaganeye.system_info.os.cpu_count", return_value=128)
+def test_get_cpu_info_single_socket_uses_bare_name(_logical, _physical, _models):
+    """Single-socket retains the bare model + (CC/TT) format (#435 regression guard)."""
+    result = get_cpu_info()
+    assert result == "AMD EPYC 7763 (64C/128T)"
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+def test_detect_cpu_models_windows_returns_all_sockets(_system):
+    """Windows wmic returns every CPU package, not just the first (#435)."""
+    from allaganeye.system_info import _detect_cpu_models
+
+    wmic_output = (
+        "Name\nAMD EPYC 7763 64-Core Processor\nAMD EPYC 7763 64-Core Processor\n"
+    )
+    with patch("allaganeye.system_info._run_text", return_value=wmic_output):
+        result = _detect_cpu_models()
+    assert result == [
+        "AMD EPYC 7763 64-Core Processor",
+        "AMD EPYC 7763 64-Core Processor",
+    ]
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+def test_detect_physical_cores_windows_sums_all_sockets(_system):
+    """Windows wmic NumberOfCores is summed across packages (#435)."""
+    from allaganeye.system_info import _detect_physical_cores
+
+    wmic_output = "NumberOfCores\n64\n64\n"
+    with patch("allaganeye.system_info._run_text", return_value=wmic_output):
+        result = _detect_physical_cores()
+    assert result == 128
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Linux")
+def test_detect_cpu_models_linux_dedups_per_socket(_system):
+    """Linux /proc/cpuinfo with two physical IDs returns both socket models (#435)."""
+    from allaganeye.system_info import _detect_cpu_models
+
+    cpuinfo = (
+        "processor\t: 0\n"
+        "physical id\t: 0\n"
+        "model name\t: AMD EPYC 7763 64-Core Processor\n"
+        "\n"
+        "processor\t: 1\n"
+        "physical id\t: 0\n"
+        "model name\t: AMD EPYC 7763 64-Core Processor\n"
+        "\n"
+        "processor\t: 64\n"
+        "physical id\t: 1\n"
+        "model name\t: AMD EPYC 7763 64-Core Processor\n"
+        "\n"
+        "processor\t: 65\n"
+        "physical id\t: 1\n"
+        "model name\t: AMD EPYC 7763 64-Core Processor\n"
+        "\n"
+    )
+    with patch("builtins.open", mock_open(read_data=cpuinfo)):
+        result = _detect_cpu_models()
+    # One entry per physical socket, both identical -> caller renders x2.
+    assert result == [
+        "AMD EPYC 7763 64-Core Processor",
+        "AMD EPYC 7763 64-Core Processor",
+    ]
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Linux")
+def test_detect_cpu_models_linux_mixed_sockets(_system):
+    """Linux /proc/cpuinfo with mixed-model sockets is supported (#435)."""
+    from allaganeye.system_info import _detect_cpu_models
+
+    cpuinfo = (
+        "processor\t: 0\n"
+        "physical id\t: 0\n"
+        "model name\t: Intel Xeon Gold 6154\n"
+        "\n"
+        "processor\t: 18\n"
+        "physical id\t: 1\n"
+        "model name\t: AMD EPYC 7763\n"
+        "\n"
+    )
+    with patch("builtins.open", mock_open(read_data=cpuinfo)):
+        result = _detect_cpu_models()
+    # Order is by physical_id ascending so the display is deterministic.
+    assert result == ["Intel Xeon Gold 6154", "AMD EPYC 7763"]
 
 
 # --- get_gpu_info ---
@@ -190,24 +311,27 @@ def test_run_text_returns_stdout_on_success():
 
 
 @pytest.mark.parametrize(
-    ("cpu", "gpu", "mem", "disk"),
+    ("cpu", "gpus", "mem", "disk", "expected_gpu_line"),
     [
         (
             "AMD Ryzen 9 (16C/32T)",
-            "NVIDIA RTX 5090 (32GB VRAM)",
+            ["NVIDIA RTX 5090 (32GB VRAM)"],
             "64.0 GB",
             "142.5 / 931.5 GB free on E:",
+            "GPU: NVIDIA RTX 5090 (32GB VRAM)",
         ),
-        (_UNAVAILABLE, _UNAVAILABLE, _UNAVAILABLE, _UNAVAILABLE),
+        (_UNAVAILABLE, [], _UNAVAILABLE, _UNAVAILABLE, "GPU: (unavailable)"),
     ],
 )
-def test_print_environment_header_emits_hw_lines(cpu, gpu, mem, disk, tmp_path, capsys):
-    """_print_environment_header emits 4 HW lines including on fallback (#377)."""
+def test_print_environment_header_emits_hw_lines(
+    cpu, gpus, mem, disk, expected_gpu_line, tmp_path, capsys
+):
+    """_print_environment_header emits 4 HW lines including on fallback (#377, #436)."""
     from allaganeye.commands.split_matches import _print_environment_header
 
     with (
         patch("allaganeye.system_info.get_cpu_info", return_value=cpu),
-        patch("allaganeye.system_info.get_gpu_info", return_value=gpu),
+        patch("allaganeye.system_info.get_gpu_info_lines", return_value=gpus),
         patch("allaganeye.system_info.get_memory_info", return_value=mem),
         patch("allaganeye.system_info.get_disk_info", return_value=disk),
     ):
@@ -215,9 +339,121 @@ def test_print_environment_header_emits_hw_lines(cpu, gpu, mem, disk, tmp_path, 
 
     out = capsys.readouterr().out
     assert f"CPU: {cpu}" in out
-    assert f"GPU: {gpu}" in out
+    assert expected_gpu_line in out
     assert f"Memory: {mem}" in out
     assert f"Disk: {disk}" in out
+
+
+# --- #436: multi-GPU listing ---
+
+
+@patch("allaganeye.system_info._run_text")
+def test_get_gpu_info_lines_multiple_nvidia(mock_run):
+    """nvidia-smi multi-line CSV is parsed into multiple GPU entries (#436)."""
+    from allaganeye.system_info import get_gpu_info_lines
+
+    def side_effect(cmd, **_kwargs):
+        if cmd[:1] == ["nvidia-smi"]:
+            return "NVIDIA GeForce RTX 5090, 32768\nNVIDIA GeForce RTX 4090, 24576\n"
+        return None
+
+    mock_run.side_effect = side_effect
+    result = get_gpu_info_lines()
+    assert result == [
+        "NVIDIA GeForce RTX 5090 (32GB VRAM)",
+        "NVIDIA GeForce RTX 4090 (24GB VRAM)",
+    ]
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+@patch("allaganeye.system_info._run_text")
+def test_get_gpu_info_lines_dgpu_plus_igpu_windows(mock_run, _system):
+    """dGPU (NVIDIA) + iGPU (Intel) returns both with NVIDIA showing VRAM (#436).
+
+    The platform-probe duplicate of the NVIDIA card is deduped via
+    :func:`_gpu_signature` so the list never shows the same card twice.
+    """
+    from allaganeye.system_info import get_gpu_info_lines
+
+    def side_effect(cmd, **_kwargs):
+        if cmd[:1] == ["nvidia-smi"]:
+            return "NVIDIA GeForce RTX 5090, 32768\n"
+        if cmd[:1] == ["wmic"]:
+            return "Name\nNVIDIA GeForce RTX 5090\nIntel UHD Graphics 770\n"
+        return None
+
+    mock_run.side_effect = side_effect
+    result = get_gpu_info_lines()
+    assert result == [
+        "NVIDIA GeForce RTX 5090 (32GB VRAM)",
+        "Intel UHD Graphics 770",
+    ]
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+@patch("allaganeye.system_info._run_text")
+def test_get_gpu_info_lines_no_nvidia_windows(mock_run, _system):
+    """When nvidia-smi is unavailable, wmic provides every GPU (#436)."""
+    from allaganeye.system_info import get_gpu_info_lines
+
+    def side_effect(cmd, **_kwargs):
+        if cmd[:1] == ["nvidia-smi"]:
+            return None
+        if cmd[:1] == ["wmic"]:
+            return "Name\nAMD Radeon RX 7900 XTX\nIntel UHD Graphics\n"
+        return None
+
+    mock_run.side_effect = side_effect
+    result = get_gpu_info_lines()
+    assert result == ["AMD Radeon RX 7900 XTX", "Intel UHD Graphics"]
+
+
+@patch("allaganeye.system_info._run_text", return_value=None)
+def test_get_gpu_info_lines_returns_empty_when_no_probe_succeeds(_run):
+    """No probe success -> empty list (caller should display unavailable)."""
+    from allaganeye.system_info import get_gpu_info_lines
+
+    assert get_gpu_info_lines() == []
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Linux")
+@patch("allaganeye.system_info._run_text")
+def test_probe_gpu_names_platform_strips_lspci_bus_prefix(mock_run, _system):
+    """Linux lspci output strips bus address + category prefix (#436)."""
+    from allaganeye.system_info import _probe_gpu_names_platform
+
+    mock_run.return_value = (
+        "00:02.0 VGA compatible controller: Intel Corporation UHD Graphics\n"
+        "01:00.0 3D controller: NVIDIA Corporation GA107M [GeForce RTX 3050]\n"
+    )
+    result = _probe_gpu_names_platform()
+    assert result == [
+        "Intel Corporation UHD Graphics",
+        "NVIDIA Corporation GA107M [GeForce RTX 3050]",
+    ]
+
+
+def test_print_environment_header_renders_multi_gpu_as_multi_line(tmp_path, capsys):
+    """Multi-GPU systems emit a multi-line ``GPU:`` block with bullet entries (#436)."""
+    from allaganeye.commands.split_matches import _print_environment_header
+
+    with (
+        patch("allaganeye.system_info.get_cpu_info", return_value="X"),
+        patch(
+            "allaganeye.system_info.get_gpu_info_lines",
+            return_value=["NVIDIA RTX 5090 (32GB VRAM)", "Intel UHD Graphics"],
+        ),
+        patch("allaganeye.system_info.get_memory_info", return_value="64.0 GB"),
+        patch("allaganeye.system_info.get_disk_info", return_value="1 GB"),
+    ):
+        _print_environment_header(tmp_path)
+
+    out = capsys.readouterr().out
+    assert "  GPU:\n" in out
+    assert "    - NVIDIA RTX 5090 (32GB VRAM)" in out
+    assert "    - Intel UHD Graphics" in out
+    # Single-line "GPU: NVIDIA ..." must NOT appear when multi-GPU rendering kicks in.
+    assert "  GPU: NVIDIA" not in out
 
 
 # --- Non-Windows parser coverage (#377 follow-up) ---
@@ -229,13 +465,13 @@ def test_print_environment_header_emits_hw_lines(cpu, gpu, mem, disk, tmp_path, 
 # Linux/macOS user's verbose header to ``(unavailable)``.
 
 
-# --- G1: _detect_cpu_model Linux /proc/cpuinfo ---
+# --- G1: _detect_cpu_models Linux /proc/cpuinfo (single-socket fallback) ---
 
 
 @patch("allaganeye.system_info.platform.system", return_value="Linux")
-def test_detect_cpu_model_linux_parses_proc_cpuinfo(_system):
-    """Linux branch extracts 'model name' value from /proc/cpuinfo."""
-    from allaganeye.system_info import _detect_cpu_model
+def test_detect_cpu_models_linux_parses_proc_cpuinfo_without_physical_id(_system):
+    """Containers / qemu often omit 'physical id'; we still extract the model."""
+    from allaganeye.system_info import _detect_cpu_models
 
     cpuinfo = (
         "processor\t: 0\n"
@@ -247,19 +483,19 @@ def test_detect_cpu_model_linux_parses_proc_cpuinfo(_system):
         "model name\t: AMD Ryzen 9 9950X3D 16-Core Processor\n"
     )
     with patch("builtins.open", mock_open(read_data=cpuinfo)):
-        result = _detect_cpu_model()
-    assert result == "AMD Ryzen 9 9950X3D 16-Core Processor"
+        result = _detect_cpu_models()
+    assert result == ["AMD Ryzen 9 9950X3D 16-Core Processor"]
 
 
 @patch("allaganeye.system_info.platform.system", return_value="Linux")
 @patch("allaganeye.system_info.platform.processor", return_value="")
-def test_detect_cpu_model_linux_falls_back_when_no_model_name(_proc, _system):
+def test_detect_cpu_models_linux_falls_back_when_no_model_name(_proc, _system):
     """Linux branch returns None when /proc/cpuinfo lacks 'model name'."""
-    from allaganeye.system_info import _detect_cpu_model
+    from allaganeye.system_info import _detect_cpu_models
 
     cpuinfo = "processor\t: 0\nvendor_id\t: AuthenticAMD\n"
     with patch("builtins.open", mock_open(read_data=cpuinfo)):
-        result = _detect_cpu_model()
+        result = _detect_cpu_models()
     # With no model line AND platform.processor() returning empty, we
     # must surface None so the caller can mark CPU as unknown.
     assert result is None
@@ -310,10 +546,14 @@ def test_detect_physical_cores_linux_returns_none_on_empty_file(_system):
 
 
 @patch("allaganeye.system_info.platform.system", return_value="Linux")
-@patch("allaganeye.system_info._detect_gpu_nvidia", return_value=None)
 @patch("allaganeye.system_info._run_text")
-def test_get_gpu_info_linux_parses_lspci_vga_line(mock_run, _nvidia, _system):
-    """Linux branch extracts the GPU name from a 'VGA compatible controller' line."""
+def test_get_gpu_info_linux_parses_lspci_vga_line(mock_run, _system):
+    """Linux branch extracts the GPU name from a 'VGA compatible controller' line.
+
+    `_detect_all_gpus_nvidia`'s strict CSV parser rejects the lspci-shaped
+    mock output (no comma + digit), so no separate ``_detect_gpu_nvidia``
+    patch is needed (#436 review).
+    """
     mock_run.return_value = (
         "00:00.0 Host bridge: Intel Corporation 12th Gen Core Host Bridge\n"
         "01:00.0 VGA compatible controller: "
@@ -325,9 +565,8 @@ def test_get_gpu_info_linux_parses_lspci_vga_line(mock_run, _nvidia, _system):
 
 
 @patch("allaganeye.system_info.platform.system", return_value="Linux")
-@patch("allaganeye.system_info._detect_gpu_nvidia", return_value=None)
 @patch("allaganeye.system_info._run_text")
-def test_get_gpu_info_linux_parses_lspci_3d_controller_line(mock_run, _nvidia, _system):
+def test_get_gpu_info_linux_parses_lspci_3d_controller_line(mock_run, _system):
     """Linux branch also matches '3D controller' lines (common on laptops)."""
     mock_run.return_value = (
         "00:02.0 VGA compatible controller: Intel Corporation UHD Graphics\n"
@@ -343,9 +582,8 @@ def test_get_gpu_info_linux_parses_lspci_3d_controller_line(mock_run, _nvidia, _
 
 
 @patch("allaganeye.system_info.platform.system", return_value="Darwin")
-@patch("allaganeye.system_info._detect_gpu_nvidia", return_value=None)
 @patch("allaganeye.system_info._run_text")
-def test_get_gpu_info_darwin_parses_chipset_model(mock_run, _nvidia, _system):
+def test_get_gpu_info_darwin_parses_chipset_model(mock_run, _system):
     """Darwin branch extracts 'Chipset Model: X' via regex."""
     mock_run.return_value = (
         "Graphics/Displays:\n\n"
@@ -358,11 +596,8 @@ def test_get_gpu_info_darwin_parses_chipset_model(mock_run, _nvidia, _system):
 
 
 @patch("allaganeye.system_info.platform.system", return_value="Darwin")
-@patch("allaganeye.system_info._detect_gpu_nvidia", return_value=None)
 @patch("allaganeye.system_info._run_text")
-def test_get_gpu_info_darwin_unavailable_when_no_chipset_line(
-    mock_run, _nvidia, _system
-):
+def test_get_gpu_info_darwin_unavailable_when_no_chipset_line(mock_run, _system):
     """Darwin branch falls back when system_profiler output lacks Chipset Model."""
     mock_run.return_value = "Graphics/Displays:\n\n    (info missing)\n"
     assert get_gpu_info() == _UNAVAILABLE

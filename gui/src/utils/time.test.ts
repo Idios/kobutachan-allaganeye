@@ -1,0 +1,118 @@
+import { describe, expect, it } from 'vitest';
+
+import { fmtMatchDuration, fmtPreciseTime, fmtTime } from './time';
+
+describe('fmtTime', () => {
+  it('formats sub-hour durations as MM:SS', () => {
+    expect(fmtTime(0)).toBe('00:00');
+    expect(fmtTime(5)).toBe('00:05');
+    expect(fmtTime(65)).toBe('01:05');
+    expect(fmtTime(3599)).toBe('59:59');
+  });
+
+  it('formats hour-plus durations as H:MM:SS', () => {
+    expect(fmtTime(3600)).toBe('1:00:00');
+    expect(fmtTime(3661)).toBe('1:01:01');
+    expect(fmtTime(10228.735)).toBe('2:50:28');
+  });
+
+  it('clamps negative input to 0', () => {
+    expect(fmtTime(-1)).toBe('00:00');
+    expect(fmtTime(-3600)).toBe('00:00');
+  });
+
+  it('handles NaN and Infinity by clamping to 0', () => {
+    expect(fmtTime(Number.NaN)).toBe('00:00');
+    expect(fmtTime(Number.POSITIVE_INFINITY)).toBe('00:00');
+  });
+
+  it('truncates fractional seconds (floor semantics)', () => {
+    expect(fmtTime(59.9)).toBe('00:59');
+    expect(fmtTime(60.999)).toBe('01:00');
+  });
+});
+
+describe('fmtPreciseTime', () => {
+  it('formats whole-second timestamps at 60fps', () => {
+    expect(fmtPreciseTime(0)).toBe('0:00:00.00');
+    expect(fmtPreciseTime(65)).toBe('0:01:05.00');
+    expect(fmtPreciseTime(3661)).toBe('1:01:01.00');
+  });
+
+  it('computes frame component for fractional seconds at 60fps', () => {
+    expect(fmtPreciseTime(1.5)).toBe('0:00:01.30');
+    expect(fmtPreciseTime(1.999, 60)).toBe('0:00:01.59');
+  });
+
+  it('respects custom fps parameter', () => {
+    expect(fmtPreciseTime(1.5, 30)).toBe('0:00:01.15');
+    expect(fmtPreciseTime(1.5, 24)).toBe('0:00:01.12');
+  });
+
+  it('emits a leading minus for negative timestamps', () => {
+    expect(fmtPreciseTime(-5)).toBe('-0:00:05.00');
+    expect(fmtPreciseTime(-0.5)).toBe('-0:00:00.30');
+  });
+
+  it('handles NaN by falling back to 0', () => {
+    expect(fmtPreciseTime(Number.NaN)).toBe('0:00:00.00');
+  });
+
+  // #465 review: 120 / 240 fps 対応 — 3-digit frame portion + frame-grid 安定化
+
+  it('uses 3-digit frame portion at 120fps and 240fps', () => {
+    // 120fps: 0 ≤ frames ≤ 119 → 3 桁 padding
+    expect(fmtPreciseTime(0, 120)).toBe('0:00:00.000');
+    expect(fmtPreciseTime(0.5, 120)).toBe('0:00:00.060');
+    expect(fmtPreciseTime(1.0, 120)).toBe('0:00:01.000');
+    // 240fps: 0 ≤ frames ≤ 239 → 3 桁 padding
+    expect(fmtPreciseTime(0, 240)).toBe('0:00:00.000');
+    expect(fmtPreciseTime(0.5, 240)).toBe('0:00:00.120');
+  });
+
+  it('keeps 2-digit frame portion at <=99 fps', () => {
+    expect(fmtPreciseTime(0, 30)).toBe('0:00:00.00');
+    expect(fmtPreciseTime(0, 60)).toBe('0:00:00.00');
+  });
+
+  it('round-trips frame-grid times without losing 1 frame to float error', () => {
+    // 91 frames at 120fps = 0.7583... sec、IEEE 754 で 0.7583... * 120 ≒
+    // 90.99999996... だが epsilon adjustment で frame 91 を表示
+    expect(fmtPreciseTime(91 / 120, 120)).toBe('0:00:00.091');
+    // 同様の grid 値: 1 + 91/120 sec, 60 + 91/120 sec
+    expect(fmtPreciseTime(1 + 91 / 120, 120)).toBe('0:00:01.091');
+    expect(fmtPreciseTime(60 + 91 / 120, 120)).toBe('0:01:00.091');
+    // 240fps grid
+    expect(fmtPreciseTime(181 / 240, 240)).toBe('0:00:00.181');
+  });
+});
+
+// #466 review: ExportScreen 一覧 duration の edited 反映 (boundary 反映バグ)
+describe('fmtMatchDuration', () => {
+  it('formats sub-hour durations as `{m}m{ss:02}s`', () => {
+    expect(fmtMatchDuration(0)).toBe('0m00s');
+    expect(fmtMatchDuration(49)).toBe('0m49s');
+    expect(fmtMatchDuration(60)).toBe('1m00s');
+    // sample metadata の値で CLI 出力と完全一致するか
+    expect(fmtMatchDuration(915.5)).toBe('15m15s');
+    expect(fmtMatchDuration(349.375)).toBe('5m49s');
+    expect(fmtMatchDuration(2582.5)).toBe('43m02s');
+  });
+
+  it('formats hour-plus durations as `{h}h{mm:02}m`', () => {
+    expect(fmtMatchDuration(3600)).toBe('1h00m');
+    expect(fmtMatchDuration(3900)).toBe('1h05m');
+    expect(fmtMatchDuration(9000)).toBe('2h30m');
+  });
+
+  it('clamps negative / NaN / Infinity to 0', () => {
+    expect(fmtMatchDuration(-1)).toBe('0m00s');
+    expect(fmtMatchDuration(Number.NaN)).toBe('0m00s');
+    expect(fmtMatchDuration(Number.POSITIVE_INFINITY)).toBe('0m00s');
+  });
+
+  it('truncates fractional seconds (floor semantics, mirrors CLI int())', () => {
+    expect(fmtMatchDuration(59.9)).toBe('0m59s');
+    expect(fmtMatchDuration(60.999)).toBe('1m00s');
+  });
+});

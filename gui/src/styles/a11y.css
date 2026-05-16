@@ -1,0 +1,59 @@
+/*
+ * Global a11y rules — see docs/a11y-policy.md.
+ *
+ * Responsibility split:
+ * - tokens.css owns aetherTheme color/font tokens and base reset.
+ * - a11y.css owns global :focus-visible outline, the shared spin
+ *   keyframes, and the prefers-reduced-motion override.
+ *
+ * Loaded after tokens.css from gui/src/main.tsx so that var(--ae-*)
+ * references resolve.
+ */
+
+/* ---------------------------------------------------------------------
+ * Focus visible
+ * ---------------------------------------------------------------------
+ * Every interactive element gets a gold ring when focused via keyboard.
+ * Mouse-driven :focus (which most browsers no longer style by default)
+ * stays unstyled.
+ */
+:focus-visible {
+  outline: 2px solid var(--ae-gold-bright);
+  outline-offset: 2px;
+  border-radius: 1px;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ---------------------------------------------------------------------
+ * Shared keyframes
+ * ---------------------------------------------------------------------
+ */
+@keyframes ae-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------------------------------------------------------------------
+ * Reduced motion
+ * ---------------------------------------------------------------------
+ * Honor the OS-level "reduce animations" preference: collapse all
+ * animations and transitions to near-zero so users who get motion
+ * sickness from spinners or sliding panels see static UI instead.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

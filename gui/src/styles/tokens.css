@@ -1,0 +1,90 @@
+/*
+ * aetherTheme tokens — populated in #464 Phase 2.
+ * Source: docs/design/bundle/project/variants/aether.jsx (const aetherTheme).
+ * All UI colors, fonts, chrome, switcher styling are exposed as CSS custom
+ * properties under :root so that *.module.css can reference them without
+ * duplicating the literal values.
+ */
+
+:root {
+  /* Fonts */
+  --ae-font-ui: 'Cinzel', 'Trajan Pro', 'Cormorant Garamond', serif;
+  --ae-font-body: 'Inter', 'Segoe UI', sans-serif;
+  --ae-font-mono: 'JetBrains Mono', 'Consolas', monospace;
+
+  /* Base palette */
+  --ae-bg: #0a0e14;
+  --ae-bg-deep: #05070b;
+  --ae-panel: linear-gradient(180deg, #0f1420 0%, #0a0e14 100%);
+  --ae-panel-border: 1px solid rgba(200, 163, 92, 0.18);
+
+  /* Gold accents */
+  --ae-gold: #c8a35c;
+  --ae-gold-bright: #e8c47a;
+  --ae-gold-dim: #8a7040;
+
+  /* Cyan accents */
+  --ae-cyan: #4ac3d9;
+  --ae-cyan-bright: #7ee0f0;
+  --ae-blue: #2b6e99;
+
+  /* Text */
+  --ae-text: #d8cfbb;
+  --ae-text-dim: #8a8270;
+  --ae-text-bright: #f0e8d4;
+
+  /* Semantic */
+  --ae-danger: #c87058;
+
+  /* Chrome (title bar) */
+  --ae-chrome-bg: linear-gradient(180deg, #0a0e14, #050709);
+  --ae-chrome-fg: #c8a35c;
+  --ae-chrome-border: 1px solid rgba(200, 163, 92, 0.15);
+
+  /* State switcher (dev tab) */
+  --ae-switcher-bg: rgba(10, 14, 20, 0.8);
+  --ae-switcher-border: 1px solid rgba(200, 163, 92, 0.25);
+  --ae-switcher-active-bg: linear-gradient(180deg, #c8a35c, #8a7040);
+  --ae-switcher-active-fg: #0a0e14;
+  --ae-switcher-fg: #8a8270;
+
+  /* Match thumbnail placeholder */
+  --ae-thumb-bg: linear-gradient(135deg, #1a2230, #0a0e14);
+  --ae-thumb-border: 1px solid rgba(200, 163, 92, 0.2);
+
+  /* Rgba compositing tokens (used for hover/dim overlays) */
+  --ae-gold-rgb: 200, 163, 92;
+  --ae-cyan-rgb: 74, 195, 217;
+  --ae-danger-rgb: 200, 112, 88;
+  --ae-bg-rgb: 10, 14, 20;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--ae-bg);
+  color: var(--ae-text);
+  font-family: var(--ae-font-body);
+  overflow: hidden;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+button {
+  font-family: inherit;
+}
+
+input,
+select,
+textarea {
+  font-family: inherit;
+  color: inherit;
+}
