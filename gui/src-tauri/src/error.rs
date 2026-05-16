@@ -25,13 +25,15 @@ impl AppError {
         }
     }
 
-    /// `hint` フィールドを設定する builder。
+    /// `hint` フィールドを明示的に設定する builder (per-call-site override 用)。
     ///
-    /// 将来用 — 現状 production code では未使用 (test のみ参照、PR #665 Round 2
-    /// 課題 5 (c) で保留決定)。lib.rs 側 AppError::new(...) の主要箇所に hint
-    /// を後付けで配るための小規模拡張で活用予定 (例: `state.mtime_conflict`
-    /// で「他プロセスでの書き換えを確認してください」等)。frontend 側 helper は
-    /// `gui/src/lib/appError.ts::appErrorHint` で同じく保留中。
+    /// production code は `with_default_hint()` 経由で code 別 default hint を
+    /// 設定する (#663 で lib.rs 全 80+ site に適用済)。`with_hint` 自体は test
+    /// (`serialize_app_error_roundtrips` /
+    /// `with_default_hint_does_not_overwrite_explicit_hint`) と、将来 Approach C
+    /// (per-call-site hint override) への hybrid 移行用 API として残す。
+    /// `#[allow(dead_code)]` は production 非経由 (= test 専用 API) を示し、
+    /// `cargo build` で dead-code warning を出さないためのもの。
     #[allow(dead_code)]
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
         self.hint = Some(hint.into());
@@ -102,7 +104,7 @@ impl From<serde_json::Error> for AppError {
 /// `.with_default_hint()` chain は future-proof のため (`From<io::Error>` /
 /// `From<serde_json::Error>` と同 contract で integrity を保つ。現状
 /// `internal.error` は hint None だが、将来 hint を追加した場合の silent
-/// bypass を防ぐ)。lib.rs 全 80 site の hint chain 規律と整合 (#663)。
+/// bypass を防ぐ)。lib.rs 全 80+ site の hint chain 規律と整合 (#663)。
 impl From<String> for AppError {
     fn from(message: String) -> Self {
         AppError::new("internal.error", message).with_default_hint()
