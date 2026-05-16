@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kobutachan-allaganeye"
-version = "0.2.0"
+version = "0.2.1"
 description = "FF14 Frontline video auto-highlight extraction tool"
 license = "MIT"
 requires-python = ">=3.11"
