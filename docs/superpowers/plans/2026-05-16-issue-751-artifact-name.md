@@ -14,9 +14,10 @@
 
 ---
 
-### Task 1: 現状確認 (variation control)
+## Task 1: 現状確認 (variation control)
 
 **Files:**
+
 - Read: `.github/workflows/release.yml` line 260-285
 
 - [ ] **Step 1: yml の該当箇所を grep で確認**
@@ -48,9 +49,10 @@ Read: `docs/superpowers/specs/2026-05-16-issue-751-artifact-name-design.md` の 
 
 ---
 
-### Task 2: yml line 263 (build-windows.upload-artifact) を変更
+## Task 2: yml line 263 (build-windows.upload-artifact) を変更
 
 **Files:**
+
 - Modify: `.github/workflows/release.yml` (upload-artifact section)
 
 - [ ] **Step 1: Edit upload-artifact name (context 付き個別変更)**
@@ -99,9 +101,10 @@ Expected output:
 
 ---
 
-### Task 3: yml line 282 (release.download-artifact) を変更
+## Task 3: yml line 282 (release.download-artifact) を変更
 
 **Files:**
+
 - Modify: `.github/workflows/release.yml` (download-artifact section)
 
 - [ ] **Step 1: Edit download-artifact name (context 付き個別変更)**
@@ -152,7 +155,7 @@ Expected output:
 
 ---
 
-### Task 4: 統合検証 (git diff + 全体 grep)
+## Task 4: 統合検証 (git diff + 全体 grep)
 
 - [ ] **Step 1: git diff で変更が yml 2 行のみであることを確認**
 
@@ -184,9 +187,10 @@ Expected output: `modified: .github/workflows/release.yml` のみ。design doc /
 
 ---
 
-### Task 5: yml 変更を commit
+## Task 5: yml 変更を commit
 
 **Files:**
+
 - Modify: `.github/workflows/release.yml`
 
 - [ ] **Step 1: git add + commit (HEREDOC で日本語含む message)**
@@ -226,7 +230,7 @@ Expected output:
 
 ---
 
-### Task 6: Iron Law 6 Pre-flight (PR 作成前の必須チェック)
+## Task 6: Iron Law 6 Pre-flight (PR 作成前の必須チェック)
 
 **Files:** なし (git operation のみ)
 
@@ -285,7 +289,7 @@ Expected output: 並行 worktree が PR 提出していないこと (Step 0 か�
 
 ---
 
-### Task 7: PR push + create
+## Task 7: PR push + create
 
 **Files:** なし (git / gh 操作)
 
@@ -392,7 +396,7 @@ text response で PR URL を Idios に提示 (リンク形式: `[#XXX](https://g
 
 ---
 
-### Task 8: PR CI 待ち + machine-verified bullet 確定
+## Task 8: PR CI 待ち + machine-verified bullet 確定
 
 **Files:** なし (CI 待ち)
 
@@ -429,7 +433,7 @@ CI PASS が確認できたら、PR body の Self-Test Report machine-verified bu
 
 ---
 
-### Task 9: Idios 目視 (Self-Test Report machine-unverifiable bullet)
+## Task 9: Idios 目視 (Self-Test Report machine-unverifiable bullet)
 
 **Files:** なし (Idios 操作)
 
@@ -451,7 +455,7 @@ CI PASS が確認できたら、PR body の Self-Test Report machine-verified bu
 
 ---
 
-### Task 10: review-fix loop handoff (`/iterate-review` skill)
+## Task 10: review-fix loop handoff (`/iterate-review` skill)
 
 **Files:** なし (skill dispatch)
 
@@ -460,6 +464,7 @@ CI PASS が確認できたら、PR body の Self-Test Report machine-verified bu
 User に `/iterate-review <PR#>` を実行してもらう、または Claude 側で skill を invoke。
 
 `/iterate-review` skill が:
+
 - `/review-pr` を fresh subagent で実行
 - finding を構造化 return
 - (A) PR 内修正 / (B)(C) handoff の振り分け
@@ -470,7 +475,7 @@ User に `/iterate-review <PR#>` を実行してもらう、または Claude 側
 
 ---
 
-### Task 11: PR merge 後の close handoff (`/close-issue` skill)
+## Task 11: PR merge 後の close handoff (`/close-issue` skill)
 
 **Files:** なし (skill dispatch + issue 操作)
 
@@ -481,6 +486,7 @@ Iron Law 6 に従い、Idios の判断で merge。Claude 側から merge は行�
 - [ ] **Step 2: merge 後、`/close-issue 751` skill を invoke**
 
 `/close-issue` skill が:
+
 - 受け入れ条件をマージ後 base ブランチで実測再検証
 - 残タスク triage
 - ユーザー承認で `gh issue close`
