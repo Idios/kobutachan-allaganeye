@@ -9,9 +9,11 @@ L2a GUI (`gui/src-tauri/src/lib.rs`) は外部プロセスを 6 箇所で spawn 
 | 1 | `probe_video_with` (`lib.rs:~638`) | ffprobe (単発) | なし | なし | no (`cmd.output()`、spawn+wait 一体) | no | 短命 metadata query。`output().await` ブロックで親と寿命同期 |
 | 2 | `ensure_thumbnail_exists` (`lib.rs:~1236`) | ffmpeg (単発) | なし | なし | no (`cmd.output()`) | no | サムネ生成、数百 ms 以内 |
 | 3 | `extract_brightness_window_impl` (`lib.rs:~1348`) | ffmpeg (単発) | なし | なし | no (`cmd.output()`) | no | preview brightness 抽出、~1s |
-| 4 | `run_ffmpeg_export_attempt` (`lib.rs:~2019`) | ffmpeg (単発) | なし | あり (中断時) | yes | no | export 1 本ずつ、`TrackedChild::no_job(child)` |
-| 5 | **`start_detect` (`lib.rs:~2651`)** | Python `allaganeye detect` | **ffmpeg N 個 (GPU detector で 16-32、`gpu_detector.py`)** | **あり (#756 root cause)** | yes | **yes** | 本 PR の対応対象。`TrackedChild { child, job: Some(_) }` |
-| 6 | `open_folder_in_explorer` (`lib.rs:~1859`) | explorer.exe | (Windows shell process) | N/A (意図的 detach) | **no** | no | UI、本 app 終了後も残るべき |
+| 4 | `run_ffmpeg_export_attempt` (`lib.rs:~2072`) | ffmpeg (単発) | なし | あり (中断時) | yes | no | export 1 本ずつ、`TrackedChild::no_job(child)` |
+| 5 | **`start_detect` (`lib.rs:~2708`)** | Python `allaganeye detect` | **ffmpeg N 個 (GPU detector で 16-32、`gpu_detector.py`)** | **あり (#756 root cause)** | yes | **yes** | 本 PR の対応対象。`TrackedChild { child, job: Some(_) }` |
+| 6 | `open_folder_in_explorer` (`lib.rs:~1899`) | explorer.exe | (Windows shell process) | N/A (意図的 detach) | **no** | no | UI、本 app 終了後も残るべき |
+
+> 行番号は本 PR (#769) merge 時のスナップショット。将来の追記で drift しうるため、必ず関数名で grep して現在位置を確認すること。
 
 ## §2 #756 fix の挙動 (start_detect だけ Job 化)
 

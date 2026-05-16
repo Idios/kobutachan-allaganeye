@@ -2804,6 +2804,13 @@ async fn start_detect(
                             e
                         );
                     }
+                } else {
+                    // #756 review #2: surface unexpected None so a tokio
+                    // contract change does not silently disable tree kill.
+                    eprintln!(
+                        "warning: child.raw_handle() returned None for detect \
+                         spawn (detect descendants may be orphaned on cancel)"
+                    );
                 }
                 Some(j)
             }
