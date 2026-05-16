@@ -101,12 +101,14 @@ export function CompleteScreen() {
         <div className={styles.sourceBox}>
           <div className={styles.sourceCaption}>観測完了</div>
           {(() => {
-            const src = selectedVideoPath ?? metadata.source;
-            const { fileName, parentDir } = splitPath(src);
+            // #676 / iterate-review Round 1: ローカル名を videoSource に統一
+            // (PreviewScreen.tsx:261 / ExportScreen.tsx:126 の `videoSource` と同名)
+            const videoSource = selectedVideoPath ?? metadata.source;
+            const { fileName, parentDir } = splitPath(videoSource);
             return (
               <div
                 className={pathStyles.pathDisplay}
-                title={src}
+                title={videoSource}
                 data-testid="complete-path"
               >
                 <div className={styles.sourceName}>{fileName || '(video)'}</div>
