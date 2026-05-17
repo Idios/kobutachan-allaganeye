@@ -1,0 +1,476 @@
+# v0.2.0 / v0.2.1 retrospective の機構化 + Codex 統合 設計書
+
+- **作成日**: 2026-05-17
+- **対象**: v0.2.0 / v0.2.1 開発サイクル (2026-04-20 ～ 2026-05-17)
+- **目的**: 良かった実践の継続を仕組み化し、再発した摩擦を skill / hook / docs / CI に preventive メカニズムとして反映する。同時に新規導入した openai-codex プラグインを Iron Law と衝突しない形で workflow に組み込む。
+- **位置付け**: v0.3.0 開発開始時の workflow ベースライン整備。実装は本 spec から派生する複数 issue / Lane で行う (本 spec 自体は実装を含まない)。
+
+---
+
+## 1. 背景
+
+v0.2.0 サイクルでは 130+ PR をマージし、L2 (GUI Tauri + Portable ZIP 配布) を一から構築した上で v0.2.1 patch (security audit / CI 高速化 / Portable README ja / CHANGELOG) まで 1 ヶ月弱で到達した。Iron Law の 5→6 条化、`/iterate-review` 新設、AppError migration の Phase 分割等で workflow が顕著に成熟した一方、以下の摩擦パターンが繰り返し発生した:
+
+- 同じ root cause を 2-3 PR で fix し直す (encoding / upstream URL drift / scorebar design churn)
+- skill prompt に記載済の規律が実行時に逸脱する (scope creep / subagent 独断 fix / 到達性確認漏れ)
+- 単一 OS / runtime で CI を組んだことで他環境の regression を mask (PS 5.1)
+- deferred 判定漏れが patch release に持ち越される
+
+また、本サイクル末期に openai-codex プラグイン (1.0.4) を導入した。`/codex:review`, `/codex:adversarial-review`, `/codex:rescue` 等の機能が利用可能になり、GPT-5.4 という別 model による second opinion を Claude Code workflow に統合する余地が生まれた。ただし `/codex:rescue` は `--write` default のため Iron Law 3 (scope creep 禁止) と衝突する可能性があり、運用ルールを設計する必要がある。
+
+本 spec は (A) 継続する良い実践の codify、(B) 再発防止メカニズム M1-M10、(C) Codex 統合 C1-C5、を 4 Lane / 約 14 PR に分解する形で提案する。
+
+## 2. 範囲・非範囲
+
+### 範囲
+
+- `.claude/hooks/`, `.claude/skills/`, `.claude/settings.json` の追加・改訂
+- `CLAUDE.md`, `docs/l2-workflow.md`, `docs/issue-policy.md`, `docs/release-process.md` の規約追加
+- `docs/refactor-pattern.md`, `docs/markdownlint-guide.md` の新設
+- `.github/workflows/release.yml` への CI matrix 追加
+- `openai-codex` プラグインの常用化 (review gate ON、Iron Law 6 Pre-flight への組み込み)
+
+### 非範囲
+
+- Iron Law 1-5 の本文書き換え (条文は session-start.sh の正本を維持、Iron Law 6 を Pre-flight Step 5 で拡張するのみ)
+- 既存 skill (review-pr / iterate-review / close-issue / scope-guard / create-task / release / enforce-acceptance-criteria) の全面刷新 (改訂は局所的)
+- L1 / L2 機能スコープの再定義 (本 spec は workflow 改善のみ)
+- Codex CLI 本体の wrap / fork (プラグインを素のまま使う)
+- memory feedback の新規作成 (実装 PR 単位で必要に応じて追加)
+
+## 3. v0.2.0 / v0.2.1 retrospective サマリ
+
+### 3.1 継続したい良い実践
+
+| # | 実践 | 効いた事例 | 既存 codify 先 |
+| --- | --- | --- | --- |
+| G1 | **skill ベースディスパッチ + empirical-prompt-tuning loop** | `/review-pr` (#506 #537 #562 #674)、`/iterate-review` 新設 (#706)、`/close-issue` 分離 (#594 #602 #629)、5 skill empirical 改善 (#487) | `docs/l2-workflow.md` §開発ワークフロー、CLAUDE.md §Plugin との関係 |
+| G2 | **Iron Law 6 条 + Red Flags 表 + PR Pre-flight Step 0-4** | Iron Law 6 新設 (#637)、Pre-flight base sync 運用化 (#660)、resume-plan handoff EXECUTOR (#722)、hook test infra (#744) | `.claude/hooks/session-start.sh`、`docs/l2-workflow.md` §「PR 作成 Pre-flight」 |
+| G3 | **brainstorming → spec → plan → executor の四段分離** | `docs/superpowers/specs/` 配下に 17 spec、Lane 構成 (Lane I-VII) で並列開発が機能 | `docs/l2-workflow.md` §タスク種別、superpowers plugin |
+| G4 | **大規模 refactor の Phase 分割パターン** | AppError migration (#663→#689→#714/716/725/730/733→#745→#746)、metadata schema (#515 #533 #627)、vendor probe 段階拡張 (#546 #553 #550 #582 #591 #596) | (未 codify、A1 で追加) |
+| G5 | **deferred + Track A-D 構造化 patch release** | v0.2.1 が Track 0 (spec)/A (security)/B (UX)/C (CI gate)/D (version) を 10 PR で並列完結 (#759-#774) | (未 codify、A2 で追加) |
+
+### 3.2 摩擦・再発した事象
+
+| # | 事象 | 代表 PR / issue | 根本原因 | memory 蓄積 |
+| --- | --- | --- | --- | --- |
+| F1 | PS 5.1 vs pwsh エンコーディング差異 | #729 → #736 → #713 (BOM-less manifest, Tests.ps1 BOM) | pwsh 単独 CI で PS 5.1 silent regression を mask | ✓ `feedback_ps_setcontent_utf8_bom` (CI matrix 補強は既存 issue [#737](https://github.com/Idios/kobutachan-allaganeye/issues/737) で deferred、本 spec M1 で release-blocker 化を提案) |
+| F2 | upstream URL drift hotfix 3 連発 | #649 → #651 → #703 → #721 (get-pip.py SHA、BtbN pin) | 外部依存 DL に immutable URL 強制ルール不在 | ★ 未蓄積 |
+| F3 | scorebar V2 design churn | #522 → #525 → #552 (emblem 動的検出、対称 re-probe fallback) | 初版 dynamic-only が長尺で結合退行、OR semantics 提案が後追い | ★ 未蓄積 |
+| F4 | encoding 二段防御 (Python→Rust audit 漏れ) | #656 / #657 → #662 (cp932 fix → UTF-8 stdout 強制) | 言語境界の audit checklist 不在 | ★ 未蓄積 |
+| F5 | markdownlint ignores の穴塞ぎ | #494/500-502 → #717 → #724 (nested node_modules / build/**) | glob 仕様の理解不足、`**/<name>/**` パターン未統一 | ✓ `feedback_brainstorming_sweep_repo_wide_grep` (一部) / `feedback_markdownlint_typical_fixes` |
+| F6 | scope creep / subagent 独断 fix の再発 | #732 commit 8eff1d2-ee77e37 (claude/* sweep) / #746 Phase C subagent (`:693` 独断 fix) | skill prompt 記載のみでは実行時逸脱が発生 | ✓ `feedback_iterate_review_no_scope_creep_option` / `feedback_subagent_dispatch_stop_on_scope_creep` |
+| F7 | subagent orphaned commit (到達性確認漏れ) | #741 Task 5 (detached HEAD commit を cherry-pick で復旧) | controller の `git log <branch>` 確認が習慣化せず | ✓ `feedback_subagent_orphaned_commit` |
+| F8 | deferred 判定漏れ → v0.2.1 持ち越し | #374 #458 #743 #749 #756 (Track B で吸収) | release gate が deferred 最終 sweep を強制せず、`release-blocker` ラベルも不在 | ★ 未蓄積 |
+
+「未蓄積」は memory feedback が無く、機構化対象。「memory ✓」も実行時逸脱が発生したため、勧告だけでなく hook/CI による検出に昇格させる対象。
+
+### 3.3 同 issue 複数 PR 検出 (= 1 回目根本未解決)
+
+調査範囲: v0.2.0 / v0.2.1 サイクルでクローズされた 163 issue。代表例:
+
+- **#656**: cp932 → UTF-8 二段 (F4)
+- **#365**: ETA bar (#329 不完全) → #687 で再対応
+- **#477**: worktree sweep (#493 script → #707 hook 診断で再発フォロー)
+- **#681**: get-pip.py SHA (F2 系)
+- **#700 / #717** + **#723 / #724**: markdownlint ignores (F5)
+- **#522 / #525 / #552**: scorebar V2 (F3)
+
+合計 23 件で同 issue を 2 回以上修正。一部 (#590 UI spec、#461 release workflow、#663 AppError、#508 BtbN 統一) は意図的な multi-PR 分割で健全だが、**意図せず 2 回目 fix が発生したケースは fix 直前に検出したい**。
+
+## 4. 設計
+
+### 4.1 継続項目 (codify、A シリーズ)
+
+#### A1: `docs/refactor-pattern.md` 新設 — 大規模 refactor の Phase 分割パターン
+
+**ドキュメント構成案**:
+
+- §1 適用条件: 単一 PR で touched files > 30 file or 単一 PR で diff > 1000 line になりそうな refactor
+- §2 Phase 設計原則:
+  - Phase 0: 設計 spec + 影響範囲 inventory
+  - Phase 1: data layer / 共通 helper / 型定義 (consumer 0 でも green)
+  - Phase 2+: 個別 site migration (per-site が独立 reviewable)
+  - Phase Final: legacy fallback 撤去、stale docstring sweep
+- §3 reference: AppError migration (#663→#689→#714/716/725/730/733→#745→#746) を実例として詳細解説
+- §4 Phase 切れ目の判定基準: 1 PR で「green / regression なし / consumer が選択的に乗り換え可能」が満たせる粒度
+
+#### A2: `docs/release-process.md` に Track A-D 構造化 patch を追記
+
+**追加 §「Patch release の Track 構造」**:
+
+- §1 適用条件: v0.M.N → v0.M.(N+1) の patch release (security / UX 微調整 / CI fix / version)
+- §2 Track 規約:
+  - Track 0: spec PR (1 PR、`docs/superpowers/specs/<date>-v0.M.N+1-patch-design.md`)
+  - Track A: security/dependency (Dependabot / cargo audit / npm audit)
+  - Track B: deferred UX 吸収 (ラベル `release-blocker` + `deferred` が付いた issue を吸収)
+  - Track C: CI / build gate 追加 (security-audit.yml 等)
+  - Track D: version bump + CHANGELOG
+- §3 reference: v0.2.1 (#759-#774) を実例として明示
+- §4 並列化規約: Track A/B/C は worktree 別、Track D は最後に直列
+
+### 4.2 再発防止メカニズム (M シリーズ)
+
+#### M1: CI matrix に Windows PowerShell 5.1 job 追加
+
+**ファイル**: `.github/workflows/release.yml`、`.github/workflows/build-windows.yml`
+
+**変更内容**:
+
+- 既存 pwsh (PowerShell 7+) job に加え、`shell: powershell` (Windows PowerShell 5.1) で同じ build script を回す matrix job を追加
+- Pester smoke-test も dual shell で実行 (`feedback_ps_setcontent_utf8_bom` の hook 昇格)
+- integrity-manifest.json のような encoding-sensitive な artifact は dual job で生成して比較する step を追加
+- 既存 issue [#737](https://github.com/Idios/kobutachan-allaganeye/issues/737) (現在 P3-low / deferred) を v0.3.0 開始時に `release-blocker` 昇格し、本 Lane で吸収する
+
+**受け入れ基準**:
+
+- v0.3.0 release.yml が pwsh + PS 5.1 dual matrix で green
+- BOM 違いの artifact が CI 上で diff として検出可能
+- issue #737 が closed
+
+#### M2: 外部依存 DL の immutable URL 強制ルール
+
+**ファイル**: `scripts/build-portable-zip.ps1`、`docs/l2-workflow.md` §依存規約 (新設)
+
+**変更内容**:
+
+- `Invoke-WebRequest -Uri <url>` 等の外部 DL 行に「must be immutable (versioned tag / SHA pinned)」コメント必須
+- Pester regression: 外部 DL URL が `master` / `main` / `latest` を含む場合 fail (`tests/installer/*.Tests.ps1`)
+- `docs/l2-workflow.md` に「外部依存規約」§ 新設: 受け入れ可能なソース (PyPA versioned tag / BtbN monthly snapshot / npm registry version-pinned 等) と禁止パターン (latest, main, master, raw HEAD) を列挙
+
+**受け入れ基準**:
+
+- `scripts/build-portable-zip.ps1` の外部 DL 全行に immutable URL コメント
+- Pester テストが latest/main/master URL を検出して fail
+- F2 (get-pip / BtbN) と同じパターンを次サイクルで起こさない
+
+#### M3: subagent dispatch HARD-GATE template の規約化
+
+**ファイル**: `docs/l2-workflow.md` §「subagent 起動規約」 (新設)、各 skill prompt template
+
+**変更内容**:
+
+- subagent 起動時の prompt に必ず含めるべき HARD-GATE template を docs 化:
+  - `<action_safety>` セクション: 「scope を超える finding → 独断 fix 禁止、BLOCKED 報告のみ」「commit は controller の明示指示後のみ、それ以外は staging 留め」
+  - `Stop conditions`: scope 外 path に手を伸ばそうとした瞬間に stop
+  - `report_format`: BLOCKED の場合の構造化返却 (`status: BLOCKED, reason: ..., would_have_done: ...`)
+- 既存 skill (`/review-pr` `/iterate-review` `/close-issue` `/scope-guard`) の subagent dispatch 行を全数 audit し、template が適用されているか確認
+- F6 (#732 / #746 Phase C) と同型の独断 fix が次サイクルで発生しない
+
+**受け入れ基準**:
+
+- `docs/l2-workflow.md` に subagent 起動規約 § が存在
+- 既存 skill 内の subagent dispatch 全箇所が template 準拠 (grep audit で確認)
+- 新規 subagent dispatch を行う任意の skill / agent が template に準拠
+
+#### M4: encoding boundary audit checklist
+
+**ファイル**: `CLAUDE.md` § バグ修正時の方針
+
+**変更内容**:
+
+- 「バグ修正時の方針」§ の末尾に encoding boundary audit checklist を追加:
+  - subprocess fix の場合、以下 3 層を必ず audit:
+    1. Python 側: `subprocess.Popen(..., encoding=...)` / `sys.stdout.reconfigure(encoding='utf-8')`
+    2. Rust 側 (Tauri): `Command::new(..)` stdin/stdout の encoding / OsString の handling
+    3. OS code page: Windows なら `chcp 65001` 想定の動作、cp932 環境での fallback
+- F4 (#656/#657/#662) と同型の二段防御漏れが次サイクルで発生しない
+
+**受け入れ基準**:
+
+- CLAUDE.md に encoding boundary audit checklist が記載されている
+- (検証) 過去 PR の encoding bug fix を 1 件 sample 取り、checklist が当該事象をカバーしているか確認
+
+#### M5: 同 issue 既存 PR 検出 step を `/review-pr` および `/iterate-review` に追加
+
+**ファイル**: `.claude/skills/review-pr/SKILL.md`、`.claude/skills/iterate-review/SKILL.md`
+
+**変更内容**:
+
+- `/review-pr` Step 1 (PR 取得) で元 issue # を解決した直後に、`gh pr list --search "<issue#>" --state merged --limit 10` を実行
+- 件数 ≥1 (本 PR 以外に同 issue を fix した merged PR が既存) の場合は Step 5b トリアージ表の冒頭に警告行を追加:
+  - 内容: 「同 issue で過去に merged PR `<N>` 件あります (PR #..., #...)。前回 fix の root cause が今回の変更で完全解消しているか、Step 5 / 5a で重点的に確認してください」
+  - 「意図的な multi-phase 分割」の場合は元 issue の本文/コメントで明示確認し、警告を「意図的分割と確認済」として処置
+- 同警告を `/iterate-review` の review-fix ループでも併走 (subagent return 後に main session で表示)
+
+**受け入れ基準**:
+
+- `/review-pr` 起動時に対象 PR の元 issue # を解決し、同 issue の過去 merged PR 件数を表示
+- 警告メッセージが console / レビュー本文に明示される
+- F4 (#656 系)、F5 (markdownlint)、F2 (URL drift) と同型の reoccurring fix が次サイクルで事前検出される
+
+#### M6: Stop hook に orphan commit 検出を追加
+
+**ファイル**: `.claude/hooks/stop.sh`
+
+**変更内容**:
+
+- 既存の worktree cleanup / claude-branches cleanup の前に、`git fsck --unreachable --no-reflogs` で unreachable commit を検出
+  - 検出された unreachable commit object のうち、author が `claude` (Claude Code commit) を含むものを抽出
+  - 該当があれば警告ログを `.claude/state/stop-hook.log` に追記し、controller 側で次セッション開始時に提示 (session-start.sh で警告内容を出力)
+- 検出条件は heuristic (誤検出は許容、false positive は warning のみで block しない)
+- F7 (#741 Task 5) と同型の orphan commit が次サイクルで sweep される
+- `preuse.py` の state 記録には現状 subagent dispatch 情報がない (検出は git-native のみで行う)
+
+**受け入れ基準**:
+
+- `.claude/hooks/stop.sh` に orphan commit 検出 step が存在
+- session-start.sh が前セッションの orphan 警告を表示
+- (検証) 意図的に detached HEAD で commit を作って Stop hook を発火させ、警告が次セッション冒頭に表示されることを確認
+
+#### M7: TodoWrite scope 必須化 + diff 監視
+
+**ファイル**: `.claude/hooks/preuse.py` (拡張)、`docs/issue-policy.md` § path↔scope 対応表 (新設)
+
+**変更内容**:
+
+- `docs/issue-policy.md` に「path↔scope 対応表」§ を新設:
+  - `allaganeye/` / `tests/` (Python) → scope ラベル `l1` / `l2-cli`
+  - `gui/src/` → `l2a-gui`
+  - `gui/src-tauri/` → `l2a-gui`
+  - `scripts/` / `.github/workflows/` → `l2b-installer` / `l2-ci`
+  - `.claude/` / `docs/` → `l2-workflow` / `l2-docs`
+- preuse.py の Bash 監視を拡張: `git commit` 前に `git diff --staged --name-only` の touched files が、TodoWrite で in_progress の todo の scope (CLAUDE.md「ユーザー指示の短縮記法」の `is<N>` から推測) に対応する path 群に収まっているかを判定
+- 外れる場合は `permissionDecision: ask` で AskUserQuestion を強制
+- F6 (scope creep) を実行時に検出
+
+**受け入れ基準**:
+
+- `docs/issue-policy.md` に path↔scope 対応表が存在
+- preuse.py が `git commit` 前に scope check を実行
+- 外れた path が含まれる場合に user に 3 択 (a) revert / (b) 別 issue / (c) scope 拡大 を提示
+- (検証) 意図的に scope 外の file を staging し、hook が ask 判定を返すことを確認
+
+#### M8: `release-blocker` ラベル新設
+
+**ファイル**: `docs/issue-policy.md` § ラベル運用、`.github/labels.yml` (存在すれば) または `gh label create`
+
+**変更内容**:
+
+- `release-blocker` label を `gh label create release-blocker --color D93F0B --description "次パッチで必ず取る (deferred からの昇格、UX critical)"` で作成
+- `docs/issue-policy.md` のラベル一覧に `release-blocker` を追記
+- 適用基準: deferred 判定後に「次 patch では絶対吸収」と確定した issue に dual-label (`deferred` + `release-blocker`)
+- v0.2.1 Track B で吸収された #374 #458 #743 #749 #756 にも遡及付与 (実装 PR で追跡)
+
+**受け入れ基準**:
+
+- ラベルが作成されている
+- `docs/issue-policy.md` § ラベル運用に記載
+- M9 で `/release` skill が当該ラベルを query 対象に含める
+
+#### M9: `/release` skill Step 0 強化 — deferred 最終 sweep
+
+**ファイル**: `.claude/skills/release/SKILL.md`
+
+**変更内容**:
+
+- `/release` skill の Step 0 (現在は受け入れゲート確認) を Step 0a / 0b に分割:
+  - Step 0a: `docs/release-process.md` レイヤーリリース受け入れゲート (既存)
+  - Step 0b (新規): `gh issue list --label deferred --state open --limit 100` および `gh issue list --label release-blocker --state open --limit 100` を実行し、user に「次 patch 候補」として提示。Track 化を強制
+- Step 0b で release-blocker が 0 件、deferred が次 patch 候補ゼロ確認できなければ release PR 作成を block
+- F8 (deferred 持ち越し) の根本対策
+
+**受け入れ基準**:
+
+- `/release` skill が Step 0b を実行
+- v0.3.0 / v0.2.x の release 時に deferred / release-blocker の最終 sweep が行われる証跡
+
+#### M10: `docs/markdownlint-guide.md` 新設
+
+**ファイル**: `docs/markdownlint-guide.md` (新規)
+
+**変更内容**:
+
+- §1 強制パターン:
+  - `**/<name>/**` (例: `**/node_modules/**`、`**/build/**`、`**/dist/**`)
+  - 1 階層 path 直書きは禁止 (`node_modules/` のみは nested に効かない)
+- §2 既存 ignore 一覧 (`.markdownlint-cli2.jsonc`):
+  - `**/node_modules/**`、`**/dist/**`、`**/build/**`、`gui/dist/**` 等の現状一覧と各 ignore の追加 PR # 記録
+- §3 既知の glob 仕様:
+  - markdownlint-cli2 が使う picomatch の動作 (`**` は 0 階層以上)
+  - VS Code の glob と挙動差
+- §4 typical fixes: MD028 / MD056 / MD040 etc. の修正パターン (`feedback_markdownlint_typical_fixes.md` を昇格)
+- F5 と同型の 2 度追加 ignore を防止
+
+**受け入れ基準**:
+
+- doc が存在し、`.markdownlint-cli2.jsonc` のヘッダーコメントから参照されている
+- 既存 ignore 全項目が doc にリストアップされている
+
+### 4.3 Codex 統合 (C シリーズ)
+
+設計原則: **Codex は Iron Law (特に 3 / 5 / 6) の補完**として使う。**Codex 自身に独断で fix させない** (Iron Law 3 衝突回避)。**Codex を adversarial second-opinion** として位置付け、最終判断は Claude + Idios。
+
+#### C1: Stop-time review gate を ON
+
+**ファイル**: `.claude/settings.json`、`CLAUDE.md`
+
+**変更内容**:
+
+- `/codex:setup --enable-review-gate` を実行し ON 化
+- CLAUDE.md に「Stop-time review gate 運用」 § 新設:
+  - 趣旨: Claude が turn 終端で実際の code edit を行った直後に Codex が adversarial 再 review し `ALLOW` / `BLOCK <reason>` を返す
+  - BLOCK 時の運用: **報告のみ**。Claude は次 turn で BLOCK reason を Idios に提示し、AskUserQuestion で「修正 / 無視 / 別 issue 起票」の 3 択を強制
+  - **Claude が独断で auto-fix に走らない**ことを明示 (Iron Law 3 / 5 衝突回避)
+
+**受け入れ基準**:
+
+- `/codex:status` で review-gate が enabled 表示
+- CLAUDE.md に運用 § が記載
+- (検証) 意図的に問題のある edit を行い、BLOCK が出ること、その後 Claude が報告のみで停止することを確認
+
+#### C2: Iron Law 6 Pre-flight に Step 5 として `/codex:adversarial-review` 追加
+
+**ファイル**: `.claude/hooks/session-start.sh` (Iron Law 6 本文)、`docs/l2-workflow.md` § PR 作成 Pre-flight
+
+**変更内容**:
+
+- 現在の Pre-flight Step 0 (重複 PR ハードゲート) → Step 1 (base 同期) → Step 2 (取り込み未済 commit) → Step 3 (touched files 交差) → Step 4 (並行 PR 重複再確認) の後に **Step 5: `/codex:adversarial-review`** を追加
+- focus 文字列で project 固有焦点を渡す:
+  - 「Iron Law 3 (scope creep) を疑え。touched files が元 issue の宣言 scope と整合するか」
+  - 「ffmpeg / GPU fallback / encoding boundary を疑え (F1 / F4 再発を阻止)」
+  - 「同 issue 過去 PR の root cause が今回も残っていないか (M5 と協調)」
+- `/codex:adversarial-review` の finding は Claude が裁き、(A) 本 PR 修正 / (B)(C) handoff のどちらかに振り分け (`/review-pr` Step と同じ triage)
+- 「BLOCK」相当の指摘でも Codex 自身に commit させない (M3 と整合)
+
+**受け入れ基準**:
+
+- session-start.sh Iron Law 6 本文に Step 5 が追記
+- `docs/l2-workflow.md` § PR 作成 Pre-flight に Step 5 詳細が記載
+- (検証) v0.3.0 サイクル最初の PR で Step 5 が実行された証跡
+
+#### C3: `/review-pr` の code quality 部分に optional `/codex:review` を併走
+
+**ファイル**: `.claude/skills/review-pr/SKILL.md`
+
+**変更内容**:
+
+- 既存 `/review-pr` の Step 構造 (現行):
+  - Step 1: PR 取得 (タイトル / 本文 / diff) + M5 で元 issue 過去 PR 検出
+  - Step 2: ベース同期確認 (2.1 base 最新化 / 2.2 影響候補 / 2.3 並行 PR)
+  - Step 3: 受け入れ条件ゲート (`enforce-acceptance-criteria`)
+  - Step 4: CI 確認
+  - Step 5: ロジック / docs 整合性 (5a ギャップ分析 / 5b トリアージ / 5c sweep)
+  - Step 6: レビュー報告 (markdown 生成)
+  - Step 7: 次のアクション提案 (`/iterate-review` 起動)
+  - Step 8: マージ (user 側)
+- Step 5a (ギャップ分析) に optional として `/codex:review --base develop-X.Y.Z` を併走させる選択肢を追加
+- 起動条件 (推奨基準):
+  - PR diff が大きい (touched > 15 file or > 500 lines)、または
+  - 過去 root cause が複数 (M5 警告 ≥2 件)、または
+  - L1 (CLI / detector / GPU) の core ロジック変更を含む
+- Codex の finding は Step 5b triage 表に「出所 = codex:review」と記載して統合
+- Codex に直接 commit させない (M3 整合)
+
+**受け入れ基準**:
+
+- `/review-pr` SKILL.md の Step 5 に optional `/codex:review` 呼び出しが記載
+- triage 統合の手順が明記
+
+#### C4: `/codex:rescue` を root-cause 調査に限定し scope-guard で囲む
+
+**ファイル**: `.claude/skills/scope-guard/SKILL.md`、`CLAUDE.md` § バグ修正時の方針
+
+**変更内容**:
+
+- CLAUDE.md「バグ修正時の方針」§ に追記: 根本原因分析 / 類似バグ調査 phase で `/codex:rescue` を併用してよい。ただし以下を必須:
+  - rescue prompt に `<action_safety>` で「scope を超える finding → 独断 fix 禁止、BLOCKED 報告」を明記 (M3 と完全整合)
+  - `--write` default のままだが、Codex が write する場合は staging のみ、commit / push は controller (Claude + Idios) の明示指示後
+  - rescue 完了後、Idios に finding を提示し、AskUserQuestion で「本 PR 修正 / 別 issue / 無視」の 3 択
+- `/scope-guard` skill の検査対象に Codex commit (`git log --author=...codex...`) を追加 (実装は heuristic)
+
+**受け入れ基準**:
+
+- CLAUDE.md に `/codex:rescue` 運用ルールが記載
+- `/scope-guard` の検査範囲に Codex commit が含まれる
+- (検証) 意図的に scope 外の rescue を試み、scope-guard が detect することを確認
+
+#### C5: superpowers subagent (実装) → `/codex:review` (adversarial pass) の直列構成
+
+**ファイル**: `docs/l2-workflow.md` § subagent + Codex 直列構成 (新設)
+
+**変更内容**:
+
+- 直列ワークフローを doc 化:
+  1. superpowers `subagent-driven-development` で Claude 内 fresh subagent が実装 + 2-stage review (spec + code quality)
+  2. controller (Claude main) が subagent commit を branch HEAD に到達確認 (M6 と整合)
+  3. `/codex:review` (Codex GPT-5.4) で adversarial pass
+  4. Codex finding を triage (Claude + Idios)
+- **並列ではなく直列推奨** (Codex 自身に fix させない、Iron Law 整合)
+- Iron Law 6 Pre-flight の Step 5 (`/codex:adversarial-review`) とは別の用途 — こちらは review-pr 段階の deep-dive
+
+**受け入れ基準**:
+
+- `docs/l2-workflow.md` に直列構成 § が存在
+- 図 (mermaid または ascii) で flow を視覚化
+
+## 5. 実装 Lane と issue 分解
+
+| Lane | 内容 | 影響範囲 | 推定 PR 数 |
+| --- | --- | --- | --- |
+| **L-α** | CI/hook 補強 (M1 PS5.1, M6 Stop hook, M7 scope_issue) | `.github/workflows/`, `.claude/hooks/`, preuse.py | 3 |
+| **L-β** | skill 改訂 (M3 subagent template, M5 同 issue 検出, M9 release Step 0, C2/C3/C4 Codex 統合) | `.claude/skills/` | 5 |
+| **L-γ** | docs codify (A1 refactor-pattern, A2 release-process Track 化, M2 依存規約, M4 encoding checklist, M8 release-blocker, M10 markdownlint-guide) | `docs/`, `CLAUDE.md`, `docs/issue-policy.md` | 4 |
+| **L-δ** | Codex 統合の運用化 (C1 review gate ON、CLAUDE.md/l2-workflow への BLOCK 運用追記、C5 直列構成 doc) | `CLAUDE.md`, `docs/l2-workflow.md`, `.claude/settings.json` | 2 |
+
+合計 **約 14 PR**。v0.2.0 サイクルの 130 PR と比較して軽量。v0.3.0 開発初期 (3-7 日想定) で完結させる。
+
+### Lane 間依存
+
+- L-γ A1/A2 は Lane 独立、最初に着手可能
+- L-α M7 (scope check) は L-γ の path↔scope 対応表 (docs/issue-policy.md) を前提とするため、L-γ が先
+- L-β M5 (同 issue 検出) は単独で着手可能
+- L-δ C1/C5 は L-β の C2/C3/C4 完了後 (運用化は skill 改訂後)
+
+推奨着手順序: **L-γ → L-α → L-β → L-δ**
+
+## 6. 受け入れ基準 (全体)
+
+本 spec から派生する各 Lane / PR の受け入れ基準は §4 各 M / C / A の「受け入れ基準」を参照。全体としての受け入れ基準は以下:
+
+- v0.3.0 サイクル最初の 5 PR で:
+  - M1 PS5.1 dual matrix が CI で実行されている
+  - M5 同 issue 検出警告が `/review-pr` 起動時に表示される
+  - C2 Iron Law 6 Step 5 (`/codex:adversarial-review`) が Pre-flight で実行された証跡
+  - M7 scope check が `git commit` 前に走った証跡
+- v0.3.0 リリース時点で:
+  - L-α / L-β / L-γ / L-δ の全 PR がマージ済
+  - F1-F8 のいずれかと同型の事象が再発した場合、検出メカニズムが trigger した証跡が残る
+- 検証手順: v0.3.0 retrospective を本 spec のテンプレートで再実施し、F1-F8 の再発率が顕著に下がっていることを確認
+
+## 7. リスクとオープン点
+
+### リスク
+
+| # | リスク | 影響 | 緩和策 |
+| --- | --- | --- | --- |
+| R1 | M7 (scope check) の path↔scope 対応表メンテ負荷 | 高 (新規 path 追加時に毎回 doc 更新) | issue policy で「新規 top-level dir 追加時は対応表更新必須」を明記。CI で対応表と repo の top-level dir 差分を検出する optional check (将来) |
+| R2 | C1 (Stop-time review gate) が turn 終端を遅延 | 中 (毎 turn で adversarial pass が走る) | gate 対象を「code edit を含む turn のみ」に絞る (プラグイン仕様で既に対応)。重い場合は `/codex:setup --disable-review-gate` で一時 OFF |
+| R3 | C2/C3/C4 で Codex が独断 fix を実施 | 高 (Iron Law 3 衝突) | M3 subagent template と同じ `<action_safety>` を Codex prompt にも徹底。`/scope-guard` の検査範囲に Codex commit を含める (C4) |
+| R4 | M5 同 issue 検出が false positive (意図的な multi-PR 分割) | 低 (警告のみで block しない) | 警告メッセージで「意図的分割なら明示確認」と促す。block ではなく ask 判定 |
+| R5 | M1 PS5.1 dual matrix が CI 時間を大幅に増やす | 中 | release.yml のみ dual、PR CI は pwsh のみ。F1 系の事故は release 直前に検出できれば充分 |
+
+### オープン点 (Idios 判断が必要)
+
+| # | 判断点 | 選択肢 |
+| --- | --- | --- |
+| O1 | Codex review gate を全 turn で ON にするか、特定 skill 経由のみ | (a) 全 turn ON / (b) `/review-pr` `/iterate-review` 経由のみ ON |
+| O2 | M5 同 issue 検出を `/review-pr` 起動時警告のみとするか、block にするか | (a) 警告のみ / (b) ≥3 件で block (recommended: (a)) |
+| O3 | release-blocker label を v0.2.1 で Track B 吸収済 issue に遡及付与するか | (a) 遡及付与 / (b) v0.3.0 以降のみ適用 |
+| O4 | M7 scope check の判定基準を「path glob 完全一致」とするか「heuristic」とするか | (a) 完全一致 (false negative リスク) / (b) heuristic + AskUserQuestion (recommended: (b)) |
+| O5 | `/codex:rescue` を導入時期から常用するか、bug fix root-cause 専用に絞るか | (a) 常用 / (b) root-cause 専用 (recommended: (b)、Iron Law 整合) |
+
+## 8. 関連リンク
+
+- `CLAUDE.md` (project root) — Iron Law / バグ修正方針 / Plugin との関係
+- [.claude/hooks/session-start.sh](.claude/hooks/session-start.sh) — Iron Law 6 条 + Pre-flight Step 0-4 の正本
+- [docs/l2-workflow.md](docs/l2-workflow.md) — workflow 規約全般
+- [docs/issue-policy.md](docs/issue-policy.md) — ラベル運用 / issue 規約
+- [docs/release-process.md](docs/release-process.md) — レイヤーリリース受け入れゲート
+- openai-codex プラグイン: `C:/Users/idios/.claude/plugins/cache/openai-codex/codex/1.0.4/`
+- superpowers プラグイン: `C:/Users/idios/.claude/plugins/cache/claude-plugins-official/superpowers/`
+- 参照 memory: `feedback_iterate_review_no_scope_creep_option`, `feedback_subagent_dispatch_stop_on_scope_creep`, `feedback_subagent_orphaned_commit`, `feedback_ps_setcontent_utf8_bom`, `feedback_brainstorming_sweep_repo_wide_grep`, `feedback_skill_revision_empirical`, `feedback_markdownlint_typical_fixes`
+
+---
+
+(本 spec は Idios review を経て承認された後、writing-plans skill により 4 Lane 単位の implementation plan に分解される。)
