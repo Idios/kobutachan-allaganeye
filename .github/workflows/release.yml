@@ -55,6 +55,12 @@ on:
 
 jobs:
   version-check:
+    # /iterate-review Round 1 Finding 3 fix: push event の branches filter unmatch
+    # (claude/* 等) でも paths filter match で workflow run が created され
+    # startup_failure として記録される GitHub Actions 挙動を回避。
+    # 各 job entry で event/ref を明示判定し、main / develop-* / v*.*.* tag 以外の
+    # push は skipped に倒す。pull_request / workflow_dispatch は影響なし。
+    if: github.event_name != 'push' || github.ref_name == 'main' || startsWith(github.ref_name, 'develop-') || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.parse.outputs.version }}

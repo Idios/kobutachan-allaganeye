@@ -147,6 +147,9 @@ _PATH_SCOPE_MAP: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^gui/src/"), "l2a-gui"),
     (re.compile(r"^gui/src-tauri/"), "l2a-gui"),
     (re.compile(r"^gui/scripts/"), "l2a-gui"),
+    # gui/ 直下 catch-all (package.json / vite.config.ts / index.html / tsconfig*.json /
+    # eslint.config.js / .prettierrc.json / README.md / .gitignore / package-lock.json 等)
+    (re.compile(r"^gui/[^/]+$"), "l2a-gui"),
     (re.compile(r"^scripts/"), "l2b-installer"),
     (re.compile(r"^\.github/workflows/"), "l2-ci"),
     (re.compile(r"^\.github/ISSUE_TEMPLATE/"), "l2-workflow"),

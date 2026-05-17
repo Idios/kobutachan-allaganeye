@@ -79,7 +79,7 @@ mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 ORPHAN_LOG="$REPO_ROOT/.claude/state/orphan-commits.log"
 {
   echo "===== $(date -Iseconds 2>/dev/null || date) stop.sh orphan check ====="
-  if command -v git >/dev/null 2>&1 && [[ -d "$REPO_ROOT/.git" ]] || [[ -f "$REPO_ROOT/.git" ]]; then
+  if command -v git >/dev/null 2>&1 && { [[ -d "$REPO_ROOT/.git" ]] || [[ -f "$REPO_ROOT/.git" ]]; }; then
     UNREACHABLE=$(cd "$REPO_ROOT" && git fsck --unreachable --no-reflogs 2>/dev/null | awk '$2 == "commit" {print $3}')
     if [[ -n "$UNREACHABLE" ]]; then
       for sha in $UNREACHABLE; do

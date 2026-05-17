@@ -25,6 +25,16 @@ def test_classify_path_known_scopes() -> None:
     assert preuse._classify_path("gui/src/App.tsx") == "l2a-gui"
     assert preuse._classify_path("gui/src-tauri/src/lib.rs") == "l2a-gui"
     assert preuse._classify_path("gui/scripts/generate-ts.mjs") == "l2a-gui"
+    # gui/ direct-child catch-all (Round 1 Finding 2 fix)
+    assert preuse._classify_path("gui/package.json") == "l2a-gui"
+    assert preuse._classify_path("gui/vite.config.ts") == "l2a-gui"
+    assert preuse._classify_path("gui/index.html") == "l2a-gui"
+    assert preuse._classify_path("gui/tsconfig.json") == "l2a-gui"
+    assert preuse._classify_path("gui/eslint.config.js") == "l2a-gui"
+    assert preuse._classify_path("gui/.prettierrc.json") == "l2a-gui"
+    assert preuse._classify_path("gui/.gitignore") == "l2a-gui"
+    assert preuse._classify_path("gui/package-lock.json") == "l2a-gui"
+    assert preuse._classify_path("gui/README.md") == "l2a-gui"
     assert preuse._classify_path("scripts/build-portable-zip.ps1") == "l2b-installer"
     assert preuse._classify_path(".github/workflows/ci.yml") == "l2-ci"
     assert (

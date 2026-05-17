@@ -72,6 +72,7 @@ issue の優先度を示すラベル。全 issue に必須ではなく、優先�
 | `^gui/src/` | l2a-gui | feat(gui) / fix(gui) |
 | `^gui/src-tauri/` | l2a-gui | feat(gui) / refactor(gui) |
 | `^gui/scripts/` | l2a-gui | task |
+| `^gui/[^/]+$` (catch-all、`gui/` 直下の package.json / vite.config.ts / index.html / tsconfig*.json / eslint.config.js / .prettierrc.json / README.md / .gitignore / package-lock.json 等) | l2a-gui | feat(gui) / chore(gui) |
 | `^scripts/` | l2b-installer | feat(installer) / fix(installer) |
 | `^\.github/workflows/` | l2-ci | ci |
 | `^\.github/ISSUE_TEMPLATE/` | l2-workflow | task / doc |
