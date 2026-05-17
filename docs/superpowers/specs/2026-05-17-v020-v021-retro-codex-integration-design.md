@@ -181,16 +181,17 @@ v0.2.0 サイクルでは 130+ PR をマージし、L2 (GUI Tauri + Portable ZIP
 - CLAUDE.md に encoding boundary audit checklist が記載されている
 - (検証) 過去 PR の encoding bug fix を 1 件 sample 取り、checklist が当該事象をカバーしているか確認
 
-#### M5: 同 issue 既存 PR 検出 step を `/review-pr` および `/iterate-review` に追加
+#### M5: 同 issue 既存 PR 検出 step を `/review-pr` および `/iterate-review` に追加 (O2 (a) 確定: 警告のみ、block しない)
 
 **ファイル**: `.claude/skills/review-pr/SKILL.md`、`.claude/skills/iterate-review/SKILL.md`
 
-**変更内容**:
+**変更内容** (O2 (a) 「警告のみ」):
 
 - `/review-pr` Step 1 (PR 取得) で元 issue # を解決した直後に、`gh pr list --search "<issue#>" --state merged --limit 10` を実行
-- 件数 ≥1 (本 PR 以外に同 issue を fix した merged PR が既存) の場合は Step 5b トリアージ表の冒頭に警告行を追加:
+- 件数 ≥1 (本 PR 以外に同 issue を fix した merged PR が既存) の場合は Step 5b トリアージ表の冒頭に **警告行のみ** を追加 (block しない):
   - 内容: 「同 issue で過去に merged PR `<N>` 件あります (PR #..., #...)。前回 fix の root cause が今回の変更で完全解消しているか、Step 5 / 5a で重点的に確認してください」
-  - 「意図的な multi-phase 分割」の場合は元 issue の本文/コメントで明示確認し、警告を「意図的分割と確認済」として処置
+  - 「意図的な multi-phase 分割」(例: AppError migration #663→#689→#714 系の Phase 分割) の場合は元 issue の本文/コメントで明示確認し、警告を「意図的分割と確認済」として処置
+- 件数による block / threshold (例: ≥3 件で block) は **設けない**。警告 → user 判断 → review-fix loop で根本検証する責務分担
 - 同警告を `/iterate-review` の review-fix ループでも併走 (subagent return 後に main session で表示)
 
 **受け入れ基準**:
@@ -218,11 +219,11 @@ v0.2.0 サイクルでは 130+ PR をマージし、L2 (GUI Tauri + Portable ZIP
 - session-start.sh が前セッションの orphan 警告を表示
 - (検証) 意図的に detached HEAD で commit を作って Stop hook を発火させ、警告が次セッション冒頭に表示されることを確認
 
-#### M7: TodoWrite scope 必須化 + diff 監視
+#### M7: TodoWrite scope 必須化 + diff 監視 (O4 (b) 確定: heuristic + AskUserQuestion)
 
 **ファイル**: `.claude/hooks/preuse.py` (拡張)、`docs/issue-policy.md` § path↔scope 対応表 (新設)
 
-**変更内容**:
+**変更内容** (O4 (b) 「heuristic + AskUserQuestion」):
 
 - `docs/issue-policy.md` に「path↔scope 対応表」§ を新設:
   - `allaganeye/` / `tests/` (Python) → scope ラベル `l1` / `l2-cli`
@@ -230,33 +231,39 @@ v0.2.0 サイクルでは 130+ PR をマージし、L2 (GUI Tauri + Portable ZIP
   - `gui/src-tauri/` → `l2a-gui`
   - `scripts/` / `.github/workflows/` → `l2b-installer` / `l2-ci`
   - `.claude/` / `docs/` → `l2-workflow` / `l2-docs`
-- preuse.py の Bash 監視を拡張: `git commit` 前に `git diff --staged --name-only` の touched files が、TodoWrite で in_progress の todo の scope (CLAUDE.md「ユーザー指示の短縮記法」の `is<N>` から推測) に対応する path 群に収まっているかを判定
-- 外れる場合は `permissionDecision: ask` で AskUserQuestion を強制
+- preuse.py の Bash 監視を拡張: `git commit` 前に `git diff --staged --name-only` の touched files が、TodoWrite で in_progress の todo の scope (CLAUDE.md「ユーザー指示の短縮記法」の `is<N>` から推測) に対応する path 群に収まっているかを **heuristic 判定**
+  - **判定方式 (heuristic)**: path↔scope 対応表 を参考に「明らかに別 scope」と判定できる場合のみ ask を発火させる (例: in_progress scope = `l2a-gui` で `allaganeye/video/detector.py` が staged された場合)
+  - **path glob 完全一致は採用しない** (false negative リスク: 対応表に未登録の新規 path で必ず block するのは過剰)
+  - 判定 ambiguous (= 対応表に未登録 path や複数 scope 跨ぎの可能性) な場合も ask を発火させる (false positive 寄りの safety 設計、Iron Law 5 整合)
+- 外れる場合は `permissionDecision: ask` で AskUserQuestion を強制し、3 択提示
 - F6 (scope creep) を実行時に検出
 
 **受け入れ基準**:
 
 - `docs/issue-policy.md` に path↔scope 対応表が存在
-- preuse.py が `git commit` 前に scope check を実行
+- preuse.py が `git commit` 前に heuristic scope check を実行
 - 外れた path が含まれる場合に user に 3 択 (a) revert / (b) 別 issue / (c) scope 拡大 を提示
+- 判定 ambiguous も ask に倒す (block しない、false positive 寄りで safety)
 - (検証) 意図的に scope 外の file を staging し、hook が ask 判定を返すことを確認
 
-#### M8: `release-blocker` ラベル新設
+#### M8: `release-blocker` ラベル新設 (O3 (b) 確定: v0.3.0 以降のみ適用、遡及付与しない)
 
 **ファイル**: `docs/issue-policy.md` § ラベル運用、`.github/labels.yml` (存在すれば) または `gh label create`
 
-**変更内容**:
+**変更内容** (O3 (b) 「v0.3.0 以降のみ適用」):
 
 - `release-blocker` label を `gh label create release-blocker --color D93F0B --description "次パッチで必ず取る (deferred からの昇格、UX critical)"` で作成
 - `docs/issue-policy.md` のラベル一覧に `release-blocker` を追記
 - 適用基準: deferred 判定後に「次 patch では絶対吸収」と確定した issue に dual-label (`deferred` + `release-blocker`)
-- v0.2.1 Track B で吸収された #374 #458 #743 #749 #756 にも遡及付与 (実装 PR で追跡)
+- **遡及付与しない** (v0.2.1 Track B で吸収された #374 #458 #743 #749 #756 等の closed issue にはラベル付与しない)
+- v0.3.0 以降の新規 deferred 判断から適用開始
 
 **受け入れ基準**:
 
 - ラベルが作成されている
 - `docs/issue-policy.md` § ラベル運用に記載
 - M9 で `/release` skill が当該ラベルを query 対象に含める
+- v0.2.1 までの closed issue へのラベル付与は実施しない
 
 #### M9: `/release` skill Step 0 強化 — deferred 最終 sweep
 
@@ -301,23 +308,25 @@ v0.2.0 サイクルでは 130+ PR をマージし、L2 (GUI Tauri + Portable ZIP
 
 設計原則: **Codex は Iron Law (特に 3 / 5 / 6) の補完**として使う。**Codex 自身に独断で fix させない** (Iron Law 3 衝突回避)。**Codex を adversarial second-opinion** として位置付け、最終判断は Claude + Idios。
 
-#### C1: Stop-time review gate を ON
+#### C1: Codex review を `/review-pr` / `/iterate-review` 経由のみで invoke (O1 (b) 確定)
 
-**ファイル**: `.claude/settings.json`、`CLAUDE.md`
+**ファイル**: `.claude/skills/review-pr/SKILL.md`、`.claude/skills/iterate-review/SKILL.md`、`CLAUDE.md`
 
-**変更内容**:
+**変更内容** (O1 (b) 「`/review-pr` `/iterate-review` 経由のみ ON」):
 
-- `/codex:setup --enable-review-gate` を実行し ON 化
-- CLAUDE.md に「Stop-time review gate 運用」 § 新設:
-  - 趣旨: Claude が turn 終端で実際の code edit を行った直後に Codex が adversarial 再 review し `ALLOW` / `BLOCK <reason>` を返す
-  - BLOCK 時の運用: **報告のみ**。Claude は次 turn で BLOCK reason を Idios に提示し、AskUserQuestion で「修正 / 無視 / 別 issue 起票」の 3 択を強制
+- `/codex:setup --enable-review-gate` は **OFF のまま** (全 turn 自動 invocation はしない)
+- 代わりに `/review-pr` と `/iterate-review` の skill flow 内で `/codex:review` または `/codex:adversarial-review` を **明示的に invoke** する (C3 / C2 と統合)
+- CLAUDE.md に「Codex review 運用」 § 新設:
+  - 趣旨: Codex review は **skill 内で明示 invocation** のみで使う。Stop-time review gate (全 turn auto) は使わない (turn 終端の adversarial pass コストを毎 turn 負担しない設計)
+  - BLOCK 相当の指摘の運用: **報告のみ**。Claude は finding を Idios に提示し、AskUserQuestion で「修正 / 無視 / 別 issue 起票」の 3 択を強制
   - **Claude が独断で auto-fix に走らない**ことを明示 (Iron Law 3 / 5 衝突回避)
 
 **受け入れ基準**:
 
-- `/codex:status` で review-gate が enabled 表示
+- `/codex:setup --status` で review-gate が **disabled** 表示 (項目変更を確認)
+- `/review-pr` SKILL.md と `/iterate-review` SKILL.md に Codex review 統合 step が記載 (C2/C3 と整合)
 - CLAUDE.md に運用 § が記載
-- (検証) 意図的に問題のある edit を行い、BLOCK が出ること、その後 Claude が報告のみで停止することを確認
+- (検証) v0.3.0 サイクル最初の `/review-pr` 実行で Codex review が invoke された証跡が残る
 
 #### C2: Iron Law 6 Pre-flight に Step 5 として `/codex:adversarial-review` 追加
 
@@ -367,21 +376,22 @@ v0.2.0 サイクルでは 130+ PR をマージし、L2 (GUI Tauri + Portable ZIP
 - `/review-pr` SKILL.md の Step 5 に optional `/codex:review` 呼び出しが記載
 - triage 統合の手順が明記
 
-#### C4: `/codex:rescue` を root-cause 調査に限定し scope-guard で囲む
+#### C4: `/codex:rescue` を root-cause 調査専用に絞り scope-guard で囲む (O5 (b) 確定)
 
 **ファイル**: `.claude/skills/scope-guard/SKILL.md`、`CLAUDE.md` § バグ修正時の方針
 
-**変更内容**:
+**変更内容** (O5 (b) 「root-cause 専用」、常用しない):
 
-- CLAUDE.md「バグ修正時の方針」§ に追記: 根本原因分析 / 類似バグ調査 phase で `/codex:rescue` を併用してよい。ただし以下を必須:
+- CLAUDE.md「バグ修正時の方針」§ に追記: 根本原因分析 / 類似バグ調査 phase で `/codex:rescue` を **限定的に併用** してよい。ただし以下を必須:
   - rescue prompt に `<action_safety>` で「scope を超える finding → 独断 fix 禁止、BLOCKED 報告」を明記 (M3 と完全整合)
   - `--write` default のままだが、Codex が write する場合は staging のみ、commit / push は controller (Claude + Idios) の明示指示後
   - rescue 完了後、Idios に finding を提示し、AskUserQuestion で「本 PR 修正 / 別 issue / 無視」の 3 択
+- **常用は禁止**: 機能実装 / refactor / docs 改修等で `/codex:rescue` を default invocation するのは Iron Law 3 / 5 衝突リスク高、`/codex:review` (read-only adversarial) を優先
 - `/scope-guard` skill の検査対象に Codex commit (`git log --author=...codex...`) を追加 (実装は heuristic)
 
 **受け入れ基準**:
 
-- CLAUDE.md に `/codex:rescue` 運用ルールが記載
+- CLAUDE.md に `/codex:rescue` 運用ルール (root-cause 専用、常用禁止) が記載
 - `/scope-guard` の検査範囲に Codex commit が含まれる
 - (検証) 意図的に scope 外の rescue を試み、scope-guard が detect することを確認
 
@@ -411,7 +421,7 @@ v0.2.0 サイクルでは 130+ PR をマージし、L2 (GUI Tauri + Portable ZIP
 | **L-α** | CI/hook 補強 (M1 PS5.1, M6 Stop hook, M7 scope_issue) | `.github/workflows/`, `.claude/hooks/`, preuse.py | 3 |
 | **L-β** | skill 改訂 (M3 subagent template, M5 同 issue 検出, M9 release Step 0, C2/C3/C4 Codex 統合) | `.claude/skills/` | 5 |
 | **L-γ** | docs codify (A1 refactor-pattern, A2 release-process Track 化, M2 依存規約, M4 encoding checklist, M8 release-blocker, M10 markdownlint-guide) | `docs/`, `CLAUDE.md`, `docs/issue-policy.md` | 4 |
-| **L-δ** | Codex 統合の運用化 (C1 review gate ON、CLAUDE.md/l2-workflow への BLOCK 運用追記、C5 直列構成 doc) | `CLAUDE.md`, `docs/l2-workflow.md`, `.claude/settings.json` | 2 |
+| **L-δ** | Codex 統合の運用化 (C1 review gate は OFF のまま、`/review-pr` `/iterate-review` 内で明示 invocation、CLAUDE.md に運用追記、C5 直列構成 doc) | `CLAUDE.md`, `docs/l2-workflow.md` | 2 |
 
 合計 **約 14 PR**。v0.2.0 サイクルの 130 PR と比較して軽量。v0.3.0 開発初期 (3-7 日想定) で完結させる。
 
@@ -445,20 +455,22 @@ v0.2.0 サイクルでは 130+ PR をマージし、L2 (GUI Tauri + Portable ZIP
 | # | リスク | 影響 | 緩和策 |
 | --- | --- | --- | --- |
 | R1 | M7 (scope check) の path↔scope 対応表メンテ負荷 | 高 (新規 path 追加時に毎回 doc 更新) | issue policy で「新規 top-level dir 追加時は対応表更新必須」を明記。CI で対応表と repo の top-level dir 差分を検出する optional check (将来) |
-| R2 | C1 (Stop-time review gate) が turn 終端を遅延 | 中 (毎 turn で adversarial pass が走る) | gate 対象を「code edit を含む turn のみ」に絞る (プラグイン仕様で既に対応)。重い場合は `/codex:setup --disable-review-gate` で一時 OFF |
+| R2 | C1 (Codex review invocation) が `/review-pr` / `/iterate-review` セッションを遅延 | 低 (skill 内 invocation のみ、毎 turn では走らない) | O1 (b) 確定により Stop-time review gate (全 turn auto) は OFF のまま。skill 内 invocation は触る turn 数が限定されているため遅延も限定的 |
 | R3 | C2/C3/C4 で Codex が独断 fix を実施 | 高 (Iron Law 3 衝突) | M3 subagent template と同じ `<action_safety>` を Codex prompt にも徹底。`/scope-guard` の検査範囲に Codex commit を含める (C4) |
 | R4 | M5 同 issue 検出が false positive (意図的な multi-PR 分割) | 低 (警告のみで block しない) | 警告メッセージで「意図的分割なら明示確認」と促す。block ではなく ask 判定 |
 | R5 | M1 PS5.1 dual matrix が CI 時間を大幅に増やす | 中 | release.yml のみ dual、PR CI は pwsh のみ。F1 系の事故は release 直前に検出できれば充分 |
 
-### オープン点 (Idios 判断が必要)
+### 確定事項 (Idios 判断、2026-05-17)
 
-| # | 判断点 | 選択肢 |
-| --- | --- | --- |
-| O1 | Codex review gate を全 turn で ON にするか、特定 skill 経由のみ | (a) 全 turn ON / (b) `/review-pr` `/iterate-review` 経由のみ ON |
-| O2 | M5 同 issue 検出を `/review-pr` 起動時警告のみとするか、block にするか | (a) 警告のみ / (b) ≥3 件で block (recommended: (a)) |
-| O3 | release-blocker label を v0.2.1 で Track B 吸収済 issue に遡及付与するか | (a) 遡及付与 / (b) v0.3.0 以降のみ適用 |
-| O4 | M7 scope check の判定基準を「path glob 完全一致」とするか「heuristic」とするか | (a) 完全一致 (false negative リスク) / (b) heuristic + AskUserQuestion (recommended: (b)) |
-| O5 | `/codex:rescue` を導入時期から常用するか、bug fix root-cause 専用に絞るか | (a) 常用 / (b) root-cause 専用 (recommended: (b)、Iron Law 整合) |
+| # | 判断点 | 確定 | 反映先 |
+| --- | --- | --- | --- |
+| O1 | Codex review gate を全 turn で ON にするか、特定 skill 経由のみ | **(b) `/review-pr` `/iterate-review` 経由のみ ON** (全 turn auto は使わない) | C1 / L-δ |
+| O2 | M5 同 issue 検出を `/review-pr` 起動時警告のみとするか、block にするか | **(a) 警告のみ** (block / threshold は設けない、user 判断に委ねる) | M5 |
+| O3 | release-blocker label を v0.2.1 Track B 吸収済 issue に遡及付与するか | **(b) v0.3.0 以降のみ適用** (遡及付与しない) | M8 |
+| O4 | M7 scope check の判定基準を「path glob 完全一致」とするか「heuristic」とするか | **(b) heuristic + AskUserQuestion** (ambiguous も ask に倒す、false positive 寄り safety) | M7 |
+| O5 | `/codex:rescue` を導入時期から常用するか、root-cause 専用に絞るか | **(b) root-cause 専用** (常用禁止、`/codex:review` を優先、Iron Law 整合) | C4 |
+
+確定後、各 Lane の実装 PR は本表の確定値で進める。
 
 ## 8. 関連リンク
 
