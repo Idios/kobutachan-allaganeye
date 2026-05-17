@@ -245,6 +245,10 @@ PR 作成後は `/iterate-review <PR#>` で review-fix ループを自走させ�
 
 バグ修正は「修正実装」だけで完了せず、**根本原因分析 + 類似バグ調査 + 必要なら追加 issue 起票** をセットで行う。指示通りに直すだけでは同種のバグが残り続けるため、根本原因の横展開で品質を底上げする。
 
+### 大規模 refactor の Phase 分割
+
+単一 PR で touched files > 30 file or diff > 1000 line を超えそうな refactor は [`docs/refactor-pattern.md`](docs/refactor-pattern.md) §1 適用条件を確認し、Phase 分割を検討する。AppError migration (#663→#689→#714/716/725/730/733→#745→#746) が reference 実例。
+
 ## Plugin との関係 (override 宣言)
 
 session 先頭で有効化されている plugin (`superpowers` v5.0.7 / `andrej-karpathy-skills` v1.0.0) のプロセス規律を以下のとおり全面採用する。本 project と plugin の見解が分かれる点は project 側の立場をここで明示する。
