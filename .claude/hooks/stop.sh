@@ -71,4 +71,32 @@ mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
   echo ""
 } >>"$LOG" 2>/dev/null || true
 
+# Orphan commit detection (M6 / Refs spec L-α、F7 #741 教訓)
+# subagent が detached HEAD で commit すると orphan 化することがある。
+# git fsck で unreachable commit を抽出し、author 名に "laude" を含む commit を
+# .claude/state/orphan-commits.log に追記する (heuristic、false positive 許容)。
+# session-start.sh が次セッション開始時に Iron Law inject の前で警告表示する。
+ORPHAN_LOG="$REPO_ROOT/.claude/state/orphan-commits.log"
+{
+  echo "===== $(date -Iseconds 2>/dev/null || date) stop.sh orphan check ====="
+  if command -v git >/dev/null 2>&1 && { [[ -d "$REPO_ROOT/.git" ]] || [[ -f "$REPO_ROOT/.git" ]]; }; then
+    UNREACHABLE=$(cd "$REPO_ROOT" && git fsck --unreachable --no-reflogs 2>/dev/null | awk '$2 == "commit" {print $3}')
+    if [[ -n "$UNREACHABLE" ]]; then
+      for sha in $UNREACHABLE; do
+        AUTHOR=$(cd "$REPO_ROOT" && git show --no-patch --format="%an" "$sha" 2>/dev/null || echo "?")
+        SUBJECT=$(cd "$REPO_ROOT" && git show --no-patch --format="%s" "$sha" 2>/dev/null || echo "?")
+        # heuristic: author 名に "laude" (Claude / claude) を含むなら orphan 候補
+        if [[ "$AUTHOR" == *"laude"* ]]; then
+          echo "  orphan candidate: $sha | $AUTHOR | $SUBJECT"
+          echo "$(date -Iseconds 2>/dev/null || date)|$sha|$AUTHOR|$SUBJECT" >> "$ORPHAN_LOG"
+        fi
+      done
+    else
+      echo "  no unreachable commits"
+    fi
+  else
+    echo "  git unavailable, skip orphan check"
+  fi
+} >>"$LOG" 2>/dev/null || true
+
 exit 0

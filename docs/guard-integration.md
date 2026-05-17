@@ -150,6 +150,20 @@ GitHub の issue・PR に添付またはリンクされた動画ファイルに�
 
 外部ユーザーからバグ再現データを受領する際の手順。報告者向けの案内 (プライバシー配慮・同意項目の意味・添付動画のサイズ制約等) は [`docs/bug-report-guide.md`](bug-report-guide.md) を参照 (本節はメンテナ側の受領後手順に特化)。
 
+### 外部ユーザー向け doc 不露出原則 (2026-04-21 確定)
+
+外部ユーザー向けドキュメント (`.github/ISSUE_TEMPLATE/bug_report.yml`、`docs/bug-report-guide.md` 等) では **allaganeye-guard の存在・運用方法を露出させない**。報告者にはプライバシー・機密情報の確認のみを依頼する形を取る。
+
+**Why**: 2026-04-21、PR #497 インラインコメント (`bug_report.yml:13`) で Idios が明示: 「報告者は allaganeye-guard の存在は知らない前提。プライバシーと機密情報の確認だけ依頼する形」。guard の存在・運用ルールはメンテナ側の責務として本ドキュメントに集約されている。報告者が guard を知らなくてもバグ報告できる設計を優先。
+
+**How to apply**:
+
+- `.github/ISSUE_TEMPLATE/bug_report.yml` の markdown 冒頭案内・checkbox description・placeholder 等で `allaganeye-guard` / `guard verify` に言及しない
+- `docs/bug-report-guide.md` の受領後フロー記述は「メンテナ側でセキュリティ確認を実施」等の**抽象化表現**を使う。exit code や tool 名を出さない
+- 本ドキュメント (`docs/guard-integration.md`、メンテナ向け) から外部 doc (`bug-report-guide.md`) を参照してよい。メンテナが外部視点を認識するための**一方向**リンクで整合
+- 元 issue #459 受け入れ条件「重複なく相互参照」は本原則との折り合いで片方向リンクが許容される (2026-04-22 判断)
+- 適用事例: PR #497 4848f171、PR #498 92ac4726
+
 ### 情報収集 (段階的)
 
 | Stage | 内容 | 動画データ |

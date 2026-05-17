@@ -124,3 +124,38 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 6. **[critical]** (A) 強優先方針: CI failure / latent issue / 隣接 lint 違反 等は (A)
 7. **[critical]** (B) 厳格 3 条件 AND: 1 条件のみは (A) に再分類
 8. ambiguous_judgments セクションは空でも必ず記載
+
+---
+
+## シナリオ G (L-β β-2 M5 同 issue 過去 PR 検出): モック PR #985 (fix(detector): cp932 再発 fix)
+
+PR 本文に「Refs #656 + #662 / Round 4」と書かれた fix PR。#656 は cp932 encoding bug の元 issue で、過去に #657 (Python 側 fix)、#662 (Rust 側 fix) が merged 済 (前回 fix で 2 回目の修正、本 PR で 3 回目)。
+
+1. **[critical]** **G-1**: Step 1.1 (同 issue 過去 PR 検出) で `gh pr list --search "#656" --state merged --limit 10` を実行し、件数 ≥1 (= 2 件) を検出
+2. **[critical]** **G-2**: 検出した件数を Step 5b トリアージ表の **冒頭警告行**として追加 (「同 issue で過去に merged PR `2` 件あります (PR #657, #662)。前回 fix の root cause が今回の変更で完全解消しているか、Step 5 / 5a で重点的に確認してください」)
+3. **[critical]** **G-3**: block / threshold は設けない (spec O2 (a) 確定値、警告のみ)
+4. **[critical]** **G-4**: 「意図的な multi-phase 分割」確認の言及がある (`docs/refactor-pattern.md` 参照可能性)
+
+---
+
+## シナリオ H (L-β β-4 C2/C3 Codex 統合 + L-γ M2 外部依存規約): モック PR #986 (feat(installer): get-pip.py を新ハッシュに更新)
+
+PR 本文: `scripts/build-portable-zip.ps1` の `get-pip.py` DL URL を `https://github.com/pypa/get-pip/raw/main/public/get-pip.py` (= `main` ref) に更新、と書かれている。touched files = `scripts/build-portable-zip.ps1` 1 件。受け入れ条件 = 「get-pip.py の hash 検証 pass」。
+
+1. **[critical]** **H-1**: Step 5 で M2 外部依存規約 (`docs/l2-workflow.md` §外部依存規約) を引いて URL 規約適合を逐条検証
+2. **[critical]** **H-2**: `master` / `main` / `latest` / `raw HEAD` を含む URL (= `raw/main/`) を検出し、Step 5b トリアージ表で **(A) PR 内修正** とする
+3. **[critical]** **H-3**: F2 (#649→#651→#703→#721 hotfix 連発) を reference として参照する
+4. **[critical]** **H-4**: Codex 起動条件 (diff > 15 file / root cause ≥2 / L1 core) は満たさない (touched 1 file 単発 fix) ため optional `/codex:review` を**起動しない**判断 (起動しても可だが起動条件は満たさない旨を明示)
+5. installer 系 PR の immutable URL 規約違反は典型的な (A) trigger (B 化しない)
+
+---
+
+## シナリオ I (L-β β-5 C6 Codex fallback): モック /iterate-review Round 内で /codex:review が rate-limit fail
+
+PR #987 (大規模 refactor、touched 35 files、diff 1200 lines、L1 detector module を含む)。`/review-pr` Step 5a で C3 起動条件すべて該当のため `/codex:review` を invoke、Codex CLI exit code 1 + stderr に `Error: rate limit exceeded (429)` が含まれる。
+
+1. **[critical]** **I-1**: Codex CLI fail を検出 (exit code 非ゼロ + stderr keyword `rate.?limit` または `429`) → **token 枯渇 (明確)** 判定
+2. **[critical]** **I-2**: 自動 fallback として superpowers `requesting-code-review` subagent を起動 (Codex 用 focus 文字列を流用)
+3. **[critical]** **I-3**: Step 6 レビュー報告に「Codex fallback notice」(`> **Codex fallback notice**: ...` template) を必須記載 (Iron Law 5 整合)
+4. **[critical]** **I-4**: fallback 経路 (`docs/l2-workflow.md` §Codex fallback) を参照する
+5. **[critical]** **I-5**: 重要 PR (大規模 refactor) なので user に AskUserQuestion で「Codex 復旧待ち / Claude fallback で push」3 択を提示する

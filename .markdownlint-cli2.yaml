@@ -1,5 +1,9 @@
 # markdownlint-cli2 configuration (#474).
 #
+# Ignore pattern は `**/<name>/**` 形式 (1 階層 path は nested ケースで効かない)。
+# typical violation の fix recipe (MD028 / MD056 / MD060 等) と ignore pattern
+# 規約は docs/markdownlint-guide.md を参照。
+#
 # 段階導入方針: 既存ドキュメントで違反のあるルールは全て disable して CI を
 # green な状態で開始し、段階的に解除する (#474 follow-up)。新規コミット時に
 # 有効化済みルールが違反を検出すれば CI が失敗する。

@@ -41,6 +41,7 @@ ruff check .
 ruff format --check .
 pyright
 bash scripts/check-markdownlint.sh   # markdownlint (CI と同 version で全 .md チェック、--fix で自動修正)
+# violation の fix recipe / ignore pattern 規約は docs/markdownlint-guide.md を参照
 
 # CLI
 allaganeye detect <video_path>                          # 検知のみ (metadata.json 出力、#463)
@@ -199,6 +200,14 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 
 ツール側はユーザー環境を変更しない。ファイル関連付け / レジストリ / PATH / 自動起動登録は提案禁止。展開 = インストール、削除 = アンインストール の Portable ZIP 哲学を維持する (2026-04-27 ユーザー方針確定)。
 
+## 外部依存 URL 規約
+
+> §アーキテクチャ §外部依存 (runtime deps: ffmpeg / Python pkg / platforms) とは別。本 § は **DL URL の pin ルール**。
+
+外部依存 (Python / npm / cargo / OS binary tarball 等) の DL コードは **immutable URL** で pin する。詳細・受け入れ可能ソース・禁止パターン・検証手順は [`docs/l2-workflow.md` §外部依存規約](docs/l2-workflow.md#外部依存規約-649651703721-教訓) を参照。
+
+代表事例: get-pip.py SHA pin (#649→#651→#703)、BtbN FFmpeg monthly snapshot (#721)。
+
 ## セキュリティ検査（allaganeye-guard 運用連携）
 
 外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `allaganeye-guard` でセキュリティ検査を行う。**プログラムレベルでの結合は行わず**、エージェント (= Claude + 人間メンテナ Idios) が手動で `allaganeye-guard verify` を実行する運用ルールとする (2026-04-21 方針確定、#454 参照)。詳細は [`docs/guard-integration.md`](docs/guard-integration.md)、外部ユーザー向けバグ報告案内は [`docs/bug-report-guide.md`](docs/bug-report-guide.md) を参照。
@@ -210,7 +219,7 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 
 ## リリース戦略
 
-詳細は [`docs/release-process.md`](docs/release-process.md) を参照。
+詳細は [`docs/release-process.md`](docs/release-process.md) を参照。Patch release (v0.M.N → v0.M.(N+1)) は [§Patch release の Track 構造](docs/release-process.md#patch-release-の-track-構造) (Track A-D 並列化) に従う。
 
 ## 開発ワークフロー
 
@@ -245,6 +254,24 @@ PR 作成後は `/iterate-review <PR#>` で review-fix ループを自走させ�
 
 バグ修正は「修正実装」だけで完了せず、**根本原因分析 + 類似バグ調査 + 必要なら追加 issue 起票** をセットで行う。指示通りに直すだけでは同種のバグが残り続けるため、根本原因の横展開で品質を底上げする。
 
+#### encoding boundary audit checklist (#656/#657/#662 教訓)
+
+subprocess / IPC / OS API を介した encoding fix を行うときは、**以下 3 層をすべて audit** すること。1 層だけ fix すると別層で再発する (F4: PR #657 Python 側 fix → #662 Rust 側追加 fix が必要だった事例)。
+
+1. **Python 側** (CLI / scripts): `subprocess.Popen(..., encoding=...)` / `sys.stdout.reconfigure(encoding='utf-8')` / `os.fsencode` / `Path` の Unicode 扱い
+2. **Rust 側** (Tauri / `gui/src-tauri/`): `tokio::process::Command` の stdin/stdout encoding / `OsString` / `Path::to_string_lossy()` の `\u{FFFD}` 混入 / `serde_json::from_str` の BOM 拒否
+3. **OS code page**: Windows なら `chcp 65001` 想定の動作 / cp932 環境での fallback / GitHub Actions runner (`pwsh` UTF-8 BOM-less 出力 vs PowerShell 5.1 BOM 付き)
+
+実装 PR では各 fix が 3 層のうちどこを touch するか PR 本文に明示。3 層に跨る fix は **Phase 分割の対象**になりうる (`docs/refactor-pattern.md`)。
+
+#### `/codex:rescue` 限定使用 (C4、spec O5 (b) 確定)
+
+根本原因分析 / 類似バグ調査 phase で `/codex:rescue` を限定的に併用してよい。常用は禁止 (`/codex:review` を優先)。詳細は §Codex 運用 §rescue を参照。
+
+### 大規模 refactor の Phase 分割
+
+単一 PR で touched files > 30 file or diff > 1000 line を超えそうな refactor は [`docs/refactor-pattern.md`](docs/refactor-pattern.md) §1 適用条件を確認し、Phase 分割を検討する。AppError migration (#663→#689→#714/716/725/730/733→#745→#746) が reference 実例。
+
 ## Plugin との関係 (override 宣言)
 
 session 先頭で有効化されている plugin (`superpowers` v5.0.7 / `andrej-karpathy-skills` v1.0.0) のプロセス規律を以下のとおり全面採用する。本 project と plugin の見解が分かれる点は project 側の立場をここで明示する。
@@ -256,6 +283,37 @@ session 先頭で有効化されている plugin (`superpowers` v5.0.7 / `andrej
 - **Worktree**: トリガー別に住み分け。
   - Idios が新規セッションを立ち上げた場合: Claude Code session が自動生成する `.claude/worktrees/<name>/` を使用 (L2 workflow §単一ワークツリー)
   - plugin のワークフロー (例: `superpowers:using-git-worktrees`) が worktree 作成を要求する場合: plugin の per-feature 手動 worktree を使用
+
+## Codex 運用
+
+Codex (`openai-codex` プラグイン 1.0.4) を Iron Law 3 / 5 と衝突しない形で workflow に統合する。設計原則: **Codex は adversarial second-opinion 専用、自身に独断 fix させない**。詳細 spec は [`docs/superpowers/specs/2026-05-17-v020-v021-retro-codex-integration-design.md`](docs/superpowers/specs/2026-05-17-v020-v021-retro-codex-integration-design.md) §4.3 / §7。
+
+### review / adversarial-review (C2 / C3)
+
+- 全 turn 自動の Stop-time review gate は **OFF のまま**保持 (spec O1 (b) 確定)
+- 代わりに `/review-pr` (Step 5a) と `/iterate-review` 内で**明示 invocation**
+- Iron Law 6 Pre-flight Step 5 として `/codex:adversarial-review` を必ず実行 ([`docs/l2-workflow.md` §PR 作成 Pre-flight](docs/l2-workflow.md#pr-作成-pre-flight-iron-law-6-サブ条))
+
+### rescue (C4)
+
+- `/codex:rescue` は **root-cause 調査専用** (spec O5 (b) 確定、常用禁止)
+- 機能実装 / refactor / docs 改修等の default invocation は禁止
+- 使う場合は rescue prompt に `<action_safety>` で「scope を超える finding → 独断 fix 禁止、BLOCKED 報告」を必ず明記 (M3 整合)
+- `--write` default のままだが、Codex が write する場合は staging のみ、commit / push は controller の明示指示後
+- rescue 完了後、Idios に finding を提示し AskUserQuestion で「本 PR 修正 / 別 issue / 無視」の 3 択
+- `/scope-guard` skill が Codex commit (`git log --author='codex\|Codex'`) を検査範囲に含める
+
+### Token 枯渇時の fallback (C6)
+
+Codex CLI が rate-limit / quota / network / auth 等で fail した場合、Claude Code 側で superpowers subagent (`requesting-code-review` for review、`systematic-debugging` for rescue) を fallback として起動する。**fallback 実行時は skill report に「Codex fallback notice」を必須記載** (Iron Law 5 整合、Codex review 済との誤認防止)。
+
+詳細 (検出条件 / 戦略 / 擬似コード example) は [`docs/l2-workflow.md` §Codex fallback](docs/l2-workflow.md#codex-fallback) を参照。
+
+### subagent + Codex 直列構成 (C5)
+
+大規模実装 / 重要 PR では superpowers `subagent-driven-development` で Claude 内 fresh subagent が実装 → controller が reachability 確認 → Codex `/codex:review` で adversarial pass → Claude + Idios で triage、の **4 stage 直列**で進める。Iron Law 6 Pre-flight Step 5 (C2、PR 作成直前 / 必須) とは別用途で、`/review-pr` 段階の **deep-dive** で使う optional flow。
+
+詳細 (Flow 図 / 違い table / 並列ではなく直列にする理由) は [`docs/l2-workflow.md` §subagent + Codex 直列構成](docs/l2-workflow.md#subagent--codex-直列構成-c5) を参照。
 
 ## CLAUDE.md 継続改善
 

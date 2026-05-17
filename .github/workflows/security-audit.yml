@@ -46,12 +46,10 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install dependencies
-        working-directory: gui
-        run: npm ci
-
       - name: Run npm audit
         working-directory: gui
+        # npm audit は package-lock.json を直接読むため `npm ci` 不要 (gui-frontend job と
+        # 重複していた installation step を除去、~20-40s 短縮)
         # high 以上で fail。dev-only の moderate/low は通過 (現状 ajv moderate
         # ReDoS が deferred 状態、Track A で fast-uri は 3.1.2 解消済)
         run: npm audit --audit-level=high

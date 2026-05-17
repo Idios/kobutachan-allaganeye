@@ -84,6 +84,24 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 - MKV: OBS の長時間録画（30-80GB、複数試合を含む）
 - サブディレクトリ（`20260116/` 等）: 手動で試合分割済みの MP4（`YYYYMMDD_N.mp4`）
 
+### 音声統合テスト primary 録画 (`ALLAGANEYE_AUDIO_TEST_VIDEO`)
+
+`tests/test_audio_integration.py::test_primary_recording_fanfare_coverage` は、`audio/refs/fanfare.npz` を生成する際に使用した**そのままの**録画を必要とする。`ALLAGANEYE_SAMPLE_VIDEO_DIR` とは別管理。
+
+- **指定変数**: `ALLAGANEYE_AUDIO_TEST_VIDEO`
+- **対象ファイル**: `E:\videos\2026-04-08 21-14-05.mkv` (39 GB、full OBS 録画、8 fanfare starts を含む)
+- **理由**: `fanfare.npz::metadata.source_filename` が指す特定ファイル。`ALLAGANEYE_SAMPLE_VIDEO_DIR` (`E:/royalstraightflesh/videos`) 配下ではないため、別 env で設定する
+
+実行例:
+
+```bash
+ALLAGANEYE_AUDIO_TEST_VIDEO="E:/videos/2026-04-08 21-14-05.mkv" \
+ALLAGANEYE_SAMPLE_VIDEO_DIR="E:/royalstraightflesh/videos" \
+python -m pytest -m slow tests/test_audio_integration.py -v
+```
+
+primary 8/8 で ~30s。cumulative sample-dir tests (~90s) と合わせて音声統合の baseline をカバーする。
+
 ## GPU / ffmpeg テスト間インターバル
 
 ### 問題

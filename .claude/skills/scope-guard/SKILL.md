@@ -60,10 +60,21 @@ git diff "$DEVELOP_BRANCH"...HEAD --name-only
    - **(a) 別 issue として起票**: 変更を revert せず、同 commit 内で但し書き、新 issue を起票して親 issue にリンク
    - **(b) 今すぐ revert**: `git reset <sha> -- <逸脱ファイル>` で変更を退避し、別ブランチで後日対応
    - **(c) スコープ拡大を認める**: 元 issue の scope を編集し、変更を正当化 (ユーザー判断必須)
+   - **(d) Phase 分割で別 PR に分ける** (大規模 refactor 案件、#L-γ A1): touched > 30 file or diff > 1000 line を超える場合の選択肢として [`docs/refactor-pattern.md`](../../docs/refactor-pattern.md) §4 判定基準を引いて Phase 設計 spec を起票。実例: AppError migration (#663 → #689 → #714/716/725/730/733 → #745 → #746、`docs/refactor-pattern.md §3 Reference`)
 
-2. 上記いずれかを実行、**独断で (a)/(b)/(c) を選ばない**
+2. 上記いずれかを実行、**独断で (a)/(b)/(c)/(d) を選ばない**
 
-**フロー**: (b) revert を選択した場合は本スキル終了（作業ブランチから逸脱変更が消えたため Step 4 不要）。(a)/(c) を選択した場合は Step 4 に進み PR 本文への記載事項を確認する。
+**フロー**: (b) revert を選択した場合は本スキル終了（作業ブランチから逸脱変更が消えたため Step 4 不要）。(a)/(c)/(d) を選択した場合は Step 4 に進み PR 本文への記載事項を確認する。
+
+### Codex commit 検査範囲 (C4、`/codex:rescue` 経由の commit を含める)
+
+`/codex:rescue` が `--write` で commit を作った場合、scope 外の独断 fix がないか本 skill が検査する:
+
+```bash
+git log --author='codex\|Codex' --oneline -10
+```
+
+該当 commit があれば Step 2 の変更範囲確認に含める。Codex の独断 fix も Iron Law 3 の対象であり、本 skill の (a)/(b)/(c)/(d) 3 択を経由させる。詳細は `CLAUDE.md` §Codex 運用 §rescue を参照。
 
 ### Step 4: PR 作成前の最終確認
 

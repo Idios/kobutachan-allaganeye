@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -132,6 +133,107 @@ _GATED_PATTERNS: dict[str, dict[str, object]] = {
         ),
     },
 }
+
+
+# ---------------------------------------------------------------
+# M7: path↔scope multi-scope detection (Refs spec L-α、F6 #732 教訓)
+# ---------------------------------------------------------------
+# docs/issue-policy.md §path↔scope 対応表 と同期。新規 top-level dir を追加
+# したらここも更新する (drift 検出は future CI check)。
+
+_PATH_SCOPE_MAP: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"^allaganeye/"), "l1-cli"),
+    (re.compile(r"^tests/"), "l1-cli"),
+    (re.compile(r"^gui/src/"), "l2a-gui"),
+    (re.compile(r"^gui/src-tauri/"), "l2a-gui"),
+    (re.compile(r"^gui/scripts/"), "l2a-gui"),
+    # gui/ 直下 catch-all (package.json / vite.config.ts / index.html / tsconfig*.json /
+    # eslint.config.js / .prettierrc.json / README.md / .gitignore / package-lock.json 等)
+    (re.compile(r"^gui/[^/]+$"), "l2a-gui"),
+    (re.compile(r"^scripts/"), "l2b-installer"),
+    (re.compile(r"^\.github/workflows/"), "l2-ci"),
+    (re.compile(r"^\.github/ISSUE_TEMPLATE/"), "l2-workflow"),
+    (re.compile(r"^\.claude/"), "l2-workflow"),
+    (re.compile(r"^docs/"), "l2-docs"),
+    (re.compile(r"^CLAUDE\.md$"), "l2-docs"),
+    (re.compile(r"^README\.md$"), "l2-docs"),
+    (re.compile(r"^pyproject\.toml$"), "l1-cli"),
+    (re.compile(r"^\.markdownlint-cli2\.yaml$"), "l2-ci"),
+    (re.compile(r"^\.gitignore$"), "l2-workflow"),
+]
+"""(path regex, scope label) — docs/issue-policy.md §path↔scope 対応表 と同期。"""
+
+_GIT_COMMIT_RE: re.Pattern[str] = re.compile(r"^\s*git\s+commit\b")
+"""`git commit` の Bash command を検出する正規表現 (option / args は問わない)。"""
+
+
+def _classify_path(path: str) -> str | None:
+    """Return scope label for ``path`` or ``None`` if not in mapping."""
+    for pattern, scope in _PATH_SCOPE_MAP:
+        if pattern.match(path):
+            return scope
+    return None
+
+
+def _get_staged_paths(repo_root: Path) -> list[str]:
+    """Run ``git diff --staged --name-only`` and return staged paths.
+
+    Failures (no git, non-repo, timeout) return empty list — scope check
+    becomes a no-op rather than blocking the user.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--staged", "--name-only"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return []
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return []
+
+
+def _check_scope_creep(paths: list[str]) -> tuple[bool, str]:
+    """Heuristic multi-scope detection.
+
+    Returns ``(should_ask, reason)``.
+
+    - distinct scope count >= 2 → ask (multi-scope commit, potential creep)
+    - any unknown path → ask (table メンテ漏れ or 新規 scope の判定が必要)
+    - empty or single-scope → allow (no ask)
+
+    False positive (意図的な cross-cutting commit) は user が approve すれば
+    通過する。Iron Law 5 整合の safety-first 設計 (spec O4 (b) 確定値)。
+    """
+    if not paths:
+        return False, ""
+    scopes: set[str] = set()
+    unknown: list[str] = []
+    for p in paths:
+        s = _classify_path(p)
+        if s is None:
+            unknown.append(p)
+        else:
+            scopes.add(s)
+    if len(scopes) >= 2:
+        return True, (
+            f"multi-scope commit detected (scopes: {sorted(scopes)}).\n"
+            f"staged paths (first 5): {paths[:5]}.\n"
+            f"Iron Law 3 (scope creep) チェック。意図的なら approve、"
+            f"scope 外の混入なら revert で外してください。\n"
+            f"参照: docs/issue-policy.md §path↔scope 対応表"
+        )
+    if unknown:
+        return True, (
+            f"unknown scope path(s) detected: {unknown[:5]}.\n"
+            f"docs/issue-policy.md §path↔scope 対応表 未登録の path です。"
+            f"意図的なら approve (scope 拡大として処理)、"
+            f"そうでなければ revert または対応表更新を検討してください。"
+        )
+    return False, ""
 
 
 # ---------------------------------------------------------------
@@ -351,6 +453,21 @@ def main() -> int:
         return 0
 
     recent = _read_recent_ops(state_path, now)
+
+    # M7: git commit の場合は staged paths の multi-scope 判定を _classify の前に行う。
+    # _GATED_PATTERNS とは別系統 (heuristic、Refs spec L-α M7、spec O4 (b) 確定値)。
+    # ask が出た場合は state に記録せず (bulk gate と同じ #513 規約) return する。
+    if _GIT_COMMIT_RE.match(command):
+        staged = _get_staged_paths(_project_root())
+        should_ask, scope_reason = _check_scope_creep(staged)
+        if should_ask:
+            print(
+                "[preuse:scope_creep] ask -> user permission prompt\n"
+                f"Command: {command.strip()[:400]}",
+                file=sys.stderr,
+            )
+            _emit_ask("scope_creep", scope_reason, command)
+            return 0
 
     # Pattern 判定 (candidate の command を recent に含めずに判定)
     key, message = _classify(command, recent)

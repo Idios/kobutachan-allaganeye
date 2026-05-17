@@ -61,6 +61,43 @@ issue の優先度を示すラベル。全 issue に必須ではなく、優先�
 - 優先度ラベルは prefix ラベル・スコープラベルと併用する
 - 判断が難しい場合はラベルなしでよい（未付与 = 未判定）
 
+### path↔scope 対応表 (preuse.py scope check 用、M7)
+
+`.claude/hooks/preuse.py` の git commit pre-hook がこの表を参照して **multi-scope detection** を行う。新規 top-level dir を repo に追加した時は本表も同時に更新すること (path↔scope のメンテ責任)。
+
+| path glob (regex 風) | scope label | 該当 prefix label |
+| --- | --- | --- |
+| `^allaganeye/` | l1-cli | bug / refactor / task |
+| `^tests/` | l1-cli | test |
+| `^gui/src/` | l2a-gui | feat(gui) / fix(gui) |
+| `^gui/src-tauri/` | l2a-gui | feat(gui) / refactor(gui) |
+| `^gui/scripts/` | l2a-gui | task |
+| `^gui/[^/]+$` (catch-all、`gui/` 直下の package.json / vite.config.ts / index.html / tsconfig*.json / eslint.config.js / .prettierrc.json / README.md / .gitignore / package-lock.json 等) | l2a-gui | feat(gui) / chore(gui) |
+| `^scripts/` | l2b-installer | feat(installer) / fix(installer) |
+| `^\.github/workflows/` | l2-ci | ci |
+| `^\.github/ISSUE_TEMPLATE/` | l2-workflow | task / doc |
+| `^\.claude/` | l2-workflow | refactor(skill) / chore(hooks) |
+| `^docs/` | l2-docs | doc |
+| `^CLAUDE\.md$` | l2-docs | doc |
+| `^README\.md$` | l2-docs | doc |
+| `^pyproject\.toml$` | l1-cli | chore |
+| `^\.markdownlint-cli2\.yaml$` | l2-ci | chore(ci) |
+| `^\.gitignore$` | l2-workflow | chore |
+
+#### 判定規則
+
+- **distinct scope 数 ≥ 2**: multi-scope commit。preuse.py が `permissionDecision=ask` で 3 択 (a) revert / (b) 別 issue / (c) scope 拡大 を user に提示
+- **unknown path**: 上記表に hit しない path が staged されている。preuse.py が ask 判定。本表に追記するか、確かに新規 scope なら scope 拡大として user 承認
+
+#### メンテナンス
+
+新規 top-level dir (例: `audit/` 新設) を repo に追加するときは:
+
+1. 本表に対応行を追加 (scope label を決める)
+2. `.claude/hooks/preuse.py` の `_PATH_SCOPE_MAP` (in-source の正本) も同期更新
+
+doc と source の同期は CI で drift check 可能 (future)。
+
 ---
 
 ## 3. 本文フォーマット
@@ -273,6 +310,32 @@ issue 本文に未チェックの項目（`- [ ]`）が残っている場合、�
 - **見直しタイミング**: バージョンリリース（タグ打ち）時にユーザー (Idios) が全 `deferred` issue をレビューし、次バージョンのスコープに含めるか判断する
 - **スコープに含める場合**: `deferred` を外し、適切なスコープラベル + 優先度ラベルに変更する
 - **引き続き先送りの場合**: そのまま残す
+
+#### `l1-residual` + `deferred` dual-label 規約
+
+`l1-residual` ラベル**単独では** v0.2.0 (L2) scope から自動で外れない。L1 期間積み残し issue を現バージョン (L2 以降) scope 外と明示するには **`deferred` + `l1-residual` の dual-label** が必要。両ラベルは別目的:
+
+- `deferred` = scope 判定 (現バージョンで対応しない、release 時にレビュー)
+- `l1-residual` = 起源カテゴリ (L1 期間の積み残し)
+
+scope 判定には `deferred` が必須。実在の dual-label 運用例: [#412](https://github.com/Idios/kobutachan-allaganeye/issues/412) `[enhancement,deferred,l1-residual]`、[#634](https://github.com/Idios/kobutachan-allaganeye/issues/634) `[P3-low,doc,deferred,l1-residual]`。
+
+棚卸し時に分類漏れを検出する query:
+
+```bash
+# l1-residual だけ付いて deferred 不在 = 分類漏れ
+gh issue list --state open --label l1-residual \
+  --json number,labels \
+  --jq '.[] | select(([.labels[].name] | index("deferred")) | not) | "#\(.number) needs deferred"'
+```
+
+## GitHub Issue Forms の制約 (URL pre-fill 不可)
+
+GitHub Issue Forms (`.yml` schema、`.github/ISSUE_TEMPLATE/bug_report.yml` 等) は **`title` / `labels` / `assignees` / `projects` / `template` 以外の custom field** (textarea / input / dropdown など、`id:` で指定する field) を **URL query string で pre-fill しない** (GitHub 仕様、2026-05 時点)。
+
+例えば `?template=bug_report.yml&actual=HELLO` でも `実際の動作` textarea は空のまま開く。Markdown 形式の従来 template (`*.md` ファイル) なら `?body=...` で pre-fill 可能だが、Issue Forms はサポートされない。長年の feature request あり (参考: <https://github.com/orgs/community/discussions/22335>) だが未実装。
+
+**設計時の代替策**: ErrorModal 等で「クラッシュ情報を自動添付」する設計が必要な場合、URL pre-fill ではなく **clipboard copy + 手動 paste** 方式を使う (Plan B、#669 / PR #726 で採用)。`navigator.clipboard.writeText()` で Markdown 本文を組み立てて、user が form の textarea にペーストする UX が standard。
 
 ---
 

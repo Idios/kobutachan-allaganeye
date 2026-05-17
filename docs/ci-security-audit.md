@@ -30,6 +30,17 @@ paths filter により、Python のみ変更の PR では本 workflow は走ら�
 
 CI が常時 fail する状態を避けるため、本 workflow では default 設定 (vulnerability のみ fail) で運用する。warning は log 出力で確認可能。
 
+### tauri 2.11 transitive 制約 (PR #760 v0.2.1 Track A)
+
+tauri 2.10.3 → 2.11.1 bump (PR #760) を実施したが、以下の transitive 依存は新版へ解決できなかった:
+
+- **rand 0.7.3** (build-dep): `tauri 2.11.1 → tauri-utils 2.9.1 → kuchikiki 0.8.8-speedreader → selectors 0.24.0 → phf_codegen 0.8.0 → phf_generator 0.8.0` の chain で `rand = "^0.7"` を strict pin。`cargo update -p rand@0.7.3 --precise 0.8.6` で fail
+- **glib 0.18.5** (Linux/macOS GTK): Windows ビルドで未使用 (`cargo tree -i glib` 出力空)
+
+**経緯**: Dependabot alerts #4 (glib GHSA-wrw7-89jp-8q8g) と #5 (rand GHSA-cq8v-f236-94qc) を解消したかったが、tauri 上流が kuchikiki (HTML parser) を使い続ける限り解決不可能。両者とも配布物 (Windows Portable ZIP の `allaganeye-gui.exe`) に runtime 影響なし (rand は build-dep のみ、glib は Linux/macOS 専用)、Idios 2026-05-16 判断で deferred。
+
+**運用**: v0.2.x 系で security alert を消化する際、`rand 0.7.3 / glib 0.18.5` は tauri 上流が phf_generator / kuchikiki を新版へ移行するまで残る前提で計画する。状態確認は `gui/src-tauri/Cargo.lock` で `name = "rand"` / `name = "glib"` の version、および `cargo audit` の warning summary。上流動向は follow-up issue で追跡。
+
 ## 失敗時の対応
 
 1. PR 作者は失敗 log を確認し、影響のある依存を特定
