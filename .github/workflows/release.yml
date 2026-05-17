@@ -14,22 +14,20 @@ on:
   # 含む (v0.2.0 実績で paths 対象を多数 touch) ため tag push 時の paths filter は
   # 実用上問題ない。万一 paths にマッチしない tag commit が必要になった場合は
   # workflow_dispatch で手動実行できる。
+  # /iterate-review Round 2 R2-1 fix (PR #775): push trigger の paths filter を撤去。
+  # 経緯: 元は paths filter でファイル絞り込みしていたが、GitHub Actions の挙動として
+  # branches/tags filter unmatch (claude/* 等) でも paths match で workflow run が
+  # phantom 作成され conclusion=failure として記録される問題があった
+  # (claude/nervous-hoover-464244 で 5 連続 failure を実証)。
+  # paths を撤去することで branches=[main, develop-*] + tags=[v*.*.*] の strict
+  # 判定のみとなり、claude/* push では run 自体が作成されない。代償として main /
+  # develop-* / tag への無関係 path 変更 push でも release.yml が起動するが、
+  # これらは元々頻度低 + cache warm-up 用途 (#770) として有用なため許容。
+  # pull_request 側の paths filter は維持 (PR validation 範囲を絞る)。
   push:
     branches: [main, "develop-*"]
     tags:
       - 'v*.*.*'
-    paths:
-      - '.github/workflows/release.yml'
-      - 'scripts/build-portable-zip.ps1'
-      - 'scripts/extract_release_notes.py'
-      - 'pyproject.toml'
-      - 'gui/package.json'
-      - 'gui/package-lock.json'
-      - 'gui/src-tauri/**'
-      - 'gui/src/**'
-      - 'gui/index.html'
-      - 'gui/vite.config.ts'
-      - 'gui/tsconfig*.json'
   pull_request:
     paths:
       - '.github/workflows/release.yml'
