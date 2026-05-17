@@ -804,6 +804,40 @@ Codex CLI (`codex-companion.mjs` runtime) が以下のいずれかで fail し�
 | exit code 非ゼロ + 上記いずれにも該当しない stderr | **曖昧** → user に AskUserQuestion (再試行 / Claude fallback / abort) |
 | exit code 0 + stdout が空 / parse 不能 | **応答異常** → user に AskUserQuestion |
 
+### 検出 + fallback の擬似コード (skill 内実装イメージ)
+
+`/review-pr` Step 5a / `/iterate-review` Round 2.1 等で Codex を invoke した後の処理イメージ:
+
+```text
+result = invoke("/codex:review --base develop-0.3.0 --focus '...'")
+
+if result.exit_code != 0:
+    stderr_lower = result.stderr.lower()
+    if matches_any(stderr_lower, ["rate", "quota", "429", "usage_limit"]):
+        fallback_reason = "token 枯渇"
+        invoke_fallback("superpowers:requesting-code-review")
+    elif matches_any(stderr_lower, ["auth", "unauthorized", "401", "403", "api"]):
+        fallback_reason = "認証失敗"
+        invoke_fallback("superpowers:requesting-code-review")
+        notify_user("Codex auth failed; check token / api key")
+    elif matches_any(stderr_lower, ["timeout", "ehostunreach", "enetunreach", "econnreset"]):
+        fallback_reason = "network failure"
+        invoke_fallback("superpowers:requesting-code-review")
+    else:
+        # 曖昧 → user 判断
+        ask_user_question(["再試行", "Claude fallback", "abort"])
+elif result.stdout.empty() or not parseable(result.stdout):
+    fallback_reason = "応答異常"
+    ask_user_question(["再試行", "Claude fallback", "abort"])
+else:
+    integrate_findings(result.stdout)
+
+if fallback_invoked:
+    report.append(format_fallback_notice(fallback_reason, result.stderr[:200]))
+```
+
+実装は skill prompt 側 (`/review-pr` SKILL.md Step 5a / `/iterate-review` SKILL.md Step 2.1) で行う。Codex CLI のラッパー (`codex-companion.mjs`) との連携詳細は openai-codex plugin doc を参照。
+
 ### Fallback 戦略
 
 | Codex command | 通常用途 | Fallback 内容 |

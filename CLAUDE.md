@@ -307,7 +307,13 @@ Codex (`openai-codex` プラグイン 1.0.4) を Iron Law 3 / 5 と衝突しな�
 
 Codex CLI が rate-limit / quota / network / auth 等で fail した場合、Claude Code 側で superpowers subagent (`requesting-code-review` for review、`systematic-debugging` for rescue) を fallback として起動する。**fallback 実行時は skill report に「Codex fallback notice」を必須記載** (Iron Law 5 整合、Codex review 済との誤認防止)。
 
-詳細は [`docs/l2-workflow.md` §Codex fallback](docs/l2-workflow.md#codex-fallback) を参照 (L-β β-5 で追加予定)。
+詳細 (検出条件 / 戦略 / 擬似コード example) は [`docs/l2-workflow.md` §Codex fallback](docs/l2-workflow.md#codex-fallback) を参照。
+
+### subagent + Codex 直列構成 (C5)
+
+大規模実装 / 重要 PR では superpowers `subagent-driven-development` で Claude 内 fresh subagent が実装 → controller が reachability 確認 → Codex `/codex:review` で adversarial pass → Claude + Idios で triage、の **4 stage 直列**で進める。Iron Law 6 Pre-flight Step 5 (C2、PR 作成直前 / 必須) とは別用途で、`/review-pr` 段階の **deep-dive** で使う optional flow。
+
+詳細 (Flow 図 / 違い table / 並列ではなく直列にする理由) は [`docs/l2-workflow.md` §subagent + Codex 直列構成](docs/l2-workflow.md#subagent--codex-直列構成-c5) を参照。
 
 ## CLAUDE.md 継続改善
 
