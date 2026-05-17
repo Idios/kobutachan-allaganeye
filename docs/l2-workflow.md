@@ -135,9 +135,9 @@ template 内の各節は既存実装と整合する位置取り。Iron Law 4 (Cl
 
 ## PR 作成 Pre-flight (Iron Law 6 サブ条)
 
-PR 作成前に base 最新化と並行 worktree PR 重複を必ず確認する。`feedback_pr_review_base_merge_regression.md` (PR #627 Round 4 で発覚した base 取り込み機能 regression) と `feedback_concurrent_worktree_pr_check.md` (#646 / PR #647 並行作業重複) の skill / 規約昇格として運用化 (2026-04-29 #659)。2026-05-13 #722 で Step 0 ハードゲートを追加 (build/verify 前に `gh pr list --search "<元issue#>" --state open` を <1s で実行、PR #721 で発生した 49s redundant work 再発を防止)。Step 0 と Step 4 は検出 window が異なるため両方とも実施する。
+PR 作成前に base 最新化と並行 worktree PR 重複を必ず確認する。`feedback_pr_review_base_merge_regression.md` (PR #627 Round 4 で発覚した base 取り込み機能 regression) と `feedback_concurrent_worktree_pr_check.md` (#646 / PR #647 並行作業重複) の skill / 規約昇格として運用化 (2026-04-29 #659)。2026-05-13 #722 で Step 0 ハードゲートを追加 (build/verify 前に `gh pr list --search "<元issue#>" --state open` を <1s で実行、PR #721 で発生した 49s redundant work 再発を防止)。2026-05-17 L-β β-4 で Step 5 (`/codex:adversarial-review`) を追加 (C2)。Step 0 と Step 4 は検出 window が異なるため両方とも実施する。
 
-### 5 ステップ手順 (Step 0-4)
+### 6 ステップ手順 (Step 0-5)
 
 ```bash
 # 0. ★ ハードゲート (#722 で追加): <1s で実行、build/verify の前に置く
@@ -165,6 +165,17 @@ git diff --name-only HEAD origin/<base>
 # 4. 並行 worktree 同 issue PR 重複確認 (Step 0 と検出 window が異なるため再実行必須)
 gh pr list --search "<元issue#>" --state all \
   --json number,headRefName,state,createdAt
+
+# 5. /codex:adversarial-review (Codex 統合、C2、L-β β-4 で追加)
+# Step 0-4 通過後、PR 作成直前に Codex GPT-5.4 で adversarial pass。
+# focus 文字列に project 固有焦点を渡す:
+#   - Iron Law 3 (scope creep) を疑え。touched files が元 issue の宣言 scope と整合するか
+#   - ffmpeg / GPU fallback / encoding boundary を疑え (F1 / F4 再発を阻止)
+#   - 同 issue 過去 PR の root cause が今回も残っていないか (M5 と協調)
+# /codex:adversarial-review --base <base> --focus "<focus 文字列>"
+# 出力の finding は Claude が triage し (A) PR 内修正 / (B)(C) handoff のいずれかへ振り分け。
+# Codex 自身に commit させない (M3 整合)。token 枯渇等で fail した場合は
+# `docs/l2-workflow.md` §Codex fallback (L-β β-5 で追加) に従う。
 ```
 
 ### 判定

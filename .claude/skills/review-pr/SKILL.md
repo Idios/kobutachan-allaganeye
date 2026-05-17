@@ -211,6 +211,18 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 - [`docs/refactor-pattern.md`](../../docs/refactor-pattern.md) §4 判定基準 (green / regression なし / consumer が選択的に乗り換え可能) を引き、Step 5b トリアージ表で (A) PR 内 Phase 分割提案 or (B) 別 issue で Phase 設計 spec を起票する
 - AppError migration (#663→#689→#714/716/725/730/733→#745→#746) を reference 実例として参照
 
+**optional `/codex:review` (Codex 統合、C3)**
+
+以下のいずれかを満たす PR で `/codex:review --base develop-X.Y.Z` を併走させる (人手 trigger or skill 内 auto):
+
+- PR diff が大きい (touched > 15 file or > 500 lines)、または
+- 過去 root cause が複数 (Step 1.1 M5 警告 ≥2 件)、または
+- L1 (CLI / detector / GPU) の core ロジック変更を含む
+
+Codex の finding は Step 5b トリアージ表に「出所 = codex:review」と記載して統合する。Codex に直接 commit させない (M3 整合)。Codex CLI が token 枯渇 / network failure 等で fail した場合は [`docs/l2-workflow.md` §Codex fallback](../../docs/l2-workflow.md#codex-fallback) (L-β β-5 で追加) の手順に従い、superpowers `requesting-code-review` subagent を fallback として起動する。fallback 実行時は Step 6 レビュー報告に「Codex fallback notice」を必須記載 (Iron Law 5 整合)。
+
+詳細運用は `CLAUDE.md` §Codex 運用 を参照。
+
 ここで列挙した観点は Step 5b トリアージ表で必ず処置分類を付ける。観察コメントのみで終える (= 握り潰す) のは禁止。
 
 ### 5b. 摘出課題のトリアージ (握り潰し禁止、原則 (A) で完結)

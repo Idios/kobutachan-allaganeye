@@ -264,6 +264,10 @@ subprocess / IPC / OS API を介した encoding fix を行うときは、**以�
 
 実装 PR では各 fix が 3 層のうちどこを touch するか PR 本文に明示。3 層に跨る fix は **Phase 分割の対象**になりうる (`docs/refactor-pattern.md`)。
 
+#### `/codex:rescue` 限定使用 (C4、spec O5 (b) 確定)
+
+根本原因分析 / 類似バグ調査 phase で `/codex:rescue` を限定的に併用してよい。常用は禁止 (`/codex:review` を優先)。詳細は §Codex 運用 §rescue を参照。
+
 ### 大規模 refactor の Phase 分割
 
 単一 PR で touched files > 30 file or diff > 1000 line を超えそうな refactor は [`docs/refactor-pattern.md`](docs/refactor-pattern.md) §1 適用条件を確認し、Phase 分割を検討する。AppError migration (#663→#689→#714/716/725/730/733→#745→#746) が reference 実例。
@@ -279,6 +283,31 @@ session 先頭で有効化されている plugin (`superpowers` v5.0.7 / `andrej
 - **Worktree**: トリガー別に住み分け。
   - Idios が新規セッションを立ち上げた場合: Claude Code session が自動生成する `.claude/worktrees/<name>/` を使用 (L2 workflow §単一ワークツリー)
   - plugin のワークフロー (例: `superpowers:using-git-worktrees`) が worktree 作成を要求する場合: plugin の per-feature 手動 worktree を使用
+
+## Codex 運用
+
+Codex (`openai-codex` プラグイン 1.0.4) を Iron Law 3 / 5 と衝突しない形で workflow に統合する。設計原則: **Codex は adversarial second-opinion 専用、自身に独断 fix させない**。詳細 spec は [`docs/superpowers/specs/2026-05-17-v020-v021-retro-codex-integration-design.md`](docs/superpowers/specs/2026-05-17-v020-v021-retro-codex-integration-design.md) §4.3 / §7。
+
+### review / adversarial-review (C2 / C3)
+
+- 全 turn 自動の Stop-time review gate は **OFF のまま**保持 (spec O1 (b) 確定)
+- 代わりに `/review-pr` (Step 5a) と `/iterate-review` 内で**明示 invocation**
+- Iron Law 6 Pre-flight Step 5 として `/codex:adversarial-review` を必ず実行 ([`docs/l2-workflow.md` §PR 作成 Pre-flight](docs/l2-workflow.md#pr-作成-pre-flight-iron-law-6-サブ条))
+
+### rescue (C4)
+
+- `/codex:rescue` は **root-cause 調査専用** (spec O5 (b) 確定、常用禁止)
+- 機能実装 / refactor / docs 改修等の default invocation は禁止
+- 使う場合は rescue prompt に `<action_safety>` で「scope を超える finding → 独断 fix 禁止、BLOCKED 報告」を必ず明記 (M3 整合)
+- `--write` default のままだが、Codex が write する場合は staging のみ、commit / push は controller の明示指示後
+- rescue 完了後、Idios に finding を提示し AskUserQuestion で「本 PR 修正 / 別 issue / 無視」の 3 択
+- `/scope-guard` skill が Codex commit (`git log --author='codex\|Codex'`) を検査範囲に含める
+
+### Token 枯渇時の fallback (C6)
+
+Codex CLI が rate-limit / quota / network / auth 等で fail した場合、Claude Code 側で superpowers subagent (`requesting-code-review` for review、`systematic-debugging` for rescue) を fallback として起動する。**fallback 実行時は skill report に「Codex fallback notice」を必須記載** (Iron Law 5 整合、Codex review 済との誤認防止)。
+
+詳細は [`docs/l2-workflow.md` §Codex fallback](docs/l2-workflow.md#codex-fallback) を参照 (L-β β-5 で追加予定)。
 
 ## CLAUDE.md 継続改善
 
