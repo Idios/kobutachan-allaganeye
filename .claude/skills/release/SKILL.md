@@ -19,32 +19,64 @@ description: deferred issue レビュー → バージョンバンプ → リリ
 
 ## 手順
 
-### Step 0: リリース受け入れゲートの確認（必須）
+### Step 0a: リリース受け入れゲートの確認（必須）
 
 リリース PR を作成する前に、[`docs/release-process.md` §レイヤーリリース受け入れゲート](../../../docs/release-process.md) のチェックリストを全件達成しているか確認する。本ステップはスキップできない。
 
 1. 対象バージョン (例 `v0.2.0`) を特定し、§共通項目 + §`v0.x.0` (L?) 固有項目 の 2 ブロックをユーザーに提示
 2. 各項目について「達成 / 未達成 / 該当なし」を 1 件ずつ確認 (3 件以上の bulk 確認になる場合はサンプル提示 + 全件 OK / 個別調整 / 中止 の 3 択)
 3. 1 件でも未達成があれば本スキルは中断し、ユーザーに残タスクの優先処理を依頼
-4. 全件達成を確認してから Step 1 へ進む
+4. 全件達成を確認してから Step 0b へ進む
 
-注意: 本ゲートは Iron Law 1 (受け入れ条件全充足) のリリースレベル展開。`deferred` review (Step 1) はゲート §共通項目内の 1 行に対応するため、Step 1 はゲート確認の延長として扱う。
+注意: 本ゲートは Iron Law 1 (受け入れ条件全充足) のリリースレベル展開。`deferred` review (Step 0b / 0c) はゲート §共通項目内の 1 行に対応するため、Step 0b / 0c はゲート確認の延長として扱う。
 
-### Step 1: deferred issue のレビュー（必須）
+### Step 0b: deferred 全件取得 (M9、F8 教訓)
 
-リリース前に `deferred` ラベル付き issue を全件レビューする。このステップはスキップできない。
+リリース前に `deferred` ラベル付き issue を全件取得する。**release-blocker label は新設しない** (M8 撤回、2026-05-17 確定) — 取得対象は `deferred` 単独で十分。
 
 ```bash
-gh issue list --repo Idios/kobutachan-allaganeye --state open --label "deferred" --json number,title,labels
+gh issue list --repo Idios/kobutachan-allaganeye --state open --label "deferred" --limit 200 \
+  --json number,title,labels,createdAt,updatedAt
 ```
 
-- 各 issue について、以下の 3 択をユーザーに確認する:
-  - **[A] 次バージョンのスコープに含める**: `deferred` を外し、適切なスコープラベル + 優先度ラベル（`P1-high` / `P2-medium` / `P3-low`、ユーザーに選択を求める）に変更
-  - **[B] 引き続き deferred**: ラベル変更なし。理由を PR 本文に記載
-  - **[C] クローズ**: `gh issue close <番号> --comment "<理由>"` でクローズ
-- deferred issue が 0 件の場合のみ自動で次ステップに進む
-- 1 件以上ある場合: **必ずユーザーに判断を求めてから** 次に進む
-- 3 件以上の bulk 操作になる場合は Iron Law 2 (`.claude/hooks/session-start.sh`) に従い、実行前にサンプル 1 件を提示してユーザー確認を取る (3 択: 全件 OK / 個別調整 / やめる)
+- 件数 0 → Step 1 へ skip
+- 件数 ≥1 → Step 0c で全件分類
+
+### Step 0c: deferred 1 件ずつ 3 択分類 (M9 再設計版)
+
+Step 0b で取得した各 deferred issue について、AskUserQuestion で以下 3 択を user に提示:
+
+- **(a) 次 release で吸収**: 本 release / 次 patch の **Track B 吸収候補** とする。spec PR (Track 0) の table に記録
+- **(b) deferred 継続**: ラベル変更なし。本 release では取り込まない (次 cycle に再評価)
+- **(c) close**: `gh issue close <番号> --comment "<理由>"` でクローズ (won't fix / 再現不能 / 仕様変更等)
+
+#### bulk 件数の運用 (Iron Law 2 整合)
+
+- 件数 ≤2: 1 件ずつ AskUserQuestion で個別確認
+- 件数 ≥3: **先に Iron Law 2 bulk pre-check** (サンプル 1 件提示 + 「全件 OK / 個別調整 / やめる」3 択) → 「個別調整」選択時のみ 1 件ずつの確認に進む
+
+#### Step 0c 結果の spec PR table 化 (Track 0)
+
+(a) / (b) / (c) 各分類結果を spec PR (Track 0、`docs/superpowers/specs/<date>-v0.M.N+1-patch-design.md`) の §deferred 全件検証結果 table に保存:
+
+```markdown
+### §deferred 全件検証結果 (`/release` Step 0c)
+
+| issue # | title | 分類 | 判断理由 |
+| --- | --- | --- | --- |
+| #374 | ... | (a) 次 patch 吸収 | UX critical |
+| #432 | ... | (b) deferred 継続 | L3 scope |
+| #555 | ... | (c) close | 再現不能 |
+```
+
+(a) と分類された issue 群が [`docs/release-process.md` §Patch release の Track 構造](../../../docs/release-process.md#patch-release-の-track-構造) の **Track B 吸収候補** となる。Track B PR は本 spec PR の table をリンクで引く。
+
+#### Step 0c で block する条件 (release PR 作成前 gate)
+
+- deferred 件数 > 0 かつ Step 0c の確認が完了していない → release PR 作成を block (本 skill が abort)
+- (a) 分類 issue 群が次 release scope に取り込まれる commit / PR plan を持たない → block (`/iterate-review` / `/create-task` で Track B PR の plan を先に作る)
+
+F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏れた事例) の根本対策。
 
 ### Step 2: リリース準備
 
