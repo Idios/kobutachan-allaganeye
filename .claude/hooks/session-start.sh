@@ -2,6 +2,26 @@
 # Inject project Iron Laws at session start / clear / compact.
 # Inspired by obra/superpowers pattern: prompt-weighted self-restraint.
 
+# 前セッションで stop.sh が記録した orphan commit があれば Iron Law inject の前に警告表示 (M6 / F7)。
+# heuristic で false positive を許容するため、user が log を rm することで dismiss できる運用。
+ORPHAN_LOG="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}/.claude/state/orphan-commits.log"
+if [[ -f "$ORPHAN_LOG" ]] && [[ -s "$ORPHAN_LOG" ]]; then
+  cat <<EOF
+⚠️ 前セッションで orphan commit が検出されました (M6 / F7、PR #741 教訓):
+
+\`\`\`
+$(head -10 "$ORPHAN_LOG")
+\`\`\`
+
+復旧手順:
+- 該当 commit が必要なら: \`git cherry-pick <SHA>\` で現 HEAD 上に再生成
+- ノイズ (Claude Opus co-author trailer 持ち正常 commit 等) なら: \`rm "$ORPHAN_LOG"\` で警告クリア
+
+本警告は false positive を許容する heuristic です (詳細は \`docs/l2-workflow.md\` §subagent 起動規約 参照)。
+
+EOF
+fi
+
 cat <<'EOF'
 <EXTREMELY_IMPORTANT>
 このプロジェクト (kobutachan-allaganeye) には以下の Iron Law がある。
