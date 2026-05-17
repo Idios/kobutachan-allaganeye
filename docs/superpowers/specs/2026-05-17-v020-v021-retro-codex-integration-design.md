@@ -95,6 +95,15 @@ v0.2.0 サイクルでは 130+ PR をマージし、L2 (GUI Tauri + Portable ZIP
 - §3 reference: AppError migration (#663→#689→#714/716/725/730/733→#745→#746) を実例として詳細解説
 - §4 Phase 切れ目の判定基準: 1 PR で「green / regression なし / consumer が選択的に乗り換え可能」が満たせる粒度
 
+**参照契機 (誰がいつ引くか)**:
+
+- **brainstorming skill** (superpowers): creative work の scope 評価で「touched files / diff lines が §1 適用条件閾値を超えそう」と判定した時点で本 doc を引き、Q1 Phase 分割提案を組み立てる
+- **`/scope-guard` skill**: 実装中に scope 拡大を検知したケースで「単一 PR で吸収するか Phase 分割するか」の選択肢を提示する場面で本 doc の判定基準を引用
+- **`/review-pr` skill** Step 5a (ギャップ分析): 大規模 PR を review する際、Phase 分割すべきだった事案を発見した場合に本 doc の §4 判定基準を引用して triage 表 (B) trigger 3 条件 AND 判定の補強根拠にする
+- **CLAUDE.md** §プロジェクト概要 末尾 or §開発ワークフロー に「大規模 refactor の Phase 分割パターンは `docs/refactor-pattern.md` を参照」と 1 行リンクを置く (発見可能性確保)
+
+参照契機を含む受け入れ基準: 上記 4 経路のうち少なくとも 3 経路から本 doc への明示リンクが docs/skills に存在する。
+
 #### A2: `docs/release-process.md` に Track A-D 構造化 patch を追記
 
 **追加 §「Patch release の Track 構造」**:
@@ -103,11 +112,20 @@ v0.2.0 サイクルでは 130+ PR をマージし、L2 (GUI Tauri + Portable ZIP
 - §2 Track 規約:
   - Track 0: spec PR (1 PR、`docs/superpowers/specs/<date>-v0.M.N+1-patch-design.md`)
   - Track A: security/dependency (Dependabot / cargo audit / npm audit)
-  - Track B: deferred UX 吸収 (ラベル `release-blocker` + `deferred` が付いた issue を吸収)
+  - Track B: deferred UX 吸収 (`/release` skill Step 0 (M9) で deferred 全件検証後に「次 patch 吸収」と判定された issue 群)
   - Track C: CI / build gate 追加 (security-audit.yml 等)
   - Track D: version bump + CHANGELOG
 - §3 reference: v0.2.1 (#759-#774) を実例として明示
 - §4 並列化規約: Track A/B/C は worktree 別、Track D は最後に直列
+
+**参照契機 (誰がいつ引くか)**:
+
+- **`/release` skill** Step 0 / Step 1: patch release を planning するとき本 § を起点に Track template を生成 (M9 と直結)
+- **brainstorming skill**: v0.M.N から patch release が必要と判断した bug fix / security alert を計画する場面で本 § を引き、spec の Track 構造を組み立てる
+- **`/create-task` skill**: patch release 用の spec PR / Track PR を起票する際、本 § §2 Track 規約に対応する prefix label / scope label を判定して付与
+- **CLAUDE.md** §リリース戦略 から本 § へのリンクを既存リンクと並列で配置 (現状 `docs/release-process.md` 全体への 1 行参照のみのため、Track 構造の存在を明示する 1 行を追加)
+
+参照契機を含む受け入れ基準: `/release` skill SKILL.md が本 § を明示参照 + CLAUDE.md §リリース戦略 から本 § (anchor 単位) へのリンクが存在。
 
 ### 4.2 再発防止メカニズム (M シリーズ)
 
@@ -137,6 +155,15 @@ v0.2.0 サイクルでは 130+ PR をマージし、L2 (GUI Tauri + Portable ZIP
 - `Invoke-WebRequest -Uri <url>` 等の外部 DL 行に「must be immutable (versioned tag / SHA pinned)」コメント必須
 - Pester regression: 外部 DL URL が `master` / `main` / `latest` を含む場合 fail (`tests/installer/*.Tests.ps1`)
 - `docs/l2-workflow.md` に「外部依存規約」§ 新設: 受け入れ可能なソース (PyPA versioned tag / BtbN monthly snapshot / npm registry version-pinned 等) と禁止パターン (latest, main, master, raw HEAD) を列挙
+
+**参照契機 (誰がいつ引くか)**:
+
+- **`/review-pr` skill** Step 5 (ロジック / docs 整合性): PR の touched files に `scripts/build-portable-zip.ps1` / `.github/workflows/*.yml` / installer 関連 .ps1 / Dockerfile 系の外部 DL コードを含む場合、本 § を引いて URL 規約適合を逐条検証 (Step 5b トリアージ表に違反を必ず計上)
+- **Pester regression test**: `tests/installer/*.Tests.ps1` のテスト本文で本 § を URL 規約根拠として明示参照 (失敗時のメッセージから読者が辿れる)
+- **brainstorming skill**: 新規 installer / build script を設計する creative work で本 § を読み、URL pin 戦略を Q1 に含める (forgetting curve 対策)
+- **CLAUDE.md** §外部依存 (新設) に本 § へのリンクを 1 行配置 (発見可能性確保)
+
+参照契機を含む受け入れ基準: `/review-pr` SKILL.md Step 5 に「installer / workflow 系 PR の URL 規約検証は `docs/l2-workflow.md` §依存規約を引く」を明記 + Pester test の comment から `docs/l2-workflow.md` §依存規約への参照リンクを設置。
 
 **受け入れ基準**:
 
@@ -246,41 +273,54 @@ v0.2.0 サイクルでは 130+ PR をマージし、L2 (GUI Tauri + Portable ZIP
 - 判定 ambiguous も ask に倒す (block しない、false positive 寄りで safety)
 - (検証) 意図的に scope 外の file を staging し、hook が ask 判定を返すことを確認
 
-#### M8: `release-blocker` ラベル新設 (O3 (b) 確定: v0.3.0 以降のみ適用、遡及付与しない)
+#### M8: ~~release-blocker ラベル新設~~ **(撤回、2026-05-17 Idios 判断)**
 
-**ファイル**: `docs/issue-policy.md` § ラベル運用、`.github/labels.yml` (存在すれば) または `gh label create`
+> **撤回理由**: release 前に `/release` skill が deferred issue を**全件検証**する設計 (M9 再設計版) で、次 patch 吸収判定はその場で行う。事前ラベルで予約管理する必要がない。dual-label メンテのオーバーヘッドも避ける。
+>
+> 元の O3 判断 (v0.3.0 以降のみ適用) は M8 自体が撤回されたため moot。`release-blocker` label は作成しない。
 
-**変更内容** (O3 (b) 「v0.3.0 以降のみ適用」):
+本 M8 は実装対象から除外。F8 (deferred 持ち越し) の対策は M9 (再設計版) に一本化する。
 
-- `release-blocker` label を `gh label create release-blocker --color D93F0B --description "次パッチで必ず取る (deferred からの昇格、UX critical)"` で作成
-- `docs/issue-policy.md` のラベル一覧に `release-blocker` を追記
-- 適用基準: deferred 判定後に「次 patch では絶対吸収」と確定した issue に dual-label (`deferred` + `release-blocker`)
-- **遡及付与しない** (v0.2.1 Track B で吸収された #374 #458 #743 #749 #756 等の closed issue にはラベル付与しない)
-- v0.3.0 以降の新規 deferred 判断から適用開始
+#### M9: `/release` skill Step 0 強化 — deferred 全件検証 (再設計、2026-05-17)
+
+**ファイル**: `.claude/skills/release/SKILL.md`、`docs/release-process.md` (M9 補強)
+
+**変更内容** (M8 撤回後の再設計):
+
+`/release` skill の Step 0 (現在は受け入れゲート確認) を **Step 0a / 0b / 0c** に分割:
+
+- **Step 0a** (既存): `docs/release-process.md` レイヤーリリース受け入れゲート (既存)
+- **Step 0b (新規)**: `gh issue list --label deferred --state open --limit 200` を実行し、**全件**を取得して user に提示
+- **Step 0c (新規)**: 各 deferred issue を 1 件ずつ user に確認し、(a) 次 release で吸収 / (b) deferred 継続 / (c) close (won't fix / 再現不能等) の **3 択分類** を強制
+
+##### Step 0c の運用
+
+- 件数 ≤2 件: 1 件ずつ AskUserQuestion で確認
+- 件数 ≥3 件: Iron Law 2 に従い「全件 OK / 個別調整 / やめる」の事前確認 + 個別調整選択時のみ 1 件ずつ確認 (bulk operation 規約)
+- 確認結果は spec PR (Track 0) に「§deferred 全件検証結果」table として保存 (issue # / 分類 / 判断理由)
+- (a) 分類された issue 群 = `docs/release-process.md` §Patch release Track 構造 (A2) の **Track B 吸収候補**
+
+##### Step 0c で block する条件
+
+- deferred 件数 > 0 かつ Step 0c の確認が完了していない → release PR 作成を block
+- (a) 分類 issue 群が次 release scope に取り込まれる commit / PR plan を持たない → block (`/iterate-review` / `/create-task` で Track B の plan を先に作る)
+
+##### M8 撤回との整合
+
+`release-blocker` label は作成しない。代わりに **Step 0c の AskUserQuestion 結果を spec PR (Track 0) に table 化**することで、追跡可能性 (どの issue を次 release で吸収すると確定したか) を確保。Track B PR は spec PR の table をリンクで引く。
+
+**参照契機 (誰がいつ引くか)**:
+
+- **`/release` skill** Step 0b / 0c は本 spec 自身の手順
+- **`/create-task` skill**: deferred 状態の issue を新規に追加する場面で「次 release タイミングで `/release` Step 0c に必ず再評価される」前提を意識する (issue 本文で `deferred` 理由を明示しないと Step 0c で判断材料が無い)
+- **CLAUDE.md** §リリース戦略 から本 § (M9) へのリンク 1 行 (発見可能性)
 
 **受け入れ基準**:
 
-- ラベルが作成されている
-- `docs/issue-policy.md` § ラベル運用に記載
-- M9 で `/release` skill が当該ラベルを query 対象に含める
-- v0.2.1 までの closed issue へのラベル付与は実施しない
-
-#### M9: `/release` skill Step 0 強化 — deferred 最終 sweep
-
-**ファイル**: `.claude/skills/release/SKILL.md`
-
-**変更内容**:
-
-- `/release` skill の Step 0 (現在は受け入れゲート確認) を Step 0a / 0b に分割:
-  - Step 0a: `docs/release-process.md` レイヤーリリース受け入れゲート (既存)
-  - Step 0b (新規): `gh issue list --label deferred --state open --limit 100` および `gh issue list --label release-blocker --state open --limit 100` を実行し、user に「次 patch 候補」として提示。Track 化を強制
-- Step 0b で release-blocker が 0 件、deferred が次 patch 候補ゼロ確認できなければ release PR 作成を block
-- F8 (deferred 持ち越し) の根本対策
-
-**受け入れ基準**:
-
-- `/release` skill が Step 0b を実行
-- v0.3.0 / v0.2.x の release 時に deferred / release-blocker の最終 sweep が行われる証跡
+- `/release` skill SKILL.md に Step 0a / 0b / 0c が記載
+- Step 0c の 3 択分類の prompt template が SKILL.md に明示
+- v0.3.0 / v0.2.x の release 時に deferred 全件検証が行われた証跡 (spec PR の table) が残る
+- F8 (deferred 持ち越し) と同型の事象が次サイクルで発生した場合、Step 0c の table から「(a) と分類された issue が Track B で取り込まれていない」ことが即特定可能
 
 #### M10: `docs/markdownlint-guide.md` 新設
 
@@ -291,17 +331,28 @@ v0.2.0 サイクルでは 130+ PR をマージし、L2 (GUI Tauri + Portable ZIP
 - §1 強制パターン:
   - `**/<name>/**` (例: `**/node_modules/**`、`**/build/**`、`**/dist/**`)
   - 1 階層 path 直書きは禁止 (`node_modules/` のみは nested に効かない)
-- §2 既存 ignore 一覧 (`.markdownlint-cli2.jsonc`):
+- §2 既存 ignore 一覧 (`.markdownlint-cli2.yaml`):
   - `**/node_modules/**`、`**/dist/**`、`**/build/**`、`gui/dist/**` 等の現状一覧と各 ignore の追加 PR # 記録
 - §3 既知の glob 仕様:
   - markdownlint-cli2 が使う picomatch の動作 (`**` は 0 階層以上)
   - VS Code の glob と挙動差
-- §4 typical fixes: MD028 / MD056 / MD040 etc. の修正パターン (`feedback_markdownlint_typical_fixes.md` を昇格)
+- §4 typical fixes: MD028 / MD056 / MD040 etc. の修正パターン
 - F5 と同型の 2 度追加 ignore を防止
+
+**参照契機 (誰がいつ引くか)**:
+
+- **`/review-pr` skill** Step 5b (トリアージ): markdownlint CI が fail / docs 変更を含む PR を review する際、違反 rule (MD028 / MD056 / MD060 等) の fix 方針を本 doc から引いて triage 表に対処案を記載
+- **`/iterate-review` skill** Step 2.4 (A 修正): markdownlint fail を Round で fix するとき、典型的 violation の fix recipe を本 doc から引く
+- **`.markdownlint-cli2.yaml`** ヘッダーコメント (新設): `# See docs/markdownlint-guide.md for ignore pattern rules and typical fixes`
+- **`scripts/check-markdownlint.sh`** error 出力末尾に「See docs/markdownlint-guide.md」を付加 (lint failure 時の自然な参照導線)
+- **CLAUDE.md** §コマンド (markdownlint コマンド行のすぐ下) に 1 行リンクを置く (発見可能性確保)
+- 実装者が `docs/` 編集中に MD028 / MD056 で詰まったとき、上記 5 経路のいずれかから doc へ到達できる設計
+
+参照契機を含む受け入れ基準: 上記 5 経路すべてから本 doc への明示リンクが存在する。
 
 **受け入れ基準**:
 
-- doc が存在し、`.markdownlint-cli2.jsonc` のヘッダーコメントから参照されている
+- doc が存在し、`.markdownlint-cli2.yaml` のヘッダーコメントから参照されている
 - 既存 ignore 全項目が doc にリストアップされている
 
 ### 4.3 Codex 統合 (C シリーズ)
@@ -414,23 +465,84 @@ v0.2.0 サイクルでは 130+ PR をマージし、L2 (GUI Tauri + Portable ZIP
 - `docs/l2-workflow.md` に直列構成 § が存在
 - 図 (mermaid または ascii) で flow を視覚化
 
+#### C6: Codex token 枯渇 / failure 時の Claude Code fallback (2026-05-17 Idios 指示で追加)
+
+**ファイル**: `.claude/skills/review-pr/SKILL.md`、`.claude/skills/iterate-review/SKILL.md`、`docs/l2-workflow.md` § Codex fallback (新設)、`CLAUDE.md` § Codex 運用
+
+##### 背景
+
+Codex CLI は GPT-5.4 API quota / rate limit / network 等の理由で fail することがある。C1 (skill 内 invocation) / C2 (Iron Law 6 Step 5 adversarial-review) / C3 (`/review-pr` Step 5a optional) / C4 (`/codex:rescue` root-cause) / C5 (subagent → Codex 直列) のいずれの経路でも、Codex が応答できなくなる状況が起こり得る。Codex 不在を理由にレビュー / 調査 phase を skip するのは Iron Law 1 / 6 違反 (受け入れ条件検証 / Pre-flight ゲート不通過のまま進行) になるため、**Claude Code 側で同等処理を fallback 実行**する設計を入れる。
+
+##### 検出方法
+
+`scripts/codex-companion.mjs` (codex プラグイン runtime) の exit code / stderr / stdout last line を確認:
+
+| 検出条件 | 判定 |
+| --- | --- |
+| exit code 非ゼロ + stderr に `rate.?limit`, `quota`, `429`, `usage_limit` のいずれか | **token 枯渇 (明確)** → 自動 fallback |
+| exit code 非ゼロ + stderr に `auth`, `unauthorized`, `401`, `403`, `api.?key` | **認証失敗 (明確)** → 自動 fallback + user notify |
+| exit code 非ゼロ + stderr に `timeout`, `EHOSTUNREACH`, `ENETUNREACH`, `ECONNRESET` | **network failure (明確)** → 自動 fallback |
+| exit code 非ゼロ + 上記いずれにも該当しない stderr | **曖昧** → user に AskUserQuestion (再試行 / Claude fallback / abort) |
+| exit code 0 + stdout が空 / parse 不能 | **応答異常** → user に AskUserQuestion |
+
+##### Fallback 戦略 (Codex command 別)
+
+| Codex command | 通常用途 | Fallback 内容 |
+| --- | --- | --- |
+| `/codex:review` (C3 で `/review-pr` Step 5a に invoke) | code quality adversarial pass | **superpowers `requesting-code-review` subagent** を起動して同等の adversarial review。focus 文字列 (Iron Law 3 / encoding / GPU fallback 等) は Codex 用と同じ |
+| `/codex:adversarial-review` (C2 で Iron Law 6 Step 5 に invoke) | Pre-flight 第 5 ゲート | **superpowers `requesting-code-review` subagent + project 固有 focus** を起動。subagent prompt に「adversarial / approve させない姿勢」を `<grounding_rules>` 相当で明示 |
+| `/codex:rescue` (C4 で root-cause 調査時に invoke) | bug 根本原因 + 類似バグ探索 | **Claude main + superpowers `systematic-debugging` skill** を起動して自力で根本原因調査。`/scope-guard` 規約は維持 (独断 fix 禁止) |
+
+##### Fallback 実行時の必須記載
+
+skill report (Step 6 レビュー報告 / Round summary comment) に以下を**必ず明示**:
+
+```text
+> **Codex fallback notice**: 本 review は Codex CLI が <検出条件> で fail したため、
+> Claude Code (superpowers:<skill-name>) で代替実行しました。
+> Codex 側の review は次セッションで再試行を推奨します。
+> stderr 要約: <stderr の先頭 200 字>
+```
+
+これがないと Idios が Codex review 済と誤認するリスクがある (Iron Law 5 衝突回避)。
+
+##### Fallback の限界 (明示)
+
+- Codex は GPT-5.4 (独立 model) の second opinion。Claude Code fallback は同一 model の self-review に近く、bias 構造が同じになる
+- 重要 PR (release 直前 / 大規模 refactor) で Codex fallback が trigger した場合、user に通知し「Codex 復旧後の再 review を待つか、Claude fallback で push するか」の AskUserQuestion 3 択を提示
+- fallback report には「fallback で実行済」を明示することで、後日 Codex 復旧時に再 review が要否を判断可能にする
+
+##### 参照契機
+
+- **`/review-pr` skill** Step 5a (Codex 併走パート): Codex invocation 直後の return code 判定で本 § を引いて fallback 分岐
+- **`/iterate-review` skill** Round 内の Codex invocation 直後で同様
+- **`docs/l2-workflow.md`** § Codex fallback (新設) に検出条件 table + fallback 戦略 table + 必須記載 template を一本化、各 skill から参照
+
+**受け入れ基準**:
+
+- `docs/l2-workflow.md` に § Codex fallback が存在 (検出条件 / 戦略 / 必須記載 template)
+- `/review-pr` `/iterate-review` SKILL.md に Codex invocation 後の return code 判定 + fallback 分岐が記載
+- CLAUDE.md § Codex 運用に 1 行リンク
+- (検証) 意図的に Codex を `--model invalid` 等で fail させ、Claude fallback で同等の review が完了し report に「Codex fallback notice」が記載されることを確認
+
 ## 5. 実装 Lane と issue 分解
 
 | Lane | 内容 | 影響範囲 | 推定 PR 数 |
 | --- | --- | --- | --- |
 | **L-α** | CI/hook 補強 (M1 PS5.1, M6 Stop hook, M7 scope_issue) | `.github/workflows/`, `.claude/hooks/`, preuse.py | 3 |
-| **L-β** | skill 改訂 (M3 subagent template, M5 同 issue 検出, M9 release Step 0, C2/C3/C4 Codex 統合) | `.claude/skills/` | 5 |
-| **L-γ** | docs codify (A1 refactor-pattern, A2 release-process Track 化, M2 依存規約, M4 encoding checklist, M8 release-blocker, M10 markdownlint-guide) | `docs/`, `CLAUDE.md`, `docs/issue-policy.md` | 4 |
-| **L-δ** | Codex 統合の運用化 (C1 review gate は OFF のまま、`/review-pr` `/iterate-review` 内で明示 invocation、CLAUDE.md に運用追記、C5 直列構成 doc) | `CLAUDE.md`, `docs/l2-workflow.md` | 2 |
+| **L-β** | skill 改訂 (M3 subagent template, M5 同 issue 検出, M9 `/release` Step 0a/0b/0c (deferred 全件検証), C2/C3/C4/C6 Codex 統合 + fallback) | `.claude/skills/` | 5 |
+| **L-γ** | docs codify (A1 refactor-pattern, A2 release-process Track 化, M2 依存規約, M4 encoding checklist, M10 markdownlint-guide) | `docs/`, `CLAUDE.md`, `docs/issue-policy.md` | 3 |
+| **L-δ** | Codex 統合の運用化 (C1 review gate は OFF のまま、`/review-pr` `/iterate-review` 内で明示 invocation、CLAUDE.md に運用追記、C5 直列構成 doc、C6 fallback doc) | `CLAUDE.md`, `docs/l2-workflow.md` | 2 |
 
-合計 **約 14 PR**。v0.2.0 サイクルの 130 PR と比較して軽量。v0.3.0 開発初期 (3-7 日想定) で完結させる。
+合計 **約 13 PR** (M8 削除で 14 → 13)。v0.2.0 サイクルの 130 PR と比較して軽量。v0.3.0 開発初期 (3-7 日想定) で完結させる。
 
 ### Lane 間依存
 
 - L-γ A1/A2 は Lane 独立、最初に着手可能
 - L-α M7 (scope check) は L-γ の path↔scope 対応表 (docs/issue-policy.md) を前提とするため、L-γ が先
-- L-β M5 (同 issue 検出) は単独で着手可能
-- L-δ C1/C5 は L-β の C2/C3/C4 完了後 (運用化は skill 改訂後)
+- L-β M5 (同 issue 検出) / M9 (`/release` Step 0c) は単独で着手可能
+- L-β C6 (Codex fallback) は L-δ の C1/C2/C3 と整合が必要なため、L-β 内では fallback skeleton まで、最終文言は L-δ と co-design
+- L-δ C1/C5/C6 は L-β の C2/C3/C4 完了後 (運用化は skill 改訂後)
 
 推奨着手順序: **L-γ → L-α → L-β → L-δ**
 
@@ -443,9 +555,11 @@ v0.2.0 サイクルでは 130+ PR をマージし、L2 (GUI Tauri + Portable ZIP
   - M5 同 issue 検出警告が `/review-pr` 起動時に表示される
   - C2 Iron Law 6 Step 5 (`/codex:adversarial-review`) が Pre-flight で実行された証跡
   - M7 scope check が `git commit` 前に走った証跡
+  - C6 Codex fallback が意図的 fail で発火し fallback notice が report に記載された証跡
 - v0.3.0 リリース時点で:
   - L-α / L-β / L-γ / L-δ の全 PR がマージ済
   - F1-F8 のいずれかと同型の事象が再発した場合、検出メカニズムが trigger した証跡が残る
+  - `/release` skill Step 0c で deferred 全件検証が行われた spec PR (Track 0) の table が残る
 - 検証手順: v0.3.0 retrospective を本 spec のテンプレートで再実施し、F1-F8 の再発率が顕著に下がっていることを確認
 
 ## 7. リスクとオープン点
@@ -459,6 +573,8 @@ v0.2.0 サイクルでは 130+ PR をマージし、L2 (GUI Tauri + Portable ZIP
 | R3 | C2/C3/C4 で Codex が独断 fix を実施 | 高 (Iron Law 3 衝突) | M3 subagent template と同じ `<action_safety>` を Codex prompt にも徹底。`/scope-guard` の検査範囲に Codex commit を含める (C4) |
 | R4 | M5 同 issue 検出が false positive (意図的な multi-PR 分割) | 低 (警告のみで block しない) | 警告メッセージで「意図的分割なら明示確認」と促す。block ではなく ask 判定 |
 | R5 | M1 PS5.1 dual matrix が CI 時間を大幅に増やす | 中 | release.yml のみ dual、PR CI は pwsh のみ。F1 系の事故は release 直前に検出できれば充分 |
+| R6 | C6 Codex fallback で Claude self-review に倒れ、second-opinion bias が同一化 | 中 (重要 PR で Codex 復旧前に push) | fallback notice で「再 review 推奨」を明示。重要 PR (release 直前 / 大規模 refactor) は user に AskUserQuestion で push 可否を確認 |
+| R7 | M9 Step 0c 全件検証が deferred 件数増加で重くなる | 中 (将来 deferred が 50+ 件になると 1 release で全件確認できない) | Step 0c で「件数 ≥3 は bulk 確認 + 個別調整」運用 (Iron Law 2 整合)。長期的に deferred を定期的に再評価する別 cadence を `/release` 外で導入する余地あり |
 
 ### 確定事項 (Idios 判断、2026-05-17)
 
@@ -466,9 +582,17 @@ v0.2.0 サイクルでは 130+ PR をマージし、L2 (GUI Tauri + Portable ZIP
 | --- | --- | --- | --- |
 | O1 | Codex review gate を全 turn で ON にするか、特定 skill 経由のみ | **(b) `/review-pr` `/iterate-review` 経由のみ ON** (全 turn auto は使わない) | C1 / L-δ |
 | O2 | M5 同 issue 検出を `/review-pr` 起動時警告のみとするか、block にするか | **(a) 警告のみ** (block / threshold は設けない、user 判断に委ねる) | M5 |
-| O3 | release-blocker label を v0.2.1 Track B 吸収済 issue に遡及付与するか | **(b) v0.3.0 以降のみ適用** (遡及付与しない) | M8 |
+| O3 | ~~release-blocker label を v0.2.1 Track B 吸収済 issue に遡及付与するか~~ | **moot** (M8 が撤回されたため判断不要) | M8 撤回 |
 | O4 | M7 scope check の判定基準を「path glob 完全一致」とするか「heuristic」とするか | **(b) heuristic + AskUserQuestion** (ambiguous も ask に倒す、false positive 寄り safety) | M7 |
 | O5 | `/codex:rescue` を導入時期から常用するか、root-cause 専用に絞るか | **(b) root-cause 専用** (常用禁止、`/codex:review` を優先、Iron Law 整合) | C4 |
+
+### 追加方針 (Idios 判断、2026-05-17 追補)
+
+| # | 判断点 | 確定 | 反映先 |
+| --- | --- | --- | --- |
+| D1 | M8 `release-blocker` label を新設するか | **撤回 / 不要** (release 前に `/release` skill Step 0c で deferred 全件検証する設計で代替) | M8 削除、M9 再設計 |
+| D2 | Codex token 枯渇 / failure 時の動作 | **Claude Code (superpowers:requesting-code-review / systematic-debugging) で fallback 実行、report に明示** | C6 新設 |
+| D3 | 新設 doc (A1 / A2 / M2 / M10) の参照契機を明示するか | **必須** (各 doc が孤立した存在にならないよう skill / hook / CLAUDE.md から参照経路を 3-5 個明記) | A1 / A2 / M2 / M10 §参照契機 追加 |
 
 確定後、各 Lane の実装 PR は本表の確定値で進める。
 
