@@ -210,7 +210,7 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 
 ## リリース戦略
 
-詳細は [`docs/release-process.md`](docs/release-process.md) を参照。
+詳細は [`docs/release-process.md`](docs/release-process.md) を参照。Patch release (v0.M.N → v0.M.(N+1)) は [§Patch release の Track 構造](docs/release-process.md#patch-release-の-track-構造) (Track A-D 並列化) に従う。
 
 ## 開発ワークフロー
 

@@ -183,3 +183,38 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 - 手動リリース後、次回の通常 push で `release.yml` の `pull_request` トリガーや `python` ジョブが正常動作するか確認する (Actions タブから `Release` workflow を `workflow_dispatch` で dry-run 起動するのが確実)
 - 同梱バイナリ (Python / FFmpeg) の更新は手動ビルドでも自動ビルドでも更新箇所が同じ ([`docs/developer-setup.md` §9](developer-setup.md) のチェックリストに従う)
 - 手動 Release は通常時は不要。CI 復旧後は `release.yml` 経由に戻す
+
+## Patch release の Track 構造
+
+v0.M.N → v0.M.(N+1) の patch release を **Track A-D 構造**で並列化する。v0.2.1 (PR #759-#774) で確立した運用パターン。
+
+### 適用条件
+
+- security alert / Dependabot patch
+- deferred UX 吸収 (`/release` skill Step 0c (M9) で「次 patch 吸収」と判定された issue 群)
+- CI / build gate 追加
+- 緊急 bug fix の集約
+
+minor release (v0.M.0 → v0.(M+1).0) や major refactor は本 Track 構造の対象外、別 plan で扱う。
+
+### Track 規約
+
+| Track | 内容 | 並列性 | reference (v0.2.1) |
+| --- | --- | --- | --- |
+| Track 0 | spec PR (`docs/superpowers/specs/<date>-v0.M.N+1-patch-design.md`) | 直列 (最初) | #759 |
+| Track A | security / dependency (Dependabot / cargo audit / npm audit) | 並列可 | #760 |
+| Track B | deferred UX 吸収 (Step 0c で取り込み判定された issue 群) | 並列可 | #764 / #766 / #768 / #772 |
+| Track C | CI / build gate 追加 (security-audit.yml 等) | 並列可 | #763 |
+| Track D | version bump + CHANGELOG | 直列 (最後) | #773 |
+
+Track A / B / C は worktree 別 / 並列着手可能。Track D は他全 Track のマージ後に直列実行する (version bump が他 PR と base 衝突しないようにするため)。
+
+### `/release` skill との連携
+
+Step 0a 受け入れゲート → Step 0b deferred 全件取得 → Step 0c 1 件ずつ (a) 次release吸収 / (b) deferred 継続 / (c) close 分類。Step 0c で (a) と分類された issue 群が **Track B 吸収候補** となり、spec PR (Track 0) の table に記録される。
+
+詳細な Step 0c 運用は [`.claude/skills/release/SKILL.md`](../.claude/skills/release/SKILL.md) を参照。
+
+### 参考: v0.2.1 patch release (2026-05-16)
+
+v0.2.0 release 後の patch として、4 Track + spec を計 10 PR (#759 spec / #760 Track A / #763 Track C / #764, #766, #768, #772 Track B / #769, #771 Track C 軽量化 / #773 Track D) で完結した実例。
