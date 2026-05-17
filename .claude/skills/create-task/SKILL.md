@@ -34,3 +34,14 @@ argument-hint: <タスクの概要（自然言語）>
 ## 注意事項
 
 issue 規約 (粒度 / prefix ラベル / スコープラベル / 優先度ラベル / タイトル文字数 / `作成: <session-id>` / `Closes`/`Fixes`/`Resolves` 禁止 等) は [`docs/issue-policy.md`](../../../docs/issue-policy.md) を参照する。本 skill は手順実装に専念し、規約は restate しない。
+
+## Patch release 関連の issue 起票 (#L-γ A2 / M9)
+
+v0.M.N → v0.M.(N+1) の patch release で吸収する issue を起票する場合は、[`docs/release-process.md` §Patch release の Track 構造](../../../docs/release-process.md#patch-release-の-track-構造) (Track A-D 並列化) を参照し、対応する prefix label / scope label を判定:
+
+- **Track A** (security / dependency): prefix `[task]` or `[refactor]`、scope `l2-workflow` (security/CI 系) or 該当 scope
+- **Track B** (deferred UX 吸収): `/release` skill Step 0c で (a) 次 release 吸収と判定された issue 群 (新規起票は通常不要、既存 deferred issue が対象)
+- **Track C** (CI / build gate): prefix `[task]`、scope `l2-workflow` or `l2-ci`
+- **Track D** (version bump + CHANGELOG): `/release` skill が自動生成、`/create-task` は通常使わない
+
+新規起票時に「次 patch で吸収する」と確定済みなら、issue 本文の冒頭にどの Track 候補かを明記すると `/release` Step 0c での分類が容易になる。

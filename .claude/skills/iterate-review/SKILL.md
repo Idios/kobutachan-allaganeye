@@ -169,8 +169,10 @@ Iron Law 3 と CLAUDE.md plugin override 規約は「user の明示判断が最�
 3. 変更 path に応じた local check (Iron Law 6 サブ条 = `docs/l2-workflow.md` §「PR 作成 path 別自動チェック」):
    - Python (`*.py`): `ruff check . && ruff format --check . && pyright && pytest`
    - GUI (`gui/src/**`, `gui/src-tauri/**`): `npm run lint && npm run typecheck && npm test && npm run build && cargo check`
-   - Markdown (`docs/**.md`, `*.md`): `bash scripts/check-markdownlint.sh`
+   - Markdown (`docs/**.md`, `*.md`): `bash scripts/check-markdownlint.sh` (violation fix recipe は [`docs/markdownlint-guide.md`](../../docs/markdownlint-guide.md) §typical fixes を参照、M10)
 4. **1 round = 1 commit** で集約: 全 (A) を 1 つの commit にまとめる (round 単位の atomicity を確保、Round 別 SHA を summary コメントで参照しやすくするため)。message テンプレ: `fix(round-N): <要約> (Refs #<元 issue>)`。例外として、push 失敗で reset → 再 commit が必要な場合のみ複数 commit になる可能性を許容
+
+> **M5 同 issue 過去 PR 警告の併走**: `/review-pr` Step 1.1 で同 issue 過去 merged PR が ≥1 件検出された場合、その警告は subagent の Step 5b 表冒頭に転記されて return される。controller (本 skill) は Step 2.2 parse 後の Step 2.3 Round summary 提示時に user に再度明示する (root cause sweep 重点確認の促し)。
 
 #### Step 2.5 (B) findings handoff (新規 issue 起票、限定例外パス)
 
