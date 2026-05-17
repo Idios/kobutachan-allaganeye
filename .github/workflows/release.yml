@@ -14,16 +14,24 @@ on:
   # 含む (v0.2.0 実績で paths 対象を多数 touch) ため tag push 時の paths filter は
   # 実用上問題ない。万一 paths にマッチしない tag commit が必要になった場合は
   # workflow_dispatch で手動実行できる。
-  # /iterate-review Round 2 R2-1 fix (PR #775): push trigger の paths filter を撤去。
+  # /iterate-review Round 2 R2-1 fix + Round 3 R3-1 訂正 (PR #775): push trigger の paths filter を撤去。
   # 経緯: 元は paths filter でファイル絞り込みしていたが、GitHub Actions の挙動として
   # branches/tags filter unmatch (claude/* 等) でも paths match で workflow run が
   # phantom 作成され conclusion=failure として記録される問題があった
   # (claude/nervous-hoover-464244 で 5 連続 failure を実証)。
   # paths を撤去することで branches=[main, develop-*] + tags=[v*.*.*] の strict
-  # 判定のみとなり、claude/* push では run 自体が作成されない。代償として main /
-  # develop-* / tag への無関係 path 変更 push でも release.yml が起動するが、
-  # これらは元々頻度低 + cache warm-up 用途 (#770) として有用なため許容。
+  # 判定のみとなり、claude/* push では run 自体が作成されなくなる**期待**。
+  # 代償として main / develop-* / tag への無関係 path 変更 push でも release.yml
+  # が起動するが、これらは元々頻度低 + cache warm-up 用途 (#770) として有用なため許容。
   # pull_request 側の paths filter は維持 (PR validation 範囲を絞る)。
+  #
+  # R3-1 訂正 (重要): R2 fix の empirical 検証は **post-merge (develop-0.3.0 → main
+  # 反映) 以降の future push で初めて可能**。本 PR 期間中は GitHub Actions が
+  # `push.paths` filter を default branch (main) の workflow 定義で評価する known
+  # behavior により、main の release.yml が旧 paths filter を保持している間は claude/*
+  # push の phantom run 作成は継続する (commit 2d17747 push 自体が phantom run
+  # 25985396510 を作成した事実で実証)。defense-in-depth `if:` 条件は phantom run の
+  # 0 jobs 維持 (= conclusion=failure だが functional 影響ゼロ) を担保。
   push:
     branches: [main, "develop-*"]
     tags:
