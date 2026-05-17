@@ -1,6 +1,6 @@
 [package]
 name = "allaganeye-gui"
-version = "0.2.1"
+version = "0.3.0"
 description = "Allagan Eye GUI shell (Tauri 2 + React)"
 edition = "2021"
 
