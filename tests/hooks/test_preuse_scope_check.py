@@ -1,4 +1,4 @@
-"""Tests for M7 path↔scope multi-scope detection in preuse.py (Refs spec L-α M7)."""
+"""Tests for M7 path-to-scope multi-scope detection in preuse.py (L-alpha M7)."""
 
 from __future__ import annotations
 
