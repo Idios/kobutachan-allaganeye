@@ -27,7 +27,9 @@ def test_classify_path_known_scopes() -> None:
     assert preuse._classify_path("gui/scripts/generate-ts.mjs") == "l2a-gui"
     assert preuse._classify_path("scripts/build-portable-zip.ps1") == "l2b-installer"
     assert preuse._classify_path(".github/workflows/ci.yml") == "l2-ci"
-    assert preuse._classify_path(".github/ISSUE_TEMPLATE/bug_report.yml") == "l2-workflow"
+    assert (
+        preuse._classify_path(".github/ISSUE_TEMPLATE/bug_report.yml") == "l2-workflow"
+    )
     assert preuse._classify_path(".claude/hooks/stop.sh") == "l2-workflow"
     assert preuse._classify_path(".claude/skills/review-pr/SKILL.md") == "l2-workflow"
     assert preuse._classify_path("docs/refactor-pattern.md") == "l2-docs"
