@@ -20,8 +20,27 @@ cd "${REPO_ROOT}"
 
 CLI2_VERSION="0.22.1"  # CI のバンドル version と揃える。CI 側を更新したら同期する
 
+# Lint failure 時の参照リンク (typical violation の fix recipe + ignore pattern 規約)。
+# exec を使うと shell process が置換され trap が効かないため、明示的に rc を捕捉して
+# stderr に hint を出力する形に refactor (#L-γ M10 参照経路強化)。
+HINT="See docs/markdownlint-guide.md for ignore pattern rules and typical fixes (MD028 / MD056 / MD060)."
+
 if [[ "${1:-}" == "--fix" ]]; then
-  exec npx --yes "markdownlint-cli2@${CLI2_VERSION}" --fix "**/*.md"
+  set +e
+  npx --yes "markdownlint-cli2@${CLI2_VERSION}" --fix "**/*.md"
+  rc=$?
+  set -e
+  if [[ $rc -ne 0 ]]; then
+    echo "$HINT" >&2
+  fi
+  exit $rc
 fi
 
-exec npx --yes "markdownlint-cli2@${CLI2_VERSION}" "**/*.md"
+set +e
+npx --yes "markdownlint-cli2@${CLI2_VERSION}" "**/*.md"
+rc=$?
+set -e
+if [[ $rc -ne 0 ]]; then
+  echo "$HINT" >&2
+fi
+exit $rc

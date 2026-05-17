@@ -41,6 +41,7 @@ ruff check .
 ruff format --check .
 pyright
 bash scripts/check-markdownlint.sh   # markdownlint (CI と同 version で全 .md チェック、--fix で自動修正)
+# violation の fix recipe / ignore pattern 規約は docs/markdownlint-guide.md を参照
 
 # CLI
 allaganeye detect <video_path>                          # 検知のみ (metadata.json 出力、#463)
@@ -199,6 +200,14 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 
 ツール側はユーザー環境を変更しない。ファイル関連付け / レジストリ / PATH / 自動起動登録は提案禁止。展開 = インストール、削除 = アンインストール の Portable ZIP 哲学を維持する (2026-04-27 ユーザー方針確定)。
 
+## 外部依存 URL 規約
+
+> §アーキテクチャ §外部依存 (runtime deps: ffmpeg / Python pkg / platforms) とは別。本 § は **DL URL の pin ルール**。
+
+外部依存 (Python / npm / cargo / OS binary tarball 等) の DL コードは **immutable URL** で pin する。詳細・受け入れ可能ソース・禁止パターン・検証手順は [`docs/l2-workflow.md` §外部依存規約](docs/l2-workflow.md#外部依存規約-649651703721-教訓) を参照。
+
+代表事例: get-pip.py SHA pin (#649→#651→#703)、BtbN FFmpeg monthly snapshot (#721)。
+
 ## セキュリティ検査（allaganeye-guard 運用連携）
 
 外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `allaganeye-guard` でセキュリティ検査を行う。**プログラムレベルでの結合は行わず**、エージェント (= Claude + 人間メンテナ Idios) が手動で `allaganeye-guard verify` を実行する運用ルールとする (2026-04-21 方針確定、#454 参照)。詳細は [`docs/guard-integration.md`](docs/guard-integration.md)、外部ユーザー向けバグ報告案内は [`docs/bug-report-guide.md`](docs/bug-report-guide.md) を参照。
@@ -244,6 +253,16 @@ PR 作成後は `/iterate-review <PR#>` で review-fix ループを自走させ�
 ### バグ修正時の方針
 
 バグ修正は「修正実装」だけで完了せず、**根本原因分析 + 類似バグ調査 + 必要なら追加 issue 起票** をセットで行う。指示通りに直すだけでは同種のバグが残り続けるため、根本原因の横展開で品質を底上げする。
+
+#### encoding boundary audit checklist (#656/#657/#662 教訓)
+
+subprocess / IPC / OS API を介した encoding fix を行うときは、**以下 3 層をすべて audit** すること。1 層だけ fix すると別層で再発する (F4: PR #657 Python 側 fix → #662 Rust 側追加 fix が必要だった事例)。
+
+1. **Python 側** (CLI / scripts): `subprocess.Popen(..., encoding=...)` / `sys.stdout.reconfigure(encoding='utf-8')` / `os.fsencode` / `Path` の Unicode 扱い
+2. **Rust 側** (Tauri / `gui/src-tauri/`): `tokio::process::Command` の stdin/stdout encoding / `OsString` / `Path::to_string_lossy()` の `\u{FFFD}` 混入 / `serde_json::from_str` の BOM 拒否
+3. **OS code page**: Windows なら `chcp 65001` 想定の動作 / cp932 環境での fallback / GitHub Actions runner (`pwsh` UTF-8 BOM-less 出力 vs PowerShell 5.1 BOM 付き)
+
+実装 PR では各 fix が 3 層のうちどこを touch するか PR 本文に明示。3 層に跨る fix は **Phase 分割の対象**になりうる (`docs/refactor-pattern.md`)。
 
 ### 大規模 refactor の Phase 分割
 

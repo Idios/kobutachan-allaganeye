@@ -2,6 +2,16 @@
 
 `docs/` 配下の markdown 編集時に踏みやすい lint violation と、`.markdownlint-cli2.yaml` の ignore パターンの規約。
 
+## このドキュメントの位置付け
+
+以下の経路から参照される。違反 fix で迷ったとき、ignore pattern を新規追加するとき、glob semantics を再確認したいときに引く:
+
+- `.markdownlint-cli2.yaml` の header comment
+- `scripts/check-markdownlint.sh` の lint failure 時 stderr hint
+- `CLAUDE.md` §コマンド の markdownlint 行直下
+- `/review-pr` skill Step 5b トリアージ (L-β で追加予定)
+- `/iterate-review` skill Step 2.4 (L-β で追加予定)
+
 ## ローカル実行
 
 ```bash

@@ -779,6 +779,42 @@ typo fix / リンク更新では過剰。`/iterate-review` のような中核 sk
 
 2026-04-24 `/review-pr` skill 改修で実証済み (PR #537 / #562)。Iteration 0 baseline で構造的欠陥 6 件 (環境制約節欠落、Round N 記法不在、処置分類判定基準の弱さ、束ね PR 独立検証の明示不在、孤立 PR 手順不在、doc-only CI 波及観点なし) を検出し、Iteration 1 で全件解消。精度 0.98 → 1.00、[critical] 3/3 成功。書き手自身の自己レビューでは構造的欠陥に到達できなかった。参考: <https://github.com/mizchi/chezmoi-dotfiles/blob/main/dot_claude/skills/empirical-prompt-tuning/SKILL.md>
 
+## 外部依存規約 (#649/#651/#703/#721 教訓)
+
+外部依存 (Python / npm / cargo / OS binary tarball 等) の DL コードは **immutable URL** で pin する。`master` / `main` / `latest` / `raw HEAD` を含む URL は禁止。
+
+### Why
+
+PR #649 → #651 (get-pip.py SHA pin) → #703 (versioned tag URL 切替) → #721 (BtbN monthly snapshot) の 3 hotfix 連発 (F2)。最初から immutable URL ルールがあれば 1 PR で完結した。BtbN daily の retention 14 日 / get-pip.py master の breaking change 等、上流側の breaking が DL URL に影響する。
+
+### 受け入れ可能なソース
+
+| ソース | 形式 | 例 |
+| --- | --- | --- |
+| PyPA versioned tag | `https://github.com/pypa/<repo>/raw/<tag>/...` | get-pip.py |
+| BtbN monthly snapshot | `https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-YYYY-MM-{28,29,30,31}-*/...` | FFmpeg n8.1 |
+| npm registry version pin | `package.json` の `dependencies` で `"^X.Y.Z"` (transitive は package-lock.json で fix) | tauri / vite |
+| cargo registry version pin | `Cargo.toml` の `tauri = "2.11"` (transitive は Cargo.lock で fix) | tauri-utils |
+| SHA-pinned download | `https://.../...-<commit-hash>.tar.gz` + SHA256 checksum | FFmpeg checksum |
+
+### 禁止パターン
+
+| パターン | 理由 |
+| --- | --- |
+| `https://.../master/...` | upstream master の breaking が即影響 |
+| `https://.../main/...` | 同上 |
+| `https://.../latest/...` | retention / 互換性が保証されない |
+| `https://raw.githubusercontent.com/.../HEAD/...` | HEAD は git ref として可変 |
+| `npm install <pkg>` (version 未指定) | semver caret semantics で意図せぬ major up に脱する |
+
+### 検証手順
+
+`scripts/build-portable-zip.ps1` / `.github/workflows/*.yml` / 任意の install script を編集する場合:
+
+1. 該当行のコメントに「must be immutable (versioned tag / SHA pinned)」と記載
+2. Pester regression (`tests/installer/build-portable-zip.Tests.ps1`) で URL に `master`, `main`, `latest`, `HEAD` の literal が含まれていないことを assert
+3. `/review-pr` skill が installer / workflow PR を review するときに本 § を引いて URL 規約適合を Step 5b トリアージで逐条検証
+
 ## 参考
 
 - [code.claude.com/docs/en/skills](https://code.claude.com/docs/en/skills) — skill 設計ガイド
