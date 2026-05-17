@@ -127,6 +127,8 @@ PR の変更種別に応じて以下を確認する。**code quality (logic / ar
 
 `superpowers:requesting-code-review` skill が dispatch する `superpowers:code-reviewer` subagent に code quality 観点 (logic correctness / architecture / security / code smell / best practices) のレビューを委譲する。subagent は本 skill の責務外の項目 (受け入れ条件 / base sync / 並行 PR / project doc 整合 / マージ後 handoff) には介入しない。
 
+> **subagent 起動規約**: 本 dispatch は [`docs/l2-workflow.md` §subagent 起動規約](../../docs/l2-workflow.md#subagent-起動規約-746-phase-c--741-task-5-教訓) に準拠する。HARD-GATE (Stop conditions / 独断 fix 禁止 / orphan commit 防止) を遵守し、scope を超える発見は BLOCKED 報告で controller (本 skill) に escalate する。F6 (#732) / F7 (#741) と同型の事象を再発させない。
+
 入力に渡す情報:
 
 - PR 番号 (`$ARGUMENTS`)
