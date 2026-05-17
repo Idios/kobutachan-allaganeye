@@ -831,6 +831,61 @@ skill report (`/review-pr` Step 6 レビュー報告 / `/iterate-review` Round s
 - 重要 PR (release 直前 / 大規模 refactor) で Codex fallback が trigger した場合、user に AskUserQuestion で「Codex 復旧待ち / Claude fallback で push」の 3 択を提示
 - fallback report には「fallback で実行済」を明示することで、後日 Codex 復旧時に再 review が要否を判断可能にする
 
+## subagent + Codex 直列構成 (C5)
+
+大規模実装 / 重要 PR では superpowers `subagent-driven-development` (Claude 内 fresh subagent) と Codex `/codex:review` (GPT-5.4) を **直列**で組み合わせる。並列ではなく直列にする理由: Codex 自身に fix させない (Iron Law 3 / 5 整合)。
+
+### Flow
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ Stage 1: Claude 内 fresh subagent が実装                     │
+│         (superpowers:subagent-driven-development)            │
+│         - per-task subagent dispatch                         │
+│         - 2-stage review (spec reviewer + code quality)      │
+│         - HARD-GATE: scope を超える発見 → BLOCKED 報告       │
+└─────────────────────────────────────────────────────────────┘
+                            ↓ commit on claude/<branch>
+┌─────────────────────────────────────────────────────────────┐
+│ Stage 2: controller (Claude main) が到達確認 (M6 整合)        │
+│         git log <branch> --oneline -5 | grep <SHA>           │
+│         orphan commit 検出 → cherry-pick で復旧               │
+└─────────────────────────────────────────────────────────────┘
+                            ↓ branch HEAD が想定 SHA を含む
+┌─────────────────────────────────────────────────────────────┐
+│ Stage 3: /codex:review (Codex GPT-5.4) で adversarial pass    │
+│         独立 model の second opinion                          │
+│         focus 文字列で project 固有焦点                       │
+│         Codex 自身に commit させない (M3 整合)                │
+│         fail 時は §Codex fallback (C6) に従う                 │
+└─────────────────────────────────────────────────────────────┘
+                            ↓ Codex finding (read-only)
+┌─────────────────────────────────────────────────────────────┐
+│ Stage 4: controller + Idios で triage                         │
+│         /review-pr Step 5b の (A) / (B) / (C) 分類            │
+│         Codex finding は 出所 = codex:review として統合        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Iron Law 6 Pre-flight Step 5 との違い
+
+| 軸 | Iron Law 6 Pre-flight Step 5 (C2) | subagent + Codex 直列構成 (C5、本節) |
+| --- | --- | --- |
+| 起動タイミング | PR 作成**直前** (Step 0-4 通過後) | `/review-pr` 段階の **deep-dive** (Step 5a) |
+| Codex command | `/codex:adversarial-review` (approve させない姿勢) | `/codex:review` (code quality 一般) |
+| 必須 / オプション | **必須** (Pre-flight ゲート) | optional (起動条件: 大規模 PR / 過去 root cause 複数 / L1 core) |
+| 直前 stage | Step 4 並行 PR 重複再確認 | superpowers subagent 実装 + reachability 確認 |
+
+### 並列ではなく直列にする理由
+
+- Codex に fix させると Iron Law 3 (scope creep) / Iron Law 5 (independent judgment) の衝突リスク
+- superpowers subagent (Claude 思考体) と Codex (GPT-5.4) を並列起動しても finding が重複するだけで bias は減らない
+- 直列で「実装 → reachability → adversarial review → triage」と段階化すると、各 stage で人 (Idios) が介入できる checkpoint が確保される
+
+### Fallback (Codex fail 時)
+
+Stage 3 で Codex CLI が token 枯渇 / network failure 等で fail した場合は §Codex fallback (C6、本 doc 内) に従い、superpowers `requesting-code-review` subagent を Stage 3 の代替として起動する。Stage 4 triage は同様に実施し、fallback notice を report に必須記載する。
+
 ## 外部依存規約 (#649/#651/#703/#721 教訓)
 
 外部依存 (Python / npm / cargo / OS binary tarball 等) の DL コードは **immutable URL** で pin する。`master` / `main` / `latest` / `raw HEAD` を含む URL は禁止。
