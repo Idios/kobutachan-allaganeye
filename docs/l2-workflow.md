@@ -790,6 +790,47 @@ typo fix / リンク更新では過剰。`/iterate-review` のような中核 sk
 
 2026-04-24 `/review-pr` skill 改修で実証済み (PR #537 / #562)。Iteration 0 baseline で構造的欠陥 6 件 (環境制約節欠落、Round N 記法不在、処置分類判定基準の弱さ、束ね PR 独立検証の明示不在、孤立 PR 手順不在、doc-only CI 波及観点なし) を検出し、Iteration 1 で全件解消。精度 0.98 → 1.00、[critical] 3/3 成功。書き手自身の自己レビューでは構造的欠陥に到達できなかった。参考: <https://github.com/mizchi/chezmoi-dotfiles/blob/main/dot_claude/skills/empirical-prompt-tuning/SKILL.md>
 
+## Codex fallback (C6、Codex token 枯渇 / failure 時)
+
+Codex CLI (`codex-companion.mjs` runtime) が以下のいずれかで fail した場合、Claude Code 側で同等処理を fallback 実行する。Iron Law 1 / 6 違反 (受け入れ条件検証 / Pre-flight ゲート不通過のまま進行) を防ぐ。
+
+### 検出条件
+
+| 検出条件 | 判定 |
+| --- | --- |
+| exit code 非ゼロ + stderr に `rate.?limit`, `quota`, `429`, `usage_limit` のいずれか | **token 枯渇 (明確)** → 自動 fallback |
+| exit code 非ゼロ + stderr に `auth`, `unauthorized`, `401`, `403`, `api.?key` | **認証失敗 (明確)** → 自動 fallback + user notify |
+| exit code 非ゼロ + stderr に `timeout`, `EHOSTUNREACH`, `ENETUNREACH`, `ECONNRESET` | **network failure (明確)** → 自動 fallback |
+| exit code 非ゼロ + 上記いずれにも該当しない stderr | **曖昧** → user に AskUserQuestion (再試行 / Claude fallback / abort) |
+| exit code 0 + stdout が空 / parse 不能 | **応答異常** → user に AskUserQuestion |
+
+### Fallback 戦略
+
+| Codex command | 通常用途 | Fallback 内容 |
+| --- | --- | --- |
+| `/codex:review` (C3 で `/review-pr` Step 5a に invoke) | code quality adversarial pass | superpowers `requesting-code-review` subagent を起動して同等の adversarial review。focus 文字列は Codex 用と同じ |
+| `/codex:adversarial-review` (C2 で Iron Law 6 Step 5 に invoke) | Pre-flight 第 5 ゲート | superpowers `requesting-code-review` subagent + project 固有 focus を起動。`<grounding_rules>` 相当で「adversarial / approve させない姿勢」を明示 |
+| `/codex:rescue` (C4 で root-cause 調査時に invoke) | bug 根本原因 + 類似バグ探索 | Claude main + superpowers `systematic-debugging` skill で自力調査。`/scope-guard` 規約は維持 (独断 fix 禁止) |
+
+### Fallback 実行時の必須記載 (Iron Law 5 整合)
+
+skill report (`/review-pr` Step 6 レビュー報告 / `/iterate-review` Round summary comment) に以下を**必ず明示**:
+
+```text
+> **Codex fallback notice**: 本 review は Codex CLI が <検出条件> で fail したため、
+> Claude Code (superpowers:<skill-name>) で代替実行しました。
+> Codex 側の review は次セッションで再試行を推奨します。
+> stderr 要約: <stderr の先頭 200 字>
+```
+
+これがないと Idios が Codex review 済と誤認するリスクがある (Iron Law 5 衝突回避)。
+
+### Fallback の限界 (明示)
+
+- Codex は GPT-5.4 (独立 model) の second opinion。Claude Code fallback は同一 model の self-review に近く、bias 構造が同じになる
+- 重要 PR (release 直前 / 大規模 refactor) で Codex fallback が trigger した場合、user に AskUserQuestion で「Codex 復旧待ち / Claude fallback で push」の 3 択を提示
+- fallback report には「fallback で実行済」を明示することで、後日 Codex 復旧時に再 review が要否を判断可能にする
+
 ## 外部依存規約 (#649/#651/#703/#721 教訓)
 
 外部依存 (Python / npm / cargo / OS binary tarball 等) の DL コードは **immutable URL** で pin する。`master` / `main` / `latest` / `raw HEAD` を含む URL は禁止。

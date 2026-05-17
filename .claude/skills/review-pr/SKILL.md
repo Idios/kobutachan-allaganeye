@@ -219,7 +219,16 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 - 過去 root cause が複数 (Step 1.1 M5 警告 ≥2 件)、または
 - L1 (CLI / detector / GPU) の core ロジック変更を含む
 
-Codex の finding は Step 5b トリアージ表に「出所 = codex:review」と記載して統合する。Codex に直接 commit させない (M3 整合)。Codex CLI が token 枯渇 / network failure 等で fail した場合は [`docs/l2-workflow.md` §Codex fallback](../../docs/l2-workflow.md#codex-fallback) (L-β β-5 で追加) の手順に従い、superpowers `requesting-code-review` subagent を fallback として起動する。fallback 実行時は Step 6 レビュー報告に「Codex fallback notice」を必須記載 (Iron Law 5 整合)。
+Codex の finding は Step 5b トリアージ表に「出所 = codex:review」と記載して統合する。Codex に直接 commit させない (M3 整合)。
+
+#### Codex fail 時の fallback 手順 (C6、L-β β-5 で追加)
+
+Codex CLI が exit code 非ゼロを返した場合、[`docs/l2-workflow.md` §Codex fallback](../../docs/l2-workflow.md#codex-fallback) の検出条件 table に従い:
+
+1. stderr を keyword match (rate-limit / quota / 429 / auth / timeout 等) で分類
+2. **明確な failure** → 自動 fallback: superpowers `requesting-code-review` subagent を起動 (Codex 用 focus 文字列を流用)
+3. **曖昧** → user に AskUserQuestion (再試行 / Claude fallback / abort) 3 択
+4. fallback 実行時は **Step 6 レビュー報告に「Codex fallback notice」を必須記載** (Iron Law 5 整合、template は docs/l2-workflow.md §Codex fallback 参照)
 
 詳細運用は `CLAUDE.md` §Codex 運用 を参照。
 
