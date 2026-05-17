@@ -330,6 +330,16 @@ PR は <R> ラウンドの review-fix で収束。全 findings 解消完了。
 - 並行 PR: <検出ゼロ / [#X handled]>
 - base sync: <CLEAN / 取り込み済み>
 
+## Codex fallback notice (J-4 fix、C6 整合)
+
+(Round 内で `/codex:review` が fail し fallback で代替実行した場合は以下を必須記載。fallback ゼロなら "(なし)" を残す)
+
+> **Codex fallback notice**: Round <N> で Codex CLI が <検出条件: rate.?limit / 429 / quota / auth / timeout 等> で fail したため、Claude Code (superpowers:requesting-code-review) で代替実行しました。
+> Codex 側の review は次セッションで再試行を推奨します。
+> stderr 要約: <stderr の先頭 200 字>
+
+(Iron Law 5 整合、Idios が Codex review 済と誤認するリスク回避)
+
 [<session-id>]
 `````
 

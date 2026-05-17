@@ -53,7 +53,9 @@ Step 0b で取得した各 deferred issue について、AskUserQuestion で以�
 #### bulk 件数の運用 (Iron Law 2 整合)
 
 - 件数 ≤2: 1 件ずつ AskUserQuestion で個別確認
-- 件数 ≥3: **先に Iron Law 2 bulk pre-check** (サンプル 1 件提示 + 「全件 OK / 個別調整 / やめる」3 択) → 「個別調整」選択時のみ 1 件ずつの確認に進む
+- 件数 ≥3: **先に Iron Law 2 bulk pre-check** (サンプル 1 件提示 + 「全件 OK (= 全件 (b) deferred 継続) / 個別調整 / やめる」3 択)
+- 「全件 OK」選択時の挙動 (B-2/B-3 fix): **全件を (b) deferred 継続として処置**し、Step 0c table の分類列を全件 `(b) deferred 継続` で埋める。「全件 (a) 次 release 吸収」と読み違えやすいため pre-check の選択肢 description で「(b) 継続」を明示する規約とする。「全件 (a) 次 release 吸収」を意図する場合は user が `Other` で明示する
+- 「個別調整」選択時のみ 1 件ずつの確認に進む
 
 #### Step 0c 結果の spec PR table 化 (Track 0)
 

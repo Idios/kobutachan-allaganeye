@@ -44,4 +44,27 @@ v0.M.N → v0.M.(N+1) の patch release で吸収する issue を起票する場
 - **Track C** (CI / build gate): prefix `[task]`、scope `l2-workflow` or `l2-ci`
 - **Track D** (version bump + CHANGELOG): `/release` skill が自動生成、`/create-task` は通常使わない
 
-新規起票時に「次 patch で吸収する」と確定済みなら、issue 本文の冒頭にどの Track 候補かを明記すると `/release` Step 0c での分類が容易になる。
+新規起票時に「次 patch で吸収する」と確定済みなら、issue 本文の冒頭にどの Track 候補かを明記し、**Track 構造 doc への link を本文に含める** (例: `[Track 構造](docs/release-process.md#patch-release-の-track-構造) 参照`) と `/release` Step 0c での分類が容易になる。
+
+## deferred 状態の issue 起票 (M8 撤回後の運用、2026-05-17 D1 確定)
+
+現バージョン scope 外として `deferred` を付与する issue を起票する場合のフロー:
+
+1. **`deferred` ラベル付与**: 現バージョン scope 外確定の issue には必ず `deferred` を付与 (`--label "deferred"`)
+2. **`release-blocker` ラベルは使用しない**: M8 撤回 (2026-05-17 D1 確定、`docs/superpowers/specs/2026-05-17-v020-v021-retro-codex-integration-design.md` §M8 参照) により、`release-blocker` label は新設・付与しない。次 release 吸収判定は `/release` Step 0c で行う
+3. **L1 残課題の場合**: `deferred` + `l1-residual` の dual-label を必ず付与 ([`docs/issue-policy.md`](../../../docs/issue-policy.md) §`l1-residual` + `deferred` dual-label 規約 参照)
+4. **本文の必須要素**: 「次 release タイミングで `/release` Step 0c に再評価される前提」を明示。例:
+
+   ```markdown
+   ## scope 判定
+
+   現 v0.M.x scope 外 (`deferred` 付与)。次 release タイミングで `/release` skill
+   Step 0c の deferred 全件検証時に (a) 次 release 吸収 / (b) deferred 継続 /
+   (c) close のいずれかに分類される。
+
+   ## 判定理由
+
+   <なぜ scope 外なのかを 1-2 文>
+   ```
+
+5. issue 本文に `[docs/release-process.md §Patch release Track 構造](../../docs/release-process.md#patch-release-の-track-構造)` への link を含めると、後日の Step 0c 評価で参照しやすくなる

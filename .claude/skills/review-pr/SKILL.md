@@ -26,7 +26,23 @@ gh pr diff $ARGUMENTS
 
 #### 1.1 同 issue 過去 PR 検出 (M5、F4 / F5 / F8 教訓)
 
-元 issue # を PR 本文から解決した直後に、過去 merged PR 件数を確認する:
+##### 元 issue # の抽出ルール (G-1 fix)
+
+PR 本文 + GitHub API の両方から元 issue # を抽出する。どちらか一方の見落としを防ぐため**両方カバー必須**:
+
+```bash
+# 1. closingIssuesReferences 経由 (Closes/Fixes/Resolves キーワード由来、機械的取得)
+gh pr view <PR#> --json closingIssuesReferences
+
+# 2. PR 本文の Refs/refs/関連 issue 等の手動引用 (本 project では Closes 禁止のため Refs が主)
+gh pr view <PR#> --json body | grep -oE "#[0-9]+|Refs[[:space:]]+#[0-9]+"
+```
+
+両方の和集合を **元 issue # の集合**として扱う。本 project は Iron Law 4 で Closes / Fixes / Resolves キーワード禁止のため、通常は (2) の Refs 引用が主だが、(1) も保険として実行する。
+
+##### 過去 merged PR 確認
+
+元 issue # 集合の各 # に対し、過去 merged PR 件数を確認する:
 
 ```bash
 gh pr list --search "<元issue#>" --state merged --limit 10
@@ -37,6 +53,10 @@ gh pr list --search "<元issue#>" --state merged --limit 10
 > 「同 issue で過去に merged PR `<N>` 件あります (PR #..., #...)。前回 fix の root cause が今回の変更で完全解消しているか、Step 5 / 5a で重点的に確認してください」
 
 意図的な multi-phase 分割 (例: AppError migration #663→#689→#714 系の Phase 分割、[`docs/refactor-pattern.md`](../../docs/refactor-pattern.md)) の場合は元 issue の本文 / コメントで明示確認し、警告を「意図的分割と確認済」として処置する。
+
+##### 意図的分割の確認失敗時 fallback (G-4 fix)
+
+元 issue の本文 / コメントを Read しても「意図的な multi-phase 分割」かどうかが判断できない場合 (= 元 issue が「再発したらまた直す」程度の bug fix で Phase 設計が無いケース) は、警告行を**通常通り出す** (= 「意図的分割と確認済」処置にはしない)。warning は user 判断に倒し、Step 7 提案で `/iterate-review` 起動時に Idios が手動で root cause sweep の重点確認を行う。
 
 **block / threshold は設けない** (spec O2 (a) 確定値、警告のみ → user 判断)。F4 (#656 cp932 → #662 UTF-8 二段) や F8 (deferred 持ち越し) と同型の reoccurring fix を事前検出する。
 
@@ -219,6 +239,14 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 - 過去 root cause が複数 (Step 1.1 M5 警告 ≥2 件)、または
 - L1 (CLI / detector / GPU) の core ロジック変更を含む
 
+#### 起動条件不該当時の明示記録 (H-4 fix)
+
+上記 3 条件すべて不該当の PR (= Codex review 非起動) の場合、Step 6 レビュー報告に以下を 1 行明記する:
+
+> `Codex review 起動: 非対象 (理由: touched <N> file / single root cause / non-L1-core)`
+
+これがないと「Codex review を意図的に skip したのか / 忘れたのか」が事後追跡できない (Iron Law 5 整合)。
+
 Codex の finding は Step 5b トリアージ表に「出所 = codex:review」と記載して統合する。Codex に直接 commit させない (M3 整合)。
 
 #### Codex fail 時の fallback 手順 (C6、L-β β-5 で追加)
@@ -226,9 +254,18 @@ Codex の finding は Step 5b トリアージ表に「出所 = codex:review」�
 Codex CLI が exit code 非ゼロを返した場合、[`docs/l2-workflow.md` §Codex fallback](../../docs/l2-workflow.md#codex-fallback) の検出条件 table に従い:
 
 1. stderr を keyword match (rate-limit / quota / 429 / auth / timeout 等) で分類
-2. **明確な failure** → 自動 fallback: superpowers `requesting-code-review` subagent を起動 (Codex 用 focus 文字列を流用)
-3. **曖昧** → user に AskUserQuestion (再試行 / Claude fallback / abort) 3 択
-4. fallback 実行時は **Step 6 レビュー報告に「Codex fallback notice」を必須記載** (Iron Law 5 整合、template は docs/l2-workflow.md §Codex fallback 参照)
+2. **重要 PR 判定 (I-5 fix、spec C6 限界節)**: 以下のいずれかを満たす場合は「重要 PR」とし、**自動 fallback の前に user に AskUserQuestion 3 択を提示**:
+   - release 直前 (`pyproject.toml` version bump を含む or develop-X.Y.Z → main 統合 PR)
+   - 大規模 refactor (touched > 30 file or diff > 1000 line)
+   - L1 core ロジック変更 (detector.py / gpu_detector.py / audio/*.py / video/detector.py)
+
+   AskUserQuestion 3 択 (Recommended 順):
+   - (A) Codex 復旧待ち (本 PR 一時 abort、Codex 復旧後に再 invoke) [Recommended]
+   - (B) Claude fallback で push (superpowers `requesting-code-review` subagent fallback)
+   - (C) abort (本 PR 全体停止、user 手動判断)
+3. **明確な failure (重要 PR でない)** → 自動 fallback: superpowers `requesting-code-review` subagent を起動 (Codex 用 focus 文字列を流用)
+4. **曖昧 (重要 PR でない)** → user に AskUserQuestion (再試行 / Claude fallback / abort) 3 択
+5. fallback 実行時は **Step 6 レビュー報告に「Codex fallback notice」を必須記載** (Iron Law 5 整合、template は docs/l2-workflow.md §Codex fallback 参照)
 
 詳細運用は `CLAUDE.md` §Codex 運用 を参照。
 

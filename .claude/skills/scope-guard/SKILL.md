@@ -60,7 +60,7 @@ git diff "$DEVELOP_BRANCH"...HEAD --name-only
    - **(a) 別 issue として起票**: 変更を revert せず、同 commit 内で但し書き、新 issue を起票して親 issue にリンク
    - **(b) 今すぐ revert**: `git reset <sha> -- <逸脱ファイル>` で変更を退避し、別ブランチで後日対応
    - **(c) スコープ拡大を認める**: 元 issue の scope を編集し、変更を正当化 (ユーザー判断必須)
-   - **(d) Phase 分割で別 PR に分ける** (大規模 refactor 案件、#L-γ A1): touched > 30 file or diff > 1000 line を超える場合の選択肢として [`docs/refactor-pattern.md`](../../docs/refactor-pattern.md) §4 判定基準を引いて Phase 設計 spec を起票
+   - **(d) Phase 分割で別 PR に分ける** (大規模 refactor 案件、#L-γ A1): touched > 30 file or diff > 1000 line を超える場合の選択肢として [`docs/refactor-pattern.md`](../../docs/refactor-pattern.md) §4 判定基準を引いて Phase 設計 spec を起票。実例: AppError migration (#663 → #689 → #714/716/725/730/733 → #745 → #746、`docs/refactor-pattern.md §3 Reference`)
 
 2. 上記いずれかを実行、**独断で (a)/(b)/(c)/(d) を選ばない**
 
