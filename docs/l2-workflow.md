@@ -692,6 +692,93 @@ Stop hook は**自セッションのディレクトリを sweep しない**。�
 
 `cleanup-claude-branches.sh` も同様に明示的に安全な AND 3 条件 (merged + active 参照なし + 24h cooldown) + `claude/` prefix 限定下でのみ `git branch -D` を実行し、merged 保証により data loss しない。`origin/develop-0.2.0` / `origin/main` が未 fetch なら `is-ancestor` false に倒れて keep する設計のため、fetch されていない開発環境でも安全に動作する。
 
+## brainstorming sweep 規約 (#746 教訓)
+
+brainstorming で「stale 参照 X を post-Y に更新する」「dangling reference を sweep する」のようなスコープ確定を行うとき、`Read` で個別箇所を見るだけでは sweep に漏れが出る。**Q1 で sweep 範囲を提示する直前に repo-wide grep を実行**し、結果を全件 inventory する。
+
+### Why
+
+PR #746 (Lane V Phase 3 / Group I, issue #699) で「dangling `appErrorMessage` / `appErrorHint` 参照を sweep」と確定したが、brainstorming で 3 箇所と list した一方、実装中の Phase C scan で 2 file 追加発見 (`ui-interaction-spec.md:693`, `tauri-commands.md` lines 10/58/65/73) した。結果 user の AskUserQuestion を再度発火させ、scope expansion 承認を得て Phase D で PR 内 fix した。brainstorming で `git grep` していれば最初から正しい sweep 範囲を Q1 に提示でき、Phase D は不要だった。
+
+### How to apply
+
+- brainstorming Q1 で sweep 範囲を提示する直前に `git grep -nE "<symbol>" -- ':!docs/superpowers/' ':!docs/archive/'` を実行 (Bash tool 1 回で済む)
+- 結果を全件 inventory して spec §5 詳細設計 / §8 受け入れ条件 に列挙
+- spec §8 AC で「repo 全体で残っていない」と書くなら、その AC を sweep 確定時点で grep 検証する (AC 文言と実 sweep の食い違いを防ぐ)
+- 対象が `appError*` のように複数の関連 symbol で構成される場合は `git grep -nE "(appErrorMessage|appErrorHint|appErrorCodeIs)"` のように同類をまとめて grep する
+
+## subagent 起動規約 (#746 Phase C / #741 Task 5 教訓)
+
+実装 / scan / refactor task で限定スコープを subagent に dispatch するとき、prompt に**必ず**以下の HARD-GATE を含める。これがないと subagent が独断 fix を進めて Iron Law 3 (scope creep) や Iron Law 5 (independent judgment) を踏む。
+
+### Stop-on-scope-creep (subagent prompt に必須記述)
+
+subagent prompt の `## Stop conditions` セクションに以下を含める:
+
+- 「Predefined scope を超える発見 (新 file の dangling ref / 想定外の修正候補 等) → STOP, report BLOCKED with finding details」
+- 「想定外 finding に対して独断 fix することは禁止 (scope expansion は controller + user の判断)」
+- `## Self-review` または `## Report` セクションに「scope 外の独断行動なし」項目を追加し、subagent に self-confirm を要求
+
+#### Why
+
+PR #746 Phase C で「repo-wide dangling-ref scan」を dispatch した subagent が、scan で見つけた `ui-interaction-spec.md:693` の dangling ref を独断で fix commit (`a752fc0`) し、別 file の `tauri-commands.md` 4 件は「out-of-scope」と判定した。fix-vs-flag の境界判断を subagent が独断したことが Iron Law 5 違反。本来 STOP/escalate して controller (= main session) が判断すべき。事後の整合作業 (Phase D での PR body 修復含む) が発生した。
+
+### Orphan commit 防止 (controller 側 verification)
+
+subagent-driven-development の Task 実装で、subagent が `git checkout <SHA>` 等で detached HEAD に入ってから commit すると、新 commit は元の branch HEAD ではなく detached state の上に作られる。subagent が戻る (checkout branch) 際に reattach しないと、commit は orphan 化 (`git show <SHA>` では見えるが branch から到達不能) する。
+
+controller (main session) は subagent dispatch 後に以下を**必ず**実行:
+
+```bash
+# 1. branch HEAD への到達性確認 (reviewer subagent の verification には依存しない)
+git log <branch> --oneline -5 | grep <expected-SHA>
+
+# 2. PR 作成前 (push 前) に PR に乗る予定の commit 一覧を最終確認
+git log origin/<base>..HEAD --oneline
+```
+
+想定 commit 数 (例: 5 Task = 5 commit) と一致しなければ orphan commit が発生している。
+
+#### 検知時の修正
+
+```bash
+git cherry-pick <orphaned-SHA>
+```
+
+現 HEAD 上に同内容の新 commit を作り直す。Push 済 PR は force push 不要 (新 SHA で追加 commit として乗る)。
+
+PR #741 (2026-05-13 Lane II-b' Group D 残) で Task 5 docs commit (`cda0f8e`) が parent=9ce2565 (old base) 上の orphan になっていた事例。final reviewer の subagent が「Head: cda0f8e」claim と PR 実 head bf083f3 の食い違いを指摘して発覚、`git cherry-pick cda0f8e` で 252de72 として再生成し push して解決。
+
+### AskUserQuestion で scope 拡大選択肢を出さない (#732 教訓)
+
+controller (主セッション) が subagent reviewer の判定を受けて AskUserQuestion を組み立てる時、**subagent reviewer が scope 外 ((B) or (A) re-run 推奨) と判定した finding に対して「本 PR 内修正 (scope 拡大)」を選択肢に追加しない**。subagent recommendation を第一の選択肢 (Recommended) に置き、他は subagent が挙げた選択肢のみ提示する。user が `Other` で明示提案するまで scope 拡大は出さない。
+
+詳細は `.claude/skills/iterate-review/SKILL.md` §AskUserQuestion 設計規約を参照。
+
+## skill 改修ワークフロー (empirical-prompt-tuning)
+
+skill を**大幅改訂** (新節追加 / frontmatter description 書き換え相当) する際は、書き手が自覚できない曖昧さ・欠落を **bias-free な subagent による empirical 評価**で炙り出す。自己再読では構造的欠陥に到達できない。
+
+### 適用対象
+
+- skill 新規作成
+- frontmatter description 書き換え + 新節追加を伴う大幅改訂
+
+typo fix / リンク更新では過剰。`/iterate-review` のような中核 skill の改訂で特に有効。
+
+### How to apply
+
+1. **前段階の事例調査**: 指摘ラウンドが多かった実在 PR を 3 本ピックアップし、Explore agent 並列で指摘パターンを抽出してからモック設計へ
+2. **モック設計**: 中央値 1 + edge 2 (束ね PR / 孤立 PR / doc-only 等) を `.claude/skills/<skill-name>/eval/scenario_*.md` に書き出す
+3. **要件チェックリスト**: `[critical]` タグ付きで事前固定。`eval/requirements.md` に集約
+4. **subagent dispatch**: `general-purpose` を `model: sonnet`、3 並列・`run_in_background: true` で起動
+5. **empirical 規範遵守**: Iteration 1 再評価では必ず**新規 subagent** (empirical Red Flag「同じ subagent を使い回そう」に該当するため同一 agent は不可)
+6. **打ち切り基準**: 構造的欠陥 (新節欠落 / 判定基準不在レベル) が解消された時点で打ち切り可。残る細部不明瞭点は deferred issue として追跡
+
+### 経緯
+
+2026-04-24 `/review-pr` skill 改修で実証済み (PR #537 / #562)。Iteration 0 baseline で構造的欠陥 6 件 (環境制約節欠落、Round N 記法不在、処置分類判定基準の弱さ、束ね PR 独立検証の明示不在、孤立 PR 手順不在、doc-only CI 波及観点なし) を検出し、Iteration 1 で全件解消。精度 0.98 → 1.00、[critical] 3/3 成功。書き手自身の自己レビューでは構造的欠陥に到達できなかった。参考: <https://github.com/mizchi/chezmoi-dotfiles/blob/main/dot_claude/skills/empirical-prompt-tuning/SKILL.md>
+
 ## 参考
 
 - [code.claude.com/docs/en/skills](https://code.claude.com/docs/en/skills) — skill 設計ガイド

@@ -114,6 +114,12 @@ GPU vendor probe スナップショット。`probe_gpu_vendors()` の結果と�
 
 GUI export 画面は `system_info.gpu_vendors_available` と `vendor_preference` を `select_h264_encoder_for_export` Tauri コマンドに渡し、`H264Encoder` enum (libx264 / NVENC / QSV / AMF) を解決する。`system_info` を持たない pre-#591 metadata.json は libx264 にフォールバックする。
 
+#### `system_info` は GPU 3 field のみ (OS/CPU/Memory は対象外)
+
+`metadata.json` の `system_info` は **GPU 3 field のみ** (`gpu_vendors_available` / `gpu_vendor_used` / `vendor_preference`) を保持する。Python 側の `allaganeye/system_info.py` には他にも CPU info / OS info / memory / disk 等を取得する helpers があるが、それらは **CLI `-v` verbose header 用**で、`metadata.json` には書き込まれない。
+
+GUI 側で OS/CPU/Memory/Disk 等の環境情報が必要な場合 (例: bug_report.yml `environment` placeholder format) は metadata から取らずに **Tauri 側で別途 probe** する (例: `probe_environment_info` + `sysinfo` crate、#669 PR #726 で実装)。metadata.system_info を OS/CPU 等で拡張するのは schema 互換性を切る big change のため避ける。
+
 ### `brightness_samples` オブジェクト (#569)
 
 GUI complete 画面の輝度タイムライン (`BrightnessTimeline` SVG) 用の事前計算済み輝度配列。Pass 1 のサンプリング結果 (timestamp → 平均輝度) を最大 512 点までダウンサンプルして埋め込む。GUI は metadata.json を読むだけでタイムラインを描画でき、`debug-brightness` を再実行する必要が無い。

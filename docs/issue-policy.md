@@ -274,6 +274,32 @@ issue 本文に未チェックの項目（`- [ ]`）が残っている場合、�
 - **スコープに含める場合**: `deferred` を外し、適切なスコープラベル + 優先度ラベルに変更する
 - **引き続き先送りの場合**: そのまま残す
 
+#### `l1-residual` + `deferred` dual-label 規約
+
+`l1-residual` ラベル**単独では** v0.2.0 (L2) scope から自動で外れない。L1 期間積み残し issue を現バージョン (L2 以降) scope 外と明示するには **`deferred` + `l1-residual` の dual-label** が必要。両ラベルは別目的:
+
+- `deferred` = scope 判定 (現バージョンで対応しない、release 時にレビュー)
+- `l1-residual` = 起源カテゴリ (L1 期間の積み残し)
+
+scope 判定には `deferred` が必須。実在の dual-label 運用例: [#412](https://github.com/Idios/kobutachan-allaganeye/issues/412) `[enhancement,deferred,l1-residual]`、[#634](https://github.com/Idios/kobutachan-allaganeye/issues/634) `[P3-low,doc,deferred,l1-residual]`。
+
+棚卸し時に分類漏れを検出する query:
+
+```bash
+# l1-residual だけ付いて deferred 不在 = 分類漏れ
+gh issue list --state open --label l1-residual \
+  --json number,labels \
+  --jq '.[] | select(([.labels[].name] | index("deferred")) | not) | "#\(.number) needs deferred"'
+```
+
+## GitHub Issue Forms の制約 (URL pre-fill 不可)
+
+GitHub Issue Forms (`.yml` schema、`.github/ISSUE_TEMPLATE/bug_report.yml` 等) は **`title` / `labels` / `assignees` / `projects` / `template` 以外の custom field** (textarea / input / dropdown など、`id:` で指定する field) を **URL query string で pre-fill しない** (GitHub 仕様、2026-05 時点)。
+
+例えば `?template=bug_report.yml&actual=HELLO` でも `実際の動作` textarea は空のまま開く。Markdown 形式の従来 template (`*.md` ファイル) なら `?body=...` で pre-fill 可能だが、Issue Forms はサポートされない。長年の feature request あり (参考: <https://github.com/orgs/community/discussions/22335>) だが未実装。
+
+**設計時の代替策**: ErrorModal 等で「クラッシュ情報を自動添付」する設計が必要な場合、URL pre-fill ではなく **clipboard copy + 手動 paste** 方式を使う (Plan B、#669 / PR #726 で採用)。`navigator.clipboard.writeText()` で Markdown 本文を組み立てて、user が form の textarea にペーストする UX が standard。
+
 ---
 
 ## 9. gh コマンド例

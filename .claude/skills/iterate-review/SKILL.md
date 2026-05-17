@@ -138,6 +138,24 @@ Round N findings:
 
 `ambiguous_judgments` がある場合、追加 AskUserQuestion でユーザー判断を仰ぐ。1 AskUserQuestion call は最大 4 questions まで束ねられる仕様 (= AskUserQuestion tool 上限) を活用し、5 件以上は複数 call に分割。1 round あたりの AskUserQuestion 呼び出し総数は「Round summary 1 + ambiguous_judgments の必要分 + Step 2.5/2.7 の例外 gate」を上限とする。
 
+##### AskUserQuestion 設計規約 (scope 拡大選択肢を出さない、#732 教訓)
+
+subagent reviewer が「scope 外」(= (B) 起票 or (A) re-run 推奨) と判定した finding について、controller (主セッション) が AskUserQuestion を組み立てる際、**「本 PR 内修正 (scope 拡大)」を選択肢に追加しない**。subagent recommendation を**第一の選択肢 (Recommended)** に置き、subagent が挙げた選択肢のみ提示する。user が `Other` で明示提案するまで scope 拡大は出さない。
+
+**Why**: PR #732 (#708 = bash + docs scope) で Round 2/3 ともに、subagent reviewer が「(A) re-run」または「(B) 新規 issue 起票」を recommended と判定したが、controller が AskUserQuestion に「本 PR 内修正」を選択肢として追加 → user が選択 → 本 PR 内 commit (`8eff1d2` / `ee77e37`) で scope 拡大が発生。両回とも user が「scope 拡大」を選んだが、それは controller が **そもそも選択肢として提示した**から。subagent recommended のみを提示していれば scope creep は発生しなかった。「Round 2 で 1 件本 PR 内修正した実績がある」を Round 3 で sweep に倒した根拠にしたのも、典型的な Red Flag 「ついで」合理化。
+
+Iron Law 3 と CLAUDE.md plugin override 規約は「user の明示判断が最優先」だが、選択肢の提示自体が誘導である以上、user の選択を「user 判断」と扱って scope creep を正当化するのは責任転嫁。
+
+**How to apply**:
+
+1. subagent reviewer の recommendation を **第一の選択肢 (Recommended)** にする
+2. ambiguous_judgments の処置は subagent が挙げた選択肢のみ提示。controller が独自に「本 PR 内修正」「scope 拡大」を**追加しない**
+3. scope 拡大が本当に必要 (連続して同種 finding が出る等) と思ったら、user に AskUserQuestion で問う前に **`/scope-guard` skill** を呼び、scope 拡大の妥当性を独立判定する
+4. user が `Other` 経由で「本 PR 内修正したい」と明示した場合のみ scope 拡大に倒す
+5. 「Round N で同 root cause を 1 件本 PR 内修正した」は Round N+1 で sweep の根拠に**ならない**。各 finding は独立に subagent recommended に従う
+
+関連 PR: #732 (commit `8eff1d2`, `ee77e37` が scope creep 該当)。
+
 `<N>` には PR 番号 ($ARGUMENTS) を埋める。`<handoff_state を箇条書き>` には Step 1 で初期化した `handoff_state` の内容 (空なら "(なし)") を埋める。
 
 #### Step 2.4 (A) findings 修正
