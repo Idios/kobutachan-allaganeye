@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -191,3 +192,77 @@ def test_load_and_validate_propagates_validation_error(tmp_path: Path) -> None:
     p.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="sha256"):
         gen.load_and_validate(p)
+
+
+# ---------------------------------------------------------------------------
+# Committed fixture sanity (codex F2): the v0.3.0 baseline files checked in
+# alongside the generator must themselves stay self-consistent. Synthetic
+# unit tests above can stay green while a malformed / stale fixture is
+# committed -- these tests parametrize over the real files so the suite
+# catches drift at PR time, not when the Pillar 3 regression fires.
+
+_BASELINES_DIR = Path(__file__).resolve().parents[2] / "tests" / "baselines" / "v0.3.0"
+
+
+def _committed_labels() -> list[str]:
+    """All obs-* labels for which both metadata.json and split.json are checked in."""
+    return sorted(
+        p.stem.removesuffix(".split") for p in _BASELINES_DIR.glob("obs-*.split.json")
+    )
+
+
+@pytest.mark.parametrize("label", _committed_labels())
+def test_committed_split_baseline_validates(label: str) -> None:
+    """Every committed ``obs-*.split.json`` must satisfy the schema."""
+    gen.load_and_validate(_BASELINES_DIR / f"{label}.split.json")
+
+
+@pytest.mark.parametrize("label", _committed_labels())
+def test_committed_split_count_matches_metadata(label: str) -> None:
+    """Splits must enumerate every match recorded in the paired metadata.json."""
+    metadata = json.loads(
+        (_BASELINES_DIR / f"{label}.metadata.json").read_text(encoding="utf-8")
+    )
+    split = json.loads(
+        (_BASELINES_DIR / f"{label}.split.json").read_text(encoding="utf-8")
+    )
+    assert len(split["splits"]) == len(metadata["matches"]), (
+        f"{label}: split count {len(split['splits'])} != "
+        f"metadata matches {len(metadata['matches'])}"
+    )
+
+
+@pytest.mark.parametrize("label", _committed_labels())
+def test_committed_metadata_source_is_portable_relative_path(label: str) -> None:
+    """Committed ``source`` must be a relative posix-style path.
+
+    Codex F1 (#779): the absolute Windows path that ``detect`` writes
+    bakes machine-local filesystem details into a regression fixture and
+    breaks ``allaganeye split --from-metadata <committed.metadata.json>``
+    on any other environment. The generator now normalises ``source`` to
+    the ``source_relpath`` from ``_BASELINES`` before commit.
+    """
+    metadata = json.loads(
+        (_BASELINES_DIR / f"{label}.metadata.json").read_text(encoding="utf-8")
+    )
+    src = metadata["source"]
+    assert isinstance(src, str) and src, f"{label}: empty source"
+    assert "\\" not in src, f"{label}: source has backslash (Windows path): {src!r}"
+    assert not re.match(r"^[A-Za-z]:[/\\]", src), (
+        f"{label}: source has Windows drive letter: {src!r}"
+    )
+    assert not src.startswith("/"), f"{label}: source is absolute posix path: {src!r}"
+
+
+def test_committed_label_matches_generator_selection() -> None:
+    """Committed labels must exactly match the ``_BASELINES`` selection.
+
+    A committed baseline without a corresponding ``_BASELINES`` entry, or
+    a selection entry without a committed pair, is a drift that the
+    generator cannot reproduce.
+    """
+    committed = set(_committed_labels())
+    selection = {b["label"] for b in gen._BASELINES}
+    assert committed == selection, (
+        f"committed={sorted(committed)} vs selection={sorted(selection)}"
+    )

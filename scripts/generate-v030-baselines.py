@@ -208,12 +208,11 @@ def _generate_one(baseline: dict, sample_dir: Path, out_dir: Path) -> None:
             raise RuntimeError(
                 f"[{label}] detect did not produce metadata.json in {tmp_path}"
             )
-        metadata_dst = out_dir / f"{label}.metadata.json"
-        metadata_dst.write_text(
-            metadata_src.read_text(encoding="utf-8"), encoding="utf-8"
-        )
-        print(f"[{label}] wrote {metadata_dst.name}")
 
+        # Split needs the absolute ``source`` path that ``detect`` wrote.
+        # We run split off the tmp copy, then write the committed baseline
+        # with ``source`` normalised to the relative posix path so the
+        # checked-in metadata is environment-portable (codex F1, #779 review).
         print(f"[{label}] running allaganeye split --from-metadata ...")
         subprocess.run(
             [
@@ -222,12 +221,21 @@ def _generate_one(baseline: dict, sample_dir: Path, out_dir: Path) -> None:
                 "allaganeye",
                 "split",
                 "--from-metadata",
-                str(metadata_dst),
+                str(metadata_src),
                 "-o",
                 str(tmp_path),
             ],
             check=True,
         )
+
+        metadata_payload = json.loads(metadata_src.read_text(encoding="utf-8"))
+        metadata_payload["source"] = baseline["source_relpath"]
+        metadata_dst = out_dir / f"{label}.metadata.json"
+        metadata_dst.write_text(
+            json.dumps(metadata_payload, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        print(f"[{label}] wrote {metadata_dst.name} (source normalised)")
 
         mp4_files = sorted(tmp_path.glob("match_*.mp4"))
         if not mp4_files:
