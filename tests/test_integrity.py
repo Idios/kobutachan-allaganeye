@@ -436,3 +436,54 @@ def test_load_manifest_raises_on_bom_prefixed_json(tmp_path: Path) -> None:
     assert "json_error" in exc_info.value.context
     # JSONDecodeError の message に "BOM" が含まれることまでは assert しない
     # (Python version 差で文言が変わる可能性があるため、failure category だけ pin)
+
+
+def test_resolve_install_dir_frozen_mode_uses_sys_executable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In PyInstaller frozen mode (#752), install dir derives from sys.executable.
+
+    Layout: <install dir>/allaganeye/allaganeye.exe -> install dir = parent.parent.
+    The path passed to ``_resolve_install_dir`` (the package __init__ path) is
+    *ignored* in frozen mode because PyInstaller puts the .py files inside
+    library.zip and __file__ no longer points at a real disk location.
+    """
+    import sys
+
+    from allaganeye.integrity import _resolve_install_dir
+
+    fake_install = tmp_path / "install"
+    fake_exe = fake_install / "allaganeye" / "allaganeye.exe"
+    fake_exe.parent.mkdir(parents=True)
+    fake_exe.write_text("", encoding="utf-8")
+
+    # Simulate PyInstaller frozen launcher.
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(fake_exe))
+
+    # __init__ path is ignored in frozen mode; pass any dummy value.
+    dummy_init = tmp_path / "ignored" / "__init__.py"
+
+    assert _resolve_install_dir(dummy_init) == fake_install
+
+
+def test_resolve_install_dir_dev_mode_unchanged_when_sys_frozen_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In dev / legacy mode (sys.frozen unset), existing path resolution stays.
+
+    Regression guard for #752 to ensure the new sys.frozen branch does not
+    change behavior when sys.frozen is False or missing.
+    """
+    import sys
+
+    from allaganeye.integrity import _resolve_install_dir
+
+    # Ensure sys.frozen is not set (the production CPython interpreter).
+    monkeypatch.delattr(sys, "frozen", raising=False)
+
+    init_path = tmp_path / "lib" / "allaganeye" / "__init__.py"
+    init_path.parent.mkdir(parents=True)
+    init_path.write_text("", encoding="utf-8")
+
+    assert _resolve_install_dir(init_path) == tmp_path

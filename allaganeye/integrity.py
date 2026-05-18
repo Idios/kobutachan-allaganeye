@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import datetime
 from datetime import UTC
 from pathlib import Path
@@ -36,11 +37,17 @@ _PACKAGE_INIT: Path = Path(__file__).resolve().parent / "__init__.py"
 
 
 def _resolve_install_dir(package_init: Path) -> Path:
-    """Compute install dir from ``allaganeye/__init__.py`` path.
+    """Compute install dir.
 
-    Portable ZIP layout: ``<install dir>/lib/allaganeye/__init__.py``,
-    so the install dir is 3 ancestors up from ``__init__.py``.
+    PyInstaller frozen mode (Portable ZIP v0.3.0+, #752):
+        ``sys.executable`` = ``<install dir>/allaganeye/allaganeye.exe``
+        so install dir = ``parent.parent``.
+    Legacy embeddable layout (pre-#752 Portable ZIP) and dev mode:
+        ``__init__.py`` at ``<install dir>/lib/allaganeye/__init__.py``
+        so install dir = ``parent.parent.parent``.
     """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent.parent
     return package_init.resolve().parent.parent.parent
 
 
