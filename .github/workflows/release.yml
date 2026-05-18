@@ -183,14 +183,22 @@ jobs:
       # extension for PR before/after comparison. The JSON artifact is reused
       # in the Pester regression assertion that locks in the reduction floor.
       - name: Measure Portable ZIP baseline (#752)
-        if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch'
+        if: matrix.shell == 'pwsh' && (github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch')
         shell: ${{ matrix.shell }}
         run: |
           $version = '${{ needs.version-check.outputs.version }}'
           $payload = "build/portable/allaganeye-v$version"
           $outFile = "build/portable/baseline.json"
           $json = & ./scripts/measure-portable-zip-baseline.ps1 -PayloadDir $payload -Format Json
-          $json | Out-File -FilePath $outFile -Encoding utf8 -NoNewline
+          # #752 -- BOM-less UTF-8 で書き出す。Out-File -Encoding utf8 は PS 5.1
+          # で BOM 付き、PS 7+ で BOM-less と version 依存になるため [IO.File]
+          # 経由で encoding を explicit に揃える (PR #736 / #729 と同じ canonical
+          # pattern、`feedback_ps_setcontent_utf8_bom.md` 参照)。
+          [System.IO.File]::WriteAllText(
+            (Join-Path (Get-Location) $outFile),
+            $json,
+            [System.Text.UTF8Encoding]::new($false)
+          )
           Write-Host "--- Baseline measurement (#752) ---"
           & ./scripts/measure-portable-zip-baseline.ps1 -PayloadDir $payload -Format Human
           Write-Host "Saved baseline JSON to: $outFile"
@@ -345,6 +353,19 @@ jobs:
         with:
           name: allaganeye-windows-v${{ needs.version-check.outputs.version }}
           path: build/portable/allaganeye-v${{ needs.version-check.outputs.version }}
+          if-no-files-found: error
+
+      # #752 -- Upload baseline.json separately so PR review / Task 19 PR-body
+      # update can retrieve before/after numbers via `gh run download`. The main
+      # `allaganeye-windows-v*` artifact only contains the payload subdir; the
+      # baseline JSON lives at the parent (build/portable/) so it needs its
+      # own upload step. Gated to pwsh-only matching the main upload gate
+      # (avoid duplicate artifacts from powershell.exe runner).
+      - uses: actions/upload-artifact@v4
+        if: matrix.shell == 'pwsh' && (github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')))
+        with:
+          name: allaganeye-baseline-v${{ needs.version-check.outputs.version }}
+          path: build/portable/baseline.json
           if-no-files-found: error
 
   release:

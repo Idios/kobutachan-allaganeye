@@ -627,7 +627,8 @@ Describe 'Measure-PortableZipBaseline (#752)' {
     $obj.by_extension.'.dll'.count | Should -Be 1
     # `.bat` のような low-frequency extension は _other に分類されない (拡張子そのまま) のが望ましいが、
     # 実装簡略化のため代表的な extension (.py / .pyd / .dll / .pyi / .so) 以外は _other 集約。
-    $obj.by_extension._other.count | Should -BeGreaterThan 0
+    # 1 件しか fake payload に含まれていないため、`-Be 1` で double-count 等の regression を厳密検出。
+    $obj.by_extension._other.count | Should -Be 1
   }
 
   It '-Format Human writes human-readable table to stdout' {
@@ -639,5 +640,20 @@ Describe 'Measure-PortableZipBaseline (#752)' {
   It 'throws when -PayloadDir does not exist' {
     { & $script:MeasureScript -PayloadDir (Join-Path $script:MeasureTmp 'missing') -Format Json } |
       Should -Throw -ExpectedMessage '*not found*'
+  }
+
+  It 'JSON output starts with `{` (not UTF-8 BOM) so downstream parsers stay strict-compatible' {
+    # Regression guard mirroring `Describe 'Integrity manifest encoding (#729)'`:
+    # the measurement script itself emits text via stdout, but the CI step
+    # writes the captured text to build/portable/baseline.json. The canonical
+    # write pattern (`[IO.File]::WriteAllText` + UTF8Encoding($false)) is in
+    # release.yml. Here we assert the script's stdout text has no BOM at
+    # offset 0, so any future consumer doing `[byte[]]` inspection sees
+    # `{` (0x7B) first. Defends against future refactors that pipe through
+    # PS-version-dependent encoders.
+    $jsonText = & $script:MeasureScript -PayloadDir $script:FakePayload -Format Json
+    # & script returns string array; join to single string for byte inspection.
+    $firstChar = ($jsonText -join "`n").Substring(0, 1)
+    $firstChar | Should -Be '{'
   }
 }
