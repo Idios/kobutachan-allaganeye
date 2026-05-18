@@ -405,20 +405,61 @@ def _decode_chunk_cpu(
     chunk_start: float,
     chunk_end: float,
     sample_interval: float,
+    *,
+    source_fps_num: int | None = None,
+    source_fps_den: int | None = None,
+    source_fps: float | None = None,
+    is_tail_chunk: bool = False,
 ) -> dict[float, float]:
-    """Decode a chunk using CPU-only ffmpeg with continuous decode.
+    """Decode a chunk in CPU mode.
 
-    Mirrors the GPU ``_decode_chunk()`` approach but without hardware
-    acceleration: one long-lived ffmpeg process decodes the entire chunk
-    via the ``fps`` filter, eliminating per-frame ``-ss`` non-determinism.
-
-    Returns a dict mapping each timestamp in *chunk_timestamps* to its
-    mean brightness.  On failure, returns all timestamps mapped to 255.0
-    (safe non-blackout).
+    Dispatches to the legacy fps-filter path when env var
+    ``ALLAGANEYE_DETECT_FPS_FILTER=1`` is set or when rational fps cannot
+    be resolved.  Otherwise uses the new output-seek + Python N-th
+    sampling path (#576).
     """
     if not chunk_timestamps:
         return {}
 
+    use_legacy = _use_legacy_fps_filter() or (
+        source_fps_num is None and source_fps_den is None and source_fps is None
+    )
+    if use_legacy:
+        return _decode_chunk_cpu_legacy(
+            video_path,
+            chunk_timestamps,
+            chunk_start,
+            chunk_end,
+            sample_interval,
+        )
+
+    fps_num, fps_den = _resolve_fps_rational(
+        source_fps_num,
+        source_fps_den,
+        source_fps,
+    )
+    return _decode_chunk_cpu_v2(
+        video_path,
+        chunk_timestamps,
+        chunk_start,
+        chunk_end,
+        fps_num,
+        fps_den,
+        is_tail_chunk,
+    )
+
+
+def _decode_chunk_cpu_legacy(
+    video_path: Path,
+    chunk_timestamps: list[float],
+    chunk_start: float,
+    chunk_end: float,
+    sample_interval: float,
+) -> dict[float, float]:
+    """Legacy fps-filter chunk decode (pre-#576). Kept for env var rollback.
+
+    Scheduled for removal in v0.3.x patch release.
+    """
     chunk_duration = chunk_end - chunk_start
     fps_value = 1.0 / sample_interval
 
@@ -484,6 +525,95 @@ def _decode_chunk_cpu(
     return results
 
 
+def _decode_chunk_cpu_v2(
+    video_path: Path,
+    chunk_timestamps: list[float],
+    chunk_start: float,
+    chunk_end: float,
+    fps_num: int,
+    fps_den: int,
+    is_tail_chunk: bool,
+) -> dict[float, float]:
+    """New path: output seek + -fps_mode passthrough + Python N-th sampling (#576).
+
+    ffmpeg invocation has ``-ss`` AFTER ``-i`` (output seeking) so the
+    first emitted frame's PTS equals ``chunk_start`` exactly.  fps filter
+    is removed; ``-fps_mode passthrough`` suppresses ffmpeg internal
+    frame-rate normalization.  All frames are streamed through stdout
+    and the Python side picks indices via
+    ``round((t - chunk_start) * fps_num / fps_den)``.
+    """
+    chunk_duration = chunk_end - chunk_start
+    expected_frames = round(chunk_duration * fps_num / fps_den)
+
+    cmd = [
+        find_ffmpeg(),
+        "-threads",
+        "1",
+        "-i",
+        str(video_path),
+        "-ss",
+        str(chunk_start),
+        "-t",
+        str(chunk_duration),
+        "-fps_mode",
+        "passthrough",
+        "-vf",
+        f"scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
+        "pipe:1",
+    ]
+
+    try:
+        with subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        ) as proc:
+            try:
+                results = _sample_chunk_frames(
+                    stream=proc.stdout,
+                    chunk_start=chunk_start,
+                    chunk_timestamps=chunk_timestamps,
+                    fps_num=fps_num,
+                    fps_den=fps_den,
+                    expected_frames=expected_frames,
+                    is_tail_chunk=is_tail_chunk,
+                )
+                proc.wait(timeout=max(300, int(chunk_duration * 2)))
+            except VideoProcessingError:
+                proc.kill()
+                raise
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                logger.warning(
+                    "CPU chunk v2 decode timed out [%.1f-%.1f]",
+                    chunk_start,
+                    chunk_end,
+                )
+                return {t: 255.0 for t in chunk_timestamps}
+    except FileNotFoundError as e:
+        raise VideoProcessingError(
+            "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
+        ) from e
+
+    if proc.returncode != 0:
+        raw_stderr = proc.stderr.read() if proc.stderr is not None else b""
+        stderr = raw_stderr.decode(errors="replace")[-200:]
+        logger.warning(
+            "CPU chunk v2 decode failed [%.1f-%.1f]: %s",
+            chunk_start,
+            chunk_end,
+            stderr,
+        )
+        return {t: 255.0 for t in chunk_timestamps}
+
+    return results
+
+
 def _scan_cpu(
     video_path: Path,
     duration_hint: float,
@@ -491,13 +621,17 @@ def _scan_cpu(
     blackout_threshold: float,
     workers: int | None = None,
     progress_callback: Callable[[int, int, int], None] | None = None,
+    *,
+    source_fps_num: int | None = None,
+    source_fps_den: int | None = None,
+    source_fps: float | None = None,
 ) -> dict[float, float]:
-    """CPU mode: chunked continuous decode, one ffmpeg process per chunk.
+    """CPU mode: chunked decode (output seek + Python N-th sampling, #576).
 
-    Splits the video timeline into chunks and decodes each chunk with
-    a long-lived ffmpeg process using the ``fps`` filter.  This replaces
-    per-frame ``-ss`` probing, reducing ffmpeg seek non-determinism to
-    one seek per chunk instead of one per frame.  (#214)
+    When ``source_fps_num``/``source_fps_den`` (or float ``source_fps``) is
+    provided AND env var ``ALLAGANEYE_DETECT_FPS_FILTER`` is not set, uses
+    the new output-seek path.  Otherwise falls back to the legacy
+    fps-filter path.
     """
     timestamps = _generate_timestamps(duration_hint, sample_interval)
     if not timestamps:
@@ -508,13 +642,14 @@ def _scan_cpu(
     chunk_duration = duration_hint / num_chunks
 
     # Distribute pre-computed timestamps to chunks (with overlap)
-    chunks: list[tuple[float, float, list[float]]] = []
+    chunks: list[tuple[float, float, list[float], bool]] = []
     for i in range(num_chunks):
         c_start = i * chunk_duration
         c_end = min((i + 1) * chunk_duration + sample_interval, duration_hint)
         c_timestamps = [t for t in timestamps if c_start <= t < c_end]
+        is_tail = c_end >= duration_hint - 1.0
         if c_timestamps:
-            chunks.append((c_start, c_end, c_timestamps))
+            chunks.append((c_start, c_end, c_timestamps, is_tail))
 
     results: dict[float, float] = {}
     blackout_count = 0
@@ -531,8 +666,12 @@ def _scan_cpu(
                 c_start,
                 c_end,
                 sample_interval,
+                source_fps_num=source_fps_num,
+                source_fps_den=source_fps_den,
+                source_fps=source_fps,
+                is_tail_chunk=is_tail,
             ): (c_start, c_ts)
-            for c_start, c_end, c_ts in chunks
+            for c_start, c_end, c_ts, is_tail in chunks
         }
         for future in as_completed(futures):
             chunk_results = future.result()
