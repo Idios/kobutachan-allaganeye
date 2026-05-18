@@ -824,6 +824,129 @@ class TestScanGpu:
         )
 
 
+class TestDecodeChunkV2Cmd:
+    """GPU _decode_chunk 新 path の cmd 構築検証 (#576 §2.1 / §7.1.10)."""
+
+    import io as _io
+
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    @patch("allaganeye.video.gpu_detector.find_ffmpeg", return_value="ffmpeg")
+    def test_nvidia_new_path(self, _mock_ff, mock_popen, monkeypatch):
+        import io
+
+        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
+
+        mock_proc = MagicMock()
+        # 10s @ 60fps = 600 frames
+        from allaganeye.video.detector import _FRAME_SIZE as _FS
+
+        mock_proc.stdout = io.BytesIO(bytes([0] * _FS * 600))
+        mock_proc.stderr = io.BytesIO(b"")
+        mock_proc.wait.return_value = 0
+        mock_proc.returncode = 0
+        mock_popen.return_value.__enter__.return_value = mock_proc
+
+        _decode_chunk(
+            Path("test.mp4"),
+            chunk_start=0.0,
+            chunk_end=10.0,
+            sample_interval=1.0,
+            codec="av1",
+            chunk_timestamps=[0.0, 5.0],
+            vendor="nvidia",
+            source_fps_num=60,
+            source_fps_den=1,
+            is_tail_chunk=False,
+        )
+
+        cmd = mock_popen.call_args[0][0]
+        # -ss after -i
+        assert cmd.index("-ss") > cmd.index("-i")
+        # no fps= in -vf
+        vf_value = cmd[cmd.index("-vf") + 1]
+        assert "fps=" not in vf_value
+        # -fps_mode passthrough explicit
+        assert cmd[cmd.index("-fps_mode") + 1] == "passthrough"
+        # nvidia decoder preserved
+        assert "-c:v" in cmd
+        cv_idx = cmd.index("-c:v")
+        assert cmd[cv_idx + 1] == "av1_cuvid"
+
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    @patch("allaganeye.video.gpu_detector.find_ffmpeg", return_value="ffmpeg")
+    def test_amd_new_path_keeps_hwdownload(self, _mock_ff, mock_popen, monkeypatch):
+        import io
+
+        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
+
+        mock_proc = MagicMock()
+        from allaganeye.video.detector import _FRAME_SIZE as _FS
+
+        mock_proc.stdout = io.BytesIO(bytes([0] * _FS * 600))
+        mock_proc.stderr = io.BytesIO(b"")
+        mock_proc.wait.return_value = 0
+        mock_proc.returncode = 0
+        mock_popen.return_value.__enter__.return_value = mock_proc
+
+        _decode_chunk(
+            Path("test.mp4"),
+            chunk_start=0.0,
+            chunk_end=10.0,
+            sample_interval=1.0,
+            codec="h264",
+            chunk_timestamps=[0.0, 5.0],
+            vendor="amd",
+            source_fps_num=60,
+            source_fps_den=1,
+            is_tail_chunk=False,
+        )
+
+        cmd = mock_popen.call_args[0][0]
+        # AMD: hwdownload prefix in -vf, plus output seek + passthrough + no fps=
+        vf_value = cmd[cmd.index("-vf") + 1]
+        assert "hwdownload,format=nv12" in vf_value
+        assert "fps=" not in vf_value
+        assert cmd.index("-ss") > cmd.index("-i")
+        assert cmd[cmd.index("-fps_mode") + 1] == "passthrough"
+
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    @patch("allaganeye.video.gpu_detector.find_ffmpeg", return_value="ffmpeg")
+    def test_intel_qsv_new_path(self, _mock_ff, mock_popen, monkeypatch):
+        import io
+
+        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
+
+        mock_proc = MagicMock()
+        from allaganeye.video.detector import _FRAME_SIZE as _FS
+
+        mock_proc.stdout = io.BytesIO(bytes([0] * _FS * 600))
+        mock_proc.stderr = io.BytesIO(b"")
+        mock_proc.wait.return_value = 0
+        mock_proc.returncode = 0
+        mock_popen.return_value.__enter__.return_value = mock_proc
+
+        _decode_chunk(
+            Path("test.mp4"),
+            chunk_start=0.0,
+            chunk_end=10.0,
+            sample_interval=1.0,
+            codec="h264",
+            chunk_timestamps=[0.0, 5.0],
+            vendor="intel",
+            source_fps_num=60,
+            source_fps_den=1,
+            is_tail_chunk=False,
+        )
+
+        cmd = mock_popen.call_args[0][0]
+        # Intel QSV: hwdownload prefix preserved, decoder = h264_qsv
+        vf_value = cmd[cmd.index("-vf") + 1]
+        assert "hwdownload,format=nv12" in vf_value
+        assert "fps=" not in vf_value
+        cv_idx = cmd.index("-c:v")
+        assert cmd[cv_idx + 1] == "h264_qsv"
+
+
 class TestGpuFallbackIntegration:
     @patch("allaganeye.video.detector._scan_cpu")
     @patch("allaganeye.video.gpu_detector.scan_gpu")

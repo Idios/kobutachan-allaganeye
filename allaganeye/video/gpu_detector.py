@@ -18,6 +18,9 @@ from allaganeye.video.detector import (
     _SAMPLE_HEIGHT,
     _SAMPLE_WIDTH,
     _generate_timestamps,
+    _resolve_fps_rational,
+    _sample_chunk_frames,
+    _use_legacy_fps_filter,
 )
 
 logger = logging.getLogger(__name__)
@@ -163,8 +166,12 @@ def scan_gpu(
     chunk_progress_callback: Callable[[int, int, float], None] | None = None,
     chunk_dispatch_callback: Callable[[int], None] | None = None,
     vendor: str | None = None,
+    *,
+    source_fps_num: int | None = None,
+    source_fps_den: int | None = None,
+    source_fps: float | None = None,
 ) -> dict[float, float]:
-    """GPU mode: chunked parallel decode with cuvid hardware decoder.
+    """GPU mode: chunked parallel decode (#576: new path or legacy via env var).
 
     Splits the video timeline into chunks and runs one long-lived ffmpeg
     process per chunk with GPU-accelerated decoding.  Each process uses
@@ -216,13 +223,14 @@ def scan_gpu(
     # ``sample_interval``; downstream grouping then saw different
     # blackout region boundaries from CPU, causing #392's 1m47s miss.
     global_grid = _generate_timestamps(duration, sample_interval)
-    chunks: list[tuple[float, float, list[float]]] = []
+    chunks: list[tuple[float, float, list[float], bool]] = []
     for i in range(num_chunks):
         chunk_start = i * chunk_duration
         chunk_end = min((i + 1) * chunk_duration, duration)
         chunk_timestamps = [t for t in global_grid if chunk_start <= t < chunk_end]
+        is_tail = chunk_end >= duration - 1.0
         if chunk_timestamps:
-            chunks.append((chunk_start, chunk_end, chunk_timestamps))
+            chunks.append((chunk_start, chunk_end, chunk_timestamps, is_tail))
 
     # Chunks without any grid point (very short videos) are dropped, so
     # report the actual dispatched count via progress_callback.
@@ -260,8 +268,12 @@ def scan_gpu(
                 codec,
                 chunk_timestamps,
                 vendor,
+                source_fps_num=source_fps_num,
+                source_fps_den=source_fps_den,
+                source_fps=source_fps,
+                is_tail_chunk=is_tail,
             ): (chunk_start, chunk_end)
-            for chunk_start, chunk_end, chunk_timestamps in chunks
+            for chunk_start, chunk_end, chunk_timestamps, is_tail in chunks
         }
         for future in as_completed(futures):
             chunk_start, chunk_end = futures[future]
@@ -345,8 +357,65 @@ def _decode_chunk(
     codec: str | None = None,
     chunk_timestamps: list[float] | None = None,
     vendor: str | None = None,
+    *,
+    source_fps_num: int | None = None,
+    source_fps_den: int | None = None,
+    source_fps: float | None = None,
+    is_tail_chunk: bool = False,
 ) -> tuple[dict[float, float], str]:
-    """Decode a single chunk using GPU-accelerated ffmpeg.
+    """GPU chunk decode dispatcher (#576).
+
+    Falls back to legacy fps-filter path when env var
+    ``ALLAGANEYE_DETECT_FPS_FILTER=1`` or no rational fps supplied.
+
+    NOTE: As of Task 5, ``detect_match_boundaries`` does not yet
+    propagate ``source_fps_*`` kwargs.  This is Task 6's job.  Until
+    Task 6 lands, production GPU calls reach this dispatcher with all
+    None fps args and fall through to ``_decode_chunk_legacy``. This is
+    deliberate scaffolding.
+    """
+    use_legacy = _use_legacy_fps_filter() or (
+        source_fps_num is None and source_fps_den is None and source_fps is None
+    )
+    if use_legacy:
+        return _decode_chunk_legacy(
+            video_path,
+            chunk_start,
+            chunk_end,
+            sample_interval,
+            codec=codec,
+            chunk_timestamps=chunk_timestamps,
+            vendor=vendor,
+        )
+
+    fps_num, fps_den = _resolve_fps_rational(
+        source_fps_num,
+        source_fps_den,
+        source_fps,
+    )
+    return _decode_chunk_v2(
+        video_path,
+        chunk_start,
+        chunk_end,
+        codec,
+        chunk_timestamps,
+        vendor,
+        fps_num,
+        fps_den,
+        is_tail_chunk,
+    )
+
+
+def _decode_chunk_legacy(
+    video_path: Path,
+    chunk_start: float,
+    chunk_end: float,
+    sample_interval: float,
+    codec: str | None = None,
+    chunk_timestamps: list[float] | None = None,
+    vendor: str | None = None,
+) -> tuple[dict[float, float], str]:
+    """Legacy fps-filter chunk decode (pre-#576). Kept for env var rollback.
 
     Returns ``(results_dict, stderr_text)`` so the caller can inspect
     GPU usage from the first completed chunk.
@@ -481,5 +550,116 @@ def _decode_chunk(
                 results[timestamp] = brightness
             offset += _FRAME_SIZE
             frame_idx += 1
+
+    return results, stderr_text
+
+
+def _decode_chunk_v2(
+    video_path: Path,
+    chunk_start: float,
+    chunk_end: float,
+    codec: str | None,
+    chunk_timestamps: list[float] | None,
+    vendor: str | None,
+    fps_num: int,
+    fps_den: int,
+    is_tail_chunk: bool,
+) -> tuple[dict[float, float], str]:
+    """New GPU chunk decode: output seek + Python N-th sampling (#576).
+
+    Vendor-specific hwaccel args / hwdownload prefix preserved from legacy.
+    Only the filter chain shape and seek position change.
+    """
+    chunk_duration = chunk_end - chunk_start
+    expected_frames = round(chunk_duration * fps_num / fps_den)
+
+    # Resolve decoder / hwaccel for the selected vendor (same logic as legacy).
+    decoder: str | None = None
+    hwaccel_name: str | None = None
+    if vendor and codec:
+        decoder = _GPU_DECODER_MAP.get(vendor, {}).get(codec)
+        hwaccel_name = _VENDOR_HWACCEL_MAP.get(vendor)
+    if decoder is None and vendor is None:
+        decoder = _CUVID_CODEC_MAP.get(codec or "")
+        if decoder:
+            hwaccel_name = "cuda"
+
+    needs_hwdownload = (
+        hwaccel_name is not None and hwaccel_name in _HWACCELS_NEED_HWDOWNLOAD
+    )
+    if decoder and hwaccel_name:
+        hwaccel_args = ["-hwaccel", hwaccel_name]
+        if needs_hwdownload:
+            surface_fmt = _HWACCEL_OUTPUT_FORMAT_MAP.get(hwaccel_name, hwaccel_name)
+            hwaccel_args += ["-hwaccel_output_format", surface_fmt]
+        hwaccel_args += ["-c:v", decoder]
+    else:
+        hwaccel_args = ["-hwaccel", "auto"]
+
+    vf_prefix = "hwdownload,format=nv12," if needs_hwdownload else ""
+
+    cmd = [
+        find_ffmpeg(),
+        *hwaccel_args,
+        "-i",
+        str(video_path),
+        "-ss",
+        str(chunk_start),
+        "-t",
+        str(chunk_duration),
+        "-fps_mode",
+        "passthrough",
+        "-vf",
+        f"{vf_prefix}scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
+        "pipe:1",
+    ]
+
+    stderr_text = ""
+    try:
+        with subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        ) as proc:
+            try:
+                results = _sample_chunk_frames(
+                    stream=proc.stdout,
+                    chunk_start=chunk_start,
+                    chunk_timestamps=chunk_timestamps or [],
+                    fps_num=fps_num,
+                    fps_den=fps_den,
+                    expected_frames=expected_frames,
+                    is_tail_chunk=is_tail_chunk,
+                )
+                proc.wait(timeout=max(300, int(chunk_duration * 2)))
+                if proc.stderr is not None:
+                    stderr_text = proc.stderr.read().decode(errors="replace")
+            except VideoProcessingError:
+                proc.kill()
+                raise
+            except subprocess.TimeoutExpired as e:
+                proc.kill()
+                raise VideoProcessingError(
+                    f"GPU decode v2 timed out for chunk {chunk_start}"
+                ) from e
+    except FileNotFoundError as e:
+        raise VideoProcessingError(
+            "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
+        ) from e
+
+    if proc.returncode != 0:
+        raise VideoProcessingError(
+            "GPU decode v2 failed",
+            context={
+                "command": " ".join(str(c) for c in cmd),
+                "return_code": proc.returncode,
+                "chunk": f"{chunk_start:.1f}-{chunk_end:.1f}",
+                "stderr_tail": stderr_text[-STDERR_TAIL_BYTES:],
+            },
+        )
 
     return results, stderr_text
