@@ -39,12 +39,12 @@ L2 完了後の拡張フェーズ。L3 (new)〜L6 (former L5) の開発で新た
 `develop-x.x.x` を日常の統合先とし、`main` はリリース時のみ更新する。L2 以降は単一ワークツリー + 作業ブランチで運用する (詳細は `docs/l2-workflow.md` 参照)。
 
 ```text
-main (リリースタグ時のみ更新、L1: v0.1.0-preview / v0.1.1 タグ済み)
- └── develop-0.2.0 (L2 開発の統合先)
-      ├── claude/l2-gui-*            ← GUI 関連作業 (#105 系)
-      ├── claude/l2-installer-*      ← インストーラ作業 (#106 系)
-      ├── claude/l2-workflow-*       ← L2-0 プロセス系 + guard 運用連携 doc
-      └── claude/l1-residual-*       ← L1 残課題消化 (#412-#440)
+main (リリースタグ時のみ更新、L1: v0.1.0-preview / v0.1.1 / L2: v0.2.0 / v0.2.1 タグ済み)
+ └── develop-0.3.0 (L3 開発の統合先)
+      ├── claude/l3-vtuber-*         ← VTuber 動画対応 (#634 系)
+      ├── claude/l3-minimap-*        ← ミニマップ切抜き (#635 系)
+      ├── claude/l3-perf-*           ← export 並列・detect 高速化・GUI responsiveness (#654 系)
+      └── claude/<issue-N>-<slug>    ← 個別 issue 消化
 ```
 
 ### ルール
