@@ -476,6 +476,11 @@ def _report_app_error(
 ) -> None:
     """Render an ``AllaganEyeError`` per matrix v2 19a/19b/19c (#428, #351).
 
+    Note: 19d (click-level option-parse error such as ``allaganeye -version``)
+    is handled separately in :func:`main` and never reaches this function.
+    See ``docs/cli-spec.md`` § ``click-level option-parse error`` for details.
+
+
     - 19a (verbose=True):  ``Error: <msg>`` + ``verbose_detail()`` context
       lines + full traceback (exceptions are raised ``from None`` in the
       CLI handlers but the traceback is emitted here *before* re-raise,
