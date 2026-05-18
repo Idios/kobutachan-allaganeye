@@ -229,6 +229,7 @@ L2 からは**単一ワークツリー + skill ベースディスパッチ**を�
 - 既存 skill: `/review-pr`, `/iterate-review`, `/enforce-acceptance-criteria`, `/scope-guard`, `/create-task`, `/close-issue`, `/release`
 - 計画立案・実装・PR テストは Plan モード + 通常ツール + TodoWrite で代替
 - ユーザー (Idios) が戦略・方針を判断し、Claude は選択肢提示と実装を担う
+- skill (`.claude/skills/*/SKILL.md`) 改修 PR は mizchi `empirical-prompt-tuning` protocol に従う。詳細は [`docs/l2-workflow.md` §skill 改修ワークフロー](docs/l2-workflow.md#skill-改修ワークフロー-empirical-prompt-tuning) を参照
 
 ### `/iterate-review` workflow と (A) 強優先方針
 
