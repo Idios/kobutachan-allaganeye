@@ -5,9 +5,24 @@
 
 ## 目的
 
-v0.3.0 L3 Pillar 3 (perf 改善) と Phase 2b (scorebar ROI 適応) の regression 検出用に固定する **改修前 snapshot**。Phase 1 Wave 1a (#576 detect fps filter 廃止) を含む全 perf 改修 PR の Self-Test Report で「baseline diff 0」を `scripts/compare-baseline.py` で証明するために使用する。
+v0.3.0 L3 Pillar 3 (perf 改善) と Phase 2b (scorebar ROI 適応) のうち **detect / split (`-c copy`) 系統の regression 検出** 用に固定する改修前 snapshot。Phase 1 Wave 1a (#576 detect fps filter 廃止) のような検知ロジック改修 PR の Self-Test Report で「baseline diff 0」を `scripts/compare-baseline.py` で証明するために使用する。
 
 検証 surface は spec §8.2 で定義される `matches` + `gaps` のみ (bit-exact)。`detected_at` 等の time-varying field は projection で除外される。
+
+### Scope (本 baseline が covers すること)
+
+- `allaganeye detect <video>` の `metadata.json` 出力 (matches + gaps) bit-exact
+- `allaganeye split --from-metadata` の出力 MP4 (FFmpeg `-c copy` remux) の SHA-256 + size bit-exact
+
+### Out of scope (本 baseline は covers しないこと)
+
+| 領域 | 理由 | 別の検証ルート |
+| --- | --- | --- |
+| GUI H264 再エンコード (#591) | 入力 codec / GPU vendor / driver で出力 byte が変動 = 元々 deterministic regression に向かない | Tauri Rust 側の `select_h264_encoder` / `is_gpu_encoder_failure` unit test (`gui/src-tauri/`) |
+| 非 OBS 録画 (Game DVR / VTuber / Twitch) | Pillar 2 (input adapt) の scope。形式別に別 baseline を要する | `vtuber-primary-ground-truth.json` (VTuber 用 ±10s 比較、Pillar 2b で commit 済) |
+| 非 AV1 codec 入力 (h.264 / hevc) | サンプルは OBS NVENC AV1 統一。codec パスごとの regression は別 baseline | 別途 codec multi-baseline (#576 完了後の Pillar 3 後続枠で再評価) |
+| 非 NVIDIA GPU 環境 (AMD / Intel / CPU only) | 検知パスでは `--gpu` の vendor 選択は metadata.json `system_info.gpu_vendor_used` に記録されるのみ。出力 surface (`matches` / `gaps`) は同一の boundary 抽出結果になる想定 | 必要なら別 vendor 環境で同一動画を再検知して `compare-baseline.py` を re-run (env-specific verification は Self-Test Report の machine-unverifiable 行で扱う) |
+| Portable ZIP size (#752) / GUI HTTP server (#670) | 検知出力に無関係 | 各 PR で個別検証 |
 
 ## 種類
 
@@ -17,7 +32,7 @@ v0.3.0 L3 Pillar 3 (perf 改善) と Phase 2b (scorebar ROI 適応) の regressi
 | OBS baseline (split) | `obs-<label>.split.json` | 改修前の `allaganeye split --from-metadata` 出力の SHA-256 + size | bit-exact (Phase 1) |
 | VTuber ground truth | `vtuber-primary-ground-truth.json` | user 手動検証済みの "正解" 試合 timestamp | ±10s 一致 (Phase 2b) |
 
-OBS baseline は「現状検知の固定 snapshot」、VTuber ground truth は「目視正解」という別概念。OBS は **perf 改修で挙動が変わらないこと** を確認、VTuber は **scorebar ROI 適応化で正解に近づくこと** を確認する。
+OBS baseline は「現状検知の固定 snapshot」、VTuber ground truth は「目視正解」という別概念。OBS は **検知ロジック改修 PR で detect / split 出力が変わらないこと** を確認、VTuber は **scorebar ROI 適応化で正解に近づくこと** を確認する。本 OBS baseline は GUI H264 再エンコードや encoding fallback など別の regression を担保しない (§Out of scope 参照)。
 
 ## OBS baseline 動画セット (#778 選定)
 
