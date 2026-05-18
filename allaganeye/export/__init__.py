@@ -1,6 +1,11 @@
 """Parallel H.264 export pipeline (#761)."""
 
-from allaganeye.export.encoder import EncoderSlot, H264Encoder, select_h264_encoder
+from allaganeye.export.encoder import (
+    EncoderSlot,
+    H264Encoder,
+    enumerate_h264_encoders,
+    select_h264_encoder,
+)
 from allaganeye.export.nvenc_probe import probe_nvenc_engine_count
 from allaganeye.export.schema import (
     ExportError,
@@ -16,6 +21,7 @@ __all__ = [
     "ExportSummary",
     "H264Encoder",
     "ProgressEvent",
+    "enumerate_h264_encoders",
     "probe_nvenc_engine_count",
     "select_h264_encoder",
 ]

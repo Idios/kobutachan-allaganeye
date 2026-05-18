@@ -102,3 +102,73 @@ def test_encoder_slot_is_frozen_dataclass():
     )
     with pytest.raises(AttributeError):
         slot.slot_index = 1  # type: ignore[misc]
+
+
+# --- enumerate_h264_encoders ---
+
+
+def test_enumerate_nvenc_returns_n_slots(monkeypatch: pytest.MonkeyPatch):
+    """RTX 5090 → 3 slots, all NVENC."""
+    monkeypatch.delenv("ALLAGANEYE_EXPORT_CONCURRENCY", raising=False)
+    from allaganeye.export.encoder import enumerate_h264_encoders
+
+    slots = enumerate_h264_encoders(
+        vendors=["nvidia"],
+        preference=["nvidia", "amd", "intel"],
+        gpu_models=["NVIDIA GeForce RTX 5090"],
+    )
+    assert len(slots) == 3
+    assert all(s.encoder_kind == H264Encoder.NVENC for s in slots)
+    assert [s.slot_index for s in slots] == [0, 1, 2]
+    assert [s.display_label for s in slots] == ["NVENC #1", "NVENC #2", "NVENC #3"]
+
+
+def test_enumerate_amf_returns_1_slot():
+    """AMD iGPU → 1 slot (Phase 2 #762 will add iGPU multi-slot if engine count > 1)."""
+    from allaganeye.export.encoder import enumerate_h264_encoders
+
+    slots = enumerate_h264_encoders(
+        vendors=["amd"],
+        preference=["nvidia", "amd", "intel"],
+        gpu_models=["AMD Radeon Graphics"],
+    )
+    assert len(slots) == 1
+    assert slots[0].encoder_kind == H264Encoder.AMF
+    assert slots[0].display_label == "AMF"
+
+
+def test_enumerate_qsv_returns_1_slot():
+    from allaganeye.export.encoder import enumerate_h264_encoders
+
+    slots = enumerate_h264_encoders(
+        vendors=["intel"],
+        preference=["nvidia", "amd", "intel"],
+        gpu_models=["Intel UHD Graphics"],
+    )
+    assert len(slots) == 1
+    assert slots[0].encoder_kind == H264Encoder.QSV
+
+
+def test_enumerate_libx264_fallback_when_no_vendor(monkeypatch: pytest.MonkeyPatch):
+    """Empty vendors → 1 libx264 slot (CPU-only env)."""
+    monkeypatch.delenv("ALLAGANEYE_EXPORT_CONCURRENCY", raising=False)
+    from allaganeye.export.encoder import enumerate_h264_encoders
+
+    slots = enumerate_h264_encoders(
+        vendors=[], preference=["nvidia", "amd", "intel"], gpu_models=[]
+    )
+    assert len(slots) == 1
+    assert slots[0].encoder_kind == H264Encoder.LIBX264
+
+
+def test_enumerate_nvenc_respects_env_override(monkeypatch: pytest.MonkeyPatch):
+    """env=2 forces 2 slots even on RTX 5090 (would otherwise be 3)."""
+    monkeypatch.setenv("ALLAGANEYE_EXPORT_CONCURRENCY", "2")
+    from allaganeye.export.encoder import enumerate_h264_encoders
+
+    slots = enumerate_h264_encoders(
+        vendors=["nvidia"],
+        preference=["nvidia", "amd", "intel"],
+        gpu_models=["NVIDIA GeForce RTX 5090"],
+    )
+    assert len(slots) == 2

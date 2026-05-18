@@ -93,3 +93,37 @@ def select_h264_encoder(vendors: list[str], preference: list[str]) -> H264Encode
                 case _:
                     continue
     return H264Encoder.LIBX264
+
+
+def enumerate_h264_encoders(
+    vendors: list[str],
+    preference: list[str],
+    gpu_models: list[str],
+) -> list[EncoderSlot]:
+    """Vendor + GPU 検出結果から並列実行可能な encoder slot 列を作る。
+
+    Phase 1 (#761): NVENC 選択時のみ N slots、他は 1 slot。
+    Phase 2 (#762): mixed vendor slot 列 ``[Nvenc#0, Nvenc#1, Amf#0]`` を返す
+    よう拡張可能 (本実装は単一 vendor のみ)。
+    """
+    # 局所 import で循環依存を避ける (nvenc_probe → encoder の参照は ないが念のため)
+    from allaganeye.export.nvenc_probe import probe_nvenc_engine_count
+
+    primary = select_h264_encoder(vendors, preference)
+    if primary == H264Encoder.NVENC:
+        n = probe_nvenc_engine_count(gpu_models)
+        return [
+            EncoderSlot(
+                slot_index=i,
+                encoder_kind=H264Encoder.NVENC,
+                display_label=f"NVENC #{i + 1}",
+            )
+            for i in range(n)
+        ]
+    return [
+        EncoderSlot(
+            slot_index=0,
+            encoder_kind=primary,
+            display_label=primary.display_label,
+        )
+    ]
