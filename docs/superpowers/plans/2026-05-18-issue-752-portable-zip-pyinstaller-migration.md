@@ -353,7 +353,7 @@ git status
 
 Expected:
 
-```
+```text
 new file:   scripts/measure-portable-zip-baseline.ps1
 modified:   scripts/tests/build-portable-zip.Tests.ps1
 modified:   .github/workflows/release.yml
@@ -564,7 +564,7 @@ git status
 
 Expected:
 
-```
+```text
 modified:   allaganeye/integrity.py
 modified:   tests/test_integrity.py
 ```
@@ -1149,7 +1149,7 @@ pwsh -File scripts\measure-portable-zip-baseline.ps1 `
 
 Expected output (例値、実値は手元計測で決まる):
 
-```
+```text
 total_file_count : 250
 total_size_bytes : 180000000
 ```
@@ -1399,7 +1399,7 @@ git status
 
 Expected:
 
-```
+```text
 new file:   scripts/installer/allaganeye.spec
 new file:   scripts/installer/requirements-pyinstaller.txt
 modified:   scripts/build-portable-zip.ps1
@@ -1720,7 +1720,7 @@ CI artifact が PR Actions tab から取得できない場合、CI logs の `Mea
 
 - [ ] **Step 1: `AskUserQuestion` で Idios 実機検証を依頼**
 
-```
+```text
 質問: 「PR #<番号> の Portable ZIP 実機検証をお願いできますか?」
 選択肢:
   - 「OK / 全項目検証する」 (Recommended) — ZIP DL → 展開 → .bat ダブルクリック / .bat split / GUI 起動 の 3 項目を確認
@@ -1733,7 +1733,7 @@ CI artifact が PR Actions tab から取得できない場合、CI logs の `Mea
 
 - [ ] **Step 2: 検証 OK なら `/iterate-review <PR#>` で review-fix ループを起動**
 
-```
+```text
 /iterate-review <PR#>
 ```
 

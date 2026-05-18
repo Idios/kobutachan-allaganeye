@@ -613,7 +613,11 @@ Describe 'Measure-PortableZipBaseline (#752)' {
     $jsonText = & $script:MeasureScript -PayloadDir $script:FakePayload -Format Json
     $obj = $jsonText | ConvertFrom-Json
     $obj.schema_version | Should -Be 1
-    $obj.measured_at | Should -Match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$'
+    # PR #785 CI fix: PS 7+ ConvertFrom-Json auto-parses ISO 8601 strings to [DateTime],
+    # whose .ToString() (implicit on Should -Match) emits culture-specific format
+    # with subseconds (e.g. "2026-05-18T13:55:04.0000000Z"). Assert against raw
+    # JSON text instead — same pattern as N-IntegrityManifest test at line 387.
+    $jsonText | Should -Match '"measured_at":\s*"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"'
     $obj.payload_dir | Should -Be $script:FakePayload
     $obj.total_file_count | Should -Be 3
     $obj.total_size_bytes | Should -BeGreaterThan 0

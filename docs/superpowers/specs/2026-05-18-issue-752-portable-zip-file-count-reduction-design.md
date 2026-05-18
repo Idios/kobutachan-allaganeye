@@ -405,7 +405,7 @@ def _default_manifest_path() -> Path:
 
 #### runtime code: `audio/refs/__init__.py` (本 spec の検証対象外)
 
-[allaganeye/audio/refs/__init__.py](../../allaganeye/audio/refs/__init__.py) は `importlib.resources.files()` + `as_file()` を使用。PyInstaller `.spec` の `collect_data_files('allaganeye.audio.refs')` で `.npz` は `_internal/allaganeye/audio/refs/fanfare.npz` に bundle される (=resource は frozen bundle 内に確実に存在)。**コード変更不要**。
+[`allaganeye/audio/refs/__init__.py`](../../allaganeye/audio/refs/__init__.py) は `importlib.resources.files()` + `as_file()` を使用。PyInstaller `.spec` の `collect_data_files('allaganeye.audio.refs')` で `.npz` は `_internal/allaganeye/audio/refs/fanfare.npz` に bundle される (=resource は frozen bundle 内に確実に存在)。**コード変更不要**。
 
 audio 系 path の empirical な動作確認は本 spec の検証対象外 (Idios 2026-05-18 判断: 現在 audio 機能を使っていないため本 PR では深掘りしない)。将来 audio 機能を再度 active に使う際に問題が出れば別 issue で `audio/refs/__init__.py` の `with as_file(...) as path: return Path(path)` pattern を再評価する。
 
@@ -497,7 +497,7 @@ PyInstaller output (`allaganeye/_internal/*.dll`, `_internal/library.zip` 等) �
 1 PR / 2 commit (Step 1 → Step 2)。各 layer の更新点:
 
 | layer | Step 1 (baseline) | Step 2 (PyInstaller) |
-|---|---|---|
+| --- | --- | --- |
 | Pester unit | new measurement script | `Get-LauncherTemplate` path 検査 + `.spec` 構文 check |
 | Pester integration | baseline log のみ | file count assertion 活性化 (削減幅 ≥ 80%) |
 | pytest unit (`tests/test_integrity.py`) | unchanged | **`sys.frozen` 分岐の monkeypatch test 追加** (frozen / non-frozen 両 path) |
@@ -507,7 +507,7 @@ PyInstaller output (`allaganeye/_internal/*.dll`, `_internal/library.zip` 等) �
 | `python -m allaganeye` dev mode | unchanged | unchanged (Rust の `resolve_python_fallback` で worktree から動く) |
 | Idios 実機検証 | n/a | `.bat` ダブルクリック起動 / `.bat` split / GUI 起動 (audio は scope 外) |
 
-#### 開発者の local build 手順
+### 開発者の local build 手順
 
 ```powershell
 # build script は内部で artifact 内 venv を作成・pip install するため、
@@ -526,7 +526,7 @@ pwsh -File scripts\measure-portable-zip-baseline.ps1 `
 ## §4 Risks / mitigation
 
 | Risk | severity | mitigation |
-|---|---|---|
+| --- | --- | --- |
 | PyInstaller の numpy/scipy/cv2 hook が将来 version で broken | 低-中 | `requirements-pyinstaller.txt` で patch pin、release 前に Idios 手元で smoke 確認 |
 | PyInstaller output が byte-deterministic でない | 低 | integrity-manifest は **size only** で hash 不使用、size は同 source + 同 env で deterministic |
 | ALLAGANEYE_FFMPEG 環境変数の path resolution が frozen 化で変わる | 低 | `allaganeye.bat` で env var を設定する layer が変更なし、frozen Python は通常通り `os.environ` 参照 |
@@ -566,7 +566,7 @@ writing-plans 持ち越しの未確定事項は以下のみ (主要設計判断�
 issue #752 "確認項目 / 作業項目" → 本 spec mapping:
 
 | 元 item | 対応 phase | machine-verified? |
-|---|---|---|
+| --- | --- | --- |
 | `python/` と `lib/` 現状のファイル数・サイズを計測 | Step 1 | yes (baseline.json) |
 | Option A を試作 (zip pack ステップ追加) | **Option C に変更** (本 spec §0 経緯) | yes (CI build artifact) |
 | L1 CLI 全コマンドで import エラー無し | Step 2 (CI smoke Lv A/B) | yes |
