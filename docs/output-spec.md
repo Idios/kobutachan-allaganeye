@@ -100,7 +100,7 @@ Metadata: <metadata.json path>
 | `-v` (19a) | `Error: <msg>` + context 展開 + full traceback | full traceback (`__cause__` chain 含) |
 | default (19b) | `Error: <msg>` + `(Run with -v / --verbose for full details)` | `Unexpected error: <exc>` + hint |
 | `-q` (19c) | `Error: <msg>` のみ | `Unexpected error: <exc>` のみ |
-| click-level option-parse error (19d) | `Error: no such option: -X. Did you mean --X?` (stderr / `-v` / `-q` の影響なし、click level / 終了コード 2) | (該当なし — click level なので AllaganEyeError 系の例外経路を通らない) |
+| click-level option-parse error (19d) | `Error: No such option: <token>` + 改行 `Did you mean --<name>?` (stderr / `-v` / `-q` の影響なし、click level / 終了コード 2)。出力例の詳細は [`docs/cli-spec.md` §「click-level option-parse error」](cli-spec.md) を参照 | (該当なし — click level なので AllaganEyeError 系の例外経路を通らない) |
 
 `debug-brightness` コマンドには `-v` / `-q` オプションが無いため、エラーは default 形式に準じるが、**存在しない `-v` オプションへ誘導しないよう hint を抑制**する (#428)。
 
