@@ -39,7 +39,7 @@ OBS baseline は「現状検知の固定 snapshot」、VTuber ground truth は�
 ### 選定基準
 
 - **サイズ多様性**: 短尺 (~1h) / 中尺 (~2h) / 長尺 (~2.5h) を含み、detect 処理時間が perf 改修でどう変わるかを scale 別に観測できること
-- **試合数多様性**: 1 試合 / 中 (3-6) / 多 (7-9) を含み、splitter / metadata 書出し系の regression を match 数の異なる場面で確認できること
+- **試合数 / gap 多様性**: matches 3 〜 9 + gaps 0 〜 2 を含み、splitter / metadata 書出し / gap detection の regression を異なる場面で確認できること
 - **代表性**: 既に `tests/baselines/{20260116,20260118,20260119}.json` で scorebar V2 (#522 / #529) を validate 済みの 3 本を含み、過去の検出挙動との連続性を保つこと
 - **再現性**: Idios 個人 OBS 録画 (`ALLAGANEYE_SAMPLE_VIDEO_DIR` 配下) で deterministic に再検知可能であること
 
@@ -47,15 +47,17 @@ OBS baseline は「現状検知の固定 snapshot」、VTuber ground truth は�
 
 ### 選定リスト (5 本)
 
-| Label | Source path (相対: `$ALLAGANEYE_SAMPLE_VIDEO_DIR`) | Duration | Size | Matches (legacy) | 採択理由 |
-| --- | --- | --- | --- | --- | --- |
-| `obs-20260209` | `2026-02-09 23-12-24.mkv` | 57m06s (3426.5s) | 19.2 GiB | 3 | 最短 / fast smoke 用。既存 detect snapshot あり |
-| `obs-20260127` | `20260127/2026-01-27 21-59-15.mkv` | 1h01m11s (3671.3s) | 22.9 GiB | 1 (推定) | 単一試合 edge / 短尺枠の 2 本目 |
-| `obs-20260116` | `20260116/2026-01-16 22-12-57.mkv` | 2h01m43s (7303.5s) | 37.0 GiB | 7 (うち 1 件 `unknown`) | scorebar V2 validated / 末尾 `unknown` 分類 edge |
-| `obs-20260118` | `20260118/2026-01-18 22-15-18.mkv` | 2h17m14s (8234.7s) | 34.2 GiB | 6 | scorebar V2 validated / Limsa 待機暗転含む (#529) |
-| `obs-20260119` | `20260119/2026-01-19 22-09-07.mkv` | 2h33m54s (9234.0s) | 59.1 GiB | 9 | scorebar V2 validated / 高 match 数 |
+下表の Matches / Gaps は #779 で実測した改修前 snapshot 値 (`tests/baselines/v0.3.0/<label>.metadata.json` を参照)。
 
-合計 detect 時間 (改修前) 概算: ~55-90 分 (RTX-class GPU、`--gpu` モード)。
+| Label | Source path (相対: `$ALLAGANEYE_SAMPLE_VIDEO_DIR`) | Duration | Size | Matches | Gaps | 採択理由 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `obs-20260209` | `2026-02-09 23-12-24.mkv` | 57m06s (3426.5s) | 19.2 GiB | 3 | 0 | 最短 / fast smoke 用 |
+| `obs-20260127` | `20260127/2026-01-27 21-59-15.mkv` | 1h01m11s (3671.3s) | 22.9 GiB | 3 | 2 | 短尺枠 2 本目 / gap 検出含む edge (#576 fps filter 改修時に gap 抽出も regression 確認) |
+| `obs-20260116` | `20260116/2026-01-16 22-12-57.mkv` | 2h01m43s (7303.5s) | 37.0 GiB | 6 (うち 1 件 `unknown`) | 0 | scorebar V2 validated / 末尾 `unknown` 分類 edge |
+| `obs-20260118` | `20260118/2026-01-18 22-15-18.mkv` | 2h17m14s (8234.7s) | 34.2 GiB | 5 | 2 | scorebar V2 validated / Limsa 待機暗転含む (#529) / 異常長尺 1 試合 (40m33s) edge |
+| `obs-20260119` | `20260119/2026-01-19 22-09-07.mkv` | 2h33m54s (9234.0s) | 59.1 GiB | 9 | 1 | scorebar V2 validated / 高 match 数 |
+
+合計 detect 時間 (実測): 34m43s (RTX-class GPU、`--gpu` モード、#779 PR generation log)。
 
 ### 不採用候補と理由
 
