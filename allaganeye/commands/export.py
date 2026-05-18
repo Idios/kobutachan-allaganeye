@@ -128,7 +128,11 @@ def register(app: typer.Typer) -> None:
             typer.echo(f"error: cannot read metadata: {e}", err=True)
             raise typer.Exit(code=2) from e
 
-        source_video = Path(metadata["source"])
+        source_value = metadata.get("source")
+        if not source_value:
+            typer.echo("error: metadata.json missing required 'source' field", err=True)
+            raise typer.Exit(code=2)
+        source_video = Path(source_value)
         sys_info = metadata.get("system_info") or {}
         vendors = list(sys_info.get("gpu_vendors_available") or [])
         preference = list(
@@ -172,55 +176,58 @@ def register(app: typer.Typer) -> None:
         def _sigint_handler(signum: int, frame: object) -> None:
             cancel_event.set()
 
+        original_handler = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, _sigint_handler)
+        try:
+            # Progress callback wiring -- construct WireWriter once for json_mode.
+            # writer is always assigned when json_mode=True (initialized to None otherwise
+            # to satisfy the type checker; the second use is guarded by the same condition).
+            writer: WireWriter | None = None
+            if json_mode:
+                writer = WireWriter(stream=sys.stdout)
 
-        # Progress callback wiring -- construct WireWriter once for json_mode.
-        # writer is always assigned when json_mode=True (initialized to None otherwise
-        # to satisfy the type checker; the second use is guarded by the same condition).
-        writer: WireWriter | None = None
-        if json_mode:
-            writer = WireWriter(stream=sys.stdout)
+                def progress_cb(ev: ProgressEvent) -> None:
+                    assert writer is not None
+                    writer.emit(ev)
 
-            def progress_cb(ev: ProgressEvent) -> None:
-                assert writer is not None
-                writer.emit(ev)
+            elif quiet:
 
-        elif quiet:
+                def progress_cb(ev: ProgressEvent) -> None:
+                    pass
 
-            def progress_cb(ev: ProgressEvent) -> None:
-                pass
+            else:
+                # Plain text mode: 1 line per match start/done; no rich here to keep deps light
+                def progress_cb(ev: ProgressEvent) -> None:
+                    if ev.payload["type"] == "result":
+                        typer.echo(
+                            f"[OK] match {ev.payload['match_index']:03d} "
+                            f"-> {ev.payload['output_path']} ({ev.payload['encoder_used']})"
+                        )
+                    elif ev.payload["type"] == "error":
+                        typer.echo(
+                            f"[FAIL] match {ev.payload['match_index']:03d}: "
+                            f"{ev.payload['error_message']}",
+                            err=True,
+                        )
+                    elif ev.payload["type"] == "fallback":
+                        typer.echo(
+                            f"[fallback] match {ev.payload['match_index']:03d}: "
+                            f"{ev.payload['fallback_from']} -> {ev.payload['fallback_to']}",
+                            err=True,
+                        )
 
-        else:
-            # Plain text mode: 1 line per match start/done; no rich here to keep deps light
-            def progress_cb(ev: ProgressEvent) -> None:
-                if ev.payload["type"] == "result":
-                    typer.echo(
-                        f"[OK] match {ev.payload['match_index']:03d} "
-                        f"-> {ev.payload['output_path']} ({ev.payload['encoder_used']})"
-                    )
-                elif ev.payload["type"] == "error":
-                    typer.echo(
-                        f"[FAIL] match {ev.payload['match_index']:03d}: "
-                        f"{ev.payload['error_message']}",
-                        err=True,
-                    )
-                elif ev.payload["type"] == "fallback":
-                    typer.echo(
-                        f"[fallback] match {ev.payload['match_index']:03d}: "
-                        f"{ev.payload['fallback_from']} -> {ev.payload['fallback_to']}",
-                        err=True,
-                    )
-
-        summary = export_matches(
-            matches=filtered,
-            slots=slots,
-            source_video=source_video,
-            output_dir=output_dir,
-            codec=codec,
-            name_pattern=name_pattern,
-            progress_cb=progress_cb,
-            cancel_event=cancel_event,
-        )
+            summary = export_matches(
+                matches=filtered,
+                slots=slots,
+                source_video=source_video,
+                output_dir=output_dir,
+                codec=codec,
+                name_pattern=name_pattern,
+                progress_cb=progress_cb,
+                cancel_event=cancel_event,
+            )
+        finally:
+            signal.signal(signal.SIGINT, original_handler)
 
         # Emit summary as last JSON line; reuse the writer constructed above
         if json_mode and writer is not None:

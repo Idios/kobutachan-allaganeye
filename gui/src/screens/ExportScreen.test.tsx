@@ -733,13 +733,16 @@ describe('ExportScreen (Phase 4 #466)', () => {
   it('invokes enumerate_h264_encoders and updates sub label when system_info is present', async () => {
     invokeMock.mockImplementation(async (cmd: string) => {
       if (cmd === 'enumerate_h264_encoders') {
+        // RTX 5090 SKU → 3 parallel NVENC slots
         return [
-          { slot_index: 0, encoder_kind: 'Nvenc', display_label: 'NVENC' },
+          { slot_index: 0, encoder_kind: 'Nvenc', display_label: 'NVENC #1' },
+          { slot_index: 1, encoder_kind: 'Nvenc', display_label: 'NVENC #2' },
+          { slot_index: 2, encoder_kind: 'Nvenc', display_label: 'NVENC #3' },
         ];
       }
       return undefined;
     });
-    // Inject system_info into the sample metadata.
+    // Inject system_info with RTX 5090 GPU model into the sample metadata.
     const current = useMetadataStore.getState().metadata!;
     useMetadataStore.setState({
       metadata: {
@@ -748,6 +751,7 @@ describe('ExportScreen (Phase 4 #466)', () => {
           gpu_vendors_available: ['nvidia'],
           gpu_vendor_used: 'nvidia',
           vendor_preference: ['nvidia', 'amd', 'intel'],
+          gpu: ['NVIDIA GeForce RTX 5090'],
         },
       },
     });
@@ -759,15 +763,16 @@ describe('ExportScreen (Phase 4 #466)', () => {
           req: {
             vendors: ['nvidia'],
             preference: ['nvidia', 'amd', 'intel'],
-            gpuModels: [],
+            gpuModels: ['NVIDIA GeForce RTX 5090'],
           },
         },
       );
     });
+    // 3 slots → badge should show "NVENC ×3"
     await waitFor(() => {
       expect(
         screen.getByText(/H\.264 再エンコード/).parentElement?.textContent,
-      ).toContain('NVENC');
+      ).toContain('NVENC ×3');
     });
   });
 

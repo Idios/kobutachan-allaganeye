@@ -701,7 +701,7 @@ def _build_system_info(
 ) -> SystemInfo:
     """Build the ``system_info`` dict for ``metadata.json`` (#591, extended #761).
 
-    GUI export 画面 (Phase 4 / `select_h264_encoder_for_export`) が
+    GUI export 画面 (Phase 4 / `enumerate_h264_encoders`) が
     ``gpu_vendors_available`` と ``vendor_preference`` を読んで NVENC /
     QSV / AMF / libx264 を auto-select する。``gpu_vendor_used`` は
     実際 detect 経路で使った vendor (CPU 強制 / cache hit / split-only

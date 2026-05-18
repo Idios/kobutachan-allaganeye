@@ -112,7 +112,7 @@ GPU vendor probe スナップショット。`probe_gpu_vendors()` の結果と�
 - `allaganeye split <video>` (legacy): cache miss なら detect と同じ / cache hit は probe を実行し vendor_used = null
 - `allaganeye split --from-metadata`: probe を実行し vendor_used = null (split 時点では vendor を選ばないため)
 
-GUI export 画面は `system_info.gpu_vendors_available` と `vendor_preference` を `select_h264_encoder_for_export` Tauri コマンドに渡し、`H264Encoder` enum (libx264 / NVENC / QSV / AMF) を解決する。`system_info` を持たない pre-#591 metadata.json は libx264 にフォールバックする。
+GUI export 画面は `system_info.gpu_vendors_available` / `vendor_preference` / `gpu` を `enumerate_h264_encoders` Tauri コマンドに渡し、H.264 エンコーダスロット一覧 (`EncoderSlotJson[]`) を取得する。`system_info` を持たない pre-#591 metadata.json は libx264 にフォールバックする。
 
 #### `system_info` は GPU 3 field のみ (OS/CPU/Memory は対象外)
 

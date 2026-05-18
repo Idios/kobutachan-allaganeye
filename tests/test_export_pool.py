@@ -38,7 +38,7 @@ def _matches(n: int) -> list[ExportMatch]:
     ]
 
 
-def test_export_matches_runs_n_workers_in_parallel(tmp_path: Path):
+def test_runs_n_workers_in_parallel(tmp_path: Path):
     """concurrency = len(slots): max in-flight workers = N."""
     in_flight = 0
     max_in_flight = 0
@@ -75,7 +75,7 @@ def test_export_matches_runs_n_workers_in_parallel(tmp_path: Path):
     assert max_in_flight == 3  # never exceed slot count
 
 
-def test_export_matches_cancel_stops_remaining(tmp_path: Path):
+def test_cancel_stops_remaining(tmp_path: Path):
     """cancel_event set -> workers stop pulling. summary.cancelled = True."""
     cancel = threading.Event()
     started = 0
@@ -113,7 +113,7 @@ def test_export_matches_cancel_stops_remaining(tmp_path: Path):
     assert summary.success + summary.failure < 20
 
 
-def test_export_matches_cancel_marks_true_even_with_empty_queue(tmp_path: Path):
+def test_cancel_marks_true_even_with_empty_queue(tmp_path: Path):
     """Codex review #3: keeping queue.qsize() > 0 condition causes cancelled=False
     the moment queue empties right after cancel fires. This is a BUG."""
     cancel = threading.Event()
@@ -150,7 +150,7 @@ def test_export_matches_cancel_marks_true_even_with_empty_queue(tmp_path: Path):
     assert summary.cancelled is True
 
 
-def test_export_matches_partial_failure_other_workers_continue(tmp_path: Path):
+def test_partial_failure_other_workers_continue(tmp_path: Path):
     """Other workers continue even when 1 worker returns a failure."""
 
     def fake_run(*args: Any, **kwargs: Any) -> ExportResult:
@@ -179,7 +179,7 @@ def test_export_matches_partial_failure_other_workers_continue(tmp_path: Path):
     assert summary.cancelled is False
 
 
-def test_export_matches_empty_queue_returns_zero_summary(tmp_path: Path):
+def test_empty_queue_returns_zero_summary(tmp_path: Path):
     summary = export_matches(
         matches=[],
         slots=_slots(3),
@@ -195,7 +195,7 @@ def test_export_matches_empty_queue_returns_zero_summary(tmp_path: Path):
     assert summary.cancelled is False
 
 
-def test_export_matches_empty_slots_raises(tmp_path: Path):
+def test_empty_slots_raises(tmp_path: Path):
     """0 slots is not executable -> ValueError (caller bug)."""
     with pytest.raises(ValueError):
         export_matches(

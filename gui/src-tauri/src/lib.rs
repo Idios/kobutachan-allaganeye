@@ -1594,14 +1594,14 @@ pub struct ExportProgress {
 
 /// #466 review #4: 出力先の親ディレクトリが存在することを検証する。
 ///
-/// 以前は `export_match` 内で `create_dir_all` を呼んでいたが、ユーザーが
+/// 以前は `start_export` 内で `create_dir_all` を呼んでいたが、ユーザーが
 /// タイポしたパスに静かにディレクトリツリーが作られて混乱を招くため、
 /// 明示拒否に変更した。ディレクトリ作成はユーザーが事前に行う前提。
 ///
 /// `output_path` がルート / 親なし (file_name only など) の場合は no-op で
 /// Ok を返す (現在のディレクトリを意味すると解釈)。
 ///
-/// Task 12 で `export_match` を削除後、本関数の呼び出し元は tests のみ。
+/// `start_export` subprocess 経路に移行後、本関数の呼び出し元は tests のみ。
 /// #[cfg(test)] で test ビルドのみに限定し dead_code 警告を抑止。
 #[cfg(test)]
 fn validate_output_parent_exists(output_path: &Path) -> Result<(), AppError> {
@@ -2791,18 +2791,56 @@ async fn start_export(
             AppError::new("subprocess.serialize_failed", format!("metadata serialize: {}", e))
                 .with_default_hint()
         })?;
-        stdin.write_all(&serialized).await.ok();
+        stdin.write_all(&serialized).await.map_err(|e| {
+            AppError::new(
+                "subprocess.stdin_write_failed",
+                format!("metadata stdin write: {}", e),
+            )
+            .with_default_hint()
+        })?;
         // stdin dropped here -> EOF to Python
     }
 
     // Track via PROCESS_TRACKER. Export spawns a single Python process
-    // (which itself spawns ffmpeg children). For export we use no_job
-    // (TrackedChild without Job Object): the Python process terminates on
-    // kill() and ffmpeg children exit promptly when the parent dies on
-    // Windows. A full Job Object (as used by start_detect for the GPU
-    // chunk-parallel case) would be needed only if we detect orphan
-    // ffmpeg on cancel during export testing.
-    let tracked = TrackedChild::no_job(child);
+    // (which itself spawns N ffmpeg children). Use Job Object on Windows
+    // (same as start_detect) so cancelling export reliably reaps all
+    // ffmpeg descendants. Failure to create/assign the Job is downgraded
+    // to a warning (export proceeds without tree-kill protection).
+    #[cfg(windows)]
+    let job: Option<process_util::job_object::ProcessJob> = {
+        match process_util::job_object::ProcessJob::new() {
+            Ok(j) => {
+                if let Some(raw) = child.raw_handle() {
+                    if let Err(e) = j.assign(raw) {
+                        eprintln!(
+                            "warning: AssignProcessToJobObject failed: {} \
+                             (export descendants may be orphaned on cancel)",
+                            e
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "warning: child.raw_handle() returned None for export \
+                         spawn (export descendants may be orphaned on cancel)"
+                    );
+                }
+                Some(j)
+            }
+            Err(e) => {
+                eprintln!(
+                    "warning: CreateJobObject failed: {} \
+                     (export descendants may be orphaned on cancel)",
+                    e
+                );
+                None
+            }
+        }
+    };
+    let tracked = TrackedChild {
+        child,
+        #[cfg(windows)]
+        job,
+    };
     let tracked_id = track_child(tracked).await;
 
     // Capture stdout reader BEFORE the lock is released
@@ -4161,7 +4199,7 @@ mod tests {
     }
 
     /// #545 mystifying-ptolemy-d112b5 review (2026-04-25): track_child →
-    /// untrack_child の往復で正しく Some が返ること。`export_match` の
+    /// untrack_child の往復で正しく Some が返ること。`start_export` の
     /// happy-path cleanup の core ロジック。
     ///
     /// Windows 用 dummy プロセスとして `cmd /c rem` を spawn (即終了 no-op)、
@@ -4198,7 +4236,7 @@ mod tests {
 
     /// #545 mystifying-ptolemy-d112b5 review (2026-04-25): track_child のあと
     /// `kill_tracked_processes` が drain した場合、untrack_child は None を
-    /// 返す。`export_match` の cancel 検出 (`untrack` 結果が None なら
+    /// 返す。`start_export` の cancel 検出 (`untrack` 結果が None なら
     /// 既に kill された = 中断) のセマンティクス確認。
     #[tokio::test]
     async fn untrack_child_after_kill_tracked_returns_none() {

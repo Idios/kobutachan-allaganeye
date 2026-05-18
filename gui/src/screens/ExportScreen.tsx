@@ -196,7 +196,7 @@ export function ExportScreen() {
       req: {
         vendors: metadata.system_info.gpu_vendors_available ?? [],
         preference: metadata.system_info.vendor_preference ?? ['nvidia', 'amd', 'intel'],
-        gpuModels: [],
+        gpuModels: metadata.system_info.gpu ?? [],
       },
     })
       .then((slots) => setEncoderSlots(slots.length > 0 ? slots : [LIBX264_SLOT]))

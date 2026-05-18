@@ -68,7 +68,7 @@ export const WarningSchema = z.object({
  * #591 -- GPU vendor probe snapshot. Optional field on metadata.json
  * (pre-#591 files don't carry it). Frontend uses
  * `gpu_vendors_available` + `vendor_preference` to pick the H.264
- * encoder via `select_h264_encoder_for_export`.
+ * encoder via `enumerate_h264_encoders`.
  */
 export const SystemInfoSchema = z.object({
   gpu_vendors_available: z.array(z.string()),
