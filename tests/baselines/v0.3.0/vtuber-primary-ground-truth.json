@@ -1,0 +1,15 @@
+{
+  "source_file": "2772549129-151803977-da21c691-9ed6-4068-9a8b-4726a8a519a8.mp4",
+  "source_size_bytes": 7554775607,
+  "source_dir_label": "gyawa_vatos",
+  "ground_truth_provider": "user (manual)",
+  "ground_truth_provided_at": "2026-05-18",
+  "tolerance_sec": 10,
+  "matches": [
+    {"index": 1, "start_time": 1433, "end_time": 2361, "duration": 928, "type": "fl_match"},
+    {"index": 2, "start_time": 2624, "end_time": 3635, "duration": 1011, "type": "fl_match"},
+    {"index": 3, "start_time": 4253, "end_time": 5242, "duration": 989, "type": "fl_match"},
+    {"index": 4, "start_time": 5684, "end_time": 6379, "duration": 695, "type": "fl_match"},
+    {"index": 5, "start_time": 6609, "end_time": 7537, "duration": 928, "type": "fl_match"}
+  ]
+}
