@@ -179,6 +179,22 @@ jobs:
           $size = (Get-Item $exePath).Length / 1MB
           Write-Host "allaganeye-gui.exe bundled at $exePath ($([math]::Round($size, 2)) MB)"
 
+      # #752 -- baseline measurement: capture file count + size by top-dir /
+      # extension for PR before/after comparison. The JSON artifact is reused
+      # in the Pester regression assertion that locks in the reduction floor.
+      - name: Measure Portable ZIP baseline (#752)
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch'
+        shell: ${{ matrix.shell }}
+        run: |
+          $version = '${{ needs.version-check.outputs.version }}'
+          $payload = "build/portable/allaganeye-v$version"
+          $outFile = "build/portable/baseline.json"
+          $json = & ./scripts/measure-portable-zip-baseline.ps1 -PayloadDir $payload -Format Json
+          $json | Out-File -FilePath $outFile -Encoding utf8 -NoNewline
+          Write-Host "--- Baseline measurement (#752) ---"
+          & ./scripts/measure-portable-zip-baseline.ps1 -PayloadDir $payload -Format Human
+          Write-Host "Saved baseline JSON to: $outFile"
+
       # branch push (warm-up 目的、artifact upload なし) では smoke test を skip
       # する (~5min 短縮)。PR validation と release tag push、workflow_dispatch
       # の手動実行では従来通り実行 (CI-3, v0.3.0 cycle 改善)。

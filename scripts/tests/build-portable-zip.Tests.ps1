@@ -574,3 +574,70 @@ Describe 'Integrity manifest encoding (#729)' {
     ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) | Should -BeFalse
   }
 }
+
+
+Describe 'Measure-PortableZipBaseline (#752)' {
+  # Lazy-loaded: only test the script when it exists. Acts as TDD anchor for
+  # Task 2 (script creation) without breaking the existing Pester suite that
+  # is dot-sourced at BeforeAll without the new script.
+  BeforeAll {
+    $script:MeasureScript = Join-Path (Join-Path $PSScriptRoot '..') 'measure-portable-zip-baseline.ps1'
+    $script:MeasureTmp = Join-Path ([System.IO.Path]::GetTempPath()) "measure-baseline-tests-$(New-Guid)"
+    New-Item -ItemType Directory -Force -Path $script:MeasureTmp | Out-Null
+    # Fake payload: 3 files across 2 top-level dirs.
+    $payload = Join-Path $script:MeasureTmp 'fake-payload'
+    New-Item -ItemType Directory -Force -Path $payload | Out-Null
+    Set-Content -Path (Join-Path $payload 'allaganeye.bat') -Value 'bat content' -Encoding ASCII
+    $libDir = Join-Path $payload 'lib\foo'
+    New-Item -ItemType Directory -Force -Path $libDir | Out-Null
+    Set-Content -Path (Join-Path $libDir 'foo.py') -Value '# py' -Encoding ASCII
+    $ffDir = Join-Path $payload 'ffmpeg'
+    New-Item -ItemType Directory -Force -Path $ffDir | Out-Null
+    Set-Content -Path (Join-Path $ffDir 'fake.dll') -Value 'binary' -Encoding ASCII
+    $script:FakePayload = $payload
+  }
+  AfterAll {
+    if (Test-Path $script:MeasureTmp) {
+      Remove-Item -Recurse -Force $script:MeasureTmp
+    }
+  }
+
+  It 'produces JSON with required top-level schema fields' {
+    $jsonText = & $script:MeasureScript -PayloadDir $script:FakePayload -Format Json
+    $obj = $jsonText | ConvertFrom-Json
+    $obj.schema_version | Should -Be 1
+    $obj.measured_at | Should -Match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$'
+    $obj.payload_dir | Should -Be $script:FakePayload
+    $obj.total_file_count | Should -Be 3
+    $obj.total_size_bytes | Should -BeGreaterThan 0
+  }
+
+  It 'aggregates files by top-level directory' {
+    $jsonText = & $script:MeasureScript -PayloadDir $script:FakePayload -Format Json
+    $obj = $jsonText | ConvertFrom-Json
+    $obj.by_top_dir.lib.file_count | Should -Be 1
+    $obj.by_top_dir.ffmpeg.file_count | Should -Be 1
+    $obj.by_top_dir._root.file_count | Should -Be 1
+  }
+
+  It 'aggregates files by extension' {
+    $jsonText = & $script:MeasureScript -PayloadDir $script:FakePayload -Format Json
+    $obj = $jsonText | ConvertFrom-Json
+    $obj.by_extension.'.py'.count | Should -Be 1
+    $obj.by_extension.'.dll'.count | Should -Be 1
+    # `.bat` のような low-frequency extension は _other に分類されない (拡張子そのまま) のが望ましいが、
+    # 実装簡略化のため代表的な extension (.py / .pyd / .dll / .pyi / .so) 以外は _other 集約。
+    $obj.by_extension._other.count | Should -BeGreaterThan 0
+  }
+
+  It '-Format Human writes human-readable table to stdout' {
+    $output = & $script:MeasureScript -PayloadDir $script:FakePayload -Format Human
+    ($output -join "`n") | Should -Match 'total_file_count'
+    ($output -join "`n") | Should -Match '3'
+  }
+
+  It 'throws when -PayloadDir does not exist' {
+    { & $script:MeasureScript -PayloadDir (Join-Path $script:MeasureTmp 'missing') -Format Json } |
+      Should -Throw -ExpectedMessage '*not found*'
+  }
+}
