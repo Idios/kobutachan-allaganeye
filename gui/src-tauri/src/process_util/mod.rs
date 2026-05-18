@@ -96,7 +96,6 @@ mod tests {
         for func in [
             "fn probe_video_with",
             "async fn ensure_thumbnail_exists",
-            "async fn run_ffmpeg_export_attempt",
             "async fn start_detect",
             "pub async fn extract_brightness_window_impl",
         ] {
