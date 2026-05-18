@@ -357,17 +357,49 @@ echo '<metadata-json>' | allaganeye export --stdin [...]
 
 ### NVENC engine 数プローブ
 
-`--codec h264` 指定時、`enumerate_h264_encoders` が `metadata.json` の `system_info.gpu` (GPU モデル名リスト) を SKU テーブルで参照し、並列スロット数を決定する:
+`--codec h264` 指定時、**NVENC が primary encoder に選択された場合のみ** `enumerate_h264_encoders` が `metadata.json` の `system_info.gpu` (GPU モデル名リスト) を SKU テーブルで参照し、並列スロット数を決定する。
 
-| GPU モデル | NVENC engine 数 |
-| --- | --- |
-| RTX 5090 | 3 |
-| RTX 5080 / 5070 / 4090 / 4080 / 4070 | 2 |
-| RTX 5060 / 4060 | 1 |
-| 不明 NVIDIA | 1 (保守的) |
-| AMD AMF / Intel QSV / libx264 fallback | 1 |
+| GPU モデル | NVENC engine 数 | 出典 |
+| --- | --- | --- |
+| RTX 5090 | 3 | NVIDIA 公式 spec |
+| RTX 5080 / 5070 / 4090 / 4080 / 4070 | 2 | NVIDIA 公式 spec |
+| RTX 5060 / 4060 | 1 | NVIDIA 公式 spec |
+| 不明 NVIDIA | 1 (保守的 default) | `_DEFAULT_NVENC_COUNT` |
+| AMD AMF / Intel QSV / libx264 fallback | 1 | (NVENC probe は実行されない) |
 
-環境変数 `ALLAGANEYE_EXPORT_CONCURRENCY` を設定するとすべての SKU テーブル値を上書きする。OBS 等の他プロセスが NVENC engine を占有している場合は `(engine 数 - 使用中)` に設定して timeshare 低速化を回避できる。
+#### SKU テーブルでカバーされない NVIDIA カードの挙動
+
+以下のカードは SKU テーブルにないため `_DEFAULT_NVENC_COUNT = 1` にフォールバックする:
+
+- **Consumer Pascal/Turing/Ampere** (GTX 10x0 / 16x0 / RTX 20x0 / 30x0): 全て NVENC engine = 1 のため **default=1 で正しい**。性能上の問題なし
+- **Workstation Ampere** (RTX A4000 / A5000 / A6000 等): 実際は **NVENC engine = 2** だが default=1 で起動 → 性能を活かせない (under-utilization)。`ALLAGANEYE_EXPORT_CONCURRENCY=2` で env override すると 2 並列実行可能
+- **Datacenter** (Tesla T4 / A100 / H100 / L4 等): T4 は 1 engine、A100 は 3、H100 は 3。default=1 で起動 → env override 推奨
+- **Quadro Turing pro** (Quadro RTX 6000 / 8000): NVENC engine = 2、同上
+
+#### NVENC engine 数の動的取得について
+
+NVIDIA は **NVENC engine 数を直接公開する API を持たない** (`nvidia-smi` の session count は engine 数ではなく同時 session 上限のみ; NVML / NVENC SDK も同様)。そのため SKU テーブル + env override 方式を採用している (#761)。新しい GPU 世代がリリースされたら本テーブルを更新する。
+
+#### env override
+
+環境変数 `ALLAGANEYE_EXPORT_CONCURRENCY` を設定するとすべての SKU テーブル値を上書きする。用途:
+
+- **Contention 回避**: OBS 等の他プロセスが NVENC engine を占有 → `(engine 数 - 使用中)` に設定して timeshare 低速化を回避
+- **Under-utilization 解消**: SKU テーブル未カバーの workstation/datacenter カードで実際の engine 数に合わせる (例: A6000 なら `=2`、H100 なら `=3`)
+- **保守的に動かす**: `=1` 指定でレガシー sequential 動作 (デバッグ時)
+
+```bash
+# RTX A6000 (NVENC 2 engine) で 2 並列実行
+ALLAGANEYE_EXPORT_CONCURRENCY=2 allaganeye export <metadata.json> --codec h264
+
+# H100 (NVENC 3 engine) で 3 並列
+ALLAGANEYE_EXPORT_CONCURRENCY=3 allaganeye export <metadata.json> --codec h264
+
+# OBS 録画中 (1 engine 占有) で RTX 5090 を 2 並列に下げる
+ALLAGANEYE_EXPORT_CONCURRENCY=2 allaganeye export <metadata.json> --codec h264
+```
+
+**非 NVIDIA 環境への影響なし**: `probe_nvenc_engine_count` は NVENC が primary encoder に選ばれた時のみ呼ばれる。AMD / Intel / CPU のみのユーザーには SKU テーブルは参照されない (常に 1 slot)。
 
 ### Exit Codes
 
