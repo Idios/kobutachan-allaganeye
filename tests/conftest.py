@@ -139,7 +139,7 @@ def _ffmpeg_interval(request: pytest.FixtureRequest) -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _clear_allaganeye_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Clear ALLAGANEYE_DETECT_FPS_FILTER for every test (#576 §6 / R6).
+    """Clear ALLAGANEYE_DETECT_FPS_FILTER for every test (#576 S6 / R6).
 
     The env var is a transitional rollback switch (will be deleted in
     v0.3.x). Tests that need to exercise the legacy path must opt-in by

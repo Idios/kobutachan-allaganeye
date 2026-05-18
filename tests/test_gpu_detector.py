@@ -825,7 +825,7 @@ class TestScanGpu:
 
 
 class TestDecodeChunkV2Cmd:
-    """GPU _decode_chunk 新 path の cmd 構築検証 (#576 §2.1 / §7.1.10)."""
+    """GPU _decode_chunk 新 path の cmd 構築検証 (#576 S2.1 / S7.1.10)."""
 
     import io as _io
 

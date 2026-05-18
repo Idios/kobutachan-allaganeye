@@ -1687,7 +1687,7 @@ class TestPass1HysteresisIntegration:
 
 
 class TestUseLegacyFpsFilter:
-    """env var rollback helper (#576 §6)."""
+    """env var rollback helper (#576 S6)."""
 
     def test_default_false(self, monkeypatch):
         monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
@@ -1704,7 +1704,7 @@ class TestUseLegacyFpsFilter:
 
 
 class TestConftestEnvVarAutouse:
-    """conftest.py autouse fixture clears ALLAGANEYE_DETECT_FPS_FILTER (#576 §6)."""
+    """conftest.py autouse fixture clears ALLAGANEYE_DETECT_FPS_FILTER (#576 S6)."""
 
     def test_env_var_unset_by_default(self):
         # autouse fixture should have unset it before this test runs.
@@ -1715,7 +1715,7 @@ class TestConftestEnvVarAutouse:
 
 
 # ---------------------------------------------------------------------------
-# _sample_chunk_frames / _resolve_fps_rational (#576 §2.2 / §2.3)
+# _sample_chunk_frames / _resolve_fps_rational (#576 S2.2 / S2.3)
 # ---------------------------------------------------------------------------
 
 import io  # noqa: E402 -- placed here to keep new test section self-contained
@@ -1733,7 +1733,7 @@ def _frames_bytes(brightnesses: list[int]) -> bytes:
 
 
 class TestSampleChunkFramesRationalMapping:
-    """rational fps での frame_idx mapping (#576 §2.2 / §7.1.2)."""
+    """rational fps での frame_idx mapping (#576 S2.2 / S7.1.2)."""
 
     def test_integer_60fps(self):
         # source_fps=60/1, chunk_start=10.0, targets {10.0, 12.0, 14.0}
@@ -1772,7 +1772,7 @@ class TestSampleChunkFramesRationalMapping:
 
 
 class TestSampleChunkFramesFrameMissing:
-    """frame_idx >= 利用可能 frame 数 のとき 255.0 fallback (#576 §4.3 / §7.1.4)."""
+    """frame_idx >= 利用可能 frame 数 のとき 255.0 fallback (#576 S4.3 / S7.1.4)."""
 
     def test_target_beyond_available_frames(self):
         # 100 frames available, target wants frame_idx 200 -> fallback to 255.0
@@ -1791,10 +1791,10 @@ class TestSampleChunkFramesFrameMissing:
 
 
 class TestSampleChunkFramesDynamicVfr:
-    """動的 VFR 検出: slack 超過時 raise / tail chunk は WARN のみ (#576 §2.2 / §7.1.5)."""
+    """動的 VFR 検出: slack 超過時 raise / tail chunk は WARN のみ (#576 S2.2 / S7.1.5)."""
 
     def test_within_slack_no_error(self):
-        # 60fps × 60s = 3600 expected, slack = max(36, 6) = 36
+        # 60fps x 60s = 3600 expected, slack = max(36, 6) = 36
         # emit 3580 = -20 (within slack), should not raise
         stream = io.BytesIO(_frames_bytes([100] * 3580))
         _sample_chunk_frames(
@@ -1809,7 +1809,7 @@ class TestSampleChunkFramesDynamicVfr:
         # no raise expected
 
     def test_exceeds_slack_non_tail_raises(self):
-        # 60fps × 60s = 3600 expected, slack = max(36, 6) = 36
+        # 60fps x 60s = 3600 expected, slack = max(36, 6) = 36
         # emit 3500 = -100 (exceeds slack), non-tail chunk -> raise
         stream = io.BytesIO(_frames_bytes([100] * 3500))
         with pytest.raises(VideoProcessingError) as excinfo:
@@ -1851,7 +1851,7 @@ class TestSampleChunkFramesDynamicVfr:
 
 class TestSampleChunkFramesFloatFallback:
     """float source_fps を Fraction.limit_denominator(10000) で rational に
-    変換した場合、NTSC rational と同じ frame_idx を選ぶこと (#576 §2.3 / §7.1.3)."""
+    変換した場合、NTSC rational と同じ frame_idx を選ぶこと (#576 S2.3 / S7.1.3)."""
 
     def test_float_59_94_yields_ntsc_index(self):
         num, den = _resolve_fps_rational(None, None, 60000 / 1001)
@@ -1889,7 +1889,7 @@ class TestResolveFpsRationalPositivityCheck:
 
 
 class TestSampleChunkFramesStreamingMemory:
-    """フレームを逐次処理し全フレームをバッファに蓄積しないこと (spec §2.2 memory budget fix)."""
+    """フレームを逐次処理し全フレームをバッファに蓄積しないこと (spec S2.2 memory budget fix)."""
 
     def test_does_not_buffer_all_frames(self):
         """Only the needed frames produce brightness values; the rest are discarded."""
@@ -1931,14 +1931,14 @@ class TestSampleChunkFramesStreamingMemory:
 
 
 # ---------------------------------------------------------------------------
-# _decode_chunk_cpu v2 path + env var dispatch (#576 §2.1 / §6 / §7.1.1 / §7.1.7)
+# _decode_chunk_cpu v2 path + env var dispatch (#576 S2.1 / S6 / S7.1.1 / S7.1.7)
 # ---------------------------------------------------------------------------
 
 import io as _io  # noqa: E402 -- placed here to keep new test section self-contained
 
 
 class TestDecodeChunkCpuNewPath:
-    """_decode_chunk_cpu 新 path の cmd 構築検証 (#576 §2.1 / §7.1.1)."""
+    """_decode_chunk_cpu 新 path の cmd 構築検証 (#576 S2.1 / S7.1.1)."""
 
     @patch("allaganeye.video.detector.subprocess.Popen")
     @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
@@ -1991,7 +1991,7 @@ class TestDecodeChunkCpuV2NonzeroReturncode:
     def test_nonzero_returncode_returns_255_fallback(
         self, _mock_ff, mock_popen, monkeypatch, caplog
     ):
-        """proc.returncode != 0 → 255.0 fallback, no ValueError from closed pipe."""
+        """proc.returncode != 0 -> 255.0 fallback, no ValueError from closed pipe."""
         import logging
 
         monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
@@ -2032,7 +2032,7 @@ class TestDecodeChunkCpuV2NonzeroReturncode:
 
 
 class TestDecodeChunkCpuLegacyRollback:
-    """env var=1 で旧 fps filter cmd が生成されること (#576 §6 / §7.1.7)."""
+    """env var=1 で旧 fps filter cmd が生成されること (#576 S6 / S7.1.7)."""
 
     @patch("allaganeye.video.detector.subprocess.run")
     @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")

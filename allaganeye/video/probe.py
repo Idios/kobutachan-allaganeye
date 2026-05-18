@@ -134,7 +134,7 @@ def probe_video(video_path: Path) -> ProbeResult:
             "Cannot determine video frame rate from ffprobe output"
         )
 
-    # #576: 静的 VFR 検出 — r_frame_rate vs avg_frame_rate の差が 1% 超の
+    # #576: 静的 VFR 検出 -- r_frame_rate vs avg_frame_rate の差が 1% 超の
     # 場合 WARNING ログ (hard fail はしない、benign mismatch を許容)。
     # 実 VFR / decoder anomaly は detector 側の動的 frame_count check で
     # 捕捉する。

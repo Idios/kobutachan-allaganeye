@@ -70,7 +70,7 @@ def _resolve_fps_rational(
     fps_den: int | None,
     source_fps: float | None,
 ) -> tuple[int, int]:
-    """Resolve (num, den) from rational-first / float-fallback inputs (#576 §2.3).
+    """Resolve (num, den) from rational-first / float-fallback inputs (#576 S2.3).
 
     Priority:
     1. ``fps_num`` + ``fps_den`` both given -> use as-is
@@ -99,7 +99,7 @@ def _sample_chunk_frames(
     expected_frames: int,
     is_tail_chunk: bool,
 ) -> dict[float, float]:
-    """Sample N-th frames from a stream by rational frame index (#576 §2.2).
+    """Sample N-th frames from a stream by rational frame index (#576 S2.2).
 
     Args:
         stream: A binary file-like object (``IO[bytes]``) that yields raw
@@ -133,7 +133,7 @@ def _sample_chunk_frames(
         frame count deviates from ``expected_frames`` by more than
         ``max(expected_frames * 0.01, ceil(source_fps * 0.1))`` frames
         (= 1% or 100ms equivalent, whichever larger).  This is the
-        dynamic VFR / decoder anomaly detection (#576 §2.2).
+        dynamic VFR / decoder anomaly detection (#576 S2.2).
     """
     if stream is None:
         raise VideoProcessingError("ffmpeg stdout not available")
@@ -143,7 +143,7 @@ def _sample_chunk_frames(
     # Pre-compute target frame indices.  Group by index so multiple
     # timestamps mapping to the same frame are handled in one pass.
     # Memory budget: only one _FRAME_SIZE bytes chunk is held at a time
-    # (spec §2.2 -- subprocess.run(capture_output=True) is forbidden).
+    # (spec S2.2 -- subprocess.run(capture_output=True) is forbidden).
     target_indices: dict[int, list[float]] = {}
     for t in chunk_timestamps:
         # rational integer arithmetic avoids float drift on NTSC 60000/1001
@@ -181,7 +181,7 @@ def _sample_chunk_frames(
     if diff > slack:
         msg = (
             f"Dynamic VFR detection: chunk emitted {emit_count} frames, "
-            f"expected {expected_frames} (slack=±{slack}). "
+            f"expected {expected_frames} (slack=+-{slack}). "
             f"Input may be VFR or decoder anomaly."
         )
         if is_tail_chunk:
