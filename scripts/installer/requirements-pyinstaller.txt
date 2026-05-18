@@ -1,0 +1,7 @@
+# PyInstaller pinning policy (#752):
+#   - patch-level pin (e.g. `pyinstaller==6.20.0`)
+#   - hooks-contrib も reproducibility 強化のため explicit pin
+#   - 4-6 か月毎に bump、Idios の手元で frozen output が test pass することを確認
+#   - bump 時は両 version を同時に上げ、PR で smoke-test + 実機 split を実測
+pyinstaller==6.20.0
+pyinstaller-hooks-contrib==2026.5

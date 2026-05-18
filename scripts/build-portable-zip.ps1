@@ -3,12 +3,15 @@
 Build the allaganeye Portable ZIP for Windows.
 
 .DESCRIPTION
-Downloads Python 3.11 embeddable and FFmpeg LGPLv3 shared (BtbN), installs
-allaganeye and its runtime dependencies into the payload, adds a .bat
-launcher, and compresses everything into dist/allaganeye-v<version>-windows.zip.
+Creates a build venv, installs allaganeye + PyInstaller into it, freezes
+allaganeye via PyInstaller --onedir (scripts/installer/allaganeye.spec) and
+copies the result into the payload. Downloads FFmpeg LGPLv3 shared (BtbN),
+adds a .bat launcher, and compresses everything into
+dist/allaganeye-v<version>-windows.zip.
 
-Downloaded artefacts (Python embed, get-pip.py, FFmpeg zip) are pinned by URL
-and verified against hard-coded SHA256 digests. A mismatch aborts the build.
+The FFmpeg zip is pinned by URL and verified against a hard-coded SHA256
+digest; a mismatch aborts the build. PyInstaller + hooks-contrib versions are
+pinned in scripts/installer/requirements-pyinstaller.txt.
 
 The FFmpeg zip is cached in $env:ALLAGANEYE_BUILD_CACHE_DIR when that variable
 is set. CI populates that directory with actions/cache so the ~85MB BtbN zip
@@ -46,26 +49,10 @@ Set-StrictMode -Version Latest
 $ProgressPreference = 'SilentlyContinue'
 
 # Pinned versions - referenced from both the main build path and Pester tests.
-$PythonVersion = '3.11.9'
-$PythonEmbedUrl = "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVersion-embed-amd64.zip"
-$PythonEmbedSha256 = '009D6BF7E3B2DDCA3D784FA09F90FE54336D5B60F0E0F305C37F400BF83CFD3B'
-
-$GetPipUrl = 'https://raw.githubusercontent.com/pypa/get-pip/26.1.1/public/get-pip.py'
-# #681 -- Pin get-pip.py via the pypa/get-pip GitHub raw URL with a release
-# tag (immutable per tag), not bootstrap.pypa.io/get-pip.py (unversioned;
-# drifts whenever PyPA refreshes pip and breaks build-windows CI -- see
-# #649 short-term fix and PR #675 Round 2 follow-up).
-#
-# To bump pip when a new release is required:
-#   1. Pick a new tag from https://github.com/pypa/get-pip/tags (e.g. 26.1.2)
-#   2. Update the URL above and the SHA below:
-#        Invoke-WebRequest `
-#          "https://raw.githubusercontent.com/pypa/get-pip/<tag>/public/get-pip.py" `
-#          -OutFile get-pip.py
-#        Get-FileHash get-pip.py -Algorithm SHA256
-#   3. Verify the regression test still passes:
-#        Invoke-Pester -Path scripts/tests/build-portable-zip.Tests.ps1
-$GetPipSha256 = '66904BCCB878E363DB6236EA900E6935E507DCB887E9F178F6212EDFE7F46A76'
+# Python 3.11 embed + get-pip pin は #752 で PyInstaller 化に伴い削除。
+# 代わりに scripts/installer/requirements-pyinstaller.txt が build venv の
+# pyinstaller + hooks-contrib version を pin する。
+# FFmpeg は引き続き同梱 (LGPLv3 別ディレクトリ、#508)。
 
 # FFmpeg is pinned to a BtbN MONTHLY snapshot (the end-of-month daily that
 # survives BtbN's ~14-day GC of regular dailies, kept for ~24 months). Daily
@@ -236,7 +223,7 @@ NOTE: GUI は Microsoft Edge WebView2 Runtime を必要とします (Windows 11 
   return @"
 # allaganeye v$Version (Windows 向け Portable ZIP)
 
-allaganeye と一緒に Python 3.11 と FFmpeg LGPL バイナリが同梱されています。
+allaganeye 本体 (PyInstaller frozen application) と FFmpeg LGPL バイナリが同梱されています。
 
 ## 使い方
 $guiSection
@@ -262,7 +249,9 @@ $guiSection
 ## ライセンス
 
 - allaganeye: MIT (リポジトリの LICENSE ファイル参照)
-$guiLicenseLine- Python: PSF License (python\LICENSE.txt)
+$guiLicenseLine- Python: PSF License
+    PyInstaller frozen bundle 内 ``allaganeye\_internal\`` に同梱。
+    License 全文: https://docs.python.org/3/license.html
 - FFmpeg: LGPLv3 (全文は ffmpeg\LICENSE.txt)
     Build:         ffmpeg n$FFmpegVersion win64-lgpl-shared build (BtbN/FFmpeg-Builds)
     Build tag:     $FFmpegBuildTag
@@ -297,8 +286,8 @@ function Get-LauncherTemplate {
     1. --help / -h / /?               -> :show_help (explicit help flags always reach help)
     2. no args + GUI exe exists       -> start "" "%PAYLOAD%allaganeye-gui.exe" + exit /b 0
     3. no args + GUI exe absent       -> :show_help (CLI-only ZIP fallback)
-    4. video file extension           -> python -m allaganeye split %*  (existing pre-#617 behavior)
-    5. other args                     -> python -m allaganeye %*        (existing pre-#617 behavior)
+    4. video file extension           -> allaganeye\allaganeye.exe split %*  (#752: PyInstaller frozen)
+    5. other args                     -> allaganeye\allaganeye.exe %*        (#752: PyInstaller frozen)
 
   The runtime `if exist "%PAYLOAD%allaganeye-gui.exe"` check is a defensive
   fallback that handles the (rare) case where a user manually deletes the GUI
@@ -354,9 +343,9 @@ if /i "%EXT%"==".avi" set IS_VIDEO=1
 if /i "%EXT%"==".mov" set IS_VIDEO=1
 
 if defined IS_VIDEO (
-  "%PAYLOAD%python\python.exe" -m allaganeye split %*
+  "%PAYLOAD%allaganeye\allaganeye.exe" split %*
 ) else (
-  "%PAYLOAD%python\python.exe" -m allaganeye %*
+  "%PAYLOAD%allaganeye\allaganeye.exe" %*
 )
 set EXIT_CODE=%ERRORLEVEL%
 
@@ -458,35 +447,49 @@ foreach ($dir in @($BuildDir, $DistDir)) {
 }
 New-Item -ItemType Directory -Force -Path $PayloadDir | Out-Null
 
-# 1. Python embeddable
-$PythonZip = Join-Path $BuildDir 'python-embed.zip'
-Invoke-Download -Uri $PythonEmbedUrl -OutPath $PythonZip -ExpectedSha256 $PythonEmbedSha256
-$PythonDir = Join-Path $PayloadDir 'python'
-Expand-Archive -Path $PythonZip -DestinationPath $PythonDir -Force
+# #752 -- Python version sanity check (CI pins via actions/setup-python, but
+# local builds depend on whatever `python` is on PATH). PyInstaller frozen
+# output is tied to the Python version used at build time; pin to 3.11.x for
+# reproducibility parity with CI.
+$PythonVersionOutput = & python --version 2>&1
+if ($PythonVersionOutput -notmatch '^Python 3\.11\.') {
+  throw "Expected Python 3.11.x on PATH for reproducible build, got: $PythonVersionOutput"
+}
+Write-Host "Using Python: $PythonVersionOutput"
 
-$PthFile = Join-Path $PythonDir 'python311._pth'
-Set-Content -Path $PthFile -Encoding ASCII -Value @(
-  'python311.zip',
-  '.',
-  '..\lib',
-  'import site'
-)
+# 1. Create build venv inside the build artifact dir (clean reproducible env).
+# Putting the venv inside $BuildDir means it gets cleaned along with the rest
+# of the build artifact, avoiding stale state between runs. CI clean build
+# 前提のため artifact 外への venv 共有は不要 (Idios 決定 2026-05-18、#752).
+$VenvDir = Join-Path $BuildDir 'venv'
+& python -m venv $VenvDir
+$VenvPython = Join-Path $VenvDir 'Scripts\python.exe'
 
-# 2. Install pip into the embedded interpreter
-$GetPipPath = Join-Path $BuildDir 'get-pip.py'
-Invoke-Download -Uri $GetPipUrl -OutPath $GetPipPath -ExpectedSha256 $GetPipSha256
-$PythonExe = Join-Path $PythonDir 'python.exe'
-& $PythonExe $GetPipPath --no-warn-script-location --no-cache-dir
+# 2. Install allaganeye + PyInstaller into venv
+& $VenvPython -m pip install --upgrade pip --no-cache-dir
+& $VenvPython -m pip install `
+    -r (Join-Path $RepoRoot 'scripts\installer\requirements-pyinstaller.txt') `
+    --no-cache-dir
+& $VenvPython -m pip install $RepoRoot --no-cache-dir
 
-# 3. Install allaganeye + deps into payload\lib
-$LibDir = Join-Path $PayloadDir 'lib'
-New-Item -ItemType Directory -Force -Path $LibDir | Out-Null
-& $PythonExe -m pip install `
-    --target $LibDir `
-    --no-compile `
-    --no-warn-script-location `
-    --no-cache-dir `
-    $RepoRoot
+# 3. Run PyInstaller (frozen --onedir) and copy the frozen app into the payload.
+# PyInstaller output: $BuildDir/pyinstaller-dist/allaganeye/ (allaganeye.exe +
+# _internal/). We then copy that directory into $PayloadDir/allaganeye/.
+$PyInstallerDist = Join-Path $BuildDir 'pyinstaller-dist'
+$PyInstallerWork = Join-Path $BuildDir 'pyinstaller-work'
+Push-Location $RepoRoot
+try {
+  & $VenvPython -m PyInstaller `
+    'scripts/installer/allaganeye.spec' `
+    --noconfirm `
+    --clean `
+    --distpath $PyInstallerDist `
+    --workpath $PyInstallerWork
+} finally {
+  Pop-Location
+}
+# Result: $PayloadDir/allaganeye/allaganeye.exe + $PayloadDir/allaganeye/_internal/
+Copy-Item -Recurse -Path (Join-Path $PyInstallerDist 'allaganeye') -Destination $PayloadDir
 
 # 4. FFmpeg LGPLv3 shared, BtbN/FFmpeg-Builds (version-pinned)
 # LGPLv3 redistribution requires shipping the license text alongside the binary

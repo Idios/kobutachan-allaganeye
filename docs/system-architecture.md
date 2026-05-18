@@ -116,6 +116,21 @@ Portable ZIP 内の `integrity-manifest.json` を起動時に読み、同梱物
   を copy → 1 file 削除 → `allaganeye.bat --version` → exit code 7 を
   assert する E2E step。
 
+### 2.6 Portable ZIP 内構造 (#752 で簡素化)
+
+- `<install>/allaganeye/`: PyInstaller frozen CLI application (#752、v0.3.0+)
+  - `allaganeye.exe`: entry point
+  - `_internal/`: Python interpreter + library.zip + numpy/scipy/cv2 native DLLs + `allaganeye/audio/refs/fanfare.npz` 等の data
+- `<install>/ffmpeg/`: FFmpeg LGPLv3 shared build (LICENSE.txt 同梱、#508)
+- `<install>/allaganeye.bat`: launcher (#617、内部実装は `allaganeye\allaganeye.exe` を呼ぶ)
+- `<install>/allaganeye-gui.exe`: Tauri GUI (#527、frozen CLI を allaganeye.bat 経由で起動 (#646))
+- `<install>/README.txt`: 日本語 (#749)
+- `<install>/integrity-manifest.json`: 同梱物整合性検査 manifest (#668)
+
+旧来の `python/` (embeddable interpreter) および `lib/` (`pip install --target`) ディレクトリは **v0.3.0 の #752 で廃止**。PyInstaller `--onedir` が Python interpreter + 全依存を `allaganeye/_internal/` に統合する。
+
+GUI Tauri Rust 側 (`gui/src-tauri/src/lib.rs::resolve_allaganeye_command`) は `<resource_dir>/allaganeye.bat` を `Command::new(...)` の program として渡すだけで、bat 内部実装の変更 (`python.exe -m allaganeye` → `allaganeye\allaganeye.exe`) は Rust から不可視 (`allaganeye.bat` 抽象化レイヤー、#646)。
+
 ## 3. データフロー
 
 ### 3.1 detect → preview → export の典型フロー
