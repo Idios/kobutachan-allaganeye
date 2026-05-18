@@ -18,7 +18,9 @@ argument-hint: <タスクの概要（自然言語）>
      - ユーザー影響・重要性: 1 行で位置付け (例:「ユーザー影響なし、メンテ性負債」「将来のセキュリティ整合性」)
      - skill は draft を一括生成。ユーザーは手順 5 で修正を指摘
    - prefix が `[bug]` / `[doc]` / `[question]` の場合: 現行どおり (preamble 不要)
-4. 重複チェック: `gh issue list --search "<主題を表す名詞 2-3 個>" --state all --repo Idios/kobutachan-allaganeye` を実行し、類似 issue がないか確認する（キーワードはタイトルから名詞を優先抽出、必要なら本文から補足）
+4. 重複チェック + label 存在確認:
+   - 重複チェック: `gh issue list --search "<主題を表す名詞 2-3 個>" --state all --repo Idios/kobutachan-allaganeye` を実行し、類似 issue がないか確認する（キーワードはタイトルから名詞を優先抽出、必要なら本文から補足）
+   - label 存在確認: 付与予定の scope/優先度ラベルが repo に存在するか `gh label list --repo Idios/kobutachan-allaganeye | grep <label>` で確認。未作成のラベルがあれば `gh label create` を先行する (起票時の `--label` reject 回避)
 5. 作成前にユーザーに以下の要素を提示して確認を得る:
    - タイトル（文字数表示付き、例: "33/40 文字"）
    - assignee / ラベル一覧（スコープラベル・優先度ラベル含む）
