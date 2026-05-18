@@ -1983,6 +1983,54 @@ class TestDecodeChunkCpuNewPath:
         assert called_cmd[fps_mode_idx + 1] == "passthrough"
 
 
+class TestDecodeChunkCpuV2NonzeroReturncode:
+    """returncode != 0 で 255.0 fallback + WARNING ログ (#576 bug fix)."""
+
+    @patch("allaganeye.video.detector.subprocess.Popen")
+    @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
+    def test_nonzero_returncode_returns_255_fallback(
+        self, _mock_ff, mock_popen, monkeypatch, caplog
+    ):
+        """proc.returncode != 0 → 255.0 fallback, no ValueError from closed pipe."""
+        import logging
+
+        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
+
+        mock_proc = MagicMock()
+        # 3s @ 60fps = 180 frames; emit exactly that so _sample_chunk_frames succeeds,
+        # then returncode=1 triggers the 255.0 fallback path we are testing.
+        mock_proc.stdout = _io.BytesIO(bytes([128]) * _FRAME_SIZE * 180)
+        mock_proc.stderr = _io.BytesIO(b"error: some ffmpeg failure")
+        mock_proc.wait.return_value = None
+        mock_proc.returncode = 1
+        mock_popen.return_value.__enter__.return_value = mock_proc
+
+        timestamps = [0.0, 1.0, 2.0]
+        with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+            result = _decode_chunk_cpu(
+                Path("test.mp4"),
+                chunk_timestamps=timestamps,
+                chunk_start=0.0,
+                chunk_end=3.0,
+                sample_interval=1.0,
+                source_fps_num=60,
+                source_fps_den=1,
+                is_tail_chunk=False,
+            )
+
+        # All timestamps must map to 255.0 (safe non-blackout fallback)
+        assert result == {0.0: 255.0, 1.0: 255.0, 2.0: 255.0}, (
+            f"Expected all 255.0 fallback, got {result}"
+        )
+        # A WARNING must be logged containing the stderr snippet
+        warning_messages = [
+            r.message for r in caplog.records if r.levelno == logging.WARNING
+        ]
+        assert any("error: some ffmpeg failure" in m for m in warning_messages), (
+            f"Expected stderr snippet in WARNING log, got: {warning_messages}"
+        )
+
+
 class TestDecodeChunkCpuLegacyRollback:
     """env var=1 で旧 fps filter cmd が生成されること (#576 §6 / §7.1.7)."""
 

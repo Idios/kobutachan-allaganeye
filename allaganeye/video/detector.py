@@ -417,6 +417,12 @@ def _decode_chunk_cpu(
     ``ALLAGANEYE_DETECT_FPS_FILTER=1`` is set or when rational fps cannot
     be resolved.  Otherwise uses the new output-seek + Python N-th
     sampling path (#576).
+
+    NOTE: As of Task 4, ``detect_match_boundaries`` does not yet
+    propagate ``source_fps_*`` kwargs.  This is Task 6's job.  Until
+    Task 6 lands, production calls reach this dispatcher with all None
+    fps args and fall through to ``_decode_chunk_cpu_legacy``.  This is
+    deliberate scaffolding.
     """
     if not chunk_timestamps:
         return {}
@@ -567,6 +573,7 @@ def _decode_chunk_cpu_v2(
         "pipe:1",
     ]
 
+    stderr_text = ""
     try:
         with subprocess.Popen(
             cmd,
@@ -584,6 +591,8 @@ def _decode_chunk_cpu_v2(
                     is_tail_chunk=is_tail_chunk,
                 )
                 proc.wait(timeout=max(300, int(chunk_duration * 2)))
+                if proc.stderr is not None:
+                    stderr_text = proc.stderr.read().decode(errors="replace")
             except VideoProcessingError:
                 proc.kill()
                 raise
@@ -601,13 +610,11 @@ def _decode_chunk_cpu_v2(
         ) from e
 
     if proc.returncode != 0:
-        raw_stderr = proc.stderr.read() if proc.stderr is not None else b""
-        stderr = raw_stderr.decode(errors="replace")[-200:]
         logger.warning(
             "CPU chunk v2 decode failed [%.1f-%.1f]: %s",
             chunk_start,
             chunk_end,
-            stderr,
+            stderr_text[-200:],
         )
         return {t: 255.0 for t in chunk_timestamps}
 
