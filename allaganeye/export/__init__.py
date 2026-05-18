@@ -6,6 +6,10 @@ from allaganeye.export.encoder import (
     enumerate_h264_encoders,
     select_h264_encoder,
 )
+from allaganeye.export.ffmpeg_runner import (
+    is_gpu_encoder_failure,
+    run_export_attempt,
+)
 from allaganeye.export.nvenc_probe import probe_nvenc_engine_count
 from allaganeye.export.schema import (
     ExportError,
@@ -22,6 +26,8 @@ __all__ = [
     "H264Encoder",
     "ProgressEvent",
     "enumerate_h264_encoders",
+    "is_gpu_encoder_failure",
     "probe_nvenc_engine_count",
+    "run_export_attempt",
     "select_h264_encoder",
 ]

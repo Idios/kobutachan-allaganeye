@@ -1,0 +1,229 @@
+"""Single-match ffmpeg launcher + libx264 fallback retry (#761).
+
+Ported from gui/src-tauri/src/lib.rs:1738-2348 (run_ffmpeg_export_attempt
++ export_match fallback logic). See spec §4.3.
+"""
+
+from __future__ import annotations
+
+import subprocess
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from collections.abc import Callable
+
+from allaganeye.export.encoder import H264Encoder
+from allaganeye.export.schema import ExportError, ExportResult
+from allaganeye.ffmpeg_path import find_ffmpeg
+
+
+_GPU_ENCODER_FAILURE_PATTERNS: dict[H264Encoder, tuple[str, ...]] = {
+    # Patterns mirror gui/src-tauri/src/lib.rs:1738+ (#591). Memory:
+    # feedback_ffmpeg_qsv_stderr_pattern.md notes ffmpeg 8.1 QSV uses
+    # "Error creating a MFX session" (not pre-8.1 "Error initializing").
+    H264Encoder.NVENC: (
+        "no nvenc capable devices found",
+        "cannot load cuda driver",
+        "openencodesessionex failed",
+    ),
+    H264Encoder.QSV: (
+        "error creating a mfx session",  # 8.1+
+        "error initializing an internal mfx session",  # pre-8.1
+        "no device available for encoder",
+    ),
+    H264Encoder.AMF: (
+        "dll amfrt64.dll failed to open",
+        "amf failed",
+        "no opencl-supported device",
+    ),
+}
+
+
+def is_gpu_encoder_failure(stderr_text: str, encoder: H264Encoder) -> bool:
+    """True iff stderr indicates the GPU encoder failed to initialise."""
+    if encoder == H264Encoder.LIBX264:
+        return False
+    text = stderr_text.lower()
+    patterns = _GPU_ENCODER_FAILURE_PATTERNS.get(encoder, ())
+    return any(p in text for p in patterns)
+
+
+@dataclass(frozen=True)
+class _AttemptOutcome:
+    returncode: int
+    stderr_tail: str
+
+
+def _run_single_attempt(
+    args: list[str],
+    duration_s: float,
+    progress_cb: Callable[[float, str], None],
+    cancel_event: threading.Event,
+) -> _AttemptOutcome:
+    """1 ffmpeg process を起動して終了まで wait。
+
+    stderr を 1 行ずつ読み、``out_time_ms`` を percent に変換して
+    progress_cb に渡す。``cancel_event.is_set()`` を読み取り毎に確認し
+    set されたら ``proc.kill()``。
+    """
+    proc = subprocess.Popen(
+        args,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        bufsize=0,
+    )
+    stderr_tail_bytes: list[bytes] = []
+    max_tail = 2048
+
+    assert proc.stderr is not None
+    while True:
+        if cancel_event.is_set():
+            proc.kill()
+            break
+        line = proc.stderr.readline()
+        if not line:
+            break
+        line_str = line.decode("utf-8", errors="replace").rstrip("\n")
+        # 進捗パース (ffmpeg -progress pipe:2 format)
+        if line_str.startswith("out_time_ms="):
+            raw = line_str.split("=", 1)[1]
+            us = int(raw) if raw.strip().lstrip("-").isdigit() else 0
+            seconds = us / 1_000_000.0
+            percent = (seconds / duration_s * 100.0) if duration_s > 0 else 0.0
+            percent = max(0.0, min(100.0, percent))
+            progress_cb(percent, "encoding")
+            continue
+        if line_str.strip() == "progress=end":
+            progress_cb(100.0, "done")
+            continue
+        # それ以外は stderr_tail バッファに溜める
+        stderr_tail_bytes.append(line)
+        if sum(len(b) for b in stderr_tail_bytes) > max_tail * 2:
+            # 末尾だけ残す
+            while sum(len(b) for b in stderr_tail_bytes) > max_tail:
+                stderr_tail_bytes.pop(0)
+
+    returncode = proc.wait()
+    tail = b"".join(stderr_tail_bytes).decode("utf-8", errors="replace")
+    return _AttemptOutcome(returncode=returncode, stderr_tail=tail[-max_tail:])
+
+
+def _build_ffmpeg_args(
+    ffmpeg: str,
+    video: Path,
+    start: float,
+    end: float,
+    output: Path,
+    codec: str,
+    encoder: H264Encoder,
+) -> list[str]:
+    """Construct the ffmpeg argv list. Mirrors gui/src-tauri/src/lib.rs:1926+."""
+    args: list[str] = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "info",
+        "-progress",
+        "pipe:2",
+        "-y",
+        "-ss",
+        f"{start:.3f}",
+        "-to",
+        f"{end:.3f}",
+        "-i",
+        str(video),
+    ]
+    if codec == "copy":
+        args.extend(["-c", "copy"])
+    else:
+        # h264 path
+        args.extend(["-c:v", encoder.value])
+        args.extend(list(encoder.quality_args()))
+        args.extend(["-c:a", "copy"])
+    args.append(str(output))
+    return args
+
+
+def run_export_attempt(
+    video: Path,
+    start: float,
+    end: float,
+    output: Path,
+    codec: str,
+    encoder: H264Encoder,
+    *,
+    progress_cb: Callable[[float, str], None],
+    fallback_cb: Callable[[H264Encoder, H264Encoder, str], None] | None,
+    cancel_event: threading.Event,
+) -> ExportResult:
+    """1 試合分の ffmpeg を起動して終了まで wait し、必要なら libx264 retry。
+
+    - codec == "copy"  -> encoder は無視、ffmpeg -c copy
+    - codec == "h264" -> encoder で起動、GPU init 失敗時に libx264 retry
+    """
+    ffmpeg = find_ffmpeg()
+    duration = end - start
+    started = time.monotonic()
+
+    # 1st attempt
+    args = _build_ffmpeg_args(ffmpeg, video, start, end, output, codec, encoder)
+    outcome = _run_single_attempt(args, duration, progress_cb, cancel_event)
+
+    if cancel_event.is_set():
+        raise ExportError(kind="cancelled", message="export cancelled by user")
+
+    if outcome.returncode == 0:
+        return ExportResult(
+            match_index=-1,  # caller (pool.py) overwrites
+            output_path=output,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            encoder_used=encoder.value,
+            fallback_from=None,
+        )
+
+    # GPU encoder init failure -> libx264 retry
+    if (
+        codec == "h264"
+        and encoder != H264Encoder.LIBX264
+        and is_gpu_encoder_failure(outcome.stderr_tail, encoder)
+    ):
+        if fallback_cb is not None:
+            fallback_cb(
+                encoder,
+                H264Encoder.LIBX264,
+                f"{encoder.display_label} の初期化に失敗したため libx264 で再試行します",
+            )
+        retry_args = _build_ffmpeg_args(
+            ffmpeg, video, start, end, output, codec, H264Encoder.LIBX264
+        )
+        retry_outcome = _run_single_attempt(
+            retry_args, duration, progress_cb, cancel_event
+        )
+
+        if cancel_event.is_set():
+            raise ExportError(kind="cancelled", message="export cancelled by user")
+
+        if retry_outcome.returncode == 0:
+            return ExportResult(
+                match_index=-1,
+                output_path=output,
+                duration_ms=int((time.monotonic() - started) * 1000),
+                encoder_used=H264Encoder.LIBX264.value,
+                fallback_from=encoder.value,
+            )
+        raise ExportError(
+            kind="ffmpeg.exit_failed",
+            message=f"libx264 retry exited with {retry_outcome.returncode}: "
+            + retry_outcome.stderr_tail.strip(),
+            hint="ffmpeg/codec を確認するか、入力動画を再確認してください",
+        )
+
+    # その他の失敗 (libx264 1st attempt fail, codec=copy fail, etc.)
+    raise ExportError(
+        kind="ffmpeg.exit_failed",
+        message=f"ffmpeg ({encoder.value}) exited with {outcome.returncode}: "
+        + outcome.stderr_tail.strip(),
+        hint="ffmpeg/codec を確認するか、入力動画を再確認してください",
+    )
