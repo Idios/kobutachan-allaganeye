@@ -1,0 +1,28 @@
+{
+  "schema_version": "1",
+  "label": "obs-20260209",
+  "source_file": "2026-02-09 23-12-24.mkv",
+  "source_size_bytes": 20566546827,
+  "source_dir_label": "root",
+  "generated_at": "2026-05-18T06:45:09Z",
+  "splits": [
+    {
+      "index": 1,
+      "output_file": "match_001.mp4",
+      "size_bytes": 8989686870,
+      "sha256": "257459369f6f865dd7ada17d8a64de3b8dc138a16f23790a266539ffe51230c8"
+    },
+    {
+      "index": 2,
+      "output_file": "match_002.mp4",
+      "size_bytes": 3571121572,
+      "sha256": "0547c30563afbd4d7679d1c2ba3b715864d2bed8ee71026a331f797835337a18"
+    },
+    {
+      "index": 3,
+      "output_file": "match_003.mp4",
+      "size_bytes": 7030278589,
+      "sha256": "365877de42c1c08be0331affb1e652ddc24f486b3c5f39f827bbe69072fd84bf"
+    }
+  ]
+}
