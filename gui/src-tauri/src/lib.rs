@@ -2816,68 +2816,84 @@ async fn start_export(
     let mut summary_capture: Option<ExportSummary> = None;
     if let Some(stdout) = stdout {
         use tokio::io::{AsyncBufReadExt, BufReader};
-        let reader = BufReader::new(stdout);
-        let mut lines = reader.lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            match parse_wire_event(&line) {
-                Some(WireEvent::Progress { match_index, percent, stage }) => {
-                    let _ = app.emit(
-                        "export-progress",
-                        ExportProgress {
-                            match_index,
-                            percent,
-                            stage,
-                            message: None,
-                            fallback_from: None,
-                        },
-                    );
+        // #761 / #656 -- defensive byte-level read with lossy UTF-8 decode
+        // to mirror start_detect's pattern. PYTHONIOENCODING=utf-8:replace
+        // (above) is the primary guarantee; this defensive layer catches the
+        // case where the env var fails to apply (e.g. exotic Python launcher).
+        let mut reader = BufReader::new(stdout);
+        let mut line_buf: Vec<u8> = Vec::with_capacity(1024);
+
+        loop {
+            line_buf.clear();
+            match reader.read_until(b'\n', &mut line_buf).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    while matches!(line_buf.last(), Some(b'\n') | Some(b'\r')) {
+                        line_buf.pop();
+                    }
+                    let line = String::from_utf8_lossy(&line_buf);
+                    match parse_wire_event(&line) {
+                        Some(WireEvent::Progress { match_index, percent, stage }) => {
+                            let _ = app.emit(
+                                "export-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent,
+                                    stage,
+                                    message: None,
+                                    fallback_from: None,
+                                },
+                            );
+                        }
+                        Some(WireEvent::Fallback { match_index, fallback_from, fallback_to, message }) => {
+                            let _ = app.emit(
+                                "export-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent: 0.0,
+                                    stage: "fallback".to_string(),
+                                    message: Some(message),
+                                    fallback_from: Some(format!("{} -> {}", fallback_from, fallback_to)),
+                                },
+                            );
+                        }
+                        Some(WireEvent::Result { match_index, .. }) => {
+                            let _ = app.emit(
+                                "export-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent: 100.0,
+                                    stage: "done".to_string(),
+                                    message: None,
+                                    fallback_from: None,
+                                },
+                            );
+                        }
+                        Some(WireEvent::Error { match_index, error_kind: _, error_message, error_hint }) => {
+                            let _ = app.emit(
+                                "export-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent: 0.0,
+                                    stage: "error".to_string(),
+                                    message: Some(if let Some(hint) = error_hint {
+                                        format!("{} ({})", error_message, hint)
+                                    } else {
+                                        error_message
+                                    }),
+                                    fallback_from: None,
+                                },
+                            );
+                        }
+                        Some(WireEvent::Summary { success, failure, skipped, cancelled }) => {
+                            summary_capture = Some(ExportSummary { success, failure, skipped, cancelled });
+                        }
+                        Some(WireEvent::Unknown) | None => {
+                            // forward-compat: ignore unknown / non-JSON lines
+                        }
+                    }
                 }
-                Some(WireEvent::Fallback { match_index, fallback_from, fallback_to, message }) => {
-                    let _ = app.emit(
-                        "export-progress",
-                        ExportProgress {
-                            match_index,
-                            percent: 0.0,
-                            stage: "fallback".to_string(),
-                            message: Some(message),
-                            fallback_from: Some(format!("{} -> {}", fallback_from, fallback_to)),
-                        },
-                    );
-                }
-                Some(WireEvent::Result { match_index, .. }) => {
-                    let _ = app.emit(
-                        "export-progress",
-                        ExportProgress {
-                            match_index,
-                            percent: 100.0,
-                            stage: "done".to_string(),
-                            message: None,
-                            fallback_from: None,
-                        },
-                    );
-                }
-                Some(WireEvent::Error { match_index, error_kind: _, error_message, error_hint }) => {
-                    let _ = app.emit(
-                        "export-progress",
-                        ExportProgress {
-                            match_index,
-                            percent: 0.0,
-                            stage: "error".to_string(),
-                            message: Some(if let Some(hint) = error_hint {
-                                format!("{} ({})", error_message, hint)
-                            } else {
-                                error_message
-                            }),
-                            fallback_from: None,
-                        },
-                    );
-                }
-                Some(WireEvent::Summary { success, failure, skipped, cancelled }) => {
-                    summary_capture = Some(ExportSummary { success, failure, skipped, cancelled });
-                }
-                Some(WireEvent::Unknown) | None => {
-                    // forward-compat: ignore unknown / non-JSON lines
-                }
+                Err(_) => break,
             }
         }
     }
