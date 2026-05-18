@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 60" width="1200" height="60" role="img" aria-label="section divider">
+  <g stroke="#c8a35c" stroke-width="1" fill="none">
+    
+    <line x1="40" y1="30" x2="500" y2="30" opacity="0.85"></line>
+    
+    <line x1="500" y1="22" x2="500" y2="38" opacity="0.85"></line>
+    
+    <line x1="510" y1="30" x2="565" y2="30" opacity="0.85"></line>
+    <polygon points="580,30 595,18 610,30 595,42" opacity="0.85"></polygon>
+    <circle cx="595" cy="30" r="3" fill="#c8a35c" stroke="none"></circle>
+    <circle cx="595" cy="30" r="9" opacity="0.55"></circle>
+    <line x1="625" y1="30" x2="680" y2="30" opacity="0.85"></line>
+    
+    <line x1="690" y1="22" x2="690" y2="38" opacity="0.85"></line>
+    
+    <line x1="690" y1="30" x2="1160" y2="30" opacity="0.85"></line>
+  </g>
+  
+  <g fill="#c8a35c" opacity="0.65">
+    <circle cx="40" cy="30" r="2"></circle>
+    <circle cx="1160" cy="30" r="2"></circle>
+    <circle cx="500" cy="30" r="1.5"></circle>
+    <circle cx="690" cy="30" r="1.5"></circle>
+  </g>
+</svg>

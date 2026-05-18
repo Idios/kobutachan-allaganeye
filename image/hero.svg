@@ -1,0 +1,178 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 520" width="1600" height="520" role="img" aria-label="Allagan Eye banner">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0d1320"></stop>
+      <stop offset="0.55" stop-color="#0a0e14"></stop>
+      <stop offset="1" stop-color="#05070b"></stop>
+    </linearGradient>
+    <radialGradient id="centerGlow" cx="0.28" cy="0.5" r="0.42">
+      <stop offset="0" stop-color="#c8a35c" stop-opacity="0.18"></stop>
+      <stop offset="0.5" stop-color="#c8a35c" stop-opacity="0.05"></stop>
+      <stop offset="1" stop-color="#c8a35c" stop-opacity="0"></stop>
+    </radialGradient>
+    <radialGradient id="eyeGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#e8c47a"></stop>
+      <stop offset="0.55" stop-color="#c8a35c"></stop>
+      <stop offset="1" stop-color="#5b4520"></stop>
+    </radialGradient>
+    <pattern id="hex" x="0" y="0" width="64" height="55.4" patternUnits="userSpaceOnUse">
+      <path d="M16 0 L48 0 L64 27.7 L48 55.4 L16 55.4 L0 27.7 Z" fill="none" stroke="#c8a35c" stroke-width="0.4" opacity="0.6"></path>
+    </pattern>
+    <pattern id="grid" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0 L0 0 L0 40" fill="none" stroke="#c8a35c" stroke-width="0.25" opacity="0.18"></path>
+    </pattern>
+  </defs>
+
+  
+  <rect width="1600" height="520" fill="url(#bg)"></rect>
+  <rect width="1600" height="520" fill="url(#grid)"></rect>
+  <rect width="1600" height="520" fill="url(#hex)" opacity="0.18"></rect>
+  <rect width="1600" height="520" fill="url(#centerGlow)"></rect>
+
+  
+  <g stroke="#c8a35c" stroke-width="1.5" fill="none" opacity="0.85">
+    <path d="M30 30 L30 86 M30 30 L86 30"></path>
+    <path d="M1570 30 L1570 86 M1570 30 L1514 30"></path>
+    <path d="M30 490 L30 434 M30 490 L86 490"></path>
+    <path d="M1570 490 L1570 434 M1570 490 L1514 490"></path>
+  </g>
+  <g fill="#c8a35c" opacity="0.85">
+    <circle cx="30" cy="30" r="2.5"></circle>
+    <circle cx="1570" cy="30" r="2.5"></circle>
+    <circle cx="30" cy="490" r="2.5"></circle>
+    <circle cx="1570" cy="490" r="2.5"></circle>
+  </g>
+
+  
+  <line x1="120" y1="65" x2="1480" y2="65" stroke="#c8a35c" stroke-width="0.6" opacity="0.35"></line>
+  <line x1="120" y1="455" x2="1480" y2="455" stroke="#c8a35c" stroke-width="0.6" opacity="0.35"></line>
+  <text x="120" y="59" font-family="&#39;Trajan Pro&#39;,&#39;Optima&#39;,&#39;Palatino&#39;,&#39;Cormorant Garamond&#39;,&#39;Times New Roman&#39;,serif" font-size="13" letter-spacing="6" fill="#8a7040">ALLAGAN OBSERVATION SYSTEM · MK·VII</text>
+  <text x="1480" y="59" text-anchor="end" font-family="&#39;Trajan Pro&#39;,&#39;Optima&#39;,&#39;Palatino&#39;,&#39;Times New Roman&#39;,serif" font-size="13" letter-spacing="4" fill="#8a7040">エオルゼア標準時 · CYCLE 7</text>
+
+  
+  <g transform="translate(82,260)" font-family="&#39;Trajan Pro&#39;,&#39;Optima&#39;,&#39;Palatino&#39;,&#39;Times New Roman&#39;,serif" fill="#c8a35c" opacity="0.7">
+    <text font-size="14" letter-spacing="9" transform="rotate(-90)" text-anchor="middle">A L L A G A N</text>
+  </g>
+
+  
+  <g transform="translate(370,260)">
+    
+    <g stroke="#c8a35c" stroke-width="0.6" fill="none" opacity="0.85">
+      
+      <g id="tickRing">
+        
+      </g>
+    </g>
+
+    
+    <circle cx="0" cy="0" r="200" fill="none" stroke="#c8a35c" stroke-width="0.5" stroke-dasharray="2 8" opacity="0.55"></circle>
+    <circle cx="0" cy="0" r="178" fill="none" stroke="#c8a35c" stroke-width="0.5" opacity="0.5"></circle>
+
+    
+    <polygon points="0,-155 134,-77.5 134,77.5 0,155 -134,77.5 -134,-77.5" fill="none" stroke="#c8a35c" stroke-width="1.6" opacity="0.95"></polygon>
+    
+    <g fill="#c8a35c">
+      <circle cx="0" cy="-155" r="3.5"></circle>
+      <circle cx="134" cy="-77.5" r="3.5"></circle>
+      <circle cx="134" cy="77.5" r="3.5"></circle>
+      <circle cx="0" cy="155" r="3.5"></circle>
+      <circle cx="-134" cy="77.5" r="3.5"></circle>
+      <circle cx="-134" cy="-77.5" r="3.5"></circle>
+    </g>
+
+    
+    <g stroke="#c8a35c" stroke-width="0.8" opacity="0.8">
+      <line x1="0" y1="-168" x2="0" y2="-188"></line>
+      <line x1="0" y1="168" x2="0" y2="188"></line>
+      <line x1="146" y1="-84" x2="163" y2="-94"></line>
+      <line x1="146" y1="84" x2="163" y2="94"></line>
+      <line x1="-146" y1="-84" x2="-163" y2="-94"></line>
+      <line x1="-146" y1="84" x2="-163" y2="94"></line>
+    </g>
+
+    
+    <polygon points="0,-118 102,-59 102,59 0,118 -102,59 -102,-59" fill="none" stroke="#c8a35c" stroke-width="1" opacity="0.6"></polygon>
+
+    
+    <polygon points="0,-90 78,45 -78,45" fill="none" stroke="#c8a35c" stroke-width="1.6"></polygon>
+    
+    <polygon points="0,90 -78,-45 78,-45" fill="none" stroke="#4ac3d9" stroke-width="1.4"></polygon>
+
+    
+    <circle cx="0" cy="0" r="42" fill="url(#eyeGlow)"></circle>
+    <circle cx="0" cy="0" r="42" fill="none" stroke="#c8a35c" stroke-width="1.2"></circle>
+    <circle cx="0" cy="0" r="18" fill="#05070b"></circle>
+    <circle cx="0" cy="0" r="18" fill="none" stroke="#c8a35c" stroke-width="0.8"></circle>
+    <circle cx="0" cy="0" r="6" fill="#4ac3d9"></circle>
+    <circle cx="-1.5" cy="-1.5" r="2" fill="#7ee0f0"></circle>
+
+    
+    <g fill="#c8a35c">
+      <polygon points="0,-200 4,-188 0,-184 -4,-188"></polygon>
+      <polygon points="0,200 4,188 0,184 -4,188"></polygon>
+      <polygon points="-200,0 -188,-4 -184,0 -188,4"></polygon>
+      <polygon points="200,0 188,-4 184,0 188,4"></polygon>
+    </g>
+
+    
+    <g stroke="#c8a35c" stroke-width="0.5" opacity="0.45">
+      <line x1="0" y1="-210" x2="0" y2="-220"></line>
+      <line x1="0" y1="210" x2="0" y2="220"></line>
+      <line x1="-210" y1="0" x2="-220" y2="0"></line>
+      <line x1="210" y1="0" x2="220" y2="0"></line>
+      <g transform="rotate(30)"><line x1="0" y1="-210" x2="0" y2="-218"></line><line x1="0" y1="210" x2="0" y2="218"></line></g>
+      <g transform="rotate(60)"><line x1="0" y1="-210" x2="0" y2="-218"></line><line x1="0" y1="210" x2="0" y2="218"></line></g>
+      <g transform="rotate(15)"><line x1="0" y1="-210" x2="0" y2="-216"></line><line x1="0" y1="210" x2="0" y2="216"></line></g>
+      <g transform="rotate(45)"><line x1="0" y1="-210" x2="0" y2="-216"></line><line x1="0" y1="210" x2="0" y2="216"></line></g>
+      <g transform="rotate(75)"><line x1="0" y1="-210" x2="0" y2="-216"></line><line x1="0" y1="210" x2="0" y2="216"></line></g>
+    </g>
+  </g>
+
+  
+  <g transform="translate(700,160)">
+    
+    <g font-family="&#39;Trajan Pro&#39;,&#39;Optima&#39;,&#39;Palatino&#39;,&#39;Cormorant Garamond&#39;,&#39;Times New Roman&#39;,serif" fill="#c8a35c">
+      <text font-size="18" letter-spacing="14" opacity="0.75">◆  F R O N T L I N E    C L E A V E R  ◆</text>
+    </g>
+
+    
+    <text y="100" font-family="&#39;Trajan Pro&#39;,&#39;Optima&#39;,&#39;Palatino&#39;,&#39;Cormorant Garamond&#39;,&#39;Times New Roman&#39;,serif" font-size="108" letter-spacing="10" fill="#e8c47a" font-weight="500">ALLAGAN EYE</text>
+
+    
+    <g transform="translate(0,128)">
+      <line x1="0" y1="0" x2="320" y2="0" stroke="#c8a35c" stroke-width="1.2"></line>
+      <polygon points="340,0 350,-7 360,0 350,7" fill="none" stroke="#c8a35c" stroke-width="1.2"></polygon>
+      <line x1="370" y1="0" x2="690" y2="0" stroke="#c8a35c" stroke-width="1.2"></line>
+    </g>
+
+    
+    <text y="190" font-family="&#39;Yu Mincho&#39;,&#39;游明朝&#39;,&#39;Hiragino Mincho ProN&#39;,&#39;MS Mincho&#39;,&#39;Times New Roman&#39;,serif" font-size="44" letter-spacing="12" fill="#d8cfbb">観 測 器</text>
+    <text y="190" x="220" font-family="&#39;Trajan Pro&#39;,&#39;Optima&#39;,&#39;Palatino&#39;,&#39;Times New Roman&#39;,serif" font-size="22" letter-spacing="6" fill="#8a8270">·  T H E   O B S E R V E R</text>
+
+    
+    <text y="252" font-family="&#39;Yu Mincho&#39;,&#39;游明朝&#39;,&#39;Hiragino Mincho ProN&#39;,&#39;MS Mincho&#39;,&#39;Times New Roman&#39;,serif" font-size="26" fill="#d8cfbb" letter-spacing="2">FF14 フロントラインの長時間録画を、</text>
+    <text y="290" font-family="&#39;Yu Mincho&#39;,&#39;游明朝&#39;,&#39;Hiragino Mincho ProN&#39;,&#39;MS Mincho&#39;,&#39;Times New Roman&#39;,serif" font-size="26" fill="#d8cfbb" letter-spacing="2">試合ごとの戦果へ ──  無劣化で、自動分割。</text>
+
+    
+    <g transform="translate(0,326)" font-family="&#39;Consolas&#39;,&#39;JetBrains Mono&#39;,&#39;Menlo&#39;,monospace" font-size="14" fill="#8a7040" letter-spacing="2">
+      <text>◇ WINDOWS  ·  ◇ MP4 / MKV / AVI / MOV  ·  ◇ LOSSLESS COPY  ·  ◇ GUI &amp; CLI</text>
+    </g>
+  </g>
+
+  
+  <g fill="#c8a35c" opacity="0.5">
+    <circle cx="920" cy="80" r="1"></circle>
+    <circle cx="1180" cy="105" r="1.5"></circle>
+    <circle cx="1380" cy="80" r="1"></circle>
+    <circle cx="1090" cy="450" r="1"></circle>
+    <circle cx="1320" cy="440" r="1.5"></circle>
+    <circle cx="1480" cy="410" r="1"></circle>
+    <circle cx="800" cy="430" r="1"></circle>
+    <circle cx="640" cy="80" r="1"></circle>
+  </g>
+  <g fill="#4ac3d9" opacity="0.6">
+    <circle cx="1240" cy="430" r="1"></circle>
+    <circle cx="1050" cy="80" r="1"></circle>
+    <circle cx="760" cy="430" r="1"></circle>
+  </g>
+</svg>
