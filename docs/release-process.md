@@ -41,9 +41,9 @@ L2 完了後の拡張フェーズ。L3 (new)〜L6 (former L5) の開発で新た
 ```text
 main (リリースタグ時のみ更新、L1: v0.1.0-preview / v0.1.1 / L2: v0.2.0 / v0.2.1 タグ済み)
  └── develop-0.3.0 (L3 開発の統合先)
-      ├── claude/l3-vtuber-*         ← VTuber 動画対応 (#634 系)
-      ├── claude/l3-minimap-*        ← ミニマップ切抜き (#635 系)
-      ├── claude/l3-perf-*           ← export 並列・detect 高速化・GUI responsiveness (#654 系)
+      ├── claude/l3-vtuber-*         ← VTuber 動画対応 (#480, parent #753)
+      ├── claude/l3-minimap-*        ← ミニマップ切抜き (#481, parent #753)
+      ├── claude/l3-perf-*           ← export 並列 (#761 #762) / detect 高速化 (#576) / GUI responsiveness (#670)
       └── claude/<issue-N>-<slug>    ← 個別 issue 消化
 ```
 
