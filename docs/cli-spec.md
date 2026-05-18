@@ -60,7 +60,7 @@ allaganeye split --from-metadata <metadata.json> [OPTIONS]
 | `-v`, `--verbose` | `false` | 詳細出力（メタデータ詳細、gap 情報）。**`-q` と同時指定は排他エラー (exit 5) (#419)** |
 | `-q`, `--quiet` | `false` | 進捗出力を抑制（出力ファイル一覧のみ）。**`-v` と同時指定は排他エラー (exit 5) (#419)** |
 
-`--gpu` / `--no-gpu` のいずれも指定しない場合はコーデックから自動選択される (H.264/HEVC/AV1/VP9 → GPU、それ以外 → CPU) (#414)。ハードウェア要件は [`docs/video-processing.md`](video-processing.md) §「コーデック自動選択」を参照。
+`--gpu` / `--no-gpu` のいずれも指定しない場合はコーデックから自動選択される (H.264/HEVC/AV1/VP9 → GPU、それ以外 → CPU) (#414)。ハードウェア要件は [`docs/video-processing.md`](video-processing.md) §「コーデック + vendor 自動選択（#334, #414, #546, #550）」を参照。
 
 ### 出力
 
