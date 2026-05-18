@@ -1,5 +1,6 @@
 """Tests for match boundary detection."""
 
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -29,6 +30,7 @@ from allaganeye.video.detector import (
     _merge_regions,
     _probe_single_frame,
     _refine_blackout_regions,
+    _use_legacy_fps_filter,
     detect_match_boundaries,
 )
 
@@ -1656,3 +1658,31 @@ class TestPass1HysteresisIntegration:
 
         # Borderline not captured -> single match spans whole video
         assert len(result) == 1
+
+
+class TestUseLegacyFpsFilter:
+    """env var rollback helper (#576 §6)."""
+
+    def test_default_false(self, monkeypatch):
+        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
+        assert _use_legacy_fps_filter() is False
+
+    def test_explicit_1_returns_true(self, monkeypatch):
+        monkeypatch.setenv("ALLAGANEYE_DETECT_FPS_FILTER", "1")
+        assert _use_legacy_fps_filter() is True
+
+    def test_other_values_return_false(self, monkeypatch):
+        for value in ("0", "true", "yes", "", "2"):
+            monkeypatch.setenv("ALLAGANEYE_DETECT_FPS_FILTER", value)
+            assert _use_legacy_fps_filter() is False, f"value={value!r}"
+
+
+class TestConftestEnvVarAutouse:
+    """conftest.py autouse fixture clears ALLAGANEYE_DETECT_FPS_FILTER (#576 §6)."""
+
+    def test_env_var_unset_by_default(self):
+        # autouse fixture should have unset it before this test runs.
+        assert "ALLAGANEYE_DETECT_FPS_FILTER" not in os.environ, (
+            "conftest autouse should unset ALLAGANEYE_DETECT_FPS_FILTER. "
+            "CI pollution risk (#576 R6)."
+        )

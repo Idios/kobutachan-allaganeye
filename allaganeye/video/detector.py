@@ -1113,6 +1113,19 @@ By placing cut points inside blackout regions, keyframe drift never
 clips actual match footage.
 """
 
+# ---------------------------------------------------------------------------
+# Legacy fps-filter rollback switch (#576)
+# ---------------------------------------------------------------------------
+# Transitional escape hatch: when ALLAGANEYE_DETECT_FPS_FILTER=1 the
+# detector reverts to the pre-#576 chunked fps=N filter path.  Default
+# (= False) is the new output-seek + N-th sampling path.  Scheduled for
+# removal in v0.3.x patch release (see CHANGELOG / docstring).
+
+
+def _use_legacy_fps_filter() -> bool:
+    """Return True when the legacy fps-filter path is forced via env var."""
+    return os.environ.get("ALLAGANEYE_DETECT_FPS_FILTER") == "1"
+
 
 def _borderline_pseudo_regions(
     results: dict[float, float],
