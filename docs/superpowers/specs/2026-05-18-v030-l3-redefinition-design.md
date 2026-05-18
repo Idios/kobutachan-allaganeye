@@ -191,12 +191,11 @@ L6: プライバシー (暫定)                   L6 (former L5): 自動編集
 | **書出し結果 baseline (split)** | 試合 MP4 のファイルサイズ + SHA-256 hash | byte-exact (`-c copy` 無劣化分割のため決定論的) |
 | **書出し結果 baseline (export GUI)** | encoder/version 依存で byte-exact 不可 | ffprobe メタデータ一致 (長さ・解像度・fps・codec) + 任意 1 フレーム抽出 spot check |
 
-### 8.3 VTuber benchmark の前提条件 (CLAUDE.md §セキュリティ検査 整合)
+### 8.3 VTuber benchmark の取扱い
 
-- 外部 (gyawa, X `@gyawaff14`, #481 で提供約束あり) からの動画
-- **Phase 1 着手 (= 検知 baseline 生成) 前に `allaganeye-guard verify` を通す** (PASS exit 0 / 1)
-- verify 未完までは agent (Claude) は動画中身を再生・分析しない
+- 動画提供元: gyawa (X `@gyawaff14`、#481 で提供約束あり)
 - 動画本体は repo に commit しない。**metadata snapshot のみ commit** (`tests/baselines/v0.3.0/`)
+- 入手済み (`E:\videos\gyawa_vatos\` 配下、user 側で取得済み) なので Phase 1 着手の追加前提条件なし
 
 ### 8.4 VTuber primary benchmark の Ground Truth (user 手動検証済み)
 
@@ -245,12 +244,11 @@ L6: プライバシー (暫定)                   L6 (former L5): 自動編集
 
 | Order | Item | Owner | 備考 |
 |---|---|---|---|
-| (i) | `allaganeye-guard verify` 実行 + PASS 記録 (gyawa 提供 7.5 GB MP4) | human (Idios) | guard tool を別 repo で実行 |
-| (ii) | OBS baseline 動画セット選定 (ALLAGANEYE_SAMPLE_VIDEO_DIR から N 本、N は child issue で確定) | agent + human | サイズ・代表性・再現性で選定 |
-| (iii) | 全 baseline 動画で改修前検知結果 + split 書出し結果を生成・commit | agent | `tests/baselines/v0.3.0/` 配下 |
-| (iv) | baseline 比較スクリプト (`scripts/compare-baseline.py`) を実装 | agent | 各 Wave PR の Self-Test Report で使用 |
+| (i) | OBS baseline 動画セット選定 (ALLAGANEYE_SAMPLE_VIDEO_DIR から N 本、N は child issue で確定) | agent + human | サイズ・代表性・再現性で選定 |
+| (ii) | 全 baseline 動画で改修前検知結果 + split 書出し結果を生成・commit | agent | `tests/baselines/v0.3.0/` 配下 |
+| (iii) | baseline 比較スクリプト (`scripts/compare-baseline.py`) を実装 | agent | 各 Wave PR の Self-Test Report で使用 |
 
-(i)-(iv) は Phase 1 Wave 1a (#576 detect 改修) より前に必須。
+(i)-(iii) は Phase 1 Wave 1a (#576 detect 改修) より前に必須。
 
 ### 8.8 baseline drift 判定との関係
 
@@ -303,7 +301,6 @@ L6: プライバシー (暫定)                   L6 (former L5): 自動編集
 ## 10. Out of scope (本 spec が扱わないもの)
 
 - **各 pillar の technical detail**: VTuber 動画 game capture 領域検出 algorithm / minimap ROI 検出 algorithm / NVENC 並列 export 実装方式 / Portable ZIP file 削減方式 etc. — 各 child issue 着手時に別 brainstorm で詳細設計
-- **VTuber 動画の中身分析**: allaganeye-guard verify 通過前は動画 frame の解析 / 視覚的 inspection は行わない
 - **旧 L3 work (OCR/Whisper) の再評価**: L4 (former L3) として deferred 継続。v0.3.0 で扱わない
 - **Twitch URL 取り込み (#479)**: 法的論点 + Web 依存で `CLAUDE.md §設計原則` 要再検討。v0.3.0 では扱わない
 
@@ -327,5 +324,4 @@ L6: プライバシー (暫定)                   L6 (former L5): 自動編集
   - [#576](https://github.com/Idios/kobutachan-allaganeye/issues/576) (fps filter)
   - [#670](https://github.com/Idios/kobutachan-allaganeye/issues/670) (HTTP server)
   - [#765](https://github.com/Idios/kobutachan-allaganeye/issues/765) (NVDEC saturation)
-- セキュリティ規約: [CLAUDE.md §セキュリティ検査](../../../CLAUDE.md) / [docs/guard-integration.md](../../guard-integration.md)
 - baseline drift: [docs/testing-guide.md §baseline drift の判定](../../testing-guide.md)
