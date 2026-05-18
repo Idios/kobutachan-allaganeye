@@ -478,7 +478,7 @@ def _report_app_error(
 
     Note: 19d (click-level option-parse error such as ``allaganeye -version``)
     is handled separately in :func:`main` and never reaches this function.
-    See ``docs/cli-spec.md`` § ``click-level option-parse error`` for details.
+    See ``docs/cli-spec.md`` section ``click-level option-parse error`` for details.
 
 
     - 19a (verbose=True):  ``Error: <msg>`` + ``verbose_detail()`` context
