@@ -1,6 +1,6 @@
 ---
 name: create-task
-description: issue-policy.md に沿って GitHub issue を対話的に作成する（全 prefix: bug/doc/refactor/task/question/risk 対応）
+description: issue-policy.md に沿って GitHub issue を対話的に作成する。全 prefix 対応 (bug/doc/refactor/task/question/risk)、refactor/task/risk は preamble (期待値/現状/ユーザー影響・重要性) 必須
 user-invocable: true
 argument-hint: <タスクの概要（自然言語）>
 ---
