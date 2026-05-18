@@ -9,7 +9,7 @@ import { SampleModeBanner } from '../components/SampleModeBanner';
 import { toErrorState } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
-import { joinPath, splitPath, stripExtendedPathPrefix } from '../utils/path';
+import { splitPath, stripExtendedPathPrefix } from '../utils/path';
 import pathStyles from '../styles/path-display.module.css';
 import { fmtMatchDuration, fmtTime } from '../utils/time';
 import { exportReducer } from './reducers/export';
@@ -49,30 +49,32 @@ interface ExportProgressPayload {
 }
 
 /**
- * #591 -- payload returned by `select_h264_encoder_for_export` Tauri
- * command. `encoder_kind` is the wire form sent back to `export_match`
- * via the `h264_encoder` argument.
+ * #761 -- payload returned by `enumerate_h264_encoders` Tauri command.
+ * Each slot represents one available H.264 encoder (e.g. NVENC, QSV, AMF,
+ * libx264). The frontend displays a badge like "NVENC ×3" when multiple
+ * GPU slots are available.
  */
-interface EncoderInfo {
-  encoder: string;
-  display_label: string;
+interface EncoderSlot {
+  slot_index: number;
   encoder_kind: 'Libx264' | 'Nvenc' | 'Qsv' | 'Amf';
+  display_label: string;
 }
 
 /**
- * #591 -- libx264 fallback used when metadata.json has no system_info
+ * #761 -- libx264 fallback used when metadata.json has no system_info
  * (pre-#591 metadata) or the probe came back empty (CPU-only env).
  */
-const LIBX264_INFO: EncoderInfo = {
-  encoder: 'libx264',
-  display_label: 'libx264 (CPU)',
+const LIBX264_SLOT: EncoderSlot = {
+  slot_index: 0,
   encoder_kind: 'Libx264',
+  display_label: 'libx264 (CPU)',
 };
 
-interface ExportResult {
-  match_index: number;
-  output_path: string;
-  duration_ms: number;
+interface ExportSummary {
+  success: number;
+  failure: number;
+  skipped: number;
+  cancelled: boolean;
 }
 
 /**
@@ -140,11 +142,11 @@ export function ExportScreen() {
   // にしておき、ユーザーに必須選択させる。
   const [outDir, setOutDir] = useState<string>(() => deriveDefaultOutDir(videoSource));
   const [codec, setCodec] = useState<Codec>('copy');
-  // #591 -- H.264 encoder is auto-selected from metadata.system_info on
-  // mount. Initial value defaults to libx264 so the sub label and
-  // export_match argument are always defined; useEffect overwrites with
-  // the real probe-derived encoder once metadata is loaded.
-  const [encoderInfo, setEncoderInfo] = useState<EncoderInfo>(LIBX264_INFO);
+  // #761 -- H.264 encoder slots are enumerated from metadata.system_info on
+  // every metadata change via `enumerate_h264_encoders`. Initial value
+  // defaults to [LIBX264_SLOT]; useEffect overwrites with the real
+  // probe-derived slots once metadata is loaded.
+  const [encoderSlots, setEncoderSlots] = useState<EncoderSlot[]>([LIBX264_SLOT]);
   const [namePattern, setNamePattern] = useState('match_{idx:03}.mp4');
   const [matchStates, setMatchStates] = useState<Record<number, MatchState>>({});
   // #466 review #1: per-match の選択 (default: 全選択 = 全試合書き出し)。
@@ -174,37 +176,47 @@ export function ExportScreen() {
     return () => clearInterval(iv);
   }, [exportStartMs, phase]);
 
-  // #591 -- resolve the H.264 encoder from metadata.system_info on
-  // every metadata change. Falls back to libx264 silently when the
-  // probe is empty / missing or when the Tauri command rejects (e.g.
-  // sample mode without a backing system_info). The effect intentionally
-  // calls setEncoderInfo synchronously in the no-system_info branch so
-  // that switching from a probe-equipped metadata back to a sample
+  // #761 -- enumerate H.264 encoder slots from metadata.system_info on
+  // every metadata source change. Falls back to [LIBX264_SLOT] silently
+  // when the probe is empty / missing or when the Tauri command rejects
+  // (e.g. sample mode without a backing system_info). The effect
+  // intentionally calls setEncoderSlots synchronously in the no-system_info
+  // branch so that switching from a probe-equipped metadata back to a sample
   // (legacy) one resets the sub label; per-frame cascading renders are
-  // not a concern here (encoderInfo updates are bounded and infrequent).
+  // not a concern here (encoderSlots updates are bounded and infrequent).
+  // `metadata?.source` is used as the dep so the effect re-runs when the
+  // user loads a different file (system_info changes with source).
   useEffect(() => {
-    const info = metadata?.system_info;
-    if (!info) {
+    if (!metadata?.system_info) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setEncoderInfo(LIBX264_INFO);
+      setEncoderSlots([LIBX264_SLOT]);
       return;
     }
-    invoke<EncoderInfo>('select_h264_encoder_for_export', {
-      vendors: info.gpu_vendors_available,
-      preference: info.vendor_preference,
+    invoke<EncoderSlot[]>('enumerate_h264_encoders', {
+      req: {
+        vendors: metadata.system_info.gpu_vendors_available ?? [],
+        preference: metadata.system_info.vendor_preference ?? ['nvidia', 'amd', 'intel'],
+        gpuModels: [],
+      },
     })
-      .then((resolved) => setEncoderInfo(resolved))
-      .catch(() => setEncoderInfo(LIBX264_INFO));
-  }, [metadata]);
+      .then((slots) => setEncoderSlots(slots.length > 0 ? slots : [LIBX264_SLOT]))
+      .catch(() => setEncoderSlots([LIBX264_SLOT]));
+  }, [metadata?.source]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // #591 -- CODECS list rebuilt from encoderInfo so the H.264 sub label
-  // reflects "(NVENC)" / "(QSV)" / "(AMF)" / "(libx264 (CPU))".
+  // #761 -- encoder badge: "NVENC ×3" when multiple GPU slots are available,
+  // single label otherwise. Rebuilt from encoderSlots so the H.264 sub label
+  // reflects "(NVENC ×3)" / "(NVENC)" / "(QSV)" / "(AMF)" / "(libx264 (CPU))".
+  const encoderBadge =
+    encoderSlots.length > 1
+      ? `${encoderSlots[0].display_label.split(' ')[0]} ×${encoderSlots.length}`
+      : encoderSlots[0].display_label;
+
   const codecs: { v: Codec; l: string; sub: string }[] = [
     { v: 'copy', l: '無損失 copy', sub: '高速 / 前 I フレーム吸着' },
     {
       v: 'h264',
       l: 'H.264 再エンコード',
-      sub: `遅い / 正確な秒指定 (${encoderInfo.display_label})`,
+      sub: `遅い / 正確な秒指定 (${encoderBadge})`,
     },
   ];
 
@@ -323,7 +335,7 @@ export function ExportScreen() {
 
   async function handleStartExport() {
     // 2026-04-25 修正: filePath は metadata.json の path であり、
-    // export_match invoke 自体は videoSource (実 video path) だけで動く。
+    // export invoke 自体は videoSource (実 video path) だけで動く。
     // dummy detect で loadSample() のみ走った場合 filePath は null のため、
     // 旧 `!filePath` early return + button disabled 条件は誤検知になる。
     if (!metadata) return;
@@ -333,13 +345,11 @@ export function ExportScreen() {
     // Initialize per-match state. Skip = `type_override === 'skip'` (永続)
     // または excludedIndexes に含まれる (ad-hoc UI 選択、#466 review #1)。
     const nextStates: Record<number, MatchState> = {};
-    const queue: typeof metadata.matches = [];
     for (const m of metadata.matches) {
       if (m.type_override === 'skip' || excludedIndexes.has(m.index)) {
         nextStates[m.index] = { status: 'skipped', percent: 0 };
       } else {
         nextStates[m.index] = { status: 'pending', percent: 0 };
-        queue.push(m);
       }
     }
     setMatchStates(nextStates);
@@ -349,63 +359,33 @@ export function ExportScreen() {
     setNowMs(startMs);
     dispatch({ type: 'START_CLICKED' });
 
-    let successCount = 0;
-    let failureCount = 0;
-    for (const m of queue) {
-      if (cancelRequestedRef.current) break;
-      const name = formatName(m.index, m.type, m.edited?.start_time ?? m.start_time);
-      const outputPath = joinPath(outDir, name);
-      try {
-        const result = await invoke<ExportResult>('export_match', {
-          videoPath: videoSource,
-          startSeconds: m.edited?.start_time ?? m.start_time,
-          endSeconds: m.edited?.end_time ?? m.end_time,
-          outputPath,
+    // #761 -- single invoke: hand entire metadata + settings to Python
+    // subprocess via stdin. The existing export-progress event listener
+    // continues to update per-match state as events arrive (match_index
+    // keyed payload works unchanged with the new parallel export arch).
+    try {
+      const summary = await invoke<ExportSummary>('start_export', {
+        req: {
+          metadataJson: metadata,
+          outputDir: outDir,
           codec,
-          // #591 -- when codec === 'h264', Rust spawns ffmpeg with the
-          // resolved encoder. Copy codec ignores this value.
-          h264Encoder: codec === 'h264' ? encoderInfo.encoder_kind : null,
-          matchIndex: m.index,
-        });
-        successCount += 1;
-        setMatchStates((prev) => ({
-          ...prev,
-          [m.index]: {
-            status: 'done',
-            percent: 100,
-            outputPath: result.output_path,
-          },
-        }));
-      } catch (e) {
-        failureCount += 1;
-        // #663 — AppError-shaped throws (Tauri command rejection) carry
-        // a corrective hint that we render as the per-match list's 2nd
-        // error line. `errorState.hint` is null for legacy `new Error`,
-        // which we collapse to undefined so MatchState stays clean.
-        const errorState = toErrorState(e);
-        const msg = errorState.message;
-        const hint = errorState.hint;
-        setMatchStates((prev) => ({
-          ...prev,
-          [m.index]: {
-            status: 'error',
-            percent: 0,
-            error: msg,
-            errorHint: hint ?? undefined,
-          },
-        }));
+          namePattern,
+          excludedIndexes: Array.from(excludedIndexes),
+        },
+      });
+      if (summary.cancelled) {
+        dispatch({ type: 'CANCEL_CONFIRMED' });
+      } else if (summary.success === 0 && summary.failure > 0) {
+        // Zero matches finished -- surface the error phase. If at least one
+        // match succeeded we declare the run "completed" and keep per-match
+        // errors inline for the user to review.
+        dispatch({ type: 'EXPORT_ERROR' });
+      } else {
+        dispatch({ type: 'PROGRESS_COMPLETE' });
       }
-    }
-
-    if (cancelRequestedRef.current) {
-      dispatch({ type: 'CANCEL_CONFIRMED' });
-    } else if (successCount === 0 && failureCount > 0) {
-      // Zero matches finished -- surface the error phase. If at least one
-      // match succeeded we declare the run "completed" and keep per-match
-      // errors inline for the user to review.
+    } catch {
+      // Unexpected (Python subprocess spawn failure / metadata parse failure / etc.)
       dispatch({ type: 'EXPORT_ERROR' });
-    } else {
-      dispatch({ type: 'PROGRESS_COMPLETE' });
     }
   }
 
