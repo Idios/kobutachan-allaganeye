@@ -417,7 +417,7 @@ Error: ffmpeg failed
 
 ### click-level option-parse error (#440 / PR #632)
 
-`split` / `debug-brightness` 等のサブコマンド entrypoint より前で発生する click-level option-parse error (例: `allaganeye -version` のような single-dash long-option typo) は AllaganEyeError 系の `-v` / `-q` 切替制御の対象外。`allaganeye/cli.py:498-574` の `_suggest_long_option_hint` / `main()` で捕捉し、click 標準メッセージに続けて `Did you mean --<name>?` ヒントを stderr に出力する。
+`split` / `debug-brightness` 等のサブコマンド entrypoint より前で発生する click-level option-parse error (例: `allaganeye -version` のような single-dash long-option typo) は AllaganEyeError 系の `-v` / `-q` 切替制御の対象外。`allaganeye/cli.py` の `_suggest_long_option_hint` (line 537-571) と `main()` (line 574-611) で捕捉し、click 標準メッセージに続けて `Did you mean --<name>?` ヒントを stderr に出力する。
 
 捕捉対象は `click.exceptions.NoSuchOption` / `UsageError` / `ClickException` (および `Abort`)。`NoSuchOption` 経路では `_suggest_long_option_hint` が argv を走査し、`-` 始まり (`--` でない) かつ長さ >= 2 の token を `--<name>` として既知の long option (typer app + 全 subcommand + `help`) と照合する。マッチしないときは hint を出さず、無関係な typo に誤導しないようにする。
 
