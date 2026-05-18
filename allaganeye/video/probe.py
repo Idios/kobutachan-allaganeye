@@ -50,6 +50,9 @@ def _parse_frame_rate_rational(rate_str: str) -> tuple[int, int]:
         num_s, den_s = rate_str.split("/")
         num = int(num_s)
         den = int(den_s)
+        # ZeroDivisionError is intentionally not caught: int() never divides,
+        # so it cannot raise it.  The companion _parse_frame_rate catches it
+        # because float division occurs there.
     except (ValueError, AttributeError):
         return 0, 0
     if num <= 0 or den <= 0:
@@ -60,7 +63,8 @@ def _parse_frame_rate_rational(rate_str: str) -> tuple[int, int]:
 def probe_video(video_path: Path) -> ProbeResult:
     """Extract video metadata using ffprobe.
 
-    Returns dict with keys: duration, width, height, fps, codec, audio_codec.
+    Returns dict with keys: duration, width, height, fps, fps_num, fps_den,
+    codec, audio_codec.
     """
     try:
         result = subprocess.run(

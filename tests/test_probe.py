@@ -3,10 +3,11 @@
 import json
 import logging
 import subprocess
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+import allaganeye.video.probe as probe_mod
 from allaganeye.exceptions import InputFileError, VideoProcessingError
 from allaganeye.video.probe import (
     _parse_frame_rate,
@@ -428,10 +429,6 @@ class TestProbeRationalFps:
     def test_probe_result_has_rational_fields(self, tmp_path, monkeypatch):
         # NOTE: this calls probe_video with a fake ffprobe output via
         # monkeypatching subprocess.run.
-        from unittest.mock import MagicMock
-        import json as _json
-        import allaganeye.video.probe as probe_mod
-
         fake_streams = {
             "streams": [
                 {
@@ -446,7 +443,7 @@ class TestProbeRationalFps:
             "format": {"duration": "3600.0"},
         }
         mock_result = MagicMock()
-        mock_result.stdout = _json.dumps(fake_streams)
+        mock_result.stdout = json.dumps(fake_streams)
         mock_result.stderr = ""
         mock_result.returncode = 0
         monkeypatch.setattr(
@@ -465,6 +462,43 @@ class TestProbeRationalFps:
         assert result["fps_den"] == 1001
         assert abs(result["fps"] - 60000 / 1001) < 1e-9
 
+    def test_probe_falls_back_to_avg_frame_rate_for_rational(
+        self, tmp_path, monkeypatch
+    ):
+        """fps_num/fps_den fall back to avg_frame_rate when r_frame_rate is invalid."""
+        fake_streams = {
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "codec_name": "h264",
+                    "width": 1920,
+                    "height": 1080,
+                    "r_frame_rate": "0/0",  # invalid -> _parse_frame_rate_rational returns (0,0)
+                    "avg_frame_rate": "30/1",
+                },
+            ],
+            "format": {"duration": "3600.0"},
+        }
+        mock_result = MagicMock()
+        mock_result.stdout = json.dumps(fake_streams)
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+        monkeypatch.setattr(
+            probe_mod.subprocess,
+            "run",
+            lambda *a, **kw: mock_result,
+        )
+        monkeypatch.setattr(
+            probe_mod,
+            "find_ffprobe",
+            lambda: "ffprobe",
+        )
+
+        result = probe_mod.probe_video(tmp_path / "fake.mkv")
+        assert result["fps_num"] == 30
+        assert result["fps_den"] == 1
+        assert result["fps"] == pytest.approx(30.0)
+
 
 # --- 静的 VFR WARN tests (#576) ---
 
@@ -473,10 +507,6 @@ class TestProbeStaticVfrWarn:
     """probe_video logs WARNING when r_frame_rate vs avg_frame_rate differ > 1% (#576)."""
 
     def test_aggregate_disagree_logs_warn(self, tmp_path, monkeypatch, caplog):
-        from unittest.mock import MagicMock
-        import json as _json
-        import allaganeye.video.probe as probe_mod
-
         fake_streams = {
             "streams": [
                 {
@@ -491,7 +521,7 @@ class TestProbeStaticVfrWarn:
             "format": {"duration": "3600.0"},
         }
         mock_result = MagicMock()
-        mock_result.stdout = _json.dumps(fake_streams)
+        mock_result.stdout = json.dumps(fake_streams)
         mock_result.stderr = ""
         mock_result.returncode = 0
         monkeypatch.setattr(probe_mod.subprocess, "run", lambda *a, **kw: mock_result)
@@ -506,10 +536,6 @@ class TestProbeStaticVfrWarn:
         )
 
     def test_aggregate_match_does_not_warn(self, tmp_path, monkeypatch, caplog):
-        from unittest.mock import MagicMock
-        import json as _json
-        import allaganeye.video.probe as probe_mod
-
         fake_streams = {
             "streams": [
                 {
@@ -524,7 +550,7 @@ class TestProbeStaticVfrWarn:
             "format": {"duration": "3600.0"},
         }
         mock_result = MagicMock()
-        mock_result.stdout = _json.dumps(fake_streams)
+        mock_result.stdout = json.dumps(fake_streams)
         mock_result.stderr = ""
         mock_result.returncode = 0
         monkeypatch.setattr(probe_mod.subprocess, "run", lambda *a, **kw: mock_result)
