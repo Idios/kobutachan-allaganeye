@@ -100,6 +100,7 @@ Metadata: <metadata.json path>
 | `-v` (19a) | `Error: <msg>` + context 展開 + full traceback | full traceback (`__cause__` chain 含) |
 | default (19b) | `Error: <msg>` + `(Run with -v / --verbose for full details)` | `Unexpected error: <exc>` + hint |
 | `-q` (19c) | `Error: <msg>` のみ | `Unexpected error: <exc>` のみ |
+| click-level option-parse error (19d) | `Error: no such option: -X. Did you mean --X?` (stderr / `-v` / `-q` の影響なし、click level / 終了コード 2) | (該当なし — click level なので AllaganEyeError 系の例外経路を通らない) |
 
 `debug-brightness` コマンドには `-v` / `-q` オプションが無いため、エラーは default 形式に準じるが、**存在しない `-v` オプションへ誘導しないよう hint を抑制**する (#428)。
 
@@ -119,6 +120,7 @@ Metadata: <metadata.json path>
 - [#368](https://github.com/Idios/kobutachan-allaganeye/issues/368) / [#393](https://github.com/Idios/kobutachan-allaganeye/issues/393) (3 フェーズ進捗バー)
 - [#418](https://github.com/Idios/kobutachan-allaganeye/issues/418) (`-q` 厳密 silent: L/M/N 統合)
 - [#419](https://github.com/Idios/kobutachan-allaganeye/issues/419) (`-q -v` / `--gpu --no-gpu` 排他)
+- [#440](https://github.com/Idios/kobutachan-allaganeye/issues/440) / [#634](https://github.com/Idios/kobutachan-allaganeye/issues/634) (click-level option-parse error hint, PR [#632](https://github.com/Idios/kobutachan-allaganeye/pull/632))
 
 ### Open (対応中・レビュー中)
 
