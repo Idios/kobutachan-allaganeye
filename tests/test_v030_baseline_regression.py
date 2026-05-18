@@ -131,3 +131,48 @@ def test_class_a_intermediate_audit_no_regress(
     )
     # 内部値 (verbose stats / brightness samples) は legitimate に変わって OK。
     # ここでは report のみ (本番では PR 本文に dump 添付)。
+
+
+# Class B baseline: regenerated in this PR (#576) because the new path
+# legitimately detects the 0.8s blackout at ~6184 that legacy fps filter
+# missed (#560 root cause fix).  After regenerate, the new path must
+# bit-exact match the new baseline.
+_CLASS_B_BASELINE = ("obs-20260118", "20260118/2026-01-18 22-15-18.mkv")
+
+
+@pytest.mark.slow_detect
+def test_class_b_regenerated(sample_video_dir, tmp_output_dir):
+    """Class B (obs-20260118) は本 PR で regenerate された baseline と一致 (#576 S3)."""
+    label, relpath = _CLASS_B_BASELINE
+    video = sample_video_dir / relpath
+    if not video.exists():
+        pytest.skip(f"video not found: {video}")
+
+    out_meta = tmp_output_dir / "metadata.json"
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "allaganeye",
+            "detect",
+            str(video),
+            "-o",
+            str(tmp_output_dir),
+            "--no-cache",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=1800,
+    )
+
+    baseline_path = _BASELINE_DIR / f"{label}.metadata.json"
+    cmp = subprocess.run(
+        [sys.executable, str(_COMPARE_SCRIPT), str(baseline_path), str(out_meta)],
+        capture_output=True,
+        text=True,
+    )
+    assert cmp.returncode == 0, (
+        f"Class B baseline mismatch (regenerated baseline diverged): "
+        f"{cmp.stdout} {cmp.stderr}"
+    )
