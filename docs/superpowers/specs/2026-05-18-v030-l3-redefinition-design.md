@@ -30,7 +30,7 @@ v0.2.0 / v0.2.1 release (2026-05-13/17) 完了に伴い develop-0.3.0 を cut �
 ## 2. 採用方針 (brainstorming で決定)
 
 | 論点 | 選択肢 | 採用 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | **Layer 構造** | (a) 下流 1 段スライド (b) 旧 L3 を L4 に吸収 (c) L3 swap のみ下流維持 | **(a) 下流 1 段スライド** | #753 提案踏襲。全 layer work を保全しつつ意味を明確化。doc 更新負荷はあるが one-time コスト |
 | **性能改善 scope** | (i) export 並列 (ii) ZIP size (iii) detect 高速化 (iv) GUI responsiveness | **(i)(ii)(iii)(iv) 全採用** | user 指示 (4 領域すべてを v0.3.0 内で消化) |
 | **Label 運用** | (a) 新規 layer label 追加 (b) 既存 label 温存 + title prefix | **(b) 既存 label 温存 + title prefix** | user 指示 (label が乱立しているので新規追加禁止)。`[type] L3:` 形式で識別 |
@@ -89,7 +89,7 @@ L6: プライバシー (暫定)                   L6 (former L5): 自動編集
 ### 5.2 既存 label の使い分け (変更なし、新規追加禁止)
 
 | Label | 意味 | v0.3.0 での運用 |
-|---|---|---|
+| --- | --- | --- |
 | `deferred` | 現バージョンスコープ外 | **`deferred` 外し = v0.3.0 (新 L3) 必須対応**。v0.3.0 着手 issue は `deferred` を外す。それ以外 (旧 L3 / L4-L7) は `deferred` 継続 |
 | `l1-residual` | L1 残課題 | 既存付与を温存、新規付与しない |
 | `l2a-gui` / `l2b-installer` / `l2-decision` / `l2-workflow` | L2 サブスコープ | 既存通り |
@@ -107,7 +107,7 @@ L6: プライバシー (暫定)                   L6 (former L5): 自動編集
 ### 6.1 Pillar 1+2 (VTuber + minimap, v0.3.0 必須対応)
 
 | # | 現 title | 操作 |
-|---|---|---|
+| --- | --- | --- |
 | #753 | [task] L3 (new) キックオフ: VTuber 配信動画対応 + minimap 切抜き | `deferred` 外す。本 issue を v0.3.0 の親 issue にする。child issue は実装着手時に派生 |
 | #481 | フロントラインゲーム中のミニマップ映像の切抜き機能サポート | `deferred` 外す。title rename: `[enhancement] L3: minimap 切抜き機能`。priority P3 → P2 |
 | #480 | [task] 配信者動画対応: スコアバー ROI の適応化 | `deferred` 外す。title rename: `[task] L3: VTuber 配信動画対応 (scorebar ROI 適応化)`。P3 → P2 |
@@ -115,7 +115,7 @@ L6: プライバシー (暫定)                   L6 (former L5): 自動編集
 ### 6.2 Pillar 3 (perf, v0.3.0 必須対応)
 
 | # | 現 title | 操作 |
-|---|---|---|
+| --- | --- | --- |
 | #761 | [task] NVENC 複数 engine の並列 export 基盤化 | `deferred` 外す。title rename: `[task] L3: NVENC 並列 export 基盤化`。P2 維持 |
 | #762 | [task] dGPU + iGPU encoder の multi-vendor 並列 export | `deferred` 外す。title rename: `[task] L3: multi-vendor 並列 export (dGPU+iGPU)`。P2 維持 |
 | #752 | [task] L2b: Portable ZIP の python/lib ファイル数削減方式の検討 | `deferred` 外す。title rename: `[task] L3: Portable ZIP file 数削減`。P3 → P2 |
@@ -125,14 +125,14 @@ L6: プライバシー (暫定)                   L6 (former L5): 自動編集
 ### 6.3 判断保留 (`deferred` 維持、L3 外)
 
 | # | 理由 |
-|---|---|
+| --- | --- |
 | #765 | NVDEC saturation 計測 **記録** issue。action なし、参照用 |
 | #479 | Twitch URL 取り込みは法的論点 + Web 依存で `CLAUDE.md §設計原則` 再検討要。L3 では扱わず |
 
 ### 6.4 下流 layer rename (`deferred` 維持)
 
 | 旧 layer → 新 layer | 対象 issue | 件数 |
-|---|---|---|
+| --- | --- | --- |
 | L3 → L4 (former L3) | #125, #126, #127, #128, #129, #130, #139, #140, #150, #151, #152 | 11 |
 | L4 → L5 (former L4) | #131, #132, #133, #134 (LLM 拡張) | 4 |
 | L5 → L6 (former L5) | #135, #136, #137 (highlight / thumbnail / post output) | 3 |
@@ -153,7 +153,7 @@ L6: プライバシー (暫定)                   L6 (former L5): 自動編集
 ### 7.1 Phase 1: Pillar 3 (perf) — テスト時間圧縮基盤
 
 | Wave | Issue | 効果 | 並列性 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1a | #576 `detect fps filter 廃止` | **全 issue のテスト時間に効く基盤改善** (最優先) | 独立 worktree 可 |
 | 1b | #761 `NVENC 並列 export` | export 系 regression test 圧縮 | 1a と並列可 |
 | 1c | #670 `GUI 動画 HTTP server 改善` | GUI test responsiveness 改善 | 1a と並列可 |
@@ -163,7 +163,7 @@ L6: プライバシー (暫定)                   L6 (former L5): 自動編集
 ### 7.2 Phase 2: Pillar 1+2 (input adapt) — Phase 1 完了後
 
 | Wave | Issue | 備考 | 並列性 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 2a | #753 child issue 起票 (game capture 領域検出 algo / scorebar V2 適応 / minimap ROI 検出 等) | #753 を parent として child を派生。各 child は別 brainstorm で詳細設計 | Phase 2 の基盤、先行必須 |
 | 2b | #480 `scorebar ROI 適応化` | 2a の game capture 領域検出基盤の上に実装 | 2c と並列可 (game capture 基盤を共有するが output path 異独立) |
 | 2c | #481 `minimap 切抜き機能` | 2a の game capture 領域検出を再利用 | 2b と並列可 |
@@ -179,14 +179,14 @@ L6: プライバシー (暫定)                   L6 (former L5): 自動編集
 ### 8.1 Baseline 動画セット (2 系統)
 
 | 系統 | 動画 | 役割 |
-|---|---|---|
+| --- | --- | --- |
 | **OBS baseline** | ALLAGANEYE_SAMPLE_VIDEO_DIR 配下の代表 OBS 録画 (Phase 1 child issue で N 本選定) | Pillar 3 (perf) の bit-exact 一致検証。「正常検知可能な録画で改修後 regression なし」を保証 |
 | **VTuber primary benchmark** | `E:\videos\gyawa_vatos\2772549129-151803977-da21c691-9ed6-4068-9a8b-4726a8a519a8.mp4` (7,554,775,607 bytes, gyawa 提供 2026-05-18) | Phase 2 (input adapt) の primary test target + Pillar 3 robustness 検証 |
 
 ### 8.2 Baseline 定義 (項目別)
 
 | 項目 | 内容 | 比較方法 |
-|---|---|---|
+| --- | --- | --- |
 | **検知結果 baseline** | `metadata.json` の `matches` (`index` / `start_time` / `end_time` / `duration` / `type` / `output_file`) + `gaps` | bit-exact (JSON canonical 比較)。`detected_at` は除外 |
 | **書出し結果 baseline (split)** | 試合 MP4 のファイルサイズ + SHA-256 hash | byte-exact (`-c copy` 無劣化分割のため決定論的) |
 | **書出し結果 baseline (export GUI)** | encoder/version 依存で byte-exact 不可 | ffprobe メタデータ一致 (長さ・解像度・fps・codec) + 任意 1 フレーム抽出 spot check |
@@ -202,7 +202,7 @@ L6: プライバシー (暫定)                   L6 (former L5): 自動編集
 `2772549129-151803977-…-4726a8a519a8.mp4` の試合 5 件 (大体の暗転時刻、user 目視):
 
 | index | start (HH:MM:SS) | end (HH:MM:SS) | start_sec | end_sec | duration |
-|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- |
 | 1 | 00:23:53 | 00:39:21 | 1433 | 2361 | 15m28s |
 | 2 | 00:43:44 | 01:00:35 | 2624 | 3635 | 16m51s |
 | 3 | 01:10:53 | 01:27:22 | 4253 | 5242 | 16m29s |
@@ -212,7 +212,7 @@ L6: プライバシー (暫定)                   L6 (former L5): 自動編集
 ### 8.5 Phase 別の VTuber benchmark 使い方
 
 | Phase | 比較対象 | 内容 |
-|---|---|---|
+| --- | --- | --- |
 | Phase 1 (Pillar 3) 着手前 | — | allaganeye-guard verify → 現状 (改修前) で `allaganeye detect` 実行 → 検知結果 snapshot を baseline として commit (現状の不完全検知も含めてそのまま固定) |
 | Phase 1 各 Wave 完了時 | **改修前 snapshot baseline** | bit-exact 一致 (perf 改善で検知結果が変わらないこと) |
 | Phase 2b 完了時 | **Ground Truth** | 5 試合検出 + `start_time` / `end_time` が ground truth と **±10s 以内** (fps filter offset #575 max ~1.1s + 暗転 grouping 許容) + 検出順序 index 1-5 一致 |
@@ -243,7 +243,7 @@ L6: プライバシー (暫定)                   L6 (former L5): 自動編集
 ### 8.7 Phase 1 着手前の準備 (新規 child issue, prioritized order)
 
 | Order | Item | Owner | 備考 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | (i) | OBS baseline 動画セット選定 (ALLAGANEYE_SAMPLE_VIDEO_DIR から N 本、N は child issue で確定) | agent + human | サイズ・代表性・再現性で選定 |
 | (ii) | 全 baseline 動画で改修前検知結果 + split 書出し結果を生成・commit | agent | `tests/baselines/v0.3.0/` 配下 |
 | (iii) | baseline 比較スクリプト (`scripts/compare-baseline.py`) を実装 | agent | 各 Wave PR の Self-Test Report で使用 |
@@ -259,7 +259,7 @@ L6: プライバシー (暫定)                   L6 (former L5): 自動編集
 ### 9.1 Primary (layer table を直接書き換え)
 
 | Doc | 更新内容 |
-|---|---|
+| --- | --- |
 | `CLAUDE.md` | §段階的アーキテクチャ table を新 layer table に書き換え。L3 (new) の 3 pillar を簡潔に記述 |
 | `docs/design-overview.md` | §概要・段階的アーキテクチャの ASCII 図を新 layer table に書き換え。L3 (new) の input adapt + perf を新節で詳述、旧 L3 (= 新 L4) は L4 節に移動 |
 | `docs/release-process.md` | L3/L4/L5/L6 の roadmap 言及を新番号に置換。v0.3.0 = 新 L3 release boundary 方針 (§7.3 未確定分) は別途決定したら反映 |
@@ -268,7 +268,7 @@ L6: プライバシー (暫定)                   L6 (former L5): 自動編集
 ### 9.2 Secondary (incidental な L3 言及、文脈で書き換え)
 
 | Doc | 更新内容 |
-|---|---|
+| --- | --- |
 | `docs/cli-spec.md` | L3 関連の言及があれば「旧 L3 → L4 (former L3)」の文脈注釈または番号置換 |
 | `docs/l2-workflow.md` | L3 言及があれば同様に置換 |
 | `docs/issue-policy.md` | §2 スコープラベル表に「**新 L3 work は新規 label 追加せず、title prefix `[type] L3:` で識別**」「**`deferred` 外し = v0.3.0 着手対象**」の運用ルールを明記 |
@@ -278,25 +278,25 @@ L6: プライバシー (暫定)                   L6 (former L5): 自動編集
 ### 9.3 Testing 関連 (§8 baseline 規定の反映)
 
 | Doc | 更新内容 |
-|---|---|
+| --- | --- |
 | `docs/testing-guide.md` | 新節「v0.3.0 L3 work 用 regression baseline」を追加。OBS baseline + VTuber primary benchmark + ground truth 規定 + `tests/baselines/v0.3.0/` 配置規約 |
 
 ### 9.4 Specs / Plans (時系列文脈保存、原則不変)
 
 | 場所 | 方針 |
-|---|---|
+| --- | --- |
 | `docs/superpowers/specs/*.md` (既存 28 本) | **本文不変**。読み手は文書作成時点での L3 = 旧 L3 = 新 L4 と読む |
 | `docs/superpowers/plans/*.md` (既存) | 同上、本文不変 |
 
 ### 9.5 新規作成ファイル
 
 | ファイル | 内容 | 担当 |
-|---|---|---|
+| --- | --- | --- |
 | `docs/superpowers/specs/2026-05-18-v030-l3-redefinition-design.md` (本 file) | brainstorming 結果の design | 本セッション |
 | `docs/superpowers/plans/2026-05-18-v030-l3-redefinition-plan.md` | 本 spec を実行するための implementation plan | writing-plans skill |
-| `tests/baselines/v0.3.0/vtuber-primary-ground-truth.json` | Phase 1 child issue (iii) で生成 |
-| `tests/baselines/v0.3.0/<OBS-baseline-N>.json` | 同上 |
-| `scripts/compare-baseline.py` | Phase 1 child issue (iv) で実装 |
+| `tests/baselines/v0.3.0/vtuber-primary-ground-truth.json` | Phase 1 child issue で生成 | Phase 1 prep (ii) 着手者 |
+| `tests/baselines/v0.3.0/<OBS-baseline-N>.json` | 同上 | Phase 1 prep (ii) 着手者 |
+| `scripts/compare-baseline.py` | Phase 1 prep (iii) で実装 | Phase 1 prep (iii) 着手者 |
 
 ## 10. Out of scope (本 spec が扱わないもの)
 

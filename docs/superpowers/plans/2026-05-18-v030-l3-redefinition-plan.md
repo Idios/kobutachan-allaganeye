@@ -7,6 +7,7 @@
 **Architecture:** This plan implements the organizational reforms defined in [`docs/superpowers/specs/2026-05-18-v030-l3-redefinition-design.md`](../specs/2026-05-18-v030-l3-redefinition-design.md) Sections 4-9. The plan does **NOT** implement Pillar 3 (perf) or Pillar 1+2 (input adapt) technical work — those are explicitly deferred to child-issue-level brainstorms (spec §10 Out of scope). Tasks are grouped into 4 waves: (A) documentation updates, (B) issue reorganization via `gh` CLI, (C) baseline infrastructure (script + JSON), (D) Phase 1 prep child issue creation. Waves A/C/D produce code or doc deltas committed to git; Wave B produces GitHub state changes only (no commits).
 
 **Tech Stack:**
+
 - Markdown (docs editing — primary deliverable)
 - `gh` CLI 2.x (issue rename + label management; user is authenticated)
 - Python 3.11+ (compare-baseline.py with pytest TDD)
@@ -19,7 +20,7 @@
 ### Files modified
 
 | Path | Wave | Responsibility |
-|---|---|---|
+| --- | --- | --- |
 | `CLAUDE.md` | A1 | §段階的アーキテクチャ layer table (Primary spec table) |
 | `docs/design-overview.md` | A2 | §段階的アーキテクチャ ASCII art + L3 (new) 节 + 旧 L3 移動 |
 | `docs/release-process.md` | A3 | Layer-to-version mapping table + L6 拡張 section + バージョン別検証テーマ |
@@ -32,7 +33,7 @@
 ### Files created
 
 | Path | Wave | Responsibility |
-|---|---|---|
+| --- | --- | --- |
 | `tests/baselines/v0.3.0/vtuber-primary-ground-truth.json` | C1 | VTuber 5 試合 ground truth metadata (spec §8.6) |
 | `scripts/compare-baseline.py` | C2 | metadata.json bit-exact 比較スクリプト (excludes `detected_at`) |
 | `tests/scripts/test_compare_baseline.py` | C2 | pytest TDD tests for compare-baseline |
@@ -40,7 +41,7 @@
 ### Files NOT touched (explicit decisions)
 
 | Path | Reason |
-|---|---|
+| --- | --- |
 | `docs/l2-workflow.md` | "L3" mentions at L538-540 refer to memory tier (`docs/knowledge/*.md`), NOT architecture layer. Skip. |
 | `docs/ui-interaction-spec.md` | No actual L3 (architecture layer) reference. `L997` matched a TSX line number (`L399`), false positive. Skip. |
 | `docs/superpowers/specs/*.md` (28 existing) | Time-series context preservation (spec §4.1, §9.4). Body unchanged. |
@@ -51,7 +52,7 @@
 ## PR Organization (L2 workflow integration)
 
 | PR | Scope | Wave(s) | Title (draft) | base |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | PR 1 | v0.3.0 L3 redefinition doc realignment | Wave A | `docs(v0.3.0): L3 redefinition layer table + docs realignment` | `develop-0.3.0` |
 | PR 2 | Baseline preparation infrastructure | Wave C | `feat(tests): v0.3.0 baseline regression infrastructure (compare-baseline + ground truth)` | `develop-0.3.0` |
 
@@ -74,6 +75,7 @@ Wave B (GitHub issue operations) and Wave D (child issue creation) are **GitHub 
 ### Task A1: Update CLAUDE.md §段階的アーキテクチャ
 
 **Files:**
+
 - Modify: `CLAUDE.md` (§段階的アーキテクチャ table block)
 
 - [ ] **Step 1: Read existing layer table block in CLAUDE.md**
@@ -134,6 +136,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ### Task A2: Update docs/design-overview.md ASCII art + L3 (new) 节
 
 **Files:**
+
 - Modify: `docs/design-overview.md` (§段階的アーキテクチャ ASCII block, lines ~11-41; plus 旧 L3 references throughout if any)
 
 - [ ] **Step 1: Read existing ASCII layer block**
@@ -215,6 +218,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ### Task A3: Update docs/release-process.md layer/version mapping
 
 **Files:**
+
 - Modify: `docs/release-process.md` (lines ~7, 13-15, 24-32, 110-112)
 
 - [ ] **Step 1: Read sections to be modified**
@@ -222,6 +226,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 Read `docs/release-process.md` lines 1-40, then 100-120.
 
 Confirm:
+
 - L7: `### コアレイヤー（L1〜L5）` heading
 - L13-15: L3/L4/L5 rows in layer-to-version table
 - L24-32: 拡張レイヤー (L6) section
@@ -252,6 +257,7 @@ Edit `L2 完了後の拡張フェーズ。L3〜L5 の開発で新たな課題が
 → `L2 完了後の拡張フェーズ。L3 (new)〜L6 (former L5) の開発で新たな課題が判明した場合、スコープを見直す。`
 
 Edit the L6 row in 拡張レイヤー table:
+
 ```markdown
 | L7 (former L6): プライバシー・精密分割 | 0.7.0 | `v0.7.0` | TBD | プレイヤー名ぼかし (#63)、再エンコード分割 (#28) |
 ```
@@ -262,6 +268,7 @@ Edit `> L6 は暫定計画。L5 リリース時に deferred issue を全件レ�
 - [ ] **Step 4: Update §バージョン別検証テーマ (L110-112)**
 
 Edit:
+
 ```markdown
 | v0.3.0 | L3 (new): 配信形式対応 + 性能改善 | VTuber baseline 検知 ground truth 一致、export 並列で encoder 出力 visual spot check、Portable ZIP 起動回帰 |
 | v0.4.0 | L4 (former L3): メタデータ化 | キルログ OCR / 音声認識統合の精度ベンチ、metadata schema 拡張の互換性検証 |
@@ -296,6 +303,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ### Task A4: Remove README.md §ロードマップ
 
 **Files:**
+
 - Modify: `README.md` (lines 43-53)
 
 - [ ] **Step 1: Read README.md lines 40-57**
@@ -356,6 +364,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ### Task A5: Update docs/cli-spec.md L205 incidental L3 reference
 
 **Files:**
+
 - Modify: `docs/cli-spec.md` (line 205 area)
 
 - [ ] **Step 1: Read line 205 context**
@@ -399,6 +408,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ### Task A6: Update docs/reference-videos.md L3 OCR references
 
 **Files:**
+
 - Modify: `docs/reference-videos.md` (lines 11, 16)
 
 - [ ] **Step 1: Read lines 1-30**
@@ -406,6 +416,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 Read `docs/reference-videos.md` offset=1, limit=30.
 
 Confirm:
+
 - L11: `試合中の UI 要素（スコアボード、ミニマップ、キルログ等）の位置や見た目を把握するための資料。L1（暗転検知）・L3（OCR）の設計に直接役立つ。`
 - L16: `... L3 OCR 対象の理解に有用 |`
 
@@ -414,10 +425,12 @@ Confirm:
 Use Edit tool with `replace_all=false`:
 
 Edit 1:
+
 - old: `L1（暗転検知）・L3（OCR）の設計に直接役立つ`
 - new: `L1（暗転検知）・L3 (new) (VTuber UI 適応)・L4 (former L3, OCR) の設計に直接役立つ`
 
 Edit 2:
+
 - old: `L3 OCR 対象の理解に有用`
 - new: `L4 (former L3) OCR 対象の理解に有用`
 
@@ -444,6 +457,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ### Task A7: Add v0.3.0 運用ルール to docs/issue-policy.md
 
 **Files:**
+
 - Modify: `docs/issue-policy.md` (§2 スコープラベル, §8 deferred ラベルの運用)
 
 - [ ] **Step 1: Read §2 スコープラベル section**
@@ -454,7 +468,7 @@ Read `docs/issue-policy.md` offset=30, limit=30. Confirm §2 contains スコー�
 
 Use Edit tool. After the existing スコープラベル table (last row), insert:
 
-```markdown
+````markdown
 
 #### v0.3.0 新 L3 work の title prefix 規約
 
@@ -469,7 +483,8 @@ v0.3.0 (= 新 L3) work では **新規 layer label を追加しない**。issue 
 ```
 
 詳細は [`docs/superpowers/specs/2026-05-18-v030-l3-redefinition-design.md`](superpowers/specs/2026-05-18-v030-l3-redefinition-design.md) §5 を参照。
-```
+
+````
 
 - [ ] **Step 3: Read §8 deferred ラベルの運用 section**
 
@@ -515,6 +530,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ### Task A8: Add v0.3.0 baseline section to docs/testing-guide.md
 
 **Files:**
+
 - Modify: `docs/testing-guide.md` (insert new section after §baseline drift の判定, around L160)
 
 - [ ] **Step 1: Locate insertion point**
@@ -525,7 +541,7 @@ Read `docs/testing-guide.md` offset=155, limit=30. Confirm §baseline drift の�
 
 Use Edit tool. After the last paragraph of §baseline drift の判定 (typically the `### 事例` block or end of file), insert:
 
-```markdown
+````markdown
 
 ## v0.3.0 L3 work 用 regression baseline
 
@@ -536,14 +552,14 @@ v0.3.0 (= 新 L3) の Pillar 3 (perf 改善) と Phase 2b (scorebar ROI 適応) 
 ### baseline 動画セット (2 系統)
 
 | 系統 | 動画 | 役割 |
-|---|---|---|
+| --- | --- | --- |
 | OBS baseline | ALLAGANEYE_SAMPLE_VIDEO_DIR 配下の代表 OBS 録画 (Phase 1 child issue で N 本選定) | 正常検知可能な録画で改修後 regression なし保証 |
 | VTuber primary benchmark | `E:\videos\gyawa_vatos\2772549129-...mp4` (7.5 GB, gyawa 提供 2026-05-18) | Phase 2 input adapt の primary test target + Pillar 3 robustness 検証 |
 
 ### baseline 定義
 
 | 項目 | 内容 | 比較方法 |
-|---|---|---|
+| --- | --- | --- |
 | 検知結果 | `metadata.json` の `matches` (`index` / `start_time` / `end_time` / `duration` / `type` / `output_file`) + `gaps` | bit-exact (JSON canonical 比較)。`detected_at` は除外 |
 | 書出し結果 (split) | 試合 MP4 のファイルサイズ + SHA-256 hash | byte-exact (`-c copy` 無劣化のため決定論的) |
 | 書出し結果 (export GUI) | encoder/version 依存で byte-exact 不可 | ffprobe メタデータ (長さ・解像度・fps・codec) + 任意 1 フレーム抽出 spot check |
@@ -567,7 +583,8 @@ python scripts/compare-baseline.py tests/baselines/v0.3.0/<video>.metadata.json 
 ```
 
 詳細仕様は [`docs/superpowers/specs/2026-05-18-v030-l3-redefinition-design.md`](superpowers/specs/2026-05-18-v030-l3-redefinition-design.md) §8 を参照。
-```
+
+````
 
 - [ ] **Step 3: Verify markdown structure**
 
@@ -812,7 +829,7 @@ gh issue edit <#> --title "<new-title>"
 Per-issue title transformations:
 
 | # | Before (current) | After |
-|---|---|---|
+| --- | --- | --- |
 | 125 | `[task] L3: Tesseract OCR によるキルログ抽出` | `[task] L4 (former L3): Tesseract OCR によるキルログ抽出` |
 | 126 | `[task] L3: Whisper による音声認識・SE 検出` | `[task] L4 (former L3): Whisper による音声認識・SE 検出` |
 | 127 | `[task] L3: イベントデータ出力フォーマットの設計` | `[task] L4 (former L3): イベントデータ出力フォーマットの設計` |
@@ -846,7 +863,7 @@ Issues: #131, #132, #133, #134
 - [ ] **Step 1: Rename per table**
 
 | # | Before | After |
-|---|---|---|
+| --- | --- | --- |
 | 131 | `[task] [LLM拡張] LLM プラグインアーキテクチャの設計` | `[task] L5 (former L4) [LLM拡張]: LLM プラグインアーキテクチャの設計` |
 | 132 | `[task] [LLM拡張] 投稿価値の評価基準定義` | `[task] L5 (former L4) [LLM拡張]: 投稿価値の評価基準定義` |
 | 133 | `[risk] [LLM拡張] API コスト管理 — LLM 呼び出しの費用見積もり` | `[risk] L5 (former L4) [LLM拡張]: API コスト管理 — LLM 呼び出しの費用見積もり` |
@@ -880,7 +897,7 @@ Issues: #135, #136, #137
 - [ ] **Step 1: Rename per table**
 
 | # | Before | After |
-|---|---|---|
+| --- | --- | --- |
 | 135 | `[task] L5: ハイライトクリップ自動切り出し` | `[task] L6 (former L5): ハイライトクリップ自動切り出し` |
 | 136 | `[task] L5: サムネイル自動生成` | `[task] L6 (former L5): サムネイル自動生成` |
 | 137 | `[task] L5: 投稿提案の出力設計` | `[task] L6 (former L5): 投稿提案の出力設計` |
@@ -917,7 +934,7 @@ gh issue view 28 --json title
 The titles may not contain explicit "L6" — they're in 拡張レイヤー context per `docs/release-process.md`. Add L7 prefix:
 
 | # | Before | After |
-|---|---|---|
+| --- | --- | --- |
 | 63 | `[task] プレイヤー名ぼかし機能の検討・実装` | `[task] L7 (former L6): プレイヤー名ぼかし機能の検討・実装` |
 | 28 | `[task] --precise フラグ（再エンコード分割モード）の追加` | `[task] L7 (former L6): --precise フラグ（再エンコード分割モード）の追加` |
 
@@ -945,6 +962,7 @@ gh issue list --state open --search "former L" --json number,title | ConvertFrom
 ```
 
 Expected:
+
 - active set: 8 issues (Pillar 1+2: 3, Pillar 3: 5)
 - former-L set: 20 issues
 
@@ -955,6 +973,7 @@ Expected:
 ### Task C1: Create ground truth JSON for VTuber primary benchmark
 
 **Files:**
+
 - Create: `tests/baselines/v0.3.0/vtuber-primary-ground-truth.json`
 
 - [ ] **Step 1: Create tests/baselines/v0.3.0/ directory**
@@ -1031,6 +1050,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ### Task C2: Implement scripts/compare-baseline.py with TDD
 
 **Files:**
+
 - Create: `tests/scripts/__init__.py` (if not exists)
 - Create: `tests/scripts/test_compare_baseline.py`
 - Create: `scripts/compare-baseline.py`
