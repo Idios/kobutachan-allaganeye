@@ -1,0 +1,28 @@
+{
+  "schema_version": "1",
+  "label": "obs-20260127",
+  "source_file": "20260127/2026-01-27 21-59-15.mkv",
+  "source_size_bytes": 24581426044,
+  "source_dir_label": "20260127",
+  "generated_at": "2026-05-18T06:50:05Z",
+  "splits": [
+    {
+      "index": 1,
+      "output_file": "match_001.mp4",
+      "size_bytes": 8246136273,
+      "sha256": "c96eee9c0de861eed89c827519b34afdf5c2479f6c3d3f0a8b4337d4c096f266"
+    },
+    {
+      "index": 2,
+      "output_file": "match_002.mp4",
+      "size_bytes": 8343550064,
+      "sha256": "180606a715d4f368d3d3a7a1b7ef82d627985c03b0e193442ba6fc129bc52dc1"
+    },
+    {
+      "index": 3,
+      "output_file": "match_003.mp4",
+      "size_bytes": 7618118180,
+      "sha256": "85e7905c2757f58dc16923a05427d723767c404b91d2683aab572652b0f26b25"
+    }
+  ]
+}
