@@ -91,7 +91,7 @@ Metadata: <metadata.json path>
 
 エラーは stderr (19c 準拠)、その他 stdout メッセージは一切抑制される。
 
-## エラー表示仕様 (19a / 19b / 19c)
+## エラー表示仕様 (19a / 19b / 19c / 19d)
 
 詳細は [`docs/cli-spec.md` §「エラー表示 (#428 / #405 matrix v2)」](cli-spec.md) を参照。要約:
 
