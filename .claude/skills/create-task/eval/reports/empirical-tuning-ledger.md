@@ -36,5 +36,5 @@ Mizchi 規範 (2 consecutive clears) の strict 適用には 5 scenarios の再 
 ## Patterns
 
 | Pattern name | Example | General Fix Rule | Seen in |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | label-pre-check-missing | "--label 指定前に gh label list で存在確認していない" | scope/優先度 label を指定する前に gh label list で存在確認、未作成なら gh label create を先行 | iter 1 (A-UP1) |

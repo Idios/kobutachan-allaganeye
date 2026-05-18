@@ -6,7 +6,7 @@ protocol: <https://github.com/mizchi/skills/tree/main/empirical-prompt-tuning>
 ## Iter 1 結果 (5 scenarios fresh subagent 並列 dispatch、model: sonnet)
 
 | Scenario | Success | Accuracy | tool_uses | duration_ms | retries | weak phase | unclear points |
-|---|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- | --- |
 | A (bug 起票) | ○ | 100% (5/5 [critical] ○) | 14 | 94,774 | 0 | all OK | 1 (operational) |
 | B (patch task) | ○ | 100% (7/7 [critical] ○) | 21 | 134,866 | 0 | all OK | 0 |
 | C (deferred task) | ○ | 100% (7/7 [critical] ○) | 9 | 85,208 | 0 | all OK | 2 (workflow success: dup detected) |
@@ -39,11 +39,13 @@ protocol: <https://github.com/mizchi/skills/tree/main/empirical-prompt-tuning>
 mizchi 規範: 2 consecutive clears (new unclear=0 + accuracy +3pt 以下 + step ±10% + duration ±15%) で convergence。
 
 Iter 1 baseline 評価:
+
 - 新 unclear points: **1 件 (A-UP1)**。SKILL.md actionable
 - accuracy: 100% (改善余地ゼロ、+0pt)
 - step / duration variation: baseline のため前 iter 比較なし
 
 判定:
+
 - [critical] 全 ○ 達成 (= ship-ready bar 通過)
 - ただし 1 unclear point (A-UP1) が SKILL.md-actionable で残存
 - mizchi 厳密適用なら Iter 2 で A-UP1 fix → 再 dispatch で 0 unclear 確認 → Iter 3 で 2 連続 clear 確認

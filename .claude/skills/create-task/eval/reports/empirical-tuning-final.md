@@ -7,7 +7,7 @@ target: `.claude/skills/create-task/SKILL.md` (改修 PR の create-task skill)
 ## Summary
 
 | Iteration | Theme | Result |
-|---|---|---|
+| --- | --- | --- |
 | Iter 0 | description / body 整合性 static check | ○ description に preamble 必須化を明記 (commit 5330259) |
 | Iter 1 | baseline (5 scenarios A-E fresh subagent dispatch) | ○ 全 5 scenarios で [critical] 全 ○ (accuracy 100%) |
 | Iter 2 | A-UP1 (label 存在 pre-check 不在) fix | ○ 手順 4 に label 存在確認 step 追加 (commit 1be8a7f) |
@@ -22,7 +22,7 @@ target: `.claude/skills/create-task/SKILL.md` (改修 PR の create-task skill)
 mizchi 規範: baseline subagent dispatch 前に frontmatter description と body の主張 scope が一致しているかチェック。description-body gap があると subagent が description を信じて body 再解釈し false positive が出る。
 
 | 検証項目 | 状態 |
-|---|---|
+| --- | --- |
 | description に「全 prefix 対応」明記 | ○ (修正前から存在) |
 | description に「refactor/task/risk preamble 必須」明記 | × (修正前) → ○ (修正後、commit 5330259) |
 
@@ -31,7 +31,7 @@ mizchi 規範: baseline subagent dispatch 前に frontmatter description と bod
 ### Iter 1 (baseline、5 scenarios fresh subagent 並列 dispatch、model: sonnet)
 
 | Scenario | Success | Accuracy | tool_uses | duration_ms | retries | weak phase | new unclear (SKILL.md-actionable) |
-|---|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- | --- |
 | A (bug 起票) | ○ | 100% (5/5) | 14 | 94,774 | 0 | all OK | 1 (A-UP1) |
 | B (patch task) | ○ | 100% (7/7) | 21 | 134,866 | 0 | all OK | 0 |
 | C (deferred task) | ○ | 100% (7/7) | 9 | 85,208 | 0 | all OK | 0 |
@@ -85,7 +85,7 @@ mizchi 規範: baseline subagent dispatch 前に frontmatter description と bod
 **Mock**: 「`allaganeye detect` の暗転検知閾値を `--blackout-threshold` オプションで CLI から指定できるようにする task を起票」 — regular L1 CLI task, NOT deferred, NOT patch release. Tests "normal task" path with preamble.
 
 | Req | Result |
-|---|---|
+| --- | --- |
 | F-1 prefix [task] | ○ |
 | F-2 scope label l1-cli 付与 | partial (label 不在を subagent が検出 = Iter 2 fix 動作確認) |
 | F-3 期待値 section | ○ |
@@ -103,7 +103,7 @@ Accuracy = 6.5/7 = **92.86%**。Baseline 100% から 7.14 pt drop。
 ## Failure pattern ledger (final state)
 
 | Pattern name | Example | General Fix Rule | Seen in | Status |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | description-body-gap | "description は全 prefix 対応のみ、body には preamble 必須化が入っている" | skill 改修で body の semantic を変えた場合、frontmatter description にも変更点を反映する | Iter 0 | 解消 (commit 5330259) |
 | label-pre-check-missing | "--label 指定前に gh label list で存在確認していない" | scope/優先度 label を指定する前に gh label list で存在確認、未作成なら gh label create を先行 | Iter 1 (A-UP1) | 解消 (commit 1be8a7f、手順 4 拡張) |
 
