@@ -2583,6 +2583,78 @@ fn read_error_log_tail_inner(
     Ok(String::new())
 }
 
+/// #761 -- Encoder slot returned from Python `allaganeye encoder-slots`.
+///
+/// `encoder_kind` is the title-cased enum variant name (`"Nvenc"`,
+/// `"Libx264"`, `"Qsv"`, `"Amf"`) that the frontend renders as the
+/// encoder badge ("NVENC x3" etc.).
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct EncoderSlotJson {
+    pub slot_index: u32,
+    pub encoder_kind: String,
+    pub display_label: String,
+}
+
+/// #761 -- Request shape for `enumerate_h264_encoders`. Frontend supplies
+/// the metadata.json `system_info` slice.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnumerateEncodersRequest {
+    pub vendors: Vec<String>,
+    pub preference: Vec<String>,
+    pub gpu_models: Vec<String>,
+}
+
+/// #761 -- Spawn `python -m allaganeye encoder-slots --vendors=... \
+/// --preference=... --gpu-models=...` and parse the JSON array on stdout.
+///
+/// Codex review #2: enforce `PYTHONIOENCODING=utf-8:replace` to match
+/// `start_detect` cp932 mitigation pattern.
+#[tauri::command]
+async fn enumerate_h264_encoders(
+    app: tauri::AppHandle,
+    req: EnumerateEncodersRequest,
+) -> Result<Vec<EncoderSlotJson>, AppError> {
+    let cmd_spec = resolve_allaganeye_command(&app);
+    let mut cmd = tokio::process::Command::new(&cmd_spec.program);
+    for a in &cmd_spec.prefix_args {
+        cmd.arg(a);
+    }
+    cmd.arg("encoder-slots")
+        .arg("--vendors").arg(req.vendors.join(","))
+        .arg("--preference").arg(req.preference.join(","))
+        .arg("--gpu-models").arg(req.gpu_models.join(","))
+        .env("PYTHONIOENCODING", "utf-8:replace")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(cwd) = &cmd_spec.cwd {
+        cmd.current_dir(cwd);
+    }
+    process_util::apply_no_window(&mut cmd);
+
+    let output = cmd.output().await.map_err(|e| {
+        AppError::new("subprocess.spawn_failed", format!("encoder-slots spawn: {}", e))
+            .with_default_hint()
+    })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(AppError::new(
+            "subprocess.exit_failed",
+            format!("encoder-slots exit {}: {}", output.status, stderr),
+        )
+        .with_default_hint());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    serde_json::from_str::<Vec<EncoderSlotJson>>(&stdout).map_err(|e| {
+        AppError::new(
+            "subprocess.parse_failed",
+            format!("encoder-slots stdout parse: {} (raw={})", e, stdout),
+        )
+        .with_default_hint()
+    })
+}
+
 pub fn run() {
     // #614 -- Rotate stale panic logs (>7 days) and detect unclean shutdown
     // from the previous session, BEFORE the Tauri builder runs so the
@@ -2664,6 +2736,7 @@ pub fn run() {
     // arguments, so we build the handler list twice and pick at compile time.
     #[cfg(debug_assertions)]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        enumerate_h264_encoders,
         load_metadata,
         get_metadata_mtime,
         apply_changes,
@@ -2691,6 +2764,7 @@ pub fn run() {
     ]);
     #[cfg(not(debug_assertions))]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        enumerate_h264_encoders,
         load_metadata,
         get_metadata_mtime,
         apply_changes,
@@ -4597,5 +4671,28 @@ mod tests {
         assert_eq!(lines.len(), 500);
         assert_eq!(lines[0], "line 0");
         assert_eq!(lines[499], "line 499");
+    }
+}
+
+#[cfg(test)]
+mod enumerate_h264_encoders_tests {
+    use super::*;
+
+    #[test]
+    fn parses_python_json_array_output() {
+        let raw = r#"[
+            {"slot_index": 0, "encoder_kind": "Nvenc", "display_label": "NVENC #1"},
+            {"slot_index": 1, "encoder_kind": "Nvenc", "display_label": "NVENC #2"}
+        ]"#;
+        let parsed: Vec<EncoderSlotJson> = serde_json::from_str(raw).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].encoder_kind, "Nvenc");
+    }
+
+    #[test]
+    fn empty_array_is_valid() {
+        let raw = r#"[]"#;
+        let parsed: Vec<EncoderSlotJson> = serde_json::from_str(raw).unwrap();
+        assert!(parsed.is_empty());
     }
 }
