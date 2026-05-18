@@ -414,3 +414,24 @@ Error: ffmpeg failed
 ```text
 Error: ffmpeg failed
 ```
+
+### click-level option-parse error (#440 / PR #632)
+
+`split` / `debug-brightness` 等のサブコマンド entrypoint より前で発生する click-level option-parse error (例: `allaganeye -version` のような single-dash long-option typo) は AllaganEyeError 系の `-v` / `-q` 切替制御の対象外。`allaganeye/cli.py:498-574` の `_suggest_long_option_hint` / `main()` で捕捉し、click 標準メッセージに続けて `Did you mean --<name>?` ヒントを stderr に出力する。
+
+捕捉対象は `click.exceptions.NoSuchOption` / `UsageError` / `ClickException` (および `Abort`)。`NoSuchOption` 経路では `_suggest_long_option_hint` が argv を走査し、`-` 始まり (`--` でない) かつ長さ >= 2 の token を `--<name>` として既知の long option (typer app + 全 subcommand + `help`) と照合する。マッチしないときは hint を出さず、無関係な typo に誤導しないようにする。
+
+出力例 (`allaganeye -version`):
+
+```text
+Usage: allaganeye [OPTIONS] COMMAND [ARGS]...
+Try 'allaganeye --help' for help.
+
+Error: No such option: -v
+Did you mean --version?
+```
+
+- 出力先: stderr (click `exc.show()` + `click.echo(..., err=True)` の hint 行)
+- 終了コード: 2 (`NoSuchOption.exit_code` = click UsageError 系のデフォルト)
+- `-v` / `-q` の影響なし (click level / AllaganEyeError 経路と独立)
+- `debug-brightness` の click-level error も本経路を通る。`-v` / `-q` を持たないサブコマンドだが、click-level hint 自体はサブコマンド固有の `-v` 案内を含まない (既知 long option 集合に `--version` 等のグローバル option が含まれるのみ)
