@@ -6,7 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 
-# Import the module under test (scripts/compare-baseline.py — hyphenated name
+# Import the module under test (scripts/compare-baseline.py -- hyphenated name
 # requires importlib.util.spec_from_file_location)
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 _spec = importlib.util.spec_from_file_location(
@@ -18,7 +18,7 @@ _spec.loader.exec_module(compare_baseline)
 
 
 def test_normalize_projects_to_matches_and_gaps_only() -> None:
-    """normalize_metadata must project to spec §8.2 baseline surface (matches + gaps).
+    """normalize_metadata must project to spec section 8.2 baseline surface (matches + gaps).
 
     Excludes `detected_at` and all other non-baseline top-level fields
     (e.g., `source`, `detection_params`, `system_info`).
@@ -103,7 +103,7 @@ def test_main_returns_2_on_invalid_json(tmp_path: Path) -> None:
 def test_main_returns_0_when_only_non_baseline_fields_differ(tmp_path: Path) -> None:
     """main() must return 0 when only non-baseline top-level fields differ.
 
-    Spec §8.2 defines baseline as `matches` + `gaps`. Other top-level fields
+    Spec section 8.2 defines baseline as `matches` + `gaps`. Other top-level fields
     (e.g., `source`, `detection_params`, `system_info`) may evolve independently
     and must NOT trigger a regression alarm.
     """
