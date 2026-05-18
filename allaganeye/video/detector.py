@@ -100,79 +100,64 @@ def _sample_chunk_frames(
     expected_frames: int,
     is_tail_chunk: bool,
 ) -> dict[float, float]:
-    """Sample N-th frames from a stream by rational frame index (#576 S2.2).
+    """Sample frames from a pre-filtered stream (#576 select-filter path).
+
+    With ffmpeg-level ``select='not(mod(n,N))'`` filter, the stream emits
+    exactly one frame per ``chunk_timestamps`` entry (in order).  Emitted
+    frame K is mapped directly to ``chunk_timestamps[K]``.  The rational-fps
+    ``round((t-chunk_start) * fps_num / fps_den)`` math is handled at the
+    ffmpeg layer; Python just assigns frames by position.
 
     Args:
-        stream: A binary file-like object (``IO[bytes]``) that yields raw
+        stream: A binary file-like object (``IO[bytes]``) yielding raw
             grayscale frames (320x180 = ``_FRAME_SIZE`` bytes per frame)
-            when ``.read()`` is called.  In production this is the stdout
-            of a ``subprocess.Popen`` running ffmpeg with output seeking +
-            ``-fps_mode passthrough``.  Must not be ``None`` (i.e. the
-            Popen must have been created with ``stdout=PIPE``).
+            from a ``subprocess.Popen`` with ``select`` filter +
+            ``-fps_mode passthrough``.  Must not be ``None``.
         chunk_start: Wall-clock start time of the chunk (seconds).
-        chunk_timestamps: Pre-computed global grid timestamps that fall
-            inside this chunk (sorted ascending).  Each becomes a key in
-            the returned dict.
-        fps_num / fps_den: Source video frame rate as rational (e.g. 60/1
-            or 60000/1001 for NTSC 59.94).
-        expected_frames: ``round(chunk_duration * fps_num / fps_den)`` -- the
-            number of frames the decoder is expected to emit.  Used by
-            the dynamic VFR check (frame_count vs expected).
+            Kept in signature for API stability; not used for index math.
+        chunk_timestamps: Pre-computed global grid timestamps for this chunk
+            (sorted ascending).  Each becomes a key in the returned dict.
+            Emitted frame K -> chunk_timestamps[K].
+        fps_num / fps_den: Source video frame rate as rational.  Used only
+            for the slack computation in the dynamic VFR check.
+        expected_frames: ``len(chunk_timestamps)`` -- the number of frames
+            the ffmpeg ``select`` filter is expected to emit.
         is_tail_chunk: True when this chunk ends at (or within 1.0s of)
             the video duration.  Tail chunks may emit fewer frames than
-            expected due to decoder truncation; the VFR check downgrades
-            to WARN-only for them.
+            expected; the VFR check downgrades to WARN-only for them.
 
     Returns:
         ``{timestamp: brightness}`` mapping for every entry in
-        ``chunk_timestamps``.  Targets whose computed frame_idx exceeds
-        the emitted frame count get 255.0 (safe non-blackout fallback,
-        #214 contract preserved).
+        ``chunk_timestamps``.  Targets whose emitted frame was not received
+        get 255.0 (safe non-blackout fallback, #214 contract preserved).
 
     Raises:
         VideoProcessingError: when the chunk is non-tail and the emitted
         frame count deviates from ``expected_frames`` by more than
         ``max(expected_frames * 0.01, ceil(source_fps * 0.1))`` frames
-        (= 1% or 100ms equivalent, whichever larger).  This is the
-        dynamic VFR / decoder anomaly detection (#576 S2.2).
+        (dynamic VFR / decoder anomaly detection).
     """
     if stream is None:
         raise VideoProcessingError("ffmpeg stdout not available")
 
     source_fps = fps_num / fps_den
 
-    # Pre-compute target frame indices.  Group by index so multiple
-    # timestamps mapping to the same frame are handled in one pass.
-    # Memory budget: only one _FRAME_SIZE bytes chunk is held at a time
-    # (spec S2.2 -- subprocess.run(capture_output=True) is forbidden).
-    target_indices: dict[int, list[float]] = {}
-    for t in chunk_timestamps:
-        # rational integer arithmetic avoids float drift on NTSC 60000/1001
-        frame_idx = round((t - chunk_start) * fps_num / fps_den)
-        target_indices.setdefault(frame_idx, []).append(t)
-
     results: dict[float, float] = {}
     emit_count = 0
-    remaining = set(target_indices.keys())
 
+    # Memory budget: one _FRAME_SIZE bytes chunk at a time.
+    # Emitted frame K -> chunk_timestamps[K] (positional mapping).
     while True:
         raw = stream.read(_FRAME_SIZE)
         if len(raw) < _FRAME_SIZE:
             break
-        if emit_count in target_indices:
+        if emit_count < len(chunk_timestamps):
             frame = np.frombuffer(raw, dtype=np.uint8)
             brightness = float(frame.mean())
-            for t in target_indices[emit_count]:
-                results[t] = brightness
-            remaining.discard(emit_count)
+            results[chunk_timestamps[emit_count]] = brightness
         emit_count += 1
 
-    # Targets whose frame_idx was beyond what the decoder emitted: 255.0 fallback
-    for missing_idx in remaining:
-        for t in target_indices[missing_idx]:
-            results[t] = 255.0  # safe non-blackout fallback (#214)
-
-    # Defensive: fill any timestamp still missing (e.g. negative frame_idx)
+    # Targets whose frames were not emitted: 255.0 fallback (#214)
     for t in chunk_timestamps:
         if t not in results:
             results[t] = 255.0  # safe non-blackout fallback (#214)
@@ -459,6 +444,7 @@ def _decode_chunk_cpu(
         chunk_timestamps,
         chunk_start,
         chunk_end,
+        sample_interval,
         fps_num,
         fps_den,
         is_tail_chunk,
@@ -546,21 +532,31 @@ def _decode_chunk_cpu_v2(
     chunk_timestamps: list[float],
     chunk_start: float,
     chunk_end: float,
+    sample_interval: float,
     fps_num: int,
     fps_den: int,
     is_tail_chunk: bool,
 ) -> dict[float, float]:
-    """New path: output seek + -fps_mode passthrough + Python N-th sampling (#576).
+    """New path: output seek + select filter + -fps_mode passthrough (#576).
 
     ffmpeg invocation has ``-ss`` AFTER ``-i`` (output seeking) so the
-    first emitted frame's PTS equals ``chunk_start`` exactly.  fps filter
-    is removed; ``-fps_mode passthrough`` suppresses ffmpeg internal
-    frame-rate normalization.  All frames are streamed through stdout
-    and the Python side picks indices via
-    ``round((t - chunk_start) * fps_num / fps_den)``.
+    first emitted frame's PTS equals ``chunk_start`` exactly.  The
+    ``select='not(mod(n,N))'`` filter drops frames at the ffmpeg layer
+    (frame-index based, NOT PTS-based -- deterministic across versions)
+    before they reach the pipe, reducing pipe IO from ~28 GB to ~178 MB
+    per 2h video at 60fps + sample_interval=3.0s.
+
+    N = round(sample_interval * fps_num / fps_den).  For 60fps +
+    sample_interval=3.0, N=180 -> ffmpeg emits frame 0, 180, 360, ...
+    Python maps emitted frame K to chunk_timestamps[K] (positional).
     """
     chunk_duration = chunk_end - chunk_start
-    expected_frames = round(chunk_duration * fps_num / fps_den)
+    # #576: frame-index step for ffmpeg select filter.
+    # N selects every Nth decoded frame (deterministic, unlike PTS-based
+    # fps filter).  For 60fps + sample_interval=3.0, N=180.
+    n_step = max(1, round(sample_interval * fps_num / fps_den))
+    # expected_frames = number of selected frames = len(chunk_timestamps)
+    expected_frames = len(chunk_timestamps)
 
     cmd = [
         find_ffmpeg(),
@@ -575,7 +571,7 @@ def _decode_chunk_cpu_v2(
         "-fps_mode",
         "passthrough",
         "-vf",
-        f"scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
+        f"select='not(mod(n\\,{n_step}))',scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
         "-f",
         "rawvideo",
         "-pix_fmt",

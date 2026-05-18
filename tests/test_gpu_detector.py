@@ -837,10 +837,11 @@ class TestDecodeChunkV2Cmd:
         monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
 
         mock_proc = MagicMock()
-        # 10s @ 60fps = 600 frames
+        # chunk_timestamps has 2 entries -> select filter emits exactly 2 frames.
+        # expected_frames = len(chunk_timestamps) = 2; stream must match.
         from allaganeye.video.detector import _FRAME_SIZE as _FS
 
-        mock_proc.stdout = io.BytesIO(bytes([0] * _FS * 600))
+        mock_proc.stdout = io.BytesIO(bytes([0] * _FS * 2))
         mock_proc.stderr = io.BytesIO(b"")
         mock_proc.wait.return_value = 0
         mock_proc.returncode = 0
@@ -862,9 +863,12 @@ class TestDecodeChunkV2Cmd:
         cmd = mock_popen.call_args[0][0]
         # -ss after -i
         assert cmd.index("-ss") > cmd.index("-i")
-        # no fps= in -vf
+        # -vf must contain select filter (frame-index based, not PTS-based fps=)
         vf_value = cmd[cmd.index("-vf") + 1]
         assert "fps=" not in vf_value
+        assert "select='not(mod(n\\," in vf_value, (
+            f"select filter missing in GPU -vf, got {vf_value!r}"
+        )
         # -fps_mode passthrough explicit
         assert cmd[cmd.index("-fps_mode") + 1] == "passthrough"
         # nvidia decoder preserved
@@ -880,9 +884,10 @@ class TestDecodeChunkV2Cmd:
         monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
 
         mock_proc = MagicMock()
+        # chunk_timestamps has 2 entries -> select filter emits exactly 2 frames.
         from allaganeye.video.detector import _FRAME_SIZE as _FS
 
-        mock_proc.stdout = io.BytesIO(bytes([0] * _FS * 600))
+        mock_proc.stdout = io.BytesIO(bytes([0] * _FS * 2))
         mock_proc.stderr = io.BytesIO(b"")
         mock_proc.wait.return_value = 0
         mock_proc.returncode = 0
@@ -902,10 +907,13 @@ class TestDecodeChunkV2Cmd:
         )
 
         cmd = mock_popen.call_args[0][0]
-        # AMD: hwdownload prefix in -vf, plus output seek + passthrough + no fps=
+        # AMD: hwdownload prefix in -vf, select filter, output seek + passthrough
         vf_value = cmd[cmd.index("-vf") + 1]
         assert "hwdownload,format=nv12" in vf_value
         assert "fps=" not in vf_value
+        assert "select='not(mod(n\\," in vf_value, (
+            f"select filter missing in AMD GPU -vf, got {vf_value!r}"
+        )
         assert cmd.index("-ss") > cmd.index("-i")
         assert cmd[cmd.index("-fps_mode") + 1] == "passthrough"
 
@@ -917,9 +925,10 @@ class TestDecodeChunkV2Cmd:
         monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
 
         mock_proc = MagicMock()
+        # chunk_timestamps has 2 entries -> select filter emits exactly 2 frames.
         from allaganeye.video.detector import _FRAME_SIZE as _FS
 
-        mock_proc.stdout = io.BytesIO(bytes([0] * _FS * 600))
+        mock_proc.stdout = io.BytesIO(bytes([0] * _FS * 2))
         mock_proc.stderr = io.BytesIO(b"")
         mock_proc.wait.return_value = 0
         mock_proc.returncode = 0
@@ -939,10 +948,13 @@ class TestDecodeChunkV2Cmd:
         )
 
         cmd = mock_popen.call_args[0][0]
-        # Intel QSV: hwdownload prefix preserved, decoder = h264_qsv
+        # Intel QSV: hwdownload prefix preserved, select filter, decoder = h264_qsv
         vf_value = cmd[cmd.index("-vf") + 1]
         assert "hwdownload,format=nv12" in vf_value
         assert "fps=" not in vf_value
+        assert "select='not(mod(n\\," in vf_value, (
+            f"select filter missing in Intel QSV -vf, got {vf_value!r}"
+        )
         cv_idx = cmd.index("-c:v")
         assert cmd[cv_idx + 1] == "h264_qsv"
 

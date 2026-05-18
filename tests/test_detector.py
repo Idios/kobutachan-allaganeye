@@ -1733,13 +1733,12 @@ def _frames_bytes(brightnesses: list[int]) -> bytes:
 
 
 class TestSampleChunkFramesRationalMapping:
-    """rational fps での frame_idx mapping (#576 S2.2 / S7.1.2)."""
+    """ffmpeg select filter positional mapping: emitted frame K -> chunk_timestamps[K]."""
 
     def test_integer_60fps(self):
-        # source_fps=60/1, chunk_start=10.0, targets {10.0, 12.0, 14.0}
-        # frame_idx {0, 120, 240}
-        # expected_frames=241 (> max frame_idx=240); stream has 241 frames so
-        # VFR check sees diff=0 and does not fire.
+        # ffmpeg select filter emits 3 frames (one per chunk_timestamps entry).
+        # Emitted frame 0 -> 10.0, frame 1 -> 12.0, frame 2 -> 14.0.
+        # expected_frames=241 simulates VFR check with stream matching expected.
         stream = io.BytesIO(_frames_bytes([100] * 241))
         result = _sample_chunk_frames(
             stream=stream,
@@ -1747,15 +1746,15 @@ class TestSampleChunkFramesRationalMapping:
             chunk_timestamps=[10.0, 12.0, 14.0],
             fps_num=60,
             fps_den=1,
-            expected_frames=241,  # > max frame_idx (240), stream matches
+            expected_frames=241,  # stream emits 241 total, slack covers diff
             is_tail_chunk=False,
         )
         assert result == {10.0: 100.0, 12.0: 100.0, 14.0: 100.0}
 
     def test_ntsc_59_94(self):
-        # source_fps=60000/1001 (=59.94...), chunk_start=0.0, targets {0.0, 10.0}
-        # frame_idx {0, round(10 * 60000 / 1001)} = {0, 599}
-        # 599 + 1 = 600 frames minimum; stream has 600 frames (exact match)
+        # ffmpeg select filter emits 2 frames for 2 chunk_timestamps entries.
+        # Emitted frame 0 -> 0.0, frame 1 -> 10.0 (positional mapping).
+        # Stream has 600 total frames matching expected_frames (VFR check passes).
         stream = io.BytesIO(_frames_bytes([50] * 600))
         result = _sample_chunk_frames(
             stream=stream,
@@ -1772,19 +1771,21 @@ class TestSampleChunkFramesRationalMapping:
 
 
 class TestSampleChunkFramesFrameMissing:
-    """frame_idx >= 利用可能 frame 数 のとき 255.0 fallback (#576 S4.3 / S7.1.4)."""
+    """stream が chunk_timestamps より少ないフレームを emitted したとき 255.0 fallback (#576)."""
 
     def test_target_beyond_available_frames(self):
-        # 100 frames available, target wants frame_idx 200 -> fallback to 255.0
-        stream = io.BytesIO(_frames_bytes([0] * 100))
+        # Stream emits 1 frame, but chunk_timestamps has 2 entries.
+        # With positional mapping: emitted frame 0 -> chunk_timestamps[0]=0.0,
+        # chunk_timestamps[1]=10.0 gets no emitted frame -> 255.0 fallback.
+        stream = io.BytesIO(_frames_bytes([0] * 1))
         result = _sample_chunk_frames(
             stream=stream,
             chunk_start=0.0,
-            chunk_timestamps=[0.0, 10.0],  # 10.0 * 60 = 600 > 100
+            chunk_timestamps=[0.0, 10.0],
             fps_num=60,
             fps_den=1,
-            expected_frames=600,
-            is_tail_chunk=True,  # tail なので動的 VFR check も WARN のみ
+            expected_frames=2,  # expected = len(chunk_timestamps) = 2
+            is_tail_chunk=True,  # tail -- VFR diff=1 within slack, no raise
         )
         assert result[0.0] == 0.0
         assert result[10.0] == 255.0
@@ -1892,16 +1893,17 @@ class TestSampleChunkFramesStreamingMemory:
     """フレームを逐次処理し全フレームをバッファに蓄積しないこと (spec S2.2 memory budget fix)."""
 
     def test_does_not_buffer_all_frames(self):
-        """Only the needed frames produce brightness values; the rest are discarded."""
-        # 3600 frames at 60fps (= 60s chunk), but we only ask for frame 0 and frame 60
-        # (i.e. timestamps 0.0 and 1.0).  All other frames should be discarded.
+        """Only the first len(chunk_timestamps) frames are recorded; rest discarded.
+
+        With ffmpeg select filter, the stream emits exactly one frame per
+        chunk_timestamps entry in order.  Emitted frame 0 -> 0.0, frame 1 -> 1.0.
+        Frames beyond len(chunk_timestamps) are consumed but not stored.
+        """
         n_frames = 3600
-        # frame 0 brightness=10, frame 60 brightness=200, all others=128
+        # frame 0 brightness=10, frame 1 brightness=200, all others=128.
+        # With positional mapping: 0.0 -> frame 0 (10), 1.0 -> frame 1 (200).
         raw = (
-            bytes([10]) * _FS
-            + bytes([128]) * _FS * 59
-            + bytes([200]) * _FS
-            + bytes([128]) * _FS * (n_frames - 61)
+            bytes([10]) * _FS + bytes([200]) * _FS + bytes([128]) * _FS * (n_frames - 2)
         )
         stream = io.BytesIO(raw)
         result = _sample_chunk_frames(
@@ -1948,8 +1950,10 @@ class TestDecodeChunkCpuNewPath:
         monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
 
         mock_proc = MagicMock()
-        # 60s @ 60fps = 3600 frames; emit exactly that
-        mock_proc.stdout = _io.BytesIO(bytes([0] * _FRAME_SIZE * 3600))
+        # chunk_timestamps has 3 entries -> select filter emits exactly 3 frames.
+        # expected_frames = len(chunk_timestamps) = 3; stream must match to pass
+        # the VFR check.
+        mock_proc.stdout = _io.BytesIO(bytes([0] * _FRAME_SIZE * 3))
         mock_proc.stderr = _io.BytesIO(b"")
         mock_proc.wait.return_value = 0
         mock_proc.returncode = 0
@@ -1971,11 +1975,14 @@ class TestDecodeChunkCpuNewPath:
         i_idx = called_cmd.index("-i")
         ss_idx = called_cmd.index("-ss")
         assert ss_idx > i_idx, f"-ss must follow -i (output seek), got {called_cmd}"
-        # no fps= in -vf
+        # -vf must contain select filter (frame-index based, not PTS-based fps=)
         vf_idx = called_cmd.index("-vf")
         vf_value = called_cmd[vf_idx + 1]
         assert "fps=" not in vf_value, (
             f"fps filter must be removed, got -vf {vf_value!r}"
+        )
+        assert "select='not(mod(n\\," in vf_value, (
+            f"select filter missing in -vf, got {vf_value!r}"
         )
         # -fps_mode passthrough explicit
         assert "-fps_mode" in called_cmd, "missing -fps_mode passthrough"
@@ -2003,9 +2010,10 @@ class TestDecodeChunkCpuV2NonzeroReturncode:
         mock_tmpfile.return_value = fake_stderr_buf
 
         mock_proc = MagicMock()
-        # 3s @ 60fps = 180 frames; emit exactly that so _sample_chunk_frames succeeds,
-        # then returncode=1 triggers the 255.0 fallback path we are testing.
-        mock_proc.stdout = _io.BytesIO(bytes([128]) * _FRAME_SIZE * 180)
+        # With select filter, expected_frames = len(chunk_timestamps) = 3.
+        # Emit exactly 3 frames so _sample_chunk_frames VFR check passes;
+        # returncode=1 then triggers the 255.0 fallback path we are testing.
+        mock_proc.stdout = _io.BytesIO(bytes([128]) * _FRAME_SIZE * 3)
         mock_proc.wait.return_value = None
         mock_proc.returncode = 1
         mock_popen.return_value.__enter__.return_value = mock_proc

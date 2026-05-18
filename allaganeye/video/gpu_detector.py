@@ -392,6 +392,7 @@ def _decode_chunk(
         video_path,
         chunk_start,
         chunk_end,
+        sample_interval,
         codec,
         chunk_timestamps,
         vendor,
@@ -553,6 +554,7 @@ def _decode_chunk_v2(
     video_path: Path,
     chunk_start: float,
     chunk_end: float,
+    sample_interval: float,
     codec: str | None,
     chunk_timestamps: list[float] | None,
     vendor: str | None,
@@ -560,13 +562,21 @@ def _decode_chunk_v2(
     fps_den: int,
     is_tail_chunk: bool,
 ) -> tuple[dict[float, float], str]:
-    """New GPU chunk decode: output seek + Python N-th sampling (#576).
+    """New GPU chunk decode: output seek + select filter (#576).
 
     Vendor-specific hwaccel args / hwdownload prefix preserved from legacy.
-    Only the filter chain shape and seek position change.
+    The ``select='not(mod(n,N))'`` filter drops frames at the ffmpeg layer
+    (frame-index based, NOT PTS-based) before they reach the pipe, reducing
+    pipe IO from ~28 GB to ~178 MB per 2h video at 60fps + sample_interval=3.0s.
+    Python maps emitted frame K to chunk_timestamps[K] (positional).
     """
     chunk_duration = chunk_end - chunk_start
-    expected_frames = round(chunk_duration * fps_num / fps_den)
+    # #576: frame-index step for ffmpeg select filter.
+    # N selects every Nth decoded frame (deterministic, unlike PTS-based
+    # fps filter).  For 60fps + sample_interval=3.0, N=180.
+    n_step = max(1, round(sample_interval * fps_num / fps_den))
+    # expected_frames = number of selected frames = len(chunk_timestamps)
+    expected_frames = len(chunk_timestamps or [])
 
     # Resolve decoder / hwaccel for the selected vendor (same logic as legacy).
     decoder: str | None = None
@@ -605,7 +615,7 @@ def _decode_chunk_v2(
         "-fps_mode",
         "passthrough",
         "-vf",
-        f"{vf_prefix}scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
+        f"{vf_prefix}select='not(mod(n\\,{n_step}))',scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
         "-f",
         "rawvideo",
         "-pix_fmt",
