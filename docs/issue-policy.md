@@ -45,7 +45,21 @@
 
 > `l2c-guard` ラベルは 2026-04-21 廃止 (guard との program integration 構想を破棄、#454 参照)。関連 doc 整備は `l2-workflow` で追跡。
 
-L3 以降のレイヤーは着手時に適切なスコープラベルを新設する。
+L3 以降のレイヤーは着手時に運用ルールを判断する。v0.3.0 (新 L3) は新規ラベルを追加せず title prefix で識別する (詳細は下の §v0.3.0 新 L3 work の title prefix 規約 参照)。
+
+#### v0.3.0 新 L3 work の title prefix 規約
+
+v0.3.0 (= 新 L3) work では **新規 layer label を追加しない**。issue title prefix で識別する:
+
+```text
+[type] L3: <要約>                                    ← 新 L3 (VTuber+minimap+perf, v0.3.0 target)
+[type] L4 (former L3): <要約>                        ← 旧 L3 (OCR/Whisper), L4 にスライド
+[type] L5 (former L4): <要約>                        ← 旧 L4 (ML)
+[type] L6 (former L5): <要約>                        ← 旧 L5 (auto edit)
+[type] L7 (former L6): <要約>                        ← 旧 L6 (privacy)
+```
+
+詳細は [`docs/superpowers/specs/2026-05-18-v030-l3-redefinition-design.md`](superpowers/specs/2026-05-18-v030-l3-redefinition-design.md) §5 を参照。
 
 ### 優先度ラベル
 
@@ -310,6 +324,16 @@ issue 本文に未チェックの項目（`- [ ]`）が残っている場合、�
 - **見直しタイミング**: バージョンリリース（タグ打ち）時にユーザー (Idios) が全 `deferred` issue をレビューし、次バージョンのスコープに含めるか判断する
 - **スコープに含める場合**: `deferred` を外し、適切なスコープラベル + 優先度ラベルに変更する
 - **引き続き先送りの場合**: そのまま残す
+
+#### v0.3.0 期間中の運用 (2026-05-18 以降)
+
+**`deferred` ラベルを外す = v0.3.0 (新 L3) で必須対応** と扱う:
+
+- v0.3.0 着手対象に選定された issue: `deferred` を外す
+- それ以外の issue (旧 L3 = L4 へ繰り下げ、旧 L4-L6 等): `deferred` を維持
+- 検索: v0.3.0 アクティブセット = `is:open -label:deferred`
+
+詳細は [`docs/superpowers/specs/2026-05-18-v030-l3-redefinition-design.md`](superpowers/specs/2026-05-18-v030-l3-redefinition-design.md) §5.2 を参照。
 
 #### `l1-residual` + `deferred` dual-label 規約
 

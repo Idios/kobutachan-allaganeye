@@ -162,6 +162,47 @@ PR #575 / issue #560: ffmpeg 8.1 で `20260118` baseline の Match 8 end が 281
 
 PR #575 で取得した brightness 比較表 (per-frame probe vs chunked fps の対比) は [`docs/video-processing.md`](video-processing.md) §「ffmpeg fps filter の version 依存制約」に記録されている。
 
+## v0.3.0 L3 work 用 regression baseline
+
+v0.3.0 (= 新 L3) の Pillar 3 (perf 改善) と Phase 2b (scorebar ROI 適応) は既存 detect / export パイプラインを touch するため、改修前後で検知結果 + 書出し結果に regression がないことを **bit-exact baseline 比較** で保証する。
+
+§baseline drift の判定 (ffmpeg version 依存差異) とは別軸で、**同一 ffmpeg version での実装変更 regression** を見る。
+
+### baseline 動画セット (2 系統)
+
+| 系統 | 動画 | 役割 |
+| --- | --- | --- |
+| OBS baseline | ALLAGANEYE_SAMPLE_VIDEO_DIR 配下の代表 OBS 録画 (Phase 1 child issue で N 本選定) | 正常検知可能な録画で改修後 regression なし保証 |
+| VTuber primary benchmark | `E:\videos\gyawa_vatos\2772549129-...mp4` (7.5 GB, gyawa 提供 2026-05-18) | Phase 2 input adapt の primary test target + Pillar 3 robustness 検証 |
+
+### baseline 定義
+
+| 項目 | 内容 | 比較方法 |
+| --- | --- | --- |
+| 検知結果 | `metadata.json` の `matches` (`index` / `start_time` / `end_time` / `duration` / `type` / `output_file`) + `gaps` | bit-exact (JSON canonical 比較)。`detected_at` は除外 |
+| 書出し結果 (split) | 試合 MP4 のファイルサイズ + SHA-256 hash | byte-exact (`-c copy` 無劣化のため決定論的) |
+| 書出し結果 (export GUI) | encoder/version 依存で byte-exact 不可 | ffprobe メタデータ (長さ・解像度・fps・codec) + 任意 1 フレーム抽出 spot check |
+
+### 配置規約
+
+```text
+tests/baselines/v0.3.0/
+├── vtuber-primary-ground-truth.json     # VTuber 5 試合 ground truth (spec §8.6)
+├── <obs-baseline-N>.metadata.json       # 改修前 detect 結果 snapshot
+└── <obs-baseline-N>.split.json          # 改修前 split MP4 sizes + SHA-256
+```
+
+動画本体は repo に commit しない。metadata snapshot のみ commit。
+
+### 比較スクリプト
+
+```powershell
+python scripts/compare-baseline.py tests/baselines/v0.3.0/<video>.metadata.json output/<video>/metadata.json
+# exit 0 = match, exit 1 = diff detected
+```
+
+詳細仕様は [`docs/superpowers/specs/2026-05-18-v030-l3-redefinition-design.md`](superpowers/specs/2026-05-18-v030-l3-redefinition-design.md) §8 を参照。
+
 ## プラットフォーム固有の注意点
 
 ### Windows
