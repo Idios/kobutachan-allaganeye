@@ -11,6 +11,7 @@ from allaganeye.export.ffmpeg_runner import (
     run_export_attempt,
 )
 from allaganeye.export.nvenc_probe import probe_nvenc_engine_count
+from allaganeye.export.pool import ExportMatch, export_matches
 from allaganeye.export.schema import (
     ExportError,
     ExportResult,
@@ -21,11 +22,13 @@ from allaganeye.export.schema import (
 __all__ = [
     "EncoderSlot",
     "ExportError",
+    "ExportMatch",
     "ExportResult",
     "ExportSummary",
     "H264Encoder",
     "ProgressEvent",
     "enumerate_h264_encoders",
+    "export_matches",
     "is_gpu_encoder_failure",
     "probe_nvenc_engine_count",
     "run_export_attempt",
