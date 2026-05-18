@@ -75,14 +75,14 @@
 
 Use Grep tool:
 
-```
+```text
 pattern: L3
 path: CLAUDE.md
 output_mode: content
 -n: true
 ```
 
-```
+```text
 pattern: L3
 path: README.md
 output_mode: content
@@ -95,7 +95,7 @@ Expected: CLAUDE.md は §段階的アーキテクチャ の layer table のみ 
 
 Use Grep tool:
 
-```
+```text
 pattern: L3
 path: docs
 glob: *.md
@@ -112,21 +112,21 @@ head_limit: 200
 
 Use Grep tool:
 
-```
+```text
 pattern: L3
 path: .github
 output_mode: content
 -n: true
 ```
 
-```
+```text
 pattern: L3
 path: .claude/skills
 output_mode: content
 -n: true
 ```
 
-```
+```text
 pattern: L3
 path: .claude/hooks
 output_mode: content
@@ -147,7 +147,7 @@ Expected: `.github/` は 0 件 (smoke check 確認済)。`.claude/skills/` / `.c
 
 Memo 出力形式 (例):
 
-```
+```text
 | file:line | mention | classification | 根拠 |
 | --- | --- | --- | --- |
 | docs/issue-policy.md:48 | "L3 以降のレイヤーは…" | (i) | "新 L3" と次行で明示 |
@@ -173,7 +173,7 @@ memo 上に table を構造化して保存。Phase 1 triage と PR body 記載�
 
 Use Read tool:
 
-```
+```text
 file_path: CLAUDE.md
 limit: 50
 ```
@@ -182,7 +182,7 @@ limit: 50
 
 期待行例:
 
-```
+```text
 | L1: 試合分割 | … | リリース済み (…) |
 | L2: 配布・統合 | … | 開発中 |
 | L3 (new): 配信形式対応 + 性能改善 | … | 開発中 (v0.3.0 target) |
@@ -196,7 +196,7 @@ limit: 50
 
 Use Read tool:
 
-```
+```text
 file_path: docs/design-overview.md
 limit: 50
 ```
@@ -207,7 +207,7 @@ ASCII art (L1 〜 L7) の各 layer 行を memo に貼る。
 
 Use Read tool:
 
-```
+```text
 file_path: docs/release-process.md
 limit: 40
 ```
@@ -222,7 +222,7 @@ limit: 40
 
 Memo 出力形式 (例):
 
-```
+```text
 | layer | CLAUDE.md | design-overview.md | release-process.md | 一致? |
 | --- | --- | --- | --- | --- |
 | L3 | "L3 (new): 配信形式対応 + 性能改善" | "L3 (new): 配信形式対応 + 性能改善" | "L3 (new): 配信形式対応 + 性能改善" | YES |
@@ -241,7 +241,7 @@ Memo 出力形式 (例):
 
 Use Read tool:
 
-```
+```text
 file_path: docs/superpowers/specs/2026-05-18-v030-l3-redefinition-design.md
 offset: 260
 limit: 50
@@ -272,7 +272,7 @@ limit: 50
 
 Use Grep tool:
 
-```
+```text
 pattern: \[.+?\]\(.+?\)
 path: docs
 glob: *.md
@@ -302,7 +302,7 @@ multiline: false
 
 Use Grep tool:
 
-```
+```text
 pattern: §「[^」]+」
 path: docs
 glob: *.md
@@ -326,7 +326,7 @@ head_limit: 200
 
 Use Glob tool:
 
-```
+```text
 pattern: docs/*.md
 ```
 
@@ -338,7 +338,7 @@ pattern: docs/*.md
 
 Use Grep tool (各 file ごとに):
 
-```
+```text
 pattern: <filename>.md
 path: .
 output_mode: count
@@ -363,7 +363,7 @@ head_limit: 5
 
 Use Grep tool:
 
-```
+```text
 pattern: TBD|TODO: remove after|TODO\s*\(remove
 path: docs
 glob: *.md
@@ -374,7 +374,7 @@ head_limit: 100
 
 Use Grep tool:
 
-```
+```text
 pattern: \(暫定\)|\(計画中\)|\(未確定\)
 path: docs
 glob: *.md
@@ -389,7 +389,7 @@ head_limit: 100
 
 Use Grep tool:
 
-```
+```text
 pattern: v0\.1\.[0-9x]|v0\.2\.[0-9x]|v0\.2\.1
 path: docs
 glob: *.md
@@ -402,7 +402,7 @@ head_limit: 200
 
 memo に `stale-info findings` を記録。各 finding は以下形式:
 
-```
+```text
 | file:line | content | reason (なぜ stale か) |
 | --- | --- | --- |
 ```
@@ -419,7 +419,7 @@ memo に `stale-info findings` を記録。各 finding は以下形式:
 
 Use Grep tool:
 
-```
+```text
 pattern: DEPRECATED|TODO: remove after|XXX|FIXME: remove
 path: allaganeye
 glob: *.py
@@ -434,7 +434,7 @@ head_limit: 100
 
 Use Grep tool:
 
-```
+```text
 pattern: DEPRECATED|TODO: remove after|XXX|FIXME: remove
 path: gui/src
 output_mode: content
@@ -446,7 +446,7 @@ head_limit: 100
 
 Use Grep tool:
 
-```
+```text
 pattern: DEPRECATED|TODO: remove after|XXX|FIXME: remove
 path: gui/src-tauri/src
 output_mode: content
@@ -458,7 +458,7 @@ head_limit: 100
 
 Use Grep tool:
 
-```
+```text
 pattern: DEPRECATED|TODO: remove after|XXX|FIXME: remove
 path: scripts
 output_mode: content
@@ -466,7 +466,7 @@ output_mode: content
 head_limit: 50
 ```
 
-```
+```text
 pattern: DEPRECATED|TODO: remove after|XXX|FIXME: remove
 path: .github/scripts
 output_mode: content
@@ -478,7 +478,7 @@ head_limit: 50
 
 全 hit を以下形式で memo に保存:
 
-```
+```text
 | file:line | mention | comment 内容 | triage 候補 |
 | --- | --- | --- | --- |
 ```
@@ -513,7 +513,7 @@ Phase 0A / 0B-doc / 0B-src の memo を統合して 1 つの summary table に�
 
 各 finding に対して以下 3 択を提示:
 
-```
+```text
 Q: "<finding ID>: <要約> をどう処理するか?"
 Options:
   (a) 本 PR 内で修正 (推奨、scope 内) - description: "diff 数行程度の修正なら同 PR 内で消化"
@@ -527,7 +527,7 @@ Options:
 
 各 finding に最終決定 (a/b/c) を付記:
 
-```
+```text
 | ID | file:line | finding | triage | 備考 |
 | --- | --- | --- | --- | --- |
 | A1-001 | ... | ... | (a) | Wave D Task D-001 で fix |
@@ -550,7 +550,7 @@ Options:
 
 Use Read tool:
 
-```
+```text
 file_path: docs/output-spec.md
 offset: 115
 limit: 5
@@ -564,7 +564,7 @@ limit: 5
 
 Use Read tool:
 
-```
+```text
 file_path: docs/output-spec.md
 offset: 60
 limit: 5
@@ -576,7 +576,7 @@ row 12 で `(Filter drop 内訳 + unknown match 行)` の表現を確認。本 f
 
 Use Edit tool:
 
-```
+```text
 file_path: docs/output-spec.md
 old_string: - [#388](https://github.com/Idios/kobutachan-allaganeye/issues/388) (Filter drop 内訳)
 new_string: - [#388](https://github.com/Idios/kobutachan-allaganeye/issues/388) / [#433](https://github.com/Idios/kobutachan-allaganeye/issues/433) (Filter drop 内訳 + unknown match 行)
@@ -586,7 +586,7 @@ new_string: - [#388](https://github.com/Idios/kobutachan-allaganeye/issues/388) 
 
 Use Grep tool:
 
-```
+```text
 pattern: \(Filter drop 内訳\)$
 path: docs/output-spec.md
 output_mode: content
@@ -631,7 +631,7 @@ EOF
 
 Use Read tool:
 
-```
+```text
 file_path: allaganeye/cli.py
 offset: 495
 limit: 85
@@ -646,7 +646,7 @@ limit: 85
 
 memo 例:
 
-```
+```text
 - 捕捉対象: click.exceptions.NoSuchOption (single-dash long-option typo)
 - 出力例: `Error: no such option: -version. Did you mean --version?`
 - 出力先: stderr
@@ -668,7 +668,7 @@ memo 例:
 
 Use Read tool:
 
-```
+```text
 file_path: docs/cli-spec.md
 offset: 370
 limit: 60
@@ -704,7 +704,7 @@ Edit tool の `old_string` には現状の `-q` 出力例直後の context (例:
 
 Use Grep tool:
 
-```
+```text
 pattern: ^### click-level option-parse error
 path: docs/cli-spec.md
 output_mode: content
@@ -748,7 +748,7 @@ EOF
 
 Use Read tool:
 
-```
+```text
 file_path: docs/output-spec.md
 offset: 95
 limit: 15
@@ -756,7 +756,7 @@ limit: 15
 
 matrix v2 の 19a / 19b / 19c 行が以下のような形式であることを確認:
 
-```
+```text
 | `-v` (19a) | ... | ... |
 | default (19b) | ... | ... |
 | `-q` (19c) | ... | ... |
@@ -776,7 +776,7 @@ Use Edit tool で `-q (19c)` 行の直後に以下を挿入:
 
 Use Read tool:
 
-```
+```text
 file_path: docs/output-spec.md
 offset: 107
 limit: 30
@@ -824,7 +824,7 @@ EOF
 
 Use Grep tool:
 
-```
+```text
 pattern: ^## PR 作成ルール|^## Self-Test Report 規約
 path: docs/l2-workflow.md
 output_mode: content
@@ -837,7 +837,7 @@ output_mode: content
 
 Use Read tool:
 
-```
+```text
 file_path: .github/pull_request_template.md
 offset: 40
 limit: 60
@@ -847,7 +847,7 @@ Pre-flight 節 / Self-Test Report 節 / 実機検証 節の **convention 案内�
 
 - [ ] **Step 3: AskUserQuestion で Q / R 採否を確定**
 
-```
+```text
 Q: "#635 の対応方法を確定してください"
 Options:
   (Q) docs/l2-workflow.md §「PR 作成ルール」 から §「Self-Test Report 規約」 への cross-link 追加のみ (推奨、最小)
@@ -919,7 +919,7 @@ Expected: pass.
 
 Use Grep tool:
 
-```
+```text
 pattern: §「Self-Test Report 規約」
 path: docs/l2-workflow.md
 output_mode: content
@@ -975,7 +975,7 @@ Edit tool で具体的修正を適用 (e.g., L3 ambiguous な単独表記を `L3
 
 修正対象が「旧 L3 単独表記の置換」なら:
 
-```
+```text
 pattern: <旧表現>
 path: <修正 file>
 output_mode: content
@@ -1031,7 +1031,7 @@ violation 出たら該当 task に戻って修正。
 
 Use Grep tool:
 
-```
+```text
 pattern: ^L3[^ \(]|[^a-zA-Z]L3[^a-zA-Z\(]
 path: docs
 glob: *.md
@@ -1048,7 +1048,7 @@ Expected: 0 hits in active docs。
 
 Use Grep tool:
 
-```
+```text
 pattern: \(Filter drop 内訳[^+]
 path: docs
 output_mode: content
@@ -1117,7 +1117,7 @@ gh pr list --search "654" --state all
 
 spec §9 「Codex adversarial-review focus」 をコピー:
 
-```
+```text
 Verify (i) Iron Law 3 — only docs cleanup / L3 audit changes, no incidental refactors leaked. (ii) Phase 0A audit comprehensive — `L3` mentions in CLAUDE.md / README.md / docs/*.md (excluding superpowers/) / .github/**/*.md|yml / .claude/skills/**/*.md / .claude/hooks/** all classified (i/ii/iii). (iii) #634 doc example matches current `allaganeye/cli.py:498-574` `_suggest_long_option_hint` / `main()` behavior. (iv) #635 cross-link points to live section. (v) 0B findings triage decisions are reasonable (本 PR / 別 issue / skip).
 ```
 
