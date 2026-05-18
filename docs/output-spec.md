@@ -114,7 +114,7 @@ Metadata: <metadata.json path>
 - [#384](https://github.com/Idios/kobutachan-allaganeye/issues/384) (audio=frozen)
 - [#386](https://github.com/Idios/kobutachan-allaganeye/issues/386) (Scorebar elapsed)
 - [#387](https://github.com/Idios/kobutachan-allaganeye/issues/387) (Splitting elapsed)
-- [#388](https://github.com/Idios/kobutachan-allaganeye/issues/388) (Filter drop 内訳)
+- [#388](https://github.com/Idios/kobutachan-allaganeye/issues/388) / [#433](https://github.com/Idios/kobutachan-allaganeye/issues/433) (Filter drop 内訳 + unknown match 行)
 - [#389](https://github.com/Idios/kobutachan-allaganeye/issues/389) (workers=auto 解決値)
 - [#368](https://github.com/Idios/kobutachan-allaganeye/issues/368) / [#393](https://github.com/Idios/kobutachan-allaganeye/issues/393) (3 フェーズ進捗バー)
 - [#418](https://github.com/Idios/kobutachan-allaganeye/issues/418) (`-q` 厳密 silent: L/M/N 統合)
