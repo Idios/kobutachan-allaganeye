@@ -6,7 +6,7 @@
 - [GUI UI Architecture](ui-architecture.md) — L2a Tauri GUI の screen / phase state machine (Phase 2 基盤、Phase 3/4 で拡張)
 - [Tauri Commands リファレンス](tauri-commands.md) — `gui/src-tauri/src/lib.rs` 内の全 `#[tauri::command]` 一覧 (signature + 想定エラー + AppError code 推奨)
 - [metadata.json 仕様](metadata-spec.md) — CLI ↔ GUI の唯一の契約
-- [リリース戦略](release-strategy.md) — develop-x.x.x / main のブランチ運用
+- [リリース戦略](release-process.md) — develop-x.x.x / main のブランチ運用
 
 本 doc は上記を横断する「全体像」と「起動経路 (CUI/GUI dispatch)」を扱う。
 
@@ -172,7 +172,7 @@ sequenceDiagram
 - **CLI の新サブコマンド** → [cli-spec.md](cli-spec.md) 更新 / GUI が spawn するなら本 doc §2.3 にも行追加
 - **GUI の新画面** → [ui-architecture.md §screen 遷移図](ui-architecture.md) の Mermaid 図更新
 - **起動経路の変更** (例: `allaganeye-gui.exe` を別アーキでビルド) → 本 doc §2 の表を更新
-- **bundle 形態の変更** (例: MSIX 採用) → リリース戦略 ([release-strategy.md](release-strategy.md)) と本 doc §2.1 を同時更新
+- **bundle 形態の変更** (例: MSIX 採用) → リリース戦略 ([release-process.md](release-process.md)) と本 doc §2.1 を同時更新
 
 ## 6. 関連 issue / doc
 
@@ -184,4 +184,4 @@ sequenceDiagram
 - [#451](https://github.com/Idios/kobutachan-allaganeye/issues/451) / [#452](https://github.com/Idios/kobutachan-allaganeye/issues/452) L2b installer (bundle 形態 / 配布)
 - [#619](https://github.com/Idios/kobutachan-allaganeye/issues/619) Tauri Commands リファレンス新設 ([tauri-commands.md](tauri-commands.md))
 - [#668](https://github.com/Idios/kobutachan-allaganeye/issues/668) Portable ZIP integrity check (manifest + exit code 7)
-- [cli-spec.md](cli-spec.md) / [ui-architecture.md](ui-architecture.md) / [tauri-commands.md](tauri-commands.md) / [metadata-spec.md](metadata-spec.md) / [release-strategy.md](release-strategy.md)
+- [cli-spec.md](cli-spec.md) / [ui-architecture.md](ui-architecture.md) / [tauri-commands.md](tauri-commands.md) / [metadata-spec.md](metadata-spec.md) / [release-process.md](release-process.md)
