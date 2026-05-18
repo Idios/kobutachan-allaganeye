@@ -7,8 +7,9 @@ import subprocess
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from fractions import Fraction
 from pathlib import Path
-from typing import TypedDict
+from typing import IO, TypedDict
 
 import numpy as np
 
@@ -77,11 +78,11 @@ def _resolve_fps_rational(
     3. all None -> raise VideoProcessingError (caller should not call here
        without source_fps; legacy path is selected via env var separately)
     """
-    if fps_num and fps_den:
+    # probe.py returns (0, 0) on parse failure; we deliberately fall through
+    # to source_fps (float) for that case via the > 0 checks below.
+    if fps_num is not None and fps_den is not None and fps_num > 0 and fps_den > 0:
         return fps_num, fps_den
     if source_fps and source_fps > 0:
-        from fractions import Fraction
-
         frac = Fraction(source_fps).limit_denominator(10000)
         return frac.numerator, frac.denominator
     raise VideoProcessingError(
@@ -90,7 +91,7 @@ def _resolve_fps_rational(
 
 
 def _sample_chunk_frames(
-    stream,
+    stream: IO[bytes] | None,
     chunk_start: float,
     chunk_timestamps: list[float],
     fps_num: int,
@@ -101,11 +102,12 @@ def _sample_chunk_frames(
     """Sample N-th frames from a stream by rational frame index (#576 §2.2).
 
     Args:
-        stream: A binary file-like object that yields raw grayscale frames
-            (320x180 = ``_FRAME_SIZE`` bytes per frame) when ``.read()``
-            is called.  In production this is the stdout of a
-            ``subprocess.Popen`` running ffmpeg with output seeking +
-            ``-fps_mode passthrough``.
+        stream: A binary file-like object (``IO[bytes]``) that yields raw
+            grayscale frames (320x180 = ``_FRAME_SIZE`` bytes per frame)
+            when ``.read()`` is called.  In production this is the stdout
+            of a ``subprocess.Popen`` running ffmpeg with output seeking +
+            ``-fps_mode passthrough``.  Must not be ``None`` (i.e. the
+            Popen must have been created with ``stdout=PIPE``).
         chunk_start: Wall-clock start time of the chunk (seconds).
         chunk_timestamps: Pre-computed global grid timestamps that fall
             inside this chunk (sorted ascending).  Each becomes a key in
@@ -133,17 +135,47 @@ def _sample_chunk_frames(
         (= 1% or 100ms equivalent, whichever larger).  This is the
         dynamic VFR / decoder anomaly detection (#576 §2.2).
     """
+    if stream is None:
+        raise VideoProcessingError("ffmpeg stdout not available")
+
     source_fps = fps_num / fps_den
 
-    # Read all frames streaming; accumulate until stream exhausted.
-    frames: list[bytes] = []
-    while True:
-        chunk = stream.read(_FRAME_SIZE)
-        if len(chunk) < _FRAME_SIZE:
-            break
-        frames.append(chunk)
+    # Pre-compute target frame indices.  Group by index so multiple
+    # timestamps mapping to the same frame are handled in one pass.
+    # Memory budget: only one _FRAME_SIZE bytes chunk is held at a time
+    # (spec §2.2 -- subprocess.run(capture_output=True) is forbidden).
+    target_indices: dict[int, list[float]] = {}
+    for t in chunk_timestamps:
+        # rational integer arithmetic avoids float drift on NTSC 60000/1001
+        frame_idx = round((t - chunk_start) * fps_num / fps_den)
+        target_indices.setdefault(frame_idx, []).append(t)
 
-    emit_count = len(frames)
+    results: dict[float, float] = {}
+    emit_count = 0
+    remaining = set(target_indices.keys())
+
+    while True:
+        raw = stream.read(_FRAME_SIZE)
+        if len(raw) < _FRAME_SIZE:
+            break
+        if emit_count in target_indices:
+            frame = np.frombuffer(raw, dtype=np.uint8)
+            brightness = float(frame.mean())
+            for t in target_indices[emit_count]:
+                results[t] = brightness
+            remaining.discard(emit_count)
+        emit_count += 1
+
+    # Targets whose frame_idx was beyond what the decoder emitted: 255.0 fallback
+    for missing_idx in remaining:
+        for t in target_indices[missing_idx]:
+            results[t] = 255.0  # safe non-blackout fallback (#214)
+
+    # Defensive: fill any timestamp still missing (e.g. negative frame_idx)
+    for t in chunk_timestamps:
+        if t not in results:
+            results[t] = 255.0  # safe non-blackout fallback (#214)
+
     slack = max(int(expected_frames * 0.01), math.ceil(source_fps * 0.1))
     diff = abs(emit_count - expected_frames)
     if diff > slack:
@@ -160,16 +192,6 @@ def _sample_chunk_frames(
         else:
             raise VideoProcessingError(msg)
 
-    results: dict[float, float] = {}
-    for t in chunk_timestamps:
-        # rational frame_idx (integer arithmetic preferred, avoids float drift
-        # on NTSC 60000/1001 over long chunks).
-        frame_idx = round((t - chunk_start) * fps_num / fps_den)
-        if 0 <= frame_idx < emit_count:
-            frame = np.frombuffer(frames[frame_idx], dtype=np.uint8)
-            results[t] = float(frame.mean())
-        else:
-            results[t] = 255.0  # safe non-blackout fallback (#214)
     return results
 
 

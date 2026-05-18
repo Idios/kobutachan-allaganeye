@@ -1836,3 +1836,69 @@ class TestSampleChunkFramesFloatFallback:
         num, den = _resolve_fps_rational(None, None, 60.0)
         # Fraction(60.0).limit_denominator(10000) -> 60/1
         assert (num, den) == (60, 1)
+
+
+class TestResolveFpsRationalPositivityCheck:
+    """(0, 1) のような half-zero rational は float fallback を使うこと (#576 fix)."""
+
+    def test_zero_num_falls_back_to_float(self):
+        # fps_num=0 is invalid; must fall back to source_fps float
+        num, den = _resolve_fps_rational(0, 1, 60.0)
+        assert (num, den) == (60, 1)
+
+    def test_zero_den_falls_back_to_float(self):
+        # fps_den=0 would cause ZeroDivisionError if used; must fall back
+        num, den = _resolve_fps_rational(60, 0, 60.0)
+        assert (num, den) == (60, 1)
+
+    def test_zero_zero_sentinel_falls_back_to_float(self):
+        # probe.py parse failure sentinel (0, 0) -> fall through to float
+        num, den = _resolve_fps_rational(0, 0, 60000 / 1001)
+        assert (num, den) == (60000, 1001)
+
+    def test_valid_rational_used_directly(self):
+        # positive (num, den) must still be returned as-is
+        num, den = _resolve_fps_rational(60, 1, 30.0)
+        assert (num, den) == (60, 1)
+
+
+class TestSampleChunkFramesStreamingMemory:
+    """フレームを逐次処理し全フレームをバッファに蓄積しないこと (spec §2.2 memory budget fix)."""
+
+    def test_does_not_buffer_all_frames(self):
+        """Only the needed frames produce brightness values; the rest are discarded."""
+        # 3600 frames at 60fps (= 60s chunk), but we only ask for frame 0 and frame 60
+        # (i.e. timestamps 0.0 and 1.0).  All other frames should be discarded.
+        n_frames = 3600
+        # frame 0 brightness=10, frame 60 brightness=200, all others=128
+        raw = (
+            bytes([10]) * _FS
+            + bytes([128]) * _FS * 59
+            + bytes([200]) * _FS
+            + bytes([128]) * _FS * (n_frames - 61)
+        )
+        stream = io.BytesIO(raw)
+        result = _sample_chunk_frames(
+            stream=stream,
+            chunk_start=0.0,
+            chunk_timestamps=[0.0, 1.0],
+            fps_num=60,
+            fps_den=1,
+            expected_frames=n_frames,
+            is_tail_chunk=False,
+        )
+        assert result[0.0] == pytest.approx(10.0)
+        assert result[1.0] == pytest.approx(200.0)
+
+    def test_stream_none_raises(self):
+        """None stream raises VideoProcessingError immediately."""
+        with pytest.raises(VideoProcessingError, match="ffmpeg stdout not available"):
+            _sample_chunk_frames(
+                stream=None,
+                chunk_start=0.0,
+                chunk_timestamps=[0.0],
+                fps_num=60,
+                fps_den=1,
+                expected_frames=1,
+                is_tail_chunk=False,
+            )
