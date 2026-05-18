@@ -61,6 +61,7 @@ PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成 Pre
 2. `git log HEAD..origin/<base> --oneline` で取り込み未済 commit 列挙
 3. 取り込み未済 commit が当 PR の `git diff --name-only origin/<base>` と path 交差するなら取り込み + 検証再実行
 4. `gh pr list --search "<元issue#>" --state all` で並行 PR の有無確認
+(Refs #635) checkbox convention: PR 本文では Self-Test Report (machine-verified) のみ [x] 必須、本節のような Pre-flight / 実機検証は plain bullet `-` を使う
 -->
 
 - PR 作成時の base HEAD: `<sha>` (`git rev-parse origin/<base>` 出力)
@@ -74,6 +75,7 @@ PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成 Pre
 変更ファイル path に応じて該当する job のみ `[x]` 必須。
 該当しない場合は `[x]` + 「N/A: <理由>」 を付記 (例: `[x] cargo check — N/A: gui/src-tauri/ 変更なし`)。
 未実施の場合は `[ ]` のままで CI fail させる (Iron Law 6 違反として明示)。
+(Refs #635) checkbox convention: 本節は machine-verified 限定なので全件 [x]、未実施は [ ] のまま CI fail させて自覚を促す。詳細は docs/l2-workflow.md §「Self-Test Report 規約」
 -->
 
 - [ ] `ruff check .` (python-core 変更時)
@@ -101,6 +103,7 @@ PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成 Pre
 validate-checklist は plain bullet `-` を無視するため未実施でもブロックしない。
 ただし「未実施」を握り潰しせず明示する: 「PR 提出時点では未実施 / レビュー時に実機確認」と書く。
 該当 path 変更がない場合: 「- 該当なし (gpu_detector.py / audio/ / video/detector.py / gui/ 変更なし)」を 1 行書く。
+(Refs #635) checkbox convention: 本節は machine-unverifiable なので plain bullet `-` (checkbox なし)。CI validate-checklist は本節を無視
 -->
 
 - (例) `pytest -m slow_gpu tests/test_gpu_detector.py` — PR 提出時点で実施済 (Windows + NVIDIA RTX 4070, ffmpeg 8.1, NVENC 動作確認)

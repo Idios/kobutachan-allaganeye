@@ -60,7 +60,7 @@ allaganeye split --from-metadata <metadata.json> [OPTIONS]
 | `-v`, `--verbose` | `false` | 詳細出力（メタデータ詳細、gap 情報）。**`-q` と同時指定は排他エラー (exit 5) (#419)** |
 | `-q`, `--quiet` | `false` | 進捗出力を抑制（出力ファイル一覧のみ）。**`-v` と同時指定は排他エラー (exit 5) (#419)** |
 
-`--gpu` / `--no-gpu` のいずれも指定しない場合はコーデックから自動選択される (H.264/HEVC/AV1/VP9 → GPU、それ以外 → CPU) (#414)。ハードウェア要件は [`docs/video-processing.md`](video-processing.md) §「コーデック自動選択」を参照。
+`--gpu` / `--no-gpu` のいずれも指定しない場合はコーデックから自動選択される (H.264/HEVC/AV1/VP9 → GPU、それ以外 → CPU) (#414)。ハードウェア要件は [`docs/video-processing.md`](video-processing.md) §「コーデック + vendor 自動選択（#334, #414, #546, #550）」を参照。
 
 ### 出力
 
@@ -515,3 +515,24 @@ Error: ffmpeg failed
 ```text
 Error: ffmpeg failed
 ```
+
+### click-level option-parse error (#440 / PR #632)
+
+`split` / `debug-brightness` 等のサブコマンド entrypoint より前で発生する click-level option-parse error (例: `allaganeye -version` のような single-dash long-option typo) は AllaganEyeError 系の `-v` / `-q` 切替制御の対象外。`allaganeye/cli.py` の `_suggest_long_option_hint` (line 537-571) と `main()` (line 574-611) で捕捉し、click 標準メッセージに続けて `Did you mean --<name>?` ヒントを stderr に出力する。
+
+捕捉対象は `click.exceptions.NoSuchOption` / `UsageError` / `ClickException` (および `Abort`)。`NoSuchOption` 経路では `_suggest_long_option_hint` が argv を走査し、`-` 始まり (`--` でない) かつ長さ >= 2 の token を `--<name>` として既知の long option (typer app + 全 subcommand + `help`) と照合する。マッチしないときは hint を出さず、無関係な typo に誤導しないようにする。
+
+出力例 (`allaganeye -version`):
+
+```text
+Usage: allaganeye [OPTIONS] COMMAND [ARGS]...
+Try 'allaganeye --help' for help.
+
+Error: No such option: -v
+Did you mean --version?
+```
+
+- 出力先: stderr (click `exc.show()` + `click.echo(..., err=True)` の hint 行)
+- 終了コード: 2 (`NoSuchOption.exit_code` = click UsageError 系のデフォルト)
+- `-v` / `-q` の影響なし (click level / AllaganEyeError 経路と独立)
+- `debug-brightness` の click-level error も本経路を通る。`-v` / `-q` を持たないサブコマンドだが、click-level hint 自体はサブコマンド固有の `-v` 案内を含まない (既知 long option 集合に `--version` 等のグローバル option が含まれるのみ)

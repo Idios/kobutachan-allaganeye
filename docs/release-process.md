@@ -39,12 +39,12 @@ L2 完了後の拡張フェーズ。L3 (new)〜L6 (former L5) の開発で新た
 `develop-x.x.x` を日常の統合先とし、`main` はリリース時のみ更新する。L2 以降は単一ワークツリー + 作業ブランチで運用する (詳細は `docs/l2-workflow.md` 参照)。
 
 ```text
-main (リリースタグ時のみ更新、L1: v0.1.0-preview / v0.1.1 タグ済み)
- └── develop-0.2.0 (L2 開発の統合先)
-      ├── claude/l2-gui-*            ← GUI 関連作業 (#105 系)
-      ├── claude/l2-installer-*      ← インストーラ作業 (#106 系)
-      ├── claude/l2-workflow-*       ← L2-0 プロセス系 + guard 運用連携 doc
-      └── claude/l1-residual-*       ← L1 残課題消化 (#412-#440)
+main (リリースタグ時のみ更新、L1: v0.1.0-preview / v0.1.1 / L2: v0.2.0 / v0.2.1 タグ済み)
+ └── develop-0.3.0 (L3 開発の統合先)
+      ├── claude/l3-vtuber-*         ← VTuber 動画対応 (#480, parent #753)
+      ├── claude/l3-minimap-*        ← ミニマップ切抜き (#481, parent #753)
+      ├── claude/l3-perf-*           ← export 並列 (#761 #762) / detect 高速化 (#576) / GUI responsiveness (#670)
+      └── claude/<issue-N>-<slug>    ← 個別 issue 消化
 ```
 
 ### ルール
@@ -70,9 +70,9 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 - タグ形式: `v<major>.<minor>.<patch>`
 - コマンド: `git tag -a v0.x.0 -m "Release v0.x.0: <レイヤー名>"`
 - `git push origin v0.x.0` すると [`.github/workflows/release.yml`](../.github/workflows/release.yml) が発火し、Windows Portable ZIP (`allaganeye-v<version>-windows.zip`) のビルドと GitHub Release への成果物自動添付を実行する (#461)
-  - ビルドは [`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) で Python 3.11 embeddable + FFmpeg LGPLv3 shared (BtbN FFmpeg-Builds win64-lgpl-shared、libdav1d 入り) を同梱する
-    - ダウンロードする外部バイナリ (Python embed / get-pip.py / FFmpeg) はスクリプト内に **SHA256 ダイジェストをハードコードして検証** する。ダイジェスト不一致時はビルドを fail。FFmpeg は BtbN の **monthly snapshot タグ** (`autobuild-YYYY-MM-{28,29,30,31}-*`、~24 ヶ月 retention) と特定アセット名を URL にピン留めして再現性を確保する (`latest` タグは日次更新の可動ポインタなので不可、daily 中間タグは ~14 日で GC されるため不可。詳細 #705)
-      - `get-pip.py` は `pypa/get-pip` GitHub release tag (`26.1.1`) を指す versioned URL でピン留め ([#681](https://github.com/Idios/kobutachan-allaganeye/issues/681) / PR [#703](https://github.com/Idios/kobutachan-allaganeye/pull/703))。release tag は immutable per release のため SHA drift は構造的に発生しない。pip 新版 bundle 時の bump 手順は [`docs/developer-setup.md` §「get-pip.py のピン留め (#681)」](developer-setup.md) と [`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) の `$GetPipUrl` 周辺コメントを参照
+  - ビルドは [`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) で PyInstaller `--onedir` により Python interpreter + 全依存 (numpy / scipy / opencv-python-headless / typer / allaganeye 本体) を frozen application 化 (`scripts/installer/requirements-pyinstaller.txt` で pyinstaller / hooks-contrib version pin、CI `actions/setup-python@v5` で Python 3.11.9 pin) し、FFmpeg LGPLv3 shared (BtbN FFmpeg-Builds win64-lgpl-shared、libdav1d 入り) を同梱する (#752)
+    - ダウンロードする外部バイナリ (FFmpeg) はスクリプト内に **SHA256 ダイジェストをハードコードして検証** する。ダイジェスト不一致時はビルドを fail。FFmpeg は BtbN の **monthly snapshot タグ** (`autobuild-YYYY-MM-{28,29,30,31}-*`、~24 ヶ月 retention) と特定アセット名を URL にピン留めして再現性を確保する (`latest` タグは日次更新の可動ポインタなので不可、daily 中間タグは ~14 日で GC されるため不可。詳細 #705)
+      - PyInstaller bundle の bump 手順は [`docs/developer-setup.md` §「PyInstaller フローでの version pin (#752 以降)」](developer-setup.md) を参照
     - 外部バイナリを更新する場合はスクリプト先頭の `$FFmpegBuildTag` / `$FFmpegAssetName` / `$*Sha256` 定数を更新する
   - Release 本文は [`scripts/extract_release_notes.py`](../scripts/extract_release_notes.py) が CHANGELOG.md から該当バージョンのセクションを抽出する
   - タグ名と `pyproject.toml` の `version` が一致しない場合、workflow は fail する
