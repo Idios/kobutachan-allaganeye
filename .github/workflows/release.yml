@@ -161,6 +161,17 @@ jobs:
         working-directory: gui
         run: npm run tauri build
 
+      # #752 -- PyInstaller install. build-portable-zip.ps1 creates its own
+      # venv and installs PyInstaller there, so this base Python install is
+      # NOT strictly required for the build itself. We do it here anyway to
+      # surface version pin issues early (before the build script noise) and
+      # for actions/cache to amortize PyInstaller wheel downloads across runs.
+      - name: Install PyInstaller (#752)
+        shell: ${{ matrix.shell }}
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r scripts/installer/requirements-pyinstaller.txt
+
       - name: Build Portable ZIP (skip archive)
         shell: ${{ matrix.shell }}
         run: ./scripts/build-portable-zip.ps1 -Version '${{ needs.version-check.outputs.version }}' -SkipArchive
@@ -313,7 +324,12 @@ jobs:
           }
 
           # Remove a bundled file the manifest is known to track.
-          $victim = Join-Path $verifyDir 'lib\allaganeye\audio\refs\fanfare.npz'
+          # #752: lib/ ディレクトリは PyInstaller --onedir 化で廃止。frozen bundle
+          # entry point の allaganeye/allaganeye.exe を消すと bat → allaganeye.exe
+          # 起動自体が失敗するため、_internal/ 内の fanfare.npz を victim に変更
+          # (manifest 対象ファイル、削除しても bat → allaganeye.exe 起動は成功 →
+          # exit 7 を辿れる)。
+          $victim = Join-Path $verifyDir 'allaganeye\_internal\allaganeye\audio\refs\fanfare.npz'
           if (-not (Test-Path $victim)) {
             throw "expected bundled file not present (build broken?): $victim"
           }

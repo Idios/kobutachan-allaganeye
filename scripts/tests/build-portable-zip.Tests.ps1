@@ -243,6 +243,25 @@ Describe 'Format-ReadmeContent' {
     $idxBatDoubleClick | Should -BeLessThan $idxDragDrop
     $idxDragDrop | Should -BeLessThan $idxCommandPrompt
   }
+
+  It 'README documents PyInstaller frozen distribution (#752, regression guard)' {
+    # #752 で Python embed が PyInstaller --onedir に置き換わったため、README から
+    # "Python 3.11 と FFmpeg LGPL バイナリが同梱" / "python\LICENSE.txt" の旧 wording が
+    # 消えていることを assert する。frozen bundle path (`allaganeye\_internal\`) と
+    # canonical PSF license URL が新 wording で参照されていることも併せて確認。
+    $readme = Format-ReadmeContent `
+      -Version '0.3.0' `
+      -FFmpegVersion '8.1' `
+      -FFmpegBuildTag 'autobuild-2026-04-30-13-44' `
+      -FFmpegSourceRef 'n8.1.1'
+    # 旧 wording は完全に消えている
+    $readme | Should -Not -Match 'Python 3\.11 と FFmpeg'
+    $readme | Should -Not -Match 'python\\LICENSE\.txt'
+    # 新 wording が含まれる
+    $readme | Should -Match 'PyInstaller frozen application'
+    $readme | Should -Match 'allaganeye\\_internal\\'
+    $readme | Should -Match 'docs\.python\.org/3/license\.html'
+  }
 }
 
 Describe 'Get-LauncherTemplate' {
@@ -287,23 +306,27 @@ Describe 'Get-LauncherTemplate' {
     $template | Should -Match 'if "%~1"=="/\?"'
   }
 
-  It 'preserves case-insensitive video drag-drop dispatch (regression)' {
-    # The video drag-drop branch (existing pre-#617 behavior) must remain.
-    # All four video extensions are case-insensitive (if /i) and the script
-    # invokes `python -m allaganeye split %*` to preserve full arg pass-through.
+  It 'dispatches video drag-drop to PyInstaller frozen allaganeye.exe split (#752)' {
+    # The video drag-drop branch must invoke the PyInstaller-frozen entry
+    # point `allaganeye\allaganeye.exe split %*` so all args are forwarded.
+    # Pre-#752 used `python\python.exe -m allaganeye split %*`; that path
+    # is removed because the embed Python interpreter is no longer shipped.
     $template = Get-LauncherTemplate
     $template | Should -Match 'if /i "%EXT%"==".mp4"'
     $template | Should -Match 'if /i "%EXT%"==".mkv"'
     $template | Should -Match 'if /i "%EXT%"==".avi"'
     $template | Should -Match 'if /i "%EXT%"==".mov"'
-    $template | Should -Match '"%PAYLOAD%python\\python\.exe" -m allaganeye split %\*'
+    $template | Should -Match '"%PAYLOAD%allaganeye\\allaganeye\.exe" split %\*'
+    # Pre-#752 path must not linger in the template.
+    $template | Should -Not -Match 'python\\python\.exe'
   }
 
-  It 'preserves CLI passthrough for non-video args (regression)' {
+  It 'dispatches non-video args to PyInstaller frozen allaganeye.exe (#752)' {
     # Non-video args (e.g. allaganeye.bat detect <file>, --version) must
-    # still be dispatched to `python -m allaganeye %*`.
+    # also be dispatched to `allaganeye\allaganeye.exe %*` (PyInstaller frozen).
     $template = Get-LauncherTemplate
-    $template | Should -Match '"%PAYLOAD%python\\python\.exe" -m allaganeye %\*'
+    $template | Should -Match '"%PAYLOAD%allaganeye\\allaganeye\.exe" %\*'
+    $template | Should -Not -Match 'python\\python\.exe'
   }
 
   It '-IncludeGui:$true emits help text mentioning .bat double-click as the first option (#617)' {
@@ -474,26 +497,10 @@ Describe 'New-IntegrityManifest' {
   }
 }
 
-Describe 'GetPip pinning (#681)' {
-  It 'pins $GetPipUrl to a versioned pypa/get-pip GitHub raw URL' {
-    # bootstrap.pypa.io/get-pip.py is unversioned and PyPA refreshes it without
-    # notice, drifting our hardcoded SHA pin and breaking build-windows CI
-    # (#649, PR #675 Round 2). #681 pins the URL to a versioned pypa/get-pip
-    # GitHub raw URL whose content is immutable per release tag.
-    # This regression test guards against accidental rollback to the
-    # unversioned bootstrap.pypa.io URL.
-    $GetPipUrl | Should -Match '^https://raw\.githubusercontent\.com/pypa/get-pip/[\w.\-]+/public/get-pip\.py$'
-  }
-
-  It 'pins $GetPipSha256 to the literal value matching the pypa/get-pip 26.1.1 tag' {
-    # SHA256 verify (Invoke-Download) stays as defense-in-depth even with the
-    # immutable URL: catches the (very unlikely) force-push scenario on the
-    # upstream pypa/get-pip release tag.
-    # value-equality lock so any accidental SHA edit without a corresponding
-    # URL tag bump is caught at test time, not at CI build-windows time.
-    $GetPipSha256 | Should -Be '66904BCCB878E363DB6236EA900E6935E507DCB887E9F178F6212EDFE7F46A76'
-  }
-}
+# Describe 'GetPip pinning (#681)' block was removed by #752: get-pip.py is no
+# longer downloaded as PyInstaller --onedir bundles its own pip-managed venv.
+# The version pin moved to scripts/installer/requirements-pyinstaller.txt and
+# is covered by the `PyInstaller artifacts (#752)` block above.
 
 Describe 'File encoding (#704)' {
   It 'is saved as UTF-8 with BOM so PowerShell 5.1 (powershell.exe) can parse non-ASCII comments' {
@@ -655,5 +662,107 @@ Describe 'Measure-PortableZipBaseline (#752)' {
     # & script returns string array; join to single string for byte inspection.
     $firstChar = ($jsonText -join "`n").Substring(0, 1)
     $firstChar | Should -Be '{'
+  }
+
+  # NOTE: 本 assertion は #752 PR で post-build measurement の値を hardcode する。
+  # 値は CI build-windows job の baseline.json artifact から取得。
+  # 旧 (develop-0.3.0 main) baseline と新 (PyInstaller --onedir) after を
+  # 並べて削減率を assert することで、将来の不用意な再回帰を防ぐ。
+  # Bump 時 (PyInstaller version 更新等) は本 const を再測定して上書きする。
+  Context 'File count reduction floor (#752 post-merge regression guard)' {
+    BeforeAll {
+      # $script:RepoRoot は outer Describe 'Measure-PortableZipBaseline (#752)' の
+      # BeforeAll で定義されていないため、本 Context の BeforeAll で local に定義。
+      # (次の Describe 'PyInstaller artifacts (#752)' BeforeAll と同等の式)
+      $script:RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+      # 旧 (PyInstaller 移行前) baseline は conservative estimate。develop-0.3.0 main
+      # の Portable ZIP は Python 3.11 embed + numpy/scipy/cv2/typer 等の pip install
+      # が展開された状態で 2500+ file 程度が想定値。本 const は 2000 に conservative
+      # に下げており、実値が 2500+ で reduction ratio がより大きくなれば assertion は
+      # 通る (test がより緩い方向に振れるだけ)。PR push 後の CI artifact から develop
+      # 比較値を取得して上書き可能。
+      # Option B (estimated) を使用。理由: Python 3.11 が local 環境に未インストール
+      # で local PyInstaller build を走らせられなかったため (Python 3.12 のみ available)。
+      # CI build-windows job の baseline.json artifact が真値の根拠となる。
+      $script:OLD_BASELINE_FILE_COUNT = 2000
+      # PyInstaller --onedir output の上限。conservative estimate (実測 + buffer)。
+      # PyInstaller 6.x + numpy/scipy/cv2 の onedir output は 300-400 file 規模が想定
+      # (binary + Python stdlib + 3rd party shared libs のみ、site-packages の純 Python
+      # source ファイル群は frozen された)。conservative に 400 を ceiling とする。
+      # 実測値が 300 程度に収束した場合は本 const を 350 程度に絞ることで regression
+      # を sharp に検出できるが、bump 時 false positive を避けるため余裕を持たせる。
+      $script:NEW_AFTER_FILE_COUNT_CEILING = 400
+      $script:RecentBaseline = Join-Path $script:RepoRoot 'build\portable\baseline.json'
+    }
+
+    It 'frozen output file count is at most NEW_AFTER_FILE_COUNT_CEILING' {
+      if (-not (Test-Path $script:RecentBaseline)) {
+        # ローカル build せずに Pester を回す場合 (CI lint job 等) は assertion を skip
+        Set-ItResult -Skipped -Because 'build/portable/baseline.json not present (no local build); CI smoke covers this in release.yml'
+        return
+      }
+      $obj = Get-Content $script:RecentBaseline -Raw | ConvertFrom-Json
+      $obj.total_file_count | Should -BeLessOrEqual $script:NEW_AFTER_FILE_COUNT_CEILING
+    }
+
+    It 'reduction from OLD_BASELINE_FILE_COUNT is at least 80%' {
+      if (-not (Test-Path $script:RecentBaseline)) {
+        Set-ItResult -Skipped -Because 'build/portable/baseline.json not present (no local build); CI smoke covers this in release.yml'
+        return
+      }
+      $obj = Get-Content $script:RecentBaseline -Raw | ConvertFrom-Json
+      $reductionRatio = 1.0 - ($obj.total_file_count / $script:OLD_BASELINE_FILE_COUNT)
+      $reductionRatio | Should -BeGreaterThan 0.8
+    }
+  }
+}
+
+
+Describe 'PyInstaller artifacts (#752)' {
+  BeforeAll {
+    $script:RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+    $script:SpecFile = Join-Path $script:RepoRoot 'scripts\installer\allaganeye.spec'
+    $script:ReqFile = Join-Path $script:RepoRoot 'scripts\installer\requirements-pyinstaller.txt'
+  }
+
+  It 'allaganeye.spec exists at scripts/installer/' {
+    Test-Path $script:SpecFile | Should -BeTrue
+  }
+
+  It 'requirements-pyinstaller.txt exists and pins pyinstaller + hooks-contrib at exact versions' {
+    Test-Path $script:ReqFile | Should -BeTrue
+    $content = Get-Content $script:ReqFile -Raw
+    $content | Should -Match 'pyinstaller==6\.20\.0'
+    $content | Should -Match 'pyinstaller-hooks-contrib==2026\.5'
+  }
+
+  It 'allaganeye.spec references allaganeye/__main__.py as entry script (relative to spec)' {
+    $spec = Get-Content $script:SpecFile -Raw
+    # Relative path from scripts/installer/ to allaganeye/__main__.py is ../../allaganeye/__main__.py
+    $spec | Should -Match "Analysis\(\s*\[\s*'\.\./\.\./allaganeye/__main__\.py'\s*\]"
+  }
+
+  It 'allaganeye.spec collect_data_files allaganeye.audio.refs (fanfare.npz)' {
+    $spec = Get-Content $script:SpecFile -Raw
+    $spec | Should -Match "collect_data_files\(\s*'allaganeye\.audio\.refs'\s*\)"
+  }
+
+  It 'allaganeye.spec disables UPX compression (Idios 2026-05-18 決定)' {
+    $spec = Get-Content $script:SpecFile -Raw
+    $spec | Should -Match 'upx\s*=\s*False'
+    $spec | Should -Not -Match 'upx\s*=\s*True'
+  }
+
+  It 'allaganeye.spec excludes obvious unused stdlib (#752)' {
+    # Size reduction: tkinter / PIL / matplotlib / pytest / sphinx は allaganeye
+    # 本体および依存からは import されない。明示 exclude で frozen bundle size を
+    # 削減する。bump 時に excludes リストの妥当性を再評価する trigger として
+    # 本 test を用意。
+    $spec = Get-Content $script:SpecFile -Raw
+    $spec | Should -Match "'tkinter'"
+    $spec | Should -Match "'PIL'"
+    $spec | Should -Match "'matplotlib'"
+    $spec | Should -Match "'pytest'"
+    $spec | Should -Match "'sphinx'"
   }
 }

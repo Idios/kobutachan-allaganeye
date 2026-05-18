@@ -386,7 +386,7 @@ CI / Portable ZIP / 開発環境の 3 環境で Python と FFmpeg のバージ�
 | --- | --- |
 | `.github/workflows/ci.yml` | `python-version: "3.11.9"` |
 | `.github/workflows/release.yml` (3 ジョブ) | `python-version: '3.11.9'` |
-| `scripts/build-portable-zip.ps1` | `$PythonVersion = '3.11.9'` + `$PythonEmbedSha256` |
+| `scripts/build-portable-zip.ps1` | `python --version` sanity check (line ~448) で `^Python 3\.11\.` を期待 |
 | `docs/developer-setup.md` §1 | 「Python 3.11 (3.11.9 推奨)」の記載 |
 
 ### FFmpeg (現在 BtbN LGPLv3 n8.1 shared / `autobuild-2026-04-30-13-44` monthly snapshot に固定)
@@ -413,16 +413,19 @@ CI / Portable ZIP / 開発環境の 3 環境で Python と FFmpeg のバージ�
 | `docs/developer-setup.md` §1 | 「ffmpeg / ffprobe 8.1 LGPLv3 推奨」「推奨: ffmpeg 8.1 LGPLv3」の major version 記述 (系列変更時のみ) |
 | `docs/quickstart.md` §10 | 対応 FFmpeg ソース ref (commit hash の場合は `g<commit>`、release tag の場合は `n<version>`) の記述 (upstream ref 変更時) |
 
-### get-pip.py のピン留め (#681)
+### PyInstaller フローでの version pin (#752 以降)
 
-`$GetPipUrl` ([scripts/build-portable-zip.ps1](../scripts/build-portable-zip.ps1)) は `pypa/get-pip` GitHub release tag (例: `26.1.1`) を指す versioned URL でピン留めする (#681 / PR #703 で確定)。release tag の content は immutable per release のため、PyPA が `bootstrap.pypa.io/get-pip.py` を更新しても本 URL は影響を受けず SHA drift は構造的に発生しない。
+v0.3.0 で Portable ZIP の build フローを Python 3.11 embed + `pip install --target lib` から **PyInstaller `--onedir`** に切り替えた (`docs/superpowers/specs/2026-05-18-issue-752-portable-zip-file-count-reduction-design.md`)。これに伴い旧 `$PythonVersion` / `$PythonEmbedUrl` / `$PythonEmbedSha256` / `$GetPipUrl` / `$GetPipSha256` 定数は `scripts/build-portable-zip.ps1` から削除。
 
-pip 新版を bundle したい場合の bump 手順:
+bump 手順:
 
-1. <https://github.com/pypa/get-pip/tags> から新 tag を選択 (例: `26.1.2`)
-2. `scripts/build-portable-zip.ps1` の `$GetPipUrl` の tag 部分と `$GetPipSha256` を新値に更新
-3. `Invoke-Pester -Path scripts/tests/build-portable-zip.Tests.ps1` で regression test pass を確認
+1. `scripts/installer/requirements-pyinstaller.txt` の 2 行 (`pyinstaller==<ver>` + `pyinstaller-hooks-contrib==<ver>`) を更新
+2. Idios の手元で `pwsh -File scripts/build-portable-zip.ps1 -Version <test-ver> -SkipArchive` を実行、frozen output が生成されることを確認
+3. CI smoke-test (Lv A `--version` / Lv B `detect` 3s / integrity exit 7 fall-through) が PASS することを確認
+4. 実機 split (1:25 動画 1 本) で audio / video detection + GUI export が動作することを Idios 実機検証
 
-詳細は [`scripts/build-portable-zip.ps1:54-67`](../scripts/build-portable-zip.ps1) のコメントを参照。
+bump 頻度: 4-6 か月毎を目安、PyInstaller 公式 release notes を確認して numpy / scipy / cv2 hook の互換性を事前確認する。
 
-> **履歴**: 旧 URL `https://bootstrap.pypa.io/get-pip.py` (unversioned) は PyPA 側更新で SHA pin が drift する問題があり、[#649](https://github.com/Idios/kobutachan-allaganeye/issues/649) (PR [#651](https://github.com/Idios/kobutachan-allaganeye/pull/651)) と [PR #675](https://github.com/Idios/kobutachan-allaganeye/pull/675) Round 2 #7 で短期 fix を行った後、#681 / PR #703 で本構造に移行した。
+Python interpreter 自体は CI 上 `actions/setup-python@v5` で 3.11.9 に pin される (`.github/workflows/release.yml`)。local build では `python --version` (PATH 上の `python` コマンド) を build script 冒頭で sanity check する。
+
+> **履歴**: 旧 Python 3.11 embed + get-pip.py SHA pin フローは [#649](https://github.com/Idios/kobutachan-allaganeye/issues/649) (PR [#651](https://github.com/Idios/kobutachan-allaganeye/pull/651)) → [PR #675](https://github.com/Idios/kobutachan-allaganeye/pull/675) Round 2 #7 → [#681](https://github.com/Idios/kobutachan-allaganeye/issues/681) / PR [#703](https://github.com/Idios/kobutachan-allaganeye/pull/703) の versioned tag 化を経て [#752](https://github.com/Idios/kobutachan-allaganeye/issues/752) で PyInstaller `--onedir` に移行した。
