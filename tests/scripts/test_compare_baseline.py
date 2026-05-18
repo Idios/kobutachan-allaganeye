@@ -17,17 +17,24 @@ compare_baseline = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(compare_baseline)
 
 
-def test_normalize_drops_detected_at() -> None:
-    """normalize_metadata must remove `detected_at` field for comparability."""
+def test_normalize_projects_to_matches_and_gaps_only() -> None:
+    """normalize_metadata must project to spec §8.2 baseline surface (matches + gaps).
+
+    Excludes `detected_at` and all other non-baseline top-level fields
+    (e.g., `source`, `detection_params`, `system_info`).
+    """
     raw = {
         "source": "video.mp4",
+        "source_duration": 7303.0,
         "detected_at": "2026-05-18T12:34:56Z",
+        "detection_params": {"sample_interval": 2.0},
         "matches": [{"index": 1, "start_time": 0, "end_time": 100}],
+        "gaps": [{"start_time": 200, "end_time": 300}],
     }
     result = compare_baseline.normalize_metadata(raw)
-    assert "detected_at" not in result
-    assert result["source"] == "video.mp4"
+    assert set(result.keys()) == {"matches", "gaps"}
     assert result["matches"] == raw["matches"]
+    assert result["gaps"] == raw["gaps"]
 
 
 def test_main_returns_0_on_identical_metadata(tmp_path: Path) -> None:
@@ -91,3 +98,35 @@ def test_main_returns_2_on_invalid_json(tmp_path: Path) -> None:
 
     exit_code = compare_baseline.main([str(bad), str(good)])
     assert exit_code == 2
+
+
+def test_main_returns_0_when_only_non_baseline_fields_differ(tmp_path: Path) -> None:
+    """main() must return 0 when only non-baseline top-level fields differ.
+
+    Spec §8.2 defines baseline as `matches` + `gaps`. Other top-level fields
+    (e.g., `source`, `detection_params`, `system_info`) may evolve independently
+    and must NOT trigger a regression alarm.
+    """
+    baseline = {
+        "source": "video.mp4",
+        "source_duration": 7303.0,
+        "detection_params": {"sample_interval": 2.0},
+        "matches": [{"index": 1, "start_time": 0, "end_time": 100}],
+        "gaps": [],
+    }
+    current = {
+        "source": "video-renamed.mp4",  # source changed
+        "source_duration": 7303.5,  # source_duration changed
+        "detection_params": {"sample_interval": 1.5},  # detection_params changed
+        "system_info": {"gpu_vendor_used": "nvidia"},  # new field added
+        "matches": [{"index": 1, "start_time": 0, "end_time": 100}],  # SAME
+        "gaps": [],  # SAME
+    }
+
+    baseline_path = tmp_path / "baseline.json"
+    current_path = tmp_path / "current.json"
+    baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+    current_path.write_text(json.dumps(current), encoding="utf-8")
+
+    exit_code = compare_baseline.main([str(baseline_path), str(current_path)])
+    assert exit_code == 0

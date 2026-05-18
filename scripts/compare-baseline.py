@@ -22,10 +22,16 @@ from pathlib import Path
 
 
 def normalize_metadata(raw: dict) -> dict:
-    """Return a copy of `raw` with the time-varying `detected_at` field removed."""
-    result = dict(raw)
-    result.pop("detected_at", None)
-    return result
+    """Project `raw` to the baseline surface defined in spec §8.2.
+
+    Spec §8.2 defines the metadata baseline as `matches` + `gaps`, excluding
+    `detected_at` and all other top-level fields (which may evolve independently
+    of detection regression — e.g., `source`, `detection_params`, `system_info`).
+    """
+    return {
+        "matches": raw.get("matches", []),
+        "gaps": raw.get("gaps", []),
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -45,7 +51,9 @@ def main(argv: list[str] | None = None) -> int:
     norm_current = normalize_metadata(current)
 
     if norm_baseline == norm_current:
-        print("MATCH: baseline and current are bit-exact (excluding detected_at).")
+        print(
+            "MATCH: baseline and current are bit-exact on spec §8.2 surface (matches + gaps)."
+        )
         return 0
 
     print("DIFF: baseline and current differ.", file=sys.stderr)
