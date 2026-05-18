@@ -2060,3 +2060,45 @@ class TestDecodeChunkCpuLegacyRollback:
         vf_idx = called_cmd.index("-vf")
         vf_value = called_cmd[vf_idx + 1]
         assert "fps=" in vf_value, f"legacy must keep fps filter, got -vf {vf_value!r}"
+
+
+class TestDetectMatchBoundariesRationalFps:
+    """detect_match_boundaries が source_fps_num/den を _scan_cpu / scan_gpu
+    まで伝搬すること (#576 S2.3)."""
+
+    @patch("allaganeye.video.detector._scan_cpu")
+    def test_cpu_path_receives_rational_fps(self, mock_scan):
+        mock_scan.return_value = {0.0: 100.0, 1.0: 100.0}
+
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=1.0,
+            sample_interval=1.0,
+            min_match_duration=0.5,
+            use_gpu=False,
+            source_fps_num=60000,
+            source_fps_den=1001,
+        )
+
+        kwargs = mock_scan.call_args.kwargs
+        assert kwargs.get("source_fps_num") == 60000
+        assert kwargs.get("source_fps_den") == 1001
+
+    @patch("allaganeye.video.gpu_detector.scan_gpu")
+    @patch("allaganeye.video.detector._scan_cpu")
+    def test_gpu_path_receives_rational_fps(self, _mock_cpu, mock_gpu):
+        mock_gpu.return_value = {0.0: 100.0, 1.0: 100.0}
+
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=1.0,
+            sample_interval=1.0,
+            min_match_duration=0.5,
+            use_gpu=True,
+            source_fps_num=60,
+            source_fps_den=1,
+        )
+
+        kwargs = mock_gpu.call_args.kwargs
+        assert kwargs.get("source_fps_num") == 60
+        assert kwargs.get("source_fps_den") == 1

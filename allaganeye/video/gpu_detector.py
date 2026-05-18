@@ -367,12 +367,6 @@ def _decode_chunk(
 
     Falls back to legacy fps-filter path when env var
     ``ALLAGANEYE_DETECT_FPS_FILTER=1`` or no rational fps supplied.
-
-    NOTE: As of Task 5, ``detect_match_boundaries`` does not yet
-    propagate ``source_fps_*`` kwargs.  This is Task 6's job.  Until
-    Task 6 lands, production GPU calls reach this dispatcher with all
-    None fps args and fall through to ``_decode_chunk_legacy``. This is
-    deliberate scaffolding.
     """
     use_legacy = _use_legacy_fps_filter() or (
         source_fps_num is None and source_fps_den is None and source_fps is None

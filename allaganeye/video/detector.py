@@ -223,6 +223,12 @@ def detect_match_boundaries(
     chunk_dispatch_callback: Callable[[int], None] | None = None,
     gpu_vendor: str | None = None,
     brightness_callback: Callable[[dict[float, float]], None] | None = None,
+    # #576: rational fps propagation (preferred over float source_fps).
+    # Either pair (num+den) takes precedence; float source_fps is the
+    # backward-compatible fallback (Fraction.limit_denominator path).
+    source_fps_num: int | None = None,
+    source_fps_den: int | None = None,
+    source_fps: float | None = None,
 ) -> list[MatchBoundary]:
     """Detect match boundaries by finding blackout frames.
 
@@ -281,6 +287,9 @@ def detect_match_boundaries(
                 chunk_progress_callback=chunk_progress_callback,
                 chunk_dispatch_callback=chunk_dispatch_callback,
                 vendor=gpu_vendor,
+                source_fps_num=source_fps_num,
+                source_fps_den=source_fps_den,
+                source_fps=source_fps,
             )
             resolved_mode = "GPU"
         except VideoProcessingError:
@@ -292,6 +301,9 @@ def detect_match_boundaries(
                 blackout_threshold,
                 workers,
                 progress_callback,
+                source_fps_num=source_fps_num,
+                source_fps_den=source_fps_den,
+                source_fps=source_fps,
             )
             resolved_mode = "CPU (GPU fallback)"
     else:
@@ -302,6 +314,9 @@ def detect_match_boundaries(
             blackout_threshold,
             workers,
             progress_callback,
+            source_fps_num=source_fps_num,
+            source_fps_den=source_fps_den,
+            source_fps=source_fps,
         )
     pass1_elapsed = time.monotonic() - pass1_start
 
@@ -417,12 +432,6 @@ def _decode_chunk_cpu(
     ``ALLAGANEYE_DETECT_FPS_FILTER=1`` is set or when rational fps cannot
     be resolved.  Otherwise uses the new output-seek + Python N-th
     sampling path (#576).
-
-    NOTE: As of Task 4, ``detect_match_boundaries`` does not yet
-    propagate ``source_fps_*`` kwargs.  This is Task 6's job.  Until
-    Task 6 lands, production calls reach this dispatcher with all None
-    fps args and fall through to ``_decode_chunk_cpu_legacy``.  This is
-    deliberate scaffolding.
     """
     if not chunk_timestamps:
         return {}
