@@ -69,6 +69,7 @@ class SystemInfo(TypedDict):
     gpu_vendors_available: list[str]
     gpu_vendor_used: str | None
     vendor_preference: list[str]
+    gpu: NotRequired[list[str]]
 
 
 class BrightnessSamples(TypedDict):
