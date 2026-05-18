@@ -74,6 +74,7 @@
 ### Task 1: schema.py — wire 用 dataclass
 
 **Files:**
+
 - Create: `allaganeye/export/__init__.py`
 - Create: `allaganeye/export/schema.py`
 - Test: `tests/test_export_schema.py`
@@ -344,6 +345,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 2: encoder.py — H264Encoder enum + EncoderSlot + select_h264_encoder
 
 **Files:**
+
 - Create: `allaganeye/export/encoder.py`
 - Modify: `allaganeye/export/__init__.py`
 - Test: `tests/test_export_encoder.py`
@@ -599,6 +601,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 3: nvenc_probe.py — SKU table + env override + multi-GPU min
 
 **Files:**
+
 - Create: `allaganeye/export/nvenc_probe.py`
 - Modify: `allaganeye/export/__init__.py`
 - Test: `tests/test_export_nvenc_probe.py`
@@ -855,6 +858,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 4: encoder.py — enumerate_h264_encoders integration
 
 **Files:**
+
 - Modify: `allaganeye/export/encoder.py`
 - Modify: `allaganeye/export/__init__.py`
 - Modify: `tests/test_export_encoder.py`
@@ -1010,6 +1014,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 5: wire.py — WireWriter (stdout JSON Lines + threading.Lock)
 
 **Files:**
+
 - Create: `allaganeye/export/wire.py`
 - Test: extend `tests/test_export_schema.py`
 
@@ -1143,6 +1148,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 6: ffmpeg_runner.py — single-attempt ffmpeg + libx264 fallback retry
 
 **Files:**
+
 - Create: `allaganeye/export/ffmpeg_runner.py`
 - Modify: `allaganeye/export/__init__.py`
 - Test: `tests/test_export_ffmpeg_runner.py`
@@ -1640,6 +1646,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 7: pool.py — ThreadPoolExecutor orchestrator + cancel semantics
 
 **Files:**
+
 - Create: `allaganeye/export/pool.py`
 - Modify: `allaganeye/export/__init__.py`
 - Test: `tests/test_export_pool.py`
@@ -2052,6 +2059,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 8: commands/encoder_slots.py — Typer hidden command (GUI subprocess用)
 
 **Files:**
+
 - Create: `allaganeye/commands/encoder_slots.py`
 - Test: `tests/test_encoder_slots_cli.py`
 
@@ -2222,6 +2230,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 9: commands/export.py — Typer `export` command (stdin / file / --json)
 
 **Files:**
+
 - Create: `allaganeye/commands/export.py`
 - Test: `tests/test_export_cli.py` (基本検証 + slow integration は Task 11 で)
 
@@ -2598,6 +2607,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 10: cli.py — register export + encoder-slots commands
 
 **Files:**
+
 - Modify: `allaganeye/cli.py`
 
 - [ ] **Step 1: Read existing cli.py registration site**
@@ -2649,6 +2659,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 11: tests/test_export_wire_protocol.py — slow integration test (Codex review #5)
 
 **Files:**
+
 - Create: `tests/test_export_wire_protocol.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -2824,6 +2835,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 12: lib.rs — delete legacy export code
 
 **Files:**
+
 - Modify: `gui/src-tauri/src/lib.rs`
 
 This task removes the Rust-side export logic that moves to Python. The
@@ -2833,6 +2845,7 @@ new Tauri commands so the new code can be written without name clashes.
 - [ ] **Step 1: Locate each item via grep**
 
 Run:
+
 ```bash
 grep -n "fn run_ffmpeg_export_attempt\|fn export_match\|fn select_h264_encoder\|fn is_gpu_encoder_failure\|fn validate_export_request\|fn ffmpeg_args_for_export\|fn select_h264_encoder_for_export\|fn build_export_result\|enum H264Encoder\|enum ExportCodec\|struct ExportResult\|struct ExportProgress\|struct EncoderInfo" gui/src-tauri/src/lib.rs
 ```
@@ -2842,6 +2855,7 @@ Confirm line ranges roughly match spec §7.1.
 - [ ] **Step 2: Delete the legacy items**
 
 Open `gui/src-tauri/src/lib.rs` and delete (in order, top to bottom):
+
 - `enum ExportCodec` (~1580-1586)
 - `enum H264Encoder` + impl (~1597-1653)
 - `fn select_h264_encoder` (~1666-1678)
@@ -2858,9 +2872,11 @@ Open `gui/src-tauri/src/lib.rs` and delete (in order, top to bottom):
 - `fn select_h264_encoder_for_export` Tauri command (~2397-2408)
 
 Remove the corresponding entries from `tauri::generate_handler!` at **lib.rs:3303** AND **lib.rs:3332** (2 occurrences, Codex review #1):
+
 - Remove `export_match,` and `select_h264_encoder_for_export,`
 
 Delete the legacy unit tests inside `mod tests {}` that referenced the removed items:
+
 - Any `select_h264_encoder_*` test
 - Any `is_gpu_encoder_failure_*` test
 - Any `validate_export_request_*` test
@@ -2895,6 +2911,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 13: lib.rs — add `enumerate_h264_encoders` Tauri command
 
 **Files:**
+
 - Modify: `gui/src-tauri/src/lib.rs`
 
 - [ ] **Step 1: Write a Rust unit test first**
@@ -3029,6 +3046,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 14: lib.rs — add `start_export` Tauri command (Python subprocess with stdin)
 
 **Files:**
+
 - Modify: `gui/src-tauri/src/lib.rs`
 
 - [ ] **Step 1: Write a Rust unit test for the wire-event parser first**
@@ -3364,12 +3382,14 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 15: ExportScreen.tsx — refactor handleStartExport + encoder slot display
 
 **Files:**
+
 - Modify: `gui/src/screens/ExportScreen.tsx`
 - Modify: `gui/src/screens/__tests__/ExportScreen.test.tsx` (or create if absent)
 
 - [ ] **Step 1: Read current state**
 
 Run: `head -200 gui/src/screens/ExportScreen.tsx` and note:
+
 - Existing `EncoderInfo` interface (lines 56-60) → replace with `EncoderSlot`
 - Existing `encoderInfo` state via `select_h264_encoder_for_export` → switch to `enumerate_h264_encoders[0]` style with multi-slot
 - handleStartExport for-loop (lines 354-398) → 1 invoke
@@ -3583,6 +3603,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 16: docs/cli-spec.md — add `export` section
 
 **Files:**
+
 - Modify: `docs/cli-spec.md`
 
 - [ ] **Step 1: Read current cli-spec.md TOC and pick the section location**
@@ -3638,6 +3659,8 @@ echo '<metadata-json>' | allaganeye export --stdin [...]
 | 1 | 1 件以上 failure (partial failure 含む) |
 | 2 | 入力 error (metadata 不正、output dir 不存在 等) |
 | 130 | SIGINT (Ctrl+C) で cancel |
+
+<!-- markdownlint-disable-next-line MD040 -->
 ```
 
 - [ ] **Step 3: Run markdownlint**
@@ -3659,6 +3682,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 17: docs/output-spec.md — add export output matrix entries
 
 **Files:**
+
 - Modify: `docs/output-spec.md`
 
 - [ ] **Step 1: Read current output-spec.md**
@@ -3690,6 +3714,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 18: gh issue edit #761 — extend acceptance criteria
 
 **Files:**
+
 - (GitHub state change, no local file)
 
 - [ ] **Step 1: Fetch current issue body**
@@ -3723,6 +3748,7 @@ gh issue edit 761 --body-file /tmp/issue761.md
 ```bash
 gh issue view 761 | grep -A 2 "CLI:"
 ```
+
 Expected: new entries visible.
 
 (No commit — pure GitHub state change.)
@@ -3732,6 +3758,7 @@ Expected: new entries visible.
 ### Task 19: Run full test suite + lint + typecheck (Python + Rust + GUI)
 
 **Files:**
+
 - (No file changes, verification only)
 
 - [ ] **Step 1: Python lint + typecheck + tests**
@@ -3797,6 +3824,7 @@ git status
 ### Task 20: Real-device verification (Iron Law 6 — Idios)
 
 **Files:**
+
 - (Manual verification, no code changes)
 
 - [ ] **Step 1: AskUserQuestion to Idios**
@@ -3827,6 +3855,7 @@ User reports back; check each box on issue #761 only after the corresponding sce
 ### Task 21: Open PR
 
 **Files:**
+
 - (PR creation, no local file changes)
 
 - [ ] **Step 1: Verify all commits are local**
@@ -3834,6 +3863,7 @@ User reports back; check each box on issue #761 only after the corresponding sce
 ```bash
 git log origin/develop-0.3.0..HEAD --oneline
 ```
+
 Expected: ~16 commits covering Tasks 1-17.
 
 - [ ] **Step 2: Push branch**

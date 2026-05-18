@@ -1600,6 +1600,10 @@ pub struct ExportProgress {
 ///
 /// `output_path` がルート / 親なし (file_name only など) の場合は no-op で
 /// Ok を返す (現在のディレクトリを意味すると解釈)。
+///
+/// Task 12 で `export_match` を削除後、本関数の呼び出し元は tests のみ。
+/// #[cfg(test)] で test ビルドのみに限定し dead_code 警告を抑止。
+#[cfg(test)]
 fn validate_output_parent_exists(output_path: &Path) -> Result<(), AppError> {
     if let Some(parent) = output_path.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
@@ -1737,6 +1741,10 @@ async fn untrack_child(id: Uuid) -> Option<tokio::process::Child> {
 /// a terminal `progress=end` or `progress=continue`. We only care about
 /// `out_time_ms` (for the percent bar) and `progress=end` (for the terminal
 /// event). Returns None for every other key.
+///
+/// Task 12 で `run_ffmpeg_export_attempt` を削除後、呼び出し元は tests のみ。
+/// #[cfg(test)] で test ビルドのみに限定し dead_code 警告を抑止。
+#[cfg(test)]
 fn parse_progress_line(line: &str) -> Option<ProgressSignal> {
     let line = line.trim();
     if let Some(rest) = line.strip_prefix("out_time_ms=") {
@@ -1754,6 +1762,10 @@ fn parse_progress_line(line: &str) -> Option<ProgressSignal> {
 }
 
 /// #466 -- internal enum for parsed progress lines.
+///
+/// Task 12 で `run_ffmpeg_export_attempt` を削除後、参照元は tests のみ。
+/// #[cfg(test)] で test ビルドのみに限定し dead_code 警告を抑止。
+#[cfg(test)]
 #[derive(Debug, PartialEq)]
 enum ProgressSignal {
     /// ffmpeg's `out_time_ms` is actually in microseconds (the name is a
@@ -1765,6 +1777,10 @@ enum ProgressSignal {
 /// #466 -- keep the last `max_bytes` bytes of `buf` as a UTF-8 lossy
 /// string. Used so the error message returned to the frontend stays
 /// bounded even if ffmpeg dumps pages of diagnostics.
+///
+/// Task 12 で `run_ffmpeg_export_attempt` を削除後、呼び出し元は tests のみ。
+/// #[cfg(test)] で test ビルドのみに限定し dead_code 警告を抑止。
+#[cfg(test)]
 fn tail_string(buf: &[u8], max_bytes: usize) -> String {
     let start = buf.len().saturating_sub(max_bytes);
     String::from_utf8_lossy(&buf[start..]).trim().to_string()

@@ -2318,7 +2318,7 @@ class TestBuildSystemInfo:
         assert info["gpu_vendors_available"] == ["nvidia", "amd"]
         assert info["gpu_vendor_used"] == "nvidia"
         assert info["vendor_preference"] == ["nvidia", "amd", "intel"]
-        assert info["gpu"] == ["NVIDIA GeForce RTX 5090 (32GB VRAM)"]
+        assert info.get("gpu") == ["NVIDIA GeForce RTX 5090 (32GB VRAM)"]
 
     def test_no_gpu_used_is_null(self):
         """CPU 強制 / cache hit / split-only path では vendor_used=None."""
@@ -2333,7 +2333,7 @@ class TestBuildSystemInfo:
             )
         assert info["gpu_vendor_used"] is None
         assert info["gpu_vendors_available"] == ["nvidia"]
-        assert info["gpu"] == []
+        assert info.get("gpu") == []
 
     def test_empty_available_vendors(self):
         """probe 失敗環境 (CPU only Linux CI など) でも payload を作れる."""
@@ -2349,7 +2349,7 @@ class TestBuildSystemInfo:
         assert info["gpu_vendors_available"] == []
         assert info["gpu_vendor_used"] is None
         assert info["vendor_preference"] == ["nvidia", "amd", "intel"]
-        assert info["gpu"] == []
+        assert info.get("gpu") == []
 
     def test_preference_matches_gpu_detector_module(self):
         """``vendor_preference`` は ``gpu_detector._VENDOR_PREFERENCE`` のスナップショット."""
@@ -2375,7 +2375,7 @@ class TestBuildSystemInfo:
             info = _build_system_info(
                 available_vendors=["nvidia"], vendor_used="nvidia"
             )
-        assert info["gpu"] == gpu_models
+        assert info.get("gpu") == gpu_models
 
 
 class TestBuildMetadataPayloadSystemInfo:

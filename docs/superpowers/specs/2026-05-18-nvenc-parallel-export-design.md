@@ -350,7 +350,7 @@ type WireEvent =
 - 終端: `summary` event を 1 回だけ出力してから process exit
 - Python は `sys.stdout` を `flush=True` で 1 line ごとに flush して buffer 滞留を防ぐ
 
-Rust 側 [`start_export`](#7-rust-側変更-libgrs) Tauri command は以下のように変換:
+Rust 側 [`start_export`](#7-rust-側変更-librs) Tauri command は以下のように変換:
 
 | Wire event | Rust 動作 |
 | --- | --- |
@@ -713,6 +713,7 @@ waive の根拠:
 - user (Idios) が 1 PR を明示選択
 
 reviewer への負担緩和措置:
+
 - commit を機能単位で 5-8 個に分割 (Phase A 相当の Python core / wire protocol / Rust 切替 / frontend 切替 / test) し、commit ごとに review しやすくする
 - Self-Test Report 内に file-by-file diff summary を記載
 - PR 本文に `## レビュー指針` を載せて重点 review ポイント (encoding boundary / wire protocol / cancel semantics) を誘導

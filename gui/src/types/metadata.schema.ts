@@ -74,6 +74,10 @@ export const SystemInfoSchema = z.object({
   gpu_vendors_available: z.array(z.string()),
   gpu_vendor_used: z.string().nullable(),
   vendor_preference: z.array(z.string()),
+  /** #761 -- GPU model name strings from get_gpu_info_lines(). Optional for
+   * backward compat with pre-#761 metadata.json files that don't carry this
+   * field. Empty array on CPU-only hosts or when probing fails. */
+  gpu: z.array(z.string()).optional(),
 });
 
 /**
