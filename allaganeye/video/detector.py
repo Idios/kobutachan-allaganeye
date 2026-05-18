@@ -1,6 +1,7 @@
 """Match boundary detection using parallel ffmpeg frame probing."""
 
 import logging
+import math
 import os
 import subprocess
 import time
@@ -61,6 +62,115 @@ logger = logging.getLogger(__name__)
 _SAMPLE_WIDTH = 320
 _SAMPLE_HEIGHT = 180
 _FRAME_SIZE = _SAMPLE_WIDTH * _SAMPLE_HEIGHT  # grayscale, 1 byte per pixel
+
+
+def _resolve_fps_rational(
+    fps_num: int | None,
+    fps_den: int | None,
+    source_fps: float | None,
+) -> tuple[int, int]:
+    """Resolve (num, den) from rational-first / float-fallback inputs (#576 §2.3).
+
+    Priority:
+    1. ``fps_num`` + ``fps_den`` both given -> use as-is
+    2. ``source_fps`` (float) only -> ``Fraction(...).limit_denominator(10000)``
+    3. all None -> raise VideoProcessingError (caller should not call here
+       without source_fps; legacy path is selected via env var separately)
+    """
+    if fps_num and fps_den:
+        return fps_num, fps_den
+    if source_fps and source_fps > 0:
+        from fractions import Fraction
+
+        frac = Fraction(source_fps).limit_denominator(10000)
+        return frac.numerator, frac.denominator
+    raise VideoProcessingError(
+        "source_fps not provided to detector (need fps_num/fps_den or source_fps)."
+    )
+
+
+def _sample_chunk_frames(
+    stream,
+    chunk_start: float,
+    chunk_timestamps: list[float],
+    fps_num: int,
+    fps_den: int,
+    expected_frames: int,
+    is_tail_chunk: bool,
+) -> dict[float, float]:
+    """Sample N-th frames from a stream by rational frame index (#576 §2.2).
+
+    Args:
+        stream: A binary file-like object that yields raw grayscale frames
+            (320x180 = ``_FRAME_SIZE`` bytes per frame) when ``.read()``
+            is called.  In production this is the stdout of a
+            ``subprocess.Popen`` running ffmpeg with output seeking +
+            ``-fps_mode passthrough``.
+        chunk_start: Wall-clock start time of the chunk (seconds).
+        chunk_timestamps: Pre-computed global grid timestamps that fall
+            inside this chunk (sorted ascending).  Each becomes a key in
+            the returned dict.
+        fps_num / fps_den: Source video frame rate as rational (e.g. 60/1
+            or 60000/1001 for NTSC 59.94).
+        expected_frames: ``round(chunk_duration * fps_num / fps_den)`` -- the
+            number of frames the decoder is expected to emit.  Used by
+            the dynamic VFR check (frame_count vs expected).
+        is_tail_chunk: True when this chunk ends at (or within 1.0s of)
+            the video duration.  Tail chunks may emit fewer frames than
+            expected due to decoder truncation; the VFR check downgrades
+            to WARN-only for them.
+
+    Returns:
+        ``{timestamp: brightness}`` mapping for every entry in
+        ``chunk_timestamps``.  Targets whose computed frame_idx exceeds
+        the emitted frame count get 255.0 (safe non-blackout fallback,
+        #214 contract preserved).
+
+    Raises:
+        VideoProcessingError: when the chunk is non-tail and the emitted
+        frame count deviates from ``expected_frames`` by more than
+        ``max(expected_frames * 0.01, ceil(source_fps * 0.1))`` frames
+        (= 1% or 100ms equivalent, whichever larger).  This is the
+        dynamic VFR / decoder anomaly detection (#576 §2.2).
+    """
+    source_fps = fps_num / fps_den
+
+    # Read all frames streaming; accumulate until stream exhausted.
+    frames: list[bytes] = []
+    while True:
+        chunk = stream.read(_FRAME_SIZE)
+        if len(chunk) < _FRAME_SIZE:
+            break
+        frames.append(chunk)
+
+    emit_count = len(frames)
+    slack = max(int(expected_frames * 0.01), math.ceil(source_fps * 0.1))
+    diff = abs(emit_count - expected_frames)
+    if diff > slack:
+        msg = (
+            f"Dynamic VFR detection: chunk emitted {emit_count} frames, "
+            f"expected {expected_frames} (slack=±{slack}). "
+            f"Input may be VFR or decoder anomaly."
+        )
+        if is_tail_chunk:
+            logger.warning(
+                "%s tail chunk -- decoder truncation allowed, continuing.",
+                msg,
+            )
+        else:
+            raise VideoProcessingError(msg)
+
+    results: dict[float, float] = {}
+    for t in chunk_timestamps:
+        # rational frame_idx (integer arithmetic preferred, avoids float drift
+        # on NTSC 60000/1001 over long chunks).
+        frame_idx = round((t - chunk_start) * fps_num / fps_den)
+        if 0 <= frame_idx < emit_count:
+            frame = np.frombuffer(frames[frame_idx], dtype=np.uint8)
+            results[t] = float(frame.mean())
+        else:
+            results[t] = 255.0  # safe non-blackout fallback (#214)
+    return results
 
 
 def _resolve_workers(workers: int | None) -> int:

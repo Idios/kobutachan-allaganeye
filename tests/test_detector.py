@@ -1686,3 +1686,153 @@ class TestConftestEnvVarAutouse:
             "conftest autouse should unset ALLAGANEYE_DETECT_FPS_FILTER. "
             "CI pollution risk (#576 R6)."
         )
+
+
+# ---------------------------------------------------------------------------
+# _sample_chunk_frames / _resolve_fps_rational (#576 §2.2 / §2.3)
+# ---------------------------------------------------------------------------
+
+import io  # noqa: E402 -- placed here to keep new test section self-contained
+
+from allaganeye.video.detector import (  # noqa: E402
+    _FRAME_SIZE as _FS,
+    _resolve_fps_rational,
+    _sample_chunk_frames,
+)
+
+
+def _frames_bytes(brightnesses: list[int]) -> bytes:
+    """Build a raw grayscale frame stream from per-frame mean brightness."""
+    return b"".join(bytes([b]) * _FS for b in brightnesses)
+
+
+class TestSampleChunkFramesRationalMapping:
+    """rational fps での frame_idx mapping (#576 §2.2 / §7.1.2)."""
+
+    def test_integer_60fps(self):
+        # source_fps=60/1, chunk_start=10.0, targets {10.0, 12.0, 14.0}
+        # frame_idx {0, 120, 240}
+        # expected_frames=241 (> max frame_idx=240); stream has 241 frames so
+        # VFR check sees diff=0 and does not fire.
+        stream = io.BytesIO(_frames_bytes([100] * 241))
+        result = _sample_chunk_frames(
+            stream=stream,
+            chunk_start=10.0,
+            chunk_timestamps=[10.0, 12.0, 14.0],
+            fps_num=60,
+            fps_den=1,
+            expected_frames=241,  # > max frame_idx (240), stream matches
+            is_tail_chunk=False,
+        )
+        assert result == {10.0: 100.0, 12.0: 100.0, 14.0: 100.0}
+
+    def test_ntsc_59_94(self):
+        # source_fps=60000/1001 (=59.94...), chunk_start=0.0, targets {0.0, 10.0}
+        # frame_idx {0, round(10 * 60000 / 1001)} = {0, 599}
+        # 599 + 1 = 600 frames minimum; stream has 600 frames (exact match)
+        stream = io.BytesIO(_frames_bytes([50] * 600))
+        result = _sample_chunk_frames(
+            stream=stream,
+            chunk_start=0.0,
+            chunk_timestamps=[0.0, 10.0],
+            fps_num=60000,
+            fps_den=1001,
+            expected_frames=600,
+            is_tail_chunk=False,
+        )
+        assert 0.0 in result and 10.0 in result
+        assert result[0.0] == 50.0
+        assert result[10.0] == 50.0
+
+
+class TestSampleChunkFramesFrameMissing:
+    """frame_idx >= 利用可能 frame 数 のとき 255.0 fallback (#576 §4.3 / §7.1.4)."""
+
+    def test_target_beyond_available_frames(self):
+        # 100 frames available, target wants frame_idx 200 -> fallback to 255.0
+        stream = io.BytesIO(_frames_bytes([0] * 100))
+        result = _sample_chunk_frames(
+            stream=stream,
+            chunk_start=0.0,
+            chunk_timestamps=[0.0, 10.0],  # 10.0 * 60 = 600 > 100
+            fps_num=60,
+            fps_den=1,
+            expected_frames=600,
+            is_tail_chunk=True,  # tail なので動的 VFR check も WARN のみ
+        )
+        assert result[0.0] == 0.0
+        assert result[10.0] == 255.0
+
+
+class TestSampleChunkFramesDynamicVfr:
+    """動的 VFR 検出: slack 超過時 raise / tail chunk は WARN のみ (#576 §2.2 / §7.1.5)."""
+
+    def test_within_slack_no_error(self):
+        # 60fps × 60s = 3600 expected, slack = max(36, 6) = 36
+        # emit 3580 = -20 (within slack), should not raise
+        stream = io.BytesIO(_frames_bytes([100] * 3580))
+        _sample_chunk_frames(
+            stream=stream,
+            chunk_start=0.0,
+            chunk_timestamps=[0.0, 30.0],
+            fps_num=60,
+            fps_den=1,
+            expected_frames=3600,
+            is_tail_chunk=False,
+        )
+        # no raise expected
+
+    def test_exceeds_slack_non_tail_raises(self):
+        # 60fps × 60s = 3600 expected, slack = max(36, 6) = 36
+        # emit 3500 = -100 (exceeds slack), non-tail chunk -> raise
+        stream = io.BytesIO(_frames_bytes([100] * 3500))
+        with pytest.raises(VideoProcessingError) as excinfo:
+            _sample_chunk_frames(
+                stream=stream,
+                chunk_start=0.0,
+                chunk_timestamps=[0.0, 30.0],
+                fps_num=60,
+                fps_den=1,
+                expected_frames=3600,
+                is_tail_chunk=False,
+            )
+        assert "Dynamic VFR" in str(excinfo.value)
+
+    def test_exceeds_slack_tail_only_warns(self, caplog):
+        # Same overshoot but tail chunk -> WARN only, no raise.
+        import logging as _logging
+
+        stream = io.BytesIO(_frames_bytes([100] * 3500))
+        with caplog.at_level(_logging.WARNING):
+            _sample_chunk_frames(
+                stream=stream,
+                chunk_start=0.0,
+                chunk_timestamps=[0.0, 30.0],
+                fps_num=60,
+                fps_den=1,
+                expected_frames=3600,
+                is_tail_chunk=True,
+            )
+        msgs = [
+            r.getMessage()
+            for r in caplog.records
+            if "VFR" in r.getMessage() or "tail" in r.getMessage()
+        ]
+        assert any("tail" in m or "VFR" in m for m in msgs), (
+            f"expected WARN for tail chunk, got: {[r.getMessage() for r in caplog.records]}"
+        )
+
+
+class TestSampleChunkFramesFloatFallback:
+    """float source_fps を Fraction.limit_denominator(10000) で rational に
+    変換した場合、NTSC rational と同じ frame_idx を選ぶこと (#576 §2.3 / §7.1.3)."""
+
+    def test_float_59_94_yields_ntsc_index(self):
+        num, den = _resolve_fps_rational(None, None, 60000 / 1001)
+        # Fraction(60000/1001).limit_denominator(10000) -> 60000/1001 exactly
+        assert (num, den) == (60000, 1001)
+
+    def test_float_60_yields_60_over_1(self):
+        num, den = _resolve_fps_rational(None, None, 60.0)
+        # Fraction(60.0).limit_denominator(10000) -> 60/1
+        assert (num, den) == (60, 1)
