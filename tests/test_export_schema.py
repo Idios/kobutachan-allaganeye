@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import io
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+import pytest
 
 from allaganeye.export.schema import (
     ExportError,
@@ -83,3 +87,59 @@ def test_export_summary_to_json_line():
         "skipped": 0,
         "cancelled": False,
     }
+
+
+# --- WireWriter (Codex review #4 writer lock) ---
+
+
+def test_wire_writer_serializes_single_event():
+    from allaganeye.export.wire import WireWriter
+
+    sink = io.StringIO()
+    w = WireWriter(stream=sink)
+    w.emit(ProgressEvent.progress(0, 25.0, "encoding"))
+    lines = sink.getvalue().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["type"] == "progress"
+
+
+def test_wire_writer_concurrent_writes_atomic():
+    """Codex review #4: 複数 thread が同時 emit しても改行までの atomic 性が保たれる."""
+    from allaganeye.export.wire import WireWriter
+
+    sink = io.StringIO()
+    w = WireWriter(stream=sink)
+
+    def worker(idx: int):
+        for p in range(100):
+            w.emit(ProgressEvent.progress(idx, float(p), "encoding"))
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futures = [ex.submit(worker, i) for i in range(4)]
+        for f in futures:
+            f.result()
+
+    lines = sink.getvalue().splitlines()
+    assert len(lines) == 400  # 4 workers × 100 events
+    # Each line must be valid JSON (interleaved bytes would break parse)
+    for line in lines:
+        parsed = json.loads(line)
+        assert parsed["type"] == "progress"
+
+
+def test_wire_writer_flush_called_per_emit(monkeypatch: pytest.MonkeyPatch):
+    """flush ごとに subprocess buffer が滞留せず GUI に届くこと."""
+    from allaganeye.export.wire import WireWriter
+
+    flush_count = 0
+
+    class FlushTracker(io.StringIO):
+        def flush(self) -> None:
+            nonlocal flush_count
+            flush_count += 1
+
+    sink = FlushTracker()
+    w = WireWriter(stream=sink)
+    w.emit(ProgressEvent.progress(0, 10.0, "encoding"))
+    w.emit(ProgressEvent.progress(0, 20.0, "encoding"))
+    assert flush_count == 2
