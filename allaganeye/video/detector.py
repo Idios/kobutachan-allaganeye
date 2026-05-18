@@ -4,6 +4,7 @@ import logging
 import math
 import os
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -583,11 +584,12 @@ def _decode_chunk_cpu_v2(
     ]
 
     stderr_text = ""
+    stderr_buf = tempfile.TemporaryFile(mode="w+b")
     try:
         with subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=stderr_buf,
         ) as proc:
             try:
                 results = _sample_chunk_frames(
@@ -600,10 +602,17 @@ def _decode_chunk_cpu_v2(
                     is_tail_chunk=is_tail_chunk,
                 )
                 proc.wait(timeout=max(300, int(chunk_duration * 2)))
-                if proc.stderr is not None:
-                    stderr_text = proc.stderr.read().decode(errors="replace")
+                # Read stderr from temp file (no pipe backpressure issue)
+                stderr_buf.seek(0)
+                stderr_text = stderr_buf.read().decode(errors="replace")
             except VideoProcessingError:
                 proc.kill()
+                # still try to capture stderr for error context
+                try:
+                    stderr_buf.seek(0)
+                    stderr_text = stderr_buf.read().decode(errors="replace")
+                except Exception:
+                    logger.debug("Failed to read stderr from temp file", exc_info=True)
                 raise
             except subprocess.TimeoutExpired:
                 proc.kill()
@@ -617,6 +626,8 @@ def _decode_chunk_cpu_v2(
         raise VideoProcessingError(
             "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
         ) from e
+    finally:
+        stderr_buf.close()
 
     if proc.returncode != 0:
         logger.warning(

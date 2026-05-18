@@ -1986,21 +1986,26 @@ class TestDecodeChunkCpuNewPath:
 class TestDecodeChunkCpuV2NonzeroReturncode:
     """returncode != 0 で 255.0 fallback + WARNING ログ (#576 bug fix)."""
 
+    @patch("allaganeye.video.detector.tempfile.TemporaryFile")
     @patch("allaganeye.video.detector.subprocess.Popen")
     @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
     def test_nonzero_returncode_returns_255_fallback(
-        self, _mock_ff, mock_popen, monkeypatch, caplog
+        self, _mock_ff, mock_popen, mock_tmpfile, monkeypatch, caplog
     ):
-        """proc.returncode != 0 -> 255.0 fallback, no ValueError from closed pipe."""
+        """proc.returncode != 0 -> 255.0 fallback, stderr read from tempfile."""
         import logging
 
         monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
+
+        # Simulate tempfile that ffmpeg would have written to.
+        # seek(0) + read() must return the error bytes.
+        fake_stderr_buf = _io.BytesIO(b"error: some ffmpeg failure")
+        mock_tmpfile.return_value = fake_stderr_buf
 
         mock_proc = MagicMock()
         # 3s @ 60fps = 180 frames; emit exactly that so _sample_chunk_frames succeeds,
         # then returncode=1 triggers the 255.0 fallback path we are testing.
         mock_proc.stdout = _io.BytesIO(bytes([128]) * _FRAME_SIZE * 180)
-        mock_proc.stderr = _io.BytesIO(b"error: some ffmpeg failure")
         mock_proc.wait.return_value = None
         mock_proc.returncode = 1
         mock_popen.return_value.__enter__.return_value = mock_proc
