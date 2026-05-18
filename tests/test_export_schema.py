@@ -120,7 +120,7 @@ def test_wire_writer_concurrent_writes_atomic():
             f.result()
 
     lines = sink.getvalue().splitlines()
-    assert len(lines) == 400  # 4 workers × 100 events
+    assert len(lines) == 400  # 4 workers x 100 events
     # Each line must be valid JSON (interleaved bytes would break parse)
     for line in lines:
         parsed = json.loads(line)
@@ -128,7 +128,7 @@ def test_wire_writer_concurrent_writes_atomic():
 
 
 def test_wire_writer_flush_called_per_emit(monkeypatch: pytest.MonkeyPatch):
-    """flush ごとに subprocess buffer が滞留せず GUI に届くこと."""
+    """Flush is called on each emit so subprocess buffer reaches GUI without delay."""
     from allaganeye.export.wire import WireWriter
 
     flush_count = 0

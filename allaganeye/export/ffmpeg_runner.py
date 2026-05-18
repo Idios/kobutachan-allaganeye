@@ -1,7 +1,7 @@
 """Single-match ffmpeg launcher + libx264 fallback retry (#761).
 
 Ported from gui/src-tauri/src/lib.rs:1738-2348 (run_ffmpeg_export_attempt
-+ export_match fallback logic). See spec §4.3.
++ export_match fallback logic). See spec section 4.3.
 """
 
 from __future__ import annotations
@@ -61,11 +61,11 @@ def _run_single_attempt(
     progress_cb: Callable[[float, str], None],
     cancel_event: threading.Event,
 ) -> _AttemptOutcome:
-    """1 ffmpeg process を起動して終了まで wait。
+    """Launch one ffmpeg process and wait for completion.
 
-    stderr を 1 行ずつ読み、``out_time_ms`` を percent に変換して
-    progress_cb に渡す。``cancel_event.is_set()`` を読み取り毎に確認し
-    set されたら ``proc.kill()``。
+    Reads stderr line by line, converts ``out_time_ms`` to a percent and
+    passes it to progress_cb. Checks ``cancel_event.is_set()`` on each read;
+    calls ``proc.kill()`` if set.
     """
     proc = subprocess.Popen(
         args,
@@ -86,7 +86,7 @@ def _run_single_attempt(
         if not line:
             break
         line_str = line.decode("utf-8", errors="replace").rstrip("\n")
-        # 進捗パース (ffmpeg -progress pipe:2 format)
+        # Parse progress (ffmpeg -progress pipe:2 format)
         if line_str.startswith("out_time_ms="):
             raw = line_str.split("=", 1)[1]
             us = int(raw) if raw.strip().lstrip("-").isdigit() else 0
@@ -98,10 +98,10 @@ def _run_single_attempt(
         if line_str.strip() == "progress=end":
             progress_cb(100.0, "done")
             continue
-        # それ以外は stderr_tail バッファに溜める
+        # Accumulate remaining lines in stderr_tail buffer
         stderr_tail_bytes.append(line)
         if sum(len(b) for b in stderr_tail_bytes) > max_tail * 2:
-            # 末尾だけ残す
+            # Keep only the tail
             while sum(len(b) for b in stderr_tail_bytes) > max_tail:
                 stderr_tail_bytes.pop(0)
 
@@ -158,10 +158,10 @@ def run_export_attempt(
     fallback_cb: Callable[[H264Encoder, H264Encoder, str], None] | None,
     cancel_event: threading.Event,
 ) -> ExportResult:
-    """1 試合分の ffmpeg を起動して終了まで wait し、必要なら libx264 retry。
+    """Launch ffmpeg for one match and wait; retries with libx264 if needed.
 
-    - codec == "copy"  -> encoder は無視、ffmpeg -c copy
-    - codec == "h264" -> encoder で起動、GPU init 失敗時に libx264 retry
+    - codec == "copy"  -> encoder is ignored; runs ffmpeg -c copy
+    - codec == "h264" -> starts with encoder; retries libx264 on GPU init failure
     """
     ffmpeg = find_ffmpeg()
     duration = end - start
@@ -193,7 +193,7 @@ def run_export_attempt(
             fallback_cb(
                 encoder,
                 H264Encoder.LIBX264,
-                f"{encoder.display_label} の初期化に失敗したため libx264 で再試行します",
+                f"{encoder.display_label} init failed; retrying with libx264",
             )
         retry_args = _build_ffmpeg_args(
             ffmpeg, video, start, end, output, codec, H264Encoder.LIBX264
@@ -217,13 +217,13 @@ def run_export_attempt(
             kind="ffmpeg.exit_failed",
             message=f"libx264 retry exited with {retry_outcome.returncode}: "
             + retry_outcome.stderr_tail.strip(),
-            hint="ffmpeg/codec を確認するか、入力動画を再確認してください",
+            hint="Check ffmpeg/codec installation or verify the input video.",
         )
 
-    # その他の失敗 (libx264 1st attempt fail, codec=copy fail, etc.)
+    # Other failures (libx264 1st attempt fail, codec=copy fail, etc.)
     raise ExportError(
         kind="ffmpeg.exit_failed",
         message=f"ffmpeg ({encoder.value}) exited with {outcome.returncode}: "
         + outcome.stderr_tail.strip(),
-        hint="ffmpeg/codec を確認するか、入力動画を再確認してください",
+        hint="Check ffmpeg/codec installation or verify the input video.",
     )

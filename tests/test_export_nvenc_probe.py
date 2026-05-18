@@ -1,6 +1,6 @@
 """Tests for NVENC engine count probe (#761).
 
-SKU table from spec §4.2. Codex review #9 enforces fallback=1 for
+SKU table from spec section 4.2. Codex review #9 enforces fallback=1 for
 unknown NVIDIA cards.
 """
 
@@ -54,7 +54,7 @@ def test_rtx_5060_returns_1():
 
 
 def test_unknown_nvidia_falls_back_to_1():
-    """Codex review #9: 不明 NVIDIA は保守的に 1 (default は 1-engine 想定)."""
+    """Codex review #9: unknown NVIDIA card defaults to 1 (conservative; assumes 1-engine)."""
     assert probe_nvenc_engine_count(["NVIDIA GeForce GTX 1660"]) == 1
 
 
@@ -63,8 +63,8 @@ def test_empty_list_falls_back_to_1():
 
 
 def test_non_nvidia_falls_back_to_1():
-    """vendor 選択ロジック側で NVENC が選ばれた前提なのでここに来るのは異例。
-    多くの環境では nvidia-smi 検出済みのはずだが、想定外も 1 で fallback。"""
+    """Reaching here implies vendor selection chose NVENC -- unusual.
+    Most environments will have nvidia-smi detected; unexpected vendors fall back to 1."""
     assert probe_nvenc_engine_count(["AMD Radeon RX 7900 XT"]) == 1
 
 
@@ -77,13 +77,13 @@ def test_env_override_takes_precedence(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_env_override_invalid_falls_through(monkeypatch: pytest.MonkeyPatch):
-    """Non-digit env value is ignored — SKU table consulted normally."""
+    """Non-digit env value is ignored -- SKU table consulted normally."""
     monkeypatch.setenv("ALLAGANEYE_EXPORT_CONCURRENCY", "auto")
     assert probe_nvenc_engine_count(["NVIDIA GeForce RTX 5090"]) == 3
 
 
 def test_env_override_zero_falls_through(monkeypatch: pytest.MonkeyPatch):
-    """0 is invalid (would mean no workers) — fall back to SKU table."""
+    """0 is invalid (would mean no workers) -- fall back to SKU table."""
     monkeypatch.setenv("ALLAGANEYE_EXPORT_CONCURRENCY", "0")
     assert probe_nvenc_engine_count(["NVIDIA GeForce RTX 5090"]) == 3
 
@@ -97,7 +97,7 @@ def test_env_override_empty_falls_through(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_multi_gpu_takes_minimum_engine_count():
-    """RTX 5090 (3 engine) + RTX 4060 (1 engine) → 1 (conservative)."""
+    """RTX 5090 (3 engine) + RTX 4060 (1 engine) -> 1 (conservative)."""
     assert (
         probe_nvenc_engine_count(
             [
@@ -110,7 +110,7 @@ def test_multi_gpu_takes_minimum_engine_count():
 
 
 def test_multi_gpu_with_unknown_uses_min_of_known():
-    """RTX 4090 (2) + unknown card → 2 (unknown doesn't pollute the table match)."""
+    """RTX 4090 (2) + unknown card -> 2 (unknown doesn't pollute the table match)."""
     assert (
         probe_nvenc_engine_count(
             [
@@ -123,7 +123,7 @@ def test_multi_gpu_with_unknown_uses_min_of_known():
 
 
 def test_multi_same_sku_returns_same_count():
-    """2x RTX 5090 → 3 (matches present but min == 3)."""
+    """2x RTX 5090 -> 3 (matches present but min == 3)."""
     assert (
         probe_nvenc_engine_count(
             [

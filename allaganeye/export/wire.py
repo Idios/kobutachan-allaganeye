@@ -1,10 +1,11 @@
 """Thread-safe stdout JSON Lines emitter (#761).
 
-Codex review #4: 複数 ThreadPoolExecutor worker が直接 ``sys.stdout.write`` を
-呼ぶと、CPython の GIL は ``json.dumps`` 単独の atomic 性を保証するが、
-``write(json_str)`` → ``write("\\n")`` → ``flush()`` のシーケンス全体が
-interleave 可能 (実測で改行が前イベントと混在する事例あり)。本クラスは
-``threading.Lock`` で 1 line emit の atomic 性を保証する。
+Codex review #4: when multiple ThreadPoolExecutor workers call
+``sys.stdout.write`` directly, CPython's GIL guarantees atomicity of
+``json.dumps`` alone, but the full sequence
+``write(json_str)`` -> ``write("\\n")`` -> ``flush()`` can interleave
+(observed in practice: newlines mixed with prior events). This class uses
+``threading.Lock`` to guarantee one-line-emit atomicity.
 """
 
 from __future__ import annotations

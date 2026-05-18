@@ -2,7 +2,7 @@
 
 The CLI ``allaganeye export --json`` and the GUI subprocess emit one
 JSON object per line on stdout. Rust ``start_export`` parses each line
-into ``ExportProgress`` Tauri events. See spec §5.
+into ``ExportProgress`` Tauri events. See spec section 5.
 """
 
 from __future__ import annotations

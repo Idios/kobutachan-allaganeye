@@ -76,7 +76,7 @@ def test_export_matches_runs_n_workers_in_parallel(tmp_path: Path):
 
 
 def test_export_matches_cancel_stops_remaining(tmp_path: Path):
-    """cancel_event set → workers stop pulling. summary.cancelled = True."""
+    """cancel_event set -> workers stop pulling. summary.cancelled = True."""
     cancel = threading.Event()
     started = 0
     lock = threading.Lock()
@@ -109,13 +109,13 @@ def test_export_matches_cancel_stops_remaining(tmp_path: Path):
             cancel_event=cancel,
         )
     assert summary.cancelled is True
-    # 全 20 件 finish しないこと (cancel で打ち切り)
+    # All 20 matches must not all finish (cancelled mid-run)
     assert summary.success + summary.failure < 20
 
 
 def test_export_matches_cancel_marks_true_even_with_empty_queue(tmp_path: Path):
-    """Codex review #3: queue.qsize() > 0 条件を残すと、cancel 直後に queue が
-    たまたま空になった瞬間 cancelled=False になる。これは BUG なので NG."""
+    """Codex review #3: keeping queue.qsize() > 0 condition causes cancelled=False
+    the moment queue empties right after cancel fires. This is a BUG."""
     cancel = threading.Event()
     lock = threading.Lock()
     n_done = 0
@@ -125,7 +125,7 @@ def test_export_matches_cancel_marks_true_even_with_empty_queue(tmp_path: Path):
         with lock:
             n_done += 1
             if n_done == 3:
-                # 全 match 終了直後に cancel set
+                # set cancel immediately after all matches complete
                 cancel.set()
         return ExportResult(
             match_index=-1,
@@ -145,13 +145,13 @@ def test_export_matches_cancel_marks_true_even_with_empty_queue(tmp_path: Path):
             progress_cb=lambda ev: None,
             cancel_event=cancel,
         )
-    # 全 3 件 success だが、cancel_event は set されているので cancelled=True
+    # All 3 succeed, but cancel_event is set so cancelled=True
     assert summary.success == 3
     assert summary.cancelled is True
 
 
 def test_export_matches_partial_failure_other_workers_continue(tmp_path: Path):
-    """1 worker が failure を返しても他は続行する."""
+    """Other workers continue even when 1 worker returns a failure."""
 
     def fake_run(*args: Any, **kwargs: Any) -> ExportResult:
         if kwargs.get("start") == 10.0:  # match index 1
@@ -196,7 +196,7 @@ def test_export_matches_empty_queue_returns_zero_summary(tmp_path: Path):
 
 
 def test_export_matches_empty_slots_raises(tmp_path: Path):
-    """0 slot は実行不能 → ValueError (caller の bug)."""
+    """0 slots is not executable -> ValueError (caller bug)."""
     with pytest.raises(ValueError):
         export_matches(
             matches=_matches(1),

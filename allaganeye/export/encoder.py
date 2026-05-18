@@ -1,10 +1,10 @@
 """H.264 encoder selection logic (#761).
 
 Ported from gui/src-tauri/src/lib.rs:1597-1678 (H264Encoder + select_h264_encoder)
-so CLI and GUI share a single source of truth. See spec §4.1.
+so CLI and GUI share a single source of truth. See spec section 4.1.
 
 NOTE: enumerate_h264_encoders depends on probe_nvenc_engine_count which lives
-in nvenc_probe.py — that import is added in Task 4.
+in nvenc_probe.py -- that import is added in Task 4.
 """
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ class EncoderSlot:
 
 
 def select_h264_encoder(vendors: list[str], preference: list[str]) -> H264Encoder:
-    """First vendor preference present in ``vendors`` → its encoder; libx264 fallback.
+    """First vendor preference present in ``vendors`` -> its encoder; libx264 fallback.
 
     Equivalent to gui/src-tauri/src/lib.rs:1666-1678. Unknown vendor strings
     in ``preference`` are skipped.
@@ -100,13 +100,13 @@ def enumerate_h264_encoders(
     preference: list[str],
     gpu_models: list[str],
 ) -> list[EncoderSlot]:
-    """Vendor + GPU 検出結果から並列実行可能な encoder slot 列を作る。
+    """Build a list of parallel-executable encoder slots from vendor/GPU detection.
 
-    Phase 1 (#761): NVENC 選択時のみ N slots、他は 1 slot。
-    Phase 2 (#762): mixed vendor slot 列 ``[Nvenc#0, Nvenc#1, Amf#0]`` を返す
-    よう拡張可能 (本実装は単一 vendor のみ)。
+    Phase 1 (#761): NVENC only gets N slots; all other encoders get 1 slot.
+    Phase 2 (#762): extensible to mixed-vendor slot lists [Nvenc#0, Nvenc#1, Amf#0]
+    (this implementation handles single vendor only).
     """
-    # 局所 import で循環依存を避ける (nvenc_probe → encoder の参照は ないが念のため)
+    # Local import to avoid circular dependency (nvenc_probe -> encoder ref absent, but safe)
     from allaganeye.export.nvenc_probe import probe_nvenc_engine_count
 
     primary = select_h264_encoder(vendors, preference)

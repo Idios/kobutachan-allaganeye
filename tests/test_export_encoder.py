@@ -86,7 +86,7 @@ def test_select_libx264_fallback_when_pref_empty():
 
 
 def test_select_libx264_fallback_unknown_vendor():
-    """Unknown vendor strings (typos, future entries) ignored — libx264 fallback."""
+    """Unknown vendor strings (typos, future entries) ignored -- libx264 fallback."""
     assert (
         select_h264_encoder(vendors=["mali"], preference=["mali", "nvidia"])
         == H264Encoder.LIBX264
@@ -108,7 +108,7 @@ def test_encoder_slot_is_frozen_dataclass():
 
 
 def test_enumerate_nvenc_returns_n_slots(monkeypatch: pytest.MonkeyPatch):
-    """RTX 5090 → 3 slots, all NVENC."""
+    """RTX 5090 -> 3 slots, all NVENC."""
     monkeypatch.delenv("ALLAGANEYE_EXPORT_CONCURRENCY", raising=False)
     from allaganeye.export.encoder import enumerate_h264_encoders
 
@@ -124,7 +124,7 @@ def test_enumerate_nvenc_returns_n_slots(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_enumerate_amf_returns_1_slot():
-    """AMD iGPU → 1 slot (Phase 2 #762 will add iGPU multi-slot if engine count > 1)."""
+    """AMD iGPU -> 1 slot (Phase 2 #762 will add iGPU multi-slot if engine count > 1)."""
     from allaganeye.export.encoder import enumerate_h264_encoders
 
     slots = enumerate_h264_encoders(
@@ -150,7 +150,7 @@ def test_enumerate_qsv_returns_1_slot():
 
 
 def test_enumerate_libx264_fallback_when_no_vendor(monkeypatch: pytest.MonkeyPatch):
-    """Empty vendors → 1 libx264 slot (CPU-only env)."""
+    """Empty vendors -> 1 libx264 slot (CPU-only env)."""
     monkeypatch.delenv("ALLAGANEYE_EXPORT_CONCURRENCY", raising=False)
     from allaganeye.export.encoder import enumerate_h264_encoders
 

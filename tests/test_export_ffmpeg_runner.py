@@ -45,7 +45,7 @@ def test_amf_dll_failure():
 
 
 def test_libx264_never_triggers_fallback():
-    """libx264 itself is the fallback target — fallback predicate is False."""
+    """libx264 itself is the fallback target -- fallback predicate is False."""
     text = "anything"
     assert not is_gpu_encoder_failure(text, H264Encoder.LIBX264)
 

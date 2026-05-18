@@ -1,6 +1,6 @@
 """NVENC physical engine count probe via SKU table (#761).
 
-See spec §4.2 / §9 for design rationale (live nvidia-smi probe rejected).
+See spec sections 4.2/9 for design rationale (live nvidia-smi probe rejected).
 Codex review #9 sets fallback=1; review #12 enforces conservative min for
 multi-GPU.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 
 # (GPU model substring (lowercased), NVENC engine count)
-# NVIDIA 公式 spec sheet 基準。新 SKU 追加時は本テーブルを更新。
+# Based on official NVIDIA spec sheets. Update this table when adding new SKUs.
 _SKU_TABLE: tuple[tuple[str, int], ...] = (
     # RTX 50 series
     ("rtx 5090", 3),
@@ -25,19 +25,19 @@ _SKU_TABLE: tuple[tuple[str, int], ...] = (
 )
 
 _DEFAULT_NVENC_COUNT = 1
-"""Codex review #9: 不明 NVIDIA カードは保守的に 1 (1-engine card の subprocess
-setup overhead を避けるため)。user が高 N を望むなら env override で。"""
+"""Codex review #9: unknown NVIDIA cards default to 1 (conservative; avoids
+subprocess setup overhead for 1-engine cards). Use env override for higher N."""
 
 
 def probe_nvenc_engine_count(gpu_models: list[str]) -> int:
-    """NVENC engine count を SKU table から決定する。
+    """Determine NVENC engine count from the SKU table.
 
-    優先順:
-    1. env var ``ALLAGANEYE_EXPORT_CONCURRENCY`` が正の整数 → そのまま採用
-       (OBS 録画中等の contention scenario に user が manual 設定するエスケープハッチ)
-    2. ``gpu_models`` のいずれかが SKU table の substring に hit
-       → 全 hit の **最小値** (Codex review #12: 複数 GPU 環境で弱い側に揃える)
-    3. fallback → ``_DEFAULT_NVENC_COUNT`` (= 1)
+    Priority:
+    1. env var ``ALLAGANEYE_EXPORT_CONCURRENCY`` if a positive integer -> use directly
+       (escape hatch for manual override, e.g. during OBS recording contention)
+    2. any entry in ``gpu_models`` matches a SKU table substring
+       -> minimum of all matched counts (Codex review #12: conservative for multi-GPU)
+    3. fallback -> ``_DEFAULT_NVENC_COUNT`` (= 1)
     """
     override = os.environ.get("ALLAGANEYE_EXPORT_CONCURRENCY", "").strip()
     if override.isdigit() and int(override) > 0:

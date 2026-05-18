@@ -166,7 +166,7 @@ def register(app: typer.Typer) -> None:
         if concurrency is not None and concurrency > 0:
             slots = slots[:concurrency]
 
-        # Cancel: SIGINT (Ctrl+C) → cancel_event set → workers stop
+        # Cancel: SIGINT (Ctrl+C) -> cancel_event set -> workers stop
         cancel_event = threading.Event()
 
         def _sigint_handler(signum: int, frame: object) -> None:
@@ -174,7 +174,7 @@ def register(app: typer.Typer) -> None:
 
         signal.signal(signal.SIGINT, _sigint_handler)
 
-        # Progress callback wiring — construct WireWriter once for json_mode.
+        # Progress callback wiring -- construct WireWriter once for json_mode.
         # writer is always assigned when json_mode=True (initialized to None otherwise
         # to satisfy the type checker; the second use is guarded by the same condition).
         writer: WireWriter | None = None

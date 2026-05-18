@@ -1,8 +1,8 @@
 """Parallel match-export orchestrator (#761).
 
-ThreadPoolExecutor で N worker を起動し、共有 queue から match を pull。
-各 worker は run_export_attempt で 1 ffmpeg を起動。cancel_event は worker
-に伝搬し、in-flight ffmpeg を kill する。See spec §4.4.
+Starts N workers via ThreadPoolExecutor; each worker pulls matches from a
+shared queue and launches one ffmpeg via run_export_attempt. cancel_event
+propagates to workers and kills in-flight ffmpeg processes. See spec section 4.4.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ class ExportMatch:
     index: int
     start: float
     end: float
-    type_label: str  # "match" / "non_fl" / etc. — used by name_pattern
+    type_label: str  # "match" / "non_fl" / etc. -- used by name_pattern
 
 
 def _format_filename(m: ExportMatch, pattern: str, codec: str) -> str:
@@ -70,15 +70,16 @@ def export_matches(
     progress_cb: Callable[[ProgressEvent], None],
     cancel_event: threading.Event | None = None,
 ) -> ExportSummary:
-    """N workers (= len(slots)) で並列実行し、aggregated summary を返す.
+    """Run N workers (= len(slots)) in parallel and return an aggregated summary.
 
     cancel_event:
-        set されると worker は次の queue.get_nowait() で抜ける。in-flight な
-        ffmpeg は run_export_attempt 内で kill される (ExportError(kind='cancelled'))。
+        When set, workers exit on the next queue.get_nowait(). In-flight
+        ffmpeg processes are killed inside run_export_attempt
+        (ExportError(kind='cancelled')).
 
-    Codex review #3: summary.cancelled は ``cancel_event.is_set()`` 単独で
-    判定する。``queue.qsize() > 0`` を AND してはいけない (全 dequeue 済の
-    状態で cancel された場合に false negative)。
+    Codex review #3: summary.cancelled is determined solely by
+    ``cancel_event.is_set()``. Do NOT AND with ``queue.qsize() > 0`` -- that
+    would produce a false negative if cancel fires after all items are dequeued.
     """
     if not slots:
         raise ValueError("export_matches: slots is empty (need at least 1)")
@@ -120,7 +121,7 @@ def export_matches(
                     fallback_cb=on_fallback,
                     cancel_event=cancel_event,
                 )
-                # match_index は ExportResult が caller 値で上書きされる
+                # match_index is overwritten by the caller value in ExportResult
                 result_with_idx = ExportResult(
                     match_index=m.index,
                     output_path=result.output_path,
@@ -150,8 +151,8 @@ def export_matches(
     ) as ex:
         futures = [ex.submit(worker, slot) for slot in slots]
         for f in futures:
-            f.result()  # 例外伝搬 (workers の例外は内部で catch されるので通常 None)
+            f.result()  # propagate exceptions (workers catch internally, so normally None)
 
-    # Codex review #3: cancel 判定は cancel_event.is_set() 単独で
+    # Codex review #3: cancel check uses cancel_event.is_set() alone
     summary.cancelled = cancel_event.is_set() or bool(cancelled_results)
     return summary
