@@ -1,0 +1,46 @@
+{
+  "schema_version": "1",
+  "label": "obs-20260116",
+  "source_file": "20260116/2026-01-16 22-12-57.mkv",
+  "source_size_bytes": 39721920176,
+  "source_dir_label": "20260116",
+  "generated_at": "2026-05-18T06:58:33Z",
+  "splits": [
+    {
+      "index": 1,
+      "output_file": "match_001.mp4",
+      "size_bytes": 3285749976,
+      "sha256": "58a01a181f8ce8ea4bd511711f0c1f796e8ab6d105ceee4893af12535ec87c02"
+    },
+    {
+      "index": 2,
+      "output_file": "match_002.mp4",
+      "size_bytes": 8424463651,
+      "sha256": "dbc25b2084cf311cf2ac77260f1297f20595b43badab057d594ba055787dca5a"
+    },
+    {
+      "index": 3,
+      "output_file": "match_003.mp4",
+      "size_bytes": 7647638449,
+      "sha256": "6d7e22c02197ba27f125dd3c903b6e9cda0f12db2d2fc11e655402dddf261820"
+    },
+    {
+      "index": 4,
+      "output_file": "match_004.mp4",
+      "size_bytes": 2861538852,
+      "sha256": "4af0159cb23002756abcd01fc3317b0ac32706cd80a69149f959b4662504e775"
+    },
+    {
+      "index": 5,
+      "output_file": "match_005.mp4",
+      "size_bytes": 8533667286,
+      "sha256": "b5779f788046bf339b35d5e5dfd05f0aa1b00d98aba10db675e145404289bbc9"
+    },
+    {
+      "index": 6,
+      "output_file": "match_006.mp4",
+      "size_bytes": 7650637649,
+      "sha256": "6906e5d31ec89535ff8fb76b156c54cec17c898d0446baf9c3a5ac7bf8ad31a5"
+    }
+  ]
+}
