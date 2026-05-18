@@ -1,6 +1,6 @@
-# v0.3.0 docs cleanup + 新 L3 整合性監査 + PR 課題サマリ規約 design (2026-05-18)
+# v0.3.0 docs cleanup + 新 L3 整合性監査 design (2026-05-18)
 
-> **目的**: `v0.3.0` 開発期間中の doc 整理として、(i) 3 件の P3 deferred doc issue ([#634](https://github.com/Idios/kobutachan-allaganeye/issues/634) / [#635](https://github.com/Idios/kobutachan-allaganeye/issues/635) / [#654](https://github.com/Idios/kobutachan-allaganeye/issues/654)) を消化、(ii) 新 L3 redefinition (PR [#776](https://github.com/Idios/kobutachan-allaganeye/pull/776)) 後の active docs 整合性を網羅監査、(iii) 不要となっている doc / source のクリーンアップ機会を発見・処理、(iv) PR template に「## 課題サマリ」セクションを新設し「期待値 vs 現状 vs 修正方針」が一目で読める PR 本文規約を確立する。
+> **目的**: `v0.3.0` 開発期間中の doc 整理として、(i) 3 件の P3 deferred doc issue ([#634](https://github.com/Idios/kobutachan-allaganeye/issues/634) / [#635](https://github.com/Idios/kobutachan-allaganeye/issues/635) / [#654](https://github.com/Idios/kobutachan-allaganeye/issues/654)) を消化、(ii) 新 L3 redefinition (PR [#776](https://github.com/Idios/kobutachan-allaganeye/pull/776)) 後の active docs 整合性を網羅監査、(iii) 不要となっている doc / source のクリーンアップ機会を発見・処理する。
 
 ## 1. 背景
 
@@ -11,7 +11,6 @@
 - **P3 deferred doc** 3 件 (#634 / #635 / #654) — v0.2.0 / v0.2.1 期間に observation 起票したが対応が後送りになっている
 - L3 redefinition 後の **active docs 全体整合性** の網羅検証は未実施 (Wave A は touch 対象 8 ファイルへの編集が主で、touch 対象外の active docs を網羅的に grep 検証していない)
 - v0.2.0 / v0.2.1 で集中的に追加した docs や scripts に、リリース後にもはや不要となっている記述・ファイルが含まれている可能性
-- **PR 本文の構造不明確** — `## 概要` (1-3 行 purpose) + `## 変更点` (主要変更箇条書き) では「期待値 vs 現状 vs 修正方針」のギャップが一目で読めず、レビュアー / 将来読者が PR の核心を素早く把握できない (user 観察、本セッション 2026-05-18 提示)
 
 これらを 1 spec / 1 PR で消化する。
 
@@ -21,8 +20,7 @@
 2. 新 L3 / `L4 (former L3)` ナミング規約が active docs 全件で正しく適用されている (= ambiguous な `L3` 表記が新 L3 / 旧 L3 のどちらか文脈で曖昧でない)
 3. CLAUDE.md / design-overview.md / release-process.md の layer table 3 つが行単位で一致
 4. broken link / orphan doc / 自己申告 dead-flag コメント (`DEPRECATED` / `TODO: remove after vX` 等) が見つかれば triage して処理 (本 PR 内 / 別 issue / skip のいずれか)
-5. PR template に「## 課題サマリ」新規セクション (3 サブ: `### 現状` / `### 期待値` / `### 修正方針`) を追加し、`docs/l2-workflow.md` §「PR 作成ルール」 にも convention を明文化。bug fix / regression PR で全サブ必須、feature / refactor PR は `N/A: <理由>` 許容。`pr-checklist.yml` workflow の section-aware regex を壊さないこと
-6. PR タイトル `docs: v0.3.0 P3 deferred doc cleanup (#634 #635 #654) + L3 整合性監査 + 不要整理 + PR 課題サマリ規約` で `develop-0.3.0` にマージ
+5. PR タイトル `docs: v0.3.0 P3 deferred doc cleanup (#634 #635 #654) + L3 整合性監査 + 不要整理` で `develop-0.3.0` にマージ
 
 ## 3. 重要な選択点と決定
 
@@ -34,8 +32,6 @@
 | #635 対応 | (P) verify-only close / (Q) cross-link 追加 / (R) PR template explicit 化 | **(Q) cross-link** default、(R) は Phase 2 で AskUserQuestion 再判断 | session 2 で user が「対応して」と明示。Q が最小 / 最安全。R は CI ゲート影響なし確認が必要 |
 | cleanup 観点 (source) | (i) shallow grep only / (ii) 深い dead-code detection | **(i) shallow grep only** | 本 PR scope を 1 PR に収めるため。深い検出は別 issue 化 |
 | cleanup 観点 (doc) | (i) link audit のみ / (ii) link + orphan + stale 全て | **(ii) link + orphan + stale 全て** | session 2 で user が「不要となっているドキュメント」と広めに指示 |
-| PR template 改善方向性 | (A) 「## 課題サマリ」新規セクション / (B) 「## 変更点」に before/after 必須化 / (C) 「## 概要」に 3 文必須ルール / (D) 別 spec | **(A) 「## 課題サマリ」新規セクション** | session 3 で user 確定。3 サブ (現状 / 期待値 / 修正方針) 必須、N/A 許容。最も強制力が強く読みやすい |
-| PR 改善の issue tracking | (a) 新規 issue 起票 / (b) #635 scope 拡張 / (c) issue 起票せず spec 内のみ | **(c) issue 起票せず spec 内のみ** | session 3 で user 確定。小さめ convention 改善なので issue 不要との判断 |
 
 ## 4. Phase 構成
 
@@ -56,14 +52,13 @@
 - 0A の finding は smoke check で 0 件見込み (§6 末尾 "smoke check 暫定結果" 参照)
 - 0B の finding 数次第で本 PR のサイズが変動 → diff 行数 100+ になりそうなら必ず triage で (b) に逃す
 
-### Phase 2: 4 件 doc / template fix 実装
+### Phase 2: 3 件 doc fix 実装
 
-| Task | 由来 | 対象 | 変更内容 |
+| Task | Issue | 対象 | 変更内容 |
 | --- | --- | --- | --- |
 | **2.1** | #654 | `docs/output-spec.md:117` | Closed Issue 一覧の `#388` 行を `#388 / #433 (Filter drop 内訳 + unknown match 行)` に書き換え |
 | **2.2** | #634 | `docs/cli-spec.md:376+` + `docs/output-spec.md` matrix v2 | click-level option-parse error (`Did you mean --version?`) のサブセクション追加。`allaganeye/cli.py:498-574` 実装と整合。matrix v2 にも click-level error 行 (19d 等) 追加 |
 | **2.3** | #635 | `docs/l2-workflow.md` | §「PR 作成ルール」から §「Self-Test Report 規約」 (line 325-342) への cross-link 追加 (選択肢 Q)。`(R)` 採否は Phase 2 開始時に AskUserQuestion |
-| **2.4** | session 3 観察 (issue 起票せず) | `.github/pull_request_template.md` + `docs/l2-workflow.md` | PR template に「## 課題サマリ」新規セクション追加 (`### 現状` / `### 期待値 (= 受け入れ条件 要約)` / `### 修正方針` の 3 サブ、N/A 許容)。位置: `## 概要` の直下、`## 変更点` の上。`docs/l2-workflow.md` §「PR 作成ルール」 に convention 明文化。`pr-checklist.yml` workflow の section-aware regex を壊さないこと (新セクションは regex 監視外なので影響なし) |
 
 ### Phase 3 (conditional): 監査 finding 実装
 
@@ -77,8 +72,7 @@
 | --- | --- | --- |
 | `docs/output-spec.md` | #654 + #634 | `:117` Closed Issue 一覧 + matrix v2 click-level error 行 |
 | `docs/cli-spec.md` | #634 | §「エラー表示」に click-level option-parse error サブセクション追加 |
-| `docs/l2-workflow.md` | #635 + Phase 2.4 | §「PR 作成ルール」 → §「Self-Test Report 規約」 cross-link (#635 Q) + 「## 課題サマリ」 convention 明文化 |
-| `.github/pull_request_template.md` | Phase 2.4 | 「## 課題サマリ」新規セクション (3 サブ: 現状 / 期待値 / 修正方針) を `## 概要` 直下に追加 |
+| `docs/l2-workflow.md` | #635 | §「PR 作成ルール」 → §「Self-Test Report 規約」 cross-link |
 
 ### 暫定 (audit finding 次第)
 
@@ -86,7 +80,7 @@
 | --- | --- |
 | 他 active docs (期待値 0 件) | Phase 0A finding (a) triage で追加された場合 |
 | broken link / orphan を持つ doc | Phase 0B-doc finding (a) triage で追加された場合 |
-| `.github/pull_request_template.md` 追加 touch | #635 選択肢 R 採用時 (Phase 2.4 とは別箇所、Self-Test Report 節 comment 強化) |
+| `.github/pull_request_template.md` | #635 選択肢 R 採用時 |
 
 ### Files NOT modified (明示)
 
@@ -142,8 +136,6 @@
 | R3 | PR #632 実装との drift — #634 doc 例が現実装と乖離 | `allaganeye/cli.py:498-574` を Phase 2.2 実装直前に Read で再確認 |
 | R4 | markdownlint violation の二次発生 — 大量 doc 編集で local conv 違反 | 各 task 完了直後に `bash scripts/check-markdownlint.sh` 実行 (#660 規約) |
 | R5 | layer table 不一致の見落とし | Phase 0A Step 3 を grep だけでなく行単位 diff で照合 |
-| R6 | PR template 改修で `pr-checklist.yml` workflow 破壊 — section-aware regex (`.github/scripts/check-pr-checklist.js`) が見出し名を読んでいる | Phase 2.4 で `check-pr-checklist.js` を Read して regex 対象 heading 名 (e.g., `Self-Test Report`, `実機検証`, `関連ドキュメント / マトリクス更新`) を確認、これら既存 heading は触らない。「## 課題サマリ」は新規追加なので regex 対象外 |
-| R7 | 課題サマリ convention の運用負荷 — 全 PR で 3 サブを書くのが重い | bug fix / regression PR は必須、feature / refactor PR は `N/A: <理由>` 許容で運用負荷を下げる。template comment で適用基準を誘導 |
 
 ## 8. Acceptance gates
 
@@ -156,9 +148,6 @@
 - [ ] **#634**: doc 修正が `allaganeye/cli.py:498-574` 実装と整合
 - [ ] **#635**: `docs/l2-workflow.md` §「PR 作成ルール」 に checkbox convention の cross-link / 言及あり
 - [ ] **#635**: `.github/pull_request_template.md` の convention 案内コメントは既存 (選択肢 R 採否で touch 判断)
-- [ ] **Phase 2.4**: `.github/pull_request_template.md` に「## 課題サマリ」セクション追加 (3 サブ: `### 現状` / `### 期待値` / `### 修正方針`)
-- [ ] **Phase 2.4**: `docs/l2-workflow.md` §「PR 作成ルール」 に「## 課題サマリ」 convention 明文化 (bug fix / regression は必須、feature / refactor は `N/A` 許容、判断基準明示)
-- [ ] **Phase 2.4**: `pr-checklist.yml` workflow が CI で pass (新セクション追加で regression なし、PR 提出時に validate-checklist が落ちないこと)
 
 ### 監査結果 (Phase 0 output)
 
@@ -172,8 +161,6 @@
 - [ ] `bash scripts/check-markdownlint.sh` pass
 - [ ] `Grep "Filter drop 内訳"` で `(Filter drop 内訳)` 単独 (#654 規約: `#388 / #433 (Filter drop 内訳 + unknown match 行)` の expanded 形式のみ残る) を確認
 - [ ] `Grep "L3"` で ambiguous な単独 `L3` 表記が 0 件
-- [ ] PR template の section heading 監視 (`.github/scripts/check-pr-checklist.js` regex) と新規「## 課題サマリ」が無関係であることを node 実行確認
-- [ ] 本 PR 自体の本文が新 convention に従って「## 課題サマリ」 3 サブ書き込み済 (self-application: dogfooding)
 
 ### Self-Test Report (machine-verified)
 
@@ -202,7 +189,7 @@
 
 ### Codex adversarial-review focus
 
-> Verify (i) Iron Law 3 — only docs cleanup / L3 audit / PR template 改修 changes, no incidental refactors leaked. (ii) Phase 0A audit comprehensive — `L3` mentions in CLAUDE.md / README.md / docs/*.md (excluding superpowers/) / .github/**/*.md|yml / .claude/skills/**/*.md / .claude/hooks/** all classified (i/ii/iii). (iii) #634 doc example matches current `allaganeye/cli.py:498-574` `_suggest_long_option_hint` / `main()` behavior. (iv) #635 cross-link points to live section. (v) 0B findings triage decisions are reasonable (本 PR / 別 issue / skip). (vi) Phase 2.4 PR template の新「## 課題サマリ」が `pr-checklist.yml` workflow (specifically `.github/scripts/check-pr-checklist.js` section regex) を破壊しないこと、新 heading 名が既存 regex pattern と衝突しないこと、validate-checklist CI が空サブで block しないこと。
+> Verify (i) Iron Law 3 — only docs cleanup / L3 audit changes, no incidental refactors leaked. (ii) Phase 0A audit comprehensive — `L3` mentions in CLAUDE.md / README.md / docs/*.md (excluding superpowers/) / .github/**/*.md|yml / .claude/skills/**/*.md / .claude/hooks/** all classified (i/ii/iii). (iii) #634 doc example matches current `allaganeye/cli.py:498-574` `_suggest_long_option_hint` / `main()` behavior. (iv) #635 cross-link points to live section. (v) 0B findings triage decisions are reasonable (本 PR / 別 issue / skip).
 
 ### Closes 禁止 (Iron Law 4)
 
@@ -232,5 +219,3 @@
 - `docs/superpowers/specs/2026-05-18-v030-l3-redefinition-design.md` — L3 redefinition design (本 spec が監査する対象)
 - `docs/l2-workflow.md` §「Self-Test Report 規約」 (line 325-342) — #635 で参照する既存規約
 - `docs/refactor-pattern.md` — Phase 分割の判断基準 (本 PR が分割不要であることの裏付け)
-- `.github/pull_request_template.md` — Phase 2.4 で「## 課題サマリ」 新規セクション追加対象
-- `.github/scripts/check-pr-checklist.js` + `.github/workflows/pr-checklist.yml` — Phase 2.4 で section-aware regex を壊さないことを確認する対象
