@@ -341,6 +341,30 @@ PR 本文を以下の構成で書き分ける (PR #615 / PR #625 修正で確立
 
 `- [ ]` を残すと PR 提出直後の CI で fail する。`gh pr edit <N> --body-file -` で書き直せば validate-checklist は再実行され直ちに pass する (commit 不要)。
 
+## PR body 規約 (期待値 / 現状 / 修正内容)
+
+すべての PR で本文冒頭に以下 3 section を inline 必須化する:
+
+- `## 期待値 (あるべき姿)`: 2-4 文。この PR がマージされた後にコードベース or 動作がどうあるべきか + なぜ目指すか
+- `## 現状 (修正前)`: 2-4 文。PR 作成時点でどうなっているか + 期待値とのギャップ
+- `## 修正内容 (現状 → 期待値)`: bullet list。何をしたか、必要なら file path:line で具体化
+
+### issue ref の運用
+
+issue ref がある PR も、期待値 / 現状 は PR 本文に **簡潔に inline 記載** (issue を辿らせない)。詳細は元 issue へ link 参照可、PR 本文と issue 本文の重複は受容。
+
+### release / meta PR の解釈
+
+複数 PR を統合する release / meta PR (例: PR #774) も同構造で書く:
+
+- 期待値: 当該リリースバージョンが出て該当問題が解消されている
+- 現状: develop ブランチで修正が積まれ統合準備完了、main は未統合
+- 修正内容: 統合した PR list + 各 Track の解消内容
+
+### Iron Law 6 サブ条との関係
+
+本規約は PR template (`.github/pull_request_template.md`) と一致する。template の `## 期待値` / `## 現状` / `## 修正内容` を埋めずに PR 作成すると `/review-pr` で blocker 扱い。
+
 ## (A) PR 内修正優先 規約
 
 > originally from `feedback_pr_internal_fix_policy.md`, absorbed 2026-05-01
