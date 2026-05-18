@@ -71,9 +71,12 @@ def test_load_manifest_raises_when_files_key_missing(tmp_path: Path) -> None:
 
 
 def test_resolve_install_dir_from_package_init(tmp_path: Path) -> None:
-    """_resolve_install_dir walks 3 levels up from package __init__.
+    """_resolve_install_dir walks 3 levels up from package __init__ in dev / legacy mode.
 
-    Portable ZIP layout: <install dir>/lib/allaganeye/__init__.py
+    Dev mode (``pip install -e .``) and pre-#752 Portable ZIP layout:
+    ``<install dir>/lib/allaganeye/__init__.py``. v0.3.0+ PyInstaller frozen
+    layout uses the ``sys.frozen`` branch instead (covered by
+    ``test_resolve_install_dir_frozen_mode_uses_sys_executable``).
     """
     from allaganeye.integrity import _resolve_install_dir
 
@@ -87,10 +90,12 @@ def test_resolve_install_dir_from_package_init(tmp_path: Path) -> None:
 def test_default_manifest_path_under_install_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """_default_manifest_path returns <install dir>/integrity-manifest.json.
+    """_default_manifest_path returns <install dir>/integrity-manifest.json (dev / legacy path).
 
     Patches the module-level Path-from-__file__ resolution so the test is
-    independent of where pytest finds the actual package.
+    independent of where pytest finds the actual package. Exercises the
+    legacy ``<install dir>/lib/allaganeye/__init__.py`` layout; v0.3.0+
+    PyInstaller frozen layout is covered by the frozen-mode test.
     """
     import allaganeye.integrity as integ
 
