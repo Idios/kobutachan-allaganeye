@@ -2655,6 +2655,238 @@ async fn enumerate_h264_encoders(
     })
 }
 
+/// #761 -- Discriminated union of JSON-line events emitted by
+/// `python -m allaganeye export --json`. See spec section 5.
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "type")]
+pub enum WireEvent {
+    #[serde(rename = "progress")]
+    Progress { match_index: u32, percent: f64, stage: String },
+    #[serde(rename = "fallback")]
+    Fallback {
+        match_index: u32,
+        fallback_from: String,
+        fallback_to: String,
+        message: String,
+    },
+    #[serde(rename = "result")]
+    Result {
+        match_index: u32,
+        output_path: String,
+        duration_ms: u64,
+        encoder_used: String,
+    },
+    #[serde(rename = "error")]
+    Error {
+        match_index: u32,
+        error_kind: String,
+        error_message: String,
+        error_hint: Option<String>,
+    },
+    #[serde(rename = "summary")]
+    Summary {
+        success: u32,
+        failure: u32,
+        skipped: u32,
+        cancelled: bool,
+    },
+    #[serde(other)]
+    Unknown,
+}
+
+/// #761 -- Parse one ndjson line into `WireEvent`. `None` for empty / malformed.
+fn parse_wire_event(line: &str) -> Option<WireEvent> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    serde_json::from_str(trimmed).ok()
+}
+
+/// #761 -- Request shape for `start_export` Tauri command.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartExportRequest {
+    /// Full metadata JSON content (in-memory edited state). Passed via
+    /// stdin to Python so sample mode (filePath=null) + unsaved edits
+    /// are supported.
+    pub metadata_json: serde_json::Value,
+    pub output_dir: String,
+    pub codec: String, // "copy" | "h264"
+    pub name_pattern: String,
+    pub excluded_indexes: Vec<u32>,
+}
+
+/// #761 -- Aggregate returned to frontend after Python exits.
+#[derive(Debug, serde::Serialize)]
+pub struct ExportSummary {
+    pub success: u32,
+    pub failure: u32,
+    pub skipped: u32,
+    pub cancelled: bool,
+}
+
+#[tauri::command]
+async fn start_export(
+    app: tauri::AppHandle,
+    req: StartExportRequest,
+) -> Result<ExportSummary, AppError> {
+    let cmd_spec = resolve_allaganeye_command(&app);
+    let mut cmd = tokio::process::Command::new(&cmd_spec.program);
+    for arg in &cmd_spec.prefix_args {
+        cmd.arg(arg);
+    }
+    let exclude_arg = req
+        .excluded_indexes
+        .iter()
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    cmd.arg("export")
+        .arg("--stdin").arg("--json")
+        .arg("--output-dir").arg(&req.output_dir)
+        .arg("--codec").arg(&req.codec)
+        .arg("--name-pattern").arg(&req.name_pattern);
+    if !exclude_arg.is_empty() {
+        cmd.arg("--exclude").arg(&exclude_arg);
+    }
+    if let Some(cwd) = &cmd_spec.cwd {
+        cmd.current_dir(cwd);
+    }
+    cmd.env("PYTHONIOENCODING", "utf-8:replace")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    process_util::apply_no_window(&mut cmd);
+
+    let mut child = cmd.spawn().map_err(|e| {
+        AppError::new("subprocess.spawn_failed", format!("start_export spawn: {}", e))
+            .with_default_hint()
+    })?;
+
+    // Write metadata JSON to stdin, then close
+    {
+        let mut stdin = child.stdin.take().ok_or_else(|| {
+            AppError::new("subprocess.stdin_unavailable", "stdin missing on spawn")
+                .with_default_hint()
+        })?;
+        use tokio::io::AsyncWriteExt;
+        let serialized = serde_json::to_vec(&req.metadata_json).map_err(|e| {
+            AppError::new("subprocess.serialize_failed", format!("metadata serialize: {}", e))
+                .with_default_hint()
+        })?;
+        stdin.write_all(&serialized).await.ok();
+        // stdin dropped here -> EOF to Python
+    }
+
+    // Track via PROCESS_TRACKER. Export spawns a single Python process
+    // (which itself spawns ffmpeg children). For export we use no_job
+    // (TrackedChild without Job Object): the Python process terminates on
+    // kill() and ffmpeg children exit promptly when the parent dies on
+    // Windows. A full Job Object (as used by start_detect for the GPU
+    // chunk-parallel case) would be needed only if we detect orphan
+    // ffmpeg on cancel during export testing.
+    let tracked = TrackedChild::no_job(child);
+    let tracked_id = track_child(tracked).await;
+
+    // Capture stdout reader BEFORE the lock is released
+    let stdout = {
+        let map = process_tracker();
+        let mut guard = map.lock().await;
+        let tc = guard.get_mut(&tracked_id).expect("tracked just inserted");
+        tc.child.stdout.take()
+    };
+
+    let mut summary_capture: Option<ExportSummary> = None;
+    if let Some(stdout) = stdout {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+        let reader = BufReader::new(stdout);
+        let mut lines = reader.lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            match parse_wire_event(&line) {
+                Some(WireEvent::Progress { match_index, percent, stage }) => {
+                    let _ = app.emit(
+                        "export-progress",
+                        ExportProgress {
+                            match_index,
+                            percent,
+                            stage,
+                            message: None,
+                            fallback_from: None,
+                        },
+                    );
+                }
+                Some(WireEvent::Fallback { match_index, fallback_from, fallback_to, message }) => {
+                    let _ = app.emit(
+                        "export-progress",
+                        ExportProgress {
+                            match_index,
+                            percent: 0.0,
+                            stage: "fallback".to_string(),
+                            message: Some(message),
+                            fallback_from: Some(format!("{} -> {}", fallback_from, fallback_to)),
+                        },
+                    );
+                }
+                Some(WireEvent::Result { match_index, .. }) => {
+                    let _ = app.emit(
+                        "export-progress",
+                        ExportProgress {
+                            match_index,
+                            percent: 100.0,
+                            stage: "done".to_string(),
+                            message: None,
+                            fallback_from: None,
+                        },
+                    );
+                }
+                Some(WireEvent::Error { match_index, error_kind: _, error_message, error_hint }) => {
+                    let _ = app.emit(
+                        "export-progress",
+                        ExportProgress {
+                            match_index,
+                            percent: 0.0,
+                            stage: "error".to_string(),
+                            message: Some(if let Some(hint) = error_hint {
+                                format!("{} ({})", error_message, hint)
+                            } else {
+                                error_message
+                            }),
+                            fallback_from: None,
+                        },
+                    );
+                }
+                Some(WireEvent::Summary { success, failure, skipped, cancelled }) => {
+                    summary_capture = Some(ExportSummary { success, failure, skipped, cancelled });
+                }
+                Some(WireEvent::Unknown) | None => {
+                    // forward-compat: ignore unknown / non-JSON lines
+                }
+            }
+        }
+    }
+
+    let mut child = match untrack_child(tracked_id).await {
+        Some(c) => c,
+        None => {
+            return Ok(ExportSummary {
+                success: 0,
+                failure: 0,
+                skipped: 0,
+                cancelled: true,
+            });
+        }
+    };
+    let _ = child.wait().await;
+
+    Ok(summary_capture.unwrap_or(ExportSummary {
+        success: 0,
+        failure: 0,
+        skipped: 0,
+        cancelled: false,
+    }))
+}
+
 pub fn run() {
     // #614 -- Rotate stale panic logs (>7 days) and detect unclean shutdown
     // from the previous session, BEFORE the Tauri builder runs so the
@@ -2737,6 +2969,7 @@ pub fn run() {
     #[cfg(debug_assertions)]
     let builder = builder.invoke_handler(tauri::generate_handler![
         enumerate_h264_encoders,
+        start_export,
         load_metadata,
         get_metadata_mtime,
         apply_changes,
@@ -2765,6 +2998,7 @@ pub fn run() {
     #[cfg(not(debug_assertions))]
     let builder = builder.invoke_handler(tauri::generate_handler![
         enumerate_h264_encoders,
+        start_export,
         load_metadata,
         get_metadata_mtime,
         apply_changes,
@@ -4694,5 +4928,55 @@ mod enumerate_h264_encoders_tests {
         let raw = r#"[]"#;
         let parsed: Vec<EncoderSlotJson> = serde_json::from_str(raw).unwrap();
         assert!(parsed.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod start_export_wire_tests {
+    use super::*;
+
+    #[test]
+    fn parses_progress_line() {
+        let line = r#"{"type":"progress","match_index":2,"percent":33.5,"stage":"encoding"}"#;
+        let ev = parse_wire_event(line).expect("parse");
+        match ev {
+            WireEvent::Progress { match_index, percent, stage } => {
+                assert_eq!(match_index, 2);
+                assert!((percent - 33.5).abs() < 0.001);
+                assert_eq!(stage, "encoding");
+            }
+            _ => panic!("expected Progress"),
+        }
+    }
+
+    #[test]
+    fn parses_summary_line() {
+        let line = r#"{"type":"summary","success":3,"failure":1,"skipped":0,"cancelled":false}"#;
+        let ev = parse_wire_event(line).expect("parse");
+        match ev {
+            WireEvent::Summary { success, failure, skipped, cancelled } => {
+                assert_eq!(success, 3);
+                assert_eq!(failure, 1);
+                assert_eq!(skipped, 0);
+                assert!(!cancelled);
+            }
+            _ => panic!("expected Summary"),
+        }
+    }
+
+    #[test]
+    fn ignores_unknown_type() {
+        let line = r#"{"type":"future_unknown","extra":"foo"}"#;
+        assert!(matches!(parse_wire_event(line), Some(WireEvent::Unknown)));
+    }
+
+    #[test]
+    fn ignores_malformed_json() {
+        assert!(parse_wire_event("not json {").is_none());
+    }
+
+    #[test]
+    fn ignores_empty_line() {
+        assert!(parse_wire_event("").is_none());
     }
 }
