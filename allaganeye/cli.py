@@ -571,6 +571,15 @@ def _suggest_long_option_hint(argv: list[str]) -> str | None:
     return None
 
 
+# #761 -- register export + encoder-slots commands. Hidden commands stay
+# out of `allaganeye --help` listings but remain dispatchable.
+from allaganeye.commands import encoder_slots as _encoder_slots_cmd  # noqa: E402
+from allaganeye.commands import export as _export_cmd  # noqa: E402
+
+_export_cmd.register(app)
+_encoder_slots_cmd.register(app)
+
+
 def main() -> None:
     """Console-script entry point that adds a hint for single-dash long-option typos (#440).
 
