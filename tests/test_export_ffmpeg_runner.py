@@ -1,7 +1,7 @@
 """Tests for single-attempt ffmpeg runner + libx264 fallback (#761).
 
-Ported from gui/src-tauri/src/lib.rs::tests run_ffmpeg_export_attempt /
-is_gpu_encoder_failure coverage. Heavy mocking around subprocess.Popen.
+Ported from gui/src-tauri/src/lib.rs tests (pre-#761 run_ffmpeg_export_attempt /
+is_gpu_encoder_failure coverage, see #591/#761). Heavy mocking around subprocess.Popen.
 """
 
 from __future__ import annotations

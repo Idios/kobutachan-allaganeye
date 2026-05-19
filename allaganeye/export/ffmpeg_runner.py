@@ -1,7 +1,7 @@
 """Single-match ffmpeg launcher + libx264 fallback retry (#761).
 
-Ported from gui/src-tauri/src/lib.rs:1738-2348 (run_ffmpeg_export_attempt
-+ export_match fallback logic). See spec section 4.3.
+Ported from gui/src-tauri/src/lib.rs (pre-#761 run_ffmpeg_export_attempt
++ export_match fallback logic, see #591/#761). See spec section 4.3.
 """
 
 from __future__ import annotations
@@ -119,7 +119,7 @@ def _build_ffmpeg_args(
     codec: str,
     encoder: H264Encoder,
 ) -> list[str]:
-    """Construct the ffmpeg argv list. Mirrors gui/src-tauri/src/lib.rs:1926+."""
+    """Construct the ffmpeg argv list. Mirrors pre-#761 build_ffmpeg_args in gui/src-tauri/src/lib.rs (see #591/#761)."""
     args: list[str] = [
         ffmpeg,
         "-hide_banner",

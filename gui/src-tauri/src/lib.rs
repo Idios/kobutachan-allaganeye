@@ -1656,9 +1656,10 @@ fn validate_open_folder_request(path: &str) -> Result<(), AppError> {
 /// 確実に動かす (#545 review、2026-04-25)。
 ///
 /// **#727 (2026-05-13)**: 元 `std::process::Command` から `tokio::process::Command`
-/// に切り替え、lib.rs 内 6 spawn site (probe_video_with / ensure_thumbnail_exists
-/// / run_ffmpeg_export_attempt / start_detect / extract_brightness_window_impl
-/// / 本関数) を `tokio::process::Command` 系で統一する refactor (gui spawn 統一)。
+/// に切り替え、lib.rs 内 spawn site (probe_video_with / ensure_thumbnail_exists
+/// / start_detect / start_export / enumerate_h264_encoders /
+/// extract_brightness_window_impl / 本関数) を `tokio::process::Command` 系で
+/// 統一する refactor (gui spawn 統一)。
 ///
 /// **apply_no_window 非適用**: explorer.exe は Win32 GUI subsystem アプリで
 /// そもそも console window を生成しないため、`process_util::apply_no_window`
@@ -1680,9 +1681,10 @@ async fn open_folder_in_explorer(path: String) -> Result<(), AppError> {
     #[cfg(target_os = "windows")]
     {
         // #727 -- spawn explorer.exe via tokio::process::Command for parity
-        // with the other 5 spawn sites (probe_video_with /
-        // ensure_thumbnail_exists / run_ffmpeg_export_attempt / start_detect
-        // / extract_brightness_window_impl). The returned Child is dropped
+        // with the other spawn sites (probe_video_with /
+        // ensure_thumbnail_exists / start_detect / start_export /
+        // enumerate_h264_encoders / extract_brightness_window_impl). The
+        // returned Child is dropped
         // immediately: explorer.exe is the user's file manager UI and should
         // outlive this Tauri app; Windows has no zombie process model so
         // the drop is safe.

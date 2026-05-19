@@ -1,7 +1,7 @@
 """H.264 encoder selection logic (#761).
 
-Ported from gui/src-tauri/src/lib.rs:1597-1678 (H264Encoder + select_h264_encoder)
-so CLI and GUI share a single source of truth. See spec section 4.1.
+Ported from gui/src-tauri/src/lib.rs (pre-#761 H264Encoder + select_h264_encoder,
+see #591/#761) so CLI and GUI share a single source of truth. See spec section 4.1.
 
 NOTE: enumerate_h264_encoders depends on probe_nvenc_engine_count which lives
 in nvenc_probe.py -- that import is added in Task 4.
@@ -31,9 +31,9 @@ class H264Encoder(Enum):
     def quality_args(self) -> tuple[str, ...]:
         """Vendor-specific quality / preset args.
 
-        Ported from gui/src-tauri/src/lib.rs:1621-1642 (#591 baseline).
-        Targets visual parity with libx264 CRF 18; RD curves differ per
-        encoder so the mapping is approximate.
+        Ported from gui/src-tauri/src/lib.rs (pre-#761 quality_args impl,
+        see #591/#761). Targets visual parity with libx264 CRF 18; RD curves
+        differ per encoder so the mapping is approximate.
         """
         return _QUALITY_ARGS[self]
 
@@ -78,8 +78,8 @@ class EncoderSlot:
 def select_h264_encoder(vendors: list[str], preference: list[str]) -> H264Encoder:
     """First vendor preference present in ``vendors`` -> its encoder; libx264 fallback.
 
-    Equivalent to gui/src-tauri/src/lib.rs:1666-1678. Unknown vendor strings
-    in ``preference`` are skipped.
+    Equivalent to pre-#761 select_h264_encoder in gui/src-tauri/src/lib.rs
+    (see #591/#761). Unknown vendor strings in ``preference`` are skipped.
     """
     for pref in preference:
         if pref in vendors:
