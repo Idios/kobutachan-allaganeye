@@ -2947,14 +2947,37 @@ async fn start_export(
             });
         }
     };
-    let _ = child.wait().await;
+    let status = child.wait().await.map_err(|e| {
+        AppError::new("subprocess.wait_failed", format!("python subprocess wait: {}", e))
+            .with_default_hint()
+    })?;
 
-    Ok(summary_capture.unwrap_or(ExportSummary {
-        success: 0,
-        failure: 0,
-        skipped: 0,
-        cancelled: false,
-    }))
+    if let Some(summary) = summary_capture {
+        return Ok(summary);
+    }
+
+    // summary_capture is None — Python exited without emitting a summary line.
+    // This is an unexpected exit (crash, killed, OOM, etc.).
+    if status.success() {
+        // Exit code 0 but no summary — treat as zero work done (e.g. empty queue),
+        // which is "cancelled" semantically (no progress, no failure).
+        return Ok(ExportSummary {
+            success: 0,
+            failure: 0,
+            skipped: 0,
+            cancelled: true,
+        });
+    }
+
+    // Non-zero exit + no summary = Python crashed
+    Err(AppError::new(
+        "subprocess.exit_failed",
+        format!(
+            "python export subprocess exited unexpectedly (status: {:?}) without emitting summary",
+            status.code()
+        ),
+    )
+    .with_default_hint())
 }
 
 pub fn run() {

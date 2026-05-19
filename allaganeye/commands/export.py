@@ -153,13 +153,18 @@ def register(app: typer.Typer) -> None:
                 continue
             if raw.get("type_override") == "skip":
                 continue
+            edited = raw.get("edited") or {}
+            edited_start = edited.get("start_time")
+            edited_end = edited.get("end_time")
             filtered.append(
                 ExportMatch(
                     index=idx,
                     start=float(
-                        raw.get("edited", {}).get("start_time") or raw["start_time"]
+                        edited_start if edited_start is not None else raw["start_time"]
                     ),
-                    end=float(raw.get("edited", {}).get("end_time") or raw["end_time"]),
+                    end=float(
+                        edited_end if edited_end is not None else raw["end_time"]
+                    ),
                     type_label=str(raw.get("type", "match")),
                 )
             )
