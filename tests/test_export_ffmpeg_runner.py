@@ -225,3 +225,31 @@ def test_run_export_attempt_both_attempts_fail(mock_popen: MagicMock, tmp_path: 
             cancel_event=threading.Event(),
         )
     assert exc_info.value.kind == "ffmpeg.exit_failed"
+
+
+# --- _build_ffmpeg_args: decode hwaccel (#791) ---
+
+from allaganeye.export.ffmpeg_runner import _build_ffmpeg_args
+
+
+def test_build_args_nvenc_inserts_hwaccel_cuda_before_input(tmp_path: Path):
+    args = _build_ffmpeg_args(
+        ffmpeg="ffmpeg",
+        video=tmp_path / "in.mp4",
+        start=0.0,
+        end=10.0,
+        output=tmp_path / "out.mp4",
+        codec="h264",
+        encoder=H264Encoder.NVENC,
+    )
+    # -hwaccel cuda -hwaccel_output_format cuda が連続で含まれる
+    idx_hwaccel = args.index("-hwaccel")
+    assert args[idx_hwaccel : idx_hwaccel + 4] == [
+        "-hwaccel",
+        "cuda",
+        "-hwaccel_output_format",
+        "cuda",
+    ]
+    # -i より前に置かれている (ffmpeg input flag 規則)
+    idx_i = args.index("-i")
+    assert idx_hwaccel < idx_i

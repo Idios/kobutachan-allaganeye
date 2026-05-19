@@ -18,6 +18,17 @@ from allaganeye.export.schema import ExportError, ExportResult
 from allaganeye.ffmpeg_path import find_ffmpeg
 
 
+_DECODE_HWACCEL_ARGS: dict[H264Encoder, tuple[str, ...]] = {
+    # #791: encoder->decode hwaccel mapping. NVENC uses NVDEC -> NVENC zero-copy
+    # (CUDA memory). QSV/AMF are stubs here; activated in #762 multi-vendor work.
+    # LIBX264 is an empty tuple (no hwaccel, avoids GPU->CPU memcpy concern).
+    H264Encoder.NVENC: ("-hwaccel", "cuda", "-hwaccel_output_format", "cuda"),
+    H264Encoder.QSV: ("-hwaccel", "qsv", "-hwaccel_output_format", "qsv"),
+    H264Encoder.AMF: ("-hwaccel", "d3d11va"),
+    H264Encoder.LIBX264: (),
+}
+
+
 _GPU_ENCODER_FAILURE_PATTERNS: dict[H264Encoder, tuple[str, ...]] = {
     # Patterns mirror gui/src-tauri/src/lib.rs:1738+ (#591). Memory:
     # feedback_ffmpeg_qsv_stderr_pattern.md notes ffmpeg 8.1 QSV uses
@@ -119,7 +130,11 @@ def _build_ffmpeg_args(
     codec: str,
     encoder: H264Encoder,
 ) -> list[str]:
-    """Construct the ffmpeg argv list. Mirrors pre-#761 build_ffmpeg_args in gui/src-tauri/src/lib.rs (see #591/#761)."""
+    """Construct the ffmpeg argv list. Mirrors pre-#761 build_ffmpeg_args in gui/src-tauri/src/lib.rs (see #591/#761).
+
+    #791: codec=="h264" のとき encoder に対応する decode hwaccel 引数を
+    `-i` の前に挿入する。codec=="copy" / encoder==LIBX264 は除外。
+    """
     args: list[str] = [
         ffmpeg,
         "-hide_banner",
@@ -128,17 +143,22 @@ def _build_ffmpeg_args(
         "-progress",
         "pipe:2",
         "-y",
-        "-ss",
-        f"{start:.3f}",
-        "-to",
-        f"{end:.3f}",
-        "-i",
-        str(video),
     ]
+    if codec != "copy":
+        args.extend(_DECODE_HWACCEL_ARGS[encoder])
+    args.extend(
+        [
+            "-ss",
+            f"{start:.3f}",
+            "-to",
+            f"{end:.3f}",
+            "-i",
+            str(video),
+        ]
+    )
     if codec == "copy":
         args.extend(["-c", "copy"])
     else:
-        # h264 path
         args.extend(["-c:v", encoder.value])
         args.extend(list(encoder.quality_args()))
         args.extend(["-c:a", "copy"])
