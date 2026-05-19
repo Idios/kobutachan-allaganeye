@@ -72,6 +72,30 @@ def test_nvenc_nvdec_decode_failure_hwaccel_transfer():
     assert is_gpu_encoder_failure(text, H264Encoder.NVENC)
 
 
+def test_nvenc_nvdec_cuda_dynamic_load_failure():
+    """#791 Codex Round 2: CUDA dynamic library load failure (Linux variant)."""
+    text = "Could not dynamically load CUDA"
+    assert is_gpu_encoder_failure(text, H264Encoder.NVENC)
+
+
+def test_nvenc_nvdec_device_creation_failure():
+    """#791 Codex Round 2: CUDA device creation (cuInit / cuDeviceGet) failure."""
+    text = "Device creation failed: out of memory"
+    assert is_gpu_encoder_failure(text, H264Encoder.NVENC)
+
+
+def test_nvenc_nvdec_device_setup_failure():
+    """#791 Codex Round 2: decoder device setup failure (between device init and decoder creation)."""
+    text = "Device setup failed for decoder on input stream #0:0"
+    assert is_gpu_encoder_failure(text, H264Encoder.NVENC)
+
+
+def test_nvenc_nvdec_no_device_available():
+    """#791 Codex Round 2: no CUDA device available for the decoder."""
+    text = "No device available for decoder: device type cuda needed"
+    assert is_gpu_encoder_failure(text, H264Encoder.NVENC)
+
+
 # --- run_export_attempt: success path ---
 
 

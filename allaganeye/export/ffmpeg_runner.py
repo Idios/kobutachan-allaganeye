@@ -49,9 +49,18 @@ _GPU_ENCODER_FAILURE_PATTERNS: dict[H264Encoder, tuple[str, ...]] = {
         # before reaching the encoder. Detect representative stderr and
         # treat as a GPU failure -> libx264 retry rebuilds argv without
         # `-hwaccel cuda` (mapping returns () for LIBX264) and decodes on CPU.
-        "cuvidcreatedecoder",  # cuvidCreateDecoder failed
+        # Three failure layers covered (Codex Round 2 finding):
+        # (1) CUDA dynamic-library load / device init (earliest):
+        "could not dynamically load cuda",
+        "cannot load libcuda",
+        # (2) CUDA device creation / decoder device setup:
+        "device creation failed",
+        "device setup failed for decoder",
+        "no device available for decoder",
         "failed to create cuda context",
         "cannot init cuda",
+        # (3) Decoder creation / frame transfer (latest):
+        "cuvidcreatedecoder",  # cuvidCreateDecoder failed
         "hwaccel transfer data failed",
         "cuvid: failed",
         "could not allocate hardware frames",
