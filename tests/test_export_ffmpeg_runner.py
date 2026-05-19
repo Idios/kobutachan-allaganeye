@@ -14,6 +14,7 @@ import pytest
 
 from allaganeye.export.encoder import H264Encoder
 from allaganeye.export.ffmpeg_runner import (
+    _build_ffmpeg_args,
     is_gpu_encoder_failure,
     run_export_attempt,
 )
@@ -228,8 +229,6 @@ def test_run_export_attempt_both_attempts_fail(mock_popen: MagicMock, tmp_path: 
 
 
 # --- _build_ffmpeg_args: decode hwaccel (#791) ---
-
-from allaganeye.export.ffmpeg_runner import _build_ffmpeg_args
 
 
 def test_build_args_nvenc_inserts_hwaccel_cuda_before_input(tmp_path: Path):
