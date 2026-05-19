@@ -1460,20 +1460,13 @@ def _use_legacy_fps_filter() -> bool:
     **Transitional / scheduled for removal in v0.3.x.**
 
     Setting ``ALLAGANEYE_DETECT_FPS_FILTER=1`` reverts the detector to
-    the pre-#576 chunked ``fps=N`` filter path.  Provided as an emergency
-    escape hatch for ffmpeg version regressions during the v0.3.0
-    rollout.  CI / production should NEVER set this var (CHANGELOG
-    "Deprecated").
-
-    **Known perf trade-off (v0.3.0 only)**: the new path is significantly
-    slower than the legacy fps-filter path on long videos.  obs-20260118
-    baseline measured 67 min on the new path vs 7 min on legacy path
-    (RTX 5090, NVDEC AV1 decode).  See spec S5 / S10 R11 + CHANGELOG
-    [Unreleased] "Performance (known regression)" for the rationale.
-    Despite the slowdown, the new path is correctness-critical (#576
-    detects 3 short blackouts that the legacy fps filter missed in
-    20260118 due to version-dependent PTS drift).  Real perf optimization
-    is deferred to v0.3.x.
+    the pre-#576 chunked ``fps=N`` filter path.  Originally provided as
+    both an emergency escape hatch for ffmpeg version regressions AND
+    a perf escape (output seek had ~10x regression).  Codex perf rescue
+    Option 1 (dual seek, commit a864834) restored perf to legacy levels
+    (~6m18s for obs-20260118 on RTX 5090 vs legacy ~7 min), so the perf
+    angle is no longer relevant.  CI / production should NEVER set this
+    var (CHANGELOG "Deprecated").
 
     Removal plan:
 

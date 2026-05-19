@@ -27,17 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/validate-fps-retirement.py` を新規追加 (#576 実装中 evidence
   用 one-off スクリプト、CI gate ではない)。
 
-### Performance (known regression)
+### Performance (resolved)
 
-- **detect コマンドが ~10x 遅くなる**。obs-20260118 baseline で legacy
-  fps filter 経路 = 7 min vs 新 path = 67 min (RTX 5090, NVDEC AV1
-  decode)。原因は output seek (`-ss after -i`) が container index seek
-  を回避し、chunk_start に至るまで全フレームを decode する必要がある
-  ためと推定。
-- 緊急時は env var `ALLAGANEYE_DETECT_FPS_FILTER=1` で legacy path に
-  rollback 可能 (transitional、v0.3.x で削除予定)。
-- 本格 perf 改善 (R2 mitigation: input seek + showinfo PTS parse, etc.)
-  は v0.3.x で別 issue として brainstorm 予定。
+- 当初 v0.3.0 で detect 高速化 path に切替 (#576) で ~10x slowdown が
+  発生していたが、Codex perf rescue Option 1 (dual seek: input seek for
+  fast container index jump + output seek for accurate chunk_start) を
+  commit a864834 で実装し、perf を legacy 同等以下に復元。
+- 実測 (RTX 5090): 5 OBS baseline 合計 ~31 min (前: legacy ~31 min)。
+- v0.3.x で更なる最適化 (showinfo PTS parse, single-process design)
+  検討 (#576 spec S10 R12 defer)。
 
 ### Deprecated
 

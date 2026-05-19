@@ -139,6 +139,12 @@ detect_kwargs["source_fps_den"] = metadata["fps_den"]
 
 ## §3. Baseline strategy (3 class 分類、二段検証)
 
+**NOTE (post-PR update)**: obs-20260116 は R1 に従い Class B に昇格、commit `191d419`
+で baseline を regenerate。legacy fps filter が t=3227.4 付近の 3.6s blackout
+(Match 3 end 56:07 -> 53:50) を取りこぼしていたことが dual seek path の実測で判明。
+Class A は `obs-20260119` / `obs-20260127` / `obs-20260209` の 3 本、
+Class B は `obs-20260118` / `obs-20260116` の 2 本として本 PR 完了。
+
 | Class | 対象 | 期待挙動 | 検証方法 |
 | --- | --- | --- | --- |
 | **A** (projection bit-exact + intermediate audit) | `obs-20260116` / `obs-20260119` / `obs-20260127` / `obs-20260209` | `matches` + `gaps` projection 完全一致 **かつ** Pass 1 candidate / Pass 2 refined region の intermediate audit で内部 stability 確認 | `compare-baseline.py` exit 0 **+ verbose audit dump 比較** |
@@ -271,21 +277,33 @@ edge cases:
 
 regression 上限は S7 の test plan で **「5 baseline 合計が 36 分以内」** で gate。
 
-**Reality (post-implementation)**: 実装完了後の実測では brainstorm 時の見込みと大きく乖離した。
+**Reality (post-implementation, pre-rescue)**: 実装完了後の実測では brainstorm 時の見込みと大きく乖離した。
 
 | 計測対象 | 経路 | 実測時間 | 環境 |
 | --- | --- | --- | --- |
 | obs-20260118 detect | legacy fps filter path | ~7 min | RTX 5090, NVDEC AV1 decode |
-| obs-20260118 detect | 新 path (output seek + N-th sampling) | ~67 min | 同上 |
+| obs-20260118 detect | 新 path (output seek only) | ~67 min | 同上 |
 
 brainstorm 時の見込み (+0.5%) に対し、実際は **約 10x の perf regression** が発生した。
 原因は output seek (`-ss after -i`) が container index seek を回避し、
 chunk_start に至るまで全フレームを decode する必要があるためと推定。
 pipe IO 量の +120x と合わせて streaming の bottleneck も寄与している可能性あり。
 
-この regression は v0.3.0 では **既知の制限** として受け入れ、本格的な perf 改善
-(R2 mitigation: input seek + showinfo PTS parse 等) は v0.3.x の別 issue として
-brainstorm 予定。S9.4 / S7.4 の perf gate を実測値ベースに改訂済み。
+**Final reality (post dual-seek rescue, commit a864834)**: Codex perf rescue Option 1
+(dual seek: input seek for fast container index jump + output seek for accurate
+chunk_start) を commit a864834 で実装し、perf を legacy 同等以下に復元。
+
+| 計測対象 (RTX 5090, NVDEC AV1) | legacy fps filter | dual seek (current) |
+| --- | --- | --- |
+| obs-20260209 (57m) | ~3 min | 3m20s |
+| obs-20260127 (1h01m) | ~4 min | 3m58s |
+| obs-20260116 (2h01m) | ~7 min | 7m44s |
+| obs-20260118 (2h17m) | ~7 min | 6m18s |
+| obs-20260119 (2h33m) | ~10 min | 9m38s |
+| **5 baseline total** | **~31 min** | **~30m58s** |
+
+5 baseline 合計 ~31 min は元の 36 min gate を下回る。perf は legacy 同等以下に復元。
+S7.4 / S9.4 の perf gate を元の 36 min 合計ベースに戻す (S10 R11 参照)。
 
 ## §6. Rollback safety: env var migration switch + CI hygiene
 
@@ -342,12 +360,13 @@ def _use_legacy_fps_filter() -> bool:
 
 ### §7.4 perf budget gate
 
-1. 1 baseline detect 時間 ≦ 70 分 (revised from original 36 分 / 5 baseline 合計
-   target; post-implementation reality: obs-20260118 = 67 min on RTX 5090)
+1. 5 baseline detect 合計 <= 36 分 (dual seek perf rescue (commit a864834) により
+   perf が legacy 同等以下に復元。実測: 5 baseline 合計 ~31 min on RTX 5090。
+   S5 "Final reality" table 参照)
 
-NOTE: brainstorm 時の "36 分 / 5 baseline 合計" gate は実装前見込み (+0.5%) に
-基づいた。実測 10x regression を受けて本 gate を改訂。v0.3.x で本格 perf 改善
-(R2 / R11) を実施した時点で再設定する。
+NOTE: pre-rescue 実測 (output seek only) では 10x regression (obs-20260118 = 67 min)
+が発生し、本 gate を一時 "70 分 / 1 baseline" に改訂した。dual seek 実装後に
+元の 36 分 / 5 baseline 合計 gate に戻す (S10 R11 参照)。
 
 ## §8. Scope guard (Iron Law 3 防壁)
 
@@ -408,8 +427,8 @@ NOTE: brainstorm 時の "36 分 / 5 baseline 合計" gate は実装前見込み 
 
 ### §9.4 regression / perf
 
-- [ ] 1 baseline detect 時間 ≦ 70 分 (revised; post-implementation: obs-20260118
-  = 67 min on RTX 5090 -- see S5 Reality section for context)
+- [ ] 5 baseline detect 合計 <= 36 分 (dual seek 実装後は ~31 min で達成。S5 "Final
+  reality" table / S7.4 参照)
 - [ ] `TestNoResolutionCompat` 全 PASS
 - [ ] env var rollback の動作確認 (Idios 実機)
 - [ ] `docs/video-processing.md` / `docs/testing-guide.md` の fps filter 言及更新
@@ -419,7 +438,7 @@ NOTE: brainstorm 時の "36 分 / 5 baseline 合計" gate は実装前見込み 
 | ID | リスク | 緩和 |
 | --- | --- | --- |
 | R1 | Class A の matches/gaps projection が崩れる (極短 blackout が他 baseline にも潜在) | PR 内で 4 本を順に detect → diff を確認 → diff あれば Class B 扱いに昇格して baseline regenerate (本 PR scope に含める)。さらに Pass 1/Pass 2 intermediate audit dump で内部 stability も明示 |
-| R2 | output seek の discard decode が長 GOP video で予想より遅い | **実装後の reality**: 想定を超える 10x 規模の regression (obs-20260118 で 7 min legacy -> 67 min new on RTX 5090) が発生。S7.4 perf gate を 70 min/baseline に revise (S5 reality table 参照)。input seek + PTS metadata parse への pivot は v0.3.x で別 brainstorm として deferred (R11) |
+| R2 | output seek の discard decode が長 GOP video で予想より遅い | **実装後の reality**: 想定を超える 10x 規模の regression (obs-20260118 で 7 min legacy -> 67 min new on RTX 5090) が発生。**RESOLVED via Codex perf rescue Option 1** (dual seek: input seek for fast container jump + output seek for precise chunk_start, commit a864834)。5 baseline 合計 ~31 min (legacy: ~31 min) に復元。S7.4 perf gate を元の 36 min / 5 baseline 合計 に戻す (S5 "Final reality" table 参照)。さらなる perf 最適化 (showinfo PTS parse, single-process design) は R12 として v0.3.x に defer |
 | R3 | 一部 hwaccel (Intel QSV 等) で hwdownload + scale=gray の挙動が ffmpeg 内部実装に依存し新パイプで decode 失敗 | vendor 別 unit test (command 構築) + Idios 環境での実機検証 (NVIDIA / AMD) + vendor 別 golden brightness 比較。Intel は user 側に検証可能な機材がない場合は AskUserQuestion で別途依頼 |
 | R4 | env var rollback path の保守コストが膨らむ | v0.3.x で削除を明記、docstring に "transitional" マーク、`conftest.py` autouse fixture で CI pollution 防止 |
 | R5 | brightness_callback (#569 GUI timeline) の値が新 path で変わる | callback の dict key (timestamp grid) は同一、value のみ正確化 = GUI timeline は意図通り改善方向 (旧 fps filter の drift で歪んでいた値が直る)。release notes と CHANGELOG に明記、user-visible metadata 変更として扱う |
@@ -428,7 +447,8 @@ NOTE: brainstorm 時の "36 分 / 5 baseline 合計" gate は実装前見込み 
 | R8 (Codex review 由来) | trust chain for Class B baseline regeneration | Class B 新 baseline は per-frame probe evidence (`debug-brightness` CSV) を PR 本文に必須添付。new path が物理現実と一致することの独立証跡 |
 | R9 (deferred) | audio promote false positive when audio frozen-by-default 解除時 | audio は現在 `audio/__init__.py` で frozen。再有効化時 (将来の別 issue) には audio-enabled regression run を 20260118 で実施することが前提条件として §1 Non-goals + R9 に記録 |
 | R10 (deferred) | packet-level PTS variance による精密 VFR 検出 が本 PR では未実装 | aggregate `r_frame_rate` vs `avg_frame_rate` での静的 WARN + 動的 frame_count check の 2 段防御 (S2.2) が現状対応。packet PTS variance check は ffprobe `-show_packets` 経由で実装可能だが性能 cost と複雑性を考えて本 PR scope 外。VFR 入力で動的 check をすり抜けるケースが実観測されたら別 issue 起票 |
-| R11 (post-implementation, deferred to v0.3.x) | output seek による ~10x perf regression (obs-20260118 = 67 min vs legacy 7 min on RTX 5090) | v0.3.0 では既知の制限として受け入れ。緊急時は env var `ALLAGANEYE_DETECT_FPS_FILTER=1` で legacy path に rollback。v0.3.x で R2 mitigation (input seek + showinfo PTS parse) を別 brainstorm issue として検討予定。S5 "Reality" section 参照 |
+| R11 (post-implementation) | output seek による ~10x perf regression (obs-20260118 = 67 min vs legacy 7 min on RTX 5090) | **RESOLVED**. Codex perf rescue Option 1 (dual seek, commit a864834) により perf を legacy 同等以下に復元 (5 baseline 合計 ~31 min)。S5 "Final reality" table 参照。env var rollback は引き続き ffmpeg version regression 向け escape hatch として v0.3.x まで維持 |
+| R12 (deferred to v0.3.x) | さらなる perf 最適化余地 (showinfo PTS parse, single-process design 等) | dual seek で legacy 同等性能を達成したため v0.3.0 では scope 外。v0.3.x で別 issue として brainstorm 予定 |
 
 ## §11. Process notes (adversarial review history)
 
