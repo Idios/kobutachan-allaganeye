@@ -121,6 +121,13 @@ jobs:
       matrix:
         shell: [pwsh, powershell]
     name: build-windows (${{ matrix.shell }})
+    # build-windows job は matrix.shell (pwsh / powershell dual matrix) を
+    # `defaults.run.shell` 経由で適用する。GitHub Actions schema 仕様で
+    # `jobs.<job_id>.steps[*].shell` field は matrix context をサポートしない
+    # ため (PR #788 / issue #786 で確定)、step 個別の `shell:` 指定では matrix.shell
+    # を展開できない。`defaults.run.shell` field は matrix context 参照可能。
+    # version-check / release job は ubuntu-latest 上で意図的に `shell: bash`
+    # を step 個別指定しているが、これは shell variation 不要なため。
     defaults:
       run:
         shell: ${{ matrix.shell }}
