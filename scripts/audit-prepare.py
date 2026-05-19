@@ -13,8 +13,15 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
+
+from allaganeye.exceptions import VideoProcessingError
+from allaganeye.video.detector import (  # pyright: ignore[reportPrivateUsage]
+    _probe_single_frame,
+    _resolve_workers,
+)
 
 
 def _format_timestamp(timestamp_sec: float) -> str:
@@ -91,6 +98,48 @@ def resolve_video_path(source_relative: str) -> Path:
             f"ALLAGANEYE_SAMPLE_VIDEO_DIR={base!r} + source={source_relative!r})"
         )
     return candidate
+
+
+def export_brightness_csv(
+    *,
+    video_path: Path,
+    boundary_timestamp: float,
+    out_path: Path,
+    window_sec: float = 5.0,
+    interval_sec: float = 0.25,
+    workers: int | None = None,
+) -> None:
+    """Probe brightness in [boundary - window, boundary + window] at interval_sec.
+
+    Writes CSV with header ``timestamp,brightness``. Probe failures are
+    recorded as 255.0 (same convention as ``_probe_single_frame``).
+    """
+    start = max(boundary_timestamp - window_sec, 0.0)
+    end = boundary_timestamp + window_sec
+    timestamps: list[float] = []
+    t = start
+    while t <= end + 1e-6:
+        timestamps.append(round(t, 3))
+        t += interval_sec
+
+    max_workers = _resolve_workers(workers)
+    results: dict[float, float] = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(_probe_single_frame, video_path, ts): ts for ts in timestamps
+        }
+        for future in as_completed(futures):
+            ts = futures[future]
+            try:
+                results[ts] = future.result()
+            except VideoProcessingError:
+                results[ts] = 255.0
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8", newline="") as f:
+        f.write("timestamp,brightness\n")
+        for ts in sorted(results):
+            f.write(f"{ts:.3f},{results[ts]:.1f}\n")
 
 
 def main(argv: list[str] | None = None) -> int:

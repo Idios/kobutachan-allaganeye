@@ -142,3 +142,36 @@ def test_resolve_video_path_missing_file_raises(monkeypatch, tmp_path):
     monkeypatch.setenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", str(tmp_path))
     with pytest.raises(FileNotFoundError):
         mod.resolve_video_path("20260116/not-there.mkv")
+
+
+def test_export_brightness_csv_writes_expected_rows(tmp_path, monkeypatch):
+    mod = _load_module()
+
+    # Stub _probe_single_frame to avoid needing a real video
+    calls: list[float] = []
+
+    def fake_probe(video_path, timestamp):
+        calls.append(timestamp)
+        # Synthetic brightness: dip near t=100
+        return 5.0 if abs(timestamp - 100.0) < 1.0 else 80.0
+
+    monkeypatch.setattr(mod, "_probe_single_frame", fake_probe)
+
+    out_path = tmp_path / "brightness-around-100.000.csv"
+    mod.export_brightness_csv(
+        video_path=tmp_path / "fake.mkv",
+        boundary_timestamp=100.0,
+        out_path=out_path,
+        window_sec=5.0,
+        interval_sec=0.25,
+    )
+
+    assert out_path.exists()
+    content = out_path.read_text(encoding="utf-8").strip().splitlines()
+    # Header + (5s before + 5s after) / 0.25s + 1 = 41 rows
+    assert content[0] == "timestamp,brightness"
+    assert len(content) == 1 + 41
+    # First data row should be at 95.000
+    assert content[1].startswith("95.000,")
+    # Last data row should be at 105.000
+    assert content[-1].startswith("105.000,")
