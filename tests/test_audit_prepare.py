@@ -114,3 +114,31 @@ def test_build_worksheet_rows_empty_inputs():
     mod = _load_module()
     rows = mod.build_worksheet_rows({"matches": [], "gaps": []})
     assert rows == []
+
+
+def test_resolve_video_path_uses_env_var(monkeypatch, tmp_path):
+    mod = _load_module()
+    video_dir = tmp_path / "videos"
+    video_dir.mkdir()
+    (video_dir / "20260116").mkdir()
+    target = video_dir / "20260116" / "2026-01-16 22-12-57.mkv"
+    target.write_bytes(b"")  # placeholder
+
+    monkeypatch.setenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", str(video_dir))
+    resolved = mod.resolve_video_path("20260116/2026-01-16 22-12-57.mkv")
+
+    assert resolved == target
+
+
+def test_resolve_video_path_missing_env_raises(monkeypatch):
+    mod = _load_module()
+    monkeypatch.delenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", raising=False)
+    with pytest.raises(EnvironmentError, match="ALLAGANEYE_SAMPLE_VIDEO_DIR"):
+        mod.resolve_video_path("20260116/2026-01-16 22-12-57.mkv")
+
+
+def test_resolve_video_path_missing_file_raises(monkeypatch, tmp_path):
+    mod = _load_module()
+    monkeypatch.setenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", str(tmp_path))
+    with pytest.raises(FileNotFoundError):
+        mod.resolve_video_path("20260116/not-there.mkv")

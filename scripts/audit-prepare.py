@@ -11,7 +11,9 @@ See: docs/superpowers/specs/2026-05-19-v030-baseline-audit-design.md §3.1
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+from pathlib import Path
 from typing import Any
 
 
@@ -69,6 +71,26 @@ def build_worksheet_rows(metadata: dict[str, Any]) -> list[dict[str, Any]]:
             )
 
     return rows
+
+
+def resolve_video_path(source_relative: str) -> Path:
+    """Resolve metadata.json `source` field to an absolute video path.
+
+    Uses ``ALLAGANEYE_SAMPLE_VIDEO_DIR`` env var as the base directory.
+    """
+    base = os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR")
+    if not base:
+        raise OSError(
+            "ALLAGANEYE_SAMPLE_VIDEO_DIR is not set. Point it to the directory "
+            "containing the recording subdirs (see CLAUDE.md §動画サンプルデータ)."
+        )
+    candidate = Path(base) / source_relative
+    if not candidate.exists():
+        raise FileNotFoundError(
+            f"Video not found: {candidate} (resolved from "
+            f"ALLAGANEYE_SAMPLE_VIDEO_DIR={base!r} + source={source_relative!r})"
+        )
+    return candidate
 
 
 def main(argv: list[str] | None = None) -> int:
