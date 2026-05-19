@@ -127,7 +127,7 @@ jobs:
 
 ### 修復後の作業フロー (一気通貫)
 
-```
+```text
 [Phase 1: release.yml 修正 PR]
  ├ 1. release.yml に defaults.run.shell 追加 + 9 箇所の shell: 行削除
  ├ 2. local YAML syntax check (Python yaml.safe_load)
@@ -155,7 +155,7 @@ jobs:
 ### Components / 触る file
 
 | File | 修正内容 | 想定 diff |
-|---|---|---|
+| --- | --- | --- |
 | `.github/workflows/release.yml` | build-windows job に `defaults.run.shell: ${{ matrix.shell }}` 追加 + 各 step の `shell: ${{ matrix.shell }}` 行 9 箇所削除 | +3 / -9 = -6 net line |
 
 それ以外の file (scripts / source code / docs) は touch しない。
