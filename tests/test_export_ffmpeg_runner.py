@@ -348,3 +348,101 @@ def test_build_args_hwaccel_positioned_before_ss_to_i(tmp_path: Path):
     assert idx_hwaccel < idx_ss
     assert idx_hwaccel < idx_to
     assert idx_hwaccel < idx_i
+
+
+# --- run_export_attempt: Popen argv integration tests (#791) ---
+
+
+@patch("allaganeye.export.ffmpeg_runner.subprocess.Popen")
+def test_run_export_attempt_nvenc_argv_includes_hwaccel_cuda(
+    mock_popen: MagicMock, tmp_path: Path
+):
+    """run_export_attempt → Popen に渡る argv に -hwaccel cuda が含まれる."""
+    proc = MagicMock()
+    proc.stderr = MagicMock()
+    proc.stderr.readline = MagicMock(
+        side_effect=[
+            b"out_time_ms=1000000\n",
+            b"progress=end\n",
+            b"",
+        ]
+    )
+    proc.wait = MagicMock(return_value=0)
+    proc.returncode = 0
+    mock_popen.return_value = proc
+
+    run_export_attempt(
+        video=tmp_path / "in.mp4",
+        start=0.0,
+        end=10.0,
+        output=tmp_path / "out.mp4",
+        codec="h264",
+        encoder=H264Encoder.NVENC,
+        progress_cb=lambda p, s: None,
+        fallback_cb=None,
+        cancel_event=threading.Event(),
+    )
+    # Popen の 1st positional arg (argv list) を取得
+    first_call_args = mock_popen.call_args_list[0]
+    argv = first_call_args.args[0]
+    assert "-hwaccel" in argv
+    idx = argv.index("-hwaccel")
+    assert argv[idx : idx + 4] == [
+        "-hwaccel",
+        "cuda",
+        "-hwaccel_output_format",
+        "cuda",
+    ]
+
+
+@patch("allaganeye.export.ffmpeg_runner.subprocess.Popen")
+def test_run_export_attempt_libx264_fallback_argv_lacks_hwaccel(
+    mock_popen: MagicMock, tmp_path: Path
+):
+    """NVENC init fail → libx264 retry の 2nd Popen call argv に -hwaccel なし.
+
+    libx264 path で -hwaccel を付けると GPU→CPU memcpy が逆コストになるため、
+    fallback retry では確実に decode hwaccel を外すことを担保する.
+    """
+    proc_nvenc = MagicMock()
+    proc_nvenc.stderr = MagicMock()
+    proc_nvenc.stderr.readline = MagicMock(
+        side_effect=[
+            b"[h264_nvenc @ 0xfff] No NVENC capable devices found\n",
+            b"",
+        ]
+    )
+    proc_nvenc.wait = MagicMock(return_value=1)
+    proc_nvenc.returncode = 1
+
+    proc_libx264 = MagicMock()
+    proc_libx264.stderr = MagicMock()
+    proc_libx264.stderr.readline = MagicMock(
+        side_effect=[
+            b"out_time_ms=1000000\n",
+            b"progress=end\n",
+            b"",
+        ]
+    )
+    proc_libx264.wait = MagicMock(return_value=0)
+    proc_libx264.returncode = 0
+
+    mock_popen.side_effect = [proc_nvenc, proc_libx264]
+
+    run_export_attempt(
+        video=tmp_path / "in.mp4",
+        start=0.0,
+        end=10.0,
+        output=tmp_path / "out.mp4",
+        codec="h264",
+        encoder=H264Encoder.NVENC,
+        progress_cb=lambda p, s: None,
+        fallback_cb=lambda f, t, m: None,
+        cancel_event=threading.Event(),
+    )
+    # 1st call (NVENC) は hwaccel あり、2nd call (libx264 retry) は hwaccel なし
+    first_argv = mock_popen.call_args_list[0].args[0]
+    second_argv = mock_popen.call_args_list[1].args[0]
+    assert "-hwaccel" in first_argv
+    assert "-hwaccel" not in second_argv
+    assert "libx264" in second_argv
