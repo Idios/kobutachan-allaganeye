@@ -196,14 +196,28 @@ Codex pointed out that `-hwaccel cuda` injection adds a new failure surface (NVD
 
 **Idios decision**: Extend `is_gpu_encoder_failure[NVENC]` with NVDEC decode-stage patterns in this PR.
 
-Patterns added:
+Patterns added (11 NVDEC pattern を 3 layer 構成、Round 2 で Layer 1/2 拡充):
 
-- `cuvidcreatedecoder` (cuvidCreateDecoder failed)
-- `failed to create cuda context`
-- `cannot init cuda`
-- `hwaccel transfer data failed`
-- `cuvid: failed`
-- `could not allocate hardware frames`
+- **Layer 1** (CUDA dynamic library load / device init、最早期):
+  - `could not dynamically load cuda`
+  - `cannot load libcuda`
+- **Layer 2** (CUDA device creation / decoder device setup):
+  - `device creation failed`
+  - `device setup failed for decoder`
+  - `no device available for decoder`
+  - `failed to create cuda context`
+  - `cannot init cuda`
+- **Layer 3** (decoder creation / frame transfer、最後段):
+  - `cuvidcreatedecoder` (cuvidCreateDecoder failed)
+  - `hwaccel transfer data failed`
+  - `cuvid: failed`
+  - `could not allocate hardware frames`
+
+### Finding 2.1: CUDA device-setup layer 追加 (Codex Round 2 提起)
+
+Round 1 で Layer 3 (decoder creation / frame transfer) のみカバーしたが、Codex Round 2 で **Layer 1 (CUDA dynamic load) + Layer 2 (device creation/setup) も新しい failure surface** と指摘 (`-hwaccel cuda` 注入で発生する早期失敗が encoder-init より前段で起きる可能性)。
+
+**Idios decision**: 本 PR で Layer 1+2 patterns 5 件 (`could not dynamically load cuda` / `cannot load libcuda` / `device creation failed` / `device setup failed for decoder` / `no device available for decoder`) を追加し、3 layer 構成として整理 (上記 list 参照)。対応 commit `80c77c2`、対応 unit test 4 件 (`test_nvenc_nvdec_cuda_dynamic_load_failure` / `test_nvenc_nvdec_device_creation_failure` / `test_nvenc_nvdec_device_setup_failure` / `test_nvenc_nvdec_no_device_available`)。
 
 **実機 stderr corpus との突合**: 本 PR の pattern set は Codex 3 round の review で coverage を validated したが、`feedback_ffmpeg_qsv_stderr_pattern.md` memory 教訓 (「実機 stderr で確認しないと検出漏れ」) は NVENC 側にも同 surface あり。Iron Law 6 trigger (Idios RTX 5090) で actual stderr corpus 取得後、必要なら #791 派生 issue として pattern 追加 / regex 化 等の継続検討。
 
