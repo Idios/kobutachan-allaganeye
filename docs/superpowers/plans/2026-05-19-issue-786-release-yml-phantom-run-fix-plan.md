@@ -186,17 +186,29 @@ python -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml', enc
 
 Expected: `YAML OK` を出力。yaml.YAMLError が出たら syntax 修正。
 
-- [ ] **Step 2: `shell: ${{ matrix.shell }}` 行が 0 件であることを確認**
+- [ ] **Step 2: step-level `shell: ${{ matrix.shell }}` が 0 件、defaults.run.shell が matrix.shell であることを structural check**
 
-Run:
+Run (Python YAML parse による structural check):
 
 ```bash
-MSYS_NO_PATHCONV=1 grep -cE 'shell:.*matrix' .github/workflows/release.yml
+python -c "
+import yaml
+data = yaml.safe_load(open('.github/workflows/release.yml', encoding='utf-8').read())
+build_windows = data['jobs']['build-windows']
+defaults_shell = build_windows.get('defaults', {}).get('run', {}).get('shell', None)
+steps = build_windows.get('steps', [])
+matrix_step_shells = [s for s in steps if 'shell' in s and 'matrix' in str(s['shell'])]
+assert defaults_shell == '\${{ matrix.shell }}', f'defaults.run.shell unexpected: {defaults_shell!r}'
+assert len(matrix_step_shells) == 0, f'step-level shell: matrix が残存: {matrix_step_shells}'
+print('Schema check OK: defaults.run.shell = matrix.shell (1 件), step-level shell: matrix = 0')
+"
 ```
 
-Expected: `0` を出力 (修正前は 9)。0 以外なら Task 3 Step 3 の削除漏れあり、再修正。
+Expected: `Schema check OK: defaults.run.shell = matrix.shell (1 件), step-level shell: matrix = 0`。AssertionError が出たら Task 3 の挿入 / 削除に過不足あり、再修正。
 
-- [ ] **Step 3: `defaults.run.shell` が 1 件存在することを確認**
+(補足: 純粋な `grep -cE 'shell:.*matrix'` だと defaults block の 1 件も match するため、step-level の 0 件を直接 verify できない。Codex `/codex:adversarial-review` 2026-05-19 の指摘で structural check に置換。本 PR の root cause = 「step-level shell: matrix が schema invalid」の修正完了を直接実証する重要な validation)
+
+- [ ] **Step 3: defaults block の行番号 sanity check (補助検証)**
 
 Run:
 
@@ -204,14 +216,14 @@ Run:
 MSYS_NO_PATHCONV=1 grep -nE 'defaults:|shell: \$\{\{ matrix' .github/workflows/release.yml
 ```
 
-Expected:
+Expected (2 行のみ、L113-L115 付近):
 
 ```text
-<line>:    defaults:
-<line>:        shell: ${{ matrix.shell }}
+113:    defaults:
+115:        shell: ${{ matrix.shell }}
 ```
 
-(= 2 行のみ、L117 付近)
+3 行以上 (= defaults 1 + shell: matrix 行 2 以上) なら step-level に matrix.shell 行が残存している (Step 2 の structural check も同時に AssertionError になるはず)。本 Step は補助、Step 2 が source of truth。
 
 - [ ] **Step 4: (Optional) actionlint で schema 検証**
 
