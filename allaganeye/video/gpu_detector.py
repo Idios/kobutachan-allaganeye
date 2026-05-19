@@ -562,9 +562,12 @@ def _decode_chunk_v2(
     fps_den: int,
     is_tail_chunk: bool,
 ) -> tuple[dict[float, float], str]:
-    """New GPU chunk decode: output seek + select filter (#576).
+    """New GPU chunk decode: input seek + select filter (#576).
 
     Vendor-specific hwaccel args / hwdownload prefix preserved from legacy.
+    ``-ss`` is placed BEFORE ``-i`` (input seek) so the container index is
+    used for a direct keyframe jump instead of scanning the file from the
+    start.  hwaccel args are input options and also stay before ``-i``.
     The ``select='not(mod(n,N))'`` filter drops frames at the ffmpeg layer
     (frame-index based, NOT PTS-based) before they reach the pipe, reducing
     pipe IO from ~28 GB to ~178 MB per 2h video at 60fps + sample_interval=3.0s.
@@ -606,12 +609,12 @@ def _decode_chunk_v2(
     cmd = [
         find_ffmpeg(),
         *hwaccel_args,
-        "-i",
-        str(video_path),
         "-ss",
         str(chunk_start),
         "-t",
         str(chunk_duration),
+        "-i",
+        str(video_path),
         "-fps_mode",
         "passthrough",
         "-vf",

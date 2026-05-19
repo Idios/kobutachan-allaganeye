@@ -861,8 +861,8 @@ class TestDecodeChunkV2Cmd:
         )
 
         cmd = mock_popen.call_args[0][0]
-        # -ss after -i
-        assert cmd.index("-ss") > cmd.index("-i")
+        # input seek: -ss before -i
+        assert cmd.index("-ss") < cmd.index("-i")
         # -vf must contain select filter (frame-index based, not PTS-based fps=)
         vf_value = cmd[cmd.index("-vf") + 1]
         assert "fps=" not in vf_value
@@ -907,14 +907,14 @@ class TestDecodeChunkV2Cmd:
         )
 
         cmd = mock_popen.call_args[0][0]
-        # AMD: hwdownload prefix in -vf, select filter, output seek + passthrough
+        # AMD: hwdownload prefix in -vf, select filter, input seek + passthrough
         vf_value = cmd[cmd.index("-vf") + 1]
         assert "hwdownload,format=nv12" in vf_value
         assert "fps=" not in vf_value
         assert "select='not(mod(n\\," in vf_value, (
             f"select filter missing in AMD GPU -vf, got {vf_value!r}"
         )
-        assert cmd.index("-ss") > cmd.index("-i")
+        assert cmd.index("-ss") < cmd.index("-i")
         assert cmd[cmd.index("-fps_mode") + 1] == "passthrough"
 
     @patch("allaganeye.video.gpu_detector.subprocess.Popen")

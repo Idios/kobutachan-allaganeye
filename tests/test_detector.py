@@ -1944,7 +1944,7 @@ class TestDecodeChunkCpuNewPath:
 
     @patch("allaganeye.video.detector.subprocess.Popen")
     @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
-    def test_cmd_uses_output_seek_no_fps_passthrough(
+    def test_cmd_uses_input_seek_no_fps_passthrough(
         self, _mock_ff, mock_popen, monkeypatch
     ):
         monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
@@ -1971,10 +1971,10 @@ class TestDecodeChunkCpuNewPath:
         )
 
         called_cmd = mock_popen.call_args[0][0]
-        # output seek: -ss must come AFTER -i, not before
+        # input seek + select filter: -ss must come BEFORE -i
         i_idx = called_cmd.index("-i")
         ss_idx = called_cmd.index("-ss")
-        assert ss_idx > i_idx, f"-ss must follow -i (output seek), got {called_cmd}"
+        assert ss_idx < i_idx, f"-ss must precede -i (input seek), got {called_cmd}"
         # -vf must contain select filter (frame-index based, not PTS-based fps=)
         vf_idx = called_cmd.index("-vf")
         vf_value = called_cmd[vf_idx + 1]
