@@ -163,7 +163,13 @@ def format_markdown(
         findings, key=lambda f: _FINDING_ORDER.index(f["finding_type"])
     )
     for i, f in enumerate(sorted_findings, start=1):
-        match_idx = f.get("match_index_gt") or f.get("match_index_baseline") or "—"
+        match_idx: int | str
+        if f.get("match_index_gt") is not None:
+            match_idx = f["match_index_gt"]
+        elif f.get("match_index_baseline") is not None:
+            match_idx = f["match_index_baseline"]
+        else:
+            match_idx = "—"
         lines.append(
             f"| {i} "
             f"| {f['finding_type']} "
