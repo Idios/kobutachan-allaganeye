@@ -79,7 +79,8 @@ interface ExportSummary {
 
 /**
  * #466 Phase 4 export screen. Real ffmpeg invocation driven by the Rust
- * `export_match` command; per-match progress arrives via the
+ * `start_export` command (single invoke → Python pool spawns N parallel
+ * ffmpeg processes); per-match progress arrives via the
  * `export-progress` Tauri event.
  *
  * ## review 反映 (2026-04-25)
@@ -102,17 +103,17 @@ interface ExportSummary {
  *   (出力先 / 命名 / コーデック / 試合選択) で再実行する用途。既存ファイル
  *   は ffmpeg `-y` で silent overwrite される。
  * - **#7 (boundary)**: `m.edited?.start_time ?? m.start_time` を
- *   `export_match` の `startSeconds` に渡す (`end_time` も同様)。preview で
- *   調整した境界が export に反映される。
+ *   `start_export` の metadata payload に含めて渡す (`end_time` も同様)。
+ *   preview で調整した境界が export に反映される。
  *
  * ## 2026-04-25 追加修正 (#545 実機テスト)
  *
  * - **filePath 早期 return 廃止**: 旧実装は `if (!metadata || !filePath)
  *   return` だったが、Phase 3 dummy detect が `loadSample()` のみで
  *   `filePath = null` のまま preview/export に来るため、書き出し開始ボタンが
- *   常に disable + クリックしても無反応になっていた。`export_match` invoke
- *   は `filePath` (metadata.json の path) を必要とせず `videoSource` (実
- *   video の path) だけで動くため、ガードを `!videoSource` に変更。
+ *   常に disable + クリックしても無反応になっていた。`start_export` invoke
+ *   は metadata JSON を stdin 経由で渡すため `filePath` 不要。`videoSource`
+ *   (実 video の path) がある限り動くため、ガードを `!videoSource` に変更。
  * - **list duration の edited 反映**: 旧実装は `m.duration_display` を
  *   そのまま表示していたため、preview で `m.edited.end_time` を変えても
  *   一覧の duration が CLI 初期値のまま固定だった。`m.edited` がある場合は

@@ -2957,15 +2957,26 @@ async fn start_export(
     }
 
     // summary_capture is None — Python exited without emitting a summary line.
-    // This is an unexpected exit (crash, killed, OOM, etc.).
+    // In practice, Python's export_matches always emits a summary line via
+    // WireWriter even for empty queues (see allaganeye/commands/export.py
+    // where summary is emitted in --json mode regardless of filtered list size).
+    // This fallback path is defensive against:
+    // - Python crash before reaching the summary emit
+    // - stdout pipe broken / buffer not flushed (uncommon)
+    // - extreme races (cancellation between last result and summary emit)
     if status.success() {
-        // Exit code 0 but no summary — treat as zero work done (e.g. empty queue),
-        // which is "cancelled" semantically (no progress, no failure).
+        // Exit 0 + no summary = Python normal exit with no output (unlikely but defensive).
+        // Treat as zero-work success, NOT cancelled (avoids false CANCEL_CONFIRMED on
+        // empty-include / all-excluded scenarios).
+        eprintln!(
+            "[start_export] WARNING: Python subprocess exited cleanly without summary line; \
+             returning zero-work success. Inspect Python stdout flushing if this recurs."
+        );
         return Ok(ExportSummary {
             success: 0,
             failure: 0,
             skipped: 0,
-            cancelled: true,
+            cancelled: false,
         });
     }
 

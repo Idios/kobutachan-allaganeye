@@ -35,7 +35,7 @@ beforeEach(() => {
   listenMock.mockReset();
   openDialogMock.mockReset();
   // Default: any invoke resolves with undefined; the per-test callers
-  // override `export_match` / `kill_tracked_processes` as needed.
+  // override `start_export` / `kill_tracked_processes` as needed.
   invokeMock.mockResolvedValue(undefined);
   // Default: listen() returns a no-op unlisten function. 個別 test で
   // `mockResolvedValueOnce(spy)` すると 1 回だけ override できる
@@ -532,7 +532,7 @@ describe('ExportScreen (Phase 4 #466)', () => {
   // が `[object Object]` になるバグを TDD で検出するための test。
   describe('ExportScreen handleOpenFolder catch (#678)', () => {
     // open_folder_in_explorer を reject 値別に mock 化し、完了画面まで遷移
-    // させてから [フォルダを開く] をクリックする共通 helper。export_match は
+    // させてから [フォルダを開く] をクリックする共通 helper。start_export は
     // 通常通り resolve させて completed phase まで持っていく。
     async function setupAndClickOpenFolder(
       openFolderReject: unknown,

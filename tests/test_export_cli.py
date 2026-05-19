@@ -333,3 +333,38 @@ def test_export_include_minus_exclude(
     assert result.exit_code == 0
     _, kwargs = mock_export.call_args
     assert [m.index for m in kwargs.get("matches")] == [0, 2]
+
+
+@patch("allaganeye.commands.export.export_matches")
+@patch("allaganeye.commands.export.enumerate_h264_encoders")
+def test_export_copy_mode_uses_single_slot(
+    mock_enumerate: MagicMock, mock_export: MagicMock, app: typer.Typer, tmp_path: Path
+):
+    """codec=copy should truncate slot list to 1 (parallel copy is wasteful)."""
+    from allaganeye.export.encoder import EncoderSlot, H264Encoder
+
+    mock_enumerate.return_value = [
+        EncoderSlot(
+            slot_index=i,
+            encoder_kind=H264Encoder.NVENC,
+            display_label=f"NVENC #{i + 1}",
+        )
+        for i in range(3)
+    ]
+    mock_export.return_value = ExportSummary(success=2, failure=0)
+    metadata_path = _make_metadata(tmp_path)
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            str(metadata_path),
+            "--output-dir",
+            str(tmp_path),
+            "--codec",
+            "copy",
+            "--quiet",
+        ],
+    )
+    assert result.exit_code == 0
+    _, kwargs = mock_export.call_args
+    assert len(kwargs.get("slots")) == 1

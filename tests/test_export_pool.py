@@ -114,8 +114,9 @@ def test_cancel_stops_remaining(tmp_path: Path):
 
 
 def test_cancel_marks_true_even_with_empty_queue(tmp_path: Path):
-    """Codex review #3: keeping queue.qsize() > 0 condition causes cancelled=False
-    the moment queue empties right after cancel fires. This is a BUG."""
+    """Codex review #3: when cancel_event fires after all items dequeued,
+    queue.qsize() AND condition would yield cancelled=False (incorrect).
+    Single cancel_event.is_set() check correctly reports cancelled=True."""
     cancel = threading.Event()
     lock = threading.Lock()
     n_done = 0

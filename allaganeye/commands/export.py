@@ -172,7 +172,12 @@ def register(app: typer.Typer) -> None:
         slots = enumerate_h264_encoders(
             vendors=vendors, preference=preference, gpu_models=gpu_models
         )
-        if concurrency is not None and concurrency > 0:
+        if codec == "copy":
+            # Copy mode (no re-encode) does not benefit from NVENC slots --
+            # parallel ffmpeg -c copy of the same source would just thrash
+            # disk I/O without throughput gain. Truncate to 1 slot.
+            slots = slots[:1]
+        elif concurrency is not None and concurrency > 0:
             slots = slots[:concurrency]
 
         # Cancel: SIGINT (Ctrl+C) -> cancel_event set -> workers stop

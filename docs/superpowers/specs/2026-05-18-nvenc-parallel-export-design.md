@@ -683,7 +683,7 @@ PR レビュー時に Idios が実機で:
 - [ ] **共有**: CLI と GUI が同じ `allaganeye/export/` module を経由 (重複ロジックなし、Rust 側 export ロジック削除)
 - [ ] NVENC engine count probe (SKU table + env override `ALLAGANEYE_EXPORT_CONCURRENCY`)
 - [ ] cancel: 全 in-flight ffmpeg が秒以内に kill される (CLI=SIGINT, GUI=`kill_tracked_processes` 経由 Job Object reaping)
-- [ ] **GUI ウィンドウクローズ** (Codex review #11): export 進行中に `[×]` でウィンドウを閉じた際、`force_exit_app` を経て `kill_tracked_processes` 相当の cleanup が走り全 ffmpeg / Python subprocess が reaped されること (frontend WindowCloseRequested handler の追加 / 既存 force_exit_app への乗り合いを実装時に決定)
+- [ ] **GUI ウィンドウクローズ** (Codex review #11): export 進行中に `[×]` でウィンドウを閉じた際、確認ダイアログ → 確定で全 ffmpeg + Python subprocess が Task Manager > Details で 2 秒以内に reaped されること。Phase 1 (#761) では新規 close handler 追加せず、既存 `on_window_event` (lib.rs:3048-3057) CloseRequested → `prevent_close` + frontend 通知 → frontend が cancel/cleanup を dispatch する path + `force_exit_app` + `kill_tracked_processes` 経由で対応
 - [ ] libx264 fallback retry: 並列実行中の 1 slot が失敗しても他 slot は続行
 - [ ] 既存 progress event schema (`export-progress` Tauri event with `match_index` keyed payload) は後方互換
 - [ ] 出力ファイルが ffprobe で妥当な codec / 解像度 / 長さ (byte-exact 比較は encoder 並列度依存で不可)
@@ -778,7 +778,9 @@ NVENC / QSV / AMF / libx264 で生成される H.264 stream の bitrate / VMAF �
 
 ### R9: ウィンドウクローズ時の export cleanup (Codex review #11)
 
-ユーザーが export 進行中に GUI ウィンドウを `[×]` で閉じた場合、現状の `force_exit_app` ([gui/src-tauri/src/lib.rs:1533](../../../gui/src-tauri/src/lib.rs#L1533)) は app.exit(0) する前に `on_window_event` で `prevent_close` が走るため、frontend が cleanup する余地がある。本 spec の Python subprocess は `PROCESS_TRACKER` 経由で管理されているため、`force_exit_app` 前に `kill_tracked_processes` が呼ばれていれば Job Object 経由で全 ffmpeg descendant が reaped される。**ただし frontend 側で「export 中の close 確認 + kill_tracked_processes 呼び出し」を行うフロー** ([gui/src/window.ts](../../../gui/src/window.ts) 等の WindowCloseRequested handler) は本 spec で新規追加すべきか、既存の force_exit_app に乗るかは実装時に確認 (Phase 1 内で対応、§11 受け入れ条件に追記済)。
+ユーザーが export 進行中に GUI ウィンドウを `[×]` で閉じた場合、現状の `force_exit_app` ([gui/src-tauri/src/lib.rs:1533](../../../gui/src-tauri/src/lib.rs#L1533)) は app.exit(0) する前に `on_window_event` で `prevent_close` が走るため、frontend が cleanup する余地がある。本 spec の Python subprocess は `PROCESS_TRACKER` 経由で管理されているため、`force_exit_app` 前に `kill_tracked_processes` が呼ばれていれば Job Object 経由で全 ffmpeg descendant が reaped される。
+
+**Phase 1 (#761) 実装決定**: 新規 WindowCloseRequested handler は追加しない。既存 `on_window_event` (lib.rs:3048-3057) の CloseRequested → `prevent_close` + frontend 通知 → frontend が cancel/cleanup を dispatch する path を維持し、`force_exit_app` + `kill_tracked_processes` 経由で全 Python + ffmpeg subprocess を reap する。実機検証 (Iron Law 6 trigger): export 進行中に [×] → 確認ダイアログ → 確定で全プロセスが Task Manager > Details で 2 秒以内に reaped されること。
 
 ## 15. 後続 issue への影響
 
