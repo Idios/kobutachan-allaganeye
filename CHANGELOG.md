@@ -27,15 +27,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/validate-fps-retirement.py` を新規追加 (#576 実装中 evidence
   用 one-off スクリプト、CI gate ではない)。
 
-### Performance (resolved)
+### Performance
 
 - 当初 v0.3.0 で detect 高速化 path に切替 (#576) で ~10x slowdown が
   発生していたが、Codex perf rescue Option 1 (dual seek: input seek for
   fast container index jump + output seek for accurate chunk_start) を
-  commit a864834 で実装し、perf を legacy 同等以下に復元。
-- 実測 (RTX 5090): 5 OBS baseline 合計 ~31 min (前: legacy ~31 min)。
-- v0.3.x で更なる最適化 (showinfo PTS parse, single-process design)
-  検討 (#576 spec S10 R12 defer)。
+  commit `a864834` で実装し、perf を legacy 同等以下に復元。
+- ただし dual seek 後の accuracy 検証で sub-sample-interval blackout
+  (例: obs-20260116 t=2178 = 試合境界、Idios 視覚確認済) を Pass 1 が
+  取りこぼすケースを発見。A3 borderline range を `[15, 30) -> [15, 55)`
+  に拡張 (#576 A5) して Pass 2 refinement を活性化、accuracy regression
+  ゼロに到達。trade-off として Pass 2 probe 数増加で perf cost +1.7x。
+- 実測 (RTX 5090): 5 OBS baseline 合計 **~52 min** (legacy ~31 min)。
+  spec §7.4 perf gate を 60 min/合計に revise。
+- v0.3.x で更なる最適化 (gradient-based trigger / packet PTS parse /
+  single-process design) 検討 (#576 spec §10 R12 defer)。
 
 ### Deprecated
 

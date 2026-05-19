@@ -289,21 +289,38 @@ brainstorm 時の見込み (+0.5%) に対し、実際は **約 10x の perf regr
 chunk_start に至るまで全フレームを decode する必要があるためと推定。
 pipe IO 量の +120x と合わせて streaming の bottleneck も寄与している可能性あり。
 
-**Final reality (post dual-seek rescue, commit a864834)**: Codex perf rescue Option 1
-(dual seek: input seek for fast container index jump + output seek for accurate
-chunk_start) を commit a864834 で実装し、perf を legacy 同等以下に復元。
+**Final reality (post dual-seek rescue + A5 borderline range extension)**:
 
-| 計測対象 (RTX 5090, NVDEC AV1) | legacy fps filter | dual seek (current) |
-| --- | --- | --- |
-| obs-20260209 (57m) | ~3 min | 3m20s |
-| obs-20260127 (1h01m) | ~4 min | 3m58s |
-| obs-20260116 (2h01m) | ~7 min | 7m44s |
-| obs-20260118 (2h17m) | ~7 min | 6m18s |
-| obs-20260119 (2h33m) | ~10 min | 9m38s |
-| **5 baseline total** | **~31 min** | **~30m58s** |
+Codex perf rescue Option 1 (dual seek, commit `a864834`) restored perf
+to legacy-equivalent. **However**, post-rescue accuracy verification
+revealed a sub-sample-interval boundary regression at obs-20260116
+t=2178 (user-confirmed real match boundary that the new path missed
+because Pass 1 sample at t=2178 returned brightness 42.6, outside the
+original A3 borderline range `[15, 30)`). Fix: extend A3 borderline
+range to `[15, _TRANSITION_THRESHOLD = 55)` so Pass 2 refines around
+any sample in the "darker than typical game frames" range (#576 A5,
+post-rescue follow-up commit). Pass 2 still uses strict `< 15` for
+final extraction, so no false-positive risk -- only Pass 2 probe count
+increases.
 
-5 baseline 合計 ~31 min は元の 36 min gate を下回る。perf は legacy 同等以下に復元。
-S7.4 / S9.4 の perf gate を元の 36 min 合計ベースに戻す (S10 R11 参照)。
+A5 also reveals a second-level boundary in obs-20260118 t=2610.75 that
+the pre-A5 dual seek baseline regen (commit `789a9b7`) had missed
+(legacy fps filter detected it, but dual seek without A5 didn't).
+
+| 計測対象 (RTX 5090, NVDEC AV1) | legacy fps filter | dual seek (a864834) | dual seek + A5 (current) |
+| --- | --- | --- | --- |
+| obs-20260209 (57m) | ~3 min | 3m20s | 5m27s |
+| obs-20260127 (1h01m) | ~4 min | 3m58s | 4m52s |
+| obs-20260116 (2h01m) | ~7 min | 7m44s | 11m19s |
+| obs-20260118 (2h17m) | ~7 min | 6m18s | 17m58s |
+| obs-20260119 (2h33m) | ~10 min | 9m38s | 12m46s |
+| **5 baseline total** | **~31 min** | **~30m58s** | **~52m22s** |
+
+5 baseline 合計 ~52 min は元の 36 min gate を超過。S7.4 / S9.4 の perf gate を
+**60 min** に修正 (legacy 31 min + A5 borderline 拡張で約 1.7x、ただし
+accuracy regression ゼロ + sub-sample boundary 復元)。さらなる perf 最適化
+(gradient-based trigger / packet PTS parse / single-process design) は R12 として
+v0.3.x に defer。
 
 ## §6. Rollback safety: env var migration switch + CI hygiene
 
@@ -360,13 +377,18 @@ def _use_legacy_fps_filter() -> bool:
 
 ### §7.4 perf budget gate
 
-1. 5 baseline detect 合計 <= 36 分 (dual seek perf rescue (commit a864834) により
-   perf が legacy 同等以下に復元。実測: 5 baseline 合計 ~31 min on RTX 5090。
+1. 5 baseline detect 合計 <= **60 分** (dual seek + A5 borderline range extension により
+   accuracy regression ゼロを達成。実測: 5 baseline 合計 ~52 min on RTX 5090。
    S5 "Final reality" table 参照)
 
-NOTE: pre-rescue 実測 (output seek only) では 10x regression (obs-20260118 = 67 min)
-が発生し、本 gate を一時 "70 分 / 1 baseline" に改訂した。dual seek 実装後に
-元の 36 分 / 5 baseline 合計 gate に戻す (S10 R11 参照)。
+NOTE: gate revision 履歴:
+
+- Brainstorm 時: 36 分 / 5 baseline 合計 (legacy 31 min + 5 min margin)
+- Pre-rescue (output seek only, 10x regression): 一時 70 分 / 1 baseline に改訂
+- dual seek (commit a864834): 元の 36 分 gate を回復 (5 baseline 合計 31 min)
+- **dual seek + A5 (current)**: accuracy regression を完全消去するため A3 borderline
+  range を `[15, 30) -> [15, 55)` に拡張。Pass 2 probe 数増で perf cost +1.7x、
+  5 baseline 合計 52 min。gate を **60 分** に再改訂 (R12 で v0.3.x 最適化を defer)。
 
 ## §8. Scope guard (Iron Law 3 防壁)
 

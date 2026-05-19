@@ -1486,15 +1486,27 @@ def _borderline_pseudo_regions(
     blackout_threshold: float,
     total_duration: float,
 ) -> list[tuple[float, float]]:
-    """Build pseudo-regions around Pass 1 borderline frames (A3, #361).
+    """Build pseudo-regions around Pass 1 borderline frames (A3, #361 + #576 A5).
 
-    A borderline frame sits in ``[blackout_threshold, blackout_threshold * 2)``
-    -- close to blackout but not dark enough to pass the strict Pass 1 cut.
+    A borderline frame sits in ``[blackout_threshold, _TRANSITION_THRESHOLD)``
+    -- the full "darker than typical game frames" range, not just super-dark.
     Each borderline timestamp produces a +-``_BORDERLINE_REFINE_RADIUS``
     window so Pass 2 precise sampling probes around it.
+
+    #576 A5 extension: the upper bound was originally
+    ``blackout_threshold * 2 = 30`` (catches frames just brighter than blackout
+    threshold).  After dual seek (commit a864834) eliminated fps filter PTS
+    drift, the legacy "accidental" sub-sample-interval blackout detection
+    via drift-induced borderline triggers no longer fires.  Extending the
+    upper bound to ``_TRANSITION_THRESHOLD = 55`` (the full transition zone)
+    restores coverage of sub-sample-interval blackouts that the new accurate
+    sampling otherwise misses (e.g., obs-20260116 t=2175.7-2177.3 boundary
+    where sample at t=2178 = brightness 42.6 was previously skipped).
+    Pass 2 still uses strict ``< blackout_threshold`` extraction, so the
+    only cost is extra Pass 2 probes (no false-positive risk).
     """
     radius = _BORDERLINE_REFINE_RADIUS
-    upper = blackout_threshold * 2
+    upper = _TRANSITION_THRESHOLD
     return [
         (max(0.0, t - radius), min(total_duration, t + radius))
         for t, b in results.items()

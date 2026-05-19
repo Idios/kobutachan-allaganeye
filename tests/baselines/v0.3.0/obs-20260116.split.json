@@ -4,7 +4,7 @@
   "source_file": "20260116/2026-01-16 22-12-57.mkv",
   "source_size_bytes": 39721920176,
   "source_dir_label": "20260116",
-  "generated_at": "2026-05-19T04:15:00Z",
+  "generated_at": "2026-05-19T08:11:54Z",
   "splits": [
     {
       "index": 1,
@@ -15,8 +15,8 @@
     {
       "index": 2,
       "output_file": "match_002.mp4",
-      "size_bytes": 8646130705,
-      "sha256": "7546a723da34ad7020201c886c36167031a249a05a18b2f5dc82b547b21a0658"
+      "size_bytes": 8424463651,
+      "sha256": "dbc25b2084cf311cf2ac77260f1297f20595b43badab057d594ba055787dca5a"
     },
     {
       "index": 3,

@@ -1491,7 +1491,11 @@ class TestBorderlinePseudoRegions:
         assert _borderline_pseudo_regions({}, 15.0, 1000.0) == []
 
     def test_no_borderline_frames(self):
-        """All frames outside [threshold, threshold*2) -> no pseudo regions."""
+        """All frames outside [threshold, _TRANSITION_THRESHOLD) -> no pseudo regions.
+
+        #576 A5: upper bound extended from blackout_threshold * 2 (= 30) to
+        _TRANSITION_THRESHOLD (= 55).
+        """
         results = {0.0: 128.0, 10.0: 5.0, 20.0: 200.0}
         assert _borderline_pseudo_regions(results, 15.0, 1000.0) == []
 
@@ -1515,9 +1519,24 @@ class TestBorderlinePseudoRegions:
         assert regions[0][0] == 996.0
         assert regions[0][1] == 1000.0
 
-    def test_upper_bound_exclusive(self):
-        """Frames at exactly 2 * threshold are not borderline."""
-        results = {100.0: 30.0}  # == threshold * 2
+    def test_upper_bound_is_transition_threshold(self):
+        """#576 A5: upper bound is _TRANSITION_THRESHOLD (55), not threshold * 2.
+
+        Sample at brightness 42.6 (case from obs-20260116 t=2178) MUST
+        trigger A3 refinement so Pass 2 can find sub-sample-interval
+        blackouts.  Pre-A5 fix, brightness 42.6 was outside the
+        [15, 30) borderline range and Pass 2 never probed the region.
+        """
+        results = {100.0: 42.6}
+        regions = _borderline_pseudo_regions(results, 15.0, 1000.0)
+        assert len(regions) == 1, (
+            "brightness 42.6 should trigger A3 with #576 A5 extension "
+            "(was non-borderline pre-fix)"
+        )
+
+    def test_upper_bound_exclusive_at_transition(self):
+        """Frames at exactly _TRANSITION_THRESHOLD = 55 are NOT borderline."""
+        results = {100.0: 55.0}
         assert _borderline_pseudo_regions(results, 15.0, 1000.0) == []
 
     def test_lower_bound_inclusive(self):
