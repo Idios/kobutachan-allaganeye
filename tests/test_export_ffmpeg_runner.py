@@ -252,3 +252,40 @@ def test_build_args_nvenc_inserts_hwaccel_cuda_before_input(tmp_path: Path):
     # -i より前に置かれている (ffmpeg input flag 規則)
     idx_i = args.index("-i")
     assert idx_hwaccel < idx_i
+
+
+def test_build_args_qsv_inserts_hwaccel_qsv_before_input(tmp_path: Path):
+    args = _build_ffmpeg_args(
+        ffmpeg="ffmpeg",
+        video=tmp_path / "in.mp4",
+        start=0.0,
+        end=10.0,
+        output=tmp_path / "out.mp4",
+        codec="h264",
+        encoder=H264Encoder.QSV,
+    )
+    idx_hwaccel = args.index("-hwaccel")
+    assert args[idx_hwaccel : idx_hwaccel + 4] == [
+        "-hwaccel",
+        "qsv",
+        "-hwaccel_output_format",
+        "qsv",
+    ]
+    assert idx_hwaccel < args.index("-i")
+
+
+def test_build_args_amf_inserts_hwaccel_d3d11va_before_input(tmp_path: Path):
+    args = _build_ffmpeg_args(
+        ffmpeg="ffmpeg",
+        video=tmp_path / "in.mp4",
+        start=0.0,
+        end=10.0,
+        output=tmp_path / "out.mp4",
+        codec="h264",
+        encoder=H264Encoder.AMF,
+    )
+    idx_hwaccel = args.index("-hwaccel")
+    # AMF は -hwaccel_output_format 指定なし (issue 仕様)
+    assert args[idx_hwaccel : idx_hwaccel + 2] == ["-hwaccel", "d3d11va"]
+    assert "-hwaccel_output_format" not in args
+    assert idx_hwaccel < args.index("-i")
