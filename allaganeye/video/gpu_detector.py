@@ -618,7 +618,11 @@ def _decode_chunk_v2(
         "-fps_mode",
         "passthrough",
         "-vf",
-        f"{vf_prefix}select='not(mod(n\\,{n_step}))',scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
+        (
+            f"{vf_prefix}trim=start={chunk_start},setpts=PTS-STARTPTS,"
+            f"select='not(mod(n\\,{n_step}))',"
+            f"scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray"
+        ),
         "-f",
         "rawvideo",
         "-pix_fmt",

@@ -1981,6 +1981,12 @@ class TestDecodeChunkCpuNewPath:
         assert "fps=" not in vf_value, (
             f"fps filter must be removed, got -vf {vf_value!r}"
         )
+        assert "trim=start=" in vf_value, (
+            f"trim=start= missing in -vf, got {vf_value!r}"
+        )
+        assert "setpts=PTS-STARTPTS" in vf_value, (
+            f"setpts=PTS-STARTPTS missing in -vf, got {vf_value!r}"
+        )
         assert "select='not(mod(n\\," in vf_value, (
             f"select filter missing in -vf, got {vf_value!r}"
         )
