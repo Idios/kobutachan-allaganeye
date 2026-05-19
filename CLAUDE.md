@@ -160,6 +160,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 - vendor 自動選択 (#546 / #553 / #550 / #582): `allaganeye.system_info.probe_gpu_vendors()` で検出した GPU から `_VENDOR_PREFERENCE = ("nvidia", "amd", "intel")` 順で選択。実装済み vendor は NVIDIA (cuvid, #546) / AMD (d3d11va + hwdownload, #553) / Intel (QSV + hwdownload, #550 h264/hevc/av1 + #582 vp9) の 3 つ。default (auto) は NVIDIA > AMD > Intel の preference 順で実装済み vendor を選ぶ
 - probe 結果は metadata.json `system_info` フィールドに記録され (#591)、GUI export 画面が H.264 再エンコードのエンコーダ選択 (NVENC / QSV / AMF / libx264 fallback) に使う。`--no-gpu` 指定時でも probe は実行し `gpu_vendors_available` を埋めるが、`gpu_vendor_used` は `null` になる
 - GUI export の H.264 再エンコード (#761): GUI 書き出し開始時に `start_export` Tauri コマンドへ単発 invoke → Python subprocess が `enumerate_h264_encoders` で決定した N スロット分の ffmpeg を pool 並列で spawn。GPU 初期化失敗 (NVENC `No NVENC capable devices found` 等) は Python 側で検知して libx264 で 1 回 retry し、`stage="fallback"` の `export-progress` イベントを emit (フロントエンドが per-match notice 表示)
+- NVENC 選択時は NVDEC zero-copy decode 経路 (`-hwaccel cuda -hwaccel_output_format cuda` を `-i` の前に挿入、#791)。NVENC encoder init failure に加え NVDEC decode-stage 失敗 (CUDA dynamic load / device creation / decoder device setup / `cuvidCreateDecoder` / `hwaccel transfer data failed` 等) も libx264 fallback の trigger 対象 (`_GPU_ENCODER_FAILURE_PATTERNS[NVENC]` 12 pattern、3 layer 構成)。QSV/AMF 側の decode hwaccel は #762 で実機検証込みで wire 予定 (現状 `_DECODE_HWACCEL_ARGS` で `()` no-op)
 
 ### Exit Codes
 
