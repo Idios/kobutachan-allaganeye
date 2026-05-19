@@ -162,7 +162,7 @@ def export_sample_frames(
         ts = max(boundary_timestamp + offset, 0.0)
         try:
             raw = _probe_frame_rgb(video_path, ts, height=height)
-        except Exception:  # pragma: no cover
+        except Exception:
             raw = None
         if raw is None:
             continue
