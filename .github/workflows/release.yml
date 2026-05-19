@@ -32,6 +32,17 @@ on:
   # push の phantom run 作成は継続する (commit 2d17747 push 自体が phantom run
   # 25985396510 を作成した事実で実証)。defense-in-depth `if:` 条件は phantom run の
   # 0 jobs 維持 (= conclusion=failure だが functional 影響ゼロ) を担保。
+  #
+  # Retrospective (issue #786 / PR #788): 上記 R3-1 訂正の「main paths filter で
+  # gating」仮説は **誤り** だった。真の root cause = `shell: ${{ matrix.shell }}` が
+  # GitHub Actions schema-invalid (`jobs.<job_id>.steps[*].shell` field は matrix
+  # context をサポートしない、公式 context availability table 参照)。Codex
+  # /codex:rescue (agentId a9a21c7545477c99c) で独立調査により確定。PR #788 で
+  # `build-windows.defaults.run.shell: ${{ matrix.shell }}` 移行 + step 個別
+  # `shell: ${{ matrix.shell }}` 削除 (9 箇所) により解消。R2 fix の paths filter
+  # 撤去自体は別目的 (push trigger を strict 判定にして無関係 path push の run 抑止)
+  # で benefit があるため維持しているが、phantom run の真因ではなかった。詳細は
+  # PR #786 / #788 / docs/superpowers/specs/2026-05-17-...-design.md §9 を参照。
   push:
     branches: [main, "develop-*"]
     tags:
