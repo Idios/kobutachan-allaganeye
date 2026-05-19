@@ -17,8 +17,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+import cv2  # type: ignore[import-untyped]
+import numpy as np
+
 from allaganeye.exceptions import VideoProcessingError
-from allaganeye.video.detector import _probe_single_frame, _resolve_workers
+from allaganeye.video.detector import (
+    _SAMPLE_WIDTH,
+    _probe_frame_rgb,
+    _probe_single_frame,
+    _resolve_workers,
+)
 
 
 def _format_timestamp(timestamp_sec: float) -> str:
@@ -137,6 +145,30 @@ def export_brightness_csv(
         f.write("timestamp,brightness\n")
         for ts in sorted(results):
             f.write(f"{ts:.3f},{results[ts]:.1f}\n")
+
+
+def export_sample_frames(
+    *,
+    video_path: Path,
+    boundary_timestamp: float,
+    out_dir: Path,
+    height: int = 180,
+) -> None:
+    """Export 3 sample frames at boundary - 1s / boundary / boundary + 1s as PNG."""
+    offsets = (-1.0, 0.0, 1.0)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for offset in offsets:
+        ts = max(boundary_timestamp + offset, 0.0)
+        try:
+            raw = _probe_frame_rgb(video_path, ts, height=height)
+        except Exception:  # pragma: no cover
+            raw = None
+        if raw is None:
+            continue
+        frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, _SAMPLE_WIDTH, 3)
+        out_path = out_dir / f"frame-around-{ts:07.3f}.png"
+        cv2.imwrite(str(out_path), frame[:, :, ::-1])  # RGB -> BGR for cv2
 
 
 def main(argv: list[str] | None = None) -> int:

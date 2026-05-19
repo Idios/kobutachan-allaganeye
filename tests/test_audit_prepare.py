@@ -175,3 +175,35 @@ def test_export_brightness_csv_writes_expected_rows(tmp_path, monkeypatch):
     assert content[1].startswith("95.000,")
     # Last data row should be at 105.000
     assert content[-1].startswith("105.000,")
+
+
+def test_export_sample_frames_writes_three_pngs(tmp_path, monkeypatch):
+    import numpy as np
+
+    mod = _load_module()
+
+    def fake_probe_rgb(video_path, timestamp, height):
+        # Return a 320x180x3 black-and-mid frame
+        frame = np.full((180, 320, 3), int(timestamp) % 256, dtype=np.uint8)
+        return frame.tobytes()
+
+    monkeypatch.setattr(mod, "_probe_frame_rgb", fake_probe_rgb)
+
+    out_dir = tmp_path / "obs-fake"
+    out_dir.mkdir()
+
+    mod.export_sample_frames(
+        video_path=tmp_path / "fake.mkv",
+        boundary_timestamp=100.0,
+        out_dir=out_dir,
+        height=180,
+    )
+
+    pngs = sorted(out_dir.glob("frame-around-*.png"))
+    assert len(pngs) == 3
+    assert pngs[0].name == "frame-around-099.000.png"
+    assert pngs[1].name == "frame-around-100.000.png"
+    assert pngs[2].name == "frame-around-101.000.png"
+    # Sanity: each file is non-empty
+    for p in pngs:
+        assert p.stat().st_size > 0
