@@ -610,3 +610,58 @@ skill report (Step 6 レビュー報告 / Round summary comment) に以下を**�
 ---
 
 (本 spec は Idios review を経て承認された後、writing-plans skill により 4 Lane 単位の implementation plan に分解される。)
+
+## 9. v0.2.x 系 release.yml phantom run retrospective (post-spec 追補)
+
+本節は本 spec doc 確定 (2026-05-17) 後に PR #775 → issue #786 → PR #788 の
+ループで判明した release.yml phantom run の真因と、本 spec doc の Risk Register
+(§7.1) R3 とは独立した「R3-1 訂正の訂正」を retrospective として記録する。
+
+### 9.1 経緯
+
+- PR #775 (本 spec doc を produce した PR) で release.yml の paths filter 撤去 (R2 fix)
+  - 各 job entry に `if:` gating を追加 (Round 1 Finding 3 fix)
+- PR #775 期間中 (`/iterate-review` Round 2 → Round 3) に「`push.paths` filter は
+  default branch (main) の workflow 定義で評価される known behavior があるため、
+  R2 fix の empirical 検証は post-merge 以降の future push でしかできない」と R3-1 訂正
+- PR #775 merge 後 develop-0.3.0 で 8 連続 phantom run (`conclusion=failure` /
+  `jobs_count=0` / 診断 "This run likely failed because of a workflow file issue.")
+- issue #786 で Codex `/codex:rescue` (session `brave-heisenberg-5730dd`、
+  agentId `a9a21c7545477c99c`) が真因を独立調査で確定
+
+### 9.2 真因 (Codex finding)
+
+`shell: ${{ matrix.shell }}` が GitHub Actions schema-invalid。`jobs.<job_id>.steps[*].shell`
+field は matrix context をサポートしない (公式 [context availability table](https://docs.github.com/en/actions/learn-github-actions/contexts))。
+workflow 起動前 schema validation で `Unrecognized named-value: 'matrix'` reject
+→ jobs=0 / conclusion=failure となる。R3-1 訂正の「main paths filter で gating」
+仮説とは無関係で、main の paths filter 残存とは独立した workflow schema 違反だった。
+
+### 9.3 修正 (PR #788)
+
+`build-windows` job 直下に `defaults.run.shell: ${{ matrix.shell }}` を追加し
+(`jobs.<job_id>.defaults.run` field は matrix context 参照可能)、各 step 個別の
+`shell: ${{ matrix.shell }}` 行を削除 (9 箇所)。matrix.shell 構造と #737 dual-shell
+検証能力 (PS 5.1 silent regression 検知) を維持。`version-check` / `release` job の
+`shell: bash` step 3 件は ubuntu-latest 上の意図的 bash 指定で touch しない。
+
+### 9.4 spec doc への implication
+
+- §7.1 R3 (Codex 独断 fix の risk) と本節 R3-1 訂正は **別物**。R3 は本 spec doc が
+  対象とする risk、R3-1 訂正は PR #775 review process 中に生まれた誤った仮説で
+  本 spec doc 範囲外
+- 本節は PR #775 → #786 → #788 のループで得た「workflow schema 違反 phantom run」の
+  empirical 知見を spec doc 末尾に追補することで、将来同種事象 (phantom run /
+  jobs_count=0 / schema-invalid 仮説) が再発した時に正しい原因仮説を辿れるようにする
+- 横展開教訓: workflow YAML で `${{ matrix.* }}` を含む field は GitHub Actions
+  公式 context availability table を必ず確認する。step level `shell` は不可、
+  job level `defaults.run.shell` は可、`env` block は両方可、等
+
+### 9.5 関連
+
+- 起源 PR: PR #775 (R3-1 訂正の元)
+- 真因確定 issue: #786
+- 真因修正 PR: #788
+- doc 整合性 issue: #789 / #790 (本節 + release.yml inline comment retrospective note)
+- Codex rescue session: `brave-heisenberg-5730dd` / agentId `a9a21c7545477c99c`
+- GitHub Actions context availability: <https://docs.github.com/en/actions/learn-github-actions/contexts>
