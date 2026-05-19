@@ -861,8 +861,14 @@ class TestDecodeChunkV2Cmd:
         )
 
         cmd = mock_popen.call_args[0][0]
-        # -ss after -i
-        assert cmd.index("-ss") > cmd.index("-i")
+        # dual seek: one -ss before -i (input seek), one after -i (output seek)
+        ss_positions = [i for i, arg in enumerate(cmd) if arg == "-ss"]
+        i_idx = cmd.index("-i")
+        assert len(ss_positions) == 2, (
+            f"expected 2 -ss flags for dual seek, got {ss_positions}"
+        )
+        assert ss_positions[0] < i_idx, "first -ss should be input seek (before -i)"
+        assert ss_positions[1] > i_idx, "second -ss should be output seek (after -i)"
         # -vf must contain select filter (frame-index based, not PTS-based fps=)
         vf_value = cmd[cmd.index("-vf") + 1]
         assert "fps=" not in vf_value
@@ -907,14 +913,21 @@ class TestDecodeChunkV2Cmd:
         )
 
         cmd = mock_popen.call_args[0][0]
-        # AMD: hwdownload prefix in -vf, select filter, output seek + passthrough
+        # AMD: hwdownload prefix in -vf, select filter, dual seek + passthrough
         vf_value = cmd[cmd.index("-vf") + 1]
         assert "hwdownload,format=nv12" in vf_value
         assert "fps=" not in vf_value
         assert "select='not(mod(n\\," in vf_value, (
             f"select filter missing in AMD GPU -vf, got {vf_value!r}"
         )
-        assert cmd.index("-ss") > cmd.index("-i")
+        # dual seek: one -ss before -i (input seek), one after -i (output seek)
+        ss_positions = [i for i, arg in enumerate(cmd) if arg == "-ss"]
+        i_idx = cmd.index("-i")
+        assert len(ss_positions) == 2, (
+            f"expected 2 -ss flags for dual seek, got {ss_positions}"
+        )
+        assert ss_positions[0] < i_idx, "first -ss should be input seek (before -i)"
+        assert ss_positions[1] > i_idx, "second -ss should be output seek (after -i)"
         assert cmd[cmd.index("-fps_mode") + 1] == "passthrough"
 
     @patch("allaganeye.video.gpu_detector.subprocess.Popen")
@@ -957,6 +970,14 @@ class TestDecodeChunkV2Cmd:
         )
         cv_idx = cmd.index("-c:v")
         assert cmd[cv_idx + 1] == "h264_qsv"
+        # dual seek: one -ss before -i (input seek), one after -i (output seek)
+        ss_positions = [i for i, arg in enumerate(cmd) if arg == "-ss"]
+        i_idx = cmd.index("-i")
+        assert len(ss_positions) == 2, (
+            f"expected 2 -ss flags for dual seek, got {ss_positions}"
+        )
+        assert ss_positions[0] < i_idx, "first -ss should be input seek (before -i)"
+        assert ss_positions[1] > i_idx, "second -ss should be output seek (after -i)"
 
 
 class TestGpuFallbackIntegration:

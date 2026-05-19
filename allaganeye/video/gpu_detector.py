@@ -15,6 +15,7 @@ import numpy as np
 from allaganeye.exceptions import STDERR_TAIL_BYTES, VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
 from allaganeye.video.detector import (
+    SEEK_LEAD_SECONDS,
     _FRAME_SIZE,
     _SAMPLE_HEIGHT,
     _SAMPLE_WIDTH,
@@ -562,7 +563,17 @@ def _decode_chunk_v2(
     fps_den: int,
     is_tail_chunk: bool,
 ) -> tuple[dict[float, float], str]:
-    """New GPU chunk decode: output seek + select filter (#576).
+    """New GPU chunk decode: dual seek + select filter (#576 Option 1).
+
+    Dual seek layout (hwaccel args precede input -ss)::
+
+        <hwaccel_args> -ss <input_seek> -i <video> -ss <output_seek> -t <dur>
+
+    Input ``-ss`` BEFORE ``-i``: fast container index jump to keyframe near
+    ``chunk_start - SEEK_LEAD_SECONDS``.  Output ``-ss`` AFTER ``-i``: accurate
+    trim of the GOP pre-roll so the filter graph receives frames from
+    ``chunk_start`` onwards.  The ``select`` filter's ``n`` counter resets at
+    filter graph input, ensuring deterministic frame-index alignment.
 
     Vendor-specific hwaccel args / hwdownload prefix preserved from legacy.
     The ``select='not(mod(n,N))'`` filter drops frames at the ffmpeg layer
@@ -582,6 +593,13 @@ def _decode_chunk_v2(
     n_step = max(1, round(sample_interval * fps_num / fps_den))
     # expected_frames = number of selected frames = len(chunk_timestamps)
     expected_frames = len(chunk_timestamps or [])
+
+    # Dual seek: input seek jumps to keyframe near chunk_start (fast),
+    # output seek trims the GOP pre-roll so filter graph starts at chunk_start.
+    input_seek: float = max(0.0, chunk_start - SEEK_LEAD_SECONDS)
+    output_seek: float = (
+        chunk_start - input_seek
+    )  # = SEEK_LEAD_SECONDS unless chunk_start < SEEK_LEAD_SECONDS
 
     # Resolve decoder / hwaccel for the selected vendor (same logic as legacy).
     decoder: str | None = None
@@ -611,10 +629,12 @@ def _decode_chunk_v2(
     cmd = [
         find_ffmpeg(),
         *hwaccel_args,
+        "-ss",
+        str(input_seek),  # input seek (BEFORE -i): fast container jump
         "-i",
         str(video_path),
         "-ss",
-        str(chunk_start),
+        str(output_seek),  # output seek (AFTER -i): accurate trim to chunk_start
         "-t",
         str(chunk_duration),
         "-fps_mode",

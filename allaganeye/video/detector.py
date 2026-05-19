@@ -65,6 +65,12 @@ _SAMPLE_WIDTH = 320
 _SAMPLE_HEIGHT = 180
 _FRAME_SIZE = _SAMPLE_WIDTH * _SAMPLE_HEIGHT  # grayscale, 1 byte per pixel
 
+# Dual seek (#576 Option 1): input seek lead-in margin (seconds).
+# Input -ss jumps to the keyframe BEFORE (chunk_start - SEEK_LEAD_SECONDS)
+# so ffmpeg only decodes the small GOP pre-roll, not from t=0.
+# OBS AV1 keyframe interval is typically 2s; 5s gives 2.5x slack.
+SEEK_LEAD_SECONDS = 5.0
+
 
 def _resolve_fps_rational(
     fps_num: int | None,
@@ -537,11 +543,27 @@ def _decode_chunk_cpu_v2(
     fps_den: int,
     is_tail_chunk: bool,
 ) -> dict[float, float]:
-    """New path: output seek + select filter + -fps_mode passthrough (#576).
+    """New path: dual seek + select filter + -fps_mode passthrough (#576 Option 1).
 
-    ffmpeg invocation has ``-ss`` AFTER ``-i`` (output seeking) so the
-    first emitted frame's PTS equals ``chunk_start`` exactly.  The
-    ``select='not(mod(n,N))'`` filter drops frames at the ffmpeg layer
+    Dual seek layout::
+
+        -ss <input_seek> -i <video> -ss <output_seek> -t <chunk_duration>
+
+    Input ``-ss`` BEFORE ``-i``: fast container index jump to keyframe near
+    ``chunk_start - SEEK_LEAD_SECONDS`` (~10ms, no decode).  Output ``-ss``
+    AFTER ``-i``: accurate frame-level trim of the small GOP pre-roll
+    (typically SEEK_LEAD_SECONDS worth of frames).  The filter graph then
+    receives frames starting at ``chunk_start``; the ``select`` filter's
+    ``n`` counter resets at filter graph input, so frame 0 corresponds to
+    ``chunk_start``.
+
+    This replaces the previous pure output-seek design where ffmpeg decoded
+    from t=0 for every chunk, causing O(N^2/2) total decode for N=32 chunks
+    (~16.5x full-video decodes -> 67 min on RTX 5090 for a 2h recording).
+    With dual seek, the per-chunk pre-roll is bounded by SEEK_LEAD_SECONDS
+    (5s x 32 = 160s of duplicate decode vs 16.5x full-video).
+
+    The ``select='not(mod(n,N))'`` filter drops frames at the ffmpeg layer
     (frame-index based, NOT PTS-based -- deterministic across versions)
     before they reach the pipe, reducing pipe IO from ~28 GB to ~178 MB
     per 2h video at 60fps + sample_interval=3.0s.
@@ -565,14 +587,23 @@ def _decode_chunk_cpu_v2(
     # expected_frames = number of selected frames = len(chunk_timestamps)
     expected_frames = len(chunk_timestamps)
 
+    # Dual seek: input seek jumps to keyframe near chunk_start (fast),
+    # output seek trims the GOP pre-roll so filter graph starts at chunk_start.
+    input_seek: float = max(0.0, chunk_start - SEEK_LEAD_SECONDS)
+    output_seek: float = (
+        chunk_start - input_seek
+    )  # = SEEK_LEAD_SECONDS unless chunk_start < SEEK_LEAD_SECONDS
+
     cmd = [
         find_ffmpeg(),
         "-threads",
         "1",
+        "-ss",
+        str(input_seek),  # input seek (BEFORE -i): fast container jump
         "-i",
         str(video_path),
         "-ss",
-        str(chunk_start),
+        str(output_seek),  # output seek (AFTER -i): accurate trim to chunk_start
         "-t",
         str(chunk_duration),
         "-fps_mode",
