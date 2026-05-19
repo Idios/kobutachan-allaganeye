@@ -18,10 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from allaganeye.exceptions import VideoProcessingError
-from allaganeye.video.detector import (  # pyright: ignore[reportPrivateUsage]
-    _probe_single_frame,
-    _resolve_workers,
-)
+from allaganeye.video.detector import _probe_single_frame, _resolve_workers
 
 
 def _format_timestamp(timestamp_sec: float) -> str:
