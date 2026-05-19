@@ -419,7 +419,7 @@ NOTE: brainstorm 時の "36 分 / 5 baseline 合計" gate は実装前見込み 
 | ID | リスク | 緩和 |
 | --- | --- | --- |
 | R1 | Class A の matches/gaps projection が崩れる (極短 blackout が他 baseline にも潜在) | PR 内で 4 本を順に detect → diff を確認 → diff あれば Class B 扱いに昇格して baseline regenerate (本 PR scope に含める)。さらに Pass 1/Pass 2 intermediate audit dump で内部 stability も明示 |
-| R2 | output seek の discard decode が長 GOP video で予想より遅い | perf budget 36 分 gate で検出、超過時は input seek + PTS metadata parse へ pivot (別 brainstorm) |
+| R2 | output seek の discard decode が長 GOP video で予想より遅い | **実装後の reality**: 想定を超える 10x 規模の regression (obs-20260118 で 7 min legacy -> 67 min new on RTX 5090) が発生。S7.4 perf gate を 70 min/baseline に revise (S5 reality table 参照)。input seek + PTS metadata parse への pivot は v0.3.x で別 brainstorm として deferred (R11) |
 | R3 | 一部 hwaccel (Intel QSV 等) で hwdownload + scale=gray の挙動が ffmpeg 内部実装に依存し新パイプで decode 失敗 | vendor 別 unit test (command 構築) + Idios 環境での実機検証 (NVIDIA / AMD) + vendor 別 golden brightness 比較。Intel は user 側に検証可能な機材がない場合は AskUserQuestion で別途依頼 |
 | R4 | env var rollback path の保守コストが膨らむ | v0.3.x で削除を明記、docstring に "transitional" マーク、`conftest.py` autouse fixture で CI pollution 防止 |
 | R5 | brightness_callback (#569 GUI timeline) の値が新 path で変わる | callback の dict key (timestamp grid) は同一、value のみ正確化 = GUI timeline は意図通り改善方向 (旧 fps filter の drift で歪んでいた値が直る)。release notes と CHANGELOG に明記、user-visible metadata 変更として扱う |

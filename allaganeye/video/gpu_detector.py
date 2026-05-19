@@ -574,6 +574,11 @@ def _decode_chunk_v2(
     # #576: frame-index step for ffmpeg select filter.
     # N selects every Nth decoded frame (deterministic, unlike PTS-based
     # fps filter).  For 60fps + sample_interval=3.0, N=180.
+    #
+    # Float arithmetic is acceptable here: same rationale as detector.py
+    # _decode_chunk_cpu_v2 (spec S2.2 NTSC drift acceptance).  Realistic
+    # NTSC 60000/1001 over 2h yields <0.2s drift -- well under the 1.4s+
+    # minimum blackout duration the detector targets.
     n_step = max(1, round(sample_interval * fps_num / fps_den))
     # expected_frames = number of selected frames = len(chunk_timestamps)
     expected_frames = len(chunk_timestamps or [])

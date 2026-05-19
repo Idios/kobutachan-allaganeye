@@ -554,6 +554,13 @@ def _decode_chunk_cpu_v2(
     # #576: frame-index step for ffmpeg select filter.
     # N selects every Nth decoded frame (deterministic, unlike PTS-based
     # fps filter).  For 60fps + sample_interval=3.0, N=180.
+    #
+    # Float arithmetic is acceptable here: sample_interval is a float
+    # CLI option, fps_num/fps_den are positive ints from probe.py.  The
+    # round() collapses to int and the worst-case relative error
+    # (~1/min(fps_num,fps_den) <= 1/24 over realistic sample_intervals)
+    # is dwarfed by the >=1.4s blackout duration the detector cares
+    # about.  Spec S2.2 NTSC drift note covers the same trade-off.
     n_step = max(1, round(sample_interval * fps_num / fps_den))
     # expected_frames = number of selected frames = len(chunk_timestamps)
     expected_frames = len(chunk_timestamps)
@@ -1426,6 +1433,16 @@ def _use_legacy_fps_filter() -> bool:
     escape hatch for ffmpeg version regressions during the v0.3.0
     rollout.  CI / production should NEVER set this var (CHANGELOG
     "Deprecated").
+
+    **Known perf trade-off (v0.3.0 only)**: the new path is significantly
+    slower than the legacy fps-filter path on long videos.  obs-20260118
+    baseline measured 67 min on the new path vs 7 min on legacy path
+    (RTX 5090, NVDEC AV1 decode).  See spec S5 / S10 R11 + CHANGELOG
+    [Unreleased] "Performance (known regression)" for the rationale.
+    Despite the slowdown, the new path is correctness-critical (#576
+    detects 3 short blackouts that the legacy fps filter missed in
+    20260118 due to version-dependent PTS drift).  Real perf optimization
+    is deferred to v0.3.x.
 
     Removal plan:
 
