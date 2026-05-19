@@ -134,15 +134,14 @@ function configureHappyInvoke() {
         return Promise.resolve(0);
       case 'force_exit_app':
         return Promise.resolve();
-      // #466 -- Phase 4 export
-      case 'export_match': {
-        const a = args as { matchIndex: number; outputPath: string };
+      // #466 / #761 -- Phase 4 export (single-invoke start_export)
+      case 'start_export':
         return Promise.resolve({
-          match_index: a.matchIndex,
-          output_path: a.outputPath,
-          duration_ms: 100,
+          success: 9,
+          failure: 0,
+          skipped: 0,
+          cancelled: false,
         });
-      }
       // #569 -- Phase 2.5 detect
       case 'start_detect': {
         const a = args as { outputDir?: string } | undefined;
@@ -305,11 +304,11 @@ describe('flow G: detecting [中断] returns to drop', () => {
   });
 });
 
-describe('flow H: export cancel mid-flight (#466 + #523)', () => {
+describe('flow H: export cancel mid-flight (#466 + #523 + #761)', () => {
   it('kill_tracked_processes is invoked when 中断 is clicked', async () => {
-    // Make export_match hang so we can observe the cancel path.
+    // Make start_export hang so we can observe the cancel path.
     invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === 'export_match') return new Promise(() => undefined);
+      if (cmd === 'start_export') return new Promise(() => undefined);
       if (cmd === 'kill_tracked_processes') return Promise.resolve(0);
       return Promise.resolve(undefined);
     });

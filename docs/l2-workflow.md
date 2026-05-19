@@ -137,6 +137,8 @@ template 内の各節は既存実装と整合する位置取り。Iron Law 4 (Cl
 
 PR 作成前に base 最新化と並行 worktree PR 重複を必ず確認する。`feedback_pr_review_base_merge_regression.md` (PR #627 Round 4 で発覚した base 取り込み機能 regression) と `feedback_concurrent_worktree_pr_check.md` (#646 / PR #647 並行作業重複) の skill / 規約昇格として運用化 (2026-04-29 #659)。2026-05-13 #722 で Step 0 ハードゲートを追加 (build/verify 前に `gh pr list --search "<元issue#>" --state open` を <1s で実行、PR #721 で発生した 49s redundant work 再発を防止)。2026-05-17 L-β β-4 で Step 5 (`/codex:adversarial-review`) を追加 (C2)。Step 0 と Step 4 は検出 window が異なるため両方とも実施する。
 
+> **checkbox 表記 convention**: Self-Test Report (machine-verified) は `- [x]` (CI ゲート対象)、実機検証 (machine-unverifiable) は plain bullet `-` (CI ゲート対象外) で書き分ける。詳細は本 doc §「Self-Test Report 規約」 を参照。
+
 ### 6 ステップ手順 (Step 0-5)
 
 ```bash
@@ -341,6 +343,30 @@ PR 本文を以下の構成で書き分ける (PR #615 / PR #625 修正で確立
 
 `- [ ]` を残すと PR 提出直後の CI で fail する。`gh pr edit <N> --body-file -` で書き直せば validate-checklist は再実行され直ちに pass する (commit 不要)。
 
+## PR body 規約 (期待値 / 現状 / 修正内容)
+
+すべての PR で本文冒頭に以下 3 section を inline 必須化する:
+
+- `## 期待値 (あるべき姿)`: 2-4 文。この PR がマージされた後にコードベース or 動作がどうあるべきか + なぜ目指すか
+- `## 現状 (修正前)`: 2-4 文。PR 作成時点でどうなっているか + 期待値とのギャップ
+- `## 修正内容 (現状 → 期待値)`: bullet list。何をしたか、必要なら file path:line で具体化
+
+### issue ref の運用
+
+issue ref がある PR も、期待値 / 現状 は PR 本文に **簡潔に inline 記載** (issue を辿らせない)。詳細は元 issue へ link 参照可、PR 本文と issue 本文の重複は受容。
+
+### release / meta PR の解釈
+
+複数 PR を統合する release / meta PR (例: PR #774) も同構造で書く:
+
+- 期待値: 当該リリースバージョンが出て該当問題が解消されている
+- 現状: develop ブランチで修正が積まれ統合準備完了、main は未統合
+- 修正内容: 統合した PR list + 各 Track の解消内容
+
+### Iron Law 6 サブ条との関係
+
+本規約は PR template (`.github/pull_request_template.md`) と一致する。template の `## 期待値` / `## 現状` / `## 修正内容` を埋めずに PR 作成すると `/review-pr` で blocker 扱い。
+
 ## (A) PR 内修正優先 規約
 
 > originally from `feedback_pr_internal_fix_policy.md`, absorbed 2026-05-01
@@ -414,7 +440,7 @@ doc の節構造を変える PR、**または `git merge` で他 skill / doc を
 doc の節構造を変える PR、または merge 取り込み PR では以下を実行:
 
 1. `git grep -oE '§「[^」]+」' .claude/ docs/ | sort -u` で全 section reference を抽出
-2. 各 reference が target doc の `##` または `###` 見出しと文字列一致するか確認 (`grep -nE "^### ?<セクション名>" docs/<target>.md` 等)
+2. 各 reference が target doc の `##` または `###` 見出しと文字列一致するか確認 (`grep -nE "^### ?<セクション名>" docs/<target>.md` 等)。**partial-string match 許容**: 見出し末尾の注釈 (例: `(#428 / #405 matrix v2)`、`(#440 / PR #632)`) は section name に含めず、本体名 (例: `click-level option-parse error`) のみで一致を判定する (PR #784 で明文化)
 3. 旧セクション名が確実に消えたら `git grep -n "<旧セクション名>"` で残骸ゼロを確認
 
 「相互参照は破綻していない」と PR Self-Test Report に書く前に、上記 3 ステップを実施する。ファイル名 mention の grep だけでは不十分 (l2-workflow.md という mention は残るが、参照している節が統合・廃止されていることを検出できない)。
@@ -777,6 +803,14 @@ skill を**大幅改訂** (新節追加 / frontmatter description 書き換え�
 
 typo fix / リンク更新では過剰。`/iterate-review` のような中核 skill の改訂で特に有効。
 
+### 上流参照 (mizchi protocol を直接読む)
+
+上流 SKILL.md を **vendoring せず** (license 未設定のため)、改修者が都度参照する:
+
+- URL: <https://github.com/mizchi/skills/tree/main/empirical-prompt-tuning>
+- raw 取得: `gh api repos/mizchi/skills/contents/empirical-prompt-tuning/SKILL.md -H "Accept: application/vnd.github.raw"`
+- offline / GitHub 不到達時は WebFetch / `gh api` 不可 → skill 改修作業を保留。短期キャッシュは作業 dir に置いて **commit しない**
+
 ### How to apply
 
 1. **前段階の事例調査**: 指摘ラウンドが多かった実在 PR を 3 本ピックアップし、Explore agent 並列で指摘パターンを抽出してからモック設計へ
@@ -784,11 +818,19 @@ typo fix / リンク更新では過剰。`/iterate-review` のような中核 sk
 3. **要件チェックリスト**: `[critical]` タグ付きで事前固定。`eval/requirements.md` に集約
 4. **subagent dispatch**: `general-purpose` を `model: sonnet`、3 並列・`run_in_background: true` で起動
 5. **empirical 規範遵守**: Iteration 1 再評価では必ず**新規 subagent** (empirical Red Flag「同じ subagent を使い回そう」に該当するため同一 agent は不可)
-6. **打ち切り基準**: 構造的欠陥 (新節欠落 / 判定基準不在レベル) が解消された時点で打ち切り可。残る細部不明瞭点は deferred issue として追跡
+6. **打ち切り基準**: 2 consecutive clears (new unclear=0 + accuracy +3pt 以下 + step ±10% + duration ±15%) で打ち切り。または構造的欠陥 (新節欠落 / 判定基準不在レベル) が解消された時点で打ち切り可。残る細部不明瞭点は deferred issue として追跡
+
+### Iron Law 6 路線 / Self-Test Report integration
+
+本 workflow を skip した skill 改修 PR は「未検証 PR」と同じ扱い。
+
+- PR Self-Test Report に `### empirical prompt tuning` セクションを設け、Iteration table (per-scenario success / accuracy / steps (tool_uses) / duration / structured reflection / ledger updates) を記録する
+- 例外: trivial wording fix (typo / link 修正 / コメント追記のみ) は skip 可、判断は `AskUserQuestion` で確認
+- Self-Test Report の `### empirical prompt tuning` section を欠いた skill 改修 PR は `/review-pr` で blocker 扱い (Iron Law 6 違反)
 
 ### 経緯
 
-2026-04-24 `/review-pr` skill 改修で実証済み (PR #537 / #562)。Iteration 0 baseline で構造的欠陥 6 件 (環境制約節欠落、Round N 記法不在、処置分類判定基準の弱さ、束ね PR 独立検証の明示不在、孤立 PR 手順不在、doc-only CI 波及観点なし) を検出し、Iteration 1 で全件解消。精度 0.98 → 1.00、[critical] 3/3 成功。書き手自身の自己レビューでは構造的欠陥に到達できなかった。参考: <https://github.com/mizchi/chezmoi-dotfiles/blob/main/dot_claude/skills/empirical-prompt-tuning/SKILL.md>
+2026-04-24 `/review-pr` skill 改修で実証済み (PR #537 / #562)。Iteration 0 baseline で構造的欠陥 6 件 (環境制約節欠落、Round N 記法不在、処置分類判定基準の弱さ、束ね PR 独立検証の明示不在、孤立 PR 手順不在、doc-only CI 波及観点なし) を検出し、Iteration 1 で全件解消。精度 0.98 → 1.00、[critical] 3/3 成功。書き手自身の自己レビューでは構造的欠陥に到達できなかった。参考: <https://github.com/mizchi/skills/tree/main/empirical-prompt-tuning>
 
 ## Codex fallback (C6、Codex token 枯渇 / failure 時)
 

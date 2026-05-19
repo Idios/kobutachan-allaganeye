@@ -165,7 +165,7 @@ export interface MetadataWarning {
   };
 }
 /**
- * GPU vendor probe snapshot recorded by detect/split (#591). GUI export uses this to pick the H.264 encoder (NVENC / QSV / AMF / libx264). Optional at the root because pre-#591 metadata.json files don't carry it.
+ * GPU vendor probe snapshot recorded by detect/split (#591, extended #761). GUI export uses this to pick the H.264 encoder (NVENC / QSV / AMF / libx264) and query the NVENC parallel slot count SKU table. Optional at the root because pre-#591 metadata.json files don't carry it.
  */
 export interface SystemInfo {
   /**
@@ -180,6 +180,10 @@ export interface SystemInfo {
    * Snapshot of gpu_detector._VENDOR_PREFERENCE (currently ["nvidia","amd","intel"]).
    */
   vendor_preference: string[];
+  /**
+   * GPU model name strings from get_gpu_info_lines() (#761). Used by GUI export to query probe_nvenc_engine_count() for NVENC parallel slot count. Empty array on CPU-only hosts or when probing fails. Optional for backward compat with pre-#761 metadata.json.
+   */
+  gpu?: string[];
 }
 /**
  * Pre-rendered Pass 1 brightness timeline (#569). The CLI writer caps `values` to ~512 entries via downsampling so the GUI complete screen can draw the SVG without recomputing. Optional at the root: pre-#569 metadata.json and detect cache hits skip the field; CompleteScreen falls back to a sample curve when missing.

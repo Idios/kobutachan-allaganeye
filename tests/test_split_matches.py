@@ -2300,49 +2300,82 @@ class TestResolveGpuModeWithProbe:
 
 
 class TestBuildSystemInfo:
-    """``_build_system_info`` constructs the metadata.json system_info dict (#591)."""
+    """``_build_system_info`` constructs the metadata.json system_info dict (#591, extended #761)."""
 
     def test_basic_payload(self):
+        from unittest.mock import patch
+
         from allaganeye.commands.split_matches import _build_system_info
 
-        info = _build_system_info(
-            available_vendors=["nvidia", "amd"],
-            vendor_used="nvidia",
-        )
+        with patch(
+            "allaganeye.system_info.get_gpu_info_lines",
+            return_value=["NVIDIA GeForce RTX 5090 (32GB VRAM)"],
+        ):
+            info = _build_system_info(
+                available_vendors=["nvidia", "amd"],
+                vendor_used="nvidia",
+            )
         assert info["gpu_vendors_available"] == ["nvidia", "amd"]
         assert info["gpu_vendor_used"] == "nvidia"
         assert info["vendor_preference"] == ["nvidia", "amd", "intel"]
+        assert info.get("gpu") == ["NVIDIA GeForce RTX 5090 (32GB VRAM)"]
 
     def test_no_gpu_used_is_null(self):
         """CPU 強制 / cache hit / split-only path では vendor_used=None."""
+        from unittest.mock import patch
+
         from allaganeye.commands.split_matches import _build_system_info
 
-        info = _build_system_info(
-            available_vendors=["nvidia"],
-            vendor_used=None,
-        )
+        with patch("allaganeye.system_info.get_gpu_info_lines", return_value=[]):
+            info = _build_system_info(
+                available_vendors=["nvidia"],
+                vendor_used=None,
+            )
         assert info["gpu_vendor_used"] is None
         assert info["gpu_vendors_available"] == ["nvidia"]
+        assert info.get("gpu") == []
 
     def test_empty_available_vendors(self):
         """probe 失敗環境 (CPU only Linux CI など) でも payload を作れる."""
+        from unittest.mock import patch
+
         from allaganeye.commands.split_matches import _build_system_info
 
-        info = _build_system_info(
-            available_vendors=[],
-            vendor_used=None,
-        )
+        with patch("allaganeye.system_info.get_gpu_info_lines", return_value=[]):
+            info = _build_system_info(
+                available_vendors=[],
+                vendor_used=None,
+            )
         assert info["gpu_vendors_available"] == []
         assert info["gpu_vendor_used"] is None
         assert info["vendor_preference"] == ["nvidia", "amd", "intel"]
+        assert info.get("gpu") == []
 
     def test_preference_matches_gpu_detector_module(self):
         """``vendor_preference`` は ``gpu_detector._VENDOR_PREFERENCE`` のスナップショット."""
+        from unittest.mock import patch
+
         from allaganeye.commands.split_matches import _build_system_info
         from allaganeye.video.gpu_detector import _VENDOR_PREFERENCE
 
-        info = _build_system_info(available_vendors=[], vendor_used=None)
+        with patch("allaganeye.system_info.get_gpu_info_lines", return_value=[]):
+            info = _build_system_info(available_vendors=[], vendor_used=None)
         assert info["vendor_preference"] == list(_VENDOR_PREFERENCE)
+
+    def test_gpu_models_included_in_payload(self):
+        """``gpu`` field は ``get_gpu_info_lines()`` の結果を格納する (#761)."""
+        from unittest.mock import patch
+
+        from allaganeye.commands.split_matches import _build_system_info
+
+        gpu_models = ["NVIDIA GeForce RTX 5090 (32GB VRAM)", "Intel Arc A770"]
+        with patch(
+            "allaganeye.system_info.get_gpu_info_lines", return_value=gpu_models
+        ):
+            info = _build_system_info(
+                available_vendors=["nvidia"], vendor_used="nvidia"
+            )
+        assert info.get("gpu") == gpu_models
 
 
 class TestBuildMetadataPayloadSystemInfo:

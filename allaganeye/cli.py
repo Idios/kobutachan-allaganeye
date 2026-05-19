@@ -476,6 +476,11 @@ def _report_app_error(
 ) -> None:
     """Render an ``AllaganEyeError`` per matrix v2 19a/19b/19c (#428, #351).
 
+    Note: 19d (click-level option-parse error such as ``allaganeye -version``)
+    is handled separately in :func:`main` and never reaches this function.
+    See ``docs/cli-spec.md`` section ``click-level option-parse error`` for details.
+
+
     - 19a (verbose=True):  ``Error: <msg>`` + ``verbose_detail()`` context
       lines + full traceback (exceptions are raised ``from None`` in the
       CLI handlers but the traceback is emitted here *before* re-raise,
@@ -569,6 +574,15 @@ def _suggest_long_option_hint(argv: list[str]) -> str | None:
             return f"--{name}"
 
     return None
+
+
+# #761 -- register export + encoder-slots commands. Hidden commands stay
+# out of `allaganeye --help` listings but remain dispatchable.
+from allaganeye.commands import encoder_slots as _encoder_slots_cmd  # noqa: E402
+from allaganeye.commands import export as _export_cmd  # noqa: E402
+
+_export_cmd.register(app)
+_encoder_slots_cmd.register(app)
 
 
 def main() -> None:

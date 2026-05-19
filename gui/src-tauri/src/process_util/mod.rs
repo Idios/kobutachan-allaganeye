@@ -87,6 +87,8 @@ mod tests {
     /// #645 で `extract_brightness_window_impl` を 5 番目の spawn site
     /// として追加。`impl` 関数は `pub` (integration test から呼ぶため)
     /// なので `pub async fn ...` で match する。
+    /// #761 で `start_export` (Job Object + apply_no_window) と
+    /// `enumerate_h264_encoders` (apply_no_window のみ) を追加。
     #[test]
     fn lib_rs_applies_apply_no_window_at_all_spawn_sites() {
         // #756 -- after `process_util.rs` was promoted to a directory module
@@ -96,9 +98,10 @@ mod tests {
         for func in [
             "fn probe_video_with",
             "async fn ensure_thumbnail_exists",
-            "async fn run_ffmpeg_export_attempt",
             "async fn start_detect",
             "pub async fn extract_brightness_window_impl",
+            "async fn start_export",            // #761 new
+            "async fn enumerate_h264_encoders", // #761 new
         ] {
             let pos = src
                 .find(func)

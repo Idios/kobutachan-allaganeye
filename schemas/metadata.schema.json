@@ -265,7 +265,7 @@
     },
     "SystemInfo": {
       "title": "SystemInfo",
-      "description": "GPU vendor probe snapshot recorded by detect/split (#591). GUI export uses this to pick the H.264 encoder (NVENC / QSV / AMF / libx264). Optional at the root because pre-#591 metadata.json files don't carry it.",
+      "description": "GPU vendor probe snapshot recorded by detect/split (#591, extended #761). GUI export uses this to pick the H.264 encoder (NVENC / QSV / AMF / libx264) and query the NVENC parallel slot count SKU table. Optional at the root because pre-#591 metadata.json files don't carry it.",
       "type": "object",
       "additionalProperties": false,
       "required": ["gpu_vendors_available", "gpu_vendor_used", "vendor_preference"],
@@ -283,6 +283,13 @@
         },
         "vendor_preference": {
           "description": "Snapshot of gpu_detector._VENDOR_PREFERENCE (currently [\"nvidia\",\"amd\",\"intel\"]).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "gpu": {
+          "description": "GPU model name strings from get_gpu_info_lines() (#761). Used by GUI export to query probe_nvenc_engine_count() for NVENC parallel slot count. Empty array on CPU-only hosts or when probing fails. Optional for backward compat with pre-#761 metadata.json.",
           "type": "array",
           "items": {
             "type": "string"

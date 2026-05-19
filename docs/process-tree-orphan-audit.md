@@ -1,6 +1,6 @@
 # Windows process tree orphan audit (#743)
 
-L2a GUI (`gui/src-tauri/src/lib.rs`) は外部プロセスを 6 箇所で spawn する。本 audit はそれぞれの Windows process tree 振る舞いと孤児化リスクを整理し、#756 fix (Job Object 化) を `start_detect` のみに適用した理由を明示する。元 audit task は #743、修正実装は #756。
+L2a GUI (`gui/src-tauri/src/lib.rs`) は外部プロセスを 7 箇所で spawn する。本 audit はそれぞれの Windows process tree 振る舞いと孤児化リスクを整理し、#756 fix (Job Object 化) を `start_detect` と `start_export` に適用した理由を明示する。元 audit task は #743、修正実装は #756、`start_export` / `enumerate_h264_encoders` の追加は #761。
 
 ## §1 spawn site 一覧
 
@@ -9,22 +9,24 @@ L2a GUI (`gui/src-tauri/src/lib.rs`) は外部プロセスを 6 箇所で spawn 
 | 1 | `probe_video_with` (`lib.rs:~638`) | ffprobe (単発) | なし | なし | no (`cmd.output()`、spawn+wait 一体) | no | 短命 metadata query。`output().await` ブロックで親と寿命同期 |
 | 2 | `ensure_thumbnail_exists` (`lib.rs:~1236`) | ffmpeg (単発) | なし | なし | no (`cmd.output()`) | no | サムネ生成、数百 ms 以内 |
 | 3 | `extract_brightness_window_impl` (`lib.rs:~1348`) | ffmpeg (単発) | なし | なし | no (`cmd.output()`) | no | preview brightness 抽出、~1s |
-| 4 | `run_ffmpeg_export_attempt` (`lib.rs:~2072`) | ffmpeg (単発) | なし | あり (中断時) | yes | no | export 1 本ずつ、`TrackedChild::no_job(child)` |
-| 5 | **`start_detect` (`lib.rs:~2708`)** | Python `allaganeye detect` | **ffmpeg N 個 (GPU detector で 16-32、`gpu_detector.py`)** | **あり (#756 root cause)** | yes | **yes** | 本 PR の対応対象。`TrackedChild { child, job: Some(_) }` |
-| 6 | `open_folder_in_explorer` (`lib.rs:~1899`) | explorer.exe | (Windows shell process) | N/A (意図的 detach) | **no** | no | UI、本 app 終了後も残るべき |
+| 4 | **`start_detect` (`lib.rs:~2087`)** | Python `allaganeye detect` | **ffmpeg N 個 (GPU detector で 16-32、`gpu_detector.py`)** | **あり (#756 root cause)** | yes | **yes** | `TrackedChild { child, job: Some(_) }`。GPU 実行時 Python が ffmpeg 子孫を spawn するため Job Object 必須 |
+| 5 | **`start_export` (`lib.rs:~2746`)** | Python `allaganeye export` | **ffmpeg N 個 (並列 export worker)** | **あり** | yes | **yes** | #761 追加。N 並列 export が ffmpeg を spawn するため `start_detect` と同様に Job Object 適用 |
+| 6 | `enumerate_h264_encoders` (`lib.rs:~2630`) | Python `allaganeye encoder-slots` (単発 JSON 出力) | なし | なし | no (`cmd.output()`) | no | #761 追加。短命 single-shot、子孫なし。`output().await` で親と寿命同期 |
+| 7 | `open_folder_in_explorer` (`lib.rs:~1677`) | explorer.exe | (Windows shell process) | N/A (意図的 detach) | **no** | no | UI、本 app 終了後も残るべき |
 
-> 行番号は本 PR (#772) merge 時のスナップショット。将来の追記で drift しうるため、必ず関数名で grep して現在位置を確認すること。
+> 行番号は #787 merge 時のスナップショット。将来の追記で drift しうるため、必ず関数名で grep して現在位置を確認すること。
 
 ## §2 #756 fix の挙動 (start_detect だけ Job 化)
 
-### 2.1 なぜ start_detect だけか
+### 2.1 なぜ start_detect と start_export に Job Object が必要か
 
-`start_detect` は Python CLI (`allaganeye detect`) を spawn し、Python 側は GPU detection が有効な場合に内部で N 個 (16-32) の ffmpeg プロセスを並列 spawn する (`allaganeye/video/gpu_detector.py`)。Windows の `TerminateProcess` (= `tokio::process::Child::kill().await`) は **直接の子プロセスのみ kill** するため、Python だけが死んで ffmpeg 子孫は親なしの孤児として残留する (#756 root cause)。
+`start_detect` は Python CLI (`allaganeye detect`) を spawn し、Python 側は GPU detection が有効な場合に内部で N 個 (16-32) の ffmpeg プロセスを並列 spawn する (`allaganeye/video/gpu_detector.py`)。`start_export` (#761) は Python CLI (`allaganeye export`) を spawn し、Python 側が N 個の ffmpeg 並列 export worker を spawn する。いずれも Windows の `TerminateProcess` (= `tokio::process::Child::kill().await`) は **直接の子プロセスのみ kill** するため、Python だけが死んで ffmpeg 子孫は親なしの孤児として残留する (#756 root cause、#761 で同構造を export にも適用)。
 
 他 5 spawn site は:
 
-- **#1-#4 (ffmpeg / ffprobe 単発)**: 子孫を spawn しない。`Child::kill` で十分。
-- **#6 (explorer.exe)**: 「UI が GUI 終了後も残る」のが意図 (Idios の方針: 「展開 = インストール、削除 = アンインストール」)。Job 化すると Job Close で explorer も道連れに kill されてしまうため絶対に対象外。
+- **#1-#3 (ffprobe / ffmpeg 単発 = `output()` 系)**: 子孫を spawn しない。`Child::kill` で十分。
+- **#6 (`enumerate_h264_encoders` = Python 単発 JSON 出力)**: `output().await` で同期完了する short-lived subprocess、子孫なし。Job Object 不要。
+- **#7 (explorer.exe)**: 「UI が GUI 終了後も残る」のが意図 (Idios の方針: 「展開 = インストール、削除 = アンインストール」)。Job 化すると Job Close で explorer も道連れに kill されてしまうため絶対に対象外。
 
 ### 2.2 Job Object の効果
 
@@ -86,7 +88,7 @@ Python が spawn する ffmpeg は親プロセス (Python) の Job membership �
 
 | 項目 | 状態 | 理由 |
 | --- | --- | --- |
-| `run_ffmpeg_export_attempt` の Job 化 | 不要 | ffmpeg 1 本のみ、子孫なし。`Child::kill` で十分 |
+| `enumerate_h264_encoders` の Job 化 | 不要 | Python 単発 single-shot JSON 出力。子孫なし、`output().await` で同期完了 |
 | `taskkill /T /F /PID` fallback | 不要 | Job Object pattern が crash 時も含めてより確実 |
 | `JOB_OBJECT_LIMIT_BREAKAWAY_OK` を必要とする legitimate child の救済 | 該当なし | 現状 Python も ffmpeg も BREAKAWAY を要求しない |
 | Linux / macOS の同等対応 (`setpgid` + `kill -SIGTERM -<pgid>`) | 後回し | プロジェクト方針: 「対応プラットフォーム: Windows のみ」 |
@@ -95,7 +97,7 @@ Python が spawn する ffmpeg は親プロセス (Python) の Job membership �
 
 ## §6 関連
 
-- 実装: `gui/src-tauri/src/process_util/job_object.rs` + `gui/src-tauri/src/lib.rs` (`TrackedChild` / `track_child` / `start_detect`)
+- 実装: `gui/src-tauri/src/process_util/job_object.rs` + `gui/src-tauri/src/lib.rs` (`TrackedChild` / `track_child` / `start_detect` / `start_export`)
 - 整合性 test: `gui/src-tauri/src/process_util/mod.rs` の `lib_rs_applies_apply_no_window_at_all_spawn_sites` と並ぶ「spawn site policy」回帰検査
 - integration test: `gui/src/__tests__/flow.integration.test.tsx` の `flow N: detecting cancel triggers kill_tracked_processes (#756)`
 - 元 issue: #743 (audit task)、#756 (orphan bug fix)

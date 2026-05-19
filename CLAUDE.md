@@ -109,7 +109,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `gui/src/styles/tokens.css` | `aetherTheme` の CSS 変数定義 (#464 で追加) |
 | `gui/src/styles/path-display.module.css` | 5 画面横断のファイルパス表示 CSS Module (`.pathDisplay` container / `.pathSecondary` parent dir 行 RTL ellipsis truncate)、#676 で追加 (`docs/ui-interaction-spec.md §1.6` 参照) |
 | `gui/src/utils/path.ts` | Windows / POSIX path 操作 utility。`stripExtendedPathPrefix` (Windows `\\?\` prefix 除去) / `joinPath` (OS-appropriate separator) / `splitPath` (fileName + parentDir 分解、#676 で追加) |
-| `gui/src-tauri/` | Tauri 2 Rust バックエンド (`load_metadata` / `apply_changes` / `restore_from_original` / `check_backup_exists` / `get_metadata_mtime` / `export_match` / `select_h264_encoder_for_export` (#591) / `read_recent` / `add_recent` / `clear_recent` (#571) command、axum/tower-http による動画配信は #465 で実装)。`H264Encoder` enum + `select_h264_encoder` + `is_gpu_encoder_failure` で GUI export の H.264 エンコーダ自動選択と libx264 fallback retry を実装 (#591) |
+| `gui/src-tauri/` | Tauri 2 Rust バックエンド (`load_metadata` / `apply_changes` / `restore_from_original` / `check_backup_exists` / `get_metadata_mtime` / `start_export` / `enumerate_h264_encoders` (#761) / `read_recent` / `add_recent` / `clear_recent` (#571) command、axum/tower-http による動画配信は #465 で実装)。`start_export` は Python subprocess を起動して JSON Lines で進捗を受け取り、`enumerate_h264_encoders` は GPU SKU table から利用可能エンコーダスロット一覧を返す (#761) |
 
 ### 検知アルゴリズム（detector.py）
 
@@ -159,7 +159,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 - GPU 利用不可時は自動で CPU モードにフォールバック
 - vendor 自動選択 (#546 / #553 / #550 / #582): `allaganeye.system_info.probe_gpu_vendors()` で検出した GPU から `_VENDOR_PREFERENCE = ("nvidia", "amd", "intel")` 順で選択。実装済み vendor は NVIDIA (cuvid, #546) / AMD (d3d11va + hwdownload, #553) / Intel (QSV + hwdownload, #550 h264/hevc/av1 + #582 vp9) の 3 つ。default (auto) は NVIDIA > AMD > Intel の preference 順で実装済み vendor を選ぶ
 - probe 結果は metadata.json `system_info` フィールドに記録され (#591)、GUI export 画面が H.264 再エンコードのエンコーダ選択 (NVENC / QSV / AMF / libx264 fallback) に使う。`--no-gpu` 指定時でも probe は実行し `gpu_vendors_available` を埋めるが、`gpu_vendor_used` は `null` になる
-- GUI export の H.264 再エンコード (#591): metadata の `system_info.gpu_vendors_available` + `vendor_preference` を `select_h264_encoder_for_export` Tauri コマンドで `H264Encoder` enum に解決し、ffmpeg を `h264_nvenc` / `h264_qsv` / `h264_amf` / `libx264` のいずれかで起動。GPU 初期化失敗 (NVENC `No NVENC capable devices found` 等) は `is_gpu_encoder_failure` で検知して libx264 で 1 回 retry し、`stage="fallback"` の `export-progress` イベントを emit (フロントエンドが per-match notice 表示)
+- GUI export の H.264 再エンコード (#761): GUI 書き出し開始時に `start_export` Tauri コマンドへ単発 invoke → Python subprocess が `enumerate_h264_encoders` で決定した N スロット分の ffmpeg を pool 並列で spawn。GPU 初期化失敗 (NVENC `No NVENC capable devices found` 等) は Python 側で検知して libx264 で 1 回 retry し、`stage="fallback"` の `export-progress` イベントを emit (フロントエンドが per-match notice 表示)
 
 ### Exit Codes
 
@@ -229,6 +229,7 @@ L2 からは**単一ワークツリー + skill ベースディスパッチ**を�
 - 既存 skill: `/review-pr`, `/iterate-review`, `/enforce-acceptance-criteria`, `/scope-guard`, `/create-task`, `/close-issue`, `/release`
 - 計画立案・実装・PR テストは Plan モード + 通常ツール + TodoWrite で代替
 - ユーザー (Idios) が戦略・方針を判断し、Claude は選択肢提示と実装を担う
+- skill (`.claude/skills/*/SKILL.md`) 改修 PR は mizchi `empirical-prompt-tuning` protocol に従う。詳細は [`docs/l2-workflow.md` §skill 改修ワークフロー](docs/l2-workflow.md#skill-改修ワークフロー-empirical-prompt-tuning) を参照
 
 ### `/iterate-review` workflow と (A) 強優先方針
 

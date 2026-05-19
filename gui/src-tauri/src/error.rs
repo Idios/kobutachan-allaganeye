@@ -96,10 +96,11 @@ impl From<serde_json::Error> for AppError {
 }
 
 /// `?` 演算子で `String` error を AppError として propagate するための impl。
-/// 主に `Result<_, String>` を返す内部 helper (例 `run_ffmpeg_export_attempt`)
-/// を `Result<_, AppError>` を返す Tauri command 内で `?` 経由で呼び出すケース
-/// で使われる。code は `internal.error` 固定。新規コードでは call site で
-/// `AppError::new("domain.error_kind", message)` を構築するのが望ましい。
+/// 主に `Result<_, String>` を返す内部 helper (例 `untrack_child` 相当の
+/// 内部ヘルパー) を `Result<_, AppError>` を返す Tauri command 内で `?` 経由で
+/// 呼び出すケースで使われる。code は `internal.error` 固定。新規コードでは
+/// call site で `AppError::new("domain.error_kind", message)` を構築するのが
+/// 望ましい。
 ///
 /// `.with_default_hint()` chain は future-proof のため (`From<io::Error>` /
 /// `From<serde_json::Error>` と同 contract で integrity を保つ。現状

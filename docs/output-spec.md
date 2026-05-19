@@ -91,7 +91,7 @@ Metadata: <metadata.json path>
 
 エラーは stderr (19c 準拠)、その他 stdout メッセージは一切抑制される。
 
-## エラー表示仕様 (19a / 19b / 19c)
+## エラー表示仕様 (19a / 19b / 19c / 19d)
 
 詳細は [`docs/cli-spec.md` §「エラー表示 (#428 / #405 matrix v2)」](cli-spec.md) を参照。要約:
 
@@ -100,6 +100,7 @@ Metadata: <metadata.json path>
 | `-v` (19a) | `Error: <msg>` + context 展開 + full traceback | full traceback (`__cause__` chain 含) |
 | default (19b) | `Error: <msg>` + `(Run with -v / --verbose for full details)` | `Unexpected error: <exc>` + hint |
 | `-q` (19c) | `Error: <msg>` のみ | `Unexpected error: <exc>` のみ |
+| click-level option-parse error (19d) | `Error: No such option: <token>` + 改行 `Did you mean --<name>?` (stderr / `-v` / `-q` の影響なし、click level / 終了コード 2)。出力例の詳細は [`docs/cli-spec.md` §「click-level option-parse error」](cli-spec.md) を参照 | (該当なし — click level なので AllaganEyeError 系の例外経路を通らない) |
 
 `debug-brightness` コマンドには `-v` / `-q` オプションが無いため、エラーは default 形式に準じるが、**存在しない `-v` オプションへ誘導しないよう hint を抑制**する (#428)。
 
@@ -114,11 +115,12 @@ Metadata: <metadata.json path>
 - [#384](https://github.com/Idios/kobutachan-allaganeye/issues/384) (audio=frozen)
 - [#386](https://github.com/Idios/kobutachan-allaganeye/issues/386) (Scorebar elapsed)
 - [#387](https://github.com/Idios/kobutachan-allaganeye/issues/387) (Splitting elapsed)
-- [#388](https://github.com/Idios/kobutachan-allaganeye/issues/388) (Filter drop 内訳)
+- [#388](https://github.com/Idios/kobutachan-allaganeye/issues/388) / [#433](https://github.com/Idios/kobutachan-allaganeye/issues/433) (Filter drop 内訳 + unknown match 行)
 - [#389](https://github.com/Idios/kobutachan-allaganeye/issues/389) (workers=auto 解決値)
 - [#368](https://github.com/Idios/kobutachan-allaganeye/issues/368) / [#393](https://github.com/Idios/kobutachan-allaganeye/issues/393) (3 フェーズ進捗バー)
 - [#418](https://github.com/Idios/kobutachan-allaganeye/issues/418) (`-q` 厳密 silent: L/M/N 統合)
 - [#419](https://github.com/Idios/kobutachan-allaganeye/issues/419) (`-q -v` / `--gpu --no-gpu` 排他)
+- [#440](https://github.com/Idios/kobutachan-allaganeye/issues/440) / [#634](https://github.com/Idios/kobutachan-allaganeye/issues/634) (click-level option-parse error hint, PR [#632](https://github.com/Idios/kobutachan-allaganeye/pull/632))
 
 ### Open (対応中・レビュー中)
 
@@ -151,3 +153,14 @@ Metadata: <metadata.json path>
 - エラー表示: [`docs/cli-spec.md` §「エラー表示」](cli-spec.md)
 
 出力例を変更する PR は本マトリクスのセルに変化が無くても、該当 docs 節の整合性を必ず目視確認する (再発防止: PR #343 系での「docs 出力例なし → 整合性検証が走らない」問題への対応)。
+
+## export コマンド出力
+
+関連: `export` コマンドの構文・オプション・wire protocol の詳細は [`docs/cli-spec.md` §「export コマンド」](cli-spec.md) を参照。
+
+| モード | 生成ファイル | 備考 |
+| --- | --- | --- |
+| `export --codec copy` | `{idx:03}_{type}_{start}.mp4` (match ごと) | ストリームコピー MP4 (再エンコードなし)。`split` 出力と同じバイト内容を既存 `metadata.json` から生成 |
+| `export --codec h264` | `{idx:03}_{type}_{start}.mp4` (match ごと) | 再エンコード MP4 (NVENC / QSV / AMF / libx264 fallback)。スロット数 = NVENC engine 数 (RTX 5090 → 3、RTX 4090 → 2 等)。iGPU / ソフトウェア encoder は 1 スロット |
+| `export --json` | stdout: NDJSON ストリーム | 1 行 1 JSON イベント (progress / fallback / result / error / summary)。Tauri GUI subprocess が使用する wire protocol |
+| `--include I,J,K` / `--exclude I,J,K` | 0 始まりの index で match をフィルタ | `type_override="skip"` の match はこれらのフラグに関係なく常に除外 |
