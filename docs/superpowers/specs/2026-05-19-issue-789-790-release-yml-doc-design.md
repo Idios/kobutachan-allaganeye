@@ -19,7 +19,7 @@ PR #788 (`fix(workflow): #786 release.yml phantom run を defaults.run.shell で
 
 1. `.github/workflows/release.yml` L28-34 R3-1 訂正 inline comment 末尾に retrospective note (3-4 行) を追加 (#790)
 2. `.github/workflows/release.yml` build-windows job の `defaults.run.shell` 直上に shell 戦略コメント (5 行) を追加 (#789)
-3. `docs/superpowers/specs/2026-05-17-v020-v021-retro-codex-integration-design.md` に新規 section §9「v0.2.x 系 release.yml phantom run retrospective (post-spec 追補)」を追加 (~30-40 行、§8「関連リンク」の前に挿入) (#790)
+3. `docs/superpowers/specs/2026-05-17-v020-v021-retro-codex-integration-design.md` に新規 section §9「v0.2.x 系 release.yml phantom run retrospective (post-spec 追補)」を追加 (~30-40 行、§8「関連リンク」の後 = spec doc 末尾に追記) (#790)
 4. (任意 / PR 外) `C:\Users\idios\.claude\projects\.../memory/feedback_github_actions_step_shell_matrix.md` を新規作成 + MEMORY.md に index 行追記 (#790)
 
 ### 非範囲
@@ -313,7 +313,7 @@ CLAUDE.md 「実機検証 trigger 表」に該当する path (`gpu_detector.py` 
 
 - 起源 PR: [PR #788](https://github.com/Idios/kobutachan-allaganeye/pull/788) (release.yml phantom run fix、本 issue 群の deferred 元)
 - 関連 issue: [#789](https://github.com/Idios/kobutachan-allaganeye/issues/789) / [#790](https://github.com/Idios/kobutachan-allaganeye/issues/790)
-- 真因確定 PR: [PR #786](https://github.com/Idios/kobutachan-allaganeye/issues/786)
+- 真因確定 issue: [#786](https://github.com/Idios/kobutachan-allaganeye/issues/786)
 - 起源 spec doc: `docs/superpowers/specs/2026-05-17-v020-v021-retro-codex-integration-design.md`
 - Codex rescue session: `brave-heisenberg-5730dd` / agentId `a9a21c7545477c99c`
 - GitHub Actions context availability: <https://docs.github.com/en/actions/learn-github-actions/contexts>

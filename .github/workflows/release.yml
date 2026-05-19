@@ -42,7 +42,7 @@ on:
   # `shell: ${{ matrix.shell }}` 削除 (9 箇所) により解消。R2 fix の paths filter
   # 撤去自体は別目的 (push trigger を strict 判定にして無関係 path push の run 抑止)
   # で benefit があるため維持しているが、phantom run の真因ではなかった。詳細は
-  # PR #786 / #788 / docs/superpowers/specs/2026-05-17-...-design.md §9 を参照。
+  # PR #786 / #788 / docs/superpowers/specs/2026-05-17-v020-v021-retro-codex-integration-design.md §9 を参照。
   push:
     branches: [main, "develop-*"]
     tags:
