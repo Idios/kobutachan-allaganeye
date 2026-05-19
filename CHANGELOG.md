@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **detect**: chunk decode の ffmpeg `-vf fps=N` filter を廃止し、output
+  seek + `-fps_mode passthrough` + Python 側 N-th sampling 方式に移行
+  (#576)。ffmpeg version 依存の frame-selection drift (#560 / #575 /
+  #577) を構造的に除去。obs-20260118 で見逃されていた 3 件の短時間
+  blackout (1.4-2.1s) を正しく検出するように動作が変わる。Match 1 が
+  17m23s に短縮、新 Match 2 (21m32s) が追加、Match 3 が 15m50s に短縮。
+- **GUI brightness timeline** (#569): 新 path で Pass 1 brightness 値が
+  正確化される (旧 path の fps filter drift により歪んでいた値が修正
+  される方向)。timeline 形状の変化が user-visible になる可能性あり。
+
+### Added
+
+- `probe.py::ProbeResult` に `fps_num`/`fps_den` フィールドを追加
+  (NTSC 60000/1001 等の rational frame rate を float 精度損失なく
+  detector まで伝搬)。
+- `scripts/validate-fps-retirement.py` を新規追加 (#576 実装中 evidence
+  用 one-off スクリプト、CI gate ではない)。
+
+### Performance (known regression)
+
+- **detect コマンドが ~10x 遅くなる**。obs-20260118 baseline で legacy
+  fps filter 経路 = 7 min vs 新 path = 67 min (RTX 5090, NVDEC AV1
+  decode)。原因は output seek (`-ss after -i`) が container index seek
+  を回避し、chunk_start に至るまで全フレームを decode する必要がある
+  ためと推定。
+- 緊急時は env var `ALLAGANEYE_DETECT_FPS_FILTER=1` で legacy path に
+  rollback 可能 (transitional、v0.3.x で削除予定)。
+- 本格 perf 改善 (R2 mitigation: input seek + showinfo PTS parse, etc.)
+  は v0.3.x で別 issue として brainstorm 予定。
+
+### Deprecated
+
+- env var `ALLAGANEYE_DETECT_FPS_FILTER=1` で旧 fps filter path に
+  rollback 可能 (transitional)。**v0.3.x patch release で削除予定**。
+  緊急 escape 用途のみ、CI / production で使わないこと。
+
 ## [0.2.1] - 2026-05-17
 
 v0.2.0 リリース直後の patch リリース。Dependabot security alerts 解消と既存 deferred UX issue 5 件の対応、PR マージ前の cargo/npm audit CI 追加 + Windows process tree orphan の Job Object 化を含む。Track A/B-1/B-2/B-3/B-4/C/D 構成 (`docs/superpowers/specs/2026-05-16-security-alerts-response-design.md`)。

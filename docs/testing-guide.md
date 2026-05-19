@@ -156,7 +156,20 @@ def _ffmpeg_interval(request: pytest.FixtureRequest) -> None:
 
 ### 事例
 
-PR #575 / issue #560: ffmpeg 8.1 で `20260118` baseline の Match 8 end が 281s 乖離。per-frame probe で 6184.0-6184.8 の 0.8s 幅 blackout を捕捉できたが、`fps=0.5` filter は output PTS 6184 のラベルで実際は ~6185.1s 時点のフレーム (Y-mean=45) をサンプリングしていた (`showinfo` で確認)。(B) 案で baseline を `6184.0 → 6465.25` に更新して対応。fps filter 廃止による根本対策は #576 で検討中。
+PR #575 / issue #560: ffmpeg 8.1 で `20260118` baseline の Match 8 end が 281s 乖離。per-frame probe で 6184.0-6184.8 の 0.8s 幅 blackout を捕捉できたが、`fps=0.5` filter は output PTS 6184 のラベルで実際は ~6185.1s 時点のフレーム (Y-mean=45) をサンプリングしていた (`showinfo` で確認)。(B) 案で baseline を `6184.0 -> 6465.25` に更新して対応。fps filter 廃止による根本対策は #576 で実施済み。
+
+### detect fps filter 廃止後の運用 (#576)
+
+PR #576 (detect fps filter 廃止) 完了後、default path では fps filter を
+使わないため、ffmpeg version upgrade による Pass 1 brightness drift は
+構造的に発生しない。本 S の判定 flow が必要になるのは、env var
+`ALLAGANEYE_DETECT_FPS_FILTER=1` で legacy path を強制した場合のみ。
+
+- 新 path で baseline mismatch が観測された場合は、(B) ffmpeg version
+  依存 ではなく **(A) 検知ロジック退行** を疑う (legacy path で再現
+  しないことを確認)
+- legacy path は v0.3.x patch release で削除予定。それ以降は本 S の
+  運用は廃止される
 
 ### 検証データの保存場所
 

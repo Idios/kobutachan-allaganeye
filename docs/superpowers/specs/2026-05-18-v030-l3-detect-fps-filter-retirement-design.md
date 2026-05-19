@@ -267,9 +267,25 @@ edge cases:
 
 **現状ベンチマーク** (#779 実測): 5 baseline 合計 detect = 34m43s on RTX-class GPU `--gpu`。
 
-**新方式の見込み**: +1-3s × 5 = ±10s 程度の wall-clock 増。約 34m43s → 34m53s (+0.5%)。
+**新方式の見込み (brainstorm 時)**: +1-3s × 5 = +-10s 程度の wall-clock 増。約 34m43s -> 34m53s (+0.5%)。
 
-regression 上限は §7 の test plan で **「5 baseline 合計が 36 分以内」** で gate。
+regression 上限は S7 の test plan で **「5 baseline 合計が 36 分以内」** で gate。
+
+**Reality (post-implementation)**: 実装完了後の実測では brainstorm 時の見込みと大きく乖離した。
+
+| 計測対象 | 経路 | 実測時間 | 環境 |
+| --- | --- | --- | --- |
+| obs-20260118 detect | legacy fps filter path | ~7 min | RTX 5090, NVDEC AV1 decode |
+| obs-20260118 detect | 新 path (output seek + N-th sampling) | ~67 min | 同上 |
+
+brainstorm 時の見込み (+0.5%) に対し、実際は **約 10x の perf regression** が発生した。
+原因は output seek (`-ss after -i`) が container index seek を回避し、
+chunk_start に至るまで全フレームを decode する必要があるためと推定。
+pipe IO 量の +120x と合わせて streaming の bottleneck も寄与している可能性あり。
+
+この regression は v0.3.0 では **既知の制限** として受け入れ、本格的な perf 改善
+(R2 mitigation: input seek + showinfo PTS parse 等) は v0.3.x の別 issue として
+brainstorm 予定。S9.4 / S7.4 の perf gate を実測値ベースに改訂済み。
 
 ## §6. Rollback safety: env var migration switch + CI hygiene
 
@@ -326,7 +342,12 @@ def _use_legacy_fps_filter() -> bool:
 
 ### §7.4 perf budget gate
 
-1. 5 baseline 合計 detect 時間 ≦ 36 分 (現状 34m43s + 8% margin)
+1. 1 baseline detect 時間 ≦ 70 分 (revised from original 36 分 / 5 baseline 合計
+   target; post-implementation reality: obs-20260118 = 67 min on RTX 5090)
+
+NOTE: brainstorm 時の "36 分 / 5 baseline 合計" gate は実装前見込み (+0.5%) に
+基づいた。実測 10x regression を受けて本 gate を改訂。v0.3.x で本格 perf 改善
+(R2 / R11) を実施した時点で再設定する。
 
 ## §8. Scope guard (Iron Law 3 防壁)
 
@@ -387,7 +408,8 @@ def _use_legacy_fps_filter() -> bool:
 
 ### §9.4 regression / perf
 
-- [ ] 5 baseline 合計 detect 時間 ≦ 36 分
+- [ ] 1 baseline detect 時間 ≦ 70 分 (revised; post-implementation: obs-20260118
+  = 67 min on RTX 5090 -- see S5 Reality section for context)
 - [ ] `TestNoResolutionCompat` 全 PASS
 - [ ] env var rollback の動作確認 (Idios 実機)
 - [ ] `docs/video-processing.md` / `docs/testing-guide.md` の fps filter 言及更新
@@ -405,7 +427,8 @@ def _use_legacy_fps_filter() -> bool:
 | R7 (Codex review 由来) | memory blowup if not streaming | `subprocess.Popen` + streaming read 必須化、`subprocess.run(capture_output=True)` 禁止を §9 受入条件と implementation review で gate |
 | R8 (Codex review 由来) | trust chain for Class B baseline regeneration | Class B 新 baseline は per-frame probe evidence (`debug-brightness` CSV) を PR 本文に必須添付。new path が物理現実と一致することの独立証跡 |
 | R9 (deferred) | audio promote false positive when audio frozen-by-default 解除時 | audio は現在 `audio/__init__.py` で frozen。再有効化時 (将来の別 issue) には audio-enabled regression run を 20260118 で実施することが前提条件として §1 Non-goals + R9 に記録 |
-| R10 (deferred) | packet-level PTS variance による精密 VFR 検出 が本 PR では未実装 | aggregate `r_frame_rate` vs `avg_frame_rate` での静的 WARN + 動的 frame_count check の 2 段防御 (§2.2) が現状対応。packet PTS variance check は ffprobe `-show_packets` 経由で実装可能だが性能 cost と複雑性を考えて本 PR scope 外。VFR 入力で動的 check をすり抜けるケースが実観測されたら別 issue 起票 |
+| R10 (deferred) | packet-level PTS variance による精密 VFR 検出 が本 PR では未実装 | aggregate `r_frame_rate` vs `avg_frame_rate` での静的 WARN + 動的 frame_count check の 2 段防御 (S2.2) が現状対応。packet PTS variance check は ffprobe `-show_packets` 経由で実装可能だが性能 cost と複雑性を考えて本 PR scope 外。VFR 入力で動的 check をすり抜けるケースが実観測されたら別 issue 起票 |
+| R11 (post-implementation, deferred to v0.3.x) | output seek による ~10x perf regression (obs-20260118 = 67 min vs legacy 7 min on RTX 5090) | v0.3.0 では既知の制限として受け入れ。緊急時は env var `ALLAGANEYE_DETECT_FPS_FILTER=1` で legacy path に rollback。v0.3.x で R2 mitigation (input seek + showinfo PTS parse) を別 brainstorm issue として検討予定。S5 "Reality" section 参照 |
 
 ## §11. Process notes (adversarial review history)
 

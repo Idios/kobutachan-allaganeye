@@ -1417,7 +1417,26 @@ clips actual match footage.
 
 
 def _use_legacy_fps_filter() -> bool:
-    """Return True when the legacy fps-filter path is forced via env var."""
+    """Return True when the legacy fps-filter path is forced via env var (#576).
+
+    **Transitional / scheduled for removal in v0.3.x.**
+
+    Setting ``ALLAGANEYE_DETECT_FPS_FILTER=1`` reverts the detector to
+    the pre-#576 chunked ``fps=N`` filter path.  Provided as an emergency
+    escape hatch for ffmpeg version regressions during the v0.3.0
+    rollout.  CI / production should NEVER set this var (CHANGELOG
+    "Deprecated").
+
+    Removal plan:
+
+    - v0.3.0: env var supported (this function exists, returns env value)
+    - v0.3.x: env var removed (this function deleted, only new path
+      exists, _decode_chunk_cpu_legacy / _decode_chunk_legacy purged)
+
+    See ``docs/superpowers/specs/2026-05-18-v030-l3-detect-fps-filter-retirement-design.md``
+    S6 for rollback design and ``CHANGELOG.md`` for the deprecation
+    timeline.
+    """
     return os.environ.get("ALLAGANEYE_DETECT_FPS_FILTER") == "1"
 
 
