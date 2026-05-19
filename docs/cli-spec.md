@@ -327,7 +327,7 @@ detect/split が生成した `metadata.json` をもとに、N 並列で試合 MP
 
 ```bash
 # 通常モード (metadata.json をディスクから読み込む)
-allaganeye export <metadata_path> [--output-dir DIR] [--codec copy|h264]
+allaganeye export <metadata_path> --output-dir DIR [--codec copy|h264]
                                   [--concurrency N] [--name-pattern PATTERN]
                                   [--quiet|--json] [--include I,J,K|--exclude I,J,K]
 
@@ -346,7 +346,7 @@ echo '<metadata-json>' | allaganeye export --stdin [...]
 
 | オプション | デフォルト | 説明 |
 | --- | --- | --- |
-| `--output-dir DIR` | ソース動画の dirname | 出力先ディレクトリ |
+| `--output-dir DIR` | (必須) | 出力先ディレクトリ (省略不可) |
 | `--codec copy\|h264` | `copy` | `copy` (FFmpeg `-c copy`、無劣化分割) または `h264` (NVENC / QSV / AMF / libx264 で再エンコード) |
 | `--concurrency N` | SKU テーブル値 | 同時 export スロット数を上書き (`enumerate_h264_encoders` が返す値のデフォルト: RTX 5090 → 3、RTX 4090/4080/4070 → 2、RTX 4060 / 不明 NVIDIA → 1、QSV / AMF / libx264 → 1) |
 | `--name-pattern PATTERN` | `{idx:03}_{type}_{start}.mp4` | 出力ファイル名テンプレート。使用可能トークン: `{idx}` / `{idx:03}` / `{type}` / `{start}` / `{date}` |

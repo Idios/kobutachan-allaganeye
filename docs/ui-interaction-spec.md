@@ -820,7 +820,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 - mermaid 図は `export_idle / export_running / export_cancelling / export_completed / export_error` の 5 状態。本節は接頭辞 `export_` を省略した内部 reducer 名に揃えている (実装では `phase: ExportPhase` 直値を使う)
 - mermaid の `export_cancelling` 状態は ffmpeg 停止後 `export_idle` に直結し、終端の `cancelled` 状態は持たない (`export_cancelling → export_idle: ffmpeg 停止`)。内部 reducer の `cancelling → idle (CANCEL_CONFIRMED)` と同形状で、両者は意図的な簡略化として整合する。後続 §3 で全画面分の整理を行う
 
-**store**: 主に **読み取り** (`metadataStore.metadata`、`appStateStore.selectedVideoPath`)。書き込みは `appStateStore.navigate('preview')` ([◀ プレビュー]) のみ。export 自体は store ではなく **Tauri command `start_export`** (単発 invoke → Python pool が N 並列 ffmpeg を spawn) + **event `export-progress`** + local state (`matchStates` / `excludedIndexes` / `outDir` / `namePattern` / `codec` / `encoderInfo` 等) で駆動する。
+**store**: 主に **読み取り** (`metadataStore.metadata`、`appStateStore.selectedVideoPath`)。書き込みは `appStateStore.navigate('preview')` ([◀ プレビュー]) のみ。export 自体は store ではなく **Tauri command `start_export`** (単発 invoke → Python pool が N 並列 ffmpeg を spawn) + **event `export-progress`** + local state (`matchStates` / `excludedIndexes` / `outDir` / `namePattern` / `codec` / `encoderSlots` / `encoderBadge` 等) で駆動する。
 
 **dirty / silent loss**: 編集対象 metadata なしのため §1.3 silent loss 対象外。export screen 上の設定 (`outDir` / `namePattern` / `codec` / `excludedIndexes`) は session-local config 扱いで confirm 不要。`running / cancelling` 中は [◀ プレビュー] が disabled になり物理的に navigate を防ぐ。
 
@@ -898,7 +898,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | 各ボタン: `inactive` / `active` (`codec === c.v` で `codecButtonActive`) / `disabled` (`running \|\| cancelling \|\| isSample`。sample mode disabled + tooltip 理由「サンプル動画では保存できません」、[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) → §1.4) |
 | 遷移トリガー | `onClick` → 即時 `setCodec(value)` |
 | store mutation | なし |
-| 例外 / edge case | h264 ボタンの sub label に `encoderInfo.display_label` を埋め込み、auto-select 結果 (`NVENC` / `QSV` / `AMF` / `libx264 (CPU)`) を可視化 ([#591](https://github.com/Idios/kobutachan-allaganeye/issues/591))。`metadata.system_info` 欠損 / Tauri command reject 時は libx264 silent fallback。codec 未選択状態は無し (default `'copy'`) |
+| 例外 / edge case | h264 ボタンの sub label に `encoderBadge` を埋め込み、auto-select 結果 (`NVENC ×N` / `QSV` / `AMF` / `libx264 (CPU)`) を可視化 ([#761](https://github.com/Idios/kobutachan-allaganeye/issues/761))。`metadata.system_info` 欠損 / Tauri command reject 時は libx264 silent fallback。codec 未選択状態は無し (default `'copy'`) |
 
 #### §2.5.7 errorMessage (phase=error)
 
