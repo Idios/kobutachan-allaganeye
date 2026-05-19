@@ -63,12 +63,13 @@ class MetadataWarning(TypedDict):
 
 class SystemInfo(TypedDict):
     """
-    GPU vendor probe snapshot recorded by detect/split (#591). GUI export uses this to pick the H.264 encoder (NVENC / QSV / AMF / libx264). Optional at the root because pre-#591 metadata.json files don't carry it.
+    GPU vendor probe snapshot recorded by detect/split (#591, extended #761). GUI export uses this to pick the H.264 encoder (NVENC / QSV / AMF / libx264) and query the NVENC parallel slot count SKU table. Optional at the root because pre-#591 metadata.json files don't carry it.
     """
 
     gpu_vendors_available: list[str]
     gpu_vendor_used: str | None
     vendor_preference: list[str]
+    gpu: NotRequired[list[str]]
 
 
 class BrightnessSamples(TypedDict):

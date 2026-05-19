@@ -22,11 +22,14 @@
 //!
 //! Other spawn sites in `lib.rs` (`probe_video_with` /
 //! `ensure_thumbnail_exists` / `extract_brightness_window_impl` /
-//! `run_ffmpeg_export_attempt`) invoke ffmpeg/ffprobe directly with no
-//! descendants and therefore do not need Job Objects;
-//! `open_folder_in_explorer` intentionally detaches explorer.exe so the
-//! user's file manager outlives the GUI. See
-//! `docs/process-tree-orphan-audit.md` (#743) for the per-site rationale.
+//! `enumerate_h264_encoders`) invoke ffmpeg/ffprobe or a short-lived Python
+//! subprocess directly with no descendants and therefore do not need Job
+//! Objects; `open_folder_in_explorer` intentionally detaches explorer.exe so
+//! the user's file manager outlives the GUI. `start_detect` and `start_export`
+//! both spawn long-lived Python subprocesses that in turn spawn ffmpeg
+//! children — those two sites require Job Objects for descendant reaping.
+//! See `docs/process-tree-orphan-audit.md` (#743/#761) for the per-site
+//! rationale.
 
 #![cfg(windows)]
 

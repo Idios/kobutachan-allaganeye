@@ -105,6 +105,7 @@ GPU vendor probe スナップショット。`probe_gpu_vendors()` の結果と�
 | `gpu_vendors_available` | array of string | ✓ | probe で検出された vendor 識別子の集合。`{"nvidia","amd","intel"}` の subset。空配列はその環境に GPU が無い (CPU only) |
 | `gpu_vendor_used` | string \| null | ✓ | 実際 detect で使った vendor。CPU 強制 (`--no-gpu`) / cache hit / `split --from-metadata` では `null` |
 | `vendor_preference` | array of string | ✓ | `gpu_detector._VENDOR_PREFERENCE` のスナップショット。現状 `["nvidia","amd","intel"]` |
+| `gpu` | array of string | — (NotRequired) | `get_gpu_info_lines()` が返す GPU モデル名文字列のリスト。GUI の `enumerate_h264_encoders` が NVENC SKU ルックアップに使用 (#761)。空配列 = GPU 無し / 未取得 |
 
 書き込みパス:
 
@@ -112,11 +113,11 @@ GPU vendor probe スナップショット。`probe_gpu_vendors()` の結果と�
 - `allaganeye split <video>` (legacy): cache miss なら detect と同じ / cache hit は probe を実行し vendor_used = null
 - `allaganeye split --from-metadata`: probe を実行し vendor_used = null (split 時点では vendor を選ばないため)
 
-GUI export 画面は `system_info.gpu_vendors_available` と `vendor_preference` を `select_h264_encoder_for_export` Tauri コマンドに渡し、`H264Encoder` enum (libx264 / NVENC / QSV / AMF) を解決する。`system_info` を持たない pre-#591 metadata.json は libx264 にフォールバックする。
+GUI export 画面は `system_info.gpu_vendors_available` / `vendor_preference` / `gpu` を `enumerate_h264_encoders` Tauri コマンドに渡し、H.264 エンコーダスロット一覧 (`EncoderSlotJson[]`) を取得する。`system_info` を持たない pre-#591 metadata.json は libx264 にフォールバックする。
 
-#### `system_info` は GPU 3 field のみ (OS/CPU/Memory は対象外)
+#### `system_info` の GPU field のみ (OS/CPU/Memory は対象外)
 
-`metadata.json` の `system_info` は **GPU 3 field のみ** (`gpu_vendors_available` / `gpu_vendor_used` / `vendor_preference`) を保持する。Python 側の `allaganeye/system_info.py` には他にも CPU info / OS info / memory / disk 等を取得する helpers があるが、それらは **CLI `-v` verbose header 用**で、`metadata.json` には書き込まれない。
+`metadata.json` の `system_info` は **GPU field のみ** (`gpu_vendors_available` / `gpu_vendor_used` / `vendor_preference` / `gpu`) を保持する。Python 側の `allaganeye/system_info.py` には他にも CPU info / OS info / memory / disk 等を取得する helpers があるが、それらは **CLI `-v` verbose header 用**で、`metadata.json` には書き込まれない。
 
 GUI 側で OS/CPU/Memory/Disk 等の環境情報が必要な場合 (例: bug_report.yml `environment` placeholder format) は metadata から取らずに **Tauri 側で別途 probe** する (例: `probe_environment_info` + `sysinfo` crate、#669 PR #726 で実装)。metadata.system_info を OS/CPU 等で拡張するのは schema 互換性を切る big change のため避ける。
 

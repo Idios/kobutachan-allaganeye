@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{
     extract::{Path as AxumPath, State},
@@ -1573,120 +1573,6 @@ async fn force_exit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
-/// #466 -- codec selection for a single-match export. `Copy` is fast and
-/// keyframe-aligned (no re-encode); `H264` re-encodes for accurate seek
-/// boundaries. The actual H.264 encoder (libx264 / NVENC / QSV / AMF)
-/// is chosen separately via [`H264Encoder`] (#591).
-#[derive(Debug, serde::Deserialize)]
-pub enum ExportCodec {
-    #[serde(rename = "copy")]
-    Copy,
-    #[serde(rename = "h264")]
-    H264,
-}
-
-/// #591 -- which H.264 encoder ffmpeg should use when [`ExportCodec::H264`]
-/// is requested. Auto-selected from the metadata.json `system_info`
-/// (probe results from the detect/split run) by [`select_h264_encoder`].
-///
-/// `Libx264` is the CPU fallback; `Nvenc` / `Qsv` / `Amf` are the GPU
-/// hardware encoders for NVIDIA / Intel / AMD respectively. The frontend
-/// displays the chosen encoder in the export panel sub label and passes
-/// the value back to `export_match` so the runtime fallback retry (#591
-/// Phase 3) knows which GPU encoder failed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum H264Encoder {
-    Libx264,
-    Nvenc,
-    Qsv,
-    Amf,
-}
-
-impl H264Encoder {
-    /// Return the ffmpeg `-c:v` value for this encoder.
-    fn ffmpeg_codec_name(&self) -> &'static str {
-        match self {
-            H264Encoder::Libx264 => "libx264",
-            H264Encoder::Nvenc => "h264_nvenc",
-            H264Encoder::Qsv => "h264_qsv",
-            H264Encoder::Amf => "h264_amf",
-        }
-    }
-
-    /// Return the vendor-specific quality / preset args. Targets visual
-    /// parity with libx264 CRF 18 (1080p ≈ 4-8 Mbps band), but the RD
-    /// curves differ between encoders so the mapping is approximate.
-    /// Tuned values may be revisited per-vendor based on PR #591 real
-    /// hardware verification.
-    fn quality_args(&self) -> &'static [&'static str] {
-        match self {
-            // Existing libx264 settings (unchanged from #466 baseline).
-            H264Encoder::Libx264 => &["-crf", "18", "-preset", "medium"],
-            // NVENC has no CRF; -cq is constant-quality with -rc vbr.
-            // -preset p5 ≈ libx264 medium on NVIDIA SDK 12+ (p1=fastest,
-            // p7=slowest).
-            H264Encoder::Nvenc => &[
-                "-rc", "vbr", "-cq", "19", "-preset", "p5",
-            ],
-            // QSV ICQ (Intelligent Constant Quality). -look_ahead 1
-            // enables 1-frame look-ahead for better RD decisions.
-            H264Encoder::Qsv => &[
-                "-global_quality", "20", "-look_ahead", "1", "-preset", "medium",
-            ],
-            // AMF Constant QP. Windows-only encoder; matches CLAUDE.md
-            // "対応プラットフォーム: Windows のみ".
-            H264Encoder::Amf => &[
-                "-quality", "quality", "-rc", "cqp", "-qp_i", "19", "-qp_p", "21",
-            ],
-        }
-    }
-
-    /// Short human label shown in the GUI export panel sub line.
-    fn display_label(&self) -> &'static str {
-        match self {
-            H264Encoder::Libx264 => "libx264 (CPU)",
-            H264Encoder::Nvenc => "NVENC",
-            H264Encoder::Qsv => "QSV",
-            H264Encoder::Amf => "AMF",
-        }
-    }
-}
-
-/// #591 -- choose an H.264 encoder from the GPU vendor probe results.
-///
-/// `vendors` is the `gpu_vendors_available` slice from the metadata.json
-/// `system_info` field (Phase 1). `preference` is `vendor_preference`
-/// from the same payload (a snapshot of `gpu_detector._VENDOR_PREFERENCE`,
-/// currently `["nvidia", "amd", "intel"]`).
-///
-/// Returns the first preference entry that is also present in `vendors`,
-/// mapped to the vendor's H.264 encoder. Falls back to `Libx264` when no
-/// vendor matches (CPU-only environment, empty system_info, or unknown
-/// vendor names).
-fn select_h264_encoder(vendors: &[String], preference: &[String]) -> H264Encoder {
-    for pref in preference {
-        if vendors.iter().any(|v| v == pref) {
-            match pref.as_str() {
-                "nvidia" => return H264Encoder::Nvenc,
-                "intel" => return H264Encoder::Qsv,
-                "amd" => return H264Encoder::Amf,
-                _ => continue,
-            }
-        }
-    }
-    H264Encoder::Libx264
-}
-
-/// #466 -- terminal payload returned to the frontend when a single match
-/// finishes exporting. `duration_ms` is wall time; the frontend uses it to
-/// show "exported in Ns" per match.
-#[derive(Debug, serde::Serialize)]
-pub struct ExportResult {
-    pub match_index: u32,
-    pub output_path: String,
-    pub duration_ms: u64,
-}
-
 /// #466 -- progress event emitted on channel `export-progress`. One event
 /// per ffmpeg `out_time_ms` line during encoding, plus a terminal
 /// `stage="done"` on success or `stage="error"` on failure.
@@ -1706,126 +1592,18 @@ pub struct ExportProgress {
     pub fallback_from: Option<String>,
 }
 
-/// #591 -- detect "this looks like a GPU encoder initialisation failure"
-/// from ffmpeg stderr text. Used by `export_match` to decide whether a
-/// non-zero exit warrants a libx264 retry.
-///
-/// Returns `false` for [`H264Encoder::Libx264`] (libx264 errors are not
-/// recoverable by switching encoders) and for unrelated errors (e.g.
-/// `"No such file or directory"`).
-///
-/// The substring patterns are pinned to ffmpeg 8.x BtbN LGPL builds
-/// (CLAUDE.md recommended). Future ffmpeg releases may change the
-/// wording -- when that happens, extend this match arm rather than
-/// loosening the matcher (loose matching would silently retry on
-/// unrelated failures).
-///
-/// QSV patterns include the post-PR-#596 verified ffmpeg 8.1 strings
-/// (`Error creating a MFX session` / `current mfx implementation is not
-/// supported` -- observed when QSV is forced on a non-Intel host) plus
-/// the older `Error initializing an internal MFX session` for older
-/// ffmpeg builds. The `Could not open encoder` line is generic but
-/// always preceded by `[h264_qsv @ ...]` in QSV failures, so we accept
-/// it inside the Qsv arm only.
-///
-/// NVENC and AMF were validated against ffmpeg 8.1 BtbN LGPL on an
-/// Intel-iGPU-only host (#604): `Cannot load nvcuda.dll` (NVENC) and
-/// `DLL amfrt64.dll failed to open` (AMF) are the strings ffmpeg 8.1
-/// emits when the respective vendor driver DLL is missing. Pre-#604
-/// the patterns targeted ffmpeg 7.x only and missed every line of the
-/// 8.1 stderr, so the libx264 fallback retry never fired -- the same
-/// version-drift class of bug PR #596 fixed for QSV.
-fn is_gpu_encoder_failure(stderr: &str, encoder: H264Encoder) -> bool {
-    match encoder {
-        H264Encoder::Libx264 => false,
-        H264Encoder::Nvenc => {
-            stderr.contains("No NVENC capable devices found")
-                || stderr.contains("Cannot load nvEncodeAPI")
-                || stderr.contains("OpenEncodeSessionEx failed")
-                || stderr.contains("Cannot load nvcuda.dll")
-        }
-        H264Encoder::Qsv => {
-            stderr.contains("Error creating a MFX session")
-                || stderr.contains("Error initializing an internal MFX session")
-                || stderr.contains("current mfx implementation is not supported")
-                || stderr.contains("Cannot load libmfx")
-                || stderr.contains("MFXVideoENCODE_Init")
-                || (stderr.contains("h264_qsv") && stderr.contains("Could not open encoder"))
-        }
-        H264Encoder::Amf => {
-            stderr.contains("AMF runtime not initialized")
-                || stderr.contains("DLL load failed")
-                || stderr.contains("Could not initialize AMFContext")
-                || stderr.contains("DLL amfrt64.dll failed to open")
-        }
-    }
-}
-
-/// #466 -- pure validator for export arguments. Split out so unit tests can
-/// exercise the error paths without spawning ffmpeg. The caller is expected
-/// to pass the resolved `video_path` (no path-resolution done here).
-fn validate_export_request(
-    video_path: &Path,
-    start_seconds: f64,
-    end_seconds: f64,
-) -> Result<(), AppError> {
-    if !video_path.exists() {
-        return Err(AppError::new(
-            "io.file_not_found",
-            format!("video file not found: {}", video_path.display()),
-        )
-        .with_default_hint());
-    }
-    let meta = fs::metadata(video_path).map_err(|e| {
-        AppError::new(
-            "io.read_failed",
-            format!("stat failed ({}): {}", video_path.display(), e),
-        )
-        .with_default_hint()
-    })?;
-    if !meta.is_file() {
-        return Err(AppError::new(
-            "validation.not_a_file",
-            format!("video path is not a regular file: {}", video_path.display()),
-        )
-        .with_default_hint());
-    }
-    if !start_seconds.is_finite() || start_seconds < 0.0 {
-        return Err(AppError::new(
-            "validation.range_invalid",
-            format!("start_seconds must be >= 0 (got {})", start_seconds),
-        )
-        .with_default_hint());
-    }
-    if !end_seconds.is_finite() || end_seconds <= start_seconds {
-        return Err(AppError::new(
-            "validation.range_invalid",
-            format!(
-                "end_seconds must be > start_seconds (got start={}, end={})",
-                start_seconds, end_seconds
-            ),
-        )
-        .with_default_hint());
-    }
-    Ok(())
-}
-
-/// #466 -- assemble the ffmpeg argv for a single export. Pulled out of
-/// `export_match` so unit tests can verify flag ordering and codec choices
-/// without spawning a process.
-///
-/// Note: `-ss` is placed BEFORE `-i` so ffmpeg does a fast keyframe-based
-/// seek rather than decoding from t=0. `-to` / `-t` interpretation after
-/// `-ss -i` is "duration from the seek point", so we pass
-/// `end_seconds - start_seconds` as a duration via `-t`.
 /// #466 review #4: 出力先の親ディレクトリが存在することを検証する。
 ///
-/// 以前は `export_match` 内で `create_dir_all` を呼んでいたが、ユーザーが
+/// 以前は `start_export` 内で `create_dir_all` を呼んでいたが、ユーザーが
 /// タイポしたパスに静かにディレクトリツリーが作られて混乱を招くため、
 /// 明示拒否に変更した。ディレクトリ作成はユーザーが事前に行う前提。
 ///
 /// `output_path` がルート / 親なし (file_name only など) の場合は no-op で
 /// Ok を返す (現在のディレクトリを意味すると解釈)。
+///
+/// `start_export` subprocess 経路に移行後、本関数の呼び出し元は tests のみ。
+/// #[cfg(test)] で test ビルドのみに限定し dead_code 警告を抑止。
+#[cfg(test)]
 fn validate_output_parent_exists(output_path: &Path) -> Result<(), AppError> {
     if let Some(parent) = output_path.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
@@ -1878,9 +1656,10 @@ fn validate_open_folder_request(path: &str) -> Result<(), AppError> {
 /// 確実に動かす (#545 review、2026-04-25)。
 ///
 /// **#727 (2026-05-13)**: 元 `std::process::Command` から `tokio::process::Command`
-/// に切り替え、lib.rs 内 6 spawn site (probe_video_with / ensure_thumbnail_exists
-/// / run_ffmpeg_export_attempt / start_detect / extract_brightness_window_impl
-/// / 本関数) を `tokio::process::Command` 系で統一する refactor (gui spawn 統一)。
+/// に切り替え、lib.rs 内 spawn site (probe_video_with / ensure_thumbnail_exists
+/// / start_detect / start_export / enumerate_h264_encoders /
+/// extract_brightness_window_impl / 本関数) を `tokio::process::Command` 系で
+/// 統一する refactor (gui spawn 統一)。
 ///
 /// **apply_no_window 非適用**: explorer.exe は Win32 GUI subsystem アプリで
 /// そもそも console window を生成しないため、`process_util::apply_no_window`
@@ -1902,9 +1681,10 @@ async fn open_folder_in_explorer(path: String) -> Result<(), AppError> {
     #[cfg(target_os = "windows")]
     {
         // #727 -- spawn explorer.exe via tokio::process::Command for parity
-        // with the other 5 spawn sites (probe_video_with /
-        // ensure_thumbnail_exists / run_ffmpeg_export_attempt / start_detect
-        // / extract_brightness_window_impl). The returned Child is dropped
+        // with the other spawn sites (probe_video_with /
+        // ensure_thumbnail_exists / start_detect / start_export /
+        // enumerate_h264_encoders / extract_brightness_window_impl). The
+        // returned Child is dropped
         // immediately: explorer.exe is the user's file manager UI and should
         // outlive this Tauri app; Windows has no zombie process model so
         // the drop is safe.
@@ -1921,58 +1701,6 @@ async fn open_folder_in_explorer(path: String) -> Result<(), AppError> {
     }
 
     Ok(())
-}
-
-fn ffmpeg_args_for_export(
-    video_path: &Path,
-    start_seconds: f64,
-    end_seconds: f64,
-    output_path: &Path,
-    codec: &ExportCodec,
-    h264_encoder: H264Encoder,
-) -> Vec<String> {
-    let duration = (end_seconds - start_seconds).max(0.0);
-    let start_str = format!("{:.3}", start_seconds.max(0.0));
-    let duration_str = format!("{:.3}", duration);
-
-    let mut args: Vec<String> = Vec::new();
-    args.push("-y".to_string());
-    args.push("-hide_banner".to_string());
-    args.push("-loglevel".to_string());
-    args.push("error".to_string());
-    args.push("-progress".to_string());
-    args.push("pipe:2".to_string());
-    args.push("-ss".to_string());
-    args.push(start_str);
-    args.push("-i".to_string());
-    args.push(video_path.to_string_lossy().to_string());
-    args.push("-t".to_string());
-    args.push(duration_str);
-
-    match codec {
-        ExportCodec::Copy => {
-            args.push("-c".to_string());
-            args.push("copy".to_string());
-            args.push("-avoid_negative_ts".to_string());
-            args.push("make_zero".to_string());
-        }
-        ExportCodec::H264 => {
-            // #591 -- vendor-aware encoder selection. h264_encoder is
-            // resolved by select_h264_encoder() from metadata.json
-            // system_info.gpu_vendors_available; falls back to libx264
-            // when the system_info is missing or empty.
-            args.push("-c:v".to_string());
-            args.push(h264_encoder.ffmpeg_codec_name().to_string());
-            for q in h264_encoder.quality_args() {
-                args.push((*q).to_string());
-            }
-            args.push("-c:a".to_string());
-            args.push("copy".to_string());
-        }
-    }
-
-    args.push(output_path.to_string_lossy().to_string());
-    args
 }
 
 /// #466 -- insert a spawned ffmpeg child into the global PROCESS_TRACKER so
@@ -2015,6 +1743,10 @@ async fn untrack_child(id: Uuid) -> Option<tokio::process::Child> {
 /// a terminal `progress=end` or `progress=continue`. We only care about
 /// `out_time_ms` (for the percent bar) and `progress=end` (for the terminal
 /// event). Returns None for every other key.
+///
+/// Task 12 で `run_ffmpeg_export_attempt` を削除後、呼び出し元は tests のみ。
+/// #[cfg(test)] で test ビルドのみに限定し dead_code 警告を抑止。
+#[cfg(test)]
 fn parse_progress_line(line: &str) -> Option<ProgressSignal> {
     let line = line.trim();
     if let Some(rest) = line.strip_prefix("out_time_ms=") {
@@ -2032,6 +1764,10 @@ fn parse_progress_line(line: &str) -> Option<ProgressSignal> {
 }
 
 /// #466 -- internal enum for parsed progress lines.
+///
+/// Task 12 で `run_ffmpeg_export_attempt` を削除後、参照元は tests のみ。
+/// #[cfg(test)] で test ビルドのみに限定し dead_code 警告を抑止。
+#[cfg(test)]
 #[derive(Debug, PartialEq)]
 enum ProgressSignal {
     /// ffmpeg's `out_time_ms` is actually in microseconds (the name is a
@@ -2043,368 +1779,13 @@ enum ProgressSignal {
 /// #466 -- keep the last `max_bytes` bytes of `buf` as a UTF-8 lossy
 /// string. Used so the error message returned to the frontend stays
 /// bounded even if ffmpeg dumps pages of diagnostics.
+///
+/// Task 12 で `run_ffmpeg_export_attempt` を削除後、呼び出し元は tests のみ。
+/// #[cfg(test)] で test ビルドのみに限定し dead_code 警告を抑止。
+#[cfg(test)]
 fn tail_string(buf: &[u8], max_bytes: usize) -> String {
     let start = buf.len().saturating_sub(max_bytes);
     String::from_utf8_lossy(&buf[start..]).trim().to_string()
-}
-
-/// #466 -- export a single match to `output_path` by invoking ffmpeg.
-///
-/// Spawns with stderr piped, reads `-progress pipe:2` lines, and emits one
-/// `export-progress` event per `out_time_ms=` or terminal `progress=end`
-/// line. Non-progress stderr lines (e.g. real ffmpeg errors under
-/// `-loglevel error`) are accumulated into a ring buffer and folded into
-/// the Err message on non-zero exit.
-///
-/// The spawned child is registered in PROCESS_TRACKER for the duration of
-/// the call so the CloseRequested flow can kill it before app exit.
-/// #591 -- one ffmpeg invocation: spawn, stream stderr (progress events
-/// + tail buffer), wait for exit. Returns the captured stderr tail and
-/// final status so the caller can decide whether to retry with a
-/// different encoder.
-///
-/// `attempt_emits_done`: when `true` (single-attempt path or final
-/// retry), the function emits `stage="done"` on success. When `false`
-/// (first attempt of a retry sequence), the caller suppresses the done
-/// event for the failing attempt so the frontend doesn't see "done"
-/// followed by "fallback". The done event for a successful retry is
-/// emitted by the next call with `attempt_emits_done = true`.
-async fn run_ffmpeg_export_attempt(
-    app: &tauri::AppHandle,
-    args: &[String],
-    duration_seconds: f64,
-    match_index: u32,
-    attempt_emits_done: bool,
-) -> Result<(std::process::ExitStatus, Vec<u8>, bool), String> {
-    let mut cmd = tokio::process::Command::new("ffmpeg");
-    for a in args {
-        cmd.arg(a);
-    }
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-    process_util::apply_no_window(&mut cmd);
-
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("spawn ffmpeg failed: {}", e))?;
-
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| "failed to capture ffmpeg stderr".to_string())?;
-
-    // #756 -- export ffmpeg has no descendants to reap, so wrap with
-    // `TrackedChild::no_job`. The Job Object path is reserved for
-    // `start_detect` (Python CLI with N ffmpeg children); see
-    // `docs/process-tree-orphan-audit.md`.
-    let tracked_id = track_child(TrackedChild::no_job(child)).await;
-
-    let mut reader = BufReader::new(stderr).lines();
-    let mut stderr_tail: Vec<u8> = Vec::with_capacity(4096);
-    let max_tail = 2048;
-    let mut saw_end = false;
-
-    loop {
-        match reader.next_line().await {
-            Ok(Some(line)) => match parse_progress_line(&line) {
-                Some(ProgressSignal::OutTimeMs(us)) => {
-                    let seconds = (us as f64) / 1_000_000.0;
-                    let mut percent = if duration_seconds > 0.0 {
-                        seconds / duration_seconds * 100.0
-                    } else {
-                        0.0
-                    };
-                    if !percent.is_finite() {
-                        percent = 0.0;
-                    }
-                    if percent < 0.0 {
-                        percent = 0.0;
-                    }
-                    if percent > 100.0 {
-                        percent = 100.0;
-                    }
-                    let _ = app.emit(
-                        "export-progress",
-                        ExportProgress {
-                            match_index,
-                            percent,
-                            stage: "encoding".to_string(),
-                            message: None,
-                            fallback_from: None,
-                        },
-                    );
-                }
-                Some(ProgressSignal::End) => {
-                    saw_end = true;
-                    if attempt_emits_done {
-                        let _ = app.emit(
-                            "export-progress",
-                            ExportProgress {
-                                match_index,
-                                percent: 100.0,
-                                stage: "done".to_string(),
-                                message: None,
-                                fallback_from: None,
-                            },
-                        );
-                    }
-                }
-                None => {
-                    stderr_tail.extend_from_slice(line.as_bytes());
-                    stderr_tail.push(b'\n');
-                    if stderr_tail.len() > max_tail * 2 {
-                        let keep_from = stderr_tail.len() - max_tail;
-                        stderr_tail.drain(0..keep_from);
-                    }
-                }
-            },
-            Ok(None) => break,
-            Err(e) => {
-                stderr_tail
-                    .extend_from_slice(format!("stderr read error: {}\n", e).as_bytes());
-                break;
-            }
-        }
-    }
-
-    let mut child = match untrack_child(tracked_id).await {
-        Some(c) => c,
-        None => {
-            return Err("export cancelled (process tracker drained)".to_string());
-        }
-    };
-
-    let status = child
-        .wait()
-        .await
-        .map_err(|e| format!("wait ffmpeg failed: {}", e))?;
-
-    Ok((status, stderr_tail, saw_end))
-}
-
-#[tauri::command]
-async fn export_match(
-    app: tauri::AppHandle,
-    video_path: String,
-    start_seconds: f64,
-    end_seconds: f64,
-    output_path: String,
-    codec: ExportCodec,
-    h264_encoder: Option<H264Encoder>,
-    match_index: u32,
-) -> Result<ExportResult, AppError> {
-    let video = PathBuf::from(&video_path);
-    validate_export_request(&video, start_seconds, end_seconds)?;
-
-    let output = PathBuf::from(&output_path);
-    validate_output_parent_exists(&output)?;
-
-    // #591 -- frontend が metadata.json system_info から resolve した
-    // encoder を渡す。None (legacy / 古い metadata) は libx264 fallback。
-    let encoder = h264_encoder.unwrap_or(H264Encoder::Libx264);
-
-    let duration_seconds = end_seconds - start_seconds;
-    let started = Instant::now();
-    let max_tail = 2048;
-
-    // Attempt 1: vendor-resolved encoder.
-    let primary_args =
-        ffmpeg_args_for_export(&video, start_seconds, end_seconds, &output, &codec, encoder);
-    let (status, stderr_tail, saw_end) = run_ffmpeg_export_attempt(
-        &app,
-        &primary_args,
-        duration_seconds,
-        match_index,
-        true, // emits "done" on success
-    )
-    .await
-    .map_err(|e| {
-        let _ = app.emit(
-            "export-progress",
-            ExportProgress {
-                match_index,
-                percent: 0.0,
-                stage: "error".to_string(),
-                message: Some(e.clone()),
-                fallback_from: None,
-            },
-        );
-        e
-    })?;
-
-    if status.success() {
-        // Some ffmpeg builds close stderr without flushing the final
-        // `progress=end` line -- synthesize a terminal "done" so the
-        // frontend always sees one.
-        if !saw_end {
-            let _ = app.emit(
-                "export-progress",
-                ExportProgress {
-                    match_index,
-                    percent: 100.0,
-                    stage: "done".to_string(),
-                    message: None,
-                    fallback_from: None,
-                },
-            );
-        }
-        return Ok(build_export_result(&output, match_index, started));
-    }
-
-    // Failed. Decide whether to retry with libx264 (#591).
-    let stderr_text = String::from_utf8_lossy(&stderr_tail).into_owned();
-    if encoder != H264Encoder::Libx264
-        && matches!(codec, ExportCodec::H264)
-        && is_gpu_encoder_failure(&stderr_text, encoder)
-    {
-        let from_to = format!("{} -> libx264", encoder.ffmpeg_codec_name());
-        let _ = app.emit(
-            "export-progress",
-            ExportProgress {
-                match_index,
-                percent: 0.0,
-                stage: "fallback".to_string(),
-                message: Some(format!(
-                    "{} の初期化に失敗したため libx264 で再試行します",
-                    encoder.display_label()
-                )),
-                fallback_from: Some(from_to),
-            },
-        );
-
-        let retry_args = ffmpeg_args_for_export(
-            &video,
-            start_seconds,
-            end_seconds,
-            &output,
-            &codec,
-            H264Encoder::Libx264,
-        );
-        let (retry_status, retry_tail, retry_saw_end) = run_ffmpeg_export_attempt(
-            &app,
-            &retry_args,
-            duration_seconds,
-            match_index,
-            true,
-        )
-        .await
-        .map_err(|e| {
-            let _ = app.emit(
-                "export-progress",
-                ExportProgress {
-                    match_index,
-                    percent: 0.0,
-                    stage: "error".to_string(),
-                    message: Some(e.clone()),
-                    fallback_from: None,
-                },
-            );
-            e
-        })?;
-
-        if retry_status.success() {
-            if !retry_saw_end {
-                let _ = app.emit(
-                    "export-progress",
-                    ExportProgress {
-                        match_index,
-                        percent: 100.0,
-                        stage: "done".to_string(),
-                        message: None,
-                        fallback_from: None,
-                    },
-                );
-            }
-            return Ok(build_export_result(&output, match_index, started));
-        }
-
-        // Retry also failed -- surface the libx264 stderr (more useful
-        // than the original GPU failure).
-        let tail = tail_string(&retry_tail, max_tail);
-        let msg = if tail.is_empty() {
-            format!(
-                "ffmpeg (libx264 retry) exited with status {:?}",
-                retry_status.code()
-            )
-        } else {
-            format!(
-                "ffmpeg (libx264 retry) exited with status {:?}: {}",
-                retry_status.code(),
-                tail
-            )
-        };
-        let _ = app.emit(
-            "export-progress",
-            ExportProgress {
-                match_index,
-                percent: 0.0,
-                stage: "error".to_string(),
-                message: Some(msg.clone()),
-                fallback_from: None,
-            },
-        );
-        return Err(AppError::new("subprocess.exit_failed", msg).with_default_hint());
-    }
-
-    // No retry -- surface the primary failure.
-    let tail = tail_string(&stderr_tail, max_tail);
-    let msg = if tail.is_empty() {
-        format!("ffmpeg exited with status {:?}", status.code())
-    } else {
-        format!("ffmpeg exited with status {:?}: {}", status.code(), tail)
-    };
-    let _ = app.emit(
-        "export-progress",
-        ExportProgress {
-            match_index,
-            percent: 0.0,
-            stage: "error".to_string(),
-            message: Some(msg.clone()),
-            fallback_from: None,
-        },
-    );
-    Err(AppError::new("subprocess.exit_failed", msg).with_default_hint())
-}
-
-fn build_export_result(output: &Path, match_index: u32, started: Instant) -> ExportResult {
-    let output_str = fs::canonicalize(output)
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| output.to_string_lossy().to_string());
-    ExportResult {
-        match_index,
-        output_path: output_str,
-        duration_ms: started.elapsed().as_millis() as u64,
-    }
-}
-
-/// #591 -- payload returned from `select_h264_encoder_for_export` to the
-/// frontend. `encoder_kind` is the wire form (`"Nvenc"` / `"Qsv"` /
-/// `"Amf"` / `"Libx264"`) which the frontend passes back unchanged in
-/// the `h264_encoder` field of `export_match`.
-#[derive(Debug, serde::Serialize)]
-pub struct EncoderInfo {
-    pub encoder: String,
-    pub display_label: String,
-    pub encoder_kind: H264Encoder,
-}
-
-/// #591 -- pure-function Tauri command that maps a metadata.json
-/// `system_info.gpu_vendors_available` + `vendor_preference` pair to the
-/// concrete H.264 encoder the frontend should use. No subprocess work
-/// (the probe already happened during detect/split), so this is cheap to
-/// call on every ExportScreen mount.
-#[tauri::command]
-fn select_h264_encoder_for_export(
-    vendors: Vec<String>,
-    preference: Vec<String>,
-) -> EncoderInfo {
-    let encoder = select_h264_encoder(&vendors, &preference);
-    EncoderInfo {
-        encoder: encoder.ffmpeg_codec_name().to_string(),
-        display_label: encoder.display_label().to_string(),
-        encoder_kind: encoder,
-    }
 }
 
 /// #569 -- detect command parameters surfaced from the GUI's drop screen.
@@ -3220,6 +2601,398 @@ fn read_error_log_tail_inner(
     Ok(String::new())
 }
 
+/// #761 -- Encoder slot returned from Python `allaganeye encoder-slots`.
+///
+/// `encoder_kind` is the title-cased enum variant name (`"Nvenc"`,
+/// `"Libx264"`, `"Qsv"`, `"Amf"`) that the frontend renders as the
+/// encoder badge ("NVENC x3" etc.).
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct EncoderSlotJson {
+    pub slot_index: u32,
+    pub encoder_kind: String,
+    pub display_label: String,
+}
+
+/// #761 -- Request shape for `enumerate_h264_encoders`. Frontend supplies
+/// the metadata.json `system_info` slice.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnumerateEncodersRequest {
+    pub vendors: Vec<String>,
+    pub preference: Vec<String>,
+    pub gpu_models: Vec<String>,
+}
+
+/// #761 -- Spawn `python -m allaganeye encoder-slots --vendors=... \
+/// --preference=... --gpu-models=...` and parse the JSON array on stdout.
+///
+/// Codex review #2: enforce `PYTHONIOENCODING=utf-8:replace` to match
+/// `start_detect` cp932 mitigation pattern.
+#[tauri::command]
+async fn enumerate_h264_encoders(
+    app: tauri::AppHandle,
+    req: EnumerateEncodersRequest,
+) -> Result<Vec<EncoderSlotJson>, AppError> {
+    let cmd_spec = resolve_allaganeye_command(&app);
+    let mut cmd = tokio::process::Command::new(&cmd_spec.program);
+    for a in &cmd_spec.prefix_args {
+        cmd.arg(a);
+    }
+    cmd.arg("encoder-slots")
+        .arg("--vendors").arg(req.vendors.join(","))
+        .arg("--preference").arg(req.preference.join(","))
+        .arg("--gpu-models").arg(req.gpu_models.join(","))
+        .env("PYTHONIOENCODING", "utf-8:replace")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(cwd) = &cmd_spec.cwd {
+        cmd.current_dir(cwd);
+    }
+    process_util::apply_no_window(&mut cmd);
+
+    let output = cmd.output().await.map_err(|e| {
+        AppError::new("subprocess.spawn_failed", format!("encoder-slots spawn: {}", e))
+            .with_default_hint()
+    })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(AppError::new(
+            "subprocess.exit_failed",
+            format!("encoder-slots exit {}: {}", output.status, stderr),
+        )
+        .with_default_hint());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    serde_json::from_str::<Vec<EncoderSlotJson>>(&stdout).map_err(|e| {
+        AppError::new(
+            "subprocess.parse_failed",
+            format!("encoder-slots stdout parse: {} (raw={})", e, stdout),
+        )
+        .with_default_hint()
+    })
+}
+
+/// #761 -- Discriminated union of JSON-line events emitted by
+/// `python -m allaganeye export --json`. See spec section 5.
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "type")]
+pub enum WireEvent {
+    #[serde(rename = "progress")]
+    Progress { match_index: u32, percent: f64, stage: String },
+    #[serde(rename = "fallback")]
+    Fallback {
+        match_index: u32,
+        fallback_from: String,
+        fallback_to: String,
+        message: String,
+    },
+    #[serde(rename = "result")]
+    Result {
+        match_index: u32,
+        output_path: String,
+        duration_ms: u64,
+        encoder_used: String,
+    },
+    #[serde(rename = "error")]
+    Error {
+        match_index: u32,
+        error_kind: String,
+        error_message: String,
+        error_hint: Option<String>,
+    },
+    #[serde(rename = "summary")]
+    Summary {
+        success: u32,
+        failure: u32,
+        skipped: u32,
+        cancelled: bool,
+    },
+    #[serde(other)]
+    Unknown,
+}
+
+/// #761 -- Parse one ndjson line into `WireEvent`. `None` for empty / malformed.
+fn parse_wire_event(line: &str) -> Option<WireEvent> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    serde_json::from_str(trimmed).ok()
+}
+
+/// #761 -- Request shape for `start_export` Tauri command.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartExportRequest {
+    /// Full metadata JSON content (in-memory edited state). Passed via
+    /// stdin to Python so sample mode (filePath=null) + unsaved edits
+    /// are supported.
+    pub metadata_json: serde_json::Value,
+    pub output_dir: String,
+    pub codec: String, // "copy" | "h264"
+    pub name_pattern: String,
+    pub excluded_indexes: Vec<u32>,
+}
+
+/// #761 -- Aggregate returned to frontend after Python exits.
+#[derive(Debug, serde::Serialize)]
+pub struct ExportSummary {
+    pub success: u32,
+    pub failure: u32,
+    pub skipped: u32,
+    pub cancelled: bool,
+}
+
+#[tauri::command]
+async fn start_export(
+    app: tauri::AppHandle,
+    req: StartExportRequest,
+) -> Result<ExportSummary, AppError> {
+    let cmd_spec = resolve_allaganeye_command(&app);
+    let mut cmd = tokio::process::Command::new(&cmd_spec.program);
+    for arg in &cmd_spec.prefix_args {
+        cmd.arg(arg);
+    }
+    let exclude_arg = req
+        .excluded_indexes
+        .iter()
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    cmd.arg("export")
+        .arg("--stdin").arg("--json")
+        .arg("--output-dir").arg(&req.output_dir)
+        .arg("--codec").arg(&req.codec)
+        .arg("--name-pattern").arg(&req.name_pattern);
+    if !exclude_arg.is_empty() {
+        cmd.arg("--exclude").arg(&exclude_arg);
+    }
+    if let Some(cwd) = &cmd_spec.cwd {
+        cmd.current_dir(cwd);
+    }
+    cmd.env("PYTHONIOENCODING", "utf-8:replace")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    process_util::apply_no_window(&mut cmd);
+
+    let mut child = cmd.spawn().map_err(|e| {
+        AppError::new("subprocess.spawn_failed", format!("start_export spawn: {}", e))
+            .with_default_hint()
+    })?;
+
+    // Write metadata JSON to stdin, then close
+    {
+        let mut stdin = child.stdin.take().ok_or_else(|| {
+            AppError::new("subprocess.stdin_unavailable", "stdin missing on spawn")
+                .with_default_hint()
+        })?;
+        use tokio::io::AsyncWriteExt;
+        let serialized = serde_json::to_vec(&req.metadata_json).map_err(|e| {
+            AppError::new("subprocess.serialize_failed", format!("metadata serialize: {}", e))
+                .with_default_hint()
+        })?;
+        stdin.write_all(&serialized).await.map_err(|e| {
+            AppError::new(
+                "subprocess.stdin_write_failed",
+                format!("metadata stdin write: {}", e),
+            )
+            .with_default_hint()
+        })?;
+        // stdin dropped here -> EOF to Python
+    }
+
+    // Track via PROCESS_TRACKER. Export spawns a single Python process
+    // (which itself spawns N ffmpeg children). Use Job Object on Windows
+    // (same as start_detect) so cancelling export reliably reaps all
+    // ffmpeg descendants. Failure to create/assign the Job is downgraded
+    // to a warning (export proceeds without tree-kill protection).
+    #[cfg(windows)]
+    let job: Option<process_util::job_object::ProcessJob> = {
+        match process_util::job_object::ProcessJob::new() {
+            Ok(j) => {
+                if let Some(raw) = child.raw_handle() {
+                    if let Err(e) = j.assign(raw) {
+                        eprintln!(
+                            "warning: AssignProcessToJobObject failed: {} \
+                             (export descendants may be orphaned on cancel)",
+                            e
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "warning: child.raw_handle() returned None for export \
+                         spawn (export descendants may be orphaned on cancel)"
+                    );
+                }
+                Some(j)
+            }
+            Err(e) => {
+                eprintln!(
+                    "warning: CreateJobObject failed: {} \
+                     (export descendants may be orphaned on cancel)",
+                    e
+                );
+                None
+            }
+        }
+    };
+    let tracked = TrackedChild {
+        child,
+        #[cfg(windows)]
+        job,
+    };
+    let tracked_id = track_child(tracked).await;
+
+    // Capture stdout reader BEFORE the lock is released
+    let stdout = {
+        let map = process_tracker();
+        let mut guard = map.lock().await;
+        let tc = guard.get_mut(&tracked_id).expect("tracked just inserted");
+        tc.child.stdout.take()
+    };
+
+    let mut summary_capture: Option<ExportSummary> = None;
+    if let Some(stdout) = stdout {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+        // #761 / #656 -- defensive byte-level read with lossy UTF-8 decode
+        // to mirror start_detect's pattern. PYTHONIOENCODING=utf-8:replace
+        // (above) is the primary guarantee; this defensive layer catches the
+        // case where the env var fails to apply (e.g. exotic Python launcher).
+        let mut reader = BufReader::new(stdout);
+        let mut line_buf: Vec<u8> = Vec::with_capacity(1024);
+
+        loop {
+            line_buf.clear();
+            match reader.read_until(b'\n', &mut line_buf).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    while matches!(line_buf.last(), Some(b'\n') | Some(b'\r')) {
+                        line_buf.pop();
+                    }
+                    let line = String::from_utf8_lossy(&line_buf);
+                    match parse_wire_event(&line) {
+                        Some(WireEvent::Progress { match_index, percent, stage }) => {
+                            let _ = app.emit(
+                                "export-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent,
+                                    stage,
+                                    message: None,
+                                    fallback_from: None,
+                                },
+                            );
+                        }
+                        Some(WireEvent::Fallback { match_index, fallback_from, fallback_to, message }) => {
+                            let _ = app.emit(
+                                "export-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent: 0.0,
+                                    stage: "fallback".to_string(),
+                                    message: Some(message),
+                                    fallback_from: Some(format!("{} -> {}", fallback_from, fallback_to)),
+                                },
+                            );
+                        }
+                        Some(WireEvent::Result { match_index, .. }) => {
+                            let _ = app.emit(
+                                "export-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent: 100.0,
+                                    stage: "done".to_string(),
+                                    message: None,
+                                    fallback_from: None,
+                                },
+                            );
+                        }
+                        Some(WireEvent::Error { match_index, error_kind: _, error_message, error_hint }) => {
+                            let _ = app.emit(
+                                "export-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent: 0.0,
+                                    stage: "error".to_string(),
+                                    message: Some(if let Some(hint) = error_hint {
+                                        format!("{} ({})", error_message, hint)
+                                    } else {
+                                        error_message
+                                    }),
+                                    fallback_from: None,
+                                },
+                            );
+                        }
+                        Some(WireEvent::Summary { success, failure, skipped, cancelled }) => {
+                            summary_capture = Some(ExportSummary { success, failure, skipped, cancelled });
+                        }
+                        Some(WireEvent::Unknown) | None => {
+                            // forward-compat: ignore unknown / non-JSON lines
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    }
+
+    let mut child = match untrack_child(tracked_id).await {
+        Some(c) => c,
+        None => {
+            return Ok(ExportSummary {
+                success: 0,
+                failure: 0,
+                skipped: 0,
+                cancelled: true,
+            });
+        }
+    };
+    let status = child.wait().await.map_err(|e| {
+        AppError::new("subprocess.wait_failed", format!("python subprocess wait: {}", e))
+            .with_default_hint()
+    })?;
+
+    if let Some(summary) = summary_capture {
+        return Ok(summary);
+    }
+
+    // summary_capture is None — Python exited without emitting a summary line.
+    // In practice, Python's export_matches always emits a summary line via
+    // WireWriter even for empty queues (see allaganeye/commands/export.py
+    // where summary is emitted in --json mode regardless of filtered list size).
+    // This fallback path is defensive against:
+    // - Python crash before reaching the summary emit
+    // - stdout pipe broken / buffer not flushed (uncommon)
+    // - extreme races (cancellation between last result and summary emit)
+    if status.success() {
+        // Exit 0 + no summary = Python normal exit with no output (unlikely but defensive).
+        // Treat as zero-work success, NOT cancelled (avoids false CANCEL_CONFIRMED on
+        // empty-include / all-excluded scenarios).
+        eprintln!(
+            "[start_export] WARNING: Python subprocess exited cleanly without summary line; \
+             returning zero-work success. Inspect Python stdout flushing if this recurs."
+        );
+        return Ok(ExportSummary {
+            success: 0,
+            failure: 0,
+            skipped: 0,
+            cancelled: false,
+        });
+    }
+
+    // Non-zero exit + no summary = Python crashed
+    Err(AppError::new(
+        "subprocess.exit_failed",
+        format!(
+            "python export subprocess exited unexpectedly (status: {:?}) without emitting summary",
+            status.code()
+        ),
+    )
+    .with_default_hint())
+}
+
 pub fn run() {
     // #614 -- Rotate stale panic logs (>7 days) and detect unclean shutdown
     // from the previous session, BEFORE the Tauri builder runs so the
@@ -3301,6 +3074,8 @@ pub fn run() {
     // arguments, so we build the handler list twice and pick at compile time.
     #[cfg(debug_assertions)]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        enumerate_h264_encoders,
+        start_export,
         load_metadata,
         get_metadata_mtime,
         apply_changes,
@@ -3316,8 +3091,6 @@ pub fn run() {
         is_process_running,
         kill_tracked_processes,
         force_exit_app,
-        export_match,
-        select_h264_encoder_for_export,
         open_folder_in_explorer,
         start_detect,
         read_recent,
@@ -3330,6 +3103,8 @@ pub fn run() {
     ]);
     #[cfg(not(debug_assertions))]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        enumerate_h264_encoders,
+        start_export,
         load_metadata,
         get_metadata_mtime,
         apply_changes,
@@ -3345,8 +3120,6 @@ pub fn run() {
         is_process_running,
         kill_tracked_processes,
         force_exit_app,
-        export_match,
-        select_h264_encoder_for_export,
         open_folder_in_explorer,
         start_detect,
         read_recent,
@@ -4375,395 +4148,6 @@ mod tests {
         );
     }
 
-    /// #466 -- `copy` codec must emit `-c copy`, not `libx264`. The
-    /// `-avoid_negative_ts make_zero` flag prevents negative timestamp
-    /// errors common when seeking into a stream whose first packet after
-    /// the seek point has a non-zero PTS.
-    #[test]
-    fn ffmpeg_args_for_export_copy_uses_c_copy() {
-        let args = ffmpeg_args_for_export(
-            Path::new("C:/videos/in.mp4"),
-            10.0,
-            40.0,
-            Path::new("C:/out/match1.mp4"),
-            &ExportCodec::Copy,
-            H264Encoder::Libx264,
-        );
-        let joined = args.join(" ");
-        assert!(joined.contains("-c copy"), "args: {}", joined);
-        assert!(
-            joined.contains("-avoid_negative_ts make_zero"),
-            "args: {}",
-            joined
-        );
-        assert!(!joined.contains("libx264"), "args: {}", joined);
-    }
-
-    /// #466 -- `h264` codec must use libx264 with the documented crf/preset
-    /// tuning so the frontend's "high quality" toggle lands a consistent
-    /// encode. Audio must be copied (not re-encoded) to avoid silent loss
-    /// of quality.
-    #[test]
-    fn ffmpeg_args_for_export_h264_uses_libx264() {
-        let args = ffmpeg_args_for_export(
-            Path::new("C:/videos/in.mp4"),
-            0.0,
-            30.0,
-            Path::new("C:/out/match1.mp4"),
-            &ExportCodec::H264,
-            H264Encoder::Libx264,
-        );
-        let joined = args.join(" ");
-        assert!(joined.contains("-c:v libx264"), "args: {}", joined);
-        assert!(joined.contains("-crf 18"), "args: {}", joined);
-        assert!(joined.contains("-preset medium"), "args: {}", joined);
-        assert!(joined.contains("-c:a copy"), "args: {}", joined);
-    }
-
-    /// #466 -- ffmpeg's seek semantics differ dramatically depending on
-    /// whether `-ss` appears before or after `-i`. Before `-i`: fast
-    /// keyframe-based seek. After `-i`: slow decode-and-discard. We rely
-    /// on the fast path, so guard the ordering.
-    #[test]
-    fn ffmpeg_args_include_ss_before_input_for_keyframe_seek() {
-        let args = ffmpeg_args_for_export(
-            Path::new("C:/videos/in.mp4"),
-            15.5,
-            45.5,
-            Path::new("C:/out/match1.mp4"),
-            &ExportCodec::Copy,
-            H264Encoder::Libx264,
-        );
-        let ss_pos = args.iter().position(|a| a == "-ss").expect("-ss present");
-        let i_pos = args.iter().position(|a| a == "-i").expect("-i present");
-        assert!(
-            ss_pos < i_pos,
-            "-ss (at {}) must precede -i (at {}): {:?}",
-            ss_pos,
-            i_pos,
-            args
-        );
-    }
-
-    /// #466 -- argv must include a `-t <duration>` pair whose value equals
-    /// `end_seconds - start_seconds`. This is the cross-check that
-    /// `export_match` actually delivers the requested clip length, not
-    /// trailing footage from the source.
-    #[test]
-    fn ffmpeg_args_encode_duration_as_t_flag() {
-        let args = ffmpeg_args_for_export(
-            Path::new("C:/videos/in.mp4"),
-            10.0,
-            40.5,
-            Path::new("C:/out/match1.mp4"),
-            &ExportCodec::Copy,
-            H264Encoder::Libx264,
-        );
-        let t_pos = args.iter().position(|a| a == "-t").expect("-t present");
-        let duration = args.get(t_pos + 1).expect("value after -t");
-        let parsed: f64 = duration.parse().expect("parse duration");
-        assert!(
-            (parsed - 30.5).abs() < 1e-6,
-            "expected 30.5, got {} (all: {:?})",
-            parsed,
-            args
-        );
-    }
-
-    // -- #591 -- H264Encoder + select_h264_encoder + ffmpeg_args_for_export
-    // vendor 別 args の単体テスト群。
-
-    fn _vendor_strs(items: &[&str]) -> Vec<String> {
-        items.iter().map(|s| (*s).to_string()).collect()
-    }
-
-    fn _default_preference() -> Vec<String> {
-        _vendor_strs(&["nvidia", "amd", "intel"])
-    }
-
-    /// #591 -- NVIDIA があれば preference 順で最優先選択。
-    #[test]
-    fn select_h264_encoder_picks_nvenc_for_nvidia_first() {
-        let vendors = _vendor_strs(&["nvidia", "amd"]);
-        assert_eq!(
-            select_h264_encoder(&vendors, &_default_preference()),
-            H264Encoder::Nvenc
-        );
-    }
-
-    /// #591 -- Intel iGPU 単独環境では QSV を選ぶ。
-    #[test]
-    fn select_h264_encoder_picks_qsv_for_intel_only() {
-        let vendors = _vendor_strs(&["intel"]);
-        assert_eq!(
-            select_h264_encoder(&vendors, &_default_preference()),
-            H264Encoder::Qsv
-        );
-    }
-
-    /// #591 -- AMD のみなら AMF を選ぶ (Windows 限定だが pure 関数として
-    /// は OS 非依存に動作)。
-    #[test]
-    fn select_h264_encoder_picks_amf_for_amd_only() {
-        let vendors = _vendor_strs(&["amd"]);
-        assert_eq!(
-            select_h264_encoder(&vendors, &_default_preference()),
-            H264Encoder::Amf
-        );
-    }
-
-    /// #591 -- vendor 不在 (CPU only / 空 system_info) は Libx264 fallback。
-    #[test]
-    fn select_h264_encoder_falls_back_to_libx264_when_empty() {
-        let vendors: Vec<String> = vec![];
-        assert_eq!(
-            select_h264_encoder(&vendors, &_default_preference()),
-            H264Encoder::Libx264
-        );
-    }
-
-    /// #591 -- preference 順で選ぶ (vendors の出現順は無視される)。
-    #[test]
-    fn select_h264_encoder_respects_preference_order() {
-        let vendors = _vendor_strs(&["amd", "nvidia"]);
-        // preference = nvidia > amd > intel なので NVIDIA が先。
-        assert_eq!(
-            select_h264_encoder(&vendors, &_default_preference()),
-            H264Encoder::Nvenc
-        );
-    }
-
-    /// #591 -- 知らない vendor 名は無視されて libx264 へ。
-    #[test]
-    fn select_h264_encoder_ignores_unknown_vendors() {
-        let vendors = _vendor_strs(&["wgpu", "moltenvk"]);
-        assert_eq!(
-            select_h264_encoder(&vendors, &_default_preference()),
-            H264Encoder::Libx264
-        );
-    }
-
-    /// #591 -- NVENC 選択時の ffmpeg argv は h264_nvenc + -cq 19 + -preset p5。
-    #[test]
-    fn ffmpeg_args_for_export_h264_nvenc_uses_h264_nvenc() {
-        let args = ffmpeg_args_for_export(
-            Path::new("C:/videos/in.mp4"),
-            0.0,
-            30.0,
-            Path::new("C:/out/m.mp4"),
-            &ExportCodec::H264,
-            H264Encoder::Nvenc,
-        );
-        let joined = args.join(" ");
-        assert!(joined.contains("-c:v h264_nvenc"), "args: {}", joined);
-        assert!(joined.contains("-cq 19"), "args: {}", joined);
-        assert!(joined.contains("-preset p5"), "args: {}", joined);
-        assert!(joined.contains("-c:a copy"), "args: {}", joined);
-        assert!(!joined.contains("libx264"), "args: {}", joined);
-    }
-
-    /// #591 -- QSV 選択時は h264_qsv + -global_quality 20 + -look_ahead 1。
-    #[test]
-    fn ffmpeg_args_for_export_h264_qsv_uses_h264_qsv() {
-        let args = ffmpeg_args_for_export(
-            Path::new("C:/videos/in.mp4"),
-            0.0,
-            30.0,
-            Path::new("C:/out/m.mp4"),
-            &ExportCodec::H264,
-            H264Encoder::Qsv,
-        );
-        let joined = args.join(" ");
-        assert!(joined.contains("-c:v h264_qsv"), "args: {}", joined);
-        assert!(joined.contains("-global_quality 20"), "args: {}", joined);
-        assert!(joined.contains("-look_ahead 1"), "args: {}", joined);
-        assert!(joined.contains("-c:a copy"), "args: {}", joined);
-        assert!(!joined.contains("libx264"), "args: {}", joined);
-    }
-
-    /// #591 -- AMF 選択時は h264_amf + -rc cqp + -qp_i 19 + -qp_p 21。
-    #[test]
-    fn ffmpeg_args_for_export_h264_amf_uses_h264_amf() {
-        let args = ffmpeg_args_for_export(
-            Path::new("C:/videos/in.mp4"),
-            0.0,
-            30.0,
-            Path::new("C:/out/m.mp4"),
-            &ExportCodec::H264,
-            H264Encoder::Amf,
-        );
-        let joined = args.join(" ");
-        assert!(joined.contains("-c:v h264_amf"), "args: {}", joined);
-        assert!(joined.contains("-rc cqp"), "args: {}", joined);
-        assert!(joined.contains("-qp_i 19"), "args: {}", joined);
-        assert!(joined.contains("-qp_p 21"), "args: {}", joined);
-        assert!(joined.contains("-c:a copy"), "args: {}", joined);
-        assert!(!joined.contains("libx264"), "args: {}", joined);
-    }
-
-    /// #591 -- Copy codec では h264_encoder の値に関わらず -c copy 経路を取る。
-    /// h264_encoder=Nvenc を渡しても、ExportCodec::Copy なら NVENC は使われない。
-    #[test]
-    fn ffmpeg_args_for_export_copy_ignores_h264_encoder_value() {
-        let args = ffmpeg_args_for_export(
-            Path::new("C:/videos/in.mp4"),
-            0.0,
-            30.0,
-            Path::new("C:/out/m.mp4"),
-            &ExportCodec::Copy,
-            H264Encoder::Nvenc,
-        );
-        let joined = args.join(" ");
-        assert!(joined.contains("-c copy"), "args: {}", joined);
-        assert!(!joined.contains("h264_nvenc"), "args: {}", joined);
-        assert!(!joined.contains("-cq"), "args: {}", joined);
-    }
-
-    /// #591 -- H264Encoder::display_label は GUI sub label 用の固定文字列を返す。
-    #[test]
-    fn h264_encoder_display_labels() {
-        assert_eq!(H264Encoder::Libx264.display_label(), "libx264 (CPU)");
-        assert_eq!(H264Encoder::Nvenc.display_label(), "NVENC");
-        assert_eq!(H264Encoder::Qsv.display_label(), "QSV");
-        assert_eq!(H264Encoder::Amf.display_label(), "AMF");
-    }
-
-    /// #591 -- ffmpeg_codec_name は ffmpeg `-c:v` で使う識別子を返す。
-    #[test]
-    fn h264_encoder_ffmpeg_codec_names() {
-        assert_eq!(H264Encoder::Libx264.ffmpeg_codec_name(), "libx264");
-        assert_eq!(H264Encoder::Nvenc.ffmpeg_codec_name(), "h264_nvenc");
-        assert_eq!(H264Encoder::Qsv.ffmpeg_codec_name(), "h264_qsv");
-        assert_eq!(H264Encoder::Amf.ffmpeg_codec_name(), "h264_amf");
-    }
-
-    // -- #591 Phase 3 -- is_gpu_encoder_failure detector tests.
-
-    /// NVENC の代表的初期化エラー文字列を検出。
-    #[test]
-    fn is_gpu_encoder_failure_detects_nvenc_unavailable() {
-        let stderr = "[h264_nvenc @ 0x1234] No NVENC capable devices found\n";
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
-    }
-
-    /// nvEncodeAPI DLL がロードできないケース。
-    #[test]
-    fn is_gpu_encoder_failure_detects_nvenc_dll_missing() {
-        let stderr = "[h264_nvenc @ 0x1] Cannot load nvEncodeAPI.dll\n";
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
-    }
-
-    /// #604 実機検証: ffmpeg 8.1 BtbN LGPL を Intel iGPU only host で
-    /// h264_nvenc 強制起動 -> NVIDIA driver 不在で nvcuda.dll が見つからず
-    /// 失敗。pre-#604 の pattern (`No NVENC capable devices found` /
-    /// `Cannot load nvEncodeAPI` / `OpenEncodeSessionEx failed`) は 1 つも
-    /// hit せず libx264 retry が走らない bug があった (#596 QSV と同型)。
-    #[test]
-    fn is_gpu_encoder_failure_detects_nvenc_nvcuda_dll_missing() {
-        let stderr = "\
-[h264_nvenc @ 0x1] Cannot load nvcuda.dll\n\
-[vost#0:0/h264_nvenc @ 0x2] Could not open encoder before EOF\n";
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
-    }
-
-    /// Intel QSV の MFX session 初期化失敗 (ffmpeg 7.x 系ワード)。
-    #[test]
-    fn is_gpu_encoder_failure_detects_qsv_init_error() {
-        let stderr = "[h264_qsv] Error initializing an internal MFX session: -3\n";
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Qsv));
-    }
-
-    /// #591 PR review 実機検証: ffmpeg 8.1 の QSV failure stderr 実例
-    /// (RTX 5090 + AMD iGPU 環境で h264_qsv 強制起動 -> Intel iGPU 不在で
-    /// MFX session creation 失敗)。pre-fix の pattern では検出漏れし
-    /// libx264 retry が走らない bug があった。
-    #[test]
-    fn is_gpu_encoder_failure_detects_qsv_mfx_session_creation_error() {
-        let stderr = "\
-[h264_qsv @ 0x1] Error creating a MFX session: -9.\n\
-[h264_qsv @ 0x1] The current mfx implementation is not supported, try next mfx implementation.\n\
-[vost#0:0/h264_qsv @ 0x2] Could not open encoder before EOF\n";
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Qsv));
-    }
-
-    /// `Could not open encoder` は generic message なので、`h264_qsv`
-    /// context が無ければ Qsv の failure と扱わない (libx264 でこの
-    /// メッセージが出ても誤って GPU 失敗判定しないため)。
-    #[test]
-    fn is_gpu_encoder_failure_qsv_requires_h264_qsv_context_for_generic_open_error() {
-        let stderr_generic = "[some_codec] Could not open encoder before EOF\n";
-        assert!(!is_gpu_encoder_failure(stderr_generic, H264Encoder::Qsv));
-    }
-
-    /// AMD AMF runtime ロード失敗。
-    #[test]
-    fn is_gpu_encoder_failure_detects_amf_load_error() {
-        let stderr = "[h264_amf] AMF runtime not initialized\n";
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Amf));
-    }
-
-    /// #604 実機検証: ffmpeg 8.1 BtbN LGPL を Intel iGPU only host で
-    /// h264_amf 強制起動 -> AMD driver 不在で amfrt64.dll が開けず失敗。
-    /// pre-#604 の pattern (`AMF runtime not initialized` / `DLL load
-    /// failed` / `Could not initialize AMFContext`) は 1 つも hit せず
-    /// libx264 retry が走らない bug があった (#596 QSV と同型)。
-    #[test]
-    fn is_gpu_encoder_failure_detects_amf_amfrt64_dll_missing() {
-        let stderr = "\
-[AMF @ 0x1] DLL amfrt64.dll failed to open\n\
-[h264_amf @ 0x2] Failed to create  hardware device context (AMF) : Unknown error occurred\n\
-[vost#0:0/h264_amf @ 0x3] Could not open encoder before EOF\n";
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Amf));
-    }
-
-    /// libx264 失敗は GPU encoder 由来でないので false (encoder 切替で
-    /// 救えないため retry させない)。
-    #[test]
-    fn is_gpu_encoder_failure_returns_false_for_libx264() {
-        let stderr = "[libx264 @ 0x1] some error\n";
-        assert!(!is_gpu_encoder_failure(stderr, H264Encoder::Libx264));
-    }
-
-    /// 「ファイルが見つからない」のような GPU 関係ない失敗は false (誤って
-    /// libx264 retry すると 2 倍時間かかる)。
-    #[test]
-    fn is_gpu_encoder_failure_returns_false_for_unrelated_error() {
-        let stderr = "Error: No such file or directory\n";
-        assert!(!is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
-    }
-
-    /// AMF 検出パターンが NVENC stderr に一致しないこと (cross-encoder
-    /// false-positive 防止)。
-    #[test]
-    fn is_gpu_encoder_failure_qsv_pattern_does_not_match_nvenc() {
-        let stderr = "[h264_qsv] Error initializing an internal MFX session\n";
-        assert!(!is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Qsv));
-    }
-
-    /// #604 false-positive 防止: NVENC pattern (`Cannot load nvcuda.dll`)
-    /// が AMF / QSV stderr context では false を返すこと (retry 暴走防止)。
-    /// QSV の `Could not open encoder` generic message に対する
-    /// `is_gpu_encoder_failure_qsv_requires_h264_qsv_context_for_generic_open_error`
-    /// と同種の cross-encoder context test。
-    #[test]
-    fn is_gpu_encoder_failure_nvenc_nvcuda_pattern_does_not_match_other_encoders() {
-        let stderr = "[h264_nvenc @ 0x1] Cannot load nvcuda.dll\n";
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
-        assert!(!is_gpu_encoder_failure(stderr, H264Encoder::Amf));
-        assert!(!is_gpu_encoder_failure(stderr, H264Encoder::Qsv));
-    }
-
-    /// #604 false-positive 防止: AMF pattern (`DLL amfrt64.dll failed to open`)
-    /// が NVENC / QSV stderr context では false を返すこと (retry 暴走防止)。
-    #[test]
-    fn is_gpu_encoder_failure_amf_amfrt64_pattern_does_not_match_other_encoders() {
-        let stderr = "[AMF @ 0x1] DLL amfrt64.dll failed to open\n";
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Amf));
-        assert!(!is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
-        assert!(!is_gpu_encoder_failure(stderr, H264Encoder::Qsv));
-    }
-
     /// ExportProgress::fallback_from が serde で正しく往復する。
     #[test]
     fn export_progress_fallback_from_serde_roundtrip() {
@@ -4794,54 +4178,6 @@ mod tests {
         assert!(!json.contains("message"));
     }
 
-    /// #466 -- a missing video path must fail validation before ffmpeg is
-    /// touched. The error message must contain "not found" so the frontend
-    /// can distinguish it from generic ffmpeg errors.
-    #[test]
-    fn export_match_rejects_missing_video_path() {
-        let tmp = TempDir::new().unwrap();
-        let missing = tmp.path().join("nope.mp4");
-        let err = validate_export_request(&missing, 0.0, 10.0).unwrap_err();
-        assert!(err.message.contains("not found"), "got: {}", err);
-    }
-
-    /// #466 -- `end <= start` must fail immediately (otherwise ffmpeg's
-    /// `-t` flag would receive 0 or negative and silently write an empty
-    /// file).
-    #[test]
-    fn export_match_rejects_end_le_start() {
-        let tmp = TempDir::new().unwrap();
-        let video = tmp.path().join("clip.mp4");
-        fs::write(&video, b"fake mp4").unwrap();
-        let err_equal = validate_export_request(&video, 10.0, 10.0).unwrap_err();
-        assert!(err_equal.message.contains("end_seconds"), "got: {}", err_equal);
-        let err_lt = validate_export_request(&video, 20.0, 10.0).unwrap_err();
-        assert!(err_lt.message.contains("end_seconds"), "got: {}", err_lt);
-    }
-
-    /// #466 -- negative start times are rejected. ffmpeg treats `-ss <0`
-    /// inconsistently across builds; better to refuse up front.
-    #[test]
-    fn export_match_rejects_negative_start() {
-        let tmp = TempDir::new().unwrap();
-        let video = tmp.path().join("clip.mp4");
-        fs::write(&video, b"fake mp4").unwrap();
-        let err = validate_export_request(&video, -1.0, 10.0).unwrap_err();
-        assert!(err.message.contains("start_seconds"), "got: {}", err);
-    }
-
-    /// #466 -- NaN / non-finite values are rejected (they would otherwise
-    /// propagate into ffmpeg argv as "NaN" and fail opaquely).
-    #[test]
-    fn export_match_rejects_non_finite_values() {
-        let tmp = TempDir::new().unwrap();
-        let video = tmp.path().join("clip.mp4");
-        fs::write(&video, b"fake mp4").unwrap();
-        let err_nan_start = validate_export_request(&video, f64::NAN, 10.0).unwrap_err();
-        assert!(err_nan_start.message.contains("start_seconds"), "got: {}", err_nan_start);
-        let err_inf_end = validate_export_request(&video, 0.0, f64::INFINITY).unwrap_err();
-        assert!(err_inf_end.message.contains("end_seconds"), "got: {}", err_inf_end);
-    }
 
     /// #466 review #4: 出力先親ディレクトリが存在しなければエラー。
     /// 以前の `create_dir_all` (silent mkdir) は廃止されたので、存在しない
@@ -4899,7 +4235,7 @@ mod tests {
     }
 
     /// #545 mystifying-ptolemy-d112b5 review (2026-04-25): track_child →
-    /// untrack_child の往復で正しく Some が返ること。`export_match` の
+    /// untrack_child の往復で正しく Some が返ること。`start_export` の
     /// happy-path cleanup の core ロジック。
     ///
     /// Windows 用 dummy プロセスとして `cmd /c rem` を spawn (即終了 no-op)、
@@ -4936,7 +4272,7 @@ mod tests {
 
     /// #545 mystifying-ptolemy-d112b5 review (2026-04-25): track_child のあと
     /// `kill_tracked_processes` が drain した場合、untrack_child は None を
-    /// 返す。`export_match` の cancel 検出 (`untrack` 結果が None なら
+    /// 返す。`start_export` の cancel 検出 (`untrack` 結果が None なら
     /// 既に kill された = 中断) のセマンティクス確認。
     #[tokio::test]
     async fn untrack_child_after_kill_tracked_returns_none() {
@@ -4961,16 +4297,6 @@ mod tests {
             recovered.is_none(),
             "untrack_child should return None after kill_tracked_processes drained the tracker"
         );
-    }
-
-    /// #466 -- happy path: real file, sane start/end, validator returns Ok.
-    #[test]
-    fn export_match_accepts_valid_request() {
-        let tmp = TempDir::new().unwrap();
-        let video = tmp.path().join("clip.mp4");
-        fs::write(&video, b"fake mp4").unwrap();
-        validate_export_request(&video, 0.0, 10.0).unwrap();
-        validate_export_request(&video, 5.5, 6.25).unwrap();
     }
 
     /// #466 -- `out_time_ms=` (actually microseconds per the ffmpeg
@@ -5685,5 +5011,78 @@ mod tests {
         assert_eq!(lines.len(), 500);
         assert_eq!(lines[0], "line 0");
         assert_eq!(lines[499], "line 499");
+    }
+}
+
+#[cfg(test)]
+mod enumerate_h264_encoders_tests {
+    use super::*;
+
+    #[test]
+    fn parses_python_json_array_output() {
+        let raw = r#"[
+            {"slot_index": 0, "encoder_kind": "Nvenc", "display_label": "NVENC #1"},
+            {"slot_index": 1, "encoder_kind": "Nvenc", "display_label": "NVENC #2"}
+        ]"#;
+        let parsed: Vec<EncoderSlotJson> = serde_json::from_str(raw).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].encoder_kind, "Nvenc");
+    }
+
+    #[test]
+    fn empty_array_is_valid() {
+        let raw = r#"[]"#;
+        let parsed: Vec<EncoderSlotJson> = serde_json::from_str(raw).unwrap();
+        assert!(parsed.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod start_export_wire_tests {
+    use super::*;
+
+    #[test]
+    fn parses_progress_line() {
+        let line = r#"{"type":"progress","match_index":2,"percent":33.5,"stage":"encoding"}"#;
+        let ev = parse_wire_event(line).expect("parse");
+        match ev {
+            WireEvent::Progress { match_index, percent, stage } => {
+                assert_eq!(match_index, 2);
+                assert!((percent - 33.5).abs() < 0.001);
+                assert_eq!(stage, "encoding");
+            }
+            _ => panic!("expected Progress"),
+        }
+    }
+
+    #[test]
+    fn parses_summary_line() {
+        let line = r#"{"type":"summary","success":3,"failure":1,"skipped":0,"cancelled":false}"#;
+        let ev = parse_wire_event(line).expect("parse");
+        match ev {
+            WireEvent::Summary { success, failure, skipped, cancelled } => {
+                assert_eq!(success, 3);
+                assert_eq!(failure, 1);
+                assert_eq!(skipped, 0);
+                assert!(!cancelled);
+            }
+            _ => panic!("expected Summary"),
+        }
+    }
+
+    #[test]
+    fn ignores_unknown_type() {
+        let line = r#"{"type":"future_unknown","extra":"foo"}"#;
+        assert!(matches!(parse_wire_event(line), Some(WireEvent::Unknown)));
+    }
+
+    #[test]
+    fn ignores_malformed_json() {
+        assert!(parse_wire_event("not json {").is_none());
+    }
+
+    #[test]
+    fn ignores_empty_line() {
+        assert!(parse_wire_event("").is_none());
     }
 }

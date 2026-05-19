@@ -35,7 +35,7 @@ beforeEach(() => {
   listenMock.mockReset();
   openDialogMock.mockReset();
   // Default: any invoke resolves with undefined; the per-test callers
-  // override `export_match` / `kill_tracked_processes` as needed.
+  // override `start_export` / `kill_tracked_processes` as needed.
   invokeMock.mockResolvedValue(undefined);
   // Default: listen() returns a no-op unlisten function. 個別 test で
   // `mockResolvedValueOnce(spy)` すると 1 回だけ override できる
@@ -191,14 +191,14 @@ describe('ExportScreen (Phase 4 #466)', () => {
     });
   });
 
-  it('[書き出し開始] invokes export_match per non-skipped match and completes', async () => {
-    invokeMock.mockImplementation((cmd: string, args: unknown) => {
-      if (cmd === 'export_match') {
-        const a = args as { matchIndex: number; outputPath: string };
+  it('[書き出し開始] invokes start_export with full metadata and completes', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'start_export') {
         return Promise.resolve({
-          match_index: a.matchIndex,
-          output_path: a.outputPath,
-          duration_ms: 100,
+          success: 9,
+          failure: 0,
+          skipped: 0,
+          cancelled: false,
         });
       }
       return Promise.resolve(undefined);
@@ -209,24 +209,28 @@ describe('ExportScreen (Phase 4 #466)', () => {
     await waitFor(() => {
       expect(screen.getByTestId('export-screen').dataset.phase).toBe('completed');
     });
-    // sampleMetadata has 9 matches, none marked skip -> 9 invocations
+    // single start_export call (not one per match)
     const exportCalls = invokeMock.mock.calls.filter(
-      (c) => c[0] === 'export_match',
+      (c) => c[0] === 'start_export',
     );
-    expect(exportCalls.length).toBe(9);
+    expect(exportCalls.length).toBe(1);
     expect(screen.getByRole('button', { name: /フォルダを開く/ }))
       .toBeInTheDocument();
   });
 
-  it('continues after a single match failure (per-match error isolation)', async () => {
-    invokeMock.mockImplementation((cmd: string, args: unknown) => {
-      if (cmd === 'export_match') {
-        const a = args as { matchIndex: number; outputPath: string };
-        if (a.matchIndex === 3) return Promise.reject(new Error('ffmpeg said no'));
+  it('completes even when some matches fail (per-match error via progress events)', async () => {
+    let progressHandler: ((e: { payload: { match_index: number; percent: number; stage: string; message?: string } }) => void) | null = null;
+    listenMock.mockImplementation(async (_name: string, handler: (e: unknown) => void) => {
+      progressHandler = handler as typeof progressHandler;
+      return () => undefined;
+    });
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'start_export') {
         return Promise.resolve({
-          match_index: a.matchIndex,
-          output_path: a.outputPath,
-          duration_ms: 100,
+          success: 8,
+          failure: 1,
+          skipped: 0,
+          cancelled: false,
         });
       }
       return Promise.resolve(undefined);
@@ -234,24 +238,22 @@ describe('ExportScreen (Phase 4 #466)', () => {
     render(<ExportScreen />);
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /書き出し開始/ }));
+    // Simulate an error progress event for match 3 before completion
+    await waitFor(() => expect(progressHandler).not.toBeNull());
+    progressHandler!({ payload: { match_index: 3, percent: 0, stage: 'error', message: 'ffmpeg said no' } });
     await waitFor(() => {
       expect(screen.getByTestId('export-screen').dataset.phase).toBe('completed');
     });
-    const exportCalls = invokeMock.mock.calls.filter(
-      (c) => c[0] === 'export_match',
-    );
-    expect(exportCalls.length).toBe(9); // kept going through match 3
-    // UI shows the error for match 3
+    // UI shows the error for match 3 (surfaced via progress event)
     const alerts = await screen.findAllByRole('alert');
     expect(alerts.some((el) => el.textContent?.includes('ffmpeg said no')))
       .toBe(true);
   });
 
-  it('[中断] calls kill_tracked_processes and stops the loop', async () => {
-    // Make export_match slow so we can hit the cancel button before the
-    // whole queue drains.
+  it('[中断] calls kill_tracked_processes and stops the export', async () => {
+    // Make start_export slow so we can hit the cancel button before it resolves.
     invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === 'export_match') {
+      if (cmd === 'start_export') {
         return new Promise(() => undefined); // never resolves
       }
       if (cmd === 'kill_tracked_processes') return Promise.resolve(0);
@@ -270,8 +272,10 @@ describe('ExportScreen (Phase 4 #466)', () => {
   });
 
   // #466 review #7: preview で調整した境界 (m.edited.start_time / end_time)
-  // が export_match の startSeconds / endSeconds に正しく渡される。
-  it('passes m.edited.start_time / end_time to export_match (boundary propagation)', async () => {
+  // が start_export の metadataJson の中に正しく含まれる。
+  // #761: boundary は metadata 丸ごと Python に渡すので、edited フィールドが
+  // metadataJson に含まれているかを確認する。
+  it('passes metadata with m.edited to start_export (boundary propagation)', async () => {
     // sample の match 1 に edited 境界を設定
     const meta = useMetadataStore.getState().metadata!;
     const edited = {
@@ -284,14 +288,9 @@ describe('ExportScreen (Phase 4 #466)', () => {
     };
     useMetadataStore.setState({ metadata: edited });
 
-    invokeMock.mockImplementation((cmd: string, args: unknown) => {
-      if (cmd === 'export_match') {
-        const a = args as { matchIndex: number; outputPath: string };
-        return Promise.resolve({
-          match_index: a.matchIndex,
-          output_path: a.outputPath,
-          duration_ms: 100,
-        });
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'start_export') {
+        return Promise.resolve({ success: 9, failure: 0, skipped: 0, cancelled: false });
       }
       return Promise.resolve(undefined);
     });
@@ -301,36 +300,19 @@ describe('ExportScreen (Phase 4 #466)', () => {
     await waitFor(() => {
       expect(screen.getByTestId('export-screen').dataset.phase).toBe('completed');
     });
-    const calls = invokeMock.mock.calls.filter((c) => c[0] === 'export_match');
-    const m1Call = calls.find(
-      (c) => (c[1] as { matchIndex: number }).matchIndex === 1,
-    );
-    expect(m1Call).toBeDefined();
-    expect(m1Call![1]).toMatchObject({
-      startSeconds: 5.5,
-      endSeconds: 12.25,
-    });
-    // ほかの match (例: index 2) は edited なしなので元の start/end を使う
-    const m2Call = calls.find(
-      (c) => (c[1] as { matchIndex: number }).matchIndex === 2,
-    );
-    const m2 = edited.matches.find((m) => m.index === 2)!;
-    expect(m2Call![1]).toMatchObject({
-      startSeconds: m2.start_time,
-      endSeconds: m2.end_time,
-    });
+    const calls = invokeMock.mock.calls.filter((c) => c[0] === 'start_export');
+    expect(calls.length).toBe(1);
+    const reqArg = (calls[0][1] as { req: { metadataJson: typeof edited } }).req;
+    // metadataJson に edited 境界が含まれている
+    const m1 = reqArg.metadataJson.matches.find((m: { index: number }) => m.index === 1);
+    expect(m1?.edited).toMatchObject({ start_time: 5.5, end_time: 12.25 });
   });
 
   // #466 review #1: per-match include/exclude checkbox (ad-hoc UI 選択)
   it('excludes a match from export when its checkbox is unchecked', async () => {
-    invokeMock.mockImplementation((cmd: string, args: unknown) => {
-      if (cmd === 'export_match') {
-        const a = args as { matchIndex: number; outputPath: string };
-        return Promise.resolve({
-          match_index: a.matchIndex,
-          output_path: a.outputPath,
-          duration_ms: 100,
-        });
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'start_export') {
+        return Promise.resolve({ success: 8, failure: 0, skipped: 1, cancelled: false });
       }
       return Promise.resolve(undefined);
     });
@@ -349,32 +331,27 @@ describe('ExportScreen (Phase 4 #466)', () => {
     await waitFor(() => {
       expect(screen.getByTestId('export-screen').dataset.phase).toBe('completed');
     });
-    const calls = invokeMock.mock.calls.filter((c) => c[0] === 'export_match');
-    expect(calls.length).toBe(8); // 9 sample matches - 1 excluded
-    expect(
-      calls.some((c) => (c[1] as { matchIndex: number }).matchIndex === 3),
-    ).toBe(false);
+    const calls = invokeMock.mock.calls.filter((c) => c[0] === 'start_export');
+    expect(calls.length).toBe(1);
+    // excludedIndexes contains match 3
+    const reqArg = (calls[0][1] as { req: { excludedIndexes: number[] } }).req;
+    expect(reqArg.excludedIndexes).toContain(3);
   });
 
   // 2026-04-25 修正: dummy detect (loadSample のみ) で filePath=null のまま
   // export 画面に来た場合でも、書き出し開始ボタンが disable されず、かつ
-  // クリックで export_match が走ること。Phase 3 dummy フローのバグ。
-  it('still triggers export_match when filePath is null but videoSource is set', async () => {
-    // 2026-04-25 修正の検証: export_match は filePath (metadata.json path) ではなく
+  // クリックで start_export が走ること。Phase 3 dummy フローのバグ。
+  it('still triggers start_export when filePath is null but videoSource is set', async () => {
+    // 2026-04-25 修正の検証: start_export は filePath (metadata.json path) ではなく
     // videoSource (実 video path) を使う。filePath=null は sample mode (Task 1.7)
     // で disabled になるため、このテストは filePath を '/tmp/x/metadata.json'
     // (beforeEach の値) のまま維持しつつ selectedVideoPath を上書きして、
-    // videoPath 引数が selectedVideoPath を優先することを確認する。
+    // start_export が呼ばれることを確認する。
     // (filePath=null のケースは sample mode なので export 不可が正しい動作)
     useAppStateStore.getState().setSelectedVideoPath('C:/videos/x.mkv');
-    invokeMock.mockImplementation((cmd: string, args: unknown) => {
-      if (cmd === 'export_match') {
-        const a = args as { matchIndex: number; outputPath: string };
-        return Promise.resolve({
-          match_index: a.matchIndex,
-          output_path: a.outputPath,
-          duration_ms: 100,
-        });
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'start_export') {
+        return Promise.resolve({ success: 9, failure: 0, skipped: 0, cancelled: false });
       }
       return Promise.resolve(undefined);
     });
@@ -386,10 +363,11 @@ describe('ExportScreen (Phase 4 #466)', () => {
     await waitFor(() => {
       expect(screen.getByTestId('export-screen').dataset.phase).toBe('completed');
     });
-    const calls = invokeMock.mock.calls.filter((c) => c[0] === 'export_match');
-    expect(calls.length).toBe(9);
-    // videoPath が selectedVideoPath を反映している
-    expect(calls[0][1]).toMatchObject({ videoPath: 'C:/videos/x.mkv' });
+    const calls = invokeMock.mock.calls.filter((c) => c[0] === 'start_export');
+    expect(calls.length).toBe(1);
+    // metadataJson が start_export に渡されている
+    const reqArg = (calls[0][1] as { req: { metadataJson: unknown } }).req;
+    expect(reqArg.metadataJson).toBeDefined();
   });
 
   // 2026-04-25 修正: 書き出し開始ボタンは videoSource なし (selectedVideoPath
@@ -455,7 +433,7 @@ describe('ExportScreen (Phase 4 #466)', () => {
 
   it('全選択 / 全解除 buttons disable while running', async () => {
     invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === 'export_match') return new Promise(() => undefined);
+      if (cmd === 'start_export') return new Promise(() => undefined);
       return Promise.resolve(undefined);
     });
     render(<ExportScreen />);
@@ -478,14 +456,9 @@ describe('ExportScreen (Phase 4 #466)', () => {
   // command) を invoke する。`plugin:shell|open` は使わない (default scope の
   // URL regex で reject されるため)。
   it('completed [フォルダを開く] invokes open_folder_in_explorer with outDir', async () => {
-    invokeMock.mockImplementation((cmd: string, args: unknown) => {
-      if (cmd === 'export_match') {
-        const a = args as { matchIndex: number; outputPath: string };
-        return Promise.resolve({
-          match_index: a.matchIndex,
-          output_path: a.outputPath,
-          duration_ms: 100,
-        });
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'start_export') {
+        return Promise.resolve({ success: 9, failure: 0, skipped: 0, cancelled: false });
       }
       if (cmd === 'open_folder_in_explorer') return Promise.resolve(undefined);
       return Promise.resolve(undefined);
@@ -510,7 +483,7 @@ describe('ExportScreen (Phase 4 #466)', () => {
   // クリックで idle に戻り、再度書き出し可能。
   it('error phase shows 「設定変更して再試行」 button that returns to idle', async () => {
     invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === 'export_match') return Promise.reject(new Error('boom'));
+      if (cmd === 'start_export') return Promise.reject(new Error('boom'));
       return Promise.resolve(undefined);
     });
     render(<ExportScreen />);
@@ -529,15 +502,13 @@ describe('ExportScreen (Phase 4 #466)', () => {
     expect(screen.getByTestId('export-screen').dataset.phase).toBe('idle');
   });
 
-  // #663 — Phase 4: when export_match rejects with an AppError-shaped
-  // object (`{ code, message, hint }`), the per-match list error renders
-  // the hint as a 2nd line below the primary message. The sample
-  // metadata has 9 matches and the mock fails every export, so we expect
-  // 9 message + 9 hint nodes. Asserting on getAllByText keeps the test
-  // robust to fixture-size changes (just checks ≥1).
-  it('renders per-match error hint when export_match rejects with AppError (#663)', async () => {
+  // #663 / #761 — when start_export rejects with an AppError-shaped object,
+  // the screen transitions to error phase. Per-match error details come via
+  // export-progress events (stage='error'). Test that error phase is reached
+  // when start_export rejects.
+  it('transitions to error phase when start_export rejects with AppError (#663)', async () => {
     invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === 'export_match') {
+      if (cmd === 'start_export') {
         return Promise.reject({
           code: 'subprocess.spawn_failed',
           message: 'ffmpeg spawn failed',
@@ -550,11 +521,8 @@ describe('ExportScreen (Phase 4 #466)', () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /書き出し開始/ }));
     await waitFor(() => {
-      expect(screen.getAllByText(/ffmpeg spawn failed/).length).toBeGreaterThan(
-        0,
-      );
+      expect(screen.getByTestId('export-screen').dataset.phase).toBe('error');
     });
-    expect(screen.getAllByText(/reinstall ffmpeg/).length).toBeGreaterThan(0);
   });
 
   // #678 Lane II-b §2.1 — handleOpenFolder catch path: AppError struct +
@@ -564,20 +532,15 @@ describe('ExportScreen (Phase 4 #466)', () => {
   // が `[object Object]` になるバグを TDD で検出するための test。
   describe('ExportScreen handleOpenFolder catch (#678)', () => {
     // open_folder_in_explorer を reject 値別に mock 化し、完了画面まで遷移
-    // させてから [フォルダを開く] をクリックする共通 helper。export_match は
+    // させてから [フォルダを開く] をクリックする共通 helper。start_export は
     // 通常通り resolve させて completed phase まで持っていく。
     async function setupAndClickOpenFolder(
       openFolderReject: unknown,
       user: ReturnType<typeof userEvent.setup>,
     ) {
-      invokeMock.mockImplementation((cmd: string, args: unknown) => {
-        if (cmd === 'export_match') {
-          const a = args as { matchIndex: number; outputPath: string };
-          return Promise.resolve({
-            match_index: a.matchIndex,
-            output_path: a.outputPath,
-            duration_ms: 100,
-          });
+      invokeMock.mockImplementation((cmd: string) => {
+        if (cmd === 'start_export') {
+          return Promise.resolve({ success: 9, failure: 0, skipped: 0, cancelled: false });
         }
         if (cmd === 'open_folder_in_explorer') {
           return Promise.reject(openFolderReject);
@@ -657,14 +620,9 @@ describe('ExportScreen (Phase 4 #466)', () => {
   // #545 review #7: 進捗バー直下に「経過 0:00 / 残り —」が出る (running 中)。
   // 完了後は両方の表示が残るが setInterval は止まる。
   it('shows elapsed / remaining time line during running', async () => {
-    invokeMock.mockImplementation((cmd: string, args: unknown) => {
-      if (cmd === 'export_match') {
-        const a = args as { matchIndex: number; outputPath: string };
-        return Promise.resolve({
-          match_index: a.matchIndex,
-          output_path: a.outputPath,
-          duration_ms: 100,
-        });
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'start_export') {
+        return Promise.resolve({ success: 9, failure: 0, skipped: 0, cancelled: false });
       }
       return Promise.resolve(undefined);
     });
@@ -699,7 +657,7 @@ describe('ExportScreen (Phase 4 #466)', () => {
       },
     );
     invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === 'export_match') return new Promise(() => undefined); // never resolves
+      if (cmd === 'start_export') return new Promise(() => undefined); // never resolves
       return Promise.resolve(undefined);
     });
     render(<ExportScreen />);
@@ -772,18 +730,19 @@ describe('ExportScreen (Phase 4 #466)', () => {
     });
   });
 
-  it('invokes select_h264_encoder_for_export and updates sub label when system_info is present', async () => {
+  it('invokes enumerate_h264_encoders and updates sub label when system_info is present', async () => {
     invokeMock.mockImplementation(async (cmd: string) => {
-      if (cmd === 'select_h264_encoder_for_export') {
-        return {
-          encoder: 'h264_nvenc',
-          display_label: 'NVENC',
-          encoder_kind: 'Nvenc',
-        };
+      if (cmd === 'enumerate_h264_encoders') {
+        // RTX 5090 SKU → 3 parallel NVENC slots
+        return [
+          { slot_index: 0, encoder_kind: 'Nvenc', display_label: 'NVENC #1' },
+          { slot_index: 1, encoder_kind: 'Nvenc', display_label: 'NVENC #2' },
+          { slot_index: 2, encoder_kind: 'Nvenc', display_label: 'NVENC #3' },
+        ];
       }
       return undefined;
     });
-    // Inject system_info into the sample metadata.
+    // Inject system_info with RTX 5090 GPU model into the sample metadata.
     const current = useMetadataStore.getState().metadata!;
     useMetadataStore.setState({
       metadata: {
@@ -792,29 +751,34 @@ describe('ExportScreen (Phase 4 #466)', () => {
           gpu_vendors_available: ['nvidia'],
           gpu_vendor_used: 'nvidia',
           vendor_preference: ['nvidia', 'amd', 'intel'],
+          gpu: ['NVIDIA GeForce RTX 5090'],
         },
       },
     });
     render(<ExportScreen />);
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith(
-        'select_h264_encoder_for_export',
+        'enumerate_h264_encoders',
         {
-          vendors: ['nvidia'],
-          preference: ['nvidia', 'amd', 'intel'],
+          req: {
+            vendors: ['nvidia'],
+            preference: ['nvidia', 'amd', 'intel'],
+            gpuModels: ['NVIDIA GeForce RTX 5090'],
+          },
         },
       );
     });
+    // 3 slots → badge should show "NVENC ×3"
     await waitFor(() => {
       expect(
         screen.getByText(/H\.264 再エンコード/).parentElement?.textContent,
-      ).toContain('NVENC');
+      ).toContain('NVENC ×3');
     });
   });
 
-  it('falls back to libx264 sub label when select_h264_encoder_for_export rejects', async () => {
+  it('falls back to libx264 sub label when enumerate_h264_encoders rejects', async () => {
     invokeMock.mockImplementation(async (cmd: string) => {
-      if (cmd === 'select_h264_encoder_for_export') {
+      if (cmd === 'enumerate_h264_encoders') {
         throw new Error('boom');
       }
       return undefined;
@@ -838,17 +802,13 @@ describe('ExportScreen (Phase 4 #466)', () => {
     });
   });
 
-  it('passes h264_encoder argument to export_match when codec is h264', async () => {
+  it('passes codec=h264 to start_export when h264 codec is selected', async () => {
     invokeMock.mockImplementation(async (cmd: string) => {
-      if (cmd === 'select_h264_encoder_for_export') {
-        return {
-          encoder: 'h264_nvenc',
-          display_label: 'NVENC',
-          encoder_kind: 'Nvenc',
-        };
+      if (cmd === 'enumerate_h264_encoders') {
+        return [{ slot_index: 0, encoder_kind: 'Nvenc', display_label: 'NVENC' }];
       }
-      if (cmd === 'export_match') {
-        return { match_index: 1, output_path: '/tmp/match_001.mp4', duration_ms: 0 };
+      if (cmd === 'start_export') {
+        return { success: 9, failure: 0, skipped: 0, cancelled: false };
       }
       return undefined;
     });
@@ -867,7 +827,7 @@ describe('ExportScreen (Phase 4 #466)', () => {
     render(<ExportScreen />);
     await waitFor(() =>
       expect(invokeMock).toHaveBeenCalledWith(
-        'select_h264_encoder_for_export',
+        'enumerate_h264_encoders',
         expect.anything(),
       ),
     );
@@ -879,26 +839,21 @@ describe('ExportScreen (Phase 4 #466)', () => {
     );
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith(
-        'export_match',
+        'start_export',
         expect.objectContaining({
-          codec: 'h264',
-          h264Encoder: 'Nvenc',
+          req: expect.objectContaining({ codec: 'h264' }),
         }),
       );
     });
   });
 
-  it('passes h264Encoder=null to export_match when codec is copy', async () => {
+  it('passes codec=copy to start_export when copy codec is selected (default)', async () => {
     invokeMock.mockImplementation(async (cmd: string) => {
-      if (cmd === 'select_h264_encoder_for_export') {
-        return {
-          encoder: 'h264_nvenc',
-          display_label: 'NVENC',
-          encoder_kind: 'Nvenc',
-        };
+      if (cmd === 'enumerate_h264_encoders') {
+        return [{ slot_index: 0, encoder_kind: 'Nvenc', display_label: 'NVENC' }];
       }
-      if (cmd === 'export_match') {
-        return { match_index: 1, output_path: '/tmp/match_001.mp4', duration_ms: 0 };
+      if (cmd === 'start_export') {
+        return { success: 9, failure: 0, skipped: 0, cancelled: false };
       }
       return undefined;
     });
@@ -922,10 +877,9 @@ describe('ExportScreen (Phase 4 #466)', () => {
     );
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith(
-        'export_match',
+        'start_export',
         expect.objectContaining({
-          codec: 'copy',
-          h264Encoder: null,
+          req: expect.objectContaining({ codec: 'copy' }),
         }),
       );
     });
@@ -989,7 +943,7 @@ describe('ExportScreen (Phase 4 #466)', () => {
 
   it('[全選択] / [全解除] surface a "書き出し中" reason while exporting (#587)', async () => {
     invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === 'export_match') return new Promise(() => undefined);
+      if (cmd === 'start_export') return new Promise(() => undefined);
       return Promise.resolve(undefined);
     });
     render(<ExportScreen />);

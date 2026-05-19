@@ -319,6 +319,107 @@ allaganeye split --from-metadata output/metadata.json -o output/
 allaganeye split recording.mkv -o output/
 ```
 
+## export コマンド
+
+detect/split が生成した `metadata.json` をもとに、N 並列で試合 MP4 を書き出す (#761)。
+
+### 構文
+
+```bash
+# 通常モード (metadata.json をディスクから読み込む)
+allaganeye export <metadata_path> --output-dir DIR [--codec copy|h264]
+                                  [--concurrency N] [--name-pattern PATTERN]
+                                  [--quiet|--json] [--include I,J,K|--exclude I,J,K]
+
+# stdin モード (GUI subprocess が in-memory 編集済み metadata を渡す場合)
+echo '<metadata-json>' | allaganeye export --stdin [...]
+```
+
+### 引数
+
+| 引数 | 必須 | 説明 |
+| --- | --- | --- |
+| `metadata_path` | `--stdin` と排他 | detect/split が生成した `metadata.json` のパス |
+| `--stdin` | `metadata_path` と排他 | stdin から metadata JSON を読み込む (GUI subprocess モード。未保存 in-memory 編集 + filePath が null の sample mode に対応) |
+
+### オプション
+
+| オプション | デフォルト | 説明 |
+| --- | --- | --- |
+| `--output-dir DIR` | (必須) | 出力先ディレクトリ (省略不可) |
+| `--codec copy\|h264` | `copy` | `copy` (FFmpeg `-c copy`、無劣化分割) または `h264` (NVENC / QSV / AMF / libx264 で再エンコード) |
+| `--concurrency N` | SKU テーブル値 | 同時 export スロット数を上書き (`enumerate_h264_encoders` が返す値のデフォルト: RTX 5090 → 3、RTX 4090/4080/4070 → 2、RTX 4060 / 不明 NVIDIA → 1、QSV / AMF / libx264 → 1) |
+| `--name-pattern PATTERN` | `{idx:03}_{type}_{start}.mp4` | 出力ファイル名テンプレート。使用可能トークン: `{idx}` / `{idx:03}` / `{type}` / `{start}` / `{date}` |
+| `--include I,J,K` | (すべて対象) | 0 始まりの match index フィルタ (カンマ区切り)。`--exclude` との併用時は `include - exclude` が有効集合 |
+| `--exclude I,J,K` | (なし) | 0 始まりの match index 除外フィルタ (カンマ区切り)。`type_override == "skip"` の match は本フラグに関係なく常に除外 |
+| `--quiet` | `false` | 進捗出力を抑制 (success/error 行は stderr に出力される)。`--json` と排他 |
+| `--json` | `false` | stdout に JSON Lines を emit する (GUI subprocess wire protocol)。`--quiet` と排他 |
+
+### NVENC engine 数プローブ
+
+`--codec h264` 指定時、**NVENC が primary encoder に選択された場合のみ** `enumerate_h264_encoders` が `metadata.json` の `system_info.gpu` (GPU モデル名リスト) を SKU テーブルで参照し、並列スロット数を決定する。
+
+| GPU モデル | NVENC engine 数 | 出典 |
+| --- | --- | --- |
+| RTX 5090 | 3 | NVIDIA 公式 spec |
+| RTX 5080 / 5070 / 4090 / 4080 / 4070 | 2 | NVIDIA 公式 spec |
+| RTX 5060 / 4060 | 1 | NVIDIA 公式 spec |
+| 不明 NVIDIA | 1 (保守的 default) | `_DEFAULT_NVENC_COUNT` |
+| AMD AMF / Intel QSV / libx264 fallback | 1 | (NVENC probe は実行されない) |
+
+#### SKU テーブルでカバーされない NVIDIA カードの挙動
+
+以下のカードは SKU テーブルにないため `_DEFAULT_NVENC_COUNT = 1` にフォールバックする:
+
+- **Consumer Pascal/Turing/Ampere** (GTX 10x0 / 16x0 / RTX 20x0 / 30x0): 全て NVENC engine = 1 のため **default=1 で正しい**。性能上の問題なし
+- **Workstation Ampere** (RTX A4000 / A5000 / A6000 等): 実際は **NVENC engine = 2** だが default=1 で起動 → 性能を活かせない (under-utilization)。`ALLAGANEYE_EXPORT_CONCURRENCY=2` で env override すると 2 並列実行可能
+- **Datacenter** (Tesla T4 / A100 / H100 / L4 等): T4 は 1 engine、A100 は 3、H100 は 3。default=1 で起動 → env override 推奨
+- **Quadro Turing pro** (Quadro RTX 6000 / 8000): NVENC engine = 2、同上
+
+#### NVENC engine 数の動的取得について
+
+NVIDIA は **NVENC engine 数を直接公開する API を持たない** (`nvidia-smi` の session count は engine 数ではなく同時 session 上限のみ; NVML / NVENC SDK も同様)。そのため SKU テーブル + env override 方式を採用している (#761)。新しい GPU 世代がリリースされたら本テーブルを更新する。
+
+#### env override
+
+環境変数 `ALLAGANEYE_EXPORT_CONCURRENCY` を設定するとすべての SKU テーブル値を上書きする。用途:
+
+- **Contention 回避**: OBS 等の他プロセスが NVENC engine を占有 → `(engine 数 - 使用中)` に設定して timeshare 低速化を回避
+- **Under-utilization 解消**: SKU テーブル未カバーの workstation/datacenter カードで実際の engine 数に合わせる (例: A6000 なら `=2`、H100 なら `=3`)
+- **保守的に動かす**: `=1` 指定でレガシー sequential 動作 (デバッグ時)
+
+```bash
+# RTX A6000 (NVENC 2 engine) で 2 並列実行
+ALLAGANEYE_EXPORT_CONCURRENCY=2 allaganeye export <metadata.json> --codec h264
+
+# H100 (NVENC 3 engine) で 3 並列
+ALLAGANEYE_EXPORT_CONCURRENCY=3 allaganeye export <metadata.json> --codec h264
+
+# OBS 録画中 (1 engine 占有) で RTX 5090 を 2 並列に下げる
+ALLAGANEYE_EXPORT_CONCURRENCY=2 allaganeye export <metadata.json> --codec h264
+```
+
+**非 NVIDIA 環境への影響なし**: `probe_nvenc_engine_count` は NVENC が primary encoder に選ばれた時のみ呼ばれる。AMD / Intel / CPU のみのユーザーには SKU テーブルは参照されない (常に 1 slot)。
+
+### Exit Codes
+
+| コード | 意味 |
+| --- | --- |
+| 0 | 全 match 成功 (exclude された match を除く) |
+| 1 | 1 件以上の match が失敗 (部分失敗または全失敗) |
+| 2 | 入力エラー (metadata 読み込み失敗 / JSON 不正 / 出力ディレクトリ未存在) |
+| 130 | SIGINT (Ctrl+C) によるキャンセル |
+
+### Wire protocol (`--json` モード)
+
+stdout の各行は JSON オブジェクト 1 件:
+
+- `{"type":"progress","match_index":N,"percent":P,"stage":"encoding"|"done"}`
+- `{"type":"fallback","match_index":N,"fallback_from":"h264_nvenc","fallback_to":"libx264","message":"..."}`
+- `{"type":"result","match_index":N,"output_path":"...","duration_ms":N,"encoder_used":"h264_nvenc"|"libx264"|...}`
+- `{"type":"error","match_index":N,"error_kind":"...","error_message":"...","error_hint":null|"..."}`
+- `{"type":"summary","success":N,"failure":N,"skipped":N,"cancelled":bool}` (常に最終行)
+
 ## debug-brightness コマンド
 
 フレーム輝度を CSV 出力する。暗転検知の閾値チューニング用。

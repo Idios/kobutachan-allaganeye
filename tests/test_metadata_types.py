@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import NotRequired, get_origin, get_type_hints
+from unittest.mock import patch
 
 from jsonschema import Draft202012Validator
 
@@ -39,7 +40,13 @@ def _build_payload(tmp_path: Path) -> Metadata:
         {"start": 1500.0, "end": 2400.0, "type": "unknown"},
     ]
     output_files = [Path("match_001.mp4"), Path("match_002.mp4")]
-    system_info = _build_system_info(available_vendors=["nvidia"], vendor_used="nvidia")
+    with patch(
+        "allaganeye.system_info.get_gpu_info_lines",
+        return_value=["NVIDIA GeForce RTX 5090 (32GB VRAM)"],
+    ):
+        system_info = _build_system_info(
+            available_vendors=["nvidia"], vendor_used="nvidia"
+        )
     return _build_metadata_payload(
         video_path=tmp_path / "sample.mkv",
         source_duration=7200.0,
@@ -98,6 +105,8 @@ def test_legacy_unknown_type_is_normalized(tmp_path: Path):
     boundaries: list[MatchBoundary] = [
         {"start": 0.0, "end": 100.0, "type": "non_fl"},
     ]
+    with patch("allaganeye.system_info.get_gpu_info_lines", return_value=[]):
+        system_info = _build_system_info(available_vendors=[], vendor_used=None)
     payload = _build_metadata_payload(
         video_path=tmp_path / "sample.mkv",
         source_duration=200.0,
@@ -110,6 +119,6 @@ def test_legacy_unknown_type_is_normalized(tmp_path: Path):
         boundaries=boundaries,
         output_files=[Path("match_001.mp4")],
         gaps=[],
-        system_info=_build_system_info(available_vendors=[], vendor_used=None),
+        system_info=system_info,
     )
     assert payload["matches"][0]["type"] == "unknown"

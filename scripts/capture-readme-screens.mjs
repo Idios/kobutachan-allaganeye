@@ -42,8 +42,8 @@ const TAURI_INIT_SCRIPT = `
     if (cmd === 'get_metadata_mtime') return null;
     if (cmd === 'read_recent') return [];
     if (cmd === 'add_recent' || cmd === 'clear_recent') return null;
-    if (cmd === 'select_h264_encoder_for_export') {
-      return { encoder: 'libx264', vendor: null };
+    if (cmd === 'enumerate_h264_encoders') {
+      return [{ slot_index: 0, encoder_kind: 'Libx264', display_label: 'libx264 (CPU)' }];
     }
     if (cmd === 'register_video') {
       return { url: 'about:blank', token: 'mock-token' };
@@ -67,7 +67,7 @@ const TAURI_INIT_SCRIPT = `
     // Long-running commands: leave pending forever so the UI sits in its
     // initial in-flight state.
     if (cmd === 'load_metadata' || cmd === 'apply_changes' ||
-        cmd === 'restore_from_original' || cmd === 'export_match' ||
+        cmd === 'restore_from_original' || cmd === 'start_export' ||
         cmd === 'start_detect') {
       return new Promise(() => {});
     }
