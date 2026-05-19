@@ -328,3 +328,23 @@ def test_build_args_copy_codec_has_no_hwaccel_even_with_nvenc_encoder(
     # -c copy が指定されている
     idx_c = args.index("-c")
     assert args[idx_c + 1] == "copy"
+
+
+def test_build_args_hwaccel_positioned_before_ss_to_i(tmp_path: Path):
+    """ffmpeg の -hwaccel は input flag であり -ss/-to/-i より前に置く必要がある."""
+    args = _build_ffmpeg_args(
+        ffmpeg="ffmpeg",
+        video=tmp_path / "in.mp4",
+        start=1.5,
+        end=12.5,
+        output=tmp_path / "out.mp4",
+        codec="h264",
+        encoder=H264Encoder.NVENC,
+    )
+    idx_hwaccel = args.index("-hwaccel")
+    idx_ss = args.index("-ss")
+    idx_to = args.index("-to")
+    idx_i = args.index("-i")
+    assert idx_hwaccel < idx_ss
+    assert idx_hwaccel < idx_to
+    assert idx_hwaccel < idx_i
