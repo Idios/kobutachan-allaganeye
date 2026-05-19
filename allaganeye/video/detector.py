@@ -537,17 +537,14 @@ def _decode_chunk_cpu_v2(
     fps_den: int,
     is_tail_chunk: bool,
 ) -> dict[float, float]:
-    """New path: input seek + select filter + -fps_mode passthrough (#576).
+    """New path: output seek + select filter + -fps_mode passthrough (#576).
 
-    ffmpeg invocation has ``-ss`` BEFORE ``-i`` (input seeking) so the
-    container index is used for a direct keyframe jump instead of
-    scanning the entire file to ``chunk_start``.  Modern ffmpeg (>=4.x)
-    default accurate_seek discards frames between the keyframe and
-    ``chunk_start``, so first-emitted-frame timing matches output seek.
-    The ``select='not(mod(n,N))'`` filter drops frames at the ffmpeg
-    layer (frame-index based, NOT PTS-based -- deterministic across
-    versions) before they reach the pipe, reducing pipe IO from ~28 GB
-    to ~178 MB per 2h video at 60fps + sample_interval=3.0s.
+    ffmpeg invocation has ``-ss`` AFTER ``-i`` (output seeking) so the
+    first emitted frame's PTS equals ``chunk_start`` exactly.  The
+    ``select='not(mod(n,N))'`` filter drops frames at the ffmpeg layer
+    (frame-index based, NOT PTS-based -- deterministic across versions)
+    before they reach the pipe, reducing pipe IO from ~28 GB to ~178 MB
+    per 2h video at 60fps + sample_interval=3.0s.
 
     N = round(sample_interval * fps_num / fps_den).  For 60fps +
     sample_interval=3.0, N=180 -> ffmpeg emits frame 0, 180, 360, ...
@@ -565,20 +562,16 @@ def _decode_chunk_cpu_v2(
         find_ffmpeg(),
         "-threads",
         "1",
+        "-i",
+        str(video_path),
         "-ss",
         str(chunk_start),
         "-t",
         str(chunk_duration),
-        "-i",
-        str(video_path),
         "-fps_mode",
         "passthrough",
         "-vf",
-        (
-            f"trim=start={chunk_start},setpts=PTS-STARTPTS,"
-            f"select='not(mod(n\\,{n_step}))',"
-            f"scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray"
-        ),
+        f"select='not(mod(n\\,{n_step}))',scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
         "-f",
         "rawvideo",
         "-pix_fmt",

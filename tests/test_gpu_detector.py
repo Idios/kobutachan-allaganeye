@@ -861,17 +861,11 @@ class TestDecodeChunkV2Cmd:
         )
 
         cmd = mock_popen.call_args[0][0]
-        # input seek: -ss before -i
-        assert cmd.index("-ss") < cmd.index("-i")
-        # -vf must contain trim+setpts+select filter (frame-index based, not PTS-based fps=)
+        # -ss after -i
+        assert cmd.index("-ss") > cmd.index("-i")
+        # -vf must contain select filter (frame-index based, not PTS-based fps=)
         vf_value = cmd[cmd.index("-vf") + 1]
         assert "fps=" not in vf_value
-        assert "trim=start=" in vf_value, (
-            f"trim=start= missing in GPU -vf, got {vf_value!r}"
-        )
-        assert "setpts=PTS-STARTPTS" in vf_value, (
-            f"setpts=PTS-STARTPTS missing in GPU -vf, got {vf_value!r}"
-        )
         assert "select='not(mod(n\\," in vf_value, (
             f"select filter missing in GPU -vf, got {vf_value!r}"
         )
@@ -913,20 +907,14 @@ class TestDecodeChunkV2Cmd:
         )
 
         cmd = mock_popen.call_args[0][0]
-        # AMD: hwdownload prefix in -vf, trim+setpts+select filter, input seek + passthrough
+        # AMD: hwdownload prefix in -vf, select filter, output seek + passthrough
         vf_value = cmd[cmd.index("-vf") + 1]
         assert "hwdownload,format=nv12" in vf_value
         assert "fps=" not in vf_value
-        assert "trim=start=" in vf_value, (
-            f"trim=start= missing in AMD GPU -vf, got {vf_value!r}"
-        )
-        assert "setpts=PTS-STARTPTS" in vf_value, (
-            f"setpts=PTS-STARTPTS missing in AMD GPU -vf, got {vf_value!r}"
-        )
         assert "select='not(mod(n\\," in vf_value, (
             f"select filter missing in AMD GPU -vf, got {vf_value!r}"
         )
-        assert cmd.index("-ss") < cmd.index("-i")
+        assert cmd.index("-ss") > cmd.index("-i")
         assert cmd[cmd.index("-fps_mode") + 1] == "passthrough"
 
     @patch("allaganeye.video.gpu_detector.subprocess.Popen")
@@ -960,16 +948,10 @@ class TestDecodeChunkV2Cmd:
         )
 
         cmd = mock_popen.call_args[0][0]
-        # Intel QSV: hwdownload prefix preserved, trim+setpts+select filter, decoder = h264_qsv
+        # Intel QSV: hwdownload prefix preserved, select filter, decoder = h264_qsv
         vf_value = cmd[cmd.index("-vf") + 1]
         assert "hwdownload,format=nv12" in vf_value
         assert "fps=" not in vf_value
-        assert "trim=start=" in vf_value, (
-            f"trim=start= missing in Intel QSV -vf, got {vf_value!r}"
-        )
-        assert "setpts=PTS-STARTPTS" in vf_value, (
-            f"setpts=PTS-STARTPTS missing in Intel QSV -vf, got {vf_value!r}"
-        )
         assert "select='not(mod(n\\," in vf_value, (
             f"select filter missing in Intel QSV -vf, got {vf_value!r}"
         )
