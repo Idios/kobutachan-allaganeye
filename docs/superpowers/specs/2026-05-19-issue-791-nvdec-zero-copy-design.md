@@ -73,6 +73,8 @@ _DECODE_HWACCEL_ARGS: dict[H264Encoder, tuple[str, ...]] = {
 - **AMF**: `()` (no-op) -- deferred to #762. Real wire: `("-hwaccel", "d3d11va")`, requires AMD dGPU real-machine verification
 - **LIBX264**: 空 tuple -> hwaccel 引数なし (CPU decode + CPU encode のまま)
 
+**未登録 enum 追加時の risk**: `_DECODE_HWACCEL_ARGS[encoder]` は direct subscript (`.get(encoder, ())` ではない) のため、`H264Encoder` enum に新規メンバーを追加し `_DECODE_HWACCEL_ARGS` への登録を忘れた場合は merge-time test failure (KeyError) で検出される。これは意図的設計: silently miss を防ぐため。将来の encoder 追加 PR (例: AV1) は本 mapping にも entry を追加すること (空 tuple `()` でも OK)。
+
 ### 3.2 挿入条件
 
 ```python
@@ -93,7 +95,7 @@ def _build_ffmpeg_args(...) -> list[str]:
 ```
 
 | codec | encoder | hwaccel 挿入? | 結果 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `"h264"` | NVENC | YES (cuda + cuda) | NVDEC->NVENC zero-copy |
 | `"h264"` | QSV | NO (empty tuple, deferred to #762) | CPU decode + QSV encode |
 | `"h264"` | AMF | NO (empty tuple, deferred to #762) | CPU decode + AMF encode |
@@ -113,7 +115,7 @@ def _build_ffmpeg_args(...) -> list[str]:
 ### 4.1 unit test (red → green の順で追加)
 
 | # | Test 名 | Assert |
-|---|---|---|
+| --- | --- | --- |
 | T1 | `test_build_args_nvenc_inserts_hwaccel_cuda_before_input` | argv に `["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]` が連続で含まれ、その index が `-i` の index より小さい |
 | T2 | `test_build_args_qsv_has_no_hwaccel_deferred_to_762` | QSV mapping は no-op: argv に `-hwaccel` / `-hwaccel_output_format` なし (#762 で wire、Codex adversarial-review #791 + Idios 判断) |
 | T3 | `test_build_args_amf_has_no_hwaccel_deferred_to_762` | AMF mapping は no-op: argv に `-hwaccel` / `-hwaccel_output_format` なし (#762 で wire、Codex adversarial-review #791 + Idios 判断) |
@@ -125,7 +127,7 @@ def _build_ffmpeg_args(...) -> list[str]:
 ### 4.2 integration test (run_export_attempt 経路、subprocess mock)
 
 | # | Test 名 | Assert |
-|---|---|---|
+| --- | --- | --- |
 | I1 | `test_run_export_attempt_nvenc_argv_includes_hwaccel_cuda` | Popen 1st call (`mock_popen.call_args_list[0]`) の argv に `-hwaccel cuda` が含まれる |
 | I2 | `test_run_export_attempt_libx264_fallback_argv_lacks_hwaccel` | NVENC init fail -> libx264 retry シナリオで、Popen 2nd call (`mock_popen.call_args_list[1]`) の argv に `-hwaccel` なし |
 | I3 | `test_run_export_attempt_nvdec_decode_failure_triggers_libx264_retry` | NVDEC decode failure (`cuvidCreateDecoder failed`) stderr -> libx264 retry argv lacks `-hwaccel` (Codex Finding 2 対応) |
@@ -156,7 +158,7 @@ Idios 環境 (Windows 11 + RTX 5090 + BtbN LGPL ffmpeg) で以下を `AskUserQue
 ### 5.2 期待結果
 
 | Metric | #761 baseline | 本 PR target |
-|---|---|---|
+| --- | --- | --- |
 | Video Encode 平均 | ~58% (3 engine) | ~90%+ |
 | Video Decode 平均 | 0% | 非ゼロ (~50-90%) |
 | 8 試合 export 実時間 | 10:54 | 5-7 分台 |
@@ -171,7 +173,7 @@ Idios 環境 (Windows 11 + RTX 5090 + BtbN LGPL ffmpeg) で以下を `AskUserQue
 ## 6. リスクと対応
 
 | Risk | 対応 |
-|---|---|
+| --- | --- |
 | 入力動画の codec が NVDEC 未対応 (例: 特殊な MKV) | ffmpeg は `-hwaccel cuda` 指定でも未対応 codec で silent CPU fallback。動作は維持されるが zero-copy 効果は失われる。issue 仕様通り「silent fallback を unit test で verify」は **argv が正しく構築されること** までを担保 (各 codec 別 NVDEC 実機検証は対象外、N4) |
 | NVDEC engine 数 (1) < NVENC engine 数 (3) で feeding bottleneck 継続 | RTX 5090 は NVDEC 2 engine + NVENC 3 engine。N=3 並列で NVDEC 飽和の可能性あり。目視確認で Video Decode が 100% 近く貼り付いていれば feeding 律速の余地が残るが、CPU decode→memcpy より高速なので net positive。target 未達時は §5.2 の通り追加調査 |
 | `-hwaccel_output_format cuda` 指定により h264_nvenc が CUDA buffer を受け取れない GPU/driver | RTX 5090 + BtbN LGPL ffmpeg + 最新 driver では動作確認可能。古い driver では `-hwaccel_output_format` を解釈できない可能性があるが、Idios 環境 (本 PR の Iron Law 6 検証ターゲット) は最新 driver を維持しているため検証可能。Idios 以外のユーザー環境での古い driver 互換性は本 PR スコープ外、回帰時は別 issue で対応 |
@@ -202,6 +204,8 @@ Patterns added:
 - `hwaccel transfer data failed`
 - `cuvid: failed`
 - `could not allocate hardware frames`
+
+**実機 stderr corpus との突合**: 本 PR の pattern set は Codex 3 round の review で coverage を validated したが、`feedback_ffmpeg_qsv_stderr_pattern.md` memory 教訓 (「実機 stderr で確認しないと検出漏れ」) は NVENC 側にも同 surface あり。Iron Law 6 trigger (Idios RTX 5090) で actual stderr corpus 取得後、必要なら #791 派生 issue として pattern 追加 / regex 化 等の継続検討。
 
 Coverage: new unit tests (T7 series) for `is_gpu_encoder_failure` + integration test (I3) for full `run_export_attempt` retry path with NVDEC decode failure stderr.
 

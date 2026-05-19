@@ -494,6 +494,10 @@ def test_run_export_attempt_nvdec_decode_failure_triggers_libx264_retry(
     encoder. is_gpu_encoder_failure must detect these stderr patterns so
     run_export_attempt rebuilds argv without -hwaccel cuda and retries with
     libx264.
+
+    Note: real-machine fallback behavior (actual ffmpeg argv hand-off) is
+    verified via Iron Law 6 trigger (Idios RTX 5090) per spec section 5.1,
+    not in this mocked test.
     """
     proc_nvenc = MagicMock()
     proc_nvenc.stderr = MagicMock()

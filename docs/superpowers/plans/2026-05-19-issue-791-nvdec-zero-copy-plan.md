@@ -15,9 +15,11 @@
 ## File Structure
 
 **Modified:**
+
 - [`allaganeye/export/ffmpeg_runner.py`](../../../allaganeye/export/ffmpeg_runner.py) — module-level `_DECODE_HWACCEL_ARGS` dict + `_build_ffmpeg_args` の 1 行追加
 
 **Modified (tests):**
+
 - [`tests/test_export_ffmpeg_runner.py`](../../../tests/test_export_ffmpeg_runner.py) — unit test 6 件 + integration test 2 件追加
 
 **No new files.** 既存 2 ファイルへの追加のみ。
@@ -27,6 +29,7 @@
 ## Task 1: TDD T1 — NVENC mapping 導入
 
 **Files:**
+
 - Modify: `allaganeye/export/ffmpeg_runner.py`
 - Test: `tests/test_export_ffmpeg_runner.py`
 
@@ -65,7 +68,7 @@ def test_build_args_nvenc_inserts_hwaccel_cuda_before_input(tmp_path: Path):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-```
+```bash
 pytest tests/test_export_ffmpeg_runner.py::test_build_args_nvenc_inserts_hwaccel_cuda_before_input -v
 ```
 
@@ -88,6 +91,8 @@ _DECODE_HWACCEL_ARGS: dict[H264Encoder, tuple[str, ...]] = {
     H264Encoder.LIBX264: (),
 }
 ```
+
+> **Note (Codex Round 1 Finding 1 + Idios decision)**: 上記 mapping は初期 plan。Round 1 review で Codex adversarial-review が「Intel/AMD 未検証変更」として HIGH 指摘 → Idios 判断で QSV/AMF を `()` no-op に変更 (実 wire は #762)。最終的な mapping と判断記録は spec §3.1 / §6.5 を参照。
 
 3b. `_build_ffmpeg_args` (line 113-146) の本体を以下に置換:
 
@@ -139,7 +144,7 @@ def _build_ffmpeg_args(
 
 - [ ] **Step 4: Run test to verify it passes**
 
-```
+```bash
 pytest tests/test_export_ffmpeg_runner.py::test_build_args_nvenc_inserts_hwaccel_cuda_before_input -v
 ```
 
@@ -147,7 +152,7 @@ Expected: PASS
 
 - [ ] **Step 5: Run full test file to verify no regression**
 
-```
+```bash
 pytest tests/test_export_ffmpeg_runner.py -v
 ```
 
@@ -169,6 +174,7 @@ decode to NVDEC with CUDA output format for zero-copy NVDEC->NVENC."
 ## Task 2: TDD T2/T3 — QSV / AMF mapping 確認
 
 **Files:**
+
 - Test: `tests/test_export_ffmpeg_runner.py`
 
 - [ ] **Step 1: Write the failing test (T2: QSV)**
@@ -198,7 +204,7 @@ def test_build_args_qsv_inserts_hwaccel_qsv_before_input(tmp_path: Path):
 
 - [ ] **Step 2: Run test to verify it passes (already passing — mapping covers all 4 encoders)**
 
-```
+```bash
 pytest tests/test_export_ffmpeg_runner.py::test_build_args_qsv_inserts_hwaccel_qsv_before_input -v
 ```
 
@@ -226,7 +232,7 @@ def test_build_args_amf_inserts_hwaccel_d3d11va_before_input(tmp_path: Path):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-```
+```bash
 pytest tests/test_export_ffmpeg_runner.py::test_build_args_amf_inserts_hwaccel_d3d11va_before_input -v
 ```
 
@@ -248,6 +254,7 @@ added in Task 1. Real-world verification deferred to #762."
 ## Task 3: TDD T4/T5 — LIBX264 / copy mode exclusion
 
 **Files:**
+
 - Test: `tests/test_export_ffmpeg_runner.py`
 
 - [ ] **Step 1: Write test (T4: LIBX264 has no hwaccel)**
@@ -272,7 +279,7 @@ def test_build_args_libx264_has_no_hwaccel(tmp_path: Path):
 
 - [ ] **Step 2: Run test to verify it passes**
 
-```
+```bash
 pytest tests/test_export_ffmpeg_runner.py::test_build_args_libx264_has_no_hwaccel -v
 ```
 
@@ -303,7 +310,7 @@ def test_build_args_copy_codec_has_no_hwaccel_even_with_nvenc_encoder(
 
 - [ ] **Step 4: Run test to verify it passes**
 
-```
+```bash
 pytest tests/test_export_ffmpeg_runner.py::test_build_args_copy_codec_has_no_hwaccel_even_with_nvenc_encoder -v
 ```
 
@@ -325,6 +332,7 @@ even when encoder=NVENC (stream copy bypasses decode/encode)."
 ## Task 4: TDD T6 — Position before -ss / -to / -i
 
 **Files:**
+
 - Test: `tests/test_export_ffmpeg_runner.py`
 
 - [ ] **Step 1: Write test (T6: hwaccel before all input flags)**
@@ -352,7 +360,7 @@ def test_build_args_hwaccel_positioned_before_ss_to_i(tmp_path: Path):
 
 - [ ] **Step 2: Run test to verify it passes**
 
-```
+```bash
 pytest tests/test_export_ffmpeg_runner.py::test_build_args_hwaccel_positioned_before_ss_to_i -v
 ```
 
@@ -374,6 +382,7 @@ against accidental reordering."
 ## Task 5: Integration tests — Popen call argv assertion
 
 **Files:**
+
 - Test: `tests/test_export_ffmpeg_runner.py`
 
 - [ ] **Step 1: Write integration test (I1: NVENC 1st attempt argv includes -hwaccel cuda)**
@@ -423,7 +432,7 @@ def test_run_export_attempt_nvenc_argv_includes_hwaccel_cuda(
 
 - [ ] **Step 2: Run test to verify it passes**
 
-```
+```bash
 pytest tests/test_export_ffmpeg_runner.py::test_run_export_attempt_nvenc_argv_includes_hwaccel_cuda -v
 ```
 
@@ -487,7 +496,7 @@ def test_run_export_attempt_libx264_fallback_argv_lacks_hwaccel(
 
 - [ ] **Step 4: Run test to verify it passes**
 
-```
+```bash
 pytest tests/test_export_ffmpeg_runner.py::test_run_export_attempt_libx264_fallback_argv_lacks_hwaccel -v
 ```
 
@@ -513,7 +522,7 @@ I2: NVENC init fail -> libx264 retry 2nd Popen call argv lacks
 
 - [ ] **Step 1: Run full export test suite**
 
-```
+```bash
 pytest tests/test_export_ffmpeg_runner.py tests/test_export_pool.py tests/test_export_cli.py tests/test_export_encoder.py tests/test_export_nvenc_probe.py tests/test_export_schema.py tests/test_export_wire_protocol.py -v
 ```
 
@@ -521,7 +530,7 @@ Expected: 全 PASS。既存 test (8 件 in ffmpeg_runner.py + 他 6 ファイル
 
 - [ ] **Step 2: Run full test suite**
 
-```
+```bash
 pytest
 ```
 
@@ -529,7 +538,7 @@ Expected: PASS (slow marker 除く)
 
 - [ ] **Step 3: Lint check**
 
-```
+```bash
 ruff check . && ruff format --check .
 ```
 
@@ -537,7 +546,7 @@ Expected: All checks passed.
 
 - [ ] **Step 4: Type check**
 
-```
+```bash
 pyright
 ```
 
@@ -566,7 +575,7 @@ Format / type が pass している場合は本 commit 不要。
 
 - [ ] **Step 0: Hard gate — 重複 PR 検出 (<1s)**
 
-```
+```bash
 gh pr list --search "791" --state open --json number,title,headRefName
 ```
 
@@ -574,24 +583,25 @@ Expected: `[]` (issue#791 用 open PR なし)。何か返ってきたら作業�
 
 - [ ] **Step 1: Base branch 同期**
 
-```
+```bash
 git fetch origin develop-0.3.0
 ```
 
 - [ ] **Step 2: 取り込み未済 commit 確認**
 
-```
+```bash
 git log HEAD..origin/develop-0.3.0 --oneline
 ```
 
 Expected: 空 (Pre-flight 開始時に base 最新)。commit が出てきたら merge / rebase を判断:
+
 - 自動 merge 可能 → `git merge origin/develop-0.3.0`
 - conflict → 手動解決
 - conflict なくても touched files が交差する場合 → Step 3 で再確認
 
 - [ ] **Step 3: Touched files 交差判定**
 
-```
+```bash
 git log HEAD..origin/develop-0.3.0 --name-only --pretty=format: | sort -u | grep -E "(allaganeye/export/ffmpeg_runner\.py|tests/test_export_ffmpeg_runner\.py)" || echo "no overlap"
 ```
 
@@ -599,7 +609,7 @@ Expected: `no overlap`。overlap があれば変更内容を確認し、必要�
 
 - [ ] **Step 4: 並行 PR 重複再確認**
 
-```
+```bash
 gh pr list --search "791" --state all --json number,title,state
 gh pr list --search "NVDEC" --state open --json number,title,state
 gh pr list --search "hwaccel cuda" --state open --json number,title,state
@@ -609,7 +619,7 @@ Expected: state=open で issue#791 関連の他 PR なし。
 
 - [ ] **Step 5: Codex adversarial-review**
 
-```
+```text
 /codex:adversarial-review focus="Iron Law 3 scope creep / NVDEC encoding boundary / GPU fallback path correctness / past PR same-issue root cause"
 ```
 
@@ -617,7 +627,7 @@ Expected: Codex が verdict (PROCEED / PROCEED-WITH-FIXES / HALT) + findings lis
 
 - [ ] **Step 6: PR push**
 
-```
+```bash
 git push -u origin claude/mystifying-poincare-51645d
 ```
 
@@ -689,7 +699,7 @@ EOF
 
 - [ ] **Step 8: PR 番号を控える**
 
-```
+```bash
 gh pr view --json number,url
 ```
 
@@ -713,6 +723,7 @@ Question: "RTX 5090 環境で N=3 並列 H.264 export 実機検証をお願い�
 4. `PowerShell Get-Counter '\GPU Engine(*engtype_VideoDecode*)\Utilization Percentage'` で per-engine NVDEC 補助確認"
 
 Options:
+
 - 「実施完了、結果を返答」(検証 OK / NG を別途報告)
 - 「PR review 後に実施」(まず /iterate-review でレビューを進める)
 - 「実施できない、現状で merge」(検証なしで進める、Iron Law 6 違反のため非推奨)
@@ -721,11 +732,12 @@ Options:
 
 実機検証と並行 or 完了後に:
 
-```
+```text
 /iterate-review <PR#>
 ```
 
 review findings に対して:
+
 - (A) 本 PR 内修正 (推奨、デフォルト)
 - (B) 別 issue 起票 (限定例外)
 - (C) 既存 issue 追記 (限定例外)
@@ -736,7 +748,7 @@ iterate-review skill が CI / lint / review 全 pass まで自走。
 
 iterate-review summary で LGTM 確定後、Idios に merge 承認を得てから merge。merge 後:
 
-```
+```text
 /close-issue 791
 ```
 
