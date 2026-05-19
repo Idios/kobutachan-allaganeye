@@ -40,9 +40,21 @@ _GPU_ENCODER_FAILURE_PATTERNS: dict[H264Encoder, tuple[str, ...]] = {
     # feedback_ffmpeg_qsv_stderr_pattern.md notes ffmpeg 8.1 QSV uses
     # "Error creating a MFX session" (not pre-8.1 "Error initializing").
     H264Encoder.NVENC: (
+        # Encoder init failures (pre-#791):
         "no nvenc capable devices found",
         "cannot load cuda driver",
         "openencodesessionex failed",
+        # NVDEC decode-stage failures introduced by #791 `-hwaccel cuda`
+        # injection. With decode now routed through NVDEC, ffmpeg can fail
+        # before reaching the encoder. Detect representative stderr and
+        # treat as a GPU failure -> libx264 retry rebuilds argv without
+        # `-hwaccel cuda` (mapping returns () for LIBX264) and decodes on CPU.
+        "cuvidcreatedecoder",  # cuvidCreateDecoder failed
+        "failed to create cuda context",
+        "cannot init cuda",
+        "hwaccel transfer data failed",
+        "cuvid: failed",
+        "could not allocate hardware frames",
     ),
     H264Encoder.QSV: (
         "error creating a mfx session",  # 8.1+

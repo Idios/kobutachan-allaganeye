@@ -56,6 +56,22 @@ def test_unrelated_error_not_classified_as_gpu_init():
     assert not is_gpu_encoder_failure(text, H264Encoder.NVENC)
 
 
+def test_nvenc_nvdec_decode_failure_cuvidcreatedecoder():
+    """#791: NVDEC decode stage failures (introduced by -hwaccel cuda) trigger libx264 retry."""
+    text = "[h264_cuvid @ 0x...] cuvidCreateDecoder failed: invalid argument"
+    assert is_gpu_encoder_failure(text, H264Encoder.NVENC)
+
+
+def test_nvenc_nvdec_decode_failure_cuda_context():
+    text = "Failed to create CUDA context (1)"
+    assert is_gpu_encoder_failure(text, H264Encoder.NVENC)
+
+
+def test_nvenc_nvdec_decode_failure_hwaccel_transfer():
+    text = "hwaccel transfer data failed"
+    assert is_gpu_encoder_failure(text, H264Encoder.NVENC)
+
+
 # --- run_export_attempt: success path ---
 
 
@@ -441,3 +457,60 @@ def test_run_export_attempt_libx264_fallback_argv_lacks_hwaccel(
     assert "-hwaccel" in first_argv
     assert "-hwaccel" not in second_argv
     assert "libx264" in second_argv
+
+
+@patch("allaganeye.export.ffmpeg_runner.subprocess.Popen")
+def test_run_export_attempt_nvdec_decode_failure_triggers_libx264_retry(
+    mock_popen: MagicMock, tmp_path: Path
+):
+    """#791 Codex Finding 2: NVDEC decode-stage failure (not encoder init) -> libx264 retry.
+
+    With -hwaccel cuda routed through NVDEC, ffmpeg can fail at decode setup
+    (cuvidCreateDecoder, CUDA context creation, etc.) before reaching the
+    encoder. is_gpu_encoder_failure must detect these stderr patterns so
+    run_export_attempt rebuilds argv without -hwaccel cuda and retries with
+    libx264.
+    """
+    proc_nvenc = MagicMock()
+    proc_nvenc.stderr = MagicMock()
+    proc_nvenc.stderr.readline = MagicMock(
+        side_effect=[
+            b"[h264_cuvid @ 0xfff] cuvidCreateDecoder failed: invalid argument\n",
+            b"",
+        ]
+    )
+    proc_nvenc.wait = MagicMock(return_value=1)
+    proc_nvenc.returncode = 1
+
+    proc_libx264 = MagicMock()
+    proc_libx264.stderr = MagicMock()
+    proc_libx264.stderr.readline = MagicMock(
+        side_effect=[
+            b"out_time_ms=1000000\n",
+            b"progress=end\n",
+            b"",
+        ]
+    )
+    proc_libx264.wait = MagicMock(return_value=0)
+    proc_libx264.returncode = 0
+
+    mock_popen.side_effect = [proc_nvenc, proc_libx264]
+
+    fallback_calls: list[tuple[H264Encoder, H264Encoder, str]] = []
+    result = run_export_attempt(
+        video=tmp_path / "in.mp4",
+        start=0.0,
+        end=10.0,
+        output=tmp_path / "out.mp4",
+        codec="h264",
+        encoder=H264Encoder.NVENC,
+        progress_cb=lambda p, s: None,
+        fallback_cb=lambda f, t, m: fallback_calls.append((f, t, m)),
+        cancel_event=threading.Event(),
+    )
+    assert result.encoder_used == H264Encoder.LIBX264.value
+    assert result.fallback_from == H264Encoder.NVENC.value
+    assert len(fallback_calls) == 1
+    # libx264 retry argv lacks -hwaccel
+    second_argv = mock_popen.call_args_list[1].args[0]
+    assert "-hwaccel" not in second_argv
