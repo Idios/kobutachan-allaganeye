@@ -108,6 +108,21 @@ def classify_findings(
     return findings
 
 
+_FINDING_ORDER = ("silent_miss", "false_positive", "boundary_shift", "agreed")
+
+
+def _format_delta(delta: float | None) -> str:
+    if delta is None:
+        return "—"
+    return f"{delta:+.3f}"
+
+
+def _format_ts(ts: float | None) -> str:
+    if ts is None:
+        return "—"
+    return f"{ts:.3f}"
+
+
 def format_markdown(
     findings: list[dict[str, Any]],
     *,
@@ -115,8 +130,51 @@ def format_markdown(
     baseline: dict[str, Any],
     ground_truth: dict[str, Any],
 ) -> str:
-    """Format findings as a markdown section. Filled in Task 8."""
-    return f"## {label}\n\n(format_markdown stub — {len(findings)} findings)"
+    tolerance = ground_truth.get("tolerance_sec", 1)
+    baseline_match_count = len(baseline.get("matches", []))
+    gt_match_count = len(ground_truth.get("matches", []))
+    source = baseline.get("source", "(unknown)")
+
+    counts = {kind: 0 for kind in _FINDING_ORDER}
+    for f in findings:
+        counts[f["finding_type"]] = counts.get(f["finding_type"], 0) + 1
+
+    lines: list[str] = []
+    lines.append(f"## {label}")
+    lines.append("")
+    lines.append(f"- Source: `{source}`")
+    lines.append(f"- Ground truth: {gt_match_count} matches (Idios manual)")
+    lines.append(f"- Current baseline: {baseline_match_count} matches")
+    lines.append(f"- Tolerance: ±{tolerance}s")
+    lines.append(
+        f"- Findings: {counts['silent_miss']} silent_miss / "
+        f"{counts['false_positive']} false_positive / "
+        f"{counts['boundary_shift']} boundary_shift / "
+        f"{counts['agreed']} agreed"
+    )
+    lines.append("")
+    lines.append("### Findings")
+    lines.append("")
+    lines.append(
+        "| # | Type | Match | Boundary | Baseline ts | Ground truth ts | Delta | Classification (a/b/c) |"
+    )
+    lines.append("|---|---|---|---|---|---|---|---|")
+    sorted_findings = sorted(
+        findings, key=lambda f: _FINDING_ORDER.index(f["finding_type"])
+    )
+    for i, f in enumerate(sorted_findings, start=1):
+        match_idx = f.get("match_index_gt") or f.get("match_index_baseline") or "—"
+        lines.append(
+            f"| {i} "
+            f"| {f['finding_type']} "
+            f"| {match_idx} "
+            f"| {f['boundary']} "
+            f"| {_format_ts(f['baseline_ts'])} "
+            f"| {_format_ts(f['ground_truth_ts'])} "
+            f"| {_format_delta(f['delta_sec'])} "
+            f"| (TBD by Idios) |"
+        )
+    return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:

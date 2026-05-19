@@ -106,3 +106,51 @@ def test_classify_findings_includes_delta():
     assert shift["baseline_ts"] == 50
     assert shift["ground_truth_ts"] == 53
     assert shift["delta_sec"] == pytest.approx(3.0)
+
+
+def test_format_markdown_contains_header_and_table():
+    mod = _load_module()
+    findings = [
+        {
+            "finding_type": "agreed",
+            "match_index_gt": 1,
+            "boundary": "start",
+            "baseline_ts": 49.125,
+            "ground_truth_ts": 49,
+            "delta_sec": -0.125,
+        },
+        {
+            "finding_type": "boundary_shift",
+            "match_index_gt": 3,
+            "boundary": "end",
+            "baseline_ts": 3367.125,
+            "ground_truth_ts": 3230.5,
+            "delta_sec": -136.625,
+        },
+        {
+            "finding_type": "silent_miss",
+            "match_index_gt": 4,
+            "boundary": "start",
+            "baseline_ts": None,
+            "ground_truth_ts": 4000.0,
+            "delta_sec": None,
+        },
+    ]
+    baseline = {"source": "20260116/2026-01-16.mkv", "matches": [{}, {}, {}]}
+    ground_truth = {
+        "source_dir_label": "obs-20260116",
+        "tolerance_sec": 1,
+        "matches": [{}, {}, {}, {}],
+    }
+    out = mod.format_markdown(
+        findings, label="obs-20260116", baseline=baseline, ground_truth=ground_truth
+    )
+    assert "## obs-20260116" in out
+    assert "Tolerance: ±1" in out
+    assert "Ground truth: 4 matches" in out
+    assert "Current baseline: 3 matches" in out
+    # Table contains all 3 findings
+    assert "agreed" in out
+    assert "boundary_shift" in out
+    assert "silent_miss" in out
+    assert "-136.625" in out
