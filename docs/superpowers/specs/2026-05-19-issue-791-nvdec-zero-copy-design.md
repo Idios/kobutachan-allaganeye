@@ -25,7 +25,7 @@ CUDA SDK のインストール不要 (BtbN LGPL ffmpeg に NVDEC build 同梱、
 ### Goals
 
 - **G1**: NVENC encoder 選択時、ffmpeg input decode が NVDEC に dispatch される (`-hwaccel cuda -hwaccel_output_format cuda` 付与)
-- **G2**: 同様の mapping を AMF (`-hwaccel d3d11va`) / QSV (`-hwaccel qsv -hwaccel_output_format qsv`) にも整備し、#762 multi-vendor encoder pool 実装時にそのまま使える形にする
+- **G2**: NVENC のみ wire し、QSV / AMF mapping は `()` (no-op) で key 保持する。実際の wire は #762 (multi-vendor encoder pool) phase で実機検証込みで行う。理由: Codex adversarial-review (#791 Iron Law 6 Pre-flight Step 5) で「Intel/AMD 未検証変更」HIGH finding が出たため、Idios 判断で scope を NVENC に限定。
 - **G3**: libx264 fallback path には decode hwaccel を**適用しない** (GPU→CPU memcpy が逆コストになるため)
 - **G4**: `codec="copy"` path には適用しない (decode/encode しないため不要)
 - **G5**: 既存の wire protocol / progress event / cancel / libx264 fallback retry を**無修正で維持**
@@ -38,6 +38,7 @@ CUDA SDK のインストール不要 (BtbN LGPL ffmpeg に NVDEC build 同梱、
 - **N3**: detect 側 (`gpu_detector.py`) への NVDEC 適用は対象外 (`gpu_detector.py` は既に長寿命 ffmpeg + `-hwaccel auto` で動作、計測は #765 で記録済)
 - **N4**: 未対応 codec の `-hwaccel cuda` silent CPU fallback は ffmpeg 既定挙動を信頼。argv が正しく構築されることを unit test で確認するに留め、各 codec 別 NVDEC 実機検証は対象外
 - **N5**: CHANGELOG 追記は対象外 (`/release` Step で v0.3.0 release 時に対応)
+- **N6**: QSV / AMF decode hwaccel の本 PR 内 wire (Codex Finding 1 を受け #762 へ deferred)
 
 ## 3. アーキテクチャ
 
@@ -61,16 +62,16 @@ ffmpeg の `-hwaccel` は **per-input flag** であり `-i` の前に置く必�
 ```python
 _DECODE_HWACCEL_ARGS: dict[H264Encoder, tuple[str, ...]] = {
     H264Encoder.NVENC:   ("-hwaccel", "cuda",    "-hwaccel_output_format", "cuda"),
-    H264Encoder.QSV:     ("-hwaccel", "qsv",     "-hwaccel_output_format", "qsv"),
-    H264Encoder.AMF:     ("-hwaccel", "d3d11va"),
+    H264Encoder.QSV:     (),  # deferred to #762
+    H264Encoder.AMF:     (),  # deferred to #762
     H264Encoder.LIBX264: (),
 }
 ```
 
-- **NVENC**: `cuda` decode + `cuda` output format → NVDEC frame が CUDA memory に留まり NVENC へ zero-copy
-- **QSV**: `qsv` decode + `qsv` output format → Intel Media SDK 上で zero-copy (Intel iGPU での自然な対応)
-- **AMF**: `d3d11va` decode のみ (issue 仕様)。AMD 環境では `-hwaccel_output_format` 指定の zero-copy path は ffmpeg 側で確立されておらず、d3d11va decode → system memory → AMF encode の middle-ground。完全 zero-copy は #762 検証時に再評価
-- **LIBX264**: 空 tuple → hwaccel 引数なし (CPU decode + CPU encode のまま)
+- **NVENC**: `cuda` decode + `cuda` output format -> NVDEC frame が CUDA memory に留まり NVENC へ zero-copy
+- **QSV**: `()` (no-op) -- deferred to #762. Real wire: `("-hwaccel", "qsv", "-hwaccel_output_format", "qsv")`, requires Intel iGPU real-machine verification
+- **AMF**: `()` (no-op) -- deferred to #762. Real wire: `("-hwaccel", "d3d11va")`, requires AMD dGPU real-machine verification
+- **LIBX264**: 空 tuple -> hwaccel 引数なし (CPU decode + CPU encode のまま)
 
 ### 3.2 挿入条件
 
@@ -93,9 +94,9 @@ def _build_ffmpeg_args(...) -> list[str]:
 
 | codec | encoder | hwaccel 挿入? | 結果 |
 |---|---|---|---|
-| `"h264"` | NVENC | YES (cuda + cuda) | NVDEC→NVENC zero-copy |
-| `"h264"` | QSV | YES (qsv + qsv) | QSV decode→QSV encode zero-copy |
-| `"h264"` | AMF | YES (d3d11va) | d3d11va decode→AMF encode (partial) |
+| `"h264"` | NVENC | YES (cuda + cuda) | NVDEC->NVENC zero-copy |
+| `"h264"` | QSV | NO (empty tuple, deferred to #762) | CPU decode + QSV encode |
+| `"h264"` | AMF | NO (empty tuple, deferred to #762) | CPU decode + AMF encode |
 | `"h264"` | LIBX264 | NO (empty tuple) | CPU decode + CPU encode |
 | `"copy"` | (任意) | NO (codec guard) | stream copy のみ |
 
@@ -114,18 +115,20 @@ def _build_ffmpeg_args(...) -> list[str]:
 | # | Test 名 | Assert |
 |---|---|---|
 | T1 | `test_build_args_nvenc_inserts_hwaccel_cuda_before_input` | argv に `["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]` が連続で含まれ、その index が `-i` の index より小さい |
-| T2 | `test_build_args_qsv_inserts_hwaccel_qsv_before_input` | QSV mapping が同様に `-i` 前に挿入される |
-| T3 | `test_build_args_amf_inserts_hwaccel_d3d11va_before_input` | AMF mapping (`-hwaccel d3d11va` のみ、`-hwaccel_output_format` なし) が `-i` 前に挿入される |
+| T2 | `test_build_args_qsv_has_no_hwaccel_deferred_to_762` | QSV mapping は no-op: argv に `-hwaccel` / `-hwaccel_output_format` なし (#762 で wire、Codex adversarial-review #791 + Idios 判断) |
+| T3 | `test_build_args_amf_has_no_hwaccel_deferred_to_762` | AMF mapping は no-op: argv に `-hwaccel` / `-hwaccel_output_format` なし (#762 で wire、Codex adversarial-review #791 + Idios 判断) |
 | T4 | `test_build_args_libx264_has_no_hwaccel` | `-hwaccel` 文字列が argv に存在しないこと (`"-hwaccel" not in args`) |
 | T5 | `test_build_args_copy_codec_has_no_hwaccel_even_with_nvenc_encoder` | `codec="copy"` + encoder=NVENC で argv に `-hwaccel` なし、`-c copy` あり |
 | T6 | `test_build_args_hwaccel_positioned_before_ss_to` | `-hwaccel` 引数群が `-ss` / `-to` / `-i` のいずれよりも前 (ffmpeg 仕様準拠) |
+| T7 | `test_nvenc_nvdec_decode_failure_*` (3 tests) | NVDEC decode-stage failure patterns (`cuvidcreatedecoder` / `failed to create cuda context` / `hwaccel transfer data failed`) が `is_gpu_encoder_failure` で True を返す (Codex Finding 2 対応) |
 
 ### 4.2 integration test (run_export_attempt 経路、subprocess mock)
 
 | # | Test 名 | Assert |
 |---|---|---|
 | I1 | `test_run_export_attempt_nvenc_argv_includes_hwaccel_cuda` | Popen 1st call (`mock_popen.call_args_list[0]`) の argv に `-hwaccel cuda` が含まれる |
-| I2 | `test_run_export_attempt_libx264_fallback_argv_lacks_hwaccel` | NVENC init fail → libx264 retry シナリオで、Popen 2nd call (`mock_popen.call_args_list[1]`) の argv に `-hwaccel` なし |
+| I2 | `test_run_export_attempt_libx264_fallback_argv_lacks_hwaccel` | NVENC init fail -> libx264 retry シナリオで、Popen 2nd call (`mock_popen.call_args_list[1]`) の argv に `-hwaccel` なし |
+| I3 | `test_run_export_attempt_nvdec_decode_failure_triggers_libx264_retry` | NVDEC decode failure (`cuvidCreateDecoder failed`) stderr -> libx264 retry argv lacks `-hwaccel` (Codex Finding 2 対応) |
 
 ### 4.3 既存 test の保護
 
@@ -163,7 +166,7 @@ Idios 環境 (Windows 11 + RTX 5090 + BtbN LGPL ffmpeg) で以下を `AskUserQue
 
 ### 5.3 AMD/Intel 検証
 
-本 PR ではスコープ外。`-hwaccel d3d11va` / `-hwaccel qsv` の引数構築は ffmpeg 公式 doc に基づき wire するが、実機検証は **#762 implementation phase** に持ち越し。PR 本文の Self-Test Report で「AMD/Intel は machine-unverifiable」として plain bullet 表記。
+本 PR ではスコープ外。Codex adversarial-review (§6.5 Finding 1) + Idios 判断で AMF/QSV mapping は `()` (no-op) とした。実際の wire と実機検証は **#762 implementation phase** に持ち越し。PR 本文の Self-Test Report で「AMD/Intel decode hwaccel は #762 へ deferred」として記載。
 
 ## 6. リスクと対応
 
@@ -173,12 +176,40 @@ Idios 環境 (Windows 11 + RTX 5090 + BtbN LGPL ffmpeg) で以下を `AskUserQue
 | NVDEC engine 数 (1) < NVENC engine 数 (3) で feeding bottleneck 継続 | RTX 5090 は NVDEC 2 engine + NVENC 3 engine。N=3 並列で NVDEC 飽和の可能性あり。目視確認で Video Decode が 100% 近く貼り付いていれば feeding 律速の余地が残るが、CPU decode→memcpy より高速なので net positive。target 未達時は §5.2 の通り追加調査 |
 | `-hwaccel_output_format cuda` 指定により h264_nvenc が CUDA buffer を受け取れない GPU/driver | RTX 5090 + BtbN LGPL ffmpeg + 最新 driver では動作確認可能。古い driver では `-hwaccel_output_format` を解釈できない可能性があるが、Idios 環境 (本 PR の Iron Law 6 検証ターゲット) は最新 driver を維持しているため検証可能。Idios 以外のユーザー環境での古い driver 互換性は本 PR スコープ外、回帰時は別 issue で対応 |
 | argv の順序ミスで `-hwaccel` が `-i` の後に置かれる (input flag 規則違反) | T1-T3 + T6 で `-i` / `-ss` / `-to` より前にあることを assert |
+| NVDEC decode-stage failure が libx264 fallback を trigger しない | `_GPU_ENCODER_FAILURE_PATTERNS[NVENC]` に NVDEC decode stderr patterns を追加 (§6.5 Finding 2 対応)。T7 / I3 でカバー |
+
+## 6.5 Codex adversarial-review findings (#791 Iron Law 6 Pre-flight Step 5)
+
+Codex review verdict: `needs-attention` (2 HIGH).
+
+### Finding 1: QSV/AMF mapping unverified for Intel/AMD users
+
+Codex argued that wiring QSV/AMF mapping changes the ffmpeg argv for Intel/AMD users without Idios environment validation, creating regression risk.
+
+**Idios decision**: Limit this PR to NVENC. Set QSV/AMF mapping entries to `()`. Real wire happens in #762 with multi-vendor encoder pool + AMD/Intel real-machine verification.
+
+### Finding 2: libx264 fallback only matches encoder-init failure patterns
+
+Codex pointed out that `-hwaccel cuda` injection adds a new failure surface (NVDEC decode stage). The pre-existing `is_gpu_encoder_failure` patterns only match encoder-init stderr (e.g. `no nvenc capable devices found`). Decode-stage failures (e.g. `cuvidCreateDecoder failed`) bypass the libx264 retry.
+
+**Idios decision**: Extend `is_gpu_encoder_failure[NVENC]` with NVDEC decode-stage patterns in this PR.
+
+Patterns added:
+
+- `cuvidcreatedecoder` (cuvidCreateDecoder failed)
+- `failed to create cuda context`
+- `cannot init cuda`
+- `hwaccel transfer data failed`
+- `cuvid: failed`
+- `could not allocate hardware frames`
+
+Coverage: new unit tests (T7 series) for `is_gpu_encoder_failure` + integration test (I3) for full `run_export_attempt` retry path with NVDEC decode failure stderr.
 
 ## 7. スコープ境界
 
-- ✅ 本 PR: `_build_ffmpeg_args` の 4-encoder decode hwaccel mapping + unit test (T1-T6 / I1-I2) + RTX 5090 実機検証
+- ✅ 本 PR: NVENC decode hwaccel mapping + NVDEC fallback pattern 拡張 + unit test (T1-T7 / I1-I3) + RTX 5090 実機検証
 - ❌ 本 PR外 (#762 担当): multi-vendor encoder pool 本体 (slot list の `[Nvenc; 3, Amf; 1]` 化、`enumerate_h264_encoders` 拡張)
-- ❌ 本 PR外 (#762 担当): AMF/QSV decode hwaccel の実機検証
+- ❌ 本 PR外 (#762 担当): AMF/QSV decode hwaccel の wire と実機検証 (Codex Finding 1 + Idios 判断で deferred、§6.5)
 - ❌ 本 PR外 (#765 担当): detect 側 NVDEC saturation 計測
 - ❌ 本 PR外 (`/release` 担当): CHANGELOG 追記
 
@@ -189,7 +220,7 @@ issue [#791](https://github.com/Idios/kobutachan-allaganeye/issues/791) `## 確�
 - [ ] `allaganeye/export/ffmpeg_runner.py::_build_ffmpeg_args` に NVENC encoder 時のみ `-hwaccel cuda -hwaccel_output_format cuda` を追加 (input file の前) → §3.2
 - [ ] codec 別 NVDEC 対応確認 (silent CPU fallback の unit test) → T1-T6 (argv 構築の正しさを assert、各 codec 別 NVDEC 実機検証は N4 で対象外)
 - [ ] libx264 fallback path への適用回避 → §3.3 (mapping 自然な結果)
-- [ ] #762 multi-vendor 対応統合 (AMF=`-hwaccel d3d11va`, QSV=`-hwaccel qsv`) → §3.1 mapping、wire のみ実機検証は #762
+- [ ] #762 multi-vendor 対応統合 (AMF=`-hwaccel d3d11va`, QSV=`-hwaccel qsv`) -- deferred to #762 per Codex Finding 1 + Idios decision (§6.5)
 - [ ] テスト: NVDEC 適用時の wire protocol / progress event / cancel が無修正で動作 → §4.3 既存 test 保護
 - [ ] 実機検証 (Iron Law 6): RTX 5090 で N=3 並列 H.264 export → §5.1 / §5.2
 - [ ] 計測比較: pre/post の ETA / 実時間記録 → §5.2 (CHANGELOG 追記は N5 で対象外)

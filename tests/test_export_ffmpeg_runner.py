@@ -254,7 +254,8 @@ def test_build_args_nvenc_inserts_hwaccel_cuda_before_input(tmp_path: Path):
     assert idx_hwaccel < idx_i
 
 
-def test_build_args_qsv_inserts_hwaccel_qsv_before_input(tmp_path: Path):
+def test_build_args_qsv_has_no_hwaccel_deferred_to_762(tmp_path: Path):
+    """QSV decode hwaccel は #762 で wire 予定。現状は no-op (Codex adversarial-review #791 + Idios 判断)."""
     args = _build_ffmpeg_args(
         ffmpeg="ffmpeg",
         video=tmp_path / "in.mp4",
@@ -264,18 +265,14 @@ def test_build_args_qsv_inserts_hwaccel_qsv_before_input(tmp_path: Path):
         codec="h264",
         encoder=H264Encoder.QSV,
     )
-    idx_hwaccel = args.index("-hwaccel")
-    assert args[idx_hwaccel : idx_hwaccel + 4] == [
-        "-hwaccel",
-        "qsv",
-        "-hwaccel_output_format",
-        "qsv",
-    ]
-    # -i より前に置かれている (ffmpeg input flag 規則)
-    assert idx_hwaccel < args.index("-i")
+    assert "-hwaccel" not in args
+    assert "-hwaccel_output_format" not in args
+    # QSV encoder 本体は使われる
+    assert "h264_qsv" in args
 
 
-def test_build_args_amf_inserts_hwaccel_d3d11va_before_input(tmp_path: Path):
+def test_build_args_amf_has_no_hwaccel_deferred_to_762(tmp_path: Path):
+    """AMF decode hwaccel は #762 で wire 予定。現状は no-op (Codex adversarial-review #791 + Idios 判断)."""
     args = _build_ffmpeg_args(
         ffmpeg="ffmpeg",
         video=tmp_path / "in.mp4",
@@ -285,12 +282,10 @@ def test_build_args_amf_inserts_hwaccel_d3d11va_before_input(tmp_path: Path):
         codec="h264",
         encoder=H264Encoder.AMF,
     )
-    idx_hwaccel = args.index("-hwaccel")
-    # AMF は -hwaccel_output_format 指定なし (issue 仕様)
-    assert args[idx_hwaccel : idx_hwaccel + 2] == ["-hwaccel", "d3d11va"]
+    assert "-hwaccel" not in args
     assert "-hwaccel_output_format" not in args
-    # -i より前に置かれている (ffmpeg input flag 規則)
-    assert idx_hwaccel < args.index("-i")
+    # AMF encoder 本体は使われる
+    assert "h264_amf" in args
 
 
 def test_build_args_libx264_has_no_hwaccel(tmp_path: Path):

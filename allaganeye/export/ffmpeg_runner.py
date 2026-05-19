@@ -19,13 +19,19 @@ from allaganeye.ffmpeg_path import find_ffmpeg
 
 
 _DECODE_HWACCEL_ARGS: dict[H264Encoder, tuple[str, ...]] = {
-    # #791: encoder->decode hwaccel mapping. NVENC uses NVDEC -> NVENC zero-copy
-    # (CUDA memory). QSV/AMF are stubs here; activated in #762 multi-vendor work.
-    # LIBX264 is an empty tuple (no hwaccel, avoids GPU->CPU memcpy concern).
+    # #791: encoder->decode hwaccel mapping.
+    # NVENC: NVDEC -> NVENC zero-copy (CUDA memory) on RTX 5090 / driver
+    # verified by Idios (#791 Iron Law 6 trigger).
+    # QSV / AMF: intentionally empty in this PR. Per Codex adversarial-review
+    # (#791) and Idios decision: Intel/AMD decode hwaccel will be wired in
+    # #762 (multi-vendor encoder pool) where real-machine validation on
+    # Intel iGPU / AMD dGPU is part of the acceptance criteria. Keys kept
+    # explicit so a future H264Encoder member doesn't silently miss the
+    # mapping via KeyError.
     H264Encoder.NVENC: ("-hwaccel", "cuda", "-hwaccel_output_format", "cuda"),
-    H264Encoder.QSV: ("-hwaccel", "qsv", "-hwaccel_output_format", "qsv"),
-    H264Encoder.AMF: ("-hwaccel", "d3d11va"),
-    H264Encoder.LIBX264: (),
+    H264Encoder.QSV: (),  # wired in #762
+    H264Encoder.AMF: (),  # wired in #762
+    H264Encoder.LIBX264: (),  # CPU path, no GPU->CPU memcpy
 }
 
 
