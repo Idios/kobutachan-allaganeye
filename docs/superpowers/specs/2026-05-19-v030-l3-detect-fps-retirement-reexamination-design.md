@@ -167,3 +167,40 @@ R12-c / d は code-only minor fix なので、誰かが detect 周辺を触る P
    → spec → plan サイクルに乗せる。
 
 本 doc は decision record として archive せず、v0.3.x perf 最適化 spec の起点として参照される。
+
+## 9. 2026-05-19 User 決定: audit-first direction (§4 supersede)
+
+§4 で「Ship PR #793 as-is」を推奨したが、Idios と協議の結果、**先に baseline 精度を
+ground-truth audit で確定させ、その結果に基づいて #576 の扱いを再判定する**方針に変更。
+
+### 9.1 理由
+
+- §3 NOTE / §journey で報告された F1-F4 (obs-20260116 t=3227.4, t=2178, obs-20260118
+  t=2610.75, 3 件短時間 blackout) は全て **偶発的発見**だった (Codex spec reading /
+  Idios 視覚確認 / pre-A5 dual seek baseline regen 中の検出 等)
+- 他 baseline (obs-20260119 / 20260127 / 20260209) や既 audit 済 baseline の未知箇所に
+  F5+ が存在する可能性を排除できない
+- ground truth 未確定の状態では trade-off (perf -68% vs accuracy zero regression) を
+  定量的に正当化できない
+
+### 9.2 新方針
+
+1. **#796** (`[task] v0.3.0 OBS baseline 5 件の ground-truth audit`) を起票済
+   (URL: https://github.com/Idios/kobutachan-allaganeye/issues/796)
+2. PR #793 は draft に convert、`Blocked by #796` で PR comment 済
+3. #796 audit 完了後、本 spec §4 の A/B/C 判断を再評価する
+
+### 9.3 §4 (旧推奨) の位置づけ
+
+§4 の「Ship A as-is」推奨は **audit 未実施の前提**に基づくものであり、本 §9 で superseded。
+audit 結果次第で:
+
+- baseline が ground truth とほぼ一致 → §4 / §7 の「B / C を採らない論理」が成立、A 推奨が確定
+- 重大な silent miss / FP 発覚 → detector tuning 別 issue 起票後に再再評価
+- audit 過剰 / 不要判定 → §4 推奨 (A) が直接生きる
+
+### 9.4 §4.2 R12-a..e の扱い
+
+R12-a (gradient-based) / R12-b (SEEK_LEAD_SECONDS adaptive) / R12-c..e (minor) の
+v0.3.x 後続作業は #796 audit と独立に進行可能。ただし audit 結果次第で priority / scope
+が変わる可能性があり、起票 timing は audit 完了後を推奨。
