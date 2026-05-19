@@ -18,14 +18,52 @@ from allaganeye.export.schema import ExportError, ExportResult
 from allaganeye.ffmpeg_path import find_ffmpeg
 
 
+_DECODE_HWACCEL_ARGS: dict[H264Encoder, tuple[str, ...]] = {
+    # #791: encoder->decode hwaccel mapping.
+    # NVENC: NVDEC -> NVENC zero-copy (CUDA memory) on RTX 5090 / driver
+    # verified by Idios (#791 Iron Law 6 trigger).
+    # QSV / AMF: intentionally empty in this PR. Per Codex adversarial-review
+    # (#791) and Idios decision: Intel/AMD decode hwaccel will be wired in
+    # #762 (multi-vendor encoder pool) where real-machine validation on
+    # Intel iGPU / AMD dGPU is part of the acceptance criteria. Keys kept
+    # explicit so a future H264Encoder member doesn't silently miss the
+    # mapping via KeyError.
+    H264Encoder.NVENC: ("-hwaccel", "cuda", "-hwaccel_output_format", "cuda"),
+    H264Encoder.QSV: (),  # wired in #762
+    H264Encoder.AMF: (),  # wired in #762
+    H264Encoder.LIBX264: (),  # CPU path, no GPU->CPU memcpy
+}
+
+
 _GPU_ENCODER_FAILURE_PATTERNS: dict[H264Encoder, tuple[str, ...]] = {
     # Patterns mirror gui/src-tauri/src/lib.rs:1738+ (#591). Memory:
     # feedback_ffmpeg_qsv_stderr_pattern.md notes ffmpeg 8.1 QSV uses
     # "Error creating a MFX session" (not pre-8.1 "Error initializing").
     H264Encoder.NVENC: (
+        # Encoder init failures (pre-#791):
         "no nvenc capable devices found",
         "cannot load cuda driver",
         "openencodesessionex failed",
+        # NVDEC decode-stage failures introduced by #791 `-hwaccel cuda`
+        # injection. With decode now routed through NVDEC, ffmpeg can fail
+        # before reaching the encoder. Detect representative stderr and
+        # treat as a GPU failure -> libx264 retry rebuilds argv without
+        # `-hwaccel cuda` (mapping returns () for LIBX264) and decodes on CPU.
+        # Three failure layers covered (Codex Round 2 finding):
+        # (1) CUDA dynamic-library load / device init (earliest):
+        "could not dynamically load cuda",
+        "cannot load libcuda",
+        # (2) CUDA device creation / decoder device setup:
+        "device creation failed",
+        "device setup failed for decoder",
+        "no device available for decoder",
+        "failed to create cuda context",
+        "cannot init cuda",
+        # (3) Decoder creation / frame transfer (latest):
+        "cuvidcreatedecoder",  # cuvidCreateDecoder failed
+        "hwaccel transfer data failed",
+        "cuvid: failed",
+        "could not allocate hardware frames",
     ),
     H264Encoder.QSV: (
         "error creating a mfx session",  # 8.1+
@@ -119,7 +157,11 @@ def _build_ffmpeg_args(
     codec: str,
     encoder: H264Encoder,
 ) -> list[str]:
-    """Construct the ffmpeg argv list. Mirrors pre-#761 build_ffmpeg_args in gui/src-tauri/src/lib.rs (see #591/#761)."""
+    """Construct the ffmpeg argv list. Mirrors pre-#761 build_ffmpeg_args in gui/src-tauri/src/lib.rs (see #591/#761).
+
+    #791: codec=="h264" のとき encoder に対応する decode hwaccel 引数を
+    `-i` の前に挿入する。codec=="copy" / encoder==LIBX264 は除外。
+    """
     args: list[str] = [
         ffmpeg,
         "-hide_banner",
@@ -128,17 +170,22 @@ def _build_ffmpeg_args(
         "-progress",
         "pipe:2",
         "-y",
-        "-ss",
-        f"{start:.3f}",
-        "-to",
-        f"{end:.3f}",
-        "-i",
-        str(video),
     ]
+    if codec != "copy":
+        args.extend(_DECODE_HWACCEL_ARGS[encoder])
+    args.extend(
+        [
+            "-ss",
+            f"{start:.3f}",
+            "-to",
+            f"{end:.3f}",
+            "-i",
+            str(video),
+        ]
+    )
     if codec == "copy":
         args.extend(["-c", "copy"])
     else:
-        # h264 path
         args.extend(["-c:v", encoder.value])
         args.extend(list(encoder.quality_args()))
         args.extend(["-c:a", "copy"])
