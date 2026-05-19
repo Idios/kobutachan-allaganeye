@@ -16,10 +16,12 @@ from typing import Any
 
 
 def _format_timestamp(timestamp_sec: float) -> str:
-    """Format seconds as MM:SS.fff (e.g., 2178.75 -> '36:18.750')."""
-    minutes = int(timestamp_sec // 60)
-    seconds = timestamp_sec - minutes * 60
-    return f"{minutes:02d}:{seconds:06.3f}"
+    """Format seconds as HH:MM:SS.fff (e.g., 2178.75 -> '00:36:18.750')."""
+    hours = int(timestamp_sec // 3600)
+    remaining = timestamp_sec - hours * 3600
+    minutes = int(remaining // 60)
+    seconds = remaining - minutes * 60
+    return f"{hours:02d}:{minutes:02d}:{seconds:06.3f}"
 
 
 def build_worksheet_rows(metadata: dict[str, Any]) -> list[dict[str, Any]]:
