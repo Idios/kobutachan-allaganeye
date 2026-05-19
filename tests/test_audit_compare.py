@@ -146,7 +146,9 @@ def test_format_markdown_contains_header_and_table():
         findings, label="obs-20260116", baseline=baseline, ground_truth=ground_truth
     )
     assert "## obs-20260116" in out
-    assert "Tolerance: ±1" in out
+    # Note: format_markdown emits literal U+00B1 (plus-minus); build the expected
+    # substring via chr() so this source file stays pure ASCII (test_ascii_guard).
+    assert f"Tolerance: {chr(0x00B1)}1" in out
     assert "Ground truth: 4 matches" in out
     assert "Current baseline: 3 matches" in out
     # Table contains all 3 findings

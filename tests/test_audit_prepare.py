@@ -58,7 +58,7 @@ def test_build_worksheet_rows_includes_all_boundaries(sample_metadata):
     mod = _load_module()
     rows = mod.build_worksheet_rows(sample_metadata)
 
-    # 2 matches × 2 boundaries + 1 gap × 2 boundaries = 6 rows
+    # 2 matches x 2 boundaries + 1 gap x 2 boundaries = 6 rows
     assert len(rows) == 6
 
     types = [r["boundary_type"] for r in rows]
@@ -76,10 +76,10 @@ def test_build_worksheet_rows_timestamp_display_format(sample_metadata):
     mod = _load_module()
     rows = mod.build_worksheet_rows(sample_metadata)
 
-    # 49.125 → "00:00:49.125"
+    # 49.125 -> "00:00:49.125"
     assert rows[0]["timestamp_sec"] == pytest.approx(49.125)
     assert rows[0]["timestamp_display"] == "00:00:49.125"
-    # 2178.75 → "00:36:18.750"
+    # 2178.75 -> "00:36:18.750"
     assert rows[3]["timestamp_display"] == "00:36:18.750"
 
 

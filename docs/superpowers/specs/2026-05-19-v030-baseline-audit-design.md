@@ -149,7 +149,7 @@ F1-F4 は PR #793 で fix 済とされているが、**発見が偶発的** で�
 | `scripts/audit-prepare.py` | Stage 1 worksheet generator。引数: `<recording-label>`、内部で `tests/baselines/v0.3.0/<label>.metadata.json` を読む |
 | `scripts/audit-compare.py` | Stage 3 diff extractor。引数: `<recording-label>`、ground truth と baseline を tolerance_sec で照合 |
 
-両 script とも `python -m scripts.audit_prepare <label>` 形式で起動可能なよう module 配置を検討。CLI 引数は最低限 (label のみ) + `--tolerance-sec` / `--worksheet-dir` 等の override option。
+両 script とも `python scripts/audit-prepare.py <label>` 形式で直接実行 (hyphen 命名、`compare-baseline.py` family と整合)。CLI 引数は最低限 (label のみ) + `--tolerance-sec` / `--worksheet-dir` 等の override option。
 
 ### 4.2 新規 files
 
