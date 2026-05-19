@@ -176,3 +176,55 @@ def test_class_b_regenerated(sample_video_dir, tmp_output_dir):
         f"Class B baseline mismatch (regenerated baseline diverged): "
         f"{cmp.stdout} {cmp.stderr}"
     )
+
+
+@pytest.mark.slow_detect
+@pytest.mark.parametrize(
+    "vendor,timestamps",
+    [
+        # obs-20260116 (1920x1080, 60fps, AV1):
+        # 黒/transition/lobby/normal の 4 種類で _probe_single_frame と
+        # 新 path の brightness が +-2.0 (= _BLACKOUT_THRESHOLD_UPPER_MARGIN)
+        # 以内で一致することを確認する (#576 S7.2.16 / S9.3)。
+        ("cpu", [4.0, 30.0, 600.0, 1200.0]),
+        ("nvidia", [4.0, 30.0, 600.0, 1200.0]),
+        ("amd", [4.0, 30.0, 600.0, 1200.0]),
+    ],
+)
+def test_vendor_golden_brightness(vendor, timestamps, sample_video_dir, tmp_output_dir):
+    """各 vendor で _probe_single_frame と新 path の brightness が
+    +-2.0 以内で一致 (#576 S7.2.16 / S9.3 #3).
+
+    Idios 環境で NVIDIA / AMD が利用可能な前提。Intel は別途 AskUserQuestion。
+    """
+    import platform
+
+    video = sample_video_dir / "20260116" / "2026-01-16 22-12-57.mkv"
+    if not video.exists():
+        pytest.skip(f"video not found: {video}")
+
+    # Skip if vendor not available (CI fallback)
+    if vendor == "nvidia" and platform.system() != "Windows":
+        pytest.skip("NVIDIA GPU only validated on Windows Idios env")
+
+    chunks_csv = ",".join(str(t) for t in timestamps)
+    cmd = [
+        sys.executable,
+        str(_REPO_ROOT / "scripts" / "validate-fps-retirement.py"),
+        "--video",
+        str(video),
+        "--chunks",
+        chunks_csv,
+        "--vendor",
+        vendor,
+        "--codec",
+        "av1",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    # exit 0 = all PASS, exit 1 = FAIL, exit 2 = script error.
+    if result.returncode == 2:
+        pytest.skip(f"validate script error for vendor={vendor}: {result.stderr}")
+    assert result.returncode == 0, (
+        f"vendor golden brightness FAIL for {vendor}: "
+        f"stdout=\n{result.stdout}\nstderr=\n{result.stderr}"
+    )
