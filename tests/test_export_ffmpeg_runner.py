@@ -357,7 +357,7 @@ def test_build_args_hwaccel_positioned_before_ss_to_i(tmp_path: Path):
 def test_run_export_attempt_nvenc_argv_includes_hwaccel_cuda(
     mock_popen: MagicMock, tmp_path: Path
 ):
-    """run_export_attempt → Popen に渡る argv に -hwaccel cuda が含まれる."""
+    """run_export_attempt -> Popen に渡る argv に -hwaccel cuda が含まれる."""
     proc = MagicMock()
     proc.stderr = MagicMock()
     proc.stderr.readline = MagicMock(
@@ -399,9 +399,9 @@ def test_run_export_attempt_nvenc_argv_includes_hwaccel_cuda(
 def test_run_export_attempt_libx264_fallback_argv_lacks_hwaccel(
     mock_popen: MagicMock, tmp_path: Path
 ):
-    """NVENC init fail → libx264 retry の 2nd Popen call argv に -hwaccel なし.
+    """NVENC init fail -> libx264 retry の 2nd Popen call argv に -hwaccel なし.
 
-    libx264 path で -hwaccel を付けると GPU→CPU memcpy が逆コストになるため、
+    libx264 path で -hwaccel を付けると GPU->CPU memcpy が逆コストになるため、
     fallback retry では確実に decode hwaccel を外すことを担保する.
     """
     proc_nvenc = MagicMock()
