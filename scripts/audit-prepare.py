@@ -11,6 +11,8 @@ See: docs/superpowers/specs/2026-05-19-v030-baseline-audit-design.md §3.1
 from __future__ import annotations
 
 import argparse
+import csv
+import json
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -27,6 +29,21 @@ from allaganeye.video.detector import (
     _probe_single_frame,
     _resolve_workers,
 )
+
+_DEFAULT_BASELINE_DIR = Path("tests/baselines/v0.3.0")
+_DEFAULT_WORKSHEET_DIR = Path("tests/baselines/v0.3.0/audit-worksheet")
+
+_WORKSHEET_FIELDS = [
+    "index",
+    "boundary_type",
+    "timestamp_sec",
+    "timestamp_display",
+    "current_type",
+    "brightness_csv_ref",
+    "sample_frame_png_ref",
+    "idios_verdict",
+    "idios_note",
+]
 
 
 def _format_timestamp(timestamp_sec: float) -> str:
@@ -171,12 +188,76 @@ def export_sample_frames(
         cv2.imwrite(str(out_path), frame[:, :, ::-1])  # RGB -> BGR for cv2
 
 
+def write_worksheet_csv(rows: list[dict[str, Any]], out_path: Path) -> None:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_WORKSHEET_FIELDS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: row.get(k, "") for k in _WORKSHEET_FIELDS})
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("recording_label", help="e.g., obs-20260116")
-    parser.parse_args(argv)
-    print("Not yet implemented: full pipeline (Task 3-5).", file=sys.stderr)
-    return 1
+    parser.add_argument(
+        "--baseline-dir",
+        type=Path,
+        default=_DEFAULT_BASELINE_DIR,
+        help=f"Default: {_DEFAULT_BASELINE_DIR}",
+    )
+    parser.add_argument(
+        "--worksheet-dir",
+        type=Path,
+        default=_DEFAULT_WORKSHEET_DIR,
+        help=f"Default: {_DEFAULT_WORKSHEET_DIR}",
+    )
+    parser.add_argument(
+        "--window-sec",
+        type=float,
+        default=5.0,
+        help="brightness window (default 5.0)",
+    )
+    parser.add_argument(
+        "--interval-sec",
+        type=float,
+        default=0.25,
+        help="brightness sample interval (default 0.25)",
+    )
+    args = parser.parse_args(argv)
+
+    metadata_path = args.baseline_dir / f"{args.recording_label}.metadata.json"
+    if not metadata_path.exists():
+        print(f"ERROR: {metadata_path} not found", file=sys.stderr)
+        return 2
+
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    rows = build_worksheet_rows(metadata)
+
+    video_path = resolve_video_path(metadata["source"])
+
+    worksheet_csv = args.worksheet_dir / f"{args.recording_label}.csv"
+    write_worksheet_csv(rows, worksheet_csv)
+
+    per_boundary_dir = args.worksheet_dir / args.recording_label
+    for row in rows:
+        ts = float(row["timestamp_sec"])
+        export_brightness_csv(
+            video_path=video_path,
+            boundary_timestamp=ts,
+            out_path=per_boundary_dir / row["brightness_csv_ref"],
+            window_sec=args.window_sec,
+            interval_sec=args.interval_sec,
+        )
+        export_sample_frames(
+            video_path=video_path,
+            boundary_timestamp=ts,
+            out_dir=per_boundary_dir,
+        )
+
+    print(f"Worksheet: {worksheet_csv}", file=sys.stderr)
+    print(f"Per-boundary artifacts: {per_boundary_dir}", file=sys.stderr)
+    return 0
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 from typing import Any
 
@@ -207,3 +208,63 @@ def test_export_sample_frames_writes_three_pngs(tmp_path, monkeypatch):
     # Sanity: each file is non-empty
     for p in pngs:
         assert p.stat().st_size > 0
+
+
+def test_main_writes_worksheet_csv(tmp_path, monkeypatch):
+    """End-to-end: main() reads metadata.json + writes worksheet CSV.
+
+    Brightness/PNG step is stubbed; this verifies worksheet CSV shape only.
+    """
+    mod = _load_module()
+
+    # Fake baseline dir with one metadata.json
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+    metadata = {
+        "schema_version": "1",
+        "source": "20260116/fake.mkv",
+        "matches": [
+            {
+                "index": 1,
+                "start_time": 49.125,
+                "end_time": 1054.5,
+                "duration": 1005.375,
+                "type": "fl_match",
+            },
+        ],
+        "gaps": [],
+    }
+    (baseline_dir / "obs-20260116.metadata.json").write_text(
+        json.dumps(metadata), encoding="utf-8"
+    )
+
+    # Fake video so resolve_video_path doesn't raise
+    video_dir = tmp_path / "videos"
+    (video_dir / "20260116").mkdir(parents=True)
+    (video_dir / "20260116" / "fake.mkv").write_bytes(b"")
+    monkeypatch.setenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", str(video_dir))
+
+    # Stub brightness / PNG exporters
+    monkeypatch.setattr(mod, "export_brightness_csv", lambda **kw: None)
+    monkeypatch.setattr(mod, "export_sample_frames", lambda **kw: None)
+
+    worksheet_dir = tmp_path / "audit-worksheet"
+    rc = mod.main(
+        [
+            "obs-20260116",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 0
+
+    worksheet_csv = worksheet_dir / "obs-20260116.csv"
+    assert worksheet_csv.exists()
+    lines = worksheet_csv.read_text(encoding="utf-8").strip().splitlines()
+    # Header + 2 rows (match_start + match_end)
+    assert len(lines) == 1 + 2
+    assert lines[0].startswith("index,boundary_type,timestamp_sec,")
+    assert "match_start" in lines[1]
+    assert "match_end" in lines[2]
