@@ -271,6 +271,7 @@ def test_build_args_qsv_inserts_hwaccel_qsv_before_input(tmp_path: Path):
         "-hwaccel_output_format",
         "qsv",
     ]
+    # -i より前に置かれている (ffmpeg input flag 規則)
     assert idx_hwaccel < args.index("-i")
 
 
@@ -288,4 +289,42 @@ def test_build_args_amf_inserts_hwaccel_d3d11va_before_input(tmp_path: Path):
     # AMF は -hwaccel_output_format 指定なし (issue 仕様)
     assert args[idx_hwaccel : idx_hwaccel + 2] == ["-hwaccel", "d3d11va"]
     assert "-hwaccel_output_format" not in args
+    # -i より前に置かれている (ffmpeg input flag 規則)
     assert idx_hwaccel < args.index("-i")
+
+
+def test_build_args_libx264_has_no_hwaccel(tmp_path: Path):
+    args = _build_ffmpeg_args(
+        ffmpeg="ffmpeg",
+        video=tmp_path / "in.mp4",
+        start=0.0,
+        end=10.0,
+        output=tmp_path / "out.mp4",
+        codec="h264",
+        encoder=H264Encoder.LIBX264,
+    )
+    # GPU->CPU memcpy 回避: libx264 path には decode hwaccel を付けない
+    assert "-hwaccel" not in args
+    assert "-hwaccel_output_format" not in args
+    # libx264 自体は使われる
+    assert "libx264" in args
+
+
+def test_build_args_copy_codec_has_no_hwaccel_even_with_nvenc_encoder(
+    tmp_path: Path,
+):
+    """codec='copy' は decode/encode しないため、encoder が NVENC でも hwaccel 不要."""
+    args = _build_ffmpeg_args(
+        ffmpeg="ffmpeg",
+        video=tmp_path / "in.mp4",
+        start=0.0,
+        end=10.0,
+        output=tmp_path / "out.mp4",
+        codec="copy",
+        encoder=H264Encoder.NVENC,
+    )
+    assert "-hwaccel" not in args
+    assert "-hwaccel_output_format" not in args
+    # -c copy が指定されている
+    idx_c = args.index("-c")
+    assert args[idx_c + 1] == "copy"
