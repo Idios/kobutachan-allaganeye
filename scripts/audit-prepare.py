@@ -41,6 +41,14 @@ from allaganeye.video.detector import (  # noqa: E402
 _DEFAULT_BASELINE_DIR = Path("tests/baselines/v0.3.0")
 _DEFAULT_WORKSHEET_DIR = Path("tests/baselines/v0.3.0/audit-worksheet")
 
+# Issue #800: tx-state sidecar for transactional crash recovery.
+# `<label>.tx.json` holds the single canonical state of the last publish;
+# crash mid-publish is detected by next run via state == "swapping" and
+# recovered by wiping artifacts before regenerating.
+_TX_SCHEMA_VERSION = 1
+_TX_STATE_CONSISTENT = "consistent"
+_TX_STATE_SWAPPING = "swapping"
+
 _WORKSHEET_FIELDS = [
     "index",
     "boundary_type",
@@ -122,6 +130,48 @@ def build_worksheet_rows(metadata: dict[str, Any]) -> list[dict[str, Any]]:
             )
 
     return rows
+
+
+def _read_tx_state(tx_path: Path) -> dict[str, Any] | None:
+    """Return parsed tx-state, or None if file missing / corrupted / unknown shape.
+
+    Returning None means "no committed transactional state" (= no recovery
+    needed). File-not-exist is the legacy / first-run case (silent); all
+    other "missing-equivalent" cases warn on stderr so the operator can
+    debug why their tx-state was ignored.
+    """
+    if not tx_path.exists():
+        return None
+    try:
+        data = json.loads(tx_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        print(
+            f"WARNING: {tx_path} is unreadable ({exc}); treating as missing",
+            file=sys.stderr,
+        )
+        return None
+    if not isinstance(data, dict):
+        print(
+            f"WARNING: {tx_path} top-level is not an object; treating as missing",
+            file=sys.stderr,
+        )
+        return None
+    if data.get("schema_version") != _TX_SCHEMA_VERSION:
+        print(
+            f"WARNING: {tx_path} has unsupported schema_version "
+            f"{data.get('schema_version')!r} (expected {_TX_SCHEMA_VERSION}); "
+            "treating as missing",
+            file=sys.stderr,
+        )
+        return None
+    if data.get("state") not in (_TX_STATE_CONSISTENT, _TX_STATE_SWAPPING):
+        print(
+            f"WARNING: {tx_path} has unknown state {data.get('state')!r}; "
+            "treating as missing",
+            file=sys.stderr,
+        )
+        return None
+    return data
 
 
 def resolve_video_path(source_relative: str) -> Path:

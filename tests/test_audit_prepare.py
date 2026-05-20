@@ -444,3 +444,71 @@ def test_main_writes_worksheet_csv(tmp_path, monkeypatch):
     assert lines[0].startswith("index,boundary_type,timestamp_sec,")
     assert "match_start" in lines[1]
     assert "match_end" in lines[2]
+
+
+# --- Issue #800: tx-state helpers ---
+
+
+def test_read_tx_state_returns_none_when_missing(tmp_path, capsys):
+    """File-not-exist is legacy / first-run case; no warning."""
+    mod = _load_module()
+    tx_path = tmp_path / "obs.tx.json"
+    assert mod._read_tx_state(tx_path) is None
+    assert capsys.readouterr().err == ""
+
+
+def test_read_tx_state_returns_consistent_state(tmp_path):
+    mod = _load_module()
+    tx_path = tmp_path / "obs.tx.json"
+    tx_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "state": "consistent",
+                "updated_at": "2026-05-21T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = mod._read_tx_state(tx_path)
+    assert result is not None
+    assert result["state"] == "consistent"
+
+
+def test_read_tx_state_returns_swapping_state(tmp_path):
+    mod = _load_module()
+    tx_path = tmp_path / "obs.tx.json"
+    tx_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "state": "swapping",
+                "updated_at": "2026-05-21T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = mod._read_tx_state(tx_path)
+    assert result is not None
+    assert result["state"] == "swapping"
+
+
+@pytest.mark.parametrize(
+    "payload,variant",
+    [
+        ("not valid json{{{", "invalid_json"),
+        ('["a", "b"]', "non_dict"),
+        ('{"schema_version": 2, "state": "consistent"}', "unknown_schema_version"),
+        ('{"schema_version": 1, "state": "unknown"}', "unknown_state"),
+    ],
+)
+def test_tx_state_corrupted_treated_as_missing(tmp_path, capsys, payload, variant):
+    """All 4 corrupted variants return None + warn on stderr."""
+    mod = _load_module()
+    tx_path = tmp_path / "obs.tx.json"
+    tx_path.write_text(payload, encoding="utf-8")
+    result = mod._read_tx_state(tx_path)
+    assert result is None, f"variant={variant}"
+    err = capsys.readouterr().err
+    assert "WARNING" in err, f"variant={variant} stderr: {err!r}"
+    assert str(tx_path) in err, f"variant={variant} stderr: {err!r}"
