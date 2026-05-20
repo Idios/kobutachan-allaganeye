@@ -85,8 +85,7 @@ def validate_ground_truth_against_baseline(
                 "actual_source_size is required for source_size_bytes "
                 "validation. Set ALLAGANEYE_SAMPLE_VIDEO_DIR + ensure the "
                 "video resolves on disk, or pass skip_source_size_check=True "
-                "explicitly (also exposed as --skip-source-size-check on the "
-                "audit-compare CLI)."
+                "explicitly."
             )
         gt_size = ground_truth["source_size_bytes"]
         if gt_size != actual_source_size:
