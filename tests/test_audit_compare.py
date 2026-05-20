@@ -168,7 +168,9 @@ def test_validate_ground_truth_against_baseline_ok():
         "matches": [],
         "source_size_bytes": 12345,
     }
-    mod.validate_ground_truth_against_baseline(baseline, ground_truth)
+    mod.validate_ground_truth_against_baseline(
+        baseline, ground_truth, skip_source_size_check=True
+    )
 
 
 def test_validate_ground_truth_source_mismatch_raises():
@@ -182,7 +184,9 @@ def test_validate_ground_truth_source_mismatch_raises():
         "source_size_bytes": 12345,
     }
     with pytest.raises(ValueError, match="does not match"):
-        mod.validate_ground_truth_against_baseline(baseline, ground_truth)
+        mod.validate_ground_truth_against_baseline(
+            baseline, ground_truth, skip_source_size_check=True
+        )
 
 
 def test_validate_ground_truth_missing_fields_raises():
@@ -247,7 +251,10 @@ def test_validate_ground_truth_recording_label_mismatch_raises():
     }
     with pytest.raises(ValueError, match="source_dir_label"):
         mod.validate_ground_truth_against_baseline(
-            baseline, ground_truth, recording_label="obs-20260116"
+            baseline,
+            ground_truth,
+            recording_label="obs-20260116",
+            skip_source_size_check=True,
         )
 
 
@@ -279,7 +286,9 @@ def test_validate_ground_truth_recording_label_skipped_when_not_provided():
         "matches": [],
         "source_size_bytes": 12345,
     }
-    mod.validate_ground_truth_against_baseline(baseline, ground_truth)
+    mod.validate_ground_truth_against_baseline(
+        baseline, ground_truth, skip_source_size_check=True
+    )
 
 
 def test_validate_ground_truth_rejects_missing_source_size_bytes():
@@ -295,3 +304,35 @@ def test_validate_ground_truth_rejects_missing_source_size_bytes():
     }
     with pytest.raises(ValueError, match="missing required fields"):
         mod.validate_ground_truth_against_baseline(baseline, ground_truth)
+
+
+def test_validate_rejects_none_actual_size_when_check_enabled():
+    """actual_source_size=None + skip=False (default) raises (R3#1)."""
+    mod = _load_module()
+    baseline = {"source": "x.mkv", "matches": []}
+    ground_truth = {
+        "source_file": "x.mkv",
+        "source_dir_label": "obs-fake",
+        "tolerance_sec": 5,
+        "matches": [],
+        "source_size_bytes": 12345,
+    }
+    with pytest.raises(ValueError, match="actual_source_size is required"):
+        mod.validate_ground_truth_against_baseline(baseline, ground_truth)
+
+
+def test_validate_skip_flag_bypasses_size_check():
+    """skip_source_size_check=True allows actual_source_size=None to pass (R3#1)."""
+    mod = _load_module()
+    baseline = {"source": "x.mkv", "matches": []}
+    ground_truth = {
+        "source_file": "x.mkv",
+        "source_dir_label": "obs-fake",
+        "tolerance_sec": 5,
+        "matches": [],
+        "source_size_bytes": 12345,
+    }
+    # Should not raise even though actual_source_size is None
+    mod.validate_ground_truth_against_baseline(
+        baseline, ground_truth, skip_source_size_check=True
+    )

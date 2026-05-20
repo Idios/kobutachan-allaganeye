@@ -39,6 +39,7 @@ def validate_ground_truth_against_baseline(
     *,
     recording_label: str | None = None,
     actual_source_size: int | None = None,
+    skip_source_size_check: bool = False,
 ) -> None:
     """Reject ground-truth files that do not describe the same recording.
 
@@ -46,12 +47,16 @@ def validate_ground_truth_against_baseline(
     - required schema fields are absent
     - baseline `source` != ground truth `source_file`
     - `recording_label` was supplied and != ground truth `source_dir_label`
-    - `actual_source_size` was supplied and != ground truth `source_size_bytes`
+    - `skip_source_size_check` is False and `actual_source_size` is None
+    - `skip_source_size_check` is False and the resolved video size does not
+      match ground truth `source_size_bytes`
 
-    Codex adversarial reviews (2026-05-20 round 1 + round 2) flagged that
-    matching only the relative source path is insufficient: a replaced /
-    truncated recording at the same path, or a copy-pasted ground-truth
-    file with the wrong label, would silently certify stale findings.
+    Codex adversarial reviews (2026-05-20 rounds 1-3) flagged that matching
+    only the relative source path is insufficient: a replaced / truncated
+    recording at the same path, or a silently skipped size check when the
+    sample dir is unset, would certify stale findings. Schema + actual size
+    are now both required by default; operators opt out explicitly via
+    `skip_source_size_check=True` (Issue #798).
     """
     missing = [f for f in _REQUIRED_GROUND_TRUTH_FIELDS if f not in ground_truth]
     if missing:
@@ -74,7 +79,15 @@ def validate_ground_truth_against_baseline(
                 f"recording label ({recording_label!r}) does not match "
                 f"ground truth source_dir_label ({gt_label!r})"
             )
-    if actual_source_size is not None and "source_size_bytes" in ground_truth:
+    if not skip_source_size_check:
+        if actual_source_size is None:
+            raise ValueError(
+                "actual_source_size is required for source_size_bytes "
+                "validation. Set ALLAGANEYE_SAMPLE_VIDEO_DIR + ensure the "
+                "video resolves on disk, or pass skip_source_size_check=True "
+                "explicitly (also exposed as --skip-source-size-check on the "
+                "audit-compare CLI)."
+            )
         gt_size = ground_truth["source_size_bytes"]
         if gt_size != actual_source_size:
             raise ValueError(
