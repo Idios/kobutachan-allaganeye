@@ -19,11 +19,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-import cv2  # type: ignore[import-untyped]
-import numpy as np
+# Make `allaganeye` importable when this script is run directly via
+# `python scripts/audit-prepare.py ...` from the project root (sys.path[0]
+# is `scripts/` in that case, not the project root).
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
-from allaganeye.exceptions import VideoProcessingError
-from allaganeye.video.detector import (
+import cv2  # type: ignore[import-untyped]  # noqa: E402
+import numpy as np  # noqa: E402
+
+from allaganeye.exceptions import VideoProcessingError  # noqa: E402
+from allaganeye.video.detector import (  # noqa: E402
     _SAMPLE_WIDTH,
     _probe_frame_rgb,
     _probe_single_frame,

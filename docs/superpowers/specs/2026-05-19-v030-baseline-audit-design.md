@@ -96,7 +96,7 @@ F1-F4 は PR #793 で fix 済とされているが、**発見が偶発的** で�
      "source_dir_label": "obs-20260116",
      "ground_truth_provider": "user (Idios, manual)",
      "ground_truth_provided_at": "2026-05-19",
-     "tolerance_sec": 1,
+     "tolerance_sec": 5,
      "matches": [
        {"index": 1, "start_time": 49, "end_time": 1055, "duration": 1006, "type": "fl_match"},
        ...
@@ -104,7 +104,7 @@ F1-F4 は PR #793 で fix 済とされているが、**発見が偶発的** で�
    }
    ```
 
-   - `tolerance_sec` = 1: **Stage 3 `audit-compare.py` が baseline と ground truth を照合する際の許容誤差** (= 「baseline timestamp が ground truth ±1s 以内なら一致」)。Idios の視覚確認精度ではない (視覚確認は player の seek 精度に依存、典型 0.1-0.5s)。issue 本文「±1s (Pass 1 sample interval 内で十分)」と整合。Pass 1 sample interval は 3s だが、A5 borderline extension で sub-sample boundary も検出される現状を踏まえ、より厳しい 1s を採用
+   - `tolerance_sec` = 5: **Stage 3 `audit-compare.py` が baseline と ground truth を照合する際の許容誤差** (= 「baseline timestamp が ground truth ±5s 以内なら一致」)。Idios の視覚確認精度ではなく、(a) Idios の minute-level 報告 (秒精度、ただし試合終了暗転は複数フレームに跨るため 1-5s の不確定性) + (b) detector 側の Pass 1 sample interval (3s) と A5 borderline extension の精度を踏まえた値。元 issue #796 本文では「±1s」と例示されていたが、Iteration 1 PoC で実際の視聴精度と試合終了暗転の幅を実測した結果、`5s` に update (本 spec の Iteration 1 retrospect で確定)
    - `start_time` / `end_time` / `duration` は秒単位、整数または小数 (Idios の視覚確認精度に依存、典型 0.1-1s 粒度)
    - `type` は `fl_match` のみ採用 (issue scope では試合境界のみ確定、`unknown` 分類は detector 判断で baseline metadata.json 側に残す)
 
@@ -123,12 +123,12 @@ F1-F4 は PR #793 で fix 済とされているが、**発見が偶発的** で�
 
 **処理** (`scripts/audit-compare.py` + Idios manual classification):
 
-1. baseline matches[] と ground truth matches[] を `tolerance_sec=1` で照合
+1. baseline matches[] と ground truth matches[] を `tolerance_sec=5` で照合 (元 issue 本文の例示は `±1s` だが、Iteration 1 PoC で `5s` に変更)
 2. 以下を抽出:
-    - **agreed**: baseline と ground truth で `start_time` / `end_time` が ±1s 一致
+    - **agreed**: baseline と ground truth で `start_time` / `end_time` が `±tolerance_sec` 一致 (default 5s)
     - **silent_miss**: ground truth にあるが baseline にない (start または end)
     - **false_positive**: baseline にあるが ground truth にない (start または end)
-    - **boundary_shift**: baseline と ground truth で ±1s を超える timestamp drift (例: 56:07 vs 53:50)
+    - **boundary_shift**: baseline と ground truth で `±tolerance_sec` を超える timestamp drift (例: 56:07 vs 53:50)
 3. 各 finding を §5 rubric で (a/b/c) 分類:
     - Claude が candidate justification (現 detector で再検知した結果 / brightness 証跡) を提示
     - Idios が最終判断
@@ -176,8 +176,8 @@ F1-F4 は PR #793 で fix 済とされているが、**発見が偶発的** で�
 
 | 区分 | 判定 fork | 対応 |
 |---|---|---|
-| **(a) baseline 修正** | 現 detector で同 timestamp を再検知すると **正検出される (silent_miss → 検出される / false_positive → 検出されない / boundary_shift → ground truth ±1s 以内に収束)**。baseline metadata.json が偶発的に古い / 過去 regenerate 時の non-determinism | `tests/baselines/v0.3.0/<recording>.metadata.json` を regenerate (PR #793 内で消化 or 本 issue の deliverable PR で消化、user 判断) |
-| **(b) detector tuning** | 現 detector で再検知しても **miss / FP / drift が再現** する。アルゴリズム改善が必要 (例: sub-sample boundary、scorebar misclassification、audio promotion 偽陽性、boundary_shift が ±1s を超えて drift する場合の精度改善、新規 edge case) | **別 issue 起票** (Iron Law 2 bulk confirm: 3 件以上はまとめて user 確認後に起票)。本 issue は完了させ、tuning 自体は別 issue で別 brainstorming |
+| **(a) baseline 修正** | 現 detector で同 timestamp を再検知すると **正検出される (silent_miss → 検出される / false_positive → 検出されない / boundary_shift → ground truth `±tolerance_sec` 以内に収束)**。baseline metadata.json が偶発的に古い / 過去 regenerate 時の non-determinism | `tests/baselines/v0.3.0/<recording>.metadata.json` を regenerate (PR #793 内で消化 or 本 issue の deliverable PR で消化、user 判断) |
+| **(b) detector tuning** | 現 detector で再検知しても **miss / FP / drift が再現** する。アルゴリズム改善が必要 (例: sub-sample boundary、scorebar misclassification、audio promotion 偽陽性、boundary_shift が `tolerance_sec` を超えて drift する場合の精度改善、新規 edge case) | **別 issue 起票** (Iron Law 2 bulk confirm: 3 件以上はまとめて user 確認後に起票)。本 issue は完了させ、tuning 自体は別 issue で別 brainstorming |
 | **(c) 既知限界** | 現 detector で再検知しても不検出 / drift が残る、かつ修正方針が立たない (例: 純黒でないローディング画面、特殊 OBS recording setting、ffmpeg version 依存 PTS drift、min_blackout_duration threshold の trade-off で許容するもの) | `docs/v030-baseline-audit.md` に document + `CLAUDE.md` / `docs/video-processing.md` の "既知の制限" に追記 (P3-low 別 issue で実施) |
 
 ### 5.1 判断 fork のフローチャート
@@ -187,7 +187,7 @@ Finding (silent_miss / false_positive / boundary_shift)
    ↓
 現 detector で同 timestamp を再検知 (allaganeye detect <video> + 該当 segment)
    ↓
-ground truth と一致? (silent_miss → 検出 / false_positive → 不検出 / boundary_shift → ±1s 以内)
+ground truth と一致? (silent_miss → 検出 / false_positive → 不検出 / boundary_shift → `tolerance_sec` 以内)
    ├─ Yes ─→ (a) baseline 修正 (baseline metadata.json が古い、regenerate)
    └─ No (再現)
        ↓
@@ -326,7 +326,7 @@ audit 完了後の deliverable PR で以下を実行:
 |---|---|
 | Idios が 5 OBS baseline を視覚確認し、試合境界 timestamp を `tests/baselines/v0.3.0/ground-truth/<recording>.txt` に保存 | §3.2 Stage 2 deliverable (`<recording>.json`、issue 本文 `.txt` → `.json` 変更を §2 で採用) |
 | 対象 5 件 (obs-20260116/20260118/20260119/20260127/20260209) | §3.1 / §6 全 5 件対応 |
-| timestamp 精度 ±1s | §3.2 ground truth file の `tolerance_sec=1` |
+| timestamp 精度 ±1s | §3.2 ground truth file の `tolerance_sec=5` (issue 本文の例示 `±1s` から Iteration 1 PoC で実測精度に合わせて update) |
 | 現 baseline と ground truth の diff を `docs/v030-baseline-audit.md` (新規) に列挙 | §3.3 Stage 3 deliverable |
 | F1-F4 が現 detector (v2 + A5) で正しく検出されることを確認 | §3.3 agreed として記録 (§5.2 example 参照) |
 | 新規発見の miss / FP を列挙 | §3.3 silent_miss / false_positive / boundary_shift として記録 |

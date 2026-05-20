@@ -16,6 +16,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# Reconfigure stdout to UTF-8 so the rendered markdown (which contains the
+# U+00B1 character in the "Tolerance: ±Ns" line) is not mangled by the
+# default cp932 codec on Windows terminals.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+
 
 def _extract_boundaries(
     matches: list[dict[str, Any]],
