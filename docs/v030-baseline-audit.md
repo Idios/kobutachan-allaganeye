@@ -172,6 +172,6 @@ PR #799 merge 後の Codex Round 3 finding 2 件を Issue #798 で消化:
 - tx-state 自身は `.tx.json.new` 経由の `os.replace` で single-file atomic 書き込み
 - backwards-compat: tx.json 不在 (legacy baseline) / "consistent" は recovery skip
 
-詳細仕様は `docs/superpowers/specs/2026-05-20-audit-prepare-tx-recovery-design.md`、実装は PR #<新 PR 番号> (Task 8 で番号確定)。
+詳細仕様は `docs/superpowers/specs/2026-05-20-audit-prepare-tx-recovery-design.md`、実装は [PR #802](https://github.com/Idios/kobutachan-allaganeye/pull/802)。
 
 なお Iteration 1 retrospect item 4 の "adjacent boundary PNG overwriting" は本 follow-up の scope 外 (低 impact + Iron Law 3 scope 維持、Issue #798 §7 out of scope 明記)。
