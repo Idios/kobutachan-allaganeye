@@ -353,6 +353,24 @@ def main(argv: list[str] | None = None) -> int:
     worksheet_csv_new = args.worksheet_dir / f"{args.recording_label}.csv.new"
     tx_path = args.worksheet_dir / f"{args.recording_label}.tx.json"
 
+    # (0) Recovery-on-start: if a prior run crashed mid-publish, the
+    # tx-state will be "swapping" and the on-disk artifacts are in an
+    # unknown state. Wipe everything so Step 2 regenerates from scratch.
+    # Backwards-compat: tx.json absent (legacy baseline) or "consistent"
+    # (clean prior run) skips recovery.
+    tx = _read_tx_state(tx_path)
+    if tx is not None and tx["state"] == _TX_STATE_SWAPPING:
+        print(
+            f"WARNING: previous {args.recording_label} run crashed mid-publish; "
+            "cleaning up stale artifacts before regenerating",
+            file=sys.stderr,
+        )
+        _recover_stale_artifacts(
+            per_boundary_dir=per_boundary_dir,
+            worksheet_csv=worksheet_csv,
+            tx_path=tx_path,
+        )
+
     # (1) Pre-clean any stale temp residue from a prior crashed run.
     # Existing final artifacts are untouched until step (3).
     if per_boundary_dir_new.exists():

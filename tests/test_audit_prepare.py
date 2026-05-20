@@ -645,3 +645,144 @@ def test_main_writes_tx_state_consistent_after_publish(tmp_path, monkeypatch):
     data = json.loads(tx_path.read_text(encoding="utf-8"))
     assert data["schema_version"] == 1
     assert data["state"] == "consistent"
+
+
+def _seed_baseline_for_main(tmp_path, monkeypatch, label="obs-fake"):
+    """Helper: build a minimal baseline + video tree usable by main()."""
+    mod = _load_module()
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir(exist_ok=True)
+    metadata = {
+        "schema_version": "1",
+        "source": "20260116/fake.mkv",
+        "matches": [
+            {
+                "index": 1,
+                "start_time": 49.125,
+                "end_time": 1054.5,
+                "duration": 1005.375,
+                "type": "fl_match",
+            },
+        ],
+        "gaps": [],
+    }
+    (baseline_dir / f"{label}.metadata.json").write_text(
+        json.dumps(metadata), encoding="utf-8"
+    )
+    video_dir = tmp_path / "videos"
+    (video_dir / "20260116").mkdir(parents=True, exist_ok=True)
+    (video_dir / "20260116" / "fake.mkv").write_bytes(b"")
+    monkeypatch.setenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", str(video_dir))
+    monkeypatch.setattr(mod, "export_brightness_csv", lambda **kw: None)
+    monkeypatch.setattr(mod, "export_sample_frames", lambda **kw: None)
+    return mod, baseline_dir
+
+
+def test_main_step0_recovers_from_swapping_state(tmp_path, monkeypatch, capsys):
+    """tx-state == 'swapping' on startup -> wipe + regenerate + WARNING (#800)."""
+    mod, baseline_dir = _seed_baseline_for_main(tmp_path, monkeypatch)
+    worksheet_dir = tmp_path / "audit-worksheet"
+    worksheet_dir.mkdir()
+    per_boundary_dir = worksheet_dir / "obs-fake"
+    worksheet_csv = worksheet_dir / "obs-fake.csv"
+    tx_path = worksheet_dir / "obs-fake.tx.json"
+
+    # Seed mid-crash state: tx="swapping", stale dir, stale csv
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "old.txt").write_text("OLD", encoding="utf-8")
+    worksheet_csv.write_text("OLD_HEADER\n", encoding="utf-8")
+    mod._write_tx_state_atomic(tx_path, state="swapping")
+
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 0
+
+    # Recovery happened: old wiped, new regenerated, tx="consistent"
+    assert not (per_boundary_dir / "old.txt").exists()
+    assert per_boundary_dir.exists()
+    assert "OLD_HEADER" not in worksheet_csv.read_text(encoding="utf-8")
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "consistent"
+
+    # WARNING was emitted on stderr
+    err = capsys.readouterr().err
+    assert "crashed mid-publish" in err
+
+
+def test_tx_state_missing_legacy_compat(tmp_path, monkeypatch, capsys):
+    """tx.json absent (legacy baseline) -> no recovery, normal regenerate (#800)."""
+    mod, baseline_dir = _seed_baseline_for_main(tmp_path, monkeypatch)
+    worksheet_dir = tmp_path / "audit-worksheet"
+    worksheet_dir.mkdir()
+    per_boundary_dir = worksheet_dir / "obs-fake"
+    worksheet_csv = worksheet_dir / "obs-fake.csv"
+
+    # Seed legacy state: dir + csv exist but NO tx.json
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "legacy.txt").write_text("LEGACY", encoding="utf-8")
+    worksheet_csv.write_text("LEGACY_HEADER\n", encoding="utf-8")
+
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 0
+
+    # Normal regenerate (legacy content overwritten by atomic swap)
+    assert not (per_boundary_dir / "legacy.txt").exists()
+    # No recovery WARNING in stderr
+    err = capsys.readouterr().err
+    assert "crashed mid-publish" not in err
+
+    # tx.json is now created with state=consistent
+    tx_path = worksheet_dir / "obs-fake.tx.json"
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "consistent"
+
+
+def test_no_recovery_when_state_consistent(tmp_path, monkeypatch, capsys):
+    """tx-state == 'consistent' on startup -> no recovery, normal regenerate (#800)."""
+    mod, baseline_dir = _seed_baseline_for_main(tmp_path, monkeypatch)
+    worksheet_dir = tmp_path / "audit-worksheet"
+    worksheet_dir.mkdir()
+    per_boundary_dir = worksheet_dir / "obs-fake"
+    worksheet_csv = worksheet_dir / "obs-fake.csv"
+    tx_path = worksheet_dir / "obs-fake.tx.json"
+
+    # Seed clean prior-run state
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "prev.txt").write_text("PREV", encoding="utf-8")
+    worksheet_csv.write_text("PREV_HEADER\n", encoding="utf-8")
+    mod._write_tx_state_atomic(tx_path, state="consistent")
+
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 0
+
+    # Normal regenerate (prev content overwritten by atomic swap)
+    assert not (per_boundary_dir / "prev.txt").exists()
+    # No recovery WARNING in stderr
+    err = capsys.readouterr().err
+    assert "crashed mid-publish" not in err
+
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "consistent"
