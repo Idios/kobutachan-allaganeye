@@ -1,0 +1,19 @@
+{
+  "source_file": "20260119/2026-01-19 22-09-07.mkv",
+  "source_size_bytes": 63423933464,
+  "source_dir_label": "obs-20260119",
+  "ground_truth_provider": "user (Idios, manual)",
+  "ground_truth_provided_at": "2026-05-20",
+  "tolerance_sec": 5,
+  "matches": [
+    {"index": 1, "start_time": 124, "end_time": 867, "duration": 743, "type": "fl_match"},
+    {"index": 2, "start_time": 943, "end_time": 1891, "duration": 948, "type": "fl_match"},
+    {"index": 3, "start_time": 1985, "end_time": 2928, "duration": 943, "type": "fl_match"},
+    {"index": 4, "start_time": 3068, "end_time": 3839, "duration": 771, "type": "fl_match"},
+    {"index": 5, "start_time": 3993, "end_time": 4948, "duration": 955, "type": "fl_match"},
+    {"index": 6, "start_time": 5098, "end_time": 6035, "duration": 937, "type": "fl_match"},
+    {"index": 7, "start_time": 6469, "end_time": 7385, "duration": 916, "type": "fl_match"},
+    {"index": 8, "start_time": 7556, "end_time": 8193, "duration": 637, "type": "fl_match"},
+    {"index": 9, "start_time": 8413, "end_time": 9101, "duration": 688, "type": "fl_match"}
+  ]
+}

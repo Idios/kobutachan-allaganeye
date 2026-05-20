@@ -1,0 +1,13 @@
+{
+  "source_file": "2026-02-09 23-12-24.mkv",
+  "source_size_bytes": 20566546827,
+  "source_dir_label": "obs-20260209",
+  "ground_truth_provider": "user (Idios, manual)",
+  "ground_truth_provided_at": "2026-05-20",
+  "tolerance_sec": 5,
+  "matches": [
+    {"index": 1, "start_time": 40, "end_time": 1076, "duration": 1036, "type": "fl_match"},
+    {"index": 2, "start_time": 1252, "end_time": 2324, "duration": 1072, "type": "fl_match"},
+    {"index": 3, "start_time": 2504, "end_time": 3370, "duration": 866, "type": "fl_match"}
+  ]
+}
