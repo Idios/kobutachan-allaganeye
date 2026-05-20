@@ -597,3 +597,51 @@ def test_recover_stale_artifacts_partial_state(tmp_path):
     )
 
     assert not per_boundary_dir.exists()
+
+
+def test_main_writes_tx_state_consistent_after_publish(tmp_path, monkeypatch):
+    """After successful main() the tx-state file exists with state=consistent (#800)."""
+    mod = _load_module()
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+    metadata = {
+        "schema_version": "1",
+        "source": "20260116/fake.mkv",
+        "matches": [
+            {
+                "index": 1,
+                "start_time": 49.125,
+                "end_time": 1054.5,
+                "duration": 1005.375,
+                "type": "fl_match",
+            },
+        ],
+        "gaps": [],
+    }
+    (baseline_dir / "obs-fake.metadata.json").write_text(
+        json.dumps(metadata), encoding="utf-8"
+    )
+    video_dir = tmp_path / "videos"
+    (video_dir / "20260116").mkdir(parents=True)
+    (video_dir / "20260116" / "fake.mkv").write_bytes(b"")
+    monkeypatch.setenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", str(video_dir))
+    monkeypatch.setattr(mod, "export_brightness_csv", lambda **kw: None)
+    monkeypatch.setattr(mod, "export_sample_frames", lambda **kw: None)
+
+    worksheet_dir = tmp_path / "audit-worksheet"
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 0
+
+    tx_path = worksheet_dir / "obs-fake.tx.json"
+    assert tx_path.exists()
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["schema_version"] == 1
+    assert data["state"] == "consistent"

@@ -351,6 +351,7 @@ def main(argv: list[str] | None = None) -> int:
     per_boundary_dir_new = args.worksheet_dir / f"{args.recording_label}.new"
     worksheet_csv = args.worksheet_dir / f"{args.recording_label}.csv"
     worksheet_csv_new = args.worksheet_dir / f"{args.recording_label}.csv.new"
+    tx_path = args.worksheet_dir / f"{args.recording_label}.tx.json"
 
     # (1) Pre-clean any stale temp residue from a prior crashed run.
     # Existing final artifacts are untouched until step (3).
@@ -414,10 +415,13 @@ def main(argv: list[str] | None = None) -> int:
     # follow-up" section + spec `docs/superpowers/specs/
     # 2026-05-20-audit-script-hardening-design.md` §3.2 Recovery table /
     # §9 Risks #1.
+    args.worksheet_dir.mkdir(parents=True, exist_ok=True)
+    _write_tx_state_atomic(tx_path, state=_TX_STATE_SWAPPING)
     if per_boundary_dir.exists():
         shutil.rmtree(per_boundary_dir)
     per_boundary_dir_new.rename(per_boundary_dir)
     worksheet_csv_new.replace(worksheet_csv)
+    _write_tx_state_atomic(tx_path, state=_TX_STATE_CONSISTENT)
 
     print(f"Worksheet: {worksheet_csv}", file=sys.stderr)
     print(f"Per-boundary artifacts: {per_boundary_dir}", file=sys.stderr)
