@@ -17,6 +17,7 @@ import os
 import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -172,6 +173,23 @@ def _read_tx_state(tx_path: Path) -> dict[str, Any] | None:
         )
         return None
     return data
+
+
+def _write_tx_state_atomic(tx_path: Path, *, state: str) -> None:
+    """Atomically write tx-state via temp file + os.replace.
+
+    On POSIX and Windows, replace() of a single file is atomic, so the
+    on-disk tx-state is never partially-written. The temp file uses the
+    `.new` suffix to match the existing artifact-staging convention.
+    """
+    payload = {
+        "schema_version": _TX_SCHEMA_VERSION,
+        "state": state,
+        "updated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    }
+    tx_new = tx_path.parent / (tx_path.name + ".new")
+    tx_new.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tx_new.replace(tx_path)
 
 
 def resolve_video_path(source_relative: str) -> Path:

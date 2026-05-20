@@ -512,3 +512,32 @@ def test_tx_state_corrupted_treated_as_missing(tmp_path, capsys, payload, varian
     err = capsys.readouterr().err
     assert "WARNING" in err, f"variant={variant} stderr: {err!r}"
     assert str(tx_path) in err, f"variant={variant} stderr: {err!r}"
+
+
+def test_write_tx_state_atomic_creates_file(tmp_path):
+    mod = _load_module()
+    tx_path = tmp_path / "obs.tx.json"
+    mod._write_tx_state_atomic(tx_path, state="consistent")
+    assert tx_path.exists()
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["schema_version"] == 1
+    assert data["state"] == "consistent"
+    assert data["updated_at"].endswith("Z")  # ISO 8601 UTC
+
+
+def test_write_tx_state_atomic_overwrites_existing(tmp_path):
+    mod = _load_module()
+    tx_path = tmp_path / "obs.tx.json"
+    mod._write_tx_state_atomic(tx_path, state="swapping")
+    mod._write_tx_state_atomic(tx_path, state="consistent")
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "consistent"
+
+
+def test_write_tx_state_atomic_cleans_up_new_suffix(tmp_path):
+    """No `.tx.json.new` should remain after successful write."""
+    mod = _load_module()
+    tx_path = tmp_path / "obs.tx.json"
+    mod._write_tx_state_atomic(tx_path, state="consistent")
+    assert tx_path.exists()
+    assert not (tmp_path / "obs.tx.json.new").exists()
