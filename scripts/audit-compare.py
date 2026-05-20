@@ -29,6 +29,7 @@ _REQUIRED_GROUND_TRUTH_FIELDS = (
     "source_dir_label",
     "tolerance_sec",
     "matches",
+    "source_size_bytes",
 )
 
 

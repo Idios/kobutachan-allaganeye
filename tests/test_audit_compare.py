@@ -166,6 +166,7 @@ def test_validate_ground_truth_against_baseline_ok():
         "source_dir_label": "obs-20260116",
         "tolerance_sec": 5,
         "matches": [],
+        "source_size_bytes": 12345,
     }
     mod.validate_ground_truth_against_baseline(baseline, ground_truth)
 
@@ -178,6 +179,7 @@ def test_validate_ground_truth_source_mismatch_raises():
         "source_dir_label": "obs-20260118",
         "tolerance_sec": 5,
         "matches": [],
+        "source_size_bytes": 12345,
     }
     with pytest.raises(ValueError, match="does not match"):
         mod.validate_ground_truth_against_baseline(baseline, ground_truth)
@@ -241,6 +243,7 @@ def test_validate_ground_truth_recording_label_mismatch_raises():
         "source_dir_label": "obs-WRONG-LABEL",
         "tolerance_sec": 5,
         "matches": [],
+        "source_size_bytes": 12345,
     }
     with pytest.raises(ValueError, match="source_dir_label"):
         mod.validate_ground_truth_against_baseline(
@@ -274,5 +277,21 @@ def test_validate_ground_truth_recording_label_skipped_when_not_provided():
         "source_dir_label": "anything",
         "tolerance_sec": 5,
         "matches": [],
+        "source_size_bytes": 12345,
     }
     mod.validate_ground_truth_against_baseline(baseline, ground_truth)
+
+
+def test_validate_ground_truth_rejects_missing_source_size_bytes():
+    """source_size_bytes is REQUIRED in ground-truth schema (R3#1)."""
+    mod = _load_module()
+    baseline = {"source": "20260116/x.mkv", "matches": []}
+    ground_truth = {
+        "source_file": "20260116/x.mkv",
+        "source_dir_label": "obs-20260116",
+        "tolerance_sec": 5,
+        "matches": [],
+        # source_size_bytes intentionally missing
+    }
+    with pytest.raises(ValueError, match="missing required fields"):
+        mod.validate_ground_truth_against_baseline(baseline, ground_truth)
