@@ -29,6 +29,7 @@ _REQUIRED_GROUND_TRUTH_FIELDS = (
     "source_dir_label",
     "tolerance_sec",
     "matches",
+    "source_size_bytes",
 )
 
 
@@ -38,6 +39,7 @@ def validate_ground_truth_against_baseline(
     *,
     recording_label: str | None = None,
     actual_source_size: int | None = None,
+    skip_source_size_check: bool = False,
 ) -> None:
     """Reject ground-truth files that do not describe the same recording.
 
@@ -45,12 +47,16 @@ def validate_ground_truth_against_baseline(
     - required schema fields are absent
     - baseline `source` != ground truth `source_file`
     - `recording_label` was supplied and != ground truth `source_dir_label`
-    - `actual_source_size` was supplied and != ground truth `source_size_bytes`
+    - `skip_source_size_check` is False and `actual_source_size` is None
+    - `skip_source_size_check` is False and the resolved video size does not
+      match ground truth `source_size_bytes`
 
-    Codex adversarial reviews (2026-05-20 round 1 + round 2) flagged that
-    matching only the relative source path is insufficient: a replaced /
-    truncated recording at the same path, or a copy-pasted ground-truth
-    file with the wrong label, would silently certify stale findings.
+    Codex adversarial reviews (2026-05-20 rounds 1-3) flagged that matching
+    only the relative source path is insufficient: a replaced / truncated
+    recording at the same path, or a silently skipped size check when the
+    sample dir is unset, would certify stale findings. Schema + actual size
+    are now both required by default; operators opt out explicitly via
+    `skip_source_size_check=True` (Issue #798).
     """
     missing = [f for f in _REQUIRED_GROUND_TRUTH_FIELDS if f not in ground_truth]
     if missing:
@@ -73,7 +79,14 @@ def validate_ground_truth_against_baseline(
                 f"recording label ({recording_label!r}) does not match "
                 f"ground truth source_dir_label ({gt_label!r})"
             )
-    if actual_source_size is not None and "source_size_bytes" in ground_truth:
+    if not skip_source_size_check:
+        if actual_source_size is None:
+            raise ValueError(
+                "actual_source_size is required for source_size_bytes "
+                "validation. Set ALLAGANEYE_SAMPLE_VIDEO_DIR + ensure the "
+                "video resolves on disk, or pass skip_source_size_check=True "
+                "explicitly."
+            )
         gt_size = ground_truth["source_size_bytes"]
         if gt_size != actual_source_size:
             raise ValueError(
@@ -280,6 +293,12 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=Path("tests/baselines/v0.3.0/ground-truth"),
     )
+    parser.add_argument(
+        "--skip-source-size-check",
+        action="store_true",
+        help="Skip source_size_bytes verification (operator escape; "
+        "logged to stderr; ground-truth schema validation is NOT skipped).",
+    )
     args = parser.parse_args(argv)
 
     baseline_path = args.baseline_dir / f"{args.recording_label}.metadata.json"
@@ -295,10 +314,39 @@ def main(argv: list[str] | None = None) -> int:
 
     actual_source_size: int | None = None
     sample_video_dir = os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR")
-    if sample_video_dir and "source" in baseline:
+    if not sample_video_dir:
+        print(
+            "WARNING: ALLAGANEYE_SAMPLE_VIDEO_DIR is not set; "
+            "source_size_bytes validation will fail unless "
+            "--skip-source-size-check is passed.",
+            file=sys.stderr,
+        )
+    elif "source" not in baseline:
+        print(
+            "WARNING: baseline metadata.json is missing the 'source' field; "
+            "source_size_bytes validation will fail unless "
+            "--skip-source-size-check is passed.",
+            file=sys.stderr,
+        )
+    else:
         video_candidate = Path(sample_video_dir) / baseline["source"]
         if video_candidate.exists():
             actual_source_size = video_candidate.stat().st_size
+        else:
+            print(
+                f"WARNING: ALLAGANEYE_SAMPLE_VIDEO_DIR is set ({sample_video_dir!r}) "
+                f"but {video_candidate} does not exist; "
+                "source_size_bytes validation will fail unless "
+                "--skip-source-size-check is passed.",
+                file=sys.stderr,
+            )
+
+    if args.skip_source_size_check:
+        print(
+            "WARNING: --skip-source-size-check is set; source_size_bytes "
+            "verification skipped. Ground-truth schema validation still runs.",
+            file=sys.stderr,
+        )
 
     try:
         validate_ground_truth_against_baseline(
@@ -306,6 +354,7 @@ def main(argv: list[str] | None = None) -> int:
             ground_truth,
             recording_label=args.recording_label,
             actual_source_size=actual_source_size,
+            skip_source_size_check=args.skip_source_size_check,
         )
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

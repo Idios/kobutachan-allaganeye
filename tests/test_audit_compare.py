@@ -166,8 +166,11 @@ def test_validate_ground_truth_against_baseline_ok():
         "source_dir_label": "obs-20260116",
         "tolerance_sec": 5,
         "matches": [],
+        "source_size_bytes": 12345,
     }
-    mod.validate_ground_truth_against_baseline(baseline, ground_truth)
+    mod.validate_ground_truth_against_baseline(
+        baseline, ground_truth, skip_source_size_check=True
+    )
 
 
 def test_validate_ground_truth_source_mismatch_raises():
@@ -178,9 +181,12 @@ def test_validate_ground_truth_source_mismatch_raises():
         "source_dir_label": "obs-20260118",
         "tolerance_sec": 5,
         "matches": [],
+        "source_size_bytes": 12345,
     }
     with pytest.raises(ValueError, match="does not match"):
-        mod.validate_ground_truth_against_baseline(baseline, ground_truth)
+        mod.validate_ground_truth_against_baseline(
+            baseline, ground_truth, skip_source_size_check=True
+        )
 
 
 def test_validate_ground_truth_missing_fields_raises():
@@ -241,10 +247,14 @@ def test_validate_ground_truth_recording_label_mismatch_raises():
         "source_dir_label": "obs-WRONG-LABEL",
         "tolerance_sec": 5,
         "matches": [],
+        "source_size_bytes": 12345,
     }
     with pytest.raises(ValueError, match="source_dir_label"):
         mod.validate_ground_truth_against_baseline(
-            baseline, ground_truth, recording_label="obs-20260116"
+            baseline,
+            ground_truth,
+            recording_label="obs-20260116",
+            skip_source_size_check=True,
         )
 
 
@@ -274,5 +284,260 @@ def test_validate_ground_truth_recording_label_skipped_when_not_provided():
         "source_dir_label": "anything",
         "tolerance_sec": 5,
         "matches": [],
+        "source_size_bytes": 12345,
     }
-    mod.validate_ground_truth_against_baseline(baseline, ground_truth)
+    mod.validate_ground_truth_against_baseline(
+        baseline, ground_truth, skip_source_size_check=True
+    )
+
+
+def test_validate_ground_truth_rejects_missing_source_size_bytes():
+    """source_size_bytes is REQUIRED in ground-truth schema (R3#1)."""
+    mod = _load_module()
+    baseline = {"source": "20260116/x.mkv", "matches": []}
+    ground_truth = {
+        "source_file": "20260116/x.mkv",
+        "source_dir_label": "obs-20260116",
+        "tolerance_sec": 5,
+        "matches": [],
+        # source_size_bytes intentionally missing
+    }
+    with pytest.raises(ValueError, match="missing required fields"):
+        mod.validate_ground_truth_against_baseline(baseline, ground_truth)
+
+
+def test_validate_rejects_none_actual_size_when_check_enabled():
+    """actual_source_size=None + skip=False (default) raises (R3#1)."""
+    mod = _load_module()
+    baseline = {"source": "x.mkv", "matches": []}
+    ground_truth = {
+        "source_file": "x.mkv",
+        "source_dir_label": "obs-fake",
+        "tolerance_sec": 5,
+        "matches": [],
+        "source_size_bytes": 12345,
+    }
+    with pytest.raises(ValueError, match="actual_source_size is required"):
+        mod.validate_ground_truth_against_baseline(baseline, ground_truth)
+
+
+def test_validate_skip_flag_bypasses_size_check():
+    """skip_source_size_check=True allows actual_source_size=None to pass (R3#1)."""
+    mod = _load_module()
+    baseline = {"source": "x.mkv", "matches": []}
+    ground_truth = {
+        "source_file": "x.mkv",
+        "source_dir_label": "obs-fake",
+        "tolerance_sec": 5,
+        "matches": [],
+        "source_size_bytes": 12345,
+    }
+    # Should not raise even though actual_source_size is None
+    mod.validate_ground_truth_against_baseline(
+        baseline, ground_truth, skip_source_size_check=True
+    )
+
+
+def test_main_video_unresolved_fails_close(tmp_path, monkeypatch, capsys):
+    """ALLAGANEYE_SAMPLE_VIDEO_DIR unset -> exit 3 + stderr ERROR (R3#1)."""
+    import json as _json
+
+    mod = _load_module()
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+    gt_dir = baseline_dir / "ground-truth"
+    gt_dir.mkdir()
+
+    (baseline_dir / "obs-fake.metadata.json").write_text(
+        _json.dumps({"source": "fake.mkv", "matches": []}),
+        encoding="utf-8",
+    )
+    (gt_dir / "obs-fake.json").write_text(
+        _json.dumps(
+            {
+                "source_file": "fake.mkv",
+                "source_dir_label": "obs-fake",
+                "tolerance_sec": 5,
+                "matches": [],
+                "source_size_bytes": 12345,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", raising=False)
+
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--ground-truth-dir",
+            str(gt_dir),
+        ]
+    )
+    assert rc == 3
+    captured = capsys.readouterr()
+    # Task 3 WARNING (env unset): distinguishes Task 3 impl from Task 2-only state
+    assert "ALLAGANEYE_SAMPLE_VIDEO_DIR is not set" in captured.err
+    # Task 2 ERROR (validate raises and main catches): downstream of WARNING
+    assert "actual_source_size is required" in captured.err
+
+
+def test_main_video_missing_in_env_fails_close(tmp_path, monkeypatch, capsys):
+    """env set but video file absent -> exit 3 + stderr ERROR (R3#1)."""
+    import json as _json
+
+    mod = _load_module()
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+    gt_dir = baseline_dir / "ground-truth"
+    gt_dir.mkdir()
+    video_dir = tmp_path / "videos"  # empty, no fake.mkv inside
+    video_dir.mkdir()
+
+    (baseline_dir / "obs-fake.metadata.json").write_text(
+        _json.dumps({"source": "fake.mkv", "matches": []}),
+        encoding="utf-8",
+    )
+    (gt_dir / "obs-fake.json").write_text(
+        _json.dumps(
+            {
+                "source_file": "fake.mkv",
+                "source_dir_label": "obs-fake",
+                "tolerance_sec": 5,
+                "matches": [],
+                "source_size_bytes": 12345,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", str(video_dir))
+
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--ground-truth-dir",
+            str(gt_dir),
+        ]
+    )
+    assert rc == 3
+    captured = capsys.readouterr()
+    # Task 3 WARNING (file missing): distinguishes Task 3 impl from Task 2-only state
+    assert "does not exist" in captured.err
+    # Task 2 ERROR (validate raises and main catches)
+    assert "actual_source_size is required" in captured.err
+
+
+def test_main_skip_flag_proceeds_without_video(tmp_path, monkeypatch, capsys):
+    """--skip-source-size-check bypasses size check + emits stderr WARNING (R3#1)."""
+    import json as _json
+
+    mod = _load_module()
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+    gt_dir = baseline_dir / "ground-truth"
+    gt_dir.mkdir()
+
+    (baseline_dir / "obs-fake.metadata.json").write_text(
+        _json.dumps({"source": "fake.mkv", "matches": []}),
+        encoding="utf-8",
+    )
+    (gt_dir / "obs-fake.json").write_text(
+        _json.dumps(
+            {
+                "source_file": "fake.mkv",
+                "source_dir_label": "obs-fake",
+                "tolerance_sec": 5,
+                "matches": [],
+                "source_size_bytes": 12345,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", raising=False)
+
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--ground-truth-dir",
+            str(gt_dir),
+            "--skip-source-size-check",
+        ]
+    )
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "--skip-source-size-check" in captured.err
+    assert "skipped" in captured.err.lower()
+
+
+def test_main_baseline_missing_source_field_fails_close(tmp_path, monkeypatch, capsys):
+    """env set + baseline lacks 'source' field -> WARNING + exit 3 (AC#3 branch 2)."""
+    import json as _json
+
+    mod = _load_module()
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+    gt_dir = baseline_dir / "ground-truth"
+    gt_dir.mkdir()
+    video_dir = tmp_path / "videos"
+    video_dir.mkdir()
+
+    # Baseline intentionally lacks "source" field -- defensive code path
+    (baseline_dir / "obs-fake.metadata.json").write_text(
+        _json.dumps({"matches": []}),
+        encoding="utf-8",
+    )
+    (gt_dir / "obs-fake.json").write_text(
+        _json.dumps(
+            {
+                "source_file": "fake.mkv",
+                "source_dir_label": "obs-fake",
+                "tolerance_sec": 5,
+                "matches": [],
+                "source_size_bytes": 12345,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", str(video_dir))
+
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--ground-truth-dir",
+            str(gt_dir),
+        ]
+    )
+    assert rc == 3
+    captured = capsys.readouterr()
+    # Task 3 branch-2 WARNING (corrupt baseline path)
+    assert "baseline metadata.json is missing the 'source' field" in captured.err
+    # Downstream validate raises (baseline source None != ground-truth source_file)
+    assert "does not match" in captured.err
+
+
+def test_validate_skip_flag_still_enforces_schema():
+    """skip_source_size_check=True does NOT bypass schema field check (AC#4)."""
+    mod = _load_module()
+    baseline = {"source": "x.mkv", "matches": []}
+    ground_truth = {
+        "source_file": "x.mkv",
+        "source_dir_label": "obs-fake",
+        "tolerance_sec": 5,
+        "matches": [],
+        # source_size_bytes intentionally missing -- schema validation must still raise
+    }
+    with pytest.raises(ValueError, match="missing required fields"):
+        mod.validate_ground_truth_against_baseline(
+            baseline, ground_truth, skip_source_size_check=True
+        )

@@ -264,32 +264,76 @@ def main(argv: list[str] | None = None) -> int:
     video_path = resolve_video_path(metadata["source"])
 
     per_boundary_dir = args.worksheet_dir / args.recording_label
+    per_boundary_dir_new = args.worksheet_dir / f"{args.recording_label}.new"
+    worksheet_csv = args.worksheet_dir / f"{args.recording_label}.csv"
+    worksheet_csv_new = args.worksheet_dir / f"{args.recording_label}.csv.new"
 
-    # Atomic re-run: clean any previous artifacts so the worksheet never points
-    # at stale or partial files (Codex finding #6, 2026-05-20 round 2).
+    # (1) Pre-clean any stale temp residue from a prior crashed run.
+    # Existing final artifacts are untouched until step (3).
+    if per_boundary_dir_new.exists():
+        shutil.rmtree(per_boundary_dir_new)
+    worksheet_csv_new.unlink(missing_ok=True)
+    per_boundary_dir_new.mkdir(parents=True, exist_ok=True)
+
+    # (2) Generate everything into the temp sibling. On any failure leave
+    # existing final artifacts intact and clean up the temp.
+    try:
+        for row in rows:
+            ts = float(row["timestamp_sec"])
+            export_brightness_csv(
+                video_path=video_path,
+                boundary_timestamp=ts,
+                out_path=per_boundary_dir_new / row["brightness_csv_ref"],
+                window_sec=args.window_sec,
+                interval_sec=args.interval_sec,
+            )
+            export_sample_frames(
+                video_path=video_path,
+                boundary_timestamp=ts,
+                out_dir=per_boundary_dir_new,
+            )
+        write_worksheet_csv(rows, worksheet_csv_new)
+    except Exception:
+        if per_boundary_dir_new.exists():
+            shutil.rmtree(per_boundary_dir_new)
+        worksheet_csv_new.unlink(missing_ok=True)
+        raise
+
+    # (3) All-success: swap temp into final position.
+    #
+    # ATOMICITY LIMITATIONS (Issue #800 tracks the proper fix):
+    #
+    # The swap is 3 non-atomic operations: rmtree -> rename -> replace.
+    # A crash / AV lock / process kill between any two leaves observable
+    # mixed state that next-run pre-clean does NOT detect or repair:
+    #
+    #   - After rmtree, before rename:
+    #       per_boundary_dir gone, worksheet_csv still old.
+    #       Reader sees old worksheet referencing a missing artifact dir.
+    #   - After rename, before replace:
+    #       per_boundary_dir is new, worksheet_csv still old.
+    #       Reader sees old worksheet referencing the new artifact dir.
+    #
+    # POSIX `rename(2)` semantics make each individual op atomic, but the
+    # 3-op sequence as a whole is not transactional. Windows additionally
+    # cannot atomically rename onto an existing directory, which is why
+    # rmtree happens first.
+    #
+    # Recovery today: operator notices the inconsistency (worksheet
+    # references files that do not exist, or the audit doc disagrees with
+    # the generated frames) and re-runs `audit-prepare`. The crash window
+    # is very short (filesystem rename is milliseconds) so the practical
+    # impact is low for an interactive operator workflow.
+    #
+    # Tracked for future hardening in Issue #800 (manifest / epoch / atomic
+    # pointer pattern). See `docs/v030-baseline-audit.md` "Codex round 3
+    # follow-up" section + spec `docs/superpowers/specs/
+    # 2026-05-20-audit-script-hardening-design.md` §3.2 Recovery table /
+    # §9 Risks #1.
     if per_boundary_dir.exists():
         shutil.rmtree(per_boundary_dir)
-
-    # Generate all per-boundary artifacts first; fail loud on any error.
-    for row in rows:
-        ts = float(row["timestamp_sec"])
-        export_brightness_csv(
-            video_path=video_path,
-            boundary_timestamp=ts,
-            out_path=per_boundary_dir / row["brightness_csv_ref"],
-            window_sec=args.window_sec,
-            interval_sec=args.interval_sec,
-        )
-        export_sample_frames(
-            video_path=video_path,
-            boundary_timestamp=ts,
-            out_dir=per_boundary_dir,
-        )
-
-    # Write the worksheet last so any failure above leaves the CSV either
-    # absent or unchanged — never with broken references to missing artifacts.
-    worksheet_csv = args.worksheet_dir / f"{args.recording_label}.csv"
-    write_worksheet_csv(rows, worksheet_csv)
+    per_boundary_dir_new.rename(per_boundary_dir)
+    worksheet_csv_new.replace(worksheet_csv)
 
     print(f"Worksheet: {worksheet_csv}", file=sys.stderr)
     print(f"Per-boundary artifacts: {per_boundary_dir}", file=sys.stderr)

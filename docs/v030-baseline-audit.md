@@ -156,3 +156,23 @@ PoC で発見した workflow / script の改善点 (Iteration 1 終了時に fix
 2. **`PYTHONIOENCODING=utf-8` 不要化** ([2e2fd18](https://github.com/Idios/kobutachan-allaganeye/commit/2e2fd18)): `audit-compare.py` 内で `sys.stdout.reconfigure(encoding='utf-8')` を実行、Windows cp932 環境で `±` が文字化けしない
 3. **`tolerance_sec` default 1 → 5** ([2e2fd18](https://github.com/Idios/kobutachan-allaganeye/commit/2e2fd18)): spec §3.2 を update、Idios の minute-level + 試合終了暗転の複数フレーム不確定性を踏まえた値
 4. **adjacent boundary の PNG file overwriting** (未対応、低 impact): obs-20260116 M3 end (3367.125) と M4 start (3367.125) が同 timestamp で sample frame PNG が overwrite される (12 boundary → 11 unique = 1 件不足)。低 impact のため未対応、将来 (a/b/c) finding が発生した場合に script を見直す
+
+## Codex round 3 follow-up (Issue #798, applied 2026-05-20)
+
+PR #799 merge 後の Codex Round 3 finding 2 件を Issue #798 で消化:
+
+1. **R3#1 source_size validation tightening** — `_REQUIRED_GROUND_TRUTH_FIELDS` に `source_size_bytes` を追加し REQUIRED 化。`audit-compare.py` main は video 未解決時に exit 3 で fail-close、operator escape は `--skip-source-size-check` flag 経由 (stderr に WARNING)。`validate_ground_truth_against_baseline` に `skip_source_size_check` parameter 追加
+2. **R3#2 atomic re-run** — `audit-prepare.main()` を `<label>.new/` + `<label>.csv.new` 経由の atomic flow に書き直し。mid-run failure 時は旧 artifacts intact、success 時に rename / replace で swap、前 run crash 由来の stale `.new` も次 run の pre-cleanup で recover
+
+### Known limitation (Issue #800)
+
+Issue #798 PR の Iron Law 6 Pre-flight Step 5 (Codex adversarial-review) が R3#2 の step (3) 最終 swap に残る crash window を指摘:
+
+- `per_boundary_dir` rmtree 直後 / dir rename 前 crash → old worksheet が missing artifact dir を refer
+- `per_boundary_dir_new` rename 後 / `worksheet_csv_new.replace` 前 crash → new artifact dir + old worksheet (mismatch)
+
+これらは spec §3.2 Recovery 性 table + §9 Risks #1 で trade-off として受容済の窓だが、次 run の pre-cleanup では detect / repair されない。実発生条件は process kill / OS crash / AV file lock / 電源断のみで window は filesystem rename 速度 (ミリ秒オーダー) と短く、operator は worksheet と artifact dir の不整合を即座に視認できるため P3-low 扱い。
+
+manifest / epoch / atomic pointer pattern による transactional crash recovery は [Issue #800](https://github.com/Idios/kobutachan-allaganeye/issues/800) で別途扱う (#798 PR の scope 外)。実装 `scripts/audit-prepare.py` の step (3) コメントブロックにも本制約を明示。
+
+なお Iteration 1 retrospect item 4 の "adjacent boundary PNG overwriting" は本 follow-up の scope 外 (低 impact + Iron Law 3 scope 維持、Issue #798 §7 out of scope 明記)。

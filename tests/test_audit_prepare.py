@@ -213,6 +213,179 @@ def test_export_sample_frames_writes_three_pngs(tmp_path, monkeypatch):
         assert p.stat().st_size > 0
 
 
+def test_main_atomic_success_replaces_old_artifacts(tmp_path, monkeypatch):
+    """Success run atomically replaces old artifacts; no .new residue (R3#2)."""
+    mod = _load_module()
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+    metadata = {
+        "schema_version": "1",
+        "source": "20260116/fake.mkv",
+        "matches": [
+            {
+                "index": 1,
+                "start_time": 49.125,
+                "end_time": 1054.5,
+                "duration": 1005.375,
+                "type": "fl_match",
+            },
+        ],
+        "gaps": [],
+    }
+    (baseline_dir / "obs-fake.metadata.json").write_text(
+        json.dumps(metadata), encoding="utf-8"
+    )
+    video_dir = tmp_path / "videos"
+    (video_dir / "20260116").mkdir(parents=True)
+    (video_dir / "20260116" / "fake.mkv").write_bytes(b"")
+    monkeypatch.setenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", str(video_dir))
+    monkeypatch.setattr(mod, "export_brightness_csv", lambda **kw: None)
+    monkeypatch.setattr(mod, "export_sample_frames", lambda **kw: None)
+
+    worksheet_dir = tmp_path / "audit-worksheet"
+    per_boundary_dir = worksheet_dir / "obs-fake"
+    worksheet_csv = worksheet_dir / "obs-fake.csv"
+
+    # Seed pre-existing artifacts so we can verify they get replaced
+    per_boundary_dir.mkdir(parents=True)
+    (per_boundary_dir / "stale.txt").write_text("STALE", encoding="utf-8")
+    worksheet_csv.write_text("STALE_HEADER\n", encoding="utf-8")
+
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 0
+    # Stale must be gone, new artifacts present
+    assert not (per_boundary_dir / "stale.txt").exists()
+    assert "STALE_HEADER" not in worksheet_csv.read_text(encoding="utf-8")
+    # No .new suffix residue
+    assert not (worksheet_dir / "obs-fake.new").exists()
+    assert not (worksheet_dir / "obs-fake.csv.new").exists()
+
+
+def test_main_atomic_failure_preserves_old_artifacts(tmp_path, monkeypatch):
+    """Failure mid-run keeps old artifacts intact; .new cleaned up (R3#2)."""
+    mod = _load_module()
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+    metadata = {
+        "schema_version": "1",
+        "source": "20260116/fake.mkv",
+        "matches": [
+            {
+                "index": 1,
+                "start_time": 49.125,
+                "end_time": 1054.5,
+                "duration": 1005.375,
+                "type": "fl_match",
+            },
+        ],
+        "gaps": [],
+    }
+    (baseline_dir / "obs-fake.metadata.json").write_text(
+        json.dumps(metadata), encoding="utf-8"
+    )
+    video_dir = tmp_path / "videos"
+    (video_dir / "20260116").mkdir(parents=True)
+    (video_dir / "20260116" / "fake.mkv").write_bytes(b"")
+    monkeypatch.setenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", str(video_dir))
+
+    # export_brightness_csv succeeds; export_sample_frames raises -> mid-run failure
+    monkeypatch.setattr(mod, "export_brightness_csv", lambda **kw: None)
+
+    def _fail(**kw):
+        raise RuntimeError("simulated export failure")
+
+    monkeypatch.setattr(mod, "export_sample_frames", _fail)
+
+    worksheet_dir = tmp_path / "audit-worksheet"
+    per_boundary_dir = worksheet_dir / "obs-fake"
+    worksheet_csv = worksheet_dir / "obs-fake.csv"
+
+    # Seed pre-existing artifacts that must survive the failure
+    per_boundary_dir.mkdir(parents=True)
+    (per_boundary_dir / "keep.txt").write_text("KEEP", encoding="utf-8")
+    worksheet_csv.write_text("KEEP_HEADER\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="simulated export failure"):
+        mod.main(
+            [
+                "obs-fake",
+                "--baseline-dir",
+                str(baseline_dir),
+                "--worksheet-dir",
+                str(worksheet_dir),
+            ]
+        )
+
+    # Old artifacts must be intact
+    assert (per_boundary_dir / "keep.txt").read_text(encoding="utf-8") == "KEEP"
+    assert worksheet_csv.read_text(encoding="utf-8") == "KEEP_HEADER\n"
+    # .new suffix dirs cleaned up
+    assert not (worksheet_dir / "obs-fake.new").exists()
+    assert not (worksheet_dir / "obs-fake.csv.new").exists()
+
+
+def test_main_recovers_from_stale_new_dir(tmp_path, monkeypatch):
+    """Stale .new dir from prior crash is pre-cleaned and new run succeeds (R3#2)."""
+    mod = _load_module()
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+    metadata = {
+        "schema_version": "1",
+        "source": "20260116/fake.mkv",
+        "matches": [
+            {
+                "index": 1,
+                "start_time": 49.125,
+                "end_time": 1054.5,
+                "duration": 1005.375,
+                "type": "fl_match",
+            },
+        ],
+        "gaps": [],
+    }
+    (baseline_dir / "obs-fake.metadata.json").write_text(
+        json.dumps(metadata), encoding="utf-8"
+    )
+    video_dir = tmp_path / "videos"
+    (video_dir / "20260116").mkdir(parents=True)
+    (video_dir / "20260116" / "fake.mkv").write_bytes(b"")
+    monkeypatch.setenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", str(video_dir))
+    monkeypatch.setattr(mod, "export_brightness_csv", lambda **kw: None)
+    monkeypatch.setattr(mod, "export_sample_frames", lambda **kw: None)
+
+    worksheet_dir = tmp_path / "audit-worksheet"
+    # Seed stale .new dir (simulating prior crash mid-write)
+    stale_new = worksheet_dir / "obs-fake.new"
+    stale_new.mkdir(parents=True)
+    (stale_new / "junk.txt").write_text("JUNK", encoding="utf-8")
+    stale_csv_new = worksheet_dir / "obs-fake.csv.new"
+    stale_csv_new.write_text("JUNK\n", encoding="utf-8")
+
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 0
+    # Stale .new must be gone (replaced by either rename target or cleanup)
+    assert not stale_new.exists()
+    assert not stale_csv_new.exists()
+    # Final artifacts in place
+    assert (worksheet_dir / "obs-fake.csv").exists()
+
+
 def test_main_writes_worksheet_csv(tmp_path, monkeypatch):
     """End-to-end: main() reads metadata.json + writes worksheet CSV.
 
