@@ -475,3 +475,69 @@ def test_main_skip_flag_proceeds_without_video(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "--skip-source-size-check" in captured.err
     assert "skipped" in captured.err.lower()
+
+
+def test_main_baseline_missing_source_field_fails_close(tmp_path, monkeypatch, capsys):
+    """env set + baseline lacks 'source' field -> WARNING + exit 3 (AC#3 branch 2)."""
+    import json as _json
+
+    mod = _load_module()
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+    gt_dir = baseline_dir / "ground-truth"
+    gt_dir.mkdir()
+    video_dir = tmp_path / "videos"
+    video_dir.mkdir()
+
+    # Baseline intentionally lacks "source" field -- defensive code path
+    (baseline_dir / "obs-fake.metadata.json").write_text(
+        _json.dumps({"matches": []}),
+        encoding="utf-8",
+    )
+    (gt_dir / "obs-fake.json").write_text(
+        _json.dumps(
+            {
+                "source_file": "fake.mkv",
+                "source_dir_label": "obs-fake",
+                "tolerance_sec": 5,
+                "matches": [],
+                "source_size_bytes": 12345,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", str(video_dir))
+
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--ground-truth-dir",
+            str(gt_dir),
+        ]
+    )
+    assert rc == 3
+    captured = capsys.readouterr()
+    # Task 3 branch-2 WARNING (corrupt baseline path)
+    assert "baseline metadata.json is missing the 'source' field" in captured.err
+    # Downstream validate raises (baseline source None != ground-truth source_file)
+    assert "does not match" in captured.err
+
+
+def test_validate_skip_flag_still_enforces_schema():
+    """skip_source_size_check=True does NOT bypass schema field check (AC#4)."""
+    mod = _load_module()
+    baseline = {"source": "x.mkv", "matches": []}
+    ground_truth = {
+        "source_file": "x.mkv",
+        "source_dir_label": "obs-fake",
+        "tolerance_sec": 5,
+        "matches": [],
+        # source_size_bytes intentionally missing -- schema validation must still raise
+    }
+    with pytest.raises(ValueError, match="missing required fields"):
+        mod.validate_ground_truth_against_baseline(
+            baseline, ground_truth, skip_source_size_check=True
+        )
