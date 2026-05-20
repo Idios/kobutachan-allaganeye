@@ -299,9 +299,37 @@ def main(argv: list[str] | None = None) -> int:
         worksheet_csv_new.unlink(missing_ok=True)
         raise
 
-    # (3) All-success: swap temp into final position. POSIX: atomic. Windows:
-    # rmtree + rename has a brief window where per_boundary_dir is absent,
-    # but next-run pre-clean recovers any in-progress state cleanly.
+    # (3) All-success: swap temp into final position.
+    #
+    # ATOMICITY LIMITATIONS (Issue #800 tracks the proper fix):
+    #
+    # The swap is 3 non-atomic operations: rmtree -> rename -> replace.
+    # A crash / AV lock / process kill between any two leaves observable
+    # mixed state that next-run pre-clean does NOT detect or repair:
+    #
+    #   - After rmtree, before rename:
+    #       per_boundary_dir gone, worksheet_csv still old.
+    #       Reader sees old worksheet referencing a missing artifact dir.
+    #   - After rename, before replace:
+    #       per_boundary_dir is new, worksheet_csv still old.
+    #       Reader sees old worksheet referencing the new artifact dir.
+    #
+    # POSIX `rename(2)` semantics make each individual op atomic, but the
+    # 3-op sequence as a whole is not transactional. Windows additionally
+    # cannot atomically rename onto an existing directory, which is why
+    # rmtree happens first.
+    #
+    # Recovery today: operator notices the inconsistency (worksheet
+    # references files that do not exist, or the audit doc disagrees with
+    # the generated frames) and re-runs `audit-prepare`. The crash window
+    # is very short (filesystem rename is milliseconds) so the practical
+    # impact is low for an interactive operator workflow.
+    #
+    # Tracked for future hardening in Issue #800 (manifest / epoch / atomic
+    # pointer pattern). See `docs/v030-baseline-audit.md` "Codex round 3
+    # follow-up" section + spec `docs/superpowers/specs/
+    # 2026-05-20-audit-script-hardening-design.md` §3.2 Recovery table /
+    # §9 Risks #1.
     if per_boundary_dir.exists():
         shutil.rmtree(per_boundary_dir)
     per_boundary_dir_new.rename(per_boundary_dir)
