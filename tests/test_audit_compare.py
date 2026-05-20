@@ -156,3 +156,77 @@ def test_format_markdown_contains_header_and_table():
     assert "boundary_shift" in out
     assert "silent_miss" in out
     assert "-136.625" in out
+
+
+def test_validate_ground_truth_against_baseline_ok():
+    mod = _load_module()
+    baseline = {"source": "20260116/x.mkv", "matches": []}
+    ground_truth = {
+        "source_file": "20260116/x.mkv",
+        "source_dir_label": "obs-20260116",
+        "tolerance_sec": 5,
+        "matches": [],
+    }
+    mod.validate_ground_truth_against_baseline(baseline, ground_truth)
+
+
+def test_validate_ground_truth_source_mismatch_raises():
+    mod = _load_module()
+    baseline = {"source": "20260116/x.mkv", "matches": []}
+    ground_truth = {
+        "source_file": "20260118/y.mkv",
+        "source_dir_label": "obs-20260118",
+        "tolerance_sec": 5,
+        "matches": [],
+    }
+    with pytest.raises(ValueError, match="does not match"):
+        mod.validate_ground_truth_against_baseline(baseline, ground_truth)
+
+
+def test_validate_ground_truth_missing_fields_raises():
+    mod = _load_module()
+    baseline = {"source": "x", "matches": []}
+    ground_truth = {"source_file": "x", "matches": []}
+    with pytest.raises(ValueError, match="missing required fields"):
+        mod.validate_ground_truth_against_baseline(baseline, ground_truth)
+
+
+def test_classify_findings_extra_baseline_match_yields_false_positive_not_shift():
+    """Baseline has an extra match that GT does not. The new matcher should
+    classify it as 2x false_positive, not silently absorb as boundary_shift."""
+    mod = _load_module()
+    baseline = {
+        "matches": [
+            {"index": 1, "start_time": 100, "end_time": 200, "type": "fl_match"},
+            {"index": 2, "start_time": 500, "end_time": 600, "type": "fl_match"},
+        ]
+    }
+    ground_truth = {
+        "matches": [
+            {"index": 1, "start_time": 100, "end_time": 200, "type": "fl_match"},
+        ],
+        "tolerance_sec": 5,
+    }
+    findings = mod.classify_findings(baseline, ground_truth)
+    types = sorted(f["finding_type"] for f in findings)
+    assert types == ["agreed", "agreed", "false_positive", "false_positive"]
+
+
+def test_classify_findings_missing_gt_match_yields_silent_miss_not_shift():
+    """GT has an extra match that baseline does not. Should be 2x silent_miss."""
+    mod = _load_module()
+    baseline = {
+        "matches": [
+            {"index": 1, "start_time": 100, "end_time": 200, "type": "fl_match"},
+        ]
+    }
+    ground_truth = {
+        "matches": [
+            {"index": 1, "start_time": 100, "end_time": 200, "type": "fl_match"},
+            {"index": 2, "start_time": 500, "end_time": 600, "type": "fl_match"},
+        ],
+        "tolerance_sec": 5,
+    }
+    findings = mod.classify_findings(baseline, ground_truth)
+    types = sorted(f["finding_type"] for f in findings)
+    assert types == ["agreed", "agreed", "silent_miss", "silent_miss"]

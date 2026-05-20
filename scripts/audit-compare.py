@@ -23,93 +23,144 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
 
 
-def _extract_boundaries(
-    matches: list[dict[str, Any]],
-) -> list[tuple[int | None, str, float]]:
-    """Return (index, kind, timestamp) for each match start/end."""
-    out: list[tuple[int | None, str, float]] = []
-    for m in matches:
-        out.append((m.get("index"), "start", float(m["start_time"])))
-        out.append((m.get("index"), "end", float(m["end_time"])))
-    return out
+_REQUIRED_GROUND_TRUTH_FIELDS = (
+    "source_file",
+    "source_dir_label",
+    "tolerance_sec",
+    "matches",
+)
+
+
+def validate_ground_truth_against_baseline(
+    baseline: dict[str, Any], ground_truth: dict[str, Any]
+) -> None:
+    """Reject ground-truth files that do not describe the same recording.
+
+    Raises ValueError if required schema fields are absent or the baseline's
+    `source` does not match the ground truth's `source_file`. This prevents
+    silently comparing one recording's baseline against another recording's
+    ground truth (Codex high finding, 2026-05-20).
+    """
+    missing = [f for f in _REQUIRED_GROUND_TRUTH_FIELDS if f not in ground_truth]
+    if missing:
+        raise ValueError(
+            f"ground truth missing required fields: {missing}. "
+            f"Required: {list(_REQUIRED_GROUND_TRUTH_FIELDS)}"
+        )
+    baseline_source = baseline.get("source")
+    gt_source = ground_truth.get("source_file")
+    if baseline_source != gt_source:
+        raise ValueError(
+            f"baseline source ({baseline_source!r}) does not match "
+            f"ground truth source_file ({gt_source!r}); "
+            "this ground-truth file describes a different recording"
+        )
+
+
+def _pair_matches_by_overlap(
+    baseline_matches: list[dict[str, Any]],
+    ground_truth_matches: list[dict[str, Any]],
+) -> list[tuple[int | None, int | None]]:
+    """Pair (baseline_idx, gt_idx) by greedy max time-range overlap.
+
+    Each ground-truth match consumes at most one baseline match (whichever
+    overlaps it the most). Unpaired ground-truth matches become
+    `silent_miss` candidates; unpaired baseline matches become
+    `false_positive` candidates. Pairing at match-level (not flat boundary
+    level) ensures that an extra baseline match plus a missing ground-truth
+    match are reported as both `false_positive` and `silent_miss` rather
+    than collapsing into a single `boundary_shift` (Codex high finding,
+    2026-05-20).
+    """
+    pairs: list[tuple[int | None, int | None]] = []
+    used_baseline: set[int] = set()
+    for g_i, g_m in enumerate(ground_truth_matches):
+        g_start = float(g_m["start_time"])
+        g_end = float(g_m["end_time"])
+        best_b: int | None = None
+        best_overlap: float = 0.0
+        for b_i, b_m in enumerate(baseline_matches):
+            if b_i in used_baseline:
+                continue
+            b_start = float(b_m["start_time"])
+            b_end = float(b_m["end_time"])
+            overlap = max(0.0, min(g_end, b_end) - max(g_start, b_start))
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_b = b_i
+        if best_b is not None and best_overlap > 0:
+            pairs.append((best_b, g_i))
+            used_baseline.add(best_b)
+        else:
+            pairs.append((None, g_i))
+    for b_i in range(len(baseline_matches)):
+        if b_i not in used_baseline:
+            pairs.append((b_i, None))
+    return pairs
 
 
 def classify_findings(
     baseline: dict[str, Any], ground_truth: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    """Classify each ground_truth / baseline boundary into the 4 finding types."""
+    """Classify each baseline / ground-truth boundary into the 4 finding types.
+
+    Algorithm (rewritten 2026-05-20 per Codex finding): pair matches by
+    maximum time-range overlap first, then evaluate per-paired-pair start
+    and end deltas against `tolerance_sec`. Unpaired matches emit two
+    boundary-level findings (silent_miss or false_positive).
+    """
     tolerance = float(ground_truth.get("tolerance_sec", 1))
-    b_boundaries = _extract_boundaries(baseline.get("matches", []))
-    g_boundaries = _extract_boundaries(ground_truth.get("matches", []))
+    baseline_matches = baseline.get("matches", [])
+    gt_matches = ground_truth.get("matches", [])
+    pairs = _pair_matches_by_overlap(baseline_matches, gt_matches)
 
-    matched_b: set[int] = set()
     findings: list[dict[str, Any]] = []
-
-    # Walk ground truth: find best match in baseline within tolerance
-    for g_idx, g_kind, g_ts in g_boundaries:
-        best_b: int | None = None
-        best_delta: float = float("inf")
-        for i, (_b_idx, b_kind, b_ts) in enumerate(b_boundaries):
-            if i in matched_b or b_kind != g_kind:
-                continue
-            delta = abs(g_ts - b_ts)
-            if delta < best_delta:
-                best_delta = delta
-                best_b = i
-        if best_b is not None and best_delta <= tolerance:
-            matched_b.add(best_b)
-            _b_idx_match, _b_kind_match, b_ts_match = b_boundaries[best_b]
-            findings.append(
-                {
-                    "finding_type": "agreed",
-                    "match_index_gt": g_idx,
-                    "boundary": g_kind,
-                    "baseline_ts": b_ts_match,
-                    "ground_truth_ts": g_ts,
-                    "delta_sec": g_ts - b_ts_match,
-                }
-            )
-        elif best_b is not None and best_delta > tolerance:
-            # Closest baseline boundary exists but outside tolerance -> shift
-            matched_b.add(best_b)
-            _b_idx_match, _b_kind_match, b_ts_match = b_boundaries[best_b]
-            findings.append(
-                {
-                    "finding_type": "boundary_shift",
-                    "match_index_gt": g_idx,
-                    "boundary": g_kind,
-                    "baseline_ts": b_ts_match,
-                    "ground_truth_ts": g_ts,
-                    "delta_sec": g_ts - b_ts_match,
-                }
-            )
-        else:
-            findings.append(
-                {
-                    "finding_type": "silent_miss",
-                    "match_index_gt": g_idx,
-                    "boundary": g_kind,
-                    "baseline_ts": None,
-                    "ground_truth_ts": g_ts,
-                    "delta_sec": None,
-                }
-            )
-
-    # Unmatched baseline boundaries -> false positive
-    for i, (b_idx, b_kind, b_ts) in enumerate(b_boundaries):
-        if i in matched_b:
-            continue
-        findings.append(
-            {
-                "finding_type": "false_positive",
-                "match_index_gt": None,
-                "match_index_baseline": b_idx,
-                "boundary": b_kind,
-                "baseline_ts": b_ts,
-                "ground_truth_ts": None,
-                "delta_sec": None,
-            }
-        )
+    for b_i, g_i in pairs:
+        if b_i is not None and g_i is not None:
+            b_m = baseline_matches[b_i]
+            g_m = gt_matches[g_i]
+            for kind, key in (("start", "start_time"), ("end", "end_time")):
+                b_ts = float(b_m[key])
+                g_ts = float(g_m[key])
+                delta = g_ts - b_ts
+                finding_type = "agreed" if abs(delta) <= tolerance else "boundary_shift"
+                findings.append(
+                    {
+                        "finding_type": finding_type,
+                        "match_index_gt": g_m.get("index"),
+                        "boundary": kind,
+                        "baseline_ts": b_ts,
+                        "ground_truth_ts": g_ts,
+                        "delta_sec": delta,
+                    }
+                )
+        elif b_i is None and g_i is not None:
+            g_m = gt_matches[g_i]
+            for kind, key in (("start", "start_time"), ("end", "end_time")):
+                findings.append(
+                    {
+                        "finding_type": "silent_miss",
+                        "match_index_gt": g_m.get("index"),
+                        "boundary": kind,
+                        "baseline_ts": None,
+                        "ground_truth_ts": float(g_m[key]),
+                        "delta_sec": None,
+                    }
+                )
+        elif b_i is not None and g_i is None:
+            b_m = baseline_matches[b_i]
+            for kind, key in (("start", "start_time"), ("end", "end_time")):
+                findings.append(
+                    {
+                        "finding_type": "false_positive",
+                        "match_index_gt": None,
+                        "match_index_baseline": b_m.get("index"),
+                        "boundary": kind,
+                        "baseline_ts": float(b_m[key]),
+                        "ground_truth_ts": None,
+                        "delta_sec": None,
+                    }
+                )
 
     return findings
 
@@ -214,6 +265,12 @@ def main(argv: list[str] | None = None) -> int:
 
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     ground_truth = json.loads(ground_truth_path.read_text(encoding="utf-8"))
+
+    try:
+        validate_ground_truth_against_baseline(baseline, ground_truth)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 3
 
     findings = classify_findings(baseline, ground_truth)
     print(

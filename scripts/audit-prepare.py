@@ -62,6 +62,20 @@ def _format_timestamp(timestamp_sec: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:06.3f}"
 
 
+def _frame_png_filename(timestamp_sec: float) -> str:
+    """Canonical PNG filename used by both worksheet rows and export_sample_frames.
+
+    Zero-padded `frame-around-NNN.MMM.png` (07.3f width). Single source of truth
+    so worksheet rows always point at filenames that actually exist on disk.
+    """
+    return f"frame-around-{timestamp_sec:07.3f}.png"
+
+
+def _brightness_csv_filename(timestamp_sec: float) -> str:
+    """Canonical brightness CSV filename used by worksheet rows and exporter."""
+    return f"brightness-around-{timestamp_sec:.3f}.csv"
+
+
 def build_worksheet_rows(metadata: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract boundary timestamps from metadata.json into worksheet rows.
 
@@ -82,8 +96,8 @@ def build_worksheet_rows(metadata: dict[str, Any]) -> list[dict[str, Any]]:
                     "timestamp_sec": ts,
                     "timestamp_display": _format_timestamp(ts),
                     "current_type": match.get("type", "unknown"),
-                    "brightness_csv_ref": f"brightness-around-{ts:.3f}.csv",
-                    "sample_frame_png_ref": f"frame-around-{ts:.3f}.png",
+                    "brightness_csv_ref": _brightness_csv_filename(ts),
+                    "sample_frame_png_ref": _frame_png_filename(ts),
                     "idios_verdict": "",
                     "idios_note": "",
                 }
@@ -99,8 +113,8 @@ def build_worksheet_rows(metadata: dict[str, Any]) -> list[dict[str, Any]]:
                     "timestamp_sec": ts,
                     "timestamp_display": _format_timestamp(ts),
                     "current_type": "gap",
-                    "brightness_csv_ref": f"brightness-around-{ts:.3f}.csv",
-                    "sample_frame_png_ref": f"frame-around-{ts:.3f}.png",
+                    "brightness_csv_ref": _brightness_csv_filename(ts),
+                    "sample_frame_png_ref": _frame_png_filename(ts),
                     "idios_verdict": "",
                     "idios_note": "",
                 }
@@ -191,7 +205,7 @@ def export_sample_frames(
         if raw is None:
             continue
         frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, _SAMPLE_WIDTH, 3)
-        out_path = out_dir / f"frame-around-{ts:07.3f}.png"
+        out_path = out_dir / _frame_png_filename(ts)
         cv2.imwrite(str(out_path), frame[:, :, ::-1])  # RGB -> BGR for cv2
 
 
