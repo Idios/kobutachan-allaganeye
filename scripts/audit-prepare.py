@@ -415,7 +415,6 @@ def main(argv: list[str] | None = None) -> int:
     # follow-up" section + spec `docs/superpowers/specs/
     # 2026-05-20-audit-script-hardening-design.md` §3.2 Recovery table /
     # §9 Risks #1.
-    args.worksheet_dir.mkdir(parents=True, exist_ok=True)
     _write_tx_state_atomic(tx_path, state=_TX_STATE_SWAPPING)
     if per_boundary_dir.exists():
         shutil.rmtree(per_boundary_dir)
