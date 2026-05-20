@@ -192,6 +192,22 @@ def _write_tx_state_atomic(tx_path: Path, *, state: str) -> None:
     tx_new.replace(tx_path)
 
 
+def _recover_stale_artifacts(
+    *,
+    per_boundary_dir: Path,
+    worksheet_csv: Path,
+    tx_path: Path,
+) -> None:
+    """Wipe artifacts when tx-state == swapping on startup.
+
+    Idempotent. Does not raise on missing paths. Called from main() Step 0
+    after _read_tx_state returns a swapping-state dict.
+    """
+    shutil.rmtree(per_boundary_dir, ignore_errors=True)
+    worksheet_csv.unlink(missing_ok=True)
+    tx_path.unlink(missing_ok=True)
+
+
 def resolve_video_path(source_relative: str) -> Path:
     """Resolve metadata.json `source` field to an absolute video path.
 

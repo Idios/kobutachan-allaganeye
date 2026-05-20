@@ -541,3 +541,59 @@ def test_write_tx_state_atomic_cleans_up_new_suffix(tmp_path):
     mod._write_tx_state_atomic(tx_path, state="consistent")
     assert tx_path.exists()
     assert not (tmp_path / "obs.tx.json.new").exists()
+
+
+def test_recover_stale_artifacts_removes_all(tmp_path):
+    mod = _load_module()
+    per_boundary_dir = tmp_path / "obs"
+    worksheet_csv = tmp_path / "obs.csv"
+    tx_path = tmp_path / "obs.tx.json"
+
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "a.png").write_bytes(b"PNG")
+    worksheet_csv.write_text("HEADER\n", encoding="utf-8")
+    tx_path.write_text("{}", encoding="utf-8")
+
+    mod._recover_stale_artifacts(
+        per_boundary_dir=per_boundary_dir,
+        worksheet_csv=worksheet_csv,
+        tx_path=tx_path,
+    )
+
+    assert not per_boundary_dir.exists()
+    assert not worksheet_csv.exists()
+    assert not tx_path.exists()
+
+
+def test_recover_stale_artifacts_idempotent_on_missing(tmp_path):
+    """Helper must not raise when paths are already absent."""
+    mod = _load_module()
+    per_boundary_dir = tmp_path / "obs"
+    worksheet_csv = tmp_path / "obs.csv"
+    tx_path = tmp_path / "obs.tx.json"
+
+    # All absent
+    mod._recover_stale_artifacts(
+        per_boundary_dir=per_boundary_dir,
+        worksheet_csv=worksheet_csv,
+        tx_path=tx_path,
+    )
+
+
+def test_recover_stale_artifacts_partial_state(tmp_path):
+    """Helper handles 'dir exists but csv/tx absent' without error."""
+    mod = _load_module()
+    per_boundary_dir = tmp_path / "obs"
+    worksheet_csv = tmp_path / "obs.csv"
+    tx_path = tmp_path / "obs.tx.json"
+
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "a.png").write_bytes(b"PNG")
+
+    mod._recover_stale_artifacts(
+        per_boundary_dir=per_boundary_dir,
+        worksheet_csv=worksheet_csv,
+        tx_path=tx_path,
+    )
+
+    assert not per_boundary_dir.exists()
