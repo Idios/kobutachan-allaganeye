@@ -293,6 +293,12 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=Path("tests/baselines/v0.3.0/ground-truth"),
     )
+    parser.add_argument(
+        "--skip-source-size-check",
+        action="store_true",
+        help="Skip source_size_bytes verification (operator escape; "
+        "logged to stderr; ground-truth schema validation is NOT skipped).",
+    )
     args = parser.parse_args(argv)
 
     baseline_path = args.baseline_dir / f"{args.recording_label}.metadata.json"
@@ -335,12 +341,20 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
 
+    if args.skip_source_size_check:
+        print(
+            "WARNING: --skip-source-size-check is set; source_size_bytes "
+            "verification skipped. Ground-truth schema validation still runs.",
+            file=sys.stderr,
+        )
+
     try:
         validate_ground_truth_against_baseline(
             baseline,
             ground_truth,
             recording_label=args.recording_label,
             actual_source_size=actual_source_size,
+            skip_source_size_check=args.skip_source_size_check,
         )
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

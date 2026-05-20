@@ -430,3 +430,48 @@ def test_main_video_missing_in_env_fails_close(tmp_path, monkeypatch, capsys):
     assert "does not exist" in captured.err
     # Task 2 ERROR (validate raises and main catches)
     assert "actual_source_size is required" in captured.err
+
+
+def test_main_skip_flag_proceeds_without_video(tmp_path, monkeypatch, capsys):
+    """--skip-source-size-check bypasses size check + emits stderr WARNING (R3#1)."""
+    import json as _json
+
+    mod = _load_module()
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+    gt_dir = baseline_dir / "ground-truth"
+    gt_dir.mkdir()
+
+    (baseline_dir / "obs-fake.metadata.json").write_text(
+        _json.dumps({"source": "fake.mkv", "matches": []}),
+        encoding="utf-8",
+    )
+    (gt_dir / "obs-fake.json").write_text(
+        _json.dumps(
+            {
+                "source_file": "fake.mkv",
+                "source_dir_label": "obs-fake",
+                "tolerance_sec": 5,
+                "matches": [],
+                "source_size_bytes": 12345,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", raising=False)
+
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--ground-truth-dir",
+            str(gt_dir),
+            "--skip-source-size-check",
+        ]
+    )
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "--skip-source-size-check" in captured.err
+    assert "skipped" in captured.err.lower()
