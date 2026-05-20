@@ -17,7 +17,7 @@
 ## File Structure
 
 | Path | 種別 | 責務 |
-|---|---|---|
+| --- | --- | --- |
 | `scripts/audit-prepare.py` | Create | Pre-screen worksheet generator (matches/gaps から境界抽出、brightness CSV / sample frame PNG / worksheet CSV を export) |
 | `scripts/audit-compare.py` | Create | Diff extractor (baseline と ground truth を tolerance_sec で照合、silent_miss/false_positive/boundary_shift/agreed に分類、markdown table 出力) |
 | `tests/test_audit_prepare.py` | Create | `audit-prepare.py` の unit + integration test (synthetic metadata.json fixture) |
@@ -41,6 +41,7 @@
 ## Task 1: ground-truth ディレクトリ marker
 
 **Files:**
+
 - Create: `tests/baselines/v0.3.0/ground-truth/.gitkeep`
 - Create: `tests/baselines/v0.3.0/audit-worksheet/.gitignore`
 
@@ -87,6 +88,7 @@ EOF
 ## Task 2: audit-prepare.py — worksheet row builder (TDD)
 
 **Files:**
+
 - Create: `tests/test_audit_prepare.py`
 - Create: `scripts/audit-prepare.py`
 
@@ -318,6 +320,7 @@ EOF
 ## Task 3: audit-prepare.py — video path resolution (TDD)
 
 **Files:**
+
 - Modify: `tests/test_audit_prepare.py` (add new tests)
 - Modify: `scripts/audit-prepare.py` (add `resolve_video_path`)
 
@@ -421,6 +424,7 @@ EOF
 ## Task 4: audit-prepare.py — brightness CSV export (TDD)
 
 **Files:**
+
 - Modify: `tests/test_audit_prepare.py`
 - Modify: `scripts/audit-prepare.py`
 
@@ -551,6 +555,7 @@ EOF
 ## Task 5: audit-prepare.py — sample frame PNG export (TDD)
 
 **Files:**
+
 - Modify: `tests/test_audit_prepare.py`
 - Modify: `scripts/audit-prepare.py`
 
@@ -662,6 +667,7 @@ EOF
 ## Task 6: audit-prepare.py — main() integration (TDD)
 
 **Files:**
+
 - Modify: `tests/test_audit_prepare.py`
 - Modify: `scripts/audit-prepare.py`
 
@@ -855,6 +861,7 @@ EOF
 ## Task 7: audit-compare.py — diff classification (TDD)
 
 **Files:**
+
 - Create: `tests/test_audit_compare.py`
 - Create: `scripts/audit-compare.py`
 
@@ -1168,6 +1175,7 @@ EOF
 ## Task 8: audit-compare.py — markdown formatter (TDD)
 
 **Files:**
+
 - Modify: `tests/test_audit_compare.py`
 - Modify: `scripts/audit-compare.py`
 
@@ -1335,6 +1343,7 @@ EOF
 ## Task 9: Full suite verification
 
 **Files:**
+
 - (none changed)
 
 実装した script / test 全件で lint / type / unit test を回し、既存 testsuite に regression がないか確認。
@@ -1376,6 +1385,7 @@ EOF
 ## Task 10: Iteration 1 — obs-20260116 worksheet generation
 
 **Files:**
+
 - Generated: `tests/baselines/v0.3.0/audit-worksheet/obs-20260116.csv`
 - Generated: `tests/baselines/v0.3.0/audit-worksheet/obs-20260116/brightness-around-*.csv`
 - Generated: `tests/baselines/v0.3.0/audit-worksheet/obs-20260116/frame-around-*.png`
@@ -1398,12 +1408,14 @@ Expected: stderr shows worksheet path and per-boundary artifacts dir. May take 3
 
 Run: `Get-ChildItem tests/baselines/v0.3.0/audit-worksheet/obs-20260116*` (PowerShell)
 Expected:
+
 - `obs-20260116.csv` — 12 rows (6 matches × 2 boundaries + 0 gaps × 2)
 - `obs-20260116/` dir containing `brightness-around-*.csv` (12 files) + `frame-around-*.png` (~36 files: 12 boundaries × 3 offsets)
 
 - [ ] **Step 4: Spot-check worksheet**
 
 Open `tests/baselines/v0.3.0/audit-worksheet/obs-20260116.csv` and verify:
+
 - Header line is correct
 - First match start: index=1, boundary_type=match_start, timestamp_sec=49.125, current_type=fl_match
 - Match 3 end: timestamp_sec=3367.125 (= F1 example boundary that PR #793 changed to 3230.5 = note: baseline file is PR #793 head, so should reflect new value)
@@ -1419,6 +1431,7 @@ If baseline file has old timestamps (legacy fps filter values), STOP and confirm
 ## Task 11: Iteration 1 — Idios manual viewing (HANDOFF)
 
 **Files (manual):**
+
 - Create: `tests/baselines/v0.3.0/ground-truth/obs-20260116.json`
 
 **THIS IS A MANUAL TASK — Idios performs the work.** The agent's role is to (1) verify the worksheet exists, (2) wait for Idios to upload the ground truth JSON, (3) sanity-check the JSON schema.
@@ -1427,7 +1440,7 @@ If baseline file has old timestamps (legacy fps filter values), STOP and confirm
 
 Send Idios the following:
 
-```
+```text
 obs-20260116 worksheet が `tests/baselines/v0.3.0/audit-worksheet/obs-20260116.csv` に生成済。
 
 手順:
@@ -1484,6 +1497,7 @@ EOF
 ## Task 12: Iteration 1 — audit-compare run + finding classification
 
 **Files:**
+
 - Create: `docs/v030-baseline-audit.md`
 
 audit-compare.py で diff 抽出 → markdown section をベースに Idios と finding 分類。
@@ -1550,6 +1564,7 @@ EOF
 ## Task 13: Iteration 1 retrospect — spec / script feedback
 
 **Files:**
+
 - (potentially) Modify: `docs/superpowers/specs/2026-05-19-v030-baseline-audit-design.md`
 - (potentially) Modify: `scripts/audit-prepare.py` / `scripts/audit-compare.py`
 
@@ -1558,6 +1573,7 @@ Iteration 1 で発見した script bug / workflow gap / 不足を fix。
 - [ ] **Step 1: Review with Idios**
 
 Ask:
+
 - Was the worksheet CSV easy to fill in (column names clear, sufficient detail)?
 - Were brightness CSVs / PNGs useful, or wasted I/O?
 - Did audit-compare output give enough info to classify findings?
@@ -1581,6 +1597,7 @@ Commit messages per fix. If no feedback needed, skip this task.
 ## Task 14: Iteration 2 — remaining 4 baselines worksheet generation
 
 **Files:**
+
 - Generated: `tests/baselines/v0.3.0/audit-worksheet/obs-20260118.csv` + per-boundary artifacts
 - Generated: `tests/baselines/v0.3.0/audit-worksheet/obs-20260119.csv` + per-boundary artifacts
 - Generated: `tests/baselines/v0.3.0/audit-worksheet/obs-20260127.csv` + per-boundary artifacts
@@ -1609,6 +1626,7 @@ Expected: 4 worksheet CSVs + per-boundary dirs. obs-20260119 has the most matche
 For each label, confirm worksheet CSV exists and has expected row count (matches × 2 + gaps × 2 per `<label>.metadata.json`).
 
 Expected row counts (from `tests/baselines/v0.3.0/README.md`):
+
 - obs-20260118: 5 matches × 2 + 2 gaps × 2 = 14 rows
 - obs-20260119: 9 matches × 2 + 1 gap × 2 = 20 rows
 - obs-20260127: 3 matches × 2 + 2 gaps × 2 = 10 rows
@@ -1621,6 +1639,7 @@ Expected row counts (from `tests/baselines/v0.3.0/README.md`):
 ## Task 15: Iteration 2 — Idios manual viewing for 4 baselines (HANDOFF)
 
 **Files (manual):**
+
 - Create: `tests/baselines/v0.3.0/ground-truth/obs-20260118.json`
 - Create: `tests/baselines/v0.3.0/ground-truth/obs-20260119.json`
 - Create: `tests/baselines/v0.3.0/ground-truth/obs-20260127.json`
@@ -1632,7 +1651,7 @@ Expected row counts (from `tests/baselines/v0.3.0/README.md`):
 
 Send Idios:
 
-```
+```text
 4 worksheet が `tests/baselines/v0.3.0/audit-worksheet/obs-*.csv` に生成済。Iteration 1 と同じ手順で 4 件分 ground truth を作成してください。
 
 オススメ順 (estimated time):
@@ -1670,6 +1689,7 @@ EOF
 ## Task 16: Iteration 2 — audit-compare + finding classification + cross-recording summary
 
 **Files:**
+
 - Modify: `docs/v030-baseline-audit.md`
 
 4 件分の audit-compare 出力 + finding 分類 + 全 5 件の summary を doc に集約。
@@ -1698,7 +1718,7 @@ Replace the `## Cross-recording summary` placeholder with actual content:
 ### Totals (all 5 baselines)
 
 | Category | Count |
-|---|---|
+| --- | --- |
 | Agreed (within ±1s) | (n_agreed) |
 | Silent miss | (n_silent_miss) |
 | False positive | (n_false_positive) |
@@ -1708,7 +1728,7 @@ Replace the `## Cross-recording summary` placeholder with actual content:
 ### Classification
 
 | Class | Count | Notes |
-|---|---|---|
+| --- | --- | --- |
 | (a) baseline 修正 | (n_a) | baseline metadata.json regenerate 対象 |
 | (b) detector tuning | (n_b) | 別 issue 起票 (Iron Law 2 bulk confirm 適用) |
 | (c) 既知限界 | (n_c) | docs/video-processing.md 追記対象 |
@@ -1748,6 +1768,7 @@ EOF
 ## Task 17: (b) detector tuning — new issues (Iron Law 2 bulk confirm)
 
 **Files (no repo files changed):**
+
 - GitHub: new issues per (b) finding
 
 (b) 該当 finding を別 issue で起票する。Iron Law 2 を厳守。
@@ -1765,6 +1786,7 @@ Extract all `(b)` classifications from `docs/v030-baseline-audit.md` and group b
 - [ ] **Step 3: Create issues per `/create-task` skill**
 
 For each issue, use the `/create-task` skill (or `gh issue create`) following `docs/issue-policy.md`. Title format: `[refactor] L3: detect tuning — <subsystem> (audit #796 から)` or `[task] L3: ...`. Body includes:
+
 - Preamble (期待値 / 現状 / ユーザー影響・重要性)
 - Cross-link to `docs/v030-baseline-audit.md#obs-<recording>` section
 - Cross-link to #796
@@ -1794,6 +1816,7 @@ EOF
 ## Task 18: (c) known limitation documentation
 
 **Files:**
+
 - Modify: `docs/video-processing.md` (if (c) finding exists)
 - Modify: `CLAUDE.md` (if (c) finding warrants top-level mention)
 - GitHub: P3-low issue for tracking
@@ -1840,6 +1863,7 @@ EOF
 ## Task 19: PR Pre-flight (Iron Law 6 Step 0-5)
 
 **Files (no changes):**
+
 - (verification only)
 
 Iron Law 6 Pre-flight 5 step を実行してから PR 作成。
@@ -1873,7 +1897,7 @@ Expected: only the PR we're creating + closed PRs (if any retrospect).
 
 Run: `/codex:adversarial-review` (skill invocation) with focus:
 
-```
+```text
 audit script の reproducibility (deterministic worksheet generation across runs),
 ground truth schema vs vtuber-primary-ground-truth.json consistency,
 finding classification rubric の網羅性 (4 type × 3 class = 12 case 全部 covered か),
@@ -1896,6 +1920,7 @@ Present Iron Law 6 result summary and ask Idios for go-ahead on PR creation.
 ## Task 20: PR creation
 
 **Files (no changes):**
+
 - GitHub: new PR
 
 - [ ] **Step 1: Push branch**

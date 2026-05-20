@@ -12,7 +12,7 @@
 PR #793 (#576 detect fps filter retirement) 実装中、複数の baseline 精度問題が偶発的に発見された:
 
 | # | Recording | Timestamp | 内容 | 発見契機 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | F1 | obs-20260116 | t=3227.4 (3.6s blackout) | Match 3 end 56:07→53:50、legacy fps filter で silent miss、dual seek path で初検出 | Codex の spec reading |
 | F2 | obs-20260116 | t=2175.7-2177.3 (~1.6s blackout) | sub-sample-interval boundary、Idios 視覚確認済の実試合境界、pre-A5 dual seek で deterministic miss、A5 で救済 | Idios の視覚確認 |
 | F3 | obs-20260118 | t=2610.75 | sub-sample-interval boundary、pre-A5 dual seek で miss、A5 で救済 (legacy fps filter は非決定検出) | Pre-A5 baseline regenerate (commit 789a9b7) 中の偶発検出 |
@@ -38,7 +38,7 @@ F1-F4 は PR #793 で fix 済とされているが、**発見が偶発的** で�
 ## 2. 採用方針 (brainstorming で決定)
 
 | 論点 | 選択肢 | 採用 | 根拠 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | **Claude 支援レベル** | (A) Minimum (diff script のみ) (B) Pre-screen 付き視聴 (C) Auto-suggest + Confirm | **(B) Pre-screen 付き視聴** | Idios workload 5-7.5h → 2-4h に短縮 (C) は ground truth の neutrality を損なう懸念あり (Claude の auto-extract が誤った場合に発見困難) |
 | **Audit batching** | (X) Per-recording 逐次 (Y) 5 本一括 batch (Z) 増分 (1+4) | **(Z) 増分 (1 本 proof of concept → 残り 4 本 batch)** | obs-20260116 で end-to-end 実証 → script / worksheet の不足を spec に feedback → 残り 4 本 batch。やり直し cost が最小 |
 | **Ground truth file format** | (a) `.txt` (issue 本文表記) (b) `.json` (vtuber-primary-ground-truth.json 既存 schema) | **(b) `.json`** | 既存 vtuber-primary-ground-truth.json と schema 統一 / diff 抽出 script が書きやすい / 既存 baseline metadata.json と同 family |
@@ -145,7 +145,7 @@ F1-F4 は PR #793 で fix 済とされているが、**発見が偶発的** で�
 ### 4.1 新規 scripts
 
 | Path | 役割 |
-|---|---|
+| --- | --- |
 | `scripts/audit-prepare.py` | Stage 1 worksheet generator。引数: `<recording-label>`、内部で `tests/baselines/v0.3.0/<label>.metadata.json` を読む |
 | `scripts/audit-compare.py` | Stage 3 diff extractor。引数: `<recording-label>`、ground truth と baseline を tolerance_sec で照合 |
 
@@ -154,7 +154,7 @@ F1-F4 は PR #793 で fix 済とされているが、**発見が偶発的** で�
 ### 4.2 新規 files
 
 | Path | 種別 | 生成主 |
-|---|---|---|
+| --- | --- | --- |
 | `tests/baselines/v0.3.0/ground-truth/<recording>.json` | Idios 確定 ground truth | Idios (worksheet CSV から組立) |
 | `tests/baselines/v0.3.0/audit-worksheet/<recording>.csv` | Pre-screen worksheet | Claude (audit-prepare.py) |
 | `tests/baselines/v0.3.0/audit-worksheet/<recording>/brightness-around-<t>.csv` | ±5s brightness frame data | Claude (audit-prepare.py) |
@@ -164,7 +164,7 @@ F1-F4 は PR #793 で fix 済とされているが、**発見が偶発的** で�
 ### 4.3 Reused
 
 | Path | 用途 |
-|---|---|
+| --- | --- |
 | `scripts/compare-baseline.py` (#777) | Diff ロジックの参考 (bit-exact vs tolerance-based の違い) |
 | `allaganeye debug-brightness <video>` | Brightness CSV 出力の既存 CLI、内部ロジックを Stage 1 で再利用 |
 | `tests/baselines/v0.3.0/vtuber-primary-ground-truth.json` | Ground truth file schema reference |
@@ -175,7 +175,7 @@ F1-F4 は PR #793 で fix 済とされているが、**発見が偶発的** で�
 各 finding (silent miss / false positive / boundary shift) を以下のいずれかに分類:
 
 | 区分 | 判定 fork | 対応 |
-|---|---|---|
+| --- | --- | --- |
 | **(a) baseline 修正** | 現 detector で同 timestamp を再検知すると **正検出される (silent_miss → 検出される / false_positive → 検出されない / boundary_shift → ground truth `±tolerance_sec` 以内に収束)**。baseline metadata.json が偶発的に古い / 過去 regenerate 時の non-determinism | `tests/baselines/v0.3.0/<recording>.metadata.json` を regenerate (PR #793 内で消化 or 本 issue の deliverable PR で消化、user 判断) |
 | **(b) detector tuning** | 現 detector で再検知しても **miss / FP / drift が再現** する。アルゴリズム改善が必要 (例: sub-sample boundary、scorebar misclassification、audio promotion 偽陽性、boundary_shift が `tolerance_sec` を超えて drift する場合の精度改善、新規 edge case) | **別 issue 起票** (Iron Law 2 bulk confirm: 3 件以上はまとめて user 確認後に起票)。本 issue は完了させ、tuning 自体は別 issue で別 brainstorming |
 | **(c) 既知限界** | 現 detector で再検知しても不検出 / drift が残る、かつ修正方針が立たない (例: 純黒でないローディング画面、特殊 OBS recording setting、ffmpeg version 依存 PTS drift、min_blackout_duration threshold の trade-off で許容するもの) | `docs/v030-baseline-audit.md` に document + `CLAUDE.md` / `docs/video-processing.md` の "既知の制限" に追記 (P3-low 別 issue で実施) |
@@ -219,8 +219,8 @@ ground truth と一致? (silent_miss → 検出 / false_positive → 不検出 /
 
 ### 6.1 Iteration 1: obs-20260116 (proof of concept)
 
-| Step | 担当 | 所要 |
-|---|---|---|
+| Step | 内容 | 担当 | 所要 |
+| --- | --- | --- | --- |
 | 1 | `scripts/audit-prepare.py` 試作実装 | Claude | 1-2h |
 | 2 | obs-20260116 で worksheet 生成 | Claude | 5-10 分 |
 | 3 | obs-20260116 視聴 + ground-truth/obs-20260116.json 作成 | Idios | 1-1.5h (scorebar V2 validated なので最も verify しやすい) |
@@ -236,8 +236,8 @@ ground truth と一致? (silent_miss → 検出 / false_positive → 不検出 /
 
 ### 6.2 Iteration 2: 残り 4 baseline batch
 
-| Step | 担当 | 所要 |
-|---|---|---|
+| Step | 内容 | 担当 | 所要 |
+| --- | --- | --- | --- |
 | 1 | Finalized script で 4 件 worksheet 一括生成 | Claude | 30 分-1h (合計、recording ごと 5-15 分) |
 | 2 | obs-20260118 / 20260119 / 20260127 / 20260209 視聴 + ground truth 4 件作成 | Idios | 1.5-3h (一気にやる or 分割は Idios 裁量) |
 | 3 | 4 件 diff 抽出 + finding 分類 | Claude + Idios | 1-2h |
@@ -264,7 +264,7 @@ ground truth と一致? (silent_miss → 検出 / false_positive → 不検出 /
 ## 7. Edge cases
 
 | ケース | 対応 |
-|---|---|
+| --- | --- |
 | Recording 動画が手元にない | `ALLAGANEYE_SAMPLE_VIDEO_DIR` を確認、欠損なら本 issue を temporarily block (`needs-input` label を付与、Idios が動画手当 / clarification するまで止める) |
 | `audit-prepare.py` が一部 recording で fail (例: codec mismatch / corrupted video) | 該当 recording を skip、failure を spec の Limitations に記載、Iteration 1 で発見されたら spec doc に feedback |
 | Idios が「画面が暗くて判断不能」「sample frame が小さすぎて判別不能」 | worksheet で `idios_verdict=uncertain`、後で (c) 既知限界に分類。必要なら sample frame を `frame-around-<t>-large.png` (1280x720) で再生成可能にする option を `audit-prepare.py` に追加 |
@@ -280,7 +280,7 @@ ground truth と一致? (silent_miss → 検出 / false_positive → 不検出 /
 ### 8.1 Script unit test (新規)
 
 | Test | 対象 | Fixture |
-|---|---|---|
+| --- | --- | --- |
 | `tests/test_audit_prepare.py` | `scripts/audit-prepare.py` の worksheet 生成 | 既存 `obs-20260209.metadata.json` (3 matches, short) を input、生成 worksheet の row 数 / 列名 / brightness CSV reference 整合を検証 |
 | `tests/test_audit_compare.py` | `scripts/audit-compare.py` の diff 抽出 | Synthesized baseline + ground truth fixture (intentional silent_miss / false_positive / boundary_shift / agreed を含む) で各 case の出力 classification を検証 |
 
@@ -311,7 +311,7 @@ audit 完了後の deliverable PR で以下を実行:
 ## 9. Out of scope
 
 | 項目 | 理由 / どこで扱うか |
-|---|---|
+| --- | --- |
 | **reexamination spec の作成** | audit 完了後の別 brainstorming で `docs/superpowers/specs/2026-05-19-v030-l3-detect-fps-retirement-reexamination-design.md` を新規作成 |
 | **PR #793 の merge / defer 判断** | reexamination spec の責務 |
 | **(b) 該当 detector tuning の実装** | 起票された別 issue ごとに別 brainstorming |
@@ -323,7 +323,7 @@ audit 完了後の deliverable PR で以下を実行:
 ## 10. 受け入れ条件 mapping (issue #796)
 
 | issue #796 受け入れ条件 | 本 spec での対応 |
-|---|---|
+| --- | --- |
 | Idios が 5 OBS baseline を視覚確認し、試合境界 timestamp を `tests/baselines/v0.3.0/ground-truth/<recording>.txt` に保存 | §3.2 Stage 2 deliverable (`<recording>.json`、issue 本文 `.txt` → `.json` 変更を §2 で採用) |
 | 対象 5 件 (obs-20260116/20260118/20260119/20260127/20260209) | §3.1 / §6 全 5 件対応 |
 | timestamp 精度 ±1s | §3.2 ground truth file の `tolerance_sec=5` (issue 本文の例示 `±1s` から Iteration 1 PoC で実測精度に合わせて update) |

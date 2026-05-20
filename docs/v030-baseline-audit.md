@@ -9,7 +9,7 @@
 ### Totals (all 5 baselines, 52 boundaries)
 
 | Category | Count |
-|---|---|
+| --- | --- |
 | Agreed (within ±5s) | 49 |
 | Silent miss | 0 |
 | False positive | 0 |
@@ -19,7 +19,7 @@
 ### Findings classification
 
 | Class | Count | Notes |
-|---|---|---|
+| --- | --- | --- |
 | (a) baseline 修正 | 0 | — |
 | (b) detector tuning | 3 | 2 件は [PR #793](https://github.com/Idios/kobutachan-allaganeye/pull/793) で fix される (F1 obs-20260116 M3 end + F4 obs-20260118 M2 end)、1 件は新規 [#797](https://github.com/Idios/kobutachan-allaganeye/issues/797) (obs-20260116 M6 end) |
 | (c) 既知限界 | 0 | — |
@@ -45,7 +45,7 @@
 ### Findings
 
 | # | Type | Match | Boundary | Baseline ts | Ground truth ts | Delta | Classification |
-|---|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | boundary_shift | 3 | end | 3367.125 | 3227.000 | -140.125 | (b) — fix in [PR #793](https://github.com/Idios/kobutachan-allaganeye/pull/793) (#576) |
 | 2 | boundary_shift | 6 | end | 7303.488 | 6540.000 | -763.488 | (b) — [#797](https://github.com/Idios/kobutachan-allaganeye/issues/797) |
 | 3 | agreed | 1 | start | 49.125 | 49.000 | -0.125 | (agreed) |
@@ -90,7 +90,7 @@
 ### Findings
 
 | # | Type | Match | Boundary | Baseline ts | Ground truth ts | Delta | Classification |
-|---|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | boundary_shift | 2 | end | 4195.750 | 3926.000 | -269.750 | (b) — fix in [PR #793](https://github.com/Idios/kobutachan-allaganeye/pull/793) (#576) |
 | 2 | agreed | 1 | start | 177.250 | 177.000 | -0.250 | (agreed) |
 | 3 | agreed | 1 | end | 2610.750 | 2610.000 | -0.750 | (agreed) |
