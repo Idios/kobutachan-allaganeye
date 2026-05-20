@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -32,14 +33,24 @@ _REQUIRED_GROUND_TRUTH_FIELDS = (
 
 
 def validate_ground_truth_against_baseline(
-    baseline: dict[str, Any], ground_truth: dict[str, Any]
+    baseline: dict[str, Any],
+    ground_truth: dict[str, Any],
+    *,
+    recording_label: str | None = None,
+    actual_source_size: int | None = None,
 ) -> None:
     """Reject ground-truth files that do not describe the same recording.
 
-    Raises ValueError if required schema fields are absent or the baseline's
-    `source` does not match the ground truth's `source_file`. This prevents
-    silently comparing one recording's baseline against another recording's
-    ground truth (Codex high finding, 2026-05-20).
+    Raises ValueError if any of the following hold:
+    - required schema fields are absent
+    - baseline `source` != ground truth `source_file`
+    - `recording_label` was supplied and != ground truth `source_dir_label`
+    - `actual_source_size` was supplied and != ground truth `source_size_bytes`
+
+    Codex adversarial reviews (2026-05-20 round 1 + round 2) flagged that
+    matching only the relative source path is insufficient: a replaced /
+    truncated recording at the same path, or a copy-pasted ground-truth
+    file with the wrong label, would silently certify stale findings.
     """
     missing = [f for f in _REQUIRED_GROUND_TRUTH_FIELDS if f not in ground_truth]
     if missing:
@@ -55,6 +66,21 @@ def validate_ground_truth_against_baseline(
             f"ground truth source_file ({gt_source!r}); "
             "this ground-truth file describes a different recording"
         )
+    if recording_label is not None:
+        gt_label = ground_truth.get("source_dir_label")
+        if gt_label != recording_label:
+            raise ValueError(
+                f"recording label ({recording_label!r}) does not match "
+                f"ground truth source_dir_label ({gt_label!r})"
+            )
+    if actual_source_size is not None and "source_size_bytes" in ground_truth:
+        gt_size = ground_truth["source_size_bytes"]
+        if gt_size != actual_source_size:
+            raise ValueError(
+                f"video file size ({actual_source_size}) does not match "
+                f"ground truth source_size_bytes ({gt_size}); "
+                "the recording may have been replaced or truncated"
+            )
 
 
 def _pair_matches_by_overlap(
@@ -266,8 +292,20 @@ def main(argv: list[str] | None = None) -> int:
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     ground_truth = json.loads(ground_truth_path.read_text(encoding="utf-8"))
 
+    actual_source_size: int | None = None
+    sample_video_dir = os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR")
+    if sample_video_dir and "source" in baseline:
+        video_candidate = Path(sample_video_dir) / baseline["source"]
+        if video_candidate.exists():
+            actual_source_size = video_candidate.stat().st_size
+
     try:
-        validate_ground_truth_against_baseline(baseline, ground_truth)
+        validate_ground_truth_against_baseline(
+            baseline,
+            ground_truth,
+            recording_label=args.recording_label,
+            actual_source_size=actual_source_size,
+        )
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 3

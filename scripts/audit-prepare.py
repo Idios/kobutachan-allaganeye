@@ -14,6 +14,7 @@ import argparse
 import csv
 import json
 import os
+import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -192,18 +193,23 @@ def export_sample_frames(
     out_dir: Path,
     height: int = 180,
 ) -> None:
-    """Export 3 sample frames at boundary - 1s / boundary / boundary + 1s as PNG."""
+    """Export 3 sample frames at boundary - 1s / boundary / boundary + 1s as PNG.
+
+    Raises RuntimeError if any of the 3 frames cannot be produced. Codex
+    flagged the silent-skip pattern as incompatible with audit reproducibility
+    (the worksheet would still reference filenames that were never written).
+    """
     offsets = (-1.0, 0.0, 1.0)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     for offset in offsets:
         ts = max(boundary_timestamp + offset, 0.0)
-        try:
-            raw = _probe_frame_rgb(video_path, ts, height=height)
-        except Exception:
-            raw = None
+        raw = _probe_frame_rgb(video_path, ts, height=height)
         if raw is None:
-            continue
+            raise RuntimeError(
+                f"_probe_frame_rgb returned None for {video_path} at t={ts}; "
+                "cannot produce sample frame PNG"
+            )
         frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, _SAMPLE_WIDTH, 3)
         out_path = out_dir / _frame_png_filename(ts)
         cv2.imwrite(str(out_path), frame[:, :, ::-1])  # RGB -> BGR for cv2
@@ -257,10 +263,14 @@ def main(argv: list[str] | None = None) -> int:
 
     video_path = resolve_video_path(metadata["source"])
 
-    worksheet_csv = args.worksheet_dir / f"{args.recording_label}.csv"
-    write_worksheet_csv(rows, worksheet_csv)
-
     per_boundary_dir = args.worksheet_dir / args.recording_label
+
+    # Atomic re-run: clean any previous artifacts so the worksheet never points
+    # at stale or partial files (Codex finding #6, 2026-05-20 round 2).
+    if per_boundary_dir.exists():
+        shutil.rmtree(per_boundary_dir)
+
+    # Generate all per-boundary artifacts first; fail loud on any error.
     for row in rows:
         ts = float(row["timestamp_sec"])
         export_brightness_csv(
@@ -275,6 +285,11 @@ def main(argv: list[str] | None = None) -> int:
             boundary_timestamp=ts,
             out_dir=per_boundary_dir,
         )
+
+    # Write the worksheet last so any failure above leaves the CSV either
+    # absent or unchanged — never with broken references to missing artifacts.
+    worksheet_csv = args.worksheet_dir / f"{args.recording_label}.csv"
+    write_worksheet_csv(rows, worksheet_csv)
 
     print(f"Worksheet: {worksheet_csv}", file=sys.stderr)
     print(f"Per-boundary artifacts: {per_boundary_dir}", file=sys.stderr)

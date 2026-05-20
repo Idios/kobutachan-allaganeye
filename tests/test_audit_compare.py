@@ -230,3 +230,49 @@ def test_classify_findings_missing_gt_match_yields_silent_miss_not_shift():
     findings = mod.classify_findings(baseline, ground_truth)
     types = sorted(f["finding_type"] for f in findings)
     assert types == ["agreed", "agreed", "silent_miss", "silent_miss"]
+
+
+def test_validate_ground_truth_recording_label_mismatch_raises():
+    """source_file matches but source_dir_label is wrong -> reject."""
+    mod = _load_module()
+    baseline = {"source": "20260116/x.mkv", "matches": []}
+    ground_truth = {
+        "source_file": "20260116/x.mkv",
+        "source_dir_label": "obs-WRONG-LABEL",
+        "tolerance_sec": 5,
+        "matches": [],
+    }
+    with pytest.raises(ValueError, match="source_dir_label"):
+        mod.validate_ground_truth_against_baseline(
+            baseline, ground_truth, recording_label="obs-20260116"
+        )
+
+
+def test_validate_ground_truth_source_size_mismatch_raises():
+    """source_file matches but on-disk file size differs from ground truth -> reject."""
+    mod = _load_module()
+    baseline = {"source": "20260116/x.mkv", "matches": []}
+    ground_truth = {
+        "source_file": "20260116/x.mkv",
+        "source_dir_label": "obs-20260116",
+        "source_size_bytes": 12345,
+        "tolerance_sec": 5,
+        "matches": [],
+    }
+    with pytest.raises(ValueError, match="source_size_bytes"):
+        mod.validate_ground_truth_against_baseline(
+            baseline, ground_truth, actual_source_size=99999
+        )
+
+
+def test_validate_ground_truth_recording_label_skipped_when_not_provided():
+    """validate without recording_label should not raise on label issues."""
+    mod = _load_module()
+    baseline = {"source": "x.mkv", "matches": []}
+    ground_truth = {
+        "source_file": "x.mkv",
+        "source_dir_label": "anything",
+        "tolerance_sec": 5,
+        "matches": [],
+    }
+    mod.validate_ground_truth_against_baseline(baseline, ground_truth)
