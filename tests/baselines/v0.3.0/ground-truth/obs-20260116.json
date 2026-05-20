@@ -1,0 +1,16 @@
+{
+  "source_file": "20260116/2026-01-16 22-12-57.mkv",
+  "source_size_bytes": 39721920176,
+  "source_dir_label": "obs-20260116",
+  "ground_truth_provider": "user (Idios, manual)",
+  "ground_truth_provided_at": "2026-05-20",
+  "tolerance_sec": 5,
+  "matches": [
+    {"index": 1, "start_time": 49, "end_time": 1054, "duration": 1005, "type": "fl_match"},
+    {"index": 2, "start_time": 1256, "end_time": 2178, "duration": 922, "type": "fl_match"},
+    {"index": 3, "start_time": 2355, "end_time": 3227, "duration": 872, "type": "fl_match"},
+    {"index": 4, "start_time": 3367, "end_time": 4352, "duration": 985, "type": "fl_match"},
+    {"index": 5, "start_time": 4538, "end_time": 5482, "duration": 944, "type": "fl_match"},
+    {"index": 6, "start_time": 5624, "end_time": 6540, "duration": 916, "type": "fl_match"}
+  ]
+}
