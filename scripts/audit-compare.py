@@ -308,7 +308,21 @@ def main(argv: list[str] | None = None) -> int:
 
     actual_source_size: int | None = None
     sample_video_dir = os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR")
-    if sample_video_dir and "source" in baseline:
+    if not sample_video_dir:
+        print(
+            "WARNING: ALLAGANEYE_SAMPLE_VIDEO_DIR is not set; "
+            "source_size_bytes validation will fail unless "
+            "--skip-source-size-check is passed.",
+            file=sys.stderr,
+        )
+    elif "source" not in baseline:
+        print(
+            "WARNING: baseline metadata.json is missing the 'source' field; "
+            "source_size_bytes validation will fail unless "
+            "--skip-source-size-check is passed.",
+            file=sys.stderr,
+        )
+    else:
         video_candidate = Path(sample_video_dir) / baseline["source"]
         if video_candidate.exists():
             actual_source_size = video_candidate.stat().st_size
@@ -320,13 +334,6 @@ def main(argv: list[str] | None = None) -> int:
                 "--skip-source-size-check is passed.",
                 file=sys.stderr,
             )
-    elif not sample_video_dir:
-        print(
-            "WARNING: ALLAGANEYE_SAMPLE_VIDEO_DIR is not set; "
-            "source_size_bytes validation will fail unless "
-            "--skip-source-size-check is passed.",
-            file=sys.stderr,
-        )
 
     try:
         validate_ground_truth_against_baseline(
