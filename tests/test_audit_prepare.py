@@ -1015,3 +1015,110 @@ def test_recovers_from_crash_before_tx_commit(tmp_path, monkeypatch, capsys):
 
     err = capsys.readouterr().err
     assert "crashed mid-publish" in err
+
+
+def test_step0_recovery_runs_even_when_metadata_missing(tmp_path, monkeypatch, capsys):
+    """Recovery (#800 Codex follow-up): tx="swapping" cleanup must NOT be gated by
+    metadata.json existence. Even if metadata is missing and main() returns 2,
+    stale artifacts must still be wiped first.
+    """
+    mod = _load_module()
+    # baseline_dir exists but metadata.json does NOT (no _seed_baseline_for_main)
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+
+    worksheet_dir = tmp_path / "audit-worksheet"
+    worksheet_dir.mkdir()
+    per_boundary_dir = worksheet_dir / "obs-fake"
+    worksheet_csv = worksheet_dir / "obs-fake.csv"
+    tx_path = worksheet_dir / "obs-fake.tx.json"
+
+    # Seed mid-crash state: tx="swapping" + stale artifacts
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "stale.txt").write_text("STALE", encoding="utf-8")
+    worksheet_csv.write_text("STALE_HEADER\n", encoding="utf-8")
+    mod._write_tx_state_atomic(tx_path, state="swapping")
+
+    # main() should exit 2 (missing metadata) BUT still wipe stale artifacts first
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 2
+
+    # Critical: recovery happened despite the metadata bailout
+    assert not per_boundary_dir.exists()
+    assert not worksheet_csv.exists()
+    assert not tx_path.exists()
+
+    # WARNING was emitted before the metadata error
+    err = capsys.readouterr().err
+    assert "crashed mid-publish" in err
+
+
+def test_step0_recovery_runs_even_when_video_unresolvable(
+    tmp_path, monkeypatch, capsys
+):
+    """Recovery (#800 Codex follow-up): tx="swapping" cleanup must NOT be gated by
+    ALLAGANEYE_SAMPLE_VIDEO_DIR being set. Even if resolve_video_path raises,
+    stale artifacts must still be wiped first.
+    """
+    mod = _load_module()
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+    metadata = {
+        "schema_version": "1",
+        "source": "20260116/fake.mkv",
+        "matches": [
+            {
+                "index": 1,
+                "start_time": 49.125,
+                "end_time": 1054.5,
+                "duration": 1005.375,
+                "type": "fl_match",
+            },
+        ],
+        "gaps": [],
+    }
+    (baseline_dir / "obs-fake.metadata.json").write_text(
+        json.dumps(metadata), encoding="utf-8"
+    )
+    # Deliberately DO NOT set ALLAGANEYE_SAMPLE_VIDEO_DIR -> resolve_video_path will raise OSError
+    monkeypatch.delenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", raising=False)
+
+    worksheet_dir = tmp_path / "audit-worksheet"
+    worksheet_dir.mkdir()
+    per_boundary_dir = worksheet_dir / "obs-fake"
+    worksheet_csv = worksheet_dir / "obs-fake.csv"
+    tx_path = worksheet_dir / "obs-fake.tx.json"
+
+    # Seed mid-crash state
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "stale.txt").write_text("STALE", encoding="utf-8")
+    worksheet_csv.write_text("STALE_HEADER\n", encoding="utf-8")
+    mod._write_tx_state_atomic(tx_path, state="swapping")
+
+    # main() should raise OSError (video env unset) BUT recovery must run first
+    with pytest.raises(OSError, match="ALLAGANEYE_SAMPLE_VIDEO_DIR"):
+        mod.main(
+            [
+                "obs-fake",
+                "--baseline-dir",
+                str(baseline_dir),
+                "--worksheet-dir",
+                str(worksheet_dir),
+            ]
+        )
+
+    # Critical: recovery happened despite the video bailout
+    assert not per_boundary_dir.exists()
+    assert not worksheet_csv.exists()
+    assert not tx_path.exists()
+
+    err = capsys.readouterr().err
+    assert "crashed mid-publish" in err

@@ -337,16 +337,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    metadata_path = args.baseline_dir / f"{args.recording_label}.metadata.json"
-    if not metadata_path.exists():
-        print(f"ERROR: {metadata_path} not found", file=sys.stderr)
-        return 2
-
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    rows = build_worksheet_rows(metadata)
-
-    video_path = resolve_video_path(metadata["source"])
-
+    # Path setup (used by recovery + downstream steps). Resolved up-front so
+    # Step 0 below can run BEFORE any metadata/video loading that may exit
+    # early.
     per_boundary_dir = args.worksheet_dir / args.recording_label
     per_boundary_dir_new = args.worksheet_dir / f"{args.recording_label}.new"
     worksheet_csv = args.worksheet_dir / f"{args.recording_label}.csv"
@@ -358,6 +351,12 @@ def main(argv: list[str] | None = None) -> int:
     # unknown state. Wipe everything so Step 2 regenerates from scratch.
     # Backwards-compat: tx.json absent (legacy baseline) or "consistent"
     # (clean prior run) skips recovery.
+    #
+    # MUST run before metadata/video loading so a missing baseline or
+    # unset ALLAGANEYE_SAMPLE_VIDEO_DIR does not block recovery of a
+    # prior crashed run. Otherwise tx="swapping" would persist indefinitely
+    # whenever the operator regenerates the baseline / changes sample dir
+    # between the crash and the next invocation (Codex #800 follow-up).
     tx = _read_tx_state(tx_path)
     if tx is not None and tx["state"] == _TX_STATE_SWAPPING:
         print(
@@ -370,6 +369,19 @@ def main(argv: list[str] | None = None) -> int:
             worksheet_csv=worksheet_csv,
             tx_path=tx_path,
         )
+
+    # Now load metadata + resolve video. These can return 2 / raise
+    # FileNotFoundError / raise OSError, but recovery has already happened
+    # above so a stale tx="swapping" will not persist.
+    metadata_path = args.baseline_dir / f"{args.recording_label}.metadata.json"
+    if not metadata_path.exists():
+        print(f"ERROR: {metadata_path} not found", file=sys.stderr)
+        return 2
+
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    rows = build_worksheet_rows(metadata)
+
+    video_path = resolve_video_path(metadata["source"])
 
     # (1) Pre-clean any stale temp residue from a prior crashed run.
     # Existing final artifacts are untouched until step (3).
