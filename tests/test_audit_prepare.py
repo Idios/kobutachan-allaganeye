@@ -786,3 +786,232 @@ def test_no_recovery_when_state_consistent(tmp_path, monkeypatch, capsys):
 
     data = json.loads(tx_path.read_text(encoding="utf-8"))
     assert data["state"] == "consistent"
+
+
+def test_recovers_from_crash_after_rmtree(tmp_path, monkeypatch, capsys):
+    """W1 window: crash AFTER rmtree old per_boundary_dir, BEFORE rename .new.
+
+    Mid-crash state: dir gone, csv old, tx.json "swapping".
+    Next run: Step 0 sees "swapping" + wipes + regenerates.
+    """
+    mod, baseline_dir = _seed_baseline_for_main(tmp_path, monkeypatch)
+    worksheet_dir = tmp_path / "audit-worksheet"
+    worksheet_dir.mkdir()
+    per_boundary_dir = worksheet_dir / "obs-fake"
+    worksheet_csv = worksheet_dir / "obs-fake.csv"
+    tx_path = worksheet_dir / "obs-fake.tx.json"
+
+    # Seed clean prior-run state
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "old.txt").write_text("OLD", encoding="utf-8")
+    worksheet_csv.write_text("OLD_HEADER\n", encoding="utf-8")
+    mod._write_tx_state_atomic(tx_path, state="consistent")
+
+    # Inject crash: shutil.rmtree raises AFTER deleting per_boundary_dir once
+    original_rmtree = mod.shutil.rmtree
+    crashed = {"value": False}
+
+    def crashing_rmtree(path, *args, **kwargs):
+        original_rmtree(path, *args, **kwargs)
+        if not crashed["value"] and Path(path) == per_boundary_dir:
+            crashed["value"] = True
+            raise RuntimeError("simulated crash after rmtree")
+
+    monkeypatch.setattr(mod.shutil, "rmtree", crashing_rmtree)
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        mod.main(
+            [
+                "obs-fake",
+                "--baseline-dir",
+                str(baseline_dir),
+                "--worksheet-dir",
+                str(worksheet_dir),
+            ]
+        )
+
+    # Mid-crash state: tx="swapping", dir gone, csv still old
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "swapping"
+    assert not per_boundary_dir.exists()
+    assert worksheet_csv.read_text(encoding="utf-8") == "OLD_HEADER\n"
+
+    # Restore rmtree for recovery run
+    monkeypatch.setattr(mod.shutil, "rmtree", original_rmtree)
+
+    # Re-run audit-prepare: Step 0 recovery
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 0
+
+    # Recovered state: tx="consistent", regenerated artifacts
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "consistent"
+    assert per_boundary_dir.exists()
+    assert worksheet_csv.exists()
+    assert "OLD_HEADER" not in worksheet_csv.read_text(encoding="utf-8")
+
+    # WARNING was emitted
+    err = capsys.readouterr().err
+    assert "crashed mid-publish" in err
+
+
+def test_recovers_from_crash_after_dir_rename(tmp_path, monkeypatch, capsys):
+    """W2 window: crash AFTER per_boundary_dir_new.rename, BEFORE csv replace.
+
+    Mid-crash state: new dir + old csv, tx.json "swapping".
+    Next run: Step 0 wipes new dir + old csv + tx, regenerates.
+    """
+    mod, baseline_dir = _seed_baseline_for_main(tmp_path, monkeypatch)
+    worksheet_dir = tmp_path / "audit-worksheet"
+    worksheet_dir.mkdir()
+    per_boundary_dir = worksheet_dir / "obs-fake"
+    per_boundary_dir_new = worksheet_dir / "obs-fake.new"
+    worksheet_csv = worksheet_dir / "obs-fake.csv"
+    tx_path = worksheet_dir / "obs-fake.tx.json"
+
+    # Seed clean prior-run state
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "old.txt").write_text("OLD", encoding="utf-8")
+    worksheet_csv.write_text("OLD_HEADER\n", encoding="utf-8")
+    mod._write_tx_state_atomic(tx_path, state="consistent")
+
+    # Inject crash: Path.rename raises AFTER renaming per_boundary_dir_new -> per_boundary_dir
+    original_rename = Path.rename
+    crashed = {"value": False}
+
+    def crashing_rename(self, target, *args, **kwargs):
+        result = original_rename(self, target, *args, **kwargs)
+        if (
+            not crashed["value"]
+            and Path(self) == per_boundary_dir_new
+            and Path(target) == per_boundary_dir
+        ):
+            crashed["value"] = True
+            raise RuntimeError("simulated crash after dir rename")
+        return result
+
+    monkeypatch.setattr(Path, "rename", crashing_rename)
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        mod.main(
+            [
+                "obs-fake",
+                "--baseline-dir",
+                str(baseline_dir),
+                "--worksheet-dir",
+                str(worksheet_dir),
+            ]
+        )
+
+    # Mid-crash state: tx="swapping", new dir present, old csv still there
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "swapping"
+    assert per_boundary_dir.exists()
+    assert not (per_boundary_dir / "old.txt").exists()  # new content
+    assert worksheet_csv.read_text(encoding="utf-8") == "OLD_HEADER\n"
+
+    # Restore rename for recovery run
+    monkeypatch.setattr(Path, "rename", original_rename)
+
+    # Re-run audit-prepare: Step 0 recovery
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 0
+
+    # Recovered state
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "consistent"
+    assert per_boundary_dir.exists()
+    assert worksheet_csv.exists()
+    assert "OLD_HEADER" not in worksheet_csv.read_text(encoding="utf-8")
+
+    err = capsys.readouterr().err
+    assert "crashed mid-publish" in err
+
+
+def test_recovers_from_crash_before_tx_commit(tmp_path, monkeypatch, capsys):
+    """crash AFTER csv replace, BEFORE final tx="consistent" write.
+
+    Mid-crash state: new dir + new csv, tx.json still "swapping" (= wasteful regenerate).
+    Next run: Step 0 wipes everything + regenerates (content correct but tx not committed).
+    """
+    mod, baseline_dir = _seed_baseline_for_main(tmp_path, monkeypatch)
+    worksheet_dir = tmp_path / "audit-worksheet"
+    worksheet_dir.mkdir()
+    per_boundary_dir = worksheet_dir / "obs-fake"
+    worksheet_csv = worksheet_dir / "obs-fake.csv"
+    tx_path = worksheet_dir / "obs-fake.tx.json"
+
+    # Seed clean prior-run state
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "old.txt").write_text("OLD", encoding="utf-8")
+    worksheet_csv.write_text("OLD_HEADER\n", encoding="utf-8")
+    mod._write_tx_state_atomic(tx_path, state="consistent")
+
+    # Inject crash: _write_tx_state_atomic raises on the 2nd call (consistent commit)
+    original_write = mod._write_tx_state_atomic
+    call_count = {"value": 0}
+
+    def crashing_write(path, *, state):
+        call_count["value"] += 1
+        if call_count["value"] == 2 and state == "consistent":
+            raise RuntimeError("simulated crash before tx commit")
+        original_write(path, state=state)
+
+    monkeypatch.setattr(mod, "_write_tx_state_atomic", crashing_write)
+
+    with pytest.raises(RuntimeError, match="simulated crash before tx commit"):
+        mod.main(
+            [
+                "obs-fake",
+                "--baseline-dir",
+                str(baseline_dir),
+                "--worksheet-dir",
+                str(worksheet_dir),
+            ]
+        )
+
+    # Mid-crash state: tx still "swapping", new dir + new csv on disk
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "swapping"
+    assert per_boundary_dir.exists()
+    assert not (per_boundary_dir / "old.txt").exists()  # new content
+    assert "OLD_HEADER" not in worksheet_csv.read_text(encoding="utf-8")
+
+    # Restore for recovery run
+    monkeypatch.setattr(mod, "_write_tx_state_atomic", original_write)
+
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 0
+
+    # Recovered state
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "consistent"
+    assert per_boundary_dir.exists()
+    assert worksheet_csv.exists()
+
+    err = capsys.readouterr().err
+    assert "crashed mid-publish" in err
