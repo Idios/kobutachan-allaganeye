@@ -61,8 +61,12 @@ def validate_ground_truth_against_baseline(
             raise ValueError(
                 "actual_source_size is required for source_size_bytes validation. "
                 "Set ALLAGANEYE_SAMPLE_VIDEO_DIR + ensure video resolves, "
-                "or pass --skip-source-size-check explicitly."
+                "or pass skip_source_size_check=True explicitly."
             )
+            # Operators discover the CLI counterpart `--skip-source-size-check`
+            # via `audit-compare --help`; the error message stays focused on
+            # the programmatic escape route to avoid lying about the CLI flag
+            # at intermediate commit boundaries.
         gt_size = ground_truth["source_size_bytes"]
         if gt_size != actual_source_size:
             raise ValueError(...)
