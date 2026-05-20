@@ -336,3 +336,97 @@ def test_validate_skip_flag_bypasses_size_check():
     mod.validate_ground_truth_against_baseline(
         baseline, ground_truth, skip_source_size_check=True
     )
+
+
+def test_main_video_unresolved_fails_close(tmp_path, monkeypatch, capsys):
+    """ALLAGANEYE_SAMPLE_VIDEO_DIR unset -> exit 3 + stderr ERROR (R3#1)."""
+    import json as _json
+
+    mod = _load_module()
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+    gt_dir = baseline_dir / "ground-truth"
+    gt_dir.mkdir()
+
+    (baseline_dir / "obs-fake.metadata.json").write_text(
+        _json.dumps({"source": "fake.mkv", "matches": []}),
+        encoding="utf-8",
+    )
+    (gt_dir / "obs-fake.json").write_text(
+        _json.dumps(
+            {
+                "source_file": "fake.mkv",
+                "source_dir_label": "obs-fake",
+                "tolerance_sec": 5,
+                "matches": [],
+                "source_size_bytes": 12345,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", raising=False)
+
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--ground-truth-dir",
+            str(gt_dir),
+        ]
+    )
+    assert rc == 3
+    captured = capsys.readouterr()
+    # Task 3 WARNING (env unset): distinguishes Task 3 impl from Task 2-only state
+    assert "ALLAGANEYE_SAMPLE_VIDEO_DIR is not set" in captured.err
+    # Task 2 ERROR (validate raises and main catches): downstream of WARNING
+    assert "actual_source_size is required" in captured.err
+
+
+def test_main_video_missing_in_env_fails_close(tmp_path, monkeypatch, capsys):
+    """env set but video file absent -> exit 3 + stderr ERROR (R3#1)."""
+    import json as _json
+
+    mod = _load_module()
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+    gt_dir = baseline_dir / "ground-truth"
+    gt_dir.mkdir()
+    video_dir = tmp_path / "videos"  # empty, no fake.mkv inside
+    video_dir.mkdir()
+
+    (baseline_dir / "obs-fake.metadata.json").write_text(
+        _json.dumps({"source": "fake.mkv", "matches": []}),
+        encoding="utf-8",
+    )
+    (gt_dir / "obs-fake.json").write_text(
+        _json.dumps(
+            {
+                "source_file": "fake.mkv",
+                "source_dir_label": "obs-fake",
+                "tolerance_sec": 5,
+                "matches": [],
+                "source_size_bytes": 12345,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", str(video_dir))
+
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--ground-truth-dir",
+            str(gt_dir),
+        ]
+    )
+    assert rc == 3
+    captured = capsys.readouterr()
+    # Task 3 WARNING (file missing): distinguishes Task 3 impl from Task 2-only state
+    assert "does not exist" in captured.err
+    # Task 2 ERROR (validate raises and main catches)
+    assert "actual_source_size is required" in captured.err

@@ -312,6 +312,21 @@ def main(argv: list[str] | None = None) -> int:
         video_candidate = Path(sample_video_dir) / baseline["source"]
         if video_candidate.exists():
             actual_source_size = video_candidate.stat().st_size
+        else:
+            print(
+                f"WARNING: ALLAGANEYE_SAMPLE_VIDEO_DIR is set ({sample_video_dir!r}) "
+                f"but {video_candidate} does not exist; "
+                "source_size_bytes validation will fail unless "
+                "--skip-source-size-check is passed.",
+                file=sys.stderr,
+            )
+    elif not sample_video_dir:
+        print(
+            "WARNING: ALLAGANEYE_SAMPLE_VIDEO_DIR is not set; "
+            "source_size_bytes validation will fail unless "
+            "--skip-source-size-check is passed.",
+            file=sys.stderr,
+        )
 
     try:
         validate_ground_truth_against_baseline(
