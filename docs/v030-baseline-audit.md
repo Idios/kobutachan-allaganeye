@@ -2,7 +2,7 @@
 
 > **Status**: complete (5/5 baselines audited)
 > **Spec**: [docs/superpowers/specs/2026-05-19-v030-baseline-audit-design.md](superpowers/specs/2026-05-19-v030-baseline-audit-design.md)
-> **PR #793 status**: draft (audit blocking)
+> **PR #793 status**: open (本 audit の scope 外、merge / defer 判断は reexamination spec で確定)
 
 ## Cross-recording summary
 

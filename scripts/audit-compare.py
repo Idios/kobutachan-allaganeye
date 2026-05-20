@@ -2,8 +2,8 @@
 
 Compares matches[] from tests/baselines/v0.3.0/<label>.metadata.json against
 tests/baselines/v0.3.0/ground-truth/<label>.json with tolerance_sec from the
-ground truth file (default 1s). Emits a markdown finding table ready to paste
-into docs/v030-baseline-audit.md.
+ground truth file (default 5s, see spec §3.2). Emits a markdown finding table
+ready to paste into docs/v030-baseline-audit.md.
 
 See: docs/superpowers/specs/2026-05-19-v030-baseline-audit-design.md §3.3 / §5
 """
@@ -114,7 +114,8 @@ def _pair_matches_by_overlap(
             if overlap > best_overlap:
                 best_overlap = overlap
                 best_b = b_i
-        if best_b is not None and best_overlap > 0:
+        if best_overlap > 0:
+            assert best_b is not None  # best_overlap > 0 implies best_b was set
             pairs.append((best_b, g_i))
             used_baseline.add(best_b)
         else:
@@ -135,7 +136,7 @@ def classify_findings(
     and end deltas against `tolerance_sec`. Unpaired matches emit two
     boundary-level findings (silent_miss or false_positive).
     """
-    tolerance = float(ground_truth.get("tolerance_sec", 1))
+    tolerance = float(ground_truth.get("tolerance_sec", 5))
     baseline_matches = baseline.get("matches", [])
     gt_matches = ground_truth.get("matches", [])
     pairs = _pair_matches_by_overlap(baseline_matches, gt_matches)
@@ -213,7 +214,7 @@ def format_markdown(
     baseline: dict[str, Any],
     ground_truth: dict[str, Any],
 ) -> str:
-    tolerance = ground_truth.get("tolerance_sec", 1)
+    tolerance = ground_truth.get("tolerance_sec", 5)
     baseline_match_count = len(baseline.get("matches", []))
     gt_match_count = len(ground_truth.get("matches", []))
     source = baseline.get("source", "(unknown)")

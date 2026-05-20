@@ -134,7 +134,10 @@ def test_resolve_video_path_uses_env_var(monkeypatch, tmp_path):
 def test_resolve_video_path_missing_env_raises(monkeypatch):
     mod = _load_module()
     monkeypatch.delenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", raising=False)
-    with pytest.raises(EnvironmentError, match="ALLAGANEYE_SAMPLE_VIDEO_DIR"):
+    # NOTE: implementation raises OSError; EnvironmentError is the Python 3
+    # alias for OSError (kept as a comment for searchability). Test mirrors
+    # the impl literal to keep intent unambiguous.
+    with pytest.raises(OSError, match="ALLAGANEYE_SAMPLE_VIDEO_DIR"):
         mod.resolve_video_path("20260116/2026-01-16 22-12-57.mkv")
 
 
