@@ -1,8 +1,9 @@
 # v0.3.0 OBS baseline audit (#796)
 
-> **Status**: complete (5/5 baselines audited)
+> **Status**: complete (5/5 baselines audited); PR #793 verification update appended 2026-05-21 (§PR #793 verification update)
 > **Spec**: [docs/superpowers/specs/2026-05-19-v030-baseline-audit-design.md](superpowers/specs/2026-05-19-v030-baseline-audit-design.md)
-> **PR #793 status**: open (本 audit の scope 外、merge / defer 判断は reexamination spec で確定)
+> **Reexamination spec**: [docs/superpowers/specs/2026-05-19-v030-l3-detect-fps-retirement-reexamination-design.md](superpowers/specs/2026-05-19-v030-l3-detect-fps-retirement-reexamination-design.md) §9
+> **PR #793 status**: in-progress on `claude/recursing-lewin-4c5f9c` (reexamination spec §9 の (D) scope を実施中、本 doc §PR #793 verification update も参照)
 
 ## Cross-recording summary
 
@@ -40,6 +41,119 @@ reexamination spec で確定する判断点 (本 audit の scope 外):
 - PR #793 (#576 fps filter retirement) の merge / scope reduce / defer / abandon 判断
 
 本 audit はその input を揃えるところまでで、merge 判断や post-fix timestamp の projection は別 brainstorming で扱う。
+
+## 2026-05-21 PR #793 verification update
+
+PR #793 (`claude/recursing-lewin-4c5f9c`) で regenerate された baseline (obs-20260116 / obs-20260118) を
+`scripts/audit-compare.py` で更新後の ground truth と直接比較。Idios の追加視覚確認 (2026-05-21) で
+obs-20260118 の ground truth を 5→6 matches に修正。詳細経緯は
+[reexamination spec](superpowers/specs/2026-05-19-v030-l3-detect-fps-retirement-reexamination-design.md)
+§9 参照。
+
+### Ground truth 修正
+
+| File | 変更前 | 変更後 | 理由 |
+| --- | --- | --- | --- |
+| `tests/baselines/v0.3.0/ground-truth/obs-20260118.json` | 5 matches (M1 = 177-2610 単一) | 6 matches (M1 = 177-1221 + M2 = 1686-2610) | PR #793 detector が 1221-1686 間に新規 boundary を検出 (legacy / 初回 GT は miss)。Idios 視覚再確認 (2026-05-21) で real boundary 確定 |
+
+obs-20260116 / 20260119 / 20260127 / 20260209 の ground truth は変更無し。
+
+### Audit-compare results (PR #793 baseline, 2026-05-21)
+
+#### obs-20260118 (PR #793 detector 出力 vs 修正後 6-match GT)
+
+| Category | Count |
+| --- | --- |
+| Agreed (within ±5s) | 12 |
+| Silent miss | 0 |
+| False positive | 0 |
+| Boundary shift | 0 |
+
+全 12 boundary が agreed。PR #793 detector は更新後の ground truth と完全整合。F4 (legacy M2 end -269.75s)
+と 新規 M1/M2 split が両方 fix。
+
+#### obs-20260116 (PR #793 detector 出力 vs GT)
+
+| Category | Count |
+| --- | --- |
+| Agreed (within ±5s) | 11 |
+| Silent miss | 0 |
+| False positive | 0 |
+| Boundary shift | 1 |
+
+| # | Type | Match | Boundary | Baseline ts | Ground truth ts | Delta | Classification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | boundary_shift | 6 | end | 7303.488 | 6540.000 | -763.488 | (b) — V6 として PR #793 内 fix scope に統合 |
+| 2 | agreed | 1 | start | 49.125 | 49.000 | -0.125 | (agreed) |
+| 3 | agreed | 1 | end | 1054.500 | 1054.000 | -0.500 | (agreed) |
+| 4 | agreed | 2 | start | 1256.000 | 1256.000 | +0.000 | (agreed) |
+| 5 | agreed | 2 | end | 2178.750 | 2178.000 | -0.750 | (agreed) |
+| 6 | agreed | 3 | start | 2355.000 | 2355.000 | +0.000 | (agreed) |
+| 7 | agreed | 3 | end | 3230.500 | 3227.000 | -3.500 | (agreed) F1 FIXED |
+| 8 | agreed | 4 | start | 3365.000 | 3367.000 | +2.000 | (agreed) M3/M4 境界 disambiguation |
+| 9 | agreed | 4 | end | 4352.000 | 4352.000 | +0.000 | (agreed) |
+| 10 | agreed | 5 | start | 4538.000 | 4538.000 | +0.000 | (agreed) |
+| 11 | agreed | 5 | end | 5482.500 | 5482.000 | -0.500 | (agreed) |
+| 12 | agreed | 6 | start | 5624.250 | 5624.000 | -0.250 | (agreed) |
+
+F1 (M3 end) fix 済、**#797 (M6 end -763.488s) は本 PR では未解消で v0.3.x defer**。
+
+PR #793 reexamination scope (D) で V6.2 (scorebar HUD 二分探索、commit `f7f8879`) を
+実装したが、実機検証 (obs-20260116) で **scorebar V2 が post-match content で
+False positive 発火** (5700-6850 範囲、true match end 6540 を超えて FP) することが判明し
+revert (`22c8979`)。V2 strengthening が必要なため、独立 issue [#803](https://github.com/Idios/kobutachan-allaganeye/issues/803)
+として起票し v0.3.x で扱う。詳細は reexamination spec §10 参照。
+
+### Updated cross-recording summary (post-PR #793 verification, complete)
+
+| Recording | Baseline | GT matches | Findings | Status |
+| --- | --- | --- | --- | --- |
+| obs-20260116 | PR #793 detector | 6 | 1 boundary_shift (M6 end #797) | #797 v0.3.x defer (V6.2 attempt reverted, V2 FP `#803` blocker) |
+| obs-20260118 | PR #793 detector | 6 (updated) | 0 | ✓ |
+| obs-20260119 | PR #793 detector (V3) | 9 | 0 (18/18 agreed) | ✓ |
+| obs-20260127 | PR #793 detector (V3) | 3 | 0 (6/6 agreed) | ✓ |
+| obs-20260209 | PR #793 detector (V3) | 3 | 0 (6/6 agreed) | ✓ |
+
+### Totals (post-PR #793 verification, 5 baselines / 54 boundaries)
+
+| Category | Count |
+| --- | --- |
+| Agreed (within ±5s) | 53 |
+| Silent miss | 0 |
+| False positive | 0 |
+| Boundary shift | 1 (obs-20260116 M6 end, #797 defer) |
+| **Total findings** | **1 (deferred)** |
+
+→ PR #793 detector は 5 baseline / 54 boundary のうち **53 agreed (98.1%)、唯一の残 finding は #797 (v0.3.x defer)**。
+他 4 baseline (obs-20260118/119/127/209) は完全一致、PR #793 detector が legacy で
+agreed だった baseline で regression を起こしていないことを確認。
+
+### V3 detect 実機検証メモ (2026-05-21)
+
+- obs-20260119: 18/18 agreed、最大 delta -0.75s
+- obs-20260127: 6/6 agreed、最大 delta -0.75s
+- obs-20260209: 6/6 agreed、最大 delta -0.75s
+- 各 detect = ~12 min wall (RTX 5090、PR #793 detector code、`--gpu --no-cache`)
+- source path normalize には `scripts/v3-normalize-source-path.py` 使用 (詳細は同 script の docstring)
+
+### Findings classification (updated 2026-05-21)
+
+| Class | Count | Notes |
+| --- | --- | --- |
+| (a) ground truth 修正 | 1 | obs-20260118 GT を 5→6 matches に修正 (PR #793 detection 経由で発見、Idios 視覚再確認 2026-05-21 で確定) |
+| (b) detector tuning | 1 | #797 (obs-20260116 M6 end miss、PR #793 でも legacy と同じ値) — V6.2 attempt は V2 FP で reverted (#803)、v0.3.x で本公式 fix |
+| (c) 既知限界 | 0 | — |
+
+2026-05-20 audit の (b) detector tuning 3 件のうち F1 / F4 は PR #793 で fix 完了確認。#797 のみ V6 scope で対応継続。
+
+### Legacy baseline vs 修正後 GT (参考)
+
+obs-20260118 GT 5→6 matches 修正の結果、legacy detector に対する findings は以下に変化:
+
+- 修正前 (5-match GT): 1 boundary_shift (M2 end -269.75s)
+- 修正後 (6-match GT): 1 silent_miss (新 M2 1686-2610 全体を legacy は検出していない) + 1 boundary_shift (M2 end -269.75s)
+
+→ legacy は obs-20260118 で **boundary 2 件取りこぼし** (元の表記より 1 件多い)。PR #793 で両方 fix。
 
 ## obs-20260116
 

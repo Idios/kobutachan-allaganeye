@@ -4,6 +4,7 @@ import logging
 import math
 import os
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -14,10 +15,14 @@ import numpy as np
 from allaganeye.exceptions import STDERR_TAIL_BYTES, VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
 from allaganeye.video.detector import (
+    SEEK_LEAD_SECONDS,
     _FRAME_SIZE,
     _SAMPLE_HEIGHT,
     _SAMPLE_WIDTH,
     _generate_timestamps,
+    _resolve_fps_rational,
+    _sample_chunk_frames,
+    _use_legacy_fps_filter,
 )
 
 logger = logging.getLogger(__name__)
@@ -163,13 +168,24 @@ def scan_gpu(
     chunk_progress_callback: Callable[[int, int, float], None] | None = None,
     chunk_dispatch_callback: Callable[[int], None] | None = None,
     vendor: str | None = None,
+    *,
+    source_fps_num: int | None = None,
+    source_fps_den: int | None = None,
+    source_fps: float | None = None,
 ) -> dict[float, float]:
-    """GPU mode: chunked parallel decode with cuvid hardware decoder.
+    """GPU mode: chunked parallel decode (#576: new path or legacy via env var).
 
     Splits the video timeline into chunks and runs one long-lived ffmpeg
     process per chunk with GPU-accelerated decoding.  Each process uses
-    ``fps=1/{interval}`` to output one frame per interval, which is read
-    from stdout and analyzed for brightness.
+    one of two paths to output one frame per interval, which is read from
+    stdout and analyzed for brightness:
+
+    - **v0.3.0 default**: dual seek (``-ss <chunk_start - 5>`` before ``-i`` +
+      ``-ss 5`` after ``-i``) + ``-fps_mode passthrough`` + ``-vf select='not(mod(n,N))'``
+      (frame-index based, deterministic; ffmpeg version 非依存)
+    - **legacy rollback**: ``-vf fps=1/{interval}`` (PTS based, transitional)
+      -- enabled only when env var ``ALLAGANEYE_DETECT_FPS_FILTER=1`` is set
+      (v0.3.x patch release で削除予定)
 
     Returns dict mapping timestamp -> brightness, same as CPU mode.
 
@@ -216,13 +232,14 @@ def scan_gpu(
     # ``sample_interval``; downstream grouping then saw different
     # blackout region boundaries from CPU, causing #392's 1m47s miss.
     global_grid = _generate_timestamps(duration, sample_interval)
-    chunks: list[tuple[float, float, list[float]]] = []
+    chunks: list[tuple[float, float, list[float], bool]] = []
     for i in range(num_chunks):
         chunk_start = i * chunk_duration
         chunk_end = min((i + 1) * chunk_duration, duration)
         chunk_timestamps = [t for t in global_grid if chunk_start <= t < chunk_end]
+        is_tail = chunk_end >= duration - 1.0
         if chunk_timestamps:
-            chunks.append((chunk_start, chunk_end, chunk_timestamps))
+            chunks.append((chunk_start, chunk_end, chunk_timestamps, is_tail))
 
     # Chunks without any grid point (very short videos) are dropped, so
     # report the actual dispatched count via progress_callback.
@@ -260,8 +277,12 @@ def scan_gpu(
                 codec,
                 chunk_timestamps,
                 vendor,
+                source_fps_num=source_fps_num,
+                source_fps_den=source_fps_den,
+                source_fps=source_fps,
+                is_tail_chunk=is_tail,
             ): (chunk_start, chunk_end)
-            for chunk_start, chunk_end, chunk_timestamps in chunks
+            for chunk_start, chunk_end, chunk_timestamps, is_tail in chunks
         }
         for future in as_completed(futures):
             chunk_start, chunk_end = futures[future]
@@ -345,8 +366,60 @@ def _decode_chunk(
     codec: str | None = None,
     chunk_timestamps: list[float] | None = None,
     vendor: str | None = None,
+    *,
+    source_fps_num: int | None = None,
+    source_fps_den: int | None = None,
+    source_fps: float | None = None,
+    is_tail_chunk: bool = False,
 ) -> tuple[dict[float, float], str]:
-    """Decode a single chunk using GPU-accelerated ffmpeg.
+    """GPU chunk decode dispatcher (#576).
+
+    Falls back to legacy fps-filter path when env var
+    ``ALLAGANEYE_DETECT_FPS_FILTER=1`` or no rational fps supplied.
+    """
+    use_legacy = _use_legacy_fps_filter() or (
+        source_fps_num is None and source_fps_den is None and source_fps is None
+    )
+    if use_legacy:
+        return _decode_chunk_legacy(
+            video_path,
+            chunk_start,
+            chunk_end,
+            sample_interval,
+            codec=codec,
+            chunk_timestamps=chunk_timestamps,
+            vendor=vendor,
+        )
+
+    fps_num, fps_den = _resolve_fps_rational(
+        source_fps_num,
+        source_fps_den,
+        source_fps,
+    )
+    return _decode_chunk_v2(
+        video_path,
+        chunk_start,
+        chunk_end,
+        sample_interval,
+        codec,
+        chunk_timestamps,
+        vendor,
+        fps_num,
+        fps_den,
+        is_tail_chunk,
+    )
+
+
+def _decode_chunk_legacy(
+    video_path: Path,
+    chunk_start: float,
+    chunk_end: float,
+    sample_interval: float,
+    codec: str | None = None,
+    chunk_timestamps: list[float] | None = None,
+    vendor: str | None = None,
+) -> tuple[dict[float, float], str]:
+    """Legacy fps-filter chunk decode (pre-#576). Kept for env var rollback.
 
     Returns ``(results_dict, stderr_text)`` so the caller can inspect
     GPU usage from the first completed chunk.
@@ -481,5 +554,153 @@ def _decode_chunk(
                 results[timestamp] = brightness
             offset += _FRAME_SIZE
             frame_idx += 1
+
+    return results, stderr_text
+
+
+def _decode_chunk_v2(
+    video_path: Path,
+    chunk_start: float,
+    chunk_end: float,
+    sample_interval: float,
+    codec: str | None,
+    chunk_timestamps: list[float] | None,
+    vendor: str | None,
+    fps_num: int,
+    fps_den: int,
+    is_tail_chunk: bool,
+) -> tuple[dict[float, float], str]:
+    """New GPU chunk decode: dual seek + select filter (#576 Option 1).
+
+    Dual seek layout (hwaccel args precede input -ss)::
+
+        <hwaccel_args> -ss <input_seek> -i <video> -ss <output_seek> -t <dur>
+
+    Input ``-ss`` BEFORE ``-i``: fast container index jump to keyframe near
+    ``chunk_start - SEEK_LEAD_SECONDS``.  Output ``-ss`` AFTER ``-i``: accurate
+    trim of the GOP pre-roll so the filter graph receives frames from
+    ``chunk_start`` onwards.  The ``select`` filter's ``n`` counter resets at
+    filter graph input, ensuring deterministic frame-index alignment.
+
+    Vendor-specific hwaccel args / hwdownload prefix preserved from legacy.
+    The ``select='not(mod(n,N))'`` filter drops frames at the ffmpeg layer
+    (frame-index based, NOT PTS-based) before they reach the pipe, reducing
+    pipe IO from ~28 GB to ~178 MB per 2h video at 60fps + sample_interval=3.0s.
+    Python maps emitted frame K to chunk_timestamps[K] (positional).
+    """
+    chunk_duration = chunk_end - chunk_start
+    # #576: frame-index step for ffmpeg select filter.
+    # N selects every Nth decoded frame (deterministic, unlike PTS-based
+    # fps filter).  For 60fps + sample_interval=3.0, N=180.
+    #
+    # Float arithmetic is acceptable here: same rationale as detector.py
+    # _decode_chunk_cpu_v2 (spec S2.2 NTSC drift acceptance).  Realistic
+    # NTSC 60000/1001 over 2h yields <0.2s drift -- well under the 1.4s+
+    # minimum blackout duration the detector targets.
+    n_step = max(1, round(sample_interval * fps_num / fps_den))
+    # expected_frames = number of selected frames = len(chunk_timestamps)
+    expected_frames = len(chunk_timestamps or [])
+
+    # Dual seek: input seek jumps to keyframe near chunk_start (fast),
+    # output seek trims the GOP pre-roll so filter graph starts at chunk_start.
+    input_seek: float = max(0.0, chunk_start - SEEK_LEAD_SECONDS)
+    output_seek: float = (
+        chunk_start - input_seek
+    )  # = SEEK_LEAD_SECONDS unless chunk_start < SEEK_LEAD_SECONDS
+
+    # Resolve decoder / hwaccel for the selected vendor (same logic as legacy).
+    decoder: str | None = None
+    hwaccel_name: str | None = None
+    if vendor and codec:
+        decoder = _GPU_DECODER_MAP.get(vendor, {}).get(codec)
+        hwaccel_name = _VENDOR_HWACCEL_MAP.get(vendor)
+    if decoder is None and vendor is None:
+        decoder = _CUVID_CODEC_MAP.get(codec or "")
+        if decoder:
+            hwaccel_name = "cuda"
+
+    needs_hwdownload = (
+        hwaccel_name is not None and hwaccel_name in _HWACCELS_NEED_HWDOWNLOAD
+    )
+    if decoder and hwaccel_name:
+        hwaccel_args = ["-hwaccel", hwaccel_name]
+        if needs_hwdownload:
+            surface_fmt = _HWACCEL_OUTPUT_FORMAT_MAP.get(hwaccel_name, hwaccel_name)
+            hwaccel_args += ["-hwaccel_output_format", surface_fmt]
+        hwaccel_args += ["-c:v", decoder]
+    else:
+        hwaccel_args = ["-hwaccel", "auto"]
+
+    vf_prefix = "hwdownload,format=nv12," if needs_hwdownload else ""
+
+    cmd = [
+        find_ffmpeg(),
+        *hwaccel_args,
+        "-ss",
+        str(input_seek),  # input seek (BEFORE -i): fast container jump
+        "-i",
+        str(video_path),
+        "-ss",
+        str(output_seek),  # output seek (AFTER -i): accurate trim to chunk_start
+        "-t",
+        str(chunk_duration),
+        "-fps_mode",
+        "passthrough",
+        "-vf",
+        f"{vf_prefix}select='not(mod(n\\,{n_step}))',scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
+        "pipe:1",
+    ]
+
+    stderr_text = ""
+    stderr_buf = tempfile.TemporaryFile(mode="w+b")
+    try:
+        with subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=stderr_buf,
+        ) as proc:
+            try:
+                results = _sample_chunk_frames(
+                    stream=proc.stdout,
+                    chunk_start=chunk_start,
+                    chunk_timestamps=chunk_timestamps or [],
+                    fps_num=fps_num,
+                    fps_den=fps_den,
+                    expected_frames=expected_frames,
+                    is_tail_chunk=is_tail_chunk,
+                )
+                proc.wait(timeout=max(300, int(chunk_duration * 2)))
+                # Read stderr from temp file (no pipe backpressure issue)
+                stderr_buf.seek(0)
+                stderr_text = stderr_buf.read().decode(errors="replace")
+            except VideoProcessingError:
+                proc.kill()
+                raise
+            except subprocess.TimeoutExpired as e:
+                proc.kill()
+                raise VideoProcessingError(
+                    f"GPU decode v2 timed out for chunk {chunk_start}"
+                ) from e
+    except FileNotFoundError as e:
+        raise VideoProcessingError(
+            "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
+        ) from e
+    finally:
+        stderr_buf.close()
+
+    if proc.returncode != 0:
+        raise VideoProcessingError(
+            "GPU decode v2 failed",
+            context={
+                "command": " ".join(str(c) for c in cmd),
+                "return_code": proc.returncode,
+                "chunk": f"{chunk_start:.1f}-{chunk_end:.1f}",
+                "stderr_tail": stderr_text[-STDERR_TAIL_BYTES:],
+            },
+        )
 
     return results, stderr_text

@@ -1,5 +1,6 @@
 """Tests for match boundary detection."""
 
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -29,6 +30,7 @@ from allaganeye.video.detector import (
     _merge_regions,
     _probe_single_frame,
     _refine_blackout_regions,
+    _use_legacy_fps_filter,
     detect_match_boundaries,
 )
 
@@ -1014,7 +1016,9 @@ class TestDetectMatchBoundaries:
     @patch("allaganeye.video.detector._probe_single_frame")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_all_black(self, mock_chunk, mock_probe):
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 5.0 for t in ts}
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 5.0 for t in ts
+        }
         mock_probe.return_value = 5.0  # Pass 2 refinement
         result = detect_match_boundaries(
             Path("test.mp4"), duration_hint=300.0, min_match_duration=100.0
@@ -1024,7 +1028,7 @@ class TestDetectMatchBoundaries:
     @patch("allaganeye.video.detector._probe_single_frame")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_blackout_in_middle(self, mock_chunk, mock_probe):
-        def chunk_side_effect(vp, ts, cs, ce, si):
+        def chunk_side_effect(vp, ts, cs, ce, si, **kwargs):
             return {t: 5.0 if 598.0 <= t <= 602.0 else 128.0 for t in ts}
 
         mock_chunk.side_effect = chunk_side_effect
@@ -1041,7 +1045,9 @@ class TestDetectMatchBoundaries:
 
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_custom_threshold(self, mock_chunk):
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 20.0 for t in ts}
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 20.0 for t in ts
+        }
         result = detect_match_boundaries(
             Path("test.mp4"),
             duration_hint=300.0,
@@ -1053,7 +1059,9 @@ class TestDetectMatchBoundaries:
     @patch("allaganeye.video.detector._probe_single_frame")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_custom_threshold_blackout(self, mock_chunk, mock_probe):
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 20.0 for t in ts}
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 20.0 for t in ts
+        }
         mock_probe.return_value = 20.0  # Pass 2 refinement
         result = detect_match_boundaries(
             Path("test.mp4"),
@@ -1072,7 +1080,9 @@ class TestDetectMatchBoundaries:
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_brightness_callback_receives_pass1_results(self, mock_chunk):
         """#569 -- brightness_callback fires once with full Pass 1 map."""
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 50.0 + t for t in ts}
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 50.0 + t for t in ts
+        }
         captured: list[dict[float, float]] = []
         detect_match_boundaries(
             Path("test.mp4"),
@@ -1092,7 +1102,9 @@ class TestDetectMatchBoundaries:
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_brightness_callback_optional_default(self, mock_chunk):
         """Omitting the callback is a no-op (preserves pre-#569 callers)."""
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 100.0 for t in ts}
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 100.0 for t in ts
+        }
         # Should not raise even without the new kwarg.
         result = detect_match_boundaries(
             Path("test.mp4"),
@@ -1107,7 +1119,9 @@ class TestDetectMatchBoundaries:
         """Verbose callers receive pipeline statistics (issue #336 Phase 1)."""
         from allaganeye.video.detector import DetectionStats
 
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 128.0 for t in ts
+        }
         stats: DetectionStats = {}
         detect_match_boundaries(
             Path("test.mp4"),
@@ -1129,7 +1143,7 @@ class TestDetectMatchBoundaries:
         """Scorebar classification counts flow through to stats."""
         from allaganeye.video.detector import DetectionStats
 
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
             t: 5.0 if 598.0 <= t <= 602.0 else 128.0 for t in ts
         }
         mock_probe.side_effect = lambda path, t: 5.0 if 593.0 <= t <= 607.0 else 128.0
@@ -1173,7 +1187,9 @@ class TestDetectMatchBoundaries:
 
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_progress_callback(self, mock_chunk):
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 128.0 for t in ts
+        }
         calls = []
         detect_match_boundaries(
             Path("test.mp4"),
@@ -1197,7 +1213,7 @@ class TestDetectMatchBoundaries:
         """
 
         # Single blackout region at t=5 (below threshold)
-        def side_effect(vp, ts, cs, ce, si):
+        def side_effect(vp, ts, cs, ce, si, **kwargs):
             return {t: 0.0 if 4.0 <= t <= 6.0 else 128.0 for t in ts}
 
         mock_chunk.side_effect = side_effect
@@ -1237,7 +1253,7 @@ class TestDetectMatchBoundaries:
         """
 
         # One blackout region around t=5.
-        def chunk_side_effect(vp, ts, cs, ce, si):
+        def chunk_side_effect(vp, ts, cs, ce, si, **kwargs):
             return {t: 0.0 if 4.0 <= t <= 6.0 else 128.0 for t in ts}
 
         mock_chunk.side_effect = chunk_side_effect
@@ -1272,7 +1288,9 @@ class TestDetectMatchBoundaries:
 
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_progress_callback_none(self, mock_chunk):
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 128.0 for t in ts
+        }
         result = detect_match_boundaries(
             Path("test.mp4"), duration_hint=300.0, min_match_duration=100.0
         )
@@ -1283,7 +1301,7 @@ class TestDetectMatchBoundaries:
         """All timestamps are processed across chunks."""
         call_timestamps = []
 
-        def side_effect(vp, ts, cs, ce, si):
+        def side_effect(vp, ts, cs, ce, si, **kwargs):
             call_timestamps.extend(ts)
             return {t: 128.0 for t in ts}
 
@@ -1299,7 +1317,9 @@ class TestDetectMatchBoundaries:
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_chunked_execution(self, mock_chunk):
         """Multiple chunks are created for parallel execution."""
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 128.0 for t in ts
+        }
         result = detect_match_boundaries(
             Path("test.mp4"),
             duration_hint=100.0,
@@ -1313,7 +1333,9 @@ class TestDetectMatchBoundaries:
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_scorebar_filtering_called_with_resolution(self, mock_chunk, mock_filter):
         """Scorebar filtering is invoked when src_resolution is provided."""
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 128.0 for t in ts
+        }
         mock_filter.side_effect = lambda vp, regions, dur, h, w, **kw: (
             regions,
             ["match_boundary"] * len(regions),
@@ -1332,7 +1354,9 @@ class TestDetectMatchBoundaries:
         self, mock_chunk, mock_filter
     ):
         """Scorebar filtering is NOT invoked when src_resolution is None."""
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 128.0 for t in ts
+        }
         detect_match_boundaries(
             Path("test.mp4"),
             duration_hint=300.0,
@@ -1344,7 +1368,9 @@ class TestDetectMatchBoundaries:
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_audio_hits_forwarded_to_scorebar_filter(self, mock_chunk, mock_filter):
         """audio_hits parameter is passed through to scorebar filtering (#288)."""
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 128.0 for t in ts
+        }
         mock_filter.side_effect = lambda vp, regions, dur, h, w, **kw: (
             regions,
             ["match_boundary"] * len(regions),
@@ -1364,7 +1390,9 @@ class TestDetectMatchBoundaries:
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_audio_hits_default_none_forwarded_as_none(self, mock_chunk, mock_filter):
         """Omitted audio_hits reaches the scorebar filter as None."""
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 128.0 for t in ts
+        }
         mock_filter.side_effect = lambda vp, regions, dur, h, w, **kw: (
             regions,
             ["match_boundary"] * len(regions),
@@ -1463,7 +1491,11 @@ class TestBorderlinePseudoRegions:
         assert _borderline_pseudo_regions({}, 15.0, 1000.0) == []
 
     def test_no_borderline_frames(self):
-        """All frames outside [threshold, threshold*2) -> no pseudo regions."""
+        """All frames outside [threshold, _TRANSITION_THRESHOLD) -> no pseudo regions.
+
+        #576 A5: upper bound extended from blackout_threshold * 2 (= 30) to
+        _TRANSITION_THRESHOLD (= 55).
+        """
         results = {0.0: 128.0, 10.0: 5.0, 20.0: 200.0}
         assert _borderline_pseudo_regions(results, 15.0, 1000.0) == []
 
@@ -1487,9 +1519,24 @@ class TestBorderlinePseudoRegions:
         assert regions[0][0] == 996.0
         assert regions[0][1] == 1000.0
 
-    def test_upper_bound_exclusive(self):
-        """Frames at exactly 2 * threshold are not borderline."""
-        results = {100.0: 30.0}  # == threshold * 2
+    def test_upper_bound_is_transition_threshold(self):
+        """#576 A5: upper bound is _TRANSITION_THRESHOLD (55), not threshold * 2.
+
+        Sample at brightness 42.6 (case from obs-20260116 t=2178) MUST
+        trigger A3 refinement so Pass 2 can find sub-sample-interval
+        blackouts.  Pre-A5 fix, brightness 42.6 was outside the
+        [15, 30) borderline range and Pass 2 never probed the region.
+        """
+        results = {100.0: 42.6}
+        regions = _borderline_pseudo_regions(results, 15.0, 1000.0)
+        assert len(regions) == 1, (
+            "brightness 42.6 should trigger A3 with #576 A5 extension "
+            "(was non-borderline pre-fix)"
+        )
+
+    def test_upper_bound_exclusive_at_transition(self):
+        """Frames at exactly _TRANSITION_THRESHOLD = 55 are NOT borderline."""
+        results = {100.0: 55.0}
         assert _borderline_pseudo_regions(results, 15.0, 1000.0) == []
 
     def test_lower_bound_inclusive(self):
@@ -1543,7 +1590,7 @@ class TestPass1HysteresisIntegration:
         # Put borderline frames in the middle, bright frames elsewhere.
         # Pass 1 runs at 3s interval (default), so frames at 600-609 become
         # a 10s borderline span.
-        def chunk_side_effect(vp, ts, cs, ce, si):
+        def chunk_side_effect(vp, ts, cs, ce, si, **kwargs):
             return {t: 15.5 if 600.0 <= t <= 609.0 else 128.0 for t in ts}
 
         mock_chunk.side_effect = chunk_side_effect
@@ -1575,7 +1622,7 @@ class TestPass1HysteresisIntegration:
         at 0.25s intervals -- finding the real short blackout at 8137-8140.
         """
 
-        def chunk_side_effect(vp, ts, cs, ce, si):
+        def chunk_side_effect(vp, ts, cs, ce, si, **kwargs):
             # t=8139 is borderline; surrounding Pass 1 samples are bright
             out = {}
             for t in ts:
@@ -1611,7 +1658,7 @@ class TestPass1HysteresisIntegration:
     ):
         """With _ENABLE_BORDERLINE_REFINEMENT=False, no pseudo regions added."""
 
-        def chunk_side_effect(vp, ts, cs, ce, si):
+        def chunk_side_effect(vp, ts, cs, ce, si, **kwargs):
             return {t: 20.0 if t == 8139.0 else 128.0 for t in ts}
 
         mock_chunk.side_effect = chunk_side_effect
@@ -1635,7 +1682,7 @@ class TestPass1HysteresisIntegration:
     def test_upper_margin_zero_restores_strict_threshold(self, mock_chunk, mock_probe):
         """With _BLACKOUT_THRESHOLD_UPPER_MARGIN=0.0, only b<threshold is blackout."""
 
-        def chunk_side_effect(vp, ts, cs, ce, si):
+        def chunk_side_effect(vp, ts, cs, ce, si, **kwargs):
             # Make one frame borderline (15.5) but otherwise bright.
             # Also disable A3 so only A4 behavior is under test.
             return {t: 15.5 if 600.0 <= t <= 609.0 else 128.0 for t in ts}
@@ -1656,3 +1703,438 @@ class TestPass1HysteresisIntegration:
 
         # Borderline not captured -> single match spans whole video
         assert len(result) == 1
+
+
+class TestUseLegacyFpsFilter:
+    """env var rollback helper (#576 S6)."""
+
+    def test_default_false(self, monkeypatch):
+        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
+        assert _use_legacy_fps_filter() is False
+
+    def test_explicit_1_returns_true(self, monkeypatch):
+        monkeypatch.setenv("ALLAGANEYE_DETECT_FPS_FILTER", "1")
+        assert _use_legacy_fps_filter() is True
+
+    def test_other_values_return_false(self, monkeypatch):
+        for value in ("0", "true", "yes", "", "2"):
+            monkeypatch.setenv("ALLAGANEYE_DETECT_FPS_FILTER", value)
+            assert _use_legacy_fps_filter() is False, f"value={value!r}"
+
+
+class TestConftestEnvVarAutouse:
+    """conftest.py autouse fixture clears ALLAGANEYE_DETECT_FPS_FILTER (#576 S6)."""
+
+    def test_env_var_unset_by_default(self):
+        # autouse fixture should have unset it before this test runs.
+        assert "ALLAGANEYE_DETECT_FPS_FILTER" not in os.environ, (
+            "conftest autouse should unset ALLAGANEYE_DETECT_FPS_FILTER. "
+            "CI pollution risk (#576 R6)."
+        )
+
+
+# ---------------------------------------------------------------------------
+# _sample_chunk_frames / _resolve_fps_rational (#576 S2.2 / S2.3)
+# ---------------------------------------------------------------------------
+
+import io  # noqa: E402 -- placed here to keep new test section self-contained
+
+from allaganeye.video.detector import (  # noqa: E402
+    _FRAME_SIZE as _FS,
+    _resolve_fps_rational,
+    _sample_chunk_frames,
+)
+
+
+def _frames_bytes(brightnesses: list[int]) -> bytes:
+    """Build a raw grayscale frame stream from per-frame mean brightness."""
+    return b"".join(bytes([b]) * _FS for b in brightnesses)
+
+
+class TestSampleChunkFramesRationalMapping:
+    """ffmpeg select filter positional mapping: emitted frame K -> chunk_timestamps[K]."""
+
+    def test_integer_60fps(self):
+        # ffmpeg select filter emits 3 frames (one per chunk_timestamps entry).
+        # Emitted frame 0 -> 10.0, frame 1 -> 12.0, frame 2 -> 14.0.
+        # expected_frames=241 simulates VFR check with stream matching expected.
+        stream = io.BytesIO(_frames_bytes([100] * 241))
+        result = _sample_chunk_frames(
+            stream=stream,
+            chunk_start=10.0,
+            chunk_timestamps=[10.0, 12.0, 14.0],
+            fps_num=60,
+            fps_den=1,
+            expected_frames=241,  # stream emits 241 total, slack covers diff
+            is_tail_chunk=False,
+        )
+        assert result == {10.0: 100.0, 12.0: 100.0, 14.0: 100.0}
+
+    def test_ntsc_59_94(self):
+        # ffmpeg select filter emits 2 frames for 2 chunk_timestamps entries.
+        # Emitted frame 0 -> 0.0, frame 1 -> 10.0 (positional mapping).
+        # Stream has 600 total frames matching expected_frames (VFR check passes).
+        stream = io.BytesIO(_frames_bytes([50] * 600))
+        result = _sample_chunk_frames(
+            stream=stream,
+            chunk_start=0.0,
+            chunk_timestamps=[0.0, 10.0],
+            fps_num=60000,
+            fps_den=1001,
+            expected_frames=600,
+            is_tail_chunk=False,
+        )
+        assert 0.0 in result and 10.0 in result
+        assert result[0.0] == 50.0
+        assert result[10.0] == 50.0
+
+
+class TestSampleChunkFramesFrameMissing:
+    """stream が chunk_timestamps より少ないフレームを emitted したとき 255.0 fallback (#576)."""
+
+    def test_target_beyond_available_frames(self):
+        # Stream emits 1 frame, but chunk_timestamps has 2 entries.
+        # With positional mapping: emitted frame 0 -> chunk_timestamps[0]=0.0,
+        # chunk_timestamps[1]=10.0 gets no emitted frame -> 255.0 fallback.
+        stream = io.BytesIO(_frames_bytes([0] * 1))
+        result = _sample_chunk_frames(
+            stream=stream,
+            chunk_start=0.0,
+            chunk_timestamps=[0.0, 10.0],
+            fps_num=60,
+            fps_den=1,
+            expected_frames=2,  # expected = len(chunk_timestamps) = 2
+            is_tail_chunk=True,  # tail -- VFR diff=1 within slack, no raise
+        )
+        assert result[0.0] == 0.0
+        assert result[10.0] == 255.0
+
+
+class TestSampleChunkFramesDynamicVfr:
+    """動的 VFR 検出: slack 超過時 raise / tail chunk は WARN のみ (#576 S2.2 / S7.1.5)."""
+
+    def test_within_slack_no_error(self):
+        # 60fps x 60s = 3600 expected, slack = max(36, 6) = 36
+        # emit 3580 = -20 (within slack), should not raise
+        stream = io.BytesIO(_frames_bytes([100] * 3580))
+        _sample_chunk_frames(
+            stream=stream,
+            chunk_start=0.0,
+            chunk_timestamps=[0.0, 30.0],
+            fps_num=60,
+            fps_den=1,
+            expected_frames=3600,
+            is_tail_chunk=False,
+        )
+        # no raise expected
+
+    def test_exceeds_slack_non_tail_raises(self):
+        # 60fps x 60s = 3600 expected, slack = max(36, 6) = 36
+        # emit 3500 = -100 (exceeds slack), non-tail chunk -> raise
+        stream = io.BytesIO(_frames_bytes([100] * 3500))
+        with pytest.raises(VideoProcessingError) as excinfo:
+            _sample_chunk_frames(
+                stream=stream,
+                chunk_start=0.0,
+                chunk_timestamps=[0.0, 30.0],
+                fps_num=60,
+                fps_den=1,
+                expected_frames=3600,
+                is_tail_chunk=False,
+            )
+        assert "Dynamic VFR" in str(excinfo.value)
+
+    def test_exceeds_slack_tail_only_warns(self, caplog):
+        # Same overshoot but tail chunk -> WARN only, no raise.
+        import logging as _logging
+
+        stream = io.BytesIO(_frames_bytes([100] * 3500))
+        with caplog.at_level(_logging.WARNING):
+            _sample_chunk_frames(
+                stream=stream,
+                chunk_start=0.0,
+                chunk_timestamps=[0.0, 30.0],
+                fps_num=60,
+                fps_den=1,
+                expected_frames=3600,
+                is_tail_chunk=True,
+            )
+        msgs = [
+            r.getMessage()
+            for r in caplog.records
+            if "VFR" in r.getMessage() or "tail" in r.getMessage()
+        ]
+        assert any("tail" in m or "VFR" in m for m in msgs), (
+            f"expected WARN for tail chunk, got: {[r.getMessage() for r in caplog.records]}"
+        )
+
+
+class TestSampleChunkFramesFloatFallback:
+    """float source_fps を Fraction.limit_denominator(10000) で rational に
+    変換した場合、NTSC rational と同じ frame_idx を選ぶこと (#576 S2.3 / S7.1.3)."""
+
+    def test_float_59_94_yields_ntsc_index(self):
+        num, den = _resolve_fps_rational(None, None, 60000 / 1001)
+        # Fraction(60000/1001).limit_denominator(10000) -> 60000/1001 exactly
+        assert (num, den) == (60000, 1001)
+
+    def test_float_60_yields_60_over_1(self):
+        num, den = _resolve_fps_rational(None, None, 60.0)
+        # Fraction(60.0).limit_denominator(10000) -> 60/1
+        assert (num, den) == (60, 1)
+
+
+class TestResolveFpsRationalPositivityCheck:
+    """(0, 1) のような half-zero rational は float fallback を使うこと (#576 fix)."""
+
+    def test_zero_num_falls_back_to_float(self):
+        # fps_num=0 is invalid; must fall back to source_fps float
+        num, den = _resolve_fps_rational(0, 1, 60.0)
+        assert (num, den) == (60, 1)
+
+    def test_zero_den_falls_back_to_float(self):
+        # fps_den=0 would cause ZeroDivisionError if used; must fall back
+        num, den = _resolve_fps_rational(60, 0, 60.0)
+        assert (num, den) == (60, 1)
+
+    def test_zero_zero_sentinel_falls_back_to_float(self):
+        # probe.py parse failure sentinel (0, 0) -> fall through to float
+        num, den = _resolve_fps_rational(0, 0, 60000 / 1001)
+        assert (num, den) == (60000, 1001)
+
+    def test_valid_rational_used_directly(self):
+        # positive (num, den) must still be returned as-is
+        num, den = _resolve_fps_rational(60, 1, 30.0)
+        assert (num, den) == (60, 1)
+
+
+class TestSampleChunkFramesStreamingMemory:
+    """フレームを逐次処理し全フレームをバッファに蓄積しないこと (spec S2.2 memory budget fix)."""
+
+    def test_does_not_buffer_all_frames(self):
+        """Only the first len(chunk_timestamps) frames are recorded; rest discarded.
+
+        With ffmpeg select filter, the stream emits exactly one frame per
+        chunk_timestamps entry in order.  Emitted frame 0 -> 0.0, frame 1 -> 1.0.
+        Frames beyond len(chunk_timestamps) are consumed but not stored.
+        """
+        n_frames = 3600
+        # frame 0 brightness=10, frame 1 brightness=200, all others=128.
+        # With positional mapping: 0.0 -> frame 0 (10), 1.0 -> frame 1 (200).
+        raw = (
+            bytes([10]) * _FS + bytes([200]) * _FS + bytes([128]) * _FS * (n_frames - 2)
+        )
+        stream = io.BytesIO(raw)
+        result = _sample_chunk_frames(
+            stream=stream,
+            chunk_start=0.0,
+            chunk_timestamps=[0.0, 1.0],
+            fps_num=60,
+            fps_den=1,
+            expected_frames=n_frames,
+            is_tail_chunk=False,
+        )
+        assert result[0.0] == pytest.approx(10.0)
+        assert result[1.0] == pytest.approx(200.0)
+
+    def test_stream_none_raises(self):
+        """None stream raises VideoProcessingError immediately."""
+        with pytest.raises(VideoProcessingError, match="ffmpeg stdout not available"):
+            _sample_chunk_frames(
+                stream=None,
+                chunk_start=0.0,
+                chunk_timestamps=[0.0],
+                fps_num=60,
+                fps_den=1,
+                expected_frames=1,
+                is_tail_chunk=False,
+            )
+
+
+# ---------------------------------------------------------------------------
+# _decode_chunk_cpu v2 path + env var dispatch (#576 S2.1 / S6 / S7.1.1 / S7.1.7)
+# ---------------------------------------------------------------------------
+
+import io as _io  # noqa: E402 -- placed here to keep new test section self-contained
+
+
+class TestDecodeChunkCpuNewPath:
+    """_decode_chunk_cpu 新 path の cmd 構築検証 (#576 S2.1 / S7.1.1)."""
+
+    @patch("allaganeye.video.detector.subprocess.Popen")
+    @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
+    def test_cmd_uses_input_seek_no_fps_passthrough(
+        self, _mock_ff, mock_popen, monkeypatch
+    ):
+        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
+
+        mock_proc = MagicMock()
+        # chunk_timestamps has 3 entries -> select filter emits exactly 3 frames.
+        # expected_frames = len(chunk_timestamps) = 3; stream must match to pass
+        # the VFR check.
+        mock_proc.stdout = _io.BytesIO(bytes([0] * _FRAME_SIZE * 3))
+        mock_proc.stderr = _io.BytesIO(b"")
+        mock_proc.wait.return_value = 0
+        mock_proc.returncode = 0
+        mock_popen.return_value.__enter__.return_value = mock_proc
+
+        _decode_chunk_cpu(
+            Path("test.mp4"),
+            chunk_timestamps=[0.0, 1.0, 2.0],
+            chunk_start=0.0,
+            chunk_end=60.0,
+            sample_interval=1.0,
+            source_fps_num=60,
+            source_fps_den=1,
+            is_tail_chunk=False,
+        )
+
+        called_cmd = mock_popen.call_args[0][0]
+        # dual seek: one -ss before -i (input seek), one after -i (output seek)
+        ss_positions = [i for i, arg in enumerate(called_cmd) if arg == "-ss"]
+        i_idx = called_cmd.index("-i")
+        assert len(ss_positions) == 2, (
+            f"expected 2 -ss flags for dual seek, got {ss_positions} in {called_cmd}"
+        )
+        assert ss_positions[0] < i_idx, "first -ss should be input seek (before -i)"
+        assert ss_positions[1] > i_idx, "second -ss should be output seek (after -i)"
+        # -vf must contain select filter (frame-index based, not PTS-based fps=)
+        vf_idx = called_cmd.index("-vf")
+        vf_value = called_cmd[vf_idx + 1]
+        assert "fps=" not in vf_value, (
+            f"fps filter must be removed, got -vf {vf_value!r}"
+        )
+        assert "select='not(mod(n\\," in vf_value, (
+            f"select filter missing in -vf, got {vf_value!r}"
+        )
+        # -fps_mode passthrough explicit
+        assert "-fps_mode" in called_cmd, "missing -fps_mode passthrough"
+        fps_mode_idx = called_cmd.index("-fps_mode")
+        assert called_cmd[fps_mode_idx + 1] == "passthrough"
+
+
+class TestDecodeChunkCpuV2NonzeroReturncode:
+    """returncode != 0 で 255.0 fallback + WARNING ログ (#576 bug fix)."""
+
+    @patch("allaganeye.video.detector.tempfile.TemporaryFile")
+    @patch("allaganeye.video.detector.subprocess.Popen")
+    @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
+    def test_nonzero_returncode_returns_255_fallback(
+        self, _mock_ff, mock_popen, mock_tmpfile, monkeypatch, caplog
+    ):
+        """proc.returncode != 0 -> 255.0 fallback, stderr read from tempfile."""
+        import logging
+
+        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
+
+        # Simulate tempfile that ffmpeg would have written to.
+        # seek(0) + read() must return the error bytes.
+        fake_stderr_buf = _io.BytesIO(b"error: some ffmpeg failure")
+        mock_tmpfile.return_value = fake_stderr_buf
+
+        mock_proc = MagicMock()
+        # With select filter, expected_frames = len(chunk_timestamps) = 3.
+        # Emit exactly 3 frames so _sample_chunk_frames VFR check passes;
+        # returncode=1 then triggers the 255.0 fallback path we are testing.
+        mock_proc.stdout = _io.BytesIO(bytes([128]) * _FRAME_SIZE * 3)
+        mock_proc.wait.return_value = None
+        mock_proc.returncode = 1
+        mock_popen.return_value.__enter__.return_value = mock_proc
+
+        timestamps = [0.0, 1.0, 2.0]
+        with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+            result = _decode_chunk_cpu(
+                Path("test.mp4"),
+                chunk_timestamps=timestamps,
+                chunk_start=0.0,
+                chunk_end=3.0,
+                sample_interval=1.0,
+                source_fps_num=60,
+                source_fps_den=1,
+                is_tail_chunk=False,
+            )
+
+        # All timestamps must map to 255.0 (safe non-blackout fallback)
+        assert result == {0.0: 255.0, 1.0: 255.0, 2.0: 255.0}, (
+            f"Expected all 255.0 fallback, got {result}"
+        )
+        # A WARNING must be logged containing the stderr snippet
+        warning_messages = [
+            r.message for r in caplog.records if r.levelno == logging.WARNING
+        ]
+        assert any("error: some ffmpeg failure" in m for m in warning_messages), (
+            f"Expected stderr snippet in WARNING log, got: {warning_messages}"
+        )
+
+
+class TestDecodeChunkCpuLegacyRollback:
+    """env var=1 で旧 fps filter cmd が生成されること (#576 S6 / S7.1.7)."""
+
+    @patch("allaganeye.video.detector.subprocess.run")
+    @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
+    def test_legacy_cmd_used_when_env_set(self, _mock_ff, mock_run, monkeypatch):
+        monkeypatch.setenv("ALLAGANEYE_DETECT_FPS_FILTER", "1")
+        mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
+
+        _decode_chunk_cpu(
+            Path("test.mp4"),
+            chunk_timestamps=[0.0, 1.0, 2.0],
+            chunk_start=0.0,
+            chunk_end=3.0,
+            sample_interval=1.0,
+            source_fps_num=60,
+            source_fps_den=1,
+            is_tail_chunk=False,
+        )
+
+        called_cmd = mock_run.call_args[0][0]
+        # legacy: -ss before -i
+        i_idx = called_cmd.index("-i")
+        ss_idx = called_cmd.index("-ss")
+        assert ss_idx < i_idx, f"legacy -ss must precede -i, got {called_cmd}"
+        # legacy: fps= present in -vf
+        vf_idx = called_cmd.index("-vf")
+        vf_value = called_cmd[vf_idx + 1]
+        assert "fps=" in vf_value, f"legacy must keep fps filter, got -vf {vf_value!r}"
+
+
+class TestDetectMatchBoundariesRationalFps:
+    """detect_match_boundaries が source_fps_num/den を _scan_cpu / scan_gpu
+    まで伝搬すること (#576 S2.3)."""
+
+    @patch("allaganeye.video.detector._scan_cpu")
+    def test_cpu_path_receives_rational_fps(self, mock_scan):
+        mock_scan.return_value = {0.0: 100.0, 1.0: 100.0}
+
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=1.0,
+            sample_interval=1.0,
+            min_match_duration=0.5,
+            use_gpu=False,
+            source_fps_num=60000,
+            source_fps_den=1001,
+        )
+
+        kwargs = mock_scan.call_args.kwargs
+        assert kwargs.get("source_fps_num") == 60000
+        assert kwargs.get("source_fps_den") == 1001
+
+    @patch("allaganeye.video.gpu_detector.scan_gpu")
+    @patch("allaganeye.video.detector._scan_cpu")
+    def test_gpu_path_receives_rational_fps(self, _mock_cpu, mock_gpu):
+        mock_gpu.return_value = {0.0: 100.0, 1.0: 100.0}
+
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=1.0,
+            sample_interval=1.0,
+            min_match_duration=0.5,
+            use_gpu=True,
+            source_fps_num=60,
+            source_fps_den=1,
+        )
+
+        kwargs = mock_gpu.call_args.kwargs
+        assert kwargs.get("source_fps_num") == 60
+        assert kwargs.get("source_fps_den") == 1

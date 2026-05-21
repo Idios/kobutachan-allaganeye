@@ -1,13 +1,16 @@
 """Match boundary detection using parallel ffmpeg frame probing."""
 
 import logging
+import math
 import os
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from fractions import Fraction
 from pathlib import Path
-from typing import TypedDict
+from typing import IO, TypedDict
 
 import numpy as np
 
@@ -62,6 +65,127 @@ _SAMPLE_WIDTH = 320
 _SAMPLE_HEIGHT = 180
 _FRAME_SIZE = _SAMPLE_WIDTH * _SAMPLE_HEIGHT  # grayscale, 1 byte per pixel
 
+# Dual seek (#576 Option 1): input seek lead-in margin (seconds).
+# Input -ss jumps to the keyframe BEFORE (chunk_start - SEEK_LEAD_SECONDS)
+# so ffmpeg only decodes the small GOP pre-roll, not from t=0.
+# OBS AV1 keyframe interval is typically 2s; 5s gives 2.5x slack.
+SEEK_LEAD_SECONDS = 5.0
+
+
+def _resolve_fps_rational(
+    fps_num: int | None,
+    fps_den: int | None,
+    source_fps: float | None,
+) -> tuple[int, int]:
+    """Resolve (num, den) from rational-first / float-fallback inputs (#576 S2.3).
+
+    Priority:
+    1. ``fps_num`` + ``fps_den`` both given -> use as-is
+    2. ``source_fps`` (float) only -> ``Fraction(...).limit_denominator(10000)``
+    3. all None -> raise VideoProcessingError (caller should not call here
+       without source_fps; legacy path is selected via env var separately)
+    """
+    # probe.py returns (0, 0) on parse failure; we deliberately fall through
+    # to source_fps (float) for that case via the > 0 checks below.
+    if fps_num is not None and fps_den is not None and fps_num > 0 and fps_den > 0:
+        return fps_num, fps_den
+    if source_fps and source_fps > 0:
+        frac = Fraction(source_fps).limit_denominator(10000)
+        return frac.numerator, frac.denominator
+    raise VideoProcessingError(
+        "source_fps not provided to detector (need fps_num/fps_den or source_fps)."
+    )
+
+
+def _sample_chunk_frames(
+    stream: IO[bytes] | None,
+    chunk_start: float,
+    chunk_timestamps: list[float],
+    fps_num: int,
+    fps_den: int,
+    expected_frames: int,
+    is_tail_chunk: bool,
+) -> dict[float, float]:
+    """Sample frames from a pre-filtered stream (#576 select-filter path).
+
+    With ffmpeg-level ``select='not(mod(n,N))'`` filter, the stream emits
+    exactly one frame per ``chunk_timestamps`` entry (in order).  Emitted
+    frame K is mapped directly to ``chunk_timestamps[K]``.  The rational-fps
+    ``round((t-chunk_start) * fps_num / fps_den)`` math is handled at the
+    ffmpeg layer; Python just assigns frames by position.
+
+    Args:
+        stream: A binary file-like object (``IO[bytes]``) yielding raw
+            grayscale frames (320x180 = ``_FRAME_SIZE`` bytes per frame)
+            from a ``subprocess.Popen`` with ``select`` filter +
+            ``-fps_mode passthrough``.  Must not be ``None``.
+        chunk_start: Wall-clock start time of the chunk (seconds).
+            Kept in signature for API stability; not used for index math.
+        chunk_timestamps: Pre-computed global grid timestamps for this chunk
+            (sorted ascending).  Each becomes a key in the returned dict.
+            Emitted frame K -> chunk_timestamps[K].
+        fps_num / fps_den: Source video frame rate as rational.  Used only
+            for the slack computation in the dynamic VFR check.
+        expected_frames: ``len(chunk_timestamps)`` -- the number of frames
+            the ffmpeg ``select`` filter is expected to emit.
+        is_tail_chunk: True when this chunk ends at (or within 1.0s of)
+            the video duration.  Tail chunks may emit fewer frames than
+            expected; the VFR check downgrades to WARN-only for them.
+
+    Returns:
+        ``{timestamp: brightness}`` mapping for every entry in
+        ``chunk_timestamps``.  Targets whose emitted frame was not received
+        get 255.0 (safe non-blackout fallback, #214 contract preserved).
+
+    Raises:
+        VideoProcessingError: when the chunk is non-tail and the emitted
+        frame count deviates from ``expected_frames`` by more than
+        ``max(expected_frames * 0.01, ceil(source_fps * 0.1))`` frames
+        (dynamic VFR / decoder anomaly detection).
+    """
+    if stream is None:
+        raise VideoProcessingError("ffmpeg stdout not available")
+
+    source_fps = fps_num / fps_den
+
+    results: dict[float, float] = {}
+    emit_count = 0
+
+    # Memory budget: one _FRAME_SIZE bytes chunk at a time.
+    # Emitted frame K -> chunk_timestamps[K] (positional mapping).
+    while True:
+        raw = stream.read(_FRAME_SIZE)
+        if len(raw) < _FRAME_SIZE:
+            break
+        if emit_count < len(chunk_timestamps):
+            frame = np.frombuffer(raw, dtype=np.uint8)
+            brightness = float(frame.mean())
+            results[chunk_timestamps[emit_count]] = brightness
+        emit_count += 1
+
+    # Targets whose frames were not emitted: 255.0 fallback (#214)
+    for t in chunk_timestamps:
+        if t not in results:
+            results[t] = 255.0  # safe non-blackout fallback (#214)
+
+    slack = max(int(expected_frames * 0.01), math.ceil(source_fps * 0.1))
+    diff = abs(emit_count - expected_frames)
+    if diff > slack:
+        msg = (
+            f"Dynamic VFR detection: chunk emitted {emit_count} frames, "
+            f"expected {expected_frames} (slack=+-{slack}). "
+            f"Input may be VFR or decoder anomaly."
+        )
+        if is_tail_chunk:
+            logger.warning(
+                "%s tail chunk -- decoder truncation allowed, continuing.",
+                msg,
+            )
+        else:
+            raise VideoProcessingError(msg)
+
+    return results
+
 
 def _resolve_workers(workers: int | None) -> int:
     """Resolve worker count: explicit value or auto-detect."""
@@ -91,6 +215,12 @@ def detect_match_boundaries(
     chunk_dispatch_callback: Callable[[int], None] | None = None,
     gpu_vendor: str | None = None,
     brightness_callback: Callable[[dict[float, float]], None] | None = None,
+    # #576: rational fps propagation (preferred over float source_fps).
+    # Either pair (num+den) takes precedence; float source_fps is the
+    # backward-compatible fallback (Fraction.limit_denominator path).
+    source_fps_num: int | None = None,
+    source_fps_den: int | None = None,
+    source_fps: float | None = None,
 ) -> list[MatchBoundary]:
     """Detect match boundaries by finding blackout frames.
 
@@ -149,6 +279,9 @@ def detect_match_boundaries(
                 chunk_progress_callback=chunk_progress_callback,
                 chunk_dispatch_callback=chunk_dispatch_callback,
                 vendor=gpu_vendor,
+                source_fps_num=source_fps_num,
+                source_fps_den=source_fps_den,
+                source_fps=source_fps,
             )
             resolved_mode = "GPU"
         except VideoProcessingError:
@@ -160,6 +293,9 @@ def detect_match_boundaries(
                 blackout_threshold,
                 workers,
                 progress_callback,
+                source_fps_num=source_fps_num,
+                source_fps_den=source_fps_den,
+                source_fps=source_fps,
             )
             resolved_mode = "CPU (GPU fallback)"
     else:
@@ -170,6 +306,9 @@ def detect_match_boundaries(
             blackout_threshold,
             workers,
             progress_callback,
+            source_fps_num=source_fps_num,
+            source_fps_den=source_fps_den,
+            source_fps=source_fps,
         )
     pass1_elapsed = time.monotonic() - pass1_start
 
@@ -273,20 +412,62 @@ def _decode_chunk_cpu(
     chunk_start: float,
     chunk_end: float,
     sample_interval: float,
+    *,
+    source_fps_num: int | None = None,
+    source_fps_den: int | None = None,
+    source_fps: float | None = None,
+    is_tail_chunk: bool = False,
 ) -> dict[float, float]:
-    """Decode a chunk using CPU-only ffmpeg with continuous decode.
+    """Decode a chunk in CPU mode.
 
-    Mirrors the GPU ``_decode_chunk()`` approach but without hardware
-    acceleration: one long-lived ffmpeg process decodes the entire chunk
-    via the ``fps`` filter, eliminating per-frame ``-ss`` non-determinism.
-
-    Returns a dict mapping each timestamp in *chunk_timestamps* to its
-    mean brightness.  On failure, returns all timestamps mapped to 255.0
-    (safe non-blackout).
+    Dispatches to the legacy fps-filter path when env var
+    ``ALLAGANEYE_DETECT_FPS_FILTER=1`` is set or when rational fps cannot
+    be resolved.  Otherwise uses the new output-seek + Python N-th
+    sampling path (#576).
     """
     if not chunk_timestamps:
         return {}
 
+    use_legacy = _use_legacy_fps_filter() or (
+        source_fps_num is None and source_fps_den is None and source_fps is None
+    )
+    if use_legacy:
+        return _decode_chunk_cpu_legacy(
+            video_path,
+            chunk_timestamps,
+            chunk_start,
+            chunk_end,
+            sample_interval,
+        )
+
+    fps_num, fps_den = _resolve_fps_rational(
+        source_fps_num,
+        source_fps_den,
+        source_fps,
+    )
+    return _decode_chunk_cpu_v2(
+        video_path,
+        chunk_timestamps,
+        chunk_start,
+        chunk_end,
+        sample_interval,
+        fps_num,
+        fps_den,
+        is_tail_chunk,
+    )
+
+
+def _decode_chunk_cpu_legacy(
+    video_path: Path,
+    chunk_timestamps: list[float],
+    chunk_start: float,
+    chunk_end: float,
+    sample_interval: float,
+) -> dict[float, float]:
+    """Legacy fps-filter chunk decode (pre-#576). Kept for env var rollback.
+
+    Scheduled for removal in v0.3.x patch release.
+    """
     chunk_duration = chunk_end - chunk_start
     fps_value = 1.0 / sample_interval
 
@@ -352,6 +533,148 @@ def _decode_chunk_cpu(
     return results
 
 
+def _decode_chunk_cpu_v2(
+    video_path: Path,
+    chunk_timestamps: list[float],
+    chunk_start: float,
+    chunk_end: float,
+    sample_interval: float,
+    fps_num: int,
+    fps_den: int,
+    is_tail_chunk: bool,
+) -> dict[float, float]:
+    """New path: dual seek + select filter + -fps_mode passthrough (#576 Option 1).
+
+    Dual seek layout::
+
+        -ss <input_seek> -i <video> -ss <output_seek> -t <chunk_duration>
+
+    Input ``-ss`` BEFORE ``-i``: fast container index jump to keyframe near
+    ``chunk_start - SEEK_LEAD_SECONDS`` (~10ms, no decode).  Output ``-ss``
+    AFTER ``-i``: accurate frame-level trim of the small GOP pre-roll
+    (typically SEEK_LEAD_SECONDS worth of frames).  The filter graph then
+    receives frames starting at ``chunk_start``; the ``select`` filter's
+    ``n`` counter resets at filter graph input, so frame 0 corresponds to
+    ``chunk_start``.
+
+    This replaces the previous pure output-seek design where ffmpeg decoded
+    from t=0 for every chunk, causing O(N^2/2) total decode for N=32 chunks
+    (~16.5x full-video decodes -> 67 min on RTX 5090 for a 2h recording).
+    With dual seek, the per-chunk pre-roll is bounded by SEEK_LEAD_SECONDS
+    (5s x 32 = 160s of duplicate decode vs 16.5x full-video).
+
+    The ``select='not(mod(n,N))'`` filter drops frames at the ffmpeg layer
+    (frame-index based, NOT PTS-based -- deterministic across versions)
+    before they reach the pipe, reducing pipe IO from ~28 GB to ~178 MB
+    per 2h video at 60fps + sample_interval=3.0s.
+
+    N = round(sample_interval * fps_num / fps_den).  For 60fps +
+    sample_interval=3.0, N=180 -> ffmpeg emits frame 0, 180, 360, ...
+    Python maps emitted frame K to chunk_timestamps[K] (positional).
+    """
+    chunk_duration = chunk_end - chunk_start
+    # #576: frame-index step for ffmpeg select filter.
+    # N selects every Nth decoded frame (deterministic, unlike PTS-based
+    # fps filter).  For 60fps + sample_interval=3.0, N=180.
+    #
+    # Float arithmetic is acceptable here: sample_interval is a float
+    # CLI option, fps_num/fps_den are positive ints from probe.py.  The
+    # round() collapses to int and the worst-case relative error
+    # (~1/min(fps_num,fps_den) <= 1/24 over realistic sample_intervals)
+    # is dwarfed by the >=1.4s blackout duration the detector cares
+    # about.  Spec S2.2 NTSC drift note covers the same trade-off.
+    n_step = max(1, round(sample_interval * fps_num / fps_den))
+    # expected_frames = number of selected frames = len(chunk_timestamps)
+    expected_frames = len(chunk_timestamps)
+
+    # Dual seek: input seek jumps to keyframe near chunk_start (fast),
+    # output seek trims the GOP pre-roll so filter graph starts at chunk_start.
+    input_seek: float = max(0.0, chunk_start - SEEK_LEAD_SECONDS)
+    output_seek: float = (
+        chunk_start - input_seek
+    )  # = SEEK_LEAD_SECONDS unless chunk_start < SEEK_LEAD_SECONDS
+
+    cmd = [
+        find_ffmpeg(),
+        "-threads",
+        "1",
+        "-ss",
+        str(input_seek),  # input seek (BEFORE -i): fast container jump
+        "-i",
+        str(video_path),
+        "-ss",
+        str(output_seek),  # output seek (AFTER -i): accurate trim to chunk_start
+        "-t",
+        str(chunk_duration),
+        "-fps_mode",
+        "passthrough",
+        "-vf",
+        f"select='not(mod(n\\,{n_step}))',scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
+        "pipe:1",
+    ]
+
+    stderr_text = ""
+    stderr_buf = tempfile.TemporaryFile(mode="w+b")
+    try:
+        with subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=stderr_buf,
+        ) as proc:
+            try:
+                results = _sample_chunk_frames(
+                    stream=proc.stdout,
+                    chunk_start=chunk_start,
+                    chunk_timestamps=chunk_timestamps,
+                    fps_num=fps_num,
+                    fps_den=fps_den,
+                    expected_frames=expected_frames,
+                    is_tail_chunk=is_tail_chunk,
+                )
+                proc.wait(timeout=max(300, int(chunk_duration * 2)))
+                # Read stderr from temp file (no pipe backpressure issue)
+                stderr_buf.seek(0)
+                stderr_text = stderr_buf.read().decode(errors="replace")
+            except VideoProcessingError:
+                proc.kill()
+                # still try to capture stderr for error context
+                try:
+                    stderr_buf.seek(0)
+                    stderr_text = stderr_buf.read().decode(errors="replace")
+                except Exception:
+                    logger.debug("Failed to read stderr from temp file", exc_info=True)
+                raise
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                logger.warning(
+                    "CPU chunk v2 decode timed out [%.1f-%.1f]",
+                    chunk_start,
+                    chunk_end,
+                )
+                return {t: 255.0 for t in chunk_timestamps}
+    except FileNotFoundError as e:
+        raise VideoProcessingError(
+            "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
+        ) from e
+    finally:
+        stderr_buf.close()
+
+    if proc.returncode != 0:
+        logger.warning(
+            "CPU chunk v2 decode failed [%.1f-%.1f]: %s",
+            chunk_start,
+            chunk_end,
+            stderr_text[-200:],
+        )
+        return {t: 255.0 for t in chunk_timestamps}
+
+    return results
+
+
 def _scan_cpu(
     video_path: Path,
     duration_hint: float,
@@ -359,13 +682,17 @@ def _scan_cpu(
     blackout_threshold: float,
     workers: int | None = None,
     progress_callback: Callable[[int, int, int], None] | None = None,
+    *,
+    source_fps_num: int | None = None,
+    source_fps_den: int | None = None,
+    source_fps: float | None = None,
 ) -> dict[float, float]:
-    """CPU mode: chunked continuous decode, one ffmpeg process per chunk.
+    """CPU mode: chunked decode (output seek + Python N-th sampling, #576).
 
-    Splits the video timeline into chunks and decodes each chunk with
-    a long-lived ffmpeg process using the ``fps`` filter.  This replaces
-    per-frame ``-ss`` probing, reducing ffmpeg seek non-determinism to
-    one seek per chunk instead of one per frame.  (#214)
+    When ``source_fps_num``/``source_fps_den`` (or float ``source_fps``) is
+    provided AND env var ``ALLAGANEYE_DETECT_FPS_FILTER`` is not set, uses
+    the new output-seek path.  Otherwise falls back to the legacy
+    fps-filter path.
     """
     timestamps = _generate_timestamps(duration_hint, sample_interval)
     if not timestamps:
@@ -376,13 +703,14 @@ def _scan_cpu(
     chunk_duration = duration_hint / num_chunks
 
     # Distribute pre-computed timestamps to chunks (with overlap)
-    chunks: list[tuple[float, float, list[float]]] = []
+    chunks: list[tuple[float, float, list[float], bool]] = []
     for i in range(num_chunks):
         c_start = i * chunk_duration
         c_end = min((i + 1) * chunk_duration + sample_interval, duration_hint)
         c_timestamps = [t for t in timestamps if c_start <= t < c_end]
+        is_tail = c_end >= duration_hint - 1.0
         if c_timestamps:
-            chunks.append((c_start, c_end, c_timestamps))
+            chunks.append((c_start, c_end, c_timestamps, is_tail))
 
     results: dict[float, float] = {}
     blackout_count = 0
@@ -399,8 +727,12 @@ def _scan_cpu(
                 c_start,
                 c_end,
                 sample_interval,
+                source_fps_num=source_fps_num,
+                source_fps_den=source_fps_den,
+                source_fps=source_fps,
+                is_tail_chunk=is_tail,
             ): (c_start, c_ts)
-            for c_start, c_end, c_ts in chunks
+            for c_start, c_end, c_ts, is_tail in chunks
         }
         for future in as_completed(futures):
             chunk_results = future.result()
@@ -1113,21 +1445,68 @@ By placing cut points inside blackout regions, keyframe drift never
 clips actual match footage.
 """
 
+# ---------------------------------------------------------------------------
+# Legacy fps-filter rollback switch (#576)
+# ---------------------------------------------------------------------------
+# Transitional escape hatch: when ALLAGANEYE_DETECT_FPS_FILTER=1 the
+# detector reverts to the pre-#576 chunked fps=N filter path.  Default
+# (= False) is the new output-seek + N-th sampling path.  Scheduled for
+# removal in v0.3.x patch release (see CHANGELOG / docstring).
+
+
+def _use_legacy_fps_filter() -> bool:
+    """Return True when the legacy fps-filter path is forced via env var (#576).
+
+    **Transitional / scheduled for removal in v0.3.x.**
+
+    Setting ``ALLAGANEYE_DETECT_FPS_FILTER=1`` reverts the detector to
+    the pre-#576 chunked ``fps=N`` filter path.  Originally provided as
+    both an emergency escape hatch for ffmpeg version regressions AND
+    a perf escape (output seek had ~10x regression).  Codex perf rescue
+    Option 1 (dual seek, commit a864834) restored perf to legacy levels
+    (~6m18s for obs-20260118 on RTX 5090 vs legacy ~7 min), so the perf
+    angle is no longer relevant.  CI / production should NEVER set this
+    var (CHANGELOG "Deprecated").
+
+    Removal plan:
+
+    - v0.3.0: env var supported (this function exists, returns env value)
+    - v0.3.x: env var removed (this function deleted, only new path
+      exists, _decode_chunk_cpu_legacy / _decode_chunk_legacy purged)
+
+    See ``docs/superpowers/specs/2026-05-18-v030-l3-detect-fps-filter-retirement-design.md``
+    S6 for rollback design and ``CHANGELOG.md`` for the deprecation
+    timeline.
+    """
+    return os.environ.get("ALLAGANEYE_DETECT_FPS_FILTER") == "1"
+
 
 def _borderline_pseudo_regions(
     results: dict[float, float],
     blackout_threshold: float,
     total_duration: float,
 ) -> list[tuple[float, float]]:
-    """Build pseudo-regions around Pass 1 borderline frames (A3, #361).
+    """Build pseudo-regions around Pass 1 borderline frames (A3, #361 + #576 A5).
 
-    A borderline frame sits in ``[blackout_threshold, blackout_threshold * 2)``
-    -- close to blackout but not dark enough to pass the strict Pass 1 cut.
+    A borderline frame sits in ``[blackout_threshold, _TRANSITION_THRESHOLD)``
+    -- the full "darker than typical game frames" range, not just super-dark.
     Each borderline timestamp produces a +-``_BORDERLINE_REFINE_RADIUS``
     window so Pass 2 precise sampling probes around it.
+
+    #576 A5 extension: the upper bound was originally
+    ``blackout_threshold * 2 = 30`` (catches frames just brighter than blackout
+    threshold).  After dual seek (commit a864834) eliminated fps filter PTS
+    drift, the legacy "accidental" sub-sample-interval blackout detection
+    via drift-induced borderline triggers no longer fires.  Extending the
+    upper bound to ``_TRANSITION_THRESHOLD = 55`` (the full transition zone)
+    restores coverage of sub-sample-interval blackouts that the new accurate
+    sampling otherwise misses (e.g., obs-20260116 t=2175.7-2177.3 boundary
+    where sample at t=2178 = brightness 42.6 was previously skipped).
+    Pass 2 still uses strict ``< blackout_threshold`` extraction, so the
+    only cost is extra Pass 2 probes (no false-positive risk).
     """
     radius = _BORDERLINE_REFINE_RADIUS
-    upper = blackout_threshold * 2
+    upper = _TRANSITION_THRESHOLD
     return [
         (max(0.0, t - radius), min(total_duration, t + radius))
         for t, b in results.items()

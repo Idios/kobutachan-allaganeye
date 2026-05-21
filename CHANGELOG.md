@@ -5,6 +5,91 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **detect**: chunk decode の ffmpeg `-vf fps=N` filter を廃止し、output
+  seek + `-fps_mode passthrough` + Python 側 N-th sampling 方式に移行
+  (#576)。ffmpeg version 依存の frame-selection drift (#560 / #575 /
+  #577) を構造的に除去。obs-20260118 で見逃されていた 3 件の短時間
+  blackout (1.4-2.1s) を正しく検出するように動作が変わる。Match 1 が
+  17m24s に短縮、新 Match 2 (15m24s) が追加、Match 3 が 15m52s に短縮。
+  この新 Match 2 (1686-2610) は 2026-05-21 の Idios 視覚再確認で real
+  boundary と確定、`tests/baselines/v0.3.0/ground-truth/obs-20260118.json`
+  を 5→6 matches に update 済 (#796 audit 後追補)。
+- **GUI brightness timeline** (#569): 新 path で Pass 1 brightness 値が
+  正確化される (旧 path の fps filter drift により歪んでいた値が修正
+  される方向)。timeline 形状の変化が user-visible になる可能性あり。
+- **Audit verification**: PR #793 detector を 5 OBS baseline
+  (obs-20260116/118/119/127/209、計 54 boundary) に対して
+  `scripts/audit-compare.py` (#796 deliverable, PR #799) で ground truth 比較。
+  **53/54 agreed (within ±5s、98.1%)**、唯一の残 finding は
+  obs-20260116 M6 end (#797) で v0.3.x defer。obs-20260118 ground truth は
+  PR #793 detector で新発見した M2 boundary (1686-2610s) を Idios 視覚再確認
+  (2026-05-21) で実 boundary 確定し 5→6 matches に修正。詳細は
+  `docs/v030-baseline-audit.md` §"2026-05-21 PR #793 verification update" 参照。
+
+### Added
+
+- `probe.py::ProbeResult` に `fps_num`/`fps_den` フィールドを追加
+  (NTSC 60000/1001 等の rational frame rate を float 精度損失なく
+  detector まで伝搬)。
+- `scripts/validate-fps-retirement.py` を新規追加 (#576 実装中 evidence
+  用 one-off スクリプト、CI gate ではない)。
+- `scripts/v3-normalize-source-path.py` を新規追加 (PR #793 reexamination V3
+  baseline regen 時の絶対 path → 相対 path 正規化用 one-off スクリプト、
+  audit-compare の source-vs-ground-truth 整合のため必要)。
+
+### Performance
+
+- 当初 v0.3.0 で detect 高速化 path に切替 (#576) で ~10x slowdown が
+  発生していたが、Codex perf rescue Option 1 (dual seek: input seek for
+  fast container index jump + output seek for accurate chunk_start) を
+  commit `a864834` で実装し、perf を legacy 同等以下に復元。
+- ただし dual seek 後の accuracy 検証で sub-sample-interval blackout
+  (例: obs-20260116 t=2178 = 試合境界、Idios 視覚確認済) を Pass 1 が
+  取りこぼすケースを発見。A3 borderline range を `[15, 30) -> [15, 55)`
+  に拡張 (#576 A5) して Pass 2 refinement を活性化、accuracy regression
+  ゼロに到達。trade-off として Pass 2 probe 数増加で perf cost +1.7x。
+- 実測 (RTX 5090): 5 OBS baseline 合計 **~52 min** (legacy ~31 min)。
+  spec §7.4 perf gate を 60 min/合計に revise。
+- v0.3.x で更なる最適化 (gradient-based trigger / packet PTS parse /
+  single-process design) 検討 (#576 spec §10 R12 defer)。
+
+### Deprecated
+
+- env var `ALLAGANEYE_DETECT_FPS_FILTER=1` で旧 fps filter path に
+  rollback 可能 (transitional)。**v0.3.x patch release で削除予定**。
+  緊急 escape 用途のみ、CI / production で使わないこと。
+
+### Known Issues
+
+- **obs-20260116 M6 end miss (#797)**: 試合終了が Fanfare / VICTORY moment で
+  起き、その時点で brightness blackout が無い (post-match cutscene が ~6 分
+  続いた後の teleport blackout のみ) ケース。新 dual seek + A5 path でも
+  legacy 同様 `type=unknown` で video 末尾 (7303.488s) を M6 end とする状態。
+  Fanfare moment (6540s) での fix は v0.3.x で audio Fanfare unfreezing
+  (`scan_fanfare_hits` を detector flow に統合) または scorebar V2
+  strengthening (#803) のいずれかで対応予定。
+- **`scripts/validate-fps-retirement.py` PTS extraction bug (#804)**:
+  legacy / 新 path のどちらでも boundary timestamp に対する PTS 計算が
+  常に `0.021` という固定値を返す既知 bug。brightness 比較は正しく動作する
+  ため accuracy 検証には影響しないが、将来 fps filter 関連 regression 検証
+  で本スクリプトを再使用する場合は PTS extraction の root cause 修正が必要。
+  PR #793 では evidence 収集を audit-compare + Idios 視覚確認で代替済。
+
+### Internal
+
+- V6.2 (scorebar HUD 二分探索) を #797 fix として一時実装 (commit
+  `f7f8879`)、obs-20260116 実機検証で scorebar V2 detection が post-match
+  content (5700-6850) で False positive を発火することが判明し revert
+  (commit `22c8979`)。V2 strengthening の調査を新 issue (#803、
+  `bug` / `P2-medium` / `refactor`) で扱い、#797 の scorebar-based fix path
+  の blocker とする。経緯は
+  `docs/superpowers/specs/2026-05-19-v030-l3-detect-fps-retirement-reexamination-design.md`
+  §10 に記録。
+
 ## [0.2.1] - 2026-05-17
 
 v0.2.0 リリース直後の patch リリース。Dependabot security alerts 解消と既存 deferred UX issue 5 件の対応、PR マージ前の cargo/npm audit CI 追加 + Windows process tree orphan の Job Object 化を含む。Track A/B-1/B-2/B-3/B-4/C/D 構成 (`docs/superpowers/specs/2026-05-16-security-alerts-response-design.md`)。

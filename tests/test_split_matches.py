@@ -28,6 +28,8 @@ PROBE_RESULT: ProbeResult = {
     "width": 1920,
     "height": 1080,
     "fps": 30.0,
+    "fps_num": 30,
+    "fps_den": 1,
     "codec": "h264",
     "audio_codec": "aac",
 }

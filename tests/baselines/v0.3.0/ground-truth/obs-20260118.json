@@ -3,13 +3,14 @@
   "source_size_bytes": 36736854561,
   "source_dir_label": "obs-20260118",
   "ground_truth_provider": "user (Idios, manual)",
-  "ground_truth_provided_at": "2026-05-20",
+  "ground_truth_provided_at": "2026-05-21",
   "tolerance_sec": 5,
   "matches": [
-    {"index": 1, "start_time": 177, "end_time": 2610, "duration": 2433, "type": "fl_match"},
-    {"index": 2, "start_time": 2976, "end_time": 3926, "duration": 950, "type": "fl_match"},
-    {"index": 3, "start_time": 4200, "end_time": 5255, "duration": 1055, "type": "fl_match"},
-    {"index": 4, "start_time": 5499, "end_time": 6465, "duration": 966, "type": "fl_match"},
-    {"index": 5, "start_time": 7231, "end_time": 8114, "duration": 883, "type": "fl_match"}
+    {"index": 1, "start_time": 177, "end_time": 1221, "duration": 1044, "type": "fl_match"},
+    {"index": 2, "start_time": 1686, "end_time": 2610, "duration": 924, "type": "fl_match"},
+    {"index": 3, "start_time": 2976, "end_time": 3926, "duration": 950, "type": "fl_match"},
+    {"index": 4, "start_time": 4200, "end_time": 5255, "duration": 1055, "type": "fl_match"},
+    {"index": 5, "start_time": 5499, "end_time": 6465, "duration": 966, "type": "fl_match"},
+    {"index": 6, "start_time": 7231, "end_time": 8114, "duration": 883, "type": "fl_match"}
   ]
 }

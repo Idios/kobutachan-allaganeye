@@ -1,6 +1,7 @@
 """Video metadata extraction using ffprobe."""
 
 import json
+import logging
 import subprocess
 from pathlib import Path
 from typing import TypedDict
@@ -12,6 +13,8 @@ from allaganeye.exceptions import (
 )
 from allaganeye.ffmpeg_path import find_ffprobe
 
+logger = logging.getLogger(__name__)
+
 
 class ProbeResult(TypedDict):
     """Metadata returned by probe_video()."""
@@ -20,6 +23,8 @@ class ProbeResult(TypedDict):
     width: int
     height: int
     fps: float
+    fps_num: int  # #576: rational frame rate numerator (e.g. 60000)
+    fps_den: int  # #576: rational frame rate denominator (e.g. 1001)
     codec: str
     audio_codec: str | None
 
@@ -34,10 +39,32 @@ def _parse_frame_rate(rate_str: str) -> float:
     return fps if fps > 0 else 0.0
 
 
+def _parse_frame_rate_rational(rate_str: str) -> tuple[int, int]:
+    """Parse a frame rate string into (num, den). Returns (0, 0) on failure.
+
+    Companion to ``_parse_frame_rate`` that preserves the rational form so
+    callers needing exact NTSC arithmetic (e.g., detector frame index
+    mapping, #576) can avoid float precision loss.
+    """
+    try:
+        num_s, den_s = rate_str.split("/")
+        num = int(num_s)
+        den = int(den_s)
+        # ZeroDivisionError is intentionally not caught: int() never divides,
+        # so it cannot raise it.  The companion _parse_frame_rate catches it
+        # because float division occurs there.
+    except (ValueError, AttributeError):
+        return 0, 0
+    if num <= 0 or den <= 0:
+        return 0, 0
+    return num, den
+
+
 def probe_video(video_path: Path) -> ProbeResult:
     """Extract video metadata using ffprobe.
 
-    Returns dict with keys: duration, width, height, fps, codec, audio_codec.
+    Returns dict with keys: duration, width, height, fps, fps_num, fps_den,
+    codec, audio_codec.
     """
     try:
         result = subprocess.run(
@@ -96,12 +123,32 @@ def probe_video(video_path: Path) -> ProbeResult:
     # Parse FPS from r_frame_rate (e.g., "30/1" or "60000/1001"),
     # falling back to avg_frame_rate if r_frame_rate is unusable.
     fps = _parse_frame_rate(video_stream.get("r_frame_rate", ""))
+    fps_num, fps_den = _parse_frame_rate_rational(video_stream.get("r_frame_rate", ""))
     if fps <= 0:
         fps = _parse_frame_rate(video_stream.get("avg_frame_rate", ""))
+        fps_num, fps_den = _parse_frame_rate_rational(
+            video_stream.get("avg_frame_rate", "")
+        )
     if fps <= 0:
         raise VideoProcessingError(
             "Cannot determine video frame rate from ffprobe output"
         )
+
+    # #576: 静的 VFR 検出 -- r_frame_rate vs avg_frame_rate の差が 1% 超の
+    # 場合 WARNING ログ (hard fail はしない、benign mismatch を許容)。
+    # 実 VFR / decoder anomaly は detector 側の動的 frame_count check で
+    # 捕捉する。
+    avg_fps = _parse_frame_rate(video_stream.get("avg_frame_rate", ""))
+    if avg_fps > 0 and fps > 0:
+        diff_ratio = abs(fps - avg_fps) / fps
+        if diff_ratio > 0.01:
+            logger.warning(
+                "VFR の可能性あり (r_frame_rate=%.4f, avg_frame_rate=%.4f, "
+                "diff=%.2f%%). detector 側で動的 frame_count check 経由で検証。",
+                fps,
+                avg_fps,
+                diff_ratio * 100,
+            )
 
     duration = float(data.get("format", {}).get("duration", 0))
     if duration <= 0:
@@ -121,6 +168,8 @@ def probe_video(video_path: Path) -> ProbeResult:
         "width": width,
         "height": height,
         "fps": fps,
+        "fps_num": fps_num,
+        "fps_den": fps_den,
         "codec": video_stream.get("codec_name", "unknown"),
         "audio_codec": audio_stream.get("codec_name", "unknown")
         if audio_stream

@@ -760,6 +760,10 @@ def _run_detection(
         "audio_hits": audio_hits,
         "stats": stats,
         "brightness_callback": brightness_callback,
+        # #576: rational fps propagation (probe -> detector).
+        "source_fps": metadata.get("fps"),
+        "source_fps_num": metadata.get("fps_num"),
+        "source_fps_den": metadata.get("fps_den"),
     }
 
     if progress_emitter is not None:
