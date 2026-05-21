@@ -1,0 +1,266 @@
+# Design: scorebar V2 post-match FP fix (#803) + optional #797 bundle
+
+| Field | Value |
+| --- | --- |
+| **Status** | design freeze (2026-05-21) |
+| **Issues** | [#803](https://github.com/Idios/kobutachan-allaganeye/issues/803) (primary, P2 bug) + [#797](https://github.com/Idios/kobutachan-allaganeye/issues/797) (secondary, P2 refactor, conditional bundle) |
+| **Parent spec** | [2026-05-19-v030-l3-detect-fps-retirement-reexamination-design.md](2026-05-19-v030-l3-detect-fps-retirement-reexamination-design.md) §9-§10 (V6.2 attempt → revert → #803 起票) |
+| **Related root cause** | PR [#793](https://github.com/Idios/kobutachan-allaganeye/pull/793) post-merge verification で発覚した `_has_scorebar_v2` の post-match content (5700-6850s, obs-20260116) False positive (true M6 end 6540 を超えて FP 群発火) |
+| **Adversarial review** | Iron Law 6 Pre-flight Step 5 で `/codex:adversarial-review` 実行予定 (PR 作成時) |
+| **Scope** | v0.3.x (Pillar 3 detect / v0.3.0 baseline audit follow-up)。`#804` (validate-fps-retirement.py PTS fix) は別 session |
+
+## §1. Goal & Non-goals
+
+### §1.1 Primary goal (#803)
+
+`allaganeye/video/detector.py::_has_scorebar_v2` (line 1190) を強化し、以下を達成する:
+
+- **obs-20260116 で 6540 (Fanfare moment、true M6 end) を `False`** と返す
+- **obs-20260116 で 6450 (in-match) を `True`** と返す (既存挙動保持)
+- 既存 validated 5 baseline (obs-20260116 / 20260118 / 20260119 / 20260127 / 20260209) で scorebar 分類 (12 match_boundary / 10 in_match / 2 non_fl) と post-PR #793 の 53 agreed boundary が完全保持される (regression なし)
+- #522 (4K Game DVR Rescue path validation, 20260219) / #307 (V2 baseline validation, 156+ non-match frames zero FP) で regression なし
+
+### §1.2 Secondary goal (#797, conditional)
+
+#803 fix 完了後、V6.2 (scorebar HUD 二分探索、PR #793 reexamination spec §9 で revert された commit `f7f8879` の logic) を再実装する。
+
+- **収束**: obs-20260116 で V6.2 が M6 end を `6540 ±5s` に収束させる → #803 + #797 を 1 PR で束ね close
+- **非収束**: #797 を v0.3.x defer、#803 のみで PR を切る (`docs/v030-baseline-audit.md` に状況を記録)
+
+判断は Phase 4 (§3.4) で実機検証結果から確定する。
+
+### §1.3 Non-goals
+
+- `#804` (`scripts/validate-fps-retirement.py` PTS extraction が常に 0.021 を返す bug) — 独立した P3-low utility bug、別 session で対応
+- 他 baseline (obs-20260118 / 20260119 / 20260127 / 20260209) の boundary tuning — 既に 53 agreed のため tuning 不要
+- scorebar V1 (`_has_scorebar`, line 1274) のリファクタ — V2 fallback として既存挙動保持
+- `_find_scorebar_horizontal_range` 自体の再設計 — Rescue path の input として使うのみ
+- audio Fanfare promote / WR scan の改修 — frozen-by-default の方針保持
+
+## §2. 採用 approach: investigation-first minimal V2 strengthening
+
+debug 結果ベースで minimal な条件追加を行う。投機的 (Approach B: padding-first) や全部入れ (Approach C: 3 条件 AND) は採用しない (over-fit / false negative risk が高い)。
+
+### §2.1 V2 検出ロジックの現状 (root cause 分析の出発点)
+
+`_has_scorebar_v2` は two-path OR semantics:
+
+- **Primary path** (line 1248): `_EMBLEM_POSITIONS` 絶対座標で GC 紋章 3 点 AND 判定 (Maelstrom / Twin Adder / Immortal Flames の HSV saturation + Sobel edge density)
+- **Rescue path** (line 1252): `_find_scorebar_horizontal_range` で動的 span を取得 → `_EMBLEM_RELATIVE_POSITIONS` 相対比で emblem 位置を算出 → 同じ 3 点 AND 判定 (#522 で追加、4K Game DVR の HUD scale 差異対応)
+
+issue #803 実証データ (obs-20260116):
+
+- 5700 / 6000 / 6400 / 6520 (in-match): True (期待 True、一致)
+- **6540 (true M6 end / Fanfare moment): True (期待 False、FP)**
+- 6555 - 6850 (post-match cutscene / GC scoreboard): True (期待 False、FP 群)
+- 6890 / 6898 / 6900 / 6920-7290: False (一致)
+
+FP 範囲 = 6540-6890 ≒ 350s。Primary / Rescue どちらの path が原因かは debug で確定する。
+
+### §2.2 検出強化候補 (Phase 1 結果から 1-2 候補を選定)
+
+- **候補 1 (padding 検証)**: emblem 領域の上下 (e.g., `y-20:y-5`, `y+25:y+40`) の brightness 平均が閾値以下 (e.g., `< 60`) を要求。in-match scorebar は半透明黒背景の上に置かれる (post-match cutscene は明背景、city interior はステンドグラス背景で multi-color)
+- **候補 2 (色域絞り込み)**: 3 GC の specific RGB range (Maelstrom red `(180-255, 30-80, 40-90)` / Twin Adder yellow `(220-255, 200-240, 60-110)` / Immortal Flames orange `(220-255, 100-160, 30-80)` 等、Phase 1 で確定) で template matching に絞り込み
+- **候補 3 (構造検証)**: `_find_scorebar_horizontal_range` の span 内で中央寄りに score 数値 2 箇所の高 contrast vertical band を要求 (in-match のみ score 0-100 数値表示が 2 箇所中央寄りに存在)
+
+3 候補全 AND は false negative risk が高いため避ける (over-fit による in-match 検出漏れ)。
+
+## §3. Phase 構成
+
+### §3.1 Phase 1: Investigation (frame-level FP localization)
+
+**目的**: FP 源を specific UI element (GC scoreboard / VICTORY banner / lobby UI / city interior 等) に紐付けて identify する。
+
+**手順**:
+
+1. throw-away script `scripts/debug-scorebar-v2-fp.py` を作成 (PR には含めない、Phase 5 / 5' 前に削除)
+2. obs-20260116 から `_probe_frame_rgb_hires` で **15 timestamp** の 1920x1080 PNG を抽出して保存:
+   - in-match baseline: 5450, 5700, 6000, 6400, 6450, 6520
+   - true M6 end & FP 群: **6540** (Fanfare), 6555, 6600, 6700, 6800, 6850
+   - transition / clean: 6890, 6895, 6898
+3. 出力先: `output/v2-fp-investigation/<t>.png` (git ignore)
+4. `_has_scorebar_v2` 内に temporary tracing を仕込み、Primary / Rescue どちらが True を返したかと、3 emblem 位置の HSV saturation / edge density 値を stderr に出力
+5. **Execution**: Claude が script を書き、**Idios が RTX 5090 環境で実行**、output PNG + stderr trace log を Claude に共有 (Iron Law 6 実機検証必須)
+6. Claude が PNG を Read tool で確認、Idios と一緒に FP 源 UI element を identify
+
+**終了基準**:
+
+- FP が Primary path / Rescue path のどちらで発火しているかが確定
+- 6540-6850 範囲の FP frame 群に共通する UI 特徴 (e.g., 「emblem 位置に GC scoreboard の自分の GC 所属表示が偶然重なる」「post-match cutscene の colored banner が emblem 様」等) が特定
+- Phase 2 候補のうち最も narrow に効く 1-2 つが選定可能
+
+### §3.2 Phase 2: Minimal V2 strengthening
+
+Phase 1 debug 結果から Phase 2 候補 (§2.2 の 1-2 つ) を AND で追加する。
+
+**実装方針**:
+
+- 既存 `_emblem_and_check(frame, positions, path_label, cv2)` ([detector.py](allaganeye/video/detector.py) line ~1100-1187) に新条件を追加する形が筋。Primary / Rescue 両 path に同条件が適用される (両 path で同じ over-detection を防ぐ)
+- 新定数 (e.g., `_EMBLEM_PADDING_BRIGHTNESS_MAX = 60.0`) は既存 `_EMBLEM_SAT_THRESHOLD` / `_EMBLEM_EDGE_THRESHOLD` の近くに追加
+- TDD: 先に test (§4.1) を書いて fail させ、その後実装
+
+**Phase 2 → Phase 3 loop**:
+
+- Phase 3 で regression が出たら Phase 2 条件を緩和または別候補に切替
+- 緩和 / 切替の判断点が出たら都度 AskUserQuestion (Iron Law 5)
+
+### §3.3 Phase 3: Regression check (mandatory gate)
+
+**手順**:
+
+1. unit test (`tests/test_scorebar_v2_fp.py`、§4.1) 全 pass
+2. 既存 `tests/test_detector.py` / scorebar 関連 test (もしあれば) 全 pass
+3. 5 baseline で `audit-prepare` + `audit-compare` 全件再実行 (`scripts/audit-prepare.py <label>` + `scripts/audit-compare.py <label>`)
+   - obs-20260116 (M6 end は #797 verify で確認、他 11 boundary は agreed 維持)
+   - obs-20260118 (12/12 agreed 維持)
+   - obs-20260119 (18/18 agreed 維持)
+   - obs-20260127 (6/6 agreed 維持)
+   - obs-20260209 (6/6 agreed 維持)
+4. **Execution**: Idios の RTX 5090 環境で実機実行 (audit 1 件あたり ~12 min wall)。Iron Law 6 trigger
+
+**Pass 基準**:
+
+- 既存 scorebar 分類 (12 match_boundary / 10 in_match / 2 non_fl) と post-PR #793 の 53 agreed boundary が完全保持
+- 1 件でも regression (新 silent_miss / false_positive / boundary_shift) が出たら Phase 2 ↔ Phase 3 loop
+
+### §3.4 Phase 4 (optional): #797 bundle — V6.2 reintroduce + verify
+
+Phase 3 全 pass 後にのみ実施。
+
+**手順**:
+
+1. V6.2 (scorebar HUD 二分探索) を再実装。reverted commit `f7f8879` の logic を current main branch (Phase 2 fix 後) に re-apply
+   - 実装方針: cherry-pick + Phase 2 fix との conflict 解決 or 新規実装 — debug 結果と code diff の cleanness で判断
+2. obs-20260116 で `_has_scorebar_v2` が True → False に切り替わる timestamp を `[match_start, video_end]` 区間で二分探索 (e.g., 1s 精度) し、M6 end として metadata.json に書き込み
+3. `scripts/audit-compare.py obs-20260116` で M6 end が `6540 ±5s` に収束するか確認 (Idios の RTX 5090 で再実機検証)
+
+**判断**:
+
+- **収束** (`|baseline_M6_end - 6540| ≤ 5`): Phase 5 (束ね PR、§3.5)
+- **非収束**: Phase 5' (#803 単独 PR、§3.6)。`docs/v030-baseline-audit.md` の #797 status を「V2 fix 後も V6.2 で 6540±5s に収束せず、別 root cause を v0.3.x で再調査」と更新
+
+### §3.5 Phase 5 (束ね PR): #803 + #797 close
+
+**前提**: Phase 4 で V6.2 が `6540 ±5s` に収束した場合
+
+**PR 作成 (Iron Law 6 Pre-flight 必須)**:
+
+- Step 0: `gh pr list --search "803" --state open` + `gh pr list --search "797" --state open` でハードゲート
+- Step 1: `git fetch origin main`
+- Step 2: `git log HEAD..origin/main` で取り込み未済 commit 確認
+- Step 3: touched files 交差判定 (`allaganeye/video/detector.py` + 5 baseline JSON)
+- Step 4: `gh pr list --search "803" --state all` + `gh pr list --search "797" --state all` で並行 PR 重複確認
+- Step 5: `/codex:adversarial-review` で Iron Law 3 / encoding / GPU fallback / 同 issue 過去 PR root cause を疑う
+
+**PR description**:
+
+- title 例: `fix(detector): scorebar V2 post-match FP fix + HUD 二分探索 reintroduce (Refs #803 #797)`
+- Iron Law 1: 両 issue の `## 受け入れ条件` 各項目を逐条引用し、対応する diff / test を逐条引用 (#367 対策)
+- Iron Law 4: **Closes/Fixes/Resolves キーワード禁止**
+- Self-Test Report: `[x]` machine-verified (ruff check / ruff format --check / pyright / pytest) vs plain `-` machine-unverifiable (5 baseline audit-compare / V6.2 obs-20260116 6540±5s 収束) を分離 (`docs/l2-workflow.md` §「Self-Test Report 規約」)
+- session-id / EXECUTOR directive (`docs/l2-workflow.md` §「resume-plan handoff protocol」)
+
+### §3.6 Phase 5' (#803 単独 PR): #797 defer
+
+**前提**: Phase 4 で V6.2 が非収束、または Phase 4 を skip した場合
+
+**PR description**:
+
+- title 例: `fix(detector): scorebar V2 post-match FP fix (Refs #803)`
+- 本文に「V6.2 reintroduce attempt は obs-20260116 M6 end を 6540±5s に収束させず、#797 は v0.3.x defer。`docs/v030-baseline-audit.md` 参照」と明記
+- Iron Law 6 Pre-flight (Step 0-5) は同様に実施
+
+### §3.7 Post-merge
+
+- `/close-issue` skill で #803 (Phase 5 / 5' 両方) と #797 (Phase 5 のみ) を実測検証してから手動 close (Iron Law 4)
+- #804 は別 session で対応 (本 spec の non-goal、§1.3)
+
+## §4. Test strategy
+
+### §4.1 Unit test (新規、TDD)
+
+**File**: `tests/test_scorebar_v2_fp.py` (新規)
+
+**Fixtures**:
+
+- (a) `synthetic_in_match_scorebar()`: 1920x1080 numpy array、emblem 3 点位置に高 saturation + 高 edge density の colored region、padding 領域は brightness < 60 → V2 `True`
+- (b) `synthetic_post_match_cutscene()`: emblem 位置に colored region (Phase 1 debug 結果から FP source pattern を抽出) だが padding 領域 brightness > 80 → V2 `False` (新 FP 検出)
+- (c) `synthetic_no_scorebar()`: 全 frame 均一輝度 (e.g., gray 128) → V2 `False` (既存挙動)
+- (d) Phase 1 で取得した real obs-20260116 frame の PNG fixture (`tests/fixtures/scorebar_v2/`) を 2-3 枚 (in-match 1 枚 + FP 例 1-2 枚)
+
+**Test cases**:
+
+- `test_v2_returns_true_for_in_match_scorebar()` — fixture (a) で True
+- `test_v2_returns_false_for_post_match_cutscene()` — fixture (b) で False (#803 acceptance criteria)
+- `test_v2_returns_false_for_no_scorebar()` — fixture (c) で False (#307 regression)
+- `test_v2_real_obs_20260116_6540_false()` — fixture (d) で 6540 frame が False (#803 acceptance criteria)
+- `test_v2_real_obs_20260116_6450_true()` — fixture (d) で 6450 frame が True (#803 acceptance criteria)
+
+**TDD**: 各 test を先に書いて fail させ、Phase 2 fix で pass させる (`superpowers:test-driven-development` 全面採用、CLAUDE.md §Plugin との関係)。
+
+### §4.2 Regression (既存 test suite)
+
+- `pytest` (slow マーカー除外) で既存 test 全 pass
+- `pytest -m slow` (動画ファイル必要) で scorebar 関連 slow test (もしあれば) 全 pass
+
+### §4.3 Audit-compare regression (5 baseline)
+
+- §3.3 で詳細記述。Iron Law 6 実機検証 trigger
+
+### §4.4 実機検証依頼 (Idios dependency)
+
+- Phase 1 frame extract + V2 trace (~10-30 min wall)
+- Phase 3 5 baseline audit-compare (`--gpu --no-cache`、各 ~12 min wall、計 ~1h)
+- Phase 4 V6.2 + audit-compare (obs-20260116 のみ、~15-30 min wall)
+- AskUserQuestion で各 phase 完了時に next phase 依頼 (まとめて 1 回依頼するか phase 毎にするかは Idios 都合で決定、PR 作成時に確認)
+
+## §5. Files touched (estimate)
+
+| File | 操作 | 推定 lines |
+| --- | --- | --- |
+| `allaganeye/video/detector.py` | `_has_scorebar_v2` + `_emblem_and_check` + 関連定数の修正 | +30-80 |
+| `tests/test_scorebar_v2_fp.py` | 新規 | +120-200 |
+| `tests/fixtures/scorebar_v2/*.png` | 新規 (Phase 1 から抽出した実 frame 2-3 枚) | binary |
+| `tests/baselines/v0.3.0/baselines/obs-20260116.json` | Phase 4 で V6.2 reintroduce する場合 regenerate | (regen) |
+| `docs/v030-baseline-audit.md` | #797 status / Phase 5 or 5' 結果反映 | +10-30 |
+| `CHANGELOG.md` | `[Unreleased]` Fixed (Iron Law 4 整合で Closes キーワード無し) | +2-5 |
+| `scripts/debug-scorebar-v2-fp.py` | 一時 throw-away、commit しない | (throw-away) |
+
+`scripts/debug-scorebar-v2-fp.py` は PR には含めない。Phase 1 終了後に削除。
+
+## §6. Risks & Mitigation
+
+| ID | Risk | Mitigation |
+| --- | --- | --- |
+| R1 | Phase 1 で FP source が UI element に紐付け identify できない | synthetic frame 解析 + `cv2.matchTemplate` 追加 tool。Idios の domain knowledge (FF14 UI 認識) で specific UI element を特定。最悪 V2 path 別 (Primary / Rescue) の numerical trace から条件追加位置を決定 |
+| R2 | Phase 2 fix で in-match scorebar 検出漏れ (false negative) | Phase 3 が gate。1 件 regression で fix 緩和 or 別候補へ切替 (§3.2 → §3.3 loop)。緩和 / 切替の判断点が出たら都度 AskUserQuestion (Iron Law 5) |
+| R3 | Phase 4 で V6.2 が `6540 ±5s` に収束しない | #797 を v0.3.x defer、Phase 5' で #803 単独 PR。`docs/v030-baseline-audit.md` の #797 status を update して再調査記録を残す |
+| R4 | Codex adversarial-review で additional finding | `(A) PR 内修正優先` (`docs/l2-workflow.md` §「(A) PR 内修正優先 規約」)。finding 内容次第で AskUserQuestion で (A)/(B)/(C) 振分 |
+| R5 | encoding boundary (subprocess / IPC / OS API) で UTF-8 / cp932 / BOM 問題 | 本 PR は detector logic のみ touch で encoding boundary を超えないため低 risk。万一 Phase 1 script の stderr / PNG file name で問題が出たら CLAUDE.md §encoding boundary audit checklist (3 層) で fix |
+| R6 | #797 verify を待つ間に他 branch / PR が `_has_scorebar_v2` を touch | Phase 5 PR 作成時に Iron Law 6 Pre-flight Step 0 / 4 (gh pr list --search) で重複検出。並行 PR があれば AskUserQuestion で順序判断 |
+
+## §7. Open decision points (実装中に AskUserQuestion で都度確認)
+
+- Phase 1 debug 結果から Phase 2 候補 (padding / 色域 / 構造) のどれを採用するか
+- Phase 3 regression 発生時の condition 緩和 or 候補切替
+- Phase 4 V6.2 収束 / 非収束時の Phase 5 vs 5' 分岐 (`6540 ±5s` 境界の judgment)
+- Phase 5 で Codex adversarial-review finding が出た場合の (A)/(B)/(C) 振分
+- 実機検証 cadence (Phase 毎依頼 vs まとめ依頼)
+
+## §8. Iron Law 整合
+
+| Iron Law | 本 spec での担保 |
+| --- | --- |
+| **1** (NO PR MERGE WITHOUT ALL ACCEPTANCE CRITERIA CHECKED) | Phase 5 / 5' PR description で #803 (+ #797) 受け入れ条件を逐条引用 + diff/test 引用 (`enforce-acceptance-criteria` skill) |
+| **2** (NO BULK OPERATION WITHOUT AskUserQuestion CONFIRMATION) | bulk 操作 (3 件以上の baseline regen / 5 baseline 全件 audit) は本 spec 内で計画済 = 事前確認済。Phase 中に追加 bulk 操作が必要なら AskUserQuestion |
+| **3** (NO SCOPE CREEP WITHOUT NEW ISSUE) | #804 は別 session、scope creep しない。Phase 1 debug 中に scope 外 (e.g., V1 reform / audio 再有効化) が必要になったら STOP + 新 issue 起票 (`scope-guard` skill) |
+| **4** (NO Closes/Fixes/Resolves KEYWORDS) | Phase 5 / 5' PR 本文・commit メッセージで自動クローズキーワード禁止。merge 後に `/close-issue` skill で実測検証してから `gh issue close` |
+| **5** (NO INDEPENDENT JUDGMENT ON AMBIGUOUS POINTS) | §7 Open decision points 全てに AskUserQuestion |
+| **6** (NO PR CREATION WITHOUT VERIFIED CHECKS) | §3.5 Phase 5 で Pre-flight Step 0-5 + Codex adversarial-review。touched path が Python (`allaganeye/video/detector.py`) のため `ruff check . / ruff format --check . / pyright / pytest` を全 pass。GPU / 長時間動画 trigger に該当するため Idios に実機検証依頼 (§4.4) |
+
+## §9. Process notes
+
+- TDD: `superpowers:test-driven-development` HARD-GATE 全面採用 (CLAUDE.md §Plugin との関係)。Phase 2 実装は §4.1 unit test を先に書いて fail させた後に開始
+- subagent + Codex 直列構成: Phase 4 (V6.2 reintroduce) は重要度高、`subagent-driven-development` + Codex `/codex:review` の 4 stage 直列を採用候補 (Codex 運用 §C5、`docs/l2-workflow.md` §「subagent + Codex 直列構成」)
+- Brainstorming: 本 spec 自体が `superpowers:brainstorming` の output。次は `superpowers:writing-plans` で implementation plan に展開する
+- resume-plan handoff: Phase 5 / 5' PR 提出時の resume task prompt に `EXECUTOR: self|dispatch (origin=..., generated=...)` ディレクティブを 1 行目に明記 (#722、`docs/l2-workflow.md` §「resume-plan handoff protocol」)
