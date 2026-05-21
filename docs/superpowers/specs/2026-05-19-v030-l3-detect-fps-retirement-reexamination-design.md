@@ -8,7 +8,7 @@
 ## 0. 目的
 
 PR #793 (`claude/recursing-lewin-4c5f9c`、29 commits / +7227 -1281 / 23 files) で実装された
-#576 (ffmpeg `-vf fps=N` filter retirement) について、**accuracy zero regression と引き換えに
+`#576` (ffmpeg `-vf fps=N` filter retirement) について、**accuracy zero regression と引き換えに
 +1.7x perf cost (52 min vs legacy 31 min) が発生した最終状態**を踏まえ、ゼロベースで
 再検討する。v0.3.0 ship 可否と、v0.3.x で取り組む後続作業を確定する。
 
@@ -96,7 +96,7 @@ Codex (`codex:codex-rescue` agent) の adversarial second-opinion 主旨:
 
 CHANGELOG `## [Unreleased]` 既存記述で trade-off explained:
 
-```
+```text
 - v0.3.0 で detect 高速化 path に切替 (#576) で ~10x slowdown が発生していたが、Codex perf
   rescue Option 1 (dual seek) を commit `a864834` で実装し、perf を legacy 同等以下に復元。
 - ただし dual seek 後の accuracy 検証で sub-sample-interval blackout を Pass 1 が取りこぼす
@@ -186,7 +186,7 @@ ground-truth audit で確定させ、その結果に基づいて #576 の扱い�
 ### 9.2 新方針
 
 1. **#796** (`[task] v0.3.0 OBS baseline 5 件の ground-truth audit`) を起票済
-   (URL: https://github.com/Idios/kobutachan-allaganeye/issues/796)
+   (URL: <https://github.com/Idios/kobutachan-allaganeye/issues/796>)
 2. PR #793 は draft に convert、`Blocked by #796` で PR comment 済
 3. #796 audit 完了後、本 spec §4 の A/B/C 判断を再評価する
 
@@ -276,4 +276,5 @@ PR #793 は #797 fix を含まずに ship:
 User 選択 scope (D) のうち V3 (obs-20260119/127/209 detect) は引き続き実施し、
 PR #793 detector の他 baseline での regression 有無を確認する。
 
-#797 fix は v0.3.x で本公式 fix (#803 or audio Fanfare unfreezing 経由)。
+本 PR では `#797` fix を含まず ship、v0.3.x で本公式 fix
+(#803 V2 strengthening or audio Fanfare unfreezing 経由)。

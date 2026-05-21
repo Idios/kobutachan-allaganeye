@@ -104,15 +104,37 @@ False positive 発火** (5700-6850 範囲、true match end 6540 を超えて FP)
 revert (`22c8979`)。V2 strengthening が必要なため、独立 issue [#803](https://github.com/Idios/kobutachan-allaganeye/issues/803)
 として起票し v0.3.x で扱う。詳細は reexamination spec §10 参照。
 
-### Updated cross-recording summary (post-PR #793 verification, partial)
+### Updated cross-recording summary (post-PR #793 verification, complete)
 
 | Recording | Baseline | GT matches | Findings | Status |
 | --- | --- | --- | --- | --- |
 | obs-20260116 | PR #793 detector | 6 | 1 boundary_shift (M6 end #797) | #797 v0.3.x defer (V6.2 attempt reverted, V2 FP `#803` blocker) |
 | obs-20260118 | PR #793 detector | 6 (updated) | 0 | ✓ |
-| obs-20260119 | PR #793 detector (V3) | 9 | (pending) | V3 audit-compare 実行待ち |
-| obs-20260127 | PR #793 detector (V3) | 3 | (pending) | V3 audit-compare 実行待ち |
-| obs-20260209 | PR #793 detector (V3) | 3 | (pending) | V3 audit-compare 実行待ち |
+| obs-20260119 | PR #793 detector (V3) | 9 | 0 (18/18 agreed) | ✓ |
+| obs-20260127 | PR #793 detector (V3) | 3 | 0 (6/6 agreed) | ✓ |
+| obs-20260209 | PR #793 detector (V3) | 3 | 0 (6/6 agreed) | ✓ |
+
+### Totals (post-PR #793 verification, 5 baselines / 54 boundaries)
+
+| Category | Count |
+| --- | --- |
+| Agreed (within ±5s) | 53 |
+| Silent miss | 0 |
+| False positive | 0 |
+| Boundary shift | 1 (obs-20260116 M6 end, #797 defer) |
+| **Total findings** | **1 (deferred)** |
+
+→ PR #793 detector は 5 baseline / 54 boundary のうち **53 agreed (98.1%)、唯一の残 finding は #797 (v0.3.x defer)**。
+他 4 baseline (obs-20260118/119/127/209) は完全一致、PR #793 detector が legacy で
+agreed だった baseline で regression を起こしていないことを確認。
+
+### V3 detect 実機検証メモ (2026-05-21)
+
+- obs-20260119: 18/18 agreed、最大 delta -0.75s
+- obs-20260127: 6/6 agreed、最大 delta -0.75s
+- obs-20260209: 6/6 agreed、最大 delta -0.75s
+- 各 detect = ~12 min wall (RTX 5090、PR #793 detector code、`--gpu --no-cache`)
+- source path normalize には `scripts/v3-normalize-source-path.py` 使用 (詳細は同 script の docstring)
 
 ### Findings classification (updated 2026-05-21)
 

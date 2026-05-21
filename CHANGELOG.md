@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **GUI brightness timeline** (#569): 新 path で Pass 1 brightness 値が
   正確化される (旧 path の fps filter drift により歪んでいた値が修正
   される方向)。timeline 形状の変化が user-visible になる可能性あり。
+- **Audit verification**: PR #793 detector を 5 OBS baseline
+  (obs-20260116/118/119/127/209、計 54 boundary) に対して
+  `scripts/audit-compare.py` (#796 deliverable, PR #799) で ground truth 比較。
+  **53/54 agreed (within ±5s、98.1%)**、唯一の残 finding は
+  obs-20260116 M6 end (#797) で v0.3.x defer。obs-20260118 ground truth は
+  PR #793 detector で新発見した M2 boundary (1686-2610s) を Idios 視覚再確認
+  (2026-05-21) で実 boundary 確定し 5→6 matches に修正。詳細は
+  `docs/v030-baseline-audit.md` §"2026-05-21 PR #793 verification update" 参照。
 
 ### Added
 
@@ -29,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detector まで伝搬)。
 - `scripts/validate-fps-retirement.py` を新規追加 (#576 実装中 evidence
   用 one-off スクリプト、CI gate ではない)。
+- `scripts/v3-normalize-source-path.py` を新規追加 (PR #793 reexamination V3
+  baseline regen 時の絶対 path → 相対 path 正規化用 one-off スクリプト、
+  audit-compare の source-vs-ground-truth 整合のため必要)。
 
 ### Performance
 
@@ -51,6 +62,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - env var `ALLAGANEYE_DETECT_FPS_FILTER=1` で旧 fps filter path に
   rollback 可能 (transitional)。**v0.3.x patch release で削除予定**。
   緊急 escape 用途のみ、CI / production で使わないこと。
+
+### Known Issues
+
+- **obs-20260116 M6 end miss (#797)**: 試合終了が Fanfare / VICTORY moment で
+  起き、その時点で brightness blackout が無い (post-match cutscene が ~6 分
+  続いた後の teleport blackout のみ) ケース。新 dual seek + A5 path でも
+  legacy 同様 `type=unknown` で video 末尾 (7303.488s) を M6 end とする状態。
+  Fanfare moment (6540s) での fix は v0.3.x で audio Fanfare unfreezing
+  (`scan_fanfare_hits` を detector flow に統合) または scorebar V2
+  strengthening (#803) のいずれかで対応予定。
+
+### Internal
+
+- V6.2 (scorebar HUD 二分探索) を #797 fix として一時実装 (commit
+  `f7f8879`)、obs-20260116 実機検証で scorebar V2 detection が post-match
+  content (5700-6850) で False positive を発火することが判明し revert
+  (commit `22c8979`)。V2 strengthening の調査を新 issue (#803、
+  `bug` / `P2-medium` / `refactor`) で扱い、#797 の scorebar-based fix path
+  の blocker とする。経緯は
+  `docs/superpowers/specs/2026-05-19-v030-l3-detect-fps-retirement-reexamination-design.md`
+  §10 に記録。
 
 ## [0.2.1] - 2026-05-17
 
