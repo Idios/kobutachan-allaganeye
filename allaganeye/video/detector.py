@@ -57,11 +57,6 @@ class DetectionStats(TypedDict, total=False):
     # Filter "kept" with the larger Detected count when a recording
     # starts / ends mid-match.
     filter_unknown: int
-    # Count of open-ended unknown matches refined to fl_match via scorebar
-    # binary search (#797 V6.2).  Each promotion is a match whose end
-    # was at total_duration (no blackout signal at match end) and the
-    # scorebar HUD transition was successfully located via binary search.
-    scorebar_search_promotions: int
 
 
 logger = logging.getLogger(__name__)
@@ -401,7 +396,7 @@ def detect_match_boundaries(
             stats["scorebar_elapsed_s"] = scorebar_elapsed
 
     effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
-    matches = _filter_and_extract_segments(
+    return _filter_and_extract_segments(
         refined_regions,
         duration_hint,
         min_match_duration,
@@ -409,22 +404,6 @@ def detect_match_boundaries(
         classifications=region_classifications,
         stats=stats,
     )
-
-    # V6.2 (#797): refine open-ended unknown matches via scorebar binary search.
-    # Targets cases like obs-20260116 M6 end (Fanfare / VICTORY moment without
-    # blackout) where _filter_and_extract_segments fell back to total_duration
-    # with type=unknown.  Requires scorebar detection (src_resolution path).
-    if src_resolution is not None:
-        scorebar_search_height = _scaled_height(src_resolution[0], src_resolution[1])
-        matches = _refine_open_ended_unknown_matches(
-            matches,
-            video_path,
-            height=scorebar_search_height,
-            total_duration=duration_hint,
-            stats=stats,
-        )
-
-    return matches
 
 
 def _decode_chunk_cpu(
@@ -1869,137 +1848,3 @@ def _padded_start(region: tuple[float, float]) -> float:
     region_duration = region_end - region_start
     effective_padding = min(_BLACKOUT_PADDING, region_duration / 2)
     return region_end - effective_padding
-
-
-# ===== V6.2 scorebar binary search for open-ended unknown matches (#797) =====
-#
-# Background: some matches end without a visible blackout signal (e.g.,
-# obs-20260116 M6 end at 6540 = Fanfare/VICTORY moment).  The detector's
-# _filter_and_extract_segments falls back to total_duration with type=unknown
-# (see "After last blackout" path).  V6.2 refines such open-ended unknown
-# matches by binary-searching the scorebar HUD present-to-absent transition.
-#
-# Strategy: assume scorebar HUD visible during match and absent after match
-# end (post-match GC scoreboard / lobby).  Binary search the transition
-# point using existing V2 (GC emblem 3-point AND) / V1 (channel-std + edge)
-# scorebar detection.  log2(N) probes instead of every-frame scan; ~12
-# probes for a ~28 min open-ended segment at 1.0s resolution.
-_SCOREBAR_SEARCH_MIN_MATCH = 120.0  # seconds; skip search if match shorter
-_SCOREBAR_SEARCH_START_OFFSET = 60.0  # seconds; offset from match_start
-_SCOREBAR_SEARCH_END_MARGIN = 10.0  # seconds; margin from match_end_upper
-_SCOREBAR_SEARCH_RESOLUTION = 1.0  # seconds; binary search target precision
-
-
-def _check_scorebar_present_at(
-    video_path: Path,
-    t: float,
-    height: int,
-) -> bool | None:
-    """Probe scorebar presence at timestamp ``t``.
-
-    V2 (GC emblem 3-point AND, #307 / #522) primary; V1 (channel-std +
-    edge) fallback when V2 returns None.  Returns True if scorebar present,
-    False if absent, None if both V2 and V1 are inconclusive (e.g., frame
-    extraction failure).
-    """
-    if _SCOREBAR_METHOD == "v2":
-        hi_raw = _probe_frame_rgb_hires(video_path, t)
-        v2 = _has_scorebar_v2(hi_raw)
-        if v2 is not None:
-            return v2
-    raw = _probe_frame_rgb(video_path, t, height)
-    return _has_scorebar(raw, height)
-
-
-def _find_match_end_via_scorebar(
-    video_path: Path,
-    match_start: float,
-    match_end_upper: float,
-    height: int,
-    *,
-    resolution_seconds: float = _SCOREBAR_SEARCH_RESOLUTION,
-    min_match_for_search: float = _SCOREBAR_SEARCH_MIN_MATCH,
-    start_probe_offset: float = _SCOREBAR_SEARCH_START_OFFSET,
-    end_probe_margin: float = _SCOREBAR_SEARCH_END_MARGIN,
-) -> float | None:
-    """Binary search for scorebar HUD disappearance (#797).
-
-    Used for open-ended unknown matches whose end fell back to
-    total_duration because no blackout exists between the match start and
-    the video end (Fanfare/VICTORY transition without blackout signal,
-    e.g., obs-20260116 M6 at 6540).
-
-    Returns the timestamp where the scorebar transitions from present to
-    absent (within ``resolution_seconds``), or ``None`` if the search
-    preconditions fail (match too short / scorebar absent at start probe /
-    scorebar present at end probe / detection inconclusive mid-search).
-    """
-    if match_end_upper - match_start < min_match_for_search:
-        return None
-
-    start_probe = match_start + start_probe_offset
-    if _check_scorebar_present_at(video_path, start_probe, height) is not True:
-        return None
-
-    end_probe = match_end_upper - end_probe_margin
-    if _check_scorebar_present_at(video_path, end_probe, height) is not False:
-        return None
-
-    lo, hi = start_probe, end_probe
-    while hi - lo > resolution_seconds:
-        mid = (lo + hi) / 2
-        result = _check_scorebar_present_at(video_path, mid, height)
-        if result is True:
-            lo = mid
-        elif result is False:
-            hi = mid
-        else:
-            return None  # conservative: undetermined -> no refinement
-
-    return hi  # first absent timestamp
-
-
-def _refine_open_ended_unknown_matches(
-    matches: list[MatchBoundary],
-    video_path: Path,
-    height: int,
-    total_duration: float,
-    *,
-    stats: DetectionStats | None = None,
-) -> list[MatchBoundary]:
-    """Refine matches with ``end ~= total_duration`` and ``type == "unknown"``.
-
-    Calls :func:`_find_match_end_via_scorebar` on each open-ended unknown
-    match.  When a transition is found, updates ``end`` and changes ``type``
-    to ``"fl_match"``.  Targets #797 (obs-20260116 M6 end miss).
-    """
-    promotions = 0
-    for match in matches:
-        if match["end"] < total_duration - 1.0 or match["type"] != "unknown":
-            continue
-
-        refined_end = _find_match_end_via_scorebar(
-            video_path,
-            match_start=match["start"],
-            match_end_upper=match["end"],
-            height=height,
-        )
-        if refined_end is None:
-            continue
-
-        logger.info(
-            "Open-ended unknown match refined via scorebar binary search "
-            "(#797): [%.2f, %.2f] -> [%.2f, %.2f] (type unknown -> fl_match)",
-            match["start"],
-            match["end"],
-            match["start"],
-            refined_end,
-        )
-        match["end"] = refined_end
-        match["type"] = "fl_match"
-        promotions += 1
-
-    if stats is not None and promotions > 0:
-        stats["scorebar_search_promotions"] = promotions
-
-    return matches
