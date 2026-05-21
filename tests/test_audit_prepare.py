@@ -444,3 +444,681 @@ def test_main_writes_worksheet_csv(tmp_path, monkeypatch):
     assert lines[0].startswith("index,boundary_type,timestamp_sec,")
     assert "match_start" in lines[1]
     assert "match_end" in lines[2]
+
+
+# --- Issue #800: tx-state helpers ---
+
+
+def test_read_tx_state_returns_none_when_missing(tmp_path, capsys):
+    """File-not-exist is legacy / first-run case; no warning."""
+    mod = _load_module()
+    tx_path = tmp_path / "obs.tx.json"
+    assert mod._read_tx_state(tx_path) is None
+    assert capsys.readouterr().err == ""
+
+
+def test_read_tx_state_returns_consistent_state(tmp_path):
+    mod = _load_module()
+    tx_path = tmp_path / "obs.tx.json"
+    tx_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "state": "consistent",
+                "updated_at": "2026-05-21T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = mod._read_tx_state(tx_path)
+    assert result is not None
+    assert result["state"] == "consistent"
+
+
+def test_read_tx_state_returns_swapping_state(tmp_path):
+    mod = _load_module()
+    tx_path = tmp_path / "obs.tx.json"
+    tx_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "state": "swapping",
+                "updated_at": "2026-05-21T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = mod._read_tx_state(tx_path)
+    assert result is not None
+    assert result["state"] == "swapping"
+
+
+@pytest.mark.parametrize(
+    "payload,variant",
+    [
+        ("not valid json{{{", "invalid_json"),
+        ('["a", "b"]', "non_dict"),
+        ('{"schema_version": 2, "state": "consistent"}', "unknown_schema_version"),
+        ('{"schema_version": 1, "state": "unknown"}', "unknown_state"),
+    ],
+)
+def test_tx_state_corrupted_treated_as_missing(tmp_path, capsys, payload, variant):
+    """All 4 corrupted variants return None + warn on stderr."""
+    mod = _load_module()
+    tx_path = tmp_path / "obs.tx.json"
+    tx_path.write_text(payload, encoding="utf-8")
+    result = mod._read_tx_state(tx_path)
+    assert result is None, f"variant={variant}"
+    err = capsys.readouterr().err
+    assert "WARNING" in err, f"variant={variant} stderr: {err!r}"
+    assert str(tx_path) in err, f"variant={variant} stderr: {err!r}"
+
+
+def test_write_tx_state_atomic_creates_file(tmp_path):
+    mod = _load_module()
+    tx_path = tmp_path / "obs.tx.json"
+    mod._write_tx_state_atomic(tx_path, state="consistent")
+    assert tx_path.exists()
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["schema_version"] == 1
+    assert data["state"] == "consistent"
+    assert data["updated_at"].endswith("Z")  # ISO 8601 UTC
+
+
+def test_write_tx_state_atomic_overwrites_existing(tmp_path):
+    mod = _load_module()
+    tx_path = tmp_path / "obs.tx.json"
+    mod._write_tx_state_atomic(tx_path, state="swapping")
+    mod._write_tx_state_atomic(tx_path, state="consistent")
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "consistent"
+
+
+def test_write_tx_state_atomic_cleans_up_new_suffix(tmp_path):
+    """No `.tx.json.new` should remain after successful write."""
+    mod = _load_module()
+    tx_path = tmp_path / "obs.tx.json"
+    mod._write_tx_state_atomic(tx_path, state="consistent")
+    assert tx_path.exists()
+    assert not (tmp_path / "obs.tx.json.new").exists()
+
+
+def test_recover_stale_artifacts_removes_all(tmp_path):
+    mod = _load_module()
+    per_boundary_dir = tmp_path / "obs"
+    worksheet_csv = tmp_path / "obs.csv"
+    tx_path = tmp_path / "obs.tx.json"
+
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "a.png").write_bytes(b"PNG")
+    worksheet_csv.write_text("HEADER\n", encoding="utf-8")
+    tx_path.write_text("{}", encoding="utf-8")
+
+    mod._recover_stale_artifacts(
+        per_boundary_dir=per_boundary_dir,
+        worksheet_csv=worksheet_csv,
+        tx_path=tx_path,
+    )
+
+    assert not per_boundary_dir.exists()
+    assert not worksheet_csv.exists()
+    assert not tx_path.exists()
+
+
+def test_recover_stale_artifacts_idempotent_on_missing(tmp_path):
+    """Helper must not raise when paths are already absent."""
+    mod = _load_module()
+    per_boundary_dir = tmp_path / "obs"
+    worksheet_csv = tmp_path / "obs.csv"
+    tx_path = tmp_path / "obs.tx.json"
+
+    # All absent
+    mod._recover_stale_artifacts(
+        per_boundary_dir=per_boundary_dir,
+        worksheet_csv=worksheet_csv,
+        tx_path=tx_path,
+    )
+
+
+def test_recover_stale_artifacts_partial_state(tmp_path):
+    """Helper handles 'dir exists but csv/tx absent' without error."""
+    mod = _load_module()
+    per_boundary_dir = tmp_path / "obs"
+    worksheet_csv = tmp_path / "obs.csv"
+    tx_path = tmp_path / "obs.tx.json"
+
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "a.png").write_bytes(b"PNG")
+
+    mod._recover_stale_artifacts(
+        per_boundary_dir=per_boundary_dir,
+        worksheet_csv=worksheet_csv,
+        tx_path=tx_path,
+    )
+
+    assert not per_boundary_dir.exists()
+
+
+def test_main_writes_tx_state_consistent_after_publish(tmp_path, monkeypatch):
+    """After successful main() the tx-state file exists with state=consistent (#800)."""
+    mod = _load_module()
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+    metadata = {
+        "schema_version": "1",
+        "source": "20260116/fake.mkv",
+        "matches": [
+            {
+                "index": 1,
+                "start_time": 49.125,
+                "end_time": 1054.5,
+                "duration": 1005.375,
+                "type": "fl_match",
+            },
+        ],
+        "gaps": [],
+    }
+    (baseline_dir / "obs-fake.metadata.json").write_text(
+        json.dumps(metadata), encoding="utf-8"
+    )
+    video_dir = tmp_path / "videos"
+    (video_dir / "20260116").mkdir(parents=True)
+    (video_dir / "20260116" / "fake.mkv").write_bytes(b"")
+    monkeypatch.setenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", str(video_dir))
+    monkeypatch.setattr(mod, "export_brightness_csv", lambda **kw: None)
+    monkeypatch.setattr(mod, "export_sample_frames", lambda **kw: None)
+
+    worksheet_dir = tmp_path / "audit-worksheet"
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 0
+
+    tx_path = worksheet_dir / "obs-fake.tx.json"
+    assert tx_path.exists()
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["schema_version"] == 1
+    assert data["state"] == "consistent"
+
+
+def _seed_baseline_for_main(tmp_path, monkeypatch, label="obs-fake"):
+    """Helper: build a minimal baseline + video tree usable by main()."""
+    mod = _load_module()
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir(exist_ok=True)
+    metadata = {
+        "schema_version": "1",
+        "source": "20260116/fake.mkv",
+        "matches": [
+            {
+                "index": 1,
+                "start_time": 49.125,
+                "end_time": 1054.5,
+                "duration": 1005.375,
+                "type": "fl_match",
+            },
+        ],
+        "gaps": [],
+    }
+    (baseline_dir / f"{label}.metadata.json").write_text(
+        json.dumps(metadata), encoding="utf-8"
+    )
+    video_dir = tmp_path / "videos"
+    (video_dir / "20260116").mkdir(parents=True, exist_ok=True)
+    (video_dir / "20260116" / "fake.mkv").write_bytes(b"")
+    monkeypatch.setenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", str(video_dir))
+    monkeypatch.setattr(mod, "export_brightness_csv", lambda **kw: None)
+    monkeypatch.setattr(mod, "export_sample_frames", lambda **kw: None)
+    return mod, baseline_dir
+
+
+def test_main_step0_recovers_from_swapping_state(tmp_path, monkeypatch, capsys):
+    """tx-state == 'swapping' on startup -> wipe + regenerate + WARNING (#800)."""
+    mod, baseline_dir = _seed_baseline_for_main(tmp_path, monkeypatch)
+    worksheet_dir = tmp_path / "audit-worksheet"
+    worksheet_dir.mkdir()
+    per_boundary_dir = worksheet_dir / "obs-fake"
+    worksheet_csv = worksheet_dir / "obs-fake.csv"
+    tx_path = worksheet_dir / "obs-fake.tx.json"
+
+    # Seed mid-crash state: tx="swapping", stale dir, stale csv
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "old.txt").write_text("OLD", encoding="utf-8")
+    worksheet_csv.write_text("OLD_HEADER\n", encoding="utf-8")
+    mod._write_tx_state_atomic(tx_path, state="swapping")
+
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 0
+
+    # Recovery happened: old wiped, new regenerated, tx="consistent"
+    assert not (per_boundary_dir / "old.txt").exists()
+    assert per_boundary_dir.exists()
+    assert "OLD_HEADER" not in worksheet_csv.read_text(encoding="utf-8")
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "consistent"
+
+    # WARNING was emitted on stderr
+    err = capsys.readouterr().err
+    assert "crashed mid-publish" in err
+
+
+def test_tx_state_missing_legacy_compat(tmp_path, monkeypatch, capsys):
+    """tx.json absent (legacy baseline) -> no recovery, normal regenerate (#800)."""
+    mod, baseline_dir = _seed_baseline_for_main(tmp_path, monkeypatch)
+    worksheet_dir = tmp_path / "audit-worksheet"
+    worksheet_dir.mkdir()
+    per_boundary_dir = worksheet_dir / "obs-fake"
+    worksheet_csv = worksheet_dir / "obs-fake.csv"
+
+    # Seed legacy state: dir + csv exist but NO tx.json
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "legacy.txt").write_text("LEGACY", encoding="utf-8")
+    worksheet_csv.write_text("LEGACY_HEADER\n", encoding="utf-8")
+
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 0
+
+    # Normal regenerate (legacy content overwritten by atomic swap)
+    assert not (per_boundary_dir / "legacy.txt").exists()
+    # No recovery WARNING in stderr
+    err = capsys.readouterr().err
+    assert "crashed mid-publish" not in err
+
+    # tx.json is now created with state=consistent
+    tx_path = worksheet_dir / "obs-fake.tx.json"
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "consistent"
+
+
+def test_no_recovery_when_state_consistent(tmp_path, monkeypatch, capsys):
+    """tx-state == 'consistent' on startup -> no recovery, normal regenerate (#800)."""
+    mod, baseline_dir = _seed_baseline_for_main(tmp_path, monkeypatch)
+    worksheet_dir = tmp_path / "audit-worksheet"
+    worksheet_dir.mkdir()
+    per_boundary_dir = worksheet_dir / "obs-fake"
+    worksheet_csv = worksheet_dir / "obs-fake.csv"
+    tx_path = worksheet_dir / "obs-fake.tx.json"
+
+    # Seed clean prior-run state
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "prev.txt").write_text("PREV", encoding="utf-8")
+    worksheet_csv.write_text("PREV_HEADER\n", encoding="utf-8")
+    mod._write_tx_state_atomic(tx_path, state="consistent")
+
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 0
+
+    # Normal regenerate (prev content overwritten by atomic swap)
+    assert not (per_boundary_dir / "prev.txt").exists()
+    # No recovery WARNING in stderr
+    err = capsys.readouterr().err
+    assert "crashed mid-publish" not in err
+
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "consistent"
+
+
+def test_recovers_from_crash_after_rmtree(tmp_path, monkeypatch, capsys):
+    """W1 window: crash AFTER rmtree old per_boundary_dir, BEFORE rename .new.
+
+    Mid-crash state: dir gone, csv old, tx.json "swapping".
+    Next run: Step 0 sees "swapping" + wipes + regenerates.
+    """
+    mod, baseline_dir = _seed_baseline_for_main(tmp_path, monkeypatch)
+    worksheet_dir = tmp_path / "audit-worksheet"
+    worksheet_dir.mkdir()
+    per_boundary_dir = worksheet_dir / "obs-fake"
+    worksheet_csv = worksheet_dir / "obs-fake.csv"
+    tx_path = worksheet_dir / "obs-fake.tx.json"
+
+    # Seed clean prior-run state
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "old.txt").write_text("OLD", encoding="utf-8")
+    worksheet_csv.write_text("OLD_HEADER\n", encoding="utf-8")
+    mod._write_tx_state_atomic(tx_path, state="consistent")
+
+    # Inject crash: shutil.rmtree raises AFTER deleting per_boundary_dir once
+    original_rmtree = mod.shutil.rmtree
+    crashed = {"value": False}
+
+    def crashing_rmtree(path, *args, **kwargs):
+        original_rmtree(path, *args, **kwargs)
+        if not crashed["value"] and Path(path) == per_boundary_dir:
+            crashed["value"] = True
+            raise RuntimeError("simulated crash after rmtree")
+
+    monkeypatch.setattr(mod.shutil, "rmtree", crashing_rmtree)
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        mod.main(
+            [
+                "obs-fake",
+                "--baseline-dir",
+                str(baseline_dir),
+                "--worksheet-dir",
+                str(worksheet_dir),
+            ]
+        )
+
+    # Mid-crash state: tx="swapping", dir gone, csv still old
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "swapping"
+    assert not per_boundary_dir.exists()
+    assert worksheet_csv.read_text(encoding="utf-8") == "OLD_HEADER\n"
+
+    # Restore rmtree for recovery run
+    monkeypatch.setattr(mod.shutil, "rmtree", original_rmtree)
+
+    # Re-run audit-prepare: Step 0 recovery
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 0
+
+    # Recovered state: tx="consistent", regenerated artifacts
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "consistent"
+    assert per_boundary_dir.exists()
+    assert worksheet_csv.exists()
+    assert "OLD_HEADER" not in worksheet_csv.read_text(encoding="utf-8")
+
+    # WARNING was emitted
+    err = capsys.readouterr().err
+    assert "crashed mid-publish" in err
+
+
+def test_recovers_from_crash_after_dir_rename(tmp_path, monkeypatch, capsys):
+    """W2 window: crash AFTER per_boundary_dir_new.rename, BEFORE csv replace.
+
+    Mid-crash state: new dir + old csv, tx.json "swapping".
+    Next run: Step 0 wipes new dir + old csv + tx, regenerates.
+    """
+    mod, baseline_dir = _seed_baseline_for_main(tmp_path, monkeypatch)
+    worksheet_dir = tmp_path / "audit-worksheet"
+    worksheet_dir.mkdir()
+    per_boundary_dir = worksheet_dir / "obs-fake"
+    per_boundary_dir_new = worksheet_dir / "obs-fake.new"
+    worksheet_csv = worksheet_dir / "obs-fake.csv"
+    tx_path = worksheet_dir / "obs-fake.tx.json"
+
+    # Seed clean prior-run state
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "old.txt").write_text("OLD", encoding="utf-8")
+    worksheet_csv.write_text("OLD_HEADER\n", encoding="utf-8")
+    mod._write_tx_state_atomic(tx_path, state="consistent")
+
+    # Inject crash: Path.rename raises AFTER renaming per_boundary_dir_new -> per_boundary_dir
+    original_rename = Path.rename
+    crashed = {"value": False}
+
+    def crashing_rename(self, target, *args, **kwargs):
+        result = original_rename(self, target, *args, **kwargs)
+        if (
+            not crashed["value"]
+            and Path(self) == per_boundary_dir_new
+            and Path(target) == per_boundary_dir
+        ):
+            crashed["value"] = True
+            raise RuntimeError("simulated crash after dir rename")
+        return result
+
+    monkeypatch.setattr(Path, "rename", crashing_rename)
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        mod.main(
+            [
+                "obs-fake",
+                "--baseline-dir",
+                str(baseline_dir),
+                "--worksheet-dir",
+                str(worksheet_dir),
+            ]
+        )
+
+    # Mid-crash state: tx="swapping", new dir present, old csv still there
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "swapping"
+    assert per_boundary_dir.exists()
+    assert not (per_boundary_dir / "old.txt").exists()  # new content
+    assert worksheet_csv.read_text(encoding="utf-8") == "OLD_HEADER\n"
+
+    # Restore rename for recovery run
+    monkeypatch.setattr(Path, "rename", original_rename)
+
+    # Re-run audit-prepare: Step 0 recovery
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 0
+
+    # Recovered state
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "consistent"
+    assert per_boundary_dir.exists()
+    assert worksheet_csv.exists()
+    assert "OLD_HEADER" not in worksheet_csv.read_text(encoding="utf-8")
+
+    err = capsys.readouterr().err
+    assert "crashed mid-publish" in err
+
+
+def test_recovers_from_crash_before_tx_commit(tmp_path, monkeypatch, capsys):
+    """crash AFTER csv replace, BEFORE final tx="consistent" write.
+
+    Mid-crash state: new dir + new csv, tx.json still "swapping" (= wasteful regenerate).
+    Next run: Step 0 wipes everything + regenerates (content correct but tx not committed).
+    """
+    mod, baseline_dir = _seed_baseline_for_main(tmp_path, monkeypatch)
+    worksheet_dir = tmp_path / "audit-worksheet"
+    worksheet_dir.mkdir()
+    per_boundary_dir = worksheet_dir / "obs-fake"
+    worksheet_csv = worksheet_dir / "obs-fake.csv"
+    tx_path = worksheet_dir / "obs-fake.tx.json"
+
+    # Seed clean prior-run state
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "old.txt").write_text("OLD", encoding="utf-8")
+    worksheet_csv.write_text("OLD_HEADER\n", encoding="utf-8")
+    mod._write_tx_state_atomic(tx_path, state="consistent")
+
+    # Inject crash: _write_tx_state_atomic raises on the 2nd call (consistent commit)
+    original_write = mod._write_tx_state_atomic
+    call_count = {"value": 0}
+
+    def crashing_write(path, *, state):
+        call_count["value"] += 1
+        if call_count["value"] == 2 and state == "consistent":
+            raise RuntimeError("simulated crash before tx commit")
+        original_write(path, state=state)
+
+    monkeypatch.setattr(mod, "_write_tx_state_atomic", crashing_write)
+
+    with pytest.raises(RuntimeError, match="simulated crash before tx commit"):
+        mod.main(
+            [
+                "obs-fake",
+                "--baseline-dir",
+                str(baseline_dir),
+                "--worksheet-dir",
+                str(worksheet_dir),
+            ]
+        )
+
+    # Mid-crash state: tx still "swapping", new dir + new csv on disk
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "swapping"
+    assert per_boundary_dir.exists()
+    assert not (per_boundary_dir / "old.txt").exists()  # new content
+    assert "OLD_HEADER" not in worksheet_csv.read_text(encoding="utf-8")
+
+    # Restore for recovery run
+    monkeypatch.setattr(mod, "_write_tx_state_atomic", original_write)
+
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 0
+
+    # Recovered state
+    data = json.loads(tx_path.read_text(encoding="utf-8"))
+    assert data["state"] == "consistent"
+    assert per_boundary_dir.exists()
+    assert worksheet_csv.exists()
+
+    err = capsys.readouterr().err
+    assert "crashed mid-publish" in err
+
+
+def test_step0_recovery_runs_even_when_metadata_missing(tmp_path, monkeypatch, capsys):
+    """Recovery (#800 Codex follow-up): tx="swapping" cleanup must NOT be gated by
+    metadata.json existence. Even if metadata is missing and main() returns 2,
+    stale artifacts must still be wiped first.
+    """
+    mod = _load_module()
+    # baseline_dir exists but metadata.json does NOT (no _seed_baseline_for_main)
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+
+    worksheet_dir = tmp_path / "audit-worksheet"
+    worksheet_dir.mkdir()
+    per_boundary_dir = worksheet_dir / "obs-fake"
+    worksheet_csv = worksheet_dir / "obs-fake.csv"
+    tx_path = worksheet_dir / "obs-fake.tx.json"
+
+    # Seed mid-crash state: tx="swapping" + stale artifacts
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "stale.txt").write_text("STALE", encoding="utf-8")
+    worksheet_csv.write_text("STALE_HEADER\n", encoding="utf-8")
+    mod._write_tx_state_atomic(tx_path, state="swapping")
+
+    # main() should exit 2 (missing metadata) BUT still wipe stale artifacts first
+    rc = mod.main(
+        [
+            "obs-fake",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
+    assert rc == 2
+
+    # Critical: recovery happened despite the metadata bailout
+    assert not per_boundary_dir.exists()
+    assert not worksheet_csv.exists()
+    assert not tx_path.exists()
+
+    # WARNING was emitted before the metadata error
+    err = capsys.readouterr().err
+    assert "crashed mid-publish" in err
+
+
+def test_step0_recovery_runs_even_when_video_unresolvable(
+    tmp_path, monkeypatch, capsys
+):
+    """Recovery (#800 Codex follow-up): tx="swapping" cleanup must NOT be gated by
+    ALLAGANEYE_SAMPLE_VIDEO_DIR being set. Even if resolve_video_path raises,
+    stale artifacts must still be wiped first.
+    """
+    mod = _load_module()
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+    metadata = {
+        "schema_version": "1",
+        "source": "20260116/fake.mkv",
+        "matches": [
+            {
+                "index": 1,
+                "start_time": 49.125,
+                "end_time": 1054.5,
+                "duration": 1005.375,
+                "type": "fl_match",
+            },
+        ],
+        "gaps": [],
+    }
+    (baseline_dir / "obs-fake.metadata.json").write_text(
+        json.dumps(metadata), encoding="utf-8"
+    )
+    # Deliberately DO NOT set ALLAGANEYE_SAMPLE_VIDEO_DIR -> resolve_video_path will raise OSError
+    monkeypatch.delenv("ALLAGANEYE_SAMPLE_VIDEO_DIR", raising=False)
+
+    worksheet_dir = tmp_path / "audit-worksheet"
+    worksheet_dir.mkdir()
+    per_boundary_dir = worksheet_dir / "obs-fake"
+    worksheet_csv = worksheet_dir / "obs-fake.csv"
+    tx_path = worksheet_dir / "obs-fake.tx.json"
+
+    # Seed mid-crash state
+    per_boundary_dir.mkdir()
+    (per_boundary_dir / "stale.txt").write_text("STALE", encoding="utf-8")
+    worksheet_csv.write_text("STALE_HEADER\n", encoding="utf-8")
+    mod._write_tx_state_atomic(tx_path, state="swapping")
+
+    # main() should raise OSError (video env unset) BUT recovery must run first
+    with pytest.raises(OSError, match="ALLAGANEYE_SAMPLE_VIDEO_DIR"):
+        mod.main(
+            [
+                "obs-fake",
+                "--baseline-dir",
+                str(baseline_dir),
+                "--worksheet-dir",
+                str(worksheet_dir),
+            ]
+        )
+
+    # Critical: recovery happened despite the video bailout
+    assert not per_boundary_dir.exists()
+    assert not worksheet_csv.exists()
+    assert not tx_path.exists()
+
+    err = capsys.readouterr().err
+    assert "crashed mid-publish" in err

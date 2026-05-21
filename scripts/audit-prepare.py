@@ -17,6 +17,7 @@ import os
 import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,14 @@ from allaganeye.video.detector import (  # noqa: E402
 
 _DEFAULT_BASELINE_DIR = Path("tests/baselines/v0.3.0")
 _DEFAULT_WORKSHEET_DIR = Path("tests/baselines/v0.3.0/audit-worksheet")
+
+# Issue #800: tx-state sidecar for transactional crash recovery.
+# `<label>.tx.json` holds the single canonical state of the last publish;
+# crash mid-publish is detected by next run via state == "swapping" and
+# recovered by wiping artifacts before regenerating.
+_TX_SCHEMA_VERSION = 1
+_TX_STATE_CONSISTENT = "consistent"
+_TX_STATE_SWAPPING = "swapping"
 
 _WORKSHEET_FIELDS = [
     "index",
@@ -122,6 +131,81 @@ def build_worksheet_rows(metadata: dict[str, Any]) -> list[dict[str, Any]]:
             )
 
     return rows
+
+
+def _read_tx_state(tx_path: Path) -> dict[str, Any] | None:
+    """Return parsed tx-state, or None if file missing / corrupted / unknown shape.
+
+    Returning None means "no committed transactional state" (= no recovery
+    needed). File-not-exist is the legacy / first-run case (silent); all
+    other "missing-equivalent" cases warn on stderr so the operator can
+    debug why their tx-state was ignored.
+    """
+    if not tx_path.exists():
+        return None
+    try:
+        data = json.loads(tx_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        print(
+            f"WARNING: {tx_path} is unreadable ({exc}); treating as missing",
+            file=sys.stderr,
+        )
+        return None
+    if not isinstance(data, dict):
+        print(
+            f"WARNING: {tx_path} top-level is not an object; treating as missing",
+            file=sys.stderr,
+        )
+        return None
+    if data.get("schema_version") != _TX_SCHEMA_VERSION:
+        print(
+            f"WARNING: {tx_path} has unsupported schema_version "
+            f"{data.get('schema_version')!r} (expected {_TX_SCHEMA_VERSION}); "
+            "treating as missing",
+            file=sys.stderr,
+        )
+        return None
+    if data.get("state") not in (_TX_STATE_CONSISTENT, _TX_STATE_SWAPPING):
+        print(
+            f"WARNING: {tx_path} has unknown state {data.get('state')!r}; "
+            "treating as missing",
+            file=sys.stderr,
+        )
+        return None
+    return data
+
+
+def _write_tx_state_atomic(tx_path: Path, *, state: str) -> None:
+    """Atomically write tx-state via temp file + os.replace.
+
+    On POSIX and Windows, replace() of a single file is atomic, so the
+    on-disk tx-state is never partially-written. The temp file uses the
+    `.new` suffix to match the existing artifact-staging convention.
+    """
+    payload = {
+        "schema_version": _TX_SCHEMA_VERSION,
+        "state": state,
+        "updated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    }
+    tx_new = tx_path.parent / (tx_path.name + ".new")
+    tx_new.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tx_new.replace(tx_path)
+
+
+def _recover_stale_artifacts(
+    *,
+    per_boundary_dir: Path,
+    worksheet_csv: Path,
+    tx_path: Path,
+) -> None:
+    """Wipe artifacts when tx-state == swapping on startup.
+
+    Idempotent. Does not raise on missing paths. Called from main() Step 0
+    after _read_tx_state returns a swapping-state dict.
+    """
+    shutil.rmtree(per_boundary_dir, ignore_errors=True)
+    worksheet_csv.unlink(missing_ok=True)
+    tx_path.unlink(missing_ok=True)
 
 
 def resolve_video_path(source_relative: str) -> Path:
@@ -253,6 +337,42 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    # Path setup (used by recovery + downstream steps). Resolved up-front so
+    # Step 0 below can run BEFORE any metadata/video loading that may exit
+    # early.
+    per_boundary_dir = args.worksheet_dir / args.recording_label
+    per_boundary_dir_new = args.worksheet_dir / f"{args.recording_label}.new"
+    worksheet_csv = args.worksheet_dir / f"{args.recording_label}.csv"
+    worksheet_csv_new = args.worksheet_dir / f"{args.recording_label}.csv.new"
+    tx_path = args.worksheet_dir / f"{args.recording_label}.tx.json"
+
+    # (0) Recovery-on-start: if a prior run crashed mid-publish, the
+    # tx-state will be "swapping" and the on-disk artifacts are in an
+    # unknown state. Wipe everything so Step 2 regenerates from scratch.
+    # Backwards-compat: tx.json absent (legacy baseline) or "consistent"
+    # (clean prior run) skips recovery.
+    #
+    # MUST run before metadata/video loading so a missing baseline or
+    # unset ALLAGANEYE_SAMPLE_VIDEO_DIR does not block recovery of a
+    # prior crashed run. Otherwise tx="swapping" would persist indefinitely
+    # whenever the operator regenerates the baseline / changes sample dir
+    # between the crash and the next invocation (Codex #800 follow-up).
+    tx = _read_tx_state(tx_path)
+    if tx is not None and tx["state"] == _TX_STATE_SWAPPING:
+        print(
+            f"WARNING: previous {args.recording_label} run crashed mid-publish; "
+            "cleaning up stale artifacts before regenerating",
+            file=sys.stderr,
+        )
+        _recover_stale_artifacts(
+            per_boundary_dir=per_boundary_dir,
+            worksheet_csv=worksheet_csv,
+            tx_path=tx_path,
+        )
+
+    # Now load metadata + resolve video. These can return 2 / raise
+    # FileNotFoundError / raise OSError, but recovery has already happened
+    # above so a stale tx="swapping" will not persist.
     metadata_path = args.baseline_dir / f"{args.recording_label}.metadata.json"
     if not metadata_path.exists():
         print(f"ERROR: {metadata_path} not found", file=sys.stderr)
@@ -262,11 +382,6 @@ def main(argv: list[str] | None = None) -> int:
     rows = build_worksheet_rows(metadata)
 
     video_path = resolve_video_path(metadata["source"])
-
-    per_boundary_dir = args.worksheet_dir / args.recording_label
-    per_boundary_dir_new = args.worksheet_dir / f"{args.recording_label}.new"
-    worksheet_csv = args.worksheet_dir / f"{args.recording_label}.csv"
-    worksheet_csv_new = args.worksheet_dir / f"{args.recording_label}.csv.new"
 
     # (1) Pre-clean any stale temp residue from a prior crashed run.
     # Existing final artifacts are untouched until step (3).
@@ -301,39 +416,30 @@ def main(argv: list[str] | None = None) -> int:
 
     # (3) All-success: swap temp into final position.
     #
-    # ATOMICITY LIMITATIONS (Issue #800 tracks the proper fix):
+    # The 3-op swap (rmtree + rename + replace) is non-atomic, so a crash
+    # between any two ops leaves filesystem state inconsistent. Issue #800
+    # added a tx-state sidecar (`<label>.tx.json`) that is marked
+    # "swapping" before the swap starts and "consistent" only after csv
+    # replace succeeds. Step 0 of the next `audit-prepare` run reads the
+    # tx-state, and if it is still "swapping" wipes all artifacts before
+    # regenerating from scratch (`_recover_stale_artifacts`).
     #
-    # The swap is 3 non-atomic operations: rmtree -> rename -> replace.
-    # A crash / AV lock / process kill between any two leaves observable
-    # mixed state that next-run pre-clean does NOT detect or repair:
+    # Both Codex-flagged windows are now detect + auto-recover safe:
+    #   - After rmtree, before rename (W1):
+    #       Mid-crash: per_boundary_dir gone, worksheet_csv still old.
+    #       Next run: tx="swapping" -> wipe old csv + tx -> regenerate.
+    #   - After rename, before replace (W2):
+    #       Mid-crash: per_boundary_dir new, worksheet_csv still old.
+    #       Next run: tx="swapping" -> wipe new dir + old csv + tx -> regenerate.
     #
-    #   - After rmtree, before rename:
-    #       per_boundary_dir gone, worksheet_csv still old.
-    #       Reader sees old worksheet referencing a missing artifact dir.
-    #   - After rename, before replace:
-    #       per_boundary_dir is new, worksheet_csv still old.
-    #       Reader sees old worksheet referencing the new artifact dir.
-    #
-    # POSIX `rename(2)` semantics make each individual op atomic, but the
-    # 3-op sequence as a whole is not transactional. Windows additionally
-    # cannot atomically rename onto an existing directory, which is why
-    # rmtree happens first.
-    #
-    # Recovery today: operator notices the inconsistency (worksheet
-    # references files that do not exist, or the audit doc disagrees with
-    # the generated frames) and re-runs `audit-prepare`. The crash window
-    # is very short (filesystem rename is milliseconds) so the practical
-    # impact is low for an interactive operator workflow.
-    #
-    # Tracked for future hardening in Issue #800 (manifest / epoch / atomic
-    # pointer pattern). See `docs/v030-baseline-audit.md` "Codex round 3
-    # follow-up" section + spec `docs/superpowers/specs/
-    # 2026-05-20-audit-script-hardening-design.md` §3.2 Recovery table /
-    # §9 Risks #1.
+    # The tx-state file itself is published via `.tx.json.new` + os.replace
+    # so its write is single-file atomic on Windows + POSIX.
+    _write_tx_state_atomic(tx_path, state=_TX_STATE_SWAPPING)
     if per_boundary_dir.exists():
         shutil.rmtree(per_boundary_dir)
     per_boundary_dir_new.rename(per_boundary_dir)
     worksheet_csv_new.replace(worksheet_csv)
+    _write_tx_state_atomic(tx_path, state=_TX_STATE_CONSISTENT)
 
     print(f"Worksheet: {worksheet_csv}", file=sys.stderr)
     print(f"Per-boundary artifacts: {per_boundary_dir}", file=sys.stderr)
