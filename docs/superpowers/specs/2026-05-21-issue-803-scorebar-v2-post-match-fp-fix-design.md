@@ -2,12 +2,78 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | design freeze (2026-05-21) |
+| **Status** | Phase 1 complete, root cause confirmed (2026-05-22); design freeze |
 | **Issues** | [#803](https://github.com/Idios/kobutachan-allaganeye/issues/803) (primary, P2 bug) + [#797](https://github.com/Idios/kobutachan-allaganeye/issues/797) (secondary, P2 refactor, conditional bundle) |
 | **Parent spec** | [2026-05-19-v030-l3-detect-fps-retirement-reexamination-design.md](2026-05-19-v030-l3-detect-fps-retirement-reexamination-design.md) §9-§10 (V6.2 attempt → revert → #803 起票) |
 | **Related root cause** | PR [#793](https://github.com/Idios/kobutachan-allaganeye/pull/793) post-merge verification で発覚した `_has_scorebar_v2` の post-match content (5700-6850s, obs-20260116) False positive (true M6 end 6540 を超えて FP 群発火) |
 | **Adversarial review** | Iron Law 6 Pre-flight Step 5 で `/codex:adversarial-review` 実行予定 (PR 作成時) |
 | **Scope** | v0.3.x (Pillar 3 detect / v0.3.0 baseline audit follow-up)。`#804` (validate-fps-retirement.py PTS fix) は別 session |
+
+## §0. Phase 1 investigation results (2026-05-22 確定)
+
+Phase 1 debug (`scripts/debug-scorebar-v2-fp.py`、obs-20260116、Idios RTX 5090 実機) で当初仮説 (§2.2 の padding / 色域 / 構造) を棄却し、root cause と Fix を確定した。本節が最新・確定で、§2.2 / §3.1 / §3.2 の当初記述は経緯として残す。
+
+### §0.1 発見 1: 6540 の True は FP ではない (scorebar 残存)
+
+実機 frame (PNG) + Primary path 数値で scorebar HUD の消失点を特定:
+
+| t | Primary 本来座標 sat (left/center/right) | scorebar | 画面 |
+| --- | --- | --- | --- |
+| 6540 | 174.3 / 176.3 / 176.2 | **あり** | 試合終了「退出しますか」ダイアログ、scorebar HUD 残存 |
+| 6541 | 0.0 / 0.0 / 16.2 | なし | Limsa ワープ暗転 |
+| 6541-6543 | span=None | なし | ワープ / ローディング (彩度ゼロ) |
+| 6544+ | Primary False | なし | Limsa 到着 |
+
+→ **scorebar 消失点 = 6540-6541 間 (≈6540.5)**。ground truth M6 end 6540 と一致 (±1s)。6540 で V2 True は scorebar が実際にあるための正常検出。
+
+### §0.2 発見 2: FP は Rescue path 単独犯 (6 件)
+
+post-match の真の FP は **例外なく `Primary=False / Rescue=True`**。Primary path (絶対座標) は zero FP を維持:
+
+| FP frame | Rescue span | width | 画面 (PNG) |
+| --- | --- | --- | --- |
+| 6544-6555 | 1407-1410..1919 | ~510 | Limsa、右端チャット欄を span 誤検出 |
+| 6800 / 6850 | 8..1919 | 1912 | 派手な黄金内装 + ステンドグラス、全幅を誤検出 |
+| 6895 | 8..544 | 537 | 同上、左端を誤検出 |
+
+### §0.3 確定した root cause
+
+`_find_scorebar_horizontal_range` (Rescue path の span 検出、detector.py:1073) が緩すぎる:
+
+1. **width 上限が無い** — `_SCOREBAR_SCAN_MIN_WIDTH_PX=500` の下限のみ。画面全幅 1912px すら scorebar とみなす
+2. **水平位置の検証が無い** — 画面右端 (1407..1919) / 左端 (8..544) を scorebar とみなす
+
+in-match span は一貫して ~600..1320 / width ~715、4K Game DVR (#522) は ~613-620 / 中央寄り。FP span は位置・幅が大きく外れているのに accept されている。誤検出 span の相対 3 点に偶然 sat>70 & edge>40 が乗って AND が成立。
+
+### §0.4 確定した Fix: Rescue span gating
+
+`_find_scorebar_horizontal_range` が返す span に 2 つの gate を追加 (Primary path は無変更):
+
+1. **width 上限** (新定数 `_SCOREBAR_SCAN_MAX_WIDTH_PX`、暫定 ~1100-1200px) — 1912px を reject、in-match ~715 / 4K ~615 を通す
+2. **中央位置要求** — span が画面中央 x=960 を含む (`x_left <= 960 <= x_right`) ことを要求。1407..1919 / 8..544 を reject、600..1320 / 4K 中央寄りを通す
+
+| span | width | 中央(960)含む | 判定 |
+| --- | --- | --- | --- |
+| 600..1320 (in-match) | ~720 | ✓ | 通す |
+| ~613-620 (#522 4K) | ~615 | ✓ (中央寄り) | 通す |
+| 1407..1919 (6544-6555) | ~510 | ✗ | reject (中央) |
+| 8..1919 (6800/6850) | 1912 | ✓ | reject (width) |
+| 8..544 (6895) | 537 | ✗ | reject (中央) |
+
+具体閾値は Phase 2 で #522 baseline の実 span 値を確認して最終決定。
+
+### §0.5 criteria 訂正 (#803 受け入れ条件)
+
+issue #803 の「6540 で False を返す」は実機の scorebar 挙動と矛盾するため訂正する:
+
+- 訂正前: 6540 で False
+- 訂正後: **6540 で True (scorebar 残存) / 6541 で False (Limsa ワープ後、消失)**。真の試合終了境界 6540-6541 は ground truth と一致
+
+この訂正は PR 本文の Iron Law 1 逐条検証と issue #803 コメントに Phase 1 実証データ付きで記録する (独断で issue 本文を書き換えない、Iron Law 5)。
+
+### §0.6 #797 への含意 (束ね解決見込み大)
+
+Rescue gating で 6541 以降が V2 False になると、V2 全体が **6540=True / 6541=False**。V6.2 (scorebar 二分探索) は Primary 主導で M6 end を 6540-6541 に収束 → ground truth 6540 と一致 → `6540±5s` に余裕で収束する見込み。確定は Phase 4 で V6.2 を実際に再導入して audit-compare する (§3.4)。
 
 ## §1. Goal & Non-goals
 
@@ -15,8 +81,8 @@
 
 `allaganeye/video/detector.py::_has_scorebar_v2` (line 1190) を強化し、以下を達成する:
 
-- **obs-20260116 で 6540 (Fanfare moment、true M6 end) を `False`** と返す
-- **obs-20260116 で 6450 (in-match) を `True`** と返す (既存挙動保持)
+- **obs-20260116 で 6541 (Limsa ワープ後、scorebar 消失) を `False`** と返す (criteria 訂正、§0.5 参照。当初の「6540 で False」は scorebar 残存と矛盾)
+- **obs-20260116 で 6450 / 6520 / 6540 (in-match + scorebar 残存) を `True`** と返す (既存挙動保持)
 - 既存 validated 5 baseline (obs-20260116 / 20260118 / 20260119 / 20260127 / 20260209) で scorebar 分類 (12 match_boundary / 10 in_match / 2 non_fl) と post-PR #793 の 53 agreed boundary が完全保持される (regression なし)
 - #522 (4K Game DVR Rescue path validation, 20260219) / #307 (V2 baseline validation, 156+ non-match frames zero FP) で regression なし
 
@@ -57,7 +123,9 @@ issue #803 実証データ (obs-20260116):
 
 FP 範囲 = 6540-6890 ≒ 350s。Primary / Rescue どちらの path が原因かは debug で確定する。
 
-### §2.2 検出強化候補 (Phase 1 結果から 1-2 候補を選定)
+### §2.2 検出強化候補 (当初仮説 — Phase 1 で不採用、§0.4 参照)
+
+> **確定 (§0.4)**: Phase 1 の結果、FP は Rescue path の span 検出由来と判明 (Primary は zero FP)。以下の当初候補 (padding / 色域 / 構造) はいずれも採用せず、**Rescue span gating** (`_find_scorebar_horizontal_range` に width 上限 + 中央位置要求) を採用する。本節は検討経緯として残す。
 
 - **候補 1 (padding 検証)**: emblem 領域の上下 (e.g., `y-20:y-5`, `y+25:y+40`) の brightness 平均が閾値以下 (e.g., `< 60`) を要求。in-match scorebar は半透明黒背景の上に置かれる (post-match cutscene は明背景、city interior はステンドグラス背景で multi-color)
 - **候補 2 (色域絞り込み)**: 3 GC の specific RGB range (Maelstrom red `(180-255, 30-80, 40-90)` / Twin Adder yellow `(220-255, 200-240, 60-110)` / Immortal Flames orange `(220-255, 100-160, 30-80)` 等、Phase 1 で確定) で template matching に絞り込み
@@ -67,7 +135,9 @@ FP 範囲 = 6540-6890 ≒ 350s。Primary / Rescue どちらの path が原因か
 
 ## §3. Phase 構成
 
-### §3.1 Phase 1: Investigation (frame-level FP localization)
+### §3.1 Phase 1: Investigation (frame-level FP localization) — 完了 (2026-05-22)
+
+> **完了**: 実機 debug で root cause を確定 (§0)。FP は Rescue path 単独犯、scorebar 消失点は ground truth 6540 と一致。以下は実施手順の記録。
 
 **目的**: FP 源を specific UI element (GC scoreboard / VICTORY banner / lobby UI / city interior 等) に紐付けて identify する。
 
@@ -89,20 +159,21 @@ FP 範囲 = 6540-6890 ≒ 350s。Primary / Rescue どちらの path が原因か
 - 6540-6850 範囲の FP frame 群に共通する UI 特徴 (e.g., 「emblem 位置に GC scoreboard の自分の GC 所属表示が偶然重なる」「post-match cutscene の colored banner が emblem 様」等) が特定
 - Phase 2 候補のうち最も narrow に効く 1-2 つが選定可能
 
-### §3.2 Phase 2: Minimal V2 strengthening
+### §3.2 Phase 2: Rescue span gating (§0.4 で確定)
 
-Phase 1 debug 結果から Phase 2 候補 (§2.2 の 1-2 つ) を AND で追加する。
+> **確定 (§0.4)**: 実装対象は `_find_scorebar_horizontal_range` (Rescue path の span 検出)。span に (1) width 上限 `_SCOREBAR_SCAN_MAX_WIDTH_PX` と (2) 中央位置要求 (`x_left <= 960 <= x_right`) の 2 gate を追加する。Primary path (`_emblem_and_check` / `_EMBLEM_POSITIONS`) は無変更 (zero FP 維持)。当初の §2.2 候補 (padding / 色域 / 構造) は不採用。
 
-**実装方針**:
+実装方針 (確定版):
 
-- 既存 `_emblem_and_check(frame, positions, path_label, cv2)` ([detector.py](allaganeye/video/detector.py) line ~1100-1187) に新条件を追加する形が筋。Primary / Rescue 両 path に同条件が適用される (両 path で同じ over-detection を防ぐ)
-- 新定数 (e.g., `_EMBLEM_PADDING_BRIGHTNESS_MAX = 60.0`) は既存 `_EMBLEM_SAT_THRESHOLD` / `_EMBLEM_EDGE_THRESHOLD` の近くに追加
-- TDD: 先に test (§4.1) を書いて fail させ、その後実装
+- `_find_scorebar_horizontal_range` が longest span を返す直前 (detector.py:1136-1141 の width 下限チェック付近) に width 上限 + 中央位置 gate を追加し、外れたら `None` を返す
+- 新定数 `_SCOREBAR_SCAN_MAX_WIDTH_PX` を `_SCOREBAR_SCAN_MIN_WIDTH_PX` の近くに追加。値は #522 baseline の実 span (4K Game DVR ~613-620) と in-match (~715) を通し 1912 を弾く範囲で確定 (暫定 ~1100-1200)
+- 中央位置 gate (`x=960` を含む) は定数化せず 1920 幅前提の中央判定で実装 (probe は常に 1920x1080、`_SCOREBAR_V2_PROBE_WIDTH`)
+- TDD: §4.1 unit test を先に書いて fail させてから実装
 
 **Phase 2 → Phase 3 loop**:
 
-- Phase 3 で regression が出たら Phase 2 条件を緩和または別候補に切替
-- 緩和 / 切替の判断点が出たら都度 AskUserQuestion (Iron Law 5)
+- Phase 3 で regression が出たら gate 閾値 (width 上限値 / 中央位置条件) を緩和または再調整
+- 緩和 / 調整の判断点が出たら都度 AskUserQuestion (Iron Law 5)
 
 ### §3.3 Phase 3: Regression check (mandatory gate)
 
@@ -181,20 +252,24 @@ Phase 3 全 pass 後にのみ実施。
 
 **File**: `tests/test_scorebar_v2_fp.py` (新規)
 
-**Fixtures**:
+**Fixtures** (Rescue span gating を検証):
 
-- (a) `synthetic_in_match_scorebar()`: 1920x1080 numpy array、emblem 3 点位置に高 saturation + 高 edge density の colored region、padding 領域は brightness < 60 → V2 `True`
-- (b) `synthetic_post_match_cutscene()`: emblem 位置に colored region (Phase 1 debug 結果から FP source pattern を抽出) だが padding 領域 brightness > 80 → V2 `False` (新 FP 検出)
-- (c) `synthetic_no_scorebar()`: 全 frame 均一輝度 (e.g., gray 128) → V2 `False` (既存挙動)
-- (d) Phase 1 で取得した real obs-20260116 frame の PNG fixture (`tests/fixtures/scorebar_v2/`) を 2-3 枚 (in-match 1 枚 + FP 例 1-2 枚)
+- (a) `synthetic_in_match_scorebar()`: 1920x1080 numpy array、span が中央 ~600..1320 (width ~720、x=960 を含む) になる横長彩度帯 + emblem 3 点 → V2 `True`
+- (b) `synthetic_offcenter_span()`: span が画面右端 (~1410..1919) になる彩度帯 + その相対 3 点に sat/edge → Rescue 中央位置 gate で reject → V2 `False` (6544-6555 FP 相当)
+- (c) `synthetic_overwide_span()`: span が画面ほぼ全幅 (~8..1919、width 1912) になる彩度帯 → Rescue width 上限 gate で reject → V2 `False` (6800/6850 FP 相当)
+- (d) `synthetic_no_scorebar()`: 全 frame 均一輝度 (e.g., gray 128) → span None → V2 `False` (既存挙動)
+- (e) Phase 1 で取得した real obs-20260116 frame の PNG fixture (`tests/fixtures/scorebar_v2/`) を 3 枚 (6520 in-match / 6540 scorebar 残存 / 6555 post-match FP)
 
 **Test cases**:
 
-- `test_v2_returns_true_for_in_match_scorebar()` — fixture (a) で True
-- `test_v2_returns_false_for_post_match_cutscene()` — fixture (b) で False (#803 acceptance criteria)
-- `test_v2_returns_false_for_no_scorebar()` — fixture (c) で False (#307 regression)
-- `test_v2_real_obs_20260116_6540_false()` — fixture (d) で 6540 frame が False (#803 acceptance criteria)
-- `test_v2_real_obs_20260116_6450_true()` — fixture (d) で 6450 frame が True (#803 acceptance criteria)
+- `test_v2_true_for_in_match_centered_span()` — fixture (a) で True
+- `test_v2_false_for_offcenter_span()` — fixture (b) で False (中央位置 gate、#803)
+- `test_v2_false_for_overwide_span()` — fixture (c) で False (width 上限 gate、#803)
+- `test_v2_false_for_no_scorebar()` — fixture (d) で False (#307 regression)
+- `test_find_scorebar_range_rejects_offcenter()` / `test_find_scorebar_range_rejects_overwide()` — `_find_scorebar_horizontal_range` 直接 unit test (gate 該当時 `None` を返す)
+- `test_v2_real_obs_20260116_6555_false()` — fixture (e) で 6555 frame が False (#803、Rescue FP 解消)
+- `test_v2_real_obs_20260116_6540_true()` — fixture (e) で 6540 frame が True (scorebar 残存、criteria §0.5)
+- `test_v2_real_obs_20260116_6520_true()` — fixture (e) で 6520 in-match が True (既存挙動保持)
 
 **TDD**: 各 test を先に書いて fail させ、Phase 2 fix で pass させる (`superpowers:test-driven-development` 全面採用、CLAUDE.md §Plugin との関係)。
 
@@ -241,8 +316,8 @@ Phase 3 全 pass 後にのみ実施。
 
 ## §7. Open decision points (実装中に AskUserQuestion で都度確認)
 
-- Phase 1 debug 結果から Phase 2 候補 (padding / 色域 / 構造) のどれを採用するか
-- Phase 3 regression 発生時の condition 緩和 or 候補切替
+- Phase 2 で width 上限 `_SCOREBAR_SCAN_MAX_WIDTH_PX` の最終値確定 (#522 baseline の 4K Game DVR 実 span ~615 を通し 1912 を弾く範囲)
+- Phase 3 regression 発生時の gate 閾値緩和 or 再調整
 - Phase 4 V6.2 収束 / 非収束時の Phase 5 vs 5' 分岐 (`6540 ±5s` 境界の judgment)
 - Phase 5 で Codex adversarial-review finding が出た場合の (A)/(B)/(C) 振分
 - 実機検証 cadence (Phase 毎依頼 vs まとめ依頼)
