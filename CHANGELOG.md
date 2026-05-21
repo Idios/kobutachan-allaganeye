@@ -14,7 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#576)。ffmpeg version 依存の frame-selection drift (#560 / #575 /
   #577) を構造的に除去。obs-20260118 で見逃されていた 3 件の短時間
   blackout (1.4-2.1s) を正しく検出するように動作が変わる。Match 1 が
-  17m23s に短縮、新 Match 2 (21m32s) が追加、Match 3 が 15m50s に短縮。
+  17m24s に短縮、新 Match 2 (15m24s) が追加、Match 3 が 15m52s に短縮。
+  この新 Match 2 (1686-2610) は 2026-05-21 の Idios 視覚再確認で real
+  boundary と確定、`tests/baselines/v0.3.0/ground-truth/obs-20260118.json`
+  を 5→6 matches に update 済 (#796 audit 後追補)。
 - **GUI brightness timeline** (#569): 新 path で Pass 1 brightness 値が
   正確化される (旧 path の fps filter drift により歪んでいた値が修正
   される方向)。timeline 形状の変化が user-visible になる可能性あり。
