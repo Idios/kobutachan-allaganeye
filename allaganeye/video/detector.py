@@ -1017,6 +1017,17 @@ Game DVR lobby UI artifacts (observed: ~409 px width at screen-top
 minimap/content-name widget).  Confirmed during #522 validation.
 """
 
+_SCOREBAR_SCAN_MAX_WIDTH_PX = 1440
+"""Maximum detected span (pixels) to accept as scorebar.
+
+1080p OBS scorebar tops out at ~1090 px and 4K Game DVR at ~620 px
+(#522).  Post-match content (Limsa exterior, colorful interiors) can
+produce a near-full-width saturated band (observed ~1912 px on
+obs-20260116 at t=6800/6850), which is not a scorebar.  1440 px (75% of
+the 1920 px probe width) clears the real ~1090 px maximum with margin
+while rejecting the ~1912 px false positive (#803).
+"""
+
 _SCOREBAR_SCAN_MAX_GAP_PX = 80
 """Maximum gap (pixels) to bridge when merging saturated runs.
 
@@ -1136,6 +1147,18 @@ def _find_scorebar_horizontal_range(raw_rgb: bytes) -> tuple[int, int] | None:
     longest = max(merged, key=lambda r: r[1] - r[0])
     span_width = longest[1] - longest[0] + 1
     if span_width < _SCOREBAR_SCAN_MIN_WIDTH_PX:
+        return None
+    # Reject implausibly wide spans (#803): a real FL scorebar tops out at
+    # ~1090 px (1080p OBS).  A near-full-width band (e.g. ~1912 px from a
+    # colorful post-match interior) is not a scorebar.
+    if span_width > _SCOREBAR_SCAN_MAX_WIDTH_PX:
+        return None
+    # Reject spans that do not straddle screen center (#803): the FL
+    # scorebar is horizontally centered, so an edge-confined band (e.g. a
+    # right-side chat panel at 1410..1919 or a left-side widget at 8..544)
+    # is not a scorebar.
+    center_x = _SCOREBAR_V2_PROBE_WIDTH // 2
+    if not (longest[0] <= center_x <= longest[1]):
         return None
 
     return longest
