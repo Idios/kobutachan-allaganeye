@@ -1,0 +1,4 @@
+# Audit worksheet output is regenerable from <recording>.metadata.json + video.
+# Exclude all generated files but keep this .gitignore.
+*
+!.gitignore
