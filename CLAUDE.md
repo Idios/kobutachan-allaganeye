@@ -147,7 +147,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 - 動作確認済み: ハイスペック PC（高速 SSD、高性能 GPU）での OBS 録画。試合間暗転 2-5 秒程度
 - 未検証: 低スペック環境でローディング画面が長い（10 秒超）ケース
 - 既知の制限: ローディング画面が純粋な黒画面でなく UI 要素（スピナー、ロゴ等）を含む場合、brightness が 15-55 の範囲で変動し暗転が分断されることがある。分断された各区間が `min_blackout_duration` 未満になると試合境界を検出できない
-- 既知の制限: ffmpeg `fps` filter のフレーム選択は version 依存。8.1 で output PTS と実フレーム内容に最大 ~1.1s のオフセットが発生する事例あり (#575)。極短 (< 1s) blackout の取りこぼしによる baseline drift は #576 で根本対策検討中。判定 flow は [`docs/testing-guide.md`](docs/testing-guide.md) §「baseline drift の判定」、検証データは [`docs/video-processing.md`](docs/video-processing.md) §「ffmpeg fps filter の version 依存制約」を参照
+- 既知の制限 (legacy fps filter path、#576 で v0.3.0 構造的対策実装済): ffmpeg `fps` filter のフレーム選択は version 依存で、8.1 で output PTS と実フレーム内容に最大 ~1.1s のオフセットが発生する事例あり (#575)。v0.3.0 default の新 path (`-vf select='not(mod(n,N))'` + dual seek、frame-index ベース) は ffmpeg version 非依存。緊急 rollback が必要な場合のみ env var `ALLAGANEYE_DETECT_FPS_FILTER=1` で legacy path に戻せる (transitional、v0.3.x patch release で削除予定)。判定 flow は [`docs/testing-guide.md`](docs/testing-guide.md) §「baseline drift の判定」、検証データは [`docs/video-processing.md`](docs/video-processing.md) §「ffmpeg fps filter の version 依存制約」を参照
 
 **GPU モード** (`--gpu`)
 

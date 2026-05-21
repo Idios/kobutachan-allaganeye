@@ -177,8 +177,15 @@ def scan_gpu(
 
     Splits the video timeline into chunks and runs one long-lived ffmpeg
     process per chunk with GPU-accelerated decoding.  Each process uses
-    ``fps=1/{interval}`` to output one frame per interval, which is read
-    from stdout and analyzed for brightness.
+    one of two paths to output one frame per interval, which is read from
+    stdout and analyzed for brightness:
+
+    - **v0.3.0 default**: dual seek (``-ss <chunk_start - 5>`` before ``-i`` +
+      ``-ss 5`` after ``-i``) + ``-fps_mode passthrough`` + ``-vf select='not(mod(n,N))'``
+      (frame-index based, deterministic; ffmpeg version 非依存)
+    - **legacy rollback**: ``-vf fps=1/{interval}`` (PTS based, transitional)
+      — enabled only when env var ``ALLAGANEYE_DETECT_FPS_FILTER=1`` is set
+      (v0.3.x patch release で削除予定)
 
     Returns dict mapping timestamp -> brightness, same as CPU mode.
 

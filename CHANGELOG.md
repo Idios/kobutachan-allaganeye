@@ -72,6 +72,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Fanfare moment (6540s) での fix は v0.3.x で audio Fanfare unfreezing
   (`scan_fanfare_hits` を detector flow に統合) または scorebar V2
   strengthening (#803) のいずれかで対応予定。
+- **`scripts/validate-fps-retirement.py` PTS extraction bug (#804)**:
+  legacy / 新 path のどちらでも boundary timestamp に対する PTS 計算が
+  常に `0.021` という固定値を返す既知 bug。brightness 比較は正しく動作する
+  ため accuracy 検証には影響しないが、将来 fps filter 関連 regression 検証
+  で本スクリプトを再使用する場合は PTS extraction の root cause 修正が必要。
+  PR #793 では evidence 収集を audit-compare + Idios 視覚確認で代替済。
 
 ### Internal
 
