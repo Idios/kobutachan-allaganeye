@@ -184,7 +184,7 @@ def scan_gpu(
       ``-ss 5`` after ``-i``) + ``-fps_mode passthrough`` + ``-vf select='not(mod(n,N))'``
       (frame-index based, deterministic; ffmpeg version 非依存)
     - **legacy rollback**: ``-vf fps=1/{interval}`` (PTS based, transitional)
-      — enabled only when env var ``ALLAGANEYE_DETECT_FPS_FILTER=1`` is set
+      -- enabled only when env var ``ALLAGANEYE_DETECT_FPS_FILTER=1`` is set
       (v0.3.x patch release で削除予定)
 
     Returns dict mapping timestamp -> brightness, same as CPU mode.
