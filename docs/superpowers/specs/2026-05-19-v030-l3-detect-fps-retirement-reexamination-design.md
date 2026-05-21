@@ -204,3 +204,76 @@ audit 結果次第で:
 R12-a (gradient-based) / R12-b (SEEK_LEAD_SECONDS adaptive) / R12-c..e (minor) の
 v0.3.x 後続作業は #796 audit と独立に進行可能。ただし audit 結果次第で priority / scope
 が変わる可能性があり、起票 timing は audit 完了後を推奨。
+
+## 10. V6.2 attempt + V2 FP finding (reverted, #797 defer 確定)
+
+§9 で audit-first direction を取り、PR #793 baseline 検証で **#797 (obs-20260116
+M6 end miss)** が残課題と確定。user 選択 scope (D) に基づき PR #793 内で fix を試みた。
+
+### 10.1 V6.2 attempt: scorebar HUD binary search
+
+User suggestion (2026-05-21): 全フレーム scan ではなく**二分探索**で境界位置を絞る。
+
+実装:
+
+- `_check_scorebar_present_at` / `_find_match_end_via_scorebar` / `_refine_open_ended_unknown_matches`
+  を `detector.py` に追加
+- `detect_match_boundaries` の post-process で `type=unknown` & `end=total_duration`
+  の match を refine
+- 13 tests (`TestFindMatchEndViaScorebar` 7件 + `TestRefineOpenEndedUnknownMatches` 6件)
+  を `tests/test_detector.py` に追加し全 PASS
+
+Commit: `f7f8879` (subsequently reverted in `22c8979`)。
+
+### 10.2 実機検証で発覚した V2 FP
+
+`obs-20260116` で実機 detect を再実行:
+
+- M6 type が `unknown` → `fl_match` に refined (V6.2 fired 確認)
+- M6 end = **6898.25** (legacy 7303.488 から -405s 改善)
+- ただし GT (Idios) は **6540** → **delta +358s** (±5s tolerance 大幅超過)
+
+`_check_scorebar_present_at` を obs-20260116 の 18 timestamp で probe したところ、
+**V2 が 5700-6850 全範囲で True を返し、true positive (in-match の 6520) と
+false positive (post-match の 6700/6800/6850) を区別できていない**ことが判明。
+Idios 視覚確認 (6898 付近の暗転は teleport / map 移動、scorebar はその前後にも存在しない)
+と矛盾。
+
+V6.2 の二分探索は V2 が確実に True/False に切り替わる前提だが、V2 の post-match FP に
+より収束点が真の match end (6540) ではなく post-match content の次の "scene change"
+(~6898 = teleport blackout 直前) になった。
+
+### 10.3 Decision (2026-05-21): revert + defer
+
+V6.2 を `git revert 22c8979` で undo (3 files / -594 / +1 line)。
+
+理由:
+
+- V6.2 の output (6898) は GT (6540) と一致しない wrong value
+- 「不完全だが legacy より改善」(6898 < 7303) として ship する選択肢も検討したが、
+  user GT が明確 (6540) なので shipping すべきでない
+- V2 FP の根本修正は scope 大 (V2 改修 + 5 baseline regen + #522/#307 regression check)
+  で v0.3.0 timeframe に合わない
+
+### 10.4 Follow-up issues
+
+- **#803** (新規、`bug` / `P2-medium` / `refactor`): scorebar V2 detection FP in
+  post-match content。V2 の検出ロジック厳格化を扱う。本 issue が **#797 の
+  scorebar-based fix path の blocker**。
+- **#797**: scorebar-based fix は #803 解決待ち。並行で audio Fanfare 復活
+  (#327 freeze 解除) による fix path も候補 (3 options が #797 comment に列挙)。
+
+### 10.5 PR #793 への影響
+
+PR #793 は #797 fix を含まずに ship:
+
+- V6.2 implementation は `22c8979` で revert 済、detector.py / tests は f7f8879 以前の状態に復帰
+- obs-20260116 M6 end は依然 7303.488 (video 末尾、type=unknown) のまま (legacy と同等動作)
+- spec §9 の結論 (Ship as-is、ただし #797 は documented caveat) に戻る
+
+### 10.6 残る scope (D) 項目
+
+User 選択 scope (D) のうち V3 (obs-20260119/127/209 detect) は引き続き実施し、
+PR #793 detector の他 baseline での regression 有無を確認する。
+
+#797 fix は v0.3.x で本公式 fix (#803 or audio Fanfare unfreezing 経由)。

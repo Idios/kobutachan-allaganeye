@@ -96,24 +96,30 @@ obs-20260116 / 20260119 / 20260127 / 20260209 の ground truth は変更無し�
 | 11 | agreed | 5 | end | 5482.500 | 5482.000 | -0.500 | (agreed) |
 | 12 | agreed | 6 | start | 5624.250 | 5624.000 | -0.250 | (agreed) |
 
-F1 (M3 end) fix 済、**#797 (M6 end -763.488s) は未解消**で V6 として PR #793 scope 内対応。
+F1 (M3 end) fix 済、**#797 (M6 end -763.488s) は本 PR では未解消で v0.3.x defer**。
+
+PR #793 reexamination scope (D) で V6.2 (scorebar HUD 二分探索、commit `f7f8879`) を
+実装したが、実機検証 (obs-20260116) で **scorebar V2 が post-match content で
+False positive 発火** (5700-6850 範囲、true match end 6540 を超えて FP) することが判明し
+revert (`22c8979`)。V2 strengthening が必要なため、独立 issue [#803](https://github.com/Idios/kobutachan-allaganeye/issues/803)
+として起票し v0.3.x で扱う。詳細は reexamination spec §10 参照。
 
 ### Updated cross-recording summary (post-PR #793 verification, partial)
 
 | Recording | Baseline | GT matches | Findings | Status |
 | --- | --- | --- | --- | --- |
-| obs-20260116 | PR #793 detector | 6 | 1 boundary_shift (M6 end #797) | V6 で対応中 |
+| obs-20260116 | PR #793 detector | 6 | 1 boundary_shift (M6 end #797) | #797 v0.3.x defer (V6.2 attempt reverted, V2 FP `#803` blocker) |
 | obs-20260118 | PR #793 detector | 6 (updated) | 0 | ✓ |
-| obs-20260119 | legacy (未 regenerate) | 9 | 0 | △ V3 で再検証予定 |
-| obs-20260127 | legacy (未 regenerate) | 3 | 0 | △ V3 で再検証予定 |
-| obs-20260209 | legacy (未 regenerate) | 3 | 0 | △ V3 で再検証予定 |
+| obs-20260119 | PR #793 detector (V3) | 9 | (pending) | V3 audit-compare 実行待ち |
+| obs-20260127 | PR #793 detector (V3) | 3 | (pending) | V3 audit-compare 実行待ち |
+| obs-20260209 | PR #793 detector (V3) | 3 | (pending) | V3 audit-compare 実行待ち |
 
 ### Findings classification (updated 2026-05-21)
 
 | Class | Count | Notes |
 | --- | --- | --- |
 | (a) ground truth 修正 | 1 | obs-20260118 GT を 5→6 matches に修正 (PR #793 detection 経由で発見、Idios 視覚再確認 2026-05-21 で確定) |
-| (b) detector tuning | 1 | #797 (obs-20260116 M6 end miss、PR #793 でも legacy と同じ値) — V6 として PR #793 内 fix |
+| (b) detector tuning | 1 | #797 (obs-20260116 M6 end miss、PR #793 でも legacy と同じ値) — V6.2 attempt は V2 FP で reverted (#803)、v0.3.x で本公式 fix |
 | (c) 既知限界 | 0 | — |
 
 2026-05-20 audit の (b) detector tuning 3 件のうち F1 / F4 は PR #793 で fix 完了確認。#797 のみ V6 scope で対応継続。
