@@ -30,6 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (2026-05-21) で実 boundary 確定し 5→6 matches に修正。詳細は
   `docs/v030-baseline-audit.md` §"2026-05-21 PR #793 verification update" 参照。
 
+### Fixed
+
+- **detect (scorebar V2)**: post-match content (試合終了後の Limsa /
+  colorful interior 等) の彩度高領域を Rescue path が scorebar と誤検出
+  する false positive を解消 (#803)。`_find_scorebar_horizontal_range` に
+  span width 上限 (`_SCOREBAR_SCAN_MAX_WIDTH_PX=1440`) と中央位置要求
+  (span が画面中央 x=960 を含む) の 2 gate を追加。obs-20260116 で試合終了
+  (6540、scorebar HUD 残存) 直後の post-match 区間 (6544-6850) が試合内と
+  誤分類されていた問題を修正。Primary path (絶対座標 emblem) は無変更。
+
 ### Added
 
 - `probe.py::ProbeResult` に `fps_num`/`fps_den` フィールドを追加
