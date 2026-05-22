@@ -1093,12 +1093,16 @@ def _find_scorebar_horizontal_range(raw_rgb: bytes) -> tuple[int, int] | None:
     becomes the scorebar span.
 
     Returns ``(x_left, x_right)`` with both endpoints inclusive when the
-    detected span is at least ``_SCOREBAR_SCAN_MIN_WIDTH_PX`` wide.
-    Returns ``None`` when:
+    detected span passes all gates: width within
+    ``_SCOREBAR_SCAN_MIN_WIDTH_PX``..``_SCOREBAR_SCAN_MAX_WIDTH_PX`` and
+    straddling screen center.  Returns ``None`` when:
 
     - cv2 is not installed (matches V2 "None -> V1 fallback" contract),
-    - no saturated run is found (lobby / loading / all-dark frame), or
-    - the longest run is narrower than the minimum width.
+    - no saturated run is found (lobby / loading / all-dark frame),
+    - the longest run is narrower than the minimum width,
+    - the longest run is wider than ``_SCOREBAR_SCAN_MAX_WIDTH_PX`` (#803), or
+    - the longest run does not straddle screen center
+      (x = ``_SCOREBAR_V2_PROBE_WIDTH // 2``) (#803).
     """
     try:
         import cv2

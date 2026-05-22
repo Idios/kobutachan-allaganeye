@@ -21,6 +21,7 @@ from allaganeye.video.detector import (
     _EMBLEM_POSITIONS,
     _EMBLEM_SAT_THRESHOLD,
     _SCOREBAR_SCAN_MAX_GAP_PX,
+    _SCOREBAR_SCAN_MAX_WIDTH_PX,
     _SCOREBAR_SCAN_MIN_WIDTH_PX,
     _SCOREBAR_V2_PROBE_HEIGHT,
     _SCOREBAR_V2_PROBE_WIDTH,
@@ -441,6 +442,9 @@ class TestHasScorebarV2:
         # backgrounds (median 66-79) -- should sit at 70.
         assert _EMBLEM_SAT_THRESHOLD == 70.0
         assert _EMBLEM_EDGE_THRESHOLD == 40.0
+        # Width upper bound (#803): 75% of the 1920px probe width, clears the
+        # ~1090px real scorebar max and rejects the ~1912px post-match FP.
+        assert _SCOREBAR_SCAN_MAX_WIDTH_PX == 1440
 
 
 # ---------------------------------------------------------------------------
