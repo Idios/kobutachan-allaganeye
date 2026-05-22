@@ -723,7 +723,12 @@ class TestExtractSegments:
         cls = ["match_boundary", "match_boundary"]
         stats: dict = {}
         _filter_and_extract_segments(
-            regions, 1800.0, 300.0, 3.0, classifications=cls, stats=stats
+            regions,
+            1800.0,
+            300.0,
+            3.0,
+            classifications=cls,
+            stats=stats,  # type: ignore[arg-type]
         )
         assert stats["filter_drops"]["post_match_trailing"] == 1
 
