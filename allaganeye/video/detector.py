@@ -398,7 +398,7 @@ def detect_match_boundaries(
             stats["scorebar_elapsed_s"] = scorebar_elapsed
 
     effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
-    return _filter_and_extract_segments(
+    segments = _filter_and_extract_segments(
         refined_regions,
         duration_hint,
         min_match_duration,
@@ -406,6 +406,12 @@ def detect_match_boundaries(
         classifications=region_classifications,
         stats=stats,
     )
+    # #797: drop a trailing post-match run (final match ended, recording
+    # continued into lobby/city) when its midpoint has no scorebar. Only
+    # runs when scorebar classification is available (src_resolution set).
+    if src_resolution is not None:
+        segments = _drop_post_match_trailing(segments, video_path, duration_hint, stats)
+    return segments
 
 
 def _decode_chunk_cpu(
@@ -1742,11 +1748,8 @@ def _filter_and_extract_segments(
     and the per-reason drop counts are recorded under
     ``stats["filter_candidates"]`` and ``stats["filter_drops"]`` (#388).
     ``filter_drops`` keys: ``"below_min_match_duration"`` (segment length
-    short of the threshold), ``"other"`` (whole-video candidate also
-    below the threshold when no valid blackout remains), and
-    ``"post_match_trailing"`` (trailing run after the final
-    ``match_boundary`` -- post-match content -- dropped per #797).
-    scorebar-based
+    short of the threshold) and ``"other"`` (whole-video candidate also
+    below the threshold when no valid blackout remains).  scorebar-based
     drops (``in_match`` / ``non_fl``) stay in the dedicated
     ``scorebar_*`` fields -- this counter is strictly for the duration-
     based filters that happen inside this function.
@@ -1761,7 +1764,6 @@ def _filter_and_extract_segments(
         drops = stats.get("filter_drops") or {}
         drops.setdefault("below_min_match_duration", 0)
         drops.setdefault("other", 0)
-        drops.setdefault("post_match_trailing", 0)
         stats["filter_drops"] = drops
 
     def _record_drop(key: str) -> None:
@@ -1854,25 +1856,54 @@ def _filter_and_extract_segments(
     seg_start = _padded_start(blackout_regions[-1])
     seg_start = max(seg_start, 0.0)
     if total_duration - seg_start >= min_match_duration:
-        # If the final match ended normally (the last blackout is a
-        # match_boundary), the run to end-of-video is post-match content
-        # (lobby / city), not a match -- drop it (#797).  If it is in_match
-        # or unclassified (recording cut mid-match / no classifications),
-        # keep the trailing segment as before.
-        if filtered_cls is not None and filtered_cls[-1] == "match_boundary":
-            _record_drop("post_match_trailing")
-        else:
-            segments.append(
-                {
-                    "start": seg_start,
-                    "end": total_duration,
-                    "type": "unknown",
-                }
-            )
+        segments.append(
+            {
+                "start": seg_start,
+                "end": total_duration,
+                "type": "unknown",
+            }
+        )
     else:
         _record_drop("below_min_match_duration")
 
     return _finalize(segments)
+
+
+def _drop_post_match_trailing(
+    segments: list[MatchBoundary],
+    video_path: Path,
+    total_duration: float,
+    stats: DetectionStats | None,
+) -> list[MatchBoundary]:
+    """Drop a trailing post-match run via a scorebar probe (#797).
+
+    The final segment, when it runs to end-of-video (``end`` within 1.0s of
+    ``total_duration``) with ``type == "unknown"`` (no closing blackout), may
+    be post-match content (lobby / city) rather than a match.  Probe the
+    segment midpoint for a V2 scorebar:
+
+    - scorebar absent (``False``) -> post-match -> drop the segment
+    - scorebar present (``True``) -> recording was cut mid-match -> keep
+    - probe failure / opencv unavailable (``None``) -> keep (safe side)
+
+    Probing the trailing run itself (rather than keying on an undirected
+    ``match_boundary`` classification) avoids deleting a real match that
+    runs to end-of-video after a single opening boundary
+    (Codex adversarial-review, 2026-05-22).
+    """
+    if not segments:
+        return segments
+    last = segments[-1]
+    if last["type"] != "unknown" or abs(last["end"] - total_duration) >= 1.0:
+        return segments
+    midpoint = (last["start"] + last["end"]) / 2.0
+    raw = _probe_frame_rgb_hires(video_path, midpoint)
+    if _has_scorebar_v2(raw) is False:
+        if stats is not None:
+            drops = stats.setdefault("filter_drops", {})
+            drops["post_match_trailing"] = drops.get("post_match_trailing", 0) + 1
+        return segments[:-1]
+    return segments
 
 
 def _padded_end(region: tuple[float, float]) -> float:
