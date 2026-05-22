@@ -2157,7 +2157,7 @@ class TestDropPostMatchTrailing:
             {"start": 100.0, "end": 1000.0, "type": "fl_match"},
             {"start": 1000.0, "end": 1800.0, "type": "unknown"},
         ]
-        stats: dict = {}
+        stats: dict = {"filter_unknown": 1}
         result = _drop_post_match_trailing(
             segments,  # type: ignore[arg-type]
             Path("v.mp4"),
@@ -2167,6 +2167,9 @@ class TestDropPostMatchTrailing:
         assert len(result) == 1
         assert result[0]["type"] == "fl_match"
         assert stats["filter_drops"]["post_match_trailing"] == 1
+        # filter_unknown decremented so the verbose unknown-match count
+        # stays consistent after the drop (#797).
+        assert stats["filter_unknown"] == 0
 
     @patch("allaganeye.video.detector._has_scorebar_v2", return_value=True)
     @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
@@ -2210,7 +2213,10 @@ class TestDropPostMatchTrailing:
             {"start": 1000.0, "end": 1800.0, "type": "fl_match"},
         ]
         result = _drop_post_match_trailing(
-            segments, Path("v.mp4"), 1800.0, None  # type: ignore[arg-type]
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            1800.0,
+            None,
         )
         assert len(result) == 2
 
@@ -2221,7 +2227,10 @@ class TestDropPostMatchTrailing:
             {"start": 100.0, "end": 1600.0, "type": "unknown"},
         ]
         result = _drop_post_match_trailing(
-            segments, Path("v.mp4"), 3600.0, None  # type: ignore[arg-type]
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            3600.0,
+            None,
         )
         assert len(result) == 1
 

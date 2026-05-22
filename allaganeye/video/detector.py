@@ -53,7 +53,7 @@ class DetectionStats(TypedDict, total=False):
     filter_candidates: int
     filter_drops: dict[
         str, int
-    ]  # keys: below_min_match_duration, other, post_match_trailing
+    ]  # keys: below_min_match_duration, other, post_match_trailing (optional, #797)
     # Count of segments returned with type=="unknown" (#433). Used by the
     # verbose ``+ N unknown match`` line so the user can reconcile
     # Filter "kept" with the larger Detected count when a recording
@@ -1902,6 +1902,10 @@ def _drop_post_match_trailing(
         if stats is not None:
             drops = stats.setdefault("filter_drops", {})
             drops["post_match_trailing"] = drops.get("post_match_trailing", 0) + 1
+            # Keep filter_unknown consistent: _finalize counted this trailing
+            # segment as unknown before this drop, so decrement it (#797).
+            if stats.get("filter_unknown", 0) > 0:
+                stats["filter_unknown"] -= 1
         return segments[:-1]
     return segments
 
