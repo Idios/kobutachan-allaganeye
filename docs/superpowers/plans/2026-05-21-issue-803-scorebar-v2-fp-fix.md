@@ -306,6 +306,8 @@ EOF
 
 ## Task 4 (条件付き、#797): V6.2 二分探索の再導入
 
+> **不採用 (2026-05-22 実機確定)**: V6.2 は不要だった。#803 gate で M6 end が暗転境界として 6542 (GT 6540 +2s) に確定し、post-match (M7 = `match_007.mp4`) は **対策 A (post-match trailing drop、commit `21c7c48` + `f10f39a`)** で除去 → obs-20260116 が 6 match / 0 finding。spec §0.6 / `docs/v030-baseline-audit.md` §2026-05-22 参照。以下は当初の V6.2 計画 (経緯として保持)。
+
 **前提:** Task 2 (Phase 3) が pass し、Idios が「#797 の束ねを進める」と判断した場合のみ着手する。Phase 3 で #803 単独でも M6 end が改善する場合や、収束見込みが不確実な場合は本 Task を skip し Task 5 を Phase 5' (#803 単独 PR) で進める。
 
 本 Task の complete code は、revert された commit `f7f8879` の中身に依存するため、**着手時に以下の調査 step を先に実施してから詳細を確定する** (現時点では V6.2 の正確な diff が未確認のため complete code を確定できない)。

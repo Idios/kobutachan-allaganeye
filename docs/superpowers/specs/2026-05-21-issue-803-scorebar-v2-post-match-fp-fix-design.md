@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | Phase 1 complete, root cause confirmed (2026-05-22); design freeze |
+| **Status** | Implemented + 5-baseline verified (2026-05-22): #803 gate + #797 M7 drop、54 boundary 全 agreed / 0 finding |
 | **Issues** | [#803](https://github.com/Idios/kobutachan-allaganeye/issues/803) (primary, P2 bug) + [#797](https://github.com/Idios/kobutachan-allaganeye/issues/797) (secondary, P2 refactor, conditional bundle) |
 | **Parent spec** | [2026-05-19-v030-l3-detect-fps-retirement-reexamination-design.md](2026-05-19-v030-l3-detect-fps-retirement-reexamination-design.md) §9-§10 (V6.2 attempt → revert → #803 起票) |
 | **Related root cause** | PR [#793](https://github.com/Idios/kobutachan-allaganeye/pull/793) post-merge verification で発覚した `_has_scorebar_v2` の post-match content (5700-6850s, obs-20260116) False positive (true M6 end 6540 を超えて FP 群発火) |
@@ -71,9 +71,15 @@ issue #803 の「6540 で False を返す」は実機の scorebar 挙動と矛�
 
 この訂正は PR 本文の Iron Law 1 逐条検証と issue #803 コメントに Phase 1 実証データ付きで記録する (独断で issue 本文を書き換えない、Iron Law 5)。
 
-### §0.6 #797 への含意 (束ね解決見込み大)
+### §0.6 #797 解決 (実装完了 2026-05-22)
 
-Rescue gating で 6541 以降が V2 False になると、V2 全体が **6540=True / 6541=False**。V6.2 (scorebar 二分探索) は Primary 主導で M6 end を 6540-6541 に収束 → ground truth 6540 と一致 → `6540±5s` に余裕で収束する見込み。確定は Phase 4 で V6.2 を実際に再導入して audit-compare する (§3.4)。
+実機検証で確定。当初想定した V6.2 (scorebar 二分探索) は**不要**だった:
+
+1. **#803 Rescue gating** で M6 end が 7303→6542 (GT 6540 +2s) に正確化、M6 が unknown→fl_match に。
+2. ただし gate 副作用で post-match (6542-7303) が unknown segment (M7 = match_007.mp4) として分離。これは detector "After last blackout" (line 1847) が試合終了後の trailing を出力する #797 の本体。
+3. **対策 A (post-match trailing drop)**: 最後の有効 blackout が match_boundary なら trailing を post-match と判定し drop (`_filter_and_extract_segments` の "After last blackout")。obs-20260116 で M7 除去 → **6 match / 12 agreed / 0 finding** (GT 完全一致)。実装は plan Task 6。
+
+他 4 baseline (118/119/127/209) は trailing < 300s で対策 A 影響なし、gate も in-match 通過で regression ゼロ。**5 baseline / 54 boundary 全 agreed**。V6.2 二分探索は M6 end が暗転境界として既に 6542 に確定したため要らなかった。
 
 ## §1. Goal & Non-goals
 
@@ -86,7 +92,9 @@ Rescue gating で 6541 以降が V2 False になると、V2 全体が **6540=Tru
 - 既存 validated 5 baseline (obs-20260116 / 20260118 / 20260119 / 20260127 / 20260209) で scorebar 分類 (12 match_boundary / 10 in_match / 2 non_fl) と post-PR #793 の 53 agreed boundary が完全保持される (regression なし)
 - #522 (4K Game DVR Rescue path validation, 20260219) / #307 (V2 baseline validation, 156+ non-match frames zero FP) で regression なし
 
-### §1.2 Secondary goal (#797, conditional)
+### §1.2 Secondary goal (#797) — 解決済 (§0.6 参照)
+
+> **実装完了 (§0.6)**: V6.2 ではなく **対策 A (post-match trailing drop)** で #797 解決。obs-20260116 が 0 finding。以下は当初の V6.2 計画 (経緯として保持)。
 
 Rescue gating (#803) の fix 完了後、V6.2 (scorebar HUD 二分探索、PR #793 reexamination spec §9 で revert された commit `f7f8879` の logic) を再実装する。
 
@@ -195,6 +203,8 @@ FP 範囲 = 6540-6890 ≒ 350s。Primary / Rescue どちらの path が原因か
 - 1 件でも regression (新 silent_miss / false_positive / boundary_shift) が出たら Phase 2 ↔ Phase 3 loop
 
 ### §3.4 Phase 4 (optional): #797 bundle — V6.2 reintroduce + verify
+
+> **不採用 (§0.6)**: 実機検証の結果 V6.2 は不要だった。実装は **対策 A (post-match trailing drop)** = `_filter_and_extract_segments` の "After last blackout" を classification ベースで gate (plan Task 6)。以下は当初の V6.2 計画 (経緯として保持)。
 
 Phase 3 全 pass 後にのみ実施。
 
