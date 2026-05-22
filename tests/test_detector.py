@@ -633,18 +633,19 @@ class TestExtractSegments:
         assert all(s["type"] == "unknown" for s in result)
 
     def test_type_fl_match_with_classifications(self):
-        """Segments between match_boundary blackouts get type=fl_match."""
+        """Segments between match_boundary blackouts get type=fl_match;
+        the trailing run after a match_boundary is post-match -> dropped (#797).
+        """
         regions = [(100.0, 105.0), (900.0, 905.0)]
         cls = ["match_boundary", "match_boundary"]
         result = _filter_and_extract_segments(
             regions, 1800.0, 300.0, 3.0, classifications=cls
         )
-        # Before first blackout: too short (102.5s < 300s) -> excluded
+        # Before first blackout: too short (~102.5s < 300s) -> excluded
         # Between blackouts: fl_match (both sides match_boundary)
-        # After last blackout: unknown (tail segment)
-        assert len(result) == 2
+        # After last blackout: last cls = match_boundary -> post-match -> dropped (#797)
+        assert len(result) == 1
         assert result[0]["type"] == "fl_match"
-        assert result[1]["type"] == "unknown"
 
     def test_type_unknown_with_mixed_classifications(self):
         """Segments between non-boundary blackouts get type=unknown."""
@@ -657,13 +658,16 @@ class TestExtractSegments:
         assert result[0]["type"] == "unknown"
 
     def test_type_with_in_match_classifications(self):
-        """in_match classifications produce fl_match segments."""
+        """in_match classifications produce fl_match segments;
+        trailing run after the final match_boundary is dropped (#797)."""
         regions = [(100.0, 105.0), (900.0, 905.0)]
         cls = ["in_match", "match_boundary"]
         result = _filter_and_extract_segments(
             regions, 1800.0, 300.0, 3.0, classifications=cls
         )
-        assert len(result) == 2
+        # Between blackouts: fl_match (in_match + match_boundary are both boundary classes)
+        # After last (match_boundary): trailing run dropped (#797)
+        assert len(result) == 1
         assert result[0]["type"] == "fl_match"
 
     def test_classifications_filtered_with_regions(self):
@@ -673,9 +677,52 @@ class TestExtractSegments:
         result = _filter_and_extract_segments(
             regions, 1800.0, 300.0, 3.0, classifications=cls
         )
-        # First region (1s) filtered out; remaining: match_boundary, match_boundary
-        assert len(result) == 3
+        # First region (1s) filtered out; remaining: match_boundary, match_boundary.
+        # Before-first run (~0-505s) -> unknown; between -> fl_match;
+        # after-last run (last cls match_boundary) -> post-match -> dropped (#797).
+        assert len(result) == 2
         assert result[1]["type"] == "fl_match"
+
+    def test_trailing_after_in_match_kept(self):
+        """Trailing run after an in_match blackout (recording cut mid-match)
+        is kept as unknown -- only match_boundary tails are dropped (#797)."""
+        regions = [(100.0, 105.0), (900.0, 905.0)]
+        cls = ["match_boundary", "in_match"]
+        result = _filter_and_extract_segments(
+            regions, 1800.0, 300.0, 3.0, classifications=cls
+        )
+        # Between: fl_match (match_boundary + in_match are both boundary classes)
+        # After last (in_match): kept as unknown (mid-match recording cut)
+        assert len(result) == 2
+        assert result[-1]["type"] == "unknown"
+        assert result[-1]["start"] >= 900.0
+
+    def test_trailing_after_match_boundary_dropped(self):
+        """Trailing run after a match_boundary is dropped (#797 core)."""
+        regions = [(100.0, 105.0), (900.0, 905.0)]
+        cls = ["in_match", "match_boundary"]
+        result = _filter_and_extract_segments(
+            regions, 1800.0, 300.0, 3.0, classifications=cls
+        )
+        # After last (match_boundary) -> post-match -> dropped; no segment >= 900
+        assert all(s["start"] < 900.0 for s in result)
+
+    def test_trailing_no_classifications_kept(self):
+        """Without classifications the trailing run is kept (backward compat):
+        the #797 drop only applies when the last blackout is classified."""
+        regions = [(100.0, 105.0), (900.0, 905.0)]
+        result = _filter_and_extract_segments(regions, 1800.0, 300.0, 3.0)
+        assert any(s["start"] >= 900.0 for s in result)
+
+    def test_post_match_trailing_drop_counted(self):
+        """Dropping a post-match trailing run increments the stats counter (#797)."""
+        regions = [(100.0, 105.0), (900.0, 905.0)]
+        cls = ["match_boundary", "match_boundary"]
+        stats: dict = {}
+        _filter_and_extract_segments(
+            regions, 1800.0, 300.0, 3.0, classifications=cls, stats=stats
+        )
+        assert stats["filter_drops"]["post_match_trailing"] == 1
 
 
 # ============================================================
@@ -714,6 +761,7 @@ class TestFilterDropsStats:
         assert stats["filter_drops"] == {
             "below_min_match_duration": 0,
             "other": 0,
+            "post_match_trailing": 0,
         }
 
     def test_below_min_match_duration_increments_on_short_segment(self):
@@ -776,6 +824,7 @@ class TestFilterDropsStats:
         assert stats["filter_drops"] == {
             "below_min_match_duration": 0,
             "other": 0,
+            "post_match_trailing": 0,
         }
 
     def test_stats_none_runs_without_raising(self):

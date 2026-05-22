@@ -1756,6 +1756,7 @@ def _filter_and_extract_segments(
         drops = stats.get("filter_drops") or {}
         drops.setdefault("below_min_match_duration", 0)
         drops.setdefault("other", 0)
+        drops.setdefault("post_match_trailing", 0)
         stats["filter_drops"] = drops
 
     def _record_drop(key: str) -> None:
@@ -1848,13 +1849,21 @@ def _filter_and_extract_segments(
     seg_start = _padded_start(blackout_regions[-1])
     seg_start = max(seg_start, 0.0)
     if total_duration - seg_start >= min_match_duration:
-        segments.append(
-            {
-                "start": seg_start,
-                "end": total_duration,
-                "type": "unknown",
-            }
-        )
+        # If the final match ended normally (the last blackout is a
+        # match_boundary), the run to end-of-video is post-match content
+        # (lobby / city), not a match -- drop it (#797).  If it is in_match
+        # or unclassified (recording cut mid-match / no classifications),
+        # keep the trailing segment as before.
+        if filtered_cls is not None and filtered_cls[-1] == "match_boundary":
+            _record_drop("post_match_trailing")
+        else:
+            segments.append(
+                {
+                    "start": seg_start,
+                    "end": total_duration,
+                    "type": "unknown",
+                }
+            )
     else:
         _record_drop("below_min_match_duration")
 
