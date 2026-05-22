@@ -39,6 +39,7 @@
 スコープは `_find_scorebar_horizontal_range` への 2 gate 追加と、その unit / 統合 test。Primary path は触らない。
 
 **Files:**
+
 - Modify: `allaganeye/video/detector.py` (定数 + `_find_scorebar_horizontal_range`)
 - Test: `tests/test_scorebar_v2.py`
 
@@ -251,6 +252,7 @@ done
 (Windows cmd では `for /L` ではなく 5 回個別実行、または PowerShell の `foreach`。各 detect は GPU で ~12min wall、計 ~1h。)
 
 Expected:
+
 - **obs-20260118 / 119 / 127 / 209**: 変更前と同じ agreed 数を維持 (それぞれ 12/12, 18/18, 6/6, 6/6 agreed、boundary_shift / silent_miss / false_positive = 0)
 - **obs-20260116**: post-match (6555-6850) の Rescue FP が解消され、M6 が動画末尾まで伸びる誤分類が改善方向に変わる。M6 end は #803 単独では 6540-6541 (= scorebar 消失点) 付近に近づくが、V6.2 (Task 4) 未導入時は in-match 分類 logic 次第。最低限、変更前 (53/54 agreed) を下回らないこと
 
@@ -269,6 +271,7 @@ Expected: 分類カウントに regression なし。1 件でも変化したら T
 ## Task 3: CHANGELOG 更新
 
 **Files:**
+
 - Modify: `CHANGELOG.md`
 
 - [ ] **Step 1: `### Fixed` セクションに #803 entry を追加する**
@@ -336,6 +339,7 @@ V6.2 再導入が収束した場合のみ。commit message に `Refs #797` を�
 ## Task 5: PR 作成 (Phase 5 束ね or Phase 5' 単独)
 
 **Files:**
+
 - Modify: `docs/v030-baseline-audit.md` (#797 status)
 - Delete (untracked): `scripts/debug-scorebar-v2-fp.py`
 
@@ -350,6 +354,7 @@ rm scripts/debug-scorebar-v2-fp.py
 - [ ] **Step 2: `docs/v030-baseline-audit.md` の #797 status を更新する**
 
 Task 4 の結果に応じて記載:
+
 - **収束 (束ね)**: #797 を「#803 の Rescue gating + V6.2 再導入で M6 end を 6540±5s に収束、PR で解決」と更新
 - **非収束 (単独)**: #797 を「#803 で post-match FP は解消したが M6 end の 6540±5s 収束は別 root cause、v0.3.x で継続」と更新
 
@@ -387,10 +392,12 @@ Expected: 全 pass。Python のみの変更なので GUI job (npm lint/typecheck
 - [ ] **Step 5: PR を作成する**
 
 base は `develop-0.3.0`。title は Phase に応じて:
+
 - **束ね**: `fix(detector): scorebar V2 post-match FP fix + HUD 二分探索 reintroduce (Refs #803 #797)`
 - **単独**: `fix(detector): scorebar V2 post-match FP fix (Refs #803)`
 
 PR 本文に必須:
+
 - **Iron Law 1 逐条検証**: #803 (+ #797) の `## 受け入れ条件` 各項目を引用し、対応 diff / test を引用。**criteria 訂正の記録**: 「6540 で False」は実機で scorebar 残存と判明したため「6541 で False / 6540 は True」に訂正、根拠は spec §0.5 + Phase 1 実証データ
 - **Self-Test Report**: `[x]` machine-verified (ruff / ruff format / pyright / pytest) と plain `-` machine-unverifiable (Task 2 の 5 baseline audit-compare 結果、Task 4 の M6 end 収束) を分離
 - **Iron Law 4**: Closes/Fixes/Resolves キーワード禁止 (`Refs #803` のみ)

@@ -88,7 +88,7 @@ Rescue gating で 6541 以降が V2 False になると、V2 全体が **6540=Tru
 
 ### §1.2 Secondary goal (#797, conditional)
 
-#803 fix 完了後、V6.2 (scorebar HUD 二分探索、PR #793 reexamination spec §9 で revert された commit `f7f8879` の logic) を再実装する。
+Rescue gating (#803) の fix 完了後、V6.2 (scorebar HUD 二分探索、PR #793 reexamination spec §9 で revert された commit `f7f8879` の logic) を再実装する。
 
 - **収束**: obs-20260116 で V6.2 が M6 end を `6540 ±5s` に収束させる → #803 + #797 を 1 PR で束ね close
 - **非収束**: #797 を v0.3.x defer、#803 のみで PR を切る (`docs/v030-baseline-audit.md` に状況を記録)
