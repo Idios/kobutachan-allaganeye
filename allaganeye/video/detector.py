@@ -51,7 +51,9 @@ class DetectionStats(TypedDict, total=False):
     # Paired with filter_drops so verbose can report
     # ``<candidates> -> <final matches>`` with breakdown.
     filter_candidates: int
-    filter_drops: dict[str, int]  # keys: below_min_match_duration, other
+    filter_drops: dict[
+        str, int
+    ]  # keys: below_min_match_duration, other, post_match_trailing
     # Count of segments returned with type=="unknown" (#433). Used by the
     # verbose ``+ N unknown match`` line so the user can reconcile
     # Filter "kept" with the larger Detected count when a recording
@@ -1740,8 +1742,11 @@ def _filter_and_extract_segments(
     and the per-reason drop counts are recorded under
     ``stats["filter_candidates"]`` and ``stats["filter_drops"]`` (#388).
     ``filter_drops`` keys: ``"below_min_match_duration"`` (segment length
-    short of the threshold) and ``"other"`` (whole-video candidate also
-    below the threshold when no valid blackout remains).  scorebar-based
+    short of the threshold), ``"other"`` (whole-video candidate also
+    below the threshold when no valid blackout remains), and
+    ``"post_match_trailing"`` (trailing run after the final
+    ``match_boundary`` -- post-match content -- dropped per #797).
+    scorebar-based
     drops (``in_match`` / ``non_fl``) stay in the dedicated
     ``scorebar_*`` fields -- this counter is strictly for the duration-
     based filters that happen inside this function.

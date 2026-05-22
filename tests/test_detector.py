@@ -704,7 +704,10 @@ class TestExtractSegments:
         result = _filter_and_extract_segments(
             regions, 1800.0, 300.0, 3.0, classifications=cls
         )
-        # After last (match_boundary) -> post-match -> dropped; no segment >= 900
+        # After last (match_boundary) -> post-match -> dropped; only the
+        # between-blackouts fl_match segment remains.
+        assert len(result) == 1
+        assert result[0]["type"] == "fl_match"
         assert all(s["start"] < 900.0 for s in result)
 
     def test_trailing_no_classifications_kept(self):
