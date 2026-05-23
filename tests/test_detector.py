@@ -2206,6 +2206,82 @@ class TestDropPostMatchTrailing:
         assert len(result) == 1
         assert "post_match_trailing" not in stats.get("filter_drops", {})
 
+    @patch("allaganeye.video.detector._has_scorebar_v2")
+    @patch("allaganeye.video.detector._probe_frame_rgb_hires")
+    def test_trailing_scorebar_early_kept(self, _probe, _v2):
+        """Mixed trailing (scorebar present early, absent at midpoint) -> kept.
+
+        A removed/missed match-end blackout (e.g. a warp misclassified as
+        ``non_fl`` and dropped in scorebar.py) merges a real match and the
+        post-match tail into one trailing ``unknown`` segment.  A single
+        midpoint probe lands in the longer post-match portion and would
+        drop the whole segment, silently losing the match.  Probing earlier
+        positions and keeping on any scorebar hit prevents that
+        (#797 multi-probe, Codex adversarial-review 2026-05-22).
+        """
+
+        # Trailing segment [1000, 2800]; midpoint 1900.  Scorebar present
+        # only before the midpoint (the match), absent after (post-match).
+        def fake_probe(_video_path, timestamp):
+            return b"present" if timestamp < 1900.0 else b"absent"
+
+        def fake_v2(raw):
+            if raw is None:
+                return None
+            return raw == b"present"
+
+        _probe.side_effect = fake_probe
+        _v2.side_effect = fake_v2
+        segments = [
+            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
+            {"start": 1000.0, "end": 2800.0, "type": "unknown"},
+        ]
+        stats: dict = {"filter_unknown": 1}
+        result = _drop_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            2800.0,
+            stats,  # type: ignore[arg-type]
+        )
+        assert len(result) == 2
+        assert result[-1]["type"] == "unknown"
+        assert "post_match_trailing" not in stats.get("filter_drops", {})
+        # No drop -> the unknown count must stay put.
+        assert stats["filter_unknown"] == 1
+
+    @patch("allaganeye.video.detector._has_scorebar_v2")
+    @patch("allaganeye.video.detector._probe_frame_rgb_hires")
+    def test_trailing_partial_probe_failure_kept(self, _probe, _v2):
+        """A probe failure (None) anywhere in the multi-probe set -> kept.
+
+        Without positive ``False`` proof at every probed position, keep the
+        segment: the failed probe might have covered match footage.  Drop
+        requires unanimous, definite scorebar absence.
+        """
+
+        # Early position fails to decode (None); later positions are absent.
+        def fake_probe(_video_path, timestamp):
+            return None if timestamp < 1900.0 else b"absent"
+
+        def fake_v2(raw):
+            if raw is None:
+                return None
+            return raw == b"present"
+
+        _probe.side_effect = fake_probe
+        _v2.side_effect = fake_v2
+        segments = [
+            {"start": 1000.0, "end": 2800.0, "type": "unknown"},
+        ]
+        result = _drop_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            2800.0,
+            None,
+        )
+        assert len(result) == 1
+        assert result[-1]["type"] == "unknown"
+
     def test_last_segment_not_unknown_kept(self):
         """Last segment with type != 'unknown' is not touched."""
         segments = [

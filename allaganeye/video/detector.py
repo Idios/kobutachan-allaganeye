@@ -1480,6 +1480,18 @@ By placing cut points inside blackout regions, keyframe drift never
 clips actual match footage.
 """
 
+_TRAILING_PROBE_START_OFFSET = 12.0
+"""Seconds past a trailing segment's start for its earliest scorebar probe.
+
+A trailing segment begins inside the opening blackout (``_BLACKOUT_PADDING``)
+and the arena then loads, so the earliest probe must clear ~3s of padding plus
+a few seconds of loading before any in-match HUD can appear.  Used by
+``_drop_post_match_trailing`` (#797).
+"""
+
+_TRAILING_PROBE_LATE_FRACTION = 0.85
+"""Fractional position of a trailing segment's latest scorebar probe (#797)."""
+
 # ---------------------------------------------------------------------------
 # Legacy fps-filter rollback switch (#576)
 # ---------------------------------------------------------------------------
@@ -1875,39 +1887,52 @@ def _drop_post_match_trailing(
     total_duration: float,
     stats: DetectionStats | None,
 ) -> list[MatchBoundary]:
-    """Drop a trailing post-match run via a scorebar probe (#797).
+    """Drop a trailing post-match run via scorebar probes (#797).
 
     The final segment, when it runs to end-of-video (``end`` within 1.0s of
     ``total_duration``) with ``type == "unknown"`` (no closing blackout), may
-    be post-match content (lobby / city) rather than a match.  Probe the
-    segment midpoint for a V2 scorebar:
+    be post-match content (lobby / city) rather than a match.  Probe several
+    positions across the segment -- an early point past the opening blackout,
+    the midpoint, and a late point -- for a V2 scorebar:
 
-    - scorebar absent (``False``) -> post-match -> drop the segment
-    - scorebar present (``True``) -> recording was cut mid-match -> keep
-    - probe failure / opencv unavailable (``None``) -> keep (safe side)
+    - every probe a definite miss (``False``) -> post-match -> drop
+    - any probe a scorebar hit (``True``) -> match footage present -> keep
+    - any probe failure / opencv unavailable (``None``) -> keep (safe side)
 
     Probing the trailing run itself (rather than keying on an undirected
-    ``match_boundary`` classification) avoids deleting a real match that
-    runs to end-of-video after a single opening boundary
-    (Codex adversarial-review, 2026-05-22).
+    ``match_boundary`` classification) avoids deleting a real match that runs
+    to end-of-video after a single opening boundary.  Probing multiple
+    positions (rather than the midpoint alone) avoids deleting a *mixed*
+    trailing segment -- a real match followed by a longer post-match tail,
+    which arises when the match-end blackout is missed or dropped (e.g. a
+    warp misclassified as ``non_fl`` in scorebar.py) -- where a lone midpoint
+    would land in the post-match portion (Codex adversarial-review,
+    2026-05-22).
     """
     if not segments:
         return segments
     last = segments[-1]
     if last["type"] != "unknown" or abs(last["end"] - total_duration) >= 1.0:
         return segments
-    midpoint = (last["start"] + last["end"]) / 2.0
-    raw = _probe_frame_rgb_hires(video_path, midpoint)
-    if _has_scorebar_v2(raw) is False:
-        if stats is not None:
-            drops = stats.setdefault("filter_drops", {})
-            drops["post_match_trailing"] = drops.get("post_match_trailing", 0) + 1
-            # Keep filter_unknown consistent: _finalize counted this trailing
-            # segment as unknown before this drop, so decrement it (#797).
-            if stats.get("filter_unknown", 0) > 0:
-                stats["filter_unknown"] -= 1
-        return segments[:-1]
-    return segments
+    start = last["start"]
+    end = last["end"]
+    midpoint = (start + end) / 2.0
+    early = min(start + _TRAILING_PROBE_START_OFFSET, midpoint)
+    late = max(start + (end - start) * _TRAILING_PROBE_LATE_FRACTION, midpoint)
+    for timestamp in (early, midpoint, late):
+        if _has_scorebar_v2(_probe_frame_rgb_hires(video_path, timestamp)) is not False:
+            # Scorebar hit (True) or probe failure (None) -> keep (safe side).
+            return segments
+    # Every probe was a definite miss -> post-match trailing -> drop.
+    if stats is not None:
+        drops = stats.setdefault("filter_drops", {})
+        drops["post_match_trailing"] = drops.get("post_match_trailing", 0) + 1
+        # Keep filter_unknown consistent: _finalize counted this trailing
+        # segment as unknown before this drop, so decrement it (#797).
+        unknown_count = stats.get("filter_unknown", 0)
+        if unknown_count > 0:
+            stats["filter_unknown"] = unknown_count - 1
+    return segments[:-1]
 
 
 def _padded_end(region: tuple[float, float]) -> float:

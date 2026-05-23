@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | Implemented + 5-baseline verified (2026-05-22): #803 gate + #797 M7 drop、54 boundary 全 agreed / 0 finding |
+| **Status** | #803 gate + #797 M7 drop は 5-baseline verified (2026-05-22、54 boundary 全 agreed / 0 finding)。#797 trailing-drop は Codex 再 review を受けて multi-probe guard に強化 (2026-05-23、§0.6「実装の変遷」)、5-baseline 実機 audit 再検証 pending |
 | **Issues** | [#803](https://github.com/Idios/kobutachan-allaganeye/issues/803) (primary, P2 bug) + [#797](https://github.com/Idios/kobutachan-allaganeye/issues/797) (secondary, P2 refactor, conditional bundle) |
 | **Parent spec** | [2026-05-19-v030-l3-detect-fps-retirement-reexamination-design.md](2026-05-19-v030-l3-detect-fps-retirement-reexamination-design.md) §9-§10 (V6.2 attempt → revert → #803 起票) |
 | **Related root cause** | PR [#793](https://github.com/Idios/kobutachan-allaganeye/pull/793) post-merge verification で発覚した `_has_scorebar_v2` の post-match content (5700-6850s, obs-20260116) False positive (true M6 end 6540 を超えて FP 群発火) |
@@ -80,6 +80,8 @@ issue #803 の「6540 で False を返す」は実機の scorebar 挙動と矛�
 3. **対策 A (post-match trailing drop)**: 最後の有効 blackout が match_boundary なら trailing を post-match と判定し drop (`_filter_and_extract_segments` の "After last blackout")。obs-20260116 で M7 除去 → **6 match / 12 agreed / 0 finding** (GT 完全一致)。実装は plan Task 6。
 
 他 4 baseline (118/119/127/209) は trailing < 300s で対策 A 影響なし、gate も in-match 通過で regression ゼロ。**5 baseline / 54 boundary 全 agreed**。V6.2 二分探索は M6 end が暗転境界として既に 6542 に確定したため要らなかった。
+
+**実装の変遷 (#797 trailing-drop、Codex review chain)**: 上記 **対策 A** (最後の有効 blackout が `match_boundary` なら drop) は無方向な `match_boundary` 分類を key にしていたため、「lobby→試合開始→EOF まで試合」録画で真の試合 trailing を誤 drop しうる、と Codex adversarial-review (2026-05-22) が [high] 指摘。これを受けて専用 helper `_drop_post_match_trailing` が **trailing segment 自体の scorebar を probe** する方式 (C') に置換 (commit 64a72ba / d759fe9)。さらに再 review (2026-05-23) で「単一 midpoint probe は *mixed* trailing (真の試合 + より長い post-match tail。試合終了 blackout が `non_fl` 誤分類等で scorebar.py で drop された場合に発生) の試合部分まで誤 drop しうる」と [high] 指摘され、early (`_TRAILING_PROBE_START_OFFSET` で開幕 blackout を越えた点) / midpoint / late の **multi-probe guard** に強化。全 probe が definite miss (`False`) のときのみ drop し、1 つでも scorebar hit (`True`) / probe 失敗 (`None`) なら保持する (safe side)。obs-20260116 の M7 drop = 6 match / 0 finding と他 4 baseline の regression ゼロは、この multi-probe 版で実機 audit-compare 再検証する (§3.3 / §4.4、Iron Law 6)。
 
 ## §1. Goal & Non-goals
 
