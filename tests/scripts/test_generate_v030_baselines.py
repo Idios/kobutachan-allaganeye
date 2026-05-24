@@ -254,6 +254,32 @@ def test_committed_metadata_source_is_portable_relative_path(label: str) -> None
     assert not src.startswith("/"), f"{label}: source is absolute posix path: {src!r}"
 
 
+@pytest.mark.parametrize("label", _committed_labels())
+def test_committed_metadata_output_file_is_relative(label: str) -> None:
+    """Committed ``matches[].output_file`` must be a bare ``match_NNN.mp4`` name.
+
+    ``split --from-metadata -o <dir>`` rewrites ``output_file`` to an absolute
+    path; the generator must capture detect's relative placeholders *before*
+    running split so machine-local tmp paths never leak into the committed,
+    environment-portable baseline (#797 round-4: the generator previously
+    re-read metadata.json after split and baked in absolute tmp paths).
+    """
+    metadata = json.loads(
+        (_BASELINES_DIR / f"{label}.metadata.json").read_text(encoding="utf-8")
+    )
+    for match in metadata["matches"]:
+        out = match["output_file"]
+        assert isinstance(out, str) and out, f"{label}: empty output_file"
+        assert "\\" not in out, f"{label}: output_file has backslash: {out!r}"
+        assert "/" not in out, f"{label}: output_file has path separator: {out!r}"
+        assert not re.match(r"^[A-Za-z]:", out), (
+            f"{label}: output_file has Windows drive letter: {out!r}"
+        )
+        assert re.match(r"^match_\d{3}\.mp4$", out), (
+            f"{label}: output_file not match_NNN.mp4: {out!r}"
+        )
+
+
 def test_committed_label_matches_generator_selection() -> None:
     """Committed labels must exactly match the ``_BASELINES`` selection.
 
