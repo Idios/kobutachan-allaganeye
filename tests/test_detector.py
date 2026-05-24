@@ -2310,6 +2310,92 @@ class TestDropPostMatchTrailing:
         )
         assert len(result) == 1
 
+    @patch("allaganeye.video.detector._has_scorebar_v2")
+    @patch("allaganeye.video.detector._probe_frame_rgb_hires")
+    def test_trailing_long_loading_kept(self, _probe, _v2):
+        """Mixed trailing where the HUD appears only after long loading -> kept.
+
+        The match-end blackout was dropped, merging a real match and a longer
+        post-match tail into one trailing segment.  Loading runs ~60s, so a
+        single ``start + 12s`` early probe lands in the loading screen (no
+        HUD), while the midpoint and late probes fall in the longer post-match
+        tail.  A fixed-offset probe set would see all misses and silently drop
+        the real match; an early-window scan must catch the later HUD and keep
+        it (#797, Codex adversarial-review 2026-05-23).
+        """
+
+        # Trailing [1000, 3000]: loading [1000, 1060), match HUD [1060, 1600),
+        # post-match [1600, 3000].  start+12 (=1012) is loading; midpoint
+        # (=2000) and 85% (=2700) are post-match.
+        def fake_probe(_video_path, timestamp):
+            return b"M" if 1060.0 <= timestamp < 1600.0 else b"x"
+
+        def fake_v2(raw):
+            if raw is None:
+                return None
+            return raw == b"M"
+
+        _probe.side_effect = fake_probe
+        _v2.side_effect = fake_v2
+        segments = [
+            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
+            {"start": 1000.0, "end": 3000.0, "type": "unknown"},
+        ]
+        stats: dict = {"filter_unknown": 1}
+        result = _drop_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            3000.0,
+            stats,  # type: ignore[arg-type]
+        )
+        assert len(result) == 2
+        assert result[-1]["type"] == "unknown"
+        assert "post_match_trailing" not in stats.get("filter_drops", {})
+        assert stats["filter_unknown"] == 1
+
+    @patch("allaganeye.video.detector._has_scorebar_v2")
+    @patch("allaganeye.video.detector._probe_frame_rgb_hires")
+    def test_trailing_hud_in_window_end_gap_kept(self, _probe, _v2):
+        """HUD first appearing in the final stride gap of the window -> kept.
+
+        With default min_match_duration=300 and stride=60 the strided probes
+        land at start+60/120/180/240; a ``timestamp < window_end`` loop never
+        probes the window end, leaving [start+240, start+300] unsampled.  A
+        mixed trailing whose loading runs to start+270 (HUD only from there)
+        produces misses at every strided point and would be silently dropped.
+        The window-end probe must catch it (#797, Codex adversarial-review
+        2026-05-24).
+        """
+
+        # Trailing [1000, 3000], window_end=1300.  Loading [1000, 1270),
+        # match HUD [1270, 1800), post-match [1800, 3000].  start+60..+240 are
+        # all < 1270 (loading); only a probe at/near window_end (1300) hits.
+        def fake_probe(_video_path, timestamp):
+            return b"M" if 1270.0 <= timestamp < 1800.0 else b"x"
+
+        def fake_v2(raw):
+            if raw is None:
+                return None
+            return raw == b"M"
+
+        _probe.side_effect = fake_probe
+        _v2.side_effect = fake_v2
+        segments = [
+            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
+            {"start": 1000.0, "end": 3000.0, "type": "unknown"},
+        ]
+        stats: dict = {"filter_unknown": 1}
+        result = _drop_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            3000.0,
+            stats,  # type: ignore[arg-type]
+        )
+        assert len(result) == 2
+        assert result[-1]["type"] == "unknown"
+        assert "post_match_trailing" not in stats.get("filter_drops", {})
+        assert stats["filter_unknown"] == 1
+
     def test_empty_segments_no_crash(self):
         """Empty input returns empty, no exception."""
         result = _drop_post_match_trailing([], Path("v.mp4"), 1800.0, None)

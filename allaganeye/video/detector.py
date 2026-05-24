@@ -410,7 +410,13 @@ def detect_match_boundaries(
     # continued into lobby/city) when its midpoint has no scorebar. Only
     # runs when scorebar classification is available (src_resolution set).
     if src_resolution is not None:
-        segments = _drop_post_match_trailing(segments, video_path, duration_hint, stats)
+        segments = _drop_post_match_trailing(
+            segments,
+            video_path,
+            duration_hint,
+            stats,
+            min_match_duration=min_match_duration,
+        )
     return segments
 
 
@@ -1480,17 +1486,18 @@ By placing cut points inside blackout regions, keyframe drift never
 clips actual match footage.
 """
 
-_TRAILING_PROBE_START_OFFSET = 12.0
-"""Seconds past a trailing segment's start for its earliest scorebar probe.
+_TRAILING_PROBE_STRIDE = 60.0
+"""Seconds between scorebar probes when scanning a trailing segment's early
+candidate-match window (#797).
 
-A trailing segment begins inside the opening blackout (``_BLACKOUT_PADDING``)
-and the arena then loads, so the earliest probe must clear ~3s of padding plus
-a few seconds of loading before any in-match HUD can appear.  Used by
-``_drop_post_match_trailing`` (#797).
+A real match in a mixed trailing sits at the start, right after the opening
+blackout, and its HUD stays visible for the whole match (>= several minutes).
+Sampling every ``_TRAILING_PROBE_STRIDE`` seconds across the early window
+(``start`` .. ``start + min_match_duration``) tolerates a delayed HUD after
+long loading -- which a single fixed early offset could miss
+(Codex adversarial-review, 2026-05-23) -- while keeping post-match
+false-positive exposure low.  Used by ``_drop_post_match_trailing``.
 """
-
-_TRAILING_PROBE_LATE_FRACTION = 0.85
-"""Fractional position of a trailing segment's latest scorebar probe (#797)."""
 
 # ---------------------------------------------------------------------------
 # Legacy fps-filter rollback switch (#576)
@@ -1886,28 +1893,32 @@ def _drop_post_match_trailing(
     video_path: Path,
     total_duration: float,
     stats: DetectionStats | None,
+    *,
+    min_match_duration: float = 300.0,
 ) -> list[MatchBoundary]:
-    """Drop a trailing post-match run via scorebar probes (#797).
+    """Drop a trailing post-match run via early-window scorebar probes (#797).
 
     The final segment, when it runs to end-of-video (``end`` within 1.0s of
     ``total_duration``) with ``type == "unknown"`` (no closing blackout), may
-    be post-match content (lobby / city) rather than a match.  Probe several
-    positions across the segment -- an early point past the opening blackout,
-    the midpoint, and a late point -- for a V2 scorebar:
+    be post-match content (lobby / city) rather than a match.
 
-    - every probe a definite miss (``False``) -> post-match -> drop
+    A real match in a *mixed* trailing -- formed when the match-end blackout is
+    missed or dropped (e.g. a warp misclassified as ``non_fl`` in scorebar.py)
+    so a real match and the post-match tail merge into one segment -- always
+    sits at the start, right after the opening blackout.  Scan that early
+    candidate-match window (``start`` .. ``start + min_match_duration``,
+    clamped to the segment) at ``_TRAILING_PROBE_STRIDE`` intervals **plus the
+    window end**, so no stride gap (including the final one) is left unprobed:
+
     - any probe a scorebar hit (``True``) -> match footage present -> keep
     - any probe failure / opencv unavailable (``None``) -> keep (safe side)
+    - every probe a definite miss (``False``) -> post-match -> drop
 
-    Probing the trailing run itself (rather than keying on an undirected
-    ``match_boundary`` classification) avoids deleting a real match that runs
-    to end-of-video after a single opening boundary.  Probing multiple
-    positions (rather than the midpoint alone) avoids deleting a *mixed*
-    trailing segment -- a real match followed by a longer post-match tail,
-    which arises when the match-end blackout is missed or dropped (e.g. a
-    warp misclassified as ``non_fl`` in scorebar.py) -- where a lone midpoint
-    would land in the post-match portion (Codex adversarial-review,
-    2026-05-22).
+    Scanning a strided window (rather than a single fixed early offset) means a
+    delayed HUD after long loading cannot hide a real match: a fixed
+    ``start + 12s`` probe could land in the loading screen while the midpoint
+    and late probes land in a longer post-match tail, dropping a real match
+    (Codex adversarial-review, 2026-05-23).
     """
     if not segments:
         return segments
@@ -1916,14 +1927,33 @@ def _drop_post_match_trailing(
         return segments
     start = last["start"]
     end = last["end"]
-    midpoint = (start + end) / 2.0
-    early = min(start + _TRAILING_PROBE_START_OFFSET, midpoint)
-    late = max(start + (end - start) * _TRAILING_PROBE_LATE_FRACTION, midpoint)
-    for timestamp in (early, midpoint, late):
-        if _has_scorebar_v2(_probe_frame_rgb_hires(video_path, timestamp)) is not False:
+    window_end = min(start + min_match_duration, end)
+    # Probe the early candidate-match window at a fixed stride, and always
+    # include a probe at the window end so the final stride gap is never left
+    # unprobed (Codex round-4): a HUD that first appears late in the window
+    # (long loading) must still be caught.  The end probe is backed off to
+    # ``end - 1.0`` so a ``window_end == end`` case (trailing length ==
+    # min_match_duration) does not probe past the last frame -- an EOF read
+    # returns None and would (via keep-on-None) suppress a legitimate drop.
+    probe_points: list[float] = []
+    timestamp = start + _TRAILING_PROBE_STRIDE
+    while timestamp < window_end:
+        probe_points.append(timestamp)
+        timestamp += _TRAILING_PROBE_STRIDE
+    probe_points.append(min(window_end, end - 1.0))
+    probed = False
+    for probe_at in probe_points:
+        if probe_at <= start:
+            continue
+        probed = True
+        if _has_scorebar_v2(_probe_frame_rgb_hires(video_path, probe_at)) is not False:
             # Scorebar hit (True) or probe failure (None) -> keep (safe side).
             return segments
-    # Every probe was a definite miss -> post-match trailing -> drop.
+    if not probed:
+        # No valid probe point inside the segment -> no evidence -> keep.
+        return segments
+    # Every probe across the candidate match window was a definite miss ->
+    # post-match trailing -> drop.
     if stats is not None:
         drops = stats.setdefault("filter_drops", {})
         drops["post_match_trailing"] = drops.get("post_match_trailing", 0) + 1
