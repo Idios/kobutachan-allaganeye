@@ -2192,9 +2192,14 @@ class TestDropPostMatchTrailing:
     @patch("allaganeye.video.detector._has_scorebar_v2", return_value=None)
     @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=None)
     def test_trailing_probe_failure_kept(self, _probe, _v2):
-        """Trailing unknown + probe failure (None) -> kept (safe side)."""
+        """Trailing unknown after a confirmed match + probe failure (None) -> kept.
+
+        Preceded by an fl_match so the post-match gate passes and the probe
+        path is exercised; a None probe must keep the segment (safe side).
+        """
         segments = [
-            {"start": 100.0, "end": 1800.0, "type": "unknown"},
+            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
+            {"start": 1000.0, "end": 1800.0, "type": "unknown"},
         ]
         stats: dict = {}
         result = _drop_post_match_trailing(
@@ -2203,7 +2208,7 @@ class TestDropPostMatchTrailing:
             1800.0,
             stats,  # type: ignore[arg-type]
         )
-        assert len(result) == 1
+        assert len(result) == 2
         assert "post_match_trailing" not in stats.get("filter_drops", {})
 
     @patch("allaganeye.video.detector._has_scorebar_v2")
@@ -2271,6 +2276,7 @@ class TestDropPostMatchTrailing:
         _probe.side_effect = fake_probe
         _v2.side_effect = fake_v2
         segments = [
+            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
             {"start": 1000.0, "end": 2800.0, "type": "unknown"},
         ]
         result = _drop_post_match_trailing(
@@ -2279,7 +2285,7 @@ class TestDropPostMatchTrailing:
             2800.0,
             None,
         )
-        assert len(result) == 1
+        assert len(result) == 2
         assert result[-1]["type"] == "unknown"
 
     def test_last_segment_not_unknown_kept(self):
@@ -2395,6 +2401,55 @@ class TestDropPostMatchTrailing:
         assert result[-1]["type"] == "unknown"
         assert "post_match_trailing" not in stats.get("filter_drops", {})
         assert stats["filter_unknown"] == 1
+
+    @patch("allaganeye.video.detector._has_scorebar_v2", return_value=False)
+    @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
+    def test_whole_video_unknown_kept(self, _probe, _v2):
+        """A lone whole-video unknown is never dropped (fail-open preserved).
+
+        _filter_and_extract_segments returns a single whole-video unknown as a
+        conservative fallback when no blackout survives.  With no preceding
+        confirmed match there is nothing for it to be "post-match" of, so the
+        trailing-drop must keep it even when the early window has no scorebar --
+        otherwise "no boundaries found" silently becomes zero matches
+        (#797, Codex adversarial-review 2026-05-24).
+        """
+        segments = [
+            {"start": 0.0, "end": 1800.0, "type": "unknown"},
+        ]
+        stats: dict = {"filter_unknown": 1}
+        result = _drop_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            1800.0,
+            stats,  # type: ignore[arg-type]
+        )
+        assert len(result) == 1
+        assert "post_match_trailing" not in stats.get("filter_drops", {})
+        assert stats["filter_unknown"] == 1
+
+    @patch("allaganeye.video.detector._has_scorebar_v2", return_value=False)
+    @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
+    def test_trailing_preceding_unknown_kept(self, _probe, _v2):
+        """A trailing unknown preceded by an unknown (no confirmed match) is kept.
+
+        Without a preceding non-unknown match there is no confirmed match for
+        the trailing run to follow, so it stays fail-open even with no scorebar
+        (#797, Codex adversarial-review 2026-05-24).
+        """
+        segments = [
+            {"start": 0.0, "end": 900.0, "type": "unknown"},
+            {"start": 900.0, "end": 1800.0, "type": "unknown"},
+        ]
+        stats: dict = {"filter_unknown": 2}
+        result = _drop_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            1800.0,
+            stats,  # type: ignore[arg-type]
+        )
+        assert len(result) == 2
+        assert "post_match_trailing" not in stats.get("filter_drops", {})
 
     def test_empty_segments_no_crash(self):
         """Empty input returns empty, no exception."""

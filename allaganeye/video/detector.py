@@ -1900,7 +1900,12 @@ def _drop_post_match_trailing(
 
     The final segment, when it runs to end-of-video (``end`` within 1.0s of
     ``total_duration``) with ``type == "unknown"`` (no closing blackout), may
-    be post-match content (lobby / city) rather than a match.
+    be post-match content (lobby / city) rather than a match.  It is only
+    considered droppable when it actually follows a confirmed match
+    (``len(segments) >= 2`` and the preceding segment is non-``unknown``); a
+    lone whole-video unknown -- the fail-open fallback when no blackout
+    survives -- has no match to trail and is always kept, so "no boundaries
+    found" never collapses to zero matches.
 
     A real match in a *mixed* trailing -- formed when the match-end blackout is
     missed or dropped (e.g. a warp misclassified as ``non_fl`` in scorebar.py)
@@ -1924,6 +1929,13 @@ def _drop_post_match_trailing(
         return segments
     last = segments[-1]
     if last["type"] != "unknown" or abs(last["end"] - total_duration) >= 1.0:
+        return segments
+    # Only a trailing run that follows a *confirmed* match can be post-match.
+    # A lone whole-video unknown (the fail-open fallback emitted when no
+    # blackout survives) -- or one preceded only by another unknown -- has no
+    # match to be the tail of, so keep it: never turn "no boundaries found"
+    # into zero matches (Codex round-5 adversarial-review, 2026-05-24).
+    if len(segments) < 2 or segments[-2]["type"] == "unknown":
         return segments
     start = last["start"]
     end = last["end"]
