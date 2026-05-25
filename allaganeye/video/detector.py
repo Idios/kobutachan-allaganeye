@@ -1102,21 +1102,24 @@ def _find_scorebar_horizontal_range(raw_rgb: bytes) -> tuple[int, int] | None:
     1920x1080 RGB frame, counts columns where at least
     ``_SCOREBAR_SCAN_COL_RATIO`` of rows have HSV saturation
     > ``_SCOREBAR_SCAN_SAT_THRESHOLD`` AND value
-    > ``_SCOREBAR_SCAN_VAL_THRESHOLD``.  The longest contiguous run of
-    saturated columns (bridging gaps up to ``_SCOREBAR_SCAN_MAX_GAP_PX``)
-    becomes the scorebar span.
+    > ``_SCOREBAR_SCAN_VAL_THRESHOLD``.  Contiguous runs of saturated columns
+    (bridging gaps up to ``_SCOREBAR_SCAN_MAX_GAP_PX``) are built, and the run
+    **straddling screen center** (x = ``_SCOREBAR_V2_PROBE_WIDTH // 2``) becomes
+    the scorebar candidate -- the FL scorebar is horizontally centered, and
+    keying on the *longest* run instead would let a longer off-center / over-
+    wide band mask a valid centered scorebar (#803, Codex PR pre-flight Step 5).
 
     Returns ``(x_left, x_right)`` with both endpoints inclusive when the
-    detected span passes all gates: width within
-    ``_SCOREBAR_SCAN_MIN_WIDTH_PX``..``_SCOREBAR_SCAN_MAX_WIDTH_PX`` and
-    straddling screen center.  Returns ``None`` when:
+    center-straddling run's width is within
+    ``_SCOREBAR_SCAN_MIN_WIDTH_PX``..``_SCOREBAR_SCAN_MAX_WIDTH_PX``.
+    Returns ``None`` when:
 
     - cv2 is not installed (matches V2 "None -> V1 fallback" contract),
     - no saturated run is found (lobby / loading / all-dark frame),
-    - the longest run is narrower than the minimum width,
-    - the longest run is wider than ``_SCOREBAR_SCAN_MAX_WIDTH_PX`` (#803), or
-    - the longest run does not straddle screen center
-      (x = ``_SCOREBAR_V2_PROBE_WIDTH // 2``) (#803).
+    - no run straddles screen center (only edge-confined bands, e.g. a
+      right-side chat panel or left-side widget) (#803),
+    - the center run is narrower than the minimum width, or
+    - the center run is wider than ``_SCOREBAR_SCAN_MAX_WIDTH_PX`` (#803).
     """
     try:
         import cv2
@@ -1162,8 +1165,21 @@ def _find_scorebar_horizontal_range(raw_rgb: bytes) -> tuple[int, int] | None:
         else:
             merged.append((start, end))
 
-    longest = max(merged, key=lambda r: r[1] - r[0])
-    span_width = longest[1] - longest[0] + 1
+    # The FL scorebar is horizontally centered, so the candidate is the run
+    # straddling screen center -- NOT merely the longest run.  Selecting the
+    # longest first lets a longer off-center / over-wide band (UI widget,
+    # colorful post-match interior) mask a valid centered HUD-scaled scorebar
+    # and reject the whole frame, false-negativing the 4K / Game DVR layouts
+    # the rescue path exists to support (Codex PR pre-flight Step 5, #803).
+    # Runs are disjoint, so at most one contains center; pick it, then width-gate.
+    center_x = _SCOREBAR_V2_PROBE_WIDTH // 2
+    center_run = next((run for run in merged if run[0] <= center_x <= run[1]), None)
+    # No run straddles screen center -> only edge-confined bands (e.g. a
+    # right-side chat panel at 1410..1919 or a left-side widget at 8..544) ->
+    # not a scorebar (#803).
+    if center_run is None:
+        return None
+    span_width = center_run[1] - center_run[0] + 1
     if span_width < _SCOREBAR_SCAN_MIN_WIDTH_PX:
         return None
     # Reject implausibly wide spans (#803): a real FL scorebar tops out at
@@ -1171,15 +1187,8 @@ def _find_scorebar_horizontal_range(raw_rgb: bytes) -> tuple[int, int] | None:
     # colorful post-match interior) is not a scorebar.
     if span_width > _SCOREBAR_SCAN_MAX_WIDTH_PX:
         return None
-    # Reject spans that do not straddle screen center (#803): the FL
-    # scorebar is horizontally centered, so an edge-confined band (e.g. a
-    # right-side chat panel at 1410..1919 or a left-side widget at 8..544)
-    # is not a scorebar.
-    center_x = _SCOREBAR_V2_PROBE_WIDTH // 2
-    if not (longest[0] <= center_x <= longest[1]):
-        return None
 
-    return longest
+    return center_run
 
 
 def _emblem_and_check(

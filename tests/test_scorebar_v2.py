@@ -220,24 +220,45 @@ class TestFindScorebarHorizontalRange:
         assert _find_scorebar_horizontal_range(_empty_hires_frame()) is None
 
     def test_too_narrow_region_returns_none(self):
-        """Saturated band narrower than MIN_WIDTH_PX -> None."""
-        # Width 301 < 400 (_SCOREBAR_SCAN_MIN_WIDTH_PX)
-        frame = _make_hires_frame_with_strip(500, 800)
-        assert _SCOREBAR_SCAN_MIN_WIDTH_PX > 301
+        """Centered band narrower than MIN_WIDTH_PX -> None (width gate)."""
+        # (860, 1060) width 201 < 400 (_SCOREBAR_SCAN_MIN_WIDTH_PX) and it
+        # straddles center 960, so it reaches the width gate (not the center
+        # gate) -- exercising the min-width rejection specifically.
+        frame = _make_hires_frame_with_strip(860, 1060)
+        assert _SCOREBAR_SCAN_MIN_WIDTH_PX > 201
         assert _find_scorebar_horizontal_range(frame) is None
 
-    def test_two_disjoint_regions_returns_longest(self):
-        """Two far-apart regions -> only the larger one returned.
+    def test_two_disjoint_regions_centered_wins(self):
+        """Two far-apart regions -> the center-straddling one is returned.
 
-        The longest run must also satisfy the #803 gates (straddle center,
-        within max width), so the larger region is centered here.
+        Here the centered region (700, 1300) is also the larger one; the
+        off-center region (1500, 1700) is ignored.  See
+        ``test_longer_offcenter_run_does_not_mask_centered_scorebar`` for the
+        case where the off-center run is the *longer* one.
         """
-        # (700, 1300) width 601 + (1500, 1700) width 201
+        # (700, 1300) width 601 straddles center 960; (1500, 1700) does not.
         # gap = 1500 - 1300 - 1 = 199 > MAX_GAP_PX (80) -> not bridged.
-        # Longest (700, 1300) straddles center 960 and is within max width.
         frame = _make_hires_frame_with_strips([(700, 1300), (1500, 1700)])
         result = _find_scorebar_horizontal_range(frame)
         assert result == (700, 1300)
+
+    def test_longer_offcenter_run_does_not_mask_centered_scorebar(self):
+        """A longer off-center run must not mask a valid centered scorebar.
+
+        Selecting only the longest run lets a longer off-center / over-wide
+        band (UI / colorful background) reject the whole frame, false-
+        negativing a real centered HUD-scaled scorebar -- the 4K / Game DVR
+        layouts the rescue path exists to support.  The run straddling screen
+        center must win (Codex PR pre-flight Step 5 adversarial-review,
+        2026-05-24).
+        """
+        # A = (10, 700) width 691: off-center (does not contain center 960)
+        #     and the LONGEST run.
+        # B = (900, 1400) width 501: centered (contains 960), within width.
+        # gap = 900 - 700 - 1 = 199 > MAX_GAP_PX -> not bridged.
+        assert _SCOREBAR_SCAN_MAX_GAP_PX < 199
+        frame = _make_hires_frame_with_strips([(10, 700), (900, 1400)])
+        assert _find_scorebar_horizontal_range(frame) == (900, 1400)
 
     def test_small_gap_is_bridged(self):
         """Gap within MAX_GAP_PX -> runs merged into one span."""
