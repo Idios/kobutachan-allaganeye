@@ -1901,11 +1901,13 @@ def _drop_post_match_trailing(
     The final segment, when it runs to end-of-video (``end`` within 1.0s of
     ``total_duration``) with ``type == "unknown"`` (no closing blackout), may
     be post-match content (lobby / city) rather than a match.  It is only
-    considered droppable when it actually follows a confirmed match
-    (``len(segments) >= 2`` and the preceding segment is non-``unknown``); a
-    lone whole-video unknown -- the fail-open fallback when no blackout
-    survives -- has no match to trail and is always kept, so "no boundaries
-    found" never collapses to zero matches.
+    considered droppable when it is not the sole segment
+    (``len(segments) >= 2``); a lone whole-video unknown -- the fail-open
+    fallback when no blackout survives -- has no match to trail and is always
+    kept, so "no boundaries found" never collapses to zero matches.  Other
+    shapes rely on the scorebar probes below (a tail showing in-match HUD is
+    kept), so a single real match followed by a post-match tail is dropped
+    correctly even though both segments are typed ``unknown``.
 
     A real match in a *mixed* trailing -- formed when the match-end blackout is
     missed or dropped (e.g. a warp misclassified as ``non_fl`` in scorebar.py)
@@ -1930,12 +1932,16 @@ def _drop_post_match_trailing(
     last = segments[-1]
     if last["type"] != "unknown" or abs(last["end"] - total_duration) >= 1.0:
         return segments
-    # Only a trailing run that follows a *confirmed* match can be post-match.
-    # A lone whole-video unknown (the fail-open fallback emitted when no
-    # blackout survives) -- or one preceded only by another unknown -- has no
-    # match to be the tail of, so keep it: never turn "no boundaries found"
-    # into zero matches (Codex round-5 adversarial-review, 2026-05-24).
-    if len(segments) < 2 or segments[-2]["type"] == "unknown":
+    # Only the lone whole-video unknown fallback -- a single segment spanning
+    # the recording, emitted when no blackout survives -- has no match to
+    # trail; keep it so "no boundaries found" never collapses to zero matches.
+    # Any multi-segment shape still goes through the scorebar probes below,
+    # which keep a segment that shows in-match HUD, so a real single match
+    # followed by a no-scorebar post-match tail is still dropped.  (Do not also
+    # gate on ``segments[-2]`` type: ``_filter_and_extract_segments`` hardcodes
+    # the before-first / after-last segments as ``unknown``, so that would
+    # wrongly keep single-match tails -- Codex round-5/6 adversarial-review.)
+    if len(segments) < 2:
         return segments
     start = last["start"]
     end = last["end"]

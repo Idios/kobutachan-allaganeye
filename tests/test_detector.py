@@ -2430,12 +2430,16 @@ class TestDropPostMatchTrailing:
 
     @patch("allaganeye.video.detector._has_scorebar_v2", return_value=False)
     @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
-    def test_trailing_preceding_unknown_kept(self, _probe, _v2):
-        """A trailing unknown preceded by an unknown (no confirmed match) is kept.
+    def test_single_match_post_match_tail_dropped(self, _probe, _v2):
+        """A single-match recording's no-scorebar post-match tail is still dropped.
 
-        Without a preceding non-unknown match there is no confirmed match for
-        the trailing run to follow, so it stays fail-open even with no scorebar
-        (#797, Codex adversarial-review 2026-05-24).
+        ``_filter_and_extract_segments`` hardcodes the before-first and
+        after-last segments as ``unknown``, so [match -> warp -> post-match]
+        is ``[unknown, unknown]``.  Only the lone whole-video fallback
+        (``len(segments) < 2``) is protected; a real match followed by a
+        no-scorebar post-match tail must still be dropped, else #797's FP
+        returns for single-match recordings (Codex round-6 adversarial-review
+        2026-05-24).
         """
         segments = [
             {"start": 0.0, "end": 900.0, "type": "unknown"},
@@ -2448,8 +2452,9 @@ class TestDropPostMatchTrailing:
             1800.0,
             stats,  # type: ignore[arg-type]
         )
-        assert len(result) == 2
-        assert "post_match_trailing" not in stats.get("filter_drops", {})
+        assert len(result) == 1
+        assert stats["filter_drops"]["post_match_trailing"] == 1
+        assert stats["filter_unknown"] == 1
 
     def test_empty_segments_no_crash(self):
         """Empty input returns empty, no exception."""
