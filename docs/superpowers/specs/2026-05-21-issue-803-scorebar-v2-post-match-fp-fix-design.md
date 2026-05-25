@@ -325,6 +325,7 @@ Phase 3 全 pass 後にのみ実施。
 | R4 | Codex adversarial-review で additional finding | `(A) PR 内修正優先` (`docs/l2-workflow.md` §「(A) PR 内修正優先 規約」)。finding 内容次第で AskUserQuestion で (A)/(B)/(C) 振分 |
 | R5 | encoding boundary (subprocess / IPC / OS API) で UTF-8 / cp932 / BOM 問題 | 本 PR は detector logic のみ touch で encoding boundary を超えないため低 risk。万一 Phase 1 script の stderr / PNG file name で問題が出たら CLAUDE.md §encoding boundary audit checklist (3 層) で fix |
 | R6 | #797 verify を待つ間に他 branch / PR が `_has_scorebar_v2` を touch | Phase 5 PR 作成時に Iron Law 6 Pre-flight Step 0 / 4 (gh pr list --search) で重複検出。並行 PR があれば AskUserQuestion で順序判断 |
+| R7 (構造) | `_drop_post_match_trailing` は post-match trailing を「不可逆削除 × scorebar 不在 (弱い否定信号)」で判定するため、scorebar FN (未対応 HUD layout / 4K Game DVR 等) で実試合 trailing を silent 削除しうる。round-1〜6 の adversarial-review で繰り返し露出した silent-loss クラスの構造的根本 (probe チューニングでは塞げない) | round-6 で削除/保持の境界を収束させ、1080p OBS の 5 baseline 実機 verify (27 match / 54 agreed / 0 finding) で現行 set は担保。残存する構造リスクは CLAUDE.md 検出限界 + 本 spec に明文化し、非破壊化 (削除 → フラグ方式) による恒久対策を **#805 (follow-up [risk])** で追跡。本 PR の scope は #797 incremental fix に留める (Iron Law 3) |
 
 ## §7. Open decision points (実装中に AskUserQuestion で都度確認)
 
