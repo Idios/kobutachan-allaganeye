@@ -4,7 +4,7 @@ Normalized-coordinate region contract + geometry helpers + candidate
 detectors (S1 variance / S2 scorebar-band / S3 blackout-overlap).
 On standard OBS recordings every detector resolves to ``FULL_FRAME`` so
 downstream brightness/scorebar behavior is unchanged (v0.3.0 baseline
-bit-exact; see spec §3.4 / M4).
+bit-exact; see spec section 3.4 / M4).
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ _SNAP_FULL_FRAME_WH = 0.92
 
 OBS 録画では game = frame 全体のため検出器は frame 全域に近い矩形を返す。
 わずかな端の欠けで IoU<1.0 になり baseline を壊すのを防ぐため full-frame
-に snap し、Pass 1 輝度を現行と数値一致させる (spec §3.4 / M4)。
+に snap し、Pass 1 輝度を現行と数値一致させる (spec section 3.4 / M4)。
 """
 
 
@@ -153,7 +153,7 @@ def detect_region_variance(
     """S1: 時間分散の最大連結成分を game 領域とみなす (Tier A coarse)。
 
     *frames* は同形状の 2D グレースケール (H,W) uint8。OBS 録画は全域が
-    動くため最大成分が frame 全域 → FULL_FRAME に snap。分散が無ければ
+    動くため最大成分が frame 全域 -> FULL_FRAME に snap。分散が無ければ
     (静止) FULL_FRAME に fallback。
     """
     if len(frames) < 2:
@@ -269,7 +269,7 @@ def detect_region_blackout_overlap(
     """S3: 「明るい時もあるが暗転で暗くなる」画素 = game 領域 (spec finding #4)。
 
     overlay は常時明るい (min が下がらない) ため除外される。OBS は全画面が
-    暗転する (mask が全域) → FULL_FRAME。
+    暗転する (mask が全域) -> FULL_FRAME。
     """
     if len(frames) < 2:
         return FULL_FRAME
