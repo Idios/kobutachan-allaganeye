@@ -202,3 +202,12 @@ def test_scorebar_band_uniform_cyan_banner_rejected():
     f = np.full((H, W, 3), 40, dtype=np.uint8)
     f[0:55, :] = (60, 200, 200)  # 単色 cyan 帯 (紋章なし)
     assert detect_region_scorebar_band(f) is None
+
+
+def test_all_grayscale_detectors_snap_full_on_obs_like_input():
+    rng = np.random.default_rng(2)
+    motion = [rng.integers(0, 256, (180, 320), dtype=np.uint8) for _ in range(8)]
+    assert detect_region_variance(motion) == FULL_FRAME
+    bright = np.full((180, 320), 120, dtype=np.uint8)
+    dark = np.full((180, 320), 2, dtype=np.uint8)
+    assert detect_region_blackout_overlap([bright, bright, dark]) == FULL_FRAME
