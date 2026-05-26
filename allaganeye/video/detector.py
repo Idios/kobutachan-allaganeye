@@ -407,7 +407,8 @@ def detect_match_boundaries(
         stats=stats,
     )
     # #797: drop a trailing post-match run (final match ended, recording
-    # continued into lobby/city) when its midpoint has no scorebar. Only
+    # continued into lobby/city) when its early candidate-match window shows
+    # no scorebar at any strided probe point (+ window-end probe). Only
     # runs when scorebar classification is available (src_resolution set).
     if src_resolution is not None:
         segments = _drop_post_match_trailing(
