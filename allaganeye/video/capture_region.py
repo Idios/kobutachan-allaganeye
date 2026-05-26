@@ -180,23 +180,6 @@ _BAND_Y_MAX_FRAC = 0.55
 _GAME_ASPECT = 16.0 / 9.0
 """FF14 game capture のアスペクト比 (帯幅から game 高さを逆算)。"""
 
-_BAND_SNAP_GW = 0.85
-"""S2 専用 full-frame snap のスコアバー幅しきい値。
-
-_SNAP_FULL_FRAME_WH=0.92 はアスペクト比ベースの h 計算と組み合わせると
-OBS 相当のほぼ全幅 scorebar (gw~0.88) を snap できない。S2 では scorebar
-幅比が 0.85 以上 (bar_w >= 1632px at 1920px frame) かつ gy が _BAND_SNAP_Y_MAX
-以下 (= frame 上端付近) の場合に OBS 相当と判断し FULL_FRAME に snap する。
-4K Game DVR の narrow scorebar (gw~0.32) は対象外。
-"""
-
-_BAND_SNAP_Y_MAX = 0.10
-"""full-frame snap を許す scorebar 上端 y の上限 (frame 高さ比)。
-
-OBS の scorebar は frame 上端付近 (gy~0)。gw が大きくても gy がこれを超える
-場合 (= 画面途中に widget) は inset とみなし snap しない。
-"""
-
 
 def detect_region_scorebar_band(
     frame: np.ndarray,
@@ -207,7 +190,8 @@ def detect_region_scorebar_band(
 
     *frame* は 1920x1080 RGB (H,W,3) uint8。検出帯を GC 紋章 3 点 AND で
     FL と検証してから返す。FL 帯が見つからなければ None (試合外フレーム
-    や opencv 未導入)。OBS 相当 (帯が y~0, 全幅) は FULL_FRAME に snap。
+    や opencv 未導入)。OBS の全体縮退は coarse 検出器 (S1/S3) の責務であり、
+    scorebar 幅 > detector._SCOREBAR_SCAN_MAX_WIDTH_PX (1440, #806) の広帯は None。
     """
     try:
         import cv2
@@ -253,8 +237,6 @@ def detect_region_scorebar_band(
         gy = y / H
         gh = (bar_w / _GAME_ASPECT) / H
         region = CaptureRegion(gx, gy, gw, gh, confidence=0.9, source="tierB").clamp()
-        if gw >= _BAND_SNAP_GW and gy <= _BAND_SNAP_Y_MAX:
-            return FULL_FRAME
         return region
     return None
 

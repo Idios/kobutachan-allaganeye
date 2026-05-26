@@ -187,9 +187,12 @@ def test_scorebar_band_at_offset_y_returns_inset_top():
     assert abs(r.y - 120 / 1080) < 0.012
 
 
-def test_scorebar_band_full_width_top_snaps_full():
+def test_scorebar_band_overwide_returns_none():
+    # scorebar 幅 1690px > detector._SCOREBAR_SCAN_MAX_WIDTH_PX (1440, #806) のため
+    # _find_scorebar_horizontal_range が None を返し S2 も None。OBS の全体縮退は
+    # coarse 検出器 (S1/S3) の責務であり S2 (Tier-B precise) は OBS を snap しない。
     f = _hires_with_scorebar_at(y_top=2, x_left=120, x_right=1810)
-    assert detect_region_scorebar_band(f) == FULL_FRAME
+    assert detect_region_scorebar_band(f) is None
 
 
 def test_scorebar_band_uniform_cyan_banner_rejected():
