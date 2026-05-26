@@ -146,3 +146,46 @@ def detect_region_variance(
         bx / w, by / h, bw / w, bh / h, confidence=fill, source="tierA"
     ).clamp()
     return _maybe_snap_full_frame(region)
+
+
+_OVERLAP_BRIGHT = 60.0
+"""「試合中は明るい」とみなす画素の最大輝度しきい (tunable)。"""
+
+_OVERLAP_DARK = 20.0
+"""「暗転で暗くなる」とみなす画素の最小輝度しきい (tunable)。"""
+
+
+def detect_region_blackout_overlap(
+    frames: list[np.ndarray],
+    *,
+    bright_thresh: float = _OVERLAP_BRIGHT,
+    dark_thresh: float = _OVERLAP_DARK,
+    min_area_frac: float = _MIN_REGION_AREA_FRAC,
+) -> CaptureRegion:
+    """S3: 「明るい時もあるが暗転で暗くなる」画素 = game 領域 (spec finding #4)。
+
+    overlay は常時明るい (min が下がらない) ため除外される。OBS は全画面が
+    暗転する (mask が全域) → FULL_FRAME。
+    """
+    import cv2
+
+    if len(frames) < 2:
+        return FULL_FRAME
+    stack = np.stack(frames).astype(np.float32)
+    pmax = stack.max(axis=0)
+    pmin = stack.min(axis=0)
+    h, w = pmax.shape
+    mask = ((pmax > bright_thresh) & (pmin < dark_thresh)).astype(np.uint8)
+    n, _labels, stats, _c = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    if n <= 1:
+        return FULL_FRAME
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    idx = 1 + int(np.argmax(areas))
+    bx, by = int(stats[idx, cv2.CC_STAT_LEFT]), int(stats[idx, cv2.CC_STAT_TOP])
+    bw, bh = int(stats[idx, cv2.CC_STAT_WIDTH]), int(stats[idx, cv2.CC_STAT_HEIGHT])
+    if bw * bh < min_area_frac * w * h:
+        return FULL_FRAME
+    region = CaptureRegion(
+        bx / w, by / h, bw / w, bh / h, confidence=0.8, source="tierA"
+    ).clamp()
+    return _maybe_snap_full_frame(region)

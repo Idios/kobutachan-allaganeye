@@ -5,6 +5,7 @@ from allaganeye.video.capture_region import (
     CaptureRegion,
     RegionTimeline,
     _maybe_snap_full_frame,
+    detect_region_blackout_overlap,
     detect_region_variance,
     iou,
     top_edge_error_px,
@@ -106,3 +107,30 @@ def test_variance_full_frame_motion_snaps_full():
 def test_variance_static_frames_fall_back_full():
     frames = [np.full((180, 320), 50, dtype=np.uint8) for _ in range(12)]
     assert detect_region_variance(frames) == FULL_FRAME
+
+
+# ---------------------------------------------------------------------------
+# Task B.3: S3 detect_region_blackout_overlap
+# ---------------------------------------------------------------------------
+
+
+def test_blackout_overlap_finds_region_that_goes_dark():
+    h, w = 180, 320
+    inset = (0.30, 0.20, 0.40, 0.50)
+    x0, y0 = int(inset[0] * w), int(inset[1] * h)
+    ww, hh = int(inset[2] * w), int(inset[3] * h)
+    bright = np.full((h, w), 120, dtype=np.uint8)
+    dark_inset = bright.copy()
+    dark_inset[y0 : y0 + hh, x0 : x0 + ww] = 2
+    frames = [bright, bright, dark_inset, dark_inset]
+    r = detect_region_blackout_overlap(frames)
+    assert r.source == "tierA"
+    assert inset[0] <= r.x + r.w / 2 <= inset[0] + inset[2]
+    assert inset[1] <= r.y + r.h / 2 <= inset[1] + inset[3]
+
+
+def test_blackout_overlap_obs_full_frame_blackout_snaps_full():
+    h, w = 180, 320
+    bright = np.full((h, w), 120, dtype=np.uint8)
+    dark = np.full((h, w), 2, dtype=np.uint8)
+    assert detect_region_blackout_overlap([bright, bright, dark]) == FULL_FRAME
