@@ -189,12 +189,17 @@ def _generate_one(baseline: dict, sample_dir: Path, out_dir: Path) -> None:
         tmp_path = Path(tmp)
 
         print(f"[{label}] running allaganeye detect ...")
+        # ``--gpu`` so the committed baseline records ``use_gpu: true`` /
+        # ``gpu_vendor_used`` from the actual accelerated run (matching the
+        # established baseline format); without it the auto path records
+        # ``null`` (#797 round-4 review).
         subprocess.run(
             [
                 sys.executable,
                 "-m",
                 "allaganeye",
                 "detect",
+                "--gpu",
                 "--no-cache",
                 "-o",
                 str(tmp_path),
@@ -208,6 +213,13 @@ def _generate_one(baseline: dict, sample_dir: Path, out_dir: Path) -> None:
             raise RuntimeError(
                 f"[{label}] detect did not produce metadata.json in {tmp_path}"
             )
+
+        # Capture detect's metadata (relative ``output_file`` placeholders such
+        # as ``match_001.mp4``) BEFORE running split: ``split --from-metadata -o
+        # <tmp>`` rewrites ``output_file`` to absolute tmp paths (see
+        # split_matches "updated output_file entries"), which must not leak into
+        # the committed, environment-portable baseline (#797 round-4 review).
+        metadata_payload = json.loads(metadata_src.read_text(encoding="utf-8"))
 
         # Split needs the absolute ``source`` path that ``detect`` wrote.
         # We run split off the tmp copy, then write the committed baseline
@@ -228,7 +240,6 @@ def _generate_one(baseline: dict, sample_dir: Path, out_dir: Path) -> None:
             check=True,
         )
 
-        metadata_payload = json.loads(metadata_src.read_text(encoding="utf-8"))
         metadata_payload["source"] = baseline["source_relpath"]
         metadata_dst = out_dir / f"{label}.metadata.json"
         metadata_dst.write_text(

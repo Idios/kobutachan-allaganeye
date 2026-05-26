@@ -4,9 +4,9 @@
   "source_duration": 3426.505,
   "source_duration_display": "57:06",
   "source_fps": 60.0,
-  "detected_at": "2026-05-21T04:20:19Z",
-  "detection_started_at": "2026-05-21T04:20:19Z",
-  "detection_completed_at": "2026-05-21T04:25:49Z",
+  "detected_at": "2026-05-24T07:37:09Z",
+  "detection_started_at": "2026-05-24T07:37:09Z",
+  "detection_completed_at": "2026-05-24T07:42:37Z",
   "detection_params": {
     "sample_interval": 1.0,
     "blackout_threshold": 15.0,

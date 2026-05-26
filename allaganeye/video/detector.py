@@ -51,7 +51,9 @@ class DetectionStats(TypedDict, total=False):
     # Paired with filter_drops so verbose can report
     # ``<candidates> -> <final matches>`` with breakdown.
     filter_candidates: int
-    filter_drops: dict[str, int]  # keys: below_min_match_duration, other
+    filter_drops: dict[
+        str, int
+    ]  # keys: below_min_match_duration, other, post_match_trailing (optional, #797)
     # Count of segments returned with type=="unknown" (#433). Used by the
     # verbose ``+ N unknown match`` line so the user can reconcile
     # Filter "kept" with the larger Detected count when a recording
@@ -396,7 +398,7 @@ def detect_match_boundaries(
             stats["scorebar_elapsed_s"] = scorebar_elapsed
 
     effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
-    return _filter_and_extract_segments(
+    segments = _filter_and_extract_segments(
         refined_regions,
         duration_hint,
         min_match_duration,
@@ -404,6 +406,19 @@ def detect_match_boundaries(
         classifications=region_classifications,
         stats=stats,
     )
+    # #797: drop a trailing post-match run (final match ended, recording
+    # continued into lobby/city) when its early candidate-match window shows
+    # no scorebar at any strided probe point (+ window-end probe). Only
+    # runs when scorebar classification is available (src_resolution set).
+    if src_resolution is not None:
+        segments = _drop_post_match_trailing(
+            segments,
+            video_path,
+            duration_hint,
+            stats,
+            min_match_duration=min_match_duration,
+        )
+    return segments
 
 
 def _decode_chunk_cpu(
@@ -1017,6 +1032,17 @@ Game DVR lobby UI artifacts (observed: ~409 px width at screen-top
 minimap/content-name widget).  Confirmed during #522 validation.
 """
 
+_SCOREBAR_SCAN_MAX_WIDTH_PX = 1440
+"""Maximum detected span (pixels) to accept as scorebar.
+
+1080p OBS scorebar tops out at ~1090 px and 4K Game DVR at ~620 px
+(#522).  Post-match content (Limsa exterior, colorful interiors) can
+produce a near-full-width saturated band (observed ~1912 px on
+obs-20260116 at t=6800/6850), which is not a scorebar.  1440 px (75% of
+the 1920 px probe width) clears the real ~1090 px maximum with margin
+while rejecting the ~1912 px false positive (#803).
+"""
+
 _SCOREBAR_SCAN_MAX_GAP_PX = 80
 """Maximum gap (pixels) to bridge when merging saturated runs.
 
@@ -1077,17 +1103,24 @@ def _find_scorebar_horizontal_range(raw_rgb: bytes) -> tuple[int, int] | None:
     1920x1080 RGB frame, counts columns where at least
     ``_SCOREBAR_SCAN_COL_RATIO`` of rows have HSV saturation
     > ``_SCOREBAR_SCAN_SAT_THRESHOLD`` AND value
-    > ``_SCOREBAR_SCAN_VAL_THRESHOLD``.  The longest contiguous run of
-    saturated columns (bridging gaps up to ``_SCOREBAR_SCAN_MAX_GAP_PX``)
-    becomes the scorebar span.
+    > ``_SCOREBAR_SCAN_VAL_THRESHOLD``.  Contiguous runs of saturated columns
+    (bridging gaps up to ``_SCOREBAR_SCAN_MAX_GAP_PX``) are built, and the run
+    **straddling screen center** (x = ``_SCOREBAR_V2_PROBE_WIDTH // 2``) becomes
+    the scorebar candidate -- the FL scorebar is horizontally centered, and
+    keying on the *longest* run instead would let a longer off-center / over-
+    wide band mask a valid centered scorebar (#803, Codex PR pre-flight Step 5).
 
     Returns ``(x_left, x_right)`` with both endpoints inclusive when the
-    detected span is at least ``_SCOREBAR_SCAN_MIN_WIDTH_PX`` wide.
+    center-straddling run's width is within
+    ``_SCOREBAR_SCAN_MIN_WIDTH_PX``..``_SCOREBAR_SCAN_MAX_WIDTH_PX``.
     Returns ``None`` when:
 
     - cv2 is not installed (matches V2 "None -> V1 fallback" contract),
-    - no saturated run is found (lobby / loading / all-dark frame), or
-    - the longest run is narrower than the minimum width.
+    - no saturated run is found (lobby / loading / all-dark frame),
+    - no run straddles screen center (only edge-confined bands, e.g. a
+      right-side chat panel or left-side widget) (#803),
+    - the center run is narrower than the minimum width, or
+    - the center run is wider than ``_SCOREBAR_SCAN_MAX_WIDTH_PX`` (#803).
     """
     try:
         import cv2
@@ -1133,12 +1166,30 @@ def _find_scorebar_horizontal_range(raw_rgb: bytes) -> tuple[int, int] | None:
         else:
             merged.append((start, end))
 
-    longest = max(merged, key=lambda r: r[1] - r[0])
-    span_width = longest[1] - longest[0] + 1
+    # The FL scorebar is horizontally centered, so the candidate is the run
+    # straddling screen center -- NOT merely the longest run.  Selecting the
+    # longest first lets a longer off-center / over-wide band (UI widget,
+    # colorful post-match interior) mask a valid centered HUD-scaled scorebar
+    # and reject the whole frame, false-negativing the 4K / Game DVR layouts
+    # the rescue path exists to support (Codex PR pre-flight Step 5, #803).
+    # Runs are disjoint, so at most one contains center; pick it, then width-gate.
+    center_x = _SCOREBAR_V2_PROBE_WIDTH // 2
+    center_run = next((run for run in merged if run[0] <= center_x <= run[1]), None)
+    # No run straddles screen center -> only edge-confined bands (e.g. a
+    # right-side chat panel at 1410..1919 or a left-side widget at 8..544) ->
+    # not a scorebar (#803).
+    if center_run is None:
+        return None
+    span_width = center_run[1] - center_run[0] + 1
     if span_width < _SCOREBAR_SCAN_MIN_WIDTH_PX:
         return None
+    # Reject implausibly wide spans (#803): a real FL scorebar tops out at
+    # ~1090 px (1080p OBS).  A near-full-width band (e.g. ~1912 px from a
+    # colorful post-match interior) is not a scorebar.
+    if span_width > _SCOREBAR_SCAN_MAX_WIDTH_PX:
+        return None
 
-    return longest
+    return center_run
 
 
 def _emblem_and_check(
@@ -1443,6 +1494,19 @@ _BLACKOUT_PADDING = 3.0
 With ``-c copy``, FFmpeg can only cut at keyframes (~2s apart for OBS).
 By placing cut points inside blackout regions, keyframe drift never
 clips actual match footage.
+"""
+
+_TRAILING_PROBE_STRIDE = 60.0
+"""Seconds between scorebar probes when scanning a trailing segment's early
+candidate-match window (#797).
+
+A real match in a mixed trailing sits at the start, right after the opening
+blackout, and its HUD stays visible for the whole match (>= several minutes).
+Sampling every ``_TRAILING_PROBE_STRIDE`` seconds across the early window
+(``start`` .. ``start + min_match_duration``) tolerates a delayed HUD after
+long loading -- which a single fixed early offset could miss
+(Codex adversarial-review, 2026-05-23) -- while keeping post-match
+false-positive exposure low.  Used by ``_drop_post_match_trailing``.
 """
 
 # ---------------------------------------------------------------------------
@@ -1832,6 +1896,101 @@ def _filter_and_extract_segments(
         _record_drop("below_min_match_duration")
 
     return _finalize(segments)
+
+
+def _drop_post_match_trailing(
+    segments: list[MatchBoundary],
+    video_path: Path,
+    total_duration: float,
+    stats: DetectionStats | None,
+    *,
+    min_match_duration: float = 300.0,
+) -> list[MatchBoundary]:
+    """Drop a trailing post-match run via early-window scorebar probes (#797).
+
+    The final segment, when it runs to end-of-video (``end`` within 1.0s of
+    ``total_duration``) with ``type == "unknown"`` (no closing blackout), may
+    be post-match content (lobby / city) rather than a match.  It is only
+    considered droppable when it is not the sole segment
+    (``len(segments) >= 2``); a lone whole-video unknown -- the fail-open
+    fallback when no blackout survives -- has no match to trail and is always
+    kept, so "no boundaries found" never collapses to zero matches.  Other
+    shapes rely on the scorebar probes below (a tail showing in-match HUD is
+    kept), so a single real match followed by a post-match tail is dropped
+    correctly even though both segments are typed ``unknown``.
+
+    A real match in a *mixed* trailing -- formed when the match-end blackout is
+    missed or dropped (e.g. a warp misclassified as ``non_fl`` in scorebar.py)
+    so a real match and the post-match tail merge into one segment -- always
+    sits at the start, right after the opening blackout.  Scan that early
+    candidate-match window (``start`` .. ``start + min_match_duration``,
+    clamped to the segment) at ``_TRAILING_PROBE_STRIDE`` intervals **plus the
+    window end**, so no stride gap (including the final one) is left unprobed:
+
+    - any probe a scorebar hit (``True``) -> match footage present -> keep
+    - any probe failure / opencv unavailable (``None``) -> keep (safe side)
+    - every probe a definite miss (``False``) -> post-match -> drop
+
+    Scanning a strided window (rather than a single fixed early offset) means a
+    delayed HUD after long loading cannot hide a real match: a fixed
+    ``start + 12s`` probe could land in the loading screen while the midpoint
+    and late probes land in a longer post-match tail, dropping a real match
+    (Codex adversarial-review, 2026-05-23).
+    """
+    if not segments:
+        return segments
+    last = segments[-1]
+    if last["type"] != "unknown" or abs(last["end"] - total_duration) >= 1.0:
+        return segments
+    # Only the lone whole-video unknown fallback -- a single segment spanning
+    # the recording, emitted when no blackout survives -- has no match to
+    # trail; keep it so "no boundaries found" never collapses to zero matches.
+    # Any multi-segment shape still goes through the scorebar probes below,
+    # which keep a segment that shows in-match HUD, so a real single match
+    # followed by a no-scorebar post-match tail is still dropped.  (Do not also
+    # gate on ``segments[-2]`` type: ``_filter_and_extract_segments`` hardcodes
+    # the before-first / after-last segments as ``unknown``, so that would
+    # wrongly keep single-match tails -- Codex round-5/6 adversarial-review.)
+    if len(segments) < 2:
+        return segments
+    start = last["start"]
+    end = last["end"]
+    window_end = min(start + min_match_duration, end)
+    # Probe the early candidate-match window at a fixed stride, and always
+    # include a probe at the window end so the final stride gap is never left
+    # unprobed (Codex round-4): a HUD that first appears late in the window
+    # (long loading) must still be caught.  The end probe is backed off to
+    # ``end - 1.0`` so a ``window_end == end`` case (trailing length ==
+    # min_match_duration) does not probe past the last frame -- an EOF read
+    # returns None and would (via keep-on-None) suppress a legitimate drop.
+    probe_points: list[float] = []
+    timestamp = start + _TRAILING_PROBE_STRIDE
+    while timestamp < window_end:
+        probe_points.append(timestamp)
+        timestamp += _TRAILING_PROBE_STRIDE
+    probe_points.append(min(window_end, end - 1.0))
+    probed = False
+    for probe_at in probe_points:
+        if probe_at <= start:
+            continue
+        probed = True
+        if _has_scorebar_v2(_probe_frame_rgb_hires(video_path, probe_at)) is not False:
+            # Scorebar hit (True) or probe failure (None) -> keep (safe side).
+            return segments
+    if not probed:
+        # No valid probe point inside the segment -> no evidence -> keep.
+        return segments
+    # Every probe across the candidate match window was a definite miss ->
+    # post-match trailing -> drop.
+    if stats is not None:
+        drops = stats.setdefault("filter_drops", {})
+        drops["post_match_trailing"] = drops.get("post_match_trailing", 0) + 1
+        # Keep filter_unknown consistent: _finalize counted this trailing
+        # segment as unknown before this drop, so decrement it (#797).
+        unknown_count = stats.get("filter_unknown", 0)
+        if unknown_count > 0:
+            stats["filter_unknown"] = unknown_count - 1
+    return segments[:-1]
 
 
 def _padded_end(region: tuple[float, float]) -> float:

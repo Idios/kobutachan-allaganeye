@@ -4,6 +4,37 @@
 > **Spec**: [docs/superpowers/specs/2026-05-19-v030-baseline-audit-design.md](superpowers/specs/2026-05-19-v030-baseline-audit-design.md)
 > **Reexamination spec**: [docs/superpowers/specs/2026-05-19-v030-l3-detect-fps-retirement-reexamination-design.md](superpowers/specs/2026-05-19-v030-l3-detect-fps-retirement-reexamination-design.md) §9
 > **PR #793 status**: in-progress on `claude/recursing-lewin-4c5f9c` (reexamination spec §9 の (D) scope を実施中、本 doc §PR #793 verification update も参照)
+> **#797 status**: **RESOLVED 2026-05-22** (#803 scorebar gate + post-match M7 drop)、§2026-05-22 #797 解決 update 参照
+
+## 2026-05-22 #797 解決 update (#803 gate + post-match M7 drop)
+
+issue #797 (obs-20260116 M6 end miss) を #803 (scorebar V2 Rescue span gating:
+width 上限 + 中央位置要求) + post-match trailing drop (対策 A: 最後の有効
+blackout が match_boundary なら trailing を post-match と判定し drop) で
+解決。詳細は
+[spec §0](superpowers/specs/2026-05-21-issue-803-scorebar-v2-post-match-fp-fix-design.md)。
+
+### 5 baseline totals (gate + M7 drop detector, 2026-05-22)
+
+| Recording | matches | agreed | findings |
+| --- | --- | --- | --- |
+| obs-20260116 | 6 | 12 | 0 |
+| obs-20260118 | 6 | 12 | 0 |
+| obs-20260119 | 9 | 18 | 0 |
+| obs-20260127 | 3 | 6 | 0 |
+| obs-20260209 | 3 | 6 | 0 |
+
+**54/54 boundary 全 agreed (within ±5s)、finding ゼロ**。
+
+- **obs-20260116**: M6 end が `7303.488` → `6542.0` (GT 6540 +2s, agreed) に
+  正確化。gate で post-match の scorebar FP を解消し M6 が unknown→fl_match
+  に。さらに post-match (6542-7303) の unknown segment (M7 = match_007.mp4) を
+  対策 A で除去 → 6 match で GT 完全一致。PR #793 時点の boundary_shift
+  -763.488s は解消。
+- **他 4 baseline**: matches 不変 (再 detect で同一)、gate (in-match 通過) +
+  M7 drop (trailing < 300s で非該当) による regression なし。
+- 当初想定の V6.2 (scorebar 二分探索) は不要だった (gate で M6 end が暗転
+  境界として 6542 に確定済)。
 
 ## Cross-recording summary
 

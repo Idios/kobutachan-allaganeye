@@ -30,6 +30,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (2026-05-21) で実 boundary 確定し 5→6 matches に修正。詳細は
   `docs/v030-baseline-audit.md` §"2026-05-21 PR #793 verification update" 参照。
 
+### Fixed
+
+- **detect (scorebar V2)**: post-match content (試合終了後の Limsa /
+  colorful interior 等) の彩度高領域を Rescue path が scorebar と誤検出
+  する false positive を解消 (#803)。`_find_scorebar_horizontal_range` に
+  span width 上限 (`_SCOREBAR_SCAN_MAX_WIDTH_PX=1440`) と中央位置要求
+  (span が画面中央 x=960 を含む) の 2 gate を追加。obs-20260116 で試合終了
+  (6540、scorebar HUD 残存) 直後の post-match 区間 (6544-6850) が試合内と
+  誤分類されていた問題を修正。Primary path (絶対座標 emblem) は無変更。
+- **detect (post-match trailing drop)**: 試合終了後の trailing segment
+  (lobby / city interior 等の non-match 区間) を、その区間の scorebar 不在を
+  probe で確認した上で出力から除外 (#797)。#803 gate で obs-20260116 の
+  M6 end が 6542 (ground truth 6540 +2s) に確定した副作用で post-match
+  (6542-7303) が unknown segment (`match_007.mp4`) として分離していたのを
+  解消し、6 match (GT 完全一致) を出力。trailing 先頭の candidate-match
+  window を `_TRAILING_PROBE_STRIDE` (=60s) 間隔 + window 末尾で走査し、
+  全 probe が scorebar definite miss のときのみ drop (1 つでも scorebar hit /
+  probe 失敗なら保持 = safe side)。動画全体 1 つの unknown フォールバック
+  (`len(segments) < 2`) は drop 対象外 (fail-open 保護)。scorebar 検出が
+  FN する環境 (未対応 HUD / 4K Game DVR 等) で実試合 trailing を silent に
+  削除しうる構造リスクは既知限界として記録し、非破壊化 (削除 → フラグ方式)
+  を #805 で追跡。
+
 ### Added
 
 - `probe.py::ProbeResult` に `fps_num`/`fps_den` フィールドを追加
