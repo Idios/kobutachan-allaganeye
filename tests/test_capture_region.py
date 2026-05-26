@@ -1,8 +1,11 @@
+import numpy as np
+
 from allaganeye.video.capture_region import (
-    CaptureRegion,
     FULL_FRAME,
+    CaptureRegion,
     RegionTimeline,
     _maybe_snap_full_frame,
+    detect_region_variance,
     iou,
     top_edge_error_px,
 )
@@ -60,3 +63,46 @@ def test_snap_full_frame_when_region_covers_most_of_frame():
 def test_snap_keeps_small_inset_unchanged():
     inset = CaptureRegion(0.2, 0.1, 0.5, 0.5, source="tierA")
     assert _maybe_snap_full_frame(inset) is inset
+
+
+# ---------------------------------------------------------------------------
+# Task B.1: S1 detect_region_variance
+# ---------------------------------------------------------------------------
+
+
+def _stack_static_bg_with_moving_inset(
+    n=12, h=180, w=320, inset=(0.30, 0.20, 0.40, 0.50)
+):
+    """静止 bg (一定値) + inset 内だけフレームごとに乱数 = 高分散."""
+    rng = np.random.default_rng(0)
+    x0, y0, ww, hh = (
+        int(inset[0] * w),
+        int(inset[1] * h),
+        int(inset[2] * w),
+        int(inset[3] * h),
+    )
+    frames = []
+    for _ in range(n):
+        f = np.full((h, w), 50, dtype=np.uint8)
+        f[y0 : y0 + hh, x0 : x0 + ww] = rng.integers(0, 256, (hh, ww), dtype=np.uint8)
+        frames.append(f)
+    return frames, inset
+
+
+def test_variance_finds_moving_inset():
+    frames, inset = _stack_static_bg_with_moving_inset()
+    r = detect_region_variance(frames)
+    assert r.source == "tierA"
+    assert inset[0] <= r.x + r.w / 2 <= inset[0] + inset[2]
+    assert inset[1] <= r.y + r.h / 2 <= inset[1] + inset[3]
+
+
+def test_variance_full_frame_motion_snaps_full():
+    rng = np.random.default_rng(1)
+    frames = [rng.integers(0, 256, (180, 320), dtype=np.uint8) for _ in range(12)]
+    assert detect_region_variance(frames) == FULL_FRAME
+
+
+def test_variance_static_frames_fall_back_full():
+    frames = [np.full((180, 320), 50, dtype=np.uint8) for _ in range(12)]
+    assert detect_region_variance(frames) == FULL_FRAME

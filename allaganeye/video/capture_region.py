@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import numpy as np
+
 
 @dataclass(frozen=True)
 class CaptureRegion:
@@ -101,3 +103,46 @@ def _maybe_snap_full_frame(region: CaptureRegion) -> CaptureRegion:
     if region.w >= _SNAP_FULL_FRAME_WH and region.h >= _SNAP_FULL_FRAME_WH:
         return FULL_FRAME
     return region
+
+
+_VAR_THRESHOLD = 80.0
+"""グレースケール時間分散がこの値超で「動きあり」画素とみなす (tunable)。"""
+
+_MIN_REGION_AREA_FRAC = 0.08
+"""検出矩形の最小面積比。これ未満は誤検出として FULL_FRAME に fallback。"""
+
+
+def detect_region_variance(
+    frames: list[np.ndarray],
+    *,
+    var_threshold: float = _VAR_THRESHOLD,
+    min_area_frac: float = _MIN_REGION_AREA_FRAC,
+) -> CaptureRegion:
+    """S1: 時間分散の最大連結成分を game 領域とみなす (Tier A coarse)。
+
+    *frames* は同形状の 2D グレースケール (H,W) uint8。OBS 録画は全域が
+    動くため最大成分が frame 全域 → FULL_FRAME に snap。分散が無ければ
+    (静止) FULL_FRAME に fallback。
+    """
+    import cv2
+
+    if len(frames) < 2:
+        return FULL_FRAME
+    stack = np.stack(frames).astype(np.float32)
+    var = stack.var(axis=0)
+    h, w = var.shape
+    mask = (var > var_threshold).astype(np.uint8)
+    n, _labels, stats, _c = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    if n <= 1:
+        return FULL_FRAME
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    idx = 1 + int(np.argmax(areas))
+    bx, by = int(stats[idx, cv2.CC_STAT_LEFT]), int(stats[idx, cv2.CC_STAT_TOP])
+    bw, bh = int(stats[idx, cv2.CC_STAT_WIDTH]), int(stats[idx, cv2.CC_STAT_HEIGHT])
+    if bw * bh < min_area_frac * w * h:
+        return FULL_FRAME
+    fill = float(areas[idx - 1]) / (bw * bh)
+    region = CaptureRegion(
+        bx / w, by / h, bw / w, bh / h, confidence=fill, source="tierA"
+    ).clamp()
+    return _maybe_snap_full_frame(region)
