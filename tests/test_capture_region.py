@@ -96,6 +96,8 @@ def test_variance_finds_moving_inset():
     assert r.source == "tierA"
     assert inset[0] <= r.x + r.w / 2 <= inset[0] + inset[2]
     assert inset[1] <= r.y + r.h / 2 <= inset[1] + inset[3]
+    expected = CaptureRegion(inset[0], inset[1], inset[2], inset[3])
+    assert iou(r, expected) >= 0.8
 
 
 def test_variance_full_frame_motion_snaps_full():
@@ -127,6 +129,8 @@ def test_blackout_overlap_finds_region_that_goes_dark():
     assert r.source == "tierA"
     assert inset[0] <= r.x + r.w / 2 <= inset[0] + inset[2]
     assert inset[1] <= r.y + r.h / 2 <= inset[1] + inset[3]
+    expected = CaptureRegion(inset[0], inset[1], inset[2], inset[3])
+    assert iou(r, expected) >= 0.8
 
 
 def test_blackout_overlap_obs_full_frame_blackout_snaps_full():
@@ -134,3 +138,13 @@ def test_blackout_overlap_obs_full_frame_blackout_snaps_full():
     bright = np.full((h, w), 120, dtype=np.uint8)
     dark = np.full((h, w), 2, dtype=np.uint8)
     assert detect_region_blackout_overlap([bright, bright, dark]) == FULL_FRAME
+
+
+def test_variance_tiny_speck_below_min_area_falls_back_full():
+    rng = np.random.default_rng(7)
+    frames = []
+    for _ in range(8):
+        f = np.full((180, 320), 50, dtype=np.uint8)
+        f[0:8, 0:8] = rng.integers(0, 256, (8, 8), dtype=np.uint8)  # ~0.1% area
+        frames.append(f)
+    assert detect_region_variance(frames) == FULL_FRAME

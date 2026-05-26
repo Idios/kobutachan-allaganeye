@@ -112,6 +112,38 @@ _MIN_REGION_AREA_FRAC = 0.08
 """検出矩形の最小面積比。これ未満は誤検出として FULL_FRAME に fallback。"""
 
 
+def _largest_component_region(
+    mask: np.ndarray,
+    *,
+    min_area_frac: float,
+    source: str,
+    confidence: float | None = None,
+) -> CaptureRegion:
+    """連結成分の最大 bbox を正規化 CaptureRegion 化 (S1/S3 共通)。
+
+    *mask* は uint8 2D。最大の非背景成分の bbox を返す。成分なし / 面積が
+    min_area_frac 未満 / frame 全域に近い場合は FULL_FRAME。confidence が
+    None なら成分の充填率 (画素数/bbox面積) を使う。
+    """
+    import cv2
+
+    h, w = mask.shape
+    n, _labels, stats, _c = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    if n <= 1:
+        return FULL_FRAME
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    idx = 1 + int(np.argmax(areas))
+    bx, by = int(stats[idx, cv2.CC_STAT_LEFT]), int(stats[idx, cv2.CC_STAT_TOP])
+    bw, bh = int(stats[idx, cv2.CC_STAT_WIDTH]), int(stats[idx, cv2.CC_STAT_HEIGHT])
+    if bw * bh < min_area_frac * w * h:
+        return FULL_FRAME
+    conf = float(areas[idx - 1]) / (bw * bh) if confidence is None else confidence
+    region = CaptureRegion(
+        bx / w, by / h, bw / w, bh / h, confidence=conf, source=source
+    ).clamp()
+    return _maybe_snap_full_frame(region)
+
+
 def detect_region_variance(
     frames: list[np.ndarray],
     *,
@@ -124,32 +156,16 @@ def detect_region_variance(
     動くため最大成分が frame 全域 → FULL_FRAME に snap。分散が無ければ
     (静止) FULL_FRAME に fallback。
     """
-    import cv2
-
     if len(frames) < 2:
         return FULL_FRAME
     stack = np.stack(frames).astype(np.float32)
     var = stack.var(axis=0)
-    h, w = var.shape
     mask = (var > var_threshold).astype(np.uint8)
-    n, _labels, stats, _c = cv2.connectedComponentsWithStats(mask, connectivity=8)
-    if n <= 1:
-        return FULL_FRAME
-    areas = stats[1:, cv2.CC_STAT_AREA]
-    idx = 1 + int(np.argmax(areas))
-    bx, by = int(stats[idx, cv2.CC_STAT_LEFT]), int(stats[idx, cv2.CC_STAT_TOP])
-    bw, bh = int(stats[idx, cv2.CC_STAT_WIDTH]), int(stats[idx, cv2.CC_STAT_HEIGHT])
-    if bw * bh < min_area_frac * w * h:
-        return FULL_FRAME
-    fill = float(areas[idx - 1]) / (bw * bh)
-    region = CaptureRegion(
-        bx / w, by / h, bw / w, bh / h, confidence=fill, source="tierA"
-    ).clamp()
-    return _maybe_snap_full_frame(region)
+    return _largest_component_region(mask, min_area_frac=min_area_frac, source="tierA")
 
 
 _OVERLAP_BRIGHT = 60.0
-"""「試合中は明るい」とみなす画素の最大輝度しきい (tunable)。"""
+"""画素の最大輝度がこの値を超えれば「試合中は明るい画素」とみなす下限しきい (tunable)。"""
 
 _OVERLAP_DARK = 20.0
 """「暗転で暗くなる」とみなす画素の最小輝度しきい (tunable)。"""
@@ -167,25 +183,12 @@ def detect_region_blackout_overlap(
     overlay は常時明るい (min が下がらない) ため除外される。OBS は全画面が
     暗転する (mask が全域) → FULL_FRAME。
     """
-    import cv2
-
     if len(frames) < 2:
         return FULL_FRAME
     stack = np.stack(frames).astype(np.float32)
     pmax = stack.max(axis=0)
     pmin = stack.min(axis=0)
-    h, w = pmax.shape
     mask = ((pmax > bright_thresh) & (pmin < dark_thresh)).astype(np.uint8)
-    n, _labels, stats, _c = cv2.connectedComponentsWithStats(mask, connectivity=8)
-    if n <= 1:
-        return FULL_FRAME
-    areas = stats[1:, cv2.CC_STAT_AREA]
-    idx = 1 + int(np.argmax(areas))
-    bx, by = int(stats[idx, cv2.CC_STAT_LEFT]), int(stats[idx, cv2.CC_STAT_TOP])
-    bw, bh = int(stats[idx, cv2.CC_STAT_WIDTH]), int(stats[idx, cv2.CC_STAT_HEIGHT])
-    if bw * bh < min_area_frac * w * h:
-        return FULL_FRAME
-    region = CaptureRegion(
-        bx / w, by / h, bw / w, bh / h, confidence=0.8, source="tierA"
-    ).clamp()
-    return _maybe_snap_full_frame(region)
+    return _largest_component_region(
+        mask, min_area_frac=min_area_frac, source="tierA", confidence=0.8
+    )
