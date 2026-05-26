@@ -6,6 +6,7 @@ from allaganeye.video.capture_region import (
     RegionTimeline,
     _maybe_snap_full_frame,
     detect_region_blackout_overlap,
+    detect_region_scorebar_band,
     detect_region_variance,
     iou,
     top_edge_error_px,
@@ -148,3 +149,56 @@ def test_variance_tiny_speck_below_min_area_falls_back_full():
         f[0:8, 0:8] = rng.integers(0, 256, (8, 8), dtype=np.uint8)  # ~0.1% area
         frames.append(f)
     assert detect_region_variance(frames) == FULL_FRAME
+
+
+# ---------------------------------------------------------------------------
+# Task B.2: S2 detect_region_scorebar_band
+# ---------------------------------------------------------------------------
+
+
+def _hires_with_scorebar_at(y_top: int, x_left: int, x_right: int):
+    """1920x1080 RGB: y_top 行に saturated 帯 + 3 紋章 (striped) を描く。
+
+    紋章位置は detector._EMBLEM_RELATIVE_POSITIONS を帯 span に投影。
+    """
+    from allaganeye.video.detector import (
+        _SCOREBAR_V2_PROBE_WIDTH,
+        _SCOREBAR_V2_PROBE_HEIGHT,
+        _EMBLEM_RELATIVE_POSITIONS,
+    )
+
+    W, H = _SCOREBAR_V2_PROBE_WIDTH, _SCOREBAR_V2_PROBE_HEIGHT
+    f = np.full((H, W, 3), 40, dtype=np.uint8)
+    bar_w = x_right - x_left
+    f[y_top : y_top + 45, x_left : x_right + 1] = (50, 50, 200)
+    for _name, cx_rel, hw_rel, ey1, ey2 in _EMBLEM_RELATIVE_POSITIONS:
+        cx = int(x_left + cx_rel * bar_w)
+        hw = max(2, int(hw_rel * bar_w))
+        region = f[y_top + ey1 : y_top + ey2, cx - hw : cx + hw]
+        for col in range(region.shape[1]):
+            region[:, col] = (200, 30, 30) if (col // 2) % 2 == 0 else (0, 0, 0)
+    return f
+
+
+def test_scorebar_band_at_offset_y_returns_inset_top():
+    f = _hires_with_scorebar_at(y_top=120, x_left=500, x_right=1400)
+    r = detect_region_scorebar_band(f)
+    assert r is not None and r.source == "tierB"
+    assert abs(r.y - 120 / 1080) < 0.03
+
+
+def test_scorebar_band_full_width_top_snaps_full():
+    f = _hires_with_scorebar_at(y_top=2, x_left=120, x_right=1810)
+    assert detect_region_scorebar_band(f) == FULL_FRAME
+
+
+def test_scorebar_band_uniform_cyan_banner_rejected():
+    from allaganeye.video.detector import (
+        _SCOREBAR_V2_PROBE_WIDTH,
+        _SCOREBAR_V2_PROBE_HEIGHT,
+    )
+
+    W, H = _SCOREBAR_V2_PROBE_WIDTH, _SCOREBAR_V2_PROBE_HEIGHT
+    f = np.full((H, W, 3), 40, dtype=np.uint8)
+    f[0:55, :] = (60, 200, 200)  # 単色 cyan 帯 (紋章なし)
+    assert detect_region_scorebar_band(f) is None

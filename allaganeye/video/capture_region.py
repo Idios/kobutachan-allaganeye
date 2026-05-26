@@ -171,6 +171,85 @@ _OVERLAP_DARK = 20.0
 """「暗転で暗くなる」とみなす画素の最小輝度しきい (tunable)。"""
 
 
+_BAND_SCAN_STRIDE = 6
+"""y 方向の走査刻み (px)。scorebar 帯の高さ ~45px に対し十分細かい。"""
+
+_BAND_Y_MAX_FRAC = 0.55
+"""scorebar を探す y の上限 (frame 高さ比)。game は frame 上〜中央寄り。"""
+
+_GAME_ASPECT = 16.0 / 9.0
+"""FF14 game capture のアスペクト比 (帯幅から game 高さを逆算)。"""
+
+_BAND_SNAP_GW = 0.85
+"""S2 専用 full-frame snap しきい値 (gw)。
+
+_SNAP_FULL_FRAME_WH=0.92 はアスペクト比ベースの h 計算と組み合わせると
+OBS 相当のほぼ全幅 scorebar (gw~0.88) を snap できない。S2 では scorebar
+幅比が 0.85 以上 (bar_w >= 1632px at 1920px frame) を OBS 相当と判断し
+FULL_FRAME に snap する。4K Game DVR の narrow scorebar (gw~0.32) は対象外。
+"""
+
+
+def detect_region_scorebar_band(
+    frame: np.ndarray,
+    *,
+    stride: int = _BAND_SCAN_STRIDE,
+) -> CaptureRegion | None:
+    """S2: FL scorebar 帯を全 y で探し、game 矩形を逆算 (Tier B precise)。
+
+    *frame* は 1920x1080 RGB (H,W,3) uint8。検出帯を GC 紋章 3 点 AND で
+    FL と検証してから返す。FL 帯が見つからなければ None (試合外フレーム
+    や opencv 未導入)。OBS 相当 (帯が y~0, 全幅) は FULL_FRAME に snap。
+    """
+    try:
+        import cv2
+    except ImportError:
+        return None
+    from allaganeye.video.detector import (
+        _SCOREBAR_V2_PROBE_WIDTH,
+        _SCOREBAR_V2_PROBE_HEIGHT,
+        _EMBLEM_RELATIVE_POSITIONS,
+        _emblem_and_check,
+        _find_scorebar_horizontal_range,
+    )
+
+    H = _SCOREBAR_V2_PROBE_HEIGHT
+    W = _SCOREBAR_V2_PROBE_WIDTH
+    if frame.shape[:2] != (H, W):
+        return None
+    y_max = int(H * _BAND_Y_MAX_FRAC)
+    for y in range(0, y_max, stride):
+        shifted = np.zeros_like(frame)
+        band_h = min(45, H - y)
+        shifted[0:band_h] = frame[y : y + band_h]
+        span = _find_scorebar_horizontal_range(shifted.tobytes())
+        if span is None:
+            continue
+        x_left, x_right = span
+        bar_w = x_right - x_left
+        positions = [
+            (
+                name,
+                int(x_left + cx_rel * bar_w - hw_rel * bar_w),
+                y + ey1,
+                int(x_left + cx_rel * bar_w + hw_rel * bar_w),
+                y + ey2,
+            )
+            for name, cx_rel, hw_rel, ey1, ey2 in _EMBLEM_RELATIVE_POSITIONS
+        ]
+        if not _emblem_and_check(frame, positions, f"band y={y}", cv2):
+            continue
+        gw = bar_w / W
+        gx = x_left / W
+        gy = y / H
+        gh = (bar_w / _GAME_ASPECT) / H
+        region = CaptureRegion(gx, gy, gw, gh, confidence=0.9, source="tierB").clamp()
+        if gw >= _BAND_SNAP_GW:
+            return FULL_FRAME
+        return region
+    return None
+
+
 def detect_region_blackout_overlap(
     frames: list[np.ndarray],
     *,
