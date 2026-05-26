@@ -181,12 +181,20 @@ _GAME_ASPECT = 16.0 / 9.0
 """FF14 game capture のアスペクト比 (帯幅から game 高さを逆算)。"""
 
 _BAND_SNAP_GW = 0.85
-"""S2 専用 full-frame snap しきい値 (gw)。
+"""S2 専用 full-frame snap のスコアバー幅しきい値。
 
 _SNAP_FULL_FRAME_WH=0.92 はアスペクト比ベースの h 計算と組み合わせると
 OBS 相当のほぼ全幅 scorebar (gw~0.88) を snap できない。S2 では scorebar
-幅比が 0.85 以上 (bar_w >= 1632px at 1920px frame) を OBS 相当と判断し
-FULL_FRAME に snap する。4K Game DVR の narrow scorebar (gw~0.32) は対象外。
+幅比が 0.85 以上 (bar_w >= 1632px at 1920px frame) かつ gy が _BAND_SNAP_Y_MAX
+以下 (= frame 上端付近) の場合に OBS 相当と判断し FULL_FRAME に snap する。
+4K Game DVR の narrow scorebar (gw~0.32) は対象外。
+"""
+
+_BAND_SNAP_Y_MAX = 0.10
+"""full-frame snap を許す scorebar 上端 y の上限 (frame 高さ比)。
+
+OBS の scorebar は frame 上端付近 (gy~0)。gw が大きくても gy がこれを超える
+場合 (= 画面途中に widget) は inset とみなし snap しない。
 """
 
 
@@ -218,9 +226,10 @@ def detect_region_scorebar_band(
     if frame.shape[:2] != (H, W):
         return None
     y_max = int(H * _BAND_Y_MAX_FRAC)
+    shifted = np.zeros_like(frame)
     for y in range(0, y_max, stride):
-        shifted = np.zeros_like(frame)
-        band_h = min(45, H - y)
+        band_h = 45  # always 45 within the scan range (y_max << H-45); guard not needed
+        shifted[band_h:] = 0
         shifted[0:band_h] = frame[y : y + band_h]
         span = _find_scorebar_horizontal_range(shifted.tobytes())
         if span is None:
@@ -244,7 +253,7 @@ def detect_region_scorebar_band(
         gy = y / H
         gh = (bar_w / _GAME_ASPECT) / H
         region = CaptureRegion(gx, gy, gw, gh, confidence=0.9, source="tierB").clamp()
-        if gw >= _BAND_SNAP_GW:
+        if gw >= _BAND_SNAP_GW and gy <= _BAND_SNAP_Y_MAX:
             return FULL_FRAME
         return region
     return None

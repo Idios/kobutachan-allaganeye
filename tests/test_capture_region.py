@@ -184,7 +184,7 @@ def test_scorebar_band_at_offset_y_returns_inset_top():
     f = _hires_with_scorebar_at(y_top=120, x_left=500, x_right=1400)
     r = detect_region_scorebar_band(f)
     assert r is not None and r.source == "tierB"
-    assert abs(r.y - 120 / 1080) < 0.03
+    assert abs(r.y - 120 / 1080) < 0.012
 
 
 def test_scorebar_band_full_width_top_snaps_full():
