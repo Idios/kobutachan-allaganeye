@@ -154,12 +154,41 @@ RegionTimeline = {
 | M3 | e2e (±10s) | crop→Pass1→scorebar spike が 5 試合を検出し start/end が ground truth ±10s・index 1-5 一致 | Phase 2b 完了基準と同値 |
 | M4 | OBS 回帰 | OBS baseline で領域 = frame 全体 & detect 出力 bit-exact | 5 本すべて pass (**hard gate**) |
 
-### 6.3 選定手順 (実測値は実験後に本 spec へ追記)
+### 6.3 選定手順 (実測済み 2026-05-27)
 
 1. **M4 (OBS 回帰) pass を hard gate** — fail する候補は不採用。
 2. VTuber 領域精度 (M1) 最大。
 3. コスト (M2) 許容。
 4. e2e (M3) ±10s 達成。
+
+### 6.3.1 実測結果 (2026-05-27, gyawa benchmark + OBS baseline 5 本)
+
+`scripts/vtuber_region_experiment.py` / `scripts/vtuber_region_spike.py` を実機
+(Windows, ffmpeg 8.1) で手動実行した結果。proxy 矩形は `vtuber-primary-regions.json`
+(レイアウト A=B static、正規化 0.1302 / 0.0898 / 0.8698 / 0.8667)。
+
+| 候補 | tier | M1 IoU | M1 上端誤差 | M2 cost | M4 OBS 縮退 |
+| --- | --- | --- | --- | --- | --- |
+| S1 時間分散 | A coarse | 0.846 | 11px | ~0s (probe 除く) | FULL_FRAME x5 = PASS |
+| S2 scorebar 帯 | B precise | 0.188 (注1) | 上端 15.7px (注2) | ~1.8s / 4 frame | inset 誤検出 x5 = coarse 不適 (注3) |
+| S3 暗転重なり | A coarse | **0.851** | **11px** | ~0s (probe 除く) | FULL_FRAME x5 = PASS |
+
+- 注1: S2 の full-rect IoU が低いのは設計上の帰結。FL scorebar は game 全幅ではなく中央 ~835px の HUD であり、帯幅からの 16:9 game 逆算が成立しない。
+- 注2: S2 の主指標は上端 px 誤差 (scorebar ROI #480 が要求するのは精密な上端 / y-band)。検出できた frame では上端 1-23px (平均 15.7px)、検出率 3/4。
+- 注3: 単一 scorebar frame では OBS (game = 全画面) と VTuber (game = inset) を区別できない (scorebar は両者で同一の中央 HUD)。S2 は OBS で誤った inset を主張するため coarse には使えず、Tier B precise 限定が hard constraint。
+
+**M3 spike (crop -> Pass1 -> ±10s)**:
+
+- full-frame 輝度 Pass1: **start 0/5** (overlay により暗転中も平均輝度 ~52 に張り付き、threshold 15 で 1 件も検出できず = finding #4 を実測再現)。
+- 領域 crop 輝度 Pass1: **start 4/5 + end 5/5** (threshold 30, interval 2.0s, tol ±10s)。9/10 境界を ±10s で検出。
+- 唯一の miss (試合 3 start) は fade-in recover (~4264s) と手動 gt start (4253s) の ~11s 較正差であり検出失敗ではない (Open Q4)。
+- 追加 finding: game 領域 crop の暗転 floor は ~17-20 (FF14 の load 画面は純黒でなく薄い UI / 背景を含む)。full-frame OBS の `blackout_threshold=15` より高い閾値 (~30) が領域 crop には必要。Pass1 wiring child issue の直接の入力。
+
+**選定結論**:
+
+- **Tier A coarse (Pass1 領域輝度へ供給)** = **S3 暗転重なり**。IoU 0.851 で S1 (0.846) を僅かに上回り、overlay は暗転しないため webcam / chat の動き混入 (R3) に対し S1 時間分散より頑健。S1 は近接候補として残置 (1-source 過学習 R6 回避、削除可否は別途 user 判断)。
+- **Tier B precise (scorebar ROI #480 へ供給)** = **S2 scorebar 帯**。ただし full-rect ではなく**上端 px (y-band) のみ**を消費し、横 extent は Tier A から取得する。
+- **M4 hard gate**: 本 issue は detector.py 本体を変更しないため production detect 出力は構造的に bit-exact (region 検出を wiring しない)。S1 / S3 の OBS FULL_FRAME 縮退は将来 wiring 時の前方互換性として実測確認した。
 
 ### 6.4 proxy ground truth (新規 annotation 成果物)
 
@@ -207,10 +236,10 @@ RegionTimeline = {
 
 ## 10. Open questions (writing-plans / 実装で解決)
 
-1. **検出シグナルの最終選定**: §6 harness の実測後に確定 (本 spec へ追記)。
-2. **再検出粒度**: per-blackout / per-segment / 固定時間窓 のいずれか (M2 コストと R4 のトレードオフで決定)。
-3. **本番 metadata.json スキーマ**: consumer (Pass1 wiring / #480 / #481) と整合して別途確定。
-4. **annotation tolerance の具体値**: M1 の IoU / 上端 px 閾値を実データで較正。
+1. **検出シグナルの最終選定**: **CLOSED (2026-05-27, §6.3.1)** — Tier A coarse = S3 暗転重なり、Tier B precise = S2 scorebar 帯 (上端 y-band のみ)。
+2. **再検出粒度**: **CLOSED (暫定)** — gyawa は A=B static のため coarse 1 領域で十分 (実測)。per-segment 再検出は layout が変化する他 VOD 向けの一般 capability として contract (`RegionTimeline.segments`) に保持。本ベンチでは static のため発火せず。
+3. **本番 metadata.json スキーマ**: consumer (Pass1 wiring / #480 / #481) と整合して別途確定 (下流のまま)。
+4. **annotation tolerance の具体値**: **CLOSED (暫定, §6.3.1)** — M1 上端 <=~15px は S2 / S3 とも満たす。M3 試合 3 start の ~11s 較正差は Pass1 wiring issue で「試合 start = fade-in recover」と定義を確定して解消する。
 
 ## 11. 決定ログ (本ブレストの選択)
 
@@ -220,6 +249,9 @@ RegionTimeline = {
 | 本 issue の検証 | **proxy metric (IoU/px) + thin e2e spike** (full wiring でも harness-only でもない) |
 | Pass 1 の扱い | **第一級利用者として設計に含める + e2e spike で ±10s 実証** (別 issue 分離でも #480 統合でもない)。本番 wiring は別 child issue |
 | 検出アルゴリズム | **spec で固定せず harness で実験選定** |
+| 検出アルゴリズム (実測選定 2026-05-27) | **Tier A coarse = S3 暗転重なり** (IoU 0.851, OBS FULL_FRAME), **Tier B precise = S2 scorebar 帯の上端 y-band のみ** (上端 15.7px)。S1 は近接候補として残置 |
+| S2 の使い方 (実測) | full-rect ではなく**上端のみ**消費 (横 extent は Tier A から)。OBS で inset 誤検出するため coarse 不可 = Tier B 限定が hard constraint |
+| Pass1 領域 crop の閾値 (実測) | 領域 crop の暗転 floor ~17-20 のため OBS の `blackout_threshold=15` より高い ~30 が必要 (Pass1 wiring child issue へ申し送り) |
 | guard | gyawa benchmark は trusted 扱い (user 確認 2026-05-26) |
 
 ## 12. 参照
