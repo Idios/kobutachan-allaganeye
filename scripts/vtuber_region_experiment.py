@@ -261,20 +261,26 @@ def _eval_obs_regression(
         bright = _sample_gray_frames(video, _mid_match_timestamps(matches))
         dark = _sample_gray_frames(video, _boundary_dark_timestamps(matches))
 
-        s1 = detect_region_variance(bright)
-        ok1 = s1 == FULL_FRAME
-        status["S1"].append(ok1)
-        detail["S1"].append(f"{label}={'full' if ok1 else _fmt(s1)}")
+        # S1/S3 は frame が 2 枚未満だと自明に FULL_FRAME へ縮退するため、probe
+        # 失敗 (frame 不足) を pass と数えると hard gate が無根拠に PASS してしまう。
+        # noframe (評価対象外) として status には積まず detail にのみ残す。
+        if len(bright) < 2:
+            detail["S1"].append(f"{label}=noframe")
+            detail["S3"].append(f"{label}=noframe")
+        else:
+            s1 = detect_region_variance(bright)
+            ok1 = s1 == FULL_FRAME
+            status["S1"].append(ok1)
+            detail["S1"].append(f"{label}={'full' if ok1 else _fmt(s1)}")
 
-        s3 = detect_region_blackout_overlap(bright + dark)
-        ok3 = s3 == FULL_FRAME
-        status["S3"].append(ok3)
-        detail["S3"].append(f"{label}={'full' if ok3 else _fmt(s3)}")
+            s3 = detect_region_blackout_overlap(bright + dark)
+            ok3 = s3 == FULL_FRAME
+            status["S3"].append(ok3)
+            detail["S3"].append(f"{label}={'full' if ok3 else _fmt(s3)}")
 
         mid = _mid_match_timestamps(matches)
         raw = _probe_frame_rgb_hires(video, mid[0]) if mid else None
         if raw is None:
-            status["S2"].append(True)
             detail["S2"].append(f"{label}=noframe")
         else:
             frame = np.frombuffer(raw, dtype=np.uint8).reshape(
@@ -286,7 +292,8 @@ def _eval_obs_regression(
             detail["S2"].append(
                 f"{label}={'none' if s2 is None else ('full' if s2 == FULL_FRAME else _fmt(s2))}"
             )
-    return {c: (all(v) if v else True, detail[c]) for c, v in status.items()}
+    # 評価できた video が 1 本も無ければ PASS にしない (no evidence != pass)。
+    return {c: (bool(v) and all(v), detail[c]) for c, v in status.items()}
 
 
 def _fmt(r) -> str:

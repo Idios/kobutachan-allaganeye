@@ -200,6 +200,8 @@ def detect_region_scorebar_band(
     from allaganeye.video.detector import (
         _SCOREBAR_V2_PROBE_WIDTH,
         _SCOREBAR_V2_PROBE_HEIGHT,
+        _SCOREBAR_SCAN_Y_START,
+        _SCOREBAR_SCAN_Y_END,
         _EMBLEM_RELATIVE_POSITIONS,
         _emblem_and_check,
         _find_scorebar_horizontal_range,
@@ -209,10 +211,12 @@ def detect_region_scorebar_band(
     W = _SCOREBAR_V2_PROBE_WIDTH
     if frame.shape[:2] != (H, W):
         return None
+    # _find_scorebar_horizontal_range は内部で y=_SCOREBAR_SCAN_Y_START.._END を
+    # 走査するため、その窓高に合わせて band を切り出す (定数 drift 防止)。
+    band_h = _SCOREBAR_SCAN_Y_END - _SCOREBAR_SCAN_Y_START
     y_max = int(H * _BAND_Y_MAX_FRAC)
     shifted = np.zeros_like(frame)
     for y in range(0, y_max, stride):
-        band_h = 45  # always 45 within the scan range (y_max << H-45); guard not needed
         shifted[band_h:] = 0
         shifted[0:band_h] = frame[y : y + band_h]
         span = _find_scorebar_horizontal_range(shifted.tobytes())

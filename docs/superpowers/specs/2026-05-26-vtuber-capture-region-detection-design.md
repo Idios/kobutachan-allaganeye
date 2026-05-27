@@ -167,6 +167,17 @@ RegionTimeline = {
 (Windows, ffmpeg 8.1) で手動実行した結果。proxy 矩形は `vtuber-primary-regions.json`
 (レイアウト A=B static、正規化 0.1302 / 0.0898 / 0.8698 / 0.8667)。
 
+再現コマンド (worktree root を `PYTHONPATH` に通して実行):
+
+```bash
+# M1/M2/M4: 実験 harness
+python scripts/vtuber_region_experiment.py --benchmark <gyawa.mp4> --obs-dir <ALLAGANEYE_SAMPLE_VIDEO_DIR>
+# M3: e2e spike (threshold/interval を明示。default は threshold 15 = production 値)
+python scripts/vtuber_region_spike.py --benchmark <gyawa.mp4> --threshold 30 --interval 2.0
+```
+
+下表および M3 の `start 4/5 + end 5/5` は上記コマンド (spike は threshold 30 / interval 2.0) の結果。spike を default (threshold 15) で実行すると crop start は 1/5 に留まり、これが「領域 crop の暗転 floor ~17-20 に対し ~30 の閾値が必要」という finding の根拠そのものになる。
+
 | 候補 | tier | M1 IoU | M1 上端誤差 | M2 cost | M4 OBS 縮退 |
 | --- | --- | --- | --- | --- | --- |
 | S1 時間分散 | A coarse | 0.846 | 11px | ~0s (probe 除く) | FULL_FRAME x5 = PASS |
