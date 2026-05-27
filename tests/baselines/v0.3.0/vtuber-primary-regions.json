@@ -1,0 +1,14 @@
+{
+  "source_file": "2772549129-151803977-da21c691-9ed6-4068-9a8b-4726a8a519a8.mp4",
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "annotation_provider": "agent visual estimate, user (Idios) verified 2026-05-26",
+  "annotated_at": "2026-05-26",
+  "layout_note": "Layouts A (match 1, Valentine card) and B (matches 3/5, Halloween card) share the SAME game capture region; only decoration card overlays differ. The game capture is STATIC across this VOD. Top edge = bottom of the cyan streaming banner; right edge = frame right edge (the X/Y info panel + minimap + decoration cards are in-game HUD or overlays on top of the game); bottom edge = above the white follower-progress bar; left edge = right of the chat/avatar strip. Per-segment re-detect remains a general capability for other streams/VODs that DO change layout.",
+  "regions": [
+    {"timestamp": 1900, "layout": "A", "x": 0.1302, "y": 0.0898, "w": 0.8698, "h": 0.8667, "px": {"x": 250, "y": 97, "w": 1670, "h": 936}},
+    {"timestamp": 2361, "layout": "A", "x": 0.1302, "y": 0.0898, "w": 0.8698, "h": 0.8667, "px": {"x": 250, "y": 97, "w": 1670, "h": 936}},
+    {"timestamp": 4700, "layout": "B", "x": 0.1302, "y": 0.0898, "w": 0.8698, "h": 0.8667, "px": {"x": 250, "y": 97, "w": 1670, "h": 936}},
+    {"timestamp": 6900, "layout": "B", "x": 0.1302, "y": 0.0898, "w": 0.8698, "h": 0.8667, "px": {"x": 250, "y": 97, "w": 1670, "h": 936}}
+  ]
+}
