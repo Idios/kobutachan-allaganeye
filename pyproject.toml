@@ -9,7 +9,13 @@ description = "FF14 Frontline video auto-highlight extraction tool"
 license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
-    "typer>=0.9",
+    # click 8.4 / typer 0.25+ は click 例外を typer._click 名前空間へ分離し、
+    # cli.py の単一ダッシュ hint (NoSuchOption 捕捉) と debug_brightness の
+    # typer.Exit 捕捉を破壊する (CI 2026-05-27、develop-0.3.0 全体が赤化)。
+    # 既知 good ライン (typer 0.24.x / click 8.3.x) に pin して回帰を防ぐ。
+    # click は cli.py / tests が直接 import するため明示依存として宣言。
+    "typer>=0.9,<0.25",
+    "click>=8.0,<8.4",
     "numpy>=1.24",
     "scipy>=1.11",
     "opencv-python-headless>=4.8",
