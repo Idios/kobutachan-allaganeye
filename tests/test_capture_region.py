@@ -9,7 +9,6 @@ from allaganeye.video.capture_region import (
     _maybe_snap_full_frame,
     _scorebar_saturated_runs,
     detect_region_blackout_overlap,
-    detect_region_scorebar_band,
     detect_region_variance,
     iou,
     localize_scorebar,
@@ -156,7 +155,7 @@ def test_variance_tiny_speck_below_min_area_falls_back_full():
 
 
 # ---------------------------------------------------------------------------
-# Task B.2: S2 detect_region_scorebar_band
+# Shared hi-res scorebar frame builder (used by P1 localize tests)
 # ---------------------------------------------------------------------------
 
 
@@ -182,33 +181,6 @@ def _hires_with_scorebar_at(y_top: int, x_left: int, x_right: int):
         for col in range(region.shape[1]):
             region[:, col] = (200, 30, 30) if (col // 2) % 2 == 0 else (0, 0, 0)
     return f
-
-
-def test_scorebar_band_at_offset_y_returns_inset_top():
-    f = _hires_with_scorebar_at(y_top=120, x_left=500, x_right=1400)
-    r = detect_region_scorebar_band(f)
-    assert r is not None and r.source == "tierB"
-    assert abs(r.y - 120 / 1080) < 0.012
-
-
-def test_scorebar_band_overwide_returns_none():
-    # scorebar 幅 1690px > detector._SCOREBAR_SCAN_MAX_WIDTH_PX (1440, #806) のため
-    # _find_scorebar_horizontal_range が None を返し S2 も None。OBS の全体縮退は
-    # coarse 検出器 (S1/S3) の責務であり S2 (Tier-B precise) は OBS を snap しない。
-    f = _hires_with_scorebar_at(y_top=2, x_left=120, x_right=1810)
-    assert detect_region_scorebar_band(f) is None
-
-
-def test_scorebar_band_uniform_cyan_banner_rejected():
-    from allaganeye.video.detector import (
-        _SCOREBAR_V2_PROBE_WIDTH,
-        _SCOREBAR_V2_PROBE_HEIGHT,
-    )
-
-    W, H = _SCOREBAR_V2_PROBE_WIDTH, _SCOREBAR_V2_PROBE_HEIGHT
-    f = np.full((H, W, 3), 40, dtype=np.uint8)
-    f[0:55, :] = (60, 200, 200)  # 単色 cyan 帯 (紋章なし)
-    assert detect_region_scorebar_band(f) is None
 
 
 def test_all_grayscale_detectors_snap_full_on_obs_like_input():

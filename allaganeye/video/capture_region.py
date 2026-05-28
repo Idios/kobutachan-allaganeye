@@ -195,9 +195,6 @@ _LOCALIZE_TARGET_RATIO = 2.0
 """confidence が 1.0 に達する emblem margin 倍率 (最弱 emblem の sat/edge が
 閾値の TARGET 倍で満点)。clear な in-match frame で ~1.0 に出るよう選定。"""
 
-_GAME_ASPECT = 16.0 / 9.0
-"""FF14 game capture のアスペクト比 (帯幅から game 高さを逆算)。"""
-
 
 def _scorebar_saturated_runs(band: np.ndarray, cv2) -> list[tuple[int, int]]:
     """band (Hb,W,3 uint8 RGB) の saturated column run を width-gate して全件返す。
@@ -369,70 +366,6 @@ def localize_scorebar(
         y_bottom=y + band_h,
         confidence=confidence,
     )
-
-
-def detect_region_scorebar_band(
-    frame: np.ndarray,
-    *,
-    stride: int = _BAND_SCAN_STRIDE,
-) -> CaptureRegion | None:
-    """S2: FL scorebar 帯を全 y で探し、game 矩形を逆算 (Tier B precise)。
-
-    *frame* は 1920x1080 RGB (H,W,3) uint8。検出帯を GC 紋章 3 点 AND で
-    FL と検証してから返す。FL 帯が見つからなければ None (試合外フレーム
-    や opencv 未導入)。OBS の全体縮退は coarse 検出器 (S1/S3) の責務であり、
-    scorebar 幅 > detector._SCOREBAR_SCAN_MAX_WIDTH_PX (1440, #806) の広帯は None。
-    """
-    try:
-        import cv2
-    except ImportError:
-        return None
-    from allaganeye.video.detector import (
-        _SCOREBAR_V2_PROBE_WIDTH,
-        _SCOREBAR_V2_PROBE_HEIGHT,
-        _SCOREBAR_SCAN_Y_START,
-        _SCOREBAR_SCAN_Y_END,
-        _EMBLEM_RELATIVE_POSITIONS,
-        _emblem_and_check,
-        _find_scorebar_horizontal_range,
-    )
-
-    H = _SCOREBAR_V2_PROBE_HEIGHT
-    W = _SCOREBAR_V2_PROBE_WIDTH
-    if frame.shape[:2] != (H, W):
-        return None
-    # _find_scorebar_horizontal_range は内部で y=_SCOREBAR_SCAN_Y_START.._END を
-    # 走査するため、その窓高に合わせて band を切り出す (定数 drift 防止)。
-    band_h = _SCOREBAR_SCAN_Y_END - _SCOREBAR_SCAN_Y_START
-    y_max = int(H * _BAND_Y_MAX_FRAC)
-    shifted = np.zeros_like(frame)
-    for y in range(0, y_max, stride):
-        shifted[band_h:] = 0
-        shifted[0:band_h] = frame[y : y + band_h]
-        span = _find_scorebar_horizontal_range(shifted.tobytes())
-        if span is None:
-            continue
-        x_left, x_right = span
-        bar_w = x_right - x_left
-        positions = [
-            (
-                name,
-                int(x_left + cx_rel * bar_w - hw_rel * bar_w),
-                y + ey1,
-                int(x_left + cx_rel * bar_w + hw_rel * bar_w),
-                y + ey2,
-            )
-            for name, cx_rel, hw_rel, ey1, ey2 in _EMBLEM_RELATIVE_POSITIONS
-        ]
-        if not _emblem_and_check(frame, positions, f"band y={y}", cv2):
-            continue
-        gw = bar_w / W
-        gx = x_left / W
-        gy = y / H
-        gh = (bar_w / _GAME_ASPECT) / H
-        region = CaptureRegion(gx, gy, gw, gh, confidence=0.9, source="tierB").clamp()
-        return region
-    return None
 
 
 def detect_region_blackout_overlap(
