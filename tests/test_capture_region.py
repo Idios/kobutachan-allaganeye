@@ -4,6 +4,7 @@ from allaganeye.video.capture_region import (
     FULL_FRAME,
     CaptureRegion,
     RegionTimeline,
+    ScorebarLocalization,
     _maybe_snap_full_frame,
     detect_region_blackout_overlap,
     detect_region_scorebar_band,
@@ -214,3 +215,20 @@ def test_all_grayscale_detectors_snap_full_on_obs_like_input():
     bright = np.full((180, 320), 120, dtype=np.uint8)
     dark = np.full((180, 320), 2, dtype=np.uint8)
     assert detect_region_blackout_overlap([bright, bright, dark]) == FULL_FRAME
+
+
+# ---------------------------------------------------------------------------
+# P1: localize_scorebar (re-plan #753)
+# ---------------------------------------------------------------------------
+
+
+def test_scorebar_localization_is_frozen_with_fields():
+    loc = ScorebarLocalization(
+        x_left=100, x_right=700, y_top=300, y_bottom=345, confidence=0.9
+    )
+    assert (loc.x_left, loc.x_right, loc.y_top, loc.y_bottom) == (100, 700, 300, 345)
+    assert loc.confidence == 0.9
+    import dataclasses
+
+    with __import__("pytest").raises(dataclasses.FrozenInstanceError):
+        loc.x_left = 0  # type: ignore[misc]

@@ -54,6 +54,20 @@ class CaptureRegion:
         )
 
 
+@dataclass(frozen=True)
+class ScorebarLocalization:
+    """FL scorebar 帯を 1920x1080 probe frame 内で局在化した結果 (P1, re-plan #753).
+
+    座標はすべて probe px (inclusive)。consumer (P2) が /1920,/1080 で正規化する。
+    """
+
+    x_left: int
+    x_right: int
+    y_top: int
+    y_bottom: int
+    confidence: float
+
+
 FULL_FRAME = CaptureRegion(0.0, 0.0, 1.0, 1.0, confidence=1.0, source="fallback")
 
 
@@ -176,6 +190,10 @@ _BAND_SCAN_STRIDE = 6
 
 _BAND_Y_MAX_FRAC = 0.55
 """scorebar を探す y の上限 (frame 高さ比)。game は frame 上〜中央寄り。"""
+
+_LOCALIZE_TARGET_RATIO = 2.0
+"""confidence が 1.0 に達する emblem margin 倍率 (最弱 emblem の sat/edge が
+閾値の TARGET 倍で満点)。clear な in-match frame で ~1.0 に出るよう選定。"""
 
 _GAME_ASPECT = 16.0 / 9.0
 """FF14 game capture のアスペクト比 (帯幅から game 高さを逆算)。"""
