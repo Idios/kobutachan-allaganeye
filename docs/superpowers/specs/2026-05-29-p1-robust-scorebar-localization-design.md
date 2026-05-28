@@ -49,6 +49,8 @@ P1 は **単フレーム localization のみ**。robustness (外れ値除去) �
 | D4 | multi-source 検証 | **P1 のマージ gate (受け入れ条件)**。実装+gyawa+合成は今進め、追加 source 入手・guard verify・検証完了まで **P1 マージは保留** | 追加 VTuber source 入手見込みあり。gyawa 1-source 過学習リスク (R2) を実データで潰してから land する |
 
 > **D4 の replan との差分**: replan §5/§8 は multi-source を「data-gated *follow-up*」としていたが、本 P1 では user 判断により **マージ gate** に強化する。これは P1 (および依存する P2→P4→P5 chain) の land を multi-source データ入手まで保留することを意味する (§8.4 / §10 で chain 影響を明記)。
+>
+> **D2 の plan 時改訂**: 方式1 の y 走査 hit 選択を当初の first-hit short-circuit から **best-hit (emblem margin 最大の候補を選択)** に変更した (plan 作成時に first-hit の confidence/y 精度問題が判明、2026-05-29 user 承認済)。詳細・理由は §5.4。
 
 ## 4. API / データ構造
 
@@ -76,14 +78,16 @@ localize_scorebar(frame):                       # frame: (1080,1920,3) uint8
     if frame.shape != (1080,1920,3): return None
     band_h = _SCOREBAR_SCAN_Y_END - _SCOREBAR_SCAN_Y_START   # = 45
     y_max  = int(1080 * _BAND_Y_MAX_FRAC)                     # ≈ 594
-    for y in range(0, y_max, stride):            # stride 既定 = _BAND_SCAN_STRIDE (6) → ~99 steps
+    best = None                                  # (margin, x_left, x_right, y)
+    for y in range(0, y_max, stride):            # stride 既定 = _BAND_SCAN_STRIDE (6) → ~99 steps (全走査)
         band = frame[y : y + band_h]             # (45,1920,3)
         for (x_left, x_right) in saturated_runs(band):   # width-gated 全 run、center 前提なし
             positions = emblem_positions(x_left, x_right, y)   # _EMBLEM_RELATIVE_POSITIONS
             margin = emblem_and_margin(frame, positions)       # 3点 AND 通過なら最弱 margin、不通過 None
-            if margin is not None:
-                return ScorebarLocalization(x_left, x_right, y, y + band_h, conf(margin))
-    return None
+            if margin is not None and (best is None or margin > best.margin):
+                best = (margin, x_left, x_right, y)            # best-hit: 最大 margin を保持
+    if best is None: return None
+    return ScorebarLocalization(best.x_left, best.x_right, best.y, best.y + band_h, conf(best.margin))
 ```
 
 ### 5.2 saturated_runs (#803 center-straddling の撤廃)
@@ -109,10 +113,10 @@ D1 (Additive) を OBS 安全のため選んだ経緯から既定は案 A 寄り�
 - `emblem_and_margin(frame, positions)`: 各 emblem で `mean_sat` (bright pixel) と `edge_density` (Sobel) を計算し、`_EMBLEM_SAT_THRESHOLD`(70) / `_EMBLEM_EDGE_THRESHOLD`(40) と比較。3点すべて両閾値超なら最弱 margin を返し、1点でも不通過なら `None`。bool だけ返す既存 `_emblem_and_check` の margin 版。
   - **実装手段** (plan/TDD で確定、§5.2 と同じ案 A/案 B の trade-off): 案 A = P1 側に margin 計算を持つ (`_emblem_and_check` 不変)。案 B = `_emblem_and_margin` を新設し `_emblem_and_check` をその bool ラッパに保存的 refactor (OBS parity で担保)。いずれも `_has_scorebar_v2` の判定不変。
 
-### 5.4 探索順序とコスト
+### 5.4 探索順序とコスト (best-hit、plan 作成時の改訂)
 
-- y 昇順 first-hit short-circuit: in-match は scorebar が inset 上端 (小 y) にあるため早期 hit。
-- 最悪 (非試合・hit なし): ~99 y-step × (band の HSV 変換 + run 構築)。emblem-AND は width-gated run (非試合では 0〜1 本) のみに走るため、支配コストは per-y の HSV 変換 (cheap numpy)。
+- **best-hit**: y を全走査し、emblem-AND 通過候補のうち **margin 最大の (run, y)** を返す。当初案の first-hit short-circuit は、scan band が scorebar 帯に**部分的に重なった時点** (true y_top 手前) で AND が通り、(a) y_top が ±stride 超ずれ、(b) 部分重なりで sat が薄まり confidence が clean in-match でも低く出る、という問題があったため改訂 (plan 作成時に判明、user 承認済)。best-hit は最大整合の y を選ぶため y_top 精度 ±stride/2、confidence は最良整合 margin になる。
+- コスト: short-circuit を持たず常に ~99 y-step 全走査 (band の HSV 変換 + run 構築)。emblem-AND は width-gated run (非試合では 0〜1 本) のみに走るため、支配コストは per-y の HSV 変換 (cheap numpy)。spec §5.1/§9 R3 が「最悪は全走査」を既に織り込み済み。
 - `stride` は引数で可変 (既定 6)。P2 多フレーム利用時に実測コストが問題化したら upper-frame 一括 HSV + sliding window へ最適化 (YAGNI、後付け)。
 
 ## 6. confidence
@@ -126,7 +130,7 @@ m            = min over i of min(ratio_sat_i, ratio_edge_i)   # AND 通過時 m 
 confidence   = clamp((m - 1.0) / (TARGET_RATIO - 1.0), 0.0, 1.0)
 ```
 
-- AND 通過 = 全 ratio > 1.0。margin が大きいほど 1.0 に近づく。
+- AND 通過 = 全 ratio > 1.0。margin が大きいほど 1.0 に近づく。`m` は best-hit (§5.4) で選ばれた **最大 margin 候補**のものなので、confidence は「最良整合 frame 位置での余裕」を表す。
 - `TARGET_RATIO` (満点に達する margin 倍率) は gyawa/OBS の clear な in-match frame で confidence が 1.0 近傍に出るよう calibrate (既定候補は実装時に決定)。
 - 用途: P2 が「inset を信頼して採用するか FULL_FRAME に縮退するか」の gate に使う。P4 は localization の **有無** (None か否か) を主に使う。
 
