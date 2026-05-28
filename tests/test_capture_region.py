@@ -5,6 +5,7 @@ from allaganeye.video.capture_region import (
     CaptureRegion,
     RegionTimeline,
     ScorebarLocalization,
+    _emblem_and_margin,
     _maybe_snap_full_frame,
     _scorebar_saturated_runs,
     detect_region_blackout_overlap,
@@ -283,3 +284,37 @@ def test_saturated_runs_blank_returns_empty():
 
     band = np.full((45, 1920, 3), 40, dtype=np.uint8)
     assert _scorebar_saturated_runs(band, cv2) == []
+
+
+def _frame_with_emblem_box(fill, x1=600, y1=2, x2=665, y2=40):
+    """1920x1080 frame の 1 box を指定 fill で塗る。stripe=高 sat/edge を作る用。"""
+    from allaganeye.video.detector import (
+        _SCOREBAR_V2_PROBE_HEIGHT,
+        _SCOREBAR_V2_PROBE_WIDTH,
+    )
+
+    W, H = _SCOREBAR_V2_PROBE_WIDTH, _SCOREBAR_V2_PROBE_HEIGHT
+    f = np.full((H, W, 3), 40, dtype=np.uint8)
+    region = f[y1:y2, x1:x2]
+    if fill == "stripe":
+        for col in range(region.shape[1]):
+            region[:, col] = (200, 30, 30) if (col // 2) % 2 == 0 else (0, 0, 0)
+    else:
+        region[:] = fill
+    return f, [("e", x1, y1, x2, y2)]
+
+
+def test_emblem_and_margin_strong_emblem_returns_ratio_above_one():
+    import cv2
+
+    f, positions = _frame_with_emblem_box("stripe")
+    margin = _emblem_and_margin(f, positions, cv2)
+    assert margin is not None and margin > 1.0
+
+
+def test_emblem_and_margin_flat_region_returns_none():
+    import cv2
+
+    # 単色 (低 edge) は edge 閾値を割るので None。
+    f, positions = _frame_with_emblem_box((50, 50, 200))
+    assert _emblem_and_margin(f, positions, cv2) is None

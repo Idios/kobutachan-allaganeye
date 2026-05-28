@@ -256,6 +256,52 @@ def _scorebar_saturated_runs(band: np.ndarray, cv2) -> list[tuple[int, int]]:
     return runs
 
 
+def _emblem_and_margin(
+    frame: np.ndarray,
+    positions: list[tuple[str, int, int, int, int]],
+    cv2,
+) -> float | None:
+    """3点 emblem AND。全通過なら最弱 margin (min ratio>1.0)、不通過なら None。
+
+    `detector._emblem_and_check` と同一の sat (bright pixel) / Sobel edge 計算を
+    用いる (OBS parity は plan Task 7 で担保)。各 position は (name,x1,y1,x2,y2)。
+    """
+    from allaganeye.video.detector import (
+        _EMBLEM_EDGE_THRESHOLD,
+        _EMBLEM_SAT_THRESHOLD,
+    )
+
+    min_ratio: float | None = None
+    for _name, x1, y1, x2, y2 in positions:
+        region = frame[y1:y2, x1:x2, :]
+        if region.size == 0:
+            return None
+        bgr = cv2.cvtColor(region, cv2.COLOR_RGB2BGR)
+        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+
+        val = hsv[:, :, 2].astype(np.float32)
+        sat = hsv[:, :, 1].astype(np.float32)
+        bright_mask = val > 30
+        if bright_mask.sum() > 5:
+            mean_sat = float(sat[bright_mask].mean())
+        else:
+            mean_sat = 0.0
+
+        sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        edge_density = float(np.sqrt(sobel_x**2 + sobel_y**2).mean())
+
+        if mean_sat <= _EMBLEM_SAT_THRESHOLD or edge_density <= _EMBLEM_EDGE_THRESHOLD:
+            return None
+        ratio = min(
+            mean_sat / _EMBLEM_SAT_THRESHOLD,
+            edge_density / _EMBLEM_EDGE_THRESHOLD,
+        )
+        min_ratio = ratio if min_ratio is None else min(min_ratio, ratio)
+    return min_ratio
+
+
 def detect_region_scorebar_band(
     frame: np.ndarray,
     *,
