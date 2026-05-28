@@ -351,3 +351,63 @@ def test_localize_blank_frame_returns_none():
         (_SCOREBAR_V2_PROBE_HEIGHT, _SCOREBAR_V2_PROBE_WIDTH, 3), 40, dtype=np.uint8
     )
     assert localize_scorebar(f) is None
+
+
+def test_localize_scale_variation_recovers_span():
+    # HUD スケール差を span 幅で模擬。narrow と wide の両方で復元できること。
+    for x_left, x_right in [(700, 1220), (300, 1620)]:
+        f = _hires_with_scorebar_at(y_top=60, x_left=x_left, x_right=x_right)
+        loc = localize_scorebar(f)
+        assert loc is not None, (x_left, x_right)
+        assert abs(loc.x_left - x_left) <= 4 and abs(loc.x_right - x_right) <= 4
+
+
+def test_localize_off_center_band_without_emblems_returns_none():
+    # 中心をまたがない右寄りの単色帯 (emblem なし)。all-run 化しても emblem-AND
+    # が落とすので None。#803 (post-match 広帯) 防御が center 前提なしで成立する確証。
+    from allaganeye.video.detector import (
+        _SCOREBAR_V2_PROBE_HEIGHT,
+        _SCOREBAR_V2_PROBE_WIDTH,
+    )
+
+    W, H = _SCOREBAR_V2_PROBE_WIDTH, _SCOREBAR_V2_PROBE_HEIGHT
+    f = np.full((H, W, 3), 40, dtype=np.uint8)
+    f[0:45, 1400:1919] = (50, 50, 200)  # 519px 右寄り帯、紋章なし
+    assert localize_scorebar(f) is None
+
+
+def test_localize_overwide_band_returns_none():
+    f = _hires_with_scorebar_at(y_top=2, x_left=120, x_right=1810)
+    assert localize_scorebar(f) is None
+
+
+def test_localize_uniform_cyan_banner_returns_none():
+    from allaganeye.video.detector import (
+        _SCOREBAR_V2_PROBE_HEIGHT,
+        _SCOREBAR_V2_PROBE_WIDTH,
+    )
+
+    W, H = _SCOREBAR_V2_PROBE_WIDTH, _SCOREBAR_V2_PROBE_HEIGHT
+    f = np.full((H, W, 3), 40, dtype=np.uint8)
+    f[0:55, :] = (60, 200, 200)  # 全幅単色 cyan (>max width かつ紋章なし)
+    assert localize_scorebar(f) is None
+
+
+def test_localize_wrong_shape_returns_none():
+    f = np.full((100, 100, 3), 40, dtype=np.uint8)
+    assert localize_scorebar(f) is None
+
+
+def test_localize_returns_none_without_cv2(monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "cv2":
+            raise ImportError("simulated missing cv2")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    f = _hires_with_scorebar_at(y_top=120, x_left=500, x_right=1400)
+    assert localize_scorebar(f) is None
