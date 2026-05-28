@@ -302,6 +302,75 @@ def _emblem_and_margin(
     return min_ratio
 
 
+def localize_scorebar(
+    frame: np.ndarray,
+    *,
+    stride: int = _BAND_SCAN_STRIDE,
+    target_ratio: float = _LOCALIZE_TARGET_RATIO,
+) -> ScorebarLocalization | None:
+    """1920x1080 RGB frame から FL scorebar を位置独立に局在化する (P1, #753).
+
+    y を stride 全走査し、各 band で width-gated 全 run に emblem 3点 AND をかけ、
+    通過候補のうち emblem margin が最大の (run, y) を返す (best-hit)。best-hit に
+    より y_top 精度が ±stride/2 に上がり confidence が最良整合の margin になる。
+    試合外 / cv2 不在 / 形状不一致は None。OBS 分類 path からは呼ばれない
+    (Additive、§7)。
+    """
+    try:
+        import cv2
+    except ImportError:
+        return None
+
+    from allaganeye.video.detector import (
+        _EMBLEM_RELATIVE_POSITIONS,
+        _SCOREBAR_SCAN_Y_END,
+        _SCOREBAR_SCAN_Y_START,
+        _SCOREBAR_V2_PROBE_HEIGHT,
+        _SCOREBAR_V2_PROBE_WIDTH,
+    )
+
+    W = _SCOREBAR_V2_PROBE_WIDTH
+    H = _SCOREBAR_V2_PROBE_HEIGHT
+    if frame.shape[:2] != (H, W):
+        return None
+
+    band_h = _SCOREBAR_SCAN_Y_END - _SCOREBAR_SCAN_Y_START
+    y_max = int(H * _BAND_Y_MAX_FRAC)
+    best: tuple[float, int, int, int] | None = None  # (margin, x_left, x_right, y)
+    for y in range(0, y_max, stride):
+        band = frame[y : y + band_h]
+        for x_left, x_right in _scorebar_saturated_runs(band, cv2):
+            bar_w = x_right - x_left
+            positions: list[tuple[str, int, int, int, int]] = []
+            valid = True
+            for name, cx_rel, hw_rel, ey1, ey2 in _EMBLEM_RELATIVE_POSITIONS:
+                px1 = int(x_left + cx_rel * bar_w - hw_rel * bar_w)
+                px2 = int(x_left + cx_rel * bar_w + hw_rel * bar_w)
+                py1 = y + ey1
+                py2 = y + ey2
+                if px1 < 0 or px2 > W or py1 < 0 or py2 > H or px2 <= px1:
+                    valid = False
+                    break
+                positions.append((name, px1, py1, px2, py2))
+            if not valid:
+                continue
+            margin = _emblem_and_margin(frame, positions, cv2)
+            if margin is not None and (best is None or margin > best[0]):
+                best = (margin, x_left, x_right, y)
+
+    if best is None:
+        return None
+    margin, x_left, x_right, y = best
+    confidence = max(0.0, min(1.0, (margin - 1.0) / (target_ratio - 1.0)))
+    return ScorebarLocalization(
+        x_left=x_left,
+        x_right=x_right,
+        y_top=y,
+        y_bottom=y + band_h,
+        confidence=confidence,
+    )
+
+
 def detect_region_scorebar_band(
     frame: np.ndarray,
     *,

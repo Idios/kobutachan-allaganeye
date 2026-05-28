@@ -12,6 +12,7 @@ from allaganeye.video.capture_region import (
     detect_region_scorebar_band,
     detect_region_variance,
     iou,
+    localize_scorebar,
     top_edge_error_px,
 )
 
@@ -318,3 +319,35 @@ def test_emblem_and_margin_flat_region_returns_none():
     # 単色 (低 edge) は edge 閾値を割るので None。
     f, positions = _frame_with_emblem_box((50, 50, 200))
     assert _emblem_and_margin(f, positions, cv2) is None
+
+
+def test_localize_centered_in_match_returns_localization():
+    f = _hires_with_scorebar_at(y_top=120, x_left=500, x_right=1400)
+    loc = localize_scorebar(f)
+    assert loc is not None
+    assert abs(loc.x_left - 500) <= 4 and abs(loc.x_right - 1400) <= 4
+    assert abs(loc.y_top - 120) <= 6  # stride 既定 6
+    assert loc.y_bottom == loc.y_top + 45
+    assert 0.0 < loc.confidence <= 1.0
+
+
+def test_localize_off_center_inset_position_independent():
+    # 中心 (x=960) をまたがない左寄り inset。退役した S2 (_find_scorebar_horizontal_range
+    # center-straddling) では検出不能だった位置独立ケース (P1 の存在意義)。
+    f = _hires_with_scorebar_at(y_top=300, x_left=100, x_right=700)
+    loc = localize_scorebar(f)
+    assert loc is not None
+    assert abs(loc.x_left - 100) <= 4 and abs(loc.x_right - 700) <= 4
+    assert abs(loc.y_top - 300) <= 6
+
+
+def test_localize_blank_frame_returns_none():
+    from allaganeye.video.detector import (
+        _SCOREBAR_V2_PROBE_HEIGHT,
+        _SCOREBAR_V2_PROBE_WIDTH,
+    )
+
+    f = np.full(
+        (_SCOREBAR_V2_PROBE_HEIGHT, _SCOREBAR_V2_PROBE_WIDTH, 3), 40, dtype=np.uint8
+    )
+    assert localize_scorebar(f) is None
