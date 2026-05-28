@@ -383,3 +383,26 @@ def test_localize_returns_none_without_cv2(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", fake_import)
     f = _hires_with_scorebar_at(y_top=120, x_left=500, x_right=1400)
     assert localize_scorebar(f) is None
+
+
+def test_localize_agrees_with_has_scorebar_v2_in_match():
+    # 絶対 emblem 位置に重なる span を描くと _has_scorebar_v2 Primary が True。
+    # localize_scorebar も relative 位置で検出 -> 両者が in-match で合致 (OBS parity)。
+    from allaganeye.video.detector import _has_scorebar_v2
+
+    f = _hires_with_scorebar_at(y_top=0, x_left=600, x_right=1318)
+    assert localize_scorebar(f) is not None
+    assert _has_scorebar_v2(f.tobytes()) is True
+
+
+def test_localize_agrees_with_has_scorebar_v2_non_match():
+    from allaganeye.video.detector import (
+        _SCOREBAR_V2_PROBE_HEIGHT,
+        _SCOREBAR_V2_PROBE_WIDTH,
+        _has_scorebar_v2,
+    )
+
+    W, H = _SCOREBAR_V2_PROBE_WIDTH, _SCOREBAR_V2_PROBE_HEIGHT
+    f = np.full((H, W, 3), 40, dtype=np.uint8)
+    assert localize_scorebar(f) is None
+    assert _has_scorebar_v2(f.tobytes()) is False
