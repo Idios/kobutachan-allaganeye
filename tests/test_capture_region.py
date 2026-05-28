@@ -6,6 +6,7 @@ from allaganeye.video.capture_region import (
     RegionTimeline,
     ScorebarLocalization,
     _maybe_snap_full_frame,
+    _scorebar_saturated_runs,
     detect_region_blackout_overlap,
     detect_region_scorebar_band,
     detect_region_variance,
@@ -232,3 +233,53 @@ def test_scorebar_localization_is_frozen_with_fields():
 
     with __import__("pytest").raises(dataclasses.FrozenInstanceError):
         loc.x_left = 0  # type: ignore[misc]
+
+
+def _sat_band(width_runs, h=45, w=1920):
+    """指定 (x_left, x_right) 範囲を saturated blue で塗った band (h,w,3) を返す。"""
+    band = np.full((h, w, 3), 40, dtype=np.uint8)
+    for x_left, x_right in width_runs:
+        band[:, x_left : x_right + 1] = (50, 50, 200)
+    return band
+
+
+def test_saturated_runs_finds_centered_run():
+    import cv2
+
+    band = _sat_band([(500, 1400)])
+    runs = _scorebar_saturated_runs(band, cv2)
+    assert len(runs) == 1
+    x_left, x_right = runs[0]
+    assert abs(x_left - 500) <= 2 and abs(x_right - 1400) <= 2
+
+
+def test_saturated_runs_finds_off_center_run():
+    # 中心 (x=960) をまたがない左寄り帯。_find_scorebar_horizontal_range は
+    # center-straddling で None を返すが、P1 はこれを拾えねばならない (#803 撤廃)。
+    import cv2
+
+    band = _sat_band([(100, 700)])
+    runs = _scorebar_saturated_runs(band, cv2)
+    assert len(runs) == 1
+    x_left, x_right = runs[0]
+    assert abs(x_left - 100) <= 2 and abs(x_right - 700) <= 2
+
+
+def test_saturated_runs_drops_narrow_and_overwide():
+    import cv2
+
+    # narrow (<500px) と overwide (>1440px) はどちらも width gate で除外。
+    band = _sat_band([(0, 300), (700, 1300)])  # 301px run, 601px run
+    runs = _scorebar_saturated_runs(band, cv2)
+    assert len(runs) == 1
+    assert abs(runs[0][0] - 700) <= 2 and abs(runs[0][1] - 1300) <= 2
+
+    overwide = _sat_band([(100, 1800)])  # 1701px
+    assert _scorebar_saturated_runs(overwide, cv2) == []
+
+
+def test_saturated_runs_blank_returns_empty():
+    import cv2
+
+    band = np.full((45, 1920, 3), 40, dtype=np.uint8)
+    assert _scorebar_saturated_runs(band, cv2) == []

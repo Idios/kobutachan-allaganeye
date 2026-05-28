@@ -199,6 +199,63 @@ _GAME_ASPECT = 16.0 / 9.0
 """FF14 game capture のアスペクト比 (帯幅から game 高さを逆算)。"""
 
 
+def _scorebar_saturated_runs(band: np.ndarray, cv2) -> list[tuple[int, int]]:
+    """band (Hb,W,3 uint8 RGB) の saturated column run を width-gate して全件返す。
+
+    `detector._find_scorebar_horizontal_range` の per-pixel mask + col-ratio +
+    gap-merge を共有しつつ、center-straddling 選択 (#803) を撤廃する。返す run は
+    `_SCOREBAR_SCAN_MIN_WIDTH_PX`..`_SCOREBAR_SCAN_MAX_WIDTH_PX` の幅のもののみ。
+    """
+    from allaganeye.video.detector import (
+        _SCOREBAR_SCAN_COL_RATIO,
+        _SCOREBAR_SCAN_MAX_GAP_PX,
+        _SCOREBAR_SCAN_MAX_WIDTH_PX,
+        _SCOREBAR_SCAN_MIN_WIDTH_PX,
+        _SCOREBAR_SCAN_SAT_THRESHOLD,
+        _SCOREBAR_SCAN_VAL_THRESHOLD,
+    )
+
+    bgr = cv2.cvtColor(band, cv2.COLOR_RGB2BGR)
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    sat = hsv[:, :, 1].astype(np.float32)
+    val = hsv[:, :, 2].astype(np.float32)
+    pixel_mask = (sat > _SCOREBAR_SCAN_SAT_THRESHOLD) & (
+        val > _SCOREBAR_SCAN_VAL_THRESHOLD
+    )
+    col_saturated = pixel_mask.mean(axis=0) >= _SCOREBAR_SCAN_COL_RATIO
+
+    width = band.shape[1]
+    raw_runs: list[tuple[int, int]] = []
+    i = 0
+    while i < width:
+        if col_saturated[i]:
+            j = i
+            while j < width and col_saturated[j]:
+                j += 1
+            raw_runs.append((i, j - 1))
+            i = j
+        else:
+            i += 1
+
+    if not raw_runs:
+        return []
+
+    merged: list[tuple[int, int]] = [raw_runs[0]]
+    for start, end in raw_runs[1:]:
+        prev_start, prev_end = merged[-1]
+        if start - prev_end - 1 <= _SCOREBAR_SCAN_MAX_GAP_PX:
+            merged[-1] = (prev_start, end)
+        else:
+            merged.append((start, end))
+
+    runs: list[tuple[int, int]] = []
+    for start, end in merged:
+        span_width = end - start + 1
+        if _SCOREBAR_SCAN_MIN_WIDTH_PX <= span_width <= _SCOREBAR_SCAN_MAX_WIDTH_PX:
+            runs.append((start, end))
+    return runs
+
+
 def detect_region_scorebar_band(
     frame: np.ndarray,
     *,
