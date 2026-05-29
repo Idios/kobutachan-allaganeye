@@ -4,11 +4,14 @@ from allaganeye.video.capture_region import (
     FULL_FRAME,
     CaptureRegion,
     RegionTimeline,
+    ScorebarLocalization,
+    _emblem_and_margin,
     _maybe_snap_full_frame,
+    _scorebar_saturated_runs,
     detect_region_blackout_overlap,
-    detect_region_scorebar_band,
     detect_region_variance,
     iou,
+    localize_scorebar,
     top_edge_error_px,
 )
 
@@ -152,7 +155,7 @@ def test_variance_tiny_speck_below_min_area_falls_back_full():
 
 
 # ---------------------------------------------------------------------------
-# Task B.2: S2 detect_region_scorebar_band
+# Shared hi-res scorebar frame builder (used by P1 localize tests)
 # ---------------------------------------------------------------------------
 
 
@@ -180,33 +183,6 @@ def _hires_with_scorebar_at(y_top: int, x_left: int, x_right: int):
     return f
 
 
-def test_scorebar_band_at_offset_y_returns_inset_top():
-    f = _hires_with_scorebar_at(y_top=120, x_left=500, x_right=1400)
-    r = detect_region_scorebar_band(f)
-    assert r is not None and r.source == "tierB"
-    assert abs(r.y - 120 / 1080) < 0.012
-
-
-def test_scorebar_band_overwide_returns_none():
-    # scorebar 幅 1690px > detector._SCOREBAR_SCAN_MAX_WIDTH_PX (1440, #806) のため
-    # _find_scorebar_horizontal_range が None を返し S2 も None。OBS の全体縮退は
-    # coarse 検出器 (S1/S3) の責務であり S2 (Tier-B precise) は OBS を snap しない。
-    f = _hires_with_scorebar_at(y_top=2, x_left=120, x_right=1810)
-    assert detect_region_scorebar_band(f) is None
-
-
-def test_scorebar_band_uniform_cyan_banner_rejected():
-    from allaganeye.video.detector import (
-        _SCOREBAR_V2_PROBE_WIDTH,
-        _SCOREBAR_V2_PROBE_HEIGHT,
-    )
-
-    W, H = _SCOREBAR_V2_PROBE_WIDTH, _SCOREBAR_V2_PROBE_HEIGHT
-    f = np.full((H, W, 3), 40, dtype=np.uint8)
-    f[0:55, :] = (60, 200, 200)  # 単色 cyan 帯 (紋章なし)
-    assert detect_region_scorebar_band(f) is None
-
-
 def test_all_grayscale_detectors_snap_full_on_obs_like_input():
     rng = np.random.default_rng(2)
     motion = [rng.integers(0, 256, (180, 320), dtype=np.uint8) for _ in range(8)]
@@ -214,3 +190,228 @@ def test_all_grayscale_detectors_snap_full_on_obs_like_input():
     bright = np.full((180, 320), 120, dtype=np.uint8)
     dark = np.full((180, 320), 2, dtype=np.uint8)
     assert detect_region_blackout_overlap([bright, bright, dark]) == FULL_FRAME
+
+
+# ---------------------------------------------------------------------------
+# P1: localize_scorebar (re-plan #753)
+# ---------------------------------------------------------------------------
+
+
+def test_scorebar_localization_is_frozen_with_fields():
+    loc = ScorebarLocalization(
+        x_left=100, x_right=700, y_top=300, y_bottom=345, confidence=0.9
+    )
+    assert (loc.x_left, loc.x_right, loc.y_top, loc.y_bottom) == (100, 700, 300, 345)
+    assert loc.confidence == 0.9
+    import dataclasses
+
+    with __import__("pytest").raises(dataclasses.FrozenInstanceError):
+        loc.x_left = 0  # type: ignore[misc]
+
+
+def _sat_band(width_runs, h=45, w=1920):
+    """指定 (x_left, x_right) 範囲を saturated blue で塗った band (h,w,3) を返す。"""
+    band = np.full((h, w, 3), 40, dtype=np.uint8)
+    for x_left, x_right in width_runs:
+        band[:, x_left : x_right + 1] = (50, 50, 200)
+    return band
+
+
+def test_saturated_runs_finds_centered_run():
+    import cv2
+
+    band = _sat_band([(500, 1400)])
+    runs = _scorebar_saturated_runs(band, cv2)
+    assert len(runs) == 1
+    x_left, x_right = runs[0]
+    assert abs(x_left - 500) <= 2 and abs(x_right - 1400) <= 2
+
+
+def test_saturated_runs_finds_off_center_run():
+    # 中心 (x=960) をまたがない左寄り帯。_find_scorebar_horizontal_range は
+    # center-straddling で None を返すが、P1 はこれを拾えねばならない (#803 撤廃)。
+    import cv2
+
+    band = _sat_band([(100, 700)])
+    runs = _scorebar_saturated_runs(band, cv2)
+    assert len(runs) == 1
+    x_left, x_right = runs[0]
+    assert abs(x_left - 100) <= 2 and abs(x_right - 700) <= 2
+
+
+def test_saturated_runs_drops_narrow_and_overwide():
+    import cv2
+
+    # narrow (<500px) と overwide (>1440px) はどちらも width gate で除外。
+    band = _sat_band([(0, 300), (700, 1300)])  # 301px run, 601px run
+    runs = _scorebar_saturated_runs(band, cv2)
+    assert len(runs) == 1
+    assert abs(runs[0][0] - 700) <= 2 and abs(runs[0][1] - 1300) <= 2
+
+    overwide = _sat_band([(100, 1800)])  # 1701px
+    assert _scorebar_saturated_runs(overwide, cv2) == []
+
+
+def test_saturated_runs_blank_returns_empty():
+    import cv2
+
+    band = np.full((45, 1920, 3), 40, dtype=np.uint8)
+    assert _scorebar_saturated_runs(band, cv2) == []
+
+
+def _frame_with_emblem_box(fill, x1=600, y1=2, x2=665, y2=40):
+    """1920x1080 frame の 1 box を指定 fill で塗る。stripe=高 sat/edge を作る用。"""
+    from allaganeye.video.detector import (
+        _SCOREBAR_V2_PROBE_HEIGHT,
+        _SCOREBAR_V2_PROBE_WIDTH,
+    )
+
+    W, H = _SCOREBAR_V2_PROBE_WIDTH, _SCOREBAR_V2_PROBE_HEIGHT
+    f = np.full((H, W, 3), 40, dtype=np.uint8)
+    region = f[y1:y2, x1:x2]
+    if fill == "stripe":
+        for col in range(region.shape[1]):
+            region[:, col] = (200, 30, 30) if (col // 2) % 2 == 0 else (0, 0, 0)
+    else:
+        region[:] = fill
+    return f, [("e", x1, y1, x2, y2)]
+
+
+def test_emblem_and_margin_strong_emblem_returns_ratio_above_one():
+    import cv2
+
+    f, positions = _frame_with_emblem_box("stripe")
+    margin = _emblem_and_margin(f, positions, cv2)
+    assert margin is not None and margin > 1.0
+
+
+def test_emblem_and_margin_flat_region_returns_none():
+    import cv2
+
+    # 単色 (低 edge) は edge 閾値を割るので None。
+    f, positions = _frame_with_emblem_box((50, 50, 200))
+    assert _emblem_and_margin(f, positions, cv2) is None
+
+
+def test_localize_centered_in_match_returns_localization():
+    f = _hires_with_scorebar_at(y_top=120, x_left=500, x_right=1400)
+    loc = localize_scorebar(f)
+    assert loc is not None
+    assert abs(loc.x_left - 500) <= 4 and abs(loc.x_right - 1400) <= 4
+    assert abs(loc.y_top - 120) <= 6  # stride 既定 6
+    assert loc.y_bottom == loc.y_top + 45
+    assert 0.0 < loc.confidence <= 1.0
+
+
+def test_localize_invalid_target_ratio_raises():
+    # target_ratio<=1.0 は confidence 分母が 0/負 になるため ValueError (public kwarg 前提条件)。
+    import pytest
+
+    f = _hires_with_scorebar_at(y_top=120, x_left=500, x_right=1400)
+    with pytest.raises(ValueError):
+        localize_scorebar(f, target_ratio=1.0)
+
+
+def test_localize_off_center_inset_position_independent():
+    # 中心 (x=960) をまたがない左寄り inset。退役した S2 (_find_scorebar_horizontal_range
+    # center-straddling) では検出不能だった位置独立ケース (P1 の存在意義)。
+    f = _hires_with_scorebar_at(y_top=300, x_left=100, x_right=700)
+    loc = localize_scorebar(f)
+    assert loc is not None
+    assert abs(loc.x_left - 100) <= 4 and abs(loc.x_right - 700) <= 4
+    assert abs(loc.y_top - 300) <= 6
+
+
+def test_localize_blank_frame_returns_none():
+    from allaganeye.video.detector import (
+        _SCOREBAR_V2_PROBE_HEIGHT,
+        _SCOREBAR_V2_PROBE_WIDTH,
+    )
+
+    f = np.full(
+        (_SCOREBAR_V2_PROBE_HEIGHT, _SCOREBAR_V2_PROBE_WIDTH, 3), 40, dtype=np.uint8
+    )
+    assert localize_scorebar(f) is None
+
+
+def test_localize_scale_variation_recovers_span():
+    # HUD スケール差を span 幅で模擬。narrow と wide の両方で復元できること。
+    for x_left, x_right in [(700, 1220), (300, 1620)]:
+        f = _hires_with_scorebar_at(y_top=60, x_left=x_left, x_right=x_right)
+        loc = localize_scorebar(f)
+        assert loc is not None, (x_left, x_right)
+        assert abs(loc.x_left - x_left) <= 4 and abs(loc.x_right - x_right) <= 4
+
+
+def test_localize_off_center_band_without_emblems_returns_none():
+    # 中心をまたがない右寄りの単色帯 (emblem なし)。all-run 化しても emblem-AND
+    # が落とすので None。#803 (post-match 広帯) 防御が center 前提なしで成立する確証。
+    from allaganeye.video.detector import (
+        _SCOREBAR_V2_PROBE_HEIGHT,
+        _SCOREBAR_V2_PROBE_WIDTH,
+    )
+
+    W, H = _SCOREBAR_V2_PROBE_WIDTH, _SCOREBAR_V2_PROBE_HEIGHT
+    f = np.full((H, W, 3), 40, dtype=np.uint8)
+    f[0:45, 1400:1919] = (50, 50, 200)  # 519px 右寄り帯、紋章なし
+    assert localize_scorebar(f) is None
+
+
+def test_localize_overwide_band_returns_none():
+    f = _hires_with_scorebar_at(y_top=2, x_left=120, x_right=1810)
+    assert localize_scorebar(f) is None
+
+
+def test_localize_uniform_cyan_banner_returns_none():
+    from allaganeye.video.detector import (
+        _SCOREBAR_V2_PROBE_HEIGHT,
+        _SCOREBAR_V2_PROBE_WIDTH,
+    )
+
+    W, H = _SCOREBAR_V2_PROBE_WIDTH, _SCOREBAR_V2_PROBE_HEIGHT
+    f = np.full((H, W, 3), 40, dtype=np.uint8)
+    f[0:55, :] = (60, 200, 200)  # 全幅単色 cyan (>max width かつ紋章なし)
+    assert localize_scorebar(f) is None
+
+
+def test_localize_wrong_shape_returns_none():
+    f = np.full((100, 100, 3), 40, dtype=np.uint8)
+    assert localize_scorebar(f) is None
+
+
+def test_localize_returns_none_without_cv2(monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "cv2":
+            raise ImportError("simulated missing cv2")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    f = _hires_with_scorebar_at(y_top=120, x_left=500, x_right=1400)
+    assert localize_scorebar(f) is None
+
+
+def test_localize_agrees_with_has_scorebar_v2_in_match():
+    # 絶対 emblem 位置に重なる span を描くと _has_scorebar_v2 Primary が True。
+    # localize_scorebar も relative 位置で検出 -> 両者が in-match で合致 (OBS parity)。
+    from allaganeye.video.detector import _has_scorebar_v2
+
+    f = _hires_with_scorebar_at(y_top=0, x_left=600, x_right=1318)
+    assert localize_scorebar(f) is not None
+    assert _has_scorebar_v2(f.tobytes()) is True
+
+
+def test_localize_agrees_with_has_scorebar_v2_non_match():
+    from allaganeye.video.detector import (
+        _SCOREBAR_V2_PROBE_HEIGHT,
+        _SCOREBAR_V2_PROBE_WIDTH,
+        _has_scorebar_v2,
+    )
+
+    W, H = _SCOREBAR_V2_PROBE_WIDTH, _SCOREBAR_V2_PROBE_HEIGHT
+    f = np.full((H, W, 3), 40, dtype=np.uint8)
+    assert localize_scorebar(f) is None
+    assert _has_scorebar_v2(f.tobytes()) is False

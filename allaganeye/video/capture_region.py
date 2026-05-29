@@ -54,6 +54,20 @@ class CaptureRegion:
         )
 
 
+@dataclass(frozen=True)
+class ScorebarLocalization:
+    """FL scorebar 帯を 1920x1080 probe frame 内で局在化した結果 (P1, re-plan #753).
+
+    座標はすべて probe px (inclusive)。consumer (P2) が /1920,/1080 で正規化する。
+    """
+
+    x_left: int
+    x_right: int
+    y_top: int
+    y_bottom: int
+    confidence: float
+
+
 FULL_FRAME = CaptureRegion(0.0, 0.0, 1.0, 1.0, confidence=1.0, source="fallback")
 
 
@@ -177,72 +191,183 @@ _BAND_SCAN_STRIDE = 6
 _BAND_Y_MAX_FRAC = 0.55
 """scorebar を探す y の上限 (frame 高さ比)。game は frame 上〜中央寄り。"""
 
-_GAME_ASPECT = 16.0 / 9.0
-"""FF14 game capture のアスペクト比 (帯幅から game 高さを逆算)。"""
+_LOCALIZE_TARGET_RATIO = 2.0
+"""confidence が 1.0 に達する emblem margin 倍率 (最弱 emblem の sat/edge が
+閾値の TARGET 倍で満点)。clear な in-match frame で ~1.0 に出るよう選定。"""
 
 
-def detect_region_scorebar_band(
+def _scorebar_saturated_runs(band: np.ndarray, cv2) -> list[tuple[int, int]]:
+    """band (Hb,W,3 uint8 RGB) の saturated column run を width-gate して全件返す。
+
+    `detector._find_scorebar_horizontal_range` の per-pixel mask + col-ratio +
+    gap-merge を共有しつつ、center-straddling 選択 (#803) を撤廃する。返す run は
+    `_SCOREBAR_SCAN_MIN_WIDTH_PX`..`_SCOREBAR_SCAN_MAX_WIDTH_PX` の幅のもののみ。
+    """
+    from allaganeye.video.detector import (
+        _SCOREBAR_SCAN_COL_RATIO,
+        _SCOREBAR_SCAN_MAX_GAP_PX,
+        _SCOREBAR_SCAN_MAX_WIDTH_PX,
+        _SCOREBAR_SCAN_MIN_WIDTH_PX,
+        _SCOREBAR_SCAN_SAT_THRESHOLD,
+        _SCOREBAR_SCAN_VAL_THRESHOLD,
+    )
+
+    bgr = cv2.cvtColor(band, cv2.COLOR_RGB2BGR)
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    sat = hsv[:, :, 1].astype(np.float32)
+    val = hsv[:, :, 2].astype(np.float32)
+    pixel_mask = (sat > _SCOREBAR_SCAN_SAT_THRESHOLD) & (
+        val > _SCOREBAR_SCAN_VAL_THRESHOLD
+    )
+    col_saturated = pixel_mask.mean(axis=0) >= _SCOREBAR_SCAN_COL_RATIO
+
+    width = band.shape[1]
+    raw_runs: list[tuple[int, int]] = []
+    i = 0
+    while i < width:
+        if col_saturated[i]:
+            j = i
+            while j < width and col_saturated[j]:
+                j += 1
+            raw_runs.append((i, j - 1))
+            i = j
+        else:
+            i += 1
+
+    if not raw_runs:
+        return []
+
+    merged: list[tuple[int, int]] = [raw_runs[0]]
+    for start, end in raw_runs[1:]:
+        prev_start, prev_end = merged[-1]
+        if start - prev_end - 1 <= _SCOREBAR_SCAN_MAX_GAP_PX:
+            merged[-1] = (prev_start, end)
+        else:
+            merged.append((start, end))
+
+    runs: list[tuple[int, int]] = []
+    for start, end in merged:
+        span_width = end - start + 1
+        if _SCOREBAR_SCAN_MIN_WIDTH_PX <= span_width <= _SCOREBAR_SCAN_MAX_WIDTH_PX:
+            runs.append((start, end))
+    return runs
+
+
+def _emblem_and_margin(
+    frame: np.ndarray,
+    positions: list[tuple[str, int, int, int, int]],
+    cv2,
+) -> float | None:
+    """3点 emblem AND。全通過なら最弱 margin (min ratio>1.0)、不通過なら None。
+
+    `detector._emblem_and_check` と同一の sat (bright pixel) / Sobel edge 計算を
+    用いる (OBS parity は plan Task 7 で担保)。各 position は (name,x1,y1,x2,y2)。
+    """
+    from allaganeye.video.detector import (
+        _EMBLEM_EDGE_THRESHOLD,
+        _EMBLEM_SAT_THRESHOLD,
+    )
+
+    min_ratio: float | None = None
+    for _name, x1, y1, x2, y2 in positions:
+        region = frame[y1:y2, x1:x2, :]
+        if region.size == 0:
+            return None
+        bgr = cv2.cvtColor(region, cv2.COLOR_RGB2BGR)
+        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+
+        val = hsv[:, :, 2].astype(np.float32)
+        sat = hsv[:, :, 1].astype(np.float32)
+        bright_mask = val > 30
+        if bright_mask.sum() > 5:
+            mean_sat = float(sat[bright_mask].mean())
+        else:
+            mean_sat = 0.0
+
+        sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        edge_density = float(np.sqrt(sobel_x**2 + sobel_y**2).mean())
+
+        if mean_sat <= _EMBLEM_SAT_THRESHOLD or edge_density <= _EMBLEM_EDGE_THRESHOLD:
+            return None
+        ratio = min(
+            mean_sat / _EMBLEM_SAT_THRESHOLD,
+            edge_density / _EMBLEM_EDGE_THRESHOLD,
+        )
+        min_ratio = ratio if min_ratio is None else min(min_ratio, ratio)
+    return min_ratio
+
+
+def localize_scorebar(
     frame: np.ndarray,
     *,
     stride: int = _BAND_SCAN_STRIDE,
-) -> CaptureRegion | None:
-    """S2: FL scorebar 帯を全 y で探し、game 矩形を逆算 (Tier B precise)。
+    target_ratio: float = _LOCALIZE_TARGET_RATIO,
+) -> ScorebarLocalization | None:
+    """1920x1080 RGB frame から FL scorebar を位置独立に局在化する (P1, #753).
 
-    *frame* は 1920x1080 RGB (H,W,3) uint8。検出帯を GC 紋章 3 点 AND で
-    FL と検証してから返す。FL 帯が見つからなければ None (試合外フレーム
-    や opencv 未導入)。OBS の全体縮退は coarse 検出器 (S1/S3) の責務であり、
-    scorebar 幅 > detector._SCOREBAR_SCAN_MAX_WIDTH_PX (1440, #806) の広帯は None。
+    y を stride 全走査し、各 band で width-gated 全 run に emblem 3点 AND をかけ、
+    通過候補のうち emblem margin が最大の (run, y) を返す (best-hit)。best-hit に
+    より y_top 精度が +-stride/2 に上がり confidence が最良整合の margin になる。
+    試合外 / cv2 不在 / 形状不一致は None。OBS 分類 path からは呼ばれない
+    (Additive、spec section 7)。
     """
+    if target_ratio <= 1.0:
+        raise ValueError("target_ratio must be > 1.0 (confidence denominator)")
     try:
         import cv2
     except ImportError:
         return None
+
     from allaganeye.video.detector import (
-        _SCOREBAR_V2_PROBE_WIDTH,
-        _SCOREBAR_V2_PROBE_HEIGHT,
-        _SCOREBAR_SCAN_Y_START,
-        _SCOREBAR_SCAN_Y_END,
         _EMBLEM_RELATIVE_POSITIONS,
-        _emblem_and_check,
-        _find_scorebar_horizontal_range,
+        _SCOREBAR_SCAN_Y_END,
+        _SCOREBAR_SCAN_Y_START,
+        _SCOREBAR_V2_PROBE_HEIGHT,
+        _SCOREBAR_V2_PROBE_WIDTH,
     )
 
-    H = _SCOREBAR_V2_PROBE_HEIGHT
     W = _SCOREBAR_V2_PROBE_WIDTH
+    H = _SCOREBAR_V2_PROBE_HEIGHT
     if frame.shape[:2] != (H, W):
         return None
-    # _find_scorebar_horizontal_range は内部で y=_SCOREBAR_SCAN_Y_START.._END を
-    # 走査するため、その窓高に合わせて band を切り出す (定数 drift 防止)。
+
     band_h = _SCOREBAR_SCAN_Y_END - _SCOREBAR_SCAN_Y_START
     y_max = int(H * _BAND_Y_MAX_FRAC)
-    shifted = np.zeros_like(frame)
+    best: tuple[float, int, int, int] | None = None  # (margin, x_left, x_right, y)
     for y in range(0, y_max, stride):
-        shifted[band_h:] = 0
-        shifted[0:band_h] = frame[y : y + band_h]
-        span = _find_scorebar_horizontal_range(shifted.tobytes())
-        if span is None:
-            continue
-        x_left, x_right = span
-        bar_w = x_right - x_left
-        positions = [
-            (
-                name,
-                int(x_left + cx_rel * bar_w - hw_rel * bar_w),
-                y + ey1,
-                int(x_left + cx_rel * bar_w + hw_rel * bar_w),
-                y + ey2,
-            )
-            for name, cx_rel, hw_rel, ey1, ey2 in _EMBLEM_RELATIVE_POSITIONS
-        ]
-        if not _emblem_and_check(frame, positions, f"band y={y}", cv2):
-            continue
-        gw = bar_w / W
-        gx = x_left / W
-        gy = y / H
-        gh = (bar_w / _GAME_ASPECT) / H
-        region = CaptureRegion(gx, gy, gw, gh, confidence=0.9, source="tierB").clamp()
-        return region
-    return None
+        band = frame[y : y + band_h]
+        for x_left, x_right in _scorebar_saturated_runs(band, cv2):
+            bar_w = x_right - x_left
+            positions: list[tuple[str, int, int, int, int]] = []
+            valid = True
+            for name, cx_rel, hw_rel, ey1, ey2 in _EMBLEM_RELATIVE_POSITIONS:
+                px1 = int(x_left + cx_rel * bar_w - hw_rel * bar_w)
+                px2 = int(x_left + cx_rel * bar_w + hw_rel * bar_w)
+                py1 = y + ey1
+                py2 = y + ey2
+                if px1 < 0 or px2 > W or py1 < 0 or py2 > H or px2 <= px1:
+                    valid = False
+                    break
+                positions.append((name, px1, py1, px2, py2))
+            if not valid:
+                continue
+            margin = _emblem_and_margin(frame, positions, cv2)
+            if margin is not None and (best is None or margin > best[0]):
+                best = (margin, x_left, x_right, y)
+
+    if best is None:
+        return None
+    margin, x_left, x_right, y = best
+    confidence = max(0.0, min(1.0, (margin - 1.0) / (target_ratio - 1.0)))
+    return ScorebarLocalization(
+        x_left=x_left,
+        x_right=x_right,
+        y_top=y,
+        y_bottom=y + band_h,
+        confidence=confidence,
+    )
 
 
 def detect_region_blackout_overlap(
