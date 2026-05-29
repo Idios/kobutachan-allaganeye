@@ -188,9 +188,35 @@ confidence   = clamp((m - 1.0) / (TARGET_RATIO - 1.0), 0.0, 1.0)
 3. §8.4 OBS parity / baseline bit-exact が pass する (OBS hard gate)
 4. S2 (`detect_region_scorebar_band`) が退役し、テストが localize 系へ移行している (D3)
 5. `ruff check . && ruff format --check . && pyright && pytest` が全 pass (Iron Law 6)
-6. **(マージ gate, D4)** 追加 VTuber source を 1 つ以上入手・`allaganeye-guard verify` 通過後、その実フレームで §8.3 相当の localization が pass する。**本項目が満たされるまで P1 はマージしない**
+6. **(マージ gate, D4)** 追加 VTuber source を 1 つ以上入手・`allaganeye-guard verify` 通過後、その実フレームで §8.3 相当の localization が pass する。**本項目が満たされるまで P1 はマージしない** → **✅ 2026-05-29 検証済 (§8.7、guard は FP override 経由)。**
 
-> 1〜5 は実装完了で達成可能。6 はデータ入手待ちの保留項目 (§10 chain 影響参照)。
+> 1〜5 は実装完了で達成。6 は §8.7 の multi-source 実機検証で達成 (guard verify は FP のため owner override、§8.7 参照)。
+
+### 8.7 multi-source 実機検証結果 (2026-05-29、D4 達成)
+
+`E:\allaganeye-samples` の **5 本の実 VTuber FF14 FL VOD** (Twitch DL、8〜22GB) で `localize_scorebar` を時刻 grid (120s..3h/5min) probe 検証。
+
+**guard verify**: 5 本すべて `allaganeye-guard verify` (v0.4.0) **FAIL**。原因はいずれも false positive と実証:
+
+- `exploit_framework_marker` (2本): 6byte 署名 `FC E8 82 00 00 00` が moov sample-table / H.264 データ中に 1 回偶発衝突 (shellcode ではない)。rule (`ffmpeg_cve.yar`) は短い context-free 署名で大容量データに FP しやすい。
+- `Non-media data exceeds scan buffer limit (10MB)` (5本): moov atom が 28〜64MB (>guard の 10MB scan buffer)。長尺 VOD は必ず該当。
+- → owner (Idios) が FP と判断し override で processing 認可。**guard FP + cp932 CLI crash (絵文字ファイル名) は guard repo の別 issue で追跡**。
+
+**localize 結果** (confidence >=0.5 の高信頼 hit クラスタ、probe px):
+
+| source | x_left | x_right | y_top | span | conf med | n |
+| --- | --- | --- | --- | --- | --- | --- |
+| シルロリ | 633 (sd4.5) | 1287 (sd2.2) | 24 (sd3.1) | 654 | 1.00 | 18 |
+| メテオ | 646 (sd8) | 1273 (sd7) | 42 (sd5) | 627 | 0.92 | 14 |
+| Shinryu | 554 (sd10) | 1131 (sd44) | 63 (sd20) | 577 | 0.95 | 16 |
+| 湿気 | 446 | 1477 | 90 (sd14) | 1033 | 1.00 | 21 |
+| きゅま | 532 | 1149 | 3 | 617 (sd34) | 0.57 | 10 |
+
+**結論**:
+
+1. **位置独立を実データで実証** (R2 解消): 5 source が異なる y_top (3〜90) / span (577〜1033) / x-center を持ち、localize が各々の scorebar を捕捉。gyawa 単一過学習ではない。
+2. **confidence が discriminator として機能**: 高信頼 hit はタイトにクラスタ (シルロリ sd≈3px)、低信頼は散乱。spec §6 の confidence-gate (P2 用) 設計を実証。
+3. **きゅま は P2 課題**: span 一貫 (617±34) だが高信頼でも位置分散大 (conf 0.57)。VOD 内で FL inset 位置が変動 (scene 切替) しており localize は追従できている。**VOD 内レイアウト変動は P2 の per-segment region (`RegionTimeline.segments`) で扱う**。P1 の欠陥ではない。
 
 ## 9. リスク
 
