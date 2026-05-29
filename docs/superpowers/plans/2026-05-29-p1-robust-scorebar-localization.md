@@ -642,7 +642,7 @@ Expected: `allaganeye/video/capture_region.py` の定義行のみ (他の produc
 
 - [ ] **Step 2: S2 関数を削除**
 
-`allaganeye/video/capture_region.py` から `def detect_region_scorebar_band(...)` 関数全体 (docstring 含む、`return None` まで) を削除する。`_BAND_SCAN_STRIDE` / `_BAND_Y_MAX_FRAC` / `_GAME_ASPECT` 定数は `localize_scorebar` (前者2つ) や P2 (後者) で使うため **残す**。
+`allaganeye/video/capture_region.py` から `def detect_region_scorebar_band(...)` 関数全体 (docstring 含む、`return None` まで) を削除する。`_BAND_SCAN_STRIDE` / `_BAND_Y_MAX_FRAC` は `localize_scorebar` で使うため **残す**。`_GAME_ASPECT` は S2 削除後 dead になる (使用箇所が S2 のみ) ため本 Task で **併せて削除** する (P2 で game rect 逆算時に `16/9` を再導入、spec §10)。
 
 - [ ] **Step 3: S2 テストと import を削除**
 

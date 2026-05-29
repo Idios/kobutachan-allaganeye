@@ -313,6 +313,8 @@ def localize_scorebar(
     試合外 / cv2 不在 / 形状不一致は None。OBS 分類 path からは呼ばれない
     (Additive、spec section 7)。
     """
+    if target_ratio <= 1.0:
+        raise ValueError("target_ratio must be > 1.0 (confidence denominator)")
     try:
         import cv2
     except ImportError:

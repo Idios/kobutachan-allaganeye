@@ -303,6 +303,15 @@ def test_localize_centered_in_match_returns_localization():
     assert 0.0 < loc.confidence <= 1.0
 
 
+def test_localize_invalid_target_ratio_raises():
+    # target_ratio<=1.0 は confidence 分母が 0/負 になるため ValueError (public kwarg 前提条件)。
+    import pytest
+
+    f = _hires_with_scorebar_at(y_top=120, x_left=500, x_right=1400)
+    with pytest.raises(ValueError):
+        localize_scorebar(f, target_ratio=1.0)
+
+
 def test_localize_off_center_inset_position_independent():
     # 中心 (x=960) をまたがない左寄り inset。退役した S2 (_find_scorebar_horizontal_range
     # center-straddling) では検出不能だった位置独立ケース (P1 の存在意義)。
