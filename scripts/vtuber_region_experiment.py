@@ -1,19 +1,15 @@
 """VTuber game capture 領域検出 候補の実験 harness (#753, spec section 6)。
 
-候補 (S1/S2/S3) を gyawa benchmark + OBS baseline に適用し、proxy 矩形
+候補 (S1/S3) を gyawa benchmark + OBS baseline に適用し、proxy 矩形
 (tests/baselines/v0.3.0/vtuber-primary-regions.json) に対する M1 (IoU /
 上端 px 誤差)、M2 (cost)、M4 (OBS で領域=全体 or 安全に decline) を比較表で
 出力する。
 
-Tier ごとに評価方法が異なる (spec section 3.1):
 - S1/S3 = Tier A coarse: 動画全域から **1 領域**を推定し静的正解矩形と比較。
-- S2     = Tier B precise: annotation timestamp ごとの **単フレーム**で推定。
+- S2 (scorebar-band) は localize_scorebar に一般化され退役 (#753 P1 / re-plan)。
 
 M4 (OBS 回帰) の合否 (spec section 6.2):
 - S1/S3 は Pass 1 coarse に直接使うため OBS では FULL_FRAME 必須。
-- S2 は Tier B precise (coarse Pass 1 には使わない)。#806 の max-width gate で
-  OBS の全幅 scorebar (>1440px) は None を返し decline する。誤った inset を
-  主張しなければ regression-safe なので None / FULL_FRAME を pass とみなす。
 - なお本 issue は detector.py 本体を変更しないため、production detect 出力は
   構造的に bit-exact (M4 の bit-exact 部分は自明に満たす)。本 harness が測るのは
   「将来 wiring したとき OBS で安全に縮退するか」という前方互換性。
@@ -185,69 +181,22 @@ def _eval_tierA_on_benchmark(
     return s1_row, s3_row
 
 
-def _eval_tierB_on_benchmark(video: Path, truths: list[tuple], frame_h: int) -> dict:
-    """S2 (scorebar-band) を annotation timestamp ごとに単フレーム評価。"""
-    from allaganeye.video.capture_region import detect_region_scorebar_band
-    from allaganeye.video.detector import (
-        _SCOREBAR_V2_PROBE_HEIGHT,
-        _SCOREBAR_V2_PROBE_WIDTH,
-        _probe_frame_rgb_hires,
-    )
-
-    ious: list[float] = []
-    errs: list[float] = []
-    hit_top_errs: list[float] = []  # 上端誤差は検出できた frame のみ (S2 の主指標)
-    t0 = time.time()
-    for ts, truth in truths:
-        raw = _probe_frame_rgb_hires(video, float(ts))
-        if raw is None:
-            ious.append(0.0)
-            errs.append(float(frame_h))
-            continue
-        frame = np.frombuffer(raw, dtype=np.uint8).reshape(
-            _SCOREBAR_V2_PROBE_HEIGHT, _SCOREBAR_V2_PROBE_WIDTH, 3
-        )
-        det = detect_region_scorebar_band(frame)
-        m = region_metrics(det, truth, frame_h)
-        ious.append(m["iou"])
-        errs.append(m["top_err_px"])
-        if det is not None:
-            hit_top_errs.append(m["top_err_px"])
-    cost = time.time() - t0
-    n = len(truths)
-    return {
-        "candidate": "S2",
-        "tier": "B",
-        "mean_iou": float(np.mean(ious)) if ious else 0.0,
-        "mean_top_err_px": float(np.mean(errs)) if errs else float(frame_h),
-        "cost_s": cost,
-        "hit_rate": len(hit_top_errs) / n if n else 0.0,
-        "top_err_hits_px": float(np.mean(hit_top_errs)) if hit_top_errs else None,
-    }
-
-
 def _eval_obs_regression(
     obs_dir: Path, gt_dir: Path
 ) -> dict[str, tuple[bool, list[str]]]:
-    """OBS baseline 各本で S1/S2/S3 が安全に縮退するか (M4)。
+    """OBS baseline 各本で S1/S3 が安全に縮退するか (M4)。
 
     Returns {candidate: (all_pass, [detail per video])}。
-    S1/S3 は FULL_FRAME 必須、S2 は None / FULL_FRAME を安全とみなす。
+    S1/S3 は FULL_FRAME 必須。
     """
     from allaganeye.video.capture_region import (
         FULL_FRAME,
         detect_region_blackout_overlap,
-        detect_region_scorebar_band,
         detect_region_variance,
     )
-    from allaganeye.video.detector import (
-        _SCOREBAR_V2_PROBE_HEIGHT,
-        _SCOREBAR_V2_PROBE_WIDTH,
-        _probe_frame_rgb_hires,
-    )
 
-    status: dict[str, list[bool]] = {"S1": [], "S2": [], "S3": []}
-    detail: dict[str, list[str]] = {"S1": [], "S2": [], "S3": []}
+    status: dict[str, list[bool]] = {"S1": [], "S3": []}
+    detail: dict[str, list[str]] = {"S1": [], "S3": []}
     gt_files = sorted(gt_dir.glob("obs-*.json"))
     for gt_file in gt_files:
         gt = json.loads(gt_file.read_text(encoding="utf-8"))
@@ -278,20 +227,6 @@ def _eval_obs_regression(
             status["S3"].append(ok3)
             detail["S3"].append(f"{label}={'full' if ok3 else _fmt(s3)}")
 
-        mid = _mid_match_timestamps(matches)
-        raw = _probe_frame_rgb_hires(video, mid[0]) if mid else None
-        if raw is None:
-            detail["S2"].append(f"{label}=noframe")
-        else:
-            frame = np.frombuffer(raw, dtype=np.uint8).reshape(
-                _SCOREBAR_V2_PROBE_HEIGHT, _SCOREBAR_V2_PROBE_WIDTH, 3
-            )
-            s2 = detect_region_scorebar_band(frame)
-            ok2 = s2 is None or s2 == FULL_FRAME
-            status["S2"].append(ok2)
-            detail["S2"].append(
-                f"{label}={'none' if s2 is None else ('full' if s2 == FULL_FRAME else _fmt(s2))}"
-            )
     # 評価できた video が 1 本も無ければ PASS にしない (no evidence != pass)。
     return {c: (bool(v) and all(v), detail[c]) for c, v in status.items()}
 
@@ -317,14 +252,13 @@ def _run_on_benchmark(args: argparse.Namespace) -> list[dict]:
 
     print(f"[M1/M2] benchmark={args.benchmark.name} ({len(truths)} annotated regions)")
     s1_row, s3_row = _eval_tierA_on_benchmark(args.benchmark, matches, truth0, frame_h)
-    s2_row = _eval_tierB_on_benchmark(args.benchmark, truths, frame_h)
 
     obs_status: dict[str, tuple[bool, list[str]]] = {}
     if args.obs_dir is not None:
         print(f"[M4] OBS regression from {args.obs_dir}")
         obs_status = _eval_obs_regression(args.obs_dir, args.obs_ground_truth_dir)
 
-    rows = [s1_row, s2_row, s3_row]
+    rows = [s1_row, s3_row]
     for row in rows:
         cand = row["candidate"]
         if cand in obs_status:
@@ -369,17 +303,6 @@ def main(argv: list[str] | None = None) -> int:
         f"\nTier A coarse winner (M4 gate + max IoU): "
         f"{coarse['candidate'] if coarse else 'NONE'}"
     )
-    # Tier B precise (S2) は full-rect IoU ではなく上端 px 誤差で評価する
-    # (scorebar ROI #480 が要求するのは精密な上端/y-band)。
-    s2 = next((r for r in rows if r["candidate"] == "S2"), None)
-    if s2 is not None:
-        hit = s2.get("top_err_hits_px")
-        hit_s = "n/a" if hit is None else f"{hit:.1f}px"
-        print(
-            f"Tier B precise (S2) top-edge on hits: {hit_s} "
-            f"(hit_rate={s2.get('hit_rate', 0):.2f}); "
-            f"full-rect IoU low by design (FL scorebar width != game width)"
-        )
     return 0
 
 

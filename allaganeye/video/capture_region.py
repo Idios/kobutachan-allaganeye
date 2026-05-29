@@ -309,9 +309,9 @@ def localize_scorebar(
 
     y を stride 全走査し、各 band で width-gated 全 run に emblem 3点 AND をかけ、
     通過候補のうち emblem margin が最大の (run, y) を返す (best-hit)。best-hit に
-    より y_top 精度が ±stride/2 に上がり confidence が最良整合の margin になる。
+    より y_top 精度が +-stride/2 に上がり confidence が最良整合の margin になる。
     試合外 / cv2 不在 / 形状不一致は None。OBS 分類 path からは呼ばれない
-    (Additive、§7)。
+    (Additive、spec section 7)。
     """
     try:
         import cv2
