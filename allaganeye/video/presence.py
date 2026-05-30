@@ -177,3 +177,42 @@ def scan_presence(
         for fut in futures:
             results[futures[fut]] = fut.result()
     return [results[t] for t in times]
+
+
+def detect_matches_by_presence(
+    video_path: Path,
+    duration: float,
+    *,
+    stride: float,
+    t_gap: float,
+    t_min_match: float,
+    tol: float,
+    workers: int,
+) -> list[PresenceMatch]:
+    """Top-level presence detector: scan -> segment -> refine boundaries.
+
+    1. ``scan_presence`` samples the whole video on a ``stride`` grid.
+    2. ``segment_presence`` debounces and yields coarse matches (boundaries
+       at sample times).
+    3. each coarse boundary is refined within a one-stride bracket using
+       ``refine_boundary``.  Matches touching the video edges (t<=0 or
+       t>=duration within one stride) keep the edge unrefined.
+    """
+    samples = scan_presence(video_path, duration, stride=stride, workers=workers)
+    coarse = segment_presence(samples, t_gap=t_gap, t_min_match=t_min_match)
+
+    def present_at(t: float) -> bool:
+        return localize_present_at(video_path, t).present
+
+    refined: list[PresenceMatch] = []
+    for m in coarse:
+        if m.start - stride < 0.0:
+            start = 0.0
+        else:
+            start = refine_boundary(m.start, m.start - stride, present_at, tol=tol)
+        if m.end + stride > duration:
+            end = duration
+        else:
+            end = refine_boundary(m.end, m.end + stride, present_at, tol=tol)
+        refined.append(PresenceMatch(start=start, end=end))
+    return refined

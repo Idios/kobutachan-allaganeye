@@ -11,6 +11,7 @@ from allaganeye.video.capture_region import ScorebarLocalization
 from allaganeye.video.presence import (
     PresenceMatch,
     PresenceSample,
+    detect_matches_by_presence,
     refine_boundary,
     scan_presence,
     segment_presence,
@@ -164,3 +165,52 @@ def test_scan_presence_grid_and_order():
         False,
         False,
     ]
+
+
+def test_detect_matches_by_presence_end_to_end(monkeypatch):
+    import allaganeye.video.presence as presence
+
+    # Ground physics: scorebar present for 250 <= t < 740.
+    def present_phys(t: float) -> bool:
+        return 250.0 <= t < 740.0
+
+    monkeypatch.setattr(
+        presence,
+        "localize_present_at",
+        lambda vp, t: PresenceSample(time=t, present=present_phys(t), confidence=1.0),
+    )
+
+    matches = detect_matches_by_presence(
+        Path("dummy.mkv"),
+        duration=1000.0,
+        stride=100.0,
+        t_gap=120.0,
+        t_min_match=60.0,
+        tol=1.0,
+        workers=2,
+    )
+    assert len(matches) == 1
+    # coarse run is 300..700 (grid); refine pulls start->250, end->740
+    assert abs(matches[0].start - 250.0) <= 1.0
+    assert abs(matches[0].end - 740.0) <= 1.0
+
+
+def test_detect_matches_present_at_video_edges(monkeypatch):
+    import allaganeye.video.presence as presence
+
+    # present for the entire video -> match spans [0, duration], no refine
+    monkeypatch.setattr(
+        presence,
+        "localize_present_at",
+        lambda vp, t: PresenceSample(time=t, present=True, confidence=1.0),
+    )
+    matches = detect_matches_by_presence(
+        Path("dummy.mkv"),
+        duration=500.0,
+        stride=100.0,
+        t_gap=120.0,
+        t_min_match=60.0,
+        tol=1.0,
+        workers=2,
+    )
+    assert matches == [PresenceMatch(start=0.0, end=500.0)]
