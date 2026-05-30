@@ -12,6 +12,7 @@ from allaganeye.video.presence import (
     PresenceMatch,
     PresenceSample,
     refine_boundary,
+    scan_presence,
     segment_presence,
 )
 
@@ -142,3 +143,24 @@ def test_localize_present_at_probe_failure(monkeypatch):
     sample = presence.localize_present_at(Path("dummy.mkv"), 7.0)
     assert sample.present is False
     assert sample.confidence == 0.0
+
+
+def test_scan_presence_grid_and_order():
+    # synthetic sample_fn: present for 200 <= t < 500
+    def sample_fn(t: float) -> PresenceSample:
+        return PresenceSample(time=t, present=(200.0 <= t < 500.0), confidence=1.0)
+
+    samples = scan_presence(
+        Path("dummy.mkv"), duration=600.0, stride=100.0, workers=2, sample_fn=sample_fn
+    )
+    # times must be sorted and cover 0,100,...,600
+    assert [s.time for s in samples] == [0.0, 100.0, 200.0, 300.0, 400.0, 500.0, 600.0]
+    assert [s.present for s in samples] == [
+        False,
+        False,
+        True,
+        True,
+        True,
+        False,
+        False,
+    ]

@@ -11,6 +11,7 @@ the Phase 3 cutover.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -135,3 +136,44 @@ def localize_present_at(video_path: Path, timestamp: float) -> PresenceSample:
     if loc is None:
         return PresenceSample(time=timestamp, present=False, confidence=0.0)
     return PresenceSample(time=timestamp, present=True, confidence=loc.confidence)
+
+
+def _grid_timestamps(duration: float, stride: float) -> list[float]:
+    """Inclusive 0..duration grid at ``stride`` spacing (duration endpoint kept)."""
+    if stride <= 0:
+        raise ValueError("stride must be > 0")
+    n = int(duration // stride)
+    times = [round(i * stride, 6) for i in range(n + 1)]
+    if not times or times[-1] < duration:
+        times.append(round(duration, 6))
+    return times
+
+
+def scan_presence(
+    video_path: Path,
+    duration: float,
+    *,
+    stride: float,
+    workers: int,
+    sample_fn: Callable[[float], PresenceSample] | None = None,
+) -> list[PresenceSample]:
+    """Sample scorebar presence across the whole video on a uniform grid.
+
+    ``sample_fn`` maps a timestamp to a :class:`PresenceSample`; it defaults
+    to :func:`localize_present_at` bound to ``video_path`` (the production
+    path).  Tests inject a synthetic ``sample_fn`` to stay fast.  Results are
+    returned sorted by time ascending.
+    """
+
+    def _default(t: float) -> PresenceSample:
+        return localize_present_at(video_path, t)
+
+    fn = sample_fn if sample_fn is not None else _default
+
+    times = _grid_timestamps(duration, stride)
+    results: dict[float, PresenceSample] = {}
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(fn, t): t for t in times}
+        for fut in futures:
+            results[futures[fut]] = fut.result()
+    return [results[t] for t in times]
