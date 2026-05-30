@@ -217,3 +217,50 @@ Phase 1/2 = 検証、Phase 3 = 切替。これがブレストの「検証して�
 - #809 wiring (park): [2026-05-27-vtuber-pass1-region-wiring-design.md](2026-05-27-vtuber-pass1-region-wiring-design.md)
 - 現行コード: `allaganeye/video/capture_region.py` (`localize_scorebar` / `ScorebarLocalization`), `allaganeye/video/detector.py` (`detect_match_boundaries` / brightness Pass1 / emblem 定数), `allaganeye/video/scorebar.py` (`filter_blackouts_with_scorebar` = #480 分類), `allaganeye/commands/detect.py` (metadata 出力)
 - 関連 issue: [#480](https://github.com/Idios/kobutachan-allaganeye/issues/480) (分類・本 spec が subsume), [#481](https://github.com/Idios/kobutachan-allaganeye/issues/481) (minimap・範囲外), [#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) (post-match trailing), [#809](https://github.com/Idios/kobutachan-allaganeye/issues/809) (park・redefine 候補), [#753](https://github.com/Idios/kobutachan-allaganeye/issues/753) (re-plan umbrella)
+
+## 付録: Phase 1 実機検証結果と Q3 決定の改訂 (2026-05-30 追記)
+
+> Phase 1 (presence 検出アルゴリズム + offline 検証ハーネス) を実装し
+> (branch `claude/l3-p2-region-detection`、presence.py + presence_harness.py、
+> unit/lint/型/レビュー全 pass)、OBS 実動画で受け入れゲートを実行した結果、
+> **本 spec の中核決定 (§3 Q3「brightness Pass-1 を撤去し presence 単独に全置換」)
+> が OBS では不適切**と実証された。以下に記録し、アーキテクチャを再ブレストする。
+
+### A.1 OBS gate 実機結果 (obs-20260209、20.6GB / 57min)
+
+- **性能 OK**: `detect_matches_by_presence` (stride=4s, workers=8) が 3m16s で完走 (spec §6 の性能懸念クリア)。
+- **精度 FAIL**: `ComparisonResult(matched=1, missed=2, spurious=1)`。検出できた 1 試合の境界誤差は 0.5–2.5s と高精度 (機構は正しい、**signal が不足**)。
+
+### A.2 根本原因: リザルト画面の偽 presence (データ実証)
+
+presence (scorebar 有無) は、試合直後の**リザルト/順位画面が同じ GC 紋章を表示する**ため、連続試合を分離できない。キャッシュ samples 解析 (再 probe なし):
+
+| 区間 | present% | conf 中央値 |
+| --- | --- | --- |
+| GT1 試合 | 98% | 0.60 |
+| inter 1→2 (リザルト画面) | **91%** | 0.42 ← 偽 presence |
+| GT2 試合 | 94% | 1.00 |
+| inter 2→3 (正常 lobby) | 13% | 0.06 |
+| GT3 試合 | 99% | 0.92 |
+
+- inter 1→2 の 91% present が GT1↔GT2 を橋渡し → 閾値スイープで GT1+GT2 が 1 ブロックにマージ。
+- **confidence 閾値では分離不能** (GAP1→2 を下げる閾値で GT1 も崩壊、分布が重なる)。
+- **absent gap 長でも分離不能** (試合間 gap ≈ mid-match 中断 ≈ 8–20s)。spec §4.3 の debounce 前提 (max mid-match 不在 < T_gap < min 試合間 gap) が実データで破れている。
+
+### A.3 決定的データ: 既存 brightness 検出器は OBS で完璧
+
+`tests/baselines/v0.3.0/obs-20260209.metadata.json` (既存 brightness Pass-1 + scorebar 分類) は同動画で 3 試合を**秒未満精度**で検出: M1 40.25..1076.125 / M2 1252.25..2324.5 / M3 2504.0..3370.75 (GT 40..1076 / 1252..2324 / 2504..3370)。**brightness blackout は真の試合境界 (リザルト画面の手前) に存在し、既存検出器はそれを正しく使えている**。presence がマージしたのは、この blackout 信号を持たないため。
+
+### A.4 設計含意 (Q3 改訂方針)
+
+- **Q3「brightness Pass-1 撤去・全置換」は OBS では不適切**。brightness 境界は撤去すべきでない。
+- presence/localize_scorebar の真価は「全置換の検出器」ではなく、**位置独立で頑健な分類器 + VTuber 経路**にある。
+- → re-plan #753 全体 (P1〜P6 の依存・presence の位置づけ) を改めて brainstorm し直す (本 addendum を起点)。
+
+### A.5 Phase 1 コード資産の扱い
+
+- `allaganeye/video/presence.py` + `tests/presence_harness.py` (+ 3 test files) は branch にコミット済・production 非配線。**revert 不要**。再アーキテクチャ下で資産として残す:
+  - `localize_scorebar` 由来の presence 信号 = 頑健な分類器の核。
+  - offline 検証ハーネス (`compare_segments` / GT 突合) = 今後の検証インフラ。
+  - `segment_presence` / `refine_boundary` = blackout 境界と組む際に再利用候補。
+- 新アーキテクチャの spec / plan は別ドキュメントで起こす。
