@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from allaganeye.video.presence import PresenceMatch, PresenceSample
+from collections.abc import Sequence
+
+from allaganeye.video.presence import PresenceMatch, PresenceSample, segment_presence
 
 
 def test_presence_sample_fields():
@@ -16,3 +18,48 @@ def test_presence_match_fields():
     m = PresenceMatch(start=10.0, end=900.0)
     assert m.start == 10.0
     assert m.end == 900.0
+
+
+def _samples(spec: Sequence[tuple[float, bool]]) -> list[PresenceSample]:
+    return [PresenceSample(time=t, present=p, confidence=1.0) for t, p in spec]
+
+
+def test_segment_single_match():
+    # present 0..900 (stride 100) -> one match
+    samples = _samples([(t, True) for t in range(0, 1000, 100)])
+    matches = segment_presence(samples, t_gap=30.0, t_min_match=60.0)
+    assert matches == [PresenceMatch(start=0.0, end=900.0)]
+
+
+def test_segment_two_matches_split_by_long_gap():
+    # match A 0..200, absent 300..600 (gap 400 >= t_gap), match B 700..900
+    spec = [(t, True) for t in (0, 100, 200)]
+    spec += [(t, False) for t in (300, 400, 500, 600)]
+    spec += [(t, True) for t in (700, 800, 900)]
+    matches = segment_presence(_samples(spec), t_gap=120.0, t_min_match=60.0)
+    assert matches == [
+        PresenceMatch(start=0.0, end=200.0),
+        PresenceMatch(start=700.0, end=900.0),
+    ]
+
+
+def test_segment_absorbs_short_absent_gap():
+    # short absent at 300 only (gap from 200 to 400 = 200 < t_gap=300) -> merged
+    spec = [(t, True) for t in (0, 100, 200)]
+    spec += [(300, False)]
+    spec += [(t, True) for t in (400, 500, 600)]
+    matches = segment_presence(_samples(spec), t_gap=300.0, t_min_match=60.0)
+    assert matches == [PresenceMatch(start=0.0, end=600.0)]
+
+
+def test_segment_drops_short_present_spike():
+    # isolated present spike 400..450 (duration 50 < t_min_match=60) -> dropped
+    spec = [(t, False) for t in (0, 100, 200, 300)]
+    spec += [(400, True), (450, True)]
+    spec += [(t, False) for t in (600, 700, 800)]
+    matches = segment_presence(_samples(spec), t_gap=120.0, t_min_match=60.0)
+    assert matches == []
+
+
+def test_segment_empty_input():
+    assert segment_presence([], t_gap=30.0, t_min_match=60.0) == []
