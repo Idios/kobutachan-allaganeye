@@ -9,6 +9,7 @@ unit-tested without video; the slow end-to-end runs live in
 
 from __future__ import annotations
 
+import argparse
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -107,3 +108,54 @@ def compare_segments(
         spurious=spurious,
         boundary_errors=boundary_errors,
     )
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    """CLI for manual harness runs (Phase 2 threshold calibration)."""
+    p = argparse.ArgumentParser(description="Presence detection validation harness")
+    p.add_argument("--video", required=True, help="Path to source video")
+    p.add_argument("--ground-truth", required=True, help="Path to ground-truth JSON")
+    p.add_argument("--stride", type=float, default=4.0, help="Coarse grid stride (s)")
+    p.add_argument(
+        "--t-gap", type=float, default=30.0, help="Min absent gap = boundary (s)"
+    )
+    p.add_argument(
+        "--t-min-match", type=float, default=120.0, help="Min present run = match (s)"
+    )
+    p.add_argument("--tol", type=float, default=1.0, help="Refinement tolerance (s)")
+    p.add_argument("--workers", type=int, default=8, help="Parallel probe workers")
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run presence detection on one video and print metrics vs ground truth."""
+    from allaganeye.video.presence import detect_matches_by_presence
+    from allaganeye.video.probe import probe_video
+
+    args = build_arg_parser().parse_args(argv)
+    video = Path(args.video)
+    gt = load_ground_truth(Path(args.ground_truth))
+    duration = float(probe_video(video)["duration"])
+
+    detected = detect_matches_by_presence(
+        video,
+        duration,
+        stride=args.stride,
+        t_gap=args.t_gap,
+        t_min_match=args.t_min_match,
+        tol=args.tol,
+        workers=args.workers,
+    )
+    res = compare_segments(detected, gt.matches, tolerance=gt.tolerance_sec)
+    print(f"source        : {gt.source_file}")
+    print(f"detected      : {len(detected)} matches")
+    print(f"ground truth  : {len(gt.matches)} matches (tol {gt.tolerance_sec}s)")
+    print(f"matched       : {res.matched}")
+    print(f"missed        : {res.missed}")
+    print(f"spurious      : {res.spurious}")
+    print(f"max boundary err: {res.max_boundary_error:.2f}s")
+    return 0 if (res.missed == 0 and res.spurious == 0) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

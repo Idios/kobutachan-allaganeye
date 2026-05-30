@@ -10,6 +10,7 @@ from tests.presence_harness import (
     ComparisonResult,
     GroundTruth,
     GroundTruthMatch,
+    build_arg_parser,
     compare_segments,
     load_ground_truth,
 )
@@ -81,3 +82,42 @@ def test_compare_boundary_outside_tolerance_is_not_matched():
     assert res.matched == 0
     assert res.missed == 1
     assert res.spurious == 1
+
+
+def test_build_arg_parser_defaults():
+    parser = build_arg_parser()
+    args = parser.parse_args(["--video", "v.mkv", "--ground-truth", "gt.json"])
+    assert args.video == "v.mkv"
+    assert args.ground_truth == "gt.json"
+    assert args.stride == 4.0
+    assert args.t_gap == 30.0
+    assert args.t_min_match == 120.0
+    assert args.tol == 1.0
+    assert args.workers == 8
+
+
+def test_build_arg_parser_overrides():
+    parser = build_arg_parser()
+    args = parser.parse_args(
+        [
+            "--video",
+            "v.mkv",
+            "--ground-truth",
+            "gt.json",
+            "--stride",
+            "3",
+            "--t-gap",
+            "45",
+            "--t-min-match",
+            "90",
+            "--tol",
+            "0.5",
+            "--workers",
+            "16",
+        ]
+    )
+    assert args.stride == 3.0
+    assert args.t_gap == 45.0
+    assert args.t_min_match == 90.0
+    assert args.tol == 0.5
+    assert args.workers == 16
