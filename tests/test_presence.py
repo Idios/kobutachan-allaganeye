@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from allaganeye.video.presence import PresenceMatch, PresenceSample, segment_presence
+from allaganeye.video.presence import (
+    PresenceMatch,
+    PresenceSample,
+    refine_boundary,
+    segment_presence,
+)
 
 
 def test_presence_sample_fields():
@@ -63,3 +68,31 @@ def test_segment_drops_short_present_spike():
 
 def test_segment_empty_input():
     assert segment_presence([], t_gap=30.0, t_min_match=60.0) == []
+
+
+def test_refine_boundary_finds_transition_forward():
+    # scorebar present for t < 500, absent for t >= 500 (match end)
+    def present_at(t: float) -> bool:
+        return t < 500.0
+
+    # bracket: t_true=480 (present), t_false=520 (absent)
+    edge = refine_boundary(480.0, 520.0, present_at, tol=1.0)
+    assert abs(edge - 500.0) <= 1.0
+
+
+def test_refine_boundary_finds_transition_backward():
+    # scorebar absent for t < 300, present for t >= 300 (match start)
+    def present_at(t: float) -> bool:
+        return t >= 300.0
+
+    # bracket: t_true=320 (present), t_false=280 (absent)
+    edge = refine_boundary(320.0, 280.0, present_at, tol=1.0)
+    assert abs(edge - 300.0) <= 1.0
+
+
+def test_refine_boundary_respects_tolerance():
+    def present_at(t: float) -> bool:
+        return t < 500.0
+
+    edge = refine_boundary(480.0, 520.0, present_at, tol=0.1)
+    assert abs(edge - 500.0) <= 0.1

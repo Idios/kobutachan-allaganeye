@@ -10,7 +10,7 @@ the Phase 3 cutover.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 
@@ -81,3 +81,28 @@ def segment_presence(
         for r in merged
         if r[1] - r[0] >= t_min_match
     ]
+
+
+def refine_boundary(
+    t_true: float,
+    t_false: float,
+    present_at: Callable[[float], bool],
+    *,
+    tol: float,
+) -> float:
+    """Binary-search the present<->absent transition between two times.
+
+    Precondition: ``present_at(t_true)`` is True and ``present_at(t_false)``
+    is False.  ``t_true`` and ``t_false`` may be in either order (forward =
+    match end, backward = match start).  Returns the midpoint of the final
+    bracket, accurate to within ``tol`` seconds.
+    """
+    lo_true = t_true
+    hi_false = t_false
+    while abs(lo_true - hi_false) > tol:
+        mid = (lo_true + hi_false) / 2.0
+        if present_at(mid):
+            lo_true = mid
+        else:
+            hi_false = mid
+    return (lo_true + hi_false) / 2.0
