@@ -12,6 +12,16 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+
+from allaganeye.video.capture_region import localize_scorebar
+from allaganeye.video.detector import (
+    _SCOREBAR_V2_PROBE_HEIGHT,
+    _SCOREBAR_V2_PROBE_WIDTH,
+    _probe_frame_rgb_hires,
+)
 
 
 @dataclass(frozen=True)
@@ -106,3 +116,22 @@ def refine_boundary(
         else:
             hi_false = mid
     return (lo_true + hi_false) / 2.0
+
+
+def localize_present_at(video_path: Path, timestamp: float) -> PresenceSample:
+    """Probe one hi-res frame and report scorebar presence at ``timestamp``.
+
+    Bridges the production frame source (``_probe_frame_rgb_hires``, 1920x1080
+    RGB24) and the P1 localizer (``localize_scorebar``).  Probe failure or
+    a None localization both yield ``present=False`` (safe absent).
+    """
+    raw = _probe_frame_rgb_hires(video_path, timestamp)
+    if raw is None:
+        return PresenceSample(time=timestamp, present=False, confidence=0.0)
+    frame = np.frombuffer(raw, dtype=np.uint8).reshape(
+        _SCOREBAR_V2_PROBE_HEIGHT, _SCOREBAR_V2_PROBE_WIDTH, 3
+    )
+    loc = localize_scorebar(frame)
+    if loc is None:
+        return PresenceSample(time=timestamp, present=False, confidence=0.0)
+    return PresenceSample(time=timestamp, present=True, confidence=loc.confidence)

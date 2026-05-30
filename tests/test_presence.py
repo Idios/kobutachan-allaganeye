@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 
+import numpy as np
+
+from allaganeye.video.capture_region import ScorebarLocalization
 from allaganeye.video.presence import (
     PresenceMatch,
     PresenceSample,
@@ -96,3 +100,45 @@ def test_refine_boundary_respects_tolerance():
 
     edge = refine_boundary(480.0, 520.0, present_at, tol=0.1)
     assert abs(edge - 500.0) <= 0.1
+
+
+def test_localize_present_at_present(monkeypatch):
+    import allaganeye.video.presence as presence
+
+    fake_frame_bytes = (np.zeros((1080, 1920, 3), dtype=np.uint8)).tobytes()
+    monkeypatch.setattr(
+        presence, "_probe_frame_rgb_hires", lambda vp, t: fake_frame_bytes
+    )
+    monkeypatch.setattr(
+        presence,
+        "localize_scorebar",
+        lambda frame: ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.8
+        ),
+    )
+    sample = presence.localize_present_at(Path("dummy.mkv"), 123.0)
+    assert sample.time == 123.0
+    assert sample.present is True
+    assert sample.confidence == 0.8
+
+
+def test_localize_present_at_absent(monkeypatch):
+    import allaganeye.video.presence as presence
+
+    fake_frame_bytes = (np.zeros((1080, 1920, 3), dtype=np.uint8)).tobytes()
+    monkeypatch.setattr(
+        presence, "_probe_frame_rgb_hires", lambda vp, t: fake_frame_bytes
+    )
+    monkeypatch.setattr(presence, "localize_scorebar", lambda frame: None)
+    sample = presence.localize_present_at(Path("dummy.mkv"), 50.0)
+    assert sample.present is False
+    assert sample.confidence == 0.0
+
+
+def test_localize_present_at_probe_failure(monkeypatch):
+    import allaganeye.video.presence as presence
+
+    monkeypatch.setattr(presence, "_probe_frame_rgb_hires", lambda vp, t: None)
+    sample = presence.localize_present_at(Path("dummy.mkv"), 7.0)
+    assert sample.present is False
+    assert sample.confidence == 0.0
