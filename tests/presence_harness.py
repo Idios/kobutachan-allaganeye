@@ -10,8 +10,11 @@ unit-tested without video; the slow end-to-end runs live in
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+
+from allaganeye.video.presence import PresenceMatch
 
 
 @dataclass(frozen=True)
@@ -42,4 +45,65 @@ def load_ground_truth(path: Path) -> GroundTruth:
         source_file=str(data["source_file"]),
         tolerance_sec=float(data["tolerance_sec"]),
         matches=matches,
+    )
+
+
+@dataclass(frozen=True)
+class ComparisonResult:
+    """Outcome of comparing detected matches against ground truth."""
+
+    matched: int
+    missed: int
+    spurious: int
+    boundary_errors: list[float]
+
+    @property
+    def max_boundary_error(self) -> float:
+        return max(self.boundary_errors) if self.boundary_errors else 0.0
+
+
+def compare_segments(
+    detected: Sequence[PresenceMatch],
+    gt: Sequence[GroundTruthMatch],
+    *,
+    tolerance: float,
+) -> ComparisonResult:
+    """Greedy-match detected segments to GT within ``tolerance`` seconds.
+
+    A detected segment matches a GT match iff both its start and end are
+    within ``tolerance`` of the GT start/end.  Each GT and each detected
+    segment is used at most once.  Unmatched GT -> missed; unmatched
+    detected -> spurious.  ``boundary_errors`` holds, for every matched
+    pair, the start error and the end error (seconds).
+    """
+    used_detected: set[int] = set()
+    matched = 0
+    boundary_errors: list[float] = []
+
+    for g in gt:
+        best_idx: int | None = None
+        best_err: float | None = None
+        for i, d in enumerate(detected):
+            if i in used_detected:
+                continue
+            start_err = abs(d.start - g.start)
+            end_err = abs(d.end - g.end)
+            if start_err <= tolerance and end_err <= tolerance:
+                worst = max(start_err, end_err)
+                if best_err is None or worst < best_err:
+                    best_err = worst
+                    best_idx = i
+        if best_idx is not None:
+            used_detected.add(best_idx)
+            matched += 1
+            boundary_errors.append(abs(detected[best_idx].start - g.start))
+            boundary_errors.append(abs(detected[best_idx].end - g.end))
+
+    missed = len(gt) - matched
+    spurious = len(detected) - len(used_detected)
+    return ComparisonResult(
+        matched=matched,
+        missed=missed,
+        spurious=spurious,
+        boundary_errors=boundary_errors,
     )
