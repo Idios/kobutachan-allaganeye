@@ -442,7 +442,7 @@ def detect_scorebar_band_region(
 ) -> CaptureRegion:
     """疎な多フレーム localize の median consensus で安定 scorebar 帯 ROI を返す。
 
-    *localize_fn* は timestamp → ScorebarLocalization|None。動画 I/O は呼び出し側が
+    *localize_fn* は timestamp -> ScorebarLocalization|None。動画 I/O は呼び出し側が
     bind する (テストは合成関数を注入)。成功局在化が *min_hits* 未満なら FULL_FRAME
     (OBS / 局在化不能時の安全縮退)。成功時は各座標の median を取り
     `band_region_from_localization` で正規化帯 ROI に変換する。
