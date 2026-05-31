@@ -110,6 +110,28 @@ Codex review (§4) と本セッションの実機検証で、**「v2 retire」�
 - duration filter (`_filter_and_extract_segments:1851,1868`) は `seg_end - seg_start >= min_match_duration` (default 300、`detector.py:205`) で gate。
 - **訂正記録**: 本セッション当初「v2 の位置特異性がリザルト除去に load-bearing」と述べたが、コード追跡の結果 **duration filter が backstop** であり、obs-20260209 の result gap (176s < 300s) は v2 の判定に関係なく落ちる。Codex #2 の指摘どおり。この事実が「brightness 主」決定を強く正当化する。
 
+### 3.6 OBS/VTuber 判別: 明示信号 (`--vtuber`) — auto 推論を捨てる (2026-05-31 実機実証)
+
+Phase 1 実装後の OBS bit-exact gate (D1, obs-20260209) で **当初設計の判別ロジックが破綻**し、実機調査で root-cause を確定した。記録と確定方針:
+
+**破綻した当初仮定**: 「OBS では `localize_scorebar` が失敗 (inset 帯が無い) → FULL_FRAME に縮退 → bit-exact」。
+
+**実機が示した事実** (5 OBS + 5 VTuber、`localize_scorebar` bbox 実測):
+
+1. **localize は OBS でも成功する**。FL scorebar は OBS の全画面にも写っており (それが P1 を「位置独立」にしている当の理由)、`detect_scorebar_band_region` consensus が band region を返す → brightness が帯で測られ OBS 境界が秒未満ずれ baseline 破綻 (M1 start 40.25→39.5 等)。
+2. **localize の生出力は per-frame に noisy**。`localize_scorebar` は上半分全 y を走査し best-hit を返すため、OBS 試合中フレームでも約半数で下部 HUD (party list 等) を誤検出 (y_top 0 ↔ 540-582 が混在、誤検出 conf が 0.69 まで上がり confidence 閾値で弾けない)。median consensus が真/偽クラスタ混在で y=0.24 のゴミ region を出した。
+3. OBS 真 scorebar は (x≈0.31, y≈0, w≈0.37, conf 高) に 5 本とも密集する一方、VTuber は (y 0.006–0.367, conf 0.06–0.94) と散在し、**confidence が OBS/VTuber 判別と entangle** する (OBS を守る conf 閾値が VTuber を全 reject)。
+
+**確定方針 (user 2026-05-31)**: localize の noisy な生出力に auto 判別を載せるのは脆い (presence 全置換に続く 2 度目の「OBS gate での仮定破綻」)。よって **OBS/VTuber の auto 推論を全廃し、明示信号で VTuber を示す**:
+
+- **`--vtuber` CLI flag を新設** (boolean、CLI のみ、GUI 連携は別 issue)。
+- **未指定 (= OBS default)**: `detect_match_boundaries` は Stage 0 (帯 anchor) を**走らせず** FULL_FRAME。brightness は現行どおり全画面で測る → **bit-exact が構造的に保証**される (本 §の破綻が原理的に起きない)。
+- **`--vtuber` 指定時のみ**: Stage 0 帯 anchor を解決し band region を Pass1/Pass2/GPU に渡す。
+- **localize robust 化 (Problem 2)**: VTuber band 解決 (`detect_scorebar_band_region`) では confidence-filter + dominant cluster で per-frame noise を抑える。これは VTuber 経路内に閉じ、OBS には無影響。
+- **Phase 1 plumbing (B1–C1) は salvage**: region threading (FULL_FRAME default) は正しく実証済 (254 unit tests)。改訂は B4 の「無条件 anchor → `--vtuber` gate」と consensus robust 化のみ。
+
+> §3.1③ の「OBS は localize bbox に anchor / VTuber も」という記述は本 §で上書きされる: **OBS は Stage 0 を走らせず FULL_FRAME (localize を検出経路で使わない)**。VTuber のみ帯 anchor。
+
 ## 4. Codex adversarial review (2026-05-30) の反映
 
 design-stage で Codex に「2 信号 fusion」案をレビューさせた (read-only)。主要 finding と本 spec での扱い:
@@ -170,7 +192,7 @@ Codex 提案順序 (production 不変のまま shadow trace → MAD calibrate �
 | Phase | 内容 | production 影響 | gate |
 | --- | --- | --- | --- |
 | **0** | 検出 subsystem の git 考古学 + 現状 map (ドキュメント化)。各 layer の load-bearing / cruft / 有害判定、`_drop_post_match_trailing`×v2×membership coupling を含む。成果物 = [docs/detection-map.md](../../detection-map.md) | なし (docs) | user レビュー |
-| **1** | Stage 0 anchor (P1 consensus → scorebar 帯 ROI + 保持矩形) + Stage 1 VTuber 帯 crop wiring (#809 を帯に限定) + MAD ROI の band-anchor 化。OBS=絶対 ROI 縮退 | なし (VTuber 経路は gate 内) | OBS bit-exact 維持 + gyawa 帯 crop blackout 回復 |
+| **1** | `--vtuber` flag 新設 (§3.6) + Stage 0 anchor (P1 consensus → scorebar 帯 ROI、`--vtuber` 時のみ実行・consensus robust 化) + Stage 1 VTuber 帯 crop wiring (#809 を帯に限定) + MAD ROI の band-anchor 化。**OBS (flag なし) は Stage 0 を走らせず FULL_FRAME** | なし (VTuber 経路は `--vtuber` gate 内) | OBS (flag なし) bit-exact 維持 + VTuber (flag あり) 帯 crop blackout 回復 |
 | **2** | Stage 2 分類を localize+motion 化 (#480)。v2 shadow guard 並走。MAD calibrate | なし (v2 が production 判定、localize は shadow) | OBS parity 計測 + baseline diff |
 | **3** | VTuber GT 注釈 (5 source) + VTuber 検証。fusion 真理値表 + fallback フラグ | なし | VTuber GT-accuracy |
 | **4** | cutover: localize を production 判定に昇格 (v2 retire 可否は parity 実証後判断)。GT-accuracy gate 化 | あり (分類器置換) | 全 GT-accuracy + baseline diff + Idios 実機検証 |
@@ -220,6 +242,8 @@ Phase 0-3 = 検証・非破壊、Phase 4 = 切替。「検証してから切替�
 | R5 | CPU/GPU/legacy-fps パリティ崩れ (Codex #8、#575) | 検証 matrix に 3 モード。frame-index ベース新 path 前提 |
 | R6 | gyawa 1-source 過学習 (VTuber multi-source) | 5 source 手動 GT + 幾何ベース anchor。data-gated |
 | R7 | brightness 主で VTuber 境界を取り逃す (full-frame では blackout なし) | Stage 1 scorebar 帯 crop で blackout 回復 (#809 Wave F は inset 全体で実証、本 spec は帯に限定し contamination 耐性を上げる)。帯 anchor が前提 |
+| R8 | auto 判別が localize noise で OBS bit-exact を破壊 (2026-05-31 実証、§3.6) | **auto 推論を全廃し `--vtuber` 明示信号化**。OBS (flag なし) は Stage 0 を走らせず FULL_FRAME = bit-exact 構造保証。VTuber 経路の localize noise (Problem 2) は consensus の confidence-filter + cluster で抑制 (OBS 無影響) |
+| R9 | user が VTuber 動画に `--vtuber` を付け忘れる | 検出は FULL_FRAME で動く (clean fail = OBS 同等の挙動、誤分割でなく under-detect)。OBS 出力を汚さないため安全側。将来 GUI トグル / auto hint は別 issue |
 
 ## 13. 参照
 
