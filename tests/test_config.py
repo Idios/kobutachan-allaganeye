@@ -83,3 +83,11 @@ class TestSplitConfigValidation:
         with pytest.raises(ConfigValidationError) as exc_info:
             SplitConfig(sample_interval=-1.0)
         assert exc_info.value.exit_code == 5
+
+    def test_vtuber_default_false(self):
+        """vtuber defaults False so OBS full-frame behavior is unchanged (L3 B6)."""
+        assert SplitConfig().vtuber is False
+
+    def test_vtuber_true_is_valid(self):
+        """vtuber=True is accepted (game-inset scorebar-band anchor path)."""
+        assert SplitConfig(vtuber=True).vtuber is True

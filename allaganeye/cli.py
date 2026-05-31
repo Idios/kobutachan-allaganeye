@@ -149,6 +149,14 @@ def split(
             "Currently frozen: audio scan is always skipped regardless of this flag.",
         ),
     ] = False,
+    vtuber: Annotated[
+        bool,
+        typer.Option(
+            "--vtuber",
+            help="VTuber recording (game inset): use scorebar-band anchor for "
+            "detection. Omit for OBS full-frame (default).",
+        ),
+    ] = False,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -211,6 +219,7 @@ def split(
                 workers=workers,
                 no_cache=no_cache,
                 no_audio=no_audio,
+                vtuber=vtuber,
             )
             from allaganeye.commands.split_matches import run_split_from_metadata
 
@@ -239,6 +248,7 @@ def split(
             workers=workers,
             no_cache=no_cache,
             no_audio=no_audio,
+            vtuber=vtuber,
         )
 
         from allaganeye.commands.split_matches import run_split
@@ -319,6 +329,14 @@ def detect(
             "Currently frozen: audio scan is always skipped regardless of this flag.",
         ),
     ] = False,
+    vtuber: Annotated[
+        bool,
+        typer.Option(
+            "--vtuber",
+            help="VTuber recording (game inset): use scorebar-band anchor for "
+            "detection. Omit for OBS full-frame (default).",
+        ),
+    ] = False,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -388,6 +406,7 @@ def detect(
             workers=workers,
             no_cache=no_cache,
             no_audio=no_audio,
+            vtuber=vtuber,
         )
 
         from allaganeye.commands.detect import run_detect

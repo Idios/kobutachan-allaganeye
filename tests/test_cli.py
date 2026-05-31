@@ -275,6 +275,26 @@ def test_split_no_gpu_flag(mock_run_split, fake_video):
 
 
 @patch(MODULE)
+def test_split_vtuber_flag(mock_run_split, fake_video):
+    """--vtuber sets config.vtuber=True on split (L3 B6)."""
+    result = runner.invoke(app, ["split", str(fake_video), "--vtuber"])
+
+    assert result.exit_code == 0
+    config = mock_run_split.call_args[0][1]
+    assert config.vtuber is True
+
+
+@patch(MODULE)
+def test_split_vtuber_default_false(mock_run_split, fake_video):
+    """Omitting --vtuber keeps config.vtuber=False (OBS full-frame, L3 B6)."""
+    result = runner.invoke(app, ["split", str(fake_video)])
+
+    assert result.exit_code == 0
+    config = mock_run_split.call_args[0][1]
+    assert config.vtuber is False
+
+
+@patch(MODULE)
 def test_split_verbose_short(mock_run_split, fake_video):
     """-v flag sets verbose=True."""
     result = runner.invoke(app, ["split", str(fake_video), "-v"])
@@ -1000,6 +1020,24 @@ def test_detect_invokes_run_detect(mock_run_detect, fake_video):
     mock_run_detect.assert_called_once()
     args, _kwargs = mock_run_detect.call_args
     assert args[0] == fake_video
+
+
+@patch("allaganeye.commands.detect.run_detect")
+def test_detect_vtuber_flag(mock_run_detect, fake_video):
+    """--vtuber sets config.vtuber=True on detect (L3 B6)."""
+    result = runner.invoke(app, ["detect", str(fake_video), "--vtuber"])
+    assert result.exit_code == 0, result.stdout
+    config = mock_run_detect.call_args[0][1]
+    assert config.vtuber is True
+
+
+@patch("allaganeye.commands.detect.run_detect")
+def test_detect_vtuber_default_false(mock_run_detect, fake_video):
+    """Omitting --vtuber keeps config.vtuber=False on detect (L3 B6)."""
+    result = runner.invoke(app, ["detect", str(fake_video)])
+    assert result.exit_code == 0, result.stdout
+    config = mock_run_detect.call_args[0][1]
+    assert config.vtuber is False
 
 
 @patch("allaganeye.commands.detect.run_detect")

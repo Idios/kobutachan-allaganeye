@@ -754,6 +754,9 @@ def _run_detection(
         "min_blackout_duration": config.min_blackout_duration,
         "gpu_vendor": gpu_vendor,
         "use_gpu": use_gpu,
+        # L3 B6: VTuber game-inset recording -> scorebar-band anchor region.
+        # False (default) keeps FULL_FRAME = OBS bit-exact behavior.
+        "vtuber": config.vtuber,
         "workers": config.workers,
         "src_resolution": (metadata["width"], metadata["height"]),
         "codec": metadata.get("codec"),

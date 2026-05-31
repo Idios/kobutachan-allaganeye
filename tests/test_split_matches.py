@@ -128,6 +128,40 @@ def test_pipeline_happy_path(mock_probe, mock_detect, mock_split, tmp_path):
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
+def test_pipeline_threads_vtuber_default_false(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """config.vtuber=False (default) reaches detect_match_boundaries (L3 B6)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    _, detect_kwargs = mock_detect.call_args
+    assert detect_kwargs["vtuber"] is False
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_pipeline_threads_vtuber_true(mock_probe, mock_detect, mock_split, tmp_path):
+    """config.vtuber=True is threaded into detect_kwargs (L3 B6)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, vtuber=True)
+
+    run_split(Path("input.mp4"), config)
+
+    _, detect_kwargs = mock_detect.call_args
+    assert detect_kwargs["vtuber"] is True
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
 def test_pipeline_metadata_json_content(mock_probe, mock_detect, mock_split, tmp_path):
     """metadata.json contains correct structure and values."""
     mock_probe.return_value = PROBE_RESULT
