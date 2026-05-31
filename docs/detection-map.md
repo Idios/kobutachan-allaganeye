@@ -41,7 +41,21 @@
 
 ## 3. git 考古学 (なぜ追加されたか)
 
-(Task 2 で記入)
+> 詳細経緯は [video-processing.md §設計経緯](video-processing.md#設計経緯) に既出。
+> 本節は「対症修正が積層した順序」と「各層が生んだ新たな制約」に絞る。
+
+| 時期 | 契機 (課題) | 追加 layer | 生んだ制約/脆さ |
+| --- | --- | --- | --- |
+| #60 | リスポーン暗転の誤検知 | min_blackout_duration filter | 短い真境界も落ちうる |
+| #71 | 試合境界の未検出 (パターンB) | `_expand_regions_with_transitions` (閾値55) | lobby 輝度依存。VTuber crop で過剰 merge (#809 Wave F) |
+| #77 | 境界未検出 (パターンC) | Pass2 refine + duration filter | — |
+| #107 | キャラダウン暗転 | `in_match` duration guard | — |
+| #108/#109 | 非 FL コンテンツ | `non_fl` 分類 | — |
+| #111 | scorebar 分類統合 | `filter_blackouts_with_scorebar` 一式 | 絶対座標前提 (VTuber inset で破綻 = #480) |
+| #201/#203 | 静止ローディング誤分類 | `_is_static_from_frames` (MAD override) | short blackout 限定の局所 override |
+| #288 | scorebar 残像で境界誤分類 | audio Fanfare promotion | Fanfare 試合中弱ピークで FP 余地 |
+| #307/#522 | scorebar FP | `_has_scorebar_v2` (GC紋章3点AND) | 絶対/相対 two-path。位置特異 = VTuber 不可 |
+| #797/#806 | 試合後 trailing 残存 | `_drop_post_match_trailing` | **不可逆削除 × v2 直接プローブ** (#805/Codex #6) |
 
 ## 4. coupling 図: `_drop_post_match_trailing` × v2 × membership
 
