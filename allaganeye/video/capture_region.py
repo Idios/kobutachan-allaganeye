@@ -32,6 +32,10 @@ class CaptureRegion:
         h = min(max(self.h, 0.0), 1.0 - y)
         return CaptureRegion(x, y, w, h, self.confidence, self.source)
 
+    def is_full_frame(self) -> bool:
+        """領域 = frame 全体か (OBS 縮退判定 / bit-exact 分岐に使用)。"""
+        return self.x == 0.0 and self.y == 0.0 and self.w == 1.0 and self.h == 1.0
+
     def to_dict(self) -> dict:
         return {
             "x": self.x,
@@ -69,6 +73,20 @@ class ScorebarLocalization:
 
 
 FULL_FRAME = CaptureRegion(0.0, 0.0, 1.0, 1.0, confidence=1.0, source="fallback")
+
+
+def region_mean(frame: np.ndarray, region: CaptureRegion) -> float:
+    """2D gray frame (H,W) を正規化矩形 *region* で crop し平均輝度を返す。
+
+    crop が空になる場合も最低 1px に clamp する。整数次元 frame では
+    FULL_FRAME のとき結果は ``float(frame.mean())`` と一致する (bit-exact 縮退)。
+    """
+    h, w = frame.shape[:2]
+    x0 = max(0, min(round(region.x * w), w - 1))
+    y0 = max(0, min(round(region.y * h), h - 1))
+    x1 = max(x0 + 1, min(round((region.x + region.w) * w), w))
+    y1 = max(y0 + 1, min(round((region.y + region.h) * h), h))
+    return float(frame[y0:y1, x0:x1].mean())
 
 
 @dataclass

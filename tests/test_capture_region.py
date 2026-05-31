@@ -12,6 +12,7 @@ from allaganeye.video.capture_region import (
     detect_region_variance,
     iou,
     localize_scorebar,
+    region_mean,
     top_edge_error_px,
 )
 
@@ -415,3 +416,33 @@ def test_localize_agrees_with_has_scorebar_v2_non_match():
     f = np.full((H, W, 3), 40, dtype=np.uint8)
     assert localize_scorebar(f) is None
     assert _has_scorebar_v2(f.tobytes()) is False
+
+
+# ---------------------------------------------------------------------------
+# Task A1: is_full_frame + region_mean
+# ---------------------------------------------------------------------------
+
+
+def test_is_full_frame_true_only_for_unit_rect():
+    assert FULL_FRAME.is_full_frame() is True
+    assert CaptureRegion(0.0, 0.0, 1.0, 1.0).is_full_frame() is True
+    assert CaptureRegion(0.1, 0.0, 0.9, 1.0).is_full_frame() is False
+    assert CaptureRegion(0.0, 0.0, 1.0, 0.5).is_full_frame() is False
+
+
+def test_region_mean_full_frame_equals_frame_mean():
+    frame = np.arange(12, dtype=np.uint8).reshape(3, 4)
+    assert region_mean(frame, FULL_FRAME) == float(frame.mean())
+
+
+def test_region_mean_crops_to_band():
+    frame = np.zeros((10, 10), dtype=np.uint8)
+    frame[0:2, :] = 200  # bright top band
+    band = CaptureRegion(0.0, 0.0, 1.0, 0.2)
+    assert region_mean(frame, band) == 200.0
+
+
+def test_region_mean_empty_crop_clamps_to_1px():
+    frame = np.full((10, 10), 50, dtype=np.uint8)
+    degenerate = CaptureRegion(0.999, 0.999, 0.0001, 0.0001)
+    assert region_mean(frame, degenerate) == 50.0
