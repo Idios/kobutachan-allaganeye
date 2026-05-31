@@ -1000,3 +1000,28 @@ class TestGpuFallbackIntegration:
         mock_gpu.assert_called_once()
         mock_cpu.assert_called_once()
         assert len(result) >= 1
+
+
+class TestGpuBrightnessParity:
+    """GPU Pass1 brightness must route through detector._frame_brightness so
+    CPU and GPU compute brightness identically (Phase 1 B3, Codex #8)."""
+
+    def test_gpu_brightness_shares_frame_brightness_helper(self):
+        # GPU path must use the same _frame_brightness so CPU/GPU parity holds.
+        import numpy as np
+
+        from allaganeye.video import detector as det
+        from allaganeye.video.capture_region import FULL_FRAME
+
+        frame = np.arange(det._FRAME_SIZE, dtype=np.uint8)
+        assert det._frame_brightness(frame, FULL_FRAME) == float(frame.mean())
+
+    def test_scan_gpu_accepts_region_kwarg_default_full_frame(self):
+        import inspect
+
+        from allaganeye.video import gpu_detector as gpu
+        from allaganeye.video.capture_region import FULL_FRAME
+
+        sig = inspect.signature(gpu.scan_gpu)
+        assert "region" in sig.parameters
+        assert sig.parameters["region"].default is FULL_FRAME
