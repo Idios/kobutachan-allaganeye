@@ -430,6 +430,15 @@ def detect_region_blackout_overlap(
 _BAND_CONSENSUS_MIN_HITS = 2
 """帯 consensus に必要な最小局在化成功数。これ未満は FULL_FRAME 縮退。"""
 
+_CLUSTER_Y_TOL = 60
+"""y_top クラスタリングの許容差 (probe px)。これ以内の y_top は同一クラスタ。
+
+localize は per-frame noisy で、真の scorebar (y_top~0) と下部 HUD 誤検出
+(y_top~540-582) が混在しうる。両者を別クラスタに分け dominant を選ぶための
+許容差。scorebar 帯高 ~45px に対し十分広く、真クラスタ内の +-stride ばらつき
+(18 vs 20 等) は 1 クラスタにまとめる。
+"""
+
 
 def detect_scorebar_band_region(
     *,
@@ -440,12 +449,15 @@ def detect_scorebar_band_region(
     num_samples: int = 8,
     min_hits: int = _BAND_CONSENSUS_MIN_HITS,
 ) -> CaptureRegion:
-    """疎な多フレーム localize の median consensus で安定 scorebar 帯 ROI を返す。
+    """疎な多フレーム localize の dominant-cluster consensus で安定 scorebar 帯 ROI を返す。
 
     *localize_fn* は timestamp -> ScorebarLocalization|None。動画 I/O は呼び出し側が
     bind する (テストは合成関数を注入)。成功局在化が *min_hits* 未満なら FULL_FRAME
-    (OBS / 局在化不能時の安全縮退)。成功時は各座標の median を取り
-    `band_region_from_localization` で正規化帯 ROI に変換する。
+    (OBS / 局在化不能時の安全縮退)。成功時は hits を y_top で `_CLUSTER_Y_TOL`
+    クラスタリングし、最大クラスタ (同数なら平均 confidence) の各座標 median を取り
+    `band_region_from_localization` で正規化帯 ROI に変換する。これにより真の
+    scorebar (y_top~0) と下部 HUD 誤検出が混在しても between-clusters の garbage
+    band を避ける (spec section 3.6)。
     """
     if duration <= 0 or num_samples < 1:
         return FULL_FRAME
@@ -453,11 +465,28 @@ def detect_scorebar_band_region(
     hits = [loc for t in times if (loc := localize_fn(t)) is not None]
     if len(hits) < min_hits:
         return FULL_FRAME
+    # localize is per-frame noisy (upper-half best-hit scan can lock onto lower
+    # HUD; spec section 3.6). Cluster hits by y_top and take the largest cluster
+    # (true scorebar is dominant across in-match samples), so a noise-mixed
+    # median cannot produce a between-clusters garbage band.
+    hits_sorted = sorted(hits, key=lambda h: h.y_top)
+    clusters: list[list[ScorebarLocalization]] = []
+    for h in hits_sorted:
+        if clusters and h.y_top - clusters[-1][-1].y_top <= _CLUSTER_Y_TOL:
+            clusters[-1].append(h)
+        else:
+            clusters.append([h])
+    best = max(
+        clusters,
+        key=lambda c: (len(c), sum(h.confidence for h in c) / len(c)),
+    )
+    if len(best) < min_hits:
+        return FULL_FRAME
     median_loc = ScorebarLocalization(
-        x_left=int(np.median([h.x_left for h in hits])),
-        x_right=int(np.median([h.x_right for h in hits])),
-        y_top=int(np.median([h.y_top for h in hits])),
-        y_bottom=int(np.median([h.y_bottom for h in hits])),
-        confidence=float(np.median([h.confidence for h in hits])),
+        x_left=int(np.median([h.x_left for h in best])),
+        x_right=int(np.median([h.x_right for h in best])),
+        y_top=int(np.median([h.y_top for h in best])),
+        y_bottom=int(np.median([h.y_bottom for h in best])),
+        confidence=float(np.median([h.confidence for h in best])),
     )
     return band_region_from_localization(median_loc, probe_w=probe_w, probe_h=probe_h)

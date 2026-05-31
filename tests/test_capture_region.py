@@ -526,3 +526,57 @@ def test_band_consensus_below_min_hits_falls_back_full_frame():
         min_hits=2,
     )
     assert region.is_full_frame()
+
+
+def test_band_consensus_rejects_noise_and_picks_dominant_cluster():
+    from allaganeye.video.capture_region import (
+        ScorebarLocalization,
+        detect_scorebar_band_region,
+    )
+
+    # 4 true (y~0, high conf) + 3 noise (y~540-582, varied conf incl one 0.69)
+    locs = [
+        ScorebarLocalization(600, 1315, 0, 45, 1.0),
+        ScorebarLocalization(600, 1315, 0, 45, 1.0),
+        ScorebarLocalization(604, 1311, 12, 57, 0.52),
+        ScorebarLocalization(600, 1315, 0, 45, 1.0),
+        ScorebarLocalization(1116, 1919, 540, 585, 0.21),
+        ScorebarLocalization(508, 1288, 582, 627, 0.28),
+        ScorebarLocalization(0, 778, 558, 603, 0.69),
+    ]
+    calls = iter(locs)
+    region = detect_scorebar_band_region(
+        duration=400.0,
+        probe_w=1920,
+        probe_h=1080,
+        localize_fn=lambda _t: next(calls),
+        num_samples=7,
+    )
+    # must converge on the true cluster (y~0), NOT the noise-mixed median (y~0.24)
+    assert region.y < 0.05, f"expected true cluster y~0, got {region.y}"
+    assert abs(region.x - 600 / 1920) < 0.05
+
+
+def test_band_consensus_balanced_split_median_falls_between_clusters():
+    # 3 true (y~0-12, high conf) vs 3 noise (y~540-582, low conf): an exact
+    # count tie where a plain median of y_top lands in the gap (~276px / y~0.26),
+    # producing a between-clusters garbage band. Dominant-cluster selection breaks
+    # the tie by mean confidence (true 0.84 > noise 0.39) and recovers y~0.
+    locs = [
+        ScorebarLocalization(600, 1315, 0, 45, 1.0),
+        ScorebarLocalization(600, 1315, 0, 45, 1.0),
+        ScorebarLocalization(604, 1311, 12, 57, 0.52),
+        ScorebarLocalization(1116, 1919, 540, 585, 0.21),
+        ScorebarLocalization(508, 1288, 582, 627, 0.28),
+        ScorebarLocalization(0, 778, 558, 603, 0.69),
+    ]
+    calls = iter(locs)
+    region = detect_scorebar_band_region(
+        duration=400.0,
+        probe_w=1920,
+        probe_h=1080,
+        localize_fn=lambda _t: next(calls),
+        num_samples=6,
+    )
+    assert region.y < 0.05, f"expected true cluster y~0, got {region.y}"
+    assert abs(region.x - 600 / 1920) < 0.05
