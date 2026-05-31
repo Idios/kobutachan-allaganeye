@@ -17,6 +17,7 @@ import numpy as np
 from allaganeye.audio.matcher import BgmHit
 from allaganeye.exceptions import VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
+from allaganeye.video.capture_region import CaptureRegion, FULL_FRAME, region_mean
 
 
 class MatchBoundary(TypedDict):
@@ -99,6 +100,19 @@ def _resolve_fps_rational(
     )
 
 
+def _frame_brightness(frame: np.ndarray, region: CaptureRegion = FULL_FRAME) -> float:
+    """CPU scan の 1-D grayscale buffer (320*180,) の平均輝度。
+
+    FULL_FRAME のときは 1-D のまま ``float(frame.mean())`` (現行と bit-exact、
+    reshape による丸め経路変化なし)。band region のときのみ
+    ``(_SAMPLE_HEIGHT, _SAMPLE_WIDTH)`` に reshape して ``region_mean`` で crop する。
+    """
+    if region.is_full_frame():
+        return float(frame.mean())
+    frame2d = frame.reshape(_SAMPLE_HEIGHT, _SAMPLE_WIDTH)
+    return region_mean(frame2d, region)
+
+
 def _sample_chunk_frames(
     stream: IO[bytes] | None,
     chunk_start: float,
@@ -107,6 +121,7 @@ def _sample_chunk_frames(
     fps_den: int,
     expected_frames: int,
     is_tail_chunk: bool,
+    region: CaptureRegion = FULL_FRAME,
 ) -> dict[float, float]:
     """Sample frames from a pre-filtered stream (#576 select-filter path).
 
@@ -161,7 +176,7 @@ def _sample_chunk_frames(
             break
         if emit_count < len(chunk_timestamps):
             frame = np.frombuffer(raw, dtype=np.uint8)
-            brightness = float(frame.mean())
+            brightness = _frame_brightness(frame, region)
             results[chunk_timestamps[emit_count]] = brightness
         emit_count += 1
 
@@ -432,6 +447,7 @@ def _decode_chunk_cpu(
     source_fps_den: int | None = None,
     source_fps: float | None = None,
     is_tail_chunk: bool = False,
+    region: CaptureRegion = FULL_FRAME,
 ) -> dict[float, float]:
     """Decode a chunk in CPU mode.
 
@@ -453,6 +469,7 @@ def _decode_chunk_cpu(
             chunk_start,
             chunk_end,
             sample_interval,
+            region,
         )
 
     fps_num, fps_den = _resolve_fps_rational(
@@ -469,6 +486,7 @@ def _decode_chunk_cpu(
         fps_num,
         fps_den,
         is_tail_chunk,
+        region,
     )
 
 
@@ -478,6 +496,7 @@ def _decode_chunk_cpu_legacy(
     chunk_start: float,
     chunk_end: float,
     sample_interval: float,
+    region: CaptureRegion = FULL_FRAME,
 ) -> dict[float, float]:
     """Legacy fps-filter chunk decode (pre-#576). Kept for env var rollback.
 
@@ -536,7 +555,7 @@ def _decode_chunk_cpu_legacy(
 
     while offset + _FRAME_SIZE <= len(data) and frame_idx < len(chunk_timestamps):
         frame = np.frombuffer(data[offset : offset + _FRAME_SIZE], dtype=np.uint8)
-        results[chunk_timestamps[frame_idx]] = float(frame.mean())
+        results[chunk_timestamps[frame_idx]] = _frame_brightness(frame, region)
         offset += _FRAME_SIZE
         frame_idx += 1
 
@@ -557,6 +576,7 @@ def _decode_chunk_cpu_v2(
     fps_num: int,
     fps_den: int,
     is_tail_chunk: bool,
+    region: CaptureRegion = FULL_FRAME,
 ) -> dict[float, float]:
     """New path: dual seek + select filter + -fps_mode passthrough (#576 Option 1).
 
@@ -649,6 +669,7 @@ def _decode_chunk_cpu_v2(
                     fps_den=fps_den,
                     expected_frames=expected_frames,
                     is_tail_chunk=is_tail_chunk,
+                    region=region,
                 )
                 proc.wait(timeout=max(300, int(chunk_duration * 2)))
                 # Read stderr from temp file (no pipe backpressure issue)
@@ -701,6 +722,7 @@ def _scan_cpu(
     source_fps_num: int | None = None,
     source_fps_den: int | None = None,
     source_fps: float | None = None,
+    region: CaptureRegion = FULL_FRAME,
 ) -> dict[float, float]:
     """CPU mode: chunked decode (output seek + Python N-th sampling, #576).
 
@@ -746,6 +768,7 @@ def _scan_cpu(
                 source_fps_den=source_fps_den,
                 source_fps=source_fps,
                 is_tail_chunk=is_tail,
+                region=region,
             ): (c_start, c_ts)
             for c_start, c_end, c_ts, is_tail in chunks
         }

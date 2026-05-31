@@ -5,10 +5,13 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 from allaganeye.audio.matcher import BgmHit
 from allaganeye.exceptions import VideoProcessingError
+from allaganeye.video import detector as det
+from allaganeye.video.capture_region import FULL_FRAME, CaptureRegion
 from allaganeye.video.detector import (
     MatchBoundary,
     _BLACKOUT_PADDING,
@@ -2460,3 +2463,19 @@ class TestDropPostMatchTrailing:
         """Empty input returns empty, no exception."""
         result = _drop_post_match_trailing([], Path("v.mp4"), 1800.0, None)
         assert result == []
+
+
+def test_frame_brightness_full_frame_is_1d_mean_bitexact():
+    # CPU scan passes a 1-D grayscale buffer (320*180,). FULL_FRAME must
+    # equal float(buf.mean()) EXACTLY (no reshape) for OBS bit-exact.
+    buf = np.arange(det._FRAME_SIZE, dtype=np.uint8)  # 1-D, length 320*180
+    assert det._frame_brightness(buf, FULL_FRAME) == float(buf.mean())
+
+
+def test_frame_brightness_band_reshapes_and_crops():
+    # band branch must reshape the 1-D buffer to (180,320) then crop.
+    buf = np.zeros(det._FRAME_SIZE, dtype=np.uint8)
+    frame2d = buf.reshape(det._SAMPLE_HEIGHT, det._SAMPLE_WIDTH)
+    frame2d[0:9, :] = 100  # top 5% rows bright
+    band = CaptureRegion(0.0, 0.0, 1.0, 0.05)
+    assert det._frame_brightness(buf.reshape(-1), band) == 100.0
