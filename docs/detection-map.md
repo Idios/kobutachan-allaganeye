@@ -126,7 +126,7 @@ segments 抽出 (_filter_and_extract_segments)
 
 ### 5.4 presence.py 資産 (spec §10)
 
-- `compare_segments` / GT 突合ハーネス → 検証インフラとして存続。
+- `compare_segments` (`tests/presence_harness.py`) / GT 突合ハーネス → 検証インフラとして存続。
 - `localize_present_at` → Stage 2 分類で再利用。
 - `scan_presence` / `segment_presence` / `detect_matches_by_presence` → VTuber + 診断専用に降格 (OBS production 経路では使わない)。
 - branch `claude/l3-p2-region-detection` は Phase 1-2 実装で継続使用。
