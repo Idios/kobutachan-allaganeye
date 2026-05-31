@@ -11,6 +11,7 @@ from allaganeye.video.capture_region import (
     band_region_from_localization,
     detect_region_blackout_overlap,
     detect_region_variance,
+    detect_scorebar_band_region,
     iou,
     localize_scorebar,
     region_mean,
@@ -475,3 +476,53 @@ def test_band_region_clamps_into_unit_square():
     assert region.x >= 0.0 and region.y >= 0.0
     assert region.x + region.w <= 1.0 + 1e-9
     assert region.y + region.h <= 1.0 + 1e-9
+
+
+# ---------------------------------------------------------------------------
+# Task A3: detect_scorebar_band_region (localize 多フレーム consensus)
+# ---------------------------------------------------------------------------
+
+
+def test_band_consensus_takes_median_of_localizations():
+    locs = [
+        ScorebarLocalization(238, 1678, 18, 63, 0.8),
+        ScorebarLocalization(240, 1680, 18, 63, 0.9),
+        ScorebarLocalization(242, 1682, 20, 65, 0.7),
+        None,
+    ]
+    calls = iter(locs)
+    region = detect_scorebar_band_region(
+        duration=400.0,
+        probe_w=1920,
+        probe_h=1080,
+        localize_fn=lambda _t: next(calls),
+        num_samples=4,
+    )
+    assert abs(region.x - 240 / 1920) < 1e-3
+    assert region.source == "band"
+    assert region.confidence > 0.0
+
+
+def test_band_consensus_all_miss_falls_back_full_frame():
+    region = detect_scorebar_band_region(
+        duration=400.0,
+        probe_w=1920,
+        probe_h=1080,
+        localize_fn=lambda _t: None,
+        num_samples=4,
+    )
+    assert region.is_full_frame()
+
+
+def test_band_consensus_below_min_hits_falls_back_full_frame():
+    locs = [ScorebarLocalization(240, 1680, 18, 63, 0.9), None, None, None]
+    calls = iter(locs)
+    region = detect_scorebar_band_region(
+        duration=400.0,
+        probe_w=1920,
+        probe_h=1080,
+        localize_fn=lambda _t: next(calls),
+        num_samples=4,
+        min_hits=2,
+    )
+    assert region.is_full_frame()

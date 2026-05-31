@@ -9,6 +9,7 @@ bit-exact; see spec section 3.4 / M4).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -424,3 +425,39 @@ def detect_region_blackout_overlap(
     return _largest_component_region(
         mask, min_area_frac=min_area_frac, source="tierA", confidence=0.8
     )
+
+
+_BAND_CONSENSUS_MIN_HITS = 2
+"""帯 consensus に必要な最小局在化成功数。これ未満は FULL_FRAME 縮退。"""
+
+
+def detect_scorebar_band_region(
+    *,
+    duration: float,
+    probe_w: int,
+    probe_h: int,
+    localize_fn: Callable[[float], ScorebarLocalization | None],
+    num_samples: int = 8,
+    min_hits: int = _BAND_CONSENSUS_MIN_HITS,
+) -> CaptureRegion:
+    """疎な多フレーム localize の median consensus で安定 scorebar 帯 ROI を返す。
+
+    *localize_fn* は timestamp → ScorebarLocalization|None。動画 I/O は呼び出し側が
+    bind する (テストは合成関数を注入)。成功局在化が *min_hits* 未満なら FULL_FRAME
+    (OBS / 局在化不能時の安全縮退)。成功時は各座標の median を取り
+    `band_region_from_localization` で正規化帯 ROI に変換する。
+    """
+    if duration <= 0 or num_samples < 1:
+        return FULL_FRAME
+    times = [duration * (i + 1) / (num_samples + 1) for i in range(num_samples)]
+    hits = [loc for t in times if (loc := localize_fn(t)) is not None]
+    if len(hits) < min_hits:
+        return FULL_FRAME
+    median_loc = ScorebarLocalization(
+        x_left=int(np.median([h.x_left for h in hits])),
+        x_right=int(np.median([h.x_right for h in hits])),
+        y_top=int(np.median([h.y_top for h in hits])),
+        y_bottom=int(np.median([h.y_bottom for h in hits])),
+        confidence=float(np.median([h.confidence for h in hits])),
+    )
+    return band_region_from_localization(median_loc, probe_w=probe_w, probe_h=probe_h)
