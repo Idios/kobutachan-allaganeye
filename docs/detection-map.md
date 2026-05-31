@@ -77,7 +77,35 @@
 
 ## 4. coupling 図: `_drop_post_match_trailing` × v2 × membership
 
-(Task 4 で記入)
+`_drop_post_match_trailing` (detector.py:1901) は segment 抽出の **後段**で、最終 segment が
+post-match trailing (lobby/city) かを **v2 scorebar の不在を根拠に不可逆削除**する。
+
+```text
+segments 抽出 (_filter_and_extract_segments)
+        │
+        ▼
+最終 segment が type=unknown かつ end≈動画末尾 かつ len>=2 か?
+        │ yes
+        ▼
+早期 candidate-match 窓を _TRAILING_PROBE_STRIDE で v2 プローブ
+        │
+        ├─ どれか True / None (probe 失敗) → keep (safe side)
+        └─ 全て False (definite miss)      → segments[:-1]  ← 不可逆削除
+```
+
+### 競合シナリオ (Codex #6 / spec R4)
+
+| 変更 | trailing drop への影響 |
+| --- | --- |
+| v2 を localize に置換 (Q3) | trailing drop は v2 を直接呼ぶ (detector.py:1977)。置換すると **第 2 の分類器が暗黙に挙動変化**。localize はリザルト 91% present → trailing を「試合あり」と誤判定し drop し損ねる、逆に VTuber では本物 trailing を切る (R3) |
+| membership 信号導入 (Q4) | membership は segment 抽出の前段。trailing drop は後段で独立に再判定するため、**2 つの membership 判断が二重化** |
+| #805 非破壊化 | 不可逆削除 → フラグ方式にすると trailing drop の出力契約が変わる |
+
+### 結論 (Phase 1+ への制約)
+
+- spec §3.4 の通り、**Phase 1-3 は v2 を温存**し trailing drop を現状のまま据え置く。
+- membership 統一と #805 非破壊化は **Phase 4 cutover 以降の別 phase**で、trailing drop を新 membership と同じ根拠に統一するか shadow 無効化してから扱う。
+- Phase 2 で localize を shadow 並走させる際、**trailing drop は v2 (authoritative) のまま**にする (localize を trailing drop に配線しない)。
 
 ## 5. 再アーキ (spec) への含意
 
