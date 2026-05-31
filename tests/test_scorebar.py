@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from allaganeye.audio.matcher import BgmHit
+from allaganeye.video.capture_region import CaptureRegion
 from allaganeye.video.detector import (
     _SAMPLE_WIDTH,
     _SCOREBAR_CHANNEL_STD_THRESHOLD,
@@ -1258,3 +1259,47 @@ class TestProbeScorebarContext:
         )
         assert results == [None, None]
         assert frames == [None, None]
+
+
+_W = 320
+
+
+def _solid_frame(height, fill):
+    return np.full((height, _W, 3), fill, dtype=np.uint8).tobytes()
+
+
+def test_is_static_default_uses_absolute_roi_unchanged():
+    h = 180
+    # two identical frames -> static (MAD 0) under default absolute ROI
+    frames = [_solid_frame(h, 50), _solid_frame(h, 50)]
+    assert _is_static_from_frames(frames, h) is True
+
+
+def test_is_static_band_region_argument_accepted():
+    import inspect
+
+    sig = inspect.signature(_is_static_from_frames)
+    assert "region" in sig.parameters
+    assert sig.parameters["region"].default is None
+
+
+def test_is_static_band_region_derives_from_normalized_region():
+    h = 180
+    # Build frames where the absolute scorebar ROI is identical (static) but
+    # a band region elsewhere differs between frames. With region given, the
+    # band-derived ROI must drive the MAD -> not static.
+    a = np.full((h, _W, 3), 50, dtype=np.uint8)
+    b = np.full((h, _W, 3), 50, dtype=np.uint8)
+    # Region = top-left quadrant (away from the bottom scorebar ROI).
+    region = CaptureRegion(0.0, 0.0, 0.25, 0.25)
+    bx1 = max(0, int(region.x * _W))
+    bx2 = min(_W, int((region.x + region.w) * _W))
+    by1 = max(0, int(region.y * h))
+    by2 = min(h, int((region.y + region.h) * h))
+    b[by1:by2, bx1:bx2, :] = 200  # large diff inside the band region only
+    frames = [a.tobytes(), b.tobytes()]
+
+    # Default absolute ROI sees no change -> static.
+    assert _is_static_from_frames(frames, h) is True
+    # Band region sees the change -> not static.
+    assert _is_static_from_frames(frames, h, region=region) is False

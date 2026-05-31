@@ -10,6 +10,7 @@ import numpy as np
 
 from allaganeye.audio.matcher import BgmHit
 from allaganeye.exceptions import VideoProcessingError
+from allaganeye.video.capture_region import CaptureRegion
 from allaganeye.video.detector import (
     DetectionStats,
     _SAMPLE_WIDTH,
@@ -135,6 +136,7 @@ Threshold 0.5 sits well inside the gap.
 def _is_static_from_frames(
     raw_frames: Sequence[bytes | None],
     height: int,
+    region: CaptureRegion | None = None,
 ) -> bool:
     """Detect static screens (loading/result) via scorebar ROI frame diff.
 
@@ -155,10 +157,16 @@ def _is_static_from_frames(
     if len(valid) < 2:
         return False
 
-    x1 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_START)
-    x2 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_END)
-    y1 = int(height * _SCOREBAR_ROI_Y_START)
-    y2 = int(height * _SCOREBAR_ROI_Y_END)
+    if region is None:
+        x1 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_START)
+        x2 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_END)
+        y1 = int(height * _SCOREBAR_ROI_Y_START)
+        y2 = int(height * _SCOREBAR_ROI_Y_END)
+    else:
+        x1 = max(0, int(region.x * _SAMPLE_WIDTH))
+        x2 = min(_SAMPLE_WIDTH, int((region.x + region.w) * _SAMPLE_WIDTH))
+        y1 = max(0, int(region.y * height))
+        y2 = min(height, int((region.y + region.h) * height))
 
     rois = []
     for raw in valid:
