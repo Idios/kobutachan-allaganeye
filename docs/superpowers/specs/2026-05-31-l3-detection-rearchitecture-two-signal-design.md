@@ -169,7 +169,7 @@ Codex 提案順序 (production 不変のまま shadow trace → MAD calibrate �
 
 | Phase | 内容 | production 影響 | gate |
 | --- | --- | --- | --- |
-| **0** | 検出 subsystem の git 考古学 + 現状 map (ドキュメント化)。各 layer の load-bearing / cruft / 有害判定、`_drop_post_match_trailing`×v2×membership coupling を含む | なし (docs) | user レビュー |
+| **0** | 検出 subsystem の git 考古学 + 現状 map (ドキュメント化)。各 layer の load-bearing / cruft / 有害判定、`_drop_post_match_trailing`×v2×membership coupling を含む。成果物 = [docs/detection-map.md](../../detection-map.md) | なし (docs) | user レビュー |
 | **1** | Stage 0 anchor (P1 consensus → scorebar 帯 ROI + 保持矩形) + Stage 1 VTuber 帯 crop wiring (#809 を帯に限定) + MAD ROI の band-anchor 化。OBS=絶対 ROI 縮退 | なし (VTuber 経路は gate 内) | OBS bit-exact 維持 + gyawa 帯 crop blackout 回復 |
 | **2** | Stage 2 分類を localize+motion 化 (#480)。v2 shadow guard 並走。MAD calibrate | なし (v2 が production 判定、localize は shadow) | OBS parity 計測 + baseline diff |
 | **3** | VTuber GT 注釈 (5 source) + VTuber 検証。fusion 真理値表 + fallback フラグ | なし | VTuber GT-accuracy |
@@ -228,4 +228,5 @@ Phase 0-3 = 検証・非破壊、Phase 4 = 切替。「検証してから切替�
 - P1 (基盤・マージ済): [2026-05-29-p1-robust-scorebar-localization-design.md](2026-05-29-p1-robust-scorebar-localization-design.md)
 - #809 wiring (再利用): [2026-05-27-vtuber-pass1-region-wiring-design.md](2026-05-27-vtuber-pass1-region-wiring-design.md)
 - 現行コード: `allaganeye/video/detector.py` (`detect_match_boundaries` / brightness Pass1/2 / `_has_scorebar_v2` / `_filter_and_extract_segments` / `_drop_post_match_trailing`), `scorebar.py` (`filter_blackouts_with_scorebar` / `classify_blackout` / `_is_static_from_frames`), `capture_region.py` (`localize_scorebar` / S3), `presence.py` (Phase 1 資産)
+- Phase 0 成果物: [docs/detection-map.md](../../detection-map.md) (layer 別 keep/cruft/harmful 判定 + git 考古学 + coupling 図)
 - 関連 issue: [#480](https://github.com/Idios/kobutachan-allaganeye/issues/480) (分類・Stage 2 に再マップ), [#481](https://github.com/Idios/kobutachan-allaganeye/issues/481) (minimap・範囲外), [#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) (trailing 非破壊化・別 phase), [#809](https://github.com/Idios/kobutachan-allaganeye/issues/809) (wiring 再利用), [#810](https://github.com/Idios/kobutachan-allaganeye/issues/810) (metadata region・P6), [#753](https://github.com/Idios/kobutachan-allaganeye/issues/753) (re-plan umbrella)

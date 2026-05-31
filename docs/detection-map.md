@@ -109,4 +109,24 @@ segments 抽出 (_filter_and_extract_segments)
 
 ## 5. 再アーキ (spec) への含意
 
-(Task 5 で記入)
+### 5.1 Phase 1 で保持必須 (load-bearing)
+
+- brightness Pass1/Pass2、duration filter (backstop)、`_merge_boundary_pairs` は OBS で bit-exact 維持。
+- `_has_scorebar_v2` は authoritative 温存 (Q3 provisional)。
+
+### 5.2 Phase 1 で触る (再編)
+
+- `classify_blackout` の検出 primitive を localize+motion 化 (shadow 並走、§2 判定参照)。
+- `_is_static_from_frames` を band-anchor 化 (絶対 ROI → localize bbox、spec §5)。OBS は絶対 ROI 縮退。
+
+### 5.3 触ってはいけない (Phase 4 以降)
+
+- `_drop_post_match_trailing` (harmful だが §4 の通り coupling 故に Phase 1-3 据え置き)。
+- legacy fps filter path (cruft、別 issue で撤去)。
+
+### 5.4 presence.py 資産 (spec §10)
+
+- `compare_segments` / GT 突合ハーネス → 検証インフラとして存続。
+- `localize_present_at` → Stage 2 分類で再利用。
+- `scan_presence` / `segment_presence` / `detect_matches_by_presence` → VTuber + 診断専用に降格 (OBS production 経路では使わない)。
+- branch `claude/l3-p2-region-detection` は Phase 1-2 実装で継続使用。

@@ -8,6 +8,8 @@ L1 の動画処理は以下の3段階で構成される:
 2. **detect**: ffmpeg 並列プローブで暗転を検知し、試合境界を特定
 3. **split**: FFmpeg で試合ごとに動画を分割
 
+> 検出 subsystem の layer 別 load-bearing/cruft/harmful 判定・git 考古学・再アーキ coupling は [detection-map.md](detection-map.md) (L3 Phase 0) を参照。
+
 ## probe（メタデータ取得）
 
 ffprobe を使用して以下の情報を取得:
