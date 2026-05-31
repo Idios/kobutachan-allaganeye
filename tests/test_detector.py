@@ -203,7 +203,7 @@ class TestRefineBlackoutRegions:
     def test_2s_blackout_detected(self, mock_probe):
         """A 2.0s blackout is precisely measured and retained."""
 
-        def side_effect(path, t):
+        def side_effect(path, t, region=FULL_FRAME):
             # Blackout from 100.0 to 102.0
             return 5.0 if 100.0 <= t < 102.0 else 128.0
 
@@ -223,7 +223,7 @@ class TestRefineBlackoutRegions:
     def test_1s_respawn_stays_short(self, mock_probe):
         """A 1.0s respawn blackout remains short after refinement."""
 
-        def side_effect(path, t):
+        def side_effect(path, t, region=FULL_FRAME):
             return 5.0 if 100.0 <= t < 101.0 else 128.0
 
         mock_probe.side_effect = side_effect
@@ -314,7 +314,7 @@ class TestRefineBlackoutRegions:
 
         call_count = 0
 
-        def side_effect(video_path, t):
+        def side_effect(video_path, t, region=FULL_FRAME):
             nonlocal call_count
             call_count += 1
             # Every 3rd probe fails
@@ -408,7 +408,7 @@ class TestRefineBlackoutRegions:
 
         call_count = 0
 
-        def side_effect(video_path, t):
+        def side_effect(video_path, t, region=FULL_FRAME):
             nonlocal call_count
             call_count += 1
             if call_count % 3 == 0:
@@ -1036,7 +1036,9 @@ class TestDetectMatchBoundaries:
             return {t: 5.0 if 598.0 <= t <= 602.0 else 128.0 for t in ts}
 
         mock_chunk.side_effect = chunk_side_effect
-        mock_probe.side_effect = lambda path, t: 5.0 if 593.0 <= t <= 607.0 else 128.0
+        mock_probe.side_effect = lambda path, t, region=FULL_FRAME: (
+            5.0 if 593.0 <= t <= 607.0 else 128.0
+        )
         result = detect_match_boundaries(
             Path("test.mp4"),
             duration_hint=1800.0,
@@ -1150,7 +1152,9 @@ class TestDetectMatchBoundaries:
         mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
             t: 5.0 if 598.0 <= t <= 602.0 else 128.0 for t in ts
         }
-        mock_probe.side_effect = lambda path, t: 5.0 if 593.0 <= t <= 607.0 else 128.0
+        mock_probe.side_effect = lambda path, t, region=FULL_FRAME: (
+            5.0 if 593.0 <= t <= 607.0 else 128.0
+        )
         with patch(
             "allaganeye.video.scorebar.filter_blackouts_with_scorebar"
         ) as mock_filter:
@@ -1599,7 +1603,9 @@ class TestPass1HysteresisIntegration:
 
         mock_chunk.side_effect = chunk_side_effect
         # Pass 2 confirms blackout (<15.0 strict) in the same span
-        mock_probe.side_effect = lambda p, t: 5.0 if 599.0 <= t <= 610.0 else 128.0
+        mock_probe.side_effect = lambda p, t, region=FULL_FRAME: (
+            5.0 if 599.0 <= t <= 610.0 else 128.0
+        )
 
         result = detect_match_boundaries(
             Path("test.mp4"),
@@ -1638,7 +1644,9 @@ class TestPass1HysteresisIntegration:
 
         mock_chunk.side_effect = chunk_side_effect
         # Pass 2 at 0.25s finds real blackout 8137.25-8139.75
-        mock_probe.side_effect = lambda p, t: 2.0 if 8137.25 <= t <= 8139.75 else 128.0
+        mock_probe.side_effect = lambda p, t, region=FULL_FRAME: (
+            2.0 if 8137.25 <= t <= 8139.75 else 128.0
+        )
 
         detect_match_boundaries(
             Path("test.mp4"),
@@ -2479,3 +2487,14 @@ def test_frame_brightness_band_reshapes_and_crops():
     frame2d[0:9, :] = 100  # top 5% rows bright
     band = CaptureRegion(0.0, 0.0, 1.0, 0.05)
     assert det._frame_brightness(buf.reshape(-1), band) == 100.0
+
+
+def test_refine_accepts_region_kwarg_default_full_frame():
+    # Pass2 (_refine_blackout_regions) must accept a region kwarg defaulting to
+    # FULL_FRAME so existing callers (detect_match_boundaries) stay bit-exact.
+    # Signature-level pin: Pass2 needs a real video to run end-to-end (B2).
+    import inspect
+
+    sig = inspect.signature(det._refine_blackout_regions)
+    assert "region" in sig.parameters
+    assert sig.parameters["region"].default is FULL_FRAME

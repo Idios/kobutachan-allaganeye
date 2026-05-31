@@ -805,11 +805,20 @@ def _generate_timestamps(duration: float, interval: float) -> list[float]:
     return timestamps
 
 
-def _probe_single_frame(video_path: Path, timestamp: float) -> float:
+def _probe_single_frame(
+    video_path: Path,
+    timestamp: float,
+    region: CaptureRegion = FULL_FRAME,
+) -> float:
     """Probe a single frame's mean brightness using ffmpeg -ss seek.
 
     Uses input seeking (``-ss`` before ``-i``) for fast keyframe-based
     access, then decodes exactly one frame at 320x180 grayscale.
+
+    Brightness is computed via :func:`_frame_brightness`, so *region*
+    defaults to ``FULL_FRAME`` (the 1-D ``float(frame.mean())`` path is
+    byte-identical to the pre-region behavior; a band region reshapes the
+    raw buffer to ``(_SAMPLE_HEIGHT, _SAMPLE_WIDTH)`` and crops).
 
     Returns the mean brightness (0-255).  Returns 255.0 on probe failure
     (treated as non-blackout to avoid false positives).
@@ -848,7 +857,8 @@ def _probe_single_frame(video_path: Path, timestamp: float) -> float:
     if len(result.stdout) < _FRAME_SIZE:
         return 255.0  # incomplete frame, treat as non-blackout
 
-    return float(np.frombuffer(result.stdout[:_FRAME_SIZE], dtype=np.uint8).mean())
+    frame = np.frombuffer(result.stdout[:_FRAME_SIZE], dtype=np.uint8)
+    return _frame_brightness(frame, region)
 
 
 def _probe_frame_rgb(
@@ -1710,6 +1720,7 @@ def _refine_blackout_regions(
     total_duration: float,
     workers: int | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
+    region: CaptureRegion = FULL_FRAME,
 ) -> list[tuple[float, float]]:
     """Re-probe blackout regions at fine interval for precise duration.
 
@@ -1721,6 +1732,10 @@ def _refine_blackout_regions(
     to publish the total, then once per completed probe with the running
     ``(completed, total)``.  This lets callers drive a progress bar during
     the long ThreadPoolExecutor wait (#366).
+
+    *region* is forwarded to :func:`_probe_single_frame` for per-frame
+    brightness.  It defaults to ``FULL_FRAME`` so the OBS Pass 2 path stays
+    bit-exact with the pre-region behavior (#753 / Task B2).
     """
     if not blackout_regions:
         return blackout_regions
@@ -1747,7 +1762,8 @@ def _refine_blackout_regions(
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
-            pool.submit(_probe_single_frame, video_path, t): t for t in sorted_probes
+            pool.submit(_probe_single_frame, video_path, t, region): t
+            for t in sorted_probes
         }
         completed = 0
         for future in as_completed(futures):
