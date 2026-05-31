@@ -211,6 +211,40 @@ def _resolve_workers(workers: int | None) -> int:
     return min(os.cpu_count() or 4, 32)
 
 
+def _resolve_detect_region(video_path: Path, duration_hint: float) -> CaptureRegion:
+    """Stage 0: scorebar 帯 anchor を解決する。失敗時は FULL_FRAME (OBS 安全縮退)。
+
+    OBS (全画面 game) では localize がインセット帯を見つけられず consensus が
+    成立しないため FULL_FRAME に縮退し、検出は現行と bit-exact になる。VTuber は
+    帯 ROI が解決される。anchor の例外は決して検出を壊さない (FULL_FRAME に握り潰す)。
+    """
+    from allaganeye.video.capture_region import (
+        detect_scorebar_band_region,
+        localize_scorebar,
+    )
+
+    def _localize_at(t: float):
+        raw = _probe_frame_rgb_hires(video_path, t)
+        if raw is None:
+            return None
+        frame = np.frombuffer(raw, dtype=np.uint8).reshape(
+            _SCOREBAR_V2_PROBE_HEIGHT, _SCOREBAR_V2_PROBE_WIDTH, 3
+        )
+        return localize_scorebar(frame)
+
+    try:
+        return detect_scorebar_band_region(
+            duration=duration_hint,
+            probe_w=_SCOREBAR_V2_PROBE_WIDTH,
+            probe_h=_SCOREBAR_V2_PROBE_HEIGHT,
+            localize_fn=_localize_at,
+        )
+    except Exception:
+        # Anchor failure must never break detect: degrade to FULL_FRAME so the
+        # OBS / error path stays bit-exact with the pre-region behavior.
+        return FULL_FRAME
+
+
 def detect_match_boundaries(
     video_path: Path,
     *,
@@ -279,6 +313,12 @@ def detect_match_boundaries(
             "Cannot determine video duration. Provide duration_hint via probe."
         )
 
+    # Stage 0 (#753 / B4): resolve a scorebar-band anchor before any scan.
+    # OBS (full-frame game) -> localize finds no inset band, consensus fails ->
+    # FULL_FRAME (detection stays bit-exact with the pre-region behavior).
+    # VTuber -> a scorebar-band ROI is resolved and threaded into Pass1/GPU/Pass2.
+    detect_region = _resolve_detect_region(video_path, duration_hint)
+
     # Pass 1: scan for blackout frames
     pass1_start = time.monotonic()
     resolved_mode = "CPU"
@@ -299,6 +339,7 @@ def detect_match_boundaries(
                 source_fps_num=source_fps_num,
                 source_fps_den=source_fps_den,
                 source_fps=source_fps,
+                region=detect_region,
             )
             resolved_mode = "GPU"
         except VideoProcessingError:
@@ -313,6 +354,7 @@ def detect_match_boundaries(
                 source_fps_num=source_fps_num,
                 source_fps_den=source_fps_den,
                 source_fps=source_fps,
+                region=detect_region,
             )
             resolved_mode = "CPU (GPU fallback)"
     else:
@@ -326,6 +368,7 @@ def detect_match_boundaries(
             source_fps_num=source_fps_num,
             source_fps_den=source_fps_den,
             source_fps=source_fps,
+            region=detect_region,
         )
     pass1_elapsed = time.monotonic() - pass1_start
 
@@ -385,6 +428,7 @@ def detect_match_boundaries(
         duration_hint,
         workers,
         progress_callback=refine_progress_callback,
+        region=detect_region,
     )
     pass2_elapsed = time.monotonic() - pass2_start
     if stats is not None:

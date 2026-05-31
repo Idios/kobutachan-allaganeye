@@ -2498,3 +2498,95 @@ def test_refine_accepts_region_kwarg_default_full_frame():
     sig = inspect.signature(det._refine_blackout_regions)
     assert "region" in sig.parameters
     assert sig.parameters["region"].default is FULL_FRAME
+
+
+# ============================================================
+# Task B4: Stage 0 band anchor resolution (_resolve_detect_region)
+# ============================================================
+
+
+def test_resolve_detect_region_exists():
+    from allaganeye.video import detector as det
+
+    assert hasattr(det, "_resolve_detect_region")
+
+
+def test_resolve_detect_region_falls_back_full_frame_on_probe_failure(monkeypatch):
+    from allaganeye.video import detector as det
+    from allaganeye.video.capture_region import FULL_FRAME  # noqa: F401
+    from pathlib import Path
+
+    # all hi-res probes fail -> localize_fn always None -> band consensus FULL_FRAME
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", lambda vp, t: None)
+    region = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    assert region.is_full_frame()
+
+
+def test_resolve_detect_region_swallows_exceptions_to_full_frame(monkeypatch):
+    # Anchor failure must NEVER break detect: any exception inside the probe
+    # path is swallowed to FULL_FRAME (OBS-safe degrade, bit-exact preserved).
+    from allaganeye.video import detector as det
+    from pathlib import Path
+
+    def _boom(vp, t):
+        raise RuntimeError("probe exploded")
+
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", _boom)
+    region = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    assert region.is_full_frame()
+
+
+def test_detect_match_boundaries_passes_region_to_all_three_call_sites(monkeypatch):
+    # Keystone wiring guard: the region resolved by Stage 0 must reach Pass1
+    # (_scan_cpu), GPU (scan_gpu), and Pass2 (_refine_blackout_regions).  On a
+    # probe failure the resolved region is FULL_FRAME, but the kwarg must still
+    # be threaded through every call so VTuber band ROIs propagate.
+    from allaganeye.video import detector as det
+    from allaganeye.video import gpu_detector
+    from allaganeye.video.capture_region import FULL_FRAME
+    from pathlib import Path
+
+    sentinel = CaptureRegion(0.0, 0.10, 1.0, 0.18, confidence=0.9, source="band")
+    monkeypatch.setattr(det, "_resolve_detect_region", lambda vp, dh: sentinel)
+
+    cpu_calls: list[CaptureRegion] = []
+    gpu_calls: list[CaptureRegion] = []
+    refine_calls: list[CaptureRegion] = []
+
+    def fake_scan_cpu(*args, **kwargs):
+        cpu_calls.append(kwargs.get("region", FULL_FRAME))
+        return {0.0: 100.0, 1.0: 100.0}
+
+    def fake_scan_gpu(*args, **kwargs):
+        gpu_calls.append(kwargs.get("region", FULL_FRAME))
+        return {0.0: 100.0, 1.0: 100.0}
+
+    def fake_refine(*args, **kwargs):
+        refine_calls.append(kwargs.get("region", FULL_FRAME))
+        return []
+
+    monkeypatch.setattr(det, "_scan_cpu", fake_scan_cpu)
+    monkeypatch.setattr(gpu_detector, "scan_gpu", fake_scan_gpu)
+    monkeypatch.setattr(det, "_refine_blackout_regions", fake_refine)
+
+    # CPU path
+    det.detect_match_boundaries(
+        Path("test.mp4"),
+        duration_hint=2.0,
+        sample_interval=1.0,
+        min_match_duration=0.5,
+        use_gpu=False,
+    )
+    # GPU path
+    det.detect_match_boundaries(
+        Path("test.mp4"),
+        duration_hint=2.0,
+        sample_interval=1.0,
+        min_match_duration=0.5,
+        use_gpu=True,
+    )
+
+    assert cpu_calls == [sentinel]
+    assert gpu_calls == [sentinel]
+    # Pass2 runs in both invocations.
+    assert refine_calls == [sentinel, sentinel]

@@ -1295,6 +1295,7 @@ class TestRefineProgressBar:
             workers,
             *,
             progress_callback=None,
+            region=None,
         ):
             # Mimic Pass 2: publish total then advance per probe (#366)
             total_probes = 4
@@ -1349,6 +1350,7 @@ class TestRefineProgressBar:
             workers,
             *,
             progress_callback=None,
+            region=None,
         ):
             # Mimic Pass 2: publish total then advance per probe (#366)
             total_probes = 6
