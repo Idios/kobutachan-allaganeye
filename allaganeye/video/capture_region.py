@@ -89,6 +89,21 @@ def region_mean(frame: np.ndarray, region: CaptureRegion) -> float:
     return float(frame[y0:y1, x0:x1].mean())
 
 
+def band_region_from_localization(
+    loc: ScorebarLocalization, *, probe_w: int, probe_h: int
+) -> CaptureRegion:
+    """probe px の scorebar 局在化を正規化 scorebar 帯 ROI に変換する。
+
+    検出 (brightness / motion) を測る最 clean 領域。`loc.confidence` を引き継ぎ
+    `source="band"` を付ける。範囲外座標は clamp する。
+    """
+    x = loc.x_left / probe_w
+    y = loc.y_top / probe_h
+    w = (loc.x_right - loc.x_left) / probe_w
+    h = (loc.y_bottom - loc.y_top) / probe_h
+    return CaptureRegion(x, y, w, h, confidence=loc.confidence, source="band").clamp()
+
+
 @dataclass
 class RegionTimeline:
     """Coarse region (Pass 1) + per-segment precise regions (#480/#481)."""

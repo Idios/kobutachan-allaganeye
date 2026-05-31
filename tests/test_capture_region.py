@@ -8,6 +8,7 @@ from allaganeye.video.capture_region import (
     _emblem_and_margin,
     _maybe_snap_full_frame,
     _scorebar_saturated_runs,
+    band_region_from_localization,
     detect_region_blackout_overlap,
     detect_region_variance,
     iou,
@@ -446,3 +447,31 @@ def test_region_mean_empty_crop_clamps_to_1px():
     frame = np.full((10, 10), 50, dtype=np.uint8)
     degenerate = CaptureRegion(0.999, 0.999, 0.0001, 0.0001)
     assert region_mean(frame, degenerate) == 50.0
+
+
+# ---------------------------------------------------------------------------
+# Task A2: band_region_from_localization
+# ---------------------------------------------------------------------------
+
+
+def test_band_region_normalizes_probe_px_to_unit_rect():
+    loc = ScorebarLocalization(
+        x_left=240, x_right=1680, y_top=18, y_bottom=63, confidence=0.9
+    )
+    region = band_region_from_localization(loc, probe_w=1920, probe_h=1080)
+    assert abs(region.x - 240 / 1920) < 1e-6
+    assert abs(region.y - 18 / 1080) < 1e-6
+    assert abs(region.w - (1680 - 240) / 1920) < 1e-6
+    assert abs(region.h - (63 - 18) / 1080) < 1e-6
+    assert region.confidence == 0.9
+    assert region.source == "band"
+
+
+def test_band_region_clamps_into_unit_square():
+    loc = ScorebarLocalization(
+        x_left=-5, x_right=1925, y_top=-2, y_bottom=70, confidence=0.5
+    )
+    region = band_region_from_localization(loc, probe_w=1920, probe_h=1080)
+    assert region.x >= 0.0 and region.y >= 0.0
+    assert region.x + region.w <= 1.0 + 1e-9
+    assert region.y + region.h <= 1.0 + 1e-9
