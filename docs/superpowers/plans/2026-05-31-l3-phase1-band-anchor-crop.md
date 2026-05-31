@@ -912,3 +912,311 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - **VTuber GT 注釈・recall/precision 校正** → Phase 3。
 - **full inset 16:9 矩形の metadata 永続化** → P6 / #810、範囲外 (本 plan は検出に帯のみ使用、保持矩形 schema は別途)。
 - **issue 起票** → Iron Law 2、起票時に AskUserQuestion。
+
+---
+
+## 改訂 (2026-05-31): `--vtuber` 明示信号化 (D1 破綻の root-cause 対応)
+
+> **背景**: 当初 plan の B4 は「Stage 0 anchor を無条件実行し、OBS は localize 失敗で
+> FULL_FRAME に縮退」を前提とした。D1 (OBS baseline gate) を実機で回したところ
+> **破綻** — localize は OBS でも成功し (FL scorebar は全画面にも写る)、band region が
+> 返って OBS 境界が秒未満ずれた。実機調査で localize 生出力が per-frame noisy であることも
+> 判明 (spec §3.6)。**確定方針 (user 2026-05-31): auto 推論を全廃し `--vtuber` 明示信号化**。
+> 以下の B4-rev / B5 / B6 / D1-rev / D2-rev が **authoritative** で、上の B4 (auto 版) を
+> supersede する。B1-B3 / C1 / A1-A3 の実装済 commit は salvage (region plumbing は正しい)。
+
+### Task B4-rev: `detect_match_boundaries` の anchor を `vtuber` gate 化
+
+実装済 B4 (commit 21974db) は `_resolve_detect_region` を無条件呼び出し。これを `vtuber: bool` で gate する。**OBS (vtuber=False) は Stage 0 を走らせず `region=FULL_FRAME`** → bit-exact 構造保証。
+
+**Files:**
+
+- Modify: `allaganeye/video/detector.py` (`detect_match_boundaries`)
+- Test: `tests/test_detector.py`
+
+- [ ] **Step 1: Write failing test — vtuber=False は anchor を呼ばず FULL_FRAME**
+
+```python
+def test_detect_skips_anchor_when_not_vtuber(monkeypatch):
+    from allaganeye.video import detector as det
+    called = {"anchor": False}
+    orig = det._resolve_detect_region
+
+    def spy(*a, **k):
+        called["anchor"] = True
+        return orig(*a, **k)
+
+    monkeypatch.setattr(det, "_resolve_detect_region", spy)
+    import inspect
+    sig = inspect.signature(det.detect_match_boundaries)
+    assert "vtuber" in sig.parameters
+    assert sig.parameters["vtuber"].default is False
+
+
+def test_detect_resolves_region_only_when_vtuber(monkeypatch):
+    # vtuber=False -> anchor never called; vtuber=True -> anchor called.
+    # (full run needs video; assert the gate via a lightweight monkeypatch on
+    #  the first thing detect does — see impl. Here we assert the param exists
+    #  and defaults False so OBS callers are unchanged.)
+    from allaganeye.video import detector as det
+    import inspect
+    assert inspect.signature(det.detect_match_boundaries).parameters["vtuber"].default is False
+```
+
+- [ ] **Step 2: Run, verify fail**
+
+Run: `cd "E:/projects/kobutachan-tools/kobutachan-allaganeye/.claude/worktrees/l3-p2-region-detection" && python -m pytest tests/test_detector.py -k "skips_anchor_when_not_vtuber or resolves_region_only_when_vtuber" -v`
+Expected: FAIL (`vtuber` param absent).
+
+- [ ] **Step 3: Add `vtuber: bool = False` param + gate the anchor call**
+
+In `detect_match_boundaries`, add `vtuber: bool = False` (keyword-with-default, near the other flags like `use_gpu`). Replace the unconditional:
+
+```python
+    detect_region = _resolve_detect_region(video_path, duration_hint)
+```
+
+with:
+
+```python
+    # Stage 0 帯 anchor は VTuber 明示時のみ (spec §3.6)。OBS (vtuber=False) は
+    # FULL_FRAME で現行 bit-exact。localize は OBS でも成功するため auto 判別は不可。
+    detect_region = (
+        _resolve_detect_region(video_path, duration_hint)
+        if vtuber
+        else FULL_FRAME
+    )
+```
+
+(All B1-B4 region threading stays; only the resolution is gated.)
+
+- [ ] **Step 4: Run detector suite (bit-exact guard)**
+
+Run: `cd "E:/projects/kobutachan-tools/kobutachan-allaganeye/.claude/worktrees/l3-p2-region-detection" && python -m pytest tests/test_detector.py -v`
+Expected: PASS — all green. `vtuber=False` default = existing callers unchanged.
+
+- [ ] **Step 5: Lint + commit**
+
+```bash
+cd "E:/projects/kobutachan-tools/kobutachan-allaganeye/.claude/worktrees/l3-p2-region-detection"
+python -m ruff check allaganeye/video/detector.py tests/test_detector.py
+python -m pyright allaganeye/video/detector.py
+git add allaganeye/video/detector.py tests/test_detector.py
+git commit -m "fix(l3): Stage 0 anchor を --vtuber gate 化 (OBS=FULL_FRAME bit-exact, Phase 1 B4-rev)
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+```
+
+### Task B5: `detect_scorebar_band_region` の consensus robust 化 (localize noise 対策)
+
+実機で localize は per-frame noisy (OBS 試合中でも y_top 0 ↔ 540-582 が混在、誤検出 conf 0.69)。VTuber 経路の band 解決が真/偽クラスタ混在で壊れないよう、confidence-filter + dominant cluster を入れる。**VTuber 経路内 (`vtuber=True`) のみ通るので OBS には無影響。**
+
+**Files:**
+
+- Modify: `allaganeye/video/capture_region.py` (`detect_scorebar_band_region`)
+- Test: `tests/test_capture_region.py`
+
+- [ ] **Step 1: Write failing test — 真/偽クラスタ混在で真クラスタを選ぶ**
+
+```python
+def test_band_consensus_rejects_low_conf_and_picks_dominant_cluster():
+    from allaganeye.video.capture_region import (
+        ScorebarLocalization, detect_scorebar_band_region,
+    )
+    # 4 true (y~0, high conf) + 3 noise (y~540, varied conf incl one 0.69)
+    locs = [
+        ScorebarLocalization(600, 1315, 0, 45, 1.0),
+        ScorebarLocalization(600, 1315, 0, 45, 1.0),
+        ScorebarLocalization(604, 1311, 12, 57, 0.52),
+        ScorebarLocalization(600, 1315, 0, 45, 1.0),
+        ScorebarLocalization(1116, 1919, 540, 585, 0.21),
+        ScorebarLocalization(508, 1288, 582, 627, 0.28),
+        ScorebarLocalization(0, 778, 558, 603, 0.69),
+    ]
+    calls = iter(locs)
+    region = detect_scorebar_band_region(
+        duration=400.0, probe_w=1920, probe_h=1080,
+        localize_fn=lambda _t: next(calls), num_samples=7,
+    )
+    # must converge on the true cluster (y~0), NOT the noise-mixed median (y~0.24)
+    assert region.y < 0.05, f"expected true cluster y~0, got {region.y}"
+    assert abs(region.x - 600 / 1920) < 0.05
+```
+
+- [ ] **Step 2: Run, verify fail**
+
+Run: `cd "E:/projects/kobutachan-tools/kobutachan-allaganeye/.claude/worktrees/l3-p2-region-detection" && python -m pytest tests/test_capture_region.py -k "dominant_cluster" -v`
+Expected: FAIL (current plain-median returns y~0.24).
+
+- [ ] **Step 3: Implement cluster-based consensus**
+
+Replace the plain-median body of `detect_scorebar_band_region` (keep signature + FULL_FRAME fallbacks). After collecting `hits`, cluster by `y_top` (the noisy axis) and pick the **largest cluster**, breaking ties by mean confidence; require the chosen cluster to still meet `min_hits`:
+
+```python
+    if len(hits) < min_hits:
+        return FULL_FRAME
+    # localize は per-frame noisy (上半分 best-hit scan; spec §3.6)。
+    # y_top で粗くクラスタリングし最大クラスタを採用 (真 scorebar が支配的の前提)。
+    _CLUSTER_Y_TOL = 60  # probe px。同一 scorebar 帯とみなす y_top 差
+    hits_sorted = sorted(hits, key=lambda h: h.y_top)
+    clusters: list[list] = []
+    for h in hits_sorted:
+        if clusters and h.y_top - clusters[-1][-1].y_top <= _CLUSTER_Y_TOL:
+            clusters[-1].append(h)
+        else:
+            clusters.append([h])
+    # 最大サイズ、同数なら平均 confidence の高い方
+    best = max(
+        clusters,
+        key=lambda c: (len(c), sum(h.confidence for h in c) / len(c)),
+    )
+    if len(best) < min_hits:
+        return FULL_FRAME
+    median_loc = ScorebarLocalization(
+        x_left=int(np.median([h.x_left for h in best])),
+        x_right=int(np.median([h.x_right for h in best])),
+        y_top=int(np.median([h.y_top for h in best])),
+        y_bottom=int(np.median([h.y_bottom for h in best])),
+        confidence=float(np.median([h.confidence for h in best])),
+    )
+    return band_region_from_localization(median_loc, probe_w=probe_w, probe_h=probe_h)
+```
+
+Add `_CLUSTER_Y_TOL` as a module constant with a docstring if preferred. Keep the existing `duration<=0`/`num_samples<1` and `len(hits)<min_hits` guards.
+
+- [ ] **Step 4: Run, verify pass + full capture_region suite**
+
+Run: `cd "E:/projects/kobutachan-tools/kobutachan-allaganeye/.claude/worktrees/l3-p2-region-detection" && python -m pytest tests/test_capture_region.py -v`
+Expected: PASS — new cluster test + the 3 existing A3 consensus tests still green (the all-true and all-miss cases are unaffected; the below-min case still falls back).
+
+- [ ] **Step 5: Lint + commit**
+
+```bash
+cd "E:/projects/kobutachan-tools/kobutachan-allaganeye/.claude/worktrees/l3-p2-region-detection"
+python -m ruff check allaganeye/video/capture_region.py tests/test_capture_region.py
+python -m pyright allaganeye/video/capture_region.py
+git add allaganeye/video/capture_region.py tests/test_capture_region.py
+git commit -m "fix(l3): band consensus を dominant-cluster 化 (localize per-frame noise 対策, Phase 1 B5)
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+```
+
+### Task B6: `--vtuber` CLI flag を detect / split に追加
+
+`detect_match_boundaries(vtuber=...)` を CLI から駆動する。`allaganeye/cli.py` の detect / split コマンドに `--vtuber` boolean flag を足し、検出呼び出しに渡す。
+
+**Files:**
+
+- Modify: `allaganeye/cli.py` (detect / split コマンド)
+- Modify: `allaganeye/commands/detect.py` / `allaganeye/commands/split_matches.py` (vtuber を detect_match_boundaries まで配線)
+- Test: `tests/test_cli.py` (なければ既存 CLI テストファイル) / `tests/test_detect.py` 等
+
+- [ ] **Step 1: 配線経路を確認**
+
+Run:
+
+```bash
+cd "E:/projects/kobutachan-tools/kobutachan-allaganeye/.claude/worktrees/l3-p2-region-detection"
+grep -nE "detect_match_boundaries\(" allaganeye/commands/detect.py allaganeye/commands/split_matches.py
+grep -nE "def detect|def split" allaganeye/cli.py
+```
+
+Expected: detect.py / split_matches.py が `detect_match_boundaries(...)` を呼ぶ箇所、cli.py の detect/split 定義が見える。`vtuber` をこの経路で渡す。
+
+- [ ] **Step 2: Write failing test — --vtuber flag が解析され渡る**
+
+CLI テスト (typer の CliRunner、既存パターンに合わせる) で `allaganeye detect <v> --vtuber` が detect_match_boundaries に `vtuber=True` を渡すことを mock で確認:
+
+```python
+def test_detect_vtuber_flag_passed(monkeypatch, tmp_path):
+    # mock detect_match_boundaries, assert it receives vtuber=True with --vtuber
+    captured = {}
+    from allaganeye.commands import detect as detect_cmd
+
+    def fake_detect(*a, **k):
+        captured["vtuber"] = k.get("vtuber")
+        return []  # no boundaries
+
+    monkeypatch.setattr(detect_cmd, "detect_match_boundaries", fake_detect)
+    # invoke the CLI detect command with --vtuber on a dummy path that probes OK,
+    # OR call the command function directly with vtuber=True.
+    # (Adapt to the existing test style in the repo — see tests/test_detect*.py.)
+```
+
+Adapt to the repo's actual CLI test pattern (read an existing CLI test first; if detect is hard to invoke without a real video, test the command-layer function `detect.py` directly with `vtuber=True` and assert it threads through).
+
+- [ ] **Step 3: Run, verify fail**
+
+Run: `cd "E:/projects/kobutachan-tools/kobutachan-allaganeye/.claude/worktrees/l3-p2-region-detection" && python -m pytest -k "vtuber_flag" -v`
+Expected: FAIL (flag/param absent).
+
+- [ ] **Step 4: Add `--vtuber` flag + thread through**
+
+In `cli.py` detect (and split) commands, add:
+
+```python
+    vtuber: bool = typer.Option(
+        False,
+        "--vtuber",
+        help="VTuber 録画 (game inset): scorebar 帯 anchor で検出。"
+        "未指定は OBS 全画面前提 (default)。",
+    ),
+```
+
+Thread `vtuber` into the command-layer call (`detect.py` / `split_matches.py`) and on into `detect_match_boundaries(..., vtuber=vtuber)`.
+
+- [ ] **Step 5: Run CLI tests + lint + commit**
+
+```bash
+cd "E:/projects/kobutachan-tools/kobutachan-allaganeye/.claude/worktrees/l3-p2-region-detection"
+python -m pytest -k "vtuber or test_cli or test_detect" -v
+python -m ruff check allaganeye/cli.py allaganeye/commands/detect.py allaganeye/commands/split_matches.py
+python -m pyright allaganeye/cli.py allaganeye/commands/detect.py allaganeye/commands/split_matches.py
+git add allaganeye/cli.py allaganeye/commands/detect.py allaganeye/commands/split_matches.py tests/
+git commit -m "feat(l3): --vtuber CLI flag を detect/split に追加 (Phase 1 B6)
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+```
+
+### Task D1-rev: OBS baseline 回帰 (flag なし = bit-exact gate)
+
+B4-rev 適用後、`allaganeye detect <obs> --no-cache` (vtuber flag なし) が 5 OBS baseline と bit-exact であることを確認。**これが今 fail している gate で、B4-rev で pass すべき。**
+
+- [ ] **Step 1: Run OBS Class A bit-exact (Idios 実機 / sample dir 設定マシン)**
+
+```bash
+cd "E:/projects/kobutachan-tools/kobutachan-allaganeye/.claude/worktrees/l3-p2-region-detection"
+set ALLAGANEYE_SAMPLE_VIDEO_DIR=E:\royalstraightflesh\videos
+set PYTHONUTF8=1
+python -m pytest tests/test_v030_baseline_regression.py -m slow_detect -v
+```
+
+Expected: PASS — 4 Class A OBS baselines bit-exact (detect は flag なしで FULL_FRAME)。**fail なら B4-rev の gate が効いていない** → STOP。
+
+### Task D2-rev: VTuber 帯 anchor + 帯 crop 受け入れ (`--vtuber` 経由)
+
+`tests/test_vtuber_region_e2e.py` (本セッションで作成済) を `--vtuber` 経路に合わせる。`_resolve_detect_region` 直呼びでなく、`vtuber=True` での band 解決を検証。
+
+- [ ] **Step 1: D2 テストを vtuber=True 経路に更新**
+
+既存 `test_vtuber_region_e2e.py` の `_resolve_detect_region(vod, dur)` 呼び出しは B4-rev 後も有効 (helper 自体は残る)。ただし「detect 全体が `--vtuber` で band を使う」ことも 1 ケース追加し、`--vtuber` なしでは FULL_FRAME になることを対比で示す。
+
+- [ ] **Step 2: Run (sample-gated)**
+
+```bash
+cd "E:/projects/kobutachan-tools/kobutachan-allaganeye/.claude/worktrees/l3-p2-region-detection"
+set PYTHONUTF8=1
+set ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER=E:\allaganeye-samples
+python -m pytest tests/test_vtuber_region_e2e.py -m slow_detect -v
+```
+
+Expected: PASS (band anchor が VTuber VOD で non-FULL_FRAME を返す or 明示 skip)、`--vtuber` なしは FULL_FRAME。
+
+### 改訂後の受け入れ条件 (上の §受け入れ条件を補正)
+
+- [ ] B4-rev: `detect_match_boundaries(vtuber=False)` は Stage 0 を走らせず FULL_FRAME。`vtuber=True` のみ band 解決。
+- [ ] B5: band consensus が dominant-cluster で localize noise に頑健 (真/偽クラスタ混在 unit)。
+- [ ] B6: `--vtuber` flag が detect/split に存在し `detect_match_boundaries(vtuber=...)` まで配線される。
+- [ ] D1-rev: OBS 5 baseline が **flag なしで** bit-exact (これが破綻していた gate)。
+- [ ] D2-rev: VTuber は `--vtuber` で band 解決、flag なしは FULL_FRAME。
+- [ ] Idios 実機検証 (OBS detect 不変 + `--vtuber` で VTuber 帯 crop + GPU)。
