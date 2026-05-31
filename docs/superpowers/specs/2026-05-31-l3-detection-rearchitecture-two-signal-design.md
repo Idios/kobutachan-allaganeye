@@ -26,7 +26,7 @@ presence spec は「scorebar 有無 (present/absent) を OBS/VTuber 共通の唯
 | # | 論点 | 決定 | 根拠 |
 | --- | --- | --- | --- |
 | Q1 | scope | **re-plan #753 全体を再設計** | presence の位置づけ・VTuber 境界の出し方を含めて作り直す |
-| Q2 | VTuber 境界信号 | **scorebar anchor から inset 矩形を復元し crop** (#809 crop-brightness wiring 再利用) | #809 Wave F: full-frame では blackout を拾えないが inset crop で Pass1 が blackout を回復 (drop 5/5 end)。脆いのは region 検出 (S3) で crop-brightness 自体は有効 |
+| Q2 | VTuber 境界信号 | **scorebar 帯を anchor して帯 crop の brightness/motion を測る** (#809 wiring を帯に限定)。full inset 矩形は preview/minimap 用に保持するが検出には使わない (user 指摘 2026-05-31) | #809 Wave F: full-frame では blackout を拾えないが crop で Pass1 が blackout を回復 (drop 5/5 end)。ただし inset 全体だとアバター/オーバーレイ混入で暗転を取り逃すため、最 clean な scorebar 帯に限定 (§3.1③) |
 | Q3 | 分類器統一 | **localize に統一する方向。ただし OBS では v2 を authoritative に温存し localize を shadow 並走、parity 実証後に retire (provisional)** | VTuber inset は v2 絶対座標が効かず localize 必須。OBS は 5 baseline で拾えない regression risk があるため、Codex 推奨の incremental (parity 実証ゲート) に従う。**§3.4 / §11 で要再訪** |
 | Q4 | localize の使い方 | **brightness 主 / localize+motion は分類器** (presence timeline は VTuber + 診断に従属) | A.3 実証: blackout = 境界。localize = 「その blackout が真の境界か」を判定する分類器。後述 Codex #2/#4 を自動解消 |
 | Q5 | リザルト除去信号 | **動き/静止判定 (MAD) を分類の補助信号に昇格** | リザルト/順位画面=静止、FL 試合=常時動き。位置・encoder 非依存で OBS/VTuber 両方に効く。**brightness 主では二次補正に降格** (§3.3) |
@@ -39,8 +39,9 @@ released 検出器を「全置換」せず、**位置独立な 2 信号を fusio
 
 **① boundary 信号 (主・どこに境界がありうるか)**
 
-- 領域 crop の brightness 暗転。A.3 実証: OBS で真の試合境界に秒未満精度で存在。
-- OBS = FULL_FRAME (現行と同じ全画面)。VTuber = scorebar anchor で復元した inset crop (#809 Wave F で blackout 回復を実証)。
+- brightness 暗転で境界候補を出す。A.3 実証: OBS で真の試合境界に秒未満精度で存在。
+- OBS = 全画面 brightness (現行 Pass1 不変)。VTuber = **localize_scorebar の bbox に anchor した scorebar 帯**の brightness (#809 は inset 全体を crop していたが、本 spec はさらに帯に限定)。
+- **VTuber を inset 全体でなく帯に限定する理由** (user 指摘 2026-05-31): inset 内にアバター / webcam / オーバーレイ / マスク画像が合成されると、ローディング暗転でも該当領域が明るいまま残り inset 平均が落ちず**境界を取り逃す** (#809 で full-frame が失敗したのと同じ機序が inset 内でも起きる)。scorebar 帯は game 描画の一部で必ず存在し、オーバーレイが被せられにくい最 clean 領域。ローディング中は game inset 全体が暗転するため帯も暗くなる。
 
 **② 分類信号 (各 blackout が真の境界か)**
 
@@ -49,32 +50,33 @@ classify(blackout) = localize_scorebar(flank_frame) is not None  AND  moving(fla
 ```
 
 - `localize_scorebar` (P1, 位置独立) で blackout の前後フレームに scorebar があるか判定 → 現行 `classify_blackout` の `_has_scorebar_v2` 呼び出しを置換。
-- `moving()` = scorebar 領域の MAD (既存 `_is_static_from_frames`) が閾値超。リザルト/順位画面 = present だが**静止** → 分類上 absent 扱い。
+- `moving()` = **scorebar 帯**の MAD (既存 `_is_static_from_frames` を流用) が閾値超。リザルト/順位画面 = present だが**静止** → 分類上 absent 扱い。VTuber は localize bbox に anchor (既存 ROI は絶対座標 = VTuber では誤った場所を測るため、§5 で band-anchor 化が必要)。
 - 出力分類は現行同一: `match_boundary` / `in_match` / `non_fl`。#480 (region-aware 分類) はこの localize 化に subsume。
 
-**③ 領域 (両信号を測る場所)**
+**③ 領域: 測定 ROI と保持矩形を分離 (user 指摘 2026-05-31)**
 
-- OBS → FULL_FRAME。VTuber → scorebar anchor から復元した inset 矩形 (P1 `localize_scorebar` の bbox + 16:9 で下端/左右を導出)。
+- **測定 ROI** (brightness / motion を測る場所) = scorebar 帯。OBS は全画面 brightness + 現行 motion ROI (上部中央 ≈ scorebar 位置) のまま。VTuber は localize bbox に anchor した帯。
+- **保持矩形** (full inset 16:9 復元) = preview / 将来の minimap (#481) 用に metadata へ保持するが、**検出測定には使わない**。脆い 16:9 矩形推定が失敗しても検出信号は帯側で独立に成立する (re-plan R6 の脆さを検出経路から分離)。
 
 ### 3.2 データフロー (OBS / VTuber 統一)
 
 ```text
 入力動画
   │
-  ├─[Stage 0] 領域 anchor   : sparse in-match frame → localize consensus → game 矩形
-  │                            OBS=FULL_FRAME / VTuber=inset rect          [re-plan P1✓ + P2]
+  ├─[Stage 0] anchor        : sparse in-match frame → localize consensus
+  │                            → 測定 ROI = scorebar 帯 (+ 保持矩形 full inset、preview/minimap 用) [P1✓ + P2]
   │
-  ├─[Stage 1] boundary 信号 : 領域 crop で brightness Pass1/Pass2 → 暗転エッジ (主軸)
-  │                            OBS=全画面(現行不変) / VTuber=inset crop(#809再利用)  [P3]
+  ├─[Stage 1] boundary 信号 : brightness Pass1/Pass2 → 暗転エッジ (主軸)
+  │                            OBS=全画面(現行不変) / VTuber=scorebar 帯 crop(#809 を帯に限定)  [P3]
   │
-  ├─[Stage 2] 分類          : 各 blackout の前後で localize+motion → match_boundary/in_match/non_fl
+  ├─[Stage 2] 分類          : 各 blackout 前後で localize + 帯 motion → match_boundary/in_match/non_fl
   │                            OBS は v2 が authoritative・localize を shadow 並走 (parity 計測) [P4 = #480]
   │
   └─[Stage 3] 抽出・後処理  : duration filter (backstop) → segment 抽出 → trailing 整理
                               → metadata.json (現行 schema 不変)
 ```
 
-OBS・VTuber とも同一パイプライン。差は Stage 0 の領域 (FULL_FRAME / inset) と、それに伴う Stage 1 crop / Stage 2 座標のみ。**OBS 経路は分類器 primitive 差し替え + v2 並走のみで、構造は現行を保つ** (最小変更 = regression risk 最小)。
+OBS・VTuber とも同一パイプライン。差は Stage 0 の測定 ROI (OBS=全画面+絶対 ROI / VTuber=localize bbox anchor の scorebar 帯) と、それに伴う Stage 1 crop / Stage 2 座標のみ。**OBS 経路は分類器 primitive 差し替え + v2 並走のみで、構造は現行を保つ** (最小変更 = regression risk 最小)。
 
 ### 3.3 fusion 優先順位 (Codex #4 = 不一致時の真理値表)
 
@@ -129,8 +131,10 @@ Codex 提案順序 (production 不変のまま shadow trace → MAD calibrate �
 
 - **再利用 (P1, マージ済)**: `localize_scorebar(frame, *, stride, target_ratio) -> ScorebarLocalization | None` (`capture_region.py`)。入力 1920x1080 RGB、出力 probe px bbox + confidence。
 - **再編 (#480)**: `filter_blackouts_with_scorebar` / `classify_blackout` の scorebar 検出 primitive を `_has_scorebar_v2` → `localize_scorebar` + `moving()` に差し替え。v2 は shadow guard として並走計測。classify/merge/duration ロジックは流用。
-- **新規 (VTuber)**: Stage 0 領域 anchor (sparse localize consensus → inset 矩形)、Stage 1 inset crop wiring (#809 再利用)。
-- **VTuber fallback フラグ**: inset blackout 欠損で membership edge にフォールバックした segment は metadata に低信頼フラグを付け、境界 snap と区別 (Codex #5)。
+- **band-anchor 化 (必須・user 指摘 2026-05-31)**: 既存 `_is_static_from_frames` の MAD ROI は絶対座標 (`_SCOREBAR_ROI_*`、上部中央) で、VTuber では誤った場所 (オーバーレイ/余白) を測る。`localize_scorebar` の bbox に anchor して帯 ROI を渡せるよう signature を拡張。OBS は現行絶対 ROI に縮退して bit-exact 維持。
+- **新規 (VTuber)**: Stage 0 anchor (sparse localize consensus → scorebar 帯 ROI + 保持矩形)、Stage 1 帯 crop brightness wiring (#809 を帯に限定して再利用)。
+- **保持矩形 (full inset 16:9)**: preview / 将来 minimap (#481) 用に metadata 保持候補。検出測定には使わない (§3.1③)。schema 追加は P6 で別途。
+- **VTuber fallback フラグ**: 帯 blackout 欠損で membership edge にフォールバックした segment は metadata に低信頼フラグを付け、境界 snap と区別 (Codex #5)。
 - **出力**: 試合 segment = 現行 `matches[]` / `boundaries`。metadata schema 不変 (region フィールドは P6 で別途検討、本 spec 範囲外)。
 
 ## 6. やらないこと (境界)
@@ -152,7 +156,7 @@ Codex 提案順序 (production 不変のまま shadow trace → MAD calibrate �
 
 - `compare_segments` (Phase 1) で OBS 5 baseline + VTuber 5 source を GT 突合。matched/missed/spurious、boundary 誤差、wall-time。
 - **v2 vs localize+motion の OBS parity** 計測 (Codex #3): long 非試合区間 (lobby/result) の FP/FN 差分を per-source 出力。
-- **MAD 分布収集** (Codex #1): 真の試合/リザルト/ロビー/ローディングの per-source MAD を出し、閾値 calibrate。
+- **MAD 分布収集** (Codex #1): 真の試合/リザルト/ロビー/ローディングの per-source MAD を **scorebar 帯 ROI で** 出し、閾値 calibrate。帯内オーバーレイ被覆 (R3b) の SNR も実測。
 - **CPU/GPU/legacy-fps parity** (Codex #8): 最低 1 OBS baseline を 3 モードで突合。
 
 ### 7.3 gate
@@ -166,7 +170,7 @@ Codex 提案順序 (production 不変のまま shadow trace → MAD calibrate �
 | Phase | 内容 | production 影響 | gate |
 | --- | --- | --- | --- |
 | **0** | 検出 subsystem の git 考古学 + 現状 map (ドキュメント化)。各 layer の load-bearing / cruft / 有害判定、`_drop_post_match_trailing`×v2×membership coupling を含む | なし (docs) | user レビュー |
-| **1** | Stage 0 領域 anchor (P1 consensus → inset) + Stage 1 VTuber inset crop wiring (#809 再利用)。OBS=FULL_FRAME 縮退 | なし (VTuber 経路は gate 内) | OBS bit-exact 維持 + gyawa crop blackout 回復 |
+| **1** | Stage 0 anchor (P1 consensus → scorebar 帯 ROI + 保持矩形) + Stage 1 VTuber 帯 crop wiring (#809 を帯に限定) + MAD ROI の band-anchor 化。OBS=絶対 ROI 縮退 | なし (VTuber 経路は gate 内) | OBS bit-exact 維持 + gyawa 帯 crop blackout 回復 |
 | **2** | Stage 2 分類を localize+motion 化 (#480)。v2 shadow guard 並走。MAD calibrate | なし (v2 が production 判定、localize は shadow) | OBS parity 計測 + baseline diff |
 | **3** | VTuber GT 注釈 (5 source) + VTuber 検証。fusion 真理値表 + fallback フラグ | なし | VTuber GT-accuracy |
 | **4** | cutover: localize を production 判定に昇格 (v2 retire 可否は parity 実証後判断)。GT-accuracy gate 化 | あり (分類器置換) | 全 GT-accuracy + baseline diff + Idios 実機検証 |
@@ -178,8 +182,8 @@ Phase 0-3 = 検証・非破壊、Phase 4 = 切替。「検証してから切替�
 | re-plan | 旧定義 | 新定義 (本 spec) |
 | --- | --- | --- |
 | P1 | robust scorebar 局在化 (anchor) | **マージ済** (#811)。Stage 0/2 で consumer として再利用 |
-| P2 | scorebar-anchored 領域検出 (S3 consensus) | Stage 0 領域 anchor。S3 extent は補助、scorebar geometry + 16:9 主軸に簡素化 |
-| P3 | 領域 crop 輝度 wiring | Stage 1 (#809 再利用)。VTuber inset crop |
+| P2 | scorebar-anchored 領域検出 (S3 consensus) | Stage 0 anchor。検出は scorebar 帯 ROI に簡素化 (full 矩形 16:9 推定は検出から分離し preview 用保持に降格) |
+| P3 | 領域 crop 輝度 wiring | Stage 1 (#809 再利用)。VTuber は scorebar 帯 crop (inset 全体でなく) |
 | P4 | region-aware 分類 (#480) | Stage 2 = localize+motion 分類。v2 shadow guard 並走 |
 | P5 | adaptive transition expansion | VTuber crop 輝度分布から動的閾値。FULL_FRAME は現行 55 維持 (Phase 3+ で必要時) |
 | P6 | metadata 領域フィールド (#810) | 本 spec 範囲外 (別途) |
@@ -210,11 +214,12 @@ Phase 0-3 = 検証・非破壊、Phase 4 = 切替。「検証してから切替�
 | --- | --- | --- |
 | R1 | MAD (motion) が試合/リザルトを誤判定 (Codex #1) | brightness 主で二次補正に降格。per-source 分布で calibrate、percentile/多数決化検討。短 blackout 限定 override から段階昇格 |
 | R2 | v2 retire で 5 baseline 外の OBS regression (Codex #3) | Q3 provisional、v2 shadow guard 並走 + parity 実証ゲート。bit-exact baseline diff を shadow 期間維持 |
-| R3 | VTuber inset blackout 欠損で実試合を誤分割 (Codex #5) | 低信頼フラグ、境界 snap と区別。harness で boundary 誤差確認 |
+| R3 | VTuber 帯 blackout 欠損で実試合を誤分割 (Codex #5) | 低信頼フラグ、境界 snap と区別。harness で boundary 誤差確認 |
+| R3b | scorebar 帯にオーバーレイ/テロップが被さる、帯が薄く motion/blackout の SNR が低い (user 指摘の contamination が帯にも及ぶ最悪ケース) | 帯内でも emblem 3 点位置の sub-cell を優先測定。帯高 < 閾値や localize confidence 低下時は低信頼フラグ。multi-source harness で帯 SNR を実測 |
 | R4 | `_drop_post_match_trailing` × v2 × 新 membership の hidden coupling (Codex #6、#805) | v2 温存、別 phase。Phase 0 map で coupling 明示 |
 | R5 | CPU/GPU/legacy-fps パリティ崩れ (Codex #8、#575) | 検証 matrix に 3 モード。frame-index ベース新 path 前提 |
 | R6 | gyawa 1-source 過学習 (VTuber multi-source) | 5 source 手動 GT + 幾何ベース anchor。data-gated |
-| R7 | brightness 主で VTuber 境界を取り逃す (full-frame では blackout なし) | Stage 1 inset crop で blackout 回復 (#809 Wave F 実証)。領域 anchor が前提 |
+| R7 | brightness 主で VTuber 境界を取り逃す (full-frame では blackout なし) | Stage 1 scorebar 帯 crop で blackout 回復 (#809 Wave F は inset 全体で実証、本 spec は帯に限定し contamination 耐性を上げる)。帯 anchor が前提 |
 
 ## 13. 参照
 
