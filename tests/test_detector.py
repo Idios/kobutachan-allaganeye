@@ -2569,6 +2569,9 @@ def test_detect_match_boundaries_passes_region_to_all_three_call_sites(monkeypat
     monkeypatch.setattr(gpu_detector, "scan_gpu", fake_scan_gpu)
     monkeypatch.setattr(det, "_refine_blackout_regions", fake_refine)
 
+    # vtuber=True is required so Stage 0 resolves the band anchor; without it
+    # the gate (B4-rev) keeps detect_region=FULL_FRAME and the sentinel from
+    # the monkeypatched _resolve_detect_region would not reach the call sites.
     # CPU path
     det.detect_match_boundaries(
         Path("test.mp4"),
@@ -2576,6 +2579,7 @@ def test_detect_match_boundaries_passes_region_to_all_three_call_sites(monkeypat
         sample_interval=1.0,
         min_match_duration=0.5,
         use_gpu=False,
+        vtuber=True,
     )
     # GPU path
     det.detect_match_boundaries(
@@ -2584,9 +2588,24 @@ def test_detect_match_boundaries_passes_region_to_all_three_call_sites(monkeypat
         sample_interval=1.0,
         min_match_duration=0.5,
         use_gpu=True,
+        vtuber=True,
     )
 
     assert cpu_calls == [sentinel]
     assert gpu_calls == [sentinel]
     # Pass2 runs in both invocations.
     assert refine_calls == [sentinel, sentinel]
+
+
+# ============================================================
+# Task B4-rev: --vtuber gate on Stage 0 anchor (OBS bit-exact fix)
+# ============================================================
+
+
+def test_detect_has_vtuber_param_defaulting_false():
+    from allaganeye.video import detector as det
+    import inspect
+
+    sig = inspect.signature(det.detect_match_boundaries)
+    assert "vtuber" in sig.parameters
+    assert sig.parameters["vtuber"].default is False

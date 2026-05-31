@@ -254,6 +254,7 @@ def detect_match_boundaries(
     min_match_duration: float = 300.0,
     min_blackout_duration: float = 3.0,
     use_gpu: bool = False,
+    vtuber: bool = False,
     workers: int | None = None,
     src_resolution: tuple[int, int] | None = None,
     codec: str | None = None,
@@ -313,11 +314,13 @@ def detect_match_boundaries(
             "Cannot determine video duration. Provide duration_hint via probe."
         )
 
-    # Stage 0 (#753 / B4): resolve a scorebar-band anchor before any scan.
-    # OBS (full-frame game) -> localize finds no inset band, consensus fails ->
-    # FULL_FRAME (detection stays bit-exact with the pre-region behavior).
-    # VTuber -> a scorebar-band ROI is resolved and threaded into Pass1/GPU/Pass2.
-    detect_region = _resolve_detect_region(video_path, duration_hint)
+    # Stage 0 (#753 / B4-rev): resolve a scorebar-band anchor before any scan.
+    # Stage 0 band anchor runs only when VTuber is explicit (spec section 3.6).
+    # OBS (vtuber=False) stays FULL_FRAME -> current bit-exact. localize also
+    # succeeds on OBS, so auto-detection is not possible -> the flag gates it.
+    detect_region = (
+        _resolve_detect_region(video_path, duration_hint) if vtuber else FULL_FRAME
+    )
 
     # Pass 1: scan for blackout frames
     pass1_start = time.monotonic()
