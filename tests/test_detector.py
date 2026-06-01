@@ -2618,20 +2618,119 @@ def test_detect_has_vtuber_param_defaulting_false():
 # ============================================================
 
 
-def test_filter_call_receives_band_region_and_vtuber():
-    # static check: detect threads detect_region + vtuber into the scorebar filter.
-    import inspect
-    from allaganeye.video import detector as det
+def _vtuber_filter_capture(seen: dict):
+    """Build a filter_blackouts_with_scorebar stand-in that records kwargs.
 
-    src = inspect.getsource(det.detect_match_boundaries)
-    assert "band_region=detect_region" in src
-    assert "vtuber=vtuber" in src
+    Mirrors the real signature (allaganeye/video/scorebar.py) so the
+    keyword-only block (band_region / vtuber / audio_hits / stats /
+    progress_callback) binds exactly as the production call site passes it.
+    Returns every region classified as ``match_boundary`` so segments survive
+    into the trailing-drop stage.
+    """
+
+    def filter_side_effect(
+        video_path,
+        regions,
+        duration,
+        height,
+        workers=None,
+        *,
+        band_region=FULL_FRAME,
+        vtuber=False,
+        audio_hits=None,
+        stats=None,
+        progress_callback=None,
+    ):
+        seen["band_region"] = band_region
+        seen["vtuber"] = vtuber
+        return regions, ["match_boundary"] * len(regions)
+
+    return filter_side_effect
 
 
-def test_trailing_drop_gated_off_for_vtuber():
-    import inspect
-    from allaganeye.video import detector as det
+@patch("allaganeye.video.detector._resolve_detect_region")
+@patch("allaganeye.video.detector._drop_post_match_trailing")
+@patch("allaganeye.video.detector._probe_single_frame")
+@patch("allaganeye.video.detector._decode_chunk_cpu")
+def test_vtuber_threads_filter_kwargs_and_gates_trailing_drop(
+    mock_chunk, mock_probe, mock_trailing, mock_resolve
+):
+    """Behavioral: vtuber=True threads band_region/vtuber into the scorebar
+    filter at runtime and skips the irreversible trailing-drop (#797 gate).
 
-    src = inspect.getsource(det.detect_match_boundaries)
-    # the trailing-drop call must be guarded so it never runs on the VTuber path.
-    assert "if src_resolution is not None and not vtuber:" in src
+    Replaces the prior inspect.getsource static checks: this exercises the
+    real call path so an early return or refactor that breaks the gate fails
+    here (the static substring tests would still pass).
+    """
+    # One blackout region around t=600 (single match boundary).
+    mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kw: {
+        t: 5.0 if 598.0 <= t <= 602.0 else 128.0 for t in ts
+    }
+    mock_probe.side_effect = lambda p, t, region=FULL_FRAME: (
+        5.0 if 593.0 <= t <= 607.0 else 128.0
+    )
+    # Passthrough so the assertion is "was it called", independent of segments.
+    mock_trailing.side_effect = lambda segs, *a, **k: segs
+    # Isolate from real ffmpeg/localize I/O; return a distinct (non-FULL_FRAME)
+    # region so band_region threading is observable, not a degraded default.
+    band = CaptureRegion(0.1, 0.1, 0.8, 0.2, confidence=0.9, source="tierB")
+    mock_resolve.return_value = band
+
+    seen: dict = {}
+    with patch(
+        "allaganeye.video.scorebar.filter_blackouts_with_scorebar",
+        side_effect=_vtuber_filter_capture(seen),
+    ):
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=1800.0,
+            sample_interval=1.0,
+            min_match_duration=300.0,
+            src_resolution=(1920, 1080),
+            vtuber=True,
+        )
+
+    # filter received the resolved band region and the vtuber flag at runtime.
+    assert seen["vtuber"] is True
+    assert seen["band_region"] is not None
+    assert seen["band_region"] is band
+    # VTuber path must NOT run the irreversible trailing-drop (#797 / #805).
+    mock_trailing.assert_not_called()
+
+
+@patch("allaganeye.video.detector._drop_post_match_trailing")
+@patch("allaganeye.video.detector._probe_single_frame")
+@patch("allaganeye.video.detector._decode_chunk_cpu")
+def test_obs_runs_trailing_drop_and_filter_sees_vtuber_false(
+    mock_chunk, mock_probe, mock_trailing
+):
+    """Behavioral OBS regression guard: vtuber=False (default OBS path) keeps
+    running the trailing-drop and reports vtuber=False to the scorebar filter.
+
+    Pairs with the vtuber=True test to pin the gate from both sides so a
+    regression that drops the ``not vtuber`` guard is caught.
+    """
+    mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kw: {
+        t: 5.0 if 598.0 <= t <= 602.0 else 128.0 for t in ts
+    }
+    mock_probe.side_effect = lambda p, t, region=FULL_FRAME: (
+        5.0 if 593.0 <= t <= 607.0 else 128.0
+    )
+    mock_trailing.side_effect = lambda segs, *a, **k: segs
+
+    seen: dict = {}
+    with patch(
+        "allaganeye.video.scorebar.filter_blackouts_with_scorebar",
+        side_effect=_vtuber_filter_capture(seen),
+    ):
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=1800.0,
+            sample_interval=1.0,
+            min_match_duration=300.0,
+            src_resolution=(1920, 1080),
+        )
+
+    assert seen["vtuber"] is False
+    # OBS path runs the trailing-drop exactly once.
+    mock_trailing.assert_called_once()
