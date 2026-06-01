@@ -26,11 +26,7 @@ from allaganeye.video.detector import (
     _probe_frame_rgb_hires,
     _resolve_workers,
 )
-from allaganeye.video.capture_region import (
-    CaptureRegion,
-    FULL_FRAME,  # noqa: F401  # used as default by B2/B3 in this Phase 2 group
-    localize_scorebar,
-)
+from allaganeye.video.capture_region import CaptureRegion, FULL_FRAME, localize_scorebar
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +272,108 @@ def _has_nearby_fanfare_hit(
         if lo <= hit["timestamp"] <= hi:
             return hit
     return None
+
+
+def _classify_blackout_localize(
+    video_path: Path,
+    region: tuple[float, float],
+    duration: float,
+    height: int,
+    workers: int | None = None,
+    *,
+    band_region: CaptureRegion = FULL_FRAME,
+) -> str:
+    """Classify a blackout by position-independent scorebar presence (VTuber).
+
+    Uses ``localize_scorebar`` majority on 3 pre + 3 post frames as the sole
+    signal (motion is NOT ANDed in Phase 2 -- P2-a / spec section 8.1).  Mirrors
+    the v2 re-probe fallback (#524) for the both-absent case.  Band-MAD is
+    emitted to the log for Phase 3 calibration but does not affect the label.
+
+    Returns ``"in_match"`` / ``"match_boundary"`` / ``"non_fl"`` / ``"unknown"``.
+    """
+    pre_timestamps = sorted(set(max(0.0, region[0] - d) for d in (3.0, 2.0, 1.0)))
+    post_timestamps = sorted(set(min(duration, region[1] + d) for d in (1.0, 2.0, 3.0)))
+
+    _, pre_frames, pre_loc = _probe_scorebar_context(
+        video_path, pre_timestamps, height, workers, with_localize=True
+    )
+    _, post_frames, post_loc = _probe_scorebar_context(
+        video_path, post_timestamps, height, workers, with_localize=True
+    )
+    pre_has = _majority_scorebar(pre_loc)
+    post_has = _majority_scorebar(post_loc)
+
+    # Re-probe further out when neither side localized a scorebar (#524 mirror):
+    # a true boundary whose flanks both land in a fade/loading would otherwise
+    # classify as non_fl and be dropped.
+    if pre_has is not True and post_has is not True:
+        region_width = region[1] - region[0]
+        existing_pre = set(pre_timestamps)
+        existing_post = set(post_timestamps)
+        pre_re_ts = [
+            t
+            for t in sorted(
+                set(max(0.0, region[0] - (region_width + d)) for d in (3.0, 2.0, 1.0))
+            )
+            if t not in existing_pre
+        ]
+        post_re_ts = [
+            t
+            for t in sorted(
+                set(
+                    min(duration, region[1] + (region_width + d))
+                    for d in (1.0, 2.0, 3.0)
+                )
+            )
+            if t not in existing_post
+        ]
+        if pre_re_ts:
+            _, _, pre_re_loc = _probe_scorebar_context(
+                video_path, pre_re_ts, height, workers, with_localize=True
+            )
+            pre_re = _majority_scorebar(pre_re_loc)
+            if pre_re is not None:
+                pre_has = pre_re
+        if post_re_ts:
+            _, _, post_re_loc = _probe_scorebar_context(
+                video_path, post_re_ts, height, workers, with_localize=True
+            )
+            post_re = _majority_scorebar(post_re_loc)
+            if post_re is not None:
+                post_has = post_re
+
+    # Band-MAD telemetry for Phase 3 calibration -- emitted only, NOT used in
+    # classification (P2-a). Grep "VTUBER_MAD" in logs to collect distributions.
+    pre_mad = _band_mad_min(pre_frames, height, band_region)
+    post_mad = _band_mad_min(post_frames, height, band_region)
+    logger.info(
+        "VTUBER_MAD region=[%.1f-%.1f] pre_mad=%s post_mad=%s",
+        region[0],
+        region[1],
+        f"{pre_mad:.3f}" if pre_mad is not None else "na",
+        f"{post_mad:.3f}" if post_mad is not None else "na",
+    )
+
+    if pre_has is None or post_has is None:
+        classification = "unknown"
+    elif pre_has and post_has:
+        classification = "in_match"
+    elif pre_has or post_has:
+        classification = "match_boundary"
+    else:
+        classification = "non_fl"
+
+    logger.debug(
+        "vtuber classify region [%.1f-%.1f] (%.1fs): pre=%s post=%s -> %s",
+        region[0],
+        region[1],
+        region[1] - region[0],
+        pre_has,
+        post_has,
+        classification,
+    )
+    return classification
 
 
 def classify_blackout(

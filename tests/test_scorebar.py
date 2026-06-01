@@ -1392,3 +1392,67 @@ def test_band_mad_min_returns_none_for_degenerate_band():
 
 def test_band_mad_min_none_for_under_two_frames():
     assert _band_mad_min([_rgb(180, 50)], 180) is None
+
+
+# ---------------------------------------------------------------------------
+# _classify_blackout_localize unit tests (Phase 2 B2)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_localize_truth_table(monkeypatch):
+    # Inject localize-present per probe set; assert the present-only labels.
+    from allaganeye.video import scorebar as sb
+
+    calls = {"n": 0}
+
+    def fake_probe(video, ts, height, workers, *, with_localize=False):
+        # pre call first, post call second (region_width re-probe not triggered
+        # unless both not-True).
+        calls["n"] += 1
+        present = calls["n"] == 1  # pre present, post absent -> match_boundary
+        return ([None] * len(ts), [b"f"] * len(ts), [present] * len(ts))
+
+    monkeypatch.setattr(sb, "_probe_scorebar_context", fake_probe)
+    monkeypatch.setattr(sb, "_band_mad_min", lambda *a, **k: 1.23)
+    cls = sb._classify_blackout_localize(
+        Path("x.mp4"), (100.0, 103.0), duration=400.0, height=180, workers=1
+    )
+    assert cls == "match_boundary"
+
+
+def test_classify_localize_both_present_is_in_match(monkeypatch):
+    from allaganeye.video import scorebar as sb
+
+    monkeypatch.setattr(
+        sb,
+        "_probe_scorebar_context",
+        lambda v, ts, h, w, *, with_localize=False: (
+            [None] * len(ts),
+            [b"f"] * len(ts),
+            [True] * len(ts),
+        ),
+    )
+    monkeypatch.setattr(sb, "_band_mad_min", lambda *a, **k: 5.0)
+    cls = sb._classify_blackout_localize(
+        Path("x.mp4"), (100.0, 101.0), duration=400.0, height=180, workers=1
+    )
+    assert cls == "in_match"
+
+
+def test_classify_localize_both_absent_is_non_fl(monkeypatch):
+    from allaganeye.video import scorebar as sb
+
+    monkeypatch.setattr(
+        sb,
+        "_probe_scorebar_context",
+        lambda v, ts, h, w, *, with_localize=False: (
+            [None] * len(ts),
+            [b"f"] * len(ts),
+            [False] * len(ts),
+        ),
+    )
+    monkeypatch.setattr(sb, "_band_mad_min", lambda *a, **k: 0.1)
+    cls = sb._classify_blackout_localize(
+        Path("x.mp4"), (100.0, 102.0), duration=400.0, height=180, workers=1
+    )
+    assert cls == "non_fl"
