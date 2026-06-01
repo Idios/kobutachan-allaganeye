@@ -304,9 +304,9 @@ def _classify_blackout_localize(
     pre_has = _majority_scorebar(pre_loc)
     post_has = _majority_scorebar(post_loc)
 
-    # Re-probe further out when neither side localized a scorebar (#524 mirror):
-    # a true boundary whose flanks both land in a fade/loading would otherwise
-    # classify as non_fl and be dropped.
+    # Re-probe further out when neither side localized (see classify_blackout's
+    # #524 rationale): a true boundary whose flanks both land in a fade/loading
+    # would otherwise classify as non_fl.
     if pre_has is not True and post_has is not True:
         region_width = region[1] - region[0]
         existing_pre = set(pre_timestamps)
@@ -348,9 +348,10 @@ def _classify_blackout_localize(
     pre_mad = _band_mad_min(pre_frames, height, band_region)
     post_mad = _band_mad_min(post_frames, height, band_region)
     logger.info(
-        "VTUBER_MAD region=[%.1f-%.1f] pre_mad=%s post_mad=%s",
+        "VTUBER_MAD region=[%.1fs-%.1fs] band=%s pre_mad=%s post_mad=%s",
         region[0],
         region[1],
+        band_region.source,
         f"{pre_mad:.3f}" if pre_mad is not None else "na",
         f"{post_mad:.3f}" if post_mad is not None else "na",
     )

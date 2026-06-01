@@ -1458,6 +1458,55 @@ def test_classify_localize_both_absent_is_non_fl(monkeypatch):
     assert cls == "non_fl"
 
 
+def test_classify_localize_reprobe_rescues_to_boundary(monkeypatch):
+    # Pins the #524 re-probe rescue: the initial +1/2/3s probes both land
+    # absent (e.g. inside a fade), but the region_width-offset re-probe finds
+    # the scorebar on the pre side -> rescued from non_fl to match_boundary.
+    # Call ordering inside _classify_blackout_localize: pre (1), post (2),
+    # then pre_re (3), post_re (4) since both initial sides are not-True.
+    from allaganeye.video import scorebar as sb
+
+    calls = {"n": 0}
+    # call 1 pre absent, call 2 post absent, call 3 pre_re present, call 4 post_re absent
+    per_call_present = {1: False, 2: False, 3: True, 4: False}
+
+    def fake_probe(video, ts, height, workers, *, with_localize=False):
+        calls["n"] += 1
+        present = per_call_present[calls["n"]]
+        return ([None] * len(ts), [b"f"] * len(ts), [present] * len(ts))
+
+    monkeypatch.setattr(sb, "_probe_scorebar_context", fake_probe)
+    monkeypatch.setattr(sb, "_band_mad_min", lambda *a, **k: 1.23)
+    cls = sb._classify_blackout_localize(
+        Path("x.mp4"), (100.0, 103.0), duration=400.0, height=180, workers=1
+    )
+    # Without the re-probe block this region would be non_fl (both initial
+    # sides absent); the pre-side re-probe rescues it to match_boundary.
+    assert calls["n"] == 4  # all four probe sets were consulted
+    assert cls == "match_boundary"
+
+
+def test_classify_localize_all_none_is_unknown(monkeypatch):
+    # All probes (including the re-probe) return localize None -> the re-probe
+    # majority is None and must NOT override, leaving the side None -> unknown.
+    from allaganeye.video import scorebar as sb
+
+    monkeypatch.setattr(
+        sb,
+        "_probe_scorebar_context",
+        lambda v, ts, h, w, *, with_localize=False: (
+            [None] * len(ts),
+            [b"f"] * len(ts),
+            [None] * len(ts),
+        ),
+    )
+    monkeypatch.setattr(sb, "_band_mad_min", lambda *a, **k: 1.23)
+    cls = sb._classify_blackout_localize(
+        Path("x.mp4"), (100.0, 103.0), duration=400.0, height=180, workers=1
+    )
+    assert cls == "unknown"
+
+
 # ---------------------------------------------------------------------------
 # classify_blackout vtuber gate unit tests (Phase 2 B3)
 # ---------------------------------------------------------------------------
