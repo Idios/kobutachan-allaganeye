@@ -1166,6 +1166,8 @@ class TestDetectMatchBoundaries:
                 height,
                 workers,
                 *,
+                band_region=FULL_FRAME,
+                vtuber=False,
                 audio_hits,
                 stats,
                 progress_callback=None,
@@ -2609,3 +2611,27 @@ def test_detect_has_vtuber_param_defaulting_false():
     sig = inspect.signature(det.detect_match_boundaries)
     assert "vtuber" in sig.parameters
     assert sig.parameters["vtuber"].default is False
+
+
+# ============================================================
+# Task D1: band_region/vtuber threading + trailing-drop VTuber gate (Phase 2)
+# ============================================================
+
+
+def test_filter_call_receives_band_region_and_vtuber():
+    # static check: detect threads detect_region + vtuber into the scorebar filter.
+    import inspect
+    from allaganeye.video import detector as det
+
+    src = inspect.getsource(det.detect_match_boundaries)
+    assert "band_region=detect_region" in src
+    assert "vtuber=vtuber" in src
+
+
+def test_trailing_drop_gated_off_for_vtuber():
+    import inspect
+    from allaganeye.video import detector as det
+
+    src = inspect.getsource(det.detect_match_boundaries)
+    # the trailing-drop call must be guarded so it never runs on the VTuber path.
+    assert "if src_resolution is not None and not vtuber:" in src

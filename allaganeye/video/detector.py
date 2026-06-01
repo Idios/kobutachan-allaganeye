@@ -451,6 +451,8 @@ def detect_match_boundaries(
             duration_hint,
             height,
             workers,
+            band_region=detect_region,
+            vtuber=vtuber,
             audio_hits=audio_hits,
             stats=stats,
             progress_callback=scorebar_progress_callback,
@@ -468,11 +470,12 @@ def detect_match_boundaries(
         classifications=region_classifications,
         stats=stats,
     )
-    # #797: drop a trailing post-match run (final match ended, recording
-    # continued into lobby/city) when its early candidate-match window shows
-    # no scorebar at any strided probe point (+ window-end probe). Only
-    # runs when scorebar classification is available (src_resolution set).
-    if src_resolution is not None:
+    # #797: drop a trailing post-match run when its early candidate-match window
+    # shows no scorebar at any strided probe point. Skipped for VTuber
+    # (vtuber=True): _drop_post_match_trailing probes v2 (absolute coords) which
+    # FNs on an inset scorebar and would silently drop a real VTuber final match
+    # (spec section 8.1 P2-d / Codex #1). VTuber trailing is handled in Phase 3.
+    if src_resolution is not None and not vtuber:
         segments = _drop_post_match_trailing(
             segments,
             video_path,
