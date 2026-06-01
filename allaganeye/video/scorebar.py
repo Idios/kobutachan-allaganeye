@@ -570,6 +570,8 @@ def filter_blackouts_with_scorebar(
     height: int,
     workers: int | None = None,
     *,
+    band_region: CaptureRegion = FULL_FRAME,
+    vtuber: bool = False,
     audio_hits: Sequence[BgmHit] | None = None,
     stats: DetectionStats | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
@@ -611,7 +613,13 @@ def filter_blackouts_with_scorebar(
     total_regions = len(blackout_regions)
     for idx, region in enumerate(blackout_regions):
         classification = classify_blackout(
-            video_path, region, duration, height, workers
+            video_path,
+            region,
+            duration,
+            height,
+            workers,
+            band_region=band_region,
+            vtuber=vtuber,
         )
         if progress_callback is not None:
             progress_callback(idx + 1, total_regions)
@@ -670,7 +678,14 @@ def filter_blackouts_with_scorebar(
         stats["audio_promotions"] = audio_promotions
 
     return _merge_boundary_pairs(
-        video_path, kept, classifications, duration, height, workers
+        video_path,
+        kept,
+        classifications,
+        duration,
+        height,
+        workers,
+        band_region=band_region,
+        vtuber=vtuber,
     )
 
 

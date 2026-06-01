@@ -1551,3 +1551,24 @@ def test_classify_blackout_obs_does_not_call_localize(monkeypatch):
     )
     out = sb.classify_blackout(Path("x.mp4"), (10.0, 12.0), 400.0, 180)
     assert out == "non_fl"
+
+
+def test_filter_threads_vtuber_to_classify(monkeypatch):
+    from allaganeye.video import scorebar as sb
+    from allaganeye.video.capture_region import CaptureRegion
+
+    seen = []
+
+    def fake_classify(
+        video, region, duration, height, workers=None, *, band_region, vtuber
+    ):
+        seen.append((vtuber, band_region.source))
+        return "match_boundary"
+
+    monkeypatch.setattr(sb, "classify_blackout", fake_classify)
+    monkeypatch.setattr(sb, "_merge_boundary_pairs", lambda *a, **k: (a[1], a[2]))
+    band = CaptureRegion(0.3, 0.0, 0.37, 0.04, source="band")
+    sb.filter_blackouts_with_scorebar(
+        Path("x.mp4"), [(10.0, 12.0)], 400.0, 180, band_region=band, vtuber=True
+    )
+    assert seen == [(True, "band")]
