@@ -10,7 +10,6 @@ import numpy as np
 
 from allaganeye.audio.matcher import BgmHit
 from allaganeye.exceptions import VideoProcessingError
-from allaganeye.video.capture_region import CaptureRegion
 from allaganeye.video.detector import (
     DetectionStats,
     _SAMPLE_WIDTH,
@@ -19,14 +18,34 @@ from allaganeye.video.detector import (
     _SCOREBAR_ROI_X_START,
     _SCOREBAR_ROI_Y_END,
     _SCOREBAR_ROI_Y_START,
+    _SCOREBAR_V2_PROBE_HEIGHT,
+    _SCOREBAR_V2_PROBE_WIDTH,
     _has_scorebar,
     _has_scorebar_v2,
     _probe_frame_rgb,
     _probe_frame_rgb_hires,
     _resolve_workers,
 )
+from allaganeye.video.capture_region import CaptureRegion, localize_scorebar
 
 logger = logging.getLogger(__name__)
+
+
+def _localize_present_from_raw(raw: bytes | None) -> bool | None:
+    """hi-res RGB probe bytes -> localize-present (True/False). None on probe failure.
+
+    Reshapes the 1920x1080 RGB probe buffer and runs the position-independent
+    localizer (``localize_scorebar``).  A successfully decoded frame yields
+    True/False (a clean localizer miss is treated as absent, not unknown, so
+    majority vote behaves like the v2 path).  Only a missing frame (raw None)
+    yields None.  Used by the VTuber classification path; OBS never calls it.
+    """
+    if raw is None:
+        return None
+    frame = np.frombuffer(raw, dtype=np.uint8).reshape(
+        _SCOREBAR_V2_PROBE_HEIGHT, _SCOREBAR_V2_PROBE_WIDTH, 3
+    )
+    return localize_scorebar(frame) is not None
 
 
 def _probe_scorebar_context(
@@ -34,7 +53,9 @@ def _probe_scorebar_context(
     timestamps: list[float],
     height: int,
     workers: int | None,
-) -> tuple[list[bool | None], list[bytes | None]]:
+    *,
+    with_localize: bool = False,
+) -> tuple[list[bool | None], list[bytes | None], list[bool | None]]:
     """Probe multiple timestamps and return has_scorebar + raw frames.
 
     Returns a tuple of two lists aligned with *timestamps*:
@@ -107,9 +128,21 @@ def _probe_scorebar_context(
             else:
                 scorebar_results[t] = _has_scorebar(raw_frames[t], height)
 
+        # localize-present from the hi-res frames already decoded for v2
+        # (additive; OBS production passes with_localize=False -> all None,
+        # so existing callers stay bit-exact).
+        localize_results: dict[float, bool | None] = {}
+        if with_localize and use_v2:
+            for t in unique_ts:
+                localize_results[t] = _localize_present_from_raw(hi_raws.get(t))
+        else:
+            for t in unique_ts:
+                localize_results[t] = None
+
     return (
         [scorebar_results[t] for t in timestamps],
         [raw_frames[t] for t in timestamps],
+        [localize_results[t] for t in timestamps],
     )
 
 
@@ -274,10 +307,10 @@ def classify_blackout(
     pre_timestamps = sorted(set(max(0.0, region[0] - d) for d in (3.0, 2.0, 1.0)))
     post_timestamps = sorted(set(min(duration, region[1] + d) for d in (1.0, 2.0, 3.0)))
 
-    pre_results, pre_frames = _probe_scorebar_context(
+    pre_results, pre_frames, _pre_loc = _probe_scorebar_context(
         video_path, pre_timestamps, height, workers
     )
-    post_results, post_frames = _probe_scorebar_context(
+    post_results, post_frames, _post_loc = _probe_scorebar_context(
         video_path, post_timestamps, height, workers
     )
 
@@ -312,11 +345,11 @@ def classify_blackout(
         pre_re_results: list[bool | None] = []
         post_re_results: list[bool | None] = []
         if pre_re_timestamps:
-            pre_re_results, _ = _probe_scorebar_context(
+            pre_re_results, _, _ = _probe_scorebar_context(
                 video_path, pre_re_timestamps, height, workers
             )
         if post_re_timestamps:
-            post_re_results, _ = _probe_scorebar_context(
+            post_re_results, _, _ = _probe_scorebar_context(
                 video_path, post_re_timestamps, height, workers
             )
         pre_has_re = _majority_scorebar(pre_re_results)
@@ -559,7 +592,7 @@ def _merge_boundary_pairs(
                 probe_points = [
                     gap_start + (gap_end - gap_start) * k / 10 for k in range(1, 10)
                 ]
-                probe_results, _ = _probe_scorebar_context(
+                probe_results, _, _ = _probe_scorebar_context(
                     video_path,
                     probe_points,
                     height,
