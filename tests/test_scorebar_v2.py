@@ -543,7 +543,9 @@ class TestProbeScorebarContextV2:
     @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb", return_value=b"lo")
     def test_v2_true_returns_true(self, _lo, _hi, mock_v1, _mock_v2):
         """V2 True -> True; V1 not consulted."""
-        results, frames = _probe_scorebar_context(Path("v.mp4"), [1.0], 180, workers=1)
+        results, frames, _ = _probe_scorebar_context(
+            Path("v.mp4"), [1.0], 180, workers=1
+        )
         assert results == [True]
         # frames returned are LOW-RES (used for static-screen detection)
         assert frames == [b"lo"]
@@ -561,7 +563,7 @@ class TestProbeScorebarContextV2:
         frame, V2 False wins, because V1 has known FP on lobby backgrounds
         that block correct merging of match_boundary pairs (PR #313 rationale).
         """
-        results, _ = _probe_scorebar_context(Path("v.mp4"), [1.0], 180, workers=1)
+        results, _, _ = _probe_scorebar_context(Path("v.mp4"), [1.0], 180, workers=1)
         assert results == [False]
         mock_v1.assert_not_called()
 
@@ -572,7 +574,7 @@ class TestProbeScorebarContextV2:
     @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb", return_value=b"lo")
     def test_v2_none_falls_back_to_v1(self, _lo, _hi, mock_v1, _mock_v2):
         """V2 None (e.g. opencv missing or hi-res probe failed) -> V1 result."""
-        results, _ = _probe_scorebar_context(Path("v.mp4"), [1.0], 180, workers=1)
+        results, _, _ = _probe_scorebar_context(Path("v.mp4"), [1.0], 180, workers=1)
         assert results == [True]
         mock_v1.assert_called_once()
 
@@ -583,7 +585,7 @@ class TestProbeScorebarContextV2:
     @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb", return_value=b"lo")
     def test_v1_method_skips_hires_probe(self, _lo, mock_hi, _mock_v1_fn, mock_v2):
         """When METHOD=v1, no high-res probe and no V2 call."""
-        results, _ = _probe_scorebar_context(Path("v.mp4"), [1.0], 180, workers=1)
+        results, _, _ = _probe_scorebar_context(Path("v.mp4"), [1.0], 180, workers=1)
         assert results == [True]
         mock_hi.assert_not_called()
         mock_v2.assert_not_called()

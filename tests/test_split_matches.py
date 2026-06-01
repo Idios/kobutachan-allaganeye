@@ -1420,6 +1420,8 @@ class TestRefineProgressBar:
                 h,
                 w,
                 *,
+                band_region=None,
+                vtuber=False,
                 audio_hits=None,
                 stats=None,
                 progress_callback=None,
