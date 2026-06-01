@@ -26,7 +26,11 @@ from allaganeye.video.detector import (
     _probe_frame_rgb_hires,
     _resolve_workers,
 )
-from allaganeye.video.capture_region import CaptureRegion, localize_scorebar
+from allaganeye.video.capture_region import (
+    CaptureRegion,
+    FULL_FRAME,  # noqa: F401  # used as default by B2/B3 in this Phase 2 group
+    localize_scorebar,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +62,11 @@ def _probe_scorebar_context(
 ) -> tuple[list[bool | None], list[bytes | None], list[bool | None]]:
     """Probe multiple timestamps and return has_scorebar + raw frames.
 
-    Returns a tuple of two lists aligned with *timestamps*:
+    Returns a tuple of three lists aligned with *timestamps*:
     - scorebar results: True/False/None per frame
     - raw RGB frame bytes: bytes/None per frame (low-res for static detection)
+    - localize-present results: True/False/None per frame (populated only when
+      with_localize=True and method is v2; otherwise all None)
 
     When ``_SCOREBAR_METHOD == "v2"``, probes at 1920x1080 for GC-emblem
     3-point AND detection.  V2 False is used as-is (no V1 fallback) to
