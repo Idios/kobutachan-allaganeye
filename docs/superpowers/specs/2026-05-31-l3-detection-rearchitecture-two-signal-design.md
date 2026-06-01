@@ -199,6 +199,22 @@ Codex 提案順序 (production 不変のまま shadow trace → MAD calibrate �
 
 Phase 0-3 = 検証・非破壊、Phase 4 = 切替。「検証してから切替」をデータ駆動で。各 Phase 独立 PR。
 
+### 8.1 Phase 2 確定事項 (2026-06-01 brainstorming + Codex 設計レビュー)
+
+Phase 2 着手前の軽量 brainstorming (§11 の Phase 2 関連未確定を user 承認で確定) と、その設計に対する Codex adversarial 設計レビュー (read-only、8 finding) の反映。
+
+| # | 論点 | 決定 | 根拠 |
+| --- | --- | --- | --- |
+| P2-a | motion の役割 | **present(localize) 単独を VTuber authoritative 分類器に**。motion(band-MAD) は telemetry 収集のみで分類に AND しない。`AND moving` 配線・閾値は harness 校正後の Phase 3 | Codex #3/#5: 未校正の min-MAD<0.5 を load-bearing 化すると in-match flank の一時静止 (重複 encode / 低動き瞬間) が present→absent flip し偽境界化。観測された過分割 (両側 present の in_match) は present 単独で解消。§3.3「motion は二次補正」と整合 |
+| P2-b | v2 shadow の所在 | **harness 専用**。production OBS 経路は v2 単独で完全不変。localize 分類器を再利用可能な単位にし、harness が 5 baseline の各 blackout で v2/localize を both 呼んで FP/FN parity を per-source 出力 | §3.4 / §7.2。production purity (bit-exact 構造保証)。Codex #7: harness は presence API 再実装でなく同一 classifier を呼び drift 排除 |
+| P2-c | localize 配線 | `_probe_scorebar_context` が既に decode 済の hi-res frame を再利用し localize-present を additive + flag-gate で返す (OBS production は localize 非計算でコスト 0) | Codex #8: 戻り値後方互換で既存 3 caller (classify / #524 re-probe / merge) bit-exact |
+| P2-d | trailing-drop | **VTuber は `_drop_post_match_trailing` を call site で gate off** (`not vtuber`)。v2 内部・OBS 挙動は不変 | Codex #1 (CRITICAL): v2 は VTuber inset で全 probe FN → 最終/混在試合を silent 削除。map §4「Phase 4 まで内部を触らない」制約とも両立 (call gate のみ、内部不変) |
+| P2-e | merge predicate | VTuber の `_merge_boundary_pairs` gap probe も localize-present (present 単独分類器と一貫)。長 result 画面で bar 可視→merge 阻害の edge は duration backstop で大半が落ち、残差は Phase 3 | Codex #2 |
+| P2-f | band MAD guard | `_is_static_from_frames` の region path に 1px clamp + 空 ROI guard (nan 回避)。telemetry の健全性 | Codex #4: 7-8px@180p band で int 切り捨て→空 ROI→nan→誤 moving |
+| P2-g | audio promotion | **対応不要** (`AUDIO_FROZEN=True` #327/#303 で inert、OBS でも未使用)。将来 unfreeze 時に VTuber 相互作用を再評価する caveat のみ | Codex #6 は frozen 中は moot (user 指摘で確認) |
+
+**Phase 2 の既知の限界 (Phase 3 で対処)**: 全画面 UI が片側 flank の scorebar を隠すと偽境界化しうる (R3/R3b、fallback フラグ)。motion AND 配線・MAD 閾値校正・VTuber GT も Phase 3。
+
 ## 9. re-plan #753 P1-P6 の再定義
 
 | re-plan | 旧定義 | 新定義 (本 spec) |
@@ -228,7 +244,7 @@ Phase 0-3 = 検証・非破壊、Phase 4 = 切替。「検証してから切替�
 - **Q3 最終形 (v2 retire 可否)**: §3.4。localize+motion の OBS parity 実証後に判断。本 spec は「API 統一 + shadow 並走」まで確定。
 - **issue 起票 / 編集**: presence umbrella の再定義、#480 を Stage 2 に再マップ、#809 branch の扱い、#805 非破壊化との phase 分離。**起票時に AskUserQuestion** (Iron Law 2)。
 - **閾値最終値**: MAD 静止閾値、`T_*`、領域 confidence gate、VTuber GT 目標値 → harness 校正。
-- **MAD の昇格形** (Codex #1): min → percentile/多数決化するか harness 分布で判断。
+- **MAD の昇格形** (Codex #1): min → percentile/多数決化するか harness 分布で判断。**Phase 2 では motion を分類に AND せず telemetry 収集のみ**とし、配線・昇格形は Phase 3 で校正後に確定 (§8.1 P2-a)。
 
 ## 12. リスク
 
