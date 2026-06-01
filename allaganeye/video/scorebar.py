@@ -172,29 +172,21 @@ Threshold 0.5 sits well inside the gap.
 """
 
 
-def _is_static_from_frames(
+def _band_mad_min(
     raw_frames: Sequence[bytes | None],
     height: int,
     region: CaptureRegion | None = None,
-) -> bool:
-    """Detect static screens (loading/result) via scorebar ROI frame diff.
+) -> float | None:
+    """Min MAD of the scorebar ROI across consecutive frame pairs.
 
-    Computes the mean absolute difference (MAD) of the scorebar ROI pixels
-    between consecutive frame pairs.  If the **minimum** MAD across all
-    pairs is below threshold, the frames show a static screen.
-
-    Using min() tolerates a single screen transition within the window
-    (one pair may have high MAD from a screen change, but the next pair
-    will be static).  False positives from ffmpeg keyframe aliasing are
-    mitigated by the A1+A2 checks in ``_has_scorebar``, which reduce the
-    number of blackouts reaching the ``in_match`` classification path
-    where this check is applied.
-
-    Returns False if fewer than 2 valid frames are provided.
+    Returns None when fewer than 2 valid frames are given, or when a band
+    ``region`` collapses to an empty crop (degenerate / sub-pixel band at
+    320x180; Codex #4).  ``region is None`` uses the absolute ``_SCOREBAR_ROI_*``
+    ROI exactly as before (bit-exact).
     """
     valid = [r for r in raw_frames if r is not None]
     if len(valid) < 2:
-        return False
+        return None
 
     if region is None:
         x1 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_START)
@@ -206,29 +198,40 @@ def _is_static_from_frames(
         x2 = min(_SAMPLE_WIDTH, int((region.x + region.w) * _SAMPLE_WIDTH))
         y1 = max(0, int(region.y * height))
         y2 = min(height, int((region.y + region.h) * height))
+        if x2 <= x1 or y2 <= y1:
+            return None  # degenerate band crop (Codex #4) -> no usable signal
 
     rois = []
     for raw in valid:
         frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, _SAMPLE_WIDTH, 3)
         rois.append(frame[y1:y2, x1:x2, :].astype(np.int16))
 
-    mads = []
-    for i in range(len(rois) - 1):
-        mad = float(np.mean(np.abs(rois[i] - rois[i + 1])))
-        mads.append(mad)
+    mads = [float(np.mean(np.abs(rois[i] - rois[i + 1]))) for i in range(len(rois) - 1)]
+    return min(mads)
 
-    min_mad = min(mads)
+
+def _is_static_from_frames(
+    raw_frames: Sequence[bytes | None],
+    height: int,
+    region: CaptureRegion | None = None,
+) -> bool:
+    """Detect static screens (loading/result) via scorebar ROI frame diff.
+
+    Returns False if fewer than 2 valid frames are provided or the band ROI is
+    degenerate.  ``region is None`` keeps the absolute-ROI behavior (bit-exact).
+    """
+    min_mad = _band_mad_min(raw_frames, height, region)
+    if min_mad is None:
+        return False
+
     is_static = min_mad < _STATIC_SCREEN_MAD_THRESHOLD
-
     logger.debug(
-        "static_screen: frames=%d mads=%s min=%.2f thr=%.1f -> %s",
-        len(raw_frames),
-        [f"{m:.2f}" for m in mads],
+        "static_screen: min=%.2f thr=%.1f region=%s -> %s",
         min_mad,
         _STATIC_SCREEN_MAD_THRESHOLD,
+        "absolute" if region is None else "band",
         is_static,
     )
-
     return is_static
 
 

@@ -19,6 +19,7 @@ from allaganeye.video.detector import (
 )
 from allaganeye.video import scorebar as sb
 from allaganeye.video.scorebar import (
+    _band_mad_min,
     _is_static_from_frames,
     _majority_scorebar,
     _probe_scorebar_context,
@@ -1362,3 +1363,32 @@ def test_probe_context_with_localize_populates_3rd(monkeypatch):
         Path("x.mp4"), [1.0, 2.0], height=180, workers=1, with_localize=True
     )
     assert loc == [True, False]
+
+
+# ---------------------------------------------------------------------------
+# _band_mad_min unit tests (Phase 2 B1)
+# ---------------------------------------------------------------------------
+
+
+def _rgb(height, fill):
+    return np.full((height, _W, 3), fill, dtype=np.uint8).tobytes()
+
+
+def test_band_mad_min_absolute_roi_matches_is_static():
+    # region=None path must stay bit-exact: identical frames -> MAD 0 -> static.
+    frames = [_rgb(180, 50), _rgb(180, 50)]
+    assert _band_mad_min(frames, 180) == 0.0
+    assert _is_static_from_frames(frames, 180) is True
+
+
+def test_band_mad_min_returns_none_for_degenerate_band():
+    # a band so thin it collapses to an empty crop -> None (not nan, not 0).
+    frames = [_rgb(180, 50), _rgb(180, 90)]
+    degenerate = CaptureRegion(0.5, 0.5, 0.0, 0.0)
+    assert _band_mad_min(frames, 180, degenerate) is None
+    # _is_static_from_frames must not raise / must be False for degenerate band.
+    assert _is_static_from_frames(frames, 180, degenerate) is False
+
+
+def test_band_mad_min_none_for_under_two_frames():
+    assert _band_mad_min([_rgb(180, 50)], 180) is None
