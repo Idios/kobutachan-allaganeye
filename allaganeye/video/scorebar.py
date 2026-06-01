@@ -382,6 +382,9 @@ def classify_blackout(
     duration: float,
     height: int,
     workers: int | None = None,
+    *,
+    band_region: CaptureRegion = FULL_FRAME,
+    vtuber: bool = False,
 ) -> str:
     """Classify a blackout region by scorebar context.
 
@@ -411,6 +414,18 @@ def classify_blackout(
     - ``"non_fl"``: neither side has scorebar -> non-FL blackout (#109)
     - ``"unknown"``: all probes failed on either side -> keep boundary (safe)
     """
+    if vtuber:
+        # VTuber path: position-independent localize as the sole signal
+        # (spec section 8.1 P2-a). The OBS v2 body below is left untouched.
+        return _classify_blackout_localize(
+            video_path,
+            region,
+            duration,
+            height,
+            workers,
+            band_region=band_region,
+        )
+
     pre_timestamps = sorted(set(max(0.0, region[0] - d) for d in (3.0, 2.0, 1.0)))
     post_timestamps = sorted(set(min(duration, region[1] + d) for d in (1.0, 2.0, 3.0)))
 

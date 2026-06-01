@@ -1456,3 +1456,49 @@ def test_classify_localize_both_absent_is_non_fl(monkeypatch):
         Path("x.mp4"), (100.0, 102.0), duration=400.0, height=180, workers=1
     )
     assert cls == "non_fl"
+
+
+# ---------------------------------------------------------------------------
+# classify_blackout vtuber gate unit tests (Phase 2 B3)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_blackout_vtuber_delegates_to_localize(monkeypatch):
+    from allaganeye.video import scorebar as sb
+    from allaganeye.video.capture_region import CaptureRegion
+
+    seen = {}
+
+    def fake_localize(video, region, duration, height, workers=None, *, band_region):
+        seen["band"] = band_region
+        return "in_match"
+
+    monkeypatch.setattr(sb, "_classify_blackout_localize", fake_localize)
+    band = CaptureRegion(0.3, 0.0, 0.37, 0.04, source="band")
+    out = sb.classify_blackout(
+        Path("x.mp4"), (10.0, 11.0), 400.0, 180, vtuber=True, band_region=band
+    )
+    assert out == "in_match"
+    assert seen["band"] is band
+
+
+def test_classify_blackout_obs_does_not_call_localize(monkeypatch):
+    from allaganeye.video import scorebar as sb
+
+    monkeypatch.setattr(
+        sb,
+        "_classify_blackout_localize",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("OBS must not localize")),
+    )
+    # vtuber defaults False -> must take the v2 path (probe returns absent here).
+    monkeypatch.setattr(
+        sb,
+        "_probe_scorebar_context",
+        lambda v, ts, h, w, *, with_localize=False: (
+            [False] * len(ts),
+            [b"f"] * len(ts),
+            [None] * len(ts),
+        ),
+    )
+    out = sb.classify_blackout(Path("x.mp4"), (10.0, 12.0), 400.0, 180)
+    assert out == "non_fl"
