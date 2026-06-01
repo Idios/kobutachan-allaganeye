@@ -1572,3 +1572,25 @@ def test_filter_threads_vtuber_to_classify(monkeypatch):
         Path("x.mp4"), [(10.0, 12.0)], 400.0, 180, band_region=band, vtuber=True
     )
     assert seen == [(True, "band")]
+
+
+def test_merge_gap_probe_uses_localize_when_vtuber(monkeypatch):
+    from allaganeye.video import scorebar as sb
+    from allaganeye.video.capture_region import CaptureRegion
+
+    captured = {}
+
+    def fake_probe(video, points, height, workers, *, with_localize=False):
+        captured["with_localize"] = with_localize
+        # gap shows no scorebar by either signal -> eligible to merge.
+        return ([None] * len(points), [b"f"] * len(points), [False] * len(points))
+
+    monkeypatch.setattr(sb, "_probe_scorebar_context", fake_probe)
+    regions = [(10.0, 12.0), (30.0, 32.0)]
+    cls = ["match_boundary", "match_boundary"]
+    band = CaptureRegion(0.3, 0.0, 0.37, 0.04, source="band")
+    merged, _merged_cls = sb._merge_boundary_pairs(
+        Path("x.mp4"), regions, cls, 400.0, 180, None, band_region=band, vtuber=True
+    )
+    assert captured["with_localize"] is True
+    assert merged == [(10.0, 32.0)]  # localize-absent gap -> merged

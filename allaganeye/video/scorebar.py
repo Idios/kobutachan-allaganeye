@@ -696,6 +696,9 @@ def _merge_boundary_pairs(
     duration: float,
     height: int,
     workers: int | None,
+    *,
+    band_region: CaptureRegion = FULL_FRAME,
+    vtuber: bool = False,
 ) -> tuple[list[tuple[float, float]], list[str]]:
     """Merge consecutive match_boundary pairs separated by non-FL content.
 
@@ -730,14 +733,23 @@ def _merge_boundary_pairs(
                 probe_points = [
                     gap_start + (gap_end - gap_start) * k / 10 for k in range(1, 10)
                 ]
-                probe_results, _, _ = _probe_scorebar_context(
-                    video_path,
-                    probe_points,
-                    height,
-                    workers,
-                )
-                all_valid = all(r is not None for r in probe_results)
-                any_scorebar = any(r is True for r in probe_results)
+                if vtuber:
+                    _, _, probe_signal = _probe_scorebar_context(
+                        video_path,
+                        probe_points,
+                        height,
+                        workers,
+                        with_localize=True,
+                    )
+                else:
+                    probe_signal, _, _ = _probe_scorebar_context(
+                        video_path,
+                        probe_points,
+                        height,
+                        workers,
+                    )
+                all_valid = all(r is not None for r in probe_signal)
+                any_scorebar = any(r is True for r in probe_signal)
                 if all_valid and not any_scorebar:
                     merged_region = (regions[i][0], regions[i + 1][1])
                     logger.info(
@@ -750,7 +762,7 @@ def _merge_boundary_pairs(
                         merged_region[0],
                         merged_region[1],
                         gap,
-                        probe_results,
+                        probe_signal,
                     )
                     merged.append(merged_region)
                     merged_cls.append("match_boundary")
@@ -763,7 +775,7 @@ def _merge_boundary_pairs(
                     regions[i + 1][0],
                     regions[i + 1][1],
                     gap,
-                    probe_results,
+                    probe_signal,
                 )
         merged.append(regions[i])
         merged_cls.append(classifications[i])
