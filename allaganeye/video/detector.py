@@ -257,6 +257,42 @@ def _resolve_detect_region(video_path: Path, duration_hint: float) -> CaptureReg
     return region
 
 
+_MASKED_REGION_SAMPLES = 48
+"""Sparse frames sampled across the video for mask-free region detection.
+
+Must span multiple blackouts so game pixels register a dark ``min``; 48 over a
+multi-hour FL recording covers many match boundaries (spec section 5).
+"""
+
+
+def _resolve_masked_region(
+    video_path: Path, duration_hint: float, workers: int | None
+) -> CaptureRegion:
+    """Detect the mask-free game rectangle for masked recordings (#753).
+
+    Samples ``_MASKED_REGION_SAMPLES`` sparse grayscale frames and runs
+    ``detect_mask_free_region``.  Any failure (decode, opencv, empty) degrades to
+    FULL_FRAME so the masked-fallback caller can treat FULL_FRAME as "no mask
+    region found" and defer to the standard result.  Never raises.
+    """
+    from allaganeye.video.capture_region import detect_mask_free_region
+
+    try:
+        n = _MASKED_REGION_SAMPLES
+        times = [duration_hint * (i + 1) / (n + 1) for i in range(n)]
+        max_workers = max(1, min(len(times), workers or os.cpu_count() or 4))
+        frames: list[np.ndarray] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            for frame in pool.map(lambda t: _probe_frame_gray2d(video_path, t), times):
+                if frame is not None:
+                    frames.append(frame)
+        if len(frames) < 2:
+            return FULL_FRAME
+        return detect_mask_free_region(frames)
+    except Exception:
+        return FULL_FRAME
+
+
 def detect_match_boundaries(
     video_path: Path,
     *,

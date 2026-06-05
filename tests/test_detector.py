@@ -2784,3 +2784,39 @@ def test_probe_single_frame_regression_via_shared_decoder(monkeypatch):
     assert det._probe_single_frame(det.Path("x.mp4"), 1.0) == 10.0
     monkeypatch.setattr(det, "_decode_gray_raw", lambda v, t: None)
     assert det._probe_single_frame(det.Path("x.mp4"), 1.0) == 255.0
+
+
+# ============================================================
+# TestResolveMaskedRegion (masked-OBS A3)
+# ============================================================
+
+
+def _masked_frames():
+    out = []
+    for v in (5, 200, 5, 200):
+        f = np.full((det._SAMPLE_HEIGHT, det._SAMPLE_WIDTH), v, dtype=np.uint8)
+        f[120:180, 0:120] = 200  # static bright mask, bottom-left
+        out.append(f)
+    return out
+
+
+def test_resolve_masked_region_finds_mask_free_rect(monkeypatch):
+    seq = iter(_masked_frames() * 20)
+    monkeypatch.setattr(
+        det, "_probe_frame_gray2d", lambda v, t: next(seq, _masked_frames()[0])
+    )
+    region = det._resolve_masked_region(det.Path("x.mp4"), 600.0, None)
+    assert not region.is_full_frame()
+
+
+def test_resolve_masked_region_full_frame_when_no_frames(monkeypatch):
+    monkeypatch.setattr(det, "_probe_frame_gray2d", lambda v, t: None)
+    assert det._resolve_masked_region(det.Path("x.mp4"), 600.0, None).is_full_frame()
+
+
+def test_resolve_masked_region_swallows_exceptions(monkeypatch):
+    def boom(v, t):
+        raise RuntimeError("decode blew up")
+
+    monkeypatch.setattr(det, "_probe_frame_gray2d", boom)
+    assert det._resolve_masked_region(det.Path("x.mp4"), 600.0, None).is_full_frame()
