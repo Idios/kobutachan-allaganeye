@@ -303,6 +303,7 @@ def detect_match_boundaries(
     min_blackout_duration: float = 3.0,
     use_gpu: bool = False,
     vtuber: bool = False,
+    masked: bool = False,
     workers: int | None = None,
     src_resolution: tuple[int, int] | None = None,
     codec: str | None = None,
@@ -329,6 +330,9 @@ def detect_match_boundaries(
             to generate the list of sample timestamps.
         use_gpu: If True, use chunked parallel GPU decode instead of
             per-frame -ss probes.  Falls back to CPU on failure.
+        masked: If True (or when standard full-frame Pass 1 finds no
+            blackout), re-detect on a mask-free region with position-
+            independent classification (#753 masked-OBS).  OBS bit-exact.
         src_resolution: (width, height) from probe.  When provided,
             scorebar-based filtering is applied to remove in-match
             blackouts and non-FL blackouts.
@@ -446,6 +450,35 @@ def detect_match_boundaries(
         t for t, b in results.items() if b < pass1_blackout_threshold
     )
 
+    # Masked fallback (#753 masked-OBS): when standard full-frame Pass 1 finds no
+    # blackout (bright chat-mask overlays hold the average above threshold), OR
+    # --masked forces it, re-detect on a mask-free region with position-
+    # independent classification.  Gated by `not vtuber and (masked or not
+    # blackout_times)`: OBS baselines always have >=1 blackout so `not
+    # blackout_times` is False -> the standard path below runs unchanged
+    # (bit-exact; spec section 3 / R1).  VTuber uses its own path.
+    if not vtuber and (masked or not blackout_times):
+        masked_segments = _detect_masked_fallback(
+            video_path,
+            duration_hint=duration_hint,
+            sample_interval=sample_interval,
+            blackout_threshold=blackout_threshold,
+            min_match_duration=min_match_duration,
+            min_blackout_duration=min_blackout_duration,
+            use_gpu=use_gpu,
+            workers=workers,
+            src_resolution=src_resolution,
+            codec=codec,
+            gpu_vendor=gpu_vendor,
+            source_fps_num=source_fps_num,
+            source_fps_den=source_fps_den,
+            source_fps=source_fps,
+            audio_hits=audio_hits,
+            stats=stats,
+        )
+        if masked_segments is not None:
+            return masked_segments
+
     # Group into regions and expand with transition frames (#71)
     blackout_regions = _group_blackout_regions(blackout_times, sample_interval)
     blackout_regions = _expand_regions_with_transitions(
@@ -532,6 +565,139 @@ def detect_match_boundaries(
             min_match_duration=min_match_duration,
         )
     return segments
+
+
+def _detect_masked_fallback(
+    video_path: Path,
+    *,
+    duration_hint: float,
+    sample_interval: float,
+    blackout_threshold: float,
+    min_match_duration: float,
+    min_blackout_duration: float,
+    use_gpu: bool,
+    workers: int | None,
+    src_resolution: tuple[int, int] | None,
+    codec: str | None,
+    gpu_vendor: str | None,
+    source_fps_num: int | None,
+    source_fps_den: int | None,
+    source_fps: float | None,
+    audio_hits: Sequence[BgmHit] | None,
+    stats: DetectionStats | None,
+) -> list[MatchBoundary] | None:
+    """Masked-OBS detection: region-aware Pass 1/2 + localize classification.
+
+    Returns segments, or ``None`` when no mask-free region is found (caller falls
+    through to the standard single-segment result).  Deliberately duplicates the
+    standard Pass1/Pass2/classify sequence (calling the same factored helpers)
+    rather than sharing a core, so the standard OBS path is structurally
+    unchanged (bit-exact mandate; spec section 3 / R1).  Uses ``band_region=
+    FULL_FRAME`` + ``localize=True`` (full-frame position-independent scorebar;
+    v2 absolute coords FN on ultrawide, spec section 5).  No trailing-drop:
+    ``_drop_post_match_trailing`` probes v2 absolute coords which FN on
+    ultrawide (same rationale as the VTuber gate in detect_match_boundaries).
+    """
+    region = _resolve_masked_region(video_path, duration_hint, workers)
+    if region.is_full_frame():
+        return None  # no mask region found -> defer to the standard result
+
+    if use_gpu:
+        from allaganeye.video.gpu_detector import scan_gpu
+
+        try:
+            results = scan_gpu(
+                video_path,
+                duration_hint,
+                sample_interval,
+                blackout_threshold,
+                None,
+                codec=codec,
+                vendor=gpu_vendor,
+                source_fps_num=source_fps_num,
+                source_fps_den=source_fps_den,
+                source_fps=source_fps,
+                region=region,
+            )
+        except VideoProcessingError:
+            results = _scan_cpu(
+                video_path,
+                duration_hint,
+                sample_interval,
+                blackout_threshold,
+                workers,
+                None,
+                source_fps_num=source_fps_num,
+                source_fps_den=source_fps_den,
+                source_fps=source_fps,
+                region=region,
+            )
+    else:
+        results = _scan_cpu(
+            video_path,
+            duration_hint,
+            sample_interval,
+            blackout_threshold,
+            workers,
+            None,
+            source_fps_num=source_fps_num,
+            source_fps_den=source_fps_den,
+            source_fps=source_fps,
+            region=region,
+        )
+
+    pass1_blackout_threshold = blackout_threshold + _BLACKOUT_THRESHOLD_UPPER_MARGIN
+    blackout_times = sorted(
+        t for t, b in results.items() if b < pass1_blackout_threshold
+    )
+    blackout_regions = _group_blackout_regions(blackout_times, sample_interval)
+    blackout_regions = _expand_regions_with_transitions(
+        blackout_regions, results, sample_interval, _TRANSITION_THRESHOLD
+    )
+    if _ENABLE_BORDERLINE_REFINEMENT:
+        borderline_regions = _borderline_pseudo_regions(
+            results, blackout_threshold, duration_hint
+        )
+        if borderline_regions:
+            blackout_regions = _merge_regions(
+                blackout_regions + borderline_regions, sample_interval
+            )
+
+    refined_regions = _refine_blackout_regions(
+        video_path,
+        blackout_regions,
+        blackout_threshold,
+        duration_hint,
+        workers,
+        region=region,
+    )
+
+    classifications: list[str] | None = None
+    if src_resolution is not None:
+        from allaganeye.video.scorebar import filter_blackouts_with_scorebar
+
+        height = _scaled_height(src_resolution[0], src_resolution[1])
+        refined_regions, classifications = filter_blackouts_with_scorebar(
+            video_path,
+            refined_regions,
+            duration_hint,
+            height,
+            workers,
+            band_region=FULL_FRAME,
+            localize=True,
+            audio_hits=audio_hits,
+            stats=stats,
+        )
+
+    effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
+    return _filter_and_extract_segments(
+        refined_regions,
+        duration_hint,
+        min_match_duration,
+        effective_min,
+        classifications=classifications,
+        stats=stats,
+    )
 
 
 def _decode_chunk_cpu(
