@@ -867,23 +867,13 @@ def _generate_timestamps(duration: float, interval: float) -> list[float]:
     return timestamps
 
 
-def _probe_single_frame(
-    video_path: Path,
-    timestamp: float,
-    region: CaptureRegion = FULL_FRAME,
-) -> float:
-    """Probe a single frame's mean brightness using ffmpeg -ss seek.
+def _decode_gray_raw(video_path: Path, timestamp: float) -> bytes | None:
+    """Decode exactly one 320x180 grayscale frame to raw bytes via ffmpeg -ss.
 
-    Uses input seeking (``-ss`` before ``-i``) for fast keyframe-based
-    access, then decodes exactly one frame at 320x180 grayscale.
-
-    Brightness is computed via :func:`_frame_brightness`, so *region*
-    defaults to ``FULL_FRAME`` (the 1-D ``float(frame.mean())`` path is
-    byte-identical to the pre-region behavior; a band region reshapes the
-    raw buffer to ``(_SAMPLE_HEIGHT, _SAMPLE_WIDTH)`` and crops).
-
-    Returns the mean brightness (0-255).  Returns 255.0 on probe failure
-    (treated as non-blackout to avoid false positives).
+    Shared by :func:`_probe_single_frame` (brightness) and
+    :func:`_probe_frame_gray2d` (2D array).  Returns the first ``_FRAME_SIZE``
+    bytes, or ``None`` on timeout / ffmpeg error / short read.  Raises
+    ``VideoProcessingError`` only when ffmpeg is missing.
     """
     cmd = [
         find_ffmpeg(),
@@ -903,7 +893,6 @@ def _probe_single_frame(
         "gray",
         "pipe:1",
     ]
-
     try:
         result = subprocess.run(cmd, capture_output=True, timeout=30)
     except FileNotFoundError as e:
@@ -911,16 +900,44 @@ def _probe_single_frame(
             "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
         ) from e
     except subprocess.TimeoutExpired:
-        return 255.0  # treat timeout as non-blackout
-
+        return None
     if result.returncode != 0:
-        return 255.0  # ffmpeg error, treat as non-blackout
-
+        return None
     if len(result.stdout) < _FRAME_SIZE:
-        return 255.0  # incomplete frame, treat as non-blackout
+        return None
+    return result.stdout[:_FRAME_SIZE]
 
-    frame = np.frombuffer(result.stdout[:_FRAME_SIZE], dtype=np.uint8)
+
+def _probe_single_frame(
+    video_path: Path,
+    timestamp: float,
+    region: CaptureRegion = FULL_FRAME,
+) -> float:
+    """Probe a single frame's mean brightness using ffmpeg -ss seek.
+
+    Returns the mean brightness (0-255).  Returns 255.0 on probe failure
+    (treated as non-blackout to avoid false positives).  Brightness is computed
+    via :func:`_frame_brightness`, so *region* defaults to ``FULL_FRAME`` (the
+    1-D ``float(frame.mean())`` path is byte-identical to the pre-region
+    behavior; a band region reshapes the raw buffer and crops).
+    """
+    raw = _decode_gray_raw(video_path, timestamp)
+    if raw is None:
+        return 255.0
+    frame = np.frombuffer(raw, dtype=np.uint8)
     return _frame_brightness(frame, region)
+
+
+def _probe_frame_gray2d(video_path: Path, timestamp: float) -> np.ndarray | None:
+    """Probe one 320x180 grayscale frame as a 2D ``(H, W)`` uint8 array.
+
+    Returns ``None`` on probe failure.  Used by :func:`_resolve_masked_region`
+    for static-overlay mask-free region detection (#753 masked-OBS).
+    """
+    raw = _decode_gray_raw(video_path, timestamp)
+    if raw is None:
+        return None
+    return np.frombuffer(raw, dtype=np.uint8).reshape(_SAMPLE_HEIGHT, _SAMPLE_WIDTH)
 
 
 def _probe_frame_rgb(

@@ -2756,3 +2756,31 @@ def test_obs_runs_trailing_drop_and_filter_sees_vtuber_false(
     assert seen["vtuber"] is False
     # OBS path runs the trailing-drop exactly once.
     mock_trailing.assert_called_once()
+
+
+# ============================================================
+# TestDecodeGrayRaw / TestProbeFrameGray2d (masked-OBS A2)
+# ============================================================
+
+
+def test_probe_frame_gray2d_returns_2d(monkeypatch):
+    buf = bytes(range(256)) * (det._FRAME_SIZE // 256 + 1)
+    monkeypatch.setattr(det, "_decode_gray_raw", lambda v, t: buf[: det._FRAME_SIZE])
+    frame = det._probe_frame_gray2d(det.Path("x.mp4"), 1.0)
+    assert frame is not None
+    assert frame.shape == (det._SAMPLE_HEIGHT, det._SAMPLE_WIDTH)
+    assert frame.dtype == np.uint8
+
+
+def test_probe_frame_gray2d_none_on_decode_failure(monkeypatch):
+    monkeypatch.setattr(det, "_decode_gray_raw", lambda v, t: None)
+    assert det._probe_frame_gray2d(det.Path("x.mp4"), 1.0) is None
+
+
+def test_probe_single_frame_regression_via_shared_decoder(monkeypatch):
+    # Extraction must preserve _probe_single_frame brightness exactly.
+    buf = bytes([10]) * det._FRAME_SIZE
+    monkeypatch.setattr(det, "_decode_gray_raw", lambda v, t: buf)
+    assert det._probe_single_frame(det.Path("x.mp4"), 1.0) == 10.0
+    monkeypatch.setattr(det, "_decode_gray_raw", lambda v, t: None)
+    assert det._probe_single_frame(det.Path("x.mp4"), 1.0) == 255.0
