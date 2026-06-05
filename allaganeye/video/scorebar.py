@@ -420,7 +420,7 @@ def classify_blackout(
     - ``"unknown"``: all probes failed on either side -> keep boundary (safe)
     """
     if localize:
-        # position-independent: VTuber / masked path — uses the localize
+        # position-independent: VTuber / masked path - uses the localize
         # classifier as the sole signal (spec section 8.1 P2-a).
         # The OBS v2 body below is left untouched.
         return _classify_blackout_localize(
