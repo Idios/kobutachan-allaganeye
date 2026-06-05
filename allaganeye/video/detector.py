@@ -500,7 +500,7 @@ def detect_match_boundaries(
             height,
             workers,
             band_region=detect_region,
-            vtuber=vtuber,
+            localize=vtuber,
             audio_hits=audio_hits,
             stats=stats,
             progress_callback=scorebar_progress_callback,

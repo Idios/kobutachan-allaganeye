@@ -1458,7 +1458,7 @@ class TestRefineProgressBar:
                 w,
                 *,
                 band_region=None,
-                vtuber=False,
+                localize=False,
                 audio_hits=None,
                 stats=None,
                 progress_callback=None,

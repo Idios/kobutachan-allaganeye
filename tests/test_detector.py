@@ -1167,7 +1167,7 @@ class TestDetectMatchBoundaries:
                 workers,
                 *,
                 band_region=FULL_FRAME,
-                vtuber=False,
+                localize=False,
                 audio_hits,
                 stats,
                 progress_callback=None,
@@ -2644,7 +2644,7 @@ def _vtuber_filter_capture(seen: dict):
     """Build a filter_blackouts_with_scorebar stand-in that records kwargs.
 
     Mirrors the real signature (allaganeye/video/scorebar.py) so the
-    keyword-only block (band_region / vtuber / audio_hits / stats /
+    keyword-only block (band_region / localize / audio_hits / stats /
     progress_callback) binds exactly as the production call site passes it.
     Returns every region classified as ``match_boundary`` so segments survive
     into the trailing-drop stage.
@@ -2658,13 +2658,13 @@ def _vtuber_filter_capture(seen: dict):
         workers=None,
         *,
         band_region=FULL_FRAME,
-        vtuber=False,
+        localize=False,
         audio_hits=None,
         stats=None,
         progress_callback=None,
     ):
         seen["band_region"] = band_region
-        seen["vtuber"] = vtuber
+        seen["localize"] = localize
         return regions, ["match_boundary"] * len(regions)
 
     return filter_side_effect
@@ -2712,8 +2712,8 @@ def test_vtuber_threads_filter_kwargs_and_gates_trailing_drop(
             vtuber=True,
         )
 
-    # filter received the resolved band region and the vtuber flag at runtime.
-    assert seen["vtuber"] is True
+    # filter received the resolved band region and the localize flag at runtime.
+    assert seen["localize"] is True
     assert seen["band_region"] is not None
     assert seen["band_region"] is band
     # VTuber path must NOT run the irreversible trailing-drop (#797 / #805).
@@ -2753,7 +2753,7 @@ def test_obs_runs_trailing_drop_and_filter_sees_vtuber_false(
             src_resolution=(1920, 1080),
         )
 
-    assert seen["vtuber"] is False
+    assert seen["localize"] is False
     # OBS path runs the trailing-drop exactly once.
     mock_trailing.assert_called_once()
 
