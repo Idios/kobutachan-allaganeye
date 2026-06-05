@@ -1508,7 +1508,7 @@ def test_classify_localize_all_none_is_unknown(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# classify_blackout vtuber gate unit tests (Phase 2 B3)
+# classify_blackout localize selector unit tests (Phase 2 B3)
 # ---------------------------------------------------------------------------
 
 
@@ -1574,7 +1574,7 @@ def test_filter_threads_vtuber_to_classify(monkeypatch):
     assert seen == [(True, "band")]
 
 
-def test_merge_gap_probe_uses_localize_when_vtuber(monkeypatch):
+def test_merge_gap_probe_uses_localize_path(monkeypatch):
     from allaganeye.video import scorebar as sb
     from allaganeye.video.capture_region import CaptureRegion
 
