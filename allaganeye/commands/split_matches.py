@@ -762,6 +762,9 @@ def _run_detection(
         # L3 B6: VTuber game-inset recording -> scorebar-band anchor region.
         # False (default) keeps FULL_FRAME = OBS bit-exact behavior.
         "vtuber": config.vtuber,
+        # L3 masked-OBS (#753): chat-mask overlay -> mask-free region fallback.
+        # False (default) only auto-triggers on 0-blackout; True forces it.
+        "masked": config.masked,
         "workers": config.workers,
         "src_resolution": (metadata["width"], metadata["height"]),
         "codec": metadata.get("codec"),

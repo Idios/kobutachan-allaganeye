@@ -153,9 +153,18 @@ def split(
         bool,
         typer.Option(
             "--vtuber",
+            help="(experimental) VTuber recording (game inset): scorebar-band "
+            "anchor detection. Under-detects irregular transitions; deferred (#480).",
             hidden=True,
-            help="VTuber recording (game inset): use scorebar-band anchor for "
-            "detection. Omit for OBS full-frame (default).",
+        ),
+    ] = False,
+    masked: Annotated[
+        bool,
+        typer.Option(
+            "--masked",
+            help="Masked recording: a chat-hiding image is composited over the "
+            "full screen. Auto-detects a mask-free region and re-detects; this "
+            "flag forces that path even when some blackouts are found.",
         ),
     ] = False,
     verbose: Annotated[
@@ -180,6 +189,8 @@ def split(
             raise ConfigValidationError("--quiet and --verbose are mutually exclusive")
         if gpu and no_gpu:
             raise ConfigValidationError("--gpu and --no-gpu are mutually exclusive")
+        if vtuber and masked:
+            raise ConfigValidationError("--vtuber and --masked are mutually exclusive")
         if video_path is not None and from_metadata is not None:
             raise ConfigValidationError(
                 "VIDEO_PATH and --from-metadata are mutually exclusive"
@@ -221,6 +232,7 @@ def split(
                 no_cache=no_cache,
                 no_audio=no_audio,
                 vtuber=vtuber,
+                masked=masked,
             )
             from allaganeye.commands.split_matches import run_split_from_metadata
 
@@ -250,6 +262,7 @@ def split(
             no_cache=no_cache,
             no_audio=no_audio,
             vtuber=vtuber,
+            masked=masked,
         )
 
         from allaganeye.commands.split_matches import run_split
@@ -334,9 +347,18 @@ def detect(
         bool,
         typer.Option(
             "--vtuber",
+            help="(experimental) VTuber recording (game inset): scorebar-band "
+            "anchor detection. Under-detects irregular transitions; deferred (#480).",
             hidden=True,
-            help="VTuber recording (game inset): use scorebar-band anchor for "
-            "detection. Omit for OBS full-frame (default).",
+        ),
+    ] = False,
+    masked: Annotated[
+        bool,
+        typer.Option(
+            "--masked",
+            help="Masked recording: a chat-hiding image is composited over the "
+            "full screen. Auto-detects a mask-free region and re-detects; this "
+            "flag forces that path even when some blackouts are found.",
         ),
     ] = False,
     verbose: Annotated[
@@ -373,6 +395,8 @@ def detect(
             raise ConfigValidationError("--quiet and --verbose are mutually exclusive")
         if gpu and no_gpu:
             raise ConfigValidationError("--gpu and --no-gpu are mutually exclusive")
+        if vtuber and masked:
+            raise ConfigValidationError("--vtuber and --masked are mutually exclusive")
         if progress_format not in ("text", "json"):
             raise ConfigValidationError(
                 f"Invalid --progress-format: {progress_format!r}. "
@@ -409,6 +433,7 @@ def detect(
             no_cache=no_cache,
             no_audio=no_audio,
             vtuber=vtuber,
+            masked=masked,
         )
 
         from allaganeye.commands.detect import run_detect

@@ -1110,6 +1110,30 @@ def test_split_from_metadata_missing_file_exits_with_input_file_error(tmp_path):
     assert result.exit_code == 2  # InputFileError
 
 
+# --- masked flag and vtuber/masked mutex (L3 A6) ---
+
+
+@patch(MODULE)
+def test_split_masked_flag_sets_config(mock_run_split, tmp_path):
+    """--masked sets config.masked=True and is threaded through to SplitConfig."""
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"x")
+    result = runner.invoke(app, ["split", str(video), "--masked"])
+    assert result.exit_code == 0, result.stdout
+    config = mock_run_split.call_args[0][1]
+    assert config.masked is True
+
+
+def test_split_vtuber_and_masked_mutually_exclusive(tmp_path):
+    """--vtuber and --masked together should exit non-zero with 'exclusive' in output."""
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"x")
+    result = runner.invoke(app, ["split", str(video), "--vtuber", "--masked"])
+    assert result.exit_code != 0
+    combined = result.stdout + (result.stderr or "")
+    assert "exclusive" in combined.lower()
+
+
 # --- single-dash long-option hint (#440) ---
 
 
