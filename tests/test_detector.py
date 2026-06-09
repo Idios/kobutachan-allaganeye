@@ -3029,3 +3029,84 @@ def test_detect_masked_fallback_wires_region_band_localize(monkeypatch):
     assert seen["refine_region"] is fake_region
     assert seen["band_region"] is det.FULL_FRAME
     assert seen["localize"] is True
+
+
+# ============================================================
+# A-Task 8: brightness-hint dark+even sampling
+# ============================================================
+
+
+def test_resolve_masked_region_hint_samples_darkest(monkeypatch):
+    # brightness_hint marks 3 very-dark timestamps (the masked blackouts).
+    DUR = 1000.0
+    hint = {
+        float(t): (5.0 if t in (100, 300, 700) else 200.0) for t in range(0, 1000, 10)
+    }
+    sampled = []
+
+    def fake(v, t):
+        sampled.append(round(t, 3))
+        return np.zeros((det._SAMPLE_HEIGHT, det._SAMPLE_WIDTH), dtype=np.uint8)
+
+    monkeypatch.setattr(det, "_probe_frame_gray2d", fake)
+    det._resolve_masked_region(det.Path("x.mp4"), DUR, None, brightness_hint=hint)
+    # The 3 darkest timestamps must be among those decoded (dark-moment sampling).
+    assert {100.0, 300.0, 700.0}.issubset(set(sampled))
+
+
+def test_resolve_masked_region_hint_finds_region(monkeypatch):
+    DUR = 1000.0
+    dark = {100.0, 300.0, 700.0}
+    hint = {float(t): (5.0 if t in dark else 200.0) for t in range(0, 1000, 10)}
+
+    def fake(v, t):
+        # dark timestamps -> game region dark (5); others -> game bright (200).
+        base = 5 if t in dark else 200
+        f = np.full((det._SAMPLE_HEIGHT, det._SAMPLE_WIDTH), base, dtype=np.uint8)
+        f[120:180, 0:120] = 200  # static bright mask, bottom-left
+        return f
+
+    monkeypatch.setattr(det, "_probe_frame_gray2d", fake)
+    r = det._resolve_masked_region(det.Path("x.mp4"), DUR, None, brightness_hint=hint)
+    assert not r.is_full_frame()  # dark+even sampling recovers the region
+
+
+def test_resolve_masked_region_no_hint_unchanged(monkeypatch):
+    # Without a hint, behavior is the prior even-only sampling (backward compat).
+    seq = iter(_masked_frames() * 40)
+    monkeypatch.setattr(
+        det, "_probe_frame_gray2d", lambda v, t: next(seq, _masked_frames()[0])
+    )
+    r = det._resolve_masked_region(det.Path("x.mp4"), 600.0, None)
+    assert not r.is_full_frame()
+
+
+def test_detect_masked_fallback_threads_brightness_hint(monkeypatch):
+    seen = {}
+
+    def fake_resolve(video_path, duration_hint, workers, *, brightness_hint=None):
+        seen["hint"] = brightness_hint
+        return det.FULL_FRAME  # short-circuit (returns None) -- we only check wiring
+
+    monkeypatch.setattr(det, "_resolve_masked_region", fake_resolve)
+    out = det._detect_masked_fallback(
+        det.Path("x.mp4"),
+        duration_hint=600.0,
+        sample_interval=3.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        use_gpu=False,
+        workers=None,
+        src_resolution=(1920, 1080),
+        codec="h264",
+        gpu_vendor=None,
+        source_fps_num=60,
+        source_fps_den=1,
+        source_fps=None,
+        audio_hits=None,
+        stats=None,
+        brightness_results={1.0: 5.0, 2.0: 200.0},
+    )
+    assert out is None
+    assert seen["hint"] == {1.0: 5.0, 2.0: 200.0}

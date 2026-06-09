@@ -264,22 +264,51 @@ Must span multiple blackouts so game pixels register a dark ``min``; 48 over a
 multi-hour FL recording covers many match boundaries (spec section 5).
 """
 
+_MASKED_REGION_DARK = 32
+"""Darkest-brightness frames sampled for masked region detection when a Pass-1
+brightness hint is available.  These land on the masked blackouts (game region
+dark) so ``detect_mask_free_region`` can see game pixels reach a dark min."""
+
+_MASKED_REGION_EVEN = 32
+"""Evenly-spaced frames sampled alongside ``_MASKED_REGION_DARK`` (gameplay:
+game region bright) so each game pixel is bright in some frame AND dark in
+another (#753: even-only sampling missed brief blackouts on shorter recordings)."""
+
 
 def _resolve_masked_region(
-    video_path: Path, duration_hint: float, workers: int | None
+    video_path: Path,
+    duration_hint: float,
+    workers: int | None,
+    *,
+    brightness_hint: dict[float, float] | None = None,
 ) -> CaptureRegion:
     """Detect the mask-free game rectangle for masked recordings (#753).
 
-    Samples ``_MASKED_REGION_SAMPLES`` sparse grayscale frames and runs
-    ``detect_mask_free_region``.  Any failure (decode, opencv, empty) degrades to
-    FULL_FRAME so the masked-fallback caller can treat FULL_FRAME as "no mask
-    region found" and defer to the standard result.  Never raises.
+    Samples grayscale frames and runs ``detect_mask_free_region``.  When a
+    ``brightness_hint`` (the standard full-frame Pass-1 ``{timestamp: brightness}``
+    map) is provided, samples the ``_MASKED_REGION_DARK`` darkest timestamps (the
+    masked blackouts, where the game region goes dark) plus ``_MASKED_REGION_EVEN``
+    evenly-spaced timestamps (gameplay, where it is bright) -- both are required
+    so each game pixel is bright in some frame AND dark in another.  Without a
+    hint, falls back to ``_MASKED_REGION_SAMPLES`` even samples.  Any failure
+    (decode, opencv, empty) degrades to FULL_FRAME so the caller can treat
+    FULL_FRAME as "no mask region found".  Never raises.
     """
     from allaganeye.video.capture_region import detect_mask_free_region
 
     try:
-        n = _MASKED_REGION_SAMPLES
-        times = [duration_hint * (i + 1) / (n + 1) for i in range(n)]
+        if brightness_hint:
+            dark_ts = sorted(brightness_hint, key=lambda t: brightness_hint[t])[
+                :_MASKED_REGION_DARK
+            ]
+            even_ts = [
+                duration_hint * (i + 1) / (_MASKED_REGION_EVEN + 1)
+                for i in range(_MASKED_REGION_EVEN)
+            ]
+            times = sorted(set(dark_ts) | set(even_ts))
+        else:
+            n = _MASKED_REGION_SAMPLES
+            times = [duration_hint * (i + 1) / (n + 1) for i in range(n)]
         max_workers = max(1, min(len(times), workers or os.cpu_count() or 4))
         frames: list[np.ndarray] = []
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -475,6 +504,7 @@ def detect_match_boundaries(
             source_fps=source_fps,
             audio_hits=audio_hits,
             stats=stats,
+            brightness_results=results,
         )
         if masked_segments is not None:
             return masked_segments
@@ -585,6 +615,7 @@ def _detect_masked_fallback(
     source_fps: float | None,
     audio_hits: Sequence[BgmHit] | None,
     stats: DetectionStats | None,
+    brightness_results: dict[float, float] | None = None,
 ) -> list[MatchBoundary] | None:
     """Masked-OBS detection: region-aware Pass 1/2 + localize classification.
 
@@ -598,7 +629,9 @@ def _detect_masked_fallback(
     ``_drop_post_match_trailing`` probes v2 absolute coords which FN on
     ultrawide (same rationale as the VTuber gate in detect_match_boundaries).
     """
-    region = _resolve_masked_region(video_path, duration_hint, workers)
+    region = _resolve_masked_region(
+        video_path, duration_hint, workers, brightness_hint=brightness_results
+    )
     if region.is_full_frame():
         return None  # no mask region found -> defer to the standard result
 
