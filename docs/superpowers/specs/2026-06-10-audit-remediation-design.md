@@ -39,7 +39,7 @@ v0.3.0 リリース条件への追加: **Wave 1 の全 issue クローズ** (= P
 - 変更箇所: `tests/test_v030_baseline_regression.py` / `tests/conftest.py` / 新規 `tests/test_marker_conventions.py`
 - 設計:
   - `test_v030_baseline_regression.py` に `pytestmark = [pytest.mark.slow, pytest.mark.slow_detect]` を追加 (他 slow ファイルと同形)。docstring の「CI default deselect」誤認記述も訂正
-  - conftest の `_ffmpeg_interval` cooldown の発動条件を `slow` に加えて `slow_*` サブマーカーにも拡張
+  - conftest の `_ffmpeg_interval` cooldown は現行 (`slow` のみ参照) を維持する — enforcement hook が「`slow_*` ⇒ `slow`」を collection 時に強制するため、拡張は冗長 (2026-06-10 plan で確定)
   - meta-test (新規): tests/ 配下のソースを走査し、`slow_probe/slow_detect/slow_pipeline/slow_gpu` を付与したテスト (またはファイル) が `slow` を併せ持つことを assert する。実装方式はソーススキャン (前例: `tests/test_ascii_guard.py`)。testing-guide.md:33 の「slow = サブマーカーのスーパーセット」契約を機械化する
 - 受け入れ条件案: `pytest -m slow --collect-only` が v030 baseline 4 テストを select する / bare `pytest --collect-only` が select しない / meta-test が `slow_detect` 単独付与の fixture コードで fail することをユニットで実証
 - 検証: Python path チェック (ruff / pyright / pytest)。実動画実行は不要 (配線のみ)
@@ -211,13 +211,13 @@ PR を伴わない gh 操作。**3 件以上の編集・起票・クローズを
 
 | # | タイトル案 | prefix | label 案 | Wave |
 | --- | --- | --- | --- | --- |
-| 1 | v0.3.0 baseline regression が slow marker 規約から漏れ documented コマンドで実行されない | bug | P1-high | 1 (G1) |
-| 2 | GUI: detect 中断がプロセスを kill せず二重 detect が可能 | bug | P1-high, l2a-gui | 1 (G2) |
-| 3 | GUI: OUT<IN を apply でき metadata.json が読込不能 + load エラー非表示 | bug | P1-high, l2a-gui | 1 (G3) |
-| 4 | cli-spec / CLAUDE.md の P1 級 drift 修正 (export index 基数 / intel / 音声 frozen) | doc | P1-high | 1 (G5) |
-| 5 | CI guard: tests/scripts/*.sh 配線 + branch pin の develop-* 化 | task | P2-medium | 1 (N1) |
-| 6 | skill 改修: close-issue / release に追跡切れ防止チェック + version grep *.json + broken link 修正 | task | P2-medium, l2-workflow | 1 (N2) |
-| 7 | doc SSoT 規約の明文化 + release gate に監査 P1 クローズ確認を追加 | doc | P2-medium | 1 (N3) |
+| 1 | v0.3.0 baseline regression が slow marker 規約から漏れ documented コマンドで実行されない → #812 | bug | P1-high | 1 (G1) |
+| 2 | GUI: detect 中断がプロセスを kill せず二重 detect が可能 → #813 | bug | P1-high, l2a-gui | 1 (G2) |
+| 3 | GUI: OUT<IN を apply でき metadata.json が読込不能 + load エラー非表示 → #814 | bug | P1-high, l2a-gui | 1 (G3) |
+| 4 | cli-spec / CLAUDE.md の P1 級 drift 修正 (export index 基数 / intel / 音声 frozen) → #815 | doc | P1-high | 1 (G5) |
+| 5 | CI guard: tests/scripts/*.sh 配線 + branch pin の develop-* 化 → #816 | task | P2-medium | 1 (N1) |
+| 6 | skill 改修: close-issue / release に追跡切れ防止チェック + version grep *.json + broken link 修正 → #817 | task | P2-medium, l2-workflow | 1 (N2) |
+| 7 | doc SSoT 規約の明文化 + release gate に監査 P1 クローズ確認を追加 → #818 | doc | P2-medium | 1 (N3) |
 | 8 | export/CLI 整合 (エラー枠組み / encoding 自衛 / skipped / output_dir / interval guard / {start}) | bug | P2-medium | 2 (W1) |
 | 9 | GUI export/cancel 安定化 (cancelling スタック / stderr drain / expect race) | bug | P2-medium, l2a-gui | 2 (W2) |
 | 10 | GUI metadata/polish (name 消失 / BOM / mtime 順序 / thumbnail 並列) | bug | P2-medium, l2a-gui | 2 (W3) |
