@@ -153,6 +153,7 @@ def _clear_allaganeye_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 # --- slow_* submarker convention enforcement ---
 
+# pyproject.toml [tool.pytest.ini_options].markers に登録した slow_* と一致させること
 _SLOW_SUBMARKERS = frozenset({"slow_probe", "slow_detect", "slow_pipeline", "slow_gpu"})
 
 
@@ -182,6 +183,6 @@ def pytest_collection_modifyitems(
     violations = slow_submarker_violations(mapping)
     if violations:
         raise pytest.UsageError(
-            "slow_* submarker without 'slow' (testing-guide.md の slow スーパーセット契約違反): "
-            + ", ".join(violations)
+            "slow_* submarker without 'slow' (testing-guide.md の slow スーパーセット契約違反):\n"
+            + "\n".join(f"  {nid}  → @pytest.mark.slow を追加" for nid in violations)
         )
