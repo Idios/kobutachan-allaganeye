@@ -169,10 +169,15 @@ def slow_submarker_violations(marker_names_by_nodeid: dict[str, set[str]]) -> li
     )
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    """collection 時に slow マーカー契約違反を即エラーにする (deselect より前に全 item を検査)."""
+    """collection 時に slow マーカー契約違反を即エラーにする.
+
+    tryfirst で builtin の -m deselection より前に全 item を検査する
+    (deselect 後では addopts で除外された違反が素通りするため)。
+    """
     mapping = {item.nodeid: {m.name for m in item.iter_markers()} for item in items}
     violations = slow_submarker_violations(mapping)
     if violations:
