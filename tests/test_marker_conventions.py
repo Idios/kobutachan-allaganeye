@@ -59,6 +59,17 @@ def test_submarker_set_matches_pyproject():
     )
 
 
+def test_strict_markers_enabled(pytestconfig: pytest.Config) -> None:
+    """strict_markers が ini option として有効なことを pin する (#812).
+
+    addopts 内の --strict-markers は pytest 9.x で silent no-op になる
+    (ini override 化され第 1 parse でしか消費されない) ため、ini option での
+    有効化を機械検証する。これが効かないと未登録マーカーの typo
+    (例: slow_detec) が guard と addopts 除外の両方を素通りする。
+    """
+    assert pytestconfig.getini("strict_markers")
+
+
 def test_guard_fires_before_addopts_deselection(pytester: pytest.Pytester) -> None:
     """tryfirst 化の核心挙動を pin する (#812 回帰防止).
 

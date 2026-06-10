@@ -50,7 +50,9 @@ markers = [
     "baseline_regen: marks tests only needed during baseline regeneration",
     "real_audio_scan: opt out of the autouse _run_audio_scan mock (#288)",
 ]
-addopts = "-m 'not slow and not baseline_regen' --strict-markers"
+addopts = "-m 'not slow and not baseline_regen'"
+# addopts 内の --strict-markers は pytest 9.x で no-op (ini override 化のため)。ini option で有効化する (#812)
+strict_markers = true
 
 [tool.ruff]
 target-version = "py311"

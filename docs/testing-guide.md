@@ -37,7 +37,7 @@ pytest -v
 | `slow_gpu` | GPU アクセラレーション必須テスト | 除外 |
 | `baseline_regen` | ベースライン再生成時のみ必要なテスト | 除外 |
 
-`slow` および `baseline_regen` マーカーは `addopts = "-m 'not slow and not baseline_regen'"` で除外される。「slow はサブマーカーのスーパーセット」契約は `tests/conftest.py` の collection hook が機械的に強制しており、`slow_*` サブマーカーを単独付与すると、違反 item を collect する pytest 実行 (bare / `-m` 指定 / CI を含む) が `UsageError` (exit 4) で fail する (#812)。未登録マーカーの typo (例: `slow_detec`) は addopts の `--strict-markers` が collection エラーで弾く (#812)。
+`slow` および `baseline_regen` マーカーは `addopts = "-m 'not slow and not baseline_regen'"` で除外される。「slow はサブマーカーのスーパーセット」契約は `tests/conftest.py` の collection hook が機械的に強制しており、`slow_*` サブマーカーを単独付与すると、違反 item を collect する pytest 実行 (bare / `-m` 指定 / CI を含む) が `UsageError` (exit 4) で fail する (#812)。未登録マーカーの typo (例: `slow_detec`) は ini option `strict_markers = true` (pyproject.toml) が collection エラーで弾く (#812。addopts 内の `--strict-markers` は pytest 9.x で no-op のため不可)。
 
 ### マーカーの使い分け
 
