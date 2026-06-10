@@ -53,7 +53,7 @@ allaganeye split --from-metadata <metadata.json> [OPTIONS]
 | `--workers` | auto | 検知の並列ワーカー数（デフォルト: 自動=`min(cpu_count, 24)`） |
 | `--gpu` | `false` | GPU アクセラレーション検知を強制（チャンク並列デコード）。利用不可時は CPU フォールバック。**`--no-gpu` と同時指定は排他エラー (exit 5) (#419)** |
 | `--no-gpu` | `false` | GPU を無効化し CPU 検知を強制する。**`--gpu` と同時指定は排他エラー (exit 5) (#419)** |
-| `--gpu-vendor` | `auto` | 使用する GPU vendor を明示指定 (#546 / #553)。値: `auto` / `nvidia` / `amd` / `intel`。**実装済みは `nvidia` (cuvid, #546) と `amd` (d3d11va + hwdownload, #553)**。`intel` は **exit 5** (#550 で実装予定)。probe に無い vendor を要求すると exit 5。default は probe 結果から `_VENDOR_PREFERENCE` (nvidia > amd > intel) 順で実装済み vendor を選ぶ |
+| `--gpu-vendor` | `auto` | 使用する GPU vendor を明示指定 (#546 / #553 / #550 / #582)。値: `auto` / `nvidia` / `amd` / `intel`。**3 vendor すべて実装済み** (`nvidia`=cuvid #546 / `amd`=d3d11va+hwdownload #553 / `intel`=QSV+hwdownload #550 h264/hevc/av1 + #582 vp9)。probe に無い vendor を要求すると exit 5。default は probe 結果から `_VENDOR_PREFERENCE` (nvidia > amd > intel) 順で選ぶ |
 | `--no-cache` | `false` | キャッシュされた検知結果を無視して再検知する |
 | `--no-audio` | `false` | 音声ベースの試合境界昇格（Fanfare スキャン）を無効化する。**現在は音声モジュールが凍結中（#327）のため、本フラグの値に関わらずスキャンは常にスキップされる。verbose 出力では `audio=frozen` と表示される (#384)** |
 | `--dry-run` | `false` | 検知のみ実行し分割しない（検知結果はキャッシュに保存される） |
@@ -350,8 +350,8 @@ echo '<metadata-json>' | allaganeye export --stdin [...]
 | `--codec copy\|h264` | `copy` | `copy` (FFmpeg `-c copy`、無劣化分割) または `h264` (NVENC / QSV / AMF / libx264 で再エンコード) |
 | `--concurrency N` | SKU テーブル値 | 同時 export スロット数を上書き (`enumerate_h264_encoders` が返す値のデフォルト: RTX 5090 → 3、RTX 4090/4080/4070 → 2、RTX 4060 / 不明 NVIDIA → 1、QSV / AMF / libx264 → 1) |
 | `--name-pattern PATTERN` | `{idx:03}_{type}_{start}.mp4` | 出力ファイル名テンプレート。使用可能トークン: `{idx}` / `{idx:03}` / `{type}` / `{start}` / `{date}` |
-| `--include I,J,K` | (すべて対象) | 0 始まりの match index フィルタ (カンマ区切り)。`--exclude` との併用時は `include - exclude` が有効集合 |
-| `--exclude I,J,K` | (なし) | 0 始まりの match index 除外フィルタ (カンマ区切り)。`type_override == "skip"` の match は本フラグに関係なく常に除外 |
+| `--include I,J,K` | (すべて対象) | metadata の `matches[].index` (**1 始まり**) と照合する match フィルタ (カンマ区切り)。`--exclude` との併用時は `include - exclude` が有効集合 |
+| `--exclude I,J,K` | (なし) | metadata の `matches[].index` (**1 始まり**) と照合する除外フィルタ (カンマ区切り)。`type_override == "skip"` の match は本フラグに関係なく常に除外 |
 | `--quiet` | `false` | 進捗出力を抑制 (success/error 行は stderr に出力される)。`--json` と排他 |
 | `--json` | `false` | stdout に JSON Lines を emit する (GUI subprocess wire protocol)。`--quiet` と排他 |
 
