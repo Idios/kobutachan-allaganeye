@@ -149,3 +149,34 @@ def _clear_allaganeye_env(monkeypatch: pytest.MonkeyPatch) -> None:
     path.
     """
     monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
+
+
+# --- slow_* submarker convention enforcement ---
+
+_SLOW_SUBMARKERS = frozenset({"slow_probe", "slow_detect", "slow_pipeline", "slow_gpu"})
+
+
+def slow_submarker_violations(marker_names_by_nodeid: dict[str, set[str]]) -> list[str]:
+    """slow_* サブマーカーを持つのに slow を持たない nodeid を返す.
+
+    testing-guide.md の「slow はサブマーカーのスーパーセット」契約を機械化する
+    (audit 2026-06-10 P1-3: 違反すると documented コマンドから test が漏れる)。
+    """
+    return sorted(
+        nodeid
+        for nodeid, names in marker_names_by_nodeid.items()
+        if names & _SLOW_SUBMARKERS and "slow" not in names
+    )
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """collection 時に slow マーカー契約違反を即エラーにする (deselect より前に全 item を検査)."""
+    mapping = {item.nodeid: {m.name for m in item.iter_markers()} for item in items}
+    violations = slow_submarker_violations(mapping)
+    if violations:
+        raise pytest.UsageError(
+            "slow_* submarker without 'slow' (testing-guide.md の slow スーパーセット契約違反): "
+            + ", ".join(violations)
+        )
