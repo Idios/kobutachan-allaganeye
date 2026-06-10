@@ -50,7 +50,7 @@ markers = [
     "baseline_regen: marks tests only needed during baseline regeneration",
     "real_audio_scan: opt out of the autouse _run_audio_scan mock (#288)",
 ]
-addopts = "-m 'not slow and not baseline_regen'"
+addopts = "-m 'not slow and not baseline_regen' --strict-markers"
 
 [tool.ruff]
 target-version = "py311"
