@@ -40,7 +40,7 @@ v0.3.0 リリース条件への追加: **Wave 1 の全 issue クローズ** (= P
 - 設計:
   - `test_v030_baseline_regression.py` に `pytestmark = [pytest.mark.slow, pytest.mark.slow_detect]` を追加 (他 slow ファイルと同形)。docstring の「CI default deselect」誤認記述も訂正
   - conftest の `_ffmpeg_interval` cooldown は現行 (`slow` のみ参照) を維持する — enforcement hook が「`slow_*` ⇒ `slow`」を collection 時に強制するため、拡張は冗長 (2026-06-10 plan で確定)
-  - meta-test (新規): tests/ 配下のソースを走査し、`slow_probe/slow_detect/slow_pipeline/slow_gpu` を付与したテスト (またはファイル) が `slow` を併せ持つことを assert する。実装方式はソーススキャン (前例: `tests/test_ascii_guard.py`)。testing-guide.md:33 の「slow = サブマーカーのスーパーセット」契約を機械化する
+  - enforcement (新規): `pytest_collection_modifyitems` hook (tryfirst) が全 collected item の marker を検査し、`slow_probe/slow_detect/slow_pipeline/slow_gpu` を持つのに `slow` を持たない item があれば UsageError で collection を fail させる。純関数 `slow_submarker_violations()` は unit test で検証。testing-guide.md:33 の「slow = サブマーカーのスーパーセット」契約を機械化する (実装時にソーススキャン案から hook 方式へ変更 — runtime enforcement の方が網羅的、2026-06-10 plan 実行で確定)
 - 受け入れ条件案: `pytest -m slow --collect-only` が v030 baseline 4 テストを select する / bare `pytest --collect-only` が select しない / meta-test が `slow_detect` 単独付与の fixture コードで fail することをユニットで実証
 - 検証: Python path チェック (ruff / pyright / pytest)。実動画実行は不要 (配線のみ)
 
