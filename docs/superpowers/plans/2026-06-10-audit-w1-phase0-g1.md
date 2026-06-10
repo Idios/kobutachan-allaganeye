@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **注記 (2026-06-10 /iterate-review Round 3)**: 本 plan は point-in-time の実行 artifact。G1 実装確定の正は spec §G1 と `tests/conftest.py` / `tests/test_marker_conventions.py` を参照のこと (review round での強化により本 plan のコードサンプルから乖離あり: hook の tryfirst 付与 / エラーメッセージの複数行化 + ASCII 化 / 手動 red 実証の pytester 統合テスト置換)。
+**注記 (2026-06-10 /iterate-review Round 3)**: 本 plan は point-in-time の実行 artifact。G1 実装確定の正は spec §G1 と `tests/conftest.py` / `tests/test_marker_conventions.py` を参照のこと (review round での強化により本 plan のコードサンプルから乖離あり: hook の tryfirst 付与 / エラーメッセージの複数行化 + ASCII 化 / 手動 red 実証の pytester 統合テスト置換)。
 
 **Goal:** Wave 1 の起点を作る — 監査対応 issue 7 本の起票 + issue アクション 2 件 (Phase 0) と、最初の PR である G1 (slow マーカー配線修正 + 規約 enforcement、spec/監査レポート同梱コミット) を完成させる。
 
