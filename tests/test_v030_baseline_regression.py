@@ -1,6 +1,7 @@
 """v0.3.0 baseline regression tests (#576 S7.2 / S9.2).
 
-slow_detect マーカー: 実動画必須、CI default deselect。
+slow + slow_detect マーカー: 実動画必須。`pytest -m slow` / `-m slow_detect` で実行し、
+bare pytest からは addopts (`-m 'not slow and not baseline_regen'`) により除外される。
 Idios 環境または ALLAGANEYE_SAMPLE_VIDEO_DIR が設定されたマシンで実行。
 """
 
@@ -11,6 +12,8 @@ import sys
 from pathlib import Path
 
 import pytest
+
+pytestmark = [pytest.mark.slow, pytest.mark.slow_detect]
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _BASELINE_DIR = _REPO_ROOT / "tests" / "baselines" / "v0.3.0"
@@ -25,7 +28,6 @@ _CLASS_A_BASELINES = [
 ]
 
 
-@pytest.mark.slow_detect
 @pytest.mark.parametrize("label,relpath", _CLASS_A_BASELINES)
 def test_class_a_bit_exact(label, relpath, sample_video_dir, tmp_output_dir):
     """new path で detect を回し Class A baseline と matches/gaps が完全一致 (#576 S3 / S9.2)."""
@@ -59,7 +61,6 @@ def test_class_a_bit_exact(label, relpath, sample_video_dir, tmp_output_dir):
     )
 
 
-@pytest.mark.slow_detect
 @pytest.mark.parametrize("label,relpath", _CLASS_A_BASELINES)
 def test_class_a_intermediate_audit_no_regress(
     label, relpath, sample_video_dir, tmp_output_dir, monkeypatch
@@ -140,7 +141,6 @@ def test_class_a_intermediate_audit_no_regress(
 _CLASS_B_BASELINE = ("obs-20260118", "20260118/2026-01-18 22-15-18.mkv")
 
 
-@pytest.mark.slow_detect
 def test_class_b_regenerated(sample_video_dir, tmp_output_dir):
     """Class B (obs-20260118) は本 PR で regenerate された baseline と一致 (#576 S3)."""
     label, relpath = _CLASS_B_BASELINE
@@ -178,7 +178,6 @@ def test_class_b_regenerated(sample_video_dir, tmp_output_dir):
     )
 
 
-@pytest.mark.slow_detect
 @pytest.mark.parametrize(
     "vendor,timestamps",
     [

@@ -294,6 +294,7 @@ class TestMatchDurations:
 # --- 3. Performance: scorebar overhead ---
 
 
+@pytest.mark.slow
 @pytest.mark.slow_detect
 @pytest.mark.baseline_regen
 class TestPerformance:
@@ -409,6 +410,7 @@ def _load_legacy_baseline(name: str) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+@pytest.mark.slow
 @pytest.mark.slow_detect
 @pytest.mark.baseline_regen
 class TestNoResolutionCompat:

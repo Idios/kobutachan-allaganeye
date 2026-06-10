@@ -37,7 +37,7 @@ pytest -v
 | `slow_gpu` | GPU アクセラレーション必須テスト | 除外 |
 | `baseline_regen` | ベースライン再生成時のみ必要なテスト | 除外 |
 
-`slow` および `baseline_regen` マーカーは `addopts = "-m 'not slow and not baseline_regen'"` で除外される。
+`slow` および `baseline_regen` マーカーは `addopts = "-m 'not slow and not baseline_regen'"` で除外される。「slow はサブマーカーのスーパーセット」契約は `tests/conftest.py` の collection hook が機械的に強制しており、`slow_*` サブマーカーを単独付与すると、違反 item を collect する pytest 実行 (bare / `-m` 指定 / CI を含む) が `UsageError` (exit 4) で fail する (#812)。未登録マーカーの typo (例: `slow_detec`) は ini option `strict_markers = true` (pyproject.toml) が collection エラーで弾く (#812。addopts 内の `--strict-markers` は pytest 9.x で no-op のため不可)。
 
 ### マーカーの使い分け
 
@@ -54,17 +54,18 @@ pytest -m slow_pipeline
 # GPU テストのみ
 pytest -m slow_gpu
 
-# slow テスト全体（サブマーカー全含む、baseline_regen 除外）
+# slow テスト全体（サブマーカー全含む。baseline_regen 付きテストも slow を
+# 併せ持つため、現状は下の "slow or baseline_regen" と同一集合になる、#812）
 pytest -m slow
 
-# baseline_regen 含む全テスト（ベースライン再生成時）
+# baseline_regen 含む全テスト（ベースライン再生成時の明示形）
 pytest -m "slow or baseline_regen"
 ```
 
 ### 開発時の推奨テスト実行パターン
 
 1. **コード変更後**: `pytest`（ユニットテストのみ、数秒）
-2. **PR 作成前**: `pytest -m slow`（全 slow テスト）
+2. **PR 作成前**: `pytest -m slow`（全 slow テスト。baseline_regen 付き class も含む、#812）
 3. **検出アルゴリズム変更時**: `pytest -m "slow or baseline_regen"`（ベースライン検証含む）
 4. **probe 周りの変更確認**: `pytest -m slow_probe`（高速確認）
 
