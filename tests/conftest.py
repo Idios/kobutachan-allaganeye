@@ -184,5 +184,5 @@ def pytest_collection_modifyitems(
     if violations:
         raise pytest.UsageError(
             "slow_* submarker without 'slow' (testing-guide.md の slow スーパーセット契約違反):\n"
-            + "\n".join(f"  {nid}  → @pytest.mark.slow を追加" for nid in violations)
+            + "\n".join(f"  {nid}  -> @pytest.mark.slow を追加" for nid in violations)
         )
