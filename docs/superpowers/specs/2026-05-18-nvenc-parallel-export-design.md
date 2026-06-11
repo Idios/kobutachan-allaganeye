@@ -384,7 +384,7 @@ echo '<metadata-json>' | allaganeye export --stdin [...同上 flag]
 #   --name-pattern PATTERN  {idx:03}_{type}_{start}.mp4 等 (default: GUI と同じ)
 #   --quiet                 progress bar 抑制 (出力 path のみ)
 #   --json                  stdout に JSON lines emit (GUI subprocess 用、--quiet と排他)
-#   --include / --exclude   match index による絞り込み (0-based、metadata の matches[].index)
+#   --include / --exclude   match index による絞り込み (1-based、metadata の matches[].index)
 
 # Exit code:
 #   0: 全 match success (skipped を除く)
