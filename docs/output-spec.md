@@ -163,4 +163,4 @@ Metadata: <metadata.json path>
 | `export --codec copy` | `{idx:03}_{type}_{start}.mp4` (match ごと) | ストリームコピー MP4 (再エンコードなし)。`split` 出力と同じバイト内容を既存 `metadata.json` から生成 |
 | `export --codec h264` | `{idx:03}_{type}_{start}.mp4` (match ごと) | 再エンコード MP4 (NVENC / QSV / AMF / libx264 fallback)。スロット数 = NVENC engine 数 (RTX 5090 → 3、RTX 4090 → 2 等)。iGPU / ソフトウェア encoder は 1 スロット |
 | `export --json` | stdout: NDJSON ストリーム | 1 行 1 JSON イベント (progress / fallback / result / error / summary)。Tauri GUI subprocess が使用する wire protocol |
-| `--include I,J,K` / `--exclude I,J,K` | 0 始まりの index で match をフィルタ | `type_override="skip"` の match はこれらのフラグに関係なく常に除外 |
+| `--include I,J,K` / `--exclude I,J,K` | metadata の `matches[].index` (**1 始まり**) と照合して match をフィルタ | `type_override="skip"` の match はこれらのフラグに関係なく常に除外 |
