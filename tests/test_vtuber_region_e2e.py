@@ -1,6 +1,6 @@
 """VTuber scorebar 帯 anchor + 帯 crop の end-to-end 受け入れ (L3 Phase 1 D2).
 
-slow_detect マーカー: 実 VTuber VOD 必須、CI default deselect。
+slow + slow_detect マーカー: 実 VTuber VOD 必須、CI default deselect。
 VTuber サンプルは ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER (既定 E:/allaganeye-samples)。
 
 本テストは Phase 1 の *wiring* (Stage 0 帯 anchor -> Stage 1 帯 crop brightness)
@@ -19,7 +19,7 @@ import pytest
 if TYPE_CHECKING:
     from allaganeye.video.capture_region import CaptureRegion
 
-pytestmark = pytest.mark.slow_detect
+pytestmark = [pytest.mark.slow, pytest.mark.slow_detect]
 
 _VTUBER_DIR = Path(
     os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER", r"E:/allaganeye-samples")
