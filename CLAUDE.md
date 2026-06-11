@@ -52,7 +52,7 @@ allaganeye split <video_path> -o <dir>  # 出力先指定
 allaganeye split <video_path> --gpu     # GPU アクセラレーション検知
 allaganeye split <video_path> --workers 8  # ワーカー数指定
 allaganeye split <video_path> --no-cache   # キャッシュ無視で再検知
-allaganeye split <video_path> --no-audio   # 音声昇格を無効化（視覚のみ）
+allaganeye split <video_path> --no-audio   # 音声昇格の無効化フラグ（#327 で凍結中のため現在は常にスキップ）
 allaganeye split <video_path> --quiet      # 進捗抑制（出力ファイルのみ）
 allaganeye split <video_path> -v           # verbose（環境情報・パイプライン統計を表示、#336）
 allaganeye --version                       # バージョン表示（短縮形: -V、#337）
@@ -99,7 +99,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `audio/features.py` | log-mel スペクトログラム計算と保存 |
 | `audio/matcher.py` | 参照 BGM と target の相互相関で peak 検出 |
 | `audio/scan.py` | 動画全域を走査して Fanfare ピークを返す |
-| `audio/refs/` | 同梱参照特徴量（`fanfare.npz`） |
+| `audio/refs/` | 同梱参照特徴量（`fanfare.npz` / `war_room.npz`、#306） |
 | `commands/detect.py` | detect コマンド。検知のみ実行し metadata.json を出力 (#463) |
 | `detection/` | 検知パイプラインの共有ヘルパ (#463)。`format.py` (フォーマッタ) / `metadata_writer.py` (atomic read/write) |
 | `gui/` | L2a Tauri GUI (React 19 + TS + Vite + Zustand + zod)。`#483` で bootstrap、`#463` で data 層、`#464` で画面骨格 + CSS Modules、`#516` で `[元に戻す]` 機能、`#514` で排他管理 (mtime 検知 + ConflictModal)、`#587` で a11y polish (focus trap / Escape / DisabledTooltip / jest-axe)。詳細は [docs/gui-development.md](docs/gui-development.md) / [docs/design/README.md](docs/design/README.md) / [docs/ui-architecture.md](docs/ui-architecture.md) / [docs/ui-interaction-spec.md](docs/ui-interaction-spec.md) (#590, UI 部品ごとの操作 → 状態遷移 / store mutation / 例外処理) / [docs/a11y-policy.md](docs/a11y-policy.md) (#587, screen reader scope / キーボード全機能 / focus visible 等) |
@@ -131,12 +131,12 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 8. `filter_blackouts_with_scorebar()` で各暗転領域の前後フレームのスコアバー有無を判定し、暗転を分類（`match_boundary` / `in_match` / `non_fl`）。V2 検出 (`_has_scorebar_v2`) は 1920x1080 リサイズ後に **two-path OR semantics** で GC 紋章 3 点 AND 判定 (#307, #522): **Primary=absolute `_EMBLEM_POSITIONS`** (pre-#522 validated)、**Rescue=dynamic span (`_find_scorebar_horizontal_range`) + `_EMBLEM_RELATIVE_POSITIONS` 相対比**。Primary pass で short-circuit、両 path fail で False。`raw_rgb` None / opencv 未インストール時のみ None → V1 (`_has_scorebar`, channel-std + edge) フォールバック。1080p OBS validated set の挙動を完全保持しつつ 4K Game DVR の HUD スケール差異は Rescue で救済
 9. `non_fl`（非FL暗転）と短い `in_match`（試合内暗転）を除外。隣接する `match_boundary` ペア間の短いギャップをマージ
 
-**音声昇格**（`--no-audio` 未指定時、#288）
+**音声昇格**（#288。**現在は凍結中 #327**: `AUDIO_FROZEN=True` のため `--no-audio` の値に関わらずスキャンは常にスキップされ、verbose では `audio=frozen` と表示される #384。以下は解凍時の挙動）
 
 - `audio/scan.py` で動画全域の音声から Fanfare ピーク（log-mel 相関 sim ≥ 0.65）を抽出
 - `in_match` 分類された暗転のうち、暗転終了後 0-60s 以内に Fanfare ピークがあるものを `match_boundary` に昇格
 - スコアバー残像で誤分類された試合境界（例: 2026-04-08 57:53）を救済
-- 既知の制約: Fanfare は試合中にも弱いピーク（sim 0.65-0.75）を出すため、本条件のみでは偽陽性が混入しうる。WR 参照 (#301) 同梱後に WR→Fanfare 間隔による (B) 条件を追加して偽陽性除去
+- 既知の制約: Fanfare は試合中にも弱いピーク（sim 0.65-0.75）を出すため、本条件のみでは偽陽性が混入しうる。WR 参照は #306 で同梱済み（`war_room.npz`）。解凍時に WR→Fanfare 間隔による (B) 条件を追加して偽陽性を除去する計画（#327 の解凍判断と合わせて再評価）
 
 **フィルタリング・抽出**
 10. `min(min_blackout_duration, _REFINED_MIN_BLACKOUT)` 未満の短い暗転を除外（リスポーン暗転の誤判定防止）

@@ -3639,7 +3639,7 @@ echo '<metadata-json>' | allaganeye export --stdin [...]
 - `--codec copy|h264` — `copy` (FFmpeg `-c copy` 無劣化分割) / `h264` (NVENC / QSV / AMF / libx264 再エンコード)。default `copy`。
 - `--concurrency N` — slot 数 override。指定しなければ `enumerate_h264_encoders` の自動検出 (SKU table) を採用。
 - `--name-pattern PATTERN` — 出力ファイル名。tokens: `{idx}` / `{idx:03}` / `{type}` / `{start}` / `{date}`。default `{idx:03}_{type}_{start}.mp4`。
-- `--include / --exclude` — 0-based match index による絞り込み (カンマ区切り)。`--include` 指定で list 外は skip、`--exclude` 指定で list 内を skip。同時指定すると `--include ∩ ¬--exclude`。
+- `--include / --exclude` — 1-based match index (metadata の `matches[].index`) による絞り込み (カンマ区切り)。`--include` 指定で list 外は skip、`--exclude` 指定で list 内を skip。同時指定すると `--include ∩ ¬--exclude`。
 - `--quiet` — progress 出力を抑制。
 - `--json` — stdout に JSON Lines (`{"type":"progress",...}` 等) を吐く。`--quiet` と排他。GUI subprocess 用。
 

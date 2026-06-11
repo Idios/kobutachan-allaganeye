@@ -130,7 +130,7 @@ v0.3.0 リリース条件への追加: **Wave 1 の全 issue クローズ** (= P
 ### W1: export/CLI 整合
 
 - 対応: P2-7 / P2-8 / P2-9 / P2-10 / P2-11 / P2-20 / P2-40 + export 系 P3 (concurrency 検証、partial file 掃除、stderr_tail、dead param、stale comment、`{idx}` 衝突検査)
-- 骨子: export command を split/detect と同じ `except AllaganEyeError` → exit code マッピングに収める / json モード突入時に stdout reconfigure + stdin buffer 読み / skipped 計上 / output_dir mkdir / debug-brightness interval guard (exit 5) / `{start}` を Python 側 H-MM-SS に統一 (GUI 表示と一致させる)
+- 骨子: export command を split/detect と同じ `except AllaganEyeError` → exit code マッピングに収める / json モード突入時に stdout reconfigure + stdin buffer 読み / skipped 計上 / output_dir mkdir / debug-brightness interval guard (exit 5) / `{start}` を Python 側 H-MM-SS に統一 (GUI 表示と一致させる) / `--include`・`--exclude` help への基数 (1 始まり) 明記 + 範囲外 index の警告検討 (PR #820 Round 1 finding #4 由来、2026-06-11 Idios 判断で W1 へ)
 - 注意: exit code 体系の変更は cli-spec / output-spec の同時更新を伴う (W6 と重なる箇所は W1 側で正を書く)
 
 ### W2: GUI export/cancel 安定化

@@ -345,7 +345,7 @@ allaganeye split <video_path> --dry-run       # 検知のみ、分割しない
 allaganeye split <video_path> --gpu           # GPU アクセラレーション検知
 allaganeye split <video_path> --workers 8     # ワーカー数指定
 allaganeye split <video_path> --no-cache      # キャッシュ無視で再検知
-allaganeye split <video_path> --no-audio      # 音声昇格を無効化
+allaganeye split <video_path> --no-audio      # 音声昇格の無効化フラグ（#327 で凍結中のため現在は常にスキップ）
 allaganeye split <video_path> -v              # verbose 出力
 allaganeye split <video_path> -q              # 進捗抑制
 
@@ -422,7 +422,7 @@ bump 手順:
 1. `scripts/installer/requirements-pyinstaller.txt` の 2 行 (`pyinstaller==<ver>` + `pyinstaller-hooks-contrib==<ver>`) を更新
 2. Idios の手元で `pwsh -File scripts/build-portable-zip.ps1 -Version <test-ver> -SkipArchive` を実行、frozen output が生成されることを確認
 3. CI smoke-test (Lv A `--version` / Lv B `detect` 3s / integrity exit 7 fall-through) が PASS することを確認
-4. 実機 split (1:25 動画 1 本) で audio / video detection + GUI export が動作することを Idios 実機検証
+4. 実機 split (1:25 動画 1 本) で video detection (+ audio module の frozen build での import 健全性) + GUI export が動作することを Idios 実機検証
 
 bump 頻度: 4-6 か月毎を目安、PyInstaller 公式 release notes を確認して numpy / scipy / cv2 hook の互換性を事前確認する。
 
