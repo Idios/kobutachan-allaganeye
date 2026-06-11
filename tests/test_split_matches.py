@@ -1127,6 +1127,43 @@ class TestCacheRoundTrip:
         different_config = SplitConfig(output_dir=tmp_path / "output", no_audio=True)
         assert _load_cache(cache_path, cache_video, 1.0, different_config) is None
 
+    def test_param_mismatch_vtuber(self, cache_video, cache_config, tmp_path):
+        """標準 run の cache を vtuber run が再利用しない -> None (gate の cache bypass 防止)."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        vtuber_config = SplitConfig(output_dir=tmp_path / "output", vtuber=True)
+        assert _load_cache(cache_path, cache_video, 1.0, vtuber_config) is None
+
+    def test_param_mismatch_vtuber_reverse(self, cache_video, cache_config, tmp_path):
+        """vtuber run の cache を標準 run が再利用しない -> None (released path 保護)."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        vtuber_config = SplitConfig(output_dir=tmp_path / "output", vtuber=True)
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, vtuber_config, CACHE_BOUNDARIES
+        )
+        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+
+    def test_legacy_cache_without_vtuber_key(self, cache_video, cache_config, tmp_path):
+        """vtuber key なし legacy cache: 標準 run は有効 (後方互換)、vtuber run は無効。
+
+        --vtuber 導入前の cache はすべて標準 path の結果なので missing = False と
+        同値に扱う (既存ユーザーの cache を無駄に invalidate しない)。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("vtuber", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        assert (
+            _load_cache(cache_path, cache_video, 1.0, cache_config) == CACHE_BOUNDARIES
+        )
+        vtuber_config = SplitConfig(output_dir=tmp_path / "output", vtuber=True)
+        assert _load_cache(cache_path, cache_video, 1.0, vtuber_config) is None
+
     def test_version_mismatch(self, cache_video, cache_config, tmp_path):
         """cache_version mismatch -> None."""
         cache_path = tmp_path / "output" / ".detection_cache.json"

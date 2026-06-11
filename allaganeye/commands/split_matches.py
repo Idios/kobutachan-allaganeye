@@ -1745,6 +1745,7 @@ def _save_cache(
             "min_match_duration": config.min_match_duration,
             "min_blackout_duration": config.min_blackout_duration,
             "no_audio": config.no_audio,
+            "vtuber": config.vtuber,
         },
         "boundaries": boundaries,
     }
@@ -1796,12 +1797,16 @@ def _load_cache(
         return None
 
     params = data.get("params", {})
+    # vtuber は detection path を切り替えるため cache key に含める (gate の cache
+    # bypass 防止)。key なし legacy cache は --vtuber 導入前 = 標準 path の結果
+    # なので False と同値に扱う。
     if (
         params.get("sample_interval") != effective_interval
         or params.get("blackout_threshold") != config.blackout_threshold
         or params.get("min_match_duration") != config.min_match_duration
         or params.get("min_blackout_duration") != config.min_blackout_duration
         or params.get("no_audio") != config.no_audio
+        or params.get("vtuber", False) != config.vtuber
     ):
         logger.debug("Cache parameter mismatch")
         return None
