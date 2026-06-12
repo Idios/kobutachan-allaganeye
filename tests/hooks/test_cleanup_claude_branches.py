@@ -221,28 +221,28 @@ def test_no_develop_remote_refs_keeps_branch(
     ), result.stdout
 
 
-# ---------- Scenario 8: 複数 origin/develop-* 共存、新しい方にのみ merged ----------
+# ---------- Scenario 8: 複数 origin/develop-* 共存時は sort -V 最新が選ばれる ----------
 
 
-def test_merged_to_one_of_multiple_develop_refs_deleted(
+def test_latest_develop_selected_among_multiple(
     tmp_repo: Path,
     make_claude_branch,
     run_hook,
     assert_valid_ndjson,
 ) -> None:
-    """branch を含まない develop-* ref があってもループが次の base へ継続する (#816).
+    """複数 origin/develop-* 共存時、sort -V 最新のみが merge base になる (#816).
 
-    origin/develop-0.2.0 (stale、branch を含まない) と origin/develop-0.3.0
-    (branch を含む) が共存するとき、最初の base の is-ancestor 失敗で
-    keep に倒れず、後続 base で merged 判定されることを pin する。
+    旧 origin/develop-0.2.0 (branch を含まない) と新 origin/develop-0.3.0
+    (branch を含む) が共存するとき、最新の 0.3.0 が選ばれて deleted になる。
+    選択を誤って 0.2.0 を使うと kept になるため、version 選択を pin する。
     """
     import subprocess
 
     make_claude_branch("scenario8", merged=True, age_seconds=86400 * 2)
     # NOTE: make_claude_branch は呼び出しごとに origin/develop-0.2.0 を HEAD へ
     # 再 mirror するため (conftest)、ref の付け替えは最後の呼び出しの後で行う。
-    # HEAD は merge commit。第 1 親 (HEAD^1) = merge 前の develop tip で
-    # scenario8 の commit を含まない = stale な旧 develop ref を再現する。
+    # origin/develop-0.2.0 (旧、branch を含まない) と origin/develop-0.3.0
+    # (新、branch を含む) を共存させる。最新 = 0.3.0 が選ばれれば deleted になる。
     subprocess.run(
         ["git", "update-ref", "refs/remotes/origin/develop-0.2.0", "HEAD^1"],
         cwd=tmp_repo,
@@ -257,3 +257,70 @@ def test_merged_to_one_of_multiple_develop_refs_deleted(
     assert_valid_ndjson(result.ndjson)
     deleted = _of_event(result.ndjson, "deleted")
     assert any(e["name"] == "claude/scenario8" for e in deleted), result.stdout
+
+
+# ---------- Scenario 9: stale な旧 develop にのみ merged -> 安全側 keep (Codex HIGH) ----------
+
+
+def test_merged_only_to_stale_older_develop_kept(
+    tmp_repo: Path,
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+) -> None:
+    """stale な旧 origin/develop-* にのみ merged な branch は削除しない (#816 Codex HIGH).
+
+    Stop hook は fetch/prune しないため、origin 側で削除済みの旧 develop の
+    remote-tracking ref がローカルに残存しうる。merge base を sort -V 最新の
+    develop に限定することで、旧 ref だけを根拠にした削除を防ぐ。
+    """
+    import subprocess
+
+    make_claude_branch("scenario9", merged=True, age_seconds=86400 * 2)
+    # NOTE: make_claude_branch は呼び出しごとに origin/develop-0.2.0 を HEAD へ
+    # 再 mirror するため (conftest)、ref の付け替えは最後の呼び出しの後で行う。
+    # origin/develop-0.2.0 (= HEAD、branch を含む stale 旧 ref) はそのまま残し、
+    # 現行 develop に相当する origin/develop-0.3.0 を HEAD^1 (branch を含まない)
+    # に置く = 「旧にのみ merged、現行には未 merged」を再現する。
+    subprocess.run(
+        ["git", "update-ref", "refs/remotes/origin/develop-0.3.0", "HEAD^1"],
+        cwd=tmp_repo,
+        check=True,
+    )
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
+    kept = _of_event(result.ndjson, "kept")
+    assert any(
+        e["name"] == "claude/scenario9" and e["reason"] == "not-merged" for e in kept
+    ), result.stdout
+
+
+# ---------- Scenario 10: 最新 develop に未 merged でも origin/main に merged -> deleted ----------
+
+
+def test_merged_to_main_but_not_latest_develop_deleted(
+    tmp_repo: Path,
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+) -> None:
+    """origin/main fallback の pin: 最新 develop が含まなくても main に merged なら削除可."""
+    import subprocess
+
+    make_claude_branch("scenario10", merged=True, age_seconds=86400 * 2)
+    # NOTE: make_claude_branch は呼び出しごとに origin/develop-0.2.0 を HEAD へ
+    # 再 mirror するため (conftest)、ref の付け替えは最後の呼び出しの後で行う。
+    subprocess.run(
+        ["git", "update-ref", "refs/remotes/origin/main", "HEAD"],
+        cwd=tmp_repo,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "update-ref", "refs/remotes/origin/develop-0.2.0", "HEAD^1"],
+        cwd=tmp_repo,
+        check=True,
+    )
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
+    deleted = _of_event(result.ndjson, "deleted")
+    assert any(e["name"] == "claude/scenario10" for e in deleted), result.stdout

@@ -4,7 +4,7 @@
 # Output: stdout NDJSON (one JSON object per line). Schema: schemas/cleanup-output.schema.json.
 #
 # Safety AND conditions (3-condition structure unchanged from pre-#710; AND 1 bases generalized in #816):
-#   1. merged: ancestor of any origin/develop-* branch or origin/main
+#   1. merged: ancestor of the latest (sort -V) origin/develop-* or origin/main
 #   2. active 不在: not referenced by any active worktree
 #   3. cooldown: last commit ≥ 24h ago
 #   (prefix filter: claude/* only is listed)
@@ -81,10 +81,17 @@ while IFS= read -r line; do
   fi
 done < <(git -C "$REPO_ROOT" worktree list --porcelain)
 
-# AND 1 merge bases: 全 origin/develop-* (現行/将来の開発 branch) + origin/main (#816)。
+# AND 1 merge bases: sort -V 最新の origin/develop-* + origin/main (#816)。
 # 固定 pin (develop-0.2.0) だと release 後に新 develop branch へ merge された
-# branch が永遠に not-merged 扱いになる (audit 2026-06-10 P3)。
-mapfile -t MERGE_BASES < <(git -C "$REPO_ROOT" for-each-ref --format='%(refname:short)' 'refs/remotes/origin/develop-*')
+# branch が永遠に not-merged 扱いになる (audit 2026-06-10 P3)。一方、全
+# develop-* を信用すると fetch --prune されず残った stale な旧 develop ref
+# だけに merged な branch を誤削除しうる (Codex adversarial-review HIGH) ため、
+# 現行 = version 最大の develop のみを merge base に採用する (no-network 維持)。
+mapfile -t DEVELOP_REFS < <(git -C "$REPO_ROOT" for-each-ref --format='%(refname:short)' 'refs/remotes/origin/develop-*' | sort -V)
+MERGE_BASES=()
+if (( ${#DEVELOP_REFS[@]} > 0 )); then
+  MERGE_BASES+=("${DEVELOP_REFS[-1]}")
+fi
 MERGE_BASES+=("origin/main")
 
 for branch in "${BRANCHES[@]}"; do

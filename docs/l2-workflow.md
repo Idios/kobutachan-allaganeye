@@ -679,14 +679,14 @@ Claude Code のセッション用 worktree はセッション終了時に `git w
 
 `scripts/cleanup-claude-branches.sh --apply` が `git branch -D` で削除する条件 (#708):
 
-- **AND 1 (merged)**: いずれかの `origin/develop-*` または `origin/main` の祖先 (`git merge-base --is-ancestor`。#816 で develop-0.2.0 固定から一般化)
+- **AND 1 (merged)**: 最新 (`sort -V`) の `origin/develop-*` または `origin/main` の祖先 (`git merge-base --is-ancestor`。#816 で develop-0.2.0 固定から一般化。stale な旧 develop ref を merge 根拠にしないため最新のみを採用)
 - **AND 2 (active 参照なし)**: `git worktree list --porcelain` の `branch refs/heads/...` 集合に含まれない
 - **AND 3 (24h cooldown)**: 最終 commit (`git log -1 --format=%ct`) が 24h 以上前
 - **prefix 限定**: `claude/` のみ (= `feature/xxx` 等の手動 branch は対象外)
 
 **評価順序**: AND 2 → AND 1 → AND 3 (cost-efficient: AND 2 は local hash lookup で安価、AND 1 / AND 3 は git subprocess を spawn するため後回し)。最初に fail した条件が `kept <branch> (reason: not-merged | active | cooldown)` の reason として記録される。
 
-`origin/develop-*` / `origin/main` が未 fetch だと `merge-base --is-ancestor` が false に倒れて keep される = 安全側。`git fetch` は hook 内で実行せず、user の通常運用 (`git pull`) を前提とする。
+最新の `origin/develop-*` / `origin/main` が未 fetch だと `merge-base --is-ancestor` が false に倒れて keep される = 安全側。`git fetch` は hook 内で実行せず、user の通常運用 (`git pull`) を前提とする。
 
 ### 手動実行
 
@@ -727,7 +727,7 @@ Stop hook は**自セッションのディレクトリを sweep しない**。�
 
 `rmdir` のみを使用するため、アクティブな worktree や何らかのファイルが残っているディレクトリは**削除されない**。想定外のファイルが残っているディレクトリは出力で明示されるため、必要に応じて手動で確認する。Stop hook が起動中のセッションのアクティブ worktree は `.git` 参照で保護されるため安全に skip される。Windows のディレクトリハンドル保持問題 (#477 コメント) は上記 2 段階設計により回避している。
 
-`cleanup-claude-branches.sh` も同様に明示的に安全な AND 3 条件 (merged + active 参照なし + 24h cooldown) + `claude/` prefix 限定下でのみ `git branch -D` を実行し、merged 保証により data loss しない。`origin/develop-*` / `origin/main` が未 fetch なら `is-ancestor` false に倒れて keep する設計のため、fetch されていない開発環境でも安全に動作する。
+`cleanup-claude-branches.sh` も同様に明示的に安全な AND 3 条件 (merged + active 参照なし + 24h cooldown) + `claude/` prefix 限定下でのみ `git branch -D` を実行し、merged 保証により data loss しない。最新の `origin/develop-*` / `origin/main` が未 fetch なら `is-ancestor` false に倒れて keep する設計のため、fetch されていない開発環境でも安全に動作する。
 
 ## brainstorming sweep 規約 (#746 教訓)
 
