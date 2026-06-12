@@ -87,6 +87,10 @@ done < <(git -C "$REPO_ROOT" worktree list --porcelain)
 # develop-* を信用すると fetch --prune されず残った stale な旧 develop ref
 # だけに merged な branch を誤削除しうる (Codex adversarial-review HIGH) ため、
 # 現行 = version 最大の develop のみを merge base に採用する (no-network 維持)。
+# 注: no-network 設計のため「最新 develop ref 自体の鮮度」は原理的に保証できない
+# (stale と fresh はローカルでは識別不能)。残余リスクは fetch 済み -> release なし
+# 廃棄 -> 再 fetch なし、の 3 連鎖が条件で本 repo の release flow では非発生、
+# かつ commit は当該 ref から reachable で GC されない (2026-06-13 Idios 受容確定)。
 mapfile -t DEVELOP_REFS < <(git -C "$REPO_ROOT" for-each-ref --format='%(refname:short)' 'refs/remotes/origin/develop-*' | sort -V)
 MERGE_BASES=()
 if (( ${#DEVELOP_REFS[@]} > 0 )); then
