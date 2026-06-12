@@ -294,6 +294,20 @@ def test_split_vtuber_default_false(mock_run_split, fake_video):
     assert config.vtuber is False
 
 
+def test_split_vtuber_hidden_from_help():
+    """--vtuber は split --help に出ない (hidden、PR #823 R1 で A6 から前倒し)."""
+    result = runner.invoke(app, ["split", "--help"])
+    assert result.exit_code == 0
+    assert "--vtuber" not in result.stdout
+
+
+def test_detect_vtuber_hidden_from_help():
+    """--vtuber は detect --help に出ない (hidden、PR #823 R1 で A6 から前倒し)."""
+    result = runner.invoke(app, ["detect", "--help"])
+    assert result.exit_code == 0
+    assert "--vtuber" not in result.stdout
+
+
 @patch(MODULE)
 def test_split_verbose_short(mock_run_split, fake_video):
     """-v flag sets verbose=True."""

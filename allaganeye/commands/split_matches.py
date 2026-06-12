@@ -176,7 +176,8 @@ def run_split(
             f"workers={_workers_summary_str(config.workers)}, "
             f"min_match={config.min_match_duration}s, "
             f"min_blackout={config.min_blackout_duration}s, "
-            f"audio={_audio_status_str(config.no_audio)})"
+            f"audio={_audio_status_str(config.no_audio)}, "
+            f"vtuber={'on' if config.vtuber else 'off'})"
         )
 
     detect_stats: DetectionStats | None = {} if verbose else None
@@ -513,6 +514,9 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
     # Live-probe AUDIO_FROZEN so the verbose line mirrors `_run_audio_scan`
     # behaviour for the current run, same as the cache-miss summary.
     cached_no_audio = bool(params.get("no_audio", config.no_audio))
+    # vtuber は cache key (PR #823) に含まれるため hit 時は config と一致するが、
+    # 表示は cache 記録値を正とする (legacy cache は key なし = False)。
+    cached_vtuber = bool(params.get("vtuber", False))
 
     typer.echo(header)
     typer.echo(
@@ -521,7 +525,8 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
         f"threshold={params.get('blackout_threshold', '?')}, "
         f"min_match={params.get('min_match_duration', '?')}s, "
         f"min_blackout={params.get('min_blackout_duration', '?')}s, "
-        f"audio={_audio_status_str(cached_no_audio)}"
+        f"audio={_audio_status_str(cached_no_audio)}, "
+        f"vtuber={'on' if cached_vtuber else 'off'}"
     )
 
 

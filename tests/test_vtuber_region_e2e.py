@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.slow, pytest.mark.slow_detect]
 
 _VTUBER_DIR = Path(
-    os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER", r"E:/allaganeye-samples")
+    os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER") or r"E:/allaganeye-samples"
 )
 
 

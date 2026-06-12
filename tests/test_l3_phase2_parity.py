@@ -14,7 +14,7 @@ pytestmark = pytest.mark.slow
 
 def _vtuber_sample() -> Path | None:
     base = (
-        os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER") or r"E:\allaganeye-samples"
+        os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER") or r"E:/allaganeye-samples"
     )
     cands = list(Path(base).glob("*オンサル*")) if Path(base).exists() else []
     return cands[0] if cands else None

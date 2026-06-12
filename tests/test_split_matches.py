@@ -3584,6 +3584,8 @@ def test_verbose_cache_hit_prints_detection_params(
     # (#384 contract: audio display is driven by the helper, not
     # config.no_audio directly).
     assert "audio=frozen" in out
+    # vtuber provenance token (PR #823 R1): 検出 mode を表示に含める。
+    assert "vtuber=off" in out
 
 
 @patch(f"{MODULE}.split_video")
@@ -3636,6 +3638,53 @@ def test_verbose_cache_hit_audio_line_matches_cache_miss_path(
     tail = out[header_idx:]
     # When AUDIO_FROZEN=False and no_audio=False, audio=on.
     assert "audio=on" in tail, f"expected audio=on in cache hit summary: {tail[:400]!r}"
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_prints_vtuber_on_token(
+    mock_probe, mock_split, tmp_path, capsys
+):
+    """vtuber=True で生成した cache の hit 表示は vtuber=on (provenance 可視化).
+
+    cache key fix (PR #823) で mode 混在 hit は不可能になったが、表示にも
+    provenance を出して troubleshoot 報告から検出 mode を判別可能にする。
+    """
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, vtuber=True)
+    _seed_cache(source, tmp_path, config)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True)
+    out = capsys.readouterr().out
+
+    header_idx = out.find("Cache hit:")
+    assert header_idx >= 0
+    assert "vtuber=on" in out[header_idx:]
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_miss_summary_includes_vtuber_token(
+    mock_probe, mock_split, mock_run_detection, tmp_path, capsys
+):
+    """cache-miss の Detecting summary に vtuber token が出る (provenance 可視化)."""
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+    mock_run_detection.return_value = BOUNDARIES
+
+    config = SplitConfig(output_dir=tmp_path, no_cache=True, vtuber=True)
+    run_split(source, config, verbose=True)
+    assert "vtuber=on" in capsys.readouterr().out
+
+    config_off = SplitConfig(output_dir=tmp_path, no_cache=True)
+    run_split(source, config_off, verbose=True)
+    assert "vtuber=off" in capsys.readouterr().out
 
 
 def test_display_cache_hit_params_malformed_json_emits_unavailable(tmp_path, capsys):

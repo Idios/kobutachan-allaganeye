@@ -153,6 +153,7 @@ def split(
         bool,
         typer.Option(
             "--vtuber",
+            hidden=True,
             help="VTuber recording (game inset): use scorebar-band anchor for "
             "detection. Omit for OBS full-frame (default).",
         ),
@@ -333,6 +334,7 @@ def detect(
         bool,
         typer.Option(
             "--vtuber",
+            hidden=True,
             help="VTuber recording (game inset): use scorebar-band anchor for "
             "detection. Omit for OBS full-frame (default).",
         ),
