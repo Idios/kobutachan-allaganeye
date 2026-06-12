@@ -2543,6 +2543,23 @@ def test_resolve_detect_region_swallows_exceptions_to_full_frame(monkeypatch, ca
     assert any("band anchor" in r.message for r in caplog.records)
 
 
+def test_resolve_detect_region_warns_on_consensus_miss_full_frame(monkeypatch, caplog):
+    # consensus-miss (非例外縮退) も silent にしない (R5): --vtuber 明示 run が
+    # FULL_FRAME (汚染 path) で続行することを warning で痕跡に残す。
+    import logging
+
+    from pathlib import Path
+
+    from allaganeye.video import capture_region as cr
+    from allaganeye.video import detector as det
+
+    monkeypatch.setattr(cr, "detect_scorebar_band_region", lambda **kw: cr.FULL_FRAME)
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        region = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    assert region.is_full_frame()
+    assert any("consensus" in r.message for r in caplog.records)
+
+
 def test_detect_match_boundaries_passes_region_to_all_three_call_sites(monkeypatch):
     # Keystone wiring guard: the region resolved by Stage 0 must reach Pass1
     # (_scan_cpu), GPU (scan_gpu), and Pass2 (_refine_blackout_regions).  On a

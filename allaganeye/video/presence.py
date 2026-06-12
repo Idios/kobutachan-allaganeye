@@ -10,6 +10,7 @@ the Phase 3 cutover.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -22,6 +23,8 @@ from allaganeye.video.detector import (
     _SCOREBAR_V2_PROBE_WIDTH,
     _probe_frame_rgb_hires,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -193,10 +196,17 @@ def scan_presence(
                 # 落とさず safe absent にする。
                 results[t] = PresenceSample(time=t, present=False, confidence=0.0)
                 failures.append(e)
-    if failures and len(failures) == len(times):
-        # 全 probe 失敗は系統故障 (ffmpeg 不在等)。silent な全 absent にせず
-        # fail-loud で上流に伝える。
-        raise failures[0]
+    if failures:
+        if len(failures) == len(times):
+            # 全 probe 失敗は系統故障 (ffmpeg 不在等)。silent な全 absent にせず
+            # fail-loud で上流に伝える。
+            raise failures[0]
+        # 部分故障も痕跡を残す (R5 可視化): absent 化した probe 数を warning。
+        logger.warning(
+            "%d/%d presence probes failed; treated as absent",
+            len(failures),
+            len(times),
+        )
     return [results[t] for t in times]
 
 
@@ -223,7 +233,20 @@ def detect_matches_by_presence(
     coarse = segment_presence(samples, t_gap=t_gap, t_min_match=t_min_match)
 
     def present_at(t: float) -> bool:
-        return localize_present_at(video_path, t).present
+        try:
+            return localize_present_at(
+                video_path, t, raise_on_probe_failure=True
+            ).present
+        except VideoProcessingError:
+            # refine 中の probe 失敗は absent 扱いで続行するが、境界が最大
+            # 1 stride ずれうるため silent にしない (R5 可視化。probe-failure
+            # semantics の統一は設計 issue で後続)。
+            logger.warning(
+                "presence probe failed during boundary refine at t=%.3fs; "
+                "treating as absent",
+                t,
+            )
+            return False
 
     refined: list[PresenceMatch] = []
     for m in coarse:

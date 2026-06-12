@@ -287,6 +287,55 @@ def test_scan_presence_default_sampler_mixed_probe_none_stays_absent(monkeypatch
     assert samples[1].confidence == 0.0
 
 
+def test_scan_presence_partial_failures_logged(caplog):
+    """部分故障 (全滅未満) は absent 化しつつ warning で痕跡を残す (R5 可視化)."""
+    import logging
+
+    def fn(t: float) -> PresenceSample:
+        if t == 2.0:
+            raise VideoProcessingError("probe failed")
+        return PresenceSample(time=t, present=True, confidence=1.0)
+
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.presence"):
+        samples = scan_presence(Path("v.mp4"), 4.0, stride=2.0, workers=2, sample_fn=fn)
+    assert [s.present for s in samples] == [True, False, True]
+    assert any("presence probes failed" in r.message for r in caplog.records)
+
+
+def test_refine_probe_failure_warns_and_treats_absent(monkeypatch, caplog):
+    """refine 中の probe 失敗は absent 続行 + warning で痕跡を残す (R5 可視化).
+
+    境界が最大 1 stride ずれうる縮退なので silent にしない (semantics 統一は
+    設計 issue で後続)。
+    """
+    import logging
+
+    import allaganeye.video.presence as presence
+
+    grid = {0.0, 100.0, 200.0, 300.0, 400.0, 500.0, 600.0}
+
+    def fake_localize(vp, t, *, raise_on_probe_failure=False):
+        if t not in grid:
+            if raise_on_probe_failure:
+                raise VideoProcessingError("probe failed mid-refine")
+            return PresenceSample(time=t, present=False, confidence=0.0)
+        return PresenceSample(time=t, present=(200.0 <= t < 500.0), confidence=1.0)
+
+    monkeypatch.setattr(presence, "localize_present_at", fake_localize)
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.presence"):
+        matches = presence.detect_matches_by_presence(
+            Path("dummy.mkv"),
+            duration=600.0,
+            stride=100.0,
+            t_gap=120.0,
+            t_min_match=60.0,
+            tol=50.0,
+            workers=2,
+        )
+    assert len(matches) == 1
+    assert any("refine" in r.message for r in caplog.records)
+
+
 def test_localize_from_rgb_bytes_none_passthrough_and_decode():
     """共有 helper (R3 dedup): raw None -> None / 正常 bytes は decode して localizer へ."""
     assert localize_from_rgb_bytes(None, height=4, width=4) is None

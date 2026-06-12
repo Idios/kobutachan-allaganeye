@@ -245,7 +245,15 @@ def _resolve_detect_region(video_path: Path, duration_hint: float) -> CaptureReg
             "scorebar band anchor failed; degrading to FULL_FRAME", exc_info=True
         )
         return FULL_FRAME
-    logger.debug("band anchor resolved: %s", region)
+    if region.is_full_frame():
+        # consensus-miss (非例外縮退) も silent にしない (R5): --vtuber 明示 run
+        # が FULL_FRAME (汚染 path) で続行することを痕跡に残す。
+        logger.warning(
+            "band anchor found no scorebar-band consensus; "
+            "continuing with FULL_FRAME (--vtuber)"
+        )
+    else:
+        logger.debug("band anchor resolved: %s", region)
     return region
 
 
