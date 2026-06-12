@@ -184,7 +184,9 @@ def test_detect_matches_by_presence_end_to_end(monkeypatch):
     monkeypatch.setattr(
         presence,
         "localize_present_at",
-        lambda vp, t: PresenceSample(time=t, present=present_phys(t), confidence=1.0),
+        lambda vp, t, **_kw: PresenceSample(
+            time=t, present=present_phys(t), confidence=1.0
+        ),
     )
 
     matches = detect_matches_by_presence(
@@ -209,7 +211,7 @@ def test_detect_matches_present_at_video_edges(monkeypatch):
     monkeypatch.setattr(
         presence,
         "localize_present_at",
-        lambda vp, t: PresenceSample(time=t, present=True, confidence=1.0),
+        lambda vp, t, **_kw: PresenceSample(time=t, present=True, confidence=1.0),
     )
     matches = detect_matches_by_presence(
         Path("dummy.mkv"),
@@ -252,6 +254,37 @@ def test_scan_presence_all_probe_failures_raise():
 
     with pytest.raises(VideoProcessingError):
         scan_presence(Path("v.mp4"), 4.0, stride=2.0, workers=2, sample_fn=fn)
+
+
+def test_scan_presence_default_sampler_all_probe_none_fails_loud(monkeypatch):
+    """default sampler 経由: 全 probe が raw None (decode 系統故障) でも fail-loud (R4).
+
+    R3 の fail-loud guard は VideoProcessingError raise しか数えず、raw None ->
+    safe absent 変換で decode 系統故障が silent 全 absent になる穴があった。
+    """
+    import allaganeye.video.presence as presence
+
+    monkeypatch.setattr(presence, "_probe_frame_rgb_hires", lambda vp, t: None)
+    with pytest.raises(VideoProcessingError):
+        scan_presence(Path("v.mp4"), 4.0, stride=2.0, workers=2)
+
+
+def test_scan_presence_default_sampler_mixed_probe_none_stays_absent(monkeypatch):
+    """default sampler 経由: 一部 probe のみ raw None なら scan は完走し absent 化 (R4)."""
+    import allaganeye.video.presence as presence
+
+    loc = ScorebarLocalization(
+        x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.8
+    )
+    monkeypatch.setattr(
+        presence, "_probe_frame_rgb_hires", lambda vp, t: None if t == 2.0 else b"x"
+    )
+    monkeypatch.setattr(
+        presence, "localize_from_rgb_bytes", lambda raw, *, height, width: loc
+    )
+    samples = scan_presence(Path("v.mp4"), 4.0, stride=2.0, workers=2)
+    assert [s.present for s in samples] == [True, False, True]
+    assert samples[1].confidence == 0.0
 
 
 def test_localize_from_rgb_bytes_none_passthrough_and_decode():

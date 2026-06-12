@@ -231,7 +231,7 @@ def _resolve_detect_region(video_path: Path, duration_hint: float) -> CaptureReg
         )
 
     try:
-        return detect_scorebar_band_region(
+        region = detect_scorebar_band_region(
             duration=duration_hint,
             probe_w=_SCOREBAR_V2_PROBE_WIDTH,
             probe_h=_SCOREBAR_V2_PROBE_HEIGHT,
@@ -240,7 +240,13 @@ def _resolve_detect_region(video_path: Path, duration_hint: float) -> CaptureReg
     except Exception:
         # Anchor failure must never break detect: degrade to FULL_FRAME so the
         # OBS / error path stays bit-exact with the pre-region behavior.
+        # R4: 縮退自体は意図的設計だが、silent にせず痕跡を残す (診断性のみ)。
+        logger.warning(
+            "scorebar band anchor failed; degrading to FULL_FRAME", exc_info=True
+        )
         return FULL_FRAME
+    logger.debug("band anchor resolved: %s", region)
+    return region
 
 
 def detect_match_boundaries(

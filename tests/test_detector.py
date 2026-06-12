@@ -2524,9 +2524,12 @@ def test_resolve_detect_region_falls_back_full_frame_on_probe_failure(monkeypatc
     assert region.is_full_frame()
 
 
-def test_resolve_detect_region_swallows_exceptions_to_full_frame(monkeypatch):
+def test_resolve_detect_region_swallows_exceptions_to_full_frame(monkeypatch, caplog):
     # Anchor failure must NEVER break detect: any exception inside the probe
     # path is swallowed to FULL_FRAME (OBS-safe degrade, bit-exact preserved).
+    # R4: 縮退は silent にせず warning を 1 行残す (診断性のみ、挙動不変)。
+    import logging
+
     from allaganeye.video import detector as det
     from pathlib import Path
 
@@ -2534,8 +2537,10 @@ def test_resolve_detect_region_swallows_exceptions_to_full_frame(monkeypatch):
         raise RuntimeError("probe exploded")
 
     monkeypatch.setattr(det, "_probe_frame_rgb_hires", _boom)
-    region = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        region = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
     assert region.is_full_frame()
+    assert any("band anchor" in r.message for r in caplog.records)
 
 
 def test_detect_match_boundaries_passes_region_to_all_three_call_sites(monkeypatch):

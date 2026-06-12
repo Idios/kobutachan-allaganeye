@@ -118,14 +118,25 @@ def refine_boundary(
     return (lo_true + hi_false) / 2.0
 
 
-def localize_present_at(video_path: Path, timestamp: float) -> PresenceSample:
+def localize_present_at(
+    video_path: Path, timestamp: float, *, raise_on_probe_failure: bool = False
+) -> PresenceSample:
     """Probe one hi-res frame and report scorebar presence at ``timestamp``.
 
     Bridges the production frame source (``_probe_frame_rgb_hires``, 1920x1080
     RGB24) and the P1 localizer (``localize_scorebar``).  Probe failure or
     a None localization both yield ``present=False`` (safe absent).
+
+    ``raise_on_probe_failure=True`` は probe 失敗 (raw None) を
+    ``VideoProcessingError`` として raise する。``scan_presence`` がこの seam で
+    decode 系統故障 (全 probe None) を per-probe 隔離 + 全滅 fail-loud 判定に
+    乗せる (R4: raw None を absent 変換だけにすると系統故障が silent 化する)。
     """
     raw = _probe_frame_rgb_hires(video_path, timestamp)
+    if raw is None and raise_on_probe_failure:
+        raise VideoProcessingError(
+            f"hi-res probe returned no frame at t={timestamp:.3f}s"
+        )
     loc = localize_from_rgb_bytes(
         raw, height=_SCOREBAR_V2_PROBE_HEIGHT, width=_SCOREBAR_V2_PROBE_WIDTH
     )
@@ -162,7 +173,8 @@ def scan_presence(
     """
 
     def _default(t: float) -> PresenceSample:
-        return localize_present_at(video_path, t)
+        # raw None (decode 失敗) も probe 失敗として隔離・全滅判定に乗せる (R4)。
+        return localize_present_at(video_path, t, raise_on_probe_failure=True)
 
     fn = sample_fn if sample_fn is not None else _default
 
