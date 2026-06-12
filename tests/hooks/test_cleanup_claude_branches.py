@@ -175,6 +175,8 @@ def test_merged_to_newer_develop_branch_deleted(
     import subprocess
 
     make_claude_branch("scenario6", merged=True, age_seconds=86400 * 2)
+    # NOTE: make_claude_branch は呼び出しごとに origin/develop-0.2.0 を HEAD へ
+    # 再 mirror するため (conftest)、ref の削除/付け替えは最後の呼び出しの後で行う。
     subprocess.run(
         ["git", "update-ref", "refs/remotes/origin/develop-0.3.0", "HEAD"],
         cwd=tmp_repo,
@@ -204,6 +206,8 @@ def test_no_develop_remote_refs_keeps_branch(
     import subprocess
 
     make_claude_branch("scenario7", merged=True, age_seconds=86400 * 2)
+    # NOTE: make_claude_branch は呼び出しごとに origin/develop-0.2.0 を HEAD へ
+    # 再 mirror するため (conftest)、ref の削除/付け替えは最後の呼び出しの後で行う。
     subprocess.run(
         ["git", "update-ref", "-d", "refs/remotes/origin/develop-0.2.0"],
         cwd=tmp_repo,
@@ -215,3 +219,41 @@ def test_no_develop_remote_refs_keeps_branch(
     assert any(
         e["name"] == "claude/scenario7" and e["reason"] == "not-merged" for e in kept
     ), result.stdout
+
+
+# ---------- Scenario 8: 複数 origin/develop-* 共存、新しい方にのみ merged ----------
+
+
+def test_merged_to_one_of_multiple_develop_refs_deleted(
+    tmp_repo: Path,
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+) -> None:
+    """branch を含まない develop-* ref があってもループが次の base へ継続する (#816).
+
+    origin/develop-0.2.0 (stale、branch を含まない) と origin/develop-0.3.0
+    (branch を含む) が共存するとき、最初の base の is-ancestor 失敗で
+    keep に倒れず、後続 base で merged 判定されることを pin する。
+    """
+    import subprocess
+
+    make_claude_branch("scenario8", merged=True, age_seconds=86400 * 2)
+    # NOTE: make_claude_branch は呼び出しごとに origin/develop-0.2.0 を HEAD へ
+    # 再 mirror するため (conftest)、ref の付け替えは最後の呼び出しの後で行う。
+    # HEAD は merge commit。第 1 親 (HEAD^1) = merge 前の develop tip で
+    # scenario8 の commit を含まない = stale な旧 develop ref を再現する。
+    subprocess.run(
+        ["git", "update-ref", "refs/remotes/origin/develop-0.2.0", "HEAD^1"],
+        cwd=tmp_repo,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "update-ref", "refs/remotes/origin/develop-0.3.0", "HEAD"],
+        cwd=tmp_repo,
+        check=True,
+    )
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
+    deleted = _of_event(result.ndjson, "deleted")
+    assert any(e["name"] == "claude/scenario8" for e in deleted), result.stdout

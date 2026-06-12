@@ -3,7 +3,7 @@
 #
 # Output: stdout NDJSON (one JSON object per line). Schema: schemas/cleanup-output.schema.json.
 #
-# Safety AND conditions (unchanged from pre-#710):
+# Safety AND conditions (3-condition structure unchanged from pre-#710; AND 1 bases generalized in #816):
 #   1. merged: ancestor of any origin/develop-* branch or origin/main
 #   2. active 不在: not referenced by any active worktree
 #   3. cooldown: last commit ≥ 24h ago
