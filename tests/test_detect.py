@@ -138,6 +138,36 @@ def test_detect_uses_cache_when_present(tmp_path):
     assert (tmp_path / "metadata.json").exists()
 
 
+def test_detect_verbose_cache_miss_summary_includes_vtuber_token(tmp_path, capsys):
+    """detect の cache-miss verbose summary に vtuber token が出る (PR #823 R2).
+
+    run_split 側の Detecting summary (R1 fix) と同形。初回 (cache-miss) 実行でも
+    検出 mode の provenance が stdout に残ることを pin する。
+    """
+    config = SplitConfig(
+        output_dir=tmp_path, min_match_duration=60.0, no_cache=True, vtuber=True
+    )
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", return_value=BOUNDARIES),
+    ):
+        run_detect(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "Detecting match boundaries" in out
+    assert "vtuber=on" in out
+
+    config_off = SplitConfig(
+        output_dir=tmp_path, min_match_duration=60.0, no_cache=True
+    )
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", return_value=BOUNDARIES),
+    ):
+        run_detect(Path("input.mp4"), config_off, verbose=True)
+    out = capsys.readouterr().out
+    assert "vtuber=off" in out
+
+
 def test_detect_writes_system_info_to_metadata(tmp_path, monkeypatch):
     """#591 -- detect で書き出した metadata.json に system_info が含まれる."""
     monkeypatch.setattr(

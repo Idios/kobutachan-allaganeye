@@ -20,6 +20,7 @@ def _vtuber_sample() -> Path | None:
     return cands[0] if cands else None
 
 
+@pytest.mark.slow_detect
 @pytest.mark.skipif(_vtuber_sample() is None, reason="VTuber sample not available")
 def test_vtuber_split_removes_in_match_overspilt():
     from allaganeye.video.probe import probe_video

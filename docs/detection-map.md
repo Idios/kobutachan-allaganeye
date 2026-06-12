@@ -77,7 +77,7 @@
 
 ## 4. coupling 図: `_drop_post_match_trailing` × v2 × membership
 
-`_drop_post_match_trailing` (detector.py:1901) は segment 抽出の **後段**で、最終 segment が
+`_drop_post_match_trailing` (detector.py) は segment 抽出の **後段**で、最終 segment が
 post-match trailing (lobby/city) かを **v2 scorebar の不在を根拠に不可逆削除**する。
 
 ```text
@@ -97,7 +97,7 @@ segments 抽出 (_filter_and_extract_segments)
 
 | 変更 | trailing drop への影響 |
 | --- | --- |
-| v2 を localize に置換 (Q3) | trailing drop は v2 を直接呼ぶ (detector.py:1977)。置換すると **第 2 の分類器が暗黙に挙動変化**。localize はリザルト 91% present → trailing を「試合あり」と誤判定し drop し損ねる、逆に VTuber では本物 trailing を切る (R3) |
+| v2 を localize に置換 (Q3) | trailing drop は v2 を直接呼ぶ (`_drop_post_match_trailing` 内の `_has_scorebar_v2` 直接呼び出し)。置換すると **第 2 の分類器が暗黙に挙動変化**。localize はリザルト 91% present → trailing を「試合あり」と誤判定し drop し損ねる、逆に VTuber では本物 trailing を切る (R3) |
 | membership 信号導入 (Q4) | membership は segment 抽出の前段。trailing drop は後段で独立に再判定するため、**2 つの membership 判断が二重化** |
 | #805 非破壊化 | 不可逆削除 → フラグ方式にすると trailing drop の出力契約が変わる |
 

@@ -122,12 +122,14 @@ def _assert_match_6_end_within_tolerance(boundaries: list[MatchBoundary]) -> Non
 class TestMatch6BoundaryRegression:
     """Regression: #330 Match 6 end 35s shift resolved by #361 A3/A4."""
 
+    @pytest.mark.slow_detect
     def test_match_6_boundary_2015_within_tolerance_cpu(
         self, primary_video: Path, primary_metadata: ProbeResult
     ) -> None:
         boundaries = _run_detection(primary_video, primary_metadata, use_gpu=False)
         _assert_match_6_end_within_tolerance(boundaries)
 
+    @pytest.mark.slow_detect
     @gpu_available
     def test_match_6_boundary_2015_within_tolerance_gpu(
         self, primary_video: Path, primary_metadata: ProbeResult
