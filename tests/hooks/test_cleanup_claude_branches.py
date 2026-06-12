@@ -155,3 +155,63 @@ def test_empty_branch_list_emits_zero_summary(
     summaries = _of_event(result.ndjson, "summary")
     assert len(summaries) == 1
     assert summaries[0]["total"] == 0
+
+
+# ---------- Scenario 6: origin/develop-0.3.0 のみ存在 (develop-* 一般化, #816) ----------
+
+
+def test_merged_to_newer_develop_branch_deleted(
+    tmp_repo: Path,
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+) -> None:
+    """develop-0.2.0 が origin から消えても現行 origin/develop-* で merged 判定できる (#816).
+
+    実環境の再現: origin/develop-0.2.0 は v0.2.x 期の後に削除済みで、
+    origin/develop-0.3.0 のみが存在する。旧実装 (develop-0.2.0 固定) では
+    not-merged 扱いで永遠に kept になる (audit 2026-06-10 P3)。
+    """
+    import subprocess
+
+    make_claude_branch("scenario6", merged=True, age_seconds=86400 * 2)
+    subprocess.run(
+        ["git", "update-ref", "refs/remotes/origin/develop-0.3.0", "HEAD"],
+        cwd=tmp_repo,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "update-ref", "-d", "refs/remotes/origin/develop-0.2.0"],
+        cwd=tmp_repo,
+        check=True,
+    )
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
+    deleted = _of_event(result.ndjson, "deleted")
+    assert any(e["name"] == "claude/scenario6" for e in deleted), result.stdout
+
+
+# ---------- Scenario 7: origin/develop-* も origin/main も無い -> 安全側 keep ----------
+
+
+def test_no_develop_remote_refs_keeps_branch(
+    tmp_repo: Path,
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+) -> None:
+    """origin/develop-* が 1 本も無く origin/main も無い場合は not-merged で keep (安全側)."""
+    import subprocess
+
+    make_claude_branch("scenario7", merged=True, age_seconds=86400 * 2)
+    subprocess.run(
+        ["git", "update-ref", "-d", "refs/remotes/origin/develop-0.2.0"],
+        cwd=tmp_repo,
+        check=True,
+    )
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
+    kept = _of_event(result.ndjson, "kept")
+    assert any(
+        e["name"] == "claude/scenario7" and e["reason"] == "not-merged" for e in kept
+    ), result.stdout

@@ -4,7 +4,7 @@
 # Output: stdout NDJSON (one JSON object per line). Schema: schemas/cleanup-output.schema.json.
 #
 # Safety AND conditions (unchanged from pre-#710):
-#   1. merged: ancestor of origin/develop-0.2.0 or origin/main
+#   1. merged: ancestor of any origin/develop-* branch or origin/main
 #   2. active 不在: not referenced by any active worktree
 #   3. cooldown: last commit ≥ 24h ago
 #   (prefix filter: claude/* only is listed)
@@ -81,6 +81,12 @@ while IFS= read -r line; do
   fi
 done < <(git -C "$REPO_ROOT" worktree list --porcelain)
 
+# AND 1 merge bases: 全 origin/develop-* (現行/将来の開発 branch) + origin/main (#816)。
+# 固定 pin (develop-0.2.0) だと release 後に新 develop branch へ merge された
+# branch が永遠に not-merged 扱いになる (audit 2026-06-10 P3)。
+mapfile -t MERGE_BASES < <(git -C "$REPO_ROOT" for-each-ref --format='%(refname:short)' 'refs/remotes/origin/develop-*')
+MERGE_BASES+=("origin/main")
+
 for branch in "${BRANCHES[@]}"; do
   # AND 2: active 不在判定
   if [[ -n "${ACTIVE_BRANCHES[$branch]:-}" ]]; then
@@ -89,13 +95,14 @@ for branch in "${BRANCHES[@]}"; do
     continue
   fi
 
-  # AND 1: merged 判定
+  # AND 1: merged 判定 (いずれかの origin/develop-* or origin/main の祖先)
   merged=0
-  if git -C "$REPO_ROOT" merge-base --is-ancestor "$branch" "origin/develop-0.2.0" 2>/dev/null; then
-    merged=1
-  elif git -C "$REPO_ROOT" merge-base --is-ancestor "$branch" "origin/main" 2>/dev/null; then
-    merged=1
-  fi
+  for base in "${MERGE_BASES[@]}"; do
+    if git -C "$REPO_ROOT" merge-base --is-ancestor "$branch" "$base" 2>/dev/null; then
+      merged=1
+      break
+    fi
+  done
   if [[ "$merged" -eq 0 ]]; then
     _emit kept name="$branch" reason=not-merged
     kept=$((kept + 1))
