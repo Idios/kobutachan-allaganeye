@@ -15,9 +15,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
-
-from allaganeye.video.capture_region import localize_scorebar
+from allaganeye.exceptions import VideoProcessingError
+from allaganeye.video.capture_region import localize_from_rgb_bytes
 from allaganeye.video.detector import (
     _SCOREBAR_V2_PROBE_HEIGHT,
     _SCOREBAR_V2_PROBE_WIDTH,
@@ -127,12 +126,9 @@ def localize_present_at(video_path: Path, timestamp: float) -> PresenceSample:
     a None localization both yield ``present=False`` (safe absent).
     """
     raw = _probe_frame_rgb_hires(video_path, timestamp)
-    if raw is None:
-        return PresenceSample(time=timestamp, present=False, confidence=0.0)
-    frame = np.frombuffer(raw, dtype=np.uint8).reshape(
-        _SCOREBAR_V2_PROBE_HEIGHT, _SCOREBAR_V2_PROBE_WIDTH, 3
+    loc = localize_from_rgb_bytes(
+        raw, height=_SCOREBAR_V2_PROBE_HEIGHT, width=_SCOREBAR_V2_PROBE_WIDTH
     )
-    loc = localize_scorebar(frame)
     if loc is None:
         return PresenceSample(time=timestamp, present=False, confidence=0.0)
     return PresenceSample(time=timestamp, present=True, confidence=loc.confidence)
@@ -172,10 +168,23 @@ def scan_presence(
 
     times = _grid_timestamps(duration, stride)
     results: dict[float, PresenceSample] = {}
+    failures: list[VideoProcessingError] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(fn, t): t for t in times}
         for fut in futures:
-            results[futures[fut]] = fut.result()
+            t = futures[fut]
+            try:
+                results[t] = fut.result()
+            except VideoProcessingError as e:
+                # per-probe 縮退 (PR #823 R3): 同型 pool (_probe_scorebar_context /
+                # _refine_blackout_regions) と同じく 1 probe の失敗で全 scan を
+                # 落とさず safe absent にする。
+                results[t] = PresenceSample(time=t, present=False, confidence=0.0)
+                failures.append(e)
+    if failures and len(failures) == len(times):
+        # 全 probe 失敗は系統故障 (ffmpeg 不在等)。silent な全 absent にせず
+        # fail-loud で上流に伝える。
+        raise failures[0]
     return [results[t] for t in times]
 
 

@@ -220,17 +220,15 @@ def _resolve_detect_region(video_path: Path, duration_hint: float) -> CaptureReg
     """
     from allaganeye.video.capture_region import (
         detect_scorebar_band_region,
-        localize_scorebar,
+        localize_from_rgb_bytes,
     )
 
     def _localize_at(t: float):
-        raw = _probe_frame_rgb_hires(video_path, t)
-        if raw is None:
-            return None
-        frame = np.frombuffer(raw, dtype=np.uint8).reshape(
-            _SCOREBAR_V2_PROBE_HEIGHT, _SCOREBAR_V2_PROBE_WIDTH, 3
+        return localize_from_rgb_bytes(
+            _probe_frame_rgb_hires(video_path, t),
+            height=_SCOREBAR_V2_PROBE_HEIGHT,
+            width=_SCOREBAR_V2_PROBE_WIDTH,
         )
-        return localize_scorebar(frame)
 
     try:
         return detect_scorebar_band_region(

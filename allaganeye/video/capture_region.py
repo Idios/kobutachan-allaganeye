@@ -333,6 +333,23 @@ def _emblem_and_margin(
     return min_ratio
 
 
+def localize_from_rgb_bytes(
+    raw: bytes | None, *, height: int, width: int
+) -> ScorebarLocalization | None:
+    """RGB24 probe bytes を decode して :func:`localize_scorebar` にかける共有 helper.
+
+    raw が None (probe 失敗) なら None を返す。probe 失敗と localizer miss を
+    呼び出し側で区別したい場合は raw の None を先に判定すること
+    (例: ``scorebar._localize_present_from_raw``)。呼び出し元 3 箇所
+    (presence / scorebar / detector の帯 anchor) の reshape boilerplate を一元化し、
+    probe 次元変更時の drift を防ぐ (PR #823 R3 dedup)。
+    """
+    if raw is None:
+        return None
+    frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
+    return localize_scorebar(frame)
+
+
 def localize_scorebar(
     frame: np.ndarray,
     *,

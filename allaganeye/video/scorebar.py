@@ -26,7 +26,11 @@ from allaganeye.video.detector import (
     _probe_frame_rgb_hires,
     _resolve_workers,
 )
-from allaganeye.video.capture_region import CaptureRegion, FULL_FRAME, localize_scorebar
+from allaganeye.video.capture_region import (
+    FULL_FRAME,
+    CaptureRegion,
+    localize_from_rgb_bytes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +46,10 @@ def _localize_present_from_raw(raw: bytes | None) -> bool | None:
     """
     if raw is None:
         return None
-    frame = np.frombuffer(raw, dtype=np.uint8).reshape(
-        _SCOREBAR_V2_PROBE_HEIGHT, _SCOREBAR_V2_PROBE_WIDTH, 3
+    loc = localize_from_rgb_bytes(
+        raw, height=_SCOREBAR_V2_PROBE_HEIGHT, width=_SCOREBAR_V2_PROBE_WIDTH
     )
-    return localize_scorebar(frame) is not None
+    return loc is not None
 
 
 def _probe_scorebar_context(

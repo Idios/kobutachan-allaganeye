@@ -6,8 +6,13 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-from allaganeye.video.capture_region import ScorebarLocalization
+from allaganeye.exceptions import VideoProcessingError
+from allaganeye.video.capture_region import (
+    ScorebarLocalization,
+    localize_from_rgb_bytes,
+)
 from allaganeye.video.presence import (
     PresenceMatch,
     PresenceSample,
@@ -113,8 +118,8 @@ def test_localize_present_at_present(monkeypatch):
     )
     monkeypatch.setattr(
         presence,
-        "localize_scorebar",
-        lambda frame: ScorebarLocalization(
+        "localize_from_rgb_bytes",
+        lambda raw, *, height, width: ScorebarLocalization(
             x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.8
         ),
     )
@@ -131,7 +136,9 @@ def test_localize_present_at_absent(monkeypatch):
     monkeypatch.setattr(
         presence, "_probe_frame_rgb_hires", lambda vp, t: fake_frame_bytes
     )
-    monkeypatch.setattr(presence, "localize_scorebar", lambda frame: None)
+    monkeypatch.setattr(
+        presence, "localize_from_rgb_bytes", lambda raw, *, height, width: None
+    )
     sample = presence.localize_present_at(Path("dummy.mkv"), 50.0)
     assert sample.present is False
     assert sample.confidence == 0.0
@@ -214,3 +221,42 @@ def test_detect_matches_present_at_video_edges(monkeypatch):
         workers=2,
     )
     assert matches == [PresenceMatch(start=0.0, end=500.0)]
+
+
+def test_scan_presence_isolates_single_probe_failure():
+    """1 probe の VideoProcessingError で全 scan が abort しない (PR #823 R3).
+
+    production の同型 pool (_probe_scorebar_context / _refine_blackout_regions)
+    と同じ per-future 縮退。失敗 probe は safe absent になる。
+    """
+
+    def fn(t: float) -> PresenceSample:
+        if t == 2.0:
+            raise VideoProcessingError("probe failed")
+        return PresenceSample(time=t, present=True, confidence=1.0)
+
+    samples = scan_presence(Path("v.mp4"), 4.0, stride=2.0, workers=2, sample_fn=fn)
+
+    assert [s.time for s in samples] == [0.0, 2.0, 4.0]
+    assert samples[0].present is True
+    assert samples[1].present is False
+    assert samples[1].confidence == 0.0
+    assert samples[2].present is True
+
+
+def test_scan_presence_all_probe_failures_raise():
+    """全 probe 失敗 (ffmpeg 不在等の系統故障) は silent all-absent にせず fail-loud."""
+
+    def fn(t: float) -> PresenceSample:
+        raise VideoProcessingError("ffmpeg not found")
+
+    with pytest.raises(VideoProcessingError):
+        scan_presence(Path("v.mp4"), 4.0, stride=2.0, workers=2, sample_fn=fn)
+
+
+def test_localize_from_rgb_bytes_none_passthrough_and_decode():
+    """共有 helper (R3 dedup): raw None -> None / 正常 bytes は decode して localizer へ."""
+    assert localize_from_rgb_bytes(None, height=4, width=4) is None
+    # 4x4 RGB の全黒 frame: decode は成功し、localizer は scorebar なし -> None
+    raw = bytes(4 * 4 * 3)
+    assert localize_from_rgb_bytes(raw, height=4, width=4) is None
