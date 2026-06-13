@@ -128,6 +128,14 @@
         "workers": {
           "description": "Parallel worker count. number for explicit, null for auto.",
           "type": ["number", "null"]
+        },
+        "vtuber": {
+          "description": "True when the VTuber scorebar-band anchor path was used (#821). Optional: absent in pre-#821 outputs and means false.",
+          "type": "boolean"
+        },
+        "masked": {
+          "description": "True when the masked-recording mask-free-region fallback path was used (#821). Optional: absent in pre-#821 outputs and means false.",
+          "type": "boolean"
         }
       }
     },

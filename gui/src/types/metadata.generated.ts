@@ -88,6 +88,14 @@ export interface DetectionParams {
    * Parallel worker count. number for explicit, null for auto.
    */
   workers: number | null;
+  /**
+   * True when the VTuber scorebar-band anchor path was used (#821). Optional: absent in pre-#821 outputs and means false.
+   */
+  vtuber?: boolean;
+  /**
+   * True when the masked-recording mask-free-region fallback path was used (#821). Optional: absent in pre-#821 outputs and means false.
+   */
+  masked?: boolean;
 }
 /**
  * Single match segment. JSON Schema is the strict writer contract; reader-side passthrough for GUI-only edit fields (name / type_override / edited) is provided by zod (.passthrough() on MatchSchema) and only round-trips inside metadata.draft.json, never metadata.json proper.

@@ -489,6 +489,7 @@ def test_metadata_detection_params_present(
         no_audio=True,
         use_gpu=True,
         workers=8,
+        vtuber=True,
     )
 
     run_split(Path("input.mp4"), config)
@@ -505,10 +506,17 @@ def test_metadata_detection_params_present(
         "no_audio",
         "use_gpu",
         "workers",
+        "vtuber",
+        "masked",
     }
     assert set(params) == expected_keys, (
         f"detection_params keys mismatch: {set(params) ^ expected_keys}"
     )
+
+    # vtuber/masked provenance (PR #823 R1 deferred -> PR (b) で一括): metadata
+    # からどの検出 path で生成されたかを判別可能にする。
+    assert params["vtuber"] is True
+    assert params["masked"] is False
 
     # Values must reflect runtime SplitConfig.  sample_interval is the
     # effective (post-auto-adjust) value to stay in sync with
@@ -1163,6 +1171,43 @@ class TestCacheRoundTrip:
         )
         vtuber_config = SplitConfig(output_dir=tmp_path / "output", vtuber=True)
         assert _load_cache(cache_path, cache_video, 1.0, vtuber_config) is None
+
+    def test_param_mismatch_masked(self, cache_video, cache_config, tmp_path):
+        """標準 run の cache を masked run が再利用しない -> None (vtuber key と同型)."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        masked_config = SplitConfig(output_dir=tmp_path / "output", masked=True)
+        assert _load_cache(cache_path, cache_video, 1.0, masked_config) is None
+
+    def test_param_mismatch_masked_reverse(self, cache_video, cache_config, tmp_path):
+        """masked run の cache を標準 run が再利用しない -> None (released path 保護)."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        masked_config = SplitConfig(output_dir=tmp_path / "output", masked=True)
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, masked_config, CACHE_BOUNDARIES
+        )
+        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+
+    def test_legacy_cache_without_masked_key(self, cache_video, cache_config, tmp_path):
+        """masked key なし legacy cache: 標準 run は有効、masked run は無効。
+
+        --masked 導入前の cache はすべて標準 path の結果なので missing = False と
+        同値に扱う (vtuber key と同じ後方互換規約)。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("masked", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        assert (
+            _load_cache(cache_path, cache_video, 1.0, cache_config) == CACHE_BOUNDARIES
+        )
+        masked_config = SplitConfig(output_dir=tmp_path / "output", masked=True)
+        assert _load_cache(cache_path, cache_video, 1.0, masked_config) is None
 
     def test_version_mismatch(self, cache_video, cache_config, tmp_path):
         """cache_version mismatch -> None."""
@@ -3584,8 +3629,9 @@ def test_verbose_cache_hit_prints_detection_params(
     # (#384 contract: audio display is driven by the helper, not
     # config.no_audio directly).
     assert "audio=frozen" in out
-    # vtuber provenance token (PR #823 R1): 検出 mode を表示に含める。
+    # vtuber/masked provenance token (PR #823 R1 / PR (b)): 検出 mode を表示に含める。
     assert "vtuber=off" in out
+    assert "masked=off" in out
 
 
 @patch(f"{MODULE}.split_video")
@@ -3665,6 +3711,27 @@ def test_verbose_cache_hit_prints_vtuber_on_token(
     assert "vtuber=on" in out[header_idx:]
 
 
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_prints_masked_on_token(
+    mock_probe, mock_split, tmp_path, capsys
+):
+    """masked=True で生成した cache の hit 表示は masked=on (vtuber token と同型)."""
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, masked=True)
+    _seed_cache(source, tmp_path, config)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True)
+    out = capsys.readouterr().out
+
+    header_idx = out.find("Cache hit:")
+    assert header_idx >= 0
+    assert "masked=on" in out[header_idx:]
+
+
 @patch(f"{MODULE}._run_detection")
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.probe_video")
@@ -3685,6 +3752,28 @@ def test_verbose_cache_miss_summary_includes_vtuber_token(
     config_off = SplitConfig(output_dir=tmp_path, no_cache=True)
     run_split(source, config_off, verbose=True)
     assert "vtuber=off" in capsys.readouterr().out
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_miss_summary_includes_masked_token(
+    mock_probe, mock_split, mock_run_detection, tmp_path, capsys
+):
+    """cache-miss の Detecting summary に masked token が出る (vtuber と同型)."""
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+    mock_run_detection.return_value = BOUNDARIES
+
+    config = SplitConfig(output_dir=tmp_path, no_cache=True, masked=True)
+    run_split(source, config, verbose=True)
+    assert "masked=on" in capsys.readouterr().out
+
+    config_off = SplitConfig(output_dir=tmp_path, no_cache=True)
+    run_split(source, config_off, verbose=True)
+    assert "masked=off" in capsys.readouterr().out
 
 
 def test_display_cache_hit_params_malformed_json_emits_unavailable(tmp_path, capsys):

@@ -177,7 +177,8 @@ def run_split(
             f"min_match={config.min_match_duration}s, "
             f"min_blackout={config.min_blackout_duration}s, "
             f"audio={_audio_status_str(config.no_audio)}, "
-            f"vtuber={'on' if config.vtuber else 'off'})"
+            f"vtuber={'on' if config.vtuber else 'off'}, "
+            f"masked={'on' if config.masked else 'off'})"
         )
 
     detect_stats: DetectionStats | None = {} if verbose else None
@@ -514,9 +515,10 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
     # Live-probe AUDIO_FROZEN so the verbose line mirrors `_run_audio_scan`
     # behaviour for the current run, same as the cache-miss summary.
     cached_no_audio = bool(params.get("no_audio", config.no_audio))
-    # vtuber は cache key (PR #823) に含まれるため hit 時は config と一致するが、
+    # vtuber / masked は cache key に含まれるため hit 時は config と一致するが、
     # 表示は cache 記録値を正とする (legacy cache は key なし = False)。
     cached_vtuber = bool(params.get("vtuber", False))
+    cached_masked = bool(params.get("masked", False))
 
     typer.echo(header)
     typer.echo(
@@ -526,7 +528,8 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
         f"min_match={params.get('min_match_duration', '?')}s, "
         f"min_blackout={params.get('min_blackout_duration', '?')}s, "
         f"audio={_audio_status_str(cached_no_audio)}, "
-        f"vtuber={'on' if cached_vtuber else 'off'}"
+        f"vtuber={'on' if cached_vtuber else 'off'}, "
+        f"masked={'on' if cached_masked else 'off'}"
     )
 
 
@@ -1359,6 +1362,10 @@ def _build_metadata_payload(
             "no_audio": config.no_audio,
             "use_gpu": config.use_gpu,
             "workers": config.workers,
+            # vtuber/masked は検出 path の provenance (PR #823 R1 deferred 分)。
+            # schema 上は optional (導入前 metadata との後方互換)。
+            "vtuber": config.vtuber,
+            "masked": config.masked,
         },
         "system_info": system_info,
         "matches": [
@@ -1754,6 +1761,7 @@ def _save_cache(
             "min_blackout_duration": config.min_blackout_duration,
             "no_audio": config.no_audio,
             "vtuber": config.vtuber,
+            "masked": config.masked,
         },
         "boundaries": boundaries,
     }
@@ -1805,9 +1813,9 @@ def _load_cache(
         return None
 
     params = data.get("params", {})
-    # vtuber は detection path を切り替えるため cache key に含める (gate の cache
-    # bypass 防止)。key なし legacy cache は --vtuber 導入前 = 標準 path の結果
-    # なので False と同値に扱う。
+    # vtuber / masked は detection path を切り替えるため cache key に含める (gate
+    # の cache bypass 防止)。key なし legacy cache は両 flag 導入前 = 標準 path の
+    # 結果なので False と同値に扱う。
     if (
         params.get("sample_interval") != effective_interval
         or params.get("blackout_threshold") != config.blackout_threshold
@@ -1815,6 +1823,7 @@ def _load_cache(
         or params.get("min_blackout_duration") != config.min_blackout_duration
         or params.get("no_audio") != config.no_audio
         or params.get("vtuber", False) != config.vtuber
+        or params.get("masked", False) != config.masked
     ):
         logger.debug("Cache parameter mismatch")
         return None

@@ -8,6 +8,12 @@ export const DetectionParamsSchema = z.object({
   no_audio: z.boolean(),
   use_gpu: z.union([z.number(), z.boolean(), z.null()]),
   workers: z.number().nullable(),
+  /**
+   * #821 -- detection-path provenance. Optional because pre-#821
+   * metadata.json doesn't include them; absent means false.
+   */
+  vtuber: z.boolean().optional(),
+  masked: z.boolean().optional(),
 });
 
 export const MatchSchema = z

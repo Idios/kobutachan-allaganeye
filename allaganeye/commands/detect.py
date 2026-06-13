@@ -171,7 +171,8 @@ def run_detect(
                 f"min_match={config.min_match_duration}s, "
                 f"min_blackout={config.min_blackout_duration}s, "
                 f"audio={_audio_status_str(config.no_audio)}, "
-                f"vtuber={'on' if config.vtuber else 'off'})"
+                f"vtuber={'on' if config.vtuber else 'off'}, "
+                f"masked={'on' if config.masked else 'off'})"
             )
 
         detect_stats: DetectionStats | None = {} if verbose else None

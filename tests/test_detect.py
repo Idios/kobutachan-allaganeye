@@ -168,6 +168,31 @@ def test_detect_verbose_cache_miss_summary_includes_vtuber_token(tmp_path, capsy
     assert "vtuber=off" in out
 
 
+def test_detect_verbose_cache_miss_summary_includes_masked_token(tmp_path, capsys):
+    """detect の cache-miss verbose summary に masked token が出る (vtuber と同型)."""
+    config = SplitConfig(
+        output_dir=tmp_path, min_match_duration=60.0, no_cache=True, masked=True
+    )
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", return_value=BOUNDARIES),
+    ):
+        run_detect(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "masked=on" in out
+
+    config_off = SplitConfig(
+        output_dir=tmp_path, min_match_duration=60.0, no_cache=True
+    )
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", return_value=BOUNDARIES),
+    ):
+        run_detect(Path("input.mp4"), config_off, verbose=True)
+    out = capsys.readouterr().out
+    assert "masked=off" in out
+
+
 def test_detect_writes_system_info_to_metadata(tmp_path, monkeypatch):
     """#591 -- detect で書き出した metadata.json に system_info が含まれる."""
     monkeypatch.setattr(
