@@ -113,7 +113,7 @@ validate-checklist は plain bullet `-` を無視するため未実施でもブ�
 ## 関連
 
 - Refs #
-- Base branch: `develop-0.2.0`
+- Base branch: `develop-x.y.z` <!-- 現行の開発 branch に置換 -->
 - Session: <!-- 例: relaxed-mestorf-9807da -->
 
 ## 備考 (任意)

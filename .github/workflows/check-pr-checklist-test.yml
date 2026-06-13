@@ -7,10 +7,11 @@ on:
       - '.github/scripts/check-pr-checklist.test.js'
       - '.github/workflows/check-pr-checklist-test.yml'
   push:
-    branches: [develop-0.2.0, main]
+    branches: [main, "develop-*"]
     paths:
       - '.github/scripts/check-pr-checklist.js'
       - '.github/scripts/check-pr-checklist.test.js'
+      - '.github/workflows/check-pr-checklist-test.yml'
 
 jobs:
   test:

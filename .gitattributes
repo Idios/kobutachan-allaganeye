@@ -5,3 +5,8 @@
 gui/src/types/metadata.generated.ts text eol=lf
 allaganeye/metadata_types.py text eol=lf
 schemas/metadata.schema.json text eol=lf
+
+# error-hints fixtures are byte-compared test vectors: tests/scripts/test_extract_*.sh
+# diff awk output (always LF) against expected-*.tsv. Force LF so a Windows
+# autocrlf=true checkout does not produce false drift FAILs (#816).
+tests/fixtures/error-hints/* text eol=lf

@@ -3,8 +3,8 @@
 #
 # Output: stdout NDJSON (one JSON object per line). Schema: schemas/cleanup-output.schema.json.
 #
-# Safety AND conditions (unchanged from pre-#710):
-#   1. merged: ancestor of origin/develop-0.2.0 or origin/main
+# Safety AND conditions (3-condition structure unchanged from pre-#710; AND 1 bases generalized in #816):
+#   1. merged: ancestor of the latest (sort -V) origin/develop-* or origin/main
 #   2. active 不在: not referenced by any active worktree
 #   3. cooldown: last commit ≥ 24h ago
 #   (prefix filter: claude/* only is listed)
@@ -81,6 +81,23 @@ while IFS= read -r line; do
   fi
 done < <(git -C "$REPO_ROOT" worktree list --porcelain)
 
+# AND 1 merge bases: sort -V 最新の origin/develop-* + origin/main (#816)。
+# 固定 pin (develop-0.2.0) だと release 後に新 develop branch へ merge された
+# branch が永遠に not-merged 扱いになる (audit 2026-06-10 P3)。一方、全
+# develop-* を信用すると fetch --prune されず残った stale な旧 develop ref
+# だけに merged な branch を誤削除しうる (Codex adversarial-review HIGH) ため、
+# 現行 = version 最大の develop のみを merge base に採用する (no-network 維持)。
+# 注: no-network 設計のため「最新 develop ref 自体の鮮度」は原理的に保証できない
+# (stale と fresh はローカルでは識別不能)。残余リスクは fetch 済み -> release なし
+# 廃棄 -> 再 fetch なし、の 3 連鎖が条件で本 repo の release flow では非発生、
+# かつ commit は当該 ref から reachable で GC されない (2026-06-13 Idios 受容確定)。
+mapfile -t DEVELOP_REFS < <(git -C "$REPO_ROOT" for-each-ref --format='%(refname:short)' 'refs/remotes/origin/develop-*' | sort -V)
+MERGE_BASES=()
+if (( ${#DEVELOP_REFS[@]} > 0 )); then
+  MERGE_BASES+=("${DEVELOP_REFS[-1]}")
+fi
+MERGE_BASES+=("origin/main")
+
 for branch in "${BRANCHES[@]}"; do
   # AND 2: active 不在判定
   if [[ -n "${ACTIVE_BRANCHES[$branch]:-}" ]]; then
@@ -89,13 +106,14 @@ for branch in "${BRANCHES[@]}"; do
     continue
   fi
 
-  # AND 1: merged 判定
+  # AND 1: merged 判定 (sort -V 最新の origin/develop-* or origin/main の祖先)
   merged=0
-  if git -C "$REPO_ROOT" merge-base --is-ancestor "$branch" "origin/develop-0.2.0" 2>/dev/null; then
-    merged=1
-  elif git -C "$REPO_ROOT" merge-base --is-ancestor "$branch" "origin/main" 2>/dev/null; then
-    merged=1
-  fi
+  for base in "${MERGE_BASES[@]}"; do
+    if git -C "$REPO_ROOT" merge-base --is-ancestor "$branch" "$base" 2>/dev/null; then
+      merged=1
+      break
+    fi
+  done
   if [[ "$merged" -eq 0 ]]; then
     _emit kept name="$branch" reason=not-merged
     kept=$((kept + 1))

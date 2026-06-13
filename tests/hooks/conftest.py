@@ -48,9 +48,10 @@ def _symlink_or_copy(src: Path, dst: Path) -> None:
 def tmp_repo(tmp_path: Path) -> Path:
     """Isolated git repo with .claude/ and scripts/ wired from project root.
 
-    The repo has an initial commit on `develop-0.2.0` (the project's default
-    base branch). cleanup-claude-branches.sh's merge-base logic resolves
-    correctly against this branch.
+    The repo has an initial commit on `develop-0.2.0` (a fixture-internal
+    branch name kept for historical continuity; it matches the develop-*
+    glob, so cleanup-claude-branches.sh's merge-base logic resolves
+    correctly against it regardless of the project's current base branch).
     """
     repo = tmp_path / "repo"
     repo.mkdir()
