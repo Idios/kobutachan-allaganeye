@@ -91,3 +91,7 @@ class TestSplitConfigValidation:
     def test_vtuber_true_is_valid(self):
         """vtuber=True is accepted (game-inset scorebar-band anchor path)."""
         assert SplitConfig(vtuber=True).vtuber is True
+
+    def test_split_config_masked_defaults_false(self):
+        """masked defaults False so OBS full-frame behavior is unchanged (L3 A6)."""
+        assert SplitConfig().masked is False

@@ -1508,7 +1508,7 @@ def test_classify_localize_all_none_is_unknown(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# classify_blackout vtuber gate unit tests (Phase 2 B3)
+# classify_blackout localize selector unit tests (Phase 2 B3)
 # ---------------------------------------------------------------------------
 
 
@@ -1525,7 +1525,7 @@ def test_classify_blackout_vtuber_delegates_to_localize(monkeypatch):
     monkeypatch.setattr(sb, "_classify_blackout_localize", fake_localize)
     band = CaptureRegion(0.3, 0.0, 0.37, 0.04, source="band")
     out = sb.classify_blackout(
-        Path("x.mp4"), (10.0, 11.0), 400.0, 180, vtuber=True, band_region=band
+        Path("x.mp4"), (10.0, 11.0), 400.0, 180, localize=True, band_region=band
     )
     assert out == "in_match"
     assert seen["band"] is band
@@ -1560,21 +1560,21 @@ def test_filter_threads_vtuber_to_classify(monkeypatch):
     seen = []
 
     def fake_classify(
-        video, region, duration, height, workers=None, *, band_region, vtuber
+        video, region, duration, height, workers=None, *, band_region, localize
     ):
-        seen.append((vtuber, band_region.source))
+        seen.append((localize, band_region.source))
         return "match_boundary"
 
     monkeypatch.setattr(sb, "classify_blackout", fake_classify)
     monkeypatch.setattr(sb, "_merge_boundary_pairs", lambda *a, **k: (a[1], a[2]))
     band = CaptureRegion(0.3, 0.0, 0.37, 0.04, source="band")
     sb.filter_blackouts_with_scorebar(
-        Path("x.mp4"), [(10.0, 12.0)], 400.0, 180, band_region=band, vtuber=True
+        Path("x.mp4"), [(10.0, 12.0)], 400.0, 180, band_region=band, localize=True
     )
     assert seen == [(True, "band")]
 
 
-def test_merge_gap_probe_uses_localize_when_vtuber(monkeypatch):
+def test_merge_gap_probe_uses_localize_path(monkeypatch):
     from allaganeye.video import scorebar as sb
     from allaganeye.video.capture_region import CaptureRegion
 
@@ -1590,7 +1590,28 @@ def test_merge_gap_probe_uses_localize_when_vtuber(monkeypatch):
     cls = ["match_boundary", "match_boundary"]
     band = CaptureRegion(0.3, 0.0, 0.37, 0.04, source="band")
     merged, _merged_cls = sb._merge_boundary_pairs(
-        Path("x.mp4"), regions, cls, 400.0, 180, None, band_region=band, vtuber=True
+        Path("x.mp4"), regions, cls, 400.0, 180, None, band_region=band, localize=True
     )
     assert captured["with_localize"] is True
     assert merged == [(10.0, 32.0)]  # localize-absent gap -> merged
+
+
+def test_classify_blackout_localize_selector_routes(monkeypatch):
+    from pathlib import Path
+
+    monkeypatch.setattr(sb, "_classify_blackout_localize", lambda *a, **k: "LOCALIZED")
+    # localize=True routes to the position-independent classifier
+    assert (
+        sb.classify_blackout(Path("x.mp4"), (10.0, 12.0), 100.0, 180, localize=True)
+        == "LOCALIZED"
+    )
+    # localize=False takes the v2 path (must NOT be the localize sentinel).
+    monkeypatch.setattr(
+        sb,
+        "_probe_scorebar_context",
+        lambda *a, **k: ([False, False, False], [None, None, None], [None, None, None]),
+    )
+    assert (
+        sb.classify_blackout(Path("x.mp4"), (10.0, 12.0), 100.0, 180, localize=False)
+        != "LOCALIZED"
+    )

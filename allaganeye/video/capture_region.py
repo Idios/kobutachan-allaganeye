@@ -444,6 +444,85 @@ def detect_region_blackout_overlap(
     )
 
 
+def _maximal_ones_rectangle(mask: np.ndarray) -> tuple[int, int, int, int] | None:
+    """Largest all-ones axis-aligned rectangle in a binary mask (histogram stack).
+
+    Returns ``(x0, y0, x1, y1)`` half-open (x1/y1 exclusive) of the maximum-area
+    all-ones rectangle, or ``None`` when the mask has no set pixels.  O(H*W):
+    per-row histogram heights + largest-rectangle-in-histogram with a sentinel.
+    """
+    h, w = mask.shape
+    heights = np.zeros(w, dtype=np.int32)
+    best_area = 0
+    best: tuple[int, int, int, int] | None = None
+    for y in range(h):
+        heights = np.where(mask[y] > 0, heights + 1, 0)
+        hh = heights.tolist()
+        stack: list[int] = []
+        x = 0
+        while x <= w:
+            cur = hh[x] if x < w else 0
+            if not stack or hh[stack[-1]] <= cur:
+                stack.append(x)
+                x += 1
+            else:
+                top = stack.pop()
+                height = hh[top]
+                left = 0 if not stack else stack[-1] + 1
+                width = x - left
+                area = height * width
+                if area > best_area:
+                    best_area = area
+                    best = (left, y - height + 1, left + width, y + 1)
+    return best
+
+
+def detect_mask_free_region(
+    frames: list[np.ndarray],
+    *,
+    bright_thresh: float = _OVERLAP_BRIGHT,
+    dark_thresh: float = _OVERLAP_DARK,
+    min_area_frac: float = _MIN_REGION_AREA_FRAC,
+) -> CaptureRegion:
+    """Largest hole-free game rectangle for masked recordings (#753 masked-OBS).
+
+    Refines S3 (``detect_region_blackout_overlap``): instead of the largest game
+    *component bbox* (which can contain mask holes), returns the largest solid
+    all-game *rectangle* (maximal all-ones rectangle over the game mask), so the
+    measurement region excludes bright static masks composited over gameplay.
+
+    game pixel = max brightness > ``bright_thresh`` AND min brightness <
+    ``dark_thresh`` (brightens during play, darkens during a blackout).  Bright
+    static masks never darken (min stays high) -> excluded.  Always-dark bars
+    never brighten -> excluded.  Unmasked full-frame game -> every pixel is game
+    -> snaps to FULL_FRAME.  Fewer than 2 frames, no game pixels, or a max
+    rectangle below ``min_area_frac`` of the frame -> FULL_FRAME (safe degenerate:
+    the masked-fallback caller treats FULL_FRAME as "no mask region found").
+    """
+    if len(frames) < 2:
+        return FULL_FRAME
+    stack = np.stack(frames).astype(np.float32)
+    pmax = stack.max(axis=0)
+    pmin = stack.min(axis=0)
+    game_mask = ((pmax > bright_thresh) & (pmin < dark_thresh)).astype(np.uint8)
+    rect = _maximal_ones_rectangle(game_mask)
+    if rect is None:
+        return FULL_FRAME
+    x0, y0, x1, y1 = rect
+    h, w = game_mask.shape
+    if (x1 - x0) * (y1 - y0) < min_area_frac * w * h:
+        return FULL_FRAME
+    region = CaptureRegion(
+        x0 / w,
+        y0 / h,
+        (x1 - x0) / w,
+        (y1 - y0) / h,
+        confidence=0.8,
+        source="tierA",
+    ).clamp()
+    return _maybe_snap_full_frame(region)
+
+
 _BAND_CONSENSUS_MIN_HITS = 2
 """帯 consensus に必要な最小局在化成功数。これ未満は FULL_FRAME 縮退。"""
 

@@ -39,6 +39,12 @@ def _valid_sample() -> dict[str, Any]:
             "no_audio": False,
             "use_gpu": None,
             "workers": None,
+            # optional provenance fields (#821): writer は常に出力、読み込みは
+            # 欠落許容 (pre-#821 metadata)。masked = request flag、
+            # masked_fallback_used = resolved path (auto-fallback 含む)。
+            "vtuber": False,
+            "masked": False,
+            "masked_fallback_used": False,
         },
         "matches": [
             {

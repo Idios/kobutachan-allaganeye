@@ -6,9 +6,11 @@ from allaganeye.video.capture_region import (
     RegionTimeline,
     ScorebarLocalization,
     _emblem_and_margin,
+    _maximal_ones_rectangle,
     _maybe_snap_full_frame,
     _scorebar_saturated_runs,
     band_region_from_localization,
+    detect_mask_free_region,
     detect_region_blackout_overlap,
     detect_region_variance,
     detect_scorebar_band_region,
@@ -580,3 +582,70 @@ def test_band_consensus_balanced_split_median_falls_between_clusters():
     )
     assert region.y < 0.05, f"expected true cluster y~0, got {region.y}"
     assert abs(region.x - 600 / 1920) < 0.05
+
+
+# ---------------------------------------------------------------------------
+# A-Task 1: detect_mask_free_region + _maximal_ones_rectangle
+# ---------------------------------------------------------------------------
+
+
+def _rect_overlaps(rect_px, block_px) -> bool:
+    ax0, ay0, ax1, ay1 = rect_px
+    bx0, by0, bx1, by1 = block_px
+    return ax0 < bx1 and bx0 < ax1 and ay0 < by1 and by0 < ay1
+
+
+def _frames_with_mask(h, w, mask_block, values=(5, 200, 5, 200)):
+    """Game pixels cycle bright/dark across frames; mask_block stays bright (200)."""
+    bx0, by0, bx1, by1 = mask_block
+    frames = []
+    for v in values:
+        f = np.full((h, w), v, dtype=np.uint8)
+        f[by0:by1, bx0:bx1] = 200  # static bright mask -> min never < dark
+        frames.append(f)
+    return frames
+
+
+def test_maximal_ones_rectangle_simple_block():
+    mask = np.zeros((4, 5), dtype=np.uint8)
+    mask[1:4, 1:4] = 1  # 3x3 block of ones at (x=1..3, y=1..3)
+    assert _maximal_ones_rectangle(mask) == (1, 1, 4, 4)
+
+
+def test_maximal_ones_rectangle_empty_is_none():
+    assert _maximal_ones_rectangle(np.zeros((4, 4), dtype=np.uint8)) is None
+
+
+def test_detect_mask_free_region_excludes_bright_mask():
+    # 20x20, bright static mask at bottom-left (cols 0..10, rows 10..20).
+    frames = _frames_with_mask(20, 20, (0, 10, 10, 20))
+    region = detect_mask_free_region(frames)
+    assert not region.is_full_frame()
+    # Returned rectangle must not intersect the mask block.
+    px = (
+        round(region.x * 20),
+        round(region.y * 20),
+        round((region.x + region.w) * 20),
+        round((region.y + region.h) * 20),
+    )
+    assert not _rect_overlaps(px, (0, 10, 10, 20))
+
+
+def test_detect_mask_free_region_full_game_snaps_full_frame():
+    # Every pixel cycles bright/dark -> game everywhere -> FULL_FRAME.
+    frames = [np.full((20, 20), v, dtype=np.uint8) for v in (5, 200, 5, 200)]
+    assert detect_mask_free_region(frames).is_full_frame()
+
+
+def test_detect_mask_free_region_tiny_game_is_full_frame():
+    # Only a 2x2 game patch (rest stays bright) -> below min_area_frac -> FULL_FRAME.
+    frames = []
+    for v in (5, 200):
+        f = np.full((20, 20), 200, dtype=np.uint8)
+        f[0:2, 0:2] = v
+        frames.append(f)
+    assert detect_mask_free_region(frames).is_full_frame()
+
+
+def test_detect_mask_free_region_single_frame_is_full_frame():
+    assert detect_mask_free_region([np.zeros((20, 20), dtype=np.uint8)]).is_full_frame()

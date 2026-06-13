@@ -78,7 +78,7 @@ allaganeye 0.1.1 (ffmpeg 8.1, Python 3.12.10, Windows 11)
   Disk: 1359.5 / 3726.0 GB free on E:
 Probing: recording.mkv
   Duration: 10228.7s, Resolution: 1920x1080, FPS: 60.00, Codec: h264
-Detecting match boundaries (interval=3.0s, threshold=15.0, workers=auto (24), min_match=300.0s, min_blackout=3.0s, audio=frozen, vtuber=off)
+Detecting match boundaries (interval=3.0s, threshold=15.0, workers=auto (24), min_match=300.0s, min_blackout=3.0s, audio=frozen, vtuber=off, masked=off)
 Detecting  #################################### 100%
 Refining   #################################### 100%
 Scorebar   #################################### 100%
@@ -129,7 +129,7 @@ allaganeye 0.1.1 (ffmpeg 8.1, Python 3.12.10, Windows 11)
 Probing: recording.mkv
   Duration: 10228.7s, Resolution: 1920x1080, FPS: 60.00, Codec: h264
 Cache hit: detection params from .detection_cache.json
-  sample_interval=3.0s, threshold=15.0, min_match=300.0s, min_blackout=3.0s, audio=frozen, vtuber=off
+  sample_interval=3.0s, threshold=15.0, min_match=300.0s, min_blackout=3.0s, audio=frozen, vtuber=off, masked=off, masked_fallback=off
 Detected 8 match(es) in recording.mkv (2:50:28) (cached)
   Match 1:   00:00 -   15:17  (15m17s)  [unknown]
   ...

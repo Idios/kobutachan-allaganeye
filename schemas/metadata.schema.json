@@ -128,6 +128,18 @@
         "workers": {
           "description": "Parallel worker count. number for explicit, null for auto.",
           "type": ["number", "null"]
+        },
+        "vtuber": {
+          "description": "True when the --vtuber flag was supplied (#821; the VTuber path never auto-triggers, so request equals resolved). Optional: absent in pre-#821 outputs and means false.",
+          "type": "boolean"
+        },
+        "masked": {
+          "description": "True when the --masked flag was supplied (request, #821). The masked fallback can also auto-trigger on zero-blackout recordings; see masked_fallback_used for the resolved path. Optional: absent in pre-#821 outputs and means false.",
+          "type": "boolean"
+        },
+        "masked_fallback_used": {
+          "description": "True when the mask-free-region fallback actually produced this result (explicit --masked or zero-blackout auto-trigger, #821). Optional: absent in pre-#821 outputs and means false.",
+          "type": "boolean"
         }
       }
     },

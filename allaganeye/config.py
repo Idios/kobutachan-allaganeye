@@ -22,6 +22,7 @@ class SplitConfig:
     no_cache: bool = False
     no_audio: bool = False
     vtuber: bool = False
+    masked: bool = False
 
     def __post_init__(self) -> None:
         if self.workers is not None and self.workers < 1:

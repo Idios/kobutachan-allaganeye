@@ -1007,8 +1007,13 @@ class TestProbeSingleFrame:
 
 
 class TestDetectMatchBoundaries:
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._probe_single_frame")
-    def test_all_bright(self, mock_probe):
+    def test_all_bright(self, mock_probe, _mock_region):
+        # _mock_region: zero-blackout Pass 1 now routes through the masked
+        # fallback gate (#753 A5); stub the region resolver to FULL_FRAME so the
+        # masked path returns None and falls through to the standard result
+        # without spawning real ffmpeg probes (kept fast/deterministic).
         mock_probe.return_value = 128.0
         result = detect_match_boundaries(
             Path("test.mp4"), duration_hint=300.0, min_match_duration=100.0
@@ -1049,8 +1054,11 @@ class TestDetectMatchBoundaries:
         assert result[0]["start"] == 0.0
         assert result[1]["end"] == pytest.approx(1800.0)
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_custom_threshold(self, mock_chunk):
+    def test_custom_threshold(self, mock_chunk, _mock_region):
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub
+        # falls through to standard result (no real ffmpeg probes).
         mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
             t: 20.0 for t in ts
         }
@@ -1083,9 +1091,11 @@ class TestDetectMatchBoundaries:
         ):
             detect_match_boundaries(Path("test.mp4"), min_match_duration=100.0)
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_brightness_callback_receives_pass1_results(self, mock_chunk):
+    def test_brightness_callback_receives_pass1_results(self, mock_chunk, _mock_region):
         """#569 -- brightness_callback fires once with full Pass 1 map."""
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub.
         mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
             t: 50.0 + t for t in ts
         }
@@ -1105,9 +1115,11 @@ class TestDetectMatchBoundaries:
         assert results[0.0] == pytest.approx(50.0)
         assert results[5.0] == pytest.approx(55.0)
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_brightness_callback_optional_default(self, mock_chunk):
+    def test_brightness_callback_optional_default(self, mock_chunk, _mock_region):
         """Omitting the callback is a no-op (preserves pre-#569 callers)."""
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub.
         mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
             t: 100.0 for t in ts
         }
@@ -1120,9 +1132,58 @@ class TestDetectMatchBoundaries:
         )
         assert isinstance(result, list)
 
+    @patch("allaganeye.video.detector._detect_masked_fallback")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_stats_populated_cpu(self, mock_chunk):
+    def test_masked_fallback_callback_fires_when_result_used(
+        self, mock_chunk, mock_fallback
+    ):
+        """fallback の結果が採用されたときのみ callback が発火 (resolved provenance).
+
+        request flag (masked) と resolved path を分離するための通知 seam。
+        brightness_callback (#569/#644) と同型の配線。
+        """
+        # zero-blackout -> gate (not vtuber and not blackout_times) が fallback へ
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 100.0 for t in ts
+        }
+        fallback_result = [{"start": 0.0, "end": 9.0, "type": "fl_match"}]
+        mock_fallback.return_value = fallback_result
+        fired: list[bool] = []
+        result = detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=10.0,
+            sample_interval=1.0,
+            min_match_duration=1.0,
+            masked_fallback_callback=lambda: fired.append(True),
+        )
+        assert result == fallback_result
+        assert fired == [True]
+
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_masked_fallback_callback_not_fired_when_fallback_gives_up(
+        self, mock_chunk, _mock_region
+    ):
+        """fallback が None (縮退) で標準 path に落ちた場合は callback 不発."""
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 100.0 for t in ts
+        }
+        fired: list[bool] = []
+        result = detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=10.0,
+            sample_interval=1.0,
+            min_match_duration=1.0,
+            masked_fallback_callback=lambda: fired.append(True),
+        )
+        assert isinstance(result, list)
+        assert fired == []
+
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_stats_populated_cpu(self, mock_chunk, _mock_region):
         """Verbose callers receive pipeline statistics (issue #336 Phase 1)."""
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub.
         from allaganeye.video.detector import DetectionStats
 
         mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
@@ -1167,7 +1228,7 @@ class TestDetectMatchBoundaries:
                 workers,
                 *,
                 band_region=FULL_FRAME,
-                vtuber=False,
+                localize=False,
                 audio_hits,
                 stats,
                 progress_callback=None,
@@ -1195,8 +1256,10 @@ class TestDetectMatchBoundaries:
         assert stats.get("scorebar_non_fl") == 3
         assert stats.get("audio_promotions") == 1
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_progress_callback(self, mock_chunk):
+    def test_progress_callback(self, mock_chunk, _mock_region):
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub.
         mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
             t: 128.0 for t in ts
         }
@@ -1296,8 +1359,10 @@ class TestDetectMatchBoundaries:
             "no intermediate progress was published; callbacks appear batched"
         )
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_progress_callback_none(self, mock_chunk):
+    def test_progress_callback_none(self, mock_chunk, _mock_region):
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub.
         mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
             t: 128.0 for t in ts
         }
@@ -1306,9 +1371,11 @@ class TestDetectMatchBoundaries:
         )
         assert len(result) == 1
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_sample_count(self, mock_chunk):
+    def test_sample_count(self, mock_chunk, _mock_region):
         """All timestamps are processed across chunks."""
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub.
         call_timestamps = []
 
         def side_effect(vp, ts, cs, ce, si, **kwargs):
@@ -1324,9 +1391,11 @@ class TestDetectMatchBoundaries:
         )
         assert len(set(call_timestamps)) == 150
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_chunked_execution(self, mock_chunk):
+    def test_chunked_execution(self, mock_chunk, _mock_region):
         """Multiple chunks are created for parallel execution."""
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub.
         mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
             t: 128.0 for t in ts
         }
@@ -1339,10 +1408,16 @@ class TestDetectMatchBoundaries:
         assert len(result) == 1
         assert mock_chunk.call_count >= 1
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.scorebar.filter_blackouts_with_scorebar")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_scorebar_filtering_called_with_resolution(self, mock_chunk, mock_filter):
+    def test_scorebar_filtering_called_with_resolution(
+        self, mock_chunk, mock_filter, _mock_region
+    ):
         """Scorebar filtering is invoked when src_resolution is provided."""
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub
+        # so the masked path returns None and the standard scorebar call still
+        # fires exactly once (assertion below unchanged).
         mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
             t: 128.0 for t in ts
         }
@@ -1358,12 +1433,16 @@ class TestDetectMatchBoundaries:
         )
         mock_filter.assert_called_once()
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.scorebar.filter_blackouts_with_scorebar")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_scorebar_filtering_skipped_without_resolution(
-        self, mock_chunk, mock_filter
+        self, mock_chunk, mock_filter, _mock_region
     ):
         """Scorebar filtering is NOT invoked when src_resolution is None."""
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub
+        # -> masked path returns None before its own scorebar call, so
+        # assert_not_called() still holds.
         mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
             t: 128.0 for t in ts
         }
@@ -1374,10 +1453,14 @@ class TestDetectMatchBoundaries:
         )
         mock_filter.assert_not_called()
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.scorebar.filter_blackouts_with_scorebar")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_audio_hits_forwarded_to_scorebar_filter(self, mock_chunk, mock_filter):
+    def test_audio_hits_forwarded_to_scorebar_filter(
+        self, mock_chunk, mock_filter, _mock_region
+    ):
         """audio_hits parameter is passed through to scorebar filtering (#288)."""
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub.
         mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
             t: 128.0 for t in ts
         }
@@ -1396,10 +1479,14 @@ class TestDetectMatchBoundaries:
         mock_filter.assert_called_once()
         assert mock_filter.call_args.kwargs["audio_hits"] == hits
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.scorebar.filter_blackouts_with_scorebar")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_audio_hits_default_none_forwarded_as_none(self, mock_chunk, mock_filter):
+    def test_audio_hits_default_none_forwarded_as_none(
+        self, mock_chunk, mock_filter, _mock_region
+    ):
         """Omitted audio_hits reaches the scorebar filter as None."""
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub.
         mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
             t: 128.0 for t in ts
         }
@@ -1620,10 +1707,11 @@ class TestPass1HysteresisIntegration:
         # the blackout and splits the video into two matches.
         assert len(result) == 2
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._probe_single_frame")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_borderline_triggers_refinement_around_missed_blackout(
-        self, mock_chunk, mock_probe
+        self, mock_chunk, mock_probe, _mock_region
     ):
         """A3: Pass 1 borderline frames trigger Pass 2 +-3s refinement.
 
@@ -1650,6 +1738,9 @@ class TestPass1HysteresisIntegration:
             2.0 if 8137.25 <= t <= 8139.75 else 128.0
         )
 
+        # _mock_region: borderline-only Pass 1 has 0 strict blackouts -> masked
+        # gate (#753 A5); FULL_FRAME stub returns None so the standard A3
+        # pseudo-region path still runs and probes around t=8139.
         detect_match_boundaries(
             Path("test.mp4"),
             duration_hint=10000.0,
@@ -1665,12 +1756,16 @@ class TestPass1HysteresisIntegration:
             f"but probed: {sorted(set(probed))[:10]}..."
         )
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._probe_single_frame")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_borderline_refinement_disabled_skips_pseudo_regions(
-        self, mock_chunk, mock_probe
+        self, mock_chunk, mock_probe, _mock_region
     ):
         """With _ENABLE_BORDERLINE_REFINEMENT=False, no pseudo regions added."""
+        # _mock_region: borderline-only Pass 1 has 0 strict blackouts -> masked
+        # gate (#753 A5); FULL_FRAME stub returns None so the standard path runs
+        # and (with A3 disabled) probes no region near 8139.
 
         def chunk_side_effect(vp, ts, cs, ce, si, **kwargs):
             return {t: 20.0 if t == 8139.0 else 128.0 for t in ts}
@@ -1691,10 +1786,16 @@ class TestPass1HysteresisIntegration:
         near_borderline = [t for t in probed if 8136.0 <= t <= 8142.0]
         assert not near_borderline
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._probe_single_frame")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_upper_margin_zero_restores_strict_threshold(self, mock_chunk, mock_probe):
+    def test_upper_margin_zero_restores_strict_threshold(
+        self, mock_chunk, mock_probe, _mock_region
+    ):
         """With _BLACKOUT_THRESHOLD_UPPER_MARGIN=0.0, only b<threshold is blackout."""
+        # _mock_region: with margin 0, the 15.5 frame is not blackout -> 0
+        # blackouts -> masked gate (#753 A5); FULL_FRAME stub falls through to
+        # the standard single-match result.
 
         def chunk_side_effect(vp, ts, cs, ce, si, **kwargs):
             # Make one frame borderline (15.5) but otherwise bright.
@@ -2116,8 +2217,12 @@ class TestDetectMatchBoundariesRationalFps:
     """detect_match_boundaries が source_fps_num/den を _scan_cpu / scan_gpu
     まで伝搬すること (#576 S2.3)."""
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._scan_cpu")
-    def test_cpu_path_receives_rational_fps(self, mock_scan):
+    def test_cpu_path_receives_rational_fps(self, mock_scan, _mock_region):
+        # _mock_region: bright Pass 1 -> 0 blackouts -> masked gate (#753 A5);
+        # FULL_FRAME stub returns None before the masked path can call _scan_cpu
+        # again, so mock_scan.call_args remains the single standard Pass 1 call.
         mock_scan.return_value = {0.0: 100.0, 1.0: 100.0}
 
         detect_match_boundaries(
@@ -2134,9 +2239,13 @@ class TestDetectMatchBoundariesRationalFps:
         assert kwargs.get("source_fps_num") == 60000
         assert kwargs.get("source_fps_den") == 1001
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.gpu_detector.scan_gpu")
     @patch("allaganeye.video.detector._scan_cpu")
-    def test_gpu_path_receives_rational_fps(self, _mock_cpu, mock_gpu):
+    def test_gpu_path_receives_rational_fps(self, _mock_cpu, mock_gpu, _mock_region):
+        # _mock_region: bright Pass 1 -> 0 blackouts -> masked gate (#753 A5);
+        # FULL_FRAME stub returns None before the masked path can call scan_gpu
+        # again, so mock_gpu.call_args remains the single standard Pass 1 call.
         mock_gpu.return_value = {0.0: 100.0, 1.0: 100.0}
 
         detect_match_boundaries(
@@ -2644,7 +2753,7 @@ def _vtuber_filter_capture(seen: dict):
     """Build a filter_blackouts_with_scorebar stand-in that records kwargs.
 
     Mirrors the real signature (allaganeye/video/scorebar.py) so the
-    keyword-only block (band_region / vtuber / audio_hits / stats /
+    keyword-only block (band_region / localize / audio_hits / stats /
     progress_callback) binds exactly as the production call site passes it.
     Returns every region classified as ``match_boundary`` so segments survive
     into the trailing-drop stage.
@@ -2658,13 +2767,13 @@ def _vtuber_filter_capture(seen: dict):
         workers=None,
         *,
         band_region=FULL_FRAME,
-        vtuber=False,
+        localize=False,
         audio_hits=None,
         stats=None,
         progress_callback=None,
     ):
         seen["band_region"] = band_region
-        seen["vtuber"] = vtuber
+        seen["localize"] = localize
         return regions, ["match_boundary"] * len(regions)
 
     return filter_side_effect
@@ -2712,8 +2821,8 @@ def test_vtuber_threads_filter_kwargs_and_gates_trailing_drop(
             vtuber=True,
         )
 
-    # filter received the resolved band region and the vtuber flag at runtime.
-    assert seen["vtuber"] is True
+    # filter received the resolved band region and the localize flag at runtime.
+    assert seen["localize"] is True
     assert seen["band_region"] is not None
     assert seen["band_region"] is band
     # VTuber path must NOT run the irreversible trailing-drop (#797 / #805).
@@ -2753,6 +2862,298 @@ def test_obs_runs_trailing_drop_and_filter_sees_vtuber_false(
             src_resolution=(1920, 1080),
         )
 
-    assert seen["vtuber"] is False
+    assert seen["localize"] is False
     # OBS path runs the trailing-drop exactly once.
     mock_trailing.assert_called_once()
+
+
+# ============================================================
+# TestDecodeGrayRaw / TestProbeFrameGray2d (masked-OBS A2)
+# ============================================================
+
+
+def test_probe_frame_gray2d_returns_2d(monkeypatch):
+    buf = bytes(range(256)) * (det._FRAME_SIZE // 256 + 1)
+    monkeypatch.setattr(det, "_decode_gray_raw", lambda v, t: buf[: det._FRAME_SIZE])
+    frame = det._probe_frame_gray2d(det.Path("x.mp4"), 1.0)
+    assert frame is not None
+    assert frame.shape == (det._SAMPLE_HEIGHT, det._SAMPLE_WIDTH)
+    assert frame.dtype == np.uint8
+
+
+def test_probe_frame_gray2d_none_on_decode_failure(monkeypatch):
+    monkeypatch.setattr(det, "_decode_gray_raw", lambda v, t: None)
+    assert det._probe_frame_gray2d(det.Path("x.mp4"), 1.0) is None
+
+
+def test_probe_single_frame_regression_via_shared_decoder(monkeypatch):
+    # Extraction must preserve _probe_single_frame brightness exactly.
+    buf = bytes([10]) * det._FRAME_SIZE
+    monkeypatch.setattr(det, "_decode_gray_raw", lambda v, t: buf)
+    assert det._probe_single_frame(det.Path("x.mp4"), 1.0) == 10.0
+    monkeypatch.setattr(det, "_decode_gray_raw", lambda v, t: None)
+    assert det._probe_single_frame(det.Path("x.mp4"), 1.0) == 255.0
+
+
+# ============================================================
+# TestResolveMaskedRegion (masked-OBS A3)
+# ============================================================
+
+
+def _masked_frames():
+    out = []
+    for v in (5, 200, 5, 200):
+        f = np.full((det._SAMPLE_HEIGHT, det._SAMPLE_WIDTH), v, dtype=np.uint8)
+        f[120:180, 0:120] = 200  # static bright mask, bottom-left
+        out.append(f)
+    return out
+
+
+def test_resolve_masked_region_finds_mask_free_rect(monkeypatch):
+    seq = iter(_masked_frames() * 20)
+    monkeypatch.setattr(
+        det, "_probe_frame_gray2d", lambda v, t: next(seq, _masked_frames()[0])
+    )
+    region = det._resolve_masked_region(det.Path("x.mp4"), 600.0, None)
+    assert not region.is_full_frame()
+
+
+def test_resolve_masked_region_full_frame_when_no_frames(monkeypatch):
+    monkeypatch.setattr(det, "_probe_frame_gray2d", lambda v, t: None)
+    assert det._resolve_masked_region(det.Path("x.mp4"), 600.0, None).is_full_frame()
+
+
+def test_resolve_masked_region_swallows_exceptions(monkeypatch):
+    def boom(v, t):
+        raise RuntimeError("decode blew up")
+
+    monkeypatch.setattr(det, "_probe_frame_gray2d", boom)
+    assert det._resolve_masked_region(det.Path("x.mp4"), 600.0, None).is_full_frame()
+
+
+# ============================================================
+# Masked fallback (#753 masked-OBS, A-Task 5)
+# ============================================================
+
+
+def _zero_blackout_results():
+    return {float(t): 200.0 for t in range(0, 600, 3)}
+
+
+def test_masked_fallback_triggers_on_zero_blackout(monkeypatch):
+    monkeypatch.setattr(det, "_scan_cpu", lambda *a, **k: _zero_blackout_results())
+    called = {}
+
+    def fake_masked(video_path, **kw):
+        called["hit"] = True
+        return [{"start": 0.0, "end": 300.0}]
+
+    monkeypatch.setattr(det, "_detect_masked_fallback", fake_masked)
+    out = det.detect_match_boundaries(
+        det.Path("x.mp4"),
+        duration_hint=600.0,
+        use_gpu=False,
+        src_resolution=(1920, 1080),
+    )
+    assert called.get("hit") is True
+    assert out == [{"start": 0.0, "end": 300.0}]
+
+
+def test_masked_fallback_not_triggered_when_blackouts_present(monkeypatch):
+    # OBS bit-exact gate: blackouts present + masked=False -> fallback NOT called.
+    results = _zero_blackout_results()
+    results[300.0] = 2.0  # one blackout frame
+    monkeypatch.setattr(det, "_scan_cpu", lambda *a, **k: results)
+    monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **k: [])
+    called = {}
+    monkeypatch.setattr(
+        det, "_detect_masked_fallback", lambda *a, **k: called.setdefault("hit", True)
+    )
+    det.detect_match_boundaries(
+        det.Path("x.mp4"), duration_hint=600.0, use_gpu=False, src_resolution=None
+    )
+    assert "hit" not in called
+
+
+def test_masked_fallback_forced_even_with_blackouts(monkeypatch):
+    results = _zero_blackout_results()
+    results[300.0] = 2.0
+    monkeypatch.setattr(det, "_scan_cpu", lambda *a, **k: results)
+    monkeypatch.setattr(
+        det, "_detect_masked_fallback", lambda *a, **k: [{"start": 1.0, "end": 2.0}]
+    )
+    out = det.detect_match_boundaries(
+        det.Path("x.mp4"),
+        duration_hint=600.0,
+        use_gpu=False,
+        masked=True,
+        src_resolution=(1920, 1080),
+    )
+    assert out == [{"start": 1.0, "end": 2.0}]
+
+
+def test_detect_masked_fallback_returns_none_when_no_region(monkeypatch):
+    monkeypatch.setattr(det, "_resolve_masked_region", lambda *a, **k: det.FULL_FRAME)
+    scan_called = {}
+    monkeypatch.setattr(
+        det, "_scan_cpu", lambda *a, **k: scan_called.setdefault("hit", True) or {}
+    )
+    out = det._detect_masked_fallback(
+        det.Path("x.mp4"),
+        duration_hint=600.0,
+        sample_interval=3.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        use_gpu=False,
+        workers=None,
+        src_resolution=(1920, 1080),
+        codec="h264",
+        gpu_vendor=None,
+        source_fps_num=60,
+        source_fps_den=1,
+        source_fps=None,
+        audio_hits=None,
+        stats=None,
+    )
+    assert out is None
+    assert "hit" not in scan_called  # short-circuits before scanning
+
+
+def test_detect_masked_fallback_wires_region_band_localize(monkeypatch):
+    from allaganeye.video.capture_region import CaptureRegion
+
+    fake_region = CaptureRegion(0.0, 0.0, 1.0, 0.3, source="tierA")
+    monkeypatch.setattr(det, "_resolve_masked_region", lambda *a, **k: fake_region)
+    seen = {}
+
+    def fake_scan(video_path, dur, si, thr, workers, cb, **kw):
+        seen["scan_region"] = kw.get("region")
+        return {0.0: 2.0, 3.0: 2.0, 100.0: 200.0}
+
+    monkeypatch.setattr(det, "_scan_cpu", fake_scan)
+
+    def fake_refine(video_path, regions, thr, dur, workers, **kw):
+        seen["refine_region"] = kw.get("region")
+        return [(0.0, 3.0)]
+
+    monkeypatch.setattr(det, "_refine_blackout_regions", fake_refine)
+
+    def fake_filter(video_path, regions, dur, height, workers, **kw):
+        seen["band_region"] = kw.get("band_region")
+        seen["localize"] = kw.get("localize")
+        return regions, ["match_boundary"]
+
+    monkeypatch.setattr(
+        "allaganeye.video.scorebar.filter_blackouts_with_scorebar", fake_filter
+    )
+    monkeypatch.setattr(
+        det,
+        "_filter_and_extract_segments",
+        lambda *a, **k: [{"start": 0.0, "end": 9.0}],
+    )
+
+    out = det._detect_masked_fallback(
+        det.Path("x.mp4"),
+        duration_hint=600.0,
+        sample_interval=3.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        use_gpu=False,
+        workers=None,
+        src_resolution=(1920, 1080),
+        codec="h264",
+        gpu_vendor=None,
+        source_fps_num=60,
+        source_fps_den=1,
+        source_fps=None,
+        audio_hits=None,
+        stats=None,
+    )
+    assert out == [{"start": 0.0, "end": 9.0}]
+    assert seen["scan_region"] is fake_region
+    assert seen["refine_region"] is fake_region
+    assert seen["band_region"] is det.FULL_FRAME
+    assert seen["localize"] is True
+
+
+# ============================================================
+# A-Task 8: brightness-hint dark+even sampling
+# ============================================================
+
+
+def test_resolve_masked_region_hint_samples_darkest(monkeypatch):
+    # brightness_hint marks 3 very-dark timestamps (the masked blackouts).
+    DUR = 1000.0
+    hint = {
+        float(t): (5.0 if t in (100, 300, 700) else 200.0) for t in range(0, 1000, 10)
+    }
+    sampled = []
+
+    def fake(v, t):
+        sampled.append(round(t, 3))
+        return np.zeros((det._SAMPLE_HEIGHT, det._SAMPLE_WIDTH), dtype=np.uint8)
+
+    monkeypatch.setattr(det, "_probe_frame_gray2d", fake)
+    det._resolve_masked_region(det.Path("x.mp4"), DUR, None, brightness_hint=hint)
+    # The 3 darkest timestamps must be among those decoded (dark-moment sampling).
+    assert {100.0, 300.0, 700.0}.issubset(set(sampled))
+
+
+def test_resolve_masked_region_hint_finds_region(monkeypatch):
+    DUR = 1000.0
+    dark = {100.0, 300.0, 700.0}
+    hint = {float(t): (5.0 if t in dark else 200.0) for t in range(0, 1000, 10)}
+
+    def fake(v, t):
+        # dark timestamps -> game region dark (5); others -> game bright (200).
+        base = 5 if t in dark else 200
+        f = np.full((det._SAMPLE_HEIGHT, det._SAMPLE_WIDTH), base, dtype=np.uint8)
+        f[120:180, 0:120] = 200  # static bright mask, bottom-left
+        return f
+
+    monkeypatch.setattr(det, "_probe_frame_gray2d", fake)
+    r = det._resolve_masked_region(det.Path("x.mp4"), DUR, None, brightness_hint=hint)
+    assert not r.is_full_frame()  # dark+even sampling recovers the region
+
+
+def test_resolve_masked_region_no_hint_unchanged(monkeypatch):
+    # Without a hint, behavior is the prior even-only sampling (backward compat).
+    seq = iter(_masked_frames() * 40)
+    monkeypatch.setattr(
+        det, "_probe_frame_gray2d", lambda v, t: next(seq, _masked_frames()[0])
+    )
+    r = det._resolve_masked_region(det.Path("x.mp4"), 600.0, None)
+    assert not r.is_full_frame()
+
+
+def test_detect_masked_fallback_threads_brightness_hint(monkeypatch):
+    seen = {}
+
+    def fake_resolve(video_path, duration_hint, workers, *, brightness_hint=None):
+        seen["hint"] = brightness_hint
+        return det.FULL_FRAME  # short-circuit (returns None) -- we only check wiring
+
+    monkeypatch.setattr(det, "_resolve_masked_region", fake_resolve)
+    out = det._detect_masked_fallback(
+        det.Path("x.mp4"),
+        duration_hint=600.0,
+        sample_interval=3.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        use_gpu=False,
+        workers=None,
+        src_resolution=(1920, 1080),
+        codec="h264",
+        gpu_vendor=None,
+        source_fps_num=60,
+        source_fps_den=1,
+        source_fps=None,
+        audio_hits=None,
+        stats=None,
+        brightness_results={1.0: 5.0, 2.0: 200.0},
+    )
+    assert out is None
+    assert seen["hint"] == {1.0: 5.0, 2.0: 200.0}

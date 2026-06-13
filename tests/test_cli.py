@@ -1110,6 +1110,40 @@ def test_split_from_metadata_missing_file_exits_with_input_file_error(tmp_path):
     assert result.exit_code == 2  # InputFileError
 
 
+# --- masked flag and vtuber/masked mutex (L3 A6) ---
+
+
+@patch(MODULE)
+def test_split_masked_flag_sets_config(mock_run_split, fake_video):
+    """--masked sets config.masked=True and is threaded through to SplitConfig."""
+    result = runner.invoke(app, ["split", str(fake_video), "--masked"])
+    assert result.exit_code == 0, result.stdout
+    config = mock_run_split.call_args[0][1]
+    assert config.masked is True
+
+
+@patch(MODULE)
+def test_split_vtuber_and_masked_mutually_exclusive(mock_run_split, fake_video):
+    """--vtuber and --masked together exit 5 without calling run_split."""
+    result = runner.invoke(app, ["split", str(fake_video), "--vtuber", "--masked"])
+    assert result.exit_code == 5
+    mock_run_split.assert_not_called()
+    combined = result.stdout + (result.stderr or "")
+    assert "--vtuber and --masked are mutually exclusive" in combined
+    assert result.stdout == "", f"stdout must be empty: {result.stdout!r}"
+
+
+@patch("allaganeye.commands.detect.run_detect")
+def test_detect_vtuber_and_masked_mutually_exclusive(mock_run_detect, fake_video):
+    """--vtuber and --masked together exit 5 on detect without calling run_detect."""
+    result = runner.invoke(app, ["detect", str(fake_video), "--vtuber", "--masked"])
+    assert result.exit_code == 5
+    mock_run_detect.assert_not_called()
+    combined = result.stdout + (result.stderr or "")
+    assert "--vtuber and --masked are mutually exclusive" in combined
+    assert result.stdout == "", f"stdout must be empty: {result.stdout!r}"
+
+
 # --- single-dash long-option hint (#440) ---
 
 

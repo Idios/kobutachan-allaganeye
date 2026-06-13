@@ -389,7 +389,7 @@ def classify_blackout(
     workers: int | None = None,
     *,
     band_region: CaptureRegion = FULL_FRAME,
-    vtuber: bool = False,
+    localize: bool = False,
 ) -> str:
     """Classify a blackout region by scorebar context.
 
@@ -419,9 +419,10 @@ def classify_blackout(
     - ``"non_fl"``: neither side has scorebar -> non-FL blackout (#109)
     - ``"unknown"``: all probes failed on either side -> keep boundary (safe)
     """
-    if vtuber:
-        # VTuber path: position-independent localize as the sole signal
-        # (spec section 8.1 P2-a). The OBS v2 body below is left untouched.
+    if localize:
+        # position-independent: VTuber / masked path - uses the localize
+        # classifier as the sole signal (spec section 8.1 P2-a).
+        # The OBS v2 body below is left untouched.
         return _classify_blackout_localize(
             video_path,
             region,
@@ -575,7 +576,7 @@ def filter_blackouts_with_scorebar(
     workers: int | None = None,
     *,
     band_region: CaptureRegion = FULL_FRAME,
-    vtuber: bool = False,
+    localize: bool = False,
     audio_hits: Sequence[BgmHit] | None = None,
     stats: DetectionStats | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
@@ -623,7 +624,7 @@ def filter_blackouts_with_scorebar(
             height,
             workers,
             band_region=band_region,
-            vtuber=vtuber,
+            localize=localize,
         )
         if progress_callback is not None:
             progress_callback(idx + 1, total_regions)
@@ -689,7 +690,7 @@ def filter_blackouts_with_scorebar(
         height,
         workers,
         band_region=band_region,
-        vtuber=vtuber,
+        localize=localize,
     )
 
 
@@ -702,7 +703,7 @@ def _merge_boundary_pairs(
     workers: int | None,
     *,
     band_region: CaptureRegion = FULL_FRAME,
-    vtuber: bool = False,
+    localize: bool = False,
 ) -> tuple[list[tuple[float, float]], list[str]]:
     """Merge consecutive match_boundary pairs separated by non-FL content.
 
@@ -737,7 +738,7 @@ def _merge_boundary_pairs(
                 probe_points = [
                     gap_start + (gap_end - gap_start) * k / 10 for k in range(1, 10)
                 ]
-                if vtuber:
+                if localize:
                     _, _, probe_signal = _probe_scorebar_context(
                         video_path,
                         probe_points,

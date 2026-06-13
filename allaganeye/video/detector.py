@@ -257,6 +257,71 @@ def _resolve_detect_region(video_path: Path, duration_hint: float) -> CaptureReg
     return region
 
 
+_MASKED_REGION_SAMPLES = 48
+"""Sparse frames sampled across the video for mask-free region detection.
+
+Must span multiple blackouts so game pixels register a dark ``min``; 48 over a
+multi-hour FL recording covers many match boundaries (spec section 5).
+"""
+
+_MASKED_REGION_DARK = 32
+"""Darkest-brightness frames sampled for masked region detection when a Pass-1
+brightness hint is available.  These land on the masked blackouts (game region
+dark) so ``detect_mask_free_region`` can see game pixels reach a dark min."""
+
+_MASKED_REGION_EVEN = 32
+"""Evenly-spaced frames sampled alongside ``_MASKED_REGION_DARK`` (gameplay:
+game region bright) so each game pixel is bright in some frame AND dark in
+another (#753: even-only sampling missed brief blackouts on shorter recordings)."""
+
+
+def _resolve_masked_region(
+    video_path: Path,
+    duration_hint: float,
+    workers: int | None,
+    *,
+    brightness_hint: dict[float, float] | None = None,
+) -> CaptureRegion:
+    """Detect the mask-free game rectangle for masked recordings (#753).
+
+    Samples grayscale frames and runs ``detect_mask_free_region``.  When a
+    ``brightness_hint`` (the standard full-frame Pass-1 ``{timestamp: brightness}``
+    map) is provided, samples the ``_MASKED_REGION_DARK`` darkest timestamps (the
+    masked blackouts, where the game region goes dark) plus ``_MASKED_REGION_EVEN``
+    evenly-spaced timestamps (gameplay, where it is bright) -- both are required
+    so each game pixel is bright in some frame AND dark in another.  Without a
+    hint, falls back to ``_MASKED_REGION_SAMPLES`` even samples.  Any failure
+    (decode, opencv, empty) degrades to FULL_FRAME so the caller can treat
+    FULL_FRAME as "no mask region found".  Never raises.
+    """
+    from allaganeye.video.capture_region import detect_mask_free_region
+
+    try:
+        if brightness_hint:
+            dark_ts = sorted(brightness_hint, key=lambda t: brightness_hint[t])[
+                :_MASKED_REGION_DARK
+            ]
+            even_ts = [
+                duration_hint * (i + 1) / (_MASKED_REGION_EVEN + 1)
+                for i in range(_MASKED_REGION_EVEN)
+            ]
+            times = sorted(set(dark_ts) | set(even_ts))
+        else:
+            n = _MASKED_REGION_SAMPLES
+            times = [duration_hint * (i + 1) / (n + 1) for i in range(n)]
+        max_workers = max(1, min(len(times), workers or os.cpu_count() or 4))
+        frames: list[np.ndarray] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            for frame in pool.map(lambda t: _probe_frame_gray2d(video_path, t), times):
+                if frame is not None:
+                    frames.append(frame)
+        if len(frames) < 2:
+            return FULL_FRAME
+        return detect_mask_free_region(frames)
+    except Exception:
+        return FULL_FRAME
+
+
 def detect_match_boundaries(
     video_path: Path,
     *,
@@ -267,6 +332,7 @@ def detect_match_boundaries(
     min_blackout_duration: float = 3.0,
     use_gpu: bool = False,
     vtuber: bool = False,
+    masked: bool = False,
     workers: int | None = None,
     src_resolution: tuple[int, int] | None = None,
     codec: str | None = None,
@@ -279,6 +345,10 @@ def detect_match_boundaries(
     chunk_dispatch_callback: Callable[[int], None] | None = None,
     gpu_vendor: str | None = None,
     brightness_callback: Callable[[dict[float, float]], None] | None = None,
+    # #821: masked fallback の結果が採用されたとき (明示 --masked / 0-blackout
+    # auto-trigger とも) に一度だけ呼ばれる。request flag と resolved path を
+    # 分離して記録するための通知 seam (brightness_callback と同型)。
+    masked_fallback_callback: Callable[[], None] | None = None,
     # #576: rational fps propagation (preferred over float source_fps).
     # Either pair (num+den) takes precedence; float source_fps is the
     # backward-compatible fallback (Fraction.limit_denominator path).
@@ -293,6 +363,9 @@ def detect_match_boundaries(
             to generate the list of sample timestamps.
         use_gpu: If True, use chunked parallel GPU decode instead of
             per-frame -ss probes.  Falls back to CPU on failure.
+        masked: If True (or when standard full-frame Pass 1 finds no
+            blackout), re-detect on a mask-free region with position-
+            independent classification (#753 masked-OBS).  OBS bit-exact.
         src_resolution: (width, height) from probe.  When provided,
             scorebar-based filtering is applied to remove in-match
             blackouts and non-FL blackouts.
@@ -410,6 +483,38 @@ def detect_match_boundaries(
         t for t, b in results.items() if b < pass1_blackout_threshold
     )
 
+    # Masked fallback (#753 masked-OBS): when standard full-frame Pass 1 finds no
+    # blackout (bright chat-mask overlays hold the average above threshold), OR
+    # --masked forces it, re-detect on a mask-free region with position-
+    # independent classification.  Gated by `not vtuber and (masked or not
+    # blackout_times)`: OBS baselines always have >=1 blackout so `not
+    # blackout_times` is False -> the standard path below runs unchanged
+    # (bit-exact; spec section 3 / R1).  VTuber uses its own path.
+    if not vtuber and (masked or not blackout_times):
+        masked_segments = _detect_masked_fallback(
+            video_path,
+            duration_hint=duration_hint,
+            sample_interval=sample_interval,
+            blackout_threshold=blackout_threshold,
+            min_match_duration=min_match_duration,
+            min_blackout_duration=min_blackout_duration,
+            use_gpu=use_gpu,
+            workers=workers,
+            src_resolution=src_resolution,
+            codec=codec,
+            gpu_vendor=gpu_vendor,
+            source_fps_num=source_fps_num,
+            source_fps_den=source_fps_den,
+            source_fps=source_fps,
+            audio_hits=audio_hits,
+            stats=stats,
+            brightness_results=results,
+        )
+        if masked_segments is not None:
+            if masked_fallback_callback is not None:
+                masked_fallback_callback()
+            return masked_segments
+
     # Group into regions and expand with transition frames (#71)
     blackout_regions = _group_blackout_regions(blackout_times, sample_interval)
     blackout_regions = _expand_regions_with_transitions(
@@ -464,7 +569,7 @@ def detect_match_boundaries(
             height,
             workers,
             band_region=detect_region,
-            vtuber=vtuber,
+            localize=vtuber,
             audio_hits=audio_hits,
             stats=stats,
             progress_callback=scorebar_progress_callback,
@@ -496,6 +601,142 @@ def detect_match_boundaries(
             min_match_duration=min_match_duration,
         )
     return segments
+
+
+def _detect_masked_fallback(
+    video_path: Path,
+    *,
+    duration_hint: float,
+    sample_interval: float,
+    blackout_threshold: float,
+    min_match_duration: float,
+    min_blackout_duration: float,
+    use_gpu: bool,
+    workers: int | None,
+    src_resolution: tuple[int, int] | None,
+    codec: str | None,
+    gpu_vendor: str | None,
+    source_fps_num: int | None,
+    source_fps_den: int | None,
+    source_fps: float | None,
+    audio_hits: Sequence[BgmHit] | None,
+    stats: DetectionStats | None,
+    brightness_results: dict[float, float] | None = None,
+) -> list[MatchBoundary] | None:
+    """Masked-OBS detection: region-aware Pass 1/2 + localize classification.
+
+    Returns segments, or ``None`` when no mask-free region is found (caller falls
+    through to the standard single-segment result).  Deliberately duplicates the
+    standard Pass1/Pass2/classify sequence (calling the same factored helpers)
+    rather than sharing a core, so the standard OBS path is structurally
+    unchanged (bit-exact mandate; spec section 3 / R1).  Uses ``band_region=
+    FULL_FRAME`` + ``localize=True`` (full-frame position-independent scorebar;
+    v2 absolute coords FN on ultrawide, spec section 5).  No trailing-drop:
+    ``_drop_post_match_trailing`` probes v2 absolute coords which FN on
+    ultrawide (same rationale as the VTuber gate in detect_match_boundaries).
+    """
+    region = _resolve_masked_region(
+        video_path, duration_hint, workers, brightness_hint=brightness_results
+    )
+    if region.is_full_frame():
+        return None  # no mask region found -> defer to the standard result
+
+    if use_gpu:
+        from allaganeye.video.gpu_detector import scan_gpu
+
+        try:
+            results = scan_gpu(
+                video_path,
+                duration_hint,
+                sample_interval,
+                blackout_threshold,
+                None,
+                codec=codec,
+                vendor=gpu_vendor,
+                source_fps_num=source_fps_num,
+                source_fps_den=source_fps_den,
+                source_fps=source_fps,
+                region=region,
+            )
+        except VideoProcessingError:
+            results = _scan_cpu(
+                video_path,
+                duration_hint,
+                sample_interval,
+                blackout_threshold,
+                workers,
+                None,
+                source_fps_num=source_fps_num,
+                source_fps_den=source_fps_den,
+                source_fps=source_fps,
+                region=region,
+            )
+    else:
+        results = _scan_cpu(
+            video_path,
+            duration_hint,
+            sample_interval,
+            blackout_threshold,
+            workers,
+            None,
+            source_fps_num=source_fps_num,
+            source_fps_den=source_fps_den,
+            source_fps=source_fps,
+            region=region,
+        )
+
+    pass1_blackout_threshold = blackout_threshold + _BLACKOUT_THRESHOLD_UPPER_MARGIN
+    blackout_times = sorted(
+        t for t, b in results.items() if b < pass1_blackout_threshold
+    )
+    blackout_regions = _group_blackout_regions(blackout_times, sample_interval)
+    blackout_regions = _expand_regions_with_transitions(
+        blackout_regions, results, sample_interval, _TRANSITION_THRESHOLD
+    )
+    if _ENABLE_BORDERLINE_REFINEMENT:
+        borderline_regions = _borderline_pseudo_regions(
+            results, blackout_threshold, duration_hint
+        )
+        if borderline_regions:
+            blackout_regions = _merge_regions(
+                blackout_regions + borderline_regions, sample_interval
+            )
+
+    refined_regions = _refine_blackout_regions(
+        video_path,
+        blackout_regions,
+        blackout_threshold,
+        duration_hint,
+        workers,
+        region=region,
+    )
+
+    classifications: list[str] | None = None
+    if src_resolution is not None:
+        from allaganeye.video.scorebar import filter_blackouts_with_scorebar
+
+        height = _scaled_height(src_resolution[0], src_resolution[1])
+        refined_regions, classifications = filter_blackouts_with_scorebar(
+            video_path,
+            refined_regions,
+            duration_hint,
+            height,
+            workers,
+            band_region=FULL_FRAME,
+            localize=True,
+            audio_hits=audio_hits,
+            stats=stats,
+        )
+
+    effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
+    return _filter_and_extract_segments(
+        refined_regions,
+        duration_hint,
+        min_match_duration,
+        effective_min,
+        classifications=classifications,
+        stats=stats,
+    )
 
 
 def _decode_chunk_cpu(
@@ -867,23 +1108,13 @@ def _generate_timestamps(duration: float, interval: float) -> list[float]:
     return timestamps
 
 
-def _probe_single_frame(
-    video_path: Path,
-    timestamp: float,
-    region: CaptureRegion = FULL_FRAME,
-) -> float:
-    """Probe a single frame's mean brightness using ffmpeg -ss seek.
+def _decode_gray_raw(video_path: Path, timestamp: float) -> bytes | None:
+    """Decode exactly one 320x180 grayscale frame to raw bytes via ffmpeg -ss.
 
-    Uses input seeking (``-ss`` before ``-i``) for fast keyframe-based
-    access, then decodes exactly one frame at 320x180 grayscale.
-
-    Brightness is computed via :func:`_frame_brightness`, so *region*
-    defaults to ``FULL_FRAME`` (the 1-D ``float(frame.mean())`` path is
-    byte-identical to the pre-region behavior; a band region reshapes the
-    raw buffer to ``(_SAMPLE_HEIGHT, _SAMPLE_WIDTH)`` and crops).
-
-    Returns the mean brightness (0-255).  Returns 255.0 on probe failure
-    (treated as non-blackout to avoid false positives).
+    Shared by :func:`_probe_single_frame` (brightness) and
+    :func:`_probe_frame_gray2d` (2D array).  Returns the first ``_FRAME_SIZE``
+    bytes, or ``None`` on timeout / ffmpeg error / short read.  Raises
+    ``VideoProcessingError`` only when ffmpeg is missing.
     """
     cmd = [
         find_ffmpeg(),
@@ -903,7 +1134,6 @@ def _probe_single_frame(
         "gray",
         "pipe:1",
     ]
-
     try:
         result = subprocess.run(cmd, capture_output=True, timeout=30)
     except FileNotFoundError as e:
@@ -911,16 +1141,44 @@ def _probe_single_frame(
             "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
         ) from e
     except subprocess.TimeoutExpired:
-        return 255.0  # treat timeout as non-blackout
-
+        return None
     if result.returncode != 0:
-        return 255.0  # ffmpeg error, treat as non-blackout
-
+        return None
     if len(result.stdout) < _FRAME_SIZE:
-        return 255.0  # incomplete frame, treat as non-blackout
+        return None
+    return result.stdout[:_FRAME_SIZE]
 
-    frame = np.frombuffer(result.stdout[:_FRAME_SIZE], dtype=np.uint8)
+
+def _probe_single_frame(
+    video_path: Path,
+    timestamp: float,
+    region: CaptureRegion = FULL_FRAME,
+) -> float:
+    """Probe a single frame's mean brightness using ffmpeg -ss seek.
+
+    Returns the mean brightness (0-255).  Returns 255.0 on probe failure
+    (treated as non-blackout to avoid false positives).  Brightness is computed
+    via :func:`_frame_brightness`, so *region* defaults to ``FULL_FRAME`` (the
+    1-D ``float(frame.mean())`` path is byte-identical to the pre-region
+    behavior; a band region reshapes the raw buffer and crops).
+    """
+    raw = _decode_gray_raw(video_path, timestamp)
+    if raw is None:
+        return 255.0
+    frame = np.frombuffer(raw, dtype=np.uint8)
     return _frame_brightness(frame, region)
+
+
+def _probe_frame_gray2d(video_path: Path, timestamp: float) -> np.ndarray | None:
+    """Probe one 320x180 grayscale frame as a 2D ``(H, W)`` uint8 array.
+
+    Returns ``None`` on probe failure.  Used by :func:`_resolve_masked_region`
+    for static-overlay mask-free region detection (#753 masked-OBS).
+    """
+    raw = _decode_gray_raw(video_path, timestamp)
+    if raw is None:
+        return None
+    return np.frombuffer(raw, dtype=np.uint8).reshape(_SAMPLE_HEIGHT, _SAMPLE_WIDTH)
 
 
 def _probe_frame_rgb(

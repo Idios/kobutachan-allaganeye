@@ -19,6 +19,9 @@ class DetectionParams(TypedDict):
     no_audio: bool
     use_gpu: float | bool | None
     workers: float | None
+    vtuber: NotRequired[bool]
+    masked: NotRequired[bool]
+    masked_fallback_used: NotRequired[bool]
 
 
 class Match(TypedDict):
