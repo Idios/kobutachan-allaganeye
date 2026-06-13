@@ -324,3 +324,44 @@ def test_merged_to_main_but_not_latest_develop_deleted(
     assert_valid_ndjson(result.ndjson)
     deleted = _of_event(result.ndjson, "deleted")
     assert any(e["name"] == "claude/scenario10" for e in deleted), result.stdout
+
+
+# ---------- Scenario 11: double-digit version は sort -V でのみ正しく最新判定 ----------
+
+
+def test_latest_develop_uses_version_sort_for_double_digits(
+    tmp_repo: Path,
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+) -> None:
+    """develop-0.10.0 vs 0.9.0 で version sort が最新を選ぶことを pin (#816).
+
+    `sort -V` が lexical `sort` に退行すると 0.9.0 > 0.10.0 と誤判定し、
+    branch を含まない旧 develop が merge base になって kept に倒れる
+    (v0.10.0 到達時に silent 再発する bug class)。本テストはその退行で fail する。
+    """
+    import subprocess
+
+    make_claude_branch("scenario11", merged=True, age_seconds=86400 * 2)
+    # NOTE: make_claude_branch は呼び出しごとに origin/develop-0.2.0 を HEAD へ
+    # 再 mirror するため (conftest)、ref の削除/付け替えは最後の呼び出しの後で行う。
+    subprocess.run(
+        ["git", "update-ref", "-d", "refs/remotes/origin/develop-0.2.0"],
+        cwd=tmp_repo,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "update-ref", "refs/remotes/origin/develop-0.9.0", "HEAD^1"],
+        cwd=tmp_repo,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "update-ref", "refs/remotes/origin/develop-0.10.0", "HEAD"],
+        cwd=tmp_repo,
+        check=True,
+    )
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
+    deleted = _of_event(result.ndjson, "deleted")
+    assert any(e["name"] == "claude/scenario11" for e in deleted), result.stdout
