@@ -14,11 +14,13 @@ import numpy as np
 
 from allaganeye.exceptions import STDERR_TAIL_BYTES, VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
+from allaganeye.video.capture_region import FULL_FRAME, CaptureRegion
 from allaganeye.video.detector import (
     SEEK_LEAD_SECONDS,
     _FRAME_SIZE,
     _SAMPLE_HEIGHT,
     _SAMPLE_WIDTH,
+    _frame_brightness,
     _generate_timestamps,
     _resolve_fps_rational,
     _sample_chunk_frames,
@@ -172,6 +174,7 @@ def scan_gpu(
     source_fps_num: int | None = None,
     source_fps_den: int | None = None,
     source_fps: float | None = None,
+    region: CaptureRegion = FULL_FRAME,
 ) -> dict[float, float]:
     """GPU mode: chunked parallel decode (#576: new path or legacy via env var).
 
@@ -281,6 +284,7 @@ def scan_gpu(
                 source_fps_den=source_fps_den,
                 source_fps=source_fps,
                 is_tail_chunk=is_tail,
+                region=region,
             ): (chunk_start, chunk_end)
             for chunk_start, chunk_end, chunk_timestamps, is_tail in chunks
         }
@@ -371,11 +375,16 @@ def _decode_chunk(
     source_fps_den: int | None = None,
     source_fps: float | None = None,
     is_tail_chunk: bool = False,
+    region: CaptureRegion = FULL_FRAME,
 ) -> tuple[dict[float, float], str]:
     """GPU chunk decode dispatcher (#576).
 
     Falls back to legacy fps-filter path when env var
     ``ALLAGANEYE_DETECT_FPS_FILTER=1`` or no rational fps supplied.
+
+    *region* (default ``FULL_FRAME``) selects the brightness sub-rectangle and
+    is threaded to the brightness site so GPU stays bit-exact with the CPU
+    ``_frame_brightness`` path (Phase 1 B3, Codex #8).
     """
     use_legacy = _use_legacy_fps_filter() or (
         source_fps_num is None and source_fps_den is None and source_fps is None
@@ -389,6 +398,7 @@ def _decode_chunk(
             codec=codec,
             chunk_timestamps=chunk_timestamps,
             vendor=vendor,
+            region=region,
         )
 
     fps_num, fps_den = _resolve_fps_rational(
@@ -407,6 +417,7 @@ def _decode_chunk(
         fps_num,
         fps_den,
         is_tail_chunk,
+        region=region,
     )
 
 
@@ -418,6 +429,7 @@ def _decode_chunk_legacy(
     codec: str | None = None,
     chunk_timestamps: list[float] | None = None,
     vendor: str | None = None,
+    region: CaptureRegion = FULL_FRAME,
 ) -> tuple[dict[float, float], str]:
     """Legacy fps-filter chunk decode (pre-#576). Kept for env var rollback.
 
@@ -538,7 +550,7 @@ def _decode_chunk_legacy(
         # (can happen with keyframe-aligned -ss seeks near chunk_end).
         while offset + _FRAME_SIZE <= len(data) and frame_idx < len(chunk_timestamps):
             frame = np.frombuffer(data[offset : offset + _FRAME_SIZE], dtype=np.uint8)
-            results[chunk_timestamps[frame_idx]] = float(frame.mean())
+            results[chunk_timestamps[frame_idx]] = _frame_brightness(frame, region)
             offset += _FRAME_SIZE
             frame_idx += 1
     else:
@@ -548,7 +560,7 @@ def _decode_chunk_legacy(
         # pass chunk_timestamps from scan_gpu.
         while offset + _FRAME_SIZE <= len(data):
             frame = np.frombuffer(data[offset : offset + _FRAME_SIZE], dtype=np.uint8)
-            brightness = float(frame.mean())
+            brightness = _frame_brightness(frame, region)
             timestamp = round(chunk_start + frame_idx * sample_interval, 4)
             if timestamp < chunk_end:
                 results[timestamp] = brightness
@@ -569,6 +581,7 @@ def _decode_chunk_v2(
     fps_num: int,
     fps_den: int,
     is_tail_chunk: bool,
+    region: CaptureRegion = FULL_FRAME,
 ) -> tuple[dict[float, float], str]:
     """New GPU chunk decode: dual seek + select filter (#576 Option 1).
 
@@ -672,6 +685,7 @@ def _decode_chunk_v2(
                     fps_den=fps_den,
                     expected_frames=expected_frames,
                     is_tail_chunk=is_tail_chunk,
+                    region=region,
                 )
                 proc.wait(timeout=max(300, int(chunk_duration * 2)))
                 # Read stderr from temp file (no pipe backpressure issue)

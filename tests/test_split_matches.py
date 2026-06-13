@@ -128,6 +128,40 @@ def test_pipeline_happy_path(mock_probe, mock_detect, mock_split, tmp_path):
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
+def test_pipeline_threads_vtuber_default_false(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """config.vtuber=False (default) reaches detect_match_boundaries (L3 B6)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    _, detect_kwargs = mock_detect.call_args
+    assert detect_kwargs["vtuber"] is False
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_pipeline_threads_vtuber_true(mock_probe, mock_detect, mock_split, tmp_path):
+    """config.vtuber=True is threaded into detect_kwargs (L3 B6)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, vtuber=True)
+
+    run_split(Path("input.mp4"), config)
+
+    _, detect_kwargs = mock_detect.call_args
+    assert detect_kwargs["vtuber"] is True
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
 def test_pipeline_metadata_json_content(mock_probe, mock_detect, mock_split, tmp_path):
     """metadata.json contains correct structure and values."""
     mock_probe.return_value = PROBE_RESULT
@@ -1093,6 +1127,43 @@ class TestCacheRoundTrip:
         different_config = SplitConfig(output_dir=tmp_path / "output", no_audio=True)
         assert _load_cache(cache_path, cache_video, 1.0, different_config) is None
 
+    def test_param_mismatch_vtuber(self, cache_video, cache_config, tmp_path):
+        """標準 run の cache を vtuber run が再利用しない -> None (gate の cache bypass 防止)."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        vtuber_config = SplitConfig(output_dir=tmp_path / "output", vtuber=True)
+        assert _load_cache(cache_path, cache_video, 1.0, vtuber_config) is None
+
+    def test_param_mismatch_vtuber_reverse(self, cache_video, cache_config, tmp_path):
+        """vtuber run の cache を標準 run が再利用しない -> None (released path 保護)."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        vtuber_config = SplitConfig(output_dir=tmp_path / "output", vtuber=True)
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, vtuber_config, CACHE_BOUNDARIES
+        )
+        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+
+    def test_legacy_cache_without_vtuber_key(self, cache_video, cache_config, tmp_path):
+        """vtuber key なし legacy cache: 標準 run は有効 (後方互換)、vtuber run は無効。
+
+        --vtuber 導入前の cache はすべて標準 path の結果なので missing = False と
+        同値に扱う (既存ユーザーの cache を無駄に invalidate しない)。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("vtuber", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        assert (
+            _load_cache(cache_path, cache_video, 1.0, cache_config) == CACHE_BOUNDARIES
+        )
+        vtuber_config = SplitConfig(output_dir=tmp_path / "output", vtuber=True)
+        assert _load_cache(cache_path, cache_video, 1.0, vtuber_config) is None
+
     def test_version_mismatch(self, cache_video, cache_config, tmp_path):
         """cache_version mismatch -> None."""
         cache_path = tmp_path / "output" / ".detection_cache.json"
@@ -1295,6 +1366,7 @@ class TestRefineProgressBar:
             workers,
             *,
             progress_callback=None,
+            region=None,
         ):
             # Mimic Pass 2: publish total then advance per probe (#366)
             total_probes = 4
@@ -1349,6 +1421,7 @@ class TestRefineProgressBar:
             workers,
             *,
             progress_callback=None,
+            region=None,
         ):
             # Mimic Pass 2: publish total then advance per probe (#366)
             total_probes = 6
@@ -1384,6 +1457,8 @@ class TestRefineProgressBar:
                 h,
                 w,
                 *,
+                band_region=None,
+                vtuber=False,
                 audio_hits=None,
                 stats=None,
                 progress_callback=None,
@@ -3509,6 +3584,8 @@ def test_verbose_cache_hit_prints_detection_params(
     # (#384 contract: audio display is driven by the helper, not
     # config.no_audio directly).
     assert "audio=frozen" in out
+    # vtuber provenance token (PR #823 R1): 検出 mode を表示に含める。
+    assert "vtuber=off" in out
 
 
 @patch(f"{MODULE}.split_video")
@@ -3561,6 +3638,53 @@ def test_verbose_cache_hit_audio_line_matches_cache_miss_path(
     tail = out[header_idx:]
     # When AUDIO_FROZEN=False and no_audio=False, audio=on.
     assert "audio=on" in tail, f"expected audio=on in cache hit summary: {tail[:400]!r}"
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_prints_vtuber_on_token(
+    mock_probe, mock_split, tmp_path, capsys
+):
+    """vtuber=True で生成した cache の hit 表示は vtuber=on (provenance 可視化).
+
+    cache key fix (PR #823) で mode 混在 hit は不可能になったが、表示にも
+    provenance を出して troubleshoot 報告から検出 mode を判別可能にする。
+    """
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, vtuber=True)
+    _seed_cache(source, tmp_path, config)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True)
+    out = capsys.readouterr().out
+
+    header_idx = out.find("Cache hit:")
+    assert header_idx >= 0
+    assert "vtuber=on" in out[header_idx:]
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_miss_summary_includes_vtuber_token(
+    mock_probe, mock_split, mock_run_detection, tmp_path, capsys
+):
+    """cache-miss の Detecting summary に vtuber token が出る (provenance 可視化)."""
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+    mock_run_detection.return_value = BOUNDARIES
+
+    config = SplitConfig(output_dir=tmp_path, no_cache=True, vtuber=True)
+    run_split(source, config, verbose=True)
+    assert "vtuber=on" in capsys.readouterr().out
+
+    config_off = SplitConfig(output_dir=tmp_path, no_cache=True)
+    run_split(source, config_off, verbose=True)
+    assert "vtuber=off" in capsys.readouterr().out
 
 
 def test_display_cache_hit_params_malformed_json_emits_unavailable(tmp_path, capsys):

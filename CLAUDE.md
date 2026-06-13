@@ -93,6 +93,8 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `video/probe.py` | ffprobe でメタデータ取得（解像度、fps、長さ） |
 | `video/detector.py` | ffmpeg 並列プローブで暗転検知、試合境界抽出（CPU モード） |
 | `video/gpu_detector.py` | GPU アクセラレーション検知（チャンク並列デコード） |
+| `video/capture_region.py` | 検出 ROI（`CaptureRegion`）の解決。scorebar 帯 anchor の多フレーム consensus（`detect_scorebar_band_region`）/ FULL_FRAME 縮退。`--vtuber` gate 内でのみ有効（L3 Phase 1。検出 subsystem の現状 map は [docs/detection-map.md](docs/detection-map.md)） |
+| `video/presence.py` | presence（scorebar 在/不在）ベースの試合検出エンジン + GT 突合ハーネス基盤（L3 Phase 1。2 信号 fusion 再アーキ spec 参照） |
 | `video/scorebar.py` | スコアバーフィルタリング（暗転分類・試合内/非FL判定）+ 音声昇格 |
 | `video/splitter.py` | FFmpeg で動画分割（-c copy） |
 | `audio/extract.py` | ffmpeg で音声 PCM 抽出 |
@@ -198,6 +200,7 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 - MKV: OBSの長時間録画（30-80GB、複数試合を含む）
 - サブディレクトリ（`20260116/` 等）: 手動で試合分割済みのMP4（`YYYYMMDD_N.mp4`）
 - 未設定の場合、`sample_video_dir` fixture を使うテスト（`slow` マーカー）はスキップされる
+- VTuber/masked 系 slow テスト用 VOD は別変数 `ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER`（既定 `E:/allaganeye-samples`）。詳細は [`docs/testing-guide.md`](docs/testing-guide.md) §サンプル動画データの設定
 
 ## Portable ZIP 哲学
 

@@ -17,6 +17,7 @@ import numpy as np
 from allaganeye.audio.matcher import BgmHit
 from allaganeye.exceptions import VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
+from allaganeye.video.capture_region import CaptureRegion, FULL_FRAME, region_mean
 
 
 class MatchBoundary(TypedDict):
@@ -99,6 +100,19 @@ def _resolve_fps_rational(
     )
 
 
+def _frame_brightness(frame: np.ndarray, region: CaptureRegion = FULL_FRAME) -> float:
+    """CPU scan の 1-D grayscale buffer (320*180,) の平均輝度。
+
+    FULL_FRAME のときは 1-D のまま ``float(frame.mean())`` (現行と bit-exact、
+    reshape による丸め経路変化なし)。band region のときのみ
+    ``(_SAMPLE_HEIGHT, _SAMPLE_WIDTH)`` に reshape して ``region_mean`` で crop する。
+    """
+    if region.is_full_frame():
+        return float(frame.mean())
+    frame2d = frame.reshape(_SAMPLE_HEIGHT, _SAMPLE_WIDTH)
+    return region_mean(frame2d, region)
+
+
 def _sample_chunk_frames(
     stream: IO[bytes] | None,
     chunk_start: float,
@@ -107,6 +121,7 @@ def _sample_chunk_frames(
     fps_den: int,
     expected_frames: int,
     is_tail_chunk: bool,
+    region: CaptureRegion = FULL_FRAME,
 ) -> dict[float, float]:
     """Sample frames from a pre-filtered stream (#576 select-filter path).
 
@@ -161,7 +176,7 @@ def _sample_chunk_frames(
             break
         if emit_count < len(chunk_timestamps):
             frame = np.frombuffer(raw, dtype=np.uint8)
-            brightness = float(frame.mean())
+            brightness = _frame_brightness(frame, region)
             results[chunk_timestamps[emit_count]] = brightness
         emit_count += 1
 
@@ -196,6 +211,52 @@ def _resolve_workers(workers: int | None) -> int:
     return min(os.cpu_count() or 4, 32)
 
 
+def _resolve_detect_region(video_path: Path, duration_hint: float) -> CaptureRegion:
+    """Stage 0: scorebar 帯 anchor を解決する。失敗時は FULL_FRAME (OBS 安全縮退)。
+
+    OBS (全画面 game) では localize がインセット帯を見つけられず consensus が
+    成立しないため FULL_FRAME に縮退し、検出は現行と bit-exact になる。VTuber は
+    帯 ROI が解決される。anchor の例外は決して検出を壊さない (FULL_FRAME に握り潰す)。
+    """
+    from allaganeye.video.capture_region import (
+        detect_scorebar_band_region,
+        localize_from_rgb_bytes,
+    )
+
+    def _localize_at(t: float):
+        return localize_from_rgb_bytes(
+            _probe_frame_rgb_hires(video_path, t),
+            height=_SCOREBAR_V2_PROBE_HEIGHT,
+            width=_SCOREBAR_V2_PROBE_WIDTH,
+        )
+
+    try:
+        region = detect_scorebar_band_region(
+            duration=duration_hint,
+            probe_w=_SCOREBAR_V2_PROBE_WIDTH,
+            probe_h=_SCOREBAR_V2_PROBE_HEIGHT,
+            localize_fn=_localize_at,
+        )
+    except Exception:
+        # Anchor failure must never break detect: degrade to FULL_FRAME so the
+        # OBS / error path stays bit-exact with the pre-region behavior.
+        # R4: 縮退自体は意図的設計だが、silent にせず痕跡を残す (診断性のみ)。
+        logger.warning(
+            "scorebar band anchor failed; degrading to FULL_FRAME", exc_info=True
+        )
+        return FULL_FRAME
+    if region.is_full_frame():
+        # consensus-miss (非例外縮退) も silent にしない (R5): --vtuber 明示 run
+        # が FULL_FRAME (汚染 path) で続行することを痕跡に残す。
+        logger.warning(
+            "band anchor found no scorebar-band consensus; "
+            "continuing with FULL_FRAME (--vtuber)"
+        )
+    else:
+        logger.debug("band anchor resolved: %s", region)
+    return region
+
+
 def detect_match_boundaries(
     video_path: Path,
     *,
@@ -205,6 +266,7 @@ def detect_match_boundaries(
     min_match_duration: float = 300.0,
     min_blackout_duration: float = 3.0,
     use_gpu: bool = False,
+    vtuber: bool = False,
     workers: int | None = None,
     src_resolution: tuple[int, int] | None = None,
     codec: str | None = None,
@@ -264,6 +326,14 @@ def detect_match_boundaries(
             "Cannot determine video duration. Provide duration_hint via probe."
         )
 
+    # Stage 0 (#753 / B4-rev): resolve a scorebar-band anchor before any scan.
+    # Stage 0 band anchor runs only when VTuber is explicit (spec section 3.6).
+    # OBS (vtuber=False) stays FULL_FRAME -> current bit-exact. localize also
+    # succeeds on OBS, so auto-detection is not possible -> the flag gates it.
+    detect_region = (
+        _resolve_detect_region(video_path, duration_hint) if vtuber else FULL_FRAME
+    )
+
     # Pass 1: scan for blackout frames
     pass1_start = time.monotonic()
     resolved_mode = "CPU"
@@ -284,6 +354,7 @@ def detect_match_boundaries(
                 source_fps_num=source_fps_num,
                 source_fps_den=source_fps_den,
                 source_fps=source_fps,
+                region=detect_region,
             )
             resolved_mode = "GPU"
         except VideoProcessingError:
@@ -298,6 +369,7 @@ def detect_match_boundaries(
                 source_fps_num=source_fps_num,
                 source_fps_den=source_fps_den,
                 source_fps=source_fps,
+                region=detect_region,
             )
             resolved_mode = "CPU (GPU fallback)"
     else:
@@ -311,6 +383,7 @@ def detect_match_boundaries(
             source_fps_num=source_fps_num,
             source_fps_den=source_fps_den,
             source_fps=source_fps,
+            region=detect_region,
         )
     pass1_elapsed = time.monotonic() - pass1_start
 
@@ -370,6 +443,7 @@ def detect_match_boundaries(
         duration_hint,
         workers,
         progress_callback=refine_progress_callback,
+        region=detect_region,
     )
     pass2_elapsed = time.monotonic() - pass2_start
     if stats is not None:
@@ -389,6 +463,8 @@ def detect_match_boundaries(
             duration_hint,
             height,
             workers,
+            band_region=detect_region,
+            vtuber=vtuber,
             audio_hits=audio_hits,
             stats=stats,
             progress_callback=scorebar_progress_callback,
@@ -406,11 +482,12 @@ def detect_match_boundaries(
         classifications=region_classifications,
         stats=stats,
     )
-    # #797: drop a trailing post-match run (final match ended, recording
-    # continued into lobby/city) when its early candidate-match window shows
-    # no scorebar at any strided probe point (+ window-end probe). Only
-    # runs when scorebar classification is available (src_resolution set).
-    if src_resolution is not None:
+    # #797: drop a trailing post-match run when its early candidate-match window
+    # shows no scorebar at any strided probe point. Skipped for VTuber
+    # (vtuber=True): _drop_post_match_trailing probes v2 (absolute coords) which
+    # FNs on an inset scorebar and would silently drop a real VTuber final match
+    # (spec section 8.1 P2-d / Codex #1). VTuber trailing is handled in Phase 3.
+    if src_resolution is not None and not vtuber:
         segments = _drop_post_match_trailing(
             segments,
             video_path,
@@ -432,6 +509,7 @@ def _decode_chunk_cpu(
     source_fps_den: int | None = None,
     source_fps: float | None = None,
     is_tail_chunk: bool = False,
+    region: CaptureRegion = FULL_FRAME,
 ) -> dict[float, float]:
     """Decode a chunk in CPU mode.
 
@@ -453,6 +531,7 @@ def _decode_chunk_cpu(
             chunk_start,
             chunk_end,
             sample_interval,
+            region,
         )
 
     fps_num, fps_den = _resolve_fps_rational(
@@ -469,6 +548,7 @@ def _decode_chunk_cpu(
         fps_num,
         fps_den,
         is_tail_chunk,
+        region,
     )
 
 
@@ -478,6 +558,7 @@ def _decode_chunk_cpu_legacy(
     chunk_start: float,
     chunk_end: float,
     sample_interval: float,
+    region: CaptureRegion = FULL_FRAME,
 ) -> dict[float, float]:
     """Legacy fps-filter chunk decode (pre-#576). Kept for env var rollback.
 
@@ -536,7 +617,7 @@ def _decode_chunk_cpu_legacy(
 
     while offset + _FRAME_SIZE <= len(data) and frame_idx < len(chunk_timestamps):
         frame = np.frombuffer(data[offset : offset + _FRAME_SIZE], dtype=np.uint8)
-        results[chunk_timestamps[frame_idx]] = float(frame.mean())
+        results[chunk_timestamps[frame_idx]] = _frame_brightness(frame, region)
         offset += _FRAME_SIZE
         frame_idx += 1
 
@@ -557,6 +638,7 @@ def _decode_chunk_cpu_v2(
     fps_num: int,
     fps_den: int,
     is_tail_chunk: bool,
+    region: CaptureRegion = FULL_FRAME,
 ) -> dict[float, float]:
     """New path: dual seek + select filter + -fps_mode passthrough (#576 Option 1).
 
@@ -649,6 +731,7 @@ def _decode_chunk_cpu_v2(
                     fps_den=fps_den,
                     expected_frames=expected_frames,
                     is_tail_chunk=is_tail_chunk,
+                    region=region,
                 )
                 proc.wait(timeout=max(300, int(chunk_duration * 2)))
                 # Read stderr from temp file (no pipe backpressure issue)
@@ -701,6 +784,7 @@ def _scan_cpu(
     source_fps_num: int | None = None,
     source_fps_den: int | None = None,
     source_fps: float | None = None,
+    region: CaptureRegion = FULL_FRAME,
 ) -> dict[float, float]:
     """CPU mode: chunked decode (output seek + Python N-th sampling, #576).
 
@@ -746,6 +830,7 @@ def _scan_cpu(
                 source_fps_den=source_fps_den,
                 source_fps=source_fps,
                 is_tail_chunk=is_tail,
+                region=region,
             ): (c_start, c_ts)
             for c_start, c_end, c_ts, is_tail in chunks
         }
@@ -782,11 +867,20 @@ def _generate_timestamps(duration: float, interval: float) -> list[float]:
     return timestamps
 
 
-def _probe_single_frame(video_path: Path, timestamp: float) -> float:
+def _probe_single_frame(
+    video_path: Path,
+    timestamp: float,
+    region: CaptureRegion = FULL_FRAME,
+) -> float:
     """Probe a single frame's mean brightness using ffmpeg -ss seek.
 
     Uses input seeking (``-ss`` before ``-i``) for fast keyframe-based
     access, then decodes exactly one frame at 320x180 grayscale.
+
+    Brightness is computed via :func:`_frame_brightness`, so *region*
+    defaults to ``FULL_FRAME`` (the 1-D ``float(frame.mean())`` path is
+    byte-identical to the pre-region behavior; a band region reshapes the
+    raw buffer to ``(_SAMPLE_HEIGHT, _SAMPLE_WIDTH)`` and crops).
 
     Returns the mean brightness (0-255).  Returns 255.0 on probe failure
     (treated as non-blackout to avoid false positives).
@@ -825,7 +919,8 @@ def _probe_single_frame(video_path: Path, timestamp: float) -> float:
     if len(result.stdout) < _FRAME_SIZE:
         return 255.0  # incomplete frame, treat as non-blackout
 
-    return float(np.frombuffer(result.stdout[:_FRAME_SIZE], dtype=np.uint8).mean())
+    frame = np.frombuffer(result.stdout[:_FRAME_SIZE], dtype=np.uint8)
+    return _frame_brightness(frame, region)
 
 
 def _probe_frame_rgb(
@@ -1687,6 +1782,7 @@ def _refine_blackout_regions(
     total_duration: float,
     workers: int | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
+    region: CaptureRegion = FULL_FRAME,
 ) -> list[tuple[float, float]]:
     """Re-probe blackout regions at fine interval for precise duration.
 
@@ -1698,6 +1794,10 @@ def _refine_blackout_regions(
     to publish the total, then once per completed probe with the running
     ``(completed, total)``.  This lets callers drive a progress bar during
     the long ThreadPoolExecutor wait (#366).
+
+    *region* is forwarded to :func:`_probe_single_frame` for per-frame
+    brightness.  It defaults to ``FULL_FRAME`` so the OBS Pass 2 path stays
+    bit-exact with the pre-region behavior (#753 / Task B2).
     """
     if not blackout_regions:
         return blackout_regions
@@ -1724,7 +1824,8 @@ def _refine_blackout_regions(
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
-            pool.submit(_probe_single_frame, video_path, t): t for t in sorted_probes
+            pool.submit(_probe_single_frame, video_path, t, region): t
+            for t in sorted_probes
         }
         completed = 0
         for future in as_completed(futures):

@@ -21,6 +21,7 @@ from pathlib import Path
 import typer
 
 from allaganeye.commands.split_matches import (
+    _audio_status_str,
     _auto_sample_interval,
     _build_metadata_payload,
     _build_system_info,
@@ -38,6 +39,7 @@ from allaganeye.commands.split_matches import (
     _run_audio_scan,
     _run_detection,
     _save_cache,
+    _workers_summary_str,
     build_brightness_samples,
 )
 from allaganeye.config import SplitConfig
@@ -156,6 +158,21 @@ def run_detect(
             )
 
         audio_hits = _run_audio_scan(video_path, config, show=show, verbose=verbose)
+
+        if show and verbose:
+            # run_split の cache-miss summary と同形 (PR #823 R2)。vtuber token
+            # は検出 mode の provenance を stdout に残す (cache-hit 側は
+            # _display_cache_hit_params が担う)。
+            typer.echo(
+                f"Detecting match boundaries "
+                f"(interval={effective_interval}s, "
+                f"threshold={config.blackout_threshold}, "
+                f"workers={_workers_summary_str(config.workers)}, "
+                f"min_match={config.min_match_duration}s, "
+                f"min_blackout={config.min_blackout_duration}s, "
+                f"audio={_audio_status_str(config.no_audio)}, "
+                f"vtuber={'on' if config.vtuber else 'off'})"
+            )
 
         detect_stats: DetectionStats | None = {} if verbose else None
 

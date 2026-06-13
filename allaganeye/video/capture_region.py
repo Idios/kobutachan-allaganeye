@@ -9,6 +9,7 @@ bit-exact; see spec section 3.4 / M4).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -31,6 +32,10 @@ class CaptureRegion:
         w = min(max(self.w, 0.0), 1.0 - x)
         h = min(max(self.h, 0.0), 1.0 - y)
         return CaptureRegion(x, y, w, h, self.confidence, self.source)
+
+    def is_full_frame(self) -> bool:
+        """領域 = frame 全体か (OBS 縮退判定 / bit-exact 分岐に使用)。"""
+        return self.x == 0.0 and self.y == 0.0 and self.w == 1.0 and self.h == 1.0
 
     def to_dict(self) -> dict:
         return {
@@ -69,6 +74,35 @@ class ScorebarLocalization:
 
 
 FULL_FRAME = CaptureRegion(0.0, 0.0, 1.0, 1.0, confidence=1.0, source="fallback")
+
+
+def region_mean(frame: np.ndarray, region: CaptureRegion) -> float:
+    """2D gray frame (H,W) を正規化矩形 *region* で crop し平均輝度を返す。
+
+    crop が空になる場合も最低 1px に clamp する。整数次元 frame では
+    FULL_FRAME のとき結果は ``float(frame.mean())`` と一致する (bit-exact 縮退)。
+    """
+    h, w = frame.shape[:2]
+    x0 = max(0, min(round(region.x * w), w - 1))
+    y0 = max(0, min(round(region.y * h), h - 1))
+    x1 = max(x0 + 1, min(round((region.x + region.w) * w), w))
+    y1 = max(y0 + 1, min(round((region.y + region.h) * h), h))
+    return float(frame[y0:y1, x0:x1].mean())
+
+
+def band_region_from_localization(
+    loc: ScorebarLocalization, *, probe_w: int, probe_h: int
+) -> CaptureRegion:
+    """probe px の scorebar 局在化を正規化 scorebar 帯 ROI に変換する。
+
+    検出 (brightness / motion) を測る最 clean 領域。`loc.confidence` を引き継ぎ
+    `source="band"` を付ける。範囲外座標は clamp する。
+    """
+    x = loc.x_left / probe_w
+    y = loc.y_top / probe_h
+    w = (loc.x_right - loc.x_left) / probe_w
+    h = (loc.y_bottom - loc.y_top) / probe_h
+    return CaptureRegion(x, y, w, h, confidence=loc.confidence, source="band").clamp()
 
 
 @dataclass
@@ -299,6 +333,23 @@ def _emblem_and_margin(
     return min_ratio
 
 
+def localize_from_rgb_bytes(
+    raw: bytes | None, *, height: int, width: int
+) -> ScorebarLocalization | None:
+    """RGB24 probe bytes を decode して :func:`localize_scorebar` にかける共有 helper.
+
+    raw が None (probe 失敗) なら None を返す。probe 失敗と localizer miss を
+    呼び出し側で区別したい場合は raw の None を先に判定すること
+    (例: ``scorebar._localize_present_from_raw``)。呼び出し元 3 箇所
+    (presence / scorebar / detector の帯 anchor) の reshape boilerplate を一元化し、
+    probe 次元変更時の drift を防ぐ (PR #823 R3 dedup)。
+    """
+    if raw is None:
+        return None
+    frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
+    return localize_scorebar(frame)
+
+
 def localize_scorebar(
     frame: np.ndarray,
     *,
@@ -391,3 +442,68 @@ def detect_region_blackout_overlap(
     return _largest_component_region(
         mask, min_area_frac=min_area_frac, source="tierA", confidence=0.8
     )
+
+
+_BAND_CONSENSUS_MIN_HITS = 2
+"""帯 consensus に必要な最小局在化成功数。これ未満は FULL_FRAME 縮退。"""
+
+_CLUSTER_Y_TOL = 60
+"""y_top クラスタリングの許容差 (probe px)。これ以内の y_top は同一クラスタ。
+
+localize は per-frame noisy で、真の scorebar (y_top~0) と下部 HUD 誤検出
+(y_top~540-582) が混在しうる。両者を別クラスタに分け dominant を選ぶための
+許容差。scorebar 帯高 ~45px に対し十分広く、真クラスタ内の +-stride ばらつき
+(18 vs 20 等) は 1 クラスタにまとめる。
+"""
+
+
+def detect_scorebar_band_region(
+    *,
+    duration: float,
+    probe_w: int,
+    probe_h: int,
+    localize_fn: Callable[[float], ScorebarLocalization | None],
+    num_samples: int = 8,
+    min_hits: int = _BAND_CONSENSUS_MIN_HITS,
+) -> CaptureRegion:
+    """疎な多フレーム localize の dominant-cluster consensus で安定 scorebar 帯 ROI を返す。
+
+    *localize_fn* は timestamp -> ScorebarLocalization|None。動画 I/O は呼び出し側が
+    bind する (テストは合成関数を注入)。成功局在化が *min_hits* 未満なら FULL_FRAME
+    (OBS / 局在化不能時の安全縮退)。成功時は hits を y_top で `_CLUSTER_Y_TOL`
+    クラスタリングし、最大クラスタ (同数なら平均 confidence) の各座標 median を取り
+    `band_region_from_localization` で正規化帯 ROI に変換する。これにより真の
+    scorebar (y_top~0) と下部 HUD 誤検出が混在しても between-clusters の garbage
+    band を避ける (spec section 3.6)。
+    """
+    if duration <= 0 or num_samples < 1:
+        return FULL_FRAME
+    times = [duration * (i + 1) / (num_samples + 1) for i in range(num_samples)]
+    hits = [loc for t in times if (loc := localize_fn(t)) is not None]
+    if len(hits) < min_hits:
+        return FULL_FRAME
+    # localize is per-frame noisy (upper-half best-hit scan can lock onto lower
+    # HUD; spec section 3.6). Cluster hits by y_top and take the largest cluster
+    # (true scorebar is dominant across in-match samples), so a noise-mixed
+    # median cannot produce a between-clusters garbage band.
+    hits_sorted = sorted(hits, key=lambda h: h.y_top)
+    clusters: list[list[ScorebarLocalization]] = []
+    for h in hits_sorted:
+        if clusters and h.y_top - clusters[-1][-1].y_top <= _CLUSTER_Y_TOL:
+            clusters[-1].append(h)
+        else:
+            clusters.append([h])
+    best = max(
+        clusters,
+        key=lambda c: (len(c), sum(h.confidence for h in c) / len(c)),
+    )
+    if len(best) < min_hits:
+        return FULL_FRAME
+    median_loc = ScorebarLocalization(
+        x_left=int(np.median([h.x_left for h in best])),
+        x_right=int(np.median([h.x_right for h in best])),
+        y_top=int(np.median([h.y_top for h in best])),
+        y_bottom=int(np.median([h.y_bottom for h in best])),
+        confidence=float(np.median([h.confidence for h in best])),
+    )
+    return band_region_from_localization(median_loc, probe_w=probe_w, probe_h=probe_h)

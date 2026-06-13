@@ -18,14 +18,38 @@ from allaganeye.video.detector import (
     _SCOREBAR_ROI_X_START,
     _SCOREBAR_ROI_Y_END,
     _SCOREBAR_ROI_Y_START,
+    _SCOREBAR_V2_PROBE_HEIGHT,
+    _SCOREBAR_V2_PROBE_WIDTH,
     _has_scorebar,
     _has_scorebar_v2,
     _probe_frame_rgb,
     _probe_frame_rgb_hires,
     _resolve_workers,
 )
+from allaganeye.video.capture_region import (
+    FULL_FRAME,
+    CaptureRegion,
+    localize_from_rgb_bytes,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _localize_present_from_raw(raw: bytes | None) -> bool | None:
+    """hi-res RGB probe bytes -> localize-present (True/False). None on probe failure.
+
+    Reshapes the 1920x1080 RGB probe buffer and runs the position-independent
+    localizer (``localize_scorebar``).  A successfully decoded frame yields
+    True/False (a clean localizer miss is treated as absent, not unknown, so
+    majority vote behaves like the v2 path).  Only a missing frame (raw None)
+    yields None.  Used by the VTuber classification path; OBS never calls it.
+    """
+    if raw is None:
+        return None
+    loc = localize_from_rgb_bytes(
+        raw, height=_SCOREBAR_V2_PROBE_HEIGHT, width=_SCOREBAR_V2_PROBE_WIDTH
+    )
+    return loc is not None
 
 
 def _probe_scorebar_context(
@@ -33,12 +57,16 @@ def _probe_scorebar_context(
     timestamps: list[float],
     height: int,
     workers: int | None,
-) -> tuple[list[bool | None], list[bytes | None]]:
+    *,
+    with_localize: bool = False,
+) -> tuple[list[bool | None], list[bytes | None], list[bool | None]]:
     """Probe multiple timestamps and return has_scorebar + raw frames.
 
-    Returns a tuple of two lists aligned with *timestamps*:
+    Returns a tuple of three lists aligned with *timestamps*:
     - scorebar results: True/False/None per frame
     - raw RGB frame bytes: bytes/None per frame (low-res for static detection)
+    - localize-present results: True/False/None per frame (populated only when
+      with_localize=True and method is v2; otherwise all None)
 
     When ``_SCOREBAR_METHOD == "v2"``, probes at 1920x1080 for GC-emblem
     3-point AND detection.  V2 False is used as-is (no V1 fallback) to
@@ -106,9 +134,21 @@ def _probe_scorebar_context(
             else:
                 scorebar_results[t] = _has_scorebar(raw_frames[t], height)
 
+        # localize-present from the hi-res frames already decoded for v2
+        # (additive; OBS production passes with_localize=False -> all None,
+        # so existing callers stay bit-exact).
+        localize_results: dict[float, bool | None] = {}
+        if with_localize and use_v2:
+            for t in unique_ts:
+                localize_results[t] = _localize_present_from_raw(hi_raws.get(t))
+        else:
+            for t in unique_ts:
+                localize_results[t] = None
+
     return (
         [scorebar_results[t] for t in timestamps],
         [raw_frames[t] for t in timestamps],
+        [localize_results[t] for t in timestamps],
     )
 
 
@@ -132,56 +172,66 @@ Threshold 0.5 sits well inside the gap.
 """
 
 
-def _is_static_from_frames(
+def _band_mad_min(
     raw_frames: Sequence[bytes | None],
     height: int,
-) -> bool:
-    """Detect static screens (loading/result) via scorebar ROI frame diff.
+    region: CaptureRegion | None = None,
+) -> float | None:
+    """Min MAD of the scorebar ROI across consecutive frame pairs.
 
-    Computes the mean absolute difference (MAD) of the scorebar ROI pixels
-    between consecutive frame pairs.  If the **minimum** MAD across all
-    pairs is below threshold, the frames show a static screen.
-
-    Using min() tolerates a single screen transition within the window
-    (one pair may have high MAD from a screen change, but the next pair
-    will be static).  False positives from ffmpeg keyframe aliasing are
-    mitigated by the A1+A2 checks in ``_has_scorebar``, which reduce the
-    number of blackouts reaching the ``in_match`` classification path
-    where this check is applied.
-
-    Returns False if fewer than 2 valid frames are provided.
+    Returns None when fewer than 2 valid frames are given, or when a band
+    ``region`` collapses to an empty crop (degenerate / sub-pixel band at
+    320x180; Codex #4).  ``region is None`` uses the absolute ``_SCOREBAR_ROI_*``
+    ROI exactly as before (bit-exact).
     """
     valid = [r for r in raw_frames if r is not None]
     if len(valid) < 2:
-        return False
+        return None
 
-    x1 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_START)
-    x2 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_END)
-    y1 = int(height * _SCOREBAR_ROI_Y_START)
-    y2 = int(height * _SCOREBAR_ROI_Y_END)
+    if region is None:
+        x1 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_START)
+        x2 = int(_SAMPLE_WIDTH * _SCOREBAR_ROI_X_END)
+        y1 = int(height * _SCOREBAR_ROI_Y_START)
+        y2 = int(height * _SCOREBAR_ROI_Y_END)
+    else:
+        x1 = max(0, int(region.x * _SAMPLE_WIDTH))
+        x2 = min(_SAMPLE_WIDTH, int((region.x + region.w) * _SAMPLE_WIDTH))
+        y1 = max(0, int(region.y * height))
+        y2 = min(height, int((region.y + region.h) * height))
+        if x2 <= x1 or y2 <= y1:
+            return None  # degenerate band crop (Codex #4) -> no usable signal
 
     rois = []
     for raw in valid:
         frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, _SAMPLE_WIDTH, 3)
         rois.append(frame[y1:y2, x1:x2, :].astype(np.int16))
 
-    mads = []
-    for i in range(len(rois) - 1):
-        mad = float(np.mean(np.abs(rois[i] - rois[i + 1])))
-        mads.append(mad)
+    mads = [float(np.mean(np.abs(rois[i] - rois[i + 1]))) for i in range(len(rois) - 1)]
+    return min(mads)
 
-    min_mad = min(mads)
+
+def _is_static_from_frames(
+    raw_frames: Sequence[bytes | None],
+    height: int,
+    region: CaptureRegion | None = None,
+) -> bool:
+    """Detect static screens (loading/result) via scorebar ROI frame diff.
+
+    Returns False if fewer than 2 valid frames are provided or the band ROI is
+    degenerate.  ``region is None`` keeps the absolute-ROI behavior (bit-exact).
+    """
+    min_mad = _band_mad_min(raw_frames, height, region)
+    if min_mad is None:
+        return False
+
     is_static = min_mad < _STATIC_SCREEN_MAD_THRESHOLD
-
     logger.debug(
-        "static_screen: frames=%d mads=%s min=%.2f thr=%.1f -> %s",
-        len(raw_frames),
-        [f"{m:.2f}" for m in mads],
+        "static_screen: min=%.2f thr=%.1f region=%s -> %s",
         min_mad,
         _STATIC_SCREEN_MAD_THRESHOLD,
+        "absolute" if region is None else "band",
         is_static,
     )
-
     return is_static
 
 
@@ -228,12 +278,118 @@ def _has_nearby_fanfare_hit(
     return None
 
 
+def _classify_blackout_localize(
+    video_path: Path,
+    region: tuple[float, float],
+    duration: float,
+    height: int,
+    workers: int | None = None,
+    *,
+    band_region: CaptureRegion = FULL_FRAME,
+) -> str:
+    """Classify a blackout by position-independent scorebar presence (VTuber).
+
+    Uses ``localize_scorebar`` majority on 3 pre + 3 post frames as the sole
+    signal (motion is NOT ANDed in Phase 2 -- P2-a / spec section 8.1).  Mirrors
+    the v2 re-probe fallback (#524) for the both-absent case.  Band-MAD is
+    emitted to the log for Phase 3 calibration but does not affect the label.
+
+    Returns ``"in_match"`` / ``"match_boundary"`` / ``"non_fl"`` / ``"unknown"``.
+    """
+    pre_timestamps = sorted(set(max(0.0, region[0] - d) for d in (3.0, 2.0, 1.0)))
+    post_timestamps = sorted(set(min(duration, region[1] + d) for d in (1.0, 2.0, 3.0)))
+
+    _, pre_frames, pre_loc = _probe_scorebar_context(
+        video_path, pre_timestamps, height, workers, with_localize=True
+    )
+    _, post_frames, post_loc = _probe_scorebar_context(
+        video_path, post_timestamps, height, workers, with_localize=True
+    )
+    pre_has = _majority_scorebar(pre_loc)
+    post_has = _majority_scorebar(post_loc)
+
+    # Re-probe further out when neither side localized (see classify_blackout's
+    # #524 rationale): a true boundary whose flanks both land in a fade/loading
+    # would otherwise classify as non_fl.
+    if pre_has is not True and post_has is not True:
+        region_width = region[1] - region[0]
+        existing_pre = set(pre_timestamps)
+        existing_post = set(post_timestamps)
+        pre_re_ts = [
+            t
+            for t in sorted(
+                set(max(0.0, region[0] - (region_width + d)) for d in (3.0, 2.0, 1.0))
+            )
+            if t not in existing_pre
+        ]
+        post_re_ts = [
+            t
+            for t in sorted(
+                set(
+                    min(duration, region[1] + (region_width + d))
+                    for d in (1.0, 2.0, 3.0)
+                )
+            )
+            if t not in existing_post
+        ]
+        if pre_re_ts:
+            _, _, pre_re_loc = _probe_scorebar_context(
+                video_path, pre_re_ts, height, workers, with_localize=True
+            )
+            pre_re = _majority_scorebar(pre_re_loc)
+            if pre_re is not None:
+                pre_has = pre_re
+        if post_re_ts:
+            _, _, post_re_loc = _probe_scorebar_context(
+                video_path, post_re_ts, height, workers, with_localize=True
+            )
+            post_re = _majority_scorebar(post_re_loc)
+            if post_re is not None:
+                post_has = post_re
+
+    # Band-MAD telemetry for Phase 3 calibration -- emitted only, NOT used in
+    # classification (P2-a). Grep "VTUBER_MAD" in logs to collect distributions.
+    pre_mad = _band_mad_min(pre_frames, height, band_region)
+    post_mad = _band_mad_min(post_frames, height, band_region)
+    logger.info(
+        "VTUBER_MAD region=[%.1fs-%.1fs] band=%s pre_mad=%s post_mad=%s",
+        region[0],
+        region[1],
+        band_region.source,
+        f"{pre_mad:.3f}" if pre_mad is not None else "na",
+        f"{post_mad:.3f}" if post_mad is not None else "na",
+    )
+
+    if pre_has is None or post_has is None:
+        classification = "unknown"
+    elif pre_has and post_has:
+        classification = "in_match"
+    elif pre_has or post_has:
+        classification = "match_boundary"
+    else:
+        classification = "non_fl"
+
+    logger.debug(
+        "vtuber classify region [%.1f-%.1f] (%.1fs): pre=%s post=%s -> %s",
+        region[0],
+        region[1],
+        region[1] - region[0],
+        pre_has,
+        post_has,
+        classification,
+    )
+    return classification
+
+
 def classify_blackout(
     video_path: Path,
     region: tuple[float, float],
     duration: float,
     height: int,
     workers: int | None = None,
+    *,
+    band_region: CaptureRegion = FULL_FRAME,
+    vtuber: bool = False,
 ) -> str:
     """Classify a blackout region by scorebar context.
 
@@ -263,13 +419,25 @@ def classify_blackout(
     - ``"non_fl"``: neither side has scorebar -> non-FL blackout (#109)
     - ``"unknown"``: all probes failed on either side -> keep boundary (safe)
     """
+    if vtuber:
+        # VTuber path: position-independent localize as the sole signal
+        # (spec section 8.1 P2-a). The OBS v2 body below is left untouched.
+        return _classify_blackout_localize(
+            video_path,
+            region,
+            duration,
+            height,
+            workers,
+            band_region=band_region,
+        )
+
     pre_timestamps = sorted(set(max(0.0, region[0] - d) for d in (3.0, 2.0, 1.0)))
     post_timestamps = sorted(set(min(duration, region[1] + d) for d in (1.0, 2.0, 3.0)))
 
-    pre_results, pre_frames = _probe_scorebar_context(
+    pre_results, pre_frames, _pre_loc = _probe_scorebar_context(
         video_path, pre_timestamps, height, workers
     )
-    post_results, post_frames = _probe_scorebar_context(
+    post_results, post_frames, _post_loc = _probe_scorebar_context(
         video_path, post_timestamps, height, workers
     )
 
@@ -304,11 +472,11 @@ def classify_blackout(
         pre_re_results: list[bool | None] = []
         post_re_results: list[bool | None] = []
         if pre_re_timestamps:
-            pre_re_results, _ = _probe_scorebar_context(
+            pre_re_results, _, _ = _probe_scorebar_context(
                 video_path, pre_re_timestamps, height, workers
             )
         if post_re_timestamps:
-            post_re_results, _ = _probe_scorebar_context(
+            post_re_results, _, _ = _probe_scorebar_context(
                 video_path, post_re_timestamps, height, workers
             )
         pre_has_re = _majority_scorebar(pre_re_results)
@@ -406,6 +574,8 @@ def filter_blackouts_with_scorebar(
     height: int,
     workers: int | None = None,
     *,
+    band_region: CaptureRegion = FULL_FRAME,
+    vtuber: bool = False,
     audio_hits: Sequence[BgmHit] | None = None,
     stats: DetectionStats | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
@@ -447,7 +617,13 @@ def filter_blackouts_with_scorebar(
     total_regions = len(blackout_regions)
     for idx, region in enumerate(blackout_regions):
         classification = classify_blackout(
-            video_path, region, duration, height, workers
+            video_path,
+            region,
+            duration,
+            height,
+            workers,
+            band_region=band_region,
+            vtuber=vtuber,
         )
         if progress_callback is not None:
             progress_callback(idx + 1, total_regions)
@@ -506,7 +682,14 @@ def filter_blackouts_with_scorebar(
         stats["audio_promotions"] = audio_promotions
 
     return _merge_boundary_pairs(
-        video_path, kept, classifications, duration, height, workers
+        video_path,
+        kept,
+        classifications,
+        duration,
+        height,
+        workers,
+        band_region=band_region,
+        vtuber=vtuber,
     )
 
 
@@ -517,6 +700,9 @@ def _merge_boundary_pairs(
     duration: float,
     height: int,
     workers: int | None,
+    *,
+    band_region: CaptureRegion = FULL_FRAME,
+    vtuber: bool = False,
 ) -> tuple[list[tuple[float, float]], list[str]]:
     """Merge consecutive match_boundary pairs separated by non-FL content.
 
@@ -551,14 +737,23 @@ def _merge_boundary_pairs(
                 probe_points = [
                     gap_start + (gap_end - gap_start) * k / 10 for k in range(1, 10)
                 ]
-                probe_results, _ = _probe_scorebar_context(
-                    video_path,
-                    probe_points,
-                    height,
-                    workers,
-                )
-                all_valid = all(r is not None for r in probe_results)
-                any_scorebar = any(r is True for r in probe_results)
+                if vtuber:
+                    _, _, probe_signal = _probe_scorebar_context(
+                        video_path,
+                        probe_points,
+                        height,
+                        workers,
+                        with_localize=True,
+                    )
+                else:
+                    probe_signal, _, _ = _probe_scorebar_context(
+                        video_path,
+                        probe_points,
+                        height,
+                        workers,
+                    )
+                all_valid = all(r is not None for r in probe_signal)
+                any_scorebar = any(r is True for r in probe_signal)
                 if all_valid and not any_scorebar:
                     merged_region = (regions[i][0], regions[i + 1][1])
                     logger.info(
@@ -571,7 +766,7 @@ def _merge_boundary_pairs(
                         merged_region[0],
                         merged_region[1],
                         gap,
-                        probe_results,
+                        probe_signal,
                     )
                     merged.append(merged_region)
                     merged_cls.append("match_boundary")
@@ -584,7 +779,7 @@ def _merge_boundary_pairs(
                     regions[i + 1][0],
                     regions[i + 1][1],
                     gap,
-                    probe_results,
+                    probe_signal,
                 )
         merged.append(regions[i])
         merged_cls.append(classifications[i])

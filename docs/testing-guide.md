@@ -85,6 +85,13 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 - MKV: OBS の長時間録画（30-80GB、複数試合を含む）
 - サブディレクトリ（`20260116/` 等）: 手動で試合分割済みの MP4（`YYYYMMDD_N.mp4`）
 
+### VTuber 検証用 VOD (`ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER`)
+
+L3 の VTuber/masked 系 slow テスト（`tests/test_l3_phase2_parity.py` / `tests/test_vtuber_region_e2e.py`）は、`ALLAGANEYE_SAMPLE_VIDEO_DIR` とは別の VOD 置き場を `ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER` で参照する（未設定時の既定: `E:/allaganeye-samples`）。
+
+- 配置: 配信者別の FF14 FL VOD（mp4）。未配置・未設定の場合、該当テストは skip される
+- 空文字で設定した場合も未設定と同様に既定 path へフォールバックする（`os.environ.get(...) or` 規約で統一）
+
 ### 音声統合テスト primary 録画 (`ALLAGANEYE_AUDIO_TEST_VIDEO`)
 
 `tests/test_audio_integration.py::test_primary_recording_fanfare_coverage` は、`audio/refs/fanfare.npz` を生成する際に使用した**そのままの**録画を必要とする。`ALLAGANEYE_SAMPLE_VIDEO_DIR` とは別管理。

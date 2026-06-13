@@ -5,10 +5,13 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 from allaganeye.audio.matcher import BgmHit
 from allaganeye.exceptions import VideoProcessingError
+from allaganeye.video import detector as det
+from allaganeye.video.capture_region import FULL_FRAME, CaptureRegion
 from allaganeye.video.detector import (
     MatchBoundary,
     _BLACKOUT_PADDING,
@@ -200,7 +203,7 @@ class TestRefineBlackoutRegions:
     def test_2s_blackout_detected(self, mock_probe):
         """A 2.0s blackout is precisely measured and retained."""
 
-        def side_effect(path, t):
+        def side_effect(path, t, region=FULL_FRAME):
             # Blackout from 100.0 to 102.0
             return 5.0 if 100.0 <= t < 102.0 else 128.0
 
@@ -220,7 +223,7 @@ class TestRefineBlackoutRegions:
     def test_1s_respawn_stays_short(self, mock_probe):
         """A 1.0s respawn blackout remains short after refinement."""
 
-        def side_effect(path, t):
+        def side_effect(path, t, region=FULL_FRAME):
             return 5.0 if 100.0 <= t < 101.0 else 128.0
 
         mock_probe.side_effect = side_effect
@@ -311,7 +314,7 @@ class TestRefineBlackoutRegions:
 
         call_count = 0
 
-        def side_effect(video_path, t):
+        def side_effect(video_path, t, region=FULL_FRAME):
             nonlocal call_count
             call_count += 1
             # Every 3rd probe fails
@@ -405,7 +408,7 @@ class TestRefineBlackoutRegions:
 
         call_count = 0
 
-        def side_effect(video_path, t):
+        def side_effect(video_path, t, region=FULL_FRAME):
             nonlocal call_count
             call_count += 1
             if call_count % 3 == 0:
@@ -1033,7 +1036,9 @@ class TestDetectMatchBoundaries:
             return {t: 5.0 if 598.0 <= t <= 602.0 else 128.0 for t in ts}
 
         mock_chunk.side_effect = chunk_side_effect
-        mock_probe.side_effect = lambda path, t: 5.0 if 593.0 <= t <= 607.0 else 128.0
+        mock_probe.side_effect = lambda path, t, region=FULL_FRAME: (
+            5.0 if 593.0 <= t <= 607.0 else 128.0
+        )
         result = detect_match_boundaries(
             Path("test.mp4"),
             duration_hint=1800.0,
@@ -1147,7 +1152,9 @@ class TestDetectMatchBoundaries:
         mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
             t: 5.0 if 598.0 <= t <= 602.0 else 128.0 for t in ts
         }
-        mock_probe.side_effect = lambda path, t: 5.0 if 593.0 <= t <= 607.0 else 128.0
+        mock_probe.side_effect = lambda path, t, region=FULL_FRAME: (
+            5.0 if 593.0 <= t <= 607.0 else 128.0
+        )
         with patch(
             "allaganeye.video.scorebar.filter_blackouts_with_scorebar"
         ) as mock_filter:
@@ -1159,6 +1166,8 @@ class TestDetectMatchBoundaries:
                 height,
                 workers,
                 *,
+                band_region=FULL_FRAME,
+                vtuber=False,
                 audio_hits,
                 stats,
                 progress_callback=None,
@@ -1596,7 +1605,9 @@ class TestPass1HysteresisIntegration:
 
         mock_chunk.side_effect = chunk_side_effect
         # Pass 2 confirms blackout (<15.0 strict) in the same span
-        mock_probe.side_effect = lambda p, t: 5.0 if 599.0 <= t <= 610.0 else 128.0
+        mock_probe.side_effect = lambda p, t, region=FULL_FRAME: (
+            5.0 if 599.0 <= t <= 610.0 else 128.0
+        )
 
         result = detect_match_boundaries(
             Path("test.mp4"),
@@ -1635,7 +1646,9 @@ class TestPass1HysteresisIntegration:
 
         mock_chunk.side_effect = chunk_side_effect
         # Pass 2 at 0.25s finds real blackout 8137.25-8139.75
-        mock_probe.side_effect = lambda p, t: 2.0 if 8137.25 <= t <= 8139.75 else 128.0
+        mock_probe.side_effect = lambda p, t, region=FULL_FRAME: (
+            2.0 if 8137.25 <= t <= 8139.75 else 128.0
+        )
 
         detect_match_boundaries(
             Path("test.mp4"),
@@ -2460,3 +2473,286 @@ class TestDropPostMatchTrailing:
         """Empty input returns empty, no exception."""
         result = _drop_post_match_trailing([], Path("v.mp4"), 1800.0, None)
         assert result == []
+
+
+def test_frame_brightness_full_frame_is_1d_mean_bitexact():
+    # CPU scan passes a 1-D grayscale buffer (320*180,). FULL_FRAME must
+    # equal float(buf.mean()) EXACTLY (no reshape) for OBS bit-exact.
+    buf = np.arange(det._FRAME_SIZE, dtype=np.uint8)  # 1-D, length 320*180
+    assert det._frame_brightness(buf, FULL_FRAME) == float(buf.mean())
+
+
+def test_frame_brightness_band_reshapes_and_crops():
+    # band branch must reshape the 1-D buffer to (180,320) then crop.
+    buf = np.zeros(det._FRAME_SIZE, dtype=np.uint8)
+    frame2d = buf.reshape(det._SAMPLE_HEIGHT, det._SAMPLE_WIDTH)
+    frame2d[0:9, :] = 100  # top 5% rows bright
+    band = CaptureRegion(0.0, 0.0, 1.0, 0.05)
+    assert det._frame_brightness(buf.reshape(-1), band) == 100.0
+
+
+def test_refine_accepts_region_kwarg_default_full_frame():
+    # Pass2 (_refine_blackout_regions) must accept a region kwarg defaulting to
+    # FULL_FRAME so existing callers (detect_match_boundaries) stay bit-exact.
+    # Signature-level pin: Pass2 needs a real video to run end-to-end (B2).
+    import inspect
+
+    sig = inspect.signature(det._refine_blackout_regions)
+    assert "region" in sig.parameters
+    assert sig.parameters["region"].default is FULL_FRAME
+
+
+# ============================================================
+# Task B4: Stage 0 band anchor resolution (_resolve_detect_region)
+# ============================================================
+
+
+def test_resolve_detect_region_exists():
+    from allaganeye.video import detector as det
+
+    assert hasattr(det, "_resolve_detect_region")
+
+
+def test_resolve_detect_region_falls_back_full_frame_on_probe_failure(monkeypatch):
+    from allaganeye.video import detector as det
+    from allaganeye.video.capture_region import FULL_FRAME  # noqa: F401
+    from pathlib import Path
+
+    # all hi-res probes fail -> localize_fn always None -> band consensus FULL_FRAME
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", lambda vp, t: None)
+    region = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    assert region.is_full_frame()
+
+
+def test_resolve_detect_region_swallows_exceptions_to_full_frame(monkeypatch, caplog):
+    # Anchor failure must NEVER break detect: any exception inside the probe
+    # path is swallowed to FULL_FRAME (OBS-safe degrade, bit-exact preserved).
+    # R4: 縮退は silent にせず warning を 1 行残す (診断性のみ、挙動不変)。
+    import logging
+
+    from allaganeye.video import detector as det
+    from pathlib import Path
+
+    def _boom(vp, t):
+        raise RuntimeError("probe exploded")
+
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", _boom)
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        region = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    assert region.is_full_frame()
+    assert any("band anchor" in r.message for r in caplog.records)
+
+
+def test_resolve_detect_region_warns_on_consensus_miss_full_frame(monkeypatch, caplog):
+    # consensus-miss (非例外縮退) も silent にしない (R5): --vtuber 明示 run が
+    # FULL_FRAME (汚染 path) で続行することを warning で痕跡に残す。
+    import logging
+
+    from pathlib import Path
+
+    from allaganeye.video import capture_region as cr
+    from allaganeye.video import detector as det
+
+    monkeypatch.setattr(cr, "detect_scorebar_band_region", lambda **kw: cr.FULL_FRAME)
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        region = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    assert region.is_full_frame()
+    assert any("consensus" in r.message for r in caplog.records)
+
+
+def test_detect_match_boundaries_passes_region_to_all_three_call_sites(monkeypatch):
+    # Keystone wiring guard: the region resolved by Stage 0 must reach Pass1
+    # (_scan_cpu), GPU (scan_gpu), and Pass2 (_refine_blackout_regions).  On a
+    # probe failure the resolved region is FULL_FRAME, but the kwarg must still
+    # be threaded through every call so VTuber band ROIs propagate.
+    from allaganeye.video import detector as det
+    from allaganeye.video import gpu_detector
+    from allaganeye.video.capture_region import FULL_FRAME
+    from pathlib import Path
+
+    sentinel = CaptureRegion(0.0, 0.10, 1.0, 0.18, confidence=0.9, source="band")
+    monkeypatch.setattr(det, "_resolve_detect_region", lambda vp, dh: sentinel)
+
+    cpu_calls: list[CaptureRegion] = []
+    gpu_calls: list[CaptureRegion] = []
+    refine_calls: list[CaptureRegion] = []
+
+    def fake_scan_cpu(*args, **kwargs):
+        cpu_calls.append(kwargs.get("region", FULL_FRAME))
+        return {0.0: 100.0, 1.0: 100.0}
+
+    def fake_scan_gpu(*args, **kwargs):
+        gpu_calls.append(kwargs.get("region", FULL_FRAME))
+        return {0.0: 100.0, 1.0: 100.0}
+
+    def fake_refine(*args, **kwargs):
+        refine_calls.append(kwargs.get("region", FULL_FRAME))
+        return []
+
+    monkeypatch.setattr(det, "_scan_cpu", fake_scan_cpu)
+    monkeypatch.setattr(gpu_detector, "scan_gpu", fake_scan_gpu)
+    monkeypatch.setattr(det, "_refine_blackout_regions", fake_refine)
+
+    # vtuber=True is required so Stage 0 resolves the band anchor; without it
+    # the gate (B4-rev) keeps detect_region=FULL_FRAME and the sentinel from
+    # the monkeypatched _resolve_detect_region would not reach the call sites.
+    # CPU path
+    det.detect_match_boundaries(
+        Path("test.mp4"),
+        duration_hint=2.0,
+        sample_interval=1.0,
+        min_match_duration=0.5,
+        use_gpu=False,
+        vtuber=True,
+    )
+    # GPU path
+    det.detect_match_boundaries(
+        Path("test.mp4"),
+        duration_hint=2.0,
+        sample_interval=1.0,
+        min_match_duration=0.5,
+        use_gpu=True,
+        vtuber=True,
+    )
+
+    assert cpu_calls == [sentinel]
+    assert gpu_calls == [sentinel]
+    # Pass2 runs in both invocations.
+    assert refine_calls == [sentinel, sentinel]
+
+
+# ============================================================
+# Task B4-rev: --vtuber gate on Stage 0 anchor (OBS bit-exact fix)
+# ============================================================
+
+
+def test_detect_has_vtuber_param_defaulting_false():
+    from allaganeye.video import detector as det
+    import inspect
+
+    sig = inspect.signature(det.detect_match_boundaries)
+    assert "vtuber" in sig.parameters
+    assert sig.parameters["vtuber"].default is False
+
+
+# ============================================================
+# Task D1: band_region/vtuber threading + trailing-drop VTuber gate (Phase 2)
+# ============================================================
+
+
+def _vtuber_filter_capture(seen: dict):
+    """Build a filter_blackouts_with_scorebar stand-in that records kwargs.
+
+    Mirrors the real signature (allaganeye/video/scorebar.py) so the
+    keyword-only block (band_region / vtuber / audio_hits / stats /
+    progress_callback) binds exactly as the production call site passes it.
+    Returns every region classified as ``match_boundary`` so segments survive
+    into the trailing-drop stage.
+    """
+
+    def filter_side_effect(
+        video_path,
+        regions,
+        duration,
+        height,
+        workers=None,
+        *,
+        band_region=FULL_FRAME,
+        vtuber=False,
+        audio_hits=None,
+        stats=None,
+        progress_callback=None,
+    ):
+        seen["band_region"] = band_region
+        seen["vtuber"] = vtuber
+        return regions, ["match_boundary"] * len(regions)
+
+    return filter_side_effect
+
+
+@patch("allaganeye.video.detector._resolve_detect_region")
+@patch("allaganeye.video.detector._drop_post_match_trailing")
+@patch("allaganeye.video.detector._probe_single_frame")
+@patch("allaganeye.video.detector._decode_chunk_cpu")
+def test_vtuber_threads_filter_kwargs_and_gates_trailing_drop(
+    mock_chunk, mock_probe, mock_trailing, mock_resolve
+):
+    """Behavioral: vtuber=True threads band_region/vtuber into the scorebar
+    filter at runtime and skips the irreversible trailing-drop (#797 gate).
+
+    Replaces the prior inspect.getsource static checks: this exercises the
+    real call path so an early return or refactor that breaks the gate fails
+    here (the static substring tests would still pass).
+    """
+    # One blackout region around t=600 (single match boundary).
+    mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kw: {
+        t: 5.0 if 598.0 <= t <= 602.0 else 128.0 for t in ts
+    }
+    mock_probe.side_effect = lambda p, t, region=FULL_FRAME: (
+        5.0 if 593.0 <= t <= 607.0 else 128.0
+    )
+    # Passthrough so the assertion is "was it called", independent of segments.
+    mock_trailing.side_effect = lambda segs, *a, **k: segs
+    # Isolate from real ffmpeg/localize I/O; return a distinct (non-FULL_FRAME)
+    # region so band_region threading is observable, not a degraded default.
+    band = CaptureRegion(0.1, 0.1, 0.8, 0.2, confidence=0.9, source="tierB")
+    mock_resolve.return_value = band
+
+    seen: dict = {}
+    with patch(
+        "allaganeye.video.scorebar.filter_blackouts_with_scorebar",
+        side_effect=_vtuber_filter_capture(seen),
+    ):
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=1800.0,
+            sample_interval=1.0,
+            min_match_duration=300.0,
+            src_resolution=(1920, 1080),
+            vtuber=True,
+        )
+
+    # filter received the resolved band region and the vtuber flag at runtime.
+    assert seen["vtuber"] is True
+    assert seen["band_region"] is not None
+    assert seen["band_region"] is band
+    # VTuber path must NOT run the irreversible trailing-drop (#797 / #805).
+    mock_trailing.assert_not_called()
+
+
+@patch("allaganeye.video.detector._drop_post_match_trailing")
+@patch("allaganeye.video.detector._probe_single_frame")
+@patch("allaganeye.video.detector._decode_chunk_cpu")
+def test_obs_runs_trailing_drop_and_filter_sees_vtuber_false(
+    mock_chunk, mock_probe, mock_trailing
+):
+    """Behavioral OBS regression guard: vtuber=False (default OBS path) keeps
+    running the trailing-drop and reports vtuber=False to the scorebar filter.
+
+    Pairs with the vtuber=True test to pin the gate from both sides so a
+    regression that drops the ``not vtuber`` guard is caught.
+    """
+    mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kw: {
+        t: 5.0 if 598.0 <= t <= 602.0 else 128.0 for t in ts
+    }
+    mock_probe.side_effect = lambda p, t, region=FULL_FRAME: (
+        5.0 if 593.0 <= t <= 607.0 else 128.0
+    )
+    mock_trailing.side_effect = lambda segs, *a, **k: segs
+
+    seen: dict = {}
+    with patch(
+        "allaganeye.video.scorebar.filter_blackouts_with_scorebar",
+        side_effect=_vtuber_filter_capture(seen),
+    ):
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=1800.0,
+            sample_interval=1.0,
+            min_match_duration=300.0,
+            src_resolution=(1920, 1080),
+        )
+
+    assert seen["vtuber"] is False
+    # OBS path runs the trailing-drop exactly once.
+    mock_trailing.assert_called_once()

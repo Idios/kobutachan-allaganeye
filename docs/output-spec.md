@@ -57,7 +57,7 @@ Error: --quiet and --verbose are mutually exclusive
 | 6 | Dry-run 通知 (`[dry-run] Detect only...` / `Dry run: skipping split`) | [#418](https://github.com/Idios/kobutachan-allaganeye/issues/418) | - | - | - | ◯ | ◯ | × | ❌ |
 | 7 | Cache hit 検知パラメータ (`Cache hit: detection params from ...`) | [#380](https://github.com/Idios/kobutachan-allaganeye/issues/380) | × | ◯ (cache hit 時のみ) | × | × | ◯ | × | ❌ |
 | 8 | Auto-selected / Forced GPU/CPU mode | - | × | ◯ | × | × | ◯ | × | ❌ |
-| 9 | 検知パラメータ summary (`interval=..., threshold=..., workers=auto(N), audio=frozen`) | [#384](https://github.com/Idios/kobutachan-allaganeye/issues/384), [#389](https://github.com/Idios/kobutachan-allaganeye/issues/389) | × | ◯ | × | × | ◯ | × | ❌ |
+| 9 | 検知パラメータ summary (`interval=..., threshold=..., workers=auto (N), audio=frozen, vtuber=off`) | [#384](https://github.com/Idios/kobutachan-allaganeye/issues/384), [#389](https://github.com/Idios/kobutachan-allaganeye/issues/389) | × | ◯ | × | × | ◯ | × | ❌ |
 | 10 | 進捗バー `Detecting` / `Refining` / `Scorebar` | [#368](https://github.com/Idios/kobutachan-allaganeye/issues/368), [#393](https://github.com/Idios/kobutachan-allaganeye/issues/393) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
 | 11 | 検知統計 (`Pass 1`, `Pass 2`, `Scorebar`, `Splitting` elapsed 含) | [#386](https://github.com/Idios/kobutachan-allaganeye/issues/386), [#387](https://github.com/Idios/kobutachan-allaganeye/issues/387) | × | ◯ | × | × | ◯ | × | ❌ |
 | 12 | Filter drop 内訳 + unknown match 行 (`Filter: N candidates -> M matches` + `+ N unknown match (録画途中試合)`) | [#388](https://github.com/Idios/kobutachan-allaganeye/issues/388), [#433](https://github.com/Idios/kobutachan-allaganeye/issues/433) | × | ◯ | × | × | ◯ | × | ❌ |
