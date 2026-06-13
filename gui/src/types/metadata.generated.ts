@@ -89,13 +89,17 @@ export interface DetectionParams {
    */
   workers: number | null;
   /**
-   * True when the VTuber scorebar-band anchor path was used (#821). Optional: absent in pre-#821 outputs and means false.
+   * True when the --vtuber flag was supplied (#821; the VTuber path never auto-triggers, so request equals resolved). Optional: absent in pre-#821 outputs and means false.
    */
   vtuber?: boolean;
   /**
-   * True when the masked-recording mask-free-region fallback path was used (#821). Optional: absent in pre-#821 outputs and means false.
+   * True when the --masked flag was supplied (request, #821). The masked fallback can also auto-trigger on zero-blackout recordings; see masked_fallback_used for the resolved path. Optional: absent in pre-#821 outputs and means false.
    */
   masked?: boolean;
+  /**
+   * True when the mask-free-region fallback actually produced this result (explicit --masked or zero-blackout auto-trigger, #821). Optional: absent in pre-#821 outputs and means false.
+   */
+  masked_fallback_used?: boolean;
 }
 /**
  * Single match segment. JSON Schema is the strict writer contract; reader-side passthrough for GUI-only edit fields (name / type_override / edited) is provided by zod (.passthrough() on MatchSchema) and only round-trips inside metadata.draft.json, never metadata.json proper.

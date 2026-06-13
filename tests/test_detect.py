@@ -193,6 +193,29 @@ def test_detect_verbose_cache_miss_summary_includes_masked_token(tmp_path, capsy
     assert "masked=off" in out
 
 
+def test_detect_records_masked_fallback_used(tmp_path):
+    """detect 経路でも resolved path が metadata に記録される (run_split と同型)."""
+
+    def fake_run_detection(*args, **kwargs):
+        cb = kwargs.get("masked_fallback_callback")
+        assert cb is not None, (
+            "run_detect must pass masked_fallback_callback to _run_detection"
+        )
+        cb()
+        return BOUNDARIES
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, no_cache=True)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", side_effect=fake_run_detection),
+    ):
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
+    assert payload["detection_params"]["masked"] is False
+    assert payload["detection_params"]["masked_fallback_used"] is True
+
+
 def test_detect_writes_system_info_to_metadata(tmp_path, monkeypatch):
     """#591 -- detect で書き出した metadata.json に system_info が含まれる."""
     monkeypatch.setattr(

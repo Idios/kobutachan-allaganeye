@@ -81,8 +81,9 @@ JSON Schema は writer 契約として strict (additional properties は受け�
 | `no_audio` | boolean | 音声昇格無効化フラグ |
 | `use_gpu` | number \| boolean \| null | GPU モード (null = auto 判定) |
 | `workers` | number \| null | 並列ワーカー数 (null = auto) |
-| `vtuber` | boolean | VTuber 帯 anchor path で検出したか (#821)。新規書き込みは常に出力 / 読み込み時は欠落許容 (欠落 = false、#821 導入前の出力) |
-| `masked` | boolean | masked (チャット隠しマスク) fallback path で検出したか (#821)。新規書き込みは常に出力 / 読み込み時は欠落許容 (欠落 = false) |
+| `vtuber` | boolean | `--vtuber` flag の値 (#821。VTuber path は auto-trigger しないため request = resolved)。新規書き込みは常に出力 / 読み込み時は欠落許容 (欠落 = false、#821 導入前の出力) |
+| `masked` | boolean | `--masked` flag の値 (request、#821)。fallback は 0-blackout で auto-trigger もするため、resolved path は `masked_fallback_used` を参照。新規書き込みは常に出力 / 読み込み時は欠落許容 (欠落 = false) |
+| `masked_fallback_used` | boolean | mask-free 領域 fallback が実際にこの結果を生成したか (明示 `--masked` / 0-blackout auto-trigger とも true、#821)。新規書き込みは常に出力 / 読み込み時は欠落許容 (欠落 = false) |
 
 ### `Match` オブジェクト (`matches[]`)
 

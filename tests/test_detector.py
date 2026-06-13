@@ -1132,6 +1132,53 @@ class TestDetectMatchBoundaries:
         )
         assert isinstance(result, list)
 
+    @patch("allaganeye.video.detector._detect_masked_fallback")
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_masked_fallback_callback_fires_when_result_used(
+        self, mock_chunk, mock_fallback
+    ):
+        """fallback の結果が採用されたときのみ callback が発火 (resolved provenance).
+
+        request flag (masked) と resolved path を分離するための通知 seam。
+        brightness_callback (#569/#644) と同型の配線。
+        """
+        # zero-blackout -> gate (not vtuber and not blackout_times) が fallback へ
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 100.0 for t in ts
+        }
+        fallback_result = [{"start": 0.0, "end": 9.0, "type": "fl_match"}]
+        mock_fallback.return_value = fallback_result
+        fired: list[bool] = []
+        result = detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=10.0,
+            sample_interval=1.0,
+            min_match_duration=1.0,
+            masked_fallback_callback=lambda: fired.append(True),
+        )
+        assert result == fallback_result
+        assert fired == [True]
+
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_masked_fallback_callback_not_fired_when_fallback_gives_up(
+        self, mock_chunk, _mock_region
+    ):
+        """fallback が None (縮退) で標準 path に落ちた場合は callback 不発."""
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 100.0 for t in ts
+        }
+        fired: list[bool] = []
+        result = detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=10.0,
+            sample_interval=1.0,
+            min_match_duration=1.0,
+            masked_fallback_callback=lambda: fired.append(True),
+        )
+        assert isinstance(result, list)
+        assert fired == []
+
     @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_stats_populated_cpu(self, mock_chunk, _mock_region):

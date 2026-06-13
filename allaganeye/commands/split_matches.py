@@ -48,7 +48,11 @@ class Gap(TypedDict):
 
 logger = logging.getLogger(__name__)
 
-_CACHE_VERSION = 2
+# v3 (#821): masked auto-fallback (flag なしでも 0-blackout で発火) の導入で
+# 「missing masked = 標準 path と同一挙動」が成立しなくなったため、pre-#821
+# cache を全面 invalidate する (v2 cache が hit し続けると masked 動画の誤結果
+# が再利用され、新 detector が走らない)。
+_CACHE_VERSION = 3
 
 
 def run_split(
@@ -139,6 +143,9 @@ def run_split(
                 effective_interval=effective_interval,
                 detected_at=detected_at,
                 system_info=cached_system_info,
+                # cache-hit: resolved path は当該 boundaries を生成した検出の
+                # 記録値 (cache top-level) を引き継ぐ。
+                masked_fallback_used=_read_cached_masked_fallback(cache_path),
                 quiet=quiet,
             )
             _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
@@ -193,6 +200,13 @@ def run_split(
     def _on_brightness(samples: dict[float, float]) -> None:
         captured_brightness.update(samples)
 
+    # #821 -- masked fallback の resolved path を捕捉 (request flag と分離)。
+    masked_fallback_used = False
+
+    def _on_masked_fallback() -> None:
+        nonlocal masked_fallback_used
+        masked_fallback_used = True
+
     boundaries = _run_detection(
         video_path,
         metadata,
@@ -204,6 +218,7 @@ def run_split(
         use_gpu=use_gpu,
         gpu_vendor=gpu_vendor,
         brightness_callback=_on_brightness,
+        masked_fallback_callback=_on_masked_fallback,
     )
 
     if not boundaries:
@@ -235,7 +250,13 @@ def run_split(
 
     # Save detection cache
     _save_cache(
-        cache_path, video_path, metadata, effective_interval, config, boundaries
+        cache_path,
+        video_path,
+        metadata,
+        effective_interval,
+        config,
+        boundaries,
+        masked_fallback_used=masked_fallback_used,
     )
 
     # Step 3: Split (unless dry-run)
@@ -270,6 +291,7 @@ def run_split(
         detected_at=detected_at,
         system_info=detected_system_info,
         brightness_samples=brightness_samples,
+        masked_fallback_used=masked_fallback_used,
         quiet=quiet,
     )
     _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
@@ -427,6 +449,11 @@ def run_split_from_metadata(
         detection_completed_at=preserve_completed_at,
         system_info=split_only_system_info,
         brightness_samples=preserve_brightness_samples,
+        # from-metadata: 入力 metadata に記録された resolved path を引き継ぐ
+        # (本ランは detect しないため)。
+        masked_fallback_used=bool(
+            (detection_params or {}).get("masked_fallback_used", False)
+        ),
         quiet=quiet,
     )
     _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
@@ -519,6 +546,9 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
     # 表示は cache 記録値を正とする (legacy cache は key なし = False)。
     cached_vtuber = bool(params.get("vtuber", False))
     cached_masked = bool(params.get("masked", False))
+    # resolved path (top-level、key 非対象)。auto-fallback 時は masked=off でも
+    # masked_fallback=on になる (#821)。
+    cached_fallback = bool(data.get("masked_fallback_used", False))
 
     typer.echo(header)
     typer.echo(
@@ -529,7 +559,8 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
         f"min_blackout={params.get('min_blackout_duration', '?')}s, "
         f"audio={_audio_status_str(cached_no_audio)}, "
         f"vtuber={'on' if cached_vtuber else 'off'}, "
-        f"masked={'on' if cached_masked else 'off'}"
+        f"masked={'on' if cached_masked else 'off'}, "
+        f"masked_fallback={'on' if cached_fallback else 'off'}"
     )
 
 
@@ -741,6 +772,7 @@ def _run_detection(
     gpu_vendor: str | None = None,
     progress_emitter: ProgressEmitter | None = None,
     brightness_callback: Callable[[dict[float, float]], None] | None = None,
+    masked_fallback_callback: Callable[[], None] | None = None,
 ) -> list[MatchBoundary]:
     """Run detection with progress bars for each phase (#328, #329, #331).
 
@@ -774,6 +806,7 @@ def _run_detection(
         "audio_hits": audio_hits,
         "stats": stats,
         "brightness_callback": brightness_callback,
+        "masked_fallback_callback": masked_fallback_callback,
         # #576: rational fps propagation (probe -> detector).
         "source_fps": metadata.get("fps"),
         "source_fps_num": metadata.get("fps_num"),
@@ -1220,6 +1253,7 @@ def _split_and_write_metadata(
     detection_completed_at: str | None = None,
     system_info: SystemInfo,
     brightness_samples: BrightnessSamples | None = None,
+    masked_fallback_used: bool = False,
     quiet: bool = False,
 ) -> None:
     """Split video and write metadata.json (#591: system_info required).
@@ -1281,6 +1315,7 @@ def _split_and_write_metadata(
         gaps=gaps,
         system_info=system_info,
         brightness_samples=brightness_samples,
+        masked_fallback_used=masked_fallback_used,
     )
     metadata_path = config.output_dir / "metadata.json"
     write_metadata_atomic(metadata_path, result)
@@ -1306,6 +1341,7 @@ def _build_metadata_payload(
     gaps: list[Gap],
     system_info: SystemInfo,
     brightness_samples: BrightnessSamples | None = None,
+    masked_fallback_used: bool = False,
 ) -> Metadata:
     """Build the ``metadata.json`` payload dict (schema v1, #463 / #569 / #586 / #591).
 
@@ -1363,9 +1399,12 @@ def _build_metadata_payload(
             "use_gpu": config.use_gpu,
             "workers": config.workers,
             # vtuber/masked は検出 path の provenance (PR #823 R1 deferred 分)。
-            # schema 上は optional (導入前 metadata との後方互換)。
+            # schema 上は optional (導入前 metadata との後方互換)。masked は
+            # request flag、masked_fallback_used は resolved path (auto-fallback
+            # 含む) で、両者は 0-blackout auto-trigger 時に乖離する (#821)。
             "vtuber": config.vtuber,
             "masked": config.masked,
+            "masked_fallback_used": masked_fallback_used,
         },
         "system_info": system_info,
         "matches": [
@@ -1734,6 +1773,8 @@ def _save_cache(
     effective_interval: float,
     config: SplitConfig,
     boundaries: list[MatchBoundary],
+    *,
+    masked_fallback_used: bool = False,
 ) -> None:
     """Save detection results to cache file."""
     resolved = video_path.resolve()
@@ -1763,6 +1804,10 @@ def _save_cache(
             "vtuber": config.vtuber,
             "masked": config.masked,
         },
+        # resolved path は key (params) ではなく top-level に記録する: auto-masked
+        # 動画の cache 再利用は request flag の一致で正しく機能させ、provenance
+        # は表示/metadata 引き継ぎ用に保持する (#821)。
+        "masked_fallback_used": masked_fallback_used,
         "boundaries": boundaries,
     }
     try:
@@ -1772,6 +1817,19 @@ def _save_cache(
         )
     except OSError:
         logger.debug("Failed to write detection cache to %s", cache_path)
+
+
+def _read_cached_masked_fallback(cache_path: Path) -> bool:
+    """cache-hit 経路用: cache に記録された resolved masked fallback を読む。
+
+    読めない / 欠落時は False (標準 path 扱い)。cache key の一部ではないため
+    `_load_cache` とは独立に読む (#821)。
+    """
+    try:
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return bool(data.get("masked_fallback_used", False))
 
 
 def _load_cache(

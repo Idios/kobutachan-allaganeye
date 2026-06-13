@@ -21,6 +21,7 @@ class DetectionParams(TypedDict):
     workers: float | None
     vtuber: NotRequired[bool]
     masked: NotRequired[bool]
+    masked_fallback_used: NotRequired[bool]
 
 
 class Match(TypedDict):

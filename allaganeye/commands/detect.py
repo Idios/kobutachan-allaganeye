@@ -33,6 +33,7 @@ from allaganeye.commands.split_matches import (
     _format_duration,
     _iso_utc_now,
     _load_cache,
+    _read_cached_masked_fallback,
     _print_environment_header,
     _print_detection_stats,
     _resolve_gpu_mode_with_probe,
@@ -125,12 +126,16 @@ def run_detect(
 
     cache_path = config.output_dir / ".detection_cache.json"
     boundaries = None
+    # #821 -- resolved masked fallback。cache-hit は cache 記録値を引き継ぎ、
+    # cache-miss は detection callback で捕捉する。
+    masked_fallback_used = False
     use_gpu = False
     gpu_vendor: str | None = None
     available_vendors: list[str] = []
     if not config.no_cache:
         boundaries = _load_cache(cache_path, video_path, effective_interval, config)
         if boundaries is not None:
+            masked_fallback_used = _read_cached_masked_fallback(cache_path)
             if show and verbose:
                 _display_cache_hit_params(cache_path, config)
             if show:
@@ -177,6 +182,10 @@ def run_detect(
 
         detect_stats: DetectionStats | None = {} if verbose else None
 
+        def _on_masked_fallback() -> None:
+            nonlocal masked_fallback_used
+            masked_fallback_used = True
+
         boundaries = _run_detection(
             video_path,
             metadata,
@@ -189,6 +198,7 @@ def run_detect(
             gpu_vendor=gpu_vendor,
             progress_emitter=progress_emitter,
             brightness_callback=on_brightness,
+            masked_fallback_callback=_on_masked_fallback,
         )
 
         if not boundaries:
@@ -212,7 +222,13 @@ def run_detect(
             _display_results(boundaries, metadata, video_path, verbose)
 
         _save_cache(
-            cache_path, video_path, metadata, effective_interval, config, boundaries
+            cache_path,
+            video_path,
+            metadata,
+            effective_interval,
+            config,
+            boundaries,
+            masked_fallback_used=masked_fallback_used,
         )
 
     gaps = _find_gaps(boundaries, metadata["duration"], min_gap=300.0)
@@ -275,6 +291,7 @@ def run_detect(
         gaps=gaps,
         system_info=system_info,
         brightness_samples=brightness_samples,
+        masked_fallback_used=masked_fallback_used,
     )
     metadata_path = config.output_dir / "metadata.json"
     write_metadata_atomic(metadata_path, payload)

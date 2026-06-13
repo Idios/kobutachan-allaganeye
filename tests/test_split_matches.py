@@ -508,15 +508,18 @@ def test_metadata_detection_params_present(
         "workers",
         "vtuber",
         "masked",
+        "masked_fallback_used",
     }
     assert set(params) == expected_keys, (
         f"detection_params keys mismatch: {set(params) ^ expected_keys}"
     )
 
     # vtuber/masked provenance (PR #823 R1 deferred -> PR (b) で一括): metadata
-    # からどの検出 path で生成されたかを判別可能にする。
+    # からどの検出 path で生成されたかを判別可能にする。masked は request flag、
+    # masked_fallback_used は resolved path (auto-fallback 含む) を表す。
     assert params["vtuber"] is True
     assert params["masked"] is False
+    assert params["masked_fallback_used"] is False
 
     # Values must reflect runtime SplitConfig.  sample_interval is the
     # effective (post-auto-adjust) value to stay in sync with
@@ -1208,6 +1211,25 @@ class TestCacheRoundTrip:
         )
         masked_config = SplitConfig(output_dir=tmp_path / "output", masked=True)
         assert _load_cache(cache_path, cache_video, 1.0, masked_config) is None
+
+    def test_legacy_v2_cache_rejected(self, cache_video, cache_config, tmp_path):
+        """pre-#821 (v2) cache は version bump で全面 invalidate (Codex high finding).
+
+        masked auto-fallback (flag なしでも 0-blackout で発火) の導入により
+        「missing masked = False = 同一挙動」が成立しなくなった。v2 cache が
+        hit し続けると masked 動画の誤結果 (全滅 1-match) が再利用され、新
+        detector が永遠に走らないため、version で全面 invalidate する。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["cache_version"] = 2
+        for key in ("vtuber", "masked"):
+            data["params"].pop(key, None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
 
     def test_version_mismatch(self, cache_video, cache_config, tmp_path):
         """cache_version mismatch -> None."""
@@ -3774,6 +3796,71 @@ def test_verbose_cache_miss_summary_includes_masked_token(
     config_off = SplitConfig(output_dir=tmp_path, no_cache=True)
     run_split(source, config_off, verbose=True)
     assert "masked=off" in capsys.readouterr().out
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_records_masked_fallback_used(
+    mock_probe, mock_split, mock_run_detection, tmp_path
+):
+    """auto masked fallback の resolved path が metadata と cache に記録される.
+
+    Codex medium finding: gate は flag なしでも 0-blackout で fallback に入る
+    ため、request flag (masked) と resolved path (masked_fallback_used) を
+    分離して記録する。callback 配線は brightness_callback (#644) と同型。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    def fake_run_detection(*args, **kwargs):
+        cb = kwargs.get("masked_fallback_callback")
+        assert cb is not None, (
+            "run_split must pass masked_fallback_callback to _run_detection"
+        )
+        cb()
+        return BOUNDARIES
+
+    mock_run_detection.side_effect = fake_run_detection
+    config = SplitConfig(output_dir=tmp_path, no_cache=True)
+    run_split(source, config)
+
+    data = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+    assert data["detection_params"]["masked"] is False
+    assert data["detection_params"]["masked_fallback_used"] is True
+
+    cache = json.loads((tmp_path / ".detection_cache.json").read_text(encoding="utf-8"))
+    # resolved path は cache key (params) ではなく top-level に記録する
+    # (auto-masked 動画の cache 再利用は request key で正しく機能させる)。
+    assert cache["masked_fallback_used"] is True
+    assert cache["params"]["masked"] is False
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_prints_masked_fallback_token(
+    mock_probe, mock_split, tmp_path, capsys
+):
+    """cache-hit 表示は resolved path (masked_fallback=on/off) も出す."""
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    _seed_cache(source, tmp_path, config)
+    cache_path = tmp_path / ".detection_cache.json"
+    data = json.loads(cache_path.read_text(encoding="utf-8"))
+    data["masked_fallback_used"] = True
+    cache_path.write_text(json.dumps(data), encoding="utf-8")
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True)
+    out = capsys.readouterr().out
+
+    header_idx = out.find("Cache hit:")
+    assert header_idx >= 0
+    assert "masked_fallback=on" in out[header_idx:]
 
 
 def test_display_cache_hit_params_malformed_json_emits_unavailable(tmp_path, capsys):

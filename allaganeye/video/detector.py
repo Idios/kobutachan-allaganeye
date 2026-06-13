@@ -345,6 +345,10 @@ def detect_match_boundaries(
     chunk_dispatch_callback: Callable[[int], None] | None = None,
     gpu_vendor: str | None = None,
     brightness_callback: Callable[[dict[float, float]], None] | None = None,
+    # #821: masked fallback の結果が採用されたとき (明示 --masked / 0-blackout
+    # auto-trigger とも) に一度だけ呼ばれる。request flag と resolved path を
+    # 分離して記録するための通知 seam (brightness_callback と同型)。
+    masked_fallback_callback: Callable[[], None] | None = None,
     # #576: rational fps propagation (preferred over float source_fps).
     # Either pair (num+den) takes precedence; float source_fps is the
     # backward-compatible fallback (Fraction.limit_denominator path).
@@ -507,6 +511,8 @@ def detect_match_boundaries(
             brightness_results=results,
         )
         if masked_segments is not None:
+            if masked_fallback_callback is not None:
+                masked_fallback_callback()
             return masked_segments
 
     # Group into regions and expand with transition frames (#71)
