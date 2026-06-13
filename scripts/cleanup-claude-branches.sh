@@ -106,7 +106,7 @@ for branch in "${BRANCHES[@]}"; do
     continue
   fi
 
-  # AND 1: merged 判定 (いずれかの origin/develop-* or origin/main の祖先)
+  # AND 1: merged 判定 (sort -V 最新の origin/develop-* or origin/main の祖先)
   merged=0
   for base in "${MERGE_BASES[@]}"; do
     if git -C "$REPO_ROOT" merge-base --is-ancestor "$branch" "$base" 2>/dev/null; then
