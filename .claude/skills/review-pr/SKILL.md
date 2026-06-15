@@ -52,7 +52,7 @@ gh pr list --search "<元issue#>" --state merged --limit 10
 
 > 「同 issue で過去に merged PR `<N>` 件あります (PR #..., #...)。前回 fix の root cause が今回の変更で完全解消しているか、Step 5 / 5a で重点的に確認してください」
 
-意図的な multi-phase 分割 (例: AppError migration #663→#689→#714 系の Phase 分割、[`docs/refactor-pattern.md`](../../docs/refactor-pattern.md)) の場合は元 issue の本文 / コメントで明示確認し、警告を「意図的分割と確認済」として処置する。
+意図的な multi-phase 分割 (例: AppError migration #663→#689→#714 系の Phase 分割、[`docs/refactor-pattern.md`](../../../docs/refactor-pattern.md)) の場合は元 issue の本文 / コメントで明示確認し、警告を「意図的分割と確認済」として処置する。
 
 ##### 意図的分割の確認失敗時 fallback (G-4 fix)
 
@@ -163,7 +163,7 @@ PR の変更種別に応じて以下を確認する。**code quality (logic / ar
 
 `superpowers:requesting-code-review` skill が dispatch する `superpowers:code-reviewer` subagent に code quality 観点 (logic correctness / architecture / security / code smell / best practices) のレビューを委譲する。subagent は本 skill の責務外の項目 (受け入れ条件 / base sync / 並行 PR / project doc 整合 / マージ後 handoff) には介入しない。
 
-> **subagent 起動規約**: 本 dispatch は [`docs/l2-workflow.md` §subagent 起動規約](../../docs/l2-workflow.md#subagent-起動規約-746-phase-c--741-task-5-教訓) に準拠する。HARD-GATE (Stop conditions / 独断 fix 禁止 / orphan commit 防止) を遵守し、scope を超える発見は BLOCKED 報告で controller (本 skill) に escalate する。F6 (#732) / F7 (#741) と同型の事象を再発させない。
+> **subagent 起動規約**: 本 dispatch は [`docs/l2-workflow.md` §subagent 起動規約](../../../docs/l2-workflow.md#subagent-起動規約-746-phase-c--741-task-5-教訓) に準拠する。HARD-GATE (Stop conditions / 独断 fix 禁止 / orphan commit 防止) を遵守し、scope を超える発見は BLOCKED 報告で controller (本 skill) に escalate する。F6 (#732) / F7 (#741) と同型の事象を再発させない。
 
 入力に渡す情報:
 
@@ -201,7 +201,7 @@ PR の変更種別に応じて以下を確認する。**code quality (logic / ar
 **installer / workflow 系 PR の場合 (#L-γ M2、F2 教訓)**:
 
 - 外部依存 (Python / npm / cargo / OS binary tarball 等) の DL URL が **immutable** か (`master` / `main` / `latest` / `raw HEAD` を含まない)
-- [`docs/l2-workflow.md` §外部依存規約](../../docs/l2-workflow.md#外部依存規約-649651703721-教訓) §受け入れ可能なソース / §禁止パターン に沿うか
+- [`docs/l2-workflow.md` §外部依存規約](../../../docs/l2-workflow.md#外部依存規約-649651703721-教訓) §受け入れ可能なソース / §禁止パターン に沿うか
 - 違反があれば Step 5b トリアージ表で **(A)** PR 内修正 とし、URL pin 形式 (versioned tag / SHA pin 等) への変更を要請
 
 **diff 外 doc の確認ができない場合の処置**: 関連 doc の整合性確認がレビューセッションで完結しない (ファイルが session context 外 / アクセス不可 / 判断に専門領域知識が必要) 場合、「確認不要」と自己判断して省略せず、**(A) PR コメントで PR 作成セッションに整合性確認を依頼** する。Iron Law 3 / 5 に従い、曖昧な判断は独断で skip しない。
@@ -228,7 +228,7 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 **大規模 refactor 観点 (#L-γ A1)**
 
 - 本 PR が `touched files > 30 file` または `diff > 1000 line` を超える場合、Phase 分割すべきだった可能性を疑う
-- [`docs/refactor-pattern.md`](../../docs/refactor-pattern.md) §4 判定基準 (green / regression なし / consumer が選択的に乗り換え可能) を引き、Step 5b トリアージ表で (A) PR 内 Phase 分割提案 or (B) 別 issue で Phase 設計 spec を起票する
+- [`docs/refactor-pattern.md`](../../../docs/refactor-pattern.md) §4 判定基準 (green / regression なし / consumer が選択的に乗り換え可能) を引き、Step 5b トリアージ表で (A) PR 内 Phase 分割提案 or (B) 別 issue で Phase 設計 spec を起票する
 - AppError migration (#663→#689→#714/716/725/730/733→#745→#746) を reference 実例として参照
 
 **optional `/codex:review` (Codex 統合、C3)**
@@ -251,7 +251,7 @@ Codex の finding は Step 5b トリアージ表に「出所 = codex:review」�
 
 #### Codex fail 時の fallback 手順 (C6、L-β β-5 で追加)
 
-Codex CLI が exit code 非ゼロを返した場合、[`docs/l2-workflow.md` §Codex fallback](../../docs/l2-workflow.md#codex-fallback) の検出条件 table に従い:
+Codex CLI が exit code 非ゼロを返した場合、[`docs/l2-workflow.md` §Codex fallback](../../../docs/l2-workflow.md#codex-fallback) の検出条件 table に従い:
 
 1. stderr を keyword match (rate-limit / quota / 429 / auth / timeout 等) で分類
 2. **重要 PR 判定 (I-5 fix、spec C6 限界節)**: 以下のいずれかを満たす場合は「重要 PR」とし、**自動 fallback の前に user に AskUserQuestion 3 択を提示**:
@@ -324,9 +324,9 @@ options: [
 | doc 変更 PR で発見した CI 設定 (`.github/workflows/`) との矛盾 | **(A) PR コメント** (パス変更スコープに含まれる) | doc-only の境界を越える。「波及が大きい」の目安 — **(A) 目安**: 同一 PR で対応可能 (CI YAML 1-2 箇所の path 書換え / テスト追加 1-2 ファイル / doc 追従 1-2 箇所)。**(B) 目安**: 別レイヤー実装変更を伴う (検知パイプライン / GUI / CLI への連鎖修正 / 既存テスト再実行工数が GPU / 音声統合で 30 分超 / 別担当領域)。判断に迷う場合は AskUserQuestion でユーザー (Idios) 判断に回す |
 | 束ね PR で分離推奨と判断 | **(A) 分離依頼** (束ねの合理性を問い、分離 or 合理性説明を要求) | 束ね合理性が明記されていれば合意可、なければ分離優先 |
 | 予告文 (「今後実装」「追加予定」) の実装に該当する PR での予告文更新漏れ | **(A) PR コメント** (本 skill Step 5 にも明記された修正依頼対象) | CLAUDE.md / docs の予告文更新は受け入れ条件レベル |
-| markdownlint violation (MD028 / MD056 / MD060 等) を発見 | **(A) PR コメント** (本 PR 内で fix) | fix recipe は [`docs/markdownlint-guide.md`](../../docs/markdownlint-guide.md) §typical fixes (M10) を参照。typical なのは MD028 (blockquote 連結) / MD056+MD060 (table cell の \| escape) / MD060 compact-style |
-| installer / `.github/workflows/` 系 PR で `master` / `main` / `latest` を含む URL を発見 | **(A) PR コメント** (immutable URL pin への変更を要請) | 規約は [`docs/l2-workflow.md` §外部依存規約](../../docs/l2-workflow.md#外部依存規約-649651703721-教訓) (M2)。F2 (#649→#651→#703→#721) 系の再発防止 |
-| 大規模 PR (touched > 30 file or diff > 1000 line) で Phase 分割の検討漏れ | **(A) PR コメント** (Phase 分割提案) または **(B)** Phase 設計 spec 起票 | 判定基準は [`docs/refactor-pattern.md`](../../docs/refactor-pattern.md) §4 (A1)。AppError migration が reference 実例 |
+| markdownlint violation (MD028 / MD056 / MD060 等) を発見 | **(A) PR コメント** (本 PR 内で fix) | fix recipe は [`docs/markdownlint-guide.md`](../../../docs/markdownlint-guide.md) §typical fixes (M10) を参照。typical なのは MD028 (blockquote 連結) / MD056+MD060 (table cell の \| escape) / MD060 compact-style |
+| installer / `.github/workflows/` 系 PR で `master` / `main` / `latest` を含む URL を発見 | **(A) PR コメント** (immutable URL pin への変更を要請) | 規約は [`docs/l2-workflow.md` §外部依存規約](../../../docs/l2-workflow.md#外部依存規約-649651703721-教訓) (M2)。F2 (#649→#651→#703→#721) 系の再発防止 |
+| 大規模 PR (touched > 30 file or diff > 1000 line) で Phase 分割の検討漏れ | **(A) PR コメント** (Phase 分割提案) または **(B)** Phase 設計 spec 起票 | 判定基準は [`docs/refactor-pattern.md`](../../../docs/refactor-pattern.md) §4 (A1)。AppError migration が reference 実例 |
 
 **root cause 識別時は Step 5c (同種パターン sweep 規約、本節の直後で詳述) に従う**: explicit N 箇所のみ列挙ではなく、`grep -nE '...'` 全件 sweep の hits を本表に転記すること。**先に下記 Step 5c の手順を確認してから本表を埋めること** (Step 5b → 5c の flow 順は doc 上の順序、運用上は 5c の sweep 結果を 5b 表に転記する)。
 

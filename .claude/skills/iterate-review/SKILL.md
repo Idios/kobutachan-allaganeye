@@ -21,7 +21,7 @@ PR 作成後の review → fix → review ループを自動化する。指定�
 5. Step 4: Final summary comment (HEREDOC で投稿、AskUserQuestion 3 択で承認)
 6. Step 5: LGTM 候補通知 (user merge → /close-issue handoff)
 
-詳細仕様: [docs/superpowers/specs/2026-05-10-iterate-review-and-review-pr-redesign.md](../../docs/superpowers/specs/2026-05-10-iterate-review-and-review-pr-redesign.md)
+詳細仕様: [docs/superpowers/specs/2026-05-10-iterate-review-and-review-pr-redesign.md](../../../docs/superpowers/specs/2026-05-10-iterate-review-and-review-pr-redesign.md)
 
 ## 手順
 
@@ -58,9 +58,9 @@ base 最新化 + 直近マージ PR + 並行 worktree PR 重複確認は `/revie
 
 `Agent` tool (subagent_type: `general-purpose`) で fresh subagent を spawn。**毎ラウンド新しい subagent** を起動 (context 汚染回避)。
 
-> **subagent 起動規約**: 本 dispatch は [`docs/l2-workflow.md` §subagent 起動規約](../../docs/l2-workflow.md#subagent-起動規約-746-phase-c--741-task-5-教訓) に準拠する。`__ITERATE_REVIEW_SUBAGENT_MODE__` marker + `(A)*` / ambiguous_judgments の自己申告 (下記 prompt template の item 6 / 7) で HARD-GATE (Stop conditions / 独断 fix 禁止) を担保する。controller (本 skill) が Step 2.2 validation で「無視 / 観察のみ / スコープ対象外」キーワード単独行を parse error とすることで、subagent の独断 fix 倍数を 0 に抑える。F6 / F7 と同型の事象を再発させない。
+> **subagent 起動規約**: 本 dispatch は [`docs/l2-workflow.md` §subagent 起動規約](../../../docs/l2-workflow.md#subagent-起動規約-746-phase-c--741-task-5-教訓) に準拠する。`__ITERATE_REVIEW_SUBAGENT_MODE__` marker + `(A)*` / ambiguous_judgments の自己申告 (下記 prompt template の item 6 / 7) で HARD-GATE (Stop conditions / 独断 fix 禁止) を担保する。controller (本 skill) が Step 2.2 validation で「無視 / 観察のみ / スコープ対象外」キーワード単独行を parse error とすることで、subagent の独断 fix 倍数を 0 に抑える。F6 / F7 と同型の事象を再発させない。
 >
-> **Codex fallback (C6)**: subagent が `/review-pr` 内で `/codex:review` を invoke して fail した場合は [`docs/l2-workflow.md` §Codex fallback](../../docs/l2-workflow.md#codex-fallback) の手順に従い superpowers `requesting-code-review` subagent を fallback として起動する。Round summary comment (Step 4) に「Codex fallback notice」を必須記載 (Iron Law 5 整合)。
+> **Codex fallback (C6)**: subagent が `/review-pr` 内で `/codex:review` を invoke して fail した場合は [`docs/l2-workflow.md` §Codex fallback](../../../docs/l2-workflow.md#codex-fallback) の手順に従い superpowers `requesting-code-review` subagent を fallback として起動する。Round summary comment (Step 4) に「Codex fallback notice」を必須記載 (Iron Law 5 整合)。
 
 prompt template (固定):
 
@@ -171,7 +171,7 @@ Iron Law 3 と CLAUDE.md plugin override 規約は「user の明示判断が最�
 3. 変更 path に応じた local check (Iron Law 6 サブ条 = `docs/l2-workflow.md` §「PR 作成 path 別自動チェック」):
    - Python (`*.py`): `ruff check . && ruff format --check . && pyright && pytest`
    - GUI (`gui/src/**`, `gui/src-tauri/**`): `npm run lint && npm run typecheck && npm test && npm run build && cargo check`
-   - Markdown (`docs/**.md`, `*.md`): `bash scripts/check-markdownlint.sh` (violation fix recipe は [`docs/markdownlint-guide.md`](../../docs/markdownlint-guide.md) §typical fixes を参照、M10)
+   - Markdown (`docs/**.md`, `*.md`): `bash scripts/check-markdownlint.sh` (violation fix recipe は [`docs/markdownlint-guide.md`](../../../docs/markdownlint-guide.md) §typical fixes を参照、M10)
 4. **1 round = 1 commit** で集約: 全 (A) を 1 つの commit にまとめる (round 単位の atomicity を確保、Round 別 SHA を summary コメントで参照しやすくするため)。message テンプレ: `fix(round-N): <要約> (Refs #<元 issue>)`。例外として、push 失敗で reset → 再 commit が必要な場合のみ複数 commit になる可能性を許容
 
 > **M5 同 issue 過去 PR 警告の併走**: `/review-pr` Step 1.1 で同 issue 過去 merged PR が ≥1 件検出された場合、その警告は subagent の Step 5b 表冒頭に転記されて return される。controller (本 skill) は Step 2.2 parse 後の Step 2.3 Round summary 提示時に user に再度明示する (root cause sweep 重点確認の促し)。
