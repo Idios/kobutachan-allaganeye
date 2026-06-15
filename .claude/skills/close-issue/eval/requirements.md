@@ -1,6 +1,6 @@
 # 要件チェックリスト (baseline 評価用、事前固定)
 
-[empirical-prompt-tuning](https://github.com/mizchi/skills/blob/main/empirical-prompt-tuning/SKILL-ja.md) §「ワークフロー 4. 両面評価」の精度算出・[critical] 付与ルールに従う。
+[empirical-prompt-tuning](https://github.com/mizchi/skills/blob/main/meta/empirical-prompt-tuning/SKILL-ja.md) §「ワークフロー 4. 両面評価」の精度算出・[critical] 付与ルールに従う (#817 で上流パス移動 empirical-prompt-tuning/ → meta/empirical-prompt-tuning/ に追従)。
 各シナリオに [critical] 項目を最低 1 つ以上含む (本 close-issue では各シナリオ 5-7 個)。事後の [critical] 付け外しは禁止。
 
 ## 判定規則 (全シナリオ共通)
@@ -14,6 +14,8 @@
 
 ## シナリオ A (中央値): モック issue #911 + PR #921 (verbose mode)
 
+> mock 追加前提 (#817): PR #921 の**レビューコメント**に「guard 側で別途追って対応します」のような**行き先 issue 番号を伴わない follow-up 宣言**が 1 つ含まれる。
+
 1. **[critical]** ケース A (1:1) と判定している (Step 2 で 1 PR (Step 1 取得) + 1 issue (`closingIssuesReferences` または PR 本文 `Refs #911` 抽出) と確認)
 2. **[critical]** PR #921 を `gh pr view` で MERGED 確認している (`state: MERGED` / `mergedAt` を取得)
 3. **[critical]** issue #911 の受け入れ条件 5 項目を逐条引用している (項目 1-5 を独立に列挙)
@@ -24,6 +26,7 @@
 8. close 実行する場合のコメントテンプレートに session-id と検証方法サマリ (静的 grep / 単体テスト pytest 等) を含めている
 9. **[critical]** `closedByPullRequestsReferences` 空の状態から Step 1 fallback (`gh api repos/.../issues/911/timeline` cross-referenced-event + `gh search prs '"Refs #911"'`) を経由して PR #921 を列挙している (両 fallback 段の挙動を明示的に言及。`closedByPullRequestsReferences` 空 → 「PR なし」の即断は失格)
 10. **[important]** Hybrid fallback の dedupe ポリシーを明示している (timeline の `state==closed` と search の `state==merged` が両方ヒットした場合は search の `merged` を真値として採用、または PR 番号で重複排除)
+11. **[critical]** PR #921 のレビューコメントにある**番号なし follow-up 宣言** (「guard 側で追って対応」) を検出し、未追跡残タスクとして Step 6 で (B) `/create-task` 起票を提案している (Step 5b の follow-up 宣言確認、#817 / P2-39)。**「宣言はあるが番号がないので追えない」と見送ったら失格** (番号不在こそ死角の証拠)
 
 ---
 
