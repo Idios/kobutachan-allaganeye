@@ -1,7 +1,7 @@
 # create-task SKILL.md empirical-prompt-tuning Final Report
 
 session-id: eloquent-kalam-0196f5
-protocol: <https://github.com/mizchi/skills/tree/main/empirical-prompt-tuning>
+protocol: <https://github.com/mizchi/skills/tree/main/meta/empirical-prompt-tuning>
 target: `.claude/skills/create-task/SKILL.md` (改修 PR の create-task skill)
 
 ## Summary

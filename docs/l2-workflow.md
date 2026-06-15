@@ -807,8 +807,8 @@ typo fix / リンク更新では過剰。`/iterate-review` のような中核 sk
 
 上流 SKILL.md を **vendoring せず** (license 未設定のため)、改修者が都度参照する:
 
-- URL: <https://github.com/mizchi/skills/tree/main/empirical-prompt-tuning>
-- raw 取得: `gh api repos/mizchi/skills/contents/empirical-prompt-tuning/SKILL.md -H "Accept: application/vnd.github.raw"`
+- URL: <https://github.com/mizchi/skills/tree/main/meta/empirical-prompt-tuning>
+- raw 取得: `gh api repos/mizchi/skills/contents/meta/empirical-prompt-tuning/SKILL.md -H "Accept: application/vnd.github.raw"`
 - offline / GitHub 不到達時は WebFetch / `gh api` 不可 → skill 改修作業を保留。短期キャッシュは作業 dir に置いて **commit しない**
 
 ### How to apply
@@ -830,7 +830,7 @@ typo fix / リンク更新では過剰。`/iterate-review` のような中核 sk
 
 ### 経緯
 
-2026-04-24 `/review-pr` skill 改修で実証済み (PR #537 / #562)。Iteration 0 baseline で構造的欠陥 6 件 (環境制約節欠落、Round N 記法不在、処置分類判定基準の弱さ、束ね PR 独立検証の明示不在、孤立 PR 手順不在、doc-only CI 波及観点なし) を検出し、Iteration 1 で全件解消。精度 0.98 → 1.00、[critical] 3/3 成功。書き手自身の自己レビューでは構造的欠陥に到達できなかった。参考: <https://github.com/mizchi/skills/tree/main/empirical-prompt-tuning>
+2026-04-24 `/review-pr` skill 改修で実証済み (PR #537 / #562)。Iteration 0 baseline で構造的欠陥 6 件 (環境制約節欠落、Round N 記法不在、処置分類判定基準の弱さ、束ね PR 独立検証の明示不在、孤立 PR 手順不在、doc-only CI 波及観点なし) を検出し、Iteration 1 で全件解消。精度 0.98 → 1.00、[critical] 3/3 成功。書き手自身の自己レビューでは構造的欠陥に到達できなかった。参考: <https://github.com/mizchi/skills/tree/main/meta/empirical-prompt-tuning>
 
 ## Codex fallback (C6、Codex token 枯渇 / failure 時)
 
