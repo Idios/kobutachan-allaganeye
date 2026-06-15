@@ -26,7 +26,8 @@
 8. close 実行する場合のコメントテンプレートに session-id と検証方法サマリ (静的 grep / 単体テスト pytest 等) を含めている
 9. **[critical]** `closedByPullRequestsReferences` 空の状態から Step 1 fallback (`gh api repos/.../issues/911/timeline` cross-referenced-event + `gh search prs '"Refs #911"'`) を経由して PR #921 を列挙している (両 fallback 段の挙動を明示的に言及。`closedByPullRequestsReferences` 空 → 「PR なし」の即断は失格)
 10. **[important]** Hybrid fallback の dedupe ポリシーを明示している (timeline の `state==closed` と search の `state==merged` が両方ヒットした場合は search の `merged` を真値として採用、または PR 番号で重複排除)
-11. **[critical]** PR #921 のレビューコメントにある**番号なし follow-up 宣言** (「guard 側で追って対応」) を検出し、未追跡残タスクとして Step 6 で (B) `/create-task` 起票を提案している (Step 5b の follow-up 宣言確認、#817 / P2-39)。**「宣言はあるが番号がないので追えない」と見送ったら失格** (番号不在こそ死角の証拠)
+11. **[critical]** PR #921 のレビューコメントにある**番号なし follow-up 宣言** (「guard 側で追って対応」= 未解決 actionable) を検出し、未追跡残タスクとして Step 6 で (B) `/create-task` 起票を提案している (Step 5b の follow-up 宣言確認、#817 / P2-39)。**actionable な未解決宣言を「番号がないので追えない」と見送ったら失格** (番号不在こそ死角の証拠)
+12. **[critical]** 過剰発火しない: 仮に PR #921 のコメントに benign な「follow-up」言及 (後続コメントで解決済み / 外部 tracker URL 付き / 単なる例示) が別途あった場合、それを機械的に (B) 起票せず Step 6 で「残タスクなし」と理由付き判定している (#817 Codex medium 対策。actionable 性を Step 6 で判定するのが正、闇雲な起票は noise)
 
 ---
 

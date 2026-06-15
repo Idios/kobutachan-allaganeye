@@ -12,6 +12,7 @@ Step 5b に「follow-up 宣言の起票漏れ確認 (番号なし、#817 / audit
 | --- | --- | --- | --- | --- | --- |
 | 1 | Step 5b follow-up 節追加後 | ○ (11/11 [critical] ○) | 100% | Read 1 + gh 6 相当 | 0 |
 | 2 | (無変更、別 fresh subagent で再評価) | ○ (11/11 [critical] ○) | 100% | Read 1 + gh 6 相当 | 0 |
+| 3 | Codex medium 対応 (over-fire 抑制: actionable 限定 + benign 除外 3 条件 + item 12 追加) | ○ (item 11 actionable 発火 ○ / item 12 benign 非発火 ○) | 100% | Read 1 相当 | 0 |
 
 ## 構造化 reflection
 
@@ -20,4 +21,4 @@ Step 5b に「follow-up 宣言の起票漏れ確認 (番号なし、#817 / audit
 
 ## 収束判定
 
-**2 consecutive clears (iter1 + iter2、新規不明瞭点ゼロ + accuracy 100% 維持)** で収束。General Fix Rule 台帳への新規追加なし。
+iter1 + iter2 で 2 consecutive clears 達成後、Pre-flight Step 5 の Codex adversarial-review が medium「follow-up 検出が benign コメントに過剰発火しうる」を摘出。iter3 で over-fire 抑制 (actionable 未解決の約束に限定 + 解決済み/外部 tracker URL/例示の 3 除外条件 + benign 非発火 item 12) を適用し、actionable 発火と benign 非発火の両立を fresh subagent で確認 (新規不明瞭点ゼロ)。**収束** (Codex finding 解消込み)。

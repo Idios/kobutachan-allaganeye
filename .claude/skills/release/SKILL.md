@@ -39,8 +39,8 @@ gh issue list --repo Idios/kobutachan-allaganeye --state open --label "deferred"
   --json number,title,labels,createdAt,updatedAt
 ```
 
-- 件数 0 → Step 1 へ skip
-- 件数 ≥1 → Step 0c で全件分類
+- 件数 0 → deferred 分類 (Step 0c) は skip。ただし **Step 0c-2 の not_planned 残タスク確認** (リリース区間ベース、deferred 件数と独立) は必ず実施してから Step 2 へ進む (本文鮮度は対象 deferred が無いため skip 可)
+- 件数 ≥1 → **Step 0c-2 (本文鮮度 + not_planned) を実施後**、Step 0c で全件分類
 
 ### Step 0c: deferred 1 件ずつ 3 択分類 (M9 再設計版)
 

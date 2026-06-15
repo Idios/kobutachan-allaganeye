@@ -15,6 +15,7 @@ mizchi protocol: <https://github.com/mizchi/skills/blob/main/meta/empirical-prom
 | 1 | Step 0c-2 + json grep 追加後 | ○ (A-5 ○、全 [critical] ○) | ○ (B-7/B-8 ○、全 [critical] ○) | A: 2 (Step 1 欠番=pre-existing / `git add` が json 非 stage), B: 3 (0c-2 実行順序 / 全件OK時適用 / not_planned grep concrete 欠如) |
 | 2 | iter1 reflection 反映 (0c-2 実行順序+全件OK注記 / not_planned concrete grep / `git add` json 注記) | ○ (全 [critical] ○) | ○ (全 [critical] ○、不明瞭点ゼロ) | A: 1 (not_planned が deferred=0 時走るか) + pre-existing Step 1 欠番 / B: 0 |
 | 2 後 polish | not_planned は deferred 件数独立で 0 件時も実施、と 1 行明確化 | — | — | (A の in-scope 点を解消) |
+| 3 | Codex high 対応 (Step 0b「件数0→skip」を deferred 分類のみ skip + not_planned は必ず実施に書換、Step 1 欠番も解消、eval C-3 追加) | ○ | ○ (scenario C: C-1/C-2/C-3 ○、deferred 0 でも not_planned gate 迂回せず) | 0 |
 
 ## 構造化 reflection (iter1 → iter2 で潰した点)
 
@@ -22,9 +23,10 @@ mizchi protocol: <https://github.com/mizchi/skills/blob/main/meta/empirical-prom
 - **Issue**: not_planned マーカー探索範囲が未規定 / **Cause**: concrete コマンド不在 / **General Fix Rule**: 探索系手順は `git log .. -p | grep` レベルの concrete 例を添える → grep + `gh issue view --json stateReason` の 2 コマンド例を追加
 - **Issue**: `git add pyproject.toml` 単体だと *.json bump が非 stage / **Cause**: grep 拡張と commit 例の不整合 / **General Fix Rule**: 確認 grep を広げたら stage 例も同期 → `git add` にコメント + json 例追加
 
-## scope 外 (deferred)
+## Codex Pre-flight finding (iter3 で解消)
 
-- **Step 0b「件数 0 → Step 1 へ skip」の Step 1 欠番**: pre-existing (本 #817 の変更と無関係、Step 番号は 0a/0b/0c/2/3 で Step 1 が存在しない)。N2 scope 外のため本 PR では修正せず別途処理 (PR 本文备考に記載)
+- **[high] deferred-zero で not_planned gate 迂回**: Pre-flight Step 5 の Codex adversarial-review が摘出。Step 0b の「件数 0 → skip」が新 Step 0c-2 の not_planned 確認まで skip してしまう矛盾 (polish の 1 行では Step 0c-2 内の記述のみで Step 0b 制御フローが未修正だった)。iter3 で Step 0b を「deferred 分類 (Step 0c) のみ skip、not_planned は必ず実施」に書換、eval scenario C を not_planned マーカー入りに改め C-3 [critical] 追加。fresh subagent で迂回しないことを確認
+- この Step 0b 書換に伴い **pre-existing の「Step 1 欠番」(Step 1 が存在しないのに skip 先と記載) も同時に解消** (skip 先を「Step 2 へ進む」に明記)。当初 scope 外と判断していたが、high finding 修正で同一行を書き換えるため統合
 
 ## 収束判定
 

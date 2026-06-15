@@ -14,7 +14,7 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 モック: develop-0.3.0 ブランチで v0.3.0 release PR 作成。pyproject.toml = 0.3.0、受け入れゲート §共通項目 + §v0.3.0 (L3) 固有項目 を充足、deferred 0 件。
 
 1. **[critical]** **A-1**: Step 0a (旧 Step 0) でレイヤーリリース受け入れゲートを §共通項目 + §v0.3.0 固有項目 を user 提示し各項目 ○ 確認
-2. **[critical]** **A-2**: Step 0b で `gh issue list --label deferred --state open --limit 200` を実行し、件数 0 を検出して Step 0c skip
+2. **[critical]** **A-2**: Step 0b で `gh issue list --label deferred --state open --limit 200` を実行し、件数 0 を検出して deferred 分類 (Step 0c) を skip (※not_planned 残タスク確認の要否は C-3 で検証)
 3. **[critical]** **A-3**: 全ゲート通過後に Step 1 リリース準備に進む
 4. minor release は `docs/release-process.md` §Patch release Track 構造 (A2) の適用対象外と判断
 5. **[critical]** **A-5**: Step 3-2 の version bump 確認 grep に `--include='*.json'` を含め、`gui/src-tauri/tauri.conf.json` / `gui/package.json` のバージョン参照も対象にしている (#817 / P2-33。`*.py` / `*.toml` のみで `*.json` を落としていたら失格)
@@ -38,10 +38,11 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 
 ## シナリオ C (deferred 0 件 edge)
 
-モック: deferred ラベル 0 件。
+モック: deferred ラベル 0 件。ただしリリース区間のコードに `wired in #770` マーカーがあり、#770 は `stateReason == "not_planned"` で close 済み (残タスク行き先未確認)。
 
 1. **[critical]** **C-1**: Step 0b で件数 0 を検出
-2. **[critical]** **C-2**: Step 0c を skip して Step 1 に進む (無駄な AskUserQuestion を発火しない)
+2. **[critical]** **C-2**: deferred 分類 (Step 0c) と本文鮮度確認は skip して無駄な AskUserQuestion を発火しない
+3. **[critical]** **C-3**: deferred 0 件でも Step 0c-2 の **not_planned 残タスク確認はリリース区間ベースで必ず実施**し、`wired in #770` の not_planned close を検出して残タスク行き先を確認している (#817 high finding 対策。deferred 0 で not_planned gate を迂回したら ×)
 
 ## Codex 統合 / 撤回 M8 関連 [critical] (全 scenario 共通)
 
