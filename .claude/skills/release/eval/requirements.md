@@ -17,6 +17,7 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 2. **[critical]** **A-2**: Step 0b で `gh issue list --label deferred --state open --limit 200` を実行し、件数 0 を検出して Step 0c skip
 3. **[critical]** **A-3**: 全ゲート通過後に Step 1 リリース準備に進む
 4. minor release は `docs/release-process.md` §Patch release Track 構造 (A2) の適用対象外と判断
+5. **[critical]** **A-5**: Step 3-2 の version bump 確認 grep に `--include='*.json'` を含め、`gui/src-tauri/tauri.conf.json` / `gui/package.json` のバージョン参照も対象にしている (#817 / P2-33。`*.py` / `*.toml` のみで `*.json` を落としていたら失格)
 
 ---
 
@@ -30,6 +31,8 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 4. **[critical]** **B-4**: 分類結果を spec PR (Track 0) の §deferred 全件検証結果 table として保存
 5. **[critical]** **B-5**: (a) 分類が `docs/release-process.md` §Patch release Track 構造 の Track B 吸収候補と関連付けされる
 6. **[critical]** **B-6**: (a) 分類 issue 群の Track B PR / commit plan が無い場合、release PR 作成を block
+7. **[critical]** **B-7**: Step 0c-2 で各 deferred issue の本文と直近コメントを関連 spec と突合し、鮮度切れ (本文が現状と矛盾) があれば分類前に `gh issue edit` での本文更新を提案している (#817 / P2-39)
+8. **[critical]** **B-8**: Step 0c-2 でリリース区間の `wired in #N` / `Refs #N` 等が指す issue を確認し、`stateReason == "not_planned"` で close されているものは残タスクの行き先 (再起票要否) を確認している (#762 orphan 化の再発防止)
 
 ---
 
