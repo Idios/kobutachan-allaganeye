@@ -86,4 +86,4 @@ v0.M.N → v0.M.(N+1) の patch release で吸収する issue を起票する場
    <なぜ scope 外なのかを 1-2 文>
    ```
 
-5. issue 本文に `[docs/release-process.md §Patch release Track 構造](../../docs/release-process.md#patch-release-の-track-構造)` への link を含めると、後日の Step 0c 評価で参照しやすくなる
+5. issue 本文に `[docs/release-process.md §Patch release Track 構造](../../../docs/release-process.md#patch-release-の-track-構造)` への link を含めると、後日の Step 0c 評価で参照しやすくなる

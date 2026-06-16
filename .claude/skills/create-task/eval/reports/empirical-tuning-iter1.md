@@ -1,7 +1,7 @@
 # create-task SKILL.md empirical-prompt-tuning Iter 1 (baseline)
 
 session-id: eloquent-kalam-0196f5
-protocol: <https://github.com/mizchi/skills/tree/main/empirical-prompt-tuning>
+protocol: <https://github.com/mizchi/skills/tree/main/meta/empirical-prompt-tuning>
 
 ## Iter 1 結果 (5 scenarios fresh subagent 並列 dispatch、model: sonnet)
 

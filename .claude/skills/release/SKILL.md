@@ -39,8 +39,8 @@ gh issue list --repo Idios/kobutachan-allaganeye --state open --label "deferred"
   --json number,title,labels,createdAt,updatedAt
 ```
 
-- 件数 0 → Step 1 へ skip
-- 件数 ≥1 → Step 0c で全件分類
+- 件数 0 → deferred 分類 (Step 0c) は skip。ただし **Step 0c-2 の not_planned 残タスク確認** (リリース区間ベース、deferred 件数と独立) は必ず実施してから Step 2 へ進む (本文鮮度は対象 deferred が無いため skip 可)
+- 件数 ≥1 → **Step 0c-2 (本文鮮度 + not_planned) を実施後**、Step 0c で全件分類
 
 ### Step 0c: deferred 1 件ずつ 3 択分類 (M9 再設計版)
 
@@ -80,6 +80,22 @@ Step 0b で取得した各 deferred issue について、AskUserQuestion で以�
 
 F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏れた事例) の根本対策。
 
+#### Step 0c-2: deferred 本文鮮度 + not_planned 残タスク確認 (#817 / audit P2-39)
+
+**実行順序**: 本確認は Step 0c の分類 (bulk pre-check 含む) の**前に**実施する。bulk pre-check で「全件 OK (= 全件 (b) 継続)」を選ぶ場合も省略しない (古い本文・orphan 残タスクのまま継続するのを防ぐのが目的のため)。なお **本文鮮度** は各 deferred issue 単位のため deferred 0 件時はスキップ可だが、**not_planned 残タスク** はリリース区間ベース (deferred 件数と独立) のため deferred 0 件でも必ず実施する。
+
+以下 2 点を確認する (closed 側から open 側への参照切れの構造的検出):
+
+- **本文鮮度**: 各 deferred issue の本文と直近コメントを、関連 spec / design doc と突合する。本文が現状の実装・方針と矛盾 (鮮度切れ) している場合は、分類前に `gh issue edit <番号>` での本文更新を提案する (古い前提のまま (b) 継続すると次 cycle も腐り続けるため、#753「親 issue 本文が腐る」と同型の予防)
+- **not_planned 残タスク**: リリース区間 (前タグ〜HEAD) の commit / doc が参照する issue 番号のうち、コード/doc 内マーカー (`wired in #N` / `Refs #N` / `TODO(#N)` 等) が指す `#N` が **not_planned で close** されている場合、その残タスクの行き先 (再起票要否) を確認する (#762 が not_planned close されて残タスクが orphan 化した事例)。行き先が無ければ `/create-task` 起票を提案。マーカー探索の具体例:
+
+  ```bash
+  # リリース区間の diff から issue 参照マーカーを抽出
+  git log <前タグ>..HEAD -p -- '*.py' '*.md' '*.rs' '*.ts' | grep -oE '(wired in|Refs|TODO\() ?#[0-9]+'
+  # 抽出した各 #N の close 理由を確認 (not_planned を検出)
+  gh issue view <N> --json state,stateReason --jq '"\(.state) \(.stateReason)"'
+  ```
+
 ### Step 2: リリース準備
 
 1. 現在のバージョンを `pyproject.toml` から取得
@@ -106,7 +122,7 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
    ```
 
    いずれか失敗したら修正してから以下に進む
-2. `pyproject.toml` の `version` を更新（他にバージョン参照箇所があれば `grep -r '<旧バージョン>' --include='*.py' --include='*.toml'` で確認し同時更新）
+2. `pyproject.toml` の `version` を更新（他にバージョン参照箇所があれば `grep -r '<旧バージョン>' --include='*.py' --include='*.toml' --include='*.json'` で確認し同時更新。`*.json` は `gui/src-tauri/tauri.conf.json` / `gui/package.json` 等のバージョン参照を拾う、#817 / audit P2-33）
 3. リリースブランチを作成（Step 2-4 で特定したベースブランチから分岐）:
 
    ```bash
@@ -118,6 +134,8 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 4. 変更をコミット（session-id を含める、[`docs/l2-workflow.md`](../../../docs/l2-workflow.md) §「PR 規約」 §「コミットメッセージ session-id」）:
 
    ```bash
+   # Step 3-2 の grep で *.json 等に追加のバージョン参照が見つかった場合はそれらも stage する
+   # (例: git add pyproject.toml gui/src-tauri/tauri.conf.json gui/package.json)
    git add pyproject.toml
    git commit -m "chore: bump version to <新バージョン> [<session-id>]"
    ```

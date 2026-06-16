@@ -2,7 +2,7 @@
 
 **実施日**: 2026-04-27 (Iter 0 / Iter 1) → 2026-04-28 (Iter 2)
 **対象**: `.claude/skills/close-issue/SKILL.md` (#594 新設、#607 で `Refs #N` fallback 追加、#606 で eval/reports 構造整理)
-**参照プロセス**: [mizchi empirical-prompt-tuning SKILL-ja.md](https://github.com/mizchi/skills/blob/main/empirical-prompt-tuning/SKILL-ja.md)
+**参照プロセス**: [mizchi empirical-prompt-tuning SKILL-ja.md](https://github.com/mizchi/skills/blob/main/meta/empirical-prompt-tuning/SKILL-ja.md)
 **先行事例**: `.claude/skills/review-pr/eval/` (#511 関連、Iter 2 まで実行の実績)
 
 ---

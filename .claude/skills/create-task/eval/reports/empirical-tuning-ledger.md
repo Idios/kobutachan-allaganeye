@@ -2,7 +2,7 @@
 
 iter ごとに pattern を累積する。同じ `General Fix Rule` が再出現したら "Seen in" を update して、既存 fix が prevent しなかった理由を記録する。
 
-protocol 参考: <https://github.com/mizchi/skills/tree/main/empirical-prompt-tuning>
+protocol 参考: <https://github.com/mizchi/skills/tree/main/meta/empirical-prompt-tuning>
 session-id: eloquent-kalam-0196f5
 
 ## Iter 0 (description / body 整合性 static check)
