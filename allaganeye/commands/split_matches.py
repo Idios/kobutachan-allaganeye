@@ -21,7 +21,7 @@ from allaganeye.detection.metadata_writer import (
     write_metadata_atomic,
 )
 from allaganeye.detection.progress_emitter import ProgressEmitter
-from allaganeye.detection.warnings import build_warnings
+from allaganeye.detection.warnings import build_warnings, sanitize_warnings
 from allaganeye.exceptions import (
     AllaganEyeError,
     DetectionError,
@@ -435,18 +435,11 @@ def run_split_from_metadata(
     # split --from-metadata -o <same dir> が記録済み warning を silent に
     # 上書きしないよう、元 metadata の warnings を引き継ぐ (#586 timing /
     # #644 brightness と同じ preserve パターン)。本ランは再検知しないので
-    # 新たな drop 痕跡は生成されない。code を持つ dict entry のみ拾い、壊れた
-    # entry は捨てる (writer 契約を満たすため)。
-    old_warnings = payload.get("warnings")
-    preserve_warnings: list[MetadataWarning] = (
-        [
-            cast("MetadataWarning", w)
-            for w in old_warnings
-            if isinstance(w, dict) and "code" in w
-        ]
-        if isinstance(old_warnings, list)
-        else []
-    )
+    # 新たな drop 痕跡は生成されない。writer は schema 検証しないため、壊れた
+    # entry や schema 違反 optional field が freshly written metadata.json に
+    # 漏れないよう sanitize_warnings で coerce する (非 dict / code 欠落 entry の
+    # drop + 不正 field の strip)。
+    preserve_warnings = sanitize_warnings(payload.get("warnings"))
 
     detection_params = payload.get("detection_params")
     if isinstance(detection_params, dict):
@@ -580,10 +573,11 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
     # Live-probe AUDIO_FROZEN so the verbose line mirrors `_run_audio_scan`
     # behaviour for the current run, same as the cache-miss summary.
     cached_no_audio = bool(params.get("no_audio", config.no_audio))
-    # vtuber / masked は cache key に含まれるため hit 時は config と一致するが、
-    # 表示は cache 記録値を正とする (legacy cache は key なし = False)。
+    # vtuber / masked / keep_trailing は cache key に含まれるため hit 時は config と
+    # 一致するが、表示は cache 記録値を正とする (legacy cache は key なし = False)。
     cached_vtuber = bool(params.get("vtuber", False))
     cached_masked = bool(params.get("masked", False))
+    cached_keep_trailing = bool(params.get("keep_trailing", False))
     # resolved path (top-level、key 非対象)。auto-fallback 時は masked=off でも
     # masked_fallback=on になる (#821)。
     cached_fallback = bool(data.get("masked_fallback_used", False))
@@ -598,6 +592,7 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
         f"audio={_audio_status_str(cached_no_audio)}, "
         f"vtuber={'on' if cached_vtuber else 'off'}, "
         f"masked={'on' if cached_masked else 'off'}, "
+        f"keep_trailing={'on' if cached_keep_trailing else 'off'}, "
         f"masked_fallback={'on' if cached_fallback else 'off'}"
     )
 
@@ -1855,6 +1850,7 @@ def _save_cache(
             "no_audio": config.no_audio,
             "vtuber": config.vtuber,
             "masked": config.masked,
+            "keep_trailing": config.keep_trailing,
         },
         # resolved path は key (params) ではなく top-level に記録する: auto-masked
         # 動画の cache 再利用は request flag の一致で正しく機能させ、provenance
@@ -1923,9 +1919,11 @@ def _load_cache(
         return None
 
     params = data.get("params", {})
-    # vtuber / masked は detection path を切り替えるため cache key に含める (gate
-    # の cache bypass 防止)。key なし legacy cache は両 flag 導入前 = 標準 path の
-    # 結果なので False と同値に扱う。
+    # vtuber / masked は detection path を切り替え、keep_trailing は trailing-drop
+    # を skip して検出境界を変える (#805 段階1) ため、いずれも cache key に含める
+    # (gate / opt-out の cache bypass 防止)。key なし legacy cache は各 flag 導入前
+    # の結果 (vtuber/masked=標準 path、keep_trailing=drop ON) なので False と同値に
+    # 扱う。
     if (
         params.get("sample_interval") != effective_interval
         or params.get("blackout_threshold") != config.blackout_threshold
@@ -1934,6 +1932,7 @@ def _load_cache(
         or params.get("no_audio") != config.no_audio
         or params.get("vtuber", False) != config.vtuber
         or params.get("masked", False) != config.masked
+        or params.get("keep_trailing", False) != config.keep_trailing
     ):
         logger.debug("Cache parameter mismatch")
         return None

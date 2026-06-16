@@ -540,23 +540,39 @@ def test_run_split_from_metadata_empty_warnings_when_source_lacks(tmp_path):
 
 
 def test_run_split_from_metadata_drops_malformed_warning_entries(tmp_path):
-    """#805 段階1 -- preserve_warnings フィルタが壊れた entry を除外する。
+    """#805 段階1 -- preserve_warnings が壊れた entry / fields を sanitize する。
 
-    warnings に [42, {"no_code": True}, <valid>] を書いた source metadata を
-    --from-metadata で処理すると、malformed な 2 エントリは捨てられ valid 1 件
-    だけが新 metadata に残る。また warnings が非リスト (文字列 "oops") の場合は
-    出力 warnings が [] になる。
+    warnings に malformed entry (非 dict / code なし / 非 str code / 空 code) と
+    schema 違反 optional field (不正 severity / 非 dict context) を持つ valid
+    entry を混ぜた source metadata を --from-metadata で処理すると、malformed
+    entry は捨てられ、valid entry は schema 違反 field を strip した形で新
+    metadata に残る。また warnings が非リスト (文字列 "oops") の場合は出力
+    warnings が [] になる。sanitize_warnings の helper unit は test_warnings.py。
     """
-    # --- case A: list with mixed malformed / valid entries ---
+    # --- case A: valid post_match_trailing_dropped entry mixed with malformed ---
     source = tmp_path / "input.mp4"
     source.write_bytes(b"")
-    valid_warning = {
+    # valid entry だが optional field が schema 違反 (severity 不正 / context 非
+    # dict) -> sanitize で当該 field は strip され code (+ valid field) のみ残る。
+    valid_but_dirty_warning = {
         "code": "post_match_trailing_dropped",
-        "context": {"start": 1.0, "end": 2.0},
+        "message_en": "A trailing post-match segment was dropped.",
+        "severity": "totally-bogus",  # invalid -> stripped
+        "context": "not-a-dict",  # invalid -> stripped
+    }
+    sanitized_valid = {
+        "code": "post_match_trailing_dropped",
+        "message_en": "A trailing post-match segment was dropped.",
     }
     payload_a = {
         **_sample_metadata(str(source)),
-        "warnings": [42, {"no_code": True}, valid_warning],
+        "warnings": [
+            42,  # non-dict -> dropped
+            {"no_code": True},  # missing code -> dropped
+            {"code": 7},  # non-str code -> dropped
+            {"code": ""},  # empty code -> dropped
+            valid_but_dirty_warning,
+        ],
     }
     meta_path_a = tmp_path / "meta_a.json"
     meta_path_a.write_text(json.dumps(payload_a), encoding="utf-8")
@@ -575,8 +591,9 @@ def test_run_split_from_metadata_drops_malformed_warning_entries(tmp_path):
         run_split_from_metadata(meta_path_a, config_a, quiet=True)
 
     fresh_a = json.loads((tmp_path / "out_a" / "metadata.json").read_text("utf-8"))
-    assert fresh_a["warnings"] == [valid_warning], (
-        "42 と {'no_code': True} は code を持たないため除外され、valid entry のみ残る"
+    assert fresh_a["warnings"] == [sanitized_valid], (
+        "malformed entry は除外され、valid entry は不正な severity / context を "
+        "strip した形 (code + message_en) で残る"
     )
 
     # --- case B: warnings is a non-list scalar ---

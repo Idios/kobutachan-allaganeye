@@ -1218,6 +1218,70 @@ class TestCacheRoundTrip:
         masked_config = SplitConfig(output_dir=tmp_path / "output", masked=True)
         assert _load_cache(cache_path, cache_video, 1.0, masked_config) is None
 
+    def test_param_mismatch_keep_trailing(self, cache_video, cache_config, tmp_path):
+        """default run の cache を --keep-trailing run が再利用しない -> None。
+
+        keep_trailing は detect_match_boundaries の trailing-drop を skip して
+        検出境界を変える (#805 段階1) ので、cache 済み境界 (drop 済み) を
+        --keep-trailing run が再利用すると opt-out が silent に効かなくなる。
+        vtuber / masked key と同型に cache key へ含める。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        keep_config = SplitConfig(output_dir=tmp_path / "output", keep_trailing=True)
+        assert _load_cache(cache_path, cache_video, 1.0, keep_config) is None
+
+    def test_param_mismatch_keep_trailing_reverse(
+        self, cache_video, cache_config, tmp_path
+    ):
+        """--keep-trailing run の cache を default run が再利用しない -> None。
+
+        --keep-trailing cache (drop なし境界) を default path が再利用すると
+        #797 の trailing drop が抑止され released-default が regress するため、
+        reverse 方向も miss させる (vtuber/masked reverse と同型)。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        keep_config = SplitConfig(output_dir=tmp_path / "output", keep_trailing=True)
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, keep_config, CACHE_BOUNDARIES
+        )
+        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+
+    def test_keep_trailing_cache_hit(self, cache_video, tmp_path):
+        """--keep-trailing 同士は hit する (round-trip)。"""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        keep_config = SplitConfig(output_dir=tmp_path / "output", keep_trailing=True)
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, keep_config, CACHE_BOUNDARIES
+        )
+        assert (
+            _load_cache(cache_path, cache_video, 1.0, keep_config) == CACHE_BOUNDARIES
+        )
+
+    def test_legacy_cache_without_keep_trailing_key(
+        self, cache_video, cache_config, tmp_path
+    ):
+        """keep_trailing key なし legacy cache: default run は有効、keep run は無効。
+
+        --keep-trailing 導入前の cache はすべて drop ON (= keep_trailing=False) の
+        結果なので missing = False と同値に扱う (vtuber/masked key と同じ後方互換
+        規約)。version bump 不要の根拠でもある。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("keep_trailing", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        assert (
+            _load_cache(cache_path, cache_video, 1.0, cache_config) == CACHE_BOUNDARIES
+        )
+        keep_config = SplitConfig(output_dir=tmp_path / "output", keep_trailing=True)
+        assert _load_cache(cache_path, cache_video, 1.0, keep_config) is None
+
     def test_legacy_v2_cache_rejected(self, cache_video, cache_config, tmp_path):
         """pre-#821 (v2) cache は version bump で全面 invalidate (Codex high finding).
 
@@ -3758,6 +3822,34 @@ def test_verbose_cache_hit_prints_masked_on_token(
     header_idx = out.find("Cache hit:")
     assert header_idx >= 0
     assert "masked=on" in out[header_idx:]
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_prints_keep_trailing_on_token(
+    mock_probe, mock_split, tmp_path, capsys
+):
+    """keep_trailing=True で生成した cache の hit 表示は keep_trailing=on。
+
+    cache key fix (#805 段階1) で mode 混在 hit は不可能になったが、表示にも
+    provenance を出して troubleshoot 報告から keep_trailing を判別可能にする
+    (vtuber/masked token と同型)。
+    """
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(
+        output_dir=tmp_path, min_match_duration=60.0, keep_trailing=True
+    )
+    _seed_cache(source, tmp_path, config)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True)
+    out = capsys.readouterr().out
+
+    header_idx = out.find("Cache hit:")
+    assert header_idx >= 0
+    assert "keep_trailing=on" in out[header_idx:]
 
 
 @patch(f"{MODULE}._run_detection")
