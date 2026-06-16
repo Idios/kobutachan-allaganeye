@@ -99,6 +99,6 @@ Python が spawn する ffmpeg は親プロセス (Python) の Job membership �
 
 - 実装: `gui/src-tauri/src/process_util/job_object.rs` + `gui/src-tauri/src/lib.rs` (`TrackedChild` / `track_child` / `start_detect` / `start_export`)
 - 整合性 test: `gui/src-tauri/src/process_util/mod.rs` の `lib_rs_applies_apply_no_window_at_all_spawn_sites` と並ぶ「spawn site policy」回帰検査
-- integration test: `gui/src/__tests__/flow.integration.test.tsx` の `flow N: detecting cancel triggers kill_tracked_processes (#756)`
+- integration test: `gui/src/__tests__/flow.integration.test.tsx` の `flow N: window close (CloseRequested) while detecting reaps the run (#756)` (window-close 経路)。detect cancel 経路の kill は #813 で配線し `flow G` + `DetectingScreen.test.tsx` の [中断] kill assert で pin (同じ Job Object が両経路の tree-kill を担う)
 - 元 issue: #743 (audit task)、#756 (orphan bug fix)
 - 関連: #523 (CloseRequested → ConfirmExitModal 初期実装、direct child のみ kill)、#466 (export ffmpeg track_child)、memory `feedback_taskstop_child_process_leak.md`
