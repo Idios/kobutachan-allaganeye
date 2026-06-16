@@ -2038,6 +2038,16 @@ fn stamp_run_id(mut progress: DetectProgress, run_id: &str) -> DetectProgress {
     progress
 }
 
+/// #813 (iterate-review #4) -- the single sink for `detect-progress` events
+/// out of `start_detect`. Routing every emit through here guarantees the run
+/// id is stamped exactly once, so a future emit path can't silently bypass
+/// the frontend's run-id fence (the same "new code path forgets a required
+/// wiring step" failure class that bit detection cache keys). Do NOT call
+/// `app.emit("detect-progress", ...)` directly -- always use this.
+fn emit_detect_progress(app: &tauri::AppHandle, run_id: &str, progress: DetectProgress) {
+    let _ = app.emit("detect-progress", stamp_run_id(progress, run_id));
+}
+
 /// #569 -- assemble argv for `allaganeye detect --progress-format json`.
 /// Pulled out of `start_detect` so unit tests can pin flag ordering and
 /// the plumbing of optional `DetectParams` -> CLI flags without spawning
@@ -2288,7 +2298,7 @@ async fn start_detect(
                             total_matches = m;
                         }
                     }
-                    let _ = app.emit("detect-progress", stamp_run_id(progress, &run_id));
+                    emit_detect_progress(&app, &run_id, progress);
                 }
             }
             Err(e) => {
@@ -2296,16 +2306,14 @@ async fn start_detect(
                 // we don't leak a zombie.  The error path below sets the
                 // error event.
                 let msg = format!("stdout read error: {e}");
-                let _ = app.emit(
-                    "detect-progress",
-                    stamp_run_id(
-                        DetectProgress {
-                            phase: "error".to_string(),
-                            message: Some(msg.clone()),
-                            ..Default::default()
-                        },
-                        &run_id,
-                    ),
+                emit_detect_progress(
+                    &app,
+                    &run_id,
+                    DetectProgress {
+                        phase: "error".to_string(),
+                        message: Some(msg.clone()),
+                        ..Default::default()
+                    },
                 );
                 break;
             }
@@ -2316,15 +2324,13 @@ async fn start_detect(
         Some(c) => c,
         None => {
             // Drained by `kill_tracked_processes` -- treat as user cancel.
-            let _ = app.emit(
-                "detect-progress",
-                stamp_run_id(
-                    DetectProgress {
-                        phase: "cancelled".to_string(),
-                        ..Default::default()
-                    },
-                    &run_id,
-                ),
+            emit_detect_progress(
+                &app,
+                &run_id,
+                DetectProgress {
+                    phase: "cancelled".to_string(),
+                    ..Default::default()
+                },
             );
             return Err(AppError::new("subprocess.cancelled", "detect cancelled").with_default_hint());
         }
@@ -2347,16 +2353,14 @@ async fn start_detect(
                 tail
             )
         };
-        let _ = app.emit(
-            "detect-progress",
-            stamp_run_id(
-                DetectProgress {
-                    phase: "error".to_string(),
-                    message: Some(msg.clone()),
-                    ..Default::default()
-                },
-                &run_id,
-            ),
+        emit_detect_progress(
+            &app,
+            &run_id,
+            DetectProgress {
+                phase: "error".to_string(),
+                message: Some(msg.clone()),
+                ..Default::default()
+            },
         );
         return Err(AppError::new("subprocess.exit_failed", msg).with_default_hint());
     }
