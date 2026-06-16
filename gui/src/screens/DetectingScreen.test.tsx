@@ -809,7 +809,11 @@ describe('DetectingScreen', () => {
       expect(screen.getByTestId('detecting-error')).toBeInTheDocument();
     });
     const back = screen.getByTestId('detecting-error-back');
-    expect(document.activeElement).toBe(back);
+    // autofocus runs in a mount effect; wait for the flush so the assertion
+    // isn't racing the effect under full-suite parallel load (#813 R2 flake).
+    await waitFor(() => {
+      expect(document.activeElement).toBe(back);
+    });
   });
 
   // #646 review Round 2 課題 3 -- a11y: Escape key on the error view
