@@ -518,6 +518,47 @@ describe('DetectingScreen', () => {
     });
   });
 
+  // #813 review (codex HIGH) -- detect must still start (not silently hang)
+  // when the WebView runtime lacks crypto.randomUUID (old WebView2 / non-
+  // secure context). The run id falls back to a non-crypto token.
+  it('starts detect with a fallback run id when crypto.randomUUID is unavailable (#813)', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      return Promise.resolve(null);
+    });
+    const originalRandomUUID = crypto.randomUUID;
+    // Simulate a runtime where crypto.randomUUID does not exist.
+    Object.defineProperty(crypto, 'randomUUID', {
+      configurable: true,
+      value: undefined,
+    });
+    try {
+      render(<DetectingScreen />);
+      await waitFor(() => {
+        expect(
+          invokeMock.mock.calls.some(([c]) => c === 'start_detect'),
+        ).toBe(true);
+      });
+      const startCall = invokeMock.mock.calls.find(
+        ([c]) => c === 'start_detect',
+      );
+      const runId = (startCall?.[1] as { runId?: string } | undefined)?.runId;
+      expect(typeof runId).toBe('string');
+      expect(runId).toBeTruthy();
+      // No error UI -> the screen did not hang/throw.
+      expect(screen.queryByTestId('detecting-error')).not.toBeInTheDocument();
+    } finally {
+      Object.defineProperty(crypto, 'randomUUID', {
+        configurable: true,
+        value: originalRandomUUID,
+      });
+    }
+  });
+
   // #646 -- start_detect reject から drop へは silent 復帰せず、error
   // 表示 + 戻るボタンの明示操作で復帰する。Rust Err 内容が画面に出る。
   it('shows error UI when start_detect rejects (#646)', async () => {

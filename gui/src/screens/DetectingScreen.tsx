@@ -254,6 +254,27 @@ function computeEta(percent: number, elapsed: number): number | null {
 }
 
 /**
+ * #813 -- run id used to fence detect-progress events to the current run.
+ * Prefers crypto.randomUUID, but falls back to a timestamp+random token so a
+ * WebView runtime without crypto.randomUUID (old WebView2 / non-secure
+ * context) can't make detect hang. The id only needs to be unique per run,
+ * not cryptographically strong.
+ */
+function generateRunId(): string {
+  try {
+    if (
+      typeof crypto !== 'undefined' &&
+      typeof crypto.randomUUID === 'function'
+    ) {
+      return crypto.randomUUID();
+    }
+  } catch {
+    // fall through to the non-crypto fallback below
+  }
+  return `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
  * #569 Phase 2.5 — DetectingScreen real implementation.
  *
  * Spawns ``allaganeye detect --progress-format json`` via the Rust
@@ -491,13 +512,14 @@ function DetectingRunningView({
       }
 
       const outputDir = deriveDetectOutputDir(selectedVideoPath);
-      // #813 -- per-run fence token. Generated up-front (race-free: no need
-      // to await start_detect's return) and echoed by Rust on every
-      // detect-progress event so a not-yet-reaped previous run can't bleed
-      // into this run's UI (audit P1-1).
-      const runId = crypto.randomUUID();
 
       try {
+        // #813 -- per-run fence token, generated inside the try so a missing
+        // crypto.randomUUID can never hang detect (generateRunId itself never
+        // throws; this placement also keeps any future failure on the
+        // catch-reported error path). Echoed by Rust on every detect-progress
+        // event so a not-yet-reaped previous run can't bleed into this run's UI.
+        const runId = generateRunId();
         unlisten = await listen<DetectProgressEvent>(
           'detect-progress',
           (event) => {
