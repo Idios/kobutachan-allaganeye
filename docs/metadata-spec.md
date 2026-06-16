@@ -366,7 +366,7 @@ interface MetadataWarning {
 
 | code | severity | context | 意味 | 備考 |
 | --- | --- | --- | --- | --- |
-| `post_match_trailing_dropped` | `warn` | `{start, end}` (秒) | 試合後の trailing セグメント (ロビー / 市街) が、早期候補ウィンドウで scorebar を検出できなかったため削除された ([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805))。`context.start` / `context.end` が削除された区間の境界 | `--keep-trailing` 指定時は削除自体が抑制されるため emit されない。`detect` → `split --from-metadata` の経路では元 metadata の本警告を preserve する |
+| `post_match_trailing_dropped` | `warn` | `{start, end}` (秒) | 試合後の trailing セグメント (ロビー / 市街) が、早期候補ウィンドウで scorebar を検出できなかったため削除された ([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805))。`context.start` / `context.end` が削除された区間の境界 | `--keep-trailing` 指定時は削除自体が抑制されるため emit されない。`detect` → `split --from-metadata` の経路では元 metadata の本警告を preserve する。**非対称注意**: `split <video>` がキャッシュヒットした場合は `post_match_trailing_dropped` を **再構築しない** (検出キャッシュに dropped span は保持されない) ため `warnings: []` を書き出す。警告の正本は新鮮な `detect` / `split` が生成した metadata.json であり、`split --from-metadata` はそれを preserve する経路 |
 
 ## 将来の拡張 (Phase 1 スコープ外)
 

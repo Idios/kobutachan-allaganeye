@@ -18,6 +18,7 @@ from allaganeye.commands.split_matches import (
     run_split,
 )
 from allaganeye.config import SplitConfig
+from allaganeye.detection.warnings import WARNING_CODES
 from allaganeye.exceptions import AllaganEyeError, DetectionError, VideoProcessingError
 from allaganeye.video.detector import MatchBoundary
 from allaganeye.video.probe import ProbeResult
@@ -4615,7 +4616,7 @@ def test_run_split_records_trailing_drop_warning(
     assert payload["warnings"] == [
         {
             "code": "post_match_trailing_dropped",
-            "message_en": payload["warnings"][0]["message_en"],
+            "message_en": WARNING_CODES["post_match_trailing_dropped"],
             "severity": "warn",
             "context": {"start": 1000.0, "end": 1800.0},
         }

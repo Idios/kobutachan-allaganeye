@@ -511,8 +511,8 @@ def test_run_split_from_metadata_preserves_trailing_drop_warning(tmp_path):
 
 
 def test_run_split_from_metadata_empty_warnings_when_source_lacks(tmp_path):
-    """#805 段階1 -- 元 metadata が warning を持たない (or 非 dict entry) なら
-    新 metadata の warnings は [] (preserve は code を持つ dict のみ拾う)。
+    """#805 段階1 -- 元 metadata が warnings キー自体を持たない場合、
+    新 metadata の warnings は [] になる (preserve は code を持つ dict のみ拾う)。
     """
     source = tmp_path / "input.mp4"
     source.write_bytes(b"")
@@ -537,3 +537,70 @@ def test_run_split_from_metadata_empty_warnings_when_source_lacks(tmp_path):
     out_meta = tmp_path / "out" / "metadata.json"
     fresh = json.loads(out_meta.read_text("utf-8"))
     assert fresh["warnings"] == []
+
+
+def test_run_split_from_metadata_drops_malformed_warning_entries(tmp_path):
+    """#805 段階1 -- preserve_warnings フィルタが壊れた entry を除外する。
+
+    warnings に [42, {"no_code": True}, <valid>] を書いた source metadata を
+    --from-metadata で処理すると、malformed な 2 エントリは捨てられ valid 1 件
+    だけが新 metadata に残る。また warnings が非リスト (文字列 "oops") の場合は
+    出力 warnings が [] になる。
+    """
+    # --- case A: list with mixed malformed / valid entries ---
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    valid_warning = {
+        "code": "post_match_trailing_dropped",
+        "context": {"start": 1.0, "end": 2.0},
+    }
+    payload_a = {
+        **_sample_metadata(str(source)),
+        "warnings": [42, {"no_code": True}, valid_warning],
+    }
+    meta_path_a = tmp_path / "meta_a.json"
+    meta_path_a.write_text(json.dumps(payload_a), encoding="utf-8")
+    config_a = SplitConfig(output_dir=tmp_path / "out_a", min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                tmp_path / "out_a" / "match_001.mp4",
+                tmp_path / "out_a" / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path_a, config_a, quiet=True)
+
+    fresh_a = json.loads((tmp_path / "out_a" / "metadata.json").read_text("utf-8"))
+    assert fresh_a["warnings"] == [valid_warning], (
+        "42 と {'no_code': True} は code を持たないため除外され、valid entry のみ残る"
+    )
+
+    # --- case B: warnings is a non-list scalar ---
+    payload_b = {
+        **_sample_metadata(str(source)),
+        "warnings": "oops",
+    }
+    meta_path_b = tmp_path / "meta_b.json"
+    meta_path_b.write_text(json.dumps(payload_b), encoding="utf-8")
+    config_b = SplitConfig(output_dir=tmp_path / "out_b", min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                tmp_path / "out_b" / "match_001.mp4",
+                tmp_path / "out_b" / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path_b, config_b, quiet=True)
+
+    fresh_b = json.loads((tmp_path / "out_b" / "metadata.json").read_text("utf-8"))
+    assert fresh_b["warnings"] == [], (
+        "warnings が非リスト ('oops') なら出力 warnings は [] になる"
+    )
