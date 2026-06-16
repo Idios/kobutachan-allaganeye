@@ -2293,6 +2293,48 @@ class TestDropPostMatchTrailing:
         # stays consistent after the drop (#797).
         assert stats["filter_unknown"] == 0
 
+    @patch("allaganeye.video.detector._has_scorebar_v2", return_value=False)
+    @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
+    def test_trailing_drop_invokes_callback_once(self, _probe, _v2):
+        """On a drop, trailing_drop_callback fires exactly once with (start, end).
+
+        #805 段階1: the callback is the seam Unit 2 uses to record the dropped
+        span in metadata.json so the lost match is recoverable.
+        """
+        segments = [
+            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
+            {"start": 1000.0, "end": 1800.0, "type": "unknown"},
+        ]
+        seen: list[tuple[float, float]] = []
+        result = _drop_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            1800.0,
+            {"filter_unknown": 1},  # type: ignore[arg-type]
+            trailing_drop_callback=lambda start, end: seen.append((start, end)),
+        )
+        assert len(result) == 1
+        assert seen == [(1000.0, 1800.0)]
+
+    @patch("allaganeye.video.detector._has_scorebar_v2", return_value=True)
+    @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
+    def test_trailing_keep_does_not_invoke_callback(self, _probe, _v2):
+        """When the segment is kept (scorebar present), the callback never fires."""
+        segments = [
+            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
+            {"start": 1000.0, "end": 1800.0, "type": "unknown"},
+        ]
+        seen: list[tuple[float, float]] = []
+        result = _drop_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            1800.0,
+            {},  # type: ignore[arg-type]
+            trailing_drop_callback=lambda start, end: seen.append((start, end)),
+        )
+        assert len(result) == 2
+        assert seen == []
+
     @patch("allaganeye.video.detector._has_scorebar_v2", return_value=True)
     @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
     def test_trailing_scorebar_present_kept(self, _probe, _v2):
@@ -2865,6 +2907,42 @@ def test_obs_runs_trailing_drop_and_filter_sees_vtuber_false(
     assert seen["localize"] is False
     # OBS path runs the trailing-drop exactly once.
     mock_trailing.assert_called_once()
+
+
+@patch("allaganeye.video.detector._drop_post_match_trailing")
+@patch("allaganeye.video.detector._probe_single_frame")
+@patch("allaganeye.video.detector._decode_chunk_cpu")
+def test_keep_trailing_gates_trailing_drop(mock_chunk, mock_probe, mock_trailing):
+    """keep_trailing=True opts out of the irreversible trailing-drop (#805 段階1).
+
+    Pairs with test_obs_runs_trailing_drop_* (which proves the default
+    keep_trailing=False path DOES drop) to pin the new gate from both sides:
+    flipping --keep-trailing must be the only thing that suppresses the call.
+    """
+    mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kw: {
+        t: 5.0 if 598.0 <= t <= 602.0 else 128.0 for t in ts
+    }
+    mock_probe.side_effect = lambda p, t, region=FULL_FRAME: (
+        5.0 if 593.0 <= t <= 607.0 else 128.0
+    )
+    mock_trailing.side_effect = lambda segs, *a, **k: segs
+
+    with patch(
+        "allaganeye.video.scorebar.filter_blackouts_with_scorebar",
+        side_effect=_vtuber_filter_capture({}),
+    ):
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=1800.0,
+            sample_interval=1.0,
+            min_match_duration=300.0,
+            src_resolution=(1920, 1080),
+            keep_trailing=True,
+        )
+
+    # --keep-trailing -> the drop helper is never invoked, so the final
+    # segment survives untouched.
+    mock_trailing.assert_not_called()
 
 
 # ============================================================

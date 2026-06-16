@@ -23,6 +23,7 @@ existing emitters keep working unchanged.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal
 
 from allaganeye.metadata_types import MetadataWarning
@@ -40,20 +41,44 @@ emitters; the canonical literal lives inline in
 :class:`allaganeye.metadata_types.MetadataWarning`."""
 
 
-WARNING_CODES: dict[str, str] = {}
+WARNING_CODES: dict[str, str] = {
+    "post_match_trailing_dropped": (
+        "A trailing post-match segment was dropped because no scorebar was "
+        "detected in its early candidate-match window; re-run with "
+        "--keep-trailing to retain it."
+    ),
+}
 """Registry of known warning codes mapped to their default English message.
 
-Empty at introduction. Emitters should add entries here alongside the
-code they introduce so readers can look up a human-readable default even
-when the metadata payload only carries the code.
+Emitters should add entries here alongside the code they introduce so
+readers can look up a human-readable default even when the metadata
+payload only carries the code.
 """
 
 
-def build_warnings() -> list[MetadataWarning]:
+def build_warnings(
+    *,
+    trailing_drops: Sequence[tuple[float, float]] = (),
+) -> list[MetadataWarning]:
     """Build the `warnings` list for a freshly written metadata.json.
 
-    Currently unconditional: returns an empty list. Future callers may
-    pass detection / scorebar context to this helper and receive a
-    populated list back.
+    Args:
+        trailing_drops: ``(start, end)`` spans for each post-match trailing
+            segment that ``_drop_post_match_trailing`` removed (#805 段階1).
+            Each becomes a ``post_match_trailing_dropped`` warn entry so the
+            dropped match's boundaries are recoverable from metadata.json.
+
+    Returns an empty list when no context is supplied (backward compatible
+    with the #518 scaffold).
     """
-    return []
+    warnings: list[MetadataWarning] = []
+    for start, end in trailing_drops:
+        warnings.append(
+            MetadataWarning(
+                code="post_match_trailing_dropped",
+                message_en=WARNING_CODES["post_match_trailing_dropped"],
+                severity="warn",
+                context={"start": start, "end": end},
+            )
+        )
+    return warnings

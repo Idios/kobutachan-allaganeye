@@ -167,6 +167,14 @@ def split(
             "flag forces that path even when some blackouts are found.",
         ),
     ] = False,
+    keep_trailing: Annotated[
+        bool,
+        typer.Option(
+            "--keep-trailing",
+            help="Keep the post-match trailing segment instead of dropping it "
+            "when no scorebar is detected (disables the #797 trailing drop; #805).",
+        ),
+    ] = False,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -233,6 +241,7 @@ def split(
                 no_audio=no_audio,
                 vtuber=vtuber,
                 masked=masked,
+                keep_trailing=keep_trailing,
             )
             from allaganeye.commands.split_matches import run_split_from_metadata
 
@@ -263,6 +272,7 @@ def split(
             no_audio=no_audio,
             vtuber=vtuber,
             masked=masked,
+            keep_trailing=keep_trailing,
         )
 
         from allaganeye.commands.split_matches import run_split
@@ -361,6 +371,14 @@ def detect(
             "flag forces that path even when some blackouts are found.",
         ),
     ] = False,
+    keep_trailing: Annotated[
+        bool,
+        typer.Option(
+            "--keep-trailing",
+            help="Keep the post-match trailing segment instead of dropping it "
+            "when no scorebar is detected (disables the #797 trailing drop; #805).",
+        ),
+    ] = False,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -434,6 +452,7 @@ def detect(
             no_audio=no_audio,
             vtuber=vtuber,
             masked=masked,
+            keep_trailing=keep_trailing,
         )
 
         from allaganeye.commands.detect import run_detect
