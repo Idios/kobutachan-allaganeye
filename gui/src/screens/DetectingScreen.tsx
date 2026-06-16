@@ -44,6 +44,10 @@ interface DetectProgressEvent {
   codec?: string;
   chunks?: number;
   boundaries?: number;
+  // #813 -- run identifier echoed by Rust `start_detect` on every event so
+  // the listener can fence out stragglers from a previous (cancelled) run.
+  // Absent only on synthetic / unit-test payloads.
+  run_id?: string;
 }
 
 interface DetectResult {
@@ -259,10 +263,10 @@ function computeEta(percent: number, elapsed: number): number | null {
  * via the existing metadataStore.load() and navigate to complete.
  *
  * Cancel button: dispatches ``CANCEL_CLICKED`` so the reducer enters
- * ``cancelling``. The actual ffmpeg/process kill arrives in #523's PR
- * (next PR in the alpha group); for this PR the running subprocess is
- * left to finish on its own and the user sees the cancellation echoed
- * in the UI.
+ * ``cancelling``. The cancelling effect then invokes
+ * ``kill_tracked_processes`` (#813) to reap the running detect (Python CLI
+ * + ffmpeg children) before confirming the cancel, so no orphaned
+ * processes survive.
  */
 export function DetectingScreen() {
   const navigate = useAppStateStore((s) => s.navigate);
@@ -311,13 +315,28 @@ export function DetectingScreen() {
     }
   }, [phase, navigate]);
 
-  // Cancel button: phase transition only. Real ffmpeg kill ships in
-  // #523's PR via kill_tracked_processes; this PR keeps the issue's
-  // explicit scope ("UI phase transition only").
+  // #813 -- cancel reaps the running detect: invoke kill_tracked_processes
+  // (drains PROCESS_TRACKER + drops the Job handle so the Python CLI and its
+  // ffmpeg children die, #756) before confirming the cancel. The in-flight
+  // start_detect's untrack then returns None and rejects with
+  // `subprocess.cancelled`, which the reducer folds into `cancelled`
+  // (DETECT_ERROR during cancelling -> cancelled). Kill failure is
+  // best-effort: log and still confirm so the UI never hangs.
   useEffect(() => {
-    if (phase === 'cancelling') {
-      dispatch({ type: 'CANCEL_CONFIRMED' });
+    if (phase !== 'cancelling') return;
+    let active = true;
+    async function confirmCancel(): Promise<void> {
+      try {
+        await invoke('kill_tracked_processes');
+      } catch (e) {
+        console.error('detect cancel: kill_tracked_processes failed', e);
+      }
+      if (active) dispatch({ type: 'CANCEL_CONFIRMED' });
     }
+    void confirmCancel();
+    return () => {
+      active = false;
+    };
   }, [phase]);
 
   // #646 -- error phase は detect 進行 UI を捨てて専用 error view に
@@ -472,6 +491,11 @@ function DetectingRunningView({
       }
 
       const outputDir = deriveDetectOutputDir(selectedVideoPath);
+      // #813 -- per-run fence token. Generated up-front (race-free: no need
+      // to await start_detect's return) and echoed by Rust on every
+      // detect-progress event so a not-yet-reaped previous run can't bleed
+      // into this run's UI (audit P1-1).
+      const runId = crypto.randomUUID();
 
       try {
         unlisten = await listen<DetectProgressEvent>(
@@ -479,6 +503,13 @@ function DetectingRunningView({
           (event) => {
             if (cancelled) return;
             const payload = event.payload;
+            // #813 -- drop events tagged with a different run's id. Rust
+            // stamps run_id on every emit, so a non-matching id marks a
+            // straggler from a previous run. Bare events (no run_id) only
+            // occur in unit tests and pass through.
+            if (payload.run_id !== undefined && payload.run_id !== runId) {
+              return;
+            }
             setPhaseLabel(payload.phase);
 
             // #569 review Round 1 課題 1: probing event の ffprobe 結果を
@@ -527,6 +558,7 @@ function DetectingRunningView({
           videoPath: selectedVideoPath,
           outputDir,
           params: toStartDetectParams(detectionParams),
+          runId,
         });
         if (cancelled) return;
 

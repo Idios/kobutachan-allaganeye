@@ -421,6 +421,7 @@ describe('DetectingScreen', () => {
           /* never resolves */
         });
       }
+      if (cmd === 'kill_tracked_processes') return Promise.resolve(0);
       return Promise.resolve(null);
     });
     render(<DetectingScreen />);
@@ -433,6 +434,87 @@ describe('DetectingScreen', () => {
     // reducer: running -> cancelling -> (auto) cancelled -> navigate('drop')
     await waitFor(() => {
       expect(useAppStateStore.getState().screen).toBe('drop');
+    });
+  });
+
+  // #813 (AC1) -- 中断 click は phase 遷移だけでなく走行中 detect を
+  // kill_tracked_processes で reap する。export cancel (§2.5.10) と同経路。
+  it('invokes kill_tracked_processes when [中断] is clicked (#813)', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      if (cmd === 'kill_tracked_processes') return Promise.resolve(0);
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(listenMock).toHaveBeenCalled();
+    });
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: '中断' }));
+    });
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.some(([c]) => c === 'kill_tracked_processes'),
+      ).toBe(true);
+    });
+  });
+
+  // #813 (AC2) -- 旧 run の straggler detect-progress (run_id mismatch) は
+  // 現在 run の UI に反映されない。現在 run の event (run_id 一致) は適用される。
+  it('ignores detect-progress events from a stale run (run-id fence, #813)', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    // start_detect 起動後 (run id が args に乗る) まで待つ。
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.some(([c]) => c === 'start_detect'),
+      ).toBe(true);
+    });
+    const startCall = invokeMock.mock.calls.find(([c]) => c === 'start_detect');
+    const runId = (startCall?.[1] as { runId?: string } | undefined)?.runId;
+    expect(typeof runId).toBe('string');
+
+    // 旧 run の event (run_id mismatch) -> 無視。meta 行は変化しない。
+    act(() => {
+      emitDetectProgress({
+        phase: 'probing',
+        run_id: 'stale-run-id',
+        width: 1280,
+        height: 720,
+        fps: 30,
+        codec: 'hevc',
+        duration_s: 120,
+      });
+    });
+    expect(screen.queryByText(/1280x720/)).not.toBeInTheDocument();
+
+    // 現在 run の event (run_id 一致) -> 適用される。
+    act(() => {
+      emitDetectProgress({
+        phase: 'probing',
+        run_id: runId,
+        width: 1920,
+        height: 1080,
+        fps: 60,
+        codec: 'h264',
+        duration_s: 240,
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('detecting-meta').textContent).toContain(
+        '1920x1080',
+      );
     });
   });
 
