@@ -17,6 +17,7 @@ from allaganeye.exceptions import (
 runner = CliRunner()
 
 MODULE = "allaganeye.commands.split_matches.run_split"
+DETECT_MODULE = "allaganeye.commands.detect.run_detect"
 
 
 # --- Basic tests ---
@@ -292,6 +293,46 @@ def test_split_vtuber_default_false(mock_run_split, fake_video):
     assert result.exit_code == 0
     config = mock_run_split.call_args[0][1]
     assert config.vtuber is False
+
+
+@patch(MODULE)
+def test_split_keep_trailing_flag(mock_run_split, fake_video):
+    """--keep-trailing sets config.keep_trailing=True on split (#805 段階1)."""
+    result = runner.invoke(app, ["split", str(fake_video), "--keep-trailing"])
+
+    assert result.exit_code == 0
+    config = mock_run_split.call_args[0][1]
+    assert config.keep_trailing is True
+
+
+@patch(MODULE)
+def test_split_keep_trailing_default_false(mock_run_split, fake_video):
+    """Omitting --keep-trailing keeps config.keep_trailing=False (#797 drop on)."""
+    result = runner.invoke(app, ["split", str(fake_video)])
+
+    assert result.exit_code == 0
+    config = mock_run_split.call_args[0][1]
+    assert config.keep_trailing is False
+
+
+@patch(DETECT_MODULE)
+def test_detect_keep_trailing_flag(mock_run_detect, fake_video):
+    """--keep-trailing sets config.keep_trailing=True on detect (#805 段階1)."""
+    result = runner.invoke(app, ["detect", str(fake_video), "--keep-trailing"])
+
+    assert result.exit_code == 0
+    config = mock_run_detect.call_args[0][1]
+    assert config.keep_trailing is True
+
+
+@patch(DETECT_MODULE)
+def test_detect_keep_trailing_default_false(mock_run_detect, fake_video):
+    """Omitting --keep-trailing keeps config.keep_trailing=False on detect."""
+    result = runner.invoke(app, ["detect", str(fake_video)])
+
+    assert result.exit_code == 0
+    config = mock_run_detect.call_args[0][1]
+    assert config.keep_trailing is False
 
 
 def test_split_vtuber_hidden_from_help():

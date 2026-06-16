@@ -355,6 +355,11 @@ def detect_match_boundaries(
     source_fps_num: int | None = None,
     source_fps_den: int | None = None,
     source_fps: float | None = None,
+    # #805 段階1: opt out of the irreversible post-match trailing drop (#797).
+    keep_trailing: bool = False,
+    # #805 段階1: fired once with (start, end) whenever a trailing segment is
+    # actually dropped, so the lost span can be recorded in metadata.json.
+    trailing_drop_callback: Callable[[float, float], None] | None = None,
 ) -> list[MatchBoundary]:
     """Detect match boundaries by finding blackout frames.
 
@@ -391,6 +396,12 @@ def detect_match_boundaries(
             mapping covers every timestamp between 0 and ``duration_hint``
             at ``sample_interval`` spacing; non-blackout fallbacks (255.0)
             are included so consumers can plot continuous data.
+        keep_trailing: If True, skip the #797 post-match trailing drop so a
+            trailing no-scorebar segment is retained (#805 段階1 opt-out).
+        trailing_drop_callback: Optional callback invoked once with
+            ``(start, end)`` when a trailing segment is actually dropped
+            (#805 段階1); the seam used to record the lost span in
+            metadata.json.
 
     Returns list of dicts with 'start' and 'end' keys (seconds).
     """
@@ -592,13 +603,14 @@ def detect_match_boundaries(
     # (vtuber=True): _drop_post_match_trailing probes v2 (absolute coords) which
     # FNs on an inset scorebar and would silently drop a real VTuber final match
     # (spec section 8.1 P2-d / Codex #1). VTuber trailing is handled in Phase 3.
-    if src_resolution is not None and not vtuber:
+    if src_resolution is not None and not vtuber and not keep_trailing:
         segments = _drop_post_match_trailing(
             segments,
             video_path,
             duration_hint,
             stats,
             min_match_duration=min_match_duration,
+            trailing_drop_callback=trailing_drop_callback,
         )
     return segments
 
@@ -2264,6 +2276,7 @@ def _drop_post_match_trailing(
     stats: DetectionStats | None,
     *,
     min_match_duration: float = 300.0,
+    trailing_drop_callback: Callable[[float, float], None] | None = None,
 ) -> list[MatchBoundary]:
     """Drop a trailing post-match run via early-window scorebar probes (#797).
 
@@ -2349,6 +2362,11 @@ def _drop_post_match_trailing(
         unknown_count = stats.get("filter_unknown", 0)
         if unknown_count > 0:
             stats["filter_unknown"] = unknown_count - 1
+    # #805 段階1: surface the dropped span (start, end) so the command layer
+    # can record it in metadata.json. Fired only on an actual drop -- the drop
+    # decision above is unchanged (bit-exact default behavior preserved).
+    if trailing_drop_callback is not None:
+        trailing_drop_callback(start, end)
     return segments[:-1]
 
 

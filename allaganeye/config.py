@@ -23,6 +23,7 @@ class SplitConfig:
     no_audio: bool = False
     vtuber: bool = False
     masked: bool = False
+    keep_trailing: bool = False
 
     def __post_init__(self) -> None:
         if self.workers is not None and self.workers < 1:

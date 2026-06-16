@@ -55,6 +55,7 @@ allaganeye split --from-metadata <metadata.json> [OPTIONS]
 | `--no-gpu` | `false` | GPU を無効化し CPU 検知を強制する。**`--gpu` と同時指定は排他エラー (exit 5) (#419)** |
 | `--gpu-vendor` | `auto` | 使用する GPU vendor を明示指定 (#546 / #553 / #550 / #582)。値: `auto` / `nvidia` / `amd` / `intel`。**3 vendor すべて実装済み** (`nvidia`=cuvid #546 / `amd`=d3d11va+hwdownload #553 / `intel`=QSV+hwdownload #550 h264/hevc/av1 + #582 vp9)。probe に無い vendor を要求すると exit 5。default は probe 結果から `_VENDOR_PREFERENCE` (nvidia > amd > intel) 順で選ぶ |
 | `--no-cache` | `false` | キャッシュされた検知結果を無視して再検知する |
+| `--keep-trailing` | `false` | 試合後 trailing を削除せず保持 (#797 drop 無効化、#805)。削除された場合は metadata.json の `warnings` に `post_match_trailing_dropped` を記録するが、本フラグ指定時は削除自体を抑制する |
 | `--no-audio` | `false` | 音声ベースの試合境界昇格（Fanfare スキャン）を無効化する。**現在は音声モジュールが凍結中（#327）のため、本フラグの値に関わらずスキャンは常にスキップされる。verbose 出力では `audio=frozen` と表示される (#384)** |
 | `--dry-run` | `false` | 検知のみ実行し分割しない（検知結果はキャッシュに保存される） |
 | `-v`, `--verbose` | `false` | 詳細出力（メタデータ詳細、gap 情報）。**`-q` と同時指定は排他エラー (exit 5) (#419)** |
@@ -291,6 +292,7 @@ allaganeye detect <video_path> [OPTIONS]
 | `--workers` | auto | 検知の並列ワーカー数 |
 | `--gpu` / `--no-gpu` | auto | GPU 強制 / CPU 強制 (排他) |
 | `--no-cache` | `false` | キャッシュ無視で再検知 |
+| `--keep-trailing` | `false` | 試合後 trailing を削除せず保持 (#797 drop 無効化、#805) |
 | `--no-audio` | `false` | 音声昇格無効化 (現在 frozen) |
 | `-v`, `--verbose` | `false` | 詳細出力 |
 | `-q`, `--quiet` | `false` | 進捗出力抑制 |

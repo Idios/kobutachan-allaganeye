@@ -463,3 +463,161 @@ def test_run_split_from_metadata_omits_brightness_samples_when_source_lacks(tmp_
     assert "brightness_samples" not in fresh, (
         "元 metadata に brightness_samples が無いなら新 metadata にも書かない"
     )
+
+
+# -- #805 段階1: post_match_trailing_dropped warning preserve through --from-metadata --
+
+
+def test_run_split_from_metadata_preserves_trailing_drop_warning(tmp_path):
+    """#805 段階1 -- --from-metadata 経路で元 metadata.json の
+    post_match_trailing_dropped warning が新 metadata.json に preserve される。
+
+    detect -> split --from-metadata -o <same dir> で記録済み warning を
+    silent に上書きしないこと (brightness_samples #644 / timing #586 同パターン)。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    original_warning = {
+        "code": "post_match_trailing_dropped",
+        "message_en": "A trailing post-match segment was dropped.",
+        "severity": "warn",
+        "context": {"start": 1000.0, "end": 1800.0},
+    }
+    payload = {
+        **_sample_metadata(str(source)),
+        "warnings": [original_warning],
+    }
+    meta_path = _write_metadata(tmp_path, payload)
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                tmp_path / "out" / "match_001.mp4",
+                tmp_path / "out" / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    out_meta = tmp_path / "out" / "metadata.json"
+    fresh = json.loads(out_meta.read_text("utf-8"))
+    assert fresh["warnings"] == [original_warning], (
+        "--from-metadata は元 metadata の post_match_trailing_dropped warning を "
+        "新 metadata に preserve するはず (#805 段階1)"
+    )
+
+
+def test_run_split_from_metadata_empty_warnings_when_source_lacks(tmp_path):
+    """#805 段階1 -- 元 metadata が warnings キー自体を持たない場合、
+    新 metadata の warnings は [] になる (preserve は code を持つ dict のみ拾う)。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    # _sample_metadata はデフォルトで warnings を含めない (= 欠落)。
+    payload = _sample_metadata(str(source))
+    assert "warnings" not in payload
+    meta_path = _write_metadata(tmp_path, payload)
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                tmp_path / "out" / "match_001.mp4",
+                tmp_path / "out" / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    out_meta = tmp_path / "out" / "metadata.json"
+    fresh = json.loads(out_meta.read_text("utf-8"))
+    assert fresh["warnings"] == []
+
+
+def test_run_split_from_metadata_drops_malformed_warning_entries(tmp_path):
+    """#805 段階1 -- preserve_warnings が壊れた entry / fields を sanitize する。
+
+    warnings に malformed entry (非 dict / code なし / 非 str code / 空 code) と
+    schema 違反 optional field (不正 severity / 非 dict context) を持つ valid
+    entry を混ぜた source metadata を --from-metadata で処理すると、malformed
+    entry は捨てられ、valid entry は schema 違反 field を strip した形で新
+    metadata に残る。また warnings が非リスト (文字列 "oops") の場合は出力
+    warnings が [] になる。sanitize_warnings の helper unit は test_warnings.py。
+    """
+    # --- case A: valid post_match_trailing_dropped entry mixed with malformed ---
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    # valid entry だが optional field が schema 違反 (severity 不正 / context 非
+    # dict) -> sanitize で当該 field は strip され code (+ valid field) のみ残る。
+    valid_but_dirty_warning = {
+        "code": "post_match_trailing_dropped",
+        "message_en": "A trailing post-match segment was dropped.",
+        "severity": "totally-bogus",  # invalid -> stripped
+        "context": "not-a-dict",  # invalid -> stripped
+    }
+    sanitized_valid = {
+        "code": "post_match_trailing_dropped",
+        "message_en": "A trailing post-match segment was dropped.",
+    }
+    payload_a = {
+        **_sample_metadata(str(source)),
+        "warnings": [
+            42,  # non-dict -> dropped
+            {"no_code": True},  # missing code -> dropped
+            {"code": 7},  # non-str code -> dropped
+            {"code": ""},  # empty code -> dropped
+            valid_but_dirty_warning,
+        ],
+    }
+    meta_path_a = tmp_path / "meta_a.json"
+    meta_path_a.write_text(json.dumps(payload_a), encoding="utf-8")
+    config_a = SplitConfig(output_dir=tmp_path / "out_a", min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                tmp_path / "out_a" / "match_001.mp4",
+                tmp_path / "out_a" / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path_a, config_a, quiet=True)
+
+    fresh_a = json.loads((tmp_path / "out_a" / "metadata.json").read_text("utf-8"))
+    assert fresh_a["warnings"] == [sanitized_valid], (
+        "malformed entry は除外され、valid entry は不正な severity / context を "
+        "strip した形 (code + message_en) で残る"
+    )
+
+    # --- case B: warnings is a non-list scalar ---
+    payload_b = {
+        **_sample_metadata(str(source)),
+        "warnings": "oops",
+    }
+    meta_path_b = tmp_path / "meta_b.json"
+    meta_path_b.write_text(json.dumps(payload_b), encoding="utf-8")
+    config_b = SplitConfig(output_dir=tmp_path / "out_b", min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                tmp_path / "out_b" / "match_001.mp4",
+                tmp_path / "out_b" / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path_b, config_b, quiet=True)
+
+    fresh_b = json.loads((tmp_path / "out_b" / "metadata.json").read_text("utf-8"))
+    assert fresh_b["warnings"] == [], (
+        "warnings が非リスト ('oops') なら出力 warnings は [] になる"
+    )

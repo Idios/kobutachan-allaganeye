@@ -18,6 +18,7 @@ from allaganeye.commands.split_matches import (
     run_split,
 )
 from allaganeye.config import SplitConfig
+from allaganeye.detection.warnings import WARNING_CODES
 from allaganeye.exceptions import AllaganEyeError, DetectionError, VideoProcessingError
 from allaganeye.video.detector import MatchBoundary
 from allaganeye.video.probe import ProbeResult
@@ -1036,6 +1037,7 @@ def test_pipeline_config_params_forwarded(
         sample_interval=2.0,
         blackout_threshold=20.0,
         min_match_duration=120.0,
+        keep_trailing=True,
     )
 
     run_split(Path("input.mp4"), config)
@@ -1046,6 +1048,10 @@ def test_pipeline_config_params_forwarded(
     assert detect_kwargs["blackout_threshold"] == 20.0
     assert detect_kwargs["min_match_duration"] == 120.0
     assert detect_kwargs["min_blackout_duration"] == 3.0
+    # #805 段階1: keep_trailing flag + trailing_drop_callback seam reach the
+    # detector through _run_detection's detect_kwargs assembly.
+    assert detect_kwargs["keep_trailing"] is True
+    assert callable(detect_kwargs["trailing_drop_callback"])
 
 
 # ============================================================
@@ -1211,6 +1217,70 @@ class TestCacheRoundTrip:
         )
         masked_config = SplitConfig(output_dir=tmp_path / "output", masked=True)
         assert _load_cache(cache_path, cache_video, 1.0, masked_config) is None
+
+    def test_param_mismatch_keep_trailing(self, cache_video, cache_config, tmp_path):
+        """default run の cache を --keep-trailing run が再利用しない -> None。
+
+        keep_trailing は detect_match_boundaries の trailing-drop を skip して
+        検出境界を変える (#805 段階1) ので、cache 済み境界 (drop 済み) を
+        --keep-trailing run が再利用すると opt-out が silent に効かなくなる。
+        vtuber / masked key と同型に cache key へ含める。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        keep_config = SplitConfig(output_dir=tmp_path / "output", keep_trailing=True)
+        assert _load_cache(cache_path, cache_video, 1.0, keep_config) is None
+
+    def test_param_mismatch_keep_trailing_reverse(
+        self, cache_video, cache_config, tmp_path
+    ):
+        """--keep-trailing run の cache を default run が再利用しない -> None。
+
+        --keep-trailing cache (drop なし境界) を default path が再利用すると
+        #797 の trailing drop が抑止され released-default が regress するため、
+        reverse 方向も miss させる (vtuber/masked reverse と同型)。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        keep_config = SplitConfig(output_dir=tmp_path / "output", keep_trailing=True)
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, keep_config, CACHE_BOUNDARIES
+        )
+        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+
+    def test_keep_trailing_cache_hit(self, cache_video, tmp_path):
+        """--keep-trailing 同士は hit する (round-trip)。"""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        keep_config = SplitConfig(output_dir=tmp_path / "output", keep_trailing=True)
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, keep_config, CACHE_BOUNDARIES
+        )
+        assert (
+            _load_cache(cache_path, cache_video, 1.0, keep_config) == CACHE_BOUNDARIES
+        )
+
+    def test_legacy_cache_without_keep_trailing_key(
+        self, cache_video, cache_config, tmp_path
+    ):
+        """keep_trailing key なし legacy cache: default run は有効、keep run は無効。
+
+        --keep-trailing 導入前の cache はすべて drop ON (= keep_trailing=False) の
+        結果なので missing = False と同値に扱う (vtuber/masked key と同じ後方互換
+        規約)。version bump 不要の根拠でもある。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("keep_trailing", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        assert (
+            _load_cache(cache_path, cache_video, 1.0, cache_config) == CACHE_BOUNDARIES
+        )
+        keep_config = SplitConfig(output_dir=tmp_path / "output", keep_trailing=True)
+        assert _load_cache(cache_path, cache_video, 1.0, keep_config) is None
 
     def test_legacy_v2_cache_rejected(self, cache_video, cache_config, tmp_path):
         """pre-#821 (v2) cache は version bump で全面 invalidate (Codex high finding).
@@ -3754,6 +3824,34 @@ def test_verbose_cache_hit_prints_masked_on_token(
     assert "masked=on" in out[header_idx:]
 
 
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_prints_keep_trailing_on_token(
+    mock_probe, mock_split, tmp_path, capsys
+):
+    """keep_trailing=True で生成した cache の hit 表示は keep_trailing=on。
+
+    cache key fix (#805 段階1) で mode 混在 hit は不可能になったが、表示にも
+    provenance を出して troubleshoot 報告から keep_trailing を判別可能にする
+    (vtuber/masked token と同型)。
+    """
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(
+        output_dir=tmp_path, min_match_duration=60.0, keep_trailing=True
+    )
+    _seed_cache(source, tmp_path, config)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True)
+    out = capsys.readouterr().out
+
+    header_idx = out.find("Cache hit:")
+    assert header_idx >= 0
+    assert "keep_trailing=on" in out[header_idx:]
+
+
 @patch(f"{MODULE}._run_detection")
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.probe_video")
@@ -4561,3 +4659,135 @@ def test_run_split_cache_hit_omits_brightness_samples(
         "cache hit 経路では Pass 1 を skip するため brightness_samples キー"
         "は欠落するはず (#644、metadata-spec.md 書き込みパス表と整合)"
     )
+
+
+# -- #805 段階1: post_match_trailing_dropped warning wiring through run_split --
+
+# trailing_drop_callback の wiring を assert したいので mock_pipeline ではなく
+# `_run_detection` を直接 patch する (brightness_samples #644 と同型)。
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_records_trailing_drop_warning(
+    mock_probe, mock_split, mock_run_detection, tmp_path
+):
+    """#805 段階1 -- run_split (一気通貫) で trailing drop が起きたら
+    metadata.json の warnings に post_match_trailing_dropped が記録される。
+
+    `_run_detection` に渡される `trailing_drop_callback` を
+    fake_run_detection から (1000.0, 1800.0) で呼び、最終 metadata.json
+    の warnings に 1 件現れることを assert する (brightness #644 同型)。
+    """
+    mock_probe.return_value = PROBE_RESULT
+
+    def fake_run_detection(*args, **kwargs):
+        cb = kwargs.get("trailing_drop_callback")
+        assert cb is not None, (
+            "run_split must pass trailing_drop_callback to _run_detection (#805)"
+        )
+        cb(1000.0, 1800.0)
+        return BOUNDARIES
+
+    mock_run_detection.side_effect = fake_run_detection
+
+    output_dir = tmp_path / "out_drop"
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0, no_cache=True)
+
+    run_split(video, config, verbose=False, quiet=True)
+
+    payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["warnings"] == [
+        {
+            "code": "post_match_trailing_dropped",
+            "message_en": WARNING_CODES["post_match_trailing_dropped"],
+            "severity": "warn",
+            "context": {"start": 1000.0, "end": 1800.0},
+        }
+    ]
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_no_trailing_drop_writes_empty_warnings(
+    mock_probe, mock_split, mock_run_detection, tmp_path
+):
+    """#805 段階1 -- 何も drop されない (callback 不発) なら warnings は []。"""
+    mock_probe.return_value = PROBE_RESULT
+
+    def fake_run_detection(*args, **kwargs):
+        # callback を呼ばない (trailing drop なし)
+        return BOUNDARIES
+
+    mock_run_detection.side_effect = fake_run_detection
+
+    output_dir = tmp_path / "out_nodrop"
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0, no_cache=True)
+
+    run_split(video, config, verbose=False, quiet=True)
+
+    payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["warnings"] == []
+
+
+def test_build_metadata_payload_round_trips_warnings(tmp_path):
+    """#805 段階1 -- `_build_metadata_payload(warnings=[...])` emits the list
+    verbatim; default (no arg) keeps the historical `[]` for existing callers.
+    """
+    from allaganeye.commands.split_matches import _build_metadata_payload
+    from allaganeye.detection.warnings import WARNING_CODES, build_warnings
+
+    system_info = {
+        "gpu_vendors_available": [],
+        "gpu_vendor_used": None,
+        "vendor_preference": ["nvidia", "amd", "intel"],
+    }
+    common = dict(
+        video_path=tmp_path / "input.mp4",
+        source_duration=1800.0,
+        source_fps=30.0,
+        detected_at="2026-06-16T00:00:00Z",
+        detection_started_at="2026-06-16T00:00:00Z",
+        detection_completed_at="2026-06-16T00:01:00Z",
+        effective_interval=1.0,
+        config=SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0),
+        boundaries=BOUNDARIES,
+        output_files=_output_files(tmp_path / "out"),
+        gaps=[],
+        system_info=system_info,
+    )
+
+    # Default: no warnings arg -> [] (existing callers/tests stay green).
+    default_payload = _build_metadata_payload(**common)  # type: ignore[arg-type]
+    assert default_payload.get("warnings") == []
+
+    warned = build_warnings(trailing_drops=[(1000.0, 1800.0)])
+    # The producer emits exactly this shape; pin it explicitly so the round
+    # trip below also documents the wire contract.
+    assert warned == [
+        {
+            "code": "post_match_trailing_dropped",
+            "message_en": WARNING_CODES["post_match_trailing_dropped"],
+            "severity": "warn",
+            "context": {"start": 1000.0, "end": 1800.0},
+        }
+    ]
+    payload = _build_metadata_payload(**common, warnings=warned)  # type: ignore[arg-type]
+    # _build_metadata_payload forwards the list verbatim (not rebuilt).
+    assert payload.get("warnings") == warned

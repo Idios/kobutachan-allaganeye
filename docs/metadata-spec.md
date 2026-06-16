@@ -350,7 +350,7 @@ interface MetadataWarning {
 
 ### 読み書き契約
 
-- **新規書き込み**: `allaganeye detect` / `allaganeye split` は常に `warnings: []` を emit する
+- **新規書き込み**: `allaganeye detect` / `allaganeye split` は常に `warnings` 配列を emit する。通常は空配列だが、試合後 trailing が削除された場合は `post_match_trailing_dropped` エントリを含む ([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805))。`--keep-trailing` 指定時は削除自体が無効化されるため空配列のまま
 - **読み込み**: `warnings` が欠落していても error にしない (pre-#518 の legacy metadata.json を許容)。GUI の zod schema は `optional`
 - **pass-through**: 未知の `code` を reader が reject してはならない (forward compat)
 - **emitter の責務** (後続 PR): `allaganeye/detection/warnings.py::WARNING_CODES` にコードキーを登録し、`build_warnings` で該当箇所から push
@@ -360,7 +360,13 @@ interface MetadataWarning {
 1. `allaganeye/detection/warnings.py::WARNING_CODES` に `"your_code": "english message"` を追加
 2. 発行箇所から `MetadataWarning(code=..., severity=..., context=...)` を生成
 3. `build_warnings` (または呼び出し経路) に集約
-4. `docs/metadata-spec.md` § warnings 一覧表 (以下 TBD) に追加
+4. `docs/metadata-spec.md` § 既知の warning コード一覧 (以下) に行を追加
+
+### 既知の warning コード一覧
+
+| code | severity | context | 意味 | 備考 |
+| --- | --- | --- | --- | --- |
+| `post_match_trailing_dropped` | `warn` | `{start, end}` (秒) | 試合後の trailing セグメント (ロビー / 市街) が、早期候補ウィンドウで scorebar を検出できなかったため削除された ([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805))。`context.start` / `context.end` が削除された区間の境界 | `--keep-trailing` 指定時は削除自体が抑制されるため emit されない。`detect` → `split --from-metadata` の経路では元 metadata の本警告を preserve する。**非対称注意 (段階1 の既知制限、[#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) 段階2 で解消予定)**: `split <video>` がキャッシュヒットした場合は `post_match_trailing_dropped` を **再構築しない** (検出キャッシュに dropped span は保持されない) ため `warnings: []` を書き出す。すなわち、既に本警告を含む metadata.json と同じ出力先へ `split <video>` を cache-hit で再実行すると `[]` で上書きされる。警告の正本は新鮮な `detect` / `split` が生成した metadata.json であり、`split --from-metadata` はそれを preserve する経路。cache-hit を含む全経路での durable 化は trailing drop の非破壊化 (段階2) で対応する |
 
 ## 将来の拡張 (Phase 1 スコープ外)
 
