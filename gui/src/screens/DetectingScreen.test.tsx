@@ -521,6 +521,55 @@ describe('DetectingScreen', () => {
   // #813 review (codex HIGH) -- detect must still start (not silently hang)
   // when the WebView runtime lacks crypto.randomUUID (old WebView2 / non-
   // secure context). The run id falls back to a non-crypto token.
+  // #813 review (codex HIGH) -- if the component is cancelled/unmounted while
+  // listen() is still resolving, run() must NOT spawn a detect afterwards
+  // (the cancel's kill already ran and would miss it, orphaning the process).
+  it('does not spawn detect when unmounted before listen() resolves (#813)', async () => {
+    let resolveListen!: (fn: () => void) => void;
+    const pendingListen = new Promise<() => void>((res) => {
+      resolveListen = res;
+    });
+    // Override the default (immediately-resolving) listen mock with one that
+    // stays pending until the test resolves it.
+    listenMock.mockImplementation((channel: string, handler) => {
+      if (channel === 'detect-progress') {
+        lastDetectProgressHandler = handler as (event: {
+          payload: unknown;
+        }) => void;
+      }
+      return pendingListen;
+    });
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'kill_tracked_processes') return Promise.resolve(0);
+      return Promise.resolve(null);
+    });
+
+    const { unmount } = render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(listenMock).toHaveBeenCalled();
+    });
+    // listen() is still pending, so start_detect must not have run yet.
+    expect(
+      invokeMock.mock.calls.some(([c]) => c === 'start_detect'),
+    ).toBe(false);
+
+    // Simulate cancel -> navigate('drop') -> unmount (sets cancelled = true).
+    unmount();
+
+    // listen() now resolves; run() continues past the await.
+    await act(async () => {
+      resolveListen(() => {
+        lastDetectProgressHandler = null;
+      });
+      await Promise.resolve();
+    });
+
+    // The post-listen cancelled guard must prevent the spawn.
+    expect(
+      invokeMock.mock.calls.some(([c]) => c === 'start_detect'),
+    ).toBe(false);
+  });
+
   it('starts detect with a fallback run id when crypto.randomUUID is unavailable (#813)', async () => {
     invokeMock.mockImplementation((cmd) => {
       if (cmd === 'start_detect') {

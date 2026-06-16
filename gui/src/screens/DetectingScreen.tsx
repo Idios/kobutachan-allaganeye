@@ -576,6 +576,16 @@ function DetectingRunningView({
           },
         );
 
+        // #813 review (codex HIGH) -- if the component was cancelled/unmounted
+        // while listen() was resolving, the cancel's kill already ran
+        // (draining zero processes) and the effect cleanup couldn't unlisten
+        // (unlisten was still undefined). Bail before spawning a detect the
+        // cancel would miss, and tear down the listener we just registered.
+        if (cancelled) {
+          unlisten();
+          return;
+        }
+
         const result = await invoke<DetectResult>('start_detect', {
           videoPath: selectedVideoPath,
           outputDir,
