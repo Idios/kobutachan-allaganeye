@@ -407,3 +407,54 @@ def test_detect_omits_brightness_samples_when_callback_silent(tmp_path):
 
     payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
     assert "brightness_samples" not in payload
+
+
+# #805 段階1 -- post_match_trailing_dropped warning wiring through run_detect
+
+
+def test_detect_records_trailing_drop_warning(tmp_path):
+    """detect 経路で trailing drop が起きたら metadata.json の warnings に
+    post_match_trailing_dropped が記録される (#805 段階1)。
+
+    `_run_detection` に渡される `trailing_drop_callback` を fake から
+    (1000.0, 1800.0) で呼び、payload の warnings に 1 件現れることを assert。
+    """
+
+    def _detect_with_trailing_drop(*args, **kwargs):
+        cb = kwargs.get("trailing_drop_callback")
+        assert cb is not None, (
+            "run_detect must pass trailing_drop_callback to _run_detection (#805)"
+        )
+        cb(1000.0, 1800.0)
+        return BOUNDARIES
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE_DETECT}._run_detection",
+            side_effect=_detect_with_trailing_drop,
+        ),
+    ):
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
+    assert payload["warnings"] == [
+        {
+            "code": "post_match_trailing_dropped",
+            "message_en": payload["warnings"][0]["message_en"],
+            "severity": "warn",
+            "context": {"start": 1000.0, "end": 1800.0},
+        }
+    ]
+
+
+def test_detect_no_trailing_drop_writes_empty_warnings(tmp_path):
+    """callback 不発 (drop なし) なら detect の warnings は [] (#805 段階1)。"""
+    probe, detect = _mock_detect_only(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with probe, detect:
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
+    assert payload["warnings"] == []

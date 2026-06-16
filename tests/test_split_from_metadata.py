@@ -463,3 +463,77 @@ def test_run_split_from_metadata_omits_brightness_samples_when_source_lacks(tmp_
     assert "brightness_samples" not in fresh, (
         "元 metadata に brightness_samples が無いなら新 metadata にも書かない"
     )
+
+
+# -- #805 段階1: post_match_trailing_dropped warning preserve through --from-metadata --
+
+
+def test_run_split_from_metadata_preserves_trailing_drop_warning(tmp_path):
+    """#805 段階1 -- --from-metadata 経路で元 metadata.json の
+    post_match_trailing_dropped warning が新 metadata.json に preserve される。
+
+    detect -> split --from-metadata -o <same dir> で記録済み warning を
+    silent に上書きしないこと (brightness_samples #644 / timing #586 同パターン)。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    original_warning = {
+        "code": "post_match_trailing_dropped",
+        "message_en": "A trailing post-match segment was dropped.",
+        "severity": "warn",
+        "context": {"start": 1000.0, "end": 1800.0},
+    }
+    payload = {
+        **_sample_metadata(str(source)),
+        "warnings": [original_warning],
+    }
+    meta_path = _write_metadata(tmp_path, payload)
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                tmp_path / "out" / "match_001.mp4",
+                tmp_path / "out" / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    out_meta = tmp_path / "out" / "metadata.json"
+    fresh = json.loads(out_meta.read_text("utf-8"))
+    assert fresh["warnings"] == [original_warning], (
+        "--from-metadata は元 metadata の post_match_trailing_dropped warning を "
+        "新 metadata に preserve するはず (#805 段階1)"
+    )
+
+
+def test_run_split_from_metadata_empty_warnings_when_source_lacks(tmp_path):
+    """#805 段階1 -- 元 metadata が warning を持たない (or 非 dict entry) なら
+    新 metadata の warnings は [] (preserve は code を持つ dict のみ拾う)。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    # _sample_metadata はデフォルトで warnings を含めない (= 欠落)。
+    payload = _sample_metadata(str(source))
+    assert "warnings" not in payload
+    meta_path = _write_metadata(tmp_path, payload)
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                tmp_path / "out" / "match_001.mp4",
+                tmp_path / "out" / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    out_meta = tmp_path / "out" / "metadata.json"
+    fresh = json.loads(out_meta.read_text("utf-8"))
+    assert fresh["warnings"] == []

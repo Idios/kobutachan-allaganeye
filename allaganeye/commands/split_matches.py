@@ -28,7 +28,12 @@ from allaganeye.exceptions import (
     InputFileError,
     VideoProcessingError,
 )
-from allaganeye.metadata_types import BrightnessSamples, Metadata, SystemInfo
+from allaganeye.metadata_types import (
+    BrightnessSamples,
+    Metadata,
+    MetadataWarning,
+    SystemInfo,
+)
 from allaganeye.video.detector import (
     DetectionStats,
     MatchBoundary,
@@ -207,6 +212,15 @@ def run_split(
         nonlocal masked_fallback_used
         masked_fallback_used = True
 
+    # #805 段階1 -- trailing drop の (start, end) を捕捉して metadata.json の
+    # warnings に書く。brightness_callback (#644) / masked_fallback (#821) と
+    # 同じ collector パターン。callback が呼ばれない経路 (cache hit / drop なし)
+    # では trailing_drops は空のまま残り build_warnings(trailing_drops=()) -> []。
+    trailing_drops: list[tuple[float, float]] = []
+
+    def _on_trailing_drop(start: float, end: float) -> None:
+        trailing_drops.append((start, end))
+
     boundaries = _run_detection(
         video_path,
         metadata,
@@ -219,6 +233,7 @@ def run_split(
         gpu_vendor=gpu_vendor,
         brightness_callback=_on_brightness,
         masked_fallback_callback=_on_masked_fallback,
+        trailing_drop_callback=_on_trailing_drop,
     )
 
     if not boundaries:
@@ -292,6 +307,10 @@ def run_split(
         system_info=detected_system_info,
         brightness_samples=brightness_samples,
         masked_fallback_used=masked_fallback_used,
+        # #805 段階1: fresh-detection drops -> post_match_trailing_dropped
+        # warning(s). Empty when nothing dropped -> []. (cache-hit write above
+        # stays unchanged: no fresh detection = documented limitation.)
+        warnings=build_warnings(trailing_drops=trailing_drops),
         quiet=quiet,
     )
     _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
@@ -412,6 +431,23 @@ def run_split_from_metadata(
         else None
     )
 
+    # #805 段階1 -- preserve warnings across `--from-metadata`. detect ->
+    # split --from-metadata -o <same dir> が記録済み warning を silent に
+    # 上書きしないよう、元 metadata の warnings を引き継ぐ (#586 timing /
+    # #644 brightness と同じ preserve パターン)。本ランは再検知しないので
+    # 新たな drop 痕跡は生成されない。code を持つ dict entry のみ拾い、壊れた
+    # entry は捨てる (writer 契約を満たすため)。
+    old_warnings = payload.get("warnings")
+    preserve_warnings: list[MetadataWarning] = (
+        [
+            cast("MetadataWarning", w)
+            for w in old_warnings
+            if isinstance(w, dict) and "code" in w
+        ]
+        if isinstance(old_warnings, list)
+        else []
+    )
+
     detection_params = payload.get("detection_params")
     if isinstance(detection_params, dict):
         effective_interval = float(
@@ -454,6 +490,8 @@ def run_split_from_metadata(
         masked_fallback_used=bool(
             (detection_params or {}).get("masked_fallback_used", False)
         ),
+        # #805 段階1: 元 metadata の warnings を preserve (再検知しないため)。
+        warnings=preserve_warnings,
         quiet=quiet,
     )
     _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
@@ -773,6 +811,7 @@ def _run_detection(
     progress_emitter: ProgressEmitter | None = None,
     brightness_callback: Callable[[dict[float, float]], None] | None = None,
     masked_fallback_callback: Callable[[], None] | None = None,
+    trailing_drop_callback: Callable[[float, float], None] | None = None,
 ) -> list[MatchBoundary]:
     """Run detection with progress bars for each phase (#328, #329, #331).
 
@@ -807,6 +846,12 @@ def _run_detection(
         "stats": stats,
         "brightness_callback": brightness_callback,
         "masked_fallback_callback": masked_fallback_callback,
+        # #805 段階1: opt-out flag + drop-span seam. keep_trailing skips the
+        # #797 trailing drop entirely (default False = bit-exact); the callback
+        # records each dropped (start, end) so the command layer can surface
+        # it in metadata.json warnings.
+        "keep_trailing": config.keep_trailing,
+        "trailing_drop_callback": trailing_drop_callback,
         # #576: rational fps propagation (probe -> detector).
         "source_fps": metadata.get("fps"),
         "source_fps_num": metadata.get("fps_num"),
@@ -1254,6 +1299,7 @@ def _split_and_write_metadata(
     system_info: SystemInfo,
     brightness_samples: BrightnessSamples | None = None,
     masked_fallback_used: bool = False,
+    warnings: list[MetadataWarning] | None = None,
     quiet: bool = False,
 ) -> None:
     """Split video and write metadata.json (#591: system_info required).
@@ -1316,6 +1362,7 @@ def _split_and_write_metadata(
         system_info=system_info,
         brightness_samples=brightness_samples,
         masked_fallback_used=masked_fallback_used,
+        warnings=warnings,
     )
     metadata_path = config.output_dir / "metadata.json"
     write_metadata_atomic(metadata_path, result)
@@ -1342,6 +1389,7 @@ def _build_metadata_payload(
     system_info: SystemInfo,
     brightness_samples: BrightnessSamples | None = None,
     masked_fallback_used: bool = False,
+    warnings: list[MetadataWarning] | None = None,
 ) -> Metadata:
     """Build the ``metadata.json`` payload dict (schema v1, #463 / #569 / #586 / #591).
 
@@ -1436,7 +1484,11 @@ def _build_metadata_payload(
             }
             for g in gaps
         ],
-        "warnings": build_warnings(),
+        # #805 段階1: ``warnings`` defaults to None -> ``build_warnings()`` ([])
+        # so existing callers/tests stay byte-identical. Callers that capture
+        # trailing-drop spans pass a pre-built list (via build_warnings(
+        # trailing_drops=...)) which is emitted verbatim.
+        "warnings": build_warnings() if warnings is None else warnings,
     }
     if brightness_samples is not None:
         payload["brightness_samples"] = brightness_samples

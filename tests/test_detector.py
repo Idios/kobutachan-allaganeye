@@ -2316,6 +2316,31 @@ class TestDropPostMatchTrailing:
         assert len(result) == 1
         assert seen == [(1000.0, 1800.0)]
 
+    @patch("allaganeye.video.detector._has_scorebar_v2", return_value=False)
+    @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
+    def test_trailing_drop_invokes_callback_with_stats_none(self, _probe, _v2):
+        """On a drop the callback fires even when ``stats is None``.
+
+        #805 段階1: the callback path sits intentionally outside the
+        ``if stats is not None:`` block, so non-verbose runs (stats=None)
+        still record the dropped span in metadata.json. Pin that the seam
+        is independent of stats collection.
+        """
+        segments = [
+            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
+            {"start": 1000.0, "end": 1800.0, "type": "unknown"},
+        ]
+        seen: list[tuple[float, float]] = []
+        result = _drop_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            1800.0,
+            None,
+            trailing_drop_callback=lambda start, end: seen.append((start, end)),
+        )
+        assert len(result) == 1
+        assert seen == [(1000.0, 1800.0)]
+
     @patch("allaganeye.video.detector._has_scorebar_v2", return_value=True)
     @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
     def test_trailing_keep_does_not_invoke_callback(self, _probe, _v2):

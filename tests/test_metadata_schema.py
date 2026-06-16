@@ -165,3 +165,31 @@ def test_warning_context_accepts_arbitrary_keys():
         }
     ]
     Draft202012Validator(schema).validate(sample)
+
+
+def test_post_match_trailing_dropped_warning_validates():
+    """A `post_match_trailing_dropped` warning (#805 段階1) must validate.
+
+    Pins the forward-compat contract: readers accept the new code because
+    the schema `code` is a free string. Feeds the real `build_warnings`
+    output so the wire shape (code / message_en / severity / context with
+    start+end) is exactly what detect/split writes.
+    """
+    from allaganeye.detection.warnings import WARNING_CODES, build_warnings
+
+    schema = _load_schema()
+    sample = _valid_sample()
+    built = build_warnings(trailing_drops=[(1000.0, 1800.0)])
+    # Sanity: the producer emitted exactly the shape we are pinning. Compare
+    # against WARNING_CODES (canonical message) rather than re-reading the
+    # NotRequired message_en key off the typed result.
+    assert built == [
+        {
+            "code": "post_match_trailing_dropped",
+            "message_en": WARNING_CODES["post_match_trailing_dropped"],
+            "severity": "warn",
+            "context": {"start": 1000.0, "end": 1800.0},
+        }
+    ]
+    sample["warnings"] = built
+    Draft202012Validator(schema).validate(sample)
