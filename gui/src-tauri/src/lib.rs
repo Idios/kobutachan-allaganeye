@@ -925,6 +925,31 @@ fn apply_changes_sync(
     payload: &Value,
     expected_mtime_ms: Option<u64>,
 ) -> Result<(), AppError> {
+    // #814 -- reject boundaries the GUI can't read back. The zod MatchSchema
+    // refine rejects end_time < start_time on reload, so persisting one would
+    // brick metadata.json (audit P1-2). The frontend blocks this at apply time
+    // too; this is defense in depth at the write boundary. Strict end > start
+    // (AC: end <= start is blocked). Matches missing start_time/end_time are
+    // left to the schema on read and skipped here.
+    if let Some(matches) = payload.get("matches").and_then(Value::as_array) {
+        for (i, m) in matches.iter().enumerate() {
+            let start = m.get("start_time").and_then(Value::as_f64);
+            let end = m.get("end_time").and_then(Value::as_f64);
+            if let (Some(start), Some(end)) = (start, end) {
+                if !(end > start) {
+                    return Err(AppError::new(
+                        "validation.boundary_invalid",
+                        format!(
+                            "match at index {} has end_time ({}) <= start_time ({})",
+                            i, end, start
+                        ),
+                    )
+                    .with_default_hint());
+                }
+            }
+        }
+    }
+
     // #514 — refuse to overwrite a file that has been modified externally
     // since the caller last loaded it. Target not existing is not a conflict
     // (treat as a fresh write).
@@ -3194,6 +3219,47 @@ mod tests {
         write_metadata_atomic(&target, &payload).unwrap();
         let roundtrip: Value = serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
         assert_eq!(roundtrip, payload);
+    }
+
+    // #814 -- write-boundary guard: end_time must be strictly > start_time so
+    // a boundary the zod schema would reject on reload never reaches disk.
+    #[test]
+    fn apply_changes_rejects_end_before_start() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let payload = json!({
+            "source": "a.mkv",
+            "matches": [{ "start_time": 900.0, "end_time": 100.0 }]
+        });
+        let err = apply_changes_sync(&meta, &payload, None).unwrap_err();
+        assert_eq!(err.code, "validation.boundary_invalid");
+        // nothing is written when the guard rejects
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_zero_duration_boundary() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let payload = json!({
+            "source": "a.mkv",
+            "matches": [{ "start_time": 500.0, "end_time": 500.0 }]
+        });
+        let err = apply_changes_sync(&meta, &payload, None).unwrap_err();
+        assert_eq!(err.code, "validation.boundary_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_accepts_valid_boundaries() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let payload = json!({
+            "source": "a.mkv",
+            "matches": [{ "start_time": 0.0, "end_time": 100.0 }]
+        });
+        apply_changes_sync(&meta, &payload, None).expect("valid boundaries accepted");
+        assert!(meta.exists());
     }
 
     #[test]
