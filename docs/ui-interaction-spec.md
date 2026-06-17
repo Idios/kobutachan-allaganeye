@@ -599,10 +599,10 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | display ([CompleteScreen.tsx:44-50](../gui/src/screens/CompleteScreen.tsx#L44)) |
-| 状態 | `complete_empty` のみ表示 (`metadata === null`)。文言: `'No metadata. Run detect first.'` |
+| 状態 | `complete_empty` のみ表示 (`metadata === null`)。`loadErrorState === null` 時は文言 `'No metadata. Run detect first.'`、`loadErrorState !== null` 時は `role="alert"` で load 失敗の message + hint を表示 ([#814](https://github.com/Idios/kobutachan-allaganeye/issues/814)、`data-testid="complete-load-error"`) |
 | 遷移トリガー | `metadata` が null になった瞬間 (clear / 起動直後 / load 失敗後) |
 | store mutation | なし |
-| 例外 / edge case | 通常フロー (drop → detecting → complete) では到達しない (detecting 完了で `loadSample()` が必ず呼ばれる)。dev 用 StateSwitcher で複数 screen を試行する場合や、Phase 2.5 で `clear()` 経由で意図的に表示する経路が増えた場合の文言 / アクションリンク ([参照…] への戻り) は [#587](https://github.com/Idios/kobutachan-allaganeye/issues/587) で議論 |
+| 例外 / edge case | 通常フロー (drop → detecting → complete) では到達しない (detecting 完了で `loadSample()` が必ず呼ばれる)。dev 用 StateSwitcher で複数 screen を試行する場合や、Phase 2.5 で `clear()` 経由で意図的に表示する経路が増えた場合の文言 / アクションリンク ([参照…] への戻り) は [#587](https://github.com/Idios/kobutachan-allaganeye/issues/587) で議論。[#814](https://github.com/Idios/kobutachan-allaganeye/issues/814): detect 完了後の load 失敗は DetectingScreen が専用 error view (§2.2 detecting error) へルーティングするため通常はそちらで表示されるが、restore reload 失敗等で complete に load 失敗状態が残る経路の保険として本 emptyNote も `loadErrorState` を表示する (P2-13 連鎖の二重防御) |
 
 ### §2.4 preview
 
@@ -740,10 +740,10 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | button ([PreviewScreen.tsx:651-657](../gui/src/screens/PreviewScreen.tsx#L651))。`aria-label="apply"` |
-| 状態 | `idle` (`!applying && !isSample && filePath !== null`) / `applying` (label = `'適用中…'`) / `disabled` (priority: `applying` → `isSample` → `!filePath`) |
+| 状態 | `idle` (`!applying && !isSample && filePath !== null && boundaryValid`) / `applying` (label = `'適用中…'`) / `disabled` (priority: `applying` → `isSample` → `!filePath` → `!boundaryValid` (`end <= start`)) |
 | 遷移トリガー | `onClick` → `handleApply()` ([PreviewScreen.tsx:451-457](../gui/src/screens/PreviewScreen.tsx#L451)) → `flushUpdate()` で残 debounce を即時 commit → `filePath` がある場合のみ `apply()` を await。debounce 経路で既に store の dirty 編集が立っている前提で、handleApply は二重 commit を行わない (§1.1 #589 修正で確立) |
 | store mutation | `metadataStore.applying`、`metadataStore.applyError`、`metadataStore.loadedMtimeMs` (apply 成功時)、`metadataStore.dirty=false` (apply 完了)、`metadataStore.hasBackup` (`refreshBackupStatus`)、`metadataStore.metadata.draft.json` clear ([#517](https://github.com/Idios/kobutachan-allaganeye/issues/517) draft auto-save 連携)。matches 編集自体は debounce 経路で既に commit 済 |
-| 例外 / edge case | sample mode (`isSample=true`) では disabled + tooltip 「サンプル動画では保存できません」 + inline hint を同時表示 ([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で §1.2 準拠実装済)。conflict 時は ConflictModal ([metadata-spec.md](metadata-spec.md) §排他管理) が global で表示される (本画面では特段の追加処理なし) |
+| 例外 / edge case | sample mode (`isSample=true`) では disabled + tooltip 「サンプル動画では保存できません」 + inline hint を同時表示 ([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で §1.2 準拠実装済)。conflict 時は ConflictModal ([metadata-spec.md](metadata-spec.md) §排他管理) が global で表示される (本画面では特段の追加処理なし)。[#814](https://github.com/Idios/kobutachan-allaganeye/issues/814): `boundaryValid = isBoundaryValid(startT, endT)` (`end > start`) でない時も disabled + inline hint「終了 (OUT) は開始 (IN) より後にしてください」。境界編集 (nudge / frame step / FrameStrip / TC 入力 / playback) は `commitStart` / `commitEnd` で相互クランプし `startT <= endT` を維持、`apply()` は store `runApply` が apply 直前に全 match の `end > start` を強制し違反時は `apply_changes` を invoke せず `applyErrorState` (code `validation.boundary_invalid`) を set、Rust `apply_changes_sync` も同 guard を持つ多層防御 (read は zod `end >= start` で寛容、write は厳格で OUT<IN による metadata.json 破損 = P1-2 を防ぐ) |
 
 #### §2.4.11 dirty indicator
 
