@@ -925,27 +925,34 @@ fn apply_changes_sync(
     payload: &Value,
     expected_mtime_ms: Option<u64>,
 ) -> Result<(), AppError> {
-    // #814 -- reject boundaries the GUI can't read back. The zod MatchSchema
-    // refine rejects end_time < start_time on reload, so persisting one would
-    // brick metadata.json (audit P1-2). The frontend blocks this at apply time
-    // too; this is defense in depth at the write boundary. Strict end > start
-    // (AC: end <= start is blocked). Matches missing start_time/end_time are
-    // left to the schema on read and skipped here.
+    // #814 -- reject any match whose boundaries would make metadata.json
+    // unreadable on reload. The zod MatchSchema requires finite numeric
+    // start_time/end_time on every match (and end >= start); we enforce strict
+    // end > start on write. apply_changes takes arbitrary JSON, so this is the
+    // last line of defense (audit P1-2): a frontend bug / stale caller / direct
+    // invoke must not be able to persist a file the GUI can't read back. A
+    // match missing a boundary, with a non-numeric boundary, or with
+    // end <= start is rejected before any backup/write. (codex adversarial
+    // review, #814)
     if let Some(matches) = payload.get("matches").and_then(Value::as_array) {
         for (i, m) in matches.iter().enumerate() {
             let start = m.get("start_time").and_then(Value::as_f64);
             let end = m.get("end_time").and_then(Value::as_f64);
-            if let (Some(start), Some(end)) = (start, end) {
-                if !(end > start) {
-                    return Err(AppError::new(
-                        "validation.boundary_invalid",
-                        format!(
-                            "match at index {} has end_time ({}) <= start_time ({})",
-                            i, end, start
-                        ),
-                    )
-                    .with_default_hint());
-                }
+            let valid = match (start, end) {
+                (Some(s), Some(e)) => e > s,
+                _ => false,
+            };
+            if !valid {
+                return Err(AppError::new(
+                    "validation.boundary_invalid",
+                    format!(
+                        "match at index {} has invalid boundaries (start_time/end_time must be finite numbers with end_time > start_time); got start_time={:?}, end_time={:?}",
+                        i,
+                        m.get("start_time"),
+                        m.get("end_time")
+                    ),
+                )
+                .with_default_hint());
             }
         }
     }
@@ -3263,14 +3270,44 @@ mod tests {
     }
 
     #[test]
+    fn apply_changes_rejects_match_missing_start_time() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let payload = json!({ "matches": [{ "end_time": 100.0 }] });
+        let err = apply_changes_sync(&meta, &payload, None).unwrap_err();
+        assert_eq!(err.code, "validation.boundary_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_match_missing_end_time() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let payload = json!({ "matches": [{ "start_time": 0.0 }] });
+        let err = apply_changes_sync(&meta, &payload, None).unwrap_err();
+        assert_eq!(err.code, "validation.boundary_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_match_non_numeric_boundary() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let payload = json!({ "matches": [{ "start_time": "0", "end_time": "100" }] });
+        let err = apply_changes_sync(&meta, &payload, None).unwrap_err();
+        assert_eq!(err.code, "validation.boundary_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
     fn apply_changes_creates_backup_on_first_call() {
         let tmp = TempDir::new().unwrap();
         let meta = tmp.path().join("metadata.json");
         let backup = tmp.path().join("metadata.original.json");
-        let original = json!({"source": "a.mkv", "matches": [{"m": 1}]});
+        let original = json!({"source": "a.mkv", "matches": [{"m": 1, "start_time": 0.0, "end_time": 100.0}]});
         fs::write(&meta, serde_json::to_string_pretty(&original).unwrap()).unwrap();
 
-        let edited = json!({"source": "a.mkv", "matches": [{"m": 1, "edited": true}]});
+        let edited = json!({"source": "a.mkv", "matches": [{"m": 1, "edited": true, "start_time": 0.0, "end_time": 100.0}]});
         apply_changes_sync(&meta, &edited, None).unwrap();
 
         assert!(backup.exists());
