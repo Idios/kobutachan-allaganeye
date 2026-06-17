@@ -487,17 +487,17 @@ export function PreviewScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match?.index, videoSource, isSample, currentT]);
 
-  // #814 -- mutual clamp: keep startT <= endT so a boundary can't be dragged
-  // past its counterpart via nudge / frame-step / FrameStrip / timecode entry.
-  // The strict end>start guard at apply time (store + Rust) is the backstop;
-  // this keeps the local edit state from ever reaching the invalid region.
+  // #814 -- mutual clamp: keep startT < endT with at least a 1-frame gap so a
+  // boundary can't be dragged onto / past its counterpart (start === end would
+  // produce a zero-length clip and disable [適用]; iterate-review Round 1 F3).
+  // The strict end > start guard at apply time (store + Rust) is the backstop.
   const commitStart = useCallback(
-    (next: number) => setStartT(Math.max(0, Math.min(next, endT))),
-    [endT],
+    (next: number) => setStartT(Math.max(0, Math.min(next, endT - 1 / fps))),
+    [endT, fps],
   );
   const commitEnd = useCallback(
-    (next: number) => setEndT(Math.max(next, startT)),
-    [startT],
+    (next: number) => setEndT(Math.max(next, startT + 1 / fps)),
+    [startT, fps],
   );
   const commitCurrentT = useCallback(
     (next: number) => (editing === 'start' ? commitStart(next) : commitEnd(next)),

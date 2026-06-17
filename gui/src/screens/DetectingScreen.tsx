@@ -597,6 +597,10 @@ function DetectingRunningView({
         setProgress(100);
         const metaPath = result.metadata_path || metadataPathFor(outputDir);
         await loadMetadata(metaPath);
+        // #814 (iterate-review) -- bail if the run was cancelled while
+        // loadMetadata was in flight, mirroring the post-start_detect guard,
+        // so onError/onComplete don't fire on a cancelled/unmounted run.
+        if (cancelled) return;
         // #814 -- loadMetadata (metadataStore.load) swallows failures into
         // loadErrorState and never throws. A detect that finished but whose
         // metadata.json can't be read (zod reject / BOM / corruption) must

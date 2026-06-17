@@ -20,5 +20,7 @@ describe('isBoundaryValid (#814)', () => {
     expect(isBoundaryValid(Number.NaN, 100)).toBe(false);
     expect(isBoundaryValid(0, Number.NaN)).toBe(false);
     expect(isBoundaryValid(0, Number.POSITIVE_INFINITY)).toBe(false);
+    expect(isBoundaryValid(Number.NEGATIVE_INFINITY, 100)).toBe(false);
+    expect(isBoundaryValid(0, Number.NEGATIVE_INFINITY)).toBe(false);
   });
 });

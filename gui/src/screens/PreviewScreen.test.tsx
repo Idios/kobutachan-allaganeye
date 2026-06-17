@@ -742,7 +742,7 @@ describe('PreviewScreen', () => {
   });
 
   // #814 (AC1) -- editing IN past OUT is clamped so start never exceeds end.
-  it('clamps IN so start never passes end on +10s nudge (#814)', async () => {
+  it('clamps IN to keep a 1-frame gap below end on +10s nudge (#814)', async () => {
     useMetadataStore.setState({
       filePath: '/x/metadata.json',
       metadata: {
@@ -769,7 +769,12 @@ describe('PreviewScreen', () => {
     const inTc = screen.getByLabelText(
       'IN (start) timecode',
     ) as HTMLInputElement;
-    expect(inTc.value).toBe('0:01:45.00'); // fmtPreciseTime(105,60), NOT 0:01:50.00
+    // +10s -> 110 would pass end(105); clamp caps start ~1 frame below end.
+    // Not the un-clamped 0:01:50.00, and strictly inside the 1:44.xx second.
+    expect(inTc.value).not.toBe('0:01:50.00');
+    expect(inTc.value).toMatch(/^0:01:44\./);
+    // boundary stays valid (start < end), so [適用] is enabled.
+    expect(screen.getByRole('button', { name: 'apply' })).not.toBeDisabled();
   });
 
   // #814 (AC1) -- [適用] is disabled (with a reason) when end <= start.
