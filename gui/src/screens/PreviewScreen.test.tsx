@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -739,6 +739,66 @@ describe('PreviewScreen', () => {
       'IN (start) timecode',
     ) as HTMLInputElement;
     expect(tc.value).toMatch(/^\d+:\d{2}:\d{2}\.\d{2}$/);
+  });
+
+  // #814 (AC1) -- editing IN past OUT is clamped so start never exceeds end.
+  it('clamps IN so start never passes end on +10s nudge (#814)', async () => {
+    useMetadataStore.setState({
+      filePath: '/x/metadata.json',
+      metadata: {
+        ...useMetadataStore.getState().metadata!,
+        matches: [
+          {
+            index: 1,
+            start_time: 100,
+            end_time: 105,
+            start_display: '01:40',
+            end_display: '01:45',
+            duration: 5,
+            duration_display: '0m05s',
+            type: 'fl_match',
+            output_file: 'm1.mp4',
+          },
+        ],
+      } as never,
+    });
+    useAppStateStore.getState().selectMatch(1);
+    render(<PreviewScreen />);
+    // IN active by default; +10s -> 110 would pass end(105); clamp caps at 105.
+    fireEvent.click(screen.getByRole('button', { name: 'nudge +10s' }));
+    const inTc = screen.getByLabelText(
+      'IN (start) timecode',
+    ) as HTMLInputElement;
+    expect(inTc.value).toBe('0:01:45.00'); // fmtPreciseTime(105,60), NOT 0:01:50.00
+  });
+
+  // #814 (AC1) -- [適用] is disabled (with a reason) when end <= start.
+  it('disables [適用] when the selected match has end <= start (#814)', () => {
+    useMetadataStore.setState({
+      filePath: '/x/metadata.json',
+      metadata: {
+        ...useMetadataStore.getState().metadata!,
+        matches: [
+          {
+            index: 1,
+            start_time: 200,
+            end_time: 100, // inverted
+            start_display: '03:20',
+            end_display: '01:40',
+            duration: 0,
+            duration_display: '0m00s',
+            type: 'fl_match',
+            output_file: 'm1.mp4',
+          },
+        ],
+      } as never,
+    });
+    useAppStateStore.getState().selectMatch(1);
+    render(<PreviewScreen />);
+    expect(screen.getByRole('button', { name: 'apply' })).toBeDisabled();
+    expect(
+      screen.getByText(/終了 \(OUT\) は開始 \(IN\) より後/),
+    ).toBeInTheDocument();
   });
 });
 
