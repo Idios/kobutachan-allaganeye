@@ -3,6 +3,7 @@ import { useEffect, useMemo, type KeyboardEvent } from 'react';
 import { AllaganFrame } from '../components/AllaganFrame';
 import { BrightnessTimeline } from '../components/BrightnessTimeline';
 import { DisabledTooltip } from '../components/DisabledTooltip';
+import { InlineErrorHint } from '../components/InlineErrorHint';
 import { MatchThumb } from '../components/MatchThumb';
 import { RestoreButton } from '../components/RestoreButton';
 import { SampleModeBanner } from '../components/SampleModeBanner';
@@ -43,6 +44,7 @@ export function formatElapsed(
 export function CompleteScreen() {
   const metadata = useMetadataStore((s) => s.metadata);
   const clear = useMetadataStore((s) => s.clear);
+  const loadErrorState = useMetadataStore((s) => s.loadErrorState);
 
   const selectedMatchIndex = useAppStateStore((s) => s.selectedMatchIndex);
   const selectMatch = useAppStateStore((s) => s.selectMatch);
@@ -78,7 +80,19 @@ export function CompleteScreen() {
   if (!metadata) {
     return (
       <div className={styles.screen} data-testid="complete-screen">
-        <div className={styles.emptyNote}>No metadata. Run detect first.</div>
+        {loadErrorState ? (
+          <div
+            className={styles.emptyNote}
+            role="alert"
+            data-testid="complete-load-error"
+          >
+            <div>metadata.json の読み込みに失敗しました</div>
+            <div>{loadErrorState.message}</div>
+            <InlineErrorHint hint={loadErrorState.hint} />
+          </div>
+        ) : (
+          <div className={styles.emptyNote}>No metadata. Run detect first.</div>
+        )}
       </div>
     );
   }

@@ -597,6 +597,16 @@ function DetectingRunningView({
         setProgress(100);
         const metaPath = result.metadata_path || metadataPathFor(outputDir);
         await loadMetadata(metaPath);
+        // #814 -- loadMetadata (metadataStore.load) swallows failures into
+        // loadErrorState and never throws. A detect that finished but whose
+        // metadata.json can't be read (zod reject / BOM / corruption) must
+        // surface the error, not silently land on the empty complete screen.
+        // Route the failure to the existing error view instead of onComplete().
+        const loadErr = useMetadataStore.getState().loadErrorState;
+        if (loadErr) {
+          onError(loadErr.message, loadErr.hint);
+          return;
+        }
         onComplete();
       } catch (e) {
         if (cancelled) return;
