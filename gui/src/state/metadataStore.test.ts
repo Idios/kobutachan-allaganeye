@@ -271,6 +271,73 @@ describe('useMetadataStore.apply', () => {
     await useMetadataStore.getState().apply();
     expect(invokeMock).not.toHaveBeenCalled();
   });
+
+  // #814 (AC1) -- end <= start must be blocked before apply_changes is invoked.
+  it('blocks apply when a match has end_time < start_time (#814)', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      get_metadata_mtime: 1700,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, {
+      edited: { start_time: 900, end_time: 100 },
+    });
+    await useMetadataStore.getState().apply();
+    const state = useMetadataStore.getState();
+    expect(
+      invokeMock.mock.calls.find((c) => c[0] === 'apply_changes'),
+    ).toBeUndefined();
+    expect(state.applyErrorState?.code).toBe('validation.boundary_invalid');
+    expect(state.applying).toBe(false);
+    // edits retained so the user can fix them
+    expect(state.dirty).toBe(true);
+  });
+
+  it('blocks apply when a match has end_time === start_time (zero duration, #814)', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, {
+      edited: { start_time: 500, end_time: 500 },
+    });
+    await useMetadataStore.getState().apply();
+    expect(
+      invokeMock.mock.calls.find((c) => c[0] === 'apply_changes'),
+    ).toBeUndefined();
+    expect(useMetadataStore.getState().applyErrorState?.code).toBe(
+      'validation.boundary_invalid',
+    );
+  });
+
+  // #814 (AC4) -- *_display strings are regenerated from the edited numbers so
+  // the persisted file never shows a timestamp that disagrees with the value.
+  it('regenerates *_display from edited numeric boundaries on apply (#814)', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      apply_changes: 2000,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, {
+      edited: { start_time: 65, end_time: 3725 },
+    });
+    await useMetadataStore.getState().apply();
+    const applyCall = invokeMock.mock.calls.find((c) => c[0] === 'apply_changes');
+    const m = (applyCall![1] as { metadata: Metadata }).metadata.matches[0];
+    expect(m.start_time).toBe(65);
+    expect(m.end_time).toBe(3725);
+    expect(m.start_display).toBe('01:05'); // fmtTime(65)
+    expect(m.end_display).toBe('1:02:05'); // fmtTime(3725)
+    expect(m.duration).toBe(3660);
+    expect(m.duration_display).toBe('1h01m'); // fmtMatchDuration(3660)
+    // in-memory store metadata also reflects the regenerated strings
+    expect(useMetadataStore.getState().metadata?.matches[0].start_display).toBe(
+      '01:05',
+    );
+  });
 });
 
 describe('useMetadataStore.clear', () => {
@@ -369,6 +436,30 @@ describe('useMetadataStore.restore (#516)', () => {
     await useMetadataStore.getState().restore();
     // only loadSample should have run — no invoke calls at all
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  // #814 (AC3) -- a restore whose reload fails must not report success.
+  it('surfaces a reload failure as restoreErrorState (#814)', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'restore_from_original') return Promise.resolve(undefined);
+      if (cmd === 'load_metadata') {
+        return Promise.reject({
+          code: 'parse.json_invalid',
+          message: 'restored metadata is corrupt',
+          hint: 'restore from a different backup',
+        });
+      }
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(null);
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      return Promise.resolve(null);
+    });
+    useMetadataStore.setState({ filePath: 'p' });
+    await useMetadataStore.getState().restore();
+    const state = useMetadataStore.getState();
+    expect(state.restoring).toBe(false);
+    expect(state.restoreErrorState?.message).toContain('corrupt');
+    expect(state.restoreErrorState?.code).toBe('parse.json_invalid');
+    expect(state.metadata).toBeNull();
   });
 });
 
