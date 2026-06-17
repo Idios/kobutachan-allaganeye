@@ -44,6 +44,10 @@ interface DetectProgressEvent {
   codec?: string;
   chunks?: number;
   boundaries?: number;
+  // #813 -- run identifier echoed by Rust `start_detect` on every event so
+  // the listener can fence out stragglers from a previous (cancelled) run.
+  // Absent only on synthetic / unit-test payloads.
+  run_id?: string;
 }
 
 interface DetectResult {
@@ -250,6 +254,27 @@ function computeEta(percent: number, elapsed: number): number | null {
 }
 
 /**
+ * #813 -- run id used to fence detect-progress events to the current run.
+ * Prefers crypto.randomUUID, but falls back to a timestamp+random token so a
+ * WebView runtime without crypto.randomUUID (old WebView2 / non-secure
+ * context) can't make detect hang. The id only needs to be unique per run,
+ * not cryptographically strong.
+ */
+function generateRunId(): string {
+  try {
+    if (
+      typeof crypto !== 'undefined' &&
+      typeof crypto.randomUUID === 'function'
+    ) {
+      return crypto.randomUUID();
+    }
+  } catch {
+    // fall through to the non-crypto fallback below
+  }
+  return `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
  * #569 Phase 2.5 — DetectingScreen real implementation.
  *
  * Spawns ``allaganeye detect --progress-format json`` via the Rust
@@ -259,10 +284,10 @@ function computeEta(percent: number, elapsed: number): number | null {
  * via the existing metadataStore.load() and navigate to complete.
  *
  * Cancel button: dispatches ``CANCEL_CLICKED`` so the reducer enters
- * ``cancelling``. The actual ffmpeg/process kill arrives in #523's PR
- * (next PR in the alpha group); for this PR the running subprocess is
- * left to finish on its own and the user sees the cancellation echoed
- * in the UI.
+ * ``cancelling``. The cancelling effect then invokes
+ * ``kill_tracked_processes`` (#813) to reap the running detect (Python CLI
+ * + ffmpeg children) before confirming the cancel, so no orphaned
+ * processes survive.
  */
 export function DetectingScreen() {
   const navigate = useAppStateStore((s) => s.navigate);
@@ -311,13 +336,28 @@ export function DetectingScreen() {
     }
   }, [phase, navigate]);
 
-  // Cancel button: phase transition only. Real ffmpeg kill ships in
-  // #523's PR via kill_tracked_processes; this PR keeps the issue's
-  // explicit scope ("UI phase transition only").
+  // #813 -- cancel reaps the running detect: invoke kill_tracked_processes
+  // (drains PROCESS_TRACKER + drops the Job handle so the Python CLI and its
+  // ffmpeg children die, #756) before confirming the cancel. The in-flight
+  // start_detect's untrack then returns None and rejects with
+  // `subprocess.cancelled`, which the reducer folds into `cancelled`
+  // (DETECT_ERROR during cancelling -> cancelled). Kill failure is
+  // best-effort: log and still confirm so the UI never hangs.
   useEffect(() => {
-    if (phase === 'cancelling') {
-      dispatch({ type: 'CANCEL_CONFIRMED' });
+    if (phase !== 'cancelling') return;
+    let active = true;
+    async function confirmCancel(): Promise<void> {
+      try {
+        await invoke('kill_tracked_processes');
+      } catch (e) {
+        console.error('detect cancel: kill_tracked_processes failed', e);
+      }
+      if (active) dispatch({ type: 'CANCEL_CONFIRMED' });
     }
+    void confirmCancel();
+    return () => {
+      active = false;
+    };
   }, [phase]);
 
   // #646 -- error phase は detect 進行 UI を捨てて専用 error view に
@@ -474,11 +514,24 @@ function DetectingRunningView({
       const outputDir = deriveDetectOutputDir(selectedVideoPath);
 
       try {
+        // #813 -- per-run fence token, generated inside the try so a missing
+        // crypto.randomUUID can never hang detect (generateRunId itself never
+        // throws; this placement also keeps any future failure on the
+        // catch-reported error path). Echoed by Rust on every detect-progress
+        // event so a not-yet-reaped previous run can't bleed into this run's UI.
+        const runId = generateRunId();
         unlisten = await listen<DetectProgressEvent>(
           'detect-progress',
           (event) => {
             if (cancelled) return;
             const payload = event.payload;
+            // #813 -- drop events tagged with a different run's id. Rust
+            // stamps run_id on every emit, so a non-matching id marks a
+            // straggler from a previous run. Bare events (no run_id) only
+            // occur in unit tests and pass through.
+            if (payload.run_id !== undefined && payload.run_id !== runId) {
+              return;
+            }
             setPhaseLabel(payload.phase);
 
             // #569 review Round 1 課題 1: probing event の ffprobe 結果を
@@ -523,10 +576,21 @@ function DetectingRunningView({
           },
         );
 
+        // #813 review (codex HIGH) -- if the component was cancelled/unmounted
+        // while listen() was resolving, the cancel's kill already ran
+        // (draining zero processes) and the effect cleanup couldn't unlisten
+        // (unlisten was still undefined). Bail before spawning a detect the
+        // cancel would miss, and tear down the listener we just registered.
+        if (cancelled) {
+          unlisten();
+          return;
+        }
+
         const result = await invoke<DetectResult>('start_detect', {
           videoPath: selectedVideoPath,
           outputDir,
           params: toStartDetectParams(detectionParams),
+          runId,
         });
         if (cancelled) return;
 

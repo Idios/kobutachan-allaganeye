@@ -1861,6 +1861,12 @@ pub struct DetectProgress {
     /// `start` phase: source video path (echoes the request).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// #813 -- detect run identifier echoed back to the frontend on every
+    /// event so the listener can fence out stragglers from a previous
+    /// (cancelled) run. The CLI never emits this; `start_detect` injects it
+    /// via `stamp_run_id` on every `detect-progress` emit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
 }
 
 /// #569 -- terminal payload returned to the frontend when detect finishes.
@@ -2023,6 +2029,25 @@ fn find_worktree_root(start: Option<PathBuf>) -> Option<PathBuf> {
     None
 }
 
+/// #813 -- stamp the active detect run's id onto a progress event before
+/// emitting it. Centralises the injection so every `detect-progress` emit
+/// in `start_detect` carries the run id and the frontend can drop
+/// stragglers from a previous run (audit P1-1).
+fn stamp_run_id(mut progress: DetectProgress, run_id: &str) -> DetectProgress {
+    progress.run_id = Some(run_id.to_string());
+    progress
+}
+
+/// #813 (iterate-review #4) -- the single sink for `detect-progress` events
+/// out of `start_detect`. Routing every emit through here guarantees the run
+/// id is stamped exactly once, so a future emit path can't silently bypass
+/// the frontend's run-id fence (the same "new code path forgets a required
+/// wiring step" failure class that bit detection cache keys). Do NOT call
+/// `app.emit("detect-progress", ...)` directly -- always use this.
+fn emit_detect_progress(app: &tauri::AppHandle, run_id: &str, progress: DetectProgress) {
+    let _ = app.emit("detect-progress", stamp_run_id(progress, run_id));
+}
+
 /// #569 -- assemble argv for `allaganeye detect --progress-format json`.
 /// Pulled out of `start_detect` so unit tests can pin flag ordering and
 /// the plumbing of optional `DetectParams` -> CLI flags without spawning
@@ -2080,17 +2105,19 @@ fn detect_command_args(
 /// progress events to the frontend.
 ///
 /// The child is registered with [`process_tracker`] so the
-/// `CloseRequested` flow (#523) and the user-pressed cancel button (next
-/// PR, also #523) can kill it.  Cancellation by the user from the
-/// detecting screen is handled by the frontend dispatching a phase
-/// transition only -- the actual `kill_tracked_processes` invocation is
-/// deferred to #523's PR.
+/// `CloseRequested` window-close flow (#523) and the user-pressed cancel
+/// button on the detecting screen (#813) can kill it.  On cancel the
+/// frontend invokes `kill_tracked_processes`, which drains the tracker and
+/// drops this child's Job handle (tree-killing the Python CLI + ffmpeg
+/// descendants, #756); the `untrack_child` below then returns `None`, so we
+/// emit a `cancelled` event and return `subprocess.cancelled`.
 #[tauri::command]
 async fn start_detect(
     app: tauri::AppHandle,
     video_path: String,
     output_dir: String,
     params: DetectParams,
+    run_id: String,
 ) -> Result<DetectResult, AppError> {
     let video = PathBuf::from(&video_path);
     if !video.exists() {
@@ -2271,7 +2298,7 @@ async fn start_detect(
                             total_matches = m;
                         }
                     }
-                    let _ = app.emit("detect-progress", progress);
+                    emit_detect_progress(&app, &run_id, progress);
                 }
             }
             Err(e) => {
@@ -2279,8 +2306,9 @@ async fn start_detect(
                 // we don't leak a zombie.  The error path below sets the
                 // error event.
                 let msg = format!("stdout read error: {e}");
-                let _ = app.emit(
-                    "detect-progress",
+                emit_detect_progress(
+                    &app,
+                    &run_id,
                     DetectProgress {
                         phase: "error".to_string(),
                         message: Some(msg.clone()),
@@ -2296,8 +2324,9 @@ async fn start_detect(
         Some(c) => c,
         None => {
             // Drained by `kill_tracked_processes` -- treat as user cancel.
-            let _ = app.emit(
-                "detect-progress",
+            emit_detect_progress(
+                &app,
+                &run_id,
                 DetectProgress {
                     phase: "cancelled".to_string(),
                     ..Default::default()
@@ -2324,8 +2353,9 @@ async fn start_detect(
                 tail
             )
         };
-        let _ = app.emit(
-            "detect-progress",
+        emit_detect_progress(
+            &app,
+            &run_id,
             DetectProgress {
                 phase: "error".to_string(),
                 message: Some(msg.clone()),
@@ -4349,6 +4379,46 @@ mod tests {
     fn tail_string_returns_whole_buffer_when_small() {
         let buf = b"  short message\n";
         assert_eq!(tail_string(buf, 2048), "short message");
+    }
+
+    // -- #813 run-id stamping (越境イベント遮断) ---------------------------
+
+    #[test]
+    fn stamp_run_id_sets_field() {
+        let p = DetectProgress {
+            phase: "scan".to_string(),
+            ..Default::default()
+        };
+        let stamped = stamp_run_id(p, "run-abc");
+        assert_eq!(stamped.run_id.as_deref(), Some("run-abc"));
+    }
+
+    #[test]
+    fn stamp_run_id_serializes_into_payload() {
+        let stamped = stamp_run_id(
+            DetectProgress {
+                phase: "done".to_string(),
+                ..Default::default()
+            },
+            "run-xyz",
+        );
+        let json = serde_json::to_string(&stamped).expect("serialize");
+        assert!(
+            json.contains("\"run_id\":\"run-xyz\""),
+            "run_id missing from emitted payload: {json}"
+        );
+    }
+
+    #[test]
+    fn detect_progress_omits_run_id_when_unset() {
+        // skip_serializing_if pin: 未 stamp の event は run_id を wire に
+        // 載せない (forward-compat、CLI が将来 run_id を持たない前提)。
+        let p = DetectProgress {
+            phase: "scan".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&p).expect("serialize");
+        assert!(!json.contains("run_id"), "run_id leaked when unset: {json}");
     }
 
     // -- #569 detect progress streaming -----------------------------------

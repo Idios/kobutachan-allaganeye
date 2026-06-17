@@ -278,8 +278,8 @@ describe('flow F: drop [キャンセル] clears selection', () => {
   });
 });
 
-describe('flow G: detecting [中断] returns to drop', () => {
-  it('cancel button transitions through cancelling -> cancelled -> drop (#569)', async () => {
+describe('flow G: detecting [中断] kills the run and returns to drop', () => {
+  it('cancel invokes kill_tracked_processes then routes cancelling -> cancelled -> drop (#569, #813)', async () => {
     // Make start_detect hang so the only termination path is the
     // cancel button (otherwise the mocked happy path would auto-
     // navigate to complete before we can click 中断).
@@ -289,6 +289,7 @@ describe('flow G: detecting [中断] returns to drop', () => {
           /* never resolves */
         });
       }
+      if (cmd === 'kill_tracked_processes') return Promise.resolve(0);
       return Promise.resolve();
     });
     useAppStateStore.getState().setSelectedVideoPath('/x/video.mkv');
@@ -297,6 +298,10 @@ describe('flow G: detecting [中断] returns to drop', () => {
     expect(screen.getByTestId('detecting-screen')).toBeInTheDocument();
     act(() => {
       fireEvent.click(screen.getByRole('button', { name: '中断' }));
+    });
+    // #813 -- cancel must reap the running detect, not just flip the phase.
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('kill_tracked_processes');
     });
     await waitFor(() => {
       expect(useAppStateStore.getState().screen).toBe('drop');
@@ -331,7 +336,7 @@ describe('flow H: export cancel mid-flight (#466 + #523 + #761)', () => {
   });
 });
 
-describe('flow N: detecting cancel triggers kill_tracked_processes (#756)', () => {
+describe('flow N: window close (CloseRequested) while detecting reaps the run (#756)', () => {
   it('CloseRequested -> ConfirmExitModal [終了] invokes kill_tracked_processes + force_exit_app', async () => {
     // Tauri-side spawn keeps `start_detect` hanging so the GUI is still in
     // the detecting state when the user (or OS) closes the window; this is

@@ -384,7 +384,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 **実装段階**:
 
 - Phase 2 (#464): 80ms × 100 tick = 8s の dummy progress、log は progress 連動の hardcoded 3 行 (実装当時)
-- Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) **済**: 実 CLI (`allaganeye detect --progress-format json`) stdout streaming に差し替え、log は CLI 1 行 = 1 entry で逐次 append、最大 80 行で truncate、phase 別に `info` / `done` / `error` / `warn` の kind 色分け。meta 行は `probing` event の ffprobe 結果 (`width × height` / `fps` / `codec` / `duration`) に差し替え。`cancelling → cancelled` は **本画面では UI phase 遷移のみ** (実 ffmpeg `kill()` は [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) PR で実装、本 PR は process_tracker への track 登録までで scope を絞る)
+- Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) **済**: 実 CLI (`allaganeye detect --progress-format json`) stdout streaming に差し替え、log は CLI 1 行 = 1 entry で逐次 append、最大 80 行で truncate、phase 別に `info` / `done` / `error` / `warn` の kind 色分け。meta 行は `probing` event の ffprobe 結果 (`width × height` / `fps` / `codec` / `duration`) に差し替え。`cancelling → cancelled` は **[中断] で `kill_tracked_processes` を invoke し、走行中の detect (Python CLI + ffmpeg 子) を reap してから確定** する ([#813](https://github.com/Idios/kobutachan-allaganeye/issues/813))。kill インフラ自体は [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) / [#756](https://github.com/Idios/kobutachan-allaganeye/issues/756) (Job Object) で配線済で、#813 は detect cancel path への接続。旧 run の straggler event は `start_detect` が払い出す run id を全 `detect-progress` payload に echo し、listener が現在 run id 以外を無視する fence で遮断する (audit P1-1)
 - 関連: [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) (running 中の `× 閉じる` 確保) は本画面の cancel と同じ `kill_tracked_processes` 経路を共有する
 
 #### §2.2.1 AllaganSigil (回転アニメーション)
@@ -453,7 +453,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 | --- | --- |
 | 種類 | button ([DetectingScreen.tsx:136-143](../gui/src/screens/DetectingScreen.tsx#L136)) |
 | 状態 | `idle` (phase=`running`) / `disabled` (phase=`cancelling/cancelled/completed/error`) |
-| 遷移トリガー | `onClick` → reducer `CANCEL_CLICKED` (phase=`running → cancelling`)。Phase 2 / Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) は副作用 effect で即座に `CANCEL_CONFIRMED` を発火し `cancelling → cancelled` 遷移。実 ffmpeg `kill()` 完了同期は [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) で `kill_tracked_processes` 完了を待ってから `CANCEL_CONFIRMED` を発火する設計に拡張する (本 PR は phase 遷移のみで scope を絞る) |
+| 遷移トリガー | `onClick` → reducer `CANCEL_CLICKED` (phase=`running → cancelling`)。`cancelling` phase の副作用 effect が `kill_tracked_processes` を invoke (失敗は `console.error` のみ、best-effort) → 完了後に `CANCEL_CONFIRMED` を発火し `cancelling → cancelled` 遷移 ([#813](https://github.com/Idios/kobutachan-allaganeye/issues/813))。kill が in-flight `start_detect` を reap すると Rust 側 `untrack_child` が None を返し `subprocess.cancelled` で reject、reducer が `DETECT_ERROR during cancelling → cancelled` で吸収するため error 画面化しない |
 | store mutation | なし (cancelled 検出後の effect で `appStateStore.navigate('drop')` のみ) |
 | 例外 / edge case | §1.2 disabled 理由表示について、現状 `disabled={phase !== 'running'}` のみで tooltip / inline hint 未実装 → 後続 PR で `title="検知実行中のみ中断できます"` 等を追加 (本 doc が source of truth)。`cancelling` 中の連打は disabled で物理的に防止 |
 
