@@ -283,12 +283,15 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
 
   load: async (path) => {
     try {
+      // #834 -- capture mtime BEFORE reading contents so the recorded mtime is
+      // never newer than the parsed bytes. If the file is modified between the
+      // two calls, the stored mtime stays <= the content's, so a later apply
+      // detects the conflict (conservative) instead of silently overwriting.
+      // A missing mtime (file vanished between the two calls) is recorded as
+      // null; apply will then skip the check (#514).
+      const mtime = await invoke<number | null>('get_metadata_mtime', { path });
       const raw = await invoke<unknown>('load_metadata', { path });
       const parsed = MetadataSchema.parse(raw);
-      // #514: record mtime alongside contents so subsequent apply can detect
-      // external modifications. A missing mtime (file vanished between the
-      // two calls) is recorded as null; apply will then skip the check.
-      const mtime = await invoke<number | null>('get_metadata_mtime', { path });
       set({
         metadata: parsed as unknown as Metadata,
         filePath: path,

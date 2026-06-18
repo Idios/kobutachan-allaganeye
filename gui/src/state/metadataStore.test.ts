@@ -179,6 +179,26 @@ describe('useMetadataStore.load', () => {
     expect(useMetadataStore.getState().metadata).toBeNull();
     expect(useMetadataStore.getState().loadErrorState).toBeTruthy();
   });
+
+  // #834 -- mtime は内容 read より前に取得する (TOCTOU を silent overwrite では
+  // なく conflict 検出側に倒す)。
+  it('captures mtime before reading metadata content (#834)', async () => {
+    const order: string[] = [];
+    invokeMock.mockImplementation((cmd: string) => {
+      order.push(cmd);
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(1700);
+      if (cmd === 'load_metadata') return Promise.resolve(validMetadata());
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      if (cmd === 'load_draft') return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+    await useMetadataStore.getState().load('p');
+    const mIdx = order.indexOf('get_metadata_mtime');
+    const lIdx = order.indexOf('load_metadata');
+    expect(mIdx).toBeGreaterThanOrEqual(0);
+    expect(lIdx).toBeGreaterThanOrEqual(0);
+    expect(mIdx).toBeLessThan(lIdx);
+  });
 });
 
 describe('useMetadataStore.updateMatch', () => {
