@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import { useEffect, useReducer, useRef, useState } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 
 import { DisabledTooltip } from '../components/DisabledTooltip';
 import { InlineErrorHint } from '../components/InlineErrorHint';
@@ -158,7 +158,6 @@ export function ExportScreen() {
   const [excludedIndexes, setExcludedIndexes] = useState<ReadonlySet<number>>(
     () => new Set(),
   );
-  const cancelRequestedRef = useRef(false);
   // #545 review #7 (2026-04-25): progress bar 下の「経過 / 残り」時間表示用。
   // START_CLICKED 時の wall-clock を記録し、`elapsedSec` / `remainingSec` を
   // 描画ループで更新する。残り時間は `(elapsed / done) * remaining` の線形
@@ -341,7 +340,6 @@ export function ExportScreen() {
     // 旧 `!filePath` early return + button disabled 条件は誤検知になる。
     if (!metadata) return;
     if (!videoSource) return;
-    cancelRequestedRef.current = false;
 
     // Initialize per-match state. Skip = `type_override === 'skip'` (永続)
     // または excludedIndexes に含まれる (ad-hoc UI 選択、#466 review #1)。
@@ -391,7 +389,6 @@ export function ExportScreen() {
   }
 
   function handleCancelClicked() {
-    cancelRequestedRef.current = true;
     dispatch({ type: 'CANCEL_CLICKED' });
     // #523: kill any tracked ffmpeg child so the current export can't run
     // to completion after the user asked to stop.
