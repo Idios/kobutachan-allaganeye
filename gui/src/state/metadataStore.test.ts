@@ -382,7 +382,7 @@ describe('useMetadataStore.apply', () => {
 
     const applyCall = invokeMock.mock.calls.find((c) => c[0] === 'apply_changes');
     const persisted = (applyCall![1] as { metadata: Metadata }).metadata
-      .matches[0] as Record<string, unknown>;
+      .matches[0];
     expect(persisted.name).toBeUndefined();
     expect(persisted.type_override).toBeUndefined();
   });
