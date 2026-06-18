@@ -66,6 +66,36 @@ describe('PreviewScreen', () => {
     ).toBe(before);
   });
 
+  // #834 (codex) -- sample mode must be read-only through the PLAYBACK path too,
+  // not just keyboard. Playing the pane video fires onTimeUpdate -> onTChange ->
+  // commitStart/commitEnd; in sample mode that must NOT move the boundary.
+  it('does not mutate boundaries via playback timeupdate in sample mode (#834)', async () => {
+    useMetadataStore.getState().loadSample();
+    const sampleIdx = useMetadataStore.getState().metadata!.matches[0].index;
+    useAppStateStore.getState().selectMatch(sampleIdx);
+    render(<PreviewScreen />);
+    const inTc = screen.getByLabelText('IN (start) timecode') as HTMLInputElement;
+    const before = inTc.value;
+    const video = (await screen.findByLabelText(
+      'IN (start) video',
+    )) as HTMLVideoElement;
+    // simulate playback: paused=false + advanced currentTime, then timeupdate.
+    // match[0] starts at 0.0 (IN = 0:00:00.00), so 12.5 is genuinely different.
+    Object.defineProperty(video, 'paused', { value: false, configurable: true });
+    Object.defineProperty(video, 'currentTime', {
+      value: 12.5,
+      configurable: true,
+    });
+    video.dispatchEvent(new Event('timeupdate'));
+    await new Promise((r) => setTimeout(r, 20));
+    // (a) the IN timecode must be unchanged ...
+    expect(
+      (screen.getByLabelText('IN (start) timecode') as HTMLInputElement).value,
+    ).toBe(before);
+    // ... and (b) a read-only-mode playback must not flip the store dirty.
+    expect(useMetadataStore.getState().dirty).toBe(false);
+  });
+
   // #663 — Phase 4 / #694 — *ErrorState form: when applyErrorState is set in the
   // store, render message + companion hint as 2nd line so the user sees the
   // recommended next step. Hint stays inside the existing role="alert"
@@ -657,6 +687,10 @@ describe('PreviewScreen', () => {
   // #465 review 追加: 再生中の TC 表示は video.currentTime に追従する。
 
   it('TC display follows video.currentTime during playback (timeupdate event)', async () => {
+    // #834 (codex): TC が再生に追従するのは editable mode の挙動。commitStart/
+    // commitEnd は sample mode で no-op 化されたため、filePath を与えて編集可能
+    // mode に切り替える (sample mode の read-only 化は別 test で検証)。
+    useMetadataStore.setState({ filePath: '/x' });
     render(<PreviewScreen />);
     const video = (await screen.findByLabelText(
       'IN (start) video',
