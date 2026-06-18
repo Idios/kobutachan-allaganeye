@@ -338,6 +338,34 @@ describe('useMetadataStore.apply', () => {
       '01:05',
     );
   });
+
+  // #834 (P2-18) -- name/type_override は apply 後も in-memory に残る (UI 表示維持)。
+  // 一方 metadata.json (apply_changes payload) には書き戻さない (契約維持)。
+  it('retains name and type_override in-memory after apply but strips them from disk (#834)', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      apply_changes: 2000,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, {
+      name: 'highlight reel',
+      type_override: 'skip',
+    });
+    await useMetadataStore.getState().apply();
+
+    const m = useMetadataStore
+      .getState()
+      .metadata!.matches.find((x) => x.index === 1)!;
+    expect(m.name).toBe('highlight reel');
+    expect(m.type_override).toBe('skip');
+
+    const applyCall = invokeMock.mock.calls.find((c) => c[0] === 'apply_changes');
+    const persisted = (applyCall![1] as { metadata: Metadata }).metadata
+      .matches[0] as Record<string, unknown>;
+    expect(persisted.name).toBeUndefined();
+    expect(persisted.type_override).toBeUndefined();
+  });
 });
 
 describe('useMetadataStore.clear', () => {

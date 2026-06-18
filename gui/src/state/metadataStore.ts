@@ -219,8 +219,25 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
         metadata: normalized,
         expectedMtimeMs: overwrite ? null : loadedMtimeMs,
       });
+      // #834 (P2-18) -- disk へ書く normalized は GUI-local field を strip 済
+      // (metadata-spec §GUI 編集契約)。in-memory には name/type_override を復元し
+      // apply 後も UI 表示が消えないようにする (disk と in-memory を分離)。
+      const editedById = new Map(metadata.matches.map((m) => [m.index, m]));
+      const retained: Metadata = {
+        ...normalized,
+        matches: normalized.matches.map((m) => {
+          const orig = editedById.get(m.index);
+          return {
+            ...m,
+            ...(orig?.name !== undefined ? { name: orig.name } : {}),
+            ...(orig?.type_override !== undefined
+              ? { type_override: orig.type_override }
+              : {}),
+          };
+        }),
+      };
       set({
-        metadata: normalized,
+        metadata: retained,
         dirty: false,
         applying: false,
         applyErrorState: null,
