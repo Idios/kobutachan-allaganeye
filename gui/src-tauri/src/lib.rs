@@ -1290,16 +1290,16 @@ async fn generate_match_thumbnails(
     })?;
 
     let timestamps = compute_candidate_timestamps(boundary_t_seconds, window_seconds, count);
-    let semaphore = Arc::new(Semaphore::new(4));
 
     let mut tasks = Vec::with_capacity(timestamps.len());
     for t in timestamps.iter().copied() {
         let token = thumb_token(match_index, t);
         let out_path = cache_dir.join(format!("{}.webp", token));
         let video_for_task = canonical.clone();
-        let sem = Arc::clone(&semaphore);
         tasks.push(async move {
-            let _permit = sem.acquire_owned().await.map_err(|e| {
+            // #834 -- acquire from the process-global semaphore so concurrency is
+            // bounded across the whole screen, not per-invoke.
+            let _permit = thumbnail_semaphore().acquire().await.map_err(|e| {
                 AppError::new(
                     "internal.error",
                     format!("semaphore closed: {}", e),
@@ -1563,6 +1563,16 @@ static PROCESS_TRACKER: OnceLock<ProcessMap> = OnceLock::new();
 
 fn process_tracker() -> &'static ProcessMap {
     PROCESS_TRACKER.get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
+}
+
+/// Process-global cap on concurrent thumbnail ffmpeg jobs. Previously a fresh
+/// Semaphore::new(4) was created inside generate_match_thumbnails on each invoke,
+/// so N matches each spawned up to 4 ffmpeg => up to 4N concurrent (audit P2-21).
+/// A single static semaphore bounds the whole screen to 4 at a time.
+static THUMBNAIL_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
+
+fn thumbnail_semaphore() -> &'static Semaphore {
+    THUMBNAIL_SEMAPHORE.get_or_init(|| Semaphore::new(4))
 }
 
 /// #523 -- report whether any child process is currently being tracked.
@@ -3956,6 +3966,22 @@ mod tests {
         let value = load_metadata_sync(&meta)
             .expect("BOM-prefixed metadata.json should load");
         assert_eq!(value.get("source").and_then(|v| v.as_str()), Some("a.mkv"));
+    }
+
+    // #834 (P2-21) -- thumbnail semaphore は process-global な 1 インスタンスで、
+    // 並列上限 4 が画面全体に効く (修正前は invoke ごとに別 Semaphore::new(4) で
+    // 4N 並列。audit P2-21)。本 test が suite 内で唯一 permit を取得する。
+    #[tokio::test]
+    async fn thumbnail_semaphore_caps_concurrency_at_4_globally() {
+        let a = thumbnail_semaphore() as *const Semaphore;
+        let b = thumbnail_semaphore() as *const Semaphore;
+        assert_eq!(a, b, "one process-global semaphore, not per-invoke");
+        let s = thumbnail_semaphore();
+        assert_eq!(s.available_permits(), 4);
+        let permits: Vec<_> = (0..4).map(|_| s.try_acquire().unwrap()).collect();
+        assert!(s.try_acquire().is_err(), "5th concurrent thumbnail must be capped");
+        drop(permits);
+        assert_eq!(s.available_permits(), 4);
     }
 
     // #514 — mtime-based exclusive control for apply_changes.
