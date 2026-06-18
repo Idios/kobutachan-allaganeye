@@ -531,6 +531,9 @@ export function PreviewScreen() {
       if (target && interactiveTags.has(target.tagName)) return;
 
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        // #834 -- sample mode は read-only。nudge ボタンと挙動を揃え、keyboard
+        // からの境界編集を抑止する (playback (space) は read-only に反しないため許可)。
+        if (isSample) return;
         const sign = e.key === 'ArrowLeft' ? -1 : 1;
         if (e.altKey) {
           nudgeFrame(sign);
@@ -552,7 +555,7 @@ export function PreviewScreen() {
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [nudge, nudgeFrame, activeVideoRef]);
+  }, [nudge, nudgeFrame, activeVideoRef, isSample]);
 
   const matchLabel = useMemo(
     () => (match ? `match_${String(match.index).padStart(3, '0')}` : ''),

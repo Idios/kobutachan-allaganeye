@@ -51,6 +51,21 @@ describe('PreviewScreen', () => {
     expect(screen.getByText(/#004 · of 9/)).toBeInTheDocument();
   });
 
+  // #834 -- sample mode は read-only。nudge ボタンは disabled 済だが keyboard が
+  // 貫通して境界を編集できていた。arrow nudge を sample mode で無効化する。
+  it('does not nudge boundaries via keyboard in sample mode (#834)', () => {
+    useMetadataStore.getState().loadSample();
+    const sampleIdx = useMetadataStore.getState().metadata!.matches[0].index;
+    useAppStateStore.getState().selectMatch(sampleIdx);
+    render(<PreviewScreen />);
+    const inTc = screen.getByLabelText('IN (start) timecode') as HTMLInputElement;
+    const before = inTc.value;
+    fireEvent.keyDown(window, { key: 'ArrowRight', shiftKey: true }); // +10s
+    expect(
+      (screen.getByLabelText('IN (start) timecode') as HTMLInputElement).value,
+    ).toBe(before);
+  });
+
   // #663 — Phase 4 / #694 — *ErrorState form: when applyErrorState is set in the
   // store, render message + companion hint as 2nd line so the user sees the
   // recommended next step. Hint stays inside the existing role="alert"
@@ -516,6 +531,9 @@ describe('PreviewScreen', () => {
   });
 
   it('ArrowRight key nudges the active timestamp forward by 1s', async () => {
+    // #834: keyboard nudge is now blocked in sample mode (read-only). Exit
+    // sample mode so the nudge mechanics under test stay exercisable.
+    useMetadataStore.setState({ filePath: '/x' });
     render(<PreviewScreen />);
     const before = (
       screen.getByLabelText('IN (start) timecode') as HTMLInputElement
@@ -528,6 +546,9 @@ describe('PreviewScreen', () => {
   });
 
   it('Shift+ArrowLeft nudges the active timestamp (10s step) — different value from plain ArrowLeft', async () => {
+    // #834: keyboard nudge is now blocked in sample mode (read-only). Exit
+    // sample mode so the nudge mechanics under test stay exercisable.
+    useMetadataStore.setState({ filePath: '/x' });
     render(<PreviewScreen />);
     const before = (
       screen.getByLabelText('IN (start) timecode') as HTMLInputElement
@@ -684,9 +705,12 @@ describe('PreviewScreen', () => {
   // なることを確認する。
 
   it('Alt+ArrowRight steps 1/120 sec when source_fps is 120', async () => {
-    // metadata.source_fps を 120 に上書き (state を直接書き換え)
+    // metadata.source_fps を 120 に上書き (state を直接書き換え)。
+    // #834: keyboard nudge は sample mode で無効化されたため filePath を与えて
+    // 編集可能 mode に切り替え、frame-step の挙動を検証可能にする。
     const sample = useMetadataStore.getState().metadata!;
     useMetadataStore.setState({
+      filePath: '/x',
       metadata: { ...sample, source_fps: 120 },
     });
     render(<PreviewScreen />);
@@ -704,8 +728,11 @@ describe('PreviewScreen', () => {
   });
 
   it('Alt+ArrowRight steps 1/240 sec when source_fps is 240', async () => {
+    // #834: keyboard nudge は sample mode で無効化されたため filePath を与えて
+    // 編集可能 mode に切り替える (上の 120fps test と同じ理由)。
     const sample = useMetadataStore.getState().metadata!;
     useMetadataStore.setState({
+      filePath: '/x',
       metadata: { ...sample, source_fps: 240 },
     });
     render(<PreviewScreen />);
