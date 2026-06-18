@@ -492,12 +492,21 @@ export function PreviewScreen() {
   // produce a zero-length clip and disable [適用]; iterate-review Round 1 F3).
   // The strict end > start guard at apply time (store + Rust) is the backstop.
   const commitStart = useCallback(
-    (next: number) => setStartT(Math.max(0, Math.min(next, endT - 1 / fps))),
-    [endT, fps],
+    (next: number) => {
+      // #834 (codex) -- sample mode is read-only. Gate the single boundary-
+      // mutation choke point so every path (keyboard nudge / frame step /
+      // FrameStrip / TC input / playback timeupdate) is read-only at once.
+      if (isSample) return;
+      setStartT(Math.max(0, Math.min(next, endT - 1 / fps)));
+    },
+    [endT, fps, isSample],
   );
   const commitEnd = useCallback(
-    (next: number) => setEndT(Math.max(next, startT + 1 / fps)),
-    [startT, fps],
+    (next: number) => {
+      if (isSample) return;
+      setEndT(Math.max(next, startT + 1 / fps));
+    },
+    [startT, fps, isSample],
   );
   const commitCurrentT = useCallback(
     (next: number) => (editing === 'start' ? commitStart(next) : commitEnd(next)),
@@ -531,6 +540,9 @@ export function PreviewScreen() {
       if (target && interactiveTags.has(target.tagName)) return;
 
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        // #834 -- sample mode は read-only。nudge ボタンと挙動を揃え、keyboard
+        // からの境界編集を抑止する (playback (space) は read-only に反しないため許可)。
+        if (isSample) return;
         const sign = e.key === 'ArrowLeft' ? -1 : 1;
         if (e.altKey) {
           nudgeFrame(sign);
@@ -552,7 +564,7 @@ export function PreviewScreen() {
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [nudge, nudgeFrame, activeVideoRef]);
+  }, [nudge, nudgeFrame, activeVideoRef, isSample]);
 
   const matchLabel = useMemo(
     () => (match ? `match_${String(match.index).padStart(3, '0')}` : ''),

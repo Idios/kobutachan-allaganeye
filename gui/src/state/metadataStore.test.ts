@@ -179,6 +179,26 @@ describe('useMetadataStore.load', () => {
     expect(useMetadataStore.getState().metadata).toBeNull();
     expect(useMetadataStore.getState().loadErrorState).toBeTruthy();
   });
+
+  // #834 -- mtime は内容 read より前に取得する (TOCTOU を silent overwrite では
+  // なく conflict 検出側に倒す)。
+  it('captures mtime before reading metadata content (#834)', async () => {
+    const order: string[] = [];
+    invokeMock.mockImplementation((cmd: string) => {
+      order.push(cmd);
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(1700);
+      if (cmd === 'load_metadata') return Promise.resolve(validMetadata());
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      if (cmd === 'load_draft') return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+    await useMetadataStore.getState().load('p');
+    const mIdx = order.indexOf('get_metadata_mtime');
+    const lIdx = order.indexOf('load_metadata');
+    expect(mIdx).toBeGreaterThanOrEqual(0);
+    expect(lIdx).toBeGreaterThanOrEqual(0);
+    expect(mIdx).toBeLessThan(lIdx);
+  });
 });
 
 describe('useMetadataStore.updateMatch', () => {
@@ -337,6 +357,34 @@ describe('useMetadataStore.apply', () => {
     expect(useMetadataStore.getState().metadata?.matches[0].start_display).toBe(
       '01:05',
     );
+  });
+
+  // #834 (P2-18) -- name/type_override は apply 後も in-memory に残る (UI 表示維持)。
+  // 一方 metadata.json (apply_changes payload) には書き戻さない (契約維持)。
+  it('retains name and type_override in-memory after apply but strips them from disk (#834)', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      apply_changes: 2000,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, {
+      name: 'highlight reel',
+      type_override: 'skip',
+    });
+    await useMetadataStore.getState().apply();
+
+    const m = useMetadataStore
+      .getState()
+      .metadata!.matches.find((x) => x.index === 1)!;
+    expect(m.name).toBe('highlight reel');
+    expect(m.type_override).toBe('skip');
+
+    const applyCall = invokeMock.mock.calls.find((c) => c[0] === 'apply_changes');
+    const persisted = (applyCall![1] as { metadata: Metadata }).metadata
+      .matches[0];
+    expect(persisted.name).toBeUndefined();
+    expect(persisted.type_override).toBeUndefined();
   });
 });
 

@@ -61,6 +61,14 @@ fn video_server() -> &'static Mutex<VideoServer> {
     VIDEO_SERVER.get_or_init(|| Mutex::new(VideoServer::new()))
 }
 
+/// Strip a leading UTF-8 BOM (U+FEFF / bytes EF BB BF) so serde_json::from_str
+/// accepts files an editor saved with one. serde_json rejects a BOM with
+/// "expected value" (audit P2-19); metadata.json hand-edited on Windows
+/// commonly carries one. Returns the input unchanged when no BOM is present.
+fn strip_bom(s: &str) -> &str {
+    s.strip_prefix('\u{FEFF}').unwrap_or(s)
+}
+
 /// #465 -- payload returned to the GUI from `register_video`.
 ///
 /// The frontend sets `url` as the `<video>` element's `src` and keeps `token`
@@ -91,7 +99,7 @@ fn load_metadata_sync(meta_path: &Path) -> Result<Value, AppError> {
         )
         .with_default_hint()
     })?;
-    let value: Value = serde_json::from_str(&content).map_err(|e| {
+    let value: Value = serde_json::from_str(strip_bom(&content)).map_err(|e| {
         AppError::new(
             "parse.json_invalid",
             format!("invalid JSON in {}: {}", meta_path.display(), e),
@@ -196,7 +204,7 @@ fn load_draft_sync(meta_path: &Path) -> Result<Option<Value>, AppError> {
         )
         .with_default_hint()
     })?;
-    let value: Value = serde_json::from_str(&content).map_err(|e| {
+    let value: Value = serde_json::from_str(strip_bom(&content)).map_err(|e| {
         AppError::new(
             "parse.json_invalid",
             format!("invalid JSON in draft {}: {}", draft_path.display(), e),
@@ -251,7 +259,7 @@ fn restore_from_original_sync(meta_path: &Path) -> Result<(), AppError> {
         )
         .with_default_hint()
     })?;
-    let value: Value = serde_json::from_str(&content).map_err(|e| {
+    let value: Value = serde_json::from_str(strip_bom(&content)).map_err(|e| {
         AppError::new(
             "parse.json_invalid",
             format!("parse backup failed ({}): {}", original_path.display(), e),
@@ -364,7 +372,7 @@ fn read_recent_sync(path: &Path) -> Vec<RecentEntry> {
     let Ok(content) = fs::read_to_string(path) else {
         return Vec::new();
     };
-    serde_json::from_str::<Vec<RecentEntry>>(&content).unwrap_or_default()
+    serde_json::from_str::<Vec<RecentEntry>>(strip_bom(&content)).unwrap_or_default()
 }
 
 /// #571 — normalize a path string for the recent-list dedup key.
@@ -1282,16 +1290,16 @@ async fn generate_match_thumbnails(
     })?;
 
     let timestamps = compute_candidate_timestamps(boundary_t_seconds, window_seconds, count);
-    let semaphore = Arc::new(Semaphore::new(4));
 
     let mut tasks = Vec::with_capacity(timestamps.len());
     for t in timestamps.iter().copied() {
         let token = thumb_token(match_index, t);
         let out_path = cache_dir.join(format!("{}.webp", token));
         let video_for_task = canonical.clone();
-        let sem = Arc::clone(&semaphore);
         tasks.push(async move {
-            let _permit = sem.acquire_owned().await.map_err(|e| {
+            // #834 -- acquire from the process-global semaphore so concurrency is
+            // bounded across the whole screen, not per-invoke.
+            let _permit = thumbnail_semaphore().acquire().await.map_err(|e| {
                 AppError::new(
                     "internal.error",
                     format!("semaphore closed: {}", e),
@@ -1555,6 +1563,16 @@ static PROCESS_TRACKER: OnceLock<ProcessMap> = OnceLock::new();
 
 fn process_tracker() -> &'static ProcessMap {
     PROCESS_TRACKER.get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
+}
+
+/// Process-global cap on concurrent thumbnail ffmpeg jobs. Previously a fresh
+/// Semaphore::new(4) was created inside generate_match_thumbnails on each invoke,
+/// so N matches each spawned up to 4 ffmpeg => up to 4N concurrent (audit P2-21).
+/// A single static semaphore bounds the whole screen to 4 at a time.
+static THUMBNAIL_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
+
+fn thumbnail_semaphore() -> &'static Semaphore {
+    THUMBNAIL_SEMAPHORE.get_or_init(|| Semaphore::new(4))
 }
 
 /// #523 -- report whether any child process is currently being tracked.
@@ -3928,6 +3946,42 @@ mod tests {
         fs::write(&meta, r#"["not", "an", "object"]"#).unwrap();
         let err = load_metadata_sync(&meta).unwrap_err();
         assert!(err.message.contains("must be a JSON object"));
+    }
+
+    // #834 (P2-19) -- strip_bom 純関数の単体。先頭 BOM のみ除去、それ以外は素通し。
+    #[test]
+    fn strip_bom_removes_leading_bom_only() {
+        assert_eq!(strip_bom("\u{FEFF}{}"), "{}");
+        assert_eq!(strip_bom("{}"), "{}");
+        assert_eq!(strip_bom("a\u{FEFF}b"), "a\u{FEFF}b");
+    }
+
+    // #834 (P2-19) -- UTF-8 BOM 付き metadata.json が load できる (audit P2-19)。
+    #[test]
+    fn load_metadata_accepts_utf8_bom() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let body = "\u{FEFF}{\"source\":\"a.mkv\",\"matches\":[]}";
+        std::fs::write(&meta, body.as_bytes()).unwrap();
+        let value = load_metadata_sync(&meta)
+            .expect("BOM-prefixed metadata.json should load");
+        assert_eq!(value.get("source").and_then(|v| v.as_str()), Some("a.mkv"));
+    }
+
+    // #834 (P2-21) -- thumbnail semaphore は process-global な 1 インスタンスで、
+    // 並列上限 4 が画面全体に効く (修正前は invoke ごとに別 Semaphore::new(4) で
+    // 4N 並列。audit P2-21)。本 test が suite 内で唯一 permit を取得する。
+    #[tokio::test]
+    async fn thumbnail_semaphore_caps_concurrency_at_4_globally() {
+        let a = thumbnail_semaphore() as *const Semaphore;
+        let b = thumbnail_semaphore() as *const Semaphore;
+        assert_eq!(a, b, "one process-global semaphore, not per-invoke");
+        let s = thumbnail_semaphore();
+        assert_eq!(s.available_permits(), 4);
+        let permits: Vec<_> = (0..4).map(|_| s.try_acquire().unwrap()).collect();
+        assert!(s.try_acquire().is_err(), "5th concurrent thumbnail must be capped");
+        drop(permits);
+        assert_eq!(s.available_permits(), 4);
     }
 
     // #514 — mtime-based exclusive control for apply_changes.
