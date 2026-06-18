@@ -180,7 +180,7 @@ fn default_hint_for_code(code: &str) -> Option<&'static str> {
             "試合の終了 (OUT) が開始 (IN) 以前になっています。終了が開始より後になるよう境界を調整してください"
         ),
         "validation.path_invalid" => Some(
-            "入力されたパスが不正です。ファイル名と拡張子を確認してください (対応: mp4 / mkv / mov / m4v)"
+            "入力されたパスが不正です。ファイル名と拡張子を確認してください (対応: mp4 / mkv / avi / mov)"
         ),
         "validation.not_a_file" => Some(
             "指定されたパスはファイルではありません (フォルダや symlink ではなく動画ファイルを選択してください)"
@@ -353,5 +353,14 @@ mod tests {
         let e: AppError = json_err.into();
         assert_eq!(e.code, "parse.json_invalid");
         assert!(e.hint.is_some());
+    }
+
+    // #834 -- path_invalid hint は config.py SUPPORTED_EXTENSIONS (mp4/mkv/avi/mov)
+    // と一致させる。旧 hint は avi 欠落 + m4v 誤記 (DropScreen / config.py と不整合)。
+    #[test]
+    fn path_invalid_hint_lists_supported_extensions() {
+        let hint = default_hint_for_code("validation.path_invalid").unwrap();
+        assert!(hint.contains("avi"), "hint should list avi (config.py accepts it)");
+        assert!(!hint.contains("m4v"), "hint should not list m4v (not accepted)");
     }
 }

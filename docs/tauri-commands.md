@@ -151,7 +151,7 @@ PR #669 で追加した 2 command (`read_error_log_tail` / `probe_environment_in
 | `subprocess.spawn_failed` | 外部プロセスの起動に失敗しました。ffmpeg / Python / 同梱 runtime が壊れていないか確認してください |
 | `subprocess.exit_failed` | 外部プロセスが異常終了しました。logs フォルダの最新ログから詳細を確認してください |
 | `subprocess.cancelled` | (hint なし: ユーザー操作によるキャンセルは UI 側で十分な情報を出す) |
-| `validation.path_invalid` | 入力されたパスが不正です。ファイル名と拡張子を確認してください (対応: mp4 / mkv / mov / m4v) |
+| `validation.path_invalid` | 入力されたパスが不正です。ファイル名と拡張子を確認してください (対応: mp4 / mkv / avi / mov) |
 | `validation.not_a_file` | 指定されたパスはファイルではありません (フォルダや symlink ではなく動画ファイルを選択してください) |
 | `validation.range_invalid` | 入力された数値が許容範囲外です。フォーム下のヒント表示を確認してください |
 | `validation.boundary_invalid` | 試合の終了 (OUT) が開始 (IN) 以前になっています。終了が開始より後になるよう境界を調整してください |
