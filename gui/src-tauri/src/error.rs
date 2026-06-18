@@ -113,8 +113,8 @@ impl From<String> for AppError {
 }
 
 /// AppError code に対する日本語 default hint を返す。未登録 code は None。
-/// 24 codes (or-pattern `io.would_block | io.timed_out` を 2 codes に展開後、22 hint
-/// + 2 None = 24)。現在の lib.rs inventory: io.* / parse.* / state.* / subprocess.* /
+/// 25 codes (or-pattern `io.would_block | io.timed_out` を 2 codes に展開後、23 hint
+/// + 2 None = 25)。現在の lib.rs inventory: io.* / parse.* / state.* / subprocess.* /
 /// validation.* / path.* / platform.* / internal.*。
 /// 文言は `docs/tauri-commands.md` の AppError default hint mapping table と一致させる
 /// (本 fn が source of truth、docs は mirror、`.github/scripts/check-error-hint-drift.sh`
@@ -176,6 +176,9 @@ fn default_hint_for_code(code: &str) -> Option<&'static str> {
         ),
         "subprocess.cancelled" => None, // ユーザー操作によるキャンセルは hint 不要 (UI 側で「キャンセルされました」を表示で十分)
         // validation
+        "validation.boundary_invalid" => Some(
+            "試合の終了 (OUT) が開始 (IN) 以前になっています。終了が開始より後になるよう境界を調整してください"
+        ),
         "validation.path_invalid" => Some(
             "入力されたパスが不正です。ファイル名と拡張子を確認してください (対応: mp4 / mkv / mov / m4v)"
         ),
@@ -304,6 +307,7 @@ mod tests {
             "parse.schema_invalid", "parse.ffprobe_output_invalid",
             "subprocess.spawn_failed", "subprocess.exit_failed",
             "validation.path_invalid", "validation.not_a_file", "validation.range_invalid",
+            "validation.boundary_invalid",
             "path.install_dir_unresolved", "platform.unsupported",
         ];
         for code in with_hint {

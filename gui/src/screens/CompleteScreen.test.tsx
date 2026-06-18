@@ -25,6 +25,25 @@ describe('CompleteScreen', () => {
     expect(screen.getByText(/No metadata/i)).toBeInTheDocument();
   });
 
+  // #814 (AC3) -- when load failed (metadata null + loadErrorState set), the
+  // empty state shows the error instead of the generic "No metadata" line.
+  it('shows the load error in the empty state instead of "No metadata" (#814)', () => {
+    useMetadataStore.getState().clear();
+    useMetadataStore.setState({
+      loadErrorState: {
+        message: 'metadata.json is corrupt',
+        hint: 'rerun allaganeye split',
+        code: 'parse.json_invalid',
+      },
+    });
+    render(<CompleteScreen />);
+    expect(screen.getByTestId('complete-load-error')).toBeInTheDocument();
+    expect(screen.getByText(/metadata.json is corrupt/)).toBeInTheDocument();
+    expect(
+      screen.queryByText('No metadata. Run detect first.'),
+    ).toBeNull();
+  });
+
   it('displays source and match count from the store', () => {
     render(<CompleteScreen />);
     expect(screen.getByText(/2026-04-08 21-14-05.mkv/)).toBeInTheDocument();

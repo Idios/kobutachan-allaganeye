@@ -920,11 +920,95 @@ async fn serve_video(
     }
 }
 
+/// #814 -- validate a metadata payload before it is persisted by
+/// `apply_changes`. `apply_changes` accepts arbitrary `serde_json::Value`, so
+/// this is the write-side guard that prevents persisting a `metadata.json` the
+/// GUI's zod schema cannot reload (audit P1-2; codex adversarial-review rounds
+/// 1-2). It mirrors the REQUIRED parts of `gui/src/types/metadata.schema.ts`
+/// (`MetadataSchema` / `MatchSchema` / `GapSchema`) -- keep the two in sync.
+///
+/// Deliberate read/write asymmetry on matches: the GUI edits match boundaries,
+/// so we enforce strict `end > start` on write (zero-length clips are invalid,
+/// AC1) even though the read schema is lenient (`>=`). Gaps are not editable,
+/// so we mirror the read schema's `end >= start`.
+///
+/// Codes: `parse.schema_invalid` for missing / wrong-type required fields,
+/// `validation.boundary_invalid` for malformed match / gap boundaries.
+fn validate_metadata_for_write(payload: &Value) -> Result<(), AppError> {
+    fn schema_err(msg: impl Into<String>) -> AppError {
+        AppError::new("parse.schema_invalid", msg).with_default_hint()
+    }
+    fn boundary_err(msg: impl Into<String>) -> AppError {
+        AppError::new("validation.boundary_invalid", msg).with_default_hint()
+    }
+
+    let obj = payload
+        .as_object()
+        .ok_or_else(|| schema_err("metadata must be a JSON object"))?;
+
+    // Required non-empty string fields (mirror MetadataSchema).
+    for key in ["source", "source_duration_display", "detected_at"] {
+        match obj.get(key).and_then(Value::as_str) {
+            Some(s) if !s.is_empty() => {}
+            _ => return Err(schema_err(format!("metadata.{key} must be a non-empty string"))),
+        }
+    }
+    match obj.get("source_duration").and_then(Value::as_f64) {
+        Some(d) if d > 0.0 => {}
+        _ => return Err(schema_err("metadata.source_duration must be a positive number")),
+    }
+    if !obj.get("detection_params").map(Value::is_object).unwrap_or(false) {
+        return Err(schema_err("metadata.detection_params must be an object"));
+    }
+
+    let matches = obj
+        .get("matches")
+        .and_then(Value::as_array)
+        .ok_or_else(|| schema_err("metadata.matches must be an array"))?;
+    let gaps = obj
+        .get("gaps")
+        .and_then(Value::as_array)
+        .ok_or_else(|| schema_err("metadata.gaps must be an array"))?;
+
+    // Match boundaries: finite numeric start/end with strict end > start.
+    for (i, m) in matches.iter().enumerate() {
+        let start = m.get("start_time").and_then(Value::as_f64);
+        let end = m.get("end_time").and_then(Value::as_f64);
+        if !matches!((start, end), (Some(s), Some(e)) if e > s) {
+            return Err(boundary_err(format!(
+                "match at index {i} has invalid boundaries (start_time/end_time must be finite numbers with end_time > start_time); got start_time={:?}, end_time={:?}",
+                m.get("start_time"),
+                m.get("end_time")
+            )));
+        }
+    }
+
+    // Gap boundaries: finite numeric start/end with end >= start (mirror GapSchema).
+    for (i, g) in gaps.iter().enumerate() {
+        let start = g.get("start_time").and_then(Value::as_f64);
+        let end = g.get("end_time").and_then(Value::as_f64);
+        if !matches!((start, end), (Some(s), Some(e)) if e >= s) {
+            return Err(boundary_err(format!(
+                "gap at index {i} has invalid boundaries (start_time/end_time must be finite numbers with end_time >= start_time); got start_time={:?}, end_time={:?}",
+                g.get("start_time"),
+                g.get("end_time")
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 fn apply_changes_sync(
     meta_path: &Path,
     payload: &Value,
     expected_mtime_ms: Option<u64>,
 ) -> Result<(), AppError> {
+    // #814 -- validate the payload against the GUI reload contract before any
+    // backup/write so apply_changes can never persist an unreadable
+    // metadata.json (audit P1-2; codex adversarial-review rounds 1-2).
+    validate_metadata_for_write(payload)?;
+
     // #514 — refuse to overwrite a file that has been modified externally
     // since the caller last loaded it. Target not existing is not a conflict
     // (treat as a fresh write).
@@ -3172,6 +3256,39 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    /// #814 -- a fully valid metadata payload satisfying
+    /// `validate_metadata_for_write`. Tests start from this and tweak one field
+    /// to exercise a specific concern (boundary / mtime / backup).
+    fn valid_metadata_payload() -> Value {
+        json!({
+            "source": "C:/videos/test.mkv",
+            "source_duration": 600.0,
+            "source_duration_display": "10:00",
+            "detected_at": "2026-04-27T00:00:00Z",
+            "detection_params": {
+                "sample_interval": 2.0,
+                "blackout_threshold": 15.0,
+                "min_match_duration": 300.0,
+                "min_blackout_duration": 3.0,
+                "no_audio": false,
+                "use_gpu": null,
+                "workers": null
+            },
+            "matches": [{
+                "index": 1,
+                "start_time": 0.0,
+                "end_time": 100.0,
+                "start_display": "00:00",
+                "end_display": "01:40",
+                "duration": 100.0,
+                "duration_display": "1m40s",
+                "type": "fl_match",
+                "output_file": "match_001.mp4"
+            }],
+            "gaps": []
+        })
+    }
+
     #[test]
     fn atomic_write_creates_target() {
         let tmp = TempDir::new().unwrap();
@@ -3196,15 +3313,150 @@ mod tests {
         assert_eq!(roundtrip, payload);
     }
 
+    // #814 -- write-boundary guard: end_time must be strictly > start_time so
+    // a boundary the zod schema would reject on reload never reaches disk.
+    #[test]
+    fn apply_changes_rejects_end_before_start() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p["matches"][0]["start_time"] = json!(900.0);
+        p["matches"][0]["end_time"] = json!(100.0);
+        let err = apply_changes_sync(&meta, &p, None).unwrap_err();
+        assert_eq!(err.code, "validation.boundary_invalid");
+        // nothing is written when the guard rejects
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_zero_duration_boundary() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p["matches"][0]["start_time"] = json!(500.0);
+        p["matches"][0]["end_time"] = json!(500.0);
+        let err = apply_changes_sync(&meta, &p, None).unwrap_err();
+        assert_eq!(err.code, "validation.boundary_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_accepts_valid_boundaries() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let p = valid_metadata_payload();
+        apply_changes_sync(&meta, &p, None).expect("valid boundaries accepted");
+        assert!(meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_match_missing_start_time() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p["matches"][0].as_object_mut().unwrap().remove("start_time");
+        let err = apply_changes_sync(&meta, &p, None).unwrap_err();
+        assert_eq!(err.code, "validation.boundary_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_match_missing_end_time() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p["matches"][0].as_object_mut().unwrap().remove("end_time");
+        let err = apply_changes_sync(&meta, &p, None).unwrap_err();
+        assert_eq!(err.code, "validation.boundary_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_match_non_numeric_boundary() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p["matches"][0]["start_time"] = json!("0");
+        p["matches"][0]["end_time"] = json!("100");
+        let err = apply_changes_sync(&meta, &p, None).unwrap_err();
+        assert_eq!(err.code, "validation.boundary_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_inverted_gap() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p["gaps"] = json!([{ "start_time": 200.0, "end_time": 100.0 }]);
+        let err = apply_changes_sync(&meta, &p, None).unwrap_err();
+        assert_eq!(err.code, "validation.boundary_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_accepts_zero_duration_gap() {
+        // GapSchema is lenient (end >= start); a zero-length gap is valid.
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p["gaps"] = json!([{ "start_time": 100.0, "end_time": 100.0 }]);
+        apply_changes_sync(&meta, &p, None).expect("zero-duration gap accepted");
+        assert!(meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_missing_matches_array() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p.as_object_mut().unwrap().remove("matches");
+        let err = apply_changes_sync(&meta, &p, None).unwrap_err();
+        assert_eq!(err.code, "parse.schema_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_missing_gaps_array() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p.as_object_mut().unwrap().remove("gaps");
+        let err = apply_changes_sync(&meta, &p, None).unwrap_err();
+        assert_eq!(err.code, "parse.schema_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_missing_required_top_level_field() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p.as_object_mut().unwrap().remove("source");
+        let err = apply_changes_sync(&meta, &p, None).unwrap_err();
+        assert_eq!(err.code, "parse.schema_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_non_object_payload() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let err = apply_changes_sync(&meta, &json!([1, 2, 3]), None).unwrap_err();
+        assert_eq!(err.code, "parse.schema_invalid");
+        assert!(!meta.exists());
+    }
+
     #[test]
     fn apply_changes_creates_backup_on_first_call() {
         let tmp = TempDir::new().unwrap();
         let meta = tmp.path().join("metadata.json");
         let backup = tmp.path().join("metadata.original.json");
-        let original = json!({"source": "a.mkv", "matches": [{"m": 1}]});
+        let original = valid_metadata_payload();
         fs::write(&meta, serde_json::to_string_pretty(&original).unwrap()).unwrap();
 
-        let edited = json!({"source": "a.mkv", "matches": [{"m": 1, "edited": true}]});
+        let mut edited = valid_metadata_payload();
+        edited["matches"][0]["end_time"] = json!(200.0);
         apply_changes_sync(&meta, &edited, None).unwrap();
 
         assert!(backup.exists());
@@ -3220,19 +3472,25 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let meta = tmp.path().join("metadata.json");
         let backup = tmp.path().join("metadata.original.json");
-        let original = json!({"version": "v1"});
+        let original = valid_metadata_payload();
         fs::write(&meta, serde_json::to_string_pretty(&original).unwrap()).unwrap();
 
-        apply_changes_sync(&meta, &json!({"version": "v2"}), None).unwrap();
-        apply_changes_sync(&meta, &json!({"version": "v3"}), None).unwrap();
-        apply_changes_sync(&meta, &json!({"version": "v4"}), None).unwrap();
+        let mut p2 = valid_metadata_payload();
+        p2["source_duration_display"] = json!("10:02");
+        let mut p3 = valid_metadata_payload();
+        p3["source_duration_display"] = json!("10:03");
+        let mut p4 = valid_metadata_payload();
+        p4["source_duration_display"] = json!("10:04");
+        apply_changes_sync(&meta, &p2, None).unwrap();
+        apply_changes_sync(&meta, &p3, None).unwrap();
+        apply_changes_sync(&meta, &p4, None).unwrap();
 
         // backup stays the very first snapshot
         let backup_value: Value =
             serde_json::from_str(&fs::read_to_string(&backup).unwrap()).unwrap();
         assert_eq!(backup_value, original);
         let current: Value = serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
-        assert_eq!(current, json!({"version": "v4"}));
+        assert_eq!(current, p4);
     }
 
     #[test]
@@ -3241,7 +3499,7 @@ mod tests {
         let meta = tmp.path().join("metadata.json");
         let backup = tmp.path().join("metadata.original.json");
         // No pre-existing metadata.json
-        apply_changes_sync(&meta, &json!({"first": true}), None).unwrap();
+        apply_changes_sync(&meta, &valid_metadata_payload(), None).unwrap();
         assert!(meta.exists());
         // No backup created because there was nothing to back up
         assert!(!backup.exists());
@@ -3681,11 +3939,12 @@ mod tests {
         fs::write(&meta, r#"{"v":1}"#).unwrap();
         let current = file_mtime_ms(&meta).expect("mtime exists for newly written file");
 
-        apply_changes_sync(&meta, &json!({"v": 2}), Some(current)).unwrap();
+        let p = valid_metadata_payload();
+        apply_changes_sync(&meta, &p, Some(current)).unwrap();
 
         let after: Value =
             serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
-        assert_eq!(after, json!({"v": 2}));
+        assert_eq!(after, p);
     }
 
     #[test]
@@ -3697,7 +3956,7 @@ mod tests {
         // real-world file write, so the comparison is deterministic.
         let stale: u64 = 1;
 
-        let err = apply_changes_sync(&meta, &json!({"v": 2}), Some(stale)).unwrap_err();
+        let err = apply_changes_sync(&meta, &valid_metadata_payload(), Some(stale)).unwrap_err();
         assert!(err.message.starts_with("conflict:"), "unexpected error: {err}");
 
         // Conflict must not overwrite the file.
@@ -3713,10 +3972,11 @@ mod tests {
         fs::write(&meta, r#"{"v":1}"#).unwrap();
 
         // None → check is bypassed even though the file already exists.
-        apply_changes_sync(&meta, &json!({"v": 2}), None).unwrap();
+        let p = valid_metadata_payload();
+        apply_changes_sync(&meta, &p, None).unwrap();
         let after: Value =
             serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
-        assert_eq!(after, json!({"v": 2}));
+        assert_eq!(after, p);
     }
 
     #[test]
@@ -3725,7 +3985,7 @@ mod tests {
         let meta = tmp.path().join("metadata.json");
         // First write: no existing file to conflict against, so expected_mtime
         // must not block the write.
-        apply_changes_sync(&meta, &json!({"first": true}), Some(12345)).unwrap();
+        apply_changes_sync(&meta, &valid_metadata_payload(), Some(12345)).unwrap();
         assert!(meta.exists());
     }
 
@@ -3771,7 +4031,7 @@ mod tests {
         );
 
         // apply_changes_sync with the stale initial mtime must refuse the write.
-        let err = apply_changes_sync(&meta, &json!({"v": 2}), Some(initial_mtime))
+        let err = apply_changes_sync(&meta, &valid_metadata_payload(), Some(initial_mtime))
             .unwrap_err();
         assert!(err.message.starts_with("conflict:"), "unexpected error: {err}");
 
@@ -3796,19 +4056,26 @@ mod tests {
         fs::write(&meta, r#"{"v":1}"#).unwrap();
         let m1 = file_mtime_ms(&meta).unwrap();
 
+        let mut p2 = valid_metadata_payload();
+        p2["source_duration_display"] = json!("10:02");
+        let mut p3 = valid_metadata_payload();
+        p3["source_duration_display"] = json!("10:03");
+        let mut p4 = valid_metadata_payload();
+        p4["source_duration_display"] = json!("10:04");
+
         sleep(Duration::from_millis(20));
-        apply_changes_sync(&meta, &json!({"v": 2}), Some(m1)).unwrap();
+        apply_changes_sync(&meta, &p2, Some(m1)).unwrap();
         let m2 = file_mtime_ms(&meta).unwrap();
         assert!(m2 > m1, "mtime must advance after apply ({m2} > {m1})");
 
         sleep(Duration::from_millis(20));
-        apply_changes_sync(&meta, &json!({"v": 3}), Some(m2)).unwrap();
+        apply_changes_sync(&meta, &p3, Some(m2)).unwrap();
         let m3 = file_mtime_ms(&meta).unwrap();
         assert!(m3 > m2, "mtime must advance again ({m3} > {m2})");
 
         // The original m1 is now stale — attempting to apply with it must fail
         // (regression guard: prevents accepting pre-first-apply handles).
-        let err = apply_changes_sync(&meta, &json!({"v": 4}), Some(m1)).unwrap_err();
+        let err = apply_changes_sync(&meta, &p4, Some(m1)).unwrap_err();
         assert!(err.message.starts_with("conflict:"), "unexpected error: {err}");
     }
 

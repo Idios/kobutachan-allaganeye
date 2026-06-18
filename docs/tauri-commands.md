@@ -27,7 +27,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | `load_metadata` | `path: String` | `Result<Value, AppError>` | I/O | (a) ファイル不在、(b) JSON parse 失敗、(c) 読み取り権限なし、(d) JSON root が object でない | (a) `io.file_not_found`、(b) `parse.json_invalid`、(c) `io.permission_denied`、(d) `parse.schema_invalid` |
 | 2 | `get_metadata_mtime` | `path: String` | `Result<Option<u64>, AppError>` | I/O | (a) ファイル不在 (= None で返却)、(b) 読み取り権限なし | (b) `io.permission_denied` |
-| 3 | `apply_changes` | `path: String, metadata: Value, expected_mtime_ms: Option<u64>` | `Result<u64, AppError>` | I/O + state-mutating | (a) mtime conflict (外部書き換え検出)、(b) backup 作成失敗、(c) atomic write 失敗、(d) JSON serialize 失敗、(e) post-apply mtime 取得失敗 (extreme case、書き込み直後にファイルが消失/権限変更等) | (a) `state.mtime_conflict`、(b) `io.backup_failed`、(c) `io.write_failed`、(d) `parse.json_serialize_failed`、(e) `io.read_failed` |
+| 3 | `apply_changes` | `path: String, metadata: Value, expected_mtime_ms: Option<u64>` | `Result<u64, AppError>` | I/O + state-mutating | (a) mtime conflict (外部書き換え検出)、(b) backup 作成失敗、(c) atomic write 失敗、(d) JSON serialize 失敗、(e) post-apply mtime 取得失敗 (extreme case、書き込み直後にファイルが消失/権限変更等)、(f) match/gap 境界不正 (start_time/end_time 欠損・非数値、match は end_time <= start_time / gap は end_time < start_time、#814)、(g) metadata 必須フィールド欠損・型不正 (source / source_duration / source_duration_display / detected_at / detection_params / matches / gaps、#814) | (a) `state.mtime_conflict`、(b) `io.backup_failed`、(c) `io.write_failed`、(d) `parse.json_serialize_failed`、(e) `io.read_failed`、(f) `validation.boundary_invalid`、(g) `parse.schema_invalid` |
 | 4 | `save_draft` | `path: String, draft: Value` | `Result<(), AppError>` | I/O + state-mutating | (a) sibling `.draft.json` への書き込み失敗 | (a) `io.write_failed` |
 | 5 | `load_draft` | `path: String` | `Result<Option<Value>, AppError>` | I/O | (a) draft ファイル不在 (= None で返却)、(b) JSON parse 失敗 | (b) `parse.json_invalid` |
 | 6 | `clear_draft` | `path: String` | `Result<(), AppError>` | I/O + state-mutating | (a) draft 削除失敗 (権限等) | (a) `io.delete_failed` |
@@ -154,6 +154,7 @@ PR #669 で追加した 2 command (`read_error_log_tail` / `probe_environment_in
 | `validation.path_invalid` | 入力されたパスが不正です。ファイル名と拡張子を確認してください (対応: mp4 / mkv / mov / m4v) |
 | `validation.not_a_file` | 指定されたパスはファイルではありません (フォルダや symlink ではなく動画ファイルを選択してください) |
 | `validation.range_invalid` | 入力された数値が許容範囲外です。フォーム下のヒント表示を確認してください |
+| `validation.boundary_invalid` | 試合の終了 (OUT) が開始 (IN) 以前になっています。終了が開始より後になるよう境界を調整してください |
 | `path.install_dir_unresolved` | Portable ZIP の install dir を特定できませんでした。allaganeye-gui.exe を ZIP 展開後の元のフォルダ構成のまま起動してください |
 | `platform.unsupported` | 本機能は現在の OS では未対応です。Windows での起動が必要です |
 | `internal.error` | (hint なし: 内部エラーで具体的アクションがない、message 側で logs 参照を案内) |

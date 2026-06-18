@@ -947,6 +947,36 @@ describe('DetectingScreen', () => {
     expect(refiningRow.textContent).not.toContain('refine');
   });
 
+  // #814 (AC3) -- a detect that finished but whose metadata.json can't be read
+  // must surface the error in the error view, not silently land on complete.
+  it('routes a post-detect metadata load failure to the error view (#814)', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return Promise.resolve({
+          metadata_path: 'C:/videos/test_allaganeye/metadata.json',
+          matches: 1,
+        });
+      }
+      if (cmd === 'load_metadata') {
+        return Promise.reject({
+          code: 'parse.json_invalid',
+          message: 'metadata.json is corrupt',
+          hint: 'rerun allaganeye split',
+        });
+      }
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(screen.getByTestId('detecting-error')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('detecting-error-message')).toHaveTextContent(
+      'metadata.json is corrupt',
+    );
+    // must NOT navigate to complete on a failed load
+    expect(useAppStateStore.getState().screen).toBe('detecting');
+  });
+
   it('falls back to loadSample when no video is selected (StateSwitcher dev mode)', async () => {
     // Reset to a clean state without selectedVideoPath -- mimics the
     // StateSwitcher hopping straight into "detecting" without going

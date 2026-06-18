@@ -28,6 +28,7 @@ import { DEFAULT_FPS } from '../types/metadata.schema';
 import { buildLocalBrightness } from '../utils/brightness';
 import { splitPath } from '../utils/path';
 import { fmtPreciseTime } from '../utils/time';
+import { isBoundaryValid } from '../utils/boundary';
 import pathStyles from '../styles/path-display.module.css';
 import styles from './PreviewScreen.module.css';
 
@@ -400,7 +401,6 @@ export function PreviewScreen() {
   }, [videoSource, videoUrl, match]);
 
   const currentT = editing === 'start' ? startT : endT;
-  const setCurrentT = editing === 'start' ? setStartT : setEndT;
   const activeVideoRef = editing === 'start' ? inVideoRef : outVideoRef;
 
   // #645 Chapter 2 (overlay pivot): brightness window now feeds the
@@ -487,26 +487,37 @@ export function PreviewScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match?.index, videoSource, isSample, currentT]);
 
-  const nudge = useCallback(
-    (sec: number) => {
-      setCurrentT((t: number) => Math.max(0, t + sec));
-    },
-    [setCurrentT],
+  // #814 -- mutual clamp: keep startT < endT with at least a 1-frame gap so a
+  // boundary can't be dragged onto / past its counterpart (start === end would
+  // produce a zero-length clip and disable [適用]; iterate-review Round 1 F3).
+  // The strict end > start guard at apply time (store + Rust) is the backstop.
+  const commitStart = useCallback(
+    (next: number) => setStartT(Math.max(0, Math.min(next, endT - 1 / fps))),
+    [endT, fps],
+  );
+  const commitEnd = useCallback(
+    (next: number) => setEndT(Math.max(next, startT + 1 / fps)),
+    [startT, fps],
+  );
+  const commitCurrentT = useCallback(
+    (next: number) => (editing === 'start' ? commitStart(next) : commitEnd(next)),
+    [editing, commitStart, commitEnd],
   );
 
-  // #465 review: frame-grid snap で 1F step を確実に進める。`t + 1/fps` は
-  // IEEE 754 の丸めで `Math.floor((t' - floor(t')) * fps)` が増分しない
-  // ことがある (例: 2438.75 + 1/120 → frame 表示 .90 のまま)。frame 番号
-  // ベースで step してから秒に戻すと丸め誤差を回避できる。
+  const nudge = useCallback(
+    (sec: number) => commitCurrentT((editing === 'start' ? startT : endT) + sec),
+    [commitCurrentT, editing, startT, endT],
+  );
+
+  // #465 review: frame-grid snap (see prior comment). #814: route through the
+  // clamp so a frame step can't cross the counterpart boundary either.
   const nudgeFrame = useCallback(
     (frames: number) => {
-      setCurrentT((t: number) => {
-        const currentFrame = Math.round(t * fps);
-        const nextFrame = Math.max(0, currentFrame + frames);
-        return nextFrame / fps;
-      });
+      const base = editing === 'start' ? startT : endT;
+      const nextFrame = Math.max(0, Math.round(base * fps) + frames);
+      commitCurrentT(nextFrame / fps);
     },
-    [setCurrentT, fps],
+    [commitCurrentT, editing, startT, endT, fps],
   );
 
   // #465: keyboard shortcuts. ArrowLeft/Right = +-1s, Shift = +-10s,
@@ -605,14 +616,17 @@ export function PreviewScreen() {
 
   const selectable: MatchType[] = ['fl_match', 'unknown'];
 
-  const applyDisabled = applying || !filePath || isSample;
+  const boundaryValid = isBoundaryValid(startT, endT);
+  const applyDisabled = applying || !filePath || isSample || !boundaryValid;
   const applyReason = applying
     ? '適用中…'
     : isSample
       ? sampleReason
       : !filePath
         ? 'ファイルが選択されていません'
-        : '';
+        : !boundaryValid
+          ? '終了 (OUT) は開始 (IN) より後にしてください'
+          : '';
 
   const exportNavDisabled = isSample;
   const exportNavReason = isSample ? sampleReason : '';
@@ -703,7 +717,7 @@ export function PreviewScreen() {
           active={editing === 'start'}
           t={startT}
           onActivate={() => setEditing('start')}
-          onTChange={(v) => setStartT(v)}
+          onTChange={commitStart}
           videoUrl={videoUrl}
           videoError={videoError}
           videoRef={inVideoRef}
@@ -716,7 +730,7 @@ export function PreviewScreen() {
           active={editing === 'end'}
           t={endT}
           onActivate={() => setEditing('end')}
-          onTChange={(v) => setEndT(v)}
+          onTChange={commitEnd}
           videoUrl={videoUrl}
           videoError={videoError}
           videoRef={outVideoRef}
@@ -815,7 +829,7 @@ export function PreviewScreen() {
           boundaryT={currentT}
           windowSec={3}
           count={12}
-          onSelectFrame={(t) => setCurrentT(t)}
+          onSelectFrame={(t) => commitCurrentT(t)}
           thumbs={editing === 'start' ? inThumbs : outThumbs}
           disabled={isSample}
           disabledReason={sampleReason}

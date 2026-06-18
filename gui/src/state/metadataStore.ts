@@ -9,6 +9,8 @@ import {
 import { sampleMetadata } from '../data/sampleMetadata';
 import type { Match, Metadata, TypeOverride } from '../types/metadata';
 import { MetadataSchema } from '../types/metadata.schema';
+import { fmtTime, fmtMatchDuration } from '../utils/time';
+import { isBoundaryValid } from '../utils/boundary';
 
 export type MatchEditPatch = Partial<
   Pick<Match, 'name' | 'type_override' | 'edited'>
@@ -164,10 +166,10 @@ function normalizeForPersistence(metadata: Metadata): Metadata {
         index: m.index,
         start_time,
         end_time,
-        start_display: m.start_display,
-        end_display: m.end_display,
+        start_display: fmtTime(start_time),
+        end_display: fmtTime(end_time),
         duration,
-        duration_display: m.duration_display,
+        duration_display: fmtMatchDuration(duration),
         type: nextType,
         output_file: m.output_file,
       };
@@ -189,8 +191,29 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       applyErrorState: null,
       conflictErrorState: null,
     });
+    // #814 -- never persist a boundary the GUI can't read back. zod rejects
+    // end_time < start_time on reload, so writing one would brick metadata.json
+    // (audit P1-2). Enforce strict end > start here (the authoritative
+    // apply-time guard); Rust apply_changes re-checks as defense in depth.
+    // Read stays lenient (zod allows end >= start) so anything we write
+    // always reloads.
+    const normalized = normalizeForPersistence(metadata);
+    const invalid = normalized.matches.filter(
+      (m) => !isBoundaryValid(m.start_time, m.end_time),
+    );
+    if (invalid.length > 0) {
+      const idxs = invalid.map((m) => m.index).join(', ');
+      set({
+        applying: false,
+        applyErrorState: {
+          message: `境界が不正です (試合 ${idxs}): 終了 (OUT) は開始 (IN) より後である必要があります`,
+          hint: 'IN / OUT を調整してから再度適用してください',
+          code: 'validation.boundary_invalid',
+        },
+      });
+      return;
+    }
     try {
-      const normalized = normalizeForPersistence(metadata);
       const newMtime = await invoke<number>('apply_changes', {
         path: filePath,
         metadata: normalized,
@@ -342,7 +365,11 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       await invoke('restore_from_original', { path: filePath });
       // Reload metadata from disk; load() also refreshes hasBackup.
       await get().load(filePath);
-      set({ restoring: false });
+      // #814 -- load() swallows its own failures into loadErrorState and never
+      // throws, so a restore whose reload failed would otherwise report success
+      // (RestoreButton then fires onRestored -> navigates to an empty screen).
+      // Treat the load failure as the restore's failure so the user sees it.
+      set({ restoring: false, restoreErrorState: get().loadErrorState });
     } catch (e) {
       set({ restoring: false, restoreErrorState: toErrorState(e) });
     }

@@ -56,6 +56,10 @@ describe('RestoreButton', () => {
         });
       }
       if (cmd === 'check_backup_exists') return Promise.resolve(true);
+      // load() also invokes these; mock them so loadErrorState stays null
+      // and restoreErrorState (which mirrors loadErrorState after AC3) is null.
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(0);
+      if (cmd === 'load_draft') return Promise.resolve(null);
       return Promise.reject(new Error(`unmocked: ${cmd}`));
     });
     const onRestored = vi.fn();
