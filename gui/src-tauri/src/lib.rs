@@ -61,6 +61,14 @@ fn video_server() -> &'static Mutex<VideoServer> {
     VIDEO_SERVER.get_or_init(|| Mutex::new(VideoServer::new()))
 }
 
+/// Strip a leading UTF-8 BOM (U+FEFF / bytes EF BB BF) so serde_json::from_str
+/// accepts files an editor saved with one. serde_json rejects a BOM with
+/// "expected value" (audit P2-19); metadata.json hand-edited on Windows
+/// commonly carries one. Returns the input unchanged when no BOM is present.
+fn strip_bom(s: &str) -> &str {
+    s.strip_prefix('\u{FEFF}').unwrap_or(s)
+}
+
 /// #465 -- payload returned to the GUI from `register_video`.
 ///
 /// The frontend sets `url` as the `<video>` element's `src` and keeps `token`
@@ -91,7 +99,7 @@ fn load_metadata_sync(meta_path: &Path) -> Result<Value, AppError> {
         )
         .with_default_hint()
     })?;
-    let value: Value = serde_json::from_str(&content).map_err(|e| {
+    let value: Value = serde_json::from_str(strip_bom(&content)).map_err(|e| {
         AppError::new(
             "parse.json_invalid",
             format!("invalid JSON in {}: {}", meta_path.display(), e),
@@ -196,7 +204,7 @@ fn load_draft_sync(meta_path: &Path) -> Result<Option<Value>, AppError> {
         )
         .with_default_hint()
     })?;
-    let value: Value = serde_json::from_str(&content).map_err(|e| {
+    let value: Value = serde_json::from_str(strip_bom(&content)).map_err(|e| {
         AppError::new(
             "parse.json_invalid",
             format!("invalid JSON in draft {}: {}", draft_path.display(), e),
@@ -251,7 +259,7 @@ fn restore_from_original_sync(meta_path: &Path) -> Result<(), AppError> {
         )
         .with_default_hint()
     })?;
-    let value: Value = serde_json::from_str(&content).map_err(|e| {
+    let value: Value = serde_json::from_str(strip_bom(&content)).map_err(|e| {
         AppError::new(
             "parse.json_invalid",
             format!("parse backup failed ({}): {}", original_path.display(), e),
@@ -364,7 +372,7 @@ fn read_recent_sync(path: &Path) -> Vec<RecentEntry> {
     let Ok(content) = fs::read_to_string(path) else {
         return Vec::new();
     };
-    serde_json::from_str::<Vec<RecentEntry>>(&content).unwrap_or_default()
+    serde_json::from_str::<Vec<RecentEntry>>(strip_bom(&content)).unwrap_or_default()
 }
 
 /// #571 — normalize a path string for the recent-list dedup key.
@@ -3928,6 +3936,26 @@ mod tests {
         fs::write(&meta, r#"["not", "an", "object"]"#).unwrap();
         let err = load_metadata_sync(&meta).unwrap_err();
         assert!(err.message.contains("must be a JSON object"));
+    }
+
+    // #834 (P2-19) -- strip_bom 純関数の単体。先頭 BOM のみ除去、それ以外は素通し。
+    #[test]
+    fn strip_bom_removes_leading_bom_only() {
+        assert_eq!(strip_bom("\u{FEFF}{}"), "{}");
+        assert_eq!(strip_bom("{}"), "{}");
+        assert_eq!(strip_bom("a\u{FEFF}b"), "a\u{FEFF}b");
+    }
+
+    // #834 (P2-19) -- UTF-8 BOM 付き metadata.json が load できる (audit P2-19)。
+    #[test]
+    fn load_metadata_accepts_utf8_bom() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let body = "\u{FEFF}{\"source\":\"a.mkv\",\"matches\":[]}";
+        std::fs::write(&meta, body.as_bytes()).unwrap();
+        let value = load_metadata_sync(&meta)
+            .expect("BOM-prefixed metadata.json should load");
+        assert_eq!(value.get("source").and_then(|v| v.as_str()), Some("a.mkv"));
     }
 
     // #514 — mtime-based exclusive control for apply_changes.
