@@ -2949,6 +2949,38 @@ async fn start_export(
         // stdin dropped here -> EOF to Python
     }
 
+    // #837 (P2-16) -- take stdout/stderr from the child BEFORE tracking. The old
+    // code took stdout *after* track_child by locking the tracker map and
+    // unwrapping `get_mut(&tracked_id)`, which panicked if a concurrent
+    // kill_tracked_processes drained the entry between track and the lock (a
+    // normal cancel surfaced as an "internal error"). Taking the pipes up front
+    // removes the post-track lookup entirely (mirrors start_detect).
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    // #837 (P2-15) -- drain stderr into a bounded tail in parallel so a chatty
+    // child can't fill the OS pipe and block (export hang), and a crash's
+    // traceback survives for the error message. start_export previously piped
+    // stderr but never read it (asymmetric with start_detect).
+    let stderr_handle = stderr.map(|stderr| {
+        tokio::spawn(async move {
+            let max_tail = 2048usize;
+            let mut tail: Vec<u8> = Vec::with_capacity(4096);
+            let mut reader = BufReader::new(stderr);
+            let mut buf: Vec<u8> = Vec::with_capacity(1024);
+            loop {
+                buf.clear();
+                match reader.read_until(b'\n', &mut buf).await {
+                    Ok(0) => break,
+                    Ok(_) => append_bounded_tail(&mut tail, &buf, max_tail),
+                    Err(_) => break,
+                }
+            }
+            tail
+        })
+    });
+
     // Track via PROCESS_TRACKER. Export spawns a single Python process
     // (which itself spawns N ffmpeg children). Use Job Object on Windows
     // (same as start_detect) so cancelling export reliably reaps all
@@ -2991,17 +3023,8 @@ async fn start_export(
     };
     let tracked_id = track_child(tracked).await;
 
-    // Capture stdout reader BEFORE the lock is released
-    let stdout = {
-        let map = process_tracker();
-        let mut guard = map.lock().await;
-        let tc = guard.get_mut(&tracked_id).expect("tracked just inserted");
-        tc.child.stdout.take()
-    };
-
     let mut summary_capture: Option<ExportSummary> = None;
     if let Some(stdout) = stdout {
-        use tokio::io::{AsyncBufReadExt, BufReader};
         // #761 / #656 -- defensive byte-level read with lossy UTF-8 decode
         // to mirror start_detect's pattern. PYTHONIOENCODING=utf-8:replace
         // (above) is the primary guarantee; this defensive layer catches the
@@ -3100,6 +3123,13 @@ async fn start_export(
             .with_default_hint()
     })?;
 
+    // #837 (P2-15) -- join the stderr drain and keep the bounded tail for the
+    // error path below. Awaited on every path so the spawned task is reaped.
+    let stderr_tail = match stderr_handle {
+        Some(h) => h.await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+
     if let Some(summary) = summary_capture {
         return Ok(summary);
     }
@@ -3128,15 +3158,22 @@ async fn start_export(
         });
     }
 
-    // Non-zero exit + no summary = Python crashed
-    Err(AppError::new(
-        "subprocess.exit_failed",
+    // Non-zero exit + no summary = Python crashed. Surface the stderr tail
+    // (#837 / P2-15) so the GUI shows the traceback instead of just a status code.
+    let tail = String::from_utf8_lossy(&stderr_tail).trim().to_string();
+    let detail = if tail.is_empty() {
         format!(
             "python export subprocess exited unexpectedly (status: {:?}) without emitting summary",
             status.code()
-        ),
-    )
-    .with_default_hint())
+        )
+    } else {
+        format!(
+            "python export subprocess exited unexpectedly (status: {:?}) without emitting summary: {}",
+            status.code(),
+            tail
+        )
+    };
+    Err(AppError::new("subprocess.exit_failed", detail).with_default_hint())
 }
 
 pub fn run() {
