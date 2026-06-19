@@ -3124,7 +3124,11 @@ async fn start_export(
     })?;
 
     // #837 (P2-15) -- join the stderr drain and keep the bounded tail for the
-    // error path below. Awaited on every path so the spawned task is reaped.
+    // error path below. On the normal-exit and error paths this reaps the task.
+    // On the cancel path (untrack_child returned None, early return above) the
+    // JoinHandle was dropped; the task then terminates on its own when the
+    // killed child closes its stderr pipe (detached, not awaited -- same as
+    // start_detect's cancel early-return).
     let stderr_tail = match stderr_handle {
         Some(h) => h.await.unwrap_or_default(),
         None => Vec::new(),
