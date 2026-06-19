@@ -100,7 +100,7 @@ export function ConfirmExitModal() {
           実行中のプロセスがあります
         </h2>
         <p className={styles.hint}>
-          ffmpeg または関連プロセスが動作中です。「終了」でプロセスを中断してアプリを閉じます (中間ファイルは破棄)。「キャンセル」でモーダルを閉じて作業を続行します。
+          ffmpeg または関連プロセスが動作中です。「終了」でプロセスを中断してアプリを閉じます (処理中のファイルが未完成のまま残る場合があります)。「キャンセル」でモーダルを閉じて作業を続行します。
         </p>
         {error && (
           <p className={styles.message} role="alert">
