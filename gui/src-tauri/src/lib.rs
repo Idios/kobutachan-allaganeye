@@ -1890,6 +1890,20 @@ fn tail_string(buf: &[u8], max_bytes: usize) -> String {
     String::from_utf8_lossy(&buf[start..]).trim().to_string()
 }
 
+/// Append `chunk` to a rolling `tail` buffer, keeping at most ~`max_tail`
+/// trailing bytes. Used by start_export's stderr drain so a chatty child can't
+/// grow the buffer without bound while still preserving the most recent output
+/// for the error message (audit P2-15). Drains only when the buffer exceeds
+/// `max_tail * 2`, amortising the shift cost (same shape as start_detect's
+/// inline drain loop).
+fn append_bounded_tail(tail: &mut Vec<u8>, chunk: &[u8], max_tail: usize) {
+    tail.extend_from_slice(chunk);
+    if tail.len() > max_tail * 2 {
+        let drop = tail.len() - max_tail;
+        tail.drain(0..drop);
+    }
+}
+
 /// #569 -- detect command parameters surfaced from the GUI's drop screen.
 ///
 /// All fields are optional so the frontend can pass only the controls
@@ -4700,6 +4714,26 @@ mod tests {
     fn tail_string_returns_whole_buffer_when_small() {
         let buf = b"  short message\n";
         assert_eq!(tail_string(buf, 2048), "short message");
+    }
+
+    // #837 (P2-15) -- bounded tail accumulator。max_tail*2 を超えたら末尾
+    // max_tail バイト程度まで切り詰める (start_export の stderr drain が
+    // 大量出力でも有界に保つことを pin。発火する側 = drain の cap を観測)。
+    #[test]
+    fn append_bounded_tail_caps_to_about_max() {
+        let mut tail: Vec<u8> = Vec::new();
+        for _ in 0..10 {
+            append_bounded_tail(&mut tail, &vec![b'x'; 1000], 2048);
+        }
+        assert!(tail.len() <= 4096, "tail must stay bounded, got {}", tail.len());
+        assert!(tail.len() >= 2048, "tail should retain trailing bytes, got {}", tail.len());
+    }
+
+    #[test]
+    fn append_bounded_tail_keeps_small_buffer_intact() {
+        let mut tail: Vec<u8> = Vec::new();
+        append_bounded_tail(&mut tail, b"short", 2048);
+        assert_eq!(tail, b"short");
     }
 
     // -- #813 run-id stamping (越境イベント遮断) ---------------------------
