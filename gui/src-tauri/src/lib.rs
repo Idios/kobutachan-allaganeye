@@ -1904,6 +1904,30 @@ fn append_bounded_tail(tail: &mut Vec<u8>, chunk: &[u8], max_tail: usize) {
     }
 }
 
+/// Drain an async reader (a child's stderr) into a bounded tail, reading in
+/// fixed-size chunks so the buffer stays bounded even when the child emits a
+/// huge newline-free run or carriage-return-only progress (e.g. ffmpeg `\r`).
+/// The earlier newline-delimited read accumulated a whole "line" before
+/// bounding, so a newline-free stream could grow unbounded before EOF
+/// (audit #837 codex review). Returns at most ~`max_tail` trailing bytes.
+async fn drain_to_bounded_tail<R>(reader: R, max_tail: usize) -> Vec<u8>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+    let mut reader = reader;
+    let mut tail: Vec<u8> = Vec::with_capacity(max_tail.saturating_mul(2).max(1));
+    let mut chunk = [0u8; 1024];
+    loop {
+        match reader.read(&mut chunk).await {
+            Ok(0) => break,
+            Ok(n) => append_bounded_tail(&mut tail, &chunk[..n], max_tail),
+            Err(_) => break,
+        }
+    }
+    tail
+}
+
 /// #569 -- detect command parameters surfaced from the GUI's drop screen.
 ///
 /// All fields are optional so the frontend can pass only the controls
@@ -2964,21 +2988,9 @@ async fn start_export(
     // traceback survives for the error message. start_export previously piped
     // stderr but never read it (asymmetric with start_detect).
     let stderr_handle = stderr.map(|stderr| {
-        tokio::spawn(async move {
-            let max_tail = 2048usize;
-            let mut tail: Vec<u8> = Vec::with_capacity(4096);
-            let mut reader = BufReader::new(stderr);
-            let mut buf: Vec<u8> = Vec::with_capacity(1024);
-            loop {
-                buf.clear();
-                match reader.read_until(b'\n', &mut buf).await {
-                    Ok(0) => break,
-                    Ok(_) => append_bounded_tail(&mut tail, &buf, max_tail),
-                    Err(_) => break,
-                }
-            }
-            tail
-        })
+        // #837 -- drain in fixed-size chunks (not newline-delimited) so the tail
+        // stays bounded even for newline-free / CR-only child output (codex review).
+        tokio::spawn(async move { drain_to_bounded_tail(stderr, 2048).await })
     });
 
     // Track via PROCESS_TRACKER. Export spawns a single Python process
@@ -4775,6 +4787,29 @@ mod tests {
         let mut tail: Vec<u8> = Vec::new();
         append_bounded_tail(&mut tail, b"short", 2048);
         assert_eq!(tail, b"short");
+    }
+
+    // #837 codex review -- the stderr drain must bound memory for newline-free
+    // and CR-only (ffmpeg progress) streams, not just newline-delimited output.
+    #[tokio::test]
+    async fn drain_to_bounded_tail_bounds_newline_free_stream() {
+        let huge = vec![b'x'; 100_000]; // no '\n' anywhere
+        let tail = drain_to_bounded_tail(&huge[..], 2048).await;
+        assert!(tail.len() <= 4096, "tail must stay bounded, got {}", tail.len());
+        assert!(tail.len() >= 2048, "tail should retain trailing bytes, got {}", tail.len());
+        assert!(tail.iter().all(|&b| b == b'x'));
+    }
+
+    #[tokio::test]
+    async fn drain_to_bounded_tail_bounds_cr_only_progress() {
+        // ffmpeg-style '\r'-delimited progress, no '\n'
+        let mut data: Vec<u8> = Vec::new();
+        for i in 0..5000 {
+            data.extend_from_slice(format!("frame={i}\r").as_bytes());
+        }
+        let tail = drain_to_bounded_tail(&data[..], 2048).await;
+        assert!(tail.len() <= 4096, "tail must stay bounded, got {}", tail.len());
+        assert!(tail.ends_with(b"frame=4999\r"), "most recent progress retained");
     }
 
     // -- #813 run-id stamping (越境イベント遮断) ---------------------------
