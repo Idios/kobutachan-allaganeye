@@ -33,6 +33,15 @@ describe('exportReducer', () => {
     expect(exportReducer('cancelling', { type: 'EXPORT_ERROR' })).toBe('idle');
   });
 
+  // #837 (P2-14) -- cancel 要求後に export が中断前に完了する race。出力は
+  // 揃っているので completed が正。修正前は PROGRESS_COMPLETE 未処理で
+  // cancelling に滞留し「中断中…」永久スタックだった。
+  it('goes cancelling -> completed on PROGRESS_COMPLETE (#837)', () => {
+    expect(exportReducer('cancelling', { type: 'PROGRESS_COMPLETE' })).toBe(
+      'completed',
+    );
+  });
+
   it('goes completed -> idle on RESTART', () => {
     expect(exportReducer('completed', { type: 'RESTART' })).toBe('idle');
   });
