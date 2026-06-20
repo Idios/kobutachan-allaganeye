@@ -32,6 +32,9 @@ export function exportReducer(
       return phase;
 
     case 'cancelling':
+      // #837 (P2-14) -- export が中断完了前に終わった race。出力は揃って
+      // いるので completed を表示する (cancelling 滞留=永久スタックを防ぐ)。
+      if (event.type === 'PROGRESS_COMPLETE') return 'completed';
       if (event.type === 'CANCEL_CONFIRMED') return 'idle';
       if (event.type === 'EXPORT_ERROR') return 'idle';
       return phase;

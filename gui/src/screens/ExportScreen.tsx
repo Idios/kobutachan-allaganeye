@@ -261,8 +261,12 @@ export function ExportScreen() {
   // encoder fails to initialise and the export retries with libx264.
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
+    // #837 (P3-a) -- unmount-before-listen-resolves race の guard。cleanup が
+    // 先に走った場合 disposed=true を見て、解決した unlisten を即時呼んで leak
+    // を防ぐ (DetectingScreen #813 と同パターン)。
+    let disposed = false;
     (async () => {
-      unlisten = await listen<ExportProgressPayload>('export-progress', (event) => {
+      const u = await listen<ExportProgressPayload>('export-progress', (event) => {
         const p = event.payload;
         setMatchStates((prev) => {
           const prior = prev[p.match_index] ?? {
@@ -300,8 +304,15 @@ export function ExportScreen() {
           };
         });
       });
+      if (disposed) {
+        // cleanup が先行した: 取得した listener を即 teardown して return
+        u();
+        return;
+      }
+      unlisten = u;
     })();
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, []);

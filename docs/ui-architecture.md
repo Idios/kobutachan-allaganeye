@@ -326,6 +326,7 @@ stateDiagram-v2
     export_idle --> export_running: [書き出し開始]
     export_running --> export_cancelling: [中断]
     export_cancelling --> export_idle: ffmpeg 停止 (Phase 2 即時、progress reset)
+    export_cancelling --> export_completed: PROGRESS_COMPLETE (中断前に export 完了した race、#837)
     export_running --> export_completed: progress 100%
     export_running --> export_error: ffmpeg エラー
     export_completed --> export_idle: [もう一度書き出す]

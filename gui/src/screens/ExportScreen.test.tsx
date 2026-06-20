@@ -158,6 +158,39 @@ describe('ExportScreen (Phase 4 #466)', () => {
     expect(unlistenSpy).toHaveBeenCalledTimes(1);
   });
 
+  // #837 (P3-a) -- listen() 解決前に unmount された場合でも、解決時に取得した
+  // unlisten が必ず呼ばれる (leak しない)。修正前は cleanup 時 unlisten=null の
+  // まま return し、後から解決する listener が teardown されず leak していた
+  // (DetectingScreen #813 と同クラス)。発火する側 = late-resolve 時の teardown。
+  it('unlistens when unmounted before listen() resolves (#837)', async () => {
+    const unlistenSpy = vi.fn();
+    let resolveListen!: (fn: () => void) => void;
+    const pendingListen = new Promise<() => void>((res) => {
+      resolveListen = res;
+    });
+    // export-progress の listen を解決保留にする
+    listenMock.mockImplementationOnce(() => pendingListen);
+
+    const { unmount } = render(<ExportScreen />);
+    await waitFor(() => {
+      expect(listenMock).toHaveBeenCalledWith(
+        'export-progress',
+        expect.any(Function),
+      );
+    });
+    // listen 未解決のまま unmount (cleanup が走る)
+    unmount();
+
+    // listen が後から解決する
+    await act(async () => {
+      resolveListen(unlistenSpy);
+      await Promise.resolve();
+    });
+
+    // 解決時に disposed を見て即時 unlisten される
+    expect(unlistenSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('[◀ プレビュー] returns to preview when idle', async () => {
     render(<ExportScreen />);
     const user = userEvent.setup();

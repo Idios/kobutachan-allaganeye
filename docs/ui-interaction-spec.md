@@ -811,14 +811,14 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 
 - `idle` → `running` (`START_CLICKED`)
 - `running` → `cancelling` (`CANCEL_CLICKED`) / `completed` (`PROGRESS_COMPLETE`) / `error` (`EXPORT_ERROR`)
-- `cancelling` → `idle` (`CANCEL_CONFIRMED` または `EXPORT_ERROR`)
+- `cancelling` → `completed` (`PROGRESS_COMPLETE`、中断要求後に export が中断前に完了した race、[#837](https://github.com/Idios/kobutachan-allaganeye/issues/837)) / `idle` (`CANCEL_CONFIRMED` または `EXPORT_ERROR`)
 - `completed` → `idle` (`RESTART`)
 - `error` → `idle` (`DISMISS_ERROR` / `RESTART`)
 
 **[ui-architecture.md](ui-architecture.md) §export mermaid との対応**:
 
 - mermaid 図は `export_idle / export_running / export_cancelling / export_completed / export_error` の 5 状態。本節は接頭辞 `export_` を省略した内部 reducer 名に揃えている (実装では `phase: ExportPhase` 直値を使う)
-- mermaid の `export_cancelling` 状態は ffmpeg 停止後 `export_idle` に直結し、終端の `cancelled` 状態は持たない (`export_cancelling → export_idle: ffmpeg 停止`)。内部 reducer の `cancelling → idle (CANCEL_CONFIRMED)` と同形状で、両者は意図的な簡略化として整合する。後続 §3 で全画面分の整理を行う
+- mermaid の `export_cancelling` 状態は ffmpeg 停止後 `export_idle` に直結する (`export_cancelling → export_idle: ffmpeg 停止`) ほか、中断要求が export 完了を追い越した race では `export_cancelling → export_completed: PROGRESS_COMPLETE` に遷移する (#837 / P2-14)。終端の `cancelled` 状態は持たない。内部 reducer の `cancelling → idle (CANCEL_CONFIRMED)` / `cancelling → completed (PROGRESS_COMPLETE)` と同形状で整合する。後続 §3 で全画面分の整理を行う
 
 **store**: 主に **読み取り** (`metadataStore.metadata`、`appStateStore.selectedVideoPath`)。書き込みは `appStateStore.navigate('preview')` ([◀ プレビュー]) のみ。export 自体は store ではなく **Tauri command `start_export`** (単発 invoke → Python pool が N 並列 ffmpeg を spawn) + **event `export-progress`** + local state (`matchStates` / `excludedIndexes` / `outDir` / `namePattern` / `codec` / `encoderSlots` / `encoderBadge` 等) で駆動する。
 
@@ -936,9 +936,9 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | --- | --- |
 | 種類 | button ([ExportScreen.tsx:597-605](../gui/src/screens/ExportScreen.tsx#L597))。`running` のみ render |
 | 状態 | `idle` (running 中のみ render され activated) |
-| 遷移トリガー | `onClick` → `handleCancelClicked()` → `cancelRequestedRef.current = true` + `dispatch(CANCEL_CLICKED)` (running→cancelling) + `invoke('kill_tracked_processes')` |
+| 遷移トリガー | `onClick` → `handleCancelClicked()` → `dispatch(CANCEL_CLICKED)` (running→cancelling) + `void invoke('kill_tracked_processes')` |
 | store mutation | なし |
-| 例外 / edge case | for ループは次の `if (cancelRequestedRef.current) break` で抜ける。`kill_tracked_processes` は ffmpeg subprocess を即時 SIGKILL ([#523](https://github.com/Idios/kobutachan-allaganeye/issues/523))。失敗は silent (`.catch(() => undefined)`)。中断成功で `dispatch(CANCEL_CONFIRMED)` → idle 復帰、書き出し済み match は完了状態を保持 (途中 file は ffmpeg 側で破棄) |
+| 例外 / edge case | `kill_tracked_processes` は tracked process tree (Python + ffmpeg) を即時 kill (Windows は Job Object hard-kill、[#523](https://github.com/Idios/kobutachan-allaganeye/issues/523))。失敗は silent (`.catch(() => undefined)`)。`start_export` 完了が cancel を追い越した race では `PROGRESS_COMPLETE` で `cancelling → completed` ([#837](https://github.com/Idios/kobutachan-allaganeye/issues/837) / P2-14)、それ以外は `CANCEL_CONFIRMED` → idle 復帰。書き出し済み match は完了状態を保持。**中断時に書き出し中だった partial .mp4 はディスクに残置する** (hard-kill で Python の cleanup が走らないため、#837 / P3-b) |
 
 #### §2.5.11 [✓ 完了 — フォルダを開く] + openFolderError
 
@@ -1027,7 +1027,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | detecting (§2.2) | あり ([reducers/detecting.ts](../gui/src/screens/reducers/detecting.ts)) | `running / cancelling / cancelled / completed / error` | `detecting_running / detecting_cancelling / detecting_cancelled / detecting_completed / detecting_error` | なし (本 doc は接頭辞 `detecting_` 省略のみ) |
 | complete (§2.3) | なし | `complete_empty / complete_idle / complete_restoring` | `complete_idle / complete_restoring / complete_restoreError` | `complete_empty` は本 doc のみ (entry-time 特殊状態、§2.3.11 emptyNote と対応) / `complete_restoreError` は mermaid のみ (RestoreButton 共通 component 内 inline alert、§2.3.4 で扱う) |
 | preview (§2.4) | なし | `preview_empty / preview_idle / preview_applying / preview_applyError / preview_restoring` | `preview_idle / preview_applying / preview_applyError / preview_restoring / preview_restoreError` | `preview_empty` は本 doc のみ (§2.4.15 emptyNote) / `preview_restoreError` は mermaid のみ (§2.4.13 RestoreButton 共通 component) |
-| export (§2.5) | あり ([reducers/export.ts](../gui/src/screens/reducers/export.ts)) | `idle / running / cancelling / completed / error` | `export_idle / export_running / export_cancelling / export_completed / export_error` | 本 doc は接頭辞 `export_` 省略 (実装の `phase: ExportPhase` 直値に揃える)。mermaid `export_cancelling → export_idle: ffmpeg 停止` と内部 reducer `cancelling → idle (CANCEL_CONFIRMED)` は同形状簡略化 |
+| export (§2.5) | あり ([reducers/export.ts](../gui/src/screens/reducers/export.ts)) | `idle / running / cancelling / completed / error` | `export_idle / export_running / export_cancelling / export_completed / export_error` | 本 doc は接頭辞 `export_` 省略 (実装の `phase: ExportPhase` 直値に揃える)。mermaid `export_cancelling → export_idle: ffmpeg 停止` / `export_cancelling → export_completed: PROGRESS_COMPLETE` ([#837](https://github.com/Idios/kobutachan-allaganeye/issues/837)) と内部 reducer `cancelling → idle (CANCEL_CONFIRMED)` / `cancelling → completed (PROGRESS_COMPLETE)` は同形状 |
 
 ### 3.3 「entry-time 特殊状態」「sub-component エラー」の扱い
 
