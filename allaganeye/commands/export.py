@@ -226,6 +226,10 @@ def register(app: typer.Typer) -> None:
                             err=True,
                         )
 
+            # P2-10: create the output dir up front (mirrors split/detect).
+            # Without this every match's ffmpeg fails to write and the run
+            # exits 1. The mkdir OSError rides the P2-7 error frame below.
+            output_dir.mkdir(parents=True, exist_ok=True)
             summary = export_matches(
                 matches=filtered,
                 slots=slots,

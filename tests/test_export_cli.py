@@ -368,3 +368,37 @@ def test_export_copy_mode_uses_single_slot(
     assert result.exit_code == 0
     _, kwargs = mock_export.call_args
     assert len(kwargs.get("slots")) == 1
+
+
+def test_export_creates_missing_output_dir(app: typer.Typer, tmp_path: Path):
+    # P2-10: export did not mkdir output_dir (split/detect do), so a missing
+    # -o dir made every match's ffmpeg fail to write and the run exited 1.
+    out = tmp_path / "nested" / "out"  # does not exist yet
+    captured: dict[str, object] = {}
+
+    def fake_export_matches(**kwargs: object) -> ExportSummary:
+        out_dir = kwargs["output_dir"]
+        assert isinstance(out_dir, Path)
+        captured["output_dir"] = out_dir
+        captured["exists"] = out_dir.exists()
+        return ExportSummary(success=1)
+
+    metadata_path = _make_metadata(tmp_path)
+    with patch(
+        "allaganeye.commands.export.export_matches",
+        side_effect=fake_export_matches,
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                str(metadata_path),
+                "--output-dir",
+                str(out),
+                "--codec",
+                "h264",
+                "--quiet",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    assert captured["exists"] is True  # output_dir already existed when called
