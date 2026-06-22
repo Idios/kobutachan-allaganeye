@@ -608,9 +608,8 @@ def test_export_json_does_not_emit_summary_on_error(app: typer.Typer, tmp_path: 
     assert '"type":"summary"' not in result.stdout
 
 
-def test_export_warns_on_filename_collision(app: typer.Typer, tmp_path: Path):
-    # P3 I-3: a name pattern without {idx}/{idx:03} maps every match to the same
-    # filename, silently overwriting. export should warn on stderr.
+def _make_colliding_metadata(tmp_path: Path) -> Path:
+    """metadata.json whose 2 matches collide under a pattern without {idx}."""
     payload = {
         "schema_version": "1",
         "source": str(tmp_path / "in.mp4"),
@@ -626,10 +625,19 @@ def test_export_warns_on_filename_collision(app: typer.Typer, tmp_path: Path):
     }
     metadata_path = tmp_path / "metadata.json"
     metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+    return metadata_path
+
+
+def test_export_collision_is_hard_error_exit5(app: typer.Typer, tmp_path: Path):
+    # Finding 3: a name pattern without {idx}/{idx:03} maps every match to the
+    # same filename (overwrite / parallel race / misleading success summary).
+    # This is now a hard preflight error (ConfigValidationError -> exit 5)
+    # raised BEFORE any ffmpeg work, not a warning.
+    metadata_path = _make_colliding_metadata(tmp_path)
     with patch(
         "allaganeye.commands.export.export_matches",
         return_value=ExportSummary(success=2),
-    ):
+    ) as mock_export:
         result = runner.invoke(
             app,
             [
@@ -644,11 +652,39 @@ def test_export_warns_on_filename_collision(app: typer.Typer, tmp_path: Path):
                 "--quiet",
             ],
         )
-    # warning goes to stderr; command can still succeed
-    assert result.exit_code == 0
-    assert (
-        "warning" in result.output.lower() or "warning" in (result.stderr or "").lower()
-    )
+    assert result.exit_code == 5  # ConfigValidationError.exit_code
+    # export must NOT run (the error is raised before any ffmpeg work)
+    mock_export.assert_not_called()
+    assert "Traceback" not in result.output
+
+
+def test_export_collision_json_emits_no_summary(app: typer.Typer, tmp_path: Path):
+    # Finding 3 + P2-7: in --json mode the hard collision error must NOT emit a
+    # summary line (start_export treats any summary line as success in lib.rs).
+    metadata_path = _make_colliding_metadata(tmp_path)
+    with patch(
+        "allaganeye.commands.export.export_matches",
+        return_value=ExportSummary(success=2),
+    ) as mock_export:
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                str(metadata_path),
+                "--output-dir",
+                str(tmp_path),
+                "--codec",
+                "copy",
+                "--name-pattern",
+                "{type}.mp4",  # collision
+                "--json",
+            ],
+        )
+    assert result.exit_code == 5
+    mock_export.assert_not_called()
+    # no summary line on stdout (the error is the only wire signal)
+    assert '"type": "summary"' not in result.stdout
+    assert '"type":"summary"' not in result.stdout
 
 
 def test_export_no_collision_warning_when_pattern_has_idx(

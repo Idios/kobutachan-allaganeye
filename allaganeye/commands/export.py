@@ -20,7 +20,7 @@ from typing import Annotated
 
 import typer
 
-from allaganeye.exceptions import AllaganEyeError
+from allaganeye.exceptions import AllaganEyeError, ConfigValidationError
 from allaganeye.export.encoder import enumerate_h264_encoders
 from allaganeye.export.pool import ExportMatch, _format_filename, export_matches
 from allaganeye.export.schema import ExportSummary, ProgressEvent
@@ -198,21 +198,6 @@ def register(app: typer.Typer) -> None:
                         err=True,
                     )
 
-        # P3 I-3: detect output-name collisions (e.g. a pattern without {idx} maps
-        # every match to the same file, silently overwriting). Warn, don't fail.
-        seen_names: dict[str, int] = {}
-        for m in filtered:
-            name = _format_filename(m, name_pattern)
-            seen_names[name] = seen_names.get(name, 0) + 1
-        collisions = [n for n, c in seen_names.items() if c > 1]
-        if collisions:
-            typer.echo(
-                f"warning: name pattern produces {len(collisions)} duplicate "
-                f"filename(s) (e.g. {collisions[0]!r}); add {{idx}} or {{idx:03}} "
-                f"to avoid overwriting",
-                err=True,
-            )
-
         slots = enumerate_h264_encoders(
             vendors=vendors, preference=preference, gpu_models=gpu_models
         )
@@ -281,6 +266,22 @@ def register(app: typer.Typer) -> None:
                             f"{ev.payload['fallback_from']} -> {ev.payload['fallback_to']}",
                             err=True,
                         )
+
+            # Finding 3 (was P3 I-3 warning): a name pattern without {idx}/{idx:03}
+            # maps every match to the same output file -- overwrite, parallel-write
+            # race, and a misleading "success" summary. Fail hard BEFORE any ffmpeg
+            # work (inside the P2-7 frame -> exit 5, clean stderr, no summary line).
+            seen_names: dict[str, int] = {}
+            for m in filtered:
+                name = _format_filename(m, name_pattern)
+                seen_names[name] = seen_names.get(name, 0) + 1
+            collisions = [n for n, c in seen_names.items() if c > 1]
+            if collisions:
+                raise ConfigValidationError(
+                    "name pattern produces duplicate output filenames "
+                    f"(e.g. {collisions[0]!r}); add {{idx}} or {{idx:03}} to the "
+                    "--name-pattern"
+                )
 
             # P2-10: create the output dir up front (mirrors split/detect).
             # Without this every match's ffmpeg fails to write and the run
