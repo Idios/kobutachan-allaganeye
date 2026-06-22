@@ -253,6 +253,11 @@ def run_export_attempt(
     ffmpeg = find_ffmpeg()
     duration = end - start
     started = time.monotonic()
+    # Finding 1: record whether the output already existed BEFORE this attempt.
+    # The I-5 cleanup below must only remove a partial THIS attempt created --
+    # never a pre-existing valid file (left by a prior run, or a path that
+    # already held content) that ffmpeg failed before rewriting/truncating.
+    output_pre_existed = output.exists()
 
     # 1st attempt
     args = _build_ffmpeg_args(ffmpeg, video, start, end, output, codec, encoder)
@@ -260,8 +265,10 @@ def run_export_attempt(
 
     if cancel_event.is_set():
         # P3 I-5: clean up the partial output on cancel so a half-written .mp4
-        # is not left behind. NEVER unlink on success returns.
-        output.unlink(missing_ok=True)
+        # is not left behind. NEVER unlink on success returns. Finding 1: only
+        # remove a file THIS attempt created (a pre-existing one is preserved).
+        if not output_pre_existed:
+            output.unlink(missing_ok=True)
         raise ExportError(kind="cancelled", message="export cancelled by user")
 
     if outcome.returncode == 0:
@@ -295,7 +302,9 @@ def run_export_attempt(
 
         if cancel_event.is_set():
             # P3 I-5: clean up partial from the retry attempt on cancel.
-            output.unlink(missing_ok=True)
+            # Finding 1: only if this attempt created it (skip pre-existing).
+            if not output_pre_existed:
+                output.unlink(missing_ok=True)
             raise ExportError(kind="cancelled", message="export cancelled by user")
 
         if retry_outcome.returncode == 0:
@@ -307,7 +316,9 @@ def run_export_attempt(
                 fallback_from=encoder.value,
             )
         # P3 I-5: final failure (libx264 retry also failed) -> remove partial.
-        output.unlink(missing_ok=True)
+        # Finding 1: only if this attempt created it (skip pre-existing).
+        if not output_pre_existed:
+            output.unlink(missing_ok=True)
         raise ExportError(
             kind="ffmpeg.exit_failed",
             message=f"libx264 retry exited with {retry_outcome.returncode}: "
@@ -317,7 +328,9 @@ def run_export_attempt(
 
     # Other failures (libx264 1st attempt fail, codec=copy fail, etc.)
     # P3 I-5: remove the partial output left by a failed encode.
-    output.unlink(missing_ok=True)
+    # Finding 1: only if this attempt created it (skip pre-existing).
+    if not output_pre_existed:
+        output.unlink(missing_ok=True)
     raise ExportError(
         kind="ffmpeg.exit_failed",
         message=f"ffmpeg ({encoder.value}) exited with {outcome.returncode}: "

@@ -816,3 +816,76 @@ def test_partial_cleanup_cancel_output_deleted(mock_popen: MagicMock, tmp_path: 
         )
     assert exc_info.value.kind == "cancelled"
     assert not output.exists(), "partial output MUST be deleted on cancel"
+
+
+# --- run_export_attempt: ownership-safe cleanup (Finding 1) ---
+# The I-5 cleanup must only remove files THIS attempt created. A pre-existing
+# valid output (left by a prior run, or a path that already held content) must
+# survive a failure/cancel where ffmpeg never rewrote it -- otherwise a transient
+# failure silently destroys a good file the attempt did not own.
+
+
+@patch("allaganeye.export.ffmpeg_runner.subprocess.Popen")
+def test_preexisting_output_preserved_on_failure(mock_popen: MagicMock, tmp_path: Path):
+    """Finding 1: a PRE-EXISTING output is NOT deleted when the attempt fails
+    without rewriting it (ownership-safe). The fake proc fails (returncode 1)
+    and never touches the file, so output_pre_existed is True and the unlink
+    must be skipped.
+    """
+    output = tmp_path / "out.mp4"
+    output.write_bytes(b"good prior output")  # exists BEFORE the attempt
+
+    def popen_side(*args, **kwargs):  # type: ignore[no-untyped-def]
+        # Note: does NOT write output -- ffmpeg failed before truncating it.
+        return _make_proc(1, [b"Error opening codec\n"])
+
+    mock_popen.side_effect = popen_side
+
+    with pytest.raises(ExportError) as exc_info:
+        run_export_attempt(
+            video=tmp_path / "in.mp4",
+            start=0.0,
+            end=10.0,
+            output=output,
+            codec="h264",
+            encoder=H264Encoder.LIBX264,  # avoid the fallback path
+            progress_cb=lambda p, s: None,
+            fallback_cb=None,
+            cancel_event=threading.Event(),
+        )
+    assert exc_info.value.kind == "ffmpeg.exit_failed"
+    assert output.exists(), "pre-existing output MUST NOT be deleted on failure"
+    assert output.read_bytes() == b"good prior output", "bytes must be unchanged"
+
+
+@patch("allaganeye.export.ffmpeg_runner.subprocess.Popen")
+def test_preexisting_output_preserved_on_cancel(mock_popen: MagicMock, tmp_path: Path):
+    """Finding 1: a PRE-EXISTING output is NOT deleted on cancel when the
+    attempt did not rewrite it.
+    """
+    output = tmp_path / "out.mp4"
+    output.write_bytes(b"good prior output")  # exists BEFORE the attempt
+    cancel = threading.Event()
+    cancel.set()  # cancel immediately
+
+    def popen_side(*args, **kwargs):  # type: ignore[no-untyped-def]
+        # Does NOT write output.
+        return _make_proc(-9, [])
+
+    mock_popen.side_effect = popen_side
+
+    with pytest.raises(ExportError) as exc_info:
+        run_export_attempt(
+            video=tmp_path / "in.mp4",
+            start=0.0,
+            end=10.0,
+            output=output,
+            codec="h264",
+            encoder=H264Encoder.LIBX264,
+            progress_cb=lambda p, s: None,
+            fallback_cb=None,
+            cancel_event=cancel,
+        )
+    assert exc_info.value.kind == "cancelled"
+    assert output.exists(), "pre-existing output MUST NOT be deleted on cancel"
+    assert output.read_bytes() == b"good prior output", "bytes must be unchanged"
