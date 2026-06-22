@@ -8,12 +8,13 @@ import numpy as np
 import pytest
 
 from allaganeye.commands.debug_brightness import run_debug_brightness
-from allaganeye.exceptions import VideoProcessingError
+from allaganeye.exceptions import ConfigValidationError, VideoProcessingError
 from allaganeye.video.detector import (
     _SAMPLE_WIDTH,
     _SCOREBAR_ROI_X_END,
     _SCOREBAR_ROI_X_START,
     _SCOREBAR_ROI_Y_END,
+    _generate_timestamps,
 )
 
 MODULE = "allaganeye.commands.debug_brightness"
@@ -377,3 +378,33 @@ def test_scorebar_detail_mode_exception_fallback(
     # t=1.0 should have normal values
     parts_1 = lines[2].split(",")
     assert float(parts_1[1]) > 0.0
+
+
+# --- P2-11: interval non-positive guard tests ---
+
+
+def test_generate_timestamps_rejects_nonpositive_interval():
+    # P2-11: interval<=0 causes `while t < duration: t += interval` to infinite-loop;
+    # _generate_timestamps must guard against it (protects all callers at the root).
+    with pytest.raises(ValueError):
+        _generate_timestamps(100.0, 0.0)
+    with pytest.raises(ValueError):
+        _generate_timestamps(100.0, -1.0)
+
+
+def test_generate_timestamps_positive_interval_unchanged():
+    # Positive intervals must continue to work exactly as before (existing callers
+    # e.g. detect Pass 1 always pass a config-validated > 0 interval).
+    assert _generate_timestamps(5.0, 2.0) == [0.0, 2.0, 4.0]
+
+
+def test_run_debug_brightness_rejects_nonpositive_interval(tmp_path):
+    # P2-11: debug-brightness bypasses config validation and calls _generate_timestamps
+    # directly, so interval<=0 must be caught at the command level as
+    # ConfigValidationError (exit 5) BEFORE any video probe is attempted.
+    video = tmp_path / "dummy.mp4"
+    video.write_bytes(b"\x00")
+    with pytest.raises(ConfigValidationError):
+        run_debug_brightness(video, interval=0.0)
+    with pytest.raises(ConfigValidationError):
+        run_debug_brightness(video, interval=-2.0)
