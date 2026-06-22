@@ -132,9 +132,7 @@ def register(app: typer.Typer) -> None:
         if json_mode and quiet:
             raise typer.BadParameter("--json and --quiet are mutually exclusive")
         if concurrency is not None and concurrency <= 0:
-            raise typer.BadParameter(
-                f"--concurrency must be >= 1, got {concurrency}"
-            )
+            raise typer.BadParameter(f"--concurrency must be >= 1, got {concurrency}")
 
         try:
             metadata = _load_metadata(metadata_path, stdin)

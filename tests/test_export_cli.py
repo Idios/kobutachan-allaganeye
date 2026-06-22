@@ -646,10 +646,14 @@ def test_export_warns_on_filename_collision(app: typer.Typer, tmp_path: Path):
         )
     # warning goes to stderr; command can still succeed
     assert result.exit_code == 0
-    assert "warning" in result.output.lower() or "warning" in (result.stderr or "").lower()
+    assert (
+        "warning" in result.output.lower() or "warning" in (result.stderr or "").lower()
+    )
 
 
-def test_export_no_collision_warning_when_pattern_has_idx(app: typer.Typer, tmp_path: Path):
+def test_export_no_collision_warning_when_pattern_has_idx(
+    app: typer.Typer, tmp_path: Path
+):
     # P3 I-3: no warning when the pattern contains {idx} (all names are distinct).
     metadata_path = _make_metadata(tmp_path)
     with patch(

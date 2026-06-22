@@ -618,7 +618,7 @@ def _make_proc(returncode: int, stderr_lines: list[bytes]) -> MagicMock:
     """Build a fake subprocess.Popen return value."""
     proc = MagicMock()
     proc.stderr = MagicMock()
-    proc.stderr.readline = MagicMock(side_effect=stderr_lines + [b""])
+    proc.stderr.readline = MagicMock(side_effect=[*stderr_lines, b""])
     proc.wait = MagicMock(return_value=returncode)
     proc.returncode = returncode
     return proc
@@ -666,7 +666,9 @@ def test_partial_cleanup_gpu_fail_retry_success_output_kept(
         if call_count == 1:
             # 1st attempt (NVENC): writes partial then fails
             output.write_bytes(b"partial")
-            return _make_proc(1, [b"[h264_nvenc @ 0xfff] No NVENC capable devices found\n"])
+            return _make_proc(
+                1, [b"[h264_nvenc @ 0xfff] No NVENC capable devices found\n"]
+            )
         # 2nd attempt (libx264): rewrites and succeeds
         output.write_bytes(b"real output")
         return _make_proc(0, [b"out_time_ms=1000000\n", b"progress=end\n"])
@@ -701,7 +703,9 @@ def test_partial_cleanup_final_failure_output_deleted(
         call_count += 1
         output.write_bytes(b"partial")  # simulate partial write on each attempt
         if call_count == 1:
-            return _make_proc(1, [b"[h264_nvenc @ 0xfff] No NVENC capable devices found\n"])
+            return _make_proc(
+                1, [b"[h264_nvenc @ 0xfff] No NVENC capable devices found\n"]
+            )
         return _make_proc(1, [b"Error opening codec\n"])
 
     mock_popen.side_effect = popen_side
