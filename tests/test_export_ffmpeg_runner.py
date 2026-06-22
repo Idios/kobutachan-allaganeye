@@ -7,6 +7,7 @@ is_gpu_encoder_failure coverage, see #591/#761). Heavy mocking around subprocess
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -221,6 +222,66 @@ def test_run_export_attempt_cancel_event_kills_ffmpeg(
             cancel_event=cancel,
         )
     assert exc_info.value.kind == "cancelled"
+    proc.kill.assert_called()
+
+
+# --- _run_single_attempt: cancel responsiveness on no-output stall (P2-40) ---
+
+
+def test_run_single_attempt_responds_to_cancel_when_no_output():
+    """P2-40: cancel must respond on a bounded cadence even when ffmpeg emits
+    nothing to stderr.
+
+    The old implementation blocked directly on ``proc.stderr.readline()`` and
+    only re-checked ``cancel_event`` after a line returned, so a stalled ffmpeg
+    (no output) ignored cancel until the next line or EOF. The reader-thread +
+    queue rearchitecture polls cancel every ~100ms via ``queue.get(timeout=...)``.
+
+    RED design (pytest-timeout is NOT installed, so the fake readline must not
+    block forever): ``readline`` blocks for a *bounded* 4s then returns b"" (EOF),
+    while ``cancel_event`` is set at ~0.3s.
+      - NEW code: the main loop sees cancel at ~0.3s -> ``proc.kill()`` -> returns
+        promptly (elapsed < 2.0, kill called).
+      - OLD code: first iteration checks cancel (not set yet) -> blocks in
+        ``readline`` for the full 4s (never re-checks cancel) -> gets b"" -> breaks
+        WITHOUT calling kill (elapsed ~4s, kill NOT called).
+    Assertions ``elapsed < 2.0`` + ``proc.kill.assert_called()`` therefore FAIL on
+    OLD and PASS on NEW, without ever hanging.
+    """
+    from allaganeye.export.ffmpeg_runner import _run_single_attempt
+
+    readline_released = threading.Event()
+
+    class BlockingStderr:
+        def readline(self) -> bytes:
+            # Bounded block: returns EOF after 4s so the OLD code terminates
+            # (slowly, wrong behavior) rather than hanging forever.
+            readline_released.wait(timeout=4.0)
+            return b""
+
+    proc = MagicMock()
+    proc.stderr = BlockingStderr()
+    proc.kill = MagicMock()
+    proc.wait = MagicMock(return_value=-9)
+
+    cancel_event = threading.Event()
+    timer = threading.Timer(0.3, cancel_event.set)
+    timer.start()
+
+    start = time.monotonic()
+    with patch("allaganeye.export.ffmpeg_runner.subprocess.Popen", return_value=proc):
+        _run_single_attempt(
+            ["ffmpeg"],
+            duration_s=100.0,
+            progress_cb=lambda *a: None,
+            cancel_event=cancel_event,
+        )
+    elapsed = time.monotonic() - start
+
+    timer.cancel()
+    readline_released.set()  # release the (daemon) reader thread for cleanup
+
+    assert elapsed < 2.0, f"cancel should be bounded, took {elapsed:.1f}s"
     proc.kill.assert_called()
 
 

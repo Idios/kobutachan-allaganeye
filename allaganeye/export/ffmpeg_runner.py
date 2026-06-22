@@ -6,6 +6,7 @@ Ported from gui/src-tauri/src/lib.rs (pre-#761 run_ffmpeg_export_attempt
 
 from __future__ import annotations
 
+import queue as _queue
 import subprocess
 import threading
 import time
@@ -101,9 +102,12 @@ def _run_single_attempt(
 ) -> _AttemptOutcome:
     """Launch one ffmpeg process and wait for completion.
 
-    Reads stderr line by line, converts ``out_time_ms`` to a percent and
-    passes it to progress_cb. Checks ``cancel_event.is_set()`` on each read;
-    calls ``proc.kill()`` if set.
+    stderr is pumped by a daemon reader thread into a queue so the main loop
+    can poll ``cancel_event`` on a bounded cadence even when ffmpeg produces no
+    output (audit P2-40 -- the old direct ``readline()`` blocked indefinitely
+    and ignored cancel until the next line arrived). ``out_time_ms`` lines are
+    converted to a percent and passed to ``progress_cb``; the rest accumulate in
+    a bounded stderr tail buffer.
     """
     proc = subprocess.Popen(
         args,
@@ -112,16 +116,31 @@ def _run_single_attempt(
         stderr=subprocess.PIPE,
         bufsize=0,
     )
+    assert proc.stderr is not None
+    stderr = proc.stderr  # bind narrowed (non-None) handle for the reader closure
+    line_q: _queue.Queue[bytes | None] = _queue.Queue()
+
+    def _pump() -> None:
+        try:
+            for line in iter(stderr.readline, b""):
+                line_q.put(line)
+        finally:
+            line_q.put(None)  # EOF sentinel
+
+    reader = threading.Thread(target=_pump, name="ffmpeg-stderr", daemon=True)
+    reader.start()
+
     stderr_tail_bytes: list[bytes] = []
     max_tail = 2048
-
-    assert proc.stderr is not None
     while True:
         if cancel_event.is_set():
             proc.kill()
             break
-        line = proc.stderr.readline()
-        if not line:
+        try:
+            line = line_q.get(timeout=0.1)  # bounded: re-check cancel every 100ms
+        except _queue.Empty:
+            continue
+        if line is None:  # EOF
             break
         line_str = line.decode("utf-8", errors="replace").rstrip("\n")
         # Parse progress (ffmpeg -progress pipe:2 format)
@@ -143,7 +162,13 @@ def _run_single_attempt(
             while sum(len(b) for b in stderr_tail_bytes) > max_tail:
                 stderr_tail_bytes.pop(0)
 
-    returncode = proc.wait()
+    # Bounded wait: kill if the process doesn't exit promptly (cancel already
+    # killed above; this guards a stalled-but-EOF process).
+    try:
+        returncode = proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        returncode = proc.wait()
     tail = b"".join(stderr_tail_bytes).decode("utf-8", errors="replace")
     return _AttemptOutcome(returncode=returncode, stderr_tail=tail[-max_tail:])
 
