@@ -16,8 +16,31 @@ from unittest.mock import patch
 import pytest
 
 from allaganeye.export.encoder import EncoderSlot, H264Encoder
-from allaganeye.export.pool import ExportMatch, export_matches
+from allaganeye.export.pool import (
+    ExportMatch,
+    _format_start_for_filename,
+    export_matches,
+)
 from allaganeye.export.schema import ExportError, ExportResult
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [
+        (0.0, "00-00"),
+        (5.0, "00-05"),
+        (65.0, "01-05"),
+        (915.5, "15-15"),  # 15m15s
+        (3599.0, "59-59"),
+        (3600.0, "1-00-00"),  # 1h ちょうど
+        (5021.5, "1-23-41"),  # 1h23m41s -- GUI formatStartForFilename と一致
+        (-10.0, "00-00"),  # 負値は 0 clamp (GUI と同じ)
+    ],
+)
+def test_format_start_matches_gui_h_mm_ss(seconds: float, expected: str):
+    # P2-20: GUI ExportScreen.tsx formatStartForFilename と bit-identical。
+    # 旧実装は通算分 (5021.5 -> "83-41") で 1h 以降に GUI プレビューと乖離した。
+    assert _format_start_for_filename(seconds) == expected
 
 
 def _slots(n: int) -> list[EncoderSlot]:
