@@ -698,3 +698,64 @@ def test_export_concurrency_zero_is_rejected(app: typer.Typer, tmp_path: Path):
         assert result.exit_code == 2, (
             f"--concurrency {bad_val} should exit 2 (BadParameter), got {result.exit_code}"
         )
+
+
+def test_export_include_help_mentions_1_based(app: typer.Typer):
+    # P3 I-4 (a): --include/--exclude help text must mention 1-based indexes so
+    # users don't confuse them with 0-based array positions.
+    result = runner.invoke(app, ["export", "--help"])
+    assert result.exit_code == 0
+    help_text = result.output
+    assert "1-based" in help_text
+
+
+def test_export_include_out_of_range_warns(app: typer.Typer, tmp_path: Path):
+    # P3 I-4 (b): --include 99 (no such match in metadata) should warn on stderr.
+    metadata_path = _make_metadata(tmp_path)  # matches: index 0, 1
+    with patch(
+        "allaganeye.commands.export.export_matches",
+        return_value=ExportSummary(success=0),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                str(metadata_path),
+                "--output-dir",
+                str(tmp_path),
+                "--codec",
+                "copy",
+                "--include",
+                "99",  # no match has index 99
+                "--quiet",
+            ],
+        )
+    assert result.exit_code == 0  # warning only, not an error
+    assert "warning" in result.output.lower()
+    assert "99" in result.output
+
+
+def test_export_exclude_out_of_range_warns(app: typer.Typer, tmp_path: Path):
+    # P3 I-4 (b): --exclude 99 (no such match) should warn on stderr.
+    metadata_path = _make_metadata(tmp_path)  # matches: index 0, 1
+    with patch(
+        "allaganeye.commands.export.export_matches",
+        return_value=ExportSummary(success=2),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                str(metadata_path),
+                "--output-dir",
+                str(tmp_path),
+                "--codec",
+                "copy",
+                "--exclude",
+                "99",  # no match has index 99
+                "--quiet",
+            ],
+        )
+    assert result.exit_code == 0  # warning only
+    assert "warning" in result.output.lower()
+    assert "99" in result.output

@@ -112,12 +112,18 @@ def register(app: typer.Typer) -> None:
             str | None,
             typer.Option(
                 "--include",
-                help="Comma-separated match indexes to include (others skipped).",
+                help=(
+                    "Comma-separated 1-based match indexes to include"
+                    " (matches metadata 'index'; others skipped)."
+                ),
             ),
         ] = None,
         exclude: Annotated[
             str | None,
-            typer.Option("--exclude", help="Comma-separated match indexes to skip."),
+            typer.Option(
+                "--exclude",
+                help="Comma-separated 1-based match indexes to skip.",
+            ),
         ] = None,
     ) -> None:
         """Parallel H.264 / copy export from metadata.json."""
@@ -180,6 +186,19 @@ def register(app: typer.Typer) -> None:
                     type_label=str(raw.get("type", "match")),
                 )
             )
+
+        # P3 I-4: warn for include/exclude indexes that match no actual match
+        # (1-based). Helps catch off-by-one mistakes early.
+        valid_indexes = {int(r["index"]) for r in all_matches}
+        for label, given in (("--include", include_set), ("--exclude", exclude_set)):
+            if given:
+                missing = sorted(given - valid_indexes)
+                if missing:
+                    typer.echo(
+                        f"warning: {label} index(es) not found in matches: "
+                        f"{', '.join(map(str, missing))}",
+                        err=True,
+                    )
 
         # P3 I-3: detect output-name collisions (e.g. a pattern without {idx} maps
         # every match to the same file, silently overwriting). Warn, don't fail.
