@@ -45,7 +45,10 @@ def _load_metadata(metadata_path: Path | None, use_stdin: bool) -> dict:
     if use_stdin:
         if metadata_path is not None:
             raise typer.BadParameter("--stdin is mutually exclusive with metadata_path")
-        return json.load(sys.stdin)
+        # P2-8: read stdin as bytes and decode UTF-8 explicitly so a cp932
+        # default stdin encoding (Windows) can't corrupt non-ASCII paths.
+        raw = sys.stdin.buffer.read()
+        return json.loads(raw.decode("utf-8"))
     if metadata_path is None:
         raise typer.BadParameter("metadata_path is required unless --stdin is set")
     return json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -198,6 +201,11 @@ def register(app: typer.Typer) -> None:
             # to satisfy the type checker; the second use is guarded by the same condition).
             writer: WireWriter | None = None
             if json_mode:
+                # P2-8: harden the wire's stdout encoding so non-ASCII output_path
+                # / error_message survive a cp932 console without relying on the
+                # Rust caller's PYTHONIOENCODING injection.
+                if hasattr(sys.stdout, "reconfigure"):
+                    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
                 writer = WireWriter(stream=sys.stdout)
 
                 def progress_cb(ev: ProgressEvent) -> None:

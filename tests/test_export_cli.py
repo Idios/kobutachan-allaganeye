@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -457,3 +458,96 @@ def test_export_counts_skipped(
     last = json.loads(lines[-1])
     assert last["type"] == "summary"
     assert last["skipped"] == 2
+
+
+def test_export_json_reconfigures_stdout_utf8(app: typer.Typer, tmp_path: Path):
+    # P2-8: --json emits non-ASCII (output_path / error_message) with
+    # ensure_ascii=False but never reconfigured stdout to UTF-8, relying on the
+    # Rust caller's PYTHONIOENCODING. On a cp932 console CLI-only this corrupts
+    # output. Verify the command reconfigures stdout to utf-8.
+    import click.testing as click_testing
+
+    calls: list[dict[str, object]] = []
+
+    def spy_reconfigure(self: io.TextIOWrapper, **kw: object) -> None:
+        calls.append(kw)
+        io.TextIOWrapper.reconfigure(self, **kw)  # type: ignore[arg-type]
+
+    metadata_path = _make_metadata(tmp_path)
+    with (
+        patch.object(
+            click_testing._NamedTextIOWrapper, "reconfigure", spy_reconfigure
+        ),
+        patch(
+            "allaganeye.commands.export.export_matches",
+            return_value=ExportSummary(success=1),
+        ),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                str(metadata_path),
+                "--output-dir",
+                str(tmp_path),
+                "--codec",
+                "h264",
+                "--json",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    assert any(c.get("encoding") == "utf-8" for c in calls), calls
+
+
+def test_export_stdin_reads_utf8_buffer(app: typer.Typer, tmp_path: Path):
+    # P2-8: --stdin must read sys.stdin.buffer as bytes and decode UTF-8 so a
+    # cp932 default stdin encoding (Windows console) can't corrupt a non-ASCII
+    # source path. We model that by giving CliRunner a cp932 text layer over
+    # UTF-8 bytes: the old json.load(sys.stdin) text path mis-decodes, the new
+    # buffer path round-trips.
+    cp932_runner = CliRunner(charset="cp932")
+    non_ascii_source = str(tmp_path / "録画" / "試合.mp4")
+    # ensure_ascii=False so the wire carries raw UTF-8 multibyte bytes. With the
+    # old json.load(sys.stdin) cp932 text path those bytes mis-decode (mojibake);
+    # only sys.stdin.buffer + UTF-8 decode round-trips. (ASCII-escaped JSON would
+    # decode identically under any charset and would not discriminate.)
+    payload = json.dumps(
+        {
+            "source": non_ascii_source,
+            "matches": [
+                {"index": 0, "start_time": 0.0, "end_time": 5.0, "type": "match"}
+            ],
+            "system_info": {
+                "gpu_vendors_available": [],
+                "vendor_preference": ["nvidia"],
+                "gpu": [],
+            },
+        },
+        ensure_ascii=False,
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_export_matches(**kwargs: object) -> ExportSummary:
+        captured["source_video"] = kwargs["source_video"]
+        return ExportSummary(success=1)
+
+    with patch(
+        "allaganeye.commands.export.export_matches",
+        side_effect=fake_export_matches,
+    ):
+        result = cp932_runner.invoke(
+            app,
+            [
+                "export",
+                "--stdin",
+                "--output-dir",
+                str(tmp_path),
+                "--codec",
+                "copy",
+                "--quiet",
+            ],
+            input=payload.encode("utf-8"),
+        )
+    assert result.exit_code == 0, result.output
+    assert str(captured["source_video"]) == non_ascii_source
