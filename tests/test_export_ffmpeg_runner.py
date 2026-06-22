@@ -201,7 +201,11 @@ def test_run_export_attempt_cancel_event_kills_ffmpeg(
     """cancel_event が set されたら ffmpeg を kill して ExportError(kind='cancelled') raise."""
     proc = MagicMock()
     proc.stderr = MagicMock()
-    proc.stderr.readline = MagicMock(return_value=b"out_time_ms=1000000\n")
+    # Finite side_effect ending in b"" -- a real ffmpeg's stderr reaches EOF
+    # after kill(). A constant return_value (never b"") would make the reader
+    # thread's `iter(readline, b"")` spin forever and fill the queue (suite OOM);
+    # see test_reader_thread_stops_after_attempt_with_continuous_stderr.
+    proc.stderr.readline = MagicMock(side_effect=[b"out_time_ms=1000000\n", b""])
     proc.wait = MagicMock(return_value=-9)  # SIGKILL
     proc.returncode = -9
     mock_popen.return_value = proc
@@ -283,6 +287,65 @@ def test_run_single_attempt_responds_to_cancel_when_no_output():
 
     assert elapsed < 2.0, f"cancel should be bounded, took {elapsed:.1f}s"
     proc.kill.assert_called()
+
+
+# --- _run_single_attempt: reader thread must not outlive the attempt (P2-40 OOM) ---
+
+
+def test_reader_thread_stops_after_attempt_with_continuous_stderr():
+    """Regression: a stderr that never returns b"" (a stalled or continuously
+    chatty producer) must not leave the daemon reader thread spinning and
+    filling the queue after the attempt finishes -- that leaked unbounded memory
+    and OOM-crashed the whole test suite. A stop flag ends the pump.
+
+    Cleanup releases the fake reader unconditionally so that, even if the fix
+    regresses, this test only fails (thread still alive) instead of OOM-ing the
+    rest of the suite.
+    """
+    from allaganeye.export.ffmpeg_runner import _run_single_attempt
+
+    keep_emitting = threading.Event()
+    keep_emitting.set()
+
+    def fake_readline() -> bytes:
+        # Emit forever until cleanup clears the flag, then EOF (b"").
+        return b"noise\n" if keep_emitting.is_set() else b""
+
+    proc = MagicMock()
+    proc.stderr = MagicMock()
+    proc.stderr.readline = MagicMock(side_effect=fake_readline)
+    proc.kill = MagicMock()
+    proc.wait = MagicMock(return_value=-9)
+
+    cancel = threading.Event()
+    cancel.set()  # finish the attempt immediately
+
+    try:
+        with patch(
+            "allaganeye.export.ffmpeg_runner.subprocess.Popen", return_value=proc
+        ):
+            _run_single_attempt(
+                ["ffmpeg"],
+                duration_s=10.0,
+                progress_cb=lambda p, s: None,
+                cancel_event=cancel,
+            )
+        # With the stop flag, the reader winds down even though readline never
+        # returned b"" during the attempt. Poll briefly for it to exit.
+        deadline = time.monotonic() + 2.0
+        alive = True
+        while time.monotonic() < deadline:
+            alive = any(
+                t.name == "ffmpeg-stderr" and t.is_alive()
+                for t in threading.enumerate()
+            )
+            if not alive:
+                break
+            time.sleep(0.02)
+        assert not alive, "reader thread leaked after attempt (P2-40 OOM regression)"
+    finally:
+        keep_emitting.clear()  # release the fake reader so a regression can't OOM
+        time.sleep(0.05)
 
 
 # --- run_export_attempt: libx264 retry also fails ---

@@ -119,10 +119,20 @@ def _run_single_attempt(
     assert proc.stderr is not None
     stderr = proc.stderr  # bind narrowed (non-None) handle for the reader closure
     line_q: _queue.Queue[bytes | None] = _queue.Queue()
+    # P2-40 follow-up (OOM fix): bound the reader thread to this attempt. Without
+    # a stop signal, a child whose stderr never reaches EOF -- a stalled producer,
+    # or a test double whose readline never returns b"" -- would make the daemon
+    # pump spin forever filling the unbounded queue and exhaust memory (the same
+    # bounded-drain concern as start_detect / #838). The flag is set in the
+    # ``finally`` below so the pump exits once the attempt is over.
+    stop_reading = threading.Event()
 
     def _pump() -> None:
         try:
-            for line in iter(stderr.readline, b""):
+            while not stop_reading.is_set():
+                line = stderr.readline()
+                if not line:  # EOF
+                    break
                 line_q.put(line)
         finally:
             line_q.put(None)  # EOF sentinel
@@ -132,35 +142,40 @@ def _run_single_attempt(
 
     stderr_tail_bytes: list[bytes] = []
     max_tail = 2048
-    while True:
-        if cancel_event.is_set():
-            proc.kill()
-            break
-        try:
-            line = line_q.get(timeout=0.1)  # bounded: re-check cancel every 100ms
-        except _queue.Empty:
-            continue
-        if line is None:  # EOF
-            break
-        line_str = line.decode("utf-8", errors="replace").rstrip("\n")
-        # Parse progress (ffmpeg -progress pipe:2 format)
-        if line_str.startswith("out_time_ms="):
-            raw = line_str.split("=", 1)[1]
-            us = int(raw) if raw.strip().lstrip("-").isdigit() else 0
-            seconds = us / 1_000_000.0
-            percent = (seconds / duration_s * 100.0) if duration_s > 0 else 0.0
-            percent = max(0.0, min(100.0, percent))
-            progress_cb(percent, "encoding")
-            continue
-        if line_str.strip() == "progress=end":
-            progress_cb(100.0, "done")
-            continue
-        # Accumulate remaining lines in stderr_tail buffer
-        stderr_tail_bytes.append(line)
-        if sum(len(b) for b in stderr_tail_bytes) > max_tail * 2:
-            # Keep only the tail
-            while sum(len(b) for b in stderr_tail_bytes) > max_tail:
-                stderr_tail_bytes.pop(0)
+    try:
+        while True:
+            if cancel_event.is_set():
+                proc.kill()
+                break
+            try:
+                line = line_q.get(timeout=0.1)  # bounded: re-check cancel every 100ms
+            except _queue.Empty:
+                continue
+            if line is None:  # EOF
+                break
+            line_str = line.decode("utf-8", errors="replace").rstrip("\n")
+            # Parse progress (ffmpeg -progress pipe:2 format)
+            if line_str.startswith("out_time_ms="):
+                raw = line_str.split("=", 1)[1]
+                us = int(raw) if raw.strip().lstrip("-").isdigit() else 0
+                seconds = us / 1_000_000.0
+                percent = (seconds / duration_s * 100.0) if duration_s > 0 else 0.0
+                percent = max(0.0, min(100.0, percent))
+                progress_cb(percent, "encoding")
+                continue
+            if line_str.strip() == "progress=end":
+                progress_cb(100.0, "done")
+                continue
+            # Accumulate remaining lines in stderr_tail buffer
+            stderr_tail_bytes.append(line)
+            if sum(len(b) for b in stderr_tail_bytes) > max_tail * 2:
+                # Keep only the tail
+                while sum(len(b) for b in stderr_tail_bytes) > max_tail:
+                    stderr_tail_bytes.pop(0)
+    finally:
+        # Stop the reader so it cannot outlive the attempt (bounds memory and
+        # threads even when the child's stderr never reaches EOF).
+        stop_reading.set()
 
     # Bounded wait: kill if the process doesn't exit promptly (cancel already
     # killed above; this guards a stalled-but-EOF process).

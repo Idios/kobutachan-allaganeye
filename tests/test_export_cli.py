@@ -640,7 +640,7 @@ def test_export_warns_on_filename_collision(app: typer.Typer, tmp_path: Path):
                 "--codec",
                 "copy",
                 "--name-pattern",
-                "{type}.mp4",  # no {idx}: both matches → "match.mp4" (collision)
+                "{type}.mp4",  # no {idx}: both matches -> "match.mp4" (collision)
                 "--quiet",
             ],
         )
