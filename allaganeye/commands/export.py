@@ -22,7 +22,7 @@ import typer
 
 from allaganeye.exceptions import AllaganEyeError
 from allaganeye.export.encoder import enumerate_h264_encoders
-from allaganeye.export.pool import ExportMatch, export_matches
+from allaganeye.export.pool import ExportMatch, _format_filename, export_matches
 from allaganeye.export.schema import ExportSummary, ProgressEvent
 from allaganeye.export.wire import WireWriter
 
@@ -179,6 +179,21 @@ def register(app: typer.Typer) -> None:
                     ),
                     type_label=str(raw.get("type", "match")),
                 )
+            )
+
+        # P3 I-3: detect output-name collisions (e.g. a pattern without {idx} maps
+        # every match to the same file, silently overwriting). Warn, don't fail.
+        seen_names: dict[str, int] = {}
+        for m in filtered:
+            name = _format_filename(m, name_pattern)
+            seen_names[name] = seen_names.get(name, 0) + 1
+        collisions = [n for n, c in seen_names.items() if c > 1]
+        if collisions:
+            typer.echo(
+                f"warning: name pattern produces {len(collisions)} duplicate "
+                f"filename(s) (e.g. {collisions[0]!r}); add {{idx}} or {{idx:03}} "
+                f"to avoid overwriting",
+                err=True,
             )
 
         slots = enumerate_h264_encoders(

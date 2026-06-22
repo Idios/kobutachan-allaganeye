@@ -608,6 +608,74 @@ def test_export_json_does_not_emit_summary_on_error(app: typer.Typer, tmp_path: 
     assert '"type":"summary"' not in result.stdout
 
 
+def test_export_warns_on_filename_collision(app: typer.Typer, tmp_path: Path):
+    # P3 I-3: a name pattern without {idx}/{idx:03} maps every match to the same
+    # filename, silently overwriting. export should warn on stderr.
+    payload = {
+        "schema_version": "1",
+        "source": str(tmp_path / "in.mp4"),
+        "matches": [
+            {"index": 0, "start_time": 0.0, "end_time": 10.0, "type": "match"},
+            {"index": 1, "start_time": 10.0, "end_time": 20.0, "type": "match"},
+        ],
+        "system_info": {
+            "gpu_vendors_available": [],
+            "vendor_preference": ["nvidia"],
+            "gpu": [],
+        },
+    }
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+    with patch(
+        "allaganeye.commands.export.export_matches",
+        return_value=ExportSummary(success=2),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                str(metadata_path),
+                "--output-dir",
+                str(tmp_path),
+                "--codec",
+                "copy",
+                "--name-pattern",
+                "{type}.mp4",  # no {idx}: both matches → "match.mp4" (collision)
+                "--quiet",
+            ],
+        )
+    # warning goes to stderr; command can still succeed
+    assert result.exit_code == 0
+    assert "warning" in result.output.lower() or "warning" in (result.stderr or "").lower()
+
+
+def test_export_no_collision_warning_when_pattern_has_idx(app: typer.Typer, tmp_path: Path):
+    # P3 I-3: no warning when the pattern contains {idx} (all names are distinct).
+    metadata_path = _make_metadata(tmp_path)
+    with patch(
+        "allaganeye.commands.export.export_matches",
+        return_value=ExportSummary(success=2),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                str(metadata_path),
+                "--output-dir",
+                str(tmp_path),
+                "--codec",
+                "copy",
+                "--name-pattern",
+                "{idx:03}_{type}.mp4",
+                "--quiet",
+            ],
+        )
+    assert result.exit_code == 0
+    # no collision warning
+    full_output = result.output + (result.stderr or "")
+    assert "duplicate" not in full_output.lower()
+
+
 def test_export_concurrency_zero_is_rejected(app: typer.Typer, tmp_path: Path):
     # P3 I-2: --concurrency 0 must be rejected with BadParameter (exit 2) before
     # any ffmpeg is launched. Negative values must be rejected too.
