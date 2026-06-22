@@ -36,7 +36,7 @@ class ExportMatch:
     type_label: str  # "match" / "non_fl" / etc. -- used by name_pattern
 
 
-def _format_filename(m: ExportMatch, pattern: str, codec: str) -> str:
+def _format_filename(m: ExportMatch, pattern: str) -> str:
     """Render the output filename per ``pattern``.
 
     Tokens: ``{idx}`` / ``{idx:03}`` / ``{type}`` / ``{start}`` / ``{date}``.
@@ -120,7 +120,7 @@ def export_matches(
             ) -> None:
                 progress_cb(ProgressEvent.fallback(_idx, src.value, dst.value, msg))
 
-            output_path = output_dir / _format_filename(m, name_pattern, codec)
+            output_path = output_dir / _format_filename(m, name_pattern)
             try:
                 result = run_export_attempt(
                     video=source_video,
