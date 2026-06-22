@@ -606,3 +606,27 @@ def test_export_json_does_not_emit_summary_on_error(app: typer.Typer, tmp_path: 
     # no summary line on stdout (stderr carries the error)
     assert '"type": "summary"' not in result.stdout
     assert '"type":"summary"' not in result.stdout
+
+
+def test_export_concurrency_zero_is_rejected(app: typer.Typer, tmp_path: Path):
+    # P3 I-2: --concurrency 0 must be rejected with BadParameter (exit 2) before
+    # any ffmpeg is launched. Negative values must be rejected too.
+    metadata_path = _make_metadata(tmp_path)
+    for bad_val in ("0", "-1", "-99"):
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                str(metadata_path),
+                "--output-dir",
+                str(tmp_path),
+                "--codec",
+                "h264",
+                "--concurrency",
+                bad_val,
+                "--quiet",
+            ],
+        )
+        assert result.exit_code == 2, (
+            f"--concurrency {bad_val} should exit 2 (BadParameter), got {result.exit_code}"
+        )
