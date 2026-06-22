@@ -603,3 +603,149 @@ def test_run_export_attempt_nvdec_decode_failure_triggers_libx264_retry(
     # libx264 retry argv lacks -hwaccel
     second_argv = mock_popen.call_args_list[1].args[0]
     assert "-hwaccel" not in second_argv
+
+
+# --- run_export_attempt: partial file cleanup (P3 I-5) ---
+# Protective tests ensure the unlink logic fires on exactly the right paths.
+# Safety contract:
+#   (1) successful 1st attempt -> output NOT deleted (it's the real result)
+#   (2) GPU fail -> successful libx264 retry -> output NOT deleted
+#   (3) final failure (both attempts fail) -> partial IS deleted
+#   (4) cancel -> partial IS deleted
+
+
+def _make_proc(returncode: int, stderr_lines: list[bytes]) -> MagicMock:
+    """Build a fake subprocess.Popen return value."""
+    proc = MagicMock()
+    proc.stderr = MagicMock()
+    proc.stderr.readline = MagicMock(side_effect=stderr_lines + [b""])
+    proc.wait = MagicMock(return_value=returncode)
+    proc.returncode = returncode
+    return proc
+
+
+@patch("allaganeye.export.ffmpeg_runner.subprocess.Popen")
+def test_partial_cleanup_success_1st_attempt_output_kept(
+    mock_popen: MagicMock, tmp_path: Path
+):
+    """I-5 safety (1): successful 1st attempt MUST NOT delete the output."""
+    output = tmp_path / "out.mp4"
+
+    def popen_side(*args, **kwargs):  # type: ignore[no-untyped-def]
+        output.write_bytes(b"real output")  # simulate ffmpeg writing the file
+        return _make_proc(0, [b"out_time_ms=1000000\n", b"progress=end\n"])
+
+    mock_popen.side_effect = popen_side
+
+    result = run_export_attempt(
+        video=tmp_path / "in.mp4",
+        start=0.0,
+        end=10.0,
+        output=output,
+        codec="h264",
+        encoder=H264Encoder.LIBX264,
+        progress_cb=lambda p, s: None,
+        fallback_cb=None,
+        cancel_event=threading.Event(),
+    )
+    assert result.encoder_used == H264Encoder.LIBX264.value
+    assert output.exists(), "output must NOT be deleted on success"
+
+
+@patch("allaganeye.export.ffmpeg_runner.subprocess.Popen")
+def test_partial_cleanup_gpu_fail_retry_success_output_kept(
+    mock_popen: MagicMock, tmp_path: Path
+):
+    """I-5 safety (2): GPU fail -> libx264 retry success -> output MUST NOT be deleted."""
+    output = tmp_path / "out.mp4"
+    call_count = 0
+
+    def popen_side(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # 1st attempt (NVENC): writes partial then fails
+            output.write_bytes(b"partial")
+            return _make_proc(1, [b"[h264_nvenc @ 0xfff] No NVENC capable devices found\n"])
+        # 2nd attempt (libx264): rewrites and succeeds
+        output.write_bytes(b"real output")
+        return _make_proc(0, [b"out_time_ms=1000000\n", b"progress=end\n"])
+
+    mock_popen.side_effect = popen_side
+
+    result = run_export_attempt(
+        video=tmp_path / "in.mp4",
+        start=0.0,
+        end=10.0,
+        output=output,
+        codec="h264",
+        encoder=H264Encoder.NVENC,
+        progress_cb=lambda p, s: None,
+        fallback_cb=lambda f, t, m: None,
+        cancel_event=threading.Event(),
+    )
+    assert result.encoder_used == H264Encoder.LIBX264.value
+    assert output.exists(), "output must NOT be deleted after successful retry"
+
+
+@patch("allaganeye.export.ffmpeg_runner.subprocess.Popen")
+def test_partial_cleanup_final_failure_output_deleted(
+    mock_popen: MagicMock, tmp_path: Path
+):
+    """I-5 safety (3): both attempts fail -> partial output MUST be deleted."""
+    output = tmp_path / "out.mp4"
+    call_count = 0
+
+    def popen_side(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal call_count
+        call_count += 1
+        output.write_bytes(b"partial")  # simulate partial write on each attempt
+        if call_count == 1:
+            return _make_proc(1, [b"[h264_nvenc @ 0xfff] No NVENC capable devices found\n"])
+        return _make_proc(1, [b"Error opening codec\n"])
+
+    mock_popen.side_effect = popen_side
+
+    with pytest.raises(ExportError) as exc_info:
+        run_export_attempt(
+            video=tmp_path / "in.mp4",
+            start=0.0,
+            end=10.0,
+            output=output,
+            codec="h264",
+            encoder=H264Encoder.NVENC,
+            progress_cb=lambda p, s: None,
+            fallback_cb=lambda f, t, m: None,
+            cancel_event=threading.Event(),
+        )
+    assert exc_info.value.kind == "ffmpeg.exit_failed"
+    assert not output.exists(), "partial output MUST be deleted on final failure"
+
+
+@patch("allaganeye.export.ffmpeg_runner.subprocess.Popen")
+def test_partial_cleanup_cancel_output_deleted(mock_popen: MagicMock, tmp_path: Path):
+    """I-5 safety (4): cancel -> partial output MUST be deleted."""
+    output = tmp_path / "out.mp4"
+    cancel = threading.Event()
+    cancel.set()  # cancel immediately
+
+    def popen_side(*args, **kwargs):  # type: ignore[no-untyped-def]
+        output.write_bytes(b"partial")  # simulate partial write
+        return _make_proc(-9, [])
+
+    mock_popen.side_effect = popen_side
+
+    with pytest.raises(ExportError) as exc_info:
+        run_export_attempt(
+            video=tmp_path / "in.mp4",
+            start=0.0,
+            end=10.0,
+            output=output,
+            codec="h264",
+            encoder=H264Encoder.LIBX264,
+            progress_cb=lambda p, s: None,
+            fallback_cb=None,
+            cancel_event=cancel,
+        )
+    assert exc_info.value.kind == "cancelled"
+    assert not output.exists(), "partial output MUST be deleted on cancel"
