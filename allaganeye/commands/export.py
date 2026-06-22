@@ -145,13 +145,17 @@ def register(app: typer.Typer) -> None:
         exclude_set = _parse_indexes_csv(exclude) or set()
         all_matches = metadata.get("matches") or []
         filtered: list[ExportMatch] = []
+        skipped_count = 0  # P2-9: count filtered-out matches for the summary
         for raw in all_matches:
             idx = int(raw["index"])
             if include_set is not None and idx not in include_set:
+                skipped_count += 1
                 continue
             if idx in exclude_set:
+                skipped_count += 1
                 continue
             if raw.get("type_override") == "skip":
+                skipped_count += 1
                 continue
             edited = raw.get("edited") or {}
             edited_start = edited.get("start_time")
@@ -240,6 +244,8 @@ def register(app: typer.Typer) -> None:
                 progress_cb=progress_cb,
                 cancel_event=cancel_event,
             )
+            # P2-9: reflect filtered-out matches in the summary (was always 0).
+            summary.skipped = skipped_count
         finally:
             signal.signal(signal.SIGINT, original_handler)
 

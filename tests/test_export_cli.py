@@ -402,3 +402,58 @@ def test_export_creates_missing_output_dir(app: typer.Typer, tmp_path: Path):
         )
     assert result.exit_code == 0, result.output
     assert captured["exists"] is True  # output_dir already existed when called
+
+
+@patch("allaganeye.commands.export.export_matches")
+def test_export_counts_skipped(
+    mock_export: MagicMock, app: typer.Typer, tmp_path: Path
+):
+    # P2-9: ExportSummary.skipped was never incremented and stayed 0 regardless
+    # of include/exclude/type_override=skip filtering. Verify the --json summary
+    # reports the real filtered-out count.
+    mock_export.return_value = ExportSummary(success=1, failure=0)
+    payload = {
+        "schema_version": "1",
+        "source": str(tmp_path / "in.mp4"),
+        "matches": [
+            {"index": 0, "start_time": 0.0, "end_time": 10.0, "type": "match"},
+            {"index": 1, "start_time": 10.0, "end_time": 20.0, "type": "match"},
+            {
+                "index": 2,
+                "start_time": 20.0,
+                "end_time": 30.0,
+                "type": "match",
+                "type_override": "skip",
+            },
+        ],
+        "system_info": {
+            "gpu_vendors_available": [],
+            "vendor_preference": ["nvidia"],
+            "gpu": [],
+        },
+    }
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            str(metadata_path),
+            "--output-dir",
+            str(tmp_path),
+            "--codec",
+            "h264",
+            "--exclude",
+            "1",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    # export target is index 0 only (index 1 excluded, index 2 skip-override)
+    _, kwargs = mock_export.call_args
+    assert [m.index for m in kwargs.get("matches")] == [0]
+    # summary.skipped reflects the 2 filtered-out matches
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    last = json.loads(lines[-1])
+    assert last["type"] == "summary"
+    assert last["skipped"] == 2
