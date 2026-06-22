@@ -799,3 +799,117 @@ def test_export_exclude_out_of_range_warns(app: typer.Typer, tmp_path: Path):
     assert result.exit_code == 0  # warning only
     assert "warning" in result.output.lower()
     assert "99" in result.output
+
+
+def test_load_metadata_stdin_invalid_utf8_raises_unicode_decode_error(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Round 1 FIX 1 (a): _load_metadata(--stdin) reads sys.stdin.buffer as bytes
+    # and decodes UTF-8. Invalid bytes must raise UnicodeDecodeError (a ValueError
+    # subclass, NOT OSError/JSONDecodeError) so the command can map it to exit 2.
+    from allaganeye.commands.export import _load_metadata
+
+    bad_bytes = b"\xff\xfe\x00\x80not utf-8"
+
+    class _FakeStdin:
+        buffer = io.BytesIO(bad_bytes)
+
+    monkeypatch.setattr("allaganeye.commands.export.sys.stdin", _FakeStdin())
+    with pytest.raises(UnicodeDecodeError):
+        _load_metadata(None, use_stdin=True)
+
+
+def test_export_stdin_invalid_utf8_exits_2(app: typer.Typer, tmp_path: Path):
+    # Round 1 FIX 1 (a): the --stdin decode failure (UnicodeDecodeError) must map
+    # to exit 2 with a clean stderr, NOT escape as a raw traceback / exit 1.
+    bad_bytes = b"\xff\xfe\x00\x80not utf-8"
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            "--stdin",
+            "--output-dir",
+            str(tmp_path),
+            "--codec",
+            "copy",
+            "--quiet",
+        ],
+        input=bad_bytes,
+    )
+    assert result.exit_code == 2, result.output
+    assert "Traceback" not in result.output
+
+
+def test_export_metadata_missing_index_exits_2(app: typer.Typer, tmp_path: Path):
+    # Round 1 FIX 1 (b): a match missing the required "index" key raises KeyError
+    # in the filter loop (which runs BEFORE the P2-7 frame). It must map to exit 2
+    # with a clean stderr, not escape as a raw traceback / exit 1.
+    payload = {
+        "schema_version": "1",
+        "source": str(tmp_path / "in.mp4"),
+        "matches": [
+            {"start_time": 0.0, "end_time": 10.0, "type": "match"},  # no "index"
+        ],
+        "system_info": {
+            "gpu_vendors_available": [],
+            "vendor_preference": ["nvidia"],
+            "gpu": [],
+        },
+    }
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            str(metadata_path),
+            "--output-dir",
+            str(tmp_path),
+            "--codec",
+            "copy",
+            "--quiet",
+        ],
+    )
+    assert result.exit_code == 2, result.output
+    assert "Traceback" not in result.output
+
+
+def test_export_metadata_non_numeric_start_time_exits_2(
+    app: typer.Typer, tmp_path: Path
+):
+    # Round 1 FIX 1 (b): a non-numeric "start_time" raises ValueError in the
+    # filter loop (before the P2-7 frame). It must map to exit 2 with a clean
+    # stderr, not escape as a raw traceback / exit 1.
+    payload = {
+        "schema_version": "1",
+        "source": str(tmp_path / "in.mp4"),
+        "matches": [
+            {
+                "index": 0,
+                "start_time": "not-a-number",
+                "end_time": 10.0,
+                "type": "match",
+            },
+        ],
+        "system_info": {
+            "gpu_vendors_available": [],
+            "vendor_preference": ["nvidia"],
+            "gpu": [],
+        },
+    }
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            str(metadata_path),
+            "--output-dir",
+            str(tmp_path),
+            "--codec",
+            "copy",
+            "--quiet",
+        ],
+    )
+    assert result.exit_code == 2, result.output
+    assert "Traceback" not in result.output

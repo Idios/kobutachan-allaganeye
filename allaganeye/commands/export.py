@@ -136,67 +136,92 @@ def register(app: typer.Typer) -> None:
 
         try:
             metadata = _load_metadata(metadata_path, stdin)
-        except (OSError, json.JSONDecodeError) as e:
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            # Round 1 FIX 1 (a): a --stdin payload of invalid bytes makes
+            # sys.stdin.buffer.read().decode("utf-8") raise UnicodeDecodeError
+            # (a ValueError subclass, NOT OSError/JSONDecodeError). Map it here
+            # so the GUI --json --stdin path gets exit 2 + clean stderr instead
+            # of a raw traceback / exit 1.
             typer.echo(f"error: cannot read metadata: {e}", err=True)
             raise typer.Exit(code=2) from e
 
-        source_value = metadata.get("source")
-        if not source_value:
-            typer.echo("error: metadata.json missing required 'source' field", err=True)
-            raise typer.Exit(code=2)
-        source_video = Path(source_value)
-        sys_info = metadata.get("system_info") or {}
-        vendors = list(sys_info.get("gpu_vendors_available") or [])
-        preference = list(
-            sys_info.get("vendor_preference") or ["nvidia", "amd", "intel"]
-        )
-        gpu_models = list(sys_info.get("gpu") or [])
-
-        # Filter matches per include/exclude
-        include_set = _parse_indexes_csv(include)
-        exclude_set = _parse_indexes_csv(exclude) or set()
-        all_matches = metadata.get("matches") or []
-        filtered: list[ExportMatch] = []
-        skipped_count = 0  # P2-9: count filtered-out matches for the summary
-        for raw in all_matches:
-            idx = int(raw["index"])
-            if include_set is not None and idx not in include_set:
-                skipped_count += 1
-                continue
-            if idx in exclude_set:
-                skipped_count += 1
-                continue
-            if raw.get("type_override") == "skip":
-                skipped_count += 1
-                continue
-            edited = raw.get("edited") or {}
-            edited_start = edited.get("start_time")
-            edited_end = edited.get("end_time")
-            filtered.append(
-                ExportMatch(
-                    index=idx,
-                    start=float(
-                        edited_start if edited_start is not None else raw["start_time"]
-                    ),
-                    end=float(
-                        edited_end if edited_end is not None else raw["end_time"]
-                    ),
-                    type_label=str(raw.get("type", "match")),
+        # Round 1 FIX 1 (b): the metadata-content parsing below (source field,
+        # the include/exclude filter loop's int(raw["index"]) / float(...), and
+        # the I-4 valid_indexes set comprehension) runs BEFORE the P2-7 frame and
+        # can raise KeyError/ValueError/TypeError on malformed metadata. Wrap it
+        # so a bad payload on the GUI --json --stdin path maps to exit 2 + clean
+        # stderr instead of a raw traceback / exit 1. The existing
+        # typer.Exit(code=2) (missing-source) and _parse_indexes_csv's
+        # typer.BadParameter are NOT KeyError/ValueError/TypeError, so they keep
+        # propagating with their own exit codes (2 / click usage).
+        try:
+            source_value = metadata.get("source")
+            if not source_value:
+                typer.echo(
+                    "error: metadata.json missing required 'source' field", err=True
                 )
+                raise typer.Exit(code=2)
+            source_video = Path(source_value)
+            sys_info = metadata.get("system_info") or {}
+            vendors = list(sys_info.get("gpu_vendors_available") or [])
+            preference = list(
+                sys_info.get("vendor_preference") or ["nvidia", "amd", "intel"]
             )
+            gpu_models = list(sys_info.get("gpu") or [])
 
-        # P3 I-4: warn for include/exclude indexes that match no actual match
-        # (1-based). Helps catch off-by-one mistakes early.
-        valid_indexes = {int(r["index"]) for r in all_matches}
-        for label, given in (("--include", include_set), ("--exclude", exclude_set)):
-            if given:
-                missing = sorted(given - valid_indexes)
-                if missing:
-                    typer.echo(
-                        f"warning: {label} index(es) not found in matches: "
-                        f"{', '.join(map(str, missing))}",
-                        err=True,
+            # Filter matches per include/exclude
+            include_set = _parse_indexes_csv(include)
+            exclude_set = _parse_indexes_csv(exclude) or set()
+            all_matches = metadata.get("matches") or []
+            filtered: list[ExportMatch] = []
+            skipped_count = 0  # P2-9: count filtered-out matches for the summary
+            for raw in all_matches:
+                idx = int(raw["index"])
+                if include_set is not None and idx not in include_set:
+                    skipped_count += 1
+                    continue
+                if idx in exclude_set:
+                    skipped_count += 1
+                    continue
+                if raw.get("type_override") == "skip":
+                    skipped_count += 1
+                    continue
+                edited = raw.get("edited") or {}
+                edited_start = edited.get("start_time")
+                edited_end = edited.get("end_time")
+                filtered.append(
+                    ExportMatch(
+                        index=idx,
+                        start=float(
+                            edited_start
+                            if edited_start is not None
+                            else raw["start_time"]
+                        ),
+                        end=float(
+                            edited_end if edited_end is not None else raw["end_time"]
+                        ),
+                        type_label=str(raw.get("type", "match")),
                     )
+                )
+
+            # P3 I-4: warn for include/exclude indexes that match no actual match
+            # (1-based). Helps catch off-by-one mistakes early.
+            valid_indexes = {int(r["index"]) for r in all_matches}
+            for label, given in (
+                ("--include", include_set),
+                ("--exclude", exclude_set),
+            ):
+                if given:
+                    missing = sorted(given - valid_indexes)
+                    if missing:
+                        typer.echo(
+                            f"warning: {label} index(es) not found in matches: "
+                            f"{', '.join(map(str, missing))}",
+                            err=True,
+                        )
+        except (KeyError, ValueError, TypeError) as e:
+            typer.echo(f"error: invalid metadata content: {e}", err=True)
+            raise typer.Exit(code=2) from e
 
         slots = enumerate_h264_encoders(
             vendors=vendors, preference=preference, gpu_models=gpu_models
@@ -224,6 +249,13 @@ def register(app: typer.Typer) -> None:
         summary: ExportSummary
         original_handler = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, _sigint_handler)
+        # Round 1 FIX 4 (regression guard): the `except Exception` below catches
+        # ANY Exception subclass -- which includes typer.Exit (RuntimeError) and
+        # typer.BadParameter (ClickException). NEVER raise either inside this
+        # try: `except Exception` would swallow it and downgrade the intended
+        # exit code to 1. That is why the cancelled (130) and failure (1)
+        # typer.Exit raises, plus all preflight typer.Exit/typer.BadParameter,
+        # live OUTSIDE (before/after) this frame -- keep them there.
         try:
             # Progress callback wiring -- construct WireWriter once for json_mode.
             # writer is always assigned when json_mode=True (initialized to None otherwise
@@ -316,6 +348,9 @@ def register(app: typer.Typer) -> None:
         if json_mode and writer is not None:
             writer.emit(ProgressEvent.summary(summary))
 
+        # Round 1 FIX 4: these typer.Exit raises are intentionally OUTSIDE the
+        # P2-7 try -- raising them inside would be swallowed by `except Exception`
+        # and downgraded to exit 1 (130/1 would be lost).
         if summary.cancelled:
             raise typer.Exit(code=130)
         if summary.failure > 0:

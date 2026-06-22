@@ -20,8 +20,9 @@ from allaganeye.ffmpeg_path import find_ffmpeg
 
 
 # P2-40: cap the stderr reader queue so a noisy/runaway ffmpeg can't grow it
-# without bound (memory). Excess lines under a flood are dropped; the consumer
-# keeps the recent tail, which is what matters for the error message.
+# without bound (memory). Round 1 FIX 2: under a flood the queue evicts the
+# OLDEST line (ring), so the recent tail -- where a fatal ffmpeg error appears --
+# survives, which is what matters for the error message.
 _STDERR_QUEUE_MAX = 4096
 
 
@@ -128,9 +129,10 @@ def _run_single_attempt(
     # outliving the attempt or growing memory without bound. The pump exits on
     # stderr EOF or when stop_reading is set (finally below); the main loop
     # detects completion via reader.is_alive() + a drained queue, so a missing
-    # sentinel can't hang it and excess lines under a flood are dropped (the
-    # recent tail is what matters for the error message). Same bounded-drain
-    # concern as start_detect / #838.
+    # sentinel can't hang it. Round 1 FIX 2: under a flood the queue drops the
+    # OLDEST line (ring), so the recent tail -- where a fatal ffmpeg error
+    # appears -- is retained for the error message. Same bounded-drain concern
+    # as start_detect / #838.
     line_q: _queue.Queue[bytes] = _queue.Queue(maxsize=_STDERR_QUEUE_MAX)
     stop_reading = threading.Event()
 
@@ -142,12 +144,26 @@ def _run_single_attempt(
             try:
                 line_q.put_nowait(line)
             except _queue.Full:
-                pass  # drop under flood; the consumer keeps the recent tail
+                # Round 1 FIX 2: ring under flood -- drop the OLDEST queued line
+                # so the most recent output (where a fatal ffmpeg error appears)
+                # is retained. Dropping the NEW line instead would discard exactly
+                # the error tail we need for the failure message.
+                try:
+                    line_q.get_nowait()
+                except _queue.Empty:
+                    pass
+                try:
+                    line_q.put_nowait(line)
+                except _queue.Full:
+                    pass
 
     reader = threading.Thread(target=_pump, name="ffmpeg-stderr", daemon=True)
     reader.start()
 
     stderr_tail_bytes: list[bytes] = []
+    # Round 1 FIX 5: track the running byte total so the tail trim is O(1)
+    # amortized instead of recomputing sum(len(b) ...) on every append/pop.
+    stderr_tail_total = 0
     max_tail = 2048
     try:
         while True:
@@ -174,11 +190,14 @@ def _run_single_attempt(
             if line_str.strip() == "progress=end":
                 progress_cb(100.0, "done")
                 continue
-            # Accumulate remaining lines in stderr_tail buffer
+            # Accumulate remaining lines in stderr_tail buffer. Trim from the
+            # front once it grows past max_tail*2, keeping ~max_tail trailing
+            # bytes. The running total avoids an O(n) sum() on each iteration.
             stderr_tail_bytes.append(line)
-            if sum(len(b) for b in stderr_tail_bytes) > max_tail * 2:
-                while sum(len(b) for b in stderr_tail_bytes) > max_tail:
-                    stderr_tail_bytes.pop(0)
+            stderr_tail_total += len(line)
+            if stderr_tail_total > max_tail * 2:
+                while stderr_tail_total > max_tail:
+                    stderr_tail_total -= len(stderr_tail_bytes.pop(0))
     finally:
         stop_reading.set()
 
@@ -259,9 +278,15 @@ def run_export_attempt(
     duration = end - start
     started = time.monotonic()
     # Finding 1: record whether the output already existed BEFORE this attempt.
-    # The I-5 cleanup below must only remove a partial THIS attempt created --
-    # never a pre-existing valid file (left by a prior run, or a path that
-    # already held content) that ffmpeg failed before rewriting/truncating.
+    # The I-5 cleanup below skips any path that existed before the attempt, so
+    # we never delete a file the current attempt did not create.
+    # Round 1 FIX 3 (comment accuracy): with ffmpeg's `-y`, the output is
+    # truncated on open, so a pre-existing file that ffmpeg opened-then-failed
+    # is ALREADY destroyed (and may remain as a truncated partial) -- the gate
+    # cannot preserve its contents. The gate's real guarantee is narrower: it
+    # only protects a file ffmpeg failed to open at all. Leaving a truncated
+    # pre-existing partial in place is the accepted lesser-evil vs. unlinking a
+    # file ffmpeg never touched.
     output_pre_existed = output.exists()
 
     # 1st attempt
