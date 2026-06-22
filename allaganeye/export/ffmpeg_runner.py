@@ -19,6 +19,12 @@ from allaganeye.export.schema import ExportError, ExportResult
 from allaganeye.ffmpeg_path import find_ffmpeg
 
 
+# P2-40: cap the stderr reader queue so a noisy/runaway ffmpeg can't grow it
+# without bound (memory). Excess lines under a flood are dropped; the consumer
+# keeps the recent tail, which is what matters for the error message.
+_STDERR_QUEUE_MAX = 4096
+
+
 _DECODE_HWACCEL_ARGS: dict[H264Encoder, tuple[str, ...]] = {
     # #791: encoder->decode hwaccel mapping.
     # NVENC: NVDEC -> NVENC zero-copy (CUDA memory) on RTX 5090 / driver
@@ -118,24 +124,25 @@ def _run_single_attempt(
     )
     assert proc.stderr is not None
     stderr = proc.stderr  # bind narrowed (non-None) handle for the reader closure
-    line_q: _queue.Queue[bytes | None] = _queue.Queue()
-    # P2-40 follow-up (OOM fix): bound the reader thread to this attempt. Without
-    # a stop signal, a child whose stderr never reaches EOF -- a stalled producer,
-    # or a test double whose readline never returns b"" -- would make the daemon
-    # pump spin forever filling the unbounded queue and exhaust memory (the same
-    # bounded-drain concern as start_detect / #838). The flag is set in the
-    # ``finally`` below so the pump exits once the attempt is over.
+    # P2-40: a bounded queue + stop flag keep the stderr reader thread from
+    # outliving the attempt or growing memory without bound. The pump exits on
+    # stderr EOF or when stop_reading is set (finally below); the main loop
+    # detects completion via reader.is_alive() + a drained queue, so a missing
+    # sentinel can't hang it and excess lines under a flood are dropped (the
+    # recent tail is what matters for the error message). Same bounded-drain
+    # concern as start_detect / #838.
+    line_q: _queue.Queue[bytes] = _queue.Queue(maxsize=_STDERR_QUEUE_MAX)
     stop_reading = threading.Event()
 
     def _pump() -> None:
-        try:
-            while not stop_reading.is_set():
-                line = stderr.readline()
-                if not line:  # EOF
-                    break
-                line_q.put(line)
-        finally:
-            line_q.put(None)  # EOF sentinel
+        while not stop_reading.is_set():
+            line = stderr.readline()
+            if not line:  # EOF
+                break
+            try:
+                line_q.put_nowait(line)
+            except _queue.Full:
+                pass  # drop under flood; the consumer keeps the recent tail
 
     reader = threading.Thread(target=_pump, name="ffmpeg-stderr", daemon=True)
     reader.start()
@@ -150,9 +157,10 @@ def _run_single_attempt(
             try:
                 line = line_q.get(timeout=0.1)  # bounded: re-check cancel every 100ms
             except _queue.Empty:
+                # Reader finished (EOF or stopped) and the queue is drained.
+                if not reader.is_alive() and line_q.empty():
+                    break
                 continue
-            if line is None:  # EOF
-                break
             line_str = line.decode("utf-8", errors="replace").rstrip("\n")
             # Parse progress (ffmpeg -progress pipe:2 format)
             if line_str.startswith("out_time_ms="):
@@ -169,12 +177,9 @@ def _run_single_attempt(
             # Accumulate remaining lines in stderr_tail buffer
             stderr_tail_bytes.append(line)
             if sum(len(b) for b in stderr_tail_bytes) > max_tail * 2:
-                # Keep only the tail
                 while sum(len(b) for b in stderr_tail_bytes) > max_tail:
                     stderr_tail_bytes.pop(0)
     finally:
-        # Stop the reader so it cannot outlive the attempt (bounds memory and
-        # threads even when the child's stderr never reaches EOF).
         stop_reading.set()
 
     # Bounded wait: kill if the process doesn't exit promptly (cancel already
