@@ -20,9 +20,10 @@ from typing import Annotated
 
 import typer
 
+from allaganeye.exceptions import AllaganEyeError
 from allaganeye.export.encoder import enumerate_h264_encoders
 from allaganeye.export.pool import ExportMatch, export_matches
-from allaganeye.export.schema import ProgressEvent
+from allaganeye.export.schema import ExportSummary, ProgressEvent
 from allaganeye.export.wire import WireWriter
 
 
@@ -193,6 +194,13 @@ def register(app: typer.Typer) -> None:
         def _sigint_handler(signum: int, frame: object) -> None:
             cancel_event.set()
 
+        # P2-7: import the shared error reporters lazily. cli.py registers this
+        # command from its module bottom (`_export_cmd.register(app)`), so a
+        # top-level `from allaganeye.cli import ...` would be circular; a local
+        # import matches how split/detect pull in their command impls.
+        from allaganeye.cli import _report_app_error, _report_unexpected_error
+
+        summary: ExportSummary
         original_handler = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, _sigint_handler)
         try:
@@ -254,6 +262,16 @@ def register(app: typer.Typer) -> None:
             )
             # P2-9: reflect filtered-out matches in the summary (was always 0).
             summary.skipped = skipped_count
+        except AllaganEyeError as e:
+            # P2-7: do NOT emit a summary here -- start_export treats any summary
+            # line as success (lib.rs) and would mask the error in the GUI. A
+            # clean stderr + mapped non-zero exit is the correct wire signal for
+            # a hard error.
+            _report_app_error(e, verbose=False, quiet=quiet, show_hint=False)
+            raise typer.Exit(code=e.exit_code) from None
+        except Exception:
+            _report_unexpected_error(verbose=False, quiet=quiet, show_hint=False)
+            raise typer.Exit(code=1) from None
         finally:
             signal.signal(signal.SIGINT, original_handler)
 

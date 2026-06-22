@@ -475,9 +475,7 @@ def test_export_json_reconfigures_stdout_utf8(app: typer.Typer, tmp_path: Path):
 
     metadata_path = _make_metadata(tmp_path)
     with (
-        patch.object(
-            click_testing._NamedTextIOWrapper, "reconfigure", spy_reconfigure
-        ),
+        patch.object(click_testing._NamedTextIOWrapper, "reconfigure", spy_reconfigure),
         patch(
             "allaganeye.commands.export.export_matches",
             return_value=ExportSummary(success=1),
@@ -551,3 +549,60 @@ def test_export_stdin_reads_utf8_buffer(app: typer.Typer, tmp_path: Path):
         )
     assert result.exit_code == 0, result.output
     assert str(captured["source_video"]) == non_ascii_source
+
+
+def test_export_maps_allagan_error_to_exit_code(app: typer.Typer, tmp_path: Path):
+    # P2-7: export alone did not catch AllaganEyeError -> raw traceback + exit 1.
+    # It must map to the error's exit code with a clean stderr (no traceback),
+    # like split/detect/debug-brightness.
+    from allaganeye.exceptions import VideoProcessingError
+
+    metadata_path = _make_metadata(tmp_path)
+    with patch(
+        "allaganeye.commands.export.export_matches",
+        side_effect=VideoProcessingError("ffmpeg boom"),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                str(metadata_path),
+                "--output-dir",
+                str(tmp_path),
+                "--codec",
+                "h264",
+                "--quiet",
+            ],
+        )
+    assert result.exit_code == 3  # VideoProcessingError.exit_code
+    assert "Error: ffmpeg boom" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_export_json_does_not_emit_summary_on_error(app: typer.Typer, tmp_path: Path):
+    # P2-7: in --json mode a hard error must NOT emit a summary line. start_export
+    # treats any summary line as success (lib.rs) and would mask the error in the
+    # GUI. The terminal signal is a non-zero exit + stderr, never a summary.
+    from allaganeye.exceptions import VideoProcessingError
+
+    metadata_path = _make_metadata(tmp_path)
+    with patch(
+        "allaganeye.commands.export.export_matches",
+        side_effect=VideoProcessingError("ffmpeg boom"),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                str(metadata_path),
+                "--output-dir",
+                str(tmp_path),
+                "--codec",
+                "h264",
+                "--json",
+            ],
+        )
+    assert result.exit_code == 3
+    # no summary line on stdout (stderr carries the error)
+    assert '"type": "summary"' not in result.stdout
+    assert '"type":"summary"' not in result.stdout
