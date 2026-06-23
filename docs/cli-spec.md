@@ -351,7 +351,7 @@ echo '<metadata-json>' | allaganeye export --stdin [...]
 | `--output-dir DIR` | (必須) | 出力先ディレクトリ (省略不可) |
 | `--codec copy\|h264` | `copy` | `copy` (FFmpeg `-c copy`、無劣化分割) または `h264` (NVENC / QSV / AMF / libx264 で再エンコード) |
 | `--concurrency N` | SKU テーブル値 | 同時 export スロット数を上書き (`enumerate_h264_encoders` が返す値のデフォルト: RTX 5090 → 3、RTX 4090/4080/4070 → 2、RTX 4060 / 不明 NVIDIA → 1、QSV / AMF / libx264 → 1) |
-| `--name-pattern PATTERN` | `{idx:03}_{type}_{start}.mp4` | 出力ファイル名テンプレート。使用可能トークン: `{idx}` / `{idx:03}` / `{type}` / `{start}` / `{date}` |
+| `--name-pattern PATTERN` | `{idx:03}_{type}_{start}.mp4` | 出力ファイル名テンプレート。使用可能トークン: `{idx}` / `{idx:03}` / `{type}` / `{start}` (MM-SS 形式。1 時間以上の場合は H-MM-SS、例: `1-23-41`) / `{date}` |
 | `--include I,J,K` | (すべて対象) | metadata の `matches[].index` (**1 始まり**) と照合する match フィルタ (カンマ区切り)。`--exclude` との併用時は `include - exclude` が有効集合 |
 | `--exclude I,J,K` | (なし) | metadata の `matches[].index` (**1 始まり**) と照合する除外フィルタ (カンマ区切り)。`type_override == "skip"` の match は本フラグに関係なく常に除外 |
 | `--quiet` | `false` | 進捗出力を抑制 (success/error 行は stderr に出力される)。`--json` と排他 |
@@ -408,8 +408,10 @@ ALLAGANEYE_EXPORT_CONCURRENCY=2 allaganeye export <metadata.json> --codec h264
 | コード | 意味 |
 | --- | --- |
 | 0 | 全 match 成功 (exclude された match を除く) |
-| 1 | 1 件以上の match が失敗 (部分失敗または全失敗) |
-| 2 | 入力エラー (metadata 読み込み失敗 / JSON 不正 / 出力ディレクトリ未存在) |
+| 1 | 1 件以上の match が失敗 (部分失敗または全失敗) または予期せぬ例外 |
+| 2 | 入力エラー (metadata 読み込み失敗 / JSON 不正 / `source` フィールド欠落 / `--concurrency <= 0` 等の引数不正)。出力ディレクトリは不在でも自動作成されるため exit 2 にはならない |
+| 3 | ffmpeg / IO エラー (VideoProcessingError 等の `AllaganEyeError` を exit code にマッピング) |
+| 5 | 設定値不正 (ConfigValidationError 等の `AllaganEyeError` を exit code にマッピング) |
 | 130 | SIGINT (Ctrl+C) によるキャンセル |
 
 ### Wire protocol (`--json` モード)
@@ -473,7 +475,7 @@ timestamp,brightness
 | 2 | 入力ファイル不正 |
 | 3 | FFmpeg / ffprobe エラー |
 | 4 | 試合境界が見つからない |
-| 5 | 設定値不正（パラメータの範囲外等） |
+| 5 | 設定値不正（パラメータの範囲外等）。`--interval <= 0` は ConfigValidationError (exit 5) で即終了 |
 | 7 | 同梱物欠損 (Portable ZIP integrity-manifest.json で listed file が missing / size 不一致) #668 |
 
 ### エラー表示 (#428 / #405 matrix v2)

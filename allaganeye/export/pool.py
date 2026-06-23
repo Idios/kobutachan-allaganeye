@@ -7,6 +7,7 @@ propagates to workers and kills in-flight ffmpeg processes. See spec section 4.4
 
 from __future__ import annotations
 
+import math
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -35,7 +36,7 @@ class ExportMatch:
     type_label: str  # "match" / "non_fl" / etc. -- used by name_pattern
 
 
-def _format_filename(m: ExportMatch, pattern: str, codec: str) -> str:
+def _format_filename(m: ExportMatch, pattern: str) -> str:
     """Render the output filename per ``pattern``.
 
     Tokens: ``{idx}`` / ``{idx:03}`` / ``{type}`` / ``{start}`` / ``{date}``.
@@ -53,10 +54,21 @@ def _format_filename(m: ExportMatch, pattern: str, codec: str) -> str:
 
 
 def _format_start_for_filename(seconds: float) -> str:
-    """mm-ss form (`:` is invalid in Windows filenames)."""
-    minutes = int(seconds // 60)
-    rem = int(seconds % 60)
-    return f"{minutes:02d}-{rem:02d}"
+    """H-MM-SS / MM-SS form (`:` is invalid in Windows filenames).
+
+    Mirrors gui/src/screens/ExportScreen.tsx ``formatStartForFilename`` so the
+    GUI preview and the CLI's actual output agree past the 1-hour mark
+    (audit P2-20). Non-finite / negative inputs clamp to 0.
+    """
+    if not math.isfinite(seconds) or seconds < 0:
+        seconds = 0.0
+    total = int(seconds)
+    h = total // 3600
+    m = (total % 3600) // 60
+    s = total % 60
+    if h > 0:
+        return f"{h}-{m:02d}-{s:02d}"
+    return f"{m:02d}-{s:02d}"
 
 
 def export_matches(
@@ -108,7 +120,7 @@ def export_matches(
             ) -> None:
                 progress_cb(ProgressEvent.fallback(_idx, src.value, dst.value, msg))
 
-            output_path = output_dir / _format_filename(m, name_pattern, codec)
+            output_path = output_dir / _format_filename(m, name_pattern)
             try:
                 result = run_export_attempt(
                     video=source_video,

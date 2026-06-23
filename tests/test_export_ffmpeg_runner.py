@@ -7,6 +7,7 @@ is_gpu_encoder_failure coverage, see #591/#761). Heavy mocking around subprocess
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -200,7 +201,11 @@ def test_run_export_attempt_cancel_event_kills_ffmpeg(
     """cancel_event が set されたら ffmpeg を kill して ExportError(kind='cancelled') raise."""
     proc = MagicMock()
     proc.stderr = MagicMock()
-    proc.stderr.readline = MagicMock(return_value=b"out_time_ms=1000000\n")
+    # Finite side_effect ending in b"" -- a real ffmpeg's stderr reaches EOF
+    # after kill(). A constant return_value (never b"") would make the reader
+    # thread's `iter(readline, b"")` spin forever and fill the queue (suite OOM);
+    # see test_reader_thread_stops_after_attempt_with_continuous_stderr.
+    proc.stderr.readline = MagicMock(side_effect=[b"out_time_ms=1000000\n", b""])
     proc.wait = MagicMock(return_value=-9)  # SIGKILL
     proc.returncode = -9
     mock_popen.return_value = proc
@@ -222,6 +227,125 @@ def test_run_export_attempt_cancel_event_kills_ffmpeg(
         )
     assert exc_info.value.kind == "cancelled"
     proc.kill.assert_called()
+
+
+# --- _run_single_attempt: cancel responsiveness on no-output stall (P2-40) ---
+
+
+def test_run_single_attempt_responds_to_cancel_when_no_output():
+    """P2-40: cancel must respond on a bounded cadence even when ffmpeg emits
+    nothing to stderr.
+
+    The old implementation blocked directly on ``proc.stderr.readline()`` and
+    only re-checked ``cancel_event`` after a line returned, so a stalled ffmpeg
+    (no output) ignored cancel until the next line or EOF. The reader-thread +
+    queue rearchitecture polls cancel every ~100ms via ``queue.get(timeout=...)``.
+
+    RED design (pytest-timeout is NOT installed, so the fake readline must not
+    block forever): ``readline`` blocks for a *bounded* 4s then returns b"" (EOF),
+    while ``cancel_event`` is set at ~0.3s.
+      - NEW code: the main loop sees cancel at ~0.3s -> ``proc.kill()`` -> returns
+        promptly (elapsed < 2.0, kill called).
+      - OLD code: first iteration checks cancel (not set yet) -> blocks in
+        ``readline`` for the full 4s (never re-checks cancel) -> gets b"" -> breaks
+        WITHOUT calling kill (elapsed ~4s, kill NOT called).
+    Assertions ``elapsed < 2.0`` + ``proc.kill.assert_called()`` therefore FAIL on
+    OLD and PASS on NEW, without ever hanging.
+    """
+    from allaganeye.export.ffmpeg_runner import _run_single_attempt
+
+    readline_released = threading.Event()
+
+    class BlockingStderr:
+        def readline(self) -> bytes:
+            # Bounded block: returns EOF after 4s so the OLD code terminates
+            # (slowly, wrong behavior) rather than hanging forever.
+            readline_released.wait(timeout=4.0)
+            return b""
+
+    proc = MagicMock()
+    proc.stderr = BlockingStderr()
+    proc.kill = MagicMock()
+    proc.wait = MagicMock(return_value=-9)
+
+    cancel_event = threading.Event()
+    timer = threading.Timer(0.3, cancel_event.set)
+    timer.start()
+
+    start = time.monotonic()
+    with patch("allaganeye.export.ffmpeg_runner.subprocess.Popen", return_value=proc):
+        _run_single_attempt(
+            ["ffmpeg"],
+            duration_s=100.0,
+            progress_cb=lambda *a: None,
+            cancel_event=cancel_event,
+        )
+    elapsed = time.monotonic() - start
+
+    timer.cancel()
+    readline_released.set()  # release the (daemon) reader thread for cleanup
+
+    assert elapsed < 2.0, f"cancel should be bounded, took {elapsed:.1f}s"
+    proc.kill.assert_called()
+
+
+# --- _run_single_attempt: reader thread must not outlive the attempt (P2-40 OOM) ---
+
+
+def test_reader_thread_stops_after_attempt_with_continuous_stderr():
+    """Regression: a stderr that never returns b"" (a stalled or continuously
+    chatty producer) must not leave the daemon reader thread spinning and
+    filling the queue after the attempt finishes -- that leaked unbounded memory
+    and OOM-crashed the whole test suite. A stop flag ends the pump.
+
+    Cleanup releases the fake reader unconditionally so that, even if the fix
+    regresses, this test only fails (thread still alive) instead of OOM-ing the
+    rest of the suite.
+    """
+    from allaganeye.export.ffmpeg_runner import _run_single_attempt
+
+    keep_emitting = threading.Event()
+    keep_emitting.set()
+
+    def fake_readline() -> bytes:
+        # Emit forever until cleanup clears the flag, then EOF (b"").
+        return b"noise\n" if keep_emitting.is_set() else b""
+
+    proc = MagicMock()
+    proc.stderr = MagicMock()
+    proc.stderr.readline = MagicMock(side_effect=fake_readline)
+    proc.kill = MagicMock()
+    proc.wait = MagicMock(return_value=-9)
+
+    cancel = threading.Event()
+    cancel.set()  # finish the attempt immediately
+
+    try:
+        with patch(
+            "allaganeye.export.ffmpeg_runner.subprocess.Popen", return_value=proc
+        ):
+            _run_single_attempt(
+                ["ffmpeg"],
+                duration_s=10.0,
+                progress_cb=lambda p, s: None,
+                cancel_event=cancel,
+            )
+        # With the stop flag, the reader winds down even though readline never
+        # returned b"" during the attempt. Poll briefly for it to exit.
+        deadline = time.monotonic() + 2.0
+        alive = True
+        while time.monotonic() < deadline:
+            alive = any(
+                t.name == "ffmpeg-stderr" and t.is_alive()
+                for t in threading.enumerate()
+            )
+            if not alive:
+                break
+            time.sleep(0.02)
+        assert not alive, "reader thread leaked after attempt (P2-40 OOM regression)"
+    finally:
+        keep_emitting.clear()  # release the fake reader so a regression can't OOM
+        time.sleep(0.05)
 
 
 # --- run_export_attempt: libx264 retry also fails ---
@@ -542,3 +666,226 @@ def test_run_export_attempt_nvdec_decode_failure_triggers_libx264_retry(
     # libx264 retry argv lacks -hwaccel
     second_argv = mock_popen.call_args_list[1].args[0]
     assert "-hwaccel" not in second_argv
+
+
+# --- run_export_attempt: partial file cleanup (P3 I-5) ---
+# Protective tests ensure the unlink logic fires on exactly the right paths.
+# Safety contract:
+#   (1) successful 1st attempt -> output NOT deleted (it's the real result)
+#   (2) GPU fail -> successful libx264 retry -> output NOT deleted
+#   (3) final failure (both attempts fail) -> partial IS deleted
+#   (4) cancel -> partial IS deleted
+
+
+def _make_proc(returncode: int, stderr_lines: list[bytes]) -> MagicMock:
+    """Build a fake subprocess.Popen return value."""
+    proc = MagicMock()
+    proc.stderr = MagicMock()
+    proc.stderr.readline = MagicMock(side_effect=[*stderr_lines, b""])
+    proc.wait = MagicMock(return_value=returncode)
+    proc.returncode = returncode
+    return proc
+
+
+@patch("allaganeye.export.ffmpeg_runner.subprocess.Popen")
+def test_partial_cleanup_success_1st_attempt_output_kept(
+    mock_popen: MagicMock, tmp_path: Path
+):
+    """I-5 safety (1): successful 1st attempt MUST NOT delete the output."""
+    output = tmp_path / "out.mp4"
+
+    def popen_side(*args, **kwargs):  # type: ignore[no-untyped-def]
+        output.write_bytes(b"real output")  # simulate ffmpeg writing the file
+        return _make_proc(0, [b"out_time_ms=1000000\n", b"progress=end\n"])
+
+    mock_popen.side_effect = popen_side
+
+    result = run_export_attempt(
+        video=tmp_path / "in.mp4",
+        start=0.0,
+        end=10.0,
+        output=output,
+        codec="h264",
+        encoder=H264Encoder.LIBX264,
+        progress_cb=lambda p, s: None,
+        fallback_cb=None,
+        cancel_event=threading.Event(),
+    )
+    assert result.encoder_used == H264Encoder.LIBX264.value
+    assert output.exists(), "output must NOT be deleted on success"
+
+
+@patch("allaganeye.export.ffmpeg_runner.subprocess.Popen")
+def test_partial_cleanup_gpu_fail_retry_success_output_kept(
+    mock_popen: MagicMock, tmp_path: Path
+):
+    """I-5 safety (2): GPU fail -> libx264 retry success -> output MUST NOT be deleted."""
+    output = tmp_path / "out.mp4"
+    call_count = 0
+
+    def popen_side(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # 1st attempt (NVENC): writes partial then fails
+            output.write_bytes(b"partial")
+            return _make_proc(
+                1, [b"[h264_nvenc @ 0xfff] No NVENC capable devices found\n"]
+            )
+        # 2nd attempt (libx264): rewrites and succeeds
+        output.write_bytes(b"real output")
+        return _make_proc(0, [b"out_time_ms=1000000\n", b"progress=end\n"])
+
+    mock_popen.side_effect = popen_side
+
+    result = run_export_attempt(
+        video=tmp_path / "in.mp4",
+        start=0.0,
+        end=10.0,
+        output=output,
+        codec="h264",
+        encoder=H264Encoder.NVENC,
+        progress_cb=lambda p, s: None,
+        fallback_cb=lambda f, t, m: None,
+        cancel_event=threading.Event(),
+    )
+    assert result.encoder_used == H264Encoder.LIBX264.value
+    assert output.exists(), "output must NOT be deleted after successful retry"
+
+
+@patch("allaganeye.export.ffmpeg_runner.subprocess.Popen")
+def test_partial_cleanup_final_failure_output_deleted(
+    mock_popen: MagicMock, tmp_path: Path
+):
+    """I-5 safety (3): both attempts fail -> partial output MUST be deleted."""
+    output = tmp_path / "out.mp4"
+    call_count = 0
+
+    def popen_side(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal call_count
+        call_count += 1
+        output.write_bytes(b"partial")  # simulate partial write on each attempt
+        if call_count == 1:
+            return _make_proc(
+                1, [b"[h264_nvenc @ 0xfff] No NVENC capable devices found\n"]
+            )
+        return _make_proc(1, [b"Error opening codec\n"])
+
+    mock_popen.side_effect = popen_side
+
+    with pytest.raises(ExportError) as exc_info:
+        run_export_attempt(
+            video=tmp_path / "in.mp4",
+            start=0.0,
+            end=10.0,
+            output=output,
+            codec="h264",
+            encoder=H264Encoder.NVENC,
+            progress_cb=lambda p, s: None,
+            fallback_cb=lambda f, t, m: None,
+            cancel_event=threading.Event(),
+        )
+    assert exc_info.value.kind == "ffmpeg.exit_failed"
+    assert not output.exists(), "partial output MUST be deleted on final failure"
+
+
+@patch("allaganeye.export.ffmpeg_runner.subprocess.Popen")
+def test_partial_cleanup_cancel_output_deleted(mock_popen: MagicMock, tmp_path: Path):
+    """I-5 safety (4): cancel -> partial output MUST be deleted."""
+    output = tmp_path / "out.mp4"
+    cancel = threading.Event()
+    cancel.set()  # cancel immediately
+
+    def popen_side(*args, **kwargs):  # type: ignore[no-untyped-def]
+        output.write_bytes(b"partial")  # simulate partial write
+        return _make_proc(-9, [])
+
+    mock_popen.side_effect = popen_side
+
+    with pytest.raises(ExportError) as exc_info:
+        run_export_attempt(
+            video=tmp_path / "in.mp4",
+            start=0.0,
+            end=10.0,
+            output=output,
+            codec="h264",
+            encoder=H264Encoder.LIBX264,
+            progress_cb=lambda p, s: None,
+            fallback_cb=None,
+            cancel_event=cancel,
+        )
+    assert exc_info.value.kind == "cancelled"
+    assert not output.exists(), "partial output MUST be deleted on cancel"
+
+
+# --- run_export_attempt: ownership-safe cleanup (Finding 1) ---
+# The I-5 cleanup must only remove files THIS attempt created. A pre-existing
+# valid output (left by a prior run, or a path that already held content) must
+# survive a failure/cancel where ffmpeg never rewrote it -- otherwise a transient
+# failure silently destroys a good file the attempt did not own.
+
+
+@patch("allaganeye.export.ffmpeg_runner.subprocess.Popen")
+def test_preexisting_output_preserved_on_failure(mock_popen: MagicMock, tmp_path: Path):
+    """Finding 1: a PRE-EXISTING output is NOT deleted when the attempt fails
+    without rewriting it (ownership-safe). The fake proc fails (returncode 1)
+    and never touches the file, so output_pre_existed is True and the unlink
+    must be skipped.
+    """
+    output = tmp_path / "out.mp4"
+    output.write_bytes(b"good prior output")  # exists BEFORE the attempt
+
+    def popen_side(*args, **kwargs):  # type: ignore[no-untyped-def]
+        # Note: does NOT write output -- ffmpeg failed before truncating it.
+        return _make_proc(1, [b"Error opening codec\n"])
+
+    mock_popen.side_effect = popen_side
+
+    with pytest.raises(ExportError) as exc_info:
+        run_export_attempt(
+            video=tmp_path / "in.mp4",
+            start=0.0,
+            end=10.0,
+            output=output,
+            codec="h264",
+            encoder=H264Encoder.LIBX264,  # avoid the fallback path
+            progress_cb=lambda p, s: None,
+            fallback_cb=None,
+            cancel_event=threading.Event(),
+        )
+    assert exc_info.value.kind == "ffmpeg.exit_failed"
+    assert output.exists(), "pre-existing output MUST NOT be deleted on failure"
+    assert output.read_bytes() == b"good prior output", "bytes must be unchanged"
+
+
+@patch("allaganeye.export.ffmpeg_runner.subprocess.Popen")
+def test_preexisting_output_preserved_on_cancel(mock_popen: MagicMock, tmp_path: Path):
+    """Finding 1: a PRE-EXISTING output is NOT deleted on cancel when the
+    attempt did not rewrite it.
+    """
+    output = tmp_path / "out.mp4"
+    output.write_bytes(b"good prior output")  # exists BEFORE the attempt
+    cancel = threading.Event()
+    cancel.set()  # cancel immediately
+
+    def popen_side(*args, **kwargs):  # type: ignore[no-untyped-def]
+        # Does NOT write output.
+        return _make_proc(-9, [])
+
+    mock_popen.side_effect = popen_side
+
+    with pytest.raises(ExportError) as exc_info:
+        run_export_attempt(
+            video=tmp_path / "in.mp4",
+            start=0.0,
+            end=10.0,
+            output=output,
+            codec="h264",
+            encoder=H264Encoder.LIBX264,
+            progress_cb=lambda p, s: None,
+            fallback_cb=None,
+            cancel_event=cancel,
+        )
+    assert exc_info.value.kind == "cancelled"
+    assert output.exists(), "pre-existing output MUST NOT be deleted on cancel"
+    assert output.read_bytes() == b"good prior output", "bytes must be unchanged"

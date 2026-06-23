@@ -6,6 +6,7 @@ Ported from gui/src-tauri/src/lib.rs (pre-#761 run_ffmpeg_export_attempt
 
 from __future__ import annotations
 
+import queue as _queue
 import subprocess
 import threading
 import time
@@ -16,6 +17,13 @@ from collections.abc import Callable
 from allaganeye.export.encoder import H264Encoder
 from allaganeye.export.schema import ExportError, ExportResult
 from allaganeye.ffmpeg_path import find_ffmpeg
+
+
+# P2-40: cap the stderr reader queue so a noisy/runaway ffmpeg can't grow it
+# without bound (memory). Round 1 FIX 2: under a flood the queue evicts the
+# OLDEST line (ring), so the recent tail -- where a fatal ffmpeg error appears --
+# survives, which is what matters for the error message.
+_STDERR_QUEUE_MAX = 4096
 
 
 _DECODE_HWACCEL_ARGS: dict[H264Encoder, tuple[str, ...]] = {
@@ -101,9 +109,12 @@ def _run_single_attempt(
 ) -> _AttemptOutcome:
     """Launch one ffmpeg process and wait for completion.
 
-    Reads stderr line by line, converts ``out_time_ms`` to a percent and
-    passes it to progress_cb. Checks ``cancel_event.is_set()`` on each read;
-    calls ``proc.kill()`` if set.
+    stderr is pumped by a daemon reader thread into a queue so the main loop
+    can poll ``cancel_event`` on a bounded cadence even when ffmpeg produces no
+    output (audit P2-40 -- the old direct ``readline()`` blocked indefinitely
+    and ignored cancel until the next line arrived). ``out_time_ms`` lines are
+    converted to a percent and passed to ``progress_cb``; the rest accumulate in
+    a bounded stderr tail buffer.
     """
     proc = subprocess.Popen(
         args,
@@ -112,38 +123,91 @@ def _run_single_attempt(
         stderr=subprocess.PIPE,
         bufsize=0,
     )
-    stderr_tail_bytes: list[bytes] = []
-    max_tail = 2048
-
     assert proc.stderr is not None
-    while True:
-        if cancel_event.is_set():
-            proc.kill()
-            break
-        line = proc.stderr.readline()
-        if not line:
-            break
-        line_str = line.decode("utf-8", errors="replace").rstrip("\n")
-        # Parse progress (ffmpeg -progress pipe:2 format)
-        if line_str.startswith("out_time_ms="):
-            raw = line_str.split("=", 1)[1]
-            us = int(raw) if raw.strip().lstrip("-").isdigit() else 0
-            seconds = us / 1_000_000.0
-            percent = (seconds / duration_s * 100.0) if duration_s > 0 else 0.0
-            percent = max(0.0, min(100.0, percent))
-            progress_cb(percent, "encoding")
-            continue
-        if line_str.strip() == "progress=end":
-            progress_cb(100.0, "done")
-            continue
-        # Accumulate remaining lines in stderr_tail buffer
-        stderr_tail_bytes.append(line)
-        if sum(len(b) for b in stderr_tail_bytes) > max_tail * 2:
-            # Keep only the tail
-            while sum(len(b) for b in stderr_tail_bytes) > max_tail:
-                stderr_tail_bytes.pop(0)
+    stderr = proc.stderr  # bind narrowed (non-None) handle for the reader closure
+    # P2-40: a bounded queue + stop flag keep the stderr reader thread from
+    # outliving the attempt or growing memory without bound. The pump exits on
+    # stderr EOF or when stop_reading is set (finally below); the main loop
+    # detects completion via reader.is_alive() + a drained queue, so a missing
+    # sentinel can't hang it. Round 1 FIX 2: under a flood the queue drops the
+    # OLDEST line (ring), so the recent tail -- where a fatal ffmpeg error
+    # appears -- is retained for the error message. Same bounded-drain concern
+    # as start_detect / #838.
+    line_q: _queue.Queue[bytes] = _queue.Queue(maxsize=_STDERR_QUEUE_MAX)
+    stop_reading = threading.Event()
 
-    returncode = proc.wait()
+    def _pump() -> None:
+        while not stop_reading.is_set():
+            line = stderr.readline()
+            if not line:  # EOF
+                break
+            try:
+                line_q.put_nowait(line)
+            except _queue.Full:
+                # Round 1 FIX 2: ring under flood -- drop the OLDEST queued line
+                # so the most recent output (where a fatal ffmpeg error appears)
+                # is retained. Dropping the NEW line instead would discard exactly
+                # the error tail we need for the failure message.
+                try:
+                    line_q.get_nowait()
+                except _queue.Empty:
+                    pass
+                try:
+                    line_q.put_nowait(line)
+                except _queue.Full:
+                    pass
+
+    reader = threading.Thread(target=_pump, name="ffmpeg-stderr", daemon=True)
+    reader.start()
+
+    stderr_tail_bytes: list[bytes] = []
+    # Round 1 FIX 5: track the running byte total so the tail trim is O(1)
+    # amortized instead of recomputing sum(len(b) ...) on every append/pop.
+    stderr_tail_total = 0
+    max_tail = 2048
+    try:
+        while True:
+            if cancel_event.is_set():
+                proc.kill()
+                break
+            try:
+                line = line_q.get(timeout=0.1)  # bounded: re-check cancel every 100ms
+            except _queue.Empty:
+                # Reader finished (EOF or stopped) and the queue is drained.
+                if not reader.is_alive() and line_q.empty():
+                    break
+                continue
+            line_str = line.decode("utf-8", errors="replace").rstrip("\n")
+            # Parse progress (ffmpeg -progress pipe:2 format)
+            if line_str.startswith("out_time_ms="):
+                raw = line_str.split("=", 1)[1]
+                us = int(raw) if raw.strip().lstrip("-").isdigit() else 0
+                seconds = us / 1_000_000.0
+                percent = (seconds / duration_s * 100.0) if duration_s > 0 else 0.0
+                percent = max(0.0, min(100.0, percent))
+                progress_cb(percent, "encoding")
+                continue
+            if line_str.strip() == "progress=end":
+                progress_cb(100.0, "done")
+                continue
+            # Accumulate remaining lines in stderr_tail buffer. Trim from the
+            # front once it grows past max_tail*2, keeping ~max_tail trailing
+            # bytes. The running total avoids an O(n) sum() on each iteration.
+            stderr_tail_bytes.append(line)
+            stderr_tail_total += len(line)
+            if stderr_tail_total > max_tail * 2:
+                while stderr_tail_total > max_tail:
+                    stderr_tail_total -= len(stderr_tail_bytes.pop(0))
+    finally:
+        stop_reading.set()
+
+    # Bounded wait: kill if the process doesn't exit promptly (cancel already
+    # killed above; this guards a stalled-but-EOF process).
+    try:
+        returncode = proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        returncode = proc.wait()
     tail = b"".join(stderr_tail_bytes).decode("utf-8", errors="replace")
     return _AttemptOutcome(returncode=returncode, stderr_tail=tail[-max_tail:])
 
@@ -213,12 +277,28 @@ def run_export_attempt(
     ffmpeg = find_ffmpeg()
     duration = end - start
     started = time.monotonic()
+    # Finding 1: record whether the output already existed BEFORE this attempt.
+    # The I-5 cleanup below skips any path that existed before the attempt, so
+    # we never delete a file the current attempt did not create.
+    # Round 1 FIX 3 (comment accuracy): with ffmpeg's `-y`, the output is
+    # truncated on open, so a pre-existing file that ffmpeg opened-then-failed
+    # is ALREADY destroyed (and may remain as a truncated partial) -- the gate
+    # cannot preserve its contents. The gate's real guarantee is narrower: it
+    # only protects a file ffmpeg failed to open at all. Leaving a truncated
+    # pre-existing partial in place is the accepted lesser-evil vs. unlinking a
+    # file ffmpeg never touched.
+    output_pre_existed = output.exists()
 
     # 1st attempt
     args = _build_ffmpeg_args(ffmpeg, video, start, end, output, codec, encoder)
     outcome = _run_single_attempt(args, duration, progress_cb, cancel_event)
 
     if cancel_event.is_set():
+        # P3 I-5: clean up the partial output on cancel so a half-written .mp4
+        # is not left behind. NEVER unlink on success returns. Finding 1: only
+        # remove a file THIS attempt created (a pre-existing one is preserved).
+        if not output_pre_existed:
+            output.unlink(missing_ok=True)
         raise ExportError(kind="cancelled", message="export cancelled by user")
 
     if outcome.returncode == 0:
@@ -242,6 +322,7 @@ def run_export_attempt(
                 H264Encoder.LIBX264,
                 f"{encoder.display_label} init failed; retrying with libx264",
             )
+        # NOTE: do NOT unlink here -- the retry uses -y to overwrite in place.
         retry_args = _build_ffmpeg_args(
             ffmpeg, video, start, end, output, codec, H264Encoder.LIBX264
         )
@@ -250,6 +331,10 @@ def run_export_attempt(
         )
 
         if cancel_event.is_set():
+            # P3 I-5: clean up partial from the retry attempt on cancel.
+            # Finding 1: only if this attempt created it (skip pre-existing).
+            if not output_pre_existed:
+                output.unlink(missing_ok=True)
             raise ExportError(kind="cancelled", message="export cancelled by user")
 
         if retry_outcome.returncode == 0:
@@ -260,6 +345,10 @@ def run_export_attempt(
                 encoder_used=H264Encoder.LIBX264.value,
                 fallback_from=encoder.value,
             )
+        # P3 I-5: final failure (libx264 retry also failed) -> remove partial.
+        # Finding 1: only if this attempt created it (skip pre-existing).
+        if not output_pre_existed:
+            output.unlink(missing_ok=True)
         raise ExportError(
             kind="ffmpeg.exit_failed",
             message=f"libx264 retry exited with {retry_outcome.returncode}: "
@@ -268,6 +357,10 @@ def run_export_attempt(
         )
 
     # Other failures (libx264 1st attempt fail, codec=copy fail, etc.)
+    # P3 I-5: remove the partial output left by a failed encode.
+    # Finding 1: only if this attempt created it (skip pre-existing).
+    if not output_pre_existed:
+        output.unlink(missing_ok=True)
     raise ExportError(
         kind="ffmpeg.exit_failed",
         message=f"ffmpeg ({encoder.value}) exited with {outcome.returncode}: "

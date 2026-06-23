@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import typer
 
-from allaganeye.exceptions import VideoProcessingError
+from allaganeye.exceptions import ConfigValidationError, VideoProcessingError
 from allaganeye.video.detector import (
     _SAMPLE_WIDTH,
     _SCOREBAR_ROI_X_END,
@@ -33,6 +33,8 @@ def run_debug_brightness(
     roi_mode: str | None = None,
 ) -> None:
     """Probe brightness at regular intervals and print CSV to stdout."""
+    if interval <= 0:
+        raise ConfigValidationError(f"--interval must be positive, got {interval}")
     metadata = probe_video(video_path)
     duration: float = metadata["duration"]
 

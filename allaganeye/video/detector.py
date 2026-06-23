@@ -1112,6 +1112,8 @@ def _scan_cpu(
 
 def _generate_timestamps(duration: float, interval: float) -> list[float]:
     """Generate sample timestamps from 0 to duration at given interval."""
+    if interval <= 0:
+        raise ValueError(f"interval must be positive, got {interval}")
     timestamps: list[float] = []
     t = 0.0
     while t < duration:
