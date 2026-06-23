@@ -3260,3 +3260,59 @@ def test_detect_masked_fallback_threads_brightness_hint(monkeypatch):
     )
     assert out is None
     assert seen["hint"] == {1.0: 5.0, 2.0: 200.0}
+
+
+def test_saturated_column_runs_gap_merge_and_empty():
+    import numpy as np
+    import cv2
+    from allaganeye.video.detector import (
+        _saturated_column_runs,
+        _SCOREBAR_SCAN_MAX_GAP_PX,
+    )
+
+    # Build a synthetic band with two saturated (high S, high V) regions.
+    # Using pure blue (BGR 255,0,0 = RGB 0,0,255) -> HSV S=255, V=255 (fully
+    # saturated, well above SAT_THRESHOLD=80 and VAL_THRESHOLD=60).
+    h, w = 20, 200
+    band = np.zeros((h, w, 3), dtype=np.uint8)
+    # Region A: columns 10..39 (inclusive) = 30 px
+    band[:, 10:40, 2] = 255  # RGB blue
+    # Region B: starts at 40 + _SCOREBAR_SCAN_MAX_GAP_PX (gap exactly MAX_GAP px
+    # apart from region A end at 39, so gap = (40 + MAX_GAP) - 39 - 1 = MAX_GAP)
+    # -> should merge into a single run.
+    b_start = 40 + _SCOREBAR_SCAN_MAX_GAP_PX
+    band[:, b_start : b_start + 40, 2] = 255  # RGB blue
+    runs = _saturated_column_runs(band, cv2)
+    assert len(runs) == 1
+    assert runs[0][0] <= 10 and runs[0][1] >= b_start + 39
+
+    # Gap of MAX_GAP+1 px -> NOT merged (exclusive boundary): two separate
+    # runs.  Teeth on the gap-merge condition: a regression widening the bound
+    # would wrongly merge these and fail this assertion.
+    w2 = 60 + 2 * _SCOREBAR_SCAN_MAX_GAP_PX
+    band2 = np.zeros((h, w2, 3), dtype=np.uint8)
+    band2[:, 10:40, 2] = 255  # region A: cols 10..39
+    c_start = 40 + _SCOREBAR_SCAN_MAX_GAP_PX + 1  # gap = MAX_GAP+1 (> MAX_GAP)
+    band2[:, c_start : c_start + 15, 2] = 255  # region C
+    runs2 = _saturated_column_runs(band2, cv2)
+    assert len(runs2) == 2
+
+    # All-black band -> no saturated runs
+    assert _saturated_column_runs(np.zeros((h, w, 3), dtype=np.uint8), cv2) == []
+
+
+def test_emblem_metrics_bright_vs_dark():
+    import numpy as np
+    import cv2
+    from allaganeye.video.detector import _emblem_metrics
+
+    # Bright saturated region: high R channel -> high sat in HSV
+    region = np.random.default_rng(0).integers(0, 256, (40, 40, 3), dtype=np.uint8)
+    region[:, :, 0] = 220  # raise R channel -> ensure some saturation and brightness
+    sat, edge = _emblem_metrics(region, cv2)
+    assert sat > 0.0 and edge > 0.0
+
+    # All-black -> no bright pixels -> mean_sat == 0.0
+    dark = np.zeros((40, 40, 3), dtype=np.uint8)
+    d_sat, _d_edge = _emblem_metrics(dark, cv2)
+    assert d_sat == 0.0

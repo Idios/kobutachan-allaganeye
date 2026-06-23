@@ -238,49 +238,13 @@ def _scorebar_saturated_runs(band: np.ndarray, cv2) -> list[tuple[int, int]]:
     `_SCOREBAR_SCAN_MIN_WIDTH_PX`..`_SCOREBAR_SCAN_MAX_WIDTH_PX` の幅のもののみ。
     """
     from allaganeye.video.detector import (
-        _SCOREBAR_SCAN_COL_RATIO,
-        _SCOREBAR_SCAN_MAX_GAP_PX,
         _SCOREBAR_SCAN_MAX_WIDTH_PX,
         _SCOREBAR_SCAN_MIN_WIDTH_PX,
-        _SCOREBAR_SCAN_SAT_THRESHOLD,
-        _SCOREBAR_SCAN_VAL_THRESHOLD,
+        _saturated_column_runs,
     )
-
-    bgr = cv2.cvtColor(band, cv2.COLOR_RGB2BGR)
-    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-    sat = hsv[:, :, 1].astype(np.float32)
-    val = hsv[:, :, 2].astype(np.float32)
-    pixel_mask = (sat > _SCOREBAR_SCAN_SAT_THRESHOLD) & (
-        val > _SCOREBAR_SCAN_VAL_THRESHOLD
-    )
-    col_saturated = pixel_mask.mean(axis=0) >= _SCOREBAR_SCAN_COL_RATIO
-
-    width = band.shape[1]
-    raw_runs: list[tuple[int, int]] = []
-    i = 0
-    while i < width:
-        if col_saturated[i]:
-            j = i
-            while j < width and col_saturated[j]:
-                j += 1
-            raw_runs.append((i, j - 1))
-            i = j
-        else:
-            i += 1
-
-    if not raw_runs:
-        return []
-
-    merged: list[tuple[int, int]] = [raw_runs[0]]
-    for start, end in raw_runs[1:]:
-        prev_start, prev_end = merged[-1]
-        if start - prev_end - 1 <= _SCOREBAR_SCAN_MAX_GAP_PX:
-            merged[-1] = (prev_start, end)
-        else:
-            merged.append((start, end))
 
     runs: list[tuple[int, int]] = []
-    for start, end in merged:
+    for start, end in _saturated_column_runs(band, cv2):
         span_width = end - start + 1
         if _SCOREBAR_SCAN_MIN_WIDTH_PX <= span_width <= _SCOREBAR_SCAN_MAX_WIDTH_PX:
             runs.append((start, end))
@@ -300,6 +264,7 @@ def _emblem_and_margin(
     from allaganeye.video.detector import (
         _EMBLEM_EDGE_THRESHOLD,
         _EMBLEM_SAT_THRESHOLD,
+        _emblem_metrics,
     )
 
     min_ratio: float | None = None
@@ -307,22 +272,7 @@ def _emblem_and_margin(
         region = frame[y1:y2, x1:x2, :]
         if region.size == 0:
             return None
-        bgr = cv2.cvtColor(region, cv2.COLOR_RGB2BGR)
-        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-
-        val = hsv[:, :, 2].astype(np.float32)
-        sat = hsv[:, :, 1].astype(np.float32)
-        bright_mask = val > 30
-        if bright_mask.sum() > 5:
-            mean_sat = float(sat[bright_mask].mean())
-        else:
-            mean_sat = 0.0
-
-        sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-        sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-        edge_density = float(np.sqrt(sobel_x**2 + sobel_y**2).mean())
-
+        mean_sat, edge_density = _emblem_metrics(region, cv2)
         if mean_sat <= _EMBLEM_SAT_THRESHOLD or edge_density <= _EMBLEM_EDGE_THRESHOLD:
             return None
         ratio = min(

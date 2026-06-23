@@ -1463,6 +1463,75 @@ def _probe_frame_rgb_hires(video_path: Path, timestamp: float) -> bytes | None:
     return result.stdout[:rgb_size]
 
 
+def _saturated_column_runs(band: np.ndarray, cv2_module) -> list[tuple[int, int]]:
+    """Gap-merged saturated column runs of a (Hb, W, 3) RGB band.
+
+    Shared V2 scorebar geometry core: per-pixel HSV sat/val mask -> per-column
+    saturated fraction >= ``_SCOREBAR_SCAN_COL_RATIO`` -> contiguous runs bridged
+    across gaps <= ``_SCOREBAR_SCAN_MAX_GAP_PX``.  Returns merged ``(x_left,
+    x_right)`` inclusive runs ascending, BEFORE any width-gate / center-straddle
+    selection, so ``_find_scorebar_horizontal_range`` and
+    ``capture_region._scorebar_saturated_runs`` apply their own post-selection
+    on identical input (single source of truth, #842 P2-6).
+    """
+    bgr = cv2_module.cvtColor(band, cv2_module.COLOR_RGB2BGR)
+    hsv = cv2_module.cvtColor(bgr, cv2_module.COLOR_BGR2HSV)
+    sat = hsv[:, :, 1].astype(np.float32)
+    val = hsv[:, :, 2].astype(np.float32)
+    pixel_mask = (sat > _SCOREBAR_SCAN_SAT_THRESHOLD) & (
+        val > _SCOREBAR_SCAN_VAL_THRESHOLD
+    )
+    col_saturated = pixel_mask.mean(axis=0) >= _SCOREBAR_SCAN_COL_RATIO
+
+    width = band.shape[1]
+    raw_runs: list[tuple[int, int]] = []
+    i = 0
+    while i < width:
+        if col_saturated[i]:
+            j = i
+            while j < width and col_saturated[j]:
+                j += 1
+            raw_runs.append((i, j - 1))
+            i = j
+        else:
+            i += 1
+    if not raw_runs:
+        return []
+
+    merged: list[tuple[int, int]] = [raw_runs[0]]
+    for start, end in raw_runs[1:]:
+        prev_start, prev_end = merged[-1]
+        if start - prev_end - 1 <= _SCOREBAR_SCAN_MAX_GAP_PX:
+            merged[-1] = (prev_start, end)
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _emblem_metrics(region: np.ndarray, cv2_module) -> tuple[float, float]:
+    """(mean_sat_of_bright_pixels, sobel_edge_density) for one emblem region.
+
+    Shared core of the 3-point emblem AND (#842 P2-6).  ``region`` must be a
+    non-empty (h, w, 3) RGB uint8 array.  Bright pixels = HSV value > 30; mean
+    saturation over them (0.0 if <= 5 bright pixels).  Edge density = mean Sobel
+    magnitude (CV_64F, ksize=3) of the grayscale region.
+    """
+    bgr = cv2_module.cvtColor(region, cv2_module.COLOR_RGB2BGR)
+    hsv = cv2_module.cvtColor(bgr, cv2_module.COLOR_BGR2HSV)
+    gray = cv2_module.cvtColor(bgr, cv2_module.COLOR_BGR2GRAY)
+    val = hsv[:, :, 2].astype(np.float32)
+    sat = hsv[:, :, 1].astype(np.float32)
+    bright_mask = val > 30
+    if bright_mask.sum() > 5:
+        mean_sat = float(sat[bright_mask].mean())
+    else:
+        mean_sat = 0.0
+    sobel_x = cv2_module.Sobel(gray, cv2_module.CV_64F, 1, 0, ksize=3)
+    sobel_y = cv2_module.Sobel(gray, cv2_module.CV_64F, 0, 1, ksize=3)
+    edge_density = float(np.sqrt(sobel_x**2 + sobel_y**2).mean())
+    return mean_sat, edge_density
+
+
 def _find_scorebar_horizontal_range(raw_rgb: bytes) -> tuple[int, int] | None:
     """Detect horizontal extent [x_left, x_right] of the FL scorebar.
 
@@ -1499,39 +1568,9 @@ def _find_scorebar_horizontal_range(raw_rgb: bytes) -> tuple[int, int] | None:
     frame = np.frombuffer(raw_rgb, dtype=np.uint8).reshape(height, width, 3)
 
     top = frame[_SCOREBAR_SCAN_Y_START:_SCOREBAR_SCAN_Y_END, :, :]
-    bgr = cv2.cvtColor(top, cv2.COLOR_RGB2BGR)
-    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-    sat = hsv[:, :, 1].astype(np.float32)
-    val = hsv[:, :, 2].astype(np.float32)
-
-    pixel_mask = (sat > _SCOREBAR_SCAN_SAT_THRESHOLD) & (
-        val > _SCOREBAR_SCAN_VAL_THRESHOLD
-    )
-    col_fraction = pixel_mask.mean(axis=0)
-    col_saturated = col_fraction >= _SCOREBAR_SCAN_COL_RATIO
-
-    raw_runs: list[tuple[int, int]] = []
-    i = 0
-    while i < width:
-        if col_saturated[i]:
-            j = i
-            while j < width and col_saturated[j]:
-                j += 1
-            raw_runs.append((i, j - 1))
-            i = j
-        else:
-            i += 1
-
-    if not raw_runs:
+    merged = _saturated_column_runs(top, cv2)
+    if not merged:
         return None
-
-    merged: list[tuple[int, int]] = [raw_runs[0]]
-    for start, end in raw_runs[1:]:
-        prev_start, prev_end = merged[-1]
-        if start - prev_end - 1 <= _SCOREBAR_SCAN_MAX_GAP_PX:
-            merged[-1] = (prev_start, end)
-        else:
-            merged.append((start, end))
 
     # The FL scorebar is horizontally centered, so the candidate is the run
     # straddling screen center -- NOT merely the longest run.  Selecting the
@@ -1572,24 +1611,7 @@ def _emblem_and_check(
     """
     for name, x1, y1, x2, y2 in positions:
         region = frame[y1:y2, x1:x2, :]
-        bgr = cv2_module.cvtColor(region, cv2_module.COLOR_RGB2BGR)
-        hsv = cv2_module.cvtColor(bgr, cv2_module.COLOR_BGR2HSV)
-        gray = cv2_module.cvtColor(bgr, cv2_module.COLOR_BGR2GRAY)
-
-        # Saturation of bright pixels (exclude very dark pixels)
-        val = hsv[:, :, 2].astype(np.float32)
-        sat = hsv[:, :, 1].astype(np.float32)
-        bright_mask = val > 30
-        if bright_mask.sum() > 5:
-            mean_sat = float(sat[bright_mask].mean())
-        else:
-            mean_sat = 0.0
-
-        # Edge density (Sobel magnitude)
-        sobel_x = cv2_module.Sobel(gray, cv2_module.CV_64F, 1, 0, ksize=3)
-        sobel_y = cv2_module.Sobel(gray, cv2_module.CV_64F, 0, 1, ksize=3)
-        edge_density = float(np.sqrt(sobel_x**2 + sobel_y**2).mean())
-
+        mean_sat, edge_density = _emblem_metrics(region, cv2_module)
         if mean_sat <= _EMBLEM_SAT_THRESHOLD or edge_density <= _EMBLEM_EDGE_THRESHOLD:
             logger.debug(
                 "scorebar_v2 (%s): %s x=%d..%d sat=%.1f edge=%.1f -> fail",
