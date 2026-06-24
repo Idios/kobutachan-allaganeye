@@ -1025,3 +1025,42 @@ class TestGpuBrightnessParity:
         sig = inspect.signature(gpu.scan_gpu)
         assert "region" in sig.parameters
         assert sig.parameters["region"].default is FULL_FRAME
+
+
+class TestCheckGpuUsage:
+    """_check_gpu_usage は honesty 原則: cuvid 実 decoder 名一致のみ "active" と
+    断言し、hwaccel コマンドエコーによる substring 一致は "requested (unconfirmed)"
+    と正直に記す (#842 P3)。"""
+
+    def test_check_gpu_usage_d3d11va_does_not_overclaim(self, caplog):
+        import logging
+
+        from allaganeye.video.gpu_detector import _check_gpu_usage
+
+        stderr = "ffmpeg ... -hwaccel d3d11va -c:v ... \nframe= 100 ..."
+        with caplog.at_level(logging.INFO):
+            _check_gpu_usage(stderr, "h264", None)
+        text = " ".join(r.message for r in caplog.records).lower()
+        assert "active (d3d11va)" not in text  # no over-claim
+        assert "requested" in text or "unconfirmed" in text  # honest wording
+
+    def test_check_gpu_usage_cuvid_confirms_active(self, caplog):
+        import logging
+
+        from allaganeye.video.gpu_detector import _check_gpu_usage
+
+        with caplog.at_level(logging.INFO):
+            _check_gpu_usage("Using h264_cuvid decoder ...", "h264", "h264_cuvid")
+        assert any("active" in r.message.lower() for r in caplog.records)
+
+    def test_check_gpu_usage_no_marker_warns_cpu(self, caplog):
+        import logging
+
+        from allaganeye.video.gpu_detector import _check_gpu_usage
+
+        with caplog.at_level(logging.WARNING):
+            _check_gpu_usage("plain software decode log", "h264", None)
+        assert any(
+            "cpu" in r.message.lower() or "not active" in r.message.lower()
+            for r in caplog.records
+        )
