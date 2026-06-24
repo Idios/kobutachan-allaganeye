@@ -357,14 +357,24 @@ def _classify_blackout_localize(
         ]
         if pre_re_ts:
             _, _, pre_re_loc = _probe_scorebar_context(
-                video_path, pre_re_ts, height, workers, with_localize=True
+                video_path,
+                pre_re_ts,
+                height,
+                workers,
+                with_localize=True,
+                with_lowres=False,
             )
             pre_re = _majority_scorebar(pre_re_loc)
             if pre_re is not None:
                 pre_has = pre_re
         if post_re_ts:
             _, _, post_re_loc = _probe_scorebar_context(
-                video_path, post_re_ts, height, workers, with_localize=True
+                video_path,
+                post_re_ts,
+                height,
+                workers,
+                with_localize=True,
+                with_lowres=False,
             )
             post_re = _majority_scorebar(post_re_loc)
             if post_re is not None:

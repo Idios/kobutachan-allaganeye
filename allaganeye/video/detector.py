@@ -1931,7 +1931,7 @@ _BORDERLINE_SPAN_CAP_FRACTION = 1.5
 """borderline pseudo-region (#576 A5) 合計長の上限 (total_duration 比、#842 P2-4)。
 
 健全な OBS 録画でも brightness 15-55 の borderline frame は多く、実測 (2026-06-24)
-で raw_span は duration の 15-50% に達する (obs-20260118: 50.1%)。一方 brightness
+で raw_span は duration の 13-50% に達する (5 baseline 実測、最大 obs-20260118: 50.1%)。一方 brightness
 15-55 の待機画面が支配的な pathological 録画では raw_frac が ~200% に達し Pass 2
 probe が非有界に増える。cap = この値 x total_duration。1.5 は実測最大 50% の 3x
 margin で、未検証の長尺/暗め録画も clip せず pathological のみ捕捉する。超過分は
