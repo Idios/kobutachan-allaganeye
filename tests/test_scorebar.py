@@ -1405,7 +1405,9 @@ def test_classify_localize_truth_table(monkeypatch):
 
     calls = {"n": 0}
 
-    def fake_probe(video, ts, height, workers, *, with_localize=False):
+    def fake_probe(
+        video, ts, height, workers, *, with_localize=False, with_lowres=True
+    ):
         # pre call first, post call second (region_width re-probe not triggered
         # unless both not-True).
         calls["n"] += 1
@@ -1426,7 +1428,7 @@ def test_classify_localize_both_present_is_in_match(monkeypatch):
     monkeypatch.setattr(
         sb,
         "_probe_scorebar_context",
-        lambda v, ts, h, w, *, with_localize=False: (
+        lambda v, ts, h, w, *, with_localize=False, with_lowres=True: (
             [None] * len(ts),
             [b"f"] * len(ts),
             [True] * len(ts),
@@ -1445,7 +1447,7 @@ def test_classify_localize_both_absent_is_non_fl(monkeypatch):
     monkeypatch.setattr(
         sb,
         "_probe_scorebar_context",
-        lambda v, ts, h, w, *, with_localize=False: (
+        lambda v, ts, h, w, *, with_localize=False, with_lowres=True: (
             [None] * len(ts),
             [b"f"] * len(ts),
             [False] * len(ts),
@@ -1470,7 +1472,9 @@ def test_classify_localize_reprobe_rescues_to_boundary(monkeypatch):
     # call 1 pre absent, call 2 post absent, call 3 pre_re present, call 4 post_re absent
     per_call_present = {1: False, 2: False, 3: True, 4: False}
 
-    def fake_probe(video, ts, height, workers, *, with_localize=False):
+    def fake_probe(
+        video, ts, height, workers, *, with_localize=False, with_lowres=True
+    ):
         calls["n"] += 1
         present = per_call_present[calls["n"]]
         return ([None] * len(ts), [b"f"] * len(ts), [present] * len(ts))
@@ -1494,7 +1498,7 @@ def test_classify_localize_all_none_is_unknown(monkeypatch):
     monkeypatch.setattr(
         sb,
         "_probe_scorebar_context",
-        lambda v, ts, h, w, *, with_localize=False: (
+        lambda v, ts, h, w, *, with_localize=False, with_lowres=True: (
             [None] * len(ts),
             [b"f"] * len(ts),
             [None] * len(ts),
@@ -1543,7 +1547,7 @@ def test_classify_blackout_obs_does_not_call_localize(monkeypatch):
     monkeypatch.setattr(
         sb,
         "_probe_scorebar_context",
-        lambda v, ts, h, w, *, with_localize=False: (
+        lambda v, ts, h, w, *, with_localize=False, with_lowres=True: (
             [False] * len(ts),
             [b"f"] * len(ts),
             [None] * len(ts),
@@ -1580,7 +1584,9 @@ def test_merge_gap_probe_uses_localize_path(monkeypatch):
 
     captured = {}
 
-    def fake_probe(video, points, height, workers, *, with_localize=False):
+    def fake_probe(
+        video, points, height, workers, *, with_localize=False, with_lowres=True
+    ):
         captured["with_localize"] = with_localize
         # gap shows no scorebar by either signal -> eligible to merge.
         return ([None] * len(points), [b"f"] * len(points), [False] * len(points))
@@ -1615,3 +1621,61 @@ def test_classify_blackout_localize_selector_routes(monkeypatch):
         sb.classify_blackout(Path("x.mp4"), (10.0, 12.0), 100.0, 180, localize=False)
         != "LOCALIZED"
     )
+
+
+# --- T5/T6: _probe_scorebar_context with_lowres + logger ---
+
+
+def test_probe_scorebar_context_with_lowres_false_skips_lowres(monkeypatch):
+    """with_lowres=False in v2 mode: low-res probe not called, result from hi-res."""
+    from unittest.mock import MagicMock
+    from pathlib import Path
+    from allaganeye.video import scorebar as sb
+
+    lo = MagicMock(return_value=b"\x00" * 10)
+    hi = MagicMock(return_value=b"\x00" * 10)
+    monkeypatch.setattr(sb, "_probe_frame_rgb", lo)
+    monkeypatch.setattr(sb, "_probe_frame_rgb_hires", hi)
+    monkeypatch.setattr(sb, "_has_scorebar_v2", lambda raw: True)  # opencv present
+    monkeypatch.setattr(sb, "_SCOREBAR_METHOD", "v2")
+    res, _frames, _ = sb._probe_scorebar_context(
+        Path("x.mkv"), [1.0, 2.0], 180, 2, with_lowres=False
+    )
+    lo.assert_not_called()  # low-res skipped (normal path, opencv present)
+    assert res == [True, True]  # decided by hi-res (bit-exact)
+
+
+def test_probe_scorebar_context_lazy_lowres_when_v2_none(monkeypatch):
+    """with_lowres=False + V2 returns None (no opencv): lazy low-res probe fires."""
+    from unittest.mock import MagicMock
+    from pathlib import Path
+    from allaganeye.video import scorebar as sb
+
+    lo = MagicMock(return_value=b"\x00" * 10)
+    monkeypatch.setattr(sb, "_probe_frame_rgb", lo)
+    monkeypatch.setattr(sb, "_probe_frame_rgb_hires", MagicMock(return_value=b""))
+    monkeypatch.setattr(sb, "_has_scorebar_v2", lambda raw: None)  # opencv absent
+    monkeypatch.setattr(sb, "_has_scorebar", lambda raw, h: False)  # V1 fallback
+    monkeypatch.setattr(sb, "_SCOREBAR_METHOD", "v2")
+    res, _, _ = sb._probe_scorebar_context(
+        Path("x.mkv"), [1.0], 180, 1, with_lowres=False
+    )
+    lo.assert_called()  # lazily probed for V1 fallback (no-opencv preserved)
+    assert res == [False]
+
+
+def test_probe_scorebar_context_logs_probe_failure(monkeypatch, caplog):
+    """VideoProcessingError in probe -> debug-logged (not silently swallowed)."""
+    import logging
+    from pathlib import Path
+    from allaganeye.exceptions import VideoProcessingError
+    from allaganeye.video import scorebar as sb
+
+    def boom(*a, **k):
+        raise VideoProcessingError("ffmpeg not found")
+
+    monkeypatch.setattr(sb, "_probe_frame_rgb", boom)
+    monkeypatch.setattr(sb, "_probe_frame_rgb_hires", boom)
+    with caplog.at_level(logging.DEBUG, logger="allaganeye.video.scorebar"):
+        sb._probe_scorebar_context(Path("x.mkv"), [1.0], 180, 1)
+    assert any("probe" in r.message.lower() for r in caplog.records)

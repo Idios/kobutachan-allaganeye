@@ -59,6 +59,7 @@ def _probe_scorebar_context(
     workers: int | None,
     *,
     with_localize: bool = False,
+    with_lowres: bool = True,
 ) -> tuple[list[bool | None], list[bytes | None], list[bool | None]]:
     """Probe multiple timestamps and return has_scorebar + raw frames.
 
@@ -76,18 +77,29 @@ def _probe_scorebar_context(
     and downstream merge logic handle isolated false negatives.
 
     Duplicate timestamps are probed only once; results are shared.
+
+    ``with_lowres=False``: callers that discard the returned raw frames
+    (merge-probe / re-probe) skip the always-on low-res probe in V2 mode.
+    Low-res is still needed for the V1 fallback when V2 returns None (no
+    opencv), so it is probed lazily for just those timestamps -> bit-exact.
     """
     max_workers = _resolve_workers(workers)
     use_v2 = _SCOREBAR_METHOD == "v2"
     unique_ts = sorted(set(timestamps))
     scorebar_results: dict[float, bool | None] = {}
-    raw_frames: dict[float, bytes | None] = {}
+    raw_frames: dict[float, bytes | None] = {t: None for t in unique_ts}
+
+    # V2 + with_lowres=False: skip upfront low-res (callers discard it).
+    # V1 fallback path lazily probes below only if V2 returns None.
+    probe_lowres_upfront = with_lowres or not use_v2
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        # Always probe low-res for static screen detection (classify_blackout)
-        lo_futures = {
-            pool.submit(_probe_frame_rgb, video_path, t, height): t for t in unique_ts
-        }
+        lo_futures: dict[Future[bytes | None], float] = {}
+        if probe_lowres_upfront:
+            lo_futures = {
+                pool.submit(_probe_frame_rgb, video_path, t, height): t
+                for t in unique_ts
+            }
         # V2: also probe high-res for emblem detection
         hi_futures: dict[Future[bytes | None], float] = {}
         if use_v2:
@@ -99,10 +111,10 @@ def _probe_scorebar_context(
         for future in as_completed(lo_futures):
             t = lo_futures[future]
             try:
-                raw = future.result()
-            except VideoProcessingError:
-                raw = None
-            raw_frames[t] = raw
+                raw_frames[t] = future.result()
+            except VideoProcessingError as exc:
+                logger.debug("scorebar probe failed at t=%.2f: %s", t, exc)
+                raw_frames[t] = None
 
         # Collect high-res results and run V2 detection
         hi_raws: dict[float, bytes | None] = {}
@@ -110,10 +122,10 @@ def _probe_scorebar_context(
             for future in as_completed(hi_futures):
                 t = hi_futures[future]
                 try:
-                    raw = future.result()
-                except VideoProcessingError:
-                    raw = None
-                hi_raws[t] = raw
+                    hi_raws[t] = future.result()
+                except VideoProcessingError as exc:
+                    logger.debug("scorebar probe failed at t=%.2f: %s", t, exc)
+                    hi_raws[t] = None
 
         # Determine scorebar results.
         # V2 True -> True (high specificity, eliminates lobby FP).
@@ -123,16 +135,27 @@ def _probe_scorebar_context(
         #   because classify_blackout's 3-frame majority vote and
         #   downstream merge logic handle isolated FN).
         # V2 None -> V1 (opencv not installed).
+        need_v1: list[float] = []
         for t in unique_ts:
             if use_v2:
                 v2_result = _has_scorebar_v2(hi_raws.get(t))
                 if v2_result is not None:
                     scorebar_results[t] = v2_result
                 else:
-                    # V2 failed (e.g. no opencv) -> use V1
-                    scorebar_results[t] = _has_scorebar(raw_frames[t], height)
+                    need_v1.append(t)
             else:
                 scorebar_results[t] = _has_scorebar(raw_frames[t], height)
+
+        # V1 fallback: lazily probe low-res for timestamps where V2 returned
+        # None (opencv absent) and we skipped the upfront low-res probe.
+        for t in need_v1:
+            if not probe_lowres_upfront and raw_frames.get(t) is None:
+                try:
+                    raw_frames[t] = _probe_frame_rgb(video_path, t, height)
+                except VideoProcessingError as exc:
+                    logger.debug("lazy scorebar probe failed at t=%.2f: %s", t, exc)
+                    raw_frames[t] = None
+            scorebar_results[t] = _has_scorebar(raw_frames[t], height)
 
         # localize-present from the hi-res frames already decoded for v2
         # (additive; OBS production passes with_localize=False -> all None,
@@ -474,11 +497,11 @@ def classify_blackout(
         post_re_results: list[bool | None] = []
         if pre_re_timestamps:
             pre_re_results, _, _ = _probe_scorebar_context(
-                video_path, pre_re_timestamps, height, workers
+                video_path, pre_re_timestamps, height, workers, with_lowres=False
             )
         if post_re_timestamps:
             post_re_results, _, _ = _probe_scorebar_context(
-                video_path, post_re_timestamps, height, workers
+                video_path, post_re_timestamps, height, workers, with_lowres=False
             )
         pre_has_re = _majority_scorebar(pre_re_results)
         post_has_re = _majority_scorebar(post_re_results)
@@ -745,6 +768,7 @@ def _merge_boundary_pairs(
                         height,
                         workers,
                         with_localize=True,
+                        with_lowres=False,
                     )
                 else:
                     probe_signal, _, _ = _probe_scorebar_context(
@@ -752,6 +776,7 @@ def _merge_boundary_pairs(
                         probe_points,
                         height,
                         workers,
+                        with_lowres=False,
                     )
                 all_valid = all(r is not None for r in probe_signal)
                 any_scorebar = any(r is True for r in probe_signal)
