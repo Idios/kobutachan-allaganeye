@@ -1898,7 +1898,7 @@ _BORDERLINE_SPAN_CAP_FRACTION = 1.5
 健全な OBS 録画でも brightness 15-55 の borderline frame は多く、実測 (2026-06-24)
 で raw_span は duration の 15-50% に達する (obs-20260118: 50.1%)。一方 brightness
 15-55 の待機画面が支配的な pathological 録画では raw_frac が ~200% に達し Pass 2
-probe が非有界に増える。cap = この値 × total_duration。1.5 は実測最大 50% の 3x
+probe が非有界に増える。cap = この値 x total_duration。1.5 は実測最大 50% の 3x
 margin で、未検証の長尺/暗め録画も clip せず pathological のみ捕捉する。超過分は
 drop + warning、本体 blackout 抽出 (``< blackout_threshold``) は不変。
 """
@@ -2016,7 +2016,7 @@ def _borderline_pseudo_regions(
         span = end - start
         if running + span > cap_span:
             logger.warning(
-                "borderline pseudo-region 合計長が cap (%.0fs = %.1f×duration) を"
+                "borderline pseudo-region 合計長が cap (%.0fs = %.1fx duration) を"
                 "超過: %d 領域中 %d を drop (待機画面が支配的な録画の Pass 2 probe "
                 "を有界化)。",
                 cap_span,
