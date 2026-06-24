@@ -1892,6 +1892,17 @@ Pass 1 samples spaced 3s apart.  Pass 2's own +-_REFINE_WINDOW (5s)
 further extends the probe window, so effective coverage is +-8s.
 """
 
+_BORDERLINE_SPAN_CAP_FRACTION = 1.5
+"""borderline pseudo-region (#576 A5) 合計長の上限 (total_duration 比、#842 P2-4)。
+
+健全な OBS 録画でも brightness 15-55 の borderline frame は多く、実測 (2026-06-24)
+で raw_span は duration の 15-50% に達する (obs-20260118: 50.1%)。一方 brightness
+15-55 の待機画面が支配的な pathological 録画では raw_frac が ~200% に達し Pass 2
+probe が非有界に増える。cap = この値 × total_duration。1.5 は実測最大 50% の 3x
+margin で、未検証の長尺/暗め録画も clip せず pathological のみ捕捉する。超過分は
+drop + warning、本体 blackout 抽出 (``< blackout_threshold``) は不変。
+"""
+
 _REFINE_INTERVAL = 0.25
 """Fine interval for 2nd-pass re-probing of blackout candidates."""
 
@@ -1988,11 +1999,35 @@ def _borderline_pseudo_regions(
     """
     radius = _BORDERLINE_REFINE_RADIUS
     upper = _TRANSITION_THRESHOLD
-    return [
+    regions = [
         (max(0.0, t - radius), min(total_duration, t + radius))
         for t, b in results.items()
         if blackout_threshold <= b < upper
     ]
+    # #842 P2-4: total-length cap (fraction of duration). Prevents Pass 2 probe
+    # blow-up on recordings where borderline (15-55) wait screens dominate.
+    # Accumulate in start order, drop the overflow. Healthy recordings
+    # (raw_frac <= 50% measured) never hit the cap -> bit-exact.
+    cap_span = _BORDERLINE_SPAN_CAP_FRACTION * total_duration
+    regions.sort()
+    capped: list[tuple[float, float]] = []
+    running = 0.0
+    for start, end in regions:
+        span = end - start
+        if running + span > cap_span:
+            logger.warning(
+                "borderline pseudo-region 合計長が cap (%.0fs = %.1f×duration) を"
+                "超過: %d 領域中 %d を drop (待機画面が支配的な録画の Pass 2 probe "
+                "を有界化)。",
+                cap_span,
+                _BORDERLINE_SPAN_CAP_FRACTION,
+                len(regions),
+                len(regions) - len(capped),
+            )
+            break
+        capped.append((start, end))
+        running += span
+    return capped
 
 
 def _merge_regions(

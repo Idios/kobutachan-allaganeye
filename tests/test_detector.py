@@ -1642,6 +1642,39 @@ class TestBorderlinePseudoRegions:
         regions = _borderline_pseudo_regions(results, 15.0, 1000.0)
         assert len(regions) == 1
 
+    def test_borderline_pseudo_regions_capped_with_warning(self, caplog):
+        import logging
+
+        from allaganeye.video.detector import (
+            _BORDERLINE_SPAN_CAP_FRACTION,
+            _borderline_pseudo_regions,
+        )
+
+        # Dense borderline frames (b=40 in [15,55)) across the whole video, so
+        # raw_span exceeds fraction*duration (interval~3, radius=3 -> raw_span
+        # ~2*duration ~200% > 150% cap).
+        total_dur = 1000.0
+        results = {float(t): 40.0 for t in range(0, int(total_dur), 3)}
+        with caplog.at_level(logging.WARNING):
+            regions = _borderline_pseudo_regions(results, 15.0, total_dur)
+        total = sum(e - s for s, e in regions)
+        cap = _BORDERLINE_SPAN_CAP_FRACTION * total_dur
+        assert total <= cap + 6.0  # allow one region's worth
+        assert any(
+            "borderline" in r.message.lower() for r in caplog.records
+        )  # fire-side red proof
+
+    def test_borderline_pseudo_regions_not_capped_under_threshold(self, caplog):
+        import logging
+
+        from allaganeye.video.detector import _borderline_pseudo_regions
+
+        results = {0.0: 40.0, 100.0: 42.0}  # sparse, raw_span << cap
+        with caplog.at_level(logging.WARNING):
+            regions = _borderline_pseudo_regions(results, 15.0, 1000.0)
+        assert len(regions) == 2  # all kept (no fire = bit-exact)
+        assert not any("borderline" in r.message.lower() for r in caplog.records)
+
 
 class TestMergeRegions:
     """Unit tests for _merge_regions (A3 helper, #361)."""
