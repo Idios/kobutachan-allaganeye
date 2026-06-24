@@ -7,7 +7,6 @@ import shutil
 import sys
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypedDict, cast
 
@@ -16,6 +15,11 @@ from click._termui_impl import ProgressBar as _ClickProgressBar  # subclass 用 
 
 from allaganeye.audio.matcher import BgmHit
 from allaganeye.config import SplitConfig
+from allaganeye.detection.format import (
+    format_duration as _format_duration,
+    format_timestamp as _format_timestamp,
+    iso_utc_now as _iso_utc_now,
+)
 from allaganeye.detection.metadata_writer import (
     read_metadata,
     write_metadata_atomic,
@@ -1729,15 +1733,6 @@ def _print_detection_stats(stats: DetectionStats) -> None:
         typer.echo(f"  + {unknown_count} unknown {label} (録画途中試合)")
 
 
-def _format_timestamp(seconds: float) -> str:
-    """Format seconds as MM:SS or H:MM:SS."""
-    m, s = divmod(int(seconds), 60)
-    h, m = divmod(m, 60)
-    if h:
-        return f"{h}:{m:02d}:{s:02d}"
-    return f"{m:02d}:{s:02d}"
-
-
 def _format_eta(seconds: float) -> str:
     """Format an ETA for in-label display (compact, e.g. '45s' or '3m20s').
 
@@ -1754,16 +1749,6 @@ def _format_eta(seconds: float) -> str:
     return f"{h}h{m:02d}m"
 
 
-def _format_duration(seconds: float) -> str:
-    """Format duration as e.g. '14m02s' or '1h05m'."""
-    total = int(seconds)
-    m, s = divmod(total, 60)
-    h, m = divmod(m, 60)
-    if h:
-        return f"{h}h{m:02d}m"
-    return f"{m}m{s:02d}s"
-
-
 def _emit_total_time(total_start: float, verbose: bool, show: bool) -> None:
     """Print ``Total: HH:MM:SS`` wall-clock for the split pipeline (#381).
 
@@ -1773,15 +1758,6 @@ def _emit_total_time(total_start: float, verbose: bool, show: bool) -> None:
     """
     if verbose and show:
         typer.echo(f"Total: {_format_duration(time.monotonic() - total_start)}")
-
-
-def _iso_utc_now() -> str:
-    """UTC timestamp in ISO 8601 with 'Z' suffix, e.g. '2026-04-19T12:34:56Z'.
-
-    Used for metadata.json `detected_at` (#370).  Second precision keeps the
-    string human-readable without losing practical reproducibility.
-    """
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _auto_sample_interval(duration: float, configured_interval: float) -> float:

@@ -1,10 +1,12 @@
 """Match boundary detection using parallel ffmpeg frame probing."""
 
+import contextlib
 import logging
 import math
 import os
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -202,6 +204,50 @@ def _sample_chunk_frames(
             raise VideoProcessingError(msg)
 
     return results
+
+
+class _WatchdogState:
+    """Shared flag telling the caller whether the deadline watchdog fired (#842).
+
+    ``fired`` is set in the timer thread just before the kill, then read by the
+    decode caller so a stalled-then-killed chunk is handled as a decode failure
+    (graceful fallback) rather than a hard error.
+    """
+
+    __slots__ = ("fired",)
+
+    def __init__(self) -> None:
+        self.fired = False
+
+
+@contextlib.contextmanager
+def _proc_deadline_watchdog(proc: subprocess.Popen[bytes], deadline_s: float):
+    """Force-kill ``proc`` if it outlives ``deadline_s`` (#842 P2-3).
+
+    The v2 streaming decode reads ``proc.stdout`` via ``_sample_chunk_frames``
+    with a blocking ``stream.read`` that never returns while ffmpeg stalls
+    (no output, no EOF), so the post-read ``proc.wait(timeout=)`` is never
+    reached.  This watchdog kills the process at the deadline; the blocked read
+    then sees EOF.  Yields a ``_WatchdogState`` whose ``fired`` flag lets the
+    caller route a watchdog-killed (and therefore truncated) decode into its
+    decode-failed fallback (CPU: 255.0 / GPU: raise -> CPU fallback) instead of
+    propagating the resulting frame-count ``VideoProcessingError`` as a hard
+    detection failure (#842 codex).  On a healthy decode the timer is cancelled
+    before firing -> no behaviour change (bit-exact).
+    """
+    state = _WatchdogState()
+
+    def _on_deadline() -> None:
+        state.fired = True
+        proc.kill()
+
+    timer = threading.Timer(deadline_s, _on_deadline)
+    timer.daemon = True
+    timer.start()
+    try:
+        yield state
+    finally:
+        timer.cancel()
 
 
 def _resolve_workers(workers: int | None) -> int:
@@ -975,18 +1021,23 @@ def _decode_chunk_cpu_v2(
             stdout=subprocess.PIPE,
             stderr=stderr_buf,
         ) as proc:
+            deadline = max(300, int(chunk_duration * 2))
+            watchdog: _WatchdogState | None = None
             try:
-                results = _sample_chunk_frames(
-                    stream=proc.stdout,
-                    chunk_start=chunk_start,
-                    chunk_timestamps=chunk_timestamps,
-                    fps_num=fps_num,
-                    fps_den=fps_den,
-                    expected_frames=expected_frames,
-                    is_tail_chunk=is_tail_chunk,
-                    region=region,
-                )
-                proc.wait(timeout=max(300, int(chunk_duration * 2)))
+                with _proc_deadline_watchdog(proc, deadline) as watchdog:
+                    results = _sample_chunk_frames(
+                        stream=proc.stdout,
+                        chunk_start=chunk_start,
+                        chunk_timestamps=chunk_timestamps,
+                        fps_num=fps_num,
+                        fps_den=fps_den,
+                        expected_frames=expected_frames,
+                        is_tail_chunk=is_tail_chunk,
+                        region=region,
+                    )
+                    # Defense-in-depth: watchdog covers stream.read stall;
+                    # this wait covers proc-exit lag after the stream closes.
+                    proc.wait(timeout=deadline)
                 # Read stderr from temp file (no pipe backpressure issue)
                 stderr_buf.seek(0)
                 stderr_text = stderr_buf.read().decode(errors="replace")
@@ -998,6 +1049,18 @@ def _decode_chunk_cpu_v2(
                     stderr_text = stderr_buf.read().decode(errors="replace")
                 except Exception:
                     logger.debug("Failed to read stderr from temp file", exc_info=True)
+                if watchdog is not None and watchdog.fired:
+                    # ffmpeg stalled and the watchdog killed it; the truncated
+                    # read tripped the dynamic frame-count guard. Treat as a
+                    # decode failure (graceful 255.0 fallback) rather than
+                    # failing the whole detect (#842 codex).
+                    logger.warning(
+                        "CPU chunk v2 decode watchdog fired [%.1f-%.1f]; "
+                        "treating as decode failure",
+                        chunk_start,
+                        chunk_end,
+                    )
+                    return {t: 255.0 for t in chunk_timestamps}
                 raise
             except subprocess.TimeoutExpired:
                 proc.kill()
@@ -1463,6 +1526,75 @@ def _probe_frame_rgb_hires(video_path: Path, timestamp: float) -> bytes | None:
     return result.stdout[:rgb_size]
 
 
+def _saturated_column_runs(band: np.ndarray, cv2_module) -> list[tuple[int, int]]:
+    """Gap-merged saturated column runs of a (Hb, W, 3) RGB band.
+
+    Shared V2 scorebar geometry core: per-pixel HSV sat/val mask -> per-column
+    saturated fraction >= ``_SCOREBAR_SCAN_COL_RATIO`` -> contiguous runs bridged
+    across gaps <= ``_SCOREBAR_SCAN_MAX_GAP_PX``.  Returns merged ``(x_left,
+    x_right)`` inclusive runs ascending, BEFORE any width-gate / center-straddle
+    selection, so ``_find_scorebar_horizontal_range`` and
+    ``capture_region._scorebar_saturated_runs`` apply their own post-selection
+    on identical input (single source of truth, #842 P2-6).
+    """
+    bgr = cv2_module.cvtColor(band, cv2_module.COLOR_RGB2BGR)
+    hsv = cv2_module.cvtColor(bgr, cv2_module.COLOR_BGR2HSV)
+    sat = hsv[:, :, 1].astype(np.float32)
+    val = hsv[:, :, 2].astype(np.float32)
+    pixel_mask = (sat > _SCOREBAR_SCAN_SAT_THRESHOLD) & (
+        val > _SCOREBAR_SCAN_VAL_THRESHOLD
+    )
+    col_saturated = pixel_mask.mean(axis=0) >= _SCOREBAR_SCAN_COL_RATIO
+
+    width = band.shape[1]
+    raw_runs: list[tuple[int, int]] = []
+    i = 0
+    while i < width:
+        if col_saturated[i]:
+            j = i
+            while j < width and col_saturated[j]:
+                j += 1
+            raw_runs.append((i, j - 1))
+            i = j
+        else:
+            i += 1
+    if not raw_runs:
+        return []
+
+    merged: list[tuple[int, int]] = [raw_runs[0]]
+    for start, end in raw_runs[1:]:
+        prev_start, prev_end = merged[-1]
+        if start - prev_end - 1 <= _SCOREBAR_SCAN_MAX_GAP_PX:
+            merged[-1] = (prev_start, end)
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _emblem_metrics(region: np.ndarray, cv2_module) -> tuple[float, float]:
+    """(mean_sat_of_bright_pixels, sobel_edge_density) for one emblem region.
+
+    Shared core of the 3-point emblem AND (#842 P2-6).  ``region`` must be a
+    non-empty (h, w, 3) RGB uint8 array.  Bright pixels = HSV value > 30; mean
+    saturation over them (0.0 if <= 5 bright pixels).  Edge density = mean Sobel
+    magnitude (CV_64F, ksize=3) of the grayscale region.
+    """
+    bgr = cv2_module.cvtColor(region, cv2_module.COLOR_RGB2BGR)
+    hsv = cv2_module.cvtColor(bgr, cv2_module.COLOR_BGR2HSV)
+    gray = cv2_module.cvtColor(bgr, cv2_module.COLOR_BGR2GRAY)
+    val = hsv[:, :, 2].astype(np.float32)
+    sat = hsv[:, :, 1].astype(np.float32)
+    bright_mask = val > 30
+    if bright_mask.sum() > 5:
+        mean_sat = float(sat[bright_mask].mean())
+    else:
+        mean_sat = 0.0
+    sobel_x = cv2_module.Sobel(gray, cv2_module.CV_64F, 1, 0, ksize=3)
+    sobel_y = cv2_module.Sobel(gray, cv2_module.CV_64F, 0, 1, ksize=3)
+    edge_density = float(np.sqrt(sobel_x**2 + sobel_y**2).mean())
+    return mean_sat, edge_density
+
+
 def _find_scorebar_horizontal_range(raw_rgb: bytes) -> tuple[int, int] | None:
     """Detect horizontal extent [x_left, x_right] of the FL scorebar.
 
@@ -1499,39 +1631,9 @@ def _find_scorebar_horizontal_range(raw_rgb: bytes) -> tuple[int, int] | None:
     frame = np.frombuffer(raw_rgb, dtype=np.uint8).reshape(height, width, 3)
 
     top = frame[_SCOREBAR_SCAN_Y_START:_SCOREBAR_SCAN_Y_END, :, :]
-    bgr = cv2.cvtColor(top, cv2.COLOR_RGB2BGR)
-    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-    sat = hsv[:, :, 1].astype(np.float32)
-    val = hsv[:, :, 2].astype(np.float32)
-
-    pixel_mask = (sat > _SCOREBAR_SCAN_SAT_THRESHOLD) & (
-        val > _SCOREBAR_SCAN_VAL_THRESHOLD
-    )
-    col_fraction = pixel_mask.mean(axis=0)
-    col_saturated = col_fraction >= _SCOREBAR_SCAN_COL_RATIO
-
-    raw_runs: list[tuple[int, int]] = []
-    i = 0
-    while i < width:
-        if col_saturated[i]:
-            j = i
-            while j < width and col_saturated[j]:
-                j += 1
-            raw_runs.append((i, j - 1))
-            i = j
-        else:
-            i += 1
-
-    if not raw_runs:
+    merged = _saturated_column_runs(top, cv2)
+    if not merged:
         return None
-
-    merged: list[tuple[int, int]] = [raw_runs[0]]
-    for start, end in raw_runs[1:]:
-        prev_start, prev_end = merged[-1]
-        if start - prev_end - 1 <= _SCOREBAR_SCAN_MAX_GAP_PX:
-            merged[-1] = (prev_start, end)
-        else:
-            merged.append((start, end))
 
     # The FL scorebar is horizontally centered, so the candidate is the run
     # straddling screen center -- NOT merely the longest run.  Selecting the
@@ -1572,24 +1674,7 @@ def _emblem_and_check(
     """
     for name, x1, y1, x2, y2 in positions:
         region = frame[y1:y2, x1:x2, :]
-        bgr = cv2_module.cvtColor(region, cv2_module.COLOR_RGB2BGR)
-        hsv = cv2_module.cvtColor(bgr, cv2_module.COLOR_BGR2HSV)
-        gray = cv2_module.cvtColor(bgr, cv2_module.COLOR_BGR2GRAY)
-
-        # Saturation of bright pixels (exclude very dark pixels)
-        val = hsv[:, :, 2].astype(np.float32)
-        sat = hsv[:, :, 1].astype(np.float32)
-        bright_mask = val > 30
-        if bright_mask.sum() > 5:
-            mean_sat = float(sat[bright_mask].mean())
-        else:
-            mean_sat = 0.0
-
-        # Edge density (Sobel magnitude)
-        sobel_x = cv2_module.Sobel(gray, cv2_module.CV_64F, 1, 0, ksize=3)
-        sobel_y = cv2_module.Sobel(gray, cv2_module.CV_64F, 0, 1, ksize=3)
-        edge_density = float(np.sqrt(sobel_x**2 + sobel_y**2).mean())
-
+        mean_sat, edge_density = _emblem_metrics(region, cv2_module)
         if mean_sat <= _EMBLEM_SAT_THRESHOLD or edge_density <= _EMBLEM_EDGE_THRESHOLD:
             logger.debug(
                 "scorebar_v2 (%s): %s x=%d..%d sat=%.1f edge=%.1f -> fail",
@@ -1842,6 +1927,17 @@ Pass 1 samples spaced 3s apart.  Pass 2's own +-_REFINE_WINDOW (5s)
 further extends the probe window, so effective coverage is +-8s.
 """
 
+_BORDERLINE_SPAN_CAP_FRACTION = 1.5
+"""borderline pseudo-region (#576 A5) 合計長の上限 (total_duration 比、#842 P2-4)。
+
+健全な OBS 録画でも brightness 15-55 の borderline frame は多く、実測 (2026-06-24)
+で raw_span は duration の 13-50% に達する (5 baseline 実測、最大 obs-20260118: 50.1%)。一方 brightness
+15-55 の待機画面が支配的な pathological 録画では raw_frac が ~200% に達し Pass 2
+probe が非有界に増える。cap = この値 x total_duration。1.5 は実測最大 50% の 3x
+margin で、未検証の長尺/暗め録画も clip せず pathological のみ捕捉する。超過分は
+drop + warning、本体 blackout 抽出 (``< blackout_threshold``) は不変。
+"""
+
 _REFINE_INTERVAL = 0.25
 """Fine interval for 2nd-pass re-probing of blackout candidates."""
 
@@ -1938,11 +2034,35 @@ def _borderline_pseudo_regions(
     """
     radius = _BORDERLINE_REFINE_RADIUS
     upper = _TRANSITION_THRESHOLD
-    return [
+    regions = [
         (max(0.0, t - radius), min(total_duration, t + radius))
         for t, b in results.items()
         if blackout_threshold <= b < upper
     ]
+    # #842 P2-4: total-length cap (fraction of duration). Prevents Pass 2 probe
+    # blow-up on recordings where borderline (15-55) wait screens dominate.
+    # Accumulate in start order, drop the overflow. Healthy recordings
+    # (raw_frac <= 50% measured) never hit the cap -> bit-exact.
+    cap_span = _BORDERLINE_SPAN_CAP_FRACTION * total_duration
+    regions.sort()
+    capped: list[tuple[float, float]] = []
+    running = 0.0
+    for start, end in regions:
+        span = end - start
+        if running + span > cap_span:
+            logger.warning(
+                "borderline pseudo-region 合計長が cap (%.0fs = %.1fx duration) を"
+                "超過: %d 領域中 %d を drop (待機画面が支配的な録画の Pass 2 probe "
+                "を有界化)。",
+                cap_span,
+                _BORDERLINE_SPAN_CAP_FRACTION,
+                len(regions),
+                len(regions) - len(capped),
+            )
+            break
+        capped.append((start, end))
+        running += span
+    return capped
 
 
 def _merge_regions(

@@ -150,14 +150,25 @@ def probe_video(video_path: Path) -> ProbeResult:
                 diff_ratio * 100,
             )
 
-    duration = float(data.get("format", {}).get("duration", 0))
+    raw_duration = data.get("format", {}).get("duration", 0)
+    try:
+        duration = float(raw_duration)
+    except (TypeError, ValueError) as e:
+        raise VideoProcessingError(
+            f"Cannot parse video duration from ffprobe output: {raw_duration!r}"
+        ) from e
     if duration <= 0:
         raise VideoProcessingError(
             "Cannot determine video duration from ffprobe output"
         )
 
-    width = int(video_stream.get("width", 0))
-    height = int(video_stream.get("height", 0))
+    try:
+        width = int(video_stream.get("width", 0))
+        height = int(video_stream.get("height", 0))
+    except (TypeError, ValueError) as e:
+        raise VideoProcessingError(
+            "Cannot parse video resolution from ffprobe output"
+        ) from e
     if width <= 0 or height <= 0:
         raise VideoProcessingError(
             "Cannot determine video resolution from ffprobe output"

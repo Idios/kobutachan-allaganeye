@@ -22,6 +22,7 @@ from allaganeye.video.detector import (
     _SAMPLE_WIDTH,
     _frame_brightness,
     _generate_timestamps,
+    _proc_deadline_watchdog,
     _resolve_fps_rational,
     _sample_chunk_frames,
     _use_legacy_fps_filter,
@@ -345,16 +346,39 @@ def scan_gpu(
 def _check_gpu_usage(
     stderr_text: str, codec: str | None, cuvid_decoder: str | None
 ) -> None:
-    """Log GPU decode status based on ffmpeg stderr output."""
+    """Log GPU decode status based on ffmpeg stderr output.
+
+    cuvid の実 decoder 名 (h264_cuvid 等) が stderr に出ていれば実 decode を
+    確認できるため "active"。d3d11va/qsv/auto は **要求した hwaccel 名が
+    コマンドエコーに必ず出る**ため、その substring 一致だけでは実 decode を
+    確認できない (#842 P3): CPU fallback でも真になる。over-claim を避け
+    "requested (decode path unconfirmed)" と honest に記す。全 marker 不在は
+    CPU fallback の warning。vendor 固有の init 成否 marker による完全判定は
+    実機 stderr が前提で別 issue。
+    """
     lowered = stderr_text.lower()
     if cuvid_decoder and cuvid_decoder in stderr_text:
         logger.info("GPU decode active: %s", cuvid_decoder)
-    elif "d3d11va" in lowered:
-        logger.info("GPU decode active (d3d11va)")
-    elif "qsv" in lowered:
-        logger.info("GPU decode active (qsv)")
-    elif "hwaccel" in lowered or "cuda" in lowered:
-        logger.info("GPU decode active (hwaccel auto)")
+    elif (
+        "d3d11va" in lowered
+        or "qsv" in lowered
+        or "cuda" in lowered
+        or "hwaccel" in lowered
+    ):
+        if "d3d11va" in lowered:
+            requested = "d3d11va"
+        elif "qsv" in lowered:
+            requested = "qsv"
+        elif "cuda" in lowered:
+            requested = "cuda"
+        else:
+            requested = "hwaccel auto"
+        logger.info(
+            "GPU hwaccel '%s' requested for codec '%s' (decode path unconfirmed "
+            "from stderr; CPU fallback not distinguishable here)",
+            requested,
+            codec or "unknown",
+        )
     else:
         logger.warning(
             "GPU acceleration not active for codec '%s', falling back to CPU decode",
@@ -676,18 +700,22 @@ def _decode_chunk_v2(
             stdout=subprocess.PIPE,
             stderr=stderr_buf,
         ) as proc:
+            deadline = max(300, int(chunk_duration * 2))
             try:
-                results = _sample_chunk_frames(
-                    stream=proc.stdout,
-                    chunk_start=chunk_start,
-                    chunk_timestamps=chunk_timestamps or [],
-                    fps_num=fps_num,
-                    fps_den=fps_den,
-                    expected_frames=expected_frames,
-                    is_tail_chunk=is_tail_chunk,
-                    region=region,
-                )
-                proc.wait(timeout=max(300, int(chunk_duration * 2)))
+                with _proc_deadline_watchdog(proc, deadline):
+                    results = _sample_chunk_frames(
+                        stream=proc.stdout,
+                        chunk_start=chunk_start,
+                        chunk_timestamps=chunk_timestamps or [],
+                        fps_num=fps_num,
+                        fps_den=fps_den,
+                        expected_frames=expected_frames,
+                        is_tail_chunk=is_tail_chunk,
+                        region=region,
+                    )
+                    # Defense-in-depth: watchdog covers stream.read stall;
+                    # this wait covers proc-exit lag after the stream closes.
+                    proc.wait(timeout=deadline)
                 # Read stderr from temp file (no pipe backpressure issue)
                 stderr_buf.seek(0)
                 stderr_text = stderr_buf.read().decode(errors="replace")

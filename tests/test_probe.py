@@ -561,3 +561,84 @@ class TestProbeStaticVfrWarn:
 
         warns = [r for r in caplog.records if "VFR" in r.getMessage()]
         assert warns == []
+
+
+# --- P3 pin tests: non-numeric duration / resolution ---
+
+
+@patch("allaganeye.video.probe.subprocess.run")
+@patch("allaganeye.video.probe.find_ffprobe", return_value="ffprobe")
+def test_probe_nonnumeric_duration_raises_video_processing_error(
+    _mock_ffprobe, mock_run, tmp_path
+):
+    """ffprobe duration='N/A' must raise VideoProcessingError, not bare ValueError."""
+    video = tmp_path / "test.mkv"
+    video.touch()
+    data = {
+        "streams": [
+            {
+                "codec_type": "video",
+                "codec_name": "h264",
+                "width": 1920,
+                "height": 1080,
+                "r_frame_rate": "60/1",
+                "avg_frame_rate": "60/1",
+            }
+        ],
+        "format": {"duration": "N/A"},
+    }
+    mock_run.return_value = _mock_result(stdout=json.dumps(data))
+    with pytest.raises(VideoProcessingError):
+        probe_video(video)
+
+
+@patch("allaganeye.video.probe.subprocess.run")
+@patch("allaganeye.video.probe.find_ffprobe", return_value="ffprobe")
+def test_probe_nonnumeric_width_raises_video_processing_error(
+    _mock_ffprobe, mock_run, tmp_path
+):
+    """ffprobe width='N/A' must raise VideoProcessingError, not bare ValueError."""
+    video = tmp_path / "test.mkv"
+    video.touch()
+    data = {
+        "streams": [
+            {
+                "codec_type": "video",
+                "codec_name": "h264",
+                "width": "N/A",
+                "height": 1080,
+                "r_frame_rate": "60/1",
+                "avg_frame_rate": "60/1",
+            }
+        ],
+        "format": {"duration": "600.0"},
+    }
+    mock_run.return_value = _mock_result(stdout=json.dumps(data))
+    with pytest.raises(VideoProcessingError):
+        probe_video(video)
+
+
+@patch("allaganeye.video.probe.subprocess.run")
+@patch("allaganeye.video.probe.find_ffprobe", return_value="ffprobe")
+def test_probe_nonnumeric_height_raises_video_processing_error(
+    _mock_ffprobe, mock_run, tmp_path
+):
+    """ffprobe height='N/A' must raise VideoProcessingError, not bare ValueError."""
+    video = tmp_path / "test.mkv"
+    video.touch()
+    data = {
+        "streams": [
+            {
+                "codec_type": "video",
+                "codec_name": "h264",
+                "width": 1920,
+                "height": "N/A",
+                "r_frame_rate": "60/1",
+                "avg_frame_rate": "60/1",
+            }
+        ],
+        "format": {"duration": "600.0"},
+    }
+    mock_run.return_value = _mock_result(stdout=json.dumps(data))
+    with pytest.raises(VideoProcessingError):
+        probe_video(video)

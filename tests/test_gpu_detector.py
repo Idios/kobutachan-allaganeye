@@ -979,6 +979,53 @@ class TestDecodeChunkV2Cmd:
         assert ss_positions[0] < i_idx, "first -ss should be input seek (before -i)"
         assert ss_positions[1] > i_idx, "second -ss should be output seek (after -i)"
 
+    def test_decode_chunk_v2_watchdog_fire_raises_for_cpu_fallback(self, monkeypatch):
+        """GPU watchdog-fire (stall) raises VideoProcessingError so scan_gpu falls
+        back to CPU, not silently swallow the stalled chunk (#842 codex, GPU side).
+
+        Symmetric to the CPU test
+        ``test_decode_chunk_cpu_v2_watchdog_fire_returns_fallback``: the CPU path
+        degrades to 255.0, the GPU path re-raises (its decode-failed contract ->
+        upstream CPU fallback). Both must surface the stall, never hang/swallow.
+        """
+        import contextlib
+        from types import SimpleNamespace
+
+        from allaganeye.exceptions import VideoProcessingError
+        from allaganeye.video import gpu_detector as gd
+
+        @contextlib.contextmanager
+        def _fired_watchdog(_proc, _deadline_s):
+            yield SimpleNamespace(fired=True)
+
+        def _raise_vfr(**_kwargs):
+            raise VideoProcessingError("Dynamic VFR detection: chunk emitted 0 frames")
+
+        fake_proc = MagicMock()
+        fake_proc.returncode = -9
+        fake_cm = MagicMock()
+        fake_cm.__enter__.return_value = fake_proc
+        fake_cm.__exit__.return_value = False
+
+        monkeypatch.setattr(gd, "_proc_deadline_watchdog", _fired_watchdog)
+        monkeypatch.setattr(gd, "_sample_chunk_frames", _raise_vfr)
+        monkeypatch.setattr(gd, "find_ffmpeg", lambda: "ffmpeg")
+        monkeypatch.setattr(gd.subprocess, "Popen", MagicMock(return_value=fake_cm))
+
+        with pytest.raises(VideoProcessingError):
+            gd._decode_chunk_v2(
+                Path("x.mkv"),
+                chunk_start=0.0,
+                chunk_end=9.0,
+                sample_interval=3.0,
+                codec="h264",
+                chunk_timestamps=[0.0, 3.0, 6.0],
+                vendor=None,
+                fps_num=60,
+                fps_den=1,
+                is_tail_chunk=False,
+            )
+
 
 class TestGpuFallbackIntegration:
     @patch("allaganeye.video.detector._scan_cpu")
@@ -1025,3 +1072,42 @@ class TestGpuBrightnessParity:
         sig = inspect.signature(gpu.scan_gpu)
         assert "region" in sig.parameters
         assert sig.parameters["region"].default is FULL_FRAME
+
+
+class TestCheckGpuUsage:
+    """_check_gpu_usage は honesty 原則: cuvid 実 decoder 名一致のみ "active" と
+    断言し、hwaccel コマンドエコーによる substring 一致は "requested (unconfirmed)"
+    と正直に記す (#842 P3)。"""
+
+    def test_check_gpu_usage_d3d11va_does_not_overclaim(self, caplog):
+        import logging
+
+        from allaganeye.video.gpu_detector import _check_gpu_usage
+
+        stderr = "ffmpeg ... -hwaccel d3d11va -c:v ... \nframe= 100 ..."
+        with caplog.at_level(logging.INFO):
+            _check_gpu_usage(stderr, "h264", None)
+        text = " ".join(r.message for r in caplog.records).lower()
+        assert "active (d3d11va)" not in text  # no over-claim
+        assert "requested" in text or "unconfirmed" in text  # honest wording
+
+    def test_check_gpu_usage_cuvid_confirms_active(self, caplog):
+        import logging
+
+        from allaganeye.video.gpu_detector import _check_gpu_usage
+
+        with caplog.at_level(logging.INFO):
+            _check_gpu_usage("Using h264_cuvid decoder ...", "h264", "h264_cuvid")
+        assert any("active" in r.message.lower() for r in caplog.records)
+
+    def test_check_gpu_usage_no_marker_warns_cpu(self, caplog):
+        import logging
+
+        from allaganeye.video.gpu_detector import _check_gpu_usage
+
+        with caplog.at_level(logging.WARNING):
+            _check_gpu_usage("plain software decode log", "h264", None)
+        assert any(
+            "cpu" in r.message.lower() or "not active" in r.message.lower()
+            for r in caplog.records
+        )
