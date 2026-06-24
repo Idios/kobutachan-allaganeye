@@ -22,6 +22,7 @@ from allaganeye.video.detector import (
     _SAMPLE_WIDTH,
     _frame_brightness,
     _generate_timestamps,
+    _proc_deadline_watchdog,
     _resolve_fps_rational,
     _sample_chunk_frames,
     _use_legacy_fps_filter,
@@ -676,18 +677,22 @@ def _decode_chunk_v2(
             stdout=subprocess.PIPE,
             stderr=stderr_buf,
         ) as proc:
+            deadline = max(300, int(chunk_duration * 2))
             try:
-                results = _sample_chunk_frames(
-                    stream=proc.stdout,
-                    chunk_start=chunk_start,
-                    chunk_timestamps=chunk_timestamps or [],
-                    fps_num=fps_num,
-                    fps_den=fps_den,
-                    expected_frames=expected_frames,
-                    is_tail_chunk=is_tail_chunk,
-                    region=region,
-                )
-                proc.wait(timeout=max(300, int(chunk_duration * 2)))
+                with _proc_deadline_watchdog(proc, deadline):
+                    results = _sample_chunk_frames(
+                        stream=proc.stdout,
+                        chunk_start=chunk_start,
+                        chunk_timestamps=chunk_timestamps or [],
+                        fps_num=fps_num,
+                        fps_den=fps_den,
+                        expected_frames=expected_frames,
+                        is_tail_chunk=is_tail_chunk,
+                        region=region,
+                    )
+                    # Defense-in-depth: watchdog covers stream.read stall;
+                    # this wait covers proc-exit lag after the stream closes.
+                    proc.wait(timeout=deadline)
                 # Read stderr from temp file (no pipe backpressure issue)
                 stderr_buf.seek(0)
                 stderr_text = stderr_buf.read().decode(errors="replace")

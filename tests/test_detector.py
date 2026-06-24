@@ -3316,3 +3316,24 @@ def test_emblem_metrics_bright_vs_dark():
     dark = np.zeros((40, 40, 3), dtype=np.uint8)
     d_sat, _d_edge = _emblem_metrics(dark, cv2)
     assert d_sat == 0.0
+
+
+def test_proc_deadline_watchdog_kills_when_block_exceeds_deadline():
+    import time
+    from unittest.mock import Mock
+    from allaganeye.video.detector import _proc_deadline_watchdog
+
+    proc = Mock()
+    with _proc_deadline_watchdog(proc, 0.05):
+        time.sleep(0.25)  # outlive deadline (simulates stall)
+    proc.kill.assert_called_once()  # fire-side red proof
+
+
+def test_proc_deadline_watchdog_no_kill_when_fast():
+    from unittest.mock import Mock
+    from allaganeye.video.detector import _proc_deadline_watchdog
+
+    proc = Mock()
+    with _proc_deadline_watchdog(proc, 5.0):
+        pass  # completes immediately (healthy decode)
+    proc.kill.assert_not_called()  # no fire (bit-exact guarantee)

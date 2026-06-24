@@ -1,10 +1,12 @@
 """Match boundary detection using parallel ffmpeg frame probing."""
 
+import contextlib
 import logging
 import math
 import os
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -202,6 +204,28 @@ def _sample_chunk_frames(
             raise VideoProcessingError(msg)
 
     return results
+
+
+@contextlib.contextmanager
+def _proc_deadline_watchdog(proc: subprocess.Popen[bytes], deadline_s: float):
+    """Force-kill ``proc`` if it outlives ``deadline_s`` (#842 P2-3).
+
+    The v2 streaming decode reads ``proc.stdout`` via ``_sample_chunk_frames``
+    with a blocking ``stream.read`` that never returns while ffmpeg stalls
+    (no output, no EOF), so the post-read ``proc.wait(timeout=)`` is never
+    reached.  This watchdog kills the process at the deadline; the blocked
+    read then sees EOF, ``proc.wait`` returns immediately, and the existing
+    ``proc.returncode != 0`` handling (CPU: 255.0 fallback / GPU: raise ->
+    CPU fallback) fires.  On a healthy decode the timer is cancelled before
+    firing -> no behaviour change (bit-exact).
+    """
+    timer = threading.Timer(deadline_s, proc.kill)
+    timer.daemon = True
+    timer.start()
+    try:
+        yield
+    finally:
+        timer.cancel()
 
 
 def _resolve_workers(workers: int | None) -> int:
@@ -975,18 +999,22 @@ def _decode_chunk_cpu_v2(
             stdout=subprocess.PIPE,
             stderr=stderr_buf,
         ) as proc:
+            deadline = max(300, int(chunk_duration * 2))
             try:
-                results = _sample_chunk_frames(
-                    stream=proc.stdout,
-                    chunk_start=chunk_start,
-                    chunk_timestamps=chunk_timestamps,
-                    fps_num=fps_num,
-                    fps_den=fps_den,
-                    expected_frames=expected_frames,
-                    is_tail_chunk=is_tail_chunk,
-                    region=region,
-                )
-                proc.wait(timeout=max(300, int(chunk_duration * 2)))
+                with _proc_deadline_watchdog(proc, deadline):
+                    results = _sample_chunk_frames(
+                        stream=proc.stdout,
+                        chunk_start=chunk_start,
+                        chunk_timestamps=chunk_timestamps,
+                        fps_num=fps_num,
+                        fps_den=fps_den,
+                        expected_frames=expected_frames,
+                        is_tail_chunk=is_tail_chunk,
+                        region=region,
+                    )
+                    # Defense-in-depth: watchdog covers stream.read stall;
+                    # this wait covers proc-exit lag after the stream closes.
+                    proc.wait(timeout=deadline)
                 # Read stderr from temp file (no pipe backpressure issue)
                 stderr_buf.seek(0)
                 stderr_text = stderr_buf.read().decode(errors="replace")
