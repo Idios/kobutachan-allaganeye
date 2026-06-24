@@ -4791,3 +4791,12 @@ def test_build_metadata_payload_round_trips_warnings(tmp_path):
     payload = _build_metadata_payload(**common, warnings=warned)  # type: ignore[arg-type]
     # _build_metadata_payload forwards the list verbatim (not rebuilt).
     assert payload.get("warnings") == warned
+
+
+def test_split_matches_format_helpers_are_detection_format_aliases():
+    from allaganeye.commands import split_matches as sm
+    from allaganeye.detection import format as fmt
+
+    assert sm._format_timestamp is fmt.format_timestamp
+    assert sm._format_duration is fmt.format_duration
+    assert sm._iso_utc_now is fmt.iso_utc_now
