@@ -206,6 +206,20 @@ def _sample_chunk_frames(
     return results
 
 
+class _WatchdogState:
+    """Shared flag telling the caller whether the deadline watchdog fired (#842).
+
+    ``fired`` is set in the timer thread just before the kill, then read by the
+    decode caller so a stalled-then-killed chunk is handled as a decode failure
+    (graceful fallback) rather than a hard error.
+    """
+
+    __slots__ = ("fired",)
+
+    def __init__(self) -> None:
+        self.fired = False
+
+
 @contextlib.contextmanager
 def _proc_deadline_watchdog(proc: subprocess.Popen[bytes], deadline_s: float):
     """Force-kill ``proc`` if it outlives ``deadline_s`` (#842 P2-3).
@@ -213,17 +227,25 @@ def _proc_deadline_watchdog(proc: subprocess.Popen[bytes], deadline_s: float):
     The v2 streaming decode reads ``proc.stdout`` via ``_sample_chunk_frames``
     with a blocking ``stream.read`` that never returns while ffmpeg stalls
     (no output, no EOF), so the post-read ``proc.wait(timeout=)`` is never
-    reached.  This watchdog kills the process at the deadline; the blocked
-    read then sees EOF, ``proc.wait`` returns immediately, and the existing
-    ``proc.returncode != 0`` handling (CPU: 255.0 fallback / GPU: raise ->
-    CPU fallback) fires.  On a healthy decode the timer is cancelled before
-    firing -> no behaviour change (bit-exact).
+    reached.  This watchdog kills the process at the deadline; the blocked read
+    then sees EOF.  Yields a ``_WatchdogState`` whose ``fired`` flag lets the
+    caller route a watchdog-killed (and therefore truncated) decode into its
+    decode-failed fallback (CPU: 255.0 / GPU: raise -> CPU fallback) instead of
+    propagating the resulting frame-count ``VideoProcessingError`` as a hard
+    detection failure (#842 codex).  On a healthy decode the timer is cancelled
+    before firing -> no behaviour change (bit-exact).
     """
-    timer = threading.Timer(deadline_s, proc.kill)
+    state = _WatchdogState()
+
+    def _on_deadline() -> None:
+        state.fired = True
+        proc.kill()
+
+    timer = threading.Timer(deadline_s, _on_deadline)
     timer.daemon = True
     timer.start()
     try:
-        yield
+        yield state
     finally:
         timer.cancel()
 
@@ -1000,8 +1022,9 @@ def _decode_chunk_cpu_v2(
             stderr=stderr_buf,
         ) as proc:
             deadline = max(300, int(chunk_duration * 2))
+            watchdog: _WatchdogState | None = None
             try:
-                with _proc_deadline_watchdog(proc, deadline):
+                with _proc_deadline_watchdog(proc, deadline) as watchdog:
                     results = _sample_chunk_frames(
                         stream=proc.stdout,
                         chunk_start=chunk_start,
@@ -1026,6 +1049,18 @@ def _decode_chunk_cpu_v2(
                     stderr_text = stderr_buf.read().decode(errors="replace")
                 except Exception:
                     logger.debug("Failed to read stderr from temp file", exc_info=True)
+                if watchdog is not None and watchdog.fired:
+                    # ffmpeg stalled and the watchdog killed it; the truncated
+                    # read tripped the dynamic frame-count guard. Treat as a
+                    # decode failure (graceful 255.0 fallback) rather than
+                    # failing the whole detect (#842 codex).
+                    logger.warning(
+                        "CPU chunk v2 decode watchdog fired [%.1f-%.1f]; "
+                        "treating as decode failure",
+                        chunk_start,
+                        chunk_end,
+                    )
+                    return {t: 255.0 for t in chunk_timestamps}
                 raise
             except subprocess.TimeoutExpired:
                 proc.kill()

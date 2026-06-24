@@ -3370,3 +3370,53 @@ def test_proc_deadline_watchdog_no_kill_when_fast():
     with _proc_deadline_watchdog(proc, 5.0):
         pass  # completes immediately (healthy decode)
     proc.kill.assert_not_called()  # no fire (bit-exact guarantee)
+
+
+def test_decode_chunk_cpu_v2_watchdog_fire_returns_fallback(monkeypatch):
+    """A watchdog-killed stall degrades to the 255.0 decode-failed fallback,
+    not a propagated VideoProcessingError that fails the whole detect (#842 codex).
+
+    When the watchdog kills a stalled ffmpeg, the blocked read in
+    ``_sample_chunk_frames`` resumes at EOF with too few frames and (for a
+    non-tail chunk) trips the dynamic frame-count guard, raising
+    ``VideoProcessingError``.  That must be treated as a decode failure (graceful
+    255.0 fallback), NOT re-raised to fail the whole detection.
+    """
+    import contextlib
+    from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from allaganeye.exceptions import VideoProcessingError
+    from allaganeye.video import detector as det
+
+    @contextlib.contextmanager
+    def _fired_watchdog(_proc, _deadline_s):
+        yield SimpleNamespace(fired=True)
+
+    def _raise_vfr(**_kwargs):
+        raise VideoProcessingError("Dynamic VFR detection: chunk emitted 0 frames")
+
+    fake_proc = MagicMock()
+    fake_proc.returncode = -9
+    fake_cm = MagicMock()
+    fake_cm.__enter__.return_value = fake_proc
+    fake_cm.__exit__.return_value = False
+
+    monkeypatch.setattr(det, "_proc_deadline_watchdog", _fired_watchdog)
+    monkeypatch.setattr(det, "_sample_chunk_frames", _raise_vfr)
+    monkeypatch.setattr(det, "find_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(det.subprocess, "Popen", MagicMock(return_value=fake_cm))
+
+    chunk_ts = [0.0, 3.0, 6.0]
+    result = det._decode_chunk_cpu_v2(
+        video_path=Path("x.mkv"),
+        chunk_timestamps=chunk_ts,
+        chunk_start=0.0,
+        chunk_end=9.0,
+        sample_interval=3.0,
+        fps_num=60,
+        fps_den=1,
+        is_tail_chunk=False,
+    )
+    assert result == {t: 255.0 for t in chunk_ts}
