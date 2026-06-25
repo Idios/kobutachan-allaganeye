@@ -7,9 +7,20 @@ no libx264 dependency) and asserts that:
   2. event ordering is sane (progress* -> result | error -> summary terminal)
   3. each match_index produces a terminal result or error event
   4. summary line is the LAST line
+  5. progress events carry real usable fields (percent in 0-100, stage non-empty)
+  6. result events carry real payload fields (output_path, duration_ms) AND the
+     referenced output file actually exists on disk and is non-empty
+  7. summary carries all four fields (success, failure, skipped, cancelled)
 
 Runs in CI (BtbN LGPL ffmpeg has no libx264, but copy/remux + mpeg4 fixture
 need none). Skipped only when no ffmpeg binary is discoverable.
+
+Wire schema (schema.py, copy-path specific):
+  progress : {type, match_index, percent: float 0-100, stage: str}
+  result   : {type, match_index, output_path: posix str, duration_ms: int,
+              encoder_used: str}  -- encoder_used present on copy path too
+  error    : {type, match_index, error_kind, error_message, error_hint}
+  summary  : {type, success, failure, skipped, cancelled}
 """
 
 from __future__ import annotations
@@ -124,3 +135,55 @@ def test_wire_protocol_end_to_end(short_test_video: Path, tmp_path: Path):
         # --codec copy never emits fallback (that is a GPU-encoder-failure event
         # only), so every pre-terminal event for a match is a progress event.
         assert all(s == "progress" for s in seq[:terminal_pos])
+
+    # --- payload shape assertions (Codex finding #1 / W5 contract hardening) ---
+
+    # progress events: percent is a float in [0, 100]; stage is a non-empty string.
+    # Only the fields the emitter actually populates (schema.py ProgressEvent.progress).
+    progress_events = [ev for ev in events if ev["type"] == "progress"]
+    assert progress_events, "expected at least one progress event"
+    for ev in progress_events:
+        assert isinstance(ev["match_index"], int), f"progress.match_index not int: {ev}"
+        pct = ev["percent"]
+        assert isinstance(pct, (int, float)), f"progress.percent not numeric: {ev}"
+        assert 0.0 <= float(pct) <= 100.0, f"progress.percent out of range: {ev}"
+        stage = ev["stage"]
+        assert isinstance(stage, str) and stage, f"progress.stage not a non-empty str: {ev}"
+
+    # result events: real payload fields present and well-typed; output file exists
+    # on disk and is non-empty.  encoder_used is present on the copy path too
+    # (schema.py always populates it) but we assert str-type only (codec-independent).
+    result_events = [ev for ev in events if ev["type"] == "result"]
+    assert len(result_events) == 2, f"expected 2 result events, got {len(result_events)}"
+    for ev in result_events:
+        assert isinstance(ev["match_index"], int), f"result.match_index not int: {ev}"
+
+        out_path_str = ev.get("output_path")
+        assert isinstance(out_path_str, str) and out_path_str, (
+            f"result.output_path missing or not a str: {ev}"
+        )
+
+        dur = ev.get("duration_ms")
+        assert isinstance(dur, int), f"result.duration_ms not int: {ev}"
+        assert dur >= 0, f"result.duration_ms negative: {ev}"
+
+        enc = ev.get("encoder_used")
+        assert isinstance(enc, str) and enc, f"result.encoder_used not a non-empty str: {ev}"
+
+        # Key anti-false-green: the referenced output file must exist and be non-empty.
+        out_file = Path(out_path_str)
+        assert out_file.exists(), (
+            f"result.output_path references a file that does not exist: {out_path_str}"
+        )
+        assert out_file.stat().st_size > 0, (
+            f"result.output_path references an empty file: {out_path_str}"
+        )
+
+    # summary: all four fields present with correct types (skipped/cancelled added in schema.py).
+    summary_ev = events[-1]
+    assert isinstance(summary_ev["success"], int), "summary.success not int"
+    assert isinstance(summary_ev["failure"], int), "summary.failure not int"
+    assert "skipped" in summary_ev, "summary missing 'skipped' field"
+    assert isinstance(summary_ev["skipped"], int), "summary.skipped not int"
+    assert "cancelled" in summary_ev, "summary missing 'cancelled' field"
+    assert isinstance(summary_ev["cancelled"], bool), "summary.cancelled not bool"
