@@ -4804,10 +4804,18 @@ mod tests {
     // after a whole line and so grows without limit on newline-free / CR-only
     // streams. The drain runs inside a `#[tauri::command]` that spawns a real
     // subprocess and is not unit-testable in isolation; the boundedness behavior
-    // itself is covered by `drain_to_bounded_tail_bounds_*` above. This guard
-    // scans the start_detect source span and fires (RED) if the inline pattern
-    // returns. Scoped strictly to start_detect (ends at the next `async fn`, well
-    // before start_export's helper call) so it never matches start_export.
+    // itself is covered by `drain_to_bounded_tail_bounds_*` above. This guard pins
+    // the wiring and fires (RED) if the delegation is removed.
+    //
+    // codex #838 adversarial review (rounds 1-2): scope the assertion to the
+    // `let stderr_handle =` initializer LINE (code only -- any trailing `//`
+    // comment is stripped), not the whole start_detect body. A whole-body scan
+    // false-greens when the helper name appears in a comment/string while the
+    // stderr task regresses to an inline read_until drain (including via an
+    // aliased pipe such as `let p = stderr; BufReader::new(p)`, which dodges a
+    // `BufReader::new(stderr)` substring check). The initializer line must BE the
+    // bounded delegation expression. (Idios-approved approach A; a syn AST check
+    // was the considered-heavier alternative.)
     #[test]
     fn start_detect_delegates_stderr_drain_to_bounded_helper() {
         let src = include_str!("lib.rs");
@@ -4820,16 +4828,40 @@ mod tests {
             .expect("a function must follow start_detect");
         let body = &rest[..end];
 
+        // The `let stderr_handle = ...;` initializer, code portion only: drop any
+        // trailing `// comment` so a crafted comment on this line cannot satisfy
+        // the check. start_detect's stdout reader is a separate `let mut reader`
+        // binding, so scoping to `let stderr_handle` isolates the stderr drain.
+        let init_start = body
+            .find("let stderr_handle")
+            .expect("start_detect must bind stderr_handle");
+        let init_line_end = body[init_start..]
+            .find('\n')
+            .map(|i| init_start + i)
+            .unwrap_or(body.len());
+        let init_code = body[init_start..init_line_end]
+            .split("//")
+            .next()
+            .unwrap_or("");
+
+        // Positive: the initializer IS the bounded-helper delegation expression
+        // (the full `(stderr, 2048).await` call cannot be produced by prose, and
+        // a regressed inline drain pushes the spawn body onto later lines so this
+        // single-line check no longer matches).
         assert!(
-            body.contains("drain_to_bounded_tail"),
-            "start_detect must delegate stderr draining to drain_to_bounded_tail \
-             (bounded helper, #838); an inline read_until accumulator grows \
-             unbounded on newline-free / CR-only streams"
+            init_code.contains("drain_to_bounded_tail(stderr, 2048).await"),
+            "start_detect's stderr_handle must be the bounded delegation \
+             tokio::spawn(async move {{ drain_to_bounded_tail(stderr, 2048).await }}) \
+             (#838); a regressed inline read_until drain grows unbounded on \
+             newline-free / CR-only streams. Got: {init_code:?}"
         );
+        // Negative: the bounded delegation needs no read_until; its presence on
+        // the stderr_handle initializer line means an inline accumulator returned.
         assert!(
-            !body.contains("tail.drain(0..drop)"),
-            "start_detect must not re-introduce an inline tail-bounding loop \
-             (#838); delegate to drain_to_bounded_tail instead"
+            !init_code.contains("read_until"),
+            "start_detect's stderr_handle initializer must not use read_until \
+             (#838 inline drain regression); delegate to drain_to_bounded_tail. \
+             Got: {init_code:?}"
         );
     }
 
