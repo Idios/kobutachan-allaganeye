@@ -2391,8 +2391,7 @@ async fn start_detect(
     // earlier inline read_until loop only bounded after a whole line, so a
     // newline-free run could grow without limit before EOF. This converges
     // start_detect with start_export (#837) on drain_to_bounded_tail.
-    let stderr_handle =
-        tokio::spawn(async move { drain_to_bounded_tail(stderr, 2048).await });
+    let stderr_handle = tokio::spawn(async move { drain_to_bounded_tail(stderr, 2048).await });
 
     let mut metadata_path: Option<String> = None;
     let mut total_matches: u64 = 0;
