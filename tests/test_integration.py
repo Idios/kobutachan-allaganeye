@@ -84,12 +84,6 @@ def _gpu_available() -> bool:
         return False
 
 
-gpu_available = pytest.mark.skipif(
-    not _gpu_available(),
-    reason="No GPU hardware acceleration available",
-)
-
-
 # --- Fixtures ---
 
 
@@ -532,7 +526,6 @@ def gpu_cpu_results(
 class TestGpuCpuConsistency:
     """Verify GPU and CPU detection produce consistent results."""
 
-    @gpu_available
     def test_gpu_cpu_boundary_count_matches(self, gpu_cpu_results: dict):
         """GPU and CPU modes detect similar number of matches (+-1).
 
@@ -541,6 +534,8 @@ class TestGpuCpuConsistency:
         decode different frames at the same timestamp, causing +-1
         boundary difference at threshold edges.  (#214)
         """
+        if not _gpu_available():
+            pytest.skip("No GPU hardware acceleration available")
         cpu = gpu_cpu_results["cpu"]
         gpu = gpu_cpu_results["gpu"]
 
@@ -549,9 +544,10 @@ class TestGpuCpuConsistency:
             f"(diff {abs(len(cpu) - len(gpu))} > 1)"
         )
 
-    @gpu_available
     def test_gpu_cpu_boundaries_close(self, gpu_cpu_results: dict):
         """GPU and CPU boundary timestamps are within tolerance."""
+        if not _gpu_available():
+            pytest.skip("No GPU hardware acceleration available")
         cpu = gpu_cpu_results["cpu"]
         gpu = gpu_cpu_results["gpu"]
 
@@ -575,7 +571,6 @@ class TestGpuCpuConsistency:
                 f"(diff={abs(c['end'] - g['end']):.1f}s > {tolerance}s)"
             )
 
-    @gpu_available
     def test_gpu_cpu_boundaries_strict_parity(self, gpu_cpu_results: dict):
         """CPU/GPU boundary timestamps within +-5s (#392).
 
@@ -584,6 +579,8 @@ class TestGpuCpuConsistency:
         two modes within 5s per boundary.  Regression from this level
         means GPU has drifted off the sample grid again.
         """
+        if not _gpu_available():
+            pytest.skip("No GPU hardware acceleration available")
         cpu = gpu_cpu_results["cpu"]
         gpu = gpu_cpu_results["gpu"]
 

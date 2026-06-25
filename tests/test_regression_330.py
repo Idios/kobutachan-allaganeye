@@ -61,12 +61,6 @@ def _gpu_available() -> bool:
         return False
 
 
-gpu_available = pytest.mark.skipif(
-    not _gpu_available(),
-    reason="No GPU hardware acceleration available",
-)
-
-
 @pytest.fixture(scope="module")
 def primary_video() -> Path:
     video = _video_from_env()
@@ -130,9 +124,10 @@ class TestMatch6BoundaryRegression:
         _assert_match_6_end_within_tolerance(boundaries)
 
     @pytest.mark.slow_detect
-    @gpu_available
     def test_match_6_boundary_2015_within_tolerance_gpu(
         self, primary_video: Path, primary_metadata: ProbeResult
     ) -> None:
+        if not _gpu_available():
+            pytest.skip("No GPU hardware acceleration available")
         boundaries = _run_detection(primary_video, primary_metadata, use_gpu=True)
         _assert_match_6_end_within_tolerance(boundaries)

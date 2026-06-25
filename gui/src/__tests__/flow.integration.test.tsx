@@ -58,113 +58,140 @@ import { useMetadataStore } from '../state/metadataStore';
 import { useRecentStore } from '../state/recentStore';
 
 /**
+ * Standalone happy-path dispatcher. Returns sensible resolved values for
+ * every command the integration flows may fire, and rejects with a
+ * descriptive error for any command NOT listed here. This strict default
+ * ensures that a new uncased command introduced in a flow is caught
+ * immediately rather than silently passing.
+ *
+ * Ad-hoc mocks in individual tests MUST delegate their unhandled branch to
+ * this function instead of returning a bare `Promise.resolve()`.
+ */
+function happyInvoke(cmd: string, args: unknown): Promise<unknown> {
+  switch (cmd) {
+    case 'load_metadata':
+      return Promise.resolve({
+        source: (args as { path?: string }).path ?? 'x',
+        source_duration: 1000,
+        source_duration_display: '16:40',
+        detected_at: '2026-04-22T00:00:00Z',
+        detection_params: {
+          sample_interval: 2,
+          blackout_threshold: 15,
+          min_match_duration: 300,
+          min_blackout_duration: 3,
+          no_audio: false,
+          use_gpu: null,
+          workers: null,
+        },
+        matches: [
+          {
+            index: 1,
+            start_time: 0,
+            end_time: 500,
+            start_display: '00:00',
+            end_display: '08:20',
+            duration: 500,
+            duration_display: '8m20s',
+            type: 'fl_match',
+            output_file: 'match_001.mp4',
+          },
+        ],
+        gaps: [],
+      });
+    case 'apply_changes':
+      return Promise.resolve();
+    case 'restore_from_original':
+      return Promise.resolve();
+    case 'check_backup_exists':
+      return Promise.resolve(true);
+    // #465
+    case 'register_video':
+      return Promise.resolve({
+        url: 'http://127.0.0.1:0/video/test-token',
+        token: 'test-token',
+      });
+    case 'probe_video': {
+      // #465 review (B): drop が default で Tauri probe_video を呼ぶように
+      // なったので、テスト用 happy-path 値を返す。path は引数を echo back
+      // して selectedVideoPath assertion (dialog で resolve した値) と
+      // 一致させる。
+      const probePath =
+        (args as { path?: string } | undefined)?.path ?? 'C:/videos/x.mkv';
+      return Promise.resolve({
+        path: probePath,
+        fileName: probePath.split(/[/\\]/).pop() ?? probePath,
+        sizeBytes: 38 * 1024 * 1024 * 1024,
+        durationSeconds: 10228.735,
+        width: 1920,
+        height: 1080,
+        fps: 60,
+        codec: 'h264',
+      });
+    }
+    case 'generate_match_thumbnails':
+      return Promise.resolve([]);
+    // #523
+    case 'is_process_running':
+      return Promise.resolve(false);
+    case 'kill_tracked_processes':
+      return Promise.resolve(0);
+    case 'force_exit_app':
+      return Promise.resolve();
+    // #466 / #761 -- Phase 4 export (single-invoke start_export)
+    case 'start_export':
+      return Promise.resolve({
+        success: 9,
+        failure: 0,
+        skipped: 0,
+        cancelled: false,
+      });
+    // #569 -- Phase 2.5 detect
+    case 'start_detect': {
+      const a = args as { outputDir?: string } | undefined;
+      const out = a?.outputDir ?? 'C:/out';
+      return Promise.resolve({
+        metadata_path: `${out}/metadata.json`,
+        matches: 1,
+      });
+    }
+    // #571 -- recent.json history. Default is empty so the integration
+    // flow tests don't show a populated list; the persisted entry after
+    // a probe is harmless to assert as resolved.
+    case 'read_recent':
+      return Promise.resolve([]);
+    case 'add_recent':
+      return Promise.resolve([]);
+    case 'clear_recent':
+      return Promise.resolve();
+    // #514 -- conflict detection: mtime probe before load_metadata.
+    // Returns a fixed timestamp; the value is only used for
+    // conflict comparison (apply_changes), not asserted in flow tests.
+    case 'get_metadata_mtime':
+      return Promise.resolve(1_000_000_000_000);
+    default:
+      return Promise.reject(
+        new Error(`unmocked invoke command: ${cmd}`),
+      );
+  }
+}
+
+/**
  * Shared invoke dispatcher used when tests don't need per-command overrides.
- * Default answers are intentionally "happy": metadata loads, apply succeeds,
- * backup probes return true.
+ * Delegates entirely to `happyInvoke` so the strict default is always active.
  */
 function configureHappyInvoke() {
-  invokeMock.mockImplementation((cmd: string, args: unknown) => {
-    switch (cmd) {
-      case 'load_metadata':
-        return Promise.resolve({
-          source: (args as { path?: string }).path ?? 'x',
-          source_duration: 1000,
-          source_duration_display: '16:40',
-          detected_at: '2026-04-22T00:00:00Z',
-          detection_params: {
-            sample_interval: 2,
-            blackout_threshold: 15,
-            min_match_duration: 300,
-            min_blackout_duration: 3,
-            no_audio: false,
-            use_gpu: null,
-            workers: null,
-          },
-          matches: [
-            {
-              index: 1,
-              start_time: 0,
-              end_time: 500,
-              start_display: '00:00',
-              end_display: '08:20',
-              duration: 500,
-              duration_display: '8m20s',
-              type: 'fl_match',
-              output_file: 'match_001.mp4',
-            },
-          ],
-          gaps: [],
-        });
-      case 'apply_changes':
-        return Promise.resolve();
-      case 'restore_from_original':
-        return Promise.resolve();
-      case 'check_backup_exists':
-        return Promise.resolve(true);
-      // #465
-      case 'register_video':
-        return Promise.resolve({
-          url: 'http://127.0.0.1:0/video/test-token',
-          token: 'test-token',
-        });
-      case 'probe_video': {
-        // #465 review (B): drop が default で Tauri probe_video を呼ぶように
-        // なったので、テスト用 happy-path 値を返す。path は引数を echo back
-        // して selectedVideoPath assertion (dialog で resolve した値) と
-        // 一致させる。
-        const probePath =
-          (args as { path?: string } | undefined)?.path ?? 'C:/videos/x.mkv';
-        return Promise.resolve({
-          path: probePath,
-          fileName: probePath.split(/[/\\]/).pop() ?? probePath,
-          sizeBytes: 38 * 1024 * 1024 * 1024,
-          durationSeconds: 10228.735,
-          width: 1920,
-          height: 1080,
-          fps: 60,
-          codec: 'h264',
-        });
-      }
-      case 'generate_match_thumbnails':
-        return Promise.resolve([]);
-      // #523
-      case 'is_process_running':
-        return Promise.resolve(false);
-      case 'kill_tracked_processes':
-        return Promise.resolve(0);
-      case 'force_exit_app':
-        return Promise.resolve();
-      // #466 / #761 -- Phase 4 export (single-invoke start_export)
-      case 'start_export':
-        return Promise.resolve({
-          success: 9,
-          failure: 0,
-          skipped: 0,
-          cancelled: false,
-        });
-      // #569 -- Phase 2.5 detect
-      case 'start_detect': {
-        const a = args as { outputDir?: string } | undefined;
-        const out = a?.outputDir ?? 'C:/out';
-        return Promise.resolve({
-          metadata_path: `${out}/metadata.json`,
-          matches: 1,
-        });
-      }
-      // #571 -- recent.json history. Default is empty so the integration
-      // flow tests don't show a populated list; the persisted entry after
-      // a probe is harmless to assert as resolved.
-      case 'read_recent':
-        return Promise.resolve([]);
-      case 'add_recent':
-        return Promise.resolve([]);
-      case 'clear_recent':
-        return Promise.resolve();
-      default:
-        return Promise.resolve();
-    }
-  });
+  invokeMock.mockImplementation(happyInvoke);
 }
+
+describe('invoke mock strictness (#844 regression guard)', () => {
+  it('configureHappyInvoke rejects unmocked commands (no silent pass)', async () => {
+    configureHappyInvoke();
+    await expect(
+      invokeMock('some_command_that_does_not_exist'),
+    ).rejects.toThrow(/unmocked invoke command/);
+  });
+});
 
 beforeEach(() => {
   invokeMock.mockReset();
@@ -283,14 +310,13 @@ describe('flow G: detecting [中断] kills the run and returns to drop', () => {
     // Make start_detect hang so the only termination path is the
     // cancel button (otherwise the mocked happy path would auto-
     // navigate to complete before we can click 中断).
-    invokeMock.mockImplementation((cmd: string) => {
+    invokeMock.mockImplementation((cmd: string, args: unknown) => {
       if (cmd === 'start_detect') {
         return new Promise(() => {
           /* never resolves */
         });
       }
-      if (cmd === 'kill_tracked_processes') return Promise.resolve(0);
-      return Promise.resolve();
+      return happyInvoke(cmd, args);
     });
     useAppStateStore.getState().setSelectedVideoPath('/x/video.mkv');
     useAppStateStore.getState().navigate('detecting');
@@ -312,10 +338,9 @@ describe('flow G: detecting [中断] kills the run and returns to drop', () => {
 describe('flow H: export cancel mid-flight (#466 + #523 + #761)', () => {
   it('kill_tracked_processes is invoked when 中断 is clicked', async () => {
     // Make start_export hang so we can observe the cancel path.
-    invokeMock.mockImplementation((cmd: string) => {
+    invokeMock.mockImplementation((cmd: string, args: unknown) => {
       if (cmd === 'start_export') return new Promise(() => undefined);
-      if (cmd === 'kill_tracked_processes') return Promise.resolve(0);
-      return Promise.resolve(undefined);
+      return happyInvoke(cmd, args);
     });
     useMetadataStore.getState().loadSample();
     useMetadataStore.setState({ filePath: '/tmp/x/metadata.json' });
@@ -346,12 +371,13 @@ describe('flow N: window close (CloseRequested) while detecting reaps the run (#
     // is_process_running -> ConfirmExitModal -> kill_tracked_processes ->
     // force_exit_app, exactly what the Rust side relies on to trigger the
     // PROCESS_TRACKER drain that drops the Job handle.
-    invokeMock.mockImplementation((cmd: string) => {
+    invokeMock.mockImplementation((cmd: string, args: unknown) => {
       if (cmd === 'start_detect') return new Promise(() => undefined);
+      // Override: is_process_running must return true to surface the modal.
       if (cmd === 'is_process_running') return Promise.resolve(true);
+      // Override: kill_tracked_processes returns 1 (one process killed).
       if (cmd === 'kill_tracked_processes') return Promise.resolve(1);
-      if (cmd === 'force_exit_app') return Promise.resolve();
-      return Promise.resolve(undefined);
+      return happyInvoke(cmd, args);
     });
     useAppStateStore.getState().setSelectedVideoPath('/x/video.mkv');
     useAppStateStore.getState().navigate('detecting');
@@ -415,12 +441,13 @@ describe('flow I: export completes (#466)', () => {
 
 describe('flow J: restore (#516)', () => {
   it('RestoreButton is disabled when no backup', () => {
-    configureHappyInvoke();
-    // Override check_backup_exists for this test
-    invokeMock.mockImplementation((cmd: string) => {
+    // Override check_backup_exists for this test: no backup present.
+    // load_metadata is intentionally rejected (metadata is pre-seeded via
+    // setState below; a live load call would be unexpected here).
+    invokeMock.mockImplementation((cmd: string, args: unknown) => {
       if (cmd === 'check_backup_exists') return Promise.resolve(false);
       if (cmd === 'load_metadata') return Promise.reject(new Error('unused'));
-      return Promise.resolve();
+      return happyInvoke(cmd, args);
     });
     useMetadataStore.setState({
       filePath: '/x',
@@ -450,12 +477,15 @@ describe('flow J: restore (#516)', () => {
 
   it('clicking [元に戻す] invokes restore_from_original', async () => {
     let restoreInvoked = false;
-    invokeMock.mockImplementation((cmd: string) => {
+    invokeMock.mockImplementation((cmd: string, args: unknown) => {
+      // Override: track restore invocation so the test can assert it fired.
       if (cmd === 'restore_from_original') {
         restoreInvoked = true;
         return Promise.resolve();
       }
-      if (cmd === 'check_backup_exists') return Promise.resolve(true);
+      // Override: load_metadata returns a minimal stub (post-restore reload
+      // path); we use a custom stub rather than happyInvoke's version so the
+      // test's empty-matches shape is preserved.
       if (cmd === 'load_metadata') {
         return Promise.resolve({
           source: 'x',
@@ -475,7 +505,7 @@ describe('flow J: restore (#516)', () => {
           gaps: [],
         });
       }
-      return Promise.resolve();
+      return happyInvoke(cmd, args);
     });
 
     useMetadataStore.setState({

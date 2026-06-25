@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.split_baseline_compare import diff_split_against_baseline
+
 pytestmark = [pytest.mark.slow, pytest.mark.slow_detect]
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -227,3 +229,58 @@ def test_vendor_golden_brightness(vendor, timestamps, sample_video_dir, tmp_outp
         f"vendor golden brightness FAIL for {vendor}: "
         f"stdout=\n{result.stdout}\nstderr=\n{result.stderr}"
     )
+
+
+# Split bit-exact baselines (#779 generated; P2-22 / #844 wires the gate).
+_SPLIT_BASELINES = [
+    ("obs-20260116", "20260116/2026-01-16 22-12-57.mkv"),
+    ("obs-20260118", "20260118/2026-01-18 22-15-18.mkv"),
+    ("obs-20260119", "20260119/2026-01-19 22-09-07.mkv"),
+    ("obs-20260127", "20260127/2026-01-27 21-59-15.mkv"),
+    ("obs-20260209", "2026-02-09 23-12-24.mkv"),
+]
+
+
+@pytest.mark.parametrize("label,relpath", _SPLIT_BASELINES)
+def test_split_bit_exact(label, relpath, sample_video_dir, tmp_output_dir):
+    """split --from-metadata output SHA-256 + size matches obs-*.split.json (P2-22).
+
+    detect Class A bit-exact analogue for the splitter (-c copy remux). Rewrites
+    the baseline metadata 'source' to the local video, runs split, and byte-checks
+    each produced match file against the committed split baseline.
+
+    Shares this module's slow_detect lane (no separate slow_split marker): this is
+    a v0.3.0 baseline-regression gate alongside the detect baselines, so it runs in
+    the same `-m slow_detect` proxy verification pass.
+    """
+    video = sample_video_dir / relpath
+    if not video.exists():
+        pytest.skip(f"video not found: {video}")
+    split_baseline = _BASELINE_DIR / f"{label}.split.json"
+    meta_baseline = _BASELINE_DIR / f"{label}.metadata.json"
+    if not split_baseline.exists() or not meta_baseline.exists():
+        pytest.skip(f"baseline missing for {label}")
+
+    meta = json.loads(meta_baseline.read_text(encoding="utf-8"))
+    meta["source"] = str(video.resolve())
+    in_meta = tmp_output_dir / "metadata.json"
+    in_meta.write_text(json.dumps(meta), encoding="utf-8")
+    out_dir = tmp_output_dir / "splits"
+    out_dir.mkdir()
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "allaganeye",
+        "split",
+        "--from-metadata",
+        str(in_meta),
+        "-o",
+        str(out_dir),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+    assert result.returncode == 0, f"split failed: {result.stderr}"
+
+    expected = json.loads(split_baseline.read_text(encoding="utf-8"))
+    problems = diff_split_against_baseline(out_dir, expected["splits"])
+    assert not problems, f"split bit-exact diff for {label}:\n" + "\n".join(problems)
