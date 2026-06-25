@@ -4,9 +4,10 @@ slow + slow_detect: real VTuber VOD required, CI deselect.
 VOD dir: ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER (default E:/allaganeye-samples),
 reusing the env var established by tests/test_vtuber_region_e2e.py.
 
-Marked xfail(strict=False) until #809 wires production VTuber detection: the
-gate documents the +-10s target and becomes a hard pass-gate (drop xfail) once
-calibration lands. guard verify FP-rejects large VODs -> owner override, PYTHONUTF8=1.
+Marked xfail(strict=True) until #809 wires production VTuber detection: the gate
+documents the +-10s target and an XPASS (detection starts passing) fails the suite,
+forcing removal of the marker so the gate cannot silently stay non-gating. guard
+verify FP-rejects large VODs -> owner override, PYTHONUTF8=1.
 """
 
 from __future__ import annotations

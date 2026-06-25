@@ -256,6 +256,32 @@ describe('ErrorModal', () => {
     expect(await axe(container)).toHaveNoViolations();
   });
 
+  it('has no axe violations (tauri-command, with hint)', async () => {
+    useErrorStore.getState().showError({
+      errorTitle: '処理中に予期しないエラーが発生しました',
+      errorMessage: 'Permission denied',
+      errorHint: 'ファイル権限を確認してください',
+      errorCategory: 'tauri-command',
+      isPanic: false,
+      isRecoverable: true,
+    });
+    const { container } = render(<ErrorModal />);
+    expect(await axe(container)).toHaveNoViolations();
+  });
+
+  it('has no axe violations (integrity, panic with log row)', async () => {
+    useErrorStore.getState().setLogDir('C:\\install\\logs');
+    useErrorStore.getState().showError({
+      errorMessage: '1 missing, 0 size mismatch',
+      errorHint: 'Portable ZIP を再展開してください。',
+      errorCategory: 'integrity',
+      isPanic: true,
+      isRecoverable: false,
+    });
+    const { container } = render(<ErrorModal />);
+    expect(await axe(container)).toHaveNoViolations();
+  });
+
   // #696: tauri-command category
   it('renders tauri-command title from errorTitle override (#696)', () => {
     useErrorStore.getState().showError({
