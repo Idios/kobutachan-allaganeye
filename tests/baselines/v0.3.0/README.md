@@ -18,7 +18,7 @@ v0.3.0 L3 Pillar 3 (perf 改善) と Phase 2b (scorebar ROI 適応) のうち **
 
 | 領域 | 理由 | 別の検証ルート |
 | --- | --- | --- |
-| GUI H264 再エンコード (#591) | 入力 codec / GPU vendor / driver で出力 byte が変動 = 元々 deterministic regression に向かない | Tauri Rust 側の `select_h264_encoder` / `is_gpu_encoder_failure` unit test (`gui/src-tauri/`) |
+| GUI H264 再エンコード (#591) | 入力 codec / GPU vendor / driver で出力 byte が変動 = 元々 deterministic regression に向かない | Python 側の `is_gpu_encoder_failure` / encoder fallback unit test (`tests/test_export_ffmpeg_runner.py`、#761 で encoder ロジックを Python subprocess 化) |
 | 非 OBS 録画 (Game DVR / VTuber / Twitch) | Pillar 2 (input adapt) の scope。形式別に別 baseline を要する | `vtuber-primary-ground-truth.json` (VTuber 用 ±10s 比較、Pillar 2b で commit 済) |
 | 非 AV1 codec 入力 (h.264 / hevc) | サンプルは OBS NVENC AV1 統一。codec パスごとの regression は別 baseline | 別途 codec multi-baseline (#576 完了後の Pillar 3 後続枠で再評価) |
 | 非 NVIDIA GPU 環境 (AMD / Intel / CPU only) | 検知パスでは `--gpu` の vendor 選択は metadata.json `system_info.gpu_vendor_used` に記録されるのみ。出力 surface (`matches` / `gaps`) は同一の boundary 抽出結果になる想定 | 必要なら別 vendor 環境で同一動画を再検知して `compare-baseline.py` を re-run (env-specific verification は Self-Test Report の machine-unverifiable 行で扱う) |
