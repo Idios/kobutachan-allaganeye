@@ -148,13 +148,17 @@ def test_wire_protocol_end_to_end(short_test_video: Path, tmp_path: Path):
         assert isinstance(pct, (int, float)), f"progress.percent not numeric: {ev}"
         assert 0.0 <= float(pct) <= 100.0, f"progress.percent out of range: {ev}"
         stage = ev["stage"]
-        assert isinstance(stage, str) and stage, f"progress.stage not a non-empty str: {ev}"
+        assert isinstance(stage, str) and stage, (
+            f"progress.stage not a non-empty str: {ev}"
+        )
 
     # result events: real payload fields present and well-typed; output file exists
     # on disk and is non-empty.  encoder_used is present on the copy path too
     # (schema.py always populates it) but we assert str-type only (codec-independent).
     result_events = [ev for ev in events if ev["type"] == "result"]
-    assert len(result_events) == 2, f"expected 2 result events, got {len(result_events)}"
+    assert len(result_events) == 2, (
+        f"expected 2 result events, got {len(result_events)}"
+    )
     for ev in result_events:
         assert isinstance(ev["match_index"], int), f"result.match_index not int: {ev}"
 
@@ -168,7 +172,9 @@ def test_wire_protocol_end_to_end(short_test_video: Path, tmp_path: Path):
         assert dur >= 0, f"result.duration_ms negative: {ev}"
 
         enc = ev.get("encoder_used")
-        assert isinstance(enc, str) and enc, f"result.encoder_used not a non-empty str: {ev}"
+        assert isinstance(enc, str) and enc, (
+            f"result.encoder_used not a non-empty str: {ev}"
+        )
 
         # Key anti-false-green: the referenced output file must exist and be non-empty.
         out_file = Path(out_path_str)
