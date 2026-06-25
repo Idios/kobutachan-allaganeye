@@ -47,7 +47,7 @@ def _resolve_vod() -> Path | None:
 
 
 @pytest.mark.xfail(
-    reason="#809 production VTuber detection calibration pending; gate wired ahead",
+    reason="#809 VTuber detection calibration pending; drop this xfail once #809 merges",
     strict=False,
 )
 def test_vtuber_ground_truth_within_tolerance(tmp_output_dir):
