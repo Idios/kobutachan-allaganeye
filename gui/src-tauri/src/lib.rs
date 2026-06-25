@@ -1891,11 +1891,11 @@ fn tail_string(buf: &[u8], max_bytes: usize) -> String {
 }
 
 /// Append `chunk` to a rolling `tail` buffer, keeping at most ~`max_tail`
-/// trailing bytes. Used by start_export's stderr drain so a chatty child can't
-/// grow the buffer without bound while still preserving the most recent output
-/// for the error message (audit P2-15). Drains only when the buffer exceeds
-/// `max_tail * 2`, amortising the shift cost (same shape as start_detect's
-/// inline drain loop).
+/// trailing bytes. Used by `drain_to_bounded_tail` (the start_detect /
+/// start_export stderr drains) so a chatty child can't grow the buffer without
+/// bound while still preserving the most recent output for the error message
+/// (audit P2-15). Drains only when the buffer exceeds `max_tail * 2`, amortising
+/// the shift cost.
 fn append_bounded_tail(tail: &mut Vec<u8>, chunk: &[u8], max_tail: usize) {
     tail.extend_from_slice(chunk);
     if tail.len() > max_tail * 2 {
@@ -2385,27 +2385,13 @@ async fn start_detect(
     // above. The tail is exposed only when the child exits non-zero, so
     // line semantics are not load-bearing -- we just need the trailing
     // bytes intact for the GUI error display.
-    let stderr_handle = tokio::spawn(async move {
-        let max_tail = 2048usize;
-        let mut tail: Vec<u8> = Vec::with_capacity(4096);
-        let mut reader = BufReader::new(stderr);
-        let mut buf: Vec<u8> = Vec::with_capacity(1024);
-        loop {
-            buf.clear();
-            match reader.read_until(b'\n', &mut buf).await {
-                Ok(0) => break,
-                Ok(_) => {
-                    tail.extend_from_slice(&buf);
-                    if tail.len() > max_tail * 2 {
-                        let drop = tail.len() - max_tail;
-                        tail.drain(0..drop);
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-        tail
-    });
+    // #838 -- drain in fixed-size chunks via the shared bounded helper
+    // (not a newline-delimited accumulator) so the tail stays bounded even
+    // for newline-free / CR-only child output (e.g. ffmpeg progress). The
+    // earlier inline read_until loop only bounded after a whole line, so a
+    // newline-free run could grow without limit before EOF. This converges
+    // start_detect with start_export (#837) on drain_to_bounded_tail.
+    let stderr_handle = tokio::spawn(async move { drain_to_bounded_tail(stderr, 2048).await });
 
     let mut metadata_path: Option<String> = None;
     let mut total_matches: u64 = 0;
@@ -4810,6 +4796,73 @@ mod tests {
         let tail = drain_to_bounded_tail(&data[..], 2048).await;
         assert!(tail.len() <= 4096, "tail must stay bounded, got {}", tail.len());
         assert!(tail.ends_with(b"frame=4999\r"), "most recent progress retained");
+    }
+
+    // #838 anti-regression guard -- start_detect must delegate its stderr drain
+    // to the bounded helper `drain_to_bounded_tail` (same as start_export, #837),
+    // not re-introduce an inline `read_until`-based accumulator that only bounds
+    // after a whole line and so grows without limit on newline-free / CR-only
+    // streams. The drain runs inside a `#[tauri::command]` that spawns a real
+    // subprocess and is not unit-testable in isolation; the boundedness behavior
+    // itself is covered by `drain_to_bounded_tail_bounds_*` above. This guard pins
+    // the wiring and fires (RED) if the delegation is removed.
+    //
+    // codex #838 adversarial review (rounds 1-2): scope the assertion to the
+    // `let stderr_handle =` initializer LINE (code only -- any trailing `//`
+    // comment is stripped), not the whole start_detect body. A whole-body scan
+    // false-greens when the helper name appears in a comment/string while the
+    // stderr task regresses to an inline read_until drain (including via an
+    // aliased pipe such as `let p = stderr; BufReader::new(p)`, which dodges a
+    // `BufReader::new(stderr)` substring check). The initializer line must BE the
+    // bounded delegation expression. (Idios-approved approach A; a syn AST check
+    // was the considered-heavier alternative.)
+    #[test]
+    fn start_detect_delegates_stderr_drain_to_bounded_helper() {
+        let src = include_str!("lib.rs");
+        let start = src
+            .find("async fn start_detect(")
+            .expect("start_detect must exist");
+        let rest = &src[start + "async fn start_detect(".len()..];
+        let end = rest
+            .find("\nasync fn ")
+            .expect("a function must follow start_detect");
+        let body = &rest[..end];
+
+        // The `let stderr_handle = ...;` initializer, code portion only: drop any
+        // trailing `// comment` so a crafted comment on this line cannot satisfy
+        // the check. start_detect's stdout reader is a separate `let mut reader`
+        // binding, so scoping to `let stderr_handle` isolates the stderr drain.
+        let init_start = body
+            .find("let stderr_handle")
+            .expect("start_detect must bind stderr_handle");
+        let init_line_end = body[init_start..]
+            .find('\n')
+            .map(|i| init_start + i)
+            .unwrap_or(body.len());
+        let init_code = body[init_start..init_line_end]
+            .split("//")
+            .next()
+            .unwrap_or("");
+
+        // Positive: the initializer IS the bounded-helper delegation expression
+        // (the full `(stderr, 2048).await` call cannot be produced by prose, and
+        // a regressed inline drain pushes the spawn body onto later lines so this
+        // single-line check no longer matches).
+        assert!(
+            init_code.contains("drain_to_bounded_tail(stderr, 2048).await"),
+            "start_detect's stderr_handle must be the bounded delegation \
+             tokio::spawn(async move {{ drain_to_bounded_tail(stderr, 2048).await }}) \
+             (#838); a regressed inline read_until drain grows unbounded on \
+             newline-free / CR-only streams. Got: {init_code:?}"
+        );
+        // Negative: the bounded delegation needs no read_until; its presence on
+        // the stderr_handle initializer line means an inline accumulator returned.
+        assert!(
+            !init_code.contains("read_until"),
+            "start_detect's stderr_handle initializer must not use read_until \
+             (#838 inline drain regression); delegate to drain_to_bounded_tail. \
+             Got: {init_code:?}"
+        );
     }
 
     // -- #813 run-id stamping (越境イベント遮断) ---------------------------
