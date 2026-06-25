@@ -22,7 +22,9 @@ import pytest
 pytestmark = [pytest.mark.slow, pytest.mark.slow_detect]
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_GT_PATH = _REPO_ROOT / "tests" / "baselines" / "v0.3.0" / "vtuber-primary-ground-truth.json"
+_GT_PATH = (
+    _REPO_ROOT / "tests" / "baselines" / "v0.3.0" / "vtuber-primary-ground-truth.json"
+)
 _VTUBER_DIR = Path(
     os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER") or r"E:/allaganeye-samples"
 )
@@ -54,9 +56,7 @@ def test_vtuber_ground_truth_within_tolerance(tmp_output_dir):
     """Each GT FL match has a detected match with start+end within +-tolerance_sec."""
     vod = _resolve_vod()
     if vod is None:
-        pytest.skip(
-            "VTuber GT VOD not found under ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER"
-        )
+        pytest.skip("VTuber GT VOD not found under ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER")
     gt = _ground_truth()
     tol = float(gt["tolerance_sec"])
 

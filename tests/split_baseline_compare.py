@@ -20,7 +20,9 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def diff_split_against_baseline(out_dir: Path, expected_splits: list[dict]) -> list[str]:
+def diff_split_against_baseline(
+    out_dir: Path, expected_splits: list[dict]
+) -> list[str]:
     """Return human-readable mismatch lines; empty list == bit-exact match.
 
     Size and sha256 are checked independently, so a single damaged file may
