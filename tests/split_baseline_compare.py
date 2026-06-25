@@ -27,7 +27,9 @@ def diff_split_against_baseline(
 
     Size and sha256 are checked independently, so a single damaged file may
     produce two entries (one size line and one sha256 line) to surface the full
-    defect picture in one run.
+    defect picture in one run. The produced ``*.mp4`` set is also compared against
+    the expected set, so an extra/duplicate/trailing output file is flagged (a
+    true output-set gate, not just a per-expected-file check).
     """
     problems: list[str] = []
     for sp in expected_splits:
@@ -43,4 +45,8 @@ def diff_split_against_baseline(
             problems.append(
                 f"{sp['output_file']} sha256 {sha[:12]} != {sp['sha256'][:12]}"
             )
+    expected_names = {sp["output_file"] for sp in expected_splits}
+    produced_names = {p.name for p in out_dir.glob("*.mp4")}
+    for extra in sorted(produced_names - expected_names):
+        problems.append(f"unexpected output file: {extra}")
     return problems

@@ -34,3 +34,22 @@ def test_mismatch_baseline_fires(tmp_path: Path) -> None:
     assert any("size" in p for p in problems)
     assert any("sha256" in p for p in problems)
     assert any("missing" in p for p in problems)
+
+
+def test_unexpected_output_file_fires(tmp_path: Path) -> None:
+    """An extra produced *.mp4 not in the baseline must be flagged (output-set gate)."""
+    expected_file = tmp_path / "match_001.mp4"
+    expected_file.write_bytes(b"hello world")
+    (tmp_path / "match_002.mp4").write_bytes(b"surprise extra segment")
+    problems = diff_split_against_baseline(
+        tmp_path,
+        [
+            {
+                "output_file": "match_001.mp4",
+                "size_bytes": 11,
+                "sha256": sha256_file(expected_file),
+            }
+        ],
+    )
+    assert any("unexpected output file" in p for p in problems)
+    assert any("match_002.mp4" in p for p in problems)

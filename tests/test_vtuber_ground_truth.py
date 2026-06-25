@@ -50,7 +50,9 @@ def _resolve_vod() -> Path | None:
 
 @pytest.mark.xfail(
     reason="#809 VTuber detection calibration pending; drop this xfail once #809 merges",
-    strict=False,
+    # strict=True: once detection passes (post-#809), XPASS fails the suite and
+    # forces removing this marker -- the gate cannot silently stay non-gating.
+    strict=True,
 )
 def test_vtuber_ground_truth_within_tolerance(tmp_output_dir):
     """Each GT FL match has a detected match with start+end within +-tolerance_sec."""
