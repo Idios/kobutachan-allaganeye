@@ -121,4 +121,6 @@ def test_wire_protocol_end_to_end(short_test_video: Path, tmp_path: Path):
         seq = [ev["type"] for ev in events if ev.get("match_index") == idx]
         assert "progress" in seq
         terminal_pos = seq.index("result") if "result" in seq else seq.index("error")
-        assert all(s == "progress" or s == "fallback" for s in seq[:terminal_pos])
+        # --codec copy never emits fallback (that is a GPU-encoder-failure event
+        # only), so every pre-terminal event for a match is a progress event.
+        assert all(s == "progress" for s in seq[:terminal_pos])
