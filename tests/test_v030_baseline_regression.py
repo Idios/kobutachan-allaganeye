@@ -248,6 +248,10 @@ def test_split_bit_exact(label, relpath, sample_video_dir, tmp_output_dir):
     detect Class A bit-exact analogue for the splitter (-c copy remux). Rewrites
     the baseline metadata 'source' to the local video, runs split, and byte-checks
     each produced match file against the committed split baseline.
+
+    Shares this module's slow_detect lane (no separate slow_split marker): this is
+    a v0.3.0 baseline-regression gate alongside the detect baselines, so it runs in
+    the same `-m slow_detect` proxy verification pass.
     """
     video = sample_video_dir / relpath
     if not video.exists():

@@ -21,7 +21,12 @@ def sha256_file(path: Path) -> str:
 
 
 def diff_split_against_baseline(out_dir: Path, expected_splits: list[dict]) -> list[str]:
-    """Return human-readable mismatch lines; empty list == bit-exact match."""
+    """Return human-readable mismatch lines; empty list == bit-exact match.
+
+    Size and sha256 are checked independently, so a single damaged file may
+    produce two entries (one size line and one sha256 line) to surface the full
+    defect picture in one run.
+    """
     problems: list[str] = []
     for sp in expected_splits:
         produced = out_dir / sp["output_file"]
