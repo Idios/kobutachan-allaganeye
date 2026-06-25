@@ -160,11 +160,27 @@ function configureHappyInvoke() {
         return Promise.resolve([]);
       case 'clear_recent':
         return Promise.resolve();
+      // #514 -- conflict detection: mtime probe before load_metadata.
+      // Returns a fixed timestamp; the value is only used for
+      // conflict comparison (apply_changes), not asserted in flow tests.
+      case 'get_metadata_mtime':
+        return Promise.resolve(1_000_000_000_000);
       default:
-        return Promise.resolve();
+        return Promise.reject(
+          new Error(`unmocked invoke command: ${cmd}`),
+        );
     }
   });
 }
+
+describe('invoke mock strictness (#844 regression guard)', () => {
+  it('configureHappyInvoke rejects unmocked commands (no silent pass)', async () => {
+    configureHappyInvoke();
+    await expect(
+      invokeMock('some_command_that_does_not_exist'),
+    ).rejects.toThrow(/unmocked invoke command/);
+  });
+});
 
 beforeEach(() => {
   invokeMock.mockReset();
