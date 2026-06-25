@@ -2385,27 +2385,14 @@ async fn start_detect(
     // above. The tail is exposed only when the child exits non-zero, so
     // line semantics are not load-bearing -- we just need the trailing
     // bytes intact for the GUI error display.
-    let stderr_handle = tokio::spawn(async move {
-        let max_tail = 2048usize;
-        let mut tail: Vec<u8> = Vec::with_capacity(4096);
-        let mut reader = BufReader::new(stderr);
-        let mut buf: Vec<u8> = Vec::with_capacity(1024);
-        loop {
-            buf.clear();
-            match reader.read_until(b'\n', &mut buf).await {
-                Ok(0) => break,
-                Ok(_) => {
-                    tail.extend_from_slice(&buf);
-                    if tail.len() > max_tail * 2 {
-                        let drop = tail.len() - max_tail;
-                        tail.drain(0..drop);
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-        tail
-    });
+    // #838 -- drain in fixed-size chunks via the shared bounded helper
+    // (not a newline-delimited accumulator) so the tail stays bounded even
+    // for newline-free / CR-only child output (e.g. ffmpeg progress). The
+    // earlier inline read_until loop only bounded after a whole line, so a
+    // newline-free run could grow without limit before EOF. This converges
+    // start_detect with start_export (#837) on drain_to_bounded_tail.
+    let stderr_handle =
+        tokio::spawn(async move { drain_to_bounded_tail(stderr, 2048).await });
 
     let mut metadata_path: Option<String> = None;
     let mut total_matches: u64 = 0;
@@ -4810,6 +4797,41 @@ mod tests {
         let tail = drain_to_bounded_tail(&data[..], 2048).await;
         assert!(tail.len() <= 4096, "tail must stay bounded, got {}", tail.len());
         assert!(tail.ends_with(b"frame=4999\r"), "most recent progress retained");
+    }
+
+    // #838 anti-regression guard -- start_detect must delegate its stderr drain
+    // to the bounded helper `drain_to_bounded_tail` (same as start_export, #837),
+    // not re-introduce an inline `read_until`-based accumulator that only bounds
+    // after a whole line and so grows without limit on newline-free / CR-only
+    // streams. The drain runs inside a `#[tauri::command]` that spawns a real
+    // subprocess and is not unit-testable in isolation; the boundedness behavior
+    // itself is covered by `drain_to_bounded_tail_bounds_*` above. This guard
+    // scans the start_detect source span and fires (RED) if the inline pattern
+    // returns. Scoped strictly to start_detect (ends at the next `async fn`, well
+    // before start_export's helper call) so it never matches start_export.
+    #[test]
+    fn start_detect_delegates_stderr_drain_to_bounded_helper() {
+        let src = include_str!("lib.rs");
+        let start = src
+            .find("async fn start_detect(")
+            .expect("start_detect must exist");
+        let rest = &src[start + "async fn start_detect(".len()..];
+        let end = rest
+            .find("\nasync fn ")
+            .expect("a function must follow start_detect");
+        let body = &rest[..end];
+
+        assert!(
+            body.contains("drain_to_bounded_tail"),
+            "start_detect must delegate stderr draining to drain_to_bounded_tail \
+             (bounded helper, #838); an inline read_until accumulator grows \
+             unbounded on newline-free / CR-only streams"
+        );
+        assert!(
+            !body.contains("tail.drain(0..drop)"),
+            "start_detect must not re-introduce an inline tail-bounding loop \
+             (#838); delegate to drain_to_bounded_tail instead"
+        );
     }
 
     // -- #813 run-id stamping (越境イベント遮断) ---------------------------
