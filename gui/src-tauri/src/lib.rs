@@ -1891,11 +1891,11 @@ fn tail_string(buf: &[u8], max_bytes: usize) -> String {
 }
 
 /// Append `chunk` to a rolling `tail` buffer, keeping at most ~`max_tail`
-/// trailing bytes. Used by start_export's stderr drain so a chatty child can't
-/// grow the buffer without bound while still preserving the most recent output
-/// for the error message (audit P2-15). Drains only when the buffer exceeds
-/// `max_tail * 2`, amortising the shift cost (same shape as start_detect's
-/// inline drain loop).
+/// trailing bytes. Used by `drain_to_bounded_tail` (the start_detect /
+/// start_export stderr drains) so a chatty child can't grow the buffer without
+/// bound while still preserving the most recent output for the error message
+/// (audit P2-15). Drains only when the buffer exceeds `max_tail * 2`, amortising
+/// the shift cost.
 fn append_bounded_tail(tail: &mut Vec<u8>, chunk: &[u8], max_tail: usize) {
     tail.extend_from_slice(chunk);
     if tail.len() > max_tail * 2 {
