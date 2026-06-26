@@ -95,16 +95,6 @@ def run_detect(
         # complete-screen timeline.
         captured_brightness.update(results)
 
-    # #805 段階1 -- trailing drop の (start, end) を捕捉して metadata.json の
-    # warnings に書く。captured_brightness と同様に関数先頭で宣言し、
-    # cache-miss の detection block (callback 配線) と末尾の payload builder
-    # (warnings 変換) の両方から参照できるようにする。cache hit / drop なし
-    # では空のまま残り build_warnings(trailing_drops=()) -> []。
-    trailing_drops: list[tuple[float, float]] = []
-
-    def on_trailing_drop(start: float, end: float) -> None:
-        trailing_drops.append((start, end))
-
     total_start = time.monotonic()
     detected_at = _iso_utc_now()
 
@@ -210,7 +200,6 @@ def run_detect(
             progress_emitter=progress_emitter,
             brightness_callback=on_brightness,
             masked_fallback_callback=_on_masked_fallback,
-            trailing_drop_callback=on_trailing_drop,
         )
 
         if not boundaries:
@@ -304,10 +293,12 @@ def run_detect(
         system_info=system_info,
         brightness_samples=brightness_samples,
         masked_fallback_used=masked_fallback_used,
-        # #805 段階1: fresh-detection drops -> post_match_trailing_dropped
-        # warning(s). Empty when nothing dropped (incl. cache-hit, which never
-        # populates trailing_drops since _run_detection is skipped) -> [].
-        warnings=build_warnings(trailing_drops=trailing_drops),
+        # #805 段階2: warnings is always empty -- the W1
+        # post_match_trailing_dropped emission was removed; the non-destructive
+        # post_match flag on the Match now records a post-match trailing segment.
+        # (Task 5 adds detect.py's post_match 搬送; until then a post_match
+        # segment is written as a normal match here.)
+        warnings=build_warnings(),
     )
     metadata_path = config.output_dir / "metadata.json"
     write_metadata_atomic(metadata_path, payload)

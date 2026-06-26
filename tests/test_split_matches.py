@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from allaganeye.commands.split_matches import (
+    _CACHE_VERSION,
     _ETAProgressBar,
     _PROGRESS_LABEL_WIDTH,
     _auto_sample_interval,
@@ -18,7 +19,6 @@ from allaganeye.commands.split_matches import (
     run_split,
 )
 from allaganeye.config import SplitConfig
-from allaganeye.detection.warnings import WARNING_CODES
 from allaganeye.exceptions import AllaganEyeError, DetectionError, VideoProcessingError
 from allaganeye.video.detector import MatchBoundary
 from allaganeye.video.probe import ProbeResult
@@ -1048,10 +1048,11 @@ def test_pipeline_config_params_forwarded(
     assert detect_kwargs["blackout_threshold"] == 20.0
     assert detect_kwargs["min_match_duration"] == 120.0
     assert detect_kwargs["min_blackout_duration"] == 3.0
-    # #805 段階1: keep_trailing flag + trailing_drop_callback seam reach the
-    # detector through _run_detection's detect_kwargs assembly.
+    # #805 段階2: keep_trailing flag still reaches the detector through
+    # _run_detection's detect_kwargs assembly. The trailing_drop_callback seam
+    # is removed (W1: warning emission stopped, post_match flag replaces it).
     assert detect_kwargs["keep_trailing"] is True
-    assert callable(detect_kwargs["trailing_drop_callback"])
+    assert "trailing_drop_callback" not in detect_kwargs
 
 
 # ============================================================
@@ -1298,6 +1299,27 @@ class TestCacheRoundTrip:
         data["cache_version"] = 2
         for key in ("vtuber", "masked"):
             data["params"].pop(key, None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+
+    def test_cache_version_is_4(self):
+        """#805 段階2: detection output shape changed (post_match flag) -> v4."""
+        assert _CACHE_VERSION == 4
+
+    def test_legacy_v3_cache_rejected(self, cache_video, cache_config, tmp_path):
+        """#805 段階2: pre-段階2 (v3) cache は version bump で invalidate される.
+
+        旧 detector は post-match trailing を削除済み shape で cache した。新
+        detector は post_match flag 付きで残すため、v3 cache が hit し続けると
+        削除済み結果 (試合 1 本欠落) が silent に再利用される。version bump で
+        確実に miss させ再 detect させる。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["cache_version"] = 3
         cache_path.write_text(json.dumps(data), encoding="utf-8")
         assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
 
@@ -4661,33 +4683,33 @@ def test_run_split_cache_hit_omits_brightness_samples(
     )
 
 
-# -- #805 段階1: post_match_trailing_dropped warning wiring through run_split --
+# -- #805 段階2: post_match_trailing_dropped warning emission stopped (W1) --
 
-# trailing_drop_callback の wiring を assert したいので mock_pipeline ではなく
-# `_run_detection` を直接 patch する (brightness_samples #644 と同型)。
+# trailing_drop_callback の wiring は除去されたため、`_run_detection` を直接
+# patch して callback が渡されないこと + warnings が空のままなことを assert する
+# (post_match flag が warning を代替、brightness_samples #644 と同型の検証)。
 
 
 @patch(f"{MODULE}._run_detection")
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.probe_video")
-def test_run_split_records_trailing_drop_warning(
+def test_run_split_does_not_pass_trailing_drop_callback(
     mock_probe, mock_split, mock_run_detection, tmp_path
 ):
-    """#805 段階1 -- run_split (一気通貫) で trailing drop が起きたら
-    metadata.json の warnings に post_match_trailing_dropped が記録される。
+    """#805 段階2 (W1) -- run_split (一気通貫) は trailing_drop_callback を
+    `_run_detection` に渡さず、warnings は emit されない (空のまま)。
 
-    `_run_detection` に渡される `trailing_drop_callback` を
-    fake_run_detection から (1000.0, 1800.0) で呼び、最終 metadata.json
-    の warnings に 1 件現れることを assert する (brightness #644 同型)。
+    post_match flag が first-class 代替になったため、旧 callback チェーンは
+    除去された。callback kwarg が assemble されないこと + warnings が [] で
+    あることを assert する。
     """
     mock_probe.return_value = PROBE_RESULT
 
     def fake_run_detection(*args, **kwargs):
-        cb = kwargs.get("trailing_drop_callback")
-        assert cb is not None, (
-            "run_split must pass trailing_drop_callback to _run_detection (#805)"
+        assert "trailing_drop_callback" not in kwargs, (
+            "run_split must NOT pass trailing_drop_callback to _run_detection "
+            "(#805 段階2: callback removed, post_match flag replaces it)"
         )
-        cb(1000.0, 1800.0)
         return BOUNDARIES
 
     mock_run_detection.side_effect = fake_run_detection
@@ -4705,14 +4727,7 @@ def test_run_split_records_trailing_drop_warning(
     run_split(video, config, verbose=False, quiet=True)
 
     payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
-    assert payload["warnings"] == [
-        {
-            "code": "post_match_trailing_dropped",
-            "message_en": WARNING_CODES["post_match_trailing_dropped"],
-            "severity": "warn",
-            "context": {"start": 1000.0, "end": 1800.0},
-        }
-    ]
+    assert payload["warnings"] == []
 
 
 @patch(f"{MODULE}._run_detection")
@@ -4747,11 +4762,13 @@ def test_run_split_no_trailing_drop_writes_empty_warnings(
 
 
 def test_build_metadata_payload_round_trips_warnings(tmp_path):
-    """#805 段階1 -- `_build_metadata_payload(warnings=[...])` emits the list
+    """#805 -- `_build_metadata_payload(warnings=[...])` emits the list
     verbatim; default (no arg) keeps the historical `[]` for existing callers.
+
+    The ``warnings`` param survives 段階2 (only the trailing_drop emission seam
+    was removed), so a pre-built list still round-trips unchanged.
     """
     from allaganeye.commands.split_matches import _build_metadata_payload
-    from allaganeye.detection.warnings import WARNING_CODES, build_warnings
 
     system_info = {
         "gpu_vendors_available": [],
@@ -4777,19 +4794,16 @@ def test_build_metadata_payload_round_trips_warnings(tmp_path):
     default_payload = _build_metadata_payload(**common)  # type: ignore[arg-type]
     assert default_payload.get("warnings") == []
 
-    warned = build_warnings(trailing_drops=[(1000.0, 1800.0)])
-    # The producer emits exactly this shape; pin it explicitly so the round
-    # trip below also documents the wire contract.
-    assert warned == [
+    # A pre-built warnings list (any code) is forwarded verbatim, not rebuilt.
+    warned = [
         {
-            "code": "post_match_trailing_dropped",
-            "message_en": WARNING_CODES["post_match_trailing_dropped"],
+            "code": "some_warning_code",
+            "message_en": "example",
             "severity": "warn",
             "context": {"start": 1000.0, "end": 1800.0},
         }
     ]
     payload = _build_metadata_payload(**common, warnings=warned)  # type: ignore[arg-type]
-    # _build_metadata_payload forwards the list verbatim (not rebuilt).
     assert payload.get("warnings") == warned
 
 

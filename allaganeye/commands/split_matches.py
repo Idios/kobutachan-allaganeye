@@ -62,7 +62,12 @@ logger = logging.getLogger(__name__)
 # 「missing masked = 標準 path と同一挙動」が成立しなくなったため、pre-#821
 # cache を全面 invalidate する (v2 cache が hit し続けると masked 動画の誤結果
 # が再利用され、新 detector が走らない)。
-_CACHE_VERSION = 3
+# v4 (#805 段階2): post-match trailing の disposition が削除 (旧 = post_match
+# segment を drop した shape) から非破壊フラグ (新 = post_match=True で残す shape)
+# に変わったため、検出出力 (cached boundaries) の shape が変わる。旧 v3 cache が
+# hit し続けると削除済み結果 (試合 1 本欠落) が silent に再利用されるので bump
+# する。cache key params (keep_trailing 含む) 自体は不変。
+_CACHE_VERSION = 4
 
 
 def run_split(
@@ -217,15 +222,6 @@ def run_split(
         nonlocal masked_fallback_used
         masked_fallback_used = True
 
-    # #805 段階1 -- trailing drop の (start, end) を捕捉して metadata.json の
-    # warnings に書く。brightness_callback (#644) / masked_fallback (#821) と
-    # 同じ collector パターン。callback が呼ばれない経路 (cache hit / drop なし)
-    # では trailing_drops は空のまま残り build_warnings(trailing_drops=()) -> []。
-    trailing_drops: list[tuple[float, float]] = []
-
-    def _on_trailing_drop(start: float, end: float) -> None:
-        trailing_drops.append((start, end))
-
     boundaries = _run_detection(
         video_path,
         metadata,
@@ -238,7 +234,6 @@ def run_split(
         gpu_vendor=gpu_vendor,
         brightness_callback=_on_brightness,
         masked_fallback_callback=_on_masked_fallback,
-        trailing_drop_callback=_on_trailing_drop,
     )
 
     if not boundaries:
@@ -312,10 +307,10 @@ def run_split(
         system_info=detected_system_info,
         brightness_samples=brightness_samples,
         masked_fallback_used=masked_fallback_used,
-        # #805 段階1: fresh-detection drops -> post_match_trailing_dropped
-        # warning(s). Empty when nothing dropped -> []. (cache-hit write above
-        # stays unchanged: no fresh detection = documented limitation.)
-        warnings=build_warnings(trailing_drops=trailing_drops),
+        # #805 段階2: warnings is always empty -- the W1
+        # post_match_trailing_dropped emission was removed; the non-destructive
+        # post_match flag on the Match now records a post-match trailing segment.
+        warnings=build_warnings(),
         quiet=quiet,
     )
     _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
@@ -811,7 +806,6 @@ def _run_detection(
     progress_emitter: ProgressEmitter | None = None,
     brightness_callback: Callable[[dict[float, float]], None] | None = None,
     masked_fallback_callback: Callable[[], None] | None = None,
-    trailing_drop_callback: Callable[[float, float], None] | None = None,
 ) -> list[MatchBoundary]:
     """Run detection with progress bars for each phase (#328, #329, #331).
 
@@ -846,12 +840,10 @@ def _run_detection(
         "stats": stats,
         "brightness_callback": brightness_callback,
         "masked_fallback_callback": masked_fallback_callback,
-        # #805 段階1: opt-out flag + drop-span seam. keep_trailing skips the
-        # #797 trailing drop entirely (default False = bit-exact); the callback
-        # records each dropped (start, end) so the command layer can surface
-        # it in metadata.json warnings.
+        # #805: opt-out flag. keep_trailing skips the #797 post-match trailing
+        # flagging entirely so a trailing no-scorebar segment is left unflagged
+        # (default False = bit-exact).
         "keep_trailing": config.keep_trailing,
-        "trailing_drop_callback": trailing_drop_callback,
         # #576: rational fps propagation (probe -> detector).
         "source_fps": metadata.get("fps"),
         "source_fps_num": metadata.get("fps_num"),
@@ -1515,10 +1507,11 @@ def _build_metadata_payload(
             }
             for g in gaps
         ],
-        # #805 段階1: ``warnings`` defaults to None -> ``build_warnings()`` ([])
-        # so existing callers/tests stay byte-identical. Callers that capture
-        # trailing-drop spans pass a pre-built list (via build_warnings(
-        # trailing_drops=...)) which is emitted verbatim.
+        # ``warnings`` defaults to None -> ``build_warnings()`` ([]) so existing
+        # callers/tests stay byte-identical. A caller may still pass a pre-built
+        # list (e.g. preserved from an older metadata.json) which is emitted
+        # verbatim. #805 段階2 removed the only emitter (post_match_trailing_
+        # dropped), so fresh-detection writes now always pass an empty list.
         "warnings": build_warnings() if warnings is None else warnings,
     }
     if brightness_samples is not None:

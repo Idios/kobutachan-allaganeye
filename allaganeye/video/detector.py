@@ -405,11 +405,9 @@ def detect_match_boundaries(
     source_fps_num: int | None = None,
     source_fps_den: int | None = None,
     source_fps: float | None = None,
-    # #805 段階1: opt out of the irreversible post-match trailing drop (#797).
+    # #805: opt out of the post-match trailing flag (#797). When True the
+    # trailing no-scorebar segment is left unflagged (#805 opt-out).
     keep_trailing: bool = False,
-    # #805 段階1: fired once with (start, end) whenever a trailing segment is
-    # actually dropped, so the lost span can be recorded in metadata.json.
-    trailing_drop_callback: Callable[[float, float], None] | None = None,
 ) -> list[MatchBoundary]:
     """Detect match boundaries by finding blackout frames.
 
@@ -446,12 +444,8 @@ def detect_match_boundaries(
             mapping covers every timestamp between 0 and ``duration_hint``
             at ``sample_interval`` spacing; non-blackout fallbacks (255.0)
             are included so consumers can plot continuous data.
-        keep_trailing: If True, skip the #797 post-match trailing drop so a
-            trailing no-scorebar segment is retained (#805 段階1 opt-out).
-        trailing_drop_callback: Optional callback invoked once with
-            ``(start, end)`` when a trailing segment is actually dropped
-            (#805 段階1); the seam used to record the lost span in
-            metadata.json.
+        keep_trailing: If True, skip the #797 post-match trailing flagging so a
+            trailing no-scorebar segment is left unflagged (#805 opt-out).
 
     Returns list of dicts with 'start' and 'end' keys (seconds).
     """
@@ -660,7 +654,6 @@ def detect_match_boundaries(
             duration_hint,
             stats,
             min_match_duration=min_match_duration,
-            trailing_drop_callback=trailing_drop_callback,
         )
     return segments
 
@@ -2402,7 +2395,6 @@ def _flag_post_match_trailing(
     stats: DetectionStats | None,
     *,
     min_match_duration: float = 300.0,
-    trailing_drop_callback: Callable[[float, float], None] | None = None,
 ) -> list[MatchBoundary]:
     """Flag a trailing post-match run via early-window scorebar probes (#797 / #805).
 
@@ -2496,13 +2488,10 @@ def _flag_post_match_trailing(
         # #805 段階2: the segment now STAYS in ``segments`` (flagged, not
         # dropped), so it is still legitimately counted as unknown -- there is
         # nothing to decrement from ``filter_unknown``.
-    # #805 段階1: surface the post-match span (start, end) for the command
-    # layer. The callback stays wired in 段階2 Task 3 (removed in Task 4); the
-    # post-match decision above is unchanged (bit-exact default behavior).
-    if trailing_drop_callback is not None:
-        trailing_drop_callback(start, end)
-    # #805 段階2: retain the segment with the non-destructive flag instead of
-    # deleting it (was ``return segments[:-1]``).
+    # #805 段階2: retain the trailing segment with the non-destructive
+    # post_match flag (default split output excludes it) instead of
+    # dropping it, so a scorebar false-negative can never silently delete
+    # a real match.
     segments[-1]["post_match"] = True
     return segments
 
