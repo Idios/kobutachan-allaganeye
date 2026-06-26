@@ -29,7 +29,8 @@ export const MatchSchema = z
     duration: z.number().min(0),
     duration_display: z.string(),
     type: z.enum(['fl_match', 'unknown']),
-    output_file: z.string(),
+    output_file: z.string().optional(),
+    post_match: z.boolean().optional(),
   })
   // #517: passthrough match-level edit fields (`name` / `type_override` /
   // `edited`) so metadata.draft.json round-trips them when reloaded.

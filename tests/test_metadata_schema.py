@@ -167,6 +167,46 @@ def test_warning_context_accepts_arbitrary_keys():
     Draft202012Validator(schema).validate(sample)
 
 
+def _validate_match(match: dict) -> None:
+    """Helper: validate a Match object against the $defs/Match sub-schema."""
+    schema = _load_schema()
+    match_schema = schema["$defs"]["Match"]
+    # Inline $defs so the sub-schema validator can resolve them
+    match_schema = dict(match_schema, **{"$defs": schema.get("$defs", {})})
+    Draft202012Validator(match_schema).validate(match)
+
+
+def test_match_post_match_flag_without_output_file_validates():
+    # post_match segment は MP4 無し = output_file 欠落でも valid
+    match = {
+        "index": 2,
+        "start_time": 100.0,
+        "end_time": 500.0,
+        "start_display": "1:40",
+        "end_display": "8:20",
+        "duration": 400.0,
+        "duration_display": "6m40s",
+        "type": "unknown",
+        "post_match": True,
+    }
+    _validate_match(match)
+
+
+def test_match_without_output_file_and_without_post_match_validates():
+    # output_file が NotRequired になったので欠落しても schema 上 valid
+    match = {
+        "index": 1,
+        "start_time": 0.0,
+        "end_time": 600.0,
+        "start_display": "0:00",
+        "end_display": "10:00",
+        "duration": 600.0,
+        "duration_display": "10m0s",
+        "type": "fl_match",
+    }
+    _validate_match(match)
+
+
 def test_post_match_trailing_dropped_warning_validates():
     """A `post_match_trailing_dropped` warning (#805 段階1) must validate.
 

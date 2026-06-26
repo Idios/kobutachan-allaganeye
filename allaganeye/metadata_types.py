@@ -37,7 +37,8 @@ class Match(TypedDict):
     duration: float
     duration_display: str
     type: Literal["fl_match", "unknown"]
-    output_file: str
+    output_file: NotRequired[str]
+    post_match: NotRequired[bool]
 
 
 class Gap(TypedDict):
