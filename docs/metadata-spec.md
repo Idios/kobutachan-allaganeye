@@ -97,7 +97,8 @@ JSON Schema は writer 契約として strict (additional properties は受け�
 | `duration` | number | ✓ | 長さ (秒) |
 | `duration_display` | string | ✓ | 長さ表示 (例: `15m15s`) |
 | `type` | string | ✓ | `fl_match` または `unknown` |
-| `output_file` | string | ✓ | 出力 MP4 ファイル名 (相対パス、metadata.json と同ディレクトリ想定) |
+| `output_file` | string | — (NotRequired) | 出力 MP4 ファイル名 (相対パス、metadata.json と同ディレクトリ想定)。通常 match は常に存在する。`post_match: true` の match は MP4 を生成しないため本フィールドを持たない |
+| `post_match` | boolean | — (NotRequired) | post-match trailing 非破壊フラグ (#805 段階2)。`true` のとき試合後 trailing (lobby/city) を表す非破壊フラグ。default split 出力 (MP4) から除外されるが metadata には保持される。absent/false = 通常 match |
 
 ### `system_info` オブジェクト (#591)
 
@@ -174,14 +175,14 @@ GUI は読み取った未知フィールドを書き戻しで保持する義務�
 
 - probe → cache check → detect → cache save → `metadata.json` atomic write
 - 出力: `<output_dir>/metadata.json` のみ (MP4 は作らない)
-- `matches[].output_file` は `match_NNN.mp4` のプレースホルダ (split 時に生成される実ファイル名)
+- `matches[].output_file` は `match_NNN.mp4` のプレースホルダ (split 時に生成される実ファイル名)。**`post_match: true` の match は `output_file` を持たない** (active match のみプレースホルダが付く)
 - 既存 `metadata.json` は**上書き** (GUI の `metadata.original.json` バックアップには触らない)
 
 ### `allaganeye split <video>` (legacy)
 
 - detect + split を一気通貫 (後方互換)
 - probe → detect → split (ffmpeg -c copy) → `metadata.json` atomic write
-- `matches[].output_file` は実際に書き出された MP4 のパス
+- `matches[].output_file` は実際に書き出された MP4 のパス。**`post_match: true` の match は MP4 を生成せず `output_file` を持たない** (metadata には保持)
 
 ### `allaganeye split --from-metadata <metadata.json>`
 
@@ -189,6 +190,7 @@ GUI は読み取った未知フィールドを書き戻しで保持する義務�
 - `source` フィールドで元動画を解決 (相対パスは `metadata.json` のディレクトリ起点)
 - split → `metadata.json` を **`config.output_dir`** に**書き直し**
 - 書き直し時に未知フィールド (legacy `note` 等) は**落ちる**。GUI で保持したい情報は GUI 側 state に保つ
+- **`post_match: true` の match は MP4 を生成せず `output_file` を持たない** (detect / split と一貫)。3 経路すべてで post_match match は MP4 除外 + metadata 保持の動作が統一されている
 - **`detection_started_at` / `detection_completed_at` の保持** (#586): 再検知してないので元 metadata の値を pass-through し、GUI「所要」表示が「検知時の所要」を維持する。pre-#586 metadata (両フィールド欠落) では fresh capture (started=`detected_at` / completed=書き込み直前) で fallback し post-#586 形式に揃える
 
 ## 書き込み方針
@@ -226,8 +228,19 @@ GUI は以下のフィールドを in-memory で編集し、`[適用]` 時に `m
 
 ```ts
 { index, start_time, end_time, start_display, end_display,
-  duration, duration_display, type, output_file }
+  duration, duration_display, type, output_file? }
 ```
+
+> **Phase 1 の既知の限界 (`normalizeForPersistence` の挙動)**
+>
+> - `output_file` は `m.output_file` をそのまま書き出す。`post_match: true` の match は
+>   `output_file` を持たないため、JSON.stringify が当該キーを省略する
+>   (Match 表の NotRequired と整合)。
+> - `normalizeForPersistence` は `post_match` フィールドを passthrough しない。
+>   そのため `[適用]` 実行時に `post_match: true` の match は通常の match として
+>   書き戻される (`post_match` フラグが消える)。
+>   `post_match` passthrough は Phase 2 で対応予定 (設計 spec §8)。
+>   試合セグメント自体は失われない (CLI 側の非破壊化が silent-loss を構造的に排除済)。
 
 ## `metadata.original.json` policy
 
@@ -350,7 +363,7 @@ interface MetadataWarning {
 
 ### 読み書き契約
 
-- **新規書き込み**: `allaganeye detect` / `allaganeye split` は常に `warnings` 配列を emit する。通常は空配列だが、試合後 trailing が削除された場合は `post_match_trailing_dropped` エントリを含む ([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805))。`--keep-trailing` 指定時は削除自体が無効化されるため空配列のまま
+- **新規書き込み**: `allaganeye detect` / `allaganeye split` は常に `warnings` 配列を emit する。通常は空配列 (#805 段階2 以降は `post_match_trailing_dropped` も emit しない — 後述 §既知の warning コード一覧 参照)
 - **読み込み**: `warnings` が欠落していても error にしない (pre-#518 の legacy metadata.json を許容)。GUI の zod schema は `optional`
 - **pass-through**: 未知の `code` を reader が reject してはならない (forward compat)
 - **emitter の責務** (後続 PR): `allaganeye/detection/warnings.py::WARNING_CODES` にコードキーを登録し、`build_warnings` で該当箇所から push
@@ -366,11 +379,13 @@ interface MetadataWarning {
 
 | code | severity | context | 意味 | 備考 |
 | --- | --- | --- | --- | --- |
-| `post_match_trailing_dropped` | `warn` | `{start, end}` (秒) | 試合後の trailing セグメント (ロビー / 市街) が、早期候補ウィンドウで scorebar を検出できなかったため削除された ([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805))。`context.start` / `context.end` が削除された区間の境界 | `--keep-trailing` 指定時は削除自体が抑制されるため emit されない。`detect` → `split --from-metadata` の経路では元 metadata の本警告を preserve する。**非対称注意 (段階1 の既知制限、[#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) 段階2 で解消予定)**: `split <video>` がキャッシュヒットした場合は `post_match_trailing_dropped` を **再構築しない** (検出キャッシュに dropped span は保持されない) ため `warnings: []` を書き出す。すなわち、既に本警告を含む metadata.json と同じ出力先へ `split <video>` を cache-hit で再実行すると `[]` で上書きされる。警告の正本は新鮮な `detect` / `split` が生成した metadata.json であり、`split --from-metadata` はそれを preserve する経路。cache-hit を含む全経路での durable 化は trailing drop の非破壊化 (段階2) で対応する |
+| `post_match_trailing_dropped` | `warn` | `{start, end}` (秒) | 試合後の trailing セグメント (ロビー / 市街) が、早期候補ウィンドウで scorebar を検出できなかったため削除された ([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805))。`context.start` / `context.end` が削除された区間の境界 | **【段階2 で emission 停止・deprecated】** #805 段階2 で `post_match` フラグ (#805 段階2) に置換され、`build_warnings` はこの code を **emit しなくなった**。フレッシュな detect / split 実行では本エントリは生成されない。ただし code は `WARNING_CODES` registry に残置されており (後方互換)、旧 metadata.json に含まれる本エントリを `sanitize_warnings` で引き続き読み取れる。旧フォーマット (本警告を含む metadata.json) を `split --from-metadata` で読んだ場合でも crash しない (forward-compat reader が pass-through) |
 
 ## 将来の拡張 (Phase 1 スコープ外)
 
-以下は派生 issue で追跡する (本 Phase 1 では実装せず、設計余地だけ確保):
+以下は派生 issue で追跡する (本 Phase 1 では実装せず、設計余地だけ確保)。
+
+> **#373 互換性 (forward-compat 設計メモ)**: [#373](https://github.com/Idios/kobutachan-allaganeye/issues/373) では `dropped:{leading,trailing}` セクションを **metadata.json のトップレベル** (root) に将来追加する計画がある。これは `$defs/Match` への `post_match` フィールド追加 (#805 段階2) とは独立した別機構であり互換。`additionalProperties:false` は root / Match 双方で維持したまま、root へ `dropped` section を追加できる設計を確保している。#373 は未実装 — 本メモは将来実装時に本 spec の変更を壊さないことを確認した記録。
 
 | 拡張 | 追跡 issue | 内容 |
 | --- | --- | --- |
