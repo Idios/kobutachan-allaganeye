@@ -450,3 +450,39 @@ def test_detect_no_trailing_drop_writes_empty_warnings(tmp_path):
 
     payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
     assert payload["warnings"] == []
+
+
+def test_detect_carries_post_match_flag_to_metadata(tmp_path):
+    """detect 経路が post_match-flagged boundary を非破壊で metadata に搬送する (#805 段階2).
+
+    detector の `_flag_post_match_trailing` が最終 segment に post_match=True を
+    立てて返すと、run_detect はそれを active から分離し、output_file 無しの
+    post_match Match として metadata に書く。active match は従来どおり
+    placeholder output_file を持つ。
+    """
+    boundaries_with_post: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "fl_match"},
+        {"start": 600.0, "end": 700.0, "type": "unknown", "post_match": True},
+    ]
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", return_value=boundaries_with_post),
+    ):
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
+    matches = payload["matches"]
+    assert len(matches) == 2
+
+    # active match: placeholder output_file 有り、post_match flag 無し。
+    active = matches[0]
+    assert active["index"] == 1
+    assert active["output_file"] == "match_001.mp4"
+    assert "post_match" not in active
+
+    # post_match match: flag True、output_file 無し、index は active の後 (2)。
+    trailing = matches[1]
+    assert trailing["post_match"] is True
+    assert "output_file" not in trailing
+    assert trailing["index"] == 2

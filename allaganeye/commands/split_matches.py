@@ -377,7 +377,15 @@ def run_split_from_metadata(
                 f"start_time/end_time: {e}"
             ) from e
         type_value = entry.get("type", "unknown")
-        boundaries.append({"start": start, "end": end, "type": type_value})
+        boundary: MatchBoundary = {"start": start, "end": end, "type": type_value}
+        # #805 段階2: detect 由来の post_match Match を再 split で MP4 化せず、
+        # 新 metadata でも flag を保持するため boundary に復元する。truthy のとき
+        # のみ set (通常 match は flag-free のまま = detector の convention 準拠)。
+        # `_split_and_write_metadata` の partition が active と分離し、active のみ
+        # split + output_file 付与、post_match は除外 + flag 保持で rewrite する。
+        if entry.get("post_match"):
+            boundary["post_match"] = True
+        boundaries.append(boundary)
 
     gaps_raw = payload.get("gaps", [])
     gaps: list[Gap] = []

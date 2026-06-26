@@ -247,12 +247,21 @@ def run_detect(
             f"Cannot create output directory {config.output_dir}: {e}"
         ) from e
 
+    # #805 段階2: active (MP4 生成対象) と post_match (flag 方式、MP4 不生成) に
+    # 分離する。detector の `_flag_post_match_trailing` が最終 segment に
+    # post_match=True を立てた場合、それを output_file 無しの post_match Match
+    # として metadata に搬送する (`_split_and_write_metadata` と同形)。
+    # post_match が無い場合 (常態) は active == boundaries で従来と bit-exact。
+    active_boundaries = [b for b in boundaries if not b.get("post_match")]
+    post_match_boundaries = [b for b in boundaries if b.get("post_match")]
+
     # Placeholder names are relative to ``output_dir``; ``_build_metadata_payload``
     # serialises them via ``Path.as_posix`` so the resulting ``output_file``
     # entries match what ``split --from-metadata`` will produce (just the
-    # basename, parent is implicit from the metadata location).
+    # basename, parent is implicit from the metadata location). active のみに
+    # placeholder を割り当てる (post_match は MP4 を生成しないため output_file 無し)。
     placeholder_paths = [
-        Path(f"match_{i + 1:03d}.mp4") for i, _ in enumerate(boundaries)
+        Path(f"match_{i + 1:03d}.mp4") for i, _ in enumerate(active_boundaries)
     ]
 
     # #591 -- cache hit のときは _resolve_gpu_mode を通らないので
@@ -287,7 +296,8 @@ def run_detect(
         detection_completed_at=detection_completed_at,
         effective_interval=effective_interval,
         config=config,
-        boundaries=boundaries,
+        boundaries=active_boundaries,
+        post_match_boundaries=post_match_boundaries,
         output_files=placeholder_paths,
         gaps=gaps,
         system_info=system_info,
@@ -296,8 +306,8 @@ def run_detect(
         # #805 段階2: warnings is always empty -- the W1
         # post_match_trailing_dropped emission was removed; the non-destructive
         # post_match flag on the Match now records a post-match trailing segment.
-        # (Task 5 adds detect.py's post_match 搬送; until then a post_match
-        # segment is written as a normal match here.)
+        # post_match segment は post_match_boundaries 経由で output_file 無しの
+        # Match として書かれる (`_split_and_write_metadata` と同じ partition)。
         warnings=build_warnings(),
     )
     metadata_path = config.output_dir / "metadata.json"
@@ -311,6 +321,9 @@ def run_detect(
     if progress_emitter is not None:
         progress_emitter.emit(
             "done",
+            # #805 段階2: total detected segments (active + post_match)。post_match
+            # は MP4 化されないが「検出された試合数」の観測値としては数える
+            # (post_match が無い常態では active と一致 = 従来挙動)。
             metadata_path=str(metadata_path),
             matches=len(boundaries),
         )
