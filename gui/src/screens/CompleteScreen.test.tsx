@@ -441,3 +441,73 @@ describe('#676 CompleteScreen topBar path display', () => {
     expect(within(container).getByText('C:\\sample')).toBeInTheDocument();
   });
 });
+
+// #805 Phase 1: post_match match no-crash guard.
+// A metadata whose matches[] includes a post_match entry (output_file
+// undefined, post_match: true) must load and render CompleteScreen without
+// throwing. This test LOCKS the no-crash property so a future regression
+// (e.g. a screen reading match.output_file with a non-null assertion) is
+// caught immediately.
+describe('#805 CompleteScreen post_match no-crash guard', () => {
+  const baseMatch = {
+    index: 1,
+    start_time: 100,
+    end_time: 1000,
+    start_display: '01:40',
+    end_display: '16:40',
+    duration: 900,
+    duration_display: '15m00s',
+    type: 'fl_match' as const,
+    output_file: 'match_001.mp4',
+  };
+  const postMatchEntry = {
+    index: 2,
+    start_time: 1000,
+    end_time: 1120,
+    start_display: '16:40',
+    end_display: '18:40',
+    duration: 120,
+    duration_display: '2m00s',
+    type: 'unknown' as const,
+    // output_file deliberately absent -- post_match segment
+    post_match: true as const,
+  };
+  const metaWithPostMatch = {
+    source: 'C:\\videos\\rec.mkv',
+    source_duration: 1200,
+    source_duration_display: '20:00',
+    detected_at: '2026-06-26T00:00:00Z',
+    detection_params: {
+      sample_interval: 2,
+      blackout_threshold: 15,
+      min_match_duration: 300,
+      min_blackout_duration: 3,
+      no_audio: false,
+      use_gpu: null,
+      workers: null,
+    },
+    matches: [baseMatch, postMatchEntry],
+    gaps: [],
+  };
+
+  beforeEach(() => {
+    useAppStateStore.getState().reset();
+    useMetadataStore.getState().clear();
+    useMetadataStore.setState({ metadata: metaWithPostMatch as never, hasBackup: false });
+    useAppStateStore.getState().navigate('complete');
+  });
+
+  it('renders post_match match without crashing (no-crash lock #805)', () => {
+    expect(() => render(<CompleteScreen />)).not.toThrow();
+  });
+
+  it('shows match count including post_match entry', () => {
+    render(<CompleteScreen />);
+    // 2 matches total (1 active + 1 post_match)
+    const matchesValue = screen.getByText('試合数').nextSibling as HTMLElement;
+    expect(matchesValue.textContent).toBe('2');
+    // Both rows render
+    expect(screen.getByTestId('match-row-1')).toBeInTheDocument();
+    expect(screen.getByTestId('match-row-2')).toBeInTheDocument();
+  });
+});
