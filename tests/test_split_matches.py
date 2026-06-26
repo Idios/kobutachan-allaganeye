@@ -2196,6 +2196,194 @@ class TestDiskSpaceCheck:
         mock_detect.assert_not_called()
 
 
+class TestPartitionPostMatch:
+    """`_partition_post_match` helper (#805 段階2)."""
+
+    def test_partition_splits_active_and_post_match(self):
+        """active (no post_match flag) and post_match are separated."""
+        from allaganeye.commands.split_matches import _partition_post_match
+
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 600.0, "type": "unknown"},
+            {"start": 610.0, "end": 1200.0, "type": "unknown", "post_match": True},
+        ]
+        active, post_match = _partition_post_match(boundaries)
+
+        assert active == [{"start": 0.0, "end": 600.0, "type": "unknown"}]
+        assert post_match == [
+            {"start": 610.0, "end": 1200.0, "type": "unknown", "post_match": True}
+        ]
+
+    def test_partition_is_order_preserving_and_total(self):
+        """The two lists partition the input and preserve relative order."""
+        from allaganeye.commands.split_matches import _partition_post_match
+
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 100.0, "type": "unknown"},
+            {"start": 200.0, "end": 300.0, "type": "unknown", "post_match": True},
+            {"start": 400.0, "end": 500.0, "type": "unknown"},
+            {"start": 600.0, "end": 700.0, "type": "unknown", "post_match": True},
+        ]
+        active, post_match = _partition_post_match(boundaries)
+
+        # Order-preserving within each partition
+        assert active == [
+            {"start": 0.0, "end": 100.0, "type": "unknown"},
+            {"start": 400.0, "end": 500.0, "type": "unknown"},
+        ]
+        assert post_match == [
+            {"start": 200.0, "end": 300.0, "type": "unknown", "post_match": True},
+            {"start": 600.0, "end": 700.0, "type": "unknown", "post_match": True},
+        ]
+        # Total: the two lists account for every input boundary
+        assert len(active) + len(post_match) == len(boundaries)
+
+    def test_partition_no_post_match_returns_all_active(self):
+        """No post_match flag -> active is the full list (bit-exact), post empty."""
+        from allaganeye.commands.split_matches import _partition_post_match
+
+        active, post_match = _partition_post_match(BOUNDARIES)
+
+        assert active == BOUNDARIES
+        assert post_match == []
+
+    def test_partition_empty(self):
+        """Empty input -> two empty lists."""
+        from allaganeye.commands.split_matches import _partition_post_match
+
+        active, post_match = _partition_post_match([])
+
+        assert active == []
+        assert post_match == []
+
+    def test_partition_post_match_false_is_active(self):
+        """An explicit ``post_match: False`` boundary counts as active."""
+        from allaganeye.commands.split_matches import _partition_post_match
+
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 100.0, "type": "unknown", "post_match": False},
+        ]
+        active, post_match = _partition_post_match(boundaries)
+
+        assert active == boundaries
+        assert post_match == []
+
+
+# Disk-budget regression fixtures (#805 段階2).
+# Source: 1.8 MB / 1800 s (matches PROBE_RESULT["duration"]).
+#   active  = 0-600s   -> ratio 1/3   -> est = 1.8M * (1/3) * 1.1 = 660_000
+#   all     = 0-1700s  -> ratio 17/18 -> est = 1.8M * (17/18)*1.1 = 1_870_000
+# free = 1_000_000:  est(active) <= free < est(active+post_match).
+_ACTIVE_AND_POST: list[MatchBoundary] = [
+    {"start": 0.0, "end": 600.0, "type": "unknown"},
+    {"start": 600.0, "end": 1700.0, "type": "unknown", "post_match": True},
+]
+_POST_MATCH_FREE_BYTES = 1_000_000
+
+
+def _post_match_fake_usage():
+    return type(
+        "Usage",
+        (),
+        {
+            "total": 10_000_000,
+            "used": 10_000_000 - _POST_MATCH_FREE_BYTES,
+            "free": _POST_MATCH_FREE_BYTES,
+        },
+    )
+
+
+class TestDiskSpacePostMatchBudget:
+    """Disk check must budget only active (MP4-written) boundaries (#805 段階2).
+
+    Regression for the Codex adversarial-review HIGH finding: a long
+    post_match trailing segment is retained in ``boundaries`` but is *not*
+    written to MP4.  Budgeting its duration in the pre-split disk check can
+    raise a false "Not enough disk space" error even though the space free
+    is sufficient for the matches that will actually be written.
+    """
+
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    def test_run_split_does_not_false_fail_on_post_match_tail(
+        self, mock_probe, mock_detect, mock_split, tmp_path
+    ):
+        """run_split must not raise when only the post_match tail overflows."""
+        mock_probe.return_value = PROBE_RESULT
+        mock_detect.return_value = list(_ACTIVE_AND_POST)
+        # Only the single active match is written.
+        mock_split.return_value = [tmp_path / "match_001.mp4"]
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+        # Real _check_disk_space; mock the OS free-space probe.
+        video = tmp_path / "input.mp4"
+        video.write_bytes(b"\x00" * 1_800_000)  # 1.8 MB
+
+        with patch(
+            "allaganeye.commands.split_matches.shutil.disk_usage",
+            return_value=_post_match_fake_usage(),
+        ):
+            # Must NOT raise: active estimate (660_000) fits in free (1_000_000).
+            run_split(video, config)
+
+        mock_split.assert_called_once()
+
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    def test_run_split_passes_only_active_boundaries_to_disk_check(
+        self, mock_probe, mock_detect, mock_split, tmp_path
+    ):
+        """The disk check is called with active boundaries only (not post_match)."""
+        mock_probe.return_value = PROBE_RESULT
+        mock_detect.return_value = list(_ACTIVE_AND_POST)
+        mock_split.return_value = [tmp_path / "match_001.mp4"]
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+        with patch(f"{MODULE}._check_disk_space") as mock_check:
+            run_split(Path("input.mp4"), config)
+
+        mock_check.assert_called_once()
+        passed_boundaries = mock_check.call_args.args[1]
+        assert passed_boundaries == [
+            {"start": 0.0, "end": 600.0, "type": "unknown"},
+        ]
+        assert all(not b.get("post_match") for b in passed_boundaries)
+
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    @patch(f"{MODULE}._load_cache")
+    def test_cache_hit_does_not_false_fail_on_post_match_tail(
+        self, mock_load, mock_probe, mock_detect, mock_split, tmp_path
+    ):
+        """cache-hit branch must also budget only active boundaries (#805).
+
+        The v4 cache stores the post_match=True shape, and the cache-hit
+        re-run is the documented recovery path from a disk-full failure, so
+        the cache branch's disk check must exclude the post_match tail too.
+        """
+        mock_probe.return_value = PROBE_RESULT
+        # Cache returns boundaries WITH a post_match tail.
+        mock_load.return_value = list(_ACTIVE_AND_POST)
+        mock_split.return_value = [tmp_path / "match_001.mp4"]
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+        video = tmp_path / "input.mp4"
+        video.write_bytes(b"\x00" * 1_800_000)  # 1.8 MB
+
+        with patch(
+            "allaganeye.commands.split_matches.shutil.disk_usage",
+            return_value=_post_match_fake_usage(),
+        ):
+            run_split(video, config)
+
+        # cache hit -> detect must not run; split happens for the active match.
+        mock_detect.assert_not_called()
+        mock_split.assert_called_once()
+
+
 class TestResolveGpuMode:
     """Codec-based GPU/CPU auto-selection (#334) + vendor selection (#546)."""
 

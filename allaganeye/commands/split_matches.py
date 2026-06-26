@@ -135,8 +135,12 @@ def run_split(
                     typer.echo("\nDry run: skipping split")
                 _emit_total_time(total_start, verbose, show)
                 return
+            # #805 段階2: cache が post_match=True の shape を保持しうる (v4 cache
+            # bump)。post_match (MP4 不生成) は disk 予算に計上しない。active のみ
+            # 渡す (post_match が無い常態では active == boundaries で bit-exact)。
+            active_boundaries, _ = _partition_post_match(boundaries)
             _check_disk_space(
-                video_path, boundaries, metadata["duration"], config, show=show
+                video_path, active_boundaries, metadata["duration"], config, show=show
             )
             # #591 -- cache hit でも GUI export が使う system_info は
             # 「現在の環境」を反映したい (録画から数日後に GPU 構成を
@@ -163,7 +167,8 @@ def run_split(
                 masked_fallback_used=_read_cached_masked_fallback(cache_path),
                 quiet=quiet,
             )
-            _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
+            # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
+            _emit_splitting_elapsed(split_start, len(active_boundaries), verbose, show)
             _emit_total_time(total_start, verbose, show)
             return
 
@@ -281,7 +286,12 @@ def run_split(
         _emit_total_time(total_start, verbose, show)
         return
 
-    _check_disk_space(video_path, boundaries, metadata["duration"], config, show=show)
+    # #805 段階2: post_match (MP4 不生成) は disk 予算に計上しない。active
+    # のみ渡す (post_match が無い常態では active == boundaries で bit-exact)。
+    active_boundaries, _ = _partition_post_match(boundaries)
+    _check_disk_space(
+        video_path, active_boundaries, metadata["duration"], config, show=show
+    )
     # #591 -- detect 経路で確定した vendor を vendor_used に記録。CPU
     # 強制 (use_gpu=False) のときは vendor_used=None (実際使ってない)。
     detected_system_info = _build_system_info(
@@ -313,7 +323,9 @@ def run_split(
         warnings=build_warnings(),
         quiet=quiet,
     )
-    _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
+    # #805 段階2: MP4 化したのは active のみ (post_match は除外)。verbose の
+    # split 件数は書き出した MP4 数を報告する。
+    _emit_splitting_elapsed(split_start, len(active_boundaries), verbose, show)
     _emit_total_time(total_start, verbose, show)
 
 
@@ -462,7 +474,12 @@ def run_split_from_metadata(
     if verbose and show:
         typer.echo(f"  Source: {source_path}")
 
-    _check_disk_space(source_path, boundaries, probe["duration"], config, show=show)
+    # #805 段階2: post_match (MP4 不生成) は disk 予算に計上しない。active
+    # のみ渡す (post_match が無い常態では active == boundaries で bit-exact)。
+    active_boundaries, _ = _partition_post_match(boundaries)
+    _check_disk_space(
+        source_path, active_boundaries, probe["duration"], config, show=show
+    )
     # #591 -- split-only path は detect しないので vendor_used=None。
     # GUI export が encoder 選択に使う「現在の環境」を反映するため、
     # ここで probe し直して metadata を更新する (前回 detect の値で
@@ -495,7 +512,8 @@ def run_split_from_metadata(
         warnings=preserve_warnings,
         quiet=quiet,
     )
-    _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
+    # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
+    _emit_splitting_elapsed(split_start, len(active_boundaries), verbose, show)
     _emit_total_time(total_start, verbose, show)
 
 
@@ -1285,6 +1303,20 @@ def _eta_progressbar(
     )
 
 
+def _partition_post_match(
+    boundaries: list[MatchBoundary],
+) -> tuple[list[MatchBoundary], list[MatchBoundary]]:
+    """Split boundaries into (active, post_match).
+
+    Active = boundaries written to MP4 + given an output_file. post_match =
+    non-destructive trailing flag (#805 段階2): retained in metadata, excluded
+    from MP4 output. Order-preserving; the two lists partition the input.
+    """
+    active = [b for b in boundaries if not b.get("post_match")]
+    post_match = [b for b in boundaries if b.get("post_match")]
+    return active, post_match
+
+
 def _split_and_write_metadata(
     video_path: Path,
     boundaries: list[MatchBoundary],
@@ -1325,8 +1357,7 @@ def _split_and_write_metadata(
 
     # #805 段階2: active (MP4 生成対象) と post_match (flag 方式、MP4 不生成) に分離。
     # post_match が無い場合は active == boundaries で現状と bit-exact。
-    active_boundaries = [b for b in boundaries if not b.get("post_match")]
-    post_match_boundaries = [b for b in boundaries if b.get("post_match")]
+    active_boundaries, post_match_boundaries = _partition_post_match(boundaries)
 
     # Split with progress bar (#331)
     if show:

@@ -33,6 +33,7 @@ from allaganeye.commands.split_matches import (
     _format_duration,
     _iso_utc_now,
     _load_cache,
+    _partition_post_match,
     _read_cached_masked_fallback,
     _print_environment_header,
     _print_detection_stats,
@@ -252,8 +253,7 @@ def run_detect(
     # post_match=True を立てた場合、それを output_file 無しの post_match Match
     # として metadata に搬送する (`_split_and_write_metadata` と同形)。
     # post_match が無い場合 (常態) は active == boundaries で従来と bit-exact。
-    active_boundaries = [b for b in boundaries if not b.get("post_match")]
-    post_match_boundaries = [b for b in boundaries if b.get("post_match")]
+    active_boundaries, post_match_boundaries = _partition_post_match(boundaries)
 
     # Placeholder names are relative to ``output_dir``; ``_build_metadata_payload``
     # serialises them via ``Path.as_posix`` so the resulting ``output_file``
