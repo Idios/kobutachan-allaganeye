@@ -34,6 +34,7 @@ from allaganeye.exceptions import (
 )
 from allaganeye.metadata_types import (
     BrightnessSamples,
+    Match,
     Metadata,
     MetadataWarning,
     SystemInfo,
@@ -1322,9 +1323,14 @@ def _split_and_write_metadata(
             f"Cannot create output directory {config.output_dir}: {e}"
         ) from e
 
+    # #805 段階2: active (MP4 生成対象) と post_match (flag 方式、MP4 不生成) に分離。
+    # post_match が無い場合は active == boundaries で現状と bit-exact。
+    active_boundaries = [b for b in boundaries if not b.get("post_match")]
+    post_match_boundaries = [b for b in boundaries if b.get("post_match")]
+
     # Split with progress bar (#331)
     if show:
-        total = len(boundaries)
+        total = len(active_boundaries)
         with _eta_progressbar(total, "Splitting") as progress:
 
             def on_split_progress(completed: int, total: int) -> None:
@@ -1332,12 +1338,12 @@ def _split_and_write_metadata(
 
             output_files = split_video(
                 video_path,
-                boundaries,
+                active_boundaries,
                 config.output_dir,
                 progress_callback=on_split_progress,
             )
     else:
-        output_files = split_video(video_path, boundaries, config.output_dir)
+        output_files = split_video(video_path, active_boundaries, config.output_dir)
 
     # Write metadata (#463: ``note`` field retired; caveats documented in
     # docs/cli-spec.md and docs/metadata-spec.md instead of being embedded
@@ -1355,7 +1361,8 @@ def _split_and_write_metadata(
         detection_completed_at=detection_completed_at,
         effective_interval=effective_interval,
         config=config,
-        boundaries=boundaries,
+        boundaries=active_boundaries,
+        post_match_boundaries=post_match_boundaries,
         output_files=output_files,
         gaps=gaps,
         system_info=system_info,
@@ -1383,6 +1390,7 @@ def _build_metadata_payload(
     effective_interval: float,
     config: SplitConfig,
     boundaries: list[MatchBoundary],
+    post_match_boundaries: list[MatchBoundary] | None = None,
     output_files: list[Path],
     gaps: list[Gap],
     system_info: SystemInfo,
@@ -1428,6 +1436,8 @@ def _build_metadata_payload(
     #612). Drift between this builder and the JSON Schema is caught
     statically by pyright.
     """
+    # #805 段階2: post_match_boundaries が None のときは空リストで統一
+    post_match_boundaries = post_match_boundaries or []
     payload: Metadata = {
         "schema_version": "1",
         "source": str(video_path),
@@ -1454,24 +1464,46 @@ def _build_metadata_payload(
             "masked_fallback_used": masked_fallback_used,
         },
         "system_info": system_info,
-        "matches": [
-            {
-                "index": i + 1,
-                "start_time": b["start"],
-                "end_time": b["end"],
-                "start_display": _format_timestamp(b["start"]),
-                "end_display": _format_timestamp(b["end"]),
-                "duration": b["end"] - b["start"],
-                "duration_display": _format_duration(b["end"] - b["start"]),
-                # Narrow MatchBoundary's open-ended `type: str` (detector.py)
-                # to the JSON Schema literal so pyright accepts the assignment.
-                # Anything other than "fl_match" is normalized to "unknown"
-                # -- matches the prior dict.get fallback semantics.
-                "type": "fl_match" if b.get("type") == "fl_match" else "unknown",
-                "output_file": f.as_posix(),
-            }
-            for i, (b, f) in enumerate(zip(boundaries, output_files, strict=True))
-        ],
+        # #805 段階2: active matches (output_file 有り) と post_match matches
+        # (output_file 無し、post_match=True) を index 連番で結合。
+        # list + list の型推論が dict[str, Unknown] になるため cast で Match に narrow。
+        "matches": cast(
+            "list[Match]",
+            [
+                {
+                    "index": i + 1,
+                    "start_time": b["start"],
+                    "end_time": b["end"],
+                    "start_display": _format_timestamp(b["start"]),
+                    "end_display": _format_timestamp(b["end"]),
+                    "duration": b["end"] - b["start"],
+                    "duration_display": _format_duration(b["end"] - b["start"]),
+                    # Narrow MatchBoundary's open-ended `type: str` (detector.py)
+                    # to the JSON Schema literal so pyright accepts the assignment.
+                    # Anything other than "fl_match" is normalized to "unknown"
+                    # -- matches the prior dict.get fallback semantics.
+                    "type": "fl_match" if b.get("type") == "fl_match" else "unknown",
+                    "output_file": f.as_posix(),
+                }
+                for i, (b, f) in enumerate(zip(boundaries, output_files, strict=True))
+            ]
+            + [
+                {
+                    "index": len(boundaries) + j + 1,
+                    "start_time": b["start"],
+                    "end_time": b["end"],
+                    "start_display": _format_timestamp(b["start"]),
+                    "end_display": _format_timestamp(b["end"]),
+                    "duration": b["end"] - b["start"],
+                    "duration_display": _format_duration(b["end"] - b["start"]),
+                    "type": "fl_match" if b.get("type") == "fl_match" else "unknown",
+                    # #805 段階2: post_match segment は MP4 を生成しないため
+                    # output_file は付けない (NotRequired)。post_match flag を付与。
+                    "post_match": True,
+                }
+                for j, b in enumerate(post_match_boundaries)
+            ],
+        ),
         "gaps": [
             {
                 "start_time": g["start"],

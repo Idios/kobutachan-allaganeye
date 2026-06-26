@@ -4800,3 +4800,182 @@ def test_split_matches_format_helpers_are_detection_format_aliases():
     assert sm._format_timestamp is fmt.format_timestamp
     assert sm._format_duration is fmt.format_duration
     assert sm._iso_utc_now is fmt.iso_utc_now
+
+
+# -- #805 段階2: post_match boundary 除外 + metadata 搬送 --
+
+
+def _build_metadata_payload_common(tmp_path, boundaries, output_files):
+    """共通 kwargs を組み立てるヘルパ (既存テストのパターンを踏襲)。"""
+    from allaganeye.commands.split_matches import _build_metadata_payload
+    from allaganeye.config import SplitConfig
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    return _build_metadata_payload(  # type: ignore[arg-type]
+        video_path=tmp_path / "input.mp4",
+        source_duration=1800.0,
+        source_fps=30.0,
+        detected_at="2026-06-26T00:00:00Z",
+        detection_started_at="2026-06-26T00:00:00Z",
+        detection_completed_at="2026-06-26T00:01:00Z",
+        effective_interval=1.0,
+        config=config,
+        boundaries=boundaries,
+        output_files=output_files,
+        gaps=[],
+        system_info={
+            "gpu_vendors_available": [],
+            "gpu_vendor_used": None,
+            "vendor_preference": ["nvidia", "amd", "intel"],
+        },
+    )
+
+
+def test_build_metadata_payload_post_match_excluded_from_outputs(tmp_path):
+    """#805 段階2 -- post_match boundary は output_file なし・index 連番で matches に残る。
+
+    active (index 1) は output_file を持ち、post_match (index 2) は
+    output_file を持たず post_match=True が付く。
+    """
+    active: list[MatchBoundary] = [{"start": 0.0, "end": 600.0, "type": "fl_match"}]
+    post_match: list[MatchBoundary] = [
+        {"start": 600.0, "end": 700.0, "type": "unknown"}
+    ]
+    output_files = [tmp_path / "match_001.mp4"]  # active 分のみ
+
+    from allaganeye.commands.split_matches import _build_metadata_payload
+    from allaganeye.config import SplitConfig
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    payload = _build_metadata_payload(  # type: ignore[arg-type]
+        video_path=tmp_path / "input.mp4",
+        source_duration=1800.0,
+        source_fps=30.0,
+        detected_at="2026-06-26T00:00:00Z",
+        detection_started_at="2026-06-26T00:00:00Z",
+        detection_completed_at="2026-06-26T00:01:00Z",
+        effective_interval=1.0,
+        config=config,
+        boundaries=active,
+        post_match_boundaries=post_match,
+        output_files=output_files,
+        gaps=[],
+        system_info={
+            "gpu_vendors_available": [],
+            "gpu_vendor_used": None,
+            "vendor_preference": ["nvidia", "amd", "intel"],
+        },
+    )
+
+    matches = payload["matches"]
+    assert len(matches) == 2
+    # active match: index 1, output_file あり, post_match フラグ無し
+    assert matches[0]["index"] == 1
+    output_file = matches[0].get("output_file")
+    assert output_file is not None and "match_001.mp4" in output_file
+    assert "post_match" not in matches[0]
+    # post_match match: index 2, output_file なし, post_match=True
+    assert matches[1]["index"] == 2
+    assert matches[1].get("post_match") is True
+    assert "output_file" not in matches[1]
+
+
+def test_build_metadata_payload_no_post_match_is_bitexact(tmp_path):
+    """#805 段階2 -- post_match_boundaries 省略時は元の挙動と bit-exact。
+
+    weak assertion (len / index / key presence) だけでは値の swap や active list
+    の取り違えを検出できない。全フィールドを pin して構造的等価を保証する。
+    """
+    from allaganeye.commands.split_matches import _format_duration, _format_timestamp
+
+    boundaries: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "fl_match"},
+        {"start": 610.0, "end": 1200.0, "type": "unknown"},
+    ]
+    output_files = [tmp_path / "match_001.mp4", tmp_path / "match_002.mp4"]
+
+    payload = _build_metadata_payload_common(tmp_path, boundaries, output_files)
+
+    matches = payload["matches"]
+    assert matches == [
+        {
+            "index": 1,
+            "start_time": 0.0,
+            "end_time": 600.0,
+            "start_display": _format_timestamp(0.0),
+            "end_display": _format_timestamp(600.0),
+            "duration": 600.0,
+            "duration_display": _format_duration(600.0),
+            "type": "fl_match",
+            "output_file": (tmp_path / "match_001.mp4").as_posix(),
+        },
+        {
+            "index": 2,
+            "start_time": 610.0,
+            "end_time": 1200.0,
+            "start_display": _format_timestamp(610.0),
+            "end_display": _format_timestamp(1200.0),
+            "duration": 590.0,
+            "duration_display": _format_duration(590.0),
+            "type": "unknown",
+            "output_file": (tmp_path / "match_002.mp4").as_posix(),
+        },
+    ]
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_split_and_write_metadata_post_match_not_passed_to_split_video(
+    mock_probe, mock_split, tmp_path
+):
+    """#805 段階2 -- post_match boundary は split_video に渡されない。
+
+    active boundary のみが split_video の第 2 引数に渡されることを assert する。
+    """
+    from allaganeye.commands.split_matches import _split_and_write_metadata
+    from allaganeye.config import SplitConfig
+
+    active_b: MatchBoundary = {"start": 0.0, "end": 600.0, "type": "fl_match"}
+    # post_match フラグを持つ boundary は detector.py が将来付与する (Task 3)。
+    # Task 2 では dict として注入して routing ロジックを検証する。
+    post_match_b = {"start": 600.0, "end": 700.0, "type": "unknown", "post_match": True}
+    boundaries: list[MatchBoundary] = [active_b, post_match_b]  # type: ignore[list-item]
+
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    # split_video は active 分 (1件) の output file だけ返す
+    mock_split.return_value = [output_dir / "match_001.mp4"]
+
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    _split_and_write_metadata(
+        video_path=tmp_path / "input.mp4",
+        boundaries=boundaries,
+        gaps=[],
+        metadata=PROBE_RESULT,
+        config=config,
+        effective_interval=1.0,
+        detected_at="2026-06-26T00:00:00Z",
+        system_info={  # type: ignore[arg-type]
+            "gpu_vendors_available": [],
+            "gpu_vendor_used": None,
+            "vendor_preference": ["nvidia", "amd", "intel"],
+        },
+        quiet=True,
+    )
+
+    # split_video は active (post_match でない) boundary だけで呼ばれる
+    assert mock_split.called
+    call_boundaries = mock_split.call_args[0][1]  # 第 2 引数 = boundaries
+    assert len(call_boundaries) == 1
+    assert call_boundaries[0] == active_b
+    # post_match boundary は渡されていない
+    assert not any(b.get("post_match") for b in call_boundaries)
+
+    # metadata.json に post_match match が出力_file なしで残っている
+    payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    matches = payload["matches"]
+    assert len(matches) == 2
+    assert "output_file" in matches[0]
+    assert matches[1].get("post_match") is True
+    assert "output_file" not in matches[1]
