@@ -65,7 +65,7 @@ def build_warnings(
 
     Args:
         trailing_drops: ``(start, end)`` spans for each post-match trailing
-            segment that ``_drop_post_match_trailing`` removed (#805 段階1).
+            segment that ``_flag_post_match_trailing`` flagged (#805 段階1).
             Each becomes a ``post_match_trailing_dropped`` warn entry so the
             dropped match's boundaries are recoverable from metadata.json.
 
