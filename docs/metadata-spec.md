@@ -98,7 +98,7 @@ JSON Schema は writer 契約として strict (additional properties は受け�
 | `duration_display` | string | ✓ | 長さ表示 (例: `15m15s`) |
 | `type` | string | ✓ | `fl_match` または `unknown` |
 | `output_file` | string | — (NotRequired) | 出力 MP4 ファイル名 (相対パス、metadata.json と同ディレクトリ想定)。通常 match は常に存在する。`post_match: true` の match は MP4 を生成しないため本フィールドを持たない |
-| `post_match` | boolean | — (NotRequired) | post-match trailing 非破壊フラグ (#805 段階2)。`true` のとき試合後 trailing (lobby/city) を表す非破壊フラグ。default split 出力 (MP4) から除外されるが metadata には保持される。absent/false = 通常 match |
+| `post_match` | boolean | — (NotRequired) | post-match trailing 非破壊フラグ (#805 段階2)。`true` のとき試合後 trailing (lobby/city) を表す非破壊フラグ。default split 出力 (MP4) からも `allaganeye export` (CLI / GUI 共通経路) からも**機能的に除外**されるが metadata には保持される。GUI `[適用]` (`normalizeForPersistence`) でもフラグは保持される。absent/false = 通常 match。視覚的な差分化 (badge / dimmed) と ExportScreen の選択不可 UX は Phase 2 |
 
 ### `system_info` オブジェクト (#591)
 
@@ -228,19 +228,20 @@ GUI は以下のフィールドを in-memory で編集し、`[適用]` 時に `m
 
 ```ts
 { index, start_time, end_time, start_display, end_display,
-  duration, duration_display, type, output_file? }
+  duration, duration_display, type, output_file?, post_match? }
 ```
 
-> **Phase 1 の既知の限界 (`normalizeForPersistence` の挙動)**
+> **`normalizeForPersistence` の `output_file` / `post_match` 挙動 (#805 段階2)**
 >
-> - `output_file` は `m.output_file` をそのまま書き出す。`post_match: true` の match は
->   `output_file` を持たないため、JSON.stringify が当該キーを省略する
->   (Match 表の NotRequired と整合)。
-> - `normalizeForPersistence` は `post_match` フィールドを passthrough しない。
->   そのため `[適用]` 実行時に `post_match: true` の match は通常の match として
->   書き戻される (`post_match` フラグが消える)。
->   `post_match` passthrough は Phase 2 で対応予定 (設計 spec §8)。
->   試合セグメント自体は失われない (CLI 側の非破壊化が silent-loss を構造的に排除済)。
+> - `output_file` は **定義されているときのみ**書き出す (defined-only)。
+>   `post_match: true` の match は `output_file` を持たないため、当該キーは
+>   書き戻し後の object から省略される (Match 表の NotRequired と整合。
+>   `output_file: undefined` というキーは emit しない)。
+> - `post_match` フィールドは **passthrough する** (`...(m.post_match ? { post_match: true } : {})`)。
+>   `[適用]` 実行後も `post_match: true` の match は非破壊フラグを保持し、
+>   次回 split / export で MP4 化されない (除外 invariant を GUI 経路でも維持)。
+>   truthy-only で書き出すため通常 match は flag-free のまま (`post_match: false`/
+>   `undefined` は emit しない。detector / split / from-metadata の payload 規約と一致)。
 
 ## `metadata.original.json` policy
 

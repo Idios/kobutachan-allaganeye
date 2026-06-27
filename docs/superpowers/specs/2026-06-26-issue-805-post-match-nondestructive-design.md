@@ -19,9 +19,14 @@ post-match と判定した trailing segment を**削除せず、非破壊フラ�
 
 - **本 spec = 段階2 のみ** (`post_match` flag on Match)。#373 (`dropped:{leading,trailing}` で < `min_match_duration` の余りを記録) は別 P3 issue のまま。本 spec の schema は #373 の `dropped` section を将来追加できる形 (`additionalProperties:false` を壊さない余地) に設計するが #373 は実装しない。
 - **Phase 分割** (`docs/refactor-pattern.md` 準拠):
-  - **Phase 1 = Python/CLI core** (本 spec の主対象)。schema + codegen + 最小 GUI zod field (CI integrity green 維持) + detector flag + split 除外 + metadata 搬送 + cache version bump + docs + Python tests。**silent-loss クラスを Phase 1 で構造的に消滅**させる。
-  - **Phase 2 = GUI** (別 PR)。CompleteScreen/PreviewScreen での `post_match` 表示差分化 + export 除外 + `normalizeForPersistence` passthrough + GUI tests。
+  - **Phase 1 = Python/CLI core + invariant-critical な GUI 修正** (本 spec の主対象)。schema + codegen + 最小 GUI zod field (CI integrity green 維持) + detector flag + split 除外 + metadata 搬送 + cache version bump + docs + Python tests。**silent-loss クラスを Phase 1 で構造的に消滅**させる。
+    加えて、**非破壊除外 invariant を GUI 経路で反転させる 2 点を Phase 1 に取り込む** (Idios 2026-06-27 確定):
+    (1) `normalizeForPersistence` の `post_match` passthrough (GUI `[適用]` でフラグを silent に喪失させない)、
+    (2) `export.py` の `post_match` skip (CLI / GUI 共通の export 経路で post_match を MP4 化しない)。
+  - **Phase 2 = GUI 視覚 UX のみ** (別 PR)。CompleteScreen/PreviewScreen での `post_match` 視覚差分化 (badge / dimmed) + ExportScreen の選択不可 (non-selectable) UX。**機能的な除外 / 保持 invariant は Phase 1 で完結**し、Phase 2 は見た目の差分化に縮小。
   - 両 Phase とも #805 配下 (#805 は close 禁止のまま継続 = risk tracking issue)。
+
+> **Codex adversarial-review (2026-06-27) による Phase 境界の修正**: 当初 (1)(2) は Phase 2 に置いていたが、Codex の adversarial-review が「これらを Phase 2 に deferred すると、Phase 1 で構造的に消したはずの非破壊 invariant が GUI 経路で reversible なまま出荷される (GUI `[適用]` 後にフラグ喪失 → MP4 化 / `Export All` で post_match を encode)」と HIGH x2 で指摘した。invariant-critical なため Phase 1 へ前倒しした (Idios 承認)。視覚 UX のみ Phase 2 に残す。
 
 ## 4. 設計判断 (brainstorming で Idios 確定)
 
@@ -47,7 +52,11 @@ post-match と判定した trailing segment を**削除せず、非破壊フラ�
 - `MatchSchema` に `post_match: z.boolean().optional()` を追加。
 - `output_file` を `.optional()` に変更 (schema と整合)。
 - `gui/src/types/__tests__/zod-schema-integrity.test.ts` が field 一致を gate するため Phase 1 で同時更新必須 (これを怠ると gui-frontend CI red)。
-- **Phase 1 の GUI no-crash guard (最小)**: Phase 1 CLI が書いた metadata.json (post_match match = `output_file` undefined) を Phase 1 GUI が読んだとき **crash しない**ことを保証する。CompleteScreen/PreviewScreen が `match.output_file` を参照する箇所 (preview 動画ロード等) で undefined を graceful に扱う最小 guard を入れる (post_match match は preview/export 対象外として skip / placeholder)。vitest で「post_match match を含む metadata を load → render が throw しない」を 1 test 追加。**表示の差分化 (badge / dimmed) と export 除外 UX は Phase 2**。Phase 1 では post_match match は通常 match に近い見え方でよい (crash しなければ可)。
+- **Phase 1 の GUI no-crash guard (最小)**: Phase 1 CLI が書いた metadata.json (post_match match = `output_file` undefined) を Phase 1 GUI が読んだとき **crash しない**ことを保証する。CompleteScreen/PreviewScreen が `match.output_file` を参照する箇所 (preview 動画ロード等) で undefined を graceful に扱う最小 guard を入れる (post_match match は preview/export 対象外として skip / placeholder)。vitest で「post_match match を含む metadata を load → render が throw しない」を 1 test 追加。Phase 1 では post_match match は通常 match に近い見え方でよい (crash しなければ可)。
+- **Phase 1 の GUI invariant 修正 (2026-06-27 追加、Codex HIGH x2)**: 以下 2 点は invariant-critical なため Phase 1 に取り込む (§3 参照)。
+  - `normalizeForPersistence` (`metadataStore.ts`) が `post_match` を **truthy-only passthrough** する (`...(m.post_match ? { post_match: true } : {})`)。これを怠ると GUI `[適用]` で post_match フラグが silent に消え、次回 split / export で post_match trailing が MP4 化される。あわせて `output_file` も defined-only で emit し、post_match match の書き戻し形から当該キーを省略する (`output_file: undefined` を書かない)。vitest で「apply 後の永続化 payload で post_match match が `post_match: true` を保持し `output_file` を持たない / 通常 match は flag-free」を assert。
+  - `export.py` の filter loop が `post_match` を skip し skipped_count に計上する (`type_override == "skip"` と同じ位置)。これは CLI / GUI 共通の export 経路なので両方に効く。pytest (`tests/test_export_cli.py`) で「Export All で post_match が export 対象外 + skipped 計上 / active は export」を assert。
+- **表示の差分化 (badge / dimmed) と ExportScreen の選択不可 (non-selectable) UX は Phase 2** (機能ではなく見た目のみ)。
 
 ### 5.3 detector.py
 
@@ -117,14 +126,15 @@ post-match と判定した trailing segment を**削除せず、非破壊フラ�
 
 - 旧 metadata.json (post_match field 無し / warning 有り) は読取互換: `Match` の `post_match` は NotRequired なので absent でも valid。`post_match_trailing_dropped` warning は registry 残置で `sanitize_warnings` が読める。
 - 旧 cache (v3) は version bump で miss → 再 detect (silent 再利用なし)。
-- GUI: Phase 1 で zod が `post_match` optional / `output_file` optional を受け、§5.2 の no-crash guard で post_match match (`output_file` undefined) を含む metadata を render しても throw しないことを保証する。UI 差分化 (badge / dimmed) と export 除外 UX は Phase 2。
+- GUI: Phase 1 で zod が `post_match` optional / `output_file` optional を受け、§5.2 の no-crash guard で post_match match (`output_file` undefined) を含む metadata を render しても throw しないことを保証する。UI 差分化 (badge / dimmed) と ExportScreen の選択不可 (non-selectable) UX は Phase 2 (機能的な export 除外は Phase 1 の `export.py` skip で実装済)。
 
-## 8. Phase 2 preview (別 PR、本 spec の対象外詳細)
+## 8. Phase 2 preview (別 PR、視覚 UX のみ。本 spec の対象外詳細)
+
+> **境界の修正 (2026-06-27)**: 当初ここにあった「export 除外」「`normalizeForPersistence` passthrough」は invariant-critical なため **Phase 1 に移動済** (§3 / §5.2、Codex HIGH x2)。Phase 2 は機能的 invariant を含まず、視覚差分化と選択 UX のみに縮小した。
 
 - CompleteScreen/PreviewScreen で `post_match:true` match を視覚的に区別 (dimmed / badge)。
-- export flow で post_match を default 除外 (opt-in で含める)。
-- `normalizeForPersistence` が `post_match` を strip せず passthrough (CLI 由来の provenance flag)。
-- GUI tests (vitest)。
+- ExportScreen で post_match match を選択不可 (non-selectable) にする UX (機能的な除外自体は Phase 1 の `export.py` skip で既に保証済 = opt-in で含める導線が無くても MP4 化されない)。
+- 上記 UX の GUI tests (vitest)。
 
 ## 9. #373 互換性 (実装しないが設計で担保)
 
