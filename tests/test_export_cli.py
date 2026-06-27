@@ -581,6 +581,67 @@ def test_export_post_match_excluded_even_when_explicitly_included(
     )
 
 
+@patch("allaganeye.commands.export.export_matches")
+def test_export_explicit_include_of_post_match_warns(
+    mock_export: MagicMock, app: typer.Typer, tmp_path: Path
+):
+    # Round 1 (A): explicitly naming a post_match index in --include used to be a
+    # silent no-op -- the post_match guard fires first and skips the segment, and
+    # the "index not found" warning does NOT trigger because the index IS valid.
+    # The user gets zero feedback that their requested index was dropped. Verify a
+    # notice is printed (actionable visibility) WITHOUT changing the invariant:
+    # the post_match must still never reach export_matches.
+    mock_export.return_value = ExportSummary(success=1, failure=0)
+    payload = {
+        "schema_version": "1",
+        "source": str(tmp_path / "in.mp4"),
+        "matches": [
+            {"index": 1, "start_time": 0.0, "end_time": 10.0, "type": "match"},
+            {
+                "index": 2,
+                "start_time": 10.0,
+                "end_time": 20.0,
+                "type": "unknown",
+                "post_match": True,
+            },
+        ],
+        "system_info": {
+            "gpu_vendors_available": [],
+            "vendor_preference": ["nvidia"],
+            "gpu": [],
+        },
+    }
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+    # Explicitly include ONLY the post_match index (2).
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            str(metadata_path),
+            "--output-dir",
+            str(tmp_path),
+            "--codec",
+            "h264",
+            "--include",
+            "2",
+            "--quiet",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    # (a) invariant intact: the post_match (index 2) must NOT reach export_matches.
+    _, kwargs = mock_export.call_args
+    assert 2 not in [m.index for m in kwargs.get("matches")], (
+        "post_match match reached export_matches despite being post_match; "
+        "unconditional exclusion invariant must hold"
+    )
+    # (b) a notice naming the explicitly-included post_match index must print.
+    out = result.output.lower()
+    assert "warning" in out, "expected a notice for explicit --include of post_match"
+    assert "post-match" in out, "notice must explain the index is a post-match segment"
+    assert "2" in result.output, "notice must name the requested index"
+
+
 def test_export_json_reconfigures_stdout_utf8(app: typer.Typer, tmp_path: Path):
     # P2-8: --json emits non-ASCII (output_path / error_message) with
     # ensure_ascii=False but never reconfigured stdout to UTF-8, relying on the
