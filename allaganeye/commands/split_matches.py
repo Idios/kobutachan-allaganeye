@@ -34,6 +34,7 @@ from allaganeye.exceptions import (
 )
 from allaganeye.metadata_types import (
     BrightnessSamples,
+    Match,
     Metadata,
     MetadataWarning,
     SystemInfo,
@@ -61,7 +62,12 @@ logger = logging.getLogger(__name__)
 # 「missing masked = 標準 path と同一挙動」が成立しなくなったため、pre-#821
 # cache を全面 invalidate する (v2 cache が hit し続けると masked 動画の誤結果
 # が再利用され、新 detector が走らない)。
-_CACHE_VERSION = 3
+# v4 (#805 段階2): post-match trailing の disposition が削除 (旧 = post_match
+# segment を drop した shape) から非破壊フラグ (新 = post_match=True で残す shape)
+# に変わったため、検出出力 (cached boundaries) の shape が変わる。旧 v3 cache が
+# hit し続けると削除済み結果 (試合 1 本欠落) が silent に再利用されるので bump
+# する。cache key params (keep_trailing 含む) 自体は不変。
+_CACHE_VERSION = 4
 
 
 def run_split(
@@ -129,8 +135,12 @@ def run_split(
                     typer.echo("\nDry run: skipping split")
                 _emit_total_time(total_start, verbose, show)
                 return
+            # #805 段階2: cache が post_match=True の shape を保持しうる (v4 cache
+            # bump)。post_match (MP4 不生成) は disk 予算に計上しない。active のみ
+            # 渡す (post_match が無い常態では active == boundaries で bit-exact)。
+            active_boundaries, _ = _partition_post_match(boundaries)
             _check_disk_space(
-                video_path, boundaries, metadata["duration"], config, show=show
+                video_path, active_boundaries, metadata["duration"], config, show=show
             )
             # #591 -- cache hit でも GUI export が使う system_info は
             # 「現在の環境」を反映したい (録画から数日後に GPU 構成を
@@ -157,7 +167,8 @@ def run_split(
                 masked_fallback_used=_read_cached_masked_fallback(cache_path),
                 quiet=quiet,
             )
-            _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
+            # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
+            _emit_splitting_elapsed(split_start, len(active_boundaries), verbose, show)
             _emit_total_time(total_start, verbose, show)
             return
 
@@ -216,15 +227,6 @@ def run_split(
         nonlocal masked_fallback_used
         masked_fallback_used = True
 
-    # #805 段階1 -- trailing drop の (start, end) を捕捉して metadata.json の
-    # warnings に書く。brightness_callback (#644) / masked_fallback (#821) と
-    # 同じ collector パターン。callback が呼ばれない経路 (cache hit / drop なし)
-    # では trailing_drops は空のまま残り build_warnings(trailing_drops=()) -> []。
-    trailing_drops: list[tuple[float, float]] = []
-
-    def _on_trailing_drop(start: float, end: float) -> None:
-        trailing_drops.append((start, end))
-
     boundaries = _run_detection(
         video_path,
         metadata,
@@ -237,7 +239,6 @@ def run_split(
         gpu_vendor=gpu_vendor,
         brightness_callback=_on_brightness,
         masked_fallback_callback=_on_masked_fallback,
-        trailing_drop_callback=_on_trailing_drop,
     )
 
     if not boundaries:
@@ -285,7 +286,12 @@ def run_split(
         _emit_total_time(total_start, verbose, show)
         return
 
-    _check_disk_space(video_path, boundaries, metadata["duration"], config, show=show)
+    # #805 段階2: post_match (MP4 不生成) は disk 予算に計上しない。active
+    # のみ渡す (post_match が無い常態では active == boundaries で bit-exact)。
+    active_boundaries, _ = _partition_post_match(boundaries)
+    _check_disk_space(
+        video_path, active_boundaries, metadata["duration"], config, show=show
+    )
     # #591 -- detect 経路で確定した vendor を vendor_used に記録。CPU
     # 強制 (use_gpu=False) のときは vendor_used=None (実際使ってない)。
     detected_system_info = _build_system_info(
@@ -311,13 +317,15 @@ def run_split(
         system_info=detected_system_info,
         brightness_samples=brightness_samples,
         masked_fallback_used=masked_fallback_used,
-        # #805 段階1: fresh-detection drops -> post_match_trailing_dropped
-        # warning(s). Empty when nothing dropped -> []. (cache-hit write above
-        # stays unchanged: no fresh detection = documented limitation.)
-        warnings=build_warnings(trailing_drops=trailing_drops),
+        # #805 段階2: warnings is always empty -- the W1
+        # post_match_trailing_dropped emission was removed; the non-destructive
+        # post_match flag on the Match now records a post-match trailing segment.
+        warnings=build_warnings(),
         quiet=quiet,
     )
-    _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
+    # #805 段階2: MP4 化したのは active のみ (post_match は除外)。verbose の
+    # split 件数は書き出した MP4 数を報告する。
+    _emit_splitting_elapsed(split_start, len(active_boundaries), verbose, show)
     _emit_total_time(total_start, verbose, show)
 
 
@@ -381,7 +389,15 @@ def run_split_from_metadata(
                 f"start_time/end_time: {e}"
             ) from e
         type_value = entry.get("type", "unknown")
-        boundaries.append({"start": start, "end": end, "type": type_value})
+        boundary: MatchBoundary = {"start": start, "end": end, "type": type_value}
+        # #805 段階2: detect 由来の post_match Match を再 split で MP4 化せず、
+        # 新 metadata でも flag を保持するため boundary に復元する。truthy のとき
+        # のみ set (通常 match は flag-free のまま = detector の convention 準拠)。
+        # `_split_and_write_metadata` の partition が active と分離し、active のみ
+        # split + output_file 付与、post_match は除外 + flag 保持で rewrite する。
+        if entry.get("post_match"):
+            boundary["post_match"] = True
+        boundaries.append(boundary)
 
     gaps_raw = payload.get("gaps", [])
     gaps: list[Gap] = []
@@ -458,7 +474,12 @@ def run_split_from_metadata(
     if verbose and show:
         typer.echo(f"  Source: {source_path}")
 
-    _check_disk_space(source_path, boundaries, probe["duration"], config, show=show)
+    # #805 段階2: post_match (MP4 不生成) は disk 予算に計上しない。active
+    # のみ渡す (post_match が無い常態では active == boundaries で bit-exact)。
+    active_boundaries, _ = _partition_post_match(boundaries)
+    _check_disk_space(
+        source_path, active_boundaries, probe["duration"], config, show=show
+    )
     # #591 -- split-only path は detect しないので vendor_used=None。
     # GUI export が encoder 選択に使う「現在の環境」を反映するため、
     # ここで probe し直して metadata を更新する (前回 detect の値で
@@ -491,7 +512,8 @@ def run_split_from_metadata(
         warnings=preserve_warnings,
         quiet=quiet,
     )
-    _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
+    # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
+    _emit_splitting_elapsed(split_start, len(active_boundaries), verbose, show)
     _emit_total_time(total_start, verbose, show)
 
 
@@ -810,7 +832,6 @@ def _run_detection(
     progress_emitter: ProgressEmitter | None = None,
     brightness_callback: Callable[[dict[float, float]], None] | None = None,
     masked_fallback_callback: Callable[[], None] | None = None,
-    trailing_drop_callback: Callable[[float, float], None] | None = None,
 ) -> list[MatchBoundary]:
     """Run detection with progress bars for each phase (#328, #329, #331).
 
@@ -845,12 +866,10 @@ def _run_detection(
         "stats": stats,
         "brightness_callback": brightness_callback,
         "masked_fallback_callback": masked_fallback_callback,
-        # #805 段階1: opt-out flag + drop-span seam. keep_trailing skips the
-        # #797 trailing drop entirely (default False = bit-exact); the callback
-        # records each dropped (start, end) so the command layer can surface
-        # it in metadata.json warnings.
+        # #805: opt-out flag. keep_trailing skips the #797 post-match trailing
+        # flagging entirely so a trailing no-scorebar segment is left unflagged
+        # (default False = bit-exact).
         "keep_trailing": config.keep_trailing,
-        "trailing_drop_callback": trailing_drop_callback,
         # #576: rational fps propagation (probe -> detector).
         "source_fps": metadata.get("fps"),
         "source_fps_num": metadata.get("fps_num"),
@@ -1284,6 +1303,20 @@ def _eta_progressbar(
     )
 
 
+def _partition_post_match(
+    boundaries: list[MatchBoundary],
+) -> tuple[list[MatchBoundary], list[MatchBoundary]]:
+    """Split boundaries into (active, post_match).
+
+    Active = boundaries written to MP4 + given an output_file. post_match =
+    non-destructive trailing flag (#805 段階2): retained in metadata, excluded
+    from MP4 output. Order-preserving; the two lists partition the input.
+    """
+    active = [b for b in boundaries if not b.get("post_match")]
+    post_match = [b for b in boundaries if b.get("post_match")]
+    return active, post_match
+
+
 def _split_and_write_metadata(
     video_path: Path,
     boundaries: list[MatchBoundary],
@@ -1322,9 +1355,13 @@ def _split_and_write_metadata(
             f"Cannot create output directory {config.output_dir}: {e}"
         ) from e
 
+    # #805 段階2: active (MP4 生成対象) と post_match (flag 方式、MP4 不生成) に分離。
+    # post_match が無い場合は active == boundaries で現状と bit-exact。
+    active_boundaries, post_match_boundaries = _partition_post_match(boundaries)
+
     # Split with progress bar (#331)
     if show:
-        total = len(boundaries)
+        total = len(active_boundaries)
         with _eta_progressbar(total, "Splitting") as progress:
 
             def on_split_progress(completed: int, total: int) -> None:
@@ -1332,12 +1369,12 @@ def _split_and_write_metadata(
 
             output_files = split_video(
                 video_path,
-                boundaries,
+                active_boundaries,
                 config.output_dir,
                 progress_callback=on_split_progress,
             )
     else:
-        output_files = split_video(video_path, boundaries, config.output_dir)
+        output_files = split_video(video_path, active_boundaries, config.output_dir)
 
     # Write metadata (#463: ``note`` field retired; caveats documented in
     # docs/cli-spec.md and docs/metadata-spec.md instead of being embedded
@@ -1355,7 +1392,8 @@ def _split_and_write_metadata(
         detection_completed_at=detection_completed_at,
         effective_interval=effective_interval,
         config=config,
-        boundaries=boundaries,
+        boundaries=active_boundaries,
+        post_match_boundaries=post_match_boundaries,
         output_files=output_files,
         gaps=gaps,
         system_info=system_info,
@@ -1383,6 +1421,7 @@ def _build_metadata_payload(
     effective_interval: float,
     config: SplitConfig,
     boundaries: list[MatchBoundary],
+    post_match_boundaries: list[MatchBoundary] | None = None,
     output_files: list[Path],
     gaps: list[Gap],
     system_info: SystemInfo,
@@ -1428,6 +1467,8 @@ def _build_metadata_payload(
     #612). Drift between this builder and the JSON Schema is caught
     statically by pyright.
     """
+    # #805 段階2: post_match_boundaries が None のときは空リストで統一
+    post_match_boundaries = post_match_boundaries or []
     payload: Metadata = {
         "schema_version": "1",
         "source": str(video_path),
@@ -1454,24 +1495,46 @@ def _build_metadata_payload(
             "masked_fallback_used": masked_fallback_used,
         },
         "system_info": system_info,
-        "matches": [
-            {
-                "index": i + 1,
-                "start_time": b["start"],
-                "end_time": b["end"],
-                "start_display": _format_timestamp(b["start"]),
-                "end_display": _format_timestamp(b["end"]),
-                "duration": b["end"] - b["start"],
-                "duration_display": _format_duration(b["end"] - b["start"]),
-                # Narrow MatchBoundary's open-ended `type: str` (detector.py)
-                # to the JSON Schema literal so pyright accepts the assignment.
-                # Anything other than "fl_match" is normalized to "unknown"
-                # -- matches the prior dict.get fallback semantics.
-                "type": "fl_match" if b.get("type") == "fl_match" else "unknown",
-                "output_file": f.as_posix(),
-            }
-            for i, (b, f) in enumerate(zip(boundaries, output_files, strict=True))
-        ],
+        # #805 段階2: active matches (output_file 有り) と post_match matches
+        # (output_file 無し、post_match=True) を index 連番で結合。
+        # list + list の型推論が dict[str, Unknown] になるため cast で Match に narrow。
+        "matches": cast(
+            "list[Match]",
+            [
+                {
+                    "index": i + 1,
+                    "start_time": b["start"],
+                    "end_time": b["end"],
+                    "start_display": _format_timestamp(b["start"]),
+                    "end_display": _format_timestamp(b["end"]),
+                    "duration": b["end"] - b["start"],
+                    "duration_display": _format_duration(b["end"] - b["start"]),
+                    # Narrow MatchBoundary's open-ended `type: str` (detector.py)
+                    # to the JSON Schema literal so pyright accepts the assignment.
+                    # Anything other than "fl_match" is normalized to "unknown"
+                    # -- matches the prior dict.get fallback semantics.
+                    "type": "fl_match" if b.get("type") == "fl_match" else "unknown",
+                    "output_file": f.as_posix(),
+                }
+                for i, (b, f) in enumerate(zip(boundaries, output_files, strict=True))
+            ]
+            + [
+                {
+                    "index": len(boundaries) + j + 1,
+                    "start_time": b["start"],
+                    "end_time": b["end"],
+                    "start_display": _format_timestamp(b["start"]),
+                    "end_display": _format_timestamp(b["end"]),
+                    "duration": b["end"] - b["start"],
+                    "duration_display": _format_duration(b["end"] - b["start"]),
+                    "type": "fl_match" if b.get("type") == "fl_match" else "unknown",
+                    # #805 段階2: post_match segment は MP4 を生成しないため
+                    # output_file は付けない (NotRequired)。post_match flag を付与。
+                    "post_match": True,
+                }
+                for j, b in enumerate(post_match_boundaries)
+            ],
+        ),
         "gaps": [
             {
                 "start_time": g["start"],
@@ -1483,10 +1546,11 @@ def _build_metadata_payload(
             }
             for g in gaps
         ],
-        # #805 段階1: ``warnings`` defaults to None -> ``build_warnings()`` ([])
-        # so existing callers/tests stay byte-identical. Callers that capture
-        # trailing-drop spans pass a pre-built list (via build_warnings(
-        # trailing_drops=...)) which is emitted verbatim.
+        # ``warnings`` defaults to None -> ``build_warnings()`` ([]) so existing
+        # callers/tests stay byte-identical. A caller may still pass a pre-built
+        # list (e.g. preserved from an older metadata.json) which is emitted
+        # verbatim. #805 段階2 removed the only emitter (post_match_trailing_
+        # dropped), so fresh-detection writes now always pass an empty list.
         "warnings": build_warnings() if warnings is None else warnings,
     }
     if brightness_samples is not None:

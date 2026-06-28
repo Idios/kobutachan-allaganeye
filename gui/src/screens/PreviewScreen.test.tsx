@@ -1190,3 +1190,84 @@ describe('#676 PreviewScreen header path display', () => {
     expect(queryByTestId('preview-path')).not.toBeInTheDocument();
   });
 });
+
+// #805 Phase 1: post_match match no-crash guard.
+// Rendering PreviewScreen with a post_match match (output_file undefined,
+// post_match: true) selected must not throw. This test LOCKS the no-crash
+// property for the preview boundary-edit flow.
+describe('#805 PreviewScreen post_match no-crash guard', () => {
+  const postMatchEntry = {
+    index: 2,
+    start_time: 1000,
+    end_time: 1120,
+    start_display: '16:40',
+    end_display: '18:40',
+    duration: 120,
+    duration_display: '2m00s',
+    type: 'unknown' as const,
+    // output_file deliberately absent -- post_match segment
+    post_match: true as const,
+  };
+  const metaWithPostMatch = {
+    source: 'C:\\videos\\rec.mkv',
+    source_duration: 1200,
+    source_duration_display: '20:00',
+    detected_at: '2026-06-26T00:00:00Z',
+    detection_params: {
+      sample_interval: 2,
+      blackout_threshold: 15,
+      min_match_duration: 300,
+      min_blackout_duration: 3,
+      no_audio: false,
+      use_gpu: null,
+      workers: null,
+    },
+    matches: [
+      {
+        index: 1,
+        start_time: 100,
+        end_time: 1000,
+        start_display: '01:40',
+        end_display: '16:40',
+        duration: 900,
+        duration_display: '15m00s',
+        type: 'fl_match' as const,
+        output_file: 'match_001.mp4',
+      },
+      postMatchEntry,
+    ],
+    gaps: [],
+  };
+
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'register_video')
+        return Promise.resolve({ url: 'http://127.0.0.1:0/video/test-token', token: 'test-token' });
+      if (cmd === 'generate_match_thumbnails') return Promise.resolve([]);
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    useAppStateStore.getState().reset();
+    useMetadataStore.getState().clear();
+    useMetadataStore.setState({
+      metadata: metaWithPostMatch as never,
+      hasBackup: false,
+      filePath: null,
+    });
+    // Select the post_match match (index 2)
+    useAppStateStore.getState().selectMatch(2);
+    useAppStateStore.getState().navigate('preview');
+  });
+
+  it('renders post_match match without crashing (no-crash lock #805)', () => {
+    expect(() => render(<PreviewScreen />)).not.toThrow();
+  });
+
+  it('shows the post_match match in preview gracefully (no crash, index visible)', () => {
+    render(<PreviewScreen />);
+    // PreviewScreen renders if a match is found; index 2 is the post_match entry.
+    // The "#002 * of 2" meta line should be visible.
+    expect(screen.getByText(/#002 · of 2/)).toBeInTheDocument();
+  });
+});

@@ -1135,3 +1135,78 @@ describe('#676 ExportScreen header path display', () => {
     expect(queryByTestId('export-path')).not.toBeInTheDocument();
   });
 });
+
+// #805 Phase 1: post_match match no-crash guard.
+// ExportScreen must render without crashing when metadata.matches[] contains
+// a post_match entry (output_file undefined, post_match: true). This is a
+// minimal no-crash lock -- export exclusion UX is Phase 2.
+describe('#805 ExportScreen post_match no-crash guard', () => {
+  const metaWithPostMatch = {
+    source: 'C:\\videos\\rec.mkv',
+    source_duration: 1200,
+    source_duration_display: '20:00',
+    detected_at: '2026-06-26T00:00:00Z',
+    detection_params: {
+      sample_interval: 2,
+      blackout_threshold: 15,
+      min_match_duration: 300,
+      min_blackout_duration: 3,
+      no_audio: false,
+      use_gpu: null,
+      workers: null,
+    },
+    matches: [
+      {
+        index: 1,
+        start_time: 100,
+        end_time: 1000,
+        start_display: '01:40',
+        end_display: '16:40',
+        duration: 900,
+        duration_display: '15m00s',
+        type: 'fl_match' as const,
+        output_file: 'match_001.mp4',
+      },
+      {
+        index: 2,
+        start_time: 1000,
+        end_time: 1120,
+        start_display: '16:40',
+        end_display: '18:40',
+        duration: 120,
+        duration_display: '2m00s',
+        type: 'unknown' as const,
+        // output_file deliberately absent -- post_match segment
+        post_match: true as const,
+      },
+    ],
+    gaps: [],
+  };
+
+  beforeEach(() => {
+    invokeMock.mockReset();
+    listenMock.mockReset();
+    invokeMock.mockResolvedValue(undefined);
+    listenMock.mockResolvedValue(() => undefined);
+    useAppStateStore.getState().reset();
+    useMetadataStore.getState().clear();
+    useMetadataStore.setState({
+      metadata: metaWithPostMatch as never,
+      hasBackup: false,
+      filePath: '/tmp/meta.json',
+    });
+    useAppStateStore.getState().navigate('export');
+  });
+
+  it('renders post_match match without crashing (no-crash lock #805)', () => {
+    expect(() => render(<ExportScreen />)).not.toThrow();
+  });
+
+  it('shows both matches in the export list without crashing', () => {
+    render(<ExportScreen />);
+    expect(screen.getByTestId('export-screen')).toBeInTheDocument();
+    // Both match rows appear (post_match treated as normal match in Phase 1)
+    expect(screen.getByLabelText('include match 1')).toBeInTheDocument();
+    expect(screen.getByLabelText('include match 2')).toBeInTheDocument();
+  });
+});

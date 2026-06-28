@@ -156,8 +156,7 @@
         "end_display",
         "duration",
         "duration_display",
-        "type",
-        "output_file"
+        "type"
       ],
       "properties": {
         "index": {
@@ -204,6 +203,10 @@
           "description": "MP4 filename relative to the metadata.json directory.",
           "type": "string",
           "minLength": 1
+        },
+        "post_match": {
+          "description": "True when this segment is a post-match trailing run (#805 段階2). Non-destructive flag: excluded from default split output but retained in metadata. Absent / false = normal match.",
+          "type": "boolean"
         }
       }
     },

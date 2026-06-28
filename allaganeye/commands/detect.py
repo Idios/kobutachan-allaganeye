@@ -33,6 +33,7 @@ from allaganeye.commands.split_matches import (
     _format_duration,
     _iso_utc_now,
     _load_cache,
+    _partition_post_match,
     _read_cached_masked_fallback,
     _print_environment_header,
     _print_detection_stats,
@@ -94,16 +95,6 @@ def run_detect(
         # locally so the metadata.json writer can downsample for the
         # complete-screen timeline.
         captured_brightness.update(results)
-
-    # #805 段階1 -- trailing drop の (start, end) を捕捉して metadata.json の
-    # warnings に書く。captured_brightness と同様に関数先頭で宣言し、
-    # cache-miss の detection block (callback 配線) と末尾の payload builder
-    # (warnings 変換) の両方から参照できるようにする。cache hit / drop なし
-    # では空のまま残り build_warnings(trailing_drops=()) -> []。
-    trailing_drops: list[tuple[float, float]] = []
-
-    def on_trailing_drop(start: float, end: float) -> None:
-        trailing_drops.append((start, end))
 
     total_start = time.monotonic()
     detected_at = _iso_utc_now()
@@ -210,7 +201,6 @@ def run_detect(
             progress_emitter=progress_emitter,
             brightness_callback=on_brightness,
             masked_fallback_callback=_on_masked_fallback,
-            trailing_drop_callback=on_trailing_drop,
         )
 
         if not boundaries:
@@ -258,12 +248,20 @@ def run_detect(
             f"Cannot create output directory {config.output_dir}: {e}"
         ) from e
 
+    # #805 段階2: active (MP4 生成対象) と post_match (flag 方式、MP4 不生成) に
+    # 分離する。detector の `_flag_post_match_trailing` が最終 segment に
+    # post_match=True を立てた場合、それを output_file 無しの post_match Match
+    # として metadata に搬送する (`_split_and_write_metadata` と同形)。
+    # post_match が無い場合 (常態) は active == boundaries で従来と bit-exact。
+    active_boundaries, post_match_boundaries = _partition_post_match(boundaries)
+
     # Placeholder names are relative to ``output_dir``; ``_build_metadata_payload``
     # serialises them via ``Path.as_posix`` so the resulting ``output_file``
     # entries match what ``split --from-metadata`` will produce (just the
-    # basename, parent is implicit from the metadata location).
+    # basename, parent is implicit from the metadata location). active のみに
+    # placeholder を割り当てる (post_match は MP4 を生成しないため output_file 無し)。
     placeholder_paths = [
-        Path(f"match_{i + 1:03d}.mp4") for i, _ in enumerate(boundaries)
+        Path(f"match_{i + 1:03d}.mp4") for i, _ in enumerate(active_boundaries)
     ]
 
     # #591 -- cache hit のときは _resolve_gpu_mode を通らないので
@@ -298,16 +296,19 @@ def run_detect(
         detection_completed_at=detection_completed_at,
         effective_interval=effective_interval,
         config=config,
-        boundaries=boundaries,
+        boundaries=active_boundaries,
+        post_match_boundaries=post_match_boundaries,
         output_files=placeholder_paths,
         gaps=gaps,
         system_info=system_info,
         brightness_samples=brightness_samples,
         masked_fallback_used=masked_fallback_used,
-        # #805 段階1: fresh-detection drops -> post_match_trailing_dropped
-        # warning(s). Empty when nothing dropped (incl. cache-hit, which never
-        # populates trailing_drops since _run_detection is skipped) -> [].
-        warnings=build_warnings(trailing_drops=trailing_drops),
+        # #805 段階2: warnings is always empty -- the W1
+        # post_match_trailing_dropped emission was removed; the non-destructive
+        # post_match flag on the Match now records a post-match trailing segment.
+        # post_match segment は post_match_boundaries 経由で output_file 無しの
+        # Match として書かれる (`_split_and_write_metadata` と同じ partition)。
+        warnings=build_warnings(),
     )
     metadata_path = config.output_dir / "metadata.json"
     write_metadata_atomic(metadata_path, payload)
@@ -320,6 +321,9 @@ def run_detect(
     if progress_emitter is not None:
         progress_emitter.emit(
             "done",
+            # #805 段階2: total detected segments (active + post_match)。post_match
+            # は MP4 化されないが「検出された試合数」の観測値としては数える
+            # (post_match が無い常態では active と一致 = 従来挙動)。
             metadata_path=str(metadata_path),
             matches=len(boundaries),
         )

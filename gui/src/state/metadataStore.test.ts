@@ -257,6 +257,56 @@ describe('useMetadataStore.apply', () => {
     expect(persistedMatches[0]).not.toHaveProperty('type_override');
   });
 
+  // #805 Phase 1 (Codex HIGH 1) -- normalizeForPersistence must passthrough the
+  // post_match non-destructive flag. Without it, ANY [適用] strips post_match
+  // from the written metadata.json -> on the next split/export the trailing
+  // segment is treated as a normal match and gets an MP4, reversing the
+  // exclusion invariant. The flag is truthy-only (normal matches stay
+  // flag-free), and a post_match match never carries output_file.
+  it('preserves post_match (truthy-only) and omits output_file for post_match matches on apply (#805)', async () => {
+    const meta = validMetadata();
+    // matches[1] becomes a post_match trailing segment: flag set, no output_file.
+    meta.matches[1] = {
+      index: 2,
+      start_time: 1000,
+      end_time: 1800,
+      start_display: '16:40',
+      end_display: '30:00',
+      duration: 800,
+      duration_display: '13m20s',
+      type: 'unknown',
+      post_match: true,
+    };
+    configureInvoke({
+      load_metadata: meta,
+      apply_changes: undefined,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    // Apply an unrelated edit to the normal match so this exercises the full
+    // normalize/apply path (not a no-op apply).
+    useMetadataStore.getState().updateMatch(1, { name: 'Round 1' });
+    await useMetadataStore.getState().apply();
+
+    const applyCall = invokeMock.mock.calls.find((c) => c[0] === 'apply_changes');
+    expect(applyCall).toBeDefined();
+    const persisted = (applyCall![1] as { metadata: Metadata }).metadata.matches;
+
+    // Normal match: GUI-only fields stripped on persist (name was set above via
+    // updateMatch; normalizeForPersistence must remove it before apply_changes).
+    expect(persisted[0].index).toBe(1);
+    expect(persisted[0].output_file).toBe('match_001.mp4');
+    expect(persisted[0]).not.toHaveProperty('post_match');
+    expect(persisted[0]).not.toHaveProperty('name');
+    expect(persisted[0]).not.toHaveProperty('edited');
+    expect(persisted[0]).not.toHaveProperty('type_override');
+
+    // post_match match: flag preserved as true, output_file omitted.
+    expect(persisted[1].index).toBe(2);
+    expect(persisted[1].post_match).toBe(true);
+    expect(persisted[1]).not.toHaveProperty('output_file');
+  });
+
   it('does not change canonical type when type_override is skip', async () => {
     configureInvoke({
       load_metadata: validMetadata(),

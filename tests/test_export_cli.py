@@ -460,6 +460,188 @@ def test_export_counts_skipped(
     assert last["skipped"] == 2
 
 
+@patch("allaganeye.commands.export.export_matches")
+def test_export_skips_post_match_on_export_all(
+    mock_export: MagicMock, app: typer.Typer, tmp_path: Path
+):
+    # #805 Phase 1 (Codex HIGH 2): a post_match trailing segment is the
+    # non-destructive marker for a post-match (lobby/city) run -- the CLI
+    # excludes it from MP4 output and retains it only in metadata. Export
+    # (CLI and GUI share this code path) must NOT encode it even on
+    # "export all" (no include/exclude). Verify the post_match match is
+    # filtered out of the export set and counted as skipped, while the
+    # active match is exported.
+    mock_export.return_value = ExportSummary(success=1, failure=0)
+    payload = {
+        "schema_version": "1",
+        "source": str(tmp_path / "in.mp4"),
+        "matches": [
+            {"index": 0, "start_time": 0.0, "end_time": 10.0, "type": "match"},
+            {
+                "index": 1,
+                "start_time": 10.0,
+                "end_time": 20.0,
+                "type": "unknown",
+                "post_match": True,
+            },
+        ],
+        "system_info": {
+            "gpu_vendors_available": [],
+            "vendor_preference": ["nvidia"],
+            "gpu": [],
+        },
+    }
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            str(metadata_path),
+            "--output-dir",
+            str(tmp_path),
+            "--codec",
+            "h264",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    # export target is the active match only (index 0); index 1 is post_match.
+    _, kwargs = mock_export.call_args
+    assert [m.index for m in kwargs.get("matches")] == [0]
+    # summary.skipped reflects the 1 post_match match excluded from output.
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    last = json.loads(lines[-1])
+    assert last["type"] == "summary"
+    assert last["skipped"] == 1
+
+
+@patch("allaganeye.commands.export.export_matches")
+def test_export_post_match_excluded_even_when_explicitly_included(
+    mock_export: MagicMock, app: typer.Typer, tmp_path: Path
+):
+    # Fix 1 lock test: post_match exclusion is UNCONDITIONAL -- even if the
+    # caller explicitly names the post_match index in --include, the segment
+    # must NOT be exported and must be counted as skipped. This locks the
+    # guard-order invariant: moving the post_match check after the include
+    # guard would break this (the included post_match would fall through to
+    # append). The test must PASS against the current code (confirming
+    # correctness) and FAIL if the guards are reordered.
+    mock_export.return_value = ExportSummary(success=1, failure=0)
+    payload = {
+        "schema_version": "1",
+        "source": str(tmp_path / "in.mp4"),
+        "matches": [
+            {"index": 1, "start_time": 0.0, "end_time": 10.0, "type": "match"},
+            {
+                "index": 2,
+                "start_time": 10.0,
+                "end_time": 20.0,
+                "type": "unknown",
+                "post_match": True,
+            },
+        ],
+        "system_info": {
+            "gpu_vendors_available": [],
+            "vendor_preference": ["nvidia"],
+            "gpu": [],
+        },
+    }
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+    # Explicitly include BOTH the active match (1) and the post_match (2).
+    # The post_match must still be excluded and not reach export_matches.
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            str(metadata_path),
+            "--output-dir",
+            str(tmp_path),
+            "--codec",
+            "h264",
+            "--include",
+            "1,2",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    # Only the active match (index 1) must be passed to export_matches.
+    _, kwargs = mock_export.call_args
+    assert [m.index for m in kwargs.get("matches")] == [1], (
+        "post_match match reached export_matches despite --include; "
+        "unconditional guard must fire before include check"
+    )
+    # The post_match match must appear in skipped count (1 skipped).
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    last = json.loads(lines[-1])
+    assert last["type"] == "summary"
+    assert last["skipped"] == 1, (
+        f"expected skipped=1 (the post_match), got skipped={last['skipped']}"
+    )
+
+
+@patch("allaganeye.commands.export.export_matches")
+def test_export_explicit_include_of_post_match_warns(
+    mock_export: MagicMock, app: typer.Typer, tmp_path: Path
+):
+    # Round 1 (A): explicitly naming a post_match index in --include used to be a
+    # silent no-op -- the post_match guard fires first and skips the segment, and
+    # the "index not found" warning does NOT trigger because the index IS valid.
+    # The user gets zero feedback that their requested index was dropped. Verify a
+    # notice is printed (actionable visibility) WITHOUT changing the invariant:
+    # the post_match must still never reach export_matches.
+    mock_export.return_value = ExportSummary(success=1, failure=0)
+    payload = {
+        "schema_version": "1",
+        "source": str(tmp_path / "in.mp4"),
+        "matches": [
+            {"index": 1, "start_time": 0.0, "end_time": 10.0, "type": "match"},
+            {
+                "index": 2,
+                "start_time": 10.0,
+                "end_time": 20.0,
+                "type": "unknown",
+                "post_match": True,
+            },
+        ],
+        "system_info": {
+            "gpu_vendors_available": [],
+            "vendor_preference": ["nvidia"],
+            "gpu": [],
+        },
+    }
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+    # Explicitly include ONLY the post_match index (2).
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            str(metadata_path),
+            "--output-dir",
+            str(tmp_path),
+            "--codec",
+            "h264",
+            "--include",
+            "2",
+            "--quiet",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    # (a) invariant intact: the post_match (index 2) must NOT reach export_matches.
+    _, kwargs = mock_export.call_args
+    assert 2 not in [m.index for m in kwargs.get("matches")], (
+        "post_match match reached export_matches despite being post_match; "
+        "unconditional exclusion invariant must hold"
+    )
+    # (b) a notice naming the explicitly-included post_match index must print.
+    out = result.output.lower()
+    assert "warning" in out, "expected a notice for explicit --include of post_match"
+    assert "post-match" in out, "notice must explain the index is a post-match segment"
+    assert "2" in result.output, "notice must name the requested index"
+
+
 def test_export_json_reconfigures_stdout_utf8(app: typer.Typer, tmp_path: Path):
     # P2-8: --json emits non-ASCII (output_path / error_message) with
     # ensure_ascii=False but never reconfigured stdout to UTF-8, relying on the

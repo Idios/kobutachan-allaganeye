@@ -177,6 +177,29 @@ def register(app: typer.Typer) -> None:
             skipped_count = 0  # P2-9: count filtered-out matches for the summary
             for raw in all_matches:
                 idx = int(raw["index"])
+                # #805 Phase 1 (Codex HIGH 2): a post_match trailing segment is
+                # non-destructive -- retained in metadata but EXCLUDED from MP4
+                # output unconditionally. This exclusion is UNCONDITIONAL: a
+                # post_match match is never exported regardless of --include or
+                # --exclude, because it has no output_file and encoding it would
+                # reverse the non-destructive contract. Placing this guard FIRST
+                # (before include/exclude) makes the invariant explicit and
+                # future-proofs against guard reordering.
+                if raw.get("post_match"):
+                    skipped_count += 1
+                    # Round 1 (A): an explicit --include of a post_match index
+                    # would otherwise be a silent no-op (this guard skips it and
+                    # the "index not found" warning below never fires because the
+                    # index IS valid). Surface a notice ONLY for the actionable
+                    # case -- the user explicitly named this index -- without
+                    # changing the invariant (post_match is never exported).
+                    if include_set is not None and idx in include_set:
+                        typer.echo(
+                            f"warning: --include index {idx} is a post-match trailing "
+                            f"segment (excluded from MP4 export, #805)",
+                            err=True,
+                        )
+                    continue
                 if include_set is not None and idx not in include_set:
                     skipped_count += 1
                     continue

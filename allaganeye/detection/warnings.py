@@ -23,7 +23,6 @@ existing emitters keep working unchanged.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Literal
 
 from allaganeye.metadata_types import MetadataWarning
@@ -43,6 +42,11 @@ emitters; the canonical literal lives inline in
 
 
 WARNING_CODES: dict[str, str] = {
+    # #805 段階2 (W1): DEPRECATED -- emission stopped. The non-destructive
+    # ``post_match`` flag on the Match now records a post-match trailing
+    # segment, so this warning is no longer emitted by ``build_warnings``. The
+    # code stays registered so ``sanitize_warnings`` can still read it out of an
+    # older metadata.json (backward compatibility).
     "post_match_trailing_dropped": (
         "A trailing post-match segment was dropped because no scorebar was "
         "detected in its early candidate-match window; re-run with "
@@ -57,32 +61,17 @@ payload only carries the code.
 """
 
 
-def build_warnings(
-    *,
-    trailing_drops: Sequence[tuple[float, float]] = (),
-) -> list[MetadataWarning]:
+def build_warnings() -> list[MetadataWarning]:
     """Build the `warnings` list for a freshly written metadata.json.
 
-    Args:
-        trailing_drops: ``(start, end)`` spans for each post-match trailing
-            segment that ``_drop_post_match_trailing`` removed (#805 段階1).
-            Each becomes a ``post_match_trailing_dropped`` warn entry so the
-            dropped match's boundaries are recoverable from metadata.json.
-
-    Returns an empty list when no context is supplied (backward compatible
-    with the #518 scaffold).
+    Always returns an empty list (the #518 scaffold shape). The only emitter
+    that ever populated it -- ``post_match_trailing_dropped`` for a dropped
+    post-match trailing segment -- was unwired in #805 段階2 (W1): the
+    non-destructive ``post_match`` flag on the Match now records that case, so
+    no warning is emitted. The code stays registered for reading older
+    metadata.json (see ``WARNING_CODES`` / ``sanitize_warnings``).
     """
-    warnings: list[MetadataWarning] = []
-    for start, end in trailing_drops:
-        warnings.append(
-            MetadataWarning(
-                code="post_match_trailing_dropped",
-                message_en=WARNING_CODES["post_match_trailing_dropped"],
-                severity="warn",
-                context={"start": start, "end": end},
-            )
-        )
-    return warnings
+    return []
 
 
 def sanitize_warnings(raw: object) -> list[MetadataWarning]:

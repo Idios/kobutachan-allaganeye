@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from allaganeye.commands.split_matches import (
+    _CACHE_VERSION,
     _ETAProgressBar,
     _PROGRESS_LABEL_WIDTH,
     _auto_sample_interval,
@@ -18,7 +19,6 @@ from allaganeye.commands.split_matches import (
     run_split,
 )
 from allaganeye.config import SplitConfig
-from allaganeye.detection.warnings import WARNING_CODES
 from allaganeye.exceptions import AllaganEyeError, DetectionError, VideoProcessingError
 from allaganeye.video.detector import MatchBoundary
 from allaganeye.video.probe import ProbeResult
@@ -1048,10 +1048,11 @@ def test_pipeline_config_params_forwarded(
     assert detect_kwargs["blackout_threshold"] == 20.0
     assert detect_kwargs["min_match_duration"] == 120.0
     assert detect_kwargs["min_blackout_duration"] == 3.0
-    # #805 段階1: keep_trailing flag + trailing_drop_callback seam reach the
-    # detector through _run_detection's detect_kwargs assembly.
+    # #805 段階2: keep_trailing flag still reaches the detector through
+    # _run_detection's detect_kwargs assembly. The trailing_drop_callback seam
+    # is removed (W1: warning emission stopped, post_match flag replaces it).
     assert detect_kwargs["keep_trailing"] is True
-    assert callable(detect_kwargs["trailing_drop_callback"])
+    assert "trailing_drop_callback" not in detect_kwargs
 
 
 # ============================================================
@@ -1298,6 +1299,27 @@ class TestCacheRoundTrip:
         data["cache_version"] = 2
         for key in ("vtuber", "masked"):
             data["params"].pop(key, None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+
+    def test_cache_version_is_4(self):
+        """#805 段階2: detection output shape changed (post_match flag) -> v4."""
+        assert _CACHE_VERSION == 4
+
+    def test_legacy_v3_cache_rejected(self, cache_video, cache_config, tmp_path):
+        """#805 段階2: pre-段階2 (v3) cache は version bump で invalidate される.
+
+        旧 detector は post-match trailing を削除済み shape で cache した。新
+        detector は post_match flag 付きで残すため、v3 cache が hit し続けると
+        削除済み結果 (試合 1 本欠落) が silent に再利用される。version bump で
+        確実に miss させ再 detect させる。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["cache_version"] = 3
         cache_path.write_text(json.dumps(data), encoding="utf-8")
         assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
 
@@ -2172,6 +2194,194 @@ class TestDiskSpaceCheck:
         mock_check.assert_called_once()
         # detect_match_boundaries must not be invoked (cache hit)
         mock_detect.assert_not_called()
+
+
+class TestPartitionPostMatch:
+    """`_partition_post_match` helper (#805 段階2)."""
+
+    def test_partition_splits_active_and_post_match(self):
+        """active (no post_match flag) and post_match are separated."""
+        from allaganeye.commands.split_matches import _partition_post_match
+
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 600.0, "type": "unknown"},
+            {"start": 610.0, "end": 1200.0, "type": "unknown", "post_match": True},
+        ]
+        active, post_match = _partition_post_match(boundaries)
+
+        assert active == [{"start": 0.0, "end": 600.0, "type": "unknown"}]
+        assert post_match == [
+            {"start": 610.0, "end": 1200.0, "type": "unknown", "post_match": True}
+        ]
+
+    def test_partition_is_order_preserving_and_total(self):
+        """The two lists partition the input and preserve relative order."""
+        from allaganeye.commands.split_matches import _partition_post_match
+
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 100.0, "type": "unknown"},
+            {"start": 200.0, "end": 300.0, "type": "unknown", "post_match": True},
+            {"start": 400.0, "end": 500.0, "type": "unknown"},
+            {"start": 600.0, "end": 700.0, "type": "unknown", "post_match": True},
+        ]
+        active, post_match = _partition_post_match(boundaries)
+
+        # Order-preserving within each partition
+        assert active == [
+            {"start": 0.0, "end": 100.0, "type": "unknown"},
+            {"start": 400.0, "end": 500.0, "type": "unknown"},
+        ]
+        assert post_match == [
+            {"start": 200.0, "end": 300.0, "type": "unknown", "post_match": True},
+            {"start": 600.0, "end": 700.0, "type": "unknown", "post_match": True},
+        ]
+        # Total: the two lists account for every input boundary
+        assert len(active) + len(post_match) == len(boundaries)
+
+    def test_partition_no_post_match_returns_all_active(self):
+        """No post_match flag -> active is the full list (bit-exact), post empty."""
+        from allaganeye.commands.split_matches import _partition_post_match
+
+        active, post_match = _partition_post_match(BOUNDARIES)
+
+        assert active == BOUNDARIES
+        assert post_match == []
+
+    def test_partition_empty(self):
+        """Empty input -> two empty lists."""
+        from allaganeye.commands.split_matches import _partition_post_match
+
+        active, post_match = _partition_post_match([])
+
+        assert active == []
+        assert post_match == []
+
+    def test_partition_post_match_false_is_active(self):
+        """An explicit ``post_match: False`` boundary counts as active."""
+        from allaganeye.commands.split_matches import _partition_post_match
+
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 100.0, "type": "unknown", "post_match": False},
+        ]
+        active, post_match = _partition_post_match(boundaries)
+
+        assert active == boundaries
+        assert post_match == []
+
+
+# Disk-budget regression fixtures (#805 段階2).
+# Source: 1.8 MB / 1800 s (matches PROBE_RESULT["duration"]).
+#   active  = 0-600s   -> ratio 1/3   -> est = 1.8M * (1/3) * 1.1 = 660_000
+#   all     = 0-1700s  -> ratio 17/18 -> est = 1.8M * (17/18)*1.1 = 1_870_000
+# free = 1_000_000:  est(active) <= free < est(active+post_match).
+_ACTIVE_AND_POST: list[MatchBoundary] = [
+    {"start": 0.0, "end": 600.0, "type": "unknown"},
+    {"start": 600.0, "end": 1700.0, "type": "unknown", "post_match": True},
+]
+_POST_MATCH_FREE_BYTES = 1_000_000
+
+
+def _post_match_fake_usage():
+    return type(
+        "Usage",
+        (),
+        {
+            "total": 10_000_000,
+            "used": 10_000_000 - _POST_MATCH_FREE_BYTES,
+            "free": _POST_MATCH_FREE_BYTES,
+        },
+    )
+
+
+class TestDiskSpacePostMatchBudget:
+    """Disk check must budget only active (MP4-written) boundaries (#805 段階2).
+
+    Regression for the Codex adversarial-review HIGH finding: a long
+    post_match trailing segment is retained in ``boundaries`` but is *not*
+    written to MP4.  Budgeting its duration in the pre-split disk check can
+    raise a false "Not enough disk space" error even though the space free
+    is sufficient for the matches that will actually be written.
+    """
+
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    def test_run_split_does_not_false_fail_on_post_match_tail(
+        self, mock_probe, mock_detect, mock_split, tmp_path
+    ):
+        """run_split must not raise when only the post_match tail overflows."""
+        mock_probe.return_value = PROBE_RESULT
+        mock_detect.return_value = list(_ACTIVE_AND_POST)
+        # Only the single active match is written.
+        mock_split.return_value = [tmp_path / "match_001.mp4"]
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+        # Real _check_disk_space; mock the OS free-space probe.
+        video = tmp_path / "input.mp4"
+        video.write_bytes(b"\x00" * 1_800_000)  # 1.8 MB
+
+        with patch(
+            "allaganeye.commands.split_matches.shutil.disk_usage",
+            return_value=_post_match_fake_usage(),
+        ):
+            # Must NOT raise: active estimate (660_000) fits in free (1_000_000).
+            run_split(video, config)
+
+        mock_split.assert_called_once()
+
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    def test_run_split_passes_only_active_boundaries_to_disk_check(
+        self, mock_probe, mock_detect, mock_split, tmp_path
+    ):
+        """The disk check is called with active boundaries only (not post_match)."""
+        mock_probe.return_value = PROBE_RESULT
+        mock_detect.return_value = list(_ACTIVE_AND_POST)
+        mock_split.return_value = [tmp_path / "match_001.mp4"]
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+        with patch(f"{MODULE}._check_disk_space") as mock_check:
+            run_split(Path("input.mp4"), config)
+
+        mock_check.assert_called_once()
+        passed_boundaries = mock_check.call_args.args[1]
+        assert passed_boundaries == [
+            {"start": 0.0, "end": 600.0, "type": "unknown"},
+        ]
+        assert all(not b.get("post_match") for b in passed_boundaries)
+
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    @patch(f"{MODULE}._load_cache")
+    def test_cache_hit_does_not_false_fail_on_post_match_tail(
+        self, mock_load, mock_probe, mock_detect, mock_split, tmp_path
+    ):
+        """cache-hit branch must also budget only active boundaries (#805).
+
+        The v4 cache stores the post_match=True shape, and the cache-hit
+        re-run is the documented recovery path from a disk-full failure, so
+        the cache branch's disk check must exclude the post_match tail too.
+        """
+        mock_probe.return_value = PROBE_RESULT
+        # Cache returns boundaries WITH a post_match tail.
+        mock_load.return_value = list(_ACTIVE_AND_POST)
+        mock_split.return_value = [tmp_path / "match_001.mp4"]
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+        video = tmp_path / "input.mp4"
+        video.write_bytes(b"\x00" * 1_800_000)  # 1.8 MB
+
+        with patch(
+            "allaganeye.commands.split_matches.shutil.disk_usage",
+            return_value=_post_match_fake_usage(),
+        ):
+            run_split(video, config)
+
+        # cache hit -> detect must not run; split happens for the active match.
+        mock_detect.assert_not_called()
+        mock_split.assert_called_once()
 
 
 class TestResolveGpuMode:
@@ -4661,33 +4871,33 @@ def test_run_split_cache_hit_omits_brightness_samples(
     )
 
 
-# -- #805 段階1: post_match_trailing_dropped warning wiring through run_split --
+# -- #805 段階2: post_match_trailing_dropped warning emission stopped (W1) --
 
-# trailing_drop_callback の wiring を assert したいので mock_pipeline ではなく
-# `_run_detection` を直接 patch する (brightness_samples #644 と同型)。
+# trailing_drop_callback の wiring は除去されたため、`_run_detection` を直接
+# patch して callback が渡されないこと + warnings が空のままなことを assert する
+# (post_match flag が warning を代替、brightness_samples #644 と同型の検証)。
 
 
 @patch(f"{MODULE}._run_detection")
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.probe_video")
-def test_run_split_records_trailing_drop_warning(
+def test_run_split_does_not_pass_trailing_drop_callback(
     mock_probe, mock_split, mock_run_detection, tmp_path
 ):
-    """#805 段階1 -- run_split (一気通貫) で trailing drop が起きたら
-    metadata.json の warnings に post_match_trailing_dropped が記録される。
+    """#805 段階2 (W1) -- run_split (一気通貫) は trailing_drop_callback を
+    `_run_detection` に渡さず、warnings は emit されない (空のまま)。
 
-    `_run_detection` に渡される `trailing_drop_callback` を
-    fake_run_detection から (1000.0, 1800.0) で呼び、最終 metadata.json
-    の warnings に 1 件現れることを assert する (brightness #644 同型)。
+    post_match flag が first-class 代替になったため、旧 callback チェーンは
+    除去された。callback kwarg が assemble されないこと + warnings が [] で
+    あることを assert する。
     """
     mock_probe.return_value = PROBE_RESULT
 
     def fake_run_detection(*args, **kwargs):
-        cb = kwargs.get("trailing_drop_callback")
-        assert cb is not None, (
-            "run_split must pass trailing_drop_callback to _run_detection (#805)"
+        assert "trailing_drop_callback" not in kwargs, (
+            "run_split must NOT pass trailing_drop_callback to _run_detection "
+            "(#805 段階2: callback removed, post_match flag replaces it)"
         )
-        cb(1000.0, 1800.0)
         return BOUNDARIES
 
     mock_run_detection.side_effect = fake_run_detection
@@ -4705,14 +4915,7 @@ def test_run_split_records_trailing_drop_warning(
     run_split(video, config, verbose=False, quiet=True)
 
     payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
-    assert payload["warnings"] == [
-        {
-            "code": "post_match_trailing_dropped",
-            "message_en": WARNING_CODES["post_match_trailing_dropped"],
-            "severity": "warn",
-            "context": {"start": 1000.0, "end": 1800.0},
-        }
-    ]
+    assert payload["warnings"] == []
 
 
 @patch(f"{MODULE}._run_detection")
@@ -4747,11 +4950,13 @@ def test_run_split_no_trailing_drop_writes_empty_warnings(
 
 
 def test_build_metadata_payload_round_trips_warnings(tmp_path):
-    """#805 段階1 -- `_build_metadata_payload(warnings=[...])` emits the list
+    """#805 -- `_build_metadata_payload(warnings=[...])` emits the list
     verbatim; default (no arg) keeps the historical `[]` for existing callers.
+
+    The ``warnings`` param survives 段階2 (only the trailing_drop emission seam
+    was removed), so a pre-built list still round-trips unchanged.
     """
     from allaganeye.commands.split_matches import _build_metadata_payload
-    from allaganeye.detection.warnings import WARNING_CODES, build_warnings
 
     system_info = {
         "gpu_vendors_available": [],
@@ -4777,19 +4982,16 @@ def test_build_metadata_payload_round_trips_warnings(tmp_path):
     default_payload = _build_metadata_payload(**common)  # type: ignore[arg-type]
     assert default_payload.get("warnings") == []
 
-    warned = build_warnings(trailing_drops=[(1000.0, 1800.0)])
-    # The producer emits exactly this shape; pin it explicitly so the round
-    # trip below also documents the wire contract.
-    assert warned == [
+    # A pre-built warnings list (any code) is forwarded verbatim, not rebuilt.
+    warned = [
         {
-            "code": "post_match_trailing_dropped",
-            "message_en": WARNING_CODES["post_match_trailing_dropped"],
+            "code": "some_warning_code",
+            "message_en": "example",
             "severity": "warn",
             "context": {"start": 1000.0, "end": 1800.0},
         }
     ]
     payload = _build_metadata_payload(**common, warnings=warned)  # type: ignore[arg-type]
-    # _build_metadata_payload forwards the list verbatim (not rebuilt).
     assert payload.get("warnings") == warned
 
 
@@ -4800,3 +5002,182 @@ def test_split_matches_format_helpers_are_detection_format_aliases():
     assert sm._format_timestamp is fmt.format_timestamp
     assert sm._format_duration is fmt.format_duration
     assert sm._iso_utc_now is fmt.iso_utc_now
+
+
+# -- #805 段階2: post_match boundary 除外 + metadata 搬送 --
+
+
+def _build_metadata_payload_common(tmp_path, boundaries, output_files):
+    """共通 kwargs を組み立てるヘルパ (既存テストのパターンを踏襲)。"""
+    from allaganeye.commands.split_matches import _build_metadata_payload
+    from allaganeye.config import SplitConfig
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    return _build_metadata_payload(  # type: ignore[arg-type]
+        video_path=tmp_path / "input.mp4",
+        source_duration=1800.0,
+        source_fps=30.0,
+        detected_at="2026-06-26T00:00:00Z",
+        detection_started_at="2026-06-26T00:00:00Z",
+        detection_completed_at="2026-06-26T00:01:00Z",
+        effective_interval=1.0,
+        config=config,
+        boundaries=boundaries,
+        output_files=output_files,
+        gaps=[],
+        system_info={
+            "gpu_vendors_available": [],
+            "gpu_vendor_used": None,
+            "vendor_preference": ["nvidia", "amd", "intel"],
+        },
+    )
+
+
+def test_build_metadata_payload_post_match_excluded_from_outputs(tmp_path):
+    """#805 段階2 -- post_match boundary は output_file なし・index 連番で matches に残る。
+
+    active (index 1) は output_file を持ち、post_match (index 2) は
+    output_file を持たず post_match=True が付く。
+    """
+    active: list[MatchBoundary] = [{"start": 0.0, "end": 600.0, "type": "fl_match"}]
+    post_match: list[MatchBoundary] = [
+        {"start": 600.0, "end": 700.0, "type": "unknown"}
+    ]
+    output_files = [tmp_path / "match_001.mp4"]  # active 分のみ
+
+    from allaganeye.commands.split_matches import _build_metadata_payload
+    from allaganeye.config import SplitConfig
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    payload = _build_metadata_payload(  # type: ignore[arg-type]
+        video_path=tmp_path / "input.mp4",
+        source_duration=1800.0,
+        source_fps=30.0,
+        detected_at="2026-06-26T00:00:00Z",
+        detection_started_at="2026-06-26T00:00:00Z",
+        detection_completed_at="2026-06-26T00:01:00Z",
+        effective_interval=1.0,
+        config=config,
+        boundaries=active,
+        post_match_boundaries=post_match,
+        output_files=output_files,
+        gaps=[],
+        system_info={
+            "gpu_vendors_available": [],
+            "gpu_vendor_used": None,
+            "vendor_preference": ["nvidia", "amd", "intel"],
+        },
+    )
+
+    matches = payload["matches"]
+    assert len(matches) == 2
+    # active match: index 1, output_file あり, post_match フラグ無し
+    assert matches[0]["index"] == 1
+    output_file = matches[0].get("output_file")
+    assert output_file is not None and "match_001.mp4" in output_file
+    assert "post_match" not in matches[0]
+    # post_match match: index 2, output_file なし, post_match=True
+    assert matches[1]["index"] == 2
+    assert matches[1].get("post_match") is True
+    assert "output_file" not in matches[1]
+
+
+def test_build_metadata_payload_no_post_match_is_bitexact(tmp_path):
+    """#805 段階2 -- post_match_boundaries 省略時は元の挙動と bit-exact。
+
+    weak assertion (len / index / key presence) だけでは値の swap や active list
+    の取り違えを検出できない。全フィールドを pin して構造的等価を保証する。
+    """
+    from allaganeye.commands.split_matches import _format_duration, _format_timestamp
+
+    boundaries: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "fl_match"},
+        {"start": 610.0, "end": 1200.0, "type": "unknown"},
+    ]
+    output_files = [tmp_path / "match_001.mp4", tmp_path / "match_002.mp4"]
+
+    payload = _build_metadata_payload_common(tmp_path, boundaries, output_files)
+
+    matches = payload["matches"]
+    assert matches == [
+        {
+            "index": 1,
+            "start_time": 0.0,
+            "end_time": 600.0,
+            "start_display": _format_timestamp(0.0),
+            "end_display": _format_timestamp(600.0),
+            "duration": 600.0,
+            "duration_display": _format_duration(600.0),
+            "type": "fl_match",
+            "output_file": (tmp_path / "match_001.mp4").as_posix(),
+        },
+        {
+            "index": 2,
+            "start_time": 610.0,
+            "end_time": 1200.0,
+            "start_display": _format_timestamp(610.0),
+            "end_display": _format_timestamp(1200.0),
+            "duration": 590.0,
+            "duration_display": _format_duration(590.0),
+            "type": "unknown",
+            "output_file": (tmp_path / "match_002.mp4").as_posix(),
+        },
+    ]
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_split_and_write_metadata_post_match_not_passed_to_split_video(
+    mock_probe, mock_split, tmp_path
+):
+    """#805 段階2 -- post_match boundary は split_video に渡されない。
+
+    active boundary のみが split_video の第 2 引数に渡されることを assert する。
+    """
+    from allaganeye.commands.split_matches import _split_and_write_metadata
+    from allaganeye.config import SplitConfig
+
+    active_b: MatchBoundary = {"start": 0.0, "end": 600.0, "type": "fl_match"}
+    # post_match フラグを持つ boundary は detector.py が将来付与する (Task 3)。
+    # Task 2 では dict として注入して routing ロジックを検証する。
+    post_match_b = {"start": 600.0, "end": 700.0, "type": "unknown", "post_match": True}
+    boundaries: list[MatchBoundary] = [active_b, post_match_b]  # type: ignore[list-item]
+
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    # split_video は active 分 (1件) の output file だけ返す
+    mock_split.return_value = [output_dir / "match_001.mp4"]
+
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    _split_and_write_metadata(
+        video_path=tmp_path / "input.mp4",
+        boundaries=boundaries,
+        gaps=[],
+        metadata=PROBE_RESULT,
+        config=config,
+        effective_interval=1.0,
+        detected_at="2026-06-26T00:00:00Z",
+        system_info={  # type: ignore[arg-type]
+            "gpu_vendors_available": [],
+            "gpu_vendor_used": None,
+            "vendor_preference": ["nvidia", "amd", "intel"],
+        },
+        quiet=True,
+    )
+
+    # split_video は active (post_match でない) boundary だけで呼ばれる
+    assert mock_split.called
+    call_boundaries = mock_split.call_args[0][1]  # 第 2 引数 = boundaries
+    assert len(call_boundaries) == 1
+    assert call_boundaries[0] == active_b
+    # post_match boundary は渡されていない
+    assert not any(b.get("post_match") for b in call_boundaries)
+
+    # metadata.json に post_match match が出力_file なしで残っている
+    payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    matches = payload["matches"]
+    assert len(matches) == 2
+    assert "output_file" in matches[0]
+    assert matches[1].get("post_match") is True
+    assert "output_file" not in matches[1]

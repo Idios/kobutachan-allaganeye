@@ -621,3 +621,170 @@ def test_run_split_from_metadata_drops_malformed_warning_entries(tmp_path):
     assert fresh_b["warnings"] == [], (
         "warnings が非リスト ('oops') なら出力 warnings は [] になる"
     )
+
+
+# -- #805 段階2: post_match flag round-trip through --from-metadata --
+
+
+def test_run_split_from_metadata_excludes_post_match_and_preserves_flag(tmp_path):
+    """#805 段階2 -- detect 由来の post_match match が --from-metadata で
+    MP4 化されず、新 metadata.json でも flag が保持される (spec section 4 一貫除外).
+
+    detect が書いた metadata (active match 1 本 + post_match match 1 本) を
+    `split --from-metadata` に渡すと、run_split_from_metadata は matches[] 読込時に
+    post_match flag を boundary へ復元し、_split_and_write_metadata の partition が:
+      - split_video には active boundary のみ渡す (post_match は MP4 化しない)。
+      - 新 metadata で active は output_file 有り、post_match は flag 保持 +
+        output_file 無し。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+
+    payload = _sample_metadata(str(source))
+    # 2 番目の match を post_match (output_file 無し、flag True) に差し替える。
+    # detect が _build_metadata_payload 経由で書く post_match Match の形を模す。
+    payload["matches"] = [
+        {
+            "index": 1,
+            "start_time": 0.0,
+            "end_time": 600.0,
+            "start_display": "00:00",
+            "end_display": "10:00",
+            "duration": 600.0,
+            "duration_display": "10m00s",
+            "type": "fl_match",
+            "output_file": "match_001.mp4",
+        },
+        {
+            "index": 2,
+            "start_time": 600.0,
+            "end_time": 700.0,
+            "start_display": "10:00",
+            "end_display": "11:40",
+            "duration": 100.0,
+            "duration_display": "01m40s",
+            "type": "unknown",
+            "post_match": True,
+        },
+    ]
+    meta_path = _write_metadata(tmp_path, payload)
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[tmp_path / "out" / "match_001.mp4"],
+        ) as mock_split,
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    # split_video には active boundary のみ渡る (post_match は MP4 化しない)。
+    mock_split.assert_called_once()
+    boundaries_arg = mock_split.call_args[0][1]
+    assert [b["start"] for b in boundaries_arg] == [0.0]
+    assert [b["end"] for b in boundaries_arg] == [600.0]
+    assert all(not b.get("post_match") for b in boundaries_arg)
+
+    # 新 metadata: active は output_file 有り、post_match は flag 保持 +
+    # output_file 無し。
+    out_meta = tmp_path / "out" / "metadata.json"
+    fresh = json.loads(out_meta.read_text("utf-8"))
+    matches = fresh["matches"]
+    assert len(matches) == 2
+
+    active = matches[0]
+    # output_file は split_video が返す path (mock = 絶対 path) を as_posix で
+    # 直列化する。flag-free かつ MP4 basename を持つことを確認 (絶対 path 既存
+    # テストと同様、厳密な prefix までは固定しない)。
+    assert active["output_file"].endswith("match_001.mp4")
+    assert "post_match" not in active
+
+    trailing = matches[1]
+    assert trailing["post_match"] is True
+    assert "output_file" not in trailing
+
+
+# -- #805 段階2: disk-space budget excludes post_match through --from-metadata --
+
+
+def test_run_split_from_metadata_does_not_false_fail_on_post_match_tail(tmp_path):
+    """run_split_from_metadata must not raise when only the post_match tail overflows.
+
+    Regression for the third disk-check site (#805 段階2): the
+    ``run_split_from_metadata`` path calls ``_check_disk_space`` with
+    ``active_boundaries`` only, so a long ``post_match=True`` trailing
+    segment must not inflate the estimate and cause a false
+    "Not enough disk space" error.
+
+    Setup mirrors ``TestDiskSpacePostMatchBudget`` in ``test_split_matches.py``:
+      source: 1.8 MB / 1800 s
+      active  = 0-600s   -> ratio 1/3   -> est ~= 660_000 bytes
+      post_match = 600-1700s (not written to MP4)
+      all     = 0-1700s  -> ratio 17/18 -> est ~= 1_870_000 bytes
+      free    = 1_000_000: est(active) <= free < est(active+post_match)
+
+    Real ``_check_disk_space`` / ``_estimate_output_size`` are exercised;
+    only ``shutil.disk_usage`` is mocked.  If ``run_split_from_metadata``
+    passed the full boundary list the estimate would exceed free and the
+    function would raise ``AllaganEyeError``.
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"\x00" * 1_800_000)  # 1.8 MB
+
+    payload = _sample_metadata(str(source))
+    # Replace the two standard matches with: one active + one post_match tail.
+    payload["matches"] = [
+        {
+            "index": 1,
+            "start_time": 0.0,
+            "end_time": 600.0,
+            "start_display": "00:00",
+            "end_display": "10:00",
+            "duration": 600.0,
+            "duration_display": "10m00s",
+            "type": "fl_match",
+            "output_file": "match_001.mp4",
+        },
+        {
+            "index": 2,
+            "start_time": 600.0,
+            "end_time": 1700.0,
+            "start_display": "10:00",
+            "end_display": "28:20",
+            "duration": 1100.0,
+            "duration_display": "18m20s",
+            "type": "unknown",
+            "post_match": True,
+        },
+    ]
+    meta_path = _write_metadata(tmp_path, payload)
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
+
+    _POST_MATCH_FREE_BYTES = 1_000_000
+    fake_usage = type(
+        "Usage",
+        (),
+        {
+            "total": 10_000_000,
+            "used": 10_000_000 - _POST_MATCH_FREE_BYTES,
+            "free": _POST_MATCH_FREE_BYTES,
+        },
+    )
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[tmp_path / "out" / "match_001.mp4"],
+        ) as mock_split,
+        patch(
+            "allaganeye.commands.split_matches.shutil.disk_usage",
+            return_value=fake_usage,
+        ),
+    ):
+        # Must NOT raise: active estimate (~660_000) fits in free (1_000_000).
+        # Would raise if post_match tail were included in the estimate.
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    mock_split.assert_called_once()

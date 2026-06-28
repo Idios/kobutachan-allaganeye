@@ -12,7 +12,7 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fractions import Fraction
 from pathlib import Path
-from typing import IO, TypedDict
+from typing import IO, NotRequired, TypedDict
 
 import numpy as np
 
@@ -28,6 +28,10 @@ class MatchBoundary(TypedDict):
     start: float
     end: float
     type: str
+    # #805 段階2: set True on a post-match trailing segment (lobby/city after
+    # the final match). The segment is retained non-destructively and excluded
+    # from default split (MP4) output downstream; absent/False = normal match.
+    post_match: NotRequired[bool]
 
 
 class DetectionStats(TypedDict, total=False):
@@ -401,11 +405,9 @@ def detect_match_boundaries(
     source_fps_num: int | None = None,
     source_fps_den: int | None = None,
     source_fps: float | None = None,
-    # #805 段階1: opt out of the irreversible post-match trailing drop (#797).
+    # #805: opt out of the post-match trailing flag (#797). When True the
+    # trailing no-scorebar segment is left unflagged (#805 opt-out).
     keep_trailing: bool = False,
-    # #805 段階1: fired once with (start, end) whenever a trailing segment is
-    # actually dropped, so the lost span can be recorded in metadata.json.
-    trailing_drop_callback: Callable[[float, float], None] | None = None,
 ) -> list[MatchBoundary]:
     """Detect match boundaries by finding blackout frames.
 
@@ -442,12 +444,8 @@ def detect_match_boundaries(
             mapping covers every timestamp between 0 and ``duration_hint``
             at ``sample_interval`` spacing; non-blackout fallbacks (255.0)
             are included so consumers can plot continuous data.
-        keep_trailing: If True, skip the #797 post-match trailing drop so a
-            trailing no-scorebar segment is retained (#805 段階1 opt-out).
-        trailing_drop_callback: Optional callback invoked once with
-            ``(start, end)`` when a trailing segment is actually dropped
-            (#805 段階1); the seam used to record the lost span in
-            metadata.json.
+        keep_trailing: If True, skip the #797 post-match trailing flagging so a
+            trailing no-scorebar segment is left unflagged (#805 opt-out).
 
     Returns list of dicts with 'start' and 'end' keys (seconds).
     """
@@ -644,19 +642,18 @@ def detect_match_boundaries(
         classifications=region_classifications,
         stats=stats,
     )
-    # #797: drop a trailing post-match run when its early candidate-match window
-    # shows no scorebar at any strided probe point. Skipped for VTuber
-    # (vtuber=True): _drop_post_match_trailing probes v2 (absolute coords) which
-    # FNs on an inset scorebar and would silently drop a real VTuber final match
+    # #797 / #805: flag a trailing post-match run when its early candidate-match
+    # window shows no scorebar at any strided probe point. Skipped for VTuber
+    # (vtuber=True): _flag_post_match_trailing probes v2 (absolute coords) which
+    # FNs on an inset scorebar and would mis-flag a real VTuber final match
     # (spec section 8.1 P2-d / Codex #1). VTuber trailing is handled in Phase 3.
     if src_resolution is not None and not vtuber and not keep_trailing:
-        segments = _drop_post_match_trailing(
+        segments = _flag_post_match_trailing(
             segments,
             video_path,
             duration_hint,
             stats,
             min_match_duration=min_match_duration,
-            trailing_drop_callback=trailing_drop_callback,
         )
     return segments
 
@@ -689,8 +686,8 @@ def _detect_masked_fallback(
     rather than sharing a core, so the standard OBS path is structurally
     unchanged (bit-exact mandate; spec section 3 / R1).  Uses ``band_region=
     FULL_FRAME`` + ``localize=True`` (full-frame position-independent scorebar;
-    v2 absolute coords FN on ultrawide, spec section 5).  No trailing-drop:
-    ``_drop_post_match_trailing`` probes v2 absolute coords which FN on
+    v2 absolute coords FN on ultrawide, spec section 5).  No trailing flagging:
+    ``_flag_post_match_trailing`` probes v2 absolute coords which FN on
     ultrawide (same rationale as the VTuber gate in detect_match_boundaries).
     """
     region = _resolve_masked_region(
@@ -1969,7 +1966,7 @@ Sampling every ``_TRAILING_PROBE_STRIDE`` seconds across the early window
 (``start`` .. ``start + min_match_duration``) tolerates a delayed HUD after
 long loading -- which a single fixed early offset could miss
 (Codex adversarial-review, 2026-05-23) -- while keeping post-match
-false-positive exposure low.  Used by ``_drop_post_match_trailing``.
+false-positive exposure low.  Used by ``_flag_post_match_trailing``.
 """
 
 # ---------------------------------------------------------------------------
@@ -2391,27 +2388,26 @@ def _filter_and_extract_segments(
     return _finalize(segments)
 
 
-def _drop_post_match_trailing(
+def _flag_post_match_trailing(
     segments: list[MatchBoundary],
     video_path: Path,
     total_duration: float,
     stats: DetectionStats | None,
     *,
     min_match_duration: float = 300.0,
-    trailing_drop_callback: Callable[[float, float], None] | None = None,
 ) -> list[MatchBoundary]:
-    """Drop a trailing post-match run via early-window scorebar probes (#797).
+    """Flag a trailing post-match run via early-window scorebar probes (#797 / #805).
 
     The final segment, when it runs to end-of-video (``end`` within 1.0s of
     ``total_duration``) with ``type == "unknown"`` (no closing blackout), may
     be post-match content (lobby / city) rather than a match.  It is only
-    considered droppable when it is not the sole segment
+    considered for flagging when it is not the sole segment
     (``len(segments) >= 2``); a lone whole-video unknown -- the fail-open
     fallback when no blackout survives -- has no match to trail and is always
-    kept, so "no boundaries found" never collapses to zero matches.  Other
-    shapes rely on the scorebar probes below (a tail showing in-match HUD is
-    kept), so a single real match followed by a post-match tail is dropped
-    correctly even though both segments are typed ``unknown``.
+    left untouched, so "no boundaries found" never collapses to zero matches.
+    Other shapes rely on the scorebar probes below (a tail showing in-match HUD
+    is left as a normal match), so a single real match followed by a post-match
+    tail is flagged correctly even though both segments are typed ``unknown``.
 
     A real match in a *mixed* trailing -- formed when the match-end blackout is
     missed or dropped (e.g. a warp misclassified as ``non_fl`` in scorebar.py)
@@ -2422,13 +2418,23 @@ def _drop_post_match_trailing(
     window end**, so no stride gap (including the final one) is left unprobed:
 
     - any probe a scorebar hit (``True``) -> match footage present -> keep
-    - any probe failure / opencv unavailable (``None``) -> keep (safe side)
-    - every probe a definite miss (``False``) -> post-match -> drop
+      untouched (normal match)
+    - any probe failure / opencv unavailable (``None``) -> keep untouched
+      (safe side)
+    - every probe a definite miss (``False``) -> post-match -> set
+      ``post_match=True`` on the final segment and **retain** it
+
+    #805 段階2: the all-miss disposition is now **non-destructive** -- the
+    segment is flagged (``post_match=True``) and kept in ``segments`` rather
+    than deleted (``segments[:-1]``).  Downstream the default split flow
+    excludes ``post_match`` boundaries from MP4 output while preserving them in
+    metadata.json, so a scorebar false-negative can no longer silently delete a
+    real match (one match lost, no error -- the failure class this replaces).
 
     Scanning a strided window (rather than a single fixed early offset) means a
     delayed HUD after long loading cannot hide a real match: a fixed
     ``start + 12s`` probe could land in the loading screen while the midpoint
-    and late probes land in a longer post-match tail, dropping a real match
+    and late probes land in a longer post-match tail, mis-flagging a real match
     (Codex adversarial-review, 2026-05-23).
     """
     if not segments:
@@ -2441,7 +2447,7 @@ def _drop_post_match_trailing(
     # trail; keep it so "no boundaries found" never collapses to zero matches.
     # Any multi-segment shape still goes through the scorebar probes below,
     # which keep a segment that shows in-match HUD, so a real single match
-    # followed by a no-scorebar post-match tail is still dropped.  (Do not also
+    # followed by a no-scorebar post-match tail is still flagged.  (Do not also
     # gate on ``segments[-2]`` type: ``_filter_and_extract_segments`` hardcodes
     # the before-first / after-last segments as ``unknown``, so that would
     # wrongly keep single-match tails -- Codex round-5/6 adversarial-review.)
@@ -2475,21 +2481,19 @@ def _drop_post_match_trailing(
         # No valid probe point inside the segment -> no evidence -> keep.
         return segments
     # Every probe across the candidate match window was a definite miss ->
-    # post-match trailing -> drop.
+    # post-match trailing -> flag (non-destructive, #805 段階2).
     if stats is not None:
         drops = stats.setdefault("filter_drops", {})
         drops["post_match_trailing"] = drops.get("post_match_trailing", 0) + 1
-        # Keep filter_unknown consistent: _finalize counted this trailing
-        # segment as unknown before this drop, so decrement it (#797).
-        unknown_count = stats.get("filter_unknown", 0)
-        if unknown_count > 0:
-            stats["filter_unknown"] = unknown_count - 1
-    # #805 段階1: surface the dropped span (start, end) so the command layer
-    # can record it in metadata.json. Fired only on an actual drop -- the drop
-    # decision above is unchanged (bit-exact default behavior preserved).
-    if trailing_drop_callback is not None:
-        trailing_drop_callback(start, end)
-    return segments[:-1]
+        # #805 段階2: the segment now STAYS in ``segments`` (flagged, not
+        # dropped), so it is still legitimately counted as unknown -- there is
+        # nothing to decrement from ``filter_unknown``.
+    # #805 段階2: retain the trailing segment with the non-destructive
+    # post_match flag (default split output excludes it) instead of
+    # dropping it, so a scorebar false-negative can never silently delete
+    # a real match.
+    segments[-1]["post_match"] = True
+    return segments
 
 
 def _padded_end(region: tuple[float, float]) -> float:

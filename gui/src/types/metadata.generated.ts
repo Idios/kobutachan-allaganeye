@@ -140,7 +140,11 @@ export interface Match {
   /**
    * MP4 filename relative to the metadata.json directory.
    */
-  output_file: string;
+  output_file?: string;
+  /**
+   * True when this segment is a post-match trailing run (#805 段階2). Non-destructive flag: excluded from default split output but retained in metadata. Absent / false = normal match.
+   */
+  post_match?: boolean;
 }
 /**
  * Inter-match idle gap >= 5 minutes (min_gap=300.0).

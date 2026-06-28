@@ -171,7 +171,19 @@ function normalizeForPersistence(metadata: Metadata): Metadata {
         duration,
         duration_display: fmtMatchDuration(duration),
         type: nextType,
-        output_file: m.output_file,
+        // #805 Phase 1 -- a post_match trailing segment never gets an MP4, so
+        // it has no output_file (metadata-spec §Match: NotRequired). Emit the
+        // key only when defined so the persisted shape omits it for post_match
+        // matches instead of writing `output_file: undefined`.
+        ...(m.output_file !== undefined ? { output_file: m.output_file } : {}),
+        // #805 Phase 1 (Codex HIGH 1) -- passthrough the non-destructive
+        // post_match flag so [適用] never strips it. Truthy-only: normal
+        // matches stay flag-free (never emit post_match: false/undefined),
+        // matching the detector / split / from-metadata payload convention.
+        // Dropping it here would let the next split/export re-encode a
+        // post_match trailing segment into an MP4, reversing the exclusion
+        // invariant the CLI establishes.
+        ...(m.post_match ? { post_match: true } : {}),
       };
     }),
   };

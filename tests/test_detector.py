@@ -25,8 +25,8 @@ from allaganeye.video.detector import (
     _TRANSITION_THRESHOLD,
     _borderline_pseudo_regions,
     _decode_chunk_cpu,
-    _drop_post_match_trailing,
     _expand_regions_with_transitions,
+    _flag_post_match_trailing,
     _filter_and_extract_segments,
     _generate_timestamps,
     _group_blackout_regions,
@@ -2297,101 +2297,67 @@ class TestDetectMatchBoundariesRationalFps:
 
 
 # ============================================================
-# _drop_post_match_trailing (#797 対策 C')
+# _flag_post_match_trailing (#797 対策 C' / #805 段階2 flag 化)
 # ============================================================
 
 
-class TestDropPostMatchTrailing:
-    """Tests for the scorebar-probe trailing-drop helper (#797)."""
+class TestFlagPostMatchTrailing:
+    """Tests for the scorebar-probe trailing-flag helper (#797 / #805).
+
+    #805 段階2: post-match trailing is no longer dropped (``segments[:-1]``);
+    instead the final segment is retained with ``post_match=True`` so the
+    decision is non-destructive (a scorebar false-negative can no longer
+    silently delete a real match).
+    """
+
+    def test_post_match_flagged_not_dropped(self, monkeypatch):
+        # 全 probe miss (False) -> post-match -> 旧: 削除 / 新: flag + 保持
+        monkeypatch.setattr(
+            "allaganeye.video.detector._has_scorebar_v2", lambda rgb: False
+        )
+        monkeypatch.setattr(
+            "allaganeye.video.detector._probe_frame_rgb_hires",
+            lambda path, t: object(),  # non-None なので probe は実行される
+        )
+        segments = [
+            {"start": 0.0, "end": 600.0, "type": "unknown"},
+            {"start": 600.0, "end": 900.0, "type": "unknown"},
+        ]
+        result = _flag_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("dummy.mp4"),
+            900.0,
+            None,
+            min_match_duration=300.0,
+        )
+        assert len(result) == 2  # 削除されない
+        assert result[-1].get("post_match") is True  # flag が立つ
+        assert result[0].get("post_match") in (None, False)  # 先頭は無印
 
     @patch("allaganeye.video.detector._has_scorebar_v2", return_value=False)
     @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
-    def test_trailing_no_scorebar_dropped(self, _probe, _v2):
-        """Trailing unknown at EOV + scorebar absent -> segment dropped, counter incremented."""
+    def test_trailing_no_scorebar_flagged(self, _probe, _v2):
+        """Trailing unknown at EOV + scorebar absent -> flagged post_match, counter incremented."""
         segments = [
             {"start": 100.0, "end": 1000.0, "type": "fl_match"},
             {"start": 1000.0, "end": 1800.0, "type": "unknown"},
         ]
         stats: dict = {"filter_unknown": 1}
-        result = _drop_post_match_trailing(
+        result = _flag_post_match_trailing(
             segments,  # type: ignore[arg-type]
             Path("v.mp4"),
             1800.0,
             stats,  # type: ignore[arg-type]
         )
-        assert len(result) == 1
+        # #805 段階2: segment is retained (not dropped) with post_match=True.
+        assert len(result) == 2
+        assert result[-1].get("post_match") is True
+        assert result[0].get("post_match") in (None, False)
         assert result[0]["type"] == "fl_match"
         assert stats["filter_drops"]["post_match_trailing"] == 1
-        # filter_unknown decremented so the verbose unknown-match count
-        # stays consistent after the drop (#797).
-        assert stats["filter_unknown"] == 0
-
-    @patch("allaganeye.video.detector._has_scorebar_v2", return_value=False)
-    @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
-    def test_trailing_drop_invokes_callback_once(self, _probe, _v2):
-        """On a drop, trailing_drop_callback fires exactly once with (start, end).
-
-        #805 段階1: the callback is the seam Unit 2 uses to record the dropped
-        span in metadata.json so the lost match is recoverable.
-        """
-        segments = [
-            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
-            {"start": 1000.0, "end": 1800.0, "type": "unknown"},
-        ]
-        seen: list[tuple[float, float]] = []
-        result = _drop_post_match_trailing(
-            segments,  # type: ignore[arg-type]
-            Path("v.mp4"),
-            1800.0,
-            {"filter_unknown": 1},  # type: ignore[arg-type]
-            trailing_drop_callback=lambda start, end: seen.append((start, end)),
-        )
-        assert len(result) == 1
-        assert seen == [(1000.0, 1800.0)]
-
-    @patch("allaganeye.video.detector._has_scorebar_v2", return_value=False)
-    @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
-    def test_trailing_drop_invokes_callback_with_stats_none(self, _probe, _v2):
-        """On a drop the callback fires even when ``stats is None``.
-
-        #805 段階1: the callback path sits intentionally outside the
-        ``if stats is not None:`` block, so non-verbose runs (stats=None)
-        still record the dropped span in metadata.json. Pin that the seam
-        is independent of stats collection.
-        """
-        segments = [
-            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
-            {"start": 1000.0, "end": 1800.0, "type": "unknown"},
-        ]
-        seen: list[tuple[float, float]] = []
-        result = _drop_post_match_trailing(
-            segments,  # type: ignore[arg-type]
-            Path("v.mp4"),
-            1800.0,
-            None,
-            trailing_drop_callback=lambda start, end: seen.append((start, end)),
-        )
-        assert len(result) == 1
-        assert seen == [(1000.0, 1800.0)]
-
-    @patch("allaganeye.video.detector._has_scorebar_v2", return_value=True)
-    @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
-    def test_trailing_keep_does_not_invoke_callback(self, _probe, _v2):
-        """When the segment is kept (scorebar present), the callback never fires."""
-        segments = [
-            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
-            {"start": 1000.0, "end": 1800.0, "type": "unknown"},
-        ]
-        seen: list[tuple[float, float]] = []
-        result = _drop_post_match_trailing(
-            segments,  # type: ignore[arg-type]
-            Path("v.mp4"),
-            1800.0,
-            {},  # type: ignore[arg-type]
-            trailing_drop_callback=lambda start, end: seen.append((start, end)),
-        )
-        assert len(result) == 2
-        assert seen == []
+        # #805 段階2: the segment stays in matches, so it is still legitimately
+        # counted as unknown -> filter_unknown is NOT decremented anymore.
+        assert stats["filter_unknown"] == 1
 
     @patch("allaganeye.video.detector._has_scorebar_v2", return_value=True)
     @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
@@ -2402,13 +2368,15 @@ class TestDropPostMatchTrailing:
             {"start": 1000.0, "end": 1800.0, "type": "unknown"},
         ]
         stats: dict = {}
-        result = _drop_post_match_trailing(
+        result = _flag_post_match_trailing(
             segments,  # type: ignore[arg-type]
             Path("v.mp4"),
             1800.0,
             stats,  # type: ignore[arg-type]
         )
         assert len(result) == 2
+        # Kept as a normal match -> no post_match flag.
+        assert result[-1].get("post_match") in (None, False)
         assert "post_match_trailing" not in stats.get("filter_drops", {})
 
     @patch("allaganeye.video.detector._has_scorebar_v2", return_value=None)
@@ -2424,13 +2392,15 @@ class TestDropPostMatchTrailing:
             {"start": 1000.0, "end": 1800.0, "type": "unknown"},
         ]
         stats: dict = {}
-        result = _drop_post_match_trailing(
+        result = _flag_post_match_trailing(
             segments,  # type: ignore[arg-type]
             Path("v.mp4"),
             1800.0,
             stats,  # type: ignore[arg-type]
         )
         assert len(result) == 2
+        # Probe failure -> kept on safe side -> no post_match flag.
+        assert result[-1].get("post_match") in (None, False)
         assert "post_match_trailing" not in stats.get("filter_drops", {})
 
     @patch("allaganeye.video.detector._has_scorebar_v2")
@@ -2464,7 +2434,7 @@ class TestDropPostMatchTrailing:
             {"start": 1000.0, "end": 2800.0, "type": "unknown"},
         ]
         stats: dict = {"filter_unknown": 1}
-        result = _drop_post_match_trailing(
+        result = _flag_post_match_trailing(
             segments,  # type: ignore[arg-type]
             Path("v.mp4"),
             2800.0,
@@ -2472,6 +2442,8 @@ class TestDropPostMatchTrailing:
         )
         assert len(result) == 2
         assert result[-1]["type"] == "unknown"
+        # Scorebar hit early -> kept as a real match -> no post_match flag.
+        assert result[-1].get("post_match") in (None, False)
         assert "post_match_trailing" not in stats.get("filter_drops", {})
         # No drop -> the unknown count must stay put.
         assert stats["filter_unknown"] == 1
@@ -2501,7 +2473,7 @@ class TestDropPostMatchTrailing:
             {"start": 100.0, "end": 1000.0, "type": "fl_match"},
             {"start": 1000.0, "end": 2800.0, "type": "unknown"},
         ]
-        result = _drop_post_match_trailing(
+        result = _flag_post_match_trailing(
             segments,  # type: ignore[arg-type]
             Path("v.mp4"),
             2800.0,
@@ -2509,6 +2481,8 @@ class TestDropPostMatchTrailing:
         )
         assert len(result) == 2
         assert result[-1]["type"] == "unknown"
+        # Probe failure in the set -> kept on safe side -> no post_match flag.
+        assert result[-1].get("post_match") in (None, False)
 
     def test_last_segment_not_unknown_kept(self):
         """Last segment with type != 'unknown' is not touched."""
@@ -2516,13 +2490,15 @@ class TestDropPostMatchTrailing:
             {"start": 100.0, "end": 1000.0, "type": "fl_match"},
             {"start": 1000.0, "end": 1800.0, "type": "fl_match"},
         ]
-        result = _drop_post_match_trailing(
+        result = _flag_post_match_trailing(
             segments,  # type: ignore[arg-type]
             Path("v.mp4"),
             1800.0,
             None,
         )
         assert len(result) == 2
+        # Guard returns before the decision -> no post_match flag.
+        assert result[-1].get("post_match") in (None, False)
 
     def test_trailing_not_at_end_of_video_kept(self):
         """Last segment 'unknown' but end is far from total_duration -> kept."""
@@ -2530,13 +2506,15 @@ class TestDropPostMatchTrailing:
         segments = [
             {"start": 100.0, "end": 1600.0, "type": "unknown"},
         ]
-        result = _drop_post_match_trailing(
+        result = _flag_post_match_trailing(
             segments,  # type: ignore[arg-type]
             Path("v.mp4"),
             3600.0,
             None,
         )
         assert len(result) == 1
+        # Guard returns before the decision -> no post_match flag.
+        assert result[-1].get("post_match") in (None, False)
 
     @patch("allaganeye.video.detector._has_scorebar_v2")
     @patch("allaganeye.video.detector._probe_frame_rgb_hires")
@@ -2570,7 +2548,7 @@ class TestDropPostMatchTrailing:
             {"start": 1000.0, "end": 3000.0, "type": "unknown"},
         ]
         stats: dict = {"filter_unknown": 1}
-        result = _drop_post_match_trailing(
+        result = _flag_post_match_trailing(
             segments,  # type: ignore[arg-type]
             Path("v.mp4"),
             3000.0,
@@ -2578,6 +2556,8 @@ class TestDropPostMatchTrailing:
         )
         assert len(result) == 2
         assert result[-1]["type"] == "unknown"
+        # Late HUD caught -> kept as a real match -> no post_match flag.
+        assert result[-1].get("post_match") in (None, False)
         assert "post_match_trailing" not in stats.get("filter_drops", {})
         assert stats["filter_unknown"] == 1
 
@@ -2613,7 +2593,7 @@ class TestDropPostMatchTrailing:
             {"start": 1000.0, "end": 3000.0, "type": "unknown"},
         ]
         stats: dict = {"filter_unknown": 1}
-        result = _drop_post_match_trailing(
+        result = _flag_post_match_trailing(
             segments,  # type: ignore[arg-type]
             Path("v.mp4"),
             3000.0,
@@ -2621,6 +2601,8 @@ class TestDropPostMatchTrailing:
         )
         assert len(result) == 2
         assert result[-1]["type"] == "unknown"
+        # Window-end probe catches the HUD -> kept -> no post_match flag.
+        assert result[-1].get("post_match") in (None, False)
         assert "post_match_trailing" not in stats.get("filter_drops", {})
         assert stats["filter_unknown"] == 1
 
@@ -2640,47 +2622,53 @@ class TestDropPostMatchTrailing:
             {"start": 0.0, "end": 1800.0, "type": "unknown"},
         ]
         stats: dict = {"filter_unknown": 1}
-        result = _drop_post_match_trailing(
+        result = _flag_post_match_trailing(
             segments,  # type: ignore[arg-type]
             Path("v.mp4"),
             1800.0,
             stats,  # type: ignore[arg-type]
         )
         assert len(result) == 1
+        # Lone fallback -> guard returns before the decision -> no post_match flag.
+        assert result[-1].get("post_match") in (None, False)
         assert "post_match_trailing" not in stats.get("filter_drops", {})
         assert stats["filter_unknown"] == 1
 
     @patch("allaganeye.video.detector._has_scorebar_v2", return_value=False)
     @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
-    def test_single_match_post_match_tail_dropped(self, _probe, _v2):
-        """A single-match recording's no-scorebar post-match tail is still dropped.
+    def test_single_match_post_match_tail_flagged(self, _probe, _v2):
+        """A single-match recording's no-scorebar post-match tail is flagged (not dropped).
 
         ``_filter_and_extract_segments`` hardcodes the before-first and
         after-last segments as ``unknown``, so [match -> warp -> post-match]
         is ``[unknown, unknown]``.  Only the lone whole-video fallback
         (``len(segments) < 2``) is protected; a real match followed by a
-        no-scorebar post-match tail must still be dropped, else #797's FP
-        returns for single-match recordings (Codex round-6 adversarial-review
-        2026-05-24).
+        no-scorebar post-match tail still reaches the post-match decision and
+        is now flagged ``post_match=True`` (was dropped pre-#805 段階2; Codex
+        round-6 adversarial-review 2026-05-24).
         """
         segments = [
             {"start": 0.0, "end": 900.0, "type": "unknown"},
             {"start": 900.0, "end": 1800.0, "type": "unknown"},
         ]
         stats: dict = {"filter_unknown": 2}
-        result = _drop_post_match_trailing(
+        result = _flag_post_match_trailing(
             segments,  # type: ignore[arg-type]
             Path("v.mp4"),
             1800.0,
             stats,  # type: ignore[arg-type]
         )
-        assert len(result) == 1
+        # #805 段階2: retained with post_match=True instead of dropped.
+        assert len(result) == 2
+        assert result[-1].get("post_match") is True
+        assert result[0].get("post_match") in (None, False)
         assert stats["filter_drops"]["post_match_trailing"] == 1
-        assert stats["filter_unknown"] == 1
+        # filter_unknown is no longer decremented (segment stays in matches).
+        assert stats["filter_unknown"] == 2
 
     def test_empty_segments_no_crash(self):
         """Empty input returns empty, no exception."""
-        result = _drop_post_match_trailing([], Path("v.mp4"), 1800.0, None)
+        result = _flag_post_match_trailing([], Path("v.mp4"), 1800.0, None)
         assert result == []
 
 
@@ -2880,14 +2868,14 @@ def _vtuber_filter_capture(seen: dict):
 
 
 @patch("allaganeye.video.detector._resolve_detect_region")
-@patch("allaganeye.video.detector._drop_post_match_trailing")
+@patch("allaganeye.video.detector._flag_post_match_trailing")
 @patch("allaganeye.video.detector._probe_single_frame")
 @patch("allaganeye.video.detector._decode_chunk_cpu")
 def test_vtuber_threads_filter_kwargs_and_gates_trailing_drop(
     mock_chunk, mock_probe, mock_trailing, mock_resolve
 ):
     """Behavioral: vtuber=True threads band_region/vtuber into the scorebar
-    filter at runtime and skips the irreversible trailing-drop (#797 gate).
+    filter at runtime and skips the trailing post-match flagging (#797 gate).
 
     Replaces the prior inspect.getsource static checks: this exercises the
     real call path so an early return or refactor that breaks the gate fails
@@ -2925,18 +2913,19 @@ def test_vtuber_threads_filter_kwargs_and_gates_trailing_drop(
     assert seen["localize"] is True
     assert seen["band_region"] is not None
     assert seen["band_region"] is band
-    # VTuber path must NOT run the irreversible trailing-drop (#797 / #805).
+    # VTuber path must NOT run the trailing post-match flagging (#797 / #805).
     mock_trailing.assert_not_called()
 
 
-@patch("allaganeye.video.detector._drop_post_match_trailing")
+@patch("allaganeye.video.detector._flag_post_match_trailing")
 @patch("allaganeye.video.detector._probe_single_frame")
 @patch("allaganeye.video.detector._decode_chunk_cpu")
 def test_obs_runs_trailing_drop_and_filter_sees_vtuber_false(
     mock_chunk, mock_probe, mock_trailing
 ):
     """Behavioral OBS regression guard: vtuber=False (default OBS path) keeps
-    running the trailing-drop and reports vtuber=False to the scorebar filter.
+    running the trailing post-match flagging and reports vtuber=False to the
+    scorebar filter.
 
     Pairs with the vtuber=True test to pin the gate from both sides so a
     regression that drops the ``not vtuber`` guard is caught.
@@ -2963,18 +2952,18 @@ def test_obs_runs_trailing_drop_and_filter_sees_vtuber_false(
         )
 
     assert seen["localize"] is False
-    # OBS path runs the trailing-drop exactly once.
+    # OBS path runs the trailing post-match flagging exactly once.
     mock_trailing.assert_called_once()
 
 
-@patch("allaganeye.video.detector._drop_post_match_trailing")
+@patch("allaganeye.video.detector._flag_post_match_trailing")
 @patch("allaganeye.video.detector._probe_single_frame")
 @patch("allaganeye.video.detector._decode_chunk_cpu")
 def test_keep_trailing_gates_trailing_drop(mock_chunk, mock_probe, mock_trailing):
-    """keep_trailing=True opts out of the irreversible trailing-drop (#805 段階1).
+    """keep_trailing=True opts out of the trailing post-match flagging (#805).
 
     Pairs with test_obs_runs_trailing_drop_* (which proves the default
-    keep_trailing=False path DOES drop) to pin the new gate from both sides:
+    keep_trailing=False path DOES flag) to pin the gate from both sides:
     flipping --keep-trailing must be the only thing that suppresses the call.
     """
     mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kw: {

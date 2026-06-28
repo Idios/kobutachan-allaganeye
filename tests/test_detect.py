@@ -9,7 +9,6 @@ import pytest
 from allaganeye.commands.detect import run_detect
 from allaganeye.commands.split_matches import build_brightness_samples
 from allaganeye.config import SplitConfig
-from allaganeye.detection.warnings import WARNING_CODES
 from allaganeye.exceptions import DetectionError
 from allaganeye.video.detector import MatchBoundary
 from allaganeye.video.probe import ProbeResult
@@ -410,23 +409,22 @@ def test_detect_omits_brightness_samples_when_callback_silent(tmp_path):
     assert "brightness_samples" not in payload
 
 
-# #805 段階1 -- post_match_trailing_dropped warning wiring through run_detect
+# #805 段階2 -- post_match_trailing_dropped warning emission stopped (W1)
 
 
-def test_detect_records_trailing_drop_warning(tmp_path):
-    """detect 経路で trailing drop が起きたら metadata.json の warnings に
-    post_match_trailing_dropped が記録される (#805 段階1)。
+def test_detect_does_not_pass_trailing_drop_callback(tmp_path):
+    """detect 経路は trailing_drop_callback を `_run_detection` に渡さず、
+    warnings は emit されない (#805 段階2 W1)。
 
-    `_run_detection` に渡される `trailing_drop_callback` を fake から
-    (1000.0, 1800.0) で呼び、payload の warnings に 1 件現れることを assert。
+    post_match flag が warning を代替したため callback チェーンは除去された。
+    callback kwarg が渡らないこと + payload の warnings が [] であることを assert。
     """
 
-    def _detect_with_trailing_drop(*args, **kwargs):
-        cb = kwargs.get("trailing_drop_callback")
-        assert cb is not None, (
-            "run_detect must pass trailing_drop_callback to _run_detection (#805)"
+    def _detect_no_callback(*args, **kwargs):
+        assert "trailing_drop_callback" not in kwargs, (
+            "run_detect must NOT pass trailing_drop_callback to _run_detection "
+            "(#805 段階2: callback removed, post_match flag replaces it)"
         )
-        cb(1000.0, 1800.0)
         return BOUNDARIES
 
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
@@ -434,20 +432,13 @@ def test_detect_records_trailing_drop_warning(tmp_path):
         patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
         patch(
             f"{MODULE_DETECT}._run_detection",
-            side_effect=_detect_with_trailing_drop,
+            side_effect=_detect_no_callback,
         ),
     ):
         run_detect(Path("input.mp4"), config, quiet=True)
 
     payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
-    assert payload["warnings"] == [
-        {
-            "code": "post_match_trailing_dropped",
-            "message_en": WARNING_CODES["post_match_trailing_dropped"],
-            "severity": "warn",
-            "context": {"start": 1000.0, "end": 1800.0},
-        }
-    ]
+    assert payload["warnings"] == []
 
 
 def test_detect_no_trailing_drop_writes_empty_warnings(tmp_path):
@@ -459,3 +450,39 @@ def test_detect_no_trailing_drop_writes_empty_warnings(tmp_path):
 
     payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
     assert payload["warnings"] == []
+
+
+def test_detect_carries_post_match_flag_to_metadata(tmp_path):
+    """detect 経路が post_match-flagged boundary を非破壊で metadata に搬送する (#805 段階2).
+
+    detector の `_flag_post_match_trailing` が最終 segment に post_match=True を
+    立てて返すと、run_detect はそれを active から分離し、output_file 無しの
+    post_match Match として metadata に書く。active match は従来どおり
+    placeholder output_file を持つ。
+    """
+    boundaries_with_post: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "fl_match"},
+        {"start": 600.0, "end": 700.0, "type": "unknown", "post_match": True},
+    ]
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", return_value=boundaries_with_post),
+    ):
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
+    matches = payload["matches"]
+    assert len(matches) == 2
+
+    # active match: placeholder output_file 有り、post_match flag 無し。
+    active = matches[0]
+    assert active["index"] == 1
+    assert active["output_file"] == "match_001.mp4"
+    assert "post_match" not in active
+
+    # post_match match: flag True、output_file 無し、index は active の後 (2)。
+    trailing = matches[1]
+    assert trailing["post_match"] is True
+    assert "output_file" not in trailing
+    assert trailing["index"] == 2
