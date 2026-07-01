@@ -11,7 +11,8 @@
         "event": {"const": "start"},
         "script": {"enum": ["cleanup-worktrees", "cleanup-claude-branches"]},
         "apply": {"type": "boolean"},
-        "repo_root": {"type": "string"}
+        "repo_root": {"type": "string"},
+        "gh_merged_lookup": {"enum": ["ok", "unavailable", "error"]}
       },
       "additionalProperties": false
     },
@@ -21,7 +22,8 @@
       "properties": {
         "event": {"enum": ["removed", "deleted", "would_remove", "would_delete"]},
         "script": {"enum": ["cleanup-worktrees", "cleanup-claude-branches"]},
-        "name": {"type": "string"}
+        "name": {"type": "string"},
+        "merged_via": {"enum": ["ancestor", "gh"]}
       },
       "additionalProperties": false
     },

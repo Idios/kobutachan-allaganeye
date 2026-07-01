@@ -679,14 +679,14 @@ Claude Code のセッション用 worktree はセッション終了時に `git w
 
 `scripts/cleanup-claude-branches.sh --apply` が `git branch -D` で削除する条件 (#708):
 
-- **AND 1 (merged)**: 最新 (`sort -V`) の `origin/develop-*` または `origin/main` の祖先 (`git merge-base --is-ancestor`。#816 で develop-0.2.0 固定から一般化。stale な旧 develop ref を merge 根拠にしないため最新のみを採用)
+- **AND 1 (merged)**: 最新 (`sort -V`) の `origin/develop-*` または `origin/main` の祖先 (`git merge-base --is-ancestor`。#816 で develop-0.2.0 固定から一般化。stale な旧 develop ref を merge 根拠にしないため最新のみを採用)、**または** `gh pr list --state merged` の head ref 集合に含まれる (#827)。本 repo の PR は `--squash` マージのため branch tip が base の祖先にならず is-ancestor では永遠に not-merged 扱いになる。この構造的不整合を gh の merged 状態 (GitHub の ground truth) で OR 補完する。gh 不在 / 非ゼロ exit / timeout 時は集合を空に倒し is-ancestor のみに fallback する (安全側、false-positive を導入しない)
 - **AND 2 (active 参照なし)**: `git worktree list --porcelain` の `branch refs/heads/...` 集合に含まれない
 - **AND 3 (24h cooldown)**: 最終 commit (`git log -1 --format=%ct`) が 24h 以上前
 - **prefix 限定**: `claude/` のみ (= `feature/xxx` 等の手動 branch は対象外)
 
-**評価順序**: AND 2 → AND 1 → AND 3 (cost-efficient: AND 2 は local hash lookup で安価、AND 1 / AND 3 は git subprocess を spawn するため後回し)。最初に fail した条件が `kept <branch> (reason: not-merged | active | cooldown)` の reason として記録される。
+**評価順序**: AND 2 → AND 1 → AND 3 (cost-efficient: AND 2 は local hash lookup で安価、AND 1 / AND 3 は git subprocess を spawn するため後回し)。最初に fail した条件が `kept <branch> (reason: not-merged | active | cooldown)` の reason として記録される。gh merged 判定 (#827) は `command -v gh` + `command -v timeout` guard 下でループ前に 1 回だけ `gh pr list` を呼ぶ (network 依存)。判定経路は start event の `gh_merged_lookup` (`ok` / `unavailable` / `error`) と deleted / would_delete event の `merged_via` (`ancestor` / `gh`) で可視化される。
 
-最新の `origin/develop-*` / `origin/main` が未 fetch だと `merge-base --is-ancestor` が false に倒れて keep される = 安全側。`git fetch` は hook 内で実行せず、user の通常運用 (`git pull`) を前提とする。
+最新の `origin/develop-*` / `origin/main` が未 fetch だと `merge-base --is-ancestor` が false に倒れて keep される = 安全側。`git fetch` は hook 内で実行せず、user の通常運用 (`git pull`) を前提とする。gh merged 判定も同様に、gh 未認証 / network 不通なら fallback して is-ancestor のみで判定するため、オフライン環境でも安全に動作する。残余 false-positive (PR merge 後に同名 branch を再作成し新 commit を積むケース) は本 repo の session 固有 slug 運用では実質非発生 + AND2/AND3 が追加 guard (#827 で受容確定)。
 
 ### 手動実行
 

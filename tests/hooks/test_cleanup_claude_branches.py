@@ -365,3 +365,99 @@ def test_latest_develop_uses_version_sort_for_double_digits(
     assert_valid_ndjson(result.ndjson)
     deleted = _of_event(result.ndjson, "deleted")
     assert any(e["name"] == "claude/scenario11" for e in deleted), result.stdout
+
+
+# ---------- Scenario 12: squash-merged (is-ancestor=false) + gh merged -> deleted (#827) ----------
+
+
+def test_squash_merged_via_gh_deleted(
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+    with_gh_stub,
+) -> None:
+    """squash マージ済み branch は is-ancestor=false だが gh が merged と報告 -> deleted (#827).
+
+    本 repo の PR は --squash マージのため branch tip が base の祖先にならず、
+    旧実装では永遠に not-merged 扱いだった。gh pr list --state merged の
+    headRefName 集合に含まれれば merged と判定して削除する。
+    """
+    branch = make_claude_branch("scenario12", merged=False, age_seconds=86400 * 2)
+    # gh stub は `gh pr list ... --jq '.[].headRefName'` の出力 (改行区切り ref) を模す。
+    with_gh_stub("claude/scenario12")
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
+    deleted = _of_event(result.ndjson, "deleted")
+    assert any(e["name"] == branch and e.get("merged_via") == "gh" for e in deleted), (
+        result.stdout
+    )
+    # start event records the gh augmentation succeeded.
+    start = _of_event(result.ndjson, "start")
+    assert start and start[0].get("gh_merged_lookup") == "ok", result.stdout
+
+
+# ---------- Scenario 13: gh が空 [] -> is-ancestor=false は kept (OR が過剰削除しない) ----------
+
+
+def test_gh_empty_does_not_over_delete(
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+    with_gh_stub,
+) -> None:
+    """gh が merged PR を 1 件も返さないとき、is-ancestor=false branch は kept (安全側)."""
+    make_claude_branch("scenario13", merged=False, age_seconds=86400 * 2)
+    with_gh_stub("")  # 空 = merged PR head なし
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
+    kept = _of_event(result.ndjson, "kept")
+    assert any(
+        e["name"] == "claude/scenario13" and e["reason"] == "not-merged" for e in kept
+    ), result.stdout
+
+
+# ---------- Scenario 14: gh 非ゼロ exit -> is-ancestor fallback で kept + status=error ----------
+
+
+def test_gh_failure_falls_back_to_ancestor(
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+    with_gh_stub,
+) -> None:
+    """gh が失敗 (非ゼロ exit) したら集合を空に倒し is-ancestor のみで判定 (安全側 kept).
+
+    gh が「全 branch を merged」と誤って報告する状況を防ぐ: 失敗時は削除根拠に
+    しない。start.gh_merged_lookup=error で fallback を可視化する。
+    """
+    make_claude_branch("scenario14", merged=False, age_seconds=86400 * 2)
+    # response があっても exit!=0 なら無視されねばならない。
+    with_gh_stub("claude/scenario14", exit_code=1)
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
+    kept = _of_event(result.ndjson, "kept")
+    assert any(
+        e["name"] == "claude/scenario14" and e["reason"] == "not-merged" for e in kept
+    ), result.stdout
+    start = _of_event(result.ndjson, "start")
+    assert start and start[0].get("gh_merged_lookup") == "error", result.stdout
+
+
+# ---------- Scenario 15: gh merged だが cooldown 内 -> kept cooldown (gh が AND3 を bypass しない) ----------
+
+
+def test_gh_merged_still_respects_cooldown(
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+    with_gh_stub,
+) -> None:
+    """gh が merged と報告しても 24h cooldown 内なら削除しない (AND3 を bypass しない)."""
+    make_claude_branch("scenario15", merged=False, age_seconds=600)
+    with_gh_stub("claude/scenario15")
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
+    kept = _of_event(result.ndjson, "kept")
+    assert any(
+        e["name"] == "claude/scenario15" and e["reason"] == "cooldown" for e in kept
+    ), result.stdout
