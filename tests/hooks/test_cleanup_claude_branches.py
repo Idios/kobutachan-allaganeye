@@ -506,3 +506,50 @@ def test_gh_oid_mismatch_recreated_branch_kept(
     assert any(
         e["name"] == "claude/scenario16" and e["reason"] == "not-merged" for e in kept
     ), result.stdout
+
+
+# ---------- Scenario 17: gh 不在 -> gh_merged_lookup=unavailable + is-ancestor fallback ----------
+
+
+def test_gh_absent_reports_unavailable_and_falls_back(
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+    monkeypatch,
+) -> None:
+    """gh が PATH に無いとき gh_merged_lookup=unavailable + is-ancestor のみで判定 (#827 codex MEDIUM).
+
+    `command -v gh` が false になるよう、gh executable を含む PATH ディレクトリを
+    すべて除去して実行する。gh も timeout も無い環境の fallback を pin する。
+    gh/timeout を git/timeout と分離できない PATH レイアウト (両者同一 dir) では skip。
+    """
+    import os
+    import shutil
+
+    sep = os.pathsep
+
+    def _has_gh(d: str) -> bool:
+        for name in ("gh", "gh.exe", "gh.cmd", "gh.bat"):
+            p = os.path.join(d, name)
+            if os.path.isfile(p) and os.access(p, os.X_OK):
+                return True
+        return False
+
+    reduced = sep.join(
+        d for d in os.environ.get("PATH", "").split(sep) if d and not _has_gh(d)
+    )
+    monkeypatch.setenv("PATH", reduced)
+    if shutil.which("git") is None or shutil.which("timeout") is None:
+        import pytest
+
+        pytest.skip("gh を git/timeout と分離できない PATH レイアウトのため skip")
+
+    make_claude_branch("scenario17", merged=False, age_seconds=86400 * 2)
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
+    start = _of_event(result.ndjson, "start")
+    assert start and start[0].get("gh_merged_lookup") == "unavailable", result.stdout
+    kept = _of_event(result.ndjson, "kept")
+    assert any(
+        e["name"] == "claude/scenario17" and e["reason"] == "not-merged" for e in kept
+    ), result.stdout
