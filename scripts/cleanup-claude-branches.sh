@@ -5,8 +5,10 @@
 #
 # Safety AND conditions (3-condition structure unchanged from pre-#710; AND 1 bases generalized in #816):
 #   1. merged: ancestor of the latest (sort -V) origin/develop-* or origin/main,
-#      OR listed by `gh pr list --state merged` head refs (#827: --squash merges
-#      are not ancestors of base; gh absent/error/timeout -> ancestor-only fallback)
+#      OR the branch tip OID equals a `gh pr list --state merged` head OID (#827:
+#      --squash merges are not ancestors of base; OID identity match avoids
+#      deleting a recreated same-name branch; gh/timeout absent or error ->
+#      ancestor-only fallback)
 #   2. active 不在: not referenced by any active worktree
 #   3. cooldown: last commit ≥ 24h ago
 #   (prefix filter: claude/* only is listed)
@@ -96,29 +98,25 @@ MERGE_BASES+=("origin/main")
 
 # AND 1 augmentation (#827): --squash マージ済み branch は tip が base の祖先に
 # ならない (squash は新規 commit を base に作る) ため is-ancestor では永遠に
-# not-merged 扱いになる。gh pr list --state merged の headRefName 集合を 1 回だけ
-# 取得し、is-ancestor と OR して merged 判定する。gh 不在 / 非ゼロ exit / timeout
-# の場合は集合を空に倒し is-ancestor のみ (= 現行の安全側挙動) に fallback する。
-# merged 状態は GitHub の ground truth なので false-positive を導入しない。
-# 残余リスク (PR merge 後に同名 branch を再作成) は本 repo の session 固有 slug
-# 運用では実質非発生 + AND2/AND3 が追加 guard (2026-06 #827 で受容確定)。
-declare -A MERGED_PR_HEADS=()
+# not-merged 扱いになる。gh pr list --state merged の head commit OID 集合を 1 回だけ
+# 取得し、local branch tip の OID が一致するとき merged と判定する (is-ancestor と OR)。
+# **OID 同一性で照合する** (headRefName ではない): これにより「PR merge 後に同名
+# branch を再作成し未 merge の新 commit を積んだ」ケースでも local tip OID が merged
+# head OID と一致しないため kept になり、不可逆 data-loss を構造的に防ぐ (codex HIGH)。
+# gh または timeout が不在 / 非ゼロ exit / timeout 発火の場合は集合を空に倒し
+# is-ancestor のみ (= 現行の安全側挙動) に fallback する。network lookup は必ず
+# timeout で bound する (timeout 不在プラットフォームでは gh を呼ばず skip、codex MEDIUM)。
+declare -A MERGED_HEAD_OIDS=()
 GH_LOOKUP_STATUS=""
 if (( ${#BRANCHES[@]} > 0 )); then
-  if command -v gh >/dev/null 2>&1; then
-    if command -v timeout >/dev/null 2>&1; then
-      _gh_out=$(timeout 10 gh pr list --state merged --limit 200 \
-                  --json headRefName --jq '.[].headRefName' 2>/dev/null)
-      _gh_rc=$?
-    else
-      _gh_out=$(gh pr list --state merged --limit 200 \
-                  --json headRefName --jq '.[].headRefName' 2>/dev/null)
-      _gh_rc=$?
-    fi
+  if command -v gh >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+    _gh_out=$(timeout 10 gh pr list --state merged --limit 200 \
+                --json headRefOid --jq '.[].headRefOid' 2>/dev/null)
+    _gh_rc=$?
     if (( _gh_rc == 0 )); then
       GH_LOOKUP_STATUS="ok"
-      while IFS= read -r _ref; do
-        [[ -n "$_ref" ]] && MERGED_PR_HEADS["$_ref"]=1
+      while IFS= read -r _oid; do
+        [[ -n "$_oid" ]] && MERGED_HEAD_OIDS["$_oid"]=1
       done <<< "$_gh_out"
     else
       GH_LOOKUP_STATUS="error"
@@ -154,9 +152,12 @@ for branch in "${BRANCHES[@]}"; do
       break
     fi
   done
-  if [[ "$merged" -eq 0 ]] && [[ -n "${MERGED_PR_HEADS[$branch]:-}" ]]; then
-    merged=1
-    merged_via="gh"
+  if [[ "$merged" -eq 0 ]] && (( ${#MERGED_HEAD_OIDS[@]} > 0 )); then
+    branch_oid=$(git -C "$REPO_ROOT" rev-parse --verify "${branch}^{commit}" 2>/dev/null || echo "")
+    if [[ -n "$branch_oid" ]] && [[ -n "${MERGED_HEAD_OIDS[$branch_oid]:-}" ]]; then
+      merged=1
+      merged_via="gh"
+    fi
   fi
   if [[ "$merged" -eq 0 ]]; then
     _emit kept name="$branch" reason=not-merged
