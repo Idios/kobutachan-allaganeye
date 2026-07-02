@@ -299,7 +299,8 @@ Codex (`openai-codex` プラグイン 1.0.4) を Iron Law 3 / 5 と衝突しな�
 
 - 全 turn 自動の Stop-time review gate は **OFF のまま**保持 (spec O1 (b) 確定)
 - 代わりに `/review-pr` (Step 5a) と `/iterate-review` 内で**明示 invocation**
-- Iron Law 6 Pre-flight Step 5 として `/codex:adversarial-review` を必ず実行 ([`docs/l2-workflow.md` §PR 作成 Pre-flight](docs/l2-workflow.md#pr-作成-pre-flight-iron-law-6-サブ条))
+- Iron Law 6 Pre-flight Step 5 として Codex adversarial-review を必ず実行 ([`docs/l2-workflow.md` §PR 作成 Pre-flight](docs/l2-workflow.md#pr-作成-pre-flight-iron-law-6-サブ条))
+- **invocation path は 3-tier** (#795): slash command `/codex:adversarial-review` は plugin frontmatter `disable-model-invocation: true` により agent から invoke 不可のため、**tier 1 (default) = companion script 直接呼び出し** (`codex-companion.mjs adversarial-review`、本物の Codex を agent 一気通貫) / tier 2 (fallback) = Codex CLI fail 時のみ superpowers subagent + Codex fallback notice (C6) / tier 3 (escalation) = Idios が直接 slash command invoke。詳細は [`docs/l2-workflow.md` §Step 5 の invocation path](docs/l2-workflow.md#step-5-の-invocation-path-3-tier795)
 
 ### rescue (C4)
 

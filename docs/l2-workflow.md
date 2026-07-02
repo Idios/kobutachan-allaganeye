@@ -168,17 +168,33 @@ git diff --name-only HEAD origin/<base>
 gh pr list --search "<元issue#>" --state all \
   --json number,headRefName,state,createdAt
 
-# 5. /codex:adversarial-review (Codex 統合、C2、L-β β-4 で追加)
+# 5. Codex adversarial-review (Codex 統合、C2、L-β β-4 で追加)
 # Step 0-4 通過後、PR 作成直前に Codex GPT-5.4 で adversarial pass。
+# invocation path は 3-tier (#795、下記 §Step 5 の invocation path 参照)。
+# default (tier 1) は companion script 直接呼び出し:
+#   CLAUDE_PLUGIN_ROOT="$HOME/.claude/plugins/cache/openai-codex/codex/<version>" \
+#   node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" adversarial-review \
+#     [--wait|--background] --base <base> "<focus 文字列 (ASCII)>"
 # focus 文字列に project 固有焦点を渡す:
 #   - Iron Law 3 (scope creep) を疑え。touched files が元 issue の宣言 scope と整合するか
 #   - ffmpeg / GPU fallback / encoding boundary を疑え (F1 / F4 再発を阻止)
 #   - 同 issue 過去 PR の root cause が今回も残っていないか (M5 と協調)
-# /codex:adversarial-review --base <base> --focus "<focus 文字列>"
 # 出力の finding は Claude が triage し (A) PR 内修正 / (B)(C) handoff のいずれかへ振り分け。
-# Codex 自身に commit させない (M3 整合)。token 枯渇等で fail した場合は
-# `docs/l2-workflow.md` §Codex fallback (L-β β-5 で追加) に従う。
+# Codex 自身に commit させない (M3 整合)。Codex CLI が fail した場合は
+# `docs/l2-workflow.md` §Codex fallback (L-β β-5 で追加) に従う (tier 2)。
 ```
+
+#### Step 5 の invocation path (3-tier、#795)
+
+openai-codex plugin の `commands/adversarial-review.md` frontmatter には **`disable-model-invocation: true`** が明示されており、agent (Claude) が slash command `/codex:adversarial-review` を autonomous に invoke することは plugin spec レベルで禁止されている (出典: `~/.claude/plugins/cache/openai-codex/codex/<version>/commands/adversarial-review.md`、公式仕様は <https://code.claude.com/docs/en/agent-sdk/slash-commands> / <https://code.claude.com/docs/en/agent-sdk/plugins>、PR #792 で発覚)。この制約は **slash command の model-invocation のみ**を縛るため、Step 5 は以下の 3-tier で運用する:
+
+| tier | path | trigger | 実行者 |
+| --- | --- | --- | --- |
+| 1 (default) | **companion script 直接呼び出し**: `node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" adversarial-review [--wait\|--background] --base <base> "<focus>"` を Bash 経由で実行。本物の Codex GPT-5.4 review が agent 一気通貫で回る (PR #823 / #850 / #851 / #852 実績。focus は ASCII 推奨、`--background` + `run_in_background` で長時間 review を非同期化可) | 常時 (Pre-flight Step 5 必須実行) | agent |
+| 2 (fallback) | superpowers `requesting-code-review` subagent。**Codex CLI が rate-limit / quota / network / auth 等で fail した場合のみ** (検出条件・重要 PR 判定・「Codex fallback notice」必須記載は §Codex fallback (C6) に従う) | tier 1 の Codex CLI fail | agent |
+| 3 (escalation) | Idios 自身が `/codex:adversarial-review` を直接 invoke し、結果を agent に share して PR 本文に追記 | Idios が tier 1/2 の review 内容・結果に不足ありと判断した場合 | Idios |
+
+tier 1 が成功している限り「Codex review 実施済」の記載は正当 (Iron Law 5 整合)。tier 2 で代替した場合は Codex fallback notice を必ず記載し、Codex review 済と誤認させない。
 
 ### 判定
 
