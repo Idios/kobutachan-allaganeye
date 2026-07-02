@@ -365,3 +365,191 @@ def test_latest_develop_uses_version_sort_for_double_digits(
     assert_valid_ndjson(result.ndjson)
     deleted = _of_event(result.ndjson, "deleted")
     assert any(e["name"] == "claude/scenario11" for e in deleted), result.stdout
+
+
+def _rev_parse(repo: Path, ref: str) -> str:
+    """Return the commit OID of ref in repo."""
+    import subprocess
+
+    return subprocess.run(
+        ["git", "rev-parse", ref],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+# ---------- Scenario 12: squash-merged (is-ancestor=false) + gh OID 一致 -> deleted (#827) ----------
+
+
+def test_squash_merged_via_gh_deleted(
+    tmp_repo: Path,
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+    with_gh_stub,
+) -> None:
+    """squash マージ済み branch は is-ancestor=false だが gh が merged head OID を報告 -> deleted (#827).
+
+    本 repo の PR は --squash マージのため branch tip が base の祖先にならず、
+    旧実装では永遠に not-merged 扱いだった。gh pr list --state merged の
+    headRefOid 集合に local branch tip の OID が一致すれば merged と判定して削除する。
+    OID 同一性で照合するため headRefName 衝突による誤削除は起こらない (#827 codex HIGH)。
+    """
+    branch = make_claude_branch("scenario12", merged=False, age_seconds=86400 * 2)
+    # gh stub は `gh pr list ... --jq '.[].headRefOid'` の出力 (改行区切り OID) を模す。
+    with_gh_stub(_rev_parse(tmp_repo, branch))
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
+    deleted = _of_event(result.ndjson, "deleted")
+    assert any(e["name"] == branch and e.get("merged_via") == "gh" for e in deleted), (
+        result.stdout
+    )
+    # start event records the gh augmentation succeeded.
+    start = _of_event(result.ndjson, "start")
+    assert start and start[0].get("gh_merged_lookup") == "ok", result.stdout
+
+
+# ---------- Scenario 13: gh が空 [] -> is-ancestor=false は kept (OR が過剰削除しない) ----------
+
+
+def test_gh_empty_does_not_over_delete(
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+    with_gh_stub,
+) -> None:
+    """gh が merged PR を 1 件も返さないとき、is-ancestor=false branch は kept (安全側)."""
+    make_claude_branch("scenario13", merged=False, age_seconds=86400 * 2)
+    with_gh_stub("")  # 空 = merged PR head OID なし
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
+    kept = _of_event(result.ndjson, "kept")
+    assert any(
+        e["name"] == "claude/scenario13" and e["reason"] == "not-merged" for e in kept
+    ), result.stdout
+
+
+# ---------- Scenario 14: gh 非ゼロ exit -> is-ancestor fallback で kept + status=error ----------
+
+
+def test_gh_failure_falls_back_to_ancestor(
+    tmp_repo: Path,
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+    with_gh_stub,
+) -> None:
+    """gh が失敗 (非ゼロ exit) したら集合を空に倒し is-ancestor のみで判定 (安全側 kept).
+
+    gh が「全 branch を merged」と誤って報告する状況を防ぐ: 失敗時は削除根拠に
+    しない。start.gh_merged_lookup=error で fallback を可視化する。
+    """
+    branch = make_claude_branch("scenario14", merged=False, age_seconds=86400 * 2)
+    # 一致する OID を返しても exit!=0 なら無視されねばならない。
+    with_gh_stub(_rev_parse(tmp_repo, branch), exit_code=1)
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
+    kept = _of_event(result.ndjson, "kept")
+    assert any(
+        e["name"] == "claude/scenario14" and e["reason"] == "not-merged" for e in kept
+    ), result.stdout
+    start = _of_event(result.ndjson, "start")
+    assert start and start[0].get("gh_merged_lookup") == "error", result.stdout
+
+
+# ---------- Scenario 15: gh merged だが cooldown 内 -> kept cooldown (gh が AND3 を bypass しない) ----------
+
+
+def test_gh_merged_still_respects_cooldown(
+    tmp_repo: Path,
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+    with_gh_stub,
+) -> None:
+    """gh が merged と報告しても 24h cooldown 内なら削除しない (AND3 を bypass しない)."""
+    branch = make_claude_branch("scenario15", merged=False, age_seconds=600)
+    with_gh_stub(_rev_parse(tmp_repo, branch))
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
+    kept = _of_event(result.ndjson, "kept")
+    assert any(
+        e["name"] == "claude/scenario15" and e["reason"] == "cooldown" for e in kept
+    ), result.stdout
+
+
+# ---------- Scenario 16: 同名 branch 再作成で OID 不一致 -> kept (data-loss 防止, codex HIGH) ----------
+
+
+def test_gh_oid_mismatch_recreated_branch_kept(
+    tmp_repo: Path,
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+    with_gh_stub,
+) -> None:
+    """merged PR の head 名と同名だが local tip OID が異なる branch は削除しない (#827 codex HIGH).
+
+    claude/foo が squash-merged 後に同名で再作成され未 merge の新 commit を積んだ
+    ケースを再現する。gh が返す merged head OID (= 別 commit) と local branch tip が
+    一致しないため、headRefName が衝突しても kept になる (不可逆 data-loss を防止)。
+    """
+    make_claude_branch("scenario16", merged=False, age_seconds=86400 * 2)
+    # gh は当該 branch tip とは異なる OID (base develop-0.2.0 の commit) を merged head として返す。
+    # 旧 name-match 実装ではここで誤削除された (codex HIGH)。OID 一致必須なら kept。
+    with_gh_stub(_rev_parse(tmp_repo, "develop-0.2.0"))
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
+    kept = _of_event(result.ndjson, "kept")
+    assert any(
+        e["name"] == "claude/scenario16" and e["reason"] == "not-merged" for e in kept
+    ), result.stdout
+
+
+# ---------- Scenario 17: gh 不在 -> gh_merged_lookup=unavailable + is-ancestor fallback ----------
+
+
+def test_gh_absent_reports_unavailable_and_falls_back(
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+    monkeypatch,
+) -> None:
+    """gh が PATH に無いとき gh_merged_lookup=unavailable + is-ancestor のみで判定 (#827 codex MEDIUM).
+
+    `command -v gh` が false になるよう、gh executable を含む PATH ディレクトリを
+    すべて除去して実行する。gh も timeout も無い環境の fallback を pin する。
+    gh/timeout を git/timeout と分離できない PATH レイアウト (両者同一 dir) では skip。
+    """
+    import os
+    import shutil
+
+    sep = os.pathsep
+
+    def _has_gh(d: str) -> bool:
+        for name in ("gh", "gh.exe", "gh.cmd", "gh.bat"):
+            p = os.path.join(d, name)
+            if os.path.isfile(p) and os.access(p, os.X_OK):
+                return True
+        return False
+
+    reduced = sep.join(
+        d for d in os.environ.get("PATH", "").split(sep) if d and not _has_gh(d)
+    )
+    monkeypatch.setenv("PATH", reduced)
+    if shutil.which("git") is None or shutil.which("timeout") is None:
+        import pytest
+
+        pytest.skip("gh を git/timeout と分離できない PATH レイアウトのため skip")
+
+    make_claude_branch("scenario17", merged=False, age_seconds=86400 * 2)
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
+    start = _of_event(result.ndjson, "start")
+    assert start and start[0].get("gh_merged_lookup") == "unavailable", result.stdout
+    kept = _of_event(result.ndjson, "kept")
+    assert any(
+        e["name"] == "claude/scenario17" and e["reason"] == "not-merged" for e in kept
+    ), result.stdout

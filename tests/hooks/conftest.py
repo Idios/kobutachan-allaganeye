@@ -262,18 +262,21 @@ def with_gh_stub(tmp_repo: Path, monkeypatch):
 
     Args of the returned callable:
       response: literal string the stub will print on stdout.
+      exit_code: exit status the stub returns (default 0). Non-zero simulates a
+        gh failure / network error (cleanup-claude-branches.sh #827 fallback).
 
     Returns: None (callable side-effect).
     """
     stub_src = PROJECT_ROOT / "tests" / "hooks" / "_gh_stub.sh"
 
-    def _install(response: str) -> None:
+    def _install(response: str, exit_code: int = 0) -> None:
         bin_dir = tmp_repo / "bin"
         bin_dir.mkdir(exist_ok=True)
         gh_target = bin_dir / "gh"
         shutil.copy2(stub_src, gh_target)
         gh_target.chmod(0o755)
         monkeypatch.setenv("GH_STUB_RESPONSE", response)
+        monkeypatch.setenv("GH_STUB_EXIT", str(exit_code))
         monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
 
     return _install
