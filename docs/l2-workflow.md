@@ -168,17 +168,33 @@ git diff --name-only HEAD origin/<base>
 gh pr list --search "<元issue#>" --state all \
   --json number,headRefName,state,createdAt
 
-# 5. /codex:adversarial-review (Codex 統合、C2、L-β β-4 で追加)
+# 5. Codex adversarial-review (Codex 統合、C2、L-β β-4 で追加)
 # Step 0-4 通過後、PR 作成直前に Codex GPT-5.4 で adversarial pass。
+# invocation path は 3-tier (#795、下記 §Step 5 の invocation path 参照)。
+# default (tier 1) は companion script 直接呼び出し:
+#   CLAUDE_PLUGIN_ROOT="$HOME/.claude/plugins/cache/openai-codex/codex/<version>" \
+#   node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" adversarial-review \
+#     [--wait|--background] --base <base> "<focus 文字列 (ASCII)>"
 # focus 文字列に project 固有焦点を渡す:
 #   - Iron Law 3 (scope creep) を疑え。touched files が元 issue の宣言 scope と整合するか
 #   - ffmpeg / GPU fallback / encoding boundary を疑え (F1 / F4 再発を阻止)
 #   - 同 issue 過去 PR の root cause が今回も残っていないか (M5 と協調)
-# /codex:adversarial-review --base <base> --focus "<focus 文字列>"
 # 出力の finding は Claude が triage し (A) PR 内修正 / (B)(C) handoff のいずれかへ振り分け。
-# Codex 自身に commit させない (M3 整合)。token 枯渇等で fail した場合は
-# `docs/l2-workflow.md` §Codex fallback (L-β β-5 で追加) に従う。
+# Codex 自身に commit させない (M3 整合)。Codex CLI が fail した場合は
+# `docs/l2-workflow.md` §Codex fallback (L-β β-5 で追加) に従う (tier 2)。
 ```
+
+#### Step 5 の invocation path (3-tier、#795)
+
+openai-codex plugin の `commands/adversarial-review.md` frontmatter には **`disable-model-invocation: true`** が明示されており、agent (Claude) が slash command `/codex:adversarial-review` を autonomous に invoke することは plugin spec レベルで禁止されている (出典: `~/.claude/plugins/cache/openai-codex/codex/<version>/commands/adversarial-review.md`、公式仕様は <https://code.claude.com/docs/en/agent-sdk/slash-commands> / <https://code.claude.com/docs/en/agent-sdk/plugins>、PR #792 で発覚)。この制約は **slash command の model-invocation のみ**を縛るため、Step 5 は以下の 3-tier で運用する:
+
+| tier | path | trigger | 実行者 |
+| --- | --- | --- | --- |
+| 1 (default) | **companion script 直接呼び出し**: `node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" adversarial-review [--wait\|--background] --base <base> "<focus>"` を Bash 経由で実行。本物の Codex GPT-5.4 review が agent 一気通貫で回る (PR #823 / #850 / #851 / #852 実績。focus は ASCII 推奨、`--background` + `run_in_background` で長時間 review を非同期化可) | 常時 (Pre-flight Step 5 必須実行) | agent |
+| 2 (fallback) | superpowers `requesting-code-review` subagent。**Codex CLI が rate-limit / quota / network / auth 等で fail した場合のみ** (検出条件・重要 PR 判定・「Codex fallback notice」必須記載は §Codex fallback (C6) に従う) | tier 1 の Codex CLI fail | agent |
+| 3 (escalation) | Idios 自身が `/codex:adversarial-review` を直接 invoke し、結果を agent に share して PR 本文に追記 | Idios が tier 1/2 の review 内容・結果に不足ありと判断した場合 | Idios |
+
+tier 1 が成功している限り「Codex review 実施済」の記載は正当 (Iron Law 5 整合)。tier 2 で代替した場合は Codex fallback notice を必ず記載し、Codex review 済と誤認させない。
 
 ### 判定
 
@@ -848,10 +864,10 @@ Codex CLI (`codex-companion.mjs` runtime) が以下のいずれかで fail し�
 
 ### 検出 + fallback の擬似コード (skill 内実装イメージ)
 
-`/review-pr` Step 5a / `/iterate-review` Round 2.1 等で Codex を invoke した後の処理イメージ:
+`/review-pr` Step 5a / `/iterate-review` Round 2.1 等で Codex を invoke した後の処理イメージ。agent からの通常実行は companion script 直接呼び出し (§Step 5 の invocation path (3-tier、#795) の tier 1。`review` / `adversarial-review` とも slash command は `disable-model-invocation: true` のため agent invoke 不可、slash 形式は tier 3 = Idios 専用)。**subcommand と focus の対応に注意**: `review` は focus positional を受けず非空 focus を reject する。project 固有 focus を渡す場合は `adversarial-review` を使う:
 
 ```text
-result = invoke("/codex:review --base develop-0.3.0 --focus '...'")
+result = run_bash('node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" adversarial-review --base develop-0.3.0 "<focus>"')
 
 if result.exit_code != 0:
     stderr_lower = result.stderr.lower()
@@ -882,11 +898,11 @@ if fallback_invoked:
 
 ### Fallback 戦略
 
-| Codex command | 通常用途 | Fallback 内容 |
+| Codex 実行 (agent の通常 path) | 通常用途 | Fallback 内容 |
 | --- | --- | --- |
-| `/codex:review` (C3 で `/review-pr` Step 5a に invoke) | code quality adversarial pass | superpowers `requesting-code-review` subagent を起動して同等の adversarial review。focus 文字列は Codex 用と同じ |
-| `/codex:adversarial-review` (C2 で Iron Law 6 Step 5 に invoke) | Pre-flight 第 5 ゲート | superpowers `requesting-code-review` subagent + project 固有 focus を起動。`<grounding_rules>` 相当で「adversarial / approve させない姿勢」を明示 |
-| `/codex:rescue` (C4 で root-cause 調査時に invoke) | bug 根本原因 + 類似バグ探索 | Claude main + superpowers `systematic-debugging` skill で自力調査。`/scope-guard` 規約は維持 (独断 fix 禁止) |
+| `codex-companion.mjs review` (C3 で `/review-pr` Step 5a に Bash 実行。focus positional 不可 — project 固有 focus を渡す場合は `adversarial-review` subcommand を使う。slash `/codex:review` は tier 3 = Idios 専用) | code quality adversarial pass | superpowers `requesting-code-review` subagent を起動して同等の adversarial review。focus 文字列は Codex に渡した (渡す予定だった) ものと同じ |
+| `codex-companion.mjs adversarial-review` (C2 で Iron Law 6 Step 5 に Bash 実行 = tier 1。slash `/codex:adversarial-review` は tier 3 = Idios 専用) | Pre-flight 第 5 ゲート | superpowers `requesting-code-review` subagent + project 固有 focus を起動。`<grounding_rules>` 相当で「adversarial / approve させない姿勢」を明示 |
+| `/codex:rescue` (C4 で root-cause 調査時に invoke。`disable-model-invocation` なし = agent invoke 可、`codex:codex-rescue` subagent 経由) | bug 根本原因 + 類似バグ探索 | Claude main + superpowers `systematic-debugging` skill で自力調査。`/scope-guard` 規約は維持 (独断 fix 禁止) |
 
 ### Fallback 実行時の必須記載 (Iron Law 5 整合)
 
@@ -909,7 +925,7 @@ skill report (`/review-pr` Step 6 レビュー報告 / `/iterate-review` Round s
 
 ## subagent + Codex 直列構成 (C5)
 
-大規模実装 / 重要 PR では superpowers `subagent-driven-development` (Claude 内 fresh subagent) と Codex `/codex:review` (GPT-5.4) を **直列**で組み合わせる。並列ではなく直列にする理由: Codex 自身に fix させない (Iron Law 3 / 5 整合)。
+大規模実装 / 重要 PR では superpowers `subagent-driven-development` (Claude 内 fresh subagent) と Codex review (GPT-5.4) を **直列**で組み合わせる。並列ではなく直列にする理由: Codex 自身に fix させない (Iron Law 3 / 5 整合)。agent からの Codex 実行は §Step 5 の invocation path (3-tier、#795) と同じく companion script 直接呼び出し (`codex-companion.mjs review`)。slash `/codex:review` は `disable-model-invocation: true` のため Idios 専用 (本 § 以下の `/codex:review` 表記は mode 名としての言及)。
 
 ### Flow
 
