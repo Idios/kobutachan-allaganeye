@@ -864,10 +864,10 @@ Codex CLI (`codex-companion.mjs` runtime) が以下のいずれかで fail し�
 
 ### 検出 + fallback の擬似コード (skill 内実装イメージ)
 
-`/review-pr` Step 5a / `/iterate-review` Round 2.1 等で Codex を invoke した後の処理イメージ:
+`/review-pr` Step 5a / `/iterate-review` Round 2.1 等で Codex を invoke した後の処理イメージ。agent からの通常実行は companion script 直接呼び出し (§Step 5 の invocation path (3-tier、#795) の tier 1。`review` / `adversarial-review` とも slash command は `disable-model-invocation: true` のため agent invoke 不可、slash 形式は tier 3 = Idios 専用):
 
 ```text
-result = invoke("/codex:review --base develop-0.3.0 --focus '...'")
+result = run_bash('node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" review --base develop-0.3.0 "<focus>"')
 
 if result.exit_code != 0:
     stderr_lower = result.stderr.lower()
@@ -898,11 +898,11 @@ if fallback_invoked:
 
 ### Fallback 戦略
 
-| Codex command | 通常用途 | Fallback 内容 |
+| Codex 実行 (agent の通常 path) | 通常用途 | Fallback 内容 |
 | --- | --- | --- |
-| `/codex:review` (C3 で `/review-pr` Step 5a に invoke) | code quality adversarial pass | superpowers `requesting-code-review` subagent を起動して同等の adversarial review。focus 文字列は Codex 用と同じ |
-| `/codex:adversarial-review` (C2 で Iron Law 6 Step 5 に invoke) | Pre-flight 第 5 ゲート | superpowers `requesting-code-review` subagent + project 固有 focus を起動。`<grounding_rules>` 相当で「adversarial / approve させない姿勢」を明示 |
-| `/codex:rescue` (C4 で root-cause 調査時に invoke) | bug 根本原因 + 類似バグ探索 | Claude main + superpowers `systematic-debugging` skill で自力調査。`/scope-guard` 規約は維持 (独断 fix 禁止) |
+| `codex-companion.mjs review` (C3 で `/review-pr` Step 5a に Bash 実行。slash `/codex:review` は tier 3 = Idios 専用) | code quality adversarial pass | superpowers `requesting-code-review` subagent を起動して同等の adversarial review。focus 文字列は Codex 用と同じ |
+| `codex-companion.mjs adversarial-review` (C2 で Iron Law 6 Step 5 に Bash 実行 = tier 1。slash `/codex:adversarial-review` は tier 3 = Idios 専用) | Pre-flight 第 5 ゲート | superpowers `requesting-code-review` subagent + project 固有 focus を起動。`<grounding_rules>` 相当で「adversarial / approve させない姿勢」を明示 |
+| `/codex:rescue` (C4 で root-cause 調査時に invoke。`disable-model-invocation` なし = agent invoke 可、`codex:codex-rescue` subagent 経由) | bug 根本原因 + 類似バグ探索 | Claude main + superpowers `systematic-debugging` skill で自力調査。`/scope-guard` 規約は維持 (独断 fix 禁止) |
 
 ### Fallback 実行時の必須記載 (Iron Law 5 整合)
 
@@ -925,7 +925,7 @@ skill report (`/review-pr` Step 6 レビュー報告 / `/iterate-review` Round s
 
 ## subagent + Codex 直列構成 (C5)
 
-大規模実装 / 重要 PR では superpowers `subagent-driven-development` (Claude 内 fresh subagent) と Codex `/codex:review` (GPT-5.4) を **直列**で組み合わせる。並列ではなく直列にする理由: Codex 自身に fix させない (Iron Law 3 / 5 整合)。
+大規模実装 / 重要 PR では superpowers `subagent-driven-development` (Claude 内 fresh subagent) と Codex review (GPT-5.4) を **直列**で組み合わせる。並列ではなく直列にする理由: Codex 自身に fix させない (Iron Law 3 / 5 整合)。agent からの Codex 実行は §Step 5 の invocation path (3-tier、#795) と同じく companion script 直接呼び出し (`codex-companion.mjs review`)。slash `/codex:review` は `disable-model-invocation: true` のため Idios 専用 (本 § 以下の `/codex:review` 表記は mode 名としての言及)。
 
 ### Flow
 

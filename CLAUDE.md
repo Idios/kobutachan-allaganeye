@@ -319,7 +319,7 @@ Codex CLI が rate-limit / quota / network / auth 等で fail した場合、Cla
 
 ### subagent + Codex 直列構成 (C5)
 
-大規模実装 / 重要 PR では superpowers `subagent-driven-development` で Claude 内 fresh subagent が実装 → controller が reachability 確認 → Codex `/codex:review` で adversarial pass → Claude + Idios で triage、の **4 stage 直列**で進める。Iron Law 6 Pre-flight Step 5 (C2、PR 作成直前 / 必須) とは別用途で、`/review-pr` 段階の **deep-dive** で使う optional flow。
+大規模実装 / 重要 PR では superpowers `subagent-driven-development` で Claude 内 fresh subagent が実装 → controller が reachability 確認 → Codex review (agent 実行は `codex-companion.mjs review` = 3-tier の tier 1 と同様、slash `/codex:review` は Idios 専用) で adversarial pass → Claude + Idios で triage、の **4 stage 直列**で進める。Iron Law 6 Pre-flight Step 5 (C2、PR 作成直前 / 必須) とは別用途で、`/review-pr` 段階の **deep-dive** で使う optional flow。
 
 詳細 (Flow 図 / 違い table / 並列ではなく直列にする理由) は [`docs/l2-workflow.md` §subagent + Codex 直列構成](docs/l2-workflow.md#subagent--codex-直列構成-c5) を参照。
 
