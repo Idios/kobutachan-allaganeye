@@ -71,23 +71,116 @@ class TestEdgeCaseShortClip:
 
 
 class TestParsePtsTime:
-    """ffmpeg showinfo stderr frame 0 pts_time extraction (#576 S4.4)."""
+    """ffmpeg showinfo stderr first *emitted* frame pts_time extraction (#804).
 
-    def test_parse_first_frame_pts(self):
+    Output seek (``-ss`` after ``-i``) trims at the muxer stage AFTER the
+    filter graph, so showinfo logs every decoded frame from t=0.  The first
+    emitted frame is therefore the first showinfo line with
+    ``pts_time >= chunk_start``, NOT the ``n: 0`` line (which is always the
+    video's first frame = container start_time, e.g. the constant 0.021 of
+    OBS MKV recordings that #804 reported).
+    """
+
+    def test_parse_first_emitted_pts_skips_pre_seek_frames(self):
+        """#804 regression: n:0 is the video head (0.021), not the emitted frame."""
         mod = _load_module()
         stderr = (
-            "[Parsed_showinfo_0 @ 0x1234] n: 0 pts: 0 pts_time:10.5 "
+            "[Parsed_showinfo_0 @ 0x1234] n:   0 pts:     21 pts_time:0.021 "
             "duration: 0 duration_time: 0 ...\n"
-            "[Parsed_showinfo_0 @ 0x1234] n: 1 pts: 60 pts_time:10.516667 ...\n"
+            "[Parsed_showinfo_0 @ 0x1234] n:   1 pts:    533 pts_time:0.0543333 ...\n"
+            "[Parsed_showinfo_0 @ 0x1234] n: 899 pts: 460288 pts_time:29.966667 ...\n"
+            "[Parsed_showinfo_0 @ 0x1234] n: 900 pts: 460800 pts_time:30 ...\n"
+            "[Parsed_showinfo_0 @ 0x1234] n: 901 pts: 461312 pts_time:30.033333 ...\n"
         )
-        assert mod._parse_first_pts_time(stderr) == pytest.approx(10.5)
+        assert mod._parse_first_emitted_pts_time(stderr, 30.0) == pytest.approx(30.0)
 
     def test_no_match_returns_none(self):
         mod = _load_module()
-        assert mod._parse_first_pts_time("no showinfo output here") is None
+        assert (
+            mod._parse_first_emitted_pts_time("no showinfo output here", 30.0) is None
+        )
 
-    def test_second_frame_not_extracted(self):
+    def test_all_frames_before_chunk_start_returns_none(self):
+        """Stream that ends before chunk_start (e.g. ffmpeg died early) -> None."""
         mod = _load_module()
-        # Only n:0 should match; a stream starting at n:1 has no n:0
-        stderr = "[Parsed_showinfo_0 @ 0x5678] n: 1 pts: 60 pts_time:10.516667 ...\n"
-        assert mod._parse_first_pts_time(stderr) is None
+        stderr = (
+            "[Parsed_showinfo_0 @ 0x5678] n: 0 pts: 21 pts_time:0.021 ...\n"
+            "[Parsed_showinfo_0 @ 0x5678] n: 1 pts: 533 pts_time:0.0543333 ...\n"
+        )
+        assert mod._parse_first_emitted_pts_time(stderr, 30.0) is None
+
+    def test_just_below_boundary_frame_is_not_selected(self):
+        """codex #804: a dropped frame printed a hair below chunk_start must be
+        skipped -- selecting it would pair its PTS with the brightness of the
+        NEXT frame (the actually emitted one) and forge PASS evidence."""
+        mod = _load_module()
+        stderr = (
+            "[Parsed_showinfo_0 @ 0x9abc] n: 0 pts: 0 pts_time:0 ...\n"
+            "[Parsed_showinfo_0 @ 0x9abc] n: 900 pts: 460799 pts_time:29.99995 ...\n"
+            "[Parsed_showinfo_0 @ 0x9abc] n: 901 pts: 461312 pts_time:30.016667 ...\n"
+        )
+        assert mod._parse_first_emitted_pts_time(stderr, 30.0) == pytest.approx(
+            30.016667
+        )
+
+    def test_stream_ending_just_below_boundary_returns_none(self):
+        """Strict >= boundary: only pre-boundary frames -> None (no forged PTS)."""
+        mod = _load_module()
+        stderr = (
+            "[Parsed_showinfo_0 @ 0x9abc] n: 900 pts: 460799 pts_time:29.99995 ...\n"
+        )
+        assert mod._parse_first_emitted_pts_time(stderr, 30.0) is None
+
+    def test_chunk_start_zero_returns_first_frame(self):
+        """chunk_start=0: the video's first frame IS the emitted frame."""
+        mod = _load_module()
+        stderr = "[Parsed_showinfo_0 @ 0x1234] n: 0 pts: 21 pts_time:0.021 ...\n"
+        assert mod._parse_first_emitted_pts_time(stderr, 0.0) == pytest.approx(0.021)
+
+
+class TestRunChunkTimeout:
+    """long chunk_start decode-from-0 timeout handling (codex #804)."""
+
+    def _fake_completed(self, mod, stderr_text: str):
+        import subprocess
+
+        return subprocess.CompletedProcess(
+            args=["ffmpeg"],
+            returncode=0,
+            stdout=b"\x40" * mod._FRAME_SIZE,
+            stderr=stderr_text.encode(),
+        )
+
+    def test_timeout_expired_degrades_to_fail_row_not_crash(self, monkeypatch):
+        """TimeoutExpired -> (None, None, probe) so the caller prints a FAIL row."""
+        import subprocess
+
+        mod = _load_module()
+
+        def _raise_timeout(*args, **kwargs):
+            raise subprocess.TimeoutExpired(cmd=["ffmpeg"], timeout=kwargs["timeout"])
+
+        monkeypatch.setattr(mod.subprocess, "run", _raise_timeout)
+        monkeypatch.setattr(mod, "_probe_single_frame", lambda *a, **k: 42.0)
+        emit_pts, emit_brightness, probe_brightness = mod._run_chunk(
+            Path("dummy.mkv"), 7200.0, "cpu", "h264", 60.0
+        )
+        assert emit_pts is None
+        assert emit_brightness is None
+        assert probe_brightness == 42.0
+
+    def test_timeout_scales_with_chunk_start(self, monkeypatch):
+        """decode-from-0 needs ~chunk_start seconds of decode budget, not fixed 60s."""
+        mod = _load_module()
+        captured: dict = {}
+
+        def _capture(cmd, **kwargs):
+            captured.update(kwargs)
+            return self._fake_completed(
+                mod, "[Parsed_showinfo_0 @ 0x1] n: 0 pts: 0 pts_time:7200 ...\n"
+            )
+
+        monkeypatch.setattr(mod.subprocess, "run", _capture)
+        monkeypatch.setattr(mod, "_probe_single_frame", lambda *a, **k: 42.0)
+        mod._run_chunk(Path("dummy.mkv"), 7200.0, "cpu", "h264", 60.0)
+        assert captured["timeout"] >= 7200.0
