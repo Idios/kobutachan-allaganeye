@@ -52,9 +52,13 @@ from allaganeye.video.probe import probe_video  # noqa: E402
 
 import numpy as np  # noqa: E402
 
-# Matches the first showinfo line for frame n=0, capturing pts_time value.
-# Pattern: n: 0 pts: <int> pts_time:<float>
-_PTS_RE = re.compile(r"n:\s*0\s+pts:\s*\d+\s+pts_time:([\d.]+)")
+# Matches every showinfo line, capturing its pts_time value.
+# Pattern: n: <int> pts: <int> pts_time:<float>
+_PTS_RE = re.compile(r"n:\s*\d+\s+pts:\s*-?\d+\s+pts_time:(-?[\d.]+)")
+
+# Printed pts_time has finite decimal precision; a frame exactly at chunk_start
+# can print a hair below it.  0.1 ms is far under any real frame period (#804).
+_PTS_EPSILON = 1e-4
 
 
 def _classify_chunk(chunk_start: float, duration: float) -> str:
@@ -86,12 +90,21 @@ def _validate_duration_against_chunks(duration: float, chunks: list[float]) -> N
         sys.exit(2)
 
 
-def _parse_first_pts_time(stderr_text: str) -> float | None:
-    """Extract pts_time of the first showinfo frame (n: 0). Returns None if absent."""
-    m = _PTS_RE.search(stderr_text)
-    if not m:
-        return None
-    return float(m.group(1))
+def _parse_first_emitted_pts_time(stderr_text: str, chunk_start: float) -> float | None:
+    """Extract pts_time of the first *emitted* showinfo frame. None if absent.
+
+    Output seek (``-ss`` after ``-i``) trims at the muxer stage AFTER the
+    filter graph, so showinfo logs every decoded frame from t=0 and the
+    ``n: 0`` line is always the video's first frame (= container start_time,
+    the constant 0.021 that #804 reported).  The first frame the muxer
+    actually emits is the first showinfo line with
+    ``pts_time >= chunk_start`` (within printing-precision epsilon).
+    """
+    for m in _PTS_RE.finditer(stderr_text):
+        pts = float(m.group(1))
+        if pts >= chunk_start - _PTS_EPSILON:
+            return pts
+    return None
 
 
 def _build_ffmpeg_cmd(
@@ -150,7 +163,7 @@ def _run_chunk(
     cmd = _build_ffmpeg_cmd(video, chunk_start, vendor, codec)
     proc = subprocess.run(cmd, capture_output=True, timeout=60)
     stderr_text = proc.stderr.decode(errors="replace")
-    emit_pts = _parse_first_pts_time(stderr_text)
+    emit_pts = _parse_first_emitted_pts_time(stderr_text, chunk_start)
 
     if proc.returncode != 0 or len(proc.stdout) < _FRAME_SIZE:
         emit_brightness: float | None = None
