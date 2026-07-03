@@ -23,7 +23,7 @@ probe 失敗の表現と縮退時の可視化が、L3 検出系の全 site で�
 | 論点 | 決定 | 理由 |
 | --- | --- | --- |
 | 統一表現 | **tri-state enum** (present / absent / unknown) | issue 本文の例示と同方向。失敗理由 payload が必要な site は限定的で、Result wrapper の型侵入度に見合わない |
-| 適用範囲 | **L3 検出系のみ** (presence.py / capture_region.py / scorebar.py の localize 系 / detector.py の `--vtuber`・`--masked` gate 内 region 解決)。production OBS path は**現状維持** | OBS baseline bit-exact リスクをゼロにする。OBS path の縮退 (255.0 = 非黒 bias 等) は「暗転誤検知防止」という別の設計意図を持ち、本契約の対象外 |
+| 適用範囲 | **L3 検出系のみ** (presence.py / capture_region.py / scorebar.py の localize 系 / detector.py の `--vtuber` gate 内 anchor 解決・masked fallback gate 内 region 解決。masked fallback の発動条件は `not vtuber and (masked or not blackout_times)` (detector.py:548) で、**`--masked` 指定なしでも標準 Pass 1 が blackout ゼロの run では自動発動する**)。production OBS path は**現状維持** | OBS baseline bit-exact リスクをゼロにする。OBS path の縮退 (255.0 = 非黒 bias 等) は「暗転誤検知防止」という別の設計意図を持ち、本契約の対象外 |
 | 実装タイミング | **再アーキ spec Phase 2 (Stage 2 分類統合) と同一実装期** | issue 記載どおり変更回数最小。§7 参照 |
 
 > **phase 呼称の正規化 (review R1 P2-1)**: issue #824 本文の「Phase 3 cutover (detection-map §5.4)」という呼称は supersede 済みの旧 presence spec 由来。現行の authoritative な phase 番号 (再アーキ spec §8: Phase 0-3 = 検証・非破壊 / Phase 4 = 切替) では **Phase 2 = Stage 2 分類の localize 統合 (shadow、v2 authoritative のまま) / Phase 4 = cutover (authoritative 切替)** であり、detection-map §5.4 の「`localize_present_at` → Stage 2 分類で再利用」は Phase 2 に当たる。本契約の実装は **Phase 2 と同一実装期**とし、Phase 4 cutover の gate (OBS parity 実証) とは独立。
@@ -50,7 +50,7 @@ probe 失敗の表現と縮退時の可視化が、L3 検出系の全 site で�
 | 6 | `localize_from_rgb_bytes` (capture_region.py:286) | raw None → None | silent None (decode 失敗と localize miss が呼び出し側で区別不能) | 不可 |
 | 9 | `_resolve_detect_region` (detector.py:264) | anchor probe 例外 catch → FULL_FRAME。consensus miss warning もこの層 (detector.py:298-304) が発する | silent FULL_FRAME + warning (R4/R5) | 不可 |
 | 10 | `detect_scorebar_band_region` consensus (capture_region.py:489) | `localize_fn` (`Callable[[float], ScorebarLocalization \| None]`、capture_region.py:494) の None → min_hits miss | silent FULL_FRAME (consensus miss-mode)。**この層自体は無音** — warning は caller (site 9) 帰属 | 不可 |
-| 14 | `_resolve_masked_region` (detector.py:328-372、`--masked` gate 内) | per-frame decode None を **silent drop** (365-367) / `except Exception` → FULL_FRAME (371-372) | **完全 silent (log なし)**。R3-R5 後に追加され、本 spec が対象とするクラスをそのまま再導入した実例 | 不可 |
+| 14 | `_resolve_masked_region` (detector.py:328-372、masked fallback gate 内 — `--masked` 指定時 or 標準 Pass 1 blackout ゼロ時に発動、detector.py:548) | per-frame decode None を **silent drop** (365-367) / `except Exception` → FULL_FRAME (371-372) | **完全 silent (log なし)**。R3-R5 後に追加され、本 spec が対象とするクラスをそのまま再導入した実例 | 不可 |
 
 **「unknown を absent (または無音の縮退) に潰している」箇所** (契約導入で解消する対象): site 1 (default 時 raw None → present=False)、site 2 (例外 → PresenceSample(present=False)、warning はあるが sample 値としては absent と区別不能)、site 14 (decode None silent drop + 例外 silent FULL_FRAME)。site 4/5 は review R1 の突合で「既に §5 のセマンティクスに近い」ことが判明したため潰しリストから除外した (移行は表現形式の統一のみ、§5.4)。site 10 の consensus miss-mode (有効票不足 → FULL_FRAME) は現行挙動を維持する (§5.4 site 10)。
 
@@ -137,7 +137,7 @@ class ProbeFailurePolicy(Enum):
    - `test_localize_from_rgb_bytes_none_passthrough_and_decode` (test_presence.py:339) → None passthrough 維持 (§5.4 site 6: 関数自体の None 契約は不変)
    - `test_borderline_pseudo_regions_capped_with_warning` (test_detector.py:1645) → 対象外 (OBS path、無変更)
 2. **新規契約テスト**: 「UNKNOWN が ABSENT に暗黙変換されない」型/分岐テスト、全滅 fail-loud、部分故障 warning 集計、UNKNOWN 率しきい値、site 14 の decode 失敗可視化 (silent drop 廃止の pin)
-3. **OBS bit-exact gate**: (a) presence 系は OBS production 経路に非配線 (presence.py docstring + detection-map §5.4)、(b) anchor / masked region は `--vtuber` / `--masked` gate 内 (detector.py:462 / :328)、(c) site 5 は with_localize 系のみ変更し **OBS が消費する scorebar_results (bool\|None) は不変** — の 3 点で OBS baseline 5 本の detect 出力は bit-exact のはず。実装 PR で必ず実測する (実動画環境)
+3. **OBS bit-exact gate**: (a) presence 系は OBS production 経路に非配線 (presence.py docstring + detection-map §5.4)、(b) anchor は `--vtuber` gate 内 (detector.py:462)、masked region は masked fallback gate (`not vtuber and (masked or not blackout_times)`、detector.py:548) が OBS baseline では非発動 (baseline は必ず ≥1 blackout → `not blackout_times` = False、detector.py:544-547 コメント)、かつ site 14 の変更は warning 可視化のみで detect 出力不変、(c) site 5 は with_localize 系のみ変更し **OBS が消費する scorebar_results (bool\|None) は不変** — の 3 点で OBS baseline 5 本の detect 出力は bit-exact のはず。実装 PR で必ず実測する (実動画環境)
 4. **実機検証**: masked/VTuber サンプル (`ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER`) での detect 回帰 + #822 の過分割サンプルでの挙動確認 (契約導入自体は分類結果を変えない想定の確認。§5.4 site 3 の「現行挙動維持」がその前提)
 
 ## 7. 実装タイミング (Idios 確定: Stage 2 統合と同一実装期)
