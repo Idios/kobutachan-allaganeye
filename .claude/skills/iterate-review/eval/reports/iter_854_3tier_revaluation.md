@@ -23,7 +23,7 @@ executor は Codex 実行手段を tier 1 = companion script (`codex-companion.m
 本改修 (3-tier 整合) 起因の unclear point は 0。残 2 件はいずれも既存構造由来:
 
 1. HARD-GATE 本文が外部 doc 参照 (executor 自身が「隣接配置済みのため change 不要」と判定) → 対応不要
-2. eval requirements J-4 の「Round summary comment (Step 4)」という表現が Step 2.3 (per-round) と Step 4 (final) のどちらを指すか紛らわしい → 既存 eval 文言の細部。follow-up issue で追跡
+2. eval requirements J-4 の「Round summary comment (Step 4)」という表現が Step 2.3 (per-round) と Step 4 (final) のどちらを指すか紛らわしい → 既存 eval 文言の細部。#856 で追跡
 
 ## 収束判定
 
