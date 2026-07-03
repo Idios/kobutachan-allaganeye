@@ -102,6 +102,12 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 - [ ] `l2a-gui` / `l2b-installer` / `l2-workflow` スコープラベルの open issue で `P1-high` がゼロ
 - [ ] `docs/guard-integration.md` §5 「外部動画データの検査」運用が成立 (allaganeye-guard 独立リポジトリの最新版が利用可能)
 
+### v0.3.0 (L3: 配信形式対応 + 性能改善) 固有項目
+
+- [ ] 2026-06-10 full audit の監査 P1 対応 ([audit-remediation spec](./superpowers/specs/2026-06-10-audit-remediation-design.md) Wave 1) が全クローズ: [#812](https://github.com/Idios/kobutachan-allaganeye/issues/812) / [#813](https://github.com/Idios/kobutachan-allaganeye/issues/813) / [#814](https://github.com/Idios/kobutachan-allaganeye/issues/814) / [#815](https://github.com/Idios/kobutachan-allaganeye/issues/815) / [#816](https://github.com/Idios/kobutachan-allaganeye/issues/816) / [#817](https://github.com/Idios/kobutachan-allaganeye/issues/817) / [#818](https://github.com/Idios/kobutachan-allaganeye/issues/818)。G4 は [#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) の段階1 (metadata 痕跡) で消化済みのため、#805 自体の close (非破壊化・GUI UX の継続分) は本ゲートの対象外
+
+他の想定ゲート項目 (下表 v0.3.0 行) はリリース直前レビューで確定し、確定後に本節へ追記する。
+
 ### v0.3.0 以降のレイヤー固有ゲート枠組み
 
 各レイヤー固有のチェックリストは本節以下に追加していく。各レイヤー特有の品質ゲートを当該リリース直前のレビューで確定する。

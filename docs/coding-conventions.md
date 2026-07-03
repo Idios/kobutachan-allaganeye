@@ -70,3 +70,21 @@ Conventional Commits 形式:
 - `allaganeye/exceptions.py` にエラークラスを定義
 - 各エラーに exit code を対応付ける
 - CLI レイヤーで例外をキャッチし、適切な exit code で終了
+
+## ドキュメント SSoT 規約 (#818)
+
+同じ仕様値を複数 doc に書かない。**正 1 箇所 + 参照リンク** を原則とする。
+
+### 規約
+
+- 仕様値・定数・挙動説明の**正 (SSoT) は 1 箇所**に置く。正の置き場所は対象領域の spec doc または実装とし、代表は以下:
+  - [`docs/cli-spec.md`](cli-spec.md) — CLI 構文・オプション・exit code
+  - [`docs/metadata-spec.md`](metadata-spec.md) — `metadata.json` スキーマ (機械可読の正は `schemas/metadata.schema.json`。二層構造は同 doc §SSoT 二層構造 (#612) を参照)
+  - 実装 docstring — spec doc の管轄外の内部定数・アルゴリズムパラメータ (例: worker 数上限、probe 間隔)
+- 他の doc から同じ値に言及する場合は、**値を複製せず正へのリンクで参照**する
+- `CLAUDE.md` は索引として**要約**してよい。数値を書く場合は出典リンクを併記する
+- 既存 doc に複製値を見つけたら、その doc の修正時に正 1 箇所へ寄せて他をリンク化する (W6 doc 一括再同期でも本規約を適用する)
+
+### 背景 (違反の代表事例)
+
+workers 上限「24」が 6 doc 7 箇所に複製されたまま実装 (32) と drift した (2026-06-10 full audit P2-25)。同型の drift が P2-26〜P2-28 等でも反復しており、値の複製自体が drift の構造的な再発要因。詳細は [`docs/audits/2026-06-10-full-audit.md`](audits/2026-06-10-full-audit.md) および [audit-remediation spec §N3](superpowers/specs/2026-06-10-audit-remediation-design.md) を参照。
