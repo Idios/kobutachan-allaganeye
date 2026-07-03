@@ -88,7 +88,7 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 
 ## シナリオ J (L-β β-2 M5 警告併走 + β-5 C6 Codex fallback、本 PR L-β 改訂後 delta)
 
-モック: PR #988 (Refs #656、過去 merged: #657 #662)。/iterate-review 起動後、Round 1 で subagent (/review-pr 実行) が Step 1.1 で M5 同 issue 過去 PR 検出 (2 件) し、Step 5b 冒頭警告行を含む findings を返す。同 Round で Step 5a optional /codex:review が rate-limit fail (429)。
+モック: PR #988 (Refs #656、過去 merged: #657 #662)。/iterate-review 起動後、Round 1 で subagent (/review-pr 実行) が Step 1.1 で M5 同 issue 過去 PR 検出 (2 件) し、Step 5b 冒頭警告行を含む findings を返す。同 Round で Step 5a optional Codex review (tier 1 = `codex-companion.mjs review`) が rate-limit fail (429)。
 
 1. **[critical]** **J-1**: Step 2.4 Markdown path の local check で markdownlint failure 発生時、`docs/markdownlint-guide.md` §typical fixes を参照する規定があるか (M10 reference)
 2. **[critical]** **J-2**: Step 2.4 末尾の M5 同 issue 過去 PR 警告併走 規定があり、subagent return 後に main session で Step 2.3 Round summary で再度明示するか

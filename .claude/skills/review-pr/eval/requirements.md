@@ -145,14 +145,14 @@ PR 本文: `scripts/build-portable-zip.ps1` の `get-pip.py` DL URL を `https:/
 1. **[critical]** **H-1**: Step 5 で M2 外部依存規約 (`docs/l2-workflow.md` §外部依存規約) を引いて URL 規約適合を逐条検証
 2. **[critical]** **H-2**: `master` / `main` / `latest` / `raw HEAD` を含む URL (= `raw/main/`) を検出し、Step 5b トリアージ表で **(A) PR 内修正** とする
 3. **[critical]** **H-3**: F2 (#649→#651→#703→#721 hotfix 連発) を reference として参照する
-4. **[critical]** **H-4**: Codex 起動条件 (diff > 15 file / root cause ≥2 / L1 core) は満たさない (touched 1 file 単発 fix) ため optional `/codex:review` を**起動しない**判断 (起動しても可だが起動条件は満たさない旨を明示)
+4. **[critical]** **H-4**: Codex 起動条件 (diff > 15 file / root cause ≥2 / L1 core) は満たさない (touched 1 file 単発 fix) ため optional Codex review を**起動しない**判断 (起動しても可だが起動条件は満たさない旨を明示)
 5. installer 系 PR の immutable URL 規約違反は典型的な (A) trigger (B 化しない)
 
 ---
 
-## シナリオ I (L-β β-5 C6 Codex fallback): モック /iterate-review Round 内で /codex:review が rate-limit fail
+## シナリオ I (L-β β-5 C6 Codex fallback): モック /iterate-review Round 内で Codex review が rate-limit fail
 
-PR #987 (大規模 refactor、touched 35 files、diff 1200 lines、L1 detector module を含む)。`/review-pr` Step 5a で C3 起動条件すべて該当のため `/codex:review` を invoke、Codex CLI exit code 1 + stderr に `Error: rate limit exceeded (429)` が含まれる。
+PR #987 (大規模 refactor、touched 35 files、diff 1200 lines、L1 detector module を含む)。`/review-pr` Step 5a で C3 起動条件すべて該当のため Codex review (tier 1 = `codex-companion.mjs review`) を実行、Codex CLI exit code 1 + stderr に `Error: rate limit exceeded (429)` が含まれる。
 
 1. **[critical]** **I-1**: Codex CLI fail を検出 (exit code 非ゼロ + stderr keyword `rate.?limit` または `429`) → **token 枯渇 (明確)** 判定
 2. **[critical]** **I-2**: 自動 fallback として superpowers `requesting-code-review` subagent を起動 (Codex 用 focus 文字列を流用)
