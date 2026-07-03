@@ -245,7 +245,8 @@ export function ExportScreen() {
     setExcludedIndexes((prev) => {
       const next = new Set(prev);
       for (const m of metadata.matches) {
-        if (m.type_override === 'skip') continue;
+        // #805 Phase 2: post_match は個別 checkbox 同様 bulk からも除外。
+        if (m.type_override === 'skip' || m.post_match) continue;
         if (selectAll) {
           next.delete(m.index);
         } else {
@@ -356,7 +357,13 @@ export function ExportScreen() {
     // または excludedIndexes に含まれる (ad-hoc UI 選択、#466 review #1)。
     const nextStates: Record<number, MatchState> = {};
     for (const m of metadata.matches) {
-      if (m.type_override === 'skip' || excludedIndexes.has(m.index)) {
+      // #805 Phase 2: post_match は export.py 側で常に skip されるため
+      // UI 側も最初から skipped 表示にする。
+      if (
+        m.type_override === 'skip' ||
+        m.post_match ||
+        excludedIndexes.has(m.index)
+      ) {
         nextStates[m.index] = { status: 'skipped', percent: 0 };
       } else {
         nextStates[m.index] = { status: 'pending', percent: 0 };
@@ -451,8 +458,13 @@ export function ExportScreen() {
   const cancelling = phase === 'cancelling';
 
   // #466 review #1: counted = 永続 skip 除外 + ad-hoc exclude 除外
+  // #805 Phase 2: post_match trailing も常に対象外 (機能除外は export.py 側
+  // で Phase 1 済。UI では non-selectable として数にも入れない)。
   const countedMatches = metadata.matches.filter(
-    (m) => m.type_override !== 'skip' && !excludedIndexes.has(m.index),
+    (m) =>
+      m.type_override !== 'skip' &&
+      !m.post_match &&
+      !excludedIndexes.has(m.index),
   );
   const doneCount = countedMatches.filter(
     (m) => matchStates[m.index]?.status === 'done',
@@ -830,7 +842,7 @@ export function ExportScreen() {
                */}
               {(() => {
                 const eligibleCount = metadata.matches.filter(
-                  (mm) => mm.type_override !== 'skip',
+                  (mm) => mm.type_override !== 'skip' && !mm.post_match,
                 ).length;
                 const bulkDisabled =
                   isSample || running || cancelling || eligibleCount === 0;
@@ -903,6 +915,9 @@ export function ExportScreen() {
                 ? fmtMatchDuration(effectiveEnd - effectiveStart)
                 : m.duration_display;
               const name = formatName(m.index, m.type, effectiveStart);
+              // #805 Phase 2: post_match trailing は選択不可 (export.py 側の
+              // 機能除外は Phase 1 済。行は skipped 扱いで表示のみ)。
+              const isPostMatch = m.post_match === true;
               const mark =
                 s.status === 'done'
                   ? '✓'
@@ -910,7 +925,7 @@ export function ExportScreen() {
                     ? '●'
                     : s.status === 'error'
                       ? '!'
-                      : s.status === 'skipped'
+                      : s.status === 'skipped' || isPostMatch
                         ? '—'
                         : '○';
               const markClass =
@@ -923,19 +938,27 @@ export function ExportScreen() {
               // checkbox で個別 toggle 可能。export 中は disabled。
               const isPersistSkip = m.type_override === 'skip';
               const isAdHocExcluded = excludedIndexes.has(m.index);
-              const isIncluded = !isPersistSkip && !isAdHocExcluded;
+              const isIncluded =
+                !isPersistSkip && !isPostMatch && !isAdHocExcluded;
               return (
-                <li key={m.index} className={styles.listItem}>
+                <li
+                  key={m.index}
+                  className={`${styles.listItem}${isPostMatch ? ` ${styles.listItemPostMatch}` : ''}`}
+                  data-testid={`export-row-${m.index}`}
+                  {...(isPostMatch ? { 'data-post-match': 'true' } : {})}
+                >
                   {/* #587: skip-checkbox disabled reason (§1.2 + #587
                       scope-extension #11). When the match isn't a persist
                       skip the existing help title is preserved.
                       #633 / Task 1.7: sample mode also disables checkbox. */}
                   <DisabledTooltip
-                    disabled={isSample || isPersistSkip}
+                    disabled={isSample || isPersistSkip || isPostMatch}
                     reason={
                       isSample
                         ? sampleReason
-                        : 'preview で skip に設定されています'
+                        : isPostMatch
+                          ? '試合後の映像のため書き出し対象外です'
+                          : 'preview で skip に設定されています'
                     }
                   >
                     {(p) => (
@@ -943,7 +966,13 @@ export function ExportScreen() {
                         type="checkbox"
                         className={styles.listCheckbox}
                         checked={isIncluded}
-                        disabled={isSample || isPersistSkip || running || cancelling}
+                        disabled={
+                          isSample ||
+                          isPersistSkip ||
+                          isPostMatch ||
+                          running ||
+                          cancelling
+                        }
                         onChange={() => toggleMatchExclusion(m.index)}
                         aria-label={`include match ${m.index}`}
                         title={p.title ?? '書き出し対象から除外/復帰'}
@@ -954,6 +983,9 @@ export function ExportScreen() {
                     {mark}
                   </span>
                   <span className={styles.listName}>{name}</span>
+                  {isPostMatch && (
+                    <span className={styles.postMatchBadge}>試合後</span>
+                  )}
                   <span className={styles.listDur}>{durationDisplay}</span>
                   {(running ||
                     completed ||

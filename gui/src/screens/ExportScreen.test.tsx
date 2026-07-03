@@ -1209,4 +1209,57 @@ describe('#805 ExportScreen post_match no-crash guard', () => {
     expect(screen.getByLabelText('include match 1')).toBeInTheDocument();
     expect(screen.getByLabelText('include match 2')).toBeInTheDocument();
   });
+
+  // #805 Phase 2: post_match rows are non-selectable in the export list.
+  // The functional exclusion is already guaranteed by export.py (Phase 1);
+  // these tests lock the visual/selection UX (spec §8).
+  describe('Phase 2 non-selectable UX', () => {
+    it('post_match checkbox is disabled and unchecked', () => {
+      render(<ExportScreen />);
+      const cb = screen.getByLabelText('include match 2');
+      expect(cb).toBeDisabled();
+      expect(cb).not.toBeChecked();
+      // normal match stays selectable
+      const active = screen.getByLabelText('include match 1');
+      expect(active).toBeEnabled();
+      expect(active).toBeChecked();
+    });
+
+    it('post_match checkbox surfaces the disabled reason (§1.2)', () => {
+      render(<ExportScreen />);
+      const cb = screen.getByLabelText('include match 2');
+      expect(cb).toHaveAttribute(
+        'title',
+        '試合後の映像のため書き出し対象外です',
+      );
+    });
+
+    it('header count excludes post_match matches', () => {
+      render(<ExportScreen />);
+      expect(screen.getByText('1 試合を書き出す')).toBeInTheDocument();
+    });
+
+    it('post_match row is marked and badged (試合後)', () => {
+      render(<ExportScreen />);
+      const row = screen.getByTestId('export-row-2');
+      expect(row).toHaveAttribute('data-post-match', 'true');
+      expect(within(row).getByText('試合後')).toBeInTheDocument();
+      const normalRow = screen.getByTestId('export-row-1');
+      expect(normalRow).not.toHaveAttribute('data-post-match');
+      expect(within(normalRow).queryByText('試合後')).toBeNull();
+    });
+
+    it('全選択 does not re-include post_match', async () => {
+      const user = userEvent.setup();
+      render(<ExportScreen />);
+      await user.click(
+        screen.getByRole('button', { name: 'deselect all matches' }),
+      );
+      await user.click(
+        screen.getByRole('button', { name: 'select all matches' }),
+      );
+      expect(screen.getByLabelText('include match 1')).toBeChecked();
+      expect(screen.getByLabelText('include match 2')).not.toBeChecked();
+    });
+  });
 });

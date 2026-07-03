@@ -689,6 +689,14 @@ export function PreviewScreen() {
               #{String(match.index).padStart(3, '0')} · of{' '}
               {metadata!.matches.length}
             </span>
+            {match.post_match && (
+              <span
+                className={styles.postMatchBadge}
+                data-testid="post-match-badge"
+              >
+                試合後
+              </span>
+            )}
           </div>
         </div>
         <DisabledTooltip disabled={isSample} reason={sampleReason}>

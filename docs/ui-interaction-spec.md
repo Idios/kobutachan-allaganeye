@@ -579,7 +579,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | `<li>` ([CompleteScreen.tsx:128-160](../gui/src/screens/CompleteScreen.tsx#L128))。MatchThumb / 試合名 + 開始→終了 + duration / typeBadge (FL / ?) を内包 |
-| 状態 | `idle` / `active` (selectedMatchIndex 一致時 `listItemActive` クラス + `data-selected="true"`) |
+| 状態 | `idle` / `active` (selectedMatchIndex 一致時 `listItemActive` クラス + `data-selected="true"`) / `postMatch` (`post_match: true` 時 `listItemPostMatch` クラス (dimmed) + `data-post-match="true"` + badge「試合後」、[#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) Phase 2) |
 | 遷移トリガー | single `onClick` → `selectMatch(index)` (選択のみ) / `onDoubleClick` → `openPreviewFor(index)` (選択 + preview 遷移) |
 | store mutation | single click: `appStateStore.selectedMatchIndex` のみ。double click: 加えて `appStateStore.screen='preview'` |
 | 例外 / edge case | §1.3 dirty=true 時に別 match を double click すると編集破棄が発生 → confirm 必須 (現状未実装、§2.3.5 [境界を調整] と同等の対応)。listItem 内 typeBadge は表示専用で click 影響なし。`name` は `match.name ?? "MATCH_NNN"` フォールバック ([metadata-spec.md](metadata-spec.md) 編集契約により `name` は GUI 表示専用、metadata.json には書き戻さない) |
@@ -663,7 +663,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | 状態 | `idle` / `disabled` (sample mode: `isSample=true` で disabled + tooltip 理由「サンプル動画では保存できません」、[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済 → §1.4) |
 | 遷移トリガー | `onChange` → local `setMatchName(value)` → schedule effect が pendingPatchRef に `{ name }` を merge → 200ms 後に `updateMatch(match.index, pendingPatch)` を 1 回 commit (§1.1 準拠、debounce で連打を coalesce) |
 | store mutation | debounce 完了時 `metadataStore.metadata.matches[i].name`、`metadataStore.dirty=true`、`metadataStore.draft.json` (#517 auto-save、別 debounce 500ms) |
-| 例外 / edge case | `name` は metadata.json には書き戻されず GUI 表示専用 ([metadata-spec.md](metadata-spec.md))、placeholder は `match_NNN` フォールバック。空文字許容 (placeholder 表示)。`flushUpdate()` (handleApply / handleBack / handleExport / unmount) で残タイマーを即時実行 |
+| 例外 / edge case | `name` は metadata.json には書き戻されず GUI 表示専用 ([metadata-spec.md](metadata-spec.md))、placeholder は `match_NNN` フォールバック。空文字許容 (placeholder 表示)。`flushUpdate()` (handleApply / handleBack / handleExport / unmount) で残タイマーを即時実行。`post_match: true` の match を編集中は nameRow 右端に badge「試合後」(`data-testid="post-match-badge"`) を表示する ([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) Phase 2、表示専用) |
 
 #### §2.4.3 type select
 
@@ -978,17 +978,17 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | caption: `displayOnly` (`{N} ファイル`)。bulk button: `idle` / `disabled` (`running \|\| cancelling`) |
 | 遷移トリガー | `onClick` → `toggleSelectAll(true \| false)` → `excludedIndexes` から bulk 対象 (永続 skip 以外) を全 add/delete |
 | store mutation | なし |
-| 例外 / edge case | `type_override === 'skip'` (preview で永続設定) は bulk 対象外 (個別 checkbox も disabled)。bulk 対象 0 件時も「全選択」「全解除」は無害 (no-op)。§1.2 disabled 理由 tooltip「書き出し中は変更できません」 ([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済) |
+| 例外 / edge case | `type_override === 'skip'` (preview で永続設定) と `post_match: true` ([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) Phase 2) は bulk 対象外 (個別 checkbox も disabled)。bulk 対象 0 件時も「全選択」「全解除」は無害 (no-op)。§1.2 disabled 理由 tooltip「書き出し中は変更できません」 ([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済) |
 
 #### §2.5.15 listItem (per-match row)
 
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | composite `<li>` ([ExportScreen.tsx:691-776](../gui/src/screens/ExportScreen.tsx#L691))。checkbox / status mark / name / duration / per-match progress bar / per-match error / fallbackNotice |
-| 状態 | checkbox: `checked` (`isIncluded`) / `unchecked` (`isAdHocExcluded`) / `disabled` (`isPersistSkip \|\| running \|\| cancelling`)。statusMark: `pending(○) / running(●) / done(✓) / error(!) / skipped(—)`。per-match progress bar: `running \|\| completed \|\| done \|\| error` で表示 |
+| 状態 | checkbox: `checked` (`isIncluded`) / `unchecked` (`isAdHocExcluded`) / `disabled` (`isPersistSkip \|\| isPostMatch \|\| running \|\| cancelling`)。statusMark: `pending(○) / running(●) / done(✓) / error(!) / skipped(—)` (post_match 行は常に `—`)。per-match progress bar: `running \|\| completed \|\| done \|\| error` で表示。post_match 行は `listItemPostMatch` (dimmed) + `data-post-match="true"` + badge「試合後」([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) Phase 2) |
 | 遷移トリガー | checkbox `onChange` → `toggleMatchExclusion(matchIndex)` (`excludedIndexes` add/delete)。Tauri event `export-progress` payload `{match_index, percent, stage, message, fallback_from}` で `matchStates[index]` 更新 |
 | store mutation | なし |
-| 例外 / edge case | duration 表示は `m.edited` がある場合 `effectiveEnd - effectiveStart` を `fmtMatchDuration` で再計算 (旧実装は CLI 初期値 `m.duration_display` 固定、preview 編集が反映されないバグの修正)。`s.error` は 120 文字で slice (UI が崩れないため)。`fallbackNotice` は GPU encoder fail で libx264 retry した試合に `role="status"` で表示 (エラーではない info、color: `var(--ae-accent)`)。checkbox tooltip で永続 skip (`preview 画面で skip 設定済 (変更不可)`) と通常選択 (`書き出し対象から除外/復帰`) を区別 |
+| 例外 / edge case | duration 表示は `m.edited` がある場合 `effectiveEnd - effectiveStart` を `fmtMatchDuration` で再計算 (旧実装は CLI 初期値 `m.duration_display` 固定、preview 編集が反映されないバグの修正)。`s.error` は 120 文字で slice (UI が崩れないため)。`fallbackNotice` は GPU encoder fail で libx264 retry した試合に `role="status"` で表示 (エラーではない info、color: `var(--ae-accent)`)。checkbox tooltip で永続 skip (`preview 画面で skip 設定済 (変更不可)`) / post_match (`試合後の映像のため書き出し対象外です`、[#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) Phase 2) / 通常選択 (`書き出し対象から除外/復帰`) を区別。post_match の機能的な export 除外は Phase 1 の `export.py` skip が正で、本行は表示・選択 UX のみ |
 
 #### §2.5.16 emptyNote
 

@@ -510,4 +510,15 @@ describe('#805 CompleteScreen post_match no-crash guard', () => {
     expect(screen.getByTestId('match-row-1')).toBeInTheDocument();
     expect(screen.getByTestId('match-row-2')).toBeInTheDocument();
   });
+
+  // #805 Phase 2: post_match rows are visually differentiated (badge + dimmed).
+  it('marks the post_match row with 試合後 badge and data attribute (Phase 2)', () => {
+    render(<CompleteScreen />);
+    const row = screen.getByTestId('match-row-2');
+    expect(row).toHaveAttribute('data-post-match', 'true');
+    expect(within(row).getByText('試合後')).toBeInTheDocument();
+    const normalRow = screen.getByTestId('match-row-1');
+    expect(normalRow).not.toHaveAttribute('data-post-match');
+    expect(within(normalRow).queryByText('試合後')).toBeNull();
+  });
 });
