@@ -918,14 +918,17 @@ export function ExportScreen() {
               // #805 Phase 2: post_match trailing は選択不可 (export.py 側の
               // 機能除外は Phase 1 済。行は skipped 扱いで表示のみ)。
               const isPostMatch = m.post_match === true;
-              const mark =
-                s.status === 'done'
+              // post_match は常に '—' (export.py が event を emit しない前提に
+              // 依存せず、迷子 event が来ても表示を上書きさせない、review P3-1)。
+              const mark = isPostMatch
+                ? '—'
+                : s.status === 'done'
                   ? '✓'
                   : s.status === 'running'
                     ? '●'
                     : s.status === 'error'
                       ? '!'
-                      : s.status === 'skipped' || isPostMatch
+                      : s.status === 'skipped'
                         ? '—'
                         : '○';
               const markClass =

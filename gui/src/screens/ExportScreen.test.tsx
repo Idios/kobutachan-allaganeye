@@ -1249,17 +1249,56 @@ describe('#805 ExportScreen post_match no-crash guard', () => {
       expect(within(normalRow).queryByText('試合後')).toBeNull();
     });
 
-    it('全選択 does not re-include post_match', async () => {
+    it('bulk toggle keeps post_match out of excludedIndexes (start_export payload)', async () => {
+      // Review P2-1: the checkbox for a post_match row is pinned unchecked by
+      // isPostMatch, so a rendered-state assertion cannot detect the bulk
+      // guard. Assert the start_export payload instead: after 全解除 the
+      // active match (1) enters excludedIndexes but the post_match match (2)
+      // must not (toggleSelectAll skips it).
+      invokeMock.mockImplementation((cmd: string) => {
+        if (cmd === 'start_export') {
+          return Promise.resolve({
+            success: 0,
+            failure: 0,
+            skipped: 2,
+            cancelled: false,
+          });
+        }
+        return Promise.resolve(undefined);
+      });
       const user = userEvent.setup();
       render(<ExportScreen />);
       await user.click(
         screen.getByRole('button', { name: 'deselect all matches' }),
       );
+      await user.click(screen.getByRole('button', { name: /書き出し開始/ }));
+      await waitFor(() => {
+        expect(
+          invokeMock.mock.calls.some((c) => c[0] === 'start_export'),
+        ).toBe(true);
+      });
+      const call = invokeMock.mock.calls.find((c) => c[0] === 'start_export');
+      const req = (call![1] as { req: { excludedIndexes: number[] } }).req;
+      expect(req.excludedIndexes).toContain(1);
+      expect(req.excludedIndexes).not.toContain(2);
+    });
+
+    it('全選択 keeps the post_match checkbox unchecked', async () => {
+      const user = userEvent.setup();
+      render(<ExportScreen />);
       await user.click(
         screen.getByRole('button', { name: 'select all matches' }),
       );
       expect(screen.getByLabelText('include match 1')).toBeChecked();
       expect(screen.getByLabelText('include match 2')).not.toBeChecked();
+    });
+
+    // Review P3-3: the Phase 2 UI states (dimmed row + disabled checkbox +
+    // badge) go through axe once so future markup changes stay violation-free
+    // (docs/a11y-policy.md per-screen axe 方針)。
+    it('has no axe violations with a post_match row (#805 Phase 2)', async () => {
+      const { container } = render(<ExportScreen />);
+      expect(await axe(container)).toHaveNoViolations();
     });
   });
 });

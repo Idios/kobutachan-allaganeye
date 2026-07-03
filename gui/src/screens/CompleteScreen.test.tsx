@@ -511,6 +511,13 @@ describe('#805 CompleteScreen post_match no-crash guard', () => {
     expect(screen.getByTestId('match-row-2')).toBeInTheDocument();
   });
 
+  // Review P3-3: run the Phase 2 UI states (dimmed row + badge) through axe
+  // once (docs/a11y-policy.md per-screen axe 方針)。
+  it('has no axe violations with a post_match row (#805 Phase 2)', async () => {
+    const { container } = render(<CompleteScreen />);
+    expect(await axe(container)).toHaveNoViolations();
+  });
+
   // #805 Phase 2: post_match rows are visually differentiated (badge + dimmed).
   it('marks the post_match row with 試合後 badge and data attribute (Phase 2)', () => {
     render(<CompleteScreen />);

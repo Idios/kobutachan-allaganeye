@@ -976,7 +976,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | --- | --- |
 | 種類 | display caption + button × 2 ([ExportScreen.tsx:662-689](../gui/src/screens/ExportScreen.tsx#L662)) |
 | 状態 | caption: `displayOnly` (`{N} ファイル`)。bulk button: `idle` / `disabled` (`running \|\| cancelling`) |
-| 遷移トリガー | `onClick` → `toggleSelectAll(true \| false)` → `excludedIndexes` から bulk 対象 (永続 skip 以外) を全 add/delete |
+| 遷移トリガー | `onClick` → `toggleSelectAll(true \| false)` → `excludedIndexes` から bulk 対象 (永続 skip / `post_match` 以外) を全 add/delete |
 | store mutation | なし |
 | 例外 / edge case | `type_override === 'skip'` (preview で永続設定) と `post_match: true` ([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) Phase 2) は bulk 対象外 (個別 checkbox も disabled)。bulk 対象 0 件時も「全選択」「全解除」は無害 (no-op)。§1.2 disabled 理由 tooltip「書き出し中は変更できません」 ([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済) |
 
