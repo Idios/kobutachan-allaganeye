@@ -5,7 +5,9 @@ docs/superpowers/specs/2026-05-29-presence-based-detection-engine-design.md).
 This module is ADDITIVE and NOT wired into the production detection path;
 it exists for the offline validation harness only.  The brightness-based
 ``detector.detect_match_boundaries`` remains the production detector until
-the Phase 3 cutover.
+the Phase 4 cutover (two-signal rearchitecture spec
+docs/superpowers/specs/2026-05-31-l3-detection-rearchitecture-two-signal-design.md
+section 8; supersedes the older "Phase 3 cutover" numbering).
 """
 
 from __future__ import annotations

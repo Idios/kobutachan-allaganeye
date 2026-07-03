@@ -15,7 +15,7 @@ probe 失敗の表現と縮退時の可視化が、L3 検出系の全 site で�
 
 1. **probe 失敗は UNKNOWN として表現**し、absent (False) への暗黙変換を型レベルで禁止する
 2. **UNKNOWN → ABSENT の変換は集約層のみが明示的に行い**、変換時の可視化 (warning 集計) を必須とする
-3. **全滅 (全 probe UNKNOWN) は fail-loud** (VideoProcessingError)
+3. **全滅 (全 probe UNKNOWN) は fail-loud** (VideoProcessingError)。適用 site は presence scan 集約層のみ (§5.2 の適用範囲明示を参照 — region 解決層は FULL_FRAME 縮退を維持する)
 4. 新 site は tri-state 結果型を使う限り silent 縮退を書けない (契約が構造的に防ぐ)
 
 ## 3. スコープ (Idios 確定 2026-07-03)
@@ -103,6 +103,7 @@ class ProbeFailurePolicy(Enum):
 - 集約層 (site 2/3/10/14) が UNKNOWN の扱いを決める:
   - 集計から除外 (present 率・consensus 票の分母に入れない — site 5 の `_majority_scorebar` が既に持つ挙動の規範化)
   - UNKNOWN 率を集計し、しきい値超過 (>50%) で warning、全滅 (100%) で `VideoProcessingError` (fail-loud)
+  - **全滅 fail-loud の適用は site 2 (`scan_presence`) のみ** (現行の全滅 raise 挙動の規範化)。site 3 (refine) は §5.4 どおり現行挙動維持 (UNKNOWN を absent 側に倒す + warning)、region 解決層 (site 9/10/14) は全滅時も **FULL_FRAME 縮退 + §5.3 warning で続行し fail-loud を適用しない** (detect 出力不変 — §6 item 3(b) の bit-exact 論拠の前提)
   - warning message に UNKNOWN 数 / 総 probe 数を必須で含める (R5 の部分故障集計 warning を契約に昇格)
 - **RAISE の現時点の消費者はゼロ** (現行 seam の呼び出し 2 箇所 = presence.py:180 / :237 はどちらも新設計で ISOLATE 化される)。将来の診断 harness / GT 突合用の speculative seam であり、実装時に消費者が現れなければ **ISOLATE のみで開始してよい** (enum は将来拡張として定義だけ残す)。
 
