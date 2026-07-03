@@ -1293,12 +1293,101 @@ describe('#805 ExportScreen post_match no-crash guard', () => {
       expect(screen.getByLabelText('include match 2')).not.toBeChecked();
     });
 
+    // Review P3-1: export.py never emits export-progress events for
+    // post_match rows, but the mark must not depend on that assumption.
+    // Simulate stray events targeting the post_match row and assert the
+    // '—' mark cannot be overwritten ('●' running / '✓' done).
+    it('post_match row keeps the — mark even when stray export-progress events arrive (P3-1)', async () => {
+      let progressHandler: ((e: unknown) => void) | null = null;
+      listenMock.mockImplementation(
+        async (_name: string, handler: (e: unknown) => void) => {
+          progressHandler = handler;
+          return () => undefined;
+        },
+      );
+      render(<ExportScreen />);
+      await waitFor(() => expect(progressHandler).not.toBeNull());
+      const row = screen.getByTestId('export-row-2');
+      expect(within(row).getByText('—')).toBeInTheDocument();
+      // Stray events for the post_match row (encoding then done), plus one
+      // for the normal row so we can deterministically wait for the
+      // re-render before asserting nothing changed on row 2.
+      progressHandler!({
+        payload: { match_index: 2, percent: 50, stage: 'encoding' },
+      });
+      progressHandler!({
+        payload: { match_index: 2, percent: 100, stage: 'done' },
+      });
+      progressHandler!({
+        payload: { match_index: 1, percent: 10, stage: 'encoding' },
+      });
+      await waitFor(() => {
+        expect(
+          within(screen.getByTestId('export-row-1')).getByText('●'),
+        ).toBeInTheDocument();
+      });
+      expect(within(row).getByText('—')).toBeInTheDocument();
+      expect(within(row).queryByText('●')).toBeNull();
+      expect(within(row).queryByText('✓')).toBeNull();
+    });
+
     // Review P3-3: the Phase 2 UI states (dimmed row + disabled checkbox +
     // badge) go through axe once so future markup changes stay violation-free
     // (docs/a11y-policy.md per-screen axe 方針)。
     it('has no axe violations with a post_match row (#805 Phase 2)', async () => {
       const { container } = render(<ExportScreen />);
       expect(await axe(container)).toHaveNoViolations();
+    });
+  });
+
+  // iterate-review Round 1 #6: an all-post_match metadata reaches
+  // countedMatches = 0 through a new path (previously only "all matches
+  // persist-skipped" could). Lock the CTA behavior to the same semantics as
+  // the pre-existing all-skip path: header counts 0, the start button stays
+  // enabled, and a run completes immediately with zero files (Python side
+  // reports everything skipped, failure = 0 → PROGRESS_COMPLETE).
+  describe('all matches post_match (countedMatches = 0)', () => {
+    beforeEach(() => {
+      const allPostMatch = {
+        ...metaWithPostMatch,
+        matches: metaWithPostMatch.matches.map((m) => ({
+          ...m,
+          output_file: undefined,
+          post_match: true as const,
+        })),
+      };
+      useMetadataStore.setState({
+        metadata: allPostMatch as never,
+        hasBackup: false,
+        filePath: '/tmp/meta.json',
+      });
+    });
+
+    it('counts 0 matches and completes with zero files when started', async () => {
+      invokeMock.mockImplementation((cmd: string) => {
+        if (cmd === 'start_export') {
+          return Promise.resolve({
+            success: 0,
+            failure: 0,
+            skipped: 2,
+            cancelled: false,
+          });
+        }
+        return Promise.resolve(undefined);
+      });
+      const user = userEvent.setup();
+      render(<ExportScreen />);
+      expect(screen.getByText('0 試合を書き出す')).toBeInTheDocument();
+      const start = screen.getByRole('button', { name: '書き出し開始' });
+      expect(start).toBeEnabled();
+      await user.click(start);
+      await waitFor(() => {
+        expect(screen.getByTestId('export-screen').dataset.phase).toBe(
+          'completed',
+        );
+      });
+      // Zero counted matches → "0 / 0 files", not the error phase.
+      expect(screen.getByText(/0 \/ 0 files/)).toBeInTheDocument();
     });
   });
 });
