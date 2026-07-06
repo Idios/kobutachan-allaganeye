@@ -43,7 +43,7 @@ def _first_localizable_vod() -> "tuple[Path, CaptureRegion] | None":
     for vod in _vtuber_vods():
         try:
             meta = probe_video(vod)
-            region = det._resolve_detect_region(vod, meta["duration"])
+            region, _reason = det._resolve_detect_region(vod, meta["duration"])
         except Exception:  # noqa: S112 - best-effort discovery; a bad VOD just skips
             continue
         if not region.is_full_frame():
@@ -65,7 +65,7 @@ def test_band_anchor_resolves_or_degrades_safely():
     vods = _vtuber_vods()
     for vod in vods:
         meta = probe_video(vod)
-        region = det._resolve_detect_region(vod, meta["duration"])
+        region, _reason = det._resolve_detect_region(vod, meta["duration"])
         assert isinstance(region, CaptureRegion)
         # 帯 ROI なら source="band"、縮退なら FULL_FRAME (source="fallback")
         assert region.source in ("band", "fallback")

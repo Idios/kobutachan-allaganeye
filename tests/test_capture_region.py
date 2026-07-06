@@ -665,7 +665,9 @@ class TestRegionTimelineSerialization:
     def test_to_dict_includes_fallback_reason_value(self):
         from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
 
-        d = RegionTimeline(coarse=FULL_FRAME, fallback_reason="consensus_miss").to_dict()
+        d = RegionTimeline(
+            coarse=FULL_FRAME, fallback_reason="consensus_miss"
+        ).to_dict()
         assert d["fallback_reason"] == "consensus_miss"
 
     def test_round_trip_with_segments(self):
