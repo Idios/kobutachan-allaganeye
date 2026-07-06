@@ -840,9 +840,10 @@ describe('DetectingScreen', () => {
     act(() => {
       fireEvent.keyDown(window, { key: 'Escape' });
     });
-    await waitFor(() => {
-      expect(useAppStateStore.getState().screen).toBe('drop');
-    });
+    // onBack is a synchronous zustand navigate('drop'); the focus guard
+    // above already serialized the listener attach, so assert synchronously
+    // to keep the "Escape transitions synchronously" contract tight.
+    expect(useAppStateStore.getState().screen).toBe('drop');
   });
 
   // #646 -- CLI が emit した phase=error event 経路でも同じ error UI

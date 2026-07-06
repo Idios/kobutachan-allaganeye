@@ -162,7 +162,7 @@ v0.3.0 リリース条件への追加: **Wave 1 の全 issue クローズ** (= P
 - 骨子: workers 32 / Pass 1 チャンク方式 / #576 記述 / GPU default auto / CLAUDE.md モジュール表・L2 リリース済み・L3 VTuber 保留 / scorebar-detection-design の #803/#797/#811 反映 / system-architecture・quickstart の #752/#761 反映 / versioning 3 箇所 / cli-spec detect・export 節 / developer-setup の BtbN LGPL 手順昇格 / gui-development CI 表 ほか
 - 分割可: 「CLI/コマンド仕様系」と「アーキテクチャ説明系」の 2 PR に分けてよい (issue は 1 本)
 - 規約: 修正時に SSoT 規約 (N3) を適用し、複製値はリンク化する
-- 突合 (PR #855 Round 1 検出): audit P2-25 の headline「6 doc 7 箇所」と同行の箇所列挙 (cli-spec x3 / video-processing x2 / benchmarks x1 / tuning-guide x2 = 4 doc 8 箇所) が不一致。W6 起票時に実箇所を数え直して headline と列挙を突合する
+- 突合 (PR #855 Round 1 検出): audit P2-25 の headline「6 doc 7 箇所」と同行の箇所列挙 (cli-spec x3 / video-processing x2 / benchmarks x1 / tuning-guide x2 = 4 doc 8 箇所) が不一致。W6 起票時に実箇所を数え直して headline と列挙を突合する。突合結果が headline と異なる場合は `docs/coding-conventions.md` §背景 の引用値 (「6 doc 7 箇所」) も同時更新する
 
 ## Wave 3 詳細 (issue 棚卸し + P3 batch)
 

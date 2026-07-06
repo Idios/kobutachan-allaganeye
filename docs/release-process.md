@@ -110,11 +110,11 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 
 ### v0.3.0 以降のレイヤー固有ゲート枠組み
 
-各レイヤー固有のチェックリストは本節以下に追加していく。各レイヤー特有の品質ゲートを当該リリース直前のレビューで確定する。
+各レイヤー固有のチェックリストは「v0.x.0 (L?) 固有項目」節として §レイヤーリリース受け入れゲート 配下に追加していく。各レイヤー特有の品質ゲートを当該リリース直前のレビューで確定する。
 
 | バージョン | レイヤー | 想定ゲート項目 |
 | --- | --- | --- |
-| v0.3.0 | L3 (new): 配信形式対応 + 性能改善 | VTuber baseline 検知 ground truth 一致、export 並列で encoder 出力 visual spot check、Portable ZIP 起動回帰 |
+| v0.3.0 | L3 (new): 配信形式対応 + 性能改善 | masked baseline 検知 ground truth 一致 + minimap 切抜き検証 (2026-07-06 rescope で VTuber 対応ゲートは v0.4.0 期へ後送)、export 並列で encoder 出力 visual spot check、Portable ZIP 起動回帰 |
 | v0.4.0 | L4 (former L3): メタデータ化 | キルログ OCR / 音声認識統合の精度ベンチ、metadata schema 拡張の互換性検証 |
 | v0.5.0 | L5 (former L4): 価値評価 | ローカル ML model 評価指標、サンプル動画群での評価分布 |
 | v0.6.0 | L6 (former L5): 自動編集 | クリップ生成成功率、投稿提案の妥当性レビュー |
