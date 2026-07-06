@@ -114,6 +114,7 @@ v0.3.0 リリース条件への追加: **Wave 1 の全 issue クローズ** (= P
 - 変更箇所: `docs/coding-conventions.md` (または適切な既存 doc — 追加前に `grep -n '^## '` で全 section を確認し重複回避、memory 教訓) / `docs/release-process.md`
 - 設計:
   - SSoT 規約: 「仕様値・定数・挙動説明の正は 1 doc (cli-spec / metadata-spec / 実装 docstring のいずれか) に置き、他 doc はリンク参照する。CLAUDE.md は索引として要約可だが数値を書く場合は出典リンク併記」を規約化。違反の代表事例 (workers 24 が 7 箇所複製) を背景として記載
+  - 実装時の一般化 (#818 / PR #855): 上記の正の置き場所は閉リスト (cli-spec / metadata-spec / 実装 docstring) から「対象領域の spec doc または実装」の開リストに一般化した (閉リスト厳守だと `docs/output-spec.md` 等の既存 SSoT が正から排除され矛盾するため)。規約本文は `docs/coding-conventions.md` §ドキュメント SSoT 規約が正
   - release-process のリリース前チェックに「監査 P1 (本 spec Wave 1) 全クローズ確認」を追記 (既存節との重複を grep 確認の上)
 - 検証: markdownlint
 
@@ -161,6 +162,7 @@ v0.3.0 リリース条件への追加: **Wave 1 の全 issue クローズ** (= P
 - 骨子: workers 32 / Pass 1 チャンク方式 / #576 記述 / GPU default auto / CLAUDE.md モジュール表・L2 リリース済み・L3 VTuber 保留 / scorebar-detection-design の #803/#797/#811 反映 / system-architecture・quickstart の #752/#761 反映 / versioning 3 箇所 / cli-spec detect・export 節 / developer-setup の BtbN LGPL 手順昇格 / gui-development CI 表 ほか
 - 分割可: 「CLI/コマンド仕様系」と「アーキテクチャ説明系」の 2 PR に分けてよい (issue は 1 本)
 - 規約: 修正時に SSoT 規約 (N3) を適用し、複製値はリンク化する
+- 突合 (PR #855 Round 1 検出): audit P2-25 の headline「6 doc 7 箇所」と同行の箇所列挙 (cli-spec x3 / video-processing x2 / benchmarks x1 / tuning-guide x2 = 4 doc 8 箇所) が不一致。W6 起票時に実箇所を数え直して headline と列挙を突合する。突合結果が headline と異なる場合は `docs/coding-conventions.md` §背景 の引用値 (「6 doc 7 箇所」) も同時更新する
 
 ## Wave 3 詳細 (issue 棚卸し + P3 batch)
 

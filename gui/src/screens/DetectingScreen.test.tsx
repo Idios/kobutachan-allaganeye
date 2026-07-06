@@ -829,9 +829,20 @@ describe('DetectingScreen', () => {
     await waitFor(() => {
       expect(screen.getByTestId('detecting-error')).toBeInTheDocument();
     });
+    // the keydown listener attaches in a mount effect (same flush as the
+    // autofocus effect); wait for the focus so the dispatch isn't racing
+    // the listener attach under full-suite parallel load (#813 R2 flake).
+    await waitFor(() => {
+      expect(document.activeElement).toBe(
+        screen.getByTestId('detecting-error-back'),
+      );
+    });
     act(() => {
       fireEvent.keyDown(window, { key: 'Escape' });
     });
+    // onBack is a synchronous zustand navigate('drop'); the focus guard
+    // above already serialized the listener attach, so assert synchronously
+    // to keep the "Escape transitions synchronously" contract tight.
     expect(useAppStateStore.getState().screen).toBe('drop');
   });
 
