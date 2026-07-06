@@ -34,11 +34,13 @@ from allaganeye.exceptions import (
 )
 from allaganeye.metadata_types import (
     BrightnessSamples,
+    CaptureRegions,
     Match,
     Metadata,
     MetadataWarning,
     SystemInfo,
 )
+from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
 from allaganeye.video.detector import (
     DetectionStats,
     MatchBoundary,
@@ -165,6 +167,9 @@ def run_split(
                 # cache-hit: resolved path は当該 boundaries を生成した検出の
                 # 記録値 (cache top-level) を引き継ぐ。
                 masked_fallback_used=_read_cached_masked_fallback(cache_path),
+                capture_regions=cast(
+                    "CaptureRegions | None", _read_cached_capture_regions(cache_path)
+                ),
                 quiet=quiet,
             )
             # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
@@ -227,6 +232,13 @@ def run_split(
         nonlocal masked_fallback_used
         masked_fallback_used = True
 
+    # #810 -- 最終的に有効だった capture region を捕捉して cache / metadata へ。
+    captured_region: dict | None = None
+
+    def _on_region(timeline: RegionTimeline) -> None:
+        nonlocal captured_region
+        captured_region = timeline.to_dict()
+
     boundaries = _run_detection(
         video_path,
         metadata,
@@ -239,6 +251,7 @@ def run_split(
         gpu_vendor=gpu_vendor,
         brightness_callback=_on_brightness,
         masked_fallback_callback=_on_masked_fallback,
+        region_callback=_on_region,
     )
 
     if not boundaries:
@@ -258,6 +271,8 @@ def run_split(
     # Display pipeline statistics (verbose only)
     if verbose and show and detect_stats is not None:
         _print_detection_stats(detect_stats)
+        if captured_region is not None:
+            typer.echo(f"  Region: {_format_region_token(captured_region)}")
 
     # Display detection results
     if show:
@@ -277,6 +292,7 @@ def run_split(
         config,
         boundaries,
         masked_fallback_used=masked_fallback_used,
+        capture_regions=captured_region,
     )
 
     # Step 3: Split (unless dry-run)
@@ -321,6 +337,7 @@ def run_split(
         # post_match_trailing_dropped emission was removed; the non-destructive
         # post_match flag on the Match now records a post-match trailing segment.
         warnings=build_warnings(),
+        capture_regions=cast("CaptureRegions | None", captured_region),
         quiet=quiet,
     )
     # #805 段階2: MP4 化したのは active のみ (post_match は除外)。verbose の
@@ -558,6 +575,25 @@ def _display_gaps(gaps: list[Gap]) -> None:
         )
 
 
+def _format_region_token(regions: dict | None) -> str:
+    """capture region の verbose 1 行表示 (#810)。縮退を silent にしない。"""
+    if not isinstance(regions, dict):
+        return "unknown"
+    coarse = regions.get("coarse")
+    if not isinstance(coarse, dict):
+        return "unknown"
+    source = coarse.get("source", "?")
+    if source == "fallback":
+        label = "full_frame"
+    else:
+        label = (
+            f"{source}({coarse.get('x', 0):.2f},{coarse.get('y', 0):.2f},"
+            f"{coarse.get('w', 0):.2f},{coarse.get('h', 0):.2f})"
+        )
+    reason = regions.get("fallback_reason")
+    return f"{label}, fallback={reason}" if reason else label
+
+
 def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
     """Echo the cached run's detection parameters for verbose + cache-hit (#380).
 
@@ -619,7 +655,8 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
         f"vtuber={'on' if cached_vtuber else 'off'}, "
         f"masked={'on' if cached_masked else 'off'}, "
         f"keep_trailing={'on' if cached_keep_trailing else 'off'}, "
-        f"masked_fallback={'on' if cached_fallback else 'off'}"
+        f"masked_fallback={'on' if cached_fallback else 'off'}, "
+        f"region={_format_region_token(data.get('capture_regions'))}"
     )
 
 
@@ -832,6 +869,7 @@ def _run_detection(
     progress_emitter: ProgressEmitter | None = None,
     brightness_callback: Callable[[dict[float, float]], None] | None = None,
     masked_fallback_callback: Callable[[], None] | None = None,
+    region_callback: Callable[[RegionTimeline], None] | None = None,
 ) -> list[MatchBoundary]:
     """Run detection with progress bars for each phase (#328, #329, #331).
 
@@ -866,6 +904,7 @@ def _run_detection(
         "stats": stats,
         "brightness_callback": brightness_callback,
         "masked_fallback_callback": masked_fallback_callback,
+        "region_callback": region_callback,
         # #805: opt-out flag. keep_trailing skips the #797 post-match trailing
         # flagging entirely so a trailing no-scorebar segment is left unflagged
         # (default False = bit-exact).
@@ -1332,6 +1371,7 @@ def _split_and_write_metadata(
     brightness_samples: BrightnessSamples | None = None,
     masked_fallback_used: bool = False,
     warnings: list[MetadataWarning] | None = None,
+    capture_regions: CaptureRegions | None = None,
     quiet: bool = False,
 ) -> None:
     """Split video and write metadata.json (#591: system_info required).
@@ -1400,6 +1440,7 @@ def _split_and_write_metadata(
         brightness_samples=brightness_samples,
         masked_fallback_used=masked_fallback_used,
         warnings=warnings,
+        capture_regions=capture_regions,
     )
     metadata_path = config.output_dir / "metadata.json"
     write_metadata_atomic(metadata_path, result)
@@ -1428,8 +1469,9 @@ def _build_metadata_payload(
     brightness_samples: BrightnessSamples | None = None,
     masked_fallback_used: bool = False,
     warnings: list[MetadataWarning] | None = None,
+    capture_regions: CaptureRegions | None = None,
 ) -> Metadata:
-    """Build the ``metadata.json`` payload dict (schema v1, #463 / #569 / #586 / #591).
+    """Build the ``metadata.json`` payload dict (schema v1, #463 / #569 / #586 / #591 / #810).
 
     Kept private to this module; ``commands.detect`` builds a variant
     (no ``output_files``) via its own helper.
@@ -1555,6 +1597,10 @@ def _build_metadata_payload(
     }
     if brightness_samples is not None:
         payload["brightness_samples"] = brightness_samples
+    # #810 -- capture region timeline。None (pre-#810 cache hit で領域未知の
+    # 経路 / callback 未発火) では key 自体を省略する (brightness_samples と同型)。
+    if capture_regions is not None:
+        payload["capture_regions"] = capture_regions
     return payload
 
 
@@ -1862,6 +1908,7 @@ def _save_cache(
     boundaries: list[MatchBoundary],
     *,
     masked_fallback_used: bool = False,
+    capture_regions: dict | None = None,
 ) -> None:
     """Save detection results to cache file."""
     resolved = video_path.resolve()
@@ -1896,6 +1943,10 @@ def _save_cache(
         # 動画の cache 再利用は request flag の一致で正しく機能させ、provenance
         # は表示/metadata 引き継ぎ用に保持する (#821)。
         "masked_fallback_used": masked_fallback_used,
+        # #810: 解決済み capture region timeline (to_dict 形式)。key (params) では
+        # なく top-level (masked_fallback_used と同型): 出力 provenance であり
+        # cache 一致判定には関与しない。
+        "capture_regions": capture_regions,
         "boundaries": boundaries,
     }
     try:
@@ -1918,6 +1969,29 @@ def _read_cached_masked_fallback(cache_path: Path) -> bool:
     except (OSError, json.JSONDecodeError):
         return False
     return bool(data.get("masked_fallback_used", False))
+
+
+def _read_cached_capture_regions(cache_path: Path) -> dict | None:
+    """cache-hit 経路用: cache に記録された capture region timeline を読む (#810)。
+
+    pre-#810 legacy cache (field なし / None) は、cache 記録の params.vtuber ==
+    False かつ masked_fallback_used == False なら標準 path 確定 (領域は決定的に
+    FULL_FRAME) なので合成して返す。vtuber / masked の legacy cache は領域が
+    未知のため None (metadata では field 省略 = 領域不明を偽装しない)。
+    cache が読めないときも None。`_load_cache` の hit 判定とは独立に読む
+    (`_read_cached_masked_fallback` と同型)。
+    """
+    try:
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    cached = data.get("capture_regions")
+    if isinstance(cached, dict):
+        return cached
+    params = data.get("params", {})
+    if not params.get("vtuber", False) and not data.get("masked_fallback_used", False):
+        return RegionTimeline(coarse=FULL_FRAME).to_dict()
+    return None
 
 
 def _load_cache(

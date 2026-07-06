@@ -60,6 +60,18 @@ def _build_payload(tmp_path: Path) -> Metadata:
         output_files=output_files,
         gaps=[],
         system_info=system_info,
+        capture_regions={
+            "coarse": {
+                "x": 0.0,
+                "y": 0.0,
+                "w": 1.0,
+                "h": 1.0,
+                "confidence": 1.0,
+                "source": "fallback",
+            },
+            "segments": [],
+            "fallback_reason": None,
+        },
     )
 
 

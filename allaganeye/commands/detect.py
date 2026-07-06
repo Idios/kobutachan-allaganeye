@@ -20,6 +20,8 @@ from pathlib import Path
 
 import typer
 
+from typing import cast
+
 from allaganeye.commands.split_matches import (
     _audio_status_str,
     _auto_sample_interval,
@@ -31,9 +33,11 @@ from allaganeye.commands.split_matches import (
     _emit_total_time,
     _find_gaps,
     _format_duration,
+    _format_region_token,
     _iso_utc_now,
     _load_cache,
     _partition_post_match,
+    _read_cached_capture_regions,
     _read_cached_masked_fallback,
     _print_environment_header,
     _print_detection_stats,
@@ -49,6 +53,8 @@ from allaganeye.detection.metadata_writer import write_metadata_atomic
 from allaganeye.detection.progress_emitter import ProgressEmitter
 from allaganeye.detection.warnings import build_warnings
 from allaganeye.exceptions import DetectionError
+from allaganeye.metadata_types import CaptureRegions
+from allaganeye.video.capture_region import RegionTimeline
 from allaganeye.video.detector import DetectionStats
 from allaganeye.video.probe import probe_video
 
@@ -131,6 +137,9 @@ def run_detect(
     # #821 -- resolved masked fallback。cache-hit は cache 記録値を引き継ぎ、
     # cache-miss は detection callback で捕捉する。
     masked_fallback_used = False
+    # #810 -- capture region timeline。cache-hit は cache 記録値を引き継ぎ、
+    # cache-miss は detection callback で捕捉する。
+    captured_region: dict | None = None
     use_gpu = False
     gpu_vendor: str | None = None
     available_vendors: list[str] = []
@@ -138,6 +147,7 @@ def run_detect(
         boundaries = _load_cache(cache_path, video_path, effective_interval, config)
         if boundaries is not None:
             masked_fallback_used = _read_cached_masked_fallback(cache_path)
+            captured_region = _read_cached_capture_regions(cache_path)
             if show and verbose:
                 _display_cache_hit_params(cache_path, config)
             if show:
@@ -188,6 +198,10 @@ def run_detect(
             nonlocal masked_fallback_used
             masked_fallback_used = True
 
+        def _on_region(timeline: RegionTimeline) -> None:
+            nonlocal captured_region
+            captured_region = timeline.to_dict()
+
         boundaries = _run_detection(
             video_path,
             metadata,
@@ -201,6 +215,7 @@ def run_detect(
             progress_emitter=progress_emitter,
             brightness_callback=on_brightness,
             masked_fallback_callback=_on_masked_fallback,
+            region_callback=_on_region,
         )
 
         if not boundaries:
@@ -219,6 +234,8 @@ def run_detect(
 
         if verbose and show and detect_stats is not None:
             _print_detection_stats(detect_stats)
+            if captured_region is not None:
+                typer.echo(f"  Region: {_format_region_token(captured_region)}")
 
         if show:
             _display_results(boundaries, metadata, video_path, verbose)
@@ -231,6 +248,7 @@ def run_detect(
             config,
             boundaries,
             masked_fallback_used=masked_fallback_used,
+            capture_regions=captured_region,
         )
 
     gaps = _find_gaps(boundaries, metadata["duration"], min_gap=300.0)
@@ -309,6 +327,7 @@ def run_detect(
         # post_match segment は post_match_boundaries 経由で output_file 無しの
         # Match として書かれる (`_split_and_write_metadata` と同じ partition)。
         warnings=build_warnings(),
+        capture_regions=cast("CaptureRegions | None", captured_region),
     )
     metadata_path = config.output_dir / "metadata.json"
     write_metadata_atomic(metadata_path, payload)
