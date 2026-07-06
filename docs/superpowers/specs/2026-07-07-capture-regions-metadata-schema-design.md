@@ -147,6 +147,7 @@ Pass 1 領域輝度適応 (#809) / scorebar ROI 適応 (#480) / minimap 切抜�
 | cache-hit の扱い | **cache に保存 + 引継** (masked_fallback_used 同型)。legacy cache は標準 path 確定時のみ FULL_FRAME 合成 |
 | Rust write 検証の隙間 | **別 issue 起票** (optional field 全体の write-side 検証硬化。起票文面は PR 後に提示) |
 | design 全体 | **承認** (2026-07-07 AskUserQuestion) |
+| preserve 値の検証 | **in-PR sanitize 硬化** (codex adversarial-review F1、2026-07-07 AskUserQuestion で spec の defer 判断を更新)。cache 二重 read (F2) は別 issue |
 
 ## 12. 参照
 
