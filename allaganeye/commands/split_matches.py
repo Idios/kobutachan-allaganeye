@@ -654,6 +654,9 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
     # resolved path (top-level、key 非対象)。auto-fallback 時は masked=off でも
     # masked_fallback=on になる (#821)。
     cached_fallback = bool(data.get("masked_fallback_used", False))
+    # region も他 token 同様 raw cache 記録値を正として表示する (#810)。legacy
+    # cache では metadata.json 側が FULL_FRAME を合成しても表示は unknown の
+    # まま (「cache に何が記録されているか」の診断表示であり意図的な差)。
 
     typer.echo(header)
     typer.echo(
