@@ -107,6 +107,34 @@ export const BrightnessSamplesSchema = z.object({
 });
 
 /**
+ * #810 — capture-region timeline resolved by detection. `coarse` is the
+ * region Pass 1 actually measured brightness on (FULL_FRAME on standard
+ * OBS runs; the scorebar band ROI on --vtuber runs; the mask-free game
+ * rectangle when the masked fallback produced the result). `source` and
+ * `fallback_reason` are free strings — readers must accept unknown
+ * values (forward compat, same philosophy as warning codes).
+ */
+export const CaptureRegionSchema = z.object({
+  x: z.number().min(0).max(1),
+  y: z.number().min(0).max(1),
+  w: z.number().min(0).max(1),
+  h: z.number().min(0).max(1),
+  confidence: z.number().min(0).max(1),
+  source: z.string().min(1),
+});
+
+export const RegionSegmentSchema = z.object({
+  time_range: z.tuple([z.number().min(0), z.number().min(0)]),
+  region: CaptureRegionSchema,
+});
+
+export const CaptureRegionsSchema = z.object({
+  coarse: CaptureRegionSchema,
+  segments: z.array(RegionSegmentSchema),
+  fallback_reason: z.string().nullable(),
+});
+
+/**
  * #465 review: default frame rate when ``source_fps`` is missing. Pre-#465
  * legacy metadata.json files don't include the field, so we keep a
  * conservative 60fps assumption (the most common OBS recording cadence).
@@ -155,5 +183,12 @@ export const MetadataSchema = z
      * complete screen falls back to a sample curve when missing.
      */
     brightness_samples: BrightnessSamplesSchema.optional(),
+    /**
+     * #810 -- capture-region timeline. Optional because pre-#810
+     * metadata.json (and cache hits from pre-#810 vtuber/masked caches)
+     * don't carry it. GUI has no consumer yet; the field round-trips
+     * through load -> apply unchanged.
+     */
+    capture_regions: CaptureRegionsSchema.optional(),
   })
   .passthrough();

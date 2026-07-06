@@ -231,3 +231,114 @@ def test_post_match_trailing_dropped_warning_validates():
     }
     sample["warnings"] = [entry]
     Draft202012Validator(schema).validate(sample)
+
+
+def _capture_regions_sample() -> dict:
+    return {
+        "coarse": {
+            "x": 0.0,
+            "y": 0.0,
+            "w": 1.0,
+            "h": 1.0,
+            "confidence": 1.0,
+            "source": "fallback",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+
+
+def test_capture_regions_valid_sample_passes():
+    # #810: OBS 標準 run の形 (coarse=FULL_FRAME / segments 空 / 縮退なし)
+    schema = _load_schema()
+    sample = _valid_sample()
+    sample["capture_regions"] = _capture_regions_sample()
+    Draft202012Validator(schema).validate(sample)
+
+
+def test_capture_regions_omitted_accepted():
+    # pre-#810 metadata.json は field 欠落 = valid (後方互換)
+    schema = _load_schema()
+    sample = _valid_sample()
+    assert "capture_regions" not in sample
+    Draft202012Validator(schema).validate(sample)
+
+
+def test_capture_regions_band_with_fallback_reason_passes():
+    # --vtuber run: band ROI + 縮退 provenance の両形
+    schema = _load_schema()
+    sample = _valid_sample()
+    regions = _capture_regions_sample()
+    regions["coarse"] = {
+        "x": 0.1,
+        "y": 0.0,
+        "w": 0.76,
+        "h": 0.042,
+        "confidence": 0.9,
+        "source": "band",
+    }
+    sample["capture_regions"] = regions
+    Draft202012Validator(schema).validate(sample)
+    # 縮退形: coarse=FULL_FRAME + fallback_reason 文字列
+    regions2 = _capture_regions_sample()
+    regions2["fallback_reason"] = "consensus_miss"
+    sample["capture_regions"] = regions2
+    Draft202012Validator(schema).validate(sample)
+
+
+def test_capture_regions_segments_entry_passes():
+    schema = _load_schema()
+    sample = _valid_sample()
+    regions = _capture_regions_sample()
+    regions["segments"] = [
+        {
+            "time_range": [60.0, 1200.0],
+            "region": {
+                "x": 0.1,
+                "y": 0.05,
+                "w": 0.8,
+                "h": 0.7,
+                "confidence": 0.8,
+                "source": "tierB",
+            },
+        }
+    ]
+    sample["capture_regions"] = regions
+    Draft202012Validator(schema).validate(sample)
+
+
+def test_capture_regions_coordinate_out_of_range_rejected():
+    schema = _load_schema()
+    sample = _valid_sample()
+    regions = _capture_regions_sample()
+    regions["coarse"]["x"] = 1.5
+    sample["capture_regions"] = regions
+    assert not Draft202012Validator(schema).is_valid(sample)
+
+
+def test_capture_regions_empty_source_rejected():
+    schema = _load_schema()
+    sample = _valid_sample()
+    regions = _capture_regions_sample()
+    regions["coarse"]["source"] = ""
+    sample["capture_regions"] = regions
+    assert not Draft202012Validator(schema).is_valid(sample)
+
+
+def test_capture_regions_missing_fallback_reason_rejected():
+    # writer 契約: fallback_reason は required nullable (常に明示 emit)
+    schema = _load_schema()
+    sample = _valid_sample()
+    regions = _capture_regions_sample()
+    del regions["fallback_reason"]
+    sample["capture_regions"] = regions
+    assert not Draft202012Validator(schema).is_valid(sample)
+
+
+def test_capture_regions_unknown_field_rejected():
+    schema = _load_schema()
+    sample = _valid_sample()
+    regions = _capture_regions_sample()
+    regions["future_field"] = 1
+    sample["capture_regions"] = regions
+    assert not Draft202012Validator(schema).is_valid(sample)

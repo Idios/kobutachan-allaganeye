@@ -83,6 +83,9 @@
     },
     "brightness_samples": {
       "$ref": "#/$defs/BrightnessSamples"
+    },
+    "capture_regions": {
+      "$ref": "#/$defs/CaptureRegions"
     }
   },
   "$defs": {
@@ -332,6 +335,64 @@
             "minimum": 0,
             "maximum": 255
           }
+        }
+      }
+    },
+    "CaptureRegion": {
+      "title": "CaptureRegion",
+      "description": "Game capture rectangle in normalized [0,1] frame coordinates (#810). Serialized form of allaganeye/video/capture_region.py::CaptureRegion (to_dict / from_dict).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "w", "h", "confidence", "source"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "w": { "type": "number", "minimum": 0, "maximum": 1 },
+        "h": { "type": "number", "minimum": 0, "maximum": 1 },
+        "confidence": {
+          "description": "Detector confidence in [0,1].",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "source": {
+          "description": "Detector that produced the region. Documented values: \"fallback\" (FULL_FRAME), \"band\" (scorebar band ROI), \"tierA\" (game rectangle), \"tierB\" (future per-segment precise). Free string: readers must accept unknown values (forward compat, same philosophy as warning codes).",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "RegionSegment": {
+      "title": "RegionSegment",
+      "description": "Per-segment precise region entry (Tier B; consumed by #480/#481). time_range is [t0, t1] in seconds.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["time_range", "region"],
+      "properties": {
+        "time_range": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0 },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "region": { "$ref": "#/$defs/CaptureRegion" }
+      }
+    },
+    "CaptureRegions": {
+      "title": "CaptureRegions",
+      "description": "Capture-region timeline resolved by detection (#810; serialized RegionTimeline). `coarse` is the region actually used for Pass 1 brightness measurement: FULL_FRAME on standard OBS runs, the scorebar band ROI (source=\"band\", NOT the full game rectangle) on --vtuber runs, and the mask-free game rectangle (source=\"tierA\") when the masked fallback produced the result. `segments` is always [] until Tier B per-segment detection lands (#480). `fallback_reason` records band-anchor degradation on --vtuber runs (documented values: \"anchor_error\" = Stage 0 exception, \"consensus_miss\" = no band consensus); null = no degradation. Optional at the root: pre-#810 metadata.json doesn't carry it; cache hits from pre-#810 vtuber/masked caches omit it (region unknown).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coarse", "segments", "fallback_reason"],
+      "properties": {
+        "coarse": { "$ref": "#/$defs/CaptureRegion" },
+        "segments": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RegionSegment" }
+        },
+        "fallback_reason": {
+          "type": ["string", "null"],
+          "description": "Band-anchor degradation provenance. Free string (readers accept unknown values); null = no degradation."
         }
       }
     }

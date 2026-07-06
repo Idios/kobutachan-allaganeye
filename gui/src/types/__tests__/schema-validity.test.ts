@@ -149,4 +149,28 @@ describe('JSON Schema validity (#612)', () => {
     ];
     expect(validate(sample)).toBe(true);
   });
+
+  it('accepts a capture_regions with FULL_FRAME coarse (OBS standard run, #810)', () => {
+    const ajv = makeAjv();
+    const validate = ajv.compile(schema);
+    const sample = validSample();
+    sample.capture_regions = {
+      coarse: { x: 0, y: 0, w: 1, h: 1, confidence: 1, source: 'fallback' },
+      segments: [],
+      fallback_reason: null,
+    };
+    expect(validate(sample)).toBe(true);
+  });
+
+  it('rejects a capture_regions where coarse.x is out of [0,1] range (#810)', () => {
+    const ajv = makeAjv();
+    const validate = ajv.compile(schema);
+    const sample = validSample();
+    sample.capture_regions = {
+      coarse: { x: 1.5, y: 0, w: 1, h: 1, confidence: 1, source: 'fallback' },
+      segments: [],
+      fallback_reason: null,
+    };
+    expect(validate(sample)).toBe(false);
+  });
 });
