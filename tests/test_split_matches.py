@@ -1529,7 +1529,7 @@ class TestCaptureRegionsCache:
             capture_regions=None,
         )
         data = json.loads(cache_path.read_text(encoding="utf-8"))
-        # #810: None は key 省略 (null を書かない) — metadata.json と同じ省略 semantics
+        # #810: None は key 省略 (null を書かない) -- metadata.json と同じ省略 semantics
         assert "capture_regions" not in data
 
     def test_read_cached_capture_regions_returns_recorded(self, cache_video, tmp_path):

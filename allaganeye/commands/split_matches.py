@@ -1956,7 +1956,7 @@ def _save_cache(
         "masked_fallback_used": masked_fallback_used,
         "boundaries": boundaries,
     }
-    # #810: None は key 省略 (null を書かない) — metadata.json と同じ省略 semantics
+    # #810: None は key 省略 (null を書かない) -- metadata.json と同じ省略 semantics
     # (read 側は key 欠落を legacy と同じ合成ロジックで扱う)。
     if capture_regions is not None:
         cache_data["capture_regions"] = capture_regions
