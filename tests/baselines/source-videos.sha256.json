@@ -16,8 +16,8 @@
       "env": null
     }
   },
-  "total_files": 62,
-  "total_size_bytes": 694896244146,
+  "total_files": 48,
+  "total_size_bytes": 678726872998,
   "entries": [
     {
       "root": "allaganeye-samples",
@@ -347,104 +347,6 @@
       "category": "game-dvr-4k",
       "size_bytes": 3071413790,
       "sha256": "47ef33665b5fd2f521d3d61d2a6a5e2605689138dd177f58db0a50e05dde5108"
-    },
-    {
-      "root": "videos",
-      "path": "M1wa_zeromus/split_2024.02.14_arr/.detection_cache.json",
-      "category": "game-dvr-4k",
-      "size_bytes": 621,
-      "sha256": "99c37ec449bbccadaf9162db02d6e00affadd2f20d70d29853e60639ba26d71e"
-    },
-    {
-      "root": "videos",
-      "path": "M1wa_zeromus/split_2024.02.14_arr/match_001.mp4",
-      "category": "game-dvr-4k",
-      "size_bytes": 3285072257,
-      "sha256": "1c50852012a789581155971751ef5833ac04b61ab242dad5a4452404444fa048"
-    },
-    {
-      "root": "videos",
-      "path": "M1wa_zeromus/split_2024.02.14_arr/metadata.json",
-      "category": "game-dvr-4k",
-      "size_bytes": 1004,
-      "sha256": "e0bcd4e7f11781e6b5113f2c2a07e63f78d547d6de3133bab49540444fbd32a6"
-    },
-    {
-      "root": "videos",
-      "path": "M1wa_zeromus/split_2024.07.01_arr/.detection_cache.json",
-      "category": "game-dvr-4k",
-      "size_bytes": 621,
-      "sha256": "be16aec2f1b1052c4f9254f83cc56bd41c4aed765cb7f81e10ce42eff2070737"
-    },
-    {
-      "root": "videos",
-      "path": "M1wa_zeromus/split_2024.07.01_arr/match_001.mp4",
-      "category": "game-dvr-4k",
-      "size_bytes": 3072214797,
-      "sha256": "7a88e244fa8049fcbd5cc09887e09461aa5afb481b86c5046621a94834091954"
-    },
-    {
-      "root": "videos",
-      "path": "M1wa_zeromus/split_2024.07.01_arr/metadata.json",
-      "category": "game-dvr-4k",
-      "size_bytes": 1004,
-      "sha256": "1215ae624ea0bc49d2137eea992f0efdf4e2fccb5bead4ea45f751e0f0d3d677"
-    },
-    {
-      "root": "videos",
-      "path": "M1wa_zeromus/split_2026.02.22/match_001.mp4",
-      "category": "game-dvr-4k",
-      "size_bytes": 3559994375,
-      "sha256": "f14b47dac02446f5431dc2edbce0505dc4aa7ea871c05a2250a54cf5fee5ef43"
-    },
-    {
-      "root": "videos",
-      "path": "M1wa_zeromus/split_2026.02.22/metadata.json",
-      "category": "game-dvr-4k",
-      "size_bytes": 991,
-      "sha256": "5f7672036d6cca432ad87512d1522c3a7ddccc79c1ae95215d6195b0fcc5e6e8"
-    },
-    {
-      "root": "videos",
-      "path": "M1wa_zeromus/split_2026.03.24_2102/.detection_cache.json",
-      "category": "game-dvr-4k",
-      "size_bytes": 610,
-      "sha256": "ec84d8f846ea6c63d7a1acd5ad0446ac6be4749947ba328a6c524bf0623d14b0"
-    },
-    {
-      "root": "videos",
-      "path": "M1wa_zeromus/split_2026.03.24_2102/match_001.mp4",
-      "category": "game-dvr-4k",
-      "size_bytes": 3554234006,
-      "sha256": "201a9b56a76b1cd03cfa28976b3c137aa0be2a8b6b3fe067f48d4d0aa00e8eca"
-    },
-    {
-      "root": "videos",
-      "path": "M1wa_zeromus/split_2026.03.24_2102/metadata.json",
-      "category": "game-dvr-4k",
-      "size_bytes": 996,
-      "sha256": "2e59672acdfeca3fc808372cb778b3d566be09cd0b32729f063c83a49a85fa46"
-    },
-    {
-      "root": "videos",
-      "path": "M1wa_zeromus/split_2026.03.24_2118/.detection_cache.json",
-      "category": "game-dvr-4k",
-      "size_bytes": 604,
-      "sha256": "0b19c520b12715f0b4c93bcb038d8e4c54ff19e056714bfcf7a01f167bc18e78"
-    },
-    {
-      "root": "videos",
-      "path": "M1wa_zeromus/split_2026.03.24_2118/match_001.mp4",
-      "category": "game-dvr-4k",
-      "size_bytes": 2697848277,
-      "sha256": "4b0ee7bfa2bc75482bab64c9c76a2a72743c8f34f36155a9670919a80782686a"
-    },
-    {
-      "root": "videos",
-      "path": "M1wa_zeromus/split_2026.03.24_2118/metadata.json",
-      "category": "game-dvr-4k",
-      "size_bytes": 985,
-      "sha256": "ef534a8a7bb040428f24382328419bc53f96c45fa80687549860284d7ed140d7"
     },
     {
       "root": "videos",

@@ -118,7 +118,7 @@ primary 8/8 で ~30s。cumulative sample-dir tests (~90s) と合わせて音声�
 
 | 項目 | 決定 |
 | --- | --- |
-| 対象 | **検証依存セット (62 ファイル、~647 GiB)** = GT/baseline 台帳が参照する全動画 (下表)。台帳外の自録画・再生成可能な検知/分割出力・重複 zip は対象外 |
+| 対象 | **検証依存セット (48 ファイル、~632 GiB)** = GT/baseline 台帳が参照する全動画 (下表)。台帳外の自録画・再生成可能な検知/分割出力・重複 zip は対象外 |
 | 先 (第 2 系統) | `F:\allaganeye-backup\` (E: とは別物理ディスクの内蔵 HDD) へ robocopy cold copy。恒久策 (外付け HDD or クラウド cold storage) は後日追加予定 |
 | 周期 | 定期実行ではなく**新規 baseline/GT 動画の追加時に都度コピー + 台帳更新**。release gate 時に checksum 照合で健全性を確認 |
 | 台帳 | [`tests/baselines/source-videos.sha256.json`](../tests/baselines/source-videos.sha256.json) に全対象の SHA-256 + size を記録 (repo = GitHub 側にも残る)。ドライブ故障後の復元・再入手時の同一性検証に使う |
@@ -131,13 +131,13 @@ primary 8/8 で ~30s。cumulative sample-dir tests (~90s) と合わせて音声�
 | `masked-obs-source` | `$ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER/20250527-29/20250527-29/` | masked 検証用 OBS MKV 3 本 | masked GT 検証 (L3 Phase 2) |
 | `vtuber-vod` / `vtuber-mask` | `$ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER` 直下 | 配信者 VOD 5 本 (mp4) + mask PNG 3 枚。**Twitch archive 消滅後は再入手不能** | L3 位置独立検証 (multi-source) |
 | `vtuber-primary` | `E:\videos\gyawa_vatos\` | primary GT の source VOD (gyawa 提供 2026-05-18、7.5 GB) | `vtuber-primary-ground-truth.json` (±10s 突合) |
-| `game-dvr-4k` | `E:\videos\M1wa_zeromus\` | 4K Game DVR サンプル + 分割済み MP4 | scorebar V2 Rescue path (#522) の HUD スケール差異検証 |
+| `game-dvr-4k` | `E:\videos\M1wa_zeromus\` 直下 | 4K Game DVR source 5 本 (mp4)。`split_*/` 配下は allaganeye 出力 = 再生成可能なため対象外 | scorebar V2 Rescue path (#522) の HUD スケール差異検証 |
 | `audio-primary` | `E:\videos\2026-04-08 21-14-05.mkv` | `fanfare.npz` source (§音声統合テスト primary 録画) | 音声統合 baseline (`ALLAGANEYE_AUDIO_TEST_VIDEO`) |
 
 対象外 (バックアップ不要):
 
 - `$ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER/20250527-29.zip` (270 GB): 展開済み MKV と重複
-- `_masked_a_out/` / `_p2_vtuber_out/` 等の検知・分割出力 (~145 GB): source から再生成可能
+- `_masked_a_out/` / `_p2_vtuber_out/` / `M1wa_zeromus/split_*/` 等の検知・分割出力: source から再生成可能
 - 台帳外の OBS 録画 (`E:\royalstraightflesh\videos` の残り MKV / `E:\videos` の 2026-04 以降録画、~1.3 TB): 検証台帳が参照しないため本方針の対象外。保全価値は録画者判断
 
 ### コピー手順 (Idios 手動実行)
@@ -155,22 +155,25 @@ foreach ($d in '20260116','20260118','20260119','20260127') {
 robocopy 'E:\allaganeye-samples\20250527-29\20250527-29' "$B\allaganeye-samples\20250527-29\20250527-29" /E /DCOPY:DAT /R:2 /W:5
 # VTuber VOD + mask PNG (直下のみ、zip と出力 dir は含めない)
 robocopy 'E:\allaganeye-samples' "$B\allaganeye-samples" *.mp4 *.png /DCOPY:DAT /R:2 /W:5
-# E:\videos 配下 (gyawa primary / 4K Game DVR / audio primary)
+# E:\videos 配下 (gyawa primary / 4K Game DVR source / audio primary)
 robocopy 'E:\videos\gyawa_vatos' "$B\videos\gyawa_vatos" /E /DCOPY:DAT /R:2 /W:5
-robocopy 'E:\videos\M1wa_zeromus' "$B\videos\M1wa_zeromus" /E /DCOPY:DAT /R:2 /W:5
+# M1wa は直下の source mp4 のみ (split_* 出力 dir は対象外のため /E を付けない)
+robocopy 'E:\videos\M1wa_zeromus' "$B\videos\M1wa_zeromus" *.mp4 /DCOPY:DAT /R:2 /W:5
 robocopy 'E:\videos' "$B\videos" '2026-04-08 21-14-05.mkv' /DCOPY:DAT /R:2 /W:5
 ```
 
 ### checksum 照合手順 (コピー後・復元時・release gate)
 
-台帳とバックアップ側 (または復元先) を突合する。E: 側原本の照合は `$base` を各 root の原本 path に読み替える。
+台帳と突合する。バックアップ側は `$backupBase` 配下の root-key ミラー構造で、E: 側原本は台帳 `roots` の原本 path で解決する (`$backupBase = $null` に切り替える)。
 
 ```powershell
 $m = Get-Content 'tests\baselines\source-videos.sha256.json' -Raw | ConvertFrom-Json
-$base = 'F:\allaganeye-backup'
+$backupBase = 'F:\allaganeye-backup'   # E: 側原本を照合する場合は $null にする
 $fail = 0
 foreach ($e in $m.entries) {
-    $p = Join-Path (Join-Path $base $e.root) $e.path
+    if ($backupBase) { $rootPath = Join-Path $backupBase $e.root }
+    else { $rootPath = $m.roots.($e.root).path }
+    $p = Join-Path $rootPath $e.path
     if (-not (Test-Path -LiteralPath $p)) { $fail++; Write-Output "MISSING  $p"; continue }
     $h = (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLower()
     if ($h -ne $e.sha256) { $fail++; Write-Output "MISMATCH $p" }
@@ -178,7 +181,7 @@ foreach ($e in $m.entries) {
 Write-Output "verify done: fail=$fail / total=$($m.entries.Count)"
 ```
 
-`fail=0` で健全。全 62 ファイル (~647 GiB) の照合は HDD 読み出しで 1-2 時間かかるため、release gate では対象 category を絞った spot check (例: `obs-baseline-source` のみ) でもよい。
+`fail=0` で健全。全 48 ファイル (~632 GiB) の照合は HDD 読み出しで 1-2 時間かかるため、release gate では対象 category を絞った spot check (例: `obs-baseline-source` のみ) でもよい。
 
 ### 問題
 
