@@ -81,6 +81,7 @@ Conventional Commits 形式:
   - [`docs/cli-spec.md`](cli-spec.md) — CLI 構文・オプション・exit code
   - [`docs/metadata-spec.md`](metadata-spec.md) — `metadata.json` スキーマ (機械可読の正は `schemas/metadata.schema.json`。二層構造は同 doc §SSoT 二層構造 (#612) を参照)
   - 実装 docstring — spec doc の管轄外の内部定数・アルゴリズムパラメータ (例: worker 数上限、probe 間隔)
+- 管轄が重なる場合 (例: `--workers` の auto 既定値のように option の既定挙動が内部 cap に由来する場合) は**実装側を正**とし、spec doc は具体値を複製せず「auto (実装の cap に従う)」のような記述 + 実装への参照で書く
 - 他の doc から同じ値に言及する場合は、**値を複製せず正へのリンクで参照**する
 - `CLAUDE.md` は索引として**要約**してよい。数値を書く場合は出典リンクを併記する
 - 既存 doc に複製値を見つけたら、その doc の修正時に正 1 箇所へ寄せて他をリンク化する (W6 doc 一括再同期でも本規約を適用する)
