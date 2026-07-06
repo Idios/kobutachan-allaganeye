@@ -1505,6 +1505,33 @@ class TestCaptureRegionsCache:
         data = json.loads(cache_path.read_text(encoding="utf-8"))
         assert data["capture_regions"] == regions
 
+    def test_save_cache_omits_capture_regions_when_none(self, cache_video, tmp_path):
+        from allaganeye.commands.split_matches import _save_cache
+        import json
+
+        cache_path = tmp_path / ".detection_cache.json"
+        _save_cache(
+            cache_path,
+            cache_video,
+            {
+                "duration": 100.0,
+                "width": 1920,
+                "height": 1080,
+                "fps": 60.0,
+                "fps_num": 60,
+                "fps_den": 1,
+                "codec": "h264",
+                "audio_codec": "aac",
+            },
+            2.0,
+            SplitConfig(output_dir=tmp_path),
+            [{"start": 10.0, "end": 50.0, "type": "fl_match"}],
+            capture_regions=None,
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        # #810: None は key 省略 (null を書かない) — metadata.json と同じ省略 semantics
+        assert "capture_regions" not in data
+
     def test_read_cached_capture_regions_returns_recorded(self, cache_video, tmp_path):
         from allaganeye.commands.split_matches import _read_cached_capture_regions
 
@@ -5050,6 +5077,8 @@ def test_run_split_writes_capture_regions_when_callback_fires(
     payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
     assert payload["capture_regions"]["coarse"]["source"] == "fallback"
     assert payload["capture_regions"]["fallback_reason"] is None
+    assert payload["capture_regions"]["coarse"]["x"] == 0.0
+    assert payload["capture_regions"]["coarse"]["w"] == 1.0
 
 
 @patch(f"{MODULE}._run_detection")

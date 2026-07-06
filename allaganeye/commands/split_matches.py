@@ -1943,12 +1943,12 @@ def _save_cache(
         # 動画の cache 再利用は request flag の一致で正しく機能させ、provenance
         # は表示/metadata 引き継ぎ用に保持する (#821)。
         "masked_fallback_used": masked_fallback_used,
-        # #810: 解決済み capture region timeline (to_dict 形式)。key (params) では
-        # なく top-level (masked_fallback_used と同型): 出力 provenance であり
-        # cache 一致判定には関与しない。
-        "capture_regions": capture_regions,
         "boundaries": boundaries,
     }
+    # #810: None は key 省略 (null を書かない) — metadata.json と同じ省略 semantics
+    # (read 側は key 欠落を legacy と同じ合成ロジックで扱う)。
+    if capture_regions is not None:
+        cache_data["capture_regions"] = capture_regions
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_path.write_text(
