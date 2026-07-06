@@ -788,3 +788,68 @@ def test_run_split_from_metadata_does_not_false_fail_on_post_match_tail(tmp_path
         run_split_from_metadata(meta_path, config, quiet=True)
 
     mock_split.assert_called_once()
+
+
+# -- #810 capture_regions preserve through --from-metadata --
+
+
+def test_run_split_from_metadata_preserves_capture_regions(tmp_path):
+    """#810 -- --from-metadata 経路で元 metadata.json の capture_regions
+    がそのまま新 metadata に引き継がれる (brightness_samples #644 同パターン)。"""
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+
+    regions = {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    payload = _sample_metadata(str(source))
+    payload["capture_regions"] = regions
+    meta_path = _write_metadata(tmp_path, payload)
+    out_dir = tmp_path / "out"
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[out_dir / "match_001.mp4", out_dir / "match_002.mp4"],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    fresh = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert fresh["capture_regions"] == regions
+
+
+def test_run_split_from_metadata_omits_capture_regions_when_source_lacks(tmp_path):
+    """#810 -- pre-#810 metadata (field なし) からは新 metadata でも欠落
+    (合成しない。領域不明を偽装しない)。"""
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+
+    payload = _sample_metadata(str(source))
+    assert "capture_regions" not in payload
+    meta_path = _write_metadata(tmp_path, payload)
+    out_dir = tmp_path / "out"
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[out_dir / "match_001.mp4", out_dir / "match_002.mp4"],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    fresh = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert "capture_regions" not in fresh

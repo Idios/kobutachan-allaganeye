@@ -478,6 +478,16 @@ def run_split_from_metadata(
     # drop + 不正 field の strip)。
     preserve_warnings = sanitize_warnings(payload.get("warnings"))
 
+    # #810 -- preserve capture_regions across `--from-metadata`. 本ランは再検知
+    # しないため元 metadata の領域記録を引き継ぐ (#644 brightness_samples と
+    # 同じ preserve パターン。深い schema 検証は writer が行わない点も同前例)。
+    old_capture_regions = payload.get("capture_regions")
+    preserve_capture_regions: CaptureRegions | None = (
+        cast("CaptureRegions", old_capture_regions)
+        if isinstance(old_capture_regions, dict)
+        else None
+    )
+
     detection_params = payload.get("detection_params")
     if isinstance(detection_params, dict):
         effective_interval = float(
@@ -527,6 +537,7 @@ def run_split_from_metadata(
         ),
         # #805 段階1: 元 metadata の warnings を preserve (再検知しないため)。
         warnings=preserve_warnings,
+        capture_regions=preserve_capture_regions,
         quiet=quiet,
     )
     # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
