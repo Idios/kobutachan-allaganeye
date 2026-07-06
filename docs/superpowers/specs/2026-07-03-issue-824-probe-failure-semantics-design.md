@@ -80,15 +80,12 @@ class PresenceSample:
     time: float
     state: PresenceState          # 旧: present: bool
     confidence: float             # UNKNOWN のとき 0.0
-
-    @property
-    def present(self) -> bool:    # 移行用 (PRESENT のみ True)。Phase 4 以降に deprecate
-        return self.state is PresenceState.PRESENT
 ```
 
+- **移行用 `.present` property は提供しない** (review R2 Codex HIGH)。「PRESENT のみ True」の bool property は UNKNOWN → False の silent 変換 escape hatch となり、§2 item 1 (暗黙変換の型レベル禁止) / item 4 (新 site は構造的に silent 縮退を書けない) と自己矛盾する。既存の `.present` 消費者は 2 箇所のみ (`segment_presence` presence.py:73 / refine presence.py:243-251) で、どちらも §5.4 で explicit な state 比較への移行を規定する。UNKNOWN → ABSENT 側への折り畳みは集約層が **明示的な state 比較で行い、grep 可能にする**。
 - 「decode は成功したが localizer が miss」は**観測に基づく ABSENT** (真の不在判定) であり UNKNOWN ではない。site 4 は既にこの分離を実装しており (scorebar.py:38 docstring)、契約はこれを全 site の規範に昇格させるもの。
 - 低層 localizer (site 6) の `ScorebarLocalization | None` は「decode 済み frame に対する局在化結果」としては None のままでよいが、**decode 失敗情報を境界の外に運ぶ経路**を §5.4 site 6/10 で規定する。
-- **module 配置 (circular import 回避)**: `PresenceState` / `PresenceSample` / `ProbeFailurePolicy` は presence.py 所有にしない。presence.py は capture_region の `localize_from_rgb_bytes` を import しており (presence.py:20)、§5.4 site 6/10 で capture_region 側 (下位 module) が UNKNOWN を参照するため、presence 所有のままだと capture_region → presence の逆向き import で cycle になる (capture_region 内の detector import がすべて関数 local なのも、同じ cycle 制約の既存回避策)。実装 PR では両者から独立した中立 module (例: `allaganeye/video/probe_state.py`) に定義し、presence / capture_region / scorebar / detector がそこから import する。中立 module 案が実装時に過剰と判明した場合の代替 (sentinel object / `TYPE_CHECKING` + 文字列 annotation) の選択は実装 plan で確定する。
+- **module 配置 (circular import 回避)**: `PresenceState` / `PresenceSample` / `ProbeFailurePolicy` は presence.py 所有にしない。presence.py は capture_region の `localize_from_rgb_bytes` を import しており (presence.py:22)、§5.4 site 6/10 で capture_region 側 (下位 module) が UNKNOWN を参照するため、presence 所有のままだと capture_region → presence の逆向き import で cycle になる (capture_region 内の detector import がすべて関数 local なのも、同じ cycle 制約の既存回避策)。実装 PR では両者から独立した中立 module (例: `allaganeye/video/probe_state.py`) に定義し、presence / capture_region / scorebar / detector がそこから import する。中立 module 案が実装時に過剰と判明した場合の代替 (sentinel object / `TYPE_CHECKING` + 文字列 annotation) の選択は実装 plan で確定する。
 
 ### 5.2 縮退方針の明示 API (seam の一般化)
 
@@ -103,7 +100,7 @@ class ProbeFailurePolicy(Enum):
 - 単発 probe 関数 (site 1) は常に tri-state を返し、decode 例外を **caller に漏らさない** (UNKNOWN に写像し、写像した事実を debug log する)。
 - 集約層 (site 2/3/10/14) が UNKNOWN の扱いを決める:
   - 集計から除外 (present 率・consensus 票の分母に入れない — site 5 の `_majority_scorebar` が既に持つ挙動の規範化)
-  - UNKNOWN 率を集計し、しきい値超過 (>50%) で warning、全滅 (100%) で `VideoProcessingError` (fail-loud)
+  - UNKNOWN 数を集計し、部分故障 (UNKNOWN ≥ 1) で warning (§5.3 の log 階層と一致 — 現行 R5 実装 presence.py:201-210 の「failures ≥ 1 で warning」の規範化)、全滅 (100%) で `VideoProcessingError` (fail-loud)
   - **全滅 fail-loud の適用は site 2 (`scan_presence`) のみ** (現行の全滅 raise 挙動の規範化)。site 3 (refine) は §5.4 どおり現行挙動維持 (UNKNOWN を absent 側に倒す + warning)、region 解決層 (site 9/10/14) は全滅時も **FULL_FRAME 縮退 + §5.3 warning で続行し fail-loud を適用しない** (detect 出力不変 — §6 item 3(b) の bit-exact 論拠の前提)
   - warning message に UNKNOWN 数 / 総 probe 数を必須で含める (R5 の部分故障集計 warning を契約に昇格)
 - **RAISE の現時点の消費者はゼロ** (現行 seam の呼び出し 2 箇所 = presence.py:182 / :239 はどちらも新設計で ISOLATE 化される)。将来の診断 harness / GT 突合用の speculative seam であり、実装時に消費者が現れなければ **ISOLATE のみで開始してよい** (enum は将来拡張として定義だけ残す)。
@@ -123,10 +120,11 @@ class ProbeFailurePolicy(Enum):
 | --- | --- |
 | 1 `localize_present_at` | 戻り値を tri-state 化 (raw None → UNKNOWN / localizer miss → ABSENT)。`raise_on_probe_failure` param 削除 (呼び出し 2 箇所は集約層方針 §5.2 に移行) |
 | 2 `scan_presence` | per-probe try/except を「UNKNOWN 写像」に置換。全滅 fail-loud / 部分 warning は §5.2-5.3 の契約実装として維持 |
-| 3 refine (`detect_matches_by_presence`) | refine では **UNKNOWN probe は False (absent) を返して bracket を更新する** (= 現行 R5 挙動の維持、presence.py:243-251。skip / refine abort はしない。境界誤差は最大 1 refine stride)。「有効票にしない」は §5.2 の UNKNOWN 率集計 (分母除外) のみを指し、binary search の bracket 更新とは別軸。coarse 境界保持 (refine abort) への変更は行わない — §6 項 4 の「分類結果を変えない」前提を守る |
+| 2b `segment_presence` (presence.py:73) | scan_presence 出力の直接消費者 (旧 `.present` 直読み — §5.1 の property 不提供に伴い explicit な state 比較へ移行)。**UNKNOWN sample は present run を構成しない (ABSENT と同様に run を切る側に倒す = 現行挙動の維持)**。この折り畳みは集約層の明示変換 (§5.2) として行い、UNKNOWN の可視化は scan_presence 側の部分故障 warning が担う (segment_presence 自体は純粋関数のため log を持たない) |
+| 3 refine (`detect_matches_by_presence`) | refine では **UNKNOWN probe は False (absent) を返して bracket を更新する** (= 現行 R5 挙動の維持、presence.py:243-251。skip / refine abort はしない。境界誤差は最大 1 refine stride)。「有効票にしない」は §5.2 の UNKNOWN 集計 (分母除外) のみを指し、binary search の bracket 更新とは別軸。coarse 境界保持 (refine abort) への変更は行わない — §6 項 4 の「分類結果を変えない」前提を守る |
 | 4 `_localize_present_from_raw` | **semantics 変更なし**。表現形式の置換のみ (bool\|None → PresenceState。None → UNKNOWN / False → ABSENT / True → PRESENT) |
 | 5 `_probe_scorebar_context` | **with_localize (localize-present) 系のみ** tri-state 化。`scorebar_results` (bool\|None、OBS production 分類が消費) は**不変** — `_majority_scorebar` の None 分母除外 / classify の "unknown" 化 (scorebar.py:396) は既に契約相当の挙動であり触らない (review R1 P1-2 対応: OBS bit-exact 維持) |
-| 6 `localize_from_rgb_bytes` + 10 `detect_scorebar_band_region` | `localize_fn` の signature を 3 値に拡張: `Callable[[float], ScorebarLocalization \| None \| Literal[PresenceState.UNKNOWN]]` 相当 (None = decode 成功 + miss / UNKNOWN = decode 失敗)。UNKNOWN の enum は §5.1 の中立 module に配置し、capture_region → presence の import を作らない (circular import 回避)。decode 失敗判定は binding closure (site 9 内の `_localize_at`、detector.py:276) が raw None を見て UNKNOWN を返す形で境界を越えさせる。consensus 集計 (site 10) は UNKNOWN を票の分母から除外し、UNKNOWN 率を §5.2 のしきい値監視に乗せる |
+| 6 `localize_from_rgb_bytes` + 10 `detect_scorebar_band_region` | `localize_fn` の signature を 3 値に拡張: `Callable[[float], ScorebarLocalization \| None \| Literal[PresenceState.UNKNOWN]]` 相当 (None = decode 成功 + miss / UNKNOWN = decode 失敗)。UNKNOWN の enum は §5.1 の中立 module に配置し、capture_region → presence の import を作らない (circular import 回避)。decode 失敗判定は binding closure (site 9 内の `_localize_at`、detector.py:276) が raw None を見て UNKNOWN を返す形で境界を越えさせる。consensus 集計 (site 10) は UNKNOWN を票の分母から除外し、UNKNOWN 数を §5.2 の部分故障 warning 集計に乗せる |
 | 9 `_resolve_detect_region` | anchor 例外の catch → FULL_FRAME 縮退は維持 (`--vtuber` gate 内の設計済み縮退、detector.py:462)。warning 文言を §5.3 契約形式に揃える |
 | 14 `_resolve_masked_region` | per-frame decode None → UNKNOWN 集計 (silent drop 廃止)、例外 catch → FULL_FRAME 縮退は維持しつつ **§5.3 の warning を必須化** (現状 log ゼロ)。site 9 と同型の契約に揃える |
 
@@ -138,7 +136,7 @@ class ProbeFailurePolicy(Enum):
    - `test_resolve_detect_region_swallows_exceptions_to_full_frame` (test_detector.py:2724) / `test_resolve_detect_region_warns_on_consensus_miss_full_frame` (test_detector.py:2743) → 文言契約 (§5.3 表) に揃えて維持
    - `test_localize_from_rgb_bytes_none_passthrough_and_decode` (test_presence.py:339) → None passthrough 維持 (§5.4 site 6: 関数自体の None 契約は不変)
    - `test_borderline_pseudo_regions_capped_with_warning` (test_detector.py:1645) → 対象外 (OBS path、無変更)
-2. **新規契約テスト**: 「UNKNOWN が ABSENT に暗黙変換されない」型/分岐テスト、全滅 fail-loud、部分故障 warning 集計、UNKNOWN 率しきい値、site 14 の decode 失敗可視化 (silent drop 廃止の pin)、refine 中の連続 UNKNOWN (§5.4 site 3: bracket が absent 側に単調更新され refine abort しないことの pin)
+2. **新規契約テスト**: 「UNKNOWN が ABSENT に暗黙変換されない」型/分岐テスト (`.present` 相当の silent bool 化経路が存在しないことの pin を含む — §5.1)、全滅 fail-loud、部分故障 warning 集計 (UNKNOWN ≥ 1)、site 14 の decode 失敗可視化 (silent drop 廃止の pin)、refine 中の連続 UNKNOWN (§5.4 site 3: bracket が absent 側に単調更新され refine abort しないことの pin)
 3. **OBS bit-exact gate**: (a) presence 系は OBS production 経路に非配線 (presence.py docstring + detection-map §5.4)、(b) anchor は `--vtuber` gate 内 (detector.py:462)、masked region は masked fallback gate (`not vtuber and (masked or not blackout_times)`、detector.py:548) が OBS baseline では非発動 (baseline は必ず ≥1 blackout → `not blackout_times` = False、detector.py:544-547 コメント)、かつ site 14 の変更は warning 可視化のみで detect 出力不変、(c) site 5 は with_localize 系のみ変更し **OBS が消費する scorebar_results (bool\|None) は不変** — の 3 点で OBS baseline 5 本の detect 出力は bit-exact のはず。実装 PR で必ず実測する (実動画環境)。**注意 (b) の適用範囲**: 「baseline は必ず ≥1 blackout」は baseline 5 本の dataset 性質であり、§3 の通り**非 baseline の OBS 録画でも標準 Pass 1 が blackout ゼロの run では masked fallback gate が自動発動し、site 14 (+ site 5 の with_localize 系) が production 到達しうる**。この case の安全性は bit-exact gate (適用範囲 = baseline 5 本のみ) ではなく、「site 14 = warning 可視化のみで detect 出力不変 / site 5 = scorebar_results 不変」という (b) 後段・(c) の code 論拠で担保する — 実装 PR は localize 系変更を「OBS production 非到達」と誤読しないこと
 4. **実機検証**: masked/VTuber サンプル (`ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER`) での detect 回帰 + #822 の過分割サンプルでの挙動確認 (契約導入自体は分類結果を変えない想定の確認。§5.4 site 3 の「現行挙動維持」がその前提)
 
