@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,6 +22,48 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = PROJECT_ROOT / "schemas" / "cleanup-output.schema.json"
+
+
+def _resolve_bash() -> str | None:
+    """Return a bash executable that can run the project's shell scripts.
+
+    On Windows a bare ``bash`` on PATH usually resolves to the WSL launcher
+    (``...\\WindowsApps\\bash.exe``), which strips backslashes from Windows
+    paths and fails with exit 127 (#875). Production hooks run under Git Bash
+    on Windows, so prefer Git Bash (derived from git.exe's install root),
+    falling back to any non-WSL bash on PATH. Returns None when no usable
+    bash exists; callers skip with a reason instead of failing.
+    """
+    if sys.platform != "win32":
+        return shutil.which("bash")
+    candidates: list[Path] = []
+    git = shutil.which("git")
+    if git is not None:
+        # <root>/cmd/git.exe or <root>/bin/git.exe -> <root>/bin/bash.exe
+        root = Path(git).resolve().parent.parent
+        candidates += [root / "bin" / "bash.exe", root / "usr" / "bin" / "bash.exe"]
+    candidates += [
+        Path(r"C:\Program Files\Git\bin\bash.exe"),
+        Path(r"C:\Program Files (x86)\Git\bin\bash.exe"),
+    ]
+    for cand in candidates:
+        if cand.is_file():
+            return str(cand)
+    on_path = shutil.which("bash")
+    if on_path is not None and "windowsapps" not in on_path.lower():
+        return on_path
+    return None
+
+
+BASH = _resolve_bash()
+
+
+@pytest.fixture
+def bash_exe() -> str:
+    """Usable bash path; skips the test when none is available (#875)."""
+    if BASH is None:
+        pytest.skip("no usable bash found (Git Bash required on Windows, #875)")
+    return BASH
 
 
 @dataclass
@@ -191,7 +234,7 @@ def make_worktree_dir(tmp_repo: Path) -> Callable[..., Path]:
 
 
 @pytest.fixture
-def run_hook(tmp_repo: Path) -> Callable[..., HookResult]:
+def run_hook(tmp_repo: Path, bash_exe: str) -> Callable[..., HookResult]:
     """Invoke a hook bash script under tmp_repo with CLAUDE_PROJECT_DIR set.
 
     Args:
@@ -200,12 +243,15 @@ def run_hook(tmp_repo: Path) -> Callable[..., HookResult]:
 
     Returns: HookResult with stdout/stderr/exit_code and parsed NDJSON lines
     (any stdout line that successfully parses as a JSON object).
+
+    Paths are passed in forward-slash form (as_posix): identical to str() on
+    POSIX, and the form Git Bash accepts unambiguously on Windows (#875).
     """
 
     def _run(script: str, *args: str) -> HookResult:
-        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_repo)}
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": tmp_repo.as_posix()}
         proc = subprocess.run(
-            ["bash", str(tmp_repo / script), *args],
+            [bash_exe, (tmp_repo / script).as_posix(), *args],
             cwd=tmp_repo,
             env=env,
             capture_output=True,
