@@ -3221,9 +3221,12 @@ def test_masked_fallback_not_triggered_when_blackouts_present(monkeypatch):
     monkeypatch.setattr(det, "_scan_cpu", lambda *a, **k: results)
     monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **k: [])
     called = {}
-    monkeypatch.setattr(
-        det, "_detect_masked_fallback", lambda *a, **k: called.setdefault("hit", True)
-    )
+
+    def _record_and_none(*a, **k):
+        called["hit"] = True
+        return None
+
+    monkeypatch.setattr(det, "_detect_masked_fallback", _record_and_none)
     det.detect_match_boundaries(
         det.Path("x.mp4"), duration_hint=600.0, use_gpu=False, src_resolution=None
     )
