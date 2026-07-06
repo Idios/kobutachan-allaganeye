@@ -136,6 +136,8 @@ class PresenceMatch:
     end: float
 ```
 
+> 注 (2026-07-07 追記): 上記 docstring 引用中の「Phase 3 cutover」は当時の呼称の verbatim 記録。呼称は #824 spec ([`2026-07-03-issue-824-probe-failure-semantics-design.md` §3](../specs/2026-07-03-issue-824-probe-failure-semantics-design.md)) で再アーキ spec §8 の **Phase 4 cutover** に supersede 済み (presence.py の現 docstring も修正済み)。
+
 - [ ] **Step 4: テストを実行して通過を確認**
 
 Run: `python -m pytest tests/test_presence.py -v`
