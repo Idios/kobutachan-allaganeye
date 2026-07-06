@@ -139,7 +139,7 @@ def run_detect(
     masked_fallback_used = False
     # #810 -- capture region timeline。cache-hit は cache 記録値を引き継ぎ、
     # cache-miss は detection callback で捕捉する。
-    captured_region: dict | None = None
+    captured_region: CaptureRegions | None = None
     use_gpu = False
     gpu_vendor: str | None = None
     available_vendors: list[str] = []
@@ -200,7 +200,7 @@ def run_detect(
 
         def _on_region(timeline: RegionTimeline) -> None:
             nonlocal captured_region
-            captured_region = timeline.to_dict()
+            captured_region = cast("CaptureRegions", timeline.to_dict())
 
         boundaries = _run_detection(
             video_path,

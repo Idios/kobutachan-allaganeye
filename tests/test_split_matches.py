@@ -1468,22 +1468,28 @@ class TestCaptureRegionsCache:
         cache_path.write_text(json.dumps(data), encoding="utf-8")
 
     def test_save_cache_records_capture_regions(self, cache_video, tmp_path):
+        from typing import cast as _cast
+
         from allaganeye.commands.split_matches import _save_cache
+        from allaganeye.metadata_types import CaptureRegions
         import json
 
         cache_path = tmp_path / ".detection_cache.json"
-        regions = {
-            "coarse": {
-                "x": 0.0,
-                "y": 0.0,
-                "w": 1.0,
-                "h": 1.0,
-                "confidence": 1.0,
-                "source": "fallback",
+        regions = _cast(
+            CaptureRegions,
+            {
+                "coarse": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "w": 1.0,
+                    "h": 1.0,
+                    "confidence": 1.0,
+                    "source": "fallback",
+                },
+                "segments": [],
+                "fallback_reason": None,
             },
-            "segments": [],
-            "fallback_reason": None,
-        }
+        )
         _save_cache(
             cache_path,
             cache_video,
@@ -1589,6 +1595,216 @@ class TestCaptureRegionsCache:
         from allaganeye.commands.split_matches import _read_cached_capture_regions
 
         assert _read_cached_capture_regions(tmp_path / "missing.json") is None
+
+    def test_read_cached_capture_regions_malformed_returns_none_not_synthesized(
+        self, cache_video, tmp_path
+    ):
+        """codex F1 -- cache read sanitize: malformed present value -> None (not FULL_FRAME).
+
+        cache に capture_regions が present だが malformed (coarse に "confidence" 欠落)。
+        sanitize で invalid -> None を返す。
+        vtuber=False / masked_fallback_used=False でも FULL_FRAME 合成に fall through しない
+        (present-but-garbage は "領域不明" であり、legacy 不在 = 標準 path 確定 とは異なる)。
+        """
+        from allaganeye.commands.split_matches import _read_cached_capture_regions
+
+        cache_path = tmp_path / ".detection_cache.json"
+        malformed_regions = {
+            "coarse": {
+                "x": 0.0,
+                "y": 0.0,
+                "w": 1.0,
+                "h": 1.0,
+                # "confidence" key missing -> invalid CaptureRegion
+                "source": "fallback",
+            },
+            "segments": [],
+            "fallback_reason": None,
+        }
+        self._write_cache(
+            cache_path, cache_video, extra={"capture_regions": malformed_regions}
+        )
+        result = _read_cached_capture_regions(cache_path)
+        assert result is None, (
+            "present but malformed capture_regions (missing confidence) must return "
+            "None -- must NOT synthesize FULL_FRAME"
+        )
+
+    def test_read_cached_capture_regions_null_value_treated_as_absent(
+        self, cache_video, tmp_path
+    ):
+        """codex F1 -- cache read: explicit null is treated same as absent key (legacy compat).
+
+        pre-fix builds wrote `"capture_regions": null` when the value was None.
+        null should be treated as absent (key missing), triggering legacy synthesis
+        for standard path (vtuber=False, masked_fallback_used=False) -> FULL_FRAME.
+        This pins the null-tolerance so future refactors don't break legacy caches.
+        """
+        import json as _json
+
+        from allaganeye.commands.split_matches import _read_cached_capture_regions
+
+        cache_path = tmp_path / ".detection_cache.json"
+        # Write cache with explicit null for capture_regions
+        stat = cache_video.resolve().stat()
+        from allaganeye.commands.split_matches import _CACHE_VERSION
+
+        data = {
+            "cache_version": _CACHE_VERSION,
+            "source": str(cache_video.resolve()),
+            "source_size": stat.st_size,
+            "source_mtime": stat.st_mtime,
+            "probe": {
+                "duration": 100.0,
+                "width": 1920,
+                "height": 1080,
+                "fps": 60.0,
+                "codec": "h264",
+            },
+            "params": {
+                "sample_interval": 2.0,
+                "blackout_threshold": 15.0,
+                "min_match_duration": 300.0,
+                "min_blackout_duration": 3.0,
+                "no_audio": False,
+                "vtuber": False,
+                "masked": False,
+                "keep_trailing": False,
+            },
+            "masked_fallback_used": False,
+            "boundaries": [{"start": 10.0, "end": 50.0, "type": "fl_match"}],
+            "capture_regions": None,  # explicit null -- legacy pre-fix behavior
+        }
+        cache_path.write_text(_json.dumps(data), encoding="utf-8")
+
+        result = _read_cached_capture_regions(cache_path)
+        # explicit null treated as absent -> standard path -> FULL_FRAME synthesized
+        assert result is not None, (
+            "explicit null capture_regions should be treated as absent, "
+            "triggering FULL_FRAME synthesis for standard path"
+        )
+        assert result["coarse"]["source"] == "fallback"
+        assert result["coarse"]["x"] == 0.0 and result["coarse"]["w"] == 1.0
+
+
+# -- Direct unit tests for _sanitize_capture_regions --
+
+
+class TestSanitizeCaptureRegions:
+    """Unit tests for the new _sanitize_capture_regions helper (codex F1)."""
+
+    def _valid_region(self) -> dict:
+        return {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        }
+
+    def _valid_regions(self) -> dict:
+        return {
+            "coarse": self._valid_region(),
+            "segments": [],
+            "fallback_reason": None,
+        }
+
+    def test_valid_full_shape_returns_as_is(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = {
+            "coarse": self._valid_region(),
+            "segments": [
+                {
+                    "time_range": [0.0, 10.0],
+                    "region": self._valid_region(),
+                }
+            ],
+            "fallback_reason": "consensus_miss",
+        }
+        result = _sanitize_capture_regions(regions)
+        assert result == regions
+
+    def test_valid_minimal_returns_as_is(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        result = _sanitize_capture_regions(regions)
+        assert result == regions
+
+    def test_bool_coordinate_returns_none(self):
+        """bool is a subtype of int but must be rejected explicitly."""
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        regions["coarse"]["x"] = True  # bool must be rejected
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_negative_confidence_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        regions["coarse"]["confidence"] = -0.1
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_confidence_above_one_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        regions["coarse"]["confidence"] = 1.5
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_empty_source_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        regions["coarse"]["source"] = ""
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_time_range_of_length_one_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = {
+            "coarse": self._valid_region(),
+            "segments": [
+                {
+                    "time_range": [0.0],  # must be exactly 2 elements
+                    "region": self._valid_region(),
+                }
+            ],
+            "fallback_reason": None,
+        }
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_fallback_reason_non_str_non_none_returns_none(self):
+        """fallback_reason must be str or None; e.g. int 1 is invalid."""
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        regions["fallback_reason"] = 1  # invalid -- must be str or None
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_missing_top_level_key_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        del regions["fallback_reason"]
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_extra_top_level_key_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        regions["extra_field"] = "unexpected"
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_non_dict_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        assert _sanitize_capture_regions("not a dict") is None
+        assert _sanitize_capture_regions(None) is None
+        assert _sanitize_capture_regions(42) is None
 
 
 class TestCachePipeline:
