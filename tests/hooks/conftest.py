@@ -27,12 +27,15 @@ SCHEMA_PATH = PROJECT_ROOT / "schemas" / "cleanup-output.schema.json"
 def _resolve_bash() -> str | None:
     """Return a bash executable that can run the project's shell scripts.
 
-    On Windows a bare ``bash`` on PATH usually resolves to the WSL launcher
-    (``...\\WindowsApps\\bash.exe``), which strips backslashes from Windows
-    paths and fails with exit 127 (#875). Production hooks run under Git Bash
-    on Windows, so prefer Git Bash (derived from git.exe's install root),
-    falling back to any non-WSL bash on PATH. Returns None when no usable
-    bash exists; callers skip with a reason instead of failing.
+    On Windows a bare ``bash`` on PATH usually resolves to a WSL launcher
+    (``...\\WindowsApps\\bash.exe``, legacy ``System32\\bash.exe``), which
+    strips backslashes from Windows paths and fails with exit 127 (#875).
+    Production hooks run under Git Bash on Windows, so only positively
+    identified Git Bash / MSYS installs are accepted: derived from git.exe's
+    install root, or the stock Git for Windows locations. PATH ``bash`` is
+    deliberately NOT used as a fallback -- there is no reliable way to tell
+    a usable bash from another WSL shim by its path alone. Returns None when
+    no usable bash exists; callers skip with a reason instead of failing.
     """
     if sys.platform != "win32":
         return shutil.which("bash")
@@ -40,6 +43,7 @@ def _resolve_bash() -> str | None:
     git = shutil.which("git")
     if git is not None:
         # <root>/cmd/git.exe or <root>/bin/git.exe -> <root>/bin/bash.exe
+        # (also covers MSYS2: <root>/usr/bin/git.exe -> <root>/usr/bin/bash.exe)
         root = Path(git).resolve().parent.parent
         candidates += [root / "bin" / "bash.exe", root / "usr" / "bin" / "bash.exe"]
     candidates += [
@@ -49,9 +53,6 @@ def _resolve_bash() -> str | None:
     for cand in candidates:
         if cand.is_file():
             return str(cand)
-    on_path = shutil.which("bash")
-    if on_path is not None and "windowsapps" not in on_path.lower():
-        return on_path
     return None
 
 
