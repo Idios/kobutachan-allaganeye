@@ -594,8 +594,14 @@ def _display_gaps(gaps: list[Gap]) -> None:
         )
 
 
-def _format_region_token(regions: "CaptureRegions | None") -> str:
-    """capture region の verbose 1 行表示 (#810)。縮退を silent にしない。"""
+def _format_region_token(regions: object) -> str:
+    """capture region の verbose 1 行表示 (#810)。縮退を silent にしない。
+
+    cache-hit 経路では raw cache 記録値 (無検証) を受けるため、malformed 入力でも
+    crash しない tolerant contract: 欠落 / 非 dict は "unknown"、座標が実数でない
+    (bool 含む) 場合は "invalid" を返す (round-1 #1: 非数値 x/y/w/h で ``:.2f`` が
+    ValueError になる regression の防御)。
+    """
     if not isinstance(regions, dict):
         return "unknown"
     coarse = regions.get("coarse")
@@ -605,10 +611,11 @@ def _format_region_token(regions: "CaptureRegions | None") -> str:
     if source == "fallback":
         label = "full_frame"
     else:
-        label = (
-            f"{source}({coarse.get('x', 0):.2f},{coarse.get('y', 0):.2f},"
-            f"{coarse.get('w', 0):.2f},{coarse.get('h', 0):.2f})"
-        )
+        coords = [coarse.get(k) for k in ("x", "y", "w", "h")]
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in coords):
+            return "invalid"
+        x, y, w, h = coords
+        label = f"{source}({x:.2f},{y:.2f},{w:.2f},{h:.2f})"
     reason = regions.get("fallback_reason")
     return f"{label}, fallback={reason}" if reason else label
 

@@ -17,10 +17,9 @@ from __future__ import annotations
 import sys
 import time
 from pathlib import Path
+from typing import cast
 
 import typer
-
-from typing import cast
 
 from allaganeye.commands.split_matches import (
     _audio_status_str,

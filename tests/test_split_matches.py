@@ -4,9 +4,13 @@ import json
 import re
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from allaganeye.metadata_types import CaptureRegions
 
 from allaganeye.commands.split_matches import (
     _CACHE_VERSION,
@@ -14,6 +18,7 @@ from allaganeye.commands.split_matches import (
     _PROGRESS_LABEL_WIDTH,
     _auto_sample_interval,
     _eta_progressbar,
+    _format_region_token,
     _load_cache,
     _save_cache,
     run_split,
@@ -4191,9 +4196,15 @@ def test_verbose_dry_run_emits_total(
     mock_split.assert_not_called()
 
 
-def _seed_cache(source: Path, output_dir: Path, config: SplitConfig) -> None:
+def _seed_cache(
+    source: Path,
+    output_dir: Path,
+    config: SplitConfig,
+    *,
+    capture_regions: dict | None = None,
+) -> None:
     """Write a .detection_cache.json entry matching ``config`` so ``_load_cache``
-    hits.  Helper for cache-hit tests (#381)."""
+    hits.  Helper for cache-hit tests (#381; capture_regions は #810 round-1)."""
     source.write_bytes(b"")
     output_dir.mkdir(parents=True, exist_ok=True)
     _save_cache(
@@ -4203,6 +4214,9 @@ def _seed_cache(source: Path, output_dir: Path, config: SplitConfig) -> None:
         config.sample_interval,
         config,
         BOUNDARIES,
+        # malformed 値を意図的に seed するテスト (round-1 #1 pin) があるため
+        # CaptureRegions に cast して writer の型契約を素通しする。
+        capture_regions=cast("CaptureRegions | None", capture_regions),
     )
 
 
@@ -4412,6 +4426,129 @@ def test_verbose_cache_hit_prints_masked_on_token(
     header_idx = out.find("Cache hit:")
     assert header_idx >= 0
     assert "masked=on" in out[header_idx:]
+
+
+class TestFormatRegionToken:
+    """#810 round-1: verbose region token の tolerant contract を pin する。
+
+    cache-hit 表示は raw cache 記録値 (無検証) を受けるため、malformed 入力でも
+    crash せず "invalid" / "unknown" を返す契約。
+    """
+
+    def _regions(self, **coarse_overrides) -> dict:
+        coarse = {
+            "x": 0.0,
+            "y": 0.0,
+            "w": 1.0,
+            "h": 1.0,
+            "confidence": 1.0,
+            "source": "fallback",
+        }
+        coarse.update(coarse_overrides)
+        return {"coarse": coarse, "segments": [], "fallback_reason": None}
+
+    def test_none_returns_unknown(self):
+        assert _format_region_token(None) == "unknown"
+
+    def test_non_dict_returns_unknown(self):
+        assert _format_region_token("garbage") == "unknown"
+
+    def test_missing_coarse_returns_unknown(self):
+        assert _format_region_token({"segments": []}) == "unknown"
+
+    def test_full_frame(self):
+        assert _format_region_token(self._regions()) == "full_frame"
+
+    def test_band_coordinates_formatted(self):
+        regions = self._regions(
+            x=0.1, y=0.0, w=0.76, h=0.042, confidence=0.9, source="band"
+        )
+        assert _format_region_token(regions) == "band(0.10,0.00,0.76,0.04)"
+
+    def test_fallback_reason_suffix(self):
+        regions = self._regions()
+        regions["fallback_reason"] = "consensus_miss"
+        assert _format_region_token(regions) == "full_frame, fallback=consensus_miss"
+
+    def test_malformed_non_numeric_coordinate_returns_invalid(self):
+        # round-1 #1: 非数値座標で :.2f が ValueError にならないこと (crash 防御)
+        regions = self._regions(x="oops", source="band")
+        assert _format_region_token(regions) == "invalid"
+
+    def test_bool_coordinate_returns_invalid(self):
+        regions = self._regions(x=True, source="band")
+        assert _format_region_token(regions) == "invalid"
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_prints_region_token(
+    mock_probe, mock_split, tmp_path, capsys
+):
+    """cache-hit params 行に region= token が出る (#810 round-1 #2 表示 pin)."""
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    band_regions = {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    _seed_cache(source, tmp_path, config, capture_regions=band_regions)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True)
+    out = capsys.readouterr().out
+
+    header_idx = out.find("Cache hit:")
+    assert header_idx >= 0
+    assert "region=band(0.10,0.00,0.76,0.04)" in out[header_idx:]
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_malformed_region_does_not_crash(
+    mock_probe, mock_split, tmp_path, capsys
+):
+    """malformed cached capture_regions で cache-hit verbose が crash しない
+    (#810 round-1 #1 regression pin)。
+
+    表示は raw cache 記録値を正とする設計のため、formatter が tolerant に
+    "invalid" を出して run は正常続行する (metadata 側は sanitize 済みで省略)。
+    """
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    malformed = {
+        "coarse": {
+            "x": "oops",
+            "y": 0.0,
+            "w": 0.5,
+            "h": 0.5,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    _seed_cache(source, tmp_path, config, capture_regions=malformed)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True)  # must not raise
+    out = capsys.readouterr().out
+
+    header_idx = out.find("Cache hit:")
+    assert header_idx >= 0
+    assert "region=invalid" in out[header_idx:]
 
 
 @patch(f"{MODULE}.split_video")
@@ -5321,6 +5458,94 @@ def test_run_split_omits_capture_regions_when_callback_silent(
 
     payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
     assert "capture_regions" not in payload
+
+
+@patch("allaganeye.system_info.probe_gpu_vendors", return_value=[])
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}._load_cache")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_cache_hit_carries_capture_regions(
+    mock_probe,
+    mock_split,
+    mock_load_cache,
+    mock_run_detection,
+    mock_probe_gpu,
+    tmp_path,
+):
+    """#810 round-1 #3 -- run_split cache-hit 経路で cache 記録の capture_regions
+    が metadata.json へ引き継がれる (detect 側 pin と対の integration test)。
+
+    `_load_cache` を patch して hit させつつ、cache file 実体に capture_regions
+    を書いておく (`_read_cached_capture_regions` は file を直接読むため patch 不要)。
+    """
+    band_regions = {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    output_dir = tmp_path / "out_cache_hit_regions"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / ".detection_cache.json").write_text(
+        json.dumps({"capture_regions": band_regions}), encoding="utf-8"
+    )
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_load_cache.return_value = BOUNDARIES  # cache hit -> Pass 1 skip
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    run_split(video, config, verbose=False, quiet=True)
+
+    mock_run_detection.assert_not_called()
+    payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["capture_regions"] == band_regions
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_miss_prints_region_line(
+    mock_probe, mock_split, mock_run_detection, tmp_path, capsys
+):
+    """fresh 検知の verbose に Region: 行が出る (#810 round-1 #2 表示 wiring pin)."""
+    from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
+
+    mock_probe.return_value = PROBE_RESULT
+
+    def fake_run_detection(*args, **kwargs):
+        cb = kwargs.get("region_callback")
+        assert cb is not None
+        cb(RegionTimeline(coarse=FULL_FRAME))
+        return BOUNDARIES
+
+    mock_run_detection.side_effect = fake_run_detection
+
+    output_dir = tmp_path / "out_region_line"
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    run_split(video, config, verbose=True, quiet=False)
+    out = capsys.readouterr().out
+    assert "Region: full_frame" in out
 
 
 # -- #805 段階2: post_match_trailing_dropped warning emission stopped (W1) --
