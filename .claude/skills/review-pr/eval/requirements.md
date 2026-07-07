@@ -145,17 +145,31 @@ PR 本文: `scripts/build-portable-zip.ps1` の `get-pip.py` DL URL を `https:/
 1. **[critical]** **H-1**: Step 5 で M2 外部依存規約 (`docs/l2-workflow.md` §外部依存規約) を引いて URL 規約適合を逐条検証
 2. **[critical]** **H-2**: `master` / `main` / `latest` / `raw HEAD` を含む URL (= `raw/main/`) を検出し、Step 5b トリアージ表で **(A) PR 内修正** とする
 3. **[critical]** **H-3**: F2 (#649→#651→#703→#721 hotfix 連発) を reference として参照する
-4. **[critical]** **H-4**: Codex 起動条件 (diff > 15 file / root cause ≥2 / L1 core) は満たさない (touched 1 file 単発 fix) ため optional `/codex:review` を**起動しない**判断 (起動しても可だが起動条件は満たさない旨を明示)
+4. **[critical]** **H-4**: Codex 起動条件 (diff > 15 file / root cause ≥2 / L1 core) は満たさない (touched 1 file 単発 fix) ため optional Codex review を**起動しない**判断 (起動しても可だが起動条件は満たさない旨を明示)
 5. installer 系 PR の immutable URL 規約違反は典型的な (A) trigger (B 化しない)
 
 ---
 
-## シナリオ I (L-β β-5 C6 Codex fallback): モック /iterate-review Round 内で /codex:review が rate-limit fail
+## シナリオ I (L-β β-5 C6 Codex fallback): モック /iterate-review Round 内で Codex review が rate-limit fail
 
-PR #987 (大規模 refactor、touched 35 files、diff 1200 lines、L1 detector module を含む)。`/review-pr` Step 5a で C3 起動条件すべて該当のため `/codex:review` を invoke、Codex CLI exit code 1 + stderr に `Error: rate limit exceeded (429)` が含まれる。
+PR #987 (大規模 refactor、touched 35 files、diff 1200 lines、L1 detector module を含む)。`/review-pr` Step 5a で C3 起動条件すべて該当のため Codex review (tier 1 = `codex-companion.mjs review`) を実行、Codex CLI exit code 1 + stderr に `Error: rate limit exceeded (429)` が含まれる。
 
 1. **[critical]** **I-1**: Codex CLI fail を検出 (exit code 非ゼロ + stderr keyword `rate.?limit` または `429`) → **token 枯渇 (明確)** 判定
 2. **[critical]** **I-2**: 自動 fallback として superpowers `requesting-code-review` subagent を起動 (Codex 用 focus 文字列を流用)
 3. **[critical]** **I-3**: Step 6 レビュー報告に「Codex fallback notice」(`> **Codex fallback notice**: ...` template) を必須記載 (Iron Law 5 整合)
 4. **[critical]** **I-4**: fallback 経路 (`docs/l2-workflow.md` §Codex fallback) を参照する
 5. **[critical]** **I-5**: 重要 PR (大規模 refactor) なので user に AskUserQuestion で「Codex 復旧待ち / Claude fallback で push」3 択を提示する
+6. **I-6** (#854 で追加、dispatch 時事前固定 non-critical): Codex review の実行手段を companion script (`codex-companion.mjs review --base ...` の Bash 実行) と正しく特定し、slash command `/codex:review` を agent 自身が invoke する前提にしない (evidence: `eval/reports/iter_854_3tier_revaluation.md` Iteration 1)
+
+---
+
+## シナリオ P (#854 hook 同時評価): session-start.sh Iron Law 6 Pre-flight Step 5 文言
+
+> 対象は skill ではなく `.claude/hooks/session-start.sh` の Step 5 文言 (Pre-flight は PR 作成 flow で実行されるため review-pr eval に併設)。#854 で ad-hoc 評価済み (evidence: `eval/reports/iter_854_3tier_revaluation.md` §参考)。hook の Step 5 文言を再改修する際は本シナリオで再評価する。
+
+モック: PR 作成直前の Pre-flight Step 5 実行計画を executor に立てさせる。
+
+1. **[critical]** **P-1**: Step 5 の実行手段を companion script 直接呼び出し (tier 1、`codex-companion.mjs adversarial-review`) と特定し、slash `/codex:adversarial-review` を agent 自身が invoke する計画にしない
+2. **[critical]** **P-2**: focus 文字列に project 固有焦点 (Iron Law 3 scope creep / encoding boundary / GPU fallback / 同 issue 過去 PR root cause) を含める
+3. **P-3**: invocation path の詳細参照先として docs/l2-workflow.md §Step 5 の invocation path (3-tier、#795) に到達する
+4. **P-4**: Codex CLI fail 時は tier 2 fallback (C6) の存在を認識し、fallback 時は Codex fallback notice 記載が必要と述べる

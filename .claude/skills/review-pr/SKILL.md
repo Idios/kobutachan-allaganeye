@@ -231,9 +231,9 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 - [`docs/refactor-pattern.md`](../../../docs/refactor-pattern.md) §4 判定基準 (green / regression なし / consumer が選択的に乗り換え可能) を引き、Step 5b トリアージ表で (A) PR 内 Phase 分割提案 or (B) 別 issue で Phase 設計 spec を起票する
 - AppError migration (#663→#689→#714/716/725/730/733→#745→#746) を reference 実例として参照
 
-**optional `/codex:review` (Codex 統合、C3)**
+**optional Codex review (Codex 統合、C3)**
 
-以下のいずれかを満たす PR で `/codex:review --base develop-X.Y.Z` を併走させる (人手 trigger or skill 内 auto):
+以下のいずれかを満たす PR で Codex review を併走させる (人手 trigger or skill 内 auto)。agent 実行は tier 1 = companion script `codex-companion.mjs review --base develop-X.Y.Z` の Bash 実行 (slash `/codex:review` は `disable-model-invocation: true` のため agent から invoke 不可 = Idios 専用 tier 3。`docs/l2-workflow.md` §Step 5 の invocation path (3-tier、#795) 参照):
 
 - PR diff が大きい (touched > 15 file or > 500 lines)、または
 - 過去 root cause が複数 (Step 1.1 M5 警告 ≥2 件)、または

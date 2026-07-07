@@ -273,7 +273,7 @@ subprocess / IPC / OS API を介した encoding fix を行うときは、**以�
 
 #### `/codex:rescue` 限定使用 (C4、spec O5 (b) 確定)
 
-根本原因分析 / 類似バグ調査 phase で `/codex:rescue` を限定的に併用してよい。常用は禁止 (`/codex:review` を優先)。詳細は §Codex 運用 §rescue を参照。
+根本原因分析 / 類似バグ調査 phase で `/codex:rescue` を限定的に併用してよい。常用は禁止 (Codex review = tier 1 `codex-companion.mjs review` を優先)。詳細は §Codex 運用 §rescue を参照。
 
 ### 大規模 refactor の Phase 分割
 
