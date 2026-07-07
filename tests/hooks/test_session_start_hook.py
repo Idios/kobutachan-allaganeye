@@ -103,6 +103,7 @@ def test_worktree_pr_head_skipped_for_non_claude_branch(
 def test_worktree_pr_head_silent_skip_when_gh_missing(
     tmp_repo: Path,
     run_hook,
+    bash_exe: str,
     monkeypatch,
 ) -> None:
     """gh not on PATH -> fail-soft: Iron Law still emitted, no extra block, exit 0."""
@@ -113,13 +114,11 @@ def test_worktree_pr_head_silent_skip_when_gh_missing(
         cwd=tmp_repo,
         check=True,
     )
-    # Build a PATH that keeps bash (required by run_hook) but excludes gh.
-    # On POSIX, standard system dirs are tried; on Windows we must keep the
-    # Git-for-Windows usr/bin dir that ships bash.exe.
-    bash_path = _shutil.which("bash")
-    if bash_path is None:
-        pytest.skip("bash not found; cannot run hook")
-    bash_dir = str(Path(bash_path).parent)
+    # Build a PATH that keeps bash's own dir (so the hook can find git etc.)
+    # but excludes gh. bash_exe is the conftest-resolved bash (Git Bash on
+    # Windows, #875) -- run_hook invokes it by absolute path, so PATH only
+    # needs to serve the tools the hook script calls.
+    bash_dir = str(Path(bash_exe).parent)
 
     # Collect standard POSIX dirs that exist (empty on Windows, that's fine).
     posix_dirs = [p for p in ["/usr/bin", "/bin", "/usr/local/bin"] if Path(p).exists()]
