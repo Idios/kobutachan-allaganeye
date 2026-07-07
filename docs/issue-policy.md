@@ -52,7 +52,7 @@ L3 以降のレイヤーは着手時に運用ルールを判断する。v0.3.0 (
 v0.3.0 (= 新 L3) work では **新規 layer label を追加しない**。issue title prefix で識別する:
 
 ```text
-[type] L3: <要約>                                    ← 新 L3 (VTuber+minimap+perf, v0.3.0 target)
+[type] L3: <要約>                                    ← 新 L3 (minimap+masked+perf, v0.3.0 target。VTuber は v0.4.0 期 #872)
 [type] L4 (former L3): <要約>                        ← 旧 L3 (OCR/Whisper), L4 にスライド
 [type] L5 (former L4): <要約>                        ← 旧 L4 (ML)
 [type] L6 (former L5): <要約>                        ← 旧 L5 (auto edit)
