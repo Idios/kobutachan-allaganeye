@@ -1389,5 +1389,28 @@ describe('#805 ExportScreen post_match no-crash guard', () => {
       // Zero counted matches → "0 / 0 files", not the error phase.
       expect(screen.getByText(/0 \/ 0 files/)).toBeInTheDocument();
     });
+
+    // iterate-review Round 2 #2: eligibleCount's `!mm.post_match` filter
+    // (bulk toggle disabled reason) had no direct assertion — a mutation
+    // removing it survived the suite. Lock the 対象が 0 件 branch.
+    it('disables bulk toggles with the 対象が 0 件 reason (eligibleCount = 0)', () => {
+      render(<ExportScreen />);
+      const selectAll = screen.getByRole('button', {
+        name: 'select all matches',
+      });
+      const deselectAll = screen.getByRole('button', {
+        name: 'deselect all matches',
+      });
+      expect(selectAll).toBeDisabled();
+      expect(deselectAll).toBeDisabled();
+      expect(selectAll).toHaveAttribute(
+        'title',
+        '対象が 0 件のため全選択できません',
+      );
+      expect(deselectAll).toHaveAttribute(
+        'title',
+        '対象が 0 件のため全解除できません',
+      );
+    });
   });
 });

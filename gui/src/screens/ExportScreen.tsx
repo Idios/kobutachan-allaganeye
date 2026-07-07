@@ -832,13 +832,14 @@ export function ExportScreen() {
                * #587 §2.5.14: surface why bulk toggles are disabled.
                *
                * - running / cancelling: "書き出し中は変更できません"
-               * - eligible (= matches not persist-skipped) length === 0:
-               *   the bulk toggle has nothing to act on.
+               * - eligible (= matches neither persist-skipped nor
+               *   post_match, #805 Phase 2) length === 0: the bulk toggle
+               *   has nothing to act on.
                *
                * `countedMatches` reflects ad-hoc exclusion too (used for
                * "N 試合を書き出す" copy), so we instead derive eligibility
-               * from the persist-skip filter, which doesn't change as the
-               * user toggles checkboxes.
+               * from the persist-skip + post_match filter, which doesn't
+               * change as the user toggles checkboxes.
                */}
               {(() => {
                 const eligibleCount = metadata.matches.filter(

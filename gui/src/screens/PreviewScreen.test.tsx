@@ -1283,4 +1283,27 @@ describe('#805 PreviewScreen post_match no-crash guard', () => {
     render(<PreviewScreen />);
     expect(screen.queryByTestId('post-match-badge')).toBeNull();
   });
+
+  // iterate-review Round 2 #3: the Phase 2 badge markup goes through axe so
+  // all three post_match surfaces (Complete / Export / Preview) stay
+  // violation-free (docs/a11y-policy.md per-screen axe 方針)。The
+  // nested-interactive opt-out mirrors the existing #587 axe test — the
+  // preview pane pattern is unchanged by this PR.
+  it(
+    'has no axe violations with the post_match badge (#805 Phase 2)',
+    async () => {
+      const { container } = render(<PreviewScreen />);
+      await waitFor(() => {
+        expect(screen.getByTestId('post-match-badge')).toBeInTheDocument();
+      });
+      expect(
+        await axe(container, {
+          rules: {
+            'nested-interactive': { enabled: false },
+          },
+        }),
+      ).toHaveNoViolations();
+    },
+    15000,
+  );
 });
