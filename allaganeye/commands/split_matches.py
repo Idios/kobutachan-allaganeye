@@ -489,7 +489,7 @@ def run_split_from_metadata(
         if preserve_capture_regions is None:
             logger.warning(
                 "Dropping malformed capture_regions from %s "
-                "(codex F1: shape validation failed -- field omitted from rewritten metadata)",
+                "(shape validation failed -- field omitted from rewritten metadata)",
                 metadata_path,
             )
     else:
@@ -2144,7 +2144,7 @@ def _read_cached_capture_regions(cache_path: Path) -> "CaptureRegions | None":
         if sanitized is None:
             logger.warning(
                 "Dropping malformed capture_regions from cache %s "
-                "(codex F1: corrupted/tampered cache value -- region unknown)",
+                "(corrupted or hand-edited cache value -- region unknown)",
                 cache_path,
             )
         return sanitized
