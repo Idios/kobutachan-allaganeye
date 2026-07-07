@@ -24,7 +24,7 @@ class CaptureRegion:
     w: float
     h: float
     confidence: float = 1.0
-    source: str = "fallback"  # "tierA" | "tierB" | "fallback"
+    source: str = "fallback"  # "tierA" | "tierB" | "band" | "fallback"
 
     def clamp(self) -> CaptureRegion:
         x = min(max(self.x, 0.0), 1.0)
@@ -107,12 +107,18 @@ def band_region_from_localization(
 
 @dataclass
 class RegionTimeline:
-    """Coarse region (Pass 1) + per-segment precise regions (#480/#481)."""
+    """Coarse region (Pass 1) + per-segment precise regions (#480/#481).
+
+    ``fallback_reason`` (#810) は band anchor 縮退の provenance:
+    "anchor_error" (Stage 0 例外) / "consensus_miss" (consensus 不成立) /
+    None (縮退なし)。free string (読み手は unknown 値を受容)。
+    """
 
     coarse: CaptureRegion
     segments: list[tuple[tuple[float, float], CaptureRegion]] = field(
         default_factory=list
     )
+    fallback_reason: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -121,7 +127,22 @@ class RegionTimeline:
                 {"time_range": [t0, t1], "region": r.to_dict()}
                 for (t0, t1), r in self.segments
             ],
+            "fallback_reason": self.fallback_reason,
         }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> RegionTimeline:
+        return cls(
+            coarse=CaptureRegion.from_dict(d["coarse"]),
+            segments=[
+                (
+                    (s["time_range"][0], s["time_range"][1]),
+                    CaptureRegion.from_dict(s["region"]),
+                )
+                for s in d.get("segments", [])
+            ],
+            fallback_reason=d.get("fallback_reason"),
+        )
 
 
 _SNAP_FULL_FRAME_WH = 0.92

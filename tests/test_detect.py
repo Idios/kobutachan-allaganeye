@@ -168,6 +168,31 @@ def test_detect_verbose_cache_miss_summary_includes_vtuber_token(tmp_path, capsy
     assert "vtuber=off" in out
 
 
+def test_detect_verbose_cache_miss_prints_region_line(tmp_path, capsys):
+    """detect fresh 経路の verbose に Region: 行が出る (#810 round-2 #3 wiring pin).
+
+    run_split 側 (`test_verbose_cache_miss_prints_region_line`) と対の detect 版。
+    """
+    from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
+
+    def fake_run_detection(*args, **kwargs):
+        cb = kwargs.get("region_callback")
+        assert cb is not None, (
+            "run_detect must pass region_callback to _run_detection (#810)"
+        )
+        cb(RegionTimeline(coarse=FULL_FRAME))
+        return BOUNDARIES
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, no_cache=True)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", side_effect=fake_run_detection),
+    ):
+        run_detect(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "Region: full_frame" in out
+
+
 def test_detect_verbose_cache_miss_summary_includes_masked_token(tmp_path, capsys):
     """detect の cache-miss verbose summary に masked token が出る (vtuber と同型)."""
     config = SplitConfig(
@@ -486,3 +511,70 @@ def test_detect_carries_post_match_flag_to_metadata(tmp_path):
     assert trailing["post_match"] is True
     assert "output_file" not in trailing
     assert trailing["index"] == 2
+
+
+# ---------------------------------------------------------------------------
+# #810 -- capture_regions wiring through run_detect
+# ---------------------------------------------------------------------------
+
+
+def test_detect_writes_capture_regions_fresh(tmp_path):
+    """#810 -- fresh detection: region_callback 経由で capture_regions を書く。"""
+    from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
+
+    def fake_run_detection(*args, **kwargs):
+        cb = kwargs.get("region_callback")
+        assert cb is not None, (
+            "run_detect must pass region_callback to _run_detection (#810)"
+        )
+        cb(RegionTimeline(coarse=FULL_FRAME))
+        return BOUNDARIES
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", side_effect=fake_run_detection),
+    ):
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+    regions = payload["capture_regions"]
+    assert regions["coarse"]["source"] == "fallback"
+    assert regions["coarse"]["x"] == 0.0 and regions["coarse"]["w"] == 1.0
+    assert regions["segments"] == []
+    assert regions["fallback_reason"] is None
+
+
+def test_detect_cache_hit_carries_capture_regions(tmp_path):
+    """#810 -- cache-hit: cache 記録値が metadata.json へ引き継がれる。
+
+    `_load_cache` を patch して hit させつつ、cache file 実体に capture_regions
+    を書いておく (`_read_cached_capture_regions` は file を直接読むため patch 不要)。
+    """
+    band_regions = {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(
+        json.dumps({"capture_regions": band_regions}), encoding="utf-8"
+    )
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._load_cache", return_value=BOUNDARIES),
+        patch(f"{MODULE_DETECT}._run_detection") as mock_detect,
+    ):
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    mock_detect.assert_not_called()
+    payload = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["capture_regions"] == band_regions

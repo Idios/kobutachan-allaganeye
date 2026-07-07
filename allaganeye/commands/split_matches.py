@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import re
 import shutil
 import sys
@@ -34,11 +35,13 @@ from allaganeye.exceptions import (
 )
 from allaganeye.metadata_types import (
     BrightnessSamples,
+    CaptureRegions,
     Match,
     Metadata,
     MetadataWarning,
     SystemInfo,
 )
+from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
 from allaganeye.video.detector import (
     DetectionStats,
     MatchBoundary,
@@ -165,6 +168,7 @@ def run_split(
                 # cache-hit: resolved path は当該 boundaries を生成した検出の
                 # 記録値 (cache top-level) を引き継ぐ。
                 masked_fallback_used=_read_cached_masked_fallback(cache_path),
+                capture_regions=_read_cached_capture_regions(cache_path),
                 quiet=quiet,
             )
             # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
@@ -227,6 +231,13 @@ def run_split(
         nonlocal masked_fallback_used
         masked_fallback_used = True
 
+    # #810 -- 最終的に有効だった capture region を捕捉して cache / metadata へ。
+    captured_region: CaptureRegions | None = None
+
+    def _on_region(timeline: RegionTimeline) -> None:
+        nonlocal captured_region
+        captured_region = cast("CaptureRegions", timeline.to_dict())
+
     boundaries = _run_detection(
         video_path,
         metadata,
@@ -239,6 +250,7 @@ def run_split(
         gpu_vendor=gpu_vendor,
         brightness_callback=_on_brightness,
         masked_fallback_callback=_on_masked_fallback,
+        region_callback=_on_region,
     )
 
     if not boundaries:
@@ -258,6 +270,8 @@ def run_split(
     # Display pipeline statistics (verbose only)
     if verbose and show and detect_stats is not None:
         _print_detection_stats(detect_stats)
+        if captured_region is not None:
+            typer.echo(f"  Region: {_format_region_token(captured_region)}")
 
     # Display detection results
     if show:
@@ -277,6 +291,7 @@ def run_split(
         config,
         boundaries,
         masked_fallback_used=masked_fallback_used,
+        capture_regions=captured_region,
     )
 
     # Step 3: Split (unless dry-run)
@@ -321,6 +336,7 @@ def run_split(
         # post_match_trailing_dropped emission was removed; the non-destructive
         # post_match flag on the Match now records a post-match trailing segment.
         warnings=build_warnings(),
+        capture_regions=captured_region,
         quiet=quiet,
     )
     # #805 段階2: MP4 化したのは active のみ (post_match は除外)。verbose の
@@ -461,6 +477,24 @@ def run_split_from_metadata(
     # drop + 不正 field の strip)。
     preserve_warnings = sanitize_warnings(payload.get("warnings"))
 
+    # #810 -- preserve capture_regions across `--from-metadata`. 本ランは再検知
+    # しないため元 metadata の領域記録を引き継ぐ (#644 brightness_samples と
+    # 同じ preserve パターン)。
+    # codex adversarial-review F1 (2026-07-07 Idios confirmed): malformed preserve は
+    # sanitize して omit + warning (sanitize_warnings #805 と同型)。
+    # 元に capture_regions が absent (None) なら warning なし・欠落のまま。
+    old_capture_regions = payload.get("capture_regions")
+    if old_capture_regions is not None:
+        preserve_capture_regions = _sanitize_capture_regions(old_capture_regions)
+        if preserve_capture_regions is None:
+            logger.warning(
+                "Dropping malformed capture_regions from %s "
+                "(shape validation failed -- field omitted from rewritten metadata)",
+                metadata_path,
+            )
+    else:
+        preserve_capture_regions = None
+
     detection_params = payload.get("detection_params")
     if isinstance(detection_params, dict):
         effective_interval = float(
@@ -510,6 +544,7 @@ def run_split_from_metadata(
         ),
         # #805 段階1: 元 metadata の warnings を preserve (再検知しないため)。
         warnings=preserve_warnings,
+        capture_regions=preserve_capture_regions,
         quiet=quiet,
     )
     # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
@@ -556,6 +591,50 @@ def _display_gaps(gaps: list[Gap]) -> None:
             f"{_format_timestamp(gap['end'])} "
             f"({_format_duration(gap['duration'])})"
         )
+
+
+_REGION_TOKEN_MAX_LEN = 32
+"""verbose region token に埋め込む free string の表示上限 (round-3 R3-4)。"""
+
+
+def _clean_region_text(value: object) -> str:
+    """改竄 cache 由来 free string の端末 hygiene (round-3 R3-4)。
+
+    非印字文字 (ANSI escape 等の制御文字) を '?' に置換し、長さを cap する。
+    raw 診断表示の意図 (round-1/2 裁定) は保ちつつ端末制御系の注入だけを塞ぐ。
+    """
+    text = str(value)
+    cleaned = "".join(ch if ch.isprintable() else "?" for ch in text)
+    if len(cleaned) > _REGION_TOKEN_MAX_LEN:
+        cleaned = cleaned[:_REGION_TOKEN_MAX_LEN] + "..."
+    return cleaned
+
+
+def _format_region_token(regions: object) -> str:
+    """capture region の verbose 1 行表示 (#810)。縮退を silent にしない。
+
+    cache-hit 経路では raw cache 記録値 (無検証) を受けるため、malformed 入力でも
+    crash しない tolerant contract: 欠落 / 非 dict は "unknown"、座標が実数でない
+    (bool 含む) 場合は "invalid" を返す (round-1 #1: 非数値 x/y/w/h で ``:.2f`` が
+    ValueError になる regression の防御)。free string (source / fallback_reason)
+    は `_clean_region_text` で端末 hygiene を通す (round-3 R3-4)。
+    """
+    if not isinstance(regions, dict):
+        return "unknown"
+    coarse = regions.get("coarse")
+    if not isinstance(coarse, dict):
+        return "unknown"
+    source = coarse.get("source", "?")
+    if source == "fallback":
+        label = "full_frame"
+    else:
+        coords = [coarse.get(k) for k in ("x", "y", "w", "h")]
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in coords):
+            return "invalid"
+        x, y, w, h = coords
+        label = f"{_clean_region_text(source)}({x:.2f},{y:.2f},{w:.2f},{h:.2f})"
+    reason = regions.get("fallback_reason")
+    return f"{label}, fallback={_clean_region_text(reason)}" if reason else label
 
 
 def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
@@ -607,6 +686,9 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
     # resolved path (top-level、key 非対象)。auto-fallback 時は masked=off でも
     # masked_fallback=on になる (#821)。
     cached_fallback = bool(data.get("masked_fallback_used", False))
+    # region も他 token 同様 raw cache 記録値を正として表示する (#810)。legacy
+    # cache では metadata.json 側が FULL_FRAME を合成しても表示は unknown の
+    # まま (「cache に何が記録されているか」の診断表示であり意図的な差)。
 
     typer.echo(header)
     typer.echo(
@@ -619,7 +701,8 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
         f"vtuber={'on' if cached_vtuber else 'off'}, "
         f"masked={'on' if cached_masked else 'off'}, "
         f"keep_trailing={'on' if cached_keep_trailing else 'off'}, "
-        f"masked_fallback={'on' if cached_fallback else 'off'}"
+        f"masked_fallback={'on' if cached_fallback else 'off'}, "
+        f"region={_format_region_token(data.get('capture_regions'))}"
     )
 
 
@@ -832,6 +915,7 @@ def _run_detection(
     progress_emitter: ProgressEmitter | None = None,
     brightness_callback: Callable[[dict[float, float]], None] | None = None,
     masked_fallback_callback: Callable[[], None] | None = None,
+    region_callback: Callable[[RegionTimeline], None] | None = None,
 ) -> list[MatchBoundary]:
     """Run detection with progress bars for each phase (#328, #329, #331).
 
@@ -866,6 +950,7 @@ def _run_detection(
         "stats": stats,
         "brightness_callback": brightness_callback,
         "masked_fallback_callback": masked_fallback_callback,
+        "region_callback": region_callback,
         # #805: opt-out flag. keep_trailing skips the #797 post-match trailing
         # flagging entirely so a trailing no-scorebar segment is left unflagged
         # (default False = bit-exact).
@@ -1332,6 +1417,7 @@ def _split_and_write_metadata(
     brightness_samples: BrightnessSamples | None = None,
     masked_fallback_used: bool = False,
     warnings: list[MetadataWarning] | None = None,
+    capture_regions: CaptureRegions | None = None,
     quiet: bool = False,
 ) -> None:
     """Split video and write metadata.json (#591: system_info required).
@@ -1400,6 +1486,7 @@ def _split_and_write_metadata(
         brightness_samples=brightness_samples,
         masked_fallback_used=masked_fallback_used,
         warnings=warnings,
+        capture_regions=capture_regions,
     )
     metadata_path = config.output_dir / "metadata.json"
     write_metadata_atomic(metadata_path, result)
@@ -1428,8 +1515,9 @@ def _build_metadata_payload(
     brightness_samples: BrightnessSamples | None = None,
     masked_fallback_used: bool = False,
     warnings: list[MetadataWarning] | None = None,
+    capture_regions: CaptureRegions | None = None,
 ) -> Metadata:
-    """Build the ``metadata.json`` payload dict (schema v1, #463 / #569 / #586 / #591).
+    """Build the ``metadata.json`` payload dict (schema v1, #463 / #569 / #586 / #591 / #810).
 
     Kept private to this module; ``commands.detect`` builds a variant
     (no ``output_files``) via its own helper.
@@ -1555,6 +1643,10 @@ def _build_metadata_payload(
     }
     if brightness_samples is not None:
         payload["brightness_samples"] = brightness_samples
+    # #810 -- capture region timeline。None (pre-#810 cache hit で領域未知の
+    # 経路 / callback 未発火) では key 自体を省略する (brightness_samples と同型)。
+    if capture_regions is not None:
+        payload["capture_regions"] = capture_regions
     return payload
 
 
@@ -1862,6 +1954,7 @@ def _save_cache(
     boundaries: list[MatchBoundary],
     *,
     masked_fallback_used: bool = False,
+    capture_regions: "CaptureRegions | None" = None,
 ) -> None:
     """Save detection results to cache file."""
     resolved = video_path.resolve()
@@ -1898,6 +1991,10 @@ def _save_cache(
         "masked_fallback_used": masked_fallback_used,
         "boundaries": boundaries,
     }
+    # #810: None は key 省略 (null を書かない) -- metadata.json と同じ省略 semantics
+    # (read 側は key 欠落を legacy と同じ合成ロジックで扱う)。
+    if capture_regions is not None:
+        cache_data["capture_regions"] = capture_regions
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_path.write_text(
@@ -1918,6 +2015,144 @@ def _read_cached_masked_fallback(cache_path: Path) -> bool:
     except (OSError, json.JSONDecodeError):
         return False
     return bool(data.get("masked_fallback_used", False))
+
+
+_CAPTURE_REGIONS_TOP_KEYS = frozenset({"coarse", "segments", "fallback_reason"})
+_CAPTURE_REGION_COORD_KEYS = frozenset({"x", "y", "w", "h", "confidence"})
+_CAPTURE_REGION_REQUIRED_KEYS = frozenset({"x", "y", "w", "h", "confidence", "source"})
+
+
+def _sanitize_capture_regions(value: object) -> "CaptureRegions | None":
+    """Structural sanitizer for a CaptureRegions payload read from metadata.json or cache.
+
+    Mirrors the CaptureRegions shape in schemas/metadata.schema.json with a
+    pure-Python check (no jsonschema runtime dependency). Returns the value cast
+    to CaptureRegions when fully valid, else None.
+
+    Validity contract (strict writer contract, additionalProperties:false equivalent):
+    - value is a dict with exactly the keys {coarse, segments, fallback_reason}.
+    - coarse is a dict with exactly the keys {x, y, w, h, confidence, source};
+      x/y/w/h/confidence are real numbers (int or float; bool is explicitly rejected)
+      in [0, 1]; source is a non-empty str.
+    - segments is a list; each entry is a dict with exactly {time_range, region};
+      time_range is a list of exactly 2 finite real numbers each >= 0
+      (NaN / +-Infinity は reject -- round-3 R3-1: ``json.dumps`` は
+      allow_nan=True で非標準 token を再 emit し、strict reader (GUI serde_json /
+      JSON.parse) が metadata.json 全体を reject するため sanitize 側で塞ぐ);
+      region follows the same rules as coarse.
+    - fallback_reason is a str or None (free string, any value OK).
+
+    Pattern and docstring style mirrors sanitize_warnings in
+    allaganeye/detection/warnings.py.
+    codex adversarial-review F1 (2026-07-07 Idios confirmed):
+    malformed preserve -> sanitize + omit + warning (sanitize_warnings #805 same pattern).
+    """
+    if not isinstance(value, dict):
+        return None
+    if set(value.keys()) != _CAPTURE_REGIONS_TOP_KEYS:
+        return None
+
+    coarse = value.get("coarse")
+    if not _is_valid_capture_region(coarse):
+        return None
+
+    segments = value.get("segments")
+    if not isinstance(segments, list):
+        return None
+    for seg in segments:
+        if not isinstance(seg, dict):
+            return None
+        if set(seg.keys()) != {"time_range", "region"}:
+            return None
+        tr = seg.get("time_range")
+        if not isinstance(tr, list) or len(tr) != 2:
+            return None
+        for t in tr:
+            if (
+                isinstance(t, bool)
+                or not isinstance(t, (int, float))
+                or not math.isfinite(t)
+                or t < 0
+            ):
+                return None
+        if not _is_valid_capture_region(seg.get("region")):
+            return None
+
+    fallback_reason = value.get("fallback_reason")
+    if fallback_reason is not None and not isinstance(fallback_reason, str):
+        return None
+
+    return cast("CaptureRegions", value)
+
+
+def _is_valid_capture_region(region: object) -> bool:
+    """Return True iff region is a well-formed CaptureRegion dict.
+
+    Helper for _sanitize_capture_regions. Checks exact key set, numeric
+    coordinates in [0, 1] (bool explicitly rejected), and non-empty source str.
+    """
+    if not isinstance(region, dict):
+        return False
+    if set(region.keys()) != _CAPTURE_REGION_REQUIRED_KEYS:
+        return False
+    for key in _CAPTURE_REGION_COORD_KEYS:
+        v = region[key]
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return False
+        if not (0.0 <= v <= 1.0):
+            return False
+    source = region.get("source")
+    if not isinstance(source, str) or not source:
+        return False
+    return True
+
+
+def _read_cached_capture_regions(cache_path: Path) -> "CaptureRegions | None":
+    """cache-hit 経路用: cache に記録された capture region timeline を読む (#810).
+
+    pre-#810 legacy cache (field なし / explicit null) は、cache 記録の
+    params.vtuber == False かつ masked_fallback_used == False なら標準 path 確定
+    (領域は決定的に FULL_FRAME) なので合成して返す。vtuber / masked fallback 採用
+    の legacy cache は領域が未知のため None (metadata では field 省略 = 領域不明を
+    偽装しない)。
+
+    合成条件に params.masked (request flag) を含めないのは意図的 (round-2 codex
+    裁定 2026-07-07): (a) ``"masked"`` cache param と ``masked_fallback_used``
+    記録は同一 commit (PR #826) で共導入のため「masked=True だが resolved flag
+    未記録」の cache は歴史的に存在しない、(b) masked 要求で fallback 不採用
+    (mask 不発見) の run は標準 path が FULL_FRAME で Pass 1 計測しているため、
+    合成は決定的に正。resolved flag (masked_fallback_used) が正の述語。
+
+    cache に capture_regions が present (非 null) な場合は _sanitize_capture_regions
+    で shape 検証する: valid -> そのまま返す; invalid -> logger.warning + None 返す。
+    present-but-garbage は "cache が破損/改竄" を意味し FULL_FRAME 合成に fall-through
+    しない (present-but-garbage != legacy absent = 標準 path 確定)。
+
+    cache が読めないときも None。`_load_cache` の hit 判定とは独立に読む
+    (`_read_cached_masked_fallback` と同型)。
+    codex adversarial-review F1 (2026-07-07 Idios confirmed): sanitize hardening.
+    """
+    try:
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    cached = data.get("capture_regions")
+    if cached is not None:
+        # present value: sanitize. invalid means cache corruption/tampering;
+        # do NOT fall through to FULL_FRAME synthesis.
+        sanitized = _sanitize_capture_regions(cached)
+        if sanitized is None:
+            logger.warning(
+                "Dropping malformed capture_regions from cache %s "
+                "(corrupted or hand-edited cache value -- region unknown)",
+                cache_path,
+            )
+        return sanitized
+    # cached is None: key absent or explicit null -- legacy absent semantics.
+    params = data.get("params", {})
+    if not params.get("vtuber", False) and not data.get("masked_fallback_used", False):
+        return cast("CaptureRegions", RegionTimeline(coarse=FULL_FRAME).to_dict())
+    return None
 
 
 def _load_cache(

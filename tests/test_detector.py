@@ -1147,7 +1147,7 @@ class TestDetectMatchBoundaries:
             t: 100.0 for t in ts
         }
         fallback_result = [{"start": 0.0, "end": 9.0, "type": "fl_match"}]
-        mock_fallback.return_value = fallback_result
+        mock_fallback.return_value = (fallback_result, FULL_FRAME)
         fired: list[bool] = []
         result = detect_match_boundaries(
             Path("test.mp4"),
@@ -2717,8 +2717,9 @@ def test_resolve_detect_region_falls_back_full_frame_on_probe_failure(monkeypatc
 
     # all hi-res probes fail -> localize_fn always None -> band consensus FULL_FRAME
     monkeypatch.setattr(det, "_probe_frame_rgb_hires", lambda vp, t: None)
-    region = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    region, reason = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
     assert region.is_full_frame()
+    assert reason == "consensus_miss"
 
 
 def test_resolve_detect_region_swallows_exceptions_to_full_frame(monkeypatch, caplog):
@@ -2735,8 +2736,9 @@ def test_resolve_detect_region_swallows_exceptions_to_full_frame(monkeypatch, ca
 
     monkeypatch.setattr(det, "_probe_frame_rgb_hires", _boom)
     with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
-        region = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+        region, reason = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
     assert region.is_full_frame()
+    assert reason == "anchor_error"
     assert any("band anchor" in r.message for r in caplog.records)
 
 
@@ -2752,8 +2754,9 @@ def test_resolve_detect_region_warns_on_consensus_miss_full_frame(monkeypatch, c
 
     monkeypatch.setattr(cr, "detect_scorebar_band_region", lambda **kw: cr.FULL_FRAME)
     with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
-        region = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+        region, reason = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
     assert region.is_full_frame()
+    assert reason == "consensus_miss"
     assert any("consensus" in r.message for r in caplog.records)
 
 
@@ -2768,7 +2771,7 @@ def test_detect_match_boundaries_passes_region_to_all_three_call_sites(monkeypat
     from pathlib import Path
 
     sentinel = CaptureRegion(0.0, 0.10, 1.0, 0.18, confidence=0.9, source="band")
-    monkeypatch.setattr(det, "_resolve_detect_region", lambda vp, dh: sentinel)
+    monkeypatch.setattr(det, "_resolve_detect_region", lambda vp, dh: (sentinel, None))
 
     cpu_calls: list[CaptureRegion] = []
     gpu_calls: list[CaptureRegion] = []
@@ -2816,6 +2819,159 @@ def test_detect_match_boundaries_passes_region_to_all_three_call_sites(monkeypat
     assert gpu_calls == [sentinel]
     # Pass2 runs in both invocations.
     assert refine_calls == [sentinel, sentinel]
+
+
+# ============================================================
+# #810: region_callback seam (capture_regions 永続化の配線)
+# ============================================================
+
+
+def _detect_with_region_callback(monkeypatch, *, vtuber, resolve_result=None, **kwargs):
+    """共通ハーネス: scan/refine を stub し region_callback の発火を捕捉する。"""
+    from pathlib import Path
+
+    from allaganeye.video import detector as det
+    from allaganeye.video.capture_region import RegionTimeline
+
+    if resolve_result is not None:
+        monkeypatch.setattr(
+            det, "_resolve_detect_region", lambda vp, dh: resolve_result
+        )
+    monkeypatch.setattr(
+        det, "_scan_cpu", lambda *a, **kw: {0.0: 100.0, 1.0: 5.0, 2.0: 100.0}
+    )
+    monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **kw: [])
+
+    fired: list[RegionTimeline] = []
+    det.detect_match_boundaries(
+        Path("test.mp4"),
+        duration_hint=3.0,
+        sample_interval=1.0,
+        min_match_duration=0.5,
+        use_gpu=False,
+        vtuber=vtuber,
+        region_callback=fired.append,
+        **kwargs,
+    )
+    return fired
+
+
+def test_region_callback_standard_path_full_frame(monkeypatch):
+    fired = _detect_with_region_callback(monkeypatch, vtuber=False)
+    assert len(fired) == 1
+    assert fired[0].coarse.is_full_frame()
+    assert fired[0].fallback_reason is None
+    assert fired[0].segments == []
+
+
+def test_region_callback_vtuber_band(monkeypatch):
+    from allaganeye.video.capture_region import CaptureRegion
+
+    band = CaptureRegion(0.1, 0.0, 0.76, 0.042, confidence=0.9, source="band")
+    fired = _detect_with_region_callback(
+        monkeypatch, vtuber=True, resolve_result=(band, None)
+    )
+    assert len(fired) == 1
+    assert fired[0].coarse == band
+    assert fired[0].fallback_reason is None
+
+
+def test_region_callback_vtuber_degraded_carries_reason(monkeypatch):
+    from allaganeye.video.capture_region import FULL_FRAME
+
+    fired = _detect_with_region_callback(
+        monkeypatch, vtuber=True, resolve_result=(FULL_FRAME, "anchor_error")
+    )
+    assert len(fired) == 1
+    assert fired[0].coarse.is_full_frame()
+    assert fired[0].fallback_reason == "anchor_error"
+
+
+def test_region_callback_masked_fallback_reports_mask_rect(monkeypatch):
+    from pathlib import Path
+
+    from allaganeye.video import detector as det
+    from allaganeye.video.capture_region import CaptureRegion, RegionTimeline
+
+    rect = CaptureRegion(0.05, 0.1, 0.8, 0.75, confidence=0.8, source="tierA")
+    segments = [{"start": 10.0, "end": 500.0, "type": "fl_match"}]
+    monkeypatch.setattr(
+        det, "_detect_masked_fallback", lambda *a, **kw: (segments, rect)
+    )
+    # 標準 Pass 1 が 0 blackout -> masked auto-trigger (#821 と同じ経路)
+    monkeypatch.setattr(det, "_scan_cpu", lambda *a, **kw: {0.0: 100.0, 1.0: 100.0})
+
+    fired: list[RegionTimeline] = []
+    result = det.detect_match_boundaries(
+        Path("test.mp4"),
+        duration_hint=2.0,
+        sample_interval=1.0,
+        min_match_duration=0.5,
+        use_gpu=False,
+        region_callback=fired.append,
+    )
+    assert result == segments
+    assert len(fired) == 1
+    assert fired[0].coarse == rect
+    assert fired[0].fallback_reason is None
+
+
+def test_region_callback_masked_declined_fires_once_full_frame(monkeypatch):
+    """round-3 R3-2: masked auto-trigger で fallback が None (mask 不発見) を返し
+    標準 path に fall-through した run でも、region_callback は FULL_FRAME で
+    ちょうど 1 回だけ発火する (double-fire / zero-fire regression pin)。"""
+    from pathlib import Path
+
+    from allaganeye.video import detector as det
+    from allaganeye.video.capture_region import RegionTimeline
+
+    monkeypatch.setattr(det, "_detect_masked_fallback", lambda *a, **kw: None)
+    # all-bright -> blackout_times 空 -> masked auto-trigger -> None -> 標準続行
+    monkeypatch.setattr(det, "_scan_cpu", lambda *a, **kw: {0.0: 100.0, 1.0: 100.0})
+    monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **kw: [])
+
+    fired: list[RegionTimeline] = []
+    det.detect_match_boundaries(
+        Path("test.mp4"),
+        duration_hint=2.0,
+        sample_interval=1.0,
+        min_match_duration=0.5,
+        use_gpu=False,
+        region_callback=fired.append,
+    )
+    assert len(fired) == 1
+    assert fired[0].coarse.is_full_frame()
+    assert fired[0].fallback_reason is None
+
+
+def test_resolve_detect_region_returns_reason_tuple(monkeypatch):
+    # #810: 縮退 provenance を呼び出し側へ返す (metadata へ記録するため)
+    from pathlib import Path
+
+    from allaganeye.video import capture_region as cr
+    from allaganeye.video import detector as det
+
+    # (a) 例外 -> anchor_error
+    def _boom(**kw):
+        raise RuntimeError("anchor exploded")
+
+    monkeypatch.setattr(cr, "detect_scorebar_band_region", _boom)
+    region, reason = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    assert region.is_full_frame()
+    assert reason == "anchor_error"
+
+    # (b) consensus 不成立 (非例外 FULL_FRAME) -> consensus_miss
+    monkeypatch.setattr(cr, "detect_scorebar_band_region", lambda **kw: cr.FULL_FRAME)
+    region, reason = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    assert region.is_full_frame()
+    assert reason == "consensus_miss"
+
+    # (c) 解決成功 -> reason なし
+    band = cr.CaptureRegion(0.1, 0.0, 0.76, 0.042, confidence=0.9, source="band")
+    monkeypatch.setattr(cr, "detect_scorebar_band_region", lambda **kw: band)
+    region, reason = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    assert region == band
+    assert reason is None
 
 
 # ============================================================
@@ -2893,7 +3049,7 @@ def test_vtuber_threads_filter_kwargs_and_gates_trailing_drop(
     # Isolate from real ffmpeg/localize I/O; return a distinct (non-FULL_FRAME)
     # region so band_region threading is observable, not a degraded default.
     band = CaptureRegion(0.1, 0.1, 0.8, 0.2, confidence=0.9, source="tierB")
-    mock_resolve.return_value = band
+    mock_resolve.return_value = (band, None)
 
     seen: dict = {}
     with patch(
@@ -3066,12 +3222,14 @@ def _zero_blackout_results():
 
 
 def test_masked_fallback_triggers_on_zero_blackout(monkeypatch):
+    from allaganeye.video.capture_region import FULL_FRAME as _FF
+
     monkeypatch.setattr(det, "_scan_cpu", lambda *a, **k: _zero_blackout_results())
     called = {}
 
     def fake_masked(video_path, **kw):
         called["hit"] = True
-        return [{"start": 0.0, "end": 300.0}]
+        return [{"start": 0.0, "end": 300.0}], _FF
 
     monkeypatch.setattr(det, "_detect_masked_fallback", fake_masked)
     out = det.detect_match_boundaries(
@@ -3091,9 +3249,12 @@ def test_masked_fallback_not_triggered_when_blackouts_present(monkeypatch):
     monkeypatch.setattr(det, "_scan_cpu", lambda *a, **k: results)
     monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **k: [])
     called = {}
-    monkeypatch.setattr(
-        det, "_detect_masked_fallback", lambda *a, **k: called.setdefault("hit", True)
-    )
+
+    def _record_and_none(*a, **k):
+        called["hit"] = True
+        return None
+
+    monkeypatch.setattr(det, "_detect_masked_fallback", _record_and_none)
     det.detect_match_boundaries(
         det.Path("x.mp4"), duration_hint=600.0, use_gpu=False, src_resolution=None
     )
@@ -3101,11 +3262,15 @@ def test_masked_fallback_not_triggered_when_blackouts_present(monkeypatch):
 
 
 def test_masked_fallback_forced_even_with_blackouts(monkeypatch):
+    from allaganeye.video.capture_region import FULL_FRAME as _FF
+
     results = _zero_blackout_results()
     results[300.0] = 2.0
     monkeypatch.setattr(det, "_scan_cpu", lambda *a, **k: results)
     monkeypatch.setattr(
-        det, "_detect_masked_fallback", lambda *a, **k: [{"start": 1.0, "end": 2.0}]
+        det,
+        "_detect_masked_fallback",
+        lambda *a, **k: ([{"start": 1.0, "end": 2.0}], _FF),
     )
     out = det.detect_match_boundaries(
         det.Path("x.mp4"),
@@ -3196,7 +3361,10 @@ def test_detect_masked_fallback_wires_region_band_localize(monkeypatch):
         audio_hits=None,
         stats=None,
     )
-    assert out == [{"start": 0.0, "end": 9.0}]
+    assert out is not None
+    segments, region_out = out
+    assert segments == [{"start": 0.0, "end": 9.0}]
+    assert region_out is fake_region
     assert seen["scan_region"] is fake_region
     assert seen["refine_region"] is fake_region
     assert seen["band_region"] is det.FULL_FRAME

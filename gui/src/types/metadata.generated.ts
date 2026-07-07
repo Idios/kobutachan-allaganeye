@@ -55,6 +55,7 @@ export interface Metadata {
   warnings?: MetadataWarning[];
   system_info?: SystemInfo;
   brightness_samples?: BrightnessSamples;
+  capture_regions?: CaptureRegions;
 }
 /**
  * Parameters used by the detector when this metadata.json was produced.
@@ -213,4 +214,43 @@ export interface BrightnessSamples {
    * Average brightness (0-255) per sample, chronological. Length capped at 512 by the writer.
    */
   values: number[];
+}
+/**
+ * Capture-region timeline resolved by detection (#810; serialized RegionTimeline). `coarse` is the region actually used for Pass 1 brightness measurement: FULL_FRAME on standard OBS runs, the scorebar band ROI (source="band", NOT the full game rectangle) on --vtuber runs, and the mask-free game rectangle (source="tierA") when the masked fallback produced the result. `segments` is always [] until Tier B per-segment detection lands (#480). `fallback_reason` records band-anchor degradation on --vtuber runs (documented values: "anchor_error" = Stage 0 exception, "consensus_miss" = no band consensus); null = no degradation. Optional at the root: pre-#810 metadata.json doesn't carry it; cache hits from pre-#810 vtuber/masked caches omit it (region unknown).
+ */
+export interface CaptureRegions {
+  coarse: CaptureRegion;
+  segments: RegionSegment[];
+  /**
+   * Band-anchor degradation provenance. Free string (readers accept unknown values); null = no degradation.
+   */
+  fallback_reason: string | null;
+}
+/**
+ * Game capture rectangle in normalized [0,1] frame coordinates (#810). Serialized form of allaganeye/video/capture_region.py::CaptureRegion (to_dict / from_dict).
+ */
+export interface CaptureRegion {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /**
+   * Detector confidence in [0,1].
+   */
+  confidence: number;
+  /**
+   * Detector that produced the region. Documented values: "fallback" (FULL_FRAME), "band" (scorebar band ROI), "tierA" (game rectangle), "tierB" (future per-segment precise). Free string: readers must accept unknown values (forward compat, same philosophy as warning codes).
+   */
+  source: string;
+}
+/**
+ * Per-segment precise region entry (Tier B; consumed by #480/#481). time_range is [t0, t1] in seconds.
+ */
+export interface RegionSegment {
+  /**
+   * @minItems 2
+   * @maxItems 2
+   */
+  time_range: [number, number];
+  region: CaptureRegion;
 }

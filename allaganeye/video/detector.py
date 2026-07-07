@@ -19,7 +19,12 @@ import numpy as np
 from allaganeye.audio.matcher import BgmHit
 from allaganeye.exceptions import VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
-from allaganeye.video.capture_region import CaptureRegion, FULL_FRAME, region_mean
+from allaganeye.video.capture_region import (
+    CaptureRegion,
+    FULL_FRAME,
+    RegionTimeline,
+    region_mean,
+)
 
 
 class MatchBoundary(TypedDict):
@@ -261,12 +266,19 @@ def _resolve_workers(workers: int | None) -> int:
     return min(os.cpu_count() or 4, 32)
 
 
-def _resolve_detect_region(video_path: Path, duration_hint: float) -> CaptureRegion:
+def _resolve_detect_region(
+    video_path: Path, duration_hint: float
+) -> tuple[CaptureRegion, str | None]:
     """Stage 0: scorebar 帯 anchor を解決する。失敗時は FULL_FRAME (OBS 安全縮退)。
 
     OBS (全画面 game) では localize がインセット帯を見つけられず consensus が
     成立しないため FULL_FRAME に縮退し、検出は現行と bit-exact になる。VTuber は
     帯 ROI が解決される。anchor の例外は決して検出を壊さない (FULL_FRAME に握り潰す)。
+
+    Returns:
+        (region, fallback_reason)。fallback_reason は #810 の縮退 provenance:
+        "anchor_error" (例外縮退) / "consensus_miss" (consensus 不成立) /
+        None (解決成功)。metadata.json capture_regions.fallback_reason へ記録される。
     """
     from allaganeye.video.capture_region import (
         detect_scorebar_band_region,
@@ -294,7 +306,7 @@ def _resolve_detect_region(video_path: Path, duration_hint: float) -> CaptureReg
         logger.warning(
             "scorebar band anchor failed; degrading to FULL_FRAME", exc_info=True
         )
-        return FULL_FRAME
+        return FULL_FRAME, "anchor_error"
     if region.is_full_frame():
         # consensus-miss (非例外縮退) も silent にしない (R5): --vtuber 明示 run
         # が FULL_FRAME (汚染 path) で続行することを痕跡に残す。
@@ -302,9 +314,9 @@ def _resolve_detect_region(video_path: Path, duration_hint: float) -> CaptureReg
             "band anchor found no scorebar-band consensus; "
             "continuing with FULL_FRAME (--vtuber)"
         )
-    else:
-        logger.debug("band anchor resolved: %s", region)
-    return region
+        return region, "consensus_miss"
+    logger.debug("band anchor resolved: %s", region)
+    return region, None
 
 
 _MASKED_REGION_SAMPLES = 48
@@ -399,6 +411,14 @@ def detect_match_boundaries(
     # auto-trigger とも) に一度だけ呼ばれる。request flag と resolved path を
     # 分離して記録するための通知 seam (brightness_callback と同型)。
     masked_fallback_callback: Callable[[], None] | None = None,
+    # #810: 最終的に有効だった capture region (RegionTimeline) で、Pass 1 の
+    # path 確定直後 (masked fallback 採用判定の確定点) に最大 1 回呼ばれる。
+    # masked fallback 採用時は mask-free rect、それ以外は Stage 0 の解決結果
+    # (band or FULL_FRAME + fallback_reason)。発火後に後段 (Pass 2 / scorebar
+    # filtering) が例外を出す run もあるため、callback は値の捕捉のみに使い、
+    # 永続化は本関数の成功 return 後に caller (commands 層) が行う
+    # (brightness_callback と同型の contract、round-3 R3-3)。
+    region_callback: Callable[[RegionTimeline], None] | None = None,
     # #576: rational fps propagation (preferred over float source_fps).
     # Either pair (num+den) takes precedence; float source_fps is the
     # backward-compatible fallback (Fraction.limit_denominator path).
@@ -458,8 +478,10 @@ def detect_match_boundaries(
     # Stage 0 band anchor runs only when VTuber is explicit (spec section 3.6).
     # OBS (vtuber=False) stays FULL_FRAME -> current bit-exact. localize also
     # succeeds on OBS, so auto-detection is not possible -> the flag gates it.
-    detect_region = (
-        _resolve_detect_region(video_path, duration_hint) if vtuber else FULL_FRAME
+    detect_region, region_fallback_reason = (
+        _resolve_detect_region(video_path, duration_hint)
+        if vtuber
+        else (FULL_FRAME, None)
     )
 
     # Pass 1: scan for blackout frames
@@ -546,7 +568,7 @@ def detect_match_boundaries(
     # blackout_times` is False -> the standard path below runs unchanged
     # (bit-exact; spec section 3 / R1).  VTuber uses its own path.
     if not vtuber and (masked or not blackout_times):
-        masked_segments = _detect_masked_fallback(
+        masked_result = _detect_masked_fallback(
             video_path,
             duration_hint=duration_hint,
             sample_interval=sample_interval,
@@ -565,10 +587,22 @@ def detect_match_boundaries(
             stats=stats,
             brightness_results=results,
         )
-        if masked_segments is not None:
+        if masked_result is not None:
+            masked_segments, masked_region = masked_result
             if masked_fallback_callback is not None:
                 masked_fallback_callback()
+            if region_callback is not None:
+                # masked path の縮退 (mask 不発見) はここに到達しない (None 返却で
+                # 標準 path 続行) ため fallback_reason は常に None。
+                region_callback(RegionTimeline(coarse=masked_region))
             return masked_segments
+
+    # #810: この時点で標準 / vtuber path 確定 (masked fallback 不採用)。
+    # Pass 1 で実際に使った detect_region + Stage 0 縮退 provenance を通知する。
+    if region_callback is not None:
+        region_callback(
+            RegionTimeline(coarse=detect_region, fallback_reason=region_fallback_reason)
+        )
 
     # Group into regions and expand with transition frames (#71)
     blackout_regions = _group_blackout_regions(blackout_times, sample_interval)
@@ -677,11 +711,12 @@ def _detect_masked_fallback(
     audio_hits: Sequence[BgmHit] | None,
     stats: DetectionStats | None,
     brightness_results: dict[float, float] | None = None,
-) -> list[MatchBoundary] | None:
+) -> tuple[list[MatchBoundary], CaptureRegion] | None:
     """Masked-OBS detection: region-aware Pass 1/2 + localize classification.
 
-    Returns segments, or ``None`` when no mask-free region is found (caller falls
-    through to the standard single-segment result).  Deliberately duplicates the
+    Returns ``(segments, region)``, or ``None`` when no mask-free region is found
+    (caller falls through to the standard single-segment result).
+    Deliberately duplicates the
     standard Pass1/Pass2/classify sequence (calling the same factored helpers)
     rather than sharing a core, so the standard OBS path is structurally
     unchanged (bit-exact mandate; spec section 3 / R1).  Uses ``band_region=
@@ -784,7 +819,7 @@ def _detect_masked_fallback(
         )
 
     effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
-    return _filter_and_extract_segments(
+    segments = _filter_and_extract_segments(
         refined_regions,
         duration_hint,
         min_match_duration,
@@ -792,6 +827,7 @@ def _detect_masked_fallback(
         classifications=classifications,
         stats=stats,
     )
+    return segments, region
 
 
 def _decode_chunk_cpu(

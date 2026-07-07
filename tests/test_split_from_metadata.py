@@ -788,3 +788,235 @@ def test_run_split_from_metadata_does_not_false_fail_on_post_match_tail(tmp_path
         run_split_from_metadata(meta_path, config, quiet=True)
 
     mock_split.assert_called_once()
+
+
+# -- #810 capture_regions preserve through --from-metadata --
+
+
+def test_run_split_from_metadata_preserves_capture_regions(tmp_path):
+    """#810 -- --from-metadata 経路で元 metadata.json の capture_regions
+    がそのまま新 metadata に引き継がれる (brightness_samples #644 同パターン)。"""
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+
+    regions = {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    payload = _sample_metadata(str(source))
+    payload["capture_regions"] = regions
+    meta_path = _write_metadata(tmp_path, payload)
+    out_dir = tmp_path / "out"
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[out_dir / "match_001.mp4", out_dir / "match_002.mp4"],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    fresh = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert fresh["capture_regions"] == regions
+
+
+def test_run_split_from_metadata_omits_capture_regions_when_source_lacks(tmp_path):
+    """#810 -- pre-#810 metadata (field なし) からは新 metadata でも欠落
+    (合成しない。領域不明を偽装しない)。"""
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+
+    payload = _sample_metadata(str(source))
+    assert "capture_regions" not in payload
+    meta_path = _write_metadata(tmp_path, payload)
+    out_dir = tmp_path / "out"
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[out_dir / "match_001.mp4", out_dir / "match_002.mp4"],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    fresh = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert "capture_regions" not in fresh
+
+
+# -- codex adversarial-review F1: sanitize malformed capture_regions in preserve path --
+
+
+def _make_valid_regions() -> dict:
+    """Minimal valid CaptureRegions dict for sanitizer tests."""
+    return {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+
+
+def test_run_split_from_metadata_drops_capture_regions_missing_fallback_reason(
+    tmp_path,
+):
+    """codex F1 -- preserve path sanitize: fallback_reason 欠落 -> key 省略 + warning (#810).
+
+    source metadata に capture_regions はあるが fallback_reason キーが無い (shape 違反)。
+    sanitize で None に落とされ、新 metadata には capture_regions キー自体を書かない。
+    run は正常完了する。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+
+    regions = _make_valid_regions()
+    del regions["fallback_reason"]  # required key missing -> invalid
+    payload = _sample_metadata(str(source))
+    payload["capture_regions"] = regions
+    meta_path = _write_metadata(tmp_path, payload)
+    out_dir = tmp_path / "out"
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[out_dir / "match_001.mp4", out_dir / "match_002.mp4"],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)  # must not raise
+
+    fresh = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert "capture_regions" not in fresh, (
+        "fallback_reason が欠落した malformed capture_regions は sanitize で落とし、"
+        "新 metadata には key 自体を書かない"
+    )
+
+
+def test_run_split_from_metadata_drops_capture_regions_out_of_range(tmp_path):
+    """codex F1 -- preserve path sanitize: coarse.x = 1.5 (out of [0,1]) -> key 省略."""
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+
+    regions = _make_valid_regions()
+    regions["coarse"]["x"] = 1.5  # out of [0, 1] range -> invalid
+    payload = _sample_metadata(str(source))
+    payload["capture_regions"] = regions
+    meta_path = _write_metadata(tmp_path, payload)
+    out_dir = tmp_path / "out"
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[out_dir / "match_001.mp4", out_dir / "match_002.mp4"],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)  # must not raise
+
+    fresh = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert "capture_regions" not in fresh, (
+        "coarse.x = 1.5 (out of [0,1]) -> sanitize で落とし key 省略"
+    )
+
+
+def test_run_split_from_metadata_drops_capture_regions_with_extra_key(tmp_path):
+    """codex F1 -- preserve path sanitize: extra top-level key -> key 省略.
+
+    valid な shape に未知のキー {"future": 1} を追加した場合、
+    strict key-set 検証 (additionalProperties:false 相当) で invalid -> key 省略。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+
+    regions = _make_valid_regions()
+    regions["future"] = 1  # extra key not in {"coarse", "segments", "fallback_reason"}
+    payload = _sample_metadata(str(source))
+    payload["capture_regions"] = regions
+    meta_path = _write_metadata(tmp_path, payload)
+    out_dir = tmp_path / "out"
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[out_dir / "match_001.mp4", out_dir / "match_002.mp4"],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)  # must not raise
+
+    fresh = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert "capture_regions" not in fresh, (
+        "extra top-level key 'future' -> sanitize で invalid 判定、key 省略"
+    )
+
+
+def test_run_split_from_metadata_drops_capture_regions_nan_time_range(tmp_path):
+    """round-3 R3-1: NaN 混入 time_range は sanitize で drop され、json.dumps
+    (allow_nan=True) が非標準 token (NaN) を新 metadata.json に再 emit しない
+    (strict reader = GUI serde_json / JSON.parse の file 全体 reject を防ぐ)。"""
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+
+    regions = {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [
+            {
+                "time_range": [0.0, float("nan")],
+                "region": {
+                    "x": 0.1,
+                    "y": 0.0,
+                    "w": 0.76,
+                    "h": 0.042,
+                    "confidence": 0.9,
+                    "source": "band",
+                },
+            }
+        ],
+        "fallback_reason": None,
+    }
+    payload = _sample_metadata(str(source))
+    payload["capture_regions"] = regions
+    meta_path = _write_metadata(tmp_path, payload)
+    out_dir = tmp_path / "out"
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[out_dir / "match_001.mp4", out_dir / "match_002.mp4"],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)  # must not raise
+
+    raw = (out_dir / "metadata.json").read_text(encoding="utf-8")
+    assert "NaN" not in raw, "非標準 JSON token が再 emit されてはならない"
+    fresh = json.loads(raw)
+    assert "capture_regions" not in fresh

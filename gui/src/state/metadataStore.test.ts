@@ -1685,6 +1685,34 @@ describe('#691: catch path lifecycle pinning', () => {
   });
 });
 
+describe('normalizeForPersistence capture_regions round-trip (#810)', () => {
+  it('normalizeForPersistence preserves capture_regions (#810)', async () => {
+    // top-level spread で保持される契約を pin する (欠落で GUI 適用時に領域が消えると
+    // #481 minimap 等の consumer が cached 情報を失う)
+    const meta = validMetadata();
+    const captureRegions = {
+      coarse: { x: 0, y: 0, w: 1, h: 1, confidence: 1, source: 'fallback' },
+      segments: [],
+      fallback_reason: null,
+    };
+    // Metadata now has capture_regions?: CaptureRegions (from generated types)
+    const metaWithRegions = { ...meta, capture_regions: captureRegions };
+    configureInvoke({
+      load_metadata: metaWithRegions,
+      apply_changes: 2000,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    // Need a dirty edit to trigger apply
+    useMetadataStore.getState().updateMatch(1, { name: 'x' });
+    await useMetadataStore.getState().apply();
+    const applyCall = invokeMock.mock.calls.find((c) => c[0] === 'apply_changes');
+    expect(applyCall).toBeDefined();
+    const persisted = (applyCall![1] as { metadata: Metadata }).metadata;
+    expect(persisted.capture_regions).toEqual(captureRegions);
+  });
+});
+
 describe('#695: conflictErrorState lifecycle (#694 *ErrorState form)', () => {
   beforeEach(() => {
     useMetadataStore.setState({

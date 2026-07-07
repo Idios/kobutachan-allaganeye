@@ -69,6 +69,7 @@ JSON Schema は writer 契約として strict (additional properties は受け�
 | `warnings` | array | 新規書き込みは ✓ (デフォルト `[]`) / 読み込み時は欠落許容 | 構造化警告一覧 (#518) | 個々のエントリは §warnings 参照 |
 | `system_info` | object | 新規書き込みは ✓ / 読み込み時は欠落許容 (#591) | GPU vendor probe スナップショット | 後述 §system_info 参照 |
 | `brightness_samples` | object | 新規書き込みは Pass 1 が走った場合のみ ✓ / 読み込み時は欠落許容 (#569) | GUI complete 画面用の輝度タイムライン | 後述 §brightness_samples 参照 |
+| `capture_regions` | object | 新規検知では ✓ / cache-hit は記録があれば ✓ / 読み込み時は欠落許容 (#810) | 検出が解決した capture region timeline (coarse + segments + 縮退 provenance) | 後述 §capture_regions 参照 |
 
 ### `detection_params` オブジェクト
 
@@ -146,6 +147,38 @@ GUI complete 画面の輝度タイムライン (`BrightnessTimeline` SVG) 用の
 cache hit / Pass 1 未実行の場合は key 自体を省略する (`null` ではなく key 不在)。GUI 側は欠落許容済 (#569) のため、欠落時は `sampleBrightness()` 固定波形 fallback で描画する。`allaganeye split --no-cache` を使えば常に Pass 1 を走らせて書ける。
 
 GUI complete 画面は `metadata.brightness_samples?.values` を読み、欠落時はサンプルデータ (`buildSampleBrightness`) にフォールバックする。
+
+### `capture_regions` オブジェクト (#810)
+
+検出が解決した game capture 領域 (`allaganeye/video/capture_region.py::RegionTimeline` の
+serialize 形)。consumer (Pass 1 wiring #809 / scorebar ROI #480 / minimap #481 / GUI) が
+一貫参照する共有スキーマ。矩形は解像度非依存の正規化座標 `[0,1]`。
+
+| フィールド | 型 | 必須 | 意味 |
+| --- | --- | --- | --- |
+| `coarse` | CaptureRegion | ✓ | **その run の Pass 1 輝度計測に実際に使われた領域**。標準 OBS = FULL_FRAME (`{0,0,1,1}`, source=`"fallback"`) / `--vtuber` = scorebar 帯 ROI (source=`"band"`、**game 全矩形ではない**) / masked fallback 採用 run = mask-free game 矩形 (source=`"tierA"`) |
+| `segments` | array of RegionSegment | ✓ | Tier B per-segment 精密領域 (`{"time_range": [t0, t1], "region": CaptureRegion}`)。**現状は常に `[]`** (#480 P4 が埋める) |
+| `fallback_reason` | string \| null | ✓ (nullable) | band anchor 縮退の provenance。`"anchor_error"` (Stage 0 例外) / `"consensus_miss"` (consensus 不成立) / `null` (縮退なし)。free string: 読み手は unknown 値を受容 |
+
+CaptureRegion は `{x, y, w, h, confidence: number [0,1], source: string}`。`source` の文書化値:
+`"fallback"` (FULL_FRAME) / `"band"` (scorebar 帯 ROI) / `"tierA"` (game 矩形) / `"tierB"`
+(将来 precise)。free string のため読み手は unknown 値を受容すること。
+
+masked の縮退 (mask 不発見で標準 path に defer) は本フィールドではなく既存の
+`detection_params.masked` / `masked_fallback_used` フラグ対から導出する
+(`masked=true` かつ `masked_fallback_used=false`)。
+
+**書き込みパス別の挙動**:
+
+| 経路 | 書き込み |
+| --- | --- |
+| `allaganeye detect` / `allaganeye split` (新規検知) | ✓ 常に書く (OBS は coarse=FULL_FRAME) |
+| cache hit | cache 記録があれば ✓ / pre-#810 cache は標準 path 確定 (vtuber=false かつ masked_fallback_used=false) なら FULL_FRAME を合成、vtuber / **masked fallback 採用 run** なら ✗ 欠落 (領域不明を偽装しない)。判定述語は resolved flag (`masked_fallback_used`) であり request flag (`masked`) ではない: masked 要求でも fallback 不採用なら標準 path が FULL_FRAME で計測しているため合成が正 |
+| `allaganeye split --from-metadata` | 元 metadata から **preserve** (元が欠落なら欠落)。`split --from-metadata` と cache 読出しの preserve 値は shape 検証 (sanitize) され、malformed 値は warning とともに省略される (#810 codex F1) |
+
+cache には `.detection_cache.json` top-level (`masked_fallback_used` と同型、cache key 非対象)
+で保存される。GUI は読み取り時 zod `CaptureRegionsSchema` (optional) で検証し、`[適用]`
+(`normalizeForPersistence`) でも保持する (GUI 側 consumer は未実装、round-trip のみ)。
 
 ### `Gap` オブジェクト (`gaps[]`)
 

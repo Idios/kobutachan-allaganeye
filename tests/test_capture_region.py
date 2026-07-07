@@ -649,3 +649,44 @@ def test_detect_mask_free_region_tiny_game_is_full_frame():
 
 def test_detect_mask_free_region_single_frame_is_full_frame():
     assert detect_mask_free_region([np.zeros((20, 20), dtype=np.uint8)]).is_full_frame()
+
+
+class TestRegionTimelineSerialization:
+    """#810: metadata.json capture_regions round-trip contract."""
+
+    def test_to_dict_includes_fallback_reason_null(self):
+        from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
+
+        d = RegionTimeline(coarse=FULL_FRAME).to_dict()
+        assert d["fallback_reason"] is None
+        assert d["segments"] == []
+        assert d["coarse"]["source"] == "fallback"
+
+    def test_to_dict_includes_fallback_reason_value(self):
+        from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
+
+        d = RegionTimeline(
+            coarse=FULL_FRAME, fallback_reason="consensus_miss"
+        ).to_dict()
+        assert d["fallback_reason"] == "consensus_miss"
+
+    def test_round_trip_with_segments(self):
+        from allaganeye.video.capture_region import CaptureRegion, RegionTimeline
+
+        band = CaptureRegion(0.1, 0.0, 0.76, 0.042, confidence=0.9, source="band")
+        seg = CaptureRegion(0.1, 0.05, 0.8, 0.7, confidence=0.8, source="tierB")
+        timeline = RegionTimeline(
+            coarse=band,
+            segments=[((60.0, 1200.0), seg)],
+            fallback_reason=None,
+        )
+        restored = RegionTimeline.from_dict(timeline.to_dict())
+        assert restored == timeline
+
+    def test_from_dict_accepts_legacy_shape_without_fallback_reason(self):
+        # to_dict は常に emit するが、from_dict は防御的に欠落を None 扱いする
+        from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
+
+        d = {"coarse": FULL_FRAME.to_dict(), "segments": []}
+        restored = RegionTimeline.from_dict(d)
+        assert restored.fallback_reason is None

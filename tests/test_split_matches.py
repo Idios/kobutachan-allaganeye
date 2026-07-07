@@ -4,9 +4,13 @@ import json
 import re
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from allaganeye.metadata_types import CaptureRegions
 
 from allaganeye.commands.split_matches import (
     _CACHE_VERSION,
@@ -14,6 +18,7 @@ from allaganeye.commands.split_matches import (
     _PROGRESS_LABEL_WIDTH,
     _auto_sample_interval,
     _eta_progressbar,
+    _format_region_token,
     _load_cache,
     _save_cache,
     run_split,
@@ -1425,6 +1430,464 @@ def test_progressbar_auto_interval(mock_probe, mock_detect, mock_split, tmp_path
     assert mock_bar.call_count >= 1
     detecting_call = mock_bar.call_args_list[0]
     assert detecting_call[1]["length"] == 2433
+
+
+class TestCaptureRegionsCache:
+    """#810: capture_regions の cache 保存 / 引継 / legacy 合成。"""
+
+    def _write_cache(self, cache_path, video_path, *, extra=None, params_extra=None):
+        # 既存 cache fixture (cache_video / cache_config) 群のヘルパに合わせて、
+        # _save_cache を直接使わず生 JSON を書いて legacy 形を再現する
+        import json
+
+        stat = video_path.resolve().stat()
+        from allaganeye.commands.split_matches import _CACHE_VERSION
+
+        data = {
+            "cache_version": _CACHE_VERSION,
+            "source": str(video_path.resolve()),
+            "source_size": stat.st_size,
+            "source_mtime": stat.st_mtime,
+            "probe": {
+                "duration": 100.0,
+                "width": 1920,
+                "height": 1080,
+                "fps": 60.0,
+                "codec": "h264",
+            },
+            "params": {
+                "sample_interval": 2.0,
+                "blackout_threshold": 15.0,
+                "min_match_duration": 300.0,
+                "min_blackout_duration": 3.0,
+                "no_audio": False,
+                "vtuber": False,
+                "masked": False,
+                "keep_trailing": False,
+                **(params_extra or {}),
+            },
+            "masked_fallback_used": False,
+            "boundaries": [{"start": 10.0, "end": 50.0, "type": "fl_match"}],
+            **(extra or {}),
+        }
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+
+    def test_save_cache_records_capture_regions(self, cache_video, tmp_path):
+        from typing import cast as _cast
+
+        from allaganeye.commands.split_matches import _save_cache
+        from allaganeye.metadata_types import CaptureRegions
+        import json
+
+        cache_path = tmp_path / ".detection_cache.json"
+        regions = _cast(
+            CaptureRegions,
+            {
+                "coarse": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "w": 1.0,
+                    "h": 1.0,
+                    "confidence": 1.0,
+                    "source": "fallback",
+                },
+                "segments": [],
+                "fallback_reason": None,
+            },
+        )
+        _save_cache(
+            cache_path,
+            cache_video,
+            {
+                "duration": 100.0,
+                "width": 1920,
+                "height": 1080,
+                "fps": 60.0,
+                "fps_num": 60,
+                "fps_den": 1,
+                "codec": "h264",
+                "audio_codec": "aac",
+            },
+            2.0,
+            SplitConfig(output_dir=tmp_path),
+            [{"start": 10.0, "end": 50.0, "type": "fl_match"}],
+            capture_regions=regions,
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        assert data["capture_regions"] == regions
+
+    def test_save_cache_omits_capture_regions_when_none(self, cache_video, tmp_path):
+        from allaganeye.commands.split_matches import _save_cache
+        import json
+
+        cache_path = tmp_path / ".detection_cache.json"
+        _save_cache(
+            cache_path,
+            cache_video,
+            {
+                "duration": 100.0,
+                "width": 1920,
+                "height": 1080,
+                "fps": 60.0,
+                "fps_num": 60,
+                "fps_den": 1,
+                "codec": "h264",
+                "audio_codec": "aac",
+            },
+            2.0,
+            SplitConfig(output_dir=tmp_path),
+            [{"start": 10.0, "end": 50.0, "type": "fl_match"}],
+            capture_regions=None,
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        # #810: None は key 省略 (null を書かない) -- metadata.json と同じ省略 semantics
+        assert "capture_regions" not in data
+
+    def test_read_cached_capture_regions_returns_recorded(self, cache_video, tmp_path):
+        from allaganeye.commands.split_matches import _read_cached_capture_regions
+
+        cache_path = tmp_path / ".detection_cache.json"
+        regions = {
+            "coarse": {
+                "x": 0.1,
+                "y": 0.0,
+                "w": 0.76,
+                "h": 0.042,
+                "confidence": 0.9,
+                "source": "band",
+            },
+            "segments": [],
+            "fallback_reason": None,
+        }
+        self._write_cache(cache_path, cache_video, extra={"capture_regions": regions})
+        assert _read_cached_capture_regions(cache_path) == regions
+
+    def test_read_cached_capture_regions_legacy_standard_synthesizes_full_frame(
+        self, cache_video, tmp_path
+    ):
+        # pre-#810 cache + 標準 path (vtuber=False / masked_fallback_used=False)
+        # は FULL_FRAME 確定なので合成する
+        from allaganeye.commands.split_matches import _read_cached_capture_regions
+
+        cache_path = tmp_path / ".detection_cache.json"
+        self._write_cache(cache_path, cache_video)
+        regions = _read_cached_capture_regions(cache_path)
+        assert regions is not None
+        assert regions["coarse"]["source"] == "fallback"
+        assert regions["coarse"]["x"] == 0.0 and regions["coarse"]["w"] == 1.0
+        assert regions["fallback_reason"] is None
+
+    def test_read_cached_capture_regions_legacy_vtuber_returns_none(
+        self, cache_video, tmp_path
+    ):
+        # pre-#810 vtuber cache は band 領域が未知 -> 合成せず None (field 省略)
+        from allaganeye.commands.split_matches import _read_cached_capture_regions
+
+        cache_path = tmp_path / ".detection_cache.json"
+        self._write_cache(cache_path, cache_video, params_extra={"vtuber": True})
+        assert _read_cached_capture_regions(cache_path) is None
+
+    def test_read_cached_capture_regions_legacy_masked_returns_none(
+        self, cache_video, tmp_path
+    ):
+        from allaganeye.commands.split_matches import _read_cached_capture_regions
+
+        cache_path = tmp_path / ".detection_cache.json"
+        self._write_cache(cache_path, cache_video, extra={"masked_fallback_used": True})
+        assert _read_cached_capture_regions(cache_path) is None
+
+    def test_read_cached_capture_regions_masked_requested_but_declined_synthesizes(
+        self, cache_video, tmp_path
+    ):
+        """round-2 codex 裁定 pin: masked=True (request) でも fallback 不採用
+        (masked_fallback_used=False) なら標準 path が FULL_FRAME で Pass 1 計測
+        しているため、FULL_FRAME 合成が意図した挙動。判定述語は resolved flag
+        であり request flag ではない (params.masked を除外条件に加えない)。"""
+        from allaganeye.commands.split_matches import _read_cached_capture_regions
+
+        cache_path = tmp_path / ".detection_cache.json"
+        self._write_cache(cache_path, cache_video, params_extra={"masked": True})
+        regions = _read_cached_capture_regions(cache_path)
+        assert regions is not None
+        assert regions["coarse"]["source"] == "fallback"
+        assert regions["coarse"]["x"] == 0.0 and regions["coarse"]["w"] == 1.0
+        assert regions["fallback_reason"] is None
+
+    def test_read_cached_capture_regions_unreadable_returns_none(self, tmp_path):
+        from allaganeye.commands.split_matches import _read_cached_capture_regions
+
+        assert _read_cached_capture_regions(tmp_path / "missing.json") is None
+
+    def test_read_cached_capture_regions_nan_time_range_returns_none(
+        self, cache_video, tmp_path
+    ):
+        """round-3 R3-1: NaN 混入 cache 値は sanitize で drop され、非標準 JSON
+        token が metadata.json へ再 emit されない (合成 fall-through もしない)。"""
+        from allaganeye.commands.split_matches import _read_cached_capture_regions
+
+        cache_path = tmp_path / ".detection_cache.json"
+        nan_regions = {
+            "coarse": {
+                "x": 0.1,
+                "y": 0.0,
+                "w": 0.76,
+                "h": 0.042,
+                "confidence": 0.9,
+                "source": "band",
+            },
+            "segments": [
+                {
+                    "time_range": [0.0, float("nan")],
+                    "region": {
+                        "x": 0.1,
+                        "y": 0.0,
+                        "w": 0.76,
+                        "h": 0.042,
+                        "confidence": 0.9,
+                        "source": "band",
+                    },
+                }
+            ],
+            "fallback_reason": None,
+        }
+        self._write_cache(
+            cache_path, cache_video, extra={"capture_regions": nan_regions}
+        )
+        assert _read_cached_capture_regions(cache_path) is None
+
+    def test_read_cached_capture_regions_malformed_returns_none_not_synthesized(
+        self, cache_video, tmp_path
+    ):
+        """codex F1 -- cache read sanitize: malformed present value -> None (not FULL_FRAME).
+
+        cache に capture_regions が present だが malformed (coarse に "confidence" 欠落)。
+        sanitize で invalid -> None を返す。
+        vtuber=False / masked_fallback_used=False でも FULL_FRAME 合成に fall through しない
+        (present-but-garbage は "領域不明" であり、legacy 不在 = 標準 path 確定 とは異なる)。
+        """
+        from allaganeye.commands.split_matches import _read_cached_capture_regions
+
+        cache_path = tmp_path / ".detection_cache.json"
+        malformed_regions = {
+            "coarse": {
+                "x": 0.0,
+                "y": 0.0,
+                "w": 1.0,
+                "h": 1.0,
+                # "confidence" key missing -> invalid CaptureRegion
+                "source": "fallback",
+            },
+            "segments": [],
+            "fallback_reason": None,
+        }
+        self._write_cache(
+            cache_path, cache_video, extra={"capture_regions": malformed_regions}
+        )
+        result = _read_cached_capture_regions(cache_path)
+        assert result is None, (
+            "present but malformed capture_regions (missing confidence) must return "
+            "None -- must NOT synthesize FULL_FRAME"
+        )
+
+    def test_read_cached_capture_regions_null_value_treated_as_absent(
+        self, cache_video, tmp_path
+    ):
+        """codex F1 -- cache read: explicit null is treated same as absent key (legacy compat).
+
+        pre-fix builds wrote `"capture_regions": null` when the value was None.
+        null should be treated as absent (key missing), triggering legacy synthesis
+        for standard path (vtuber=False, masked_fallback_used=False) -> FULL_FRAME.
+        This pins the null-tolerance so future refactors don't break legacy caches.
+        """
+        import json as _json
+
+        from allaganeye.commands.split_matches import _read_cached_capture_regions
+
+        cache_path = tmp_path / ".detection_cache.json"
+        # Write cache with explicit null for capture_regions
+        stat = cache_video.resolve().stat()
+        from allaganeye.commands.split_matches import _CACHE_VERSION
+
+        data = {
+            "cache_version": _CACHE_VERSION,
+            "source": str(cache_video.resolve()),
+            "source_size": stat.st_size,
+            "source_mtime": stat.st_mtime,
+            "probe": {
+                "duration": 100.0,
+                "width": 1920,
+                "height": 1080,
+                "fps": 60.0,
+                "codec": "h264",
+            },
+            "params": {
+                "sample_interval": 2.0,
+                "blackout_threshold": 15.0,
+                "min_match_duration": 300.0,
+                "min_blackout_duration": 3.0,
+                "no_audio": False,
+                "vtuber": False,
+                "masked": False,
+                "keep_trailing": False,
+            },
+            "masked_fallback_used": False,
+            "boundaries": [{"start": 10.0, "end": 50.0, "type": "fl_match"}],
+            "capture_regions": None,  # explicit null -- legacy pre-fix behavior
+        }
+        cache_path.write_text(_json.dumps(data), encoding="utf-8")
+
+        result = _read_cached_capture_regions(cache_path)
+        # explicit null treated as absent -> standard path -> FULL_FRAME synthesized
+        assert result is not None, (
+            "explicit null capture_regions should be treated as absent, "
+            "triggering FULL_FRAME synthesis for standard path"
+        )
+        assert result["coarse"]["source"] == "fallback"
+        assert result["coarse"]["x"] == 0.0 and result["coarse"]["w"] == 1.0
+
+
+# -- Direct unit tests for _sanitize_capture_regions --
+
+
+class TestSanitizeCaptureRegions:
+    """Unit tests for the new _sanitize_capture_regions helper (codex F1)."""
+
+    def _valid_region(self) -> dict:
+        return {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        }
+
+    def _valid_regions(self) -> dict:
+        return {
+            "coarse": self._valid_region(),
+            "segments": [],
+            "fallback_reason": None,
+        }
+
+    def test_valid_full_shape_returns_as_is(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = {
+            "coarse": self._valid_region(),
+            "segments": [
+                {
+                    "time_range": [0.0, 10.0],
+                    "region": self._valid_region(),
+                }
+            ],
+            "fallback_reason": "consensus_miss",
+        }
+        result = _sanitize_capture_regions(regions)
+        assert result == regions
+
+    def test_valid_minimal_returns_as_is(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        result = _sanitize_capture_regions(regions)
+        assert result == regions
+
+    def test_bool_coordinate_returns_none(self):
+        """bool is a subtype of int but must be rejected explicitly."""
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        regions["coarse"]["x"] = True  # bool must be rejected
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_negative_confidence_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        regions["coarse"]["confidence"] = -0.1
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_confidence_above_one_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        regions["coarse"]["confidence"] = 1.5
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_empty_source_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        regions["coarse"]["source"] = ""
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_time_range_of_length_one_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = {
+            "coarse": self._valid_region(),
+            "segments": [
+                {
+                    "time_range": [0.0],  # must be exactly 2 elements
+                    "region": self._valid_region(),
+                }
+            ],
+            "fallback_reason": None,
+        }
+        assert _sanitize_capture_regions(regions) is None
+
+    @pytest.mark.parametrize(
+        "bad_value",
+        [float("nan"), float("inf"), float("-inf")],
+        ids=["nan", "inf", "neg_inf"],
+    )
+    def test_time_range_non_finite_returns_none(self, bad_value):
+        """round-3 R3-1: NaN / +-Infinity は json.dumps (allow_nan=True) が
+        非標準 token を再 emit し strict reader (GUI serde_json / JSON.parse) が
+        metadata.json 全体を reject するため、sanitize 側で reject する。
+        (t < 0 比較は NaN で False になり素通りしていた regression の pin)"""
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = {
+            "coarse": self._valid_region(),
+            "segments": [
+                {
+                    "time_range": [0.0, bad_value],
+                    "region": self._valid_region(),
+                }
+            ],
+            "fallback_reason": None,
+        }
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_fallback_reason_non_str_non_none_returns_none(self):
+        """fallback_reason must be str or None; e.g. int 1 is invalid."""
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        regions["fallback_reason"] = 1  # invalid -- must be str or None
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_missing_top_level_key_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        del regions["fallback_reason"]
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_extra_top_level_key_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        regions["extra_field"] = "unexpected"
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_non_dict_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        assert _sanitize_capture_regions("not a dict") is None
+        assert _sanitize_capture_regions(None) is None
+        assert _sanitize_capture_regions(42) is None
 
 
 class TestCachePipeline:
@@ -3811,9 +4274,15 @@ def test_verbose_dry_run_emits_total(
     mock_split.assert_not_called()
 
 
-def _seed_cache(source: Path, output_dir: Path, config: SplitConfig) -> None:
+def _seed_cache(
+    source: Path,
+    output_dir: Path,
+    config: SplitConfig,
+    *,
+    capture_regions: dict | None = None,
+) -> None:
     """Write a .detection_cache.json entry matching ``config`` so ``_load_cache``
-    hits.  Helper for cache-hit tests (#381)."""
+    hits.  Helper for cache-hit tests (#381; capture_regions は #810 round-1)."""
     source.write_bytes(b"")
     output_dir.mkdir(parents=True, exist_ok=True)
     _save_cache(
@@ -3823,6 +4292,9 @@ def _seed_cache(source: Path, output_dir: Path, config: SplitConfig) -> None:
         config.sample_interval,
         config,
         BOUNDARIES,
+        # malformed 値を意図的に seed するテスト (round-1 #1 pin) があるため
+        # CaptureRegions に cast して writer の型契約を素通しする。
+        capture_regions=cast("CaptureRegions | None", capture_regions),
     )
 
 
@@ -4032,6 +4504,148 @@ def test_verbose_cache_hit_prints_masked_on_token(
     header_idx = out.find("Cache hit:")
     assert header_idx >= 0
     assert "masked=on" in out[header_idx:]
+
+
+class TestFormatRegionToken:
+    """#810 round-1: verbose region token の tolerant contract を pin する。
+
+    cache-hit 表示は raw cache 記録値 (無検証) を受けるため、malformed 入力でも
+    crash せず "invalid" / "unknown" を返す契約。
+    """
+
+    def _regions(self, **coarse_overrides) -> dict:
+        coarse = {
+            "x": 0.0,
+            "y": 0.0,
+            "w": 1.0,
+            "h": 1.0,
+            "confidence": 1.0,
+            "source": "fallback",
+        }
+        coarse.update(coarse_overrides)
+        return {"coarse": coarse, "segments": [], "fallback_reason": None}
+
+    def test_none_returns_unknown(self):
+        assert _format_region_token(None) == "unknown"
+
+    def test_non_dict_returns_unknown(self):
+        assert _format_region_token("garbage") == "unknown"
+
+    def test_missing_coarse_returns_unknown(self):
+        assert _format_region_token({"segments": []}) == "unknown"
+
+    def test_full_frame(self):
+        assert _format_region_token(self._regions()) == "full_frame"
+
+    def test_band_coordinates_formatted(self):
+        regions = self._regions(
+            x=0.1, y=0.0, w=0.76, h=0.042, confidence=0.9, source="band"
+        )
+        assert _format_region_token(regions) == "band(0.10,0.00,0.76,0.04)"
+
+    def test_fallback_reason_suffix(self):
+        regions = self._regions()
+        regions["fallback_reason"] = "consensus_miss"
+        assert _format_region_token(regions) == "full_frame, fallback=consensus_miss"
+
+    def test_malformed_non_numeric_coordinate_returns_invalid(self):
+        # round-1 #1: 非数値座標で :.2f が ValueError にならないこと (crash 防御)
+        regions = self._regions(x="oops", source="band")
+        assert _format_region_token(regions) == "invalid"
+
+    def test_bool_coordinate_returns_invalid(self):
+        regions = self._regions(x=True, source="band")
+        assert _format_region_token(regions) == "invalid"
+
+    def test_ansi_escape_in_source_is_neutralized(self):
+        # round-3 R3-4: 改竄 cache 由来の制御文字を端末に素通ししない
+        regions = self._regions(source="\x1b[31mevil\x1b[0m")
+        token = _format_region_token(regions)
+        assert "\x1b" not in token
+        assert "evil" in token
+
+    def test_overlong_source_is_capped(self):
+        regions = self._regions(source="s" * 500)
+        token = _format_region_token(regions)
+        assert len(token) < 100
+
+    def test_ansi_escape_in_fallback_reason_is_neutralized(self):
+        regions = self._regions()
+        regions["fallback_reason"] = "\x1b]0;pwn\x07"
+        token = _format_region_token(regions)
+        assert "\x1b" not in token
+        assert "\x07" not in token
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_prints_region_token(
+    mock_probe, mock_split, tmp_path, capsys
+):
+    """cache-hit params 行に region= token が出る (#810 round-1 #2 表示 pin)."""
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    band_regions = {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    _seed_cache(source, tmp_path, config, capture_regions=band_regions)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True)
+    out = capsys.readouterr().out
+
+    header_idx = out.find("Cache hit:")
+    assert header_idx >= 0
+    assert "region=band(0.10,0.00,0.76,0.04)" in out[header_idx:]
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_malformed_region_does_not_crash(
+    mock_probe, mock_split, tmp_path, capsys
+):
+    """malformed cached capture_regions で cache-hit verbose が crash しない
+    (#810 round-1 #1 regression pin)。
+
+    表示は raw cache 記録値を正とする設計のため、formatter が tolerant に
+    "invalid" を出して run は正常続行する (metadata 側は sanitize 済みで省略)。
+    """
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    malformed = {
+        "coarse": {
+            "x": "oops",
+            "y": 0.0,
+            "w": 0.5,
+            "h": 0.5,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    _seed_cache(source, tmp_path, config, capture_regions=malformed)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True)  # must not raise
+    out = capsys.readouterr().out
+
+    header_idx = out.find("Cache hit:")
+    assert header_idx >= 0
+    assert "region=invalid" in out[header_idx:]
 
 
 @patch(f"{MODULE}.split_video")
@@ -4869,6 +5483,166 @@ def test_run_split_cache_hit_omits_brightness_samples(
         "cache hit 経路では Pass 1 を skip するため brightness_samples キー"
         "は欠落するはず (#644、metadata-spec.md 書き込みパス表と整合)"
     )
+
+
+# -- #810 capture_regions wiring through run_split (一気通貫) --
+
+# `MODULE` / `PROBE_RESULT` / `BOUNDARIES` / `_mock_audio_scan` (autouse)
+# は file 冒頭で既定義。brightness_samples #644 と同じ decorator / fixture 構成。
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_writes_capture_regions_when_callback_fires(
+    mock_probe, mock_split, mock_run_detection, tmp_path
+):
+    """#810 -- run_split (一気通貫) で region_callback が発火したら
+    capture_regions が metadata.json に書かれること。"""
+    from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
+
+    mock_probe.return_value = PROBE_RESULT
+
+    def fake_run_detection(*args, **kwargs):
+        cb = kwargs.get("region_callback")
+        assert cb is not None, (
+            "run_split must pass region_callback to _run_detection (#810)"
+        )
+        cb(RegionTimeline(coarse=FULL_FRAME))
+        return BOUNDARIES
+
+    mock_run_detection.side_effect = fake_run_detection
+
+    output_dir = tmp_path / "out"
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    run_split(video, config, verbose=False, quiet=True)
+
+    payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["capture_regions"]["coarse"]["source"] == "fallback"
+    assert payload["capture_regions"]["fallback_reason"] is None
+    assert payload["capture_regions"]["coarse"]["x"] == 0.0
+    assert payload["capture_regions"]["coarse"]["w"] == 1.0
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_omits_capture_regions_when_callback_silent(
+    mock_probe, mock_split, mock_run_detection, tmp_path
+):
+    """#810 -- callback が発火しない run では field を書かない
+    (brightness_samples #644 と同型の防御契約)。"""
+    mock_probe.return_value = PROBE_RESULT
+    mock_run_detection.side_effect = lambda *a, **kw: BOUNDARIES
+
+    output_dir = tmp_path / "out2"
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    run_split(video, config, verbose=False, quiet=True)
+
+    payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert "capture_regions" not in payload
+
+
+@patch("allaganeye.system_info.probe_gpu_vendors", return_value=[])
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}._load_cache")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_cache_hit_carries_capture_regions(
+    mock_probe,
+    mock_split,
+    mock_load_cache,
+    mock_run_detection,
+    mock_probe_gpu,
+    tmp_path,
+):
+    """#810 round-1 #3 -- run_split cache-hit 経路で cache 記録の capture_regions
+    が metadata.json へ引き継がれる (detect 側 pin と対の integration test)。
+
+    `_load_cache` を patch して hit させつつ、cache file 実体に capture_regions
+    を書いておく (`_read_cached_capture_regions` は file を直接読むため patch 不要)。
+    """
+    band_regions = {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    output_dir = tmp_path / "out_cache_hit_regions"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / ".detection_cache.json").write_text(
+        json.dumps({"capture_regions": band_regions}), encoding="utf-8"
+    )
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_load_cache.return_value = BOUNDARIES  # cache hit -> Pass 1 skip
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    run_split(video, config, verbose=False, quiet=True)
+
+    mock_run_detection.assert_not_called()
+    payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["capture_regions"] == band_regions
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_miss_prints_region_line(
+    mock_probe, mock_split, mock_run_detection, tmp_path, capsys
+):
+    """fresh 検知の verbose に Region: 行が出る (#810 round-1 #2 表示 wiring pin)."""
+    from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
+
+    mock_probe.return_value = PROBE_RESULT
+
+    def fake_run_detection(*args, **kwargs):
+        cb = kwargs.get("region_callback")
+        assert cb is not None
+        cb(RegionTimeline(coarse=FULL_FRAME))
+        return BOUNDARIES
+
+    mock_run_detection.side_effect = fake_run_detection
+
+    output_dir = tmp_path / "out_region_line"
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    run_split(video, config, verbose=True, quiet=False)
+    out = capsys.readouterr().out
+    assert "Region: full_frame" in out
 
 
 # -- #805 段階2: post_match_trailing_dropped warning emission stopped (W1) --

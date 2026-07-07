@@ -11,10 +11,13 @@ import { z } from 'zod';
 
 import schema from '../../../../schemas/metadata.schema.json' with { type: 'json' };
 import {
+  CaptureRegionSchema,
+  CaptureRegionsSchema,
   DetectionParamsSchema,
   GapSchema,
   MatchSchema,
   MetadataSchema,
+  RegionSegmentSchema,
   SystemInfoSchema,
   WarningSchema,
 } from '../metadata.schema';
@@ -144,6 +147,42 @@ describe('zod schema ⇔ JSON Schema integrity (#612)', () => {
   it('SystemInfo: required match', () => {
     expect(zodRequired(SystemInfoSchema)).toEqual(
       jsonRequired(schema.$defs.SystemInfo as JsonObjectSchema),
+    );
+  });
+
+  it('CaptureRegion: properties match', () => {
+    expect(zodKeys(CaptureRegionSchema)).toEqual(
+      jsonProps(schema.$defs.CaptureRegion as JsonObjectSchema),
+    );
+  });
+
+  it('CaptureRegion: required match', () => {
+    expect(zodRequired(CaptureRegionSchema)).toEqual(
+      jsonRequired(schema.$defs.CaptureRegion as JsonObjectSchema),
+    );
+  });
+
+  it('RegionSegment: properties match', () => {
+    expect(zodKeys(RegionSegmentSchema)).toEqual(
+      jsonProps(schema.$defs.RegionSegment as JsonObjectSchema),
+    );
+  });
+
+  it('RegionSegment: required match', () => {
+    expect(zodRequired(RegionSegmentSchema)).toEqual(
+      jsonRequired(schema.$defs.RegionSegment as JsonObjectSchema),
+    );
+  });
+
+  it('CaptureRegions: properties match', () => {
+    expect(zodKeys(CaptureRegionsSchema)).toEqual(
+      jsonProps(schema.$defs.CaptureRegions as JsonObjectSchema),
+    );
+  });
+
+  it('CaptureRegions: required match', () => {
+    expect(zodRequired(CaptureRegionsSchema)).toEqual(
+      jsonRequired(schema.$defs.CaptureRegions as JsonObjectSchema),
     );
   });
 });
