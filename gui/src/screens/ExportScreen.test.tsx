@@ -1287,7 +1287,10 @@ describe('#805 ExportScreen post_match no-crash guard', () => {
       expect(req.excludedIndexes).not.toContain(2);
     });
 
-    it('全選択 keeps the post_match checkbox unchecked', async () => {
+    // review R3 #2: this test pins the render-side `isIncluded` guard (the
+    // checkbox stays unchecked regardless of store state); the bulk-toggle
+    // store guard itself is gated by the payload test below.
+    it('全選択 still renders the post_match checkbox unchecked (render-side isIncluded pin)', async () => {
       const user = userEvent.setup();
       render(<ExportScreen />);
       await user.click(

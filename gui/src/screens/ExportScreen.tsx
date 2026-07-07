@@ -266,6 +266,9 @@ export function ExportScreen() {
     // 先に走った場合 disposed=true を見て、解決した unlisten を即時呼んで leak
     // を防ぐ (DetectingScreen #813 と同パターン)。
     let disposed = false;
+    // review R3 #1: 迷子 event warn の per-match dedup。invariant が実際に
+    // 破れた場合の毎秒 tick で同一 warn が数百件流れるのを 1 件/match に抑制。
+    const warnedStray = new Set<number>();
     (async () => {
       const u = await listen<ExportProgressPayload>('export-progress', (event) => {
         const p = event.payload;
@@ -282,10 +285,13 @@ export function ExportScreen() {
           // invariant (export.py は post_match を処理しない) の破れの
           // 唯一の GUI 可視証拠なので、UI は凍結したまま dev console に
           // 痕跡を残す (errorStore.ts の warn precedent と同方針)。
-          console.warn(
-            '[export] dropped stray export-progress event for post_match match',
-            p.match_index,
-          );
+          if (!warnedStray.has(p.match_index)) {
+            warnedStray.add(p.match_index);
+            console.warn(
+              '[export] dropped stray export-progress event for post_match match',
+              p.match_index,
+            );
+          }
           return;
         }
         setMatchStates((prev) => {
