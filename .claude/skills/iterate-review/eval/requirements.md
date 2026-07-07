@@ -95,3 +95,4 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 3. **[critical]** **J-3**: Step 2.1 subagent dispatch 直下の blockquote に Codex fallback (C6) への参照があり、`docs/l2-workflow.md` §Codex fallback の検出条件 / 戦略 / 必須記載に従うか
 4. **[critical]** **J-4**: Round summary comment (Step 4) に「Codex fallback notice」必須記載 (Iron Law 5 整合) するか
 5. **[critical]** **J-5**: subagent 起動規約 (`docs/l2-workflow.md` §subagent 起動規約) への明示参照があり、`__ITERATE_REVIEW_SUBAGENT_MODE__` marker + Step 2.2 validation で HARD-GATE (Stop conditions / 独断 fix 禁止) を担保するか
+6. **J-6** (#854 で追加、non-critical): Codex 実行手段を tier 1 = companion script (`codex-companion.mjs review` の Bash 実行) と特定し、slash `/codex:review` を agent 自身が invoke する計画にしない (`disable-model-invocation: true` のため Idios 専用 tier 3 と区別。evidence: `eval/reports/iter_854_3tier_revaluation.md` Iteration 1)
