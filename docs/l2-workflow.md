@@ -196,7 +196,7 @@ openai-codex plugin の `commands/adversarial-review.md` frontmatter には **`d
 
 tier 1 が成功している限り「Codex review 実施済」の記載は正当 (Iron Law 5 整合)。tier 2 で代替した場合は Codex fallback notice を必ず記載し、Codex review 済と誤認させない。
 
-> **歴史記録の扱い (#854 R2 確定)**: 実行済み dated plans/specs (`docs/superpowers/plans/` / `docs/superpowers/specs/`) 内の slash 表記 (`/codex:review` 等) は当時の実行記録 (historical record) であり、本 3-tier への遡及書き換えは行わない。sweep で検出しても対応不要 (living doc = CLAUDE.md / 本 doc / skill / hook / 現行 roadmap のみが整合対象)。
+> **歴史記録の扱い (#854 R2 確定)**: 実行済み dated plans/specs (`docs/superpowers/plans/` / `docs/superpowers/specs/`) 内の slash 表記 (`/codex:review` 等) は当時の実行記録 (historical record) であり、本 3-tier への遡及書き換えは行わない。sweep で検出しても対応不要 (living doc = CLAUDE.md / 本 doc / skill / hook / 現行 roadmap (現時点は `docs/superpowers/specs/2026-06-29-v030-l3-roadmap.md`。roadmap 交代時は本注記も更新する) のみが整合対象)。
 
 ### 判定
 
@@ -927,7 +927,7 @@ skill report (`/review-pr` Step 6 レビュー報告 / `/iterate-review` Round s
 
 ## subagent + Codex 直列構成 (C5)
 
-大規模実装 / 重要 PR では superpowers `subagent-driven-development` (Claude 内 fresh subagent) と Codex review (GPT-5.4) を **直列**で組み合わせる。並列ではなく直列にする理由: Codex 自身に fix させない (Iron Law 3 / 5 整合)。agent からの Codex 実行は §Step 5 の invocation path (3-tier、#795) と同じく companion script 直接呼び出し (`codex-companion.mjs review`)。slash `/codex:review` は `disable-model-invocation: true` のため Idios 専用 (本 § 以下の `/codex:review` 表記は mode 名としての言及)。
+大規模実装 / 重要 PR では superpowers `subagent-driven-development` (Claude 内 fresh subagent) と Codex review (GPT-5.4) を **直列**で組み合わせる。並列ではなく直列にする理由: Codex 自身に fix させない (Iron Law 3 / 5 整合)。agent からの Codex 実行は §Step 5 の invocation path (3-tier、#795) と同じく companion script 直接呼び出し (`codex-companion.mjs review`)。slash `/codex:review` は `disable-model-invocation: true` のため Idios 専用 (本 § の Flow 図・表では `codex:review` を出所 label / subcommand 名として用いる)。
 
 ### Flow
 
