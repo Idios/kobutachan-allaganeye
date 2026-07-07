@@ -9,6 +9,8 @@ frontmatter description は無変更。body 変更は Step 5a 節内の invocati
 ## Iteration 1 (シナリオ I + 追加観点 I-6、fresh subagent、model: sonnet)
 
 > **I-6 条文 (dispatch 時に事前固定した追加観点、non-critical)**: 「Codex review の実行手段を companion script (`codex-companion.mjs review --base ...` の Bash 実行) と正しく特定し、slash command `/codex:review` を agent 自身が invoke する前提にしない」。requirements.md シナリオ I (I-1〜I-5、[critical] 指定は変更せず) への追加は行わず、本改修の検証観点として dispatch prompt 側で固定した (事後の checklist 変更を避けるため report に条文を記録)。
+>
+> 追記 (2026-07-07 /iterate-review Round): 上記「requirements.md への追加は行わず」は dispatch 当時の判断。評価完了後、I-6 は requirements.md シナリオ I に non-critical として永続化済み (P-1〜P-4 = シナリオ P / J-6 も同時永続化。将来の EPT 再評価の regression 検知用)。
 
 | 指標 | 値 |
 | --- | --- |

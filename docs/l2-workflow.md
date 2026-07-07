@@ -135,7 +135,7 @@ template 内の各節は既存実装と整合する位置取り。Iron Law 4 (Cl
 
 ## PR 作成 Pre-flight (Iron Law 6 サブ条)
 
-PR 作成前に base 最新化と並行 worktree PR 重複を必ず確認する。`feedback_pr_review_base_merge_regression.md` (PR #627 Round 4 で発覚した base 取り込み機能 regression) と `feedback_concurrent_worktree_pr_check.md` (#646 / PR #647 並行作業重複) の skill / 規約昇格として運用化 (2026-04-29 #659)。2026-05-13 #722 で Step 0 ハードゲートを追加 (build/verify 前に `gh pr list --search "<元issue#>" --state open` を <1s で実行、PR #721 で発生した 49s redundant work 再発を防止)。2026-05-17 L-β β-4 で Step 5 (`/codex:adversarial-review`) を追加 (C2)。Step 0 と Step 4 は検出 window が異なるため両方とも実施する。
+PR 作成前に base 最新化と並行 worktree PR 重複を必ず確認する。`feedback_pr_review_base_merge_regression.md` (PR #627 Round 4 で発覚した base 取り込み機能 regression) と `feedback_concurrent_worktree_pr_check.md` (#646 / PR #647 並行作業重複) の skill / 規約昇格として運用化 (2026-04-29 #659)。2026-05-13 #722 で Step 0 ハードゲートを追加 (build/verify 前に `gh pr list --search "<元issue#>" --state open` を <1s で実行、PR #721 で発生した 49s redundant work 再発を防止)。2026-05-17 L-β β-4 で Step 5 (Codex adversarial-review、agent 実行は tier 1 = companion script) を追加 (C2)。Step 0 と Step 4 は検出 window が異なるため両方とも実施する。
 
 > **checkbox 表記 convention**: Self-Test Report (machine-verified) は `- [x]` (CI ゲート対象)、実機検証 (machine-unverifiable) は plain bullet `-` (CI ゲート対象外) で書き分ける。詳細は本 doc §「Self-Test Report 規約」 を参照。
 
@@ -195,6 +195,8 @@ openai-codex plugin の `commands/adversarial-review.md` frontmatter には **`d
 | 3 (escalation) | Idios 自身が `/codex:adversarial-review` を直接 invoke し、結果を agent に share して PR 本文に追記 | Idios が tier 1/2 の review 内容・結果に不足ありと判断した場合 | Idios |
 
 tier 1 が成功している限り「Codex review 実施済」の記載は正当 (Iron Law 5 整合)。tier 2 で代替した場合は Codex fallback notice を必ず記載し、Codex review 済と誤認させない。
+
+> **歴史記録の扱い (#854 R2 確定)**: 実行済み dated plans/specs (`docs/superpowers/plans/` / `docs/superpowers/specs/`) 内の slash 表記 (`/codex:review` 等) は当時の実行記録 (historical record) であり、本 3-tier への遡及書き換えは行わない。sweep で検出しても対応不要 (living doc = CLAUDE.md / 本 doc / skill / hook / 現行 roadmap のみが整合対象)。
 
 ### 判定
 
@@ -945,7 +947,7 @@ skill report (`/review-pr` Step 6 レビュー報告 / `/iterate-review` Round s
 └─────────────────────────────────────────────────────────────┘
                             ↓ branch HEAD が想定 SHA を含む
 ┌─────────────────────────────────────────────────────────────┐
-│ Stage 3: /codex:review (Codex GPT-5.4) で adversarial pass    │
+│ Stage 3: Codex review (tier 1, GPT-5.4) で adversarial pass   │
 │         独立 model の second opinion                          │
 │         focus 文字列で project 固有焦点                       │
 │         Codex 自身に commit させない (M3 整合)                │
@@ -964,7 +966,7 @@ skill report (`/review-pr` Step 6 レビュー報告 / `/iterate-review` Round s
 | 軸 | Iron Law 6 Pre-flight Step 5 (C2) | subagent + Codex 直列構成 (C5、本節) |
 | --- | --- | --- |
 | 起動タイミング | PR 作成**直前** (Step 0-4 通過後) | `/review-pr` 段階の **deep-dive** (Step 5a) |
-| Codex command | `/codex:adversarial-review` (approve させない姿勢) | `/codex:review` (code quality 一般) |
+| Codex command | `adversarial-review` subcommand (approve させない姿勢、tier 1 = companion script) | `review` subcommand (code quality 一般、同) |
 | 必須 / オプション | **必須** (Pre-flight ゲート) | optional (起動条件: 大規模 PR / 過去 root cause 複数 / L1 core) |
 | 直前 stage | Step 4 並行 PR 重複再確認 | superpowers subagent 実装 + reachability 確認 |
 

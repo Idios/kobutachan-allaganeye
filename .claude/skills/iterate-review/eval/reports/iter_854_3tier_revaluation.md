@@ -18,6 +18,8 @@ frontmatter description は無変更。body 変更は既存節内の invocation 
 
 executor は Codex 実行手段を tier 1 = companion script (`codex-companion.mjs review` の Bash 実行) と正しく特定し、slash `/codex:review` を「`disable-model-invocation: true` のため Idios 専用 tier 3」と区別した (本改修の狙いを新規 unclear なく通過)。
 
+> **J-6 条文 (dispatch 時に narrative として検証した追加観点、non-critical)**: 「Codex 実行手段を tier 1 = companion script (`codex-companion.mjs review` の Bash 実行) と特定し、slash `/codex:review` を agent 自身が invoke する計画にしない」。観察結果: ○ (上記 prose の通り、executor は tier 1 特定 + tier 3 区別を正しく実行)。J-6 条文は評価完了後に requirements.md シナリオ J へ non-critical として永続化済み (2026-07-07 /iterate-review Round 追記)。
+
 ## Unclear points と処置
 
 本改修 (3-tier 整合) 起因の unclear point は 0。残 2 件はいずれも既存構造由来:
