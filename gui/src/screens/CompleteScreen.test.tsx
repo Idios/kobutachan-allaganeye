@@ -524,8 +524,12 @@ describe('#805 CompleteScreen post_match no-crash guard', () => {
     const row = screen.getByTestId('match-row-2');
     expect(row).toHaveAttribute('data-post-match', 'true');
     expect(within(row).getByText('試合後')).toBeInTheDocument();
+    // review R2 #2: pin the dimming class so removing it fails the suite
+    // (spec §8 deliverable "dimmed" would otherwise be a false-green).
+    expect(row.className).toMatch(/listItemPostMatch/);
     const normalRow = screen.getByTestId('match-row-1');
     expect(normalRow).not.toHaveAttribute('data-post-match');
     expect(within(normalRow).queryByText('試合後')).toBeNull();
+    expect(normalRow.className).not.toMatch(/listItemPostMatch/);
   });
 });

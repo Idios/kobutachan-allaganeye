@@ -277,7 +277,17 @@ export function ExportScreen() {
         const strayTarget = useMetadataStore
           .getState()
           .metadata?.matches.find((mm) => mm.index === p.match_index);
-        if (strayTarget?.post_match === true) return;
+        if (strayTarget?.post_match === true) {
+          // review R2 #1: silent drop にしない。この event は Phase 1
+          // invariant (export.py は post_match を処理しない) の破れの
+          // 唯一の GUI 可視証拠なので、UI は凍結したまま dev console に
+          // 痕跡を残す (errorStore.ts の warn precedent と同方針)。
+          console.warn(
+            '[export] dropped stray export-progress event for post_match match',
+            p.match_index,
+          );
+          return;
+        }
         setMatchStates((prev) => {
           const prior = prev[p.match_index] ?? {
             status: 'pending' as MatchStatus,
@@ -367,7 +377,10 @@ export function ExportScreen() {
     const nextStates: Record<number, MatchState> = {};
     for (const m of metadata.matches) {
       // #805 Phase 2: post_match は export.py 側で常に skip されるため
-      // UI 側も最初から skipped 表示にする。
+      // UI 側も最初から skipped 表示にする。この branch は mark の '—' pin
+      // (render 側) + listener の迷子 event guard により render 出力では
+      // 観測不能な意図的 defense-in-depth — dead branch ではない (review R2 #3、
+      // 除外点 6 箇所の一貫性維持のため残す)。
       if (
         m.type_override === 'skip' ||
         m.post_match ||

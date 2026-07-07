@@ -1244,9 +1244,13 @@ describe('#805 ExportScreen post_match no-crash guard', () => {
       const row = screen.getByTestId('export-row-2');
       expect(row).toHaveAttribute('data-post-match', 'true');
       expect(within(row).getByText('試合後')).toBeInTheDocument();
+      // review R2 #2: pin the dimming class so removing it fails the suite
+      // (spec §8 deliverable "dimmed" would otherwise be a false-green).
+      expect(row.className).toMatch(/listItemPostMatch/);
       const normalRow = screen.getByTestId('export-row-1');
       expect(normalRow).not.toHaveAttribute('data-post-match');
       expect(within(normalRow).queryByText('試合後')).toBeNull();
+      expect(normalRow.className).not.toMatch(/listItemPostMatch/);
     });
 
     it('bulk toggle keeps post_match out of excludedIndexes (start_export payload)', async () => {
@@ -1298,6 +1302,9 @@ describe('#805 ExportScreen post_match no-crash guard', () => {
     // Simulate stray events targeting the post_match row and assert the
     // '—' mark cannot be overwritten ('●' running / '✓' done).
     it('post_match row keeps the — mark even when stray export-progress events arrive (P3-1)', async () => {
+      // review R2 #1: the guard warns (not silent) when dropping stray
+      // events — spy keeps test output clean and pins the observability.
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       let progressHandler: ((e: unknown) => void) | null = null;
       listenMock.mockImplementation(
         async (_name: string, handler: (e: unknown) => void) => {
@@ -1345,6 +1352,11 @@ describe('#805 ExportScreen post_match no-crash guard', () => {
       expect(within(row).queryByText('✓')).toBeNull();
       expect(within(row).queryByRole('alert')).toBeNull();
       expect(screen.queryByTestId('fallback-notice-2')).toBeNull();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('post_match'),
+        2,
+      );
+      warnSpy.mockRestore();
     });
 
     // Review P3-3: the Phase 2 UI states (dimmed row + disabled checkbox +
