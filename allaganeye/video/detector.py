@@ -411,10 +411,13 @@ def detect_match_boundaries(
     # auto-trigger とも) に一度だけ呼ばれる。request flag と resolved path を
     # 分離して記録するための通知 seam (brightness_callback と同型)。
     masked_fallback_callback: Callable[[], None] | None = None,
-    # #810: 最終的に有効だった capture region (RegionTimeline) で成功 run ごとに
-    # 1 回だけ呼ばれる。masked fallback 採用時は mask-free rect、それ以外は
-    # Stage 0 の解決結果 (band or FULL_FRAME + fallback_reason)。commands 層が
-    # metadata.json capture_regions として永続化する (brightness_callback と同型)。
+    # #810: 最終的に有効だった capture region (RegionTimeline) で、Pass 1 の
+    # path 確定直後 (masked fallback 採用判定の確定点) に最大 1 回呼ばれる。
+    # masked fallback 採用時は mask-free rect、それ以外は Stage 0 の解決結果
+    # (band or FULL_FRAME + fallback_reason)。発火後に後段 (Pass 2 / scorebar
+    # filtering) が例外を出す run もあるため、callback は値の捕捉のみに使い、
+    # 永続化は本関数の成功 return 後に caller (commands 層) が行う
+    # (brightness_callback と同型の contract、round-3 R3-3)。
     region_callback: Callable[[RegionTimeline], None] | None = None,
     # #576: rational fps propagation (preferred over float source_fps).
     # Either pair (num+den) takes precedence; float source_fps is the

@@ -2916,6 +2916,34 @@ def test_region_callback_masked_fallback_reports_mask_rect(monkeypatch):
     assert fired[0].fallback_reason is None
 
 
+def test_region_callback_masked_declined_fires_once_full_frame(monkeypatch):
+    """round-3 R3-2: masked auto-trigger で fallback が None (mask 不発見) を返し
+    標準 path に fall-through した run でも、region_callback は FULL_FRAME で
+    ちょうど 1 回だけ発火する (double-fire / zero-fire regression pin)。"""
+    from pathlib import Path
+
+    from allaganeye.video import detector as det
+    from allaganeye.video.capture_region import RegionTimeline
+
+    monkeypatch.setattr(det, "_detect_masked_fallback", lambda *a, **kw: None)
+    # all-bright -> blackout_times 空 -> masked auto-trigger -> None -> 標準続行
+    monkeypatch.setattr(det, "_scan_cpu", lambda *a, **kw: {0.0: 100.0, 1.0: 100.0})
+    monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **kw: [])
+
+    fired: list[RegionTimeline] = []
+    det.detect_match_boundaries(
+        Path("test.mp4"),
+        duration_hint=2.0,
+        sample_interval=1.0,
+        min_match_duration=0.5,
+        use_gpu=False,
+        region_callback=fired.append,
+    )
+    assert len(fired) == 1
+    assert fired[0].coarse.is_full_frame()
+    assert fired[0].fallback_reason is None
+
+
 def test_resolve_detect_region_returns_reason_tuple(monkeypatch):
     # #810: 縮退 provenance を呼び出し側へ返す (metadata へ記録するため)
     from pathlib import Path

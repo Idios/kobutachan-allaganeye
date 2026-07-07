@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import re
 import shutil
 import sys
@@ -592,13 +593,31 @@ def _display_gaps(gaps: list[Gap]) -> None:
         )
 
 
+_REGION_TOKEN_MAX_LEN = 32
+"""verbose region token に埋め込む free string の表示上限 (round-3 R3-4)。"""
+
+
+def _clean_region_text(value: object) -> str:
+    """改竄 cache 由来 free string の端末 hygiene (round-3 R3-4)。
+
+    非印字文字 (ANSI escape 等の制御文字) を '?' に置換し、長さを cap する。
+    raw 診断表示の意図 (round-1/2 裁定) は保ちつつ端末制御系の注入だけを塞ぐ。
+    """
+    text = str(value)
+    cleaned = "".join(ch if ch.isprintable() else "?" for ch in text)
+    if len(cleaned) > _REGION_TOKEN_MAX_LEN:
+        cleaned = cleaned[:_REGION_TOKEN_MAX_LEN] + "..."
+    return cleaned
+
+
 def _format_region_token(regions: object) -> str:
     """capture region の verbose 1 行表示 (#810)。縮退を silent にしない。
 
     cache-hit 経路では raw cache 記録値 (無検証) を受けるため、malformed 入力でも
     crash しない tolerant contract: 欠落 / 非 dict は "unknown"、座標が実数でない
     (bool 含む) 場合は "invalid" を返す (round-1 #1: 非数値 x/y/w/h で ``:.2f`` が
-    ValueError になる regression の防御)。
+    ValueError になる regression の防御)。free string (source / fallback_reason)
+    は `_clean_region_text` で端末 hygiene を通す (round-3 R3-4)。
     """
     if not isinstance(regions, dict):
         return "unknown"
@@ -613,9 +632,9 @@ def _format_region_token(regions: object) -> str:
         if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in coords):
             return "invalid"
         x, y, w, h = coords
-        label = f"{source}({x:.2f},{y:.2f},{w:.2f},{h:.2f})"
+        label = f"{_clean_region_text(source)}({x:.2f},{y:.2f},{w:.2f},{h:.2f})"
     reason = regions.get("fallback_reason")
-    return f"{label}, fallback={reason}" if reason else label
+    return f"{label}, fallback={_clean_region_text(reason)}" if reason else label
 
 
 def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
@@ -2016,7 +2035,10 @@ def _sanitize_capture_regions(value: object) -> "CaptureRegions | None":
       x/y/w/h/confidence are real numbers (int or float; bool is explicitly rejected)
       in [0, 1]; source is a non-empty str.
     - segments is a list; each entry is a dict with exactly {time_range, region};
-      time_range is a list of exactly 2 real numbers each >= 0;
+      time_range is a list of exactly 2 finite real numbers each >= 0
+      (NaN / +-Infinity は reject -- round-3 R3-1: ``json.dumps`` は
+      allow_nan=True で非標準 token を再 emit し、strict reader (GUI serde_json /
+      JSON.parse) が metadata.json 全体を reject するため sanitize 側で塞ぐ);
       region follows the same rules as coarse.
     - fallback_reason is a str or None (free string, any value OK).
 
@@ -2046,7 +2068,12 @@ def _sanitize_capture_regions(value: object) -> "CaptureRegions | None":
         if not isinstance(tr, list) or len(tr) != 2:
             return None
         for t in tr:
-            if isinstance(t, bool) or not isinstance(t, (int, float)) or t < 0:
+            if (
+                isinstance(t, bool)
+                or not isinstance(t, (int, float))
+                or not math.isfinite(t)
+                or t < 0
+            ):
                 return None
         if not _is_valid_capture_region(seg.get("region")):
             return None

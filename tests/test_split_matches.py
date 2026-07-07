@@ -1618,6 +1618,43 @@ class TestCaptureRegionsCache:
 
         assert _read_cached_capture_regions(tmp_path / "missing.json") is None
 
+    def test_read_cached_capture_regions_nan_time_range_returns_none(
+        self, cache_video, tmp_path
+    ):
+        """round-3 R3-1: NaN 混入 cache 値は sanitize で drop され、非標準 JSON
+        token が metadata.json へ再 emit されない (合成 fall-through もしない)。"""
+        from allaganeye.commands.split_matches import _read_cached_capture_regions
+
+        cache_path = tmp_path / ".detection_cache.json"
+        nan_regions = {
+            "coarse": {
+                "x": 0.1,
+                "y": 0.0,
+                "w": 0.76,
+                "h": 0.042,
+                "confidence": 0.9,
+                "source": "band",
+            },
+            "segments": [
+                {
+                    "time_range": [0.0, float("nan")],
+                    "region": {
+                        "x": 0.1,
+                        "y": 0.0,
+                        "w": 0.76,
+                        "h": 0.042,
+                        "confidence": 0.9,
+                        "source": "band",
+                    },
+                }
+            ],
+            "fallback_reason": None,
+        }
+        self._write_cache(
+            cache_path, cache_video, extra={"capture_regions": nan_regions}
+        )
+        assert _read_cached_capture_regions(cache_path) is None
+
     def test_read_cached_capture_regions_malformed_returns_none_not_synthesized(
         self, cache_video, tmp_path
     ):
@@ -1792,6 +1829,30 @@ class TestSanitizeCaptureRegions:
             "segments": [
                 {
                     "time_range": [0.0],  # must be exactly 2 elements
+                    "region": self._valid_region(),
+                }
+            ],
+            "fallback_reason": None,
+        }
+        assert _sanitize_capture_regions(regions) is None
+
+    @pytest.mark.parametrize(
+        "bad_value",
+        [float("nan"), float("inf"), float("-inf")],
+        ids=["nan", "inf", "neg_inf"],
+    )
+    def test_time_range_non_finite_returns_none(self, bad_value):
+        """round-3 R3-1: NaN / +-Infinity は json.dumps (allow_nan=True) が
+        非標準 token を再 emit し strict reader (GUI serde_json / JSON.parse) が
+        metadata.json 全体を reject するため、sanitize 側で reject する。
+        (t < 0 比較は NaN で False になり素通りしていた regression の pin)"""
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = {
+            "coarse": self._valid_region(),
+            "segments": [
+                {
+                    "time_range": [0.0, bad_value],
                     "region": self._valid_region(),
                 }
             ],
@@ -4495,6 +4556,25 @@ class TestFormatRegionToken:
     def test_bool_coordinate_returns_invalid(self):
         regions = self._regions(x=True, source="band")
         assert _format_region_token(regions) == "invalid"
+
+    def test_ansi_escape_in_source_is_neutralized(self):
+        # round-3 R3-4: 改竄 cache 由来の制御文字を端末に素通ししない
+        regions = self._regions(source="\x1b[31mevil\x1b[0m")
+        token = _format_region_token(regions)
+        assert "\x1b" not in token
+        assert "evil" in token
+
+    def test_overlong_source_is_capped(self):
+        regions = self._regions(source="s" * 500)
+        token = _format_region_token(regions)
+        assert len(token) < 100
+
+    def test_ansi_escape_in_fallback_reason_is_neutralized(self):
+        regions = self._regions()
+        regions["fallback_reason"] = "\x1b]0;pwn\x07"
+        token = _format_region_token(regions)
+        assert "\x1b" not in token
+        assert "\x07" not in token
 
 
 @patch(f"{MODULE}.split_video")
