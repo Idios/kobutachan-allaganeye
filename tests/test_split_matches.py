@@ -1596,6 +1596,23 @@ class TestCaptureRegionsCache:
         self._write_cache(cache_path, cache_video, extra={"masked_fallback_used": True})
         assert _read_cached_capture_regions(cache_path) is None
 
+    def test_read_cached_capture_regions_masked_requested_but_declined_synthesizes(
+        self, cache_video, tmp_path
+    ):
+        """round-2 codex 裁定 pin: masked=True (request) でも fallback 不採用
+        (masked_fallback_used=False) なら標準 path が FULL_FRAME で Pass 1 計測
+        しているため、FULL_FRAME 合成が意図した挙動。判定述語は resolved flag
+        であり request flag ではない (params.masked を除外条件に加えない)。"""
+        from allaganeye.commands.split_matches import _read_cached_capture_regions
+
+        cache_path = tmp_path / ".detection_cache.json"
+        self._write_cache(cache_path, cache_video, params_extra={"masked": True})
+        regions = _read_cached_capture_regions(cache_path)
+        assert regions is not None
+        assert regions["coarse"]["source"] == "fallback"
+        assert regions["coarse"]["x"] == 0.0 and regions["coarse"]["w"] == 1.0
+        assert regions["fallback_reason"] is None
+
     def test_read_cached_capture_regions_unreadable_returns_none(self, tmp_path):
         from allaganeye.commands.split_matches import _read_cached_capture_regions
 

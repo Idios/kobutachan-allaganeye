@@ -326,7 +326,7 @@ def run_detect(
         # post_match segment は post_match_boundaries 経由で output_file 無しの
         # Match として書かれる (`_split_and_write_metadata` と同じ partition)。
         warnings=build_warnings(),
-        capture_regions=cast("CaptureRegions | None", captured_region),
+        capture_regions=captured_region,
     )
     metadata_path = config.output_dir / "metadata.json"
     write_metadata_atomic(metadata_path, payload)

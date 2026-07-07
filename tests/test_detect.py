@@ -168,6 +168,31 @@ def test_detect_verbose_cache_miss_summary_includes_vtuber_token(tmp_path, capsy
     assert "vtuber=off" in out
 
 
+def test_detect_verbose_cache_miss_prints_region_line(tmp_path, capsys):
+    """detect fresh 経路の verbose に Region: 行が出る (#810 round-2 #3 wiring pin).
+
+    run_split 側 (`test_verbose_cache_miss_prints_region_line`) と対の detect 版。
+    """
+    from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
+
+    def fake_run_detection(*args, **kwargs):
+        cb = kwargs.get("region_callback")
+        assert cb is not None, (
+            "run_detect must pass region_callback to _run_detection (#810)"
+        )
+        cb(RegionTimeline(coarse=FULL_FRAME))
+        return BOUNDARIES
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, no_cache=True)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", side_effect=fake_run_detection),
+    ):
+        run_detect(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "Region: full_frame" in out
+
+
 def test_detect_verbose_cache_miss_summary_includes_masked_token(tmp_path, capsys):
     """detect の cache-miss verbose summary に masked token が出る (vtuber と同型)."""
     config = SplitConfig(

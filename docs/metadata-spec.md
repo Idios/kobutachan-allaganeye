@@ -173,7 +173,7 @@ masked の縮退 (mask 不発見で標準 path に defer) は本フィールド�
 | 経路 | 書き込み |
 | --- | --- |
 | `allaganeye detect` / `allaganeye split` (新規検知) | ✓ 常に書く (OBS は coarse=FULL_FRAME) |
-| cache hit | cache 記録があれば ✓ / pre-#810 cache は標準 path 確定 (vtuber=false かつ masked_fallback_used=false) なら FULL_FRAME を合成、vtuber / masked なら ✗ 欠落 (領域不明を偽装しない) |
+| cache hit | cache 記録があれば ✓ / pre-#810 cache は標準 path 確定 (vtuber=false かつ masked_fallback_used=false) なら FULL_FRAME を合成、vtuber / **masked fallback 採用 run** なら ✗ 欠落 (領域不明を偽装しない)。判定述語は resolved flag (`masked_fallback_used`) であり request flag (`masked`) ではない: masked 要求でも fallback 不採用なら標準 path が FULL_FRAME で計測しているため合成が正 |
 | `allaganeye split --from-metadata` | 元 metadata から **preserve** (元が欠落なら欠落)。`split --from-metadata` と cache 読出しの preserve 値は shape 検証 (sanitize) され、malformed 値は warning とともに省略される (#810 codex F1) |
 
 cache には `.detection_cache.json` top-level (`masked_fallback_used` と同型、cache key 非対象)

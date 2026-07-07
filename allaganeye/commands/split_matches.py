@@ -167,9 +167,7 @@ def run_split(
                 # cache-hit: resolved path は当該 boundaries を生成した検出の
                 # 記録値 (cache top-level) を引き継ぐ。
                 masked_fallback_used=_read_cached_masked_fallback(cache_path),
-                capture_regions=cast(
-                    "CaptureRegions | None", _read_cached_capture_regions(cache_path)
-                ),
+                capture_regions=_read_cached_capture_regions(cache_path),
                 quiet=quiet,
             )
             # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
@@ -337,7 +335,7 @@ def run_split(
         # post_match_trailing_dropped emission was removed; the non-destructive
         # post_match flag on the Match now records a post-match trailing segment.
         warnings=build_warnings(),
-        capture_regions=cast("CaptureRegions | None", captured_region),
+        capture_regions=captured_region,
         quiet=quiet,
     )
     # #805 段階2: MP4 化したのは active のみ (post_match は除外)。verbose の
@@ -2087,8 +2085,16 @@ def _read_cached_capture_regions(cache_path: Path) -> "CaptureRegions | None":
 
     pre-#810 legacy cache (field なし / explicit null) は、cache 記録の
     params.vtuber == False かつ masked_fallback_used == False なら標準 path 確定
-    (領域は決定的に FULL_FRAME) なので合成して返す。vtuber / masked の legacy
-    cache は領域が未知のため None (metadata では field 省略 = 領域不明を偽装しない)。
+    (領域は決定的に FULL_FRAME) なので合成して返す。vtuber / masked fallback 採用
+    の legacy cache は領域が未知のため None (metadata では field 省略 = 領域不明を
+    偽装しない)。
+
+    合成条件に params.masked (request flag) を含めないのは意図的 (round-2 codex
+    裁定 2026-07-07): (a) ``"masked"`` cache param と ``masked_fallback_used``
+    記録は同一 commit (PR #826) で共導入のため「masked=True だが resolved flag
+    未記録」の cache は歴史的に存在しない、(b) masked 要求で fallback 不採用
+    (mask 不発見) の run は標準 path が FULL_FRAME で Pass 1 計測しているため、
+    合成は決定的に正。resolved flag (masked_fallback_used) が正の述語。
 
     cache に capture_regions が present (非 null) な場合は _sanitize_capture_regions
     で shape 検証する: valid -> そのまま返す; invalid -> logger.warning + None 返す。
