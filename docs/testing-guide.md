@@ -167,7 +167,9 @@ robocopy 'E:\videos' "$B\videos" '2026-04-08 21-14-05.mkv' /DCOPY:DAT /R:2 /W:5
 台帳と突合する。バックアップ側は `$backupBase` 配下の root-key ミラー構造で、E: 側原本は台帳 `roots` の原本 path で解決する (`$backupBase = $null` に切り替える)。
 
 ```powershell
-$m = Get-Content 'tests\baselines\source-videos.sha256.json' -Raw | ConvertFrom-Json
+# -Encoding UTF8 必須: PS 5.1 は BOM なし UTF-8 を cp932 として読むため、
+# 省略すると日本語/絵文字ファイル名の entry (vtuber-vod 等) が化けて MISSING 誤報になる
+$m = Get-Content 'tests\baselines\source-videos.sha256.json' -Raw -Encoding UTF8 | ConvertFrom-Json
 $backupBase = 'F:\allaganeye-backup'   # E: 側原本を照合する場合は $null にする
 $fail = 0
 foreach ($e in $m.entries) {
