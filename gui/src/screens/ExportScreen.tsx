@@ -269,6 +269,15 @@ export function ExportScreen() {
     (async () => {
       const u = await listen<ExportProgressPayload>('export-progress', (event) => {
         const p = event.payload;
+        // #805 Phase 2 (review R1 #2、P3-1 と同根): post_match 行への迷子
+        // event は state ごと無視する。mark の '—' pin (render 側) に加え、
+        // progress fill / error 行 / fallbackNotice も「export.py が emit
+        // しない前提」に依存させない。metadata は store から都度取得
+        // (deps [] の stale closure を回避)。
+        const strayTarget = useMetadataStore
+          .getState()
+          .metadata?.matches.find((mm) => mm.index === p.match_index);
+        if (strayTarget?.post_match === true) return;
         setMatchStates((prev) => {
           const prior = prev[p.match_index] ?? {
             status: 'pending' as MatchStatus,

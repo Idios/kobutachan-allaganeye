@@ -1318,6 +1318,20 @@ describe('#805 ExportScreen post_match no-crash guard', () => {
       progressHandler!({
         payload: { match_index: 2, percent: 100, stage: 'done' },
       });
+      // iterate-review R1 #2: error / fallback stages must also be frozen
+      // (the listener drops post_match events before any state update, so
+      // no progress fill, alert row, or fallback notice can render).
+      progressHandler!({
+        payload: { match_index: 2, percent: 0, stage: 'error', message: 'boom' },
+      });
+      progressHandler!({
+        payload: {
+          match_index: 2,
+          percent: 0,
+          stage: 'fallback',
+          message: 'NVENC 失敗、libx264 で再試行',
+        },
+      });
       progressHandler!({
         payload: { match_index: 1, percent: 10, stage: 'encoding' },
       });
@@ -1329,6 +1343,8 @@ describe('#805 ExportScreen post_match no-crash guard', () => {
       expect(within(row).getByText('—')).toBeInTheDocument();
       expect(within(row).queryByText('●')).toBeNull();
       expect(within(row).queryByText('✓')).toBeNull();
+      expect(within(row).queryByRole('alert')).toBeNull();
+      expect(screen.queryByTestId('fallback-notice-2')).toBeNull();
     });
 
     // Review P3-3: the Phase 2 UI states (dimmed row + disabled checkbox +
