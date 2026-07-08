@@ -38,6 +38,7 @@ CI: `.github/workflows/markdownlint.yml` (paths filter `**/*.md`)。
 | `**/.venv/**` | Python venv |
 | `**/kobutachan_allaganeye.egg-info/**` | pip install -e . の egg-info |
 | `**/build-cache/**` | CI cache extracted artifacts |
+| `**/.superpowers/**` | superpowers SDD scratch (task brief / report / ledger。`.gitignore` 済み local 生成物、#481 PoC session) |
 
 新規 build / cache dir が増えたら早めに `**/<name>/**` 形式で追加する。1 階層パターン (例: `dist/**`) は nested ケース (例: `gui/dist/**`) を捕捉しないため避ける。
 
