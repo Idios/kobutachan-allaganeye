@@ -23,6 +23,14 @@
         { "t": 200.0, "bbox": [0.0, 0.171, 0.151, 0.429], "map_name": null, "visible": true },
         { "t": 400.0, "bbox": [0.0, 0.171, 0.151, 0.429], "map_name": null, "visible": true }
       ]
+    },
+    {
+      "id": "obs-20260209-mkv",
+      "video": "${ALLAGANEYE_SAMPLE_VIDEO_DIR}/2026-02-09 23-12-24.mkv",
+      "cases": [
+        { "t": 1106.0, "bbox": null, "map_name": null, "visible": false },
+        { "t": 2354.0, "bbox": null, "map_name": null, "visible": false }
+      ]
     }
   ]
 }
