@@ -134,13 +134,144 @@ def cmd_render_gt(args: argparse.Namespace) -> None:
         print(f"[ok] {p}")
 
 
+# ---- Candidate A: temporal stability + map reference matching ----
+A_STD_THRESH = 12.0  # temporal std threshold (static mask)
+A_MIN_AREA_FRAC = 0.03  # min component area (frame frac)
+A_AR_RANGE = (0.6, 2.0)  # bbox aspect w/h range
+A_MIN_EDGE_DENSITY = 0.05  # terrain texture floor inside candidate
+A_REF_MATCH_MIN = 0.45  # TM_CCOEFF_NORMED floor
+A_REF_WIDTH = 256  # ref image width (map crop resized)
+A_SCALES = np.linspace(0.6, 1.6, 11)
+
+
+def _temporal_stack(frames: list[np.ndarray]):
+    import cv2
+
+    grays = [cv2.cvtColor(f, cv2.COLOR_RGB2GRAY).astype(np.float32) for f in frames]
+    stack = np.stack(grays)
+    return np.median(stack, axis=0), stack.std(axis=0)
+
+
+def _static_components(
+    med: np.ndarray, std: np.ndarray
+) -> list[tuple[int, int, int, int, float]]:
+    """(x, y, w, h, edge_density) candidates from the static-overlay mask."""
+    import cv2
+
+    h_img, w_img = med.shape
+    static = (std < A_STD_THRESH).astype(np.uint8)
+    kernel = np.ones((9, 9), np.uint8)
+    static = cv2.morphologyEx(static, cv2.MORPH_CLOSE, kernel)
+    static = cv2.morphologyEx(static, cv2.MORPH_OPEN, kernel)
+    n, _labels, stats, _ = cv2.connectedComponentsWithStats(static)
+    out = []
+    for i in range(1, n):
+        x, y, w, h, area = stats[i]
+        if area < A_MIN_AREA_FRAC * w_img * h_img:
+            continue
+        if not (A_AR_RANGE[0] <= w / max(h, 1) <= A_AR_RANGE[1]):
+            continue
+        roi = med[y : y + h, x : x + w].astype(np.uint8)
+        edges = cv2.Canny(roi, 50, 150)
+        density = float((edges > 0).mean())
+        if density < A_MIN_EDGE_DENSITY:
+            continue
+        out.append((x, y, w, h, density))
+    return out
+
+
+def detect_candidate_a(frames, refs):
+    import cv2
+
+    if len(frames) < 3:
+        return None
+    med, std = _temporal_stack(frames)
+    h_img, w_img = med.shape
+    cands = _static_components(med, std)
+    if not cands:
+        return None
+    med_u8 = med.astype(np.uint8)
+    best = None  # (score, x, y, w, h, name)
+    for name, ref in refs.items():
+        for scale in A_SCALES:
+            t = cv2.resize(ref, None, fx=scale, fy=scale)
+            th, tw = t.shape
+            if th >= h_img or tw >= w_img:
+                continue
+            res = cv2.matchTemplate(med_u8, t, cv2.TM_CCOEFF_NORMED)
+            _, maxv, _, maxloc = cv2.minMaxLoc(res)
+            if best is None or maxv > best[0]:
+                best = (maxv, maxloc[0], maxloc[1], tw, th, name)
+    if best is not None and best[0] >= A_REF_MATCH_MIN:
+        score, bx, by, bw, bh, name = best
+        ref_box = (bx / w_img, by / h_img, bw / w_img, bh / h_img)
+        # window 枠込みの static component に ref の中心点が含まれるならそちらの bbox を採用
+        # (ref は map テクスチャ部分のみで window より小さいため IoU でなく中心点包含で判定)
+        rcx = ref_box[0] + ref_box[2] / 2
+        rcy = ref_box[1] + ref_box[3] / 2
+        for x, y, w, h, _d in cands:
+            cx0, cy0 = x / w_img, y / h_img
+            cx1, cy1 = (x + w) / w_img, (y + h) / h_img
+            if cx0 <= rcx <= cx1 and cy0 <= rcy <= cy1:
+                return (
+                    *(x / w_img, y / h_img, w / w_img, h / h_img),
+                    name,
+                    float(score),
+                )
+        return (*ref_box, name, float(score))
+    # Stage 2 不成立: 最大 edge density の static component (map_name なし、減点 score)
+    x, y, w, h, d = max(cands, key=lambda c: c[4])
+    return (x / w_img, y / h_img, w / w_img, h / h_img, None, float(d))
+
+
+def build_refs(
+    manifest: dict, exclude_video_id: str | None = None
+) -> dict[str, np.ndarray]:
+    """GT crop から map_name ごとの参照 grayscale 画像 (幅 A_REF_WIDTH) を作る。"""
+    import cv2
+
+    acc: dict[str, list[np.ndarray]] = {}
+    for case in iter_cases(manifest):
+        if not case.visible or case.bbox is None or case.map_name is None:
+            continue
+        if exclude_video_id is not None and case.video_id == exclude_video_id:
+            continue
+        frames = fetch_frames(case.video, case_sample_times(case.t))
+        if len(frames) < 3:
+            continue
+        med, _std = _temporal_stack(frames)
+        x, y, w, h = case.bbox
+        crop = med[
+            int(y * FRAME_H) : int((y + h) * FRAME_H),
+            int(x * FRAME_W) : int((x + w) * FRAME_W),
+        ]
+        scale = A_REF_WIDTH / crop.shape[1]
+        crop = cv2.resize(crop, (A_REF_WIDTH, max(1, int(crop.shape[0] * scale))))
+        acc.setdefault(case.map_name, []).append(crop.astype(np.float32))
+    refs: dict[str, np.ndarray] = {}
+    for name, crops in acc.items():
+        hmin = min(c.shape[0] for c in crops)
+        stacked = np.stack([c[:hmin, :] for c in crops])
+        refs[name] = stacked.mean(axis=0).astype(np.uint8)
+    return refs
+
+
+def cmd_build_refs(args: argparse.Namespace) -> None:
+    refs = build_refs(load_manifest(Path(args.manifest)))
+    out = Path(args.out) / "areamap_refs.npz"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(str(out), **refs)  # type: ignore[call-arg]  # numpy stubs mis-type **kwds
+    print(f"[ok] {out}: {sorted(refs)}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn in [
         ("extract", cmd_extract),
         ("render-gt", cmd_render_gt),
-        # build-refs / run / compare are added in P2-P4
+        ("build-refs", cmd_build_refs),
+        # run / compare are added in P3-P4
     ]:
         sp = sub.add_parser(name)
         sp.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
