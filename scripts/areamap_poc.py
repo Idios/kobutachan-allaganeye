@@ -401,24 +401,59 @@ def cmd_run(args: argparse.Namespace) -> None:
     print(f"[ok] {p}  result={result}  IoU={iou:.3f}")
 
 
+IOU_SUCCESS = 0.9  # spec §6.2
+
+
 def cmd_compare(args: argparse.Namespace) -> None:
-    """Full A-vs-B comparison vs GT -> stdout markdown table."""
+    """Full A-vs-B comparison vs GT -> stdout + markdown report."""
     manifest = load_manifest(Path(args.manifest))
-    cases = iter_cases(manifest)
-    refs = build_refs(manifest)
     rows = []
-    for case in cases:
-        ts_list = case_sample_times(case.t)
-        frames = fetch_frames(case.video, ts_list)
+    for case in iter_cases(manifest):
+        frames = fetch_frames(case.video, case_sample_times(case.t))
+        refs = build_refs(manifest, exclude_video_id=case.video_id)  # LOVO
         ra = detect_candidate_a(frames, refs)
         rb = detect_candidate_b(frames)
-        iou_a = iou_xywh(ra[:4], case.bbox) if ra and case.bbox else 0.0  # type: ignore[index]
-        iou_b = iou_xywh(rb[:4], case.bbox) if rb and case.bbox else 0.0  # type: ignore[index]
-        rows.append((case.video_id, case.t, case.visible, iou_a, iou_b))
-    print("| video_id | t | visible | IoU_A | IoU_B |")
-    print("|---|---|---|---|---|")
-    for vid, t, vis, ia, ib in rows:
-        print(f"| {vid} | {t} | {vis} | {ia:.3f} | {ib:.3f} |")
+        row = {"id": f"{case.video_id}@t{int(case.t)}", "visible": case.visible}
+        for key, r in (("A", ra), ("B", rb)):
+            if not case.visible:
+                # 負例: None (未検出) が正解
+                row[key] = "OK(reject)" if r is None else f"FP({r[5]:.2f})"
+            elif case.bbox is None:
+                # GT 不備: skip
+                print(
+                    f"[skip] {case.video_id}@t{int(case.t)}: visible=true but bbox=None"
+                )
+                row[key] = "SKIP(no-gt)"
+            elif r is None:
+                row[key] = "MISS"
+            else:
+                iou = iou_xywh(case.bbox, r[:4])
+                verdict = "OK" if iou >= IOU_SUCCESS else "LOW"
+                row[key] = f"{verdict}(IoU={iou:.3f}, map={r[4]}, s={r[5]:.2f})"
+        rows.append(row)
+        print(row)
+    # markdown report
+    out = Path(args.out) / "areamap-poc-report.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# areamap PoC compare (#481)",
+        "",
+        "| case | visible | A | B |",
+        "| --- | --- | --- | --- |",
+    ]
+    for r in rows:
+        lines.append(f"| {r['id']} | {r['visible']} | {r['A']} | {r['B']} |")
+    for key in ("A", "B"):
+        pos = [r for r in rows if r["visible"]]
+        ok = sum(1 for r in pos if r[key].startswith("OK"))
+        neg = [r for r in rows if not r["visible"]]
+        rej = sum(1 for r in neg if r[key].startswith("OK"))
+        lines.append("")
+        lines.append(
+            f"- **{key}**: positive {ok}/{len(pos)} / negative reject {rej}/{len(neg)}"
+        )
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"[ok] {out}")
 
 
 def main() -> None:
