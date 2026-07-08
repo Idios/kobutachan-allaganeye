@@ -202,6 +202,7 @@ def detect_candidate_a(frames, refs):
             _, maxv, _, maxloc = cv2.minMaxLoc(res)
             if best is None or maxv > best[0]:
                 best = (maxv, maxloc[0], maxloc[1], tw, th, name)
+    # refs may be empty -> stage-1 fallback is intended
     if best is not None and best[0] >= A_REF_MATCH_MIN:
         score, bx, by, bw, bh, name = best
         ref_box = (bx / w_img, by / h_img, bw / w_img, bh / h_img)
@@ -245,6 +246,8 @@ def build_refs(
             int(y * FRAME_H) : int((y + h) * FRAME_H),
             int(x * FRAME_W) : int((x + w) * FRAME_W),
         ]
+        if crop.size == 0:
+            continue
         scale = A_REF_WIDTH / crop.shape[1]
         crop = cv2.resize(crop, (A_REF_WIDTH, max(1, int(crop.shape[0] * scale))))
         acc.setdefault(case.map_name, []).append(crop.astype(np.float32))
@@ -256,12 +259,166 @@ def build_refs(
     return refs
 
 
+# ---- Candidate B: window frame edge/line detection ----
+B_CANNY = (40, 120)
+B_HOUGH_THRESH = 120
+B_MIN_LINE_FRAC = 0.12  # min line length (frame width frac)
+B_MAX_GAP_PX = 8
+B_ANGLE_TOL_DEG = 3.0
+B_SIZE_RANGE = (0.15, 0.6)  # window w as frame-width frac
+B_AR_RANGE = (0.6, 2.0)
+B_SUPPORT_MIN = 0.35  # perimeter edge support floor
+
+
+def detect_candidate_b(
+    frames: list[np.ndarray],
+) -> tuple[float, float, float, float, str | None, float] | None:
+    import cv2
+
+    if len(frames) < 3:
+        return None
+    med, _std = _temporal_stack(frames)
+    h_img, w_img = med.shape
+    edges = cv2.Canny(med.astype(np.uint8), *B_CANNY)
+    lines = cv2.HoughLinesP(
+        edges,
+        1,
+        np.pi / 180,
+        threshold=B_HOUGH_THRESH,
+        minLineLength=int(B_MIN_LINE_FRAC * w_img),
+        maxLineGap=B_MAX_GAP_PX,
+    )
+    if lines is None:
+        return None
+    horiz, vert = [], []
+    for x1, y1, x2, y2 in lines[:, 0]:
+        ang = abs(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
+        if ang < B_ANGLE_TOL_DEG or ang > 180 - B_ANGLE_TOL_DEG:
+            horiz.append((min(x1, x2), max(x1, x2), (y1 + y2) // 2))
+        elif abs(ang - 90) < B_ANGLE_TOL_DEG:
+            vert.append((min(y1, y2), max(y1, y2), (x1 + x2) // 2))
+    best = None  # (score, x, y, w, h)
+    for hx0, hx1, hy in horiz:  # top edge candidate
+        for hx0b, hx1b, hyb in horiz:  # bottom edge candidate
+            hgt = hyb - hy
+            if hgt <= 0:
+                continue
+            wid = min(hx1, hx1b) - max(hx0, hx0b)
+            if not (B_SIZE_RANGE[0] * w_img <= wid <= B_SIZE_RANGE[1] * w_img):
+                continue
+            if not (B_AR_RANGE[0] <= wid / hgt <= B_AR_RANGE[1]):
+                continue
+            x0, x1_ = max(hx0, hx0b), min(hx1, hx1b)
+            # vertical support: 両側に縦線があるか
+            lsup = any(
+                abs(vx - x0) < 12 and vy0 < hy + hgt / 2 < vy1 for vy0, vy1, vx in vert
+            )
+            rsup = any(
+                abs(vx - x1_) < 12 and vy0 < hy + hgt / 2 < vy1 for vy0, vy1, vx in vert
+            )
+            if not (lsup and rsup):
+                continue
+            # perimeter edge support
+            rect_edges = edges[hy : hyb + 1, x0 : x1_ + 1]
+            per = (
+                float((rect_edges[0, :] > 0).mean())
+                + float((rect_edges[-1, :] > 0).mean())
+                + float((rect_edges[:, 0] > 0).mean())
+                + float((rect_edges[:, -1] > 0).mean())
+            ) / 4.0
+            if per < B_SUPPORT_MIN:
+                continue
+            if best is None or per > best[0]:
+                best = (per, x0, hy, wid, hgt)
+    if best is None:
+        return None
+    score, x, y, w, h = best
+    return (x / w_img, y / h_img, w / w_img, h / h_img, None, float(score))
+
+
 def cmd_build_refs(args: argparse.Namespace) -> None:
     refs = build_refs(load_manifest(Path(args.manifest)))
     out = Path(args.out) / "areamap_refs.npz"
     out.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(str(out), **refs)  # type: ignore[call-arg]  # numpy stubs mis-type **kwds
     print(f"[ok] {out}: {sorted(refs)}")
+
+
+def cmd_run(args: argparse.Namespace) -> None:
+    """1 case on 1 candidate -- writes overlay PNG to --out dir."""
+    import cv2
+
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    manifest = load_manifest(Path(args.manifest))
+    cases = iter_cases(manifest)
+    target = [c for c in cases if c.video_id == args.case_id]
+    if not target:
+        raise SystemExit(f"case not found: {args.case_id}")
+    case = target[0]
+    ts_list = case_sample_times(case.t)
+    print(f"[run] fetching {len(ts_list)} frames for {case.video_id} t={case.t}...")
+    frames = fetch_frames(case.video, ts_list)
+    print(f"[run] got {len(frames)} frames")
+
+    if args.candidate == "a":
+        refs = build_refs(manifest, exclude_video_id=case.video_id)
+        result = detect_candidate_a(frames, refs)
+        label = "A"
+    elif args.candidate == "b":
+        result = detect_candidate_b(frames)
+        label = "B"
+    else:
+        raise SystemExit(f"unknown candidate: {args.candidate}")
+
+    # draw overlay
+    main_frame = frames[len(frames) // 2]
+    img = cv2.cvtColor(main_frame, cv2.COLOR_RGB2BGR)
+    if result is not None:
+        rx, ry, rw, rh, rname, rscore = result
+        pt1 = (int(rx * FRAME_W), int(ry * FRAME_H))
+        pt2 = (int((rx + rw) * FRAME_W), int((ry + rh) * FRAME_H))
+        cv2.rectangle(img, pt1, pt2, (0, 0, 255), 3)
+        cv2.putText(
+            img,
+            f"{label}: {rname or 'None'} s={rscore:.3f}",
+            (pt1[0], max(pt1[1] - 8, 20)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0, 0, 255),
+            2,
+        )
+    if case.bbox is not None:
+        gx, gy, gw, gh = case.bbox
+        gpt1 = (int(gx * FRAME_W), int(gy * FRAME_H))
+        gpt2 = (int((gx + gw) * FRAME_W), int((gy + gh) * FRAME_H))
+        cv2.rectangle(img, gpt1, gpt2, (0, 255, 0), 2)
+    p = out / f"run_{label}_{case.video_id}_t{int(case.t)}.png"
+    cv2.imwrite(str(p), img)
+    iou = 0.0
+    if result is not None and case.bbox is not None:
+        iou = iou_xywh(result[:4], case.bbox)  # type: ignore[arg-type]
+    print(f"[ok] {p}  result={result}  IoU={iou:.3f}")
+
+
+def cmd_compare(args: argparse.Namespace) -> None:
+    """Full A-vs-B comparison vs GT -> stdout markdown table."""
+    manifest = load_manifest(Path(args.manifest))
+    cases = iter_cases(manifest)
+    refs = build_refs(manifest)
+    rows = []
+    for case in cases:
+        ts_list = case_sample_times(case.t)
+        frames = fetch_frames(case.video, ts_list)
+        ra = detect_candidate_a(frames, refs)
+        rb = detect_candidate_b(frames)
+        iou_a = iou_xywh(ra[:4], case.bbox) if ra and case.bbox else 0.0  # type: ignore[index]
+        iou_b = iou_xywh(rb[:4], case.bbox) if rb and case.bbox else 0.0  # type: ignore[index]
+        rows.append((case.video_id, case.t, case.visible, iou_a, iou_b))
+    print("| video_id | t | visible | IoU_A | IoU_B |")
+    print("|---|---|---|---|---|")
+    for vid, t, vis, ia, ib in rows:
+        print(f"| {vid} | {t} | {vis} | {ia:.3f} | {ib:.3f} |")
 
 
 def main() -> None:
@@ -271,12 +428,23 @@ def main() -> None:
         ("extract", cmd_extract),
         ("render-gt", cmd_render_gt),
         ("build-refs", cmd_build_refs),
-        # run / compare are added in P3-P4
     ]:
         sp = sub.add_parser(name)
         sp.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
         sp.add_argument("--out", default=str(DEFAULT_OUT))
         sp.set_defaults(fn=fn)
+    # run subcommand
+    sp_run = sub.add_parser("run")
+    sp_run.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
+    sp_run.add_argument("--out", default=str(DEFAULT_OUT))
+    sp_run.add_argument("--candidate", default="b", choices=["a", "b"])
+    sp_run.add_argument("--case-id", default="obs-20260116-1")
+    sp_run.set_defaults(fn=cmd_run)
+    # compare subcommand
+    sp_cmp = sub.add_parser("compare")
+    sp_cmp.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
+    sp_cmp.add_argument("--out", default=str(DEFAULT_OUT))
+    sp_cmp.set_defaults(fn=cmd_compare)
     args = ap.parse_args()
     args.fn(args)
 
