@@ -164,8 +164,12 @@ def register(app: typer.Typer) -> None:
 
         # ------ 4a. 提案モード (--region なし) ----------------------------------
         if region is None:
-            match_tuples = [(idx, s, e) for idx, s, e, _ in filtered_tuples]
-            results, warns = resolve_match_regions(source_video, match_tuples)
+            try:
+                match_tuples = [(idx, s, e) for idx, s, e, _ in filtered_tuples]
+                results, warns = resolve_match_regions(source_video, match_tuples)
+            except AllaganEyeError as e:
+                _report_app_error(e, verbose=False, quiet=quiet, show_hint=False)
+                raise typer.Exit(code=e.exit_code) from None
             for w in warns:
                 typer.echo(w, err=True)
             if not results:
@@ -242,11 +246,14 @@ def register(app: typer.Typer) -> None:
             raise typer.Exit(code=e.exit_code) from None
 
         # ------ 5. write-back (encode 失敗でも座標は残す、先に書く) ---------------
+        # mod-2 化: codec が yuv420p を要求するため (後段と同じ処理を先に適用)
+        crop_w = rw - (rw % 2)
+        crop_h = rh - (rh % 2)
         norm_region = CaptureRegion(
             x=rx / frame_w,
             y=ry / frame_h,
-            w=rw / frame_w,
-            h=rh / frame_h,
+            w=crop_w / frame_w,
+            h=crop_h / frame_h,
             confidence=1.0,
             source="manual",
         )

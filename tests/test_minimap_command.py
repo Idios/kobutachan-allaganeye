@@ -442,6 +442,44 @@ def test_proposal_mode_no_seed_still_exits_4(
     assert "--region" in combined, "must suggest --region when no proposals"
 
 
+@patch("allaganeye.commands.minimap.resolve_match_regions")
+@patch("allaganeye.commands.minimap.probe_video")
+def test_proposal_mode_resolve_error_exit_3(
+    mock_probe: MagicMock,
+    mock_resolve: MagicMock,
+    app: typer.Typer,
+    tmp_path: Path,
+) -> None:
+    """提案モード: resolve が VideoProcessingError を raise -> exit 3。"""
+    from allaganeye.exceptions import VideoProcessingError
+
+    mock_probe.return_value = {
+        "width": 1920,
+        "height": 1080,
+        "duration": 400.0,
+        "fps": 60.0,
+        "fps_num": 60,
+        "fps_den": 1,
+        "codec": "h264",
+        "audio_codec": None,
+    }
+    mock_resolve.side_effect = VideoProcessingError(
+        "Cannot probe frame at this timestamp"
+    )
+
+    md_path = _make_metadata(
+        tmp_path,
+        matches=[
+            {"index": 1, "start_time": 10.0, "end_time": 400.0, "type": "match"},
+        ],
+    )
+
+    result = runner.invoke(app, ["minimap", str(md_path)])
+    assert result.exit_code == 3, (
+        f"expected 3 for VideoProcessingError, got {result.exit_code}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # 6. region_crop_encode_failure_exit_1
 # ---------------------------------------------------------------------------
@@ -482,6 +520,44 @@ def test_region_crop_encode_failure_exit_1(
     )
     assert result.exit_code == 1, (
         f"expected 1 for encode failure, got {result.exit_code}"
+    )
+
+
+@patch("allaganeye.commands.minimap.export_matches")
+@patch("allaganeye.commands.minimap.probe_video")
+def test_region_crop_cancelled_exit_130(
+    mock_probe: MagicMock,
+    mock_export: MagicMock,
+    app: typer.Typer,
+    tmp_path: Path,
+) -> None:
+    """--region 指定で encode cancelled=True -> exit 130。"""
+    mock_probe.return_value = {
+        "width": 1920,
+        "height": 1080,
+        "duration": 400.0,
+        "fps": 60.0,
+        "fps_num": 60,
+        "fps_den": 1,
+        "codec": "h264",
+        "audio_codec": None,
+    }
+    mock_export.return_value = ExportSummary(success=0, failure=0, cancelled=True)
+
+    md_path = _make_metadata(
+        tmp_path,
+        matches=[
+            {"index": 1, "start_time": 10.0, "end_time": 400.0, "type": "match"},
+        ],
+    )
+    out_dir = tmp_path / "minimap"
+
+    result = runner.invoke(
+        app,
+        ["minimap", str(md_path), "--region", "24,22,534,392", "-o", str(out_dir)],
+    )
+    assert result.exit_code == 130, (
+        f"expected 130 for cancelled encode, got {result.exit_code}"
     )
 
 
@@ -537,8 +613,14 @@ def test_crop_filter_mod2_and_clamp(
     assert result.exit_code == 0
     exported = mock_export.call_args[1]["matches"]
     assert exported[0].video_filter == "crop=534:392:24:22"
+    # write-back: 偶数なので mod-2 前後で変わらず
+    md_after = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+    mr = md_after["minimap_regions"][0]["region"]
+    assert mr["w"] == 534 / 1920, f"expected w={534 / 1920}, got {mr['w']}"
+    assert mr["h"] == 392 / 1080, f"expected h={392 / 1080}, got {mr['h']}"
 
     # ケース2: 奇数 w=535, h=393 -> mod-2 化で 534, 392
+    # write-back 後の metadata に記録される値は mod-2 後の値
     mock_export.reset_mock()
     mock_export.return_value = ExportSummary(success=1, failure=0)
     result2 = runner.invoke(
@@ -548,6 +630,17 @@ def test_crop_filter_mod2_and_clamp(
     assert result2.exit_code == 0
     exported2 = mock_export.call_args[1]["matches"]
     assert exported2[0].video_filter == "crop=534:392:24:22"
+    # write-back: 奇数入力 535, 393 -> mod-2 適用後 534, 392 が記録される
+    md_after2 = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+    mr2 = md_after2["minimap_regions"][0]["region"]
+    expected_w = 534 / 1920
+    expected_h = 392 / 1080
+    assert mr2["w"] == expected_w, (
+        f"奇数 w=535 の mod-2 化: 期待値 {expected_w}, 実績 {mr2['w']}"
+    )
+    assert mr2["h"] == expected_h, (
+        f"奇数 h=393 の mod-2 化: 期待値 {expected_h}, 実績 {mr2['h']}"
+    )
 
     # ケース3: mod-2 化後の crop_x clamp テスト
     # w=535 -> 534 (even), x=10, frame_w=1920, x+w=10+534=544 < 1920 -> no clamp
