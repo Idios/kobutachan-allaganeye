@@ -1,5 +1,5 @@
 {
-  "note": "areamap PoC / slow-test GT. bbox = normalized [x, y, w, h] of the area-map window incl. frame. visible=false means the window is closed at t.",
+  "note": "areamap PoC / slow-test GT. bbox = normalized [x, y, w, h] of the area-map window incl. frame. visible=false means the window is closed at t. masked-a29-m001 bboxes have ~±15px right-edge uncertainty (terrain/window boundary is soft).",
   "videos": [
     {
       "id": "obs-20260116-1",

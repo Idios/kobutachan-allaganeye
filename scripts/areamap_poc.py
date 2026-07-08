@@ -61,7 +61,7 @@ def iter_cases(manifest: dict) -> list[Case]:
                     video_id=v["id"],
                     video=_expand_env(v["video"]),
                     t=float(c["t"]),
-                    bbox=tuple(c["bbox"]) if c.get("bbox") else None,
+                    bbox=tuple(c["bbox"]) if c.get("bbox") is not None else None,
                     map_name=c.get("map_name"),
                     visible=bool(c.get("visible", True)),
                 )

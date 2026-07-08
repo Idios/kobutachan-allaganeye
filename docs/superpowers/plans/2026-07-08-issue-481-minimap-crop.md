@@ -110,7 +110,7 @@ F1 と F2 は独立 (並行 dispatch 可)。
 
 **Interfaces:**
 
-- Produces: `load_manifest(path) -> dict` / `iter_cases(manifest) -> Iterator[Case]` /
+- Produces: `load_manifest(path) -> dict` / `iter_cases(manifest) -> list[Case]` /
   `fetch_frames(video, ts_list) -> list[np.ndarray]` (H,W,3 uint8 RGB 1920x1080) /
   `iou_xywh(a, b) -> float` (正規化 xywh tuple)。P2-P4 が import する
 - GT manifest 形式 (下記)。`${ALLAGANEYE_SAMPLE_VIDEO_DIR}` / `${ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER}`
