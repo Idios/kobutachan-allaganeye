@@ -142,8 +142,8 @@ def cmd_render_gt(args: argparse.Namespace) -> None:
 
 
 # ---- Candidate A: temporal stability + map reference matching ----
-# A_STD_THRESH / A_MIN_AREA_FRAC / A_AR_RANGE / A_MIN_EDGE_DENSITY / A_MAX_DIM_FRAC /
 # _temporal_stack / _static_components are imported from allaganeye.video.areamap above.
+# (A_* constants are defined locally in areamap.py).
 A_REF_MATCH_MIN = 0.45  # TM_CCOEFF_NORMED floor
 A_REF_WIDTH = 256  # ref image width (map crop resized)
 A_SCALES = np.linspace(0.6, 1.6, 11)

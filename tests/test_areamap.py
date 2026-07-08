@@ -74,6 +74,29 @@ def test_short_match_uses_midpoint_samples():
     assert all(0.0 <= t <= 90.0 for t in seen) and seen
 
 
+def test_consensus_no_majority_cluster():
+    """windows=3 で valid=2（1 window は None）、残り 2 window が IoU<0.8 の 1-1 split。
+
+    多数派閾値 ceil(3/2)=2 に届かず、その match は results に含まれず warning が出る。
+    """
+    from allaganeye.video.areamap import resolve_match_regions
+
+    fake_probe = lambda v, t: b"\x00" * (1920 * 1080 * 3)  # noqa: E731
+    box1 = (0.01, 0.02, 0.28, 0.35, 0.9)
+    box2 = (0.50, 0.50, 0.20, 0.20, 0.5)  # IoU(box1, box2) = 0 (非重複)
+    results, warns = resolve_match_regions(
+        Path("v.mkv"),
+        [(1, 100.0, 1100.0)],
+        windows=3,
+        probe=fake_probe,
+        detect=_det_seq([box1, None, box2]),  # [valid, invalid, valid]
+    )
+    # valid_count = 2, best_cluster の max は 1 (box1 単独 or box2 単独)
+    # majority_thresh = ceil(3/2) = 2 > 1 -> no majority -> match は skip
+    assert len(results) == 0
+    assert any("no majority cluster" in w for w in warns)
+
+
 # ---------------------------------------------------------------------------
 # Step 5: detect_areamap_seed unit tests (cv2 required)
 # ---------------------------------------------------------------------------
@@ -129,18 +152,7 @@ def _make_frames_with_overlay(
     return frames
 
 
-def _iou_xywh(
-    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
-) -> float:
-    ax0, ay0, aw, ah = a
-    bx0, by0, bw, bh = b
-    ax1, ay1 = ax0 + aw, ay0 + ah
-    bx1, by1 = bx0 + bw, by0 + bh
-    ix = max(0.0, min(ax1, bx1) - max(ax0, bx0))
-    iy = max(0.0, min(ay1, by1) - max(ay0, by0))
-    inter = ix * iy
-    union = aw * ah + bw * bh - inter
-    return inter / union if union > 0 else 0.0
+from allaganeye.video.areamap import _iou_xywh  # noqa: E402
 
 
 def test_detect_areamap_seed_synthetic_iou():

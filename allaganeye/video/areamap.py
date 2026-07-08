@@ -299,7 +299,7 @@ def resolve_match_regions(
             h=med_h,
             confidence=confidence,
             source="auto",
-        )
+        ).clamp()
         results.append(
             MatchRegionResult(
                 match_index=match_index,
