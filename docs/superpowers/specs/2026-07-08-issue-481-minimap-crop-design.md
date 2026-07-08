@@ -202,7 +202,8 @@ ref score が正例を上回る)。詳細は [PoC report](2026-07-08-issue-481-a
 
 - `docs/cli-spec.md`: 新 command 構文 + 「実体はエリアマップ window」の用語注記
 - `docs/output-spec.md`: minimap 出力のマトリクス追加
-- `docs/metadata-spec.md`: `minimap_regions` field (semantics / source / map_name / 欠落規約)
+- `docs/metadata-spec.md`: `minimap_regions` field (semantics / source ("manual" のみ write) /
+  欠落規約。`map_name` は §6.3 撤回済みなので書かない)
 - `CLAUDE.md`: モジュール表 (`areamap.py` / `commands/minimap.py`) + コマンド例 1 行
 - `docs/system-architecture.md` / `docs/detection-map.md`: 該当記述があれば整合 (実装時に
   再確認し、変更不要なら PR 本文で根拠を明記)
