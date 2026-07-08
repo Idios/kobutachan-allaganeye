@@ -53,6 +53,7 @@ package-lock.json
 *.mov
 output/
 tmp/
+.tmp-areamap-poc/
 build-cache/
 
 # Node / GUI (gui/)
