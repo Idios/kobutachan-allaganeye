@@ -16,7 +16,6 @@ import statistics
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -26,9 +25,6 @@ from allaganeye.video.capture_region import CaptureRegion
 # detector.py に公開 alias を追加できないため scorebar.py と同様の cross-module
 # private import を採用する (repo 前例: scorebar.py <-> detector.py)。
 from allaganeye.video.detector import _probe_frame_rgb_hires
-
-if TYPE_CHECKING:
-    pass
 
 # ---------------------------------------------------------------------------
 # Public type aliases
