@@ -29,4 +29,4 @@ executor は Codex 実行手段を tier 1 = companion script (`codex-companion.m
 
 ## 収束判定
 
-構造的欠陥 (agent が実行不可能な slash invoke を前提とする記述) は解消。改修起因 unclear 0 + 全 [critical] ○ のため、`docs/l2-workflow.md` §skill 改修ワークフロー How to apply 6 の「構造的欠陥が解消された時点で打ち切り可。残る細部不明瞭点は deferred issue として追跡」を適用し打ち切り。
+構造的欠陥 (agent が実行不可能な slash invoke を前提とする記述) は解消。改修起因 unclear 0 + 全 [critical] ○ のため、`docs/l2-workflow.md` §skill 改修ワークフロー How to apply 6 の「構造的欠陥 (新節欠落 / 判定基準不在レベル) が解消された時点で打ち切り可。残る細部不明瞭点は deferred issue として追跡」を適用し打ち切り (本件の欠陥 = agent が実行不可能な slash invoke を必須 gate の実行手段として規定 は「判定基準不在レベル」相当と判断)。

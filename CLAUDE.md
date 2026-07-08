@@ -305,6 +305,7 @@ Codex (`openai-codex` プラグイン 1.0.4) を Iron Law 3 / 5 と衝突しな�
 ### rescue (C4)
 
 - `/codex:rescue` は **root-cause 調査専用** (spec O5 (b) 確定、常用禁止)
+- rescue の slash command は `disable-model-invocation` **なし** = agent からの invoke 可 (3-tier (#795) の制約は review / adversarial-review のみ。rescue を tier 3 = Idios 専用と誤読しない)
 - 機能実装 / refactor / docs 改修等の default invocation は禁止
 - 使う場合は rescue prompt に `<action_safety>` で「scope を超える finding → 独断 fix 禁止、BLOCKED 報告」を必ず明記 (M3 整合)
 - `--write` default のままだが、Codex が write する場合は staging のみ、commit / push は controller の明示指示後
