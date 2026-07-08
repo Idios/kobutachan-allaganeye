@@ -23,6 +23,13 @@ import numpy as np
 
 from allaganeye.video.detector import _probe_frame_rgb_hires
 
+# _temporal_stack / _static_components / constants are now the single source of truth
+# in allaganeye/video/areamap.py (Task D1, Refs #481).
+from allaganeye.video.areamap import (
+    _static_components,
+    _temporal_stack,
+)
+
 FRAME_W, FRAME_H = 1920, 1080
 DEFAULT_MANIFEST = Path("tests/baselines/v0.3.0/areamap-gt.json")
 DEFAULT_OUT = Path(".tmp-areamap-poc")
@@ -135,56 +142,11 @@ def cmd_render_gt(args: argparse.Namespace) -> None:
 
 
 # ---- Candidate A: temporal stability + map reference matching ----
-A_STD_THRESH = 12.0  # temporal std threshold (static mask)
-A_MIN_AREA_FRAC = 0.03  # min component area (frame frac)
-A_AR_RANGE = (0.6, 2.0)  # bbox aspect w/h range
-A_MIN_EDGE_DENSITY = 0.05  # terrain texture floor inside candidate
-A_MAX_DIM_FRAC = 0.95  # reject whole-frame blobs (calm-scene degenerate case, P5 R1)
+# A_STD_THRESH / A_MIN_AREA_FRAC / A_AR_RANGE / A_MIN_EDGE_DENSITY / A_MAX_DIM_FRAC /
+# _temporal_stack / _static_components are imported from allaganeye.video.areamap above.
 A_REF_MATCH_MIN = 0.45  # TM_CCOEFF_NORMED floor
 A_REF_WIDTH = 256  # ref image width (map crop resized)
 A_SCALES = np.linspace(0.6, 1.6, 11)
-
-
-def _temporal_stack(frames: list[np.ndarray]):
-    import cv2
-
-    grays = [cv2.cvtColor(f, cv2.COLOR_RGB2GRAY).astype(np.float32) for f in frames]
-    stack = np.stack(grays)
-    return np.median(stack, axis=0), stack.std(axis=0)
-
-
-def _static_components(
-    med: np.ndarray, std: np.ndarray
-) -> list[tuple[int, int, int, int, float]]:
-    """(x, y, w, h, edge_density) candidates from the static-overlay mask."""
-    import cv2
-
-    h_img, w_img = med.shape
-    static = (std < A_STD_THRESH).astype(np.uint8)
-    kernel = np.ones((9, 9), np.uint8)
-    static = cv2.morphologyEx(static, cv2.MORPH_CLOSE, kernel)
-    static = cv2.morphologyEx(static, cv2.MORPH_OPEN, kernel)
-    n, _labels, stats, _ = cv2.connectedComponentsWithStats(static)
-    out = []
-    for i in range(1, n):
-        x, y, w, h, area = stats[i]
-        if area < A_MIN_AREA_FRAC * w_img * h_img:
-            continue
-        # calm-scene degeneracy: when the whole match is momentarily static the mask
-        # collapses into one frame-sized blob (e.g. obs-20260116-1@t700,
-        # obs-20260209-mkv@t2354). Such a blob is never a window -> drop it so A
-        # returns None (honest MISS/reject) instead of a full-frame false box (P5 R1).
-        if w >= A_MAX_DIM_FRAC * w_img and h >= A_MAX_DIM_FRAC * h_img:
-            continue
-        if not (A_AR_RANGE[0] <= w / max(h, 1) <= A_AR_RANGE[1]):
-            continue
-        roi = med[y : y + h, x : x + w].astype(np.uint8)
-        edges = cv2.Canny(roi, 50, 150)
-        density = float((edges > 0).mean())
-        if density < A_MIN_EDGE_DENSITY:
-            continue
-        out.append((x, y, w, h, density))
-    return out
 
 
 def detect_candidate_a(frames, refs):
