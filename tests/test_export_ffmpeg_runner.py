@@ -858,6 +858,61 @@ def test_preexisting_output_preserved_on_failure(mock_popen: MagicMock, tmp_path
     assert output.read_bytes() == b"good prior output", "bytes must be unchanged"
 
 
+# --- _build_ffmpeg_args: video_filter (#481) ---
+
+
+def test_build_args_default_unchanged_pin():
+    """#481: video_filter を省略した argv は従来と完全一致 (bit-same pin).
+
+    default 経路 (video_filter=None) の出力リストが変更前と同一であることを
+    explicit assert で担保。-vf は不在、NVDEC hwaccel (-hwaccel cuda) は維持。
+    """
+    args_h264 = _build_ffmpeg_args(
+        "ffmpeg", Path("in.mkv"), 1.0, 2.0, Path("out.mp4"), "h264", H264Encoder.NVENC
+    )
+    assert "-vf" not in args_h264
+    assert "-hwaccel" in args_h264  # NVDEC zero-copy 維持
+
+
+def test_build_args_video_filter_inserts_vf_and_drops_hwaccel():
+    """#481: video_filter 指定時は -vf を挿入し -hwaccel を除外する.
+
+    NVDEC zero-copy の GPU frame は CPU crop filter に渡せないため (#791 設計)、
+    video_filter 指定時は _DECODE_HWACCEL_ARGS を挿入しない。
+    """
+    args = _build_ffmpeg_args(
+        "ffmpeg",
+        Path("in.mkv"),
+        1.0,
+        2.0,
+        Path("out.mp4"),
+        "h264",
+        H264Encoder.NVENC,
+        video_filter="crop=534:392:24:22",
+    )
+    assert "-hwaccel" not in args
+    i = args.index("-vf")
+    assert args[i + 1] == "crop=534:392:24:22"
+    assert args.index("-vf") < args.index("-c:v")
+
+
+def test_run_export_attempt_rejects_filter_with_copy():
+    """#481: codec=='copy' かつ video_filter 指定は ValueError (意味的矛盾)."""
+    with pytest.raises(ValueError):
+        run_export_attempt(
+            Path("in.mkv"),
+            0.0,
+            1.0,
+            Path("o.mp4"),
+            "copy",
+            H264Encoder.LIBX264,
+            progress_cb=lambda p, s: None,
+            fallback_cb=None,
+            cancel_event=threading.Event(),
+            video_filter="crop=2:2:0:0",
+        )
+
+
 @patch("allaganeye.export.ffmpeg_runner.subprocess.Popen")
 def test_preexisting_output_preserved_on_cancel(mock_popen: MagicMock, tmp_path: Path):
     """Finding 1: a PRE-EXISTING output is NOT deleted on cancel when the
