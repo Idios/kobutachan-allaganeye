@@ -48,6 +48,27 @@ A_AR_RANGE: tuple[float, float] = (0.6, 2.0)
 A_MIN_EDGE_DENSITY: float = 0.05
 A_MAX_DIM_FRAC: float = 0.95  # whole-frame blob guard (calm-scene degenerate case)
 
+# --- seed-selection scoring (#481 実データ再設計) ---------------------------
+# 旧: max edge density。実 OBS/VTuber 動画では チャット/パーティ欄など
+# テキスト由来の高 edge density UI blob が最大となり誤選択していた (右側大 blob 問題)。
+# 実測 (5 GT case) で エリアマップ (半透過 戦場全体図 overlay) は component 内 輝度が:
+#   - 中庸に明るい帯 (mean_lum ~120-132) に集中
+#   - 分散が低い (std_lum ~30-40) -- 一様な半透過パネル
+# 一方 UI パネル (チャット/スコアボード/アバター) は高コントラスト文字/画像により
+#   std_lum >= 55、mean_lum は極端 (暗い ~50-80 or 明るすぎ ~180-210) に振れる。
+# よって「幾何・テクスチャ特徴」(component 内 色・輝度統計) による **soft scoring** に置換:
+#   score = std_lum
+#         + (輝度が [_SEED_LUM_FLOOR, _SEED_LUM_CEIL] を外れた距離)
+#         + _SEED_STD_LUM_PENALTY * max(0, std_lum - _SEED_STD_LUM_MAX)
+#   最小 score を seed に選ぶ。hard gate ではなく soft penalty にするのは、候補が
+#   1 つしか無い退化ケース (D1 合成テスト等) でも必ず 1 つ返すため。複数候補時は
+#   overlay 本体 (低 std_lum + 輝度帯内 penalty 0) が UI blob (高 std_lum / 極端輝度)
+#   に勝つ。position prior・refs / map 照合は使わない (制約: temporal-stability のみ + 位置独立)。
+_SEED_LUM_FLOOR: float = 105.0
+_SEED_LUM_CEIL: float = 175.0
+_SEED_STD_LUM_MAX: float = 50.0
+_SEED_STD_LUM_PENALTY: float = 5.0
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers (also re-exported to areamap_poc.py)
@@ -98,6 +119,47 @@ def _static_components(
     return out
 
 
+def _component_luma_stats(
+    frames: list[np.ndarray],
+    med: np.ndarray,
+    std: np.ndarray,
+    bbox: tuple[int, int, int, int],
+) -> tuple[float, float]:
+    """Return ``(mean_lum, std_lum)`` over the static-component pixels inside *bbox*.
+
+    幾何・テクスチャ scoring 用 (#481)。``_static_components`` と同一 mask
+    (同一 morphology) を再構築し、``bbox`` に対応する連結成分の pixel だけを
+    temporal-median RGB から抽出して輝度統計を取る。bbox 全体でなく成分 mask に
+    限定するのは、隣接背景を混ぜず overlay 本体の一様性を測るため。
+
+    ``_static_components`` は成分 label を返さない (compare pin 固定のため signature
+    非変更) ので、ここで再度 connectedComponents を実行し bbox 一致で成分を特定する。
+    """
+    cv2 = _import_cv2()  # lazy
+    bx, by, bw, bh = bbox
+    static = (std < A_STD_THRESH).astype(np.uint8)
+    kernel = np.ones((9, 9), np.uint8)
+    static = cv2.morphologyEx(static, cv2.MORPH_CLOSE, kernel)
+    static = cv2.morphologyEx(static, cv2.MORPH_OPEN, kernel)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(static)
+    # bbox 一致 (x, y, w, h) で成分 index を特定
+    comp_idx = None
+    for i in range(1, n):
+        x, y, w, h, _area = stats[i]
+        if int(x) == bx and int(y) == by and int(w) == bw and int(h) == bh:
+            comp_idx = i
+            break
+    med_rgb = np.median(np.stack(frames).astype(np.float32), axis=0)
+    roi_rgb = med_rgb[by : by + bh, bx : bx + bw]
+    if comp_idx is None:
+        # 一致成分が見つからない (理論上起きない) 場合は bbox 全体で近似
+        px = roi_rgb.reshape(-1, 3)
+    else:
+        mask = labels[by : by + bh, bx : bx + bw] == comp_idx
+        px = roi_rgb[mask] if mask.any() else roi_rgb.reshape(-1, 3)
+    return float(px.mean()), float(px.std())
+
+
 # ---------------------------------------------------------------------------
 # Public API: detect_areamap_seed
 # ---------------------------------------------------------------------------
@@ -107,13 +169,22 @@ def detect_areamap_seed(frames: list[np.ndarray]) -> DetectResult:
     """Detect the area-map seed region from a temporal stack of RGB frames.
 
     Refs-free detector: uses temporal stability + static connected components.
-    Score = max edge density among qualifying candidates.
+
+    Selection scoring (#481 実データ再設計): 旧実装は「最大 edge density」だったが、
+    実 OBS/VTuber 動画では チャット/パーティ欄など高 edge density の UI blob を
+    誤選択していた。エリアマップ (半透過 戦場全体図 overlay) は component 内 輝度が
+    中庸に明るい帯 (``_SEED_LUM_FLOOR``..``_SEED_LUM_CEIL``) に集中し、輝度分散が低い
+    (std_lum ~30-40) という 幾何・テクスチャ特徴を持つ。この特徴を soft penalty score
+    (``_seed_score`` 参照) にした最小 score の成分を seed とする。soft penalty のため
+    候補が 1 つしか無い退化ケースでも必ず 1 つ返す。position prior・refs / map 照合は
+    使わない (制約: temporal-stability のみ + 位置独立)。
 
     Args:
         frames: List of (1080, 1920, 3) uint8 RGB frames.  At least 3 required.
 
     Returns:
         ``(x, y, w, h, score)`` in normalized [0,1] coordinates, or ``None``.
+        ``score`` は該当成分の edge density (下流表示互換のため据え置き)。
     """
     if len(frames) < 3:
         return None
@@ -122,9 +193,30 @@ def detect_areamap_seed(frames: list[np.ndarray]) -> DetectResult:
     cands = _static_components(med, std)
     if not cands:
         return None
-    # Select the candidate with the highest edge density as the seed
-    x, y, w, h, density = max(cands, key=lambda c: c[4])
+    # 各候補の component 内 輝度統計で soft scoring。最小 score を seed に選ぶ。
+    best: tuple[float, tuple[int, int, int, int, float]] | None = None
+    for x, y, w, h, density in cands:
+        mean_lum, std_lum = _component_luma_stats(frames, med, std, (x, y, w, h))
+        sc = _seed_score(mean_lum, std_lum)
+        if best is None or sc < best[0]:
+            best = (sc, (x, y, w, h, density))
+    assert best is not None  # cands 非空なので必ず 1 つ選ばれる
+    x, y, w, h, density = best[1]
     return (x / w_img, y / h_img, w / w_img, h / h_img, density)
+
+
+def _seed_score(mean_lum: float, std_lum: float) -> float:
+    """Seed selection score (lower is better, #481).
+
+    エリアマップ overlay = 低 std_lum + 輝度帯 [``_SEED_LUM_FLOOR``,
+    ``_SEED_LUM_CEIL``] 内。score は std_lum を基点に、輝度帯外れ距離 + std_lum
+    超過分 (``_SEED_STD_LUM_PENALTY`` 倍) を加算した soft penalty。
+    """
+    lum_penalty = max(0.0, mean_lum - _SEED_LUM_CEIL) + max(
+        0.0, _SEED_LUM_FLOOR - mean_lum
+    )
+    std_penalty = _SEED_STD_LUM_PENALTY * max(0.0, std_lum - _SEED_STD_LUM_MAX)
+    return std_lum + lum_penalty + std_penalty
 
 
 # ---------------------------------------------------------------------------
