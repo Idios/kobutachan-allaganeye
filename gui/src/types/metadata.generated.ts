@@ -56,6 +56,10 @@ export interface Metadata {
   system_info?: SystemInfo;
   brightness_samples?: BrightnessSamples;
   capture_regions?: CaptureRegions;
+  /**
+   * #481: per-match area-map crop region (normalized) actually used by `allaganeye minimap --region`. Missing entry for a match = not cropped. Field absent = minimap crop never ran.
+   */
+  minimap_regions?: MinimapRegionEntry[];
 }
 /**
  * Parameters used by the detector when this metadata.json was produced.
@@ -252,5 +256,12 @@ export interface RegionSegment {
    * @maxItems 2
    */
   time_range: [number, number];
+  region: CaptureRegion;
+}
+/**
+ * #481: one per-match minimap crop entry. `match_index` references Match.index (1-based). `region` is the normalized crop rectangle used by `allaganeye minimap --region`.
+ */
+export interface MinimapRegionEntry {
+  match_index: number;
   region: CaptureRegion;
 }

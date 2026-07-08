@@ -135,6 +135,18 @@ export const CaptureRegionsSchema = z.object({
 });
 
 /**
+ * #481 -- per-match minimap crop region entry. `match_index` references
+ * Match.index (1-based). `region` is the normalized crop rectangle recorded
+ * when the user ran `allaganeye minimap --region`. Absent in pre-#481
+ * metadata.json (field was never written); present only after `minimap
+ * --region` write-back.
+ */
+export const MinimapRegionEntrySchema = z.object({
+  match_index: z.number().int().min(1),
+  region: CaptureRegionSchema,
+});
+
+/**
  * #465 review: default frame rate when ``source_fps`` is missing. Pre-#465
  * legacy metadata.json files don't include the field, so we keep a
  * conservative 60fps assumption (the most common OBS recording cadence).
@@ -190,5 +202,12 @@ export const MetadataSchema = z
      * through load -> apply unchanged.
      */
     capture_regions: CaptureRegionsSchema.optional(),
+    /**
+     * #481 -- per-match minimap crop region array. Optional because
+     * pre-#481 metadata.json (and any run without `minimap --region`)
+     * won't carry it. Field absent = minimap crop never ran. GUI has no
+     * consumer yet; the field round-trips through load -> apply unchanged.
+     */
+    minimap_regions: z.array(MinimapRegionEntrySchema).optional(),
   })
   .passthrough();

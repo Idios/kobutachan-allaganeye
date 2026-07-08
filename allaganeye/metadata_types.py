@@ -110,6 +110,15 @@ class RegionSegment(TypedDict):
     region: CaptureRegion
 
 
+class MinimapRegionEntry(TypedDict):
+    """
+    #481: one per-match minimap crop entry. `match_index` references Match.index (1-based). `region` is the normalized crop rectangle used by `allaganeye minimap --region`.
+    """
+
+    match_index: int
+    region: CaptureRegion
+
+
 class CaptureRegions(TypedDict):
     """
     Capture-region timeline resolved by detection (#810; serialized RegionTimeline). `coarse` is the region actually used for Pass 1 brightness measurement: FULL_FRAME on standard OBS runs, the scorebar band ROI (source="band", NOT the full game rectangle) on --vtuber runs, and the mask-free game rectangle (source="tierA") when the masked fallback produced the result. `segments` is always [] until Tier B per-segment detection lands (#480). `fallback_reason` records band-anchor degradation on --vtuber runs (documented values: "anchor_error" = Stage 0 exception, "consensus_miss" = no band consensus); null = no degradation. Optional at the root: pre-#810 metadata.json doesn't carry it; cache hits from pre-#810 vtuber/masked caches omit it (region unknown).
@@ -140,3 +149,4 @@ class Metadata(TypedDict):
     system_info: NotRequired[SystemInfo]
     brightness_samples: NotRequired[BrightnessSamples]
     capture_regions: NotRequired[CaptureRegions]
+    minimap_regions: NotRequired[list[MinimapRegionEntry]]
