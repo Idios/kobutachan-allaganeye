@@ -139,6 +139,7 @@ A_STD_THRESH = 12.0  # temporal std threshold (static mask)
 A_MIN_AREA_FRAC = 0.03  # min component area (frame frac)
 A_AR_RANGE = (0.6, 2.0)  # bbox aspect w/h range
 A_MIN_EDGE_DENSITY = 0.05  # terrain texture floor inside candidate
+A_MAX_DIM_FRAC = 0.95  # reject whole-frame blobs (calm-scene degenerate case, P5 R1)
 A_REF_MATCH_MIN = 0.45  # TM_CCOEFF_NORMED floor
 A_REF_WIDTH = 256  # ref image width (map crop resized)
 A_SCALES = np.linspace(0.6, 1.6, 11)
@@ -168,6 +169,12 @@ def _static_components(
     for i in range(1, n):
         x, y, w, h, area = stats[i]
         if area < A_MIN_AREA_FRAC * w_img * h_img:
+            continue
+        # calm-scene degeneracy: when the whole match is momentarily static the mask
+        # collapses into one frame-sized blob (e.g. obs-20260116-1@t700,
+        # obs-20260209-mkv@t2354). Such a blob is never a window -> drop it so A
+        # returns None (honest MISS/reject) instead of a full-frame false box (P5 R1).
+        if w >= A_MAX_DIM_FRAC * w_img and h >= A_MAX_DIM_FRAC * h_img:
             continue
         if not (A_AR_RANGE[0] <= w / max(h, 1) <= A_AR_RANGE[1]):
             continue
@@ -444,7 +451,9 @@ def cmd_compare(args: argparse.Namespace) -> None:
     for r in rows:
         lines.append(f"| {r['id']} | {r['visible']} | {r['A']} | {r['B']} |")
     for key in ("A", "B"):
-        pos = [r for r in rows if r["visible"]]
+        # SKIP(no-gt) rows (visible=true but bbox=None) は分母から除外する。
+        # A/B は同一 case で同じ SKIP になるため A 列判定で代表させる (carryover P4 review)。
+        pos = [r for r in rows if r["visible"] and not r["A"].startswith("SKIP")]
         ok = sum(1 for r in pos if r[key].startswith("OK"))
         neg = [r for r in rows if not r["visible"]]
         rej = sum(1 for r in neg if r[key].startswith("OK"))
