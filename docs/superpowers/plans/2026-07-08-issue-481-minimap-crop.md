@@ -355,6 +355,10 @@ git commit -m "poc(#481): areamap PoC scaffold + GT manifest (extract/render-gt)
   -> tuple[float, float, float, float, str | None, float] | None`
   (正規化 xywh + map_name + score)。`build_refs(manifest, exclude_video_id=None)
   -> dict[str, np.ndarray]` (map_name -> grayscale ref 画像、leave-one-video-out 用 exclude)
+- **注 (Phase 0 checkpoint 改訂)**: 上記 6-tuple (map_name 含む) は PoC script 内の歴史的
+  interface としてそのまま残す。`map_name` は checkpoint で撤回済みのため、D1 の production
+  port では `detect_areamap_seed` の 5-tuple `DetectResult = (x, y, w, h, score)` に縮小する
+  (D1 Interfaces 参照)。PR 2 実装者は D1 定義を正とすること
 
 - [ ] **Step 1: 候補 A + build-refs を実装**
 
@@ -508,6 +512,8 @@ git commit -m "poc(#481): candidate A (temporal stability + map ref matching) (R
 
 - Produces: `detect_candidate_b(frames: list[np.ndarray])
   -> tuple[float, float, float, float, str | None, float] | None` (map_name は常に None)
+- **注 (Phase 0 checkpoint 改訂)**: PoC script 内は上記 6-tuple のまま。production port 時の
+  正は D1 の 5-tuple `DetectResult` (P2 Interfaces の注と同じ)
 
 - [ ] **Step 1: 候補 B を実装**
 
@@ -866,6 +872,15 @@ class MatchRegionResult:
 
 DetectResult = tuple[float, float, float, float, float] | None  # (x, y, w, h, score)
 DetectFn = Callable[[list[np.ndarray]], DetectResult]
+```
+
+- **frame probe の private API 方針**: default probe は `detector._probe_frame_rgb_hires`
+  (private helper) の **read-only import を継続**する。detector.py は変更禁止 (Global
+  Constraints) のため公開 alias は追加できず、repo には cross-module private 利用の前例
+  (scorebar.py ⟷ detector.py) がある。areamap.py の import 行に「detector 非変更の制約下での
+  意図的な private 利用 (#481 plan D1)」の comment を 1 行付けること
+
+```python
 
 def resolve_match_regions(
     video_path: Path,
@@ -1060,8 +1075,9 @@ git commit -m "feat(#481): allaganeye minimap command (検出 -> write-back -> c
   `grep -n '^## '` で全 section 確認** (feedback_grep_full_doc_before_section_add)
 - [ ] **Step 2**: output-spec に minimap 出力行 (`minimap/{idx:03}_minimap_{start}.mp4` +
   metadata write-back) を追加
-- [ ] **Step 3**: metadata-spec に `minimap_regions` § (semantics / source / map_name /
-  entry 欠落 = 未検出 / field 欠落 = 未実行 / GUI ConflictModal との関係)
+- [ ] **Step 3**: metadata-spec に `minimap_regions` § (semantics / source ("manual" のみ
+  write される旨) / entry 欠落 = 未 crop / field 欠落 = 未実行 / GUI ConflictModal との関係。
+  `map_name` は checkpoint 撤回済みなので**書かない**)
 - [ ] **Step 4**: CLAUDE.md モジュール表に `video/areamap.py` / `commands/minimap.py` 行 +
   コマンド例 `allaganeye minimap <metadata.json>` 1 行
 - [ ] **Step 5**: `bash scripts/check-markdownlint.sh` PASS → commit
@@ -1091,6 +1107,8 @@ git commit -m "feat(#481): allaganeye minimap command (検出 -> write-back -> c
    F1/F2/D1/D2/D3、§10 (実機検証) = D5 Step 5、§12 (docs) = D4。gap なし
 2. **Placeholder scan**: PoC 閾値は「初期値 + 調整可」と明示 (PoC の deliverable は report)。
    D2 実装は export.py の実在 pattern への写像で全分岐を列挙済み
-3. **Type consistency**: `DetectResult` tuple 形 (x,y,w,h,map_name,score) を P2/P3/D1 で統一。
+3. **Type consistency**: PoC (P2/P3) の候補 fn は 6-tuple (x,y,w,h,map_name,score)、
+   production (D1) の `DetectResult` は checkpoint 縮小後の 5-tuple (x,y,w,h,score)。
+   両形の境界は D1 port (`detect_areamap_seed`) で、P2/P3/D1 の各 Interfaces に注記済み。
    `MatchRegionResult.region` は `CaptureRegion` (#810 $defs) を再利用。
    `resolve_match_regions` の戻り値 (results, warnings) を D1 test / D2 実装で統一
