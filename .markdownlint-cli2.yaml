@@ -58,3 +58,4 @@ ignores:
   - "build/**"  # Portable ZIP build dry-run 出力 (third-party LICENSE/SKILL 誤検出回避、#723)
   - "build-cache/**"  # Portable ZIP build キャッシュ ($env:ALLAGANEYE_BUILD_CACHE_DIR、third-party LICENSE 誤検出回避、#723 sweep)
   - "output/**"  # detect output / temp PR body draft 等の local 生成物 (.gitignore 済、#793 reexamination で導入)
+  - "**/.superpowers/**"  # superpowers SDD scratch (task brief/report/ledger、.gitignore 済、#481 PoC session で導入)
