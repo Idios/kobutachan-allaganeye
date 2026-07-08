@@ -50,10 +50,7 @@ codegen (#612) / zod / ffmpeg crop filter + NVENC/QSV/AMF/libx264。
 | `gui/src/types/metadata.schema.ts` | zod `MinimapRegionEntrySchema` + optional 配線 | Modify (PR 2) |
 | `allaganeye/export/pool.py` | `ExportMatch.video_filter` field (default None) | Modify (PR 2) |
 | `allaganeye/export/ffmpeg_runner.py` | `run_export_attempt` / `_build_ffmpeg_args` に `video_filter` kwarg | Modify (PR 2) |
-| `allaganeye/video/areamap.py` | PoC 勝者検出 fn + `resolve_match_regions` (試合単位 consensus) | Create (PR 2) |
-| `allaganeye/video/refs/` (`__init__.py` + `areamaps.npz`) | 候補 A 勝利時のみ: map 参照特徴量 | Create (PR 2、条件付き) |
-| `scripts/regen_areamap_refs.py` | 候補 A 勝利時のみ: refs 再生成 (poc build-refs 呼び出し) | Create (PR 2、条件付き) |
-| `pyproject.toml` | 候補 A 勝利時のみ: `"allaganeye.video.refs" = ["*.npz"]` | Modify (PR 2、条件付き) |
+| `allaganeye/video/areamap.py` | A seed 検出 fn (temporal-stability のみ) + `resolve_match_regions` (試合単位 consensus)。**提案モード専用** | Create (PR 2) |
 | `allaganeye/commands/minimap.py` | command orchestration | Create (PR 2) |
 | `allaganeye/cli.py` | `_minimap_cmd.register(app)` (module 末尾、export 同型) | Modify (PR 2) |
 | `tests/test_areamap.py` / `tests/test_minimap_command.py` / `tests/test_areamap_slow.py` | unit + slow | Create (PR 2) |
@@ -92,6 +89,14 @@ codegen (#612) / zod / ffmpeg crop filter + NVENC/QSV/AMF/libx264。
 
 依存: **P1 → P2 → P3 → P4 → P5 (checkpoint) → PR 1** / **F1 ∥ F2 → D1 → D2 → D3 → D4 → D5 → PR 2**。
 F1 と F2 は独立 (並行 dispatch 可)。
+
+> **Phase 0 結果による改訂 (2026-07-08 checkpoint、spec §6.3)**: 両候補が IoU≥0.9 gate 不合格
+> → **`--region` 手動 primary + A seed 提案モード**に縮小 (Idios 確定)。本改訂は F1/D1/D2/D3 の
+> task 本文に反映済み。要点: (1) `map_name` field 撤回 (entry = match_index + region のみ)
+> (2) refs npz 同梱・regen script・pyproject 変更は撤回 (A seed は temporal-stability のみ、
+> `refs={}` の stage-1 fallback 経路) (3) `--region` なし = 提案表示 + exit 4 (crop なし・
+> metadata write なし)。crop + write-back は `--region` 指定時のみ (`source: "manual"`)
+> (4) slow test は「seed 局在性 (中心が GT 内) + 負例で提案なし」に変更 (IoU 0.9 gate は課さない)
 
 ---
 
@@ -689,9 +694,8 @@ def test_minimap_regions_valid(schema_validator, minimal_metadata):
             "match_index": 1,
             "region": {
                 "x": 0.01, "y": 0.02, "w": 0.28, "h": 0.35,
-                "confidence": 0.89, "source": "auto",
+                "confidence": 1.0, "source": "manual",
             },
-            "map_name": "onsal_hakair",
         },
         {
             "match_index": 3,
@@ -699,7 +703,6 @@ def test_minimap_regions_valid(schema_validator, minimal_metadata):
                 "x": 0.0, "y": 0.0, "w": 0.3, "h": 0.4,
                 "confidence": 1.0, "source": "manual",
             },
-            "map_name": None,
         },
     ]
     schema_validator.validate(minimal_metadata)  # must not raise
@@ -707,11 +710,10 @@ def test_minimap_regions_valid(schema_validator, minimal_metadata):
 
 def test_minimap_regions_rejects_bad_entries(schema_validator, minimal_metadata):
     for bad in [
-        [{"match_index": 0, "region": _VALID_REGION, "map_name": None}],   # index < 1
-        [{"match_index": 1, "map_name": None}],                            # region 欠落
-        [{"match_index": 1, "region": _VALID_REGION}],                     # map_name 欠落
-        [{"match_index": 1, "region": _VALID_REGION, "map_name": None,
-          "extra": 1}],                                                    # additionalProperties
+        [{"match_index": 0, "region": _VALID_REGION}],                # index < 1
+        [{"match_index": 1}],                                         # region 欠落
+        [{"region": _VALID_REGION}],                                  # match_index 欠落
+        [{"match_index": 1, "region": _VALID_REGION, "extra": 1}],    # additionalProperties
     ]:
         minimal_metadata["minimap_regions"] = bad
         with pytest.raises(jsonschema.ValidationError):
@@ -728,7 +730,7 @@ def test_minimap_regions_rejects_bad_entries(schema_validator, minimal_metadata)
 ```json
 "minimap_regions": {
   "type": "array",
-  "description": "#481: per-match area-map window region (normalized). Missing entry for a match = not detected. Field absent = minimap command never ran.",
+  "description": "#481: per-match area-map crop region (normalized) actually used by `allaganeye minimap --region`. Missing entry for a match = not cropped. Field absent = minimap crop never ran.",
   "items": { "$ref": "#/$defs/MinimapRegionEntry" }
 }
 ```
@@ -740,10 +742,9 @@ def test_minimap_regions_rejects_bad_entries(schema_validator, minimal_metadata)
   "type": "object",
   "properties": {
     "match_index": { "type": "integer", "minimum": 1 },
-    "region": { "$ref": "#/$defs/CaptureRegion" },
-    "map_name": { "type": ["string", "null"] }
+    "region": { "$ref": "#/$defs/CaptureRegion" }
   },
-  "required": ["match_index", "region", "map_name"],
+  "required": ["match_index", "region"],
   "additionalProperties": false
 }
 ```
@@ -751,7 +752,7 @@ def test_minimap_regions_rejects_bad_entries(schema_validator, minimal_metadata)
 - [ ] **Step 4: codegen** — `python scripts/codegen/generate.py` → 生成 diff を確認 →
   `pytest tests/test_metadata_schema.py tests/test_metadata_types.py -v` PASS
 - [ ] **Step 5: zod** — `gui/src/types/metadata.schema.ts` に `MinimapRegionEntrySchema`
-  (CaptureRegionSchema 再利用、`map_name: z.string().nullable()`) +
+  (CaptureRegionSchema 再利用、`match_index` + `region` の 2 field) +
   `minimap_regions: z.array(MinimapRegionEntrySchema).optional()`。
   vitest round-trip (metadataStore load→apply で field 保全) を追加 → red→green
 - [ ] **Step 6: GUI 検査** — `cd gui && npm run lint && npm run typecheck && npm test` PASS
@@ -840,33 +841,30 @@ git commit -m "feat(#481): export 基盤に optional video_filter (default 経�
 
 ## Phase 2 — 本体 (PR 2 続き)
 
-### Task D1: `areamap.py` — PoC 勝者 port + 試合単位 consensus
+### Task D1: `areamap.py` — A seed port + 試合単位 consensus (提案モード専用)
 
 **Files:**
 
 - Create: `allaganeye/video/areamap.py`
-- Create (候補 A 勝利時のみ): `allaganeye/video/refs/__init__.py` +
-  `allaganeye/video/refs/areamaps.npz` (build-refs 出力を配置) +
-  `scripts/regen_areamap_refs.py` (areamap_poc の build-refs を呼ぶ 10 行 wrapper) +
-  pyproject `"allaganeye.video.refs" = ["*.npz"]`
 - Test: `tests/test_areamap.py`
 
 **Interfaces:**
 
-- Consumes: PoC 勝者 fn (`scripts/areamap_poc.py` の `detect_candidate_a` or `_b`。
-  **P5 checkpoint の決定に従い該当 fn を areamap.py へ移植**し、poc script は移植先を import
-  する形に逆転して重複を消す)
+- Consumes: `scripts/areamap_poc.py` の `detect_candidate_a` の temporal-stability 部分
+  (`_temporal_stack` / `_static_components` / whole-frame guard `A_MAX_DIM_FRAC`)。
+  **map 照合 (refs/Stage 2) は撤回済みなので移植しない** — `detect_areamap_seed` として
+  refs なし単体化して areamap.py へ移植し、poc script は移植先を import する形に逆転して
+  重複を消す
 - Produces:
 
 ```python
 @dataclass(frozen=True)
 class MatchRegionResult:
     match_index: int
-    region: CaptureRegion   # 正規化。source="auto"|"manual"、confidence=一致 window 率
-    map_name: str | None
+    region: CaptureRegion   # 正規化。source="auto" (seed 提案)、confidence=一致 window 率
     scattered: bool         # window 間で bbox が揺れた (warning 対象)
 
-DetectResult = tuple[float, float, float, float, str | None, float] | None
+DetectResult = tuple[float, float, float, float, float] | None  # (x, y, w, h, score)
 DetectFn = Callable[[list[np.ndarray]], DetectResult]
 
 def resolve_match_regions(
@@ -900,15 +898,15 @@ def _det_seq(results):
 
 def test_consensus_majority_and_confidence():
     fake_probe = lambda v, t: b"\x00" * (1920 * 1080 * 3)
-    box = (0.01, 0.02, 0.28, 0.35, "onsal_hakair", 0.9)
-    off = (0.50, 0.50, 0.20, 0.20, None, 0.5)  # IoU=0 の外れ window
+    box = (0.01, 0.02, 0.28, 0.35, 0.9)
+    off = (0.50, 0.50, 0.20, 0.20, 0.5)  # IoU=0 の外れ window
     results, warns = resolve_match_regions(
         Path("v.mkv"), [(1, 100.0, 1100.0)],
         probe=fake_probe, detect=_det_seq([box, box, off]),
     )
     assert len(results) == 1
     r = results[0]
-    assert r.match_index == 1 and r.map_name == "onsal_hakair"
+    assert r.match_index == 1 and r.region.source == "auto"
     assert r.scattered is True and abs(r.region.confidence - 2 / 3) < 1e-6
     assert warns  # 移動疑い warning
 
@@ -928,7 +926,7 @@ def test_short_match_uses_midpoint_samples():
         return b"\x00" * (1920 * 1080 * 3)
     resolve_match_regions(
         Path("v.mkv"), [(1, 0.0, 90.0)], probe=probe,
-        detect=lambda f: (0.0, 0.0, 0.3, 0.3, None, 0.9),
+        detect=lambda f: (0.0, 0.0, 0.3, 0.3, 0.9),
     )
     assert all(0.0 <= t <= 90.0 for t in seen) and seen
 ```
@@ -937,16 +935,18 @@ def test_short_match_uses_midpoint_samples():
   `usable = [start+edge_margin, end-edge_margin]`、幅が
   `windows*frames_per_window*2` 秒未満なら margin を捨て `[start, end]` を均等分割。
   各 window の `frames_per_window` timestamp を等間隔生成 → `probe` (default
-  `detector._probe_frame_rgb_hires`) で decode → `detect` (default = 勝者 fn +
-  同梱 refs lazy load) → cluster (代表 = 要素ごと `statistics.median`) → `CaptureRegion(
+  `detector._probe_frame_rgb_hires`) で decode → `detect` (default =
+  `detect_areamap_seed`) → cluster (代表 = 要素ごと `statistics.median`) → `CaptureRegion(
   x, y, w, h, confidence=hits/valid, source="auto")`
-- [ ] **Step 4: PASS 確認** → **Step 5: 勝者 fn の合成画像 unit** (静的明色矩形 overlay +
-  乱数背景 5 frame で bbox IoU ≥ 0.8 を assert。候補 A の場合は refs を合成矩形から build)
+- [ ] **Step 4: PASS 確認** → **Step 5: `detect_areamap_seed` の合成画像 unit** (静的明色
+  矩形 overlay + 乱数背景 5 frame で bbox IoU ≥ 0.8 を assert。whole-frame guard の
+  発火 unit も追加)。poc script 側を移植先 import に切替え、`python scripts/areamap_poc.py
+  compare` が改修後も同一成績を出すことを確認 (回帰 pin)
 - [ ] **Step 6: commit**
 
 ```bash
-git add allaganeye/video/areamap.py allaganeye/video/refs scripts/ tests/test_areamap.py pyproject.toml
-git commit -m "feat(#481): areamap.py (PoC 勝者検出 + 試合単位 consensus) (Refs #481)"
+git add allaganeye/video/areamap.py scripts/areamap_poc.py tests/test_areamap.py
+git commit -m "feat(#481): areamap.py (A seed 検出 + 試合単位 consensus、提案モード用) (Refs #481)"
 ```
 
 ### Task D2: `commands/minimap.py` + CLI 配線
@@ -973,14 +973,17 @@ git commit -m "feat(#481): areamap.py (PoC 勝者検出 + 試合単位 consensus
 def test_match_set_mirrors_export_rules(...):
     # post_match 除外が --include より先 / type_override=="skip" 除外 / edited 優先
 def test_region_manual_pixel_parse_and_validation(...):
-    # "24,22,534,392" -> 正規化 + source="manual" / 範囲外 (x+w>width) は exit 5
+    # "24,22,534,392" -> 正規化 + source="manual" / 範囲外 (x+w>width)・w<16 は exit 5
 def test_writeback_preserves_existing_fields(tmp_path, ...):
-    # capture_regions / brightness_samples / 未知 field が write-back 後も残る
-    # minimap_regions は match_index 昇順
-def test_all_matches_fail_detection_exits_4(...):
-    # resolve が ([], warns) -> exit 4、stderr に --region 案内
-def test_partial_failure_warns_and_exits_0(...):
-    # 2 match 中 1 match 検出 -> 1 本 encode、warning、exit 0
+    # --region crop 実行時のみ write-back。capture_regions / brightness_samples /
+    # 未知 field が write-back 後も残る。minimap_regions は match_index 昇順
+def test_proposal_mode_exits_4_without_crop(...):
+    # --region なし: resolve mock が提案を返す -> stdout に試合ごと
+    # "--region X,Y,W,H" 形式の提案 + exit 4。metadata 不変・export_matches 未呼出
+def test_proposal_mode_no_seed_still_exits_4(...):
+    # resolve が ([], warns) -> 「提案なし」表示 + exit 4 + --region 案内
+def test_region_crop_encode_failure_exit_1(...):
+    # --region 指定で encode summary.failure>0 -> exit 1 (export 契約と同一)
 def test_crop_filter_mod2_and_clamp(...):
     # 正規化 0.2781 * 1920 = 534.0 -> "crop=534:392:24:22" / 奇数は -1 で mod-2 化
     # x+w が frame を超えないよう clamp
@@ -994,23 +997,27 @@ def test_crop_filter_mod2_and_clamp(...):
 metadata.json を入力に、試合ごとにエリアマップ window (通称 minimap) 領域を
 検出して minimap_regions に永続化し、crop + h264 の切抜き MP4 を出力する。
 """
-# 実装骨子 (export.py:129-381 の pattern を踏襲):
+# 実装骨子 (export.py:129-381 の pattern を踏襲、PoC checkpoint 改訂版):
 # 1. read_metadata (InputFileError -> _report_app_error 経由 exit 2)
 # 2. source 解決 + probe_video で width/height (VideoProcessingError -> exit 3)
 # 3. match set: post_match -> include -> type_override -> edited (export と同順)
 #    抽出形: (index, start, end) のリスト
-# 4. 領域解決:
-#    - --region "X,Y,W,H" (source 解像度 pixel): int parse 失敗/負値/はみ出し ->
-#      ConfigValidationError。全 match に同一 region、source="manual", confidence=1.0
-#    - それ以外: resolve_match_regions(video, match_tuples) -> (results, warns)
-#      warns を typer.echo(err=True)。results 空 -> DetectionError (exit 4、
-#      "--region X,Y,W,H で手動指定してください" hint)
-# 5. write-back: payload = read_metadata の dict に
-#    payload["minimap_regions"] = [entry...] (match_index 昇順) を代入し
-#    write_metadata_atomic(metadata_path, payload)。encode 失敗でも座標は残る (先に書く)
+# 4a. 提案モード (--region なし):
+#    resolve_match_regions(video, match_tuples) -> (results, warns)
+#    warns を typer.echo(err=True)。results を試合ごとに pixel 換算して
+#    「match 3: --region 24,22,534,392 (confidence 0.67)」形式で表示
+#    (そのまま貼れる形式)。results 空なら「提案なし」。crop なし・write-back なしで
+#    常に DetectionError (exit 4、"crop の実行には --region X,Y,W,H を指定して
+#    ください" hint) を raise
+# 4b. crop モード (--region "X,Y,W,H"、source 解像度 pixel):
+#    int parse 失敗/負値/はみ出し/w or h < 16 -> ConfigValidationError (exit 5)。
+#    全 match に同一 region、source="manual", confidence=1.0
+# 5. (crop モードのみ) write-back: payload = read_metadata の dict に
+#    payload["minimap_regions"] = [entry...] (match_index 昇順、entry =
+#    {match_index, region} の 2 field) を代入し write_metadata_atomic。
+#    encode 失敗でも座標は残る (先に書く)
 # 6. crop 文字列: px = round(r.x*W) 等 -> w -= w % 2, h -= h % 2,
 #    x = min(x, W - w), y = min(y, H - h) で clamp -> f"crop={w}:{h}:{x}:{y}"
-#    w < 16 or h < 16 -> その match を warning + skip (退化 crop 防止)
 # 7. encode: slots = enumerate_h264_encoders(system_info 由来、export と同引数) ->
 #    ExportMatch(index, start, end, type_label, video_filter=crop) ->
 #    export_matches(codec="h264", name_pattern=..., output_dir=
@@ -1035,11 +1042,13 @@ git commit -m "feat(#481): allaganeye minimap command (検出 -> write-back -> c
 - Create: `tests/test_areamap_slow.py` (slow marker、`sample_video_dir` fixture 慣例に従う)
 
 - [ ] **Step 1: test 実装** — GT manifest (`areamap-gt.json`) を読み、GT のある動画 2 本で
-  `resolve_match_regions` を実行し **visible case の IoU ≥ 0.9** + visible=false case で
-  非検出を assert。`ALLAGANEYE_SAMPLE_VIDEO_DIR` 未設定なら skip (既存慣例)
+  `resolve_match_regions` を実行し **seed 局在性** (検出 box の中心が GT bbox 内) +
+  visible=false case で提案なし (非検出) を assert。IoU ≥ 0.9 gate は課さない
+  (spec §6.3 縮小)。`ALLAGANEYE_SAMPLE_VIDEO_DIR` 未設定なら skip (既存慣例)
 - [ ] **Step 2: 実行** — `pytest tests/test_areamap_slow.py -m slow -v` PASS (実機)
-- [ ] **Step 3: E2E 手動 1 回** — 実 metadata.json に対し `allaganeye minimap` を実行し、
-  出力 MP4 を目視 (マップが正しく切れているか) + metadata の `minimap_regions` 確認
+- [ ] **Step 3: E2E 手動 2 回** — 実 metadata.json に対し (a) `allaganeye minimap` (提案
+  モード、exit 4 + 提案表示を確認) (b) 提案値を使った `--region` crop 実行で出力 MP4 を目視
+  (マップが正しく切れているか) + metadata の `minimap_regions` 確認
 - [ ] **Step 4: commit**
 
 ### Task D4: docs 更新 (#818 SSoT)
