@@ -86,6 +86,11 @@
     },
     "capture_regions": {
       "$ref": "#/$defs/CaptureRegions"
+    },
+    "minimap_regions": {
+      "type": "array",
+      "description": "#481: per-match area-map crop region (normalized) actually used by `allaganeye minimap --region`. Missing entry for a match = not cropped. Field absent = minimap crop never ran.",
+      "items": { "$ref": "#/$defs/MinimapRegionEntry" }
     }
   },
   "$defs": {
@@ -377,6 +382,17 @@
         },
         "region": { "$ref": "#/$defs/CaptureRegion" }
       }
+    },
+    "MinimapRegionEntry": {
+      "title": "MinimapRegionEntry",
+      "description": "#481: one per-match minimap crop entry. `match_index` references Match.index (1-based). `region` is the normalized crop rectangle used by `allaganeye minimap --region`.",
+      "type": "object",
+      "properties": {
+        "match_index": { "type": "integer", "minimum": 1 },
+        "region": { "$ref": "#/$defs/CaptureRegion" }
+      },
+      "required": ["match_index", "region"],
+      "additionalProperties": false
     },
     "CaptureRegions": {
       "title": "CaptureRegions",

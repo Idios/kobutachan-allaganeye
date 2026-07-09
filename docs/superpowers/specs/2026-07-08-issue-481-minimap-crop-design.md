@@ -136,7 +136,8 @@ ref score が正例を上回る)。詳細は [PoC report](2026-07-08-issue-481-a
 
 - **出力先**: `-o <dir>`。省略時は metadata.json と同じディレクトリの `minimap/` サブディレクトリ
 - **ファイル名**: export の `_format_filename` token 実装を流用し、default
-  `{idx:03}_minimap_{start}.mp4`
+  `{idx:03}_{type}_{start}_minimap.mp4` (実装時に export default `{idx:03}_{type}_{start}.mp4`
+  との整合で `{type}` を含む形に確定。D4 review で spec 同期、2026-07-09)
 - **対象試合**: default split と同じ集合 (type=match、`post_match: true` 除外)。
   `--include 1,3,5` (export と同形式、matches[].index 基準) で絞り込み可
 - **crop encode**: 正規化座標 → pixel 変換時に mod-2 丸め (h264 yuv420p 制約)。
@@ -147,7 +148,10 @@ ref score が正例を上回る)。詳細は [PoC report](2026-07-08-issue-481-a
 - **提案モード (`--region` 省略時)**: 案 A seed (temporal-stability consensus) で試合ごとの
   提案領域を検出し、`--region X,Y,W,H` としてそのまま貼れる pixel 形式で表示する。
   **crop はせず metadata にも書かない**。提案の有無に関わらず exit 4 (検知失敗 = 自動確定
-  不可) + `--region` 案内を表示。HUD 位置は録画者ごとに固定なので測定・調整は初回のみ
+  不可) + `--region` 案内を表示。HUD 位置は録画者ごとに固定なので測定・調整は初回のみ。
+  seed 提案は「出た提案は GT 中心精度で信頼できる・場面によっては出ない」という best-effort
+  契約 (D3 実機検証 2026-07-09 で確定。calm 場面や配信者 overlay との merge では提案なし +
+  warning になる)
 - **進捗表示**: export と同型 (plain text 1 行形式 / `--quiet`)。`--json` (GUI subprocess mode)
   は v1 では実装しない (GUI 統合は別 issue)
 
@@ -173,8 +177,12 @@ ref score が正例を上回る)。詳細は [PoC report](2026-07-08-issue-481-a
 4. write-back: atomic write + 既存 field 保全 (brightness_samples / capture_regions が
    消えないこと)。`--from-metadata` 経路の preserve は対象外 (minimap は split 後段の別 command)
 5. crop encode: ffmpeg 引数組み立て (crop filter / slot / fallback) を mock で検証
-6. slow 実機: PoC GT を用いた seed 提案の局在性検証 (検出 box 中心が GT bbox 内 / 負例で
-   提案なし)。IoU ≥ 0.9 の自動検出 gate は §6.3 縮小により**課さない**
+6. slow 実機: PoC GT を用いた seed 提案の検証。契約 = seed は best-effort
+   (D3 2026-07-09 確定)。visible=true + bbox あり (5 case): 提案が出た場合は中心が GT bbox
+   内 (誤誘導ゼロ) を per-case assert + 5 case 中 >=3 で提案が出ることを集計 assert。
+   visible=false (t=2354): 提案なし assert。visible=true + bbox null (t=1106): slow
+   assert 対象外 (city map window、提案モードは試合内 sample のみで発生しない)。
+   IoU >= 0.9 の自動検出 gate は sec.6.3 縮小により**課さない**
 7. GUI: zod parse + metadataStore round-trip (vitest) + `npm run typecheck`
    (vitest は型検査しない教訓)
 8. codegen drift: `python scripts/codegen/generate.py` 後に diff ゼロ

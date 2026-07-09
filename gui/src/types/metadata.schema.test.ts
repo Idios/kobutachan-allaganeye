@@ -344,4 +344,70 @@ describe('MetadataSchema', () => {
     };
     expect(MetadataSchema.safeParse(doc).success).toBe(true);
   });
+
+  // #481 -- minimap_regions optional field
+
+  it('accepts a document without minimap_regions (backward compat)', () => {
+    const doc = validMetadata();
+    expect('minimap_regions' in doc).toBe(false);
+    expect(MetadataSchema.safeParse(doc).success).toBe(true);
+  });
+
+  it('accepts a document with an empty minimap_regions array', () => {
+    const doc = { ...validMetadata(), minimap_regions: [] };
+    expect(MetadataSchema.safeParse(doc).success).toBe(true);
+  });
+
+  it('accepts a document with valid minimap_regions entries', () => {
+    const doc = {
+      ...validMetadata(),
+      minimap_regions: [
+        {
+          match_index: 1,
+          region: { x: 0.01, y: 0.02, w: 0.28, h: 0.35, confidence: 1.0, source: 'manual' },
+        },
+        {
+          match_index: 3,
+          region: { x: 0.0, y: 0.0, w: 0.3, h: 0.4, confidence: 1.0, source: 'manual' },
+        },
+      ],
+    };
+    const result = MetadataSchema.safeParse(doc);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.minimap_regions).toHaveLength(2);
+      expect(result.data.minimap_regions![0].match_index).toBe(1);
+    }
+  });
+
+  it('rejects minimap_regions entry with match_index < 1', () => {
+    const doc = {
+      ...validMetadata(),
+      minimap_regions: [
+        {
+          match_index: 0,
+          region: { x: 0.0, y: 0.0, w: 0.3, h: 0.4, confidence: 1.0, source: 'manual' },
+        },
+      ],
+    };
+    expect(MetadataSchema.safeParse(doc).success).toBe(false);
+  });
+
+  it('rejects minimap_regions entry missing region', () => {
+    const doc = {
+      ...validMetadata(),
+      minimap_regions: [{ match_index: 1 }],
+    };
+    expect(MetadataSchema.safeParse(doc).success).toBe(false);
+  });
+
+  it('rejects minimap_regions entry missing match_index', () => {
+    const doc = {
+      ...validMetadata(),
+      minimap_regions: [
+        { region: { x: 0.0, y: 0.0, w: 0.3, h: 0.4, confidence: 1.0, source: 'manual' } },
+      ],
+    };
+    expect(MetadataSchema.safeParse(doc).success).toBe(false);
+  });
 });

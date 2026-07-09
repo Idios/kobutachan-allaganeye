@@ -220,11 +220,16 @@ def _build_ffmpeg_args(
     output: Path,
     codec: str,
     encoder: H264Encoder,
+    video_filter: str | None = None,
 ) -> list[str]:
     """Construct the ffmpeg argv list. Mirrors pre-#761 build_ffmpeg_args in gui/src-tauri/src/lib.rs (see #591/#761).
 
     #791: codec=="h264" のとき encoder に対応する decode hwaccel 引数を
     `-i` の前に挿入する。codec=="copy" / encoder==LIBX264 は除外。
+
+    #481: video_filter 指定時は _DECODE_HWACCEL_ARGS を挿入しない
+    (NVDEC zero-copy の GPU frame は CPU filter に渡せないため)。
+    `-vf <filter>` を `-c:v` の直前に挿入する。
     """
     args: list[str] = [
         ffmpeg,
@@ -235,7 +240,7 @@ def _build_ffmpeg_args(
         "pipe:2",
         "-y",
     ]
-    if codec != "copy":
+    if codec != "copy" and video_filter is None:
         args.extend(_DECODE_HWACCEL_ARGS[encoder])
     args.extend(
         [
@@ -250,6 +255,8 @@ def _build_ffmpeg_args(
     if codec == "copy":
         args.extend(["-c", "copy"])
     else:
+        if video_filter is not None:
+            args.extend(["-vf", video_filter])
         args.extend(["-c:v", encoder.value])
         args.extend(list(encoder.quality_args()))
         args.extend(["-c:a", "copy"])
@@ -268,12 +275,21 @@ def run_export_attempt(
     progress_cb: Callable[[float, str], None],
     fallback_cb: Callable[[H264Encoder, H264Encoder, str], None] | None,
     cancel_event: threading.Event,
+    video_filter: str | None = None,
 ) -> ExportResult:
     """Launch ffmpeg for one match and wait; retries with libx264 if needed.
 
     - codec == "copy"  -> encoder is ignored; runs ffmpeg -c copy
     - codec == "h264" -> starts with encoder; retries libx264 on GPU init failure
+
+    #481: video_filter 指定時は -vf <filter> を挿入する。
+    codec=="copy" との併用は意味的矛盾のため ValueError を raise する。
     """
+    if video_filter is not None and codec == "copy":
+        raise ValueError(
+            "video_filter cannot be used with codec='copy': "
+            "stream-copy does not re-encode and therefore cannot apply a video filter."
+        )
     ffmpeg = find_ffmpeg()
     duration = end - start
     started = time.monotonic()
@@ -290,7 +306,9 @@ def run_export_attempt(
     output_pre_existed = output.exists()
 
     # 1st attempt
-    args = _build_ffmpeg_args(ffmpeg, video, start, end, output, codec, encoder)
+    args = _build_ffmpeg_args(
+        ffmpeg, video, start, end, output, codec, encoder, video_filter
+    )
     outcome = _run_single_attempt(args, duration, progress_cb, cancel_event)
 
     if cancel_event.is_set():
@@ -324,7 +342,7 @@ def run_export_attempt(
             )
         # NOTE: do NOT unlink here -- the retry uses -y to overwrite in place.
         retry_args = _build_ffmpeg_args(
-            ffmpeg, video, start, end, output, codec, H264Encoder.LIBX264
+            ffmpeg, video, start, end, output, codec, H264Encoder.LIBX264, video_filter
         )
         retry_outcome = _run_single_attempt(
             retry_args, duration, progress_cb, cancel_event

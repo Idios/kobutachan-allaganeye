@@ -342,3 +342,73 @@ def test_capture_regions_unknown_field_rejected():
     regions["future_field"] = 1
     sample["capture_regions"] = regions
     assert not Draft202012Validator(schema).is_valid(sample)
+
+
+# ---- #481: minimap_regions ----
+
+import jsonschema  # noqa: E402 (import at bottom to keep existing imports clean)
+
+_VALID_REGION: dict = {
+    "x": 0.01,
+    "y": 0.02,
+    "w": 0.28,
+    "h": 0.35,
+    "confidence": 1.0,
+    "source": "manual",
+}
+
+
+def test_minimap_regions_valid():
+    """minimap_regions field: valid two-entry array must pass."""
+    schema = _load_schema()
+    sample = _valid_sample()
+    sample["minimap_regions"] = [
+        {"match_index": 1, "region": _VALID_REGION},
+        {
+            "match_index": 3,
+            "region": {
+                "x": 0.0,
+                "y": 0.0,
+                "w": 0.3,
+                "h": 0.4,
+                "confidence": 1.0,
+                "source": "manual",
+            },
+        },
+    ]
+    Draft202012Validator(schema).validate(sample)  # must not raise
+
+
+def test_minimap_regions_omitted_accepted():
+    """minimap_regions is optional; omitting it must still validate."""
+    schema = _load_schema()
+    sample = _valid_sample()
+    assert "minimap_regions" not in sample
+    Draft202012Validator(schema).validate(sample)
+
+
+def test_minimap_regions_empty_array_accepted():
+    """An empty minimap_regions array is valid."""
+    schema = _load_schema()
+    sample = _valid_sample()
+    sample["minimap_regions"] = []
+    Draft202012Validator(schema).validate(sample)
+
+
+def test_minimap_regions_rejects_bad_entries():
+    """minimap_regions: various malformed entries must be rejected."""
+    schema = _load_schema()
+    validator = Draft202012Validator(schema)
+    bad_cases = [
+        [{"match_index": 0, "region": _VALID_REGION}],  # index < 1
+        [{"match_index": 1}],  # region 欠落
+        [{"region": _VALID_REGION}],  # match_index 欠落
+        [
+            {"match_index": 1, "region": _VALID_REGION, "extra": 1}
+        ],  # additionalProperties
+    ]
+    for bad in bad_cases:
+        sample = _valid_sample()
+        sample["minimap_regions"] = bad
+        with pytest.raises(jsonschema.ValidationError):
+            validator.validate(sample)

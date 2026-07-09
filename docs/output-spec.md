@@ -164,3 +164,13 @@ Metadata: <metadata.json path>
 | `export --codec h264` | `{idx:03}_{type}_{start}.mp4` (match ごと) | 再エンコード MP4 (NVENC / QSV / AMF / libx264 fallback)。スロット数 = NVENC engine 数 (RTX 5090 → 3、RTX 4090 → 2 等)。iGPU / ソフトウェア encoder は 1 スロット |
 | `export --json` | stdout: NDJSON ストリーム | 1 行 1 JSON イベント (progress / fallback / result / error / summary)。Tauri GUI subprocess が使用する wire protocol |
 | `--include I,J,K` / `--exclude I,J,K` | metadata の `matches[].index` (**1 始まり**) と照合して match をフィルタ | `type_override="skip"` の match はこれらのフラグに関係なく常に除外 |
+
+## minimap コマンド出力
+
+関連: `minimap` コマンドの構文・オプション・exit code の詳細は [`docs/cli-spec.md` §「minimap コマンド」](cli-spec.md) を参照。
+
+| モード | 生成ファイル | 備考 |
+| --- | --- | --- |
+| 提案モード (`--region` 未指定) | なし | stdout に `match N: --region X,Y,W,H (confidence C)` 形式で提案を表示する。エンコードなし・write-back なし。常に exit 4 |
+| crop モード (`--region X,Y,W,H`) | `<out>/{idx:03}_{type}_{start}_minimap.mp4` (match ごと) | H.264 再エンコード MP4 (NVENC / QSV / AMF / libx264 fallback)。default 出力先は `<metadata dir>/minimap/` |
+| crop モード (metadata write-back) | `metadata.json` 更新 | エンコード開始前に `minimap_regions` フィールドを atomic write-back する（エンコード失敗時も座標は保持される） |

@@ -1713,6 +1713,34 @@ describe('normalizeForPersistence capture_regions round-trip (#810)', () => {
   });
 });
 
+describe('normalizeForPersistence minimap_regions round-trip (#481)', () => {
+  it('normalizeForPersistence preserves minimap_regions (#481)', async () => {
+    // minimap_regions must survive load -> edit -> apply intact so the
+    // minimap consumer can read the cached crop region after a GUI round-trip.
+    const meta = validMetadata();
+    const minimapRegions = [
+      {
+        match_index: 1,
+        region: { x: 0.01, y: 0.02, w: 0.28, h: 0.35, confidence: 1.0, source: 'manual' },
+      },
+    ];
+    const metaWithMinimap = { ...meta, minimap_regions: minimapRegions };
+    configureInvoke({
+      load_metadata: metaWithMinimap,
+      apply_changes: 2000,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    // Need a dirty edit to trigger apply
+    useMetadataStore.getState().updateMatch(1, { name: 'x' });
+    await useMetadataStore.getState().apply();
+    const applyCall = invokeMock.mock.calls.find((c) => c[0] === 'apply_changes');
+    expect(applyCall).toBeDefined();
+    const persisted = (applyCall![1] as { metadata: Metadata }).metadata;
+    expect(persisted.minimap_regions).toEqual(minimapRegions);
+  });
+});
+
 describe('#695: conflictErrorState lifecycle (#694 *ErrorState form)', () => {
   beforeEach(() => {
     useMetadataStore.setState({

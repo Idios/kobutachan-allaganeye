@@ -34,6 +34,9 @@ class ExportMatch:
     start: float
     end: float
     type_label: str  # "match" / "non_fl" / etc. -- used by name_pattern
+    video_filter: str | None = (
+        None  # #481: optional ffmpeg -vf filter string (minimap crop etc.)
+    )
 
 
 def _format_filename(m: ExportMatch, pattern: str) -> str:
@@ -132,6 +135,7 @@ def export_matches(
                     progress_cb=on_progress,
                     fallback_cb=on_fallback,
                     cancel_event=cancel_event,
+                    video_filter=m.video_filter,
                 )
                 # match_index is overwritten by the caller value in ExportResult
                 result_with_idx = ExportResult(
