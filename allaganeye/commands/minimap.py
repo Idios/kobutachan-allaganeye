@@ -245,34 +245,7 @@ def register(app: typer.Typer) -> None:
             _report_app_error(e, verbose=False, quiet=quiet, show_hint=False)
             raise typer.Exit(code=e.exit_code) from None
 
-        # ------ 5. write-back (encode 失敗でも座標は残す、先に書く) ---------------
-        # mod-2 化: codec が yuv420p を要求するため (後段と同じ処理を先に適用)
-        crop_w = rw - (rw % 2)
-        crop_h = rh - (rh % 2)
-        norm_region = CaptureRegion(
-            x=rx / frame_w,
-            y=ry / frame_h,
-            w=crop_w / frame_w,
-            h=crop_h / frame_h,
-            confidence=1.0,
-            source="manual",
-        )
-        minimap_entries: list[dict] = sorted(
-            [
-                {"match_index": idx, "region": norm_region.to_dict()}
-                for idx, _, _, _ in filtered_tuples
-            ],
-            key=lambda e: int(e["match_index"]),
-        )
-        payload = dict(metadata)
-        payload["minimap_regions"] = minimap_entries
-        try:
-            write_metadata_atomic(metadata_path, payload)
-        except AllaganEyeError as e:
-            _report_app_error(e, verbose=False, quiet=quiet, show_hint=False)
-            raise typer.Exit(code=e.exit_code) from None
-
-        # ------ 6. crop 文字列生成 (mod-2 化 + clamp) --------------------------
+        # ------ 5. crop 文字列生成 (mod-2 化 + clamp) --------------------------
         # mod-2 化: codec が yuv420p を要求するため
         crop_w = rw - (rw % 2)
         crop_h = rh - (rh % 2)
@@ -281,7 +254,7 @@ def register(app: typer.Typer) -> None:
         crop_y = min(ry, frame_h - crop_h)
         crop_filter = f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}"
 
-        # ------ 7. encode -------------------------------------------------------
+        # ------ 6. encode -------------------------------------------------------
         slots = enumerate_h264_encoders(
             vendors=vendors, preference=preference, gpu_models=gpu_models
         )
@@ -316,6 +289,70 @@ def register(app: typer.Typer) -> None:
         eff_output_dir = (
             output_dir if output_dir is not None else metadata_path.parent / "minimap"
         )
+
+        # ------ 7. preflight: output_dir mkdir --------------------------------
+        # Finding 2 fix: 決定的 preflight (collision check 済み) を write より前に実行
+        # mkdir 失敗は except Exception で exit 1 になる (export.py と同規約)
+        eff_output_dir.mkdir(parents=True, exist_ok=True)
+
+        # ------ 8. write-back (encode 失敗でも座標は残す) ----------------------
+        # Finding 1 fix: filtered set の entry は上書き、対象外の既存 entry は保全
+        # (match_index merge)。malformed entry (dict でない / match_index 欠落) も
+        # 黙って捨てずにそのまま保全する (round-trip 哲学)。
+        norm_region = CaptureRegion(
+            x=rx / frame_w,
+            y=ry / frame_h,
+            w=crop_w / frame_w,
+            h=crop_h / frame_h,
+            confidence=1.0,
+            source="manual",
+        )
+        # filtered の match_index -> 新 entry dict
+        new_entries_by_idx: dict[int, dict] = {
+            idx: {"match_index": idx, "region": norm_region.to_dict()}
+            for idx, _, _, _ in filtered_tuples
+        }
+        filtered_idx_set: set[int] = set(new_entries_by_idx)
+        # 既存 minimap_regions を読んでマージ
+        existing_regions: list = list(metadata.get("minimap_regions") or [])
+        preserved: list[dict] = []
+        for entry in existing_regions:
+            if isinstance(entry, dict):
+                try:
+                    midx = int(entry["match_index"])
+                except (KeyError, TypeError, ValueError):
+                    # match_index 取得不能: malformed として保全
+                    preserved.append(entry)
+                    continue
+                if midx not in filtered_idx_set:
+                    # 対象外 match: 既存 entry を保全
+                    preserved.append(entry)
+                # 対象 match は new_entries_by_idx で上書きするためここでは追加しない
+            else:
+                # dict でない malformed entry: そのまま保全
+                preserved.append(entry)  # type: ignore[arg-type]
+
+        # merge: 保全 entry + 新 entry を match_index 昇順に並べる
+        # (malformed は先頭に集める: dict かつ int match_index を持つものだけで昇順)
+        def _sort_key(e: object) -> tuple[int, int]:
+            if isinstance(e, dict):
+                try:
+                    return (1, int(e["match_index"]))
+                except (KeyError, TypeError, ValueError):
+                    pass
+            return (0, 0)
+
+        minimap_entries: list = sorted(
+            preserved + list(new_entries_by_idx.values()),
+            key=_sort_key,
+        )
+        payload = dict(metadata)
+        payload["minimap_regions"] = minimap_entries
+        try:
+            write_metadata_atomic(metadata_path, payload)
+        except AllaganEyeError as e:
+            _report_app_error(e, verbose=False, quiet=quiet, show_hint=False)
+            raise typer.Exit(code=e.exit_code) from None
 
         cancel_event = threading.Event()
 
@@ -355,7 +392,6 @@ def register(app: typer.Typer) -> None:
                             err=True,
                         )
 
-            eff_output_dir.mkdir(parents=True, exist_ok=True)
             summary = export_matches(
                 matches=export_matches_list,
                 slots=slots,

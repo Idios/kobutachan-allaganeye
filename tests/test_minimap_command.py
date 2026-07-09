@@ -662,3 +662,328 @@ def test_crop_filter_mod2_and_clamp(
     vf3 = exported3[0].video_filter
     # mod-2 化: w=535->534, h=393->392; x=10, y=22 no clamp needed
     assert vf3 == "crop=534:392:10:22", f"expected mod-2 normalization, got {vf3}"
+
+
+# ---------------------------------------------------------------------------
+# 8. Finding 1 [high]: partial re-run must merge with existing minimap_regions
+# ---------------------------------------------------------------------------
+
+
+@patch("allaganeye.commands.minimap.export_matches")
+@patch("allaganeye.commands.minimap.probe_video")
+def test_partial_rerun_merges_existing_minimap_regions(
+    mock_probe: MagicMock,
+    mock_export: MagicMock,
+    app: typer.Typer,
+    tmp_path: Path,
+) -> None:
+    """--include 2 の部分再実行で match 1,3 の既存 entry が保全される。
+
+    現行実装は filtered_tuples のみから minimap_regions を再構築するため、
+    対象外 match の entry が消える (Finding 1 [high])。
+    修正後: match_index merge で保全 + 対象 match は新 region で上書き + 昇順 sort。
+    """
+    mock_probe.return_value = {
+        "width": 1920,
+        "height": 1080,
+        "duration": 1200.0,
+        "fps": 60.0,
+        "fps_num": 60,
+        "fps_den": 1,
+        "codec": "h264",
+        "audio_codec": None,
+    }
+    mock_export.return_value = ExportSummary(success=1, failure=0)
+
+    # 既存 minimap_regions: match 1,2,3 が既に crop 済み
+    existing_region = {
+        "x": 0.01,
+        "y": 0.02,
+        "w": 0.277,
+        "h": 0.362,
+        "confidence": 1.0,
+        "source": "manual",
+    }
+    payload = {
+        "schema_version": "1",
+        "source": str(tmp_path / "in.mp4"),
+        "matches": [
+            {"index": 1, "start_time": 10.0, "end_time": 400.0, "type": "match"},
+            {"index": 2, "start_time": 410.0, "end_time": 800.0, "type": "match"},
+            {"index": 3, "start_time": 810.0, "end_time": 1200.0, "type": "match"},
+        ],
+        "system_info": {
+            "gpu_vendors_available": [],
+            "vendor_preference": ["nvidia", "amd", "intel"],
+            "gpu": [],
+        },
+        "minimap_regions": [
+            {"match_index": 1, "region": existing_region},
+            {"match_index": 2, "region": existing_region},
+            {"match_index": 3, "region": existing_region},
+        ],
+    }
+    md_path = tmp_path / "metadata.json"
+    md_path.write_text(json.dumps(payload), encoding="utf-8")
+    md_bytes_before = md_path.read_bytes()
+
+    out_dir = tmp_path / "minimap"
+
+    # --include 2 で match 2 のみ再実行 (新しい region 座標)
+    result = runner.invoke(
+        app,
+        [
+            "minimap",
+            str(md_path),
+            "--region",
+            "100,50,400,300",  # 別の region
+            "--include",
+            "2",
+            "-o",
+            str(out_dir),
+        ],
+    )
+    assert result.exit_code == 0, f"exit {result.exit_code}\n{result.output}"
+
+    md_after = json.loads(md_path.read_text(encoding="utf-8"))
+    regions = md_after.get("minimap_regions", [])
+
+    # match 1,2,3 の 3 entry が残っている
+    indexes = sorted(e["match_index"] for e in regions)
+    assert indexes == [1, 2, 3], (
+        f"対象外 match 1,3 が保全されるべきだが minimap_regions={regions}"
+    )
+
+    # match 1,3 は既存 region のまま (不変)
+    entry1 = next(e for e in regions if e["match_index"] == 1)
+    entry3 = next(e for e in regions if e["match_index"] == 3)
+    assert entry1["region"] == existing_region, "match 1 は変更されるべきでない"
+    assert entry3["region"] == existing_region, "match 3 は変更されるべきでない"
+
+    # match 2 は新 region (100,50,400,300 -> mod-2 後 400,300)
+    entry2 = next(e for e in regions if e["match_index"] == 2)
+    new_w = 400 - (400 % 2)  # 400 (even)
+    new_h = 300 - (300 % 2)  # 300 (even)
+    assert abs(entry2["region"]["w"] - new_w / 1920) < 1e-6, (
+        f"match 2 の w が更新されていない: {entry2['region']}"
+    )
+    assert abs(entry2["region"]["h"] - new_h / 1080) < 1e-6, (
+        f"match 2 の h が更新されていない: {entry2['region']}"
+    )
+
+    # 昇順 sort 確認
+    raw_indexes = [e["match_index"] for e in regions]
+    assert raw_indexes == sorted(raw_indexes), "minimap_regions は match_index 昇順"
+
+    _ = md_bytes_before  # used to confirm test was checking a changed file
+
+
+@patch("allaganeye.commands.minimap.export_matches")
+@patch("allaganeye.commands.minimap.probe_video")
+def test_partial_rerun_preserves_malformed_entries(
+    mock_probe: MagicMock,
+    mock_export: MagicMock,
+    app: typer.Typer,
+    tmp_path: Path,
+) -> None:
+    """malformed entry (dict でない / match_index 欠落) は黙って捨てずに保全される。"""
+    mock_probe.return_value = {
+        "width": 1920,
+        "height": 1080,
+        "duration": 800.0,
+        "fps": 60.0,
+        "fps_num": 60,
+        "fps_den": 1,
+        "codec": "h264",
+        "audio_codec": None,
+    }
+    mock_export.return_value = ExportSummary(success=1, failure=0)
+
+    existing_region = {
+        "x": 0.01,
+        "y": 0.02,
+        "w": 0.277,
+        "h": 0.362,
+        "confidence": 1.0,
+        "source": "manual",
+    }
+    # malformed: dict でない (文字列) と、match_index が欠落した dict
+    payload = {
+        "schema_version": "1",
+        "source": str(tmp_path / "in.mp4"),
+        "matches": [
+            {"index": 1, "start_time": 10.0, "end_time": 400.0, "type": "match"},
+            {"index": 2, "start_time": 410.0, "end_time": 800.0, "type": "match"},
+        ],
+        "system_info": {
+            "gpu_vendors_available": [],
+            "vendor_preference": ["nvidia", "amd", "intel"],
+            "gpu": [],
+        },
+        "minimap_regions": [
+            {"match_index": 1, "region": existing_region},
+            "not_a_dict",  # malformed: dict でない
+            {"region": existing_region},  # malformed: match_index 欠落
+        ],
+    }
+    md_path = tmp_path / "metadata.json"
+    md_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    out_dir = tmp_path / "minimap"
+
+    # --include 2 で match 2 のみ再実行
+    result = runner.invoke(
+        app,
+        [
+            "minimap",
+            str(md_path),
+            "--region",
+            "24,22,534,392",
+            "--include",
+            "2",
+            "-o",
+            str(out_dir),
+        ],
+    )
+    assert result.exit_code == 0, f"exit {result.exit_code}\n{result.output}"
+
+    md_after = json.loads(md_path.read_text(encoding="utf-8"))
+    regions = md_after.get("minimap_regions", [])
+
+    # match 1 の正常 entry は保全される
+    assert any(isinstance(e, dict) and e.get("match_index") == 1 for e in regions), (
+        "match 1 の正常 entry が保全されていない"
+    )
+
+    # match 2 の新 entry が追加される
+    assert any(isinstance(e, dict) and e.get("match_index") == 2 for e in regions), (
+        "match 2 の新 entry が追加されていない"
+    )
+
+    # malformed entries も保全される (round-trip 哲学)
+    has_not_a_dict = any(e == "not_a_dict" for e in regions)
+    has_no_match_index = any(
+        isinstance(e, dict) and "match_index" not in e for e in regions
+    )
+    assert has_not_a_dict, "malformed string entry が消えている"
+    assert has_no_match_index, "match_index 欠落 dict entry が消えている"
+
+
+# ---------------------------------------------------------------------------
+# 9. Finding 2 [medium]: preflight before write-back
+# ---------------------------------------------------------------------------
+
+
+@patch("allaganeye.commands.minimap.export_matches")
+@patch("allaganeye.commands.minimap.probe_video")
+def test_collision_preflight_before_writeback(
+    mock_probe: MagicMock,
+    mock_export: MagicMock,
+    app: typer.Typer,
+    tmp_path: Path,
+) -> None:
+    """filename 衝突 (exit 5) が write-back より前に発火 -> metadata 不変。"""
+    mock_probe.return_value = {
+        "width": 1920,
+        "height": 1080,
+        "duration": 800.0,
+        "fps": 60.0,
+        "fps_num": 60,
+        "fps_den": 1,
+        "codec": "h264",
+        "audio_codec": None,
+    }
+    mock_export.return_value = ExportSummary(success=2, failure=0)
+
+    md_path = _make_metadata(
+        tmp_path,
+        matches=[
+            {"index": 1, "start_time": 10.0, "end_time": 400.0, "type": "match"},
+            {"index": 2, "start_time": 410.0, "end_time": 800.0, "type": "match"},
+        ],
+    )
+    md_bytes_before = md_path.read_bytes()
+    out_dir = tmp_path / "minimap"
+
+    # {idx} を含まない name-pattern -> 2 match で衝突発生 -> exit 5
+    result = runner.invoke(
+        app,
+        [
+            "minimap",
+            str(md_path),
+            "--region",
+            "24,22,534,392",
+            "--name-pattern",
+            "minimap_fixed.mp4",  # idx なし -> collision
+            "-o",
+            str(out_dir),
+        ],
+    )
+    assert result.exit_code == 5, (
+        f"name collision should be exit 5, got {result.exit_code}\n{result.output}"
+    )
+
+    # metadata は不変 (byte 比較)
+    md_bytes_after = md_path.read_bytes()
+    assert md_bytes_before == md_bytes_after, (
+        "preflight 失敗なのに metadata が書き換わっている (Finding 2)"
+    )
+    # export_matches は呼ばれない
+    mock_export.assert_not_called()
+
+
+@patch("allaganeye.commands.minimap.export_matches")
+@patch("allaganeye.commands.minimap.probe_video")
+def test_mkdir_failure_preflight_before_writeback(
+    mock_probe: MagicMock,
+    mock_export: MagicMock,
+    app: typer.Typer,
+    tmp_path: Path,
+) -> None:
+    """output dir mkdir 失敗 -> 非0 exit + metadata 不変 (Finding 2)。"""
+    mock_probe.return_value = {
+        "width": 1920,
+        "height": 1080,
+        "duration": 400.0,
+        "fps": 60.0,
+        "fps_num": 60,
+        "fps_den": 1,
+        "codec": "h264",
+        "audio_codec": None,
+    }
+    mock_export.return_value = ExportSummary(success=1, failure=0)
+
+    md_path = _make_metadata(
+        tmp_path,
+        matches=[
+            {"index": 1, "start_time": 10.0, "end_time": 400.0, "type": "match"},
+        ],
+    )
+    md_bytes_before = md_path.read_bytes()
+    out_dir = tmp_path / "minimap"
+
+    with patch("pathlib.Path.mkdir", side_effect=OSError("Permission denied")):
+        result = runner.invoke(
+            app,
+            [
+                "minimap",
+                str(md_path),
+                "--region",
+                "24,22,534,392",
+                "-o",
+                str(out_dir),
+            ],
+        )
+
+    # OSError -> 非 0 exit (exit 1 expected via except Exception)
+    assert result.exit_code != 0, (
+        f"mkdir failure should exit non-zero, got {result.exit_code}"
+    )
+
+    # metadata は不変 (Finding 2: mkdir より前に write してはならない)
+    md_bytes_after = md_path.read_bytes()
+    assert md_bytes_before == md_bytes_after, (
+        "mkdir 失敗前に metadata が書き換わっている (Finding 2)"
+    )
+    # export_matches は呼ばれない
+    mock_export.assert_not_called()

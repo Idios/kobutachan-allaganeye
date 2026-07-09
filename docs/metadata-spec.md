@@ -444,11 +444,19 @@ crop モードでは `source: "manual"` のみが書き込まれる。`--region 
 
 `x`, `y`, `w`, `h` は `[0, 1]` の正規化座標。内部で mod-2 調整（`yuv420p` の codec 要求に合わせて `w` / `h` を偶数化）した後に正規化しているため、元の `--region` 指定ピクセル値から `w` / `h` が 1 ピクセル以下小さくなる場合がある。
 
+### 部分実行 (--include) と既存 entry の保全
+
+`allaganeye minimap --region X,Y,W,H --include 2` のように特定 match だけを再実行した場合、
+既に書き込まれている他の match の entry は **match_index merge** によって保全される。
+対象 match の entry のみ新しい region で上書きし、最後に `match_index` 昇順で sort して書き戻す。
+malformed な entry (dict でない / `match_index` 欠落) も黙って捨てずにそのまま保全する (round-trip 哲学)。
+
 ### 書き込みパス別の挙動
 
 | 経路 | 書き込み |
 | --- | --- |
-| `allaganeye minimap --region X,Y,W,H` (crop モード) | ✓ 必ず書く。エンコード開始**前**に atomic write-back するため、エンコード失敗時も座標は保持される |
+| `allaganeye minimap --region X,Y,W,H` (crop モード) | ✓ 必ず書く。決定的 preflight (filename 衝突検査 + output_dir 作成) が成功した後、エンコード開始**前**に atomic write-back するため、エンコード失敗時も座標は保持される |
+| `allaganeye minimap --region ... --include N` (部分再実行) | ✓ 書く。対象外 match の既存 entry は match_index merge で保全される |
 | `allaganeye minimap` (提案モード、`--region` 未指定) | ✗ 書かない (read-only、exit 4) |
 | `allaganeye detect` / `allaganeye split` | ✗ 書かない (minimap の関知外) |
 | `allaganeye split --from-metadata` | 元 metadata から **preserve**（元が欠落なら欠落） |
