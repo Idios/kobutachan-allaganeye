@@ -293,7 +293,13 @@ def register(app: typer.Typer) -> None:
         # ------ 7. preflight: output_dir mkdir --------------------------------
         # Finding 2 fix: 決定的 preflight (collision check 済み) を write より前に実行
         # mkdir 失敗は except Exception で exit 1 になる (export.py と同規約)
-        eff_output_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            eff_output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            from allaganeye.cli import _report_unexpected_error
+
+            _report_unexpected_error(verbose=False, quiet=quiet, show_hint=False)
+            raise typer.Exit(code=1) from None
 
         # ------ 8. write-back (encode 失敗でも座標は残す) ----------------------
         # Finding 1 fix: filtered set の entry は上書き、対象外の既存 entry は保全

@@ -975,9 +975,22 @@ def test_mkdir_failure_preflight_before_writeback(
             ],
         )
 
-    # OSError -> 非 0 exit (exit 1 expected via except Exception)
-    assert result.exit_code != 0, (
-        f"mkdir failure should exit non-zero, got {result.exit_code}"
+    # OSError -> exit 1 (厳密に 1、raw OSError 素通りでない)
+    assert result.exit_code == 1, (
+        f"mkdir failure should exit exactly 1, got {result.exit_code}"
+    )
+
+    # raw OSError ではなく typer.Exit でラップされている (素通り防止)
+    # raw OSError なら result.exception が OSError；ラップなら None / SystemExit
+    if result.exception is not None:
+        assert not isinstance(result.exception, OSError), (
+            f"mkdir failure should be wrapped in typer.Exit, got raw {type(result.exception).__name__}"
+        )
+
+    # stderr / stdout に traceback 文字列なし (clean な契約)
+    output = result.stdout + result.stderr
+    assert "Traceback" not in output, (
+        f"mkdir failure should not have traceback in output:\n{output}"
     )
 
     # metadata は不変 (Finding 2: mkdir より前に write してはならない)
