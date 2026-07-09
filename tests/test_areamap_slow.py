@@ -3,10 +3,11 @@
 GT manifest: tests/baselines/v0.3.0/areamap-gt.json
 
 Contract (D3 2026-07-09 re-design, "seed is best-effort"):
-  visible=true  + bbox present (5 cases):
+  visible=true + bbox present (OBS 3 cases + masked 2 cases):
     - Per-case: if a proposal is returned, its center must lie inside the GT bbox
       (zero-misdirection assert).
-    - Aggregate: at least 3 out of 5 cases must return a proposal.
+    - Aggregate: OBS cases require >=2/3 proposals. Masked cases (when dir exists)
+      require >=1/2 proposals.
   visible=false (t=2354 only):
     - resolve_match_regions must NOT include that match in results.
   visible=true + bbox null (t=1106):
@@ -15,7 +16,7 @@ Contract (D3 2026-07-09 re-design, "seed is best-effort"):
 
 IoU >= 0.9 gate is NOT applied (spec sec.6.3 reduction agreed).
 
-VTuber cases are skipped when ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER is absent.
+VTuber (masked) cases are skipped when ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER is absent.
 """
 
 from __future__ import annotations
@@ -227,7 +228,7 @@ def test_areamap_positive_proposal_rate_obs() -> None:
     """At least 2 out of 3 OBS positive cases (bbox present) must return a proposal.
 
     Covers: obs-20260116-1 t=300, t=700 / obs-20260118-2 t=600.
-    If VTUBER dir is absent we check OBS-only subset: require >=2 of 3.
+    Requirement: >=2 of 3.
     """
     gt = _load_gt()
 
@@ -251,6 +252,41 @@ def test_areamap_positive_proposal_rate_obs() -> None:
     assert proposal_count >= 2, (
         f"Only {proposal_count}/3 OBS positive cases returned a proposal "
         f"(need >=2 for best-effort contract)."
+    )
+
+
+@pytest.mark.skipif(
+    not _vtuber_dir_available(),
+    reason="ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER not set or directory not found",
+)
+def test_areamap_positive_proposal_rate_masked() -> None:
+    """At least 1 out of 2 masked positive cases (bbox present) must return a proposal.
+
+    Covers: masked-a29-m001 t=200, t=400.
+    Requirement: >=1 of 2 (when VTuber dir exists).
+    Skipped if ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER is absent.
+    """
+    gt = _load_gt()
+
+    masked_positive = [
+        ("masked-a29-m001", 200.0),
+        ("masked-a29-m001", 400.0),
+    ]
+
+    proposal_count = 0
+    for video_id, t in masked_positive:
+        video_entry = next(v for v in gt["videos"] if v["id"] == video_id)
+        video_path = _expand_env(video_entry["video"])
+        if not video_path.exists():
+            continue
+        matches = [(0, max(0.0, t - 90.0), t + 90.0)]
+        results, _ = resolve_match_regions(video_path, matches)
+        if results:
+            proposal_count += 1
+
+    assert proposal_count >= 1, (
+        f"Only {proposal_count}/2 masked positive cases returned a proposal "
+        f"(need >=1 for best-effort contract)."
     )
 
 
