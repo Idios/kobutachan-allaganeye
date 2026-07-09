@@ -889,7 +889,7 @@ def resolve_match_regions(
     windows: int = 3,
     frames_per_window: int = 5,
     edge_margin: float = 60.0,
-    iou_cluster: float = 0.8,
+    iou_cluster: float = 0.75,
     probe: Callable[[Path, float], bytes | None] | None = None,  # DI (test 用)
     detect: DetectFn | None = None,                              # DI (test 用)
 ) -> tuple[list[MatchRegionResult], list[str]]:
@@ -1056,10 +1056,12 @@ git commit -m "feat(#481): allaganeye minimap command (検出 -> write-back -> c
 
 - Create: `tests/test_areamap_slow.py` (slow marker、`sample_video_dir` fixture 慣例に従う)
 
-- [ ] **Step 1: test 実装** — GT manifest (`areamap-gt.json`) を読み、GT のある動画 2 本で
-  `resolve_match_regions` を実行し **seed 局在性** (検出 box の中心が GT bbox 内) +
-  visible=false case で提案なし (非検出) を assert。IoU ≥ 0.9 gate は課さない
-  (spec §6.3 縮小)。`ALLAGANEYE_SAMPLE_VIDEO_DIR` 未設定なら skip (既存慣例)
+- [ ] **Step 1: test 実装** — GT manifest (`areamap-gt.json`) を読み、best-effort 契約で
+  検証する (D3 2026-07-09 確定)。visible=true + bbox あり (5 case): 提案が出た場合は
+  中心が GT bbox 内 (per-case) + 5 case 中 >=3 が提案を返す (集計)。visible=false
+  (t=2354): 提案なし。visible=true + bbox null (t=1106): slow assert 対象外。
+  IoU >= 0.9 gate は課さない (spec sec.6.3 縮小)。`ALLAGANEYE_SAMPLE_VIDEO_DIR` 未設定なら
+  skip (既存慣例)
 - [ ] **Step 2: 実行** — `pytest tests/test_areamap_slow.py -m slow -v` PASS (実機)
 - [ ] **Step 3: E2E 手動 2 回** — 実 metadata.json に対し (a) `allaganeye minimap` (提案
   モード、exit 4 + 提案表示を確認) (b) 提案値を使った `--region` crop 実行で出力 MP4 を目視

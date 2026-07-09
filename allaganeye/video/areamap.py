@@ -264,7 +264,7 @@ def resolve_match_regions(
     windows: int = 3,
     frames_per_window: int = 5,
     edge_margin: float = 60.0,
-    iou_cluster: float = 0.8,
+    iou_cluster: float = 0.75,
     probe: Callable[[Path, float], bytes | None] | None = None,
     detect: DetectFn | None = None,
 ) -> tuple[list[MatchRegionResult], list[str]]:
