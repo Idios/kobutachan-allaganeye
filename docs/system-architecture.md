@@ -25,7 +25,8 @@
 │  L1: CLI (`allaganeye`, Python)                                  │
 │  ├── detect  ── metadata.json 生成 (ffmpeg / OpenCV)             │
 │  ├── split   ── metadata.json 生成 + MP4 分割                   │
-│  └── split --from-metadata ── metadata.json 読み込み + 分割     │
+│  ├── split --from-metadata ── metadata.json 読み込み + 分割     │
+│  └── minimap ── エリアマップ切抜き (--region crop / 提案)       │
 │                                                                   │
 │  L2a: GUI (`Allagan Eye`, Tauri 2 + React 19)                    │
 │  ├── Zustand store ── metadata.json の in-memory 編集            │
