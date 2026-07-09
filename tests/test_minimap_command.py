@@ -521,6 +521,9 @@ def test_region_crop_encode_failure_exit_1(
     assert result.exit_code == 1, (
         f"expected 1 for encode failure, got {result.exit_code}"
     )
+    # write-back must survive encode failure
+    md_after = json.loads(md_path.read_text(encoding="utf-8"))
+    assert "minimap_regions" in md_after, "write-back must survive encode failure"
 
 
 @patch("allaganeye.commands.minimap.export_matches")
@@ -559,6 +562,9 @@ def test_region_crop_cancelled_exit_130(
     assert result.exit_code == 130, (
         f"expected 130 for cancelled encode, got {result.exit_code}"
     )
+    # write-back must survive encode cancellation
+    md_after = json.loads(md_path.read_text(encoding="utf-8"))
+    assert "minimap_regions" in md_after, "write-back must survive encode failure"
 
 
 # ---------------------------------------------------------------------------

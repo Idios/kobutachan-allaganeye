@@ -423,9 +423,9 @@ interface MetadataWarning {
 
 | フィールド | 型 | 必須 | 意味 |
 | --- | --- | --- | --- |
-| `minimap_regions` | array of MinimapEntry | — (NotRequired) | フィールド自体が欠落 = `allaganeye minimap --region` を一度も実行していない。空配列は対象 match が 0 件だったことを意味する |
+| `minimap_regions` | array of MinimapRegionEntry | — (NotRequired) | フィールド自体が欠落 = `allaganeye minimap --region` を一度も実行していない。空配列は対象 match が 0 件だったことを意味する |
 
-#### `MinimapEntry` オブジェクト
+#### `MinimapRegionEntry` オブジェクト
 
 | フィールド | 型 | 必須 | 意味 |
 | --- | --- | --- | --- |

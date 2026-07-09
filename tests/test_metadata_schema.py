@@ -358,7 +358,7 @@ _VALID_REGION: dict = {
 }
 
 
-def test_minimap_regions_valid(tmp_path):
+def test_minimap_regions_valid():
     """minimap_regions field: valid two-entry array must pass."""
     schema = _load_schema()
     sample = _valid_sample()
