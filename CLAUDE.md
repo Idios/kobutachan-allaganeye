@@ -57,6 +57,8 @@ allaganeye split <video_path> --quiet      # 進捗抑制（出力ファイル�
 allaganeye split <video_path> -v           # verbose（環境情報・パイプライン統計を表示、#336）
 allaganeye --version                       # バージョン表示（短縮形: -V、#337）
 allaganeye debug-brightness <video_path>   # フレーム輝度 CSV 出力
+allaganeye minimap <metadata.json>                               # エリアマップ window 領域を提案（exit 4）
+allaganeye minimap <metadata.json> --region X,Y,W,H [-o DIR]    # 指定領域で crop + H.264 encode
 
 # GUI (L2a Tauri、#483 で bootstrap)
 # 詳細は docs/gui-development.md を参照
@@ -103,6 +105,8 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `audio/scan.py` | 動画全域を走査して Fanfare ピークを返す |
 | `audio/refs/` | 同梱参照特徴量（`fanfare.npz` / `war_room.npz`、#306） |
 | `commands/detect.py` | detect コマンド。検知のみ実行し metadata.json を出力 (#463) |
+| `commands/minimap.py` | minimap コマンド。提案モード（領域検出・表示、exit 4）/ crop モード（`--region` 指定、H.264 encode + metadata write-back、#481） |
+| `video/areamap.py` | エリアマップ window の seed 検出 + per-match consensus（`resolve_match_regions`）。cv2 は lazy import（opencv 未インストール環境でも import 失敗しない）。提案モード専用 (#481) |
 | `detection/` | 検知パイプラインの共有ヘルパ (#463)。`format.py` (フォーマッタ) / `metadata_writer.py` (atomic read/write) |
 | `gui/` | L2a Tauri GUI (React 19 + TS + Vite + Zustand + zod)。`#483` で bootstrap、`#463` で data 層、`#464` で画面骨格 + CSS Modules、`#516` で `[元に戻す]` 機能、`#514` で排他管理 (mtime 検知 + ConflictModal)、`#587` で a11y polish (focus trap / Escape / DisabledTooltip / jest-axe)。詳細は [docs/gui-development.md](docs/gui-development.md) / [docs/design/README.md](docs/design/README.md) / [docs/ui-architecture.md](docs/ui-architecture.md) / [docs/ui-interaction-spec.md](docs/ui-interaction-spec.md) (#590, UI 部品ごとの操作 → 状態遷移 / store mutation / 例外処理) / [docs/a11y-policy.md](docs/a11y-policy.md) (#587, screen reader scope / キーボード全機能 / focus visible 等) |
 | `gui/src/screens/` | 5 画面 (drop / detecting / complete / preview / export) + phase reducer。#464 で追加 |

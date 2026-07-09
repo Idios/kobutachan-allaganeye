@@ -415,6 +415,48 @@ interface MetadataWarning {
 | --- | --- | --- | --- | --- |
 | `post_match_trailing_dropped` | `warn` | `{start, end}` (秒) | 試合後の trailing セグメント (ロビー / 市街) が、早期候補ウィンドウで scorebar を検出できなかったため削除された ([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805))。`context.start` / `context.end` が削除された区間の境界 | **【段階2 で emission 停止・deprecated】** #805 段階2 で `post_match` フラグ (#805 段階2) に置換され、`build_warnings` はこの code を **emit しなくなった**。フレッシュな detect / split 実行では本エントリは生成されない。ただし code は `WARNING_CODES` registry に残置されており (後方互換)、旧 metadata.json に含まれる本エントリを `sanitize_warnings` で引き続き読み取れる。旧フォーマット (本警告を含む metadata.json) を `split --from-metadata` で読んだ場合でも crash しない (forward-compat reader が pass-through) |
 
+## `minimap_regions` フィールド (#481)
+
+`allaganeye minimap --region X,Y,W,H` (crop モード) が書き込む、エリアマップ window の切り抜き座標リスト。
+
+### セマンティクス
+
+| フィールド | 型 | 必須 | 意味 |
+| --- | --- | --- | --- |
+| `minimap_regions` | array of MinimapEntry | — (NotRequired) | フィールド自体が欠落 = `allaganeye minimap --region` を一度も実行していない。空配列は対象 match が 0 件だったことを意味する |
+
+#### `MinimapEntry` オブジェクト
+
+| フィールド | 型 | 必須 | 意味 |
+| --- | --- | --- | --- |
+| `match_index` | integer | ✓ | 対象 match の `matches[].index` (1 始まり) |
+| `region` | CaptureRegion | ✓ | 切り抜き領域（正規化座標 [0,1]） |
+
+`CaptureRegion` は `{x, y, w, h, confidence: number [0,1], source: string}` の共通スキーマ（[§`capture_regions` オブジェクト](#capture_regions-オブジェクト-810) 参照）。
+
+#### `source` フィールドの値
+
+crop モードでは `source: "manual"` のみが書き込まれる。`--region X,Y,W,H` はユーザーが指定したピクセル座標を正規化した値であることを示す。
+
+> 将来的に自動検出の結果を write-back する経路が追加された場合は別の `source` 値が使われる予定だが、現時点では `"manual"` のみ。
+
+#### 座標値の意味
+
+`x`, `y`, `w`, `h` は `[0, 1]` の正規化座標。内部で mod-2 調整（`yuv420p` の codec 要求に合わせて `w` / `h` を偶数化）した後に正規化しているため、元の `--region` 指定ピクセル値から `w` / `h` が 1 ピクセル以下小さくなる場合がある。
+
+### 書き込みパス別の挙動
+
+| 経路 | 書き込み |
+| --- | --- |
+| `allaganeye minimap --region X,Y,W,H` (crop モード) | ✓ 必ず書く。エンコード開始**前**に atomic write-back するため、エンコード失敗時も座標は保持される |
+| `allaganeye minimap` (提案モード、`--region` 未指定) | ✗ 書かない (read-only、exit 4) |
+| `allaganeye detect` / `allaganeye split` | ✗ 書かない (minimap の関知外) |
+| `allaganeye split --from-metadata` | 元 metadata から **preserve**（元が欠落なら欠落） |
+
+### GUI ConflictModal との関係
+
+`minimap_regions` は CLI の atomic write-back により `metadata.json` を更新するため、GUI が同ファイルを開いたまま CLI を実行すると mtime 変化を検知して ConflictModal が表示される。これは既存の排他管理（`metadata.json` §排他管理、#514）が期待通りに機能していることを意味する。
+
 ## 将来の拡張 (Phase 1 スコープ外)
 
 以下は派生 issue で追跡する (本 Phase 1 では実装せず、設計余地だけ確保)。

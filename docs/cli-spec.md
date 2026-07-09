@@ -424,6 +424,62 @@ stdout の各行は JSON オブジェクト 1 件:
 - `{"type":"error","match_index":N,"error_kind":"...","error_message":"...","error_hint":null|"..."}`
 - `{"type":"summary","success":N,"failure":N,"skipped":N,"cancelled":bool}` (常に最終行)
 
+## minimap コマンド
+
+> **用語**: 「minimap」はコマンド名・オプション名で使う通称。実体は**エリアマップ window**（フロントライン戦場全体図を示す半透過 overlay）であり、HUD 右上などに表示される円形ナビゲーションマップではない。
+
+`metadata.json` を入力に、試合ごとのエリアマップ window 領域を検出・切り抜いた MP4 を出力する (#481)。
+
+2 つの動作モードを持つ:
+
+- **提案モード** (`--region` 未指定): 領域を自動検出して `--region X,Y,W,H` 形式で提案を表示する。エンコードは行わず常に exit 4 で終了する。提案は best-effort（出た提案は信頼できるが、出ないことがある）
+- **crop モード** (`--region X,Y,W,H`): 指定座標で全対象試合を切り抜き H.264 MP4 を出力する。エンコード前に `minimap_regions` を `metadata.json` へ atomic write-back する
+
+### 構文
+
+```bash
+# 提案モード (領域検出のみ、exit 4)
+allaganeye minimap <metadata.json>
+
+# crop モード (指定領域で切り抜き、H.264 encode)
+allaganeye minimap <metadata.json> --region X,Y,W,H [-o DIR] [--include I,J,K]
+                  [--name-pattern PATTERN] [--quiet]
+```
+
+### 引数
+
+| 引数 | 必須 | 説明 |
+| --- | --- | --- |
+| `metadata_path` | Yes | `allaganeye detect` / `allaganeye split` が生成した `metadata.json` のパス |
+
+### オプション
+
+| オプション | デフォルト | 説明 |
+| --- | --- | --- |
+| `--region X,Y,W,H` | (なし) | 切り抜き領域をピクセル座標で指定（左上原点）。省略時は提案モードになる |
+| `-o DIR` / `--output-dir DIR` | `<metadata dir>/minimap/` | 出力 MP4 の書き出し先ディレクトリ |
+| `--include I,J,K` | (全試合) | 対象 match index（`matches[].index`、**1 始まり**）をカンマ区切りで指定。`post_match` 試合は `--include` 指定時も常に除外 |
+| `--name-pattern PATTERN` | `{idx:03}_{type}_{start}_minimap.mp4` | 出力ファイル名テンプレート。使用可能トークン: `{idx}` / `{idx:03}` / `{type}` / `{start}` (MM-SS 形式。1 時間以上の場合は H-MM-SS) / `{date}` |
+| `--quiet` | `false` | 進捗出力を抑制する |
+
+### 対象試合の決定順序 (crop モード)
+
+1. `post_match: true` の試合を**無条件除外**（`--include` より優先、#805 Phase 1 契約）
+2. `--include` 指定時は指定 index のみに絞る
+3. `type_override == "skip"` の試合を除外
+4. `edited.start_time` / `edited.end_time` が存在する場合はそちらを採用（`metadata.json` GUI 編集値を尊重）
+
+### Exit Codes
+
+| コード | 意味 |
+| --- | --- |
+| 0 | 全 match の crop 成功 |
+| 1 | 1 件以上の match が encode 失敗（部分失敗含む）または予期せぬ例外 |
+| 2 | 入力エラー（`metadata.json` 読み込み失敗 / `source` フィールド欠落等） |
+| 4 | 提案モード正常終了（常に exit 4。crop なし） |
+| 5 | `--region` 値不正（非整数 / 負値 / `W` か `H` が 16 未満 / フレーム境界越え等 ConfigValidationError） |
+| 130 | SIGINT (Ctrl+C) によるキャンセル |
+
 ## debug-brightness コマンド
 
 フレーム輝度を CSV 出力する。暗転検知の閾値チューニング用。
