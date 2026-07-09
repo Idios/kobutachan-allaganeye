@@ -136,7 +136,8 @@ ref score が正例を上回る)。詳細は [PoC report](2026-07-08-issue-481-a
 
 - **出力先**: `-o <dir>`。省略時は metadata.json と同じディレクトリの `minimap/` サブディレクトリ
 - **ファイル名**: export の `_format_filename` token 実装を流用し、default
-  `{idx:03}_minimap_{start}.mp4`
+  `{idx:03}_{type}_{start}_minimap.mp4` (実装時に export default `{idx:03}_{type}_{start}.mp4`
+  との整合で `{type}` を含む形に確定。D4 review で spec 同期、2026-07-09)
 - **対象試合**: default split と同じ集合 (type=match、`post_match: true` 除外)。
   `--include 1,3,5` (export と同形式、matches[].index 基準) で絞り込み可
 - **crop encode**: 正規化座標 → pixel 変換時に mod-2 丸め (h264 yuv420p 制約)。
