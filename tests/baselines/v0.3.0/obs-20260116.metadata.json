@@ -4,9 +4,9 @@
   "source_duration": 7303.488,
   "source_duration_display": "2:01:43",
   "source_fps": 60.0,
-  "detected_at": "2026-05-24T11:10:53Z",
-  "detection_started_at": "2026-05-24T11:10:53Z",
-  "detection_completed_at": "2026-05-24T11:21:57Z",
+  "detected_at": "2026-07-11T20:18:20Z",
+  "detection_started_at": "2026-07-11T20:18:20Z",
+  "detection_completed_at": "2026-07-11T20:29:12Z",
   "detection_params": {
     "sample_interval": 3.0,
     "blackout_threshold": 15.0,
@@ -14,7 +14,10 @@
     "min_blackout_duration": 3.0,
     "no_audio": false,
     "use_gpu": true,
-    "workers": null
+    "workers": null,
+    "vtuber": false,
+    "masked": false,
+    "masked_fallback_used": false
   },
   "system_info": {
     "gpu_vendors_available": [
@@ -98,6 +101,17 @@
       "duration_display": "15m17s",
       "type": "fl_match",
       "output_file": "match_006.mp4"
+    },
+    {
+      "index": 7,
+      "start_time": 6542.0,
+      "end_time": 7303.488,
+      "start_display": "1:49:02",
+      "end_display": "2:01:43",
+      "duration": 761.4880000000003,
+      "duration_display": "12m41s",
+      "type": "unknown",
+      "post_match": true
     }
   ],
   "gaps": [],
@@ -715,5 +729,17 @@
       45.973,
       40.492
     ]
+  },
+  "capture_regions": {
+    "coarse": {
+      "x": 0.0,
+      "y": 0.0,
+      "w": 1.0,
+      "h": 1.0,
+      "confidence": 1.0,
+      "source": "fallback"
+    },
+    "segments": [],
+    "fallback_reason": null
   }
 }
