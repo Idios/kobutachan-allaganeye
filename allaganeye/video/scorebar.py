@@ -10,6 +10,7 @@ import numpy as np
 
 from allaganeye.audio.matcher import BgmHit
 from allaganeye.exceptions import VideoProcessingError
+from allaganeye.video.probe_state import PresenceState
 from allaganeye.video.detector import (
     DetectionStats,
     _SAMPLE_WIDTH,
@@ -35,21 +36,22 @@ from allaganeye.video.capture_region import (
 logger = logging.getLogger(__name__)
 
 
-def _localize_present_from_raw(raw: bytes | None) -> bool | None:
-    """hi-res RGB probe bytes -> localize-present (True/False). None on probe failure.
+def _localize_present_from_raw(raw: bytes | None) -> PresenceState:
+    """hi-res RGB probe bytes -> PresenceState (PRESENT/ABSENT/UNKNOWN).
 
     Reshapes the 1920x1080 RGB probe buffer and runs the position-independent
     localizer (``localize_scorebar``).  A successfully decoded frame yields
-    True/False (a clean localizer miss is treated as absent, not unknown, so
-    majority vote behaves like the v2 path).  Only a missing frame (raw None)
-    yields None.  Used by the VTuber classification path; OBS never calls it.
+    PRESENT or ABSENT (a clean localizer miss is ABSENT, not UNKNOWN, so
+    majority vote behaves like the v2 path -- only a missing frame (raw None)
+    is genuinely UNKNOWN).  Used by the VTuber classification path; OBS never
+    calls it.
     """
     if raw is None:
-        return None
+        return PresenceState.UNKNOWN
     loc = localize_from_rgb_bytes(
         raw, height=_SCOREBAR_V2_PROBE_HEIGHT, width=_SCOREBAR_V2_PROBE_WIDTH
     )
-    return loc is not None
+    return PresenceState.PRESENT if loc is not None else PresenceState.ABSENT
 
 
 def _probe_scorebar_context(
@@ -60,14 +62,17 @@ def _probe_scorebar_context(
     *,
     with_localize: bool = False,
     with_lowres: bool = True,
-) -> tuple[list[bool | None], list[bytes | None], list[bool | None]]:
+) -> tuple[list[bool | None], list[bytes | None], list[PresenceState | None]]:
     """Probe multiple timestamps and return has_scorebar + raw frames.
 
     Returns a tuple of three lists aligned with *timestamps*:
     - scorebar results: True/False/None per frame
     - raw RGB frame bytes: bytes/None per frame (low-res for static detection)
-    - localize-present results: True/False/None per frame (populated only when
-      with_localize=True and method is v2; otherwise all None)
+    - localize-present results: PresenceState/None per frame (populated only
+      when with_localize=True and method is v2; None means "not computed" --
+      either with_localize=False or non-v2 method). When computed, UNKNOWN
+      indicates a missing hi-res frame (probe failure); ABSENT/PRESENT are
+      observed values from the position-independent localizer.
 
     When ``_SCOREBAR_METHOD == "v2"``, probes at 1920x1080 for GC-emblem
     3-point AND detection.  V2 False is used as-is (no V1 fallback) to
@@ -160,7 +165,7 @@ def _probe_scorebar_context(
         # localize-present from the hi-res frames already decoded for v2
         # (additive; OBS production passes with_localize=False -> all None,
         # so existing callers stay bit-exact).
-        localize_results: dict[float, bool | None] = {}
+        localize_results: dict[float, PresenceState | None] = {}
         if with_localize and use_v2:
             for t in unique_ts:
                 localize_results[t] = _localize_present_from_raw(hi_raws.get(t))
@@ -184,6 +189,22 @@ def _majority_scorebar(results: list[bool | None]) -> bool | None:
     if not valid:
         return None
     return sum(valid) >= ceil(len(valid) / 2)
+
+
+def _majority_presence(states: list[PresenceState | None]) -> bool | None:
+    """Majority vote from PresenceState results, ignoring UNKNOWN and None.
+
+    UNKNOWN (probe failure) and None (not computed) are excluded from the
+    denominator -- only PRESENT/ABSENT entries count as valid votes.
+    Returns None if no valid entries; else True if PRESENT >= ceil(valid/2).
+    Exact same majority formula as ``_majority_scorebar``.
+    """
+    valid = [
+        s for s in states if s is PresenceState.PRESENT or s is PresenceState.ABSENT
+    ]
+    if not valid:
+        return None
+    return sum(s is PresenceState.PRESENT for s in valid) >= ceil(len(valid) / 2)
 
 
 _STATIC_SCREEN_MAD_THRESHOLD = 0.5
@@ -328,8 +349,8 @@ def _classify_blackout_localize(
     _, post_frames, post_loc = _probe_scorebar_context(
         video_path, post_timestamps, height, workers, with_localize=True
     )
-    pre_has = _majority_scorebar(pre_loc)
-    post_has = _majority_scorebar(post_loc)
+    pre_has = _majority_presence(pre_loc)
+    post_has = _majority_presence(post_loc)
 
     # Re-probe further out when neither side localized (see classify_blackout's
     # #524 rationale): a true boundary whose flanks both land in a fade/loading
@@ -364,7 +385,7 @@ def _classify_blackout_localize(
                 with_localize=True,
                 with_lowres=False,
             )
-            pre_re = _majority_scorebar(pre_re_loc)
+            pre_re = _majority_presence(pre_re_loc)
             if pre_re is not None:
                 pre_has = pre_re
         if post_re_ts:
@@ -376,7 +397,7 @@ def _classify_blackout_localize(
                 with_localize=True,
                 with_lowres=False,
             )
-            post_re = _majority_scorebar(post_re_loc)
+            post_re = _majority_presence(post_re_loc)
             if post_re is not None:
                 post_has = post_re
 
@@ -788,8 +809,16 @@ def _merge_boundary_pairs(
                         workers,
                         with_lowres=False,
                     )
-                all_valid = all(r is not None for r in probe_signal)
-                any_scorebar = any(r is True for r in probe_signal)
+                if localize:
+                    # probe_signal is list[PresenceState | None]; valid = PRESENT or ABSENT
+                    all_valid = all(
+                        r is PresenceState.PRESENT or r is PresenceState.ABSENT
+                        for r in probe_signal
+                    )
+                    any_scorebar = any(r is PresenceState.PRESENT for r in probe_signal)
+                else:
+                    all_valid = all(r is not None for r in probe_signal)
+                    any_scorebar = any(r is True for r in probe_signal)
                 if all_valid and not any_scorebar:
                     merged_region = (regions[i][0], regions[i + 1][1])
                     logger.info(

@@ -63,6 +63,7 @@ def test_obs_v2_vs_localize_presence_parity(caplog):
     from allaganeye.video.probe import probe_video
     from allaganeye.video import detector as det
     from allaganeye.video import scorebar as sb
+    from allaganeye.video.probe_state import PresenceState
 
     video = _obs_sample()
     assert video is not None  # guaranteed by skipif; narrows Path | None -> Path
@@ -80,9 +81,11 @@ def test_obs_v2_vs_localize_presence_parity(caplog):
             raw = det._probe_frame_rgb_hires(video, t)
             v2 = det._has_scorebar_v2(raw)
             loc = sb._localize_present_from_raw(raw)
-            if v2 is None or loc is None:
+            # v2=None means opencv absent; loc=UNKNOWN means probe failure
+            if v2 is None or loc is PresenceState.UNKNOWN:
                 continue
-            if v2 == loc:
+            loc_bool = loc is PresenceState.PRESENT
+            if v2 == loc_bool:
                 agree += 1
             else:
                 disagree += 1
