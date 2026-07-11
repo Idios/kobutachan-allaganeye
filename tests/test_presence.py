@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -16,7 +17,9 @@ from allaganeye.video.capture_region import (
 from allaganeye.video.presence import (
     PresenceMatch,
     PresenceSample,
+    PresenceState,
     detect_matches_by_presence,
+    localize_present_at,
     refine_boundary,
     scan_presence,
     segment_presence,
@@ -24,9 +27,9 @@ from allaganeye.video.presence import (
 
 
 def test_presence_sample_fields():
-    s = PresenceSample(time=12.0, present=True, confidence=0.9)
+    s = PresenceSample(time=12.0, state=PresenceState.PRESENT, confidence=0.9)
     assert s.time == 12.0
-    assert s.present is True
+    assert s.state is PresenceState.PRESENT
     assert s.confidence == 0.9
 
 
@@ -37,7 +40,14 @@ def test_presence_match_fields():
 
 
 def _samples(spec: Sequence[tuple[float, bool]]) -> list[PresenceSample]:
-    return [PresenceSample(time=t, present=p, confidence=1.0) for t, p in spec]
+    return [
+        PresenceSample(
+            time=t,
+            state=PresenceState.PRESENT if p else PresenceState.ABSENT,
+            confidence=1.0,
+        )
+        for t, p in spec
+    ]
 
 
 def test_segment_single_match():
@@ -125,7 +135,7 @@ def test_localize_present_at_present(monkeypatch):
     )
     sample = presence.localize_present_at(Path("dummy.mkv"), 123.0)
     assert sample.time == 123.0
-    assert sample.present is True
+    assert sample.state is PresenceState.PRESENT
     assert sample.confidence == 0.8
 
 
@@ -140,7 +150,7 @@ def test_localize_present_at_absent(monkeypatch):
         presence, "localize_from_rgb_bytes", lambda raw, *, height, width: None
     )
     sample = presence.localize_present_at(Path("dummy.mkv"), 50.0)
-    assert sample.present is False
+    assert sample.state is PresenceState.ABSENT
     assert sample.confidence == 0.0
 
 
@@ -149,28 +159,34 @@ def test_localize_present_at_probe_failure(monkeypatch):
 
     monkeypatch.setattr(presence, "_probe_frame_rgb_hires", lambda vp, t: None)
     sample = presence.localize_present_at(Path("dummy.mkv"), 7.0)
-    assert sample.present is False
+    assert sample.state is PresenceState.UNKNOWN
     assert sample.confidence == 0.0
 
 
 def test_scan_presence_grid_and_order():
     # synthetic sample_fn: present for 200 <= t < 500
     def sample_fn(t: float) -> PresenceSample:
-        return PresenceSample(time=t, present=(200.0 <= t < 500.0), confidence=1.0)
+        return PresenceSample(
+            time=t,
+            state=PresenceState.PRESENT
+            if (200.0 <= t < 500.0)
+            else PresenceState.ABSENT,
+            confidence=1.0,
+        )
 
     samples = scan_presence(
         Path("dummy.mkv"), duration=600.0, stride=100.0, workers=2, sample_fn=sample_fn
     )
     # times must be sorted and cover 0,100,...,600
     assert [s.time for s in samples] == [0.0, 100.0, 200.0, 300.0, 400.0, 500.0, 600.0]
-    assert [s.present for s in samples] == [
-        False,
-        False,
-        True,
-        True,
-        True,
-        False,
-        False,
+    assert [s.state for s in samples] == [
+        PresenceState.ABSENT,
+        PresenceState.ABSENT,
+        PresenceState.PRESENT,
+        PresenceState.PRESENT,
+        PresenceState.PRESENT,
+        PresenceState.ABSENT,
+        PresenceState.ABSENT,
     ]
 
 
@@ -185,7 +201,9 @@ def test_detect_matches_by_presence_end_to_end(monkeypatch):
         presence,
         "localize_present_at",
         lambda vp, t, **_kw: PresenceSample(
-            time=t, present=present_phys(t), confidence=1.0
+            time=t,
+            state=PresenceState.PRESENT if present_phys(t) else PresenceState.ABSENT,
+            confidence=1.0,
         ),
     )
 
@@ -211,7 +229,9 @@ def test_detect_matches_present_at_video_edges(monkeypatch):
     monkeypatch.setattr(
         presence,
         "localize_present_at",
-        lambda vp, t, **_kw: PresenceSample(time=t, present=True, confidence=1.0),
+        lambda vp, t, **_kw: PresenceSample(
+            time=t, state=PresenceState.PRESENT, confidence=1.0
+        ),
     )
     matches = detect_matches_by_presence(
         Path("dummy.mkv"),
@@ -229,21 +249,21 @@ def test_scan_presence_isolates_single_probe_failure():
     """1 probe の VideoProcessingError で全 scan が abort しない (PR #823 R3).
 
     production の同型 pool (_probe_scorebar_context / _refine_blackout_regions)
-    と同じ per-future 縮退。失敗 probe は safe absent になる。
+    と同じ per-future 縮退。失敗 probe は UNKNOWN になる。
     """
 
     def fn(t: float) -> PresenceSample:
         if t == 2.0:
             raise VideoProcessingError("probe failed")
-        return PresenceSample(time=t, present=True, confidence=1.0)
+        return PresenceSample(time=t, state=PresenceState.PRESENT, confidence=1.0)
 
     samples = scan_presence(Path("v.mp4"), 4.0, stride=2.0, workers=2, sample_fn=fn)
 
     assert [s.time for s in samples] == [0.0, 2.0, 4.0]
-    assert samples[0].present is True
-    assert samples[1].present is False
+    assert samples[0].state is PresenceState.PRESENT
+    assert samples[1].state is PresenceState.UNKNOWN
     assert samples[1].confidence == 0.0
-    assert samples[2].present is True
+    assert samples[2].state is PresenceState.PRESENT
 
 
 def test_scan_presence_all_probe_failures_raise():
@@ -259,8 +279,7 @@ def test_scan_presence_all_probe_failures_raise():
 def test_scan_presence_default_sampler_all_probe_none_fails_loud(monkeypatch):
     """default sampler 経由: 全 probe が raw None (decode 系統故障) でも fail-loud (R4).
 
-    R3 の fail-loud guard は VideoProcessingError raise しか数えず、raw None ->
-    safe absent 変換で decode 系統故障が silent 全 absent になる穴があった。
+    UNKNOWN の全滅 fail-loud guard は raw None -> UNKNOWN 写像後にカウントする。
     """
     import allaganeye.video.presence as presence
 
@@ -270,7 +289,7 @@ def test_scan_presence_default_sampler_all_probe_none_fails_loud(monkeypatch):
 
 
 def test_scan_presence_default_sampler_mixed_probe_none_stays_absent(monkeypatch):
-    """default sampler 経由: 一部 probe のみ raw None なら scan は完走し absent 化 (R4)."""
+    """default sampler 経由: 一部 probe のみ raw None なら scan は完走し UNKNOWN 化 (R4)."""
     import allaganeye.video.presence as presence
 
     loc = ScorebarLocalization(
@@ -283,43 +302,88 @@ def test_scan_presence_default_sampler_mixed_probe_none_stays_absent(monkeypatch
         presence, "localize_from_rgb_bytes", lambda raw, *, height, width: loc
     )
     samples = scan_presence(Path("v.mp4"), 4.0, stride=2.0, workers=2)
-    assert [s.present for s in samples] == [True, False, True]
+    assert [s.state for s in samples] == [
+        PresenceState.PRESENT,
+        PresenceState.UNKNOWN,
+        PresenceState.PRESENT,
+    ]
     assert samples[1].confidence == 0.0
 
 
-def test_scan_presence_partial_failures_logged(caplog):
-    """部分故障 (全滅未満) は absent 化しつつ warning で痕跡を残す (R5 可視化)."""
-    import logging
+def test_scan_presence_partial_unknown_logged(caplog):
+    """部分故障 (UNKNOWN >= 1) は UNKNOWN 数 / 総数 を warning で痕跡を残す (#824 sec.5.2-5.3)."""
 
-    def fn(t: float) -> PresenceSample:
-        if t == 2.0:
-            raise VideoProcessingError("probe failed")
-        return PresenceSample(time=t, present=True, confidence=1.0)
+    def fn(t):
+        if t == 0.0:
+            return PresenceSample(time=t, state=PresenceState.UNKNOWN, confidence=0.0)
+        return PresenceSample(time=t, state=PresenceState.PRESENT, confidence=1.0)
 
-    with caplog.at_level(logging.WARNING, logger="allaganeye.video.presence"):
-        samples = scan_presence(Path("v.mp4"), 4.0, stride=2.0, workers=2, sample_fn=fn)
-    assert [s.present for s in samples] == [True, False, True]
-    assert any("presence probes failed" in r.message for r in caplog.records)
+    with caplog.at_level(logging.WARNING):
+        samples = scan_presence(
+            Path("dummy.mkv"), 10.0, stride=5.0, workers=2, sample_fn=fn
+        )
+    assert any(s.state is PresenceState.UNKNOWN for s in samples)
+    assert any("UNKNOWN" in r.message and "1/3" in r.message for r in caplog.records)
 
 
-def test_refine_probe_failure_warns_and_treats_absent(monkeypatch, caplog):
-    """refine 中の probe 失敗は absent 続行 + warning で痕跡を残す (R5 可視化).
+def test_scan_presence_all_unknown_fails_loud():
+    """全滅 (全 probe UNKNOWN) は VideoProcessingError (fail-loud) (#824 sec.5.2)."""
 
-    境界が最大 1 stride ずれうる縮退なので silent にしない (semantics 統一は
-    設計 issue で後続)。
+    def fn(t):
+        return PresenceSample(time=t, state=PresenceState.UNKNOWN, confidence=0.0)
+
+    with pytest.raises(VideoProcessingError):
+        scan_presence(Path("dummy.mkv"), 10.0, stride=5.0, workers=2, sample_fn=fn)
+
+
+def test_segment_presence_unknown_breaks_run():
+    """#824 sec.5.4 site 2b: UNKNOWN sample は present run を構成しない (現行挙動維持)."""
+    samples = [
+        PresenceSample(0.0, PresenceState.PRESENT, 1.0),
+        PresenceSample(1.0, PresenceState.UNKNOWN, 0.0),
+        PresenceSample(2.0, PresenceState.PRESENT, 1.0),
+    ]
+    runs = segment_presence(samples, t_gap=0.5, t_min_match=0.0)
+    assert len(runs) == 2
+
+
+def test_localize_present_at_returns_unknown_on_decode_failure(monkeypatch):
+    # #824 site 1: raw None (decode 失敗) は ABSENT でなく UNKNOWN。
+    monkeypatch.setattr(
+        "allaganeye.video.presence._probe_frame_rgb_hires", lambda *a: None
+    )
+    s = localize_present_at(Path("dummy.mkv"), 5.0)
+    assert s.state is PresenceState.UNKNOWN and s.confidence == 0.0
+
+
+def test_localize_present_at_has_no_raise_seam():
+    # #824 sec.5.4 site 1: raise_on_probe_failure param は削除済み (bool seam 廃止)。
+    import inspect
+
+    assert (
+        "raise_on_probe_failure"
+        not in inspect.signature(localize_present_at).parameters
+    )
+
+
+def test_refine_unknown_treated_absent_with_warning(monkeypatch, caplog):
+    """#824 sec.5.4 site 3: refine 中の UNKNOWN は absent 側へ bracket 更新 + warning
+    (refine abort しない。既存 test_refine_probe_failure_warns_and_treats_absent の後継)。
     """
-    import logging
-
     import allaganeye.video.presence as presence
 
     grid = {0.0, 100.0, 200.0, 300.0, 400.0, 500.0, 600.0}
 
-    def fake_localize(vp, t, *, raise_on_probe_failure=False):
+    def fake_localize(vp, t):
         if t not in grid:
-            if raise_on_probe_failure:
-                raise VideoProcessingError("probe failed mid-refine")
-            return PresenceSample(time=t, present=False, confidence=0.0)
-        return PresenceSample(time=t, present=(200.0 <= t < 500.0), confidence=1.0)
+            return PresenceSample(time=t, state=PresenceState.UNKNOWN, confidence=0.0)
+        return PresenceSample(
+            time=t,
+            state=PresenceState.PRESENT
+            if (200.0 <= t < 500.0)
+            else PresenceState.ABSENT,
+            confidence=1.0,
+        )
 
     monkeypatch.setattr(presence, "localize_present_at", fake_localize)
     with caplog.at_level(logging.WARNING, logger="allaganeye.video.presence"):
@@ -333,7 +397,7 @@ def test_refine_probe_failure_warns_and_treats_absent(monkeypatch, caplog):
             workers=2,
         )
     assert len(matches) == 1
-    assert any("refine" in r.message for r in caplog.records)
+    assert any("UNKNOWN" in r.message and "refine" in r.message for r in caplog.records)
 
 
 def test_localize_from_rgb_bytes_none_passthrough_and_decode():
