@@ -313,12 +313,12 @@ def test_scan_presence_default_sampler_mixed_probe_none_stays_absent(monkeypatch
 def test_scan_presence_partial_unknown_logged(caplog):
     """部分故障 (UNKNOWN >= 1) は UNKNOWN 数 / 総数 を warning で痕跡を残す (#824 sec.5.2-5.3)."""
 
-    def fn(t):
+    def fn(t: float) -> PresenceSample:
         if t == 0.0:
             return PresenceSample(time=t, state=PresenceState.UNKNOWN, confidence=0.0)
         return PresenceSample(time=t, state=PresenceState.PRESENT, confidence=1.0)
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.presence"):
         samples = scan_presence(
             Path("dummy.mkv"), 10.0, stride=5.0, workers=2, sample_fn=fn
         )
