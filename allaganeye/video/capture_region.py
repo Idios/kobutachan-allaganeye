@@ -11,8 +11,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from allaganeye.video.probe_state import PresenceState
 
 
 @dataclass(frozen=True)
@@ -512,24 +516,29 @@ def detect_scorebar_band_region(
     duration: float,
     probe_w: int,
     probe_h: int,
-    localize_fn: Callable[[float], ScorebarLocalization | None],
+    localize_fn: Callable[[float], ScorebarLocalization | None | PresenceState],
     num_samples: int = 8,
     min_hits: int = _BAND_CONSENSUS_MIN_HITS,
 ) -> CaptureRegion:
     """疎な多フレーム localize の dominant-cluster consensus で安定 scorebar 帯 ROI を返す。
 
-    *localize_fn* は timestamp -> ScorebarLocalization|None。動画 I/O は呼び出し側が
-    bind する (テストは合成関数を注入)。成功局在化が *min_hits* 未満なら FULL_FRAME
-    (OBS / 局在化不能時の安全縮退)。成功時は hits を y_top で `_CLUSTER_Y_TOL`
-    クラスタリングし、最大クラスタ (同数なら平均 confidence) の各座標 median を取り
-    `band_region_from_localization` で正規化帯 ROI に変換する。これにより真の
-    scorebar (y_top~0) と下部 HUD 誤検出が混在しても between-clusters の garbage
+    *localize_fn* は timestamp -> ScorebarLocalization|None|PresenceState。動画 I/O は
+    呼び出し側が bind する (テストは合成関数を注入)。成功局在化が *min_hits* 未満なら
+    FULL_FRAME (OBS / 局在化不能時の安全縮退)。成功時は hits を y_top で
+    `_CLUSTER_Y_TOL` クラスタリングし、最大クラスタ (同数なら平均 confidence) の各座標
+    median を取り `band_region_from_localization` で正規化帯 ROI に変換する。これにより
+    真の scorebar (y_top~0) と下部 HUD 誤検出が混在しても between-clusters の garbage
     band を避ける (spec section 3.6)。
+
+    *localize_fn* が `PresenceState.UNKNOWN` を返した場合は decode 失敗 sentinel として
+    hit にも miss にも数えない (consensus から除外)。
     """
     if duration <= 0 or num_samples < 1:
         return FULL_FRAME
     times = [duration * (i + 1) / (num_samples + 1) for i in range(num_samples)]
-    hits = [loc for t in times if (loc := localize_fn(t)) is not None]
+    hits = [
+        loc for t in times if isinstance((loc := localize_fn(t)), ScorebarLocalization)
+    ]
     if len(hits) < min_hits:
         return FULL_FRAME
     # localize is per-frame noisy (upper-half best-hit scan can lock onto lower

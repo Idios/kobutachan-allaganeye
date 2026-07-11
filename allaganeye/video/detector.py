@@ -284,10 +284,21 @@ def _resolve_detect_region(
         detect_scorebar_band_region,
         localize_from_rgb_bytes,
     )
+    from allaganeye.video.probe_state import PresenceState
+
+    unknown_count = 0
+    total_probes = 0
 
     def _localize_at(t: float):
+        nonlocal unknown_count, total_probes
+        total_probes += 1
+        raw = _probe_frame_rgb_hires(video_path, t)
+        if raw is None:
+            unknown_count += 1
+            logger.debug("anchor probe decode failed at t=%.3fs -> UNKNOWN", t)
+            return PresenceState.UNKNOWN
         return localize_from_rgb_bytes(
-            _probe_frame_rgb_hires(video_path, t),
+            raw,
             height=_SCOREBAR_V2_PROBE_HEIGHT,
             width=_SCOREBAR_V2_PROBE_WIDTH,
         )
@@ -306,7 +317,19 @@ def _resolve_detect_region(
         logger.warning(
             "scorebar band anchor failed; degrading to FULL_FRAME", exc_info=True
         )
+        if unknown_count > 0:
+            logger.warning(
+                "anchor probes: %d/%d UNKNOWN (probe failure)",
+                unknown_count,
+                total_probes,
+            )
         return FULL_FRAME, "anchor_error"
+    if unknown_count > 0:
+        logger.warning(
+            "anchor probes: %d/%d UNKNOWN (probe failure)",
+            unknown_count,
+            total_probes,
+        )
     if region.is_full_frame():
         # consensus-miss (非例外縮退) も silent にしない (R5): --vtuber 明示 run
         # が FULL_FRAME (汚染 path) で続行することを痕跡に残す。
@@ -377,10 +400,20 @@ def _resolve_masked_region(
             for frame in pool.map(lambda t: _probe_frame_gray2d(video_path, t), times):
                 if frame is not None:
                     frames.append(frame)
+        dropped = len(times) - len(frames)
+        if dropped > 0:
+            logger.warning(
+                "masked region probes: %d/%d failed (decode); continuing with valid frames",
+                dropped,
+                len(times),
+            )
         if len(frames) < 2:
             return FULL_FRAME
         return detect_mask_free_region(frames)
     except Exception:
+        logger.warning(
+            "masked region detection failed; degrading to FULL_FRAME", exc_info=True
+        )
         return FULL_FRAME
 
 
