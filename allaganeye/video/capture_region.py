@@ -530,8 +530,10 @@ def detect_scorebar_band_region(
     真の scorebar (y_top~0) と下部 HUD 誤検出が混在しても between-clusters の garbage
     band を避ける (spec section 3.6)。
 
-    *localize_fn* が `PresenceState.UNKNOWN` を返した場合は decode 失敗 sentinel として
-    hit にも miss にも数えない (consensus から除外)。
+    *localize_fn* の戻り値 sentinel:
+    - ``PresenceState.UNKNOWN`` のみが decode 失敗 sentinel として有効 (hit/miss どちらにも
+      数えない、consensus から除外)。他の PresenceState 値は ScorebarLocalization でないため
+      hit としてカウントされず、実質 miss 扱いとなる。
     """
     if duration <= 0 or num_samples < 1:
         return FULL_FRAME

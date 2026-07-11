@@ -2746,7 +2746,11 @@ def test_resolve_detect_region_swallows_exceptions_to_full_frame(monkeypatch, ca
 def test_resolve_detect_region_warns_on_consensus_miss_full_frame(monkeypatch, caplog):
     # consensus-miss (非例外縮退) も silent にしない (R5): --vtuber 明示 run が
     # FULL_FRAME (汚染 path) で続行することを warning で痕跡に残す。
+    # Fix 3: message now includes valid_votes/total_probes and min_hits (#824 sec.5.3).
+    # NOTE: detect_scorebar_band_region is patched to return FULL_FRAME directly,
+    # so the _localize_at closure is never called -> valid_votes=0, total_probes=0.
     import logging
+    import re
 
     from pathlib import Path
 
@@ -2758,7 +2762,15 @@ def test_resolve_detect_region_warns_on_consensus_miss_full_frame(monkeypatch, c
         region, reason = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
     assert region.is_full_frame()
     assert reason == "consensus_miss"
-    assert any("consensus" in r.message for r in caplog.records)
+    # Message must include both "consensus" and "FULL_FRAME" (existing grep targets)
+    # plus valid_votes/total_probes/min_hits format (#824 sec.5.3).
+    assert any(
+        "consensus" in r.message and "FULL_FRAME" in r.message for r in caplog.records
+    )
+    assert any(
+        re.search(r"valid votes \d+/\d+, min_hits \d+", r.message)
+        for r in caplog.records
+    )
 
 
 def test_resolve_detect_region_warns_unknown_probes(monkeypatch, caplog):

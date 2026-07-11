@@ -124,8 +124,17 @@ def localize_present_at(video_path: Path, timestamp: float) -> PresenceSample:
 
     raw None (decode 失敗) -> UNKNOWN (debug log) / decode 成功 + localizer miss
     -> ABSENT / hit -> PRESENT。decode 例外は caller に漏らさない (#824 sec.5.2)。
+    VideoProcessingError も raw None と同様 UNKNOWN に写像する。
     """
-    raw = _probe_frame_rgb_hires(video_path, timestamp)
+    try:
+        raw = _probe_frame_rgb_hires(video_path, timestamp)
+    except VideoProcessingError:
+        logger.debug(
+            "presence probe VideoProcessingError at t=%.3fs -> UNKNOWN", timestamp
+        )
+        return PresenceSample(
+            time=timestamp, state=PresenceState.UNKNOWN, confidence=0.0
+        )
     if raw is None:
         logger.debug("presence probe decode failed at t=%.3fs -> UNKNOWN", timestamp)
         return PresenceSample(
@@ -182,26 +191,37 @@ def scan_presence(
 
     times = _grid_timestamps(duration, stride)
     results: dict[float, PresenceSample] = {}
+    first_exc: VideoProcessingError | None = None
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(fn, t): t for t in times}
         for fut in futures:
             t = futures[fut]
             try:
                 results[t] = fut.result()
-            except VideoProcessingError:
+            except VideoProcessingError as exc:
                 # 単発 probe の例外も UNKNOWN に写像 (per-probe 隔離、#824 sec.5.2)
                 results[t] = PresenceSample(
                     time=t, state=PresenceState.UNKNOWN, confidence=0.0
                 )
+                if first_exc is None:
+                    first_exc = exc
     unknown = [t for t in times if results[t].state is PresenceState.UNKNOWN]
     if unknown:
         if len(unknown) == len(times):
+            # Determine representative cause: prefer the caught exception message;
+            # fall back to marker string when the default sampler returned UNKNOWN
+            # (localize_present_at maps raw None -> UNKNOWN without raising).
+            if first_exc is not None:
+                cause: str | VideoProcessingError = first_exc
+            else:
+                cause = "decode returned no frame"
             raise VideoProcessingError(
-                f"all {len(times)} presence probes UNKNOWN (systemic probe failure)"
-            )
+                f"all {len(times)} presence probes UNKNOWN "
+                f"(systemic probe failure): {cause}"
+            ) from (first_exc if first_exc is not None else None)
         logger.warning(
-            "%d/%d presence probes UNKNOWN (probe failure); excluded from aggregation "
-            "(time range %.1f-%.1fs)",
+            "%d/%d presence probes UNKNOWN (probe failure); "
+            "treated as non-present in segmentation (time range %.1f-%.1fs)",
             len(unknown),
             len(times),
             min(unknown),

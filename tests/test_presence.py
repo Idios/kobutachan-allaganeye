@@ -267,25 +267,36 @@ def test_scan_presence_isolates_single_probe_failure():
 
 
 def test_scan_presence_all_probe_failures_raise():
-    """全 probe 失敗 (ffmpeg 不在等の系統故障) は silent all-absent にせず fail-loud."""
+    """全 probe 失敗 (ffmpeg 不在等の系統故障) は silent all-absent にせず fail-loud.
+
+    #824 sec.5.3: message に "systemic probe failure" と probe 数を含む。
+    """
 
     def fn(t: float) -> PresenceSample:
         raise VideoProcessingError("ffmpeg not found")
 
-    with pytest.raises(VideoProcessingError):
+    with pytest.raises(
+        VideoProcessingError, match="systemic probe failure"
+    ) as exc_info:
         scan_presence(Path("v.mp4"), 4.0, stride=2.0, workers=2, sample_fn=fn)
+    assert "3" in str(exc_info.value)  # 3 probes at stride=2.0 over duration=4.0
 
 
 def test_scan_presence_default_sampler_all_probe_none_fails_loud(monkeypatch):
     """default sampler 経由: 全 probe が raw None (decode 系統故障) でも fail-loud (R4).
 
     UNKNOWN の全滅 fail-loud guard は raw None -> UNKNOWN 写像後にカウントする。
+    #824 sec.5.3: message に "systemic probe failure" + probe 数 + marker cause を含む。
     """
     import allaganeye.video.presence as presence
 
     monkeypatch.setattr(presence, "_probe_frame_rgb_hires", lambda vp, t: None)
-    with pytest.raises(VideoProcessingError):
+    with pytest.raises(
+        VideoProcessingError, match="systemic probe failure"
+    ) as exc_info:
         scan_presence(Path("v.mp4"), 4.0, stride=2.0, workers=2)
+    # marker cause for the default (raw-None) path
+    assert "decode returned no frame" in str(exc_info.value)
 
 
 def test_scan_presence_default_sampler_mixed_probe_none_stays_absent(monkeypatch):
@@ -311,7 +322,10 @@ def test_scan_presence_default_sampler_mixed_probe_none_stays_absent(monkeypatch
 
 
 def test_scan_presence_partial_unknown_logged(caplog):
-    """部分故障 (UNKNOWN >= 1) は UNKNOWN 数 / 総数 を warning で痕跡を残す (#824 sec.5.2-5.3)."""
+    """部分故障 (UNKNOWN >= 1) は UNKNOWN 数 / 総数 を warning で痕跡を残す (#824 sec.5.2-5.3).
+
+    Fix 6: wording changed to "treated as non-present in segmentation".
+    """
 
     def fn(t: float) -> PresenceSample:
         if t == 0.0:
@@ -323,17 +337,27 @@ def test_scan_presence_partial_unknown_logged(caplog):
             Path("dummy.mkv"), 10.0, stride=5.0, workers=2, sample_fn=fn
         )
     assert any(s.state is PresenceState.UNKNOWN for s in samples)
-    assert any("UNKNOWN" in r.message and "1/3" in r.message for r in caplog.records)
+    assert any(
+        "UNKNOWN" in r.message and "1/3" in r.message and "non-present" in r.message
+        for r in caplog.records
+    )
 
 
 def test_scan_presence_all_unknown_fails_loud():
-    """全滅 (全 probe UNKNOWN) は VideoProcessingError (fail-loud) (#824 sec.5.2)."""
+    """全滅 (全 probe UNKNOWN) は VideoProcessingError (fail-loud) (#824 sec.5.2).
+
+    #824 sec.5.3: message に "systemic probe failure" と probe 数を含む。
+    """
 
     def fn(t):
         return PresenceSample(time=t, state=PresenceState.UNKNOWN, confidence=0.0)
 
-    with pytest.raises(VideoProcessingError):
+    with pytest.raises(
+        VideoProcessingError, match="systemic probe failure"
+    ) as exc_info:
         scan_presence(Path("dummy.mkv"), 10.0, stride=5.0, workers=2, sample_fn=fn)
+    # stride=5.0 over duration=10.0 -> 3 probes (0.0, 5.0, 10.0)
+    assert "3" in str(exc_info.value)
 
 
 def test_segment_presence_unknown_breaks_run():
@@ -354,6 +378,24 @@ def test_localize_present_at_returns_unknown_on_decode_failure(monkeypatch):
     )
     s = localize_present_at(Path("dummy.mkv"), 5.0)
     assert s.state is PresenceState.UNKNOWN and s.confidence == 0.0
+
+
+def test_localize_present_at_returns_unknown_on_video_processing_error(monkeypatch):
+    """#824 sec.5.2 fix 1: VideoProcessingError from _probe_frame_rgb_hires -> UNKNOWN.
+
+    The exception must NOT propagate to the caller (same contract as raw None).
+    """
+    from allaganeye.exceptions import VideoProcessingError
+    import allaganeye.video.presence as presence
+
+    monkeypatch.setattr(
+        presence,
+        "_probe_frame_rgb_hires",
+        lambda vp, t: (_ for _ in ()).throw(VideoProcessingError("boom")),
+    )
+    s = localize_present_at(Path("dummy.mkv"), 9.0)
+    assert s.state is PresenceState.UNKNOWN
+    assert s.confidence == 0.0
 
 
 def test_localize_present_at_has_no_raise_seam():
