@@ -1,6 +1,7 @@
 """Tests for match boundary detection."""
 
 import os
+import re
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -2768,20 +2769,52 @@ def test_resolve_detect_region_warns_unknown_probes(monkeypatch, caplog):
 
     from allaganeye.video import detector as det
 
-    # _probe_frame_rgb_hires returns None for 3 of 8 probes -> UNKNOWN sentinel
+    # _probe_frame_rgb_hires always returns None -> all probes UNKNOWN
     call_count = {"n": 0}
 
     def _sometimes_none(vp, t):
         call_count["n"] += 1
-        # first 3 calls return None (decode failure); rest return None too so
-        # consensus misses, but UNKNOWN warning should fire before that
+        # all calls return None (decode failure); consensus misses,
+        # but UNKNOWN warning should fire before that
         return None
 
     monkeypatch.setattr(det, "_probe_frame_rgb_hires", _sometimes_none)
     with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
         region, _reason = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
     assert region.is_full_frame()
-    assert any("UNKNOWN" in r.message for r in caplog.records)
+    assert any(
+        re.search(r"anchor probes: \d+/\d+ UNKNOWN", r.message) for r in caplog.records
+    )
+
+
+def test_resolve_detect_region_warns_unknown_probes_on_exception_path(
+    monkeypatch, caplog
+):
+    # site 9: exception path -- UNKNOWN probes accumulated before the raise must
+    # not be lost. The partial-failure warning fires even when detect_scorebar_band_region
+    # raises after some None probes (counter is accumulated before raise).
+    import logging
+
+    from pathlib import Path
+
+    from allaganeye.video import detector as det
+
+    call_count = {"n": 0}
+
+    def _mixed(vp, t):
+        call_count["n"] += 1
+        if call_count["n"] <= 3:
+            return None  # -> UNKNOWN
+        raise RuntimeError("probe exploded after some Nones")
+
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", _mixed)
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        _region, reason = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    assert reason == "anchor_error"
+    assert any(
+        re.search(r"anchor probes: \d+/\d+ UNKNOWN", r.message) for r in caplog.records
+    )
+    assert any("band anchor" in r.message for r in caplog.records)
 
 
 def test_detect_match_boundaries_passes_region_to_all_three_call_sites(monkeypatch):
@@ -3255,8 +3288,8 @@ def test_resolve_masked_region_warns_on_decode_failures(monkeypatch, caplog):
     monkeypatch.setattr(det, "_probe_frame_gray2d", _sometimes_none)
     with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
         det._resolve_masked_region(det.Path("x.mp4"), 600.0, None)
-    # at least one warning must mention "N/M" failed decode pattern
-    assert any("failed" in r.message and "/" in r.message for r in caplog.records), (
+    # at least one warning must mention "N/M failed" decode pattern
+    assert any(re.search(r"\d+/\d+ failed", r.message) for r in caplog.records), (
         f"Expected decode failure warning with N/M, got: {[r.message for r in caplog.records]}"
     )
 
@@ -3274,6 +3307,9 @@ def test_resolve_masked_region_warns_on_exception_fallback(monkeypatch, caplog):
     assert region.is_full_frame()
     assert any("masked region" in r.message for r in caplog.records), (
         f"Expected masked region degradation warning, got: {[r.message for r in caplog.records]}"
+    )
+    assert any("degrading to FULL_FRAME" in r.message for r in caplog.records), (
+        f"Expected 'degrading to FULL_FRAME' in warning, got: {[r.message for r in caplog.records]}"
     )
 
 

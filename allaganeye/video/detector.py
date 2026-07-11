@@ -288,6 +288,7 @@ def _resolve_detect_region(
 
     unknown_count = 0
     total_probes = 0
+    unknown_times: list[float] = []
 
     def _localize_at(t: float):
         nonlocal unknown_count, total_probes
@@ -295,6 +296,7 @@ def _resolve_detect_region(
         raw = _probe_frame_rgb_hires(video_path, t)
         if raw is None:
             unknown_count += 1
+            unknown_times.append(t)
             logger.debug("anchor probe decode failed at t=%.3fs -> UNKNOWN", t)
             return PresenceState.UNKNOWN
         return localize_from_rgb_bytes(
@@ -319,16 +321,20 @@ def _resolve_detect_region(
         )
         if unknown_count > 0:
             logger.warning(
-                "anchor probes: %d/%d UNKNOWN (probe failure)",
+                "anchor probes: %d/%d UNKNOWN (probe failure; time range %.1f-%.1fs)",
                 unknown_count,
                 total_probes,
+                min(unknown_times),
+                max(unknown_times),
             )
         return FULL_FRAME, "anchor_error"
     if unknown_count > 0:
         logger.warning(
-            "anchor probes: %d/%d UNKNOWN (probe failure)",
+            "anchor probes: %d/%d UNKNOWN (probe failure; time range %.1f-%.1fs)",
             unknown_count,
             total_probes,
+            min(unknown_times),
+            max(unknown_times),
         )
     if region.is_full_frame():
         # consensus-miss (非例外縮退) も silent にしない (R5): --vtuber 明示 run
@@ -396,16 +402,25 @@ def _resolve_masked_region(
             times = [duration_hint * (i + 1) / (n + 1) for i in range(n)]
         max_workers = max(1, min(len(times), workers or os.cpu_count() or 4))
         frames: list[np.ndarray] = []
+        failed_times: list[float] = []
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            for frame in pool.map(lambda t: _probe_frame_gray2d(video_path, t), times):
-                if frame is not None:
-                    frames.append(frame)
-        dropped = len(times) - len(frames)
+            results = list(
+                pool.map(lambda t: _probe_frame_gray2d(video_path, t), times)
+            )
+        for t, frame in zip(times, results, strict=False):
+            if frame is not None:
+                frames.append(frame)
+            else:
+                failed_times.append(t)
+        dropped = len(failed_times)
         if dropped > 0:
             logger.warning(
-                "masked region probes: %d/%d failed (decode); continuing with valid frames",
+                "masked region probes: %d/%d failed (decode); "
+                "time range %.1f-%.1fs; continuing with valid frames",
                 dropped,
                 len(times),
+                min(failed_times),
+                max(failed_times),
             )
         if len(frames) < 2:
             return FULL_FRAME
