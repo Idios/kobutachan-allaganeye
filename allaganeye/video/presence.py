@@ -119,22 +119,18 @@ def refine_boundary(
     return (lo_true + hi_false) / 2.0
 
 
-def localize_present_at(video_path: Path, timestamp: float) -> PresenceSample:
-    """Probe one hi-res frame and report scorebar presence (tri-state, #824).
+def _probe_present_sample_raising(video_path: Path, timestamp: float) -> PresenceSample:
+    """scan_presence default sampler variant: raises VideoProcessingError on decode error.
 
-    raw None (decode 失敗) -> UNKNOWN (debug log) / decode 成功 + localizer miss
-    -> ABSENT / hit -> PRESENT。decode 例外は caller に漏らさない (#824 sec.5.2)。
-    VideoProcessingError も raw None と同様 UNKNOWN に写像する。
+    raw None (decode 失敗) -> UNKNOWN (debug log) / decode 成功 + localizer miss ->
+    ABSENT / hit -> PRESENT。VideoProcessingError は raise のまま caller に渡す。
+    これにより scan_presence の per-probe except が first_exc を捕捉でき、系統故障
+    (ffmpeg 不在等) の代表原因を fail-loud まで保全する (codex finding sec.5.2)。
+    外部契約は localize_present_at (例外を漏らさない) を使うこと。
     """
-    try:
-        raw = _probe_frame_rgb_hires(video_path, timestamp)
-    except VideoProcessingError:
-        logger.debug(
-            "presence probe VideoProcessingError at t=%.3fs -> UNKNOWN", timestamp
-        )
-        return PresenceSample(
-            time=timestamp, state=PresenceState.UNKNOWN, confidence=0.0
-        )
+    raw = _probe_frame_rgb_hires(
+        video_path, timestamp
+    )  # may raise VideoProcessingError
     if raw is None:
         logger.debug("presence probe decode failed at t=%.3fs -> UNKNOWN", timestamp)
         return PresenceSample(
@@ -150,6 +146,25 @@ def localize_present_at(video_path: Path, timestamp: float) -> PresenceSample:
     return PresenceSample(
         time=timestamp, state=PresenceState.PRESENT, confidence=loc.confidence
     )
+
+
+def localize_present_at(video_path: Path, timestamp: float) -> PresenceSample:
+    """Probe one hi-res frame and report scorebar presence (tri-state, #824).
+
+    raw None (decode 失敗) -> UNKNOWN (debug log) / decode 成功 + localizer miss
+    -> ABSENT / hit -> PRESENT。decode 例外は caller に漏らさない (#824 sec.5.2)。
+    VideoProcessingError も raw None と同様 UNKNOWN に写像する。
+    Thin delegation to _probe_present_sample_raising with exception-catch wrapper.
+    """
+    try:
+        return _probe_present_sample_raising(video_path, timestamp)
+    except VideoProcessingError:
+        logger.debug(
+            "presence probe VideoProcessingError at t=%.3fs -> UNKNOWN", timestamp
+        )
+        return PresenceSample(
+            time=timestamp, state=PresenceState.UNKNOWN, confidence=0.0
+        )
 
 
 def _grid_timestamps(duration: float, stride: float) -> list[float]:
@@ -186,7 +201,7 @@ def scan_presence(
     fn = (
         sample_fn
         if sample_fn is not None
-        else (lambda t: localize_present_at(video_path, t))
+        else (lambda t: _probe_present_sample_raising(video_path, t))
     )
 
     times = _grid_timestamps(duration, stride)

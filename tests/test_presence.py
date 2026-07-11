@@ -197,15 +197,17 @@ def test_detect_matches_by_presence_end_to_end(monkeypatch):
     def present_phys(t: float) -> bool:
         return 250.0 <= t < 740.0
 
-    monkeypatch.setattr(
-        presence,
-        "localize_present_at",
-        lambda vp, t, **_kw: PresenceSample(
+    def fake_sample(vp, t):
+        return PresenceSample(
             time=t,
             state=PresenceState.PRESENT if present_phys(t) else PresenceState.ABSENT,
             confidence=1.0,
-        ),
-    )
+        )
+
+    # Patch both the scan-phase sampler (_probe_present_sample_raising, used by default
+    # scan_presence path) and the refine-phase caller (localize_present_at).
+    monkeypatch.setattr(presence, "_probe_present_sample_raising", fake_sample)
+    monkeypatch.setattr(presence, "localize_present_at", fake_sample)
 
     matches = detect_matches_by_presence(
         Path("dummy.mkv"),
@@ -226,13 +228,13 @@ def test_detect_matches_present_at_video_edges(monkeypatch):
     import allaganeye.video.presence as presence
 
     # present for the entire video -> match spans [0, duration], no refine
-    monkeypatch.setattr(
-        presence,
-        "localize_present_at",
-        lambda vp, t, **_kw: PresenceSample(
-            time=t, state=PresenceState.PRESENT, confidence=1.0
-        ),
-    )
+    def fake_sample(vp, t):
+        return PresenceSample(time=t, state=PresenceState.PRESENT, confidence=1.0)
+
+    # Patch both scan-phase sampler and refine-phase caller (see
+    # test_detect_matches_by_presence_end_to_end for rationale).
+    monkeypatch.setattr(presence, "_probe_present_sample_raising", fake_sample)
+    monkeypatch.setattr(presence, "localize_present_at", fake_sample)
     matches = detect_matches_by_presence(
         Path("dummy.mkv"),
         duration=500.0,
@@ -270,6 +272,7 @@ def test_scan_presence_all_probe_failures_raise():
     """全 probe 失敗 (ffmpeg 不在等の系統故障) は silent all-absent にせず fail-loud.
 
     #824 sec.5.3: message に "systemic probe failure" と probe 数を含む。
+    __cause__ が保全されていること (codex adversarial-review [medium] fix M1)。
     """
 
     def fn(t: float) -> PresenceSample:
@@ -280,6 +283,35 @@ def test_scan_presence_all_probe_failures_raise():
     ) as exc_info:
         scan_presence(Path("v.mp4"), 4.0, stride=2.0, workers=2, sample_fn=fn)
     assert "3" in str(exc_info.value)  # 3 probes at stride=2.0 over duration=4.0
+    # __cause__ must be set so systemic failure is diagnosable (codex finding)
+    assert exc_info.value.__cause__ is not None
+    assert "ffmpeg not found" in str(exc_info.value.__cause__)
+
+
+def test_scan_presence_default_sampler_all_exception_cause_preserved(monkeypatch):
+    """default sampler 経由: 全 probe が VideoProcessingError のとき __cause__ が保全される.
+
+    codex adversarial-review [medium]: localize_present_at が例外を UNKNOWN に写像する
+    ため default sampler では first_exc が None のまま -> 代表原因なし、という診断
+    リグレッションを修正 (_probe_present_sample_raising へ切り替え)。
+    """
+    import allaganeye.video.presence as presence
+
+    monkeypatch.setattr(
+        presence,
+        "_probe_frame_rgb_hires",
+        lambda vp, t: (_ for _ in ()).throw(
+            VideoProcessingError("ffmpeg not found (synthetic)")
+        ),
+    )
+    with pytest.raises(
+        VideoProcessingError, match="systemic probe failure"
+    ) as exc_info:
+        scan_presence(Path("v.mp4"), 4.0, stride=2.0, workers=2)
+    assert exc_info.value.__cause__ is not None, (
+        "default sampler path must preserve the representative cause in __cause__"
+    )
+    assert "ffmpeg not found (synthetic)" in str(exc_info.value.__cause__)
 
 
 def test_scan_presence_default_sampler_all_probe_none_fails_loud(monkeypatch):
@@ -427,6 +459,11 @@ def test_refine_unknown_treated_absent_with_warning(monkeypatch, caplog):
             confidence=1.0,
         )
 
+    # Patch both the scan-phase sampler (_probe_present_sample_raising) and the
+    # refine-phase caller (localize_present_at).  Grid timestamps are on the grid so
+    # scan returns the expected PRESENT/ABSENT pattern; non-grid refine timestamps
+    # exercise the UNKNOWN->absent warning path.
+    monkeypatch.setattr(presence, "_probe_present_sample_raising", fake_localize)
     monkeypatch.setattr(presence, "localize_present_at", fake_localize)
     with caplog.at_level(logging.WARNING, logger="allaganeye.video.presence"):
         matches = presence.detect_matches_by_presence(
