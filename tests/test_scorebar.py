@@ -1714,6 +1714,7 @@ def test_majority_presence_excludes_unknown_from_denominator():
     assert sb._majority_presence([P, A, U]) is True  # 有効票 2, present 1 >= ceil(2/2)
     assert sb._majority_presence([A, A, P]) is False
     assert sb._majority_presence([U, U, None]) is None  # 有効票ゼロ
+    assert sb._majority_presence([]) is None  # 有効票ゼロ (空入力) も None
 
 
 def test_probe_scorebar_context_localize_results_are_tristate(monkeypatch):
