@@ -47,7 +47,7 @@ OBS baseline は「現状検知の固定 snapshot」、VTuber ground truth は�
 
 ### 選定リスト (5 本)
 
-下表の Matches / Gaps は #779 で実測した改修前 snapshot 値 (`tests/baselines/v0.3.0/<label>.metadata.json` を参照)。`obs-20260116` のみ #805 段階2 Phase 1 (PR #848、trailing の非破壊 flag 化) の出力面変化に追随して #881 で再生成済み (2026-07-12、develop-0.3.0 = 59971e2 の素の detect 出力。trailing ≥ `min_match_duration` を持つのが本 baseline だけのため、他 4 本は #848 後も bit-exact 継続を実測確認済みで regen 不要)。
+下表の Matches / Gaps は **committed snapshot 値** (`tests/baselines/v0.3.0/<label>.metadata.json` と一致。#779 初回実測から regen で変化した行は採択理由列に経緯を記載)。`obs-20260116` のみ #805 段階2 Phase 1 (PR #848、trailing の非破壊 flag 化) の出力面変化に追随して #881 で再生成済み (2026-07-12、develop-0.3.0 = 59971e2 の素の detect 出力。trailing ≥ `min_match_duration` を持つのが本 baseline だけのため、他 4 本は #848 後も bit-exact 継続を実測確認済みで regen 不要)。
 
 | Label | Source path (相対: `$ALLAGANEYE_SAMPLE_VIDEO_DIR`) | Duration | Size | Matches | Gaps | 採択理由 |
 | --- | --- | --- | --- | --- | --- | --- |
