@@ -54,7 +54,7 @@ OBS baseline は「現状検知の固定 snapshot」、VTuber ground truth は�
 | `obs-20260209` | `2026-02-09 23-12-24.mkv` | 57m06s (3426.5s) | 19.2 GiB | 3 | 0 | 最短 / fast smoke 用 |
 | `obs-20260127` | `20260127/2026-01-27 21-59-15.mkv` | 1h01m11s (3671.3s) | 22.9 GiB | 3 | 2 | 短尺枠 2 本目 / gap 検出含む edge (#576 fps filter 改修時に gap 抽出も regression 確認) |
 | `obs-20260116` | `20260116/2026-01-16 22-12-57.mkv` | 2h01m43s (7303.5s) | 37.0 GiB | 7 (うち 1 件 末尾 `post_match` `unknown`) | 0 | scorebar V2 validated / 末尾 trailing (`post_match: true`、#805 段階2 Phase 1 の flag 保持面。MP4 非生成) を含む唯一の baseline (#881 で 2026-07-12 regen) |
-| `obs-20260118` | `20260118/2026-01-18 22-15-18.mkv` | 2h17m14s (8234.7s) | 34.2 GiB | 5 | 2 | scorebar V2 validated / Limsa 待機暗転含む (#529) / 異常長尺 1 試合 (40m33s) edge |
+| `obs-20260118` | `20260118/2026-01-18 22-15-18.mkv` | 2h17m14s (8234.7s) | 34.2 GiB | 6 | 3 | scorebar V2 validated / Limsa 待機暗転含む (#529)。#779 選定当時は「異常長尺 1 試合 (40m33s)」edge だったが、#793 (fps filter 廃止) → #806 (trailing drop) の regen で 6 試合 / 3 gaps に分解済み (現 committed 値。最長 17m35s) |
 | `obs-20260119` | `20260119/2026-01-19 22-09-07.mkv` | 2h33m54s (9234.0s) | 59.1 GiB | 9 | 1 | scorebar V2 validated / 高 match 数 |
 
 合計 detect 時間 (実測): 34m43s (RTX-class GPU、`--gpu` モード、#779 PR generation log)。

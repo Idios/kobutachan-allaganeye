@@ -219,17 +219,31 @@ def test_committed_split_baseline_validates(label: str) -> None:
 
 @pytest.mark.parametrize("label", _committed_labels())
 def test_committed_split_count_matches_metadata(label: str) -> None:
-    """Splits must enumerate every match recorded in the paired metadata.json."""
+    """Splits must enumerate every *split-eligible* match in the paired metadata.
+
+    ``post_match: true`` entries (#805 段階2 Phase 1) are metadata-only:
+    they are excluded from default split so they never produce an MP4.
+    The invariant is therefore ``splits == non-post_match matches``, and
+    post_match entries must not carry ``output_file`` (positive assertion
+    below -- a filter-only check would silently pass a future regen where
+    a post_match entry wrongly gained an MP4).
+    """
     metadata = json.loads(
         (_BASELINES_DIR / f"{label}.metadata.json").read_text(encoding="utf-8")
     )
     split = json.loads(
         (_BASELINES_DIR / f"{label}.split.json").read_text(encoding="utf-8")
     )
-    assert len(split["splits"]) == len(metadata["matches"]), (
+    split_eligible = [m for m in metadata["matches"] if not m.get("post_match", False)]
+    assert len(split["splits"]) == len(split_eligible), (
         f"{label}: split count {len(split['splits'])} != "
-        f"metadata matches {len(metadata['matches'])}"
+        f"split-eligible matches {len(split_eligible)}"
     )
+    for match in metadata["matches"]:
+        if match.get("post_match", False):
+            assert "output_file" not in match, (
+                f"{label}: post_match entry must not have output_file: {match!r}"
+            )
 
 
 @pytest.mark.parametrize("label", _committed_labels())
@@ -268,6 +282,10 @@ def test_committed_metadata_output_file_is_relative(label: str) -> None:
         (_BASELINES_DIR / f"{label}.metadata.json").read_text(encoding="utf-8")
     )
     for match in metadata["matches"]:
+        if match.get("post_match", False):
+            # post_match entries are metadata-only (#805 段階2 Phase 1): no MP4,
+            # no output_file. The split-count test pins the no-output_file side.
+            continue
         out = match["output_file"]
         assert isinstance(out, str) and out, f"{label}: empty output_file"
         assert "\\" not in out, f"{label}: output_file has backslash: {out!r}"
