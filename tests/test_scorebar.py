@@ -26,6 +26,7 @@ from allaganeye.video.scorebar import (
     classify_blackout,
     filter_blackouts_with_scorebar,
 )
+from allaganeye.video.probe_state import PresenceState
 
 _HEIGHT = 180  # 16:9 scaled height
 _FAKE_FRAME = b"\x00" * (_SAMPLE_WIDTH * _HEIGHT * 3)  # dummy frame for mocks
@@ -1358,11 +1359,15 @@ def test_probe_context_with_localize_populates_3rd(monkeypatch):
     monkeypatch.setattr(sb, "_probe_frame_rgb", lambda v, t, h: b"lo")
     monkeypatch.setattr(sb, "_probe_frame_rgb_hires", lambda v, t: f"hi{t}".encode())
     monkeypatch.setattr(sb, "_has_scorebar_v2", lambda raw: False)
-    monkeypatch.setattr(sb, "_localize_present_from_raw", lambda raw: raw == b"hi1.0")
+    monkeypatch.setattr(
+        sb,
+        "_localize_present_from_raw",
+        lambda raw: PresenceState.PRESENT if raw == b"hi1.0" else PresenceState.ABSENT,
+    )
     _scorebar, _raw, loc = sb._probe_scorebar_context(
         Path("x.mp4"), [1.0, 2.0], height=180, workers=1, with_localize=True
     )
-    assert loc == [True, False]
+    assert loc == [PresenceState.PRESENT, PresenceState.ABSENT]
 
 
 # ---------------------------------------------------------------------------
@@ -1411,8 +1416,9 @@ def test_classify_localize_truth_table(monkeypatch):
         # pre call first, post call second (region_width re-probe not triggered
         # unless both not-True).
         calls["n"] += 1
-        present = calls["n"] == 1  # pre present, post absent -> match_boundary
-        return ([None] * len(ts), [b"f"] * len(ts), [present] * len(ts))
+        # pre present, post absent -> match_boundary
+        state = PresenceState.PRESENT if calls["n"] == 1 else PresenceState.ABSENT
+        return ([None] * len(ts), [b"f"] * len(ts), [state] * len(ts))
 
     monkeypatch.setattr(sb, "_probe_scorebar_context", fake_probe)
     monkeypatch.setattr(sb, "_band_mad_min", lambda *a, **k: 1.23)
@@ -1431,7 +1437,7 @@ def test_classify_localize_both_present_is_in_match(monkeypatch):
         lambda v, ts, h, w, *, with_localize=False, with_lowres=True: (
             [None] * len(ts),
             [b"f"] * len(ts),
-            [True] * len(ts),
+            [PresenceState.PRESENT] * len(ts),
         ),
     )
     monkeypatch.setattr(sb, "_band_mad_min", lambda *a, **k: 5.0)
@@ -1450,7 +1456,7 @@ def test_classify_localize_both_absent_is_non_fl(monkeypatch):
         lambda v, ts, h, w, *, with_localize=False, with_lowres=True: (
             [None] * len(ts),
             [b"f"] * len(ts),
-            [False] * len(ts),
+            [PresenceState.ABSENT] * len(ts),
         ),
     )
     monkeypatch.setattr(sb, "_band_mad_min", lambda *a, **k: 0.1)
@@ -1470,14 +1476,19 @@ def test_classify_localize_reprobe_rescues_to_boundary(monkeypatch):
 
     calls = {"n": 0}
     # call 1 pre absent, call 2 post absent, call 3 pre_re present, call 4 post_re absent
-    per_call_present = {1: False, 2: False, 3: True, 4: False}
+    per_call_state = {
+        1: PresenceState.ABSENT,
+        2: PresenceState.ABSENT,
+        3: PresenceState.PRESENT,
+        4: PresenceState.ABSENT,
+    }
 
     def fake_probe(
         video, ts, height, workers, *, with_localize=False, with_lowres=True
     ):
         calls["n"] += 1
-        present = per_call_present[calls["n"]]
-        return ([None] * len(ts), [b"f"] * len(ts), [present] * len(ts))
+        state = per_call_state[calls["n"]]
+        return ([None] * len(ts), [b"f"] * len(ts), [state] * len(ts))
 
     monkeypatch.setattr(sb, "_probe_scorebar_context", fake_probe)
     monkeypatch.setattr(sb, "_band_mad_min", lambda *a, **k: 1.23)
@@ -1589,7 +1600,11 @@ def test_merge_gap_probe_uses_localize_path(monkeypatch):
     ):
         captured["with_localize"] = with_localize
         # gap shows no scorebar by either signal -> eligible to merge.
-        return ([None] * len(points), [b"f"] * len(points), [False] * len(points))
+        return (
+            [None] * len(points),
+            [b"f"] * len(points),
+            [PresenceState.ABSENT] * len(points),
+        )
 
     monkeypatch.setattr(sb, "_probe_scorebar_context", fake_probe)
     regions = [(10.0, 12.0), (30.0, 32.0)]
@@ -1679,3 +1694,53 @@ def test_probe_scorebar_context_logs_probe_failure(monkeypatch, caplog):
     with caplog.at_level(logging.DEBUG, logger="allaganeye.video.scorebar"):
         sb._probe_scorebar_context(Path("x.mkv"), [1.0], 180, 1)
     assert any("probe" in r.message.lower() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# #824 site 4/5: tri-state migration tests
+# ---------------------------------------------------------------------------
+
+
+def test_localize_present_from_raw_tristate():
+    # #824 site 4: 表現形式のみ変更 (semantics は docstring 分離済みのまま)。
+    assert sb._localize_present_from_raw(None) is PresenceState.UNKNOWN
+    blank = np.full((1080, 1920, 3), 40, dtype=np.uint8).tobytes()
+    assert sb._localize_present_from_raw(blank) is PresenceState.ABSENT
+
+
+def test_majority_presence_excludes_unknown_from_denominator():
+    P, A, U = PresenceState.PRESENT, PresenceState.ABSENT, PresenceState.UNKNOWN
+    assert sb._majority_presence([P, U, U]) is True  # 有効票 1, present 1
+    assert sb._majority_presence([P, A, U]) is True  # 有効票 2, present 1 >= ceil(2/2)
+    assert sb._majority_presence([A, A, P]) is False
+    assert sb._majority_presence([U, U, None]) is None  # 有効票ゼロ
+    assert sb._majority_presence([]) is None  # 有効票ゼロ (空入力) も None
+
+
+def test_probe_scorebar_context_localize_results_are_tristate(monkeypatch):
+    # with_localize=True で probe 失敗 frame は UNKNOWN、成功 miss は ABSENT。
+    # scorebar_results (bool|None) は従来のまま (OBS 不変 pin)。
+    from pathlib import Path
+
+    def fake_probe_rgb(v, t, h):
+        return b"lo"
+
+    def fake_probe_hires(v, t):
+        # t=1.0 -> None (probe failure) -> UNKNOWN; t=2.0 -> blank frame -> ABSENT
+        if t == 1.0:
+            return None
+        return np.full((1080, 1920, 3), 40, dtype=np.uint8).tobytes()
+
+    monkeypatch.setattr(sb, "_probe_frame_rgb", fake_probe_rgb)
+    monkeypatch.setattr(sb, "_probe_frame_rgb_hires", fake_probe_hires)
+    # has_scorebar_v2 returns False for both so scorebar_results are unchanged
+    monkeypatch.setattr(sb, "_has_scorebar_v2", lambda raw: False)
+
+    _scorebar, _raw, loc = sb._probe_scorebar_context(
+        Path("x.mp4"), [1.0, 2.0], height=180, workers=1, with_localize=True
+    )
+    # scorebar_results must remain bool (OBS path unaffected)
+    assert _scorebar == [False, False]
+    # localize results: probe failure -> UNKNOWN, blank frame -> ABSENT
+    assert loc[0] is PresenceState.UNKNOWN
+    assert loc[1] is PresenceState.ABSENT

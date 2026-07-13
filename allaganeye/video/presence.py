@@ -25,17 +25,9 @@ from allaganeye.video.detector import (
     _SCOREBAR_V2_PROBE_WIDTH,
     _probe_frame_rgb_hires,
 )
+from allaganeye.video.probe_state import PresenceSample, PresenceState
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class PresenceSample:
-    """One time-grid sample: whether the scorebar is present at ``time``."""
-
-    time: float
-    present: bool
-    confidence: float
 
 
 @dataclass(frozen=True)
@@ -61,6 +53,10 @@ def segment_presence(
     - present runs shorter than ``t_min_match`` are discarded (transient
       false positives).
 
+    UNKNOWN samples do not contribute to a present run (same behaviour as
+    ABSENT: breaks the current run).  The explicit ``state is
+    PresenceState.PRESENT`` comparison makes the folding visible to grep.
+
     ``samples`` must be sorted by ``time`` ascending.  Returns matches with
     start/end at the first/last present sample time of each surviving run
     (boundary refinement to sub-stride precision happens separately in
@@ -70,7 +66,7 @@ def segment_presence(
     present_runs: list[list[float]] = []
     current: list[float] | None = None
     for s in samples:
-        if s.present:
+        if s.state is PresenceState.PRESENT:
             if current is None:
                 current = [s.time, s.time]
             else:
@@ -123,31 +119,52 @@ def refine_boundary(
     return (lo_true + hi_false) / 2.0
 
 
-def localize_present_at(
-    video_path: Path, timestamp: float, *, raise_on_probe_failure: bool = False
-) -> PresenceSample:
-    """Probe one hi-res frame and report scorebar presence at ``timestamp``.
+def _probe_present_sample_raising(video_path: Path, timestamp: float) -> PresenceSample:
+    """scan_presence default sampler variant: raises VideoProcessingError on decode error.
 
-    Bridges the production frame source (``_probe_frame_rgb_hires``, 1920x1080
-    RGB24) and the P1 localizer (``localize_scorebar``).  Probe failure or
-    a None localization both yield ``present=False`` (safe absent).
-
-    ``raise_on_probe_failure=True`` は probe 失敗 (raw None) を
-    ``VideoProcessingError`` として raise する。``scan_presence`` がこの seam で
-    decode 系統故障 (全 probe None) を per-probe 隔離 + 全滅 fail-loud 判定に
-    乗せる (R4: raw None を absent 変換だけにすると系統故障が silent 化する)。
+    raw None (decode 失敗) -> UNKNOWN (debug log) / decode 成功 + localizer miss ->
+    ABSENT / hit -> PRESENT。VideoProcessingError は raise のまま caller に渡す。
+    これにより scan_presence の per-probe except が first_exc を捕捉でき、系統故障
+    (ffmpeg 不在等) の代表原因を fail-loud まで保全する (codex finding sec.5.2)。
+    外部契約は localize_present_at (例外を漏らさない) を使うこと。
     """
-    raw = _probe_frame_rgb_hires(video_path, timestamp)
-    if raw is None and raise_on_probe_failure:
-        raise VideoProcessingError(
-            f"hi-res probe returned no frame at t={timestamp:.3f}s"
+    raw = _probe_frame_rgb_hires(
+        video_path, timestamp
+    )  # may raise VideoProcessingError
+    if raw is None:
+        logger.debug("presence probe decode failed at t=%.3fs -> UNKNOWN", timestamp)
+        return PresenceSample(
+            time=timestamp, state=PresenceState.UNKNOWN, confidence=0.0
         )
     loc = localize_from_rgb_bytes(
         raw, height=_SCOREBAR_V2_PROBE_HEIGHT, width=_SCOREBAR_V2_PROBE_WIDTH
     )
     if loc is None:
-        return PresenceSample(time=timestamp, present=False, confidence=0.0)
-    return PresenceSample(time=timestamp, present=True, confidence=loc.confidence)
+        return PresenceSample(
+            time=timestamp, state=PresenceState.ABSENT, confidence=0.0
+        )
+    return PresenceSample(
+        time=timestamp, state=PresenceState.PRESENT, confidence=loc.confidence
+    )
+
+
+def localize_present_at(video_path: Path, timestamp: float) -> PresenceSample:
+    """Probe one hi-res frame and report scorebar presence (tri-state, #824).
+
+    raw None (decode 失敗) -> UNKNOWN (debug log) / decode 成功 + localizer miss
+    -> ABSENT / hit -> PRESENT。decode 例外は caller に漏らさない (#824 sec.5.2)。
+    VideoProcessingError も raw None と同様 UNKNOWN に写像する。
+    Thin delegation to _probe_present_sample_raising with exception-catch wrapper.
+    """
+    try:
+        return _probe_present_sample_raising(video_path, timestamp)
+    except VideoProcessingError:
+        logger.debug(
+            "presence probe VideoProcessingError at t=%.3fs -> UNKNOWN", timestamp
+        )
+        return PresenceSample(
+            time=timestamp, state=PresenceState.UNKNOWN, confidence=0.0
+        )
 
 
 def _grid_timestamps(duration: float, stride: float) -> list[float]:
@@ -172,42 +189,62 @@ def scan_presence(
     """Sample scorebar presence across the whole video on a uniform grid.
 
     ``sample_fn`` maps a timestamp to a :class:`PresenceSample`; it defaults
-    to :func:`localize_present_at` bound to ``video_path`` (the production
-    path).  Tests inject a synthetic ``sample_fn`` to stay fast.  Results are
-    returned sorted by time ascending.
+    to :func:`_probe_present_sample_raising` bound to ``video_path`` (the
+    production path -- the raising variant, so the per-probe except below
+    captures the representative cause for the all-UNKNOWN fail-loud.
+    External callers keep the no-leak :func:`localize_present_at`).  Tests
+    inject a synthetic ``sample_fn`` to stay fast.  Results are returned
+    sorted by time ascending.
+
+    Per-probe exceptions are mapped to UNKNOWN samples (per-probe isolation,
+    #824 sec.5.2).  If ALL samples are UNKNOWN a VideoProcessingError is raised
+    (fail-loud: systemic probe failure).  If some are UNKNOWN a single warning
+    is emitted with the count and time range.
     """
-
-    def _default(t: float) -> PresenceSample:
-        # raw None (decode 失敗) も probe 失敗として隔離・全滅判定に乗せる (R4)。
-        return localize_present_at(video_path, t, raise_on_probe_failure=True)
-
-    fn = sample_fn if sample_fn is not None else _default
+    fn = (
+        sample_fn
+        if sample_fn is not None
+        else (lambda t: _probe_present_sample_raising(video_path, t))
+    )
 
     times = _grid_timestamps(duration, stride)
     results: dict[float, PresenceSample] = {}
-    failures: list[VideoProcessingError] = []
+    first_exc: VideoProcessingError | None = None
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(fn, t): t for t in times}
         for fut in futures:
             t = futures[fut]
             try:
                 results[t] = fut.result()
-            except VideoProcessingError as e:
-                # per-probe 縮退 (PR #823 R3): 同型 pool (_probe_scorebar_context /
-                # _refine_blackout_regions) と同じく 1 probe の失敗で全 scan を
-                # 落とさず safe absent にする。
-                results[t] = PresenceSample(time=t, present=False, confidence=0.0)
-                failures.append(e)
-    if failures:
-        if len(failures) == len(times):
-            # 全 probe 失敗は系統故障 (ffmpeg 不在等)。silent な全 absent にせず
-            # fail-loud で上流に伝える。
-            raise failures[0]
-        # 部分故障も痕跡を残す (R5 可視化): absent 化した probe 数を warning。
+            except VideoProcessingError as exc:
+                # 単発 probe の例外も UNKNOWN に写像 (per-probe 隔離、#824 sec.5.2)
+                results[t] = PresenceSample(
+                    time=t, state=PresenceState.UNKNOWN, confidence=0.0
+                )
+                if first_exc is None:
+                    first_exc = exc
+    unknown = [t for t in times if results[t].state is PresenceState.UNKNOWN]
+    if unknown:
+        if len(unknown) == len(times):
+            # Determine representative cause: prefer the caught exception message;
+            # fall back to marker string when the default sampler returned UNKNOWN
+            # (_probe_present_sample_raising maps raw None -> UNKNOWN without
+            # raising; only decode exceptions raise into the except above).
+            if first_exc is not None:
+                cause: str | VideoProcessingError = first_exc
+            else:
+                cause = "decode returned no frame"
+            raise VideoProcessingError(
+                f"all {len(times)} presence probes UNKNOWN "
+                f"(systemic probe failure): {cause}"
+            ) from (first_exc if first_exc is not None else None)
         logger.warning(
-            "%d/%d presence probes failed; treated as absent",
-            len(failures),
+            "%d/%d presence probes UNKNOWN (probe failure); "
+            "treated as non-present in segmentation (time range %.1f-%.1fs)",
+            len(unknown),
             len(times),
+            min(unknown),
+            max(unknown),
         )
     return [results[t] for t in times]
 
@@ -235,20 +272,15 @@ def detect_matches_by_presence(
     coarse = segment_presence(samples, t_gap=t_gap, t_min_match=t_min_match)
 
     def present_at(t: float) -> bool:
-        try:
-            return localize_present_at(
-                video_path, t, raise_on_probe_failure=True
-            ).present
-        except VideoProcessingError:
-            # refine 中の probe 失敗は absent 扱いで続行するが、境界が最大
-            # 1 stride ずれうるため silent にしない (R5 可視化。probe-failure
-            # semantics の統一は設計 issue で後続)。
+        sample = localize_present_at(video_path, t)
+        if sample.state is PresenceState.UNKNOWN:
             logger.warning(
-                "presence probe failed during boundary refine at t=%.3fs; "
+                "presence probe UNKNOWN during boundary refine at t=%.3fs; "
                 "treating as absent",
                 t,
             )
             return False
+        return sample.state is PresenceState.PRESENT
 
     refined: list[PresenceMatch] = []
     for m in coarse:

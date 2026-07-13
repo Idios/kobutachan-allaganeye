@@ -584,6 +584,29 @@ def test_band_consensus_balanced_split_median_falls_between_clusters():
     assert abs(region.x - 600 / 1920) < 0.05
 
 
+def test_band_region_localize_fn_unknown_sentinel_not_counted():
+    # #824 site 6/10: UNKNOWN は hit でも miss でもなく consensus から除外。
+    from allaganeye.video.probe_state import PresenceState
+
+    def _loc(y_top: int) -> ScorebarLocalization:
+        return ScorebarLocalization(
+            x_left=240, x_right=1680, y_top=y_top, y_bottom=y_top + 45, confidence=0.9
+        )
+
+    calls = iter(
+        [PresenceState.UNKNOWN] + [_loc(y_top=12)] * 3 + [PresenceState.UNKNOWN] * 4
+    )
+    region = detect_scorebar_band_region(
+        duration=80.0,
+        probe_w=1920,
+        probe_h=1080,
+        localize_fn=lambda t: next(calls),
+        num_samples=8,
+        min_hits=2,
+    )
+    assert not region.is_full_frame()  # 有効 3 hit で consensus 成立
+
+
 # ---------------------------------------------------------------------------
 # A-Task 1: detect_mask_free_region + _maximal_ones_rectangle
 # ---------------------------------------------------------------------------

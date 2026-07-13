@@ -281,16 +281,46 @@ def _resolve_detect_region(
         None (解決成功)。metadata.json capture_regions.fallback_reason へ記録される。
     """
     from allaganeye.video.capture_region import (
+        ScorebarLocalization,
+        _BAND_CONSENSUS_MIN_HITS,
         detect_scorebar_band_region,
         localize_from_rgb_bytes,
     )
+    from allaganeye.video.probe_state import PresenceState
+
+    unknown_count = 0
+    valid_votes = 0  # closure returns that are ScorebarLocalization instances
+    total_probes = 0
+    unknown_times: list[float] = []
 
     def _localize_at(t: float):
-        return localize_from_rgb_bytes(
-            _probe_frame_rgb_hires(video_path, t),
+        nonlocal unknown_count, valid_votes, total_probes
+        total_probes += 1
+        raw = _probe_frame_rgb_hires(video_path, t)
+        if raw is None:
+            unknown_count += 1
+            unknown_times.append(t)
+            logger.debug("anchor probe decode failed at t=%.3fs -> UNKNOWN", t)
+            return PresenceState.UNKNOWN
+        result = localize_from_rgb_bytes(
+            raw,
             height=_SCOREBAR_V2_PROBE_HEIGHT,
             width=_SCOREBAR_V2_PROBE_WIDTH,
         )
+        if isinstance(result, ScorebarLocalization):
+            valid_votes += 1
+        return result
+
+    # Local helper to emit the UNKNOWN-probe warning (dedupes exception + success paths).
+    def _warn_unknowns() -> None:
+        if unknown_count > 0:
+            logger.warning(
+                "anchor probes: %d/%d UNKNOWN (probe failure; time range %.1f-%.1fs)",
+                unknown_count,
+                total_probes,
+                min(unknown_times),
+                max(unknown_times),
+            )
 
     try:
         region = detect_scorebar_band_region(
@@ -306,13 +336,19 @@ def _resolve_detect_region(
         logger.warning(
             "scorebar band anchor failed; degrading to FULL_FRAME", exc_info=True
         )
+        _warn_unknowns()
         return FULL_FRAME, "anchor_error"
+    _warn_unknowns()
     if region.is_full_frame():
         # consensus-miss (非例外縮退) も silent にしない (R5): --vtuber 明示 run
         # が FULL_FRAME (汚染 path) で続行することを痕跡に残す。
         logger.warning(
-            "band anchor found no scorebar-band consensus; "
-            "continuing with FULL_FRAME (--vtuber)"
+            "band anchor found no scorebar-band consensus "
+            "(valid votes %d/%d, min_hits %d); "
+            "continuing with FULL_FRAME (--vtuber)",
+            valid_votes,
+            total_probes,
+            _BAND_CONSENSUS_MIN_HITS,
         )
         return region, "consensus_miss"
     logger.debug("band anchor resolved: %s", region)
@@ -373,14 +409,33 @@ def _resolve_masked_region(
             times = [duration_hint * (i + 1) / (n + 1) for i in range(n)]
         max_workers = max(1, min(len(times), workers or os.cpu_count() or 4))
         frames: list[np.ndarray] = []
+        failed_times: list[float] = []
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            for frame in pool.map(lambda t: _probe_frame_gray2d(video_path, t), times):
-                if frame is not None:
-                    frames.append(frame)
+            results = list(
+                pool.map(lambda t: _probe_frame_gray2d(video_path, t), times)
+            )
+        for t, frame in zip(times, results, strict=True):
+            if frame is not None:
+                frames.append(frame)
+            else:
+                failed_times.append(t)
+        dropped = len(failed_times)
+        if dropped > 0:
+            logger.warning(
+                "masked region probes: %d/%d failed (decode); "
+                "time range %.1f-%.1fs; continuing with valid frames",
+                dropped,
+                len(times),
+                min(failed_times),
+                max(failed_times),
+            )
         if len(frames) < 2:
             return FULL_FRAME
         return detect_mask_free_region(frames)
     except Exception:
+        logger.warning(
+            "masked region detection failed; degrading to FULL_FRAME", exc_info=True
+        )
         return FULL_FRAME
 
 
