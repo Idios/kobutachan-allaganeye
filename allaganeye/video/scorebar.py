@@ -364,12 +364,17 @@ def _classify_blackout_localize(
     band_region: CaptureRegion = FULL_FRAME,
     anchor: "ScorebarLocalization | None" = None,
 ) -> str:
-    """Classify a blackout by position-independent scorebar presence (VTuber).
+    """Classify a blackout by scorebar presence for the localize (masked/VTuber) path.
 
     Uses ``localize_scorebar`` majority on 3 pre + 3 post frames as the sole
     signal (motion is NOT ANDed in Phase 2 -- P2-a / spec section 8.1).  Mirrors
     the v2 re-probe fallback (#524) for the both-absent case.  Band-MAD is
     emitted to the log for Phase 3 calibration but does not affect the label.
+
+    When ``anchor`` is set, presence is evaluated at-anchor via
+    ``_presence_at_anchor_from_raw`` (per-video v2-equivalent, no afterimage FN);
+    ``anchor=None`` falls back to position-independent localize (degraded path,
+    bit-exact with pre-B4 behavior).
 
     Returns ``"in_match"`` / ``"match_boundary"`` / ``"non_fl"`` / ``"unknown"``.
     """
@@ -675,14 +680,25 @@ def filter_blackouts_with_scorebar(
 ) -> tuple[list[tuple[float, float]], list[str]]:
     """Filter blackout regions using scorebar context and duration.
 
-    Removes:
-    - Short ``"in_match"`` blackouts (< 3.5s, e.g. character down, #107)
-    - ``"non_fl"`` blackouts (non-FL content boundaries, #109)
+    Two classification paths (selected by ``localize``):
 
-    Keeps:
-    - Long ``"in_match"`` blackouts (>= 3.5s, FL match boundaries)
-    - ``"match_boundary"`` (FL match start/end)
-    - ``"unknown"`` (probe failure -> safe side, keep boundary)
+    OBS path (``localize=False``, default):
+    - Removes short ``"in_match"`` blackouts (< 3.5s, e.g. character down, #107)
+    - Removes ``"non_fl"`` blackouts (non-FL content boundaries, #109)
+    - Keeps long ``"in_match"`` blackouts (>= 3.5s, FL match boundaries)
+    - Keeps ``"match_boundary"`` (FL match start/end)
+    - Keeps ``"unknown"`` (probe failure -> safe side, keep boundary)
+
+    localize path (``localize=True``, #822 masked-OBS):
+    - Removes ``"in_match"`` at ANY duration (at-anchor evaluation has no v2
+      afterimage FN, so the keep-long-in_match rule no longer applies)
+    - Keeps ``"non_fl"`` as boundary candidate (staging zone-in frames lack a
+      detectable bar for ~60s; spurious fake segments are removed by Layer 2)
+    - Keeps ``"match_boundary"`` and ``"unknown"`` (same as OBS path)
+
+    ``anchor`` param: a per-video ``ScorebarLocalization`` resolved by
+    ``_resolve_scorebar_anchor`` before calling this function.  ``None`` means
+    position-independent localize (degraded path, bit-exact with pre-B4 behavior).
 
     Audio promotion (#288):
     When *audio_hits* is provided, a blackout initially classified as
@@ -746,17 +762,19 @@ def filter_blackouts_with_scorebar(
             # in_match is non-boundary at any duration.  OBS path: only short
             # in_match (<3.5s) is removed; long in_match is kept as boundary.
             if localize:
-                reason = "in_match (localize path: non-boundary at any duration)"
+                logger.info(
+                    "REMOVE [%.1f-%.1f] (%.1fs): in_match (localize path: non-boundary at any duration)",
+                    region[0],
+                    region[1],
+                    region_duration,
+                )
             else:
-                reason = "short in_match"
-            logger.info(
-                "REMOVE [%.1f-%.1f] (%.1fs): %s (%s)",
-                region[0],
-                region[1],
-                region_duration,
-                classification,
-                reason,
-            )
+                logger.info(
+                    "REMOVE [%.1f-%.1f] (%.1fs): short in_match",
+                    region[0],
+                    region[1],
+                    region_duration,
+                )
             continue
         if classification == "non_fl" and not localize:
             # OBS path: non_fl is removed (non-FL content boundary).

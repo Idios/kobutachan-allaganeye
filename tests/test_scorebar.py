@@ -1909,8 +1909,6 @@ def test_classify_localize_uses_anchor_presence(monkeypatch):
         anchor_calls.append((raw, anc))
         return PresenceState.PRESENT
 
-    monkeypatch.setattr(sb, "_presence_at_anchor_from_raw", fake_presence_at_anchor)
-
     def fake_probe(
         vp, ts, height, workers, *, with_localize=False, with_lowres=True, anchor=None
     ):
@@ -1937,33 +1935,73 @@ def test_classify_localize_uses_anchor_presence(monkeypatch):
     )
 
 
-def test_probe_scorebar_context_anchor_none_matches_legacy(monkeypatch):
-    """with_localize=True + anchor=None yields identical localize_results to legacy path.
+def test_probe_scorebar_context_routes_localize_through_anchor_presence(monkeypatch):
+    """#822 B4 junction pin: with_localize=True no localize_results generation routes
+    _presence_at_anchor_from_raw(raw, anchor) through the real _probe_scorebar_context
+    execution path (fake-probe threading tests give false-green for this regression,
+    #844 class).
 
-    Delegation identity: _presence_at_anchor_from_raw(raw, None) must produce
-    the same result as _localize_present_from_raw(raw).
+    Setup mirrors test_probe_scorebar_context_localize_results_are_tristate:
+    monkeypatch _probe_frame_rgb + _probe_frame_rgb_hires so no real ffmpeg is needed;
+    _has_scorebar_v2 returns False so the v2 scorebar side stays quiet.
+    Spy wraps the real _presence_at_anchor_from_raw and records calls.
+
+    Assertions:
+    (a) with anchor specified: spy receives the anchor object on each hi-res frame.
+    (b) with anchor=None: spy receives None (delegation path).
     """
-    from allaganeye.video.scorebar import _presence_at_anchor_from_raw
+    from allaganeye.video.capture_region import ScorebarLocalization
 
-    calls_new = []
-    calls_legacy = []
+    my_anchor = ScorebarLocalization(
+        x_left=614, x_right=1305, y_top=12, y_bottom=57, confidence=1.0
+    )
 
-    def patched_at_anchor(raw, anc):
-        r = sb._localize_present_from_raw(raw)
-        calls_new.append(r)
-        return r
+    # Use a real hires frame (blank 1920x1080 RGB) so _presence_at_anchor_from_raw
+    # does not short-circuit on raw=None.
+    import numpy as np
 
-    def patched_legacy(raw):
-        r = PresenceState.ABSENT  # stub
-        calls_legacy.append(r)
-        return r
+    hires_bytes = np.full((1080, 1920, 3), 40, dtype=np.uint8).tobytes()
 
-    # With anchor=None, _presence_at_anchor_from_raw delegates to _localize_present_from_raw.
-    # Verify the delegation contract directly (unit test of the helper).
-    monkeypatch.setattr(sb, "_localize_present_from_raw", patched_legacy)
-    result = _presence_at_anchor_from_raw(b"\x00", None)
-    assert result is PresenceState.ABSENT
-    assert len(calls_legacy) == 1, "delegation to _localize_present_from_raw must occur"
+    monkeypatch.setattr(sb, "_probe_frame_rgb", lambda v, t, h: b"lo")
+    monkeypatch.setattr(sb, "_probe_frame_rgb_hires", lambda v, t: hires_bytes)
+    monkeypatch.setattr(sb, "_has_scorebar_v2", lambda raw: False)
+
+    # Spy: wrap the REAL _presence_at_anchor_from_raw and record call args.
+    real_fn = sb._presence_at_anchor_from_raw
+    spy_calls: list[tuple] = []
+
+    def spy_presence(raw, anc):
+        spy_calls.append((raw, anc))
+        return real_fn(raw, anc)
+
+    monkeypatch.setattr(sb, "_presence_at_anchor_from_raw", spy_presence)
+
+    # (a) anchor specified -> spy must receive my_anchor
+    spy_calls.clear()
+    sb._probe_scorebar_context(
+        Path("x.mp4"),
+        [1.0, 2.0],
+        height=180,
+        workers=1,
+        with_localize=True,
+        anchor=my_anchor,
+    )
+    assert len(spy_calls) == 2, (
+        f"expected 2 spy calls (one per unique ts), got {len(spy_calls)}"
+    )
+    assert all(anc is my_anchor for _, anc in spy_calls), (
+        "_presence_at_anchor_from_raw must receive the anchor for each frame"
+    )
+
+    # (b) anchor=None -> spy must receive None (position-independent delegation path)
+    spy_calls.clear()
+    sb._probe_scorebar_context(
+        Path("x.mp4"), [1.0], height=180, workers=1, with_localize=True, anchor=None
+    )
+    assert len(spy_calls) == 1
+    assert spy_calls[0][1] is None, (
+        "anchor=None must be forwarded to _presence_at_anchor_from_raw as None"
+    )
 
 
 def test_merge_gap_probes_at_anchor(monkeypatch):
