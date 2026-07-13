@@ -17,6 +17,7 @@ from allaganeye.video.capture_region import (
     detect_scorebar_band_region,
     iou,
     localize_scorebar,
+    localize_scorebar_at_anchor,
     region_mean,
     top_edge_error_px,
 )
@@ -750,3 +751,90 @@ class TestRegionTimelineSerialization:
         d = {"coarse": FULL_FRAME.to_dict(), "segments": []}
         restored = RegionTimeline.from_dict(d)
         assert restored.fallback_reason is None
+
+
+# ---------------------------------------------------------------------------
+# Task B2: at-anchor presence primitive
+# ---------------------------------------------------------------------------
+
+
+def _anchor(y_top=12, x_left=614, x_right=1305):
+    return ScorebarLocalization(
+        x_left=x_left, x_right=x_right, y_top=y_top, y_bottom=y_top + 45, confidence=1.0
+    )
+
+
+def _hires_with_two_bars(anchor_y: int, fp_y: int):
+    """1920x1080 RGB with two scorebar-shaped bands.
+
+    The anchor bar is at anchor_y (same x as _anchor: x_left=614, x_right=1305).
+    The fp_y bar is placed at a different y position with the same x range but
+    with HIGHER saturation/edge contrast (stripes are more intense) so that the
+    full-scan localize_scorebar *could* prefer it by margin. The at-anchor
+    primitive must still find the anchor_y bar because fp_y is outside the
+    y-tolerance window.
+
+    Construction: both bars use _hires_with_scorebar_at geometry. The FP bar
+    is made stronger by using brighter stripe colors (255 vs 200) so its emblem
+    margin is nominally higher, making full-scan prefer it when fp_y is within
+    the scanned y range.
+    """
+    from allaganeye.video.detector import (
+        _EMBLEM_RELATIVE_POSITIONS,
+        _SCOREBAR_V2_PROBE_HEIGHT,
+        _SCOREBAR_V2_PROBE_WIDTH,
+    )
+
+    W, H = _SCOREBAR_V2_PROBE_WIDTH, _SCOREBAR_V2_PROBE_HEIGHT
+    f = np.full((H, W, 3), 40, dtype=np.uint8)
+
+    x_left, x_right = 614, 1305
+    bar_w = x_right - x_left
+
+    # Draw anchor bar (weaker: normal intensity)
+    f[anchor_y : anchor_y + 45, x_left : x_right + 1] = (50, 50, 200)
+    for _name, cx_rel, hw_rel, ey1, ey2 in _EMBLEM_RELATIVE_POSITIONS:
+        cx = int(x_left + cx_rel * bar_w)
+        hw = max(2, int(hw_rel * bar_w))
+        region = f[anchor_y + ey1 : anchor_y + ey2, cx - hw : cx + hw]
+        for col in range(region.shape[1]):
+            region[:, col] = (200, 30, 30) if (col // 2) % 2 == 0 else (0, 0, 0)
+
+    # Draw FP bar at fp_y (stronger: higher brightness stripe, same x range)
+    # Brighter stripes produce higher sat/edge metrics -> higher emblem margin.
+    f[fp_y : fp_y + 45, x_left : x_right + 1] = (60, 60, 220)
+    for _name, cx_rel, hw_rel, ey1, ey2 in _EMBLEM_RELATIVE_POSITIONS:
+        cx = int(x_left + cx_rel * bar_w)
+        hw = max(2, int(hw_rel * bar_w))
+        region = f[fp_y + ey1 : fp_y + ey2, cx - hw : cx + hw]
+        for col in range(region.shape[1]):
+            region[:, col] = (255, 10, 10) if (col // 2) % 2 == 0 else (0, 0, 0)
+
+    return f
+
+
+def test_at_anchor_hits_bar_at_anchor_position():
+    f = _hires_with_scorebar_at(y_top=18, x_left=614, x_right=1305)
+    loc = localize_scorebar_at_anchor(f, _anchor())
+    assert loc is not None and abs(loc.y_top - 18) <= 6
+
+
+def test_at_anchor_rejects_bar_far_from_anchor_y():
+    # Empirical FP position (lobby HUD y~504) is outside anchor band (12+-60) -> absent.
+    f = _hires_with_scorebar_at(y_top=500, x_left=614, x_right=1305)
+    assert localize_scorebar_at_anchor(f, _anchor()) is None
+
+
+def test_at_anchor_rejects_run_with_low_x_iou():
+    # y is within anchor band but x-IoU < 0.5 -> gated (positional consistency).
+    f = _hires_with_scorebar_at(y_top=18, x_left=100, x_right=700)
+    assert localize_scorebar_at_anchor(f, _anchor()) is None
+
+
+def test_at_anchor_finds_bar_even_when_stronger_fp_elsewhere():
+    # best-hit defeat case: weak true bar at anchor + strong FP at fp_y=300.
+    # Full scan (localize_scorebar) may return FP; at-anchor must return true bar.
+    # fp_y=300 is outside anchor band (12+-60=[-48,72]) -> only anchor_y=18 survives.
+    f = _hires_with_two_bars(anchor_y=18, fp_y=300)
+    loc = localize_scorebar_at_anchor(f, _anchor())
+    assert loc is not None and abs(loc.y_top - 18) <= 6
