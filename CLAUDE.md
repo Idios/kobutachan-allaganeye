@@ -95,10 +95,10 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `video/probe.py` | ffprobe でメタデータ取得（解像度、fps、長さ） |
 | `video/detector.py` | ffmpeg 並列プローブで暗転検知、試合境界抽出（CPU モード） |
 | `video/gpu_detector.py` | GPU アクセラレーション検知（チャンク並列デコード） |
-| `video/capture_region.py` | 検出 ROI（`CaptureRegion`）の解決。scorebar 帯 anchor の多フレーム consensus（`detect_scorebar_band_region`）/ FULL_FRAME 縮退。`--vtuber` gate 内でのみ有効（L3 Phase 1。検出 subsystem の現状 map は [docs/detection-map.md](docs/detection-map.md)）。解決結果は metadata.json `capture_regions` に永続化 (#810、RegionTimeline serialize 形 + 縮退 provenance) |
+| `video/capture_region.py` | 検出 ROI（`CaptureRegion`）の解決。scorebar 帯 anchor の多フレーム consensus（`detect_scorebar_band_region` / `consensus_scorebar_localization`）/ FULL_FRAME 縮退。`--vtuber` gate 内でのみ有効（L3 Phase 1）。`localize_scorebar_at_anchor`（anchor ±60px 帯 + x-IoU gate、per-video v2 相当、#822）は masked fallback の at-anchor presence primitive として共用。検出 subsystem の現状 map は [docs/detection-map.md](docs/detection-map.md)。解決結果は metadata.json `capture_regions` に永続化 (#810、RegionTimeline serialize 形 + 縮退 provenance) |
 | `video/presence.py` | presence（scorebar 在/不在）ベースの試合検出エンジン + GT 突合ハーネス基盤（L3 Phase 1。2 信号 fusion 再アーキ spec 参照） |
 | `video/probe_state.py` | probe 失敗縮退の統一契約型（`PresenceState` tri-state / `PresenceSample` / `ProbeFailurePolicy`、#824）。presence / capture_region / scorebar / detector から import される中立 module（circular import 回避） |
-| `video/scorebar.py` | スコアバーフィルタリング（暗転分類・試合内/非FL判定）+ 音声昇格 |
+| `video/scorebar.py` | スコアバーフィルタリング（暗転分類・試合内/非FL判定）+ 音声昇格。masked path では `_presence_at_anchor_from_raw`（at-anchor tri-state）を使い、分類規則を変更（in_match 全除去 / non_fl keep）。masked fallback の 2 層構成（Layer 1 anchor 解決 + Layer 2 segment 検証）は [#822 spec](docs/superpowers/specs/2026-07-11-issue-822-masked-oversplit-anchor-design.md) および [docs/detection-map.md §5.4](docs/detection-map.md) を参照 |
 | `video/splitter.py` | FFmpeg で動画分割（-c copy） |
 | `audio/extract.py` | ffmpeg で音声 PCM 抽出 |
 | `audio/features.py` | log-mel スペクトログラム計算と保存 |
