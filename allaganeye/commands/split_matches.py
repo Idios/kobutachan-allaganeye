@@ -695,6 +695,9 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
     cached_fallback = bool(data.get("masked_fallback_used", False))
     # masked_algo は masked 影響 run のみ表示 (診断上意味を持つのは masked 経路のみ)。
     cached_algo = int(params.get("masked_algo", 1))
+    # NOTE: _load_cache の masked_affected と異なり config.masked を含めない
+    # (こちらは cache 記録値の診断表示で、invalidation 判定ではない。live config
+    # と cache が食い違う case は params 比較が先に miss させるため到達しない)。
     masked_affected = cached_masked or cached_fallback
     # region も他 token 同様 raw cache 記録値を正として表示する (#810)。legacy
     # cache では metadata.json 側が FULL_FRAME を合成しても表示は unknown の
