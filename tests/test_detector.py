@@ -4093,7 +4093,11 @@ def test_validate_segments_all_unknown_keeps_with_warning(monkeypatch, caplog):
 def test_validate_segments_failsafe_keeps_all_when_everything_dropped(
     monkeypatch, caplog
 ):
-    """When all segments would be dropped, fail-safe returns originals with warning."""
+    """When all segments would be dropped, fail-safe returns originals with warning.
+
+    stats["masked_segments_dropped"] must NOT be incremented -- the drops were
+    rolled back and reporting them would be misleading (codex R2 fix).
+    """
     import logging
 
     import allaganeye.video.detector as detector
@@ -4113,18 +4117,22 @@ def test_validate_segments_failsafe_keeps_all_when_everything_dropped(
     monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
     monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
 
+    stats: DetectionStats = {}
     with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
         result = detector._validate_match_segments(
-            Path("x.mp4"), segments, anchor, workers=2, stats=None
+            Path("x.mp4"), segments, anchor, workers=2, stats=stats
         )
 
     # Fail-safe: original segments returned unchanged
     assert len(result) == 2
     assert result[0]["start"] == 100.0
     assert result[1]["start"] == 750.0
-    # Fail-safe warning must be present
+    # Drop count must NOT be committed to stats (rolled-back drops not reported)
+    assert stats.get("masked_segments_dropped", 0) == 0
+    # Fail-safe warning must be present and include tentative drop count
     assert any(
-        "fail-safe" in r.message or "anchor mistrust" in r.message
+        ("fail-safe" in r.message or "anchor mistrust" in r.message)
+        and "tentative" in r.message
         for r in caplog.records
     )
 

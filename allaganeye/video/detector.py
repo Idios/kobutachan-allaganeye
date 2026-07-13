@@ -945,6 +945,8 @@ def _validate_match_segments(
     # (same video_path + anchor); hoisted outside the loop for clarity.
     sample_fn = _make_sample_fn(video_path, anchor)
     kept: list[MatchBoundary] = []
+    # Track drops locally; commit to stats only on the non-fail-safe path.
+    dropped_count = 0
     for seg in segments:
         seg_start = seg["start"]
         seg_end = seg["end"]
@@ -1016,18 +1018,24 @@ def _validate_match_segments(
                 present_count,
                 len(valid),
             )
-            if stats is not None:
-                stats["masked_segments_dropped"] = (
-                    stats.get("masked_segments_dropped", 0) + 1
-                )
+            dropped_count += 1
 
     if not kept and segments:
+        # Fail-safe: all segments failed presence check -- anchor may be
+        # unreliable.  Do NOT commit drop counts to stats; the drops were
+        # rolled back, so reporting them would be misleading.
         logger.warning(
-            "Layer 2 validation: all %d segment(s) failed presence check;"
-            " keeping all (anchor mistrust fail-safe)",
+            "Layer 2 validation: all %d segment(s) failed presence check"
+            " (tentative drops: %d); keeping all (anchor mistrust fail-safe)",
             len(segments),
+            dropped_count,
         )
         return list(segments)
+    # Normal path: commit the local drop count to stats.
+    if stats is not None and dropped_count:
+        stats["masked_segments_dropped"] = (
+            stats.get("masked_segments_dropped", 0) + dropped_count
+        )
     return kept
 
 
