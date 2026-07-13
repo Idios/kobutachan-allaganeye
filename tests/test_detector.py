@@ -14,6 +14,7 @@ from allaganeye.exceptions import VideoProcessingError
 from allaganeye.video import detector as det
 from allaganeye.video.capture_region import FULL_FRAME, CaptureRegion
 from allaganeye.video.detector import (
+    DetectionStats,
     MatchBoundary,
     _BLACKOUT_PADDING,
     _BLACKOUT_THRESHOLD_UPPER_MARGIN,
@@ -3936,7 +3937,7 @@ def test_validate_segments_retypes_match_and_keeps_unknown_conservatively(monkey
     anchor = _make_anchor()
     from allaganeye.video.capture_region import ScorebarLocalization
 
-    segments = [
+    segments: list[MatchBoundary] = [
         {"start": 100.0, "end": 700.0, "type": "unknown"},  # real match
         {"start": 750.0, "end": 1050.0, "type": "unknown"},  # lobby
     ]
@@ -3984,7 +3985,7 @@ def test_validate_segments_lobby_is_dropped_when_absent(monkeypatch):
     anchor = _make_anchor()
     # Two segments: match (kept) + lobby (dropped).
     # A second segment is needed to avoid the fail-safe (triggered when ALL dropped).
-    segments = [
+    segments: list[MatchBoundary] = [
         {"start": 100.0, "end": 700.0, "type": "unknown"},  # match
         {"start": 750.0, "end": 1050.0, "type": "unknown"},  # lobby
     ]
@@ -3994,11 +3995,13 @@ def test_validate_segments_lobby_is_dropped_when_absent(monkeypatch):
 
     # workers=1 前提: probe は segment ごとに直列実行されるため call-count で segment を割れる。
     # 並列化するとこの前提は崩れる (その場合は timestamp 範囲で判別する)。
+    _localize_counter = {"n": 0}
+
     def fake_localize(raw, anchor_arg, *, height, width):
         # Use call-count approach: first 9 calls (match segment) -> PRESENT,
         # next 9 (lobby segment) -> None (ABSENT).
-        fake_localize.count = getattr(fake_localize, "count", 0) + 1
-        if fake_localize.count <= 9:
+        _localize_counter["n"] += 1
+        if _localize_counter["n"] <= 9:
             return ScorebarLocalization(
                 x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
             )
@@ -4007,7 +4010,7 @@ def test_validate_segments_lobby_is_dropped_when_absent(monkeypatch):
     monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
     monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
 
-    stats: dict = {}
+    stats: DetectionStats = {}
     result = detector._validate_match_segments(
         Path("x.mp4"), segments, anchor, workers=1, stats=stats
     )
@@ -4025,7 +4028,7 @@ def test_validate_segments_stats_counts_drops(monkeypatch):
 
     anchor = _make_anchor()
     # Three segments: one match (kept), two lobbies (dropped).
-    segments = [
+    segments: list[MatchBoundary] = [
         {"start": 0.0, "end": 600.0, "type": "unknown"},  # match
         {"start": 650.0, "end": 950.0, "type": "unknown"},  # lobby 1
         {"start": 1000.0, "end": 1300.0, "type": "unknown"},  # lobby 2
@@ -4050,7 +4053,7 @@ def test_validate_segments_stats_counts_drops(monkeypatch):
     monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
     monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
 
-    stats: dict = {}
+    stats: DetectionStats = {}
     result = detector._validate_match_segments(
         Path("x.mp4"), segments, anchor, workers=1, stats=stats
     )
@@ -4066,7 +4069,7 @@ def test_validate_segments_all_unknown_keeps_with_warning(monkeypatch, caplog):
     import allaganeye.video.detector as detector
 
     anchor = _make_anchor()
-    segments = [{"start": 100.0, "end": 700.0, "type": "unknown"}]
+    segments: list[MatchBoundary] = [{"start": 100.0, "end": 700.0, "type": "unknown"}]
 
     def fake_probe(vp, t):
         return None  # raw None -> UNKNOWN sample
@@ -4096,7 +4099,7 @@ def test_validate_segments_failsafe_keeps_all_when_everything_dropped(
     import allaganeye.video.detector as detector
 
     anchor = _make_anchor()
-    segments = [
+    segments: list[MatchBoundary] = [
         {"start": 100.0, "end": 700.0, "type": "unknown"},
         {"start": 750.0, "end": 1050.0, "type": "unknown"},
     ]
