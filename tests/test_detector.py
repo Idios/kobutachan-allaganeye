@@ -3689,3 +3689,104 @@ def test_decode_chunk_cpu_v2_watchdog_fire_returns_fallback(monkeypatch):
         is_tail_chunk=False,
     )
     assert result == {t: 255.0 for t in chunk_ts}
+
+
+# ============================================================
+# _resolve_scorebar_anchor (#822)
+# ============================================================
+
+
+def _make_loc(y_top: int = 12, conf: float = 1.0):
+    """Synthetic ScorebarLocalization for anchor tests."""
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    return ScorebarLocalization(
+        x_left=100, x_right=1820, y_top=y_top, y_bottom=y_top + 36, confidence=conf
+    )
+
+
+def test_resolve_scorebar_anchor_filters_low_conf_hits(monkeypatch):
+    # conf < _ANCHOR_MIN_CONF (0.7) hits are pre-filtered (miss扱い) before
+    # being passed to consensus; with all FP-band hits, min_hits is never reached
+    # -> consensus returns None -> function returns None.
+    from pathlib import Path
+
+    from allaganeye.video import capture_region as cr
+    from allaganeye.video import detector as det
+
+    # probe always returns dummy bytes
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", lambda vp, t: b"x")
+    # localize always returns a low-conf hit (FP band, conf=0.5 < 0.7)
+    monkeypatch.setattr(
+        cr, "localize_from_rgb_bytes", lambda raw, **kw: _make_loc(conf=0.5)
+    )
+
+    result = det._resolve_scorebar_anchor(Path("dummy.mp4"), 400.0)
+    assert result is None
+
+
+def test_resolve_scorebar_anchor_success_returns_median(monkeypatch):
+    # >=5 hits with conf >= 0.7 at similar y_top -> consensus returns median loc
+    from pathlib import Path
+
+    from allaganeye.video import capture_region as cr
+    from allaganeye.video import detector as det
+
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", lambda vp, t: b"x")
+    # return high-conf loc; small y_top variation (within cluster tolerance)
+    call_count = {"n": 0}
+
+    def _high_conf_loc(raw, **kw):
+        call_count["n"] += 1
+        y = 12 + (call_count["n"] % 3)  # y_top in {12, 13, 14}
+        return _make_loc(y_top=y, conf=1.0)
+
+    monkeypatch.setattr(cr, "localize_from_rgb_bytes", _high_conf_loc)
+
+    result = det._resolve_scorebar_anchor(Path("dummy.mp4"), 400.0)
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    assert isinstance(result, ScorebarLocalization)
+    assert result.confidence >= 0.7
+
+
+def test_resolve_scorebar_anchor_exception_degrades_none_with_warning(
+    monkeypatch, caplog
+):
+    # When _probe_frame_rgb_hires raises, the function catches it, logs a warning
+    # containing "falls back to position-independent", and returns None.
+    import logging
+    from pathlib import Path
+
+    from allaganeye.video import detector as det
+
+    def _boom(vp, t):
+        raise RuntimeError("probe exploded")
+
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", _boom)
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        result = det._resolve_scorebar_anchor(Path("dummy.mp4"), 400.0)
+
+    assert result is None
+    assert any(
+        "falls back to position-independent" in r.message for r in caplog.records
+    ), f"Expected fallback warning, got: {[r.message for r in caplog.records]}"
+
+
+def test_resolve_scorebar_anchor_warns_unknown_probes(monkeypatch, caplog):
+    # When _probe_frame_rgb_hires returns None (decode failure), the function
+    # emits a warning matching r"anchor probes: \d+/\d+ UNKNOWN".
+    import logging
+    from pathlib import Path
+
+    from allaganeye.video import detector as det
+
+    # all probes return None (decode failure -> UNKNOWN)
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", lambda vp, t: None)
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        result = det._resolve_scorebar_anchor(Path("dummy.mp4"), 400.0)
+
+    assert result is None
+    assert any(
+        re.search(r"anchor probes: \d+/\d+ UNKNOWN", r.message) for r in caplog.records
+    ), f"Expected UNKNOWN warning, got: {[r.message for r in caplog.records]}"

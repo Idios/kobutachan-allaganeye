@@ -23,6 +23,7 @@ from allaganeye.video.capture_region import (
     CaptureRegion,
     FULL_FRAME,
     RegionTimeline,
+    ScorebarLocalization,
     region_mean,
 )
 
@@ -437,6 +438,117 @@ def _resolve_masked_region(
             "masked region detection failed; degrading to FULL_FRAME", exc_info=True
         )
         return FULL_FRAME
+
+
+_ANCHOR_NUM_SAMPLES = 24
+"""Number of frames sampled for scorebar anchor consensus (#822).
+
+Spec section 1.1: 24 sparse probes across a multi-hour FL recording cover many
+in-match segments so the true scorebar band (conf ~1.00) accumulates enough hits
+(>= _ANCHOR_MIN_HITS) while FP samples (conf <= 0.67) are pre-filtered out.
+"""
+
+_ANCHOR_MIN_HITS = 5
+"""Minimum cluster hits required for scorebar anchor consensus (#822).
+
+Stricter than the vtuber band-region min_hits (2) because anchor consensus feeds
+masked classification (per-frame localize_from_rgb_bytes_at_anchor) and a wrong
+anchor would corrupt all per-frame decisions for the entire video.
+"""
+
+_ANCHOR_MIN_CONF = 0.7
+"""Confidence threshold for anchor pre-filter (#822).
+
+Empirical basis (spec section 1.1): true scorebar hits have conf ~1.00;
+FP hits (lobby HUD fragments, lower-HUD segments) reach at most conf ~0.67.
+A cut at 0.70 admits all true hits and rejects all observed FPs.
+Hits below this threshold are treated as miss (not counted toward min_hits);
+they do not enter the cluster voting.
+"""
+
+
+def _resolve_scorebar_anchor(
+    video_path: Path, duration_hint: float
+) -> ScorebarLocalization | None:
+    """Resolve a per-video scorebar anchor via multi-frame consensus (#822).
+
+    Probes _ANCHOR_NUM_SAMPLES evenly-spaced frames with _probe_frame_rgb_hires
+    and localize_from_rgb_bytes (position-independent).  Hits with
+    confidence < _ANCHOR_MIN_CONF are pre-filtered (treated as miss; they do not
+    enter cluster voting) to suppress FP bands.  Raw None probes are mapped to
+    PresenceState.UNKNOWN (excluded from consensus, not counted as miss).
+
+    Returns None for two distinct reasons:
+    - Consensus miss (fewer than _ANCHOR_MIN_HITS confident hits in the dominant
+      cluster): the caller (_detect_masked_fallback / Task B4) emits the
+      consensus-miss warning and degrades to position-independent localize.
+    - Exception: caught here, logged as warning with "falls back to
+      position-independent", returns None silently for the caller.
+
+    UNKNOWN-probe partial-failure warning is emitted by this function when
+    unknown_count > 0 (same contract as _resolve_detect_region, #824 section 5.3).
+    The consensus-miss warning is the caller's responsibility (not emitted here).
+    """
+    from allaganeye.video.capture_region import (
+        consensus_scorebar_localization,
+        localize_from_rgb_bytes,
+    )
+    from allaganeye.video.probe_state import PresenceState
+
+    unknown_count = 0
+    total_probes = 0
+    unknown_times: list[float] = []
+
+    def _localize_at(t: float):
+        nonlocal unknown_count, total_probes
+        total_probes += 1
+        raw = _probe_frame_rgb_hires(video_path, t)
+        if raw is None:
+            unknown_count += 1
+            unknown_times.append(t)
+            logger.debug("anchor probe decode failed at t=%.3fs -> UNKNOWN", t)
+            return PresenceState.UNKNOWN
+        loc = localize_from_rgb_bytes(
+            raw,
+            height=_SCOREBAR_V2_PROBE_HEIGHT,
+            width=_SCOREBAR_V2_PROBE_WIDTH,
+        )
+        if loc is not None and loc.confidence < _ANCHOR_MIN_CONF:
+            return None  # conf pre-filter: treat as miss, not counted in consensus
+        return loc
+
+    try:
+        result = consensus_scorebar_localization(
+            duration=duration_hint,
+            localize_fn=_localize_at,
+            num_samples=_ANCHOR_NUM_SAMPLES,
+            min_hits=_ANCHOR_MIN_HITS,
+        )
+    except Exception:
+        logger.warning(
+            "scorebar anchor resolution failed; masked classification falls back to"
+            " position-independent localize",
+            exc_info=True,
+        )
+        if unknown_count > 0:
+            logger.warning(
+                "anchor probes: %d/%d UNKNOWN (probe failure; time range %.1f-%.1fs)",
+                unknown_count,
+                total_probes,
+                min(unknown_times),
+                max(unknown_times),
+            )
+        return None
+
+    if unknown_count > 0:
+        logger.warning(
+            "anchor probes: %d/%d UNKNOWN (probe failure; time range %.1f-%.1fs)",
+            unknown_count,
+            total_probes,
+            min(unknown_times),
+            max(unknown_times),
+        )
+    return result
 
 
 def detect_match_boundaries(
