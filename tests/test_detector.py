@@ -3747,7 +3747,9 @@ def test_resolve_scorebar_anchor_success_returns_median(monkeypatch):
     from allaganeye.video.capture_region import ScorebarLocalization
 
     assert isinstance(result, ScorebarLocalization)
-    assert result.confidence >= 0.7
+    assert (
+        result.confidence == 1.0
+    )  # consensus returns cluster median (all mocked hits conf=1.0)
 
 
 def test_resolve_scorebar_anchor_exception_degrades_none_with_warning(

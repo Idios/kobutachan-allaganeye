@@ -517,6 +517,17 @@ def _resolve_scorebar_anchor(
             return None  # conf pre-filter: treat as miss, not counted in consensus
         return loc
 
+    # Local helper to emit the UNKNOWN-probe warning (dedupes exception + success paths).
+    def _warn_unknowns() -> None:
+        if unknown_count > 0:
+            logger.warning(
+                "anchor probes: %d/%d UNKNOWN (probe failure; time range %.1f-%.1fs)",
+                unknown_count,
+                total_probes,
+                min(unknown_times),
+                max(unknown_times),
+            )
+
     try:
         result = consensus_scorebar_localization(
             duration=duration_hint,
@@ -530,24 +541,10 @@ def _resolve_scorebar_anchor(
             " position-independent localize",
             exc_info=True,
         )
-        if unknown_count > 0:
-            logger.warning(
-                "anchor probes: %d/%d UNKNOWN (probe failure; time range %.1f-%.1fs)",
-                unknown_count,
-                total_probes,
-                min(unknown_times),
-                max(unknown_times),
-            )
+        _warn_unknowns()
         return None
 
-    if unknown_count > 0:
-        logger.warning(
-            "anchor probes: %d/%d UNKNOWN (probe failure; time range %.1f-%.1fs)",
-            unknown_count,
-            total_probes,
-            min(unknown_times),
-            max(unknown_times),
-        )
+    _warn_unknowns()
     return result
 
 
