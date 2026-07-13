@@ -770,10 +770,11 @@ def filter_blackouts_with_scorebar(
                 )
             else:
                 logger.info(
-                    "REMOVE [%.1f-%.1f] (%.1fs): short in_match",
+                    "REMOVE [%.1f-%.1f] (%.1fs): %s (short in_match)",
                     region[0],
                     region[1],
                     region_duration,
+                    classification,
                 )
             continue
         if classification == "non_fl" and not localize:
