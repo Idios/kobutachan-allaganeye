@@ -266,6 +266,10 @@ def localize_present_at(video_path: Path, timestamp: float) -> PresenceSample:
     return PresenceSample(time=timestamp, state=PresenceState.PRESENT, confidence=loc.confidence)
 
 # site 2 (scan_presence): try/except → UNKNOWN 写像に置換
+# 執行時 deviation (PR #887 codex R1 [medium] 対応): 実装は default sampler を
+# `_probe_present_sample_raising` (decode 例外を raise のまま通す私設 variant) に
+# 変更し、系統故障の代表原因を fail-loud の __cause__ まで保全する。外部契約
+# (localize_present_at = no-leak) は plan 通り不変。
 def scan_presence(video_path, duration, *, stride, workers, sample_fn=None):
     fn = sample_fn if sample_fn is not None else (
         lambda t: localize_present_at(video_path, t)

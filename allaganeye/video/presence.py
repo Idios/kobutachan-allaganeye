@@ -228,7 +228,8 @@ def scan_presence(
         if len(unknown) == len(times):
             # Determine representative cause: prefer the caught exception message;
             # fall back to marker string when the default sampler returned UNKNOWN
-            # (localize_present_at maps raw None -> UNKNOWN without raising).
+            # (_probe_present_sample_raising maps raw None -> UNKNOWN without
+            # raising; only decode exceptions raise into the except above).
             if first_exc is not None:
                 cause: str | VideoProcessingError = first_exc
             else:
