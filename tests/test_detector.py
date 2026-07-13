@@ -3929,8 +3929,8 @@ def _fake_rgb_bytes():
     return bytes(3)
 
 
-def test_validate_segments_drops_lobby_and_retypes_match(monkeypatch):
-    """present=9/9 segment is kept + re-typed fl_match; 0/9 segment is dropped."""
+def test_validate_segments_retypes_match_and_keeps_unknown_conservatively(monkeypatch):
+    """PRESENT-majority segment is re-typed fl_match; all-UNKNOWN segment is kept conservatively (no retype)."""
     import allaganeye.video.detector as detector
 
     anchor = _make_anchor()
@@ -3992,6 +3992,8 @@ def test_validate_segments_lobby_is_dropped_when_absent(monkeypatch):
     def fake_probe(vp, t):
         return _fake_rgb_bytes()
 
+    # workers=1 前提: probe は segment ごとに直列実行されるため call-count で segment を割れる。
+    # 並列化するとこの前提は崩れる (その場合は timestamp 範囲で判別する)。
     def fake_localize(raw, anchor_arg, *, height, width):
         # Use call-count approach: first 9 calls (match segment) -> PRESENT,
         # next 9 (lobby segment) -> None (ABSENT).

@@ -3990,6 +3990,68 @@ def test_verbose_unknown_line_absent_when_stat_missing(
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
+def test_verbose_masked_l2_drop_line_shown_when_nonzero(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """masked_segments_dropped > 0 -> verbose emits 'masked L2 validation' line (#822)."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 2
+            stats["pass2_elapsed_s"] = 1.0
+            stats["masked_segments_dropped"] = 2
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "masked L2 validation: 2 segment(s) dropped" in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_masked_l2_drop_line_hidden_when_zero(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """masked_segments_dropped == 0 -> no masked L2 line (terse output, #822)."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 2
+            stats["pass2_elapsed_s"] = 1.0
+            stats["masked_segments_dropped"] = 0
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "masked L2" not in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
 def test_verbose_filter_section_skipped_on_whole_video_fallback(
     mock_probe, mock_detect, mock_split, tmp_path, capsys
 ):

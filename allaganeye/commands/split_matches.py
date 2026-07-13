@@ -1878,6 +1878,13 @@ def _print_detection_stats(stats: DetectionStats) -> None:
         if drops.get("other", 0) > 0:
             typer.echo(f"    {drops['other']} dropped (other)")
 
+    masked_dropped = stats.get("masked_segments_dropped", 0)
+    if masked_dropped > 0:
+        typer.echo(
+            f"  masked L2 validation: {masked_dropped} segment(s) dropped"
+            " (presence 過半未満)"
+        )
+
     # Unknown match accounting (#433): recordings starting / ending mid-match
     # produce ``type=unknown`` segments at the timeline edges. They are part
     # of Detected count but not of the Filter "kept" formula (candidates

@@ -899,6 +899,34 @@ def _validate_match_segments(
     from allaganeye.video.presence import PresenceState, scan_presence
     from allaganeye.video.probe_state import PresenceSample
 
+    def _make_sample_fn(
+        vp: Path, anch: ScorebarLocalization
+    ) -> Callable[[float], PresenceSample]:
+        def _sample(t: float) -> PresenceSample:
+            raw = _probe_frame_rgb_hires(vp, t)
+            if raw is None:
+                return PresenceSample(
+                    time=t, state=PresenceState.UNKNOWN, confidence=0.0
+                )
+            loc = localize_from_rgb_bytes_at_anchor(
+                raw,
+                anch,
+                height=_SCOREBAR_V2_PROBE_HEIGHT,
+                width=_SCOREBAR_V2_PROBE_WIDTH,
+            )
+            if loc is None:
+                return PresenceSample(
+                    time=t, state=PresenceState.ABSENT, confidence=0.0
+                )
+            return PresenceSample(
+                time=t, state=PresenceState.PRESENT, confidence=loc.confidence
+            )
+
+        return _sample
+
+    # Loop-invariant: factory and sample_fn are the same for all segments
+    # (same video_path + anchor); hoisted outside the loop for clarity.
+    sample_fn = _make_sample_fn(video_path, anchor)
     kept: list[MatchBoundary] = []
     for seg in segments:
         seg_start = seg["start"]
@@ -906,32 +934,6 @@ def _validate_match_segments(
         seg_len = seg_end - seg_start
         probe_ts = [seg_start + seg_len * k / 10.0 for k in range(1, 10)]
 
-        def _make_sample_fn(
-            vp: Path, anch: ScorebarLocalization
-        ) -> Callable[[float], PresenceSample]:
-            def _sample(t: float) -> PresenceSample:
-                raw = _probe_frame_rgb_hires(vp, t)
-                if raw is None:
-                    return PresenceSample(
-                        time=t, state=PresenceState.UNKNOWN, confidence=0.0
-                    )
-                loc = localize_from_rgb_bytes_at_anchor(
-                    raw,
-                    anch,
-                    height=_SCOREBAR_V2_PROBE_HEIGHT,
-                    width=_SCOREBAR_V2_PROBE_WIDTH,
-                )
-                if loc is None:
-                    return PresenceSample(
-                        time=t, state=PresenceState.ABSENT, confidence=0.0
-                    )
-                return PresenceSample(
-                    time=t, state=PresenceState.PRESENT, confidence=loc.confidence
-                )
-
-            return _sample
-
-        sample_fn = _make_sample_fn(video_path, anchor)
         all_unknown = False
         try:
             # duration and stride are unused when times= is provided; pass
@@ -940,6 +942,7 @@ def _validate_match_segments(
                 video_path,
                 seg_end,
                 stride=1.0,
+                # 9 probes/segment なので並列度は控えめで十分。
                 workers=workers if workers is not None else 1,
                 sample_fn=sample_fn,
                 times=probe_ts,
