@@ -6113,3 +6113,83 @@ def test_split_and_write_metadata_post_match_not_passed_to_split_video(
     assert "output_file" in matches[0]
     assert matches[1].get("post_match") is True
     assert "output_file" not in matches[1]
+
+
+# ===========================================================================
+# B6-M1: _display_cache_hit_params masked_algo token (#822)
+# ===========================================================================
+
+
+def test_display_cache_hit_params_masked_affected_shows_masked_algo(tmp_path, capsys):
+    """B6-M1: masked-affected cache-hit summary contains masked_algo=2.
+
+    When the cache records masked=True (or masked_fallback_used=True), the
+    verbose cache-hit summary must include the masked_algo token so operators
+    can distinguish pre-#822 (masked_algo=1) from post-#822 (masked_algo=2)
+    results without re-running detection.
+    """
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "params": {
+                    "sample_interval": 1.0,
+                    "blackout_threshold": 15.0,
+                    "min_match_duration": 300.0,
+                    "min_blackout_duration": 3.0,
+                    "no_audio": False,
+                    "masked": True,
+                    "vtuber": False,
+                    "keep_trailing": False,
+                    "masked_algo": 2,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "masked_algo=2" in out, (
+        "masked-affected cache hit must include masked_algo token"
+    )
+
+
+def test_display_cache_hit_params_non_masked_omits_masked_algo(tmp_path, capsys):
+    """B6-M1 (negative): non-masked cache-hit summary must NOT contain masked_algo.
+
+    For standard OBS cache hits (masked=False, no masked_fallback), the
+    masked_algo token is irrelevant and must be absent to keep the summary
+    concise.
+    """
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "params": {
+                    "sample_interval": 1.0,
+                    "blackout_threshold": 15.0,
+                    "min_match_duration": 300.0,
+                    "min_blackout_duration": 3.0,
+                    "no_audio": False,
+                    "masked": False,
+                    "vtuber": False,
+                    "keep_trailing": False,
+                    "masked_algo": 2,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "masked_algo" not in out, (
+        "non-masked cache hit must NOT include masked_algo token"
+    )

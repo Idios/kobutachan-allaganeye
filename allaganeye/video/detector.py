@@ -861,12 +861,25 @@ def detect_match_boundaries(
     return segments
 
 
+_EDGE_EPS = 0.5
+"""Epsilon (seconds) for timeline-edge detection in _validate_match_segments.
+
+Segments whose start <= 0.0 + EPS or end >= duration_hint - EPS touch the
+recording boundary and are not re-typed to "fl_match".  At-anchor PRESENT
+majority proves FL content was present, but the recording started/ended
+mid-match (#433 semantics): completeness cannot be inferred from presence,
+so the adjacency-inference type is preserved.  UNKNOWN-probe probes are
+excluded from the majority denominator (as usual).
+"""
+
+
 def _validate_match_segments(
     video_path: Path,
     segments: list[MatchBoundary],
     anchor: ScorebarLocalization,
     workers: int | None,
     stats: DetectionStats | None,
+    duration_hint: float = 0.0,
 ) -> list[MatchBoundary]:
     """Layer 2 segment validation: at-anchor presence majority vote (#822).
 
@@ -877,7 +890,11 @@ def _validate_match_segments(
 
     Kept segments are re-typed to "fl_match" (direct presence evidence
     supersedes the adjacency-inference type produced by
-    ``_infer_segment_type`` for non_fl-kept boundary pairs).
+    ``_infer_segment_type`` for non_fl-kept boundary pairs), EXCEPT for
+    timeline-edge segments (start <= 0.0 + EPS or end >= duration_hint - EPS).
+    Edge segments keep their original type because at-anchor presence proves
+    FL content but not completeness -- recording started/ended mid-match
+    (#433 semantics; ``duration_hint=0.0`` skips the edge check).
 
     Dropped segments (lobby/inter-match footage) are info-logged and counted
     in ``stats["masked_segments_dropped"]``.
@@ -934,6 +951,11 @@ def _validate_match_segments(
         seg_len = seg_end - seg_start
         probe_ts = [seg_start + seg_len * k / 10.0 for k in range(1, 10)]
 
+        # Edge-segment detection: recording started/ended mid-match (#433).
+        is_edge_segment = duration_hint > 0.0 and (
+            seg_start <= _EDGE_EPS or seg_end >= duration_hint - _EDGE_EPS
+        )
+
         all_unknown = False
         try:
             # duration and stride are unused when times= is provided; pass
@@ -967,10 +989,24 @@ def _validate_match_segments(
         valid = [s for s in samples if s.state is not PresenceState.UNKNOWN]
         present_count = sum(1 for s in valid if s.state is PresenceState.PRESENT)
         if valid and present_count * 2 > len(valid):
-            # Majority PRESENT: re-type to fl_match (direct evidence).
-            kept_seg = dict(seg)
-            kept_seg["type"] = "fl_match"
-            kept.append(kept_seg)  # type: ignore[arg-type]
+            # Majority PRESENT: re-type to fl_match (direct evidence),
+            # UNLESS this is a timeline-edge segment (recording boundary).
+            if is_edge_segment:
+                # Edge segment: presence proven but completeness unknown (#433).
+                # Keep original type; do not retype to fl_match.
+                kept.append(seg)
+                logger.debug(
+                    "Layer 2 validation: keeping edge segment [%.1f, %.1f]"
+                    " (present=%d/%d; edge -- no retype)",
+                    seg_start,
+                    seg_end,
+                    present_count,
+                    len(valid),
+                )
+            else:
+                kept_seg = dict(seg)
+                kept_seg["type"] = "fl_match"
+                kept.append(kept_seg)  # type: ignore[arg-type]
         else:
             logger.info(
                 "Layer 2 validation: dropping segment [%.1f, %.1f]"
@@ -1151,8 +1187,14 @@ def _detect_masked_fallback(
     # failed) -- degraded path keeps existing pipeline behaviour.
     if anchor is not None and segments:
         segments = _validate_match_segments(
-            video_path, segments, anchor, workers, stats
+            video_path, segments, anchor, workers, stats, duration_hint=duration_hint
         )
+        # Recompute filter_unknown after Layer 2 may have dropped segments
+        # (dropped segments can change the unknown-type count visible to verbose).
+        if stats is not None:
+            stats["filter_unknown"] = sum(
+                1 for s in segments if s.get("type") == "unknown"
+            )
 
     return segments, region
 

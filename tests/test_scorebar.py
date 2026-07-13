@@ -1792,11 +1792,11 @@ def _make_anchor():
 
 
 def test_masked_keep_rules_in_match_removed_any_duration(monkeypatch):
-    """spec 3.2: localize path removes in_match at ANY duration (incl. >=3.5s).
+    """spec 3.2: anchored localize path removes in_match at ANY duration (incl. >=3.5s).
 
     Patches classify_blackout to always return "in_match".  A 5.0s region
     (duration > _IN_MATCH_MAX_DURATION = 3.5s) must NOT appear in the kept
-    list when localize=True.
+    list when localize=True and anchor is resolved.
     """
     monkeypatch.setattr(sb, "classify_blackout", lambda *a, **kw: "in_match")
     # Also stub _merge_boundary_pairs to be identity (no regions to merge anyway)
@@ -1807,14 +1807,16 @@ def test_masked_keep_rules_in_match_removed_any_duration(monkeypatch):
     )
     regions = [(100.0, 105.0)]  # 5.0s > _IN_MATCH_MAX_DURATION
     result, clslist = filter_blackouts_with_scorebar(
-        Path("v.mp4"), regions, 400.0, _HEIGHT, localize=True
+        Path("v.mp4"), regions, 400.0, _HEIGHT, localize=True, anchor=_make_anchor()
     )
-    assert result == [], "in_match at any duration must be removed on localize path"
+    assert result == [], (
+        "in_match at any duration must be removed on anchored localize path"
+    )
     assert clslist == []
 
 
 def test_masked_keep_rules_non_fl_kept(monkeypatch):
-    """spec 3.2: localize path keeps non_fl as boundary candidate (staging frames)."""
+    """spec 3.2: anchored localize path keeps non_fl as boundary candidate (staging frames)."""
     monkeypatch.setattr(sb, "classify_blackout", lambda *a, **kw: "non_fl")
     monkeypatch.setattr(
         sb,
@@ -1823,9 +1825,9 @@ def test_masked_keep_rules_non_fl_kept(monkeypatch):
     )
     regions = [(100.0, 103.0)]
     result, clslist = filter_blackouts_with_scorebar(
-        Path("v.mp4"), regions, 400.0, _HEIGHT, localize=True
+        Path("v.mp4"), regions, 400.0, _HEIGHT, localize=True, anchor=_make_anchor()
     )
-    assert result == regions, "non_fl must be kept on localize path"
+    assert result == regions, "non_fl must be kept on anchored localize path"
     assert clslist == ["non_fl"]
 
 
@@ -1844,6 +1846,64 @@ def test_obs_keep_rules_unchanged_pin(monkeypatch):
         Path("v.mp4"), regions, 400.0, _HEIGHT, localize=False
     )
     assert result == [(100.0, 108.0)], "OBS: long in_match must be KEPT"
+    assert clslist == ["in_match"]
+
+
+def test_degraded_masked_keep_rules_match_pre_pr(monkeypatch):
+    """spec section 5 degradation floor: localize=True + anchor=None uses pre-#822 rules.
+
+    A long in_match (>=3.5s) must be KEPT (boundary), and non_fl must be
+    REMOVED -- exactly the pre-#822 / OBS behavior.  This verifies the
+    degradation floor: an anchor-unresolved masked run is never WORSE than
+    the pre-PR baseline.
+    """
+    side_effects = ["in_match", "non_fl"]
+    monkeypatch.setattr(sb, "classify_blackout", lambda *a, **kw: side_effects.pop(0))
+    monkeypatch.setattr(
+        sb,
+        "_merge_boundary_pairs",
+        lambda vp, regions, cls, dur, height, workers, **kw: (regions, cls),
+    )
+    # long in_match (5.0s >= 3.5s) + non_fl -- degraded path (anchor=None)
+    regions = [(100.0, 105.0), (200.0, 203.0)]
+    result, clslist = filter_blackouts_with_scorebar(
+        Path("v.mp4"), regions, 400.0, _HEIGHT, localize=True, anchor=None
+    )
+    assert result == [(100.0, 105.0)], (
+        "degraded masked (anchor=None): long in_match must be KEPT (pre-#822 floor)"
+    )
+    assert clslist == ["in_match"]
+
+
+def test_vtuber_path_keep_rules_unchanged_pin(monkeypatch):
+    """spec section 8 (#480 defer): vtuber path (localize=True, anchor=None) keeps pre-#822 rules.
+
+    The vtuber shape is localize=True with no anchor resolved (detector.py
+    passes localize=vtuber, no anchor).  A long in_match (>=3.5s) must be
+    KEPT and a non_fl must be REMOVED -- same as OBS / degraded path.
+    This pins the #480 contract: vtuber classification rules are unchanged.
+    """
+    side_effects = ["in_match", "non_fl"]
+    monkeypatch.setattr(sb, "classify_blackout", lambda *a, **kw: side_effects.pop(0))
+    monkeypatch.setattr(
+        sb,
+        "_merge_boundary_pairs",
+        lambda vp, regions, cls, dur, height, workers, **kw: (regions, cls),
+    )
+    # vtuber call shape: localize=True, anchor=None (no anchor from detector)
+    regions = [(100.0, 108.0), (200.0, 203.0)]
+    result, clslist = filter_blackouts_with_scorebar(
+        Path("v.mp4"),
+        regions,
+        400.0,
+        _HEIGHT,
+        localize=True,
+        anchor=None,  # vtuber shape: no anchor
+    )
+    assert result == [(100.0, 108.0)], (
+        "vtuber path (localize=True, anchor=None): long in_match must be KEPT"
+        " (pre-#822 / #480 defer contract)"
+    )
     assert clslist == ["in_match"]
 
 

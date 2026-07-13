@@ -84,6 +84,11 @@ presence primitive を at-anchor に置換した上で、keep 判定を masked p
 | non_fl | remove | remove | **keep (boundary 候補)** (staging 弱点で entry 境界が non_fl 化するため。乱立する非試合 segment は Layer 2 が除去) |
 | unknown | keep (safe) | keep (safe) | keep (safe) |
 
+> **erratum (2026-07-14, PR-B final review + codex 収束摘出)**: 本表の「masked path 新」規則は **anchor 解決成功時のみ** 適用する
+> (`anchored = localize AND anchor != None` gate)。anchor 未解決の縮退 run と `--vtuber` path は
+> pre-#822 規則のまま (§5 の「現状より悪化しない」floor と §8 の #480 defer を機構的に保証)。
+> 実装は `scorebar.py` の `anchored` gate を正とする。
+
 `#524` re-probe fallback (両側 not True 時の region_width+1/2/3s 再 probe) は at-anchor 化した presence で同構造のまま維持する。
 
 ### 3.3 Layer 2: segment 検証

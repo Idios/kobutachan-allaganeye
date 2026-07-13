@@ -680,7 +680,7 @@ def filter_blackouts_with_scorebar(
 ) -> tuple[list[tuple[float, float]], list[str]]:
     """Filter blackout regions using scorebar context and duration.
 
-    Two classification paths (selected by ``localize``):
+    Two classification paths (selected by ``localize`` and ``anchor``):
 
     OBS path (``localize=False``, default):
     - Removes short ``"in_match"`` blackouts (< 3.5s, e.g. character down, #107)
@@ -689,16 +689,24 @@ def filter_blackouts_with_scorebar(
     - Keeps ``"match_boundary"`` (FL match start/end)
     - Keeps ``"unknown"`` (probe failure -> safe side, keep boundary)
 
-    localize path (``localize=True``, #822 masked-OBS):
+    anchored localize path (``localize=True`` AND ``anchor`` is not None,
+    #822 masked-OBS with resolved anchor):
     - Removes ``"in_match"`` at ANY duration (at-anchor evaluation has no v2
       afterimage FN, so the keep-long-in_match rule no longer applies)
     - Keeps ``"non_fl"`` as boundary candidate (staging zone-in frames lack a
       detectable bar for ~60s; spurious fake segments are removed by Layer 2)
     - Keeps ``"match_boundary"`` and ``"unknown"`` (same as OBS path)
 
+    degradation floor (``localize=True`` AND ``anchor`` is None):
+    - Pre-#822 rules exactly: short in_match removed, long in_match kept,
+      non_fl removed.  Applies to anchor-unresolved masked runs and the
+      ``--vtuber`` path (spec section 5 / section 8 #480 defer).  Ensures
+      the masked path is never WORSE than the pre-PR baseline regardless of
+      anchor resolution.
+
     ``anchor`` param: a per-video ``ScorebarLocalization`` resolved by
     ``_resolve_scorebar_anchor`` before calling this function.  ``None`` means
-    position-independent localize (degraded path, bit-exact with pre-B4 behavior).
+    anchor unresolved -- degradation floor applies.
 
     Audio promotion (#288):
     When *audio_hits* is provided, a blackout initially classified as
@@ -714,6 +722,12 @@ def filter_blackouts_with_scorebar(
     Returns:
         Tuple of (filtered_regions, filtered_classifications).
     """
+    # anchored = localize AND anchor resolved.  Only the anchored path uses the
+    # #822 new rules (in_match-any-duration remove / non_fl keep).  Degraded
+    # runs (anchor=None) and the --vtuber path (localize=True, anchor=None) fall
+    # back to pre-#822 OBS rules (spec section 5 floor / section 8 #480 defer).
+    anchored = localize and anchor is not None
+
     kept: list[tuple[float, float]] = []
     classifications: list[str] = []
     raw_counts: dict[str, int] = {
@@ -756,14 +770,15 @@ def filter_blackouts_with_scorebar(
                 audio_promotions += 1
 
         if classification == "in_match" and (
-            localize or region_duration < _IN_MATCH_MAX_DURATION
+            anchored or region_duration < _IN_MATCH_MAX_DURATION
         ):
-            # localize path (#822 Q3): at-anchor has no v2 afterimage FN, so
-            # in_match is non-boundary at any duration.  OBS path: only short
-            # in_match (<3.5s) is removed; long in_match is kept as boundary.
-            if localize:
+            # anchored localize path (#822 Q3): at-anchor has no v2 afterimage
+            # FN, so in_match is non-boundary at any duration.
+            # OBS / degraded / vtuber path: only short in_match (<3.5s) is
+            # removed; long in_match is kept as boundary (pre-#822 rule).
+            if anchored:
                 logger.info(
-                    "REMOVE [%.1f-%.1f] (%.1fs): in_match (localize path: non-boundary at any duration)",
+                    "REMOVE [%.1f-%.1f] (%.1fs): in_match (anchored localize: non-boundary at any duration)",
                     region[0],
                     region[1],
                     region_duration,
@@ -777,12 +792,12 @@ def filter_blackouts_with_scorebar(
                     classification,
                 )
             continue
-        if classification == "non_fl" and not localize:
-            # OBS path: non_fl is removed (non-FL content boundary).
-            # localize path (#822): staging frames lack a detectable bar for
-            # ~60s after zone-in, so entry boundaries classify non_fl; keep
-            # them as boundary candidates (spurious fake segments removed by
-            # Layer 2 / Task B5).
+        if classification == "non_fl" and not anchored:
+            # OBS / degraded / vtuber path: non_fl is removed (non-FL content
+            # boundary).  anchored localize path (#822): staging frames lack a
+            # detectable bar for ~60s after zone-in, so entry boundaries
+            # classify non_fl; keep them as boundary candidates (spurious fake
+            # segments removed by Layer 2 / Task B5).
             logger.info(
                 "REMOVE [%.1f-%.1f] (%.1fs): %s",
                 region[0],

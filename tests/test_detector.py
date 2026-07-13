@@ -4150,7 +4150,7 @@ def test_masked_fallback_skips_validation_without_anchor(monkeypatch):
 
     validate_called = {"called": False}
 
-    def fake_validate(vp, segs, anchor, workers, stats):
+    def fake_validate(vp, segs, anchor, workers, stats, duration_hint=0.0):
         validate_called["called"] = True
         return segs
 
@@ -4179,4 +4179,127 @@ def test_masked_fallback_skips_validation_without_anchor(monkeypatch):
     assert out is not None
     assert not validate_called["called"], (
         "_validate_match_segments must NOT be called when anchor is None"
+    )
+
+
+def test_validate_segments_edge_segments_not_retyped(monkeypatch):
+    """Edge segments (touching timeline start/end) are KEPT but NOT re-typed fl_match.
+
+    At-anchor PRESENT majority proves FL content but not completeness (#433
+    semantics: recording started/ended mid-match).  The original type must
+    be preserved.  Non-edge segments with PRESENT majority are still re-typed.
+    """
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    # Two segments: one at the timeline start (edge), one in the middle (non-edge).
+    duration = 1800.0
+    segments: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "unknown"},  # edge (start=0)
+        {"start": 900.0, "end": 1500.0, "type": "unknown"},  # non-edge (middle)
+    ]
+
+    def fake_probe(vp, t):
+        return bytes(3)  # non-None -> triggers localize
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        # All probes PRESENT for both segments
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=None, duration_hint=duration
+    )
+
+    # Both kept (majority present), but edge segment keeps original type
+    assert len(result) == 2
+    # Edge segment: type unchanged (not retyped to fl_match)
+    assert result[0]["start"] == 0.0
+    assert result[0]["type"] == "unknown", (
+        "edge segment (start=0) must NOT be retyped to fl_match"
+    )
+    # Non-edge segment: retyped to fl_match
+    assert result[1]["start"] == 900.0
+    assert result[1]["type"] == "fl_match", (
+        "non-edge segment must be retyped to fl_match on PRESENT majority"
+    )
+
+
+def test_detect_masked_fallback_filter_unknown_recomputed_after_layer2(monkeypatch):
+    """filter_unknown is recomputed after Layer 2 drops segments (#433 verbose reconcile).
+
+    When Layer 2 drops a segment, the stats["filter_unknown"] count must
+    reflect the POST-Layer-2 state (not the Layer-1 state) so that verbose
+    output correctly reports the number of unknown-type segments in the
+    final result.
+    """
+    from allaganeye.video.capture_region import CaptureRegion
+
+    fake_region = CaptureRegion(0.1, 0.1, 0.9, 0.9, source="tierA")
+    anchor = _make_anchor()
+
+    # Layer 1 produces 2 segments: one real match (fl_match), one lobby (unknown).
+    layer1_segments: list[MatchBoundary] = [
+        {"start": 10.0, "end": 700.0, "type": "fl_match"},
+        {"start": 750.0, "end": 900.0, "type": "unknown"},  # lobby -> dropped by L2
+    ]
+
+    # Layer 2 drops the unknown/lobby segment -> only 1 kept
+    layer2_result: list[MatchBoundary] = [
+        {"start": 10.0, "end": 700.0, "type": "fl_match"},
+    ]
+
+    monkeypatch.setattr(det, "_resolve_masked_region", lambda *a, **k: fake_region)
+    monkeypatch.setattr(det, "_scan_cpu", lambda *a, **k: {})
+    monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **k: [])
+    monkeypatch.setattr(
+        det, "_filter_and_extract_segments", lambda *a, **k: list(layer1_segments)
+    )
+    monkeypatch.setattr(det, "_resolve_scorebar_anchor", lambda *a, **k: anchor)
+    # filter_blackouts_with_scorebar is imported locally inside _detect_masked_fallback;
+    # patch via the scorebar module so the local import picks up the stub.
+    import allaganeye.video.scorebar as sb_mod
+
+    monkeypatch.setattr(
+        sb_mod, "filter_blackouts_with_scorebar", lambda *a, **k: ([], [])
+    )
+    monkeypatch.setattr(
+        det,
+        "_validate_match_segments",
+        lambda vp, segs, anch, workers, stats, duration_hint=0.0: layer2_result,
+    )
+
+    stats: DetectionStats = {"filter_unknown": 1}  # pre-Layer-2 value
+
+    out = det._detect_masked_fallback(
+        det.Path("x.mp4"),
+        duration_hint=1000.0,
+        sample_interval=3.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        use_gpu=False,
+        workers=None,
+        src_resolution=(1920, 1080),
+        codec=None,
+        gpu_vendor=None,
+        source_fps_num=None,
+        source_fps_den=None,
+        source_fps=None,
+        audio_hits=None,
+        stats=stats,
+    )
+
+    assert out is not None
+    segs, _ = out
+    assert len(segs) == 1
+    # After Layer 2, the one remaining segment has type "fl_match" (not unknown).
+    # filter_unknown must have been recomputed to 0 (no unknown-type segments remain).
+    assert stats.get("filter_unknown") == 0, (
+        "filter_unknown must be recomputed after Layer 2 to reflect post-L2 state"
     )
