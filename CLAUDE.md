@@ -97,6 +97,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `video/gpu_detector.py` | GPU アクセラレーション検知（チャンク並列デコード） |
 | `video/capture_region.py` | 検出 ROI（`CaptureRegion`）の解決。scorebar 帯 anchor の多フレーム consensus（`detect_scorebar_band_region`）/ FULL_FRAME 縮退。`--vtuber` gate 内でのみ有効（L3 Phase 1。検出 subsystem の現状 map は [docs/detection-map.md](docs/detection-map.md)）。解決結果は metadata.json `capture_regions` に永続化 (#810、RegionTimeline serialize 形 + 縮退 provenance) |
 | `video/presence.py` | presence（scorebar 在/不在）ベースの試合検出エンジン + GT 突合ハーネス基盤（L3 Phase 1。2 信号 fusion 再アーキ spec 参照） |
+| `video/probe_state.py` | probe 失敗縮退の統一契約型（`PresenceState` tri-state / `PresenceSample` / `ProbeFailurePolicy`、#824）。presence / capture_region / scorebar / detector から import される中立 module（circular import 回避） |
 | `video/scorebar.py` | スコアバーフィルタリング（暗転分類・試合内/非FL判定）+ 音声昇格 |
 | `video/splitter.py` | FFmpeg で動画分割（-c copy） |
 | `audio/extract.py` | ffmpeg で音声 PCM 抽出 |

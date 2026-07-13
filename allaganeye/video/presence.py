@@ -189,9 +189,12 @@ def scan_presence(
     """Sample scorebar presence across the whole video on a uniform grid.
 
     ``sample_fn`` maps a timestamp to a :class:`PresenceSample`; it defaults
-    to :func:`localize_present_at` bound to ``video_path`` (the production
-    path).  Tests inject a synthetic ``sample_fn`` to stay fast.  Results are
-    returned sorted by time ascending.
+    to :func:`_probe_present_sample_raising` bound to ``video_path`` (the
+    production path -- the raising variant, so the per-probe except below
+    captures the representative cause for the all-UNKNOWN fail-loud.
+    External callers keep the no-leak :func:`localize_present_at`).  Tests
+    inject a synthetic ``sample_fn`` to stay fast.  Results are returned
+    sorted by time ascending.
 
     Per-probe exceptions are mapped to UNKNOWN samples (per-probe isolation,
     #824 sec.5.2).  If ALL samples are UNKNOWN a VideoProcessingError is raised

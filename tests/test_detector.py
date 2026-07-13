@@ -2750,7 +2750,6 @@ def test_resolve_detect_region_warns_on_consensus_miss_full_frame(monkeypatch, c
     # NOTE: detect_scorebar_band_region is patched to return FULL_FRAME directly,
     # so the _localize_at closure is never called -> valid_votes=0, total_probes=0.
     import logging
-    import re
 
     from pathlib import Path
 
