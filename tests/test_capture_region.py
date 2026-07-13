@@ -838,3 +838,13 @@ def test_at_anchor_finds_bar_even_when_stronger_fp_elsewhere():
     f = _hires_with_two_bars(anchor_y=18, fp_y=300)
     loc = localize_scorebar_at_anchor(f, _anchor())
     assert loc is not None and abs(loc.y_top - 18) <= 6
+
+
+def test_at_anchor_near_frame_bottom_does_not_scan_clipped_bands():
+    # H clamp: 大きい y_top の anchor でも sub-height band を評価しない (latent guard)。
+    # 正常系 anchor (y_top<=594) では到達しないが、契約として pin する。
+    f = _hires_with_scorebar_at(y_top=120, x_left=614, x_right=1305)
+    anchor = ScorebarLocalization(
+        x_left=614, x_right=1305, y_top=1050, y_bottom=1095, confidence=1.0
+    )
+    assert localize_scorebar_at_anchor(f, anchor) is None  # crash せず None

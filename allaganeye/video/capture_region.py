@@ -475,7 +475,8 @@ def localize_scorebar_at_anchor(
     anchor で絞り込んで適用する。これにより lobby FP (y 帯外) と x-range が
     大きくずれた偽帯を除去しつつ、full-scan が強い FP に敗北するケースを救済する。
 
-    y スキャン域: [max(0, anchor.y_top - _ANCHOR_Y_TOL), anchor.y_top + _ANCHOR_Y_TOL]
+    y スキャン域: band start が `max(0, anchor.y_top - _ANCHOR_Y_TOL)` から
+    `anchor.y_top + _ANCHOR_Y_TOL` まで (stride 刻み、fencepost のため range stop は +stride)
     x gate: saturated run の x range と anchor x range の 1-D IoU >= _ANCHOR_X_IOU_MIN
 
     cv2 不在 / 形状不一致 / 候補なし は None。target_ratio <= 1.0 は ValueError。
@@ -502,9 +503,11 @@ def localize_scorebar_at_anchor(
     band_h = _SCOREBAR_SCAN_Y_END - _SCOREBAR_SCAN_Y_START
     y_start = max(0, anchor.y_top - _ANCHOR_Y_TOL)
     # y_stop must extend so bands starting at anchor.y_top + _ANCHOR_Y_TOL are evaluated.
-    # range(y_start, y_stop, stride) includes y_start + _ANCHOR_Y_TOL when
+    # range(y_start, y_stop, stride) includes anchor.y_top + _ANCHOR_Y_TOL when
     # y_stop > anchor.y_top + _ANCHOR_Y_TOL, mirroring how y_max is used in localize_scorebar.
     y_stop = anchor.y_top + _ANCHOR_Y_TOL + stride
+    # H clamp: 端 anchor でも band が frame 下端で欠けないようにする (latent guard)
+    y_stop = min(y_stop, H - band_h + 1)
     x_gate = (anchor.x_left, anchor.x_right)
 
     best = _scan_scorebar_bands(
