@@ -511,40 +511,43 @@ localize は per-frame noisy で、真の scorebar (y_top~0) と下部 HUD 誤�
 """
 
 
-def detect_scorebar_band_region(
+def consensus_scorebar_localization(
     *,
     duration: float,
-    probe_w: int,
-    probe_h: int,
     localize_fn: Callable[[float], ScorebarLocalization | None | PresenceState],
     num_samples: int = 8,
     min_hits: int = _BAND_CONSENSUS_MIN_HITS,
-) -> CaptureRegion:
-    """疎な多フレーム localize の dominant-cluster consensus で安定 scorebar 帯 ROI を返す。
+) -> ScorebarLocalization | None:
+    """疎な多フレーム localize の dominant-cluster consensus core。
 
     *localize_fn* は timestamp -> ScorebarLocalization|None|PresenceState。動画 I/O は
     呼び出し側が bind する (テストは合成関数を注入)。成功局在化が *min_hits* 未満なら
-    FULL_FRAME (OBS / 局在化不能時の安全縮退)。成功時は hits を y_top で
+    None (OBS / 局在化不能時の安全縮退)。成功時は hits を y_top で
     `_CLUSTER_Y_TOL` クラスタリングし、最大クラスタ (同数なら平均 confidence) の各座標
-    median を取り `band_region_from_localization` で正規化帯 ROI に変換する。これにより
-    真の scorebar (y_top~0) と下部 HUD 誤検出が混在しても between-clusters の garbage
-    band を避ける (spec section 3.6)。
+    median を `ScorebarLocalization` として返す。これにより真の scorebar (y_top~0) と
+    下部 HUD 誤検出が混在しても between-clusters の garbage band を避ける
+    (spec sec. 3.6)。
 
     *localize_fn* の戻り値 sentinel:
     - ``PresenceState.UNKNOWN`` のみが decode 失敗 sentinel として有効 (hit/miss どちらにも
       数えない、consensus から除外)。他の PresenceState 値は ScorebarLocalization でないため
       hit としてカウントされず、実質 miss 扱いとなる。
+
+    Returns ``None`` when:
+    - *duration* <= 0 or *num_samples* < 1
+    - fewer than *min_hits* successful localizations
+    - dominant cluster has fewer than *min_hits* members
     """
     if duration <= 0 or num_samples < 1:
-        return FULL_FRAME
+        return None
     times = [duration * (i + 1) / (num_samples + 1) for i in range(num_samples)]
     hits = [
         loc for t in times if isinstance((loc := localize_fn(t)), ScorebarLocalization)
     ]
     if len(hits) < min_hits:
-        return FULL_FRAME
+        return None
     # localize is per-frame noisy (upper-half best-hit scan can lock onto lower
-    # HUD; spec section 3.6). Cluster hits by y_top and take the largest cluster
+    # HUD; spec sec. 3.6). Cluster hits by y_top and take the largest cluster
     # (true scorebar is dominant across in-match samples), so a noise-mixed
     # median cannot produce a between-clusters garbage band.
     hits_sorted = sorted(hits, key=lambda h: h.y_top)
@@ -559,12 +562,38 @@ def detect_scorebar_band_region(
         key=lambda c: (len(c), sum(h.confidence for h in c) / len(c)),
     )
     if len(best) < min_hits:
-        return FULL_FRAME
-    median_loc = ScorebarLocalization(
+        return None
+    return ScorebarLocalization(
         x_left=int(np.median([h.x_left for h in best])),
         x_right=int(np.median([h.x_right for h in best])),
         y_top=int(np.median([h.y_top for h in best])),
         y_bottom=int(np.median([h.y_bottom for h in best])),
         confidence=float(np.median([h.confidence for h in best])),
     )
-    return band_region_from_localization(median_loc, probe_w=probe_w, probe_h=probe_h)
+
+
+def detect_scorebar_band_region(
+    *,
+    duration: float,
+    probe_w: int,
+    probe_h: int,
+    localize_fn: Callable[[float], ScorebarLocalization | None | PresenceState],
+    num_samples: int = 8,
+    min_hits: int = _BAND_CONSENSUS_MIN_HITS,
+) -> CaptureRegion:
+    """疎な多フレーム localize の dominant-cluster consensus で安定 scorebar 帯 ROI を返す。
+
+    `consensus_scorebar_localization` に consensus 計算を委譲し、結果を
+    `band_region_from_localization` で正規化帯 ROI に変換する。縮退時は FULL_FRAME。
+    """
+    loc = consensus_scorebar_localization(
+        duration=duration,
+        localize_fn=localize_fn,
+        num_samples=num_samples,
+        min_hits=min_hits,
+    )
+    return (
+        FULL_FRAME
+        if loc is None
+        else band_region_from_localization(loc, probe_w=probe_w, probe_h=probe_h)
+    )

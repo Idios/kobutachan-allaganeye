@@ -10,6 +10,7 @@ from allaganeye.video.capture_region import (
     _maybe_snap_full_frame,
     _scorebar_saturated_runs,
     band_region_from_localization,
+    consensus_scorebar_localization,
     detect_mask_free_region,
     detect_region_blackout_overlap,
     detect_region_variance,
@@ -605,6 +606,42 @@ def test_band_region_localize_fn_unknown_sentinel_not_counted():
         min_hits=2,
     )
     assert not region.is_full_frame()  # 有効 3 hit で consensus 成立
+
+
+# ---------------------------------------------------------------------------
+# Task B1: consensus_scorebar_localization core
+# ---------------------------------------------------------------------------
+
+
+def test_consensus_scorebar_localization_dominant_cluster_median():
+    def _loc(y_top: int) -> ScorebarLocalization:
+        return ScorebarLocalization(
+            x_left=240, x_right=1680, y_top=y_top, y_bottom=y_top + 45, confidence=0.9
+        )
+
+    locs = [_loc(y_top=12), _loc(y_top=18), _loc(y_top=12), _loc(y_top=540)]
+    seq = iter(locs + [None] * 4)
+    result = consensus_scorebar_localization(
+        duration=80.0, localize_fn=lambda t: next(seq), num_samples=8, min_hits=2
+    )
+    assert result is not None and result.y_top == 12  # dominant cluster median
+
+
+def test_consensus_scorebar_localization_scattered_returns_none():
+    # FP only (clusters below min_hits) -> None.
+    def _loc(y_top: int) -> ScorebarLocalization:
+        return ScorebarLocalization(
+            x_left=240, x_right=1680, y_top=y_top, y_bottom=y_top + 45, confidence=0.9
+        )
+
+    seq = iter([_loc(y_top=100), _loc(y_top=300), _loc(y_top=500)] + [None] * 5)
+    # y tol=60: 100/300/500 are each in separate clusters with 1 hit -> min_hits=2 -> None
+    assert (
+        consensus_scorebar_localization(
+            duration=80.0, localize_fn=lambda t: next(seq), num_samples=8, min_hits=2
+        )
+        is None
+    )
 
 
 # ---------------------------------------------------------------------------
