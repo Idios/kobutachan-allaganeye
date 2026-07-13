@@ -895,6 +895,15 @@ def _detect_masked_fallback(
     if region.is_full_frame():
         return None  # no mask region found -> defer to the standard result
 
+    # B4 (#822): resolve per-video scorebar anchor for at-anchor classification.
+    # Must be called after region is confirmed non-full-frame (masked path active).
+    anchor = _resolve_scorebar_anchor(video_path, duration_hint)
+    if anchor is None:
+        logger.warning(
+            "scorebar anchor unresolved; masked classification falls back to"
+            " position-independent localize"
+        )
+
     if use_gpu:
         from allaganeye.video.gpu_detector import scan_gpu
 
@@ -978,6 +987,7 @@ def _detect_masked_fallback(
             workers,
             band_region=FULL_FRAME,
             localize=True,
+            anchor=anchor,
             audio_hits=audio_hits,
             stats=stats,
         )

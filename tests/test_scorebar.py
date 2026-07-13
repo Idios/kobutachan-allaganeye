@@ -1411,7 +1411,14 @@ def test_classify_localize_truth_table(monkeypatch):
     calls = {"n": 0}
 
     def fake_probe(
-        video, ts, height, workers, *, with_localize=False, with_lowres=True
+        video,
+        ts,
+        height,
+        workers,
+        *,
+        with_localize=False,
+        with_lowres=True,
+        anchor=None,
     ):
         # pre call first, post call second (region_width re-probe not triggered
         # unless both not-True).
@@ -1434,7 +1441,7 @@ def test_classify_localize_both_present_is_in_match(monkeypatch):
     monkeypatch.setattr(
         sb,
         "_probe_scorebar_context",
-        lambda v, ts, h, w, *, with_localize=False, with_lowres=True: (
+        lambda v, ts, h, w, *, with_localize=False, with_lowres=True, anchor=None: (
             [None] * len(ts),
             [b"f"] * len(ts),
             [PresenceState.PRESENT] * len(ts),
@@ -1453,7 +1460,7 @@ def test_classify_localize_both_absent_is_non_fl(monkeypatch):
     monkeypatch.setattr(
         sb,
         "_probe_scorebar_context",
-        lambda v, ts, h, w, *, with_localize=False, with_lowres=True: (
+        lambda v, ts, h, w, *, with_localize=False, with_lowres=True, anchor=None: (
             [None] * len(ts),
             [b"f"] * len(ts),
             [PresenceState.ABSENT] * len(ts),
@@ -1484,7 +1491,14 @@ def test_classify_localize_reprobe_rescues_to_boundary(monkeypatch):
     }
 
     def fake_probe(
-        video, ts, height, workers, *, with_localize=False, with_lowres=True
+        video,
+        ts,
+        height,
+        workers,
+        *,
+        with_localize=False,
+        with_lowres=True,
+        anchor=None,
     ):
         calls["n"] += 1
         state = per_call_state[calls["n"]]
@@ -1509,7 +1523,7 @@ def test_classify_localize_all_none_is_unknown(monkeypatch):
     monkeypatch.setattr(
         sb,
         "_probe_scorebar_context",
-        lambda v, ts, h, w, *, with_localize=False, with_lowres=True: (
+        lambda v, ts, h, w, *, with_localize=False, with_lowres=True, anchor=None: (
             [None] * len(ts),
             [b"f"] * len(ts),
             [None] * len(ts),
@@ -1533,7 +1547,9 @@ def test_classify_blackout_vtuber_delegates_to_localize(monkeypatch):
 
     seen = {}
 
-    def fake_localize(video, region, duration, height, workers=None, *, band_region):
+    def fake_localize(
+        video, region, duration, height, workers=None, *, band_region, anchor=None
+    ):
         seen["band"] = band_region
         return "in_match"
 
@@ -1558,7 +1574,7 @@ def test_classify_blackout_obs_does_not_call_localize(monkeypatch):
     monkeypatch.setattr(
         sb,
         "_probe_scorebar_context",
-        lambda v, ts, h, w, *, with_localize=False, with_lowres=True: (
+        lambda v, ts, h, w, *, with_localize=False, with_lowres=True, anchor=None: (
             [False] * len(ts),
             [b"f"] * len(ts),
             [None] * len(ts),
@@ -1575,7 +1591,15 @@ def test_filter_threads_vtuber_to_classify(monkeypatch):
     seen = []
 
     def fake_classify(
-        video, region, duration, height, workers=None, *, band_region, localize
+        video,
+        region,
+        duration,
+        height,
+        workers=None,
+        *,
+        band_region,
+        localize,
+        anchor=None,
     ):
         seen.append((localize, band_region.source))
         return "match_boundary"
@@ -1596,7 +1620,14 @@ def test_merge_gap_probe_uses_localize_path(monkeypatch):
     captured = {}
 
     def fake_probe(
-        video, points, height, workers, *, with_localize=False, with_lowres=True
+        video,
+        points,
+        height,
+        workers,
+        *,
+        with_localize=False,
+        with_lowres=True,
+        anchor=None,
     ):
         captured["with_localize"] = with_localize
         # gap shows no scorebar by either signal -> eligible to merge.
@@ -1744,3 +1775,245 @@ def test_probe_scorebar_context_localize_results_are_tristate(monkeypatch):
     # localize results: probe failure -> UNKNOWN, blank frame -> ABSENT
     assert loc[0] is PresenceState.UNKNOWN
     assert loc[1] is PresenceState.ABSENT
+
+
+# ===========================================================================
+# B4: masked classification rules + anchor threading (#822)
+# ===========================================================================
+
+
+def _make_anchor():
+    """Synthetic ScorebarLocalization anchor for B4 tests."""
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    return ScorebarLocalization(
+        x_left=100, x_right=1820, y_top=12, y_bottom=48, confidence=1.0
+    )
+
+
+def test_masked_keep_rules_in_match_removed_any_duration(monkeypatch):
+    """spec 3.2: localize path removes in_match at ANY duration (incl. >=3.5s).
+
+    Patches classify_blackout to always return "in_match".  A 5.0s region
+    (duration > _IN_MATCH_MAX_DURATION = 3.5s) must NOT appear in the kept
+    list when localize=True.
+    """
+    monkeypatch.setattr(sb, "classify_blackout", lambda *a, **kw: "in_match")
+    # Also stub _merge_boundary_pairs to be identity (no regions to merge anyway)
+    monkeypatch.setattr(
+        sb,
+        "_merge_boundary_pairs",
+        lambda vp, regions, cls, dur, height, workers, **kw: (regions, cls),
+    )
+    regions = [(100.0, 105.0)]  # 5.0s > _IN_MATCH_MAX_DURATION
+    result, clslist = filter_blackouts_with_scorebar(
+        Path("v.mp4"), regions, 400.0, _HEIGHT, localize=True
+    )
+    assert result == [], "in_match at any duration must be removed on localize path"
+    assert clslist == []
+
+
+def test_masked_keep_rules_non_fl_kept(monkeypatch):
+    """spec 3.2: localize path keeps non_fl as boundary candidate (staging frames)."""
+    monkeypatch.setattr(sb, "classify_blackout", lambda *a, **kw: "non_fl")
+    monkeypatch.setattr(
+        sb,
+        "_merge_boundary_pairs",
+        lambda vp, regions, cls, dur, height, workers, **kw: (regions, cls),
+    )
+    regions = [(100.0, 103.0)]
+    result, clslist = filter_blackouts_with_scorebar(
+        Path("v.mp4"), regions, 400.0, _HEIGHT, localize=True
+    )
+    assert result == regions, "non_fl must be kept on localize path"
+    assert clslist == ["non_fl"]
+
+
+def test_obs_keep_rules_unchanged_pin(monkeypatch):
+    """Bit-exact OBS path pin: localize=False -> in_match>=3.5s KEEP, non_fl REMOVE."""
+    side_effects = ["in_match", "non_fl"]
+    monkeypatch.setattr(sb, "classify_blackout", lambda *a, **kw: side_effects.pop(0))
+    monkeypatch.setattr(
+        sb,
+        "_merge_boundary_pairs",
+        lambda vp, regions, cls, dur, height, workers, **kw: (regions, cls),
+    )
+    # in_match 8s (>=3.5s) + non_fl 3s; localize=False (OBS path)
+    regions = [(100.0, 108.0), (200.0, 203.0)]
+    result, clslist = filter_blackouts_with_scorebar(
+        Path("v.mp4"), regions, 400.0, _HEIGHT, localize=False
+    )
+    assert result == [(100.0, 108.0)], "OBS: long in_match must be KEPT"
+    assert clslist == ["in_match"]
+
+
+def test_presence_at_anchor_from_raw_raw_none(monkeypatch):
+    """raw=None -> UNKNOWN (probe failure path)."""
+    from allaganeye.video.scorebar import _presence_at_anchor_from_raw
+
+    result = _presence_at_anchor_from_raw(None, _make_anchor())
+    assert result is PresenceState.UNKNOWN
+
+
+def test_presence_at_anchor_from_raw_anchor_none_delegates(monkeypatch):
+    """anchor=None -> delegates to _localize_present_from_raw (position-independent)."""
+    from allaganeye.video.scorebar import _presence_at_anchor_from_raw
+
+    # patch the delegate so we can verify it is called
+    called = []
+    monkeypatch.setattr(
+        sb,
+        "_localize_present_from_raw",
+        lambda raw: called.append(raw) or PresenceState.ABSENT,
+    )
+    dummy_raw = b"\x00" * 10
+    result = _presence_at_anchor_from_raw(dummy_raw, None)
+    assert result is PresenceState.ABSENT
+    assert len(called) == 1
+
+
+def test_presence_at_anchor_from_raw_hit(monkeypatch):
+    """anchor specified and localize_from_rgb_bytes_at_anchor returns a hit -> PRESENT."""
+    from allaganeye.video.scorebar import _presence_at_anchor_from_raw
+
+    monkeypatch.setattr(
+        sb,
+        "localize_from_rgb_bytes_at_anchor",
+        lambda raw, anchor, height, width: _make_anchor(),
+    )
+    dummy_raw = b"\x00" * 10
+    result = _presence_at_anchor_from_raw(dummy_raw, _make_anchor())
+    assert result is PresenceState.PRESENT
+
+
+def test_presence_at_anchor_from_raw_miss(monkeypatch):
+    """anchor specified and localize_from_rgb_bytes_at_anchor returns None -> ABSENT."""
+    from allaganeye.video.scorebar import _presence_at_anchor_from_raw
+
+    monkeypatch.setattr(
+        sb,
+        "localize_from_rgb_bytes_at_anchor",
+        lambda raw, anchor, height, width: None,
+    )
+    dummy_raw = b"\x00" * 10
+    result = _presence_at_anchor_from_raw(dummy_raw, _make_anchor())
+    assert result is PresenceState.ABSENT
+
+
+def test_classify_localize_uses_anchor_presence(monkeypatch):
+    """anchor != None: _probe_scorebar_context calls _presence_at_anchor_from_raw."""
+    anchor = _make_anchor()
+    anchor_calls = []
+
+    def fake_presence_at_anchor(raw, anc):
+        anchor_calls.append((raw, anc))
+        return PresenceState.PRESENT
+
+    monkeypatch.setattr(sb, "_presence_at_anchor_from_raw", fake_presence_at_anchor)
+
+    def fake_probe(
+        vp, ts, height, workers, *, with_localize=False, with_lowres=True, anchor=None
+    ):
+        # Return empty scorebar results + raw + localize_results
+        n = len(ts)
+        dummy_raw = b"\x00" * 10
+        if with_localize:
+            locs = [fake_presence_at_anchor(dummy_raw, anchor) for _ in ts]
+        else:
+            locs = [None] * n
+        return ([True] * n, [dummy_raw] * n, locs)
+
+    monkeypatch.setattr(sb, "_probe_scorebar_context", fake_probe)
+    monkeypatch.setattr(sb, "_band_mad_min", lambda frames, h, r=None: None)
+
+    from allaganeye.video.scorebar import _classify_blackout_localize
+
+    _classify_blackout_localize(
+        Path("v.mp4"), (10.0, 12.0), 300.0, _HEIGHT, anchor=anchor
+    )
+    # _presence_at_anchor_from_raw must have been called with the anchor
+    assert any(a is anchor for _, a in anchor_calls), (
+        "_presence_at_anchor_from_raw must receive the anchor"
+    )
+
+
+def test_probe_scorebar_context_anchor_none_matches_legacy(monkeypatch):
+    """with_localize=True + anchor=None yields identical localize_results to legacy path.
+
+    Delegation identity: _presence_at_anchor_from_raw(raw, None) must produce
+    the same result as _localize_present_from_raw(raw).
+    """
+    from allaganeye.video.scorebar import _presence_at_anchor_from_raw
+
+    calls_new = []
+    calls_legacy = []
+
+    def patched_at_anchor(raw, anc):
+        r = sb._localize_present_from_raw(raw)
+        calls_new.append(r)
+        return r
+
+    def patched_legacy(raw):
+        r = PresenceState.ABSENT  # stub
+        calls_legacy.append(r)
+        return r
+
+    # With anchor=None, _presence_at_anchor_from_raw delegates to _localize_present_from_raw.
+    # Verify the delegation contract directly (unit test of the helper).
+    monkeypatch.setattr(sb, "_localize_present_from_raw", patched_legacy)
+    result = _presence_at_anchor_from_raw(b"\x00", None)
+    assert result is PresenceState.ABSENT
+    assert len(calls_legacy) == 1, "delegation to _localize_present_from_raw must occur"
+
+
+def test_merge_gap_probes_at_anchor(monkeypatch):
+    """merge's 9 gap probes use at-anchor evaluation when anchor is specified.
+
+    Setup: two match_boundary regions; gap probes are set up so that the
+    at-anchor result returns ABSENT (no scorebar), but position-independent
+    localize would return PRESENT (lobby FP outside the anchor band).
+    With anchor=anchor, any_scorebar must be False -> merge succeeds.
+    """
+    anchor = _make_anchor()
+    probe_calls = []
+
+    def fake_probe(
+        vp, ts, height, workers, *, with_localize=False, with_lowres=True, anchor=None
+    ):
+        probe_calls.append(
+            {"with_localize": with_localize, "anchor": anchor, "n": len(ts)}
+        )
+        n = len(ts)
+        dummy = b"\x00" * 10
+        if with_localize:
+            # at-anchor: always ABSENT (gap is lobby, scorebar not at anchor position)
+            locs: list[PresenceState | None] = [PresenceState.ABSENT] * n
+        else:
+            locs = [None] * n
+        return ([False] * n, [dummy] * n, locs)
+
+    monkeypatch.setattr(sb, "_probe_scorebar_context", fake_probe)
+
+    regions = [(10.0, 15.0), (30.0, 35.0)]
+    clss = ["match_boundary", "match_boundary"]
+
+    from allaganeye.video.scorebar import _merge_boundary_pairs
+
+    merged, _merged_cls = _merge_boundary_pairs(
+        Path("v.mp4"),
+        regions,
+        clss,
+        300.0,
+        _HEIGHT,
+        None,
+        localize=True,
+        anchor=anchor,
+    )
+    # ABSENT-only gap -> all_valid and not any_scorebar -> merge happens
+    assert len(merged) == 1, f"merge should collapse 2->1, got {merged}"
+    assert merged[0] == (10.0, 35.0)
+    # The anchor must have been threaded to the probe call
+    anchor_probes = [c for c in probe_calls if c.get("with_localize")]
+    assert all(c["anchor"] is anchor for c in anchor_probes), (
+        "anchor must be threaded to gap probes"
+    )

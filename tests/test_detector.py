@@ -3792,3 +3792,120 @@ def test_resolve_scorebar_anchor_warns_unknown_probes(monkeypatch, caplog):
     assert any(
         re.search(r"anchor probes: \d+/\d+ UNKNOWN", r.message) for r in caplog.records
     ), f"Expected UNKNOWN warning, got: {[r.message for r in caplog.records]}"
+
+
+# ===========================================================================
+# B4: _detect_masked_fallback anchor threading (#822)
+# ===========================================================================
+
+
+def test_masked_fallback_warns_when_anchor_unresolved(monkeypatch, caplog):
+    """When _resolve_scorebar_anchor returns None, a warning is emitted."""
+    import logging
+
+    from allaganeye.video.capture_region import CaptureRegion
+
+    fake_region = CaptureRegion(0.0, 0.0, 1.0, 0.3, source="tierA")
+    monkeypatch.setattr(det, "_resolve_masked_region", lambda *a, **k: fake_region)
+    monkeypatch.setattr(det, "_resolve_scorebar_anchor", lambda *a, **k: None)
+    monkeypatch.setattr(
+        det, "_scan_cpu", lambda *a, **k: {0.0: 2.0, 3.0: 2.0, 100.0: 200.0}
+    )
+    monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **k: [(0.0, 3.0)])
+
+    filter_calls = {}
+
+    def fake_filter(video_path, regions, dur, height, workers, **kw):
+        filter_calls["anchor"] = kw.get("anchor")
+        return regions, ["match_boundary"]
+
+    monkeypatch.setattr(
+        "allaganeye.video.scorebar.filter_blackouts_with_scorebar", fake_filter
+    )
+    monkeypatch.setattr(
+        det,
+        "_filter_and_extract_segments",
+        lambda *a, **k: [{"start": 0.0, "end": 9.0}],
+    )
+
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        out = det._detect_masked_fallback(
+            det.Path("x.mp4"),
+            duration_hint=600.0,
+            sample_interval=3.0,
+            blackout_threshold=15.0,
+            min_match_duration=300.0,
+            min_blackout_duration=3.0,
+            use_gpu=False,
+            workers=None,
+            src_resolution=(1920, 1080),
+            codec="h264",
+            gpu_vendor=None,
+            source_fps_num=60,
+            source_fps_den=1,
+            source_fps=None,
+            audio_hits=None,
+            stats=None,
+        )
+
+    assert out is not None
+    assert any("scorebar anchor unresolved" in r.message for r in caplog.records), (
+        f"Expected anchor warning, got: {[r.message for r in caplog.records]}"
+    )
+    # anchor=None is threaded to filter when unresolved
+    assert filter_calls.get("anchor") is None
+
+
+def test_masked_fallback_threads_anchor_to_filter(monkeypatch):
+    """When _resolve_scorebar_anchor returns a valid anchor, it is passed to filter."""
+    from allaganeye.video.capture_region import CaptureRegion, ScorebarLocalization
+
+    fake_region = CaptureRegion(0.0, 0.0, 1.0, 0.3, source="tierA")
+    fake_anchor = ScorebarLocalization(
+        x_left=100, x_right=1820, y_top=12, y_bottom=48, confidence=1.0
+    )
+    monkeypatch.setattr(det, "_resolve_masked_region", lambda *a, **k: fake_region)
+    monkeypatch.setattr(det, "_resolve_scorebar_anchor", lambda *a, **k: fake_anchor)
+    monkeypatch.setattr(
+        det, "_scan_cpu", lambda *a, **k: {0.0: 2.0, 3.0: 2.0, 100.0: 200.0}
+    )
+    monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **k: [(0.0, 3.0)])
+
+    filter_calls = {}
+
+    def fake_filter(video_path, regions, dur, height, workers, **kw):
+        filter_calls["anchor"] = kw.get("anchor")
+        return regions, ["match_boundary"]
+
+    monkeypatch.setattr(
+        "allaganeye.video.scorebar.filter_blackouts_with_scorebar", fake_filter
+    )
+    monkeypatch.setattr(
+        det,
+        "_filter_and_extract_segments",
+        lambda *a, **k: [{"start": 0.0, "end": 9.0}],
+    )
+
+    out = det._detect_masked_fallback(
+        det.Path("x.mp4"),
+        duration_hint=600.0,
+        sample_interval=3.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        use_gpu=False,
+        workers=None,
+        src_resolution=(1920, 1080),
+        codec="h264",
+        gpu_vendor=None,
+        source_fps_num=60,
+        source_fps_den=1,
+        source_fps=None,
+        audio_hits=None,
+        stats=None,
+    )
+
+    assert out is not None
+    assert filter_calls.get("anchor") is fake_anchor, (
+        "anchor must be threaded to filter_blackouts_with_scorebar"
+    )

@@ -30,7 +30,9 @@ from allaganeye.video.detector import (
 from allaganeye.video.capture_region import (
     FULL_FRAME,
     CaptureRegion,
+    ScorebarLocalization,
     localize_from_rgb_bytes,
+    localize_from_rgb_bytes_at_anchor,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,6 +56,30 @@ def _localize_present_from_raw(raw: bytes | None) -> PresenceState:
     return PresenceState.PRESENT if loc is not None else PresenceState.ABSENT
 
 
+def _presence_at_anchor_from_raw(
+    raw: bytes | None, anchor: "ScorebarLocalization | None"
+) -> PresenceState:
+    """RGB24 probe bytes + anchor -> PresenceState (PRESENT/ABSENT/UNKNOWN).
+
+    raw None -> UNKNOWN (probe failure, same as _localize_present_from_raw).
+    anchor None -> delegates to _localize_present_from_raw (position-independent
+        fallback, bit-exact with pre-B4 behavior when anchor is unavailable).
+    anchor specified -> localize_from_rgb_bytes_at_anchor at the anchor position;
+        hit -> PRESENT, miss -> ABSENT.
+    """
+    if raw is None:
+        return PresenceState.UNKNOWN
+    if anchor is None:
+        return _localize_present_from_raw(raw)
+    loc = localize_from_rgb_bytes_at_anchor(
+        raw,
+        anchor,
+        height=_SCOREBAR_V2_PROBE_HEIGHT,
+        width=_SCOREBAR_V2_PROBE_WIDTH,
+    )
+    return PresenceState.PRESENT if loc is not None else PresenceState.ABSENT
+
+
 def _probe_scorebar_context(
     video_path: Path,
     timestamps: list[float],
@@ -62,6 +88,7 @@ def _probe_scorebar_context(
     *,
     with_localize: bool = False,
     with_lowres: bool = True,
+    anchor: "ScorebarLocalization | None" = None,
 ) -> tuple[list[bool | None], list[bytes | None], list[PresenceState | None]]:
     """Probe multiple timestamps and return has_scorebar + raw frames.
 
@@ -165,10 +192,15 @@ def _probe_scorebar_context(
         # localize-present from the hi-res frames already decoded for v2
         # (additive; OBS production passes with_localize=False -> all None,
         # so existing callers stay bit-exact).
+        # B4: when anchor is provided, use at-anchor evaluation instead of
+        # position-independent localize; anchor=None degrades to the legacy
+        # _localize_present_from_raw path (bit-exact delegation).
         localize_results: dict[float, PresenceState | None] = {}
         if with_localize and use_v2:
             for t in unique_ts:
-                localize_results[t] = _localize_present_from_raw(hi_raws.get(t))
+                localize_results[t] = _presence_at_anchor_from_raw(
+                    hi_raws.get(t), anchor
+                )
         else:
             for t in unique_ts:
                 localize_results[t] = None
@@ -330,6 +362,7 @@ def _classify_blackout_localize(
     workers: int | None = None,
     *,
     band_region: CaptureRegion = FULL_FRAME,
+    anchor: "ScorebarLocalization | None" = None,
 ) -> str:
     """Classify a blackout by position-independent scorebar presence (VTuber).
 
@@ -344,10 +377,10 @@ def _classify_blackout_localize(
     post_timestamps = sorted(set(min(duration, region[1] + d) for d in (1.0, 2.0, 3.0)))
 
     _, pre_frames, pre_loc = _probe_scorebar_context(
-        video_path, pre_timestamps, height, workers, with_localize=True
+        video_path, pre_timestamps, height, workers, with_localize=True, anchor=anchor
     )
     _, post_frames, post_loc = _probe_scorebar_context(
-        video_path, post_timestamps, height, workers, with_localize=True
+        video_path, post_timestamps, height, workers, with_localize=True, anchor=anchor
     )
     pre_has = _majority_presence(pre_loc)
     post_has = _majority_presence(post_loc)
@@ -384,6 +417,7 @@ def _classify_blackout_localize(
                 workers,
                 with_localize=True,
                 with_lowres=False,
+                anchor=anchor,
             )
             pre_re = _majority_presence(pre_re_loc)
             if pre_re is not None:
@@ -396,6 +430,7 @@ def _classify_blackout_localize(
                 workers,
                 with_localize=True,
                 with_lowres=False,
+                anchor=anchor,
             )
             post_re = _majority_presence(post_re_loc)
             if post_re is not None:
@@ -444,6 +479,7 @@ def classify_blackout(
     *,
     band_region: CaptureRegion = FULL_FRAME,
     localize: bool = False,
+    anchor: "ScorebarLocalization | None" = None,
 ) -> str:
     """Classify a blackout region by scorebar context.
 
@@ -484,6 +520,7 @@ def classify_blackout(
             height,
             workers,
             band_region=band_region,
+            anchor=anchor,
         )
 
     pre_timestamps = sorted(set(max(0.0, region[0] - d) for d in (3.0, 2.0, 1.0)))
@@ -631,6 +668,7 @@ def filter_blackouts_with_scorebar(
     *,
     band_region: CaptureRegion = FULL_FRAME,
     localize: bool = False,
+    anchor: "ScorebarLocalization | None" = None,
     audio_hits: Sequence[BgmHit] | None = None,
     stats: DetectionStats | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
@@ -679,6 +717,7 @@ def filter_blackouts_with_scorebar(
             workers,
             band_region=band_region,
             localize=localize,
+            anchor=anchor,
         )
         if progress_callback is not None:
             progress_callback(idx + 1, total_regions)
@@ -700,16 +739,31 @@ def filter_blackouts_with_scorebar(
                 classification = "match_boundary"
                 audio_promotions += 1
 
-        if classification == "in_match" and region_duration < _IN_MATCH_MAX_DURATION:
+        if classification == "in_match" and (
+            localize or region_duration < _IN_MATCH_MAX_DURATION
+        ):
+            # localize path (#822 Q3): at-anchor has no v2 afterimage FN, so
+            # in_match is non-boundary at any duration.  OBS path: only short
+            # in_match (<3.5s) is removed; long in_match is kept as boundary.
+            if localize:
+                reason = "in_match (localize path: non-boundary at any duration)"
+            else:
+                reason = "short in_match"
             logger.info(
-                "REMOVE [%.1f-%.1f] (%.1fs): %s (short in_match)",
+                "REMOVE [%.1f-%.1f] (%.1fs): %s (%s)",
                 region[0],
                 region[1],
                 region_duration,
                 classification,
+                reason,
             )
             continue
-        if classification == "non_fl":
+        if classification == "non_fl" and not localize:
+            # OBS path: non_fl is removed (non-FL content boundary).
+            # localize path (#822): staging frames lack a detectable bar for
+            # ~60s after zone-in, so entry boundaries classify non_fl; keep
+            # them as boundary candidates (spurious fake segments removed by
+            # Layer 2 / Task B5).
             logger.info(
                 "REMOVE [%.1f-%.1f] (%.1fs): %s",
                 region[0],
@@ -745,6 +799,7 @@ def filter_blackouts_with_scorebar(
         workers,
         band_region=band_region,
         localize=localize,
+        anchor=anchor,
     )
 
 
@@ -758,6 +813,7 @@ def _merge_boundary_pairs(
     *,
     band_region: CaptureRegion = FULL_FRAME,
     localize: bool = False,
+    anchor: "ScorebarLocalization | None" = None,
 ) -> tuple[list[tuple[float, float]], list[str]]:
     """Merge consecutive match_boundary pairs separated by non-FL content.
 
@@ -800,6 +856,7 @@ def _merge_boundary_pairs(
                         workers,
                         with_localize=True,
                         with_lowres=False,
+                        anchor=anchor,
                     )
                 else:
                     probe_signal, _, _ = _probe_scorebar_context(
