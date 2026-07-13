@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 from allaganeye.commands.split_matches import (
     _CACHE_VERSION,
     _ETAProgressBar,
+    _MASKED_ALGO_VERSION,
     _PROGRESS_LABEL_WIDTH,
     _auto_sample_interval,
     _eta_progressbar,
@@ -1430,6 +1431,101 @@ def test_progressbar_auto_interval(mock_probe, mock_detect, mock_split, tmp_path
     assert mock_bar.call_count >= 1
     detecting_call = mock_bar.call_args_list[0]
     assert detecting_call[1]["length"] == 2433
+
+
+class TestMaskedAlgoCache:
+    """#822: masked_algo cache key -- save/load/legacy OBS backward compat."""
+
+    def test_save_cache_writes_masked_algo(self, cache_video, cache_config, tmp_path):
+        """_save_cache always writes masked_algo == _MASKED_ALGO_VERSION."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        assert data["params"]["masked_algo"] == _MASKED_ALGO_VERSION
+
+    def test_cache_miss_on_masked_algo_mismatch(self, cache_video, tmp_path):
+        """Legacy masked cache (masked_algo absent = 1) misses with new code (2).
+
+        A cache saved by pre-#822 code with masked=True has no masked_algo key
+        (defaults to 1). Loading with the current code (_MASKED_ALGO_VERSION=2)
+        must return None -- the old masked-path result is stale.
+        """
+        masked_config = SplitConfig(
+            output_dir=tmp_path / "output",
+            sample_interval=1.0,
+            blackout_threshold=15.0,
+            min_match_duration=300.0,
+            min_blackout_duration=3.0,
+            masked=True,
+        )
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, masked_config, CACHE_BOUNDARIES
+        )
+        # Simulate legacy pre-#822 cache: remove masked_algo from params
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("masked_algo", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        # Must miss: masked=True run with old (missing) algo key vs new version
+        assert _load_cache(cache_path, cache_video, 1.0, masked_config) is None
+
+    def test_cache_hit_for_legacy_obs_cache_without_masked_algo(
+        self, cache_video, cache_config, tmp_path
+    ):
+        """OBS cache (fallback unused, masked off) hits even without masked_algo.
+
+        Pre-#822 OBS caches have no masked_algo key. Since masked=False and
+        masked_fallback_used=False, the run was never masked-affected.
+        Legacy key absence == algo 1, and since it is not masked-affected,
+        the mismatch check does not fire -- the cache must still hit.
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        # Simulate legacy OBS cache: remove masked_algo key
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("masked_algo", None)
+        # Ensure masked_fallback_used is absent/False (standard OBS run)
+        data.pop("masked_fallback_used", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        # Must still hit: unaffected users must not be forced to re-detect
+        assert (
+            _load_cache(cache_path, cache_video, 1.0, cache_config) == CACHE_BOUNDARIES
+        )
+
+    def test_cache_miss_when_fallback_used_and_algo_stale(
+        self, cache_video, cache_config, tmp_path
+    ):
+        """Auto-fallback run (masked=False but masked_fallback_used=True) misses
+        when masked_algo key is absent (stale pre-#822 result).
+
+        masked_fallback_used=True means the run took the masked code path
+        regardless of the request flag, so the algo change invalidates it.
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        # Save a cache that records auto-fallback was used
+        _save_cache(
+            cache_path,
+            cache_video,
+            PROBE_RESULT,
+            1.0,
+            cache_config,
+            CACHE_BOUNDARIES,
+            masked_fallback_used=True,
+        )
+        # Simulate legacy pre-#822 cache: remove masked_algo
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("masked_algo", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        # Must miss: fallback-used run with stale algo
+        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+
+    def test_masked_algo_version_is_2(self):
+        """Pin: _MASKED_ALGO_VERSION == 2 for #822."""
+        assert _MASKED_ALGO_VERSION == 2
 
 
 class TestCaptureRegionsCache:

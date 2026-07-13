@@ -72,6 +72,13 @@ logger = logging.getLogger(__name__)
 # する。cache key params (keep_trailing 含む) 自体は不変。
 _CACHE_VERSION = 4
 
+# masked_algo version: identifies the masked-path detection algorithm baked
+# into cached boundaries. Only used for cache invalidation on masked-affected
+# runs (params.masked=True or auto-fallback used).
+# version 1 = pre-#822 position-independent localize masked path
+# version 2 = #822 anchor presence + Layer 2
+_MASKED_ALGO_VERSION = 2
+
 
 def run_split(
     video_path: Path,
@@ -686,10 +693,14 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
     # resolved path (top-level、key 非対象)。auto-fallback 時は masked=off でも
     # masked_fallback=on になる (#821)。
     cached_fallback = bool(data.get("masked_fallback_used", False))
+    # masked_algo は masked 影響 run のみ表示 (診断上意味を持つのは masked 経路のみ)。
+    cached_algo = int(params.get("masked_algo", 1))
+    masked_affected = cached_masked or cached_fallback
     # region も他 token 同様 raw cache 記録値を正として表示する (#810)。legacy
     # cache では metadata.json 側が FULL_FRAME を合成しても表示は unknown の
     # まま (「cache に何が記録されているか」の診断表示であり意図的な差)。
 
+    algo_token = f", masked_algo={cached_algo}" if masked_affected else ""
     typer.echo(header)
     typer.echo(
         "  "
@@ -701,7 +712,8 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
         f"vtuber={'on' if cached_vtuber else 'off'}, "
         f"masked={'on' if cached_masked else 'off'}, "
         f"keep_trailing={'on' if cached_keep_trailing else 'off'}, "
-        f"masked_fallback={'on' if cached_fallback else 'off'}, "
+        f"masked_fallback={'on' if cached_fallback else 'off'}"
+        f"{algo_token}, "
         f"region={_format_region_token(data.get('capture_regions'))}"
     )
 
@@ -1991,6 +2003,7 @@ def _save_cache(
             "vtuber": config.vtuber,
             "masked": config.masked,
             "keep_trailing": config.keep_trailing,
+            "masked_algo": _MASKED_ALGO_VERSION,
         },
         # resolved path は key (params) ではなく top-level に記録する: auto-masked
         # 動画の cache 再利用は request flag の一致で正しく機能させ、provenance
@@ -2217,6 +2230,20 @@ def _load_cache(
         or params.get("keep_trailing", False) != config.keep_trailing
     ):
         logger.debug("Cache parameter mismatch")
+        return None
+
+    # masked_algo key: invalidate only when masked algorithm changes AND the
+    # cached run was masked-affected (params.masked=True or auto-fallback used).
+    # Legacy OBS caches (fallback unused + masked off) hit regardless of key
+    # absence -- no needless re-detects for unaffected users.
+    cached_algo = params.get("masked_algo", 1)
+    masked_affected = (
+        data.get("masked_fallback_used", False)
+        or params.get("masked", False)
+        or config.masked
+    )
+    if masked_affected and cached_algo != _MASKED_ALGO_VERSION:
+        logger.debug("Cache masked algo mismatch")
         return None
 
     boundaries = data.get("boundaries")
