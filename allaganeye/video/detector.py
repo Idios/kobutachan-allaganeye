@@ -24,6 +24,7 @@ from allaganeye.video.capture_region import (
     FULL_FRAME,
     RegionTimeline,
     ScorebarLocalization,
+    localize_from_rgb_bytes_at_anchor,
     region_mean,
 )
 
@@ -72,6 +73,10 @@ class DetectionStats(TypedDict, total=False):
     # Filter "kept" with the larger Detected count when a recording
     # starts / ends mid-match.
     filter_unknown: int
+    # Count of segments dropped by Layer 2 at-anchor presence validation (#822).
+    # Incremented once per segment dropped (lobby / non-FL inter-match footage
+    # scoring majority-absent in at-anchor probes).
+    masked_segments_dropped: int
 
 
 logger = logging.getLogger(__name__)
@@ -856,6 +861,137 @@ def detect_match_boundaries(
     return segments
 
 
+def _validate_match_segments(
+    video_path: Path,
+    segments: list[MatchBoundary],
+    anchor: ScorebarLocalization,
+    workers: int | None,
+    stats: DetectionStats | None,
+) -> list[MatchBoundary]:
+    """Layer 2 segment validation: at-anchor presence majority vote (#822).
+
+    For each candidate segment extracted by Layer 1, probe 9 evenly-spaced
+    timestamps (k/10 fractions of the segment duration, k=1..9) and classify
+    via at-anchor localization.  A segment is kept iff PRESENT probes are a
+    strict majority of non-UNKNOWN probes (``present * 2 > len(valid)``).
+
+    Kept segments are re-typed to "fl_match" (direct presence evidence
+    supersedes the adjacency-inference type produced by
+    ``_infer_segment_type`` for non_fl-kept boundary pairs).
+
+    Dropped segments (lobby/inter-match footage) are info-logged and counted
+    in ``stats["masked_segments_dropped"]``.
+
+    Segments where ALL 9 probes are UNKNOWN are kept conservatively (anchor
+    mistrust) with a warning.
+
+    Fail-safe: if validation would drop ALL segments the original list is
+    returned unchanged with a warning (anchor mistrust; conservative keep).
+
+    ``scan_presence`` raises ``VideoProcessingError`` when all probes for a
+    scan call are UNKNOWN (sec.5.3 fail-loud).  For per-segment validation
+    we want conservative keep instead, so each scan call is wrapped in a
+    try/except ``VideoProcessingError``; on catch, the segment is treated as
+    all-UNKNOWN (keep + warning).
+    """
+    # Lazy import: presence.py imports from detector.py at module level, so a
+    # top-level import here would create a circular dependency.
+    from allaganeye.video.presence import PresenceState, scan_presence
+    from allaganeye.video.probe_state import PresenceSample
+
+    kept: list[MatchBoundary] = []
+    for seg in segments:
+        seg_start = seg["start"]
+        seg_end = seg["end"]
+        seg_len = seg_end - seg_start
+        probe_ts = [seg_start + seg_len * k / 10.0 for k in range(1, 10)]
+
+        def _make_sample_fn(
+            vp: Path, anch: ScorebarLocalization
+        ) -> Callable[[float], PresenceSample]:
+            def _sample(t: float) -> PresenceSample:
+                raw = _probe_frame_rgb_hires(vp, t)
+                if raw is None:
+                    return PresenceSample(
+                        time=t, state=PresenceState.UNKNOWN, confidence=0.0
+                    )
+                loc = localize_from_rgb_bytes_at_anchor(
+                    raw,
+                    anch,
+                    height=_SCOREBAR_V2_PROBE_HEIGHT,
+                    width=_SCOREBAR_V2_PROBE_WIDTH,
+                )
+                if loc is None:
+                    return PresenceSample(
+                        time=t, state=PresenceState.ABSENT, confidence=0.0
+                    )
+                return PresenceSample(
+                    time=t, state=PresenceState.PRESENT, confidence=loc.confidence
+                )
+
+            return _sample
+
+        sample_fn = _make_sample_fn(video_path, anchor)
+        all_unknown = False
+        try:
+            # duration and stride are unused when times= is provided; pass
+            # seg_end/1.0 as placeholders for API completeness.
+            samples = scan_presence(
+                video_path,
+                seg_end,
+                stride=1.0,
+                workers=workers if workers is not None else 1,
+                sample_fn=sample_fn,
+                times=probe_ts,
+            )
+        except VideoProcessingError:
+            # scan_presence raises when ALL probes are UNKNOWN (sec.5.3
+            # fail-loud).  For per-segment validation we want conservative
+            # keep with a warning instead of propagating the error.
+            all_unknown = True
+            samples = []
+
+        if all_unknown or all(s.state is PresenceState.UNKNOWN for s in samples):
+            logger.warning(
+                "Layer 2 validation: all probes UNKNOWN for segment"
+                " [%.1f, %.1f]; keeping conservatively (anchor mistrust)",
+                seg_start,
+                seg_end,
+            )
+            kept.append(seg)
+            continue
+
+        valid = [s for s in samples if s.state is not PresenceState.UNKNOWN]
+        present_count = sum(1 for s in valid if s.state is PresenceState.PRESENT)
+        if valid and present_count * 2 > len(valid):
+            # Majority PRESENT: re-type to fl_match (direct evidence).
+            kept_seg = dict(seg)
+            kept_seg["type"] = "fl_match"
+            kept.append(kept_seg)  # type: ignore[arg-type]
+        else:
+            logger.info(
+                "Layer 2 validation: dropping segment [%.1f, %.1f]"
+                " (present=%d/%d valid probes; lobby/non-FL)",
+                seg_start,
+                seg_end,
+                present_count,
+                len(valid),
+            )
+            if stats is not None:
+                stats["masked_segments_dropped"] = (
+                    stats.get("masked_segments_dropped", 0) + 1
+                )
+
+    if not kept and segments:
+        logger.warning(
+            "Layer 2 validation: all %d segment(s) failed presence check;"
+            " keeping all (anchor mistrust fail-safe)",
+            len(segments),
+        )
+        return list(segments)
+    return kept
+
+
 def _detect_masked_fallback(
     video_path: Path,
     *,
@@ -966,6 +1102,10 @@ def _detect_masked_fallback(
     )
 
     classifications: list[str] | None = None
+    # Initialize anchor to None so it is in scope for Layer 2 validation below.
+    # anchor is resolved inside the src_resolution guard (B4) and remains None
+    # when src_resolution is not provided (degraded path; Layer 2 is skipped).
+    anchor: ScorebarLocalization | None = None
     if src_resolution is not None:
         # B4 (#822): resolve per-video scorebar anchor for at-anchor classification.
         # Placed inside this guard so anchor consensus probes only run when
@@ -1002,6 +1142,15 @@ def _detect_masked_fallback(
         classifications=classifications,
         stats=stats,
     )
+
+    # B5 (#822): Layer 2 at-anchor presence validation.
+    # Skip when anchor is None (src_resolution not provided or anchor consensus
+    # failed) -- degraded path keeps existing pipeline behaviour.
+    if anchor is not None and segments:
+        segments = _validate_match_segments(
+            video_path, segments, anchor, workers, stats
+        )
+
     return segments, region
 
 

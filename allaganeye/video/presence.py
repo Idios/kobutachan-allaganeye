@@ -185,6 +185,7 @@ def scan_presence(
     stride: float,
     workers: int,
     sample_fn: Callable[[float], PresenceSample] | None = None,
+    times: Sequence[float] | None = None,
 ) -> list[PresenceSample]:
     """Sample scorebar presence across the whole video on a uniform grid.
 
@@ -195,6 +196,13 @@ def scan_presence(
     External callers keep the no-leak :func:`localize_present_at`).  Tests
     inject a synthetic ``sample_fn`` to stay fast.  Results are returned
     sorted by time ascending.
+
+    When ``times`` is provided the probes are performed at exactly those
+    timestamps in the given order rather than on the uniform stride grid.
+    ``duration`` and ``stride`` are not used for timestamp generation when
+    ``times`` is set (pass any placeholder values; ``duration`` is ignored,
+    ``stride`` is kept as a required kwarg for API stability).  Existing
+    callers that do not pass ``times`` are unaffected.
 
     Per-probe exceptions are mapped to UNKNOWN samples (per-probe isolation,
     #824 sec.5.2).  If ALL samples are UNKNOWN a VideoProcessingError is raised
@@ -207,11 +215,14 @@ def scan_presence(
         else (lambda t: _probe_present_sample_raising(video_path, t))
     )
 
-    times = _grid_timestamps(duration, stride)
+    if times is not None:
+        times_list = list(times)
+    else:
+        times_list = _grid_timestamps(duration, stride)
     results: dict[float, PresenceSample] = {}
     first_exc: VideoProcessingError | None = None
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(fn, t): t for t in times}
+        futures = {pool.submit(fn, t): t for t in times_list}
         for fut in futures:
             t = futures[fut]
             try:
@@ -223,9 +234,9 @@ def scan_presence(
                 )
                 if first_exc is None:
                     first_exc = exc
-    unknown = [t for t in times if results[t].state is PresenceState.UNKNOWN]
+    unknown = [t for t in times_list if results[t].state is PresenceState.UNKNOWN]
     if unknown:
-        if len(unknown) == len(times):
+        if len(unknown) == len(times_list):
             # Determine representative cause: prefer the caught exception message;
             # fall back to marker string when the default sampler returned UNKNOWN
             # (_probe_present_sample_raising maps raw None -> UNKNOWN without
@@ -235,18 +246,18 @@ def scan_presence(
             else:
                 cause = "decode returned no frame"
             raise VideoProcessingError(
-                f"all {len(times)} presence probes UNKNOWN "
+                f"all {len(times_list)} presence probes UNKNOWN "
                 f"(systemic probe failure): {cause}"
             ) from (first_exc if first_exc is not None else None)
         logger.warning(
             "%d/%d presence probes UNKNOWN (probe failure); "
             "treated as non-present in segmentation (time range %.1f-%.1fs)",
             len(unknown),
-            len(times),
+            len(times_list),
             min(unknown),
             max(unknown),
         )
-    return [results[t] for t in times]
+    return [results[t] for t in times_list]
 
 
 def detect_matches_by_presence(
