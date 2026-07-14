@@ -1,6 +1,8 @@
 # #822 masked 過分割解消 + #824 probe semantics 統一 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **supersede note (2026-07-14)**: 本 plan の設計値の一部は実装期の実機再校正で更新済み (最終形: `_MASKED_ALGO_VERSION = 3` / L2 は 15-probe quorum >= 2 + zero-gap merge / keep 規則は anchored gate 下のみ)。正は [spec の erratum 群](../specs/2026-07-11-issue-822-masked-oversplit-anchor-design.md) と実装を参照。
 
 **Goal:** masked-OBS detect の過分割 (試合間 lobby の segment 化) を anchor presence + segment 検証の 2 層で解消し、同一実装期に #824 probe 失敗 semantics 統一契約 (tri-state) を全 site に実装する。
 

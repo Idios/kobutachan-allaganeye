@@ -23,6 +23,8 @@ from allaganeye.video.capture_region import (
     CaptureRegion,
     FULL_FRAME,
     RegionTimeline,
+    ScorebarLocalization,
+    localize_from_rgb_bytes_at_anchor,
     region_mean,
 )
 
@@ -71,6 +73,13 @@ class DetectionStats(TypedDict, total=False):
     # Filter "kept" with the larger Detected count when a recording
     # starts / ends mid-match.
     filter_unknown: int
+    # Count of segments dropped by Layer 2 at-anchor presence validation (#822).
+    # Incremented once per segment dropped (lobby / non-FL inter-match footage
+    # scoring majority-absent in at-anchor probes).
+    masked_segments_dropped: int
+    # Count of adjacent KEPT segment pairs merged by the post-L2 zero-gap merge
+    # pass (#822 Onsal recalibration 2026-07-14).  Each pair merged increments by 1.
+    masked_l2_zero_gap_merges: int
 
 
 logger = logging.getLogger(__name__)
@@ -439,6 +448,114 @@ def _resolve_masked_region(
         return FULL_FRAME
 
 
+_ANCHOR_NUM_SAMPLES = 24
+"""Number of frames sampled for scorebar anchor consensus (#822).
+
+Spec section 1.1: 24 sparse probes across a multi-hour FL recording cover many
+in-match segments so the true scorebar band (conf ~1.00) accumulates enough hits
+(>= _ANCHOR_MIN_HITS) while FP samples (conf <= 0.67) are pre-filtered out.
+"""
+
+_ANCHOR_MIN_HITS = 5
+"""Minimum cluster hits required for scorebar anchor consensus (#822).
+
+Stricter than the vtuber band-region min_hits (2) because anchor consensus feeds
+masked classification (per-frame localize_from_rgb_bytes_at_anchor) and a wrong
+anchor would corrupt all per-frame decisions for the entire video.
+"""
+
+_ANCHOR_MIN_CONF = 0.7
+"""Confidence threshold for anchor pre-filter (#822).
+
+Empirical basis (spec section 1.1): true scorebar hits have conf ~1.00;
+FP hits (lobby HUD fragments, lower-HUD segments) reach at most conf ~0.67.
+A cut at 0.70 admits all true hits and rejects all observed FPs.
+Hits below this threshold are treated as miss (not counted toward min_hits);
+they do not enter the cluster voting.
+"""
+
+
+def _resolve_scorebar_anchor(
+    video_path: Path, duration_hint: float
+) -> ScorebarLocalization | None:
+    """Resolve a per-video scorebar anchor via multi-frame consensus (#822).
+
+    Probes _ANCHOR_NUM_SAMPLES evenly-spaced frames with _probe_frame_rgb_hires
+    and localize_from_rgb_bytes (position-independent).  Hits with
+    confidence < _ANCHOR_MIN_CONF are pre-filtered (treated as miss; they do not
+    enter cluster voting) to suppress FP bands.  Raw None probes are mapped to
+    PresenceState.UNKNOWN (excluded from consensus, not counted as miss).
+
+    Returns None for two distinct reasons:
+    - Consensus miss (fewer than _ANCHOR_MIN_HITS confident hits in the dominant
+      cluster): the caller (_detect_masked_fallback / Task B4) emits the
+      consensus-miss warning and degrades to position-independent localize.
+    - Exception: caught here, logged as warning with "falls back to
+      position-independent", returns None silently for the caller.
+
+    UNKNOWN-probe partial-failure warning is emitted by this function when
+    unknown_count > 0 (same contract as _resolve_detect_region, #824 section 5.3).
+    The consensus-miss warning is the caller's responsibility (not emitted here).
+    """
+    from allaganeye.video.capture_region import (
+        consensus_scorebar_localization,
+        localize_from_rgb_bytes,
+    )
+    from allaganeye.video.probe_state import PresenceState
+
+    unknown_count = 0
+    total_probes = 0
+    unknown_times: list[float] = []
+
+    def _localize_at(t: float):
+        nonlocal unknown_count, total_probes
+        total_probes += 1
+        raw = _probe_frame_rgb_hires(video_path, t)
+        if raw is None:
+            unknown_count += 1
+            unknown_times.append(t)
+            logger.debug("anchor probe decode failed at t=%.3fs -> UNKNOWN", t)
+            return PresenceState.UNKNOWN
+        loc = localize_from_rgb_bytes(
+            raw,
+            height=_SCOREBAR_V2_PROBE_HEIGHT,
+            width=_SCOREBAR_V2_PROBE_WIDTH,
+        )
+        if loc is not None and loc.confidence < _ANCHOR_MIN_CONF:
+            return None  # conf pre-filter: treat as miss, not counted in consensus
+        return loc
+
+    # Local helper to emit the UNKNOWN-probe warning (dedupes exception + success paths).
+    def _warn_unknowns() -> None:
+        if unknown_count > 0:
+            logger.warning(
+                "anchor probes: %d/%d UNKNOWN (probe failure; time range %.1f-%.1fs)",
+                unknown_count,
+                total_probes,
+                min(unknown_times),
+                max(unknown_times),
+            )
+
+    try:
+        result = consensus_scorebar_localization(
+            duration=duration_hint,
+            localize_fn=_localize_at,
+            num_samples=_ANCHOR_NUM_SAMPLES,
+            min_hits=_ANCHOR_MIN_HITS,
+        )
+    except Exception:
+        logger.warning(
+            "scorebar anchor resolution failed; masked classification falls back to"
+            " position-independent localize",
+            exc_info=True,
+        )
+        _warn_unknowns()
+        return None
+
+    _warn_unknowns()
+    return result
+
+
 def detect_match_boundaries(
     video_path: Path,
     *,
@@ -747,6 +864,294 @@ def detect_match_boundaries(
     return segments
 
 
+_EDGE_EPS = 0.5
+"""Epsilon (seconds) for timeline-edge detection in _validate_match_segments.
+
+Segments whose start <= 0.0 + EPS or end >= duration_hint - EPS touch the
+recording boundary and are not re-typed to "fl_match".  At-anchor PRESENT
+majority proves FL content was present, but the recording started/ended
+mid-match (#433 semantics): completeness cannot be inferred from presence,
+so the adjacency-inference type is preserved.  UNKNOWN-probe probes are
+excluded from the majority denominator (as usual).
+"""
+
+_L2_PROBE_COUNT = 15
+"""Number of evenly-spaced timestamps probed per segment in Layer 2 validation.
+
+Onsal Hakair recalibration (2026-07-14): at-anchor presence on real Onsal
+matches measured at 40-60% (vs Seal Rock 85-100%); lobby = 0% everywhere.
+Binomial(n=9, p=0.4) -> P(present < 2) ~= 7% (too risky, 2 real matches
+false-dropped in practice).  Increasing to n=15 reduces
+Binomial(n=15, p=0.4) -> P(present < 2) ~= 0.5%, acceptable.
+Lobby at-anchor FP measured at 0% -> no false-keep risk from higher n.
+"""
+
+_L2_PRESENT_QUORUM = 2
+"""Minimum number of PRESENT probes required to keep a segment in Layer 2.
+
+Onsal recalibration: quorum of 2 out of 15 valid probes (not strict majority)
+provides P(false-drop) ~= 0.5% at the worst measured in-match rate (p=0.4
+on Onsal), while lobby at-anchor FP rate = 0% ensures no false-keep.
+The quorum replaces the previous strict majority (present * 2 > len(valid)).
+"""
+
+
+def _validate_match_segments(
+    video_path: Path,
+    segments: list[MatchBoundary],
+    anchor: ScorebarLocalization,
+    workers: int | None,
+    stats: DetectionStats | None,
+    duration_hint: float = 0.0,
+) -> list[MatchBoundary]:
+    """Layer 2 segment validation: at-anchor presence quorum (#822).
+
+    For each candidate segment extracted by Layer 1, probe _L2_PROBE_COUNT
+    evenly-spaced timestamps (k/(_L2_PROBE_COUNT+1) fractions, k=1.._L2_PROBE_COUNT)
+    and classify via at-anchor localization.  A segment is kept iff PRESENT
+    probes meet or exceed _L2_PRESENT_QUORUM among non-UNKNOWN probes.
+
+    Rationale for quorum (2026-07-14 Onsal recalibration):
+    - Onsal Hakair's scorebar is two-row with score-fill-dependent saturated-run
+      geometry; at-anchor presence on real Onsal matches measured at 40-60%
+      (vs Seal Rock 85-100%).  Lobby = 0% everywhere.
+    - Strict majority (n=9, p=0.4): P(false-drop) ~= 7% -- too risky; caused 2
+      confirmed false-drops in practice (m27 old M10, m28 old M4).
+    - Quorum 2/15 (n=15, p=0.4): P(false-drop) ~= 0.5% -- acceptable.
+    - Lobby FP rate = 0% measured; quorum does not increase false-keep risk.
+
+    Kept segments are re-typed to "fl_match" (direct presence evidence
+    supersedes the adjacency-inference type produced by
+    ``_infer_segment_type`` for non_fl-kept boundary pairs), EXCEPT for
+    timeline-edge segments (start <= 0.0 + EPS or end >= duration_hint - EPS).
+    Edge segments keep their original type because at-anchor presence proves
+    FL content but not completeness -- recording started/ended mid-match
+    (#433 semantics; ``duration_hint=0.0`` skips the edge check).
+
+    After the per-segment keep/drop pass, adjacent KEPT (quorum-validated)
+    segments whose boundary is zero-gap (abs(next.start - prev.end) < 0.01)
+    are merged into a single fl_match segment.  Zero-gap arises only from a
+    <=6s blackout split at a padded midpoint; real inter-match transitions
+    always have loading+lobby gaps > 0.  Only quorum-validated pairs are
+    merged (not all-UNKNOWN-kept segments).  Chain-merge (a-b-c all zero-gap
+    -> one segment) is applied.  Merged count is logged and added to
+    stats["masked_l2_zero_gap_merges"].
+
+    Dropped segments (lobby/inter-match footage) are info-logged and counted
+    in ``stats["masked_segments_dropped"]``.
+
+    Segments where ALL _L2_PROBE_COUNT probes are UNKNOWN are kept
+    conservatively (anchor mistrust) with a warning.
+
+    Fail-safe: if validation would drop ALL segments the original list is
+    returned unchanged with a warning (anchor mistrust; conservative keep).
+    Zero-gap merge is skipped on the fail-safe path.
+
+    ``scan_presence`` raises ``VideoProcessingError`` when all probes for a
+    scan call are UNKNOWN (sec.5.3 fail-loud).  For per-segment validation
+    we want conservative keep instead, so each scan call is wrapped in a
+    try/except ``VideoProcessingError``; on catch, the segment is treated as
+    all-UNKNOWN (keep + warning).
+    """
+    # Lazy import: presence.py imports from detector.py at module level, so a
+    # top-level import here would create a circular dependency.
+    from allaganeye.video.presence import PresenceState, scan_presence
+    from allaganeye.video.probe_state import PresenceSample
+
+    def _make_sample_fn(
+        vp: Path, anch: ScorebarLocalization
+    ) -> Callable[[float], PresenceSample]:
+        def _sample(t: float) -> PresenceSample:
+            raw = _probe_frame_rgb_hires(vp, t)
+            if raw is None:
+                return PresenceSample(
+                    time=t, state=PresenceState.UNKNOWN, confidence=0.0
+                )
+            loc = localize_from_rgb_bytes_at_anchor(
+                raw,
+                anch,
+                height=_SCOREBAR_V2_PROBE_HEIGHT,
+                width=_SCOREBAR_V2_PROBE_WIDTH,
+            )
+            if loc is None:
+                return PresenceSample(
+                    time=t, state=PresenceState.ABSENT, confidence=0.0
+                )
+            return PresenceSample(
+                time=t, state=PresenceState.PRESENT, confidence=loc.confidence
+            )
+
+        return _sample
+
+    # Loop-invariant: factory and sample_fn are the same for all segments
+    # (same video_path + anchor); hoisted outside the loop for clarity.
+    sample_fn = _make_sample_fn(video_path, anchor)
+    # kept_validated: segments that passed quorum (True) or were all-UNKNOWN kept
+    # (False).  The boolean is used later in zero-gap merge to restrict merging
+    # to quorum-validated pairs only.
+    kept: list[MatchBoundary] = []
+    kept_quorum_validated: list[bool] = []
+    # Track drops locally; commit to stats only on the non-fail-safe path.
+    dropped_count = 0
+    for seg in segments:
+        seg_start = seg["start"]
+        seg_end = seg["end"]
+        seg_len = seg_end - seg_start
+        # _L2_PROBE_COUNT evenly spaced probes: k/(_L2_PROBE_COUNT+1) fractions.
+        probe_ts = [
+            seg_start + seg_len * k / (_L2_PROBE_COUNT + 1)
+            for k in range(1, _L2_PROBE_COUNT + 1)
+        ]
+
+        # Edge-segment detection: recording started/ended mid-match (#433).
+        is_edge_segment = duration_hint > 0.0 and (
+            seg_start <= _EDGE_EPS or seg_end >= duration_hint - _EDGE_EPS
+        )
+
+        all_unknown = False
+        try:
+            # duration and stride are unused when times= is provided; pass
+            # seg_end/1.0 as placeholders for API completeness.
+            samples = scan_presence(
+                video_path,
+                seg_end,
+                stride=1.0,
+                # 15 probes/segment; modest parallelism is sufficient.
+                workers=workers if workers is not None else 1,
+                sample_fn=sample_fn,
+                times=probe_ts,
+            )
+        except VideoProcessingError:
+            # scan_presence raises when ALL probes are UNKNOWN (sec.5.3
+            # fail-loud).  For per-segment validation we want conservative
+            # keep with a warning instead of propagating the error.
+            all_unknown = True
+            samples = []
+
+        if all_unknown or all(s.state is PresenceState.UNKNOWN for s in samples):
+            logger.warning(
+                "Layer 2 validation: all probes UNKNOWN for segment"
+                " [%.1f, %.1f]; keeping conservatively (anchor mistrust)",
+                seg_start,
+                seg_end,
+            )
+            kept.append(seg)
+            kept_quorum_validated.append(
+                False
+            )  # all-UNKNOWN keep, not quorum-validated
+            continue
+
+        valid = [s for s in samples if s.state is not PresenceState.UNKNOWN]
+        present_count = sum(1 for s in valid if s.state is PresenceState.PRESENT)
+        if valid and present_count >= _L2_PRESENT_QUORUM:
+            # Quorum PRESENT: re-type to fl_match (direct evidence),
+            # UNLESS this is a timeline-edge segment (recording boundary).
+            if is_edge_segment:
+                # Edge segment: presence proven but completeness unknown (#433).
+                # Keep original type; do not retype to fl_match.
+                kept.append(seg)
+                kept_quorum_validated.append(True)
+                logger.debug(
+                    "Layer 2 validation: keeping edge segment [%.1f, %.1f]"
+                    " (present=%d/%d; edge -- no retype)",
+                    seg_start,
+                    seg_end,
+                    present_count,
+                    len(valid),
+                )
+            else:
+                kept_seg = dict(seg)
+                kept_seg["type"] = "fl_match"
+                kept.append(kept_seg)  # type: ignore[arg-type]
+                kept_quorum_validated.append(True)
+        else:
+            logger.info(
+                "Layer 2 validation: dropping segment [%.1f, %.1f]"
+                " (present=%d/%d valid probes; lobby/non-FL)",
+                seg_start,
+                seg_end,
+                present_count,
+                len(valid),
+            )
+            dropped_count += 1
+
+    if not kept and segments:
+        # Fail-safe: all segments failed presence check -- anchor may be
+        # unreliable.  Do NOT commit drop counts to stats; the drops were
+        # rolled back, so reporting them would be misleading.
+        logger.warning(
+            "Layer 2 validation: all %d segment(s) failed presence check"
+            " (tentative drops: %d); keeping all (anchor mistrust fail-safe)",
+            len(segments),
+            dropped_count,
+        )
+        return list(segments)
+    # Normal path: commit the local drop count to stats.
+    if stats is not None and dropped_count:
+        stats["masked_segments_dropped"] = (
+            stats.get("masked_segments_dropped", 0) + dropped_count
+        )
+
+    # Zero-gap merge: adjacent quorum-validated segments with no gap between
+    # them (abs(next.start - prev.end) < 0.01) are merged into a single
+    # fl_match.  Zero-gap arises only from a <=6s blackout split at a padded
+    # midpoint; real inter-match transitions always have loading+lobby gaps > 0.
+    # Only both-quorum-validated pairs are merged (not all-UNKNOWN-kept segs).
+    # Rationale: zero-gap adjacent = same match split by flank flicker (m28 M5/M6
+    # measured: two segments with identical boundary timestamps from a <=6s
+    # blackout midpoint split).
+    _ZERO_GAP_EPS = 0.01
+    merged: list[MatchBoundary] = []
+    # merged_tail_qv[i] tracks whether merged[i] was quorum-validated (True) or
+    # kept via the all-UNKNOWN conservative path (False).  Initialized empty;
+    # populated in sync with merged.
+    merged_tail_qv: list[bool] = []
+    merge_count = 0
+    for seg, is_qv in zip(kept, kept_quorum_validated, strict=True):
+        if not merged:
+            merged.append(dict(seg))  # type: ignore[arg-type]
+            merged_tail_qv.append(is_qv)
+            continue
+        prev = merged[-1]
+        prev_qv = merged_tail_qv[-1]
+        if is_qv and prev_qv and abs(seg["start"] - prev["end"]) < _ZERO_GAP_EPS:
+            # Merge: extend prev end; re-evaluate the merged span's edge status.
+            # A merged span is edge-touching iff a constituent was edge-touching
+            # (prev.start <= EPS OR seg.end >= duration-EPS), so checking the
+            # merged endpoints is equivalent to checking each constituent.
+            # Chain merges keep growing the merged span; each iteration re-checks
+            # the (already-grown) prev["start"] against the new seg["end"].
+            merged_start = prev["start"]
+            merged_end = seg["end"]
+            is_merged_edge = duration_hint > 0.0 and (
+                merged_start <= _EDGE_EPS or merged_end >= duration_hint - _EDGE_EPS
+            )
+            logger.info(
+                "Layer 2 zero-gap merge: [%.1f, %.1f] + [%.1f, %.1f] -> [%.1f, %.1f]"
+                " (flank flicker split%s)",
+                prev["start"],
+                prev["end"],
+                seg["start"],
+                seg["end"],
+                prev["start"],
+                seg["end"],
+                "; edge -- keeping unknown" if is_merged_edge else "",
+            )
+            prev["end"] = merged_end
+            prev["type"] = "unknown" if is_merged_edge else "fl_match"
+            merge_count += 1
+        else:
+            merged.append(dict(seg))  # type: ignore[arg-type]
+            merged_tail_qv.append(is_qv)
+
+    if merge_count > 0 and stats is not None:
+        stats["masked_l2_zero_gap_merges"] = (
+            stats.get("masked_l2_zero_gap_merges", 0) + merge_count
+        )
+
+    return merged
+
+
 def _detect_masked_fallback(
     video_path: Path,
     *,
@@ -857,7 +1262,21 @@ def _detect_masked_fallback(
     )
 
     classifications: list[str] | None = None
+    # Initialize anchor to None so it is in scope for Layer 2 validation below.
+    # anchor is resolved inside the src_resolution guard (B4) and remains None
+    # when src_resolution is not provided (degraded path; Layer 2 is skipped).
+    anchor: ScorebarLocalization | None = None
     if src_resolution is not None:
+        # B4 (#822): resolve per-video scorebar anchor for at-anchor classification.
+        # Placed inside this guard so anchor consensus probes only run when
+        # classification is active (src_resolution provided).
+        anchor = _resolve_scorebar_anchor(video_path, duration_hint)
+        if anchor is None:
+            logger.warning(
+                "scorebar anchor unresolved; masked classification falls back to"
+                " position-independent localize"
+            )
+
         from allaganeye.video.scorebar import filter_blackouts_with_scorebar
 
         height = _scaled_height(src_resolution[0], src_resolution[1])
@@ -869,6 +1288,7 @@ def _detect_masked_fallback(
             workers,
             band_region=FULL_FRAME,
             localize=True,
+            anchor=anchor,
             audio_hits=audio_hits,
             stats=stats,
         )
@@ -882,6 +1302,21 @@ def _detect_masked_fallback(
         classifications=classifications,
         stats=stats,
     )
+
+    # B5 (#822): Layer 2 at-anchor presence validation.
+    # Skip when anchor is None (src_resolution not provided or anchor consensus
+    # failed) -- degraded path keeps existing pipeline behaviour.
+    if anchor is not None and segments:
+        segments = _validate_match_segments(
+            video_path, segments, anchor, workers, stats, duration_hint=duration_hint
+        )
+        # Recompute filter_unknown after Layer 2 may have dropped segments
+        # (dropped segments can change the unknown-type count visible to verbose).
+        if stats is not None:
+            stats["filter_unknown"] = sum(
+                1 for s in segments if s.get("type") == "unknown"
+            )
+
     return segments, region
 
 

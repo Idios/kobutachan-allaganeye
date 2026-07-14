@@ -84,6 +84,11 @@ presence primitive を at-anchor に置換した上で、keep 判定を masked p
 | non_fl | remove | remove | **keep (boundary 候補)** (staging 弱点で entry 境界が non_fl 化するため。乱立する非試合 segment は Layer 2 が除去) |
 | unknown | keep (safe) | keep (safe) | keep (safe) |
 
+> **erratum (2026-07-14, PR-B final review + codex 収束摘出)**: 本表の「masked path 新」規則は **anchor 解決成功時のみ** 適用する
+> (`anchored = localize AND anchor != None` gate)。anchor 未解決の縮退 run と `--vtuber` path は
+> pre-#822 規則のまま (§5 の「現状より悪化しない」floor と §8 の #480 defer を機構的に保証)。
+> 実装は `scorebar.py` の `anchored` gate を正とする。
+
 `#524` re-probe fallback (両側 not True 時の region_width+1/2/3s 再 probe) は at-anchor 化した presence で同構造のまま維持する。
 
 ### 3.3 Layer 2: segment 検証
@@ -98,6 +103,31 @@ presence primitive を at-anchor に置換した上で、keep 判定を masked p
 4. 判別余地は実測で大きい: 試合 segment の present 率 ~85-100% (staging 頭を含んでも 9 点中高々 2 点) vs lobby 0/18
 
 Layer 2 は `scan_presence` (#824 site 2) の最初の production 消費者 (masked gate 内) となる。presence.py の OBS 配線は行わない。
+
+> **erratum (2026-07-14, Onsal Hakair 実機再校正)**: 上記 §3.3 item 1/2/4 を次のとおり訂正する。
+>
+> Onsal Hakair の scorebar は 2 行構成でスコア fill に依存した saturated-run geometry を持つ。
+> 実機計測結果: 実試合での at-anchor PRESENT 率 = **40-60%** (Seal Rock: 85-100%)、lobby = **0%** (全配信者共通)。
+> この実測値に基づき:
+>
+> - probe 数 9 点 → **15 点** (`_L2_PROBE_COUNT = 15`、k/16 配分)
+> - 判定条件: 厳格過半 (`present * 2 > len(valid)`) → **quorum**: `present >= _L2_PRESENT_QUORUM` (2)
+>
+> 根拠: Binomial(n=9, p=0.4) → P(false-drop) ~= 7% (2 件の実 false-drop を確認: m27 旧 M10、m28 旧 M4)。
+> Binomial(n=15, p=0.4) → P(false-drop) ~= 0.5%。Lobby FP = 0% なため quorum 緩和は false-keep リスクを増やさない。
+>
+> また、keep/drop pass の後に **zero-gap merge** を追加する:
+> 隣接 KEPT segment 間の gap が 0.01s 未満 (zero-gap) かつ両側が quorum-validated の場合、
+> 同一試合の中割り (flank flicker 由来) と断定し 1 つの fl_match にマージする
+> (実試合間には必ず loading+lobby gap > 0 が存在するため)。
+> マージ数は `stats["masked_l2_zero_gap_merges"]` に記録し verbose に表示する。
+> `_MASKED_ALGO_VERSION` は 2 → **3** に bump。
+>
+> **erratum (codex R4 [medium], 2026-07-14)**: zero-gap merge は `type = "fl_match"` を無条件にセットしていたが、
+> マージ後のスパンが timeline edge に触れる場合 (#433 semantics: 録画途中開始/終了) は `type = "unknown"` を保持する必要がある。
+> マージスパン `[prev.start, seg.end]` の endpoint で edge 条件を再評価し、edge-touching なら `type = "unknown"`、内側なら `type = "fl_match"`。
+> マージスパンが edge に触れる iff 構成要素のいずれかが edge に触れる (等価性) ため、endpoint 再評価で十分。
+> chain merge は成長中のスパンに対して毎回再評価する。実装: `detector.py` `_validate_match_segments` zero-gap merge ブロック。
 
 ## 4. #824 契約の編入 (同一実装期)
 
@@ -127,6 +157,8 @@ masked path の検出出力が変わるため、旧 cache の silent 再利用�
 1. **TDD unit (動画不要、合成 frame)**: consensus core 抽出の挙動 pin (既存 caller bit-same) / anchor 解決 (cluster vs scattered FP、min_hits 縮退) / at-anchor primitive tri-state (PRESENT / ABSENT / UNKNOWN、y 制約・x-IoU gate) / masked 分類規則 (§3.2 表の 5 行、OBS 側不変 pin) / merge at-anchor / Layer 2 (majority、削除、fail-safe 2 種、UNKNOWN 分母) / #824 pin 7 件移行
 2. **OBS bit-exact gate**: baseline 5 本の detect 出力 byte 一致を実測 (構造保証の主張だけで済ませない)
 3. **実機 (3 masked サンプル)**: 27 / 28 / 29 を再 detect (`--no-cache`、7h 級 GPU detect は detached Start-Process — memory: long-gpu-job-detached-execution)。期待: 過分割 zero-gap ペア解消 + 既存正検出の非退行。期待 match 数の目安: 29: 25→22 / 28b: 8→6 / 27: 13→12。**28b M5/M6 ペアの真相 (実試合の中割りか lobby 融合か) と、28 (非 b) run が 1 match unknown になった原因の確認を GT 確定タスクとして編入**
+
+   > **erratum (2026-07-14)**: §3.3 item 4 の「試合 segment の present 率 ~85-100%」は Seal Rock 計測値。Onsal Hakair では 40-60% まで低下する (2 行 scorebar のスコア fill 依存 geometry が原因)。これにより 9 点厳格過半は m27 M10 / m28 M4 で実際に false-drop となった。§3.3 erratum ブロックで訂正済み (15 点 quorum>=2 + zero-gap merge)。
 4. **CPU/GPU parity**: masked path は分類/検証が CPU probe のため Pass 1 の GPU/CPU で出力不変のはず — 最低 1 サンプルで確認
 
 ## 8. スコープ境界 (やらない)

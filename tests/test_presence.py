@@ -485,3 +485,27 @@ def test_localize_from_rgb_bytes_none_passthrough_and_decode():
     # 4x4 RGB の全黒 frame: decode は成功し、localizer は scorebar なし -> None
     raw = bytes(4 * 4 * 3)
     assert localize_from_rgb_bytes(raw, height=4, width=4) is None
+
+
+# ===========================================================================
+# B5: scan_presence explicit times param (#822)
+# ===========================================================================
+
+
+def test_scan_presence_explicit_times():
+    """times= param bypasses grid; sample_fn is called at exactly the given timestamps."""
+    seen: list[float] = []
+
+    def fn(t: float) -> PresenceSample:
+        seen.append(t)
+        return PresenceSample(time=t, state=PresenceState.PRESENT, confidence=1.0)
+
+    scan_presence(
+        Path("d.mkv"),
+        100.0,
+        stride=1.0,
+        workers=2,
+        sample_fn=fn,
+        times=[10.0, 20.0, 30.0],
+    )
+    assert sorted(seen) == [10.0, 20.0, 30.0]

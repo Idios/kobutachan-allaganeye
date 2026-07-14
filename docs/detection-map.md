@@ -38,6 +38,11 @@
 | legacy fps filter path | detector.py | #576 で retire 済の旧 path | #575/#576 | cruft |
 | `localize_scorebar` (P1) | capture_region.py | 位置独立 scorebar 局在化 | #811 | load-bearing (新基盤) |
 | `detect_region_*` (S1/S3) | capture_region.py | VTuber 領域候補 (脆い) | #807 | 判定保留 (脆い) |
+| `consensus_scorebar_localization` (共有 core) | capture_region.py | 多フレーム consensus anchor 解決 core (`detect_scorebar_band_region` と masked 双方が呼ぶ) | #822 | load-bearing |
+| `localize_scorebar_at_anchor` / `localize_from_rgb_bytes_at_anchor` | capture_region.py | anchor ±60px 帯 + x-IoU ≥0.5 gate の at-anchor presence primitive (tri-state) | #822 | load-bearing |
+| `_resolve_scorebar_anchor` | detector.py | 24 sparse probe → conf ≥0.7 pre-filter → y-cluster dominant → anchor (masked gate) | #822 | load-bearing |
+| `_presence_at_anchor_from_raw` | scorebar.py | masked classify で呼ぶ at-anchor presence (per-video v2 相当) | #822 | load-bearing |
+| `_validate_match_segments` (Layer 2) | detector.py | 15-probe at-anchor quorum (>=2) 判定 + zero-gap merge で非試合 segment を除去 (masked gate 専用、fail-safe あり) | #822 | load-bearing |
 
 ### 判定根拠 (脚注)
 
@@ -56,6 +61,11 @@
 - **legacy fps filter path**: #576 で新 path を default 化、env var `ALLAGANEYE_DETECT_FPS_FILTER=1` の rollback 専用。v0.3.x で削除予定。cruft。
 - **`localize_scorebar` (P1)**: 再アーキの分類器核。VTuber 配信の任意 inset 位置に対応する anchor として設計。load-bearing (新基盤)。
 - **`detect_region_*` (S1/S3)**: re-plan R6 で scorebar 帯 anchor を主軸とし S3 を補助に降格。ハーネス実測前は確証が持てないため判定保留。
+- **`consensus_scorebar_localization`**: #822 で `detect_scorebar_band_region` (--vtuber Stage 0) と masked anchor 解決の共有 core として抽出。既存 caller は挙動不変 (unit pin で担保)。
+- **`localize_scorebar_at_anchor` / `localize_from_rgb_bytes_at_anchor`**: 位置独立 `localize_scorebar` を anchor 近傍に制約した評価関数。y 走査域 anchor.y_top ±60px + x-IoU ≥0.5 gate + emblem 3 点 AND エンジン共用。lobby 18/18 absent (FP ゼロ) / リザルト margin 1.28-1.36 を実測 (spec §1.1)。
+- **`_resolve_scorebar_anchor`**: 24 sparse probe で conf ≥0.7 を pre-filter し y-cluster dominant の median anchor を返す masked gate 専用解決器。cluster 不成立時は None → 位置独立に縮退 (#822)。
+- **`_presence_at_anchor_from_raw`**: masked classify path (`filter_blackouts_with_scorebar(localize=True, anchor=...)`) で呼ぶ at-anchor presence。残像 FN が発生しないためリザルト画面 margin も正常 → masked path の in_match ≥3.5s keep 規則を撤廃できる根拠。
+- **`_validate_match_segments` (Layer 2)**: masked gate 専用の segment 検証。15-probe at-anchor presence の quorum>=2 を keep 条件とし非試合 (lobby) segment を除去。全 UNKNOWN → keep (保守)、全件削除 → fail-safe 全 keep + warning。削除数は `stats["masked_segments_dropped"]` + verbose 表示。keep/drop pass 後に zero-gap 隣接 validated ペアを 1 fl_match にマージ (`stats["masked_l2_zero_gap_merges"]`)。_MASKED_ALGO_VERSION = 3 で cache key 管理。Onsal recalibration 2026-07-14: 9-probe 厳格過半 (v2) から変更 (実試合 PRESENT 率 40-60%、2 件 false-drop)。
 
 ## 3. git 考古学 (なぜ追加されたか)
 
@@ -129,7 +139,18 @@ segments 抽出 (_filter_and_extract_segments)
 - `_flag_post_match_trailing` (#805 で非破壊化済。§4 の通り v2 coupling 故に L3 再アーキ Phase 1-3 は据え置き)。
 - legacy fps filter path (cruft、別 issue で撤去)。
 
-### 5.4 presence.py 資産 (spec §10)
+### 5.4 masked path の現状 (2 層構成、#822)
+
+issue #822 で masked fallback (`_detect_masked_fallback`) は **2 層構成**になった。
+
+- **Layer 1**: `_resolve_scorebar_anchor` が per-video anchor を解決し、flank/merge probe を at-anchor presence (`localize_scorebar_at_anchor`) で行う。masked path の in_match ≥3.5s keep 規則を廃止 (残像 FN が at-anchor では発生しないため)、non_fl を boundary 候補として keep (staging 弱点の吸収)。
+- **Layer 2**: `_validate_match_segments` が segment ごとに 15-probe at-anchor quorum>=2 判定を行い、非試合 (lobby) segment を除去する。keep/drop pass 後に zero-gap 隣接 validated ペアをマージする (flank flicker 由来の中割り解消)。Onsal recalibration 2026-07-14: 旧 9-probe 厳格過半 (v2) を訂正 (_MASKED_ALGO_VERSION=3)。
+
+OBS production path / `--vtuber` path は一切変更しない (bit-exact 構造保証。§5.1/§5.3 制約遵守)。
+
+設計詳細: [docs/superpowers/specs/2026-07-11-issue-822-masked-oversplit-anchor-design.md](superpowers/specs/2026-07-11-issue-822-masked-oversplit-anchor-design.md)
+
+### 5.5 presence.py 資産 (spec §10)
 
 - `compare_segments` (`tests/presence_harness.py`) / GT 突合ハーネス → 検証インフラとして存続。
 - `localize_present_at` → Stage 2 分類で再利用。

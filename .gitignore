@@ -68,3 +68,4 @@ gui/src-tauri/gen/schemas/
 # superpowers brainstorming session artifacts (visual companion mockups)
 .superpowers/
 .tmp-minimap/
+.tmp-822-analysis/

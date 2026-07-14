@@ -72,4 +72,4 @@ ignore = [
 [tool.pyright]
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
-exclude = ["tmp", ".venv", "build", "dist", ".claude/worktrees", ".tmp-areamap-poc"]
+exclude = ["tmp", ".venv", "build", "dist", ".claude/worktrees", ".tmp-areamap-poc", ".tmp-822-analysis"]

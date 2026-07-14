@@ -254,6 +254,20 @@ _LOCALIZE_TARGET_RATIO = 2.0
 """confidence が 1.0 に達する emblem margin 倍率 (最弱 emblem の sat/edge が
 閾値の TARGET 倍で満点)。clear な in-match frame で ~1.0 に出るよう選定。"""
 
+_ANCHOR_Y_TOL = 60
+"""at-anchor y 走査の許容幅 (probe px 片側)。anchor.y_top +- この値の範囲を走査する。
+
+_CLUSTER_Y_TOL と同値にすることで consensus cluster 幅と整合させる。
+実測: lobby FP (y~504) と in-match scorebar (y~0-20) の間隔は 480px 以上あり、
++- 60px の窓で完全分離できる。"""
+
+_ANCHOR_X_IOU_MIN = 0.5
+"""at-anchor x-range IoU の最小閾値。saturated run の x range と anchor の x range の
+IoU がこの値未満のものは gate する。
+
+x-IoU = intersection / union on the 1-D x intervals (x_left..x_right)。
+0.5 は 50% 重複を要求し、x がずれた lobby 帯や重複しない偽帯を除去する。"""
+
 
 def _scorebar_saturated_runs(band: np.ndarray, cv2) -> list[tuple[int, int]]:
     """band (Hb,W,3 uint8 RGB) の saturated column run を width-gate して全件返す。
@@ -308,6 +322,69 @@ def _emblem_and_margin(
     return min_ratio
 
 
+def _scan_scorebar_bands(
+    frame: np.ndarray,
+    *,
+    y_start: int,
+    y_stop: int,
+    stride: int,
+    x_gate: tuple[int, int] | None,
+    band_h: int,
+    W: int,
+    H: int,
+    cv2,
+) -> tuple[float, int, int, int] | None:
+    """Shared inner scanner for localize_scorebar and localize_scorebar_at_anchor.
+
+    Scans y in range(y_start, y_stop, stride). For each band evaluates all
+    width-gated saturated runs through the emblem 3-point AND filter.
+
+    x_gate: if not None, a (x_left_anchor, x_right_anchor) pair; runs whose
+    1-D x-interval IoU vs this gate is < _ANCHOR_X_IOU_MIN are skipped.
+
+    Returns best (margin, x_left, x_right, y) tuple, or None if no candidate
+    passes the filters. Does NOT import cv2 or validate frame shape -- callers
+    are responsible for those checks.
+
+    Uses _EMBLEM_RELATIVE_POSITIONS from detector for emblem position computation
+    (same as the original localize_scorebar loop, bit-identical when x_gate=None
+    and y range matches the original 0..y_max).
+    """
+    from allaganeye.video.detector import _EMBLEM_RELATIVE_POSITIONS
+
+    best: tuple[float, int, int, int] | None = None  # (margin, x_left, x_right, y)
+    for y in range(y_start, y_stop, stride):
+        band = frame[y : y + band_h]
+        for x_left, x_right in _scorebar_saturated_runs(band, cv2):
+            # x-IoU gate: reject run if x overlap with anchor is insufficient.
+            if x_gate is not None:
+                ax_left, ax_right = x_gate
+                inter_left = max(x_left, ax_left)
+                inter_right = min(x_right, ax_right)
+                inter = max(0, inter_right - inter_left)
+                union = max(x_right, ax_right) - min(x_left, ax_left)
+                if union <= 0 or inter / union < _ANCHOR_X_IOU_MIN:
+                    continue
+            bar_w = x_right - x_left
+            positions: list[tuple[str, int, int, int, int]] = []
+            valid = True
+            for name, cx_rel, hw_rel, ey1, ey2 in _EMBLEM_RELATIVE_POSITIONS:
+                px1 = int(x_left + cx_rel * bar_w - hw_rel * bar_w)
+                px2 = int(x_left + cx_rel * bar_w + hw_rel * bar_w)
+                py1 = y + ey1
+                py2 = y + ey2
+                if px1 < 0 or px2 > W or py1 < 0 or py2 > H or px2 <= px1:
+                    valid = False
+                    break
+                positions.append((name, px1, py1, px2, py2))
+            if not valid:
+                continue
+            margin = _emblem_and_margin(frame, positions, cv2)
+            if margin is not None and (best is None or margin > best[0]):
+                best = (margin, x_left, x_right, y)
+    return best
+
+
 def localize_from_rgb_bytes(
     raw: bytes | None, *, height: int, width: int
 ) -> ScorebarLocalization | None:
@@ -347,7 +424,6 @@ def localize_scorebar(
         return None
 
     from allaganeye.video.detector import (
-        _EMBLEM_RELATIVE_POSITIONS,
         _SCOREBAR_SCAN_Y_END,
         _SCOREBAR_SCAN_Y_START,
         _SCOREBAR_V2_PROBE_HEIGHT,
@@ -361,27 +437,17 @@ def localize_scorebar(
 
     band_h = _SCOREBAR_SCAN_Y_END - _SCOREBAR_SCAN_Y_START
     y_max = int(H * _BAND_Y_MAX_FRAC)
-    best: tuple[float, int, int, int] | None = None  # (margin, x_left, x_right, y)
-    for y in range(0, y_max, stride):
-        band = frame[y : y + band_h]
-        for x_left, x_right in _scorebar_saturated_runs(band, cv2):
-            bar_w = x_right - x_left
-            positions: list[tuple[str, int, int, int, int]] = []
-            valid = True
-            for name, cx_rel, hw_rel, ey1, ey2 in _EMBLEM_RELATIVE_POSITIONS:
-                px1 = int(x_left + cx_rel * bar_w - hw_rel * bar_w)
-                px2 = int(x_left + cx_rel * bar_w + hw_rel * bar_w)
-                py1 = y + ey1
-                py2 = y + ey2
-                if px1 < 0 or px2 > W or py1 < 0 or py2 > H or px2 <= px1:
-                    valid = False
-                    break
-                positions.append((name, px1, py1, px2, py2))
-            if not valid:
-                continue
-            margin = _emblem_and_margin(frame, positions, cv2)
-            if margin is not None and (best is None or margin > best[0]):
-                best = (margin, x_left, x_right, y)
+    best = _scan_scorebar_bands(
+        frame,
+        y_start=0,
+        y_stop=y_max,
+        stride=stride,
+        x_gate=None,
+        band_h=band_h,
+        W=W,
+        H=H,
+        cv2=cv2,
+    )
 
     if best is None:
         return None
@@ -394,6 +460,97 @@ def localize_scorebar(
         y_bottom=y + band_h,
         confidence=confidence,
     )
+
+
+def localize_scorebar_at_anchor(
+    frame: np.ndarray,
+    anchor: ScorebarLocalization,
+    *,
+    stride: int = _BAND_SCAN_STRIDE,
+    target_ratio: float = _LOCALIZE_TARGET_RATIO,
+) -> ScorebarLocalization | None:
+    """1920x1080 RGB frame からアンカー位置周辺の FL scorebar を局在化する (#822).
+
+    localize_scorebar の位置独立スキャンと同一の emblem 3 点 AND エンジンを
+    anchor で絞り込んで適用する。これにより lobby FP (y 帯外) と x-range が
+    大きくずれた偽帯を除去しつつ、full-scan が強い FP に敗北するケースを救済する。
+
+    y スキャン域: band start が `max(0, anchor.y_top - _ANCHOR_Y_TOL)` から
+    `anchor.y_top + _ANCHOR_Y_TOL` まで (stride 刻み、fencepost のため range stop は +stride)
+    x gate: saturated run の x range と anchor x range の 1-D IoU >= _ANCHOR_X_IOU_MIN
+
+    cv2 不在 / 形状不一致 / 候補なし は None。target_ratio <= 1.0 は ValueError。
+    """
+    if target_ratio <= 1.0:
+        raise ValueError("target_ratio must be > 1.0 (confidence denominator)")
+    try:
+        import cv2
+    except ImportError:
+        return None
+
+    from allaganeye.video.detector import (
+        _SCOREBAR_SCAN_Y_END,
+        _SCOREBAR_SCAN_Y_START,
+        _SCOREBAR_V2_PROBE_HEIGHT,
+        _SCOREBAR_V2_PROBE_WIDTH,
+    )
+
+    W = _SCOREBAR_V2_PROBE_WIDTH
+    H = _SCOREBAR_V2_PROBE_HEIGHT
+    if frame.shape[:2] != (H, W):
+        return None
+
+    band_h = _SCOREBAR_SCAN_Y_END - _SCOREBAR_SCAN_Y_START
+    y_start = max(0, anchor.y_top - _ANCHOR_Y_TOL)
+    # y_stop must extend so bands starting at anchor.y_top + _ANCHOR_Y_TOL are evaluated.
+    # range(y_start, y_stop, stride) includes anchor.y_top + _ANCHOR_Y_TOL when
+    # y_stop > anchor.y_top + _ANCHOR_Y_TOL, mirroring how y_max is used in localize_scorebar.
+    y_stop = anchor.y_top + _ANCHOR_Y_TOL + stride
+    # H clamp: 端 anchor でも band が frame 下端で欠けないようにする (latent guard)
+    y_stop = min(y_stop, H - band_h + 1)
+    x_gate = (anchor.x_left, anchor.x_right)
+
+    best = _scan_scorebar_bands(
+        frame,
+        y_start=y_start,
+        y_stop=y_stop,
+        stride=stride,
+        x_gate=x_gate,
+        band_h=band_h,
+        W=W,
+        H=H,
+        cv2=cv2,
+    )
+
+    if best is None:
+        return None
+    margin, x_left, x_right, y = best
+    confidence = max(0.0, min(1.0, (margin - 1.0) / (target_ratio - 1.0)))
+    return ScorebarLocalization(
+        x_left=x_left,
+        x_right=x_right,
+        y_top=y,
+        y_bottom=y + band_h,
+        confidence=confidence,
+    )
+
+
+def localize_from_rgb_bytes_at_anchor(
+    raw: bytes | None,
+    anchor: ScorebarLocalization,
+    *,
+    height: int,
+    width: int,
+) -> ScorebarLocalization | None:
+    """RGB24 probe bytes を decode して :func:`localize_scorebar_at_anchor` にかける helper.
+
+    raw が None (probe 失敗) なら None を返す。localize_from_rgb_bytes の
+    at-anchor 版: reshape boilerplate を共有しつつ anchor 制約を適用する (#822)。
+    """
+    if raw is None:
+        return None
+    frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
+    return localize_scorebar_at_anchor(frame, anchor)
 
 
 def detect_region_blackout_overlap(
@@ -511,40 +668,43 @@ localize は per-frame noisy で、真の scorebar (y_top~0) と下部 HUD 誤�
 """
 
 
-def detect_scorebar_band_region(
+def consensus_scorebar_localization(
     *,
     duration: float,
-    probe_w: int,
-    probe_h: int,
     localize_fn: Callable[[float], ScorebarLocalization | None | PresenceState],
     num_samples: int = 8,
     min_hits: int = _BAND_CONSENSUS_MIN_HITS,
-) -> CaptureRegion:
-    """疎な多フレーム localize の dominant-cluster consensus で安定 scorebar 帯 ROI を返す。
+) -> ScorebarLocalization | None:
+    """疎な多フレーム localize の dominant-cluster consensus core。
 
     *localize_fn* は timestamp -> ScorebarLocalization|None|PresenceState。動画 I/O は
     呼び出し側が bind する (テストは合成関数を注入)。成功局在化が *min_hits* 未満なら
-    FULL_FRAME (OBS / 局在化不能時の安全縮退)。成功時は hits を y_top で
+    None (OBS / 局在化不能時の安全縮退)。成功時は hits を y_top で
     `_CLUSTER_Y_TOL` クラスタリングし、最大クラスタ (同数なら平均 confidence) の各座標
-    median を取り `band_region_from_localization` で正規化帯 ROI に変換する。これにより
-    真の scorebar (y_top~0) と下部 HUD 誤検出が混在しても between-clusters の garbage
-    band を避ける (spec section 3.6)。
+    median を `ScorebarLocalization` として返す。これにより真の scorebar (y_top~0) と
+    下部 HUD 誤検出が混在しても between-clusters の garbage band を避ける
+    (spec sec. 3.6)。
 
     *localize_fn* の戻り値 sentinel:
     - ``PresenceState.UNKNOWN`` のみが decode 失敗 sentinel として有効 (hit/miss どちらにも
       数えない、consensus から除外)。他の PresenceState 値は ScorebarLocalization でないため
       hit としてカウントされず、実質 miss 扱いとなる。
+
+    Returns ``None`` when:
+    - *duration* <= 0 or *num_samples* < 1
+    - fewer than *min_hits* successful localizations
+    - dominant cluster has fewer than *min_hits* members
     """
     if duration <= 0 or num_samples < 1:
-        return FULL_FRAME
+        return None
     times = [duration * (i + 1) / (num_samples + 1) for i in range(num_samples)]
     hits = [
         loc for t in times if isinstance((loc := localize_fn(t)), ScorebarLocalization)
     ]
     if len(hits) < min_hits:
-        return FULL_FRAME
+        return None
     # localize is per-frame noisy (upper-half best-hit scan can lock onto lower
-    # HUD; spec section 3.6). Cluster hits by y_top and take the largest cluster
+    # HUD; spec sec. 3.6). Cluster hits by y_top and take the largest cluster
     # (true scorebar is dominant across in-match samples), so a noise-mixed
     # median cannot produce a between-clusters garbage band.
     hits_sorted = sorted(hits, key=lambda h: h.y_top)
@@ -559,12 +719,38 @@ def detect_scorebar_band_region(
         key=lambda c: (len(c), sum(h.confidence for h in c) / len(c)),
     )
     if len(best) < min_hits:
-        return FULL_FRAME
-    median_loc = ScorebarLocalization(
+        return None
+    return ScorebarLocalization(
         x_left=int(np.median([h.x_left for h in best])),
         x_right=int(np.median([h.x_right for h in best])),
         y_top=int(np.median([h.y_top for h in best])),
         y_bottom=int(np.median([h.y_bottom for h in best])),
         confidence=float(np.median([h.confidence for h in best])),
     )
-    return band_region_from_localization(median_loc, probe_w=probe_w, probe_h=probe_h)
+
+
+def detect_scorebar_band_region(
+    *,
+    duration: float,
+    probe_w: int,
+    probe_h: int,
+    localize_fn: Callable[[float], ScorebarLocalization | None | PresenceState],
+    num_samples: int = 8,
+    min_hits: int = _BAND_CONSENSUS_MIN_HITS,
+) -> CaptureRegion:
+    """疎な多フレーム localize の dominant-cluster consensus で安定 scorebar 帯 ROI を返す。
+
+    `consensus_scorebar_localization` に consensus 計算を委譲し、結果を
+    `band_region_from_localization` で正規化帯 ROI に変換する。縮退時は FULL_FRAME。
+    """
+    loc = consensus_scorebar_localization(
+        duration=duration,
+        localize_fn=localize_fn,
+        num_samples=num_samples,
+        min_hits=min_hits,
+    )
+    return (
+        FULL_FRAME
+        if loc is None
+        else band_region_from_localization(loc, probe_w=probe_w, probe_h=probe_h)
+    )

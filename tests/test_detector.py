@@ -14,6 +14,7 @@ from allaganeye.exceptions import VideoProcessingError
 from allaganeye.video import detector as det
 from allaganeye.video.capture_region import FULL_FRAME, CaptureRegion
 from allaganeye.video.detector import (
+    DetectionStats,
     MatchBoundary,
     _BLACKOUT_PADDING,
     _BLACKOUT_THRESHOLD_UPPER_MARGIN,
@@ -3689,3 +3690,1128 @@ def test_decode_chunk_cpu_v2_watchdog_fire_returns_fallback(monkeypatch):
         is_tail_chunk=False,
     )
     assert result == {t: 255.0 for t in chunk_ts}
+
+
+# ============================================================
+# _resolve_scorebar_anchor (#822)
+# ============================================================
+
+
+def _make_loc(y_top: int = 12, conf: float = 1.0):
+    """Synthetic ScorebarLocalization for anchor tests."""
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    return ScorebarLocalization(
+        x_left=100, x_right=1820, y_top=y_top, y_bottom=y_top + 36, confidence=conf
+    )
+
+
+def test_resolve_scorebar_anchor_filters_low_conf_hits(monkeypatch):
+    # conf < _ANCHOR_MIN_CONF (0.7) hits are pre-filtered (miss扱い) before
+    # being passed to consensus; with all FP-band hits, min_hits is never reached
+    # -> consensus returns None -> function returns None.
+    from pathlib import Path
+
+    from allaganeye.video import capture_region as cr
+    from allaganeye.video import detector as det
+
+    # probe always returns dummy bytes
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", lambda vp, t: b"x")
+    # localize always returns a low-conf hit (FP band, conf=0.5 < 0.7)
+    monkeypatch.setattr(
+        cr, "localize_from_rgb_bytes", lambda raw, **kw: _make_loc(conf=0.5)
+    )
+
+    result = det._resolve_scorebar_anchor(Path("dummy.mp4"), 400.0)
+    assert result is None
+
+
+def test_resolve_scorebar_anchor_success_returns_median(monkeypatch):
+    # >=5 hits with conf >= 0.7 at similar y_top -> consensus returns median loc
+    from pathlib import Path
+
+    from allaganeye.video import capture_region as cr
+    from allaganeye.video import detector as det
+
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", lambda vp, t: b"x")
+    # return high-conf loc; small y_top variation (within cluster tolerance)
+    call_count = {"n": 0}
+
+    def _high_conf_loc(raw, **kw):
+        call_count["n"] += 1
+        y = 12 + (call_count["n"] % 3)  # y_top in {12, 13, 14}
+        return _make_loc(y_top=y, conf=1.0)
+
+    monkeypatch.setattr(cr, "localize_from_rgb_bytes", _high_conf_loc)
+
+    result = det._resolve_scorebar_anchor(Path("dummy.mp4"), 400.0)
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    assert isinstance(result, ScorebarLocalization)
+    assert (
+        result.confidence == 1.0
+    )  # consensus returns cluster median (all mocked hits conf=1.0)
+
+
+def test_resolve_scorebar_anchor_exception_degrades_none_with_warning(
+    monkeypatch, caplog
+):
+    # When _probe_frame_rgb_hires raises, the function catches it, logs a warning
+    # containing "falls back to position-independent", and returns None.
+    import logging
+    from pathlib import Path
+
+    from allaganeye.video import detector as det
+
+    def _boom(vp, t):
+        raise RuntimeError("probe exploded")
+
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", _boom)
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        result = det._resolve_scorebar_anchor(Path("dummy.mp4"), 400.0)
+
+    assert result is None
+    assert any(
+        "falls back to position-independent" in r.message for r in caplog.records
+    ), f"Expected fallback warning, got: {[r.message for r in caplog.records]}"
+
+
+def test_resolve_scorebar_anchor_warns_unknown_probes(monkeypatch, caplog):
+    # When _probe_frame_rgb_hires returns None (decode failure), the function
+    # emits a warning matching r"anchor probes: \d+/\d+ UNKNOWN".
+    import logging
+    from pathlib import Path
+
+    from allaganeye.video import detector as det
+
+    # all probes return None (decode failure -> UNKNOWN)
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", lambda vp, t: None)
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        result = det._resolve_scorebar_anchor(Path("dummy.mp4"), 400.0)
+
+    assert result is None
+    assert any(
+        re.search(r"anchor probes: \d+/\d+ UNKNOWN", r.message) for r in caplog.records
+    ), f"Expected UNKNOWN warning, got: {[r.message for r in caplog.records]}"
+
+
+# ===========================================================================
+# B4: _detect_masked_fallback anchor threading (#822)
+# ===========================================================================
+
+
+def test_masked_fallback_warns_when_anchor_unresolved(monkeypatch, caplog):
+    """When _resolve_scorebar_anchor returns None, a warning is emitted."""
+    import logging
+
+    from allaganeye.video.capture_region import CaptureRegion
+
+    fake_region = CaptureRegion(0.0, 0.0, 1.0, 0.3, source="tierA")
+    monkeypatch.setattr(det, "_resolve_masked_region", lambda *a, **k: fake_region)
+    monkeypatch.setattr(det, "_resolve_scorebar_anchor", lambda *a, **k: None)
+    monkeypatch.setattr(
+        det, "_scan_cpu", lambda *a, **k: {0.0: 2.0, 3.0: 2.0, 100.0: 200.0}
+    )
+    monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **k: [(0.0, 3.0)])
+
+    filter_calls = {}
+
+    def fake_filter(video_path, regions, dur, height, workers, **kw):
+        filter_calls["anchor"] = kw.get("anchor")
+        return regions, ["match_boundary"]
+
+    monkeypatch.setattr(
+        "allaganeye.video.scorebar.filter_blackouts_with_scorebar", fake_filter
+    )
+    monkeypatch.setattr(
+        det,
+        "_filter_and_extract_segments",
+        lambda *a, **k: [{"start": 0.0, "end": 9.0}],
+    )
+
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        out = det._detect_masked_fallback(
+            det.Path("x.mp4"),
+            duration_hint=600.0,
+            sample_interval=3.0,
+            blackout_threshold=15.0,
+            min_match_duration=300.0,
+            min_blackout_duration=3.0,
+            use_gpu=False,
+            workers=None,
+            src_resolution=(1920, 1080),
+            codec="h264",
+            gpu_vendor=None,
+            source_fps_num=60,
+            source_fps_den=1,
+            source_fps=None,
+            audio_hits=None,
+            stats=None,
+        )
+
+    assert out is not None
+    assert any("scorebar anchor unresolved" in r.message for r in caplog.records), (
+        f"Expected anchor warning, got: {[r.message for r in caplog.records]}"
+    )
+    # anchor=None is threaded to filter when unresolved
+    assert filter_calls.get("anchor") is None
+
+
+def test_masked_fallback_threads_anchor_to_filter(monkeypatch):
+    """When _resolve_scorebar_anchor returns a valid anchor, it is passed to filter."""
+    from allaganeye.video.capture_region import CaptureRegion, ScorebarLocalization
+
+    fake_region = CaptureRegion(0.0, 0.0, 1.0, 0.3, source="tierA")
+    fake_anchor = ScorebarLocalization(
+        x_left=100, x_right=1820, y_top=12, y_bottom=48, confidence=1.0
+    )
+    monkeypatch.setattr(det, "_resolve_masked_region", lambda *a, **k: fake_region)
+    monkeypatch.setattr(det, "_resolve_scorebar_anchor", lambda *a, **k: fake_anchor)
+    monkeypatch.setattr(
+        det, "_scan_cpu", lambda *a, **k: {0.0: 2.0, 3.0: 2.0, 100.0: 200.0}
+    )
+    monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **k: [(0.0, 3.0)])
+
+    filter_calls = {}
+
+    def fake_filter(video_path, regions, dur, height, workers, **kw):
+        filter_calls["anchor"] = kw.get("anchor")
+        return regions, ["match_boundary"]
+
+    monkeypatch.setattr(
+        "allaganeye.video.scorebar.filter_blackouts_with_scorebar", fake_filter
+    )
+    monkeypatch.setattr(
+        det,
+        "_filter_and_extract_segments",
+        lambda *a, **k: [{"start": 0.0, "end": 9.0}],
+    )
+
+    out = det._detect_masked_fallback(
+        det.Path("x.mp4"),
+        duration_hint=600.0,
+        sample_interval=3.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        use_gpu=False,
+        workers=None,
+        src_resolution=(1920, 1080),
+        codec="h264",
+        gpu_vendor=None,
+        source_fps_num=60,
+        source_fps_den=1,
+        source_fps=None,
+        audio_hits=None,
+        stats=None,
+    )
+
+    assert out is not None
+    assert filter_calls.get("anchor") is fake_anchor, (
+        "anchor must be threaded to filter_blackouts_with_scorebar"
+    )
+
+
+# ===========================================================================
+# B5: _validate_match_segments (#822)
+# ===========================================================================
+
+
+def _make_anchor():
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    return ScorebarLocalization(
+        x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+    )
+
+
+def _fake_rgb_bytes():
+    """Minimal non-None raw bytes placeholder (1x1 RGB24)."""
+    return bytes(3)
+
+
+def test_validate_segments_retypes_match_and_keeps_unknown_conservatively(monkeypatch):
+    """PRESENT-quorum segment is re-typed fl_match; all-UNKNOWN segment is kept conservatively (no retype)."""
+    import allaganeye.video.detector as detector
+
+    anchor = _make_anchor()
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 700.0, "type": "unknown"},  # real match
+        {"start": 750.0, "end": 1050.0, "type": "unknown"},  # lobby
+    ]
+
+    call_counter = {"n": 0}
+
+    def fake_probe(vp, t):
+        call_counter["n"] += 1
+        # First segment probes (t in 100..700): return raw bytes -> present
+        # Second segment probes (t in 750..1050): return None -> UNKNOWN
+        # Use timestamp range: match segment 100-700, lobby 750-1050
+        if 100.0 < t < 700.0:
+            return _fake_rgb_bytes()
+        return None  # lobby probes: raw None -> UNKNOWN sample
+
+    def fake_localize_at_anchor(raw, anchor_arg, *, height, width):
+        # Called only when raw is not None (match segment)
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(
+        detector, "localize_from_rgb_bytes_at_anchor", fake_localize_at_anchor
+    )
+
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=2, stats=None
+    )
+
+    # First segment: 15/15 PRESENT -> kept, re-typed fl_match
+    # Second segment: 15/15 UNKNOWN -> kept conservatively (all-UNKNOWN path)
+    # Both kept, but first is fl_match, second remains unknown
+    assert len(result) == 2
+    assert result[0]["type"] == "fl_match"
+    # Second segment: all-UNKNOWN -> kept conservatively, type unchanged
+    assert result[1]["type"] == "unknown"
+
+
+def test_validate_segments_lobby_is_dropped_when_absent(monkeypatch):
+    """Segment with 0 PRESENT (15 ABSENT) is dropped; match segment (PRESENT) is kept."""
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    # Two segments: match (kept) + lobby (dropped).
+    # A second segment is needed to avoid the fail-safe (triggered when ALL dropped).
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 700.0, "type": "unknown"},  # match
+        {"start": 750.0, "end": 1050.0, "type": "unknown"},  # lobby
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    # workers=1 前提: probe は segment ごとに直列実行されるため call-count で segment を割れる。
+    # 並列化するとこの前提は崩れる (その場合は timestamp 範囲で判別する)。
+    _localize_counter = {"n": 0}
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        # Use call-count approach: first 15 calls (match segment) -> PRESENT,
+        # next 15 (lobby segment) -> None (ABSENT).
+        _localize_counter["n"] += 1
+        if _localize_counter["n"] <= 15:
+            return ScorebarLocalization(
+                x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+            )
+        return None  # ABSENT
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    # Match kept as fl_match, lobby dropped
+    assert len(result) == 1
+    assert result[0]["type"] == "fl_match"
+    assert stats.get("masked_segments_dropped", 0) == 1
+
+
+def test_validate_segments_stats_counts_drops(monkeypatch):
+    """masked_segments_dropped is incremented for each dropped segment."""
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    # Three segments: one match (kept), two lobbies (dropped).
+    segments: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "unknown"},  # match
+        {"start": 650.0, "end": 950.0, "type": "unknown"},  # lobby 1
+        {"start": 1000.0, "end": 1300.0, "type": "unknown"},  # lobby 2
+    ]
+
+    call_tracker: dict[str, int] = {"localize_call": 0}
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        call_tracker["localize_call"] += 1
+        count = call_tracker["localize_call"]
+        # First 15 calls -> match segment PRESENT
+        if count <= 15:
+            return ScorebarLocalization(
+                x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+            )
+        # Remaining calls -> lobby ABSENT
+        return None
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    assert stats.get("masked_segments_dropped", 0) == 2
+    assert len(result) == 1
+
+
+def test_validate_segments_all_unknown_keeps_with_warning(monkeypatch, caplog):
+    """Segment with all-UNKNOWN probes is kept conservatively with a warning."""
+    import logging
+
+    import allaganeye.video.detector as detector
+
+    anchor = _make_anchor()
+    segments: list[MatchBoundary] = [{"start": 100.0, "end": 700.0, "type": "unknown"}]
+
+    def fake_probe(vp, t):
+        return None  # raw None -> UNKNOWN sample
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        result = detector._validate_match_segments(
+            Path("x.mp4"), segments, anchor, workers=2, stats=None
+        )
+
+    # Segment kept (all-UNKNOWN -> conservative keep)
+    assert len(result) == 1
+    assert result[0]["type"] == "unknown"  # not re-typed (no positive evidence)
+    # Warning must mention the conservative keep
+    assert any(
+        "UNKNOWN" in r.message and "conservatively" in r.message for r in caplog.records
+    )
+
+
+def test_validate_segments_failsafe_keeps_all_when_everything_dropped(
+    monkeypatch, caplog
+):
+    """When all segments would be dropped, fail-safe returns originals with warning.
+
+    stats["masked_segments_dropped"] must NOT be incremented -- the drops were
+    rolled back and reporting them would be misleading (codex R2 fix).
+    """
+    import logging
+
+    import allaganeye.video.detector as detector
+
+    anchor = _make_anchor()
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 700.0, "type": "unknown"},
+        {"start": 750.0, "end": 1050.0, "type": "unknown"},
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        return None  # all ABSENT -> both segments would be dropped
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        result = detector._validate_match_segments(
+            Path("x.mp4"), segments, anchor, workers=2, stats=stats
+        )
+
+    # Fail-safe: original segments returned unchanged
+    assert len(result) == 2
+    assert result[0]["start"] == 100.0
+    assert result[1]["start"] == 750.0
+    # Drop count must NOT be committed to stats (rolled-back drops not reported)
+    assert stats.get("masked_segments_dropped", 0) == 0
+    # Fail-safe warning must be present and include tentative drop count
+    assert any(
+        ("fail-safe" in r.message or "anchor mistrust" in r.message)
+        and "tentative" in r.message
+        for r in caplog.records
+    )
+
+
+def test_masked_fallback_skips_validation_without_anchor(monkeypatch):
+    """Layer 2 validation is skipped when anchor is None (no src_resolution)."""
+    from allaganeye.video.capture_region import CaptureRegion
+
+    fake_region = CaptureRegion(0.1, 0.1, 0.9, 0.9, source="tierA")
+
+    monkeypatch.setattr(det, "_resolve_masked_region", lambda *a, **k: fake_region)
+    monkeypatch.setattr(det, "_scan_cpu", lambda *a, **k: {})
+    monkeypatch.setattr(
+        det,
+        "_refine_blackout_regions",
+        lambda *a, **k: [],
+    )
+    monkeypatch.setattr(
+        det,
+        "_filter_and_extract_segments",
+        lambda *a, **k: [{"start": 10.0, "end": 700.0, "type": "unknown"}],
+    )
+
+    validate_called = {"called": False}
+
+    def fake_validate(vp, segs, anchor, workers, stats, duration_hint=0.0):
+        validate_called["called"] = True
+        return segs
+
+    monkeypatch.setattr(det, "_validate_match_segments", fake_validate)
+
+    # src_resolution=None -> anchor stays None -> Layer 2 must be skipped
+    out = det._detect_masked_fallback(
+        det.Path("x.mp4"),
+        duration_hint=600.0,
+        sample_interval=3.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        use_gpu=False,
+        workers=None,
+        src_resolution=None,  # <-- no resolution -> anchor=None -> skip validation
+        codec=None,
+        gpu_vendor=None,
+        source_fps_num=None,
+        source_fps_den=None,
+        source_fps=None,
+        audio_hits=None,
+        stats=None,
+    )
+
+    assert out is not None
+    assert not validate_called["called"], (
+        "_validate_match_segments must NOT be called when anchor is None"
+    )
+
+
+def test_validate_segments_edge_segments_not_retyped(monkeypatch):
+    """Edge segments (touching timeline start/end) are KEPT but NOT re-typed fl_match.
+
+    At-anchor PRESENT majority proves FL content but not completeness (#433
+    semantics: recording started/ended mid-match).  The original type must
+    be preserved.  Non-edge segments with PRESENT majority are still re-typed.
+    """
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    # Two segments: one at the timeline start (edge), one in the middle (non-edge).
+    duration = 1800.0
+    segments: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "unknown"},  # edge (start=0)
+        {"start": 900.0, "end": 1500.0, "type": "unknown"},  # non-edge (middle)
+    ]
+
+    def fake_probe(vp, t):
+        return bytes(3)  # non-None -> triggers localize
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        # All probes PRESENT for both segments
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=None, duration_hint=duration
+    )
+
+    # Both kept (majority present), but edge segment keeps original type
+    assert len(result) == 2
+    # Edge segment: type unchanged (not retyped to fl_match)
+    assert result[0]["start"] == 0.0
+    assert result[0]["type"] == "unknown", (
+        "edge segment (start=0) must NOT be retyped to fl_match"
+    )
+    # Non-edge segment: retyped to fl_match
+    assert result[1]["start"] == 900.0
+    assert result[1]["type"] == "fl_match", (
+        "non-edge segment must be retyped to fl_match on PRESENT majority"
+    )
+
+
+def test_detect_masked_fallback_filter_unknown_recomputed_after_layer2(monkeypatch):
+    """filter_unknown is recomputed after Layer 2 drops segments (#433 verbose reconcile).
+
+    When Layer 2 drops a segment, the stats["filter_unknown"] count must
+    reflect the POST-Layer-2 state (not the Layer-1 state) so that verbose
+    output correctly reports the number of unknown-type segments in the
+    final result.
+    """
+    from allaganeye.video.capture_region import CaptureRegion
+
+    fake_region = CaptureRegion(0.1, 0.1, 0.9, 0.9, source="tierA")
+    anchor = _make_anchor()
+
+    # Layer 1 produces 2 segments: one real match (fl_match), one lobby (unknown).
+    layer1_segments: list[MatchBoundary] = [
+        {"start": 10.0, "end": 700.0, "type": "fl_match"},
+        {"start": 750.0, "end": 900.0, "type": "unknown"},  # lobby -> dropped by L2
+    ]
+
+    # Layer 2 drops the unknown/lobby segment -> only 1 kept
+    layer2_result: list[MatchBoundary] = [
+        {"start": 10.0, "end": 700.0, "type": "fl_match"},
+    ]
+
+    monkeypatch.setattr(det, "_resolve_masked_region", lambda *a, **k: fake_region)
+    monkeypatch.setattr(det, "_scan_cpu", lambda *a, **k: {})
+    monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **k: [])
+    monkeypatch.setattr(
+        det, "_filter_and_extract_segments", lambda *a, **k: list(layer1_segments)
+    )
+    monkeypatch.setattr(det, "_resolve_scorebar_anchor", lambda *a, **k: anchor)
+    # filter_blackouts_with_scorebar is imported locally inside _detect_masked_fallback;
+    # patch via the scorebar module so the local import picks up the stub.
+    import allaganeye.video.scorebar as sb_mod
+
+    monkeypatch.setattr(
+        sb_mod, "filter_blackouts_with_scorebar", lambda *a, **k: ([], [])
+    )
+    monkeypatch.setattr(
+        det,
+        "_validate_match_segments",
+        lambda vp, segs, anch, workers, stats, duration_hint=0.0: layer2_result,
+    )
+
+    stats: DetectionStats = {"filter_unknown": 1}  # pre-Layer-2 value
+
+    out = det._detect_masked_fallback(
+        det.Path("x.mp4"),
+        duration_hint=1000.0,
+        sample_interval=3.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        use_gpu=False,
+        workers=None,
+        src_resolution=(1920, 1080),
+        codec=None,
+        gpu_vendor=None,
+        source_fps_num=None,
+        source_fps_den=None,
+        source_fps=None,
+        audio_hits=None,
+        stats=stats,
+    )
+
+    assert out is not None
+    segs, _ = out
+    assert len(segs) == 1
+    # After Layer 2, the one remaining segment has type "fl_match" (not unknown).
+    # filter_unknown must have been recomputed to 0 (no unknown-type segments remain).
+    assert stats.get("filter_unknown") == 0, (
+        "filter_unknown must be recomputed after Layer 2 to reflect post-L2 state"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fix 4: Onsal recalibration -- quorum boundary cases + zero-gap merge (#822)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_segments_quorum_boundary_present_2_kept(monkeypatch):
+    """present=2 out of 15 valid probes -> meets quorum -> segment KEPT.
+
+    Onsal recalibration: quorum is _L2_PRESENT_QUORUM=2, not strict majority.
+    Even 2 PRESENT out of 15 is enough to keep (p=0.4 Onsal, P(false-drop)~0.5%).
+    A second distinct segment (all-PRESENT) is included so fail-safe does not fire.
+    """
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    segments: list[MatchBoundary] = [
+        {
+            "start": 0.0,
+            "end": 600.0,
+            "type": "unknown",
+        },  # quorum-boundary (2 PRESENT / 13 ABSENT)
+        {
+            "start": 900.0,
+            "end": 1500.0,
+            "type": "unknown",
+        },  # anchor: all PRESENT (keeps fail-safe at bay)
+    ]
+
+    # Use timestamp range to differentiate segments:
+    # Segment 1: 0-600. 15 probes at k/16 * 600 = 37.5, 75, ..., 562.5
+    #   -> return PRESENT only for first 2 timestamps (<= 75.0), ABSENT for rest.
+    # Segment 2: 900-1500. All -> PRESENT.
+    _call_order: list[float] = []
+
+    def fake_probe(vp, t):
+        _call_order.append(t)
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        t = _call_order[-1]
+        if t < 900.0:
+            # Segment 1: PRESENT only for first 2 probes (t <= 75.0)
+            if t <= 75.0:
+                return ScorebarLocalization(
+                    x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+                )
+            return None  # ABSENT
+        # Segment 2: all PRESENT
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    # Segment 1: 2/15 PRESENT >= quorum 2 -> kept, re-typed fl_match
+    # Segment 2: 15/15 PRESENT -> kept, re-typed fl_match
+    assert len(result) == 2, f"expected 2 kept segments, got {len(result)}"
+    assert result[0]["start"] == 0.0
+    assert result[0]["type"] == "fl_match", "quorum=2 segment must be kept and retyped"
+    assert result[1]["type"] == "fl_match"
+    assert stats.get("masked_segments_dropped", 0) == 0
+
+
+def test_validate_segments_quorum_boundary_present_1_dropped(monkeypatch):
+    """present=1 out of 15 valid probes -> below quorum -> segment DROPPED.
+
+    Only 1 PRESENT out of 15 does not meet _L2_PRESENT_QUORUM=2.
+    A second all-PRESENT segment is included to keep fail-safe from firing.
+    """
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    segments: list[MatchBoundary] = [
+        {
+            "start": 0.0,
+            "end": 600.0,
+            "type": "unknown",
+        },  # 1 PRESENT / 14 ABSENT -> dropped
+        {"start": 900.0, "end": 1500.0, "type": "unknown"},  # all PRESENT -> kept
+    ]
+
+    _call_order: list[float] = []
+
+    def fake_probe(vp, t):
+        _call_order.append(t)
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        t = _call_order[-1]
+        if t < 900.0:
+            # Segment 1: PRESENT only for the very first probe (t <= 40.0)
+            if t <= 40.0:
+                return ScorebarLocalization(
+                    x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+                )
+            return None  # ABSENT
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    # Segment 1: 1/15 PRESENT < quorum 2 -> dropped
+    # Segment 2: 15/15 PRESENT -> kept
+    assert len(result) == 1, f"expected 1 kept segment, got {len(result)}"
+    assert result[0]["start"] == 900.0
+    assert stats.get("masked_segments_dropped", 0) == 1
+
+
+def test_validate_segments_quorum_boundary_present_0_dropped(monkeypatch):
+    """present=0 out of 15 valid probes -> below quorum -> segment DROPPED (lobby case)."""
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 700.0, "type": "unknown"},  # 0 PRESENT -> dropped
+        {"start": 900.0, "end": 1500.0, "type": "unknown"},  # all PRESENT -> kept
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    _call_order: list[float] = []
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        _call_order.append(0)  # just track calls
+        # Determine segment by call number: first 15 -> seg1 (ABSENT), next 15 -> seg2 (PRESENT)
+        n = len(_call_order)
+        if n <= 15:
+            return None  # ABSENT
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    assert len(result) == 1
+    assert result[0]["start"] == 900.0
+    assert stats.get("masked_segments_dropped", 0) == 1
+
+
+def test_validate_segments_zero_gap_merge_two_validated(monkeypatch):
+    """Two adjacent quorum-validated segments with zero gap are merged into one fl_match.
+
+    Zero-gap arises only from a <=6s blackout split at a padded midpoint;
+    real inter-match transitions always have loading+lobby gaps > 0.
+    Both segments must be quorum-validated (not all-UNKNOWN-kept) to merge.
+    """
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    # Two adjacent quorum-validated segments with zero gap (end == next.start exactly).
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 700.0, "type": "unknown"},  # PRESENT -> fl_match
+        {
+            "start": 700.0,
+            "end": 1200.0,
+            "type": "unknown",
+        },  # zero-gap, PRESENT -> fl_match
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        # All probes PRESENT for both segments
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    # Zero-gap -> merged into one fl_match spanning 100-1200
+    assert len(result) == 1, f"expected 1 merged segment, got {len(result)}"
+    assert result[0]["start"] == 100.0
+    assert result[0]["end"] == 1200.0
+    assert result[0]["type"] == "fl_match"
+    assert stats.get("masked_l2_zero_gap_merges", 0) == 1
+
+
+def test_validate_segments_zero_gap_merge_chain_three(monkeypatch):
+    """Chain of three adjacent zero-gap quorum-validated segments merge into one."""
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    # Three zero-gap adjacent segments: a-b-c all quorum-validated.
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 500.0, "type": "unknown"},
+        {"start": 500.0, "end": 900.0, "type": "unknown"},
+        {"start": 900.0, "end": 1300.0, "type": "unknown"},
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    # Chain merge: a-b-c -> one segment spanning 100-1300
+    assert len(result) == 1, f"expected 1 merged segment, got {len(result)}"
+    assert result[0]["start"] == 100.0
+    assert result[0]["end"] == 1300.0
+    assert result[0]["type"] == "fl_match"
+    assert stats.get("masked_l2_zero_gap_merges", 0) == 2  # 2 merges for 3 segs
+
+
+def test_validate_segments_zero_gap_no_merge_when_gap_present(monkeypatch):
+    """Segments with a real gap (> 0.01s) are NOT merged even if both are PRESENT."""
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    # Two segments with a 50s gap between them (real inter-match transition).
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 700.0, "type": "unknown"},
+        {"start": 750.0, "end": 1350.0, "type": "unknown"},  # 50s gap, no merge
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    # Real gap -> two separate fl_match segments, no merge
+    assert len(result) == 2
+    assert result[0]["start"] == 100.0
+    assert result[1]["start"] == 750.0
+    assert stats.get("masked_l2_zero_gap_merges", 0) == 0
+
+
+def test_validate_segments_zero_gap_no_merge_when_one_side_all_unknown(monkeypatch):
+    """Zero-gap pair is NOT merged when one side was all-UNKNOWN kept (not quorum-validated)."""
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    # Two zero-gap segments: first all-UNKNOWN (kept conservatively), second all-PRESENT.
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 700.0, "type": "unknown"},
+        {"start": 700.0, "end": 1200.0, "type": "unknown"},
+    ]
+
+    def fake_probe(vp, t):
+        # Return None for first segment (all-UNKNOWN), real bytes for second.
+        if t < 700.0:
+            return None  # UNKNOWN
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    # First segment: all-UNKNOWN -> kept conservatively (not quorum-validated).
+    # Second segment: all-PRESENT -> quorum-validated.
+    # Zero-gap but NOT both quorum-validated -> NO merge.
+    assert len(result) == 2, (
+        f"expected 2 separate segments (no merge), got {len(result)}"
+    )
+    assert result[0]["start"] == 100.0
+    assert result[1]["start"] == 700.0
+    assert stats.get("masked_l2_zero_gap_merges", 0) == 0
+
+
+def test_validate_segments_failsafe_skips_zero_gap_merge(monkeypatch):
+    """Fail-safe path returns originals without zero-gap merge."""
+    import allaganeye.video.detector as detector
+
+    anchor = _make_anchor()
+    # Two zero-gap segments that would both fail quorum -> fail-safe fires.
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 700.0, "type": "unknown"},
+        {"start": 700.0, "end": 1200.0, "type": "unknown"},
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        return None  # all ABSENT -> both segments drop -> fail-safe
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    # Fail-safe: both dropped -> returned unchanged (2 segments, no merge).
+    assert len(result) == 2
+    assert result[0]["start"] == 100.0
+    assert result[1]["start"] == 700.0
+    # Fail-safe -> stats unchanged
+    assert stats.get("masked_segments_dropped", 0) == 0
+    assert stats.get("masked_l2_zero_gap_merges", 0) == 0
+
+
+def test_validate_segments_stats_counts_zero_gap_merges(monkeypatch):
+    """masked_l2_zero_gap_merges is incremented correctly in stats."""
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    # Three quorum-validated segments: first two zero-gap, third has a real gap.
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 500.0, "type": "unknown"},
+        {"start": 500.0, "end": 900.0, "type": "unknown"},  # zero-gap with prev
+        {"start": 1000.0, "end": 1600.0, "type": "unknown"},  # 100s gap, no merge
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    # First two merged into one, third remains separate.
+    assert len(result) == 2
+    assert result[0]["start"] == 100.0
+    assert result[0]["end"] == 900.0
+    assert result[1]["start"] == 1000.0
+    assert stats.get("masked_l2_zero_gap_merges", 0) == 1
+
+
+# ---------------------------------------------------------------------------
+# Fix 5 (codex R4): zero-gap merge must preserve edge-segment unknown marker
+# ---------------------------------------------------------------------------
+
+
+def test_validate_segments_zero_gap_merge_edge_start_keeps_unknown(monkeypatch):
+    """Zero-gap merge where FIRST segment starts at t=0 must keep type='unknown'.
+
+    The retype rule deliberately leaves edge-touching segments as 'unknown'
+    (#433 semantics: recording started mid-match, completeness unknown).
+    The zero-gap merge must re-evaluate the merged span's edge status and
+    propagate 'unknown' instead of unconditionally setting 'fl_match'.
+
+    Since a merged span touches the edge iff a constituent did, checking the
+    merged [prev.start, seg.end] endpoints is equivalent to per-constituent checks.
+    """
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    duration = 1800.0
+    # First segment starts at t=0 (edge), adjacent non-edge segment at zero gap.
+    segments: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "unknown"},  # edge-start, quorum PRESENT
+        {
+            "start": 600.0,
+            "end": 1200.0,
+            "type": "unknown",
+        },  # zero-gap, non-edge, quorum PRESENT
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"),
+        segments,
+        anchor,
+        workers=1,
+        stats=stats,
+        duration_hint=duration,
+    )
+
+    # Zero-gap merge fires (both quorum-validated), but merged span starts at 0
+    # -> edge-touching -> must keep type='unknown', not 'fl_match'.
+    assert len(result) == 1, f"expected 1 merged segment, got {len(result)}"
+    assert result[0]["start"] == 0.0
+    assert result[0]["end"] == 1200.0
+    assert result[0]["type"] == "unknown", (
+        "zero-gap merge of edge-start segment must preserve 'unknown' (#433)"
+    )
+    assert stats.get("masked_l2_zero_gap_merges", 0) == 1
+
+
+def test_validate_segments_zero_gap_merge_interior_keeps_fl_match(monkeypatch):
+    """Interior zero-gap pair (not edge-touching) is still merged to 'fl_match'.
+
+    Verifies that the edge-preservation fix does not regress the normal case:
+    two quorum-validated, non-edge-touching segments with zero gap must still
+    produce a single 'fl_match' segment.
+    """
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    duration = 3600.0
+    # Both segments well away from timeline edges.
+    segments: list[MatchBoundary] = [
+        {"start": 500.0, "end": 1200.0, "type": "unknown"},
+        {"start": 1200.0, "end": 1900.0, "type": "unknown"},  # zero-gap
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"),
+        segments,
+        anchor,
+        workers=1,
+        stats=stats,
+        duration_hint=duration,
+    )
+
+    assert len(result) == 1, f"expected 1 merged segment, got {len(result)}"
+    assert result[0]["start"] == 500.0
+    assert result[0]["end"] == 1900.0
+    assert result[0]["type"] == "fl_match", (
+        "interior zero-gap merge must produce 'fl_match'"
+    )
+    assert stats.get("masked_l2_zero_gap_merges", 0) == 1

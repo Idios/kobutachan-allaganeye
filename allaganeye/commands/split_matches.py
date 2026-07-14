@@ -72,6 +72,14 @@ logger = logging.getLogger(__name__)
 # する。cache key params (keep_trailing 含む) 自体は不変。
 _CACHE_VERSION = 4
 
+# masked_algo version: identifies the masked-path detection algorithm baked
+# into cached boundaries. Only used for cache invalidation on masked-affected
+# runs (params.masked=True or auto-fallback used).
+# version 1 = pre-#822 position-independent localize masked path
+# version 2 = #822 anchor presence + Layer 2 (9-probe strict majority)
+# version 3 = #822 Onsal recalibration: 15-probe quorum>=2 + zero-gap merge
+_MASKED_ALGO_VERSION = 3
+
 
 def run_split(
     video_path: Path,
@@ -686,10 +694,22 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
     # resolved path (top-level、key 非対象)。auto-fallback 時は masked=off でも
     # masked_fallback=on になる (#821)。
     cached_fallback = bool(data.get("masked_fallback_used", False))
+    # masked_algo は masked 影響 run のみ表示 (診断上意味を持つのは masked 経路のみ)。
+    # 破損 cache で int() 変換不能な値でも display 専用なので raise せず "?" にフォールバック
+    # (int 化可能な値 "3"/3.0 等は変換される; 安全性は値等価でのみ hit するため不変)。
+    try:
+        cached_algo: int | str = int(params.get("masked_algo", 1))
+    except (ValueError, TypeError):
+        cached_algo = "?"
+    # NOTE: _load_cache の masked_affected と異なり config.masked を含めない
+    # (こちらは cache 記録値の診断表示で、invalidation 判定ではない。live config
+    # と cache が食い違う case は params 比較が先に miss させるため到達しない)。
+    masked_affected = cached_masked or cached_fallback
     # region も他 token 同様 raw cache 記録値を正として表示する (#810)。legacy
     # cache では metadata.json 側が FULL_FRAME を合成しても表示は unknown の
     # まま (「cache に何が記録されているか」の診断表示であり意図的な差)。
 
+    algo_token = f", masked_algo={cached_algo}" if masked_affected else ""
     typer.echo(header)
     typer.echo(
         "  "
@@ -701,7 +721,8 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
         f"vtuber={'on' if cached_vtuber else 'off'}, "
         f"masked={'on' if cached_masked else 'off'}, "
         f"keep_trailing={'on' if cached_keep_trailing else 'off'}, "
-        f"masked_fallback={'on' if cached_fallback else 'off'}, "
+        f"masked_fallback={'on' if cached_fallback else 'off'}"
+        f"{algo_token}, "
         f"region={_format_region_token(data.get('capture_regions'))}"
     )
 
@@ -1878,6 +1899,20 @@ def _print_detection_stats(stats: DetectionStats) -> None:
         if drops.get("other", 0) > 0:
             typer.echo(f"    {drops['other']} dropped (other)")
 
+    masked_dropped = stats.get("masked_segments_dropped", 0)
+    if masked_dropped > 0:
+        typer.echo(
+            f"  masked L2 validation: {masked_dropped} segment(s) dropped"
+            " (below quorum)"
+        )
+
+    masked_merges = stats.get("masked_l2_zero_gap_merges", 0)
+    if masked_merges > 0:
+        typer.echo(
+            f"  masked L2 zero-gap merge: {masked_merges} pair(s) merged"
+            " (flank flicker split)"
+        )
+
     # Unknown match accounting (#433): recordings starting / ending mid-match
     # produce ``type=unknown`` segments at the timeline edges. They are part
     # of Detected count but not of the Filter "kept" formula (candidates
@@ -1984,6 +2019,7 @@ def _save_cache(
             "vtuber": config.vtuber,
             "masked": config.masked,
             "keep_trailing": config.keep_trailing,
+            "masked_algo": _MASKED_ALGO_VERSION,
         },
         # resolved path は key (params) ではなく top-level に記録する: auto-masked
         # 動画の cache 再利用は request flag の一致で正しく機能させ、provenance
@@ -2210,6 +2246,26 @@ def _load_cache(
         or params.get("keep_trailing", False) != config.keep_trailing
     ):
         logger.debug("Cache parameter mismatch")
+        return None
+
+    # masked_algo key: invalidate only when masked algorithm changes AND the
+    # cached run was masked-affected (params.masked=True or auto-fallback used).
+    # Legacy OBS caches (fallback unused + masked off) hit regardless of key
+    # absence -- no needless re-detects for unaffected users.
+    # Values that fail int() coercion (broken cache) are treated as mismatch
+    # (miss direction); int-coercible values compare by numeric equality.
+    _raw_cached_algo = params.get("masked_algo", 1)
+    try:
+        cached_algo = int(_raw_cached_algo)
+    except (ValueError, TypeError):
+        cached_algo = -1  # forces miss for any valid _MASKED_ALGO_VERSION
+    masked_affected = (
+        data.get("masked_fallback_used", False)
+        or params.get("masked", False)
+        or config.masked
+    )
+    if masked_affected and cached_algo != _MASKED_ALGO_VERSION:
+        logger.debug("Cache masked algo mismatch")
         return None
 
     boundaries = data.get("boundaries")

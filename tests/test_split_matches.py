@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 from allaganeye.commands.split_matches import (
     _CACHE_VERSION,
     _ETAProgressBar,
+    _MASKED_ALGO_VERSION,
     _PROGRESS_LABEL_WIDTH,
     _auto_sample_interval,
     _eta_progressbar,
@@ -1430,6 +1431,101 @@ def test_progressbar_auto_interval(mock_probe, mock_detect, mock_split, tmp_path
     assert mock_bar.call_count >= 1
     detecting_call = mock_bar.call_args_list[0]
     assert detecting_call[1]["length"] == 2433
+
+
+class TestMaskedAlgoCache:
+    """#822: masked_algo cache key -- save/load/legacy OBS backward compat."""
+
+    def test_save_cache_writes_masked_algo(self, cache_video, cache_config, tmp_path):
+        """_save_cache always writes masked_algo == _MASKED_ALGO_VERSION."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        assert data["params"]["masked_algo"] == _MASKED_ALGO_VERSION
+
+    def test_cache_miss_on_masked_algo_mismatch(self, cache_video, tmp_path):
+        """Legacy masked cache (masked_algo absent = 1) misses with new code (3).
+
+        A cache saved by pre-#822 code with masked=True has no masked_algo key
+        (defaults to 1). Loading with the current code (_MASKED_ALGO_VERSION=3)
+        must return None -- the old masked-path result is stale.
+        """
+        masked_config = SplitConfig(
+            output_dir=tmp_path / "output",
+            sample_interval=1.0,
+            blackout_threshold=15.0,
+            min_match_duration=300.0,
+            min_blackout_duration=3.0,
+            masked=True,
+        )
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, masked_config, CACHE_BOUNDARIES
+        )
+        # Simulate legacy pre-#822 cache: remove masked_algo from params
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("masked_algo", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        # Must miss: masked=True run with old (missing) algo key vs new version
+        assert _load_cache(cache_path, cache_video, 1.0, masked_config) is None
+
+    def test_cache_hit_for_legacy_obs_cache_without_masked_algo(
+        self, cache_video, cache_config, tmp_path
+    ):
+        """OBS cache (fallback unused, masked off) hits even without masked_algo.
+
+        Pre-#822 OBS caches have no masked_algo key. Since masked=False and
+        masked_fallback_used=False, the run was never masked-affected.
+        Legacy key absence == algo 1, and since it is not masked-affected,
+        the mismatch check does not fire -- the cache must still hit.
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        # Simulate legacy OBS cache: remove masked_algo key
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("masked_algo", None)
+        # Ensure masked_fallback_used is absent/False (standard OBS run)
+        data.pop("masked_fallback_used", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        # Must still hit: unaffected users must not be forced to re-detect
+        assert (
+            _load_cache(cache_path, cache_video, 1.0, cache_config) == CACHE_BOUNDARIES
+        )
+
+    def test_cache_miss_when_fallback_used_and_algo_stale(
+        self, cache_video, cache_config, tmp_path
+    ):
+        """Auto-fallback run (masked=False but masked_fallback_used=True) misses
+        when masked_algo key is absent (stale pre-#822 result).
+
+        masked_fallback_used=True means the run took the masked code path
+        regardless of the request flag, so the algo change invalidates it.
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        # Save a cache that records auto-fallback was used
+        _save_cache(
+            cache_path,
+            cache_video,
+            PROBE_RESULT,
+            1.0,
+            cache_config,
+            CACHE_BOUNDARIES,
+            masked_fallback_used=True,
+        )
+        # Simulate legacy pre-#822 cache: remove masked_algo
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("masked_algo", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        # Must miss: fallback-used run with stale algo
+        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+
+    def test_masked_algo_version_is_3(self):
+        """Pin: _MASKED_ALGO_VERSION == 3 for #822 Onsal recalibration (15-probe quorum + zero-gap merge)."""
+        assert _MASKED_ALGO_VERSION == 3
 
 
 class TestCaptureRegionsCache:
@@ -3990,6 +4086,130 @@ def test_verbose_unknown_line_absent_when_stat_missing(
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
+def test_verbose_masked_l2_drop_line_shown_when_nonzero(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """masked_segments_dropped > 0 -> verbose emits 'masked L2 validation' line (#822)."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 2
+            stats["pass2_elapsed_s"] = 1.0
+            stats["masked_segments_dropped"] = 2
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "masked L2 validation: 2 segment(s) dropped" in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_masked_l2_drop_line_hidden_when_zero(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """masked_segments_dropped == 0 -> no masked L2 line (terse output, #822)."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 2
+            stats["pass2_elapsed_s"] = 1.0
+            stats["masked_segments_dropped"] = 0
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "masked L2" not in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_masked_l2_zero_gap_merge_line_shown_when_nonzero(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """masked_l2_zero_gap_merges > 0 -> verbose emits 'masked L2 zero-gap merge' line (#822)."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 2
+            stats["pass2_elapsed_s"] = 1.0
+            stats["masked_l2_zero_gap_merges"] = 1
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "masked L2 zero-gap merge: 1 pair(s) merged" in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_masked_l2_zero_gap_merge_line_hidden_when_zero(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """masked_l2_zero_gap_merges == 0 -> no zero-gap merge line in verbose output."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 2
+            stats["pass2_elapsed_s"] = 1.0
+            stats["masked_l2_zero_gap_merges"] = 0
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "zero-gap merge" not in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
 def test_verbose_filter_section_skipped_on_whole_video_fallback(
     mock_probe, mock_detect, mock_split, tmp_path, capsys
 ):
@@ -5955,3 +6175,156 @@ def test_split_and_write_metadata_post_match_not_passed_to_split_video(
     assert "output_file" in matches[0]
     assert matches[1].get("post_match") is True
     assert "output_file" not in matches[1]
+
+
+# ===========================================================================
+# B6-M1: _display_cache_hit_params masked_algo token (#822)
+# ===========================================================================
+
+
+def test_display_cache_hit_params_masked_affected_shows_masked_algo(tmp_path, capsys):
+    """B6-M1: masked-affected cache-hit summary contains masked_algo token.
+
+    When the cache records masked=True (or masked_fallback_used=True), the
+    verbose cache-hit summary must include the masked_algo token so operators
+    can distinguish pre-#822 (masked_algo=1), post-#822 v2 (masked_algo=2),
+    and post-#822 v3 (masked_algo=3, 15-probe quorum + zero-gap merge)
+    results without re-running detection.
+    """
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "params": {
+                    "sample_interval": 1.0,
+                    "blackout_threshold": 15.0,
+                    "min_match_duration": 300.0,
+                    "min_blackout_duration": 3.0,
+                    "no_audio": False,
+                    "masked": True,
+                    "vtuber": False,
+                    "keep_trailing": False,
+                    "masked_algo": 2,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "masked_algo=2" in out, (
+        "masked-affected cache hit must include masked_algo token"
+    )
+
+
+def test_display_cache_hit_params_non_masked_omits_masked_algo(tmp_path, capsys):
+    """B6-M1 (negative): non-masked cache-hit summary must NOT contain masked_algo.
+
+    For standard OBS cache hits (masked=False, no masked_fallback), the
+    masked_algo token is irrelevant and must be absent to keep the summary
+    concise.
+    """
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "params": {
+                    "sample_interval": 1.0,
+                    "blackout_threshold": 15.0,
+                    "min_match_duration": 300.0,
+                    "min_blackout_duration": 3.0,
+                    "no_audio": False,
+                    "masked": False,
+                    "vtuber": False,
+                    "keep_trailing": False,
+                    "masked_algo": 2,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "masked_algo" not in out, (
+        "non-masked cache hit must NOT include masked_algo token"
+    )
+
+
+# ===========================================================================
+# B6-M2: broken cache masked_algo robustness (round-1 fix)
+# ===========================================================================
+
+
+def test_display_cache_hit_params_broken_masked_algo_shows_question_mark(
+    tmp_path, capsys
+):
+    """B6-M2a: broken masked_algo (non-int string) emits '?' token, does not raise.
+
+    A corrupted cache with masked_algo="x" must not crash the display helper.
+    The token should fall back to masked_algo=? so operators see a diagnostic
+    indicator rather than a silent gap.
+    """
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "params": {
+                    "sample_interval": 1.0,
+                    "blackout_threshold": 15.0,
+                    "min_match_duration": 300.0,
+                    "min_blackout_duration": 3.0,
+                    "no_audio": False,
+                    "masked": True,
+                    "vtuber": False,
+                    "keep_trailing": False,
+                    "masked_algo": "x",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "masked_algo=?" in out, (
+        "broken masked_algo must display '?' fallback, not raise"
+    )
+
+
+def test_load_cache_broken_masked_algo_misses(tmp_path, cache_video):
+    """B6-M2b: broken masked_algo (non-int string) in masked cache causes miss.
+
+    When a masked-affected cache has a non-int masked_algo value the invalidation
+    logic must treat it as a mismatch (miss direction) rather than raising or
+    hitting incorrectly.
+    """
+    masked_config = SplitConfig(
+        output_dir=tmp_path / "output",
+        sample_interval=1.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        masked=True,
+    )
+    cache_path = tmp_path / "output" / ".detection_cache.json"
+    _save_cache(
+        cache_path, cache_video, PROBE_RESULT, 1.0, masked_config, CACHE_BOUNDARIES
+    )
+    # Inject a non-int masked_algo to simulate cache corruption
+    data = json.loads(cache_path.read_text(encoding="utf-8"))
+    data["params"]["masked_algo"] = "x"
+    cache_path.write_text(json.dumps(data), encoding="utf-8")
+
+    result = _load_cache(cache_path, cache_video, 1.0, masked_config)
+    assert result is None, "broken masked_algo must cause cache miss, not hit"
