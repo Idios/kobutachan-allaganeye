@@ -1359,6 +1359,9 @@ describe('#805 ExportScreen post_match no-crash guard', () => {
         expect.stringContaining('post_match'),
         2,
       );
+      // iterate-review R6 #2: 4 発の stray event (match 2) で warn はちょうど
+      // 1 回 — round-5 の per-match dedup (warnedStray) を pin する。
+      expect(warnSpy).toHaveBeenCalledTimes(1);
       warnSpy.mockRestore();
     });
 

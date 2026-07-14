@@ -978,7 +978,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | caption: `displayOnly` (`{N} ファイル`)。bulk button: `idle` / `disabled` (`running \|\| cancelling \|\| sample mode \|\| bulk 対象 0 件`) |
 | 遷移トリガー | `onClick` → `toggleSelectAll(true \| false)` → `excludedIndexes` から bulk 対象 (永続 skip / `post_match` 以外) を全 add/delete |
 | store mutation | なし |
-| 例外 / edge case | `type_override === 'skip'` (preview で永続設定) と `post_match: true` ([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) Phase 2) は bulk 対象外 (個別 checkbox も disabled)。bulk 対象 0 件時 (全 match が永続 skip / post_match) は両 button とも `disabled` + §1.2 理由 tooltip「対象が 0 件のため全選択/全解除できません」。§1.2 disabled 理由 tooltip「書き出し中は変更できません」 ([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済) |
+| 例外 / edge case | `type_override === 'skip'` (preview で永続設定) と `post_match: true` ([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) Phase 2) は bulk 対象外 (個別 checkbox も disabled)。bulk 対象 0 件時 (全 match が永続 skip / post_match) は両 button とも `disabled` + §1.2 理由 tooltip (per-button 文言: 全選択側「対象が 0 件のため全選択できません」/ 全解除側「対象が 0 件のため全解除できません」)。§1.2 disabled 理由 tooltip「書き出し中は変更できません」 ([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済) |
 
 #### §2.5.15 listItem (per-match row)
 
