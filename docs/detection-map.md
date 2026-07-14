@@ -65,7 +65,7 @@
 - **`localize_scorebar_at_anchor` / `localize_from_rgb_bytes_at_anchor`**: 位置独立 `localize_scorebar` を anchor 近傍に制約した評価関数。y 走査域 anchor.y_top ±60px + x-IoU ≥0.5 gate + emblem 3 点 AND エンジン共用。lobby 18/18 absent (FP ゼロ) / リザルト margin 1.28-1.36 を実測 (spec §1.1)。
 - **`_resolve_scorebar_anchor`**: 24 sparse probe で conf ≥0.7 を pre-filter し y-cluster dominant の median anchor を返す masked gate 専用解決器。cluster 不成立時は None → 位置独立に縮退 (#822)。
 - **`_presence_at_anchor_from_raw`**: masked classify path (`filter_blackouts_with_scorebar(localize=True, anchor=...)`) で呼ぶ at-anchor presence。残像 FN が発生しないためリザルト画面 margin も正常 → masked path の in_match ≥3.5s keep 規則を撤廃できる根拠。
-- **`_validate_match_segments` (Layer 2)**: masked gate 専用の segment 検証。9-probe at-anchor presence の present 過半数を keep 条件とし非試合 (lobby) segment を除去。全 UNKNOWN → keep (保守)、全件削除 → fail-safe 全 keep + warning。削除数は `stats["masked_segments_dropped"]` + verbose 表示。_MASKED_ALGO_VERSION = 2 で cache key 管理。
+- **`_validate_match_segments` (Layer 2)**: masked gate 専用の segment 検証。15-probe at-anchor presence の quorum>=2 を keep 条件とし非試合 (lobby) segment を除去。全 UNKNOWN → keep (保守)、全件削除 → fail-safe 全 keep + warning。削除数は `stats["masked_segments_dropped"]` + verbose 表示。keep/drop pass 後に zero-gap 隣接 validated ペアを 1 fl_match にマージ (`stats["masked_l2_zero_gap_merges"]`)。_MASKED_ALGO_VERSION = 3 で cache key 管理。Onsal recalibration 2026-07-14: 9-probe 厳格過半 (v2) から変更 (実試合 PRESENT 率 40-60%、2 件 false-drop)。
 
 ## 3. git 考古学 (なぜ追加されたか)
 
@@ -144,7 +144,7 @@ segments 抽出 (_filter_and_extract_segments)
 issue #822 で masked fallback (`_detect_masked_fallback`) は **2 層構成**になった。
 
 - **Layer 1**: `_resolve_scorebar_anchor` が per-video anchor を解決し、flank/merge probe を at-anchor presence (`localize_scorebar_at_anchor`) で行う。masked path の in_match ≥3.5s keep 規則を廃止 (残像 FN が at-anchor では発生しないため)、non_fl を boundary 候補として keep (staging 弱点の吸収)。
-- **Layer 2**: `_validate_match_segments` が segment ごとに 9-probe at-anchor majority 判定を行い、非試合 (lobby) segment を除去する。
+- **Layer 2**: `_validate_match_segments` が segment ごとに 15-probe at-anchor quorum>=2 判定を行い、非試合 (lobby) segment を除去する。keep/drop pass 後に zero-gap 隣接 validated ペアをマージする (flank flicker 由来の中割り解消)。Onsal recalibration 2026-07-14: 旧 9-probe 厳格過半 (v2) を訂正 (_MASKED_ALGO_VERSION=3)。
 
 OBS production path / `--vtuber` path は一切変更しない (bit-exact 構造保証。§5.1/§5.3 制約遵守)。
 

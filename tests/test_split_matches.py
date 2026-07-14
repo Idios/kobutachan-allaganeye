@@ -1446,10 +1446,10 @@ class TestMaskedAlgoCache:
         assert data["params"]["masked_algo"] == _MASKED_ALGO_VERSION
 
     def test_cache_miss_on_masked_algo_mismatch(self, cache_video, tmp_path):
-        """Legacy masked cache (masked_algo absent = 1) misses with new code (2).
+        """Legacy masked cache (masked_algo absent = 1) misses with new code (3).
 
         A cache saved by pre-#822 code with masked=True has no masked_algo key
-        (defaults to 1). Loading with the current code (_MASKED_ALGO_VERSION=2)
+        (defaults to 1). Loading with the current code (_MASKED_ALGO_VERSION=3)
         must return None -- the old masked-path result is stale.
         """
         masked_config = SplitConfig(
@@ -1523,9 +1523,9 @@ class TestMaskedAlgoCache:
         # Must miss: fallback-used run with stale algo
         assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
 
-    def test_masked_algo_version_is_2(self):
-        """Pin: _MASKED_ALGO_VERSION == 2 for #822."""
-        assert _MASKED_ALGO_VERSION == 2
+    def test_masked_algo_version_is_3(self):
+        """Pin: _MASKED_ALGO_VERSION == 3 for #822 Onsal recalibration (15-probe quorum + zero-gap merge)."""
+        assert _MASKED_ALGO_VERSION == 3
 
 
 class TestCaptureRegionsCache:
@@ -4143,6 +4143,68 @@ def test_verbose_masked_l2_drop_line_hidden_when_zero(
     out = capsys.readouterr().out
 
     assert "masked L2" not in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_masked_l2_zero_gap_merge_line_shown_when_nonzero(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """masked_l2_zero_gap_merges > 0 -> verbose emits 'masked L2 zero-gap merge' line (#822)."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 2
+            stats["pass2_elapsed_s"] = 1.0
+            stats["masked_l2_zero_gap_merges"] = 1
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "masked L2 zero-gap merge: 1 pair(s) merged" in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_masked_l2_zero_gap_merge_line_hidden_when_zero(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """masked_l2_zero_gap_merges == 0 -> no zero-gap merge line in verbose output."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 2
+            stats["pass2_elapsed_s"] = 1.0
+            stats["masked_l2_zero_gap_merges"] = 0
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "zero-gap merge" not in out
 
 
 @patch(f"{MODULE}.split_video")

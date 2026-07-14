@@ -77,6 +77,9 @@ class DetectionStats(TypedDict, total=False):
     # Incremented once per segment dropped (lobby / non-FL inter-match footage
     # scoring majority-absent in at-anchor probes).
     masked_segments_dropped: int
+    # Count of adjacent KEPT segment pairs merged by the post-L2 zero-gap merge
+    # pass (#822 Onsal recalibration 2026-07-14).  Each pair merged increments by 1.
+    masked_l2_zero_gap_merges: int
 
 
 logger = logging.getLogger(__name__)
@@ -872,6 +875,26 @@ so the adjacency-inference type is preserved.  UNKNOWN-probe probes are
 excluded from the majority denominator (as usual).
 """
 
+_L2_PROBE_COUNT = 15
+"""Number of evenly-spaced timestamps probed per segment in Layer 2 validation.
+
+Onsal Hakair recalibration (2026-07-14): at-anchor presence on real Onsal
+matches measured at 40-60% (vs Seal Rock 85-100%); lobby = 0% everywhere.
+Binomial(n=9, p=0.4) -> P(present < 2) ~= 7% (too risky, 2 real matches
+false-dropped in practice).  Increasing to n=15 reduces
+Binomial(n=15, p=0.4) -> P(present < 2) ~= 0.5%, acceptable.
+Lobby at-anchor FP measured at 0% -> no false-keep risk from higher n.
+"""
+
+_L2_PRESENT_QUORUM = 2
+"""Minimum number of PRESENT probes required to keep a segment in Layer 2.
+
+Onsal recalibration: quorum of 2 out of 15 valid probes (not strict majority)
+provides P(false-drop) ~= 0.5% at the worst measured in-match rate (p=0.4
+on Onsal), while lobby at-anchor FP rate = 0% ensures no false-keep.
+The quorum replaces the previous strict majority (present * 2 > len(valid)).
+"""
+
 
 def _validate_match_segments(
     video_path: Path,
@@ -881,12 +904,21 @@ def _validate_match_segments(
     stats: DetectionStats | None,
     duration_hint: float = 0.0,
 ) -> list[MatchBoundary]:
-    """Layer 2 segment validation: at-anchor presence majority vote (#822).
+    """Layer 2 segment validation: at-anchor presence quorum (#822).
 
-    For each candidate segment extracted by Layer 1, probe 9 evenly-spaced
-    timestamps (k/10 fractions of the segment duration, k=1..9) and classify
-    via at-anchor localization.  A segment is kept iff PRESENT probes are a
-    strict majority of non-UNKNOWN probes (``present * 2 > len(valid)``).
+    For each candidate segment extracted by Layer 1, probe _L2_PROBE_COUNT
+    evenly-spaced timestamps (k/(_L2_PROBE_COUNT+1) fractions, k=1.._L2_PROBE_COUNT)
+    and classify via at-anchor localization.  A segment is kept iff PRESENT
+    probes meet or exceed _L2_PRESENT_QUORUM among non-UNKNOWN probes.
+
+    Rationale for quorum (2026-07-14 Onsal recalibration):
+    - Onsal Hakair's scorebar is two-row with score-fill-dependent saturated-run
+      geometry; at-anchor presence on real Onsal matches measured at 40-60%
+      (vs Seal Rock 85-100%).  Lobby = 0% everywhere.
+    - Strict majority (n=9, p=0.4): P(false-drop) ~= 7% -- too risky; caused 2
+      confirmed false-drops in practice (m27 old M10, m28 old M4).
+    - Quorum 2/15 (n=15, p=0.4): P(false-drop) ~= 0.5% -- acceptable.
+    - Lobby FP rate = 0% measured; quorum does not increase false-keep risk.
 
     Kept segments are re-typed to "fl_match" (direct presence evidence
     supersedes the adjacency-inference type produced by
@@ -896,14 +928,24 @@ def _validate_match_segments(
     FL content but not completeness -- recording started/ended mid-match
     (#433 semantics; ``duration_hint=0.0`` skips the edge check).
 
+    After the per-segment keep/drop pass, adjacent KEPT (quorum-validated)
+    segments whose boundary is zero-gap (abs(next.start - prev.end) < 0.01)
+    are merged into a single fl_match segment.  Zero-gap arises only from a
+    <=6s blackout split at a padded midpoint; real inter-match transitions
+    always have loading+lobby gaps > 0.  Only quorum-validated pairs are
+    merged (not all-UNKNOWN-kept segments).  Chain-merge (a-b-c all zero-gap
+    -> one segment) is applied.  Merged count is logged and added to
+    stats["masked_l2_zero_gap_merges"].
+
     Dropped segments (lobby/inter-match footage) are info-logged and counted
     in ``stats["masked_segments_dropped"]``.
 
-    Segments where ALL 9 probes are UNKNOWN are kept conservatively (anchor
-    mistrust) with a warning.
+    Segments where ALL _L2_PROBE_COUNT probes are UNKNOWN are kept
+    conservatively (anchor mistrust) with a warning.
 
     Fail-safe: if validation would drop ALL segments the original list is
     returned unchanged with a warning (anchor mistrust; conservative keep).
+    Zero-gap merge is skipped on the fail-safe path.
 
     ``scan_presence`` raises ``VideoProcessingError`` when all probes for a
     scan call are UNKNOWN (sec.5.3 fail-loud).  For per-segment validation
@@ -944,14 +986,22 @@ def _validate_match_segments(
     # Loop-invariant: factory and sample_fn are the same for all segments
     # (same video_path + anchor); hoisted outside the loop for clarity.
     sample_fn = _make_sample_fn(video_path, anchor)
+    # kept_validated: segments that passed quorum (True) or were all-UNKNOWN kept
+    # (False).  The boolean is used later in zero-gap merge to restrict merging
+    # to quorum-validated pairs only.
     kept: list[MatchBoundary] = []
+    kept_quorum_validated: list[bool] = []
     # Track drops locally; commit to stats only on the non-fail-safe path.
     dropped_count = 0
     for seg in segments:
         seg_start = seg["start"]
         seg_end = seg["end"]
         seg_len = seg_end - seg_start
-        probe_ts = [seg_start + seg_len * k / 10.0 for k in range(1, 10)]
+        # _L2_PROBE_COUNT evenly spaced probes: k/(_L2_PROBE_COUNT+1) fractions.
+        probe_ts = [
+            seg_start + seg_len * k / (_L2_PROBE_COUNT + 1)
+            for k in range(1, _L2_PROBE_COUNT + 1)
+        ]
 
         # Edge-segment detection: recording started/ended mid-match (#433).
         is_edge_segment = duration_hint > 0.0 and (
@@ -966,7 +1016,7 @@ def _validate_match_segments(
                 video_path,
                 seg_end,
                 stride=1.0,
-                # 9 probes/segment なので並列度は控えめで十分。
+                # 15 probes/segment; modest parallelism is sufficient.
                 workers=workers if workers is not None else 1,
                 sample_fn=sample_fn,
                 times=probe_ts,
@@ -986,17 +1036,21 @@ def _validate_match_segments(
                 seg_end,
             )
             kept.append(seg)
+            kept_quorum_validated.append(
+                False
+            )  # all-UNKNOWN keep, not quorum-validated
             continue
 
         valid = [s for s in samples if s.state is not PresenceState.UNKNOWN]
         present_count = sum(1 for s in valid if s.state is PresenceState.PRESENT)
-        if valid and present_count * 2 > len(valid):
-            # Majority PRESENT: re-type to fl_match (direct evidence),
+        if valid and present_count >= _L2_PRESENT_QUORUM:
+            # Quorum PRESENT: re-type to fl_match (direct evidence),
             # UNLESS this is a timeline-edge segment (recording boundary).
             if is_edge_segment:
                 # Edge segment: presence proven but completeness unknown (#433).
                 # Keep original type; do not retype to fl_match.
                 kept.append(seg)
+                kept_quorum_validated.append(True)
                 logger.debug(
                     "Layer 2 validation: keeping edge segment [%.1f, %.1f]"
                     " (present=%d/%d; edge -- no retype)",
@@ -1009,6 +1063,7 @@ def _validate_match_segments(
                 kept_seg = dict(seg)
                 kept_seg["type"] = "fl_match"
                 kept.append(kept_seg)  # type: ignore[arg-type]
+                kept_quorum_validated.append(True)
         else:
             logger.info(
                 "Layer 2 validation: dropping segment [%.1f, %.1f]"
@@ -1036,7 +1091,54 @@ def _validate_match_segments(
         stats["masked_segments_dropped"] = (
             stats.get("masked_segments_dropped", 0) + dropped_count
         )
-    return kept
+
+    # Zero-gap merge: adjacent quorum-validated segments with no gap between
+    # them (abs(next.start - prev.end) < 0.01) are merged into a single
+    # fl_match.  Zero-gap arises only from a <=6s blackout split at a padded
+    # midpoint; real inter-match transitions always have loading+lobby gaps > 0.
+    # Only both-quorum-validated pairs are merged (not all-UNKNOWN-kept segs).
+    # Rationale: zero-gap adjacent = same match split by flank flicker (m28 M5/M6
+    # measured: two segments with identical boundary timestamps from a <=6s
+    # blackout midpoint split).
+    _ZERO_GAP_EPS = 0.01
+    merged: list[MatchBoundary] = []
+    # merged_tail_qv[i] tracks whether merged[i] was quorum-validated (True) or
+    # kept via the all-UNKNOWN conservative path (False).  Initialized empty;
+    # populated in sync with merged.
+    merged_tail_qv: list[bool] = []
+    merge_count = 0
+    for seg, is_qv in zip(kept, kept_quorum_validated, strict=True):
+        if not merged:
+            merged.append(dict(seg))  # type: ignore[arg-type]
+            merged_tail_qv.append(is_qv)
+            continue
+        prev = merged[-1]
+        prev_qv = merged_tail_qv[-1]
+        if is_qv and prev_qv and abs(seg["start"] - prev["end"]) < _ZERO_GAP_EPS:
+            # Merge: extend prev end; ensure type is fl_match.
+            logger.info(
+                "Layer 2 zero-gap merge: [%.1f, %.1f] + [%.1f, %.1f] -> [%.1f, %.1f]"
+                " (flank flicker split)",
+                prev["start"],
+                prev["end"],
+                seg["start"],
+                seg["end"],
+                prev["start"],
+                seg["end"],
+            )
+            prev["end"] = seg["end"]
+            prev["type"] = "fl_match"
+            merge_count += 1
+        else:
+            merged.append(dict(seg))  # type: ignore[arg-type]
+            merged_tail_qv.append(is_qv)
+
+    if merge_count > 0 and stats is not None:
+        stats["masked_l2_zero_gap_merges"] = (
+            stats.get("masked_l2_zero_gap_merges", 0) + merge_count
+        )
+
+    return merged
 
 
 def _detect_masked_fallback(

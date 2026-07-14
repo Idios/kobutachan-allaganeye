@@ -76,8 +76,9 @@ _CACHE_VERSION = 4
 # into cached boundaries. Only used for cache invalidation on masked-affected
 # runs (params.masked=True or auto-fallback used).
 # version 1 = pre-#822 position-independent localize masked path
-# version 2 = #822 anchor presence + Layer 2
-_MASKED_ALGO_VERSION = 2
+# version 2 = #822 anchor presence + Layer 2 (9-probe strict majority)
+# version 3 = #822 Onsal recalibration: 15-probe quorum>=2 + zero-gap merge
+_MASKED_ALGO_VERSION = 3
 
 
 def run_split(
@@ -1897,7 +1898,14 @@ def _print_detection_stats(stats: DetectionStats) -> None:
     if masked_dropped > 0:
         typer.echo(
             f"  masked L2 validation: {masked_dropped} segment(s) dropped"
-            " (presence 過半未満)"
+            " (below quorum)"
+        )
+
+    masked_merges = stats.get("masked_l2_zero_gap_merges", 0)
+    if masked_merges > 0:
+        typer.echo(
+            f"  masked L2 zero-gap merge: {masked_merges} pair(s) merged"
+            " (flank flicker split)"
         )
 
     # Unknown match accounting (#433): recordings starting / ending mid-match
