@@ -329,6 +329,43 @@ Codex CLI が rate-limit / quota / network / auth 等で fail した場合、Cla
 
 詳細 (Flow 図 / 違い table / 並列ではなく直列にする理由) は [`docs/l2-workflow.md` §subagent + Codex 直列構成](docs/l2-workflow.md#subagent--codex-直列構成-c5) を参照。
 
+## モデルルーティング（用途別モデル使い分け）
+
+開発時のサブエージェント/レビューを用途別のモデルへ振り分ける。**本ツールの実行時依存ではなく開発運用のみ**（CLI/GUI の挙動・出力は変わらない）。設計 spec は [`docs/superpowers/specs/2026-07-14-per-use-case-model-routing-design.md`](docs/superpowers/specs/2026-07-14-per-use-case-model-routing-design.md) を参照。
+
+ルーティングは**アドバイザリ**（hook 強制はしない）。担保は 3 層: agent 定義 `model:` / 本節のガイダンス / 主エージェントの規律。
+
+### 対応表
+
+| 用途 | モデル/ツール | 呼び出し |
+| --- | --- | --- |
+| メイン（設計判断・複雑デバッグ・アーキ変更・新機能・統括） | ユーザー選択（既定 Opus 最新 / 高難度は最初から Fable 最新）。**固定しない** | セッションモデル |
+| 技術レビュー・相談（バグ/セキュリティ/GPU fallback/encoding/adversarial） | Codex | 既存 3-tier（§Codex 運用）。**不変** |
+| 全体レビュー・相談（設計方針/UX/ドキュメント整合/受け入れ条件妥当性/俯瞰） | Fable 最新 | `Agent(subagent_type=fable-consult)` |
+| 中難度定型（原因既知バグ修正/テスト作成/スコープ明確 refactor/doc 更新） | Sonnet 最新 | `Agent(subagent_type=sonnet-worker)` |
+| 低難度定型（検索/リネーム/フォーマット/boilerplate/要約/情報収集） | Haiku 最新 | `Agent(subagent_type=haiku-worker)`。ビルトイン Explore は `model:"haiku"` を渡す |
+
+- **エイリアス指定**（`fable` / `opus` / `sonnet` / `haiku`）で各系統の最新に自動追従（フル ID 固定はしない）。
+- agent 定義は **project-local**（`.claude/agents/`）を使う。user-level `~/.claude/agents/` の同名定義より優先。
+
+### fable-consult の推奨トリガー地点（原則。強制ではない）
+
+- spec/design doc 執筆完了後・ユーザーレビュー前
+- brainstorming で選択肢が割れて決めきれないとき
+- 受け入れ条件を新規策定した issue の起票前
+
+### Fable と Codex の棲み分け
+
+- **修正先が「コード/テスト diff」→ Codex**、**「文書・方針・プロセス」→ Fable**。
+- invariant / 不可逆操作に関わる spec は**両方**にかける（併存レイヤー、重複コスト許容）。
+- **「Fable にレビューさせた」≠ Codex レビュー不要**。Fable 一次通過を Codex 省略の口実にしない。
+
+### ビルトインエージェント
+
+- Explore は `model:"haiku"`（fan-out 検索は低難度）。
+- Plan・general-purpose 等その他は model 未指定（メイン inherit）を既定とし、明らかに定型のみ `sonnet` 明示。Plan（高難度）を惰性で haiku に落とさない。
+- fork はモデル上書き不可で常に親（メイン）を継承する。
+
 ## CLAUDE.md 継続改善
 
 ユーザーから「CLAUDE.md に追記して」等の指示があった場合、このファイルを即座に更新する。
