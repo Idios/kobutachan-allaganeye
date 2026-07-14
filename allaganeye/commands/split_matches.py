@@ -695,7 +695,8 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
     # masked_fallback=on になる (#821)。
     cached_fallback = bool(data.get("masked_fallback_used", False))
     # masked_algo は masked 影響 run のみ表示 (診断上意味を持つのは masked 経路のみ)。
-    # 破損 cache が非 int 値を持つ場合も display 専用なので raise せず "?" にフォールバック。
+    # 破損 cache で int() 変換不能な値でも display 専用なので raise せず "?" にフォールバック
+    # (int 化可能な値 "3"/3.0 等は変換される; 安全性は値等価でのみ hit するため不変)。
     try:
         cached_algo: int | str = int(params.get("masked_algo", 1))
     except (ValueError, TypeError):
@@ -2251,7 +2252,8 @@ def _load_cache(
     # cached run was masked-affected (params.masked=True or auto-fallback used).
     # Legacy OBS caches (fallback unused + masked off) hit regardless of key
     # absence -- no needless re-detects for unaffected users.
-    # Non-int values (broken cache) are treated as mismatch (miss direction).
+    # Values that fail int() coercion (broken cache) are treated as mismatch
+    # (miss direction); int-coercible values compare by numeric equality.
     _raw_cached_algo = params.get("masked_algo", 1)
     try:
         cached_algo = int(_raw_cached_algo)

@@ -139,7 +139,7 @@ Splitting  #################################### 100%
 Total: 0m07s
 ```
 
-`audio` 表示は cache-miss 側の Detecting summary と同じヘルパ (`_audio_status_str`) を経由するため、`AUDIO_FROZEN` 状態を反映する (#384)。masked fallback 採用 run (masked=on または masked_fallback=on) のみ、パラメータ行末尾に `masked_algo=N` トークンが追加される (N は `_MASKED_ALGO_VERSION`、#822)。
+`audio` 表示は cache-miss 側の Detecting summary と同じヘルパ (`_audio_status_str`) を経由するため、`AUDIO_FROZEN` 状態を反映する (#384)。masked fallback 採用 run (masked=on または masked_fallback=on) のみ、パラメータ行の `masked_fallback` の直後 (`region=` の前) に `masked_algo=N` トークンが挿入される (N は `_MASKED_ALGO_VERSION`、#822)。
 
 #### キャッシュ再読み込み失敗時のフォールバック
 
