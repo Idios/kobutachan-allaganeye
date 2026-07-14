@@ -12,7 +12,7 @@ allaganeye の開発では、タスクの難易度・性質に幅がある（設
 ### 要望（ユーザー）
 
 | 用途 | 割り当て |
-|---|---|
+| --- | --- |
 | メインエージェント | Opus 最新（ただしユーザーが都度選択。高難度と最初から分かるセッションは Fable） |
 | 技術的なレビュー・相談 | Codex |
 | 全体的なレビュー・相談 | Fable 最新 |
@@ -50,7 +50,7 @@ hook による強制ルーティングは本設計のスコープ外（YAGNI）�
 メインセッション（ユーザー選択、既定 Opus / 高難度は Fable）から**委譲**する先の使い分けを定義する。
 
 | 用途 | モデル/ツール | 実現手段 | 呼び出し |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | メイン（設計判断・複雑デバッグ・アーキ変更・新機能・統括） | ユーザー選択（既定 Opus 最新 / 高難度 Fable 最新） | セッションモデル | 固定しない |
 | 技術レビュー・相談（バグ/セキュリティ/GPU fallback/encoding/adversarial） | Codex | 既存 3-tier companion script | `codex-companion.mjs review\|adversarial-review`（**不変**） |
 | 全体レビュー・相談（設計方針/UX/ドキュメント整合/受け入れ条件妥当性/俯瞰） | Fable 最新 (`fable`) | `.claude/agents/fable-consult.md` | `Agent(subagent_type=fable-consult)` |

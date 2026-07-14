@@ -41,9 +41,11 @@
 ## Task 1: fable-consult 定義（全体レビュー・相談レイヤー）
 
 **Files:**
+
 - Create: `.claude/agents/fable-consult.md`
 
 **Interfaces:**
+
 - Produces: `subagent_type=fable-consult` で起動可能な read-only レビュア。`model: fable`。tools = `Read, Grep, Glob, WebSearch, WebFetch`（Edit/Write/Bash/Agent なし）。
 
 - [ ] **Step 1: ファイル作成**
@@ -108,10 +110,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ## Task 2: sonnet-worker / haiku-worker 定義（定型作業レイヤー）
 
 **Files:**
+
 - Create: `.claude/agents/sonnet-worker.md`
 - Create: `.claude/agents/haiku-worker.md`
 
 **Interfaces:**
+
 - Produces: `subagent_type=sonnet-worker`（`model: sonnet`）/ `subagent_type=haiku-worker`（`model: haiku`）。両者とも本文に「Iron Law」を含む（project-local 判別マーカー。user-level model-router 版には無い）。
 
 - [ ] **Step 1: sonnet-worker.md 作成**
@@ -190,9 +194,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ## Task 3: CLAUDE.md モデルルーティング節
 
 **Files:**
+
 - Modify: `CLAUDE.md`（`## Codex 運用` 節の直後、`## CLAUDE.md 継続改善` の直前に挿入）
 
 **Interfaces:**
+
 - Consumes: Task 1/2 の agent 名（`fable-consult` / `sonnet-worker` / `haiku-worker`）。
 - Produces: ルーティング規約の SSoT 節。
 
