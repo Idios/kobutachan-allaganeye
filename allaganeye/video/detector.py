@@ -1115,19 +1115,30 @@ def _validate_match_segments(
         prev = merged[-1]
         prev_qv = merged_tail_qv[-1]
         if is_qv and prev_qv and abs(seg["start"] - prev["end"]) < _ZERO_GAP_EPS:
-            # Merge: extend prev end; ensure type is fl_match.
+            # Merge: extend prev end; re-evaluate the merged span's edge status.
+            # A merged span is edge-touching iff a constituent was edge-touching
+            # (prev.start <= EPS OR seg.end >= duration-EPS), so checking the
+            # merged endpoints is equivalent to checking each constituent.
+            # Chain merges keep growing the merged span; each iteration re-checks
+            # the (already-grown) prev["start"] against the new seg["end"].
+            merged_start = prev["start"]
+            merged_end = seg["end"]
+            is_merged_edge = duration_hint > 0.0 and (
+                merged_start <= _EDGE_EPS or merged_end >= duration_hint - _EDGE_EPS
+            )
             logger.info(
                 "Layer 2 zero-gap merge: [%.1f, %.1f] + [%.1f, %.1f] -> [%.1f, %.1f]"
-                " (flank flicker split)",
+                " (flank flicker split%s)",
                 prev["start"],
                 prev["end"],
                 seg["start"],
                 seg["end"],
                 prev["start"],
                 seg["end"],
+                "; edge -- keeping unknown" if is_merged_edge else "",
             )
-            prev["end"] = seg["end"]
-            prev["type"] = "fl_match"
+            prev["end"] = merged_end
+            prev["type"] = "unknown" if is_merged_edge else "fl_match"
             merge_count += 1
         else:
             merged.append(dict(seg))  # type: ignore[arg-type]

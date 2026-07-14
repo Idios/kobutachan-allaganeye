@@ -122,6 +122,12 @@ Layer 2 は `scan_presence` (#824 site 2) の最初の production 消費者 (mas
 > (実試合間には必ず loading+lobby gap > 0 が存在するため)。
 > マージ数は `stats["masked_l2_zero_gap_merges"]` に記録し verbose に表示する。
 > `_MASKED_ALGO_VERSION` は 2 → **3** に bump。
+>
+> **erratum (codex R4 [medium], 2026-07-14)**: zero-gap merge は `type = "fl_match"` を無条件にセットしていたが、
+> マージ後のスパンが timeline edge に触れる場合 (#433 semantics: 録画途中開始/終了) は `type = "unknown"` を保持する必要がある。
+> マージスパン `[prev.start, seg.end]` の endpoint で edge 条件を再評価し、edge-touching なら `type = "unknown"`、内側なら `type = "fl_match"`。
+> マージスパンが edge に触れる iff 構成要素のいずれかが edge に触れる (等価性) ため、endpoint 再評価で十分。
+> chain merge は成長中のスパンに対して毎回再評価する。実装: `detector.py` `_validate_match_segments` zero-gap merge ブロック。
 
 ## 4. #824 契約の編入 (同一実装期)
 

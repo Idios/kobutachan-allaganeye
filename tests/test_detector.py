@@ -4704,3 +4704,114 @@ def test_validate_segments_stats_counts_zero_gap_merges(monkeypatch):
     assert result[0]["end"] == 900.0
     assert result[1]["start"] == 1000.0
     assert stats.get("masked_l2_zero_gap_merges", 0) == 1
+
+
+# ---------------------------------------------------------------------------
+# Fix 5 (codex R4): zero-gap merge must preserve edge-segment unknown marker
+# ---------------------------------------------------------------------------
+
+
+def test_validate_segments_zero_gap_merge_edge_start_keeps_unknown(monkeypatch):
+    """Zero-gap merge where FIRST segment starts at t=0 must keep type='unknown'.
+
+    The retype rule deliberately leaves edge-touching segments as 'unknown'
+    (#433 semantics: recording started mid-match, completeness unknown).
+    The zero-gap merge must re-evaluate the merged span's edge status and
+    propagate 'unknown' instead of unconditionally setting 'fl_match'.
+
+    Since a merged span touches the edge iff a constituent did, checking the
+    merged [prev.start, seg.end] endpoints is equivalent to per-constituent checks.
+    """
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    duration = 1800.0
+    # First segment starts at t=0 (edge), adjacent non-edge segment at zero gap.
+    segments: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "unknown"},  # edge-start, quorum PRESENT
+        {
+            "start": 600.0,
+            "end": 1200.0,
+            "type": "unknown",
+        },  # zero-gap, non-edge, quorum PRESENT
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"),
+        segments,
+        anchor,
+        workers=1,
+        stats=stats,
+        duration_hint=duration,
+    )
+
+    # Zero-gap merge fires (both quorum-validated), but merged span starts at 0
+    # -> edge-touching -> must keep type='unknown', not 'fl_match'.
+    assert len(result) == 1, f"expected 1 merged segment, got {len(result)}"
+    assert result[0]["start"] == 0.0
+    assert result[0]["end"] == 1200.0
+    assert result[0]["type"] == "unknown", (
+        "zero-gap merge of edge-start segment must preserve 'unknown' (#433)"
+    )
+    assert stats.get("masked_l2_zero_gap_merges", 0) == 1
+
+
+def test_validate_segments_zero_gap_merge_interior_keeps_fl_match(monkeypatch):
+    """Interior zero-gap pair (not edge-touching) is still merged to 'fl_match'.
+
+    Verifies that the edge-preservation fix does not regress the normal case:
+    two quorum-validated, non-edge-touching segments with zero gap must still
+    produce a single 'fl_match' segment.
+    """
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    duration = 3600.0
+    # Both segments well away from timeline edges.
+    segments: list[MatchBoundary] = [
+        {"start": 500.0, "end": 1200.0, "type": "unknown"},
+        {"start": 1200.0, "end": 1900.0, "type": "unknown"},  # zero-gap
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"),
+        segments,
+        anchor,
+        workers=1,
+        stats=stats,
+        duration_hint=duration,
+    )
+
+    assert len(result) == 1, f"expected 1 merged segment, got {len(result)}"
+    assert result[0]["start"] == 500.0
+    assert result[0]["end"] == 1900.0
+    assert result[0]["type"] == "fl_match", (
+        "interior zero-gap merge must produce 'fl_match'"
+    )
+    assert stats.get("masked_l2_zero_gap_merges", 0) == 1
