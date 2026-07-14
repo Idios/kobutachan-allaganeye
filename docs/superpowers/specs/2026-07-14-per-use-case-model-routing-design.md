@@ -80,6 +80,8 @@ settings.json でのメインモデル固定は**行わない**。
 
 ### 4.3 agent 定義（内容案）
 
+> **注記**: 本節は設計時の内容案。**実装後の最終版は `.claude/agents/*.md` が SSoT**。spec 側から再コピーして退行させないこと（Fable 最終レビュー Minor 反映）。
+
 #### `.claude/agents/fable-consult.md`
 
 ```markdown
