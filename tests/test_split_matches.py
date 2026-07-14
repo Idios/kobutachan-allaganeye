@@ -6183,11 +6183,12 @@ def test_split_and_write_metadata_post_match_not_passed_to_split_video(
 
 
 def test_display_cache_hit_params_masked_affected_shows_masked_algo(tmp_path, capsys):
-    """B6-M1: masked-affected cache-hit summary contains masked_algo=2.
+    """B6-M1: masked-affected cache-hit summary contains masked_algo token.
 
     When the cache records masked=True (or masked_fallback_used=True), the
     verbose cache-hit summary must include the masked_algo token so operators
-    can distinguish pre-#822 (masked_algo=1) from post-#822 (masked_algo=2)
+    can distinguish pre-#822 (masked_algo=1), post-#822 v2 (masked_algo=2),
+    and post-#822 v3 (masked_algo=3, 15-probe quorum + zero-gap merge)
     results without re-running detection.
     """
     from allaganeye.commands.split_matches import _display_cache_hit_params
@@ -6255,3 +6256,75 @@ def test_display_cache_hit_params_non_masked_omits_masked_algo(tmp_path, capsys)
     assert "masked_algo" not in out, (
         "non-masked cache hit must NOT include masked_algo token"
     )
+
+
+# ===========================================================================
+# B6-M2: broken cache masked_algo robustness (round-1 fix)
+# ===========================================================================
+
+
+def test_display_cache_hit_params_broken_masked_algo_shows_question_mark(
+    tmp_path, capsys
+):
+    """B6-M2a: broken masked_algo (non-int string) emits '?' token, does not raise.
+
+    A corrupted cache with masked_algo="x" must not crash the display helper.
+    The token should fall back to masked_algo=? so operators see a diagnostic
+    indicator rather than a silent gap.
+    """
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "params": {
+                    "sample_interval": 1.0,
+                    "blackout_threshold": 15.0,
+                    "min_match_duration": 300.0,
+                    "min_blackout_duration": 3.0,
+                    "no_audio": False,
+                    "masked": True,
+                    "vtuber": False,
+                    "keep_trailing": False,
+                    "masked_algo": "x",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "masked_algo=?" in out, (
+        "broken masked_algo must display '?' fallback, not raise"
+    )
+
+
+def test_load_cache_broken_masked_algo_misses(tmp_path, cache_video):
+    """B6-M2b: broken masked_algo (non-int string) in masked cache causes miss.
+
+    When a masked-affected cache has a non-int masked_algo value the invalidation
+    logic must treat it as a mismatch (miss direction) rather than raising or
+    hitting incorrectly.
+    """
+    masked_config = SplitConfig(
+        output_dir=tmp_path / "output",
+        sample_interval=1.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        masked=True,
+    )
+    cache_path = tmp_path / "output" / ".detection_cache.json"
+    _save_cache(
+        cache_path, cache_video, PROBE_RESULT, 1.0, masked_config, CACHE_BOUNDARIES
+    )
+    # Inject a non-int masked_algo to simulate cache corruption
+    data = json.loads(cache_path.read_text(encoding="utf-8"))
+    data["params"]["masked_algo"] = "x"
+    cache_path.write_text(json.dumps(data), encoding="utf-8")
+
+    result = _load_cache(cache_path, cache_video, 1.0, masked_config)
+    assert result is None, "broken masked_algo must cause cache miss, not hit"

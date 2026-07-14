@@ -130,7 +130,7 @@ allaganeye 0.1.1 (ffmpeg 8.1, Python 3.12.10, Windows 11)
 Probing: recording.mkv
   Duration: 10228.7s, Resolution: 1920x1080, FPS: 60.00, Codec: h264
 Cache hit: detection params from .detection_cache.json
-  sample_interval=3.0s, threshold=15.0, min_match=300.0s, min_blackout=3.0s, audio=frozen, vtuber=off, masked=off, masked_fallback=off
+  sample_interval=3.0s, threshold=15.0, min_match=300.0s, min_blackout=3.0s, audio=frozen, vtuber=off, masked=off, keep_trailing=off, masked_fallback=off, region=full_frame
 Detected 8 match(es) in recording.mkv (2:50:28) (cached)
   Match 1:   00:00 -   15:17  (15m17s)  [unknown]
   ...
@@ -139,7 +139,7 @@ Splitting  #################################### 100%
 Total: 0m07s
 ```
 
-`audio` 表示は cache-miss 側の Detecting summary と同じヘルパ (`_audio_status_str`) を経由するため、`AUDIO_FROZEN` 状態を反映する (#384)。
+`audio` 表示は cache-miss 側の Detecting summary と同じヘルパ (`_audio_status_str`) を経由するため、`AUDIO_FROZEN` 状態を反映する (#384)。masked fallback 採用 run (masked=on または masked_fallback=on) のみ、パラメータ行末尾に `masked_algo=N` トークンが追加される (N は `_MASKED_ALGO_VERSION`、#822)。
 
 #### キャッシュ再読み込み失敗時のフォールバック
 
@@ -187,16 +187,22 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
   Filter: 15 candidates -> 8 matches
     6 dropped (below min_match_duration)
     1 dropped (other)
+  masked L2 validation: 1 segment(s) dropped (below quorum)
+  masked L2 zero-gap merge: 1 pair(s) merged (flank flicker split)
   + 1 unknown match (録画途中試合)
   Splitting: 9 matches, 1m02s
 ```
+
+上記の `masked L2` 行は **masked fallback 採用 run のみ表示**される (OBS 通常 run では出力されない)。
 
 | 行 | 内容 |
 | --- | --- |
 | `Pass 1` | Pass 1 のサンプル数・暗転フレーム数・所要時間 |
 | `Pass 2` | Pass 2 精密計測の region 数・所要時間 (#366) |
 | `Scorebar` | Scorebar 分類 (match_boundary / in_match / non_fl / unknown) のカウントと所要時間 (#386) |
-| `Filter` | Scorebar 通過後の候補数 → 最終 match 数。`below_min_match_duration` / `other` が 0 より大きい場合のみ内訳を追加出力 (#388)。録画途中で開始 / 終了する `unknown` 試合 (Detected には含まれるが Filter "kept" には含まれない) がある場合、内訳の直下に `+ N unknown match (録画途中試合)` 行を出力 (#433) |
+| `Filter` | Scorebar 通過後の候補数 → 最終 match 数。`below_min_match_duration` / `other` が 0 より大きい場合のみ内訳を追加出力 (#388)。masked fallback 採用 run では Filter 後に Layer 2 validation (drop/merge) が match 数をさらに変更する。録画途中で開始 / 終了する `unknown` 試合 (Detected には含まれるが Filter "kept" には含まれない) がある場合、内訳の直下に `+ N unknown match (録画途中試合)` 行を出力 (#433) |
+| `masked L2 validation` | masked fallback 採用 run のみ。`_validate_match_segments` が 15-probe at-anchor quorum (>=2) 判定で除去した segment 数 (#822) |
+| `masked L2 zero-gap merge` | masked fallback 採用 run のみ。flank flicker 由来の零ギャップ隣接 validated ペアをマージした件数 (#822) |
 | `Splitting` | 分割フェーズの match 数・所要時間 (#387) |
 
 `Filter` セクションは候補数がゼロかつドロップがゼロの場合 (whole-video fallback により match が生成されたケース) は出力を省略する。`dropped (below min_match_duration)` は **セグメント長が `min_match_duration` に満たなかった数**、`dropped (other)` は短尺動画の whole-video 候補不適合等の残余カウント。`in_match` / `non_fl` はここに含まれず、上の Scorebar 行がそのカウントを担う (重複防止)。

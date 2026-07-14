@@ -42,7 +42,7 @@
 | `localize_scorebar_at_anchor` / `localize_from_rgb_bytes_at_anchor` | capture_region.py | anchor ±60px 帯 + x-IoU ≥0.5 gate の at-anchor presence primitive (tri-state) | #822 | load-bearing |
 | `_resolve_scorebar_anchor` | detector.py | 24 sparse probe → conf ≥0.7 pre-filter → y-cluster dominant → anchor (masked gate) | #822 | load-bearing |
 | `_presence_at_anchor_from_raw` | scorebar.py | masked classify で呼ぶ at-anchor presence (per-video v2 相当) | #822 | load-bearing |
-| `_validate_match_segments` (Layer 2) | detector.py | 9-probe at-anchor majority 判定で非試合 segment を除去 (masked gate 専用、fail-safe あり) | #822 | load-bearing |
+| `_validate_match_segments` (Layer 2) | detector.py | 15-probe at-anchor quorum (>=2) 判定 + zero-gap merge で非試合 segment を除去 (masked gate 専用、fail-safe あり) | #822 | load-bearing |
 
 ### 判定根拠 (脚注)
 
