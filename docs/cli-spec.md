@@ -337,7 +337,7 @@ detect/split が生成した `metadata.json` をもとに、N 並列で試合 MP
 # 通常モード (metadata.json をディスクから読み込む)
 allaganeye export <metadata_path> --output-dir DIR [--codec copy|h264]
                                   [--concurrency N] [--name-pattern PATTERN]
-                                  [--quiet|--json] [--include I,J,K|--exclude I,J,K]
+                                  [--quiet|--json] [--include I,J,K] [--exclude I,J,K]
 
 # stdin モード (GUI subprocess が in-memory 編集済み metadata を渡す場合)
 echo '<metadata-json>' | allaganeye export --stdin [...]
