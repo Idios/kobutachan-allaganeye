@@ -31,7 +31,7 @@
 
 ## File Structure
 
-> **改名注記 (#889 Codex adversarial-review 反映)**: 以下 Task 2 の worker は当初 `sonnet-worker` / `haiku-worker` として実装したが、user-level model-router との同名衝突（precedence 依存の silent 誤ルーティング）を Codex が No-ship としたため、**最終的に `allaganeye-sonnet-worker` / `allaganeye-haiku-worker` へ改名**して確定した。以降の Task 2 本文中の旧名は当初の実装記録であり、正は `.claude/agents/allaganeye-*.md` + CLAUDE.md 対応表。
+> **改名注記 (#889 Codex adversarial-review 反映)**: worker は当初 `sonnet-worker` / `haiku-worker` として実装したが、user-level model-router との同名衝突（precedence 依存の silent 誤ルーティング）を Codex が No-ship としたため、**`allaganeye-sonnet-worker` / `allaganeye-haiku-worker` へ改名**して確定。**Task 2 本文・検証も新名へ更新済み**。旧名は本注記と Task 4 の user-level 衝突例にのみ残す（実行時に旧名を使わないこと）。正は `.claude/agents/allaganeye-*.md` + CLAUDE.md 対応表。
 
 - Create: `.claude/agents/fable-consult.md` — 全体レビュー・相談ワーカー（`model: fable`、read-only）
 - Create: `.claude/agents/allaganeye-sonnet-worker.md` — 中難度定型ワーカー（`model: sonnet`）
@@ -109,24 +109,24 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 2: sonnet-worker / haiku-worker 定義（定型作業レイヤー）
+## Task 2: allaganeye-sonnet-worker / allaganeye-haiku-worker 定義（定型作業レイヤー）
 
 **Files:**
 
-- Create: `.claude/agents/sonnet-worker.md`
-- Create: `.claude/agents/haiku-worker.md`
+- Create: `.claude/agents/allaganeye-sonnet-worker.md`
+- Create: `.claude/agents/allaganeye-haiku-worker.md`
 
 **Interfaces:**
 
-- Produces: `subagent_type=sonnet-worker`（`model: sonnet`）/ `subagent_type=haiku-worker`（`model: haiku`）。両者とも本文に「Iron Law」を含む（project-local 判別マーカー。user-level model-router 版には無い）。
+- Produces: `subagent_type=allaganeye-sonnet-worker`（`model: sonnet`）/ `subagent_type=allaganeye-haiku-worker`（`model: haiku`）。両者とも本文に「Iron Law」を含む（project-local 判別マーカー。user-level model-router 版には無い）。
 
-- [ ] **Step 1: sonnet-worker.md 作成**
+- [ ] **Step 1: allaganeye-sonnet-worker.md 作成**
 
-`.claude/agents/sonnet-worker.md` を以下の内容で作成する:
+`.claude/agents/allaganeye-sonnet-worker.md` を以下の内容で作成する:
 
 ```markdown
 ---
-name: sonnet-worker
+name: allaganeye-sonnet-worker
 description: 中難度の定型タスク（原因既知バグ修正/テスト作成/スコープ明確 refactor/doc 更新/機械的依存更新）を実行するワーカー。
 model: sonnet
 ---
@@ -150,13 +150,13 @@ model: sonnet
 - サブエージェントの起動（Agent tool）は行わない。分解が必要なら主エージェントへ返す
 ```
 
-- [ ] **Step 2: haiku-worker.md 作成**
+- [ ] **Step 2: allaganeye-haiku-worker.md 作成**
 
-`.claude/agents/haiku-worker.md` を以下の内容で作成する:
+`.claude/agents/allaganeye-haiku-worker.md` を以下の内容で作成する:
 
 ```markdown
 ---
-name: haiku-worker
+name: allaganeye-haiku-worker
 description: 低難度の定型タスク（ファイル検索/リネーム/フォーマット修正/boilerplate 生成/要約/情報収集）を高速・低コストで処理するワーカー。
 model: haiku
 ---
@@ -179,14 +179,14 @@ model: haiku
 
 - [ ] **Step 3: frontmatter 検証**
 
-Run: `head -5 .claude/agents/sonnet-worker.md; echo '---'; head -5 .claude/agents/haiku-worker.md`
+Run: `head -5 .claude/agents/allaganeye-sonnet-worker.md; echo '---'; head -5 .claude/agents/allaganeye-haiku-worker.md`
 Expected: それぞれ `model: sonnet` / `model: haiku` を含む。
 
 - [ ] **Step 4: commit**
 
 ```bash
-git add .claude/agents/sonnet-worker.md .claude/agents/haiku-worker.md
-git commit -m "feat: sonnet-worker/haiku-worker 定型作業サブエージェント定義 (Iron Law 整合制約付き)
+git add .claude/agents/allaganeye-sonnet-worker.md .claude/agents/allaganeye-haiku-worker.md
+git commit -m "feat: allaganeye-sonnet-worker/allaganeye-haiku-worker 定型作業サブエージェント定義 (Iron Law 整合制約付き)
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
@@ -201,7 +201,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 
-- Consumes: Task 1/2 の agent 名（`fable-consult` / `sonnet-worker` / `haiku-worker`）。
+- Consumes: Task 1/2 の agent 名（`fable-consult` / `allaganeye-sonnet-worker` / `allaganeye-haiku-worker`）。
 - Produces: ルーティング規約の SSoT 節。
 
 - [ ] **Step 1: 挿入位置の確認**
@@ -227,8 +227,8 @@ Expected: 1 行ヒット（この行の直前に新節を挿入する）。
 | メイン（設計判断・複雑デバッグ・アーキ変更・新機能・統括） | ユーザー選択（既定 Opus 最新 / 高難度は最初から Fable 最新）。**固定しない** | セッションモデル |
 | 技術レビュー・相談（バグ/セキュリティ/GPU fallback/encoding/adversarial） | Codex | 既存 3-tier（§Codex 運用）。**不変** |
 | 全体レビュー・相談（設計方針/UX/ドキュメント整合/受け入れ条件妥当性/俯瞰） | Fable 最新 | `Agent(subagent_type=fable-consult)` |
-| 中難度定型（原因既知バグ修正/テスト作成/スコープ明確 refactor/doc 更新） | Sonnet 最新 | `Agent(subagent_type=sonnet-worker)` |
-| 低難度定型（検索/リネーム/フォーマット/boilerplate/要約/情報収集） | Haiku 最新 | `Agent(subagent_type=haiku-worker)`。ビルトイン Explore は `model:"haiku"` を渡す |
+| 中難度定型（原因既知バグ修正/テスト作成/スコープ明確 refactor/doc 更新） | Sonnet 最新 | `Agent(subagent_type=allaganeye-sonnet-worker)` |
+| 低難度定型（検索/リネーム/フォーマット/boilerplate/要約/情報収集） | Haiku 最新 | `Agent(subagent_type=allaganeye-haiku-worker)`。ビルトイン Explore は `model:"haiku"` を渡す |
 
 - **エイリアス指定**（`fable` / `opus` / `sonnet` / `haiku`）で各系統の最新に自動追従（フル ID 固定はしない）。
 - agent 定義は **project-local**（`.claude/agents/`）を使う。user-level `~/.claude/agents/` の同名定義より優先。
@@ -282,12 +282,11 @@ Expected: exit 0（agent 定義 3 ファイル + CLAUDE.md が全て pass）。�
 `Agent(subagent_type="fable-consult", model 未指定)` で軽量タスク（例: 「あなたの役割と使用モデルを 1 行で述べよ」）を起動する。
 Expected: エラーなく応答が返る（frontmatter `model: fable` 経由での起動が成立）。§7 AC「実装後 subagent_type=fable-consult で起動し fable で応答」を満たす。
 
-- [ ] **Step 3: worker の project-local 判別検証（user-level shadow 対策）**
+- [ ] **Step 3: worker 起動検証（一意名で user-level 衝突なし）**
 
-user-level `~/.claude/agents/haiku-worker.md` / `sonnet-worker.md` が実在するため、project-local が優先されることを実測する。
-`Agent(subagent_type="haiku-worker")` で「あなたの制約を列挙せよ」を起動する。
-Expected: 応答に **「Iron Law」** が含まれる（このマーカーは project-local 定義にのみ存在し、user-level model-router 版には無い）。同様に `sonnet-worker` でも「Iron Law」を確認する。
-**不合格時の分岐**: project-local が勝たない場合、spec §8 fallback に従い agent 名を `worker-sonnet` / `worker-haiku` へ改名し（Task 2 と Task 3 対応表・呼び出し規約を同時更新）、再検証する。
+`allaganeye-` prefix により user-level model-router (`~/.claude/agents/` の旧名 worker、Iron Law 記述なし) とは一意名で衝突しない（precedence 非依存。#889 Codex No-ship 対応で改名済み）。
+`Agent(subagent_type="allaganeye-haiku-worker")` で「あなたの制約を列挙せよ」を起動する。
+Expected: 応答に **「Iron Law」** が含まれる（project-local 定義が起動している確証）。同様に `allaganeye-sonnet-worker` でも「Iron Law」を確認する。
 
 - [ ] **Step 4: Codex 配線不変の確認**
 
@@ -304,5 +303,5 @@ spec §7 の各 checkbox を diff/ファイルと逐条突合し、全項目を�
 
 - **spec coverage**: §4.2 成果物 4 点 → Task 1（fable-consult）/ Task 2（2 worker）/ Task 3（CLAUDE.md 節）で網羅。§4.5 ビルトイン規約 → Task 3 Step 2 の「ビルトインエージェント」小節。§5 機構検証 → Task 4 Step 2。§7 AC 8 項 → Task 4 Step 2/3/4/5 で検証。§8 同名衝突 → Task 4 Step 3 + 改名 fallback。
 - **placeholder scan**: 各ファイル内容は全文記載。TBD/TODO なし。
-- **type consistency**: agent 名は全 Task で `fable-consult` / `sonnet-worker` / `haiku-worker` に統一。CLAUDE.md 節の呼び出し例も同名。
+- **type consistency**: agent 名は全 Task で `fable-consult` / `allaganeye-sonnet-worker` / `allaganeye-haiku-worker` に統一。CLAUDE.md 節の呼び出し例も同名。
 - **gap**: settings.json 変更なし（Global Constraints で明示的に禁止）。実機検証 trigger 非該当を前提メモで明示。
