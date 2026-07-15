@@ -54,8 +54,8 @@ hook による強制ルーティングは本設計のスコープ外（YAGNI）�
 | メイン（設計判断・複雑デバッグ・アーキ変更・新機能・統括） | ユーザー選択（既定 Opus 最新 / 高難度 Fable 最新） | セッションモデル | 固定しない |
 | 技術レビュー・相談（バグ/セキュリティ/GPU fallback/encoding/adversarial） | Codex | 既存 3-tier companion script | `codex-companion.mjs review\|adversarial-review`（**不変**） |
 | 全体レビュー・相談（設計方針/UX/ドキュメント整合/受け入れ条件妥当性/俯瞰） | Fable 最新 (`fable`) | `.claude/agents/fable-consult.md` | `Agent(subagent_type=fable-consult)` |
-| 中難度定型（原因既知バグ修正/テスト作成/スコープ明確 refactor/doc 更新） | Sonnet 最新 (`sonnet`) | `.claude/agents/sonnet-worker.md` | `Agent(subagent_type=sonnet-worker)` |
-| 低難度定型（検索/リネーム/フォーマット/boilerplate/要約/情報収集） | Haiku 最新 (`haiku`) | `.claude/agents/haiku-worker.md`、ビルトイン Explore は `model:haiku` 上書き | `Agent(...)` |
+| 中難度定型（原因既知バグ修正/テスト作成/スコープ明確 refactor/doc 更新） | Sonnet 最新 (`sonnet`) | `.claude/agents/allaganeye-sonnet-worker.md` | `Agent(subagent_type=allaganeye-sonnet-worker)` |
+| 低難度定型（検索/リネーム/フォーマット/boilerplate/要約/情報収集） | Haiku 最新 (`haiku`) | `.claude/agents/allaganeye-haiku-worker.md`、ビルトイン Explore は `model:haiku` 上書き | `Agent(...)` |
 
 **Fable と Codex の棲み分け（レイヤー併存）**:
 
@@ -72,8 +72,8 @@ hook による強制ルーティングは本設計のスコープ外（YAGNI）�
 ### 4.2 成果物
 
 1. `.claude/agents/fable-consult.md`（`model: fable`）
-2. `.claude/agents/sonnet-worker.md`（`model: sonnet`）
-3. `.claude/agents/haiku-worker.md`（`model: haiku`）
+2. `.claude/agents/allaganeye-sonnet-worker.md`（`model: sonnet`）
+3. `.claude/agents/allaganeye-haiku-worker.md`（`model: haiku`）
 4. CLAUDE.md 新節「## モデルルーティング（用途別モデル使い分け）」
 
 settings.json でのメインモデル固定は**行わない**。
@@ -119,11 +119,11 @@ tools: Read, Grep, Glob, WebSearch, WebFetch
 - 不明点は臆測せず「確認すべき点」として返す
 ```
 
-#### `.claude/agents/sonnet-worker.md`
+#### `.claude/agents/allaganeye-sonnet-worker.md`
 
 ```markdown
 ---
-name: sonnet-worker
+name: allaganeye-sonnet-worker
 description: 中難度の定型タスク（原因既知バグ修正/テスト作成/スコープ明確 refactor/doc 更新/依存更新）を実行するワーカー。
 model: sonnet
 ---
@@ -145,11 +145,11 @@ model: sonnet
 - サブエージェントの起動（Agent tool）は行わない。分解が必要なら主エージェントへ返す
 ```
 
-#### `.claude/agents/haiku-worker.md`
+#### `.claude/agents/allaganeye-haiku-worker.md`
 
 ```markdown
 ---
-name: haiku-worker
+name: allaganeye-haiku-worker
 description: 低難度の定型タスク（ファイル検索/リネーム/フォーマット修正/boilerplate 生成/要約/情報収集）を高速・低コストで処理するワーカー。
 model: haiku
 ---
@@ -175,8 +175,8 @@ model: haiku
 - 4.1 のルーティング対応表
 - 呼び出し規約:
   - 全体レビュー・相談 → `Agent(subagent_type=fable-consult)`。**推奨トリガー地点**（spec 執筆後のユーザーレビュー前 / 選択肢が割れたとき / 受け入れ条件新規策定 issue の起票前）も明記
-  - 中難度定型 → `Agent(subagent_type=sonnet-worker)`
-  - 低難度定型 → `Agent(subagent_type=haiku-worker)`、ビルトイン Explore 起動時は `model: "haiku"` を渡す
+  - 中難度定型 → `Agent(subagent_type=allaganeye-sonnet-worker)`
+  - 低難度定型 → `Agent(subagent_type=allaganeye-haiku-worker)`、ビルトイン Explore 起動時は `model: "haiku"` を渡す
   - 技術レビュー・相談 → 既存 Codex（§Codex 運用へ参照）
 - 設計原則: エイリアスで最新追従 / アドバイザリ（3 層）/ Codex 不変・Fable は別レイヤー / メインモデルは固定せずユーザー選択
 - Codex との棲み分け（Fable=非コード俯瞰 / Codex=コード技術、判定は「修正先が diff か文書か」、Fable 済み≠Codex 不要）を明記
@@ -214,18 +214,18 @@ CLAUDE.md にこの規約を書く。
 ## 7. 受け入れ条件
 
 - [ ] `.claude/agents/fable-consult.md` が存在し `model: fable`、read-only tools（Edit/Write/Bash を含まない）、推奨起動トリガー、Codex との棲み分けが記述されている
-- [ ] `.claude/agents/sonnet-worker.md` が存在し `model: sonnet`、Iron Law 整合の制約（スコープ外禁止/曖昧点は独断禁止/subagent 起動禁止）が記述されている
-- [ ] `.claude/agents/haiku-worker.md` が存在し `model: haiku`、Iron Law 整合の制約が記述されている
+- [ ] `.claude/agents/allaganeye-sonnet-worker.md` が存在し `model: sonnet`、Iron Law 整合の制約（スコープ外禁止/曖昧点は独断禁止/subagent 起動禁止）が記述されている
+- [ ] `.claude/agents/allaganeye-haiku-worker.md` が存在し `model: haiku`、Iron Law 整合の制約が記述されている
 - [ ] CLAUDE.md に「モデルルーティング」節があり、対応表・呼び出し規約（fable トリガー地点含む）・Codex 棲み分け（判定基準 + Fable 済み≠Codex 不要）・アドバイザリ明記・メインモデル非固定・project-local 優先を含む
 - [ ] エイリアス指定（フル ID 固定なし）で最新追従することが明記されている
 - [ ] 実装後、`subagent_type=fable-consult`（frontmatter 定義経由）で起動し fable で応答することを確認（param 経由の検証とは別物）
-- [ ] `sonnet-worker` / `haiku-worker` が **project-local 定義で**起動することを実測確認（user-level `~/.claude/agents/` に同名定義が存在する状態で、定義固有マーカー等で判別。project > user 優先を前提化しない）
+- [ ] `allaganeye-sonnet-worker` / `allaganeye-haiku-worker` が起動し Iron Law マーカーを含む project-local 定義で動くことを実測確認（`allaganeye-` prefix により user-level model-router と一意名で衝突しない = precedence 非依存）
 - [ ] 既存 Codex 配線（Iron Law 6 Pre-flight Step 5、3-tier）に変更を加えていない
 
 ## 8. リスク・留意点
 
 - **アドバイザリの限界**: 主エージェントが規律を破ればルーティングは効かない。CLAUDE.md 明記と agent 定義で担保するが、hook 強制はしない（意図的）。特に fable-consult は Codex のような必須フック地点がないため形骸化しやすい → §4.3 の推奨トリガー地点を CLAUDE.md にも明記して発火動機を与える。
-- **model-router との重複（silent 誤作動リスク）**: user-level に既存 `haiku-worker` / `sonnet-worker` がある。project-local を優先させる想定だが、precedence を前提化せず §7 AC で実測検証する（このプロジェクトが繰り返し学んだ「弱い前提の silent 誤作動」クラス）。検証で project-local が勝たない場合は **agent 名を変えて衝突自体を消す**（例: `worker-sonnet` / `worker-haiku`）ことを fallback とする。
-- **命名の将来 churn**: `sonnet-worker` / `haiku-worker` はモデル名を焼き込んでいるため、将来ルーティングを変えると名前ごと churn する弱点がある。可視性の実利を優先して現案維持だが、認識しておく。
+- **model-router との衝突回避（#889 Codex adversarial-review 反映、確定）**: user-level `~/.claude/agents/` に既存 `haiku-worker` / `sonnet-worker`（model-router、Iron Law 記述なし）がある。当初案は project-local precedence 前提だったが、Codex が「precedence 依存は Claude Code の version 間で脆く、弱い user-level 定義を silent に呼びうる（No-ship）」と指摘。本 § の fallback を発動し、**worker を `allaganeye-` prefix の一意名（`allaganeye-sonnet-worker` / `allaganeye-haiku-worker`）へ改名して衝突自体を構造的に消した**（precedence 非依存。「弱い前提の silent 誤作動」クラスを根絶）。
+- **命名**: `allaganeye-{sonnet,haiku}-worker` はモデル名 + project prefix を焼き込む。将来ルーティング変更時の名前 churn の弱点は残るが、衝突回避と可視性を優先。`fable-consult` は user-level に同名が無いため prefix なし。
 - **メインが Fable のセッション**: 高難度セッションでメイン = Fable の場合、`fable-consult` はメインと同モデルになる。**コンテキスト独立の価値は残るが、異モデル視点という価値は失われる**。重要案件では Codex 側レビューで補完する。
 - **retrospective 条項**: v0.3.0 リリース後（または導入から数週間後）に fable-consult / worker の実呼び出し実績を振り返り、形骸化していれば hook 強制化 or 廃止を再検討する。アドバイザリ運用（hook 見送り）の再評価点をここに固定する。

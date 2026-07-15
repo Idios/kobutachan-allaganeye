@@ -31,9 +31,11 @@
 
 ## File Structure
 
+> **改名注記 (#889 Codex adversarial-review 反映)**: 以下 Task 2 の worker は当初 `sonnet-worker` / `haiku-worker` として実装したが、user-level model-router との同名衝突（precedence 依存の silent 誤ルーティング）を Codex が No-ship としたため、**最終的に `allaganeye-sonnet-worker` / `allaganeye-haiku-worker` へ改名**して確定した。以降の Task 2 本文中の旧名は当初の実装記録であり、正は `.claude/agents/allaganeye-*.md` + CLAUDE.md 対応表。
+
 - Create: `.claude/agents/fable-consult.md` — 全体レビュー・相談ワーカー（`model: fable`、read-only）
-- Create: `.claude/agents/sonnet-worker.md` — 中難度定型ワーカー（`model: sonnet`）
-- Create: `.claude/agents/haiku-worker.md` — 低難度定型ワーカー（`model: haiku`）
+- Create: `.claude/agents/allaganeye-sonnet-worker.md` — 中難度定型ワーカー（`model: sonnet`）
+- Create: `.claude/agents/allaganeye-haiku-worker.md` — 低難度定型ワーカー（`model: haiku`）
 - Modify: `CLAUDE.md` — `## モデルルーティング（用途別モデル使い分け）` 節を `## Codex 運用`（L299-331）の直後・`## CLAUDE.md 継続改善`（L332）の直前に挿入
 
 ---

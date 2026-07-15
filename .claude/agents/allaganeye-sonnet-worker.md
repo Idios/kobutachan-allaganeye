@@ -1,5 +1,5 @@
 ---
-name: sonnet-worker
+name: allaganeye-sonnet-worker
 description: 中難度の定型タスク（原因既知バグ修正/テスト作成/スコープ明確 refactor/doc 更新/機械的依存更新）を実行するワーカー。
 model: sonnet
 ---

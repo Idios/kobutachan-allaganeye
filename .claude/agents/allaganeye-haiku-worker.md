@@ -1,5 +1,5 @@
 ---
-name: haiku-worker
+name: allaganeye-haiku-worker
 description: 低難度の定型タスク（ファイル検索/リネーム/フォーマット修正/boilerplate 生成/要約/情報収集）を高速・低コストで処理するワーカー。
 model: haiku
 ---
