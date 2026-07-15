@@ -522,7 +522,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 | 状態 | `displayOnly`。`metadata.matches.length` と `metadata.source_duration_display` を表示 |
 | 遷移トリガー | `metadata` 変化に追従 |
 | store mutation | なし |
-| 例外 / edge case | `matches.length === 0` の場合 `0` 表示 (後段の listItem は空、previewPane は非表示 = §2.3.10)。Phase 2.5 で「合計試合長」「FL 比率」等の追加列が議論対象 ([#586](https://github.com/Idios/kobutachan-allaganeye/issues/586)) |
+| 例外 / edge case | `matches.length === 0` の場合 `0` 表示 (後段の listItem は空、previewPane は非表示 = §2.3.10)。Phase 2.5 で「合計試合長」「FL 比率」等の追加列が議論対象 ([#586](https://github.com/Idios/kobutachan-allaganeye/issues/586))。「試合数」は `post_match: true` の match を**含む** (`matches.length` そのまま、[#891](https://github.com/Idios/kobutachan-allaganeye/issues/891) で意図的仕様と確定) — 一覧 = metadata の透明表示 (誤判定にユーザーが気づける、[#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) 非破壊化設計) の一部で、実効的な書き出し数は export header の `countedMatches` (§2.5.2) が担う分担 |
 
 #### §2.3.4 [元に戻す] button (RestoreButton)
 
@@ -582,7 +582,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 | 状態 | `idle` / `active` (selectedMatchIndex 一致時 `listItemActive` クラス + `data-selected="true"`) / `postMatch` (`post_match: true` 時 `listItemPostMatch` クラス (dimmed) + `data-post-match="true"` + badge「試合後」、[#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) Phase 2) |
 | 遷移トリガー | single `onClick` → `selectMatch(index)` (選択のみ) / `onDoubleClick` → `openPreviewFor(index)` (選択 + preview 遷移) |
 | store mutation | single click: `appStateStore.selectedMatchIndex` のみ。double click: 加えて `appStateStore.screen='preview'` |
-| 例外 / edge case | §1.3 dirty=true 時に別 match を double click すると編集破棄が発生 → confirm 必須 (現状未実装、§2.3.5 [境界を調整] と同等の対応)。listItem 内 typeBadge は表示専用で click 影響なし。`name` は `match.name ?? "MATCH_NNN"` フォールバック ([metadata-spec.md](metadata-spec.md) 編集契約により `name` は GUI 表示専用、metadata.json には書き戻さない) |
+| 例外 / edge case | §1.3 dirty=true 時に別 match を double click すると編集破棄が発生 → confirm 必須 (現状未実装、§2.3.5 [境界を調整] と同等の対応)。listItem 内 typeBadge は表示専用で click 影響なし。`name` は `match.name ?? "MATCH_NNN"` フォールバック ([metadata-spec.md](metadata-spec.md) 編集契約により `name` は GUI 表示専用、metadata.json には書き戻さない)。post_match 行の name も通常行と同じこのフォールバック (専用名は導入しない、[#891](https://github.com/Idios/kobutachan-allaganeye/issues/891)) — 試合でないことの伝達は badge「試合後」+ dimmed + typeBadge が担う |
 
 #### §2.3.10 previewPane (display)
 
@@ -988,7 +988,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | checkbox: `checked` (`isIncluded`) / `unchecked` (`isAdHocExcluded`) / `disabled` (`isPersistSkip \|\| isPostMatch \|\| running \|\| cancelling`)。statusMark: `pending(○) / running(●) / done(✓) / error(!) / skipped(—)` (post_match 行は常に `—`)。per-match progress bar: `running \|\| completed \|\| done \|\| error` で表示。post_match 行は `listItemPostMatch` (dimmed) + `data-post-match="true"` + badge「試合後」([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) Phase 2) |
 | 遷移トリガー | checkbox `onChange` → `toggleMatchExclusion(matchIndex)` (`excludedIndexes` add/delete)。Tauri event `export-progress` payload `{match_index, percent, stage, message, fallback_from}` で `matchStates[index]` 更新 |
 | store mutation | なし |
-| 例外 / edge case | duration 表示は `m.edited` がある場合 `effectiveEnd - effectiveStart` を `fmtMatchDuration` で再計算 (旧実装は CLI 初期値 `m.duration_display` 固定、preview 編集が反映されないバグの修正)。`s.error` は 120 文字で slice (UI が崩れないため)。`fallbackNotice` は GPU encoder fail で libx264 retry した試合に `role="status"` で表示 (エラーではない info、color: `var(--ae-accent)`)。checkbox tooltip で永続 skip (`preview 画面で skip 設定済 (変更不可)`) / post_match (`試合後の映像のため書き出し対象外です`、[#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) Phase 2) / 通常選択 (`書き出し対象から除外/復帰`) を区別。post_match の機能的な export 除外は Phase 1 の `export.py` skip が正で、本行は表示・選択 UX のみ |
+| 例外 / edge case | duration 表示は `m.edited` がある場合 `effectiveEnd - effectiveStart` を `fmtMatchDuration` で再計算 (旧実装は CLI 初期値 `m.duration_display` 固定、preview 編集が反映されないバグの修正)。`s.error` は 120 文字で slice (UI が崩れないため)。`fallbackNotice` は GPU encoder fail で libx264 retry した試合に `role="status"` で表示 (エラーではない info、color: `var(--ae-accent)`)。checkbox tooltip で永続 skip (`preview 画面で skip 設定済 (変更不可)`) / post_match (`試合後の映像のため書き出し対象外です`、[#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) Phase 2) / 通常選択 (`書き出し対象から除外/復帰`) を区別。post_match の機能的な export 除外は Phase 1 の `export.py` skip が正で、本行は表示・選択 UX のみ。post_match 行の name 表示も通常行と同じ命名規則 template 由来のファイル名形式のまま (書き出されないが専用表記はしない、[#891](https://github.com/Idios/kobutachan-allaganeye/issues/891)) — 書き出し対象外の伝達は checkbox disabled + tooltip + mark `—` + badge が担う |
 
 #### §2.5.16 emptyNote
 
