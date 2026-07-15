@@ -928,7 +928,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | `idle` (label `⬦ 書き出し開始`) / `running` (label `書き出し中…`、disabled) / `cancelling` (label `中断中…`、disabled) / `disabled` (`!videoSource`) |
 | 遷移トリガー | `onClick` → `handleStartExport()` → `dispatch(START_CLICKED)` (idle→running) → 単発 `invoke('start_export', ...)` → Python subprocess が N 並列 ffmpeg を spawn → 各試合完了ごとに `export-progress` イベントで `PROGRESS_EVENT` dispatch → 全完了で `PROGRESS_COMPLETE` / 全失敗で `EXPORT_ERROR` / cancel で `CANCEL_CONFIRMED` |
 | store mutation | なし。`matchStates` / `exportStartMs` / `nowMs` / 内部 phase が更新 |
-| 例外 / edge case | `!metadata` または `!videoSource` で early return。永続 skip (`type_override === 'skip'`) または ad-hoc exclude (`excludedIndexes` 含む) は Python 側 `--exclude` で除外。単発 `invoke('start_export', ...)` で Python subprocess を起動、Python pool が N 並列で ffmpeg を spawn。§1.2 disabled 理由: sample mode は「サンプル動画では保存できません」/ `!videoSource` は「動画ファイルが選択されていません。drop 画面に戻って選択してください」/ running / cancelling は当該ボタン非表示で代替。([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で sample mode 対応実装済) |
+| 例外 / edge case | `!metadata` または `!videoSource` で early return。ad-hoc exclude (`excludedIndexes`) のみ Python 側 `--exclude` に渡して除外。永続 skip (`type_override === 'skip'`) と `post_match: true` は `--exclude` に載らず、`--stdin` metadata 経由で Python 側 filter (`export.py` の `type_override == "skip"` / `post_match` 無条件 skip) が除外する。単発 `invoke('start_export', ...)` で Python subprocess を起動、Python pool が N 並列で ffmpeg を spawn。§1.2 disabled 理由: sample mode は「サンプル動画では保存できません」/ `!videoSource` は「動画ファイルが選択されていません。drop 画面に戻って選択してください」/ running / cancelling は当該ボタン非表示で代替。([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で sample mode 対応実装済) |
 
 #### §2.5.10 [中断] cancel button
 
