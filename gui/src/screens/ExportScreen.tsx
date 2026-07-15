@@ -245,7 +245,8 @@ export function ExportScreen() {
     setExcludedIndexes((prev) => {
       const next = new Set(prev);
       for (const m of metadata.matches) {
-        if (m.type_override === 'skip') continue;
+        // #805 Phase 2: post_match は個別 checkbox 同様 bulk からも除外。
+        if (m.type_override === 'skip' || m.post_match) continue;
         if (selectAll) {
           next.delete(m.index);
         } else {
@@ -265,9 +266,34 @@ export function ExportScreen() {
     // 先に走った場合 disposed=true を見て、解決した unlisten を即時呼んで leak
     // を防ぐ (DetectingScreen #813 と同パターン)。
     let disposed = false;
+    // review R3 #1: 迷子 event warn の per-match dedup。invariant が実際に
+    // 破れた場合の毎秒 tick で同一 warn が数百件流れるのを 1 件/match に抑制。
+    const warnedStray = new Set<number>();
     (async () => {
       const u = await listen<ExportProgressPayload>('export-progress', (event) => {
         const p = event.payload;
+        // #805 Phase 2 (review R1 #2、P3-1 と同根): post_match 行への迷子
+        // event は state ごと無視する。mark の '—' pin (render 側) に加え、
+        // progress fill / error 行 / fallbackNotice も「export.py が emit
+        // しない前提」に依存させない。metadata は store から都度取得
+        // (deps [] の stale closure を回避)。
+        const strayTarget = useMetadataStore
+          .getState()
+          .metadata?.matches.find((mm) => mm.index === p.match_index);
+        if (strayTarget?.post_match === true) {
+          // review R2 #1: silent drop にしない。この event は Phase 1
+          // invariant (export.py は post_match を処理しない) の破れの
+          // 唯一の GUI 可視証拠なので、UI は凍結したまま dev console に
+          // 痕跡を残す (errorStore.ts の warn precedent と同方針)。
+          if (!warnedStray.has(p.match_index)) {
+            warnedStray.add(p.match_index);
+            console.warn(
+              '[export] dropped stray export-progress event for post_match match',
+              p.match_index,
+            );
+          }
+          return;
+        }
         setMatchStates((prev) => {
           const prior = prev[p.match_index] ?? {
             status: 'pending' as MatchStatus,
@@ -356,7 +382,16 @@ export function ExportScreen() {
     // または excludedIndexes に含まれる (ad-hoc UI 選択、#466 review #1)。
     const nextStates: Record<number, MatchState> = {};
     for (const m of metadata.matches) {
-      if (m.type_override === 'skip' || excludedIndexes.has(m.index)) {
+      // #805 Phase 2: post_match は export.py 側で常に skip されるため
+      // UI 側も最初から skipped 表示にする。この branch は mark の '—' pin
+      // (render 側) + listener の迷子 event guard により render 出力では
+      // 観測不能な意図的 defense-in-depth — dead branch ではない (review R2 #3、
+      // 除外点 6 箇所の一貫性維持のため残す)。
+      if (
+        m.type_override === 'skip' ||
+        m.post_match ||
+        excludedIndexes.has(m.index)
+      ) {
         nextStates[m.index] = { status: 'skipped', percent: 0 };
       } else {
         nextStates[m.index] = { status: 'pending', percent: 0 };
@@ -451,8 +486,13 @@ export function ExportScreen() {
   const cancelling = phase === 'cancelling';
 
   // #466 review #1: counted = 永続 skip 除外 + ad-hoc exclude 除外
+  // #805 Phase 2: post_match trailing も常に対象外 (機能除外は export.py 側
+  // で Phase 1 済。UI では non-selectable として数にも入れない)。
   const countedMatches = metadata.matches.filter(
-    (m) => m.type_override !== 'skip' && !excludedIndexes.has(m.index),
+    (m) =>
+      m.type_override !== 'skip' &&
+      !m.post_match &&
+      !excludedIndexes.has(m.index),
   );
   const doneCount = countedMatches.filter(
     (m) => matchStates[m.index]?.status === 'done',
@@ -820,17 +860,18 @@ export function ExportScreen() {
                * #587 §2.5.14: surface why bulk toggles are disabled.
                *
                * - running / cancelling: "書き出し中は変更できません"
-               * - eligible (= matches not persist-skipped) length === 0:
-               *   the bulk toggle has nothing to act on.
+               * - eligible (= matches neither persist-skipped nor
+               *   post_match, #805 Phase 2) length === 0: the bulk toggle
+               *   has nothing to act on.
                *
                * `countedMatches` reflects ad-hoc exclusion too (used for
                * "N 試合を書き出す" copy), so we instead derive eligibility
-               * from the persist-skip filter, which doesn't change as the
-               * user toggles checkboxes.
+               * from the persist-skip + post_match filter, which doesn't
+               * change as the user toggles checkboxes.
                */}
               {(() => {
                 const eligibleCount = metadata.matches.filter(
-                  (mm) => mm.type_override !== 'skip',
+                  (mm) => mm.type_override !== 'skip' && !mm.post_match,
                 ).length;
                 const bulkDisabled =
                   isSample || running || cancelling || eligibleCount === 0;
@@ -903,8 +944,14 @@ export function ExportScreen() {
                 ? fmtMatchDuration(effectiveEnd - effectiveStart)
                 : m.duration_display;
               const name = formatName(m.index, m.type, effectiveStart);
-              const mark =
-                s.status === 'done'
+              // #805 Phase 2: post_match trailing は選択不可 (export.py 側の
+              // 機能除外は Phase 1 済。行は skipped 扱いで表示のみ)。
+              const isPostMatch = m.post_match === true;
+              // post_match は常に '—' (export.py が event を emit しない前提に
+              // 依存せず、迷子 event が来ても表示を上書きさせない、review P3-1)。
+              const mark = isPostMatch
+                ? '—'
+                : s.status === 'done'
                   ? '✓'
                   : s.status === 'running'
                     ? '●'
@@ -923,19 +970,27 @@ export function ExportScreen() {
               // checkbox で個別 toggle 可能。export 中は disabled。
               const isPersistSkip = m.type_override === 'skip';
               const isAdHocExcluded = excludedIndexes.has(m.index);
-              const isIncluded = !isPersistSkip && !isAdHocExcluded;
+              const isIncluded =
+                !isPersistSkip && !isPostMatch && !isAdHocExcluded;
               return (
-                <li key={m.index} className={styles.listItem}>
+                <li
+                  key={m.index}
+                  className={`${styles.listItem}${isPostMatch ? ` ${styles.listItemPostMatch}` : ''}`}
+                  data-testid={`export-row-${m.index}`}
+                  {...(isPostMatch ? { 'data-post-match': 'true' } : {})}
+                >
                   {/* #587: skip-checkbox disabled reason (§1.2 + #587
                       scope-extension #11). When the match isn't a persist
                       skip the existing help title is preserved.
                       #633 / Task 1.7: sample mode also disables checkbox. */}
                   <DisabledTooltip
-                    disabled={isSample || isPersistSkip}
+                    disabled={isSample || isPersistSkip || isPostMatch}
                     reason={
                       isSample
                         ? sampleReason
-                        : 'preview で skip に設定されています'
+                        : isPostMatch
+                          ? '試合後の映像のため書き出し対象外です'
+                          : 'preview で skip に設定されています'
                     }
                   >
                     {(p) => (
@@ -943,7 +998,13 @@ export function ExportScreen() {
                         type="checkbox"
                         className={styles.listCheckbox}
                         checked={isIncluded}
-                        disabled={isSample || isPersistSkip || running || cancelling}
+                        disabled={
+                          isSample ||
+                          isPersistSkip ||
+                          isPostMatch ||
+                          running ||
+                          cancelling
+                        }
                         onChange={() => toggleMatchExclusion(m.index)}
                         aria-label={`include match ${m.index}`}
                         title={p.title ?? '書き出し対象から除外/復帰'}
@@ -954,6 +1015,9 @@ export function ExportScreen() {
                     {mark}
                   </span>
                   <span className={styles.listName}>{name}</span>
+                  {isPostMatch && (
+                    <span className={styles.postMatchBadge}>試合後</span>
+                  )}
                   <span className={styles.listDur}>{durationDisplay}</span>
                   {(running ||
                     completed ||

@@ -220,6 +220,17 @@
   color: var(--ae-gold-dim);
 }
 
+/* #805 Phase 2: post_match trailing row は default 出力対象外 (機能除外は
+   Phase 1 済) なので一覧では dimmed + badge で視覚的に区別する。 */
+.listItemPostMatch {
+  opacity: 0.55;
+}
+
+.postMatchBadge {
+  border-color: var(--ae-text-dim);
+  color: var(--ae-text-dim);
+}
+
 .previewPane {
   width: 300px;
   display: flex;

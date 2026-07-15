@@ -510,4 +510,26 @@ describe('#805 CompleteScreen post_match no-crash guard', () => {
     expect(screen.getByTestId('match-row-1')).toBeInTheDocument();
     expect(screen.getByTestId('match-row-2')).toBeInTheDocument();
   });
+
+  // Review P3-3: run the Phase 2 UI states (dimmed row + badge) through axe
+  // once (docs/a11y-policy.md per-screen axe 方針)。
+  it('has no axe violations with a post_match row (#805 Phase 2)', async () => {
+    const { container } = render(<CompleteScreen />);
+    expect(await axe(container)).toHaveNoViolations();
+  });
+
+  // #805 Phase 2: post_match rows are visually differentiated (badge + dimmed).
+  it('marks the post_match row with 試合後 badge and data attribute (Phase 2)', () => {
+    render(<CompleteScreen />);
+    const row = screen.getByTestId('match-row-2');
+    expect(row).toHaveAttribute('data-post-match', 'true');
+    expect(within(row).getByText('試合後')).toBeInTheDocument();
+    // review R2 #2: pin the dimming class so removing it fails the suite
+    // (spec §8 deliverable "dimmed" would otherwise be a false-green).
+    expect(row.className).toMatch(/listItemPostMatch/);
+    const normalRow = screen.getByTestId('match-row-1');
+    expect(normalRow).not.toHaveAttribute('data-post-match');
+    expect(within(normalRow).queryByText('試合後')).toBeNull();
+    expect(normalRow.className).not.toMatch(/listItemPostMatch/);
+  });
 });

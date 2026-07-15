@@ -374,6 +374,22 @@
   width: 16px;
 }
 
+/* #805 Phase 2: post_match trailing row は常に書き出し対象外 (non-selectable)。
+   dimmed + badge で「試合後」であることを明示する。 */
+.listItemPostMatch {
+  opacity: 0.55;
+}
+
+.postMatchBadge {
+  font-family: var(--ae-font-ui);
+  font-size: 8px;
+  letter-spacing: 1.2px;
+  padding: 1px 5px;
+  border: 1px solid var(--ae-text-dim);
+  color: var(--ae-text-dim);
+  flex-shrink: 0;
+}
+
 .listMarkDone {
   color: var(--ae-cyan);
 }

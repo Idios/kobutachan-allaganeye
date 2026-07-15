@@ -249,14 +249,18 @@ export function CompleteScreen() {
           >
             {metadata.matches.map((m) => {
               const isSel = m.index === selectedMatch?.index;
+              // #805 Phase 2: post_match trailing は default split/export の
+              // 対象外 (機能除外は Phase 1 済)。一覧では dimmed + badge で区別。
+              const isPostMatch = m.post_match === true;
               return (
                 <li
                   key={m.index}
                   onClick={() => selectMatch(m.index)}
                   onDoubleClick={() => openPreviewFor(m.index)}
-                  className={`${styles.listItem}${isSel ? ` ${styles.listItemActive}` : ''}`}
+                  className={`${styles.listItem}${isSel ? ` ${styles.listItemActive}` : ''}${isPostMatch ? ` ${styles.listItemPostMatch}` : ''}`}
                   data-testid={`match-row-${m.index}`}
                   data-selected={isSel ? 'true' : 'false'}
+                  {...(isPostMatch ? { 'data-post-match': 'true' } : {})}
                 >
                   <MatchThumb
                     index={m.index}
@@ -273,6 +277,11 @@ export function CompleteScreen() {
                       {m.start_display} → {m.end_display} · {m.duration_display}
                     </div>
                   </div>
+                  {isPostMatch && (
+                    <div className={`${styles.typeBadge} ${styles.postMatchBadge}`}>
+                      試合後
+                    </div>
+                  )}
                   <div
                     className={`${styles.typeBadge}${m.type === 'fl_match' ? ` ${styles.typeBadgeFl}` : ` ${styles.typeBadgeUnknown}`}`}
                   >

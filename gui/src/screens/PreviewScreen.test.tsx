@@ -1270,4 +1270,40 @@ describe('#805 PreviewScreen post_match no-crash guard', () => {
     // The "#002 * of 2" meta line should be visible.
     expect(screen.getByText(/#002 · of 2/)).toBeInTheDocument();
   });
+
+  // #805 Phase 2: the editor header shows a 試合後 badge for post_match.
+  it('shows 試合後 badge in the header for a post_match match (Phase 2)', () => {
+    render(<PreviewScreen />);
+    const badge = screen.getByTestId('post-match-badge');
+    expect(badge).toHaveTextContent('試合後');
+  });
+
+  it('does not show the badge for a normal match (Phase 2)', () => {
+    useAppStateStore.getState().selectMatch(1);
+    render(<PreviewScreen />);
+    expect(screen.queryByTestId('post-match-badge')).toBeNull();
+  });
+
+  // iterate-review Round 2 #3: the Phase 2 badge markup goes through axe so
+  // all three post_match surfaces (Complete / Export / Preview) stay
+  // violation-free (docs/a11y-policy.md per-screen axe 方針)。The
+  // nested-interactive opt-out mirrors the existing #587 axe test — the
+  // preview pane pattern is unchanged by this PR.
+  it(
+    'has no axe violations with the post_match badge (#805 Phase 2)',
+    async () => {
+      const { container } = render(<PreviewScreen />);
+      await waitFor(() => {
+        expect(screen.getByTestId('post-match-badge')).toBeInTheDocument();
+      });
+      expect(
+        await axe(container, {
+          rules: {
+            'nested-interactive': { enabled: false },
+          },
+        }),
+      ).toHaveNoViolations();
+    },
+    15000,
+  );
 });

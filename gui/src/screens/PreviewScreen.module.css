@@ -78,6 +78,17 @@
   color: var(--ae-text-dim);
 }
 
+/* #805 Phase 2: post_match segment を編集中であることを header で明示する
+   badge (CompleteScreen の typeBadge と同系の枠付き小 badge)。 */
+.postMatchBadge {
+  font-family: var(--ae-font-ui);
+  font-size: 8px;
+  letter-spacing: 1.2px;
+  padding: 2px 6px;
+  border: 1px solid var(--ae-text-dim);
+  color: var(--ae-text-dim);
+}
+
 .typeSelect {
   background: var(--ae-bg-deep);
   border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
