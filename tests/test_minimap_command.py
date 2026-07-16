@@ -1084,7 +1084,8 @@ def test_minimap_proposal_json_emits_proposal_lines_exit4(tmp_path, monkeypatch,
         scattered = False
 
     monkeypatch.setattr(
-        minimap_mod, "resolve_match_regions",
+        minimap_mod,
+        "resolve_match_regions",
         lambda source, tuples: ([_MR()], []),
     )
 
@@ -1145,19 +1146,28 @@ def test_minimap_expected_mtime_conflict_aborts_without_write(tmp_path, monkeypa
     )
     wrote = {"called": False}
     monkeypatch.setattr(
-        minimap_mod, "write_metadata_atomic",
+        minimap_mod,
+        "write_metadata_atomic",
         lambda p, payload: wrote.__setitem__("called", True),
     )
     # export_matches must never run when the CAS aborts.
     monkeypatch.setattr(
-        minimap_mod, "export_matches",
+        minimap_mod,
+        "export_matches",
         lambda **k: (_ for _ in ()).throw(AssertionError("encode ran on conflict")),
     )
     # Pass a stale expected mtime (0) -> current mtime differs -> conflict.
     result = runner.invoke(
         _cli_app,
-        ["minimap", str(meta_path), "--region", "10,20,300,400",
-         "--json", "--expected-mtime", "0"],
+        [
+            "minimap",
+            str(meta_path),
+            "--region",
+            "10,20,300,400",
+            "--json",
+            "--expected-mtime",
+            "0",
+        ],
     )
     assert result.exit_code == 6, result.stdout
     assert wrote["called"] is False
@@ -1171,14 +1181,22 @@ def test_minimap_expected_mtime_match_writes(tmp_path, monkeypatch):
         minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
     )
     monkeypatch.setattr(
-        minimap_mod, "export_matches",
+        minimap_mod,
+        "export_matches",
         lambda **k: ExportSummary(success=1, failure=0, skipped=0, cancelled=False),
     )
     current_ms = meta_path.stat().st_mtime_ns // 1_000_000
     result = runner.invoke(
         _cli_app,
-        ["minimap", str(meta_path), "--region", "10,20,300,400",
-         "--json", "--expected-mtime", str(current_ms)],
+        [
+            "minimap",
+            str(meta_path),
+            "--region",
+            "10,20,300,400",
+            "--json",
+            "--expected-mtime",
+            str(current_ms),
+        ],
     )
     assert result.exit_code == 0, result.stdout
     written = json.loads(meta_path.read_text(encoding="utf-8"))

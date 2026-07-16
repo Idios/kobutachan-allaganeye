@@ -129,11 +129,15 @@ def test_wire_writer_concurrent_writes_atomic():
 
 def test_progress_event_proposal_with_region():
     from allaganeye.export.schema import ProgressEvent
+
     ev = ProgressEvent.proposal(
-        match_index=2, region={"x": 10, "y": 20, "w": 300, "h": 400},
-        confidence=0.87, scattered=False,
+        match_index=2,
+        region={"x": 10, "y": 20, "w": 300, "h": 400},
+        confidence=0.87,
+        scattered=False,
     )
     import json
+
     payload = json.loads(ev.to_json_line())
     assert payload["type"] == "proposal"
     assert payload["match_index"] == 2
@@ -145,6 +149,7 @@ def test_progress_event_proposal_with_region():
 def test_progress_event_proposal_none_region():
     from allaganeye.export.schema import ProgressEvent
     import json
+
     ev = ProgressEvent.proposal(
         match_index=3, region=None, confidence=0.0, scattered=False
     )
