@@ -191,6 +191,28 @@ def register(app: typer.Typer) -> None:
                 raise typer.Exit(code=e.exit_code) from None
             for w in warns:
                 typer.echo(w, err=True)
+            if json_mode:
+                if hasattr(sys.stdout, "reconfigure"):
+                    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+                writer = WireWriter(stream=sys.stdout)
+                for mr in results:
+                    r = mr.region
+                    region_px = {
+                        "x": round(r.x * frame_w),
+                        "y": round(r.y * frame_h),
+                        "w": round(r.w * frame_w),
+                        "h": round(r.h * frame_h),
+                    }
+                    writer.emit(
+                        ProgressEvent.proposal(
+                            match_index=mr.match_index,
+                            region=region_px,
+                            confidence=r.confidence,
+                            scattered=mr.scattered,
+                        )
+                    )
+                raise typer.Exit(code=4)
+            # else: 既存の plain-text 表示ブロック
             if not results:
                 typer.echo(
                     "提案なし: ミニマップ領域を自動検出できませんでした。", err=False

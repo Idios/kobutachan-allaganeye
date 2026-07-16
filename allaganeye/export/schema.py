@@ -124,3 +124,21 @@ class ProgressEvent:
                 "cancelled": summary.cancelled,
             }
         )
+
+    @classmethod
+    def proposal(
+        cls,
+        match_index: int,
+        region: dict[str, int] | None,
+        confidence: float,
+        scattered: bool,
+    ) -> ProgressEvent:
+        return cls(
+            {
+                "type": "proposal",
+                "match_index": match_index,
+                "region": region,
+                "confidence": confidence,
+                "scattered": scattered,
+            }
+        )

@@ -1067,6 +1067,36 @@ def test_minimap_json_emits_ndjson_result_and_summary(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+def test_minimap_proposal_json_emits_proposal_lines_exit4(tmp_path, monkeypatch, app):
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _write_metadata(tmp_path, source)
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+
+    class _Region:
+        x, y, w, h, confidence = 0.01, 0.02, 0.15, 0.20, 0.9
+
+    class _MR:
+        match_index = 1
+        region = _Region()
+        scattered = False
+
+    monkeypatch.setattr(
+        minimap_mod, "resolve_match_regions",
+        lambda source, tuples: ([_MR()], []),
+    )
+
+    result = runner.invoke(app, ["minimap", str(meta_path), "--json"])
+    assert result.exit_code == 4, result.stdout
+    lines = [json.loads(ln) for ln in result.stdout.splitlines() if ln.strip()]
+    prop = [ln for ln in lines if ln["type"] == "proposal"]
+    assert prop and prop[0]["match_index"] == 1
+    # normalized region -> pixel ints at 1920x1080
+    assert prop[0]["region"] == {"x": 19, "y": 22, "w": 288, "h": 216}
+
+
 def test_minimap_expected_mtime_conflict_aborts_without_write(tmp_path, monkeypatch):
     source = tmp_path / "vid.mp4"
     source.write_bytes(b"\x00")
