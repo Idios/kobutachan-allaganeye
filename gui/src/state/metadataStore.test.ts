@@ -1713,6 +1713,30 @@ describe('normalizeForPersistence capture_regions round-trip (#810)', () => {
   });
 });
 
+describe('useMetadataStore.reloadFromDisk (#893)', () => {
+  it('reloadFromDisk refreshes metadata + mtime and clears conflict', async () => {
+    const fresh = { ...validMetadata(), minimap_regions: [{ match_index: 1, region: { x: 0.01, y: 0.02, w: 0.15, h: 0.2, confidence: 1, source: 'manual' } }] };
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(999);
+      if (cmd === 'load_metadata') return Promise.resolve(fresh);
+      return Promise.resolve(null);
+    });
+    useMetadataStore.setState({ filePath: 'C:/x/metadata.json', loadedMtimeMs: 1, conflictErrorState: { code: 'x', message: 'y', hint: null } });
+
+    await useMetadataStore.getState().reloadFromDisk();
+
+    const s = useMetadataStore.getState();
+    expect(s.metadata?.minimap_regions?.[0].match_index).toBe(1);
+    expect(s.loadedMtimeMs).toBe(999);
+    expect(s.conflictErrorState).toBeNull();
+  });
+
+  it('reloadFromDisk is a no-op without filePath (sample mode)', async () => {
+    useMetadataStore.setState({ filePath: null });
+    await expect(useMetadataStore.getState().reloadFromDisk()).resolves.toBeUndefined();
+  });
+});
+
 describe('normalizeForPersistence minimap_regions round-trip (#481)', () => {
   it('normalizeForPersistence preserves minimap_regions (#481)', async () => {
     // minimap_regions must survive load -> edit -> apply intact so the
