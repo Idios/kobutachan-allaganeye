@@ -99,7 +99,7 @@ JSON Schema は writer 契約として strict (additional properties は受け�
 | `duration_display` | string | ✓ | 長さ表示 (例: `15m15s`) |
 | `type` | string | ✓ | `fl_match` または `unknown` |
 | `output_file` | string | — (NotRequired) | 出力 MP4 ファイル名 (相対パス、metadata.json と同ディレクトリ想定)。通常 match は常に存在する。`post_match: true` の match は MP4 を生成しないため本フィールドを持たない |
-| `post_match` | boolean | — (NotRequired) | post-match trailing 非破壊フラグ (#805 段階2)。`true` のとき試合後 trailing (lobby/city) を表す非破壊フラグ。default split 出力 (MP4) からも `allaganeye export` (CLI / GUI 共通経路) からも**機能的に除外**されるが metadata には保持される。GUI `[適用]` (`normalizeForPersistence`) でもフラグは保持される。absent/false = 通常 match。視覚的な差分化 (badge / dimmed) と ExportScreen の選択不可 UX は Phase 2 で実装済み (CompleteScreen / PreviewScreen badge + ExportScreen non-selectable、[ui-interaction-spec.md](ui-interaction-spec.md) §2.3.9 / §2.4.2 / §2.5.14 / §2.5.15 参照) |
+| `post_match` | boolean | — (NotRequired) | post-match trailing 非破壊フラグ (#805 段階2)。`true` のとき試合後 trailing (lobby/city) を表す非破壊フラグ。default split 出力 (MP4) からも `allaganeye export` (CLI / GUI 共通経路) からも**機能的に除外**されるが metadata には保持される。GUI `[適用]` (`normalizeForPersistence`) でもフラグは保持される。absent/false = 通常 match。視覚的な差分化 (badge / dimmed) と ExportScreen の選択不可 UX は Phase 2 で実装済み (CompleteScreen / PreviewScreen badge + ExportScreen non-selectable、[ui-interaction-spec.md](ui-interaction-spec.md) §2.3.9 / §2.4.2 / §2.5.14 / §2.5.15 参照)。誤判定 (実試合への flag FP) 時の復元手段は metadata.json の `post_match` キー手編集 (削除) が現行仕様 ([#891](https://github.com/Idios/kobutachan-allaganeye/issues/891)、GUI 復元導線は将来需要が生じた時点で別途検討) — キー削除後は `split --from-metadata` / `export` で通常 match として扱われる |
 
 ### `system_info` オブジェクト (#591)
 
