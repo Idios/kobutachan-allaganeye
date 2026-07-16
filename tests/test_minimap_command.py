@@ -1201,3 +1201,114 @@ def test_minimap_expected_mtime_match_writes(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.stdout
     written = json.loads(meta_path.read_text(encoding="utf-8"))
     assert written["minimap_regions"][0]["match_index"] == 1
+
+
+# ---------------------------------------------------------------------------
+# 13. --exclude option mirrors Rust/GUI contract (#893 HIGH fix)
+# ---------------------------------------------------------------------------
+
+
+def _write_metadata_2matches(tmp_path: Path, source: Path) -> Path:
+    """metadata.json with 2 matches for --exclude tests."""
+    meta = {
+        "schema_version": "1",
+        "source": str(source),
+        "matches": [
+            {"index": 1, "type": "fl_match", "start_time": 60.0, "end_time": 120.0},
+            {"index": 2, "type": "fl_match", "start_time": 180.0, "end_time": 240.0},
+        ],
+        "system_info": {
+            "gpu_vendors_available": [],
+            "vendor_preference": ["nvidia", "amd", "intel"],
+            "gpu": [],
+        },
+    }
+    p = tmp_path / "metadata.json"
+    p.write_text(json.dumps(meta), encoding="utf-8")
+    return p
+
+
+def test_exclude_crop_mode_skips_excluded_match(tmp_path, monkeypatch):
+    """--exclude 2 in crop mode: only match 1 reaches export_matches; exit 0.
+
+    RED: currently fails with exit 2 (usage error 'No such option: --exclude').
+    GREEN: after adding --exclude to minimap CLI, match index 2 is absent.
+    """
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _write_metadata_2matches(tmp_path, source)
+
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+
+    captured: list = []
+
+    def fake_export_matches(*, matches, progress_cb, **kwargs):
+        captured.extend(matches)
+        return ExportSummary(
+            success=len(matches), failure=0, skipped=0, cancelled=False
+        )
+
+    monkeypatch.setattr(minimap_mod, "export_matches", fake_export_matches)
+
+    result = runner.invoke(
+        _cli_app,
+        [
+            "minimap",
+            str(meta_path),
+            "--region",
+            "10,20,300,400",
+            "--json",
+            "--exclude",
+            "2",
+        ],
+    )
+    assert result.exit_code == 0, (
+        f"expected exit 0 with --exclude 2, got {result.exit_code}\nstdout={result.stdout}"
+    )
+    passed_indexes = [m.index for m in captured]
+    assert 2 not in passed_indexes, (
+        f"match index 2 should be excluded but was passed to export_matches: {passed_indexes}"
+    )
+    assert 1 in passed_indexes, (
+        f"match index 1 should be included but was absent: {passed_indexes}"
+    )
+
+
+def test_exclude_proposal_mode_skips_excluded_match(tmp_path, monkeypatch, app):
+    """--exclude 1 in proposal mode: resolve_match_regions receives only match 2; exit 4.
+
+    RED: currently fails with exit 2 (usage error 'No such option: --exclude').
+    GREEN: after adding --exclude, match 1 is absent from tuples passed to resolve.
+    """
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _write_metadata_2matches(tmp_path, source)
+
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+
+    received_tuples: list = []
+
+    def fake_resolve(source_video, match_tuples):
+        received_tuples.extend(match_tuples)
+        return ([], [])
+
+    monkeypatch.setattr(minimap_mod, "resolve_match_regions", fake_resolve)
+
+    result = runner.invoke(
+        app,
+        ["minimap", str(meta_path), "--json", "--exclude", "1"],
+    )
+    assert result.exit_code == 4, (
+        f"proposal mode should exit 4 with --exclude 1, got {result.exit_code}\nstdout={result.stdout}"
+    )
+    passed_indexes = [t[0] for t in received_tuples]
+    assert 1 not in passed_indexes, (
+        f"match index 1 should be excluded but was passed to resolve: {passed_indexes}"
+    )
+    assert 2 in passed_indexes, (
+        f"match index 2 should be included but was absent: {passed_indexes}"
+    )

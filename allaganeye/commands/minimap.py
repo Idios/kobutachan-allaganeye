@@ -76,6 +76,13 @@ def register(app: typer.Typer) -> None:
                 ),
             ),
         ] = None,
+        exclude: Annotated[
+            str | None,
+            typer.Option(
+                "--exclude",
+                help="Comma-separated 1-based match indexes to skip.",
+            ),
+        ] = None,
         name_pattern: Annotated[
             str,
             typer.Option(
@@ -146,6 +153,7 @@ def register(app: typer.Typer) -> None:
 
             # ------ 3. match filter (export と同順) ----------------------------
             include_set = _parse_indexes_csv(include)
+            exclude_set = _parse_indexes_csv(exclude) or set()
             all_matches = metadata.get("matches") or []
             filtered_tuples: list[tuple[int, float, float, str]] = []
             # (index, start, end, type_label) for filtered matches
@@ -161,6 +169,8 @@ def register(app: typer.Typer) -> None:
                         )
                     continue
                 if include_set is not None and idx not in include_set:
+                    continue
+                if idx in exclude_set:
                     continue
                 if raw.get("type_override") == "skip":
                     continue
