@@ -20,12 +20,15 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
+import allaganeye.commands.minimap as minimap_mod
+from allaganeye.cli import app as _cli_app
 from allaganeye.commands.minimap import register
 from allaganeye.export.schema import ExportSummary
 from allaganeye.video.areamap import MatchRegionResult
 from allaganeye.video.capture_region import CaptureRegion
 
 runner = CliRunner()
+_json_runner = CliRunner()
 
 
 @pytest.fixture
@@ -1000,3 +1003,61 @@ def test_mkdir_failure_preflight_before_writeback(
     )
     # export_matches は呼ばれない
     mock_export.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 11. minimap crop --json wire mode (#893)
+# ---------------------------------------------------------------------------
+
+
+def _write_metadata(tmp_path: Path, source: Path) -> Path:
+    meta = {
+        "schema_version": "1",
+        "source": str(source),
+        "matches": [
+            {"index": 1, "type": "fl_match", "start_time": 60.0, "end_time": 120.0},
+        ],
+    }
+    p = tmp_path / "metadata.json"
+    p.write_text(json.dumps(meta), encoding="utf-8")
+    return p
+
+
+def test_minimap_json_emits_ndjson_result_and_summary(tmp_path, monkeypatch):
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _write_metadata(tmp_path, source)
+
+    # Stub probe (frame size) and export_matches (encode) so no ffmpeg runs.
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+
+    def fake_export_matches(*, matches, progress_cb, **kwargs):
+        from allaganeye.export.schema import ProgressEvent
+
+        for m in matches:
+            progress_cb(
+                ProgressEvent.result(
+                    match_index=m.index,
+                    output_path=Path("out") / f"{m.index:03}.mp4",
+                    duration_ms=1000,
+                    encoder_used="libx264",
+                )
+            )
+        return ExportSummary(
+            success=len(matches), failure=0, skipped=0, cancelled=False
+        )
+
+    monkeypatch.setattr(minimap_mod, "export_matches", fake_export_matches)
+
+    result = _json_runner.invoke(
+        _cli_app,
+        ["minimap", str(meta_path), "--region", "10,20,300,400", "--json"],
+    )
+    assert result.exit_code == 0, result.stdout
+    lines = [json.loads(ln) for ln in result.stdout.splitlines() if ln.strip()]
+    types = [ln["type"] for ln in lines]
+    assert "result" in types
+    assert types[-1] == "summary"
+    assert lines[-1]["success"] == 1

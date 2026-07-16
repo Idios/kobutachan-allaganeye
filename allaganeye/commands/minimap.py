@@ -12,6 +12,7 @@ Mode:
 from __future__ import annotations
 
 import signal
+import sys
 import threading
 from pathlib import Path
 from typing import Annotated
@@ -25,6 +26,7 @@ from allaganeye.exceptions import (
 from allaganeye.export.encoder import enumerate_h264_encoders
 from allaganeye.export.pool import ExportMatch, _format_filename, export_matches
 from allaganeye.export.schema import ExportSummary, ProgressEvent
+from allaganeye.export.wire import WireWriter
 from allaganeye.video.areamap import resolve_match_regions
 from allaganeye.video.probe import probe_video
 
@@ -87,6 +89,13 @@ def register(app: typer.Typer) -> None:
             bool,
             typer.Option("--quiet", help="Suppress progress output."),
         ] = False,
+        json_mode: Annotated[
+            bool,
+            typer.Option(
+                "--json",
+                help="Emit JSON Lines on stdout (GUI subprocess mode).",
+            ),
+        ] = False,
     ) -> None:
         """Detect / crop the minimap (area-map) window per match (#481)."""
         # P2-7: lazy import the shared error reporters to avoid circular import
@@ -97,6 +106,9 @@ def register(app: typer.Typer) -> None:
             write_metadata_atomic,
         )
         from allaganeye.video.capture_region import CaptureRegion
+
+        if json_mode and quiet:
+            raise typer.BadParameter("--json and --quiet are mutually exclusive")
 
         # ------ 1. read_metadata -----------------------------------------------
         try:
@@ -371,8 +383,19 @@ def register(app: typer.Typer) -> None:
         # Round 1 FIX 4 規約: except Exception の中では typer.Exit / typer.BadParameter
         # を raise しない。cancelled / failure の Exit は try の外で。
         summary: ExportSummary
+        writer: WireWriter | None = None
+        if json_mode:
+            if hasattr(sys.stdout, "reconfigure"):
+                sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+            writer = WireWriter(stream=sys.stdout)
         try:
-            if quiet:
+            if json_mode:
+
+                def progress_cb(ev: ProgressEvent) -> None:
+                    assert writer is not None
+                    writer.emit(ev)
+
+            elif quiet:
 
                 def progress_cb(ev: ProgressEvent) -> None:
                     pass
@@ -416,6 +439,9 @@ def register(app: typer.Typer) -> None:
             raise typer.Exit(code=1) from None
         finally:
             signal.signal(signal.SIGINT, original_handler)
+
+        if json_mode and writer is not None:
+            writer.emit(ProgressEvent.summary(summary))
 
         # ------ 8. summary ------------------------------------------------------
         # Round 1 FIX 4: typer.Exit は P2-7 フレームの外で raise
