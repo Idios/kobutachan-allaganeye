@@ -27,6 +27,7 @@ from allaganeye.export.encoder import enumerate_h264_encoders
 from allaganeye.export.pool import ExportMatch, _format_filename, export_matches
 from allaganeye.export.schema import ExportSummary, ProgressEvent
 from allaganeye.export.wire import WireWriter
+from allaganeye.detection.metadata_writer import read_metadata, write_metadata_atomic
 from allaganeye.video.areamap import resolve_match_regions
 from allaganeye.video.probe import probe_video
 
@@ -96,15 +97,21 @@ def register(app: typer.Typer) -> None:
                 help="Emit JSON Lines on stdout (GUI subprocess mode).",
             ),
         ] = False,
+        expected_mtime: Annotated[
+            int | None,
+            typer.Option(
+                "--expected-mtime",
+                help=(
+                    "Compare-and-swap guard (GUI subprocess mode): abort with "
+                    "exit 6 if metadata.json mtime (ms) differs at write time."
+                ),
+            ),
+        ] = None,
     ) -> None:
         """Detect / crop the minimap (area-map) window per match (#481)."""
         # P2-7: lazy import the shared error reporters to avoid circular import
         from allaganeye.cli import _report_app_error, _report_unexpected_error
         from allaganeye.commands.export import _parse_indexes_csv
-        from allaganeye.detection.metadata_writer import (
-            read_metadata,
-            write_metadata_atomic,
-        )
         from allaganeye.video.capture_region import CaptureRegion
 
         if json_mode and quiet:
@@ -366,6 +373,23 @@ def register(app: typer.Typer) -> None:
         )
         payload = dict(metadata)
         payload["minimap_regions"] = minimap_entries
+        # CAS guard (#893, Codex critical): re-stat right before the atomic
+        # write. floor-ms must match Rust file_mtime_ms (as_millis). On mismatch
+        # abort WITHOUT writing so an external edit between our read and write
+        # is never clobbered (#514 class). exit 6 -> GUI ConflictModal.
+        if expected_mtime is not None:
+            try:
+                current_mtime = metadata_path.stat().st_mtime_ns // 1_000_000
+            except OSError:
+                current_mtime = -1
+            if current_mtime != expected_mtime:
+                typer.echo(
+                    "conflict: metadata.json was modified externally "
+                    f"(expected mtime {expected_mtime}, got {current_mtime}); "
+                    "not writing",
+                    err=True,
+                )
+                raise typer.Exit(code=6)
         try:
             write_metadata_atomic(metadata_path, payload)
         except AllaganEyeError as e:
