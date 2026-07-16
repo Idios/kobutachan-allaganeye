@@ -28,7 +28,6 @@ from allaganeye.video.areamap import MatchRegionResult
 from allaganeye.video.capture_region import CaptureRegion
 
 runner = CliRunner()
-_json_runner = CliRunner()
 
 
 @pytest.fixture
@@ -1051,7 +1050,7 @@ def test_minimap_json_emits_ndjson_result_and_summary(tmp_path, monkeypatch):
 
     monkeypatch.setattr(minimap_mod, "export_matches", fake_export_matches)
 
-    result = _json_runner.invoke(
+    result = runner.invoke(
         _cli_app,
         ["minimap", str(meta_path), "--region", "10,20,300,400", "--json"],
     )
