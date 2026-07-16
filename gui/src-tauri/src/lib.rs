@@ -2891,6 +2891,51 @@ pub struct StartExportRequest {
     pub excluded_indexes: Vec<u32>,
 }
 
+/// #893 -- Request payload for the `start_minimap` Tauri command.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartMinimapRequest {
+    pub metadata_path: String,
+    pub region: String,
+    pub output_dir: String,
+    pub name_pattern: String,
+    #[serde(default)]
+    pub excluded_indexes: Vec<u32>,
+    #[serde(default)]
+    pub expected_mtime_ms: Option<u64>,
+}
+
+/// #893 -- Build the positional + option argv for `allaganeye minimap`.
+/// Factored out for unit-testability (mirrors the export argv-builder pattern).
+fn build_minimap_argv(req: &StartMinimapRequest) -> Vec<String> {
+    let mut argv = vec![
+        "minimap".to_string(),
+        req.metadata_path.clone(),
+        "--json".to_string(),
+        "--region".to_string(),
+        req.region.clone(),
+        "--output-dir".to_string(),
+        req.output_dir.clone(),
+        "--name-pattern".to_string(),
+        req.name_pattern.clone(),
+    ];
+    if let Some(m) = req.expected_mtime_ms {
+        argv.push("--expected-mtime".to_string());
+        argv.push(m.to_string());
+    }
+    if !req.excluded_indexes.is_empty() {
+        let joined = req
+            .excluded_indexes
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        argv.push("--exclude".to_string());
+        argv.push(joined);
+    }
+    argv
+}
+
 /// #761 -- Aggregate returned to frontend after Python exits.
 #[derive(Debug, serde::Serialize)]
 pub struct ExportSummary {
@@ -3178,6 +3223,263 @@ async fn start_export(
     Err(AppError::new("subprocess.exit_failed", detail).with_default_hint())
 }
 
+/// #893 -- Launch `allaganeye minimap <path> --json …` as a child process and
+/// stream `minimap-progress` events to the frontend until the process exits.
+/// Metadata is passed by path (not stdin), so the command works with on-disk
+/// metadata.json without loading the full JSON into Rust memory.
+/// CLI exit 6 (CAS mtime conflict) is mapped to `AppError("state.mtime_conflict")`
+/// so the frontend can reuse `ConflictModal` (#514 pattern).
+#[tauri::command]
+async fn start_minimap(
+    app: tauri::AppHandle,
+    req: StartMinimapRequest,
+) -> Result<ExportSummary, AppError> {
+    let cmd_spec = resolve_allaganeye_command(&app);
+    let mut cmd = tokio::process::Command::new(&cmd_spec.program);
+    for arg in &cmd_spec.prefix_args {
+        cmd.arg(arg);
+    }
+    for a in build_minimap_argv(&req) {
+        cmd.arg(a);
+    }
+    if let Some(cwd) = &cmd_spec.cwd {
+        cmd.current_dir(cwd);
+    }
+    cmd.env("PYTHONIOENCODING", "utf-8:replace")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    process_util::apply_no_window(&mut cmd);
+
+    let mut child = cmd.spawn().map_err(|e| {
+        AppError::new("subprocess.spawn_failed", format!("start_minimap spawn: {}", e))
+            .with_default_hint()
+    })?;
+
+    // #837 (P2-16) -- take stdout/stderr from the child BEFORE tracking. The old
+    // code took stdout *after* track_child by locking the tracker map and
+    // unwrapping `get_mut(&tracked_id)`, which panicked if a concurrent
+    // kill_tracked_processes drained the entry between track and the lock (a
+    // normal cancel surfaced as an "internal error"). Taking the pipes up front
+    // removes the post-track lookup entirely (mirrors start_detect / start_export).
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    // #837 (P2-15) -- drain stderr into a bounded tail in parallel so a chatty
+    // child can't fill the OS pipe and block (minimap hang), and a crash's
+    // traceback survives for the error message.
+    let stderr_handle = stderr.map(|stderr| {
+        // drain in fixed-size chunks (not newline-delimited) so the tail
+        // stays bounded even for newline-free / CR-only child output.
+        tokio::spawn(async move { drain_to_bounded_tail(stderr, 2048).await })
+    });
+
+    // Track via PROCESS_TRACKER. Minimap spawns a single Python process
+    // (which itself spawns N ffmpeg children). Use Job Object on Windows
+    // so cancelling minimap reliably reaps all ffmpeg descendants.
+    // Failure to create/assign the Job is downgraded to a warning
+    // (minimap proceeds without tree-kill protection).
+    #[cfg(windows)]
+    let job: Option<process_util::job_object::ProcessJob> = {
+        match process_util::job_object::ProcessJob::new() {
+            Ok(j) => {
+                if let Some(raw) = child.raw_handle() {
+                    if let Err(e) = j.assign(raw) {
+                        eprintln!(
+                            "warning: AssignProcessToJobObject failed: {} \
+                             (minimap descendants may be orphaned on cancel)",
+                            e
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "warning: child.raw_handle() returned None for minimap \
+                         spawn (minimap descendants may be orphaned on cancel)"
+                    );
+                }
+                Some(j)
+            }
+            Err(e) => {
+                eprintln!(
+                    "warning: CreateJobObject failed: {} \
+                     (minimap descendants may be orphaned on cancel)",
+                    e
+                );
+                None
+            }
+        }
+    };
+    let tracked = TrackedChild {
+        child,
+        #[cfg(windows)]
+        job,
+    };
+    let tracked_id = track_child(tracked).await;
+
+    let mut summary_capture: Option<ExportSummary> = None;
+    if let Some(stdout) = stdout {
+        // #761 / #656 -- defensive byte-level read with lossy UTF-8 decode
+        // to mirror start_detect / start_export pattern. PYTHONIOENCODING=utf-8:replace
+        // (above) is the primary guarantee; this defensive layer catches the
+        // case where the env var fails to apply (e.g. exotic Python launcher).
+        let mut reader = BufReader::new(stdout);
+        let mut line_buf: Vec<u8> = Vec::with_capacity(1024);
+
+        loop {
+            line_buf.clear();
+            match reader.read_until(b'\n', &mut line_buf).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    while matches!(line_buf.last(), Some(b'\n') | Some(b'\r')) {
+                        line_buf.pop();
+                    }
+                    let line = String::from_utf8_lossy(&line_buf);
+                    match parse_wire_event(&line) {
+                        Some(WireEvent::Progress { match_index, percent, stage }) => {
+                            let _ = app.emit(
+                                "minimap-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent,
+                                    stage,
+                                    message: None,
+                                    fallback_from: None,
+                                },
+                            );
+                        }
+                        Some(WireEvent::Fallback { match_index, fallback_from, fallback_to, message }) => {
+                            let _ = app.emit(
+                                "minimap-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent: 0.0,
+                                    stage: "fallback".to_string(),
+                                    message: Some(message),
+                                    fallback_from: Some(format!("{} -> {}", fallback_from, fallback_to)),
+                                },
+                            );
+                        }
+                        Some(WireEvent::Result { match_index, .. }) => {
+                            let _ = app.emit(
+                                "minimap-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent: 100.0,
+                                    stage: "done".to_string(),
+                                    message: None,
+                                    fallback_from: None,
+                                },
+                            );
+                        }
+                        Some(WireEvent::Error { match_index, error_kind: _, error_message, error_hint }) => {
+                            let _ = app.emit(
+                                "minimap-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent: 0.0,
+                                    stage: "error".to_string(),
+                                    message: Some(if let Some(hint) = error_hint {
+                                        format!("{} ({})", error_message, hint)
+                                    } else {
+                                        error_message
+                                    }),
+                                    fallback_from: None,
+                                },
+                            );
+                        }
+                        Some(WireEvent::Summary { success, failure, skipped, cancelled }) => {
+                            summary_capture = Some(ExportSummary { success, failure, skipped, cancelled });
+                        }
+                        Some(WireEvent::Unknown) | None => {
+                            // forward-compat: ignore unknown / non-JSON lines
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    }
+
+    let mut child = match untrack_child(tracked_id).await {
+        Some(c) => c,
+        None => {
+            return Ok(ExportSummary {
+                success: 0,
+                failure: 0,
+                skipped: 0,
+                cancelled: true,
+            });
+        }
+    };
+    let status = child.wait().await.map_err(|e| {
+        AppError::new("subprocess.wait_failed", format!("python subprocess wait: {}", e))
+            .with_default_hint()
+    })?;
+
+    // #837 (P2-15) -- join the stderr drain and keep the bounded tail for the
+    // error path below. On the normal-exit and error paths this reaps the task.
+    // On the cancel path (untrack_child returned None, early return above) the
+    // JoinHandle was dropped; the task then terminates on its own when the
+    // killed child closes its stderr pipe (detached, not awaited).
+    let stderr_tail = match stderr_handle {
+        Some(h) => h.await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+
+    // #893 -- CAS conflict from the CLI (exit 6) maps to the #514 conflict
+    // AppError the apply() path uses, so the GUI reuses ConflictModal. A
+    // conflict emits no summary line; do NOT treat any summary as success.
+    if status.code() == Some(6) {
+        return Err(AppError::new(
+            "state.mtime_conflict",
+            "conflict: metadata.json was modified externally during minimap write",
+        )
+        .with_default_hint());
+    }
+
+    if let Some(summary) = summary_capture {
+        return Ok(summary);
+    }
+
+    // summary_capture is None — Python exited without emitting a summary line.
+    // This fallback path is defensive against:
+    // - Python crash before reaching the summary emit
+    // - stdout pipe broken / buffer not flushed (uncommon)
+    // - extreme races (cancellation between last result and summary emit)
+    if status.success() {
+        // Exit 0 + no summary = Python normal exit with no output (unlikely but defensive).
+        // Treat as zero-work success, NOT cancelled.
+        eprintln!(
+            "[start_minimap] WARNING: Python subprocess exited cleanly without summary line; \
+             returning zero-work success. Inspect Python stdout flushing if this recurs."
+        );
+        return Ok(ExportSummary {
+            success: 0,
+            failure: 0,
+            skipped: 0,
+            cancelled: false,
+        });
+    }
+
+    // Non-zero exit + no summary = Python crashed. Surface the stderr tail
+    // so the GUI shows the traceback instead of just a status code.
+    let tail = String::from_utf8_lossy(&stderr_tail).trim().to_string();
+    let detail = if tail.is_empty() {
+        format!(
+            "python minimap subprocess exited unexpectedly (status: {:?}) without emitting summary",
+            status.code()
+        )
+    } else {
+        format!(
+            "python minimap subprocess exited unexpectedly (status: {:?}) without emitting summary: {}",
+            status.code(),
+            tail
+        )
+    };
+    Err(AppError::new("subprocess.exit_failed", detail).with_default_hint())
+}
+
 pub fn run() {
     // #614 -- Rotate stale panic logs (>7 days) and detect unclean shutdown
     // from the previous session, BEFORE the Tauri builder runs so the
@@ -3261,6 +3563,7 @@ pub fn run() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         enumerate_h264_encoders,
         start_export,
+        start_minimap,
         load_metadata,
         get_metadata_mtime,
         apply_changes,
@@ -3290,6 +3593,7 @@ pub fn run() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         enumerate_h264_encoders,
         start_export,
+        start_minimap,
         load_metadata,
         get_metadata_mtime,
         apply_changes,
@@ -5638,5 +5942,38 @@ mod start_export_wire_tests {
     #[test]
     fn ignores_empty_line() {
         assert!(parse_wire_event("").is_none());
+    }
+
+    // -- #893 build_minimap_argv tests ----------------------------------------
+
+    #[test]
+    fn minimap_argv_includes_region_and_expected_mtime() {
+        let req = StartMinimapRequest {
+            metadata_path: "C:/x/metadata.json".into(),
+            region: "10,20,300,400".into(),
+            output_dir: "C:/x/minimap".into(),
+            name_pattern: "{idx:03}_{type}_{start}_minimap.mp4".into(),
+            excluded_indexes: vec![2, 3],
+            expected_mtime_ms: Some(1_700_000_000_000),
+        };
+        let argv = build_minimap_argv(&req);
+        assert!(argv.contains(&"minimap".to_string()));
+        assert!(argv.contains(&"C:/x/metadata.json".to_string()));
+        assert!(argv.contains(&"--json".to_string()));
+        assert!(argv.windows(2).any(|w| w[0] == "--region" && w[1] == "10,20,300,400"));
+        assert!(argv.windows(2).any(|w| w[0] == "--expected-mtime" && w[1] == "1700000000000"));
+        assert!(argv.windows(2).any(|w| w[0] == "--exclude" && w[1] == "2,3"));
+    }
+
+    #[test]
+    fn minimap_argv_omits_expected_mtime_when_none() {
+        let req = StartMinimapRequest {
+            metadata_path: "m.json".into(), region: "0,0,16,16".into(),
+            output_dir: "o".into(), name_pattern: "p.mp4".into(),
+            excluded_indexes: vec![], expected_mtime_ms: None,
+        };
+        let argv = build_minimap_argv(&req);
+        assert!(!argv.iter().any(|a| a == "--expected-mtime"));
+        assert!(!argv.iter().any(|a| a == "--exclude"));
     }
 }
