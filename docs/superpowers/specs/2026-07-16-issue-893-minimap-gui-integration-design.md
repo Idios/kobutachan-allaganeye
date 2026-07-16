@@ -42,6 +42,14 @@ path fresh-read + 事後 reload で回収 (pre-spawn mtime check なし)。M3/M4
 a11y (数値入力 = keyboard 代替 + jest-axe) / proposal cancel / エリアマップ用語 / 空集合 disable /
 letterbox 変換テストを各 § に反映。
 
+**Codex adversarial-review 反映 (2026-07-16、verdict=needs-attention→修正済)**: [critical] path
+fresh-read だけでは CLI read〜write 間の外部編集を守れない (#514 clobber class の残余) →
+**crop に `--expected-mtime` CAS を新設** (write 直前 re-stat、不一致で conflict exit → GUI
+ConflictModal。Idios 選択 A、2026-07-16)。[high] Rust が spawn 後に invoke を reject した経路で
+reload skip すると次 apply で自分の write が false conflict → overwrite で minimap_regions 消失 →
+**spawn 成功後は resolve/reject 問わず finally/catch で reloadFromDisk**。両者とも spec §3/§5.3/
+§8/§9 に反映。invariant (不可逆 metadata 上書き) に関わるため Fable + Codex の両レイヤーを通過。
+
 ## 3. 全体像 (3 層、export と同型)
 
 ```text
@@ -49,13 +57,15 @@ MinimapScreen (React)
   ├─ seed 提案: invoke('detect_minimap_regions', {req:{metadataPath, excludedIndexes}})
   │     └─ allaganeye minimap <metadata_path> --json  (提案モード、read-only)
   │          → proposal 行を stdout に emit → Rust が集約して Vec<Proposal> を返す
-  └─ crop 実行: invoke('start_minimap', {req:{metadataPath, region, outputDir, namePattern, excludedIndexes}})
+  └─ crop 実行: invoke('start_minimap', {req:{metadataPath, region, outputDir, namePattern, excludedIndexes, expectedMtimeMs}})
         └─ Tauri start_minimap (lib.rs) — start_export と同型 (ただし metadata は path 渡し)
-             └─ allaganeye minimap <metadata_path> --json --region X,Y,W,H --output-dir … --name-pattern … [--exclude …]
+             └─ allaganeye minimap <metadata_path> --json --region X,Y,W,H --expected-mtime <ms> --output-dir … --name-pattern … [--exclude …]
                   ├─ CLI が metadata.json を disk から fresh read
+                  ├─ write_metadata_atomic 直前に re-stat → mtime != expected なら conflict exit (write せず)
                   ├─ JSON Lines progress (result/error/fallback) → `minimap-progress` Tauri event
-                  └─ minimap_regions を atomic write-back (既存 CLI crop 経路そのまま、encode 前)
-        → 終端後: metadataStore.reloadFromDisk() で mtime 更新 + minimap_regions 反映
+                  └─ minimap_regions を atomic write-back (既存 CLI crop merge 経路、encode 前)
+        → conflict exit: GUI が #514 ConflictModal を表示 (reload/overwrite/cancel)
+        → 終端後 (spawn 成功なら resolve/reject 問わず): metadataStore.reloadFromDisk()
 ```
 
 - **metadata は `--stdin` ではなく positional path 渡し** (Fable review H1、2026-07-16)。理由:
@@ -66,9 +76,17 @@ MinimapScreen (React)
   clobber の新経路を生む。**path 渡しなら CLI が disk を fresh read し、既存の match_index
   merge 保全ロジック (minimap.py の対象外 entry 保全 + malformed 保全) がそのまま生きる**。
   GUI 側は §5.3 の実行前 dirty guard で store==disk を保証するので、in-memory snapshot を渡す
-  export `--stdin` と等価かつ安全。**minimap には `--stdin` を追加しない**。新設フラグは `--json`
-  のみ。metadata_path は `metadataStore.filePath` (sample mode = `null` では minimap 自体を
-  disable するため常に非 null)。
+  export `--stdin` と等価かつ安全。**minimap には `--stdin` を追加しない**。metadata_path は
+  `metadataStore.filePath` (sample mode = `null` では minimap 自体を disable するため常に非 null)。
+- **write-back の expected-mtime CAS** (Codex critical、2026-07-16): path fresh-read だけでは
+  「CLI が step 1 で read → probe/preflight の後 step 8 で write」の間に外部編集が入ると
+  (minimap_regions merge を除き) 丸ごと上書きされる window が残る (#514 の外部編集ロス class)。
+  対策として crop モードに **`--expected-mtime <ms>` を新設**: GUI が store の `loadedMtimeMs` を
+  渡し、CLI は `write_metadata_atomic` 直前に metadata.json を **re-stat** して mtime が expected と
+  異なれば **write せず conflict exit** で中断する (compare-and-swap)。GUI はこれを既存 #514
+  ConflictModal (reload / overwrite / cancel) にマップする (apply() の mtime check UX と一貫)。
+  standalone CLI (`--expected-mtime` 省略) では guard を skip し後方互換。**新設フラグは
+  `--json` + `--expected-mtime` の 2 つ**。
 - **検出は毎回 fresh 実行** (detection cache 非使用)。detect param を追加しないため cache key
   3 箇所問題 (`feedback_detection_flag_cache_key`) は構造的に発生しない (#481 と同じ)。
 - **released 経路非接触**: 新設は minimap の `--json` mode と GUI 画面のみ。detector.py /
@@ -78,9 +96,9 @@ MinimapScreen (React)
 
 | モジュール | 変更 | 責務 |
 | --- | --- | --- |
-| `allaganeye/commands/minimap.py` | 変更 | `--json` (WireWriter で ndjson emit) のみ追加 (`--stdin` は追加しない、§3 H1)。crop モードの `progress_cb` を `--json` 時は `WireWriter.emit` に、提案モードの proposal 表示を `--json` 時は `{"type":"proposal",…}` 行に切替える。既存の plain-text / exit code / positional path write-back 契約は `--json` 無し時のまま非破壊 |
+| `allaganeye/commands/minimap.py` | 変更 | `--json` (WireWriter で ndjson emit) + `--expected-mtime <ms>` (crop write-back の CAS guard、§3) を追加 (`--stdin` は追加しない)。crop モードの `progress_cb` を `--json` 時は `WireWriter.emit` に、提案モードの proposal 表示を `--json` 時は `{"type":"proposal",…}` 行に切替える。`--expected-mtime` 指定時は `write_metadata_atomic` 直前に re-stat して mtime 不一致なら conflict exit。既存の plain-text / exit code / positional path write-back 契約は両 flag 省略時のまま非破壊 |
 | `allaganeye/export/schema.py` | 変更 (追加) | 提案 event 用の payload 型 (`type="proposal"`) を追加。crop の result/error/fallback は既存 `ProgressEvent` をそのまま流用 |
-| `gui/src-tauri/src/lib.rs` | 変更 (追加) | `start_minimap` command (start_export と同型: subprocess spawn + JSON Lines parse → `minimap-progress` emit + PROCESS_TRACKER + Job Object tree-kill。ただし metadata は stdin ではなく **positional path 引数**で渡す) / `detect_minimap_regions` command (提案モード subprocess を path 渡しで起動し proposal 行を集約して返す。PROCESS_TRACKER 管理で画面内 cancel / unmount kill 可) |
+| `gui/src-tauri/src/lib.rs` | 変更 (追加) | `start_minimap` command (start_export と同型: subprocess spawn + JSON Lines parse → `minimap-progress` emit + PROCESS_TRACKER + Job Object tree-kill。metadata は positional path 引数 + `--expected-mtime` に store の mtime を渡す。CLI の conflict exit を検知し `state.mtime_conflict` AppError で reject → GUI ConflictModal。spawn 成功後は resolve/reject 問わず reload trigger) / `detect_minimap_regions` command (提案モード subprocess を path 渡しで起動し proposal 行を集約して返す。PROCESS_TRACKER 管理で画面内 cancel / unmount kill 可) |
 | `gui/src/screens/MinimapScreen.tsx` (新規) | 新規 | full-frame video + ドラッグ選択 overlay + 数値 region 入力 + 自動検出ボタン + 設定 (出力先/命名/include) + 進捗 (progressBox + per-match list) |
 | `gui/src/screens/MinimapScreen.module.css` (新規) | 新規 | 画面 CSS (aetherTheme tokens 準拠) |
 | `gui/src/screens/reducers/minimap.ts` (新規) | 新規 | export reducer 同型の phase reducer (idle→running→completed/error/cancelling) |
@@ -94,9 +112,11 @@ MinimapScreen (React)
 ### 5.1 CLI `--json` mode (crop)
 
 - Rust `start_minimap` は `allaganeye minimap <metadata_path> --json --region X,Y,W,H
-  --output-dir <dir> --name-pattern <pat> [--exclude a,b,c]` を spawn する。metadata は
-  positional path で渡し、CLI が disk から fresh read する (§3 H1。stdin は使わない)。progress
-  I/O 契約 (stdout の JSON Lines) は export と同一。
+  --expected-mtime <ms> --output-dir <dir> --name-pattern <pat> [--exclude a,b,c]` を spawn する。
+  metadata は positional path で渡し、CLI が disk から fresh read する (§3 H1。stdin は使わない)。
+  `--expected-mtime` は store の `loadedMtimeMs` (CAS guard、§3)。progress I/O 契約 (stdout の
+  JSON Lines) は export と同一。CLI が conflict exit した場合、Rust は `state.mtime_conflict`
+  AppError で invoke を reject し、GUI は既存 ConflictModal を出す。
 - crop モードは既に `export_matches(progress_cb=…)` を使用しているため、`--json` 時に
   `progress_cb` を `WireWriter.emit` に差し替えるだけで per-match の `result` / `error` /
   `fallback` 行が stdout に流れる。Rust 側は export と同じ parser で受けて `minimap-progress`
@@ -126,12 +146,18 @@ MinimapScreen (React)
 
 ### 5.3 store reload (完了後、#514 整合)
 
-- **全終端 outcome で reload** (Fable review M1): CLI は write-back を **encode より前**に行う
-  (minimap.py コメント「encode 失敗でも座標は残す」)。したがって success だけでなく partial /
-  cancel (130) / error phase でも mtime は既に変化している。`start_minimap` の invoke が
-  resolve した**すべての終端** (success/partial/cancel/error、spawn 成功後) で
-  `metadataStore.reloadFromDisk()` を呼ぶ。成功経路のみ reload だと、次の [適用] で自分の
-  write-back が false ConflictModal になり本 spec の狙い (§2) と矛盾するため。
+- **spawn 成功後は invoke が resolve/reject どちらでも reload** (Fable M1 + Codex critical/high):
+  CLI は write-back を **encode より前**に行う (minimap.py コメント「encode 失敗でも座標は残す」)。
+  したがって success だけでなく partial / cancel (130) / error phase、さらに **Rust が spawn 後に
+  invoke を reject したケース** (JSON-line parse 失敗 / subprocess plumbing error / cancel plumbing /
+  spawn 後の AppError) でも mtime は既に変化している。これらで reload を skip すると、frontend は
+  古い `loadedMtimeMs` + 古い metadata のまま残り、次の [適用] で自分の write-back が
+  false ConflictModal 化 → overwrite 選択で書いたばかりの `minimap_regions` を消しうる
+  (Codex high)。対策: **subprocess が spawn 成功したら、invoke が resolve でも reject でも
+  `finally`/`catch` 経路で必ず `metadataStore.reloadFromDisk()` を呼ぶ**。frontend catch が
+  取りこぼさないよう、Rust command 側は「spawn 後の終端は `metadataMayHaveChanged: true` を
+  含む構造化結果を返す or Rust 側で reload trigger を発火」する設計も検討する (実装 plan で確定)。
+  `reloadFromDisk()` は冪等 (get_metadata_mtime → load_metadata → store 更新) なので二重呼びは無害。
 - `reloadFromDisk()`:
   1. `get_metadata_mtime` で最新 mtime を取得 (load 時と同じ「mtime を先に取る」#834 順序)
   2. `load_metadata` で metadata.json を再読込
@@ -141,12 +167,13 @@ MinimapScreen (React)
 - **実行前 dirty guard**: 実行ボタン押下時に store が dirty (未保存の matches 編集あり) なら
   「先に [適用] するか変更を破棄してください」を促し crop を抑止する。sample mode
   (`filePath === null`) では disk が無いため crop 自体を disable (export/preview と同方針)。
-- **外部変更 window の扱い** (Fable review M2): GUI load 後〜crop 実行前に CLI 併用等で
-  metadata.json が外部変更されても、crop は path 渡しで CLI が disk を fresh read + merge 保全
-  するため **clobber は起きない**。残る影響は excludedIndexes が古い match 集合に基づくズレのみ
-  だが、これは終端後 reload で最新 matches に回収される (bounded)。v1 では pre-spawn の mtime
-  check は課さず、**path fresh-read + 事後 reload で回収**する方針を採る (実装簡素・clobber 無しの
-  ため十分)。
+- **外部変更 window の扱い** (Fable M2 + Codex critical): GUI load 後〜crop write-back 前に
+  metadata.json が外部変更されるケースは、**§3 の `--expected-mtime` CAS で閉じる**。CLI が
+  write 直前に re-stat して mtime 不一致を検知したら write せず conflict exit → GUI は既存 #514
+  ConflictModal (reload / overwrite / cancel) を表示する。これにより「CLI read〜write の window で
+  外部編集が丸ごと上書き」という #514 class の残余経路が構造的に消える (GUI-only pre-spawn check
+  では CLI の read〜write window を守れないため、CLI 側 pre-write guard が必須)。excludedIndexes の
+  stale も、conflict 検知 → reload で最新 matches に回収される。
 
 ## 6. MinimapScreen UI
 
@@ -215,6 +242,7 @@ MinimapScreen (React)
 | region 未指定 / 不正 (parse 不能 / 負値 / w,h < 16 / frame はみ出し) | 実行ボタン disable + reason tooltip (CLI `_parse_region` と同じ境界を frontend でも検証)。subprocess に渡っても CLI が exit 5 で弾く (二重防御) |
 | 対象 match が空 (matches 0 件 / 全 post_match / 全 exclude) | 入口ボタン (CompleteScreen) は matches 0 件時 disable、実行ボタンは対象 0 件時 disable + reason tooltip (L4。export の eligibleCount 0 件と同方針) |
 | 実行前 dirty (未保存 matches 編集) | crop 抑止 + 「先に適用/破棄」promptで案内 |
+| write-back 直前に外部変更検知 (expected-mtime CAS 不一致) | CLI が write せず conflict exit → Rust が `state.mtime_conflict` reject → GUI が既存 #514 ConflictModal (reload / overwrite / cancel)。overwrite 選択時は `--expected-mtime` 無しで再 spawn (apply() の overwrite 経路と同思想) |
 | sample mode (`filePath===null`) | 画面全体 read-only (SampleModeBanner)。crop / 自動検出 disable |
 | 提案モードで proposal 無し / scattered | inline notice (best-effort 契約)。crop 自体はブロックしない (手動指定に誘導) |
 | GPU encoder init 失敗 | libx264 retry (#761 `_GPU_ENCODER_FAILURE_PATTERNS` 流用) + `minimap-progress` の `fallback` stage → per-match notice |
@@ -229,6 +257,11 @@ Red-Green-Refactor を遵守 (NO PRODUCTION CODE WITHOUT FAILING TEST FIRST)。
 1. **CLI `--json` crop** (Python unit): positional path から metadata を読み `--region` crop、
    WireWriter に result/error/fallback が ndjson で流れる (mock encode)。`--json`/`--quiet` 排他。
    既存の positional path write-back (match_index merge 保全) が `--json` 併用でも不変。
+1a. **CLI `--expected-mtime` CAS** (Python unit、Codex critical の red 実証): `--expected-mtime`
+    と disk mtime 一致時は write 成功 / 不一致時は write せず conflict exit (write_metadata_atomic が
+    呼ばれないことを mock で assert)。`--expected-mtime` 省略時は guard skip (後方互換)。CLI read 後
+    write 前に mtime を書き換える race を fixture で注入し、clobber されないことを実証
+    (`feedback_protective_mechanism_red_verification`: guard は発火側の red 実証まで)。
 2. **CLI `--json` 提案** (Python unit): 提案モード + `--json` で `{"type":"proposal",…}` 行 emit、
    proposal 無し match は `region:null`、exit 4 維持。
 3. **schema**: 提案 event 型 (`type="proposal"`) の serialize/deserialize。`test_export_schema` に追加。
