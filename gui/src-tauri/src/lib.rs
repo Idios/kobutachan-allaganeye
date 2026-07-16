@@ -6197,6 +6197,7 @@ mod start_export_wire_tests {
         assert_eq!(p.match_index, 2);
         let r = p.region.expect("region");
         assert_eq!((r.x, r.y, r.w, r.h), (19, 22, 288, 216));
+        assert_eq!(p.confidence, 0.9);
         assert_eq!(p.scattered, false);
     }
 

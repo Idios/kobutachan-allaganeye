@@ -1729,11 +1729,14 @@ describe('useMetadataStore.reloadFromDisk (#893)', () => {
     expect(s.metadata?.minimap_regions?.[0].match_index).toBe(1);
     expect(s.loadedMtimeMs).toBe(999);
     expect(s.conflictErrorState).toBeNull();
+    expect(s.dirty).toBe(false);
   });
 
   it('reloadFromDisk is a no-op without filePath (sample mode)', async () => {
+    invokeMock.mockReset();
     useMetadataStore.setState({ filePath: null });
     await expect(useMetadataStore.getState().reloadFromDisk()).resolves.toBeUndefined();
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 });
 
