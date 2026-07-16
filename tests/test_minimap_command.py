@@ -1097,6 +1097,45 @@ def test_minimap_proposal_json_emits_proposal_lines_exit4(tmp_path, monkeypatch,
     assert prop[0]["region"] == {"x": 19, "y": 22, "w": 288, "h": 216}
 
 
+def test_minimap_proposal_json_none_region_emits_null_region_exit4(
+    tmp_path, monkeypatch, app
+):
+    """--json 提案モード: mr.region is None の match は region: null を emit し exit 4。
+
+    Refs #893: spec §5.2 requires region:null when no region detected.
+    Rust parser is null-capable; unconditional r.x/.y/.w/.h access would raise
+    AttributeError if region is None.
+    """
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _write_metadata(tmp_path, source)
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+
+    class _MRNone:
+        match_index = 1
+        region = None  # None region: no detection for this match
+        scattered = False
+
+    monkeypatch.setattr(
+        minimap_mod,
+        "resolve_match_regions",
+        lambda source, tuples: ([_MRNone()], []),
+    )
+
+    result = runner.invoke(app, ["minimap", str(meta_path), "--json"])
+    assert result.exit_code == 4, result.stdout
+    lines = [json.loads(ln) for ln in result.stdout.splitlines() if ln.strip()]
+    prop = [ln for ln in lines if ln["type"] == "proposal"]
+    assert prop, f"expected at least one proposal line, got lines={lines}"
+    assert prop[0]["match_index"] == 1
+    # region must be null (None) when no detection
+    assert prop[0]["region"] is None, (
+        f"expected region=null for None-region match, got {prop[0]['region']}"
+    )
+
+
 def test_minimap_expected_mtime_conflict_aborts_without_write(tmp_path, monkeypatch):
     source = tmp_path / "vid.mp4"
     source.write_bytes(b"\x00")

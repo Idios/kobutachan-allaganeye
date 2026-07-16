@@ -197,17 +197,22 @@ def register(app: typer.Typer) -> None:
                 writer = WireWriter(stream=sys.stdout)
                 for mr in results:
                     r = mr.region
-                    region_px = {
-                        "x": round(r.x * frame_w),
-                        "y": round(r.y * frame_h),
-                        "w": round(r.w * frame_w),
-                        "h": round(r.h * frame_h),
-                    }
+                    if r is None:
+                        region_px = None
+                        confidence = 0.0
+                    else:
+                        region_px = {
+                            "x": round(r.x * frame_w),
+                            "y": round(r.y * frame_h),
+                            "w": round(r.w * frame_w),
+                            "h": round(r.h * frame_h),
+                        }
+                        confidence = r.confidence
                     writer.emit(
                         ProgressEvent.proposal(
                             match_index=mr.match_index,
                             region=region_px,
-                            confidence=r.confidence,
+                            confidence=confidence,
                             scattered=mr.scattered,
                         )
                     )
