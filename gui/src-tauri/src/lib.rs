@@ -2905,6 +2905,59 @@ pub struct StartMinimapRequest {
     pub expected_mtime_ms: Option<u64>,
 }
 
+/// #893 -- Pixel region for a minimap crop proposal.
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RegionPx {
+    pub x: i64,
+    pub y: i64,
+    pub w: i64,
+    pub h: i64,
+}
+
+/// #893 -- Single proposal returned by `detect_minimap_regions`.
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MinimapProposal {
+    pub match_index: u32,
+    pub region: Option<RegionPx>,
+    pub confidence: f64,
+    pub scattered: bool,
+}
+
+/// #893 -- Request payload for `detect_minimap_regions`.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectMinimapRequest {
+    pub metadata_path: String,
+    #[serde(default)]
+    pub excluded_indexes: Vec<u32>,
+}
+
+/// #893 -- Parse a single stdout line from the CLI proposal mode.
+/// Returns `Some(MinimapProposal)` only when `type == "proposal"`.
+fn parse_proposal_line(line: &str) -> Option<MinimapProposal> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    if v.get("type")?.as_str()? != "proposal" {
+        return None;
+    }
+    let region = match v.get("region") {
+        Some(r) if r.is_object() => Some(RegionPx {
+            x: r.get("x")?.as_i64()?,
+            y: r.get("y")?.as_i64()?,
+            w: r.get("w")?.as_i64()?,
+            h: r.get("h")?.as_i64()?,
+        }),
+        _ => None,
+    };
+    Some(MinimapProposal {
+        match_index: v.get("match_index")?.as_u64()? as u32,
+        region,
+        confidence: v.get("confidence").and_then(|c| c.as_f64()).unwrap_or(0.0),
+        scattered: v.get("scattered").and_then(|s| s.as_bool()).unwrap_or(false),
+    })
+}
+
 /// #893 -- Build the positional + option argv for `allaganeye minimap`.
 /// Factored out for unit-testability (mirrors the export argv-builder pattern).
 fn build_minimap_argv(req: &StartMinimapRequest) -> Vec<String> {
@@ -3480,6 +3533,162 @@ async fn start_minimap(
     Err(AppError::new("subprocess.exit_failed", detail).with_default_hint())
 }
 
+/// #893 -- Launch `allaganeye minimap <path> --json` in proposal mode (no
+/// `--region`) and aggregate the `{"type":"proposal",…}` stdout lines into a
+/// `Vec<MinimapProposal>`.  Read-only; does NOT emit progress events.
+/// Exit codes 0 and 4 are both treated as success (CLI exits 4 in proposal
+/// mode because it cannot auto-confirm without a region).
+#[tauri::command]
+async fn detect_minimap_regions(
+    app: tauri::AppHandle,
+    req: DetectMinimapRequest,
+) -> Result<Vec<MinimapProposal>, AppError> {
+    let cmd_spec = resolve_allaganeye_command(&app);
+    let mut cmd = tokio::process::Command::new(&cmd_spec.program);
+    for arg in &cmd_spec.prefix_args {
+        cmd.arg(arg);
+    }
+    cmd.arg("minimap").arg(&req.metadata_path).arg("--json");
+    if !req.excluded_indexes.is_empty() {
+        let joined = req
+            .excluded_indexes
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        cmd.arg("--exclude").arg(joined);
+    }
+    if let Some(cwd) = &cmd_spec.cwd {
+        cmd.current_dir(cwd);
+    }
+    cmd.env("PYTHONIOENCODING", "utf-8:replace")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    process_util::apply_no_window(&mut cmd);
+
+    let mut child = cmd.spawn().map_err(|e| {
+        AppError::new(
+            "subprocess.spawn_failed",
+            format!("detect_minimap_regions spawn: {}", e),
+        )
+        .with_default_hint()
+    })?;
+
+    // Take pipes before tracking (mirrors start_detect / start_minimap).
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    // Drain stderr to a bounded tail so a chatty child can't stall the pipe.
+    let stderr_handle = stderr.map(|stderr| {
+        tokio::spawn(async move { drain_to_bounded_tail(stderr, 2048).await })
+    });
+
+    // Proposal mode spawns ffmpeg `-ss` decode children per match → tree-kill.
+    #[cfg(windows)]
+    let job: Option<process_util::job_object::ProcessJob> = {
+        match process_util::job_object::ProcessJob::new() {
+            Ok(j) => {
+                if let Some(raw) = child.raw_handle() {
+                    if let Err(e) = j.assign(raw) {
+                        eprintln!(
+                            "warning: AssignProcessToJobObject failed: {} \
+                             (detect_minimap_regions descendants may be orphaned on cancel)",
+                            e
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "warning: child.raw_handle() returned None for detect_minimap_regions \
+                         (descendants may be orphaned on cancel)"
+                    );
+                }
+                Some(j)
+            }
+            Err(e) => {
+                eprintln!(
+                    "warning: CreateJobObject failed: {} \
+                     (detect_minimap_regions descendants may be orphaned on cancel)",
+                    e
+                );
+                None
+            }
+        }
+    };
+    let tracked = TrackedChild {
+        child,
+        #[cfg(windows)]
+        job,
+    };
+    let tracked_id = track_child(tracked).await;
+
+    let mut proposals: Vec<MinimapProposal> = Vec::new();
+    if let Some(stdout) = stdout {
+        let mut reader = BufReader::new(stdout);
+        let mut line_buf: Vec<u8> = Vec::with_capacity(1024);
+        loop {
+            line_buf.clear();
+            match reader.read_until(b'\n', &mut line_buf).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    while matches!(line_buf.last(), Some(b'\n') | Some(b'\r')) {
+                        line_buf.pop();
+                    }
+                    let line = String::from_utf8_lossy(&line_buf);
+                    if let Some(p) = parse_proposal_line(&line) {
+                        proposals.push(p);
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    }
+
+    let mut child = match untrack_child(tracked_id).await {
+        Some(c) => c,
+        None => {
+            return Err(
+                AppError::new("subprocess.cancelled", "minimap detect cancelled")
+                    .with_default_hint(),
+            );
+        }
+    };
+    let status = child.wait().await.map_err(|e| {
+        AppError::new(
+            "subprocess.wait_failed",
+            format!("detect_minimap_regions wait: {}", e),
+        )
+        .with_default_hint()
+    })?;
+
+    let stderr_tail = match stderr_handle {
+        Some(h) => h.await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+
+    // Exit 4 = CLI proposal-mode normal exit (cannot auto-confirm without --region).
+    // Exit 0 = also success. Anything else is an error.
+    let code = status.code();
+    if code == Some(0) || code == Some(4) {
+        return Ok(proposals);
+    }
+
+    let tail = String::from_utf8_lossy(&stderr_tail).trim().to_string();
+    let detail = if tail.is_empty() {
+        format!(
+            "python minimap subprocess exited unexpectedly (status: {:?})",
+            code
+        )
+    } else {
+        format!(
+            "python minimap subprocess exited unexpectedly (status: {:?}): {}",
+            code, tail
+        )
+    };
+    Err(AppError::new("subprocess.exit_failed", detail).with_default_hint())
+}
+
 pub fn run() {
     // #614 -- Rotate stale panic logs (>7 days) and detect unclean shutdown
     // from the previous session, BEFORE the Tauri builder runs so the
@@ -3564,6 +3773,7 @@ pub fn run() {
         enumerate_h264_encoders,
         start_export,
         start_minimap,
+        detect_minimap_regions,
         load_metadata,
         get_metadata_mtime,
         apply_changes,
@@ -3594,6 +3804,7 @@ pub fn run() {
         enumerate_h264_encoders,
         start_export,
         start_minimap,
+        detect_minimap_regions,
         load_metadata,
         get_metadata_mtime,
         apply_changes,
@@ -5975,5 +6186,29 @@ mod start_export_wire_tests {
         let argv = build_minimap_argv(&req);
         assert!(!argv.iter().any(|a| a == "--expected-mtime"));
         assert!(!argv.iter().any(|a| a == "--exclude"));
+    }
+
+    // -- #893 parse_proposal_line tests ----------------------------------------
+
+    #[test]
+    fn parse_proposal_line_reads_region_fields() {
+        let line = r#"{"type":"proposal","match_index":2,"region":{"x":19,"y":22,"w":288,"h":216},"confidence":0.9,"scattered":false}"#;
+        let p = parse_proposal_line(line).expect("parsed");
+        assert_eq!(p.match_index, 2);
+        let r = p.region.expect("region");
+        assert_eq!((r.x, r.y, r.w, r.h), (19, 22, 288, 216));
+        assert_eq!(p.scattered, false);
+    }
+
+    #[test]
+    fn parse_proposal_line_null_region() {
+        let line = r#"{"type":"proposal","match_index":3,"region":null,"confidence":0.0,"scattered":false}"#;
+        let p = parse_proposal_line(line).expect("parsed");
+        assert!(p.region.is_none());
+    }
+
+    #[test]
+    fn parse_proposal_line_ignores_non_proposal() {
+        assert!(parse_proposal_line(r#"{"type":"summary","success":1}"#).is_none());
     }
 }
