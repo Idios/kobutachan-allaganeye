@@ -6,7 +6,7 @@
  * match, with a <select> to switch between matches.
  */
 import { invoke } from '@tauri-apps/api/core';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { SampleModeBanner } from '../components/SampleModeBanner';
 import { useAppStateStore } from '../state/appStateStore';
@@ -19,8 +19,9 @@ export function MinimapScreen() {
   const selectedVideoPath = useAppStateStore((s) => s.selectedVideoPath);
   const videoSource = selectedVideoPath ?? metadata?.source ?? null;
 
-  const eligible = (metadata?.matches ?? []).filter(
-    (m) => !m.post_match && m.type_override !== 'skip',
+  const eligible = useMemo(
+    () => (metadata?.matches ?? []).filter((m) => !m.post_match && m.type_override !== 'skip'),
+    [metadata],
   );
 
   const [frameMatchIndex, setFrameMatchIndex] = useState<number | null>(
@@ -62,8 +63,7 @@ export function MinimapScreen() {
         // jsdom video has no real currentTime — ignore in tests
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [frameMatchIndex, videoUrl]);
+  }, [frameMatchIndex, videoUrl, eligible]);
 
   return (
     <div className={styles.screen} data-testid="minimap-screen">
