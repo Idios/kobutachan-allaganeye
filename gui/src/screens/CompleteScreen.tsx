@@ -186,6 +186,15 @@ export function CompleteScreen() {
           </button>
           <button
             type="button"
+            className={styles.exportAllButton}
+            onClick={() => navigate('minimap')}
+            disabled={metadata.matches.length === 0}
+            aria-label="ミニマップ切抜き"
+          >
+            ⬦ ミニマップ切抜き
+          </button>
+          <button
+            type="button"
             className={styles.closeButton}
             aria-label="閉じる"
             onClick={handleClose}

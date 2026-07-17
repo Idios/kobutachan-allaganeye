@@ -14,7 +14,8 @@ export type AppScreen =
   | 'detecting'
   | 'complete'
   | 'preview'
-  | 'export';
+  | 'export'
+  | 'minimap';
 
 /**
  * #613: User-tunable detect parameters surfaced from the DropScreen "詳細設定"
