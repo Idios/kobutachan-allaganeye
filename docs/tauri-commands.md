@@ -4,7 +4,7 @@
 
 ## エラー型 (migration 完了)
 
-- 戻り値型: **全 26 command が `Result<T, AppError>` または `bool` / 値直接 (`is_process_running` / `probe_environment_info`) を返す** (PR [#665](https://github.com/Idios/kobutachan-allaganeye/pull/665) で legacy `Result<T, String>` から完全 migration 済、PR #669 で `read_error_log_tail` / `probe_environment_info` 追加、PR #787 で `enumerate_h264_encoders` / `start_export` 追加・`export_match` / `select_h264_encoder_for_export` 削除)
+- 戻り値型: **全 28 command が `Result<T, AppError>` または `bool` / 値直接 (`is_process_running` / `probe_environment_info`) を返す** (PR [#665](https://github.com/Idios/kobutachan-allaganeye/pull/665) で legacy `Result<T, String>` から完全 migration 済、PR #669 で `read_error_log_tail` / `probe_environment_info` 追加、PR #787 で `enumerate_h264_encoders` / `start_export` 追加・`export_match` / `select_h264_encoder_for_export` 削除、#893 で `start_minimap` / `detect_minimap_regions` 追加)
 - `AppError` 構造体 (`gui/src-tauri/src/error.rs`、PR [#661](https://github.com/Idios/kobutachan-allaganeye/pull/661) Refs [#614](https://github.com/Idios/kobutachan-allaganeye/issues/614) で導入) のフィールド: `code: String` (domain-specific identifier、例 `io.file_not_found`) / `message: String` / `hint: Option<String>` / `stacktrace: Option<String>`
 - `From<std::io::Error>` / `From<serde_json::Error>` / `From<String>` / `From<&str>` impl があり、`?` 演算子で自動変換される (PR #665 で追加)。`std::io::Error` は `ErrorKind` から domain code を派生 (例 `NotFound` → `io.file_not_found`)
 - frontend 側 narrowing: `gui/src/lib/appError.ts` の `toErrorState(e)` / `appErrorCodeIs(e, code)` / `isAppError(e)` ヘルパーを使う。Tauri は `AppError` を JSON object として frontend に渡し、invoke 失敗時 Promise.reject 値が AppError instance になる
@@ -51,6 +51,8 @@
 | 24 | `probe_environment_info` | (なし) | `EnvironmentProbe` | pure | (常に struct で返却、エラーケースなし — 個別 field は `None` で degrade) | - |
 | 25 | `extract_brightness_window` | `video_path: String, t_start: f64, t_end: f64, fps: f64` | `Result<BrightnessWindow, AppError>` | subprocess | (a) ffmpeg 不在/起動失敗、(b) ffmpeg 異常終了 | (a) `subprocess.spawn_failed`、(b) `subprocess.exit_failed` |
 | 26 | `dev_force_panic` | (なし) | `Result<(), AppError>` | state-mutating | **意図的 panic** (`#[cfg(debug_assertions)]` 限定、PR #661 E2E 検証用) | - (panic で異常終了が期待動作) |
+| 27 | `start_minimap` | `app: AppHandle, req: { metadataPath: string, region: string, outputDir: string, namePattern: string, excludedIndexes: number[], expectedMtimeMs?: number, overwrite: boolean }` (camelCase) | `Result<ExportSummary, AppError>` | subprocess + I/O + state-mutating | (a) python CLI 不在、(b) minimap crop 異常終了 (per-match error は `minimap-progress` event 経由)、(c) write-back CAS 衝突 (metadata 外部変更、CLI exit 6)、(d) `overwrite=false` かつ `expectedMtimeMs` 未指定 (fail-closed、spawn 前 reject、#893 R2) | (a) `python.not_found`、(b) `subprocess.exit_failed`、(c) `state.mtime_conflict`、(d) `state.mtime_required` |
+| 28 | `detect_minimap_regions` | `app: AppHandle, req: { metadataPath: string, excludedIndexes: number[] }` (camelCase) | `Result<Vec<MinimapProposal>, AppError>` | subprocess | (a) python CLI 不在、(b) 提案モード異常終了 (exit 4 = 提案成功として扱う、それ以外の非 0/4 が error) | (a) `python.not_found`、(b) `subprocess.exit_failed` |
 
 ## 補足
 
