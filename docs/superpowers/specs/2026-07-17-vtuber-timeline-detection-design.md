@@ -106,6 +106,7 @@
 | R-e | 非 FL コンテンツ (CC 等) の誤検出 | at-anchor は emblem 3 点 AND (FL 特異)。V4 quorum が backstop。非 Onsal マップ分布は Phase 3 で確認 |
 | R-f | V1 の計算コスト (8h VOD ≈ 3000 probes ×2 frames) | PoC 実測 6-10 分 (CPU)。現行 3s 格子 Pass1 より probe 数は少ない。GPU 化は将来最適化 (scope 外) |
 | R-g | 10s stride が短時間コンテンツ (途中参加の数分試合) を取り逃す | min_match_duration 300s が下限を規定 (仕様として文書化)。300s 未満の部分試合は対象外 |
+| R-h | 振り返り/replay パート (試合 footage の再生) が偽試合化 | きゅま実測 (PoC レポート §7.4): 静止表示は frozen で棄却、再生 footage は縮小/オフセットで at-anchor を外れ棄却 → evidence 0/27 で正しく除外。**ほぼ 1:1 スケール・無停止・300s 超の再生は原理的に騙されうる** (既知の限界として文書化。Phase 3 GT 注釈時に各 source の振り返り有無を記録し、発生時は V4 低信頼フラグ相当の可視化を検討) |
 
 ## 5. Phase 分解 (各 1 PR、TDD)
 
