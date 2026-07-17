@@ -22,7 +22,10 @@
 ```text
 入力動画 (--vtuber 指定時のみ。OBS default / --masked は現行 path 完全不変)
   │
-  ├─ V0: anchor 解決        consensus_scorebar_localization (#822 資産、変更なし)
+  ├─ V0: anchor 解決        consensus_scorebar_localization (#822 資産) を VTuber 専用
+  │                          パラメータで呼ぶ: 48 samples / conf 事前フィルタ 0.5 / min hits 5。
+  │                          masked の 24 / 0.7 / 5 は流用しない (Onsal の true hit は
+  │                          median conf 0.589 で 0.7 filter に届かず anchor が枯れる、PoC §3)
   │                          失敗時: 現行 band-crop blackout path へ縮退 + warning
   │                          (= 現状の --vtuber 挙動が floor。#824 縮退契約に従う)
   │
@@ -60,6 +63,7 @@
 | MERGE_RATE | 10% | FN run ~24% vs 真 lobby ~1.5% (1s stride、15 倍分離) | 同上 |
 | FROZEN_MAX | 1.0 | 凍結 staging/リザルト静止部 band_mad 0.13-0.83 | 同上 |
 | merge 対象 gap 上限 | 300s | 観測された FN run 最大 ~250s。300s 超 gap は真の境界のみ (gyawa lobby 600s 等) | 固定 (min_match_duration と同値) |
+| V0 anchor (samples / conf / min hits) | 48 / 0.5 / 5 | Onsal true hit 率 ~21% (conf≥0.5) で期待 ~10 hits。conf 0.7 (masked 値) は true hit median 0.589 を殺す (PoC §3) | Phase 3 で 6 source 縮退率を確認 |
 
 **共通パラメータ原則 (R6 対策)**: per-source チューニングは禁止。6 source 全部を同一パラメータで通すことを gate とする。conf gate は使わない (PoC 結果 2: ソース非可搬)。
 
