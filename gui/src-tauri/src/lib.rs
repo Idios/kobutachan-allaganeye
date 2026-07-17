@@ -3698,7 +3698,16 @@ async fn detect_minimap_regions(
     };
 
     // Exit 4 = CLI proposal-mode normal exit (cannot auto-confirm without --region).
-    // Exit 0 = also success. Anything else is an error.
+    // Exit 0 = also success (crop mode). Anything else is an error.
+    //
+    // Why exit 4 is unambiguously safe to treat as success (#893 Round 1 F4):
+    // `resolve_match_regions` (Python areamap.py) only raises ImportError (opencv
+    // missing, surfaces as exit 3 via VideoProcessingError) or VideoProcessingError
+    // (also exit 3). Neither produces exit 4. Exit 4 is emitted solely by the
+    // proposal-mode control flow in minimap.py after `resolve_match_regions`
+    // returns normally -- meaning "proposals produced (possibly zero), no crash".
+    // A proposal-mode subprocess that exits 4 is therefore unreachable from any
+    // error path; treating it as success here is correct and non-ambiguous.
     let code = status.code();
     if code == Some(0) || code == Some(4) {
         return Ok(proposals);

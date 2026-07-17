@@ -353,18 +353,7 @@ def register(app: typer.Typer) -> None:
             output_dir if output_dir is not None else metadata_path.parent / "minimap"
         )
 
-        # ------ 7. preflight: output_dir mkdir --------------------------------
-        # Finding 2 fix: 決定的 preflight (collision check 済み) を write より前に実行
-        # mkdir 失敗は except Exception で exit 1 になる (export.py と同規約)
-        try:
-            eff_output_dir.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            from allaganeye.cli import _report_unexpected_error
-
-            _report_unexpected_error(verbose=False, quiet=quiet, show_hint=False)
-            raise typer.Exit(code=1) from None
-
-        # ------ 8. write-back (encode 失敗でも座標は残す) ----------------------
+        # ------ 7. write-back (encode 失敗でも座標は残す) ------------------------
         # Finding 1 fix: filtered set の entry は上書き、対象外の既存 entry は保全
         # (match_index merge)。malformed entry (dict でない / match_index 欠落) も
         # 黙って捨てずにそのまま保全する (round-trip 哲学)。
@@ -434,6 +423,15 @@ def register(app: typer.Typer) -> None:
                     err=True,
                 )
                 raise typer.Exit(code=6)
+        # ------ 8. preflight: output_dir mkdir --------------------------------
+        # mkdir runs AFTER the CAS check so a conflict exit-6 never creates an
+        # empty output directory as a side-effect (F1 fix, Round 1).
+        # mkdir failure surfaces as exit 1 (same convention as export.py).
+        try:
+            eff_output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            _report_unexpected_error(verbose=False, quiet=quiet, show_hint=False)
+            raise typer.Exit(code=1) from None
         try:
             write_metadata_atomic(metadata_path, payload)
         except AllaganEyeError as e:

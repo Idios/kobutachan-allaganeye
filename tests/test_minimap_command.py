@@ -1358,3 +1358,54 @@ def test_exclude_proposal_mode_skips_excluded_match(tmp_path, monkeypatch, app):
     assert 2 in passed_indexes, (
         f"match index 2 should be included but was absent: {passed_indexes}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 14. CAS conflict must not create output dir (F1 fix, Round 1 #894)
+# ---------------------------------------------------------------------------
+
+
+def test_cas_conflict_does_not_create_output_dir(tmp_path, monkeypatch):
+    """--expected-mtime 0 (stale) -> exit 6 AND output dir is NOT created.
+
+    F1 fix: mkdir block was previously placed before the CAS check, so an
+    exit-6 conflict still created an empty output directory as a side-effect.
+    After the fix the mkdir runs only after a successful CAS, so the dir must
+    remain absent on conflict.
+    """
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _write_metadata(tmp_path, source)
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+    monkeypatch.setattr(
+        minimap_mod,
+        "export_matches",
+        lambda **k: (_ for _ in ()).throw(AssertionError("encode ran on conflict")),
+    )
+
+    out_dir = tmp_path / "out_conflict"
+    assert not out_dir.exists(), "precondition: output dir must not exist before test"
+
+    # Pass a stale expected mtime (0) so CAS detects a conflict.
+    result = runner.invoke(
+        _cli_app,
+        [
+            "minimap",
+            str(meta_path),
+            "--region",
+            "10,20,300,400",
+            "--json",
+            "--expected-mtime",
+            "0",
+            "-o",
+            str(out_dir),
+        ],
+    )
+    assert result.exit_code == 6, (
+        f"stale mtime should abort with exit 6, got {result.exit_code}\n{result.stdout}"
+    )
+    assert not out_dir.exists(), (
+        "output dir must NOT be created when CAS conflict aborts (F1 fix)"
+    )

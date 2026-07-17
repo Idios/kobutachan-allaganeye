@@ -566,17 +566,27 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
   reloadFromDisk: async () => {
     const path = get().filePath;
     if (!path) return; // sample mode: no disk to reload
-    // #834 order: read mtime BEFORE contents so a concurrent writer between
-    // the two calls leaves the stored mtime <= content's (conservative).
-    const mtime = await invoke<number | null>('get_metadata_mtime', { path });
-    const raw = await invoke<unknown>('load_metadata', { path });
-    const parsed = MetadataSchema.parse(raw);
-    set({
-      metadata: parsed as unknown as Metadata,
-      loadedMtimeMs: mtime ?? null,
-      conflictErrorState: null,
-      dirty: false,
-    });
+    try {
+      // #834 order: read mtime BEFORE contents so a concurrent writer between
+      // the two calls leaves the stored mtime <= content's (conservative).
+      const mtime = await invoke<number | null>('get_metadata_mtime', { path });
+      const raw = await invoke<unknown>('load_metadata', { path });
+      const parsed = MetadataSchema.parse(raw);
+      set({
+        metadata: parsed as unknown as Metadata,
+        loadedMtimeMs: mtime ?? null,
+        dirty: false,
+        loadErrorState: null,
+        applyErrorState: null,
+        restoreErrorState: null,
+        conflictErrorState: null,
+      });
+      await get().refreshBackupStatus();
+    } catch (e) {
+      // reload failure surfaces an error but keeps the current in-memory
+      // metadata (the crop already wrote to disk; this is a read failure).
+      set({ loadErrorState: toErrorState(e) });
+    }
   },
   };
 });
