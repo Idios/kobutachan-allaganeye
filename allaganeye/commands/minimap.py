@@ -239,6 +239,13 @@ def register(app: typer.Typer) -> None:
             else:
                 for mr in results:
                     r = mr.region
+                    if r is None:
+                        typer.echo(
+                            f"match {mr.match_index}: "
+                            "領域を自動検出できませんでした "
+                            "(--region X,Y,W,H で手動指定してください)"
+                        )
+                        continue
                     # pixel 換算 (そのまま --region に貼れる値)
                     px = round(r.x * frame_w)
                     py = round(r.y * frame_h)

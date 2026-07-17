@@ -1276,6 +1276,52 @@ def test_exclude_crop_mode_skips_excluded_match(tmp_path, monkeypatch):
     )
 
 
+def test_proposal_plaintext_none_region_exits4_no_traceback(tmp_path, monkeypatch, app):
+    """plain-text 提案モード: mr.region is None の match は exit 4 + 案内メッセージ。
+
+    RED: plain-text path が r.x 等を直接参照するため AttributeError が発生 (exit 1)。
+    GREEN: None guard 追加後は exit 4 + 「領域を自動検出できませんでした」メッセージ。
+    No traceback must appear.
+
+    Refs #893 (symmetry with --json None-region guard).
+    """
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _write_metadata(tmp_path, source)
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+
+    class _MRNone:
+        match_index = 1
+        region = None  # None region: no detection for this match
+        scattered = False
+
+    monkeypatch.setattr(
+        minimap_mod,
+        "resolve_match_regions",
+        lambda source, tuples: ([_MRNone()], []),
+    )
+
+    # plain-text mode: NO --json flag
+    result = runner.invoke(app, ["minimap", str(meta_path)])
+    assert result.exit_code == 4, (
+        f"expected exit 4 for None-region plain-text proposal, "
+        f"got {result.exit_code}\nstdout={result.output}"
+    )
+    # 案内メッセージが出力される
+    assert "領域を自動検出できませんでした" in result.output, (
+        f"expected guidance message in output, got:\n{result.output}"
+    )
+    # トレースバックは出ない
+    assert "Traceback" not in result.output, (
+        f"plain-text None-region must not raise traceback:\n{result.output}"
+    )
+    assert "AttributeError" not in result.output, (
+        f"plain-text None-region must not raise AttributeError:\n{result.output}"
+    )
+
+
 def test_exclude_proposal_mode_skips_excluded_match(tmp_path, monkeypatch, app):
     """--exclude 1 in proposal mode: resolve_match_regions receives only match 2; exit 4.
 
