@@ -2903,6 +2903,12 @@ pub struct StartMinimapRequest {
     pub excluded_indexes: Vec<u32>,
     #[serde(default)]
     pub expected_mtime_ms: Option<u64>,
+    /// #893 R2 (Codex HIGH): explicit overwrite intent flag.
+    /// When `true` (post-ConflictModal path), the CAS guard is bypassed
+    /// deliberately. When `false` (default), an absent `expected_mtime_ms`
+    /// is a caller bug / version skew and the guard rejects it fail-closed.
+    #[serde(default)]
+    pub overwrite: bool,
 }
 
 /// #893 -- Pixel region for a minimap crop proposal.
@@ -2958,6 +2964,21 @@ fn parse_proposal_line(line: &str) -> Option<MinimapProposal> {
     })
 }
 
+/// #893 R2 (Codex HIGH): the minimap CROP write-back must never run unguarded
+/// by accident. Require an expected mtime UNLESS the caller explicitly opted
+/// into overwrite (the post-ConflictModal path). A None mtime without overwrite
+/// is a caller bug / version skew, not a deliberate overwrite -> fail closed.
+fn minimap_write_guard(req: &StartMinimapRequest) -> Result<(), AppError> {
+    if !req.overwrite && req.expected_mtime_ms.is_none() {
+        return Err(AppError::new(
+            "state.mtime_required",
+            "minimap crop requires an expected mtime unless overwrite is set (refusing an unguarded write-back)",
+        )
+        .with_default_hint());
+    }
+    Ok(())
+}
+
 /// #893 -- Build the positional + option argv for `allaganeye minimap`.
 /// Factored out for unit-testability (mirrors the export argv-builder pattern).
 fn build_minimap_argv(req: &StartMinimapRequest) -> Vec<String> {
@@ -2972,9 +2993,15 @@ fn build_minimap_argv(req: &StartMinimapRequest) -> Vec<String> {
         "--name-pattern".to_string(),
         req.name_pattern.clone(),
     ];
-    if let Some(m) = req.expected_mtime_ms {
-        argv.push("--expected-mtime".to_string());
-        argv.push(m.to_string());
+    // #893 R2: only pass --expected-mtime when NOT overwriting. When overwrite=true,
+    // omitting the flag tells the Python CLI to skip its CAS check (deliberate
+    // overwrite). Combined with minimap_write_guard, when !overwrite the mtime is
+    // always Some (guard rejected None), so --expected-mtime is always emitted.
+    if !req.overwrite {
+        if let Some(m) = req.expected_mtime_ms {
+            argv.push("--expected-mtime".to_string());
+            argv.push(m.to_string());
+        }
     }
     if !req.excluded_indexes.is_empty() {
         let joined = req
@@ -3287,6 +3314,9 @@ async fn start_minimap(
     app: tauri::AppHandle,
     req: StartMinimapRequest,
 ) -> Result<ExportSummary, AppError> {
+    // #893 R2 (Codex HIGH): guard FIRST — no subprocess is ever spawned for an
+    // unguarded write-back. Must be before resolve_allaganeye_command / any spawn.
+    minimap_write_guard(&req)?;
     let cmd_spec = resolve_allaganeye_command(&app);
     let mut cmd = tokio::process::Command::new(&cmd_spec.program);
     for arg in &cmd_spec.prefix_args {
@@ -6166,6 +6196,7 @@ mod start_export_wire_tests {
             name_pattern: "{idx:03}_{type}_{start}_minimap.mp4".into(),
             excluded_indexes: vec![2, 3],
             expected_mtime_ms: Some(1_700_000_000_000),
+            overwrite: false,
         };
         let argv = build_minimap_argv(&req);
         assert!(argv.contains(&"minimap".to_string()));
@@ -6176,16 +6207,76 @@ mod start_export_wire_tests {
         assert!(argv.windows(2).any(|w| w[0] == "--exclude" && w[1] == "2,3"));
     }
 
+    /// overwrite=true with a stale mtime: --expected-mtime must be ABSENT
+    /// (the guard already accepted the call; Python skips CAS = deliberate overwrite).
     #[test]
-    fn minimap_argv_omits_expected_mtime_when_none() {
+    fn minimap_argv_omits_expected_mtime_when_overwrite() {
         let req = StartMinimapRequest {
             metadata_path: "m.json".into(), region: "0,0,16,16".into(),
             output_dir: "o".into(), name_pattern: "p.mp4".into(),
             excluded_indexes: vec![], expected_mtime_ms: None,
+            overwrite: true,
         };
         let argv = build_minimap_argv(&req);
         assert!(!argv.iter().any(|a| a == "--expected-mtime"));
         assert!(!argv.iter().any(|a| a == "--exclude"));
+    }
+
+    /// overwrite=true drops --expected-mtime even when a stale mtime is present.
+    #[test]
+    fn minimap_argv_overwrite_true_drops_expected_mtime_even_with_mtime_present() {
+        let req = StartMinimapRequest {
+            metadata_path: "m.json".into(), region: "0,0,16,16".into(),
+            output_dir: "o".into(), name_pattern: "p.mp4".into(),
+            excluded_indexes: vec![], expected_mtime_ms: Some(123),
+            overwrite: true,
+        };
+        let argv = build_minimap_argv(&req);
+        assert!(!argv.iter().any(|a| a == "--expected-mtime"),
+            "overwrite=true must suppress --expected-mtime regardless of expected_mtime_ms");
+    }
+
+    // -- #893 minimap_write_guard tests (Codex R2 HIGH) -----------------------
+
+    #[test]
+    fn minimap_write_guard_rejects_missing_mtime_without_overwrite() {
+        // Case A: !overwrite + None mtime -> Err (the dangerous accidental path)
+        let req_a = StartMinimapRequest {
+            metadata_path: "m.json".into(), region: "0,0,16,16".into(),
+            output_dir: "o".into(), name_pattern: "p.mp4".into(),
+            excluded_indexes: vec![], expected_mtime_ms: None,
+            overwrite: false,
+        };
+        let err = minimap_write_guard(&req_a).expect_err("should reject None mtime without overwrite");
+        assert_eq!(err.code, "state.mtime_required",
+            "error code must be state.mtime_required, got: {}", err.code);
+
+        // Case B: !overwrite + Some(mtime) -> Ok (normal guarded path)
+        let req_b = StartMinimapRequest {
+            metadata_path: "m.json".into(), region: "0,0,16,16".into(),
+            output_dir: "o".into(), name_pattern: "p.mp4".into(),
+            excluded_indexes: vec![], expected_mtime_ms: Some(1_700_000_000_000),
+            overwrite: false,
+        };
+        minimap_write_guard(&req_b).expect("!overwrite + Some(mtime) must pass guard");
+
+        // Case C: overwrite=true + None mtime -> Ok (deliberate overwrite, no mtime needed)
+        let req_c = StartMinimapRequest {
+            metadata_path: "m.json".into(), region: "0,0,16,16".into(),
+            output_dir: "o".into(), name_pattern: "p.mp4".into(),
+            excluded_indexes: vec![], expected_mtime_ms: None,
+            overwrite: true,
+        };
+        minimap_write_guard(&req_c).expect("overwrite=true + None mtime must pass guard");
+
+        // Case D: overwrite=true + Some(mtime) -> Ok (also fine; overwrite wins)
+        let req_d = StartMinimapRequest {
+            metadata_path: "m.json".into(), region: "0,0,16,16".into(),
+            output_dir: "o".into(), name_pattern: "p.mp4".into(),
+            excluded_indexes: vec![], expected_mtime_ms: Some(42),
+            overwrite: true,
+        };
+        minimap_write_guard(&req_d).expect("overwrite=true + Some(mtime) must pass guard");
     }
 
     // -- #893 parse_proposal_line tests ----------------------------------------
