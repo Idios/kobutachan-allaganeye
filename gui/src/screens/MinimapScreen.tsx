@@ -114,7 +114,12 @@ export function MinimapScreen() {
 
   const onOverlayMouseUp = () => {
     const v = videoRef.current;
-    if (!v || !dragStart || !dragCur) return;
+    if (!v || !dragStart || !dragCur) {
+      setDragStart(null);
+      setDragCur(null);
+      setDragRect(null);
+      return;
+    }
     const rect = v.getBoundingClientRect();
     const sel = {
       x: Math.min(dragStart.x, dragCur.x) - rect.left,
