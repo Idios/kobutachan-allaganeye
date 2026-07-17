@@ -214,6 +214,54 @@ describe('MinimapScreen', () => {
     expect(startBtn).not.toBeDisabled();
   });
 
+  // ── Part C: re-entrancy regression tests (Codex HIGH) ───────────────────
+
+  // Part C-1: crop returns summary.cancelled while phase=running (no CANCEL_CLICKED
+  // was dispatched). Before the fix, minimapReducer ignores CANCEL_CONFIRMED from
+  // running → phase stays stuck at running → 切抜き開始 button never re-enables.
+  it('returns to idle (not stuck running) when start_minimap returns cancelled without CANCEL_CLICKED', async () => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    useMetadataStore.setState({ reloadFromDisk: reload });
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'register_video') return Promise.resolve({ url: 'u', token: 't' });
+      if (cmd === 'start_minimap')
+        return Promise.resolve({ success: 0, failure: 0, skipped: 0, cancelled: true });
+      return Promise.resolve(null);
+    });
+    renderMinimapWithPath();
+    fillValidRegion();
+
+    fireEvent.click(screen.getByRole('button', { name: /切抜き開始/ }));
+
+    // Phase must return to idle — 切抜き開始 button re-enables (not stuck running)
+    await waitFor(() => {
+      const btn = screen.getByRole('button', { name: /切抜き開始/ });
+      expect(btn).not.toBeDisabled();
+    });
+  });
+
+  // Part C-2: auto-detect button must be disabled while a crop is running.
+  // Before the fix, disabled={detecting || isSample} — crop running is not guarded.
+  it('disables 自動検出を試す button while crop is running', async () => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    useMetadataStore.setState({ reloadFromDisk: reload });
+    // start_minimap never resolves so phase stays at running
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'register_video') return Promise.resolve({ url: 'u', token: 't' });
+      if (cmd === 'start_minimap') return new Promise(() => {});
+      return Promise.resolve(null);
+    });
+    renderMinimapWithPath();
+    fillValidRegion();
+
+    fireEvent.click(screen.getByRole('button', { name: /切抜き開始/ }));
+
+    // While running, auto-detect button must be disabled
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '自動検出を試す' })).toBeDisabled();
+    });
+  });
+
   it('has no a11y violations (jest-axe)', async () => {
     mockInvoke.mockImplementation((cmd: string) =>
       cmd === 'register_video'

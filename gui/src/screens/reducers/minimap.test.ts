@@ -55,4 +55,13 @@ describe('minimapReducer', () => {
     expect(minimapReducer('completed', { type: 'CONFLICT_RESOLVED' })).toBe('completed');
     expect(minimapReducer('error', { type: 'CONFLICT_RESOLVED' })).toBe('error');
   });
+
+  // Part B (Codex HIGH fix): CANCEL_CONFIRMED must also move running → idle.
+  // Scenario: kill_tracked_processes is called while phase=running (e.g. via the
+  // auto-detect cancel path or any external kill), causing start_minimap to return
+  // summary.cancelled. handleStartCrop dispatches CANCEL_CONFIRMED from the running
+  // phase — without this case the reducer is a no-op and phase stays stuck at running.
+  it('goes running -> idle on CANCEL_CONFIRMED (defensive: skip-CANCEL_CLICKED path)', () => {
+    expect(minimapReducer('running', { type: 'CANCEL_CONFIRMED' })).toBe('idle');
+  });
 });

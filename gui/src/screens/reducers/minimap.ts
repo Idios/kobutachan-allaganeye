@@ -31,6 +31,11 @@ export function minimapReducer(state: MinimapPhase, action: MinimapAction): Mini
       if (action.type === 'PROGRESS_COMPLETE') return 'completed';
       if (action.type === 'EXPORT_ERROR') return 'error';
       if (action.type === 'CONFLICT_RESOLVED') return 'idle';
+      // Belt-and-suspenders: if kill_tracked_processes was called without going
+      // through CANCEL_CLICKED (e.g. re-entrancy via auto-detect cancel path),
+      // start_minimap still returns summary.cancelled → CANCEL_CONFIRMED arrives
+      // from running. Without this guard phase would stay stuck at running forever.
+      if (action.type === 'CANCEL_CONFIRMED') return 'idle';
       return state;
 
     case 'cancelling':

@@ -515,22 +515,24 @@ export function MinimapScreen() {
       ? null
       : (elapsedSec / totalProgressUnits) * remainingUnits;
 
-  // Button disable condition: isSample | running | !region | regionError | 0 eligible
+  // Button disable condition: isSample | detecting | running | !region | regionError | 0 eligible
   const startDisabled =
-    isSample || running || cancelling || !region || regionError !== null || countedMatches.length === 0;
+    isSample || detecting || running || cancelling || !region || regionError !== null || countedMatches.length === 0;
   const startReason = isSample
     ? sampleReason
-    : !region
-      ? '領域を指定してください'
-      : regionError
-        ? `領域エラー: ${regionError}`
-        : countedMatches.length === 0
-          ? '切り抜き対象が 0 件です'
-          : running
-            ? '切り抜き中です'
-            : cancelling
-              ? '中断処理中です'
-              : '';
+    : detecting
+      ? '自動検出中です'
+      : !region
+        ? '領域を指定してください'
+        : regionError
+          ? `領域エラー: ${regionError}`
+          : countedMatches.length === 0
+            ? '切り抜き対象が 0 件です'
+            : running
+              ? '切り抜き中です'
+              : cancelling
+                ? '中断処理中です'
+                : '';
 
   const r = region ?? { x: 0, y: 0, w: 0, h: 0 };
 
@@ -682,7 +684,7 @@ export function MinimapScreen() {
         <button
           type="button"
           onClick={() => void handleAutoDetect()}
-          disabled={detecting || isSample}
+          disabled={detecting || isSample || phase === 'running' || phase === 'cancelling'}
         >
           自動検出を試す
         </button>

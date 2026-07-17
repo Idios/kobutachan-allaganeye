@@ -1043,7 +1043,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | button |
-| 状態 | `idle` かつ `metadata !== null` のとき enabled。`running / cancelling` 中は disabled |
+| 状態 | `idle` かつ `metadata !== null` かつ crop が `running / cancelling` でないとき enabled。`detecting` 中（自身の実行中）/ crop `running` / crop `cancelling` / sample mode で disabled |
 | 遷移トリガー | `AUTO_DETECT_CLICKED` — `allaganeye minimap <path> --json` (提案モード) を Tauri `detect_minimap_regions` command 経由で実行し、`proposal` 行を parse して最高 confidence の region を数値入力欄に反映する |
 | store mutation | なし（local region state 更新のみ） |
 | 例外 / edge case | 提案が 1 件もない（全試合 `region: null`）場合は §1.5 inline エラー。`scattered: true` の提案は 警告 badge を表示するが値は反映する |
@@ -1053,7 +1053,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | button (主要 CTA) |
-| 状態 | `idle` かつ region 値が有効 かつ `metadata !== null` のとき enabled。不正 region / `running / cancelling` / sample mode で disabled（§1.2 DisabledTooltip 必須） |
+| 状態 | `idle` かつ region 値が有効 かつ `metadata !== null` かつ `detecting` でないとき enabled。不正 region / `detecting` / `running / cancelling` / sample mode で disabled（§1.2 DisabledTooltip 必須） |
 | 遷移トリガー | `START_CLICKED` → `running`。Tauri `start_minimap` command を invoke（`--region X,Y,W,H --json --expected-mtime <mtime>` を `allaganeye minimap` に渡す）。`minimap-progress` イベントで進捗を受け取る |
 | store mutation | terminal outcome（`PROGRESS_COMPLETE` / `MINIMAP_ERROR` / `CANCEL_CONFIRMED`）で `metadataStore.reloadFromDisk()` |
 | 例外 / edge case | **exit 6 (CAS 衝突)**: `start_minimap` が exit 6 を返したとき `MINIMAP_ERROR` に遷移し ConflictModal を表示。「上書き」= `overwrite: true` で再実行（mtime チェック省略）、「リロード」= `reloadFromDisk()` 後 idle 維持、「キャンセル」= idle 維持。**GPU fallback**: `fallback` 行受信時は per-match fallback notice 表示（§2.5 export と同型） |
