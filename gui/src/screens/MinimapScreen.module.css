@@ -124,3 +124,369 @@
   color: var(--ae-text-dim, #888);
   padding: 4px 0;
 }
+
+/* ── Settings section ─────────────────────────────────────────────────── */
+
+.settingsSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--ae-bg-deep, rgba(0, 0, 0, 0.35));
+  border: 1px solid rgba(var(--ae-gold-rgb, 210 170 90), 0.13);
+  padding: 12px;
+}
+
+.settingsCaption {
+  font-family: var(--ae-font-ui, sans-serif);
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--ae-gold-dim, #9a7e3a);
+  text-transform: uppercase;
+}
+
+.settingsLabel {
+  font-family: var(--ae-font-mono, monospace);
+  font-size: 10px;
+  color: var(--ae-text-dim, #888);
+  margin-bottom: 4px;
+}
+
+.outDirRow {
+  display: flex;
+  gap: 6px;
+}
+
+.outDirInput {
+  flex: 1;
+  background: var(--ae-bg, #181510);
+  border: 1px solid rgba(var(--ae-gold-rgb, 210 170 90), 0.27);
+  color: var(--ae-text, #ddd);
+  font-family: var(--ae-font-mono, monospace);
+  font-size: 11px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.pickButton {
+  background: transparent;
+  border: 1px solid rgba(var(--ae-gold-rgb, 210 170 90), 0.27);
+  color: var(--ae-gold, #d2aa5a);
+  padding: 6px 12px;
+  font-family: var(--ae-font-ui, sans-serif);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.nameInput {
+  width: 100%;
+  background: var(--ae-bg, #181510);
+  border: 1px solid rgba(var(--ae-gold-rgb, 210 170 90), 0.27);
+  color: var(--ae-text, #ddd);
+  font-family: var(--ae-font-mono, monospace);
+  font-size: 11px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.nameHint {
+  font-family: var(--ae-font-mono, monospace);
+  font-size: 9px;
+  color: var(--ae-text-dim, #888);
+  margin-top: 4px;
+}
+
+/* ── Execute section ──────────────────────────────────────────────────── */
+
+.executeSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.progressBox {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.progressHeader {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--ae-font-mono, monospace);
+  font-size: 10px;
+  color: var(--ae-text-dim, #888);
+}
+
+.progressLabel {
+  color: var(--ae-gold-bright, #e8c870);
+  font-family: var(--ae-font-ui, sans-serif);
+  letter-spacing: 2px;
+}
+
+.progressBar {
+  height: 8px;
+  background: var(--ae-bg, #181510);
+  border: 1px solid rgba(var(--ae-gold-rgb, 210 170 90), 0.2);
+  position: relative;
+  overflow: hidden;
+}
+
+.progressFill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, var(--ae-gold-dim, #9a7e3a), var(--ae-gold-bright, #e8c870));
+  transition: width 0.2s;
+}
+
+.progressFillDone {
+  background: linear-gradient(90deg, var(--ae-cyan, #5ad), var(--ae-cyan-bright, #7ef));
+}
+
+.progressTime {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-family: var(--ae-font-mono, monospace);
+  font-size: 9px;
+  color: var(--ae-text-dim, #888);
+}
+
+.primaryButton {
+  width: 100%;
+  padding: 12px 16px;
+  background: linear-gradient(180deg, var(--ae-gold, #d2aa5a), var(--ae-gold-dim, #9a7e3a));
+  border: none;
+  color: var(--ae-bg, #181510);
+  font-family: var(--ae-font-ui, sans-serif);
+  font-size: 13px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.primaryButton:disabled {
+  background: var(--ae-gold-dim, #9a7e3a);
+  cursor: default;
+}
+
+.cancelButton {
+  padding: 10px 18px;
+  background: transparent;
+  border: 1px solid var(--ae-danger, #e05555);
+  color: var(--ae-danger, #e05555);
+  font-family: var(--ae-font-ui, sans-serif);
+  font-size: 11px;
+  letter-spacing: 2px;
+  cursor: pointer;
+}
+
+.errorMessage {
+  padding: 8px;
+  background: rgba(200, 112, 88, 0.1);
+  border: 1px solid var(--ae-danger, #e05555);
+  color: var(--ae-danger, #e05555);
+  font-family: var(--ae-font-mono, monospace);
+  font-size: 11px;
+}
+
+/* ── Per-match list section ───────────────────────────────────────────── */
+
+.listSection {
+  display: flex;
+  flex-direction: column;
+  background: var(--ae-bg-deep, rgba(0, 0, 0, 0.35));
+  border: 1px solid rgba(var(--ae-gold-rgb, 210 170 90), 0.13);
+  padding: 10px;
+  min-height: 0;
+  max-height: 320px;
+  overflow: hidden;
+}
+
+.listHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  padding: 4px 4px 0;
+}
+
+.listCaption {
+  font-family: var(--ae-font-ui, sans-serif);
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--ae-gold-dim, #9a7e3a);
+}
+
+.listBulkActions {
+  display: flex;
+  gap: 4px;
+}
+
+.listBulkButton {
+  background: transparent;
+  border: 1px solid rgba(var(--ae-gold-rgb, 210 170 90), 0.27);
+  color: var(--ae-gold, #d2aa5a);
+  padding: 2px 8px;
+  font-family: var(--ae-font-ui, sans-serif);
+  font-size: 9px;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+
+.listBulkButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.listBody {
+  flex: 1;
+  overflow: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.listItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(var(--ae-gold-rgb, 210 170 90), 0.07);
+  font-family: var(--ae-font-mono, monospace);
+  font-size: 10px;
+  color: var(--ae-text, #ddd);
+}
+
+.listCheckbox {
+  margin: 0 4px 0 0;
+  accent-color: var(--ae-gold, #d2aa5a);
+  cursor: pointer;
+}
+
+.listCheckbox:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.listMark {
+  color: var(--ae-gold, #d2aa5a);
+  width: 16px;
+}
+
+.listItemPostMatch {
+  opacity: 0.55;
+}
+
+.postMatchBadge {
+  font-family: var(--ae-font-ui, sans-serif);
+  font-size: 8px;
+  letter-spacing: 1.2px;
+  padding: 1px 5px;
+  border: 1px solid var(--ae-text-dim, #888);
+  color: var(--ae-text-dim, #888);
+  flex-shrink: 0;
+}
+
+.listMarkDone {
+  color: var(--ae-cyan, #5ad);
+}
+
+.listMarkError {
+  color: var(--ae-danger, #e05555);
+}
+
+.listName {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listDur {
+  color: var(--ae-text-dim, #888);
+}
+
+.listProgress {
+  width: 60px;
+  height: 3px;
+  background: var(--ae-bg, #181510);
+  position: relative;
+}
+
+.listProgressFill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--ae-gold, #d2aa5a);
+}
+
+.listProgressFillDone {
+  background: var(--ae-cyan, #5ad);
+}
+
+.listError {
+  font-family: var(--ae-font-mono, monospace);
+  font-size: 9px;
+  color: var(--ae-danger, #e05555);
+  margin-left: 8px;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── ConflictModal (minimap-local) ────────────────────────────────────── */
+
+.conflictBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.conflictPanel {
+  background: var(--ae-bg, #181510);
+  border: 1px solid rgba(var(--ae-gold-rgb, 210 170 90), 0.4);
+  padding: 24px;
+  max-width: 440px;
+  width: 90%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.conflictTitle {
+  font-family: var(--ae-font-ui, sans-serif);
+  font-size: 14px;
+  color: var(--ae-gold-bright, #e8c870);
+  margin: 0;
+}
+
+.conflictMessage {
+  font-family: var(--ae-font-mono, monospace);
+  font-size: 12px;
+  color: var(--ae-text, #ddd);
+  margin: 0;
+}
+
+.conflictActions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.conflictButton {
+  background: transparent;
+  border: 1px solid rgba(var(--ae-gold-rgb, 210 170 90), 0.27);
+  color: var(--ae-gold, #d2aa5a);
+  padding: 8px 16px;
+  font-family: var(--ae-font-ui, sans-serif);
+  font-size: 11px;
+  cursor: pointer;
+}
