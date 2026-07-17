@@ -242,7 +242,7 @@ git commit -m "feat(l3): vtuber_timeline V2 粗分割の純関数 segment_timeli
 - Consumes: `consensus_scorebar_localization(duration, localize_fn, num_samples, min_hits)` (capture_region.py:671) / `localize_from_rgb_bytes(raw, height, width)` / `_probe_frame_rgb_hires(video_path, t)` / `PresenceState.UNKNOWN` (probe_state.py)
 - Produces: `resolve_vtuber_anchor(video_path: Path, duration_hint: float) -> ScorebarLocalization | None` / 定数 `_VT_ANCHOR_NUM_SAMPLES = 48`, `_VT_ANCHOR_MIN_CONF = 0.5`, `_VT_ANCHOR_MIN_HITS = 5`
 
-実装は `detector._resolve_scorebar_anchor` (detector.py:479、masked #822) を鏡写しにして VTuber 定数へ差し替える。**masked の 24 samples / conf 0.7 をそのまま使ってはいけない**: Onsal の true hit は median conf 0.589 (PoC report §3) で 0.7 に届かず anchor が枯れる。48 samples / conf 0.5 なら きゅま (hit 率 20.8%) で期待 ~10 hits ≥ min 5。
+実装は `detector._resolve_scorebar_anchor` (detector.py:478、masked #822) を鏡写しにして VTuber 定数へ差し替える。**masked の 24 samples / conf 0.7 をそのまま使ってはいけない**: Onsal の true hit は median conf 0.589 (PoC report §3) で 0.7 に届かず anchor が枯れる。48 samples / conf 0.5 なら きゅま (hit 率 20.8%) で期待 ~10 hits ≥ min 5。
 
 - [ ] **Step 1: Write the failing tests** (consensus は注入 localize_fn で純粋にテストできるため、`resolve_vtuber_anchor` は `_probe_frame_rgb_hires` を monkeypatch してテストする)
 

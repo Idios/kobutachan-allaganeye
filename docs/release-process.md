@@ -43,7 +43,7 @@ main (リリースタグ時のみ更新、L1: v0.1.0-preview / v0.1.1 / L2: v0.2
  └── develop-0.3.0 (L3 開発の統合先)
       ├── claude/l3-minimap-*        ← minimap 切抜き (#481, parent #753)
       ├── claude/l3-perf-*           ← export 並列 (#761 #762) / detect 高速化 (#576)
-      ├── claude/l3-vtuber-*         ← VTuber 動画対応 (2026-07-06 rescope で v0.4.0 期へ後送 #872、追跡 #866)
+      ├── claude/l3-vtuber-*         ← VTuber 動画対応 (2026-07-17 再開 #895 timeline 再設計。release 割当は /release Step 0c 判断)
       └── claude/<issue-N>-<slug>    ← 個別 issue 消化
 ```
 
@@ -114,7 +114,7 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 
 | バージョン | レイヤー | 想定ゲート項目 |
 | --- | --- | --- |
-| v0.3.0 | L3 (new): 配信形式対応 + 性能改善 | masked baseline 検知 ground truth 一致 + minimap 切抜き検証 (2026-07-06 rescope で VTuber 対応ゲートは v0.4.0 期へ後送)、export 並列で encoder 出力 visual spot check、Portable ZIP 起動回帰 |
+| v0.3.0 | L3 (new): 配信形式対応 + 性能改善 | masked baseline 検知 ground truth 一致 + minimap 切抜き検証 (VTuber 対応ゲートは 2026-07-06 rescope で一旦後送 → 2026-07-17 再開 #895。v0.3.0 に含めるかは /release Step 0c 判断)、export 並列で encoder 出力 visual spot check、Portable ZIP 起動回帰 |
 | v0.4.0 | L4 (former L3): メタデータ化 | キルログ OCR / 音声認識統合の精度ベンチ、metadata schema 拡張の互換性検証 |
 | v0.5.0 | L5 (former L4): 価値評価 | ローカル ML model 評価指標、サンプル動画群での評価分布 |
 | v0.6.0 | L6 (former L5): 自動編集 | クリップ生成成功率、投稿提案の妥当性レビュー |

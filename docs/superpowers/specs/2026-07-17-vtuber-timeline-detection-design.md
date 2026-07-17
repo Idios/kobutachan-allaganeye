@@ -31,7 +31,8 @@
   │
   ├─ V1: timeline scan      10s stride で全域 probe。probe = 1920x1080 フレーム 1 対 (Δ0.5s):
   │                          at-anchor presence (localize_scorebar_at_anchor、conf gate なし)
-  │                          + band MAD (anchor 帯) + band brightness
+  │                          + band MAD (anchor 帯)。probe データモデルは (t, present, band_mad)
+  │                          (band brightness は PoC 診断用でモデル外。V3 blackout snap は自前 dense probe で測る)
   │
   ├─ V2: 粗分割             probe evidence = present ∧ band_mad ≥ MAD_MIN
   │                          rolling window W=9 probes、quorum K=2 → in-match run 抽出
@@ -107,7 +108,7 @@
 | --- | --- | --- |
 | R-a | 未知レイアウトで anchor 不成立 (V0 失敗) | 現行 path へ縮退 + warning (floor 保証)。縮退率を stats で可視化 |
 | R-b | 試合中 FN run が 300s 超 → merge 裁定の対象外で偽分割残存 | 6 source 実測最大 ~250s。残存時は V4 の隣接 segment 低信頼フラグで可視化 (silent 誤りにしない) |
-| R-c | inset 位置が VOD 内で移動 | 6 source では非発生 (PoC §7.5)。将来 per-segment anchor (#810 `segments[]`) で拡張 |
+| R-c | inset 位置が VOD 内で移動 | きゅま (移動が疑われた唯一の source) の実測で非発生 (PoC §7.5)、他 5 source は per-video anchor 解決 + 全域 segmentation 成立 (PoC §1/§4) で間接確認。将来 per-segment anchor (#810 `segments[]`) で拡張 |
 | R-d | リザルト/staging が present∧moving に見えて連続試合がマージ | motion AND + blackout snap + 30min 低信頼フラグの三重防御。gyawa/きゅま実測ではマージ 0 |
 | R-e | 非 FL コンテンツ (CC 等) の誤検出 | at-anchor は emblem 3 点 AND (FL 特異)。V4 quorum が backstop。非 Onsal マップ分布は Phase 3 で確認 |
 | R-f | V1 の計算コスト (8h VOD ≈ 3000 probes ×2 frames) | PoC 実測 6-10 分 (CPU)。現行 3s 格子 Pass1 より probe 数は少ない。GPU 化は将来最適化 (scope 外) |

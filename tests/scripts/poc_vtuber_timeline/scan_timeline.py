@@ -85,6 +85,9 @@ def main() -> int:
                 el = time.time() - t0
                 print(f"  {i + 1}/{len(ts)} probes, {el:.0f}s elapsed", flush=True)
 
+    if not results:
+        print("no probes generated (check --start/--end vs video duration)", flush=True)
+        return 1
     args.out_csv.parent.mkdir(parents=True, exist_ok=True)
     with open(args.out_csv, "w", newline="", encoding="utf-8") as f:
         wr = csv.DictWriter(f, fieldnames=list(results[0].keys()))

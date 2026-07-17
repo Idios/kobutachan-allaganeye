@@ -117,6 +117,9 @@ def main() -> int:
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
         results = list(ex.map(lambda t: probe_one(args.video, t, band, anchor), ts))
 
+    if not results:
+        print("no probes generated (check --t0/--t1 ordering)", flush=True)
+        return 1
     args.out_csv.parent.mkdir(parents=True, exist_ok=True)
     with open(args.out_csv, "w", newline="", encoding="utf-8") as f:
         wr = csv.DictWriter(f, fieldnames=list(results[0].keys()))
