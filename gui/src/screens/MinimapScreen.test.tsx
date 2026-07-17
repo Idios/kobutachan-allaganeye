@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockInvoke } = vi.hoisted(() => ({
@@ -67,5 +67,12 @@ describe('MinimapScreen', () => {
     renderMinimap();
     await screen.findByTestId('minimap-video');
     expect(screen.getByText(/一覧へ/)).toBeInTheDocument();
+  });
+
+  it('shows a validation error for width below 16', () => {
+    mockInvoke.mockImplementation(() => new Promise(() => {}));
+    renderMinimap();
+    fireEvent.change(screen.getByLabelText('region width'), { target: { value: '8' } });
+    expect(screen.getByText(/16px 以上/)).toBeInTheDocument();
   });
 });

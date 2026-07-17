@@ -18,14 +18,88 @@
   border: 1px solid rgba(var(--ae-gold-rgb, 210 170 90), 0.18);
 }
 
-.videoPane video {
+.videoWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.videoWrapper video {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+  display: block;
+}
+
+/* Drag-select overlay sits over the video */
+.dragOverlay {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+  user-select: none;
+}
+
+/* The rubber-band rect drawn during drag */
+.dragRect {
+  position: absolute;
+  border: 2px solid var(--ae-gold, #d2aa5a);
+  background: rgba(210, 170, 90, 0.15);
+  pointer-events: none;
 }
 
 .loading {
   color: var(--ae-text-dim, #888);
   font-family: var(--ae-font-ui, sans-serif);
   font-size: 13px;
+}
+
+/* Region inputs row */
+.regionInputs {
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.regionField {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--ae-font-ui, sans-serif);
+  font-size: 13px;
+  color: var(--ae-text, #ddd);
+}
+
+.regionField span {
+  min-width: 14px;
+  color: var(--ae-text-dim, #888);
+}
+
+.regionField input[type='number'] {
+  width: 72px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(var(--ae-gold-rgb, 210 170 90), 0.3);
+  color: var(--ae-text, #ddd);
+  font-family: var(--ae-font-mono, monospace);
+  font-size: 13px;
+  padding: 3px 6px;
+  border-radius: 2px;
+  text-align: right;
+}
+
+.regionField input[type='number']:focus {
+  outline: 1px solid rgba(var(--ae-gold-rgb, 210 170 90), 0.7);
+}
+
+/* Validation error */
+.regionError {
+  font-family: var(--ae-font-ui, sans-serif);
+  font-size: 12px;
+  color: var(--ae-error, #e05555);
+  padding: 4px 0;
 }
