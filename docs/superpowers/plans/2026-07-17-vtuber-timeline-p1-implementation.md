@@ -21,10 +21,12 @@
 ### Task 1: `segment_timeline` 純関数 (V2 粗分割)
 
 **Files:**
+
 - Create: `allaganeye/video/vtuber_timeline.py`
 - Test: `tests/test_vtuber_timeline.py`
 
 **Interfaces:**
+
 - Produces: `TimelineProbe(t: float, present: bool, band_mad: float | None)` (frozen dataclass、`band_mad=None` = decode 失敗) / `segment_timeline(probes: Sequence[TimelineProbe], *, min_match_duration: float, mad_min: float = TIMELINE_MAD_MIN, window: int = TIMELINE_WINDOW, quorum: int = TIMELINE_QUORUM) -> list[MatchBoundary]` / 定数 `TIMELINE_STRIDE = 10.0`, `TIMELINE_PAIR_DT = 0.5`, `TIMELINE_MAD_MIN = 1.5`, `TIMELINE_WINDOW = 9`, `TIMELINE_QUORUM = 2`
 
 - [ ] **Step 1: Write the failing tests**
@@ -231,10 +233,12 @@ git commit -m "feat(l3): vtuber_timeline V2 粗分割の純関数 segment_timeli
 ### Task 2: `resolve_vtuber_anchor` (V0)
 
 **Files:**
+
 - Modify: `allaganeye/video/vtuber_timeline.py`
 - Test: `tests/test_vtuber_timeline.py` (追記)
 
 **Interfaces:**
+
 - Consumes: `consensus_scorebar_localization(duration, localize_fn, num_samples, min_hits)` (capture_region.py:671) / `localize_from_rgb_bytes(raw, height, width)` / `_probe_frame_rgb_hires(video_path, t)` / `PresenceState.UNKNOWN` (probe_state.py)
 - Produces: `resolve_vtuber_anchor(video_path: Path, duration_hint: float) -> ScorebarLocalization | None` / 定数 `_VT_ANCHOR_NUM_SAMPLES = 48`, `_VT_ANCHOR_MIN_CONF = 0.5`, `_VT_ANCHOR_MIN_HITS = 5`
 
@@ -386,10 +390,12 @@ git commit -m "feat(l3): resolve_vtuber_anchor V0 (VTuber 専用 consensus パ�
 ### Task 3: `scan_timeline` (V1) + `detect_matches_timeline` (orchestration)
 
 **Files:**
+
 - Modify: `allaganeye/video/vtuber_timeline.py`
 - Test: `tests/test_vtuber_timeline.py` (追記)
 
 **Interfaces:**
+
 - Consumes: Task 1 の `TimelineProbe` / `segment_timeline`、Task 2 の `resolve_vtuber_anchor`、`localize_scorebar_at_anchor(frame, anchor)` (capture_region.py:465)、`band_region_from_localization(loc, probe_w, probe_h)` (capture_region.py:97)、`RegionTimeline` (capture_region.py:113)
 - Produces: `scan_timeline(video_path, duration_hint, anchor, *, workers=None, progress_callback=None) -> list[TimelineProbe]` / `detect_matches_timeline(video_path, duration_hint, *, min_match_duration, workers=None, progress_callback=None) -> tuple[list[MatchBoundary], RegionTimeline] | None`
 - `UNKNOWN_ABORT_RATIO = 0.5`: probe の 50% 超が decode 失敗なら timeline を信頼せず None (縮退)
@@ -663,10 +669,12 @@ git commit -m "feat(l3): scan_timeline V1 + detect_matches_timeline orchestratio
 ### Task 4: detector.py 配線 (`--vtuber` 分岐先頭で timeline を試行)
 
 **Files:**
+
 - Modify: `allaganeye/video/detector.py` (Stage 0 呼び出し部、detector.py:650 近辺 `detect_region, region_fallback_reason = ...` の直前)
 - Test: `tests/test_detector.py` (追記。既存 `_detect_with_region_callback` (test_detector.py:2898) の monkeypatch パターンを踏襲)
 
 **Interfaces:**
+
 - Consumes: `vtuber_timeline.detect_matches_timeline` (Task 3)
 - Produces: `detect_match_boundaries(vtuber=True)` は timeline 成功時にその boundaries を返し `region_callback` に band RegionTimeline を発火。timeline None 時は現行 band-crop path へ縮退 (既存コード無変更で続行)。`vtuber=False` は `vtuber_timeline` を import すらしない
 
@@ -795,10 +803,12 @@ git commit -m "feat(l3): detector に vtuber timeline path を配線 (縮退 flo
 ### Task 5: cache key `vtuber_algo` (masked_algo と同型)
 
 **Files:**
+
 - Modify: `allaganeye/commands/split_matches.py` (3 箇所: 定数 + params 書き込み split_matches.py:2022 近辺 + 比較 split_matches.py:2251 近辺 + verbose split_matches.py:697 近辺)
 - Test: `tests/test_split_matches.py` (既存 masked_algo test 群を grep して同型を追記)
 
 **Interfaces:**
+
 - Produces: `_VTUBER_ALGO_VERSION = 2` (1 = legacy band-crop、key 欠落 legacy cache は 1 扱い)。vtuber 影響 run (params.vtuber or config.vtuber) のみ比較・invalidate。OBS cache は key 欠落でも hit し続ける (無関係ユーザーの再検知なし)
 
 - [ ] **Step 1: Write the failing tests** — `grep -n "masked_algo" tests/test_split_matches.py` で既存 test 群 (mode-switch / legacy compat / 破損値) を特定し、vtuber_algo 版を同型で書く:
