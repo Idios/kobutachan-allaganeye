@@ -6,7 +6,7 @@
 
 **Architecture:** 新モジュール `allaganeye/video/vtuber_timeline.py` に V0-V2 を実装し、`detector.py` の `--vtuber` 分岐先頭から呼ぶ。V2 は純関数 (合成データで TDD)。cache key に `vtuber_algo` を追加 (masked_algo と同型)。spec: `docs/superpowers/specs/2026-07-17-vtuber-timeline-detection-design.md`、実測根拠: 同日 PoC report。
 
-**Tech Stack:** Python 3.12 / numpy / 既存 primitive (`consensus_scorebar_localization` / `localize_scorebar_at_anchor` / `_probe_frame_rgb_hires`) / pytest。
+**Tech Stack:** Python 3.11+ (pyproject requires-python 準拠) / numpy / 既存 primitive (`consensus_scorebar_localization` / `localize_scorebar_at_anchor` / `_probe_frame_rgb_hires`) / pytest。
 
 ## Global Constraints
 
@@ -776,6 +776,11 @@ def test_obs_path_does_not_call_timeline(monkeypatch):
             timeline_boundaries, timeline_region = timeline_result
             if region_callback is not None:
                 region_callback(timeline_region)
+            # P1 契約: timeline path は Pass 1/2 を通らないため DetectionStats
+            # (pass1/pass2 秒数等) と brightness_callback は未設定のまま返す。
+            # `--vtuber -v` の pipeline 統計は空表示になるが `_print_detection_stats`
+            # は全 key guarded で crash しない (実証済)。stats への timeline 固有
+            # 統計 (probe 数 / anchor conf 等) の追加は P2 で V3 と合わせて設計する。
             return timeline_boundaries
 
     # Stage 0 (#753 / B4-rev): resolve a scorebar-band anchor before any scan.
