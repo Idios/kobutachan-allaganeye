@@ -29,10 +29,12 @@
 ## Task 1: CLI minimap crop `--json` mode
 
 **Files:**
+
 - Modify: `allaganeye/commands/minimap.py` (register() 内の `minimap` 関数 signature + crop モードの progress_cb)
 - Test: `tests/test_minimap_command.py` (既存があれば追記、無ければ新規)
 
 **Interfaces:**
+
 - Consumes: 既存 `allaganeye.export.wire.WireWriter` / `allaganeye.export.schema.ProgressEvent` / `export_matches(progress_cb=…)`。
 - Produces: `allaganeye minimap <path> --region X,Y,W,H --json` が crop の per-match `result`/`error`/`fallback` + 末尾 `summary` を ndjson で stdout に emit する契約。
 
@@ -207,10 +209,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ## Task 2: CLI minimap `--expected-mtime` CAS guard
 
 **Files:**
+
 - Modify: `allaganeye/commands/minimap.py` (signature + write-back 直前の re-stat)
 - Test: `tests/test_minimap_command.py`
 
 **Interfaces:**
+
 - Consumes: 既存 `write_metadata_atomic(metadata_path, payload)` (Task で触る箇所は minimap.py の `# ------ 8. write-back` 節)。
 - Produces: `--expected-mtime <ms:int>` 指定時、`write_metadata_atomic` 直前に `metadata_path.stat().st_mtime_ns // 1_000_000` を再計算し `!= expected` なら write せず **exit code 6** で中断する契約。省略時は guard skip。
 
@@ -336,11 +340,13 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ## Task 3: CLI minimap proposal `--json` mode + proposal event
 
 **Files:**
+
 - Modify: `allaganeye/export/schema.py` (`ProgressEvent.proposal` classmethod)
 - Modify: `allaganeye/commands/minimap.py` (提案モードの `--json` 分岐)
 - Test: `tests/test_export_schema.py` (proposal event) / `tests/test_minimap_command.py` (提案 `--json`)
 
 **Interfaces:**
+
 - Consumes: 既存 `resolve_match_regions(source_video, match_tuples) -> (results, warns)`。`results` は各 `mr.match_index` / `mr.region` (`.x/.y/.w/.h/.confidence`) / `mr.scattered` を持つ。
 - Produces: `ProgressEvent.proposal(match_index, region_dict_or_none, confidence, scattered)`。提案モード `--json` で 1 match 1 行 `{"type":"proposal","match_index":N,"region":{x,y,w,h}|null,"confidence":c,"scattered":bool}` を emit し exit 4。
 
@@ -506,12 +512,14 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ## Task 4: Rust `start_minimap` command
 
 **Files:**
+
 - Modify: `gui/src-tauri/src/lib.rs` (新 command + `StartMinimapRequest` struct + `invoke_handler` 登録)
 - Test: `gui/src-tauri/src/lib.rs` の `#[cfg(test)]` module (start_export の arg-build / parse test を mirror)
 
 **Interfaces:**
+
 - Consumes: 既存 `resolve_allaganeye_command` / `TrackedChild` / `track_child` / `PROCESS_TRACKER` / `AppError` / `ExportSummary` (Rust) / `drain_to_bounded_tail` / `file_mtime_ms`。
-- Produces: `#[tauri::command] start_minimap(app, req: StartMinimapRequest) -> Result<ExportSummary, AppError>`。`req = {metadataPath, region, outputDir, namePattern, excludedIndexes: Vec<u32>, expectedMtimeMs: Option<u64>}`。CLI exit 6 → `AppError("state.mtime_conflict", …)` reject。stdout JSON Lines を `minimap-progress` event で emit。
+- Produces: `#[tauri::command] start_minimap(app, req: StartMinimapRequest) -> Result<ExportSummary, AppError>`。`req = {metadataPath, region, outputDir, namePattern, excludedIndexes: Vec<u32>, expectedMtimeMs: Option<u64>, overwrite: bool}`。**先頭で `minimap_write_guard(&req)?` を呼び、`overwrite=false` かつ mtime 不在なら spawn 前に `state.mtime_required` で fail-closed reject** (#893 R2 Codex HIGH)。CLI exit 6 → `AppError("state.mtime_conflict", …)` reject。stdout JSON Lines を `minimap-progress` event で emit。
 
 - [ ] **Step 1: Write the failing test (request → argv)**
 
@@ -573,6 +581,24 @@ pub struct StartMinimapRequest {
     pub excluded_indexes: Vec<u32>,
     #[serde(default)]
     pub expected_mtime_ms: Option<u64>,
+    // #893 R2 (Codex HIGH): explicit overwrite intent. false (default) = guarded
+    // (mtime required, see minimap_write_guard); true = deliberate post-Conflict
+    // overwrite (CAS bypassed, --expected-mtime omitted).
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+// #893 R2: fail-closed guard — no unguarded write-back subprocess is ever
+// spawned. Call FIRST in start_minimap, before resolve_allaganeye_command.
+fn minimap_write_guard(req: &StartMinimapRequest) -> Result<(), AppError> {
+    if !req.overwrite && req.expected_mtime_ms.is_none() {
+        return Err(AppError::new(
+            "state.mtime_required",
+            "minimap crop requires an expected mtime unless overwrite is set (refusing an unguarded write-back)",
+        )
+        .with_default_hint());
+    }
+    Ok(())
 }
 
 fn build_minimap_argv(req: &StartMinimapRequest) -> Vec<String> {
@@ -587,9 +613,13 @@ fn build_minimap_argv(req: &StartMinimapRequest) -> Vec<String> {
         "--name-pattern".to_string(),
         req.name_pattern.clone(),
     ];
-    if let Some(m) = req.expected_mtime_ms {
-        argv.push("--expected-mtime".to_string());
-        argv.push(m.to_string());
+    // #893 R2: overwrite=true omits --expected-mtime so the CLI skips its CAS
+    // (deliberate overwrite). When !overwrite the guard guarantees mtime is Some.
+    if !req.overwrite {
+        if let Some(m) = req.expected_mtime_ms {
+            argv.push("--expected-mtime".to_string());
+            argv.push(m.to_string());
+        }
     }
     if !req.excluded_indexes.is_empty() {
         let joined = req
@@ -651,10 +681,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ## Task 5: Rust `detect_minimap_regions` command
 
 **Files:**
+
 - Modify: `gui/src-tauri/src/lib.rs` (新 command + `MinimapProposal` struct + handler 登録)
 - Test: `gui/src-tauri/src/lib.rs` test module (proposal 行 parse)
 
 **Interfaces:**
+
 - Consumes: `resolve_allaganeye_command` / `TrackedChild` / `track_child` / `PROCESS_TRACKER`。
 - Produces: `#[tauri::command] detect_minimap_regions(app, req: DetectMinimapRequest) -> Result<Vec<MinimapProposal>, AppError>`。`req = {metadataPath, excludedIndexes}`。CLI を提案モード (`minimap <path> --json`) で起動、stdout の `{"type":"proposal",…}` 行を集約。exit 4 は成功扱い。`MinimapProposal = {match_index, region: Option<RegionPx>, confidence, scattered}`。
 
@@ -739,6 +771,7 @@ fn parse_proposal_line(line: &str) -> Option<MinimapProposal> {
 ```
 
 command 本体は `start_detect` (path 渡し + PROCESS_TRACKER + stdout drain) を mirror し、proposal 行を集約:
+
 - cmd 引数 `["minimap", &req.metadata_path, "--json"]` + `--exclude` (excluded_indexes 非空時)。
 - exit code は **4 を成功扱い** (`code == Some(4) || code == Some(0)` を OK、それ以外を AppError)。
 - stdout を行ごとに `parse_proposal_line` に通し `Vec<MinimapProposal>` に push。
@@ -770,10 +803,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ## Task 6: metadataStore `reloadFromDisk()`
 
 **Files:**
+
 - Modify: `gui/src/state/metadataStore.ts` (新 action + interface)
 - Test: `gui/src/state/metadataStore.test.ts`
 
 **Interfaces:**
+
 - Consumes: 既存 Tauri `get_metadata_mtime` / `load_metadata` invoke、既存 `load()` の mtime 記録パターン。
 - Produces: `reloadFromDisk(): Promise<void>` — filePath があれば mtime 再取得 → metadata 再読込 → `metadata` / `loadedMtimeMs` 更新 / `conflictErrorState`・`dirty` reset。冪等。
 
@@ -883,12 +918,14 @@ Phase 1 の CLI/Rust/store backbone に乗せる視覚層。
 ## Task 7: `'minimap'` screen + CompleteScreen 入口
 
 **Files:**
+
 - Modify: `gui/src/state/appStateStore.ts` (`AppScreen` union に `'minimap'`)
 - Modify: `gui/src/screens/CompleteScreen.tsx` (アクションバーに「⬦ ミニマップ切抜き」ボタン)
 - Modify: `gui/src/App.tsx` (or screen switch 箇所) で `'minimap'` → `<MinimapScreen/>` を分岐 (MinimapScreen は Task 8 で作成する仮の空 export をここで用意)
 - Test: `gui/src/screens/CompleteScreen.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `useAppStateStore().navigate`。
 - Produces: `AppScreen` に `'minimap'`。CompleteScreen に minimap ボタン (matches 0 件時 disable)。
 
@@ -970,11 +1007,13 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ## Task 8: MinimapScreen — video pane + scrubber
 
 **Files:**
+
 - Modify: `gui/src/screens/MinimapScreen.tsx` (stub → video pane)
 - Create: `gui/src/screens/MinimapScreen.module.css`
 - Test: `gui/src/screens/MinimapScreen.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `register_video` invoke (PreviewScreen line ~271 と同型) / `useMetadataStore` / `useAppStateStore`。代表 match = 最初の `!post_match && type_override !== 'skip'` match、seek 先 = その中点。
 - Produces: `<video data-testid="minimap-video">` + match セレクタ (`selectedFrameMatchIndex` local state)。
 
@@ -1084,11 +1123,13 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ## Task 9: MinimapScreen — drag-select overlay + 数値 region + validation
 
 **Files:**
+
 - Modify: `gui/src/screens/MinimapScreen.tsx` / `.module.css`
 - Create: `gui/src/utils/region.ts` (座標変換 + validation の純関数)
 - Test: `gui/src/utils/region.test.ts` / `gui/src/screens/MinimapScreen.test.tsx`
 
 **Interfaces:**
+
 - Produces: `gui/src/utils/region.ts`:
   - `elementRectToSourcePx(sel, displayRect, videoW, videoH): {x,y,w,h}` — letterbox (object-fit: contain) 補正込みで element 選択矩形を source pixel に変換。
   - `validateRegionPx(r, frameW, frameH): string | null` — CLI `_parse_region` と同じ境界 (負値 / w,h<16 / はみ出し)、error 文字列 or null。
@@ -1187,6 +1228,7 @@ Expected: PASS。
 - [ ] **Step 5: Wire drag overlay + numeric input into MinimapScreen**
 
 `MinimapScreen.tsx` に:
+
 - `region` local state (`RegionPx | null`) + `regionError` (validateRegionPx の結果)。
 - video 上に絶対配置した `div` overlay (`onMouseDown`/`onMouseMove`/`onMouseUp` で element 座標の矩形を作る)。`elementRectToSourcePx(sel, video.getBoundingClientRect(), video.videoWidth, video.videoHeight)` で `region` を更新。
 - 数値入力 4 つ (`X,Y,W,H`, `aria-label` 付き, `type="number"`) で `region` と双方向同期。onChange で `setRegion` + `validateRegionPx`。
@@ -1241,10 +1283,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ## Task 10: MinimapScreen — 自動検出ボタン (proposal) + pre-fill + cancel
 
 **Files:**
+
 - Modify: `gui/src/screens/MinimapScreen.tsx`
 - Test: `gui/src/screens/MinimapScreen.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `detect_minimap_regions` invoke → `MinimapProposal[]` (Task 5)。`kill_tracked_processes` invoke (cancel)。
 - Produces: 「自動検出を試す」ボタン。成功 proposal を矩形に pre-fill (現在表示 match の proposal 優先、無ければ最高 confidence)。全 null → notice。loading 中は「中止」ボタン。
 
@@ -1345,11 +1389,13 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ## Task 11: MinimapScreen — 設定 + crop 実行 + 進捗 + dirty guard + reload + ConflictModal + jest-axe
 
 **Files:**
+
 - Modify: `gui/src/screens/MinimapScreen.tsx` / `.module.css`
 - Create: `gui/src/screens/reducers/minimap.ts` (export reducer と同型 phase reducer)
 - Test: `gui/src/screens/MinimapScreen.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `start_minimap` invoke (Task 4) / `minimap-progress` event / `metadataStore.reloadFromDisk` (Task 6) / 既存 `ConflictModal` component / `open_folder_in_explorer` / `open({directory})` dialog。
 - Produces: 出力先 / 命名 / include checkbox / 実行ボタン (dirty & region invalid & 対象0件で disable) / progressBox + per-match list / 完了後 reload / conflict → ConflictModal。
 
@@ -1436,6 +1482,7 @@ export function minimapReducer(state: MinimapPhase, action: MinimapAction): Mini
 - [ ] **Step 4: Implement settings + execution + progress + guard + reload**
 
 `MinimapScreen.tsx` — ExportScreen (`start_export` invoke + `export-progress` listener + progressBox + per-match list + include checkbox、line 260-435 / 850-1058) を **`minimap-progress` / `start_minimap` に読み替えて移植**。追加 delta:
+
 - **出力先** default = `<metadata dir>/minimap` (metadata.json の親 + `/minimap`)。参照ボタン (`open({directory})` + `stripExtendedPathPrefix`)。
 - **命名規則** default `{idx:03}_{type}_{start}_minimap.mp4`。
 - **include checkbox** = ExportScreen と同一 (post_match 強制除外)。`excluded` set。
@@ -1444,7 +1491,7 @@ export function minimapReducer(state: MinimapPhase, action: MinimapAction): Mini
 - **crop 実行**:
 
 ```tsx
-  async function handleStartCrop() {
+  async function handleStartCrop(overwrite = false) {
     if (useMetadataStore.getState().dirty) {
       setDetectNotice('未保存の変更があります。先にプレビューで適用/破棄してください。');
       return;
@@ -1456,13 +1503,20 @@ export function minimapReducer(state: MinimapPhase, action: MinimapAction): Mini
       const summary = await invoke<{ success: number; failure: number; skipped: number; cancelled: boolean }>(
         'start_minimap',
         {
+          // #893 R2 (Codex HIGH): overwrite is an EXPLICIT intent flag. Normal
+          // path = overwrite:false + real mtime (guarded). Post-ConflictModal
+          // overwrite = handleStartCrop(true) -> overwrite:true + omit mtime.
+          // start_minimap fail-closed rejects overwrite:false + missing mtime.
           req: {
             metadataPath: filePath,
             region: regionStr,
             outputDir: outDir,
             namePattern,
             excludedIndexes: Array.from(excluded),
-            expectedMtimeMs: useMetadataStore.getState().loadedMtimeMs ?? undefined,
+            expectedMtimeMs: overwrite
+              ? undefined
+              : (useMetadataStore.getState().loadedMtimeMs ?? undefined),
+            overwrite,
           },
         },
       );
@@ -1484,7 +1538,7 @@ export function minimapReducer(state: MinimapPhase, action: MinimapAction): Mini
 ```
 
 - **`minimap-progress` listener** = ExportScreen の `export-progress` listener (line 263-344) を event 名だけ変えて移植 (post_match 迷子 guard 含む)。
-- **ConflictModal**: `showConflict` 時に既存 `<ConflictModal>` を render。overwrite 選択時は `expectedMtimeMs` 無しで `handleStartCrop` を再実行 (apply() の overwrite と同思想)、reload 選択で閉じるだけ (finally が既に reload 済)。
+- **ConflictModal**: `showConflict` 時に既存 `<ConflictModal>` を render。overwrite 選択時は **`handleStartCrop(true)`** で再実行 (`overwrite: true` を渡し CAS guard を明示 bypass、`expectedMtimeMs` は自動で omit。#893 R2 で mtime 不在=overwrite の弱い信号を廃し明示 flag 化)、reload 選択で閉じるだけ (finally が既に reload 済)。
 
 - [ ] **Step 5: Run to verify pass + typecheck**
 
@@ -1505,6 +1559,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ## Task 12: Docs (#818 SSoT gate)
 
 **Files:**
+
 - Modify: `docs/cli-spec.md` / `docs/output-spec.md` / `docs/ui-interaction-spec.md` / `docs/superpowers/specs/2026-06-29-v030-l3-roadmap.md` / `CLAUDE.md`
 - Conditionally: `docs/system-architecture.md` / `docs/ui-architecture.md` / `docs/a11y-policy.md` / `docs/gui-development.md` / `docs/design/README.md` / `docs/l2-e2e-checklist.md`
 

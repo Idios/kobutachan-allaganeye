@@ -57,7 +57,7 @@ MinimapScreen (React)
   ├─ seed 提案: invoke('detect_minimap_regions', {req:{metadataPath, excludedIndexes}})
   │     └─ allaganeye minimap <metadata_path> --json  (提案モード、read-only)
   │          → proposal 行を stdout に emit → Rust が集約して Vec<Proposal> を返す
-  └─ crop 実行: invoke('start_minimap', {req:{metadataPath, region, outputDir, namePattern, excludedIndexes, expectedMtimeMs}})
+  └─ crop 実行: invoke('start_minimap', {req:{metadataPath, region, outputDir, namePattern, excludedIndexes, expectedMtimeMs, overwrite}})
         └─ Tauri start_minimap (lib.rs) — start_export と同型 (ただし metadata は path 渡し)
              └─ allaganeye minimap <metadata_path> --json --region X,Y,W,H --expected-mtime <ms> --output-dir … --name-pattern … [--exclude …]
                   ├─ CLI が metadata.json を disk から fresh read
@@ -242,7 +242,7 @@ MinimapScreen (React)
 | region 未指定 / 不正 (parse 不能 / 負値 / w,h < 16 / frame はみ出し) | 実行ボタン disable + reason tooltip (CLI `_parse_region` と同じ境界を frontend でも検証)。subprocess に渡っても CLI が exit 5 で弾く (二重防御) |
 | 対象 match が空 (matches 0 件 / 全 post_match / 全 exclude) | 入口ボタン (CompleteScreen) は matches 0 件時 disable、実行ボタンは対象 0 件時 disable + reason tooltip (L4。export の eligibleCount 0 件と同方針) |
 | 実行前 dirty (未保存 matches 編集) | crop 抑止 + 「先に適用/破棄」promptで案内 |
-| write-back 直前に外部変更検知 (expected-mtime CAS 不一致) | CLI が write せず conflict exit → Rust が `state.mtime_conflict` reject → GUI が既存 #514 ConflictModal (reload / overwrite / cancel)。overwrite 選択時は `--expected-mtime` 無しで再 spawn (apply() の overwrite 経路と同思想) |
+| write-back 直前に外部変更検知 (expected-mtime CAS 不一致) | CLI が write せず conflict exit → Rust が `state.mtime_conflict` reject → GUI が既存 #514 ConflictModal (reload / overwrite / cancel)。overwrite 選択時は req に **`overwrite: true`** を渡して再 spawn し CAS guard を明示 bypass する (mtime 不在を overwrite の代替信号にしない、Codex R2)。`start_minimap` は `overwrite=false` かつ `expectedMtimeMs` 不在の呼び出しを spawn 前に `state.mtime_required` で **fail-closed reject** (caller bug / version skew による無 guard clobber を構造的に封鎖) |
 | sample mode (`filePath===null`) | 画面全体 read-only (SampleModeBanner)。crop / 自動検出 disable |
 | 提案モードで proposal 無し / scattered | inline notice (best-effort 契約)。crop 自体はブロックしない (手動指定に誘導) |
 | GPU encoder init 失敗 | libx264 retry (#761 `_GPU_ENCODER_FAILURE_PATTERNS` 流用) + `minimap-progress` の `fallback` stage → per-match notice |
