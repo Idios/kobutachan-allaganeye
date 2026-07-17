@@ -12,6 +12,7 @@ Mode:
 from __future__ import annotations
 
 import signal
+import sys
 import threading
 from pathlib import Path
 from typing import Annotated
@@ -25,6 +26,8 @@ from allaganeye.exceptions import (
 from allaganeye.export.encoder import enumerate_h264_encoders
 from allaganeye.export.pool import ExportMatch, _format_filename, export_matches
 from allaganeye.export.schema import ExportSummary, ProgressEvent
+from allaganeye.export.wire import WireWriter
+from allaganeye.detection.metadata_writer import read_metadata, write_metadata_atomic
 from allaganeye.video.areamap import resolve_match_regions
 from allaganeye.video.probe import probe_video
 
@@ -73,6 +76,13 @@ def register(app: typer.Typer) -> None:
                 ),
             ),
         ] = None,
+        exclude: Annotated[
+            str | None,
+            typer.Option(
+                "--exclude",
+                help="Comma-separated 1-based match indexes to skip.",
+            ),
+        ] = None,
         name_pattern: Annotated[
             str,
             typer.Option(
@@ -87,16 +97,32 @@ def register(app: typer.Typer) -> None:
             bool,
             typer.Option("--quiet", help="Suppress progress output."),
         ] = False,
+        json_mode: Annotated[
+            bool,
+            typer.Option(
+                "--json",
+                help="Emit JSON Lines on stdout (GUI subprocess mode).",
+            ),
+        ] = False,
+        expected_mtime: Annotated[
+            int | None,
+            typer.Option(
+                "--expected-mtime",
+                help=(
+                    "Compare-and-swap guard (GUI subprocess mode): abort with "
+                    "exit 6 if metadata.json mtime (ms) differs at write time."
+                ),
+            ),
+        ] = None,
     ) -> None:
         """Detect / crop the minimap (area-map) window per match (#481)."""
         # P2-7: lazy import the shared error reporters to avoid circular import
         from allaganeye.cli import _report_app_error, _report_unexpected_error
         from allaganeye.commands.export import _parse_indexes_csv
-        from allaganeye.detection.metadata_writer import (
-            read_metadata,
-            write_metadata_atomic,
-        )
         from allaganeye.video.capture_region import CaptureRegion
+
+        if json_mode and quiet:
+            raise typer.BadParameter("--json and --quiet are mutually exclusive")
 
         # ------ 1. read_metadata -----------------------------------------------
         try:
@@ -127,6 +153,7 @@ def register(app: typer.Typer) -> None:
 
             # ------ 3. match filter (export と同順) ----------------------------
             include_set = _parse_indexes_csv(include)
+            exclude_set = _parse_indexes_csv(exclude) or set()
             all_matches = metadata.get("matches") or []
             filtered_tuples: list[tuple[int, float, float, str]] = []
             # (index, start, end, type_label) for filtered matches
@@ -142,6 +169,8 @@ def register(app: typer.Typer) -> None:
                         )
                     continue
                 if include_set is not None and idx not in include_set:
+                    continue
+                if idx in exclude_set:
                     continue
                 if raw.get("type_override") == "skip":
                     continue
@@ -172,6 +201,33 @@ def register(app: typer.Typer) -> None:
                 raise typer.Exit(code=e.exit_code) from None
             for w in warns:
                 typer.echo(w, err=True)
+            if json_mode:
+                if hasattr(sys.stdout, "reconfigure"):
+                    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+                writer = WireWriter(stream=sys.stdout)
+                for mr in results:
+                    r = mr.region
+                    if r is None:
+                        region_px = None
+                        confidence = 0.0
+                    else:
+                        region_px = {
+                            "x": round(r.x * frame_w),
+                            "y": round(r.y * frame_h),
+                            "w": round(r.w * frame_w),
+                            "h": round(r.h * frame_h),
+                        }
+                        confidence = r.confidence
+                    writer.emit(
+                        ProgressEvent.proposal(
+                            match_index=mr.match_index,
+                            region=region_px,
+                            confidence=confidence,
+                            scattered=mr.scattered,
+                        )
+                    )
+                raise typer.Exit(code=4)
+            # else: 既存の plain-text 表示ブロック
             if not results:
                 typer.echo(
                     "提案なし: ミニマップ領域を自動検出できませんでした。", err=False
@@ -183,6 +239,13 @@ def register(app: typer.Typer) -> None:
             else:
                 for mr in results:
                     r = mr.region
+                    if r is None:
+                        typer.echo(
+                            f"match {mr.match_index}: "
+                            "領域を自動検出できませんでした "
+                            "(--region X,Y,W,H で手動指定してください)"
+                        )
+                        continue
                     # pixel 換算 (そのまま --region に貼れる値)
                     px = round(r.x * frame_w)
                     py = round(r.y * frame_h)
@@ -290,18 +353,7 @@ def register(app: typer.Typer) -> None:
             output_dir if output_dir is not None else metadata_path.parent / "minimap"
         )
 
-        # ------ 7. preflight: output_dir mkdir --------------------------------
-        # Finding 2 fix: 決定的 preflight (collision check 済み) を write より前に実行
-        # mkdir 失敗は except Exception で exit 1 になる (export.py と同規約)
-        try:
-            eff_output_dir.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            from allaganeye.cli import _report_unexpected_error
-
-            _report_unexpected_error(verbose=False, quiet=quiet, show_hint=False)
-            raise typer.Exit(code=1) from None
-
-        # ------ 8. write-back (encode 失敗でも座標は残す) ----------------------
+        # ------ 7. write-back (encode / mkdir 失敗でも座標は残す) -----------------
         # Finding 1 fix: filtered set の entry は上書き、対象外の既存 entry は保全
         # (match_index merge)。malformed entry (dict でない / match_index 欠落) も
         # 黙って捨てずにそのまま保全する (round-trip 哲学)。
@@ -354,11 +406,42 @@ def register(app: typer.Typer) -> None:
         )
         payload = dict(metadata)
         payload["minimap_regions"] = minimap_entries
+        # CAS guard (#893, Codex critical): re-stat right before the atomic
+        # write. floor-ms must match Rust file_mtime_ms (as_millis). On mismatch
+        # abort WITHOUT writing so an external edit between our read and write
+        # is never clobbered (#514 class). exit 6 -> GUI ConflictModal.
+        if expected_mtime is not None:
+            try:
+                current_mtime = metadata_path.stat().st_mtime_ns // 1_000_000
+            except OSError:
+                current_mtime = -1
+            if current_mtime != expected_mtime:
+                typer.echo(
+                    "conflict: metadata.json was modified externally "
+                    f"(expected mtime {expected_mtime}, got {current_mtime}); "
+                    "not writing",
+                    err=True,
+                )
+                raise typer.Exit(code=6)
         try:
             write_metadata_atomic(metadata_path, payload)
         except AllaganEyeError as e:
             _report_app_error(e, verbose=False, quiet=quiet, show_hint=False)
             raise typer.Exit(code=e.exit_code) from None
+
+        # ------ 8. encode-prep: output_dir mkdir ------------------------------
+        # mkdir runs AFTER write_metadata_atomic so that a mkdir failure still
+        # leaves the minimap coordinates persisted on disk (R2-2: coordinates-
+        # persist invariant: "encode 失敗でも座標は残す" applies equally to mkdir
+        # failures). mkdir also runs after the CAS check so a conflict exit-6
+        # never creates an empty output directory as a side-effect (F1 fix,
+        # Round 1). mkdir failure surfaces as exit 1 (same convention as
+        # export.py).
+        try:
+            eff_output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            _report_unexpected_error(verbose=False, quiet=quiet, show_hint=False)
+            raise typer.Exit(code=1) from None
 
         cancel_event = threading.Event()
 
@@ -371,8 +454,19 @@ def register(app: typer.Typer) -> None:
         # Round 1 FIX 4 規約: except Exception の中では typer.Exit / typer.BadParameter
         # を raise しない。cancelled / failure の Exit は try の外で。
         summary: ExportSummary
+        writer: WireWriter | None = None
+        if json_mode:
+            if hasattr(sys.stdout, "reconfigure"):
+                sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+            writer = WireWriter(stream=sys.stdout)
         try:
-            if quiet:
+            if json_mode:
+
+                def progress_cb(ev: ProgressEvent) -> None:
+                    assert writer is not None
+                    writer.emit(ev)
+
+            elif quiet:
 
                 def progress_cb(ev: ProgressEvent) -> None:
                     pass
@@ -417,7 +511,10 @@ def register(app: typer.Typer) -> None:
         finally:
             signal.signal(signal.SIGINT, original_handler)
 
-        # ------ 8. summary ------------------------------------------------------
+        if json_mode and writer is not None:
+            writer.emit(ProgressEvent.summary(summary))
+
+        # ------ 9. summary ------------------------------------------------------
         # Round 1 FIX 4: typer.Exit は P2-7 フレームの外で raise
         if summary.cancelled:
             raise typer.Exit(code=130)

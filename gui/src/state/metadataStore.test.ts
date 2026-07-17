@@ -1713,6 +1713,108 @@ describe('normalizeForPersistence capture_regions round-trip (#810)', () => {
   });
 });
 
+describe('useMetadataStore.reloadFromDisk (#893)', () => {
+  it('reloadFromDisk refreshes metadata + mtime and clears conflict', async () => {
+    const fresh = { ...validMetadata(), minimap_regions: [{ match_index: 1, region: { x: 0.01, y: 0.02, w: 0.15, h: 0.2, confidence: 1, source: 'manual' } }] };
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(999);
+      if (cmd === 'load_metadata') return Promise.resolve(fresh);
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      return Promise.resolve(null);
+    });
+    useMetadataStore.setState({ filePath: 'C:/x/metadata.json', loadedMtimeMs: 1, conflictErrorState: { code: 'x', message: 'y', hint: null } });
+
+    await useMetadataStore.getState().reloadFromDisk();
+
+    const s = useMetadataStore.getState();
+    expect(s.metadata?.minimap_regions?.[0].match_index).toBe(1);
+    expect(s.loadedMtimeMs).toBe(999);
+    expect(s.conflictErrorState).toBeNull();
+    expect(s.dirty).toBe(false);
+  });
+
+  // F2 fix (Round 1 #894): reloadFromDisk must also clear applyErrorState and
+  // restoreErrorState (symmetric with load()), so lingering error banners are
+  // dismissed after a successful post-crop reload.
+  it('reloadFromDisk clears applyErrorState and restoreErrorState on success', async () => {
+    const fresh = validMetadata();
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(1000);
+      if (cmd === 'load_metadata') return Promise.resolve(fresh);
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      return Promise.resolve(null);
+    });
+    // Pre-seed non-null error states that should be wiped by a successful reload.
+    useMetadataStore.setState({
+      filePath: 'C:/x/metadata.json',
+      applyErrorState: mkErrorState('apply failed'),
+      restoreErrorState: mkErrorState('restore failed'),
+      conflictErrorState: mkErrorState('conflict'),
+    });
+
+    await useMetadataStore.getState().reloadFromDisk();
+
+    const s = useMetadataStore.getState();
+    expect(s.applyErrorState).toBeNull();
+    expect(s.restoreErrorState).toBeNull();
+    expect(s.conflictErrorState).toBeNull();
+    expect(s.loadErrorState).toBeNull();
+  });
+
+  // F2 fix (Round 1 #894): reloadFromDisk must not throw on schema-invalid data
+  // or invoke failure; instead it must set loadErrorState and keep existing
+  // in-memory metadata intact.
+  it('reloadFromDisk sets loadErrorState and preserves metadata on invoke failure', async () => {
+    // load_metadata rejects (e.g. file vanished after crop)
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(null);
+      if (cmd === 'load_metadata') return Promise.reject(new Error('file gone'));
+      return Promise.resolve(null);
+    });
+    const existing = validMetadata();
+    useMetadataStore.setState({
+      filePath: 'C:/x/metadata.json',
+      metadata: existing as unknown as import('../types/metadata').Metadata,
+    });
+
+    // Must resolve (not throw) even though invoke rejects.
+    await expect(useMetadataStore.getState().reloadFromDisk()).resolves.toBeUndefined();
+
+    const s = useMetadataStore.getState();
+    expect(s.loadErrorState).not.toBeNull();
+    expect(s.loadErrorState?.message).toContain('file gone');
+    // Existing in-memory metadata is preserved (crop already wrote to disk).
+    expect(s.metadata).not.toBeNull();
+  });
+
+  it('reloadFromDisk sets loadErrorState on schema-invalid response', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(500);
+      if (cmd === 'load_metadata') return Promise.resolve({ bogus: true }); // invalid schema
+      return Promise.resolve(null);
+    });
+    const existing = validMetadata();
+    useMetadataStore.setState({
+      filePath: 'C:/x/metadata.json',
+      metadata: existing as unknown as import('../types/metadata').Metadata,
+    });
+
+    await expect(useMetadataStore.getState().reloadFromDisk()).resolves.toBeUndefined();
+
+    const s = useMetadataStore.getState();
+    expect(s.loadErrorState).not.toBeNull();
+    // Existing in-memory metadata is not wiped.
+    expect(s.metadata).not.toBeNull();
+  });
+
+  it('reloadFromDisk is a no-op without filePath (sample mode)', async () => {
+    invokeMock.mockReset();
+    useMetadataStore.setState({ filePath: null });
+    await expect(useMetadataStore.getState().reloadFromDisk()).resolves.toBeUndefined();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+});
+
 describe('normalizeForPersistence minimap_regions round-trip (#481)', () => {
   it('normalizeForPersistence preserves minimap_regions (#481)', async () => {
     // minimap_regions must survive load -> edit -> apply intact so the

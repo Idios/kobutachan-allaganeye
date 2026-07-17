@@ -20,6 +20,8 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
+import allaganeye.commands.minimap as minimap_mod
+from allaganeye.cli import app as _cli_app
 from allaganeye.commands.minimap import register
 from allaganeye.export.schema import ExportSummary
 from allaganeye.video.areamap import MatchRegionResult
@@ -934,13 +936,17 @@ def test_collision_preflight_before_writeback(
 
 @patch("allaganeye.commands.minimap.export_matches")
 @patch("allaganeye.commands.minimap.probe_video")
-def test_mkdir_failure_preflight_before_writeback(
+def test_mkdir_failure_after_writeback(
     mock_probe: MagicMock,
     mock_export: MagicMock,
     app: typer.Typer,
     tmp_path: Path,
 ) -> None:
-    """output dir mkdir 失敗 -> 非0 exit + metadata 不変 (Finding 2)。"""
+    """output dir mkdir 失敗 -> exit 1 + metadata に minimap_regions が残る (R2-2)。
+
+    R2-2 reorder: write_metadata_atomic は mkdir より先に実行されるため、
+    mkdir が OSError で失敗してもミニマップ座標は metadata.json に永続化される。
+    """
     mock_probe.return_value = {
         "width": 1920,
         "height": 1080,
@@ -959,21 +965,24 @@ def test_mkdir_failure_preflight_before_writeback(
             {"index": 1, "start_time": 10.0, "end_time": 400.0, "type": "match"},
         ],
     )
-    md_bytes_before = md_path.read_bytes()
-    out_dir = tmp_path / "minimap"
+    # Point -o at a path whose parent is a file -> mkdir must fail with OSError.
+    # Using a real-filesystem trigger avoids patching pathlib.Path.mkdir globally,
+    # which would also block write_metadata_atomic's internal parent.mkdir call.
+    blocker = tmp_path / "blocker2"
+    blocker.write_bytes(b"")  # blocker is a file; blocker/minimap cannot be mkdir'd
+    out_dir = blocker / "minimap"
 
-    with patch("pathlib.Path.mkdir", side_effect=OSError("Permission denied")):
-        result = runner.invoke(
-            app,
-            [
-                "minimap",
-                str(md_path),
-                "--region",
-                "24,22,534,392",
-                "-o",
-                str(out_dir),
-            ],
-        )
+    result = runner.invoke(
+        app,
+        [
+            "minimap",
+            str(md_path),
+            "--region",
+            "24,22,534,392",
+            "-o",
+            str(out_dir),
+        ],
+    )
 
     # OSError -> exit 1 (厳密に 1、raw OSError 素通りでない)
     assert result.exit_code == 1, (
@@ -993,10 +1002,502 @@ def test_mkdir_failure_preflight_before_writeback(
         f"mkdir failure should not have traceback in output:\n{output}"
     )
 
-    # metadata は不変 (Finding 2: mkdir より前に write してはならない)
-    md_bytes_after = md_path.read_bytes()
-    assert md_bytes_before == md_bytes_after, (
-        "mkdir 失敗前に metadata が書き換わっている (Finding 2)"
+    # R2-2: write は mkdir より前に完了するため、minimap_regions が永続化されている
+    md_after = json.loads(md_path.read_text(encoding="utf-8"))
+    assert "minimap_regions" in md_after, (
+        "R2-2: write_metadata_atomic runs before mkdir, "
+        "so minimap_regions must be present even when mkdir fails"
     )
-    # export_matches は呼ばれない
+    # export_matches は呼ばれない (mkdir 失敗で encode-prep が止まる)
     mock_export.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 10b. R2-2 TDD: CAS pass + mkdir OSError -> exit 1 + coordinates persisted
+# ---------------------------------------------------------------------------
+
+
+@patch("allaganeye.commands.minimap.export_matches")
+@patch("allaganeye.commands.minimap.probe_video")
+def test_cas_pass_mkdir_fail_coords_persist(
+    mock_probe: MagicMock,
+    mock_export: MagicMock,
+    app: typer.Typer,
+    tmp_path: Path,
+) -> None:
+    """CAS 通過後に mkdir が OSError -> exit 1 かつ minimap_regions が永続化 (R2-2)。
+
+    RED (with old mkdir-before-write order): write_metadata_atomic が mkdir の後に
+    あるため mkdir 失敗 -> write 未実行 -> minimap_regions が metadata.json に absent。
+    GREEN (after R2-2 reorder to write-before-mkdir): write は mkdir より先に完了し、
+    mkdir 失敗でも座標は残る ("encode 失敗でも座標は残す" 哲学を mkdir 失敗にも適用)。
+
+    Refs #893 iterate-review Round 2 R2-2.
+    """
+    mock_probe.return_value = {
+        "width": 1920,
+        "height": 1080,
+        "duration": 400.0,
+        "fps": 60.0,
+        "fps_num": 60,
+        "fps_den": 1,
+        "codec": "h264",
+        "audio_codec": None,
+    }
+    mock_export.return_value = ExportSummary(success=1, failure=0)
+
+    md_path = _make_metadata(
+        tmp_path,
+        matches=[
+            {"index": 1, "start_time": 10.0, "end_time": 400.0, "type": "match"},
+        ],
+    )
+    # Point -o at a path whose parent is a file -> mkdir must fail with OSError.
+    # Using a real-filesystem trigger avoids patching pathlib.Path.mkdir globally,
+    # which would also block write_metadata_atomic's internal parent.mkdir call
+    # and prevent the write (defeating the test purpose).
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")  # blocker is a file; blocker/minimap cannot be mkdir'd
+    out_dir = blocker / "minimap"
+
+    # Read the current mtime so CAS passes (expected_mtime matches actual mtime).
+    current_ms = md_path.stat().st_mtime_ns // 1_000_000
+
+    result = runner.invoke(
+        _cli_app,
+        [
+            "minimap",
+            str(md_path),
+            "--region",
+            "10,20,300,400",
+            "--json",
+            "--expected-mtime",
+            str(current_ms),
+            "-o",
+            str(out_dir),
+        ],
+    )
+
+    # mkdir failure -> exit 1
+    assert result.exit_code == 1, (
+        f"mkdir failure (after CAS pass) should exit 1, got {result.exit_code}\n"
+        f"stdout={result.stdout}"
+    )
+
+    # R2-2 invariant: write happened before mkdir, so coordinates must be on disk
+    md_after = json.loads(md_path.read_text(encoding="utf-8"))
+    assert "minimap_regions" in md_after, (
+        "R2-2 RED: with old write-after-mkdir order, write never runs when mkdir "
+        "fails -> minimap_regions absent. GREEN after reorder: minimap_regions present."
+    )
+    assert len(md_after["minimap_regions"]) >= 1, (
+        "minimap_regions must contain at least one entry for match 1"
+    )
+    assert md_after["minimap_regions"][0]["match_index"] == 1
+
+
+# ---------------------------------------------------------------------------
+# 11. minimap crop --json wire mode (#893)
+# ---------------------------------------------------------------------------
+
+
+def _write_metadata(tmp_path: Path, source: Path) -> Path:
+    meta = {
+        "schema_version": "1",
+        "source": str(source),
+        "matches": [
+            {"index": 1, "type": "fl_match", "start_time": 60.0, "end_time": 120.0},
+        ],
+    }
+    p = tmp_path / "metadata.json"
+    p.write_text(json.dumps(meta), encoding="utf-8")
+    return p
+
+
+def test_minimap_json_emits_ndjson_result_and_summary(tmp_path, monkeypatch):
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _write_metadata(tmp_path, source)
+
+    # Stub probe (frame size) and export_matches (encode) so no ffmpeg runs.
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+
+    def fake_export_matches(*, matches, progress_cb, **kwargs):
+        from allaganeye.export.schema import ProgressEvent
+
+        for m in matches:
+            progress_cb(
+                ProgressEvent.result(
+                    match_index=m.index,
+                    output_path=Path("out") / f"{m.index:03}.mp4",
+                    duration_ms=1000,
+                    encoder_used="libx264",
+                )
+            )
+        return ExportSummary(
+            success=len(matches), failure=0, skipped=0, cancelled=False
+        )
+
+    monkeypatch.setattr(minimap_mod, "export_matches", fake_export_matches)
+
+    result = runner.invoke(
+        _cli_app,
+        ["minimap", str(meta_path), "--region", "10,20,300,400", "--json"],
+    )
+    assert result.exit_code == 0, result.stdout
+    lines = [json.loads(ln) for ln in result.stdout.splitlines() if ln.strip()]
+    types = [ln["type"] for ln in lines]
+    assert "result" in types
+    assert types[-1] == "summary"
+    assert lines[-1]["success"] == 1
+
+
+# ---------------------------------------------------------------------------
+# 12. minimap --expected-mtime CAS guard (#893)
+# ---------------------------------------------------------------------------
+
+
+def test_minimap_proposal_json_emits_proposal_lines_exit4(tmp_path, monkeypatch, app):
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _write_metadata(tmp_path, source)
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+
+    class _Region:
+        x, y, w, h, confidence = 0.01, 0.02, 0.15, 0.20, 0.9
+
+    class _MR:
+        match_index = 1
+        region = _Region()
+        scattered = False
+
+    monkeypatch.setattr(
+        minimap_mod,
+        "resolve_match_regions",
+        lambda source, tuples: ([_MR()], []),
+    )
+
+    result = runner.invoke(app, ["minimap", str(meta_path), "--json"])
+    assert result.exit_code == 4, result.stdout
+    lines = [json.loads(ln) for ln in result.stdout.splitlines() if ln.strip()]
+    prop = [ln for ln in lines if ln["type"] == "proposal"]
+    assert prop and prop[0]["match_index"] == 1
+    # normalized region -> pixel ints at 1920x1080
+    assert prop[0]["region"] == {"x": 19, "y": 22, "w": 288, "h": 216}
+
+
+def test_minimap_proposal_json_none_region_emits_null_region_exit4(
+    tmp_path, monkeypatch, app
+):
+    """--json 提案モード: mr.region is None の match は region: null を emit し exit 4。
+
+    Refs #893: spec section 5.2 requires region:null when no region detected.
+    Rust parser is null-capable; unconditional r.x/.y/.w/.h access would raise
+    AttributeError if region is None.
+    """
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _write_metadata(tmp_path, source)
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+
+    class _MRNone:
+        match_index = 1
+        region = None  # None region: no detection for this match
+        scattered = False
+
+    monkeypatch.setattr(
+        minimap_mod,
+        "resolve_match_regions",
+        lambda source, tuples: ([_MRNone()], []),
+    )
+
+    result = runner.invoke(app, ["minimap", str(meta_path), "--json"])
+    assert result.exit_code == 4, result.stdout
+    lines = [json.loads(ln) for ln in result.stdout.splitlines() if ln.strip()]
+    prop = [ln for ln in lines if ln["type"] == "proposal"]
+    assert prop, f"expected at least one proposal line, got lines={lines}"
+    assert prop[0]["match_index"] == 1
+    # region must be null (None) when no detection
+    assert prop[0]["region"] is None, (
+        f"expected region=null for None-region match, got {prop[0]['region']}"
+    )
+
+
+def test_minimap_expected_mtime_conflict_aborts_without_write(tmp_path, monkeypatch):
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _write_metadata(tmp_path, source)
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+    wrote = {"called": False}
+    monkeypatch.setattr(
+        minimap_mod,
+        "write_metadata_atomic",
+        lambda p, payload: wrote.__setitem__("called", True),
+    )
+    # export_matches must never run when the CAS aborts.
+    monkeypatch.setattr(
+        minimap_mod,
+        "export_matches",
+        lambda **k: (_ for _ in ()).throw(AssertionError("encode ran on conflict")),
+    )
+    # Pass a stale expected mtime (0) -> current mtime differs -> conflict.
+    result = runner.invoke(
+        _cli_app,
+        [
+            "minimap",
+            str(meta_path),
+            "--region",
+            "10,20,300,400",
+            "--json",
+            "--expected-mtime",
+            "0",
+        ],
+    )
+    assert result.exit_code == 6, result.stdout
+    assert wrote["called"] is False
+
+
+def test_minimap_expected_mtime_match_writes(tmp_path, monkeypatch):
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _write_metadata(tmp_path, source)
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+    monkeypatch.setattr(
+        minimap_mod,
+        "export_matches",
+        lambda **k: ExportSummary(success=1, failure=0, skipped=0, cancelled=False),
+    )
+    current_ms = meta_path.stat().st_mtime_ns // 1_000_000
+    result = runner.invoke(
+        _cli_app,
+        [
+            "minimap",
+            str(meta_path),
+            "--region",
+            "10,20,300,400",
+            "--json",
+            "--expected-mtime",
+            str(current_ms),
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    written = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert written["minimap_regions"][0]["match_index"] == 1
+
+
+# ---------------------------------------------------------------------------
+# 13. --exclude option mirrors Rust/GUI contract (#893 HIGH fix)
+# ---------------------------------------------------------------------------
+
+
+def _write_metadata_2matches(tmp_path: Path, source: Path) -> Path:
+    """metadata.json with 2 matches for --exclude tests."""
+    meta = {
+        "schema_version": "1",
+        "source": str(source),
+        "matches": [
+            {"index": 1, "type": "fl_match", "start_time": 60.0, "end_time": 120.0},
+            {"index": 2, "type": "fl_match", "start_time": 180.0, "end_time": 240.0},
+        ],
+        "system_info": {
+            "gpu_vendors_available": [],
+            "vendor_preference": ["nvidia", "amd", "intel"],
+            "gpu": [],
+        },
+    }
+    p = tmp_path / "metadata.json"
+    p.write_text(json.dumps(meta), encoding="utf-8")
+    return p
+
+
+def test_exclude_crop_mode_skips_excluded_match(tmp_path, monkeypatch):
+    """--exclude 2 in crop mode: only match 1 reaches export_matches; exit 0.
+
+    RED: currently fails with exit 2 (usage error 'No such option: --exclude').
+    GREEN: after adding --exclude to minimap CLI, match index 2 is absent.
+    """
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _write_metadata_2matches(tmp_path, source)
+
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+
+    captured: list = []
+
+    def fake_export_matches(*, matches, progress_cb, **kwargs):
+        captured.extend(matches)
+        return ExportSummary(
+            success=len(matches), failure=0, skipped=0, cancelled=False
+        )
+
+    monkeypatch.setattr(minimap_mod, "export_matches", fake_export_matches)
+
+    result = runner.invoke(
+        _cli_app,
+        [
+            "minimap",
+            str(meta_path),
+            "--region",
+            "10,20,300,400",
+            "--json",
+            "--exclude",
+            "2",
+        ],
+    )
+    assert result.exit_code == 0, (
+        f"expected exit 0 with --exclude 2, got {result.exit_code}\nstdout={result.stdout}"
+    )
+    passed_indexes = [m.index for m in captured]
+    assert 2 not in passed_indexes, (
+        f"match index 2 should be excluded but was passed to export_matches: {passed_indexes}"
+    )
+    assert 1 in passed_indexes, (
+        f"match index 1 should be included but was absent: {passed_indexes}"
+    )
+
+
+def test_proposal_plaintext_none_region_exits4_no_traceback(tmp_path, monkeypatch, app):
+    """plain-text 提案モード: mr.region is None の match は exit 4 + 案内メッセージ。
+
+    RED: plain-text path が r.x 等を直接参照するため AttributeError が発生 (exit 1)。
+    GREEN: None guard 追加後は exit 4 + 「領域を自動検出できませんでした」メッセージ。
+    No traceback must appear.
+
+    Refs #893 (symmetry with --json None-region guard).
+    """
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _write_metadata(tmp_path, source)
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+
+    class _MRNone:
+        match_index = 1
+        region = None  # None region: no detection for this match
+        scattered = False
+
+    monkeypatch.setattr(
+        minimap_mod,
+        "resolve_match_regions",
+        lambda source, tuples: ([_MRNone()], []),
+    )
+
+    # plain-text mode: NO --json flag
+    result = runner.invoke(app, ["minimap", str(meta_path)])
+    assert result.exit_code == 4, (
+        f"expected exit 4 for None-region plain-text proposal, "
+        f"got {result.exit_code}\nstdout={result.output}"
+    )
+    # 案内メッセージが出力される
+    assert "領域を自動検出できませんでした" in result.output, (
+        f"expected guidance message in output, got:\n{result.output}"
+    )
+    # トレースバックは出ない
+    assert "Traceback" not in result.output, (
+        f"plain-text None-region must not raise traceback:\n{result.output}"
+    )
+    assert "AttributeError" not in result.output, (
+        f"plain-text None-region must not raise AttributeError:\n{result.output}"
+    )
+
+
+def test_exclude_proposal_mode_skips_excluded_match(tmp_path, monkeypatch, app):
+    """--exclude 1 in proposal mode: resolve_match_regions receives only match 2; exit 4.
+
+    RED: currently fails with exit 2 (usage error 'No such option: --exclude').
+    GREEN: after adding --exclude, match 1 is absent from tuples passed to resolve.
+    """
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _write_metadata_2matches(tmp_path, source)
+
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+
+    received_tuples: list = []
+
+    def fake_resolve(source_video, match_tuples):
+        received_tuples.extend(match_tuples)
+        return ([], [])
+
+    monkeypatch.setattr(minimap_mod, "resolve_match_regions", fake_resolve)
+
+    result = runner.invoke(
+        app,
+        ["minimap", str(meta_path), "--json", "--exclude", "1"],
+    )
+    assert result.exit_code == 4, (
+        f"proposal mode should exit 4 with --exclude 1, got {result.exit_code}\nstdout={result.stdout}"
+    )
+    passed_indexes = [t[0] for t in received_tuples]
+    assert 1 not in passed_indexes, (
+        f"match index 1 should be excluded but was passed to resolve: {passed_indexes}"
+    )
+    assert 2 in passed_indexes, (
+        f"match index 2 should be included but was absent: {passed_indexes}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 14. CAS conflict must not create output dir (F1 fix, Round 1 #894)
+# ---------------------------------------------------------------------------
+
+
+def test_cas_conflict_does_not_create_output_dir(tmp_path, monkeypatch):
+    """--expected-mtime 0 (stale) -> exit 6 AND output dir is NOT created.
+
+    F1 fix: mkdir block was previously placed before the CAS check, so an
+    exit-6 conflict still created an empty output directory as a side-effect.
+    After the fix the mkdir runs only after a successful CAS, so the dir must
+    remain absent on conflict.
+    """
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _write_metadata(tmp_path, source)
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+    monkeypatch.setattr(
+        minimap_mod,
+        "export_matches",
+        lambda **k: (_ for _ in ()).throw(AssertionError("encode ran on conflict")),
+    )
+
+    out_dir = tmp_path / "out_conflict"
+    assert not out_dir.exists(), "precondition: output dir must not exist before test"
+
+    # Pass a stale expected mtime (0) so CAS detects a conflict.
+    result = runner.invoke(
+        _cli_app,
+        [
+            "minimap",
+            str(meta_path),
+            "--region",
+            "10,20,300,400",
+            "--json",
+            "--expected-mtime",
+            "0",
+            "-o",
+            str(out_dir),
+        ],
+    )
+    assert result.exit_code == 6, (
+        f"stale mtime should abort with exit 6, got {result.exit_code}\n{result.stdout}"
+    )
+    assert not out_dir.exists(), (
+        "output dir must NOT be created when CAS conflict aborts (F1 fix)"
+    )

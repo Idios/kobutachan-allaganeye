@@ -124,6 +124,10 @@ export interface MetadataState {
 
   /** Phase 2 only: load the in-memory sample metadata (no filePath set). */
   loadSample: () => void;
+
+  /** #893: re-read metadata.json from disk (mtime + minimap_regions) after a
+   *  minimap crop subprocess wrote to it. Idempotent; no-op in sample mode. */
+  reloadFromDisk: () => Promise<void>;
 }
 
 const PERSISTABLE_TYPES = new Set<TypeOverride>(['fl_match', 'unknown']);
@@ -557,6 +561,42 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       draftSaving: false,
       draftSaveErrorState: null,
     });
+  },
+
+  reloadFromDisk: async () => {
+    const path = get().filePath;
+    if (!path) return; // sample mode: no disk to reload
+    try {
+      // #834 order: read mtime BEFORE contents so a concurrent writer between
+      // the two calls leaves the stored mtime <= content's (conservative).
+      const mtime = await invoke<number | null>('get_metadata_mtime', { path });
+      const raw = await invoke<unknown>('load_metadata', { path });
+      const parsed = MetadataSchema.parse(raw);
+      set({
+        metadata: parsed as unknown as Metadata,
+        loadedMtimeMs: mtime ?? null,
+        dirty: false,
+        loadErrorState: null,
+        applyErrorState: null,
+        restoreErrorState: null,
+        conflictErrorState: null,
+      });
+      await get().refreshBackupStatus();
+    } catch (e) {
+      // reload failure surfaces an error but keeps the current in-memory
+      // metadata (the crop already wrote to disk; this is a read failure).
+      //
+      // Note: on reload failure, loadedMtimeMs is intentionally left stale
+      // (not reset here). This is conservatively SAFE: a later apply() will
+      // compare the stale (older) mtime against the newer disk mtime and
+      // detect a conflict (surfacing ConflictModal -> user reloads) rather
+      // than silently clobbering external changes. (#893 R2-3)
+      //
+      // Phase 1 has no live caller of reloadFromDisk yet; the caller-context
+      // behavior (e.g. how the MinimapScreen reacts to a reload failure) will
+      // be finalized in the Phase 2 MinimapScreen wiring PR.
+      set({ loadErrorState: toErrorState(e) });
+    }
   },
   };
 });
