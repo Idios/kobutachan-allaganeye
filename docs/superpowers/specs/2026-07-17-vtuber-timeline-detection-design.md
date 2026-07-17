@@ -57,7 +57,7 @@
 
 | パラメータ | 初期値 | 根拠 (PoC) | 校正方針 |
 | --- | --- | --- | --- |
-| V1 stride | 10s | 6 source で試合構造を再現。4h VOD ≈ 1450 probes ≈ 2-6 分 (CPU 16 workers) | 固定 |
+| V1 stride | 10s | 6 source で試合構造を再現。4h VOD ≈ 1450 probes ≈ 3-6 分 (CPU 16 workers、§3.2 の性能突合基準と同値) | 固定 |
 | MAD_MIN | 1.5 | 試合中最低 band_mad ≥ 2.2 vs 凍結画面 ≤ 0.83 (きゅま)。湿気で rule A の 61min 誤マージを解消 | Phase 3 で 6 source 分布から再確認 |
 | W / K | 9 probes / 2 | Onsal 弱 presence (20s bucket 最低 25%) を bridge しつつ lobby (~1%) を弾く | 同上 |
 | MERGE_RATE | 10% | FN run ~24% vs 真 lobby ~1.5% (1s stride、15 倍分離) | 同上 |
@@ -72,12 +72,13 @@
 - OBS default path / `--masked` path / `_flag_post_match_trailing` / v2 分類器: **コード経路として一切非接触**。`--vtuber` 分岐の内側だけを差し替える (二重 gate: flag なし = 現行 path が構造的に保証される。教訓 ①②)。
 - V0 縮退時の floor = 現行 `--vtuber` band-crop blackout path (現状より悪化しない)。
 - 音声: 不採用 (PoC 結果 5)。`AUDIO_FROZEN` に変更なし。
+- VTuber の post_match trailing flag (#797/#805): 現行どおり非適用のまま (two-signal §8.1 P2-d の gate-off を timeline path も踏襲。早期 return により構造的に非適用)。導入判断は P3 / scope 外。
 - fps filter 非使用: V1/V3 はすべて `-ss` 単発 probe (#575 制約の影響を受けない)。
 
 ### 2.3 実装配置
 
-- 新規: `allaganeye/video/vtuber_timeline.py` (V1-V3 オーケストレーション + パラメータ定数)。V0/V4 は既存 (`capture_region.py` / `presence.py`) を呼ぶ。
-- `detector.py` の `--vtuber` 分岐: Stage 0 成功時に現行 band-crop Pass1/Pass2 の代わりに vtuber_timeline を呼ぶ。
+- 新規: `allaganeye/video/vtuber_timeline.py` (V0-V3 オーケストレーション + パラメータ定数)。V0/V4 は既存 primitive (`capture_region.py` / `presence.py`) を呼ぶ。
+- `detector.py` の `--vtuber` 分岐: **分岐先頭で V0 (timeline 専用 anchor consensus、48/0.5/5) を試行**し、成功時は V1-V2 (timeline path) の結果を返す。V0 不成立 / probe 過半 UNKNOWN のときのみ、既存 Stage 0 (`_resolve_detect_region`) + band-crop blackout path へ縮退する (既存 Stage 0 の consensus は timeline の gate ではない — 別物の consensus であることに注意)。
 - **cache key**: 新 param (`vtuber_timeline` バージョン識別子) を `_save_cache` / `_load_cache` / verbose の 3 箇所に追加 (`feedback_detection_flag_cache_key` 遵守。#823/#830 で 2 回摘出された死角)。legacy `--vtuber` cache は識別子欠落 → miss として再検知。
 - metadata: `matches[]` 現行 schema 不変。`capture_regions.coarse` は band (現行どおり)。V4 の低信頼フラグ・merge/削除統計は `warnings` / stats に記録 (#805 の痕跡記録と同型)。
 
@@ -106,7 +107,7 @@
 | --- | --- | --- |
 | R-a | 未知レイアウトで anchor 不成立 (V0 失敗) | 現行 path へ縮退 + warning (floor 保証)。縮退率を stats で可視化 |
 | R-b | 試合中 FN run が 300s 超 → merge 裁定の対象外で偽分割残存 | 6 source 実測最大 ~250s。残存時は V4 の隣接 segment 低信頼フラグで可視化 (silent 誤りにしない) |
-| R-c | inset 位置が VOD 内で移動 | 6 source では非発生 (PoC §7.4)。将来 per-segment anchor (#810 `segments[]`) で拡張 |
+| R-c | inset 位置が VOD 内で移動 | 6 source では非発生 (PoC §7.5)。将来 per-segment anchor (#810 `segments[]`) で拡張 |
 | R-d | リザルト/staging が present∧moving に見えて連続試合がマージ | motion AND + blackout snap + 30min 低信頼フラグの三重防御。gyawa/きゅま実測ではマージ 0 |
 | R-e | 非 FL コンテンツ (CC 等) の誤検出 | at-anchor は emblem 3 点 AND (FL 特異)。V4 quorum が backstop。非 Onsal マップ分布は Phase 3 で確認 |
 | R-f | V1 の計算コスト (8h VOD ≈ 3000 probes ×2 frames) | PoC 実測 6-10 分 (CPU)。現行 3s 格子 Pass1 より probe 数は少ない。GPU 化は将来最適化 (scope 外) |
@@ -117,7 +118,7 @@
 
 | Phase | 内容 | gate |
 | --- | --- | --- |
-| **P1** | `vtuber_timeline.py` V1+V2 (scan + 粗分割) + detector 配線 + cache key + unit | OBS bit-exact (flag なし) + gyawa/きゅま粗分割が PoC 模擬と一致 |
+| **P1** | `vtuber_timeline.py` V0-V2 (anchor + scan + 粗分割) + detector 配線 + cache key + unit | OBS bit-exact (flag なし) + gyawa/きゅま粗分割が PoC 模擬と一致 |
 | **P2** | V3 (merge 裁定 + 境界 snap) + V4 (L2 検証流用 + フラグ) + unit | きゅま 11/11 (偽分割解消) + gyawa 6/6 |
 | **P3** | 6 source GT 注釈 + 実機 gate 一式 + `--vtuber` hidden 解除判断 + doc (cli-spec / output-spec / detection-map / CLAUDE.md) | §3.2 全 gate + Idios 実機確認 |
 

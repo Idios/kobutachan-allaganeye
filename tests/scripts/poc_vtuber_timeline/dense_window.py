@@ -8,7 +8,7 @@ For a time window, probes every --stride seconds; per probe decodes TWO frames
   - raw localize presence + conf
 
 Usage:
-    python poc/dense_window.py <video> <out_csv> --t0 3200 --t1 3600 [--stride 1]
+    python tests/scripts/poc_vtuber_timeline/dense_window.py <video> <out_csv> --t0 3200 --t1 3600 [--stride 1]
         [--band-y0 0 --band-y1 60] [--band-x0 500 --band-x1 1200]
 """
 

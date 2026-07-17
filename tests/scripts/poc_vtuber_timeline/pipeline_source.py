@@ -1,7 +1,7 @@
 """Per-source PoC pipeline: sparse raw scan -> anchor consensus -> at-anchor scan -> rule-B segments.
 
 Usage:
-    python poc/pipeline_source.py <video> <label> [--out-dir E:/allaganeye-samples/_poc_vtuber_retry]
+    python tests/scripts/poc_vtuber_timeline/pipeline_source.py <video> <label> [--out-dir E:/allaganeye-samples/_poc_vtuber_retry]
 """
 
 from __future__ import annotations

@@ -4,7 +4,7 @@ Records ALL peaks above a low threshold so the report can show the similarity
 distribution (voice-over degradation check), not just production-threshold hits.
 
 Usage:
-    python poc/fanfare_scan.py <video> <out_json> [--threshold 0.5]
+    python tests/scripts/poc_vtuber_timeline/fanfare_scan.py <video> <out_json> [--threshold 0.5]
 """
 
 from __future__ import annotations

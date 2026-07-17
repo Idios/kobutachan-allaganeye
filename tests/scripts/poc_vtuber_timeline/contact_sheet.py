@@ -4,7 +4,7 @@ Extracts one frame per --stride seconds (320x180), tiles them 6x5 per sheet
 with timestamp labels, writes PNG sheets.
 
 Usage:
-    python poc/contact_sheet.py <video> <out_dir> [--stride 60] [--t0 0] [--t1 0]
+    python tests/scripts/poc_vtuber_timeline/contact_sheet.py <video> <out_dir> [--stride 60] [--t0 0] [--t1 0]
 """
 
 from __future__ import annotations

@@ -46,6 +46,8 @@ dense 計測 (1s stride、frame pair Δ0.5s) より:
 2. **gate なし hit 率 + motion (band_mad) の組合せは全ソースで分離**: 試合中 = present∧moving、lobby = absent (hit ~1-22%)、凍結画面 = present∧frozen。
 3. lobby の presence バーストは 60-120s の島で、duration prior (300s) の下では試合化しない。
 
+**補足 (V0 anchor パラメータ 48/0.5/5 の根拠数値)**: 上表の hit 率は **at-anchor** 評価 (dense 窓) の値。anchor consensus のサンプル数設計に使うのは **raw localize (位置独立・全域 10s sparse)** の conf≥0.5 hit 率で、きゅま **302/1449 = 20.8%** / gyawa **468/978 = 47.9%**。dominant cluster の median conf は きゅま 0.589 / gyawa 1.00 (§1 表)。48 samples × 20.8% ≈ 期待 10 hits ≥ min 5 が設計根拠 (masked の conf 0.7 事前フィルタでは きゅま median 0.589 の true hit 群が枯れる)。
+
 ## 4. 結果 3: timeline segmentation 模擬 (6 source)
 
 rule B = probe evidence 「anchor hit ∧ band_mad ≥ 1.5」、rolling window 9 probes (90s) quorum 2、min 300s:

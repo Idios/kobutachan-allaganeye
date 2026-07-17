@@ -5,7 +5,7 @@ records full-frame brightness + raw localize_scorebar output.  Output CSV feeds
 the boundary-signal analysis (static plateau / presence gap / blackout).
 
 Usage:
-    python poc/scan_timeline.py <video> <out_csv> [--stride 10] [--start 0] [--end 0]
+    python tests/scripts/poc_vtuber_timeline/scan_timeline.py <video> <out_csv> [--stride 10] [--start 0] [--end 0]
 """
 
 from __future__ import annotations

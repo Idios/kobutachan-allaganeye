@@ -23,7 +23,8 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 │  処理: minimap 切抜き / masked 品質改善             │
 │        export 並列化 / ZIP size / detect 高速化     │
 │  出力: 既存 metadata.json 拡張 + minimap artifact   │
-│  ※ VTuber 配信動画対応は v0.4.0 期へ後送 (#872)     │
+│  ※ VTuber 対応は 2026-07-17 再開 (#895 timeline    │
+│     再設計。release 割当は /release Step 0c 判断)    │
 ├─────────────────────────────────────────────────┤
 │  L4 (former L3): メタデータ化（将来）                │
 │  入力: L1 出力の試合動画                           │
