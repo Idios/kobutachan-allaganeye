@@ -353,7 +353,7 @@ def register(app: typer.Typer) -> None:
             output_dir if output_dir is not None else metadata_path.parent / "minimap"
         )
 
-        # ------ 7. write-back (encode 失敗でも座標は残す) ------------------------
+        # ------ 7. write-back (encode / mkdir 失敗でも座標は残す) -----------------
         # Finding 1 fix: filtered set の entry は上書き、対象外の既存 entry は保全
         # (match_index merge)。malformed entry (dict でない / match_index 欠落) も
         # 黙って捨てずにそのまま保全する (round-trip 哲学)。
@@ -423,20 +423,25 @@ def register(app: typer.Typer) -> None:
                     err=True,
                 )
                 raise typer.Exit(code=6)
-        # ------ 8. preflight: output_dir mkdir --------------------------------
-        # mkdir runs AFTER the CAS check so a conflict exit-6 never creates an
-        # empty output directory as a side-effect (F1 fix, Round 1).
-        # mkdir failure surfaces as exit 1 (same convention as export.py).
-        try:
-            eff_output_dir.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            _report_unexpected_error(verbose=False, quiet=quiet, show_hint=False)
-            raise typer.Exit(code=1) from None
         try:
             write_metadata_atomic(metadata_path, payload)
         except AllaganEyeError as e:
             _report_app_error(e, verbose=False, quiet=quiet, show_hint=False)
             raise typer.Exit(code=e.exit_code) from None
+
+        # ------ 8. encode-prep: output_dir mkdir ------------------------------
+        # mkdir runs AFTER write_metadata_atomic so that a mkdir failure still
+        # leaves the minimap coordinates persisted on disk (R2-2: coordinates-
+        # persist invariant: "encode 失敗でも座標は残す" applies equally to mkdir
+        # failures). mkdir also runs after the CAS check so a conflict exit-6
+        # never creates an empty output directory as a side-effect (F1 fix,
+        # Round 1). mkdir failure surfaces as exit 1 (same convention as
+        # export.py).
+        try:
+            eff_output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            _report_unexpected_error(verbose=False, quiet=quiet, show_hint=False)
+            raise typer.Exit(code=1) from None
 
         cancel_event = threading.Event()
 
@@ -509,7 +514,7 @@ def register(app: typer.Typer) -> None:
         if json_mode and writer is not None:
             writer.emit(ProgressEvent.summary(summary))
 
-        # ------ 8. summary ------------------------------------------------------
+        # ------ 9. summary ------------------------------------------------------
         # Round 1 FIX 4: typer.Exit は P2-7 フレームの外で raise
         if summary.cancelled:
             raise typer.Exit(code=130)

@@ -585,6 +585,16 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
     } catch (e) {
       // reload failure surfaces an error but keeps the current in-memory
       // metadata (the crop already wrote to disk; this is a read failure).
+      //
+      // Note: on reload failure, loadedMtimeMs is intentionally left stale
+      // (not reset here). This is conservatively SAFE: a later apply() will
+      // compare the stale (older) mtime against the newer disk mtime and
+      // detect a conflict (surfacing ConflictModal -> user reloads) rather
+      // than silently clobbering external changes. (#893 R2-3)
+      //
+      // Phase 1 has no live caller of reloadFromDisk yet; the caller-context
+      // behavior (e.g. how the MinimapScreen reacts to a reload failure) will
+      // be finalized in the Phase 2 MinimapScreen wiring PR.
       set({ loadErrorState: toErrorState(e) });
     }
   },

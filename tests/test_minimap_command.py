@@ -936,13 +936,17 @@ def test_collision_preflight_before_writeback(
 
 @patch("allaganeye.commands.minimap.export_matches")
 @patch("allaganeye.commands.minimap.probe_video")
-def test_mkdir_failure_preflight_before_writeback(
+def test_mkdir_failure_after_writeback(
     mock_probe: MagicMock,
     mock_export: MagicMock,
     app: typer.Typer,
     tmp_path: Path,
 ) -> None:
-    """output dir mkdir 失敗 -> 非0 exit + metadata 不変 (Finding 2)。"""
+    """output dir mkdir 失敗 -> exit 1 + metadata に minimap_regions が残る (R2-2)。
+
+    R2-2 reorder: write_metadata_atomic は mkdir より先に実行されるため、
+    mkdir が OSError で失敗してもミニマップ座標は metadata.json に永続化される。
+    """
     mock_probe.return_value = {
         "width": 1920,
         "height": 1080,
@@ -961,21 +965,24 @@ def test_mkdir_failure_preflight_before_writeback(
             {"index": 1, "start_time": 10.0, "end_time": 400.0, "type": "match"},
         ],
     )
-    md_bytes_before = md_path.read_bytes()
-    out_dir = tmp_path / "minimap"
+    # Point -o at a path whose parent is a file -> mkdir must fail with OSError.
+    # Using a real-filesystem trigger avoids patching pathlib.Path.mkdir globally,
+    # which would also block write_metadata_atomic's internal parent.mkdir call.
+    blocker = tmp_path / "blocker2"
+    blocker.write_bytes(b"")  # blocker is a file; blocker/minimap cannot be mkdir'd
+    out_dir = blocker / "minimap"
 
-    with patch("pathlib.Path.mkdir", side_effect=OSError("Permission denied")):
-        result = runner.invoke(
-            app,
-            [
-                "minimap",
-                str(md_path),
-                "--region",
-                "24,22,534,392",
-                "-o",
-                str(out_dir),
-            ],
-        )
+    result = runner.invoke(
+        app,
+        [
+            "minimap",
+            str(md_path),
+            "--region",
+            "24,22,534,392",
+            "-o",
+            str(out_dir),
+        ],
+    )
 
     # OSError -> exit 1 (厳密に 1、raw OSError 素通りでない)
     assert result.exit_code == 1, (
@@ -995,13 +1002,98 @@ def test_mkdir_failure_preflight_before_writeback(
         f"mkdir failure should not have traceback in output:\n{output}"
     )
 
-    # metadata は不変 (Finding 2: mkdir より前に write してはならない)
-    md_bytes_after = md_path.read_bytes()
-    assert md_bytes_before == md_bytes_after, (
-        "mkdir 失敗前に metadata が書き換わっている (Finding 2)"
+    # R2-2: write は mkdir より前に完了するため、minimap_regions が永続化されている
+    md_after = json.loads(md_path.read_text(encoding="utf-8"))
+    assert "minimap_regions" in md_after, (
+        "R2-2: write_metadata_atomic runs before mkdir, "
+        "so minimap_regions must be present even when mkdir fails"
     )
-    # export_matches は呼ばれない
+    # export_matches は呼ばれない (mkdir 失敗で encode-prep が止まる)
     mock_export.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 10b. R2-2 TDD: CAS pass + mkdir OSError -> exit 1 + coordinates persisted
+# ---------------------------------------------------------------------------
+
+
+@patch("allaganeye.commands.minimap.export_matches")
+@patch("allaganeye.commands.minimap.probe_video")
+def test_cas_pass_mkdir_fail_coords_persist(
+    mock_probe: MagicMock,
+    mock_export: MagicMock,
+    app: typer.Typer,
+    tmp_path: Path,
+) -> None:
+    """CAS 通過後に mkdir が OSError -> exit 1 かつ minimap_regions が永続化 (R2-2)。
+
+    RED (with old mkdir-before-write order): write_metadata_atomic が mkdir の後に
+    あるため mkdir 失敗 -> write 未実行 -> minimap_regions が metadata.json に absent。
+    GREEN (after R2-2 reorder to write-before-mkdir): write は mkdir より先に完了し、
+    mkdir 失敗でも座標は残る ("encode 失敗でも座標は残す" 哲学を mkdir 失敗にも適用)。
+
+    Refs #893 iterate-review Round 2 R2-2.
+    """
+    mock_probe.return_value = {
+        "width": 1920,
+        "height": 1080,
+        "duration": 400.0,
+        "fps": 60.0,
+        "fps_num": 60,
+        "fps_den": 1,
+        "codec": "h264",
+        "audio_codec": None,
+    }
+    mock_export.return_value = ExportSummary(success=1, failure=0)
+
+    md_path = _make_metadata(
+        tmp_path,
+        matches=[
+            {"index": 1, "start_time": 10.0, "end_time": 400.0, "type": "match"},
+        ],
+    )
+    # Point -o at a path whose parent is a file -> mkdir must fail with OSError.
+    # Using a real-filesystem trigger avoids patching pathlib.Path.mkdir globally,
+    # which would also block write_metadata_atomic's internal parent.mkdir call
+    # and prevent the write (defeating the test purpose).
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")  # blocker is a file; blocker/minimap cannot be mkdir'd
+    out_dir = blocker / "minimap"
+
+    # Read the current mtime so CAS passes (expected_mtime matches actual mtime).
+    current_ms = md_path.stat().st_mtime_ns // 1_000_000
+
+    result = runner.invoke(
+        _cli_app,
+        [
+            "minimap",
+            str(md_path),
+            "--region",
+            "10,20,300,400",
+            "--json",
+            "--expected-mtime",
+            str(current_ms),
+            "-o",
+            str(out_dir),
+        ],
+    )
+
+    # mkdir failure -> exit 1
+    assert result.exit_code == 1, (
+        f"mkdir failure (after CAS pass) should exit 1, got {result.exit_code}\n"
+        f"stdout={result.stdout}"
+    )
+
+    # R2-2 invariant: write happened before mkdir, so coordinates must be on disk
+    md_after = json.loads(md_path.read_text(encoding="utf-8"))
+    assert "minimap_regions" in md_after, (
+        "R2-2 RED: with old write-after-mkdir order, write never runs when mkdir "
+        "fails -> minimap_regions absent. GREEN after reorder: minimap_regions present."
+    )
+    assert len(md_after["minimap_regions"]) >= 1, (
+        "minimap_regions must contain at least one entry for match 1"
+    )
+    assert md_after["minimap_regions"][0]["match_index"] == 1
 
 
 # ---------------------------------------------------------------------------
