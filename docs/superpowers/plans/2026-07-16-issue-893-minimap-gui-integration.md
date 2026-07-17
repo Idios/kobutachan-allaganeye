@@ -22,11 +22,11 @@
 
 ---
 
-# Phase 1 — Backbone (invariant-critical) — PR 1
+## Phase 1 — Backbone (invariant-critical) — PR 1
 
 新設した exit code 6・schema・wire・CLI 契約は Phase 1 で全て決着させる。Phase 1 の deliverable は「GUI 無しで CLI `minimap --json`/`--expected-mtime` が動き、Tauri command と store reload が cargo/vitest test で green」であること。
 
-## Task 1: CLI minimap crop `--json` mode
+### Task 1: CLI minimap crop `--json` mode
 
 **Files:**
 
@@ -119,7 +119,7 @@ import sys
 from allaganeye.export.wire import WireWriter
 ```
 
-2. `minimap` 関数の signature に `quiet` の直後へ追加:
+1. `minimap` 関数の signature に `quiet` の直後へ追加:
 
 ```python
         json_mode: Annotated[
@@ -131,14 +131,14 @@ from allaganeye.export.wire import WireWriter
         ] = False,
 ```
 
-3. 関数本体冒頭 (docstring 直後) に排他チェックを追加:
+1. 関数本体冒頭 (docstring 直後) に排他チェックを追加:
 
 ```python
         if json_mode and quiet:
             raise typer.BadParameter("--json and --quiet are mutually exclusive")
 ```
 
-4. crop モードの `progress_cb` 定義 (現状 `if quiet: … else: …` の 2 分岐) を 3 分岐に置換。`export.py` line 286-323 と同型:
+1. crop モードの `progress_cb` 定義 (現状 `if quiet: … else: …` の 2 分岐) を 3 分岐に置換。`export.py` line 286-323 と同型:
 
 ```python
         writer: WireWriter | None = None
@@ -178,7 +178,7 @@ from allaganeye.export.wire import WireWriter
                     )
 ```
 
-5. `export_matches(...)` 呼び出し後、summary 判定の前 (`if summary.cancelled:` の直前) に summary emit を追加:
+1. `export_matches(...)` 呼び出し後、summary 判定の前 (`if summary.cancelled:` の直前) に summary emit を追加:
 
 ```python
         if json_mode and writer is not None:
@@ -206,7 +206,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 2: CLI minimap `--expected-mtime` CAS guard
+### Task 2: CLI minimap `--expected-mtime` CAS guard
 
 **Files:**
 
@@ -294,7 +294,7 @@ Expected: FAIL (`--expected-mtime` 未定義)。
         ] = None,
 ```
 
-2. write-back 節 (`payload["minimap_regions"] = minimap_entries` の直後、`write_metadata_atomic` の直前) に CAS を挿入:
+1. write-back 節 (`payload["minimap_regions"] = minimap_entries` の直後、`write_metadata_atomic` の直前) に CAS を挿入:
 
 ```python
         # CAS guard (#893, Codex critical): re-stat right before the atomic
@@ -337,7 +337,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 3: CLI minimap proposal `--json` mode + proposal event
+### Task 3: CLI minimap proposal `--json` mode + proposal event
 
 **Files:**
 
@@ -509,7 +509,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 4: Rust `start_minimap` command
+### Task 4: Rust `start_minimap` command
 
 **Files:**
 
@@ -635,7 +635,7 @@ fn build_minimap_argv(req: &StartMinimapRequest) -> Vec<String> {
 }
 ```
 
-2. `start_export` を丸ごと clone して `start_minimap` を作る。**start_export (lib.rs ~2904-末尾) をそのまま複製**し、以下の delta のみ変更:
+1. `start_export` を丸ごと clone して `start_minimap` を作る。**start_export (lib.rs ~2904-末尾) をそのまま複製**し、以下の delta のみ変更:
    - 関数名 `start_minimap`、引数 `req: StartMinimapRequest`。
    - cmd 引数構築を `for a in build_minimap_argv(&req) { cmd.arg(a); }` に置換 (export の `cmd.arg("export").arg("--stdin")…` ブロックを削除)。
    - **stdin へ metadata を書く節を削除** (path 渡しなので不要)。`cmd.stdin(Stdio::piped())` も削除し `stdin(Stdio::null())`。
@@ -655,7 +655,7 @@ fn build_minimap_argv(req: &StartMinimapRequest) -> Vec<String> {
         }
 ```
 
-3. `tauri::generate_handler![…]` の 2 箇所 (invoke_handler + test builder、grep `get_metadata_mtime,` で見つかる ~3265 / ~3294) に `start_minimap,` を追加。
+1. `tauri::generate_handler![…]` の 2 箇所 (invoke_handler + test builder、grep `get_metadata_mtime,` で見つかる ~3265 / ~3294) に `start_minimap,` を追加。
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -678,7 +678,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 5: Rust `detect_minimap_regions` command
+### Task 5: Rust `detect_minimap_regions` command
 
 **Files:**
 
@@ -800,7 +800,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 6: metadataStore `reloadFromDisk()`
+### Task 6: metadataStore `reloadFromDisk()`
 
 **Files:**
 
@@ -857,7 +857,7 @@ Expected: FAIL (`reloadFromDisk` 未定義)。
   reloadFromDisk: () => Promise<void>;
 ```
 
-2. store 実装に追加 (既存 `load` の直後):
+1. store 実装に追加 (既存 `load` の直後):
 
 ```typescript
   reloadFromDisk: async () => {
@@ -900,7 +900,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Phase 1 完了ゲート (PR 1 作成前)
+### Phase 1 完了ゲート (PR 1 作成前)
 
 - [ ] `pytest tests/test_minimap_command.py tests/test_export_schema.py -v` 全 PASS
 - [ ] `ruff check . && ruff format --check . && pyright`
@@ -911,11 +911,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-# Phase 2 — MinimapScreen UI + navigation + docs — PR 2
+## Phase 2 — MinimapScreen UI + navigation + docs — PR 2
 
 Phase 1 の CLI/Rust/store backbone に乗せる視覚層。
 
-## Task 7: `'minimap'` screen + CompleteScreen 入口
+### Task 7: `'minimap'` screen + CompleteScreen 入口
 
 **Files:**
 
@@ -961,7 +961,7 @@ export type AppScreen =
   | 'minimap';
 ```
 
-2. `gui/src/screens/CompleteScreen.tsx` のアクションバー、`⬦ 全試合書き出し` ボタンの直後に:
+1. `gui/src/screens/CompleteScreen.tsx` のアクションバー、`⬦ 全試合書き出し` ボタンの直後に:
 
 ```tsx
           <button
@@ -975,7 +975,7 @@ export type AppScreen =
           </button>
 ```
 
-3. 画面 switch (grep `'export'` で `App.tsx` or StateSwitcher の分岐箇所) に:
+1. 画面 switch (grep `'export'` で `App.tsx` or StateSwitcher の分岐箇所) に:
 
 ```tsx
         {screen === 'minimap' && <MinimapScreen />}
@@ -1004,7 +1004,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 8: MinimapScreen — video pane + scrubber
+### Task 8: MinimapScreen — video pane + scrubber
 
 **Files:**
 
@@ -1120,7 +1120,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 9: MinimapScreen — drag-select overlay + 数値 region + validation
+### Task 9: MinimapScreen — drag-select overlay + 数値 region + validation
 
 **Files:**
 
@@ -1280,7 +1280,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 10: MinimapScreen — 自動検出ボタン (proposal) + pre-fill + cancel
+### Task 10: MinimapScreen — 自動検出ボタン (proposal) + pre-fill + cancel
 
 **Files:**
 
@@ -1386,7 +1386,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 11: MinimapScreen — 設定 + crop 実行 + 進捗 + dirty guard + reload + ConflictModal + jest-axe
+### Task 11: MinimapScreen — 設定 + crop 実行 + 進捗 + dirty guard + reload + ConflictModal + jest-axe
 
 **Files:**
 
@@ -1556,7 +1556,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 12: Docs (#818 SSoT gate)
+### Task 12: Docs (#818 SSoT gate)
 
 **Files:**
 
@@ -1597,7 +1597,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Phase 2 完了ゲート (PR 2 作成前)
+### Phase 2 完了ゲート (PR 2 作成前)
 
 - [ ] `cd gui && npm run lint && npm run typecheck && npm test && npm run build`
 - [ ] `cd gui/src-tauri && cargo check && cargo test`
@@ -1608,7 +1608,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Self-Review (plan 執筆後)
+### Self-Review (plan 執筆後)
 
 - **Spec coverage**: AC1 (spec 承認) = 前段完了 / AC2 (overlay+crop+進捗完結) = Task 8-11 / AC3 (minimap_regions 反映 + #514 整合) = Task 2 (CAS) + Task 6 (reload) + Task 11 (finally reload + ConflictModal) / AC4 (checks + 実機) = 各完了ゲート / AC5 (roadmap SSoT) = Task 12。spec §全 → task マップ済。
 - **Placeholder scan**: 各 code step に実コードを記載。条件付き doc (Task 12 Step 4) は grep 手順を明示。
