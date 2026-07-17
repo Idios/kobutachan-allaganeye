@@ -1006,11 +1006,11 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 **phase**: `idle | running | completed | error | cancelling` ([reducers/minimap.ts](../gui/src/screens/reducers/minimap.ts))。`minimapReducer` は `minimapPhase` を管理する。
 
 - `idle` → `running` (`START_CLICKED`)
-- `running` → `cancelling` (`CANCEL_CLICKED`) / `completed` (`PROGRESS_COMPLETE`) / `error` (`MINIMAP_ERROR`)
-- `cancelling` → `idle` (`CANCEL_CONFIRMED` または `MINIMAP_ERROR`)
+- `running` → `cancelling` (`CANCEL_CLICKED`) / `completed` (`PROGRESS_COMPLETE`) / `error` (`EXPORT_ERROR`) / `idle` (`CONFLICT_RESOLVED`)
+- `cancelling` → `idle` (`CANCEL_CONFIRMED` または `EXPORT_ERROR`)
 - `completed` → `idle` (`RESTART`)
-- `error` → `idle` (`DISMISS_ERROR` / `RESTART`)
-- `idle` (CONFLICT_RESOLVED): ConflictModal で「リロード」選択時、`metadataStore.reloadFromDisk()` 後に `idle` を維持（進行中の crop は存在しないため reducer 遷移なし）
+- `error` → `idle` (`RESTART`)
+- `running` (CONFLICT_RESOLVED): ConflictModal 表示時に `metadataStore.reloadFromDisk()` が既に実行されています。モーダルのリロード/キャンセル操作は単にモーダルを閉じるだけです（進行中の crop は存在しないため reducer は `running` → `idle` に遷移）
 
 **store**: `metadataStore.metadata` を読み取り、crop 完了・失敗・中断すべての terminal outcome で **`metadataStore.reloadFromDisk()`** を呼ぶ（`minimap_regions` の write-back 反映）。region 数値入力は local state で保持し `metadataStore` には commit しない（§1.1 例外: session-local config 扱い）。
 
