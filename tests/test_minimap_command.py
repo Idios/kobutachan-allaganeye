@@ -1103,7 +1103,7 @@ def test_minimap_proposal_json_none_region_emits_null_region_exit4(
 ):
     """--json 提案モード: mr.region is None の match は region: null を emit し exit 4。
 
-    Refs #893: spec §5.2 requires region:null when no region detected.
+    Refs #893: spec section 5.2 requires region:null when no region detected.
     Rust parser is null-capable; unconditional r.x/.y/.w/.h access would raise
     AttributeError if region is None.
     """
