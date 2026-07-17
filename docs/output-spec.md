@@ -174,3 +174,20 @@ Metadata: <metadata.json path>
 | 提案モード (`--region` 未指定) | なし | stdout に `match N: --region X,Y,W,H (confidence C)` 形式で提案を表示する。エンコードなし・write-back なし。常に exit 4 |
 | crop モード (`--region X,Y,W,H`) | `<out>/{idx:03}_{type}_{start}_minimap.mp4` (match ごと) | H.264 再エンコード MP4 (NVENC / QSV / AMF / libx264 fallback)。default 出力先は `<metadata dir>/minimap/` |
 | crop モード (metadata write-back) | `metadata.json` 更新 | エンコード開始前に `minimap_regions` フィールドを atomic write-back する（エンコード失敗時も座標は保持される） |
+
+### `--json` モード出力行 (crop モード)
+
+`--json` フラグ指定時、stdout の各行は JSON オブジェクト 1 件（JSON Lines 形式）。GUI subprocess が parse する:
+
+- `{"type":"result","match_index":N,"output_path":"...","duration_ms":N,"encoder_used":"h264_nvenc"|"libx264"|...}` — 1 match 成功
+- `{"type":"error","match_index":N,"error_kind":"...","error_message":"...","error_hint":null|"..."}` — 1 match 失敗
+- `{"type":"fallback","match_index":N,"fallback_from":"h264_nvenc","fallback_to":"libx264","message":"..."}` — GPU encoder 失敗 → libx264 fallback
+- `{"type":"summary","success":N,"failure":N,"skipped":N,"cancelled":bool}` — 常に最終行
+
+CAS 衝突 (`--expected-mtime` 不一致) は stdout への JSON 出力なしで **exit 6** のみ。GUI は exit 6 を受けて ConflictModal を表示する。
+
+### `--json` モード出力行 (提案モード)
+
+提案モードで `--json` を指定すると、stdout に match ごとに 1 行ずつ proposal を出力し常に exit 4 で終了する:
+
+- `{"type":"proposal","match_index":N,"region":{"x":X,"y":Y,"w":W,"h":H}|null,"confidence":C,"scattered":bool}` — `region` は検出成功時は座標オブジェクト、失敗時は `null`。`confidence` は 0.0-1.0。`scattered` は検出結果が散らばり consensus が低いことを示す

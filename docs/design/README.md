@@ -191,7 +191,7 @@ Electron / Tauri の両方で最小プロトタイプを構築し F1-F5 を計�
 
 ## スクリーンショット
 
-`screens/` ディレクトリは空 (本 handoff 時点では未収録)。Idios が手動で 5 枚 (drop / detecting / complete / preview / export) のスクリーンショットを取得して追加予定。Claude はブラウザ描画・スクショ取得を行わない (handoff bundle README の指示による)。
+`screens/` ディレクトリは空 (本 handoff 時点では未収録)。Idios が手動で 6 枚 (drop / detecting / complete / preview / export / minimap) のスクリーンショットを取得して追加予定。Claude はブラウザ描画・スクショ取得を行わない (handoff bundle README の指示による)。
 
 ## ファイル構成
 

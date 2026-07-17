@@ -173,6 +173,7 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 | §2.3 | complete | statusDot / sourceBox / stats / [元に戻す] / [境界を調整] / [全試合書き出し] / [× 閉じる] / BrightnessTimeline / listItem / previewPane / emptyNote | #603 で追加 |
 | §2.4 | preview | [◀ 一覧へ] / match name input / type select / Pane (×2 IN/OUT) / Pane.video / Pane.tcInput / stepRow ×6 / keyHint / FrameStrip / [適用] / dirty indicator / applyError / [元に戻す] / [書き出し] / emptyNote | #605 で追加 |
 | §2.5 | export | [◀ プレビュー] / header / 出力先 input + [参照…] / 命名規則 input / コーデック selector ×2 / errorMessage / progressBox / [書き出し開始] / [中断] / [✓ フォルダを開く] + openFolderError / [設定変更して再書き出し] / [設定変更して再試行] / listHeader + bulk / listItem / emptyNote | 本 PR で追加 |
+| §2.6 | minimap | overlay canvas (drag-select) / 数値入力 (X/Y/W/H) / [自動検出] / [切抜き実行] / [中断] / progressBox / emptyNote | #893 で追加 |
 
 各部品節の記述フォーマット (canonical):
 
@@ -1000,6 +1001,93 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | store mutation | なし |
 | 例外 / edge case | 通常フロー (complete から [全試合書き出し] / preview から [書き出し →]) では到達しない。dev StateSwitcher 経由のみ表示。文言 / 戻り導線 ([参照…] / drop へ) は [#587](https://github.com/Idios/kobutachan-allaganeye/issues/587) a11y/polish で議論 |
 
+### §2.6 minimap
+
+**phase**: `idle | running | completed | error | cancelling` ([reducers/minimap.ts](../gui/src/screens/reducers/minimap.ts))。`minimapReducer` は `minimapPhase` を管理する。
+
+- `idle` → `running` (`START_CLICKED`)
+- `running` → `cancelling` (`CANCEL_CLICKED`) / `completed` (`PROGRESS_COMPLETE`) / `error` (`MINIMAP_ERROR`)
+- `cancelling` → `idle` (`CANCEL_CONFIRMED` または `MINIMAP_ERROR`)
+- `completed` → `idle` (`RESTART`)
+- `error` → `idle` (`DISMISS_ERROR` / `RESTART`)
+- `idle` (CONFLICT_RESOLVED): ConflictModal で「リロード」選択時、`metadataStore.reloadFromDisk()` 後に `idle` を維持（進行中の crop は存在しないため reducer 遷移なし）
+
+**store**: `metadataStore.metadata` を読み取り、crop 完了・失敗・中断すべての terminal outcome で **`metadataStore.reloadFromDisk()`** を呼ぶ（`minimap_regions` の write-back 反映）。region 数値入力は local state で保持し `metadataStore` には commit しない（§1.1 例外: session-local config 扱い）。
+
+**dirty / silent loss**: metadata の match 編集は行わないため §1.3 silent loss confirm の対象外。ただし `--expected-mtime` CAS guard により外部変更検知 → exit 6 → ConflictModal（§1.3 準拠の外部変更フロー）。
+
+**sample mode**: §1.4 通り。[切抜き実行] を disabled にし read-only 化する。
+
+#### §2.6.1 overlay canvas (drag-select)
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | canvas 要素（動画フレームを背景に描画）。drag でリージョン矩形を指定する |
+| 状態 | `idle` のみ操作可能。`running / cancelling` 中は pointer-events: none |
+| 遷移トリガー | `mousedown` → `mousemove` → `mouseup` でリージョン確定。確定値は §2.6.2 数値入力欄に反映される |
+| store mutation | なし（local state 更新のみ） |
+| 例外 / edge case | **キーボード代替**: 数値 X/Y/W/H 入力欄（§2.6.2）が keyboard 操作の等価手段。drag-select は mouse/pointer のみ（§587 keyboard-全機能: drag の代替 = 数値入力で全機能到達可能） |
+
+#### §2.6.2 数値入力 (X / Y / W / H)
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | input `type="number"` × 4 (左上 X / Y、幅 W、高さ H) |
+| 状態 | `idle` のみ編集可能。値が不正（非整数 / 負値 / W か H が 16 未満 / フレーム境界越え）の場合は §2.6.4 [切抜き実行] が disabled になる（§1.2 disabled 条件は理由表示必須） |
+| 遷移トリガー | 値変更で local region state を更新。§2.6.1 drag-select からの値も同フィールドに反映 |
+| store mutation | なし |
+| 例外 / edge case | 空欄 / 0 / 負値は即時 inline validation エラー表示（§1.5 inline エラー）。フレーム解像度超えもエラー |
+
+#### §2.6.3 [自動検出] ボタン
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | button |
+| 状態 | `idle` かつ `metadata !== null` のとき enabled。`running / cancelling` 中は disabled |
+| 遷移トリガー | `AUTO_DETECT_CLICKED` — `allaganeye minimap <path> --json` (提案モード) を Tauri `detect_minimap_regions` command 経由で実行し、`proposal` 行を parse して最高 confidence の region を数値入力欄に反映する |
+| store mutation | なし（local region state 更新のみ） |
+| 例外 / edge case | 提案が 1 件もない（全試合 `region: null`）場合は §1.5 inline エラー。`scattered: true` の提案は 警告 badge を表示するが値は反映する |
+
+#### §2.6.4 [切抜き実行] ボタン
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | button (主要 CTA) |
+| 状態 | `idle` かつ region 値が有効 かつ `metadata !== null` のとき enabled。不正 region / `running / cancelling` / sample mode で disabled（§1.2 DisabledTooltip 必須） |
+| 遷移トリガー | `START_CLICKED` → `running`。Tauri `start_minimap` command を invoke（`--region X,Y,W,H --json --expected-mtime <mtime>` を `allaganeye minimap` に渡す）。`minimap-progress` イベントで進捗を受け取る |
+| store mutation | terminal outcome（`PROGRESS_COMPLETE` / `MINIMAP_ERROR` / `CANCEL_CONFIRMED`）で `metadataStore.reloadFromDisk()` |
+| 例外 / edge case | **exit 6 (CAS 衝突)**: `start_minimap` が exit 6 を返したとき `MINIMAP_ERROR` に遷移し ConflictModal を表示。「上書き」= `overwrite: true` で再実行（mtime チェック省略）、「リロード」= `reloadFromDisk()` 後 idle 維持、「キャンセル」= idle 維持。**GPU fallback**: `fallback` 行受信時は per-match fallback notice 表示（§2.5 export と同型） |
+
+#### §2.6.5 [中断] ボタン
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | button |
+| 状態 | `running` のみ表示・enabled。`cancelling` 中は disabled（2 度押し防止） |
+| 遷移トリガー | `CANCEL_CLICKED` → `cancelling`。Tauri `cancel_minimap` command で Python subprocess に SIGTERM |
+| store mutation | `cancelling` → `idle` 遷移後に `metadataStore.reloadFromDisk()` |
+| 例外 / edge case | §1.3 dirty guard 対象外（crop は不可逆・append only。中断後は完了分のみ metadata に反映） |
+
+#### §2.6.6 progressBox
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | progress area（match ごとの進捗行 + 全体 bar） |
+| 状態 | `running / cancelling` のみ表示 |
+| 遷移トリガー | `minimap-progress` イベントの `progress` / `result` / `error` / `fallback` 行 |
+| store mutation | なし（local state） |
+| 例外 / edge case | `error` 行受信時は inline per-match エラー表示（§1.5）。summary 受信で `PROGRESS_COMPLETE` dispatch |
+
+#### §2.6.7 emptyNote
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | display |
+| 状態 | `displayOnly`。`metadata === null` のみ render |
+| 遷移トリガー | `metadata` が null になった瞬間 |
+| store mutation | なし |
+| 例外 / edge case | 通常フロー (complete から [エリアマップ切り抜き]) では到達しない。dev StateSwitcher 経由のみ表示 |
+
 ## 3. 既存 doc との分担 + クロスリファレンス
 
 ### 3.1 doc 分担
@@ -1019,7 +1107,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 
 ### 3.2 状態名と mermaid 対応表
 
-5 画面の便宜状態名 (§2 各画面ヘッダで定義) と [ui-architecture.md](ui-architecture.md) §各画面 mermaid の状態を対応付ける。差異は意図的な分担 (§3.3 で集約) であり矛盾ではない。
+6 画面の便宜状態名 (§2 各画面ヘッダで定義) と [ui-architecture.md](ui-architecture.md) §各画面 mermaid の状態を対応付ける。差異は意図的な分担 (§3.3 で集約) であり矛盾ではない。
 
 | 画面 | reducer | 本 doc 状態 (§2.x ヘッダ) | mermaid 状態 ([ui-architecture.md](ui-architecture.md)) | 差異 |
 | --- | --- | --- | --- | --- |
@@ -1028,6 +1116,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | complete (§2.3) | なし | `complete_empty / complete_idle / complete_restoring` | `complete_idle / complete_restoring / complete_restoreError` | `complete_empty` は本 doc のみ (entry-time 特殊状態、§2.3.11 emptyNote と対応) / `complete_restoreError` は mermaid のみ (RestoreButton 共通 component 内 inline alert、§2.3.4 で扱う) |
 | preview (§2.4) | なし | `preview_empty / preview_idle / preview_applying / preview_applyError / preview_restoring` | `preview_idle / preview_applying / preview_applyError / preview_restoring / preview_restoreError` | `preview_empty` は本 doc のみ (§2.4.15 emptyNote) / `preview_restoreError` は mermaid のみ (§2.4.13 RestoreButton 共通 component) |
 | export (§2.5) | あり ([reducers/export.ts](../gui/src/screens/reducers/export.ts)) | `idle / running / cancelling / completed / error` | `export_idle / export_running / export_cancelling / export_completed / export_error` | 本 doc は接頭辞 `export_` 省略 (実装の `phase: ExportPhase` 直値に揃える)。mermaid `export_cancelling → export_idle: ffmpeg 停止` / `export_cancelling → export_completed: PROGRESS_COMPLETE` ([#837](https://github.com/Idios/kobutachan-allaganeye/issues/837)) と内部 reducer `cancelling → idle (CANCEL_CONFIRMED)` / `cancelling → completed (PROGRESS_COMPLETE)` は同形状 |
+| minimap (§2.6) | あり ([reducers/minimap.ts](../gui/src/screens/reducers/minimap.ts)) | `idle / running / cancelling / completed / error` | `minimap_idle / minimap_running / minimap_cancelling / minimap_completed / minimap_error` | 本 doc は接頭辞 `minimap_` 省略。CONFLICT_RESOLVED は running→idle 特殊経路で mermaid に注記 |
 
 ### 3.3 「entry-time 特殊状態」「sub-component エラー」の扱い
 
