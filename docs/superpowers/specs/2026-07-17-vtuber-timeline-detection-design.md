@@ -91,6 +91,7 @@
 
 - **OBS 5 baseline bit-exact**: flag なし実行で現行完全一致 (構造保証の実測確認)。
 - **masked 3 サンプル**: 現行出力不変。
+- **非 VTuber 性能退行の実測**: OBS baseline 1 本以上で detect wall-time を現行 (本 spec 適用前 commit) と比較し、差がノイズ範囲 (±10% 目安) であることを確認。「経路非接触だからゼロ影響のはず」を無検証にしない (import コスト・分岐追加を含む実測)。VTuber 実行時間も PoC 見積もり (4h VOD ≈ 3-6 分 / CPU) と乖離しないことを記録。
 - **VTuber GT 突合**: gyawa 6 試合 (GT 漏れ分を追加注釈) + きゅま 11 試合で matched/missed/spurious = 全一致/0/0、境界誤差 ≤ ±15s (zone-in 基準、10s stride + snap 後)。
 - **残り 4 source**: 境界 GT を注釈し (コンタクトシート法、PoC レポート §7.2 の手順)、同一パラメータで recall 100% / spurious 0 を確認。
 - GT 規約: zone-in 基準に統一 (PoC レポート §7.3)。gyawa 既存 GT は Phase 3 で再注釈 (漏れ試合追加 + 基準統一。ファイル更新は `docs/testing-guide.md` の SHA-256 台帳更新を伴う)。
