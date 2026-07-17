@@ -10,13 +10,14 @@ beforeEach(() => {
 });
 
 describe('StateSwitcher', () => {
-  it('renders all 5 screen labels', () => {
+  it('renders all 6 screen labels', () => {
     render(<StateSwitcher />);
     expect(screen.getByRole('button', { name: 'インポート' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '検知中' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '一覧' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '境界調整' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '書出し' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'ミニマップ' })).toBeInTheDocument();
   });
 
   it('marks the active tab with aria-pressed="true"', () => {

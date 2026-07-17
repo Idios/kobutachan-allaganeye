@@ -65,7 +65,7 @@ describe('validateRegionPx', () => {
   });
 
   it('rejects negative coordinates', () => {
-    expect(validateRegionPx({ x: -1, y: 0, w: 100, h: 100 }, 1920, 1080)).not.toBeNull();
+    expect(validateRegionPx({ x: -1, y: 0, w: 100, h: 100 }, 1920, 1080)).toMatch(/0 以上/);
   });
 
   it('accepts a valid region', () => {

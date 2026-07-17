@@ -320,7 +320,7 @@ export function MinimapScreen() {
       });
       const withRegion = proposals.filter((p) => p.region !== null);
       const current = withRegion.find((p) => p.matchIndex === frameMatchIndex);
-      const best = current ?? withRegion.sort((a, b) => b.confidence - a.confidence)[0];
+      const best = current ?? [...withRegion].sort((a, b) => b.confidence - a.confidence)[0];
       if (best?.region) {
         setRegion(best.region);
         const v = videoRef.current;
@@ -639,6 +639,7 @@ export function MinimapScreen() {
             aria-label="region x"
             value={r.x}
             min={0}
+            step={1}
             onChange={(e) => onFieldChange('x', e.target.value)}
           />
         </label>
@@ -649,6 +650,7 @@ export function MinimapScreen() {
             aria-label="region y"
             value={r.y}
             min={0}
+            step={1}
             onChange={(e) => onFieldChange('y', e.target.value)}
           />
         </label>
@@ -659,6 +661,7 @@ export function MinimapScreen() {
             aria-label="region width"
             value={r.w}
             min={0}
+            step={1}
             onChange={(e) => onFieldChange('w', e.target.value)}
           />
         </label>
@@ -669,6 +672,7 @@ export function MinimapScreen() {
             aria-label="region height"
             value={r.h}
             min={0}
+            step={1}
             onChange={(e) => onFieldChange('h', e.target.value)}
           />
         </label>
