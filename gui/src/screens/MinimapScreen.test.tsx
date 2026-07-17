@@ -186,6 +186,34 @@ describe('MinimapScreen', () => {
     expect(await screen.findByTestId('conflict-modal')).toBeInTheDocument();
   });
 
+  // Fix 1 (#893 Task 11): after conflict modal is dismissed (reload/cancel),
+  // phase must return to idle so the 切抜き開始 button re-enables.
+  it('re-enables 切抜き開始 button after conflict modal is closed (phase recovery)', async () => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    useMetadataStore.setState({ reloadFromDisk: reload });
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'register_video') return Promise.resolve({ url: 'u', token: 't' });
+      if (cmd === 'start_minimap') return Promise.reject({ code: 'state.mtime_conflict', message: 'conflict' });
+      return Promise.resolve(null);
+    });
+    renderMinimapWithPath();
+    fillValidRegion();
+
+    // Trigger conflict
+    fireEvent.click(screen.getByRole('button', { name: /切抜き開始/ }));
+    await screen.findByTestId('conflict-modal');
+
+    // Dismiss modal (close/cancel path)
+    fireEvent.click(screen.getByRole('button', { name: /閉じる/ }));
+
+    // Modal gone, button re-enabled (phase=idle)
+    await waitFor(() =>
+      expect(screen.queryByTestId('conflict-modal')).toBeNull(),
+    );
+    const startBtn = screen.getByRole('button', { name: /切抜き開始/ });
+    expect(startBtn).not.toBeDisabled();
+  });
+
   it('has no a11y violations (jest-axe)', async () => {
     mockInvoke.mockImplementation((cmd: string) =>
       cmd === 'register_video'
@@ -194,5 +222,24 @@ describe('MinimapScreen', () => {
     );
     const { container } = renderMinimap();
     expect(await axe(container)).toHaveNoViolations();
-  }, 10000);
+  }, 15000);
+
+  // Fix 2 (#893 Task 11): jest-axe with conflict modal open (not just initial render).
+  it('has no a11y violations with conflict modal open (jest-axe)', async () => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    useMetadataStore.setState({ reloadFromDisk: reload });
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'register_video') return Promise.resolve({ url: 'u', token: 't' });
+      if (cmd === 'start_minimap') return Promise.reject({ code: 'state.mtime_conflict', message: 'conflict' });
+      return Promise.resolve(null);
+    });
+    const { container } = renderMinimapWithPath();
+    fillValidRegion();
+
+    // Trigger conflict to open the modal
+    fireEvent.click(screen.getByRole('button', { name: /切抜き開始/ }));
+    await screen.findByTestId('conflict-modal');
+
+    expect(await axe(container)).toHaveNoViolations();
+  }, 15000);
 });

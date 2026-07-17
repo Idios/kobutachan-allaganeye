@@ -12,7 +12,13 @@ export type MinimapAction =
   | { type: 'EXPORT_ERROR' }
   | { type: 'CANCEL_CLICKED' }
   | { type: 'CANCEL_CONFIRMED' }
-  | { type: 'RESTART' };
+  | { type: 'RESTART' }
+  /**
+   * Dispatched when an mtime conflict is detected during crop execution.
+   * Moves running → idle so the user can retry (or choose overwrite via the
+   * conflict modal) after the conflict modal closes.
+   */
+  | { type: 'CONFLICT_RESOLVED' };
 
 export function minimapReducer(state: MinimapPhase, action: MinimapAction): MinimapPhase {
   switch (state) {
@@ -24,6 +30,7 @@ export function minimapReducer(state: MinimapPhase, action: MinimapAction): Mini
       if (action.type === 'CANCEL_CLICKED') return 'cancelling';
       if (action.type === 'PROGRESS_COMPLETE') return 'completed';
       if (action.type === 'EXPORT_ERROR') return 'error';
+      if (action.type === 'CONFLICT_RESOLVED') return 'idle';
       return state;
 
     case 'cancelling':

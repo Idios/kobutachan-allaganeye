@@ -17,6 +17,8 @@ import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 
 import { DisabledTooltip } from '../components/DisabledTooltip';
 import { SampleModeBanner } from '../components/SampleModeBanner';
+import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import { isAppError } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
@@ -112,6 +114,10 @@ export function MinimapScreen() {
 
   // ConflictModal for mtime conflict
   const [showConflict, setShowConflict] = useState(false);
+  // #587: focus trap + Escape for the local conflict modal (same hooks as shared ConflictModal)
+  const conflictPanelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(conflictPanelRef, showConflict);
+  useEscapeKey(showConflict, () => setShowConflict(false));
 
   // Open-folder error
   const [openFolderError, setOpenFolderError] = useState<string | null>(null);
@@ -449,10 +455,11 @@ export function MinimapScreen() {
         // Surface ConflictModal — user can choose overwrite or just close
         // (finally has already reloaded from disk).
         setShowConflict(true);
-        // Do NOT dispatch error: phase stays at 'running' momentarily but
-        // finally will have already called reload. On conflict we reset to
-        // idle so user can retry.
-        dispatch({ type: 'CANCEL_CONFIRMED' });
+        // CONFLICT_RESOLVED: running → idle so the button re-enables and
+        // the user can retry (or choose 上書き which calls handleStartCrop(true)).
+        // CANCEL_CONFIRMED is a no-op in the running phase (only handled by
+        // cancelling), so we use the dedicated CONFLICT_RESOLVED action.
+        dispatch({ type: 'CONFLICT_RESOLVED' });
       } else {
         dispatch({ type: 'EXPORT_ERROR' });
       }
@@ -537,11 +544,11 @@ export function MinimapScreen() {
           data-testid="conflict-modal"
           role="dialog"
           aria-modal="true"
-          aria-label="ファイル競合"
+          aria-labelledby="ae-minimap-conflict-title"
           className={styles.conflictBackdrop}
         >
-          <div className={styles.conflictPanel}>
-            <h2 className={styles.conflictTitle}>metadata.json が外部で変更されました</h2>
+          <div ref={conflictPanelRef} className={styles.conflictPanel}>
+            <h2 id="ae-minimap-conflict-title" className={styles.conflictTitle}>metadata.json が外部で変更されました</h2>
             <p className={styles.conflictMessage}>
               切り抜き開始後に metadata.json が変更されました。上書きして続行しますか？
             </p>

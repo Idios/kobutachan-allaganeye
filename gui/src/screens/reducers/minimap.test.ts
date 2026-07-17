@@ -43,4 +43,16 @@ describe('minimapReducer', () => {
     expect(minimapReducer('idle', { type: 'CANCEL_CLICKED' })).toBe('idle');
     expect(minimapReducer('completed', { type: 'CANCEL_CLICKED' })).toBe('completed');
   });
+
+  // Fix 1 (#893 Task 11): CONFLICT_RESOLVED must move running → idle so the
+  // crop button re-enables after an mtime conflict modal is dismissed.
+  it('goes running -> idle on CONFLICT_RESOLVED', () => {
+    expect(minimapReducer('running', { type: 'CONFLICT_RESOLVED' })).toBe('idle');
+  });
+
+  it('CONFLICT_RESOLVED is a no-op in idle/completed/error (not a spurious reset)', () => {
+    expect(minimapReducer('idle', { type: 'CONFLICT_RESOLVED' })).toBe('idle');
+    expect(minimapReducer('completed', { type: 'CONFLICT_RESOLVED' })).toBe('completed');
+    expect(minimapReducer('error', { type: 'CONFLICT_RESOLVED' })).toBe('error');
+  });
 });
