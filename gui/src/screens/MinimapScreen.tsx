@@ -17,9 +17,13 @@ import styles from './MinimapScreen.module.css';
 
 export function MinimapScreen() {
   const metadata = useMetadataStore((s) => s.metadata);
+  const filePath = useMetadataStore((s) => s.filePath);
   const navigate = useAppStateStore((s) => s.navigate);
   const selectedVideoPath = useAppStateStore((s) => s.selectedVideoPath);
   const videoSource = selectedVideoPath ?? metadata?.source ?? null;
+
+  // Sample mode: metadata loaded but no backing file on disk
+  const isSample = filePath === null && metadata !== null;
 
   const eligible = useMemo(
     () => (metadata?.matches ?? []).filter((m) => !m.post_match && m.type_override !== 'skip'),
@@ -41,6 +45,55 @@ export function MinimapScreen() {
   const [dragCur, setDragCur] = useState<{ x: number; y: number } | null>(null);
   // Overlay-relative rect for visual rubber band (updated in onMouseMove)
   const [dragRect, setDragRect] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+
+  // Auto-detect state
+  const [detecting, setDetecting] = useState(false);
+  const [detectNotice, setDetectNotice] = useState<string | null>(null);
+
+  async function handleAutoDetect() {
+    if (!filePath) return;
+    setDetecting(true);
+    setDetectNotice(null);
+    try {
+      const proposals = await invoke<Array<{
+        matchIndex: number;
+        region: RegionPx | null;
+        confidence: number;
+        scattered: boolean;
+      }>>('detect_minimap_regions', {
+        req: {
+          metadataPath: filePath,
+          // Task 11 will wire the real excluded set from the include checkboxes
+          excludedIndexes: [] as number[],
+        },
+      });
+      const withRegion = proposals.filter((p) => p.region !== null);
+      const current = withRegion.find((p) => p.matchIndex === frameMatchIndex);
+      const best = current ?? withRegion.sort((a, b) => b.confidence - a.confidence)[0];
+      if (best?.region) {
+        setRegion(best.region);
+        const v = videoRef.current;
+        setRegionError(
+          v && v.videoWidth > 0 && v.videoHeight > 0
+            ? validateRegionPx(best.region, v.videoWidth, v.videoHeight)
+            : null,
+        );
+        if (best.scattered) {
+          setDetectNotice('警告: 試合中に領域が揺れています。手動で微調整してください。');
+        }
+      } else {
+        setDetectNotice('自動検出できませんでした。動画を見ながら手動で範囲を指定してください。');
+      }
+    } catch {
+      setDetectNotice('自動検出に失敗しました。手動で範囲を指定してください。');
+    } finally {
+      setDetecting(false);
+    }
+  }
+
+  function handleCancelDetect() {
+    void invoke('kill_tracked_processes').catch(() => undefined);
+  }
 
   // Register the video source with the Tauri backend (same pattern as PreviewScreen:266-293)
   useEffect(() => {
@@ -255,6 +308,30 @@ export function MinimapScreen() {
       {regionError && (
         <div className={styles.regionError} role="alert">
           {regionError}
+        </div>
+      )}
+
+      {/* Auto-detect controls */}
+      <div className={styles.autoDetectRow}>
+        <button
+          type="button"
+          onClick={() => void handleAutoDetect()}
+          disabled={detecting || isSample}
+        >
+          自動検出を試す
+        </button>
+        {detecting && (
+          <>
+            <button type="button" onClick={handleCancelDetect}>
+              中止
+            </button>
+            <span className={styles.detectingText}>自動検出中…</span>
+          </>
+        )}
+      </div>
+      {detectNotice && (
+        <div className={styles.detectNotice} role="status">
+          {detectNotice}
         </div>
       )}
     </div>

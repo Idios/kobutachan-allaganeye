@@ -21,6 +21,17 @@ function renderMinimap() {
   render(<MinimapScreen />);
 }
 
+/** Render with a real (non-sample) filePath so auto-detect button is enabled. */
+function renderMinimapWithPath(path = '/fake/metadata.json') {
+  useAppStateStore.getState().reset();
+  useMetadataStore.getState().clear();
+  useMetadataStore.getState().loadSample(); // load sample fixture for match data
+  // Override filePath so isSample=false and auto-detect button is enabled
+  useMetadataStore.setState({ filePath: path });
+  useAppStateStore.getState().navigate('minimap' as AppScreen);
+  render(<MinimapScreen />);
+}
+
 beforeEach(() => {
   mockInvoke.mockReset();
   useAppStateStore.getState().reset();
@@ -74,5 +85,30 @@ describe('MinimapScreen', () => {
     renderMinimap();
     fireEvent.change(screen.getByLabelText('region width'), { target: { value: '8' } });
     expect(screen.getByText(/16px 以上/)).toBeInTheDocument();
+  });
+
+  it('pre-fills region from the highest-confidence proposal', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'register_video') return Promise.resolve({ url: 'u', token: 't' });
+      if (cmd === 'detect_minimap_regions')
+        return Promise.resolve([
+          { matchIndex: 1, region: { x: 10, y: 20, w: 300, h: 400 }, confidence: 0.9, scattered: false },
+        ]);
+      return Promise.resolve(null);
+    });
+    renderMinimapWithPath();
+    fireEvent.click(screen.getByRole('button', { name: '自動検出を試す' }));
+    expect(await screen.findByDisplayValue('300')).toBeInTheDocument(); // W input pre-filled
+  });
+
+  it('shows a notice when no proposal is produced', async () => {
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'detect_minimap_regions'
+        ? Promise.resolve([{ matchIndex: 1, region: null, confidence: 0, scattered: false }])
+        : Promise.resolve(cmd === 'register_video' ? { url: 'u', token: 't' } : null),
+    );
+    renderMinimapWithPath();
+    fireEvent.click(screen.getByRole('button', { name: '自動検出を試す' }));
+    expect(await screen.findByText(/自動検出できません/)).toBeInTheDocument();
   });
 });
