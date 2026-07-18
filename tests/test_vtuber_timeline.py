@@ -9,9 +9,12 @@ from unittest.mock import patch
 from allaganeye.video.capture_region import ScorebarLocalization
 from allaganeye.video.vtuber_timeline import (
     TIMELINE_MAD_MIN,
+    TIMELINE_PAIR_DT,
     TimelineProbe,
     _VT_ANCHOR_MIN_CONF,
+    detect_matches_timeline,
     resolve_vtuber_anchor,
+    scan_timeline,
     segment_timeline,
 )
 
@@ -142,3 +145,103 @@ class TestResolveVtuberAnchor:
         # None は consensus miss 由来であること (例外握り潰し由来でないこと) を確認。
         # exception handler が発火すると "vtuber anchor consensus failed" が emit される。
         assert "vtuber anchor consensus failed" not in caplog.text
+
+
+def _synthetic_frame(brightness: int) -> bytes:
+    return bytes([brightness]) * (1920 * 1080 * 3)
+
+
+class TestScanTimeline:
+    ANCHOR = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+
+    def test_probe_pair_computes_band_mad(self):
+        # frame1=100, frame2=110 -> band MAD = 10 (band 領域も全画素同値のため)
+        frames = {0.0: _synthetic_frame(100), TIMELINE_PAIR_DT: _synthetic_frame(110)}
+
+        def fake_probe(video_path, t):
+            return frames.get(t)
+
+        with (
+            patch(
+                "allaganeye.video.detector._probe_frame_rgb_hires",
+                side_effect=fake_probe,
+            ),
+            patch(
+                "allaganeye.video.capture_region.localize_scorebar_at_anchor",
+                return_value=self.ANCHOR,
+            ),
+        ):
+            probes = scan_timeline(
+                Path("dummy.mp4"), duration_hint=10.0, anchor=self.ANCHOR
+            )
+        assert len(probes) == 1
+        assert probes[0].present is True
+        assert probes[0].band_mad is not None
+        assert abs(probes[0].band_mad - 10.0) < 0.01
+
+    def test_decode_failure_yields_unknown_probe(self):
+        with patch(
+            "allaganeye.video.detector._probe_frame_rgb_hires", return_value=None
+        ):
+            probes = scan_timeline(
+                Path("dummy.mp4"), duration_hint=30.0, anchor=self.ANCHOR
+            )
+        assert all(p.band_mad is None and p.present is False for p in probes)
+
+
+class TestDetectMatchesTimeline:
+    ANCHOR = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+
+    def _fake_scan(self, spec: str):
+        return _probes(spec)
+
+    def test_anchor_miss_returns_none(self):
+        with patch(
+            "allaganeye.video.vtuber_timeline.resolve_vtuber_anchor",
+            return_value=None,
+        ):
+            assert (
+                detect_matches_timeline(
+                    Path("d.mp4"), duration_hint=3600.0, min_match_duration=300.0
+                )
+                is None
+            )
+
+    def test_success_returns_boundaries_and_region(self):
+        with (
+            patch(
+                "allaganeye.video.vtuber_timeline.resolve_vtuber_anchor",
+                return_value=self.ANCHOR,
+            ),
+            patch(
+                "allaganeye.video.vtuber_timeline.scan_timeline",
+                return_value=self._fake_scan("l" * 6 + "M" * 40 + "l" * 6),
+            ),
+        ):
+            result = detect_matches_timeline(
+                Path("d.mp4"), duration_hint=520.0, min_match_duration=300.0
+            )
+        assert result is not None
+        boundaries, region_timeline = result
+        assert len(boundaries) == 1
+        assert region_timeline.coarse.source == "band"
+        assert region_timeline.fallback_reason is None
+
+    def test_majority_unknown_aborts_to_none(self):
+        # 50% 超 decode 失敗 -> timeline を信頼せず None (縮退 floor)
+        with (
+            patch(
+                "allaganeye.video.vtuber_timeline.resolve_vtuber_anchor",
+                return_value=self.ANCHOR,
+            ),
+            patch(
+                "allaganeye.video.vtuber_timeline.scan_timeline",
+                return_value=self._fake_scan("M" * 10 + "u" * 42),
+            ),
+        ):
+            assert (
+                detect_matches_timeline(
+                    Path("d.mp4"), duration_hint=520.0, min_match_duration=300.0
+                )
+                is None
+            )

@@ -10,10 +10,14 @@
 from __future__ import annotations
 
 import logging
+import os
+from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
-from collections.abc import Sequence
+
+import numpy as np
 
 if TYPE_CHECKING:
     from allaganeye.video.capture_region import ScorebarLocalization
@@ -143,3 +147,130 @@ def resolve_vtuber_anchor(
             exc_info=True,
         )
         return None
+
+
+UNKNOWN_ABORT_RATIO = 0.5
+"""decode 失敗 probe がこの比率を超えたら timeline を放棄して縮退する."""
+
+_BAND_PAD_PX = 10
+"""band MAD 測定域の上下パディング (probe px)。PoC 計測と同値."""
+
+
+def _band_slice(anchor) -> tuple[int, int, int, int]:
+    """anchor から MAD 測定用の band px 範囲 (y0, y1, x0, x1) を返す。"""
+    from allaganeye.video import detector
+
+    y0 = max(0, anchor.y_top - _BAND_PAD_PX)
+    y1 = min(detector._SCOREBAR_V2_PROBE_HEIGHT, anchor.y_bottom + _BAND_PAD_PX + 1)
+    x0 = max(0, anchor.x_left)
+    x1 = min(detector._SCOREBAR_V2_PROBE_WIDTH, anchor.x_right + 1)
+    return y0, y1, x0, x1
+
+
+def _probe_pair(video_path: Path, t: float, anchor) -> TimelineProbe:
+    """1 probe: frame pair decode + at-anchor presence + band MAD 計算。"""
+    from allaganeye.video import capture_region, detector
+
+    raw1 = detector._probe_frame_rgb_hires(video_path, t)
+    raw2 = detector._probe_frame_rgb_hires(video_path, t + TIMELINE_PAIR_DT)
+    if raw1 is None or raw2 is None:
+        return TimelineProbe(t=t, present=False, band_mad=None)
+    h = detector._SCOREBAR_V2_PROBE_HEIGHT
+    w = detector._SCOREBAR_V2_PROBE_WIDTH
+    f1 = np.frombuffer(raw1, np.uint8).reshape(h, w, 3)
+    f2 = np.frombuffer(raw2, np.uint8).reshape(h, w, 3)
+    y0, y1, x0, x1 = _band_slice(anchor)
+    b1 = f1[y0:y1, x0:x1].astype(np.int16)
+    b2 = f2[y0:y1, x0:x1].astype(np.int16)
+    band_mad = float(np.abs(b1 - b2).mean()) if b1.size else 0.0
+    present = capture_region.localize_scorebar_at_anchor(f1, anchor) is not None
+    return TimelineProbe(t=t, present=present, band_mad=band_mad)
+
+
+def scan_timeline(
+    video_path: Path,
+    duration_hint: float,
+    anchor,
+    *,
+    workers: int | None = None,
+    progress_callback: Callable[[int, int, int], None] | None = None,
+) -> list[TimelineProbe]:
+    """V1: 全域を TIMELINE_STRIDE 間隔で probe する (frame pair + at-anchor)。
+
+    probe あたり decode 2 回 (`-ss` 単発 x2、fps filter 不使用 #575)。
+    例外は probe 単位で UNKNOWN に隔離する (1 probe の失敗で scan を壊さない)。
+    """
+    ts = [
+        round(i * TIMELINE_STRIDE, 2)
+        for i in range(max(1, int(duration_hint / TIMELINE_STRIDE)))
+    ]
+    max_workers = workers or min(os.cpu_count() or 4, 16)
+    results: list[TimelineProbe] = []
+
+    def _one(t: float) -> TimelineProbe:
+        try:
+            return _probe_pair(video_path, t, anchor)
+        except Exception:
+            logger.debug("timeline probe failed at t=%.1fs", t, exc_info=True)
+            return TimelineProbe(t=t, present=False, band_mad=None)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        for i, probe in enumerate(ex.map(_one, ts)):
+            results.append(probe)
+            if progress_callback is not None:
+                progress_callback(i + 1, len(ts), 0)
+    return results
+
+
+def detect_matches_timeline(
+    video_path: Path,
+    duration_hint: float,
+    *,
+    min_match_duration: float,
+    workers: int | None = None,
+    progress_callback: Callable[[int, int, int], None] | None = None,
+):
+    """V0 -> V1 -> V2 orchestration。None = timeline 不能 (caller が縮退)。
+
+    Returns:
+        (boundaries, region_timeline) | None
+    """
+    from allaganeye.video import detector
+    from allaganeye.video.capture_region import (
+        RegionTimeline,
+        band_region_from_localization,
+    )
+
+    anchor = resolve_vtuber_anchor(video_path, duration_hint)
+    if anchor is None:
+        logger.warning(
+            "vtuber timeline: anchor consensus miss; falling back to band-crop path"
+        )
+        return None
+    probes = scan_timeline(
+        video_path,
+        duration_hint,
+        anchor,
+        workers=workers,
+        progress_callback=progress_callback,
+    )
+    unknown = sum(1 for p in probes if p.band_mad is None)
+    if probes and unknown / len(probes) > UNKNOWN_ABORT_RATIO:
+        logger.warning(
+            "vtuber timeline: %d/%d probes UNKNOWN (> %.0f%%); falling back",
+            unknown,
+            len(probes),
+            UNKNOWN_ABORT_RATIO * 100,
+        )
+        return None
+    boundaries = segment_timeline(probes, min_match_duration=min_match_duration)
+    region = RegionTimeline(
+        coarse=band_region_from_localization(
+            anchor,
+            probe_w=detector._SCOREBAR_V2_PROBE_WIDTH,
+            probe_h=detector._SCOREBAR_V2_PROBE_HEIGHT,
+        ),
+        segments=[],
+        fallback_reason=None,
+    )
+    return boundaries, region
