@@ -646,6 +646,31 @@ def detect_match_boundaries(
             "Cannot determine video duration. Provide duration_hint via probe."
         )
 
+    # V0-V2 (#895 / spec 2026-07-17): vtuber は timeline segmentation を先に試行。
+    # anchor 不成立 / probe 過半 UNKNOWN のときのみ従来の band-crop blackout path
+    # へ縮退する (現状より悪化しない floor)。OBS (vtuber=False) はこの分岐に
+    # 一切入らない = import もしない (bit-exact 構造保証)。
+    if vtuber:
+        from allaganeye.video import vtuber_timeline
+
+        timeline_result = vtuber_timeline.detect_matches_timeline(
+            video_path,
+            duration_hint,
+            min_match_duration=min_match_duration,
+            workers=workers,
+            progress_callback=progress_callback,
+        )
+        if timeline_result is not None:
+            timeline_boundaries, timeline_region = timeline_result
+            if region_callback is not None:
+                region_callback(timeline_region)
+            # P1 契約: timeline path は Pass 1/2 を通らないため DetectionStats
+            # (pass1/pass2 秒数等) と brightness_callback は未設定のまま返す。
+            # `--vtuber -v` の pipeline 統計は空表示になるが `_print_detection_stats`
+            # は全 key guarded で crash しない (実証済)。stats への timeline 固有
+            # 統計 (probe 数 / anchor conf 等) の追加は P2 で V3 と合わせて設計する。
+            return timeline_boundaries
+
     # Stage 0 (#753 / B4-rev): resolve a scorebar-band anchor before any scan.
     # Stage 0 band anchor runs only when VTuber is explicit (spec section 3.6).
     # OBS (vtuber=False) stays FULL_FRAME -> current bit-exact. localize also
