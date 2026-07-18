@@ -6548,3 +6548,16 @@ def test_display_cache_hit_params_broken_vtuber_algo_shows_question_mark(
     assert "vtuber_algo=?" in out, (
         "broken vtuber_algo must display '?' fallback, not raise"
     )
+
+
+def test_print_detection_stats_empty_stats_no_crash(capsys):
+    """P1 契約 pin (#895): vtuber timeline path は DetectionStats を埋めずに
+    early return するため、`--vtuber -v` の verbose 表示は空 stats で呼ばれる。
+    _print_detection_stats の全 section が key-guarded で、空 stats では
+    crash せず何も出力しないことを固定する (P2 で timeline 固有統計を
+    設計するまでの回帰防止)。
+    """
+    from allaganeye.commands.split_matches import _print_detection_stats
+
+    _print_detection_stats({})
+    assert capsys.readouterr().out == ""
