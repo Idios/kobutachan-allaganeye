@@ -80,6 +80,13 @@ _CACHE_VERSION = 4
 # version 3 = #822 Onsal recalibration: 15-probe quorum>=2 + zero-gap merge
 _MASKED_ALGO_VERSION = 3
 
+# vtuber_algo version: identifies the vtuber-path detection algorithm baked
+# into cached boundaries. Only used for cache invalidation on vtuber-affected
+# runs (config.vtuber=True or params.vtuber=True).
+# version 1 = pre-#895 legacy band-crop blackout path (key absent = 1)
+# version 2 = #895 timeline segmentation (V0-V2, presence x motion)
+_VTUBER_ALGO_VERSION = 2
+
 
 def run_split(
     video_path: Path,
@@ -705,11 +712,19 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
     # (こちらは cache 記録値の診断表示で、invalidation 判定ではない。live config
     # と cache が食い違う case は params 比較が先に miss させるため到達しない)。
     masked_affected = cached_masked or cached_fallback
+    # vtuber_algo は vtuber 影響 run のみ表示 (masked_algo と同型)。
+    try:
+        cached_vtuber_algo_display: int | str = int(params.get("vtuber_algo", 1))
+    except (ValueError, TypeError):
+        cached_vtuber_algo_display = "?"
     # region も他 token 同様 raw cache 記録値を正として表示する (#810)。legacy
     # cache では metadata.json 側が FULL_FRAME を合成しても表示は unknown の
     # まま (「cache に何が記録されているか」の診断表示であり意図的な差)。
 
     algo_token = f", masked_algo={cached_algo}" if masked_affected else ""
+    vtuber_algo_token = (
+        f", vtuber_algo={cached_vtuber_algo_display}" if cached_vtuber else ""
+    )
     typer.echo(header)
     typer.echo(
         "  "
@@ -722,7 +737,8 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
         f"masked={'on' if cached_masked else 'off'}, "
         f"keep_trailing={'on' if cached_keep_trailing else 'off'}, "
         f"masked_fallback={'on' if cached_fallback else 'off'}"
-        f"{algo_token}, "
+        f"{algo_token}"
+        f"{vtuber_algo_token}, "
         f"region={_format_region_token(data.get('capture_regions'))}"
     )
 
@@ -2020,6 +2036,7 @@ def _save_cache(
             "masked": config.masked,
             "keep_trailing": config.keep_trailing,
             "masked_algo": _MASKED_ALGO_VERSION,
+            "vtuber_algo": _VTUBER_ALGO_VERSION,
         },
         # resolved path は key (params) ではなく top-level に記録する: auto-masked
         # 動画の cache 再利用は request flag の一致で正しく機能させ、provenance
@@ -2266,6 +2283,21 @@ def _load_cache(
     )
     if masked_affected and cached_algo != _MASKED_ALGO_VERSION:
         logger.debug("Cache masked algo mismatch")
+        return None
+
+    # vtuber_algo key: invalidate only when vtuber algorithm changes AND the
+    # cached run was vtuber-affected (params.vtuber=True or config.vtuber=True).
+    # Legacy OBS caches (vtuber off) hit regardless of key absence -- no
+    # needless re-detects for unaffected users (same invalidation policy as
+    # masked_algo).
+    _raw_cached_vtuber_algo = params.get("vtuber_algo", 1)
+    try:
+        cached_vtuber_algo = int(_raw_cached_vtuber_algo)
+    except (ValueError, TypeError):
+        cached_vtuber_algo = -1  # forces miss for any valid _VTUBER_ALGO_VERSION
+    vtuber_affected = params.get("vtuber", False) or config.vtuber
+    if vtuber_affected and cached_vtuber_algo != _VTUBER_ALGO_VERSION:
+        logger.debug("Cache vtuber algo mismatch")
         return None
 
     boundaries = data.get("boundaries")
