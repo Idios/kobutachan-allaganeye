@@ -127,11 +127,18 @@ class TestResolveVtuberAnchor:
         anchor = self._run([hit] * 4 + [None] * 44)  # < _VT_ANCHOR_MIN_HITS
         assert anchor is None
 
-    def test_decode_failure_returns_none_gracefully(self):
-        with patch(
-            "allaganeye.video.detector._probe_frame_rgb_hires",
-            return_value=None,
+    def test_decode_failure_returns_none_gracefully(self, caplog):
+        import logging
+
+        with (
+            patch(
+                "allaganeye.video.detector._probe_frame_rgb_hires",
+                return_value=None,
+            ),
+            caplog.at_level(logging.WARNING, logger="allaganeye.video.vtuber_timeline"),
         ):
-            assert (
-                resolve_vtuber_anchor(Path("dummy.mp4"), duration_hint=3600.0) is None
-            )
+            result = resolve_vtuber_anchor(Path("dummy.mp4"), duration_hint=3600.0)
+        assert result is None
+        # None は consensus miss 由来であること (例外握り潰し由来でないこと) を確認。
+        # exception handler が発火すると "vtuber anchor consensus failed" が emit される。
+        assert "vtuber anchor consensus failed" not in caplog.text

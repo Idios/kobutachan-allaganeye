@@ -97,6 +97,9 @@ _VT_ANCHOR_MIN_CONF = 0.5
 の y 投票で抑制する."""
 
 _VT_ANCHOR_MIN_HITS = 5
+"""VTuber anchor の minimum hit count。masked と同値の下限。
+48 samples × 20.8% expected hit rate (Onsal PoC §3) ≈ 10 hits に対する
+安全マージン (約 50%) で、Onsal 最悪ケースでも解決できる範囲に設定。"""
 
 
 def resolve_vtuber_anchor(
@@ -116,6 +119,8 @@ def resolve_vtuber_anchor(
         raw = detector._probe_frame_rgb_hires(video_path, t)
         if raw is None:
             return PresenceState.UNKNOWN
+        # capture_region.localize_from_rgb_bytes はモジュール属性経由で参照する。
+        # テストがこの seam を patch するため、直接 import すると patch が効かなくなる。
         loc = capture_region.localize_from_rgb_bytes(
             raw,
             height=detector._SCOREBAR_V2_PROBE_HEIGHT,
