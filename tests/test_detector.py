@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from typing import Literal, overload
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -2896,6 +2897,30 @@ def test_detect_match_boundaries_passes_region_to_all_three_call_sites(monkeypat
 
 
 _TIMELINE_RESULT_UNSET = object()  # sentinel: timeline_result が明示指定されていない
+
+
+@overload
+def _detect_with_region_callback(
+    monkeypatch,
+    *,
+    vtuber: bool,
+    resolve_result: object = ...,
+    timeline_result: object = ...,
+    return_result: Literal[True],
+    **kwargs: object,
+) -> tuple[list, list[MatchBoundary]]: ...
+
+
+@overload
+def _detect_with_region_callback(
+    monkeypatch,
+    *,
+    vtuber: bool,
+    resolve_result: object = ...,
+    timeline_result: object = ...,
+    return_result: Literal[False] = ...,
+    **kwargs: object,
+) -> list: ...
 
 
 def _detect_with_region_callback(
