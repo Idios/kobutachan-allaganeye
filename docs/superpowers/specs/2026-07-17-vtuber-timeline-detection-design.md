@@ -79,7 +79,7 @@
 ### 2.3 実装配置
 
 - 新規: `allaganeye/video/vtuber_timeline.py` (V0-V3 オーケストレーション + パラメータ定数)。V0/V4 は既存 primitive (`capture_region.py` / `presence.py`) を呼ぶ。
-- `detector.py` の `--vtuber` 分岐: **分岐先頭で V0 (timeline 専用 anchor consensus、48/0.5/5) を試行**し、成功時は V1-V2 (timeline path) の結果を返す。V0 不成立 / probe 過半 UNKNOWN のときのみ、既存 Stage 0 (`_resolve_detect_region`) + band-crop blackout path へ縮退する (既存 Stage 0 の consensus は timeline の gate ではない — 別物の consensus であることに注意)。
+- `detector.py` の `--vtuber` 分岐: **分岐先頭で V0 (timeline 専用 anchor consensus、48/0.5/5) を試行**し、成功時は V1-V2 (timeline path) の結果を返す。V0 不成立 / probe 過半 UNKNOWN / **V2 産出 segment ゼロ** のときのみ、既存 Stage 0 (`_resolve_detect_region`) + band-crop blackout path へ縮退する (既存 Stage 0 の consensus は timeline の gate ではない — 別物の consensus であることに注意)。空 segment を authoritative にすると legacy 検出の機会を奪い floor が破れるため、空 = timeline 不能として扱う (Codex adversarial-review 2026-07-18 HIGH の反映。detector 側にも空 boundaries 拒否の defense-in-depth gate を置く)。
 - **cache key**: 新 param `vtuber_algo` (`_VTUBER_ALGO_VERSION`、masked_algo と同型の algo バージョン識別子) を `_save_cache` / `_load_cache` / verbose の 3 箇所に追加 (`feedback_detection_flag_cache_key` 遵守。#823/#830 で 2 回摘出された死角)。legacy `--vtuber` cache は識別子欠落 → miss として再検知。
 - metadata: `matches[]` 現行 schema 不変。`capture_regions.coarse` は band (現行どおり)。V4 の低信頼フラグ・merge/削除統計は `warnings` / stats に記録 (#805 の痕跡記録と同型)。
 

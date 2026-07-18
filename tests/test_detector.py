@@ -4917,6 +4917,40 @@ def test_vtuber_timeline_none_falls_back_to_band_crop(monkeypatch):
     assert called  # _resolve_detect_region に到達した = band-crop path に縮退した
 
 
+def test_vtuber_timeline_empty_boundaries_fall_back_to_band_crop(monkeypatch):
+    """timeline ([], region) -> 空を authoritative にせず band-crop path へ縮退。
+
+    Codex R1 (high) の defense-in-depth pin: vtuber_timeline 側は空なら None を
+    返す契約だが、detector 側 gate も空 boundaries を独立に拒否することを固定する
+    (縮退 floor が二重に守られる)。
+    """
+    from allaganeye.video.capture_region import (
+        FULL_FRAME,
+        RegionTimeline,
+        ScorebarLocalization,
+        band_region_from_localization,
+    )
+
+    anchor = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+    empty_region = RegionTimeline(
+        coarse=band_region_from_localization(anchor, probe_w=1920, probe_h=1080)
+    )
+    called: list = []
+    monkeypatch.setattr(
+        "allaganeye.video.detector._resolve_detect_region",
+        lambda *a, **k: called.append(1) or (FULL_FRAME, "consensus_miss"),
+    )
+    fired = _detect_with_region_callback(
+        monkeypatch,
+        vtuber=True,
+        timeline_result=([], empty_region),
+    )
+    assert called, "empty timeline boundaries must fall back to the band-crop path"
+    # 空 timeline の region は authoritative でないため region_callback は
+    # 縮退先 (band-crop path) の region で発火する (source は band ではない)
+    assert all(r.coarse.source != "band" for r in fired)
+
+
 def test_obs_path_does_not_call_timeline(monkeypatch):
     """vtuber=False では vtuber_timeline を一切呼ばない (構造保証の pin)。"""
     import allaganeye.video.vtuber_timeline as vt

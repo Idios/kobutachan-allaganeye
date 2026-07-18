@@ -245,3 +245,29 @@ class TestDetectMatchesTimeline:
                 )
                 is None
             )
+
+    def test_empty_segmentation_returns_none(self, caplog):
+        # Codex R1 (high): anchor 成功 + UNKNOWN 過半未満でも segmentation が
+        # 空なら None (= legacy band-crop へ縮退)。空 ([], region) を返すと
+        # caller が authoritative 扱いし「現状より悪化しない」floor が破れる。
+        import logging
+
+        with (
+            patch(
+                "allaganeye.video.vtuber_timeline.resolve_vtuber_anchor",
+                return_value=self.ANCHOR,
+            ),
+            patch(
+                "allaganeye.video.vtuber_timeline.scan_timeline",
+                # 全 probe lobby (absent) -> evidence ゼロ -> segment ゼロ
+                return_value=self._fake_scan("l" * 52),
+            ),
+            caplog.at_level(logging.WARNING, logger="allaganeye.video.vtuber_timeline"),
+        ):
+            assert (
+                detect_matches_timeline(
+                    Path("d.mp4"), duration_hint=520.0, min_match_duration=300.0
+                )
+                is None
+            )
+        assert "no segments" in caplog.text

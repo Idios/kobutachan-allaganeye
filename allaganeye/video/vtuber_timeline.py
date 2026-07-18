@@ -264,6 +264,17 @@ def detect_matches_timeline(
         )
         return None
     boundaries = segment_timeline(probes, min_match_duration=min_match_duration)
+    if not boundaries:
+        # 縮退 floor (Codex R1 high): anchor 成功 + UNKNOWN 過半未満でも
+        # presence x motion が 1 segment も形成しない場合、空結果を
+        # authoritative にすると legacy band-crop 検出の機会を奪い
+        # 「現状より悪化しない」floor が破れる。空 = timeline 不能として
+        # None を返し、caller を legacy path へ縮退させる。
+        logger.warning(
+            "vtuber timeline: segmentation produced no segments; "
+            "falling back to band-crop path"
+        )
+        return None
     region = RegionTimeline(
         coarse=band_region_from_localization(
             anchor,

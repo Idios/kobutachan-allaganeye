@@ -660,7 +660,10 @@ def detect_match_boundaries(
             workers=workers,
             progress_callback=progress_callback,
         )
-        if timeline_result is not None:
+        # defense-in-depth (Codex R1 high): 空 boundaries を authoritative に
+        # しない。vtuber_timeline 側も空なら None を返す契約だが、将来の
+        # regression でも floor (legacy fallback) が破れないよう二重に gate する。
+        if timeline_result is not None and timeline_result[0]:
             timeline_boundaries, timeline_region = timeline_result
             if region_callback is not None:
                 region_callback(timeline_region)
