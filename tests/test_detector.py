@@ -2904,6 +2904,7 @@ def _detect_with_region_callback(
     vtuber,
     resolve_result=None,
     timeline_result=_TIMELINE_RESULT_UNSET,
+    return_result=False,
     **kwargs,
 ):
     """共通ハーネス: scan/refine を stub し region_callback の発火を捕捉する。
@@ -2911,6 +2912,7 @@ def _detect_with_region_callback(
     timeline_result: 省略時は vtuber_timeline を monkeypatch しない (従来挙動)。
         明示指定 (None / tuple) 時のみ vtuber_timeline.detect_matches_timeline を
         monkeypatch して指定値を返す。
+    return_result: True 時は (fired, result) tuple を返す (返り値 assert 用)。
     """
     from pathlib import Path
 
@@ -2935,7 +2937,7 @@ def _detect_with_region_callback(
     monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **kw: [])
 
     fired: list[RegionTimeline] = []
-    det.detect_match_boundaries(
+    result = det.detect_match_boundaries(
         Path("test.mp4"),
         duration_hint=3.0,
         sample_interval=1.0,
@@ -2945,6 +2947,8 @@ def _detect_with_region_callback(
         region_callback=fired.append,
         **kwargs,
     )
+    if return_result:
+        return fired, result
     return fired
 
 
@@ -4858,13 +4862,16 @@ def test_vtuber_timeline_path_used_when_available(monkeypatch):
     region = RegionTimeline(
         coarse=band_region_from_localization(anchor, probe_w=1920, probe_h=1080)
     )
-    fired = _detect_with_region_callback(
+    fired, result = _detect_with_region_callback(
         monkeypatch,
         vtuber=True,
         timeline_result=(expected, region),
+        return_result=True,
     )
     # timeline path fires region_callback with band region
     assert fired and fired[0].coarse.source == "band"
+    # detect_match_boundaries returns timeline boundaries
+    assert result == expected
 
 
 def test_vtuber_timeline_none_falls_back_to_band_crop(monkeypatch):
