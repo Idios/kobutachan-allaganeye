@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 from collections.abc import Sequence
 
 if TYPE_CHECKING:
+    from allaganeye.video.capture_region import ScorebarLocalization
     from allaganeye.video.detector import MatchBoundary
 
 logger = logging.getLogger(__name__)
@@ -83,3 +85,56 @@ def segment_timeline(
         for a, b in segs
         if b - a >= min_match_duration
     ]
+
+
+_VT_ANCHOR_NUM_SAMPLES = 48
+"""VTuber anchor consensus のサンプル数。masked (24) の倍: Onsal の低 conf
+hit 率 (~21% @conf>=0.5、PoC report §3) でも期待 ~10 hits を確保する."""
+
+_VT_ANCHOR_MIN_CONF = 0.5
+"""VTuber anchor の conf 事前フィルタ。masked の 0.7 は Onsal true hit
+(median 0.589) を殺すため使わない (PoC report §3)。FP は dominant cluster
+の y 投票で抑制する."""
+
+_VT_ANCHOR_MIN_HITS = 5
+
+
+def resolve_vtuber_anchor(
+    video_path: Path, duration_hint: float
+) -> ScorebarLocalization | None:
+    """V0: per-video scorebar anchor を疎サンプル consensus で解決する。
+
+    detector._resolve_scorebar_anchor (#822 masked) と同構造だが VTuber 定数
+    (48 samples / conf 0.5 / min hits 5) を使う。None = 解決不能 (caller は
+    現行 band-crop path へ縮退する)。例外は握り潰して None (縮退 floor)。
+    """
+    from allaganeye.video import capture_region, detector
+    from allaganeye.video.capture_region import consensus_scorebar_localization
+    from allaganeye.video.probe_state import PresenceState
+
+    def _localize_at(t: float):
+        raw = detector._probe_frame_rgb_hires(video_path, t)
+        if raw is None:
+            return PresenceState.UNKNOWN
+        loc = capture_region.localize_from_rgb_bytes(
+            raw,
+            height=detector._SCOREBAR_V2_PROBE_HEIGHT,
+            width=detector._SCOREBAR_V2_PROBE_WIDTH,
+        )
+        if loc is not None and loc.confidence < _VT_ANCHOR_MIN_CONF:
+            return None
+        return loc
+
+    try:
+        return consensus_scorebar_localization(
+            duration=duration_hint,
+            localize_fn=_localize_at,
+            num_samples=_VT_ANCHOR_NUM_SAMPLES,
+            min_hits=_VT_ANCHOR_MIN_HITS,
+        )
+    except Exception:
+        logger.warning(
+            "vtuber anchor consensus failed with exception; timeline path unavailable",
+            exc_info=True,
+        )
+        return None

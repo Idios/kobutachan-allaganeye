@@ -3,9 +3,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import patch
+
+from allaganeye.video.capture_region import ScorebarLocalization
 from allaganeye.video.vtuber_timeline import (
     TIMELINE_MAD_MIN,
     TimelineProbe,
+    _VT_ANCHOR_MIN_CONF,
+    resolve_vtuber_anchor,
     segment_timeline,
 )
 
@@ -84,3 +90,48 @@ class TestSegmentTimeline:
         ]
         segs = segment_timeline(probes, min_match_duration=300.0)
         assert len(segs) == 1
+
+
+class TestResolveVtuberAnchor:
+    def _run(self, localize_results):
+        """localize_from_rgb_bytes を順に localize_results を返す stub にして実行。"""
+        raw = b"\x00" * (1920 * 1080 * 3)
+        with (
+            patch(
+                "allaganeye.video.detector._probe_frame_rgb_hires",
+                return_value=raw,
+            ),
+            patch(
+                "allaganeye.video.capture_region.localize_from_rgb_bytes",
+                side_effect=localize_results,
+            ),
+        ):
+            return resolve_vtuber_anchor(Path("dummy.mp4"), duration_hint=3600.0)
+
+    def test_onsal_grade_confidence_resolves(self):
+        # conf 0.55-0.6 (masked の 0.7 filter では全滅する帯域) が通ること
+        hit = ScorebarLocalization(532, 1147, 0, 45, 0.58)
+        results = [hit] * 10 + [None] * 38
+        anchor = self._run(results)
+        assert anchor is not None
+        assert anchor.y_top == 0
+
+    def test_low_conf_hits_are_prefiltered(self):
+        # conf < 0.5 のみ -> miss 扱いで anchor 不成立
+        weak = ScorebarLocalization(532, 1147, 0, 45, _VT_ANCHOR_MIN_CONF - 0.1)
+        anchor = self._run([weak] * 48)
+        assert anchor is None
+
+    def test_insufficient_hits(self):
+        hit = ScorebarLocalization(532, 1147, 0, 45, 0.9)
+        anchor = self._run([hit] * 4 + [None] * 44)  # < _VT_ANCHOR_MIN_HITS
+        assert anchor is None
+
+    def test_decode_failure_returns_none_gracefully(self):
+        with patch(
+            "allaganeye.video.detector._probe_frame_rgb_hires",
+            return_value=None,
+        ):
+            assert (
+                resolve_vtuber_anchor(Path("dummy.mp4"), duration_hint=3600.0) is None
+            )
