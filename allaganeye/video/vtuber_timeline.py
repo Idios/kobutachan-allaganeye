@@ -1,8 +1,8 @@
 # allaganeye/video/vtuber_timeline.py
-"""VTuber presence x motion timeline detection (V0-V2, spec 2026-07-17).
+"""VTuber presence x motion timeline detection (V0-V2, spec 2026-07-17 U+00A7 #895).
 
 `--vtuber` 専用の境界候補 generator。blackout 起点 (candidate-classify) では
-境界 blackout が 1-3s しかなく系統的に under-detect するため (PoC report §2)、
+境界 blackout が 1-3s しかなく系統的に under-detect するため (PoC report U+00A7 2)、
 「試合中である」証拠 (at-anchor presence AND band motion) の timeline から
 試合区間を直接切り出す。OBS / masked path からは import されない。
 """
@@ -26,13 +26,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 TIMELINE_STRIDE = 10.0
-"""V1 scan stride (seconds). PoC: 6 source で試合構造を再現、4h VOD ≈ 3-6 分."""
+"""V1 scan stride (seconds). PoC: 6 source で試合構造を再現、4h VOD ~= 3-6 分."""
 
 TIMELINE_PAIR_DT = 0.5
 """Motion 測定用フレームペアの時間差 (seconds)."""
 
 TIMELINE_MAD_MIN = 1.5
-"""band MAD の evidence 閾値。PoC: 試合中最低 ≥2.2 vs 凍結画面 ≤0.83."""
+"""band MAD の evidence 閾値。PoC: 試合中最低 >=2.2 vs 凍結画面 <=0.83."""
 
 TIMELINE_WINDOW = 9
 """rolling window の probe 数 (=90s @10s stride)。Onsal 弱 presence を bridge."""
@@ -93,16 +93,16 @@ def segment_timeline(
 
 _VT_ANCHOR_NUM_SAMPLES = 48
 """VTuber anchor consensus のサンプル数。masked (24) の倍: Onsal の低 conf
-hit 率 (~21% @conf>=0.5、PoC report §3) でも期待 ~10 hits を確保する."""
+hit 率 (~21% @conf>=0.5、PoC report U+00A7 3) でも期待 ~10 hits を確保する."""
 
 _VT_ANCHOR_MIN_CONF = 0.5
 """VTuber anchor の conf 事前フィルタ。masked の 0.7 は Onsal true hit
-(median 0.589) を殺すため使わない (PoC report §3)。FP は dominant cluster
+(median 0.589) を殺すため使わない (PoC report U+00A7 3)。FP は dominant cluster
 の y 投票で抑制する."""
 
 _VT_ANCHOR_MIN_HITS = 5
 """VTuber anchor の minimum hit count。masked と同値の下限。
-48 samples × 20.8% expected hit rate (Onsal PoC §3) ≈ 10 hits に対する
+48 samples U+00D7 20.8% expected hit rate (Onsal PoC U+00A7 3) ~= 10 hits に対する
 安全マージン (約 50%) で、Onsal 最悪ケースでも解決できる範囲に設定。"""
 
 
