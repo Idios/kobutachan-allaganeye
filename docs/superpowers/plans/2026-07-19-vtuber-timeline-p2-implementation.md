@@ -12,6 +12,9 @@
 
 - OBS default (`vtuber=False`) と `--masked` はコード経路非接触。新コードは `--vtuber` gate 内 + `vtuber_timeline.py` のみ。`_print_detection_stats` / `DetectionStats` への追加は key-guarded (OBS run はその key を set しない)
 - spec §2.1 パラメータ: MERGE_RATE 10% / FROZEN_MAX 1.0 / merge 対象 gap 上限 300s (= min_match_duration)。V3 gap probe は 1s stride、blackout エッジ精密化は 0.25s
+
+> **note (P2 final review)**: 実装では 0.25s 局所再 probe を不採用とし 1s 系列 snap に簡素化 (spec V3 (b) erratum 参照。SNAP_STRIDE は撤去済み)
+
 - positive marker 優先: gap 内に band blackout または凍結 run があれば anchor rate に関わらず「boundary」(merge 禁止)。spec §2 V3 (a)
 - 縮退 floor 不変: V3/V4 が例外を出しても timeline 全体を壊さない (V3 失敗 → V2 粗分割のまま採用 + warning / V4 は既存 fail-safe)
 - fps filter 禁止 (すべて `-ss` 単発 probe)

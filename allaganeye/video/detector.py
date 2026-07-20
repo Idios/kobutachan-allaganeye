@@ -654,7 +654,7 @@ def detect_match_boundaries(
             "Cannot determine video duration. Provide duration_hint via probe."
         )
 
-    # V0-V2 (#895 / spec 2026-07-17): vtuber は timeline segmentation を先に試行。
+    # V0-V4 (#895 / spec 2026-07-17): vtuber は timeline segmentation を先に試行。
     # anchor 不成立 / probe 過半 UNKNOWN のときのみ従来の band-crop blackout path
     # へ縮退する (現状より悪化しない floor)。OBS (vtuber=False) はこの分岐に
     # 一切入らない = import もしない (bit-exact 構造保証)。
@@ -680,7 +680,7 @@ def detect_match_boundaries(
             # (pass1/pass2 秒数等) と brightness_callback は未設定のまま返す。
             # `--vtuber -v` の pipeline 統計は空表示になるが `_print_detection_stats`
             # は全 key guarded で crash しない (実証済)。stats への timeline 固有
-            # 統計 (probe 数 / anchor conf 等) の追加は P2 で V3 と合わせて設計する。
+            # 統計 (probe 数 / anchor conf / gaps 等) は P2 で V3/V4 と合わせて実装済み。
             return timeline_boundaries
 
     # Stage 0 (#753 / B4-rev): resolve a scorebar-band anchor before any scan.
@@ -940,6 +940,8 @@ def _validate_match_segments(
     workers: int | None,
     stats: DetectionStats | None,
     duration_hint: float = 0.0,
+    *,
+    on_all_drop: str = "keep",
 ) -> list[MatchBoundary]:
     """Layer 2 segment validation: at-anchor presence quorum (#822).
 
@@ -980,9 +982,15 @@ def _validate_match_segments(
     Segments where ALL _L2_PROBE_COUNT probes are UNKNOWN are kept
     conservatively (anchor mistrust) with a warning.
 
-    Fail-safe: if validation would drop ALL segments the original list is
-    returned unchanged with a warning (anchor mistrust; conservative keep).
-    Zero-gap merge is skipped on the fail-safe path.
+    Fail-safe (``on_all_drop`` controls behaviour when all segments fail):
+    - ``"keep"`` (default): the original segment list is returned unchanged
+      with a warning (anchor mistrust; conservative keep).  Use this for the
+      masked path where there is no other fallback -- keeping is the safe side.
+    - ``"empty"``: a warning is emitted and ``[]`` is returned so the caller
+      can fall back to a legacy detection path.  Use this for VTuber mode
+      where ``detect_matches_timeline`` returns ``None`` to trigger band-crop
+      fallback -- returning empty is the safe side there.
+    Zero-gap merge is skipped on the fail-safe path regardless of mode.
 
     ``scan_presence`` raises ``VideoProcessingError`` when all probes for a
     scan call are UNKNOWN (sec.5.3 fail-loud).  For per-segment validation
@@ -1116,6 +1124,16 @@ def _validate_match_segments(
         # Fail-safe: all segments failed presence check -- anchor may be
         # unreliable.  Do NOT commit drop counts to stats; the drops were
         # rolled back, so reporting them would be misleading.
+        if on_all_drop == "empty":
+            logger.warning(
+                "Layer 2 validation: all %d segment(s) failed presence check"
+                " (tentative drops: %d); returning empty for caller fallback",
+                len(segments),
+                dropped_count,
+            )
+            return []
+        # on_all_drop == "keep" (default): conservative keep for masked path
+        # where there is no other fallback -- keeping is the safe side.
         logger.warning(
             "Layer 2 validation: all %d segment(s) failed presence check"
             " (tentative drops: %d); keeping all (anchor mistrust fail-safe)",

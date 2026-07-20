@@ -396,17 +396,33 @@ class TestRefineSegments:
         assert out == [self._seg(0, 900)]
 
     def test_true_boundary_snaps_edges(self):
-        segs = [self._seg(0, 400), self._seg(500, 900)]
-        gap = _gap_probes("M" * 5 + "bb" + "l" * 80 + "M" * 3)
+        # gap probes は絶対時刻 (t0=400 起点) で生成する。
+        # probe_gap mock が t0=400 から 1s stride で返すことを想定。
+        # spec: "M" * 5 + "bb" + "l" * 80 + "M" * 3
+        # idx 0-4 (t=400-404): present (M)
+        # idx 5-6 (t=405-406): blackout (b)
+        # idx 7-86 (t=407-486): absent (l)
+        # idx 87-89 (t=487-489): present (M)
+        t0 = 400
+        gap = _gap_probes("M" * 5 + "bb" + "l" * 80 + "M" * 3, stride=1.0)
+        # shift t to absolute
+        gap = [
+            GapProbe(
+                t=p.t + t0, present=p.present, band_mad=p.band_mad, band_b=p.band_b
+            )
+            for p in gap
+        ]
         with patch(
             "allaganeye.video.vtuber_timeline.probe_gap", return_value=gap
         ) as pg:
-            out = refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+            out = refine_segments(
+                Path("d.mp4"), self.ANCHOR, [self._seg(0, 400), self._seg(500, 900)]
+            )
         assert len(out) == 2
-        # blackout run 先頭 (相対 idx 5) へ end snap。probe_gap は t0=400 起点で
-        # 呼ばれるため GapProbe.t は絶対時刻を持つ (mock は相対 t だが契約検証は
-        # snap が適用されたことと 2 segment 維持で行う)
-        assert out[0]["end"] != 400.0 or out[1]["start"] != 500.0
+        # new_end: 最初の blackout run 先頭 (idx 5, t=405)
+        # new_start: 最後の blackout run 末尾 (idx 6, t=406)
+        assert out[0]["end"] == 405.0
+        assert out[1]["start"] == 406.0
         pg.assert_called_once()
 
     def test_long_gap_probes_only_edge_windows(self):
@@ -437,7 +453,7 @@ class TestRefineSegments:
             "allaganeye.video.vtuber_timeline.probe_gap",
             return_value=_gap_probes(("M" + "lll") * 25),
         ):
-            refine_segments(Path("d.mp4"), self.ANCHOR, segs, stats=stats)
+            refine_segments(Path("d.mp4"), self.ANCHOR, segs, stats=stats)  # type: ignore[arg-type]
         assert stats["vtuber_gaps_tested"] == 1
         assert stats["vtuber_gaps_merged"] == 1
 
@@ -486,7 +502,7 @@ class TestDetectMatchesTimelineV3V4:
             ) as rs,
             patch(
                 "allaganeye.video.detector._validate_match_segments",
-                side_effect=lambda vp, segs, a, w, st, d: segs,
+                side_effect=lambda vp, segs, a, w, st, d, **kw: segs,
             ) as vs,
         ):
             result = detect_matches_timeline(
@@ -539,7 +555,7 @@ class TestDetectMatchesTimelineV3V4:
             ),
             patch(
                 "allaganeye.video.detector._validate_match_segments",
-                side_effect=lambda vp, segs, a, w, st, d: [],
+                side_effect=lambda vp, segs, a, w, st, d, **kw: [],
             ),
         ):
             assert (
@@ -548,3 +564,219 @@ class TestDetectMatchesTimelineV3V4:
                 )
                 is None
             )
+
+
+class TestV4StatsIsolation:
+    """Fix 2: local_stats isolation + translate + pop-on-empty."""
+
+    ANCHOR = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+
+    def test_v4_drop_translate_to_main_stats(self):
+        """vtuber_v4_dropped は local_stats の masked_segments_dropped から
+        translate される。main stats に masked_segments_dropped は残らない。"""
+
+        # _validate_match_segments の side_effect: 渡された stats dict (local_stats) に
+        # masked_segments_dropped を set し、入力 segs の subset を返す。
+        def _fake_validate(vp, segs, a, w, local_st, d, **kw):
+            local_st["masked_segments_dropped"] = 1
+            return segs[:1] if len(segs) > 1 else segs
+
+        main_stats: dict = {}
+        with (
+            patch(
+                "allaganeye.video.vtuber_timeline.resolve_vtuber_anchor",
+                return_value=self.ANCHOR,
+            ),
+            patch(
+                "allaganeye.video.vtuber_timeline.scan_timeline",
+                return_value=_probes("l" * 6 + "M" * 40 + "l" * 6),
+            ),
+            patch(
+                "allaganeye.video.vtuber_timeline.refine_segments",
+                side_effect=lambda vp, a, segs, **kw: [
+                    *segs,
+                    {"start": 600.0, "end": 1000.0, "type": "fl_match"},
+                ],
+            ),
+            patch(
+                "allaganeye.video.detector._validate_match_segments",
+                side_effect=_fake_validate,
+            ),
+        ):
+            detect_matches_timeline(
+                Path("d.mp4"),
+                duration_hint=1100.0,
+                min_match_duration=300.0,
+                stats=main_stats,  # type: ignore[arg-type]
+            )
+        # translate: main_stats にキーが存在し値が 1
+        assert main_stats.get("vtuber_v4_dropped") == 1
+        # isolation: masked_segments_dropped は main_stats に漏れない
+        assert "masked_segments_dropped" not in main_stats
+
+    def test_v4_all_drop_pops_vtuber_keys_from_main_stats(self):
+        """V4 全滅 None 縮退時に V2 以降で set した vtuber_* キーが main stats
+        から除去されること。"""
+        main_stats: dict = {}
+        with (
+            patch(
+                "allaganeye.video.vtuber_timeline.resolve_vtuber_anchor",
+                return_value=self.ANCHOR,
+            ),
+            patch(
+                "allaganeye.video.vtuber_timeline.scan_timeline",
+                return_value=_probes("l" * 6 + "M" * 40 + "l" * 6),
+            ),
+            patch(
+                "allaganeye.video.vtuber_timeline.refine_segments",
+                side_effect=lambda vp, a, segs, **kw: segs,
+            ),
+            patch(
+                "allaganeye.video.detector._validate_match_segments",
+                side_effect=lambda vp, segs, a, w, st, d, **kw: [],
+            ),
+        ):
+            result = detect_matches_timeline(
+                Path("d.mp4"),
+                duration_hint=520.0,
+                min_match_duration=300.0,
+                stats=main_stats,  # type: ignore[arg-type]
+            )
+        assert result is None
+        # pop: vtuber_timeline_probes / vtuber_anchor_confidence は除去済み
+        for k in (
+            "vtuber_timeline_probes",
+            "vtuber_anchor_confidence",
+            "vtuber_gaps_tested",
+            "vtuber_gaps_merged",
+        ):
+            assert k not in main_stats
+
+    def test_v4_real_path_all_absent_returns_none(self):
+        """real _validate_match_segments (on_all_drop='empty') 経由で全 probe
+        ABSENT になると detect_matches_timeline が None を返す。
+        resolve_vtuber_anchor / scan_timeline / refine_segments のみ mock し
+        _validate_match_segments は本物を通す。"""
+        # _probe_frame_rgb_hires: 有効 bytes (UNKNOWN にしない)
+        # localize_from_rgb_bytes_at_anchor: None (ABSENT)
+        raw_bytes = bytes(1920 * 1080 * 3)
+        main_stats: dict = {}
+        with (
+            patch(
+                "allaganeye.video.vtuber_timeline.resolve_vtuber_anchor",
+                return_value=self.ANCHOR,
+            ),
+            patch(
+                "allaganeye.video.vtuber_timeline.scan_timeline",
+                return_value=_probes("l" * 6 + "M" * 40 + "l" * 6),
+            ),
+            patch(
+                "allaganeye.video.vtuber_timeline.refine_segments",
+                side_effect=lambda vp, a, segs, **kw: segs,
+            ),
+            patch(
+                "allaganeye.video.detector._probe_frame_rgb_hires",
+                return_value=raw_bytes,
+            ),
+            patch(
+                "allaganeye.video.capture_region.localize_from_rgb_bytes_at_anchor",
+                return_value=None,
+            ),
+        ):
+            result = detect_matches_timeline(
+                Path("d.mp4"),
+                duration_hint=520.0,
+                min_match_duration=300.0,
+                stats=main_stats,  # type: ignore[arg-type]
+            )
+        # 全 probe ABSENT -> on_all_drop="empty" -> [] -> None 縮退
+        assert result is None
+        # pop 済み: vtuber_timeline_probes は main stats にない
+        assert "vtuber_timeline_probes" not in main_stats
+        # masked_segments_dropped は漏れない
+        assert "masked_segments_dropped" not in main_stats
+
+
+class TestSnapSegmentEdgesContract:
+    """Fix 3: blackout snap の隣接 present 条件 pin."""
+
+    def test_single_blackout_run_only_end_snaps_when_present_before(self):
+        """単一 blackout run + run 前に present / run 後に present なし。
+        end のみ snap、start は粗い edge を維持する。"""
+        # "M"*3 + "bb" + "l"*30: present は run 前のみ
+        probes = _gap_probes("M" * 3 + "bb" + "l" * 30)
+        prev_end, next_start = 0.0, 35.0
+        new_end, new_start = snap_segment_edges(prev_end, next_start, probes)
+        # end snap: 最初の blackout run 先頭 (idx 3, t=3.0)
+        assert new_end == probes[3].t
+        # start は snap されず粗い edge 維持 (run 後に present なし)
+        assert new_start == next_start
+
+    def test_single_blackout_run_no_present_keeps_coarse(self):
+        """probes[0] が absent / probes[-1] が absent の単一 blackout run:
+        blackout snap は不発、presence エッジも不発 -> 粗い edge 維持。"""
+        probes = _gap_probes("l" * 5 + "bb" + "l" * 5)
+        new_end, new_start = snap_segment_edges(10.0, 20.0, probes)
+        assert (new_end, new_start) == (10.0, 20.0)
+
+
+class TestAdjudicateGapUnknownDenominator:
+    """Fix 4(c): unknown probe が present rate 分母に入らない pin."""
+
+    def test_unknown_excluded_from_rate_denominator(self):
+        """u (unknown) probe が rate 分母から除外されること。
+        u を含む構成で valid のみで rate を計算したとき merge になる例。"""
+        # valid: M*10 + l*90 = 10% present -> merge
+        # u を追加しても結果は変わらないことを確認 (分母は valid のみ)
+        probes_no_u = _gap_probes(("M" + "l" * 9) * 10)  # rate=10%, merge
+        probes_with_u = _gap_probes(("M" + "l" * 9) * 10 + "u" * 50)
+        assert adjudicate_gap(probes_no_u) == "merge"
+        # u が分母に入ると rate = 10 / 150 ~= 6.7% < 10% -> boundary (誤)
+        # u が分母から除外されると rate = 10 / 100 = 10% -> merge (正)
+        assert adjudicate_gap(probes_with_u) == "merge"
+
+
+class TestV4DropTranslatePin:
+    """Fix 4(a): vtuber_v4_dropped translate + isolation の直接 pin."""
+
+    ANCHOR = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+
+    def test_translate_pin(self):
+        """_validate_match_segments に渡す local_stats に masked_segments_dropped=1
+        が set されたとき、main stats の vtuber_v4_dropped=1 かつ
+        masked_segments_dropped が main stats にないことを assert。"""
+
+        def _fake_validate(vp, segs, a, w, local_st, d, **kw):
+            local_st["masked_segments_dropped"] = 1
+            return segs[:1]
+
+        main_stats: dict = {}
+        with (
+            patch(
+                "allaganeye.video.vtuber_timeline.resolve_vtuber_anchor",
+                return_value=self.ANCHOR,
+            ),
+            patch(
+                "allaganeye.video.vtuber_timeline.scan_timeline",
+                return_value=_probes("l" * 6 + "M" * 40 + "l" * 6),
+            ),
+            patch(
+                "allaganeye.video.vtuber_timeline.refine_segments",
+                side_effect=lambda vp, a, segs, **kw: [
+                    *segs,
+                    {"start": 600.0, "end": 1000.0, "type": "fl_match"},
+                ],
+            ),
+            patch(
+                "allaganeye.video.detector._validate_match_segments",
+                side_effect=_fake_validate,
+            ),
+        ):
+            detect_matches_timeline(
+                Path("d.mp4"),
+                duration_hint=1100.0,
+                min_match_duration=300.0,
+                stats=main_stats,  # type: ignore[arg-type]
+            )
+        assert main_stats["vtuber_v4_dropped"] == 1
+        assert "masked_segments_dropped" not in main_stats

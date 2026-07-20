@@ -1,10 +1,12 @@
 # allaganeye/video/vtuber_timeline.py
-"""VTuber presence x motion timeline detection (V0-V2, spec 2026-07-17 sec. #895).
+"""VTuber presence x motion timeline detection (V0-V4, spec 2026-07-17 sec. #895).
 
 `--vtuber` 専用の境界候補 generator。blackout 起点 (candidate-classify) では
 境界 blackout が 1-3s しかなく系統的に under-detect するため (PoC report sec. 2)、
 「試合中である」証拠 (at-anchor presence AND band motion) の timeline から
-試合区間を直接切り出す。OBS / masked path からは import されない。
+試合区間を直接切り出す (V0-V2)。V3 は gap merge 裁定 + 境界 snap、V4 は
+at-anchor presence quorum validation (#822 masked L2 と同 primitive)。
+OBS / masked path からは import されない。
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from allaganeye.video.capture_region import RegionTimeline, ScorebarLocalization
-    from allaganeye.video.detector import MatchBoundary
+    from allaganeye.video.detector import DetectionStats, MatchBoundary
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +65,7 @@ def segment_timeline(
     probe evidence = present AND band_mad >= mad_min。中心 rolling window
     (probe i の前後 window//2) に evidence が quorum 個以上ある probe を
     in-match とし、連続 in-match run を segment 化、min_match_duration 未満を
-    除外する。境界精度は stride 相当 (精密化は P2 の V3)。
+    除外する。境界精度は stride 相当 (精密化は V3 refine_segments で実施済み)。
     """
     n = len(probes)
     if n == 0:
@@ -233,7 +235,7 @@ def detect_matches_timeline(
     min_match_duration: float,
     workers: int | None = None,
     progress_callback: Callable[[int, int, int], None] | None = None,
-    stats=None,
+    stats: DetectionStats | None = None,
 ) -> tuple[list[MatchBoundary], RegionTimeline] | None:
     """V0 -> V1 -> V2 -> V3 -> V4 orchestration。None = timeline 不能 (caller が縮退)。
 
@@ -289,17 +291,24 @@ def detect_matches_timeline(
         video_path, anchor, boundaries, workers=workers, stats=stats
     )
     # V4: at-anchor presence quorum validation (#822 masked L2 と同 primitive)
-    before_v4 = list(boundaries)
+    # local_stats を使って _validate_match_segments を呼ぶ: main stats への
+    # masked_segments_dropped キー混入と verbose 二重表示を防ぐ。
+    # on_all_drop="empty" で全滅時は [] を返し、直後の None 縮退で legacy path へ。
+    local_stats: dict = {}
     boundaries = detector._validate_match_segments(
-        video_path, boundaries, anchor, workers, stats, duration_hint
+        video_path,
+        boundaries,
+        anchor,
+        workers,
+        local_stats,  # type: ignore[arg-type]
+        duration_hint,
+        on_all_drop="empty",
     )
-    # _validate_match_segments が drop 数を masked_segments_dropped に加算するため、
-    # vtuber 専用の vtuber_v4_dropped は wrapper 側で len の差分から計算する。
-    # 全滅 fail-safe 発動時 (全 drop -> 全件 keep) は len 差分が 0 になり
-    # 表示上は 0 dropped で正しい。before_v4 は list(boundaries) で
-    # _validate_match_segments による in-place 変化から隔離済み。
+    # vtuber_v4_dropped: local_stats の masked_segments_dropped を translate。
+    # "empty" mode で全滅した場合 boundaries=[] になるため、直後の空分岐で None
+    # 縮退し stats に書かれる前に関数を抜ける (表示不要)。
     if stats is not None:
-        stats["vtuber_v4_dropped"] = max(0, len(before_v4) - len(boundaries))
+        stats["vtuber_v4_dropped"] = local_stats.get("masked_segments_dropped", 0)
     # V4 30min 低信頼フラグ: 結果 merge 型見逃しの疑いがある長尺 segment に警告
     low = [b for b in boundaries if b["end"] - b["start"] > LOW_CONFIDENCE_SEGMENT_S]
     for b in low:
@@ -314,8 +323,17 @@ def detect_matches_timeline(
         stats["vtuber_low_confidence_segments"] = len(low)
     if not boundaries:
         # V4 が全 segment を drop した場合も None (defense-in-depth、空 authoritative 禁止)
-        # 注: _validate_match_segments 内の全滅 fail-safe が機能すれば実質 dead だが、
-        # P1 の空 segmentation gate と同じ思想で維持する。
+        # on_all_drop="empty" が発火した場合もここに落ちる。
+        # legacy 縮退 run の verbose に放棄した timeline 統計が出ないよう
+        # V2 通過後に set した vtuber_* キーを main stats から pop する。
+        if stats is not None:
+            for _k in (
+                "vtuber_timeline_probes",
+                "vtuber_anchor_confidence",
+                "vtuber_gaps_tested",
+                "vtuber_gaps_merged",
+            ):
+                stats.pop(_k, None)  # type: ignore[misc]
         logger.warning(
             "vtuber timeline: no segments after V4 validation; "
             "falling back to band-crop path"
@@ -403,6 +421,13 @@ def snap_segment_edges(
     粗い edge 維持。snap 結果が交差する場合は粗い edge に縮退する
     (snap は改善のみ、悪化させない)。
 
+    blackout snap 契約: new_end を最初の blackout run の先頭に snap するのは
+    その run より前に present probe が存在するときのみ。new_start を最後の
+    blackout run の末尾に snap するのはその run より後に present probe が存在
+    するときのみ。条件を満たさない側は presence エッジ判定に fall through し、
+    それも不成立なら粗い edge を維持する。単一 blackout run しか存在しない
+    ケースで両端を誤 snap するのを防ぐ契約 (#895 P2 fix)。
+
     presence エッジ検出の契約: probes[0] が present のときのみ leading run を
     走査 (先頭 present run の末尾を new_end とする)、probes[-1] が present の
     ときのみ trailing run を走査 (末尾 present run の先頭を new_start とする)。
@@ -412,12 +437,24 @@ def snap_segment_edges(
     new_end, new_start = prev_end, next_start
 
     runs = _blackout_runs(probes, blackout_b_max)
+    # blackout snap: 各端は隣接する present 証拠があるときのみ snap する。
+    # 証拠のない端は fall-through して presence エッジ判定に委ねる。
+    end_snapped = False
+    start_snapped = False
     if runs:
-        new_end = probes[runs[0][0]].t
-        new_start = probes[runs[-1][1]].t
-    elif probes:
-        # 先頭 present run の末尾 (probes[0] が present のときのみ)
-        if probes[0].present:
+        first_run_start = runs[0][0]
+        last_run_end = runs[-1][1]
+        # new_end snap: 最初の run より前に present probe があるか
+        if any(probes[i].present for i in range(first_run_start)):
+            new_end = probes[first_run_start].t
+            end_snapped = True
+        # new_start snap: 最後の run より後に present probe があるか
+        if any(probes[i].present for i in range(last_run_end + 1, len(probes))):
+            new_start = probes[last_run_end].t
+            start_snapped = True
+    if probes and (not runs or not end_snapped or not start_snapped):
+        # 先頭 present run の末尾 (probes[0] が present のときのみ、未 snap 端のみ)
+        if not end_snapped and probes[0].present:
             last_leading = 0
             for i in range(1, len(probes)):
                 if probes[i].present:
@@ -425,8 +462,8 @@ def snap_segment_edges(
                 else:
                     break
             new_end = probes[last_leading].t
-        # 末尾 present run の先頭 (probes[-1] が present のときのみ)
-        if probes[-1].present:
+        # 末尾 present run の先頭 (probes[-1] が present のときのみ、未 snap 端のみ)
+        if not start_snapped and probes[-1].present:
             first_trailing = len(probes) - 1
             for i in range(len(probes) - 2, -1, -1):
                 if probes[i].present:
@@ -495,7 +532,7 @@ def refine_segments(
     segments: list[MatchBoundary],
     *,
     workers: int | None = None,
-    stats=None,
+    stats: DetectionStats | None = None,
 ) -> list[MatchBoundary]:
     """V3: 隣接 segment 間 gap の merge 裁定 + 確定境界の snap。
 
