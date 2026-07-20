@@ -1,10 +1,12 @@
 # allaganeye/video/vtuber_timeline.py
-"""VTuber presence x motion timeline detection (V0-V2, spec 2026-07-17 U+00A7 #895).
+"""VTuber presence x motion timeline detection (V0-V4, spec 2026-07-17 sec. #895).
 
 `--vtuber` 専用の境界候補 generator。blackout 起点 (candidate-classify) では
-境界 blackout が 1-3s しかなく系統的に under-detect するため (PoC report U+00A7 2)、
+境界 blackout が 1-3s しかなく系統的に under-detect するため (PoC report sec. 2)、
 「試合中である」証拠 (at-anchor presence AND band motion) の timeline から
-試合区間を直接切り出す。OBS / masked path からは import されない。
+試合区間を直接切り出す (V0-V2)。V3 は gap merge 裁定 + 境界 snap、V4 は
+at-anchor presence quorum validation (#822 masked L2 と同 primitive)。
+OBS / masked path からは import されない。
 """
 
 from __future__ import annotations
@@ -15,13 +17,13 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
 if TYPE_CHECKING:
-    from allaganeye.video.capture_region import ScorebarLocalization
-    from allaganeye.video.detector import MatchBoundary
+    from allaganeye.video.capture_region import RegionTimeline, ScorebarLocalization
+    from allaganeye.video.detector import DetectionStats, MatchBoundary
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +65,7 @@ def segment_timeline(
     probe evidence = present AND band_mad >= mad_min。中心 rolling window
     (probe i の前後 window//2) に evidence が quorum 個以上ある probe を
     in-match とし、連続 in-match run を segment 化、min_match_duration 未満を
-    除外する。境界精度は stride 相当 (精密化は P2 の V3)。
+    除外する。境界精度は stride 相当 (精密化は V3 refine_segments で実施済み)。
     """
     n = len(probes)
     if n == 0:
@@ -93,16 +95,16 @@ def segment_timeline(
 
 _VT_ANCHOR_NUM_SAMPLES = 48
 """VTuber anchor consensus のサンプル数。masked (24) の倍: Onsal の低 conf
-hit 率 (~21% @conf>=0.5、PoC report U+00A7 3) でも期待 ~10 hits を確保する."""
+hit 率 (~21% @conf>=0.5、PoC report sec. 3) でも期待 ~10 hits を確保する."""
 
 _VT_ANCHOR_MIN_CONF = 0.5
 """VTuber anchor の conf 事前フィルタ。masked の 0.7 は Onsal true hit
-(median 0.589) を殺すため使わない (PoC report U+00A7 3)。FP は dominant cluster
+(median 0.589) を殺すため使わない (PoC report sec. 3)。FP は dominant cluster
 の y 投票で抑制する."""
 
 _VT_ANCHOR_MIN_HITS = 5
 """VTuber anchor の minimum hit count。masked と同値の下限。
-48 samples U+00D7 20.8% expected hit rate (Onsal PoC U+00A7 3) ~= 10 hits に対する
+48 samples x 20.8% expected hit rate (Onsal PoC sec. 3) ~= 10 hits に対する
 安全マージン (約 50%) で、Onsal 最悪ケースでも解決できる範囲に設定。"""
 
 
@@ -222,6 +224,10 @@ def scan_timeline(
     return results
 
 
+LOW_CONFIDENCE_SEGMENT_S = 1800.0
+"""30min 超 segment は result-merge 型見逃しの疑い (spec sec.2 V4)."""
+
+
 def detect_matches_timeline(
     video_path: Path,
     duration_hint: float,
@@ -229,8 +235,9 @@ def detect_matches_timeline(
     min_match_duration: float,
     workers: int | None = None,
     progress_callback: Callable[[int, int, int], None] | None = None,
-):
-    """V0 -> V1 -> V2 orchestration。None = timeline 不能 (caller が縮退)。
+    stats: DetectionStats | None = None,
+) -> tuple[list[MatchBoundary], RegionTimeline] | None:
+    """V0 -> V1 -> V2 -> V3 -> V4 orchestration。None = timeline 不能 (caller が縮退)。
 
     Returns:
         (boundaries, region_timeline) | None
@@ -275,6 +282,63 @@ def detect_matches_timeline(
             "falling back to band-crop path"
         )
         return None
+    # V2 空チェック通過後に stats を記録する (V2 が non-empty を保証してから)
+    if stats is not None:
+        stats["vtuber_timeline_probes"] = len(probes)
+        stats["vtuber_anchor_confidence"] = float(anchor.confidence)
+    # V3: gap merge 裁定 + 確定境界 snap
+    boundaries = refine_segments(
+        video_path, anchor, boundaries, workers=workers, stats=stats
+    )
+    # V4: at-anchor presence quorum validation (#822 masked L2 と同 primitive)
+    # local_stats を使って _validate_match_segments を呼ぶ: main stats への
+    # masked_segments_dropped キー混入と verbose 二重表示を防ぐ。
+    # on_all_drop="empty" で全滅時は [] を返し、直後の None 縮退で legacy path へ。
+    local_stats: dict = {}
+    boundaries = detector._validate_match_segments(
+        video_path,
+        boundaries,
+        anchor,
+        workers,
+        local_stats,  # type: ignore[arg-type]
+        duration_hint,
+        on_all_drop="empty",
+    )
+    if not boundaries:
+        # V4 が全 segment を drop した場合も None (defense-in-depth、空 authoritative 禁止)
+        # on_all_drop="empty" が発火した場合もここに落ちる。
+        # legacy 縮退 run の verbose に放棄した timeline 統計が出ないよう
+        # V2 通過後に set した vtuber_* キーを main stats から pop する。
+        if stats is not None:
+            for _k in (
+                "vtuber_timeline_probes",
+                "vtuber_anchor_confidence",
+                "vtuber_gaps_tested",
+                "vtuber_gaps_merged",
+            ):
+                stats.pop(_k, None)  # type: ignore[misc]
+        logger.warning(
+            "vtuber timeline: no segments after V4 validation; "
+            "falling back to band-crop path"
+        )
+        return None
+    # V4 統計は空チェック通過後にのみ書く: 縮退 run の main stats に放棄した
+    # timeline の統計を残さない (Round 2 finding #1)。
+    # vtuber_v4_dropped: local_stats の masked_segments_dropped を translate。
+    if stats is not None:
+        stats["vtuber_v4_dropped"] = local_stats.get("masked_segments_dropped", 0)
+    # V4 30min 低信頼フラグ: result merge 型見逃しの疑いがある長尺 segment に警告
+    low = [b for b in boundaries if b["end"] - b["start"] > LOW_CONFIDENCE_SEGMENT_S]
+    for b in low:
+        logger.warning(
+            "vtuber timeline: segment %.0f-%.0f exceeds %.0fs; low-confidence "
+            "(possible merged matches)",
+            b["start"],
+            b["end"],
+            LOW_CONFIDENCE_SEGMENT_S,
+        )
+    if stats is not None:
+        stats["vtuber_low_confidence_segments"] = len(low)
     region = RegionTimeline(
         coarse=band_region_from_localization(
             anchor,
@@ -285,3 +349,289 @@ def detect_matches_timeline(
         fallback_reason=None,
     )
     return boundaries, region
+
+
+MERGE_GAP_MAX = 300.0
+"""V3 merge 裁定の対象 gap 上限 (秒)。実測 FN run 最大 ~250s (PoC sec.5)。
+300s 超の gap は真の境界のみ (min_match_duration と同値)."""
+
+MERGE_RATE = 0.10
+"""merge 裁定の anchor presence rate 閾値。FN run ~24% vs 真 lobby ~1.5%
+(1s stride、PoC sec.5) の 15 倍分離の中間."""
+
+FROZEN_MAX = 1.0
+"""凍結 probe の band MAD 上限。リザルト/replay 静止 0.13-0.83 (PoC sec.3)."""
+
+FROZEN_RUN_MIN_PROBES = 10
+"""凍結 marker とみなす最小連続 probe 数 (=10s @1s)。リザルト/replay の
+静止表示は 30s+ 持続 (PoC sec.7.4)、試合中の瞬間静止と区別する."""
+
+BLACKOUT_B_MAX = 30.0
+"""band brightness の blackout 閾値。境界 blackout は band_b ~0-7、
+band crop の暗転 floor ~17-20 実測 (#809) に margin."""
+
+GAP_STRIDE = 1.0
+"""V3 gap dense probe の stride (秒)。blackout/presence エッジ snap もこの
+1s 系列に対して行う (spec V3 (b) erratum: 0.25s の局所再 probe は
++-15s gate に対して over-engineering のため不採用)."""
+
+
+@dataclass(frozen=True)
+class GapProbe:
+    """V3 gap dense probe。band_b (band 平均輝度) を持つ点が TimelineProbe と違う。
+
+    band_mad / band_b が None = decode 失敗 (UNKNOWN、判定の分母から除外)。
+    """
+
+    t: float
+    present: bool
+    band_mad: float | None
+    band_b: float | None
+
+
+def _blackout_runs(
+    probes: Sequence[GapProbe], blackout_b_max: float
+) -> list[tuple[int, int]]:
+    """band_b <= 閾値の連続 run を (start_idx, end_idx) inclusive で返す。"""
+    runs: list[tuple[int, int]] = []
+    start: int | None = None
+    for i, p in enumerate(probes):
+        is_black = p.band_b is not None and p.band_b <= blackout_b_max
+        if is_black and start is None:
+            start = i
+        elif not is_black and start is not None:
+            runs.append((start, i - 1))
+            start = None
+    if start is not None:
+        runs.append((start, len(probes) - 1))
+    return runs
+
+
+def snap_segment_edges(
+    prev_end: float,
+    next_start: float,
+    gap_probes: Sequence[GapProbe],
+    *,
+    blackout_b_max: float = BLACKOUT_B_MAX,
+) -> tuple[float, float]:
+    """V3-b: 確定境界の両端を gap dense 系列から精密化する (純関数)。
+
+    優先順: blackout run (OBS と同じ意味論 = 境界は blackout に snap) >
+    presence run エッジ (先頭 present run の末尾 / 末尾 present run の先頭) >
+    粗い edge 維持。snap 結果が交差する場合は粗い edge に縮退する
+    (snap は改善のみ、悪化させない)。
+
+    blackout snap 契約: new_end を最初の blackout run の先頭に snap するのは
+    その run より前に present probe が存在するときのみ。new_start を最後の
+    blackout run の末尾に snap するのはその run より後に present probe が存在
+    するときのみ。条件を満たさない側は presence エッジ判定に fall through し、
+    それも不成立なら粗い edge を維持する。単一 blackout run しか存在しない
+    ケースで両端を誤 snap するのを防ぐ契約 (#895 P2 fix)。
+
+    presence エッジ検出の契約: probes[0] が present のときのみ leading run を
+    走査 (先頭 present run の末尾を new_end とする)、probes[-1] が present の
+    ときのみ trailing run を走査 (末尾 present run の先頭を new_start とする)。
+    詳細は spec sec.2 V3 (b) を参照。
+    """
+    probes = list(gap_probes)
+    new_end, new_start = prev_end, next_start
+
+    runs = _blackout_runs(probes, blackout_b_max)
+    # blackout snap: 各端は隣接する present 証拠があるときのみ snap する。
+    # 証拠のない端は fall-through して presence エッジ判定に委ねる。
+    end_snapped = False
+    start_snapped = False
+    if runs:
+        first_run_start = runs[0][0]
+        last_run_end = runs[-1][1]
+        # new_end snap: 最初の run より前に present probe があるか
+        if any(probes[i].present for i in range(first_run_start)):
+            new_end = probes[first_run_start].t
+            end_snapped = True
+        # new_start snap: 最後の run より後に present probe があるか
+        if any(probes[i].present for i in range(last_run_end + 1, len(probes))):
+            new_start = probes[last_run_end].t
+            start_snapped = True
+    if probes and (not runs or not end_snapped or not start_snapped):
+        # 先頭 present run の末尾 (probes[0] が present のときのみ、未 snap 端のみ)
+        if not end_snapped and probes[0].present:
+            last_leading = 0
+            for i in range(1, len(probes)):
+                if probes[i].present:
+                    last_leading = i
+                else:
+                    break
+            new_end = probes[last_leading].t
+        # 末尾 present run の先頭 (probes[-1] が present のときのみ、未 snap 端のみ)
+        if not start_snapped and probes[-1].present:
+            first_trailing = len(probes) - 1
+            for i in range(len(probes) - 2, -1, -1):
+                if probes[i].present:
+                    first_trailing = i
+                else:
+                    break
+            new_start = probes[first_trailing].t
+
+    if new_end >= new_start:
+        return prev_end, next_start
+    return new_end, new_start
+
+
+_LONG_GAP_EDGE_WINDOW_S = 60.0
+"""gap > MERGE_GAP_MAX のとき両端それぞれ probe する窓幅 (秒)."""
+
+
+def _probe_gap_one(video_path: Path, t: float, anchor) -> GapProbe:
+    from allaganeye.video import capture_region, detector
+
+    raw1 = detector._probe_frame_rgb_hires(video_path, t)
+    raw2 = detector._probe_frame_rgb_hires(video_path, t + TIMELINE_PAIR_DT)
+    if raw1 is None or raw2 is None:
+        return GapProbe(t=t, present=False, band_mad=None, band_b=None)
+    h, w = detector._SCOREBAR_V2_PROBE_HEIGHT, detector._SCOREBAR_V2_PROBE_WIDTH
+    f1 = np.frombuffer(raw1, np.uint8).reshape(h, w, 3)
+    f2 = np.frombuffer(raw2, np.uint8).reshape(h, w, 3)
+    y0, y1, x0, x1 = _band_slice(anchor)
+    b1 = f1[y0:y1, x0:x1].astype(np.int16)
+    b2 = f2[y0:y1, x0:x1].astype(np.int16)
+    band_mad = float(np.abs(b1 - b2).mean()) if b1.size else 0.0
+    band_b = float(b1.mean()) if b1.size else 0.0
+    present = capture_region.localize_scorebar_at_anchor(f1, anchor) is not None
+    return GapProbe(t=t, present=present, band_mad=band_mad, band_b=band_b)
+
+
+def probe_gap(
+    video_path: Path,
+    anchor,
+    t0: float,
+    t1: float,
+    *,
+    stride: float = GAP_STRIDE,
+    workers: int | None = None,
+) -> list[GapProbe]:
+    """[t0, t1) を stride 間隔で dense probe する (V3 用、例外は probe 単位隔離)."""
+    ts = [round(t0 + i * stride, 2) for i in range(max(0, int((t1 - t0) / stride)))]
+    if not ts:
+        return []
+    max_workers = workers or min(os.cpu_count() or 4, 16)
+
+    def _one(t: float) -> GapProbe:
+        try:
+            return _probe_gap_one(video_path, t, anchor)
+        except Exception:
+            logger.debug("gap probe failed at t=%.1fs", t, exc_info=True)
+            return GapProbe(t=t, present=False, band_mad=None, band_b=None)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        return list(ex.map(_one, ts))
+
+
+def refine_segments(
+    video_path: Path,
+    anchor,
+    segments: list[MatchBoundary],
+    *,
+    workers: int | None = None,
+    stats: DetectionStats | None = None,
+) -> list[MatchBoundary]:
+    """V3: 隣接 segment 間 gap の merge 裁定 + 確定境界の snap。
+
+    per-gap 例外隔離: probe/裁定に失敗した gap は V2 の粗い結果を維持する
+    (V3 は改善のみ、失敗しても悪化させない)。
+    """
+    if len(segments) < 2:
+        return list(segments)
+    result: list[MatchBoundary] = [cast("MatchBoundary", dict(segments[0]))]
+    for nxt in segments[1:]:
+        prev = result[-1]
+        gap = nxt["start"] - prev["end"]
+        try:
+            if gap <= MERGE_GAP_MAX:
+                probes = probe_gap(
+                    video_path, anchor, prev["end"], nxt["start"], workers=workers
+                )
+                if stats is not None:
+                    stats["vtuber_gaps_tested"] = stats.get("vtuber_gaps_tested", 0) + 1
+                if adjudicate_gap(probes) == "merge":
+                    if stats is not None:
+                        stats["vtuber_gaps_merged"] = (
+                            stats.get("vtuber_gaps_merged", 0) + 1
+                        )
+                    prev["end"] = nxt["end"]
+                    continue
+                new_end, new_start = snap_segment_edges(
+                    prev["end"], nxt["start"], probes
+                )
+            else:
+                head = probe_gap(
+                    video_path,
+                    anchor,
+                    prev["end"],
+                    prev["end"] + _LONG_GAP_EDGE_WINDOW_S,
+                    workers=workers,
+                )
+                tail = probe_gap(
+                    video_path,
+                    anchor,
+                    nxt["start"] - _LONG_GAP_EDGE_WINDOW_S,
+                    nxt["start"],
+                    workers=workers,
+                )
+                new_end, _ = snap_segment_edges(
+                    prev["end"], prev["end"] + _LONG_GAP_EDGE_WINDOW_S, head
+                )
+                _, new_start = snap_segment_edges(
+                    nxt["start"] - _LONG_GAP_EDGE_WINDOW_S, nxt["start"], tail
+                )
+        except Exception:
+            logger.warning(
+                "vtuber timeline: gap refinement failed at %.0f-%.0f; keeping "
+                "coarse boundaries",
+                prev["end"],
+                nxt["start"],
+                exc_info=True,
+            )
+            result.append(cast("MatchBoundary", dict(nxt)))
+            continue
+        prev["end"] = new_end
+        follower = cast("MatchBoundary", dict(nxt))
+        follower["start"] = new_start
+        result.append(follower)
+    return result
+
+
+def adjudicate_gap(
+    probes: Sequence[GapProbe],
+    *,
+    merge_rate: float = MERGE_RATE,
+    frozen_max: float = FROZEN_MAX,
+    frozen_run_min: int = FROZEN_RUN_MIN_PROBES,
+    blackout_b_max: float = BLACKOUT_B_MAX,
+) -> str:
+    """V3-a: 隣接 segment 間 gap が偽分割 (merge) か真の境界 (boundary) か。
+
+    判定順序 (spec sec.2 V3 (a)、positive marker 優先):
+    1. blackout marker (band_b <= blackout_b_max の probe) があれば boundary
+    2. 凍結 run (band_mad < frozen_max が frozen_run_min 連続) があれば boundary
+       (リザルト/replay 静止画面 = 真の境界の証拠。presence の有無は問わない)
+    3. valid probe の present rate >= merge_rate なら merge (試合中 FN run)、
+       未満なら boundary (真の lobby)
+    4. valid probe ゼロ (空 / 全 UNKNOWN) は boundary (証拠なしで merge しない)
+    """
+    valid = [p for p in probes if p.band_b is not None and p.band_mad is not None]
+    if not valid:
+        return "boundary"
+    if any(p.band_b is not None and p.band_b <= blackout_b_max for p in valid):
+        return "boundary"
+    run = 0
+    for p in valid:
+        if p.band_mad is not None and p.band_mad < frozen_max:
+            run += 1
+            if run >= frozen_run_min:
+                return "boundary"
+        else:
+            run = 0
+    present = sum(1 for p in valid if p.present)
+    if present / len(valid) >= merge_rate:
+        return "merge"
+    return "boundary"

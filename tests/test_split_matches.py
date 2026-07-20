@@ -1550,10 +1550,10 @@ class TestVtuberAlgoCache:
         assert data["params"]["vtuber_algo"] == _VTUBER_ALGO_VERSION
 
     def test_cache_miss_on_vtuber_algo_mismatch(self, cache_video, tmp_path):
-        """Legacy vtuber cache (vtuber_algo absent = 1) misses with new code (2).
+        """Legacy vtuber cache (vtuber_algo absent = 1) misses with the current version.
 
         A cache saved by pre-#895 code with vtuber=True has no vtuber_algo key
-        (defaults to 1). Loading with the current code (_VTUBER_ALGO_VERSION=2)
+        (defaults to 1). Loading with the current code (_VTUBER_ALGO_VERSION)
         must return None -- the old band-crop result is stale (timeline path
         was not yet implemented).
         """
@@ -1627,9 +1627,41 @@ class TestVtuberAlgoCache:
         result = _load_cache(cache_path, cache_video, 1.0, vtuber_config)
         assert result is None, "broken vtuber_algo must cause cache miss, not hit"
 
-    def test_vtuber_algo_version_is_2(self):
-        """Pin: _VTUBER_ALGO_VERSION == 2 for #895 timeline segmentation."""
-        assert _VTUBER_ALGO_VERSION == 2
+    def test_vtuber_algo_version_is_3(self):
+        """Pin: _VTUBER_ALGO_VERSION == 3 for #895 V3/V4 timeline integration."""
+        assert _VTUBER_ALGO_VERSION == 3
+
+
+def test_print_detection_stats_vtuber_timeline_section(capsys):
+    """timeline stats keys present -> vtuber section shown (OBS no-impact pin)."""
+    from allaganeye.commands.split_matches import _print_detection_stats
+
+    _print_detection_stats(
+        {
+            "vtuber_timeline_probes": 1449,
+            "vtuber_anchor_confidence": 0.589,
+            "vtuber_gaps_tested": 8,
+            "vtuber_gaps_merged": 4,
+            "vtuber_v4_dropped": 0,
+            "vtuber_low_confidence_segments": 0,
+        }
+    )
+    out = capsys.readouterr().out
+    assert "Timeline (vtuber): 1449 probes" in out
+    assert "anchor conf 0.59" in out
+    assert "8 gaps tested, 4 merged" in out
+    assert "V4: 0 dropped, 0 low-confidence" in out
+
+
+def test_print_detection_stats_vtuber_timeline_section_obs_no_impact(capsys):
+    """OBS stats (vtuber key absent) must not emit the timeline section."""
+    from allaganeye.commands.split_matches import _print_detection_stats
+
+    _print_detection_stats(
+        {"mode": "cpu", "pass1_samples": 0, "pass1_blackout_frames": 0}
+    )
+    out = capsys.readouterr().out
+    assert "Timeline (vtuber)" not in out
 
 
 class TestCaptureRegionsCache:
@@ -6444,7 +6476,7 @@ def test_display_cache_hit_params_vtuber_shows_vtuber_algo(tmp_path, capsys):
 
     When the cache records vtuber=True, the verbose cache-hit summary must
     include the vtuber_algo token so operators can distinguish pre-#895
-    (vtuber_algo=1, band-crop) from post-#895 (vtuber_algo=2, timeline)
+    (vtuber_algo=1, band-crop) from post-#895 (vtuber_algo>=2, timeline)
     results without re-running detection.
     """
     from allaganeye.commands.split_matches import _display_cache_hit_params
