@@ -371,9 +371,22 @@ BLACKOUT_B_MAX = 30.0
 band crop の暗転 floor ~17-20 実測 (#809) に margin."""
 
 GAP_STRIDE = 1.0
-"""V3 gap dense probe の stride (秒)。blackout/presence エッジ snap もこの
+"""V3 gap dense probe の stride (秒)。blackout/presence edge snap もこの
 1s 系列に対して行う (spec V3 (b) erratum: 0.25s の局所再 probe は
 +-15s gate に対して over-engineering のため不採用)."""
+
+EDGE_EXT_S = 45.0
+"""V2 粗 edge の平滑ズレ吸収のための gap probe 拡張幅 (秒)。
+probe_gap の t0/t1 をそれぞれ EDGE_EXT_S だけ外側に拡張する (#895 P3)."""
+
+SNAP_FLICKER_TOL = 10
+"""evidence run の flicker 許容 probe 数。この数以下の False gap は
+True run 内に取り込んで 1 つの run にまとめる (#895 P3)."""
+
+BLACKOUT_ADJACENCY_S = 30.0
+"""blackout snap を許す evidence 隣接距離 (秒)。blackout run の前後
+この秒数以内に evidence probe がなければ blackout は snap に使わない
+(非隣接 blackout ドラッグを根絶する #895 P3)."""
 
 
 @dataclass(frozen=True)
@@ -407,6 +420,47 @@ def _blackout_runs(
     return runs
 
 
+def _evidence_flags(
+    probes: Sequence[GapProbe], *, frozen_max: float = FROZEN_MAX
+) -> list[bool]:
+    """match evidence = present AND not frozen (band_mad >= frozen_max)。UNKNOWN は False。
+
+    frozen-present (replay/result 静止画面) は evidence にしない。
+    UNKNOWN (band_mad=None) も evidence にしない。
+    """
+    return [
+        p.present and p.band_mad is not None and p.band_mad >= frozen_max
+        for p in probes
+    ]
+
+
+def _tolerant_runs(
+    flags: Sequence[bool], tol: int = SNAP_FLICKER_TOL
+) -> list[tuple[int, int]]:
+    """True run を tol 個までの False gap を跨いで結合した (start_idx, end_idx) inclusive 列。
+
+    PoC gt_boundary_probe._runs と同一アルゴリズム。将来の共用のため production 側に置く。
+    """
+    runs: list[tuple[int, int]] = []
+    start: int | None = None
+    gap = 0
+    last_true: int | None = None
+    for i, f in enumerate(flags):
+        if f:
+            if start is None:
+                start = i
+            last_true = i
+            gap = 0
+        elif start is not None:
+            gap += 1
+            if gap > tol and last_true is not None:
+                runs.append((start, last_true))
+                start = None
+    if start is not None and last_true is not None:
+        runs.append((start, last_true))
+    return runs
+
+
 def snap_segment_edges(
     prev_end: float,
     next_start: float,
@@ -414,64 +468,71 @@ def snap_segment_edges(
     *,
     blackout_b_max: float = BLACKOUT_B_MAX,
 ) -> tuple[float, float]:
-    """V3-b: 確定境界の両端を gap dense 系列から精密化する (純関数)。
+    """V3-b (P3): 物理エッジ検出による確定境界精密化 (純関数)。
 
-    優先順: blackout run (OBS と同じ意味論 = 境界は blackout に snap) >
-    presence run エッジ (先頭 present run の末尾 / 末尾 present run の先頭) >
-    粗い edge 維持。snap 結果が交差する場合は粗い edge に縮退する
-    (snap は改善のみ、悪化させない)。
+    evidence run (present AND not frozen) の先頭/末尾から境界を検出し、
+    隣接条件付き blackout run で上書きする。frozen-present (replay/result)
+    は evidence から除外する (frozen 除外 #895 P3)。
 
-    blackout snap 契約: new_end を最初の blackout run の先頭に snap するのは
-    その run より前に present probe が存在するときのみ。new_start を最後の
-    blackout run の末尾に snap するのはその run より後に present probe が存在
-    するときのみ。条件を満たさない側は presence エッジ判定に fall through し、
-    それも不成立なら粗い edge を維持する。単一 blackout run しか存在しない
-    ケースで両端を誤 snap するのを防ぐ契約 (#895 P2 fix)。
-
-    presence エッジ検出の契約: probes[0] が present のときのみ leading run を
-    走査 (先頭 present run の末尾を new_end とする)、probes[-1] が present の
-    ときのみ trailing run を走査 (末尾 present run の先頭を new_start とする)。
-    詳細は spec sec.2 V3 (b) を参照。
+    処理順:
+    1. _evidence_flags / _tolerant_runs で leading/trailing evidence run を検出
+       - new_end: leading run の末尾 (probes 先頭 15 probe 以内に run start あり)
+       - new_start: trailing run の先頭 (probes 末尾 15 probe 以内に run end あり)
+    2. blackout run の隣接条件チェック (BLACKOUT_ADJACENCY_S 以内に evidence あり)
+       - 条件を満たす blackout run で new_end / new_start を上書き
+       - 条件を満たさない blackout は無視 (非隣接 blackout ドラッグ根絶 #895 P3)
+    3. 交差 (new_end >= new_start) -> (prev_end, next_start) に縮退
     """
     probes = list(gap_probes)
+    if not probes:
+        return prev_end, next_start
+
     new_end, new_start = prev_end, next_start
 
-    runs = _blackout_runs(probes, blackout_b_max)
-    # blackout snap: 各端は隣接する present 証拠があるときのみ snap する。
-    # 証拠のない端は fall-through して presence エッジ判定に委ねる。
-    end_snapped = False
-    start_snapped = False
-    if runs:
-        first_run_start = runs[0][0]
-        last_run_end = runs[-1][1]
-        # new_end snap: 最初の run より前に present probe があるか
-        if any(probes[i].present for i in range(first_run_start)):
-            new_end = probes[first_run_start].t
-            end_snapped = True
-        # new_start snap: 最後の run より後に present probe があるか
-        if any(probes[i].present for i in range(last_run_end + 1, len(probes))):
-            new_start = probes[last_run_end].t
-            start_snapped = True
-    if probes and (not runs or not end_snapped or not start_snapped):
-        # 先頭 present run の末尾 (probes[0] が present のときのみ、未 snap 端のみ)
-        if not end_snapped and probes[0].present:
-            last_leading = 0
-            for i in range(1, len(probes)):
-                if probes[i].present:
-                    last_leading = i
-                else:
-                    break
-            new_end = probes[last_leading].t
-        # 末尾 present run の先頭 (probes[-1] が present のときのみ、未 snap 端のみ)
-        if not start_snapped and probes[-1].present:
-            first_trailing = len(probes) - 1
-            for i in range(len(probes) - 2, -1, -1):
-                if probes[i].present:
-                    first_trailing = i
-                else:
-                    break
-            new_start = probes[first_trailing].t
+    # Step 1: evidence run で leading/trailing edge を検出
+    flags = _evidence_flags(probes)
+    ev_runs = _tolerant_runs(flags)
 
+    _EDGE_PROBE_LIMIT = (
+        15  # run start/end が probes 先頭/末尾から何 probe 以内ならエッジとみなす
+    )
+
+    # new_end: leading evidence run の末尾 (run start が先頭 _EDGE_PROBE_LIMIT 以内)
+    if ev_runs and ev_runs[0][0] < _EDGE_PROBE_LIMIT:
+        new_end = probes[ev_runs[0][1]].t
+
+    # new_start: trailing evidence run の先頭 (run end が末尾 _EDGE_PROBE_LIMIT 以内)
+    if ev_runs and (len(probes) - 1 - ev_runs[-1][1]) < _EDGE_PROBE_LIMIT:
+        new_start = probes[ev_runs[-1][0]].t
+
+    # Step 2: blackout snap (隣接条件付き)
+    b_runs = _blackout_runs(probes, blackout_b_max)
+
+    # new_end の blackout 上書き: 最初の blackout run の start t から
+    # 遡って BLACKOUT_ADJACENCY_S 以内に evidence probe があること
+    for brun in b_runs:
+        brun_t_start = probes[brun[0]].t
+        adjacent = any(
+            flags[i] and (brun_t_start - probes[i].t) <= BLACKOUT_ADJACENCY_S
+            for i in range(brun[0])
+        )
+        if adjacent:
+            new_end = probes[brun[0]].t
+            break  # 最初の該当 run のみ
+
+    # new_start の blackout 上書き: 最後の blackout run の end t から
+    # 先 BLACKOUT_ADJACENCY_S 以内に evidence probe があること
+    for brun in reversed(b_runs):
+        brun_t_end = probes[brun[1]].t
+        adjacent = any(
+            flags[i] and (probes[i].t - brun_t_end) <= BLACKOUT_ADJACENCY_S
+            for i in range(brun[1] + 1, len(probes))
+        )
+        if adjacent:
+            new_start = probes[brun[1]].t
+            break  # 最後の該当 run のみ
+
+    # Step 3: 交差チェック -> 縮退
     if new_end >= new_start:
         return prev_end, next_start
     return new_end, new_start
@@ -547,26 +608,31 @@ def refine_segments(
         gap = nxt["start"] - prev["end"]
         try:
             if gap <= MERGE_GAP_MAX:
-                probes = probe_gap(
-                    video_path, anchor, prev["end"], nxt["start"], workers=workers
-                )
+                # 短 gap: probe 範囲を EDGE_EXT_S だけ外側に拡張する (#895 P3)
+                t0_ext = max(0.0, prev["end"] - EDGE_EXT_S)
+                t1_ext = nxt["start"] + EDGE_EXT_S
+                probes = probe_gap(video_path, anchor, t0_ext, t1_ext, workers=workers)
                 if stats is not None:
                     stats["vtuber_gaps_tested"] = stats.get("vtuber_gaps_tested", 0) + 1
-                if adjudicate_gap(probes) == "merge":
+                # adjudicate_gap には中央 slice (t が [prev_end, next_start] 内のみ) を渡す
+                central = [p for p in probes if prev["end"] <= p.t <= nxt["start"]]
+                if adjudicate_gap(central) == "merge":
                     if stats is not None:
                         stats["vtuber_gaps_merged"] = (
                             stats.get("vtuber_gaps_merged", 0) + 1
                         )
                     prev["end"] = nxt["end"]
                     continue
+                # snap には全 probes (拡張分含む) を渡す
                 new_end, new_start = snap_segment_edges(
                     prev["end"], nxt["start"], probes
                 )
             else:
+                # 長 gap: 両端窓を EDGE_EXT_S だけ外側に拡張する (#895 P3)
                 head = probe_gap(
                     video_path,
                     anchor,
-                    prev["end"],
+                    max(0.0, prev["end"] - EDGE_EXT_S),
                     prev["end"] + _LONG_GAP_EDGE_WINDOW_S,
                     workers=workers,
                 )
@@ -574,7 +640,7 @@ def refine_segments(
                     video_path,
                     anchor,
                     nxt["start"] - _LONG_GAP_EDGE_WINDOW_S,
-                    nxt["start"],
+                    nxt["start"] + EDGE_EXT_S,
                     workers=workers,
                 )
                 new_end, _ = snap_segment_edges(

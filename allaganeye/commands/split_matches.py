@@ -86,7 +86,8 @@ _MASKED_ALGO_VERSION = 3
 # version 1 = pre-#895 legacy band-crop blackout path (key absent = 1)
 # version 2 = #895 timeline segmentation (V0-V2, presence x motion)
 # version 3 = #895 P2 V3/V4 integration (gap refinement + at-anchor validation)
-_VTUBER_ALGO_VERSION = 3
+# version 4 = #895 P3 snap physical edge (frozen exclude + blackout adjacency limit + +-45s ext)
+_VTUBER_ALGO_VERSION = 4
 
 
 def run_split(
