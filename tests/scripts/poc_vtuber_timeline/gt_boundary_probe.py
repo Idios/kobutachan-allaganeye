@@ -51,7 +51,7 @@ def _runs(flags: list[bool], tol: int) -> list[tuple[int, int]]:
             gap = 0
         elif start is not None:
             gap += 1
-            if gap > tol:
+            if gap > tol and last_true is not None:
                 runs.append((start, last_true))
                 start = None
     if start is not None and last_true is not None:
