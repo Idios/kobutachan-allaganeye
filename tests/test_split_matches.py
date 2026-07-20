@@ -1550,10 +1550,10 @@ class TestVtuberAlgoCache:
         assert data["params"]["vtuber_algo"] == _VTUBER_ALGO_VERSION
 
     def test_cache_miss_on_vtuber_algo_mismatch(self, cache_video, tmp_path):
-        """Legacy vtuber cache (vtuber_algo absent = 1) misses with new code (2).
+        """Legacy vtuber cache (vtuber_algo absent = 1) misses with the current version.
 
         A cache saved by pre-#895 code with vtuber=True has no vtuber_algo key
-        (defaults to 1). Loading with the current code (_VTUBER_ALGO_VERSION=2)
+        (defaults to 1). Loading with the current code (_VTUBER_ALGO_VERSION)
         must return None -- the old band-crop result is stale (timeline path
         was not yet implemented).
         """
@@ -6476,7 +6476,7 @@ def test_display_cache_hit_params_vtuber_shows_vtuber_algo(tmp_path, capsys):
 
     When the cache records vtuber=True, the verbose cache-hit summary must
     include the vtuber_algo token so operators can distinguish pre-#895
-    (vtuber_algo=1, band-crop) from post-#895 (vtuber_algo=2, timeline)
+    (vtuber_algo=1, band-crop) from post-#895 (vtuber_algo>=2, timeline)
     results without re-running detection.
     """
     from allaganeye.commands.split_matches import _display_cache_hit_params
