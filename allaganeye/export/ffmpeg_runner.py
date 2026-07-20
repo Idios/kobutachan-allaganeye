@@ -360,6 +360,35 @@ def run_export_attempt(
             fallback_from=None,
         )
 
+    # #899 tier2: filter 有り NVENC の tier1 (NVDEC decode) が decode 段で失敗
+    # した場合のみ software decode + NVENC で 1 回 retry する (encode は GPU 維持)。
+    # tier2 は出力品質が変わらないため fallback_cb は呼ばない (silent decode retry)。
+    # tier2 が失敗したら outcome を上書きして下の libx264 (tier3) ブロックへ流す。
+    if (
+        codec == "h264"
+        and encoder == H264Encoder.NVENC
+        and video_filter is not None
+        and _nvenc_decode_stage_failure(outcome.stderr_tail)
+    ):
+        tier2_args = _build_ffmpeg_args(
+            ffmpeg, video, start, end, output, codec, encoder, video_filter,
+            force_software_decode=True,
+        )
+        outcome = _run_single_attempt(tier2_args, duration, progress_cb, cancel_event)
+        if cancel_event.is_set():
+            if not output_pre_existed:
+                output.unlink(missing_ok=True)
+            raise ExportError(kind="cancelled", message="export cancelled by user")
+        if outcome.returncode == 0:
+            return ExportResult(
+                match_index=-1,
+                output_path=output,
+                duration_ms=int((time.monotonic() - started) * 1000),
+                encoder_used=encoder.value,
+                fallback_from=None,
+            )
+        # tier2 も失敗 -> outcome は tier2 の失敗。下の libx264 ブロックが拾う。
+
     # GPU encoder init failure -> libx264 retry
     if (
         codec == "h264"
