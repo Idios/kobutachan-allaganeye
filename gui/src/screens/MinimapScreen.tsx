@@ -48,16 +48,20 @@ interface MinimapProgressPayload {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
- * Derive default output dir: parent of metadata.json + "/minimap".
- * e.g. "C:/x/metadata.json" → "C:/x/minimap"
+ * Derive default output dir: parent directory of metadata.json.
+ * e.g. "C:/x/metadata.json" → "C:/x"
+ *
+ * #893 R2: Changed from "<parent>/minimap" to just "<parent>" so that
+ * MinimapScreen defaults to the same directory as ExportScreen when
+ * lastExportOutputDir is not set. When lastExportOutputDir is set in the
+ * store, MinimapScreen uses that value directly.
  */
-function deriveDefaultMinimapOutDir(filePath: string | null): string {
+function deriveMetadataParentDir(filePath: string | null): string {
   if (!filePath) return '';
   const normalized = stripExtendedPathPrefix(filePath);
   const idx = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
   if (idx <= 0) return '';
-  const sep = normalized.includes('/') ? '/' : '\\';
-  return normalized.slice(0, idx) + sep + 'minimap';
+  return normalized.slice(0, idx);
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -67,6 +71,7 @@ export function MinimapScreen() {
   const filePath = useMetadataStore((s) => s.filePath);
   const navigate = useAppStateStore((s) => s.navigate);
   const selectedVideoPath = useAppStateStore((s) => s.selectedVideoPath);
+  const lastExportOutputDir = useAppStateStore((s) => s.lastExportOutputDir);
   const videoSource = selectedVideoPath ?? metadata?.source ?? null;
 
   // Sample mode: metadata loaded but no backing file on disk
@@ -100,7 +105,11 @@ export function MinimapScreen() {
 
   // ── Settings ──────────────────────────────────────────────────────────────
 
-  const [outDir, setOutDir] = useState<string>(() => deriveDefaultMinimapOutDir(filePath));
+  // #893 R2: default to lastExportOutputDir (the dir used in the last export),
+  // falling back to the metadata.json parent directory (NOT the old /minimap subdir).
+  const [outDir, setOutDir] = useState<string>(
+    () => lastExportOutputDir ?? deriveMetadataParentDir(filePath),
+  );
   const [namePattern, setNamePattern] = useState('{idx:03}_{type}_{start}_minimap.mp4');
 
   // Per-match include checkboxes (ad-hoc exclude set, same as ExportScreen)
