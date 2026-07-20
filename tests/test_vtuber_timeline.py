@@ -8,10 +8,12 @@ from unittest.mock import patch
 
 from allaganeye.video.capture_region import ScorebarLocalization
 from allaganeye.video.vtuber_timeline import (
+    GapProbe,
     TIMELINE_MAD_MIN,
     TIMELINE_PAIR_DT,
     TimelineProbe,
     _VT_ANCHOR_MIN_CONF,
+    adjudicate_gap,
     detect_matches_timeline,
     resolve_vtuber_anchor,
     scan_timeline,
@@ -271,3 +273,63 @@ class TestDetectMatchesTimeline:
                 is None
             )
         assert "no segments" in caplog.text
+
+
+def _gap_probes(spec: str, stride: float = 1.0) -> list[GapProbe]:
+    """M=present+moving (in-match FN run), l=absent+moving (lobby),
+    f=present+frozen (replay/result static), b=blackout (band_b ~0),
+    u=unknown (decode failure)."""
+    out: list[GapProbe] = []
+    for i, ch in enumerate(spec):
+        t = i * stride
+        if ch == "M":
+            out.append(GapProbe(t=t, present=True, band_mad=8.0, band_b=95.0))
+        elif ch == "l":
+            out.append(GapProbe(t=t, present=False, band_mad=6.0, band_b=110.0))
+        elif ch == "f":
+            out.append(GapProbe(t=t, present=True, band_mad=0.4, band_b=120.0))
+        elif ch == "b":
+            out.append(GapProbe(t=t, present=False, band_mad=2.0, band_b=5.0))
+        elif ch == "u":
+            out.append(GapProbe(t=t, present=False, band_mad=None, band_b=None))
+        else:  # pragma: no cover
+            raise ValueError(ch)
+    return out
+
+
+class TestAdjudicateGap:
+    def test_fn_run_merges(self):
+        # FN run: ~24% present + always moving -> merge
+        probes = _gap_probes(("M" + "lll") * 60)  # 25% present, 240 probes
+        assert adjudicate_gap(probes) == "merge"
+
+    def test_true_lobby_is_boundary(self):
+        # true lobby: present ~0.5% -> boundary
+        probes = _gap_probes("l" * 100 + "M" + "l" * 99)  # 0.5%
+        assert adjudicate_gap(probes) == "boundary"
+
+    def test_blackout_marker_forces_boundary(self):
+        # even with high rate, blackout marker forces boundary (positive marker priority)
+        probes = _gap_probes("M" * 30 + "bbb" + "M" * 30)
+        assert adjudicate_gap(probes) == "boundary"
+
+    def test_frozen_run_forces_boundary(self):
+        # replay/result: present but frozen run (>= FROZEN_RUN_MIN_PROBES)
+        # -> boundary even at 33% rate
+        probes = _gap_probes("f" * 15 + "l" * 30)
+        assert adjudicate_gap(probes) == "boundary"
+
+    def test_short_frozen_blip_does_not_force_boundary(self):
+        # frozen run < FROZEN_RUN_MIN_PROBES: no marker -> falls through to rate
+        probes = _gap_probes(("M" + "lll") * 20 + "fff" + ("M" + "lll") * 20)
+        assert adjudicate_gap(probes) == "merge"
+
+    def test_empty_or_all_unknown_is_boundary(self):
+        # no evidence -> conservative boundary (do not merge without proof)
+        assert adjudicate_gap([]) == "boundary"
+        assert adjudicate_gap(_gap_probes("u" * 20)) == "boundary"
+
+    def test_rate_threshold_boundary_case(self):
+        # rate == merge_rate (10%) is merge (>= comparison)
+        probes = _gap_probes(("M" + "l" * 9) * 20)  # exactly 10%
+        assert adjudicate_gap(probes) == "merge"

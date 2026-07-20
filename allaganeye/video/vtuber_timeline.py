@@ -285,3 +285,79 @@ def detect_matches_timeline(
         fallback_reason=None,
     )
     return boundaries, region
+
+
+MERGE_GAP_MAX = 300.0
+"""V3 merge 裁定の対象 gap 上限 (秒)。実測 FN run 最大 ~250s (PoC U+00A75)。
+300s 超の gap は真の境界のみ (min_match_duration と同値)."""
+
+MERGE_RATE = 0.10
+"""merge 裁定の anchor presence rate 閾値。FN run ~24% vs 真 lobby ~1.5%
+(1s stride、PoC U+00A75) の 15 倍分離の中間."""
+
+FROZEN_MAX = 1.0
+"""凍結 probe の band MAD 上限。リザルト/replay 静止 0.13-0.83 (PoC U+00A73)."""
+
+FROZEN_RUN_MIN_PROBES = 10
+"""凍結 marker とみなす最小連続 probe 数 (=10s @1s)。リザルト/replay の
+静止表示は 30s+ 持続 (PoC U+00A77.4)、試合中の瞬間静止と区別する."""
+
+BLACKOUT_B_MAX = 30.0
+"""band brightness の blackout 閾値。境界 blackout は band_b ~0-7、
+band crop の暗転 floor ~17-20 実測 (#809) に margin."""
+
+GAP_STRIDE = 1.0
+"""V3 gap dense probe の stride (秒)."""
+
+SNAP_STRIDE = 0.25
+"""blackout エッジ精密化の stride (秒)."""
+
+
+@dataclass(frozen=True)
+class GapProbe:
+    """V3 gap dense probe。band_b (band 平均輝度) を持つ点が TimelineProbe と違う。
+
+    band_mad / band_b が None = decode 失敗 (UNKNOWN、判定の分母から除外)。
+    """
+
+    t: float
+    present: bool
+    band_mad: float | None
+    band_b: float | None
+
+
+def adjudicate_gap(
+    probes: Sequence[GapProbe],
+    *,
+    merge_rate: float = MERGE_RATE,
+    frozen_max: float = FROZEN_MAX,
+    frozen_run_min: int = FROZEN_RUN_MIN_PROBES,
+    blackout_b_max: float = BLACKOUT_B_MAX,
+) -> str:
+    """V3-a: 隣接 segment 間 gap が偽分割 (merge) か真の境界 (boundary) か。
+
+    判定順序 (spec U+00A72 V3 (a)、positive marker 優先):
+    1. blackout marker (band_b <= blackout_b_max の probe) があれば boundary
+    2. 凍結 run (band_mad < frozen_max が frozen_run_min 連続) があれば boundary
+       (リザルト/replay 静止画面 = 真の境界の証拠。presence の有無は問わない)
+    3. valid probe の present rate >= merge_rate なら merge (試合中 FN run)、
+       未満なら boundary (真の lobby)
+    4. valid probe ゼロ (空 / 全 UNKNOWN) は boundary (証拠なしで merge しない)
+    """
+    valid = [p for p in probes if p.band_b is not None and p.band_mad is not None]
+    if not valid:
+        return "boundary"
+    if any(p.band_b is not None and p.band_b <= blackout_b_max for p in valid):
+        return "boundary"
+    run = 0
+    for p in valid:
+        if p.band_mad is not None and p.band_mad < frozen_max:
+            run += 1
+            if run >= frozen_run_min:
+                return "boundary"
+        else:
+            run = 0
+    present = sum(1 for p in valid if p.present)
+    if present / len(valid) >= merge_rate:
+        return "merge"
+    return "boundary"
