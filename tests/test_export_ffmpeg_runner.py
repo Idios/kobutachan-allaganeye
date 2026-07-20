@@ -874,11 +874,12 @@ def test_build_args_default_unchanged_pin():
     assert "-hwaccel" in args_h264  # NVDEC zero-copy 維持
 
 
-def test_build_args_video_filter_inserts_vf_and_drops_hwaccel():
-    """#481: video_filter 指定時は -vf を挿入し -hwaccel を除外する.
+def test_build_args_video_filter_inserts_vf_and_uses_decode_only_hwaccel():
+    """#481 + #899: video_filter 指定時は -vf を挿入し decode-only hwaccel を使う.
 
-    NVDEC zero-copy の GPU frame は CPU crop filter に渡せないため (#791 設計)、
-    video_filter 指定時は _DECODE_HWACCEL_ARGS を挿入しない。
+    #899 以前: video_filter 指定時は _DECODE_HWACCEL_ARGS を挿入しなかった。
+    #899 以降: _DECODE_HWACCEL_ARGS_FILTERED を使い NVENC は -hwaccel cuda のみ
+    (zero-copy の -hwaccel_output_format cuda は付けない)。GPU decode + CPU crop。
     """
     args = _build_ffmpeg_args(
         "ffmpeg",
@@ -890,7 +891,11 @@ def test_build_args_video_filter_inserts_vf_and_drops_hwaccel():
         H264Encoder.NVENC,
         video_filter="crop=534:392:24:22",
     )
-    assert "-hwaccel" not in args
+    # #899: decode-only hwaccel is now injected for filtered NVENC
+    assert "-hwaccel" in args
+    idx = args.index("-hwaccel")
+    assert args[idx + 1] == "cuda"
+    assert "-hwaccel_output_format" not in args
     i = args.index("-vf")
     assert args[i + 1] == "crop=534:392:24:22"
     assert args.index("-vf") < args.index("-c:v")
@@ -944,3 +949,58 @@ def test_preexisting_output_preserved_on_cancel(mock_popen: MagicMock, tmp_path:
     assert exc_info.value.kind == "cancelled"
     assert output.exists(), "pre-existing output MUST NOT be deleted on cancel"
     assert output.read_bytes() == b"good prior output", "bytes must be unchanged"
+
+
+# --- _build_ffmpeg_args: filter-aware decode-only hwaccel (#899) ---
+
+
+def _args(**kw):  # type: ignore[no-untyped-def]
+    """Helper: call _build_ffmpeg_args with minimal defaults."""
+    return _build_ffmpeg_args(
+        "ffmpeg",
+        Path("in.mkv"),
+        10.0,
+        20.0,
+        Path("out.mp4"),
+        "h264",
+        kw.pop("encoder", H264Encoder.NVENC),
+        kw.pop("video_filter", None),
+        **kw,
+    )
+
+
+def test_filtered_nvenc_uses_decode_only_hwaccel():
+    """#899: NVENC + video_filter -> decode-only -hwaccel cuda (NO -hwaccel_output_format)."""
+    args = _args(video_filter="crop=100:100:0:0")
+    # decode-only: -hwaccel cuda BUT NOT -hwaccel_output_format cuda
+    assert "-hwaccel" in args
+    i = args.index("-hwaccel")
+    assert args[i + 1] == "cuda"
+    assert "-hwaccel_output_format" not in args
+    # filter still applied, before -c:v
+    assert "-vf" in args and "crop=100:100:0:0" in args
+    assert args.index("-vf") < args.index("-c:v")
+    # hwaccel is before -i
+    assert args.index("-hwaccel") < args.index("-i")
+
+
+def test_filtered_nvenc_force_software_decode_omits_hwaccel():
+    """#899: force_software_decode=True suppresses decode hwaccel entirely."""
+    args = _args(video_filter="crop=100:100:0:0", force_software_decode=True)
+    assert "-hwaccel" not in args
+    assert "-vf" in args  # filter still applied
+
+
+def test_unfiltered_nvenc_zerocopy_unchanged():
+    """#899 regression pin: unfiltered NVENC must still use full zero-copy NVDEC."""
+    args = _args(video_filter=None)
+    # export path: full zero-copy NVDEC (regression pin)
+    assert "-hwaccel" in args and "cuda" in args
+    assert "-hwaccel_output_format" in args
+    assert args[args.index("-hwaccel_output_format") + 1] == "cuda"
+
+
+def test_filtered_libx264_no_hwaccel():
+    """#899: LIBX264 + video_filter -> no hwaccel (CPU path, unchanged)."""
+    args = _args(encoder=H264Encoder.LIBX264, video_filter="crop=100:100:0:0")
+    assert "-hwaccel" not in args

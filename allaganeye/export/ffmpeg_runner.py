@@ -43,6 +43,17 @@ _DECODE_HWACCEL_ARGS: dict[H264Encoder, tuple[str, ...]] = {
 }
 
 
+# #899: video_filter 有り (minimap crop 等) 用の decode-only hwaccel。
+# -hwaccel_output_format cuda を付けない = NVDEC decode 後に auto-download し
+# CPU crop filter に渡せる。GPU decode + CPU crop + NVENC encode。
+_DECODE_HWACCEL_ARGS_FILTERED: dict[H264Encoder, tuple[str, ...]] = {
+    H264Encoder.NVENC: ("-hwaccel", "cuda"),  # decode-only, auto-download
+    H264Encoder.QSV: (),  # #762 保留 (software decode 継続)
+    H264Encoder.AMF: (),  # #762 保留
+    H264Encoder.LIBX264: (),
+}
+
+
 _GPU_ENCODER_FAILURE_PATTERNS: dict[H264Encoder, tuple[str, ...]] = {
     # Patterns mirror gui/src-tauri/src/lib.rs:1738+ (#591). Memory:
     # feedback_ffmpeg_qsv_stderr_pattern.md notes ffmpeg 8.1 QSV uses
@@ -221,15 +232,19 @@ def _build_ffmpeg_args(
     codec: str,
     encoder: H264Encoder,
     video_filter: str | None = None,
+    *,
+    force_software_decode: bool = False,
 ) -> list[str]:
     """Construct the ffmpeg argv list. Mirrors pre-#761 build_ffmpeg_args in gui/src-tauri/src/lib.rs (see #591/#761).
 
     #791: codec=="h264" のとき encoder に対応する decode hwaccel 引数を
     `-i` の前に挿入する。codec=="copy" / encoder==LIBX264 は除外。
 
-    #481: video_filter 指定時は _DECODE_HWACCEL_ARGS を挿入しない
-    (NVDEC zero-copy の GPU frame は CPU filter に渡せないため)。
-    `-vf <filter>` を `-c:v` の直前に挿入する。
+    #481: video_filter 指定時は `-vf <filter>` を `-c:v` の直前に挿入する。
+
+    #899: video_filter 有りの NVENC は zero-copy でなく `-hwaccel cuda` 単独
+    (auto-download) で GPU decode + CPU crop。force_software_decode=True は
+    decode hwaccel を挿入しない (3-tier ladder の tier2 = software decode + NVENC)。
     """
     args: list[str] = [
         ffmpeg,
@@ -240,8 +255,11 @@ def _build_ffmpeg_args(
         "pipe:2",
         "-y",
     ]
-    if codec != "copy" and video_filter is None:
-        args.extend(_DECODE_HWACCEL_ARGS[encoder])
+    if codec != "copy" and not force_software_decode:
+        if video_filter is None:
+            args.extend(_DECODE_HWACCEL_ARGS[encoder])  # zero-copy (export、不変)
+        else:
+            args.extend(_DECODE_HWACCEL_ARGS_FILTERED[encoder])  # #899: decode-only
     args.extend(
         [
             "-ss",
