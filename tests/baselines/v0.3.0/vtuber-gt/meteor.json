@@ -1,0 +1,97 @@
+{
+ "source_file": "『オンサル～!!』『合わせ歓迎』『参加型!!』↣ #シャキシャキメテオ [v2779515711].mp4",
+ "source_size_bytes": 15324741494,
+ "source_dir_label": "vtuber-samples",
+ "source_env_var": "ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER",
+ "ground_truth_provider": "agent (PoC 2026-07-17 dense probe + P3 boundary instrument + 目視裁定 2026-07-20)",
+ "ground_truth_provided_at": "2026-07-20",
+ "convention": "zone-in",
+ "tolerance_sec": 15,
+ "notes": "境界は検出器と独立の 1s dense probe (at-anchor presence + frozen 除外) の collapse/recovery + blackout marker から導出、曖昧 boundary は目視裁定。meteor #12 は実長 ~285s (min_match_duration 境界ケース) だが V2 window 平滑で検出される想定",
+ "matches": [
+  {
+   "index": 1,
+   "start_time": 260.0,
+   "end_time": 1249.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 2,
+   "start_time": 1607.0,
+   "end_time": 2357.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 3,
+   "start_time": 3120.0,
+   "end_time": 3942.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 4,
+   "start_time": 4577.0,
+   "end_time": 5572.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 5,
+   "start_time": 5971.0,
+   "end_time": 6750.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 6,
+   "start_time": 7529.0,
+   "end_time": 8553.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 7,
+   "start_time": 8724.0,
+   "end_time": 9941.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 8,
+   "start_time": 10204.0,
+   "end_time": 10859.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 9,
+   "start_time": 11648.0,
+   "end_time": 12753.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 10,
+   "start_time": 13104.0,
+   "end_time": 14006.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 11,
+   "start_time": 14743.0,
+   "end_time": 15155.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 12,
+   "start_time": 15473.0,
+   "end_time": 15758.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 13,
+   "start_time": 16136.0,
+   "end_time": 17192.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 14,
+   "start_time": 17578.0,
+   "end_time": 18557.0,
+   "type": "fl_match"
+  }
+ ]
+}
