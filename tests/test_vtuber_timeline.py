@@ -100,6 +100,14 @@ class TestSegmentTimeline:
         segs = segment_timeline(probes, min_match_duration=300.0)
         assert len(segs) == 1
 
+    def test_present_with_unknown_mad_is_not_evidence(self):
+        # present=True でも band_mad=None (motion decode 失敗) は evidence にしない
+        # (述語の band_mad is not None guard の直接 pin)
+        probes = [
+            TimelineProbe(t=i * 10.0, present=True, band_mad=None) for i in range(60)
+        ]
+        assert segment_timeline(probes, min_match_duration=300.0) == []
+
 
 class TestResolveVtuberAnchor:
     def _run(self, localize_results):

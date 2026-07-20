@@ -1650,6 +1650,18 @@ def test_print_detection_stats_vtuber_timeline_section(capsys):
     assert "Timeline (vtuber): 1449 probes" in out
     assert "anchor conf 0.59" in out
     assert "8 gaps tested, 4 merged" in out
+    assert "V4: 0 dropped, 0 low-confidence" in out
+
+
+def test_print_detection_stats_vtuber_timeline_section_obs_no_impact(capsys):
+    """OBS stats (vtuber key absent) must not emit the timeline section."""
+    from allaganeye.commands.split_matches import _print_detection_stats
+
+    _print_detection_stats(
+        {"mode": "cpu", "pass1_samples": 0, "pass1_blackout_frames": 0}
+    )
+    out = capsys.readouterr().out
+    assert "Timeline (vtuber)" not in out
 
 
 class TestCaptureRegionsCache:

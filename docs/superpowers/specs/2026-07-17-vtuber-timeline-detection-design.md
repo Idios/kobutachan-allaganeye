@@ -54,6 +54,11 @@
                              → metadata.json (matches[] 現行 schema + capture_regions #810)
 ```
 
+> **erratum (2026-07-19, P2 実装)**: V3 (b) の「presence 崩壊点/回復点 (refine_boundary 二分探索)」は
+> **gap dense 系列 (1s) のエッジ検出に置換**した。at-anchor presence は per-frame に非単調
+> (Onsal 40-60%) で二分探索の単調性前提が成立しないため。1s 系列の先頭/末尾 present run
+> エッジで +-1-2s 精度を得る (実装: `snap_segment_edges`)。
+
 ### 2.1 パラメータ (初期値と根拠)
 
 | パラメータ | 初期値 | 根拠 (PoC) | 校正方針 |

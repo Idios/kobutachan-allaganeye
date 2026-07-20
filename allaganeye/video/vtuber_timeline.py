@@ -1,8 +1,8 @@
 # allaganeye/video/vtuber_timeline.py
-"""VTuber presence x motion timeline detection (V0-V2, spec 2026-07-17 U+00A7 #895).
+"""VTuber presence x motion timeline detection (V0-V2, spec 2026-07-17 sec. #895).
 
 `--vtuber` 専用の境界候補 generator。blackout 起点 (candidate-classify) では
-境界 blackout が 1-3s しかなく系統的に under-detect するため (PoC report U+00A7 2)、
+境界 blackout が 1-3s しかなく系統的に under-detect するため (PoC report sec. 2)、
 「試合中である」証拠 (at-anchor presence AND band motion) の timeline から
 試合区間を直接切り出す。OBS / masked path からは import されない。
 """
@@ -93,16 +93,16 @@ def segment_timeline(
 
 _VT_ANCHOR_NUM_SAMPLES = 48
 """VTuber anchor consensus のサンプル数。masked (24) の倍: Onsal の低 conf
-hit 率 (~21% @conf>=0.5、PoC report U+00A7 3) でも期待 ~10 hits を確保する."""
+hit 率 (~21% @conf>=0.5、PoC report sec. 3) でも期待 ~10 hits を確保する."""
 
 _VT_ANCHOR_MIN_CONF = 0.5
 """VTuber anchor の conf 事前フィルタ。masked の 0.7 は Onsal true hit
-(median 0.589) を殺すため使わない (PoC report U+00A7 3)。FP は dominant cluster
+(median 0.589) を殺すため使わない (PoC report sec. 3)。FP は dominant cluster
 の y 投票で抑制する."""
 
 _VT_ANCHOR_MIN_HITS = 5
 """VTuber anchor の minimum hit count。masked と同値の下限。
-48 samples U+00D7 20.8% expected hit rate (Onsal PoC U+00A7 3) ~= 10 hits に対する
+48 samples x 20.8% expected hit rate (Onsal PoC sec. 3) ~= 10 hits に対する
 安全マージン (約 50%) で、Onsal 最悪ケースでも解決できる範囲に設定。"""
 
 
@@ -289,15 +289,16 @@ def detect_matches_timeline(
         video_path, anchor, boundaries, workers=workers, stats=stats
     )
     # V4: at-anchor presence quorum validation (#822 masked L2 と同 primitive)
-    before_v4 = boundaries
+    before_v4 = list(boundaries)
     boundaries = detector._validate_match_segments(
         video_path, boundaries, anchor, workers, stats, duration_hint
     )
     # _validate_match_segments が drop 数を masked_segments_dropped に加算するため、
     # vtuber 専用の vtuber_v4_dropped は wrapper 側で len の差分から計算する。
-    # 全滅 fail-safe 発動時 (全 drop -> 全件 keep) は stats に加算されないので
-    # ここも len 差分が 0 になり表示上は 0 dropped で正しい。
-    if stats is not None and "vtuber_v4_dropped" not in stats:
+    # 全滅 fail-safe 発動時 (全 drop -> 全件 keep) は len 差分が 0 になり
+    # 表示上は 0 dropped で正しい。before_v4 は list(boundaries) で
+    # _validate_match_segments による in-place 変化から隔離済み。
+    if stats is not None:
         stats["vtuber_v4_dropped"] = max(0, len(before_v4) - len(boundaries))
     # V4 30min 低信頼フラグ: 結果 merge 型見逃しの疑いがある長尺 segment に警告
     low = [b for b in boundaries if b["end"] - b["start"] > LOW_CONFIDENCE_SEGMENT_S]
@@ -333,19 +334,19 @@ def detect_matches_timeline(
 
 
 MERGE_GAP_MAX = 300.0
-"""V3 merge 裁定の対象 gap 上限 (秒)。実測 FN run 最大 ~250s (PoC U+00A75)。
+"""V3 merge 裁定の対象 gap 上限 (秒)。実測 FN run 最大 ~250s (PoC sec.5)。
 300s 超の gap は真の境界のみ (min_match_duration と同値)."""
 
 MERGE_RATE = 0.10
 """merge 裁定の anchor presence rate 閾値。FN run ~24% vs 真 lobby ~1.5%
-(1s stride、PoC U+00A75) の 15 倍分離の中間."""
+(1s stride、PoC sec.5) の 15 倍分離の中間."""
 
 FROZEN_MAX = 1.0
-"""凍結 probe の band MAD 上限。リザルト/replay 静止 0.13-0.83 (PoC U+00A73)."""
+"""凍結 probe の band MAD 上限。リザルト/replay 静止 0.13-0.83 (PoC sec.3)."""
 
 FROZEN_RUN_MIN_PROBES = 10
 """凍結 marker とみなす最小連続 probe 数 (=10s @1s)。リザルト/replay の
-静止表示は 30s+ 持続 (PoC U+00A77.4)、試合中の瞬間静止と区別する."""
+静止表示は 30s+ 持続 (PoC sec.7.4)、試合中の瞬間静止と区別する."""
 
 BLACKOUT_B_MAX = 30.0
 """band brightness の blackout 閾値。境界 blackout は band_b ~0-7、
@@ -573,7 +574,7 @@ def adjudicate_gap(
 ) -> str:
     """V3-a: 隣接 segment 間 gap が偽分割 (merge) か真の境界 (boundary) か。
 
-    判定順序 (spec U+00A72 V3 (a)、positive marker 優先):
+    判定順序 (spec sec.2 V3 (a)、positive marker 優先):
     1. blackout marker (band_b <= blackout_b_max の probe) があれば boundary
     2. 凍結 run (band_mad < frozen_max が frozen_run_min 連続) があれば boundary
        (リザルト/replay 静止画面 = 真の境界の証拠。presence の有無は問わない)
