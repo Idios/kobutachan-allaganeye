@@ -434,7 +434,7 @@ class TestSnapSegmentEdges:
         # -> new_end の blackout snap は不発。trailing M があるので new_start は
         # blackout 直後 M が adjacent -> blackout snap。
         # "M"*5 + "l"*35 + "bb" + "l"*30: leading M (idx 0-4) -> leading run end=idx4
-        # blackout (idx 40-41): 先頭側 M は 35s 前 = idx4 (t=4) < idx40-35=5 -> non-adjacent
+        # blackout (idx 40-41): 直前の evidence は t=4 で 40-4=36s > BLACKOUT_ADJACENCY_S(30) -> non-adjacent
         # trailing absent -> no trailing evidence -> new_start = next_start 維持
         probes = _gap_probes("M" * 5 + "l" * 35 + "bb" + "l" * 30)
         prev_end, next_start = 0.0, 72.0

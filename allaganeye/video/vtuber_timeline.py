@@ -388,6 +388,11 @@ BLACKOUT_ADJACENCY_S = 30.0
 この秒数以内に evidence probe がなければ blackout は snap に使わない
 (非隣接 blackout ドラッグを根絶する #895 P3)."""
 
+EDGE_PROBE_LIMIT = 15
+"""snap のエッジ採用条件: evidence run の start/end が gap probe 系列の
+先頭/末尾から数えてこの probe 数以内にあるときのみ leading/trailing エッジと
+みなす (系列中央の孤立 run を境界と誤認しない)."""
+
 
 @dataclass(frozen=True)
 class GapProbe:
@@ -493,16 +498,12 @@ def snap_segment_edges(
     flags = _evidence_flags(probes)
     ev_runs = _tolerant_runs(flags)
 
-    _EDGE_PROBE_LIMIT = (
-        15  # run start/end が probes 先頭/末尾から何 probe 以内ならエッジとみなす
-    )
-
-    # new_end: leading evidence run の末尾 (run start が先頭 _EDGE_PROBE_LIMIT 以内)
-    if ev_runs and ev_runs[0][0] < _EDGE_PROBE_LIMIT:
+    # new_end: leading evidence run の末尾 (run start が先頭 EDGE_PROBE_LIMIT 以内)
+    if ev_runs and ev_runs[0][0] < EDGE_PROBE_LIMIT:
         new_end = probes[ev_runs[0][1]].t
 
-    # new_start: trailing evidence run の先頭 (run end が末尾 _EDGE_PROBE_LIMIT 以内)
-    if ev_runs and (len(probes) - 1 - ev_runs[-1][1]) < _EDGE_PROBE_LIMIT:
+    # new_start: trailing evidence run の先頭 (run end が末尾 EDGE_PROBE_LIMIT 以内)
+    if ev_runs and (len(probes) - 1 - ev_runs[-1][1]) < EDGE_PROBE_LIMIT:
         new_start = probes[ev_runs[-1][0]].t
 
     # Step 2: blackout snap (隣接条件付き)
