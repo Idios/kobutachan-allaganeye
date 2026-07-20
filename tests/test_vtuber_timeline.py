@@ -361,7 +361,9 @@ class TestSnapSegmentEdges:
         assert snap_segment_edges(5.0, 25.0, []) == (5.0, 25.0)
 
     def test_crossed_edges_fall_back_to_coarse(self):
-        # snap 結果が交差 (new_end >= new_start) したら粗い edge へ縮退
-        probes = _gap_probes("bb")  # 単一 blackout run のみ
-        new_end, new_start = snap_segment_edges(0.0, 2.0, probes)
-        assert new_end < new_start
+        # snap 結果が交差 (new_end >= new_start) したら粗い edge へ縮退。
+        # 単一 present probe のみ: leading + trailing が同じ probe を指し交差する。
+        probes = _gap_probes("M")
+        new_end, new_start = snap_segment_edges(0.0, 1.0, probes)
+        # 粗い edge へ縮退
+        assert (new_end, new_start) == (0.0, 1.0)
