@@ -326,6 +326,75 @@ class GapProbe:
     band_b: float | None
 
 
+def _blackout_runs(
+    probes: Sequence[GapProbe], blackout_b_max: float
+) -> list[tuple[int, int]]:
+    """band_b <= 閾値の連続 run を (start_idx, end_idx) inclusive で返す。"""
+    runs: list[tuple[int, int]] = []
+    start: int | None = None
+    for i, p in enumerate(probes):
+        is_black = p.band_b is not None and p.band_b <= blackout_b_max
+        if is_black and start is None:
+            start = i
+        elif not is_black and start is not None:
+            runs.append((start, i - 1))
+            start = None
+    if start is not None:
+        runs.append((start, len(probes) - 1))
+    return runs
+
+
+def snap_segment_edges(
+    prev_end: float,
+    next_start: float,
+    gap_probes: Sequence[GapProbe],
+    *,
+    blackout_b_max: float = BLACKOUT_B_MAX,
+) -> tuple[float, float]:
+    """V3-b: 確定境界の両端を gap dense 系列から精密化する (純関数)。
+
+    優先順: blackout run (OBS と同じ意味論 = 境界は blackout に snap) >
+    presence run エッジ (先頭 present run の末尾 / 末尾 present run の先頭) >
+    粗い edge 維持。snap 結果が交差する場合は粗い edge に縮退する
+    (snap は改善のみ、悪化させない)。
+
+    presence エッジ検出の契約: probes[0] が present のときのみ leading run を
+    走査 (先頭 present run の末尾を new_end とする)、probes[-1] が present の
+    ときのみ trailing run を走査 (末尾 present run の先頭を new_start とする)。
+    詳細は spec sec.2 V3 (b) を参照。
+    """
+    probes = list(gap_probes)
+    new_end, new_start = prev_end, next_start
+
+    runs = _blackout_runs(probes, blackout_b_max)
+    if runs:
+        new_end = probes[runs[0][0]].t
+        new_start = probes[runs[-1][1]].t
+    elif probes:
+        # 先頭 present run の末尾 (probes[0] が present のときのみ)
+        if probes[0].present:
+            last_leading = 0
+            for i in range(1, len(probes)):
+                if probes[i].present:
+                    last_leading = i
+                else:
+                    break
+            new_end = probes[last_leading].t
+        # 末尾 present run の先頭 (probes[-1] が present のときのみ)
+        if probes[-1].present:
+            first_trailing = len(probes) - 1
+            for i in range(len(probes) - 2, -1, -1):
+                if probes[i].present:
+                    first_trailing = i
+                else:
+                    break
+            new_start = probes[first_trailing].t
+
+    if new_end >= new_start:
+        return prev_end, next_start
+    return new_end, new_start
+
+
 def adjudicate_gap(
     probes: Sequence[GapProbe],
     *,

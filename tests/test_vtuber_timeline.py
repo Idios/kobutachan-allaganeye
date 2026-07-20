@@ -18,6 +18,7 @@ from allaganeye.video.vtuber_timeline import (
     resolve_vtuber_anchor,
     scan_timeline,
     segment_timeline,
+    snap_segment_edges,
 )
 
 
@@ -333,3 +334,34 @@ class TestAdjudicateGap:
         # rate == merge_rate (10%) is merge (>= comparison)
         probes = _gap_probes(("M" + "l" * 9) * 20)  # exactly 10%
         assert adjudicate_gap(probes) == "merge"
+
+
+class TestSnapSegmentEdges:
+    def test_blackout_snap_both_edges(self):
+        # gap 内に blackout run 2 個 (きゅま M1/M2 型): prev_end は最初の
+        # blackout run の先頭、next_start は最後の blackout run の末尾へ snap
+        probes = _gap_probes("M" * 5 + "bb" + "l" * 20 + "bbb" + "M" * 5)
+        new_end, new_start = snap_segment_edges(0.0, 35.0, probes)
+        assert new_end == probes[5].t  # 最初の blackout run 先頭
+        assert new_start == probes[29].t  # 最後の blackout run 末尾
+        assert new_end < new_start
+
+    def test_presence_edge_snap_without_blackout(self):
+        # blackout なし: prev_end = 先頭 present run の末尾、
+        # next_start = 末尾 present run の先頭
+        probes = _gap_probes("M" * 8 + "l" * 30 + "M" * 6)
+        new_end, new_start = snap_segment_edges(0.0, 44.0, probes)
+        assert new_end == probes[7].t
+        assert new_start == probes[38].t
+
+    def test_no_evidence_keeps_coarse_edges(self):
+        # 全 absent / 全 UNKNOWN: 粗い edge を維持 (悪化させない)
+        probes = _gap_probes("l" * 20)
+        assert snap_segment_edges(5.0, 25.0, probes) == (5.0, 25.0)
+        assert snap_segment_edges(5.0, 25.0, []) == (5.0, 25.0)
+
+    def test_crossed_edges_fall_back_to_coarse(self):
+        # snap 結果が交差 (new_end >= new_start) したら粗い edge へ縮退
+        probes = _gap_probes("bb")  # 単一 blackout run のみ
+        new_end, new_start = snap_segment_edges(0.0, 2.0, probes)
+        assert new_end < new_start
