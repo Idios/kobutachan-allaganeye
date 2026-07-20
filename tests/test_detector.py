@@ -4899,6 +4899,34 @@ def test_vtuber_timeline_path_used_when_available(monkeypatch):
     assert result == expected
 
 
+def test_vtuber_timeline_receives_stats_passthrough(monkeypatch):
+    """detector が stats を timeline へ渡す wiring の positive gate (Round 4 #1)。
+
+    `stats=stats` の引き渡しを外すと kwargs から "stats" が消えて fail する。
+    """
+    from allaganeye.video import vtuber_timeline
+    from allaganeye.video.capture_region import (
+        RegionTimeline,
+        ScorebarLocalization,
+        band_region_from_localization,
+    )
+
+    anchor = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+    region = RegionTimeline(
+        coarse=band_region_from_localization(anchor, probe_w=1920, probe_h=1080)
+    )
+    seen: dict = {}
+
+    def _recorder(*args, **kwargs):
+        seen.update(kwargs)
+        return ([{"start": 100.0, "end": 500.0, "type": "fl_match"}], region)
+
+    monkeypatch.setattr(vtuber_timeline, "detect_matches_timeline", _recorder)
+    main_stats: dict = {}
+    _detect_with_region_callback(monkeypatch, vtuber=True, stats=main_stats)
+    assert seen.get("stats") is main_stats
+
+
 def test_vtuber_timeline_none_falls_back_to_band_crop(monkeypatch):
     """timeline None -> 既存 band-crop path が実行される (縮退 floor)。"""
     from allaganeye.video.capture_region import FULL_FRAME

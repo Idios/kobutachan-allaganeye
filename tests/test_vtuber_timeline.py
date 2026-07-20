@@ -514,10 +514,14 @@ class TestDetectMatchesTimelineV3V4:
         return result, rs, vs
 
     def test_v3_and_v4_are_wired(self):
-        result, rs, vs = self._run("l" * 6 + "M" * 40 + "l" * 6)
+        main_stats: dict = {}
+        result, rs, vs = self._run("l" * 6 + "M" * 40 + "l" * 6, stats=main_stats)
         assert result is not None
         rs.assert_called_once()
         vs.assert_called_once()
+        # stats pass-through wiring の positive gate (Round 4 #1):
+        # refine_segments に main stats がそのまま (identity で) 渡ること
+        assert rs.call_args.kwargs.get("stats") is main_stats
 
     def test_low_confidence_flag_for_long_segment(self, caplog):
         import logging
