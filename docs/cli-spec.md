@@ -439,7 +439,7 @@ stdout の各行は JSON オブジェクト 1 件:
 2 つの動作モードを持つ:
 
 - **提案モード** (`--region` 未指定): 領域を自動検出して `--region X,Y,W,H` 形式で提案を表示する。エンコードは行わず常に exit 4 で終了する。提案は best-effort（出た提案は信頼できるが、出ないことがある）
-- **crop モード** (`--region X,Y,W,H`): 指定座標で全対象試合を切り抜き H.264 MP4 を出力する。エンコード前に `minimap_regions` を `metadata.json` へ atomic write-back する
+- **crop モード** (`--region X,Y,W,H`): 指定座標で全対象試合を切り抜き H.264 MP4 を出力する。エンコード前に `minimap_regions` を `metadata.json` へ atomic write-back する。NVENC 選択時は `-vf crop` フィルタが GPU frame を CPU に渡すため zero-copy 不可となり、`-hwaccel cuda` 単独 (auto-download) で NVDEC decode + CPU crop + NVENC encode する (#899、`_DECODE_HWACCEL_ARGS_FILTERED`)
 
 ### 構文
 
