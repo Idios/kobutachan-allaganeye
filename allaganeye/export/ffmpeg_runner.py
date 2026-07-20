@@ -371,7 +371,14 @@ def run_export_attempt(
         and _nvenc_decode_stage_failure(outcome.stderr_tail)
     ):
         tier2_args = _build_ffmpeg_args(
-            ffmpeg, video, start, end, output, codec, encoder, video_filter,
+            ffmpeg,
+            video,
+            start,
+            end,
+            output,
+            codec,
+            encoder,
+            video_filter,
             force_software_decode=True,
         )
         outcome = _run_single_attempt(tier2_args, duration, progress_cb, cancel_event)

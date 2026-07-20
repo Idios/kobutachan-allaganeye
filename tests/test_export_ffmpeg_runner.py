@@ -13,8 +13,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import allaganeye.export.ffmpeg_runner as _fr
 from allaganeye.export.encoder import H264Encoder
 from allaganeye.export.ffmpeg_runner import (
+    _AttemptOutcome,
     _build_ffmpeg_args,
     is_gpu_encoder_failure,
     run_export_attempt,
@@ -1033,10 +1035,6 @@ def test_is_gpu_encoder_failure_backward_compat():
 # --- run_export_attempt: 3-tier ladder for filtered NVENC (#899) ---
 
 
-import allaganeye.export.ffmpeg_runner as _fr
-from allaganeye.export.ffmpeg_runner import _AttemptOutcome
-
-
 def _run(monkeypatch, tmp_path, outcomes):  # type: ignore[no-untyped-def]
     """outcomes: list of (returncode, stderr). Each attempt returns the next entry.
     captured records the argv list passed to each attempt.
@@ -1073,13 +1071,17 @@ def _run(monkeypatch, tmp_path, outcomes):  # type: ignore[no-untyped-def]
 
 def test_tier1_decode_failure_retries_software_decode_nvenc(monkeypatch, tmp_path):
     """#899: tier1 (NVDEC) decode 失敗 -> tier2 (software decode + NVENC) 成功."""
-    res, captured = _run(monkeypatch, tmp_path, [
-        (1, "cuvidCreateDecoder failed"),  # tier1
-        (0, ""),                            # tier2
-    ])
+    res, captured = _run(
+        monkeypatch,
+        tmp_path,
+        [
+            (1, "cuvidCreateDecoder failed"),  # tier1
+            (0, ""),  # tier2
+        ],
+    )
     assert len(captured) == 2
-    assert "-hwaccel" in captured[0]                  # tier1 = NVDEC (-hwaccel cuda)
-    assert "-hwaccel" not in captured[1]              # tier2 = software decode
+    assert "-hwaccel" in captured[0]  # tier1 = NVDEC (-hwaccel cuda)
+    assert "-hwaccel" not in captured[1]  # tier2 = software decode
     # tier2 still uses NVENC encoder
     assert "-c:v" in captured[1] and "h264_nvenc" in captured[1]
     assert res.encoder_used == "h264_nvenc"
@@ -1088,10 +1090,14 @@ def test_tier1_decode_failure_retries_software_decode_nvenc(monkeypatch, tmp_pat
 
 def test_tier1_encode_failure_skips_to_libx264(monkeypatch, tmp_path):
     """#899: tier1 encode-init 失敗 -> tier2 skip -> tier3 libx264 (2 attempts total)."""
-    res, captured = _run(monkeypatch, tmp_path, [
-        (1, "No NVENC capable devices found"),  # tier1 (encode-init)
-        (0, ""),                                 # tier3 (libx264)
-    ])
+    res, captured = _run(
+        monkeypatch,
+        tmp_path,
+        [
+            (1, "No NVENC capable devices found"),  # tier1 (encode-init)
+            (0, ""),  # tier3 (libx264)
+        ],
+    )
     assert len(captured) == 2
     assert "h264_nvenc" not in captured[1] and "libx264" in captured[1]
     assert res.encoder_used == "libx264"
@@ -1100,11 +1106,15 @@ def test_tier1_encode_failure_skips_to_libx264(monkeypatch, tmp_path):
 
 def test_tier2_failure_falls_to_libx264(monkeypatch, tmp_path):
     """#899: tier1 decode 失敗 -> tier2 (software+NVENC) も失敗 -> tier3 libx264 (3 attempts)."""
-    res, captured = _run(monkeypatch, tmp_path, [
-        (1, "hwaccel transfer data failed"),      # tier1 decode fail
-        (1, "No NVENC capable devices found"),    # tier2 encode fail
-        (0, ""),                                   # tier3 libx264
-    ])
+    res, captured = _run(
+        monkeypatch,
+        tmp_path,
+        [
+            (1, "hwaccel transfer data failed"),  # tier1 decode fail
+            (1, "No NVENC capable devices found"),  # tier2 encode fail
+            (0, ""),  # tier3 libx264
+        ],
+    )
     assert len(captured) == 3
     assert "-hwaccel" in captured[0]
     assert "-hwaccel" not in captured[1] and "h264_nvenc" in captured[1]
