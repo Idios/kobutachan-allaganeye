@@ -455,3 +455,88 @@ class TestProbeGap:
         assert len(probes) == 3
         assert all(p.band_b is not None and abs(p.band_b - 100.0) < 0.5 for p in probes)
         assert all(p.present for p in probes)
+
+
+class TestDetectMatchesTimelineV3V4:
+    """Task 4: V3/V4 wiring, stats population, and low-confidence flag."""
+
+    ANCHOR = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+
+    def _run(self, scan_spec: str, stats=None):
+        with (
+            patch(
+                "allaganeye.video.vtuber_timeline.resolve_vtuber_anchor",
+                return_value=self.ANCHOR,
+            ),
+            patch(
+                "allaganeye.video.vtuber_timeline.scan_timeline",
+                return_value=_probes(scan_spec),
+            ),
+            patch(
+                "allaganeye.video.vtuber_timeline.refine_segments",
+                side_effect=lambda vp, a, segs, **kw: segs,
+            ) as rs,
+            patch(
+                "allaganeye.video.detector._validate_match_segments",
+                side_effect=lambda vp, segs, a, w, st, d: segs,
+            ) as vs,
+        ):
+            result = detect_matches_timeline(
+                Path("d.mp4"),
+                duration_hint=520.0,
+                min_match_duration=300.0,
+                stats=stats,
+            )
+        return result, rs, vs
+
+    def test_v3_and_v4_are_wired(self):
+        result, rs, vs = self._run("l" * 6 + "M" * 40 + "l" * 6)
+        assert result is not None
+        rs.assert_called_once()
+        vs.assert_called_once()
+
+    def test_low_confidence_flag_for_long_segment(self, caplog):
+        import logging
+
+        stats: dict = {}
+        # 200 probes = 2000s of continuous match -> exceeds 30min -> low-confidence warning
+        with caplog.at_level(
+            logging.WARNING, logger="allaganeye.video.vtuber_timeline"
+        ):
+            result, _, _ = self._run("M" * 200, stats=stats)
+        assert result is not None
+        assert stats.get("vtuber_low_confidence_segments") == 1
+        assert "exceeds" in caplog.text or "low-confidence" in caplog.text
+
+    def test_stats_populated(self):
+        stats: dict = {}
+        _, _, _ = self._run("l" * 6 + "M" * 40 + "l" * 6, stats=stats)
+        assert stats["vtuber_timeline_probes"] == 52
+        assert abs(stats["vtuber_anchor_confidence"] - 0.8) < 1e-9
+
+    def test_v4_empty_after_validation_falls_back(self):
+        # V4 that drops all segments should return None (empty authoritative forbidden)
+        with (
+            patch(
+                "allaganeye.video.vtuber_timeline.resolve_vtuber_anchor",
+                return_value=self.ANCHOR,
+            ),
+            patch(
+                "allaganeye.video.vtuber_timeline.scan_timeline",
+                return_value=_probes("l" * 6 + "M" * 40 + "l" * 6),
+            ),
+            patch(
+                "allaganeye.video.vtuber_timeline.refine_segments",
+                side_effect=lambda vp, a, segs, **kw: segs,
+            ),
+            patch(
+                "allaganeye.video.detector._validate_match_segments",
+                side_effect=lambda vp, segs, a, w, st, d: [],
+            ),
+        ):
+            assert (
+                detect_matches_timeline(
+                    Path("d.mp4"), duration_hint=520.0, min_match_duration=300.0
+                )
+                is None
+            )

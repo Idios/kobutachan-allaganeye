@@ -85,7 +85,8 @@ _MASKED_ALGO_VERSION = 3
 # runs (config.vtuber=True or params.vtuber=True).
 # version 1 = pre-#895 legacy band-crop blackout path (key absent = 1)
 # version 2 = #895 timeline segmentation (V0-V2, presence x motion)
-_VTUBER_ALGO_VERSION = 2
+# version 3 = #895 P2 V3/V4 integration (gap refinement + at-anchor validation)
+_VTUBER_ALGO_VERSION = 3
 
 
 def run_split(
@@ -1938,6 +1939,20 @@ def _print_detection_stats(stats: DetectionStats) -> None:
     if unknown_count > 0:
         label = "match" if unknown_count == 1 else "matches"
         typer.echo(f"  + {unknown_count} unknown {label} (録画途中試合)")
+
+    # VTuber timeline stats (#895 P2): only present on --vtuber path; OBS run
+    # has no vtuber_timeline_probes key and this block is entirely skipped.
+    if "vtuber_timeline_probes" in stats:
+        typer.echo(
+            f"  Timeline (vtuber): {stats['vtuber_timeline_probes']} probes, "
+            f"anchor conf {stats.get('vtuber_anchor_confidence', 0.0):.2f}"
+        )
+        typer.echo(
+            f"  V3: {stats.get('vtuber_gaps_tested', 0)} gaps tested, "
+            f"{stats.get('vtuber_gaps_merged', 0)} merged; "
+            f"V4: {stats.get('vtuber_v4_dropped', 0)} dropped, "
+            f"{stats.get('vtuber_low_confidence_segments', 0)} low-confidence"
+        )
 
 
 def _format_eta(seconds: float) -> str:

@@ -1627,9 +1627,29 @@ class TestVtuberAlgoCache:
         result = _load_cache(cache_path, cache_video, 1.0, vtuber_config)
         assert result is None, "broken vtuber_algo must cause cache miss, not hit"
 
-    def test_vtuber_algo_version_is_2(self):
-        """Pin: _VTUBER_ALGO_VERSION == 2 for #895 timeline segmentation."""
-        assert _VTUBER_ALGO_VERSION == 2
+    def test_vtuber_algo_version_is_3(self):
+        """Pin: _VTUBER_ALGO_VERSION == 3 for #895 V3/V4 timeline integration."""
+        assert _VTUBER_ALGO_VERSION == 3
+
+
+def test_print_detection_stats_vtuber_timeline_section(capsys):
+    """timeline stats keys present -> vtuber section shown (OBS no-impact pin)."""
+    from allaganeye.commands.split_matches import _print_detection_stats
+
+    _print_detection_stats(
+        {
+            "vtuber_timeline_probes": 1449,
+            "vtuber_anchor_confidence": 0.589,
+            "vtuber_gaps_tested": 8,
+            "vtuber_gaps_merged": 4,
+            "vtuber_v4_dropped": 0,
+            "vtuber_low_confidence_segments": 0,
+        }
+    )
+    out = capsys.readouterr().out
+    assert "Timeline (vtuber): 1449 probes" in out
+    assert "anchor conf 0.59" in out
+    assert "8 gaps tested, 4 merged" in out
 
 
 class TestCaptureRegionsCache:

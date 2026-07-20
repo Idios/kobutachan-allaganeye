@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 
 if TYPE_CHECKING:
-    from allaganeye.video.capture_region import ScorebarLocalization
+    from allaganeye.video.capture_region import RegionTimeline, ScorebarLocalization
     from allaganeye.video.detector import MatchBoundary
 
 logger = logging.getLogger(__name__)
@@ -222,6 +222,10 @@ def scan_timeline(
     return results
 
 
+LOW_CONFIDENCE_SEGMENT_S = 1800.0
+"""30min 超 segment は result-merge 型見逃しの疑い (spec sec.2 V4)."""
+
+
 def detect_matches_timeline(
     video_path: Path,
     duration_hint: float,
@@ -229,8 +233,9 @@ def detect_matches_timeline(
     min_match_duration: float,
     workers: int | None = None,
     progress_callback: Callable[[int, int, int], None] | None = None,
-):
-    """V0 -> V1 -> V2 orchestration。None = timeline 不能 (caller が縮退)。
+    stats=None,
+) -> tuple[list[MatchBoundary], RegionTimeline] | None:
+    """V0 -> V1 -> V2 -> V3 -> V4 orchestration。None = timeline 不能 (caller が縮退)。
 
     Returns:
         (boundaries, region_timeline) | None
@@ -272,6 +277,46 @@ def detect_matches_timeline(
         # None を返し、caller を legacy path へ縮退させる。
         logger.warning(
             "vtuber timeline: segmentation produced no segments; "
+            "falling back to band-crop path"
+        )
+        return None
+    # V2 空チェック通過後に stats を記録する (V2 が non-empty を保証してから)
+    if stats is not None:
+        stats["vtuber_timeline_probes"] = len(probes)
+        stats["vtuber_anchor_confidence"] = float(anchor.confidence)
+    # V3: gap merge 裁定 + 確定境界 snap
+    boundaries = refine_segments(
+        video_path, anchor, boundaries, workers=workers, stats=stats
+    )
+    # V4: at-anchor presence quorum validation (#822 masked L2 と同 primitive)
+    before_v4 = boundaries
+    boundaries = detector._validate_match_segments(
+        video_path, boundaries, anchor, workers, stats, duration_hint
+    )
+    # _validate_match_segments が drop 数を masked_segments_dropped に加算するため、
+    # vtuber 専用の vtuber_v4_dropped は wrapper 側で len の差分から計算する。
+    # 全滅 fail-safe 発動時 (全 drop -> 全件 keep) は stats に加算されないので
+    # ここも len 差分が 0 になり表示上は 0 dropped で正しい。
+    if stats is not None and "vtuber_v4_dropped" not in stats:
+        stats["vtuber_v4_dropped"] = max(0, len(before_v4) - len(boundaries))
+    # V4 30min 低信頼フラグ: 結果 merge 型見逃しの疑いがある長尺 segment に警告
+    low = [b for b in boundaries if b["end"] - b["start"] > LOW_CONFIDENCE_SEGMENT_S]
+    for b in low:
+        logger.warning(
+            "vtuber timeline: segment %.0f-%.0f exceeds %.0fs; low-confidence "
+            "(possible merged matches)",
+            b["start"],
+            b["end"],
+            LOW_CONFIDENCE_SEGMENT_S,
+        )
+    if stats is not None:
+        stats["vtuber_low_confidence_segments"] = len(low)
+    if not boundaries:
+        # V4 が全 segment を drop した場合も None (defense-in-depth、空 authoritative 禁止)
+        # 注: _validate_match_segments 内の全滅 fail-safe が機能すれば実質 dead だが、
+        # P1 の空 segmentation gate と同じ思想で維持する。
+        logger.warning(
+            "vtuber timeline: no segments after V4 validation; "
             "falling back to band-crop path"
         )
         return None

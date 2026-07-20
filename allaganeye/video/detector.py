@@ -80,6 +80,14 @@ class DetectionStats(TypedDict, total=False):
     # Count of adjacent KEPT segment pairs merged by the post-L2 zero-gap merge
     # pass (#822 Onsal recalibration 2026-07-14).  Each pair merged increments by 1.
     masked_l2_zero_gap_merges: int
+    # VTuber timeline stats (#895 P2 Task 4): populated only when detect_matches_timeline
+    # is used (--vtuber path).  Keys absent on OBS/masked path = no-op display.
+    vtuber_timeline_probes: int  # total probes from scan_timeline
+    vtuber_anchor_confidence: float  # resolved anchor confidence (0.0-1.0)
+    vtuber_gaps_tested: int  # V3 gaps evaluated by adjudicate_gap
+    vtuber_gaps_merged: int  # V3 gaps merged (false splits)
+    vtuber_v4_dropped: int  # V4 segments dropped by _validate_match_segments
+    vtuber_low_confidence_segments: int  # segments exceeding LOW_CONFIDENCE_SEGMENT_S
 
 
 logger = logging.getLogger(__name__)
@@ -659,6 +667,7 @@ def detect_match_boundaries(
             min_match_duration=min_match_duration,
             workers=workers,
             progress_callback=progress_callback,
+            stats=stats,
         )
         # defense-in-depth (Codex R1 high): 空 boundaries を authoritative に
         # しない。vtuber_timeline 側も空なら None を返す契約だが、将来の
