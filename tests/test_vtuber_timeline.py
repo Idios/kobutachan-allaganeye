@@ -614,6 +614,14 @@ class TestV4StatsIsolation:
         # isolation: masked_segments_dropped は main_stats に漏れない
         assert "masked_segments_dropped" not in main_stats
 
+    @staticmethod
+    def _refine_writing_stats(vp, a, segs, **kw):
+        st = kw.get("stats")
+        if st is not None:
+            st["vtuber_gaps_tested"] = 1
+            st["vtuber_gaps_merged"] = 1
+        return segs
+
     def test_v4_all_drop_pops_vtuber_keys_from_main_stats(self):
         """V4 全滅 None 縮退時に V2 以降で set した vtuber_* キーが main stats
         から除去されること。"""
@@ -629,7 +637,9 @@ class TestV4StatsIsolation:
             ),
             patch(
                 "allaganeye.video.vtuber_timeline.refine_segments",
-                side_effect=lambda vp, a, segs, **kw: segs,
+                # V3 key も実際に書き込む mock: pop list の完全性 (4 key 全て) を
+                # main_stats == {} assert で gate する (Round 3 finding #1)
+                side_effect=self._refine_writing_stats,
             ),
             patch(
                 "allaganeye.video.detector._validate_match_segments",
