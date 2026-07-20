@@ -28,8 +28,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from allaganeye.video.capture_region import ScorebarLocalization  # noqa: E402
-from allaganeye.video.vtuber_timeline import probe_gap  # noqa: E402
+from allaganeye.video.capture_region import ScorebarLocalization
+from allaganeye.video.vtuber_timeline import probe_gap
 
 WINDOW_S = 90.0
 FROZEN_MAX = 1.0
