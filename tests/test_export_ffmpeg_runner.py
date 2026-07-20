@@ -1004,3 +1004,27 @@ def test_filtered_libx264_no_hwaccel():
     """#899: LIBX264 + video_filter -> no hwaccel (CPU path, unchanged)."""
     args = _args(encoder=H264Encoder.LIBX264, video_filter="crop=100:100:0:0")
     assert "-hwaccel" not in args
+
+
+# --- _nvenc_decode_stage_failure (#899) ---
+
+
+def test_nvenc_decode_stage_failure_true_for_nvdec_patterns():
+    from allaganeye.export.ffmpeg_runner import _nvenc_decode_stage_failure
+
+    assert _nvenc_decode_stage_failure("... cuvidCreateDecoder failed ...")
+    assert _nvenc_decode_stage_failure("... hwaccel transfer data failed ...")
+    assert _nvenc_decode_stage_failure("... Cannot load libcuda ...")
+
+
+def test_nvenc_decode_stage_failure_false_for_encode_init():
+    from allaganeye.export.ffmpeg_runner import _nvenc_decode_stage_failure
+
+    assert not _nvenc_decode_stage_failure("... No NVENC capable devices found ...")
+    assert not _nvenc_decode_stage_failure("... OpenEncodeSessionEx failed ...")
+
+
+def test_is_gpu_encoder_failure_backward_compat():
+    # 合成集合なので encode-init も decode-stage も True (既存契約不変)
+    assert is_gpu_encoder_failure("No NVENC capable devices found", H264Encoder.NVENC)
+    assert is_gpu_encoder_failure("cuvidCreateDecoder failed", H264Encoder.NVENC)

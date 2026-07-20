@@ -54,36 +54,39 @@ _DECODE_HWACCEL_ARGS_FILTERED: dict[H264Encoder, tuple[str, ...]] = {
 }
 
 
+# #899: NVENC の失敗 pattern を 2 段に分割 (値は #791 の 14 個と同一)。
+# encode-init: NVENC encoder が使えない -> libx264 直行 (tier3)。
+_NVENC_ENCODE_STAGE_PATTERNS: tuple[str, ...] = (
+    "no nvenc capable devices found",
+    "cannot load cuda driver",
+    "openencodesessionex failed",
+)
+# decode-stage: NVDEC decode が失敗 (`-hwaccel cuda`) -> software decode + NVENC (tier2)。
+_NVENC_DECODE_STAGE_PATTERNS: tuple[str, ...] = (
+    # (1) CUDA dynamic-library load / device init (earliest):
+    "could not dynamically load cuda",
+    "cannot load libcuda",
+    # (2) CUDA device creation / decoder device setup:
+    "device creation failed",
+    "device setup failed for decoder",
+    "no device available for decoder",
+    "failed to create cuda context",
+    "cannot init cuda",
+    # (3) Decoder creation / frame transfer (latest):
+    "cuvidcreatedecoder",  # cuvidCreateDecoder failed
+    "hwaccel transfer data failed",
+    "cuvid: failed",
+    "could not allocate hardware frames",
+)
+
+
 _GPU_ENCODER_FAILURE_PATTERNS: dict[H264Encoder, tuple[str, ...]] = {
     # Patterns mirror gui/src-tauri/src/lib.rs:1738+ (#591). Memory:
     # feedback_ffmpeg_qsv_stderr_pattern.md notes ffmpeg 8.1 QSV uses
     # "Error creating a MFX session" (not pre-8.1 "Error initializing").
-    H264Encoder.NVENC: (
-        # Encoder init failures (pre-#791):
-        "no nvenc capable devices found",
-        "cannot load cuda driver",
-        "openencodesessionex failed",
-        # NVDEC decode-stage failures introduced by #791 `-hwaccel cuda`
-        # injection. With decode now routed through NVDEC, ffmpeg can fail
-        # before reaching the encoder. Detect representative stderr and
-        # treat as a GPU failure -> libx264 retry rebuilds argv without
-        # `-hwaccel cuda` (mapping returns () for LIBX264) and decodes on CPU.
-        # Three failure layers covered (Codex Round 2 finding):
-        # (1) CUDA dynamic-library load / device init (earliest):
-        "could not dynamically load cuda",
-        "cannot load libcuda",
-        # (2) CUDA device creation / decoder device setup:
-        "device creation failed",
-        "device setup failed for decoder",
-        "no device available for decoder",
-        "failed to create cuda context",
-        "cannot init cuda",
-        # (3) Decoder creation / frame transfer (latest):
-        "cuvidcreatedecoder",  # cuvidCreateDecoder failed
-        "hwaccel transfer data failed",
-        "cuvid: failed",
-        "could not allocate hardware frames",
-    ),
+    # #899: NVENC entry is the union of encode-init (3) + decode-stage (11)
+    # subsets -- value is identical to the pre-#899 14-pattern tuple.
+    H264Encoder.NVENC: _NVENC_ENCODE_STAGE_PATTERNS + _NVENC_DECODE_STAGE_PATTERNS,
     H264Encoder.QSV: (
         "error creating a mfx session",  # 8.1+
         "error initializing an internal mfx session",  # pre-8.1
@@ -104,6 +107,17 @@ def is_gpu_encoder_failure(stderr_text: str, encoder: H264Encoder) -> bool:
     text = stderr_text.lower()
     patterns = _GPU_ENCODER_FAILURE_PATTERNS.get(encoder, ())
     return any(p in text for p in patterns)
+
+
+def _nvenc_decode_stage_failure(stderr_text: str) -> bool:
+    """True iff stderr is NVDEC decode-stage (`-hwaccel cuda`) failure.
+
+    #899: filter 有り NVENC の tier1 (NVDEC+NVENC) 失敗を、decode 段
+    (-> tier2 software decode + NVENC) か encode 段 (-> tier3 libx264) かに
+    振り分けるために使う。
+    """
+    text = stderr_text.lower()
+    return any(p in text for p in _NVENC_DECODE_STAGE_PATTERNS)
 
 
 @dataclass(frozen=True)
