@@ -43,36 +43,50 @@ _DECODE_HWACCEL_ARGS: dict[H264Encoder, tuple[str, ...]] = {
 }
 
 
+# #899: video_filter 有り (minimap crop 等) 用の decode-only hwaccel。
+# -hwaccel_output_format cuda を付けない = NVDEC decode 後に auto-download し
+# CPU crop filter に渡せる。GPU decode + CPU crop + NVENC encode。
+_DECODE_HWACCEL_ARGS_FILTERED: dict[H264Encoder, tuple[str, ...]] = {
+    H264Encoder.NVENC: ("-hwaccel", "cuda"),  # decode-only, auto-download
+    H264Encoder.QSV: (),  # #762 保留 (software decode 継続)
+    H264Encoder.AMF: (),  # #762 保留
+    H264Encoder.LIBX264: (),
+}
+
+
+# #899: NVENC の失敗 pattern を 2 段に分割 (値は #791 の 14 個と同一)。
+# encode-init: NVENC encoder が使えない -> libx264 直行 (tier3)。
+_NVENC_ENCODE_STAGE_PATTERNS: tuple[str, ...] = (
+    "no nvenc capable devices found",
+    "cannot load cuda driver",
+    "openencodesessionex failed",
+)
+# decode-stage: NVDEC decode が失敗 (`-hwaccel cuda`) -> software decode + NVENC (tier2)。
+_NVENC_DECODE_STAGE_PATTERNS: tuple[str, ...] = (
+    # (1) CUDA dynamic-library load / device init (earliest):
+    "could not dynamically load cuda",
+    "cannot load libcuda",
+    # (2) CUDA device creation / decoder device setup:
+    "device creation failed",
+    "device setup failed for decoder",
+    "no device available for decoder",
+    "failed to create cuda context",
+    "cannot init cuda",
+    # (3) Decoder creation / frame transfer (latest):
+    "cuvidcreatedecoder",  # cuvidCreateDecoder failed
+    "hwaccel transfer data failed",
+    "cuvid: failed",
+    "could not allocate hardware frames",
+)
+
+
 _GPU_ENCODER_FAILURE_PATTERNS: dict[H264Encoder, tuple[str, ...]] = {
     # Patterns mirror gui/src-tauri/src/lib.rs:1738+ (#591). Memory:
     # feedback_ffmpeg_qsv_stderr_pattern.md notes ffmpeg 8.1 QSV uses
     # "Error creating a MFX session" (not pre-8.1 "Error initializing").
-    H264Encoder.NVENC: (
-        # Encoder init failures (pre-#791):
-        "no nvenc capable devices found",
-        "cannot load cuda driver",
-        "openencodesessionex failed",
-        # NVDEC decode-stage failures introduced by #791 `-hwaccel cuda`
-        # injection. With decode now routed through NVDEC, ffmpeg can fail
-        # before reaching the encoder. Detect representative stderr and
-        # treat as a GPU failure -> libx264 retry rebuilds argv without
-        # `-hwaccel cuda` (mapping returns () for LIBX264) and decodes on CPU.
-        # Three failure layers covered (Codex Round 2 finding):
-        # (1) CUDA dynamic-library load / device init (earliest):
-        "could not dynamically load cuda",
-        "cannot load libcuda",
-        # (2) CUDA device creation / decoder device setup:
-        "device creation failed",
-        "device setup failed for decoder",
-        "no device available for decoder",
-        "failed to create cuda context",
-        "cannot init cuda",
-        # (3) Decoder creation / frame transfer (latest):
-        "cuvidcreatedecoder",  # cuvidCreateDecoder failed
-        "hwaccel transfer data failed",
-        "cuvid: failed",
-        "could not allocate hardware frames",
-    ),
+    # #899: NVENC entry is the union of encode-init (3) + decode-stage (11)
+    # subsets -- value is identical to the pre-#899 14-pattern tuple.
+    H264Encoder.NVENC: _NVENC_ENCODE_STAGE_PATTERNS + _NVENC_DECODE_STAGE_PATTERNS,
     H264Encoder.QSV: (
         "error creating a mfx session",  # 8.1+
         "error initializing an internal mfx session",  # pre-8.1
@@ -93,6 +107,17 @@ def is_gpu_encoder_failure(stderr_text: str, encoder: H264Encoder) -> bool:
     text = stderr_text.lower()
     patterns = _GPU_ENCODER_FAILURE_PATTERNS.get(encoder, ())
     return any(p in text for p in patterns)
+
+
+def _nvenc_decode_stage_failure(stderr_text: str) -> bool:
+    """True iff stderr is NVDEC decode-stage (`-hwaccel cuda`) failure.
+
+    #899: filter 有り NVENC の tier1 (NVDEC+NVENC) 失敗を、decode 段
+    (-> tier2 software decode + NVENC) か encode 段 (-> tier3 libx264) かに
+    振り分けるために使う。
+    """
+    text = stderr_text.lower()
+    return any(p in text for p in _NVENC_DECODE_STAGE_PATTERNS)
 
 
 @dataclass(frozen=True)
@@ -221,15 +246,19 @@ def _build_ffmpeg_args(
     codec: str,
     encoder: H264Encoder,
     video_filter: str | None = None,
+    *,
+    force_software_decode: bool = False,
 ) -> list[str]:
     """Construct the ffmpeg argv list. Mirrors pre-#761 build_ffmpeg_args in gui/src-tauri/src/lib.rs (see #591/#761).
 
     #791: codec=="h264" のとき encoder に対応する decode hwaccel 引数を
     `-i` の前に挿入する。codec=="copy" / encoder==LIBX264 は除外。
 
-    #481: video_filter 指定時は _DECODE_HWACCEL_ARGS を挿入しない
-    (NVDEC zero-copy の GPU frame は CPU filter に渡せないため)。
-    `-vf <filter>` を `-c:v` の直前に挿入する。
+    #481: video_filter 指定時は `-vf <filter>` を `-c:v` の直前に挿入する。
+
+    #899: video_filter 有りの NVENC は zero-copy でなく `-hwaccel cuda` 単独
+    (auto-download) で GPU decode + CPU crop。force_software_decode=True は
+    decode hwaccel を挿入しない (3-tier ladder の tier2 = software decode + NVENC)。
     """
     args: list[str] = [
         ffmpeg,
@@ -240,8 +269,11 @@ def _build_ffmpeg_args(
         "pipe:2",
         "-y",
     ]
-    if codec != "copy" and video_filter is None:
-        args.extend(_DECODE_HWACCEL_ARGS[encoder])
+    if codec != "copy" and not force_software_decode:
+        if video_filter is None:
+            args.extend(_DECODE_HWACCEL_ARGS[encoder])  # zero-copy (export、不変)
+        else:
+            args.extend(_DECODE_HWACCEL_ARGS_FILTERED[encoder])  # #899: decode-only
     args.extend(
         [
             "-ss",
@@ -327,6 +359,42 @@ def run_export_attempt(
             encoder_used=encoder.value,
             fallback_from=None,
         )
+
+    # #899 tier2: filter 有り NVENC の tier1 (NVDEC decode) が decode 段で失敗
+    # した場合のみ software decode + NVENC で 1 回 retry する (encode は GPU 維持)。
+    # tier2 は出力品質が変わらないため fallback_cb は呼ばない (silent decode retry)。
+    # tier2 が失敗したら outcome を上書きして下の libx264 (tier3) ブロックへ流す。
+    if (
+        codec == "h264"
+        and encoder == H264Encoder.NVENC
+        and video_filter is not None
+        and _nvenc_decode_stage_failure(outcome.stderr_tail)
+    ):
+        tier2_args = _build_ffmpeg_args(
+            ffmpeg,
+            video,
+            start,
+            end,
+            output,
+            codec,
+            encoder,
+            video_filter,
+            force_software_decode=True,
+        )
+        outcome = _run_single_attempt(tier2_args, duration, progress_cb, cancel_event)
+        if cancel_event.is_set():
+            if not output_pre_existed:
+                output.unlink(missing_ok=True)
+            raise ExportError(kind="cancelled", message="export cancelled by user")
+        if outcome.returncode == 0:
+            return ExportResult(
+                match_index=-1,
+                output_path=output,
+                duration_ms=int((time.monotonic() - started) * 1000),
+                encoder_used=encoder.value,
+                fallback_from=None,
+            )
+        # tier2 も失敗 -> outcome は tier2 の失敗。下の libx264 ブロックが拾う。
 
     # GPU encoder init failure -> libx264 retry
     if (

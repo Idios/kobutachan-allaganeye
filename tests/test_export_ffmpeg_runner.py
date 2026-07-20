@@ -13,8 +13,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import allaganeye.export.ffmpeg_runner as _fr
 from allaganeye.export.encoder import H264Encoder
 from allaganeye.export.ffmpeg_runner import (
+    _AttemptOutcome,
     _build_ffmpeg_args,
     is_gpu_encoder_failure,
     run_export_attempt,
@@ -874,11 +876,12 @@ def test_build_args_default_unchanged_pin():
     assert "-hwaccel" in args_h264  # NVDEC zero-copy 維持
 
 
-def test_build_args_video_filter_inserts_vf_and_drops_hwaccel():
-    """#481: video_filter 指定時は -vf を挿入し -hwaccel を除外する.
+def test_build_args_video_filter_inserts_vf_and_uses_decode_only_hwaccel():
+    """#481 + #899: video_filter 指定時は -vf を挿入し decode-only hwaccel を使う.
 
-    NVDEC zero-copy の GPU frame は CPU crop filter に渡せないため (#791 設計)、
-    video_filter 指定時は _DECODE_HWACCEL_ARGS を挿入しない。
+    #899 以前: video_filter 指定時は _DECODE_HWACCEL_ARGS を挿入しなかった。
+    #899 以降: _DECODE_HWACCEL_ARGS_FILTERED を使い NVENC は -hwaccel cuda のみ
+    (zero-copy の -hwaccel_output_format cuda は付けない)。GPU decode + CPU crop。
     """
     args = _build_ffmpeg_args(
         "ffmpeg",
@@ -890,7 +893,11 @@ def test_build_args_video_filter_inserts_vf_and_drops_hwaccel():
         H264Encoder.NVENC,
         video_filter="crop=534:392:24:22",
     )
-    assert "-hwaccel" not in args
+    # #899: decode-only hwaccel is now injected for filtered NVENC
+    assert "-hwaccel" in args
+    idx = args.index("-hwaccel")
+    assert args[idx + 1] == "cuda"
+    assert "-hwaccel_output_format" not in args
     i = args.index("-vf")
     assert args[i + 1] == "crop=534:392:24:22"
     assert args.index("-vf") < args.index("-c:v")
@@ -944,3 +951,173 @@ def test_preexisting_output_preserved_on_cancel(mock_popen: MagicMock, tmp_path:
     assert exc_info.value.kind == "cancelled"
     assert output.exists(), "pre-existing output MUST NOT be deleted on cancel"
     assert output.read_bytes() == b"good prior output", "bytes must be unchanged"
+
+
+# --- _build_ffmpeg_args: filter-aware decode-only hwaccel (#899) ---
+
+
+def _args(**kw):  # type: ignore[no-untyped-def]
+    """Helper: call _build_ffmpeg_args with minimal defaults."""
+    return _build_ffmpeg_args(
+        "ffmpeg",
+        Path("in.mkv"),
+        10.0,
+        20.0,
+        Path("out.mp4"),
+        "h264",
+        kw.pop("encoder", H264Encoder.NVENC),
+        kw.pop("video_filter", None),
+        **kw,
+    )
+
+
+def test_filtered_nvenc_uses_decode_only_hwaccel():
+    """#899: NVENC + video_filter -> decode-only -hwaccel cuda (NO -hwaccel_output_format)."""
+    args = _args(video_filter="crop=100:100:0:0")
+    # decode-only: -hwaccel cuda BUT NOT -hwaccel_output_format cuda
+    assert "-hwaccel" in args
+    i = args.index("-hwaccel")
+    assert args[i + 1] == "cuda"
+    assert "-hwaccel_output_format" not in args
+    # filter still applied, before -c:v
+    assert "-vf" in args and "crop=100:100:0:0" in args
+    assert args.index("-vf") < args.index("-c:v")
+    # hwaccel is before -i
+    assert args.index("-hwaccel") < args.index("-i")
+
+
+def test_filtered_nvenc_force_software_decode_omits_hwaccel():
+    """#899: force_software_decode=True suppresses decode hwaccel entirely."""
+    args = _args(video_filter="crop=100:100:0:0", force_software_decode=True)
+    assert "-hwaccel" not in args
+    assert "-vf" in args  # filter still applied
+
+
+def test_unfiltered_nvenc_zerocopy_unchanged():
+    """#899 regression pin: unfiltered NVENC must still use full zero-copy NVDEC."""
+    args = _args(video_filter=None)
+    # export path: full zero-copy NVDEC (regression pin)
+    assert "-hwaccel" in args and "cuda" in args
+    assert "-hwaccel_output_format" in args
+    assert args[args.index("-hwaccel_output_format") + 1] == "cuda"
+
+
+def test_filtered_libx264_no_hwaccel():
+    """#899: LIBX264 + video_filter -> no hwaccel (CPU path, unchanged)."""
+    args = _args(encoder=H264Encoder.LIBX264, video_filter="crop=100:100:0:0")
+    assert "-hwaccel" not in args
+
+
+# --- _nvenc_decode_stage_failure (#899) ---
+
+
+def test_nvenc_decode_stage_failure_true_for_nvdec_patterns():
+    from allaganeye.export.ffmpeg_runner import _nvenc_decode_stage_failure
+
+    assert _nvenc_decode_stage_failure("... cuvidCreateDecoder failed ...")
+    assert _nvenc_decode_stage_failure("... hwaccel transfer data failed ...")
+    assert _nvenc_decode_stage_failure("... Cannot load libcuda ...")
+
+
+def test_nvenc_decode_stage_failure_false_for_encode_init():
+    from allaganeye.export.ffmpeg_runner import _nvenc_decode_stage_failure
+
+    assert not _nvenc_decode_stage_failure("... No NVENC capable devices found ...")
+    assert not _nvenc_decode_stage_failure("... OpenEncodeSessionEx failed ...")
+
+
+def test_is_gpu_encoder_failure_backward_compat():
+    # 合成集合なので encode-init も decode-stage も True (既存契約不変)
+    assert is_gpu_encoder_failure("No NVENC capable devices found", H264Encoder.NVENC)
+    assert is_gpu_encoder_failure("cuvidCreateDecoder failed", H264Encoder.NVENC)
+
+
+# --- run_export_attempt: 3-tier ladder for filtered NVENC (#899) ---
+
+
+def _run(monkeypatch, tmp_path, outcomes):  # type: ignore[no-untyped-def]
+    """outcomes: list of (returncode, stderr). Each attempt returns the next entry.
+    captured records the argv list passed to each attempt.
+    """
+    captured: list[list[str]] = []
+    it = iter(outcomes)
+
+    def fake_attempt(
+        args: list[str],
+        duration_s: float,
+        progress_cb,
+        cancel_event,
+    ) -> _AttemptOutcome:
+        captured.append(list(args))
+        rc, err = next(it)
+        return _AttemptOutcome(returncode=rc, stderr_tail=err)
+
+    monkeypatch.setattr(_fr, "_run_single_attempt", fake_attempt)
+    monkeypatch.setattr(_fr, "find_ffmpeg", lambda: "ffmpeg")
+    res = run_export_attempt(
+        tmp_path / "in.mkv",
+        10.0,
+        20.0,
+        tmp_path / "out.mp4",
+        "h264",
+        H264Encoder.NVENC,
+        progress_cb=lambda *a: None,
+        fallback_cb=None,
+        cancel_event=threading.Event(),
+        video_filter="crop=100:100:0:0",
+    )
+    return res, captured
+
+
+def test_tier1_decode_failure_retries_software_decode_nvenc(monkeypatch, tmp_path):
+    """#899: tier1 (NVDEC) decode 失敗 -> tier2 (software decode + NVENC) 成功."""
+    res, captured = _run(
+        monkeypatch,
+        tmp_path,
+        [
+            (1, "cuvidCreateDecoder failed"),  # tier1
+            (0, ""),  # tier2
+        ],
+    )
+    assert len(captured) == 2
+    assert "-hwaccel" in captured[0]  # tier1 = NVDEC (-hwaccel cuda)
+    assert "-hwaccel" not in captured[1]  # tier2 = software decode
+    # tier2 still uses NVENC encoder
+    assert "-c:v" in captured[1] and "h264_nvenc" in captured[1]
+    assert res.encoder_used == "h264_nvenc"
+    assert res.fallback_from is None
+
+
+def test_tier1_encode_failure_skips_to_libx264(monkeypatch, tmp_path):
+    """#899: tier1 encode-init 失敗 -> tier2 skip -> tier3 libx264 (2 attempts total)."""
+    res, captured = _run(
+        monkeypatch,
+        tmp_path,
+        [
+            (1, "No NVENC capable devices found"),  # tier1 (encode-init)
+            (0, ""),  # tier3 (libx264)
+        ],
+    )
+    assert len(captured) == 2
+    assert "h264_nvenc" not in captured[1] and "libx264" in captured[1]
+    assert res.encoder_used == "libx264"
+    assert res.fallback_from == "h264_nvenc"
+
+
+def test_tier2_failure_falls_to_libx264(monkeypatch, tmp_path):
+    """#899: tier1 decode 失敗 -> tier2 (software+NVENC) も失敗 -> tier3 libx264 (3 attempts)."""
+    res, captured = _run(
+        monkeypatch,
+        tmp_path,
+        [
+            (1, "hwaccel transfer data failed"),  # tier1 decode fail
+            (1, "No NVENC capable devices found"),  # tier2 encode fail
+            (0, ""),  # tier3 libx264
+        ],
+    )
+    assert len(captured) == 3
+    assert "-hwaccel" in captured[0]
+    assert "-hwaccel" not in captured[1] and "h264_nvenc" in captured[1]
+    assert "libx264" in captured[2]
+    assert res.encoder_used == "libx264"
+    assert res.fallback_from == "h264_nvenc"
