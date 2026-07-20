@@ -482,16 +482,23 @@ def snap_segment_edges(
     処理順:
     1. _evidence_flags / _tolerant_runs で leading/trailing evidence run を検出
        - new_end: leading run の末尾 (probes 先頭 15 probe 以内に run start あり)
+         ただし mid = (prev_end + next_start) / 2 より前の場合のみ採用 (中点制約)
        - new_start: trailing run の先頭 (probes 末尾 15 probe 以内に run end あり)
+         ただし mid より後の場合のみ採用 (中点制約)
     2. blackout run の隣接条件チェック (BLACKOUT_ADJACENCY_S 以内に evidence あり)
        - 条件を満たす blackout run で new_end / new_start を上書き
        - 条件を満たさない blackout は無視 (非隣接 blackout ドラッグ根絶 #895 P3)
+       - blackout snap にも中点制約を適用する
     3. 交差 (new_end >= new_start) -> (prev_end, next_start) に縮退
+
+    中点制約 (#895 P3 Fix 2): trailing run が gap 前半に踏み込んでいる場合に
+    new_start が前に引っ張られる大外れ (gyawa M6/meteor M2 実測例) を根絶する。
     """
     probes = list(gap_probes)
     if not probes:
         return prev_end, next_start
 
+    mid = (prev_end + next_start) / 2.0
     new_end, new_start = prev_end, next_start
 
     # Step 1: evidence run で leading/trailing edge を検出
@@ -499,38 +506,46 @@ def snap_segment_edges(
     ev_runs = _tolerant_runs(flags)
 
     # new_end: leading evidence run の末尾 (run start が先頭 EDGE_PROBE_LIMIT 以内)
+    # 中点制約: 候補 t < mid のときのみ採用
     if ev_runs and ev_runs[0][0] < EDGE_PROBE_LIMIT:
-        new_end = probes[ev_runs[0][1]].t
+        candidate = probes[ev_runs[0][1]].t
+        if candidate < mid:
+            new_end = candidate
 
     # new_start: trailing evidence run の先頭 (run end が末尾 EDGE_PROBE_LIMIT 以内)
+    # 中点制約: 候補 t > mid のときのみ採用
     if ev_runs and (len(probes) - 1 - ev_runs[-1][1]) < EDGE_PROBE_LIMIT:
-        new_start = probes[ev_runs[-1][0]].t
+        candidate = probes[ev_runs[-1][0]].t
+        if candidate > mid:
+            new_start = candidate
 
-    # Step 2: blackout snap (隣接条件付き)
+    # Step 2: blackout snap (隣接条件付き + 中点制約)
     b_runs = _blackout_runs(probes, blackout_b_max)
 
     # new_end の blackout 上書き: 最初の blackout run の start t から
     # 遡って BLACKOUT_ADJACENCY_S 以内に evidence probe があること
+    # 中点制約: 候補 t < mid のときのみ採用
     for brun in b_runs:
         brun_t_start = probes[brun[0]].t
         adjacent = any(
             flags[i] and (brun_t_start - probes[i].t) <= BLACKOUT_ADJACENCY_S
             for i in range(brun[0])
         )
-        if adjacent:
-            new_end = probes[brun[0]].t
+        if adjacent and brun_t_start < mid:
+            new_end = brun_t_start
             break  # 最初の該当 run のみ
 
     # new_start の blackout 上書き: 最後の blackout run の end t から
     # 先 BLACKOUT_ADJACENCY_S 以内に evidence probe があること
+    # 中点制約: 候補 t > mid のときのみ採用
     for brun in reversed(b_runs):
         brun_t_end = probes[brun[1]].t
         adjacent = any(
             flags[i] and (probes[i].t - brun_t_end) <= BLACKOUT_ADJACENCY_S
             for i in range(brun[1] + 1, len(probes))
         )
-        if adjacent:
-            new_start = probes[brun[1]].t
+        if adjacent and brun_t_end > mid:
+            new_start = brun_t_end
             break  # 最後の該当 run のみ
 
     # Step 3: 交差チェック -> 縮退
@@ -598,64 +613,120 @@ def refine_segments(
 ) -> list[MatchBoundary]:
     """V3: 隣接 segment 間 gap の merge 裁定 + 確定境界の snap。
 
+    2 パス構成 (Fix 1 / #895 P3 2周目):
+    - 第 1 パス (merge 裁定): V2 粗 edge のみを基準に gap <= MERGE_GAP_MAX
+      を probe + adjudicate_gap で裁定し、merge 済み segment list を確定する。
+      snap で edge が動いても次 gap の裁定入力が汚染されない (recall 退行根絶)。
+    - 第 2 パス (snap): merge 確定後の各境界に snap を適用する。
+      短 gap: probe_gap を再利用できる場合は第 1 パスで取得済みのものを使う。
+      長 gap: 両端窓のみ probe (probe 2 回)。
+
     per-gap 例外隔離: probe/裁定に失敗した gap は V2 の粗い結果を維持する
     (V3 は改善のみ、失敗しても悪化させない)。
+
+    端 segment snap (Fix 3 / #895 P3 2周目):
+    - 最初の segment の start 側: [max(0, first_start - EDGE_EXT_S), first_start + 60]
+      を probe し trailing-run 方式で start snap (中点制約あり)。
+    - 最後の segment の end 側: [last_end - 60, last_end + EDGE_EXT_S] を
+      probe し leading-run 方式で end snap (中点制約あり)。
     """
-    if len(segments) < 2:
-        return list(segments)
-    result: list[MatchBoundary] = [cast("MatchBoundary", dict(segments[0]))]
-    for nxt in segments[1:]:
-        prev = result[-1]
-        gap = nxt["start"] - prev["end"]
+    if not segments:
+        return []
+
+    # --- 第 1 パス: merge 裁定 (粗 edge 基準) ---
+    # gap_probes_cache[i]: segment i と i+1 の間の probes (短 gap のみ)
+    merged: list[MatchBoundary] = [cast("MatchBoundary", dict(segments[0]))]
+    gap_probes_cache: dict[
+        int, list[GapProbe]
+    ] = {}  # index = merged list の直前 segment idx
+
+    for _seg_idx, nxt in enumerate(segments[1:]):
+        orig_prev_end = merged[-1]["end"]
+        orig_next_start = nxt["start"]
+        gap = orig_next_start - orig_prev_end
         try:
             if gap <= MERGE_GAP_MAX:
-                # 短 gap: probe 範囲を EDGE_EXT_S だけ外側に拡張する (#895 P3)
-                t0_ext = max(0.0, prev["end"] - EDGE_EXT_S)
-                t1_ext = nxt["start"] + EDGE_EXT_S
+                t0_ext = max(0.0, orig_prev_end - EDGE_EXT_S)
+                t1_ext = orig_next_start + EDGE_EXT_S
                 probes = probe_gap(video_path, anchor, t0_ext, t1_ext, workers=workers)
                 if stats is not None:
                     stats["vtuber_gaps_tested"] = stats.get("vtuber_gaps_tested", 0) + 1
-                # adjudicate_gap には中央 slice (t が [prev_end, next_start] 内のみ) を渡す
-                central = [p for p in probes if prev["end"] <= p.t <= nxt["start"]]
+                # adjudicate_gap には中央 slice (粗 edge 基準) のみ渡す
+                central = [p for p in probes if orig_prev_end <= p.t <= orig_next_start]
                 if adjudicate_gap(central) == "merge":
                     if stats is not None:
                         stats["vtuber_gaps_merged"] = (
                             stats.get("vtuber_gaps_merged", 0) + 1
                         )
-                    prev["end"] = nxt["end"]
+                    merged[-1]["end"] = nxt["end"]
+                    # merge した場合は probe cache を破棄 (境界消滅)
                     continue
-                # snap には全 probes (拡張分含む) を渡す
+                # merge しない場合は probe を cache (第 2 パスで snap に使う)
+                gap_probes_cache[len(merged) - 1] = probes
+            # 長 gap の場合は cache しない (第 2 パスで再 probe)
+        except Exception:
+            logger.warning(
+                "vtuber timeline: gap adjudication failed at %.0f-%.0f; keeping "
+                "coarse boundaries",
+                orig_prev_end,
+                orig_next_start,
+                exc_info=True,
+            )
+        merged.append(cast("MatchBoundary", dict(nxt)))
+
+    if len(merged) < 2:
+        # 全 merge または 1 segment: 端 snap のみ適用して返す
+        return _snap_outer_edges(video_path, anchor, merged, workers=workers)
+
+    # --- 第 2 パス: snap (merge 確定後の各境界) ---
+    result: list[MatchBoundary] = [cast("MatchBoundary", dict(merged[0]))]
+    for i, nxt in enumerate(merged[1:]):
+        prev = result[-1]
+        prev_end_orig = prev["end"]
+        next_start_orig = nxt["start"]
+        gap = next_start_orig - prev_end_orig
+        try:
+            if gap <= MERGE_GAP_MAX:
+                # 第 1 パスの cache を再利用 (i は merged の隣接 pair index)
+                probes = gap_probes_cache.get(i)
+                if probes is None:
+                    # cache miss (稀: 第 1 パスで exception した gap)
+                    t0_ext = max(0.0, prev_end_orig - EDGE_EXT_S)
+                    t1_ext = next_start_orig + EDGE_EXT_S
+                    probes = probe_gap(
+                        video_path, anchor, t0_ext, t1_ext, workers=workers
+                    )
                 new_end, new_start = snap_segment_edges(
-                    prev["end"], nxt["start"], probes
+                    prev_end_orig, next_start_orig, probes
                 )
             else:
-                # 長 gap: 両端窓を EDGE_EXT_S だけ外側に拡張する (#895 P3)
+                # 長 gap: 両端窓のみ probe
                 head = probe_gap(
                     video_path,
                     anchor,
-                    max(0.0, prev["end"] - EDGE_EXT_S),
-                    prev["end"] + _LONG_GAP_EDGE_WINDOW_S,
+                    max(0.0, prev_end_orig - EDGE_EXT_S),
+                    prev_end_orig + _LONG_GAP_EDGE_WINDOW_S,
                     workers=workers,
                 )
                 tail = probe_gap(
                     video_path,
                     anchor,
-                    nxt["start"] - _LONG_GAP_EDGE_WINDOW_S,
-                    nxt["start"] + EDGE_EXT_S,
+                    next_start_orig - _LONG_GAP_EDGE_WINDOW_S,
+                    next_start_orig + EDGE_EXT_S,
                     workers=workers,
                 )
                 new_end, _ = snap_segment_edges(
-                    prev["end"], prev["end"] + _LONG_GAP_EDGE_WINDOW_S, head
+                    prev_end_orig, prev_end_orig + _LONG_GAP_EDGE_WINDOW_S, head
                 )
                 _, new_start = snap_segment_edges(
-                    nxt["start"] - _LONG_GAP_EDGE_WINDOW_S, nxt["start"], tail
+                    next_start_orig - _LONG_GAP_EDGE_WINDOW_S, next_start_orig, tail
                 )
         except Exception:
             logger.warning(
-                "vtuber timeline: gap refinement failed at %.0f-%.0f; keeping "
+                "vtuber timeline: gap snap failed at %.0f-%.0f; keeping "
                 "coarse boundaries",
-                prev["end"],
-                nxt["start"],
+                prev_end_orig,
+                next_start_orig,
                 exc_info=True,
             )
             result.append(cast("MatchBoundary", dict(nxt)))
@@ -664,6 +735,75 @@ def refine_segments(
         follower = cast("MatchBoundary", dict(nxt))
         follower["start"] = new_start
         result.append(follower)
+
+    return _snap_outer_edges(video_path, anchor, result, workers=workers)
+
+
+def _snap_outer_edges(
+    video_path: Path,
+    anchor,
+    segments: list[MatchBoundary],
+    *,
+    workers: int | None = None,
+) -> list[MatchBoundary]:
+    """Fix 3 (#895 P3 2周目): 最初の segment の start 端 + 最後の end 端を snap。
+
+    最初の segment start: [max(0, first_start - EDGE_EXT_S), first_start + 60] を
+    probe し trailing evidence run の先頭で snap (中点は window 中点)。
+    最後の segment end: [last_end - 60, last_end + EDGE_EXT_S] を probe し
+    leading evidence run の末尾で snap (中点は window 中点)。
+    失敗時は粗い edge 維持 (per-gap 例外隔離と同等)。
+    """
+    if not segments:
+        return segments
+    result = [cast("MatchBoundary", dict(s)) for s in segments]
+
+    # --- 最初の segment start snap ---
+    first = result[0]
+    first_start = first["start"]
+    t0 = max(0.0, first_start - EDGE_EXT_S)
+    t1 = first_start + _LONG_GAP_EDGE_WINDOW_S
+    try:
+        probes = probe_gap(video_path, anchor, t0, t1, workers=workers)
+        if probes:
+            mid = (t0 + t1) / 2.0
+            flags = _evidence_flags(probes)
+            ev_runs = _tolerant_runs(flags)
+            # trailing run の先頭 (run end が末尾 EDGE_PROBE_LIMIT 以内 + 候補 > mid)
+            if ev_runs and (len(probes) - 1 - ev_runs[-1][1]) < EDGE_PROBE_LIMIT:
+                candidate = probes[ev_runs[-1][0]].t
+                if candidate > mid:
+                    first["start"] = candidate
+    except Exception:
+        logger.debug(
+            "vtuber timeline: outer edge snap failed for first start %.0f",
+            first_start,
+            exc_info=True,
+        )
+
+    # --- 最後の segment end snap ---
+    last = result[-1]
+    last_end = last["end"]
+    t0 = last_end - _LONG_GAP_EDGE_WINDOW_S
+    t1 = last_end + EDGE_EXT_S
+    try:
+        probes = probe_gap(video_path, anchor, t0, t1, workers=workers)
+        if probes:
+            mid = (t0 + t1) / 2.0
+            flags = _evidence_flags(probes)
+            ev_runs = _tolerant_runs(flags)
+            # leading run の末尾 (run start が先頭 EDGE_PROBE_LIMIT 以内 + 候補 < mid)
+            if ev_runs and ev_runs[0][0] < EDGE_PROBE_LIMIT:
+                candidate = probes[ev_runs[0][1]].t
+                if candidate < mid:
+                    last["end"] = candidate
+    except Exception:
+        logger.debug(
+            "vtuber timeline: outer edge snap failed for last end %.0f",
+            last_end,
+            exc_info=True,
+        )
+
     return result
 
 
