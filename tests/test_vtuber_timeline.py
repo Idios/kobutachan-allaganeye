@@ -643,14 +643,10 @@ class TestV4StatsIsolation:
                 stats=main_stats,  # type: ignore[arg-type]
             )
         assert result is None
-        # pop: vtuber_timeline_probes / vtuber_anchor_confidence は除去済み
-        for k in (
-            "vtuber_timeline_probes",
-            "vtuber_anchor_confidence",
-            "vtuber_gaps_tested",
-            "vtuber_gaps_merged",
-        ):
-            assert k not in main_stats
+        # 縮退 run の main stats に vtuber_* キーが一切残らないこと (Round 2 #1:
+        # V4 統計 (v4_dropped / low_confidence) の書込は空チェック通過後のみ)
+        assert not [k for k in main_stats if str(k).startswith("vtuber_")], main_stats
+        assert main_stats == {}
 
     def test_v4_real_path_all_absent_returns_none(self):
         """real _validate_match_segments (on_all_drop='empty') 経由で全 probe

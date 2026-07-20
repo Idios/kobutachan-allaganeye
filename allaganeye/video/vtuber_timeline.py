@@ -304,23 +304,6 @@ def detect_matches_timeline(
         duration_hint,
         on_all_drop="empty",
     )
-    # vtuber_v4_dropped: local_stats の masked_segments_dropped を translate。
-    # "empty" mode で全滅した場合 boundaries=[] になるため、直後の空分岐で None
-    # 縮退し stats に書かれる前に関数を抜ける (表示不要)。
-    if stats is not None:
-        stats["vtuber_v4_dropped"] = local_stats.get("masked_segments_dropped", 0)
-    # V4 30min 低信頼フラグ: 結果 merge 型見逃しの疑いがある長尺 segment に警告
-    low = [b for b in boundaries if b["end"] - b["start"] > LOW_CONFIDENCE_SEGMENT_S]
-    for b in low:
-        logger.warning(
-            "vtuber timeline: segment %.0f-%.0f exceeds %.0fs; low-confidence "
-            "(possible merged matches)",
-            b["start"],
-            b["end"],
-            LOW_CONFIDENCE_SEGMENT_S,
-        )
-    if stats is not None:
-        stats["vtuber_low_confidence_segments"] = len(low)
     if not boundaries:
         # V4 が全 segment を drop した場合も None (defense-in-depth、空 authoritative 禁止)
         # on_all_drop="empty" が発火した場合もここに落ちる。
@@ -339,6 +322,23 @@ def detect_matches_timeline(
             "falling back to band-crop path"
         )
         return None
+    # V4 統計は空チェック通過後にのみ書く: 縮退 run の main stats に放棄した
+    # timeline の統計を残さない (Round 2 finding #1)。
+    # vtuber_v4_dropped: local_stats の masked_segments_dropped を translate。
+    if stats is not None:
+        stats["vtuber_v4_dropped"] = local_stats.get("masked_segments_dropped", 0)
+    # V4 30min 低信頼フラグ: result merge 型見逃しの疑いがある長尺 segment に警告
+    low = [b for b in boundaries if b["end"] - b["start"] > LOW_CONFIDENCE_SEGMENT_S]
+    for b in low:
+        logger.warning(
+            "vtuber timeline: segment %.0f-%.0f exceeds %.0fs; low-confidence "
+            "(possible merged matches)",
+            b["start"],
+            b["end"],
+            LOW_CONFIDENCE_SEGMENT_S,
+        )
+    if stats is not None:
+        stats["vtuber_low_confidence_segments"] = len(low)
     region = RegionTimeline(
         coarse=band_region_from_localization(
             anchor,
