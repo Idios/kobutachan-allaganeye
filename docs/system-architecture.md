@@ -68,6 +68,7 @@ GUI は以下のタイミングで CLI を subprocess として呼び出す (本
 | --- | --- | --- | --- |
 | DetectingScreen (本物化予定) | `allaganeye detect <video> -o <output>` | metadata.json | [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) Phase 3 |
 | ExportScreen (本物化予定) | `allaganeye split --from-metadata <meta>` | metadata.json + MP4 | [#466](https://github.com/Idios/kobutachan-allaganeye/issues/466) Phase 4 |
+| MinimapScreen | `allaganeye minimap <meta> --region X,Y,W,H --json --expected-mtime <ms>` | minimap MP4 per match + metadata.json write-back | [#893](https://github.com/Idios/kobutachan-allaganeye/issues/893) |
 
 ExportScreen の H.264 再エンコード時のエンコーダ選択 (#591, #761) は `enumerate_h264_encoders` Tauri command (`allaganeye encoder-slots` サブコマンドを subprocess 呼び出し) で行う。detect/split が metadata.json `system_info` に保存した `gpu_vendors_available` / `vendor_preference` / `gpu` (GPU モデル名、#761) を渡して NVENC / QSV / AMF / libx264 のスロット一覧を取得し、並列エクスポートは `start_export` command が担う。
 

@@ -53,6 +53,11 @@
 
 - Tab で全 button / input / checkbox に到達
 
+### MinimapScreen
+
+- Tab で全 button / input に到達
+- 数値入力 (X / Y / W / H) が drag-select のキーボード代替手段（#587 keyboard-全機能: drag-select は mouse 操作だが、数値入力欄で同等の領域指定が可能）
+
 ### Modal (ConflictModal / ConfirmExitModal / ErrorModal)
 
 - Tab で modal 内循環、Escape で「キャンセル」相当

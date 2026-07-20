@@ -378,6 +378,7 @@ App (App.tsx)
         └── (screen === 'complete') CompleteScreen
         └── (screen === 'preview') PreviewScreen (key=selectedMatchIndex で reset)
         └── (screen === 'export') ExportScreen
+        └── (screen === 'minimap') MinimapScreen
 
 components/
 ├── AllaganCorner / AllaganFrame / AllaganSigil   (装飾)

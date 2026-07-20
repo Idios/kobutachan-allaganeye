@@ -467,6 +467,8 @@ allaganeye minimap <metadata.json> --region X,Y,W,H [-o DIR] [--include I,J,K]
 | `--include I,J,K` | (全試合) | 対象 match index（`matches[].index`、**1 始まり**）をカンマ区切りで指定。`post_match` 試合は `--include` 指定時も常に除外 |
 | `--name-pattern PATTERN` | `{idx:03}_{type}_{start}_minimap.mp4` | 出力ファイル名テンプレート。使用可能トークン: `{idx}` / `{idx:03}` / `{type}` / `{start}` (MM-SS 形式。1 時間以上の場合は H-MM-SS) / `{date}` |
 | `--quiet` | `false` | 進捗出力を抑制する |
+| `--json` | `false` | JSON Lines モードで stdout に出力（GUI subprocess 用）。`metadata_path` は stdin ではなく positional 引数として渡す。各行の形式は [output-spec.md §「minimap コマンド出力」](output-spec.md) を参照 |
+| `--expected-mtime MS` | (なし) | crop モード書き込み前の CAS guard。`metadata.json` の現在 mtime (Unix ms) を指定する。実 mtime と不一致なら **exit 6** で即終了（外部変更検知）。GUI の ConflictModal 検知に対応 |
 
 ### 対象試合の決定順序 (crop モード)
 
@@ -484,6 +486,7 @@ allaganeye minimap <metadata.json> --region X,Y,W,H [-o DIR] [--include I,J,K]
 | 2 | 入力エラー（`metadata.json` 読み込み失敗 / `source` フィールド欠落等） |
 | 4 | 提案モード正常終了（常に exit 4。crop なし） |
 | 5 | `--region` 値不正（非整数 / 負値 / `W` か `H` が 16 未満 / フレーム境界越え等 ConfigValidationError） |
+| 6 | metadata write-back の CAS 衝突（`--expected-mtime` と実 mtime の不一致）。GUI が ConflictModal を表示する |
 | 130 | SIGINT (Ctrl+C) によるキャンセル |
 
 ## debug-brightness コマンド
