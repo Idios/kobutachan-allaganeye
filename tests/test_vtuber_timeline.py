@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from allaganeye.video.capture_region import ScorebarLocalization
+from allaganeye.video.detector import MatchBoundary
 from allaganeye.video.vtuber_timeline import (
     GapProbe,
     TIMELINE_MAD_MIN,
@@ -15,6 +16,8 @@ from allaganeye.video.vtuber_timeline import (
     _VT_ANCHOR_MIN_CONF,
     adjudicate_gap,
     detect_matches_timeline,
+    probe_gap,
+    refine_segments,
     resolve_vtuber_anchor,
     scan_timeline,
     segment_timeline,
@@ -367,3 +370,88 @@ class TestSnapSegmentEdges:
         new_end, new_start = snap_segment_edges(0.0, 1.0, probes)
         # 粗い edge へ縮退
         assert (new_end, new_start) == (0.0, 1.0)
+
+
+class TestRefineSegments:
+    ANCHOR = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+
+    def _seg(self, s, e) -> MatchBoundary:
+        return {"start": float(s), "end": float(e), "type": "fl_match"}
+
+    def test_fn_gap_merges_segments(self):
+        segs = [self._seg(0, 400), self._seg(500, 900)]
+        with patch(
+            "allaganeye.video.vtuber_timeline.probe_gap",
+            return_value=_gap_probes(("M" + "lll") * 25),  # 25% -> merge
+        ):
+            out = refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+        assert out == [self._seg(0, 900)]
+
+    def test_true_boundary_snaps_edges(self):
+        segs = [self._seg(0, 400), self._seg(500, 900)]
+        gap = _gap_probes("M" * 5 + "bb" + "l" * 80 + "M" * 3)
+        with patch(
+            "allaganeye.video.vtuber_timeline.probe_gap", return_value=gap
+        ) as pg:
+            out = refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+        assert len(out) == 2
+        # blackout run 先頭 (相対 idx 5) へ end snap。probe_gap は t0=400 起点で
+        # 呼ばれるため GapProbe.t は絶対時刻を持つ (mock は相対 t だが契約検証は
+        # snap が適用されたことと 2 segment 維持で行う)
+        assert out[0]["end"] != 400.0 or out[1]["start"] != 500.0
+        pg.assert_called_once()
+
+    def test_long_gap_probes_only_edge_windows(self):
+        # gap > MERGE_GAP_MAX: 両端 60s 窓のみ probe (呼び出し 2 回)
+        segs = [self._seg(0, 400), self._seg(900, 1300)]
+        with patch(
+            "allaganeye.video.vtuber_timeline.probe_gap",
+            return_value=_gap_probes("l" * 60),
+        ) as pg:
+            out = refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+        assert len(out) == 2
+        assert pg.call_count == 2
+
+    def test_gap_probe_exception_keeps_v2_result(self):
+        # per-gap 例外隔離: probe 失敗 gap は snap/merge なしで V2 のまま
+        segs = [self._seg(0, 400), self._seg(500, 900)]
+        with patch(
+            "allaganeye.video.vtuber_timeline.probe_gap",
+            side_effect=RuntimeError("decode"),
+        ):
+            out = refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+        assert out == segs
+
+    def test_stats_counters(self):
+        segs = [self._seg(0, 400), self._seg(500, 900)]
+        stats: dict = {}
+        with patch(
+            "allaganeye.video.vtuber_timeline.probe_gap",
+            return_value=_gap_probes(("M" + "lll") * 25),
+        ):
+            refine_segments(Path("d.mp4"), self.ANCHOR, segs, stats=stats)
+        assert stats["vtuber_gaps_tested"] == 1
+        assert stats["vtuber_gaps_merged"] == 1
+
+
+class TestProbeGap:
+    ANCHOR = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+
+    def test_probe_includes_band_brightness(self):
+        def fake_probe(video_path, t):
+            return _synthetic_frame(100)
+
+        with (
+            patch(
+                "allaganeye.video.detector._probe_frame_rgb_hires",
+                side_effect=fake_probe,
+            ),
+            patch(
+                "allaganeye.video.capture_region.localize_scorebar_at_anchor",
+                return_value=self.ANCHOR,
+            ),
+        ):
+            probes = probe_gap(Path("d.mp4"), self.ANCHOR, 10.0, 13.0)
+        assert len(probes) == 3
+        assert all(p.band_b is not None and abs(p.band_b - 100.0) < 0.5 for p in probes)
+        assert all(p.present for p in probes)

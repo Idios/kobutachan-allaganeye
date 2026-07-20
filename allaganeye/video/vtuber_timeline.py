@@ -15,7 +15,7 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
@@ -393,6 +393,129 @@ def snap_segment_edges(
     if new_end >= new_start:
         return prev_end, next_start
     return new_end, new_start
+
+
+_LONG_GAP_EDGE_WINDOW_S = 60.0
+"""gap > MERGE_GAP_MAX のとき両端それぞれ probe する窓幅 (秒)."""
+
+
+def _probe_gap_one(video_path: Path, t: float, anchor) -> GapProbe:
+    from allaganeye.video import capture_region, detector
+
+    raw1 = detector._probe_frame_rgb_hires(video_path, t)
+    raw2 = detector._probe_frame_rgb_hires(video_path, t + TIMELINE_PAIR_DT)
+    if raw1 is None or raw2 is None:
+        return GapProbe(t=t, present=False, band_mad=None, band_b=None)
+    h, w = detector._SCOREBAR_V2_PROBE_HEIGHT, detector._SCOREBAR_V2_PROBE_WIDTH
+    f1 = np.frombuffer(raw1, np.uint8).reshape(h, w, 3)
+    f2 = np.frombuffer(raw2, np.uint8).reshape(h, w, 3)
+    y0, y1, x0, x1 = _band_slice(anchor)
+    b1 = f1[y0:y1, x0:x1].astype(np.int16)
+    b2 = f2[y0:y1, x0:x1].astype(np.int16)
+    band_mad = float(np.abs(b1 - b2).mean()) if b1.size else 0.0
+    band_b = float(b1.mean()) if b1.size else 0.0
+    present = capture_region.localize_scorebar_at_anchor(f1, anchor) is not None
+    return GapProbe(t=t, present=present, band_mad=band_mad, band_b=band_b)
+
+
+def probe_gap(
+    video_path: Path,
+    anchor,
+    t0: float,
+    t1: float,
+    *,
+    stride: float = GAP_STRIDE,
+    workers: int | None = None,
+) -> list[GapProbe]:
+    """[t0, t1) を stride 間隔で dense probe する (V3 用、例外は probe 単位隔離)."""
+    ts = [round(t0 + i * stride, 2) for i in range(max(0, int((t1 - t0) / stride)))]
+    if not ts:
+        return []
+    max_workers = workers or min(os.cpu_count() or 4, 16)
+
+    def _one(t: float) -> GapProbe:
+        try:
+            return _probe_gap_one(video_path, t, anchor)
+        except Exception:
+            logger.debug("gap probe failed at t=%.1fs", t, exc_info=True)
+            return GapProbe(t=t, present=False, band_mad=None, band_b=None)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        return list(ex.map(_one, ts))
+
+
+def refine_segments(
+    video_path: Path,
+    anchor,
+    segments: list[MatchBoundary],
+    *,
+    workers: int | None = None,
+    stats=None,
+) -> list[MatchBoundary]:
+    """V3: 隣接 segment 間 gap の merge 裁定 + 確定境界の snap。
+
+    per-gap 例外隔離: probe/裁定に失敗した gap は V2 の粗い結果を維持する
+    (V3 は改善のみ、失敗しても悪化させない)。
+    """
+    if len(segments) < 2:
+        return list(segments)
+    result: list[MatchBoundary] = [cast("MatchBoundary", dict(segments[0]))]
+    for nxt in segments[1:]:
+        prev = result[-1]
+        gap = nxt["start"] - prev["end"]
+        try:
+            if gap <= MERGE_GAP_MAX:
+                probes = probe_gap(
+                    video_path, anchor, prev["end"], nxt["start"], workers=workers
+                )
+                if stats is not None:
+                    stats["vtuber_gaps_tested"] = stats.get("vtuber_gaps_tested", 0) + 1
+                if adjudicate_gap(probes) == "merge":
+                    if stats is not None:
+                        stats["vtuber_gaps_merged"] = (
+                            stats.get("vtuber_gaps_merged", 0) + 1
+                        )
+                    prev["end"] = nxt["end"]
+                    continue
+                new_end, new_start = snap_segment_edges(
+                    prev["end"], nxt["start"], probes
+                )
+            else:
+                head = probe_gap(
+                    video_path,
+                    anchor,
+                    prev["end"],
+                    prev["end"] + _LONG_GAP_EDGE_WINDOW_S,
+                    workers=workers,
+                )
+                tail = probe_gap(
+                    video_path,
+                    anchor,
+                    nxt["start"] - _LONG_GAP_EDGE_WINDOW_S,
+                    nxt["start"],
+                    workers=workers,
+                )
+                new_end, _ = snap_segment_edges(
+                    prev["end"], prev["end"] + _LONG_GAP_EDGE_WINDOW_S, head
+                )
+                _, new_start = snap_segment_edges(
+                    nxt["start"] - _LONG_GAP_EDGE_WINDOW_S, nxt["start"], tail
+                )
+        except Exception:
+            logger.warning(
+                "vtuber timeline: gap refinement failed at %.0f-%.0f; keeping "
+                "coarse boundaries",
+                prev["end"],
+                nxt["start"],
+                exc_info=True,
+            )
+            result.append(cast("MatchBoundary", dict(nxt)))
+            continue
+        prev["end"] = new_end
+        follower = cast("MatchBoundary", dict(nxt))
+        follower["start"] = new_start
+        result.append(follower)
+    return result
 
 
 def adjudicate_gap(
