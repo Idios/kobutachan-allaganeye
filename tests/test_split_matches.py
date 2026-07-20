@@ -17,6 +17,7 @@ from allaganeye.commands.split_matches import (
     _ETAProgressBar,
     _MASKED_ALGO_VERSION,
     _PROGRESS_LABEL_WIDTH,
+    _VTUBER_ALGO_VERSION,
     _auto_sample_interval,
     _eta_progressbar,
     _format_region_token,
@@ -1526,6 +1527,109 @@ class TestMaskedAlgoCache:
     def test_masked_algo_version_is_3(self):
         """Pin: _MASKED_ALGO_VERSION == 3 for #822 Onsal recalibration (15-probe quorum + zero-gap merge)."""
         assert _MASKED_ALGO_VERSION == 3
+
+
+class TestVtuberAlgoCache:
+    """#895: vtuber_algo cache key -- save/load/legacy OBS backward compat."""
+
+    def test_save_cache_writes_vtuber_algo(self, cache_video, tmp_path):
+        """_save_cache always writes vtuber_algo == _VTUBER_ALGO_VERSION."""
+        vtuber_config = SplitConfig(
+            output_dir=tmp_path / "output",
+            sample_interval=1.0,
+            blackout_threshold=15.0,
+            min_match_duration=300.0,
+            min_blackout_duration=3.0,
+            vtuber=True,
+        )
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, vtuber_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        assert data["params"]["vtuber_algo"] == _VTUBER_ALGO_VERSION
+
+    def test_cache_miss_on_vtuber_algo_mismatch(self, cache_video, tmp_path):
+        """Legacy vtuber cache (vtuber_algo absent = 1) misses with new code (2).
+
+        A cache saved by pre-#895 code with vtuber=True has no vtuber_algo key
+        (defaults to 1). Loading with the current code (_VTUBER_ALGO_VERSION=2)
+        must return None -- the old band-crop result is stale (timeline path
+        was not yet implemented).
+        """
+        vtuber_config = SplitConfig(
+            output_dir=tmp_path / "output",
+            sample_interval=1.0,
+            blackout_threshold=15.0,
+            min_match_duration=300.0,
+            min_blackout_duration=3.0,
+            vtuber=True,
+        )
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, vtuber_config, CACHE_BOUNDARIES
+        )
+        # Simulate legacy pre-#895 cache: remove vtuber_algo from params
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("vtuber_algo", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        # Must miss: vtuber=True run with old (missing) algo key vs new version
+        assert _load_cache(cache_path, cache_video, 1.0, vtuber_config) is None
+
+    def test_cache_hit_for_legacy_obs_cache_without_vtuber_algo(
+        self, cache_video, cache_config, tmp_path
+    ):
+        """OBS cache (vtuber off) hits even without vtuber_algo.
+
+        Pre-#895 OBS caches have no vtuber_algo key. Since vtuber=False,
+        the run was never vtuber-affected. Legacy key absence == algo 1,
+        and since it is not vtuber-affected, the mismatch check does not
+        fire -- the cache must still hit (no needless re-detects for
+        unaffected users).
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        # Simulate legacy OBS cache: remove vtuber_algo key
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("vtuber_algo", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        # Must still hit: unaffected users must not be forced to re-detect
+        assert (
+            _load_cache(cache_path, cache_video, 1.0, cache_config) == CACHE_BOUNDARIES
+        )
+
+    def test_load_cache_broken_vtuber_algo_misses(self, cache_video, tmp_path):
+        """Broken vtuber_algo (non-int string) in vtuber cache causes miss.
+
+        When a vtuber-affected cache has a non-int vtuber_algo value the
+        invalidation logic must treat it as a mismatch (miss direction) rather
+        than raising or hitting incorrectly.
+        """
+        vtuber_config = SplitConfig(
+            output_dir=tmp_path / "output",
+            sample_interval=1.0,
+            blackout_threshold=15.0,
+            min_match_duration=300.0,
+            min_blackout_duration=3.0,
+            vtuber=True,
+        )
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, vtuber_config, CACHE_BOUNDARIES
+        )
+        # Inject a non-int vtuber_algo to simulate cache corruption
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"]["vtuber_algo"] = "x"
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+
+        result = _load_cache(cache_path, cache_video, 1.0, vtuber_config)
+        assert result is None, "broken vtuber_algo must cause cache miss, not hit"
+
+    def test_vtuber_algo_version_is_2(self):
+        """Pin: _VTUBER_ALGO_VERSION == 2 for #895 timeline segmentation."""
+        assert _VTUBER_ALGO_VERSION == 2
 
 
 class TestCaptureRegionsCache:
@@ -6328,3 +6432,132 @@ def test_load_cache_broken_masked_algo_misses(tmp_path, cache_video):
 
     result = _load_cache(cache_path, cache_video, 1.0, masked_config)
     assert result is None, "broken masked_algo must cause cache miss, not hit"
+
+
+# ===========================================================================
+# B6-V1: _display_cache_hit_params vtuber_algo token (#895)
+# ===========================================================================
+
+
+def test_display_cache_hit_params_vtuber_shows_vtuber_algo(tmp_path, capsys):
+    """B6-V1: vtuber cache-hit summary contains vtuber_algo token.
+
+    When the cache records vtuber=True, the verbose cache-hit summary must
+    include the vtuber_algo token so operators can distinguish pre-#895
+    (vtuber_algo=1, band-crop) from post-#895 (vtuber_algo=2, timeline)
+    results without re-running detection.
+    """
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "params": {
+                    "sample_interval": 1.0,
+                    "blackout_threshold": 15.0,
+                    "min_match_duration": 300.0,
+                    "min_blackout_duration": 3.0,
+                    "no_audio": False,
+                    "masked": False,
+                    "vtuber": True,
+                    "keep_trailing": False,
+                    "vtuber_algo": 2,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "vtuber_algo=2" in out, "vtuber cache hit must include vtuber_algo token"
+
+
+def test_display_cache_hit_params_non_vtuber_omits_vtuber_algo(tmp_path, capsys):
+    """B6-V1 (negative): non-vtuber cache-hit summary must NOT contain vtuber_algo.
+
+    For standard OBS cache hits (vtuber=False), the vtuber_algo token is
+    irrelevant and must be absent to keep the summary concise.
+    """
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "params": {
+                    "sample_interval": 1.0,
+                    "blackout_threshold": 15.0,
+                    "min_match_duration": 300.0,
+                    "min_blackout_duration": 3.0,
+                    "no_audio": False,
+                    "masked": False,
+                    "vtuber": False,
+                    "keep_trailing": False,
+                    "vtuber_algo": 2,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "vtuber_algo" not in out, (
+        "non-vtuber cache hit must NOT include vtuber_algo token"
+    )
+
+
+def test_display_cache_hit_params_broken_vtuber_algo_shows_question_mark(
+    tmp_path, capsys
+):
+    """B6-V2: broken vtuber_algo (non-int string) emits '?' token, does not raise.
+
+    A corrupted cache with vtuber_algo="x" must not crash the display helper.
+    The token should fall back to vtuber_algo=? so operators see a diagnostic
+    indicator rather than a silent gap.
+    """
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "params": {
+                    "sample_interval": 1.0,
+                    "blackout_threshold": 15.0,
+                    "min_match_duration": 300.0,
+                    "min_blackout_duration": 3.0,
+                    "no_audio": False,
+                    "masked": False,
+                    "vtuber": True,
+                    "keep_trailing": False,
+                    "vtuber_algo": "x",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "vtuber_algo=?" in out, (
+        "broken vtuber_algo must display '?' fallback, not raise"
+    )
+
+
+def test_print_detection_stats_empty_stats_no_crash(capsys):
+    """P1 契約 pin (#895): vtuber timeline path は DetectionStats を埋めずに
+    early return するため、`--vtuber -v` の verbose 表示は空 stats で呼ばれる。
+    _print_detection_stats の全 section が key-guarded で、空 stats では
+    crash せず何も出力しないことを固定する (P2 で timeline 固有統計を
+    設計するまでの回帰防止)。
+    """
+    from allaganeye.commands.split_matches import _print_detection_stats
+
+    _print_detection_stats({})
+    assert capsys.readouterr().out == ""

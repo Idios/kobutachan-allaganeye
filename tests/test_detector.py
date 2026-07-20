@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from typing import Literal, overload
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -2895,8 +2896,49 @@ def test_detect_match_boundaries_passes_region_to_all_three_call_sites(monkeypat
 # ============================================================
 
 
-def _detect_with_region_callback(monkeypatch, *, vtuber, resolve_result=None, **kwargs):
-    """共通ハーネス: scan/refine を stub し region_callback の発火を捕捉する。"""
+_TIMELINE_RESULT_UNSET = object()  # sentinel: timeline_result が明示指定されていない
+
+
+@overload
+def _detect_with_region_callback(
+    monkeypatch,
+    *,
+    vtuber: bool,
+    resolve_result: object = ...,
+    timeline_result: object = ...,
+    return_result: Literal[True],
+    **kwargs: object,
+) -> tuple[list, list[MatchBoundary]]: ...
+
+
+@overload
+def _detect_with_region_callback(
+    monkeypatch,
+    *,
+    vtuber: bool,
+    resolve_result: object = ...,
+    timeline_result: object = ...,
+    return_result: Literal[False] = ...,
+    **kwargs: object,
+) -> list: ...
+
+
+def _detect_with_region_callback(
+    monkeypatch,
+    *,
+    vtuber,
+    resolve_result=None,
+    timeline_result=_TIMELINE_RESULT_UNSET,
+    return_result=False,
+    **kwargs,
+):
+    """共通ハーネス: scan/refine を stub し region_callback の発火を捕捉する。
+
+    timeline_result: 省略時は vtuber_timeline を monkeypatch しない (従来挙動)。
+        明示指定 (None / tuple) 時のみ vtuber_timeline.detect_matches_timeline を
+        monkeypatch して指定値を返す。
+    return_result: True 時は (fired, result) tuple を返す (返り値 assert 用)。
+    """
     from pathlib import Path
 
     from allaganeye.video import detector as det
@@ -2906,13 +2948,21 @@ def _detect_with_region_callback(monkeypatch, *, vtuber, resolve_result=None, **
         monkeypatch.setattr(
             det, "_resolve_detect_region", lambda vp, dh: resolve_result
         )
+    if timeline_result is not _TIMELINE_RESULT_UNSET:
+        from allaganeye.video import vtuber_timeline
+
+        monkeypatch.setattr(
+            vtuber_timeline,
+            "detect_matches_timeline",
+            lambda *a, **k: timeline_result,
+        )
     monkeypatch.setattr(
         det, "_scan_cpu", lambda *a, **kw: {0.0: 100.0, 1.0: 5.0, 2.0: 100.0}
     )
     monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **kw: [])
 
     fired: list[RegionTimeline] = []
-    det.detect_match_boundaries(
+    result = det.detect_match_boundaries(
         Path("test.mp4"),
         duration_hint=3.0,
         sample_interval=1.0,
@@ -2922,6 +2972,8 @@ def _detect_with_region_callback(monkeypatch, *, vtuber, resolve_result=None, **
         region_callback=fired.append,
         **kwargs,
     )
+    if return_result:
+        return fired, result
     return fired
 
 
@@ -4815,3 +4867,98 @@ def test_validate_segments_zero_gap_merge_interior_keeps_fl_match(monkeypatch):
         "interior zero-gap merge must produce 'fl_match'"
     )
     assert stats.get("masked_l2_zero_gap_merges", 0) == 1
+
+
+# ============================================================
+# Task 4 (Refs #895): detector.py vtuber timeline path 配線
+# ============================================================
+
+
+def test_vtuber_timeline_path_used_when_available(monkeypatch):
+    """vtuber=True で timeline が成功したらその boundaries を返す。"""
+    from allaganeye.video.capture_region import (
+        RegionTimeline,
+        ScorebarLocalization,
+        band_region_from_localization,
+    )
+
+    anchor = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+    expected = [{"start": 100.0, "end": 500.0, "type": "fl_match"}]
+    region = RegionTimeline(
+        coarse=band_region_from_localization(anchor, probe_w=1920, probe_h=1080)
+    )
+    fired, result = _detect_with_region_callback(
+        monkeypatch,
+        vtuber=True,
+        timeline_result=(expected, region),
+        return_result=True,
+    )
+    # timeline path fires region_callback with band region
+    assert fired and fired[0].coarse.source == "band"
+    # detect_match_boundaries returns timeline boundaries
+    assert result == expected
+
+
+def test_vtuber_timeline_none_falls_back_to_band_crop(monkeypatch):
+    """timeline None -> 既存 band-crop path が実行される (縮退 floor)。"""
+    from allaganeye.video.capture_region import FULL_FRAME
+
+    called: list = []
+    monkeypatch.setattr(
+        "allaganeye.video.detector._resolve_detect_region",
+        lambda *a, **k: called.append(1) or (FULL_FRAME, "consensus_miss"),
+    )
+    # timeline_result=None -> monkeypatch が None を返す -> 縮退して band-crop path へ
+    _detect_with_region_callback(
+        monkeypatch,
+        vtuber=True,
+        timeline_result=None,
+    )
+    assert called  # _resolve_detect_region に到達した = band-crop path に縮退した
+
+
+def test_vtuber_timeline_empty_boundaries_fall_back_to_band_crop(monkeypatch):
+    """timeline ([], region) -> 空を authoritative にせず band-crop path へ縮退。
+
+    Codex R1 (high) の defense-in-depth pin: vtuber_timeline 側は空なら None を
+    返す契約だが、detector 側 gate も空 boundaries を独立に拒否することを固定する
+    (縮退 floor が二重に守られる)。
+    """
+    from allaganeye.video.capture_region import (
+        FULL_FRAME,
+        RegionTimeline,
+        ScorebarLocalization,
+        band_region_from_localization,
+    )
+
+    anchor = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+    empty_region = RegionTimeline(
+        coarse=band_region_from_localization(anchor, probe_w=1920, probe_h=1080)
+    )
+    called: list = []
+    monkeypatch.setattr(
+        "allaganeye.video.detector._resolve_detect_region",
+        lambda *a, **k: called.append(1) or (FULL_FRAME, "consensus_miss"),
+    )
+    fired = _detect_with_region_callback(
+        monkeypatch,
+        vtuber=True,
+        timeline_result=([], empty_region),
+    )
+    assert called, "empty timeline boundaries must fall back to the band-crop path"
+    # 空 timeline の region は authoritative でないため region_callback は
+    # 縮退先 (band-crop path) の region で発火する (source は band ではない)
+    assert all(r.coarse.source != "band" for r in fired)
+
+
+def test_obs_path_does_not_call_timeline(monkeypatch):
+    """vtuber=False では vtuber_timeline を一切呼ばない (構造保証の pin)。"""
+    import allaganeye.video.vtuber_timeline as vt
+
+    def _boom(*a, **k):  # pragma: no cover - 呼ばれたら失敗
+        raise AssertionError("vtuber_timeline must not be called on OBS path")
+
+    monkeypatch.setattr(vt, "detect_matches_timeline", _boom)
+    # 既存の OBS wiring test と同一の mock 構成 (timeline_result 未指定 = 従来挙動)
+    fired = _detect_with_region_callback(monkeypatch, vtuber=False)
+    assert fired is not None
