@@ -353,10 +353,9 @@ BLACKOUT_B_MAX = 30.0
 band crop の暗転 floor ~17-20 実測 (#809) に margin."""
 
 GAP_STRIDE = 1.0
-"""V3 gap dense probe の stride (秒)."""
-
-SNAP_STRIDE = 0.25
-"""blackout エッジ精密化の stride (秒)."""
+"""V3 gap dense probe の stride (秒)。blackout/presence エッジ snap もこの
+1s 系列に対して行う (spec V3 (b) erratum: 0.25s の局所再 probe は
++-15s gate に対して over-engineering のため不採用)."""
 
 
 @dataclass(frozen=True)
