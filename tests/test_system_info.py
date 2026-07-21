@@ -656,3 +656,45 @@ def test_detect_total_memory_bytes_linux_returns_none_when_missing(_system):
     with patch("builtins.open", mock_open(read_data="Buffers: 123 kB\n")):
         result = _detect_total_memory_bytes()
     assert result is None
+
+
+# --- GPU vendor PS fallback (#860) ---
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+@patch("allaganeye.system_info._run_text")
+def test_probe_gpu_vendors_ps_fallback_when_wmic_absent(mock_run, _system):
+    from allaganeye.system_info import probe_gpu_vendors
+
+    def side_effect(cmd, **_kwargs):
+        if cmd[:1] == ["nvidia-smi"]:
+            return None
+        if cmd[:1] == ["wmic"]:
+            return None  # wmic-less env (Win11 24H2+)
+        if cmd[:1] == ["powershell"]:
+            return "AMD Radeon RX 7900 XTX\nIntel UHD Graphics\n"
+        return None
+
+    mock_run.side_effect = side_effect
+    assert probe_gpu_vendors() == ["amd", "intel"]
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+@patch("allaganeye.system_info._run_text")
+def test_probe_gpu_vendors_no_ps_call_when_wmic_ok(mock_run, _system):
+    """Regression pin: validated wmic path must not invoke PowerShell."""
+    from allaganeye.system_info import probe_gpu_vendors
+
+    seen = []
+
+    def side_effect(cmd, **_kwargs):
+        seen.append(cmd[0])
+        if cmd[:1] == ["nvidia-smi"]:
+            return None
+        if cmd[:1] == ["wmic"]:
+            return "Name\nAMD Radeon RX 7900 XTX\n"
+        return None
+
+    mock_run.side_effect = side_effect
+    assert probe_gpu_vendors() == ["amd"]
+    assert "powershell" not in seen

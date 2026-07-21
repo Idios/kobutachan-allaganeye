@@ -470,7 +470,10 @@ def _probe_gpu_names_platform() -> list[str]:
     if system == "Windows":
         stdout = _run_text(["wmic", "path", "win32_VideoController", "get", "Name"])
         if stdout:
-            return [line.strip() for line in stdout.splitlines()[1:] if line.strip()]
+            names = [line.strip() for line in stdout.splitlines()[1:] if line.strip()]
+            if names:
+                return names
+        return _windows_ps_values("Win32_VideoController", "Name")  # #860
     elif system == "Linux":
         stdout = _run_text(["lspci"])
         if stdout:
