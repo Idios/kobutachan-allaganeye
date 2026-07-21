@@ -18,6 +18,36 @@ import pytest
 _GT_DIR = Path(__file__).parent / "baselines" / "v0.3.0" / "vtuber-gt"
 
 
+def apply_expected_merge(matches: list[dict]) -> list[dict]:
+    """GT matches の expected_merge_with_next: true を適用して合成 GT match 列を返す。
+
+    expected_merge_with_next=true の match は次の match と合成する:
+    - start = 当該 match の start_time
+    - end = 次 match の end_time
+    - index = 当該 match の index (先頭 match の index を採用)
+    末尾 match に expected_merge_with_next=true が付いている場合は ValueError。
+    """
+    result: list[dict] = []
+    i = 0
+    while i < len(matches):
+        m = matches[i]
+        if m.get("expected_merge_with_next"):
+            if i + 1 >= len(matches):
+                raise ValueError(
+                    f"expected_merge_with_next=true on last match (index {m['index']}); "
+                    "annotation error"
+                )
+            nxt = matches[i + 1]
+            merged = dict(m)
+            merged["end_time"] = nxt["end_time"]
+            result.append(merged)
+            i += 2
+        else:
+            result.append(m)
+            i += 1
+    return result
+
+
 def compare_detection_to_gt(
     detected: list[dict], gt_matches: list[dict], tolerance_sec: float
 ) -> dict:
@@ -62,6 +92,70 @@ def compare_detection_to_gt(
     }
 
 
+class TestApplyExpectedMerge:
+    def test_no_merge_flags(self):
+        matches = [
+            {"index": 1, "start_time": 100.0, "end_time": 500.0},
+            {"index": 2, "start_time": 600.0, "end_time": 1000.0},
+        ]
+        result = apply_expected_merge(matches)
+        assert len(result) == 2
+        assert result[0]["start_time"] == 100.0
+        assert result[1]["end_time"] == 1000.0
+
+    def test_merge_first_with_next(self):
+        matches = [
+            {
+                "index": 1,
+                "start_time": 100.0,
+                "end_time": 500.0,
+                "expected_merge_with_next": True,
+            },
+            {"index": 2, "start_time": 600.0, "end_time": 1000.0},
+            {"index": 3, "start_time": 1100.0, "end_time": 1500.0},
+        ]
+        result = apply_expected_merge(matches)
+        assert len(result) == 2
+        assert result[0]["start_time"] == 100.0
+        assert result[0]["end_time"] == 1000.0
+        assert result[0]["index"] == 1
+        assert result[1]["start_time"] == 1100.0
+
+    def test_merge_preserves_original_fields(self):
+        matches = [
+            {
+                "index": 7,
+                "start_time": 7714.0,
+                "end_time": 8753.0,
+                "expected_merge_with_next": True,
+                "notes": "test",
+            },
+            {"index": 8, "start_time": 8812.0, "end_time": 9767.0},
+        ]
+        result = apply_expected_merge(matches)
+        assert len(result) == 1
+        assert result[0]["start_time"] == 7714.0
+        assert result[0]["end_time"] == 9767.0
+        assert result[0]["notes"] == "test"
+
+    def test_merge_last_match_raises(self):
+        matches = [
+            {
+                "index": 1,
+                "start_time": 100.0,
+                "end_time": 500.0,
+                "expected_merge_with_next": True,
+            },
+        ]
+        import pytest
+
+        with pytest.raises(ValueError, match="last match"):
+            apply_expected_merge(matches)
+
+    def test_empty_matches(self):
+        assert apply_expected_merge([]) == []
+
+
 class TestCompareUnit:
     def test_exact_match(self):
         det = [{"start_time": 100.0, "end_time": 500.0}]
@@ -104,6 +198,7 @@ def _gt_files():
 def test_vtuber_gt_match(gt_path, tmp_path):
     """VOD で --vtuber detect し GT と突合 (matched/missed/spurious + )。"""
     gt = json.loads(gt_path.read_text(encoding="utf-8"))
+    gt_matches = apply_expected_merge(gt["matches"])
     base = Path(
         os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER", "E:/allaganeye-samples")
     )
@@ -137,9 +232,7 @@ def test_vtuber_gt_match(gt_path, tmp_path):
     )
     assert r.returncode == 0, r.stderr[-2000:]
     meta = json.loads((out / "metadata.json").read_text(encoding="utf-8"))
-    result = compare_detection_to_gt(
-        meta["matches"], gt["matches"], gt["tolerance_sec"]
-    )
-    assert result["matched"] == len(gt["matches"]), result
+    result = compare_detection_to_gt(meta["matches"], gt_matches, gt["tolerance_sec"])
+    assert result["matched"] == len(gt_matches), result
     assert not result["missed"] and not result["spurious"], result
     assert result["max_abs_error"] <= gt["tolerance_sec"], result["boundary_errors"]

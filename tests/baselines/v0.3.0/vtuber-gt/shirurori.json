@@ -50,7 +50,9 @@
    "start_time": 7714.0,
    "end_time": 8753.0,
    "type": "fl_match",
-   "notes": "end=collapse 8753 (result 画面がバー同座標にスコア UI を表示する result-mimic。目視上の試合終了は 8636 だが released OBS path 同様 result 余韻を試合 MP4 に含める)"
+   "notes": "end=collapse 8753 (result 画面がバー同座標にスコア UI を表示する result-mimic。目視上の試合終了は 8636 だが released OBS path 同様 result 余韻を試合 MP4 に含める)",
+   "expected_merge_with_next": true,
+   "expected_merge_notes": "M7-M8 間 gap は 59s しかなく V2 rolling quorum (window=9, stride=10s) が構造的に bridge する。hard-gap break は Onsal 系で副作用が大きく revert (#895 P3 r6)。known-limitation: 試合間 gap < ~70s は結合されうる"
   },
   {
    "index": 8,
