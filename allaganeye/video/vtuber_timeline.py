@@ -355,9 +355,10 @@ MERGE_GAP_MAX = 300.0
 """V3 merge 裁定の対象 gap 上限 (秒)。実測 FN run 最大 ~250s (PoC sec.5)。
 300s 超の gap は真の境界のみ (min_match_duration と同値)."""
 
-MERGE_RATE = 0.10
-"""merge 裁定の anchor presence rate 閾値。FN run ~24% vs 真 lobby ~1.5%
-(1s stride、PoC sec.5) の 15 倍分離の中間."""
+MERGE_RATE = 0.15
+"""merge 裁定の anchor presence rate 閾値。実測 rate 0.137 (meteor replay gap) を
+boundary 側に倒すため 0.10 から 0.15 に引き上げ (Idios 承認 2026-07-21 #895 P3 4周目)。
+FN run ~24% vs 真 lobby ~1.5% の分離は引き上げ後も十分。"""
 
 FROZEN_MAX = 1.0
 """凍結 probe の band MAD 上限。リザルト/replay 静止 0.13-0.83 (PoC sec.3)."""
@@ -377,7 +378,12 @@ GAP_STRIDE = 1.0
 
 EDGE_EXT_S = 45.0
 """V2 粗 edge の平滑ズレ吸収のための gap probe 拡張幅 (秒)。
-probe_gap の t0/t1 をそれぞれ EDGE_EXT_S だけ外側に拡張する (#895 P3)."""
+start 側 snap 拡張・peek probe に使う (#895 P3)。"""
+
+EDGE_EXT_END_S = 120.0
+"""end snap probe の左側拡張幅 (秒)。
+shinryu M3 型: collapse が粗 end より ~80s 前にある場合でも窓に収める
+(旧 _LONG_GAP_EDGE_WINDOW_S=60s だと窓外になる #895 P3 4周目)。"""
 
 SNAP_FLICKER_TOL = 10
 """evidence run の flicker 許容 probe 数。この数以下の False gap は
@@ -461,6 +467,104 @@ def _tolerant_runs(
     return runs
 
 
+def _snap_end(
+    probes: Sequence[GapProbe],
+    lo: float,
+    hi: float,
+    *,
+    tol: int = SNAP_FLICKER_TOL,
+) -> float | None:
+    """end snap: evidence run のみ (blackout は使わない)。
+
+    leading evidence run の末尾を候補とし、(lo + hi) / 2 より前のときのみ採用。
+    - run start が probes 先頭 EDGE_PROBE_LIMIT 以内 (leading run 条件)
+    - 候補 t < (lo + hi) / 2 (中点制約: gap 後半に引っ張られない)
+    None = 候補なし -> caller は粗い edge を維持する。
+
+    end 側に blackout を使わない理由: in-match 瞬断 blackout (1-2 probe の真っ暗フレーム)
+    が試合中に存在することがある (shinryu M5 実測)。blackout で end を決めると
+    真のエンドではなく試合中の瞬断位置を返してしまう。
+    """
+    if not probes:
+        return None
+    mid = (lo + hi) / 2.0
+    flags = _evidence_flags(probes)
+    ev_runs = _tolerant_runs(flags, tol=tol)
+    if ev_runs and ev_runs[0][0] < EDGE_PROBE_LIMIT:
+        candidate = probes[ev_runs[0][1]].t
+        if candidate < mid:
+            return candidate
+    return None
+
+
+def _snap_start(
+    probes: Sequence[GapProbe],
+    lo: float,
+    hi: float,
+    ext_hi: float | None = None,
+    *,
+    blackout_b_max: float = BLACKOUT_B_MAX,
+    tol: int = SNAP_FLICKER_TOL,
+) -> float | None:
+    """start snap: blackout run 優先 (evidence は fallback)。
+
+    優先順:
+    1. (lo, hi] 内に完全に収まる最後の blackout run の run end -> 無条件採用。
+       ただし in-match blackout を除外: blackout run end の後に evidence probe が
+       存在する場合 (zone-in ではなく試合中の瞬断) はスキップする。
+    2. (hi, ext_hi] 内の最初の blackout run の run end -> 採用 (ext_hi 指定時のみ)
+       (V2 粗 start が真の zone-in より前のケース: 拡張窓の外側 blackout を救済)
+    3. trailing evidence run (run end が probes 末尾 EDGE_PROBE_LIMIT 以内):
+       run 先頭 t > (lo + hi) / 2 のときのみ採用 (中点制約: 大外れ根絶)
+    4. None -> caller は粗い edge を維持する。
+
+    GT 物理定義: start = 境界 blackout (zone-in 暗転) 明け。
+    blackout run end を new_start とするのは「暗転が終わった直後が試合開始」の物理直訳。
+    in-match 瞬断: blackout の後に evidence (present AND moving) が続く -> 境界ではない。
+    """
+    if not probes:
+        return None
+    probes_list = list(probes)
+    flags = _evidence_flags(probes_list)
+    b_runs = _blackout_runs(probes_list, blackout_b_max)
+
+    # Priority 1: (lo, hi] 内の最後の blackout run end (in-match 瞬断を除外)
+    last_in_range: tuple[int, int] | None = None
+    for brun in b_runs:
+        brun_t_end = probes_list[brun[1]].t
+        if lo < brun_t_end <= hi:
+            # in-match guard: blackout run の両側 (前後) に evidence がある = 試合中の瞬断。
+            # zone-in blackout は gap 内に evidence が続く場合でも「前」に evidence がなければ
+            # 境界 blackout として採用する。
+            # 前に evidence = blackout run start より前のいずれかの probe が evidence
+            has_evidence_before = any(flags[j] for j in range(0, brun[0]))
+            has_evidence_after = any(
+                flags[j] for j in range(brun[1] + 1, len(probes_list))
+            )
+            is_intra_match = has_evidence_before and has_evidence_after
+            if not is_intra_match:
+                last_in_range = brun
+    if last_in_range is not None:
+        return probes_list[last_in_range[1]].t
+
+    # Priority 2: (hi, ext_hi] 内の最初の blackout run end
+    if ext_hi is not None:
+        for brun in b_runs:
+            brun_t_end = probes_list[brun[1]].t
+            if hi < brun_t_end <= ext_hi:
+                return brun_t_end
+
+    # Priority 3: trailing evidence run + 中点制約
+    mid = (lo + hi) / 2.0
+    ev_runs = _tolerant_runs(flags, tol=tol)
+    if ev_runs and (len(probes_list) - 1 - ev_runs[-1][1]) < EDGE_PROBE_LIMIT:
+        candidate = probes_list[ev_runs[-1][0]].t
+        if candidate > mid:
+            return candidate
+
+    return None
+
+
 def snap_segment_edges(
     prev_end: float,
     next_start: float,
@@ -468,73 +572,27 @@ def snap_segment_edges(
     *,
     blackout_b_max: float = BLACKOUT_B_MAX,
 ) -> tuple[float, float]:
-    """V3-b (P3): 物理エッジ検出による確定境界精密化 (純関数)。
+    """V3-b (P3 4周目): 物理エッジ検出による確定境界精密化 (純関数)。
 
-    evidence run (present AND not frozen) の先頭/末尾から境界を検出し、
-    blackout run で上書きする (blackout override が evidence run より優先)。
-    frozen-present (replay/result) は evidence から除外する (frozen 除外 #895 P3)。
+    物理規則の再設計 (#895 P3 4周目実測診断):
+    - start 側: GT 物理定義 = 境界 blackout (zone-in 暗転) 明け。
+      _snap_start で blackout run end を無条件採用 (中点制約なし)。
+      blackout なし時のみ evidence trailing run + 中点制約 (fallback)。
+    - end 側: in-match 瞬断 blackout があるため blackout は不使用。
+      _snap_end で evidence leading run + 中点制約のみ。
 
-    処理順:
-    1. _evidence_flags / _tolerant_runs で leading/trailing evidence run を検出
-       - new_end: leading run の末尾 (probes 先頭 15 probe 以内に run start あり)
-         ただし mid = (prev_end + next_start) / 2 より前の場合のみ採用 (中点制約)
-       - new_start: trailing run の先頭 (probes 末尾 15 probe 以内に run end あり)
-         ただし mid より後の場合のみ採用 (中点制約)
-    2. blackout snap (中点制約のみ、adjacency 条件なし)
-       Fix 2 (#895 P3 3周目): BLACKOUT_ADJACENCY_S による evidence 隣接条件を撤廃。
-       GT 物理定義 (境界 blackout = 真の試合境界) に従い blackout を無条件に優先する。
-       - end 側: 中点より前 (t < mid) にある最初の blackout run start で new_end を上書き
-       - start 側: 中点より後 (t > mid) にある最後の blackout run end で new_start を上書き
-    3. 交差 (new_end >= new_start) -> (prev_end, next_start) に縮退
-
-    中点制約 (#895 P3 Fix 2): trailing run が gap 前半に踏み込んでいる場合に
-    new_start が前に引っ張られる大外れ (gyawa M6/meteor M2 実測例) を根絶する。
+    交差 (new_end >= new_start) -> (prev_end, next_start) に縮退。
     """
     probes = list(gap_probes)
     if not probes:
         return prev_end, next_start
 
-    mid = (prev_end + next_start) / 2.0
-    new_end, new_start = prev_end, next_start
+    new_end = _snap_end(probes, prev_end, next_start) or prev_end
+    new_start = (
+        _snap_start(probes, prev_end, next_start, blackout_b_max=blackout_b_max)
+        or next_start
+    )
 
-    # Step 1: evidence run で leading/trailing edge を検出
-    flags = _evidence_flags(probes)
-    ev_runs = _tolerant_runs(flags)
-
-    # new_end: leading evidence run の末尾 (run start が先頭 EDGE_PROBE_LIMIT 以内)
-    # 中点制約: 候補 t < mid のときのみ採用
-    if ev_runs and ev_runs[0][0] < EDGE_PROBE_LIMIT:
-        candidate = probes[ev_runs[0][1]].t
-        if candidate < mid:
-            new_end = candidate
-
-    # new_start: trailing evidence run の先頭 (run end が末尾 EDGE_PROBE_LIMIT 以内)
-    # 中点制約: 候補 t > mid のときのみ採用
-    if ev_runs and (len(probes) - 1 - ev_runs[-1][1]) < EDGE_PROBE_LIMIT:
-        candidate = probes[ev_runs[-1][0]].t
-        if candidate > mid:
-            new_start = candidate
-
-    # Step 2: blackout snap (中点制約のみ。adjacency 条件は撤廃)
-    # blackout override は evidence run エッジより優先 (物理境界として強い信号)。
-    # result 余韻 FP で evidence run が伸びても blackout が真の境界を指す。
-    b_runs = _blackout_runs(probes, blackout_b_max)
-
-    # new_end の blackout 上書き: 中点より前の最初の blackout run start を採用
-    for brun in b_runs:
-        brun_t_start = probes[brun[0]].t
-        if brun_t_start < mid:
-            new_end = brun_t_start
-            break  # 最初の該当 run のみ
-
-    # new_start の blackout 上書き: 中点より後の最後の blackout run end を採用
-    for brun in reversed(b_runs):
-        brun_t_end = probes[brun[1]].t
-        if brun_t_end > mid:
-            new_start = brun_t_end
-            break  # 最後の該当 run のみ
-
-    # Step 3: 交差チェック -> 縮退
     if new_end >= new_start:
         return prev_end, next_start
     return new_end, new_start
@@ -589,6 +647,17 @@ def probe_gap(
         return list(ex.map(_one, ts))
 
 
+def _has_blackout_run(
+    probes: Sequence[GapProbe],
+    *,
+    blackout_b_max: float = BLACKOUT_B_MAX,
+    min_run: int = 2,
+) -> bool:
+    """probe 列に blackout run (連続 min_run probe 以上) があるか。"""
+    b_runs = _blackout_runs(probes, blackout_b_max)
+    return any((end - start + 1) >= min_run for start, end in b_runs)
+
+
 def refine_segments(
     video_path: Path,
     anchor,
@@ -603,18 +672,23 @@ def refine_segments(
     - 第 1 パス (merge 裁定): V2 粗 edge のみを基準に gap <= MERGE_GAP_MAX
       を probe + adjudicate_gap で裁定し、merge 済み segment list を確定する。
       snap で edge が動いても次 gap の裁定入力が汚染されない (recall 退行根絶)。
+      blackout-peek override (#895 P3 4周目): adjudicate_gap が "merge" を返しても
+      adj_probes の後半 or peek probe に blackout run (>=2 probe) があれば
+      boundary に override する (次試合の zone-in blackout = 物理境界の実在)。
     - 第 2 パス (snap): merge 確定後の各境界に snap を適用する。
       短 gap: probe_gap を再利用できる場合は第 1 パスで取得済みのものを使う。
       長 gap: 両端窓のみ probe (probe 2 回)。
+      end 側窓: [prev_end - EDGE_EXT_END_S, prev_end + _LONG_GAP_EDGE_WINDOW_S]
+      (旧 EDGE_EXT_S=45s から EDGE_EXT_END_S=120s に拡大。shinryu M3 型対応)。
 
     per-gap 例外隔離: probe/裁定に失敗した gap は V2 の粗い結果を維持する
     (V3 は改善のみ、失敗しても悪化させない)。
 
-    端 segment snap (Fix 3 / #895 P3 2周目):
+    端 segment snap (Fix 3 / #895 P3 2周目、4周目で end 窓 120s に拡大):
     - 最初の segment の start 側: [max(0, first_start - EDGE_EXT_S), first_start + 60]
       を probe し trailing-run 方式で start snap (中点制約あり)。
-    - 最後の segment の end 側: [last_end - 60, last_end + EDGE_EXT_S] を
-      probe し leading-run 方式で end snap (中点制約あり)。
+    - 最後の segment の end 側: [last_end - EDGE_EXT_END_S, last_end + EDGE_EXT_S]
+      を probe し leading-run 方式で end snap (中点制約あり)。
     """
     if not segments:
         return []
@@ -643,15 +717,42 @@ def refine_segments(
                 if stats is not None:
                     stats["vtuber_gaps_tested"] = stats.get("vtuber_gaps_tested", 0) + 1
                 if adjudicate_gap(adj_probes) == "merge":
-                    if stats is not None:
-                        stats["vtuber_gaps_merged"] = (
-                            stats.get("vtuber_gaps_merged", 0) + 1
+                    # blackout-peek override: 後半 or peek に blackout run があれば boundary
+                    # (shirurori 型: result 余韻 gap の末尾に次試合の zone-in blackout が実在)
+                    mid_t = (orig_prev_end + orig_next_start) / 2.0
+                    back_half = [p for p in adj_probes if p.t >= mid_t]
+                    if _has_blackout_run(back_half):
+                        # 後半 blackout -> boundary override
+                        if stats is not None:
+                            stats["vtuber_merge_overridden"] = (
+                                stats.get("vtuber_merge_overridden", 0) + 1
+                            )
+                    else:
+                        # peek: (orig_next_start, orig_next_start + EDGE_EXT_S) を追加取得
+                        peek_probes = probe_gap(
+                            video_path,
+                            anchor,
+                            orig_next_start,
+                            orig_next_start + EDGE_EXT_S,
+                            workers=workers,
                         )
-                    merged[-1]["end"] = nxt["end"]
-                    # merge した場合は probe cache を積まない (境界消滅)
-                    continue
-                # merge しない場合は snap 用拡張あり probe を cache
-                t0_ext = max(0.0, orig_prev_end - EDGE_EXT_S)
+                        if _has_blackout_run(peek_probes):
+                            # peek blackout -> boundary override
+                            if stats is not None:
+                                stats["vtuber_merge_overridden"] = (
+                                    stats.get("vtuber_merge_overridden", 0) + 1
+                                )
+                        else:
+                            # merge 確定
+                            if stats is not None:
+                                stats["vtuber_gaps_merged"] = (
+                                    stats.get("vtuber_gaps_merged", 0) + 1
+                                )
+                            merged[-1]["end"] = nxt["end"]
+                            # merge した場合は probe cache を積まない (境界消滅)
+                            continue
+                # boundary (adjudicate_gap が boundary or override): snap 用拡張あり probe を cache
+                t0_ext = max(0.0, orig_prev_end - EDGE_EXT_END_S)
                 t1_ext = orig_next_start + EDGE_EXT_S
                 snap_probes = probe_gap(
                     video_path, anchor, t0_ext, t1_ext, workers=workers
@@ -685,7 +786,7 @@ def refine_segments(
                 probes = gap_probes_cache.get(i)
                 if probes is None:
                     # cache miss (稀: 第 1 パスで exception した gap)
-                    t0_ext = max(0.0, prev_end_orig - EDGE_EXT_S)
+                    t0_ext = max(0.0, prev_end_orig - EDGE_EXT_END_S)
                     t1_ext = next_start_orig + EDGE_EXT_S
                     probes = probe_gap(
                         video_path, anchor, t0_ext, t1_ext, workers=workers
@@ -695,10 +796,11 @@ def refine_segments(
                 )
             else:
                 # 長 gap: 両端窓のみ probe
+                # end 側: EDGE_EXT_END_S (120s) 分巻き戻る (旧 EDGE_EXT_S=45s から拡大)
                 head = probe_gap(
                     video_path,
                     anchor,
-                    max(0.0, prev_end_orig - EDGE_EXT_S),
+                    max(0.0, prev_end_orig - EDGE_EXT_END_S),
                     prev_end_orig + _LONG_GAP_EDGE_WINDOW_S,
                     workers=workers,
                 )
@@ -740,12 +842,13 @@ def _snap_outer_edges(
     *,
     workers: int | None = None,
 ) -> list[MatchBoundary]:
-    """Fix 3 (#895 P3 2周目): 最初の segment の start 端 + 最後の end 端を snap。
+    """Fix 3 (#895 P3 2周目、4周目で end 窓 120s に拡大): 最初の start + 最後の end を snap。
 
     最初の segment start: [max(0, first_start - EDGE_EXT_S), first_start + 60] を
-    probe し trailing evidence run の先頭で snap (中点は window 中点)。
-    最後の segment end: [last_end - 60, last_end + EDGE_EXT_S] を probe し
-    leading evidence run の末尾で snap (中点は window 中点)。
+    probe し _snap_start で snap (blackout 優先、evidence fallback + 中点制約)。
+    最後の segment end: [last_end - EDGE_EXT_END_S, last_end + EDGE_EXT_S] を probe し
+    _snap_end で snap (evidence のみ + 中点制約)。
+    shinryu M3 型: collapse が coarse end より ~80s 前にあるとき EDGE_EXT_END_S=120s で救済。
     失敗時は粗い edge 維持 (per-gap 例外隔離と同等)。
     """
     if not segments:
@@ -760,14 +863,9 @@ def _snap_outer_edges(
     try:
         probes = probe_gap(video_path, anchor, t0, t1, workers=workers)
         if probes:
-            mid = (t0 + t1) / 2.0
-            flags = _evidence_flags(probes)
-            ev_runs = _tolerant_runs(flags)
-            # trailing run の先頭 (run end が末尾 EDGE_PROBE_LIMIT 以内 + 候補 > mid)
-            if ev_runs and (len(probes) - 1 - ev_runs[-1][1]) < EDGE_PROBE_LIMIT:
-                candidate = probes[ev_runs[-1][0]].t
-                if candidate > mid:
-                    first["start"] = candidate
+            new_start = _snap_start(probes, t0, t1)
+            if new_start is not None:
+                first["start"] = new_start
     except Exception:
         logger.debug(
             "vtuber timeline: outer edge snap failed for first start %.0f",
@@ -778,19 +876,14 @@ def _snap_outer_edges(
     # --- 最後の segment end snap ---
     last = result[-1]
     last_end = last["end"]
-    t0 = last_end - _LONG_GAP_EDGE_WINDOW_S
+    t0 = last_end - EDGE_EXT_END_S  # 120s 巻き戻り (旧 60s から拡大)
     t1 = last_end + EDGE_EXT_S
     try:
         probes = probe_gap(video_path, anchor, t0, t1, workers=workers)
         if probes:
-            mid = (t0 + t1) / 2.0
-            flags = _evidence_flags(probes)
-            ev_runs = _tolerant_runs(flags)
-            # leading run の末尾 (run start が先頭 EDGE_PROBE_LIMIT 以内 + 候補 < mid)
-            if ev_runs and ev_runs[0][0] < EDGE_PROBE_LIMIT:
-                candidate = probes[ev_runs[0][1]].t
-                if candidate < mid:
-                    last["end"] = candidate
+            new_end = _snap_end(probes, t0, t1)
+            if new_end is not None:
+                last["end"] = new_end
     except Exception:
         logger.debug(
             "vtuber timeline: outer edge snap failed for last end %.0f",

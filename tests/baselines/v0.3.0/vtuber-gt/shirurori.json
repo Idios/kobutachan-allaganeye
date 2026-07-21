@@ -48,8 +48,9 @@
   {
    "index": 7,
    "start_time": 7714.0,
-   "end_time": 8636.0,
-   "type": "fl_match"
+   "end_time": 8753.0,
+   "type": "fl_match",
+   "notes": "end=collapse 8753 (result 画面がバー同座標にスコア UI を表示する result-mimic。目視上の試合終了は 8636 だが released OBS path 同様 result 余韻を試合 MP4 に含める)"
   },
   {
    "index": 8,

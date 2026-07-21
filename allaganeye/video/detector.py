@@ -86,6 +86,7 @@ class DetectionStats(TypedDict, total=False):
     vtuber_anchor_confidence: float  # resolved anchor confidence (0.0-1.0)
     vtuber_gaps_tested: int  # V3 gaps evaluated by adjudicate_gap
     vtuber_gaps_merged: int  # V3 gaps merged (false splits)
+    vtuber_merge_overridden: int  # V3 gaps where blackout-peek overrode merge -> boundary
     vtuber_v4_dropped: int  # V4 segments dropped by _validate_match_segments
     vtuber_low_confidence_segments: int  # segments exceeding LOW_CONFIDENCE_SEGMENT_S
 

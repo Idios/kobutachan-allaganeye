@@ -1950,7 +1950,8 @@ def _print_detection_stats(stats: DetectionStats) -> None:
         )
         typer.echo(
             f"  V3: {stats.get('vtuber_gaps_tested', 0)} gaps tested, "
-            f"{stats.get('vtuber_gaps_merged', 0)} merged; "
+            f"{stats.get('vtuber_gaps_merged', 0)} merged, "
+            f"{stats.get('vtuber_merge_overridden', 0)} peek-overridden; "
             f"V4: {stats.get('vtuber_v4_dropped', 0)} dropped, "
             f"{stats.get('vtuber_low_confidence_segments', 0)} low-confidence"
         )
