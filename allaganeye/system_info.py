@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 _UNAVAILABLE = "(unavailable)"
 _SUBPROCESS_TIMEOUT_S = 5.0
+_PS_TIMEOUT_S = 10.0  # PowerShell cold start は wmic より遅い (#860)
 
 
 def _run_text(cmd: list[str], *, timeout: float = _SUBPROCESS_TIMEOUT_S) -> str | None:
@@ -429,6 +430,31 @@ def probe_gpu_vendors() -> list[str]:
                 break
 
     return vendors
+
+
+def _windows_ps_values(cim_class: str, prop: str) -> list[str]:
+    """Return ``prop`` values from ``Get-CimInstance <cim_class>`` via PowerShell.
+
+    wmic-less (Win11 24H2+) fallback for Windows hw probes (#860).
+    ``powershell.exe`` (Windows PowerShell 5.1) is in-box on Win10/11
+    incl. 24H2/25H2 (only wmic etc. moved to Features on Demand).
+    ``-ExpandProperty`` yields header-less output, one value per line.
+    Returns ``[]`` on any failure (never raises).
+    """
+    stdout = _run_text(
+        [
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            f"Get-CimInstance -ClassName {cim_class} "
+            f"| Select-Object -ExpandProperty {prop}",
+        ],
+        timeout=_PS_TIMEOUT_S,
+    )
+    if not stdout:
+        return []
+    return [line.strip() for line in stdout.splitlines() if line.strip()]
 
 
 def _probe_gpu_names_platform() -> list[str]:

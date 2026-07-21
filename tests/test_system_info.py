@@ -298,6 +298,33 @@ def test_run_text_swallows_timeout():
         assert system_info._run_text(["nope"]) is None
 
 
+# --- _windows_ps_values (wmic-less CIM fallback, #860) ---
+
+
+@patch("allaganeye.system_info._run_text")
+def test_windows_ps_values_parses_expandproperty_output(mock_run):
+    from allaganeye.system_info import _windows_ps_values
+
+    mock_run.return_value = "AMD Radeon RX 7900 XTX\nIntel UHD Graphics\n"
+    result = _windows_ps_values("Win32_VideoController", "Name")
+    assert result == ["AMD Radeon RX 7900 XTX", "Intel UHD Graphics"]
+
+    cmd = mock_run.call_args.args[0]
+    assert cmd[0] == "powershell"
+    assert "-NoProfile" in cmd
+    assert "-NonInteractive" in cmd
+    assert "Get-CimInstance -ClassName Win32_VideoController" in cmd[-1]
+    assert "-ExpandProperty Name" in cmd[-1]
+    assert mock_run.call_args.kwargs["timeout"] == 10.0
+
+
+@patch("allaganeye.system_info._run_text", return_value=None)
+def test_windows_ps_values_empty_on_failure(_run):
+    from allaganeye.system_info import _windows_ps_values
+
+    assert _windows_ps_values("Win32_Processor", "Name") == []
+
+
 def test_run_text_returns_stdout_on_success():
     mock_result = MagicMock(stdout="hello\n")
     with patch(
