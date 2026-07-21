@@ -346,7 +346,9 @@ def _detect_total_memory_bytes() -> int | None:
                 line = line.strip()
                 if line.isdigit():
                     return int(line)
-        for value in _windows_ps_values("Win32_ComputerSystem", "TotalPhysicalMemory"):  # #860
+        for value in _windows_ps_values(
+            "Win32_ComputerSystem", "TotalPhysicalMemory"
+        ):  # #860
             if value.isdigit():
                 return int(value)
         return None
