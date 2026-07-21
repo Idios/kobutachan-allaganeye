@@ -262,6 +262,34 @@ describe('MinimapScreen', () => {
     });
   });
 
+  // #893 R2: MinimapScreen default outDir uses lastExportOutputDir when set
+  describe('#893 R2 MinimapScreen default outDir', () => {
+    it('defaults outDir to lastExportOutputDir when set in the store', () => {
+      // Set up store manually so we can set lastExportOutputDir AFTER reset
+      // and BEFORE render (useState lazy initializer runs at mount time).
+      useAppStateStore.getState().reset();
+      useMetadataStore.getState().clear();
+      useMetadataStore.getState().loadSample();
+      useMetadataStore.setState({ filePath: 'C:/x/metadata.json', loadedMtimeMs: 42, dirty: false });
+      useAppStateStore.getState().navigate('minimap' as AppScreen);
+      // Set lastExportOutputDir AFTER reset so it is available at mount
+      useAppStateStore.getState().setLastExportOutputDir('E:/videos/exported');
+      render(<MinimapScreen />);
+      // The output directory input should show the lastExportOutputDir value
+      const input = screen.getByLabelText('output directory') as HTMLInputElement;
+      expect(input.value).toBe('E:/videos/exported');
+    });
+
+    it('defaults outDir to metadata parent dir (not /minimap) when lastExportOutputDir is null', () => {
+      // Ensure lastExportOutputDir is null (reset() sets it null)
+      renderMinimapWithPath('C:/recordings/metadata.json');
+      // Should default to "C:/recordings" NOT "C:/recordings/minimap"
+      const input = screen.getByLabelText('output directory') as HTMLInputElement;
+      expect(input.value).toBe('C:/recordings');
+      expect(input.value).not.toContain('minimap');
+    });
+  });
+
   it('has no a11y violations (jest-axe)', async () => {
     mockInvoke.mockImplementation((cmd: string) =>
       cmd === 'register_video'

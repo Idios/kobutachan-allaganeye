@@ -107,6 +107,30 @@ describe('useAppStateStore.reset', () => {
   });
 });
 
+// #893 R2
+describe('useAppStateStore.lastExportOutputDir', () => {
+  it('starts as null', () => {
+    expect(useAppStateStore.getState().lastExportOutputDir).toBeNull();
+  });
+
+  it('setLastExportOutputDir stores a dir string', () => {
+    useAppStateStore.getState().setLastExportOutputDir('E:/exports');
+    expect(useAppStateStore.getState().lastExportOutputDir).toBe('E:/exports');
+  });
+
+  it('setLastExportOutputDir accepts null to clear', () => {
+    useAppStateStore.getState().setLastExportOutputDir('E:/exports');
+    useAppStateStore.getState().setLastExportOutputDir(null);
+    expect(useAppStateStore.getState().lastExportOutputDir).toBeNull();
+  });
+
+  it('reset() clears lastExportOutputDir', () => {
+    useAppStateStore.getState().setLastExportOutputDir('E:/exports');
+    useAppStateStore.getState().reset();
+    expect(useAppStateStore.getState().lastExportOutputDir).toBeNull();
+  });
+});
+
 // #613
 describe('useAppStateStore.detectionParams', () => {
   it('starts at the default values', () => {
