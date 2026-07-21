@@ -21,6 +21,8 @@ from allaganeye.video.vtuber_timeline import (
     TimelineProbe,
     _VT_ANCHOR_MIN_CONF,
     _evidence_flags,
+    _snap_end,
+    _snap_start,
     _tolerant_runs,
     adjudicate_gap,
     detect_matches_timeline,
@@ -31,6 +33,8 @@ from allaganeye.video.vtuber_timeline import (
     segment_timeline,
     snap_segment_edges,
 )  # BLACKOUT_ADJACENCY_S は Fix 2 (#895 P3 3周目) で撤廃済み
+# END_FAR_RESCUE_S / INTRA_EVIDENCE_BEFORE_S / INTRA_EVIDENCE_AFTER_S は
+# テスト内コメントで参照するが、アサートは数値リテラルで記述する
 
 
 def _probes(spec: str, stride: float = 10.0) -> list[TimelineProbe]:
@@ -420,18 +424,26 @@ class TestEvidenceFlagsAndTolerantRuns:
 
 class TestSnapSegmentEdges:
     def test_blackout_snap_both_edges_with_adjacent_evidence(self):
-        # P3 4周目: 物理規則再設計後のセマンティクス。
-        # leading evidence (M*5) -> blackout (bb) -> absent (l*20) -> blackout (bbb)
-        # -> trailing evidence (M*5)
-        # 両 blackout run は前後に evidence があるため in-match guard で除外される。
+        # P3 6周目 (Bug B 局所窓変更後): セマンティクス更新。
+        # leading evidence (M*5, t=0-4) -> blackout (bb, t=5-6) -> absent (l*20, t=7-26)
+        # -> blackout (bbb, t=27-29) -> trailing evidence (M*5, t=30-34)
+        #
+        # Priority 1 評価 (最後の in-range blackout run を探す):
+        # brun1 (t=5-6): before 5s 窓 [0,5): t=4 (M) -> has_evidence_before=True
+        #                after 10s 窓 [6,16]: t=7..16 (absent) -> has_evidence_after=False
+        #                -> is_intra_match=False -> last_in_range=brun1
+        # brun2 (t=27-29): before 5s 窓 [22,27): t=22..26 (absent) -> has_evidence_before=False
+        #                   -> is_intra_match=False -> last_in_range=brun2
+        # -> new_start = brun2 end t=29.0
+        #
         # new_end = leading evidence run 末尾 (idx 4, t=4.0): evidence-only
-        # new_start = trailing evidence run 先頭 (idx 30, t=30.0): evidence fallback
         probes = _gap_probes("M" * 5 + "bb" + "l" * 20 + "bbb" + "M" * 5)
         new_end, new_start = snap_segment_edges(0.0, 35.0, probes)
         # end: leading evidence run 末尾 t=4 < mid=17.5 -> 4.0
         assert new_end == probes[4].t
-        # start: trailing evidence run 先頭 t=30 > mid=17.5 -> 30.0
-        assert new_start == probes[30].t
+        # start (Bug B 更新): trailing blackout bbb の before 5s 窓に evidence なし
+        # -> guard 不発 -> priority 1 採用 -> t=29.0 (blackout bbb end)
+        assert new_start == probes[29].t  # t=29.0
         assert new_end < new_start
 
     def test_blackout_after_mid_snaps_start_without_adjacent_evidence(self):
@@ -539,7 +551,7 @@ class TestRefineSegments:
         assert out == [self._seg(0, 900)]
 
     def test_true_boundary_snaps_edges(self):
-        # P3 4周目: 物理規則再設計後のセマンティクス。
+        # P3 6周目 (Bug B 局所窓変更後): セマンティクス更新。
         # spec: "M" * 5 + "bb" + "l" * 20 + "M" * 3 (絶対時刻 t0=400)
         # idx 0-4 (t=400-404): M - leading evidence
         # idx 5-6 (t=405-406): blackout (bb)
@@ -549,10 +561,12 @@ class TestRefineSegments:
         # snap_segment_edges(prev_end=400, next_start=500): mid=450
         # _snap_end (end side, evidence-only):
         #   leading run (idx 0-4), end t=404 < mid=450 -> new_end=404.0
-        # _snap_start (start side, blackout priority):
-        #   blackout (5,6): evidence before (M*5) AND evidence after (M*3) -> intra-match -> skip
-        #   priority 3: trailing run (27,29), start t=427, mid=450 -> 427 < 450 -> not adopted
-        #   -> new_start = None -> 500.0 (coarse)
+        # _snap_start (start side, Bug B 局所窓):
+        #   blackout (t=405-406):
+        #     before 5s 窓 [400, 405): t=404 (M) -> has_evidence_before=True
+        #     after 10s 窓 [406, 416]: t=407..416 (absent) -> has_evidence_after=False
+        #     -> is_intra_match=False -> priority 1 採用
+        #   -> new_start = t=406.0 (blackout end)
         t0 = 400
         gap = _gap_probes("M" * 5 + "bb" + "l" * 20 + "M" * 3, stride=1.0)
         gap = [
@@ -574,9 +588,9 @@ class TestRefineSegments:
         assert len(out) == 2
         # new_end: evidence run 末尾 t=404 < mid=450 -> 採用
         assert out[0]["end"] == 404.0
-        # new_start: blackout は intra-match (前後に evidence) -> skip。
-        # trailing run 先頭 t=427 < mid=450 -> 中点制約で不採用 -> 粗い edge 維持
-        assert out[1]["start"] == 500.0
+        # new_start (Bug B 更新): blackout (t=405-406) は after 10s 窓に evidence なし
+        # -> guard 不発 -> priority 1 採用 -> t=406.0
+        assert out[1]["start"] == 406.0
         # Fix 1: 裁定 probe (400,500) + snap probe (EDGE_EXT_END_S 拡張) = 2 回
         assert pg.call_count == 2
 
@@ -1840,3 +1854,256 @@ class TestSnapStartPriorityOrder:
         probes = _gap_probes("l" * 60 + "M" * 40)
         _new_end, new_start = snap_segment_edges(0.0, 100.0, probes)
         assert new_start == probes[60].t  # t=60 > mid=50 -> 採用
+
+
+# ---------------------------------------------------------------------------
+# Round 6: Bug A / Bug B / Bug C / V2 hard-gap break
+# ---------------------------------------------------------------------------
+
+
+class TestBugAExtHiPropagation:
+    """Bug A: snap_segment_edges の内側 gap path が ext_hi を _snap_start に渡す。
+    (hi, ext_hi] 内の blackout run が Priority 2 で採用されること。
+    shirurori M3 -23 実測原因: blackout が粗 gap の外側にある場合の救済。
+    """
+
+    def test_inner_gap_ext_hi_adopts_blackout_outside_hi(self):
+        """_snap_start に ext_hi を渡すと (hi, ext_hi] の blackout が priority 2 で採用される。
+        prev_end=0, next_start=60, ext_hi=60+45=105
+        probes: t=[0, 104] (105 probe): t=0..60 absent, t=61,62 blackout, t=63..104 absent
+        -> (0, 60] に blackout run end なし -> priority 1 不発
+        -> ext_hi=105: (60, 105] に blackout run end t=62 -> priority 2 採用
+        """
+        probes = _gap_probes("l" * 61 + "bb" + "l" * 42)  # 105 probes
+        assert len(probes) == 105
+        # ext_hi を明示して _snap_start を直接呼ぶ
+        result = _snap_start(probes, 0.0, 60.0, ext_hi=60.0 + EDGE_EXT_S)
+        # priority 2: blackout run end t=62 in (60, 105] -> adopted
+        assert result == probes[62].t  # t=62.0
+
+    def test_inner_gap_no_ext_hi_blackout_outside_hi_not_adopted(self):
+        """ext_hi=None のとき (hi, ...] の blackout は採用されない (Bug A 旧挙動確認)。"""
+        probes = _gap_probes("l" * 61 + "bb" + "l" * 42)
+        # ext_hi=None -> priority 2 スキップ -> priority 3: trailing run なし -> None
+        result = _snap_start(probes, 0.0, 60.0, ext_hi=None)
+        assert result is None  # ext_hi なしでは採用されない
+
+    def test_snap_segment_edges_passes_ext_hi_correctly(self):
+        """snap_segment_edges(ext_hi=next_start+EDGE_EXT_S) を明示すると
+        (hi, ext_hi] の blackout が new_start に snap する。
+        """
+        # hi=50, ext_hi=50+EDGE_EXT_S=95
+        # probes: t=0..94, blackout at t=51,52 (= hi+1, hi+2)
+        probes = _gap_probes("l" * 51 + "bb" + "l" * 42)  # 95 probes
+        _new_end, new_start = snap_segment_edges(
+            0.0, 50.0, probes, ext_hi=50.0 + EDGE_EXT_S
+        )
+        # (0, 50] に blackout なし -> priority 1 不発
+        # ext_hi=95: (50, 95] に blackout run end t=52 -> priority 2
+        assert new_start == probes[52].t  # t=52.0
+
+
+class TestBugBIntraMatchGuardLocal:
+    """Bug B: _snap_start の in-match guard を局所窓 (before 5s / after 10s) に変更。
+    120s 広窓の先頭にある前試合 evidence が guard を誤発火させない。
+    """
+
+    def test_zone_in_blackout_adopted_when_prev_evidence_is_far(self):
+        """前試合 evidence が blackout run より 90s+ 前にある場合、
+        局所窓 5s 以内に evidence がなければ in-match guard は不発 -> blackout 採用。
+        shikke M6 型: 直前 90s 無 evidence の zone-in blackout が採用される。
+        stride=1s で probes[0..89]=evidence (90s 分), probes[90..109]=absent (20s),
+        probes[110,111]=blackout, probes[112..119]=absent
+        blackout run 先頭 t=110 の before 5s 窓 = [105, 110): t=105..109 はすべて absent
+        -> has_evidence_before = False -> guard 不発 -> blackout end t=111 採用
+        """
+        # 90 evidence + 20 absent + 2 blackout + 8 absent = 120 probes
+        probes = _gap_probes("M" * 90 + "l" * 20 + "bb" + "l" * 8)
+        assert len(probes) == 120
+        # lo=0, hi=120 (probes 全体を (lo, hi] に収める)
+        result = _snap_start(probes, 0.0, 120.0, ext_hi=None)
+        # blackout end t=111: before 5s に evidence なし -> guard 不発 -> 採用
+        assert result == probes[111].t  # t=111.0
+
+    def test_shinryu_type_intra_match_blackout_excluded(self):
+        """shinryu 型瞬断: 直前 1s + 直後 8s に evidence -> guard 発火 -> 除外。
+        before_s=5: blackout run 先頭 t=5 の before 窓 [0, 5): t=4 に evidence -> 成立
+        after_s=10: blackout run 末尾 t=6 の after 窓 (6, 16]: t=7 に evidence -> 成立
+        -> 両方成立 -> is_intra_match -> skip
+        """
+        # t=0..3: evidence(4), t=4: evidence, t=5,6: blackout, t=7..14: evidence(8), t=15..99: absent
+        probes = _gap_probes("M" * 5 + "bb" + "M" * 8 + "l" * 85)
+        assert len(probes) == 100
+        result = _snap_start(probes, 0.0, 100.0, ext_hi=None)
+        # blackout は intra-match -> skip。trailing evidence run (M*8): run 先頭 t=7
+        # priority 3: trailing run (先頭 t=7, mid=50): t=7 < mid=50 -> 不採用 -> None
+        # -> fallback: no priority fires -> None
+        assert result is None
+
+    def test_shirurori_type_before_6s_outside_window_adopted(self):
+        """shirurori 型: 直前 6s に result 余韻 evidence が存在しても
+        before 窓 5s 内には入らない -> has_evidence_before=False -> guard 不発 -> 採用。
+        probes stride=1s:
+        t=0..99: absent (100s), t=100: evidence (1 probe, "M"), t=101..105: absent (5s gap),
+        t=106,107: blackout, t=108..119: absent
+        blackout run 先頭 t=106 の before 窓 [101, 106): t=101..105 は absent
+        -> has_evidence_before = False -> guard 不発 -> blackout end t=107 採用
+        """
+        probes = _gap_probes("l" * 100 + "M" + "l" * 5 + "bb" + "l" * 12)
+        assert len(probes) == 120
+        result = _snap_start(probes, 0.0, 120.0, ext_hi=None)
+        # blackout end t=107: before 窓内に evidence なし -> 採用
+        assert result == probes[107].t  # t=107.0
+
+    def test_intra_evidence_after_boundary_10s(self):
+        """after 窓が 10s であることを直接確認:
+        blackout 直後 9s に evidence -> has_evidence_after=True (10s 窓内)
+        -> before 側も成立すれば guard 発火。
+        before=1s (成立): after=9s (成立 <=10s) -> intra-match -> excluded。
+        """
+        # t=0..2: evidence (3s = before 1s), t=3,4: blackout, t=5..13: evidence (9s = after 9s)
+        probes = _gap_probes("M" * 3 + "bb" + "M" * 9 + "l" * 84)
+        result = _snap_start(probes, 0.0, 100.0, ext_hi=None)
+        # before: t=2 is 1s before blackout[0]=t=3 -> within 5s -> True
+        # after: t=5 is 1s after blackout[1]=t=4 -> within 10s -> True -> intra-match
+        assert result is None  # guard fires, trailing evidence run start < mid -> None
+
+    def test_intra_evidence_after_boundary_11s_is_not_guard(self):
+        """after 窓 10s 境界: blackout 直後 11s に初めて evidence -> has_evidence_after=False
+        -> guard 不発 -> blackout 採用。
+        """
+        # t=0..2: evidence, t=3,4: blackout, t=5..15: absent (11s gap), t=16: evidence
+        probes = _gap_probes("M" * 3 + "bb" + "l" * 11 + "M" + "l" * 83)
+        result = _snap_start(probes, 0.0, 100.0, ext_hi=None)
+        # after 窓: blackout end t=4, after 10s -> (4, 14]: t=5..14 はすべて absent
+        # -> has_evidence_after = False -> guard 不発 -> blackout end t=4 採用
+        assert result == probes[4].t  # t=4.0
+
+
+class TestBugCSnapEndDropoutRescue:
+    """Bug C: _snap_end の leading run dropout 救済 (END_FAR_RESCUE_S=60s)。
+    kyuma M6 -91 / meteor M5 -98 型: Onsal 明滅で leading run が粗 end の 60s 超前に終端。
+    後続 3+ probe run が lo-60s 以内にあれば候補を置換する。
+    """
+
+    def test_rescue_applied_when_leading_run_ends_far_before_lo(self):
+        """leading run が lo-90s に終端 + 後続 3+ probe run が lo-10s に終端 -> 救済。
+        probes stride=1s: lo=120, hi=240, mid=180
+        t=0..9: evidence (leading, idx 0-9, t=0..9)
+        t=10..109: absent (100s gap)
+        t=110..113: evidence run (len=4 >=3, t=110..113), run end t=113 < mid=180 かつ t >= lo-60=60
+        -> rescue: candidate が 113 に置換 < mid=180 -> 採用
+        """
+        probes = _gap_probes("M" * 10 + "l" * 100 + "M" * 4 + "l" * 106)
+        assert len(probes) == 220
+        lo, hi = 120.0, 240.0
+        result = _snap_end(probes, lo, hi)
+        # leading run end t=9 << lo-60=60 -> rescue triggered
+        # rescue candidate: t=113 (run end) < mid=180 and t >= 60 -> adopted
+        assert result == probes[113].t  # t=113.0
+
+    def test_shinryu_m3_type_no_rescue_leading_adopted(self):
+        """shinryu M3 型: leading run end が lo-41s (= lo-60s 以内) -> 直接採用 (rescue 不発)。
+        probes stride=1s: lo=80, hi=180, mid=130
+        t=0..39: evidence (leading, end t=39, lo-80+39=lo-41=41 ... 実際 t=39 = lo-41)
+        -> lo - END_FAR_RESCUE_S = 80-60=20 -> t=39 >= 20 -> 60s 以内 -> 直接採用 (rescue 不要)
+        """
+        lo, hi = 80.0, 180.0
+        # mid = (lo + hi) / 2.0 = 130 (used in comment only)
+        probes = _gap_probes("M" * 40 + "l" * 60 + "M" + "l" * 19)  # 120 probes
+        # leading end t=39, lo-60=20, t=39 >= 20 -> not "far" -> leading 採用
+        result = _snap_end(probes, lo, hi)
+        # leading run end t=39 < mid=130 -> adopted (no rescue)
+        assert result == probes[39].t  # t=39.0
+
+    def test_rescue_not_applied_when_subsequent_run_too_short(self):
+        """後続 run が 2 probe (< 3) のみ -> rescue 不発 -> leading run 採用。"""
+        # leading run end t=9 << lo-60 -> rescue triggered, but subsequent run len=2
+        probes = _gap_probes("M" * 10 + "l" * 100 + "M" * 2 + "l" * 108)
+        lo, hi = 120.0, 240.0
+        result = _snap_end(probes, lo, hi)
+        # subsequent run len=2 < 3 -> not eligible -> rescue fails -> leading t=9 adopted
+        # BUT t=9 < lo-60=60 -> "far" -> rescue triggered but no eligible run -> None or leading?
+        # spec: rescue fails -> leading candidate still used if < mid
+        # t=9 < mid=180 -> adopt leading (rescue fails, no replacement)
+        assert result == probes[9].t  # t=9.0 (leading, rescue fails)
+
+    def test_rescue_not_applied_when_subsequent_run_after_mid(self):
+        """後続 run 末尾が mid 以降 -> rescue 対象外 -> leading run 採用。"""
+        # leading end t=9, lo=80, hi=240, mid=160
+        # subsequent run: t=170..173 (run end t=173 >= mid=160) -> not eligible
+        lo, hi = 80.0, 240.0
+        probes = _gap_probes("M" * 10 + "l" * 160 + "M" * 4 + "l" * 66)
+        result = _snap_end(probes, lo, hi)
+        # subsequent run end t=173 >= mid=160 -> not eligible -> leading t=9 adopted
+        assert result == probes[9].t  # t=9.0
+
+    def test_rescue_not_applied_when_subsequent_run_too_far_from_lo(self):
+        """後続 run 末尾が lo-END_FAR_RESCUE_S 未満 -> rescue 対象外 (60s 超) -> leading 採用。"""
+        # leading end t=5, lo=120, hi=240, lo-60=60
+        # subsequent run: t=50..53 (run end t=53 < lo-60=60) -> not eligible
+        lo, hi = 120.0, 240.0
+        probes = _gap_probes("M" * 6 + "l" * 44 + "M" * 4 + "l" * 166)
+        result = _snap_end(probes, lo, hi)
+        # subsequent run end t=53 < lo-60=60 -> not eligible -> leading t=5 adopted
+        assert result == probes[5].t  # t=5.0
+
+
+class TestV2HardGapBreak:
+    """V2 hard-gap break (TIMELINE_HARD_GAP_PROBES=5):
+    quorum 後の in-match run 内に 5+ probe 連続非 evidence sub-run があれば分割する。
+    両 fragment が min_match_duration 以上の場合のみ分割 (short fragment drop 防止)。
+    """
+
+    def test_hard_gap_5_probe_splits_two_segments(self):
+        """900s evidence + 6 probe (60s) 非 evidence + 900s evidence -> 2 segments。
+        TIMELINE_HARD_GAP_PROBES=5: 6 probe >= 5 -> 分割候補。
+        両 fragment = 900s >= min_match_duration=300s -> 分割実施。
+        """
+        # 90 M + 6 l + 90 M (stride=10s: 900s + 60s + 900s)
+        probes = _probes("M" * 90 + "l" * 6 + "M" * 90)
+        segs = segment_timeline(probes, min_match_duration=300.0)
+        assert len(segs) == 2
+
+    def test_hard_gap_4_probe_no_split(self):
+        """4 probe 非 evidence gap は TIMELINE_HARD_GAP_PROBES=5 未満 -> 分割しない。"""
+        probes = _probes("M" * 90 + "l" * 4 + "M" * 90)
+        segs = segment_timeline(probes, min_match_duration=300.0)
+        # quorum window で bridge されるため 1 segment
+        assert len(segs) == 1
+
+    def test_hard_gap_split_prevented_when_short_fragment(self):
+        """分割後 fragment が min_match_duration 未満 -> 分割しない (1 segment)。
+        100s evidence + 6 probe gap + 800s evidence: 100s < 300s -> 分割しない。
+        """
+        # 10 M + 6 l + 80 M: 100s + 60s gap + 800s
+        probes = _probes("M" * 10 + "l" * 6 + "M" * 80)
+        segs = segment_timeline(probes, min_match_duration=300.0)
+        assert len(segs) == 1
+
+    def test_hard_gap_boundary_times_at_evidence_probes(self):
+        """分割後の境界 t が gap 両端 evidence probe と一致すること。
+        90 M + 6 l + 90 M: 分割 end = gap 直前 evidence probe t, start = gap 直後 evidence probe t。
+        """
+        probes = _probes("M" * 90 + "l" * 6 + "M" * 90)
+        segs = segment_timeline(probes, min_match_duration=300.0)
+        assert len(segs) == 2
+        # gap 直前 evidence probe: idx=89, t=890.0
+        # gap 直後 evidence probe: idx=96, t=960.0
+        assert segs[0]["end"] == pytest.approx(890.0)
+        assert segs[1]["start"] == pytest.approx(960.0)
+
+    def test_hard_gap_exact_5_probe_splits(self):
+        """ちょうど 5 probe の非 evidence gap -> 分割 (>= 5)。"""
+        probes = _probes("M" * 90 + "l" * 5 + "M" * 90)
+        segs = segment_timeline(probes, min_match_duration=300.0)
+        assert len(segs) == 2
+
+    def test_hard_gap_both_fragments_must_meet_min_duration(self):
+        """両 fragment ともに min_match_duration 以上のときのみ分割。
+        片方が短い (200s < 300s) -> 分割しない。
+        """
+        # 20 M (200s) + 6 l + 80 M (800s): 200s < 300s -> 分割しない
+        probes = _probes("M" * 20 + "l" * 6 + "M" * 80)
+        segs = segment_timeline(probes, min_match_duration=300.0)
+        assert len(segs) == 1

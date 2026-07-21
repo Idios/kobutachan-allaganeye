@@ -66,6 +66,15 @@ def segment_timeline(
     (probe i の前後 window//2) に evidence が quorum 個以上ある probe を
     in-match とし、連続 in-match run を segment 化、min_match_duration 未満を
     除外する。境界精度は stride 相当 (精密化は V3 refine_segments で実施済み)。
+
+    hard-gap break (V2 拡張 #895 P3 6周目): quorum 平滑化後の in-match run に対して
+    raw evidence フラグ上で TIMELINE_HARD_GAP_PROBES 以上連続の非 evidence sub-run が
+    あれば分割候補とする。両 fragment の evidence 範囲 duration が両方 min_match_duration
+    以上のときのみ分割する (片方でも短い場合は分割しない = silent drop 防止)。
+    分割境界: gap の直前 evidence probe t = end / 直後 evidence probe t = start。
+    V3 (refine_segments) が gap を merge に戻す前提の分割であるため、
+    in-match 長途切れは rate 判定で merge 候補になる設計。
+    shirurori M7-M8: 59s gap で rolling quorum が bridge し V3 裁定に渡らない問題を解消。
     """
     n = len(probes)
     if n == 0:
@@ -74,21 +83,108 @@ def segment_timeline(
         p.present and p.band_mad is not None and p.band_mad >= mad_min for p in probes
     ]
     half = window // 2
-    segs: list[list[float]] = []
-    prev_in = False
+
+    # quorum 平滑化: in_match_flags[i] は probe i が in-match かどうか
+    in_match_flags = [False] * n
     for i in range(n):
         lo = max(0, i - half)
         hi = min(n, i + half + 1)
-        in_match = sum(evid[lo:hi]) >= quorum
-        if in_match:
-            if prev_in:
-                segs[-1][1] = probes[i].t
+        in_match_flags[i] = sum(evid[lo:hi]) >= quorum
+
+    # in-match run を収集 (各 run = (start_idx, end_idx) inclusive)
+    in_match_runs: list[tuple[int, int]] = []
+    run_start: int | None = None
+    for i in range(n):
+        if in_match_flags[i]:
+            if run_start is None:
+                run_start = i
+        else:
+            if run_start is not None:
+                in_match_runs.append((run_start, i - 1))
+                run_start = None
+    if run_start is not None:
+        in_match_runs.append((run_start, n - 1))
+
+    # hard-gap break: in-match run 内の raw evid で TIMELINE_HARD_GAP_PROBES 以上の
+    # 非 evidence sub-run を検査し、fragment 両方が min_match_duration 以上なら分割する
+    final_segs: list[tuple[float, float]] = []
+    for run_s, run_e in in_match_runs:
+        # この run の raw evid 部分列
+        run_evid = evid[run_s : run_e + 1]  # 0-indexed within run
+
+        # 非 evidence の連続 sub-run を探す
+        gap_runs: list[
+            tuple[int, int]
+        ] = []  # (rel_start, rel_end) within run, inclusive
+        g_start: int | None = None
+        for rel_i, ev_flag in enumerate(run_evid):
+            if not ev_flag:
+                if g_start is None:
+                    g_start = rel_i
             else:
-                segs.append([probes[i].t, probes[i].t])
-        prev_in = in_match
+                if g_start is not None:
+                    gap_runs.append((g_start, rel_i - 1))
+                    g_start = None
+        if g_start is not None:
+            gap_runs.append((g_start, len(run_evid) - 1))
+
+        # TIMELINE_HARD_GAP_PROBES 以上の gap を分割候補として評価
+        split_points: list[tuple[int, int]] = []  # (gap rel_start, gap rel_end)
+        for g_s, g_e in gap_runs:
+            if (g_e - g_s + 1) >= TIMELINE_HARD_GAP_PROBES:
+                split_points.append((g_s, g_e))
+
+        if not split_points:
+            # 分割なし: run 全体を 1 segment として追加
+            final_segs.append((probes[run_s].t, probes[run_e].t))
+            continue
+
+        # 分割: split_point ごとに fragment を切り出す
+        # fragment の start/end は gap 両端の evidence probe t を使う
+        fragments: list[tuple[float, float]] = []
+        frag_abs_start = run_s  # abs index
+        for g_s, g_e in split_points:
+            # frag end: gap 直前の evidence probe (run 内 g_s - 1, abs = run_s + g_s - 1)
+            frag_end_rel = g_s - 1
+            if frag_end_rel < 0:
+                # gap が run 先頭から始まる: fragment が空
+                frag_abs_start = run_s + g_e + 1
+                continue
+            frag_end_abs = run_s + frag_end_rel
+            # evidence 範囲: frag_abs_start から frag_end_abs の evid true 部分
+            frag_ev_indices = [
+                k for k in range(frag_abs_start, frag_end_abs + 1) if evid[k]
+            ]
+            if not frag_ev_indices:
+                frag_abs_start = run_s + g_e + 1
+                continue
+            frag_start_t = probes[frag_ev_indices[0]].t
+            frag_end_t = probes[frag_ev_indices[-1]].t
+            fragments.append((frag_start_t, frag_end_t))
+            frag_abs_start = run_s + g_e + 1
+
+        # 最後の fragment: gap の次から run 末尾まで
+        if frag_abs_start <= run_e:
+            tail_ev_indices = [k for k in range(frag_abs_start, run_e + 1) if evid[k]]
+            if tail_ev_indices:
+                fragments.append(
+                    (
+                        probes[tail_ev_indices[0]].t,
+                        probes[tail_ev_indices[-1]].t,
+                    )
+                )
+
+        # fragment 全てが min_match_duration 以上のときのみ分割を採用する
+        # (1 つでも短い fragment があれば分割しない = run 全体を 1 segment)
+        if fragments and all(e - s >= min_match_duration for s, e in fragments):
+            final_segs.extend(fragments)
+        else:
+            # 分割しない: run 全体を 1 segment
+            final_segs.append((probes[run_s].t, probes[run_e].t))
+
     return [
         {"start": a, "end": b, "type": "fl_match"}
-        for a, b in segs
+        for a, b in final_segs
         if b - a >= min_match_duration
     ]
 
@@ -394,6 +490,30 @@ EDGE_PROBE_LIMIT = 15
 先頭/末尾から数えてこの probe 数以内にあるときのみ leading/trailing エッジと
 みなす (系列中央の孤立 run を境界と誤認しない)."""
 
+INTRA_EVIDENCE_BEFORE_S = 5.0
+"""_snap_start in-match guard: blackout run 先頭 probe の t から before 側 (秒)。
+この秒数以内に evidence probe があれば has_evidence_before=True。
+120s 広窓先頭の前試合 evidence が guard を誤発火させないよう局所窓にする
+(Bug B 修正: shikke M6 実測原因)."""
+
+INTRA_EVIDENCE_AFTER_S = 10.0
+"""_snap_start in-match guard: blackout run 末尾 probe の t から after 側 (秒)。
+before=5s では shinryu 型瞬断 (直後 8s に evidence) が after を抜ける。
+8s < 10s -> 成立 -> guard 発火 -> 除外できる。
+after 側を before より広くすることで瞬断と zone-in の分離精度を上げる."""
+
+END_FAR_RESCUE_S = 60.0
+"""_snap_end: leading run が粗 end (lo) より END_FAR_RESCUE_S 超前に終端した場合に
+hybrid 救済を試みる (Bug C 修正: kyuma M6 / meteor M5 実測原因)。
+候補となる後続 run: 長さ >= 3 probe かつ run 末尾 t < mid かつ run 末尾 t >= lo - END_FAR_RESCUE_S."""
+
+TIMELINE_HARD_GAP_PROBES = 5
+"""V2 hard-gap break: quorum 後 in-match run 内に連続でこの probe 数以上の
+非 evidence sub-run があれば分割候補とする (stride=10s で 50s)。
+V3 (refine_segments) が gap を merge に戻す前提の分割。
+fragment 下限ガード (両 fragment が min_match_duration 以上) で silent drop を防ぐ。
+shirurori M7-M8: 59s gap で rolling quorum が bridge -> V3 裁定に渡らない問題を解消。"""
+
 
 @dataclass(frozen=True)
 class GapProbe:
@@ -479,21 +599,45 @@ def _snap_end(
     leading evidence run の末尾を候補とし、(lo + hi) / 2 より前のときのみ採用。
     - run start が probes 先頭 EDGE_PROBE_LIMIT 以内 (leading run 条件)
     - 候補 t < (lo + hi) / 2 (中点制約: gap 後半に引っ張られない)
-    None = 候補なし -> caller は粗い edge を維持する。
+
+    Bug C 修正 (#895 P3 6周目): hybrid dropout rescue。
+    leading run が lo - END_FAR_RESCUE_S より前に終端している場合
+    (Onsal 明滅で真の collapse より 60s 超早く leading が終わる)、
+    後続 evidence run のうち「長さ >= 3 probe かつ run 末尾 t < mid かつ
+    run 末尾 t >= lo - END_FAR_RESCUE_S」を満たす最後のものに候補を置換する。
+    置換後も候補 t < mid の中点制約を適用。
 
     end 側に blackout を使わない理由: in-match 瞬断 blackout (1-2 probe の真っ暗フレーム)
     が試合中に存在することがある (shinryu M5 実測)。blackout で end を決めると
     真のエンドではなく試合中の瞬断位置を返してしまう。
+    None = 候補なし -> caller は粗い edge を維持する。
     """
     if not probes:
         return None
+    probes_list = list(probes)
     mid = (lo + hi) / 2.0
-    flags = _evidence_flags(probes)
+    flags = _evidence_flags(probes_list)
     ev_runs = _tolerant_runs(flags, tol=tol)
-    if ev_runs and ev_runs[0][0] < EDGE_PROBE_LIMIT:
-        candidate = probes[ev_runs[0][1]].t
-        if candidate < mid:
-            return candidate
+    if not ev_runs or ev_runs[0][0] >= EDGE_PROBE_LIMIT:
+        return None
+
+    candidate = probes_list[ev_runs[0][1]].t
+
+    # Bug C: hybrid rescue -- leading run が lo より END_FAR_RESCUE_S 以上早く終端 (dropout 疑い)
+    rescue_threshold = lo - END_FAR_RESCUE_S
+    if candidate < rescue_threshold:
+        # 後続 run を探す: leading run より後の run (ev_runs[1:]) で eligible なものを探す
+        eligible: float | None = None
+        for run in ev_runs[1:]:
+            run_len = run[1] - run[0] + 1
+            run_end_t = probes_list[run[1]].t
+            if run_len >= 3 and run_end_t < mid and run_end_t >= rescue_threshold:
+                eligible = run_end_t  # 最後の eligible run を採用する (更新し続ける)
+        if eligible is not None:
+            candidate = eligible
+
+    if candidate < mid:
+        return candidate
     return None
 
 
@@ -533,13 +677,24 @@ def _snap_start(
     for brun in b_runs:
         brun_t_end = probes_list[brun[1]].t
         if lo < brun_t_end <= hi:
-            # in-match guard: blackout run の両側 (前後) に evidence がある = 試合中の瞬断。
-            # zone-in blackout は gap 内に evidence が続く場合でも「前」に evidence がなければ
-            # 境界 blackout として採用する。
-            # 前に evidence = blackout run start より前のいずれかの probe が evidence
-            has_evidence_before = any(flags[j] for j in range(0, brun[0]))
+            # in-match guard (Bug B 修正: 局所窓): blackout 前後の局所範囲に evidence が
+            # 両方あれば試合中の瞬断とみなす。
+            # 旧実装は窓全体 (range(0, brun[0])) を見ていたため 120s 広窓先頭の
+            # 前試合 evidence が常に guard を発火させ、zone-in の採用が全滅していた。
+            # 新実装: blackout run 先頭/末尾 probe の t から局所窓のみを検査する。
+            # before: blackout run 先頭 probe t から INTRA_EVIDENCE_BEFORE_S 以内前
+            # after: blackout run 末尾 probe t から INTRA_EVIDENCE_AFTER_S 以内後
+            brun_t_start_v = probes_list[brun[0]].t
+            brun_t_end_v = probes_list[brun[1]].t
+            has_evidence_before = any(
+                flags[j]
+                for j in range(0, brun[0])
+                if brun_t_start_v - probes_list[j].t <= INTRA_EVIDENCE_BEFORE_S
+            )
             has_evidence_after = any(
-                flags[j] for j in range(brun[1] + 1, len(probes_list))
+                flags[j]
+                for j in range(brun[1] + 1, len(probes_list))
+                if probes_list[j].t - brun_t_end_v <= INTRA_EVIDENCE_AFTER_S
             )
             is_intra_match = has_evidence_before and has_evidence_after
             if not is_intra_match:
@@ -571,8 +726,9 @@ def snap_segment_edges(
     gap_probes: Sequence[GapProbe],
     *,
     blackout_b_max: float = BLACKOUT_B_MAX,
+    ext_hi: float | None = None,
 ) -> tuple[float, float]:
-    """V3-b (P3 4周目): 物理エッジ検出による確定境界精密化 (純関数)。
+    """V3-b (P3 4周目 + 6周目): 物理エッジ検出による確定境界精密化 (純関数)。
 
     物理規則の再設計 (#895 P3 4周目実測診断):
     - start 側: GT 物理定義 = 境界 blackout (zone-in 暗転) 明け。
@@ -580,6 +736,11 @@ def snap_segment_edges(
       blackout なし時のみ evidence trailing run + 中点制約 (fallback)。
     - end 側: in-match 瞬断 blackout があるため blackout は不使用。
       _snap_end で evidence leading run + 中点制約のみ。
+
+    ext_hi (Bug A 修正 #895 P3 6周目): 内側 gap では probe 窓が next_start + EDGE_EXT_S まで
+    取得済みのため ext_hi=next_start+EDGE_EXT_S を渡すことで _snap_start Priority 2
+    (粗 gap の外側 blackout 救済) が内側 gap でも機能する。
+    None 時は Priority 2 スキップ (旧挙動と同一)。
 
     交差 (new_end >= new_start) -> (prev_end, next_start) に縮退。
     """
@@ -589,7 +750,13 @@ def snap_segment_edges(
 
     new_end = _snap_end(probes, prev_end, next_start) or prev_end
     new_start = (
-        _snap_start(probes, prev_end, next_start, blackout_b_max=blackout_b_max)
+        _snap_start(
+            probes,
+            prev_end,
+            next_start,
+            ext_hi=ext_hi,
+            blackout_b_max=blackout_b_max,
+        )
         or next_start
     )
 
@@ -791,8 +958,13 @@ def refine_segments(
                     probes = probe_gap(
                         video_path, anchor, t0_ext, t1_ext, workers=workers
                     )
+                # Bug A 修正 (#895 P3 6周目): probes 窓は next_start_orig + EDGE_EXT_S まで
+                # 取得済みのため ext_hi を渡して Priority 2 (外側 blackout 救済) を有効化する。
                 new_end, new_start = snap_segment_edges(
-                    prev_end_orig, next_start_orig, probes
+                    prev_end_orig,
+                    next_start_orig,
+                    probes,
+                    ext_hi=next_start_orig + EDGE_EXT_S,
                 )
             else:
                 # 長 gap: 両端窓のみ probe
