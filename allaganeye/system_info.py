@@ -192,8 +192,16 @@ def _detect_physical_cores() -> int | None:
                 if line.isdigit():
                     total += int(line)
                     found = True
-            return total if found else None
-        return None
+            if found:
+                return total
+        ps = _windows_ps_values("Win32_Processor", "NumberOfCores")  # #860
+        total = 0
+        found = False
+        for value in ps:
+            if value.isdigit():
+                total += int(value)
+                found = True
+        return total if found else None
     if system == "Linux":
         try:
             cores: set[tuple[str, str]] = set()

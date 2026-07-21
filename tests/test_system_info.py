@@ -717,3 +717,38 @@ def test_cpu_models_ps_fallback_when_wmic_absent(mock_run, _system):
 
     mock_run.side_effect = side_effect
     assert _detect_cpu_models() == ["AMD Ryzen 9 9950X3D 16-Core Processor"]
+
+
+# --- CPU cores PS fallback (#860) ---
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+@patch("allaganeye.system_info._run_text")
+def test_physical_cores_ps_fallback_single_socket(mock_run, _system):
+    from allaganeye.system_info import _detect_physical_cores
+
+    def side_effect(cmd, **_kwargs):
+        if cmd[:1] == ["wmic"]:
+            return None
+        if cmd[:1] == ["powershell"]:
+            return "16\n"
+        return None
+
+    mock_run.side_effect = side_effect
+    assert _detect_physical_cores() == 16
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+@patch("allaganeye.system_info._run_text")
+def test_physical_cores_ps_fallback_sums_sockets(mock_run, _system):
+    from allaganeye.system_info import _detect_physical_cores
+
+    def side_effect(cmd, **_kwargs):
+        if cmd[:1] == ["wmic"]:
+            return None
+        if cmd[:1] == ["powershell"]:
+            return "64\n64\n"  # dual socket
+        return None
+
+    mock_run.side_effect = side_effect
+    assert _detect_physical_cores() == 128
