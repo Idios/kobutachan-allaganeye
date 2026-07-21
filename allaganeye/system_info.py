@@ -103,6 +103,9 @@ def _detect_cpu_models() -> list[str] | None:
             # First line is the "Name" header; subsequent lines are per-CPU.
             if len(lines) >= 2:
                 return lines[1:]
+        ps = _windows_ps_values("Win32_Processor", "Name")  # #860
+        if ps:
+            return ps
         # Fall back to platform.processor() which on Windows returns
         # the CPU brand via registry lookup.
         proc = platform.processor().strip()
