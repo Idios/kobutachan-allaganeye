@@ -29,7 +29,7 @@ from allaganeye.video.vtuber_timeline import (
     scan_timeline,
     segment_timeline,
     snap_segment_edges,
-)
+)  # BLACKOUT_ADJACENCY_S は Fix 2 (#895 P3 3周目) で撤廃済み
 
 
 def _probes(spec: str, stride: float = 10.0) -> list[TimelineProbe]:
@@ -429,22 +429,21 @@ class TestSnapSegmentEdges:
         assert new_start == probes[29].t  # 最後の blackout run 末尾
         assert new_end < new_start
 
-    def test_blackout_non_adjacent_end_edge_uses_evidence_run(self):
-        # (b) new_end 側: blackout の 35s 前に evidence なし (BLACKOUT_ADJACENCY_S=30s)
-        # -> new_end の blackout snap は不発。trailing M があるので new_start は
-        # blackout 直後 M が adjacent -> blackout snap。
-        # "M"*5 + "l"*35 + "bb" + "l"*30: leading M (idx 0-4) -> leading run end=idx4
-        # blackout (idx 40-41): 直前の evidence は t=4 で 40-4=36s > BLACKOUT_ADJACENCY_S(30) -> non-adjacent
-        # trailing absent -> no trailing evidence -> new_start = next_start 維持
+    def test_blackout_after_mid_snaps_start_without_adjacent_evidence(self):
+        # Fix 2 (#895 P3 3周目): adjacency 条件撤廃後の新セマンティクス。
+        # "M"*5 + "l"*35 + "bb" + "l"*30: prev_end=0, next_start=72, mid=36
+        # leading M (idx 0-4): leading run end=idx4, t=4 < mid=36 -> new_end=4.0
+        # blackout (idx40-41): start t=40 > mid=36 -> end snap 不採用
+        #                      end t=41 > mid=36 -> new_start=41.0 (mid より後 -> 採用)
+        # trailing absent -> trailing evidence なし
         probes = _gap_probes("M" * 5 + "l" * 35 + "bb" + "l" * 30)
         prev_end, next_start = 0.0, 72.0
         new_end, new_start = snap_segment_edges(prev_end, next_start, probes)
-        # leading evidence run end = idx 4, t=4.0
+        # new_end: evidence run 末尾 t=4 < mid=36 -> 採用
+        # blackout start t=40 > mid=36 -> end snap 不採用 -> evidence run が勝つ
         assert new_end == probes[4].t
-        # blackout (idx40-41, t=40) の 35s 前 (t=5) より前の evidence は idx4 (t=4)
-        # t=4 < t=40 - 30=10 -> non-adjacent -> blackout snap せず
-        # よって new_end は evidence run 末尾 (t=4)
-        assert new_start == next_start  # trailing evidence なし -> 粗い edge 維持
+        # new_start: blackout end t=41 > mid=36 -> 採用 (adjacency 条件なし)
+        assert new_start == probes[41].t
 
     def test_blackout_adjacent_new_start_snaps(self):
         # blackout の直後 (1s) に evidence (M) があれば new_start は blackout snap
@@ -541,7 +540,8 @@ class TestRefineSegments:
 
     def test_true_boundary_snaps_edges(self):
         # gap probes は絶対時刻 (t0=400 起点) で生成する。
-        # 新セマンティクス (P3 2周目): 2 パス + 中点制約
+        # Fix 1 (#895 P3 3周目): 2 パス (裁定 + snap で probe_gap 2 回呼ぶ)
+        # Fix 2 (#895 P3 3周目): adjacency 条件撤廃、中点条件のみ
         # spec: "M" * 5 + "bb" + "l" * 20 + "M" * 3
         # idx 0-4 (t=400-404): present (M) - leading evidence
         # idx 5-6 (t=405-406): blackout (b)
@@ -551,8 +551,7 @@ class TestRefineSegments:
         # snap_segment_edges に渡す引数: prev_end=400, next_start=500
         # mid = (400 + 500) / 2 = 450
         #
-        # new_end: blackout run start t=405 < mid=450 -> 採用。leading M (t=400-404)
-        #   が 30s 以内で隣接 -> new_end = 405.0
+        # new_end: blackout run start t=405 < mid=450 -> 採用 (adjacency 不問)
         # new_start: blackout run end t=406 < mid=450 -> 中点制約で不採用
         #   trailing evidence run 先頭 t=427 < mid=450 -> 中点制約で不採用
         #   -> new_start = 500.0 (粗い edge 維持)
@@ -577,13 +576,13 @@ class TestRefineSegments:
                 Path("d.mp4"), self.ANCHOR, [self._seg(0, 400), self._seg(500, 900)]
             )
         assert len(out) == 2
-        # new_end: 最初の blackout run 先頭 (t=405) - leading M が 30s 以内で隣接
-        #   かつ t=405 < mid=450 (中点制約通過)
+        # new_end: blackout run 先頭 t=405 < mid=450 -> 採用
         assert out[0]["end"] == 405.0
         # new_start: t=406/t=427 いずれも mid=450 未満 -> 中点制約で全不採用
         #   -> 粗い edge 500.0 を維持
         assert out[1]["start"] == 500.0
-        pg.assert_called_once()
+        # Fix 1: 裁定 probe (400,500) + snap probe (355,545) = 2 回
+        assert pg.call_count == 2
 
     def test_long_gap_probes_only_edge_windows(self):
         # gap > MERGE_GAP_MAX: 両端 60s 窓のみ probe (gap で 2 回) + 端 snap で 2 回 = 計 4 回
@@ -627,17 +626,17 @@ class TestRefineSegments:
         assert stats["vtuber_gaps_tested"] == 1
         assert stats["vtuber_gaps_merged"] == 1
 
-    def test_short_gap_probe_range_extended_by_edge_ext_s(self):
-        # refine_segments が短 gap probe の t0/t1 を EDGE_EXT_S だけ拡張すること。
-        # gap: prev_end=400, next_start=500 -> 期待 t0 = 400 - EDGE_EXT_S,
-        # t1 = 500 + EDGE_EXT_S
-        # 2 パス化後: gap probe (1 回) + 端 snap probe (2 回) = 計 3 回
+    def test_short_gap_probe_range(self):
+        # Fix 1 (#895 P3 3周目): 短 gap に対して 2 回 probe_gap を呼ぶこと。
+        # [0] = 裁定用 (拡張なし: prev_end=400, next_start=500)
+        # [1] = snap 用 (拡張あり: 400-EDGE_EXT_S, 500+EDGE_EXT_S)
+        # 端 snap 2 回を合わせ合計 4 回
         segs = [self._seg(0, 400), self._seg(500, 900)]
         captured_calls: list[dict] = []
 
         def _spy_probe_gap(vp, anchor, t0, t1, **kw):
             captured_calls.append({"t0": t0, "t1": t1})
-            return _gap_probes("l" * 60)  # boundary
+            return _gap_probes("l" * max(1, int(t1 - t0)))  # boundary
 
         with patch(
             "allaganeye.video.vtuber_timeline.probe_gap",
@@ -645,27 +644,26 @@ class TestRefineSegments:
         ):
             refine_segments(Path("d.mp4"), self.ANCHOR, segs)
 
-        # 最初の呼び出しが gap probe (t0/t1 拡張の確認対象)
-        assert len(captured_calls) == 3
-        gap_call = captured_calls[0]
-        assert gap_call["t0"] == pytest.approx(max(0.0, 400.0 - EDGE_EXT_S))
-        assert gap_call["t1"] == pytest.approx(500.0 + EDGE_EXT_S)
+        # 合計 4 回: [0]=裁定, [1]=snap, [2]=first start snap, [3]=last end snap
+        assert len(captured_calls) == 4
+        adj_call = captured_calls[0]
+        snap_call = captured_calls[1]
+        # 裁定: 拡張なし
+        assert adj_call["t0"] == pytest.approx(400.0)
+        assert adj_call["t1"] == pytest.approx(500.0)
+        # snap: 拡張あり
+        assert snap_call["t0"] == pytest.approx(max(0.0, 400.0 - EDGE_EXT_S))
+        assert snap_call["t1"] == pytest.approx(500.0 + EDGE_EXT_S)
 
-    def test_adjudicate_gap_receives_central_slice_only(self):
-        # adjudicate_gap には [prev_end, next_start] 内の probe のみ渡す。
-        # 拡張分 (t < prev_end or t > next_start) は snap には使われるが
-        # adjudicate_gap には含まれないこと。
+    def test_adjudicate_gap_receives_all_adjudication_probes(self):
+        # Fix 1 (#895 P3 3周目): adjudicate_gap には probe_gap(prev_end, next_start) の
+        # 全 probes が渡ること (拡張なし probe の全量 = P2 実装と bit-同一の入力)。
+        # 裁定 probe は (prev_end=400, next_start=500) で呼ばれ t=[400, 500) の probes を返す。
         segs = [self._seg(0, 400), self._seg(500, 900)]
-        # probe_gap が返す probes: t0=355 (400-45) から t1=545 (500+45) まで 1s stride
-        # 中央 slice は t in [400, 500]
-        t0_ext = max(0.0, 400.0 - EDGE_EXT_S)
-        t1_ext = 500.0 + EDGE_EXT_S
-        full_probes = _gap_probes("M" * int(t1_ext - t0_ext), stride=1.0)
-        full_probes = [
-            GapProbe(
-                t=t0_ext + i, present=p.present, band_mad=p.band_mad, band_b=p.band_b
-            )
-            for i, p in enumerate(full_probes)
+        # probe_gap を (400, 500) で呼ぶ -> 100 probes (t=400..499)
+        adj_probes = [
+            GapProbe(t=400.0 + i, present=False, band_mad=5.0, band_b=100.0)
+            for i in range(100)
         ]
 
         adjudicate_calls: list[list[float]] = []
@@ -678,10 +676,17 @@ class TestRefineSegments:
             adjudicate_calls.append([p.t for p in probes])
             return real_adjudicate(probes, **kw)
 
+        def _spy_probe(vp, anchor, t0, t1, **kw):
+            # 裁定呼び出し (t0=400, t1=500): adj_probes を返す
+            # snap 呼び出し (拡張あり) / 端 snap: 空リストで境界変化なし
+            if abs(t0 - 400.0) < 0.1 and abs(t1 - 500.0) < 0.1:
+                return adj_probes
+            return _gap_probes("l" * max(1, int(t1 - t0)))
+
         with (
             patch(
                 "allaganeye.video.vtuber_timeline.probe_gap",
-                return_value=full_probes,
+                side_effect=_spy_probe,
             ),
             patch(
                 "allaganeye.video.vtuber_timeline.adjudicate_gap",
@@ -692,13 +697,10 @@ class TestRefineSegments:
 
         assert len(adjudicate_calls) == 1
         adj_ts = adjudicate_calls[0]
-        # 全て [prev_end=400, next_start=500] の範囲内にあること
-        assert all(400.0 <= t <= 500.0 for t in adj_ts), (
-            f"adjudicate_gap received probes outside [400,500]: {adj_ts}"
-        )
-        # 拡張分は含まれないこと
-        assert not any(t < 400.0 for t in adj_ts)
-        assert not any(t > 500.0 for t in adj_ts)
+        # 裁定 probe は (400, 500): t in [400, 500) の全 probes
+        assert len(adj_ts) == 100
+        assert min(adj_ts) == pytest.approx(400.0)
+        assert max(adj_ts) == pytest.approx(499.0)
 
     def test_long_gap_edge_windows_extended_by_edge_ext_s(self):
         # gap > MERGE_GAP_MAX の長 gap: head は [prev_end - EDGE_EXT_S, prev_end + 60]
@@ -741,40 +743,26 @@ class TestRefineFix1TwoPassIsolation:
         return {"start": float(s), "end": float(e), "type": "fl_match"}
 
     def test_snap_does_not_contaminate_next_gap_adjudication(self):
-        """第 1 gap の snap で end が -40s 動いても、第 2 gap の裁定入力が
+        """第 1 gap の snap で end が動いても、第 2 gap の裁定入力が
         粗 edge (original prev_end) 基準のままであること。
 
-        構成:
+        Fix 1 (#895 P3 3周目) 後の呼び出し順:
         - seg0: [0, 400], seg1: [460, 900], seg2: [960, 1400]
-        - gap1: [400, 460] (短 gap, 60s) -> snap: new_end = 360 (evidence run 末尾)
-            snap 後 prev["end"] が 360 に動く
-        - gap2: [460, 960] (短 gap, 500s) を裁定する:
-            * 粗 edge 基準 (正しい): central = probes with t in [460, 960]
-            * snap 後 edge 基準 (誤り): central = probes with t in [360, 960]
-              -> この場合 presence rate が変わり boundary が merge に化ける可能性
+        - gap1 裁定: probe_gap(400, 460) -> all absent -> boundary
+        - gap1 snap: probe_gap(355, 505) -> snap 適用 (new_end 変化)
+        - gap2 裁定: probe_gap(460, 960) -> 裁定 (粗 edge 基準で呼ばれること)
+        - gap2 snap: probe_gap(415, 1005)
 
-        裁定に渡す central slice の t 範囲が [460, 960] であることを spy で確認する。
+        adjudicate_gap への入力が [460, 960] 範囲のみであること (= 拡張なし) を
+        spy で確認する (snap-contamination がない = Fix 1 の invariant)。
         """
-        # gap1 probe (t0=355, t1=505): snap で new_end = 360 相当の evidence run を持つ
-        # gap1_probes: t=[355..504]、leading evidence run end がある (t=360 近辺)
-        # 実装: 先頭 5 probe が M (t=355-359)、残りは l -> evidence run end = t=359
-        gap1_probes_raw = _gap_probes("M" * 5 + "l" * 145)  # 150 probes, t=0..149
-        gap1_probes = [
-            GapProbe(
-                t=355.0 + i, present=p.present, band_mad=p.band_mad, band_b=p.band_b
-            )
-            for i, p in enumerate(gap1_probes_raw)
-        ]
+        # gap1 裁定: t in [400, 460) -> 全 absent -> boundary
+        # gap1 snap: t in [355, 505) -> 先頭 5 probe M (t=355-359) -> snap で new_end 変化
 
-        # gap2 probe (t0=415, t1=1005): 裁定用の central は [460, 960]
-        # present rate ~25% (merge 判定になる)
-        gap2_probes_raw = _gap_probes(("M" + "lll") * 150)  # 600 probes
-        gap2_probes = [
-            GapProbe(
-                t=415.0 + i, present=p.present, band_mad=p.band_mad, band_b=p.band_b
-            )
-            for i, p in enumerate(gap2_probes_raw[:590])
-        ]
+        # gap2 裁定: probe_gap(460, 960) で呼ばれる -> t in [460, 960) の probes
+        # present rate 25% -> merge になる (gap2 boundary check の逆)
+        # ここでは boundary にするために all-absent を返す
+        # (目的: adjudicate_gap への入力 t 範囲のみを gate する)
 
         adjudicate_calls: list[list[float]] = []
         real_adjudicate = __import__(
@@ -785,17 +773,20 @@ class TestRefineFix1TwoPassIsolation:
             adjudicate_calls.append([p.t for p in probes])
             return real_adjudicate(probes, **kw)
 
-        call_idx = [0]
-
         def _spy_probe_gap(vp, anchor, t0, t1, **kw):
-            idx = call_idx[0]
-            call_idx[0] += 1
-            if idx == 0:
-                return gap1_probes
-            elif idx == 1:
-                return gap2_probes
+            # 呼び出し範囲に応じた probes を生成 (t0 起点、1s stride)
+            n = max(0, int(t1 - t0))
+            # gap1 snap 窓 (355, 505): 先頭 5 probe を M -> snap で new_end が前に動く
+            if abs(t0 - 355.0) < 0.1 and abs(t1 - 505.0) < 0.1:
+                raw = _gap_probes("M" * 5 + "l" * (n - 5 if n > 5 else 0))
             else:
-                return _gap_probes("l" * 60)  # 端 snap: all absent
+                raw = _gap_probes("l" * n)
+            return [
+                GapProbe(
+                    t=t0 + i, present=p.present, band_mad=p.band_mad, band_b=p.band_b
+                )
+                for i, p in enumerate(raw)
+            ]
 
         segs = [self._seg(0, 400), self._seg(460, 900), self._seg(960, 1400)]
         with (
@@ -817,12 +808,12 @@ class TestRefineFix1TwoPassIsolation:
 
         # adjudicate_gap は 2 gap 分呼ばれる
         assert len(adjudicate_calls) == 2
-        # gap2 の adjudicate 入力は粗 edge 基準 [460, 960] のみ
+        # gap2 の adjudicate 入力は粗 edge 基準 [460, 960) のみ
         gap2_ts = adjudicate_calls[1]
-        assert all(460.0 <= t <= 960.0 for t in gap2_ts), (
-            f"gap2 adjudicate received probes outside [460, 960]: {gap2_ts[:5]}..."
+        assert all(460.0 <= t < 960.0 for t in gap2_ts), (
+            f"gap2 adjudicate received probes outside [460, 960): {gap2_ts[:5]}..."
         )
-        # snap 後 edge (360) より前の probe が含まれないこと
+        # snap 後 edge より前の probe が含まれないこと (Fix 1 の invariant)
         assert not any(t < 460.0 for t in gap2_ts), (
             f"snap-contaminated probes found in gap2 adjudicate: {[t for t in gap2_ts if t < 460]}"
         )
@@ -1252,12 +1243,21 @@ class TestSnapSegmentEdgesContract:
         # start は snap されず粗い edge 維持 (run 後に present なし)
         assert new_start == next_start
 
-    def test_single_blackout_run_no_present_keeps_coarse(self):
-        """probes[0] が absent / probes[-1] が absent の単一 blackout run:
-        blackout snap は不発、presence エッジも不発 -> 粗い edge 維持。"""
+    def test_blackout_before_mid_snaps_end_even_without_evidence(self):
+        """Fix 2 (#895 P3 3周目): 隣接条件撤廃後、blackout run start が mid より前なら
+        evidence 隣接なしでも new_end に採用される。
+        "l"*5 + "bb" + "l"*5: prev_end=10, next_start=20, mid=15
+        blackout start t=5 (0-indexed absolute t0+idx=0+5=5? いや prev_end=10 で
+        probes は gap_probes を使うが t は 0 起点なので t=5 < mid=15 -> new_end=5.0。
+        new_start: blackout end t=6 < mid=15 -> 採用されない -> 20.0 維持。
+        """
         probes = _gap_probes("l" * 5 + "bb" + "l" * 5)
+        # mid = (10 + 20) / 2 = 15; blackout t=5,6 < mid=15 -> new_end=5.0
         new_end, new_start = snap_segment_edges(10.0, 20.0, probes)
-        assert (new_end, new_start) == (10.0, 20.0)
+        assert new_end == probes[5].t  # t=5.0 (blackout start < mid)
+        assert (
+            new_start == 20.0
+        )  # blackout end t=6 < mid -> 不採用、trailing evidence なし
 
 
 class TestAdjudicateGapUnknownDenominator:
@@ -1274,6 +1274,188 @@ class TestAdjudicateGapUnknownDenominator:
         # u が分母に入ると rate = 10 / 150 ~= 6.7% < 10% -> boundary (誤)
         # u が分母から除外されると rate = 10 / 100 = 10% -> merge (正)
         assert adjudicate_gap(probes_with_u) == "merge"
+
+
+class TestFix1AdjudicationProbeNoExtension:
+    """Fix 1 (#895 P3 3周目): 裁定 probe は拡張なし (prev_end, next_start) で取得。
+    snap probe は別途拡張あり (EDGE_EXT_S) で取得する。
+    """
+
+    ANCHOR = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+
+    def _seg(self, s, e) -> MatchBoundary:
+        return {"start": float(s), "end": float(e), "type": "fl_match"}
+
+    def test_first_pass_probe_has_no_extension(self):
+        """第 1 パス (裁定) probe が (prev_end, next_start) で呼ばれること。
+        拡張なし = EDGE_EXT_S は含まれない。
+        """
+        segs = [self._seg(0, 400), self._seg(500, 900)]
+        captured_calls: list[dict] = []
+
+        def _spy(vp, anchor, t0, t1, **kw):
+            captured_calls.append({"t0": t0, "t1": t1})
+            return _gap_probes("l" * max(1, int(t1 - t0)))
+
+        with (
+            patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy),
+            patch(
+                "allaganeye.video.vtuber_timeline._snap_outer_edges",
+                side_effect=lambda vp, a, segs, **kw: segs,
+            ),
+        ):
+            refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+
+        # 最初の呼び出しが裁定用 probe: 拡張なし (prev_end=400, next_start=500)
+        assert len(captured_calls) >= 1
+        first = captured_calls[0]
+        assert first["t0"] == pytest.approx(400.0), (
+            f"adjudication probe t0 should be prev_end=400.0, got {first['t0']}"
+        )
+        assert first["t1"] == pytest.approx(500.0), (
+            f"adjudication probe t1 should be next_start=500.0, got {first['t1']}"
+        )
+
+    def test_adjudicate_receives_all_probes_not_slice(self):
+        """adjudicate_gap には probe_gap の全 probes が渡ること (slice なし)。
+        Fix 1 後: (prev_end, next_start) で取得した全 probes を渡す。
+        """
+        segs = [self._seg(0, 400), self._seg(500, 900)]
+        # probe_gap を (400, 500) で呼ぶ -> 100 probes (t=400..499)
+        adjudicate_calls: list[list[float]] = []
+        real_adjudicate = __import__(
+            "allaganeye.video.vtuber_timeline", fromlist=["adjudicate_gap"]
+        ).adjudicate_gap
+
+        def _spy_adjudicate(probes, **kw):
+            adjudicate_calls.append([p.t for p in probes])
+            return real_adjudicate(probes, **kw)
+
+        adj_probes = [
+            GapProbe(t=400.0 + i, present=False, band_mad=5.0, band_b=100.0)
+            for i in range(100)
+        ]
+
+        def _spy_probe(vp, anchor, t0, t1, **kw):
+            return [p for p in adj_probes if t0 <= p.t < t1]
+
+        with (
+            patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy_probe),
+            patch(
+                "allaganeye.video.vtuber_timeline.adjudicate_gap",
+                side_effect=_spy_adjudicate,
+            ),
+            patch(
+                "allaganeye.video.vtuber_timeline._snap_outer_edges",
+                side_effect=lambda vp, a, segs, **kw: segs,
+            ),
+        ):
+            refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+
+        assert len(adjudicate_calls) == 1
+        ts = adjudicate_calls[0]
+        # 裁定 probe は (400, 500): t in [400, 500) の全 probes
+        assert len(ts) == 100
+        assert min(ts) == pytest.approx(400.0)
+        assert max(ts) == pytest.approx(499.0)
+
+    def test_second_pass_snap_probe_uses_extension(self):
+        """第 2 パス (snap) probe は拡張あり (EDGE_EXT_S) で取得すること。"""
+        segs = [self._seg(0, 400), self._seg(500, 900)]
+        captured_calls: list[dict] = []
+
+        def _spy(vp, anchor, t0, t1, **kw):
+            captured_calls.append({"t0": t0, "t1": t1})
+            return _gap_probes("l" * max(1, int(t1 - t0)))
+
+        with (
+            patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy),
+            patch(
+                "allaganeye.video.vtuber_timeline._snap_outer_edges",
+                side_effect=lambda vp, a, segs, **kw: segs,
+            ),
+        ):
+            refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+
+        # 2 回呼ばれる: [0]=裁定 (no ext), [1]=snap (ext あり)
+        assert len(captured_calls) == 2
+        snap_call = captured_calls[1]
+        assert snap_call["t0"] == pytest.approx(max(0.0, 400.0 - EDGE_EXT_S))
+        assert snap_call["t1"] == pytest.approx(500.0 + EDGE_EXT_S)
+
+
+class TestFix2BlackoutMidpointOnly:
+    """Fix 2 (#895 P3 3周目): blackout snap は adjacency 条件なし、中点条件のみ。
+    end 側: 中点より前の最初の blackout run start を採用。
+    start 側: 中点より後の最後の blackout run end を採用。
+    """
+
+    def test_blackout_end_snap_without_adjacent_evidence(self):
+        """(a) blackout run が中点より前にあれば evidence 隣接なしでも new_end に採用。
+        旧 adjacency 条件では不発だった場合の根絶 (shikke/shinryu 実測例)。
+        """
+        # prev_end=0, next_start=200 -> mid=100
+        # "l"*80 + "bb" + "l"*120: blackout start t=80 < mid=100
+        # 旧: blackout (t=80) の前に evidence なし -> non-adjacent -> 不発
+        # 新: adjacency 撤廃 -> t=80 < mid=100 -> new_end = 80.0
+        probes = _gap_probes("l" * 80 + "bb" + "l" * 120)
+        new_end, new_start = snap_segment_edges(0.0, 200.0, probes)
+        assert new_end == probes[80].t  # t=80.0
+        assert new_start == 200.0  # trailing evidence なし -> 粗い edge
+
+    def test_blackout_start_snap_without_adjacent_evidence(self):
+        """(b) blackout run end が中点より後にあれば evidence 隣接なしでも new_start に採用。"""
+        # prev_end=0, next_start=200 -> mid=100
+        # "l"*120 + "bb" + "l"*80: blackout end t=121 > mid=100
+        # 旧: blackout (t=121) の後に evidence なし -> non-adjacent -> 不発
+        # 新: adjacency 撤廃 -> t=121 > mid=100 -> new_start = 121.0
+        probes = _gap_probes("l" * 120 + "bb" + "l" * 80)
+        new_end, new_start = snap_segment_edges(0.0, 200.0, probes)
+        assert new_end == 0.0  # leading evidence なし -> 粗い edge
+        assert new_start == probes[121].t  # t=121.0 (blackout run end idx)
+
+    def test_blackout_overrides_evidence_run(self):
+        """(c) blackout snap が evidence run エッジより優先される。
+        evidence run 末尾 = t=50、blackout run start = t=40 < mid: blackout 優先。
+        """
+        # prev_end=0, next_start=200 -> mid=100
+        # "M"*50 + "b" + "l"*149: evidence run end t=49, blackout t=50
+        probes = _gap_probes("M" * 50 + "b" + "l" * 149)
+        new_end, _new_start = snap_segment_edges(0.0, 200.0, probes)
+        # blackout start t=50 < mid=100 -> new_end = 50.0 (blackout 優先)
+        # evidence run 末尾 t=49 より blackout t=50 が優先
+        assert new_end == probes[50].t  # t=50.0 (blackout start)
+
+    def test_multiple_blackout_runs_end_uses_first_before_mid(self):
+        """(d) 複数 blackout run のうち end 側は最初の中点より前の run を採用。"""
+        # prev_end=0, next_start=200 -> mid=100
+        # "l"*30 + "bb" + "l"*40 + "bb" + "l"*130:
+        # blackout 1 start t=30 < mid=100, blackout 2 start t=74 < mid=100
+        # -> 最初 (t=30) を採用
+        probes = _gap_probes("l" * 30 + "bb" + "l" * 40 + "bb" + "l" * 130)
+        new_end, _new_start = snap_segment_edges(0.0, 200.0, probes)
+        assert new_end == probes[30].t  # 最初の blackout run start t=30.0
+
+    def test_multiple_blackout_runs_start_uses_last_after_mid(self):
+        """(d) 複数 blackout run のうち start 側は最後の中点より後の run end を採用。"""
+        # prev_end=0, next_start=200 -> mid=100
+        # "l"*120 + "bb" + "l"*40 + "bb" + "l"*36:
+        # blackout 1 end t=121 > mid=100, blackout 2 end t=163 > mid=100
+        # -> 最後 (t=163) を採用
+        probes = _gap_probes("l" * 120 + "bb" + "l" * 40 + "bb" + "l" * 36)
+        _new_end, new_start = snap_segment_edges(0.0, 200.0, probes)
+        assert new_start == probes[163].t  # 最後の blackout run end
+
+    def test_blackout_before_mid_not_used_for_start(self):
+        """(a) の逆: 中点より前の blackout run は start 側候補にならない。
+        r1 の -239s 事例 pin: gap 前半の blackout は new_start に引っ張らない。
+        """
+        # prev_end=0, next_start=200 -> mid=100
+        # "l"*30 + "bb" + "l"*168: blackout end t=31 < mid=100
+        # -> start snap は不発 (中点条件で除外)
+        probes = _gap_probes("l" * 30 + "bb" + "l" * 168)
+        _new_end, new_start = snap_segment_edges(0.0, 200.0, probes)
+        assert new_start == 200.0  # blackout が mid より前 -> new_start 不採用
 
 
 class TestV4DropTranslatePin:

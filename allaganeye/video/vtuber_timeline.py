@@ -383,11 +383,6 @@ SNAP_FLICKER_TOL = 10
 """evidence run の flicker 許容 probe 数。この数以下の False gap は
 True run 内に取り込んで 1 つの run にまとめる (#895 P3)."""
 
-BLACKOUT_ADJACENCY_S = 30.0
-"""blackout snap を許す evidence 隣接距離 (秒)。blackout run の前後
-この秒数以内に evidence probe がなければ blackout は snap に使わない
-(非隣接 blackout ドラッグを根絶する #895 P3)."""
-
 EDGE_PROBE_LIMIT = 15
 """snap のエッジ採用条件: evidence run の start/end が gap probe 系列の
 先頭/末尾から数えてこの probe 数以内にあるときのみ leading/trailing エッジと
@@ -476,8 +471,8 @@ def snap_segment_edges(
     """V3-b (P3): 物理エッジ検出による確定境界精密化 (純関数)。
 
     evidence run (present AND not frozen) の先頭/末尾から境界を検出し、
-    隣接条件付き blackout run で上書きする。frozen-present (replay/result)
-    は evidence から除外する (frozen 除外 #895 P3)。
+    blackout run で上書きする (blackout override が evidence run より優先)。
+    frozen-present (replay/result) は evidence から除外する (frozen 除外 #895 P3)。
 
     処理順:
     1. _evidence_flags / _tolerant_runs で leading/trailing evidence run を検出
@@ -485,10 +480,11 @@ def snap_segment_edges(
          ただし mid = (prev_end + next_start) / 2 より前の場合のみ採用 (中点制約)
        - new_start: trailing run の先頭 (probes 末尾 15 probe 以内に run end あり)
          ただし mid より後の場合のみ採用 (中点制約)
-    2. blackout run の隣接条件チェック (BLACKOUT_ADJACENCY_S 以内に evidence あり)
-       - 条件を満たす blackout run で new_end / new_start を上書き
-       - 条件を満たさない blackout は無視 (非隣接 blackout ドラッグ根絶 #895 P3)
-       - blackout snap にも中点制約を適用する
+    2. blackout snap (中点制約のみ、adjacency 条件なし)
+       Fix 2 (#895 P3 3周目): BLACKOUT_ADJACENCY_S による evidence 隣接条件を撤廃。
+       GT 物理定義 (境界 blackout = 真の試合境界) に従い blackout を無条件に優先する。
+       - end 側: 中点より前 (t < mid) にある最初の blackout run start で new_end を上書き
+       - start 側: 中点より後 (t > mid) にある最後の blackout run end で new_start を上書き
     3. 交差 (new_end >= new_start) -> (prev_end, next_start) に縮退
 
     中点制約 (#895 P3 Fix 2): trailing run が gap 前半に踏み込んでいる場合に
@@ -519,32 +515,22 @@ def snap_segment_edges(
         if candidate > mid:
             new_start = candidate
 
-    # Step 2: blackout snap (隣接条件付き + 中点制約)
+    # Step 2: blackout snap (中点制約のみ。adjacency 条件は撤廃)
+    # blackout override は evidence run エッジより優先 (物理境界として強い信号)。
+    # result 余韻 FP で evidence run が伸びても blackout が真の境界を指す。
     b_runs = _blackout_runs(probes, blackout_b_max)
 
-    # new_end の blackout 上書き: 最初の blackout run の start t から
-    # 遡って BLACKOUT_ADJACENCY_S 以内に evidence probe があること
-    # 中点制約: 候補 t < mid のときのみ採用
+    # new_end の blackout 上書き: 中点より前の最初の blackout run start を採用
     for brun in b_runs:
         brun_t_start = probes[brun[0]].t
-        adjacent = any(
-            flags[i] and (brun_t_start - probes[i].t) <= BLACKOUT_ADJACENCY_S
-            for i in range(brun[0])
-        )
-        if adjacent and brun_t_start < mid:
+        if brun_t_start < mid:
             new_end = brun_t_start
             break  # 最初の該当 run のみ
 
-    # new_start の blackout 上書き: 最後の blackout run の end t から
-    # 先 BLACKOUT_ADJACENCY_S 以内に evidence probe があること
-    # 中点制約: 候補 t > mid のときのみ採用
+    # new_start の blackout 上書き: 中点より後の最後の blackout run end を採用
     for brun in reversed(b_runs):
         brun_t_end = probes[brun[1]].t
-        adjacent = any(
-            flags[i] and (probes[i].t - brun_t_end) <= BLACKOUT_ADJACENCY_S
-            for i in range(brun[1] + 1, len(probes))
-        )
-        if adjacent and brun_t_end > mid:
+        if brun_t_end > mid:
             new_start = brun_t_end
             break  # 最後の該当 run のみ
 
@@ -633,8 +619,12 @@ def refine_segments(
     if not segments:
         return []
 
-    # --- 第 1 パス: merge 裁定 (粗 edge 基準) ---
-    # gap_probes_cache[i]: segment i と i+1 の間の probes (短 gap のみ)
+    # --- 第 1 パス: merge 裁定 (粗 edge 基準、拡張なし probe) ---
+    # Fix 1 (#895 P3 3周目): 裁定 probe は拡張なしで独立取得し全 probes を
+    # adjudicate_gap に渡す (= P2 実装と bit-同一の入力)。snap 用の拡張あり
+    # probe は第 2 パスで別途取得する。probe 格子の origin ズレによる裁定 flip を根絶。
+    #
+    # gap_probes_cache[i]: segment i と i+1 の間の拡張あり probes (短 gap のみ)
     merged: list[MatchBoundary] = [cast("MatchBoundary", dict(segments[0]))]
     gap_probes_cache: dict[
         int, list[GapProbe]
@@ -646,23 +636,27 @@ def refine_segments(
         gap = orig_next_start - orig_prev_end
         try:
             if gap <= MERGE_GAP_MAX:
-                t0_ext = max(0.0, orig_prev_end - EDGE_EXT_S)
-                t1_ext = orig_next_start + EDGE_EXT_S
-                probes = probe_gap(video_path, anchor, t0_ext, t1_ext, workers=workers)
+                # 裁定 probe: 拡張なし (prev_end, next_start) -- P2 と bit-同一の入力
+                adj_probes = probe_gap(
+                    video_path, anchor, orig_prev_end, orig_next_start, workers=workers
+                )
                 if stats is not None:
                     stats["vtuber_gaps_tested"] = stats.get("vtuber_gaps_tested", 0) + 1
-                # adjudicate_gap には中央 slice (粗 edge 基準) のみ渡す
-                central = [p for p in probes if orig_prev_end <= p.t <= orig_next_start]
-                if adjudicate_gap(central) == "merge":
+                if adjudicate_gap(adj_probes) == "merge":
                     if stats is not None:
                         stats["vtuber_gaps_merged"] = (
                             stats.get("vtuber_gaps_merged", 0) + 1
                         )
                     merged[-1]["end"] = nxt["end"]
-                    # merge した場合は probe cache を破棄 (境界消滅)
+                    # merge した場合は probe cache を積まない (境界消滅)
                     continue
-                # merge しない場合は probe を cache (第 2 パスで snap に使う)
-                gap_probes_cache[len(merged) - 1] = probes
+                # merge しない場合は snap 用拡張あり probe を cache
+                t0_ext = max(0.0, orig_prev_end - EDGE_EXT_S)
+                t1_ext = orig_next_start + EDGE_EXT_S
+                snap_probes = probe_gap(
+                    video_path, anchor, t0_ext, t1_ext, workers=workers
+                )
+                gap_probes_cache[len(merged) - 1] = snap_probes
             # 長 gap の場合は cache しない (第 2 パスで再 probe)
         except Exception:
             logger.warning(
