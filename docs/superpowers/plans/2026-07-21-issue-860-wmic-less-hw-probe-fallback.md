@@ -22,10 +22,12 @@
 ### Task 1: `_windows_ps_values` ヘルパ + `_PS_TIMEOUT_S`
 
 **Files:**
+
 - Modify: `allaganeye/system_info.py` (定数 `_SUBPROCESS_TIMEOUT_S` 付近に `_PS_TIMEOUT_S` 追加、`_probe_gpu_names_platform` の手前あたりに helper 追加)
 - Test: `tests/test_system_info.py`
 
 **Interfaces:**
+
 - Consumes: 既存 `_run_text(cmd, *, timeout) -> str | None`
 - Produces: `_windows_ps_values(cim_class: str, prop: str) -> list[str]` — `Get-CimInstance <cim_class> | Select -ExpandProperty <prop>` の header-less 値行リスト。失敗時 `[]`。定数 `_PS_TIMEOUT_S: float = 10.0`。
 
@@ -123,10 +125,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 2: GPU names / vendor の PS fallback
 
 **Files:**
+
 - Modify: `allaganeye/system_info.py:434-467` (`_probe_gpu_names_platform` の Windows 分岐)
 - Test: `tests/test_system_info.py`
 
 **Interfaces:**
+
 - Consumes: `_windows_ps_values` (Task 1)
 - Produces: 変更なし (既存 `_probe_gpu_names_platform` / `probe_gpu_vendors` の挙動を wmic-less 環境で拡張)
 
@@ -224,10 +228,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 3: CPU name の PS fallback
 
 **Files:**
+
 - Modify: `allaganeye/system_info.py:98-108` (`_detect_cpu_models` の Windows 分岐)
 - Test: `tests/test_system_info.py`
 
 **Interfaces:**
+
 - Consumes: `_windows_ps_values` (Task 1)
 - Produces: 変更なし (wmic 失敗時 PS → 既存 `platform.processor()` の順)
 
@@ -316,10 +322,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 4: CPU physical cores の PS fallback (early-return 微修正込み)
 
 **Files:**
+
 - Modify: `allaganeye/system_info.py:180-192` (`_detect_physical_cores` の Windows 分岐)
 - Test: `tests/test_system_info.py`
 
 **Interfaces:**
+
 - Consumes: `_windows_ps_values` (Task 1)
 - Produces: 変更なし。挙動差: 「wmic 応答あり但し digit 無し」で従来 `None` early-return → PS fallthrough に変更 (spec §3.2、正常機は従来どおり early-return し PS 非呼出)。
 
@@ -431,10 +439,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 5: memory の PS fallback
 
 **Files:**
+
 - Modify: `allaganeye/system_info.py:322-337` (`_detect_total_memory_bytes` の Windows 分岐)
 - Test: `tests/test_system_info.py`
 
 **Interfaces:**
+
 - Consumes: `_windows_ps_values` (Task 1)
 - Produces: 変更なし
 
@@ -531,11 +541,13 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 6: `gpu_vendor_probe_warning` + verbose header 配線
 
 **Files:**
+
 - Modify: `allaganeye/system_info.py` (`probe_gpu_vendors` の後ろに追加)
 - Modify: `allaganeye/commands/split_matches.py:1752-1776` (`_print_verbose_header` の import + GPU ブロック直後)
 - Test: `tests/test_system_info.py` / `tests/test_split_matches.py`
 
 **Interfaces:**
+
 - Consumes: `probe_gpu_vendors` (既存)
 - Produces: `gpu_vendor_probe_warning() -> str | None` — Windows で GPU vendor 0 件のとき警告文、それ以外 `None`。
 
@@ -698,6 +710,7 @@ Expected: 全 PASS
 - [ ] **Step 4: 実機検証依頼 (Iron Law 6)**
 
 controller が Idios に `AskUserQuestion` で以下を依頼 (mock 不可):
+
 - `where wmic` で wmic 在否確認 (Win11 build 26200)
 - 修正後 `allaganeye detect <video> -v` で CPU / GPU / Memory 行が埋まるか
 - `metadata.json system_info.gpu_vendors_available` が非空か (nvidia は元々埋まる → wmic 非搭載時に iGPU/AMD vendor + CPU/memory 行が PS fallback で復活するかが焦点)
@@ -705,6 +718,7 @@ controller が Idios に `AskUserQuestion` で以下を依頼 (mock 不可):
 ## Self-Review
 
 **1. Spec coverage:**
+
 - spec §2 scope=全4経路 → Task 2 (GPU) / 3 (CPU name) / 4 (cores) / 5 (memory)。✓
 - spec §3.1 `_windows_ps_values` → Task 1。✓
 - spec §3.2 挿入方針 + CPU cores 微修正 → Task 4 に明記。✓
