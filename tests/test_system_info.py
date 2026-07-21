@@ -697,6 +697,7 @@ def test_probe_gpu_vendors_no_ps_call_when_wmic_ok(mock_run, _system):
 
     mock_run.side_effect = side_effect
     assert probe_gpu_vendors() == ["amd"]
+    assert "powershell" not in seen
 
 
 # --- CPU name PS fallback (#860) ---
