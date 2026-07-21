@@ -771,3 +771,32 @@ def test_total_memory_ps_fallback_when_wmic_absent(mock_run, _system):
 
     mock_run.side_effect = side_effect
     assert _detect_total_memory_bytes() == 137438953472
+
+
+# --- gpu_vendor_probe_warning (verbose silent-degrade visibility, #860) ---
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+@patch("allaganeye.system_info.probe_gpu_vendors", return_value=[])
+def test_gpu_vendor_probe_warning_fires_on_empty_windows(_vendors, _system):
+    from allaganeye.system_info import gpu_vendor_probe_warning
+
+    msg = gpu_vendor_probe_warning()
+    assert msg is not None
+    assert "libx264" in msg
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+@patch("allaganeye.system_info.probe_gpu_vendors", return_value=["nvidia"])
+def test_gpu_vendor_probe_warning_none_when_vendor_present(_vendors, _system):
+    from allaganeye.system_info import gpu_vendor_probe_warning
+
+    assert gpu_vendor_probe_warning() is None
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Linux")
+@patch("allaganeye.system_info.probe_gpu_vendors", return_value=[])
+def test_gpu_vendor_probe_warning_none_on_non_windows(_vendors, _system):
+    from allaganeye.system_info import gpu_vendor_probe_warning
+
+    assert gpu_vendor_probe_warning() is None

@@ -446,6 +446,25 @@ def probe_gpu_vendors() -> list[str]:
     return vendors
 
 
+def gpu_vendor_probe_warning() -> str | None:
+    """Return a warning when Windows GPU vendor detection found nothing (#860).
+
+    wmic/PowerShell 両方の probe 失敗 (または真に GPU 無し) を verbose header
+    で可視化し、GUI export が GPU エンコーダを提示できず libx264 へ silent
+    degrade する事態にユーザーが気づけるようにする。Windows 以外、または
+    vendor を 1 件以上検出できた場合は ``None``。
+    """
+    if platform.system() != "Windows":
+        return None
+    if probe_gpu_vendors():
+        return None
+    return (
+        "GPU vendor を検出できませんでした (wmic 非搭載環境では PowerShell "
+        "fallback も失敗した可能性)。GPU エンコーダ (NVENC/QSV/AMF) は提示されず "
+        "export は libx264 になります。"
+    )
+
+
 def _windows_ps_values(cim_class: str, prop: str) -> list[str]:
     """Return ``prop`` values from ``Get-CimInstance <cim_class>`` via PowerShell.
 
