@@ -36,8 +36,9 @@
   {
    "index": 5,
    "start_time": 4749.0,
-   "end_time": 5670.0,
-   "type": "fl_match"
+   "end_time": 5686.0,
+   "type": "fl_match",
+   "notes": "M5 end=5686 は計測器 collapse 準拠 (result-mimic の flicker 橋渡しで目視値 5670 より 16s 後ろ。released OBS path 同様 result 余韻は無害)"
   },
   {
    "index": 6,
