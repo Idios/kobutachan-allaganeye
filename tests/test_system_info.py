@@ -752,3 +752,22 @@ def test_physical_cores_ps_fallback_sums_sockets(mock_run, _system):
 
     mock_run.side_effect = side_effect
     assert _detect_physical_cores() == 128
+
+
+# --- memory PS fallback (#860) ---
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+@patch("allaganeye.system_info._run_text")
+def test_total_memory_ps_fallback_when_wmic_absent(mock_run, _system):
+    from allaganeye.system_info import _detect_total_memory_bytes
+
+    def side_effect(cmd, **_kwargs):
+        if cmd[:1] == ["wmic"]:
+            return None
+        if cmd[:1] == ["powershell"]:
+            return "137438953472\n"
+        return None
+
+    mock_run.side_effect = side_effect
+    assert _detect_total_memory_bytes() == 137438953472
