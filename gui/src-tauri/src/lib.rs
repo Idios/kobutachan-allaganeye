@@ -4096,6 +4096,28 @@ mod tests {
     }
 
     #[test]
+    fn write_validation_rejects_capture_regions_missing_fallback_reason() {
+        // Mirrors zod: fallback_reason is a REQUIRED (nullable) key; absent must
+        // reject so we never persist a blob GUI zod would refuse to reload (#879).
+        let mut p = valid_metadata_payload();
+        p["capture_regions"] = json!({
+            "coarse": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "confidence": 1.0, "source": "full_frame"},
+            "segments": []
+        });
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_rejects_minimap_match_index_non_integer() {
+        // match_index mirrors z.number().int(): 1.5 must reject (fract != 0), #879.
+        let mut p = valid_metadata_payload();
+        p["minimap_regions"] = json!([
+            {"match_index": 1.5, "region": {"x": 0.8, "y": 0.8, "w": 0.15, "h": 0.15, "confidence": 1.0, "source": "user"}}
+        ]);
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
     fn atomic_write_creates_target() {
         let tmp = TempDir::new().unwrap();
         let target = tmp.path().join("metadata.json");
