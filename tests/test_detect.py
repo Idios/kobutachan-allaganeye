@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -12,6 +13,9 @@ from allaganeye.config import SplitConfig
 from allaganeye.exceptions import DetectionError
 from allaganeye.video.detector import MatchBoundary
 from allaganeye.video.probe import ProbeResult
+
+if TYPE_CHECKING:
+    from allaganeye.metadata_types import CaptureRegions
 
 PROBE_RESULT: ProbeResult = {
     "duration": 1800.0,
@@ -560,7 +564,7 @@ def test_detect_cache_hit_carries_capture_regions(tmp_path):
 
     `_load_cache_hit` を patch して CacheHit (with capture_regions) を返す (#879)。
     """
-    band_regions = {
+    band_regions: CaptureRegions = {
         "coarse": {
             "x": 0.1,
             "y": 0.0,

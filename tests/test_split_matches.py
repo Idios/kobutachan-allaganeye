@@ -5919,7 +5919,7 @@ def test_run_split_cache_hit_carries_capture_regions(
 
     `_load_cache_hit` を patch して CacheHit (with capture_regions) を返す (#879)。
     """
-    band_regions = {
+    band_regions: CaptureRegions = {
         "coarse": {
             "x": 0.1,
             "y": 0.0,
