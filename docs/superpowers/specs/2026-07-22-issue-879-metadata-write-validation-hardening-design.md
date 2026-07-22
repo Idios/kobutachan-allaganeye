@@ -25,6 +25,7 @@ metadata.json / .detection_cache.json の optional field が present だが malf
 | --- | --- | --- | --- |
 | PR 分割 | 1 PR / 2 PR (write 検証 + cache refactor) | **1 PR** | issue 単位を保ち close が単純。diff 中規模見込み (refactor-pattern の 30 file/1000 line 基準未満) |
 | Rust 検証対象 | 3 field (issue literal) / 4 field 完全 mirror | **4 field (minimap_regions 含む)** | 同クラスの検証欠落 (minimap_regions だけ素通り) を残さず zod と対称。Idios full 硬化選好 (`feedback_released_ipc_validation_scope`) |
+| cache read API | `_load_cache` を wrapper で残す / 全 caller 移行し廃止 | **全 caller 移行・`_load_cache` 廃止** | 二重 API の混乱を無くし single-read を唯一の cache-hit 入口に (Idios 確定 2026-07-22)。test 移行コストを受容 |
 
 ## 3. Layer 1 — Rust optional shape 検証
 
@@ -82,15 +83,16 @@ def _load_cache_hit(cache_path, video_path, interval, config) -> "CacheHit | Non
     から返す。cache miss / key 不一致は None。"""
 ```
 
-- `_load_cache_hit` は file を 1 回 read → parsed `data: dict` を得て、(a) 現 `_load_cache` の cache key 検証 (source/mtime/params)、(b) boundaries 抽出、(c) `masked_fallback_used` / `capture_regions` 抽出を同一 dict から行う。
-- `_read_cached_masked_fallback` / `_read_cached_capture_regions` を **file 再 open せず parsed `data: dict`（+ 必要な params）を受ける純関数**にシグネチャ変更。legacy 合成ロジック (params.vtuber==False && masked_fallback_used==False → FULL_FRAME、round-2 codex 裁定) は保持。
-- `_load_cache` は **boundary-only の既存 caller / テスト用**に `_load_cache_hit(...)` の `.boundaries` を返す薄い wrapper として残す (後方互換、file read は 1 回)。
+- `_load_cache_hit` は file を 1 回 read → parsed `data: dict` を得て、(a) 現 `_load_cache` の cache key 検証 (source/mtime/params)、(b) boundaries 抽出、(c) `masked_fallback_used` / `capture_regions` 抽出を同一 dict から行う。key 不一致 (miss) は None。
+- `_read_cached_masked_fallback` / `_read_cached_capture_regions` を **file 再 open せず parsed `data: dict`（+ 必要な params）を受ける純関数**にシグネチャ変更。legacy 合成ロジック (params.vtuber==False && masked_fallback_used==False → FULL_FRAME、round-2 codex 裁定) は保持。`_load_cache_hit` から呼ばれる内部 parser とする。
+- **`_load_cache` は廃止** (Idios 確定 2026-07-22): 後方互換 wrapper は残さず、全 caller を `_load_cache_hit` に移行する。二重 API の混乱を無くし、single-read を唯一の cache-hit 入口にする。
 
-### 5.2 call site 移行
+### 5.2 call site 移行 (全 caller、`_load_cache` 廃止)
 
-- `detect.py:146-149`: `boundaries = _load_cache(...)` → `_load_cache_hit(...)` 1 回に統合し `.boundaries` / `.masked_fallback_used` / `.capture_regions` を使う。
-- `split_matches.py:186-187`: 同様に単一 read に移行。
-- 結果、**検証済み boundaries と provenance は構造的に必ず同一 snapshot** (mixed-snapshot 不能)。
+- `detect.py:146-149`: `boundaries = _load_cache(...)` + 後続の `_read_cached_*` 2 呼び出しを `hit = _load_cache_hit(...)` 1 回に統合し `hit.boundaries` / `hit.masked_fallback_used` / `hit.capture_regions` を使う (miss は `hit is None`)。
+- `split_matches.py:138` + `:186-187`: `cached = _load_cache(...)` の hit 判定と、後続 `_split_and_write_metadata` へ渡す `_read_cached_masked_fallback(cache_path)` / `_read_cached_capture_regions(cache_path)` を、冒頭 1 回の `_load_cache_hit(...)` から取得するよう統合。
+- テスト移行: `tests/test_detect.py` / `tests/test_split_matches.py` の `_load_cache` 直接呼び出し・patch (~45+4 箇所) を `_load_cache_hit` (戻り値 `CacheHit`) に、path 引数で `_read_cached_*` を呼ぶテスト (~29 箇所) を dict 引数の純関数呼び出しに書き換える。boundary-only を確認するだけのテストは `_load_cache_hit(...).boundaries` を見る。
+- 結果、**検証済み boundaries と provenance は構造的に必ず同一 snapshot** (mixed-snapshot 不能)。cache-hit 経路の file open は 1 回のみ。
 
 ## 6. テスト方針 (TDD, Red-Green)
 
