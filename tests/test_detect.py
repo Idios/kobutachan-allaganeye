@@ -129,7 +129,12 @@ def test_detect_uses_cache_when_present(tmp_path):
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
     with (
         patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
-        patch(f"{MODULE_DETECT}._load_cache_hit", return_value=CacheHit(boundaries=BOUNDARIES, masked_fallback_used=False, capture_regions=None)),
+        patch(
+            f"{MODULE_DETECT}._load_cache_hit",
+            return_value=CacheHit(
+                boundaries=BOUNDARIES, masked_fallback_used=False, capture_regions=None
+            ),
+        ),
         patch(f"{MODULE_DETECT}._run_detection") as mock_detect,
     ):
         run_detect(Path("input.mp4"), config, quiet=True)
@@ -287,7 +292,12 @@ def test_detect_cache_hit_records_vendor_used_null(tmp_path, monkeypatch):
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
     with (
         patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
-        patch(f"{MODULE_DETECT}._load_cache_hit", return_value=CacheHit(boundaries=BOUNDARIES, masked_fallback_used=False, capture_regions=None)),
+        patch(
+            f"{MODULE_DETECT}._load_cache_hit",
+            return_value=CacheHit(
+                boundaries=BOUNDARIES, masked_fallback_used=False, capture_regions=None
+            ),
+        ),
     ):
         run_detect(Path("input.mp4"), config, quiet=True)
 
@@ -565,11 +575,14 @@ def test_detect_cache_hit_carries_capture_regions(tmp_path):
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
     with (
         patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
-        patch(f"{MODULE_DETECT}._load_cache_hit", return_value=CacheHit(
-            boundaries=BOUNDARIES,
-            masked_fallback_used=False,
-            capture_regions=band_regions,
-        )),
+        patch(
+            f"{MODULE_DETECT}._load_cache_hit",
+            return_value=CacheHit(
+                boundaries=BOUNDARIES,
+                masked_fallback_used=False,
+                capture_regions=band_regions,
+            ),
+        ),
         patch(f"{MODULE_DETECT}._run_detection") as mock_detect,
     ):
         run_detect(Path("input.mp4"), config, quiet=True)
