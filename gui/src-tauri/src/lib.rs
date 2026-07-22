@@ -1045,6 +1045,65 @@ fn validate_minimap_regions(v: &Value) -> Result<(), AppError> {
     Ok(())
 }
 
+/// #879 -- system_info shape (mirror zod SystemInfoSchema). gpu_vendors_available
+/// / vendor_preference are required string arrays; gpu_vendor_used is a required
+/// string-or-null; gpu is an optional string array.
+fn validate_system_info(v: &Value) -> Result<(), AppError> {
+    let obj = v
+        .as_object()
+        .ok_or_else(|| schema_invalid("metadata.system_info must be an object".into()))?;
+    let is_string_array = |val: Option<&Value>| {
+        matches!(val, Some(Value::Array(a)) if a.iter().all(Value::is_string))
+    };
+    for key in ["gpu_vendors_available", "vendor_preference"] {
+        if !is_string_array(obj.get(key)) {
+            return Err(schema_invalid(format!(
+                "metadata.system_info.{key} must be an array of strings"
+            )));
+        }
+    }
+    match obj.get("gpu_vendor_used") {
+        Some(Value::String(_)) | Some(Value::Null) => {}
+        _ => {
+            return Err(schema_invalid(
+                "metadata.system_info.gpu_vendor_used must be a string or null".into(),
+            ))
+        }
+    }
+    if obj.contains_key("gpu") && !is_string_array(obj.get("gpu")) {
+        return Err(schema_invalid(
+            "metadata.system_info.gpu must be an array of strings".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// #879 -- brightness_samples shape (mirror zod BrightnessSamplesSchema):
+/// interval_s is a positive number; values is an array of numbers in [0,255].
+fn validate_brightness_samples(v: &Value) -> Result<(), AppError> {
+    let obj = v
+        .as_object()
+        .ok_or_else(|| schema_invalid("metadata.brightness_samples must be an object".into()))?;
+    match obj.get("interval_s").and_then(Value::as_f64) {
+        Some(n) if n > 0.0 => {}
+        _ => {
+            return Err(schema_invalid(
+                "metadata.brightness_samples.interval_s must be a positive number".into(),
+            ))
+        }
+    }
+    match obj.get("values") {
+        Some(Value::Array(a))
+            if a.iter().all(|x| matches!(x.as_f64(), Some(n) if (0.0..=255.0).contains(&n))) => {}
+        _ => {
+            return Err(schema_invalid(
+                "metadata.brightness_samples.values must be an array of numbers in [0,255]".into(),
+            ))
+        }
+    }
+    Ok(())
+}
+
 fn validate_metadata_for_write(payload: &Value) -> Result<(), AppError> {
     fn schema_err(msg: impl Into<String>) -> AppError {
         AppError::new("parse.schema_invalid", msg).with_default_hint()
@@ -1108,6 +1167,12 @@ fn validate_metadata_for_write(payload: &Value) -> Result<(), AppError> {
     }
 
     // #879 -- optional field shape validation (present only, mirror zod).
+    if let Some(si) = obj.get("system_info") {
+        validate_system_info(si)?;
+    }
+    if let Some(bs) = obj.get("brightness_samples") {
+        validate_brightness_samples(bs)?;
+    }
     if let Some(cr) = obj.get("capture_regions") {
         validate_capture_regions(cr)?;
     }
@@ -4114,6 +4179,71 @@ mod tests {
         p["minimap_regions"] = json!([
             {"match_index": 1.5, "region": {"x": 0.8, "y": 0.8, "w": 0.15, "h": 0.15, "confidence": 1.0, "source": "user"}}
         ]);
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_accepts_valid_system_info() {
+        let mut p = valid_metadata_payload();
+        p["system_info"] = json!({
+            "gpu_vendors_available": ["nvidia"],
+            "gpu_vendor_used": "nvidia",
+            "vendor_preference": ["nvidia", "amd", "intel"],
+            "gpu": ["NVIDIA RTX 5090 (32GB VRAM)"]
+        });
+        assert!(validate_metadata_for_write(&p).is_ok());
+    }
+
+    #[test]
+    fn write_validation_accepts_system_info_null_vendor_used_no_gpu() {
+        let mut p = valid_metadata_payload();
+        p["system_info"] = json!({
+            "gpu_vendors_available": [],
+            "gpu_vendor_used": null,
+            "vendor_preference": ["nvidia"]
+        });
+        assert!(validate_metadata_for_write(&p).is_ok());
+    }
+
+    #[test]
+    fn write_validation_rejects_system_info_nonstring_vendor() {
+        let mut p = valid_metadata_payload();
+        p["system_info"] = json!({
+            "gpu_vendors_available": [1],
+            "gpu_vendor_used": null,
+            "vendor_preference": []
+        });
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_rejects_system_info_missing_vendor_used_key() {
+        let mut p = valid_metadata_payload();
+        p["system_info"] = json!({
+            "gpu_vendors_available": [],
+            "vendor_preference": []
+        });
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_accepts_valid_brightness_samples() {
+        let mut p = valid_metadata_payload();
+        p["brightness_samples"] = json!({"interval_s": 2.0, "values": [0.0, 128.0, 255.0]});
+        assert!(validate_metadata_for_write(&p).is_ok());
+    }
+
+    #[test]
+    fn write_validation_rejects_brightness_samples_nonpositive_interval() {
+        let mut p = valid_metadata_payload();
+        p["brightness_samples"] = json!({"interval_s": 0.0, "values": [1.0]});
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_rejects_brightness_samples_value_out_of_range() {
+        let mut p = valid_metadata_payload();
+        p["brightness_samples"] = json!({"interval_s": 2.0, "values": [300.0]});
         assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
     }
 
