@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from allaganeye.commands.detect import run_detect
-from allaganeye.commands.split_matches import build_brightness_samples
+from allaganeye.commands.split_matches import CacheHit, build_brightness_samples
 from allaganeye.config import SplitConfig
 from allaganeye.exceptions import DetectionError
 from allaganeye.video.detector import MatchBoundary
@@ -129,7 +129,7 @@ def test_detect_uses_cache_when_present(tmp_path):
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
     with (
         patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
-        patch(f"{MODULE_DETECT}._load_cache", return_value=BOUNDARIES),
+        patch(f"{MODULE_DETECT}._load_cache_hit", return_value=CacheHit(boundaries=BOUNDARIES, masked_fallback_used=False, capture_regions=None)),
         patch(f"{MODULE_DETECT}._run_detection") as mock_detect,
     ):
         run_detect(Path("input.mp4"), config, quiet=True)
@@ -287,7 +287,7 @@ def test_detect_cache_hit_records_vendor_used_null(tmp_path, monkeypatch):
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
     with (
         patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
-        patch(f"{MODULE_DETECT}._load_cache", return_value=BOUNDARIES),
+        patch(f"{MODULE_DETECT}._load_cache_hit", return_value=CacheHit(boundaries=BOUNDARIES, masked_fallback_used=False, capture_regions=None)),
     ):
         run_detect(Path("input.mp4"), config, quiet=True)
 
@@ -548,8 +548,7 @@ def test_detect_writes_capture_regions_fresh(tmp_path):
 def test_detect_cache_hit_carries_capture_regions(tmp_path):
     """#810 -- cache-hit: cache 記録値が metadata.json へ引き継がれる。
 
-    `_load_cache` を patch して hit させつつ、cache file 実体に capture_regions
-    を書いておく (`_read_cached_capture_regions` は file を直接読むため patch 不要)。
+    `_load_cache_hit` を patch して CacheHit (with capture_regions) を返す (#879)。
     """
     band_regions = {
         "coarse": {
@@ -563,14 +562,14 @@ def test_detect_cache_hit_carries_capture_regions(tmp_path):
         "segments": [],
         "fallback_reason": None,
     }
-    cache_path = tmp_path / ".detection_cache.json"
-    cache_path.write_text(
-        json.dumps({"capture_regions": band_regions}), encoding="utf-8"
-    )
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
     with (
         patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
-        patch(f"{MODULE_DETECT}._load_cache", return_value=BOUNDARIES),
+        patch(f"{MODULE_DETECT}._load_cache_hit", return_value=CacheHit(
+            boundaries=BOUNDARIES,
+            masked_fallback_used=False,
+            capture_regions=band_regions,
+        )),
         patch(f"{MODULE_DETECT}._run_detection") as mock_detect,
     ):
         run_detect(Path("input.mp4"), config, quiet=True)

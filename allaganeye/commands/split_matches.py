@@ -136,9 +136,9 @@ def run_split(
     # Check detection cache
     cache_path = config.output_dir / ".detection_cache.json"
     if not config.no_cache:
-        cached = _load_cache(cache_path, video_path, effective_interval, config)
-        if cached is not None:
-            boundaries = cached
+        hit = _load_cache_hit(cache_path, video_path, effective_interval, config)
+        if hit is not None:
+            boundaries = hit.boundaries
             # Surface the detection context that the cached run used (#380).
             # Without this, verbose+cached prints only "Detected ... (cached)"
             # which strips the parameter summary users rely on for
@@ -184,8 +184,8 @@ def run_split(
                 system_info=cached_system_info,
                 # cache-hit: resolved path は当該 boundaries を生成した検出の
                 # 記録値 (cache top-level) を引き継ぐ。
-                masked_fallback_used=_read_cached_masked_fallback(cache_path),
-                capture_regions=_read_cached_capture_regions(cache_path),
+                masked_fallback_used=hit.masked_fallback_used,
+                capture_regions=hit.capture_regions,
                 quiet=quiet,
             )
             # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
@@ -2075,19 +2075,6 @@ def _masked_fallback_from_cache_data(data: dict) -> bool:
     return bool(data.get("masked_fallback_used", False))
 
 
-def _read_cached_masked_fallback(cache_path: Path) -> bool:
-    """cache-hit 経路用: cache に記録された resolved masked fallback を読む。
-
-    読めない / 欠落時は False (標準 path 扱い)。cache key の一部ではないため
-    `_load_cache` とは独立に読む (#821)。
-    """
-    try:
-        data = json.loads(cache_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
-    return _masked_fallback_from_cache_data(data)
-
-
 _BRIGHTNESS_SAMPLES_KEYS = frozenset({"interval_s", "values"})
 
 
@@ -2279,119 +2266,6 @@ def _capture_regions_from_cache_data(data: dict) -> "CaptureRegions | None":
     if not params.get("vtuber", False) and not data.get("masked_fallback_used", False):
         return cast("CaptureRegions", RegionTimeline(coarse=FULL_FRAME).to_dict())
     return None
-
-
-def _read_cached_capture_regions(cache_path: Path) -> "CaptureRegions | None":
-    """cache-hit 経路用: cache に記録された capture region timeline を読む (#810).
-
-    cache が読めないときも None。`_load_cache` の hit 判定とは独立に読む
-    (`_read_cached_masked_fallback` と同型)。
-    """
-    try:
-        data = json.loads(cache_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return _capture_regions_from_cache_data(data)
-
-
-def _load_cache(
-    cache_path: Path,
-    video_path: Path,
-    effective_interval: float,
-    config: SplitConfig,
-) -> list[MatchBoundary] | None:
-    """Load and validate detection cache. Returns boundaries or None."""
-    if not cache_path.is_file():
-        return None
-
-    try:
-        data = json.loads(cache_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        logger.debug("Detection cache unreadable: %s", cache_path)
-        return None
-
-    if data.get("cache_version") != _CACHE_VERSION:
-        logger.debug("Cache version mismatch")
-        return None
-
-    resolved = video_path.resolve()
-    if data.get("source") != str(resolved):
-        logger.debug("Cache source path mismatch")
-        return None
-
-    try:
-        stat = resolved.stat()
-    except OSError:
-        return None
-
-    if data.get("source_size") != stat.st_size:
-        logger.debug("Cache source size mismatch")
-        return None
-
-    if data.get("source_mtime") != stat.st_mtime:
-        logger.debug("Cache source mtime mismatch")
-        return None
-
-    params = data.get("params", {})
-    # vtuber / masked は detection path を切り替え、keep_trailing は trailing-drop
-    # を skip して検出境界を変える (#805 段階1) ため、いずれも cache key に含める
-    # (gate / opt-out の cache bypass 防止)。key なし legacy cache は各 flag 導入前
-    # の結果 (vtuber/masked=標準 path、keep_trailing=drop ON) なので False と同値に
-    # 扱う。
-    if (
-        params.get("sample_interval") != effective_interval
-        or params.get("blackout_threshold") != config.blackout_threshold
-        or params.get("min_match_duration") != config.min_match_duration
-        or params.get("min_blackout_duration") != config.min_blackout_duration
-        or params.get("no_audio") != config.no_audio
-        or params.get("vtuber", False) != config.vtuber
-        or params.get("masked", False) != config.masked
-        or params.get("keep_trailing", False) != config.keep_trailing
-    ):
-        logger.debug("Cache parameter mismatch")
-        return None
-
-    # masked_algo key: invalidate only when masked algorithm changes AND the
-    # cached run was masked-affected (params.masked=True or auto-fallback used).
-    # Legacy OBS caches (fallback unused + masked off) hit regardless of key
-    # absence -- no needless re-detects for unaffected users.
-    # Values that fail int() coercion (broken cache) are treated as mismatch
-    # (miss direction); int-coercible values compare by numeric equality.
-    _raw_cached_algo = params.get("masked_algo", 1)
-    try:
-        cached_algo = int(_raw_cached_algo)
-    except (ValueError, TypeError):
-        cached_algo = -1  # forces miss for any valid _MASKED_ALGO_VERSION
-    masked_affected = (
-        data.get("masked_fallback_used", False)
-        or params.get("masked", False)
-        or config.masked
-    )
-    if masked_affected and cached_algo != _MASKED_ALGO_VERSION:
-        logger.debug("Cache masked algo mismatch")
-        return None
-
-    # vtuber_algo key: invalidate only when vtuber algorithm changes AND the
-    # cached run was vtuber-affected (params.vtuber=True or config.vtuber=True).
-    # Legacy OBS caches (vtuber off) hit regardless of key absence -- no
-    # needless re-detects for unaffected users (same invalidation policy as
-    # masked_algo).
-    _raw_cached_vtuber_algo = params.get("vtuber_algo", 1)
-    try:
-        cached_vtuber_algo = int(_raw_cached_vtuber_algo)
-    except (ValueError, TypeError):
-        cached_vtuber_algo = -1  # forces miss for any valid _VTUBER_ALGO_VERSION
-    vtuber_affected = params.get("vtuber", False) or config.vtuber
-    if vtuber_affected and cached_vtuber_algo != _VTUBER_ALGO_VERSION:
-        logger.debug("Cache vtuber algo mismatch")
-        return None
-
-    boundaries = data.get("boundaries")
-    if not isinstance(boundaries, list):
-        logger.debug("Cache boundaries invalid")
-        return None
-
-    return boundaries
 
 
 @dataclass(frozen=True)
