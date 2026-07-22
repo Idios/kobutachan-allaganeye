@@ -6593,3 +6593,59 @@ def test_print_detection_stats_empty_stats_no_crash(capsys):
 
     _print_detection_stats({})
     assert capsys.readouterr().out == ""
+
+
+# --- _sanitize_brightness_samples (#879) ---
+
+
+def test_sanitize_brightness_samples_accepts_valid():
+    from allaganeye.commands.split_matches import _sanitize_brightness_samples
+
+    value = {"interval_s": 2.0, "values": [0.0, 128.0, 255.0]}
+    assert _sanitize_brightness_samples(value) == value
+
+
+def test_sanitize_brightness_samples_rejects_extra_key():
+    from allaganeye.commands.split_matches import _sanitize_brightness_samples
+
+    assert _sanitize_brightness_samples({"interval_s": 2.0, "values": [], "x": 1}) is None
+
+
+def test_sanitize_brightness_samples_rejects_nonpositive_interval():
+    from allaganeye.commands.split_matches import _sanitize_brightness_samples
+
+    assert _sanitize_brightness_samples({"interval_s": 0.0, "values": [1.0]}) is None
+
+
+def test_sanitize_brightness_samples_rejects_bool_interval():
+    from allaganeye.commands.split_matches import _sanitize_brightness_samples
+
+    assert _sanitize_brightness_samples({"interval_s": True, "values": [1.0]}) is None
+
+
+def test_sanitize_brightness_samples_rejects_value_out_of_range():
+    from allaganeye.commands.split_matches import _sanitize_brightness_samples
+
+    assert _sanitize_brightness_samples({"interval_s": 2.0, "values": [256.0]}) is None
+
+
+def test_sanitize_brightness_samples_rejects_nan_value():
+    from allaganeye.commands.split_matches import _sanitize_brightness_samples
+
+    assert _sanitize_brightness_samples({"interval_s": 2.0, "values": [float("nan")]}) is None
+
+
+def test_sanitize_brightness_samples_rejects_values_not_list():
+    from allaganeye.commands.split_matches import _sanitize_brightness_samples
+
+    assert _sanitize_brightness_samples({"interval_s": 2.0, "values": "abc"}) is None
+
+
+def test_prepare_from_metadata_drops_malformed_brightness_samples(caplog):
+    """--from-metadata preserve が malformed brightness_samples を omit + warn する (#879)."""
+    from allaganeye.commands import split_matches
+
+    payload = {"brightness_samples": {"interval_s": -1.0, "values": [999.0]}}
+    with caplog.at_level("WARNING"):
+        result = split_matches._sanitize_brightness_samples(payload["brightness_samples"])
+    assert result is None

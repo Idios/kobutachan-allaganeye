@@ -477,11 +477,14 @@ def run_split_from_metadata(
     # BrightnessSamples (TypedDict) に narrow する。schema 検証は
     # _build_metadata_payload 側の TypedDict 構造に委譲。
     old_brightness_samples = payload.get("brightness_samples")
-    preserve_brightness_samples: BrightnessSamples | None = (
-        cast("BrightnessSamples", old_brightness_samples)
-        if isinstance(old_brightness_samples, dict)
-        else None
+    preserve_brightness_samples: BrightnessSamples | None = _sanitize_brightness_samples(
+        old_brightness_samples
     )
+    if old_brightness_samples is not None and preserve_brightness_samples is None:
+        logger.warning(
+            "Dropping malformed brightness_samples from metadata "
+            "(corrupted or hand-edited value)"
+        )
 
     # #805 段階1 -- preserve warnings across `--from-metadata`. detect ->
     # split --from-metadata -o <same dir> が記録済み warning を silent に
@@ -2083,6 +2086,48 @@ def _read_cached_masked_fallback(cache_path: Path) -> bool:
     except (OSError, json.JSONDecodeError):
         return False
     return bool(data.get("masked_fallback_used", False))
+
+
+_BRIGHTNESS_SAMPLES_KEYS = frozenset({"interval_s", "values"})
+
+
+def _sanitize_brightness_samples(value: object) -> "BrightnessSamples | None":
+    """Structural sanitizer for a BrightnessSamples payload from metadata.json.
+
+    Mirrors BrightnessSamplesSchema (gui/src/types/metadata.schema.ts) with a
+    pure-Python check. Returns the value cast to BrightnessSamples when fully
+    valid, else None. Same contract/style as ``_sanitize_capture_regions``:
+    bool は数値として拒否、NaN / +-Infinity は reject (``json.dumps`` allow_nan
+    が非標準 token を emit し GUI serde_json / JSON.parse が全体 reject するため)。
+
+    - value は key が厳密に {interval_s, values} の dict。
+    - interval_s は有限実数 (int/float、bool 排除) で > 0。
+    - values は list で各要素が有限実数 (bool 排除) かつ 0 <= v <= 255。
+    """
+    if not isinstance(value, dict):
+        return None
+    if set(value.keys()) != _BRIGHTNESS_SAMPLES_KEYS:
+        return None
+    interval_s = value.get("interval_s")
+    if (
+        isinstance(interval_s, bool)
+        or not isinstance(interval_s, (int, float))
+        or not math.isfinite(interval_s)
+        or interval_s <= 0
+    ):
+        return None
+    values = value.get("values")
+    if not isinstance(values, list):
+        return None
+    for v in values:
+        if (
+            isinstance(v, bool)
+            or not isinstance(v, (int, float))
+            or not math.isfinite(v)
+            or not (0.0 <= v <= 255.0)
+        ):
+            return None
+    return cast("BrightnessSamples", value)
 
 
 _CAPTURE_REGIONS_TOP_KEYS = frozenset({"coarse", "segments", "fallback_reason"})
