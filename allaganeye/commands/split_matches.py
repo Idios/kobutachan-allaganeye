@@ -476,15 +476,9 @@ def run_split_from_metadata(
     # JSON payload は Any 型なので isinstance チェック後に cast で
     # BrightnessSamples (TypedDict) に narrow する。schema 検証は
     # _build_metadata_payload 側の TypedDict 構造に委譲。
-    old_brightness_samples = payload.get("brightness_samples")
-    preserve_brightness_samples: BrightnessSamples | None = _sanitize_brightness_samples(
-        old_brightness_samples
+    preserve_brightness_samples: BrightnessSamples | None = _preserve_brightness_samples(
+        payload
     )
-    if old_brightness_samples is not None and preserve_brightness_samples is None:
-        logger.warning(
-            "Dropping malformed brightness_samples from metadata "
-            "(corrupted or hand-edited value)"
-        )
 
     # #805 段階1 -- preserve warnings across `--from-metadata`. detect ->
     # split --from-metadata -o <same dir> が記録済み warning を silent に
@@ -2089,6 +2083,23 @@ def _read_cached_masked_fallback(cache_path: Path) -> bool:
 
 
 _BRIGHTNESS_SAMPLES_KEYS = frozenset({"interval_s", "values"})
+
+
+def _preserve_brightness_samples(payload: dict) -> "BrightnessSamples | None":
+    """Sanitize brightness_samples from a --from-metadata payload for preserve (#879).
+
+    Returns the sanitized value, or None when absent or malformed. A
+    present-but-malformed value is dropped with a warning (same pattern as
+    warnings / capture_regions preserve).
+    """
+    old = payload.get("brightness_samples")
+    sanitized = _sanitize_brightness_samples(old)
+    if old is not None and sanitized is None:
+        logger.warning(
+            "Dropping malformed brightness_samples from metadata "
+            "(corrupted or hand-edited value)"
+        )
+    return sanitized
 
 
 def _sanitize_brightness_samples(value: object) -> "BrightnessSamples | None":

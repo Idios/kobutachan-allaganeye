@@ -6641,11 +6641,39 @@ def test_sanitize_brightness_samples_rejects_values_not_list():
     assert _sanitize_brightness_samples({"interval_s": 2.0, "values": "abc"}) is None
 
 
-def test_prepare_from_metadata_drops_malformed_brightness_samples(caplog):
-    """--from-metadata preserve が malformed brightness_samples を omit + warn する (#879)."""
+def test_preserve_brightness_samples_warns_on_malformed(caplog):
+    """The preserve wiring drops a present-but-malformed value with a warning (#879)."""
     from allaganeye.commands import split_matches
 
-    payload = {"brightness_samples": {"interval_s": -1.0, "values": [999.0]}}
     with caplog.at_level("WARNING"):
-        result = split_matches._sanitize_brightness_samples(payload["brightness_samples"])
+        result = split_matches._preserve_brightness_samples(
+            {"brightness_samples": {"interval_s": -1.0, "values": [999.0]}}
+        )
     assert result is None
+    assert "Dropping malformed brightness_samples" in caplog.text
+
+
+def test_preserve_brightness_samples_valid_passthrough_no_warn(caplog):
+    from allaganeye.commands import split_matches
+
+    valid = {"interval_s": 2.0, "values": [1.0]}
+    with caplog.at_level("WARNING"):
+        result = split_matches._preserve_brightness_samples({"brightness_samples": valid})
+    assert result == valid
+    assert "Dropping malformed" not in caplog.text
+
+
+def test_preserve_brightness_samples_absent_no_warn(caplog):
+    from allaganeye.commands import split_matches
+
+    with caplog.at_level("WARNING"):
+        result = split_matches._preserve_brightness_samples({})
+    assert result is None
+    assert "Dropping malformed" not in caplog.text
+
+
+def test_sanitize_brightness_samples_rejects_nan_interval(caplog):
+    from allaganeye.commands.split_matches import _sanitize_brightness_samples
+
+    assert _sanitize_brightness_samples({"interval_s": float("nan"), "values": []}) is None
+    assert _sanitize_brightness_samples({"interval_s": float("inf"), "values": []}) is None
