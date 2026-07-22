@@ -904,8 +904,14 @@ def refine_segments(
                 new_end, _ = snap_segment_edges(
                     prev_end_orig, prev_end_orig + _LONG_GAP_EDGE_WINDOW_S, head
                 )
+                # ext_hi: tail probe は next_start + EDGE_EXT_S まで取得済み。
+                # 粗 start を数秒はみ出す zone-in blackout run (実測 shirurori M7:
+                # run 末尾 7713 > coarse 7710) を Priority 2 で救済する (Bug A 同 class)。
                 _, new_start = snap_segment_edges(
-                    next_start_orig - LONG_GAP_START_BACK_S, next_start_orig, tail
+                    next_start_orig - LONG_GAP_START_BACK_S,
+                    next_start_orig,
+                    tail,
+                    ext_hi=next_start_orig + EDGE_EXT_S,
                 )
         except Exception:
             logger.warning(

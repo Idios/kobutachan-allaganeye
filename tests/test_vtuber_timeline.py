@@ -811,6 +811,57 @@ class TestRefineSegments:
         # zone-in blackout end t=821 is in Priority 1 range (780 < 821 <= 900) -> adopted
         assert out[1]["start"] == pytest.approx(821.0)
 
+    def test_long_gap_tail_adopts_blackout_straddling_coarse_start(self):
+        """shirurori M7 実測形状: zone-in blackout run が coarse start をはみ出す
+        (run 末尾 7713 > coarse 7710) と Priority 1 の「(lo, hi] 内に完全に収まる」
+        条件から漏れる。long-gap path が ext_hi を渡すことで Priority 2
+        ((hi, ext_hi] の最初の run) が採用する (#895 P3 8周目 fix)。
+
+        構成: gap > MERGE_GAP_MAX (prev_end=400, next_start=900)
+        blackout run: t=890-903 (末尾 903 が hi=900 を 3s はみ出す)
+        ext_hi なし (旧): Priority 1 範囲外 + Priority 2 無効 -> evidence fallback
+        ext_hi=945 (新): 900 < 903 <= 945 -> Priority 2 採用 -> new_start=903
+        """
+        segs = [self._seg(0, 400), self._seg(900, 1300)]
+        n_total = 165  # t=780..944
+        tail_probes = []
+        for i in range(n_total):
+            t = 780.0 + i
+            if 890.0 <= t <= 903.0:
+                tail_probes.append(
+                    GapProbe(t=t, present=False, band_mad=2.0, band_b=5.0)
+                )
+            elif t >= 910.0:
+                # 次試合 evidence (blackout 明け後の staging -> battle)
+                tail_probes.append(
+                    GapProbe(t=t, present=True, band_mad=5.0, band_b=110.0)
+                )
+            else:
+                tail_probes.append(
+                    GapProbe(t=t, present=False, band_mad=5.0, band_b=110.0)
+                )
+        head_probes = [
+            GapProbe(t=280.0 + i, present=False, band_mad=5.0, band_b=110.0)
+            for i in range(180)
+        ]
+
+        def _spy(vp, anchor, t0, t1, **kw):
+            if abs(t0 - (400.0 - EDGE_EXT_END_S)) < 1.0:
+                return head_probes
+            if abs(t0 - (900.0 - LONG_GAP_START_BACK_S)) < 1.0:
+                return tail_probes
+            return [
+                GapProbe(t=t0 + i, present=False, band_mad=5.0, band_b=110.0)
+                for i in range(max(1, int(t1 - t0)))
+            ]
+
+        with patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy):
+            out = refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+
+        assert len(out) == 2
+        # run end t=903 は (hi=900, ext_hi=945] -> Priority 2 採用
+        assert out[1]["start"] == pytest.approx(903.0)
+
 
 class TestRefineFix1TwoPassIsolation:
     """Fix 1 (#895 P3 2周目): 裁定と snap の 2 パス分離。
