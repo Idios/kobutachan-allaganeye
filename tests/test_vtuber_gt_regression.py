@@ -49,9 +49,35 @@ def apply_expected_merge(matches: list[dict]) -> list[dict]:
 
 
 def compare_detection_to_gt(
-    detected: list[dict], gt_matches: list[dict], tolerance_sec: float
+    detected: list[dict],
+    gt_matches: list[dict],
+    tolerance_sec: float,
+    *,
+    inclusive_slack_sec: float = 300.0,
 ) -> dict:
-    """segment と GT の 1:1 (overlap 最大対応)。"""
+    """segment と GT の 1:1 (overlap 最大対応)、非対称 tolerance gate 付き。
+
+    製品 invariant = 「試合内容の損失ゼロ」を直接符号化する非対称判定:
+    - 損失方向 (start が GT より遅い = 頭欠け / end が GT より早い = 尻切れ):
+      tolerance_sec (15s) で厳格に判定する。
+    - 余分方向 (start が GT より早い = ロビー混入 / end が GT より遅い = result 混入):
+      inclusive_slack_sec (default 300.0) で bound する。GT json の top-level
+      inclusive_slack_sec フィールドを読み、無ければ default 300.0 を使う。
+
+    設計判断 (2026-07-22 Idios 承認): +-tolerance_sec の対称 gate では
+    無害な余分方向が 7 周の改善でもゼロにならず、有害方向 (損失) のみ
+    厳格化が製品 invariant (試合内容の損失ゼロ) に一致する。
+
+    start_err = det_start - gt_start (正 = 遅い = 損失方向)
+    end_err   = det_end   - gt_end   (負 = 早い = 損失方向)
+
+    violations: 判定違反の cell リスト。各要素は dict:
+      {"index": gt_index, "start_err": float, "end_err": float, "direction": str}
+    direction は "start_loss" / "start_excess" / "end_loss" / "end_excess" の
+    最初の違反方向 (複数違反時は start_loss 優先)。
+
+    max_abs_error: 後方互換のため残す (asymmetric gate とは独立)。
+    """
     unmatched_det = list(range(len(detected)))
     matched_pairs: list[tuple[int, int]] = []
     for gi, g in enumerate(gt_matches):
@@ -73,15 +99,31 @@ def compare_detection_to_gt(
     ]
     spurious = [detected[di]["start_time"] for di in unmatched_det]
     errors = []
+    violations = []
     for gi, di in matched_pairs:
         g, d = gt_matches[gi], detected[di]
-        errors.append(
-            (
-                g["index"],
-                d["start_time"] - g["start_time"],
-                d["end_time"] - g["end_time"],
+        start_err = d["start_time"] - g["start_time"]
+        end_err = d["end_time"] - g["end_time"]
+        errors.append((g["index"], start_err, end_err))
+        # 非対称判定: 損失方向 = tolerance_sec 厳格 / 余分方向 = inclusive_slack_sec bound
+        direction = None
+        if start_err > tolerance_sec:
+            direction = "start_loss"
+        elif start_err < -inclusive_slack_sec:
+            direction = "start_excess"
+        elif end_err < -tolerance_sec:
+            direction = "end_loss"
+        elif end_err > inclusive_slack_sec:
+            direction = "end_excess"
+        if direction is not None:
+            violations.append(
+                {
+                    "index": g["index"],
+                    "start_err": start_err,
+                    "end_err": end_err,
+                    "direction": direction,
+                }
             )
-        )
     max_abs = max((max(abs(ds), abs(de)) for _, ds, de in errors), default=0.0)
     return {
         "matched": len(matched_pairs),
@@ -89,6 +131,7 @@ def compare_detection_to_gt(
         "spurious": spurious,
         "boundary_errors": errors,
         "max_abs_error": max_abs,
+        "violations": violations,
     }
 
 
@@ -188,6 +231,61 @@ class TestCompareUnit:
         assert r["matched"] == 1 and len(r["missed"]) == 1
 
 
+class TestAsymmetricTolerance:
+    """非対称 tolerance: 損失方向 tolerance_sec 厳格 / 余分方向 inclusive_slack_sec bound。
+
+    設計判断 (2026-07-22 Idios 承認): +-15s 対称では無害な余分方向が
+    7 周の改善でもゼロにならず、有害方向 (損失) のみ厳格化が
+    製品 invariant (試合内容の損失ゼロ) に一致する。
+
+    start_err = det_start - gt_start (正 = 遅い = 頭欠け = 損失方向)
+    end_err = det_end - gt_end (負 = 早い = 尻切れ = 損失方向)
+    """
+
+    def test_loss_direction_start_16s_fails(self):
+        """start が GT より 16s 遅い (頭欠け) -> tolerance=15s 超 -> violations あり。"""
+        det = [{"start_time": 116.0, "end_time": 500.0}]
+        gt = [{"index": 1, "start_time": 100.0, "end_time": 500.0}]
+        r = compare_detection_to_gt(det, gt, 15.0, inclusive_slack_sec=300.0)
+        assert len(r["violations"]) == 1
+        v = r["violations"][0]
+        assert v["index"] == 1
+        assert v["direction"] == "start_loss"
+        assert v["start_err"] == pytest.approx(16.0)
+
+    def test_excess_direction_start_250s_passes(self):
+        """start が GT より 250s 早い (ロビー混入) -> inclusive_slack=300s 以内 -> violations なし。"""
+        det = [{"start_time": -150.0, "end_time": 500.0}]
+        gt = [{"index": 1, "start_time": 100.0, "end_time": 500.0}]
+        r = compare_detection_to_gt(det, gt, 15.0, inclusive_slack_sec=300.0)
+        # start_err = -150 - 100 = -250 -> |excess|=250 < 300 -> pass
+        assert not r["violations"]
+
+    def test_excess_direction_start_301s_fails(self):
+        """start が GT より 301s 早い -> inclusive_slack=300s 超 -> violations あり。"""
+        det = [{"start_time": -201.0, "end_time": 500.0}]
+        gt = [{"index": 1, "start_time": 100.0, "end_time": 500.0}]
+        r = compare_detection_to_gt(det, gt, 15.0, inclusive_slack_sec=300.0)
+        # start_err = -201 - 100 = -301 -> excess 301 > 300 -> violation
+        assert len(r["violations"]) == 1
+        v = r["violations"][0]
+        assert v["direction"] == "start_excess"
+
+    def test_violations_empty_on_exact_match(self):
+        det = [{"start_time": 100.0, "end_time": 500.0}]
+        gt = [{"index": 1, "start_time": 100.0, "end_time": 500.0}]
+        r = compare_detection_to_gt(det, gt, 15.0, inclusive_slack_sec=300.0)
+        assert not r["violations"]
+
+    def test_max_abs_error_still_present_for_backward_compat(self):
+        """max_abs_error は後方互換で残る。"""
+        det = [{"start_time": 90.0, "end_time": 520.0}]
+        gt = [{"index": 1, "start_time": 100.0, "end_time": 500.0}]
+        r = compare_detection_to_gt(det, gt, 15.0)
+        assert "max_abs_error" in r
+        assert r["max_abs_error"] == pytest.approx(20.0)
+
+
 def _gt_files():
     return sorted(_GT_DIR.glob("*.json")) if _GT_DIR.exists() else []
 
@@ -232,7 +330,15 @@ def test_vtuber_gt_match(gt_path, tmp_path):
     )
     assert r.returncode == 0, r.stderr[-2000:]
     meta = json.loads((out / "metadata.json").read_text(encoding="utf-8"))
-    result = compare_detection_to_gt(meta["matches"], gt_matches, gt["tolerance_sec"])
+    # 非対称 tolerance: GT json の inclusive_slack_sec を読み (無ければ 300.0 default)
+    inclusive_slack = float(gt.get("inclusive_slack_sec", 300.0))
+    result = compare_detection_to_gt(
+        meta["matches"],
+        gt_matches,
+        gt["tolerance_sec"],
+        inclusive_slack_sec=inclusive_slack,
+    )
     assert result["matched"] == len(gt_matches), result
     assert not result["missed"] and not result["spurious"], result
-    assert result["max_abs_error"] <= gt["tolerance_sec"], result["boundary_errors"]
+    # 非対称 gate: violations リストで per-cell 判定 (損失方向 tolerance_sec / 余分方向 inclusive_slack_sec)
+    assert not result["violations"], result["violations"]

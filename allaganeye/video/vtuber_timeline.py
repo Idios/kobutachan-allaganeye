@@ -673,7 +673,15 @@ def snap_segment_edges(
 
 
 _LONG_GAP_EDGE_WINDOW_S = 60.0
-"""gap > MERGE_GAP_MAX のとき両端それぞれ probe する窓幅 (秒)."""
+"""gap > MERGE_GAP_MAX のとき head (end 側) probe する窓幅 (秒)."""
+
+LONG_GAP_START_BACK_S = 120.0
+"""gap > MERGE_GAP_MAX のとき tail (start 側) で coarse start から後方へ probe する窓幅 (秒)。
+
+旧値は _LONG_GAP_EDGE_WINDOW_S(60s) を共用していたが、shirurori M7 実測で
+zone-in blackout (境界 blackout) が coarse start の 60s 超前にあり tail 窓に入らず
+staging 18s 頭欠けが発生した (#895 P3 8周目 Idios 承認)。120s に拡大することで
+境界 blackout を捕捉する。head 窓 (_LONG_GAP_EDGE_WINDOW_S=60s) は変更しない。"""
 
 
 def _probe_gap_one(video_path: Path, t: float, anchor) -> GapProbe:
@@ -752,8 +760,11 @@ def refine_segments(
     - 第 2 パス (snap): merge 確定後の各境界に snap を適用する。
       短 gap: probe_gap を再利用できる場合は第 1 パスで取得済みのものを使う。
       長 gap: 両端窓のみ probe (probe 2 回)。
-      end 側窓: [prev_end - EDGE_EXT_END_S, prev_end + _LONG_GAP_EDGE_WINDOW_S]
+      end 側 (head) 窓: [prev_end - EDGE_EXT_END_S, prev_end + _LONG_GAP_EDGE_WINDOW_S]
       (旧 EDGE_EXT_S=45s から EDGE_EXT_END_S=120s に拡大。shinryu M3 型対応)。
+      start 側 (tail) 窓: [next_start - LONG_GAP_START_BACK_S, next_start + EDGE_EXT_S]
+      (旧 _LONG_GAP_EDGE_WINDOW_S=60s から LONG_GAP_START_BACK_S=120s に拡大。
+       shirurori M7 型: zone-in blackout が coarse start の 60s 超前にある場合対応)。
 
     per-gap 例外隔離: probe/裁定に失敗した gap は V2 の粗い結果を維持する
     (V3 は改善のみ、失敗しても悪化させない)。
@@ -886,7 +897,7 @@ def refine_segments(
                 tail = probe_gap(
                     video_path,
                     anchor,
-                    next_start_orig - _LONG_GAP_EDGE_WINDOW_S,
+                    next_start_orig - LONG_GAP_START_BACK_S,
                     next_start_orig + EDGE_EXT_S,
                     workers=workers,
                 )
@@ -894,7 +905,7 @@ def refine_segments(
                     prev_end_orig, prev_end_orig + _LONG_GAP_EDGE_WINDOW_S, head
                 )
                 _, new_start = snap_segment_edges(
-                    next_start_orig - _LONG_GAP_EDGE_WINDOW_S, next_start_orig, tail
+                    next_start_orig - LONG_GAP_START_BACK_S, next_start_orig, tail
                 )
         except Exception:
             logger.warning(

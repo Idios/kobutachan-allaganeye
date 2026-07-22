@@ -15,6 +15,7 @@ from allaganeye.video.vtuber_timeline import (
     EDGE_EXT_S,
     FROZEN_MAX,
     GapProbe,
+    LONG_GAP_START_BACK_S,
     SNAP_FLICKER_TOL,
     TIMELINE_MAD_MIN,
     TIMELINE_PAIR_DT,
@@ -714,7 +715,7 @@ class TestRefineSegments:
 
     def test_long_gap_edge_windows_extended_by_edge_ext_s(self):
         # gap > MERGE_GAP_MAX の長 gap: head は [prev_end - EDGE_EXT_END_S, prev_end + 60]
-        # tail は [next_start - 60, next_start + EDGE_EXT_S]
+        # tail は [next_start - LONG_GAP_START_BACK_S(120), next_start + EDGE_EXT_S]
         # 2 パス化後: 第 1 パス (長 gap は probe なし) + 第 2 パス gap snap (2 回)
         #   + 端 snap (first start + last end) (2 回) = 計 4 回
         segs = [self._seg(0, 400), self._seg(900, 1300)]
@@ -722,7 +723,7 @@ class TestRefineSegments:
 
         def _spy_probe_gap(vp, anchor, t0, t1, **kw):
             captured_calls.append({"t0": t0, "t1": t1})
-            return _gap_probes("l" * 60)
+            return _gap_probes("l" * max(1, int(t1 - t0)))
 
         with patch(
             "allaganeye.video.vtuber_timeline.probe_gap",
@@ -734,12 +735,81 @@ class TestRefineSegments:
         assert len(captured_calls) == 4
         head_call = captured_calls[0]
         tail_call = captured_calls[1]
-        # head: [prev_end - EDGE_EXT_END_S, prev_end + 60] (end 側 120s 拡張)
+        # head: [prev_end - EDGE_EXT_END_S, prev_end + 60] (end 側 120s 拡張、変更なし)
         assert head_call["t0"] == pytest.approx(max(0.0, 400.0 - EDGE_EXT_END_S))
         assert head_call["t1"] == pytest.approx(400.0 + 60.0)
-        # tail: [next_start - 60, next_start + EDGE_EXT_S]
-        assert tail_call["t0"] == pytest.approx(900.0 - 60.0)
+        # tail: [next_start - LONG_GAP_START_BACK_S(120), next_start + EDGE_EXT_S]
+        # shirurori M7 型: zone-in blackout が coarse start の 60s 超前にある場合を捕捉
+        assert tail_call["t0"] == pytest.approx(900.0 - LONG_GAP_START_BACK_S)
         assert tail_call["t1"] == pytest.approx(900.0 + EDGE_EXT_S)
+
+    def test_long_gap_tail_adopts_zone_in_blackout_beyond_60s(self):
+        """shirurori M7 型: zone-in blackout が coarse start の 60-120s 前にある run が
+        tail 窓 (LONG_GAP_START_BACK_S=120s) に収まり new_start として採用される。
+
+        構成: gap > MERGE_GAP_MAX (next_start=900, prev_end=400, gap=500s)
+        zone-in blackout: t=820-821 (coarse start 900 より 79s 前)
+        旧 tail 窓 [840, 945]: blackout end t=821 は 821 < 840 -> 窓外 -> 採用不能
+        新 tail 窓 [780, 945]: blackout end t=821 -> 780 < 821 <= 900 -> 採用
+        """
+        # tail probe は [next_start - LONG_GAP_START_BACK_S, next_start + EDGE_EXT_S]
+        # = [900 - 120, 900 + 45] = [780, 945]
+        # zone-in blackout: t=820-821 (= 0-indexed 40-41 in the tail window starting at 780)
+        # _snap_start: Priority 1 lo=900-120=780, hi=900
+        # blackout run end = 821.0 -> 780 < 821 <= 900 -> in range -> new_start=821
+
+        segs = [self._seg(0, 400), self._seg(900, 1300)]
+        # 165 probes = 780..944 (stride 1s)
+        # probe index = t - 780, blackout at index 40 (t=820) and 41 (t=821)
+        # build: 40 l + 2 b + remaining l
+        zone_in_idx_start = 40  # t=820 (= 780 + 40)
+        n_total = 165
+        tail_probes = (
+            [
+                GapProbe(t=780.0 + i, present=False, band_mad=5.0, band_b=110.0)
+                for i in range(zone_in_idx_start)
+            ]
+            + [
+                GapProbe(
+                    t=780.0 + zone_in_idx_start, present=False, band_mad=2.0, band_b=5.0
+                ),
+                GapProbe(
+                    t=780.0 + zone_in_idx_start + 1,
+                    present=False,
+                    band_mad=2.0,
+                    band_b=5.0,
+                ),
+            ]
+            + [
+                GapProbe(t=780.0 + i, present=False, band_mad=5.0, band_b=110.0)
+                for i in range(zone_in_idx_start + 2, n_total)
+            ]
+        )
+        # head probes: all absent (no snap for end side)
+        head_probes = [
+            GapProbe(t=280.0 + i, present=False, band_mad=5.0, band_b=110.0)
+            for i in range(180)
+        ]
+
+        def _spy(vp, anchor, t0, t1, **kw):
+            # head call: [prev_end - EDGE_EXT_END_S, prev_end + 60] = [280, 460]
+            if abs(t0 - (400.0 - EDGE_EXT_END_S)) < 1.0:
+                return head_probes
+            # tail call: [900 - LONG_GAP_START_BACK_S, 900 + EDGE_EXT_S] = [780, 945]
+            if abs(t0 - (900.0 - LONG_GAP_START_BACK_S)) < 1.0:
+                return tail_probes
+            # outer edge snaps: return absent probes
+            return [
+                GapProbe(t=t0 + i, present=False, band_mad=5.0, band_b=110.0)
+                for i in range(max(1, int(t1 - t0)))
+            ]
+
+        with patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy):
+            out = refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+
+        assert len(out) == 2
+        # zone-in blackout end t=821 is in Priority 1 range (780 < 821 <= 900) -> adopted
+        assert out[1]["start"] == pytest.approx(821.0)
 
 
 class TestRefineFix1TwoPassIsolation:
