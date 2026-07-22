@@ -6677,3 +6677,111 @@ def test_sanitize_brightness_samples_rejects_nan_interval(caplog):
 
     assert _sanitize_brightness_samples({"interval_s": float("nan"), "values": []}) is None
     assert _sanitize_brightness_samples({"interval_s": float("inf"), "values": []}) is None
+
+
+# ---------------------------------------------------------------------------
+# Task 4: CacheHit + _load_cache_hit single-read (#879)
+# ---------------------------------------------------------------------------
+
+
+def _write_cache(tmp_path, video_path, *, interval=2.0, extra=None):
+    """Minimal valid detection cache matching _load_cache_hit's key checks."""
+    import json as _json
+
+    from allaganeye.commands import split_matches
+
+    stat = video_path.stat()
+    data = {
+        "cache_version": split_matches._CACHE_VERSION,
+        "source": str(video_path.resolve()),
+        "source_size": stat.st_size,
+        "source_mtime": stat.st_mtime,
+        "params": {
+            "sample_interval": interval,
+            "blackout_threshold": 15.0,
+            "min_match_duration": 300.0,
+            "min_blackout_duration": 3.0,
+            "no_audio": False,
+            # masked_algo は masked_affected になりうる cache で key mismatch miss を
+            # 防ぐために _MASKED_ALGO_VERSION で pin する (#879 key validation)
+            "masked_algo": split_matches._MASKED_ALGO_VERSION,
+        },
+        "boundaries": [[0.0, 100.0]],
+    }
+    if extra:
+        data.update(extra)
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(_json.dumps(data), encoding="utf-8")
+    return cache_path
+
+
+def _cache_config(tmp_path):
+    from allaganeye.commands.split_matches import SplitConfig
+
+    return SplitConfig(output_dir=tmp_path)
+
+
+def test_load_cache_hit_reads_file_once(tmp_path, monkeypatch):
+    """三重 read 解消の pin: cache-hit で read_text は 1 回だけ (#879)."""
+    from allaganeye.commands import split_matches
+
+    video = tmp_path / "v.mkv"
+    video.write_bytes(b"x" * 10)
+    cache_path = _write_cache(tmp_path, video, extra={"masked_fallback_used": True})
+
+    calls = {"n": 0}
+    real_read = split_matches.Path.read_text
+
+    def counting_read(self, *a, **k):
+        if self == cache_path:
+            calls["n"] += 1
+        return real_read(self, *a, **k)
+
+    monkeypatch.setattr(split_matches.Path, "read_text", counting_read)
+    hit = split_matches._load_cache_hit(cache_path, video, 2.0, _cache_config(tmp_path))
+    assert hit is not None
+    assert hit.boundaries == [[0.0, 100.0]]
+    assert hit.masked_fallback_used is True
+    assert calls["n"] == 1
+
+
+def test_load_cache_hit_miss_returns_none(tmp_path):
+    from allaganeye.commands import split_matches
+
+    video = tmp_path / "v.mkv"
+    video.write_bytes(b"x" * 10)
+    cache_path = _write_cache(tmp_path, video)
+    # interval mismatch -> miss
+    assert split_matches._load_cache_hit(cache_path, video, 999.0, _cache_config(tmp_path)) is None
+
+
+def test_load_cache_hit_synthesizes_legacy_full_frame(tmp_path):
+    """pre-#810 legacy cache (capture_regions 欠落, vtuber/masked off) は FULL_FRAME 合成 (#879 保持)."""
+    from allaganeye.commands import split_matches
+    from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
+
+    video = tmp_path / "v.mkv"
+    video.write_bytes(b"x" * 10)
+    cache_path = _write_cache(tmp_path, video)
+    hit = split_matches._load_cache_hit(cache_path, video, 2.0, _cache_config(tmp_path))
+    assert hit is not None
+    assert hit.capture_regions == RegionTimeline(coarse=FULL_FRAME).to_dict()
+
+
+def test_capture_regions_from_cache_data_pure(tmp_path):
+    from allaganeye.commands import split_matches
+
+    valid = {
+        "coarse": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "confidence": 1.0, "source": "full_frame"},
+        "segments": [],
+        "fallback_reason": None,
+    }
+    data = {"capture_regions": valid}
+    assert split_matches._capture_regions_from_cache_data(data) == valid
+
+
+def test_masked_fallback_from_cache_data_pure():
+    from allaganeye.commands import split_matches
+
+    assert split_matches._masked_fallback_from_cache_data({"masked_fallback_used": True}) is True
+    assert split_matches._masked_fallback_from_cache_data({}) is False

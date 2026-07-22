@@ -8,6 +8,7 @@ import shutil
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict, cast
 
@@ -2069,6 +2070,11 @@ def _save_cache(
         logger.debug("Failed to write detection cache to %s", cache_path)
 
 
+def _masked_fallback_from_cache_data(data: dict) -> bool:
+    """Pure parser: resolved masked fallback flag from an already-parsed cache dict (#879)."""
+    return bool(data.get("masked_fallback_used", False))
+
+
 def _read_cached_masked_fallback(cache_path: Path) -> bool:
     """cache-hit 経路用: cache に記録された resolved masked fallback を読む。
 
@@ -2079,7 +2085,7 @@ def _read_cached_masked_fallback(cache_path: Path) -> bool:
         data = json.loads(cache_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    return bool(data.get("masked_fallback_used", False))
+    return _masked_fallback_from_cache_data(data)
 
 
 _BRIGHTNESS_SAMPLES_KEYS = frozenset({"interval_s", "values"})
@@ -2231,8 +2237,12 @@ def _is_valid_capture_region(region: object) -> bool:
     return True
 
 
-def _read_cached_capture_regions(cache_path: Path) -> "CaptureRegions | None":
-    """cache-hit 経路用: cache に記録された capture region timeline を読む (#810).
+def _capture_regions_from_cache_data(data: dict) -> "CaptureRegions | None":
+    """Pure parser: capture region timeline from an already-parsed cache dict (#810/#879).
+
+    (元 _read_cached_capture_regions の synthesis ロジックをそのまま移設:
+    present は sanitize、absent+non-vtuber+non-masked は FULL_FRAME 合成、
+    それ以外は None。)
 
     pre-#810 legacy cache (field なし / explicit null) は、cache 記録の
     params.vtuber == False かつ masked_fallback_used == False なら標準 path 確定
@@ -2251,15 +2261,8 @@ def _read_cached_capture_regions(cache_path: Path) -> "CaptureRegions | None":
     で shape 検証する: valid -> そのまま返す; invalid -> logger.warning + None 返す。
     present-but-garbage は "cache が破損/改竄" を意味し FULL_FRAME 合成に fall-through
     しない (present-but-garbage != legacy absent = 標準 path 確定)。
-
-    cache が読めないときも None。`_load_cache` の hit 判定とは独立に読む
-    (`_read_cached_masked_fallback` と同型)。
     codex adversarial-review F1 (2026-07-07 Idios confirmed): sanitize hardening.
     """
-    try:
-        data = json.loads(cache_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
     cached = data.get("capture_regions")
     if cached is not None:
         # present value: sanitize. invalid means cache corruption/tampering;
@@ -2267,9 +2270,8 @@ def _read_cached_capture_regions(cache_path: Path) -> "CaptureRegions | None":
         sanitized = _sanitize_capture_regions(cached)
         if sanitized is None:
             logger.warning(
-                "Dropping malformed capture_regions from cache %s "
-                "(corrupted or hand-edited cache value -- region unknown)",
-                cache_path,
+                "Dropping malformed capture_regions from cache "
+                "(corrupted or hand-edited cache value -- region unknown)"
             )
         return sanitized
     # cached is None: key absent or explicit null -- legacy absent semantics.
@@ -2277,6 +2279,19 @@ def _read_cached_capture_regions(cache_path: Path) -> "CaptureRegions | None":
     if not params.get("vtuber", False) and not data.get("masked_fallback_used", False):
         return cast("CaptureRegions", RegionTimeline(coarse=FULL_FRAME).to_dict())
     return None
+
+
+def _read_cached_capture_regions(cache_path: Path) -> "CaptureRegions | None":
+    """cache-hit 経路用: cache に記録された capture region timeline を読む (#810).
+
+    cache が読めないときも None。`_load_cache` の hit 判定とは独立に読む
+    (`_read_cached_masked_fallback` と同型)。
+    """
+    try:
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return _capture_regions_from_cache_data(data)
 
 
 def _load_cache(
@@ -2377,3 +2392,90 @@ def _load_cache(
         return None
 
     return boundaries
+
+
+@dataclass(frozen=True)
+class CacheHit:
+    """Single-read cache-hit result: boundaries + provenance from one snapshot (#879)."""
+
+    boundaries: list[MatchBoundary]
+    masked_fallback_used: bool
+    capture_regions: "CaptureRegions | None"
+
+
+def _load_cache_hit(
+    cache_path: Path,
+    video_path: Path,
+    effective_interval: float,
+    config: SplitConfig,
+) -> "CacheHit | None":
+    """Load + validate cache, returning boundaries and provenance from ONE read (#879).
+
+    三重 file open (旧: _load_cache + _read_cached_masked_fallback +
+    _read_cached_capture_regions) を単一 read に統合し、検証済み boundaries と
+    provenance が必ず同一 snapshot 由来になるようにする (codex F2)。
+    """
+    if not cache_path.is_file():
+        return None
+    try:
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.debug("Detection cache unreadable: %s", cache_path)
+        return None
+
+    # --- key validation (identical to _load_cache) ---
+    if data.get("cache_version") != _CACHE_VERSION:
+        return None
+    resolved = video_path.resolve()
+    if data.get("source") != str(resolved):
+        return None
+    try:
+        stat = resolved.stat()
+    except OSError:
+        return None
+    if data.get("source_size") != stat.st_size:
+        return None
+    if data.get("source_mtime") != stat.st_mtime:
+        return None
+    params = data.get("params", {})
+    if (
+        params.get("sample_interval") != effective_interval
+        or params.get("blackout_threshold") != config.blackout_threshold
+        or params.get("min_match_duration") != config.min_match_duration
+        or params.get("min_blackout_duration") != config.min_blackout_duration
+        or params.get("no_audio") != config.no_audio
+        or params.get("vtuber", False) != config.vtuber
+        or params.get("masked", False) != config.masked
+        or params.get("keep_trailing", False) != config.keep_trailing
+    ):
+        return None
+    _raw_cached_algo = params.get("masked_algo", 1)
+    try:
+        cached_algo = int(_raw_cached_algo)
+    except (ValueError, TypeError):
+        cached_algo = -1
+    masked_affected = (
+        data.get("masked_fallback_used", False)
+        or params.get("masked", False)
+        or config.masked
+    )
+    if masked_affected and cached_algo != _MASKED_ALGO_VERSION:
+        return None
+    _raw_cached_vtuber_algo = params.get("vtuber_algo", 1)
+    try:
+        cached_vtuber_algo = int(_raw_cached_vtuber_algo)
+    except (ValueError, TypeError):
+        cached_vtuber_algo = -1
+    vtuber_affected = params.get("vtuber", False) or config.vtuber
+    if vtuber_affected and cached_vtuber_algo != _VTUBER_ALGO_VERSION:
+        return None
+
+    boundaries = data.get("boundaries")
+    if not isinstance(boundaries, list):
+        return None
+
+    return CacheHit(
+        boundaries=boundaries,
+        masked_fallback_used=_masked_fallback_from_cache_data(data),
+        capture_regions=_capture_regions_from_cache_data(data),
+    )
