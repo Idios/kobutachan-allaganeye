@@ -1846,7 +1846,9 @@ class TestCaptureRegionsCache:
         assert regions["coarse"]["x"] == 0.0 and regions["coarse"]["w"] == 1.0
         assert regions["fallback_reason"] is None
 
-    def test_read_cached_capture_regions_unreadable_returns_none(self, cache_video, cache_config, tmp_path):
+    def test_read_cached_capture_regions_unreadable_returns_none(
+        self, cache_video, cache_config, tmp_path
+    ):
         # IO エラー時の None は _load_cache_hit 経由で担保される (#879)
         cache_path = tmp_path / "missing_dir" / ".detection_cache.json"
         assert _load_cache_hit(cache_path, cache_video, 2.0, cache_config) is None
@@ -2857,7 +2859,9 @@ class TestDiskSpaceCheck:
         is available before splitting.
         """
         mock_probe.return_value = PROBE_RESULT
-        mock_load.return_value = CacheHit(boundaries=BOUNDARIES, masked_fallback_used=False, capture_regions=None)  # simulate cache hit
+        mock_load.return_value = CacheHit(
+            boundaries=BOUNDARIES, masked_fallback_used=False, capture_regions=None
+        )  # simulate cache hit
         mock_split.return_value = _output_files(tmp_path)
         config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
@@ -3039,7 +3043,11 @@ class TestDiskSpacePostMatchBudget:
         """
         mock_probe.return_value = PROBE_RESULT
         # Cache returns boundaries WITH a post_match tail.
-        mock_load.return_value = CacheHit(boundaries=list(_ACTIVE_AND_POST), masked_fallback_used=False, capture_regions=None)
+        mock_load.return_value = CacheHit(
+            boundaries=list(_ACTIVE_AND_POST),
+            masked_fallback_used=False,
+            capture_regions=None,
+        )
         mock_split.return_value = [tmp_path / "match_001.mp4"]
         config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
@@ -5793,7 +5801,9 @@ def test_run_split_cache_hit_omits_brightness_samples(
     補完する。
     """
     mock_probe.return_value = PROBE_RESULT
-    mock_load_cache.return_value = CacheHit(boundaries=BOUNDARIES, masked_fallback_used=False, capture_regions=None)  # cache hit -> Pass 1 skip
+    mock_load_cache.return_value = CacheHit(
+        boundaries=BOUNDARIES, masked_fallback_used=False, capture_regions=None
+    )  # cache hit -> Pass 1 skip
 
     output_dir = tmp_path / "out_cache_hit"
     mock_split.return_value = [
@@ -6586,7 +6596,9 @@ def test_sanitize_brightness_samples_accepts_valid():
 def test_sanitize_brightness_samples_rejects_extra_key():
     from allaganeye.commands.split_matches import _sanitize_brightness_samples
 
-    assert _sanitize_brightness_samples({"interval_s": 2.0, "values": [], "x": 1}) is None
+    assert (
+        _sanitize_brightness_samples({"interval_s": 2.0, "values": [], "x": 1}) is None
+    )
 
 
 def test_sanitize_brightness_samples_rejects_nonpositive_interval():
@@ -6610,7 +6622,10 @@ def test_sanitize_brightness_samples_rejects_value_out_of_range():
 def test_sanitize_brightness_samples_rejects_nan_value():
     from allaganeye.commands.split_matches import _sanitize_brightness_samples
 
-    assert _sanitize_brightness_samples({"interval_s": 2.0, "values": [float("nan")]}) is None
+    assert (
+        _sanitize_brightness_samples({"interval_s": 2.0, "values": [float("nan")]})
+        is None
+    )
 
 
 def test_sanitize_brightness_samples_rejects_values_not_list():
@@ -6636,7 +6651,9 @@ def test_preserve_brightness_samples_valid_passthrough_no_warn(caplog):
 
     valid = {"interval_s": 2.0, "values": [1.0]}
     with caplog.at_level("WARNING"):
-        result = split_matches._preserve_brightness_samples({"brightness_samples": valid})
+        result = split_matches._preserve_brightness_samples(
+            {"brightness_samples": valid}
+        )
     assert result == valid
     assert "Dropping malformed" not in caplog.text
 
@@ -6653,8 +6670,12 @@ def test_preserve_brightness_samples_absent_no_warn(caplog):
 def test_sanitize_brightness_samples_rejects_nan_interval(caplog):
     from allaganeye.commands.split_matches import _sanitize_brightness_samples
 
-    assert _sanitize_brightness_samples({"interval_s": float("nan"), "values": []}) is None
-    assert _sanitize_brightness_samples({"interval_s": float("inf"), "values": []}) is None
+    assert (
+        _sanitize_brightness_samples({"interval_s": float("nan"), "values": []}) is None
+    )
+    assert (
+        _sanitize_brightness_samples({"interval_s": float("inf"), "values": []}) is None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -6730,7 +6751,10 @@ def test_load_cache_hit_miss_returns_none(tmp_path):
     video.write_bytes(b"x" * 10)
     cache_path = _write_cache(tmp_path, video)
     # interval mismatch -> miss
-    assert split_matches._load_cache_hit(cache_path, video, 999.0, _cache_config(tmp_path)) is None
+    assert (
+        split_matches._load_cache_hit(cache_path, video, 999.0, _cache_config(tmp_path))
+        is None
+    )
 
 
 def test_load_cache_hit_synthesizes_legacy_full_frame(tmp_path):
@@ -6750,7 +6774,14 @@ def test_capture_regions_from_cache_data_pure(tmp_path):
     from allaganeye.commands import split_matches
 
     valid = {
-        "coarse": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "confidence": 1.0, "source": "full_frame"},
+        "coarse": {
+            "x": 0.0,
+            "y": 0.0,
+            "w": 1.0,
+            "h": 1.0,
+            "confidence": 1.0,
+            "source": "full_frame",
+        },
         "segments": [],
         "fallback_reason": None,
     }
@@ -6761,5 +6792,8 @@ def test_capture_regions_from_cache_data_pure(tmp_path):
 def test_masked_fallback_from_cache_data_pure():
     from allaganeye.commands import split_matches
 
-    assert split_matches._masked_fallback_from_cache_data({"masked_fallback_used": True}) is True
+    assert (
+        split_matches._masked_fallback_from_cache_data({"masked_fallback_used": True})
+        is True
+    )
     assert split_matches._masked_fallback_from_cache_data({}) is False
