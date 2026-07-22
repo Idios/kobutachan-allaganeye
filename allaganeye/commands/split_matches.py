@@ -477,8 +477,8 @@ def run_split_from_metadata(
     # JSON payload は Any 型なので isinstance チェック後に cast で
     # BrightnessSamples (TypedDict) に narrow する。schema 検証は
     # _build_metadata_payload 側の TypedDict 構造に委譲。
-    preserve_brightness_samples: BrightnessSamples | None = _preserve_brightness_samples(
-        payload
+    preserve_brightness_samples: BrightnessSamples | None = (
+        _preserve_brightness_samples(payload)
     )
 
     # #805 段階1 -- preserve warnings across `--from-metadata`. detect ->

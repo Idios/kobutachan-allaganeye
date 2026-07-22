@@ -1934,7 +1934,6 @@ class TestCaptureRegionsCache:
         for standard path (vtuber=False, masked_fallback_used=False) -> FULL_FRAME.
         This pins the null-tolerance so future refactors don't break legacy caches.
         """
-        import json as _json
 
         from allaganeye.commands.split_matches import _capture_regions_from_cache_data
 
