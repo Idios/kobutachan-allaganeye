@@ -34,10 +34,10 @@ P2-25〜P2-35 + doc 系 P3 を消化する。W1〜W5 は消化済みで、W6 の
 | P2-31 | scorebar-design が #803 と**逆**の記述 (「最長 run」)、#797 / #811 不在 | 中央跨ぎ run + 幅上限 1440px |
 | P2-32 | system-architecture §2.1 起動経路 / §2.3 export 経路が同一 doc 内 §2.6 と矛盾、quickstart ZIP レイアウトが pre-#752 | #752 / #761 後の実装 |
 | P2-33 | versioning「pyproject.toml のみ」 | 3 箇所 (pyproject / tauri.conf.json / package.json)。「Director」旧用語も残存 |
-| P2-34 | cli-spec detect 節に `--progress-format` / `--gpu-vendor` 不在、export `--concurrency` の codec=copy 規則不在 | `allaganeye/cli.py` / `commands/export.py:256` |
+| P2-34 | cli-spec detect 節に `--progress-format` / `--gpu-vendor` 不在、split / detect 両節に `--masked` 不在、export `--concurrency` の codec=copy 規則不在 | `allaganeye/cli.py` / `commands/export.py:256` |
 | P2-35 | developer-setup が LGPL 推奨と言いつつ GPL `winget Gyan.FFmpeg` を「推奨」表記 | #508 方針 |
 | P3 | gui-development CI「3 ジョブ」 | 実際 8 ジョブ |
-| P3 | cli-spec metadata トップレベル表に 6 field 欠落 + 抜粋である旨の注記なし | `schemas/metadata.schema.json` |
+| P3 | cli-spec metadata トップレベル表に **7 field** 欠落 + 抜粋である旨の注記なし | `schemas/metadata.schema.json` |
 | P3 | output-spec 適用範囲に `detect` 不在 | — |
 | 新規 | #860 の PowerShell CIM fallback が CLAUDE.md §GPU モードに不在 | `allaganeye/system_info.py` |
 | 新規 | #879 の optional field write 検証硬化が metadata-spec に不在。cli-spec の `_load_cache` は `_load_cache_hit` に改名済み | `gui/src-tauri` / `detection/` |
@@ -49,10 +49,15 @@ P2-25〜P2-35 + doc 系 P3 を消化する。W1〜W5 は消化済みで、W6 の
 - metadata-spec §将来の拡張 の #810 — `capture_regions` として実装済み・本文に記載済み
 - `docs/design/bundle/README.md` のパス — doc 内で自己整合
 
-### 監査 headline 自体の誤り
+### 監査の計数誤り (2 件)
 
 P2-25 の headline「6 doc 7 箇所」は実測と不一致。実測は **4 doc 15 箇所**
 (監査の列挙も 8 箇所で、headline・列挙・実測の三者が食い違っていた)。
+
+cli-spec metadata トップレベル表の欠落も監査は「6 field」としているが、実測は
+**7 field** (`schemas/metadata.schema.json` の 16 field に対し doc は 9 field)。
+欠落は `schema_version` / `source_fps` / `warnings` / `system_info` /
+`brightness_samples` / `capture_regions` / `minimap_regions`。
 
 | doc | 行 | 分類 |
 | --- | --- | --- |
