@@ -88,4 +88,4 @@ Conventional Commits 形式:
 
 ### 背景 (違反の代表事例)
 
-workers 上限「24」が 6 doc 7 箇所に複製されたまま実装 (32) と drift した (2026-06-10 full audit P2-25)。同種の doc–実装 drift が P2-26〜P2-28 等でも反復しており、値の複製自体が drift の構造的な再発要因。詳細は [`docs/audits/2026-06-10-full-audit.md`](audits/2026-06-10-full-audit.md) および [audit-remediation spec §N3](superpowers/specs/2026-06-10-audit-remediation-design.md#n3-doc-ssot-規約の明文化--release-gate-追記) を参照。
+workers 上限「24」が 4 doc 15 箇所 (うち仕様主張は 8 箇所、残る 7 箇所は当時の計測値を記録した実測記録) に複製されたまま実装 (32) と drift した (2026-06-10 full audit P2-25。監査 headline の「6 doc 7 箇所」は #862 の再突合で実測と不一致であることが判明した)。同種の doc–実装 drift が P2-26〜P2-28 等でも反復しており、値の複製自体が drift の構造的な再発要因。**実測記録は書き換えない** — 行われていない測定条件を記録することになるため、SSoT 化の対象は仕様を主張している箇所に限る。詳細は [`docs/audits/2026-06-10-full-audit.md`](audits/2026-06-10-full-audit.md) および [audit-remediation spec §N3](superpowers/specs/2026-06-10-audit-remediation-design.md#n3-doc-ssot-規約の明文化--release-gate-追記) を参照。
