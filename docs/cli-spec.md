@@ -224,14 +224,14 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 | `source` | string | 入力動画のファイルパス |
 | `source_duration` | float | 入力動画の総再生時間（秒） |
 | `source_duration_display` | string | 総再生時間の表示形式（MM:SS or H:MM:SS） |
-| `source_fps` | float \| null | 入力動画のフレームレート。ffprobe で取得できない場合 `null` |
+| `source_fps` | float | 入力動画のフレームレート。存在する場合は必ず float (省略可能、pre-0.2.0 legacy metadata.json では欠落する場合があり、読み込み側は欠落時 DEFAULT_FPS=60 で補完する) |
 | `detected_at` | string | 検知パイプライン開始直前のタイムスタンプ (`detection_started_at` と同値、後方互換のため維持、UTC ISO 8601 秒精度、`Z` 終端、例: `"2026-04-19T12:34:56Z"`)。`run_split` 開始直後に生成し、キャッシュヒット時も本ランの生成時刻を記録する |
 | `detection_started_at` | string | 検知パイプライン開始直前のタイムスタンプ (#586)。`detected_at` と同値。新規書き込みは ✓ / 読み込み時は欠落許容 (legacy metadata.json)。`--from-metadata` 経路は元 metadata の値を pass-through |
 | `detection_completed_at` | string | metadata.json 書き込み直前のタイムスタンプ (#586)。GUI CompleteScreen が `completed - started` で「所要」を表示。新規書き込みは ✓ / 読み込み時は欠落許容。`--from-metadata` 経路は元 metadata の値を pass-through |
 | `detection_params` | object | 検知パラメータのスナップショット（下表） |
 | `matches` | array | 検出された試合セグメント |
 | `gaps` | array | 試合間の有意なギャップ（>=5分） |
-| `warnings` | array | 検知時の警告エントリ (#518)。現行は常に空配列 |
+| `warnings` | array | 検知時の警告エントリ (#518)。新規検知では常に空配列、`--from-metadata` 経路では元 metadata の値を preserve する (#805 段階1) |
 | `system_info` | object | 検知実行環境の記録 (#591)。GPU vendor は export のエンコーダ選択に使われる |
 | `brightness_samples` | object | GUI タイムライン描画用の輝度サンプル (#569) |
 | `capture_regions` | object | 解決された検出 ROI とその縮退 provenance (#810) |
