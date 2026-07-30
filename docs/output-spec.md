@@ -10,6 +10,18 @@
 - **対象外コマンド**: `debug-brightness` (CSV 出力用途で `-v` / `-q` オプション自体を持たない。エラー表示のみ本仕様の 19b 準拠、ただし `-v` hint は表示しない #428)
 - **対象外ストリーム**: stdout / stderr のメインストリーム。`logger.debug` 経由のログは本仕様に含まない (デフォルトで出力されず、開発者向け診断用)
 
+### detect コマンドの適用境界
+
+`detect` は検知フェーズのみを実行するため、マトリクスの以下の行・列は **detect に該当しない**:
+
+- **行 6 (`Dry-run 通知`)**: `detect` に `--dry-run` オプションは存在しない (`allaganeye/cli.py` 参照)。`--dry-run` 系列の列 (3 列) は detect では意味を持たない
+- **行 16 (`Splitting` 進捗バー)**: 分割フェーズが存在しないため detect では常に非出力
+- **行 17 のうち `Output: <dir>` + ファイル一覧**: 分割フェーズが存在しないため detect では出力されない。`Metadata: <path>` のみ detect も出力するが、`show` が真のとき (= `-q` でも `--progress-format json` でもないとき) に限る (`allaganeye/commands/detect.py:330-331` 参照)
+
+**`-q` の挙動は split と異なる**: detect の `-q` は `show = not quiet and not json_mode` の評価により、`Metadata: <path>` 行も含め stdout を全抑制する。下記「強制 silent 契約 (`-q`)」節は **split 専用**の契約であり、detect の `-q` 挙動には適用されない。
+
+**`--progress-format json` は本マトリクスの対象外**: detect 固有のオプション (#569) で、JSON モード時は構造化 JSON Lines を stdout に出力し他のすべての stdout 出力を抑制する。`--progress-format json` 時の挙動詳細は [`docs/cli-spec.md`](cli-spec.md) §「detect コマンド」を参照。
+
 ## 排他オプション組み合わせ
 
 同時指定すると **exit code 5** (ConfigValidationError) で終了する (#419):
@@ -78,7 +90,7 @@ Error: --quiet and --verbose are mutually exclusive
 - 行 19 の `stderr` は「該当モードで該当フォーマットのエラーメッセージが stderr に出る」を意味し、エラーが発生した場合にのみ到達する条件行
 - `-v -q` 列が全行 `❌` なのは、CLI 引数パース直後 (split 処理開始前) に ConfigValidationError で即 exit するため
 
-## 強制 silent 契約 (`-q`)
+## 強制 silent 契約 (`-q`) — split 専用
 
 `-q` モードでは `#418` 対応 (マトリクス行 3, 6, 7, 13 が全て `×`) により、以下のみが stdout に出力される:
 
