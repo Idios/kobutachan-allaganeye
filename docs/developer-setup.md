@@ -109,20 +109,29 @@ ffprobe -version
 
 #### インストール方法
 
-**Windows**（いずれか 1 つ）:
+**Windows**:
+
+**推奨: BtbN の LGPLv3 ビルド** (CI / Portable ZIP と同一系列、#508)。[BtbN/FFmpeg-Builds/releases](https://github.com/BtbN/FFmpeg-Builds/releases) の monthly snapshot から `ffmpeg-n8.1-*-win64-lgpl-shared.zip` をダウンロードして任意のフォルダに展開し、`ALLAGANEYE_FFMPEG` にその `bin/` を指定します:
 
 ```bash
-# winget（推奨）
+# 現在のセッションのみ
+set ALLAGANEYE_FFMPEG=C:\path\to\ffmpeg-n8.1-win64-lgpl-shared\bin
+```
+
+パッケージマネージャ経由でも動作しますが、いずれも **GPL ビルド**であり CI / Portable ZIP 同梱版 (LGPLv3) とライセンス系列が異なります。手軽さを優先する場合のみ使ってください:
+
+```bash
+# winget (GPL ビルド)
 winget install Gyan.FFmpeg
 
-# scoop
+# scoop (GPL ビルド)
 scoop install ffmpeg
 
-# Chocolatey
+# Chocolatey (GPL ビルド)
 choco install ffmpeg
 ```
 
-パッケージマネージャを使わない場合は [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) から `ffmpeg-release-essentials.zip` をダウンロードし、展開先の `bin/` フォルダを PATH に追加してください。
+`winget` のインストール先は自動検索されるため、`Gyan.FFmpeg` を使う場合 PATH 設定は通常不要です (後方互換、`allaganeye/ffmpeg_path.py`)。
 
 **macOS**:
 
