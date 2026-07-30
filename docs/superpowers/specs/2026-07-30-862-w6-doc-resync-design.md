@@ -25,7 +25,7 @@ P2-25〜P2-35 + doc 系 P3 を消化する。W1〜W5 は消化済みで、W6 の
 
 | 項目 | doc 側 | 実装側の正 |
 | --- | --- | --- |
-| P2-25 | workers 上限 `min(cpu_count, 24)` が **4 doc 12 箇所** | `allaganeye/video/detector.py:283` = `min(cpu_count, 32)` |
+| P2-25 | workers 上限 `min(cpu_count, 24)` が **4 doc 15 箇所** | `allaganeye/video/detector.py:283` = `min(cpu_count, 32)` |
 | P2-26 | CPU Pass 1 を「並列 `-ss` プローブ」と記載 | #214 以降チャンク分割デコード |
 | P2-27 | #576 新 path を「output seek + Python 側 sampling」と記載 | dual seek + `select='not(mod(n,N))'` filter (`detector.py:1520,1586`) |
 | P2-28 | tuning-guide「デフォルト = `--no-gpu`」 | codec ベース auto (#414) |
@@ -51,21 +51,28 @@ P2-25〜P2-35 + doc 系 P3 を消化する。W1〜W5 は消化済みで、W6 の
 
 ### 監査 headline 自体の誤り
 
-P2-25 の headline「6 doc 7 箇所」は実測と不一致。実測は **4 doc 12 箇所**:
+P2-25 の headline「6 doc 7 箇所」は実測と不一致。実測は **4 doc 15 箇所**
+(監査の列挙も 8 箇所で、headline・列挙・実測の三者が食い違っていた)。
 
-| doc | 箇所数 | 行 |
+| doc | 行 | 分類 |
 | --- | --- | --- |
-| `docs/cli-spec.md` | 3 | 53 / 269 / 515 |
-| `docs/video-processing.md` | 2 | 53 / 380 |
-| `docs/benchmarks.md` | 5 | 28 / 36 / 50 / 58 / 78 |
-| `docs/tuning-guide.md` | 2 | 173 / 249 |
+| `docs/cli-spec.md` | 53 / 269 / 515 | 仕様主張 → SSoT 化 |
+| `docs/cli-spec.md` | 82 | 実測記録 (`allaganeye 0.1.1` と version 印字された出力サンプル) → 保持 |
+| `docs/tuning-guide.md` | 173 / 249 | 仕様主張 → SSoT 化 |
+| `docs/benchmarks.md` | 78 / 79 | 仕様主張 (§CPU コア数 の指針) → SSoT 化 |
+| `docs/benchmarks.md` | 28 / 36 / 50 / 58 | 実測記録 (§性能改善の推移 の計測値) → 保持 |
+| `docs/video-processing.md` | 53 | 仕様主張 → SSoT 化 |
+| `docs/video-processing.md` | 380 / 381 | 実測記録 (§性能チューニング の施策と計測効果) → 保持 |
 
-このうち仕様を主張しているのは 8 箇所で、残り 4 箇所 (benchmarks の `:28` `:36`
-`:50` `:58`) は実測条件の記録である (設計判断 2 を参照)。
+**仕様主張 8 箇所を SSoT 化、実測記録 7 箇所を保持**する。
+
+`:380` `:381` は「施策と計測効果」を記録する表であり、`~3x スループット` という
+効果は上限 24 で計測された値である。行ごと保持しつつ、現在値と誤読されないよう
+計測時点の値である旨を明記する (設計判断 2 の適用)。
 
 上位 spec §W6 の突合指示に従い、この値を引用している
 `docs/coding-conventions.md` §背景 も訂正する。訂正後の記述は
-「4 doc 12 箇所 (うち仕様主張は 8 箇所)」とし、実測記録との区別を明示する。
+「4 doc 15 箇所 (うち仕様主張は 8 箇所)」とし、実測記録との区別を明示する。
 
 ## 設計判断
 
@@ -82,15 +89,26 @@ worker 数上限を実装 docstring が正となる例として明示してい�
 `allaganeye/commands/split_matches.py` と `tests/test_split_matches.py` の docstring にも
 誤値 24 が残存しており、これらも同時に正へ寄せる。
 
-### 2. benchmarks.md の実測記録は書き換えない
+### 2. 実測記録は書き換えない
 
-`docs/benchmarks.md` の `max_workers=24` 5 箇所のうち、4 箇所 (`:28` `:36` `:50` `:58`) は
-**#69 当時の実測条件を記録したベンチマーク結果**であり、仕様の主張ではない。
-これを 32 に書き換えると、実際には行われていない測定条件を記録することになり
-データの改竄にあたる。史実として保持する。
+workers 上限 24 の出現箇所は「仕様の主張」と「実測記録」が混在している。
+**実測記録を 32 に書き換えると、実際には行われていない測定条件を記録することに
+なりデータの改竄にあたる**ため、史実として保持する。
 
-SSoT 化の対象は仕様を主張している `:78`「`max_workers` のデフォルトは
-`min(cpu_count, 24)`」の 1 箇所のみ。
+保持する 7 箇所:
+
+- `benchmarks.md:28` `:36` — #69 当時の計測条件と、その条件下での所見
+- `benchmarks.md:50` `:58` — §性能改善の推移 の時系列記録 (PR 番号付き)
+- `video-processing.md:380` `:381` — §性能チューニング の施策と計測効果
+  (`~3x スループット` は上限 24 で計測された値)
+- `cli-spec.md:82` — `allaganeye 0.1.1` と version 印字された出力サンプル。
+  サンプル全体が v0.1.1 時点の実出力であり、workers の数値だけ差し替えると
+  version 印字と矛盾する
+
+保持する箇所のうち、現在値と誤読されうる `video-processing.md:380` `:381` には
+計測時点の値である旨を明記する。
+
+SSoT 化するのは仕様を主張している 8 箇所のみ。
 
 ### 3. 監査 doc は書き換えない
 
@@ -166,8 +184,9 @@ PR-A の Python 変更は docstring のみだが、gate は全 repo で回す
 - P2-25〜P2-35 のうち STILL DRIFTED と確認した項目がすべて解消している
 - doc 系 P3 のうち STILL DRIFTED と確認した 3 項目が解消している
 - #860 / #879 の実装が CLAUDE.md / metadata-spec に反映されている
-- workers 上限の値が実装 docstring 1 箇所のみに存在し、他 doc は参照になっている
-- `benchmarks.md` の実測記録 4 箇所が改変されていない
+- workers 上限の仕様主張 8 箇所が SSoT 参照になっている
+- 実測記録 7 箇所 (`benchmarks.md:28,36,50,58` / `video-processing.md:380,381` /
+  `cli-spec.md:82`) の数値が改変されていない
 - `coding-conventions.md` §背景 の引用値が実測と一致している
 - 両 PR で `bash scripts/check-markdownlint.sh` が pass する
 - PR-A で `ruff check .` / `ruff format --check .` / `pyright` / `pytest` が pass する
