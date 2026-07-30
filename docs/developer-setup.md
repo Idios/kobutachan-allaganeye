@@ -115,7 +115,7 @@ ffprobe -version
 
 ```bash
 # 現在のセッションのみ
-set ALLAGANEYE_FFMPEG=C:\path\to\ffmpeg-n8.1-win64-lgpl-shared\bin
+set ALLAGANEYE_FFMPEG=C:\path\to\ffmpeg-n8.1-11-g75d37c499d-win64-lgpl-shared-8.1\bin
 ```
 
 パッケージマネージャ経由でも動作しますが、いずれも **GPL ビルド**であり CI / Portable ZIP 同梱版 (LGPLv3) とライセンス系列が異なります。手軽さを優先する場合のみ使ってください:
