@@ -170,7 +170,7 @@ allaganeye split your_recording.mkv --sample-interval 2.0
 allaganeye split your_recording.mkv --workers 16
 ```
 
-デフォルトでは CPU コア数（最大 24）が自動設定されます。通常は変更不要ですが、他のプロセスとリソースを共有する場合は下げることも検討してください。
+デフォルトでは CPU コア数に応じたワーカー数が自動設定されます（上限は実装側の cap に従います。正は `allaganeye/video/detector.py` の `_resolve_workers` docstring）。通常は変更不要ですが、他のプロセスとリソースを共有する場合は下げることも検討してください。
 
 **対処 3: `--gpu` で GPU アクセラレーションを使う**
 
@@ -246,8 +246,8 @@ allaganeye split your_recording.mkv --dry-run --gpu
 | `--min-match-duration` | 300.0 | 0 以上 | この秒数未満のセグメントを除外する |
 | `--min-blackout-duration` | 3.0 | 0 以上 | この秒数未満の暗転を無視する（リスポーン暗転の除外用） |
 | `--sample-interval` | 1.0 | 0 より大きい値 | フレームチェックの間隔（秒）。大きくすると高速だが精度が下がる |
-| `--workers` | auto | 1 以上 | 並列ワーカー数。デフォルトは CPU コア数（最大 24） |
-| `--gpu` / `--no-gpu` | `--no-gpu` | - | GPU アクセラレーション検知。利用不可時は CPU フォールバック |
+| `--workers` | auto | 1 以上 | 並列ワーカー数。auto は CPU コア数から実装の cap で解決される (正: `_resolve_workers` docstring) |
+| `--gpu` / `--no-gpu` | auto | - | GPU アクセラレーション検知。**どちらも指定しない場合はコーデックから自動選択** (H.264/HEVC/AV1/VP9 → GPU、それ以外 → CPU、#414)。利用不可時は CPU フォールバック |
 
 ## よくある質問
 
