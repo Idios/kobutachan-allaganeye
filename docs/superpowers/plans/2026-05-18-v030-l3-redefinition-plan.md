@@ -1237,7 +1237,9 @@ def test_main_returns_1_on_match_diff(tmp_path: Path):
     }
     current = {
         "source": "video.mp4",
-        "matches": [{"index": 1, "start_time": 5, "end_time": 100}],  # start_time shifted
+        "matches": [
+            {"index": 1, "start_time": 5, "end_time": 100}
+        ],  # start_time shifted
     }
 
     baseline_path = tmp_path / "baseline.json"

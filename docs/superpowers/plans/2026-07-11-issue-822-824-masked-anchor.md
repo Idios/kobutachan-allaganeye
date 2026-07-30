@@ -190,9 +190,10 @@ def test_localize_present_at_has_no_raise_seam():
     # #824 §5.4 site 1: raise_on_probe_failure param は削除済み (bool seam 廃止)。
     import inspect
 
-    assert "raise_on_probe_failure" not in inspect.signature(
-        localize_present_at
-    ).parameters
+    assert (
+        "raise_on_probe_failure"
+        not in inspect.signature(localize_present_at).parameters
+    )
 
 
 def test_scan_presence_partial_unknown_logged(caplog):
@@ -249,6 +250,7 @@ def test_refine_unknown_treated_absent_with_warning(caplog, monkeypatch):
 # presence.py 冒頭 (dataclass 定義を probe_state import に置換):
 from allaganeye.video.probe_state import PresenceSample, PresenceState
 
+
 # site 1:
 def localize_present_at(video_path: Path, timestamp: float) -> PresenceSample:
     """Probe one hi-res frame and report scorebar presence (tri-state, #824).
@@ -259,13 +261,20 @@ def localize_present_at(video_path: Path, timestamp: float) -> PresenceSample:
     raw = _probe_frame_rgb_hires(video_path, timestamp)
     if raw is None:
         logger.debug("presence probe decode failed at t=%.3fs -> UNKNOWN", timestamp)
-        return PresenceSample(time=timestamp, state=PresenceState.UNKNOWN, confidence=0.0)
+        return PresenceSample(
+            time=timestamp, state=PresenceState.UNKNOWN, confidence=0.0
+        )
     loc = localize_from_rgb_bytes(
         raw, height=_SCOREBAR_V2_PROBE_HEIGHT, width=_SCOREBAR_V2_PROBE_WIDTH
     )
     if loc is None:
-        return PresenceSample(time=timestamp, state=PresenceState.ABSENT, confidence=0.0)
-    return PresenceSample(time=timestamp, state=PresenceState.PRESENT, confidence=loc.confidence)
+        return PresenceSample(
+            time=timestamp, state=PresenceState.ABSENT, confidence=0.0
+        )
+    return PresenceSample(
+        time=timestamp, state=PresenceState.PRESENT, confidence=loc.confidence
+    )
+
 
 # site 2 (scan_presence): try/except → UNKNOWN 写像に置換
 # 執行時 deviation (PR #887 codex R1 [medium] 対応): 実装は default sampler を
@@ -273,8 +282,10 @@ def localize_present_at(video_path: Path, timestamp: float) -> PresenceSample:
 # 変更し、系統故障の代表原因を fail-loud の __cause__ まで保全する。外部契約
 # (localize_present_at = no-leak) は plan 通り不変。
 def scan_presence(video_path, duration, *, stride, workers, sample_fn=None):
-    fn = sample_fn if sample_fn is not None else (
-        lambda t: localize_present_at(video_path, t)
+    fn = (
+        sample_fn
+        if sample_fn is not None
+        else (lambda t: localize_present_at(video_path, t))
     )
     times = _grid_timestamps(duration, stride)
     results: dict[float, PresenceSample] = {}
@@ -286,7 +297,9 @@ def scan_presence(video_path, duration, *, stride, workers, sample_fn=None):
                 results[t] = fut.result()
             except VideoProcessingError:
                 # 単発 probe の例外も UNKNOWN に写像 (per-probe 隔離、#824 §5.2)
-                results[t] = PresenceSample(time=t, state=PresenceState.UNKNOWN, confidence=0.0)
+                results[t] = PresenceSample(
+                    time=t, state=PresenceState.UNKNOWN, confidence=0.0
+                )
     unknown = [t for t in times if results[t].state is PresenceState.UNKNOWN]
     if unknown:
         if len(unknown) == len(times):
@@ -296,18 +309,22 @@ def scan_presence(video_path, duration, *, stride, workers, sample_fn=None):
         logger.warning(
             "%d/%d presence probes UNKNOWN (probe failure); excluded from aggregation "
             "(time range %.1f-%.1fs)",
-            len(unknown), len(times), min(unknown), max(unknown),
+            len(unknown),
+            len(times),
+            min(unknown),
+            max(unknown),
         )
     return [results[t] for t in times]
 
-# site 2b (segment_presence): `if s.present:` → `if s.state is PresenceState.PRESENT:`
-# site 3 (detect_matches_by_presence.present_at):
+    # site 2b (segment_presence): `if s.present:` → `if s.state is PresenceState.PRESENT:`
+    # site 3 (detect_matches_by_presence.present_at):
     def present_at(t: float) -> bool:
         sample = localize_present_at(video_path, t)
         if sample.state is PresenceState.UNKNOWN:
             logger.warning(
                 "presence probe UNKNOWN during boundary refine at t=%.3fs; "
-                "treating as absent", t,
+                "treating as absent",
+                t,
             )
             return False
         return sample.state is PresenceState.PRESENT
@@ -340,17 +357,17 @@ def test_localize_present_from_raw_tristate():
 
 def test_majority_presence_excludes_unknown_from_denominator():
     P, A, U = PresenceState.PRESENT, PresenceState.ABSENT, PresenceState.UNKNOWN
-    assert _majority_presence([P, U, U]) is True      # 有効票 1、present 1
-    assert _majority_presence([P, A, U]) is True      # 有効票 2、present 1 >= ceil(2/2)
+    assert _majority_presence([P, U, U]) is True  # 有効票 1、present 1
+    assert _majority_presence([P, A, U]) is True  # 有効票 2、present 1 >= ceil(2/2)
     assert _majority_presence([A, A, P]) is False
-    assert _majority_presence([U, U, None]) is None   # 有効票ゼロ
+    assert _majority_presence([U, U, None]) is None  # 有効票ゼロ
 
 
 def test_probe_scorebar_context_localize_results_are_tristate(monkeypatch, tmp_path):
     # with_localize=True で probe 失敗 frame は UNKNOWN、成功 miss は ABSENT。
     # scorebar_results (bool|None) は従来のまま (OBS 不変 pin)。
     ...  # 既存 test_probe_scorebar_context 系の monkeypatch 構造を流用し
-         # hires probe を {t1: None, t2: blank_frame} に固定して検証
+    # hires probe を {t1: None, t2: blank_frame} に固定して検証
 ```
 
 既存 pin: `test_probe_scorebar_context_logs_probe_failure` (test_scorebar.py:1667) は **そのまま維持** (scorebar_results 側は不変、#824 spec §6)。
@@ -383,8 +400,12 @@ def test_band_region_localize_fn_unknown_sentinel_not_counted():
         [PresenceState.UNKNOWN] + [_loc(y_top=12)] * 3 + [PresenceState.UNKNOWN] * 4
     )
     region = detect_scorebar_band_region(
-        duration=80.0, probe_w=1920, probe_h=1080,
-        localize_fn=lambda t: next(calls), num_samples=8, min_hits=2,
+        duration=80.0,
+        probe_w=1920,
+        probe_h=1080,
+        localize_fn=lambda t: next(calls),
+        num_samples=8,
+        min_hits=2,
     )
     assert not region.is_full_frame()  # 有効 3 hit で consensus 成立
 
@@ -458,9 +479,13 @@ def test_consensus_scorebar_localization_dominant_cluster_median():
 def test_consensus_scorebar_localization_scattered_returns_none():
     # FP のみ (クラスタ不成立 min_hits 未満) → None。
     seq = iter([_loc(y_top=100), _loc(y_top=300), _loc(y_top=500)] + [None] * 5)
-    assert consensus_scorebar_localization(
-        duration=80.0, localize_fn=lambda t: next(seq), num_samples=8, min_hits=2
-    ) is None or True  # y tol=60 で 100/300/500 は各クラスタ 1 件 → min_hits=2 未満 → None
+    assert (
+        consensus_scorebar_localization(
+            duration=80.0, localize_fn=lambda t: next(seq), num_samples=8, min_hits=2
+        )
+        is None
+        or True
+    )  # y tol=60 で 100/300/500 は各クラスタ 1 件 → min_hits=2 未満 → None
 ```
 
 (2 本目は `is None` を assert する。既存 `detect_scorebar_band_region` の全テストが挙動 pin として green のままであることが抽出の正しさの主担保)
@@ -537,8 +562,9 @@ def test_resolve_scorebar_anchor_filters_low_conf_hits(monkeypatch):
     ...
 
 
-def test_resolve_scorebar_anchor_exception_degrades_none_with_warning(monkeypatch, caplog):
-    ...
+def test_resolve_scorebar_anchor_exception_degrades_none_with_warning(
+    monkeypatch, caplog
+): ...
 ```
 
 - [ ] **Step 2-4: Red-Green** — 実装は Interfaces のとおり。`python -m pytest tests/test_detector.py -k anchor -v`
@@ -592,8 +618,7 @@ def test_merge_gap_probes_at_anchor(monkeypatch):
     ...
 
 
-def test_masked_fallback_warns_when_anchor_unresolved(monkeypatch, caplog):
-    ...
+def test_masked_fallback_warns_when_anchor_unresolved(monkeypatch, caplog): ...
 ```
 
 - [ ] **Step 2: FAIL 確認** → **Step 3: 実装**。keep 規則は `filter_blackouts_with_scorebar` 内:
@@ -639,11 +664,19 @@ def test_masked_fallback_warns_when_anchor_unresolved(monkeypatch, caplog):
 ```python
 def test_scan_presence_explicit_times():
     seen = []
+
     def fn(t):
         seen.append(t)
         return PresenceSample(time=t, state=PresenceState.PRESENT, confidence=1.0)
-    scan_presence(Path("d.mkv"), 100.0, stride=1.0, workers=2, sample_fn=fn,
-                  times=[10.0, 20.0, 30.0])
+
+    scan_presence(
+        Path("d.mkv"),
+        100.0,
+        stride=1.0,
+        workers=2,
+        sample_fn=fn,
+        times=[10.0, 20.0, 30.0],
+    )
     assert sorted(seen) == [10.0, 20.0, 30.0]
 
 
@@ -652,16 +685,15 @@ def test_validate_segments_drops_lobby_and_retypes_match(monkeypatch):
     ...
 
 
-def test_validate_segments_all_unknown_keeps_with_warning(monkeypatch, caplog):
-    ...
+def test_validate_segments_all_unknown_keeps_with_warning(monkeypatch, caplog): ...
 
 
-def test_validate_segments_failsafe_keeps_all_when_everything_dropped(monkeypatch, caplog):
-    ...
+def test_validate_segments_failsafe_keeps_all_when_everything_dropped(
+    monkeypatch, caplog
+): ...
 
 
-def test_masked_fallback_skips_validation_without_anchor(monkeypatch):
-    ...
+def test_masked_fallback_skips_validation_without_anchor(monkeypatch): ...
 ```
 
 - [ ] **Step 2: FAIL 確認** → **Step 3: 実装** → **Step 4: PASS** — `python -m pytest tests/test_presence.py tests/test_detector.py -v`

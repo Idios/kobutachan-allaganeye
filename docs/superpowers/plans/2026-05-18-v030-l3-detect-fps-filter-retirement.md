@@ -142,7 +142,9 @@ class TestProbeRationalFps:
             lambda *a, **kw: mock_result,
         )
         monkeypatch.setattr(
-            probe_mod, "find_ffprobe", lambda: "ffprobe",
+            probe_mod,
+            "find_ffprobe",
+            lambda: "ffprobe",
         )
 
         result = probe_mod.probe_video(tmp_path / "fake.mkv")
@@ -183,7 +185,9 @@ class TestProbeStaticVfrWarn:
             probe_mod.probe_video(tmp_path / "fake.mkv")
 
         warns = [r for r in caplog.records if "VFR" in r.getMessage()]
-        assert len(warns) == 1, f"expected one VFR WARN, got {[r.getMessage() for r in caplog.records]}"
+        assert len(warns) == 1, (
+            f"expected one VFR WARN, got {[r.getMessage() for r in caplog.records]}"
+        )
 
     def test_aggregate_match_does_not_warn(self, tmp_path, monkeypatch, caplog):
         from unittest.mock import MagicMock
@@ -258,8 +262,8 @@ class ProbeResult(TypedDict):
     width: int
     height: int
     fps: float
-    fps_num: int      # #576: rational frame rate numerator (e.g. 60000)
-    fps_den: int      # #576: rational frame rate denominator (e.g. 1001)
+    fps_num: int  # #576: rational frame rate numerator (e.g. 60000)
+    fps_den: int  # #576: rational frame rate denominator (e.g. 1001)
     codec: str
     audio_codec: str | None
 ```
@@ -269,33 +273,33 @@ class ProbeResult(TypedDict):
 `allaganeye/video/probe.py` の `probe_video` 関数内、`fps =` を解決した直後 (line 98-104 周辺) に rational 解決を追加:
 
 ```python
-    # Parse FPS from r_frame_rate (e.g., "30/1" or "60000/1001"),
-    # falling back to avg_frame_rate if r_frame_rate is unusable.
-    fps = _parse_frame_rate(video_stream.get("r_frame_rate", ""))
-    fps_num, fps_den = _parse_frame_rate_rational(video_stream.get("r_frame_rate", ""))
-    if fps <= 0:
-        fps = _parse_frame_rate(video_stream.get("avg_frame_rate", ""))
-        fps_num, fps_den = _parse_frame_rate_rational(
-            video_stream.get("avg_frame_rate", "")
-        )
-    if fps <= 0:
-        raise VideoProcessingError(
-            "Cannot determine video frame rate from ffprobe output"
-        )
+# Parse FPS from r_frame_rate (e.g., "30/1" or "60000/1001"),
+# falling back to avg_frame_rate if r_frame_rate is unusable.
+fps = _parse_frame_rate(video_stream.get("r_frame_rate", ""))
+fps_num, fps_den = _parse_frame_rate_rational(video_stream.get("r_frame_rate", ""))
+if fps <= 0:
+    fps = _parse_frame_rate(video_stream.get("avg_frame_rate", ""))
+    fps_num, fps_den = _parse_frame_rate_rational(
+        video_stream.get("avg_frame_rate", "")
+    )
+if fps <= 0:
+    raise VideoProcessingError("Cannot determine video frame rate from ffprobe output")
 
-    # #576: 静的 VFR 検出 — r_frame_rate vs avg_frame_rate の差が 1% 超 の
-    # 場合 WARNING ログ (hard fail はしない、benign mismatch を許容)。
-    # 実 VFR / decoder anomaly は detector 側の動的 frame_count check で
-    # 捕捉する。
-    avg_fps = _parse_frame_rate(video_stream.get("avg_frame_rate", ""))
-    if avg_fps > 0 and fps > 0:
-        diff_ratio = abs(fps - avg_fps) / fps
-        if diff_ratio > 0.01:
-            logger.warning(
-                "VFR の可能性あり (r_frame_rate=%.4f, avg_frame_rate=%.4f, "
-                "diff=%.2f%%). detector 側で動的 frame_count check 経由で検証。",
-                fps, avg_fps, diff_ratio * 100,
-            )
+# #576: 静的 VFR 検出 — r_frame_rate vs avg_frame_rate の差が 1% 超 の
+# 場合 WARNING ログ (hard fail はしない、benign mismatch を許容)。
+# 実 VFR / decoder anomaly は detector 側の動的 frame_count check で
+# 捕捉する。
+avg_fps = _parse_frame_rate(video_stream.get("avg_frame_rate", ""))
+if avg_fps > 0 and fps > 0:
+    diff_ratio = abs(fps - avg_fps) / fps
+    if diff_ratio > 0.01:
+        logger.warning(
+            "VFR の可能性あり (r_frame_rate=%.4f, avg_frame_rate=%.4f, "
+            "diff=%.2f%%). detector 側で動的 frame_count check 経由で検証。",
+            fps,
+            avg_fps,
+            diff_ratio * 100,
+        )
 ```
 
 ファイル冒頭に `import logging` と `logger = logging.getLogger(__name__)` が存在しない場合は追加:
@@ -310,18 +314,16 @@ logger = logging.getLogger(__name__)
 `probe_video()` の戻り値辞書 (line 119-128) を更新:
 
 ```python
-    return {
-        "duration": duration,
-        "width": width,
-        "height": height,
-        "fps": fps,
-        "fps_num": fps_num,
-        "fps_den": fps_den,
-        "codec": video_stream.get("codec_name", "unknown"),
-        "audio_codec": audio_stream.get("codec_name", "unknown")
-        if audio_stream
-        else None,
-    }
+return {
+    "duration": duration,
+    "width": width,
+    "height": height,
+    "fps": fps,
+    "fps_num": fps_num,
+    "fps_den": fps_den,
+    "codec": video_stream.get("codec_name", "unknown"),
+    "audio_codec": audio_stream.get("codec_name", "unknown") if audio_stream else None,
+}
 ```
 
 - [ ] **Step 5: Run tests, verify they pass**
@@ -630,6 +632,7 @@ class TestSampleChunkFramesDynamicVfr:
     def test_exceeds_slack_tail_only_warns(self, caplog):
         # Same overshoot but tail chunk -> WARN only, no raise.
         import logging as _logging
+
         stream = io.BytesIO(_frames_bytes([100] * 3500))
         with caplog.at_level(_logging.WARNING):
             _sample_chunk_frames(
@@ -641,7 +644,11 @@ class TestSampleChunkFramesDynamicVfr:
                 expected_frames=3600,
                 is_tail_chunk=True,
             )
-        msgs = [r.getMessage() for r in caplog.records if "VFR" in r.getMessage() or "tail" in r.getMessage()]
+        msgs = [
+            r.getMessage()
+            for r in caplog.records
+            if "VFR" in r.getMessage() or "tail" in r.getMessage()
+        ]
         assert any("tail" in m or "VFR" in m for m in msgs), (
             f"expected WARN for tail chunk, got: {[r.getMessage() for r in caplog.records]}"
         )
@@ -755,7 +762,8 @@ def _sample_chunk_frames(
         )
         if is_tail_chunk:
             logger.warning(
-                "%s tail chunk -- decoder truncation allowed, continuing.", msg,
+                "%s tail chunk -- decoder truncation allowed, continuing.",
+                msg,
             )
         else:
             raise VideoProcessingError(msg)
@@ -871,13 +879,20 @@ def _decode_chunk_cpu(
     fps_value = 1.0 / sample_interval
     cmd = [
         find_ffmpeg(),
-        "-threads", "1",
-        "-ss", str(chunk_start),
-        "-t", str(chunk_duration),
-        "-i", str(video_path),
-        "-vf", f"fps={fps_value},scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
-        "-f", "rawvideo",
-        "-pix_fmt", "gray",
+        "-threads",
+        "1",
+        "-ss",
+        str(chunk_start),
+        "-t",
+        str(chunk_duration),
+        "-i",
+        str(video_path),
+        "-vf",
+        f"fps={fps_value},scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
         "pipe:1",
     ]
     # ... subprocess.run, parse stdout, fill results ...
@@ -898,7 +913,9 @@ class TestDecodeChunkCpuNewPath:
 
     @patch("allaganeye.video.detector.subprocess.Popen")
     @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
-    def test_cmd_uses_output_seek_no_fps_passthrough(self, _mock_ff, mock_popen, monkeypatch):
+    def test_cmd_uses_output_seek_no_fps_passthrough(
+        self, _mock_ff, mock_popen, monkeypatch
+    ):
         monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
 
         mock_proc = MagicMock()
@@ -928,7 +945,9 @@ class TestDecodeChunkCpuNewPath:
         # no fps= in -vf
         vf_idx = called_cmd.index("-vf")
         vf_value = called_cmd[vf_idx + 1]
-        assert "fps=" not in vf_value, f"fps filter must be removed, got -vf {vf_value!r}"
+        assert "fps=" not in vf_value, (
+            f"fps filter must be removed, got -vf {vf_value!r}"
+        )
         # -fps_mode passthrough explicit
         assert "-fps_mode" in called_cmd, "missing -fps_mode passthrough"
         fps_mode_idx = called_cmd.index("-fps_mode")
@@ -1002,17 +1021,21 @@ def _decode_chunk_cpu(
         return {}
 
     use_legacy = _use_legacy_fps_filter() or (
-        source_fps_num is None
-        and source_fps_den is None
-        and source_fps is None
+        source_fps_num is None and source_fps_den is None and source_fps is None
     )
     if use_legacy:
         return _decode_chunk_cpu_legacy(
-            video_path, chunk_timestamps, chunk_start, chunk_end, sample_interval,
+            video_path,
+            chunk_timestamps,
+            chunk_start,
+            chunk_end,
+            sample_interval,
         )
 
     fps_num, fps_den = _resolve_fps_rational(
-        source_fps_num, source_fps_den, source_fps,
+        source_fps_num,
+        source_fps_den,
+        source_fps,
     )
     return _decode_chunk_cpu_v2(
         video_path,
@@ -1041,14 +1064,20 @@ def _decode_chunk_cpu_legacy(
 
     cmd = [
         find_ffmpeg(),
-        "-threads", "1",
-        "-ss", str(chunk_start),
-        "-t", str(chunk_duration),
-        "-i", str(video_path),
+        "-threads",
+        "1",
+        "-ss",
+        str(chunk_start),
+        "-t",
+        str(chunk_duration),
+        "-i",
+        str(video_path),
         "-vf",
         f"fps={fps_value},scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
-        "-f", "rawvideo",
-        "-pix_fmt", "gray",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
         "pipe:1",
     ]
 
@@ -1069,7 +1098,8 @@ def _decode_chunk_cpu_legacy(
     if proc.returncode != 0:
         logger.warning(
             "CPU chunk decode failed [%.1f-%.1f]: %s",
-            chunk_start, chunk_end,
+            chunk_start,
+            chunk_end,
             proc.stderr.decode(errors="replace")[-200:],
         )
         return {t: 255.0 for t in chunk_timestamps}
@@ -1113,14 +1143,22 @@ def _decode_chunk_cpu_v2(
 
     cmd = [
         find_ffmpeg(),
-        "-threads", "1",
-        "-i", str(video_path),
-        "-ss", str(chunk_start),
-        "-t", str(chunk_duration),
-        "-fps_mode", "passthrough",
-        "-vf", f"scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
-        "-f", "rawvideo",
-        "-pix_fmt", "gray",
+        "-threads",
+        "1",
+        "-i",
+        str(video_path),
+        "-ss",
+        str(chunk_start),
+        "-t",
+        str(chunk_duration),
+        "-fps_mode",
+        "passthrough",
+        "-vf",
+        f"scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
         "pipe:1",
     ]
 
@@ -1148,7 +1186,8 @@ def _decode_chunk_cpu_v2(
                 proc.kill()
                 logger.warning(
                     "CPU chunk v2 decode timed out [%.1f-%.1f]",
-                    chunk_start, chunk_end,
+                    chunk_start,
+                    chunk_end,
                 )
                 return {t: 255.0 for t in chunk_timestamps}
     except FileNotFoundError as e:
@@ -1160,7 +1199,9 @@ def _decode_chunk_cpu_v2(
         stderr = proc.stderr.read().decode(errors="replace")[-200:]
         logger.warning(
             "CPU chunk v2 decode failed [%.1f-%.1f]: %s",
-            chunk_start, chunk_end, stderr,
+            chunk_start,
+            chunk_end,
+            stderr,
         )
         return {t: 255.0 for t in chunk_timestamps}
 
@@ -1336,6 +1377,7 @@ class TestDecodeChunkV2Cmd:
         mock_proc = MagicMock()
         # 10s @ 60fps = 600 frames
         from allaganeye.video.detector import _FRAME_SIZE as _FS
+
         mock_proc.stdout = _io.BytesIO(bytes([0] * _FS * 600))
         mock_proc.stderr = _io.BytesIO(b"")
         mock_proc.wait.return_value = 0
@@ -1375,6 +1417,7 @@ class TestDecodeChunkV2Cmd:
 
         mock_proc = MagicMock()
         from allaganeye.video.detector import _FRAME_SIZE as _FS
+
         mock_proc.stdout = _io.BytesIO(bytes([0] * _FS * 600))
         mock_proc.stderr = _io.BytesIO(b"")
         mock_proc.wait.return_value = 0
@@ -1409,6 +1452,7 @@ class TestDecodeChunkV2Cmd:
 
         mock_proc = MagicMock()
         from allaganeye.video.detector import _FRAME_SIZE as _FS
+
         mock_proc.stdout = _io.BytesIO(bytes([0] * _FS * 600))
         mock_proc.stderr = _io.BytesIO(b"")
         mock_proc.wait.return_value = 0
@@ -1455,9 +1499,9 @@ from allaganeye.video.detector import (
     _SAMPLE_HEIGHT,
     _SAMPLE_WIDTH,
     _generate_timestamps,
-    _resolve_fps_rational,        # 新規 import (Task 3 で追加)
-    _sample_chunk_frames,         # 新規 import (Task 3 で追加)
-    _use_legacy_fps_filter,       # 新規 import (Task 2 で追加)
+    _resolve_fps_rational,  # 新規 import (Task 3 で追加)
+    _sample_chunk_frames,  # 新規 import (Task 3 で追加)
+    _use_legacy_fps_filter,  # 新規 import (Task 2 で追加)
 )
 
 
@@ -1485,16 +1529,30 @@ def _decode_chunk(
     )
     if use_legacy:
         return _decode_chunk_legacy(
-            video_path, chunk_start, chunk_end, sample_interval,
-            codec=codec, chunk_timestamps=chunk_timestamps, vendor=vendor,
+            video_path,
+            chunk_start,
+            chunk_end,
+            sample_interval,
+            codec=codec,
+            chunk_timestamps=chunk_timestamps,
+            vendor=vendor,
         )
 
     fps_num, fps_den = _resolve_fps_rational(
-        source_fps_num, source_fps_den, source_fps,
+        source_fps_num,
+        source_fps_den,
+        source_fps,
     )
     return _decode_chunk_v2(
-        video_path, chunk_start, chunk_end, codec, chunk_timestamps,
-        vendor, fps_num, fps_den, is_tail_chunk,
+        video_path,
+        chunk_start,
+        chunk_end,
+        codec,
+        chunk_timestamps,
+        vendor,
+        fps_num,
+        fps_den,
+        is_tail_chunk,
     )
 
 
@@ -1563,13 +1621,20 @@ def _decode_chunk_v2(
     cmd = [
         find_ffmpeg(),
         *hwaccel_args,
-        "-i", str(video_path),
-        "-ss", str(chunk_start),
-        "-t", str(chunk_duration),
-        "-fps_mode", "passthrough",
-        "-vf", f"{vf_prefix}scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
-        "-f", "rawvideo",
-        "-pix_fmt", "gray",
+        "-i",
+        str(video_path),
+        "-ss",
+        str(chunk_start),
+        "-t",
+        str(chunk_duration),
+        "-fps_mode",
+        "passthrough",
+        "-vf",
+        f"{vf_prefix}scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
         "pipe:1",
     ]
 
@@ -2028,7 +2093,8 @@ class TestEdgeCaseShortClip:
         mod = _load_module()
         with pytest.raises(SystemExit) as excinfo:
             mod._validate_duration_against_chunks(
-                duration=50.0, chunks=[100.0, 200.0],
+                duration=50.0,
+                chunks=[100.0, 200.0],
             )
         assert excinfo.value.code == 2
 
@@ -2153,7 +2219,10 @@ def _parse_first_pts_time(stderr_text: str) -> float | None:
 
 
 def _build_ffmpeg_cmd(
-    video: Path, chunk_start: float, vendor: str, codec: str,
+    video: Path,
+    chunk_start: float,
+    vendor: str,
+    codec: str,
 ) -> list[str]:
     """Build ffmpeg cmd for showinfo + new path (output seek + passthrough)."""
     hwaccel_args: list[str] = []
@@ -2169,22 +2238,27 @@ def _build_ffmpeg_cmd(
             hwaccel_args += ["-c:v", decoder]
 
     needs_hwdownload = bool(
-        decoder
-        and _VENDOR_HWACCEL_MAP.get(vendor) in _HWACCELS_NEED_HWDOWNLOAD
+        decoder and _VENDOR_HWACCEL_MAP.get(vendor) in _HWACCELS_NEED_HWDOWNLOAD
     )
     vf_prefix = "hwdownload,format=nv12," if needs_hwdownload else ""
 
     return [
         find_ffmpeg(),
         *hwaccel_args,
-        "-i", str(video),
-        "-ss", str(chunk_start),
-        "-t", "0.5",
-        "-fps_mode", "passthrough",
+        "-i",
+        str(video),
+        "-ss",
+        str(chunk_start),
+        "-t",
+        "0.5",
+        "-fps_mode",
+        "passthrough",
         "-vf",
         f"{vf_prefix}showinfo,scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
-        "-f", "rawvideo",
-        "-pix_fmt", "gray",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
         "pipe:1",
     ]
 
@@ -2268,7 +2342,11 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         emit_pts, emit_brightness, probe_brightness = _run_chunk(
-            args.video, chunk_start, args.vendor, args.codec, source_fps,
+            args.video,
+            chunk_start,
+            args.vendor,
+            args.codec,
+            source_fps,
         )
         if emit_pts is None or emit_brightness is None:
             verdict = "FAIL"
@@ -2416,8 +2494,14 @@ def test_class_a_bit_exact(label, relpath, sample_video_dir, tmp_output_dir):
 
     out_meta = tmp_output_dir / "metadata.json"
     cmd = [
-        sys.executable, "-m", "allaganeye", "detect",
-        str(video), "-o", str(tmp_output_dir), "--no-cache",
+        sys.executable,
+        "-m",
+        "allaganeye",
+        "detect",
+        str(video),
+        "-o",
+        str(tmp_output_dir),
+        "--no-cache",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
     assert result.returncode == 0, f"detect failed: {result.stderr}"
@@ -2426,7 +2510,8 @@ def test_class_a_bit_exact(label, relpath, sample_video_dir, tmp_output_dir):
     baseline_path = _BASELINE_DIR / f"{label}.metadata.json"
     cmp = subprocess.run(
         [sys.executable, str(_COMPARE_SCRIPT), str(baseline_path), str(out_meta)],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert cmp.returncode == 0, (
         f"Class A baseline diff for {label}: {cmp.stdout} {cmp.stderr}"
@@ -2454,17 +2539,42 @@ def test_class_a_intermediate_audit_no_regress(
 
     # new path (default, env var unset)
     subprocess.run(
-        [sys.executable, "-m", "allaganeye", "detect", str(video),
-         "-o", str(tmp_output_dir / "new"), "-v", "--no-cache"],
-        check=True, capture_output=True, text=True, timeout=1800,
+        [
+            sys.executable,
+            "-m",
+            "allaganeye",
+            "detect",
+            str(video),
+            "-o",
+            str(tmp_output_dir / "new"),
+            "-v",
+            "--no-cache",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=1800,
     )
 
     # legacy path (env var = 1)
     env = {**__import__("os").environ, "ALLAGANEYE_DETECT_FPS_FILTER": "1"}
     subprocess.run(
-        [sys.executable, "-m", "allaganeye", "detect", str(video),
-         "-o", str(tmp_output_dir / "legacy"), "-v", "--no-cache"],
-        check=True, capture_output=True, text=True, timeout=1800, env=env,
+        [
+            sys.executable,
+            "-m",
+            "allaganeye",
+            "detect",
+            str(video),
+            "-o",
+            str(tmp_output_dir / "legacy"),
+            "-v",
+            "--no-cache",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=1800,
+        env=env,
     )
 
     new_data = json.loads(new_meta.read_text(encoding="utf-8"))
@@ -2570,15 +2680,27 @@ def test_class_b_regenerated(sample_video_dir, tmp_output_dir):
 
     out_meta = tmp_output_dir / "metadata.json"
     subprocess.run(
-        [sys.executable, "-m", "allaganeye", "detect", str(video),
-         "-o", str(tmp_output_dir), "--no-cache"],
-        check=True, capture_output=True, text=True, timeout=1800,
+        [
+            sys.executable,
+            "-m",
+            "allaganeye",
+            "detect",
+            str(video),
+            "-o",
+            str(tmp_output_dir),
+            "--no-cache",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=1800,
     )
 
     baseline_path = _BASELINE_DIR / "obs-20260118.metadata.json"
     cmp = subprocess.run(
         [sys.executable, str(_COMPARE_SCRIPT), str(baseline_path), str(out_meta)],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert cmp.returncode == 0, (
         f"Class B baseline mismatch (regenerated baseline diverged): "
@@ -2669,6 +2791,7 @@ def test_vendor_golden_brightness(vendor, timestamps, sample_video_dir, tmp_outp
 
     # Skip if vendor not available (CI fallback)
     import platform
+
     if vendor == "nvidia" and platform.system() != "Windows":
         pytest.skip("NVIDIA GPU only validated on Windows Idios env")
 
@@ -2676,10 +2799,14 @@ def test_vendor_golden_brightness(vendor, timestamps, sample_video_dir, tmp_outp
     cmd = [
         sys.executable,
         str(_REPO_ROOT / "scripts" / "validate-fps-retirement.py"),
-        "--video", str(video),
-        "--chunks", chunks_csv,
-        "--vendor", vendor,
-        "--codec", "av1",
+        "--video",
+        str(video),
+        "--chunks",
+        chunks_csv,
+        "--vendor",
+        vendor,
+        "--codec",
+        "av1",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     # exit 0 = all PASS, exit 1 = FAIL, exit 2 = script error.

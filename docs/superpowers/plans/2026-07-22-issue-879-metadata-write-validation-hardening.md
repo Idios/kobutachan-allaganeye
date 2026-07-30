@@ -471,7 +471,9 @@ def test_sanitize_brightness_samples_accepts_valid():
 def test_sanitize_brightness_samples_rejects_extra_key():
     from allaganeye.commands.split_matches import _sanitize_brightness_samples
 
-    assert _sanitize_brightness_samples({"interval_s": 2.0, "values": [], "x": 1}) is None
+    assert (
+        _sanitize_brightness_samples({"interval_s": 2.0, "values": [], "x": 1}) is None
+    )
 
 
 def test_sanitize_brightness_samples_rejects_nonpositive_interval():
@@ -495,7 +497,10 @@ def test_sanitize_brightness_samples_rejects_value_out_of_range():
 def test_sanitize_brightness_samples_rejects_nan_value():
     from allaganeye.commands.split_matches import _sanitize_brightness_samples
 
-    assert _sanitize_brightness_samples({"interval_s": 2.0, "values": [float("nan")]}) is None
+    assert (
+        _sanitize_brightness_samples({"interval_s": 2.0, "values": [float("nan")]})
+        is None
+    )
 
 
 def test_sanitize_brightness_samples_rejects_values_not_list():
@@ -586,7 +591,9 @@ def test_prepare_from_metadata_drops_malformed_brightness_samples(caplog):
 
     payload = {"brightness_samples": {"interval_s": -1.0, "values": [999.0]}}
     with caplog.at_level("WARNING"):
-        result = split_matches._sanitize_brightness_samples(payload["brightness_samples"])
+        result = split_matches._sanitize_brightness_samples(
+            payload["brightness_samples"]
+        )
     assert result is None
 ```
 
@@ -692,7 +699,10 @@ def test_load_cache_hit_miss_returns_none(tmp_path):
     video.write_bytes(b"x" * 10)
     cache_path = _write_cache(tmp_path, video)
     # interval mismatch -> miss
-    assert split_matches._load_cache_hit(cache_path, video, 999.0, _cache_config(tmp_path)) is None
+    assert (
+        split_matches._load_cache_hit(cache_path, video, 999.0, _cache_config(tmp_path))
+        is None
+    )
 
 
 def test_load_cache_hit_synthesizes_legacy_full_frame(tmp_path):
@@ -712,7 +722,14 @@ def test_capture_regions_from_cache_data_pure(tmp_path):
     from allaganeye.commands import split_matches
 
     valid = {
-        "coarse": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "confidence": 1.0, "source": "full_frame"},
+        "coarse": {
+            "x": 0.0,
+            "y": 0.0,
+            "w": 1.0,
+            "h": 1.0,
+            "confidence": 1.0,
+            "source": "full_frame",
+        },
         "segments": [],
         "fallback_reason": None,
     }
@@ -723,7 +740,10 @@ def test_capture_regions_from_cache_data_pure(tmp_path):
 def test_masked_fallback_from_cache_data_pure():
     from allaganeye.commands import split_matches
 
-    assert split_matches._masked_fallback_from_cache_data({"masked_fallback_used": True}) is True
+    assert (
+        split_matches._masked_fallback_from_cache_data({"masked_fallback_used": True})
+        is True
+    )
     assert split_matches._masked_fallback_from_cache_data({}) is False
 ```
 
@@ -952,8 +972,8 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 そして `_split_and_write_metadata(...)` 呼び出しの引数を:
 
 ```python
-                masked_fallback_used=hit.masked_fallback_used,
-                capture_regions=hit.capture_regions,
+masked_fallback_used = (hit.masked_fallback_used,)
+capture_regions = (hit.capture_regions,)
 ```
 
 に変更 (`_read_cached_masked_fallback(cache_path)` / `_read_cached_capture_regions(cache_path)` を除去)。

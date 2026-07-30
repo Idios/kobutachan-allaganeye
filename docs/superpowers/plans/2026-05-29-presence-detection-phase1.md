@@ -561,7 +561,13 @@ def test_scan_presence_grid_and_order():
     # times must be sorted and cover 0,100,...,600
     assert [s.time for s in samples] == [0.0, 100.0, 200.0, 300.0, 400.0, 500.0, 600.0]
     assert [s.present for s in samples] == [
-        False, False, True, True, True, False, False
+        False,
+        False,
+        True,
+        True,
+        True,
+        False,
+        False,
     ]
 ```
 
@@ -608,6 +614,7 @@ def scan_presence(
     returned sorted by time ascending.
     """
     if sample_fn is None:
+
         def sample_fn(t: float) -> PresenceSample:  # noqa: E306
             return localize_present_at(video_path, t)
 
@@ -749,9 +756,7 @@ def detect_matches_by_presence(
        ``refine_boundary``.  Matches touching the video edges (t<=0 or
        t>=duration within one stride) keep the edge unrefined.
     """
-    samples = scan_presence(
-        video_path, duration, stride=stride, workers=workers
-    )
+    samples = scan_presence(video_path, duration, stride=stride, workers=workers)
     coarse = segment_presence(samples, t_gap=t_gap, t_min_match=t_min_match)
 
     def present_at(t: float) -> bool:
@@ -1098,9 +1103,7 @@ from tests.presence_harness import build_arg_parser
 
 def test_build_arg_parser_defaults():
     parser = build_arg_parser()
-    args = parser.parse_args(
-        ["--video", "v.mkv", "--ground-truth", "gt.json"]
-    )
+    args = parser.parse_args(["--video", "v.mkv", "--ground-truth", "gt.json"])
     assert args.video == "v.mkv"
     assert args.ground_truth == "gt.json"
     assert args.stride == 4.0
@@ -1114,13 +1117,20 @@ def test_build_arg_parser_overrides():
     parser = build_arg_parser()
     args = parser.parse_args(
         [
-            "--video", "v.mkv",
-            "--ground-truth", "gt.json",
-            "--stride", "3",
-            "--t-gap", "45",
-            "--t-min-match", "90",
-            "--tol", "0.5",
-            "--workers", "16",
+            "--video",
+            "v.mkv",
+            "--ground-truth",
+            "gt.json",
+            "--stride",
+            "3",
+            "--t-gap",
+            "45",
+            "--t-min-match",
+            "90",
+            "--tol",
+            "0.5",
+            "--workers",
+            "16",
         ]
     )
     assert args.stride == 3.0
@@ -1152,7 +1162,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--video", required=True, help="Path to source video")
     p.add_argument("--ground-truth", required=True, help="Path to ground-truth JSON")
     p.add_argument("--stride", type=float, default=4.0, help="Coarse grid stride (s)")
-    p.add_argument("--t-gap", type=float, default=30.0, help="Min absent gap = boundary (s)")
+    p.add_argument(
+        "--t-gap", type=float, default=30.0, help="Min absent gap = boundary (s)"
+    )
     p.add_argument(
         "--t-min-match", type=float, default=120.0, help="Min present run = match (s)"
     )

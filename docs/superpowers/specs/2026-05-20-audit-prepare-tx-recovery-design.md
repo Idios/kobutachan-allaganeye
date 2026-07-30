@@ -295,6 +295,7 @@ def _make_crashing_rmtree(target_path, original_rmtree):
         if not crashed["value"] and Path(path) == Path(target_path):
             crashed["value"] = True
             raise RuntimeError("simulated crash after rmtree")
+
     return crashing_rmtree
 ```
 

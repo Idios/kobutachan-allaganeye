@@ -44,8 +44,14 @@ from allaganeye.export.encoder import H264Encoder
 
 def _args(**kw):
     return _build_ffmpeg_args(
-        "ffmpeg", Path("in.mkv"), 10.0, 20.0, Path("out.mp4"),
-        "h264", kw.pop("encoder", H264Encoder.NVENC), kw.pop("video_filter", None),
+        "ffmpeg",
+        Path("in.mkv"),
+        10.0,
+        20.0,
+        Path("out.mp4"),
+        "h264",
+        kw.pop("encoder", H264Encoder.NVENC),
+        kw.pop("video_filter", None),
         **kw,
     )
 
@@ -134,11 +140,11 @@ docstring に 1 行追記:
 decode hwaccel 挿入部 (現行 `if codec != "copy" and video_filter is None:`) を置換:
 
 ```python
-    if codec != "copy" and not force_software_decode:
-        if video_filter is None:
-            args.extend(_DECODE_HWACCEL_ARGS[encoder])           # zero-copy (export、不変)
-        else:
-            args.extend(_DECODE_HWACCEL_ARGS_FILTERED[encoder])  # #899: decode-only
+if codec != "copy" and not force_software_decode:
+    if video_filter is None:
+        args.extend(_DECODE_HWACCEL_ARGS[encoder])  # zero-copy (export、不変)
+    else:
+        args.extend(_DECODE_HWACCEL_ARGS_FILTERED[encoder])  # #899: decode-only
 ```
 
 - [ ] **Step 5: Run to verify pass**
@@ -311,22 +317,33 @@ def _run(monkeypatch, tmp_path, outcomes):
     monkeypatch.setattr(fr, "_run_single_attempt", fake_attempt)
     monkeypatch.setattr(fr, "find_ffmpeg", lambda: "ffmpeg")
     res = run_export_attempt(
-        tmp_path / "in.mkv", 10.0, 20.0, tmp_path / "out.mp4", "h264",
-        H264Encoder.NVENC, progress_cb=lambda *a: None, fallback_cb=None,
-        cancel_event=threading.Event(), video_filter="crop=100:100:0:0",
+        tmp_path / "in.mkv",
+        10.0,
+        20.0,
+        tmp_path / "out.mp4",
+        "h264",
+        H264Encoder.NVENC,
+        progress_cb=lambda *a: None,
+        fallback_cb=None,
+        cancel_event=threading.Event(),
+        video_filter="crop=100:100:0:0",
     )
     return res, captured
 
 
 def test_tier1_decode_failure_retries_software_decode_nvenc(monkeypatch, tmp_path):
     # tier1 (NVDEC) decode 失敗 -> tier2 (software decode + NVENC) 成功
-    res, captured = _run(monkeypatch, tmp_path, [
-        (1, "cuvidCreateDecoder failed"),  # tier1
-        (0, ""),                            # tier2
-    ])
+    res, captured = _run(
+        monkeypatch,
+        tmp_path,
+        [
+            (1, "cuvidCreateDecoder failed"),  # tier1
+            (0, ""),  # tier2
+        ],
+    )
     assert len(captured) == 2
-    assert "-hwaccel" in captured[0]                 # tier1 = NVDEC
-    assert "-hwaccel" not in captured[1]             # tier2 = software decode
+    assert "-hwaccel" in captured[0]  # tier1 = NVDEC
+    assert "-hwaccel" not in captured[1]  # tier2 = software decode
     assert "-c:v" in captured[1] and "h264_nvenc" in captured[1]  # still NVENC encode
     assert res.encoder_used == "h264_nvenc"
     assert res.fallback_from is None
@@ -334,10 +351,14 @@ def test_tier1_decode_failure_retries_software_decode_nvenc(monkeypatch, tmp_pat
 
 def test_tier1_encode_failure_skips_to_libx264(monkeypatch, tmp_path):
     # tier1 encode-init 失敗 -> tier2 skip -> tier3 libx264
-    res, captured = _run(monkeypatch, tmp_path, [
-        (1, "No NVENC capable devices found"),  # tier1
-        (0, ""),                                 # tier3 (libx264)
-    ])
+    res, captured = _run(
+        monkeypatch,
+        tmp_path,
+        [
+            (1, "No NVENC capable devices found"),  # tier1
+            (0, ""),  # tier3 (libx264)
+        ],
+    )
     assert len(captured) == 2
     assert "h264_nvenc" not in captured[1] and "libx264" in captured[1]
     assert res.encoder_used == "libx264"
@@ -346,11 +367,15 @@ def test_tier1_encode_failure_skips_to_libx264(monkeypatch, tmp_path):
 
 def test_tier2_failure_falls_to_libx264(monkeypatch, tmp_path):
     # tier1 decode 失敗 -> tier2 (software+NVENC) も失敗 -> tier3 libx264
-    res, captured = _run(monkeypatch, tmp_path, [
-        (1, "hwaccel transfer data failed"),  # tier1 decode
-        (1, "No NVENC capable devices found"),  # tier2 encode fail
-        (0, ""),                                # tier3 libx264
-    ])
+    res, captured = _run(
+        monkeypatch,
+        tmp_path,
+        [
+            (1, "hwaccel transfer data failed"),  # tier1 decode
+            (1, "No NVENC capable devices found"),  # tier2 encode fail
+            (0, ""),  # tier3 libx264
+        ],
+    )
     assert len(captured) == 3
     assert "-hwaccel" in captured[0]
     assert "-hwaccel" not in captured[1] and "h264_nvenc" in captured[1]
@@ -369,34 +394,41 @@ Expected: FAIL (現状 2-tier なので tier2 が挿入されず captured / enco
 `run_export_attempt` の `if outcome.returncode == 0: return ...` (1st attempt 成功) の直後、既存の「GPU encoder init failure -> libx264 retry」ブロックの**直前**に tier2 を挿入:
 
 ```python
-    # #899 tier2: filter 有り NVENC の tier1 (NVDEC decode) が decode 段で失敗
-    # した場合のみ software decode + NVENC で 1 回 retry する (encode は GPU 維持)。
-    # tier2 は出力品質が変わらないため fallback_cb は呼ばない (silent decode retry)。
-    # tier2 が失敗したら outcome を上書きして下の libx264 (tier3) ブロックへ流す。
-    if (
-        codec == "h264"
-        and encoder == H264Encoder.NVENC
-        and video_filter is not None
-        and _nvenc_decode_stage_failure(outcome.stderr_tail)
-    ):
-        tier2_args = _build_ffmpeg_args(
-            ffmpeg, video, start, end, output, codec, encoder, video_filter,
-            force_software_decode=True,
+# #899 tier2: filter 有り NVENC の tier1 (NVDEC decode) が decode 段で失敗
+# した場合のみ software decode + NVENC で 1 回 retry する (encode は GPU 維持)。
+# tier2 は出力品質が変わらないため fallback_cb は呼ばない (silent decode retry)。
+# tier2 が失敗したら outcome を上書きして下の libx264 (tier3) ブロックへ流す。
+if (
+    codec == "h264"
+    and encoder == H264Encoder.NVENC
+    and video_filter is not None
+    and _nvenc_decode_stage_failure(outcome.stderr_tail)
+):
+    tier2_args = _build_ffmpeg_args(
+        ffmpeg,
+        video,
+        start,
+        end,
+        output,
+        codec,
+        encoder,
+        video_filter,
+        force_software_decode=True,
+    )
+    outcome = _run_single_attempt(tier2_args, duration, progress_cb, cancel_event)
+    if cancel_event.is_set():
+        if not output_pre_existed:
+            output.unlink(missing_ok=True)
+        raise ExportError(kind="cancelled", message="export cancelled by user")
+    if outcome.returncode == 0:
+        return ExportResult(
+            match_index=-1,
+            output_path=output,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            encoder_used=encoder.value,
+            fallback_from=None,
         )
-        outcome = _run_single_attempt(tier2_args, duration, progress_cb, cancel_event)
-        if cancel_event.is_set():
-            if not output_pre_existed:
-                output.unlink(missing_ok=True)
-            raise ExportError(kind="cancelled", message="export cancelled by user")
-        if outcome.returncode == 0:
-            return ExportResult(
-                match_index=-1,
-                output_path=output,
-                duration_ms=int((time.monotonic() - started) * 1000),
-                encoder_used=encoder.value,
-                fallback_from=None,
-            )
-        # tier2 も失敗 -> outcome は tier2 の失敗。下の libx264 ブロックが拾う。
+    # tier2 も失敗 -> outcome は tier2 の失敗。下の libx264 ブロックが拾う。
 ```
 
 (既存の `if (codec == "h264" and encoder != LIBX264 and is_gpu_encoder_failure(outcome.stderr_tail, encoder)):` ブロックはそのまま。tier1 encode 段失敗 → tier2 skip → このブロックが tier1 outcome で発火。tier2 失敗 → このブロックが tier2 outcome で発火。いずれも libx264 = tier3。)

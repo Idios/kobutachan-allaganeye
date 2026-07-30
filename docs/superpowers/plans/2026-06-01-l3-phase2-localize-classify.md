@@ -71,7 +71,8 @@ def test_probe_context_3tuple_localize_none_by_default(monkeypatch):
     monkeypatch.setattr(sb, "_has_scorebar_v2", lambda raw: True)
     # _localize_present_from_raw must NOT be called when with_localize is False.
     monkeypatch.setattr(
-        sb, "_localize_present_from_raw",
+        sb,
+        "_localize_present_from_raw",
         lambda raw: (_ for _ in ()).throw(AssertionError("must not localize")),
     )
     scorebar, raw, loc = sb._probe_scorebar_context(
@@ -401,10 +402,14 @@ def test_classify_localize_truth_table(monkeypatch):
 
 def test_classify_localize_both_present_is_in_match(monkeypatch):
     from allaganeye.video import scorebar as sb
+
     monkeypatch.setattr(
-        sb, "_probe_scorebar_context",
+        sb,
+        "_probe_scorebar_context",
         lambda v, ts, h, w, *, with_localize=False: (
-            [None] * len(ts), [b"f"] * len(ts), [True] * len(ts)
+            [None] * len(ts),
+            [b"f"] * len(ts),
+            [True] * len(ts),
         ),
     )
     monkeypatch.setattr(sb, "_band_mad_min", lambda *a, **k: 5.0)
@@ -416,10 +421,14 @@ def test_classify_localize_both_present_is_in_match(monkeypatch):
 
 def test_classify_localize_both_absent_is_non_fl(monkeypatch):
     from allaganeye.video import scorebar as sb
+
     monkeypatch.setattr(
-        sb, "_probe_scorebar_context",
+        sb,
+        "_probe_scorebar_context",
         lambda v, ts, h, w, *, with_localize=False: (
-            [None] * len(ts), [b"f"] * len(ts), [False] * len(ts)
+            [None] * len(ts),
+            [b"f"] * len(ts),
+            [False] * len(ts),
         ),
     )
     monkeypatch.setattr(sb, "_band_mad_min", lambda *a, **k: 0.1)
@@ -486,7 +495,10 @@ def _classify_blackout_localize(
         post_re_ts = [
             t
             for t in sorted(
-                set(min(duration, region[1] + (region_width + d)) for d in (1.0, 2.0, 3.0))
+                set(
+                    min(duration, region[1] + (region_width + d))
+                    for d in (1.0, 2.0, 3.0)
+                )
             )
             if t not in existing_post
         ]
@@ -574,6 +586,7 @@ EOF
 def test_classify_blackout_vtuber_delegates_to_localize(monkeypatch):
     from allaganeye.video import scorebar as sb
     from allaganeye.video.capture_region import CaptureRegion
+
     seen = {}
 
     def fake_localize(video, region, duration, height, workers=None, *, band_region):
@@ -591,15 +604,20 @@ def test_classify_blackout_vtuber_delegates_to_localize(monkeypatch):
 
 def test_classify_blackout_obs_does_not_call_localize(monkeypatch):
     from allaganeye.video import scorebar as sb
+
     monkeypatch.setattr(
-        sb, "_classify_blackout_localize",
+        sb,
+        "_classify_blackout_localize",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("OBS must not localize")),
     )
     # vtuber defaults False -> must take the v2 path (probe returns absent here).
     monkeypatch.setattr(
-        sb, "_probe_scorebar_context",
+        sb,
+        "_probe_scorebar_context",
         lambda v, ts, h, w, *, with_localize=False: (
-            [False] * len(ts), [b"f"] * len(ts), [None] * len(ts)
+            [False] * len(ts),
+            [b"f"] * len(ts),
+            [None] * len(ts),
         ),
     )
     out = sb.classify_blackout(Path("x.mp4"), (10.0, 12.0), 400.0, 180)
@@ -682,9 +700,12 @@ EOF
 def test_filter_threads_vtuber_to_classify(monkeypatch):
     from allaganeye.video import scorebar as sb
     from allaganeye.video.capture_region import CaptureRegion
+
     seen = []
 
-    def fake_classify(video, region, duration, height, workers=None, *, band_region, vtuber):
+    def fake_classify(
+        video, region, duration, height, workers=None, *, band_region, vtuber
+    ):
         seen.append((vtuber, band_region.source))
         return "match_boundary"
 
@@ -725,19 +746,30 @@ def filter_blackouts_with_scorebar(
 `classify_blackout` 呼び出し (現 :457) を更新:
 
 ```python
-        classification = classify_blackout(
-            video_path, region, duration, height, workers,
-            band_region=band_region, vtuber=vtuber,
-        )
+classification = classify_blackout(
+    video_path,
+    region,
+    duration,
+    height,
+    workers,
+    band_region=band_region,
+    vtuber=vtuber,
+)
 ```
 
 末尾の `_merge_boundary_pairs` 呼び出し (現 :516) を更新:
 
 ```python
-    return _merge_boundary_pairs(
-        video_path, kept, classifications, duration, height, workers,
-        band_region=band_region, vtuber=vtuber,
-    )
+return _merge_boundary_pairs(
+    video_path,
+    kept,
+    classifications,
+    duration,
+    height,
+    workers,
+    band_region=band_region,
+    vtuber=vtuber,
+)
 ```
 
 - [ ] **Step 4: Run scorebar suite**
@@ -774,6 +806,7 @@ EOF
 def test_merge_gap_probe_uses_localize_when_vtuber(monkeypatch):
     from allaganeye.video import scorebar as sb
     from allaganeye.video.capture_region import CaptureRegion
+
     captured = {}
 
     def fake_probe(video, points, height, workers, *, with_localize=False):
@@ -818,17 +851,23 @@ def _merge_boundary_pairs(
 gap probe (現 :562-567) を signal 切替に置換:
 
 ```python
-                if vtuber:
-                    _, _, probe_signal = _probe_scorebar_context(
-                        video_path, probe_points, height, workers,
-                        with_localize=True,
-                    )
-                else:
-                    probe_signal, _, _ = _probe_scorebar_context(
-                        video_path, probe_points, height, workers,
-                    )
-                all_valid = all(r is not None for r in probe_signal)
-                any_scorebar = any(r is True for r in probe_signal)
+if vtuber:
+    _, _, probe_signal = _probe_scorebar_context(
+        video_path,
+        probe_points,
+        height,
+        workers,
+        with_localize=True,
+    )
+else:
+    probe_signal, _, _ = _probe_scorebar_context(
+        video_path,
+        probe_points,
+        height,
+        workers,
+    )
+all_valid = all(r is not None for r in probe_signal)
+any_scorebar = any(r is True for r in probe_signal)
 ```
 
 (以降の `if all_valid and not any_scorebar:` merge ロジックは不変。`probe_results` 参照を `probe_signal` に変更。ログ行の `probes=%s, probe_results` も `probe_signal` に更新。)
@@ -870,6 +909,7 @@ def test_filter_call_receives_band_region_and_vtuber():
     # static check: detect threads detect_region + vtuber into the scorebar filter.
     import inspect
     from allaganeye.video import detector as det
+
     src = inspect.getsource(det.detect_match_boundaries)
     assert "band_region=detect_region" in src
     assert "vtuber=vtuber" in src
@@ -878,6 +918,7 @@ def test_filter_call_receives_band_region_and_vtuber():
 def test_trailing_drop_gated_off_for_vtuber():
     import inspect
     from allaganeye.video import detector as det
+
     src = inspect.getsource(det.detect_match_boundaries)
     # the trailing-drop call must be guarded so it never runs on the VTuber path.
     assert "if src_resolution is not None and not vtuber:" in src
@@ -1023,7 +1064,9 @@ pytestmark = pytest.mark.slow
 
 
 def _vtuber_sample() -> Path | None:
-    base = os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER") or r"E:\allaganeye-samples"
+    base = (
+        os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER") or r"E:\allaganeye-samples"
+    )
     cands = list(Path(base).glob("*オンサル*")) if Path(base).exists() else []
     return cands[0] if cands else None
 

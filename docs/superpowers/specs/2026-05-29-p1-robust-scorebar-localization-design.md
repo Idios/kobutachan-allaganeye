@@ -57,10 +57,10 @@ P1 は **単フレーム localization のみ**。robustness (外れ値除去) �
 ```python
 @dataclass(frozen=True)
 class ScorebarLocalization:
-    x_left: int        # 1920x1080 probe 上の px、inclusive
-    x_right: int       # px、inclusive
-    y_top: int         # scorebar 帯の上端 px (P2 はこれを game 上端 anchor に使う)
-    y_bottom: int      # y_top + band_h
+    x_left: int  # 1920x1080 probe 上の px、inclusive
+    x_right: int  # px、inclusive
+    y_top: int  # scorebar 帯の上端 px (P2 はこれを game 上端 anchor に使う)
+    y_bottom: int  # y_top + band_h
     confidence: float  # [0,1]、emblem margin 由来 (§6)
 ```
 

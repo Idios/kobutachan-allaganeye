@@ -74,9 +74,10 @@ cache-hit で file を **1 回だけ** open し、boundaries と provenance を�
 ```python
 @dataclass(frozen=True)
 class CacheHit:
-    boundaries: list[...]                 # 現 _load_cache の戻り値型
+    boundaries: list[...]  # 現 _load_cache の戻り値型
     masked_fallback_used: bool
     capture_regions: "CaptureRegions | None"
+
 
 def _load_cache_hit(cache_path, video_path, interval, config) -> "CacheHit | None":
     """cache を 1 回 read し、key 検証 + boundaries + provenance を同一 snapshot

@@ -64,16 +64,23 @@ def test_match_post_match_flag_without_output_file_validates():
         "type": "unknown",
         "post_match": True,
     }
-    _validate_match(match)  # 既存ヘルパ。無ければ jsonschema.validate(match, MATCH_SCHEMA)
+    _validate_match(
+        match
+    )  # 既存ヘルパ。無ければ jsonschema.validate(match, MATCH_SCHEMA)
 
 
 def test_match_without_output_file_and_without_post_match_validates():
     # output_file が NotRequired になったので欠落しても schema 上 valid
     # (実運用では通常 match は必ず output_file を持つが、schema は緩い)
     match = {
-        "index": 1, "start_time": 0.0, "end_time": 600.0,
-        "start_display": "0:00", "end_display": "10:00",
-        "duration": 600.0, "duration_display": "10m0s", "type": "fl_match",
+        "index": 1,
+        "start_time": 0.0,
+        "end_time": 600.0,
+        "start_display": "0:00",
+        "end_display": "10:00",
+        "duration": 600.0,
+        "duration_display": "10m0s",
+        "type": "fl_match",
     }
     _validate_match(match)
 ```
@@ -266,9 +273,7 @@ EOF
 ```python
 def test_post_match_flagged_not_dropped(self, monkeypatch):
     # 全 probe miss (False) -> post-match -> 旧: 削除 / 新: flag + 保持
-    monkeypatch.setattr(
-        "allaganeye.video.detector._has_scorebar_v2", lambda rgb: False
-    )
+    monkeypatch.setattr("allaganeye.video.detector._has_scorebar_v2", lambda rgb: False)
     monkeypatch.setattr(
         "allaganeye.video.detector._probe_frame_rgb_hires",
         lambda path, t: object(),  # non-None なので probe は実行される

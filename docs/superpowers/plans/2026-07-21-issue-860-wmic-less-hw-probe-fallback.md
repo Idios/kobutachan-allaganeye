@@ -500,24 +500,26 @@ Expected: FAIL (現状 wmic None → `return None`)
 を次に置換 (wmic 分岐は非改変、PS を末尾 `return None` の手前に挿入):
 
 ```python
-    if system == "Windows":
-        stdout = _run_text(
-            [
-                "wmic",
-                "ComputerSystem",
-                "get",
-                "TotalPhysicalMemory",
-            ]
-        )
-        if stdout:
-            for line in stdout.splitlines():
-                line = line.strip()
-                if line.isdigit():
-                    return int(line)
-        for value in _windows_ps_values("Win32_ComputerSystem", "TotalPhysicalMemory"):  # #860
-            if value.isdigit():
-                return int(value)
-        return None
+if system == "Windows":
+    stdout = _run_text(
+        [
+            "wmic",
+            "ComputerSystem",
+            "get",
+            "TotalPhysicalMemory",
+        ]
+    )
+    if stdout:
+        for line in stdout.splitlines():
+            line = line.strip()
+            if line.isdigit():
+                return int(line)
+    for value in _windows_ps_values(
+        "Win32_ComputerSystem", "TotalPhysicalMemory"
+    ):  # #860
+        if value.isdigit():
+            return int(value)
+    return None
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
