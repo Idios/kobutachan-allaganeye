@@ -50,7 +50,7 @@ allaganeye split --from-metadata <metadata.json> [OPTIONS]
 | `--blackout-threshold` | `15.0` | 暗転検知の輝度閾値（0-255） |
 | `--min-match-duration` | `300.0` | 最小試合時間（秒）。これより短いセグメントは無視 |
 | `--min-blackout-duration` | `3.0` | 最小暗転時間（秒）。これより短い暗転は無視 |
-| `--workers` | auto | 検知の並列ワーカー数（デフォルト: 自動=`min(cpu_count, 24)`） |
+| `--workers` | auto | 検知の並列ワーカー数。auto の解決値は実装の cap に従う (正: `allaganeye/video/detector.py` の `_resolve_workers` docstring) |
 | `--gpu` | `false` | GPU アクセラレーション検知を強制（チャンク並列デコード）。利用不可時は CPU フォールバック。**`--no-gpu` と同時指定は排他エラー (exit 5) (#419)** |
 | `--no-gpu` | `false` | GPU を無効化し CPU 検知を強制する。**`--gpu` と同時指定は排他エラー (exit 5) (#419)** |
 | `--gpu-vendor` | `auto` | 使用する GPU vendor を明示指定 (#546 / #553 / #550 / #582)。値: `auto` / `nvidia` / `amd` / `intel`。**3 vendor すべて実装済み** (`nvidia`=cuvid #546 / `amd`=d3d11va+hwdownload #553 / `intel`=QSV+hwdownload #550 h264/hevc/av1 + #582 vp9)。probe に無い vendor を要求すると exit 5。default は probe 結果から `_VENDOR_PREFERENCE` (nvidia > amd > intel) 順で選ぶ |
@@ -266,7 +266,7 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 | `min_blackout_duration` | float | 最小暗転時間（秒） |
 | `no_audio` | bool | 音声ベースの境界昇格 (Fanfare スキャン) を無効化したか |
 | `use_gpu` | bool \| null | GPU 検知の指定値。`null` は CLI で `--gpu` を指定せずコーデック自動選択に任せたことを示す |
-| `workers` | int \| null | 並列ワーカー数の指定値。`null` は auto（`_resolve_workers` が `min(cpu_count, 24)` で解決）を示す |
+| `workers` | int \| null | 並列ワーカー数の指定値。`null` は auto (`_resolve_workers` が実装の cap で解決) を示す |
 
 ## detect コマンド
 
@@ -512,7 +512,7 @@ allaganeye debug-brightness <video_path> [OPTIONS]
 | `--start` | `0.0` | 開始時刻（秒） |
 | `--end` | 動画全長 | 終了時刻（秒） |
 | `--interval` | `1.0` | サンプリング間隔（秒） |
-| `--workers` | auto | 並列ワーカー数（デフォルト: 自動=`min(cpu_count, 24)`） |
+| `--workers` | auto | 並列ワーカー数。auto の解決値は実装の cap に従う (正: `_resolve_workers` docstring) |
 | `--roi-mode` | なし | ROI 分析モード。`scorebar`: スコアバー ROI の輝度・色情報を追加出力。`scorebar-detail`: セクション別の詳細情報も出力 |
 
 ### 出力形式
