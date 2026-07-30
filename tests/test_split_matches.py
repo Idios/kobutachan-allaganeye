@@ -6592,4 +6592,23 @@ def test_print_detection_stats_empty_stats_no_crash(capsys):
     from allaganeye.commands.split_matches import _print_detection_stats
 
     _print_detection_stats({})
+
+
+def test_verbose_header_echoes_gpu_vendor_warning(capsys, monkeypatch, tmp_path):
+    """_print_verbose_header surfaces gpu_vendor_probe_warning() when set (#860)."""
+    from allaganeye.commands import split_matches
+
+    # Keep the header hermetic: stub the probe getters so no real subprocess runs.
+    monkeypatch.setattr("allaganeye.system_info.get_cpu_info", lambda: "CPU-X")
+    monkeypatch.setattr("allaganeye.system_info.get_gpu_info_lines", lambda: [])
+    monkeypatch.setattr("allaganeye.system_info.get_memory_info", lambda: "1.0 GB")
+    monkeypatch.setattr(
+        "allaganeye.system_info.gpu_vendor_probe_warning",
+        lambda: "WARN-GPU-SENTINEL",
+    )
+
+    split_matches._print_environment_header(tmp_path)
+
+    out = capsys.readouterr().out
+    assert "WARN-GPU-SENTINEL" in out
     assert capsys.readouterr().out == ""
