@@ -61,9 +61,9 @@ ffmpeg の `-hwaccel` は **per-input flag** であり `-i` の前に置く必�
 
 ```python
 _DECODE_HWACCEL_ARGS: dict[H264Encoder, tuple[str, ...]] = {
-    H264Encoder.NVENC:   ("-hwaccel", "cuda",    "-hwaccel_output_format", "cuda"),
-    H264Encoder.QSV:     (),  # deferred to #762
-    H264Encoder.AMF:     (),  # deferred to #762
+    H264Encoder.NVENC: ("-hwaccel", "cuda", "-hwaccel_output_format", "cuda"),
+    H264Encoder.QSV: (),  # deferred to #762
+    H264Encoder.AMF: (),  # deferred to #762
     H264Encoder.LIBX264: (),
 }
 ```

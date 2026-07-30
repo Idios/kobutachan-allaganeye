@@ -106,6 +106,7 @@ tests/
 ```python
 # tests/hooks/conftest.py (抜粋)
 
+
 @pytest.fixture
 def tmp_repo(tmp_path: Path) -> Path:
     """Initialize an isolated git repo with `.claude/` and `scripts/` symlinked
@@ -120,8 +121,11 @@ def tmp_repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     (repo / "README.md").write_text("test\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
-                    "commit", "-qm", "init"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"],
+        cwd=repo,
+        check=True,
+    )
     (repo / "scripts").symlink_to(PROJECT_ROOT / "scripts", target_is_directory=True)
     (repo / ".claude" / "hooks").mkdir(parents=True)
     (repo / ".claude" / "hooks" / "stop.sh").symlink_to(
@@ -135,14 +139,18 @@ def make_claude_branch(tmp_repo: Path):
     """Build a `claude/<slug>` branch with controllable merged / cooldown
     properties. Returns a callable.
     """
+
     def _make(slug: str, *, merged: bool, age_seconds: int) -> str: ...
+
     return _make
 
 
 @pytest.fixture
 def make_worktree_dir(tmp_repo: Path):
     """Build .claude/worktrees/<name>/ in 3 states: empty / non-empty / active."""
+
     def _make(name: str, state: Literal["empty", "non_empty", "active"]) -> Path: ...
+
     return _make
 
 
@@ -152,7 +160,9 @@ def run_hook(tmp_repo: Path):
     with CLAUDE_PROJECT_DIR set. Returns HookResult (stdout, stderr, exit_code,
     parsed ndjson list).
     """
+
     def _run(script: str, *args: str) -> HookResult: ...
+
     return _run
 ```
 

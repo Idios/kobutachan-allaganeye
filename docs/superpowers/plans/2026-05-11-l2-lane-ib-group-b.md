@@ -1378,30 +1378,32 @@ Find at [split_matches.py:182-194](../../allaganeye/commands/split_matches.py#L1
 Replace with (`captured_brightness` ローカル変数 + `_on_brightness` callback + `brightness_callback=_on_brightness` 配線):
 
 ```python
-    detect_stats: DetectionStats | None = {} if verbose else None
+detect_stats: DetectionStats | None = {} if verbose else None
 
-    # #644 -- Pass 1 で計測された輝度マップを捕捉して metadata.json に書く
-    # ため、`_run_detection` に brightness_callback を渡す。detect.py の
-    # run_detect (line 230-260) と同じパターン。callback が呼ばれない経路
-    # (cache hit や Pass 1 skip) では captured_brightness が空のまま残り、
-    # `_split_and_write_metadata` 呼び出し時に None を渡す。
-    captured_brightness: dict[float, float] = {}
+# #644 -- Pass 1 で計測された輝度マップを捕捉して metadata.json に書く
+# ため、`_run_detection` に brightness_callback を渡す。detect.py の
+# run_detect (line 230-260) と同じパターン。callback が呼ばれない経路
+# (cache hit や Pass 1 skip) では captured_brightness が空のまま残り、
+# `_split_and_write_metadata` 呼び出し時に None を渡す。
+captured_brightness: dict[float, float] = {}
 
-    def _on_brightness(samples: dict[float, float]) -> None:
-        captured_brightness.update(samples)
 
-    boundaries = _run_detection(
-        video_path,
-        metadata,
-        effective_interval,
-        config,
-        audio_hits=audio_hits,
-        quiet=quiet,
-        stats=detect_stats,
-        use_gpu=use_gpu,
-        gpu_vendor=gpu_vendor,
-        brightness_callback=_on_brightness,
-    )
+def _on_brightness(samples: dict[float, float]) -> None:
+    captured_brightness.update(samples)
+
+
+boundaries = _run_detection(
+    video_path,
+    metadata,
+    effective_interval,
+    config,
+    audio_hits=audio_hits,
+    quiet=quiet,
+    stats=detect_stats,
+    use_gpu=use_gpu,
+    gpu_vendor=gpu_vendor,
+    brightness_callback=_on_brightness,
+)
 ```
 
 - [ ] **Step 2: `_split_and_write_metadata` 呼び出しで `brightness_samples` を渡す**
@@ -1591,32 +1593,29 @@ Expected: `test_run_split_from_metadata_preserves_brightness_samples` FAIL (pres
 Find at [split_matches.py:350-355](../../allaganeye/commands/split_matches.py#L350) (`preserve_started_at` / `preserve_completed_at` 周辺):
 
 ```python
-    # #586 -- preserve detect timing across `--from-metadata` invocations.
-    # 再検知してないので元 metadata の検知開始/完了時刻を引き継ぎ、GUI
-    # 「所要」が「検知時の所要」を表示し続けるようにする。pre-#586 metadata
-    # では両フィールド欠落 -> None を渡して _split_and_write_metadata の
-    # fallback (started=detected_at / completed=_iso_utc_now()) に委譲。
-    old_started_at = payload.get("detection_started_at")
-    old_completed_at = payload.get("detection_completed_at")
-    preserve_started_at = old_started_at if isinstance(old_started_at, str) else None
-    preserve_completed_at = (
-        old_completed_at if isinstance(old_completed_at, str) else None
-    )
+# #586 -- preserve detect timing across `--from-metadata` invocations.
+# 再検知してないので元 metadata の検知開始/完了時刻を引き継ぎ、GUI
+# 「所要」が「検知時の所要」を表示し続けるようにする。pre-#586 metadata
+# では両フィールド欠落 -> None を渡して _split_and_write_metadata の
+# fallback (started=detected_at / completed=_iso_utc_now()) に委譲。
+old_started_at = payload.get("detection_started_at")
+old_completed_at = payload.get("detection_completed_at")
+preserve_started_at = old_started_at if isinstance(old_started_at, str) else None
+preserve_completed_at = old_completed_at if isinstance(old_completed_at, str) else None
 ```
 
 直後 (空行を挟んで) に以下を追加:
 
 ```python
-
-    # #644 -- preserve brightness_samples across `--from-metadata`.
-    # 元 metadata に brightness_samples があれば新 metadata にもそのまま
-    # コピーする。PR #626 の detection_started_at / detection_completed_at
-    # と同じ preserve パターン。元に無ければ None を渡して新 metadata でも
-    # 欠落させる (cache hit / pre-#569 metadata 経路と同じ挙動)。
-    old_brightness_samples = payload.get("brightness_samples")
-    preserve_brightness_samples = (
-        old_brightness_samples if isinstance(old_brightness_samples, dict) else None
-    )
+# #644 -- preserve brightness_samples across `--from-metadata`.
+# 元 metadata に brightness_samples があれば新 metadata にもそのまま
+# コピーする。PR #626 の detection_started_at / detection_completed_at
+# と同じ preserve パターン。元に無ければ None を渡して新 metadata でも
+# 欠落させる (cache hit / pre-#569 metadata 経路と同じ挙動)。
+old_brightness_samples = payload.get("brightness_samples")
+preserve_brightness_samples = (
+    old_brightness_samples if isinstance(old_brightness_samples, dict) else None
+)
 ```
 
 - [ ] **Step 2: `_split_and_write_metadata` 呼び出しに `brightness_samples=preserve_brightness_samples` を渡す**

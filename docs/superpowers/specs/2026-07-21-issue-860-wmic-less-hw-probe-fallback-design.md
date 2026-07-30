@@ -37,6 +37,7 @@ GPU vendor 検出が空になると `metadata.json system_info.gpu_vendors_avail
 ```python
 _PS_TIMEOUT_S = 10.0  # PowerShell cold start は wmic より遅い (5s では tight)
 
+
 def _windows_ps_values(cim_class: str, prop: str) -> list[str]:
     """Return `prop` values from `Get-CimInstance <cim_class>` via PowerShell.
 
@@ -99,14 +100,16 @@ if system == "Windows":
         for line in stdout.splitlines():
             line = line.strip()
             if line.isdigit():
-                total += int(line); found = True
+                total += int(line)
+                found = True
         if found:
             return total
     ps = _windows_ps_values("Win32_Processor", "NumberOfCores")  # NEW
     total, found = 0, False
     for v in ps:
         if v.isdigit():
-            total += int(v); found = True
+            total += int(v)
+            found = True
     return total if found else None
 ```
 

@@ -392,7 +392,9 @@ def _masked_frames():
 
 def test_resolve_masked_region_finds_mask_free_rect(monkeypatch):
     seq = iter(_masked_frames() * 20)
-    monkeypatch.setattr(_det, "_probe_frame_gray2d", lambda v, t: next(seq, _masked_frames()[0]))
+    monkeypatch.setattr(
+        _det, "_probe_frame_gray2d", lambda v, t: next(seq, _masked_frames()[0])
+    )
     region = _det._resolve_masked_region(_det.Path("x.mp4"), 600.0, None)
     assert not region.is_full_frame()
 
@@ -492,7 +494,9 @@ def test_classify_blackout_localize_selector_routes(monkeypatch):
     monkeypatch.setattr(_sb, "_classify_blackout_localize", lambda *a, **k: "LOCALIZED")
     # localize=True -> position-independent path
     assert (
-        _sb.classify_blackout(_sb.Path("x.mp4"), (10.0, 12.0), 100.0, 180, localize=True)
+        _sb.classify_blackout(
+            _sb.Path("x.mp4"), (10.0, 12.0), 100.0, 180, localize=True
+        )
         == "LOCALIZED"
     )
     # localize=False -> v2 path (NOT the localize sentinel; probes return real result)
@@ -500,7 +504,9 @@ def test_classify_blackout_localize_selector_routes(monkeypatch):
         _sb, "_probe_scorebar_context", lambda *a, **k: ([None], [None], [None])
     )
     assert (
-        _sb.classify_blackout(_sb.Path("x.mp4"), (10.0, 12.0), 100.0, 180, localize=False)
+        _sb.classify_blackout(
+            _sb.Path("x.mp4"), (10.0, 12.0), 100.0, 180, localize=False
+        )
         != "LOCALIZED"
     )
 ```
@@ -570,7 +576,10 @@ def test_masked_fallback_triggers_on_zero_blackout(monkeypatch):
 
     monkeypatch.setattr(_det, "_detect_masked_fallback", fake_masked)
     out = _det.detect_match_boundaries(
-        _det.Path("x.mp4"), duration_hint=600.0, use_gpu=False, src_resolution=(1920, 1080)
+        _det.Path("x.mp4"),
+        duration_hint=600.0,
+        use_gpu=False,
+        src_resolution=(1920, 1080),
     )
     assert called.get("hit") is True
     assert out == [{"start": 0.0, "end": 300.0}]
@@ -665,7 +674,9 @@ def test_detect_masked_fallback_wires_region_band_localize(monkeypatch):
         "allaganeye.video.scorebar.filter_blackouts_with_scorebar", fake_filter
     )
     monkeypatch.setattr(
-        _det, "_filter_and_extract_segments", lambda *a, **k: [{"start": 0.0, "end": 9.0}]
+        _det,
+        "_filter_and_extract_segments",
+        lambda *a, **k: [{"start": 0.0, "end": 9.0}],
     )
 
     out = _det._detect_masked_fallback(
@@ -703,7 +714,7 @@ Expected: FAIL (`TypeError: ... unexpected keyword argument 'masked'` / `Attribu
 `allaganeye/video/detector.py`、`detect_match_boundaries` の signature に `vtuber: bool = False` の直後 (line 257 付近) へ追加:
 
 ```python
-    masked: bool = False,
+masked: bool = (False,)
 ```
 
 `blackout_times` を計算する箇所 (lines 397-399) の**直後**、`_group_blackout_regions` 呼び出しの**前**に gate branch を挿入:
@@ -928,7 +939,9 @@ def test_split_masked_flag_sets_config(monkeypatch, tmp_path):
     video = tmp_path / "v.mp4"
     video.write_bytes(b"x")
     captured = {}
-    monkeypatch.setattr(sm, "run_split", lambda vp, cfg, **k: captured.update(masked=cfg.masked))
+    monkeypatch.setattr(
+        sm, "run_split", lambda vp, cfg, **k: captured.update(masked=cfg.masked)
+    )
     from allaganeye.cli import app
     from typer.testing import CliRunner
 
@@ -945,7 +958,9 @@ def test_split_vtuber_and_masked_mutually_exclusive(tmp_path):
 
     res = CliRunner().invoke(app, ["split", str(video), "--vtuber", "--masked"])
     assert res.exit_code != 0
-    assert "mutually exclusive" in res.stdout.lower() or "exclusive" in res.stdout.lower()
+    assert (
+        "mutually exclusive" in res.stdout.lower() or "exclusive" in res.stdout.lower()
+    )
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -966,24 +981,24 @@ Expected: FAIL (`TypeError: ... unexpected keyword argument 'masked'` / mutex �
 `allaganeye/cli.py` の `split` command で、`--vtuber` Option (lines 152-159) を `hidden=True` 付きに変更し、直後に `--masked` を追加:
 
 ```python
-    vtuber: Annotated[
-        bool,
-        typer.Option(
-            "--vtuber",
-            help="(experimental) VTuber recording (game inset): scorebar-band "
-            "anchor detection. Under-detects irregular transitions; deferred (#480).",
-            hidden=True,
-        ),
-    ] = False,
-    masked: Annotated[
-        bool,
-        typer.Option(
-            "--masked",
-            help="Masked recording: a chat-hiding image is composited over the "
-            "full screen. Auto-detects a mask-free region and re-detects; this "
-            "flag forces that path even when some blackouts are found.",
-        ),
-    ] = False,
+vtuber: Annotated[
+    bool,
+    typer.Option(
+        "--vtuber",
+        help="(experimental) VTuber recording (game inset): scorebar-band "
+        "anchor detection. Under-detects irregular transitions; deferred (#480).",
+        hidden=True,
+    ),
+] = (False,)
+masked: Annotated[
+    bool,
+    typer.Option(
+        "--masked",
+        help="Masked recording: a chat-hiding image is composited over the "
+        "full screen. Auto-detects a mask-free region and re-detects; this "
+        "flag forces that path even when some blackouts are found.",
+    ),
+] = (False,)
 ```
 
 mutual-exclusion チェック群 (lines 178-194 付近、`if gpu and no_gpu:` の近く) に追加:

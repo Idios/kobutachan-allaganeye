@@ -671,7 +671,7 @@ localize は per-frame noisy で、真の scorebar (y_top~0) と下部 HUD 誤�
 def consensus_scorebar_localization(
     *,
     duration: float,
-    localize_fn: Callable[[float], ScorebarLocalization | None | PresenceState],
+    localize_fn: Callable[[float], ScorebarLocalization | PresenceState | None],
     num_samples: int = 8,
     min_hits: int = _BAND_CONSENSUS_MIN_HITS,
 ) -> ScorebarLocalization | None:
@@ -734,7 +734,7 @@ def detect_scorebar_band_region(
     duration: float,
     probe_w: int,
     probe_h: int,
-    localize_fn: Callable[[float], ScorebarLocalization | None | PresenceState],
+    localize_fn: Callable[[float], ScorebarLocalization | PresenceState | None],
     num_samples: int = 8,
     min_hits: int = _BAND_CONSENSUS_MIN_HITS,
 ) -> CaptureRegion:

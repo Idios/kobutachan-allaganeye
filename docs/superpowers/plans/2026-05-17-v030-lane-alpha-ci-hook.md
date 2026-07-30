@@ -495,7 +495,9 @@ def _check_scope_creep(paths: list[str]) -> tuple[bool, str]:
 既存の `main()` (or `_decide_for_command`) の冒頭で `git commit` を検出して scope check を呼ぶ:
 
 ```python
-def _decide_for_command(command: str, *, recent_ops: list[dict], now: float) -> tuple[bool, str]:
+def _decide_for_command(
+    command: str, *, recent_ops: list[dict], now: float
+) -> tuple[bool, str]:
     """
     既存の bulk operation gate 等の判定。
     M7 scope check は別途 _check_git_commit_scope() で先に判定し、必要なら ask を return。
@@ -520,6 +522,7 @@ def _decide_for_command(command: str, *, recent_ops: list[dict], now: float) -> 
 
 ```python
 """Tests for M7 path↔scope multi-scope detection in preuse.py."""
+
 from __future__ import annotations
 
 import importlib.util

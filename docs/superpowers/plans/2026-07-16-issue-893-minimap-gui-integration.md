@@ -78,6 +78,7 @@ def test_minimap_json_emits_ndjson_result_and_summary(tmp_path, monkeypatch):
 
     def fake_export_matches(*, matches, progress_cb, **kwargs):
         from allaganeye.export.schema import ProgressEvent
+
         for m in matches:
             progress_cb(
                 ProgressEvent.result(
@@ -87,7 +88,9 @@ def test_minimap_json_emits_ndjson_result_and_summary(tmp_path, monkeypatch):
                     encoder_used="libx264",
                 )
             )
-        return ExportSummary(success=len(matches), failure=0, skipped=0, cancelled=False)
+        return ExportSummary(
+            success=len(matches), failure=0, skipped=0, cancelled=False
+        )
 
     monkeypatch.setattr(minimap_mod, "export_matches", fake_export_matches)
 
@@ -122,13 +125,13 @@ from allaganeye.export.wire import WireWriter
 1. `minimap` 関数の signature に `quiet` の直後へ追加:
 
 ```python
-        json_mode: Annotated[
-            bool,
-            typer.Option(
-                "--json",
-                help="Emit JSON Lines on stdout (GUI subprocess mode).",
-            ),
-        ] = False,
+json_mode: Annotated[
+    bool,
+    typer.Option(
+        "--json",
+        help="Emit JSON Lines on stdout (GUI subprocess mode).",
+    ),
+] = (False,)
 ```
 
 1. 関数本体冒頭 (docstring 直後) に排他チェックを追加:
@@ -230,19 +233,28 @@ def test_minimap_expected_mtime_conflict_aborts_without_write(tmp_path, monkeypa
     )
     wrote = {"called": False}
     monkeypatch.setattr(
-        minimap_mod, "write_metadata_atomic",
+        minimap_mod,
+        "write_metadata_atomic",
         lambda p, payload: wrote.__setitem__("called", True),
     )
     # export_matches must never run when the CAS aborts.
     monkeypatch.setattr(
-        minimap_mod, "export_matches",
+        minimap_mod,
+        "export_matches",
         lambda **k: (_ for _ in ()).throw(AssertionError("encode ran on conflict")),
     )
     # Pass a stale expected mtime (0) -> current mtime differs -> conflict.
     result = runner.invoke(
         app,
-        ["minimap", str(meta_path), "--region", "10,20,300,400",
-         "--json", "--expected-mtime", "0"],
+        [
+            "minimap",
+            str(meta_path),
+            "--region",
+            "10,20,300,400",
+            "--json",
+            "--expected-mtime",
+            "0",
+        ],
     )
     assert result.exit_code == 6, result.stdout
     assert wrote["called"] is False
@@ -256,14 +268,22 @@ def test_minimap_expected_mtime_match_writes(tmp_path, monkeypatch):
         minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
     )
     monkeypatch.setattr(
-        minimap_mod, "export_matches",
+        minimap_mod,
+        "export_matches",
         lambda **k: ExportSummary(success=1, failure=0, skipped=0, cancelled=False),
     )
     current_ms = meta_path.stat().st_mtime_ns // 1_000_000
     result = runner.invoke(
         app,
-        ["minimap", str(meta_path), "--region", "10,20,300,400",
-         "--json", "--expected-mtime", str(current_ms)],
+        [
+            "minimap",
+            str(meta_path),
+            "--region",
+            "10,20,300,400",
+            "--json",
+            "--expected-mtime",
+            str(current_ms),
+        ],
     )
     assert result.exit_code == 0, result.stdout
     written = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -282,16 +302,16 @@ Expected: FAIL (`--expected-mtime` 未定義)。
 1. signature に追加 (`json_mode` の直後):
 
 ```python
-        expected_mtime: Annotated[
-            int | None,
-            typer.Option(
-                "--expected-mtime",
-                help=(
-                    "Compare-and-swap guard (GUI subprocess mode): abort with "
-                    "exit 6 if metadata.json mtime (ms) differs at write time."
-                ),
-            ),
-        ] = None,
+expected_mtime: Annotated[
+    int | None,
+    typer.Option(
+        "--expected-mtime",
+        help=(
+            "Compare-and-swap guard (GUI subprocess mode): abort with "
+            "exit 6 if metadata.json mtime (ms) differs at write time."
+        ),
+    ),
+] = (None,)
 ```
 
 1. write-back 節 (`payload["minimap_regions"] = minimap_entries` の直後、`write_metadata_atomic` の直前) に CAS を挿入:
@@ -357,11 +377,15 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```python
 def test_progress_event_proposal_with_region():
     from allaganeye.export.schema import ProgressEvent
+
     ev = ProgressEvent.proposal(
-        match_index=2, region={"x": 10, "y": 20, "w": 300, "h": 400},
-        confidence=0.87, scattered=False,
+        match_index=2,
+        region={"x": 10, "y": 20, "w": 300, "h": 400},
+        confidence=0.87,
+        scattered=False,
     )
     import json
+
     payload = json.loads(ev.to_json_line())
     assert payload["type"] == "proposal"
     assert payload["match_index"] == 2
@@ -373,6 +397,7 @@ def test_progress_event_proposal_with_region():
 def test_progress_event_proposal_none_region():
     from allaganeye.export.schema import ProgressEvent
     import json
+
     ev = ProgressEvent.proposal(
         match_index=3, region=None, confidence=0.0, scattered=False
     )
@@ -435,7 +460,8 @@ def test_minimap_proposal_json_emits_proposal_lines_exit4(tmp_path, monkeypatch)
         scattered = False
 
     monkeypatch.setattr(
-        minimap_mod, "resolve_match_regions",
+        minimap_mod,
+        "resolve_match_regions",
         lambda source, tuples: ([_MR()], []),
     )
 

@@ -19,8 +19,12 @@ ffmpeg -ss .. -to .. -i <av1.mkv> -vf crop=358:372:6:3 -c:v h264_nvenc -rc vbr -
 **根本原因**: `allaganeye/export/ffmpeg_runner.py:243`
 
 ```python
-if codec != "copy" and video_filter is None:      # ← video_filter 有りだと decode hwaccel を挿入しない
-    args.extend(_DECODE_HWACCEL_ARGS[encoder])     # NVENC: -hwaccel cuda -hwaccel_output_format cuda
+if (
+    codec != "copy" and video_filter is None
+):  # ← video_filter 有りだと decode hwaccel を挿入しない
+    args.extend(
+        _DECODE_HWACCEL_ARGS[encoder]
+    )  # NVENC: -hwaccel cuda -hwaccel_output_format cuda
 ```
 
 `_DECODE_HWACCEL_ARGS[NVENC]` は zero-copy (`-hwaccel_output_format cuda`) で GPU frame を出すため CPU の `crop` filter に渡せず (#481)、フィルタ有り時は NVDEC を丸ごとスキップしていた。export (フィルタ無し) は既に NVDEC zero-copy で GPU decode 済みで、**フィルタ有り = minimap crop だけが取り残されている**。
@@ -50,8 +54,8 @@ zero-copy (`-hwaccel_output_format cuda`) ではなく **`-hwaccel cuda` 単独*
 # CPU crop filter に渡せる。GPU decode + CPU crop + NVENC encode。
 _DECODE_HWACCEL_ARGS_FILTERED: dict[H264Encoder, tuple[str, ...]] = {
     H264Encoder.NVENC: ("-hwaccel", "cuda"),  # decode-only, auto-download
-    H264Encoder.QSV: (),   # #762 保留 (software decode 継続)
-    H264Encoder.AMF: (),   # #762 保留
+    H264Encoder.QSV: (),  # #762 保留 (software decode 継続)
+    H264Encoder.AMF: (),  # #762 保留
     H264Encoder.LIBX264: (),
 }
 ```
@@ -61,9 +65,11 @@ _DECODE_HWACCEL_ARGS_FILTERED: dict[H264Encoder, tuple[str, ...]] = {
 ```python
 if codec != "copy":
     if video_filter is None:
-        args.extend(_DECODE_HWACCEL_ARGS[encoder])           # zero-copy (export、不変)
+        args.extend(_DECODE_HWACCEL_ARGS[encoder])  # zero-copy (export、不変)
     else:
-        args.extend(_DECODE_HWACCEL_ARGS_FILTERED[encoder])  # #899: filter 用 decode-only
+        args.extend(
+            _DECODE_HWACCEL_ARGS_FILTERED[encoder]
+        )  # #899: filter 用 decode-only
 ```
 
 export (フィルタ無し) の argv は完全不変。filter 有り NVENC のみ `-hwaccel cuda` が `-i` 前に付く。
@@ -96,15 +102,22 @@ _NVENC_ENCODE_STAGE_PATTERNS = (
 )  # 3: encoder-init
 
 _NVENC_DECODE_STAGE_PATTERNS = (
-    "could not dynamically load cuda", "cannot load libcuda",              # L1 (2)
-    "device creation failed", "device setup failed for decoder",
-    "no device available for decoder", "failed to create cuda context",
-    "cannot init cuda",                                                    # L2 (5)
-    "cuvidcreatedecoder", "hwaccel transfer data failed",
-    "cuvid: failed", "could not allocate hardware frames",                # L3 (4)
+    "could not dynamically load cuda",
+    "cannot load libcuda",  # L1 (2)
+    "device creation failed",
+    "device setup failed for decoder",
+    "no device available for decoder",
+    "failed to create cuda context",
+    "cannot init cuda",  # L2 (5)
+    "cuvidcreatedecoder",
+    "hwaccel transfer data failed",
+    "cuvid: failed",
+    "could not allocate hardware frames",  # L3 (4)
 )  # 11: NVDEC decode-stage
 
-_GPU_ENCODER_FAILURE_PATTERNS[NVENC] = _NVENC_ENCODE_STAGE_PATTERNS + _NVENC_DECODE_STAGE_PATTERNS
+_GPU_ENCODER_FAILURE_PATTERNS[NVENC] = (
+    _NVENC_ENCODE_STAGE_PATTERNS + _NVENC_DECODE_STAGE_PATTERNS
+)
 ```
 
 `is_gpu_encoder_failure` (既存) は合成した全 pattern を見るので後方互換 (export の 2-tier fallback 判定は不変)。新規に `_nvenc_decode_stage_failure(stderr) -> bool` を追加し、filter 有り NVENC の tier1→tier2 判定に使う。

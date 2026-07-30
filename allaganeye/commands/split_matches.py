@@ -8,6 +8,7 @@ import shutil
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict, cast
 
@@ -135,9 +136,9 @@ def run_split(
     # Check detection cache
     cache_path = config.output_dir / ".detection_cache.json"
     if not config.no_cache:
-        cached = _load_cache(cache_path, video_path, effective_interval, config)
-        if cached is not None:
-            boundaries = cached
+        hit = _load_cache_hit(cache_path, video_path, effective_interval, config)
+        if hit is not None:
+            boundaries = hit.boundaries
             # Surface the detection context that the cached run used (#380).
             # Without this, verbose+cached prints only "Detected ... (cached)"
             # which strips the parameter summary users rely on for
@@ -183,8 +184,8 @@ def run_split(
                 system_info=cached_system_info,
                 # cache-hit: resolved path は当該 boundaries を生成した検出の
                 # 記録値 (cache top-level) を引き継ぐ。
-                masked_fallback_used=_read_cached_masked_fallback(cache_path),
-                capture_regions=_read_cached_capture_regions(cache_path),
+                masked_fallback_used=hit.masked_fallback_used,
+                capture_regions=hit.capture_regions,
                 quiet=quiet,
             )
             # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
@@ -476,11 +477,8 @@ def run_split_from_metadata(
     # JSON payload は Any 型なので isinstance チェック後に cast で
     # BrightnessSamples (TypedDict) に narrow する。schema 検証は
     # _build_metadata_payload 側の TypedDict 構造に委譲。
-    old_brightness_samples = payload.get("brightness_samples")
     preserve_brightness_samples: BrightnessSamples | None = (
-        cast("BrightnessSamples", old_brightness_samples)
-        if isinstance(old_brightness_samples, dict)
-        else None
+        _preserve_brightness_samples(payload)
     )
 
     # #805 段階1 -- preserve warnings across `--from-metadata`. detect ->
@@ -2076,17 +2074,68 @@ def _save_cache(
         logger.debug("Failed to write detection cache to %s", cache_path)
 
 
-def _read_cached_masked_fallback(cache_path: Path) -> bool:
-    """cache-hit 経路用: cache に記録された resolved masked fallback を読む。
-
-    読めない / 欠落時は False (標準 path 扱い)。cache key の一部ではないため
-    `_load_cache` とは独立に読む (#821)。
-    """
-    try:
-        data = json.loads(cache_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
+def _masked_fallback_from_cache_data(data: dict) -> bool:
+    """Pure parser: resolved masked fallback flag from an already-parsed cache dict (#879)."""
     return bool(data.get("masked_fallback_used", False))
+
+
+_BRIGHTNESS_SAMPLES_KEYS = frozenset({"interval_s", "values"})
+
+
+def _preserve_brightness_samples(payload: dict) -> "BrightnessSamples | None":
+    """Sanitize brightness_samples from a --from-metadata payload for preserve (#879).
+
+    Returns the sanitized value, or None when absent or malformed. A
+    present-but-malformed value is dropped with a warning (same pattern as
+    warnings / capture_regions preserve).
+    """
+    old = payload.get("brightness_samples")
+    sanitized = _sanitize_brightness_samples(old)
+    if old is not None and sanitized is None:
+        logger.warning(
+            "Dropping malformed brightness_samples from metadata "
+            "(corrupted or hand-edited value)"
+        )
+    return sanitized
+
+
+def _sanitize_brightness_samples(value: object) -> "BrightnessSamples | None":
+    """Structural sanitizer for a BrightnessSamples payload from metadata.json.
+
+    Mirrors BrightnessSamplesSchema (gui/src/types/metadata.schema.ts) with a
+    pure-Python check. Returns the value cast to BrightnessSamples when fully
+    valid, else None. Same contract/style as ``_sanitize_capture_regions``:
+    bool は数値として拒否、NaN / +-Infinity は reject (``json.dumps`` allow_nan
+    が非標準 token を emit し GUI serde_json / JSON.parse が全体 reject するため)。
+
+    - value は key が厳密に {interval_s, values} の dict。
+    - interval_s は有限実数 (int/float、bool 排除) で > 0。
+    - values は list で各要素が有限実数 (bool 排除) かつ 0 <= v <= 255。
+    """
+    if not isinstance(value, dict):
+        return None
+    if set(value.keys()) != _BRIGHTNESS_SAMPLES_KEYS:
+        return None
+    interval_s = value.get("interval_s")
+    if (
+        isinstance(interval_s, bool)
+        or not isinstance(interval_s, (int, float))
+        or not math.isfinite(interval_s)
+        or interval_s <= 0
+    ):
+        return None
+    values = value.get("values")
+    if not isinstance(values, list):
+        return None
+    for v in values:
+        if (
+            isinstance(v, bool)
+            or not isinstance(v, (int, float))
+            or not math.isfinite(v)
+            or not (0.0 <= v <= 255.0)
+        ):
+            return None
+    return cast("BrightnessSamples", value)
 
 
 _CAPTURE_REGIONS_TOP_KEYS = frozenset({"coarse", "segments", "fallback_reason"})
@@ -2179,8 +2228,12 @@ def _is_valid_capture_region(region: object) -> bool:
     return True
 
 
-def _read_cached_capture_regions(cache_path: Path) -> "CaptureRegions | None":
-    """cache-hit 経路用: cache に記録された capture region timeline を読む (#810).
+def _capture_regions_from_cache_data(data: dict) -> "CaptureRegions | None":
+    """Pure parser: capture region timeline from an already-parsed cache dict (#810/#879).
+
+    (元 _read_cached_capture_regions の synthesis ロジックをそのまま移設:
+    present は sanitize、absent+non-vtuber+non-masked は FULL_FRAME 合成、
+    それ以外は None。)
 
     pre-#810 legacy cache (field なし / explicit null) は、cache 記録の
     params.vtuber == False かつ masked_fallback_used == False なら標準 path 確定
@@ -2199,15 +2252,8 @@ def _read_cached_capture_regions(cache_path: Path) -> "CaptureRegions | None":
     で shape 検証する: valid -> そのまま返す; invalid -> logger.warning + None 返す。
     present-but-garbage は "cache が破損/改竄" を意味し FULL_FRAME 合成に fall-through
     しない (present-but-garbage != legacy absent = 標準 path 確定)。
-
-    cache が読めないときも None。`_load_cache` の hit 判定とは独立に読む
-    (`_read_cached_masked_fallback` と同型)。
     codex adversarial-review F1 (2026-07-07 Idios confirmed): sanitize hardening.
     """
-    try:
-        data = json.loads(cache_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
     cached = data.get("capture_regions")
     if cached is not None:
         # present value: sanitize. invalid means cache corruption/tampering;
@@ -2215,9 +2261,8 @@ def _read_cached_capture_regions(cache_path: Path) -> "CaptureRegions | None":
         sanitized = _sanitize_capture_regions(cached)
         if sanitized is None:
             logger.warning(
-                "Dropping malformed capture_regions from cache %s "
-                "(corrupted or hand-edited cache value -- region unknown)",
-                cache_path,
+                "Dropping malformed capture_regions from cache "
+                "(corrupted or hand-edited cache value -- region unknown)"
             )
         return sanitized
     # cached is None: key absent or explicit null -- legacy absent semantics.
@@ -2227,50 +2272,50 @@ def _read_cached_capture_regions(cache_path: Path) -> "CaptureRegions | None":
     return None
 
 
-def _load_cache(
+@dataclass(frozen=True)
+class CacheHit:
+    """Single-read cache-hit result: boundaries + provenance from one snapshot (#879)."""
+
+    boundaries: list[MatchBoundary]
+    masked_fallback_used: bool
+    capture_regions: "CaptureRegions | None"
+
+
+def _load_cache_hit(
     cache_path: Path,
     video_path: Path,
     effective_interval: float,
     config: SplitConfig,
-) -> list[MatchBoundary] | None:
-    """Load and validate detection cache. Returns boundaries or None."""
+) -> "CacheHit | None":
+    """Load + validate cache, returning boundaries and provenance from ONE read (#879).
+
+    三重 file open (旧: _load_cache + _read_cached_masked_fallback +
+    _read_cached_capture_regions) を単一 read に統合し、検証済み boundaries と
+    provenance が必ず同一 snapshot 由来になるようにする (codex F2)。
+    """
     if not cache_path.is_file():
         return None
-
     try:
         data = json.loads(cache_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         logger.debug("Detection cache unreadable: %s", cache_path)
         return None
 
+    # --- key validation (identical to _load_cache) ---
     if data.get("cache_version") != _CACHE_VERSION:
-        logger.debug("Cache version mismatch")
         return None
-
     resolved = video_path.resolve()
     if data.get("source") != str(resolved):
-        logger.debug("Cache source path mismatch")
         return None
-
     try:
         stat = resolved.stat()
     except OSError:
         return None
-
     if data.get("source_size") != stat.st_size:
-        logger.debug("Cache source size mismatch")
         return None
-
     if data.get("source_mtime") != stat.st_mtime:
-        logger.debug("Cache source mtime mismatch")
         return None
-
     params = data.get("params", {})
-    # vtuber / masked は detection path を切り替え、keep_trailing は trailing-drop
-    # を skip して検出境界を変える (#805 段階1) ため、いずれも cache key に含める
-    # (gate / opt-out の cache bypass 防止)。key なし legacy cache は各 flag 導入前
-    # の結果 (vtuber/masked=標準 path、keep_trailing=drop ON) なので False と同値に
-    # 扱う。
     if (
         params.get("sample_interval") != effective_interval
         or params.get("blackout_threshold") != config.blackout_threshold
@@ -2281,47 +2326,34 @@ def _load_cache(
         or params.get("masked", False) != config.masked
         or params.get("keep_trailing", False) != config.keep_trailing
     ):
-        logger.debug("Cache parameter mismatch")
         return None
-
-    # masked_algo key: invalidate only when masked algorithm changes AND the
-    # cached run was masked-affected (params.masked=True or auto-fallback used).
-    # Legacy OBS caches (fallback unused + masked off) hit regardless of key
-    # absence -- no needless re-detects for unaffected users.
-    # Values that fail int() coercion (broken cache) are treated as mismatch
-    # (miss direction); int-coercible values compare by numeric equality.
     _raw_cached_algo = params.get("masked_algo", 1)
     try:
         cached_algo = int(_raw_cached_algo)
     except (ValueError, TypeError):
-        cached_algo = -1  # forces miss for any valid _MASKED_ALGO_VERSION
+        cached_algo = -1
     masked_affected = (
         data.get("masked_fallback_used", False)
         or params.get("masked", False)
         or config.masked
     )
     if masked_affected and cached_algo != _MASKED_ALGO_VERSION:
-        logger.debug("Cache masked algo mismatch")
         return None
-
-    # vtuber_algo key: invalidate only when vtuber algorithm changes AND the
-    # cached run was vtuber-affected (params.vtuber=True or config.vtuber=True).
-    # Legacy OBS caches (vtuber off) hit regardless of key absence -- no
-    # needless re-detects for unaffected users (same invalidation policy as
-    # masked_algo).
     _raw_cached_vtuber_algo = params.get("vtuber_algo", 1)
     try:
         cached_vtuber_algo = int(_raw_cached_vtuber_algo)
     except (ValueError, TypeError):
-        cached_vtuber_algo = -1  # forces miss for any valid _VTUBER_ALGO_VERSION
+        cached_vtuber_algo = -1
     vtuber_affected = params.get("vtuber", False) or config.vtuber
     if vtuber_affected and cached_vtuber_algo != _VTUBER_ALGO_VERSION:
-        logger.debug("Cache vtuber algo mismatch")
         return None
 
     boundaries = data.get("boundaries")
     if not isinstance(boundaries, list):
-        logger.debug("Cache boundaries invalid")
         return None
 
-    return boundaries
+    return CacheHit(
+        boundaries=boundaries,
+        masked_fallback_used=_masked_fallback_from_cache_data(data),
+        capture_regions=_capture_regions_from_cache_data(data),
+    )

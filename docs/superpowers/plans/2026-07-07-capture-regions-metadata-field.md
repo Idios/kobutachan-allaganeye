@@ -415,7 +415,9 @@ class TestRegionTimelineSerialization:
     def test_to_dict_includes_fallback_reason_value(self):
         from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
 
-        d = RegionTimeline(coarse=FULL_FRAME, fallback_reason="consensus_miss").to_dict()
+        d = RegionTimeline(
+            coarse=FULL_FRAME, fallback_reason="consensus_miss"
+        ).to_dict()
         assert d["fallback_reason"] == "consensus_miss"
 
     def test_round_trip_with_segments(self):
@@ -548,7 +550,9 @@ def _detect_with_region_callback(monkeypatch, *, vtuber, resolve_result=None, **
     from allaganeye.video.capture_region import RegionTimeline
 
     if resolve_result is not None:
-        monkeypatch.setattr(det, "_resolve_detect_region", lambda vp, dh: resolve_result)
+        monkeypatch.setattr(
+            det, "_resolve_detect_region", lambda vp, dh: resolve_result
+        )
     monkeypatch.setattr(
         det, "_scan_cpu", lambda *a, **kw: {0.0: 100.0, 1.0: 5.0, 2.0: 100.0}
     )
@@ -724,11 +728,11 @@ def _resolve_detect_region(
 (b) `detect_match_boundaries` — パラメータ追加 (`masked_fallback_callback` の直後):
 
 ```python
-    # #810: 最終的に有効だった capture region (RegionTimeline) で成功 run ごとに
-    # 1 回だけ呼ばれる。masked fallback 採用時は mask-free rect、それ以外は
-    # Stage 0 の解決結果 (band or FULL_FRAME + fallback_reason)。commands 層が
-    # metadata.json capture_regions として永続化する (brightness_callback と同型)。
-    region_callback: Callable[[RegionTimeline], None] | None = None,
+# #810: 最終的に有効だった capture region (RegionTimeline) で成功 run ごとに
+# 1 回だけ呼ばれる。masked fallback 採用時は mask-free rect、それ以外は
+# Stage 0 の解決結果 (band or FULL_FRAME + fallback_reason)。commands 層が
+# metadata.json capture_regions として永続化する (brightness_callback と同型)。
+region_callback: Callable[[RegionTimeline], None] | None = (None,)
 ```
 
 Stage 0 呼び出し (:461-463) を tuple unpack に変更:
@@ -880,12 +884,21 @@ class TestCaptureRegionsCache:
             "source": str(video_path.resolve()),
             "source_size": stat.st_size,
             "source_mtime": stat.st_mtime,
-            "probe": {"duration": 100.0, "width": 1920, "height": 1080,
-                      "fps": 60.0, "codec": "h264"},
+            "probe": {
+                "duration": 100.0,
+                "width": 1920,
+                "height": 1080,
+                "fps": 60.0,
+                "codec": "h264",
+            },
             "params": {
-                "sample_interval": 2.0, "blackout_threshold": 15.0,
-                "min_match_duration": 300.0, "min_blackout_duration": 3.0,
-                "no_audio": False, "vtuber": False, "masked": False,
+                "sample_interval": 2.0,
+                "blackout_threshold": 15.0,
+                "min_match_duration": 300.0,
+                "min_blackout_duration": 3.0,
+                "no_audio": False,
+                "vtuber": False,
+                "masked": False,
                 "keep_trailing": False,
                 **(params_extra or {}),
             },
@@ -901,8 +914,14 @@ class TestCaptureRegionsCache:
 
         cache_path = tmp_path / ".detection_cache.json"
         regions = {
-            "coarse": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0,
-                       "confidence": 1.0, "source": "fallback"},
+            "coarse": {
+                "x": 0.0,
+                "y": 0.0,
+                "w": 1.0,
+                "h": 1.0,
+                "confidence": 1.0,
+                "source": "fallback",
+            },
             "segments": [],
             "fallback_reason": None,
         }
@@ -923,8 +942,14 @@ class TestCaptureRegionsCache:
 
         cache_path = tmp_path / ".detection_cache.json"
         regions = {
-            "coarse": {"x": 0.1, "y": 0.0, "w": 0.76, "h": 0.042,
-                       "confidence": 0.9, "source": "band"},
+            "coarse": {
+                "x": 0.1,
+                "y": 0.0,
+                "w": 0.76,
+                "h": 0.042,
+                "confidence": 0.9,
+                "source": "band",
+            },
             "segments": [],
             "fallback_reason": None,
         }
@@ -962,9 +987,7 @@ class TestCaptureRegionsCache:
         from allaganeye.commands.split_matches import _read_cached_capture_regions
 
         cache_path = tmp_path / ".detection_cache.json"
-        self._write_cache(
-            cache_path, cache_video, extra={"masked_fallback_used": True}
-        )
+        self._write_cache(cache_path, cache_video, extra={"masked_fallback_used": True})
         assert _read_cached_capture_regions(cache_path) is None
 
     def test_read_cached_capture_regions_unreadable_returns_none(self, tmp_path):
@@ -1015,8 +1038,12 @@ def test_detect_cache_hit_carries_capture_regions(tmp_path):
     """
     band_regions = {
         "coarse": {
-            "x": 0.1, "y": 0.0, "w": 0.76, "h": 0.042,
-            "confidence": 0.9, "source": "band",
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
         },
         "segments": [],
         "fallback_reason": None,
@@ -1180,12 +1207,13 @@ def _read_cached_capture_regions(cache_path: Path) -> dict | None:
 (g) `run_split` — 検出 callback 群 (:218-228) の隣に捕捉を追加:
 
 ```python
-    # #810 -- 最終的に有効だった capture region を捕捉して cache / metadata へ。
-    captured_region: dict | None = None
+# #810 -- 最終的に有効だった capture region を捕捉して cache / metadata へ。
+captured_region: dict | None = None
 
-    def _on_region(timeline: RegionTimeline) -> None:
-        nonlocal captured_region
-        captured_region = timeline.to_dict()
+
+def _on_region(timeline: RegionTimeline) -> None:
+    nonlocal captured_region
+    captured_region = timeline.to_dict()
 ```
 
 `_run_detection(...)` 呼び出し (:230-242) に `region_callback=_on_region,` を追加。
@@ -1302,8 +1330,12 @@ def test_run_split_from_metadata_preserves_capture_regions(tmp_path):
 
     regions = {
         "coarse": {
-            "x": 0.1, "y": 0.0, "w": 0.76, "h": 0.042,
-            "confidence": 0.9, "source": "band",
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
         },
         "segments": [],
         "fallback_reason": None,

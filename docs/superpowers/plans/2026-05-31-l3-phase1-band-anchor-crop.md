@@ -171,7 +171,9 @@ from allaganeye.video.capture_region import (
 
 def test_band_region_normalizes_probe_px_to_unit_rect():
     # localize bbox in 1920x1080 probe space
-    loc = ScorebarLocalization(x_left=240, x_right=1680, y_top=18, y_bottom=63, confidence=0.9)
+    loc = ScorebarLocalization(
+        x_left=240, x_right=1680, y_top=18, y_bottom=63, confidence=0.9
+    )
     region = band_region_from_localization(loc, probe_w=1920, probe_h=1080)
     assert abs(region.x - 240 / 1920) < 1e-6
     assert abs(region.y - 18 / 1080) < 1e-6
@@ -182,7 +184,9 @@ def test_band_region_normalizes_probe_px_to_unit_rect():
 
 
 def test_band_region_clamps_into_unit_square():
-    loc = ScorebarLocalization(x_left=-5, x_right=1925, y_top=-2, y_bottom=70, confidence=0.5)
+    loc = ScorebarLocalization(
+        x_left=-5, x_right=1925, y_top=-2, y_bottom=70, confidence=0.5
+    )
     region = band_region_from_localization(loc, probe_w=1920, probe_h=1080)
     assert region.x >= 0.0 and region.y >= 0.0
     assert region.x + region.w <= 1.0 + 1e-9
@@ -267,8 +271,11 @@ def test_band_consensus_takes_median_of_localizations():
         return next(calls)
 
     region = detect_scorebar_band_region(
-        duration=400.0, probe_w=1920, probe_h=1080,
-        localize_fn=fake_localize, num_samples=4,
+        duration=400.0,
+        probe_w=1920,
+        probe_h=1080,
+        localize_fn=fake_localize,
+        num_samples=4,
     )
     # median x_left = 240 → region.x ≈ 240/1920
     assert abs(region.x - 240 / 1920) < 1e-3
@@ -278,8 +285,11 @@ def test_band_consensus_takes_median_of_localizations():
 
 def test_band_consensus_all_miss_falls_back_full_frame():
     region = detect_scorebar_band_region(
-        duration=400.0, probe_w=1920, probe_h=1080,
-        localize_fn=lambda _t: None, num_samples=4,
+        duration=400.0,
+        probe_w=1920,
+        probe_h=1080,
+        localize_fn=lambda _t: None,
+        num_samples=4,
     )
     assert region.is_full_frame()
 
@@ -289,8 +299,12 @@ def test_band_consensus_below_min_hits_falls_back_full_frame():
     locs = [ScorebarLocalization(240, 1680, 18, 63, 0.9), None, None, None]
     calls = iter(locs)
     region = detect_scorebar_band_region(
-        duration=400.0, probe_w=1920, probe_h=1080,
-        localize_fn=lambda _t: next(calls), num_samples=4, min_hits=2,
+        duration=400.0,
+        probe_w=1920,
+        probe_h=1080,
+        localize_fn=lambda _t: next(calls),
+        num_samples=4,
+        min_hits=2,
     )
     assert region.is_full_frame()
 ```
@@ -495,6 +509,7 @@ Expected: `_refine_blackout_regions` が 0.25s 間隔で再 probe し brightness
 ```python
 def test_refine_accepts_region_kwarg_default_full_frame():
     import inspect
+
     sig = inspect.signature(det._refine_blackout_regions)
     assert "region" in sig.parameters
     assert sig.parameters["region"].default is FULL_FRAME
@@ -607,13 +622,13 @@ A3 の `detect_scorebar_band_region` を `detect_match_boundaries` の先頭で�
 def test_detect_uses_full_frame_when_no_band(monkeypatch):
     # when band detection returns FULL_FRAME, brightness path is unchanged
     from allaganeye.video import capture_region as cr
-    monkeypatch.setattr(
-        cr, "detect_scorebar_band_region", lambda **kw: cr.FULL_FRAME
-    )
+
+    monkeypatch.setattr(cr, "detect_scorebar_band_region", lambda **kw: cr.FULL_FRAME)
     # _frame_brightness with FULL_FRAME == frame.mean() already proven;
     # this test asserts detect_match_boundaries passes FULL_FRAME through
     # by checking the resolved region default.
     import inspect
+
     sig = inspect.signature(det.detect_match_boundaries)
     # region is resolved internally, not a public param — assert the
     # internal anchor call exists via a probe flag set in B4 impl.
@@ -630,9 +645,7 @@ Expected: FAIL (`_resolve_detect_region` absent).
 Add a helper that binds `localize_scorebar` to a frame source and calls `detect_scorebar_band_region`, returning FULL_FRAME on any failure:
 
 ```python
-def _resolve_detect_region(
-    video_path: Path, duration_hint: float
-) -> CaptureRegion:
+def _resolve_detect_region(video_path: Path, duration_hint: float) -> CaptureRegion:
     """Stage 0: scorebar 帯 anchor を解決する。失敗時は FULL_FRAME (OBS 安全縮退)。"""
     from allaganeye.video.capture_region import (
         FULL_FRAME,
@@ -733,6 +746,7 @@ def test_is_static_default_uses_absolute_roi_unchanged():
 
 def test_is_static_band_region_argument_accepted():
     import inspect
+
     sig = inspect.signature(_is_static_from_frames)
     assert "region" in sig.parameters
     assert sig.parameters["region"].default is None  # None → absolute ROI
@@ -841,7 +855,9 @@ pytestmark = pytest.mark.slow
 
 
 def _gyawa_path() -> Path | None:
-    base = os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER") or r"E:\allaganeye-samples"
+    base = (
+        os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER") or r"E:\allaganeye-samples"
+    )
     # gyawa VOD filename (multi-source samples; see memory reference)
     cands = list(Path(base).glob("*オンサル*")) if Path(base).exists() else []
     return cands[0] if cands else None
@@ -851,7 +867,8 @@ def _gyawa_path() -> Path | None:
 def test_band_crop_recovers_blackout_vs_full_frame():
     from allaganeye.video.probe import probe_video
     from allaganeye.video.capture_region import (
-        detect_scorebar_band_region, FULL_FRAME,
+        detect_scorebar_band_region,
+        FULL_FRAME,
     )
     from allaganeye.video import detector as det
 
@@ -939,6 +956,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```python
 def test_detect_skips_anchor_when_not_vtuber(monkeypatch):
     from allaganeye.video import detector as det
+
     called = {"anchor": False}
     orig = det._resolve_detect_region
 
@@ -948,6 +966,7 @@ def test_detect_skips_anchor_when_not_vtuber(monkeypatch):
 
     monkeypatch.setattr(det, "_resolve_detect_region", spy)
     import inspect
+
     sig = inspect.signature(det.detect_match_boundaries)
     assert "vtuber" in sig.parameters
     assert sig.parameters["vtuber"].default is False
@@ -960,7 +979,11 @@ def test_detect_resolves_region_only_when_vtuber(monkeypatch):
     #  and defaults False so OBS callers are unchanged.)
     from allaganeye.video import detector as det
     import inspect
-    assert inspect.signature(det.detect_match_boundaries).parameters["vtuber"].default is False
+
+    assert (
+        inspect.signature(det.detect_match_boundaries).parameters["vtuber"].default
+        is False
+    )
 ```
 
 - [ ] **Step 2: Run, verify fail**
@@ -979,13 +1002,11 @@ In `detect_match_boundaries`, add `vtuber: bool = False` (keyword-with-default, 
 with:
 
 ```python
-    # Stage 0 帯 anchor は VTuber 明示時のみ (spec §3.6)。OBS (vtuber=False) は
-    # FULL_FRAME で現行 bit-exact。localize は OBS でも成功するため auto 判別は不可。
-    detect_region = (
-        _resolve_detect_region(video_path, duration_hint)
-        if vtuber
-        else FULL_FRAME
-    )
+# Stage 0 帯 anchor は VTuber 明示時のみ (spec §3.6)。OBS (vtuber=False) は
+# FULL_FRAME で現行 bit-exact。localize は OBS でも成功するため auto 判別は不可。
+detect_region = (
+    _resolve_detect_region(video_path, duration_hint) if vtuber else FULL_FRAME
+)
 ```
 
 (All B1-B4 region threading stays; only the resolution is gated.)
@@ -1021,8 +1042,10 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```python
 def test_band_consensus_rejects_low_conf_and_picks_dominant_cluster():
     from allaganeye.video.capture_region import (
-        ScorebarLocalization, detect_scorebar_band_region,
+        ScorebarLocalization,
+        detect_scorebar_band_region,
     )
+
     # 4 true (y~0, high conf) + 3 noise (y~540, varied conf incl one 0.69)
     locs = [
         ScorebarLocalization(600, 1315, 0, 45, 1.0),
@@ -1035,8 +1058,11 @@ def test_band_consensus_rejects_low_conf_and_picks_dominant_cluster():
     ]
     calls = iter(locs)
     region = detect_scorebar_band_region(
-        duration=400.0, probe_w=1920, probe_h=1080,
-        localize_fn=lambda _t: next(calls), num_samples=7,
+        duration=400.0,
+        probe_w=1920,
+        probe_h=1080,
+        localize_fn=lambda _t: next(calls),
+        num_samples=7,
     )
     # must converge on the true cluster (y~0), NOT the noise-mixed median (y~0.24)
     assert region.y < 0.05, f"expected true cluster y~0, got {region.y}"
@@ -1155,12 +1181,14 @@ Expected: FAIL (flag/param absent).
 In `cli.py` detect (and split) commands, add:
 
 ```python
-    vtuber: bool = typer.Option(
+vtuber: bool = (
+    typer.Option(
         False,
         "--vtuber",
         help="VTuber 録画 (game inset): scorebar 帯 anchor で検出。"
         "未指定は OBS 全画面前提 (default)。",
     ),
+)
 ```
 
 Thread `vtuber` into the command-layer call (`detect.py` / `split_matches.py`) and on into `detect_match_boundaries(..., vtuber=vtuber)`.

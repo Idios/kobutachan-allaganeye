@@ -259,8 +259,7 @@ def test_load_manifest_raises_on_bom_prefixed_json(tmp_path: Path) -> None:
     """
     bad = tmp_path / "bom.json"
     bad.write_bytes(
-        b"\xef\xbb\xbf"
-        + json.dumps({"version": 1, "files": []}).encode("utf-8")
+        b"\xef\xbb\xbf" + json.dumps({"version": 1, "files": []}).encode("utf-8")
     )
 
     with pytest.raises(IntegrityError) as exc_info:

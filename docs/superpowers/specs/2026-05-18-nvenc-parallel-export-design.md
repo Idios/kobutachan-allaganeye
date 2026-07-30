@@ -85,12 +85,13 @@ GUI 経路 (start_detect と同じパターン):
 from enum import Enum
 from dataclasses import dataclass
 
+
 class H264Encoder(Enum):
     LIBX264 = "libx264"
     NVENC = "h264_nvenc"
     QSV = "h264_qsv"
     AMF = "h264_amf"
-    
+
     @property
     def display_label(self) -> str:
         return {
@@ -99,31 +100,53 @@ class H264Encoder(Enum):
             H264Encoder.QSV: "QSV",
             H264Encoder.AMF: "AMF",
         }[self]
-    
+
     def quality_args(self) -> tuple[str, ...]:
         # Rust gui/src-tauri/src/lib.rs:1621-1642 から移植 (#591 baseline)
         return {
             H264Encoder.LIBX264: ("-crf", "18", "-preset", "medium"),
             H264Encoder.NVENC: ("-rc", "vbr", "-cq", "19", "-preset", "p5"),
-            H264Encoder.QSV: ("-global_quality", "20", "-look_ahead", "1", "-preset", "medium"),
-            H264Encoder.AMF: ("-quality", "quality", "-rc", "cqp", "-qp_i", "19", "-qp_p", "21"),
+            H264Encoder.QSV: (
+                "-global_quality",
+                "20",
+                "-look_ahead",
+                "1",
+                "-preset",
+                "medium",
+            ),
+            H264Encoder.AMF: (
+                "-quality",
+                "quality",
+                "-rc",
+                "cqp",
+                "-qp_i",
+                "19",
+                "-qp_p",
+                "21",
+            ),
         }[self]
+
 
 @dataclass(frozen=True)
 class EncoderSlot:
-    slot_index: int           # 0-based
+    slot_index: int  # 0-based
     encoder_kind: H264Encoder
-    display_label: str        # "NVENC #1" 等、UI 表示用
+    display_label: str  # "NVENC #1" 等、UI 表示用
+
 
 def select_h264_encoder(vendors: list[str], preference: list[str]) -> H264Encoder:
     """Rust gui/src-tauri/src/lib.rs:1666-1678 と等価な実装。"""
     for pref in preference:
         if pref in vendors:
             match pref:
-                case "nvidia": return H264Encoder.NVENC
-                case "intel": return H264Encoder.QSV
-                case "amd": return H264Encoder.AMF
+                case "nvidia":
+                    return H264Encoder.NVENC
+                case "intel":
+                    return H264Encoder.QSV
+                case "amd":
+                    return H264Encoder.AMF
     return H264Encoder.LIBX264
+
 
 def enumerate_h264_encoders(
     vendors: list[str],
@@ -135,10 +158,7 @@ def enumerate_h264_encoders(
     primary = select_h264_encoder(vendors, preference)
     if primary == H264Encoder.NVENC:
         n = probe_nvenc_engine_count(gpu_models)
-        return [
-            EncoderSlot(i, H264Encoder.NVENC, f"NVENC #{i+1}")
-            for i in range(n)
-        ]
+        return [EncoderSlot(i, H264Encoder.NVENC, f"NVENC #{i + 1}") for i in range(n)]
     return [EncoderSlot(0, primary, primary.display_label)]
 ```
 
@@ -152,32 +172,38 @@ import os
 _SKU_TABLE: tuple[tuple[str, int], ...] = (
     # RTX 50 series
     ("rtx 5090", 3),
-    ("rtx 5080", 2), ("rtx 5070", 2),
+    ("rtx 5080", 2),
+    ("rtx 5070", 2),
     ("rtx 5060", 1),
     # RTX 40 series
-    ("rtx 4090", 2), ("rtx 4080", 2), ("rtx 4070", 2),
+    ("rtx 4090", 2),
+    ("rtx 4080", 2),
+    ("rtx 4070", 2),
     ("rtx 4060", 1),
 )
-_DEFAULT_NVENC_COUNT = 1  # Codex review #9: 不明 NVIDIA カードは保守的に 1 (1-engine card
-                          # の subprocess setup overhead を避けるため、過去の挙動と互換)。
-                          # 2 にすると 1-engine card で timeshare → 速度低下なし but
-                          # 何も得しない動作。user が高 N を望むなら env override で。
+_DEFAULT_NVENC_COUNT = (
+    1  # Codex review #9: 不明 NVIDIA カードは保守的に 1 (1-engine card
+)
+# の subprocess setup overhead を避けるため、過去の挙動と互換)。
+# 2 にすると 1-engine card で timeshare → 速度低下なし but
+# 何も得しない動作。user が高 N を望むなら env override で。
+
 
 def probe_nvenc_engine_count(gpu_models: list[str]) -> int:
     """SKU substring match → engine count. env override 優先、不明なら _DEFAULT_NVENC_COUNT。
-    
+
     Codex review #12 対応: 複数 NVIDIA GPU 環境では substring match を**最初に hit した
     SKU の値を保守的に最小化**する。例: [RTX 5090, RTX 4060] が同時検出された場合、
     Phase 1 (#761) では vendor 選択ロジックが NVIDIA primary を 1 つだけ選ぶため
     実質 1 GPU しか使わないが、誤って高い N を選んで弱い側で session 過剰 init を
     避けるため min を取る (将来 #762 で per-adapter binding に拡張)。
-    
+
     env var ALLAGANEYE_EXPORT_CONCURRENCY は contention scenario (例: OBS 録画中) に
     user が manual 設定するためのエスケープハッチ。"""
     override = os.environ.get("ALLAGANEYE_EXPORT_CONCURRENCY", "").strip()
     if override.isdigit() and int(override) > 0:
         return int(override)
-    
+
     lc = [m.lower() for m in gpu_models]
     matched_counts: list[int] = []
     for needle, count in _SKU_TABLE:
@@ -198,18 +224,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+
 @dataclass(frozen=True)
 class ExportAttemptResult:
     output_path: Path
     duration_ms: int
-    encoder_used: H264Encoder      # 最終的に成功した encoder (fallback 含む)
+    encoder_used: H264Encoder  # 最終的に成功した encoder (fallback 含む)
     fallback_from: H264Encoder | None  # libx264 retry が発生したときの元 encoder
+
 
 class ExportError(Exception):
     def __init__(self, kind: str, message: str, hint: str | None = None):
         self.kind = kind
         self.message = message
         self.hint = hint
+
 
 def run_export_attempt(
     video: Path,
@@ -224,7 +253,7 @@ def run_export_attempt(
     cancel_event: threading.Event,
 ) -> ExportAttemptResult:
     """1 試合分の ffmpeg を起動して終了まで wait。
-    
+
     挙動:
     - vendor-resolved encoder で 1 回目を起動
     - 成功 → ExportAttemptResult を返す
@@ -234,6 +263,7 @@ def run_export_attempt(
     - cancel_event set → ffmpeg を SIGKILL してから ExportError("cancelled") raise
     """
     ...
+
 
 def is_gpu_encoder_failure(stderr_text: str, encoder: H264Encoder) -> bool:
     """Rust の同名関数を移植。encoder 別の init 失敗パターン文字列マッチ。"""
@@ -252,6 +282,7 @@ import threading
 from queue import Queue, Empty
 from dataclasses import dataclass, field
 
+
 @dataclass
 class ExportSummary:
     success: int = 0
@@ -261,8 +292,9 @@ class ExportSummary:
     results: dict[int, ExportAttemptResult] = field(default_factory=dict)
     errors: dict[int, ExportError] = field(default_factory=dict)
 
+
 def export_matches(
-    matches: list[Match],          # Match dataclass (allaganeye.matches 由来)
+    matches: list[Match],  # Match dataclass (allaganeye.matches 由来)
     slots: list[EncoderSlot],
     *,
     source_video: Path,
@@ -273,7 +305,7 @@ def export_matches(
     cancel_event: threading.Event | None = None,
 ) -> ExportSummary:
     """N workers (= len(slots)) で並列実行。
-    
+
     Cancel: cancel_event set → 各 worker は次の queue.get_nowait 後に脱出、
     in-flight な ffmpeg は run_export_attempt 内で kill される。
     libx264 fallback retry は per-attempt 完結 → 並列の他 worker に影響しない。"""
@@ -281,26 +313,33 @@ def export_matches(
     queue: Queue[Match] = Queue()
     for m in matches:
         queue.put(m)
-    
+
     summary = ExportSummary()
     summary_lock = threading.Lock()
-    
+
     def worker(slot: EncoderSlot):
         while not cancel_event.is_set():
-            try: m = queue.get_nowait()
-            except Empty: return
-            
+            try:
+                m = queue.get_nowait()
+            except Empty:
+                return
+
             output_path = output_dir / format_name(m, name_pattern, codec)
-            
+
             def per_match_progress(percent: float, stage: str):
                 progress_cb(ProgressEvent.progress(m.index, percent, stage))
-            
+
             def per_match_fallback(from_enc, to_enc, msg):
                 progress_cb(ProgressEvent.fallback(m.index, from_enc, to_enc, msg))
-            
+
             try:
                 result = run_export_attempt(
-                    source_video, m.start, m.end, output_path, codec, slot.encoder_kind,
+                    source_video,
+                    m.start,
+                    m.end,
+                    output_path,
+                    codec,
+                    slot.encoder_kind,
                     progress_cb=per_match_progress,
                     fallback_cb=per_match_fallback,
                     cancel_event=cancel_event,
@@ -314,11 +353,14 @@ def export_matches(
                 with summary_lock:
                     summary.failure += 1
                     summary.errors[m.index] = e
-    
-    with ThreadPoolExecutor(max_workers=len(slots), thread_name_prefix="export-worker") as ex:
+
+    with ThreadPoolExecutor(
+        max_workers=len(slots), thread_name_prefix="export-worker"
+    ) as ex:
         futures = [ex.submit(worker, slot) for slot in slots]
-        for f in futures: f.result()  # 例外伝搬
-    
+        for f in futures:
+            f.result()  # 例外伝搬
+
     # Codex review #3: queue.qsize() > 0 条件は不可。in-flight ffmpeg を kill
     # した直後に queue が空 (全 match dequeue 済) でも cancellation は発生済。
     # `cancel_event.is_set()` 単独、または worker が ExportError(kind="cancelled")

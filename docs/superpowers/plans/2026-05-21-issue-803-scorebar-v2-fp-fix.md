@@ -48,70 +48,74 @@
 `tests/test_scorebar_v2.py` の `class TestFindScorebarHorizontalRange:` の末尾 (`test_opencv_unavailable_returns_none` メソッドの直前、line ~253 あたり) に以下 4 メソッドを追加:
 
 ```python
-    def test_overwide_band_returns_none(self):
-        """Near-full-width band (post-match interior) -> None (#803).
+def test_overwide_band_returns_none(self):
+    """Near-full-width band (post-match interior) -> None (#803).
 
-        obs-20260116 t=6800/6850: a colorful interior produces a ~1912px
-        saturated band at screen top. A real FL scorebar tops out at
-        ~1090px (1080p OBS), so this is gated out by width.
-        """
-        # 8..1919 -> width 1912 >> _SCOREBAR_SCAN_MAX_WIDTH_PX (1440)
-        frame = _make_hires_frame_with_strip(8, 1919)
-        assert _find_scorebar_horizontal_range(frame) is None
+    obs-20260116 t=6800/6850: a colorful interior produces a ~1912px
+    saturated band at screen top. A real FL scorebar tops out at
+    ~1090px (1080p OBS), so this is gated out by width.
+    """
+    # 8..1919 -> width 1912 >> _SCOREBAR_SCAN_MAX_WIDTH_PX (1440)
+    frame = _make_hires_frame_with_strip(8, 1919)
+    assert _find_scorebar_horizontal_range(frame) is None
 
-    def test_right_edge_band_returns_none(self):
-        """Right-side band not straddling center (chat panel) -> None (#803).
 
-        obs-20260116 t=6544-6555 (Limsa): a chat panel at 1410..1919.
-        Width 510 passes the min-width floor but the band does not contain
-        screen center x=960, so it is gated out by position.
-        """
-        frame = _make_hires_frame_with_strip(1410, 1919)
-        assert _find_scorebar_horizontal_range(frame) is None
+def test_right_edge_band_returns_none(self):
+    """Right-side band not straddling center (chat panel) -> None (#803).
 
-    def test_left_edge_band_returns_none(self):
-        """Left-side band not straddling center (minimap) -> None (#803).
+    obs-20260116 t=6544-6555 (Limsa): a chat panel at 1410..1919.
+    Width 510 passes the min-width floor but the band does not contain
+    screen center x=960, so it is gated out by position.
+    """
+    frame = _make_hires_frame_with_strip(1410, 1919)
+    assert _find_scorebar_horizontal_range(frame) is None
 
-        obs-20260116 t=6895: a left-side widget at 8..544. Width 537
-        passes the min-width floor but does not contain center x=960.
-        """
-        frame = _make_hires_frame_with_strip(8, 544)
-        assert _find_scorebar_horizontal_range(frame) is None
 
-    def test_centered_band_within_max_width_returns_range(self):
-        """Centered in-match-like band within bounds -> range returned (#803 guard).
+def test_left_edge_band_returns_none(self):
+    """Left-side band not straddling center (minimap) -> None (#803).
 
-        Regression guard: a normal in-match span (600..1320, width 721,
-        straddles center 960, < max) must still be accepted.
-        """
-        frame = _make_hires_frame_with_strip(600, 1320)
-        assert _find_scorebar_horizontal_range(frame) == (600, 1320)
+    obs-20260116 t=6895: a left-side widget at 8..544. Width 537
+    passes the min-width floor but does not contain center x=960.
+    """
+    frame = _make_hires_frame_with_strip(8, 544)
+    assert _find_scorebar_horizontal_range(frame) is None
+
+
+def test_centered_band_within_max_width_returns_range(self):
+    """Centered in-match-like band within bounds -> range returned (#803 guard).
+
+    Regression guard: a normal in-match span (600..1320, width 721,
+    straddles center 960, < max) must still be accepted.
+    """
+    frame = _make_hires_frame_with_strip(600, 1320)
+    assert _find_scorebar_horizontal_range(frame) == (600, 1320)
 ```
 
 `class TestHasScorebarV2:` の末尾 (`test_thresholds_are_documented_constants` の直前、line ~371 あたり) に以下 2 メソッドを追加:
 
 ```python
-    def test_offcenter_layout_returns_false_after_gating(self):
-        """Emblem-like features at a right-edge layout -> span gated -> False (#803).
+def test_offcenter_layout_returns_false_after_gating(self):
+    """Emblem-like features at a right-edge layout -> span gated -> False (#803).
 
-        Simulates post-match content (obs-20260116 t=6555 Limsa chat panel):
-        a saturated band with emblem-like features at the screen edge.
-        Primary absolute path finds no emblems at 600/828/1263; the Rescue
-        path's span (1410..1919) is rejected by the center gate, so V2
-        returns False instead of a false positive.
-        """
-        frame = _make_hires_frame_with_emblems_at_layout(1410, 1919)
-        assert _has_scorebar_v2(frame) is False
+    Simulates post-match content (obs-20260116 t=6555 Limsa chat panel):
+    a saturated band with emblem-like features at the screen edge.
+    Primary absolute path finds no emblems at 600/828/1263; the Rescue
+    path's span (1410..1919) is rejected by the center gate, so V2
+    returns False instead of a false positive.
+    """
+    frame = _make_hires_frame_with_emblems_at_layout(1410, 1919)
+    assert _has_scorebar_v2(frame) is False
 
-    def test_overwide_layout_returns_false_after_gating(self):
-        """Emblem-like features spread across near-full width -> False (#803).
 
-        Simulates obs-20260116 t=6800/6850 (colorful interior). Rescue
-        span (~8..1919) is rejected by the width gate; Primary finds no
-        emblems at the absolute positions -> False.
-        """
-        frame = _make_hires_frame_with_emblems_at_layout(8, 1919)
-        assert _has_scorebar_v2(frame) is False
+def test_overwide_layout_returns_false_after_gating(self):
+    """Emblem-like features spread across near-full width -> False (#803).
+
+    Simulates obs-20260116 t=6800/6850 (colorful interior). Rescue
+    span (~8..1919) is rejected by the width gate; Primary finds no
+    emblems at the absolute positions -> False.
+    """
+    frame = _make_hires_frame_with_emblems_at_layout(8, 1919)
+    assert _has_scorebar_v2(frame) is False
 ```
 
 - [ ] **Step 2: test を実行して失敗を確認する**

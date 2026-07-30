@@ -34,10 +34,8 @@ from allaganeye.commands.split_matches import (
     _format_duration,
     _format_region_token,
     _iso_utc_now,
-    _load_cache,
+    _load_cache_hit,
     _partition_post_match,
-    _read_cached_capture_regions,
-    _read_cached_masked_fallback,
     _print_environment_header,
     _print_detection_stats,
     _resolve_gpu_mode_with_probe,
@@ -143,19 +141,17 @@ def run_detect(
     gpu_vendor: str | None = None
     available_vendors: list[str] = []
     if not config.no_cache:
-        boundaries = _load_cache(cache_path, video_path, effective_interval, config)
-        if boundaries is not None:
-            masked_fallback_used = _read_cached_masked_fallback(cache_path)
-            captured_region = _read_cached_capture_regions(cache_path)
+        hit = _load_cache_hit(cache_path, video_path, effective_interval, config)
+        if hit is not None:
+            boundaries = hit.boundaries
+            masked_fallback_used = hit.masked_fallback_used
+            captured_region = hit.capture_regions
             if show and verbose:
                 _display_cache_hit_params(cache_path, config)
             if show:
                 _display_results(boundaries, metadata, video_path, verbose, cached=True)
             if json_mode and progress_emitter is not None:
-                progress_emitter.emit(
-                    "cache_hit",
-                    boundaries=len(boundaries),
-                )
+                progress_emitter.emit("cache_hit", boundaries=len(boundaries))
 
     if boundaries is None:
         use_gpu, gpu_vendor, available_vendors = _resolve_gpu_mode_with_probe(

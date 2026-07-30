@@ -942,6 +942,168 @@ async fn serve_video(
 ///
 /// Codes: `parse.schema_invalid` for missing / wrong-type required fields,
 /// `validation.boundary_invalid` for malformed match / gap boundaries.
+
+/// #879 -- shared AppError constructor for optional-field shape violations.
+fn schema_invalid(msg: String) -> AppError {
+    AppError::new("parse.schema_invalid", msg).with_default_hint()
+}
+
+/// #879 -- CaptureRegion shape (mirror zod CaptureRegionSchema): x/y/w/h/
+/// confidence are numbers in [0,1]; source is a non-empty string. Shared by
+/// capture_regions.coarse, capture_regions.segments[].region, and
+/// minimap_regions[].region. Extra keys are allowed (zod strips them; the doc
+/// stays readable).
+fn validate_capture_region(v: &Value, ctx: &str) -> Result<(), AppError> {
+    let obj = v
+        .as_object()
+        .ok_or_else(|| schema_invalid(format!("{ctx} must be an object")))?;
+    for key in ["x", "y", "w", "h", "confidence"] {
+        match obj.get(key).and_then(Value::as_f64) {
+            Some(n) if (0.0..=1.0).contains(&n) => {}
+            _ => return Err(schema_invalid(format!("{ctx}.{key} must be a number in [0,1]"))),
+        }
+    }
+    match obj.get("source").and_then(Value::as_str) {
+        Some(s) if !s.is_empty() => {}
+        _ => return Err(schema_invalid(format!("{ctx}.source must be a non-empty string"))),
+    }
+    Ok(())
+}
+
+/// #879 -- capture_regions shape (mirror zod CaptureRegionsSchema).
+fn validate_capture_regions(v: &Value) -> Result<(), AppError> {
+    let obj = v
+        .as_object()
+        .ok_or_else(|| schema_invalid("metadata.capture_regions must be an object".into()))?;
+    let coarse = obj
+        .get("coarse")
+        .ok_or_else(|| schema_invalid("metadata.capture_regions.coarse is required".into()))?;
+    validate_capture_region(coarse, "metadata.capture_regions.coarse")?;
+    let segments = obj
+        .get("segments")
+        .and_then(Value::as_array)
+        .ok_or_else(|| schema_invalid("metadata.capture_regions.segments must be an array".into()))?;
+    for (i, seg) in segments.iter().enumerate() {
+        let so = seg.as_object().ok_or_else(|| {
+            schema_invalid(format!("metadata.capture_regions.segments[{i}] must be an object"))
+        })?;
+        let tr = so.get("time_range").and_then(Value::as_array).ok_or_else(|| {
+            schema_invalid(format!(
+                "metadata.capture_regions.segments[{i}].time_range must be an array"
+            ))
+        })?;
+        if tr.len() != 2 || !tr.iter().all(|t| matches!(t.as_f64(), Some(n) if n >= 0.0)) {
+            return Err(schema_invalid(format!(
+                "metadata.capture_regions.segments[{i}].time_range must be [n>=0, n>=0]"
+            )));
+        }
+        let region = so.get("region").ok_or_else(|| {
+            schema_invalid(format!(
+                "metadata.capture_regions.segments[{i}].region is required"
+            ))
+        })?;
+        validate_capture_region(
+            region,
+            &format!("metadata.capture_regions.segments[{i}].region"),
+        )?;
+    }
+    match obj.get("fallback_reason") {
+        Some(Value::String(_)) | Some(Value::Null) => {}
+        _ => {
+            return Err(schema_invalid(
+                "metadata.capture_regions.fallback_reason must be a string or null".into(),
+            ))
+        }
+    }
+    Ok(())
+}
+
+/// #879 -- minimap_regions shape (mirror zod array of MinimapRegionEntrySchema).
+/// match_index mirrors z.number().int().min(1): accept int-valued floats (2.0)
+/// as zod does, reject non-integers and < 1.
+fn validate_minimap_regions(v: &Value) -> Result<(), AppError> {
+    let arr = v
+        .as_array()
+        .ok_or_else(|| schema_invalid("metadata.minimap_regions must be an array".into()))?;
+    for (i, entry) in arr.iter().enumerate() {
+        let eo = entry.as_object().ok_or_else(|| {
+            schema_invalid(format!("metadata.minimap_regions[{i}] must be an object"))
+        })?;
+        match eo.get("match_index").and_then(Value::as_f64) {
+            Some(n) if n >= 1.0 && n.fract() == 0.0 => {}
+            _ => {
+                return Err(schema_invalid(format!(
+                    "metadata.minimap_regions[{i}].match_index must be an integer >= 1"
+                )))
+            }
+        }
+        let region = eo.get("region").ok_or_else(|| {
+            schema_invalid(format!("metadata.minimap_regions[{i}].region is required"))
+        })?;
+        validate_capture_region(region, &format!("metadata.minimap_regions[{i}].region"))?;
+    }
+    Ok(())
+}
+
+/// #879 -- system_info shape (mirror zod SystemInfoSchema). gpu_vendors_available
+/// / vendor_preference are required string arrays; gpu_vendor_used is a required
+/// string-or-null; gpu is an optional string array.
+fn validate_system_info(v: &Value) -> Result<(), AppError> {
+    let obj = v
+        .as_object()
+        .ok_or_else(|| schema_invalid("metadata.system_info must be an object".into()))?;
+    let is_string_array = |val: Option<&Value>| {
+        matches!(val, Some(Value::Array(a)) if a.iter().all(Value::is_string))
+    };
+    for key in ["gpu_vendors_available", "vendor_preference"] {
+        if !is_string_array(obj.get(key)) {
+            return Err(schema_invalid(format!(
+                "metadata.system_info.{key} must be an array of strings"
+            )));
+        }
+    }
+    match obj.get("gpu_vendor_used") {
+        Some(Value::String(_)) | Some(Value::Null) => {}
+        _ => {
+            return Err(schema_invalid(
+                "metadata.system_info.gpu_vendor_used must be a string or null".into(),
+            ))
+        }
+    }
+    if obj.contains_key("gpu") && !is_string_array(obj.get("gpu")) {
+        return Err(schema_invalid(
+            "metadata.system_info.gpu must be an array of strings".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// #879 -- brightness_samples shape (mirror zod BrightnessSamplesSchema):
+/// interval_s is a positive number; values is an array of numbers in [0,255].
+fn validate_brightness_samples(v: &Value) -> Result<(), AppError> {
+    let obj = v
+        .as_object()
+        .ok_or_else(|| schema_invalid("metadata.brightness_samples must be an object".into()))?;
+    match obj.get("interval_s").and_then(Value::as_f64) {
+        Some(n) if n > 0.0 => {}
+        _ => {
+            return Err(schema_invalid(
+                "metadata.brightness_samples.interval_s must be a positive number".into(),
+            ))
+        }
+    }
+    match obj.get("values") {
+        Some(Value::Array(a))
+            if a.iter().all(|x| matches!(x.as_f64(), Some(n) if (0.0..=255.0).contains(&n))) => {}
+        _ => {
+            return Err(schema_invalid(
+                "metadata.brightness_samples.values must be an array of numbers in [0,255]".into(),
+            ))
+        }
+    }
+    Ok(())
+}
+
 fn validate_metadata_for_write(payload: &Value) -> Result<(), AppError> {
     fn schema_err(msg: impl Into<String>) -> AppError {
         AppError::new("parse.schema_invalid", msg).with_default_hint()
@@ -1002,6 +1164,20 @@ fn validate_metadata_for_write(payload: &Value) -> Result<(), AppError> {
                 g.get("end_time")
             )));
         }
+    }
+
+    // #879 -- optional field shape validation (present only, mirror zod).
+    if let Some(si) = obj.get("system_info") {
+        validate_system_info(si)?;
+    }
+    if let Some(bs) = obj.get("brightness_samples") {
+        validate_brightness_samples(bs)?;
+    }
+    if let Some(cr) = obj.get("capture_regions") {
+        validate_capture_regions(cr)?;
+    }
+    if let Some(mr) = obj.get("minimap_regions") {
+        validate_minimap_regions(mr)?;
     }
 
     Ok(())
@@ -3912,6 +4088,163 @@ mod tests {
             }],
             "gaps": []
         })
+    }
+
+    #[test]
+    fn write_validation_accepts_valid_capture_regions() {
+        let mut p = valid_metadata_payload();
+        p["capture_regions"] = json!({
+            "coarse": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "confidence": 1.0, "source": "full_frame"},
+            "segments": [{"time_range": [0.0, 100.0], "region": {"x": 0.1, "y": 0.1, "w": 0.5, "h": 0.5, "confidence": 0.9, "source": "scorebar"}}],
+            "fallback_reason": null
+        });
+        assert!(validate_metadata_for_write(&p).is_ok());
+    }
+
+    #[test]
+    fn write_validation_rejects_capture_region_coord_out_of_range() {
+        let mut p = valid_metadata_payload();
+        p["capture_regions"] = json!({
+            "coarse": {"x": 1.5, "y": 0.0, "w": 1.0, "h": 1.0, "confidence": 1.0, "source": "full_frame"},
+            "segments": [],
+            "fallback_reason": null
+        });
+        let err = validate_metadata_for_write(&p).unwrap_err();
+        assert_eq!(err.code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_rejects_capture_region_empty_source() {
+        let mut p = valid_metadata_payload();
+        p["capture_regions"] = json!({
+            "coarse": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "confidence": 1.0, "source": ""},
+            "segments": [],
+            "fallback_reason": null
+        });
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_rejects_segment_time_range_wrong_len() {
+        let mut p = valid_metadata_payload();
+        p["capture_regions"] = json!({
+            "coarse": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "confidence": 1.0, "source": "full_frame"},
+            "segments": [{"time_range": [0.0], "region": {"x": 0.1, "y": 0.1, "w": 0.5, "h": 0.5, "confidence": 0.9, "source": "scorebar"}}],
+            "fallback_reason": null
+        });
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_accepts_valid_minimap_regions() {
+        let mut p = valid_metadata_payload();
+        p["minimap_regions"] = json!([
+            {"match_index": 1, "region": {"x": 0.8, "y": 0.8, "w": 0.15, "h": 0.15, "confidence": 1.0, "source": "user"}},
+            {"match_index": 2.0, "region": {"x": 0.8, "y": 0.8, "w": 0.15, "h": 0.15, "confidence": 1.0, "source": "user"}}
+        ]);
+        assert!(validate_metadata_for_write(&p).is_ok());
+    }
+
+    #[test]
+    fn write_validation_rejects_minimap_match_index_below_one() {
+        let mut p = valid_metadata_payload();
+        p["minimap_regions"] = json!([
+            {"match_index": 0, "region": {"x": 0.8, "y": 0.8, "w": 0.15, "h": 0.15, "confidence": 1.0, "source": "user"}}
+        ]);
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_capture_regions_absent_is_ok() {
+        let p = valid_metadata_payload();
+        assert!(validate_metadata_for_write(&p).is_ok());
+    }
+
+    #[test]
+    fn write_validation_rejects_capture_regions_missing_fallback_reason() {
+        // Mirrors zod: fallback_reason is a REQUIRED (nullable) key; absent must
+        // reject so we never persist a blob GUI zod would refuse to reload (#879).
+        let mut p = valid_metadata_payload();
+        p["capture_regions"] = json!({
+            "coarse": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "confidence": 1.0, "source": "full_frame"},
+            "segments": []
+        });
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_rejects_minimap_match_index_non_integer() {
+        // match_index mirrors z.number().int(): 1.5 must reject (fract != 0), #879.
+        let mut p = valid_metadata_payload();
+        p["minimap_regions"] = json!([
+            {"match_index": 1.5, "region": {"x": 0.8, "y": 0.8, "w": 0.15, "h": 0.15, "confidence": 1.0, "source": "user"}}
+        ]);
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_accepts_valid_system_info() {
+        let mut p = valid_metadata_payload();
+        p["system_info"] = json!({
+            "gpu_vendors_available": ["nvidia"],
+            "gpu_vendor_used": "nvidia",
+            "vendor_preference": ["nvidia", "amd", "intel"],
+            "gpu": ["NVIDIA RTX 5090 (32GB VRAM)"]
+        });
+        assert!(validate_metadata_for_write(&p).is_ok());
+    }
+
+    #[test]
+    fn write_validation_accepts_system_info_null_vendor_used_no_gpu() {
+        let mut p = valid_metadata_payload();
+        p["system_info"] = json!({
+            "gpu_vendors_available": [],
+            "gpu_vendor_used": null,
+            "vendor_preference": ["nvidia"]
+        });
+        assert!(validate_metadata_for_write(&p).is_ok());
+    }
+
+    #[test]
+    fn write_validation_rejects_system_info_nonstring_vendor() {
+        let mut p = valid_metadata_payload();
+        p["system_info"] = json!({
+            "gpu_vendors_available": [1],
+            "gpu_vendor_used": null,
+            "vendor_preference": []
+        });
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_rejects_system_info_missing_vendor_used_key() {
+        let mut p = valid_metadata_payload();
+        p["system_info"] = json!({
+            "gpu_vendors_available": [],
+            "vendor_preference": []
+        });
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_accepts_valid_brightness_samples() {
+        let mut p = valid_metadata_payload();
+        p["brightness_samples"] = json!({"interval_s": 2.0, "values": [0.0, 128.0, 255.0]});
+        assert!(validate_metadata_for_write(&p).is_ok());
+    }
+
+    #[test]
+    fn write_validation_rejects_brightness_samples_nonpositive_interval() {
+        let mut p = valid_metadata_payload();
+        p["brightness_samples"] = json!({"interval_s": 0.0, "values": [1.0]});
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_rejects_brightness_samples_value_out_of_range() {
+        let mut p = valid_metadata_payload();
+        p["brightness_samples"] = json!({"interval_s": 2.0, "values": [300.0]});
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
     }
 
     #[test]

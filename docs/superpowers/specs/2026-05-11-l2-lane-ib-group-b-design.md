@@ -387,8 +387,10 @@ fn truncate_and_escape(line: &str, max_chars: usize) -> String {
 # allaganeye/commands/split_matches.py run_split 内 (_run_detection 呼び出し直前)
 captured_brightness: dict[float, float] = {}
 
+
 def _on_brightness(samples: dict[float, float]) -> None:
     captured_brightness.update(samples)
+
 
 boundaries = _run_detection(
     video_path,

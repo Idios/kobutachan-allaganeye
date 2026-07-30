@@ -261,9 +261,18 @@ def tmp_repo(tmp_path: Path) -> Path:
     (repo / "README.md").write_text("test\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
     subprocess.run(
-        ["git", "-c", "user.email=t@t.invalid", "-c", "user.name=t",
-         "commit", "-qm", "init"],
-        cwd=repo, check=True,
+        [
+            "git",
+            "-c",
+            "user.email=t@t.invalid",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "init",
+        ],
+        cwd=repo,
+        check=True,
     )
 
     # Wire in real scripts/ + .claude/hooks/ via symlink (fallback: copy).
@@ -288,35 +297,66 @@ def make_claude_branch(tmp_repo: Path) -> Callable[..., str]:
     def _make(slug: str, *, merged: bool, age_seconds: int) -> str:
         branch = f"claude/{slug}"
         # Create branch from develop-0.2.0
-        subprocess.run(["git", "checkout", "-q", "-b", branch], cwd=tmp_repo, check=True)
+        subprocess.run(
+            ["git", "checkout", "-q", "-b", branch], cwd=tmp_repo, check=True
+        )
         # Make a commit with a forged committer date.
         (tmp_repo / f"{slug}.txt").write_text("x")
         subprocess.run(["git", "add", "."], cwd=tmp_repo, check=True)
         forged_ts = int(time.time()) - age_seconds
-        env = {**os.environ,
-               "GIT_COMMITTER_DATE": f"@{forged_ts} +0000",
-               "GIT_AUTHOR_DATE": f"@{forged_ts} +0000"}
+        env = {
+            **os.environ,
+            "GIT_COMMITTER_DATE": f"@{forged_ts} +0000",
+            "GIT_AUTHOR_DATE": f"@{forged_ts} +0000",
+        }
         subprocess.run(
-            ["git", "-c", "user.email=t@t.invalid", "-c", "user.name=t",
-             "commit", "-qm", f"work {slug}"],
-            cwd=tmp_repo, env=env, check=True,
+            [
+                "git",
+                "-c",
+                "user.email=t@t.invalid",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-qm",
+                f"work {slug}",
+            ],
+            cwd=tmp_repo,
+            env=env,
+            check=True,
         )
         if merged:
             # Merge into develop-0.2.0
-            subprocess.run(["git", "checkout", "-q", "develop-0.2.0"], cwd=tmp_repo, check=True)
             subprocess.run(
-                ["git", "-c", "user.email=t@t.invalid", "-c", "user.name=t",
-                 "merge", "-q", "--no-ff", branch, "-m", f"merge {branch}"],
-                cwd=tmp_repo, check=True,
+                ["git", "checkout", "-q", "develop-0.2.0"], cwd=tmp_repo, check=True
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.email=t@t.invalid",
+                    "-c",
+                    "user.name=t",
+                    "merge",
+                    "-q",
+                    "--no-ff",
+                    branch,
+                    "-m",
+                    f"merge {branch}",
+                ],
+                cwd=tmp_repo,
+                check=True,
             )
         else:
-            subprocess.run(["git", "checkout", "-q", "develop-0.2.0"], cwd=tmp_repo, check=True)
+            subprocess.run(
+                ["git", "checkout", "-q", "develop-0.2.0"], cwd=tmp_repo, check=True
+            )
 
         # cleanup-claude-branches.sh requires an `origin/develop-0.2.0` ref to test
         # ancestor-ship. Mirror local develop-0.2.0 into refs/remotes/origin/.
         subprocess.run(
             ["git", "update-ref", "refs/remotes/origin/develop-0.2.0", "HEAD"],
-            cwd=tmp_repo, check=True,
+            cwd=tmp_repo,
+            check=True,
         )
         return branch
 
@@ -361,7 +401,11 @@ def run_hook(tmp_repo: Path) -> Callable[..., HookResult]:
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_repo)}
         proc = subprocess.run(
             ["bash", str(tmp_repo / script), *args],
-            cwd=tmp_repo, env=env, capture_output=True, text=True, timeout=30,
+            cwd=tmp_repo,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         ndjson: list[dict] = []
         for line in proc.stdout.splitlines():
@@ -373,8 +417,10 @@ def run_hook(tmp_repo: Path) -> Callable[..., HookResult]:
             except json.JSONDecodeError:
                 continue
         return HookResult(
-            stdout=proc.stdout, stderr=proc.stderr,
-            exit_code=proc.returncode, ndjson=ndjson,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+            exit_code=proc.returncode,
+            ndjson=ndjson,
         )
 
     return _run
@@ -501,7 +547,10 @@ def _of_event(events: list[dict], evt: str) -> list[dict]:
 
 
 def test_empty_dir_dry_run_emits_would_remove(
-    tmp_repo: Path, make_worktree_dir, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    make_worktree_dir,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     make_worktree_dir("foo", state="empty")
     result = run_hook("scripts/cleanup-worktrees.sh")
@@ -511,7 +560,10 @@ def test_empty_dir_dry_run_emits_would_remove(
 
 
 def test_empty_dir_apply_emits_removed(
-    tmp_repo: Path, make_worktree_dir, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    make_worktree_dir,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     make_worktree_dir("foo", state="empty")
     result = run_hook("scripts/cleanup-worktrees.sh", "--apply")
@@ -523,39 +575,57 @@ def test_empty_dir_apply_emits_removed(
 
 
 def test_non_empty_dir_dry_run_emits_would_skip(
-    tmp_repo: Path, make_worktree_dir, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    make_worktree_dir,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     make_worktree_dir("bar", state="non_empty")
     result = run_hook("scripts/cleanup-worktrees.sh")
     assert_valid_ndjson(result.ndjson)
     ws = _of_event(result.ndjson, "would_skip")
-    assert any(e["name"] == "bar" and e["reason"] == "not-empty" for e in ws), result.stdout
+    assert any(e["name"] == "bar" and e["reason"] == "not-empty" for e in ws), (
+        result.stdout
+    )
 
 
 def test_non_empty_dir_apply_emits_kept(
-    tmp_repo: Path, make_worktree_dir, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    make_worktree_dir,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     make_worktree_dir("bar", state="non_empty")
     result = run_hook("scripts/cleanup-worktrees.sh", "--apply")
     assert_valid_ndjson(result.ndjson)
     kept = _of_event(result.ndjson, "kept")
-    assert any(e["name"] == "bar" and e["reason"] == "not-empty" for e in kept), result.stdout
+    assert any(e["name"] == "bar" and e["reason"] == "not-empty" for e in kept), (
+        result.stdout
+    )
     # Directory survives
     assert (tmp_repo / ".claude" / "worktrees" / "bar").exists()
 
 
 def test_active_worktree_emits_skip(
-    tmp_repo: Path, make_worktree_dir, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    make_worktree_dir,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     make_worktree_dir("baz", state="active")
     result = run_hook("scripts/cleanup-worktrees.sh", "--apply")
     assert_valid_ndjson(result.ndjson)
     skip = _of_event(result.ndjson, "skip")
-    assert any(e["name"] == "baz" and e["reason"] == "active" for e in skip), result.stdout
+    assert any(e["name"] == "baz" and e["reason"] == "active" for e in skip), (
+        result.stdout
+    )
 
 
 def test_summary_event_is_emitted_last_with_counts(
-    tmp_repo: Path, make_worktree_dir, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    make_worktree_dir,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     make_worktree_dir("e1", state="empty")
     make_worktree_dir("e2", state="empty")
@@ -778,8 +848,12 @@ def _of_event(events, evt):
 
 # ---------- Scenario 1: merged + 古い + active なし → deleted ----------
 
+
 def test_merged_old_inactive_apply_deletes(
-    tmp_repo: Path, make_claude_branch, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     make_claude_branch("scenario1", merged=True, age_seconds=86400 * 2)
     result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
@@ -789,7 +863,10 @@ def test_merged_old_inactive_apply_deletes(
 
 
 def test_merged_old_inactive_dry_run_would_delete(
-    tmp_repo: Path, make_claude_branch, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     make_claude_branch("scenario1b", merged=True, age_seconds=86400 * 2)
     result = run_hook("scripts/cleanup-claude-branches.sh")
@@ -800,8 +877,12 @@ def test_merged_old_inactive_dry_run_would_delete(
 
 # ---------- Scenario 2: not merged → kept, reason=not-merged ----------
 
+
 def test_not_merged_kept(
-    tmp_repo: Path, make_claude_branch, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     make_claude_branch("scenario2", merged=False, age_seconds=86400 * 2)
     result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
@@ -814,29 +895,39 @@ def test_not_merged_kept(
 
 # ---------- Scenario 3: active worktree が参照 → kept, reason=active ----------
 
+
 def test_active_worktree_kept(
-    tmp_repo: Path, make_claude_branch, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     import subprocess
+
     branch = make_claude_branch("scenario3", merged=True, age_seconds=86400 * 2)
     # Create an active worktree referencing this branch.
     wt_dir = tmp_repo / ".claude" / "worktrees" / "scenario3-wt"
     subprocess.run(
         ["git", "worktree", "add", "-q", str(wt_dir), branch],
-        cwd=tmp_repo, check=True,
+        cwd=tmp_repo,
+        check=True,
     )
     result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
     assert_valid_ndjson(result.ndjson)
     kept = _of_event(result.ndjson, "kept")
-    assert any(
-        e["name"] == branch and e["reason"] == "active" for e in kept
-    ), result.stdout
+    assert any(e["name"] == branch and e["reason"] == "active" for e in kept), (
+        result.stdout
+    )
 
 
 # ---------- Scenario 4: 24h cooldown 内 → kept, reason=cooldown ----------
 
+
 def test_cooldown_kept(
-    tmp_repo: Path, make_claude_branch, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     # age_seconds=600 (10 minutes ago) — well within 24h cooldown
     make_claude_branch("scenario4", merged=True, age_seconds=600)
@@ -850,13 +941,18 @@ def test_cooldown_kept(
 
 # ---------- Scenario 5: prefix 違い (feature/xxx) → 列挙対象外 ----------
 
+
 def test_non_claude_prefix_ignored(
-    tmp_repo: Path, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     import subprocess
+
     subprocess.run(
         ["git", "checkout", "-q", "-b", "feature/not-touched"],
-        cwd=tmp_repo, check=True,
+        cwd=tmp_repo,
+        check=True,
     )
     subprocess.run(["git", "checkout", "-q", "develop-0.2.0"], cwd=tmp_repo, check=True)
     result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
@@ -868,8 +964,12 @@ def test_non_claude_prefix_ignored(
 
 # ---------- summary counter 一貫性 ----------
 
+
 def test_summary_counts_match_events(
-    tmp_repo: Path, make_claude_branch, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     make_claude_branch("s-a", merged=True, age_seconds=86400 * 2)
     make_claude_branch("s-b", merged=False, age_seconds=86400 * 2)
@@ -883,12 +983,14 @@ def test_summary_counts_match_events(
     assert s["apply"] is True
     assert s["total"] == 3
     assert s["deleted"] == 1  # s-a
-    assert s["kept"] == 2     # s-b (not-merged) + s-c (cooldown)
+    assert s["kept"] == 2  # s-b (not-merged) + s-c (cooldown)
     assert result.ndjson[-1]["event"] == "summary"
 
 
 def test_empty_branch_list_emits_zero_summary(
-    tmp_repo: Path, run_hook, assert_valid_ndjson,
+    tmp_repo: Path,
+    run_hook,
+    assert_valid_ndjson,
 ) -> None:
     result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
     assert_valid_ndjson(result.ndjson)
@@ -1113,7 +1215,8 @@ def _read_log(tmp_repo: Path) -> str:
 
 
 def test_stop_hook_logs_normal_cleanup(
-    tmp_repo: Path, run_hook,
+    tmp_repo: Path,
+    run_hook,
 ) -> None:
     """Both cleanup scripts present and succeed → log records both blocks
     + NDJSON lines from each.
@@ -1131,7 +1234,8 @@ def test_stop_hook_logs_normal_cleanup(
 
 
 def test_stop_hook_logs_cleanup_script_failure(
-    tmp_repo: Path, run_hook,
+    tmp_repo: Path,
+    run_hook,
 ) -> None:
     """Replace cleanup-worktrees.sh with a stub that exits 42 → log records
     `cleanup exit=42`. stop.sh still exits 0.
@@ -1152,7 +1256,8 @@ def test_stop_hook_logs_cleanup_script_failure(
 
 
 def test_stop_hook_handles_missing_cleanup_script(
-    tmp_repo: Path, run_hook,
+    tmp_repo: Path,
+    run_hook,
 ) -> None:
     """Remove cleanup-claude-branches.sh → log records `NOT FOUND at <path>`."""
     target = tmp_repo / "scripts" / "cleanup-claude-branches.sh"
@@ -1168,7 +1273,8 @@ def test_stop_hook_handles_missing_cleanup_script(
 
 
 def test_stop_hook_swallows_errors_and_exits_zero(
-    tmp_repo: Path, run_hook,
+    tmp_repo: Path,
+    run_hook,
 ) -> None:
     """Even when both cleanup scripts fail, stop.sh exits 0."""
     for name in ("cleanup-worktrees.sh", "cleanup-claude-branches.sh"):
@@ -1231,14 +1337,22 @@ def test_format_cleanup_log_smoke(tmp_path, run_hook, make_worktree_dir, tmp_rep
     human-readable lines.
     """
     import subprocess
+
     make_worktree_dir("foo", state="empty")
     cleanup = subprocess.run(
         ["bash", str(tmp_repo / "scripts" / "cleanup-worktrees.sh"), "--apply"],
-        cwd=tmp_repo, capture_output=True, text=True, check=True,
+        cwd=tmp_repo,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     fmt = subprocess.run(
         ["bash", str(tmp_repo / "scripts" / "format-cleanup-log.sh")],
-        input=cleanup.stdout, cwd=tmp_repo, capture_output=True, text=True, check=True,
+        input=cleanup.stdout,
+        cwd=tmp_repo,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert "[cleanup-worktrees] removed foo" in fmt.stdout
     assert "[cleanup-worktrees] summary:" in fmt.stdout
@@ -1646,7 +1760,8 @@ def test_session_start_outputs_iron_law_block(tmp_repo: Path, run_hook) -> None:
 
 
 def test_session_start_includes_handoff_subclause(
-    tmp_repo: Path, run_hook,
+    tmp_repo: Path,
+    run_hook,
 ) -> None:
     """Iron Law 6 includes the new handoff sub-clause (#722)."""
     result = run_hook(".claude/hooks/session-start.sh")
@@ -1656,7 +1771,8 @@ def test_session_start_includes_handoff_subclause(
 
 
 def test_session_start_mentions_step_zero_pre_flight(
-    tmp_repo: Path, run_hook,
+    tmp_repo: Path,
+    run_hook,
 ) -> None:
     """Iron Law 6 sub-clause references Step 0 hard-gate (#722)."""
     result = run_hook(".claude/hooks/session-start.sh")
@@ -1790,13 +1906,16 @@ import subprocess
 
 
 def test_worktree_pr_head_detected_when_pr_open(
-    tmp_repo: Path, run_hook, with_gh_stub,
+    tmp_repo: Path,
+    run_hook,
+    with_gh_stub,
 ) -> None:
     """gh stub returns non-empty JSON → extra EXTREMELY_IMPORTANT block is emitted."""
     # Put tmp_repo on a claude/* branch
     subprocess.run(
         ["git", "checkout", "-q", "-b", "claude/some-pr-head"],
-        cwd=tmp_repo, check=True,
+        cwd=tmp_repo,
+        check=True,
     )
     with_gh_stub('[{"number":999,"title":"test","headRefName":"claude/some-pr-head"}]')
     result = run_hook(".claude/hooks/session-start.sh")
@@ -1808,12 +1927,15 @@ def test_worktree_pr_head_detected_when_pr_open(
 
 
 def test_worktree_pr_head_skipped_when_no_pr(
-    tmp_repo: Path, run_hook, with_gh_stub,
+    tmp_repo: Path,
+    run_hook,
+    with_gh_stub,
 ) -> None:
     """gh stub returns [] → only the base Iron Law block is emitted."""
     subprocess.run(
         ["git", "checkout", "-q", "-b", "claude/no-pr-yet"],
-        cwd=tmp_repo, check=True,
+        cwd=tmp_repo,
+        check=True,
     )
     with_gh_stub("[]")
     result = run_hook(".claude/hooks/session-start.sh")
@@ -1824,7 +1946,9 @@ def test_worktree_pr_head_skipped_when_no_pr(
 
 
 def test_worktree_pr_head_skipped_for_non_claude_branch(
-    tmp_repo: Path, run_hook, with_gh_stub,
+    tmp_repo: Path,
+    run_hook,
+    with_gh_stub,
 ) -> None:
     """Branch not starting with `claude/` → detection skipped entirely (no gh call)."""
     # tmp_repo's default branch is develop-0.2.0 — already non-claude
@@ -1836,12 +1960,15 @@ def test_worktree_pr_head_skipped_for_non_claude_branch(
 
 
 def test_worktree_pr_head_silent_skip_when_gh_missing(
-    tmp_repo: Path, run_hook, monkeypatch,
+    tmp_repo: Path,
+    run_hook,
+    monkeypatch,
 ) -> None:
     """gh not on PATH → fail-soft: Iron Law still emitted, no extra block, exit 0."""
     subprocess.run(
         ["git", "checkout", "-q", "-b", "claude/no-gh-env"],
-        cwd=tmp_repo, check=True,
+        cwd=tmp_repo,
+        check=True,
     )
     # Empty PATH so gh / timeout / etc. cannot be found
     monkeypatch.setenv("PATH", "/nonexistent")
@@ -1856,22 +1983,27 @@ Actually, the last test needs revision — we need bash to still work, just not 
 
 ```python
 def test_worktree_pr_head_silent_skip_when_gh_missing(
-    tmp_repo: Path, run_hook, monkeypatch,
+    tmp_repo: Path,
+    run_hook,
+    monkeypatch,
 ) -> None:
     """gh not on PATH → fail-soft: Iron Law still emitted, no extra block, exit 0."""
     subprocess.run(
         ["git", "checkout", "-q", "-b", "claude/no-gh-env"],
-        cwd=tmp_repo, check=True,
+        cwd=tmp_repo,
+        check=True,
     )
     # Keep system bin paths but remove anything that could provide gh.
     # On Linux: /usr/bin, /bin are required for cat/echo/bash.
-    minimal = ":".join(p for p in ["/usr/bin", "/bin", "/usr/local/bin"]
-                       if Path(p).exists())
+    minimal = ":".join(
+        p for p in ["/usr/bin", "/bin", "/usr/local/bin"] if Path(p).exists()
+    )
     monkeypatch.setenv("PATH", minimal)
     # Ensure gh is not found in the minimal PATH (typically true on CI runners
     # only when gh is installed elsewhere). If gh happens to live in /usr/bin
     # on the CI runner, this test must be skipped.
     import shutil as _shutil
+
     if _shutil.which("gh", path=minimal):
         pytest.skip("gh available in minimal PATH; cannot exercise missing-gh branch")
     result = run_hook(".claude/hooks/session-start.sh")

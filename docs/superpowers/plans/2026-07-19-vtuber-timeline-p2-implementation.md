@@ -733,7 +733,9 @@ def detect_matches_timeline(
         video_path, boundaries, anchor, workers, stats, duration_hint
     )
     if stats is not None and "vtuber_v4_dropped" not in stats:
-        stats["vtuber_v4_dropped"] = 0  # _validate_match_segments が設定しない場合の表示用 floor
+        stats["vtuber_v4_dropped"] = (
+            0  # _validate_match_segments が設定しない場合の表示用 floor
+        )
     low = [b for b in boundaries if b["end"] - b["start"] > LOW_CONFIDENCE_SEGMENT_S]
     for b in low:
         logger.warning(

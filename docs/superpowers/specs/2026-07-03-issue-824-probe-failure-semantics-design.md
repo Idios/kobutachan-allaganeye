@@ -73,13 +73,14 @@ probe 失敗の表現と縮退時の可視化が、L3 検出系の全 site で�
 class PresenceState(Enum):
     PRESENT = "present"
     ABSENT = "absent"
-    UNKNOWN = "unknown"   # probe 失敗 (decode None / 例外)。absent と区別する
+    UNKNOWN = "unknown"  # probe 失敗 (decode None / 例外)。absent と区別する
+
 
 @dataclass(frozen=True)
 class PresenceSample:
     time: float
-    state: PresenceState          # 旧: present: bool
-    confidence: float             # UNKNOWN のとき 0.0
+    state: PresenceState  # 旧: present: bool
+    confidence: float  # UNKNOWN のとき 0.0
 ```
 
 - **移行用 `.present` property は提供しない** (review R2 Codex HIGH)。「PRESENT のみ True」の bool property は UNKNOWN → False の silent 変換 escape hatch となり、§2 item 1 (暗黙変換の型レベル禁止) / item 4 (新 site は構造的に silent 縮退を書けない) と自己矛盾する。既存の `.present` 消費者は 2 箇所のみ (`segment_presence` presence.py:73 / refine presence.py:243-251) で、どちらも §5.4 で explicit な state 比較への移行を規定する。UNKNOWN → ABSENT 側への折り畳みは集約層が **明示的な state 比較で行い、grep 可能にする**。
@@ -93,8 +94,8 @@ class PresenceSample:
 
 ```python
 class ProbeFailurePolicy(Enum):
-    RAISE = "raise"            # UNKNOWN を即例外化
-    ISOLATE = "isolate"        # per-probe 隔離: UNKNOWN のまま集約に流す (default)
+    RAISE = "raise"  # UNKNOWN を即例外化
+    ISOLATE = "isolate"  # per-probe 隔離: UNKNOWN のまま集約に流す (default)
 ```
 
 - 単発 probe 関数 (site 1) は常に tri-state を返し、decode 例外を **caller に漏らさない** (UNKNOWN に写像し、写像した事実を debug log する)。
