@@ -57,6 +57,7 @@ allaganeye split --from-metadata <metadata.json> [OPTIONS]
 | `--no-cache` | `false` | キャッシュされた検知結果を無視して再検知する |
 | `--keep-trailing` | `false` | default は試合後 trailing を `post_match: true` フラグ化して metadata に保持し、default split (MP4) から除外する (#805 段階2 で不可逆削除を廃止)。本フラグ指定時は flagging を skip し、trailing を通常 match として MP4 分割・保持する (#797 probe 無効化)。段階2 で `post_match_trailing_dropped` warning は emit されなくなった (flag が代替) |
 | `--no-audio` | `false` | 音声ベースの試合境界昇格（Fanfare スキャン）を無効化する。**現在は音声モジュールが凍結中（#327）のため、本フラグの値に関わらずスキャンは常にスキップされる。verbose 出力では `audio=frozen` と表示される (#384)** |
+| `--masked` | `false` | チャット欄マスク画像が全画面に合成された録画向け。mask のない領域を自動検出して再検知する。暗転が一部見つかる場合でも本フラグ指定でこの経路を強制する。**`--vtuber` と同時指定は排他エラー (exit 5)** |
 | `--dry-run` | `false` | 検知のみ実行し分割しない（検知結果はキャッシュに保存される） |
 | `-v`, `--verbose` | `false` | 詳細出力（メタデータ詳細、gap 情報）。**`-q` と同時指定は排他エラー (exit 5) (#419)** |
 | `-q`, `--quiet` | `false` | 進捗出力を抑制（出力ファイル一覧のみ）。**`-v` と同時指定は排他エラー (exit 5) (#419)** |
@@ -143,7 +144,7 @@ Total: 0m07s
 
 #### キャッシュ再読み込み失敗時のフォールバック
 
-`_load_cache` 検証通過後でも race condition / 破損 / 権限変更等で helper 側の読み直しが失敗しうる。その場合はヘッダ (`Cache hit: detection params from ...`) を常に emit した上で、失敗理由を `(unavailable: ...)` 行で通知する。split 本体は妨げない (helper は raise しない):
+`_load_cache_hit` 検証通過後でも race condition / 破損 / 権限変更等で helper 側の読み直しが失敗しうる。その場合はヘッダ (`Cache hit: detection params from ...`) を常に emit した上で、失敗理由を `(unavailable: ...)` 行で通知する。split 本体は妨げない (helper は raise しない):
 
 | シナリオ | 出力 |
 | --- | --- |
@@ -297,11 +298,14 @@ allaganeye detect <video_path> [OPTIONS]
 | `--min-blackout-duration` | `3.0` | 最小暗転時間（秒） |
 | `--workers` | auto | 検知の並列ワーカー数 |
 | `--gpu` / `--no-gpu` | auto | GPU 強制 / CPU 強制 (排他) |
+| `--gpu-vendor` | `auto` | 使用する GPU vendor を明示指定 (`auto` / `nvidia` / `amd` / `intel`)。split と同仕様 |
 | `--no-cache` | `false` | キャッシュ無視で再検知 |
 | `--keep-trailing` | `false` | post-match trailing の flagging を skip し通常 match として保持 (#805 段階2、default は flag して MP4 除外・metadata 保持) |
 | `--no-audio` | `false` | 音声昇格無効化 (現在 frozen) |
+| `--masked` | `false` | チャット欄マスク録画向けの mask-free 領域自動検出 + 再検知。split と同仕様 |
 | `-v`, `--verbose` | `false` | 詳細出力 |
 | `-q`, `--quiet` | `false` | 進捗出力抑制 |
+| `--progress-format` | `text` | 進捗の出力形式。`text` は click progress bar + typer ステータス行、`json` は stdout に 1 行 1 JSON (`phase` / `completed` / `total` / `elapsed_s`) を emit し人間可読出力を全抑制する (Tauri GUI wrapper 用、#569)。`text` / `json` 以外は exit 5 |
 
 ### 出力
 
@@ -356,7 +360,7 @@ echo '<metadata-json>' | allaganeye export --stdin [...]
 | --- | --- | --- |
 | `--output-dir DIR` | (必須) | 出力先ディレクトリ (省略不可) |
 | `--codec copy\|h264` | `copy` | `copy` (FFmpeg `-c copy`、無劣化分割) または `h264` (NVENC / QSV / AMF / libx264 で再エンコード) |
-| `--concurrency N` | SKU テーブル値 | 同時 export スロット数を上書き (`enumerate_h264_encoders` が返す値のデフォルト: RTX 5090 → 3、RTX 4090/4080/4070 → 2、RTX 4060 / 不明 NVIDIA → 1、QSV / AMF / libx264 → 1) |
+| `--concurrency N` | SKU テーブル値 | 同時 export スロット数を上書き (`enumerate_h264_encoders` が返す値のデフォルト: RTX 5090 → 3、RTX 4090/4080/4070 → 2、RTX 4060 / 不明 NVIDIA → 1、QSV / AMF / libx264 → 1)。**`--codec copy` 時は本フラグより先にスロットが 1 に切り詰められるため無効** — 再エンコードしない `-c copy` を並列化してもディスク I/O を奪い合うだけでスループットが上がらないため (`allaganeye/commands/export.py`) |
 | `--name-pattern PATTERN` | `{idx:03}_{type}_{start}.mp4` | 出力ファイル名テンプレート。使用可能トークン: `{idx}` / `{idx:03}` / `{type}` / `{start}` (MM-SS 形式。1 時間以上の場合は H-MM-SS、例: `1-23-41`) / `{date}` |
 | `--include I,J,K` | (すべて対象) | metadata の `matches[].index` (**1 始まり**) と照合する match フィルタ (カンマ区切り)。`--exclude` との併用時は `include - exclude` が有効集合 |
 | `--exclude I,J,K` | (なし) | metadata の `matches[].index` (**1 始まり**) と照合する除外フィルタ (カンマ区切り)。`type_override == "skip"` の match は本フラグに関係なく常に除外。`post_match: true` の match も無条件除外 (`--include` 指定でも MP4 化されない、#805 Phase 1 契約) |
