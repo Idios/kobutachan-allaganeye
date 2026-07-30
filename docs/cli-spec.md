@@ -287,7 +287,7 @@ allaganeye detect <video_path> [OPTIONS]
 
 ### オプション
 
-`split` と同じオプションセットだが `--dry-run` は存在しない (detect 自体が "dry-run 相当" のため)。
+`split` と概ね同じオプションセットだが、`--dry-run` は存在せず (detect 自体が "dry-run 相当" のため)、`--progress-format` は detect 固有 (GUI wrapper 用、#569)。
 
 | オプション | デフォルト | 説明 |
 | --- | --- | --- |
