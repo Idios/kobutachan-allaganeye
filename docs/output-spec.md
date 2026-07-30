@@ -1,12 +1,12 @@
 # CLI 出力仕様 (Output Specification)
 
-`allaganeye split` コマンドの CLI オプション組み合わせごとの**期待出力**を定義する。実装と docs の整合性を検証する基準として使用し、新規 CLI オプションを追加する PR は本マトリクスに行・列を追加することを必須とする (#405)。
+`allaganeye split` / `allaganeye detect` コマンドの CLI オプション組み合わせごとの**期待出力**を定義する。実装と docs の整合性を検証する基準として使用し、新規 CLI オプションを追加する PR は本マトリクスに行・列を追加することを必須とする (#405)。
 
 関連: CLI 構文 (引数・オプション) は [`docs/cli-spec.md`](cli-spec.md) を参照。本ドキュメントは**出力側**の仕様に専念する。
 
 ## 適用範囲
 
-- **対象コマンド**: `allaganeye split`
+- **対象コマンド**: `allaganeye split` / `allaganeye detect` (#463 で分離。detect は split の検知フェーズと同じ進捗・verbose 出力契約に従う)
 - **対象外コマンド**: `debug-brightness` (CSV 出力用途で `-v` / `-q` オプション自体を持たない。エラー表示のみ本仕様の 19b 準拠、ただし `-v` hint は表示しない #428)
 - **対象外ストリーム**: stdout / stderr のメインストリーム。`logger.debug` 経由のログは本仕様に含まない (デフォルトで出力されず、開発者向け診断用)
 
