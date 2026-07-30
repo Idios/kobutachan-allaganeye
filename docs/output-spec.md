@@ -12,9 +12,12 @@
 
 ### detect コマンドの適用境界
 
-`detect` は検知フェーズのみを実行するため、マトリクスの以下の行・列は **detect に該当しない**:
+マトリクスは元々 `split` を対象に作成されたため、`detect` を対象に加えるにあたり **全 19 行を `allaganeye/commands/detect.py` の実行経路に対して突合した** (#862)。以下の 4 点を除き、残る行は split と同一のヘルパ (`_print_environment_header` / `_display_cache_hit_params` / `_resolve_gpu_mode_with_probe` / `_run_detection` / `_print_detection_stats` / `_display_results` / `_display_gaps` / `_emit_total_time`) を detect も呼ぶため、**表の値がそのまま detect にも適用される**。
+
+detect に該当しない行 (この 4 点で網羅):
 
 - **行 6 (`Dry-run 通知`)**: `detect` に `--dry-run` オプションは存在しない (`allaganeye/cli.py` 参照)。`--dry-run` 系列の列 (3 列) は detect では意味を持たない
+- **行 11 のうち `Splitting` elapsed**: `Splitting: N matches, Xs` (2 space indent 付き) は `_emit_splitting_elapsed` が出力し、その呼び出し元は `run_split` のみ (`allaganeye/commands/split_matches.py:1831` 定義)。detect は `_print_detection_stats` のみを呼ぶ (`detect.py:231`) ため、`Pass 1` / `Pass 2` / `Scorebar` / Filter drop 内訳は出力されるが `Splitting` elapsed は出力されない
 - **行 16 (`Splitting` 進捗バー)**: 分割フェーズが存在しないため detect では常に非出力
 - **行 17 のうち `Output: <dir>` + ファイル一覧**: 分割フェーズが存在しないため detect では出力されない。`Metadata: <path>` のみ detect も出力するが、`show` が真のとき (= `-q` でも `--progress-format json` でもないとき) に限る (`allaganeye/commands/detect.py:330-331` 参照)
 
@@ -71,7 +74,7 @@ Error: --quiet and --verbose are mutually exclusive
 | 8 | Auto-selected / Forced GPU/CPU mode | - | × | ◯ | × | × | ◯ | × | ❌ |
 | 9 | 検知パラメータ summary (`interval=..., threshold=..., workers=auto (N), audio=frozen, vtuber=off, masked=off`) | [#384](https://github.com/Idios/kobutachan-allaganeye/issues/384), [#389](https://github.com/Idios/kobutachan-allaganeye/issues/389) | × | ◯ | × | × | ◯ | × | ❌ |
 | 10 | 進捗バー `Detecting` / `Refining` / `Scorebar` | [#368](https://github.com/Idios/kobutachan-allaganeye/issues/368), [#393](https://github.com/Idios/kobutachan-allaganeye/issues/393) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
-| 11 | 検知統計 (`Pass 1`, `Pass 2`, `Scorebar`, `Splitting` elapsed 含) | [#386](https://github.com/Idios/kobutachan-allaganeye/issues/386), [#387](https://github.com/Idios/kobutachan-allaganeye/issues/387) | × | ◯ | × | × | ◯ | × | ❌ |
+| 11 | 検知統計 (`Pass 1`, `Pass 2`, `Scorebar`, `Splitting` elapsed (split のみ) 含) | [#386](https://github.com/Idios/kobutachan-allaganeye/issues/386), [#387](https://github.com/Idios/kobutachan-allaganeye/issues/387) | × | ◯ | × | × | ◯ | × | ❌ |
 | 12 | Filter drop 内訳 + unknown match 行 (`Filter: N candidates -> M matches` + `+ N unknown match (録画途中試合)`) | [#388](https://github.com/Idios/kobutachan-allaganeye/issues/388), [#433](https://github.com/Idios/kobutachan-allaganeye/issues/433) | × | ◯ | × | × | ◯ | × | ❌ |
 | 13 | `Detected N match(es) ... (cached)` サフィックス含 | [#418](https://github.com/Idios/kobutachan-allaganeye/issues/418) (M) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
 | 14 | Match 一覧 (`[unknown]` / `[fl_match]` マーカー含) | [#382](https://github.com/Idios/kobutachan-allaganeye/issues/382) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
