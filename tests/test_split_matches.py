@@ -5296,8 +5296,8 @@ def test_verbose_workers_auto_shows_resolved_count(
     """Verbose summary resolves workers=auto to the actual count (#389).
 
     ``workers=auto`` alone doesn't let users diagnose CPU under-utilisation
-    or hit the right number for their box; the resolved ``min(cpu_count,
-    24)`` must be shown alongside.
+    or hit the right number for their box; the number resolved by
+    ``_resolve_workers`` must be shown alongside.
     """
     mock_probe.return_value = PROBE_RESULT
     mock_detect.return_value = BOUNDARIES
