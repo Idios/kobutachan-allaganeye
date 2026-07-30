@@ -1752,6 +1752,7 @@ def _print_environment_header(
         get_disk_info,
         get_gpu_info_lines,
         get_memory_info,
+        gpu_vendor_probe_warning,
     )
 
     ffmpeg_version = _probe_ffmpeg_version()
@@ -1771,6 +1772,9 @@ def _print_environment_header(
         typer.echo("  GPU:")
         for gpu in gpus:
             typer.echo(f"    - {gpu}")
+    gpu_warning = gpu_vendor_probe_warning()
+    if gpu_warning is not None:
+        typer.echo(f"  ! {gpu_warning}")
     typer.echo(f"  Memory: {get_memory_info()}")
     disk_target = output_dir if output_dir is not None else Path.cwd()
     typer.echo(f"  Disk: {get_disk_info(disk_target)}")
