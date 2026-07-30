@@ -153,9 +153,9 @@ def split(
         bool,
         typer.Option(
             "--vtuber",
-            help="(experimental) VTuber recording (game inset): scorebar-band "
-            "anchor detection. Under-detects irregular transitions; deferred (#480).",
-            hidden=True,
+            help="VTuber recording (game inset, decorated overlays): detects "
+            "matches from a scorebar-presence x motion timeline instead of "
+            "blackouts. Matches separated by less than about 70s may merge.",
         ),
     ] = False,
     masked: Annotated[
@@ -357,9 +357,9 @@ def detect(
         bool,
         typer.Option(
             "--vtuber",
-            help="(experimental) VTuber recording (game inset): scorebar-band "
-            "anchor detection. Under-detects irregular transitions; deferred (#480).",
-            hidden=True,
+            help="VTuber recording (game inset, decorated overlays): detects "
+            "matches from a scorebar-presence x motion timeline instead of "
+            "blackouts. Matches separated by less than about 70s may merge.",
         ),
     ] = False,
     masked: Annotated[

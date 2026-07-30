@@ -335,18 +335,22 @@ def test_detect_keep_trailing_default_false(mock_run_detect, fake_video):
     assert config.keep_trailing is False
 
 
-def test_split_vtuber_hidden_from_help():
-    """--vtuber は split --help に出ない (hidden、PR #823 R1 で A6 から前倒し)."""
+def test_split_vtuber_shown_in_help():
+    """--vtuber は split --help に出る (#895 P3 で hidden 解除、Idios 承認 2026-07-30).
+
+    P3 で timeline 検出 (V0-V4) が 6 source / GT 76 試合で recall 100% を実証し、
+    OBS/masked path の bit-exact 非接触も実機 gate で確認したため公開扱いにした。
+    """
     result = runner.invoke(app, ["split", "--help"])
     assert result.exit_code == 0
-    assert "--vtuber" not in result.stdout
+    assert "--vtuber" in result.stdout
 
 
-def test_detect_vtuber_hidden_from_help():
-    """--vtuber は detect --help に出ない (hidden、PR #823 R1 で A6 から前倒し)."""
+def test_detect_vtuber_shown_in_help():
+    """--vtuber は detect --help に出る (#895 P3 で hidden 解除)."""
     result = runner.invoke(app, ["detect", "--help"])
     assert result.exit_code == 0
-    assert "--vtuber" not in result.stdout
+    assert "--vtuber" in result.stdout
 
 
 @patch(MODULE)
