@@ -111,7 +111,7 @@ ffprobe -version
 
 **Windows**:
 
-**推奨: BtbN の LGPLv3 ビルド** (CI / Portable ZIP と同一系列、#508)。[BtbN/FFmpeg-Builds/releases](https://github.com/BtbN/FFmpeg-Builds/releases) の monthly snapshot から `ffmpeg-n8.1-*-win64-lgpl-shared.zip` をダウンロードして任意のフォルダに展開し、`ALLAGANEYE_FFMPEG` にその `bin/` を指定します:
+**推奨: BtbN の LGPLv3 ビルド** (CI / Portable ZIP と同一系列、#508)。[BtbN/FFmpeg-Builds/releases](https://github.com/BtbN/FFmpeg-Builds/releases) の monthly snapshot から `ffmpeg-n8.1-*-win64-lgpl-shared*.zip` (実アセット名は `ffmpeg-n8.1-11-g75d37c499d-win64-lgpl-shared-8.1.zip` のように末尾に snapshot 系列が付く場合がある) をダウンロードして任意のフォルダに展開し、`ALLAGANEYE_FFMPEG` にその `bin/` を指定します:
 
 ```bash
 # 現在のセッションのみ
