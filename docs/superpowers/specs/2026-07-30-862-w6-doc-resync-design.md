@@ -146,7 +146,7 @@ workers 記述と #576 記述の両方を持つが、アーキテクチャ doc �
 | `allaganeye/video/detector.py` (docstring) | workers SSoT の**正を確立** |
 | `allaganeye/commands/split_matches.py` (docstring) | 誤値 24 → 正へ寄せる |
 | `tests/test_split_matches.py` (docstring) | 同上 |
-| `docs/cli-spec.md` | P2-25 x3 / P2-34 / metadata 表 6 field + 抜粋注記 / `_load_cache_hit` |
+| `docs/cli-spec.md` | P2-25 x3 / P2-34 / metadata 表 7 field + 抜粋注記 / `_load_cache_hit` |
 | `docs/tuning-guide.md` | P2-25 x2 / P2-28 |
 | `docs/benchmarks.md` | `:78` のみ SSoT 化 |
 | `docs/output-spec.md` | 適用範囲に `detect` 追加 |
