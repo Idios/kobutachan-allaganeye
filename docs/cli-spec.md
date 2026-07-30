@@ -72,6 +72,8 @@ allaganeye split --from-metadata <metadata.json> [OPTIONS]
 
 ### verbose (`-v`) 出力例
 
+> **この出力例は `allaganeye 0.1.1` 実行時に採取した実ログ**であり、行の**書式**を示すもので値は当時のもの。特に `workers=auto (24)` の `24` は当時の worker 上限で、**現在の auto 解決値ではない** (現在の上限の正は `allaganeye/video/detector.py` の `_resolve_workers` docstring。同じ 16C/32T 環境でも現在は異なる値になる)。
+
 ```text
 allaganeye 0.1.1 (ffmpeg 8.1, Python 3.12.10, Windows 11)
   CPU: AMD Ryzen 9 9950X3D (16C/32T)
