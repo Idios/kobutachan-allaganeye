@@ -85,20 +85,29 @@ def compare_detection_to_gt(
         best = None
         for di in unmatched_det:
             d = detected[di]
-            ov = min(d["end_time"], g["end_time"]) - max(d["start_time"], g["start_time"])
+            ov = min(d["end_time"], g["end_time"]) - max(
+                d["start_time"], g["start_time"]
+            )
             if ov > 0 and (best is None or ov > best[1]):
                 best = (di, ov)
         if best is not None:
             matched_pairs.append((gi, best[0]))
             unmatched_det.remove(best[0])
-    missed = [g["index"] for gi, g in enumerate(gt_matches)
-              if gi not in [p[0] for p in matched_pairs]]
+    missed = [
+        g["index"]
+        for gi, g in enumerate(gt_matches)
+        if gi not in [p[0] for p in matched_pairs]
+    ]
     spurious = [detected[di]["start_time"] for di in unmatched_det]
     errors = []
     for gi, di in matched_pairs:
         g, d = gt_matches[gi], detected[di]
         errors.append(
-            (g["index"], d["start_time"] - g["start_time"], d["end_time"] - g["end_time"])
+            (
+                g["index"],
+                d["start_time"] - g["start_time"],
+                d["end_time"] - g["end_time"],
+            )
         )
     max_abs = max((max(abs(ds), abs(de)) for _, ds, de in errors), default=0.0)
     return {
@@ -152,8 +161,14 @@ def _gt_files():
 def test_vtuber_gt_match(gt_path, tmp_path):
     """実 VOD で --vtuber detect し GT と突合 (matched/missed/spurious + 境界誤差)。"""
     gt = json.loads(gt_path.read_text(encoding="utf-8"))
-    base = Path(os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER", "E:/allaganeye-samples"))
-    video = base / gt["source_file"] if gt.get("source_dir_label") == "vtuber-samples" else None
+    base = Path(
+        os.environ.get("ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER", "E:/allaganeye-samples")
+    )
+    video = (
+        base / gt["source_file"]
+        if gt.get("source_dir_label") == "vtuber-samples"
+        else None
+    )
     if gt.get("source_dir_label") == "gyawa_vatos":
         video = Path("E:/videos/gyawa_vatos") / gt["source_file"]
     if video is None or not video.exists():
@@ -161,13 +176,27 @@ def test_vtuber_gt_match(gt_path, tmp_path):
     out = tmp_path / gt_path.stem
     env = {**os.environ, "PYTHONUTF8": "1", "ALLAGANEYE_INTEGRITY_SKIP": "1"}
     r = subprocess.run(
-        [sys.executable, "-m", "allaganeye", "detect", str(video), "--vtuber",
-         "--no-cache", "-o", str(out)],
-        capture_output=True, text=True, timeout=3600, env=env,
+        [
+            sys.executable,
+            "-m",
+            "allaganeye",
+            "detect",
+            str(video),
+            "--vtuber",
+            "--no-cache",
+            "-o",
+            str(out),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=3600,
+        env=env,
     )
     assert r.returncode == 0, r.stderr[-2000:]
     meta = json.loads((out / "metadata.json").read_text(encoding="utf-8"))
-    result = compare_detection_to_gt(meta["matches"], gt["matches"], gt["tolerance_sec"])
+    result = compare_detection_to_gt(
+        meta["matches"], gt["matches"], gt["tolerance_sec"]
+    )
     assert result["matched"] == len(gt["matches"]), result
     assert not result["missed"] and not result["spurious"], result
     assert result["max_abs_error"] <= gt["tolerance_sec"], result["boundary_errors"]
