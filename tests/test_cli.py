@@ -1,9 +1,12 @@
 """Tests for CLI entry point."""
 
+import re
 from pathlib import Path
 from unittest.mock import patch
 
+import click
 import pytest
+from typer.main import get_command
 from typer.testing import CliRunner
 
 from allaganeye.cli import app
@@ -18,6 +21,83 @@ runner = CliRunner()
 
 MODULE = "allaganeye.commands.split_matches.run_split"
 DETECT_MODULE = "allaganeye.commands.detect.run_detect"
+
+
+# --- help assertion helpers ---
+#
+# rich splits option names into several escape-separated spans whenever colour is
+# enabled (`--vtuber` renders as ESC[1;36m-ESC[0mESC[1;36m-vtuberESC[0m), so a bare
+# `"--opt" in result.stdout` is width/colour/rich-version dependent: it fails under
+# colour and, worse, a negated form (`"--opt" not in result.stdout`) passes
+# unconditionally under colour. Assert the click model for the contract and use the
+# ANSI-stripped rendering only as a smoke check.
+
+# CSI sequences (SGR colour codes and friends).
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+# Both ends of the colour spectrum: every help assertion must hold in each.
+_COLOR_ENVS = [
+    pytest.param({"FORCE_COLOR": None, "NO_COLOR": "1", "TERM": "dumb"}, id="no-color"),
+    pytest.param(
+        {"FORCE_COLOR": "1", "NO_COLOR": None, "TERM": "xterm-256color"},
+        id="force-color",
+    ),
+]
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences so help text can be matched literally."""
+    return _ANSI_RE.sub("", text)
+
+
+def _help_text(argv: list[str], color_env: dict[str, str | None]) -> str:
+    """Render ``--help`` for *argv* under *color_env*, ANSI escapes removed.
+
+    ``COLUMNS`` is pinned so panel wrapping does not depend on the ambient
+    terminal width.
+    """
+    env: dict[str, str | None] = {"COLUMNS": "120", **color_env}
+    result = runner.invoke(app, argv, env=env)
+    assert result.exit_code == 0, result.stdout
+    return _strip_ansi(result.stdout)
+
+
+def _sub_command(name: str) -> click.Command:
+    """Return the click sub-command *name* built from the typer app."""
+    group = get_command(app)
+    assert isinstance(group, click.Group), (
+        f"expected a click Group, got {type(group)!r}"
+    )
+    command = group.commands.get(name)
+    assert command is not None, (
+        f"sub-command {name!r} not found; declared: {sorted(group.commands)}"
+    )
+    return command
+
+
+def _find_click_option(command_name: str, option: str) -> click.Parameter | None:
+    """Return the parameter declaring *option* on *command_name*, else ``None``."""
+    for param in _sub_command(command_name).params:
+        if option in param.opts or option in param.secondary_opts:
+            return param
+    return None
+
+
+def _click_option(command_name: str, option: str) -> click.Option:
+    """Like :func:`_find_click_option` but fails when *option* is missing.
+
+    A removed or renamed flag therefore surfaces as a failure instead of a silent
+    pass.
+    """
+    param = _find_click_option(command_name, option)
+    declared = sorted(o for p in _sub_command(command_name).params for o in p.opts)
+    assert param is not None, (
+        f"option {option!r} is not declared on {command_name!r}; declared: {declared}"
+    )
+    assert isinstance(param, click.Option), (
+        f"{option!r} on {command_name!r} is not an Option: {type(param)!r}"
+    )
+    return param
 
 
 # --- Basic tests ---
@@ -39,17 +119,20 @@ def test_version_short_flag(monkeypatch: pytest.MonkeyPatch):
     assert "allaganeye" in result.stdout
 
 
-def test_verbose_short_flag_unchanged():
+@pytest.mark.parametrize("color_env", _COLOR_ENVS)
+def test_verbose_short_flag_unchanged(color_env: dict[str, str | None]):
     """-v must still map to --verbose (not --version) on the split command.
 
     Breaking-change policy for v0.1.x: we add -V for --version but keep
     -v = --verbose to avoid disrupting existing preview users (issue #337).
     """
-    result = runner.invoke(app, ["split", "--help"])
-    assert result.exit_code == 0
+    param = _click_option("split", "-v")
+    assert param.name == "verbose"
+    assert "--verbose" in param.opts
     # -v appears in the verbose flag help
-    assert "-v" in result.stdout
-    assert "verbose" in result.stdout.lower()
+    help_text = _help_text(["split", "--help"], color_env)
+    assert "-v" in help_text
+    assert "verbose" in help_text.lower()
 
 
 def test_help():
@@ -335,22 +418,40 @@ def test_detect_keep_trailing_default_false(mock_run_detect, fake_video):
     assert config.keep_trailing is False
 
 
-def test_split_vtuber_shown_in_help():
-    """--vtuber は split --help に出る (#895 P3 で hidden 解除、Idios 承認 2026-07-30).
+@pytest.mark.parametrize("command_name", ["split", "detect"])
+@pytest.mark.parametrize("color_env", _COLOR_ENVS)
+def test_vtuber_shown_in_help(command_name: str, color_env: dict[str, str | None]):
+    """--vtuber は split/detect --help に出る (#895 P3 で hidden 解除、Idios 承認 2026-07-30).
+
+    substring を stdout に直接 assert しないのは、色付き環境 (CI) で rich が option 名を
+    ANSI で分割する (`--vtuber` -> ESC[1;36m-ESC[0mESC[1;36m-vtuberESC[0m) ため。
+    前身の hidden pin (`"--vtuber" not in result.stdout`) はこの分割により色付き環境で
+    常に真になる false-green で、hidden 状態を CI で一度も gate していなかった。
+    そのため click model (`param.hidden`) を主 assert とし、描画側は ANSI 除去後の
+    smoke に留める。
 
     P3 で timeline 検出 (V0-V4) が 6 source / GT 76 試合で recall 100% を実証し、
     OBS/masked path の bit-exact 非接触も実機 gate で確認したため公開扱いにした。
     """
-    result = runner.invoke(app, ["split", "--help"])
-    assert result.exit_code == 0
-    assert "--vtuber" in result.stdout
+    assert _click_option(command_name, "--vtuber").hidden is False
+    assert "--vtuber" in _help_text([command_name, "--help"], color_env)
 
 
-def test_detect_vtuber_shown_in_help():
-    """--vtuber は detect --help に出る (#895 P3 で hidden 解除)."""
-    result = runner.invoke(app, ["detect", "--help"])
+def test_force_color_env_actually_colorizes():
+    """The force-color parametrization must really emit ANSI, or the smoke rots.
+
+    Without this guard a rich/typer change that stops colorizing under
+    ``FORCE_COLOR`` would silently turn the "force-color" case into a duplicate of
+    the plain one, and the ANSI-stripping smoke would stop covering anything.
+    """
+    result = runner.invoke(
+        app,
+        ["split", "--help"],
+        env={"COLUMNS": "120", "FORCE_COLOR": "1", "NO_COLOR": None},
+    )
     assert result.exit_code == 0
-    assert "--vtuber" in result.stdout
+    assert _ANSI_RE.search(result.stdout) is not None, "expected colorized help"
+    assert "--vtuber" in _strip_ansi(result.stdout)
 
 
 @patch(MODULE)
@@ -1064,12 +1165,20 @@ class TestCliOptionCombinations:
 # --- detect command + split --from-metadata (#463) ---
 
 
-def test_detect_help():
-    result = runner.invoke(app, ["detect", "--help"])
-    assert result.exit_code == 0
-    assert "detect" in result.stdout.lower()
+@pytest.mark.parametrize("color_env", _COLOR_ENVS)
+def test_detect_help(color_env: dict[str, str | None]):
+    """detect --help renders and keeps --dry-run removed (detect *is* the dry-run).
+
+    The absence check must run on ANSI-stripped output: a raw
+    `"--dry-run" not in result.stdout` passes unconditionally under colour, because
+    rich splits option names into escape-separated spans (the same false-green that
+    hid the --vtuber pin).
+    """
+    help_text = _help_text(["detect", "--help"], color_env)
+    assert "detect" in help_text.lower()
     # --dry-run removed from detect (it *is* the dry-run)
-    assert "--dry-run" not in result.stdout
+    assert _find_click_option("detect", "--dry-run") is None
+    assert "--dry-run" not in help_text
 
 
 @patch("allaganeye.commands.detect.run_detect")
