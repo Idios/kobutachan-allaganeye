@@ -232,6 +232,7 @@ GUI は読み取った未知フィールドを書き戻しで保持する義務�
 - **エンコーディング**: UTF-8 / BOM なし / `ensure_ascii=false` / `indent=2`
 - **改行**: LF (JSON 仕様上問題ないが、ツール側は特に気にしない)
 - **ファイル名**: `metadata.json` 固定 (GUI 編集時のバックアップは `metadata.original.json`)
+- **optional field の write 境界検証** (#879): `system_info` / `brightness_samples` / `capture_regions` / `minimap_regions` は present のとき shape を検証してから書き込む。Rust 側 `validate_metadata_for_write` が 4 field の zod schema を mirror し、CLI 側は `brightness_samples` を sanitize する。cache 経由の読み直しは `_load_cache_hit` の単一 read に統一済み (旧 `_load_cache` は廃止)。壊れた optional field を持つ metadata が GUI 経由で書き戻されて後続 run を壊す経路を塞ぐ
 
 ## GUI 編集契約
 

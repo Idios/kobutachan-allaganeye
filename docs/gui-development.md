@@ -78,13 +78,18 @@ GUI のスタイルは CSS 変数 + CSS Modules で統一。詳細は [`ui-archi
 
 ## CI 構成
 
-[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) に 3 ジョブが定義されている:
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) に 8 ジョブが定義されている:
 
 | ジョブ | OS | 役割 |
 | --- | --- | --- |
-| `python` | ubuntu-latest | 既存: ruff / pyright / pytest |
+| `python` | ubuntu-latest | ruff / pyright / pytest |
+| `hook-test` | ubuntu-latest | `.claude/hooks/` のシェルフック検証 |
 | `gui-frontend` | ubuntu-latest | npm ci → lint → typecheck → build → `gui/dist/` をアーティファクト保存 |
 | `gui-rust` | windows-latest | `gui-frontend` のアーティファクトを取得して `cargo check` |
+| `doc-tauri-commands-drift` | ubuntu-latest | Tauri command 一覧と doc の drift 検出 |
+| `doc-error-hint-drift` | ubuntu-latest | エラーヒント文言と doc の drift 検出 |
+| `shellcheck` | ubuntu-latest | シェルスクリプトの静的検査 |
+| `installer-pester` | windows-latest | `scripts/build-portable-zip.ps1` の Pester テスト |
 
 `gui-rust` が Windows runner なのは **L2 の Windows 専用ターゲット (#451) に合わせるため**。`gui-frontend` を ubuntu 分離しているのはコスト最適化 (Windows runner は低速)。
 

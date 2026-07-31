@@ -91,7 +91,7 @@ V2 導入時の `_EMBLEM_POSITIONS` は 1920x1080 絶対座標の hardcode で�
 
 解決策として **two-path OR semantics** を採用。Primary は pre-#522 validated の absolute `_EMBLEM_POSITIONS`、Rescue は scorebar span 動的検出 + `_EMBLEM_RELATIVE_POSITIONS` 相対比で HUD scale 差異を吸収する。
 
-1. `_find_scorebar_horizontal_range(raw_rgb)`: 画面上部 y=0..45 の HSV saturation mask で saturated 列の最長 run を scorebar span として返す。run 幅 < 500px は None (lobby UI 誤検出排除)
+1. `_find_scorebar_horizontal_range(raw_rgb)`: 画面上部 y=0..45 の HSV saturation mask で saturated 列の run を構築し、**画面中央 (x=960) を跨ぐ run** を scorebar span として返す (#803)。FL scorebar は水平中央に配置されるため、**最長 run を選ぶと**より長い off-center / 過大幅のバンド (右側チャットパネル、post-match の色鮮やかな屋内など) が有効な中央 scorebar を隠してしまい、rescue path が支えるはずの 4K / HUD-scaled layout を false-negative にする。中央を跨ぐ run が無い場合、および span 幅が 500px 未満 / 1440px 超の場合は None
 2. `_EMBLEM_RELATIVE_POSITIONS`: 1080p OBS validated set 13 frames の実測 median 相対比
    - left: `cx_rel=0.0455, half_width_rel=0.0453`
    - center: `cx_rel=0.3427, half_width_rel=0.0237`
@@ -113,6 +113,7 @@ OR 結合により、1080p OBS validated set は Primary で完結 (FP 耐性保
 | `_SCOREBAR_SCAN_VAL_THRESHOLD` | 60.0 | 暗フレーム排除 |
 | `_SCOREBAR_SCAN_COL_RATIO` | 0.30 | 行の 30% 以上が saturated であれば該当列を qualifying |
 | `_SCOREBAR_SCAN_MIN_WIDTH_PX` | 500 | scorebar と認める最小幅 (1080p 712+, 4K DVR 613+, lobby 409 FP 排除) |
+| `_SCOREBAR_SCAN_MAX_WIDTH_PX` | 1440 | scorebar と認める最大幅 (#803)。1080p OBS の実測上限 ~1090px / 4K DVR ~620px に対し、post-match の全幅近い彩度バンド (実測 ~1912px) を排除する。1440 = probe 幅 1920px の 75% |
 | `_SCOREBAR_SCAN_MAX_GAP_PX` | 80 | scorebar 中央 timer/score 部のギャップを bridge |
 
 ### 検証サマリー
@@ -121,6 +122,33 @@ OR 結合により、1080p OBS validated set は Primary で完結 (FP 耐性保
 - 4K Game DVR file 1: Path 1 absolute fail → Path 2 dynamic rescue (span=652..1272) で in-match True 復帰、lobby は両 path fail で False (FP なし)
 - emblem 位置の追従は 1080p / 4K 両方で可視化確認済み
 - ただし 4K Game DVR の試合境界完全回復は Pass 2 region 幅が狭く classify post probes が暗転 fade-in 中に hit する別問題で未達 (#524 で follow-up)
+
+### post-match trailing の flagging (#797 / #805)
+
+末尾セグメントが動画終端まで続き `type == "unknown"` の場合、試合ではなく
+post-match コンテンツ (ロビー / 街) の可能性がある。`_flag_post_match_trailing`
+は候補試合ウィンドウ (`start` .. `start + min_match_duration`) を
+`_TRAILING_PROBE_STRIDE` (60s) 間隔 + ウィンドウ終端で scorebar probe し、
+
+- 1 回でも hit (`True`) → 試合映像あり → そのまま残す
+- 1 回でも probe 失敗 / opencv 不在 (`None`) → 安全側でそのまま残す
+- 全 probe が確定 miss (`False`) → `post_match: true` を付与して**残す**
+
+判定は #805 段階2 で**非破壊**になった。旧 #797 はセグメントを削除していたが、
+scorebar false-negative が実試合を silent に消しうるため、フラグ付与 +
+default split (MP4) からの除外 + metadata 保持に置き換えられている。
+セグメントが 1 個しかない場合 (blackout が 1 つも残らなかった fail-open) は
+常に無変更で、「境界が見つからない」が試合ゼロに崩れることはない。
+
+### 位置独立な scorebar 局在化 (#811)
+
+`video/capture_region.py` の `localize_scorebar` は、上記の絶対 / 相対 2 path とは
+別に、**位置を仮定しない** scorebar 局在化を提供する (L3 Phase 1 の基盤)。
+saturated column run を width-gate で全件取り出し、各候補に対し 3 点 emblem AND を
+評価して最も margin の大きいものを採用する。`--vtuber` gate 内および masked
+fallback の at-anchor primitive (`localize_scorebar_at_anchor`、#822) として使われ、
+OBS 通常 path の分類ロジックは変更しない。検出 subsystem 全体の現状 map は
+[`docs/detection-map.md`](detection-map.md) を参照。
 
 ### 残課題 (follow-up)
 
