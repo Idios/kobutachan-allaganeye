@@ -111,6 +111,12 @@ def render_help(
     """
     force_terminal: bool = request.param
     monkeypatch.setattr(rich_utils, "FORCE_TERMINAL", force_terminal)
+    # FORCE_TERMINAL cannot turn colour *on* from the environment, but the environment
+    # can still turn it off: rich honours NO_COLOR, and TERM=dumb drops color_system to
+    # None even when forced. A dev shell carrying either would make the "ansi" leg fail
+    # for reasons unrelated to the product, so both are neutralised here.
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("TERM", "xterm-256color")
 
     def _render(argv: list[str]) -> str:
         # COLUMNS is pinned so wrapping (and therefore every pin below) does not depend
@@ -238,8 +244,8 @@ def test_verbose_short_flag_unchanged(render_help: Callable[[list[str]], str]):
     # The old `"-v" in help_text` was vacuous: it is a substring of "--verbose",
     # "--vtuber", "-vf", ... Pin the rendered row, where rich puts the long spelling
     # next to the short one, so a dropped `-v` alias is actually caught on screen.
-    assert "--verbose -v" in help_text
-    assert "Verbose output" in help_text
+    assert "--verbose -v" in help_text, f"--verbose/-v row missing: {help_text!r}"
+    assert "Verbose output" in help_text, f"verbose help missing: {help_text!r}"
 
 
 def test_help():
@@ -577,7 +583,7 @@ def test_vtuber_shown_in_help(
 
     # --- render side: the model text must actually reach the screen ---
     rendered = render_help([command_name, "--help"])
-    assert "--vtuber" in rendered
+    assert "--vtuber" in rendered, f"no --vtuber row in rendered help: {rendered!r}"
     # Containment of the *whole* model string also catches truncation and a re-hidden
     # option, which a phrase-only render pin would miss.
     assert help_str in rendered, f"--vtuber help not rendered verbatim: {rendered!r}"
@@ -596,24 +602,30 @@ def test_vtuber_help_identical_across_commands():
     assert split_help == detect_help
 
 
-def test_ansi_leg_colourises_option_content():
-    """The coloured leg must colourise option *content*, not just the panel frame.
+def test_ansi_leg_colourises_option_name():
+    """The coloured leg must colourise the option *name*, not just the panel frame.
 
     Guarding on "any escape in stdout" is too weak: typer draws the panel border with
     ESC[2m, so such a guard stays green even if rich stopped styling option names --
-    at which point the escape-stripping helpers would cover nothing. Pin a foreground
-    colour on the --vtuber row instead.
+    at which point the escape-stripping helpers would cover nothing. Even a row-wide
+    search is too weak, because neighbouring columns (metavar / required marker) carry
+    their own SGR. Scope the search to the span before the name so this stays a real
+    canary for the token-splitting hazard the helpers exist to handle.
     """
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(rich_utils, "FORCE_TERMINAL", True)
+        mp.delenv("NO_COLOR", raising=False)
+        mp.setenv("TERM", "xterm-256color")
         result = runner.invoke(app, ["split", "--help"], env={"COLUMNS": "120"})
     assert result.exit_code == 0, result.stdout
     rows = [
         line for line in result.stdout.splitlines() if "--vtuber" in _strip_ansi(line)
     ]
     assert rows, "no --vtuber row in rendered help"
-    assert _COLOR_SGR_RE.search(rows[0]) is not None, (
-        f"--vtuber row carries no foreground-colour SGR: {rows[0]!r}"
+    row = rows[0]
+    name_span = row[: row.index("vtuber")]
+    assert _COLOR_SGR_RE.search(name_span) is not None, (
+        f"--vtuber option name carries no foreground-colour SGR: {row!r}"
     )
 
 
