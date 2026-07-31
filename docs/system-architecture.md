@@ -37,7 +37,7 @@
 ```
 
 - **CLI (L1)** は standalone 動作し、GUI に依存しない
-- **GUI (L2a)** は CLI を subprocess として呼び出して detect / export を実行する
+- **GUI (L2a)** は CLI を subprocess として呼び出す (呼び出し口の一覧は [§2.3](#23-gui--cli-subprocess-経路) が正。本節では列挙しない)
 - **Installer (L2b)** は両者を同梱する配布形態を提供する
 - **metadata.json** が CLI ↔ GUI の唯一の契約 ([metadata-spec.md](metadata-spec.md) #463)
 
@@ -63,7 +63,9 @@ Allagan Eye は **別 exe 方式**を採用する (2026-04-23 確定、#527)。�
 
 ### 2.3 GUI → CLI subprocess 経路
 
-GUI は以下のタイミングで CLI を subprocess として呼び出す (`tokio::process::Command` で実装済み):
+GUI は以下のタイミングで CLI を subprocess として呼び出す (`tokio::process::Command` で実装済み)。
+
+**本表が GUI → CLI 呼び出し口の正 (SSoT) であり、網羅である。**他節・他 doc は呼び出し口を再列挙せず本表を参照すること (#818 の doc SSoT 規約を doc 内の列挙にも適用。列挙が複数箇所にあると、そのたびに不完全化する余地が生まれるため)。網羅性の根拠は `gui/src-tauri/src/lib.rs` で CLI (`cmd_spec.program`) を spawn する箇所が以下 5 つに限られること: `start_detect` / `enumerate_h264_encoders` / `start_export` / `start_minimap` / `detect_minimap_regions`。ffprobe / ffmpeg を Rust から直接 spawn する経路 (サムネイル生成等) は CLI 呼び出しではないため本表の対象外。
 
 | GUI 画面 | subprocess 引数 | 生成物 | 実装 PR |
 | --- | --- | --- | --- |
