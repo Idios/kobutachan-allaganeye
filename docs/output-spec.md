@@ -91,9 +91,9 @@ Error: --quiet and --verbose are mutually exclusive
 
 ### マトリクスの読み方
 
-- 行 12a (`Region:`) が条件付きなのは、`captured_region` が解決済み (非 `None`) のときだけ出力するため (`split_matches.py:290` / `detect.py:232` のガード)。実運用上これは **cache miss (実際に検知を走らせた) と同義**である:
-  - **cache miss 時**: `detect_match_boundaries` は標準 / vtuber / masked のどの経路を通っても `region_callback` を必ず呼ぶ (`detector.py:688` / `:814` / `:822`。早期 return は 2 箇所だけで、いずれも直前に callback を呼ぶ) ため `captured_region` は常に埋まる。したがって `-v` なら必ず出力される
-  - **cache hit 時**: `captured_region` は cache 記録値から復元される (`split_matches.py:188` / `detect.py:148`) が、cache-hit 分岐は `Region:` 行に到達する前に return / スキップするため **表示されない**。split は cache-hit 分岐 (`split_matches.py:140` の `if hit is not None:`) が `:194` で `return` するので `:290` のガードに到達しない。detect は `Region:` 出力ガード (`detect.py:232-233`) が cache-miss ブロック (`detect.py:156` の `if boundaries is None:`) の**内側**にあるため、cache hit ではブロックごとスキップされる。`--no-cache` を付ければ cache miss 扱いになり出力される
+- 行 12a (`Region:`) が条件付きなのは、`captured_region` が解決済み (非 `None`) のときだけ出力するため (`split_matches.py:290` / `detect.py:232` の `if captured_region is not None:`)。実運用上これは **cache miss (実際に検知を走らせた) と同義**である:
+  - **cache miss 時**: `detect_match_boundaries` は標準 / vtuber / masked のどの経路を通っても `region_callback` を必ず呼ぶ。`region_callback(...)` の呼び出しは vtuber timeline 採用時 (`detector.py:689`) / masked fallback 採用時 (`:817`) / 標準 path 確定時 (`:823`) の 3 箇所で、同関数の早期 return 2 箇所 (`:695` の `return timeline_boundaries` / `:818` の `return masked_segments`) はいずれも**直前に**呼び出しを済ませている。したがって `captured_region` は常に埋まり、`-v` なら必ず出力される
+  - **cache hit 時**: `captured_region` は cache 記録値から復元される (split は `capture_regions=hit.capture_regions` を渡す `split_matches.py:188`、detect は `captured_region = hit.capture_regions` の `detect.py:148`) が、cache-hit 分岐は `Region:` 行に到達する前に return / スキップするため **表示されない**。split は cache-hit 分岐 (`split_matches.py:140` の `if hit is not None:`) が `:194` の `return` で抜けるため `:290` のガードに到達しない。detect は `Region:` 出力ガード (`detect.py:232-233`) が cache-miss ブロック (`detect.py:156` の `if boundaries is None:`) の**内側**にあるため、cache hit ではブロックごとスキップされる。`--no-cache` を付ければ cache miss 扱いになり出力される
 - 行 6 (`Dry-run 通知`) で default / `-v` / `-q` 列が `-` なのは、これらの組合せでは `--dry-run` 自体が指定されていないため「通知する場面が存在しない」という意味
 - 行 16-17 で `--dry-run` 系列が `-` なのは、dry-run は分割処理を skip するため split 出力・Splitting バーが発生しない
 - 行 19 の `stderr` は「該当モードで該当フォーマットのエラーメッセージが stderr に出る」を意味し、エラーが発生した場合にのみ到達する条件行
