@@ -195,7 +195,21 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="一致時に version=<値> を $GITHUB_OUTPUT へ追記する",
     )
+    parser.add_argument(
+        "--list-paths",
+        action="store_true",
+        help="検査対象ファイルの path を 1 行 1 件で出力して終了する "
+        "(バンプ時の `git add --` 引数用。値は読まない)",
+    )
     args = parser.parse_args(argv)
+
+    if args.list_paths:
+        # バンプ「途中」に stage 対象を得るための mode なので、値の一致は見ない
+        # (この時点ではまだ不一致なのが正常)。dict.fromkeys で宣言順を保ったまま
+        # 重複 path を畳む (package-lock.json は 2 フィールド = 1 ファイル)。
+        for path in dict.fromkeys(location.path for location in VERSION_LOCATIONS):
+            print(path)
+        return 0
 
     try:
         collected = collect_versions(args.repo_root)

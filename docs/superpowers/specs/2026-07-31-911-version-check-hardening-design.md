@@ -91,6 +91,8 @@ green になるため、**違反を注入して exit code の生値を観測す�
 | ファイル欠損 / フィールド欠損 / パース不能 → exit 2 | 検査の自己崩壊を green で通さない |
 | 実 repo root に対して exit 0 | 現在の repo 状態を恒久 gate する pin test |
 | `docs/versioning.md` の表 ↔ `VERSION_LOCATIONS` の集合一致 | §2 の doc drift 再発防止 |
+| `--list-paths` が重複なし・宣言順で出る | `git add --` にそのまま渡せる形の担保 |
+| `--list-paths` はファイル欠損時も exit 0 | バンプ途中に呼ぶ mode なので値を読まないことの実証 |
 
 合成 fixture は `tmp_path` に 6 ファイルを生成する。`Cargo.lock` だけは実物の構造
 (lockfile フォーマット版 + 別バージョンの依存クレート) を再現しないと上記 2 件の
@@ -132,7 +134,13 @@ Step 3-2 は保持箇所を
 `python scripts/check_version_consistency.py --tag v<新バージョン>` で検証させる
 (手順書が守れたかどうかを人間の目視ではなく exit code で判定させる)。
 Step 3-4 の `git add pyproject.toml` も、stage 漏れが同じ fail を招くため
-全箇所 stage + `git status --short` 確認に変更する。
+`git add -- $(python scripts/check_version_consistency.py --list-paths)` に変更する。
+
+`--list-paths` は値を読まずに検査対象 path を 1 行 1 件・重複なしで出す mode。
+バンプ「途中」(まだ全箇所が一致していない状態) で呼ぶため、不一致や欠損があっても
+path 一覧は返す。これがないと実行者が `VERSION_LOCATIONS` の 7 フィールドを
+6 path へ手で畳む必要があり、保持箇所が増えたときに取りこぼす経路が残る
+(§3.1 と同じ「箇所リストを人間が複製する」問題の再発)。
 
 ## 4. スコープ外
 

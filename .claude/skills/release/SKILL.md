@@ -128,7 +128,7 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
    python scripts/check_version_consistency.py --tag v<新バージョン>
    ```
 
-   exit 0 でなければ先に進まない（exit 1 = 箇所間 or tag との不一致 / exit 2 = 検査自体の構造エラー）。`release.yml` の `version-check` job が tag push 時に同じスクリプトで同じ判定を行うため、ここを飛ばすとリリース当日に fail する
+   exit 0 でなければ先に進まない（exit 1 = 箇所間 or tag との不一致 / exit 2 = 検査自体の構造エラー）。`release.yml` の `version-check` job が tag push 時に同じスクリプトで同じ判定を行うため、ここを飛ばすとリリース当日に fail する。`--tag` は**期待値の文字列**を渡すだけで、git tag が既に存在する必要はない（タグ打ちは本スキル範囲外の後工程）
 
    > 箇所を `grep -r '<旧バージョン>' --include='*.py' --include='*.toml' --include='*.json'` で拾う旧手順は使わない。`Cargo.lock` のように上記 glob のどれにも載らない保持箇所があり、取りこぼす（#817 / audit P2-33 の手順を #911 で置換）
 
@@ -143,11 +143,11 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 4. 変更をコミット（session-id を含める、[`docs/l2-workflow.md`](../../../docs/l2-workflow.md) §「PR 規約」 §「コミットメッセージ session-id」）:
 
    ```bash
-   # Step 3-2 で更新したバージョン保持箇所を「全部」stage する (path の正は
-   # docs/versioning.md §バージョン管理場所)。pyproject.toml だけを stage して
-   # 他を置き去りにすると release.yml の version-check job が fail する (#911)。
-   # stage 単位はファイルなので、同一ファイル内の複数フィールドは path 1 個に畳む
-   git add -- <Step 3-2 で更新した全ファイル (重複 path を除いたもの)>
+   # バージョン保持箇所を「全部」stage する。path は手で列挙せず --list-paths から
+   # 得る (VERSION_LOCATIONS が正なので、保持箇所が増えても取りこぼさない)。
+   # pyproject.toml だけを stage して他を置き去りにすると
+   # release.yml の version-check job が fail する (#911)
+   git add -- $(python scripts/check_version_consistency.py --list-paths)
    git commit -m "chore: bump version to <新バージョン> [<session-id>]"
 
    # stage 漏れの検出。合格条件 = バージョン保持箇所が 1 つも出てこないこと

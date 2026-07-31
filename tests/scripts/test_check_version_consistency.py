@@ -280,6 +280,41 @@ def test_unparseable_file_returns_2(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------
+# --list-paths (バンプ時の stage 対象を機械的に得る)
+# --------------------------------------------------------------------------
+
+
+def test_list_paths_emits_deduped_paths(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`git add --` に直接渡せる形 (1 行 1 path、重複なし) で出ること。
+
+    `package-lock.json` は 2 フィールドを持つが stage 単位はファイルなので、
+    path としては 1 個に畳まれていなければならない。
+    """
+    _write_synthetic_repo(tmp_path, "1.2.3")
+
+    rc = cvc.main(["--repo-root", str(tmp_path), "--list-paths"])
+    lines = capsys.readouterr().out.splitlines()
+
+    assert rc == 0
+    assert lines == list(dict.fromkeys(loc.path for loc in cvc.VERSION_LOCATIONS))
+    assert len(lines) == len(set(lines))
+
+
+def test_list_paths_does_not_read_files(tmp_path: Path) -> None:
+    """バージョン値を読まずに path だけ返すこと。
+
+    バンプ途中 (= まだ全箇所が一致していない状態) で stage 対象を得るための
+    mode なので、不一致や欠損があっても path 一覧は返せなければ意味がない。
+    """
+    _write_synthetic_repo(tmp_path, "1.2.3")
+    (tmp_path / cvc.VERSION_LOCATIONS[0].path).unlink()
+
+    assert cvc.main(["--repo-root", str(tmp_path), "--list-paths"]) == 0
+
+
+# --------------------------------------------------------------------------
 # 実 repo に対する pin test / doc 突合
 # --------------------------------------------------------------------------
 
