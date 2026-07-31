@@ -52,6 +52,9 @@ on:
       - '.github/workflows/release.yml'
       - 'scripts/build-portable-zip.ps1'
       - 'scripts/extract_release_notes.py'
+      # #911: version-check job が呼ぶバージョン突合スクリプト。単独変更でも
+      # release CI で実際に走らせて、ガードが壊れたまま merge されるのを防ぐ。
+      - 'scripts/check_version_consistency.py'
       - 'pyproject.toml'
       # GUI 関連: tauri build を release CI で実行するため (#570)。
       # tauri.conf.json / Cargo.toml / Rust src / TS src / vite config の単独変更でも
@@ -88,21 +91,28 @@ jobs:
         with:
           python-version: '3.11.9'
 
-      - name: Resolve and verify version
+      # #911: バージョン保持箇所は pyproject.toml だけではない (実測 6 ファイル)。
+      # 箇所リストの正は scripts/check_version_consistency.py の VERSION_LOCATIONS。
+      # tag push 時は tag とも突合し、それ以外の起動 (PR / workflow_dispatch /
+      # branch push) では箇所間の相互一致だけを検証する。
+      - name: Verify version consistency across all locations
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            python scripts/check_version_consistency.py --tag "${GITHUB_REF#refs/tags/}"
+          else
+            python scripts/check_version_consistency.py
+          fi
+
+      - name: Resolve version
         id: parse
         shell: bash
         run: |
           set -euo pipefail
           PYPROJECT_VERSION=$(python -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')
-          echo "pyproject.toml version: $PYPROJECT_VERSION"
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-            echo "tag version: $TAG_VERSION"
-            if [[ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]]; then
-              echo "::error::Tag v$TAG_VERSION does not match pyproject.toml version $PYPROJECT_VERSION"
-              exit 1
-            fi
-            VERSION="$TAG_VERSION"
+            VERSION="${GITHUB_REF#refs/tags/v}"
           else
             OVERRIDE='${{ inputs.version_override }}'
             VERSION="${OVERRIDE:-$PYPROJECT_VERSION}"

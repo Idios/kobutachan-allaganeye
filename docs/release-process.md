@@ -75,7 +75,7 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
       - PyInstaller bundle の bump 手順は [`docs/developer-setup.md` §「PyInstaller フローでの version pin (#752 以降)」](developer-setup.md) を参照
     - 外部バイナリを更新する場合はスクリプト先頭の `$FFmpegBuildTag` / `$FFmpegAssetName` / `$*Sha256` 定数を更新する
   - Release 本文は [`scripts/extract_release_notes.py`](../scripts/extract_release_notes.py) が CHANGELOG.md から該当バージョンのセクションを抽出する
-  - タグ名と `pyproject.toml` の `version` が一致しない場合、workflow は fail する
+  - タグ名と[バージョン保持箇所](versioning.md#バージョン管理場所)が 1 つでも一致しない場合、workflow の `version-check` job は fail する (#911)。突合対象の正は [`scripts/check_version_consistency.py`](../scripts/check_version_consistency.py) の `VERSION_LOCATIONS`
 - 手動で dry-run ビルドを確認したい場合は、Actions タブから `Release` workflow を `workflow_dispatch` で起動する (Release は作成されず ZIP artifact のみ)
 - `/release` スキルは develop → main PR 作成・CHANGELOG 更新の支援に使う (Release 作成自体は上記 workflow が担う)
 
@@ -87,7 +87,7 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 
 - [ ] `develop-x.x.0` 上で対象スコープの全 PR がマージ済み
 - [ ] CI 全ジョブ (Python / GUI frontend / GUI Rust / Pester) が直近の develop tip で緑
-- [ ] `pyproject.toml` の `version` が `x.y.0` に更新されている
+- [ ] [バージョン保持箇所](versioning.md#バージョン管理場所)が**全箇所**`x.y.0` に更新されている (`python scripts/check_version_consistency.py` が exit 0)
 - [ ] `CHANGELOG.md` に対象バージョンセクションが存在 (日付 / 主要変更点 / breaking changes)
 - [ ] `deferred` ラベル付き issue を全件レビュー済 (close、または次バージョン `deferred` 維持判断、または当該バージョンに引き取り)
 - [ ] 対象レイヤースコープの `P1-high` issue 全 close + `P2-medium` issue 全 close または `deferred` ラベル付与
@@ -129,7 +129,7 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 2. `develop-x.x.0 → main` のリリース PR を作成・マージ
 3. `main` にタグを打つ (`v0.x.0`)
 4. GitHub Release を作成（変更内容サマリ付き、`release.yml` 自動 or `docs/release-process.md` §手動リリース手順）
-5. `main` から次バージョンの `develop-x.x.0` ブランチを作成し、その時点で `pyproject.toml` の `version` を `x.y.0` に更新（`.dev` 等の pre-release 識別子は付けない。PyPI 未公開のため不要）
+5. `main` から次バージョンの `develop-x.x.0` ブランチを作成し、その時点で[バージョン保持箇所](versioning.md#バージョン管理場所)を**全箇所**まとめて `x.y.0` に更新（`.dev` 等の pre-release 識別子は付けない。PyPI 未公開のため不要）。更新後に `python scripts/check_version_consistency.py` で全箇所一致を確認する
 6. 次レイヤーの Issue を作成し、作業開始
 
 ## 手動リリース手順 (CI 迂回)
@@ -140,7 +140,7 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 
 - ローカル環境に Python 3.11.9 + PowerShell (Windows PowerShell 5.1 以上 or pwsh 7+) + Git がインストール済み ([Developer Setup](developer-setup.md) §1)
 - `develop-x.x.x` で全テスト pass、`develop-x.x.0 → main` PR マージ済み
-- 公開対象バージョン (`x.y.z`) と `pyproject.toml` の `version` が一致していること
+- 公開対象バージョン (`x.y.z`) と[バージョン保持箇所](versioning.md#バージョン管理場所)が**全箇所**一致していること (`python scripts/check_version_consistency.py --tag vx.y.z` が exit 0。CI を迂回する手順のため `version-check` job の代わりに手元で実行する)
 
 ### 手順
 
