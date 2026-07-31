@@ -90,6 +90,9 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `config.py` | 設定管理（検知閾値、出力パス等） |
 | `exceptions.py` | エラークラス + exit code マッピング |
 | `ffmpeg_path.py` | ffmpeg/ffprobe のパス自動検索（winget, Homebrew, PATH, 環境変数） |
+| `system_info.py` | `-v` verbose ヘッダ用のハード情報取得 (#377) + GPU vendor probe (`probe_gpu_vendors`)。全 public helper は失敗時に `"(unavailable)"` を返し例外を投げない |
+| `integrity.py` | Portable ZIP 同梱物の整合性検査 (#668)。`integrity-manifest.json` を読み CLI `--version` で検証 (exit 7)。Rust 側 `gui/src-tauri/src/integrity.rs` が同ロジックをミラー |
+| `metadata_types.py` | **自動生成** (`python scripts/codegen/generate.py`、#612)。`schemas/metadata.schema.json` から TypedDict を生成。手編集禁止 |
 | `commands/split_matches.py` | split コマンドのオーケストレーション。タイムスタンプ表示・gap 検出・sample_interval 自動調整 |
 | `commands/debug_brightness.py` | debug-brightness コマンド。フレーム輝度を CSV 出力（閾値チューニング用） |
 | `video/probe.py` | ffprobe でメタデータ取得（解像度、fps、長さ） |
@@ -98,8 +101,15 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `video/capture_region.py` | 検出 ROI（`CaptureRegion`）の解決。scorebar 帯 anchor の多フレーム consensus（`detect_scorebar_band_region` / `consensus_scorebar_localization`）/ FULL_FRAME 縮退。`--vtuber` gate 内でのみ有効（L3 Phase 1）。`localize_scorebar_at_anchor`（anchor ±60px 帯 + x-IoU gate、per-video v2 相当、#822）は masked fallback の at-anchor presence primitive として共用。検出 subsystem の現状 map は [docs/detection-map.md](docs/detection-map.md)。解決結果は metadata.json `capture_regions` に永続化 (#810、RegionTimeline serialize 形 + 縮退 provenance) |
 | `video/presence.py` | presence（scorebar 在/不在）ベースの試合検出エンジン + GT 突合ハーネス基盤（L3 Phase 1。2 信号 fusion 再アーキ spec 参照） |
 | `video/probe_state.py` | probe 失敗縮退の統一契約型（`PresenceState` tri-state / `PresenceSample` / `ProbeFailurePolicy`、#824）。presence / capture_region / scorebar / detector から import される中立 module（circular import 回避） |
+| `video/vtuber_timeline.py` | VTuber presence x motion timeline 検出 (#895)。`--vtuber` 専用の境界候補 generator。OBS / masked path からは import されない |
 | `video/scorebar.py` | スコアバーフィルタリング（暗転分類・試合内/非FL判定）+ 音声昇格。masked path では `_presence_at_anchor_from_raw`（at-anchor tri-state）を使い、分類規則を変更（in_match 全除去 / non_fl keep）。masked fallback の 2 層構成（Layer 1 anchor 解決 + Layer 2 segment 検証）は [#822 spec](docs/superpowers/specs/2026-07-11-issue-822-masked-oversplit-anchor-design.md) および [docs/detection-map.md](docs/detection-map.md) §5.4 を参照 |
 | `video/splitter.py` | FFmpeg で動画分割（-c copy） |
+| `export/encoder.py` | H.264 エンコーダ選択ロジック (#761)。GUI Rust 側から移植し CLI / GUI で単一の正を共有 |
+| `export/nvenc_probe.py` | SKU テーブルによる NVENC 物理エンジン数の推定 (#761)。live な `nvidia-smi` probe は不採用 |
+| `export/pool.py` | 並列 export オーケストレータ (#761)。`ThreadPoolExecutor` で N ワーカーを起動し、`cancel_event` で in-flight ffmpeg を kill |
+| `export/ffmpeg_runner.py` | 単一 match の ffmpeg 起動 + libx264 fallback retry (#761)。NVDEC/NVENC 失敗パターン検知は `_nvenc_decode_stage_failure` (#791 / #899) |
+| `export/schema.py` | stdout JSON Lines の wire protocol dataclass (#761)。Rust `start_export` が `ExportProgress` イベントへ変換 |
+| `export/wire.py` | thread-safe な stdout JSON Lines emitter (#761)。`threading.Lock` で 1 行 emit の原子性を保証 |
 | `audio/extract.py` | ffmpeg で音声 PCM 抽出 |
 | `audio/features.py` | log-mel スペクトログラム計算と保存 |
 | `audio/matcher.py` | 参照 BGM と target の相互相関で peak 検出 |
@@ -107,8 +117,11 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `audio/refs/` | 同梱参照特徴量（`fanfare.npz` / `war_room.npz`、#306） |
 | `commands/detect.py` | detect コマンド。検知のみ実行し metadata.json を出力 (#463) |
 | `commands/minimap.py` | minimap コマンド。提案モード（領域検出・表示、exit 4）/ crop モード（`--region` 指定、H.264 encode + metadata write-back、#481） |
+| `commands/export.py` | export コマンド (#761)。metadata.json (positional または `--stdin`) を読み、エンコーダスロットを列挙して並列 export を実行。`--json` で JSON Lines 進捗を emit |
+| `commands/encoder_slots.py` | 隠しコマンド `encoder-slots` (#761)。GUI Tauri `enumerate_h264_encoders` が subprocess で呼び、EncoderSlot 一覧を JSON で返す |
 | `video/areamap.py` | エリアマップ window の seed 検出 + per-match consensus（`resolve_match_regions`）。cv2 は lazy import（opencv 未インストール環境でも import 失敗しない）。提案モード専用 (#481) |
-| `detection/` | 検知パイプラインの共有ヘルパ (#463)。`format.py` (フォーマッタ) / `metadata_writer.py` (atomic read/write) |
+| `detection/` | 検知パイプラインの共有ヘルパ (#463)。`format.py` (フォーマッタ) / `metadata_writer.py` (atomic read/write) / `migrations.py` (`schema_version` 検証 + 前方 migration、#515) / `progress_emitter.py` (`--progress-format json` の JSON Lines emitter、#569) / `warnings.py` (metadata `warnings` の payload scaffold、#518) |
+| `tools/regen_audio_refs.py` | 同梱参照特徴量 (`audio/refs/*.npz`) をメンテナ手元の録画から再生成する開発用スクリプト |
 | `gui/` | L2a Tauri GUI (React 19 + TS + Vite + Zustand + zod)。`#483` で bootstrap、`#463` で data 層、`#464` で画面骨格 + CSS Modules、`#516` で `[元に戻す]` 機能、`#514` で排他管理 (mtime 検知 + ConflictModal)、`#587` で a11y polish (focus trap / Escape / DisabledTooltip / jest-axe)、`#893` で minimap crop GUI 統合 (MinimapScreen + `start_minimap` Tauri command、GUI 完結)。詳細は [docs/gui-development.md](docs/gui-development.md) / [docs/design/README.md](docs/design/README.md) / [docs/ui-architecture.md](docs/ui-architecture.md) / [docs/ui-interaction-spec.md](docs/ui-interaction-spec.md) (#590, UI 部品ごとの操作 → 状態遷移 / store mutation / 例外処理) / [docs/a11y-policy.md](docs/a11y-policy.md) (#587, screen reader scope / キーボード全機能 / focus visible 等) |
 | `gui/src/screens/` | 6 画面 (drop / detecting / complete / preview / export / minimap) + phase reducer。#464 で追加、#893 で MinimapScreen 追加（minimap crop GUI 統合、drag-select + 数値入力 + 自動検出 + 進捗表示） |
 | `gui/src/components/` | 共通 UI コンポーネント (AllaganCorner / AllaganSigil / WindowChrome / BrightnessTimeline / RestoreButton / SampleModeBanner / ConflictModal 等)。#464 で追加、#633 で sample mode 全画面 read-only |
