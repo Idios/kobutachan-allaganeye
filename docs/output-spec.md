@@ -21,6 +21,8 @@ detect に該当しない行 (この 4 点で網羅):
 - **行 16 (`Splitting` 進捗バー)**: 分割フェーズが存在しないため detect では常に非出力
 - **行 17 のうち `Output: <dir>` + ファイル一覧**: 分割フェーズが存在しないため detect では出力されない。`Metadata: <path>` のみ detect も出力するが、`show` が真のとき (= `-q` でも `--progress-format json` でもないとき) に限る (`allaganeye/commands/detect.py:330-331` 参照)
 
+行 12a (`Region:`) は #908 で後から追加した行のため上記 #862 突合には含まれないが、split (`allaganeye/commands/split_matches.py:288-291`) / detect (`allaganeye/commands/detect.py:229-233`) が同一のガード条件で出力するため、**表の値がそのまま detect にも適用される**。この行だけは `_print_detection_stats` の内側ではなく呼び出し元に置かれており (行 11 / 行 12 は同ヘルパ内)、それが #862 PR-A の突合をすり抜けた原因。
+
 **`-q` の挙動は split と異なる**: detect の `-q` は `show = not quiet and not json_mode` の評価により、`Metadata: <path>` 行も含め stdout を全抑制する。下記「強制 silent 契約 (`-q`)」節は **split 専用**の契約であり、detect の `-q` 挙動には適用されない。
 
 **`--progress-format json` は本マトリクスの対象外**: detect 固有のオプション (#569) で、JSON モード時は構造化 JSON Lines を stdout に出力し他のすべての stdout 出力を抑制する。`--progress-format json` 時の挙動詳細は [`docs/cli-spec.md`](cli-spec.md) §「detect コマンド」を参照。
@@ -76,6 +78,7 @@ Error: --quiet and --verbose are mutually exclusive
 | 10 | 進捗バー `Detecting` / `Refining` / `Scorebar` | [#368](https://github.com/Idios/kobutachan-allaganeye/issues/368), [#393](https://github.com/Idios/kobutachan-allaganeye/issues/393) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
 | 11 | 検知統計 (`Pass 1`, `Pass 2`, `Scorebar`, `Splitting` elapsed (split のみ) 含) | [#386](https://github.com/Idios/kobutachan-allaganeye/issues/386), [#387](https://github.com/Idios/kobutachan-allaganeye/issues/387) | × | ◯ | × | × | ◯ | × | ❌ |
 | 12 | Filter drop 内訳 + unknown match 行 (`Filter: N candidates -> M matches` + `+ N unknown match (録画途中試合)`) | [#388](https://github.com/Idios/kobutachan-allaganeye/issues/388), [#433](https://github.com/Idios/kobutachan-allaganeye/issues/433) | × | ◯ | × | × | ◯ | × | ❌ |
+| 12a | `Region: <capture region token>` (`captured_region` 解決時のみ) | [#810](https://github.com/Idios/kobutachan-allaganeye/issues/810), [#908](https://github.com/Idios/kobutachan-allaganeye/issues/908) | × | ◯ (cache miss 時のみ) | × | × | ◯ (cache miss 時のみ) | × | ❌ |
 | 13 | `Detected N match(es) ... (cached)` サフィックス含 | [#418](https://github.com/Idios/kobutachan-allaganeye/issues/418) (M) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
 | 14 | Match 一覧 (`[unknown]` / `[fl_match]` マーカー含) | [#382](https://github.com/Idios/kobutachan-allaganeye/issues/382) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
 | 15 | Gap 一覧 | - | × | ◯ | × | × | ◯ | × | ❌ |
@@ -88,6 +91,9 @@ Error: --quiet and --verbose are mutually exclusive
 
 ### マトリクスの読み方
 
+- 行 12a (`Region:`) が条件付きなのは、`captured_region` が解決済み (非 `None`) のときだけ出力するため (`split_matches.py:290` / `detect.py:232` のガード)。実運用上これは **cache miss (実際に検知を走らせた) と同義**である:
+  - **cache miss 時**: `detect_match_boundaries` は標準 / vtuber / masked のどの経路を通っても `region_callback` を必ず呼ぶ (`detector.py:688` / `:814` / `:822`。早期 return は 2 箇所だけで、いずれも直前に callback を呼ぶ) ため `captured_region` は常に埋まる。したがって `-v` なら必ず出力される
+  - **cache hit 時**: `captured_region` は cache 記録値から復元される (`split_matches.py:188` / `detect.py:148`) が、cache-hit 分岐は `Region:` 行に到達する前に return / スキップする (`split_matches.py:139-194` は分岐内で `return`、`detect.py:229-233` は `if boundaries is None:` の内側) ため **表示されない**。`--no-cache` を付ければ cache miss 扱いになり出力される
 - 行 6 (`Dry-run 通知`) で default / `-v` / `-q` 列が `-` なのは、これらの組合せでは `--dry-run` 自体が指定されていないため「通知する場面が存在しない」という意味
 - 行 16-17 で `--dry-run` 系列が `-` なのは、dry-run は分割処理を skip するため split 出力・Splitting バーが発生しない
 - 行 19 の `stderr` は「該当モードで該当フォーマットのエラーメッセージが stderr に出る」を意味し、エラーが発生した場合にのみ到達する条件行

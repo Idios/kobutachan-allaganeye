@@ -202,6 +202,51 @@ def test_detect_verbose_cache_miss_prints_region_line(tmp_path, capsys):
     assert "Region: full_frame" in out
 
 
+def test_detect_verbose_cache_hit_omits_region_line(tmp_path, capsys):
+    """detect cache-hit の verbose には Region: 行が出ない (#908 doc 記述の pin)。
+
+    run_split 側 (`test_verbose_cache_hit_omits_region_line`) と対の detect 版。
+    `captured_region` は cache 記録値から復元される (`detect.py` cache-hit 分岐)
+    が、`Region:` 行は `if boundaries is None:` の内側にあるため到達しない。
+    `docs/output-spec.md` 行 12a の「cache miss 時のみ」を実装側で pin する。
+    """
+    band_regions: CaptureRegions = {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE_DETECT}._load_cache_hit",
+            return_value=CacheHit(
+                boundaries=BOUNDARIES,
+                masked_fallback_used=False,
+                capture_regions=band_regions,
+            ),
+        ),
+        patch(f"{MODULE_DETECT}._run_detection") as mock_detect,
+    ):
+        run_detect(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    mock_detect.assert_not_called()
+    # positive anchor: verbose 出力経路自体は生きている (vacuous pass 防止)
+    assert "Cache hit: detection params from" in out
+    assert "Region:" not in out
+    # 値は cache から復元され metadata まで届いている
+    payload = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["capture_regions"] == band_regions
+
+
 def test_detect_verbose_cache_miss_summary_includes_masked_token(tmp_path, capsys):
     """detect の cache-miss verbose summary に masked token が出る (vtuber と同型)."""
     config = SplitConfig(

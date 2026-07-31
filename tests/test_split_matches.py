@@ -5989,6 +5989,73 @@ def test_verbose_cache_miss_prints_region_line(
     assert "Region: full_frame" in out
 
 
+@patch("allaganeye.system_info.probe_gpu_vendors", return_value=[])
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}._load_cache_hit")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_omits_region_line(
+    mock_probe,
+    mock_split,
+    mock_load_cache,
+    mock_run_detection,
+    mock_probe_gpu,
+    tmp_path,
+    capsys,
+):
+    """cache-hit の verbose には Region: 行が出ない (#908 doc 記述の pin)。
+
+    `docs/output-spec.md` 行 12a は「`Region:` は cache miss 時のみ出力」と
+    記述する。cache-hit 経路も `captured_region` を cache 記録値から復元する
+    ため「値が無いから出ない」のではなく、`Region:` 行に到達する前に
+    return する (`split_matches.py` の cache-hit 分岐) から出ない。値が存在
+    することと表示されないことを同時に assert し、doc の主張が実装から
+    silent に乖離するのを防ぐ。
+    """
+    band_regions: CaptureRegions = {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    output_dir = tmp_path / "out_cache_hit_no_region_line"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_load_cache.return_value = CacheHit(
+        boundaries=BOUNDARIES,
+        masked_fallback_used=False,
+        capture_regions=band_regions,
+    )
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    run_split(video, config, verbose=True, quiet=False)
+    out = capsys.readouterr().out
+
+    mock_run_detection.assert_not_called()
+    # positive anchor: verbose 出力経路自体は生きている (vacuous pass 防止)
+    assert "Cache hit: detection params from" in out
+    # ...それでも Region: は出ない
+    assert "Region:" not in out
+    # 値は cache から復元され metadata まで届いている = 「値が無いから
+    # 出ない」ではないことの裏取り
+    payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["capture_regions"] == band_regions
+
+
 # -- #805 段階2: post_match_trailing_dropped warning emission stopped (W1) --
 
 # trailing_drop_callback の wiring は除去されたため、`_run_detection` を直接
