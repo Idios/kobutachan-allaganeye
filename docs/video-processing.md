@@ -124,13 +124,20 @@ ffmpeg -ss {timestamp} -i input.mkv -frames:v 1 -s 320x180 -pix_fmt gray -f rawv
 - 最初の chunk が完了する前に `chunk_dispatch_callback` で `Detecting [dispatching N chunks, ...]` を表示し、長時間動画での 0% 停滞誤解を回避
 
 ```bash
-ffmpeg -hwaccel auto -ss <chunk_start> -t <chunk_duration> -i input.mkv \
-  -vf "fps=1/{interval},scale=320:180,format=gray" -f rawvideo pipe:1
+# default (v0.3.0 新 path): dual seek + select filter (frame-index ベース)
+ffmpeg [-hwaccel <name> [-hwaccel_output_format <fmt>] -c:v <decoder>] \
+  -ss <chunk_start - SEEK_LEAD_SECONDS> -i input.mkv \
+  -ss <output_seek> -t <chunk_duration> \
+  -fps_mode passthrough \
+  -vf "[hwdownload,format=nv12,]select='not(mod(n,N))',scale=320:180,format=gray" \
+  -f rawvideo -pix_fmt gray pipe:1
 ```
 
-- `-hwaccel auto`: GPU デコードを自動選択（NVIDIA CUDA, Intel QSV 等）
-- `fps=1/{interval}`: sample_interval に基づくフレームフィルタ
-- 1プロセスあたり多数フレームをデコードするため、GPU 初期化コストが分散される
+- hwaccel args: vendor が解決できれば `-hwaccel <name>` (+ 必要なら `-hwaccel_output_format <fmt>`) + `-c:v <decoder>`、解決できなければ `-hwaccel auto`
+- dual seek: `-ss <chunk_start - SEEK_LEAD_SECONDS>` を `-i` 前に (keyframe への高速ジャンプ)、`-ss <output_seek>` を `-i` 後に (GOP pre-roll の正確な trim)
+- `select='not(mod(n,N))'`: frame index `n` ベースで N 枚おきに抽出（PTS ベースの `fps` filter とは異なり ffmpeg version 非依存）
+- 1 プロセスあたり多数フレームをデコードするため、GPU 初期化コストが分散される
+- legacy path (`fps=1/{interval}` filter) は env var `ALLAGANEYE_DETECT_FPS_FILTER=1` 指定時のみ (詳細: §ffmpeg fps filter の version 依存制約)
 
 **CPU モードとの差異**: CPU / GPU いずれもチャンク分割デコードだが、GPU モードは `-hwaccel` によるハードウェアデコードを使い、チャンク数を動画長に応じて動的調整する (#437) 点が異なる。CPU モードのチャンク数は CPU コア数のみで決まる (正: `_scan_cpu`)。Pass 1 以降（transition expansion, Pass 2, フィルタリング）は共通。
 
