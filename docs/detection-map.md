@@ -177,7 +177,8 @@ OBS/masked path は bit-exact で非接触。
 | `refine_segments` (V3) | vtuber_timeline.py | gap 裁定 + blackout-peek override + snap | load-bearing |
 | `_validate_match_segments` (V4) | detector.py | 15-probe quorum (masked L2 と同 primitive、on_all_drop="empty") | load-bearing |
 
-P3 実機 gate 結果 (6 source / GT 76 試合): recall 100% / spurious 0 / 境界 tolerance 非対称
+P3 実機 gate 結果 (6 source / GT 67 試合、うち短 gap の 1 組を `expected_merge_with_next`
+で合成した 66 セグメントで突合): recall 100% / spurious 0 / 境界 tolerance 非対称
 (損失方向 15s 厳格 / 余分方向 300s bound)。`_VTUBER_ALGO_VERSION = 4` で cache key 管理。
 
 ### 5.6 presence.py 資産 (spec §10)

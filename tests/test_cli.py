@@ -550,8 +550,8 @@ def test_vtuber_shown_in_help(
     """--vtuber は split/detect --help に出る + help 文言も pin する (#895 P3).
 
     #895 P3 で hidden 解除 (Idios 承認 2026-07-30): timeline 検出 (V0-V4) が 6 source /
-    GT 76 試合で recall 100% を実証し、OBS/masked path の bit-exact 非接触も実機 gate で
-    確認したため公開扱いにした。
+    GT 67 試合 (短 gap 1 組を合成した 66 セグメント) で recall 100% を実証し、
+    OBS/masked path の bit-exact 非接触も実機 gate で確認したため公開扱いにした。
 
     substring を stdout に直接 assert しないのは、色付き環境 (CI) で rich が option 名を
     ANSI で分割する (`--vtuber` -> ESC[1;36m-ESC[0mESC[1;36m-vtuberESC[0m) ため。
