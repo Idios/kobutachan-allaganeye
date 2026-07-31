@@ -114,11 +114,29 @@ vacuous green になる。
   やめ、`docs/versioning.md` §バージョン管理場所 への参照に置き換える (値も箇所数も
   複製しない)
 
+### 3.5 `/release` skill の Step 3 バンプ手順
+
+当初はスコープ外としていたが、実装後に **新ガードと衝突する latent break** であることが
+判明したため PR 内で直す (Idios 判断、(A) PR 内修正優先)。
+
+Step 3-2 は保持箇所を
+`grep -r '<旧バージョン>' --include='*.py' --include='*.toml' --include='*.json'` で
+拾う手順だった。`Cargo.lock` / `package-lock.json` はこの glob のどれにも載らない
+(`*.lock` / `package-lock.json` は `*.json` に一致するが `Cargo.lock` は一致しない)。
+つまり次のバンプで `Cargo.lock` だけが旧バージョンのまま残り、§3.2 のガードが
+リリースを hard fail させる。ガードを足した PR が、そのガードに引っかかる手順書を
+放置する形になっていた。
+
+置換方針は §3.1 と同じで、箇所リストを skill 側に複製せず
+`docs/versioning.md` §バージョン管理場所 を参照し、更新後に
+`python scripts/check_version_consistency.py --tag v<新バージョン>` で検証させる
+(手順書が守れたかどうかを人間の目視ではなく exit code で判定させる)。
+Step 3-4 の `git add pyproject.toml` も、stage 漏れが同じ fail を招くため
+全箇所 stage + `git status --short` 確認に変更する。
+
 ## 4. スコープ外
 
 - `docs/versioning.md` 以外の doc に散在するバージョン言及の一掃 (本 issue の対象外)
-- `/release` skill の Step 3 バンプ手順。既に 3 箇所を `grep` で拾う記述があり、
-  本 PR の doc 参照化とは独立に機能している
 
 ## 5. 受け入れ条件との対応
 

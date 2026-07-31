@@ -122,7 +122,16 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
    ```
 
    いずれか失敗したら修正してから以下に進む
-2. `pyproject.toml` の `version` を更新（他にバージョン参照箇所があれば `grep -r '<旧バージョン>' --include='*.py' --include='*.toml' --include='*.json'` で確認し同時更新。`*.json` は `gui/src-tauri/tauri.conf.json` / `gui/package.json` 等のバージョン参照を拾う、#817 / audit P2-33）
+2. [`docs/versioning.md`](../../../docs/versioning.md) §バージョン管理場所 に挙がっている**全箇所**の version を新バージョンへ更新する（箇所リストの機械可読な正は [`scripts/check_version_consistency.py`](../../../scripts/check_version_consistency.py) の `VERSION_LOCATIONS`、#911）。lockfile (`gui/package-lock.json` / `gui/src-tauri/Cargo.lock`) はパッケージマネージャで再同期しても該当フィールドを直接編集してもよい。更新できたら必ず検証する:
+
+   ```bash
+   python scripts/check_version_consistency.py --tag v<新バージョン>
+   ```
+
+   exit 0 でなければ先に進まない（exit 1 = 箇所間 or tag との不一致 / exit 2 = 検査自体の構造エラー）。`release.yml` の `version-check` job が tag push 時に同じスクリプトで同じ判定を行うため、ここを飛ばすとリリース当日に fail する
+
+   > 箇所を `grep -r '<旧バージョン>' --include='*.py' --include='*.toml' --include='*.json'` で拾う旧手順は使わない。`Cargo.lock` のように上記 glob のどれにも載らない保持箇所があり、取りこぼす（#817 / audit P2-33 の手順を #911 で置換）
+
 3. リリースブランチを作成（Step 2-4 で特定したベースブランチから分岐）:
 
    ```bash
@@ -134,10 +143,14 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 4. 変更をコミット（session-id を含める、[`docs/l2-workflow.md`](../../../docs/l2-workflow.md) §「PR 規約」 §「コミットメッセージ session-id」）:
 
    ```bash
-   # Step 3-2 の grep で *.json 等に追加のバージョン参照が見つかった場合はそれらも stage する
-   # (例: git add pyproject.toml gui/src-tauri/tauri.conf.json gui/package.json)
-   git add pyproject.toml
+   # Step 3-2 で更新した保持箇所を「全部」stage する (path の正は docs/versioning.md
+   # §バージョン管理場所)。pyproject.toml だけを stage して他を置き去りにすると
+   # release.yml の version-check job が fail する (#911)
+   git add -- <Step 3-2 で更新した全ファイル>
    git commit -m "chore: bump version to <新バージョン> [<session-id>]"
+
+   # stage 漏れの検出: バージョン保持箇所の差分が未 stage で残っていないこと
+   git status --short
    ```
 
 5. リリースブランチを push:
@@ -158,7 +171,7 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
     <Step 1 の判断結果を記載>
 
     ### チェックリスト
-    - [ ] バージョン番号が正しい
+    - [ ] バージョン保持箇所が全箇所一致 (\`python scripts/check_version_consistency.py --tag v<新バージョン>\` が exit 0)
     - [ ] 全テスト通過 (\`pytest\`, \`ruff check .\`, \`ruff format --check .\`, \`pyright\`)
     - [ ] deferred issue を全件レビュー済み
     - [ ] CLAUDE.md の更新が必要な変更はない
