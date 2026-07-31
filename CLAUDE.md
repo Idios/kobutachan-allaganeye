@@ -92,7 +92,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `config.py` | 設定管理（検知閾値、出力パス等） |
 | `exceptions.py` | エラークラス + exit code マッピング |
 | `ffmpeg_path.py` | ffmpeg/ffprobe のパス自動検索（winget, Homebrew, PATH, 環境変数） |
-| `system_info.py` | `-v` verbose ヘッダ用のハード情報取得 (#377) + GPU vendor probe (`probe_gpu_vendors`)。全 public helper は失敗時に `"(unavailable)"` を返し例外を投げない |
+| `system_info.py` | `-v` verbose ヘッダ用のハード情報取得 (#377) + GPU vendor probe (`probe_gpu_vendors`)。全 public helper は失敗しても例外を投げない。失敗時の戻り値は型ごとに異なり、`str` を返すスカラ helper (`get_cpu_info` / `get_gpu_info` / `get_memory_info` / `get_disk_info`) は `"(unavailable)"`、`list` を返す helper (`probe_gpu_vendors` / `get_gpu_info_lines`) は空リスト、`gpu_vendor_probe_warning` は `None` を返す |
 | `integrity.py` | Portable ZIP 同梱物の整合性検査 (#668)。`integrity-manifest.json` を読み CLI `--version` で検証 (exit 7)。Rust 側 `gui/src-tauri/src/integrity.rs` が同ロジックをミラー |
 | `metadata_types.py` | **自動生成** (`python scripts/codegen/generate.py`、#612)。`schemas/metadata.schema.json` から TypedDict を生成。手編集禁止 |
 | `commands/split_matches.py` | split コマンドのオーケストレーション。タイムスタンプ表示・gap 検出・sample_interval 自動調整 |

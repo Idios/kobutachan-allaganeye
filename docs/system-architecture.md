@@ -70,7 +70,8 @@ GUI は以下のタイミングで CLI を subprocess として呼び出す (`to
 | DetectingScreen | `allaganeye detect <video> -o <output> --progress-format json` | metadata.json | [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) Phase 3 / [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) |
 | ExportScreen | `allaganeye export <meta> \| --stdin -o <dir> [--codec h264] --json` | MP4 (per match) | [#466](https://github.com/Idios/kobutachan-allaganeye/issues/466) Phase 4 / [#761](https://github.com/Idios/kobutachan-allaganeye/issues/761) |
 | ExportScreen (マウント時) | `allaganeye encoder-slots` | EncoderSlot 一覧 (JSON) | [#761](https://github.com/Idios/kobutachan-allaganeye/issues/761) |
-| MinimapScreen | `allaganeye minimap <meta> --region X,Y,W,H --json --expected-mtime <ms>` | minimap MP4 per match + metadata.json write-back | [#893](https://github.com/Idios/kobutachan-allaganeye/issues/893) |
+| MinimapScreen (自動検出 = 提案モード) | `allaganeye minimap <meta> --json [--exclude i,j]` (`detect_minimap_regions`) | 領域候補一覧 (JSON、stdout)。exit 0 / 4 の双方を成功扱い | [#893](https://github.com/Idios/kobutachan-allaganeye/issues/893) |
+| MinimapScreen (切抜き実行 = crop モード) | `allaganeye minimap <meta> --json --region X,Y,W,H --output-dir <dir> --name-pattern <pat> [--expected-mtime <ms>] [--exclude i,j]` (`start_minimap`) | minimap MP4 per match + metadata.json write-back | [#893](https://github.com/Idios/kobutachan-allaganeye/issues/893) |
 
 ExportScreen の H.264 再エンコード時のエンコーダ選択 (#591, #761) は `enumerate_h264_encoders` Tauri command (`allaganeye encoder-slots` サブコマンドを subprocess 呼び出し) で行う。detect/split が metadata.json `system_info` に保存した `gpu_vendors_available` / `vendor_preference` / `gpu` (GPU モデル名、#761) を渡して NVENC / QSV / AMF / libx264 のスロット一覧を取得し、並列エクスポートは `start_export` command が担う。
 
