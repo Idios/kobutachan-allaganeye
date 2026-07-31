@@ -12,13 +12,24 @@
 
 ## バージョン管理場所
 
-以下の 3 箇所。`/release` のバージョンバンプはこの 3 つをまとめて更新する。
+以下の 6 箇所。`/release` のバージョンバンプはこれらをまとめて更新する。
 
-| ファイル | フィールド |
-| --- | --- |
-| `pyproject.toml` | `version` |
-| `gui/src-tauri/tauri.conf.json` | `version` |
-| `gui/package.json` | `version` |
+この一覧の**機械可読な正**は [`scripts/check_version_consistency.py`](../scripts/check_version_consistency.py) の
+`VERSION_LOCATIONS` 定数 ([`docs/coding-conventions.md`](coding-conventions.md) §ドキュメント SSoT 規約 の
+「管轄が重なる場合は実装を canonical」)。本表と定数の乖離は
+`tests/scripts/test_check_version_consistency.py` が検知する。
+
+| ファイル | フィールド | 消費経路 |
+| --- | --- | --- |
+| `pyproject.toml` | `project.version` | CLI `allaganeye --version` |
+| `gui/src-tauri/tauri.conf.json` | `version` | Tauri bundle metadata / exe ファイルバージョン |
+| `gui/src-tauri/Cargo.toml` | `package.version` | `env!("CARGO_PKG_VERSION")` 経由で `probe_environment_info().allaganeye_version` (GUI の環境情報表示) |
+| `gui/package.json` | `version` | npm package metadata |
+| `gui/package-lock.json` | `version` / `packages[""].version` | npm が `package.json` から同期 |
+| `gui/src-tauri/Cargo.lock` | `package[name=allaganeye-gui].version` | cargo が `Cargo.toml` から同期 |
+
+タグ push 時は [`.github/workflows/release.yml`](../.github/workflows/release.yml) の `version-check` job が
+全箇所と tag の一致を検証し、1 つでも不一致なら fail する (#911)。
 
 ## リリースフロー
 
