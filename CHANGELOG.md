@@ -5,30 +5,112 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-08-01
+
+L3 (配信形式対応 + 性能改善) リリース。エリアマップ切り抜き (`minimap` CLI + GUI 画面) と
+並列 export (`export` CLI、GUI 書き出しの Python コア共有) を新設し、masked (チャット欄
+マスク) / VTuber (ゲーム画面 inset) の配信録画を検出対象に加えた。detect の chunk decode は
+ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match trailing の不可逆削除は
+`post_match` フラグ方式に置き換えた。NVDEC decode 経路の追加で export / minimap の
+再エンコードを高速化し、Portable ZIP 同梱 CLI は PyInstaller で frozen 化した。
+
+### Added
+
+- **`minimap` コマンド** (#481): エリアマップ window を試合ごとに切り抜く。
+  `--region X,Y,W,H` 指定で crop + H.264 encode + metadata write-back、省略時は
+  領域を自動提案する提案モード (exit 4)。
+- **GUI の minimap 統合** (#893): MinimapScreen を追加し、drag-select / 数値入力 /
+  自動検出 / 進捗表示まで GUI 内で完結する (Tauri `start_minimap` command)。
+- **GUI ExportScreen からの minimap 導線** (#902): 書き出し後に minimap へ進める
+  entry を追加。minimap の default 出力先が直近の export 先になる。
+- **`export` コマンド** (#761): `metadata.json` から試合を書き出す。`--codec h264` で
+  NVENC / QSV / AMF / libx264 を自動選択し、NVENC 選択時は GPU SKU テーブルの engine 数
+  だけ並列スロットを確保する (default の `--codec copy` はディスク I/O 競合を避けるため
+  1 並列固定)。スロット数は `--concurrency` に加え環境変数
+  `ALLAGANEYE_EXPORT_CONCURRENCY` でも上書きできる (SKU テーブル未収録の Workstation /
+  Datacenter GPU や、OBS が NVENC engine を占有している場合の調整用)。GUI の書き出しも
+  同じ Python コアを共有する。
+- **masked (チャット欄マスク) 録画の検出対応** (#821 / #822): 全画面にマスク画像が
+  合成された録画向けに、mask のない領域を自動検出して再検知する `--masked` を追加。
+  anchor presence と segment 検証の 2 層構成で過分割を抑制する。暗転が 1 件も検出
+  できなかった録画では `--masked` 未指定でも本 fallback が自動発動する (`--masked` は
+  暗転が一部見つかる場合でも強制するためのフラグ)。発動有無は metadata の
+  `detection_params.masked_fallback_used` と `-v` の `masked_fallback=on` で確認できる。
+- **detect / split `--vtuber`** (#895): VTuber 配信録画 (ゲーム画面が inset、装飾
+  オーバーレイ多数) 向けの timeline 検出を新規追加。暗転起点ではなく「試合中である」
+  証拠 (scorebar presence AND 画面運動) の timeline から試合区間を抽出する (V0 anchor
+  解決 / V1 全域 10s stride scan / V2 rolling-window 粗 segmentation / V3 gap 裁定 +
+  blackout-peek override + 境界 snap / V4 segment 検証)。v0.3.0 開発中は hidden の
+  experimental フラグとして先行実装し、GT gate 通過をもって公開扱いにした。
+  **OBS / masked path は非接触** (フラグ未指定時の出力は bit-exact で不変)。縮退 3
+  trigger (V0 anchor 失敗 / UNKNOWN 過半 / V2 無結果) で従来の band-crop blackout path
+  へ fall back する floor 保証付き。`--masked` との同時指定は排他エラー (exit 5)。
+  metadata.json の `vtuber` フィールドと verbose の `Timeline (vtuber)` / `V3:` 行で
+  採用可否を確認できる。精度 gate は 6 配信者 / GT 67 試合
+  (`tests/baselines/v0.3.0/vtuber-gt/*.json`) に対する slow テスト
+  `tests/test_vtuber_gt_regression.py` で、短 gap の 1 組を `expected_merge_with_next`
+  で合成した実効 66 セグメントと突合し **recall 100% (66/66、missed 0) / spurious 0**。
+  tolerance は非対称 (損失方向 15s / 余分方向 300s = 試合内容の欠落を許さない側に厳格)。
+  詳細は `docs/superpowers/specs/2026-07-17-vtuber-timeline-detection-design.md`。
+- **post-match trailing の非破壊フラグ化** (#805): 試合終了後の trailing 区間を削除する
+  代わりに `post_match: true` を付与する。default split の MP4 からは除外しつつ metadata
+  には保持し、GUI では badge / dimming と ExportScreen の選択不可行で可視化する。
+  `--keep-trailing` で通常 match として MP4 にも出力できる。
+- **metadata `capture_regions`** (#810): 検出 ROI の解決結果 (縮退 provenance 込み) を
+  `metadata.json` に永続化。
+- **Portable ZIP CLI の frozen 化** (#752): 同梱 CLI を PyInstaller `--onedir` で
+  frozen exe 化し、従来の `python/` (embeddable Python) + `lib/` 展開を廃止。展開後の
+  Python 関連ファイル数が ~2500 → 数百規模に減り、ZIP 展開が速くなった。
+- `probe.py::ProbeResult` に `fps_num`/`fps_den` フィールドを追加
+  (NTSC 60000/1001 等の rational frame rate を float 精度損失なく
+  detector まで伝搬)。
+- `scripts/validate-fps-retirement.py` を新規追加 (#576 実装中 evidence
+  用 one-off スクリプト、CI gate ではない)。
+- `scripts/v3-normalize-source-path.py` を新規追加 (PR #793 reexamination V3
+  baseline regen 時の絶対 path → 相対 path 正規化用 one-off スクリプト、
+  audit-compare の source-vs-ground-truth 整合のため必要)。
 
 ### Changed
 
-- **detect**: chunk decode の ffmpeg `-vf fps=N` filter を廃止し、output
-  seek + `-fps_mode passthrough` + Python 側 N-th sampling 方式に移行
-  (#576)。ffmpeg version 依存の frame-selection drift (#560 / #575 /
-  #577) を構造的に除去。obs-20260118 で見逃されていた 3 件の短時間
-  blackout (1.4-2.1s) を正しく検出するように動作が変わる。Match 1 が
-  17m24s に短縮、新 Match 2 (15m24s) が追加、Match 3 が 15m52s に短縮。
-  この新 Match 2 (1686-2610) は 2026-05-21 の Idios 視覚再確認で real
-  boundary と確定、`tests/baselines/v0.3.0/ground-truth/obs-20260118.json`
+- **detect**: chunk decode の ffmpeg `-vf fps=N` filter を廃止し、dual seek
+  (`-ss` を `-i` の前後に二重指定: keyframe への高速ジャンプ + GOP pre-roll の
+  正確な trim) + `-fps_mode passthrough` + ffmpeg `select='not(mod(n,N))'`
+  (frame-index ベース、PTS 非依存) 方式に移行 (#576)。ffmpeg version 依存の
+  frame-selection drift (#560 / #575 / #577) を構造的に除去。obs-20260118 で
+  見逃されていた 3 件の短時間 blackout (1.4-2.1s) を正しく検出するように動作が
+  変わる。Match 1 が 17m24s に短縮、新 Match 2 (15m24s) が追加、Match 3 が
+  15m52s に短縮。この新 Match 2 (1686-2610) は 2026-05-21 の Idios 視覚再確認で
+  real boundary と確定、`tests/baselines/v0.3.0/ground-truth/obs-20260118.json`
   を 5→6 matches に update 済 (#796 audit 後追補)。
-- **GUI brightness timeline** (#569): 新 path で Pass 1 brightness 値が
-  正確化される (旧 path の fps filter drift により歪んでいた値が修正
-  される方向)。timeline 形状の変化が user-visible になる可能性あり。
+- **metadata.json スキーマ**: `matches[].output_file` を必須から任意に変更 (#805)。
+  `post_match: true` の entry は MP4 を生成しないため `output_file` を持たず、
+  `matches[]` の件数と出力 MP4 の件数は一致しなくなった。`schema_version` は `"1"` の
+  まま (追加 field はすべて optional) なので、metadata.json を読む外部スクリプトは
+  `output_file` の有無を存在チェックで判定すること。なお v0.3.0 が書いた post_match 入り
+  metadata.json は v0.2.x の GUI では読み込めない (旧 zod が `output_file` を必須として
+  いるため)。
+- **検知キャッシュの全無効化**: 検知結果の形が変わったため cache version を 2 → 4 に
+  更新 (#821 / #805)。v0.2.x が書いた `.detection_cache.json` は再利用されず、
+  **処理済みの動画でも v0.3.0 の初回実行はフル再検知になる** (2 回目以降は従来どおり
+  cache hit)。
+- **`-v` verbose 出力の書式**: 検知パラメータ行に `vtuber=` / `masked=`、cache hit 行に
+  `keep_trailing=` / `masked_fallback=` / `region=` を追加し、cache miss 時は
+  `Region: <領域>` 行を出力するようにした (#810 / #821 / #908)。masked / `--vtuber`
+  採用時のみ専用の統計行 (`masked L2 validation` / `masked L2 zero-gap merge` /
+  `Timeline (vtuber)` / `V3:`) が追加される。既定出力と `-q` の内容は不変だが、
+  `-v` 出力をパースしている場合は影響する。
+- **GUI brightness timeline** (#576 の副作用): #569 で追加した GUI 輝度タイムラインの
+  Pass 1 brightness 値が新 path で正確化される (旧 path の fps filter drift で歪んで
+  いた値が修正される方向)。timeline 形状の変化が user-visible になる可能性あり。
 - **Audit verification**: PR #793 detector を 5 OBS baseline
   (obs-20260116/118/119/127/209、計 54 boundary) に対して
   `scripts/audit-compare.py` (#796 deliverable, PR #799) で ground truth 比較。
   **53/54 agreed (within ±5s、98.1%)**、唯一の残 finding は
-  obs-20260116 M6 end (#797) で v0.3.x defer。obs-20260118 ground truth は
-  PR #793 detector で新発見した M2 boundary (1686-2610s) を Idios 視覚再確認
-  (2026-05-21) で実 boundary 確定し 5→6 matches に修正。詳細は
-  `docs/v030-baseline-audit.md` §"2026-05-21 PR #793 verification update" 参照。
+  obs-20260116 M6 end (#797) で、本リリースの #803 gate + #805 フラグ化で解消。
+  obs-20260118 ground truth は PR #793 detector で新発見した M2 boundary
+  (1686-2610s) を Idios 視覚再確認 (2026-05-21) で実 boundary 確定し
+  5→6 matches に修正。詳細は `docs/v030-baseline-audit.md`
+  §"2026-05-21 PR #793 verification update" 参照。
 
 ### Fixed
 
@@ -39,49 +121,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (span が画面中央 x=960 を含む) の 2 gate を追加。obs-20260116 で試合終了
   (6540、scorebar HUD 残存) 直後の post-match 区間 (6544-6850) が試合内と
   誤分類されていた問題を修正。Primary path (絶対座標 emblem) は無変更。
-- **detect (post-match trailing drop)**: 試合終了後の trailing segment
-  (lobby / city interior 等の non-match 区間) を、その区間の scorebar 不在を
-  probe で確認した上で出力から除外 (#797)。#803 gate で obs-20260116 の
-  M6 end が 6542 (ground truth 6540 +2s) に確定した副作用で post-match
-  (6542-7303) が unknown segment (`match_007.mp4`) として分離していたのを
-  解消し、6 match (GT 完全一致) を出力。trailing 先頭の candidate-match
-  window を `_TRAILING_PROBE_STRIDE` (=60s) 間隔 + window 末尾で走査し、
-  全 probe が scorebar definite miss のときのみ drop (1 つでも scorebar hit /
-  probe 失敗なら保持 = safe side)。動画全体 1 つの unknown フォールバック
-  (`len(segments) < 2`) は drop 対象外 (fail-open 保護)。scorebar 検出が
-  FN する環境 (未対応 HUD / 4K Game DVR 等) で実試合 trailing を silent に
-  削除しうる構造リスクは既知限界として記録し、非破壊化 (削除 → フラグ方式)
-  を #805 で追跡。
-
-### Added
-
-- **detect / split `--vtuber`** (#895): VTuber 配信録画 (ゲーム画面が inset、
-  装飾オーバーレイ多数) 向けの timeline 検出を追加し、hidden option だった
-  `--vtuber` を公開。暗転起点ではなく「試合中である」証拠 (scorebar presence
-  AND 画面運動) の timeline から試合区間を抽出する (V0 anchor 解決 / V1 全域
-  10s stride scan / V2 rolling-window 粗 segmentation / V3 gap 裁定 +
-  blackout-peek override + 境界 snap / V4 segment 検証)。**OBS / masked path は
-  非接触** (フラグ未指定時の出力は bit-exact で不変)。縮退 3 trigger
-  (V0 anchor 失敗 / UNKNOWN 過半 / V2 無結果) で従来の band-crop blackout path
-  へ fall back する floor 保証付き。`--masked` との同時指定は排他エラー
-  (exit 5)。metadata.json の `vtuber` フィールドと verbose の
-  `Timeline (vtuber)` / `V3:` 行で採用可否を確認できる。精度 gate は 6 source /
-  67 試合の ground truth (`tests/baselines/v0.3.0/vtuber-gt/*.json`) に対する
-  slow テスト `tests/test_vtuber_gt_regression.py` で、tolerance は非対称
-  (損失方向 15s / 余分方向 300s = 試合内容の欠落を許さない側に厳格)。
-  spec §7.4 の実測は recall 100% (67/67) / spurious 0。詳細は
-  `docs/superpowers/specs/2026-07-17-vtuber-timeline-detection-design.md`。
-- `probe.py::ProbeResult` に `fps_num`/`fps_den` フィールドを追加
-  (NTSC 60000/1001 等の rational frame rate を float 精度損失なく
-  detector まで伝搬)。
-- `scripts/validate-fps-retirement.py` を新規追加 (#576 実装中 evidence
-  用 one-off スクリプト、CI gate ではない)。
-- `scripts/v3-normalize-source-path.py` を新規追加 (PR #793 reexamination V3
-  baseline regen 時の絶対 path → 相対 path 正規化用 one-off スクリプト、
-  audit-compare の source-vs-ground-truth 整合のため必要)。
+- **detect (post-match trailing)**: 試合終了後の trailing 区間 (lobby / city
+  interior 等) が独立した unknown match (`match_007.mp4`) として出力される
+  問題を解消 (#797)。当初は scorebar 不在を probe で確認した上で trailing を
+  出力から削除する実装だったが、scorebar 検出が FN する環境 (未対応 HUD /
+  4K Game DVR 等) で実試合を silent に失う構造リスクがあったため、
+  リリース時点では **削除せず `post_match: true` を付与する非破壊方式**に
+  置き換えている (#805)。obs-20260116 は ground truth と完全一致の 6 match を
+  出力する。
+- **GPU / CPU / メモリ検出の wmic 依存を解消** (#860): `wmic` が既定で削除された
+  Windows 11 24H2 以降で PowerShell `Get-CimInstance` にフォールバックする。
+  GPU vendor を検出できず CPU モードに縮退していた環境を救済。
+- **metadata optional field の write 境界を硬化** (#879): GUI (Rust) 側に zod schema の
+  4-field mirror を置き、CLI 側でも sanitize してから書き戻すようにした。cache read も
+  単一化。
+- **GUI の dev/build 依存 (npm) の既知脆弱性 6 件を解消** (#836、`npm audit` green)。
+  いずれも vite / vitest / eslint 系の開発ツールチェーン依存で、配布 Tauri bundle には
+  同梱されないため利用者への影響はない。
+- **`release.yml` の phantom run** (#786): step の `shell` に `${{ matrix.* }}` を
+  使うと job が実行されない問題を `defaults.run.shell` で解消。
+- **release の version-check が GUI 側の stale version を素通り** (#911): tag と
+  突合していたのが `pyproject.toml` のみだったため、`gui/package.json` /
+  `gui/src-tauri/tauri.conf.json` / `gui/src-tauri/Cargo.toml` および両 lockfile の
+  古いバージョンが silent に通っていた。6 ファイル 7 フィールドすべてを突合し、
+  1 つでも不一致なら fail する gate に置き換え。
+- **`scripts/validate-fps-retirement.py` の PTS 抽出** (#804): boundary timestamp に
+  対して常に固定値 `0.021` を返していた bug を、放出フレーム基準の parse に修正。
+- CI: typer<0.25 / click<8.4 に pin して CI 赤化を解消 (#808)。
 
 ### Performance
 
+- **NVENC export の NVDEC zero-copy decode** (#791): `-hwaccel cuda
+  -hwaccel_output_format cuda` で decode → encode を GPU 内に留める。NVDEC decode 段の
+  失敗も libx264 fallback の trigger に含めた。実測 (RTX 5090、H.264 並列 export):
+  10:54 → 約 6:53 = 1.58x 短縮 (NVDEC 稼働 69% / NVENC 94%)。
+- **minimap crop (フィルタ有り NVENC) の NVDEC decode** (#899): `-vf crop` があると
+  zero-copy が使えないため `-hwaccel cuda` 単独で NVDEC decode + CPU crop + NVENC
+  encode する 3-tier fallback を実装。AV1 ソースで 2.29x。
 - 当初 v0.3.0 で detect 高速化 path に切替 (#576) で ~10x slowdown が
   発生していたが、Codex perf rescue Option 1 (dual seek: input seek for
   fast container index jump + output seek for accurate chunk_start) を
@@ -104,43 +180,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known Issues
 
-- **obs-20260116 M6 end miss (#797)**: 試合終了が Fanfare / VICTORY moment で
-  起き、その時点で brightness blackout が無い (post-match cutscene が ~6 分
-  続いた後の teleport blackout のみ) ケース。新 dual seek + A5 path でも
-  legacy 同様 `type=unknown` で video 末尾 (7303.488s) を M6 end とする状態。
-  Fanfare moment (6540s) での fix は v0.3.x で audio Fanfare unfreezing
-  (`scan_fanfare_hits` を detector flow に統合) または scorebar V2
-  strengthening (#803) のいずれかで対応予定。
-- **`--vtuber` 短 gap merge (#895)**: 試合間 gap が ~70s 未満の場合、V2 の
-  rolling window (window 9 x stride 10s) が構造的に橋渡しし、2 試合が 1
-  segment に結合されうる (6 source / GT 67 試合中 1 境界で実測)。V2 に
-  hard-gap break を入れる案は Onsal マップのダウンタイム (scorebar FN が
-  120s 以上続く) で誤 break を誘発する副作用があり不採用とし、既知 limitation
-  として GT 側に `expected_merge_with_next` 注釈で管理する。試合内容の損失は
-  起きない (結合方向のみ) ため、必要なら書き出し後に手動で分割する。詳細は
+- **`--vtuber` の短 gap merge** (#895、追跡: #921): 試合間 gap が約 70s 未満の場合、
+  V2 の rolling window (window 9 × stride 10s) が構造的に橋渡しし、2 試合が 1 segment
+  に結合されうる (6 source / GT 67 試合中 1 境界で実測)。V2 に hard-gap break を入れる
+  案は Onsal マップのダウンタイム (scorebar FN が 120s 以上続く) で誤 break を誘発する
+  副作用があり不採用とし、既知 limitation として GT 側に `expected_merge_with_next`
+  注釈で管理する。試合内容の損失は起きない (結合方向のみ) ため、必要なら書き出し後に
+  手動で分割する。暗転ベースの標準 path には影響しない。詳細は
   `docs/superpowers/specs/2026-07-17-vtuber-timeline-detection-design.md` §7.5。
-- **`scripts/validate-fps-retirement.py` PTS extraction bug (#804)**:
-  legacy / 新 path のどちらでも boundary timestamp に対する PTS 計算が
-  常に `0.021` という固定値を返す既知 bug。brightness 比較は正しく動作する
-  ため accuracy 検証には影響しないが、将来 fps filter 関連 regression 検証
-  で本スクリプトを再使用する場合は PTS extraction の root cause 修正が必要。
-  PR #793 では evidence 収集を audit-compare + Idios 視覚確認で代替済。
 
 ### Internal
 
+- GUI 安定化: detect 中断時の `kill_tracked_processes` invoke + run-id fencing
+  (#813)、metadata 境界検証 + load エラー可視化 (#814)、export/cancel 安定化
+  (#837)、stderr drain の bounded helper 化 (#838)、metadata / polish (#834)。
+- CLI / export 整合 (#840)、detector core 堅牢化 (#842)、テスト配線拡充
+  (split SHA gate / wire e2e CI 実走 / VTuber GT、#844 / #845)。
 - `--vtuber` の精度 gate 用に 6 source の VTuber ground truth
   (`tests/baselines/v0.3.0/vtuber-gt/*.json`) と境界注釈計測器
   `tests/scripts/poc_vtuber_timeline/gt_boundary_probe.py` を追加 (#895)。
   計測器は評価専用 (CLI / 配布物からは参照されない) で、GT 再現性のため
   production `_tolerant_runs` の copy を pin し drift 時に WARNING を出す。
-  label / argv / config の入力 validation は
-  `tests/scripts/test_gt_boundary_probe.py` で発火側を実証済み。
+- v0.3.0 OBS baseline regression 基盤: compare-baseline + ground truth (#777)、
+  動画セット選定 5 本 (#778)、baseline 生成 + split.json schema (#779)、
+  audit-prepare / audit-compare の再現性硬化とクラッシュ復旧 (#796 / #798 / #800)、
+  #805 段階2 追随の baseline 再生成 (#881)。
+- probe 失敗 semantics の tri-state 統一契約を導入 (#824、挙動不変)。
+- 開発運用の用途別モデルルーティングを導入 (#889)。
+- v0.2.0 / v0.2.1 retrospective 機構化 + Codex 統合 (#775)、PR 作成 Pre-flight
+  Step 5 の 3-tier invocation path を明文化 (#795)。
+- SSoT 規約の明文化 (#818) と doc の drift 修正 / 一括再同期 (#815 / #862 / #908)、
+  skill の追跡切れ防止チェック + broken link 14 件修正 (#817)。
+- `scripts/cleanup-claude-branches` の squash merge 検出を branch 名一致から
+  OID 同一性ベースに変更 (#827)。
+- pyright の解析対象から `.claude/worktrees` を恒久除外 (#828)。
 - V6.2 (scorebar HUD 二分探索) を #797 fix として一時実装 (commit
-  `f7f8879`)、obs-20260116 実機検証で scorebar V2 detection が post-match
-  content (5700-6850) で False positive を発火することが判明し revert
-  (commit `22c8979`)。V2 strengthening の調査を新 issue (#803、
-  `bug` / `P2-medium` / `refactor`) で扱い、#797 の scorebar-based fix path
-  の blocker とする。経緯は
+  `f7f8879`)、obs-20260116 実機検証で scorebar V2 detection が 5700-6850 の
+  全範囲で True を返し、post-match content (6540 以降) と in-match を区別できない
+  false positive が判明し revert (commit `22c8979`)。V2 strengthening の調査を
+  新 issue (#803、`bug` / `P2-medium` / `refactor`) で扱い、#797 の scorebar-based
+  fix path の blocker とする。経緯は
   `docs/superpowers/specs/2026-05-19-v030-l3-detect-fps-retirement-reexamination-design.md`
   §10 に記録。
 
