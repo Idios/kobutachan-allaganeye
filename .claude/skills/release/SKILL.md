@@ -122,15 +122,15 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
    ```
 
    いずれか失敗したら修正してから以下に進む
-2. [`docs/versioning.md`](../../../docs/versioning.md) §バージョン管理場所 に挙がっている**全フィールド**の version を新バージョンへ更新する（箇所リストの機械可読な正は [`scripts/check_version_consistency.py`](../../../scripts/check_version_consistency.py) の `VERSION_LOCATIONS`、#911）。1 ファイルが複数フィールドを持つ箇所があるので、ファイル単位で数えないこと。lockfile (`gui/package-lock.json` / `gui/src-tauri/Cargo.lock`) は **該当フィールドの直接編集を既定**とする（バンプでは version 以外を動かさないため。依存そのものを更新したい場合はパッケージマネージャを使い、バンプとは別コミットに分ける）。更新できたら必ず検証する:
+2. [`docs/versioning.md`](../../../docs/versioning.md) §バージョン管理場所 に挙がっている**全フィールド**の version を新バージョンへ更新する（フィールド一覧の機械可読な正は [`scripts/check_version_consistency.py`](../../../scripts/check_version_consistency.py) の `VERSION_LOCATIONS`、#911）。1 ファイルが複数フィールドを持つことがある（ファイル数 < フィールド数）ので、ファイル単位で数えて満足しないこと。lockfile (`gui/package-lock.json` / `gui/src-tauri/Cargo.lock`) は **該当フィールドの直接編集を既定**とする（バンプでは version 以外を動かさないため。依存そのものを更新したい場合はパッケージマネージャを使い、バンプとは別コミットに分ける）。このとき**旧バージョン文字列の一括置換はしない** — lockfile には依存由来の部分一致（`0.3.0` に対する `30.3.0` 等）が多数あり誤爆する。該当フィールドの行だけをピンポイントで直す。更新できたら必ず検証する:
 
    ```bash
    python scripts/check_version_consistency.py --tag v<新バージョン>
    ```
 
-   exit 0 でなければ先に進まない（exit 1 = 箇所間 or tag との不一致 / exit 2 = 検査自体の構造エラー）。`release.yml` の `version-check` job が tag push 時に同じスクリプトで同じ判定を行うため、ここを飛ばすとリリース当日に fail する。`--tag` は**期待値の文字列**を渡すだけで、git tag が既に存在する必要はない（タグ打ちは本スキル範囲外の後工程）
+   exit 0 でなければ先に進まない（exit 1 = フィールド間 or tag との不一致 / exit 2 = 検査自体の構造エラー）。`release.yml` の `version-check` job が tag push 時に同じスクリプトで同じ判定を行うため、ここを飛ばすとリリース当日に fail する。`--tag` は**期待値の文字列**を渡すだけで、git tag が既に存在する必要はない（タグ打ちは本スキル範囲外の後工程）
 
-   > 箇所を `grep -r '<旧バージョン>' --include='*.py' --include='*.toml' --include='*.json'` で拾う旧手順は使わない。`Cargo.lock` のように上記 glob のどれにも載らない保持箇所があり、取りこぼす（#817 / audit P2-33 の手順を #911 で置換）
+   > 更新対象を `grep -r '<旧バージョン>' --include='*.py' --include='*.toml' --include='*.json'` で拾う旧手順は使わない。`Cargo.lock` のように上記 glob のどれにも載らない保持ファイルがあり、取りこぼす（#817 / audit P2-33 の手順を #911 で置換）
 
 3. リリースブランチを作成（Step 2-4 で特定したベースブランチから分岐）:
 
@@ -143,18 +143,24 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 4. 変更をコミット（session-id を含める、[`docs/l2-workflow.md`](../../../docs/l2-workflow.md) §「PR 規約」 §「コミットメッセージ session-id」）:
 
    ```bash
-   # バージョン保持箇所を「全部」stage する。path は手で列挙せず --list-paths から
-   # 得る (VERSION_LOCATIONS が正なので、保持箇所が増えても取りこぼさない)。
+   # バージョンを保持する「全ファイル」を stage する。path は手で列挙せず
+   # --list-paths から得る (VERSION_LOCATIONS が正なので、保持先が増えても
+   # 取りこぼさない)。--list-paths は path を重複なしで返すので、出力行数は
+   # フィールド数ではなくファイル数になる (1 ファイル 2 フィールドの箇所がある)。
    # pyproject.toml だけを stage して他を置き去りにすると
-   # release.yml の version-check job が fail する (#911)
+   # release.yml の version-check job が fail する (#911)。
+   # git add は cwd 側の repo に効くので、Step 3-2 でバンプしたのと同じツリーを
+   # cwd にすること (worktree 作業中なら worktree root)。--list-paths の出力自体は
+   # repo root 相対の固定文字列で cwd には依存しない
    git add -- $(python scripts/check_version_consistency.py --list-paths)
    git commit -m "chore: bump version to <新バージョン> [<session-id>]"
 
-   # stage 漏れの検出。合格条件 = バージョン保持箇所が 1 つも出てこないこと
+   # commit 後に stage 漏れを検出する。合格条件 = 出力に「バージョン保持ファイルが
+   # 1 つも現れない」こと。出力が空である必要はない (他ファイルの残留は可)
    git status --short
    ```
 
-   バージョン保持箇所以外の差分（Step 3-1 で直した lint 等）が残っている場合は、
+   バージョン保持ファイル以外の差分（Step 3-1 で直した lint 等）が残っている場合は、
    バンプと混ぜず別コミットに分ける（このコミットは version bump 単独に保つ）
 
 5. リリースブランチを push:
@@ -175,7 +181,7 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
     <Step 1 の判断結果を記載>
 
     ### チェックリスト
-    - [ ] バージョン保持箇所が全箇所一致 (\`python scripts/check_version_consistency.py --tag v<新バージョン>\` が exit 0)
+    - [ ] バージョン保持フィールドが全て一致 (\`python scripts/check_version_consistency.py --tag v<新バージョン>\` が exit 0)
     - [ ] 全テスト通過 (\`pytest\`, \`ruff check .\`, \`ruff format --check .\`, \`pyright\`)
     - [ ] deferred issue を全件レビュー済み
     - [ ] CLAUDE.md の更新が必要な変更はない
