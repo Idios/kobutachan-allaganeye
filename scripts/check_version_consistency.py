@@ -101,14 +101,41 @@ VERSION_LOCATIONS: tuple[VersionLocation, ...] = (
 
 
 def _describe(keys: tuple[str, ...]) -> str:
-    return ".".join(key if key else '""' for key in keys)
+    """key path を `docs/versioning.md` と同じ記法で表す。
+
+    空文字 key は npm lockfile の root package entry (`packages[""]`) を指す。
+    素直にドット連結すると `packages."".version` になり、doc 側の
+    `packages[""].version` と表記が割れる。表記が割れると
+    `tests/scripts/test_check_version_consistency.py` の**フィールド単位**の
+    doc 突合ができなくなる (ファイル単位でしか照合できず、
+    「同じファイルは載っているがフィールドが 1 つ抜けた」drift を見逃す) ので、
+    doc 側の記法に揃える。
+    """
+    rendered = ""
+    for key in keys:
+        if not key:
+            rendered += '[""]'
+        elif rendered:
+            rendered += f".{key}"
+        else:
+            rendered = key
+    return rendered
+
+
+def field_label(location: VersionLocation, keys: tuple[str, ...]) -> str:
+    """ファイル内のフィールド位置を表す (`docs/versioning.md` のフィールド列と同記法)。
+
+    doc 突合テストが参照するので public。
+    """
+    described = _describe(keys)
+    if location.select is None:
+        return described
+    array_key, field, expected = location.select
+    return f"{array_key}[{field}={expected}].{described}"
 
 
 def _label(location: VersionLocation, keys: tuple[str, ...]) -> str:
-    if location.select is None:
-        return f"{location.path} ({_describe(keys)})"
-    array_key, field, expected = location.select
-    return f"{location.path} ({array_key}[{field}={expected}].{_describe(keys)})"
+    return f"{location.path} ({field_label(location, keys)})"
 
 
 def _load(path: Path, fmt: Literal["toml", "json"]) -> dict[str, Any]:

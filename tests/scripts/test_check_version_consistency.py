@@ -351,24 +351,93 @@ def test_real_repo_versions_are_consistent() -> None:
     assert cvc.main(["--repo-root", str(REPO_ROOT)]) == 0
 
 
+def _read_versioning_doc() -> str:
+    return (REPO_ROOT / "docs" / "versioning.md").read_text(encoding="utf-8")
+
+
+def _documented_fields(doc: str) -> set[tuple[str, str]]:
+    """`docs/versioning.md` の表から `(ファイル, フィールド)` 対を抜く。
+
+    フィールド列には 1 セルに複数フィールドが載る行がある
+    (`gui/package-lock.json` の `version` と `packages[""].version`)。
+    セル内の backtick 付きトークンを**全部**拾うことで、
+    「ファイルは載っているがフィールドが 1 つ抜けた」drift を検出可能にする。
+    """
+    section = doc.split("## バージョン管理場所", 1)[1].split("\n## ", 1)[0]
+
+    documented: set[tuple[str, str]] = set()
+    for line in section.splitlines():
+        if not line.startswith("| `"):
+            continue
+        # 消費経路 (3 列目) にも backtick があるので、セルに分けて 2 列目だけ見る
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        path_match = re.match(r"`([^`]+)`", cells[0])
+        assert path_match is not None, f"ファイル列を読めません: {line}"
+        for field in re.findall(r"`([^`]+)`", cells[1]):
+            documented.add((path_match.group(1), field))
+    return documented
+
+
+def _guarded_fields() -> set[tuple[str, str]]:
+    return {
+        (location.path, cvc.field_label(location, keys))
+        for location in cvc.VERSION_LOCATIONS
+        for keys in location.keys
+    }
+
+
 def test_versioning_doc_lists_exactly_the_guarded_locations() -> None:
-    """`docs/versioning.md` の一覧と `VERSION_LOCATIONS` が集合一致すること。
+    """`docs/versioning.md` の一覧と `VERSION_LOCATIONS` が**フィールド単位**で一致すること。
 
     #911 の root cause は「doc が 3 箇所と宣言している間に実態が 5 箇所へ増えていた」
     こと。doc 側の一覧が silent に古びる経路を塞ぐ。
-    """
-    doc = (REPO_ROOT / "docs" / "versioning.md").read_text(encoding="utf-8")
-    section = doc.split("## バージョン管理場所", 1)[1].split("\n## ", 1)[0]
 
-    documented = {
-        m.group(1)
-        for line in section.splitlines()
-        if line.startswith("| `")
-        if (m := re.match(r"\|\s*`([^`]+)`", line))
-    }
-    guarded = {loc.path for loc in cvc.VERSION_LOCATIONS}
+    ファイル単位で照合すると、`gui/package-lock.json` のように 1 ファイルが
+    2 フィールドを持つ箇所で「ファイルは載っているが片方のフィールドが抜けた」
+    drift を素通しする。#911 が潰したい drift そのものなのでフィールド単位で見る。
+    """
+    documented = _documented_fields(_read_versioning_doc())
+    guarded = _guarded_fields()
 
     assert documented == guarded, (
         f"docs/versioning.md と VERSION_LOCATIONS が乖離: "
         f"doc のみ={documented - guarded} / script のみ={guarded - documented}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("description", "old", "new"),
+    [
+        (
+            "同じファイルは載ったままフィールドが 1 つ消える",
+            '`version` と `packages[""].version` の**両方**',
+            "`version`",
+        ),
+        (
+            "Cargo.lock の selector が別クレートを指す",
+            "package[name=allaganeye-gui].version",
+            "package[name=some-other-crate].version",
+        ),
+        (
+            "フィールドの key path が浅くなる",
+            "`project.version`",
+            "`version`",
+        ),
+    ],
+)
+def test_doc_parity_detects_field_level_drift(
+    description: str, old: str, new: str
+) -> None:
+    """doc 突合が**フィールド単位で発火する**ことの実証 (発火する側の検証)。
+
+    ファイル単位の照合だと 1 件目 (`packages[""].version` の欠落) と
+    2 件目 (selector 誤り) は素通りする。ガードが不発でも green になる
+    false-green を避けるため、実際に drift を注入して不一致を観測する。
+    """
+    doc = _read_versioning_doc()
+    drifted = doc.replace(old, new)
+    assert drifted != doc, f"注入文字列が doc に存在しません ({description}): {old!r}"
+
+    assert _documented_fields(drifted) != _guarded_fields(), (
+        f"フィールド単位の drift を検出できていません: {description}"
     )
