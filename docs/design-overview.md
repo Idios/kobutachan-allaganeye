@@ -24,7 +24,7 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 │        export 並列化 / ZIP size / detect 高速化     │
 │  出力: 既存 metadata.json 拡張 + minimap artifact   │
 │  ※ VTuber 対応: `--vtuber` timeline 検出 V0-V4 実装済  │
-│     (#895 P3 完了)。hidden 解除は Idios 判断待ち。      │
+│     (#895 P3 完了)。`--vtuber` hidden 解除済み。        │
 ├─────────────────────────────────────────────────┤
 │  L4 (former L3): メタデータ化（将来）                │
 │  入力: L1 出力の試合動画                           │

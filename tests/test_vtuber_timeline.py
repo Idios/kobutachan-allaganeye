@@ -22,8 +22,11 @@ from allaganeye.video.vtuber_timeline import (
     TimelineProbe,
     _VT_ANCHOR_MIN_CONF,
     _evidence_flags,
+    _has_peek_boundary_blackout,
     _snap_end,
+    _snap_outer_edges,
     _snap_start,
+    _snap_window_needs_extension,
     _tolerant_runs,
     adjudicate_gap,
     detect_matches_timeline,
@@ -319,6 +322,30 @@ def _gap_probes(spec: str, stride: float = 1.0) -> list[GapProbe]:
             out.append(GapProbe(t=t, present=False, band_mad=None, band_b=None))
         else:  # pragma: no cover
             raise ValueError(ch)
+    return out
+
+
+def _flat_probes(
+    t0: float,
+    t1: float,
+    *,
+    evidence: tuple[tuple[float, float], ...] = (),
+    blackout: tuple[tuple[float, float], ...] = (),
+) -> list[GapProbe]:
+    """[t0, t1) の 1s probe 列を絶対時刻で組み立てる (_gap_probes は t0=0 固定)。
+
+    evidence / blackout は閉区間 [lo, hi] のリスト。どちらにも属さない probe は
+    lobby (absent + moving)。blackout が優先。
+    """
+    out: list[GapProbe] = []
+    for i in range(max(0, int(t1 - t0))):
+        t = t0 + i
+        if any(lo <= t <= hi for lo, hi in blackout):
+            out.append(GapProbe(t=t, present=False, band_mad=2.0, band_b=5.0))
+        elif any(lo <= t <= hi for lo, hi in evidence):
+            out.append(GapProbe(t=t, present=True, band_mad=8.0, band_b=95.0))
+        else:
+            out.append(GapProbe(t=t, present=False, band_mad=6.0, band_b=110.0))
     return out
 
 
@@ -1339,10 +1366,18 @@ class TestV4StatsIsolation:
 
     @staticmethod
     def _refine_writing_stats(vp, a, segs, **kw):
+        """production が V4 前に書く key を「全部」書く mock。
+
+        この green が見逃さないもの: mock が手書きの部分集合だと pop list の
+        欠落 (F5: vtuber_merge_overridden) を素通りさせる。production の
+        pop list 定数そのものを列挙元にして構造的に追従させる (F6)。
+        """
+        from allaganeye.video.vtuber_timeline import _PRE_V4_STATS_KEYS
+
         st = kw.get("stats")
         if st is not None:
-            st["vtuber_gaps_tested"] = 1
-            st["vtuber_gaps_merged"] = 1
+            for key in _PRE_V4_STATS_KEYS:
+                st[key] = 1
         return segs
 
     def test_v4_all_drop_pops_vtuber_keys_from_main_stats(self):
@@ -1813,8 +1848,8 @@ class TestSnapExtProbeWindow120s:
 
 
 class TestBlackoutPeekOverride:
-    """shirurori 型: rate > 0.15 の merge 判定 gap でも後半 or peek に
-    blackout run があれば boundary に override + stats 加算。
+    """shirurori 型: rate > 0.15 の merge 判定 gap でも peek 窓に境界 blackout run が
+    あれば boundary に override + stats 加算 (F1 以降 peek 単独)。
     """
 
     ANCHOR = ScorebarLocalization(532, 1147, 0, 45, 0.8)
@@ -1822,12 +1857,13 @@ class TestBlackoutPeekOverride:
     def _seg(self, s, e) -> MatchBoundary:
         return {"start": float(s), "end": float(e), "type": "fl_match"}
 
-    def test_backhal_blackout_overrides_merge(self):
-        """adj_probes の後半分に blackout run がある場合、adjudicate_gap は priority 1 で
-        "boundary" を返す (blackout は adj_probes 内にあれば直接検知される)。
-        このテストは: adj_probes に blackout なし (rate 高 -> merge) + 後半 adj 無 + peek に
-        blackout -> peek override が発火するケースを gate する。
-        shirurori 型: gap 末尾直後 (next_start 〜 next_start+45s) に zone-in blackout。
+    def test_peek_zone_in_blackout_at_window_head_overrides_merge(self):
+        """peek 窓 (next_start, next_start + EDGE_EXT_S) 先頭の zone-in blackout で override。
+
+        F7 修正前はこのテストが "backhal" を名乗っていたが、adj_probes に blackout が
+        1 つも無い構成 (band_b=90 の全 present) のため back_half 分岐は一切通らず、
+        実際には peek 分岐だけを見ていた。名前を実態に合わせた。
+        shirurori 型: gap 末尾直後 (next_start .. next_start+45s) に zone-in blackout。
         stats["vtuber_merge_overridden"] が 1 加算される。
         """
         segs = [self._seg(0, 100), self._seg(200, 400)]
@@ -1873,10 +1909,11 @@ class TestBlackoutPeekOverride:
         assert len(out) == 2
         assert stats.get("vtuber_merge_overridden", 0) == 1
 
-    def test_peek_blackout_overrides_merge_when_backhal_clean(self):
-        """adj_probes の後半にブラックアウトなし + peek probe に blackout run があれば
-        boundary に override。peek probe の range が (next_start, next_start + EDGE_EXT_S)
-        であることを assert。
+    def test_peek_probe_range_is_next_start_plus_edge_ext(self):
+        """gap 内に blackout なし + peek probe に blackout run -> boundary に override。
+
+        あわせて peek probe の range が (next_start, next_start + EDGE_EXT_S) で
+        あることを assert する。
         """
         segs = [self._seg(0, 100), self._seg(200, 400)]
         stats: dict = {}
@@ -1923,8 +1960,8 @@ class TestBlackoutPeekOverride:
         assert peek_calls, "peek probe_gap was not called"
         assert peek_calls[0]["t0"] == pytest.approx(200.0)
 
-    def test_no_blackout_in_backhal_or_peek_merges(self):
-        """後半 + peek に blackout なし -> merge 確定 (override されない)。"""
+    def test_no_blackout_in_gap_or_peek_merges(self):
+        """gap + peek のどちらにも blackout なし -> merge 確定 (override されない)。"""
         segs = [self._seg(0, 100), self._seg(200, 400)]
         stats: dict = {}
 
@@ -2041,7 +2078,9 @@ class TestSnapStartPriorityOrder:
 
 
 # ---------------------------------------------------------------------------
-# Round 6: Bug A / Bug B / Bug C / V2 hard-gap break
+# Round 6: Bug A / Bug B / Bug C
+# (V2 hard-gap break は e11f381 で revert 済み。実装もテストクラスも存在しない
+#  ため見出しから削除した。short gap 結合は known-limitation として spec 7.5 に残る)
 # ---------------------------------------------------------------------------
 
 
@@ -2231,3 +2270,928 @@ class TestBugCSnapEndDropoutRescue:
         result = _snap_end(probes, lo, hi)
         # subsequent run end t=53 < lo-60=60 -> not eligible -> leading t=5 adopted
         assert result == probes[5].t  # t=5.0
+
+
+# ---------------------------------------------------------------------------
+# PR #915 review round: blackout 物理規則の一元化 / 端 snap semantics / 0.0 候補
+# ---------------------------------------------------------------------------
+
+
+class TestBoundaryBlackoutRuleUnification:
+    """F1/F14/F15: blackout boundary 判定を共通 helper に一元化した契約。
+
+    この green が見逃さないもの: 「guard が効く」だけを見ると
+    (a) override 側が guard を迂回する経路 (F1) と
+    (b) UNKNOWN を挟んだ 2 run の連結 (F15)
+    が素通りする。両方を別テストで独立に pin する。
+    """
+
+    ANCHOR = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+
+    def _seg(self, s, e) -> MatchBoundary:
+        return {"start": float(s), "end": float(e), "type": "fl_match"}
+
+    # --- F15: UNKNOWN probe を挟んだ blackout run の連結 ---
+
+    def _unknown_split_probes(self) -> list[GapProbe]:
+        """idx: 0-8 l / 9 M / 10-11 b / 12 u / 13-14 b / 15-21 l / 22 M / 23-31 f / 32-59 l.
+
+        run A (t=10-11): before 5s 窓に evidence (t=9) / after 10s 窓 (11, 21] に
+        evidence 無し -> 真の境界 run。
+        run B (t=13-14): before 5s 窓 [8, 13) に evidence (t=9) / after 10s 窓
+        (14, 24] に evidence (t=22) -> intra-match flicker。
+        valid (band_b not None) 上で run を取ると A と B が 1 run (t=10-14) に
+        連結し、端点 t_start=10 / t_end=14 で評価されて両方 intra-match に落ちる。
+        """
+        return _gap_probes(
+            "l" * 9 + "M" + "bb" + "u" + "bb" + "l" * 7 + "M" + "f" * 9 + "l" * 28
+        )
+
+    def test_unknown_probe_does_not_join_two_blackout_runs(self):
+        from allaganeye.video.vtuber_timeline import _boundary_blackout_runs
+
+        probes = self._unknown_split_probes()
+        assert len(probes) == 60
+        runs = _boundary_blackout_runs(probes)
+        # run A のみが guard を通過する (run B は intra-match flicker)
+        assert runs == [(10, 11)]
+
+    def test_adjudicate_gap_sees_unknown_split_runs_separately(self):
+        # present rate = M 2 + f 9 = 11 / valid 59 = 18.6% >= MERGE_RATE
+        # -> priority 1 が発火しなければ "merge" になる構成。
+        # 連結バグがあると run A が intra-match 扱いになり "merge" (誤)。
+        probes = self._unknown_split_probes()
+        assert adjudicate_gap(probes) == "boundary"
+
+    # --- F1: back-half override の in-match guard 迂回 ---
+
+    def test_intra_match_flicker_in_back_half_does_not_override_merge(self):
+        """gap 後半の intra-match flicker で merge が boundary に戻されないこと。
+
+        実証形: evidence 60 + blackout 3 + evidence 37。
+        adjudicate_gap = "merge" (唯一の blackout run が intra-match flicker) だが、
+        旧 override は back_half に blackout run があるだけで boundary に戻していた
+        (直前 commit の in-match guard を打ち消す)。
+        """
+        segs = [self._seg(0, 100), self._seg(200, 400)]
+        stats: dict = {}
+        adj_probes = (
+            [
+                GapProbe(t=100.0 + i, present=True, band_mad=8.0, band_b=90.0)
+                for i in range(60)
+            ]
+            + [
+                GapProbe(t=160.0 + i, present=False, band_mad=2.0, band_b=5.0)
+                for i in range(3)
+            ]
+            + [
+                GapProbe(t=163.0 + i, present=True, band_mad=8.0, band_b=90.0)
+                for i in range(37)
+            ]
+        )
+        # mid_t = 150 -> blackout (t=160-162) は back_half に入る
+        assert any(p.t >= 150.0 and p.band_b == 5.0 for p in adj_probes)
+        assert adjudicate_gap(adj_probes) == "merge"
+
+        def _spy_probe(vp, anchor, t0, t1, **kw):
+            if abs(t0 - 100.0) < 0.5 and abs(t1 - 200.0) < 0.5:
+                return adj_probes
+            # peek / snap: blackout なし
+            return [
+                GapProbe(t=t0 + i, present=False, band_mad=5.0, band_b=110.0)
+                for i in range(max(0, int(t1 - t0)))
+            ]
+
+        with (
+            patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy_probe),
+            patch(
+                "allaganeye.video.vtuber_timeline._snap_outer_edges",
+                side_effect=lambda vp, a, s, **kw: s,
+            ),
+        ):
+            out = refine_segments(Path("d.mp4"), self.ANCHOR, segs, stats=stats)  # type: ignore[arg-type]
+
+        assert len(out) == 1, "intra-match flicker で merge が override された"
+        assert stats.get("vtuber_merge_overridden", 0) == 0
+        assert stats.get("vtuber_gaps_merged", 0) == 1
+
+    # --- F1 の裏: peek 側にも guard が効くこと ---
+
+    def test_intra_match_blackout_in_peek_does_not_override_merge(self):
+        """peek 窓の内部にある試合中瞬断 blackout では override しないこと。"""
+        segs = [self._seg(0, 100), self._seg(200, 400)]
+        stats: dict = {}
+        adj_probes = [
+            GapProbe(t=100.0 + i, present=True, band_mad=8.0, band_b=90.0)
+            for i in range(100)
+        ]
+        # peek [200, 245): t=200..219 evidence / t=220-221 blackout / t=222.. evidence
+        peek_probes = []
+        for i in range(45):
+            t = 200.0 + i
+            if t in (220.0, 221.0):
+                peek_probes.append(
+                    GapProbe(t=t, present=False, band_mad=2.0, band_b=5.0)
+                )
+            else:
+                peek_probes.append(
+                    GapProbe(t=t, present=True, band_mad=8.0, band_b=90.0)
+                )
+
+        def _spy_probe(vp, anchor, t0, t1, **kw):
+            if abs(t0 - 100.0) < 0.5 and abs(t1 - 200.0) < 0.5:
+                return adj_probes
+            if abs(t0 - 200.0) < 0.5:
+                return peek_probes
+            return []
+
+        with (
+            patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy_probe),
+            patch(
+                "allaganeye.video.vtuber_timeline._snap_outer_edges",
+                side_effect=lambda vp, a, s, **kw: s,
+            ),
+        ):
+            out = refine_segments(Path("d.mp4"), self.ANCHOR, segs, stats=stats)  # type: ignore[arg-type]
+
+        assert len(out) == 1
+        assert stats.get("vtuber_merge_overridden", 0) == 0
+
+    # --- F14: min_run 閾値の非対称が意図的であることの pin ---
+
+    def test_peek_single_probe_blackout_does_not_override(self):
+        """peek override は PEEK_BLACKOUT_MIN_PROBES(=2) 未満の run を無視する。
+
+        peek 窓左端では in-match guard の before 窓が構造的に空になり guard が
+        効かないため、noise margin として 2 probe を要求する (意図的な非対称)。
+        """
+        from allaganeye.video.vtuber_timeline import (
+            BOUNDARY_BLACKOUT_MIN_PROBES,
+            PEEK_BLACKOUT_MIN_PROBES,
+        )
+
+        assert BOUNDARY_BLACKOUT_MIN_PROBES == 1
+        assert PEEK_BLACKOUT_MIN_PROBES == 2
+
+        segs = [self._seg(0, 100), self._seg(200, 400)]
+        stats: dict = {}
+        adj_probes = [
+            GapProbe(t=100.0 + i, present=True, band_mad=8.0, band_b=90.0)
+            for i in range(100)
+        ]
+        # peek: 1 probe だけ blackout (t=200)
+        peek_probes = [GapProbe(t=200.0, present=False, band_mad=2.0, band_b=5.0)] + [
+            GapProbe(t=201.0 + i, present=False, band_mad=5.0, band_b=110.0)
+            for i in range(44)
+        ]
+
+        def _spy_probe(vp, anchor, t0, t1, **kw):
+            if abs(t0 - 100.0) < 0.5 and abs(t1 - 200.0) < 0.5:
+                return adj_probes
+            if abs(t0 - 200.0) < 0.5:
+                return peek_probes
+            return []
+
+        with (
+            patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy_probe),
+            patch(
+                "allaganeye.video.vtuber_timeline._snap_outer_edges",
+                side_effect=lambda vp, a, s, **kw: s,
+            ),
+        ):
+            out = refine_segments(Path("d.mp4"), self.ANCHOR, segs, stats=stats)  # type: ignore[arg-type]
+
+        assert len(out) == 1
+        assert stats.get("vtuber_merge_overridden", 0) == 0
+
+
+class TestSnapStartPriority2Guard:
+    """F4: _snap_start Priority 2 ((hi, ext_hi]) にも in-match guard を適用する。
+
+    この green が見逃さないもの: Priority 1 だけ guard しても ext_hi 窓は
+    「次試合の内部」を指すため、次試合の瞬断 blackout を new_start にして
+    頭欠け (製品 invariant「試合内容の損失ゼロ」抵触) を作れる。
+    """
+
+    def test_priority2_intra_match_blackout_is_not_adopted(self):
+        # lobby 100s (t=0..99) / 次試合 evidence 20s (t=100..119) /
+        # intra-match blackout 2 probe (t=120,121) / 次試合 evidence (t=122..144)
+        probes = _gap_probes("l" * 100 + "M" * 20 + "bb" + "M" * 23)
+        assert len(probes) == 145
+        result = _snap_start(probes, 0.0, 100.0, ext_hi=145.0)
+        # 旧: Priority 2 が blackout end t=121 を採用 -> 粗 start 100 に対し +21s 頭欠け
+        assert result != 121.0
+        # guard 発火後は Priority 3 (trailing evidence run 先頭 t=100) -> 頭欠けなし
+        assert result == 100.0
+
+    def test_priority2_true_zone_in_blackout_still_adopted(self):
+        # 反対側の pin: (hi, ext_hi] の blackout が真の zone-in (before 窓に
+        # evidence 無し) なら従来どおり採用される。
+        probes = _gap_probes("l" * 61 + "bb" + "l" * 42)
+        result = _snap_start(probes, 0.0, 60.0, ext_hi=60.0 + EDGE_EXT_S)
+        assert result == probes[62].t  # t=62.0
+
+
+class TestOuterEdgeSnapCoarseSemantics:
+    """F2/F3/F13: _snap_outer_edges の lo/hi semantics + 交差 guard + 窓 clamp。"""
+
+    ANCHOR = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+
+    def _seg(self, s, e) -> MatchBoundary:
+        return {"start": float(s), "end": float(e), "type": "fl_match"}
+
+    def test_last_end_snaps_to_collapse_near_coarse_end(self):
+        """F2: 粗 end の直前 (10s 前) にある collapse へ端 end snap が発火すること。
+
+        この green が見逃さないもの: 旧実装は lo/hi に probe 窓の両端を渡していたため
+        mid = last_end - 37.5 となり、「粗 end 付近の collapse」= 通常ケースでは
+        中点制約が必ず落として端 end snap が dead だった (far collapse だけ通る)。
+        """
+        segs = [self._seg(0, 400)]
+
+        def _spy(vp, anchor, t0, t1, **kw):
+            n = max(0, int(t1 - t0))
+            if abs(t0 - (400.0 - EDGE_EXT_END_S)) < 0.5:
+                # 窓 [280, 445): evidence t=280..390 -> collapse t=390 (粗 end の 10s 前)
+                return [
+                    GapProbe(
+                        t=t0 + i,
+                        present=(t0 + i) <= 390.0,
+                        band_mad=8.0,
+                        band_b=110.0,
+                    )
+                    for i in range(n)
+                ]
+            return _gap_probes("l" * max(1, n))
+
+        with patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy):
+            out = refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+
+        assert out[0]["end"] == pytest.approx(390.0)
+
+    def test_outer_snap_does_not_produce_crossed_edges(self):
+        """F3: 単一 segment で start snap と end snap が交差したら粗 edge を維持。
+
+        snap_segment_edges には交差 guard があるが _snap_outer_edges には無く、
+        vtuber path は下流フィルタも通らないため end < start の segment が
+        metadata に載りうる。
+        """
+        from allaganeye.video.vtuber_timeline import _snap_outer_edges
+
+        segs = [self._seg(100, 150)]
+
+        def _spy(vp, anchor, t0, t1, **kw):
+            n = max(0, int(t1 - t0))
+            if abs(t0 - max(0.0, 100.0 - EDGE_EXT_S)) < 0.5:
+                # first start 窓 [55, 160): trailing evidence t>=145 -> new_start=145
+                return [
+                    GapProbe(
+                        t=t0 + i,
+                        present=(t0 + i) >= 145.0,
+                        band_mad=8.0,
+                        band_b=110.0,
+                    )
+                    for i in range(n)
+                ]
+            # last end 窓 [30, 195): leading evidence t<=69 -> new_end=69
+            return [
+                GapProbe(t=t0 + i, present=(t0 + i) <= 69.0, band_mad=8.0, band_b=110.0)
+                for i in range(n)
+            ]
+
+        with patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy):
+            out = _snap_outer_edges(Path("d.mp4"), self.ANCHOR, segs)
+
+        assert out[0]["start"] < out[0]["end"], f"crossed segment: {out[0]}"
+        assert out[0]["start"] == pytest.approx(145.0)
+        assert out[0]["end"] == pytest.approx(150.0)  # 交差する end snap は棄却
+
+    def test_outer_snap_rejects_start_snap_beyond_coarse_end(self):
+        """F3 (start 側専用): 端 start snap が粗 end を跨いだら粗 start を維持する。
+
+        この green が見逃さないもの: 上の test_outer_snap_does_not_produce_crossed_edges
+        は start 候補が 145 < end 150 に着地するため end 側 guard しか gate せず、
+        `new_start < first["end"]` を落としてもフルスイートが緑のままだった。
+        first start 窓は粗 start + _LONG_GAP_EDGE_WINDOW_S (60s) まで伸び ext_hi も
+        そこに置かれるので、Priority 2 は粗 end より後ろの blackout を候補にでき、
+        start > end の反転 segment を metadata に載せられる
+        (vtuber path は下流 filter を通らない)。
+        """
+        segs = [self._seg(100, 150)]
+        # first start 窓 [55, 160): lobby + 窓末尾手前に 2 probe blackout (t=155,156)
+        first_window = _flat_probes(55.0, 160.0, blackout=((155.0, 156.0),))
+        # 前提 pin: この窓で start 候補は 156.0 (= 粗 end 150 の先) になる。
+        # 候補が None に退化すると guard を通らず「緑だが何も gate しない」test に
+        # なるため、guard 入力そのものを固定する。
+        assert _snap_start(first_window, 55.0, 100.0, ext_hi=160.0) == pytest.approx(
+            156.0
+        )
+
+        def _spy(vp, anchor, t0, t1, **kw):
+            if abs(t0 - max(0.0, 100.0 - EDGE_EXT_S)) < 0.5:
+                return _flat_probes(t0, t1, blackout=((155.0, 156.0),))
+            # last end 窓 [30, 195): evidence 無し -> end snap 候補なし (粗 end 維持)
+            return _flat_probes(t0, t1)
+
+        with patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy):
+            out = _snap_outer_edges(Path("d.mp4"), self.ANCHOR, segs)
+
+        assert out[0]["start"] < out[0]["end"], f"crossed segment: {out[0]}"
+        assert out[0]["start"] == pytest.approx(100.0)  # 交差する start snap は棄却
+        assert out[0]["end"] == pytest.approx(150.0)
+
+    def test_last_end_probe_window_is_clamped_at_zero(self):
+        """F13: 短尺動画で last_end - EDGE_EXT_END_S が負になっても -ss に渡さない。"""
+        segs = [self._seg(10, 50)]
+        captured: list[float] = []
+
+        def _spy(vp, anchor, t0, t1, **kw):
+            captured.append(t0)
+            return _gap_probes("l" * max(1, int(t1 - t0)))
+
+        with patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy):
+            refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+
+        assert captured
+        assert min(captured) >= 0.0, f"negative -ss passed to probe_gap: {captured}"
+
+
+class TestSnapZeroCandidateNotFalsy:
+    """F12: snap 候補 0.0 を「候補なし」と誤解釈しない (or -> is not None)。"""
+
+    def test_zero_end_candidate_is_adopted(self):
+        # leading evidence run が probes 先頭 1 probe (t=0.0) のみ
+        probes = _gap_probes("M" + "l" * 79 + "M" * 20)
+        new_end, new_start = snap_segment_edges(5.0, 100.0, probes)
+        # 旧: `_snap_end(...) or prev_end` が 0.0 を falsy 扱いして prev_end=5.0
+        assert new_end == 0.0
+        assert new_start == probes[80].t
+
+
+class TestSnapEndRescueEvidenceCount:
+    """F19: hybrid rescue の run 長は index span ではなく実 evidence probe 数。"""
+
+    def test_bridged_run_with_two_evidence_probes_is_not_eligible(self):
+        # _tolerant_runs(tol=10) は t=103 と t=110 の 2 evidence を
+        # span 8 の 1 run にまとめる。index span では 8 >= 3 で eligible に見える。
+        probes = _gap_probes("M" * 3 + "l" * 100 + "M" + "l" * 6 + "M" + "l" * 109)
+        assert len(probes) == 220
+        result = _snap_end(probes, 120.0, 240.0)
+        # evidence 数 2 < 3 -> rescue 不発 -> leading run 末尾 t=2 のまま
+        assert result == probes[2].t
+
+    def test_run_with_three_evidence_probes_is_eligible(self):
+        probes = _gap_probes("M" * 3 + "l" * 100 + "M" * 3 + "l" * 114)
+        assert len(probes) == 220
+        result = _snap_end(probes, 120.0, 240.0)
+        assert result == probes[105].t  # t=105.0 (rescue 発火)
+
+
+class TestLongGapOneSidedSnap:
+    """F20: 長 gap path は片側だけ欲しいので _snap_end / _snap_start を直接呼ぶ。
+
+    この green が見逃さないもの: snap_segment_edges 経由だと「使わない側」の
+    候補が交差判定に参加し、窓内の無関係な候補が交差を作ると正しい片側 snap まで
+    粗 edge へ縮退する (silent な snap 消失)。
+    """
+
+    ANCHOR = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+
+    def _seg(self, s, e) -> MatchBoundary:
+        return {"start": float(s), "end": float(e), "type": "fl_match"}
+
+    def test_head_end_snap_survives_unused_start_candidate(self):
+        # head 窓 [280, 460): evidence t=280..403 / absent t=404..408 (5 probe) /
+        # blackout t=409-410 / evidence t=411..420 / absent t=421..459
+        # -> _snap_end: 非 evidence 7 probe は tol=10 で bridge され run 末尾 t=420
+        #    (< mid=430) -> 420
+        # -> _snap_start: blackout run (409,410) は before 5s 窓が全 absent なので
+        #    guard 不発 -> (400, 460] 内 -> 410
+        # 410 <= 420 で交差するため snap_segment_edges 経由だと両方棄却されていた。
+        head_probes = []
+        for i in range(180):
+            t = 280.0 + i
+            if t in (409.0, 410.0):
+                head_probes.append(
+                    GapProbe(t=t, present=False, band_mad=2.0, band_b=5.0)
+                )
+            elif t <= 403.0 or 411.0 <= t <= 420.0:
+                head_probes.append(
+                    GapProbe(t=t, present=True, band_mad=8.0, band_b=110.0)
+                )
+            else:
+                head_probes.append(
+                    GapProbe(t=t, present=False, band_mad=5.0, band_b=110.0)
+                )
+
+        def _spy(vp, anchor, t0, t1, **kw):
+            if abs(t0 - (400.0 - EDGE_EXT_END_S)) < 0.5:
+                return head_probes
+            return [
+                GapProbe(t=t0 + i, present=False, band_mad=5.0, band_b=110.0)
+                for i in range(max(1, int(t1 - t0)))
+            ]
+
+        segs = [self._seg(0, 400), self._seg(900, 1300)]
+        with (
+            patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy),
+            patch(
+                "allaganeye.video.vtuber_timeline._snap_outer_edges",
+                side_effect=lambda vp, a, s, **kw: s,
+            ),
+        ):
+            out = refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+
+        assert len(out) == 2
+        assert out[0]["end"] == pytest.approx(420.0)
+
+
+class TestFirstPassExceptionLogWording:
+    """F23: 第 1 パス except は「粗い境界を維持」ではなく boundary 扱いで第 2 パスへ進む。"""
+
+    ANCHOR = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+
+    def _seg(self, s, e) -> MatchBoundary:
+        return {"start": float(s), "end": float(e), "type": "fl_match"}
+
+    def test_adjudication_failure_log_states_boundary_treatment(self, caplog):
+        import logging
+
+        segs = [self._seg(0, 400), self._seg(500, 900)]
+
+        def _spy(vp, anchor, t0, t1, **kw):
+            if abs(t0 - 400.0) < 0.5 and abs(t1 - 500.0) < 0.5:
+                raise RuntimeError("decode")
+            return _gap_probes("l" * max(1, int(t1 - t0)))
+
+        with (
+            patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy),
+            caplog.at_level(logging.WARNING, logger="allaganeye.video.vtuber_timeline"),
+        ):
+            out = refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+
+        assert len(out) == 2  # merge されず boundary 扱い
+        assert "treating gap as boundary" in caplog.text
+        assert "keeping coarse boundaries" not in caplog.text
+
+
+class TestStatsKeyPopCompleteness:
+    """F5/F6: V4 全滅縮退時の pop list 完全性を AST で gate する。
+
+    この green が見逃さないもの: mock が書く key を手書きすると
+    「production が新 stat を書いたが pop list に足し忘れた」死角を
+    素通りさせる (F5 の vtuber_merge_overridden がまさにそれ)。
+    production の書き込み箇所を AST で列挙して定数と突き合わせる。
+    """
+
+    def test_pop_list_covers_every_stats_write(self):
+        import ast
+        import pathlib
+
+        from allaganeye.video import vtuber_timeline as vt
+
+        source = pathlib.Path(vt.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        written: set[str] = set()
+        for node in ast.walk(tree):
+            targets = []
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, ast.AugAssign):
+                targets = [node.target]
+            for tgt in targets:
+                if (
+                    isinstance(tgt, ast.Subscript)
+                    and isinstance(tgt.value, ast.Name)
+                    and tgt.value.id == "stats"
+                    and isinstance(tgt.slice, ast.Constant)
+                    and isinstance(tgt.slice.value, str)
+                ):
+                    written.add(tgt.slice.value)
+
+        assert written, "stats への書き込みが 1 つも見つからない (scan が壊れている)"
+        declared = set(vt._PRE_V4_STATS_KEYS) | set(vt._POST_V4_STATS_KEYS)
+        assert written == declared, (
+            "main stats へ書く key と pop/keep 宣言が不一致: "
+            f"undeclared={sorted(written - declared)} "
+            f"stale={sorted(declared - written)}"
+        )
+
+    def test_pre_v4_keys_include_merge_overridden(self):
+        from allaganeye.video.vtuber_timeline import _PRE_V4_STATS_KEYS
+
+        assert "vtuber_merge_overridden" in _PRE_V4_STATS_KEYS
+
+
+class TestSegmentTimelineRunCollection:
+    """F24: in_match_runs 収集への書き換え (revert された hard-gap break の下準備) を
+
+    残す判断の pin。prev_in ループと挙動同値かつ run 単位の filter が読みやすいため
+    revert せず維持し、代わりに境界条件を pin する。
+    この green が見逃さないもの: run の close 漏れ (末尾) / 先頭 index 0 の run 開始漏れ /
+    filter が run 単位でなく全体に効く退行。
+    """
+
+    def test_run_reaching_last_probe_is_closed(self):
+        # 末尾まで in-match が続く場合も segment 化される (tail close 分岐)
+        probes = _probes("l" * 6 + "M" * 40)
+        segs = segment_timeline(probes, min_match_duration=300.0)
+        assert len(segs) == 1
+        assert segs[0]["end"] == probes[-1].t
+
+    def test_run_starting_at_index_zero(self):
+        probes = _probes("M" * 40 + "l" * 6)
+        segs = segment_timeline(probes, min_match_duration=300.0)
+        assert len(segs) == 1
+        assert segs[0]["start"] == 0.0
+
+    def test_short_run_filtered_long_run_kept(self):
+        probes = _probes("M" * 20 + "l" * 20 + "M" * 40)
+        segs = segment_timeline(probes, min_match_duration=300.0)
+        assert len(segs) == 1
+        assert segs[0]["start"] >= 300.0
+
+
+class TestSecondPassCrossedEdgeGuard:
+    """refine_segments 第 2 パスの交差 guard (F3 と同 class)。
+
+    この green が見逃さないもの: 第 2 パスは prev["end"] / follower["start"] を
+    無検査で上書きしていたため、長 gap path (片側ずつ snap するので
+    snap_segment_edges の交差判定を通らない) で end < start の反転 segment を
+    作れた。V4 _validate_match_segments は順序も長さも検査しないため、
+    反転 segment はそのまま metadata に載る。
+    --min-match-duration は config が > 0 しか検査しないので、end 窓の遡り幅
+    EDGE_EXT_END_S=120s より短い segment は合法に作れる。
+    """
+
+    ANCHOR = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+
+    def _seg(self, s, e) -> MatchBoundary:
+        return {"start": float(s), "end": float(e), "type": "fl_match"}
+
+    def test_end_snap_crossing_prev_start_keeps_coarse_end(self):
+        # segs = [30-60, 500-560]: gap 440 > MERGE_GAP_MAX -> 長 gap path。
+        # head 窓 [0, 120) の leading evidence が t=10 で終わる ->
+        # _snap_end が 10.0 を返し、guard なしだと end=10 < start=30 の反転になる。
+        segs = [self._seg(30, 60), self._seg(500, 560)]
+
+        def _spy(vp, anchor, t0, t1, **kw):
+            if abs(t0 - 0.0) < 0.5 and abs(t1 - 120.0) < 0.5:
+                return _flat_probes(t0, t1, evidence=((0.0, 10.0),))
+            return _flat_probes(t0, t1)
+
+        # 前提 pin: head 窓の end 候補は 10.0 (= prev の start 30 より前)
+        head = _flat_probes(0.0, 120.0, evidence=((0.0, 10.0),))
+        assert _snap_end(head, 60.0, 120.0) == pytest.approx(10.0)
+
+        with patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy):
+            out = refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+
+        assert out[0]["end"] > out[0]["start"], f"inverted segment: {out[0]}"
+        assert out[0]["end"] == pytest.approx(60.0)  # 交差する end snap は棄却
+        assert out[0]["start"] == pytest.approx(30.0)
+
+    def test_start_snap_crossing_next_end_keeps_coarse_start(self):
+        # 鏡像: tail 窓 [380, 545) の Priority 2 blackout (t=530,531) は
+        # 次 segment の粗 end 520 を越える -> guard なしだと start=531 > end=520。
+        segs = [self._seg(30, 60), self._seg(500, 520)]
+
+        def _spy(vp, anchor, t0, t1, **kw):
+            if abs(t0 - 380.0) < 0.5:
+                return _flat_probes(t0, t1, blackout=((530.0, 531.0),))
+            return _flat_probes(t0, t1)
+
+        # 前提 pin: tail 窓の start 候補は 531.0 (= 次 segment の end 520 より後)
+        tail = _flat_probes(380.0, 545.0, blackout=((530.0, 531.0),))
+        assert _snap_start(tail, 380.0, 500.0, ext_hi=545.0) == pytest.approx(531.0)
+
+        with patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy):
+            out = refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+
+        assert out[1]["end"] > out[1]["start"], f"inverted segment: {out[1]}"
+        assert out[1]["start"] == pytest.approx(500.0)  # 交差する start snap は棄却
+        assert out[1]["end"] == pytest.approx(520.0)
+
+    def test_non_crossing_long_gap_snap_still_applies(self):
+        """反対側 pin: guard は「常に粗 edge へ縮退」ではない。
+
+        交差しない snap は従来どおり採用される (guard を無条件 revert に
+        すり替える退行を落とす)。
+        """
+        segs = [self._seg(0, 400), self._seg(1000, 1400)]
+
+        def _spy(vp, anchor, t0, t1, **kw):
+            if abs(t0 - 280.0) < 0.5 and abs(t1 - 460.0) < 0.5:
+                # head 窓: collapse が粗 end 400 の 10s 前
+                return _flat_probes(t0, t1, evidence=((280.0, 390.0),))
+            if abs(t0 - 880.0) < 0.5:
+                # tail 窓: 粗 start 1000 の直前に zone-in blackout
+                return _flat_probes(t0, t1, blackout=((995.0, 996.0),))
+            return _flat_probes(t0, t1)
+
+        with patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy):
+            out = refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+
+        assert out[0]["end"] == pytest.approx(390.0)
+        assert out[1]["start"] == pytest.approx(996.0)
+
+    def test_long_gap_snap_windows_cannot_overlap(self):
+        """new_end < new_start を第 2 パスで再検査しない根拠の構造 pin。
+
+        長 gap path は head 窓 (<= prev_end + _LONG_GAP_EDGE_WINDOW_S) と
+        tail 窓 (>= next_start - LONG_GAP_START_BACK_S) が重ならないことに
+        依存している。定数を動かして重なるようになったらここで落とす
+        (「構造的に不可能」という根拠が silent に失効するのを防ぐ)。
+        """
+        from allaganeye.video.vtuber_timeline import (
+            MERGE_GAP_MAX,
+            _LONG_GAP_EDGE_WINDOW_S,
+        )
+
+        assert _LONG_GAP_EDGE_WINDOW_S + LONG_GAP_START_BACK_S <= MERGE_GAP_MAX
+
+
+class TestSnapWindowEdgeNoiseMargin:
+    """R1c: guard 窓が probe 列の端で切れる場合は probe 窓を延長して実測・再判定する。
+
+    旧設計 (edge_min_run 推測 margin) の問題:
+    - 窓端付近の真の zone-in 暗転 (1 probe) を長さで足切りし試合冒頭を損失させた。
+    - 窓右端の 2 probe in-match 瞬断が依然 +44s 頭欠けを起こした (F2a)。
+
+    新設計 (窓延長 + 再判定):
+    - 截断を検出 -> 必要な分だけ probe 窓を延長 (上限 SNAP_WINDOW_EXTEND_MAX_S) -> 再判定。
+    - 延長後に evidence が両側に揃えば guard 発火 -> 瞬断を棄却 (頭欠けなし)。
+    - 延長不可 (動画先頭等) や延長後も決定不能なら「損失方向に倒さない」既定を使う
+      (= guard が片側しか見えない場合は run を採用し、頭欠けを回避)。
+    """
+
+    ANCHOR = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+
+    # --- _snap_window_needs_extension tests ---
+
+    def test_needs_extension_detects_right_edge_truncation(self):
+        """右端の 1 probe blackout は after 窓が截断 -> after_ext > 0。
+
+        この green が見逃さないもの: after_ext == 0 を返すと caller が延長しないため
+        瞬断が採用されて頭欠けする (F2a の根本)。
+        """
+        probes = _flat_probes(
+            1100.0,
+            1145.0,
+            evidence=((1100.0, 1143.0),),
+            blackout=((1144.0, 1144.0),),
+        )
+        _before_ext, after_ext = _snap_window_needs_extension(probes)
+        # after 窓: 10s 必要、窓右端 t=1144 から残り 0 -> after_ext >= 10
+        assert after_ext > 0.0
+
+    def test_needs_extension_detects_left_edge_truncation(self):
+        """左端付近の 1 probe blackout は before 窓が截断 -> before_ext > 0。"""
+        probes = _flat_probes(
+            55.0, 160.0, blackout=((56.0, 56.0),), evidence=((57.0, 66.0),)
+        )
+        before_ext, _after_ext = _snap_window_needs_extension(probes)
+        # before 窓: 5s 必要、t=56 から窓左端 t=55 まで 1s -> before_ext >= 4
+        assert before_ext > 0.0
+
+    def test_needs_extension_zero_for_mid_window_run(self):
+        """窓中央の run は guard 窓が両側に収まる -> 延長不要 (両方 0.0)。
+
+        この green が見逃さないもの: 常に延長すると通常ケースで probe 増加が発生する。
+        """
+        probes = _flat_probes(
+            880.0,
+            1145.0,
+            evidence=((1100.0, 1143.0),),
+            blackout=((1090.0, 1090.0),),
+        )
+        before_ext, after_ext = _snap_window_needs_extension(probes)
+        # t=1090: before 5s = [1085, 1090), after 10s = [1090, 1100] -> 両側窓内
+        assert before_ext == pytest.approx(0.0)
+        assert after_ext == pytest.approx(0.0)
+
+    # --- min repro: 1 probe zone-in at left edge is adopted ---
+
+    def test_sliver_zone_in_at_video_start_is_adopted(self):
+        """最小再現: lobby t=0..2 / 1s zone-in blackout t=3 / 証拠 t>=4。
+
+        V2 粗 start=34 のとき旧 edge_min_run=2 では採用されず start=34 のまま。
+        新設計: before 窓が切れていても延長不可 (t=0 が左端) なら
+        _boundary_blackout_runs が截断窓で評価し has_evidence_before=False ->
+        guard 不発 -> 採用 -> start=3 (「損失方向に倒さない」既定)。
+
+        この green が見逃さないもの: 延長後に guard を再評価するだけでは
+        「延長不可 = 採用不可」という誤った既定を gate できない。
+        """
+        # prev_end=0 の内側 gap snap: snap 窓 [max(0,-120), 79) で lo=0, hi=34, ext_hi=79
+        probes = _flat_probes(
+            0.0,
+            79.0,
+            evidence=((4.0, 33.0),),
+            blackout=((3.0, 3.0),),
+        )
+        # _snap_window_needs_extension: t=3 から 窓左端 t=0 まで 3s < before_s=5
+        before_ext, _ = _snap_window_needs_extension(probes)
+        assert before_ext > 0.0  # 截断あり
+        # しかし t0=0 で延長不可 -> 截断窓評価: before=False, after=True -> 採用
+        result = _snap_start(probes, 0.0, 34.0, ext_hi=79.0)
+        assert result == pytest.approx(3.0)
+
+    # --- F2a: right-edge 2-probe in-match flicker rejected after extension ---
+
+    def test_two_probe_intra_match_flicker_at_window_tail_rejected_after_extension(
+        self,
+    ):
+        """F2a: 窓右端の 2 probe in-match 瞬断が延長後に guard で棄却される。
+
+        旧 edge_min_run=2 は「2 probe なら通す」なので F2a を解決できなかった。
+        新設計: 延長後に evidence が after 窓に入り guard が発火 -> 棄却。
+
+        この green が見逃さないもの: 延長なしで評価すると has_evidence_after=False
+        -> guard 不発 -> 2 probe 瞬断が採用され +44s 頭欠けする。
+        """
+        segs: list[MatchBoundary] = [
+            {"start": 0.0, "end": 1000.0, "type": "fl_match"},
+            {"start": 1100.0, "end": 1400.0, "type": "fl_match"},
+        ]
+        # snap 窓 [980-120, 1100+45] = [880, 1145)
+        # 次試合 evidence: t=1100..1142 / 2 probe in-match flicker: t=1143,1144
+        # after 窓 = [1144, 1154]: 窓外で見えない -> 延長が必要
+
+        def _spy(vp, anchor, t0, t1, **kw):
+            if (
+                abs(t0 - (1000.0 - EDGE_EXT_END_S)) < 1.0
+                and abs(t1 - (1100.0 + EDGE_EXT_S)) < 1.0
+            ):
+                # 初回 snap 窓 [880, 1145)
+                return _flat_probes(
+                    t0,
+                    t1,
+                    evidence=((1100.0, 1142.0),),
+                    blackout=((1143.0, 1144.0),),
+                )
+            # 延長窓 (after_ext 分広い): evidence が [1145, 1154] にある
+            return _flat_probes(
+                t0,
+                t1,
+                evidence=((1100.0, 1142.0), (1145.0, 1154.0)),
+                blackout=((1143.0, 1144.0),),
+            )
+
+        with (
+            patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy),
+            patch(
+                "allaganeye.video.vtuber_timeline._snap_outer_edges",
+                side_effect=lambda vp, a, s, **kw: s,
+            ),
+        ):
+            out = refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+
+        # 延長後: blackout (1143,1144) の after 窓に evidence (1145..) あり
+        # + before 窓に evidence (1142) あり -> guard 発火 -> 棄却 -> coarse 維持
+        assert out[1]["start"] == pytest.approx(1100.0)
+
+    # --- outer edge: flicker rejected after extension reveals both-side evidence ---
+
+    def test_outer_first_start_window_tail_flicker_rejected_after_extension(self):
+        """outer first-start 窓末尾の 1 probe 瞬断が延長後に guard で棄却される。
+
+        旧: edge_min_run=2 で棄却 (1 probe だから)。
+        新: 延長後に after 窓の evidence が見えて guard 発火 -> 棄却。
+
+        この green が見逃さないもの: 延長して after に evidence が入らなければ
+        guard が不発のまま採用される (= 延長 spy が正しく after evidence を返すこと
+        が不可欠)。
+        """
+        segs: list[MatchBoundary] = [{"start": 100.0, "end": 400.0, "type": "fl_match"}]
+
+        def _spy(vp, anchor, t0, t1, **kw):
+            # 初回 first-start 窓 [55, 160): 末尾 t=159 に 1 probe blackout,
+            # after 窓 [159, 169] は窓外
+            if abs(t0 - 55.0) < 0.5 and abs(t1 - 160.0) < 0.5:
+                return _flat_probes(
+                    t0, t1, evidence=((100.0, 158.0),), blackout=((159.0, 159.0),)
+                )
+            # 延長窓 (after_ext 分広い): t=160..169 に次試合の evidence を返す
+            if abs(t0 - 55.0) < 0.5 and t1 > 160.0:
+                return _flat_probes(
+                    t0,
+                    t1,
+                    evidence=((100.0, 158.0), (160.0, 169.0)),
+                    blackout=((159.0, 159.0),),
+                )
+            return _flat_probes(t0, t1)
+
+        with patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy):
+            out = _snap_outer_edges(Path("d.mp4"), self.ANCHOR, segs)
+
+        # 延長後: blackout (t=159) の before 窓に evidence (t=158) あり
+        # + after 窓に evidence (t=160..) あり -> guard 発火 -> 棄却 -> coarse 維持
+        assert out[0]["start"] == pytest.approx(100.0)
+
+    def test_outer_first_start_window_head_flicker_rejected_after_extension(self):
+        """outer first-start 窓左端の 1 probe 瞬断が延長後に guard で棄却される。
+
+        旧: edge_min_run=2 で棄却。
+        新: 延長後に before 窓の evidence が見えて guard 発火 -> 棄却。
+        """
+        segs: list[MatchBoundary] = [{"start": 100.0, "end": 400.0, "type": "fl_match"}]
+
+        def _spy(vp, anchor, t0, t1, **kw):
+            # 初回: t0=55, t1=160
+            if abs(t0 - 55.0) < 0.5 and abs(t1 - 160.0) < 0.5:
+                return _flat_probes(
+                    t0, t1, blackout=((56.0, 56.0),), evidence=((57.0, 66.0),)
+                )
+            # 延長窓 (before_ext 分左に広い): t=50..54 に前試合の evidence を返す
+            if t0 < 55.0:
+                return _flat_probes(
+                    t0,
+                    t1,
+                    blackout=((56.0, 56.0),),
+                    evidence=((50.0, 54.0), (57.0, 66.0)),
+                )
+            return _flat_probes(t0, t1)
+
+        with patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy):
+            out = _snap_outer_edges(Path("d.mp4"), self.ANCHOR, segs)
+
+        # 延長後: blackout (t=56) の before 窓に evidence (t=50..54) あり
+        # + after 窓に evidence (t=57) あり -> guard 発火 -> 棄却 -> coarse 維持
+        assert out[0]["start"] == pytest.approx(100.0)
+
+    # --- normal case: no extension triggered ---
+
+    def test_no_extension_when_guard_windows_untruncated(self):
+        """窓端の截断がなければ probe_gap は 2 回以内 (延長なし) で完了する。
+
+        この green が見逃さないもの: _snap_window_needs_extension が常に
+        before_ext/after_ext > 0 を返すバグは probe 回数を無条件に増やすが、
+        結果が変わらなければテストで気づけない。呼び出し回数を直接 assert する。
+        """
+        segs: list[MatchBoundary] = [
+            {"start": 0.0, "end": 400.0, "type": "fl_match"},
+            {"start": 500.0, "end": 900.0, "type": "fl_match"},
+        ]
+        call_count = [0]
+
+        def _spy(vp, anchor, t0, t1, **kw):
+            call_count[0] += 1
+            return _flat_probes(t0, t1)  # no blackout -> no extension needed
+
+        with (
+            patch("allaganeye.video.vtuber_timeline.probe_gap", side_effect=_spy),
+            patch(
+                "allaganeye.video.vtuber_timeline._snap_outer_edges",
+                side_effect=lambda vp, a, s, **kw: s,
+            ),
+        ):
+            refine_segments(Path("d.mp4"), self.ANCHOR, segs)
+
+        # 通常ケース: adj (1) + snap (1) = 2 回 (延長分の追加呼び出しなし)
+        assert call_count[0] == 2
+
+    # --- mid-window 1-probe zone-in adopted without extension ---
+
+    def test_single_probe_boundary_blackout_mid_window_adopted_without_extension(self):
+        """窓中央の 1 probe 境界 blackout は延長不要で採用される。
+
+        境界 blackout は 1-3s しかないことがある (PoC sec.2)。
+        guard 窓が両側に収まるため截断なし -> _snap_window_needs_extension は 0 を返し
+        追加 probe なしで採用される。
+        """
+        probes = _flat_probes(
+            880.0,
+            1145.0,
+            evidence=((1100.0, 1143.0),),
+            blackout=((1090.0, 1090.0),),
+        )
+        before_ext, after_ext = _snap_window_needs_extension(probes)
+        assert before_ext == pytest.approx(0.0)
+        assert after_ext == pytest.approx(0.0)
+        result = _snap_start(probes, 1000.0, 1100.0, ext_hi=1145.0)
+        # 中央の 1 probe zone-in (no evidence before in [1085,1090)) -> 採用
+        assert result == pytest.approx(1090.0)
+
+
+class TestFrozenMaxForwarding:
+    """frozen_max を _boundary_blackout_runs へ転送する (adjudicate_gap と統一)。
+
+    この green が見逃さないもの: default 一致で実行時は同値なので、転送漏れは
+    通常のテストでは検出できない。caller が閾値を上書きしたときに
+    「一方は新閾値・他方は旧 default」という silent な規則乖離になる。
+    """
+
+    def test_peek_override_honours_caller_frozen_max(self):
+        # 前後を M (band_mad=8.0) に挟まれた blackout: default では evidence 扱い
+        # -> in-match guard 発火 -> boundary ではない
+        probes = _gap_probes("M" * 10 + "bb" + "M" * 10)
+        assert _has_peek_boundary_blackout(probes) is False
+        # frozen_max=20 -> band_mad 8.0 は「凍結」= evidence でない -> guard 不発
+        assert _has_peek_boundary_blackout(probes, frozen_max=20.0) is True
+
+    def test_snap_start_honours_caller_frozen_max(self):
+        probes = _gap_probes("M" * 10 + "bbb" + "M" * 10 + "l" * 82)
+        assert len(probes) == 105
+        assert _snap_start(probes, 0.0, 100.0) is None
+        assert _snap_start(probes, 0.0, 100.0, frozen_max=20.0) == pytest.approx(12.0)

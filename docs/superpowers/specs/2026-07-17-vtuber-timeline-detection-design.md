@@ -187,7 +187,9 @@ spec §3.2 の「境界誤差 +-15s」対称 tolerance を以下の非対称 gat
 設計根拠: 製品 invariant = 「試合内容の損失ゼロ」を直接符号化する。ロビー混入は
 ユーザーが手動でトリムできるが、試合内容の欠落は取り戻せない。
 
-6 source / GT 76 試合での実測結果: recall 100% (76/76、missed 0) / spurious 0。
+6 source / GT 67 試合での実測結果: recall 100% (67/67、missed 0) / spurious 0。
+内訳: gyawa 6 / kyuma 11 / meteor 14 / shikke 16 / shinryu 12 / shirurori 8
+(SSoT = `tests/baselines/v0.3.0/vtuber-gt/*.json` の `matches[]` 総数)。
 
 ### 7.5 V2 hard-gap break は不採用: 短 gap known-limitation として残存 (P3)
 

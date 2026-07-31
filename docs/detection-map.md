@@ -177,8 +177,13 @@ OBS/masked path は bit-exact で非接触。
 | `refine_segments` (V3) | vtuber_timeline.py | gap 裁定 + blackout-peek override + snap | load-bearing |
 | `_validate_match_segments` (V4) | detector.py | 15-probe quorum (masked L2 と同 primitive、on_all_drop="empty") | load-bearing |
 
-P3 実機 gate 結果 (6 source / GT 76 試合): recall 100% / spurious 0 / 境界 tolerance 非対称
-(損失方向 15s 厳格 / 余分方向 300s bound)。`_VTUBER_ALGO_VERSION = 4` で cache key 管理。
+P3 実機 gate 結果 (6 source / GT 67 試合 = gyawa 6 + kyuma 11 + meteor 14 + shikke 16 +
+shinryu 12 + shirurori 8): recall 100% / spurious 0 / 境界 tolerance 非対称
+(損失方向 15s 厳格 / 余分方向 300s bound)。試合数の SSoT は
+`tests/baselines/v0.3.0/vtuber-gt/*.json` の `matches[]` 総数。
+cache key は `vtuber_algo` (`_VTUBER_ALGO_VERSION`) で管理し、検出出力を変える改修ごとに bump する。
+**値の正は実装** (`allaganeye/commands/split_matches.py`) と pin test (`tests/test_split_matches.py`) 側にあり、
+本 doc は値を複製しない (doc drift 防止)。
 
 ### 5.6 presence.py 資産 (spec §10)
 

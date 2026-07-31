@@ -1623,9 +1623,13 @@ class TestVtuberAlgoCache:
         result = _load_cache_hit(cache_path, cache_video, 1.0, vtuber_config)
         assert result is None, "broken vtuber_algo must cause cache miss, not hit"
 
-    def test_vtuber_algo_version_is_5(self):
-        """Pin: _VTUBER_ALGO_VERSION == 5 for #895 P3 adjudicate_gap in-match guard (Codex HIGH)."""
-        assert _VTUBER_ALGO_VERSION == 5
+    def test_vtuber_algo_version_is_6(self):
+        """Pin: _VTUBER_ALGO_VERSION == 6 for #895 P3 review (boundary blackout rule unification).
+
+        この green が見逃さないもの: 検出出力を変える fix で bump を忘れると
+        古い cache が config 越えに silent 再利用される。値そのものを pin する。
+        """
+        assert _VTUBER_ALGO_VERSION == 6
 
 
 def test_print_detection_stats_vtuber_timeline_section(capsys):

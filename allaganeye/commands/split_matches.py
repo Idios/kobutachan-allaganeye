@@ -89,7 +89,10 @@ _MASKED_ALGO_VERSION = 3
 # version 3 = #895 P2 V3/V4 integration (gap refinement + at-anchor validation)
 # version 4 = #895 P3 snap physical edge (frozen exclude + blackout adjacency limit + +-45s ext)
 # version 5 = #895 P3 adjudicate_gap blackout run in-match guard (Codex HIGH, snap rule unification)
-_VTUBER_ALGO_VERSION = 5
+# version 6 = #895 P3 review: blackout boundary rule single-source (_boundary_blackout_runs)
+#             = merge override / snap Priority 2 にも in-match guard 適用 + UNKNOWN 分断 +
+#               outer edge snap の粗 edge semantics / 交差 guard + rescue の evidence 実数化
+_VTUBER_ALGO_VERSION = 6
 
 
 def run_split(

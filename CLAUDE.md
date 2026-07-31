@@ -104,7 +104,6 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `video/presence.py` | presence（scorebar 在/不在）ベースの試合検出エンジン + GT 突合ハーネス基盤（L3 Phase 1。2 信号 fusion 再アーキ spec 参照） |
 | `video/vtuber_timeline.py` | VTuber presence x motion timeline 検出 V0-V4。`--vtuber` gate 内でのみ動作（OBS/masked path は非接触）。V0 anchor 解決 / V1 全域 10s stride scan / V2 rolling-window 粗 segmentation / V3 gap merge 裁定 + blackout-peek override + 境界 snap / V4 segment 検証。縮退 3 trigger（anchor 失敗 / UNKNOWN 過半 / V2 空）で従来 band-crop path へ fall back。詳細 spec: [docs/superpowers/specs/2026-07-17-vtuber-timeline-detection-design.md](docs/superpowers/specs/2026-07-17-vtuber-timeline-detection-design.md) |
 | `video/probe_state.py` | probe 失敗縮退の統一契約型（`PresenceState` tri-state / `PresenceSample` / `ProbeFailurePolicy`、#824）。presence / capture_region / scorebar / detector から import される中立 module（circular import 回避） |
-| `video/vtuber_timeline.py` | VTuber presence x motion timeline 検出 (#895)。`--vtuber` 専用の境界候補 generator。OBS / masked path からは import されない |
 | `video/scorebar.py` | スコアバーフィルタリング（暗転分類・試合内/非FL判定）+ 音声昇格。masked path では `_presence_at_anchor_from_raw`（at-anchor tri-state）を使い、分類規則を変更（in_match 全除去 / non_fl keep）。masked fallback の 2 層構成（Layer 1 anchor 解決 + Layer 2 segment 検証）は [#822 spec](docs/superpowers/specs/2026-07-11-issue-822-masked-oversplit-anchor-design.md) および [docs/detection-map.md](docs/detection-map.md) §5.4 を参照 |
 | `video/splitter.py` | FFmpeg で動画分割（-c copy） |
 | `export/encoder.py` | H.264 エンコーダ選択ロジック (#761)。GUI Rust 側から移植し CLI / GUI で単一の正を共有 |

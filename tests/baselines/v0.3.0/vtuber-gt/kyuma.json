@@ -7,6 +7,7 @@
  "ground_truth_provided_at": "2026-07-20",
  "convention": "zone-in",
  "tolerance_sec": 15,
+ "inclusive_slack_sec": 300.0,
  "notes": "境界は検出器と独立の 1s dense probe (at-anchor presence + frozen 除外) の collapse/recovery + blackout marker から導出、曖昧 boundary は目視裁定。meteor #12 は実長 ~285s (min_match_duration 境界ケース) だが V2 window 平滑で検出される想定",
  "matches": [
   {

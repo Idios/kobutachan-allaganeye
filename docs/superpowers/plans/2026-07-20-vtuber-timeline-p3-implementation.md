@@ -8,6 +8,12 @@
 
 **Tech Stack:** Python 3.11+ / 既存 PoC スクリプト (`tests/scripts/poc_vtuber_timeline/`) / pytest slow markers / PowerShell detached 実行 (長時間 gate)。
 
+> **Erratum (PR #915 review round 1)**: 本 plan 中の `_VTUBER_ALGO_VERSION` 値 (「現在 3 -> 4」等) は
+> 起草当時の履歴記録であり、その後の review round で追加 bump された。**値の正は常に実装**
+> (`allaganeye/commands/split_matches.py` の `_VTUBER_ALGO_VERSION` + pin test) 側にある。
+> 同じく GT 試合数は実データで **67 試合** (gyawa 6 / kyuma 11 / meteor 14 / shikke 16 /
+> shinryu 12 / shirurori 8) が正 (一部 doc にあった「76 試合」は誤記、同 round で訂正)。
+
 ## Global Constraints
 
 - **共通パラメータ原則 (spec §2.1、R6)**: per-source チューニング禁止。6 source 全部を同一パラメータで通す。精度改善もパラメータ/ロジックは全 source 共通
