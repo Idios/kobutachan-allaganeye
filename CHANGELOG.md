@@ -26,10 +26,11 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
 - **`export` コマンド** (#761): `metadata.json` から試合を書き出す。`--codec h264` で
   NVENC / QSV / AMF / libx264 を自動選択し、NVENC 選択時は GPU SKU テーブルの engine 数
   だけ並列スロットを確保する (default の `--codec copy` はディスク I/O 競合を避けるため
-  1 並列固定)。スロット数は `--concurrency` に加え環境変数
-  `ALLAGANEYE_EXPORT_CONCURRENCY` でも上書きできる (SKU テーブル未収録の Workstation /
-  Datacenter GPU や、OBS が NVENC engine を占有している場合の調整用)。GUI の書き出しも
-  同じ Python コアを共有する。
+  1 並列固定)。`--concurrency` は自動決定されたスロット数を上限として**絞る**方向にのみ
+  効く (OBS が NVENC engine を占有している場合などの調整用で、これでスロット数は増えない)。
+  スロット数そのものを**引き上げる**には環境変数 `ALLAGANEYE_EXPORT_CONCURRENCY` を使う
+  (SKU テーブル未収録の GPU は既定 1 スロットのため、Workstation / Datacenter GPU では
+  こちらで指定する)。GUI の書き出しも同じ Python コアを共有する。
 - **masked (チャット欄マスク) 録画の検出対応** (#821 / #822): 全画面にマスク画像が
   合成された録画向けに、mask のない領域を自動検出して再検知する `--masked` を追加。
   anchor presence と segment 検証の 2 層構成で過分割を抑制する。暗転が 1 件も検出
