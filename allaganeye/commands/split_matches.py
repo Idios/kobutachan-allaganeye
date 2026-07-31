@@ -746,9 +746,10 @@ def _workers_summary_str(workers: int | None) -> str:
     """Format workers count for verbose summary, resolving ``auto`` (#389).
 
     When ``config.workers is None`` the CLI delegates to
-    ``_resolve_workers`` which picks ``min(cpu_count, 24)``.  Users with
-    performance issues need to see the *resolved* number to diagnose
-    under-parallelised runs, not just the ``auto`` placeholder.
+    ``_resolve_workers``, whose docstring is the source of truth for the
+    cap (#862).  Users with performance issues need to see the *resolved*
+    number to diagnose under-parallelised runs, not just the ``auto``
+    placeholder.
     """
     if workers is not None:
         return str(workers)

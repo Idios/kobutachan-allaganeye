@@ -50,13 +50,14 @@ allaganeye split --from-metadata <metadata.json> [OPTIONS]
 | `--blackout-threshold` | `15.0` | 暗転検知の輝度閾値（0-255） |
 | `--min-match-duration` | `300.0` | 最小試合時間（秒）。これより短いセグメントは無視 |
 | `--min-blackout-duration` | `3.0` | 最小暗転時間（秒）。これより短い暗転は無視 |
-| `--workers` | auto | 検知の並列ワーカー数（デフォルト: 自動=`min(cpu_count, 24)`） |
+| `--workers` | auto | 検知の並列ワーカー数。auto の解決値は実装の cap に従う (正: `allaganeye/video/detector.py` の `_resolve_workers` docstring) |
 | `--gpu` | `false` | GPU アクセラレーション検知を強制（チャンク並列デコード）。利用不可時は CPU フォールバック。**`--no-gpu` と同時指定は排他エラー (exit 5) (#419)** |
 | `--no-gpu` | `false` | GPU を無効化し CPU 検知を強制する。**`--gpu` と同時指定は排他エラー (exit 5) (#419)** |
 | `--gpu-vendor` | `auto` | 使用する GPU vendor を明示指定 (#546 / #553 / #550 / #582)。値: `auto` / `nvidia` / `amd` / `intel`。**3 vendor すべて実装済み** (`nvidia`=cuvid #546 / `amd`=d3d11va+hwdownload #553 / `intel`=QSV+hwdownload #550 h264/hevc/av1 + #582 vp9)。probe に無い vendor を要求すると exit 5。default は probe 結果から `_VENDOR_PREFERENCE` (nvidia > amd > intel) 順で選ぶ |
 | `--no-cache` | `false` | キャッシュされた検知結果を無視して再検知する |
 | `--keep-trailing` | `false` | default は試合後 trailing を `post_match: true` フラグ化して metadata に保持し、default split (MP4) から除外する (#805 段階2 で不可逆削除を廃止)。本フラグ指定時は flagging を skip し、trailing を通常 match として MP4 分割・保持する (#797 probe 無効化)。段階2 で `post_match_trailing_dropped` warning は emit されなくなった (flag が代替) |
 | `--no-audio` | `false` | 音声ベースの試合境界昇格（Fanfare スキャン）を無効化する。**現在は音声モジュールが凍結中（#327）のため、本フラグの値に関わらずスキャンは常にスキップされる。verbose 出力では `audio=frozen` と表示される (#384)** |
+| `--masked` | `false` | チャット欄マスク画像が全画面に合成された録画向け。mask のない領域を自動検出して再検知する。暗転が一部見つかる場合でも本フラグ指定でこの経路を強制する。**`--vtuber` と同時指定は排他エラー (exit 5)** |
 | `--dry-run` | `false` | 検知のみ実行し分割しない（検知結果はキャッシュに保存される） |
 | `-v`, `--verbose` | `false` | 詳細出力（メタデータ詳細、gap 情報）。**`-q` と同時指定は排他エラー (exit 5) (#419)** |
 | `-q`, `--quiet` | `false` | 進捗出力を抑制（出力ファイル一覧のみ）。**`-v` と同時指定は排他エラー (exit 5) (#419)** |
@@ -70,6 +71,8 @@ allaganeye split --from-metadata <metadata.json> [OPTIONS]
 - `output/.detection_cache.json` — 検知結果キャッシュ（同一ソース・同一パラメータの再実行を高速化。`--no-cache` で無視）
 
 ### verbose (`-v`) 出力例
+
+> **この出力例は `allaganeye 0.1.1` 実行時に採取した実ログ**であり、行の**書式**を示すもので値は当時のもの。特に `workers=auto (24)` の `24` は当時の worker 上限で、**現在の auto 解決値ではない** (現在の上限の正は `allaganeye/video/detector.py` の `_resolve_workers` docstring。同じ 16C/32T 環境でも現在は異なる値になる)。
 
 ```text
 allaganeye 0.1.1 (ffmpeg 8.1, Python 3.12.10, Windows 11)
@@ -143,7 +146,7 @@ Total: 0m07s
 
 #### キャッシュ再読み込み失敗時のフォールバック
 
-`_load_cache` 検証通過後でも race condition / 破損 / 権限変更等で helper 側の読み直しが失敗しうる。その場合はヘッダ (`Cache hit: detection params from ...`) を常に emit した上で、失敗理由を `(unavailable: ...)` 行で通知する。split 本体は妨げない (helper は raise しない):
+`_load_cache_hit` 検証通過後でも race condition / 破損 / 権限変更等で helper 側の読み直しが失敗しうる。その場合はヘッダ (`Cache hit: detection params from ...`) を常に emit した上で、失敗理由を `(unavailable: ...)` 行で通知する。split 本体は妨げない (helper は raise しない):
 
 | シナリオ | 出力 |
 | --- | --- |
@@ -215,19 +218,26 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 
 **スキーマ契約の総論**は [`docs/metadata-spec.md`](metadata-spec.md) を参照。生成契約・書き込み方針・GUI 編集契約・`metadata.original.json` policy・手動編集シナリオ・将来拡張が集約されている。
 
-**トップレベル:**
+**トップレベル:** (`schemas/metadata.schema.json` の全 16 field を掲載。フィールドごとの詳細契約は [`docs/metadata-spec.md`](metadata-spec.md) が正)
 
 | フィールド | 型 | 説明 |
 | --- | --- | --- |
+| `schema_version` | string | metadata スキーマの版数 (現行 `"1"`)。欠落は v1 として読む (#515) |
 | `source` | string | 入力動画のファイルパス |
 | `source_duration` | float | 入力動画の総再生時間（秒） |
 | `source_duration_display` | string | 総再生時間の表示形式（MM:SS or H:MM:SS） |
+| `source_fps` | float | 入力動画のフレームレート。存在する場合は必ず float (省略可能、pre-0.2.0 legacy metadata.json では欠落する場合があり、読み込み側は欠落時 DEFAULT_FPS=60 で補完する) |
 | `detected_at` | string | 検知パイプライン開始直前のタイムスタンプ (`detection_started_at` と同値、後方互換のため維持、UTC ISO 8601 秒精度、`Z` 終端、例: `"2026-04-19T12:34:56Z"`)。`run_split` 開始直後に生成し、キャッシュヒット時も本ランの生成時刻を記録する |
 | `detection_started_at` | string | 検知パイプライン開始直前のタイムスタンプ (#586)。`detected_at` と同値。新規書き込みは ✓ / 読み込み時は欠落許容 (legacy metadata.json)。`--from-metadata` 経路は元 metadata の値を pass-through |
 | `detection_completed_at` | string | metadata.json 書き込み直前のタイムスタンプ (#586)。GUI CompleteScreen が `completed - started` で「所要」を表示。新規書き込みは ✓ / 読み込み時は欠落許容。`--from-metadata` 経路は元 metadata の値を pass-through |
 | `detection_params` | object | 検知パラメータのスナップショット（下表） |
 | `matches` | array | 検出された試合セグメント |
 | `gaps` | array | 試合間の有意なギャップ（>=5分） |
+| `warnings` | array | 検知時の警告エントリ (#518)。新規検知では常に空配列、`--from-metadata` 経路では元 metadata の値を preserve する (#805 段階1) |
+| `system_info` | object | 検知実行環境の記録 (#591)。GPU vendor は export のエンコーダ選択に使われる |
+| `brightness_samples` | object | GUI タイムライン描画用の輝度サンプル (#569) |
+| `capture_regions` | object | 解決された検出 ROI とその縮退 provenance (#810) |
+| `minimap_regions` | array | `minimap` コマンドが書き戻すエリアマップ切抜き領域 (#481) |
 
 **matches[]:**
 
@@ -266,7 +276,7 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 | `min_blackout_duration` | float | 最小暗転時間（秒） |
 | `no_audio` | bool | 音声ベースの境界昇格 (Fanfare スキャン) を無効化したか |
 | `use_gpu` | bool \| null | GPU 検知の指定値。`null` は CLI で `--gpu` を指定せずコーデック自動選択に任せたことを示す |
-| `workers` | int \| null | 並列ワーカー数の指定値。`null` は auto（`_resolve_workers` が `min(cpu_count, 24)` で解決）を示す |
+| `workers` | int \| null | 並列ワーカー数の指定値。`null` は auto (`_resolve_workers` が実装の cap で解決) を示す |
 
 ## detect コマンド
 
@@ -286,7 +296,7 @@ allaganeye detect <video_path> [OPTIONS]
 
 ### オプション
 
-`split` と同じオプションセットだが `--dry-run` は存在しない (detect 自体が "dry-run 相当" のため)。
+`split` と概ね同じオプションセットだが、`--dry-run` は存在せず (detect 自体が "dry-run 相当" のため)、`--progress-format` は detect 固有 (GUI wrapper 用、#569)。
 
 | オプション | デフォルト | 説明 |
 | --- | --- | --- |
@@ -297,11 +307,14 @@ allaganeye detect <video_path> [OPTIONS]
 | `--min-blackout-duration` | `3.0` | 最小暗転時間（秒） |
 | `--workers` | auto | 検知の並列ワーカー数 |
 | `--gpu` / `--no-gpu` | auto | GPU 強制 / CPU 強制 (排他) |
+| `--gpu-vendor` | `auto` | 使用する GPU vendor を明示指定 (`auto` / `nvidia` / `amd` / `intel`)。split と同仕様 |
 | `--no-cache` | `false` | キャッシュ無視で再検知 |
 | `--keep-trailing` | `false` | post-match trailing の flagging を skip し通常 match として保持 (#805 段階2、default は flag して MP4 除外・metadata 保持) |
 | `--no-audio` | `false` | 音声昇格無効化 (現在 frozen) |
+| `--masked` | `false` | チャット欄マスク録画向けの mask-free 領域自動検出 + 再検知。split と同仕様 |
 | `-v`, `--verbose` | `false` | 詳細出力 |
 | `-q`, `--quiet` | `false` | 進捗出力抑制 |
+| `--progress-format` | `text` | 進捗の出力形式。`text` は click progress bar + typer ステータス行、`json` は stdout に 1 行 1 JSON (`phase` / `completed` / `total` / `elapsed_s`) を emit し人間可読出力を全抑制する (Tauri GUI wrapper 用、#569)。`text` / `json` 以外は exit 5 |
 
 ### 出力
 
@@ -356,7 +369,7 @@ echo '<metadata-json>' | allaganeye export --stdin [...]
 | --- | --- | --- |
 | `--output-dir DIR` | (必須) | 出力先ディレクトリ (省略不可) |
 | `--codec copy\|h264` | `copy` | `copy` (FFmpeg `-c copy`、無劣化分割) または `h264` (NVENC / QSV / AMF / libx264 で再エンコード) |
-| `--concurrency N` | SKU テーブル値 | 同時 export スロット数を上書き (`enumerate_h264_encoders` が返す値のデフォルト: RTX 5090 → 3、RTX 4090/4080/4070 → 2、RTX 4060 / 不明 NVIDIA → 1、QSV / AMF / libx264 → 1) |
+| `--concurrency N` | SKU テーブル値 | 同時 export スロット数を上書き (`enumerate_h264_encoders` が返す値のデフォルト: RTX 5090 → 3、RTX 4090/4080/4070 → 2、RTX 4060 / 不明 NVIDIA → 1、QSV / AMF / libx264 → 1)。**`--codec copy` 時は本フラグより先にスロットが 1 に切り詰められるため無効** — 再エンコードしない `-c copy` を並列化してもディスク I/O を奪い合うだけでスループットが上がらないため (`allaganeye/commands/export.py`) |
 | `--name-pattern PATTERN` | `{idx:03}_{type}_{start}.mp4` | 出力ファイル名テンプレート。使用可能トークン: `{idx}` / `{idx:03}` / `{type}` / `{start}` (MM-SS 形式。1 時間以上の場合は H-MM-SS、例: `1-23-41`) / `{date}` |
 | `--include I,J,K` | (すべて対象) | metadata の `matches[].index` (**1 始まり**) と照合する match フィルタ (カンマ区切り)。`--exclude` との併用時は `include - exclude` が有効集合 |
 | `--exclude I,J,K` | (なし) | metadata の `matches[].index` (**1 始まり**) と照合する除外フィルタ (カンマ区切り)。`type_override == "skip"` の match は本フラグに関係なく常に除外。`post_match: true` の match も無条件除外 (`--include` 指定でも MP4 化されない、#805 Phase 1 契約) |
@@ -512,7 +525,7 @@ allaganeye debug-brightness <video_path> [OPTIONS]
 | `--start` | `0.0` | 開始時刻（秒） |
 | `--end` | 動画全長 | 終了時刻（秒） |
 | `--interval` | `1.0` | サンプリング間隔（秒） |
-| `--workers` | auto | 並列ワーカー数（デフォルト: 自動=`min(cpu_count, 24)`） |
+| `--workers` | auto | 並列ワーカー数。auto の解決値は実装の cap に従う (正: `_resolve_workers` docstring) |
 | `--roi-mode` | なし | ROI 分析モード。`scorebar`: スコアバー ROI の輝度・色情報を追加出力。`scorebar-detail`: セクション別の詳細情報も出力 |
 
 ### 出力形式

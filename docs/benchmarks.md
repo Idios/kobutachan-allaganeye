@@ -75,7 +75,7 @@
 
 ### CPU コア数
 
-- `max_workers` のデフォルトは `min(cpu_count, 24)`
-- 32コア環境: workers=24 で十分な並列度（残りのコアは OS + ffmpeg プロセスに使用）
+- `max_workers` のデフォルトは CPU コア数と実装側の cap から解決される (正: `allaganeye/video/detector.py` の `_resolve_workers` docstring)
+- 多コア環境では cap で頭打ちになる。残りのコアは OS + ffmpeg プロセスに使われる（下の §性能改善の推移 の数値は当時の cap 24 で計測したもの）
 - 8コア環境: workers=8 が上限。処理時間は 32コア比で ~3x 長くなる想定
 - `--workers` で明示指定可能
