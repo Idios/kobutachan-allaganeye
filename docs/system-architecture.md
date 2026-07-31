@@ -65,7 +65,9 @@ Allagan Eye は **別 exe 方式**を採用する (2026-04-23 確定、#527)。�
 
 GUI は以下のタイミングで CLI を subprocess として呼び出す (`tokio::process::Command` で実装済み)。
 
-**本表が GUI → CLI 呼び出し口の正 (SSoT) であり、網羅である。**他節・他 doc は呼び出し口を再列挙せず本表を参照すること (#818 の doc SSoT 規約を doc 内の列挙にも適用。列挙が複数箇所にあると、そのたびに不完全化する余地が生まれるため)。網羅性の根拠は `gui/src-tauri/src/lib.rs` で CLI (`cmd_spec.program`) を spawn する箇所が以下 5 つに限られること: `start_detect` / `enumerate_h264_encoders` / `start_export` / `start_minimap` / `detect_minimap_regions`。ffprobe / ffmpeg を Rust から直接 spawn する経路 (サムネイル生成等) は CLI 呼び出しではないため本表の対象外。
+**本表が GUI → CLI 呼び出し口の正 (SSoT) であり、網羅である。**他節・他 doc は呼び出し口の一覧と argv を再掲せず本表を参照すること (#818 の doc SSoT 規約を doc 内の列挙にも適用。同じ列挙が複数箇所にあると、そのたびに片方だけ古くなる余地が生まれるため)。個別の呼び出しに言及すること自体は妨げないが、その場合も argv 全体は書かず本表に委ねる。
+
+網羅性の根拠は `gui/src-tauri/src/lib.rs` で CLI (`cmd_spec.program`) を spawn する箇所が以下 5 つに限られること: `start_detect` / `enumerate_h264_encoders` / `start_export` / `start_minimap` / `detect_minimap_regions`。ffprobe / ffmpeg / explorer.exe を Rust から直接 spawn する経路 (サムネイル生成・フォルダを開く等) は CLI 呼び出しではないため本表の対象外 (プロセス木と孤児対策の観点での spawn 一覧は [process-tree-orphan-audit.md](process-tree-orphan-audit.md) が別途持つ)。
 
 | GUI 画面 | subprocess 引数 | 生成物 | 実装 PR |
 | --- | --- | --- | --- |
@@ -146,18 +148,18 @@ GUI Tauri Rust 側 (`gui/src-tauri/src/lib.rs::resolve_allaganeye_command`) は 
 sequenceDiagram
     participant User
     participant GUI as allaganeye-gui.exe
-    participant CLI as allaganeye detect/export
+    participant CLI as allaganeye CLI
     participant Disk as metadata.json + MP4
 
     User ->> GUI: 動画ファイルをドラッグ
-    GUI ->> CLI: spawn: allaganeye detect <video> -o <output> --progress-format json
+    GUI ->> CLI: spawn: detect (argv は §2.3)
     CLI ->> Disk: metadata.json 書き込み
     CLI -->> GUI: exit 0
     GUI ->> Disk: metadata.json 読み込み (load_metadata)
     User ->> GUI: 試合境界を調整 → [適用]
     GUI ->> Disk: metadata.json 上書き + metadata.original.json 退避
     User ->> GUI: [書き出し]
-    GUI ->> CLI: spawn: allaganeye export --stdin --json (metadata を stdin 渡し)
+    GUI ->> CLI: spawn: export (metadata を stdin 渡し、argv は §2.3)
     CLI -->> GUI: JSON Lines 進捗 (export-progress イベント)
     CLI ->> Disk: match_NNN.mp4 生成
     CLI -->> GUI: exit 0
