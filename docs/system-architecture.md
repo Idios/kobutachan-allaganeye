@@ -142,7 +142,7 @@ GUI Tauri Rust 側 (`gui/src-tauri/src/lib.rs::resolve_allaganeye_command`) は 
 sequenceDiagram
     participant User
     participant GUI as allaganeye-gui.exe
-    participant CLI as allaganeye detect/split
+    participant CLI as allaganeye detect/export
     participant Disk as metadata.json + MP4
 
     User ->> GUI: 動画ファイルをドラッグ
@@ -153,7 +153,8 @@ sequenceDiagram
     User ->> GUI: 試合境界を調整 → [適用]
     GUI ->> Disk: metadata.json 上書き + metadata.original.json 退避
     User ->> GUI: [書き出し]
-    GUI ->> CLI: spawn: allaganeye split --from-metadata <meta>
+    GUI ->> CLI: spawn: allaganeye export --stdin --json (metadata を stdin 渡し)
+    CLI -->> GUI: JSON Lines 進捗 (export-progress イベント)
     CLI ->> Disk: match_NNN.mp4 生成
     CLI -->> GUI: exit 0
 ```

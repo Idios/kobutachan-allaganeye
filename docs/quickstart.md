@@ -146,7 +146,7 @@ Allagan Eye は FF14 フロントラインの一般的な録画に合わせて�
 Portable ZIP には以下のソフトウェアが同梱されています。詳細な利用条件は各 LICENSE ファイルを参照してください。
 
 - **allaganeye 本体**: MIT License (リポジトリの `LICENSE` ファイル)
-- **Python**: PSF License (`python\LICENSE.txt`)
+- **Python**: PSF License (PyInstaller frozen bundle 内 `allaganeye\_internal\` に同梱。License 全文: <https://docs.python.org/3/license.html>)
 - **FFmpeg**: LGPLv3 (`ffmpeg\LICENSE.txt` に全文)
   - ビルド: [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) の win64-lgpl-shared build
   - 対応 FFmpeg ソース ref: [git.ffmpeg.org](https://git.ffmpeg.org/ffmpeg.git) の n8.1 系列 commit `g75d37c499d` (`scripts/build-portable-zip.ps1` の `$FFmpegAsset` から自動抽出)
