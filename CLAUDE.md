@@ -11,7 +11,7 @@ FF14 PvPコンテンツ「フロントライン」の長時間録画動画（OBS
 | レイヤー | 処理 | 技術 | 状態 |
 | --- | --- | --- | --- |
 | L1: 試合分割 | 暗転検知で試合単位に分割 | FFmpeg（検知+分割） | **リリース済み** (v0.1.0-preview 2026-04-17, v0.1.1 2026-04-20) |
-| L2: 配布・統合 | GUI + ゼロ環境構築配布 | Tauri 2.x + React 19 + TS | **開発中** |
+| L2: 配布・統合 | GUI + ゼロ環境構築配布 | Tauri 2.x + React 19 + TS | **リリース済み** (v0.2.0 / v0.2.1) |
 | L3 (new): 配信形式対応 + 性能改善 | minimap 切抜き / masked (チャット欄画像マスク) 品質 / export 並列・ZIP size・detect 高速化 (2026-07-06 rescope #872 で VTuber を一旦後送 → 2026-07-17 再開 #895 timeline 再設計、release 割当は /release Step 0c 判断。GUI responsiveness は v0.3.0 外 #670) | OpenCV / template matching / NVENC・QSV・AMF / Tauri | **開発中** (v0.3.0 target) |
 | L4 (former L3): メタデータ化 | キルログ・音声・チャットをタイムスタンプ化 | Tesseract / Whisper | 未着手 |
 | L5 (former L4): 価値評価 | 抽出データを ML が判定 | ローカル ML（scikit-learn 等） | 未着手 |
@@ -59,6 +59,8 @@ allaganeye --version                       # バージョン表示（短縮形: 
 allaganeye debug-brightness <video_path>   # フレーム輝度 CSV 出力
 allaganeye minimap <metadata.json>                               # エリアマップ window 領域を提案（exit 4）
 allaganeye minimap <metadata.json> --region X,Y,W,H [-o DIR]    # 指定領域で crop + H.264 encode
+allaganeye export <metadata.json> -o <dir>                       # metadata から並列書き出し (#761、default codec=copy)
+allaganeye export <metadata.json> -o <dir> --codec h264           # H.264 再エンコード（NVENC/QSV/AMF/libx264 を自動選択）
 
 # GUI (L2a Tauri、#483 で bootstrap)
 # 詳細は docs/gui-development.md を参照
@@ -77,7 +79,7 @@ cd gui/src-tauri && cargo check         # Rust 型/依存チェック
 
 ```text
 MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
-           → detector.py（ffmpeg 並列 -ss プローブで暗転検知 → 試合境界タイムスタンプ）
+           → detector.py（チャンク分割デコードで暗転検知 → 試合境界タイムスタンプ）
            → splitter.py（FFmpeg -c copy で無劣化分割）
            → 出力: 試合ごとのMP4 + metadata.json
 ```
@@ -90,17 +92,27 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `config.py` | 設定管理（検知閾値、出力パス等） |
 | `exceptions.py` | エラークラス + exit code マッピング |
 | `ffmpeg_path.py` | ffmpeg/ffprobe のパス自動検索（winget, Homebrew, PATH, 環境変数） |
+| `system_info.py` | `-v` verbose ヘッダ用のハード情報取得 (#377) + GPU vendor probe (`probe_gpu_vendors`)。全 public helper は失敗しても例外を投げない。失敗時の戻り値は型ごとに異なり、`str` を返すスカラ helper (`get_cpu_info` / `get_gpu_info` / `get_memory_info` / `get_disk_info`) は `"(unavailable)"`、`list` を返す helper (`probe_gpu_vendors` / `get_gpu_info_lines`) は空リスト、`gpu_vendor_probe_warning` は `None` を返す |
+| `integrity.py` | Portable ZIP 同梱物の整合性検査 (#668)。`integrity-manifest.json` を読み CLI `--version` で検証 (exit 7)。Rust 側 `gui/src-tauri/src/integrity.rs` が同ロジックをミラー |
+| `metadata_types.py` | **自動生成** (`python scripts/codegen/generate.py`、#612)。`schemas/metadata.schema.json` から TypedDict を生成。手編集禁止 |
 | `commands/split_matches.py` | split コマンドのオーケストレーション。タイムスタンプ表示・gap 検出・sample_interval 自動調整 |
 | `commands/debug_brightness.py` | debug-brightness コマンド。フレーム輝度を CSV 出力（閾値チューニング用） |
 | `video/probe.py` | ffprobe でメタデータ取得（解像度、fps、長さ） |
-| `video/detector.py` | ffmpeg 並列プローブで暗転検知、試合境界抽出（CPU モード） |
+| `video/detector.py` | チャンク分割デコードで暗転検知、試合境界抽出（CPU モード、#214 以降）。Pass 2 の精密計測のみ per-frame `-ss` プローブを使う |
 | `video/gpu_detector.py` | GPU アクセラレーション検知（チャンク並列デコード） |
 | `video/capture_region.py` | 検出 ROI（`CaptureRegion`）の解決。scorebar 帯 anchor の多フレーム consensus（`detect_scorebar_band_region` / `consensus_scorebar_localization`）/ FULL_FRAME 縮退。`--vtuber` gate 内でのみ有効（L3 Phase 1）。`localize_scorebar_at_anchor`（anchor ±60px 帯 + x-IoU gate、per-video v2 相当、#822）は masked fallback の at-anchor presence primitive として共用。検出 subsystem の現状 map は [docs/detection-map.md](docs/detection-map.md)。解決結果は metadata.json `capture_regions` に永続化 (#810、RegionTimeline serialize 形 + 縮退 provenance) |
 | `video/presence.py` | presence（scorebar 在/不在）ベースの試合検出エンジン + GT 突合ハーネス基盤（L3 Phase 1。2 信号 fusion 再アーキ spec 参照） |
 | `video/vtuber_timeline.py` | VTuber presence x motion timeline 検出 V0-V4。`--vtuber` gate 内でのみ動作（OBS/masked path は非接触）。V0 anchor 解決 / V1 全域 10s stride scan / V2 rolling-window 粗 segmentation / V3 gap merge 裁定 + blackout-peek override + 境界 snap / V4 segment 検証。縮退 3 trigger（anchor 失敗 / UNKNOWN 過半 / V2 空）で従来 band-crop path へ fall back。詳細 spec: [docs/superpowers/specs/2026-07-17-vtuber-timeline-detection-design.md](docs/superpowers/specs/2026-07-17-vtuber-timeline-detection-design.md) |
 | `video/probe_state.py` | probe 失敗縮退の統一契約型（`PresenceState` tri-state / `PresenceSample` / `ProbeFailurePolicy`、#824）。presence / capture_region / scorebar / detector から import される中立 module（circular import 回避） |
+| `video/vtuber_timeline.py` | VTuber presence x motion timeline 検出 (#895)。`--vtuber` 専用の境界候補 generator。OBS / masked path からは import されない |
 | `video/scorebar.py` | スコアバーフィルタリング（暗転分類・試合内/非FL判定）+ 音声昇格。masked path では `_presence_at_anchor_from_raw`（at-anchor tri-state）を使い、分類規則を変更（in_match 全除去 / non_fl keep）。masked fallback の 2 層構成（Layer 1 anchor 解決 + Layer 2 segment 検証）は [#822 spec](docs/superpowers/specs/2026-07-11-issue-822-masked-oversplit-anchor-design.md) および [docs/detection-map.md](docs/detection-map.md) §5.4 を参照 |
 | `video/splitter.py` | FFmpeg で動画分割（-c copy） |
+| `export/encoder.py` | H.264 エンコーダ選択ロジック (#761)。GUI Rust 側から移植し CLI / GUI で単一の正を共有 |
+| `export/nvenc_probe.py` | SKU テーブルによる NVENC 物理エンジン数の推定 (#761)。live な `nvidia-smi` probe は不採用 |
+| `export/pool.py` | 並列 export オーケストレータ (#761)。`ThreadPoolExecutor` で N ワーカーを起動し、`cancel_event` で in-flight ffmpeg を kill |
+| `export/ffmpeg_runner.py` | 単一 match の ffmpeg 起動 + libx264 fallback retry (#761)。NVDEC/NVENC 失敗パターン検知は `_nvenc_decode_stage_failure` (#791 / #899) |
+| `export/schema.py` | stdout JSON Lines の wire protocol dataclass (#761)。Rust `start_export` が `ExportProgress` イベントへ変換 |
+| `export/wire.py` | thread-safe な stdout JSON Lines emitter (#761)。`threading.Lock` で 1 行 emit の原子性を保証 |
 | `audio/extract.py` | ffmpeg で音声 PCM 抽出 |
 | `audio/features.py` | log-mel スペクトログラム計算と保存 |
 | `audio/matcher.py` | 参照 BGM と target の相互相関で peak 検出 |
@@ -108,8 +120,11 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `audio/refs/` | 同梱参照特徴量（`fanfare.npz` / `war_room.npz`、#306） |
 | `commands/detect.py` | detect コマンド。検知のみ実行し metadata.json を出力 (#463) |
 | `commands/minimap.py` | minimap コマンド。提案モード（領域検出・表示、exit 4）/ crop モード（`--region` 指定、H.264 encode + metadata write-back、#481） |
+| `commands/export.py` | export コマンド (#761)。metadata.json (positional または `--stdin`) を読み、エンコーダスロットを列挙して並列 export を実行。`--json` で JSON Lines 進捗を emit |
+| `commands/encoder_slots.py` | 隠しコマンド `encoder-slots` (#761)。GUI Tauri `enumerate_h264_encoders` が subprocess で呼び、EncoderSlot 一覧を JSON で返す |
 | `video/areamap.py` | エリアマップ window の seed 検出 + per-match consensus（`resolve_match_regions`）。cv2 は lazy import（opencv 未インストール環境でも import 失敗しない）。提案モード専用 (#481) |
-| `detection/` | 検知パイプラインの共有ヘルパ (#463)。`format.py` (フォーマッタ) / `metadata_writer.py` (atomic read/write) |
+| `detection/` | 検知パイプラインの共有ヘルパ (#463)。`format.py` (フォーマッタ) / `metadata_writer.py` (atomic read/write) / `migrations.py` (`schema_version` 検証 + 前方 migration、#515) / `progress_emitter.py` (`--progress-format json` の JSON Lines emitter、#569) / `warnings.py` (metadata `warnings` の payload scaffold、#518) |
+| `tools/regen_audio_refs.py` | 同梱参照特徴量 (`audio/refs/*.npz`) をメンテナ手元の録画から再生成する開発用スクリプト |
 | `gui/` | L2a Tauri GUI (React 19 + TS + Vite + Zustand + zod)。`#483` で bootstrap、`#463` で data 層、`#464` で画面骨格 + CSS Modules、`#516` で `[元に戻す]` 機能、`#514` で排他管理 (mtime 検知 + ConflictModal)、`#587` で a11y polish (focus trap / Escape / DisabledTooltip / jest-axe)、`#893` で minimap crop GUI 統合 (MinimapScreen + `start_minimap` Tauri command、GUI 完結)。詳細は [docs/gui-development.md](docs/gui-development.md) / [docs/design/README.md](docs/design/README.md) / [docs/ui-architecture.md](docs/ui-architecture.md) / [docs/ui-interaction-spec.md](docs/ui-interaction-spec.md) (#590, UI 部品ごとの操作 → 状態遷移 / store mutation / 例外処理) / [docs/a11y-policy.md](docs/a11y-policy.md) (#587, screen reader scope / キーボード全機能 / focus visible 等) |
 | `gui/src/screens/` | 6 画面 (drop / detecting / complete / preview / export / minimap) + phase reducer。#464 で追加、#893 で MinimapScreen 追加（minimap crop GUI 統合、drag-select + 数値入力 + 自動検出 + 進捗表示） |
 | `gui/src/components/` | 共通 UI コンポーネント (AllaganCorner / AllaganSigil / WindowChrome / BrightnessTimeline / RestoreButton / SampleModeBanner / ConflictModal 等)。#464 で追加、#633 で sample mode 全画面 read-only |
@@ -117,15 +132,15 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `gui/src/styles/tokens.css` | `aetherTheme` の CSS 変数定義 (#464 で追加) |
 | `gui/src/styles/path-display.module.css` | 5 画面横断のファイルパス表示 CSS Module (`.pathDisplay` container / `.pathSecondary` parent dir 行 RTL ellipsis truncate)、#676 で追加 (`docs/ui-interaction-spec.md §1.6` 参照) |
 | `gui/src/utils/path.ts` | Windows / POSIX path 操作 utility。`stripExtendedPathPrefix` (Windows `\\?\` prefix 除去) / `joinPath` (OS-appropriate separator) / `splitPath` (fileName + parentDir 分解、#676 で追加) |
-| `gui/src-tauri/` | Tauri 2 Rust バックエンド (`load_metadata` / `apply_changes` / `restore_from_original` / `check_backup_exists` / `get_metadata_mtime` / `start_export` / `enumerate_h264_encoders` (#761) / `start_minimap` (#893) / `read_recent` / `add_recent` / `clear_recent` (#571) command、axum/tower-http による動画配信は #465 で実装)。`start_export` は Python subprocess を起動して JSON Lines で進捗を受け取り、`enumerate_h264_encoders` は GPU SKU table から利用可能エンコーダスロット一覧を返す (#761)。`start_minimap` は `allaganeye minimap --json --expected-mtime` subprocess を起動し `minimap-progress` イベントで進捗を emit する (#893) |
+| `gui/src-tauri/` | Tauri 2 Rust バックエンド (`load_metadata` / `apply_changes` / `restore_from_original` / `check_backup_exists` / `get_metadata_mtime` / `start_export` / `enumerate_h264_encoders` (#761) / `start_minimap` (#893) / `read_recent` / `add_recent` / `clear_recent` (#571) command、axum/tower-http による動画配信は #465 で実装)。`start_export` は Python subprocess を起動して JSON Lines で進捗を受け取り、`enumerate_h264_encoders` は GPU SKU table から利用可能エンコーダスロット一覧を返す (#761)。`start_minimap` は `allaganeye minimap` subprocess を起動し `minimap-progress` イベントで進捗を emit する (#893)。GUI → CLI 呼び出し口と argv の正は [`docs/system-architecture.md`](docs/system-architecture.md) §2.3 |
 
 ### 検知アルゴリズム（detector.py）
 
 **Pass 1: 粗いスキャン**
 
 1. `duration_hint` から `sample_interval` 秒間隔のタイムスタンプを生成（長時間動画は自動で 2-3s に調整）
-2. 各タイムスタンプで `ffmpeg -threads 1 -ss {t} -i` により 1 フレームを 320x180 grayscale でデコード
-3. `ThreadPoolExecutor(max_workers=min(cpu_count, 32))` で並列実行
+2. 動画をチャンクに分割し、各チャンクをそれぞれ 1 プロセスの ffmpeg で dual seek + `select='not(mod(n,N))'` filter によりデコード。フレームは 320x180 grayscale (#214 / #576)
+3. `ThreadPoolExecutor` で並列実行。チャンク数は `_scan_cpu`、ワーカー数上限は `_resolve_workers` が解決する (正: `allaganeye/video/detector.py`)
 4. 各フレームの平均輝度が `blackout_threshold` 以下なら暗転と判定
 5. 連続する暗転フレームを `_group_blackout_regions()` で blackout region にマージ
 
@@ -161,12 +176,13 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 **GPU モード** (`--gpu`)
 
 - CPU モードの Pass 1 を GPU チャンク並列デコードで代替（`gpu_detector.py`）
-- 動画を N チャンク（短動画は `min(cpu_count, 16)`、長動画は `_TARGET_CHUNK_WALL_SECS=90s` を目安に `_MAX_CHUNKS=32` まで細分化 / #437）に分割し、各チャンクで長寿命の ffmpeg プロセスを `-hwaccel auto` + `fps` フィルタで起動
+- 動画を N チャンク（短動画は `min(cpu_count, 16)`、長動画は `_TARGET_CHUNK_WALL_SECS=90s` を目安に `_MAX_CHUNKS=32` まで細分化 / #437）に分割し、各チャンクで長寿命の ffmpeg プロセスを vendor 別 hwaccel (`-hwaccel <name>` (+ 必要なら `-hwaccel_output_format`) + `-c:v <decoder>`、vendor が解決できない場合のみ `-hwaccel auto`) + dual seek + `select='not(mod(n,N))'` フィルタで起動 (正: [`docs/video-processing.md`](docs/video-processing.md) §GPU アクセラレーション)
 - ffmpeg 並列上限は `max_parallel = min(cpu_count, 16)` で固定、長動画では chunks > max_parallel となり wave 実行（chunk 完了ごとにラベル更新頻度を確保）
 - GPU 初期化コストを分散し、1プロセスあたり多数フレームをデコードすることで効率化
 - Pass 1 以降の処理（transition expansion, Pass 2, フィルタリング）は CPU/GPU 共通
 - GPU 利用不可時は自動で CPU モードにフォールバック
 - vendor 自動選択 (#546 / #553 / #550 / #582): `allaganeye.system_info.probe_gpu_vendors()` で検出した GPU から `_VENDOR_PREFERENCE = ("nvidia", "amd", "intel")` 順で選択。実装済み vendor は NVIDIA (cuvid, #546) / AMD (d3d11va + hwdownload, #553) / Intel (QSV + hwdownload, #550 h264/hevc/av1 + #582 vp9) の 3 つ。default (auto) は NVIDIA > AMD > Intel の preference 順で実装済み vendor を選ぶ
+- Windows の GPU 列挙は `wmic` を第一候補とし、`wmic` 非搭載環境 (Windows 11 24H2 以降で既定削除) では PowerShell `Get-CimInstance Win32_VideoController` にフォールバックする (#860)。両方失敗した場合は vendor 検出なし = CPU モードに縮退する
 - probe 結果は metadata.json `system_info` フィールドに記録され (#591)、GUI export 画面が H.264 再エンコードのエンコーダ選択 (NVENC / QSV / AMF / libx264 fallback) に使う。`--no-gpu` 指定時でも probe は実行し `gpu_vendors_available` を埋めるが、`gpu_vendor_used` は `null` になる
 - GUI export の H.264 再エンコード (#761): GUI 書き出し開始時に `start_export` Tauri コマンドへ単発 invoke → Python subprocess が `enumerate_h264_encoders` で決定した N スロット分の ffmpeg を pool 並列で spawn。GPU 初期化失敗 (NVENC `No NVENC capable devices found` 等) は Python 側で検知して libx264 で 1 回 retry し、`stage="fallback"` の `export-progress` イベントを emit (フロントエンドが per-match notice 表示)
 - NVENC 選択時は NVDEC zero-copy decode 経路 (`-hwaccel cuda -hwaccel_output_format cuda` を `-i` の前に挿入、#791)。NVENC encoder init failure に加え NVDEC decode-stage 失敗 (CUDA dynamic load / device creation / decoder device setup / `cuvidCreateDecoder` / `hwaccel transfer data failed` 等) も libx264 fallback の trigger 対象 (`_GPU_ENCODER_FAILURE_PATTERNS[NVENC]` 計 14 pattern = encoder-init 3 + NVDEC 11 を 3 layer 構成: Layer 1 CUDA dynamic load 2 / Layer 2 device creation・setup 5 / Layer 3 decoder・transfer 4)。QSV/AMF 側の decode hwaccel は #762 で実機検証込みで wire 予定 (現状 `_DECODE_HWACCEL_ARGS` で `()` no-op)

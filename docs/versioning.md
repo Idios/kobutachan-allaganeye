@@ -12,10 +12,16 @@
 
 ## バージョン管理場所
 
-`pyproject.toml` の `version` フィールドのみ。
+以下の 3 箇所。`/release` のバージョンバンプはこの 3 つをまとめて更新する。
+
+| ファイル | フィールド |
+| --- | --- |
+| `pyproject.toml` | `version` |
+| `gui/src-tauri/tauri.conf.json` | `version` |
+| `gui/package.json` | `version` |
 
 ## リリースフロー
 
 1. `/release [patch|minor|major]` でバージョンバンプ PR を作成
-2. Director がレビュー・マージ
+2. メンテナ (Idios) がレビュー・マージ
 3. main ブランチに git tag を作成: `v<バージョン>`

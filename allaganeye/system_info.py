@@ -5,9 +5,13 @@ Design notes:
 - No heavy runtime dependencies (no ``psutil``).  Uses stdlib + platform
   subprocess tools (``wmic``, ``nvidia-smi``, ``lspci``,
   ``system_profiler``) opportunistically.
-- Every public helper returns ``"(unavailable)"`` on any failure rather
-  than raising.  The verbose header is informational; a failed probe
-  must never abort ``allaganeye split``.
+- No public helper raises on probe failure.  The verbose header is
+  informational; a failed probe must never abort ``allaganeye split``.
+  The failure value depends on the return type: scalar ``str`` helpers
+  (:func:`get_cpu_info`, :func:`get_gpu_info`, :func:`get_memory_info`,
+  :func:`get_disk_info`) return ``"(unavailable)"``; list helpers
+  (:func:`probe_gpu_vendors`, :func:`get_gpu_info_lines`) return an empty
+  list; :func:`gpu_vendor_probe_warning` returns ``None``.
 - Linux / macOS are best-effort (Windows is the primary platform).
 """
 

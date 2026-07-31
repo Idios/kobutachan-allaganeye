@@ -31,10 +31,11 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を、試合�
 
 ```text
 allaganeye-vX.Y.Z\
-├── python\            Python ランタイム（同梱済み、別途インストール不要）
-├── lib\               allaganeye 本体
-├── ffmpeg\            動画処理エンジン（同梱済み、別途インストール不要）
-├── allaganeye.bat     ← このファイルを使います
+├── allaganeye\             allaganeye 本体（Python ランタイム同梱済み、別途インストール不要）
+├── ffmpeg\                 動画処理エンジン（同梱済み、別途インストール不要）
+├── allaganeye.bat          ← このファイルを使います
+├── allaganeye-gui.exe      GUI 本体（allaganeye.bat のダブルクリックで起動します）
+├── integrity-manifest.json 同梱物の整合性検査に使います（削除しないでください）
 └── README.txt
 ```
 
@@ -145,7 +146,7 @@ Allagan Eye は FF14 フロントラインの一般的な録画に合わせて�
 Portable ZIP には以下のソフトウェアが同梱されています。詳細な利用条件は各 LICENSE ファイルを参照してください。
 
 - **allaganeye 本体**: MIT License (リポジトリの `LICENSE` ファイル)
-- **Python**: PSF License (`python\LICENSE.txt`)
+- **Python**: PSF License (PyInstaller frozen bundle 内 `allaganeye\_internal\` に同梱。License 全文: <https://docs.python.org/3/license.html>)
 - **FFmpeg**: LGPLv3 (`ffmpeg\LICENSE.txt` に全文)
   - ビルド: [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) の win64-lgpl-shared build
   - 対応 FFmpeg ソース ref: [git.ffmpeg.org](https://git.ffmpeg.org/ffmpeg.git) の n8.1 系列 commit `g75d37c499d` (`scripts/build-portable-zip.ps1` の `$FFmpegAsset` から自動抽出)
