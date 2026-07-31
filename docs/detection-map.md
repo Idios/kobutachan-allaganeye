@@ -178,7 +178,8 @@ OBS/masked path は bit-exact で非接触。
 | `_validate_match_segments` (V4) | detector.py | 15-probe quorum (masked L2 と同 primitive、on_all_drop="empty") | load-bearing |
 
 P3 実機 gate 結果 (6 source / GT 67 試合 = gyawa 6 + kyuma 11 + meteor 14 + shikke 16 +
-shinryu 12 + shirurori 8): recall 100% / spurious 0 / 境界 tolerance 非対称
+shinryu 12 + shirurori 8。うち短 gap の 1 組を `expected_merge_with_next` で合成した
+66 セグメントで突合): recall 100% / spurious 0 / 境界 tolerance 非対称
 (損失方向 15s 厳格 / 余分方向 300s bound)。試合数の SSoT は
 `tests/baselines/v0.3.0/vtuber-gt/*.json` の `matches[]` 総数。
 cache key は `vtuber_algo` (`_VTUBER_ALGO_VERSION`) で管理し、検出出力を変える改修ごとに bump する。
