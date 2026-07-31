@@ -24,6 +24,7 @@ exit code:
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import sys
@@ -207,6 +208,13 @@ def main(argv: list[str] | None = None) -> int:
         # バンプ「途中」に stage 対象を得るための mode なので、値の一致は見ない
         # (この時点ではまだ不一致なのが正常)。dict.fromkeys で宣言順を保ったまま
         # 重複 path を畳む (package-lock.json は 2 フィールド = 1 ファイル)。
+        #
+        # 改行は LF に固定する。この出力は `git add -- $(...)` で機械消費されるが、
+        # Windows の text-mode stdout は "\n" を CRLF へ変換する一方 bash の既定
+        # IFS は "\r" を区切りに含めないため、path 末尾に "\r" が残って
+        # `fatal: pathspec 'pyproject.toml?' did not match any files` になる。
+        if isinstance(sys.stdout, io.TextIOWrapper):
+            sys.stdout.reconfigure(newline="\n")
         for path in dict.fromkeys(location.path for location in VERSION_LOCATIONS):
             print(path)
         return 0

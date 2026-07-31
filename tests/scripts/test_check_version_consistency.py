@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -300,6 +301,32 @@ def test_list_paths_emits_deduped_paths(
     assert rc == 0
     assert lines == list(dict.fromkeys(loc.path for loc in cvc.VERSION_LOCATIONS))
     assert len(lines) == len(set(lines))
+
+
+def test_list_paths_emits_lf_only() -> None:
+    """改行が LF 固定であること (Windows の CRLF を出さない)。
+
+    出力は `git add -- $(python ... --list-paths)` で機械消費される。Windows の
+    text-mode stdout は "\\n" を CRLF へ変換するが、bash の既定 IFS は "\\r" を
+    区切りに含めないため path 末尾に "\\r" が残り `git add` が exit 128 で落ちる
+    (empirical-prompt-tuning iteration 5 の実測)。
+
+    `capsys` は改行変換を挟まないので捕捉できない。実際に subprocess で起動して
+    **生バイト列**を見る必要がある。
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_DIR / "check_version_consistency.py"),
+            "--list-paths",
+        ],
+        capture_output=True,
+        check=True,
+    )
+    assert b"\r" not in result.stdout
+    assert result.stdout.decode("utf-8").splitlines() == list(
+        dict.fromkeys(location.path for location in cvc.VERSION_LOCATIONS)
+    )
 
 
 def test_list_paths_does_not_read_files(tmp_path: Path) -> None:
