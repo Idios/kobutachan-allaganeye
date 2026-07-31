@@ -1623,9 +1623,9 @@ class TestVtuberAlgoCache:
         result = _load_cache_hit(cache_path, cache_video, 1.0, vtuber_config)
         assert result is None, "broken vtuber_algo must cause cache miss, not hit"
 
-    def test_vtuber_algo_version_is_4(self):
-        """Pin: _VTUBER_ALGO_VERSION == 4 for #895 P3 snap physical edge detection."""
-        assert _VTUBER_ALGO_VERSION == 4
+    def test_vtuber_algo_version_is_5(self):
+        """Pin: _VTUBER_ALGO_VERSION == 5 for #895 P3 adjudicate_gap in-match guard (Codex HIGH)."""
+        assert _VTUBER_ALGO_VERSION == 5
 
 
 def test_print_detection_stats_vtuber_timeline_section(capsys):

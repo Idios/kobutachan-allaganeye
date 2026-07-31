@@ -333,10 +333,73 @@ class TestAdjudicateGap:
         probes = _gap_probes("l" * 100 + "M" + "l" * 99)  # 0.5%
         assert adjudicate_gap(probes) == "boundary"
 
-    def test_blackout_marker_forces_boundary(self):
-        # even with high rate, blackout marker forces boundary (positive marker priority)
+    def test_blackout_intra_match_guard_merges(self):
+        # Codex HIGH (#895 P3 Pre-flight Step 5): intra-match blackout in a
+        # high-rate FN gap must NOT force boundary.
+        # "M"*30 + "bbb" + "M"*30: blackout run at t=30-32.
+        #   evidence before: t=29 (M) within INTRA_EVIDENCE_BEFORE_S=5s of t=30 -> True
+        #   evidence after:  t=33 (M) within INTRA_EVIDENCE_AFTER_S=10s of t=32 -> True
+        #   is_intra_match = True -> excluded from priority 1
+        # All blackout runs are intra-match -> priority 1 fails -> priority 2 (no frozen run)
+        # -> priority 3: present rate = 60/63 >> 15% -> merge.
+        # Before fix: priority 1 fired on bare any() -> "boundary" (bug).
         probes = _gap_probes("M" * 30 + "bbb" + "M" * 30)
+        assert adjudicate_gap(probes) == "merge"
+
+    def test_true_zone_in_blackout_no_evidence_after_is_boundary(self):
+        # True boundary: blackout run with no evidence in after window.
+        # "M"*5 + "bbb" + "l"*50: evidence before (within 5s) but absent after.
+        # evidence before: t=4 within 5s of t=5 -> True
+        # evidence after: l*50 within 10s of t=7 -> no evidence -> False
+        # is_intra_match = False -> guard does NOT exclude -> priority 1 -> boundary
+        probes = _gap_probes("M" * 5 + "bbb" + "l" * 50)
         assert adjudicate_gap(probes) == "boundary"
+
+    def test_true_zone_in_no_evidence_before_is_boundary(self):
+        # True boundary: blackout run with no evidence in before window.
+        # "l"*30 + "bbb" + "M"*5: result-screen -> zone-in -> match start.
+        # evidence before: l*30, t within 5s of t=30 -> t=25..29 all absent -> False
+        # is_intra_match = False -> priority 1 -> boundary (regardless of evidence after)
+        probes = _gap_probes("l" * 30 + "bbb" + "M" * 5)
+        assert adjudicate_gap(probes) == "boundary"
+
+    def test_only_evidence_before_not_after_is_boundary(self):
+        # Before=True, After=False -> guard fails -> priority 1 fires -> boundary.
+        # "M"*5 + "bbb" + "l"*30: evidence before (t=4 in 5s window), absent after (30s).
+        probes = _gap_probes("M" * 5 + "bbb" + "l" * 30)
+        assert adjudicate_gap(probes) == "boundary"
+
+    def test_multiple_blackout_runs_one_non_intra_match_is_boundary(self):
+        # Multiple blackout runs: one is intra-match (guard excludes it),
+        # the other is a true zone-in (no evidence before) -> boundary.
+        # "M"*5 + "bb" + "M"*5: intra-match (evidence before AND after within windows)
+        # "l"*20 + "bb" + "l"*5: true zone-in (no evidence before within 5s)
+        # One guard-passing run -> boundary.
+        probes = _gap_probes("M" * 5 + "bb" + "M" * 5 + "l" * 20 + "bb" + "l" * 5)
+        # intra-match bb at t=5-6: evidence before t=4 (M) -> True; evidence after t=7 (M) -> True
+        # -> intra-match -> excluded
+        # true zone-in bb at t=37-38: evidence before in [32,37): t=32..36 all absent -> False
+        # -> guard not excluded -> priority 1 fires -> boundary
+        assert adjudicate_gap(probes) == "boundary"
+
+    def test_all_blackout_runs_intra_match_falls_through_to_rate(self):
+        # All blackout runs are intra-match -> priority 1 fails -> falls through to rate.
+        # Low rate -> boundary via rate check.
+        # "M"*2 + "b" + "M"*2: single 1-probe blackout run (run length=1, still a run)
+        # evidence before t=1 within 5s of t=2 -> True
+        # evidence after t=3 within 10s of t=2 -> True -> intra-match -> excluded
+        # present rate: 4/(4+1)=80% >> 15% -> merge
+        probes = _gap_probes("M" * 2 + "b" + "M" * 2)
+        assert adjudicate_gap(probes) == "merge"
+
+    def test_long_blackout_run_intra_match_merges(self):
+        # Long run (10 probes) but evidence before AND after -> intra-match -> merge.
+        # Docstring pin: run length does not distinguish; only before/after evidence windows.
+        # "M"*3 + "b"*10 + "M"*30: before t=2 within 5s of t=3 -> True;
+        # after t=13 within 10s of t=12 -> True -> intra-match -> excluded -> falls to rate
+        # present rate: 33/(33+10) >> 15% -> merge
+        probes = _gap_probes("M" * 3 + "b" * 10 + "M" * 30)
+        assert adjudicate_gap(probes) == "merge"
 
     def test_frozen_run_forces_boundary(self):
         # replay/result: present but frozen run (>= FROZEN_RUN_MIN_PROBES)

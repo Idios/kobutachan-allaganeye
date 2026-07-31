@@ -88,7 +88,8 @@ _MASKED_ALGO_VERSION = 3
 # version 2 = #895 timeline segmentation (V0-V2, presence x motion)
 # version 3 = #895 P2 V3/V4 integration (gap refinement + at-anchor validation)
 # version 4 = #895 P3 snap physical edge (frozen exclude + blackout adjacency limit + +-45s ext)
-_VTUBER_ALGO_VERSION = 4
+# version 5 = #895 P3 adjudicate_gap blackout run in-match guard (Codex HIGH, snap rule unification)
+_VTUBER_ALGO_VERSION = 5
 
 
 def run_split(

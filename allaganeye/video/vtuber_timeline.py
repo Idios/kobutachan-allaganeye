@@ -1001,7 +1001,19 @@ def adjudicate_gap(
     """V3-a: 隣接 segment 間 gap が偽分割 (merge) か真の境界 (boundary) か。
 
     判定順序 (spec sec.2 V3 (a)、positive marker 優先):
-    1. blackout marker (band_b <= blackout_b_max の probe) があれば boundary
+    1. blackout run (band_b <= blackout_b_max の連続 probe) + in-match guard で boundary
+       _snap_start と同じ物理規則に揃える (Codex HIGH #895 P3 Pre-flight Step 5):
+       各 blackout run について in-match guard を評価し、
+       - run 先頭 probe の t から INTRA_EVIDENCE_BEFORE_S 以内前に evidence probe がある
+       - かつ run 末尾 probe の t から INTRA_EVIDENCE_AFTER_S 以内後に evidence probe がある
+       両方を満たす run は intra-match flicker (試合中の瞬断) とみなし除外する。
+       guard を通過した (= 真の境界) run が 1 つでもあれば boundary。
+       すべて intra-match flicker なら priority 1 は不成立として priority 2 へ進む。
+       evidence の定義は _evidence_flags と同じ (present AND band_mad >= frozen_max)。
+       変更根拠: 旧実装は bare any() で blackout probe を直接 boundary marker にしていたため、
+       試合中の瞬断 blackout を含む高率 gap が present rate 判定に到達できず boundary に固定
+       されていた (V2 が試合中に分割した oversplit が残る)。_snap_start 側の局所窓 guard
+       と物理規則を統一することで Onsal 系 source の oversplit を根絶する。
     2. 凍結 run (band_mad < frozen_max が frozen_run_min 連続) があれば boundary
        (リザルト/replay 静止画面 = 真の境界の証拠。presence の有無は問わない)
     3. valid probe の present rate >= merge_rate なら merge (試合中 FN run)、
@@ -1011,8 +1023,33 @@ def adjudicate_gap(
     valid = [p for p in probes if p.band_b is not None and p.band_mad is not None]
     if not valid:
         return "boundary"
-    if any(p.band_b is not None and p.band_b <= blackout_b_max for p in valid):
-        return "boundary"
+
+    # Priority 1: blackout run + in-match guard (snap 側と物理規則を統一)
+    ev_flags = [
+        p.present and p.band_mad is not None and p.band_mad >= frozen_max for p in valid
+    ]
+    b_runs = _blackout_runs(list(valid), blackout_b_max)  # type: ignore[arg-type]
+    # Note: valid は GapProbe の subset であり band_b が None でないものだけ。
+    # _blackout_runs は band_b is not None AND band_b <= threshold を評価するので
+    # valid 列で呼んでも同等の判定になる。
+    for brun in b_runs:
+        brun_t_start = valid[brun[0]].t
+        brun_t_end = valid[brun[1]].t
+        has_evidence_before = any(
+            ev_flags[j]
+            for j in range(0, brun[0])
+            if brun_t_start - valid[j].t <= INTRA_EVIDENCE_BEFORE_S
+        )
+        has_evidence_after = any(
+            ev_flags[j]
+            for j in range(brun[1] + 1, len(valid))
+            if valid[j].t - brun_t_end <= INTRA_EVIDENCE_AFTER_S
+        )
+        is_intra_match = has_evidence_before and has_evidence_after
+        if not is_intra_match:
+            return "boundary"
+
+    # Priority 2: 凍結 run (リザルト/replay 静止)
     run = 0
     for p in valid:
         if p.band_mad is not None and p.band_mad < frozen_max:
@@ -1021,6 +1058,8 @@ def adjudicate_gap(
                 return "boundary"
         else:
             run = 0
+
+    # Priority 3: present rate
     present = sum(1 for p in valid if p.present)
     if present / len(valid) >= merge_rate:
         return "merge"
