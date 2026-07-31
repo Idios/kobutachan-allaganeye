@@ -12,7 +12,9 @@
 
 ## バージョン管理場所
 
-以下の 6 箇所。`/release` のバージョンバンプはこれらをまとめて更新する。
+以下のとおり。`/release` のバージョンバンプはこれらをまとめて更新する。
+`gui/package-lock.json` のように **1 ファイルが複数フィールドを持つ**箇所があるので、
+ファイル単位で数えて満足しないこと (片方だけが古びる drift が実在する)。
 
 この一覧の**機械可読な正**は [`scripts/check_version_consistency.py`](../scripts/check_version_consistency.py) の
 `VERSION_LOCATIONS` 定数 ([`docs/coding-conventions.md`](coding-conventions.md) §ドキュメント SSoT 規約 の

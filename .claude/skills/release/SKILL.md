@@ -122,7 +122,7 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
    ```
 
    いずれか失敗したら修正してから以下に進む
-2. [`docs/versioning.md`](../../../docs/versioning.md) §バージョン管理場所 に挙がっている**全箇所**の version を新バージョンへ更新する（箇所リストの機械可読な正は [`scripts/check_version_consistency.py`](../../../scripts/check_version_consistency.py) の `VERSION_LOCATIONS`、#911）。lockfile (`gui/package-lock.json` / `gui/src-tauri/Cargo.lock`) はパッケージマネージャで再同期しても該当フィールドを直接編集してもよい。更新できたら必ず検証する:
+2. [`docs/versioning.md`](../../../docs/versioning.md) §バージョン管理場所 に挙がっている**全フィールド**の version を新バージョンへ更新する（箇所リストの機械可読な正は [`scripts/check_version_consistency.py`](../../../scripts/check_version_consistency.py) の `VERSION_LOCATIONS`、#911）。1 ファイルが複数フィールドを持つ箇所があるので、ファイル単位で数えないこと。lockfile (`gui/package-lock.json` / `gui/src-tauri/Cargo.lock`) は **該当フィールドの直接編集を既定**とする（バンプでは version 以外を動かさないため。依存そのものを更新したい場合はパッケージマネージャを使い、バンプとは別コミットに分ける）。更新できたら必ず検証する:
 
    ```bash
    python scripts/check_version_consistency.py --tag v<新バージョン>
@@ -143,15 +143,19 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 4. 変更をコミット（session-id を含める、[`docs/l2-workflow.md`](../../../docs/l2-workflow.md) §「PR 規約」 §「コミットメッセージ session-id」）:
 
    ```bash
-   # Step 3-2 で更新した保持箇所を「全部」stage する (path の正は docs/versioning.md
-   # §バージョン管理場所)。pyproject.toml だけを stage して他を置き去りにすると
-   # release.yml の version-check job が fail する (#911)
-   git add -- <Step 3-2 で更新した全ファイル>
+   # Step 3-2 で更新したバージョン保持箇所を「全部」stage する (path の正は
+   # docs/versioning.md §バージョン管理場所)。pyproject.toml だけを stage して
+   # 他を置き去りにすると release.yml の version-check job が fail する (#911)。
+   # stage 単位はファイルなので、同一ファイル内の複数フィールドは path 1 個に畳む
+   git add -- <Step 3-2 で更新した全ファイル (重複 path を除いたもの)>
    git commit -m "chore: bump version to <新バージョン> [<session-id>]"
 
-   # stage 漏れの検出: バージョン保持箇所の差分が未 stage で残っていないこと
+   # stage 漏れの検出。合格条件 = バージョン保持箇所が 1 つも出てこないこと
    git status --short
    ```
+
+   バージョン保持箇所以外の差分（Step 3-1 で直した lint 等）が残っている場合は、
+   バンプと混ぜず別コミットに分ける（このコミットは version bump 単独に保つ）
 
 5. リリースブランチを push:
 
