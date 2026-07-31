@@ -233,9 +233,7 @@ def fetch_frames(video: Path, ts_list: list[float]) -> list[np.ndarray]:
         raw = _probe_frame_rgb_hires(video, t)
         if raw is None:
             continue
-        frames.append(
-            np.frombuffer(raw, dtype=np.uint8).reshape(FRAME_H, FRAME_W, 3)
-        )
+        frames.append(np.frombuffer(raw, dtype=np.uint8).reshape(FRAME_H, FRAME_W, 3))
     return frames
 
 
@@ -366,26 +364,26 @@ git commit -m "poc(#481): areamap PoC scaffold + GT manifest (extract/render-gt)
 
 ```python
 # ---- Candidate A: temporal stability + map reference matching ----
-A_STD_THRESH = 12.0          # temporal std threshold (static mask)
-A_MIN_AREA_FRAC = 0.03       # min component area (frame frac)
-A_AR_RANGE = (0.6, 2.0)      # bbox aspect w/h range
-A_MIN_EDGE_DENSITY = 0.05    # terrain texture floor inside candidate
-A_REF_MATCH_MIN = 0.45       # TM_CCOEFF_NORMED floor
-A_REF_WIDTH = 256            # ref image width (map crop resized)
+A_STD_THRESH = 12.0  # temporal std threshold (static mask)
+A_MIN_AREA_FRAC = 0.03  # min component area (frame frac)
+A_AR_RANGE = (0.6, 2.0)  # bbox aspect w/h range
+A_MIN_EDGE_DENSITY = 0.05  # terrain texture floor inside candidate
+A_REF_MATCH_MIN = 0.45  # TM_CCOEFF_NORMED floor
+A_REF_WIDTH = 256  # ref image width (map crop resized)
 A_SCALES = np.linspace(0.6, 1.6, 11)
 
 
 def _temporal_stack(frames: list[np.ndarray]):
     import cv2
 
-    grays = [
-        cv2.cvtColor(f, cv2.COLOR_RGB2GRAY).astype(np.float32) for f in frames
-    ]
+    grays = [cv2.cvtColor(f, cv2.COLOR_RGB2GRAY).astype(np.float32) for f in frames]
     stack = np.stack(grays)
     return np.median(stack, axis=0), stack.std(axis=0)
 
 
-def _static_components(med: np.ndarray, std: np.ndarray) -> list[tuple[int, int, int, int, float]]:
+def _static_components(
+    med: np.ndarray, std: np.ndarray
+) -> list[tuple[int, int, int, int, float]]:
     """(x, y, w, h, edge_density) candidates from the static-overlay mask."""
     import cv2
 
@@ -447,7 +445,9 @@ def detect_candidate_a(frames, refs):
     return (x / w_img, y / h_img, w / w_img, h / h_img, None, float(d))
 
 
-def build_refs(manifest: dict, exclude_video_id: str | None = None) -> dict[str, np.ndarray]:
+def build_refs(
+    manifest: dict, exclude_video_id: str | None = None
+) -> dict[str, np.ndarray]:
     """GT crop から map_name ごとの参照 grayscale 画像 (幅 A_REF_WIDTH) を作る。"""
     import cv2
 
@@ -521,12 +521,12 @@ git commit -m "poc(#481): candidate A (temporal stability + map ref matching) (R
 # ---- Candidate B: window frame edge/line detection ----
 B_CANNY = (40, 120)
 B_HOUGH_THRESH = 120
-B_MIN_LINE_FRAC = 0.12     # min line length (frame width frac)
+B_MIN_LINE_FRAC = 0.12  # min line length (frame width frac)
 B_MAX_GAP_PX = 8
 B_ANGLE_TOL_DEG = 3.0
 B_SIZE_RANGE = (0.15, 0.6)  # window w as frame-width frac
 B_AR_RANGE = (0.6, 2.0)
-B_SUPPORT_MIN = 0.35        # perimeter edge support floor
+B_SUPPORT_MIN = 0.35  # perimeter edge support floor
 
 
 def detect_candidate_b(frames):
@@ -538,8 +538,12 @@ def detect_candidate_b(frames):
     h_img, w_img = med.shape
     edges = cv2.Canny(med.astype(np.uint8), *B_CANNY)
     lines = cv2.HoughLinesP(
-        edges, 1, np.pi / 180, threshold=B_HOUGH_THRESH,
-        minLineLength=int(B_MIN_LINE_FRAC * w_img), maxLineGap=B_MAX_GAP_PX,
+        edges,
+        1,
+        np.pi / 180,
+        threshold=B_HOUGH_THRESH,
+        minLineLength=int(B_MIN_LINE_FRAC * w_img),
+        maxLineGap=B_MAX_GAP_PX,
     )
     if lines is None:
         return None
@@ -551,8 +555,8 @@ def detect_candidate_b(frames):
         elif abs(ang - 90) < B_ANGLE_TOL_DEG:
             vert.append((min(y1, y2), max(y1, y2), (x1 + x2) // 2))
     best = None  # (score, x, y, w, h)
-    for hx0, hx1, hy in horiz:              # top edge candidate
-        for hx0b, hx1b, hyb in horiz:       # bottom edge candidate
+    for hx0, hx1, hy in horiz:  # top edge candidate
+        for hx0b, hx1b, hyb in horiz:  # bottom edge candidate
             hgt = hyb - hy
             if hgt <= 0:
                 continue
@@ -563,8 +567,12 @@ def detect_candidate_b(frames):
                 continue
             x0, x1_ = max(hx0, hx0b), min(hx1, hx1b)
             # vertical support: 両側に縦線があるか
-            lsup = any(abs(vx - x0) < 12 and vy0 < hy + hgt / 2 < vy1 for vy0, vy1, vx in vert)
-            rsup = any(abs(vx - x1_) < 12 and vy0 < hy + hgt / 2 < vy1 for vy0, vy1, vx in vert)
+            lsup = any(
+                abs(vx - x0) < 12 and vy0 < hy + hgt / 2 < vy1 for vy0, vy1, vx in vert
+            )
+            rsup = any(
+                abs(vx - x1_) < 12 and vy0 < hy + hgt / 2 < vy1 for vy0, vy1, vx in vert
+            )
             if not (lsup and rsup):
                 continue
             # perimeter edge support
@@ -633,7 +641,12 @@ def cmd_compare(args: argparse.Namespace) -> None:
         print(row)
     # markdown report
     out = Path(args.out) / "areamap-poc-report.md"
-    lines = ["# areamap PoC compare (#481)", "", "| case | visible | A | B |", "| --- | --- | --- | --- |"]
+    lines = [
+        "# areamap PoC compare (#481)",
+        "",
+        "| case | visible | A | B |",
+        "| --- | --- | --- | --- |",
+    ]
     for r in rows:
         lines.append(f"| {r['id']} | {r['visible']} | {r['A']} | {r['B']} |")
     for key in ("A", "B"):
@@ -642,7 +655,9 @@ def cmd_compare(args: argparse.Namespace) -> None:
         neg = [r for r in rows if not r["visible"]]
         rej = sum(1 for r in neg if r[key].startswith("OK"))
         lines.append("")
-        lines.append(f"- **{key}**: positive {ok}/{len(pos)} / negative reject {rej}/{len(neg)}")
+        lines.append(
+            f"- **{key}**: positive {ok}/{len(pos)} / negative reject {rej}/{len(neg)}"
+        )
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"[ok] {out}")
 ```
@@ -699,15 +714,23 @@ def test_minimap_regions_valid(schema_validator, minimal_metadata):
         {
             "match_index": 1,
             "region": {
-                "x": 0.01, "y": 0.02, "w": 0.28, "h": 0.35,
-                "confidence": 1.0, "source": "manual",
+                "x": 0.01,
+                "y": 0.02,
+                "w": 0.28,
+                "h": 0.35,
+                "confidence": 1.0,
+                "source": "manual",
             },
         },
         {
             "match_index": 3,
             "region": {
-                "x": 0.0, "y": 0.0, "w": 0.3, "h": 0.4,
-                "confidence": 1.0, "source": "manual",
+                "x": 0.0,
+                "y": 0.0,
+                "w": 0.3,
+                "h": 0.4,
+                "confidence": 1.0,
+                "source": "manual",
             },
         },
     ]
@@ -716,10 +739,12 @@ def test_minimap_regions_valid(schema_validator, minimal_metadata):
 
 def test_minimap_regions_rejects_bad_entries(schema_validator, minimal_metadata):
     for bad in [
-        [{"match_index": 0, "region": _VALID_REGION}],                # index < 1
-        [{"match_index": 1}],                                         # region 欠落
-        [{"region": _VALID_REGION}],                                  # match_index 欠落
-        [{"match_index": 1, "region": _VALID_REGION, "extra": 1}],    # additionalProperties
+        [{"match_index": 0, "region": _VALID_REGION}],  # index < 1
+        [{"match_index": 1}],  # region 欠落
+        [{"region": _VALID_REGION}],  # match_index 欠落
+        [
+            {"match_index": 1, "region": _VALID_REGION, "extra": 1}
+        ],  # additionalProperties
     ]:
         minimal_metadata["minimap_regions"] = bad
         with pytest.raises(jsonschema.ValidationError):
@@ -796,22 +821,37 @@ def test_build_args_default_unchanged_pin():
     assert "-vf" not in args_h264
     assert "-hwaccel" in args_h264  # NVDEC zero-copy 維持
 
+
 def test_build_args_video_filter_inserts_vf_and_drops_hwaccel():
     args = _build_ffmpeg_args(
-        "ffmpeg", Path("in.mkv"), 1.0, 2.0, Path("out.mp4"), "h264",
-        H264Encoder.NVENC, video_filter="crop=534:392:24:22",
+        "ffmpeg",
+        Path("in.mkv"),
+        1.0,
+        2.0,
+        Path("out.mp4"),
+        "h264",
+        H264Encoder.NVENC,
+        video_filter="crop=534:392:24:22",
     )
     assert "-hwaccel" not in args
     i = args.index("-vf")
     assert args[i + 1] == "crop=534:392:24:22"
     assert args.index("-vf") < args.index("-c:v")
 
+
 def test_run_export_attempt_rejects_filter_with_copy():
     with pytest.raises(ValueError):
         run_export_attempt(
-            Path("in.mkv"), 0.0, 1.0, Path("o.mp4"), "copy", H264Encoder.LIBX264,
-            progress_cb=lambda p, s: None, fallback_cb=None,
-            cancel_event=threading.Event(), video_filter="crop=2:2:0:0",
+            Path("in.mkv"),
+            0.0,
+            1.0,
+            Path("o.mp4"),
+            "copy",
+            H264Encoder.LIBX264,
+            progress_cb=lambda p, s: None,
+            fallback_cb=None,
+            cancel_event=threading.Event(),
+            video_filter="crop=2:2:0:0",
         )
 ```
 
@@ -867,8 +907,11 @@ git commit -m "feat(#481): export 基盤に optional video_filter (default 経�
 @dataclass(frozen=True)
 class MatchRegionResult:
     match_index: int
-    region: CaptureRegion   # 正規化。source="auto" (seed 提案)、confidence=一致 window 率
-    scattered: bool         # window 間で bbox が揺れた (warning 対象)
+    region: (
+        CaptureRegion  # 正規化。source="auto" (seed 提案)、confidence=一致 window 率
+    )
+    scattered: bool  # window 間で bbox が揺れた (warning 対象)
+
 
 DetectResult = tuple[float, float, float, float, float] | None  # (x, y, w, h, score)
 DetectFn = Callable[[list[np.ndarray]], DetectResult]
@@ -881,17 +924,16 @@ DetectFn = Callable[[list[np.ndarray]], DetectResult]
   意図的な private 利用 (#481 plan D1)」の comment を 1 行付けること
 
 ```python
-
 def resolve_match_regions(
     video_path: Path,
-    matches: list[tuple[int, float, float]],   # (match_index, start_time, end_time)
+    matches: list[tuple[int, float, float]],  # (match_index, start_time, end_time)
     *,
     windows: int = 3,
     frames_per_window: int = 5,
     edge_margin: float = 60.0,
     iou_cluster: float = 0.75,
     probe: Callable[[Path, float], bytes | None] | None = None,  # DI (test 用)
-    detect: DetectFn | None = None,                              # DI (test 用)
+    detect: DetectFn | None = None,  # DI (test 用)
 ) -> tuple[list[MatchRegionResult], list[str]]:
     """試合ごとに windows 個の時間窓で検出し、IoU >= iou_cluster の多数派を採用。
 
@@ -911,13 +953,16 @@ def _det_seq(results):
     it = iter(results)
     return lambda frames: next(it)
 
+
 def test_consensus_majority_and_confidence():
     fake_probe = lambda v, t: b"\x00" * (1920 * 1080 * 3)
     box = (0.01, 0.02, 0.28, 0.35, 0.9)
     off = (0.50, 0.50, 0.20, 0.20, 0.5)  # IoU=0 の外れ window
     results, warns = resolve_match_regions(
-        Path("v.mkv"), [(1, 100.0, 1100.0)],
-        probe=fake_probe, detect=_det_seq([box, box, off]),
+        Path("v.mkv"),
+        [(1, 100.0, 1100.0)],
+        probe=fake_probe,
+        detect=_det_seq([box, box, off]),
     )
     assert len(results) == 1
     r = results[0]
@@ -925,22 +970,29 @@ def test_consensus_majority_and_confidence():
     assert r.scattered is True and abs(r.region.confidence - 2 / 3) < 1e-6
     assert warns  # 移動疑い warning
 
+
 def test_all_windows_miss_drops_match():
     results, warns = resolve_match_regions(
-        Path("v.mkv"), [(1, 100.0, 1100.0)],
+        Path("v.mkv"),
+        [(1, 100.0, 1100.0)],
         probe=lambda v, t: b"\x00" * (1920 * 1080 * 3),
         detect=lambda frames: None,
     )
     assert results == [] and any("1" in w for w in warns)
 
+
 def test_short_match_uses_midpoint_samples():
     # end-start < 2*edge_margin でも sample が生成される (中央寄せ)
     seen = []
+
     def probe(v, t):
         seen.append(t)
         return b"\x00" * (1920 * 1080 * 3)
+
     resolve_match_regions(
-        Path("v.mkv"), [(1, 0.0, 90.0)], probe=probe,
+        Path("v.mkv"),
+        [(1, 0.0, 90.0)],
+        probe=probe,
         detect=lambda f: (0.0, 0.0, 0.3, 0.3, 0.9),
     )
     assert all(0.0 <= t <= 90.0 for t in seen) and seen

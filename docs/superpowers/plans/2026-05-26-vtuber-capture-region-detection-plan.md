@@ -109,7 +109,12 @@ from allaganeye.video.capture_region import CaptureRegion, RegionTimeline, FULL_
 
 
 def test_full_frame_is_unit_square():
-    assert (FULL_FRAME.x, FULL_FRAME.y, FULL_FRAME.w, FULL_FRAME.h) == (0.0, 0.0, 1.0, 1.0)
+    assert (FULL_FRAME.x, FULL_FRAME.y, FULL_FRAME.w, FULL_FRAME.h) == (
+        0.0,
+        0.0,
+        1.0,
+        1.0,
+    )
 
 
 def test_clamp_bounds_region_into_unit_square():
@@ -170,14 +175,24 @@ class CaptureRegion:
 
     def to_dict(self) -> dict:
         return {
-            "x": self.x, "y": self.y, "w": self.w, "h": self.h,
-            "confidence": self.confidence, "source": self.source,
+            "x": self.x,
+            "y": self.y,
+            "w": self.w,
+            "h": self.h,
+            "confidence": self.confidence,
+            "source": self.source,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "CaptureRegion":
-        return cls(d["x"], d["y"], d["w"], d["h"],
-                   d.get("confidence", 1.0), d.get("source", "fallback"))
+        return cls(
+            d["x"],
+            d["y"],
+            d["w"],
+            d["h"],
+            d.get("confidence", 1.0),
+            d.get("source", "fallback"),
+        )
 
 
 FULL_FRAME = CaptureRegion(0.0, 0.0, 1.0, 1.0, confidence=1.0, source="fallback")
@@ -188,7 +203,9 @@ class RegionTimeline:
     """Coarse region (Pass 1) + per-segment precise regions (#480/#481)."""
 
     coarse: CaptureRegion
-    segments: list[tuple[tuple[float, float], CaptureRegion]] = field(default_factory=list)
+    segments: list[tuple[tuple[float, float], CaptureRegion]] = field(
+        default_factory=list
+    )
 
     def to_dict(self) -> dict:
         return {
@@ -214,7 +231,11 @@ class RegionTimeline:
 - [ ] **Step 1: 失敗するテストを追加**
 
 ```python
-from allaganeye.video.capture_region import iou, top_edge_error_px, _maybe_snap_full_frame
+from allaganeye.video.capture_region import (
+    iou,
+    top_edge_error_px,
+    _maybe_snap_full_frame,
+)
 
 
 def test_iou_identical_is_one():
@@ -302,16 +323,21 @@ import numpy as np
 from allaganeye.video.capture_region import detect_region_variance
 
 
-def _stack_static_bg_with_moving_inset(n=12, h=180, w=320,
-                                       inset=(0.30, 0.20, 0.40, 0.50)):
+def _stack_static_bg_with_moving_inset(
+    n=12, h=180, w=320, inset=(0.30, 0.20, 0.40, 0.50)
+):
     """静止 bg (一定値) + inset 内だけフレームごとに乱数 = 高分散."""
     rng = np.random.default_rng(0)
-    x0, y0, ww, hh = (int(inset[0] * w), int(inset[1] * h),
-                      int(inset[2] * w), int(inset[3] * h))
+    x0, y0, ww, hh = (
+        int(inset[0] * w),
+        int(inset[1] * h),
+        int(inset[2] * w),
+        int(inset[3] * h),
+    )
     frames = []
     for _ in range(n):
         f = np.full((h, w), 50, dtype=np.uint8)  # static overlay-ish bg
-        f[y0:y0 + hh, x0:x0 + ww] = rng.integers(0, 256, (hh, ww), dtype=np.uint8)
+        f[y0 : y0 + hh, x0 : x0 + ww] = rng.integers(0, 256, (hh, ww), dtype=np.uint8)
         frames.append(f)
     return frames, inset
 
@@ -380,8 +406,9 @@ def detect_region_variance(
     if bw * bh < min_area_frac * w * h:
         return FULL_FRAME
     fill = float(areas[idx - 1]) / (bw * bh)
-    region = CaptureRegion(bx / w, by / h, bw / w, bh / h,
-                           confidence=fill, source="tierA").clamp()
+    region = CaptureRegion(
+        bx / w, by / h, bw / w, bh / h, confidence=fill, source="tierA"
+    ).clamp()
     return _maybe_snap_full_frame(region)
 ```
 
@@ -410,18 +437,20 @@ def _hires_with_scorebar_at(y_top: int, x_left: int, x_right: int):
     紋章位置は detector._EMBLEM_RELATIVE_POSITIONS を帯 span に投影。
     """
     from allaganeye.video.detector import (
-        _SCOREBAR_V2_PROBE_WIDTH, _SCOREBAR_V2_PROBE_HEIGHT,
+        _SCOREBAR_V2_PROBE_WIDTH,
+        _SCOREBAR_V2_PROBE_HEIGHT,
         _EMBLEM_RELATIVE_POSITIONS,
     )
+
     W, H = _SCOREBAR_V2_PROBE_WIDTH, _SCOREBAR_V2_PROBE_HEIGHT
     f = np.full((H, W, 3), 40, dtype=np.uint8)
     bar_w = x_right - x_left
     # saturated blue 帯 (45px 高)
-    f[y_top:y_top + 45, x_left:x_right + 1] = (50, 50, 200)
+    f[y_top : y_top + 45, x_left : x_right + 1] = (50, 50, 200)
     for _name, cx_rel, hw_rel, ey1, ey2 in _EMBLEM_RELATIVE_POSITIONS:
         cx = int(x_left + cx_rel * bar_w)
         hw = max(2, int(hw_rel * bar_w))
-        region = f[y_top + ey1:y_top + ey2, cx - hw:cx + hw]
+        region = f[y_top + ey1 : y_top + ey2, cx - hw : cx + hw]
         for col in range(region.shape[1]):  # 2px 縞 = 高 sat + 高 edge
             region[:, col] = (200, 30, 30) if (col // 2) % 2 == 0 else (0, 0, 0)
     return f
@@ -432,7 +461,7 @@ def test_scorebar_band_at_offset_y_returns_inset_top():
     f = _hires_with_scorebar_at(y_top=120, x_left=500, x_right=1400)
     r = detect_region_scorebar_band(f)
     assert r is not None and r.source == "tierB"
-    assert abs(r.y - 120 / 1080) < 0.03   # 上端が帯 y 付近
+    assert abs(r.y - 120 / 1080) < 0.03  # 上端が帯 y 付近
 
 
 def test_scorebar_band_full_width_top_snaps_full():
@@ -442,7 +471,11 @@ def test_scorebar_band_full_width_top_snaps_full():
 
 
 def test_scorebar_band_uniform_cyan_banner_rejected():
-    from allaganeye.video.detector import _SCOREBAR_V2_PROBE_WIDTH, _SCOREBAR_V2_PROBE_HEIGHT
+    from allaganeye.video.detector import (
+        _SCOREBAR_V2_PROBE_WIDTH,
+        _SCOREBAR_V2_PROBE_HEIGHT,
+    )
+
     W, H = _SCOREBAR_V2_PROBE_WIDTH, _SCOREBAR_V2_PROBE_HEIGHT
     f = np.full((H, W, 3), 40, dtype=np.uint8)
     f[0:55, :] = (60, 200, 200)  # 単色 cyan 帯 (紋章なし)
@@ -480,8 +513,10 @@ def detect_region_scorebar_band(
     except ImportError:
         return None
     from allaganeye.video.detector import (
-        _SCOREBAR_V2_PROBE_WIDTH, _SCOREBAR_V2_PROBE_HEIGHT,
-        _EMBLEM_RELATIVE_POSITIONS, _emblem_and_check,
+        _SCOREBAR_V2_PROBE_WIDTH,
+        _SCOREBAR_V2_PROBE_HEIGHT,
+        _EMBLEM_RELATIVE_POSITIONS,
+        _emblem_and_check,
         _find_scorebar_horizontal_range,
     )
     import cv2
@@ -496,16 +531,20 @@ def detect_region_scorebar_band(
         # ために frame を上方シフトした view を渡す。
         shifted = np.zeros_like(frame)
         band_h = min(45, H - y)
-        shifted[0:band_h] = frame[y:y + band_h]
+        shifted[0:band_h] = frame[y : y + band_h]
         span = _find_scorebar_horizontal_range(shifted.tobytes())
         if span is None:
             continue
         x_left, x_right = span
         bar_w = x_right - x_left
         positions = [
-            (name,
-             int(x_left + cx_rel * bar_w - hw_rel * bar_w), y + ey1,
-             int(x_left + cx_rel * bar_w + hw_rel * bar_w), y + ey2)
+            (
+                name,
+                int(x_left + cx_rel * bar_w - hw_rel * bar_w),
+                y + ey1,
+                int(x_left + cx_rel * bar_w + hw_rel * bar_w),
+                y + ey2,
+            )
             for name, cx_rel, hw_rel, ey1, ey2 in _EMBLEM_RELATIVE_POSITIONS
         ]
         if not _emblem_and_check(frame, positions, f"band y={y}", cv2):
@@ -545,9 +584,9 @@ def test_blackout_overlap_finds_region_that_goes_dark():
     inset = (0.30, 0.20, 0.40, 0.50)
     x0, y0 = int(inset[0] * w), int(inset[1] * h)
     ww, hh = int(inset[2] * w), int(inset[3] * h)
-    bright = np.full((h, w), 120, dtype=np.uint8)          # 全部明るい (試合中)
+    bright = np.full((h, w), 120, dtype=np.uint8)  # 全部明るい (試合中)
     dark_inset = bright.copy()
-    dark_inset[y0:y0 + hh, x0:x0 + ww] = 2                  # inset だけ暗転、overlay は明るいまま
+    dark_inset[y0 : y0 + hh, x0 : x0 + ww] = 2  # inset だけ暗転、overlay は明るいまま
     frames = [bright, bright, dark_inset, dark_inset]
     r = detect_region_blackout_overlap(frames)
     assert r.source == "tierA"
@@ -558,7 +597,7 @@ def test_blackout_overlap_finds_region_that_goes_dark():
 def test_blackout_overlap_obs_full_frame_blackout_snaps_full():
     h, w = 180, 320
     bright = np.full((h, w), 120, dtype=np.uint8)
-    dark = np.full((h, w), 2, dtype=np.uint8)              # 全画面暗転 = OBS
+    dark = np.full((h, w), 2, dtype=np.uint8)  # 全画面暗転 = OBS
     assert detect_region_blackout_overlap([bright, bright, dark]) == FULL_FRAME
 ```
 
@@ -604,8 +643,9 @@ def detect_region_blackout_overlap(
     bw, bh = int(stats[idx, cv2.CC_STAT_WIDTH]), int(stats[idx, cv2.CC_STAT_HEIGHT])
     if bw * bh < min_area_frac * w * h:
         return FULL_FRAME
-    region = CaptureRegion(bx / w, by / h, bw / w, bh / h,
-                           confidence=0.8, source="tierA").clamp()
+    region = CaptureRegion(
+        bx / w, by / h, bw / w, bh / h, confidence=0.8, source="tierA"
+    ).clamp()
     return _maybe_snap_full_frame(region)
 ```
 
@@ -651,8 +691,18 @@ def test_format_comparison_table_marks_best_iou():
 
 def test_pick_winner_requires_obs_passing():
     rows = [
-        {"candidate": "S1", "mean_iou": 0.99, "mean_top_err_px": 2.0, "obs_full_frame": False},
-        {"candidate": "S2", "mean_iou": 0.90, "mean_top_err_px": 9.0, "obs_full_frame": True},
+        {
+            "candidate": "S1",
+            "mean_iou": 0.99,
+            "mean_top_err_px": 2.0,
+            "obs_full_frame": False,
+        },
+        {
+            "candidate": "S2",
+            "mean_iou": 0.90,
+            "mean_top_err_px": 9.0,
+            "obs_full_frame": True,
+        },
     ]
     # OBS hard gate: obs_full_frame=False は IoU が高くても不採用
     assert mod.pick_winner(rows)["candidate"] == "S2"
@@ -761,14 +811,14 @@ _SPEC.loader.exec_module(mod)
 
 def test_match_within_tolerance_all_hit():
     gt = [1433, 2624, 4253, 5684, 6609]
-    detected = [1435, 2620, 4258, 5680, 6612]   # 全て ±10s 内
+    detected = [1435, 2620, 4258, 5680, 6612]  # 全て ±10s 内
     matched, misses = mod.match_within_tolerance(detected, gt, tol=10)
     assert matched == 5 and misses == []
 
 
 def test_match_within_tolerance_reports_miss():
     gt = [1433, 2624]
-    detected = [1435]                            # 2624 は未検出
+    detected = [1435]  # 2624 は未検出
     matched, misses = mod.match_within_tolerance(detected, gt, tol=10)
     assert matched == 1 and misses == [2624]
 ```
@@ -855,7 +905,9 @@ Wave B の各 `*_full_frame*` / `*_snaps_full` テストで合成 OBS フレー�
 ```python
 import pytest
 from allaganeye.video.capture_region import (
-    detect_region_variance, detect_region_blackout_overlap, FULL_FRAME,
+    detect_region_variance,
+    detect_region_blackout_overlap,
+    FULL_FRAME,
 )
 
 

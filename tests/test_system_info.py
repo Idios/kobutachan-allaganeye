@@ -298,6 +298,33 @@ def test_run_text_swallows_timeout():
         assert system_info._run_text(["nope"]) is None
 
 
+# --- _windows_ps_values (wmic-less CIM fallback, #860) ---
+
+
+@patch("allaganeye.system_info._run_text")
+def test_windows_ps_values_parses_expandproperty_output(mock_run):
+    from allaganeye.system_info import _windows_ps_values
+
+    mock_run.return_value = "AMD Radeon RX 7900 XTX\nIntel UHD Graphics\n"
+    result = _windows_ps_values("Win32_VideoController", "Name")
+    assert result == ["AMD Radeon RX 7900 XTX", "Intel UHD Graphics"]
+
+    cmd = mock_run.call_args.args[0]
+    assert cmd[0] == "powershell"
+    assert "-NoProfile" in cmd
+    assert "-NonInteractive" in cmd
+    assert "Get-CimInstance -ClassName Win32_VideoController" in cmd[-1]
+    assert "-ExpandProperty Name" in cmd[-1]
+    assert mock_run.call_args.kwargs["timeout"] == 10.0
+
+
+@patch("allaganeye.system_info._run_text", return_value=None)
+def test_windows_ps_values_empty_on_failure(_run):
+    from allaganeye.system_info import _windows_ps_values
+
+    assert _windows_ps_values("Win32_Processor", "Name") == []
+
+
 def test_run_text_returns_stdout_on_success():
     mock_result = MagicMock(stdout="hello\n")
     with patch(
@@ -629,3 +656,147 @@ def test_detect_total_memory_bytes_linux_returns_none_when_missing(_system):
     with patch("builtins.open", mock_open(read_data="Buffers: 123 kB\n")):
         result = _detect_total_memory_bytes()
     assert result is None
+
+
+# --- GPU vendor PS fallback (#860) ---
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+@patch("allaganeye.system_info._run_text")
+def test_probe_gpu_vendors_ps_fallback_when_wmic_absent(mock_run, _system):
+    from allaganeye.system_info import probe_gpu_vendors
+
+    def side_effect(cmd, **_kwargs):
+        if cmd[:1] == ["nvidia-smi"]:
+            return None
+        if cmd[:1] == ["wmic"]:
+            return None  # wmic-less env (Win11 24H2+)
+        if cmd[:1] == ["powershell"]:
+            return "AMD Radeon RX 7900 XTX\nIntel UHD Graphics\n"
+        return None
+
+    mock_run.side_effect = side_effect
+    assert probe_gpu_vendors() == ["amd", "intel"]
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+@patch("allaganeye.system_info._run_text")
+def test_probe_gpu_vendors_no_ps_call_when_wmic_ok(mock_run, _system):
+    """Regression pin: validated wmic path must not invoke PowerShell."""
+    from allaganeye.system_info import probe_gpu_vendors
+
+    seen = []
+
+    def side_effect(cmd, **_kwargs):
+        seen.append(cmd[0])
+        if cmd[:1] == ["nvidia-smi"]:
+            return None
+        if cmd[:1] == ["wmic"]:
+            return "Name\nAMD Radeon RX 7900 XTX\n"
+        return None
+
+    mock_run.side_effect = side_effect
+    assert probe_gpu_vendors() == ["amd"]
+    assert "powershell" not in seen
+
+
+# --- CPU name PS fallback (#860) ---
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+@patch("allaganeye.system_info._run_text")
+def test_cpu_models_ps_fallback_when_wmic_absent(mock_run, _system):
+    from allaganeye.system_info import _detect_cpu_models
+
+    def side_effect(cmd, **_kwargs):
+        if cmd[:1] == ["wmic"]:
+            return None
+        if cmd[:1] == ["powershell"]:
+            return "AMD Ryzen 9 9950X3D 16-Core Processor\n"
+        return None
+
+    mock_run.side_effect = side_effect
+    assert _detect_cpu_models() == ["AMD Ryzen 9 9950X3D 16-Core Processor"]
+
+
+# --- CPU cores PS fallback (#860) ---
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+@patch("allaganeye.system_info._run_text")
+def test_physical_cores_ps_fallback_single_socket(mock_run, _system):
+    from allaganeye.system_info import _detect_physical_cores
+
+    def side_effect(cmd, **_kwargs):
+        if cmd[:1] == ["wmic"]:
+            return None
+        if cmd[:1] == ["powershell"]:
+            return "16\n"
+        return None
+
+    mock_run.side_effect = side_effect
+    assert _detect_physical_cores() == 16
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+@patch("allaganeye.system_info._run_text")
+def test_physical_cores_ps_fallback_sums_sockets(mock_run, _system):
+    from allaganeye.system_info import _detect_physical_cores
+
+    def side_effect(cmd, **_kwargs):
+        if cmd[:1] == ["wmic"]:
+            return None
+        if cmd[:1] == ["powershell"]:
+            return "64\n64\n"  # dual socket
+        return None
+
+    mock_run.side_effect = side_effect
+    assert _detect_physical_cores() == 128
+
+
+# --- memory PS fallback (#860) ---
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+@patch("allaganeye.system_info._run_text")
+def test_total_memory_ps_fallback_when_wmic_absent(mock_run, _system):
+    from allaganeye.system_info import _detect_total_memory_bytes
+
+    def side_effect(cmd, **_kwargs):
+        if cmd[:1] == ["wmic"]:
+            return None
+        if cmd[:1] == ["powershell"]:
+            return "137438953472\n"
+        return None
+
+    mock_run.side_effect = side_effect
+    assert _detect_total_memory_bytes() == 137438953472
+
+
+# --- gpu_vendor_probe_warning (verbose silent-degrade visibility, #860) ---
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+@patch("allaganeye.system_info.probe_gpu_vendors", return_value=[])
+def test_gpu_vendor_probe_warning_fires_on_empty_windows(_vendors, _system):
+    from allaganeye.system_info import gpu_vendor_probe_warning
+
+    msg = gpu_vendor_probe_warning()
+    assert msg is not None
+    assert "libx264" in msg
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Windows")
+@patch("allaganeye.system_info.probe_gpu_vendors", return_value=["nvidia"])
+def test_gpu_vendor_probe_warning_none_when_vendor_present(_vendors, _system):
+    from allaganeye.system_info import gpu_vendor_probe_warning
+
+    assert gpu_vendor_probe_warning() is None
+
+
+@patch("allaganeye.system_info.platform.system", return_value="Linux")
+@patch("allaganeye.system_info.probe_gpu_vendors", return_value=[])
+def test_gpu_vendor_probe_warning_none_on_non_windows(_vendors, _system):
+    from allaganeye.system_info import gpu_vendor_probe_warning
+
+    assert gpu_vendor_probe_warning() is None

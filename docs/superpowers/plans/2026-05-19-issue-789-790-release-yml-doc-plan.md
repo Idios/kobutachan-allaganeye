@@ -84,7 +84,8 @@ L34 末尾 (`# 0 jobs 維持 (= conclusion=failure だが functional 影響ゼ�
 ```python
 # Edit tool で以下を実行:
 # old_string =
-"""  # 0 jobs 維持 (= conclusion=failure だが functional 影響ゼロ) を担保。"""
+"""# 0 jobs 維持 (= conclusion=failure だが functional 影響ゼロ) を担保。"""
+
 # new_string =
 """  # 0 jobs 維持 (= conclusion=failure だが functional 影響ゼロ) を担保。
   #
@@ -166,8 +167,9 @@ Expected: build-windows job 内の `strategy:` / `name: build-windows (${{ matri
 ```python
 # Edit tool で以下を実行:
 # old_string =
-"""    name: build-windows (${{ matrix.shell }})
-    defaults:"""
+"""name: build-windows (${{ matrix.shell }})
+defaults:"""
+
 # new_string =
 """    name: build-windows (${{ matrix.shell }})
     # build-windows job は matrix.shell (pwsh / powershell dual matrix) を

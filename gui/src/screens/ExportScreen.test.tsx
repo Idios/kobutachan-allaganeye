@@ -1140,6 +1140,57 @@ describe('#676 ExportScreen header path display', () => {
 // ExportScreen must render without crashing when metadata.matches[] contains
 // a post_match entry (output_file undefined, post_match: true). This is a
 // minimal no-crash lock -- export exclusion UX is Phase 2.
+// #893 R1: ExportScreen "ミニマップ切抜きへ" button (completed phase only)
+describe('#893 R1 ExportScreen minimap navigation button', () => {
+  it('navigates to minimap when [ミニマップ切抜きへ] is clicked after export completes', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'start_export') {
+        return Promise.resolve({ success: 9, failure: 0, skipped: 0, cancelled: false });
+      }
+      return Promise.resolve(undefined);
+    });
+    render(<ExportScreen />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /書き出し開始/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('export-screen').dataset.phase).toBe('completed');
+    });
+    // Button is visible in completed phase
+    const minimapBtn = screen.getByRole('button', { name: 'ミニマップ切抜きへ' });
+    expect(minimapBtn).toBeInTheDocument();
+    expect(minimapBtn).not.toBeDisabled();
+    await user.click(minimapBtn);
+    expect(useAppStateStore.getState().screen).toBe('minimap');
+  });
+
+  it('[ミニマップ切抜きへ] is not rendered in idle phase', () => {
+    render(<ExportScreen />);
+    expect(
+      screen.queryByRole('button', { name: 'ミニマップ切抜きへ' }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+// #893 R2: ExportScreen records lastExportOutputDir on export start
+describe('#893 R2 ExportScreen records lastExportOutputDir', () => {
+  it('sets lastExportOutputDir in the store when export starts', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'start_export') {
+        return Promise.resolve({ success: 9, failure: 0, skipped: 0, cancelled: false });
+      }
+      return Promise.resolve(undefined);
+    });
+    render(<ExportScreen />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /書き出し開始/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('export-screen').dataset.phase).toBe('completed');
+    });
+    // lastExportOutputDir should be set (non-null) in the store
+    expect(useAppStateStore.getState().lastExportOutputDir).not.toBeNull();
+  });
+});
+
 describe('#805 ExportScreen post_match no-crash guard', () => {
   const metaWithPostMatch = {
     source: 'C:\\videos\\rec.mkv',

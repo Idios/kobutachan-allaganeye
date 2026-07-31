@@ -140,7 +140,9 @@ def test_progress_event_result_includes_output_path_and_encoder():
 
 
 def test_progress_event_error_includes_hint():
-    err = ExportError(kind="ffmpeg.exit_failed", message="exit 1", hint="see stderr tail")
+    err = ExportError(
+        kind="ffmpeg.exit_failed", message="exit 1", hint="see stderr tail"
+    )
     ev = ProgressEvent.error(match_index=3, error=err)
     parsed = json.loads(ev.to_json_line())
     assert parsed["type"] == "error"
@@ -260,12 +262,14 @@ class ProgressEvent:
 
     @classmethod
     def progress(cls, match_index: int, percent: float, stage: str) -> ProgressEvent:
-        return cls({
-            "type": "progress",
-            "match_index": match_index,
-            "percent": percent,
-            "stage": stage,
-        })
+        return cls(
+            {
+                "type": "progress",
+                "match_index": match_index,
+                "percent": percent,
+                "stage": stage,
+            }
+        )
 
     @classmethod
     def fallback(
@@ -275,13 +279,15 @@ class ProgressEvent:
         fallback_to: str,
         message: str,
     ) -> ProgressEvent:
-        return cls({
-            "type": "fallback",
-            "match_index": match_index,
-            "fallback_from": fallback_from,
-            "fallback_to": fallback_to,
-            "message": message,
-        })
+        return cls(
+            {
+                "type": "fallback",
+                "match_index": match_index,
+                "fallback_from": fallback_from,
+                "fallback_to": fallback_to,
+                "message": message,
+            }
+        )
 
     @classmethod
     def result(
@@ -291,33 +297,39 @@ class ProgressEvent:
         duration_ms: int,
         encoder_used: str,
     ) -> ProgressEvent:
-        return cls({
-            "type": "result",
-            "match_index": match_index,
-            "output_path": str(output_path),
-            "duration_ms": duration_ms,
-            "encoder_used": encoder_used,
-        })
+        return cls(
+            {
+                "type": "result",
+                "match_index": match_index,
+                "output_path": str(output_path),
+                "duration_ms": duration_ms,
+                "encoder_used": encoder_used,
+            }
+        )
 
     @classmethod
     def error(cls, match_index: int, error: ExportError) -> ProgressEvent:
-        return cls({
-            "type": "error",
-            "match_index": match_index,
-            "error_kind": error.kind,
-            "error_message": error.message,
-            "error_hint": error.hint,
-        })
+        return cls(
+            {
+                "type": "error",
+                "match_index": match_index,
+                "error_kind": error.kind,
+                "error_message": error.message,
+                "error_hint": error.hint,
+            }
+        )
 
     @classmethod
     def summary(cls, summary: ExportSummary) -> ProgressEvent:
-        return cls({
-            "type": "summary",
-            "success": summary.success,
-            "failure": summary.failure,
-            "skipped": summary.skipped,
-            "cancelled": summary.cancelled,
-        })
+        return cls(
+            {
+                "type": "summary",
+                "success": summary.success,
+                "failure": summary.failure,
+                "skipped": summary.skipped,
+                "cancelled": summary.cancelled,
+            }
+        )
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -409,47 +421,54 @@ def test_h264_encoder_quality_args_amf():
 
 
 def test_select_first_pref_match():
-    assert select_h264_encoder(
-        vendors=["nvidia", "amd"], preference=["nvidia", "amd", "intel"]
-    ) == H264Encoder.NVENC
+    assert (
+        select_h264_encoder(
+            vendors=["nvidia", "amd"], preference=["nvidia", "amd", "intel"]
+        )
+        == H264Encoder.NVENC
+    )
 
 
 def test_select_skips_unavailable_first_pref():
-    assert select_h264_encoder(
-        vendors=["amd"], preference=["nvidia", "amd", "intel"]
-    ) == H264Encoder.AMF
+    assert (
+        select_h264_encoder(vendors=["amd"], preference=["nvidia", "amd", "intel"])
+        == H264Encoder.AMF
+    )
 
 
 def test_select_intel_qsv():
-    assert select_h264_encoder(
-        vendors=["intel"], preference=["nvidia", "amd", "intel"]
-    ) == H264Encoder.QSV
+    assert (
+        select_h264_encoder(vendors=["intel"], preference=["nvidia", "amd", "intel"])
+        == H264Encoder.QSV
+    )
 
 
 def test_select_libx264_fallback_when_no_vendor_match():
-    assert select_h264_encoder(
-        vendors=[], preference=["nvidia", "amd", "intel"]
-    ) == H264Encoder.LIBX264
+    assert (
+        select_h264_encoder(vendors=[], preference=["nvidia", "amd", "intel"])
+        == H264Encoder.LIBX264
+    )
 
 
 def test_select_libx264_fallback_when_pref_empty():
-    assert select_h264_encoder(
-        vendors=["nvidia"], preference=[]
-    ) == H264Encoder.LIBX264
+    assert select_h264_encoder(vendors=["nvidia"], preference=[]) == H264Encoder.LIBX264
 
 
 def test_select_libx264_fallback_unknown_vendor():
     """Unknown vendor strings (typos, future entries) ignored — libx264 fallback."""
-    assert select_h264_encoder(
-        vendors=["mali"], preference=["mali", "nvidia"]
-    ) == H264Encoder.LIBX264
+    assert (
+        select_h264_encoder(vendors=["mali"], preference=["mali", "nvidia"])
+        == H264Encoder.LIBX264
+    )
 
 
 # --- EncoderSlot ---
 
 
 def test_encoder_slot_is_frozen_dataclass():
-    slot = EncoderSlot(slot_index=0, encoder_kind=H264Encoder.NVENC, display_label="NVENC #1")
+    slot = EncoderSlot(
+        slot_index=0, encoder_kind=H264Encoder.NVENC, display_label="NVENC #1"
+    )
     with pytest.raises(Exception):
         slot.slot_index = 1  # type: ignore[misc]
 ```
@@ -515,7 +534,16 @@ _QUALITY_ARGS: dict[H264Encoder, tuple[str, ...]] = {
     H264Encoder.LIBX264: ("-crf", "18", "-preset", "medium"),
     H264Encoder.NVENC: ("-rc", "vbr", "-cq", "19", "-preset", "p5"),
     H264Encoder.QSV: ("-global_quality", "20", "-look_ahead", "1", "-preset", "medium"),
-    H264Encoder.AMF: ("-quality", "quality", "-rc", "cqp", "-qp_i", "19", "-qp_p", "21"),
+    H264Encoder.AMF: (
+        "-quality",
+        "quality",
+        "-rc",
+        "cqp",
+        "-qp_i",
+        "19",
+        "-qp_p",
+        "21",
+    ),
 }
 
 
@@ -712,10 +740,12 @@ def test_env_override_empty_falls_through(monkeypatch: pytest.MonkeyPatch):
 def test_multi_gpu_takes_minimum_engine_count():
     """RTX 5090 (3 engine) + RTX 4060 (1 engine) → 1 (conservative)."""
     assert (
-        probe_nvenc_engine_count([
-            "NVIDIA GeForce RTX 5090",
-            "NVIDIA GeForce RTX 4060",
-        ])
+        probe_nvenc_engine_count(
+            [
+                "NVIDIA GeForce RTX 5090",
+                "NVIDIA GeForce RTX 4060",
+            ]
+        )
         == 1
     )
 
@@ -723,10 +753,12 @@ def test_multi_gpu_takes_minimum_engine_count():
 def test_multi_gpu_with_unknown_uses_min_of_known():
     """RTX 4090 (2) + unknown card → 2 (unknown doesn't pollute the table match)."""
     assert (
-        probe_nvenc_engine_count([
-            "NVIDIA GeForce RTX 4090",
-            "Future Unknown Card 9000",
-        ])
+        probe_nvenc_engine_count(
+            [
+                "NVIDIA GeForce RTX 4090",
+                "Future Unknown Card 9000",
+            ]
+        )
         == 2
     )
 
@@ -734,10 +766,12 @@ def test_multi_gpu_with_unknown_uses_min_of_known():
 def test_multi_same_sku_returns_same_count():
     """2x RTX 5090 → 3 (matches present but min == 3)."""
     assert (
-        probe_nvenc_engine_count([
-            "NVIDIA GeForce RTX 5090",
-            "NVIDIA GeForce RTX 5090",
-        ])
+        probe_nvenc_engine_count(
+            [
+                "NVIDIA GeForce RTX 5090",
+                "NVIDIA GeForce RTX 5090",
+            ]
+        )
         == 3
     )
 ```
@@ -875,6 +909,7 @@ def test_enumerate_nvenc_returns_n_slots(monkeypatch: pytest.MonkeyPatch):
     """RTX 5090 → 3 slots, all NVENC."""
     monkeypatch.delenv("ALLAGANEYE_EXPORT_CONCURRENCY", raising=False)
     from allaganeye.export.encoder import enumerate_h264_encoders
+
     slots = enumerate_h264_encoders(
         vendors=["nvidia"],
         preference=["nvidia", "amd", "intel"],
@@ -889,6 +924,7 @@ def test_enumerate_nvenc_returns_n_slots(monkeypatch: pytest.MonkeyPatch):
 def test_enumerate_amf_returns_1_slot():
     """AMD iGPU → 1 slot (Phase 2 #762 will add iGPU multi-slot if engine count > 1)."""
     from allaganeye.export.encoder import enumerate_h264_encoders
+
     slots = enumerate_h264_encoders(
         vendors=["amd"],
         preference=["nvidia", "amd", "intel"],
@@ -901,6 +937,7 @@ def test_enumerate_amf_returns_1_slot():
 
 def test_enumerate_qsv_returns_1_slot():
     from allaganeye.export.encoder import enumerate_h264_encoders
+
     slots = enumerate_h264_encoders(
         vendors=["intel"],
         preference=["nvidia", "amd", "intel"],
@@ -914,6 +951,7 @@ def test_enumerate_libx264_fallback_when_no_vendor(monkeypatch: pytest.MonkeyPat
     """Empty vendors → 1 libx264 slot (CPU-only env)."""
     monkeypatch.delenv("ALLAGANEYE_EXPORT_CONCURRENCY", raising=False)
     from allaganeye.export.encoder import enumerate_h264_encoders
+
     slots = enumerate_h264_encoders(
         vendors=[], preference=["nvidia", "amd", "intel"], gpu_models=[]
     )
@@ -925,6 +963,7 @@ def test_enumerate_nvenc_respects_env_override(monkeypatch: pytest.MonkeyPatch):
     """env=2 forces 2 slots even on RTX 5090 (would otherwise be 3)."""
     monkeypatch.setenv("ALLAGANEYE_EXPORT_CONCURRENCY", "2")
     from allaganeye.export.encoder import enumerate_h264_encoders
+
     slots = enumerate_h264_encoders(
         vendors=["nvidia"],
         preference=["nvidia", "amd", "intel"],
@@ -964,7 +1003,7 @@ def enumerate_h264_encoders(
             EncoderSlot(
                 slot_index=i,
                 encoder_kind=H264Encoder.NVENC,
-                display_label=f"NVENC #{i+1}",
+                display_label=f"NVENC #{i + 1}",
             )
             for i in range(n)
         ]
@@ -1033,6 +1072,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 def test_wire_writer_serializes_single_event():
     from allaganeye.export.wire import WireWriter
+
     sink = io.StringIO()
     w = WireWriter(stream=sink)
     w.emit(ProgressEvent.progress(0, 25.0, "encoding"))
@@ -1044,6 +1084,7 @@ def test_wire_writer_serializes_single_event():
 def test_wire_writer_concurrent_writes_atomic():
     """Codex review #4: 複数 thread が同時 emit しても改行までの atomic 性が保たれる."""
     from allaganeye.export.wire import WireWriter
+
     sink = io.StringIO()
     w = WireWriter(stream=sink)
 
@@ -1067,6 +1108,7 @@ def test_wire_writer_concurrent_writes_atomic():
 def test_wire_writer_flush_called_per_emit(monkeypatch: pytest.MonkeyPatch):
     """flush ごとに subprocess buffer が滞留せず GUI に届くこと."""
     from allaganeye.export.wire import WireWriter
+
     flush_count = 0
 
     class FlushTracker(io.StringIO):
@@ -1222,14 +1264,16 @@ def test_unrelated_error_not_classified_as_gpu_init():
 def test_run_export_attempt_nvenc_success(mock_popen: MagicMock, tmp_path: Path):
     proc = MagicMock()
     proc.stderr = MagicMock()
-    proc.stderr.readline = MagicMock(side_effect=[
-        b"frame=  100 fps=30 q=23.0 size=    256kB time=00:00:01.00 bitrate=2097.2kbits/s speed=1x    \n",
-        b"out_time_ms=1000000\n",
-        b"progress=continue\n",
-        b"out_time_ms=2000000\n",
-        b"progress=end\n",
-        b"",  # EOF
-    ])
+    proc.stderr.readline = MagicMock(
+        side_effect=[
+            b"frame=  100 fps=30 q=23.0 size=    256kB time=00:00:01.00 bitrate=2097.2kbits/s speed=1x    \n",
+            b"out_time_ms=1000000\n",
+            b"progress=continue\n",
+            b"out_time_ms=2000000\n",
+            b"progress=end\n",
+            b"",  # EOF
+        ]
+    )
     proc.wait = MagicMock(return_value=0)
     proc.returncode = 0
     mock_popen.return_value = proc
@@ -1265,20 +1309,24 @@ def test_run_export_attempt_nvenc_init_fail_falls_back_to_libx264(
     """1st attempt (NVENC) returns non-zero with init-fail stderr → 2nd attempt libx264."""
     proc_nvenc = MagicMock()
     proc_nvenc.stderr = MagicMock()
-    proc_nvenc.stderr.readline = MagicMock(side_effect=[
-        b"[h264_nvenc @ 0xfff] No NVENC capable devices found\n",
-        b"",
-    ])
+    proc_nvenc.stderr.readline = MagicMock(
+        side_effect=[
+            b"[h264_nvenc @ 0xfff] No NVENC capable devices found\n",
+            b"",
+        ]
+    )
     proc_nvenc.wait = MagicMock(return_value=1)
     proc_nvenc.returncode = 1
 
     proc_libx264 = MagicMock()
     proc_libx264.stderr = MagicMock()
-    proc_libx264.stderr.readline = MagicMock(side_effect=[
-        b"out_time_ms=1000000\n",
-        b"progress=end\n",
-        b"",
-    ])
+    proc_libx264.stderr.readline = MagicMock(
+        side_effect=[
+            b"out_time_ms=1000000\n",
+            b"progress=end\n",
+            b"",
+        ]
+    )
     proc_libx264.wait = MagicMock(return_value=0)
     proc_libx264.returncode = 0
 
@@ -1341,24 +1389,26 @@ def test_run_export_attempt_cancel_event_kills_ffmpeg(
 
 
 @patch("allaganeye.export.ffmpeg_runner.subprocess.Popen")
-def test_run_export_attempt_both_attempts_fail(
-    mock_popen: MagicMock, tmp_path: Path
-):
+def test_run_export_attempt_both_attempts_fail(mock_popen: MagicMock, tmp_path: Path):
     proc_nvenc = MagicMock()
     proc_nvenc.stderr = MagicMock()
-    proc_nvenc.stderr.readline = MagicMock(side_effect=[
-        b"[h264_nvenc @ 0xfff] No NVENC capable devices found\n",
-        b"",
-    ])
+    proc_nvenc.stderr.readline = MagicMock(
+        side_effect=[
+            b"[h264_nvenc @ 0xfff] No NVENC capable devices found\n",
+            b"",
+        ]
+    )
     proc_nvenc.wait = MagicMock(return_value=1)
     proc_nvenc.returncode = 1
 
     proc_libx264 = MagicMock()
     proc_libx264.stderr = MagicMock()
-    proc_libx264.stderr.readline = MagicMock(side_effect=[
-        b"Error opening codec\n",
-        b"",
-    ])
+    proc_libx264.stderr.readline = MagicMock(
+        side_effect=[
+            b"Error opening codec\n",
+            b"",
+        ]
+    )
     proc_libx264.wait = MagicMock(return_value=1)
     proc_libx264.returncode = 1
 
@@ -1588,7 +1638,9 @@ def run_export_attempt(
         retry_args = _build_ffmpeg_args(
             ffmpeg, video, start, end, output, codec, H264Encoder.LIBX264
         )
-        retry_outcome = _run_single_attempt(retry_args, duration, progress_cb, cancel_event)
+        retry_outcome = _run_single_attempt(
+            retry_args, duration, progress_cb, cancel_event
+        )
 
         if cancel_event.is_set():
             raise ExportError(kind="cancelled", message="export cancelled by user")
@@ -1680,14 +1732,18 @@ from allaganeye.export.schema import ExportError, ExportResult
 
 def _slots(n: int) -> list[EncoderSlot]:
     return [
-        EncoderSlot(slot_index=i, encoder_kind=H264Encoder.LIBX264, display_label=f"libx264#{i}")
+        EncoderSlot(
+            slot_index=i, encoder_kind=H264Encoder.LIBX264, display_label=f"libx264#{i}"
+        )
         for i in range(n)
     ]
 
 
 def _matches(n: int) -> list[ExportMatch]:
     return [
-        ExportMatch(index=i, start=float(i * 10), end=float((i + 1) * 10), type_label="match")
+        ExportMatch(
+            index=i, start=float(i * 10), end=float((i + 1) * 10), type_label="match"
+        )
         for i in range(n)
     ]
 
@@ -1806,6 +1862,7 @@ def test_export_matches_cancel_marks_true_even_with_empty_queue(tmp_path: Path):
 
 def test_export_matches_partial_failure_other_workers_continue(tmp_path: Path):
     """1 worker が failure を返しても他は続行する."""
+
     def fake_run(*args: Any, **kwargs: Any) -> ExportResult:
         if kwargs.get("start") == 10.0:  # match index 1
             raise ExportError(kind="ffmpeg.exit_failed", message="boom")
@@ -2098,9 +2155,12 @@ def test_encoder_slots_outputs_json_array_for_nvenc(
         app,
         [
             "encoder-slots",
-            "--vendors", "nvidia",
-            "--preference", "nvidia,amd,intel",
-            "--gpu-models", "NVIDIA GeForce RTX 5090",
+            "--vendors",
+            "nvidia",
+            "--preference",
+            "nvidia,amd,intel",
+            "--gpu-models",
+            "NVIDIA GeForce RTX 5090",
         ],
     )
     assert result.exit_code == 0
@@ -2119,14 +2179,19 @@ def test_encoder_slots_libx264_when_no_vendors(
         app,
         [
             "encoder-slots",
-            "--vendors", "",
-            "--preference", "nvidia,amd,intel",
-            "--gpu-models", "",
+            "--vendors",
+            "",
+            "--preference",
+            "nvidia,amd,intel",
+            "--gpu-models",
+            "",
         ],
     )
     assert result.exit_code == 0
     parsed = json.loads(result.stdout)
-    assert parsed == [{"slot_index": 0, "encoder_kind": "Libx264", "display_label": "libx264 (CPU)"}]
+    assert parsed == [
+        {"slot_index": 0, "encoder_kind": "Libx264", "display_label": "libx264 (CPU)"}
+    ]
 
 
 def test_encoder_slots_multiple_vendors_first_pref_wins(
@@ -2137,9 +2202,12 @@ def test_encoder_slots_multiple_vendors_first_pref_wins(
         app,
         [
             "encoder-slots",
-            "--vendors", "nvidia,amd",
-            "--preference", "amd,nvidia",
-            "--gpu-models", "AMD Radeon,NVIDIA RTX 4060",
+            "--vendors",
+            "nvidia,amd",
+            "--preference",
+            "amd,nvidia",
+            "--gpu-models",
+            "AMD Radeon,NVIDIA RTX 4060",
         ],
     )
     assert result.exit_code == 0
@@ -2181,7 +2249,9 @@ def register(app: typer.Typer) -> None:
 
     @app.command(name="encoder-slots", hidden=True)
     def encoder_slots(
-        vendors: str = typer.Option("", "--vendors", help="Comma-separated vendor list."),
+        vendors: str = typer.Option(
+            "", "--vendors", help="Comma-separated vendor list."
+        ),
         preference: str = typer.Option(
             "nvidia,amd,intel",
             "--preference",
@@ -2292,7 +2362,15 @@ def test_export_positional_metadata_path(
     metadata_path = _make_metadata(tmp_path)
     result = runner.invoke(
         app,
-        ["export", str(metadata_path), "--output-dir", str(tmp_path), "--codec", "h264", "--quiet"],
+        [
+            "export",
+            str(metadata_path),
+            "--output-dir",
+            str(tmp_path),
+            "--codec",
+            "h264",
+            "--quiet",
+        ],
     )
     assert result.exit_code == 0
     mock_export.assert_called_once()
@@ -2301,18 +2379,30 @@ def test_export_positional_metadata_path(
 @patch("allaganeye.commands.export.export_matches")
 def test_export_stdin_mode(mock_export: MagicMock, app: typer.Typer, tmp_path: Path):
     mock_export.return_value = ExportSummary(success=1, failure=0)
-    payload = json.dumps({
-        "source": str(tmp_path / "in.mp4"),
-        "matches": [{"index": 0, "start_time": 0.0, "end_time": 5.0, "type": "match"}],
-        "system_info": {
-            "gpu_vendors_available": [],
-            "vendor_preference": ["nvidia"],
-            "gpu": [],
-        },
-    })
+    payload = json.dumps(
+        {
+            "source": str(tmp_path / "in.mp4"),
+            "matches": [
+                {"index": 0, "start_time": 0.0, "end_time": 5.0, "type": "match"}
+            ],
+            "system_info": {
+                "gpu_vendors_available": [],
+                "vendor_preference": ["nvidia"],
+                "gpu": [],
+            },
+        }
+    )
     result = runner.invoke(
         app,
-        ["export", "--stdin", "--output-dir", str(tmp_path), "--codec", "copy", "--quiet"],
+        [
+            "export",
+            "--stdin",
+            "--output-dir",
+            str(tmp_path),
+            "--codec",
+            "copy",
+            "--quiet",
+        ],
         input=payload,
     )
     assert result.exit_code == 0
@@ -2328,7 +2418,15 @@ def test_export_json_mode_emits_summary_line(
     metadata_path = _make_metadata(tmp_path)
     result = runner.invoke(
         app,
-        ["export", str(metadata_path), "--output-dir", str(tmp_path), "--codec", "h264", "--json"],
+        [
+            "export",
+            str(metadata_path),
+            "--output-dir",
+            str(tmp_path),
+            "--codec",
+            "h264",
+            "--json",
+        ],
     )
     assert result.exit_code == 0
     lines = [l for l in result.stdout.splitlines() if l.strip()]
@@ -2346,10 +2444,14 @@ def test_export_exclude_filters_matches(
     result = runner.invoke(
         app,
         [
-            "export", str(metadata_path),
-            "--output-dir", str(tmp_path),
-            "--codec", "h264",
-            "--exclude", "1",
+            "export",
+            str(metadata_path),
+            "--output-dir",
+            str(tmp_path),
+            "--codec",
+            "h264",
+            "--exclude",
+            "1",
             "--quiet",
         ],
     )
@@ -2373,7 +2475,15 @@ def test_export_returns_exit_1_on_failure(
     metadata_path = _make_metadata(tmp_path)
     result = runner.invoke(
         app,
-        ["export", str(metadata_path), "--output-dir", str(tmp_path), "--codec", "h264", "--quiet"],
+        [
+            "export",
+            str(metadata_path),
+            "--output-dir",
+            str(tmp_path),
+            "--codec",
+            "h264",
+            "--quiet",
+        ],
     )
     assert result.exit_code == 1
 ```
@@ -2449,7 +2559,9 @@ def register(app: typer.Typer) -> None:
             None, exists=False, help="Path to metadata.json. Omit with --stdin."
         ),
         stdin: bool = typer.Option(
-            False, "--stdin", help="Read metadata JSON from stdin (GUI subprocess mode)."
+            False,
+            "--stdin",
+            help="Read metadata JSON from stdin (GUI subprocess mode).",
         ),
         output_dir: Path = typer.Option(
             ..., "--output-dir", "-o", help="Output directory for split MP4 files."
@@ -2458,7 +2570,9 @@ def register(app: typer.Typer) -> None:
             "copy", "--codec", help="Codec mode: 'copy' (no re-encode) or 'h264'."
         ),
         concurrency: int | None = typer.Option(
-            None, "--concurrency", help="Override slot count (default: auto from SKU table)."
+            None,
+            "--concurrency",
+            help="Override slot count (default: auto from SKU table).",
         ),
         name_pattern: str = typer.Option(
             "{idx:03}_{type}_{start}.mp4",
@@ -2470,7 +2584,9 @@ def register(app: typer.Typer) -> None:
             False, "--json", help="Emit JSON Lines on stdout (GUI subprocess mode)."
         ),
         include: str | None = typer.Option(
-            None, "--include", help="Comma-separated match indexes to include (others skipped)."
+            None,
+            "--include",
+            help="Comma-separated match indexes to include (others skipped).",
         ),
         exclude: str | None = typer.Option(
             None, "--exclude", help="Comma-separated match indexes to skip."
@@ -2491,7 +2607,9 @@ def register(app: typer.Typer) -> None:
         source_video = Path(metadata["source"])
         sys_info = metadata.get("system_info") or {}
         vendors = list(sys_info.get("gpu_vendors_available") or [])
-        preference = list(sys_info.get("vendor_preference") or ["nvidia", "amd", "intel"])
+        preference = list(
+            sys_info.get("vendor_preference") or ["nvidia", "amd", "intel"]
+        )
         gpu_models = list(sys_info.get("gpu") or [])
 
         # Filter matches per include/exclude
@@ -2510,7 +2628,9 @@ def register(app: typer.Typer) -> None:
             filtered.append(
                 ExportMatch(
                     index=idx,
-                    start=float(raw.get("edited", {}).get("start_time") or raw["start_time"]),
+                    start=float(
+                        raw.get("edited", {}).get("start_time") or raw["start_time"]
+                    ),
                     end=float(raw.get("edited", {}).get("end_time") or raw["end_time"]),
                     type_label=str(raw.get("type", "match")),
                 )
@@ -2524,16 +2644,20 @@ def register(app: typer.Typer) -> None:
 
         # Cancel: SIGINT (Ctrl+C) → cancel_event set → workers stop
         cancel_event = threading.Event()
+
         def _sigint_handler(signum: int, frame: object) -> None:
             cancel_event.set()
+
         signal.signal(signal.SIGINT, _sigint_handler)
 
         # Progress callback wiring
         if json_mode:
             writer = WireWriter(stream=sys.stdout)
+
             def progress_cb(ev: ProgressEvent) -> None:
                 writer.emit(ev)
         elif quiet:
+
             def progress_cb(ev: ProgressEvent) -> None:  # noqa: ARG001
                 pass
         else:
@@ -2698,10 +2822,20 @@ def short_test_video(tmp_path_factory: pytest.TempPathFactory) -> Path:
     out = tmp_path_factory.mktemp("export-wire") / "in.mp4"
     subprocess.run(
         [
-            "ffmpeg", "-y", "-f", "lavfi",
-            "-i", "testsrc=duration=6:size=640x360:rate=30",
-            "-pix_fmt", "yuv420p",
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=6:size=640x360:rate=30",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "30",
             str(out),
         ],
         check=True,
@@ -2729,11 +2863,18 @@ def test_wire_protocol_end_to_end(short_test_video: Path, tmp_path: Path):
 
     proc = subprocess.run(
         [
-            sys.executable, "-m", "allaganeye",
-            "export", "--stdin", "--json",
-            "--output-dir", str(output_dir),
-            "--codec", "h264",
-            "--name-pattern", "{idx:03}.mp4",
+            sys.executable,
+            "-m",
+            "allaganeye",
+            "export",
+            "--stdin",
+            "--json",
+            "--output-dir",
+            str(output_dir),
+            "--codec",
+            "h264",
+            "--name-pattern",
+            "{idx:03}.mp4",
         ],
         input=json.dumps(metadata),
         capture_output=True,
@@ -2771,7 +2912,9 @@ def test_wire_protocol_end_to_end(short_test_video: Path, tmp_path: Path):
 def test_wire_protocol_cancel_via_sigint(short_test_video: Path, tmp_path: Path):
     """SIGINT mid-export → summary.cancelled = True, exit 130."""
     if os.name == "nt":
-        pytest.skip("SIGINT test requires POSIX signal semantics; Windows uses GenerateConsoleCtrlEvent")
+        pytest.skip(
+            "SIGINT test requires POSIX signal semantics; Windows uses GenerateConsoleCtrlEvent"
+        )
     metadata = {
         "source": str(short_test_video),
         "matches": [
@@ -2788,23 +2931,36 @@ def test_wire_protocol_cancel_via_sigint(short_test_video: Path, tmp_path: Path)
 
     proc = subprocess.Popen(
         [
-            sys.executable, "-m", "allaganeye",
-            "export", "--stdin", "--json",
-            "--output-dir", str(output_dir),
-            "--codec", "h264",
-            "--name-pattern", "{idx:03}.mp4",
+            sys.executable,
+            "-m",
+            "allaganeye",
+            "export",
+            "--stdin",
+            "--json",
+            "--output-dir",
+            str(output_dir),
+            "--codec",
+            "h264",
+            "--name-pattern",
+            "{idx:03}.mp4",
         ],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
         env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
     assert proc.stdin is not None
     proc.stdin.write(json.dumps(metadata))
     proc.stdin.close()
     import time, signal
+
     time.sleep(0.5)  # let export start
     proc.send_signal(signal.SIGINT)
     stdout, stderr = proc.communicate(timeout=10)
-    assert proc.returncode == 130, f"expected exit 130 (SIGINT), got {proc.returncode}; stderr={stderr}"
+    assert proc.returncode == 130, (
+        f"expected exit 130 (SIGINT), got {proc.returncode}; stderr={stderr}"
+    )
     lines = [l for l in stdout.splitlines() if l.strip()]
     last = json.loads(lines[-1])
     assert last["type"] == "summary"

@@ -123,6 +123,7 @@ interface ExportSummary {
 export function ExportScreen() {
   const metadata = useMetadataStore((s) => s.metadata);
   const navigate = useAppStateStore((s) => s.navigate);
+  const setLastExportOutputDir = useAppStateStore((s) => s.setLastExportOutputDir);
 
   // #466 review (C): drop で確定した実 path を最優先で使用する。sample mode
   // (selectedVideoPath = null) では metadata.source にフォールバック。
@@ -402,6 +403,8 @@ export function ExportScreen() {
     const startMs = Date.now();
     setExportStartMs(startMs);
     setNowMs(startMs);
+    // #893 R2: record the export output dir so MinimapScreen can default to it.
+    setLastExportOutputDir(outDir);
     dispatch({ type: 'START_CLICKED' });
 
     // #761 -- single invoke: hand entire metadata + settings to Python
@@ -823,6 +826,17 @@ export function ExportScreen() {
                 }}
               >
                 設定変更して再書き出し
+              </button>
+            )}
+            {completed && (
+              <button
+                type="button"
+                className={styles.cancelButton}
+                onClick={() => navigate('minimap')}
+                disabled={metadata.matches.length === 0}
+                aria-label="ミニマップ切抜きへ"
+              >
+                ⬦ ミニマップ切抜きへ
               </button>
             )}
 

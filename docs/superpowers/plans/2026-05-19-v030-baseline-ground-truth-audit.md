@@ -692,7 +692,13 @@ def test_main_writes_worksheet_csv(tmp_path, monkeypatch):
         "schema_version": "1",
         "source": "20260116/fake.mkv",
         "matches": [
-            {"index": 1, "start_time": 49.125, "end_time": 1054.5, "duration": 1005.375, "type": "fl_match"},
+            {
+                "index": 1,
+                "start_time": 49.125,
+                "end_time": 1054.5,
+                "duration": 1005.375,
+                "type": "fl_match",
+            },
         ],
         "gaps": [],
     }
@@ -711,11 +717,15 @@ def test_main_writes_worksheet_csv(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "export_sample_frames", lambda **kw: None)
 
     worksheet_dir = tmp_path / "audit-worksheet"
-    rc = mod.main([
-        "obs-20260116",
-        "--baseline-dir", str(baseline_dir),
-        "--worksheet-dir", str(worksheet_dir),
-    ])
+    rc = mod.main(
+        [
+            "obs-20260116",
+            "--baseline-dir",
+            str(baseline_dir),
+            "--worksheet-dir",
+            str(worksheet_dir),
+        ]
+    )
     assert rc == 0
 
     worksheet_csv = worksheet_dir / "obs-20260116.csv"
@@ -964,10 +974,14 @@ def test_classify_findings_includes_delta():
     """Each finding records baseline / ground truth ts and delta."""
     mod = _load_module()
     baseline = {
-        "matches": [{"index": 1, "start_time": 50, "end_time": 1000, "type": "fl_match"}]
+        "matches": [
+            {"index": 1, "start_time": 50, "end_time": 1000, "type": "fl_match"}
+        ]
     }
     ground_truth = {
-        "matches": [{"index": 1, "start_time": 53, "end_time": 1000, "type": "fl_match"}],
+        "matches": [
+            {"index": 1, "start_time": 53, "end_time": 1000, "type": "fl_match"}
+        ],
         "tolerance_sec": 1,
     }
     findings = mod.classify_findings(baseline, ground_truth)
@@ -1007,7 +1021,9 @@ from pathlib import Path
 from typing import Any
 
 
-def _extract_boundaries(matches: list[dict[str, Any]]) -> list[tuple[int | None, str, float]]:
+def _extract_boundaries(
+    matches: list[dict[str, Any]],
+) -> list[tuple[int | None, str, float]]:
     """Return (index, kind, timestamp) for each match start/end."""
     out: list[tuple[int | None, str, float]] = []
     for m in matches:
@@ -1123,7 +1139,14 @@ def main(argv: list[str] | None = None) -> int:
     ground_truth = json.loads(ground_truth_path.read_text(encoding="utf-8"))
 
     findings = classify_findings(baseline, ground_truth)
-    print(format_markdown(findings, label=args.recording_label, baseline=baseline, ground_truth=ground_truth))
+    print(
+        format_markdown(
+            findings,
+            label=args.recording_label,
+            baseline=baseline,
+            ground_truth=ground_truth,
+        )
+    )
     return 0
 
 
@@ -1291,7 +1314,9 @@ def format_markdown(
     lines.append("")
     lines.append("### Findings")
     lines.append("")
-    lines.append("| # | Type | Match | Boundary | Baseline ts | Ground truth ts | Delta | Classification (a/b/c) |")
+    lines.append(
+        "| # | Type | Match | Boundary | Baseline ts | Ground truth ts | Delta | Classification (a/b/c) |"
+    )
     lines.append("|---|---|---|---|---|---|---|---|")
     sorted_findings = sorted(
         findings, key=lambda f: _FINDING_ORDER.index(f["finding_type"])

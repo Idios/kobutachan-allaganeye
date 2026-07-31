@@ -115,7 +115,6 @@ Expected: `FAILED` with `AttributeError: module 'audit_prepare' has no attribute
 In `scripts/audit-prepare.py`, after line 42 (`_DEFAULT_WORKSHEET_DIR = ...`), add:
 
 ```python
-
 # Issue #800: tx-state sidecar for transactional crash recovery.
 # `<label>.tx.json` holds the single canonical state of the last publish;
 # crash mid-publish is detected by next run via state == "swapping" and
@@ -128,8 +127,6 @@ _TX_STATE_SWAPPING = "swapping"
 Then after `build_worksheet_rows` (around line 124), add:
 
 ```python
-
-
 def _read_tx_state(tx_path: Path) -> dict[str, Any] | None:
     """Return parsed tx-state, or None if file missing / corrupted / unknown shape.
 
@@ -217,8 +214,6 @@ EOF
 Append to `tests/test_audit_prepare.py`:
 
 ```python
-
-
 def test_write_tx_state_atomic_creates_file(tmp_path):
     mod = _load_module()
     tx_path = tmp_path / "obs.tx.json"
@@ -264,8 +259,6 @@ from datetime import datetime, timezone
 After `_read_tx_state`, add:
 
 ```python
-
-
 def _write_tx_state_atomic(tx_path: Path, *, state: str) -> None:
     """Atomically write tx-state via temp file + os.replace.
 
@@ -333,8 +326,6 @@ EOF
 Append to `tests/test_audit_prepare.py`:
 
 ```python
-
-
 def test_recover_stale_artifacts_removes_all(tmp_path):
     mod = _load_module()
     per_boundary_dir = tmp_path / "obs"
@@ -401,8 +392,6 @@ Expected: `FAILED` with `AttributeError: module 'audit_prepare' has no attribute
 After `_write_tx_state_atomic`, add:
 
 ```python
-
-
 def _recover_stale_artifacts(
     *,
     per_boundary_dir: Path,
@@ -467,8 +456,6 @@ EOF
 Append to `tests/test_audit_prepare.py`:
 
 ```python
-
-
 def test_main_writes_tx_state_consistent_after_publish(tmp_path, monkeypatch):
     """After successful main() the tx-state file exists with state=consistent (#800)."""
     mod = _load_module()
@@ -614,8 +601,6 @@ EOF
 Append to `tests/test_audit_prepare.py`:
 
 ```python
-
-
 def _seed_baseline_for_main(tmp_path, monkeypatch, label="obs-fake"):
     """Helper: build a minimal baseline + video tree usable by main()."""
     mod = _load_module()
@@ -850,8 +835,6 @@ EOF
 Append to `tests/test_audit_prepare.py`:
 
 ```python
-
-
 def test_recovers_from_crash_after_rmtree(tmp_path, monkeypatch, capsys):
     """W1 window: crash AFTER rmtree old per_boundary_dir, BEFORE rename .new.
 

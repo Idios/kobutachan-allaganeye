@@ -79,7 +79,7 @@ parser.add_argument(
     "--skip-source-size-check",
     action="store_true",
     help="Skip source_size_bytes verification (operator escape; "
-         "logged to stderr; ground-truth schema validation is NOT skipped).",
+    "logged to stderr; ground-truth schema validation is NOT skipped).",
 )
 
 ...

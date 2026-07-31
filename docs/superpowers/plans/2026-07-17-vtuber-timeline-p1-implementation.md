@@ -192,8 +192,7 @@ def segment_timeline(
     if n == 0:
         return []
     evid = [
-        p.present and p.band_mad is not None and p.band_mad >= mad_min
-        for p in probes
+        p.present and p.band_mad is not None and p.band_mad >= mad_min for p in probes
     ]
     half = window // 2
     segs: list[list[float]] = []
@@ -300,7 +299,9 @@ class TestResolveVtuberAnchor:
             "allaganeye.video.vtuber_timeline._probe_frame_rgb_hires",
             return_value=None,
         ):
-            assert resolve_vtuber_anchor(Path("dummy.mp4"), duration_hint=3600.0) is None
+            assert (
+                resolve_vtuber_anchor(Path("dummy.mp4"), duration_hint=3600.0) is None
+            )
 ```
 
 - [ ] **Step 2: Run to verify FAIL** — `python -m pytest tests/test_vtuber_timeline.py::TestResolveVtuberAnchor -v` → ImportError (resolve_vtuber_anchor)
@@ -726,7 +727,7 @@ def test_vtuber_timeline_none_falls_back_to_band_crop(monkeypatch):
     called: list = []
     monkeypatch.setattr(
         "allaganeye.video.detector._resolve_detect_region",
-        lambda *a, **k: (called.append(1) or (FULL_FRAME, "consensus_miss")),
+        lambda *a, **k: called.append(1) or (FULL_FRAME, "consensus_miss"),
     )
     # Pass 1 以降は既存 helper のダミー probe mock を流用 (blackout なしで即返る)
     ...  # 既存 _detect_with_region_callback の内部 mock をこの test に展開する
@@ -758,38 +759,36 @@ def test_obs_path_does_not_call_timeline(monkeypatch):
 - [ ] **Step 3: Implement** — detector.py の Stage 0 呼び出し (detector.py:650 近辺) を次の形に変更:
 
 ```python
-    # V0-V2 (#895 / spec 2026-07-17): vtuber は timeline segmentation を先に試行。
-    # anchor 不成立 / probe 過半 UNKNOWN のときのみ従来の band-crop blackout path
-    # へ縮退する (現状より悪化しない floor)。OBS (vtuber=False) はこの分岐に
-    # 一切入らない = import もしない (bit-exact 構造保証)。
-    if vtuber:
-        from allaganeye.video import vtuber_timeline
+# V0-V2 (#895 / spec 2026-07-17): vtuber は timeline segmentation を先に試行。
+# anchor 不成立 / probe 過半 UNKNOWN のときのみ従来の band-crop blackout path
+# へ縮退する (現状より悪化しない floor)。OBS (vtuber=False) はこの分岐に
+# 一切入らない = import もしない (bit-exact 構造保証)。
+if vtuber:
+    from allaganeye.video import vtuber_timeline
 
-        timeline_result = vtuber_timeline.detect_matches_timeline(
-            video_path,
-            duration_hint,
-            min_match_duration=min_match_duration,
-            workers=workers,
-            progress_callback=progress_callback,
-        )
-        if timeline_result is not None:
-            timeline_boundaries, timeline_region = timeline_result
-            if region_callback is not None:
-                region_callback(timeline_region)
-            # P1 契約: timeline path は Pass 1/2 を通らないため DetectionStats
-            # (pass1/pass2 秒数等) と brightness_callback は未設定のまま返す。
-            # `--vtuber -v` の pipeline 統計は空表示になるが `_print_detection_stats`
-            # は全 key guarded で crash しない (実証済)。stats への timeline 固有
-            # 統計 (probe 数 / anchor conf 等) の追加は P2 で V3 と合わせて設計する。
-            return timeline_boundaries
-
-    # Stage 0 (#753 / B4-rev): resolve a scorebar-band anchor before any scan.
-    # (以下、既存コード無変更)
-    detect_region, region_fallback_reason = (
-        _resolve_detect_region(video_path, duration_hint)
-        if vtuber
-        else (FULL_FRAME, None)
+    timeline_result = vtuber_timeline.detect_matches_timeline(
+        video_path,
+        duration_hint,
+        min_match_duration=min_match_duration,
+        workers=workers,
+        progress_callback=progress_callback,
     )
+    if timeline_result is not None:
+        timeline_boundaries, timeline_region = timeline_result
+        if region_callback is not None:
+            region_callback(timeline_region)
+        # P1 契約: timeline path は Pass 1/2 を通らないため DetectionStats
+        # (pass1/pass2 秒数等) と brightness_callback は未設定のまま返す。
+        # `--vtuber -v` の pipeline 統計は空表示になるが `_print_detection_stats`
+        # は全 key guarded で crash しない (実証済)。stats への timeline 固有
+        # 統計 (probe 数 / anchor conf 等) の追加は P2 で V3 と合わせて設計する。
+        return timeline_boundaries
+
+# Stage 0 (#753 / B4-rev): resolve a scorebar-band anchor before any scan.
+# (以下、既存コード無変更)
+detect_region, region_fallback_reason = (
+    _resolve_detect_region(video_path, duration_hint) if vtuber else (FULL_FRAME, None)
+)
 ```
 
 - [ ] **Step 4: Run to verify PASS** — `python -m pytest tests/test_detector.py -v` → 既存 + 新規 全 pass (OBS 系 test が 1 件も壊れないことを必ず確認)

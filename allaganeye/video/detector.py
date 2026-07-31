@@ -280,7 +280,18 @@ def _proc_deadline_watchdog(proc: subprocess.Popen[bytes], deadline_s: float):
 
 
 def _resolve_workers(workers: int | None) -> int:
-    """Resolve worker count: explicit value or auto-detect."""
+    """Resolve worker count: explicit value or auto-detect.
+
+    **This docstring is the single source of truth for the worker cap.**
+    Per ``docs/coding-conventions.md`` (doc SSoT convention, #818), spec
+    docs must not duplicate the number -- they write "auto" and link here.
+
+    When ``workers is None`` (CLI ``--workers`` omitted) the count is
+    ``min(cpu_count, 32)``.  The cap exists because each worker spawns one
+    ``ffmpeg -threads 1`` probe process; beyond ~32 concurrent seeks the
+    bottleneck moves from CPU to storage I/O and throughput stops scaling.
+    ``os.cpu_count()`` returning ``None`` falls back to 4.
+    """
     if workers is not None:
         return workers
     return min(os.cpu_count() or 4, 32)

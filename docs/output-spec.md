@@ -1,14 +1,29 @@
 # CLI 出力仕様 (Output Specification)
 
-`allaganeye split` コマンドの CLI オプション組み合わせごとの**期待出力**を定義する。実装と docs の整合性を検証する基準として使用し、新規 CLI オプションを追加する PR は本マトリクスに行・列を追加することを必須とする (#405)。
+`allaganeye split` / `allaganeye detect` コマンドの CLI オプション組み合わせごとの**期待出力**を定義する。実装と docs の整合性を検証する基準として使用し、新規 CLI オプションを追加する PR は本マトリクスに行・列を追加することを必須とする (#405)。
 
 関連: CLI 構文 (引数・オプション) は [`docs/cli-spec.md`](cli-spec.md) を参照。本ドキュメントは**出力側**の仕様に専念する。
 
 ## 適用範囲
 
-- **対象コマンド**: `allaganeye split`
+- **対象コマンド**: `allaganeye split` / `allaganeye detect` (#463 で分離。detect は split の検知フェーズと同じ進捗・verbose 出力契約に従う)
 - **対象外コマンド**: `debug-brightness` (CSV 出力用途で `-v` / `-q` オプション自体を持たない。エラー表示のみ本仕様の 19b 準拠、ただし `-v` hint は表示しない #428)
 - **対象外ストリーム**: stdout / stderr のメインストリーム。`logger.debug` 経由のログは本仕様に含まない (デフォルトで出力されず、開発者向け診断用)
+
+### detect コマンドの適用境界
+
+マトリクスは元々 `split` を対象に作成されたため、`detect` を対象に加えるにあたり **全 19 行を `allaganeye/commands/detect.py` の実行経路に対して突合した** (#862)。以下の 4 点を除き、残る行は split と同一のヘルパ (`_print_environment_header` / `_display_cache_hit_params` / `_resolve_gpu_mode_with_probe` / `_run_detection` / `_print_detection_stats` / `_display_results` / `_display_gaps` / `_emit_total_time`) を detect も呼ぶため、**表の値がそのまま detect にも適用される**。
+
+detect に該当しない行 (この 4 点で網羅):
+
+- **行 6 (`Dry-run 通知`)**: `detect` に `--dry-run` オプションは存在しない (`allaganeye/cli.py` 参照)。`--dry-run` 系列の列 (3 列) は detect では意味を持たない
+- **行 11 のうち `Splitting` elapsed**: `Splitting: N matches, Xs` (2 space indent 付き) は `_emit_splitting_elapsed` が出力し、その呼び出し元は `run_split` のみ (`allaganeye/commands/split_matches.py:1831` 定義)。detect は `_print_detection_stats` のみを呼ぶ (`detect.py:231`) ため、`Pass 1` / `Pass 2` / `Scorebar` / Filter drop 内訳は出力されるが `Splitting` elapsed は出力されない
+- **行 16 (`Splitting` 進捗バー)**: 分割フェーズが存在しないため detect では常に非出力
+- **行 17 のうち `Output: <dir>` + ファイル一覧**: 分割フェーズが存在しないため detect では出力されない。`Metadata: <path>` のみ detect も出力するが、`show` が真のとき (= `-q` でも `--progress-format json` でもないとき) に限る (`allaganeye/commands/detect.py:330-331` 参照)
+
+**`-q` の挙動は split と異なる**: detect の `-q` は `show = not quiet and not json_mode` の評価により、`Metadata: <path>` 行も含め stdout を全抑制する。下記「強制 silent 契約 (`-q`)」節は **split 専用**の契約であり、detect の `-q` 挙動には適用されない。
+
+**`--progress-format json` は本マトリクスの対象外**: detect 固有のオプション (#569) で、JSON モード時は構造化 JSON Lines を stdout に出力し他のすべての stdout 出力を抑制する。`--progress-format json` 時の挙動詳細は [`docs/cli-spec.md`](cli-spec.md) §「detect コマンド」を参照。
 
 ## 排他オプション組み合わせ
 
@@ -60,7 +75,7 @@ Error: --quiet and --verbose are mutually exclusive
 | 8 | Auto-selected / Forced GPU/CPU mode | - | × | ◯ | × | × | ◯ | × | ❌ |
 | 9 | 検知パラメータ summary (`interval=..., threshold=..., workers=auto (N), audio=frozen, vtuber=off, masked=off`) | [#384](https://github.com/Idios/kobutachan-allaganeye/issues/384), [#389](https://github.com/Idios/kobutachan-allaganeye/issues/389) | × | ◯ | × | × | ◯ | × | ❌ |
 | 10 | 進捗バー `Detecting` / `Refining` / `Scorebar` | [#368](https://github.com/Idios/kobutachan-allaganeye/issues/368), [#393](https://github.com/Idios/kobutachan-allaganeye/issues/393) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
-| 11 | 検知統計 (`Pass 1`, `Pass 2`, `Scorebar`, `Splitting` elapsed 含) | [#386](https://github.com/Idios/kobutachan-allaganeye/issues/386), [#387](https://github.com/Idios/kobutachan-allaganeye/issues/387) | × | ◯ | × | × | ◯ | × | ❌ |
+| 11 | 検知統計 (`Pass 1`, `Pass 2`, `Scorebar`, `Splitting` elapsed (split のみ) 含) | [#386](https://github.com/Idios/kobutachan-allaganeye/issues/386), [#387](https://github.com/Idios/kobutachan-allaganeye/issues/387) | × | ◯ | × | × | ◯ | × | ❌ |
 | 12 | Filter drop 内訳 + unknown match 行 (`Filter: N candidates -> M matches` + `+ N unknown match (録画途中試合)`) | [#388](https://github.com/Idios/kobutachan-allaganeye/issues/388), [#433](https://github.com/Idios/kobutachan-allaganeye/issues/433) | × | ◯ | × | × | ◯ | × | ❌ |
 | 13 | `Detected N match(es) ... (cached)` サフィックス含 | [#418](https://github.com/Idios/kobutachan-allaganeye/issues/418) (M) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
 | 14 | Match 一覧 (`[unknown]` / `[fl_match]` マーカー含) | [#382](https://github.com/Idios/kobutachan-allaganeye/issues/382) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
@@ -79,7 +94,7 @@ Error: --quiet and --verbose are mutually exclusive
 - 行 19 の `stderr` は「該当モードで該当フォーマットのエラーメッセージが stderr に出る」を意味し、エラーが発生した場合にのみ到達する条件行
 - `-v -q` 列が全行 `❌` なのは、CLI 引数パース直後 (split 処理開始前) に ConfigValidationError で即 exit するため
 
-## 強制 silent 契約 (`-q`)
+## 強制 silent 契約 (`-q`) — split 専用
 
 `-q` モードでは `#418` 対応 (マトリクス行 3, 6, 7, 13 が全て `×`) により、以下のみが stdout に出力される:
 

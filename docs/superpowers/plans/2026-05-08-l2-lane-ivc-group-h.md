@@ -685,9 +685,7 @@ def _drive_to_known_eta(bar: _ETAProgressBar, completed: int) -> None:
     bar.update(completed)
 
 
-@pytest.mark.parametrize(
-    "label", ["Detecting", "Refining", "Scorebar", "Splitting"]
-)
+@pytest.mark.parametrize("label", ["Detecting", "Refining", "Scorebar", "Splitting"])
 def test_eta_progressbar_label_present_for_all_bars(label: str) -> None:
     """4 bar 全てで 'ETA: H:MM:SS' label を出すこと (#365)."""
     bar = _eta_progressbar(100, label)
