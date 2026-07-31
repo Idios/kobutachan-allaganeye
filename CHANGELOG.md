@@ -55,6 +55,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **detect / split `--vtuber`** (#895): VTuber 配信録画 (ゲーム画面が inset、
+  装飾オーバーレイ多数) 向けの timeline 検出を追加し、hidden option だった
+  `--vtuber` を公開。暗転起点ではなく「試合中である」証拠 (scorebar presence
+  AND 画面運動) の timeline から試合区間を抽出する (V0 anchor 解決 / V1 全域
+  10s stride scan / V2 rolling-window 粗 segmentation / V3 gap 裁定 +
+  blackout-peek override + 境界 snap / V4 segment 検証)。**OBS / masked path は
+  非接触** (フラグ未指定時の出力は bit-exact で不変)。縮退 3 trigger
+  (V0 anchor 失敗 / UNKNOWN 過半 / V2 無結果) で従来の band-crop blackout path
+  へ fall back する floor 保証付き。`--masked` との同時指定は排他エラー
+  (exit 5)。metadata.json の `vtuber` フィールドと verbose の
+  `Timeline (vtuber)` / `V3:` 行で採用可否を確認できる。精度 gate は 6 source /
+  67 試合の ground truth (`tests/baselines/v0.3.0/vtuber-gt/*.json`) に対する
+  slow テスト `tests/test_vtuber_gt_regression.py` で、tolerance は非対称
+  (損失方向 15s / 余分方向 300s = 試合内容の欠落を許さない側に厳格)。
+  spec §7.4 の実測は recall 100% (67/67) / spurious 0。詳細は
+  `docs/superpowers/specs/2026-07-17-vtuber-timeline-detection-design.md`。
 - `probe.py::ProbeResult` に `fps_num`/`fps_den` フィールドを追加
   (NTSC 60000/1001 等の rational frame rate を float 精度損失なく
   detector まで伝搬)。
@@ -95,6 +111,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Fanfare moment (6540s) での fix は v0.3.x で audio Fanfare unfreezing
   (`scan_fanfare_hits` を detector flow に統合) または scorebar V2
   strengthening (#803) のいずれかで対応予定。
+- **`--vtuber` 短 gap merge (#895)**: 試合間 gap が ~70s 未満の場合、V2 の
+  rolling window (window 9 x stride 10s) が構造的に橋渡しし、2 試合が 1
+  segment に結合されうる (6 source / GT 67 試合中 1 境界で実測)。V2 に
+  hard-gap break を入れる案は Onsal マップのダウンタイム (scorebar FN が
+  120s 以上続く) で誤 break を誘発する副作用があり不採用とし、既知 limitation
+  として GT 側に `expected_merge_with_next` 注釈で管理する。試合内容の損失は
+  起きない (結合方向のみ) ため、必要なら書き出し後に手動で分割する。詳細は
+  `docs/superpowers/specs/2026-07-17-vtuber-timeline-detection-design.md` §7.5。
 - **`scripts/validate-fps-retirement.py` PTS extraction bug (#804)**:
   legacy / 新 path のどちらでも boundary timestamp に対する PTS 計算が
   常に `0.021` という固定値を返す既知 bug。brightness 比較は正しく動作する
@@ -104,6 +128,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
+- `--vtuber` の精度 gate 用に 6 source の VTuber ground truth
+  (`tests/baselines/v0.3.0/vtuber-gt/*.json`) と境界注釈計測器
+  `tests/scripts/poc_vtuber_timeline/gt_boundary_probe.py` を追加 (#895)。
+  計測器は評価専用 (CLI / 配布物からは参照されない) で、GT 再現性のため
+  production `_tolerant_runs` の copy を pin し drift 時に WARNING を出す。
+  label / argv / config の入力 validation は
+  `tests/scripts/test_gt_boundary_probe.py` で発火側を実証済み。
 - V6.2 (scorebar HUD 二分探索) を #797 fix として一時実装 (commit
   `f7f8879`)、obs-20260116 実機検証で scorebar V2 detection が post-match
   content (5700-6850) で False positive を発火することが判明し revert

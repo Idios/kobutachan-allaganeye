@@ -139,3 +139,63 @@ PoC 計測スクリプトは本 spec と同一 PR の `tests/scripts/poc_vtuber_
 - gyawa 再注釈 GT の部分試合 (250-1250、録画開始時点で進行中) の期待挙動: 検出対象とするか除外規約とするか。
 - GUI (L2) への `--vtuber` トグル露出: 本 spec scope 外 (別 issue)。
 - gyawa さんへの協力打診 (#866 記載のトリガー): VTuber 対応の実装着手をもって「再開」とするかは Idios 判断。
+
+## 7. Erratum (P3 実装由来)
+
+### 7.1 MERGE_RATE: 0.10 -> 0.15 (P3 4周目)
+
+当初値 0.10 は FN run ~24% vs 真 lobby ~1.5% の 15 倍分離を根拠に設定した (§2.1)。
+P3 実機 gate で shirurori の meteor replay gap (presence rate ~0.137) が merge 側に
+倒れることを実測。gap 内に物理的な試合境界 (zone-in blackout) が実在するにもかかわらず
+merge が発生したため、Idios 承認 (2026-07-21) の下 0.15 に引き上げた。
+FN run vs lobby の分離は引き上げ後も十分 (0.24 vs 0.015 の 16 倍)。
+
+### 7.2 blackout-peek unmerge override の追加 (P3 4周目)
+
+§2 V3 (a) は「gap 内に凍結 run または band blackout があれば merge 禁止」と記述したが、
+P3 実機で merge 裁定が行われた後に gap 後半 (中点以降) または直後 45s の zone-in
+blackout run (>=2 probe、band brightness <= 30) を検出して merge を取り消す
+**blackout-peek override** が追加された。
+根拠: 次試合の zone-in 暗転 = 物理境界の実在を示す正の証拠であり、presence rate
+の弱い信号より信頼性が高い。この override により MERGE_RATE 引き上げと組み合わせて
+偽 merge を構造的に解消した。
+
+### 7.3 snap 規則の再設計: start=zone-in blackout 明け優先 / end=evidence collapse 専用 (P3 2周目)
+
+spec §2 V3 (b) の snap 規則を以下の通り改訂した:
+
+- **start 側**: gap 内の境界 blackout run (zone-in 暗転) の明け (= blackout 末尾) を
+  優先採用する。in-match 瞬断 blackout (前後 5s または 10s に evidence が近接) は除外する。
+  blackout がない場合は evidence run 先頭 + gap 中点制約にフォールバック。
+  probe 窓は前方 45s (EDGE_EXT_S)、長 gap では後方 120s (LONG_GAP_START_BACK_S)。
+- **end 側**: evidence run 末尾 (collapse) のみを使用する。in-match 瞬断 blackout が
+  end 方向にも存在するため、blackout を end snap に使うと試合終了を誤って早める。
+  probe 窓は後方 120s (EDGE_EXT_END_S)。
+
+「なければ presence 崩壊点/回復点 (refine_boundary 二分探索)」は P2 実装時点 (P2
+erratum §2 冒頭) で既に gap dense 系列のエッジ検出に置換済みであり、本改訂は
+start/end の非対称化と blackout 優先の明文化である。
+
+### 7.4 GT gate の非対称 tolerance 化 (P3 実機 gate)
+
+spec §3.2 の「境界誤差 +-15s」対称 tolerance を以下の非対称 gate に改訂した
+(Idios 承認 2026-07-22):
+
+- **損失方向** (start が GT より遅い / end が GT より早い = 試合内容の欠落): tolerance **15s**。
+- **余分方向** (ロビー / result 画面が混入): tolerance **300s**。
+
+設計根拠: 製品 invariant = 「試合内容の損失ゼロ」を直接符号化する。ロビー混入は
+ユーザーが手動でトリムできるが、試合内容の欠落は取り戻せない。
+
+6 source / GT 67 試合 (§7.5 の `expected_merge_with_next` 合成後 66 セグメント) での
+実測結果: recall 100% (66/66、missed 0) / spurious 0。
+内訳: gyawa 6 / kyuma 11 / meteor 14 / shikke 16 / shinryu 12 / shirurori 8
+(SSoT = `tests/baselines/v0.3.0/vtuber-gt/*.json` の `matches[]` 総数)。
+
+### 7.5 V2 hard-gap break は不採用: 短 gap known-limitation として残存 (P3)
+
+試合間 gap が ~70s 未満の場合、V2 rolling window (TIMELINE_WINDOW=9、stride 10s) が
+構造的に橋渡しし 2 試合が 1 segment に結合されうる (6 source 中 1 境界で実測)。
+当初 V2 に hard-gap break を追加する案を検討したが、Onsal マップのダウンタイム (FN
+run 120s+) が誤 break を引き起こす副作用があり採用しなかった。
+GT 側に `expected_merge_with_next` 注釈を付与して既知 limitation として管理する。

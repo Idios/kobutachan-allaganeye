@@ -1,0 +1,65 @@
+{
+ "source_file": "FL参加型🍹復権の竜騎士シルロリベンジ編 🍻ETあり🌙ManaDC [v2781251159].mp4",
+ "source_size_bytes": 22191552697,
+ "source_dir_label": "vtuber-samples",
+ "source_env_var": "ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER",
+ "ground_truth_provider": "agent (PoC 2026-07-17 dense probe + P3 boundary instrument + 目視裁定 2026-07-20)",
+ "ground_truth_provided_at": "2026-07-20",
+ "convention": "zone-in",
+ "tolerance_sec": 15,
+ "inclusive_slack_sec": 300.0,
+ "notes": "境界は検出器と独立の 1s dense probe (at-anchor presence + frozen 除外) の collapse/recovery + blackout marker から導出、曖昧 boundary は目視裁定。meteor #12 は実長 ~285s (min_match_duration 境界ケース) だが V2 window 平滑で検出される想定",
+ "matches": [
+  {
+   "index": 1,
+   "start_time": 550.0,
+   "end_time": 1559.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 2,
+   "start_time": 1654.0,
+   "end_time": 2591.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 3,
+   "start_time": 2723.0,
+   "end_time": 3683.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 4,
+   "start_time": 4430.0,
+   "end_time": 5019.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 5,
+   "start_time": 5139.0,
+   "end_time": 6031.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 6,
+   "start_time": 6180.0,
+   "end_time": 7265.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 7,
+   "start_time": 7714.0,
+   "end_time": 8753.0,
+   "type": "fl_match",
+   "notes": "end=collapse 8753 (result 画面がバー同座標にスコア UI を表示する result-mimic。目視上の試合終了は 8636 だが released OBS path 同様 result 余韻を試合 MP4 に含める)",
+   "expected_merge_with_next": true,
+   "expected_merge_notes": "M7-M8 間 gap は 59s しかなく V2 rolling quorum (window=9, stride=10s) が構造的に bridge する。hard-gap break は Onsal 系で副作用が大きく revert (#895 P3 r6)。known-limitation: 試合間 gap < ~70s は結合されうる"
+  },
+  {
+   "index": 8,
+   "start_time": 8812.0,
+   "end_time": 9767.0,
+   "type": "fl_match"
+  }
+ ]
+}

@@ -146,11 +146,47 @@ issue #822 で masked fallback (`_detect_masked_fallback`) は **2 層構成**�
 - **Layer 1**: `_resolve_scorebar_anchor` が per-video anchor を解決し、flank/merge probe を at-anchor presence (`localize_scorebar_at_anchor`) で行う。masked path の in_match ≥3.5s keep 規則を廃止 (残像 FN が at-anchor では発生しないため)、non_fl を boundary 候補として keep (staging 弱点の吸収)。
 - **Layer 2**: `_validate_match_segments` が segment ごとに 15-probe at-anchor quorum>=2 判定を行い、非試合 (lobby) segment を除去する。keep/drop pass 後に zero-gap 隣接 validated ペアをマージする (flank flicker 由来の中割り解消)。Onsal recalibration 2026-07-14: 旧 9-probe 厳格過半 (v2) を訂正 (_MASKED_ALGO_VERSION=3)。
 
-OBS production path / `--vtuber` path は一切変更しない (bit-exact 構造保証。§5.1/§5.3 制約遵守)。
+OBS production path は一切変更しない (bit-exact 構造保証。§5.1/§5.3 制約遵守)。`--vtuber` path は §5.5 の timeline 検出 (V0-V4) に置換済み (#895 P3)。
 
 設計詳細: [docs/superpowers/specs/2026-07-11-issue-822-masked-oversplit-anchor-design.md](superpowers/specs/2026-07-11-issue-822-masked-oversplit-anchor-design.md)
 
-### 5.5 presence.py 資産 (spec §10)
+### 5.5 `--vtuber` timeline path (V0-V4、#895 P3)
+
+issue #895 P3 で `vtuber_timeline.py` が実装された。`--vtuber` flag 指定時のみ動作し、
+OBS/masked path は bit-exact で非接触。
+
+```text
+--vtuber 指定時のみ (detector.py 先頭分岐):
+  V0: resolve_vtuber_anchor    VTuber 専用パラメータ (48 sample / conf 0.5 / min hits 5)
+  V1: scan_timeline            10s stride 全域 probe (present + band_mad)
+  V2: segment_timeline         rolling window 9 / quorum 2 / min 300s 粗 segmentation
+  V3: refine_segments          gap merge 裁定 (MERGE_RATE 0.15) + blackout-peek override
+                               + start=zone-in blackout 明け snap / end=evidence collapse snap
+  V4: _validate_match_segments 15-probe at-anchor quorum (on_all_drop="empty")
+  -> MatchBoundary[]  --  縮退 3 trigger (anchor 失敗 / UNKNOWN >50% / V2 空) は
+                          従来 band-crop blackout path へ fall back (floor 保証)
+```
+
+各 layer の判定:
+
+| layer | module | 責務 | 判定 |
+| --- | --- | --- | --- |
+| `resolve_vtuber_anchor` | vtuber_timeline.py | VTuber 専用 anchor 解決 (48/0.5/5) | load-bearing |
+| `scan_timeline` (V1) | vtuber_timeline.py | 10s stride 全域 presence x MAD probe | load-bearing |
+| `segment_timeline` (V2) | vtuber_timeline.py | rolling-window 粗 segmentation | load-bearing |
+| `refine_segments` (V3) | vtuber_timeline.py | gap 裁定 + blackout-peek override + snap | load-bearing |
+| `_validate_match_segments` (V4) | detector.py | 15-probe quorum (masked L2 と同 primitive、on_all_drop="empty") | load-bearing |
+
+P3 実機 gate 結果 (6 source / GT 67 試合 = gyawa 6 + kyuma 11 + meteor 14 + shikke 16 +
+shinryu 12 + shirurori 8。うち短 gap の 1 組を `expected_merge_with_next` で合成した
+66 セグメントで突合): recall 100% / spurious 0 / 境界 tolerance 非対称
+(損失方向 15s 厳格 / 余分方向 300s bound)。試合数の SSoT は
+`tests/baselines/v0.3.0/vtuber-gt/*.json` の `matches[]` 総数。
+cache key は `vtuber_algo` (`_VTUBER_ALGO_VERSION`) で管理し、検出出力を変える改修ごとに bump する。
+**値の正は実装** (`allaganeye/commands/split_matches.py`) と pin test (`tests/test_split_matches.py`) 側にあり、
+本 doc は値を複製しない (doc drift 防止)。
+
+### 5.6 presence.py 資産 (spec §10)
 
 - `compare_segments` (`tests/presence_harness.py`) / GT 突合ハーネス → 検証インフラとして存続。
 - `localize_present_at` → Stage 2 分類で再利用。

@@ -55,6 +55,7 @@ allaganeye split --from-metadata <metadata.json> [OPTIONS]
 | `--no-gpu` | `false` | GPU を無効化し CPU 検知を強制する。**`--gpu` と同時指定は排他エラー (exit 5) (#419)** |
 | `--gpu-vendor` | `auto` | 使用する GPU vendor を明示指定 (#546 / #553 / #550 / #582)。値: `auto` / `nvidia` / `amd` / `intel`。**3 vendor すべて実装済み** (`nvidia`=cuvid #546 / `amd`=d3d11va+hwdownload #553 / `intel`=QSV+hwdownload #550 h264/hevc/av1 + #582 vp9)。probe に無い vendor を要求すると exit 5。default は probe 結果から `_VENDOR_PREFERENCE` (nvidia > amd > intel) 順で選ぶ |
 | `--no-cache` | `false` | キャッシュされた検知結果を無視して再検知する |
+| `--vtuber` | `false` | VTuber 配信録画向けの timeline 検出を有効化する (#895)。`--vtuber` 指定時は暗転起点ではなく「試合中である」証拠 (scorebar presence AND 画面運動) の timeline から試合区間を抽出する (V0-V4)。OBS/masked path は非接触。縮退 3 trigger (V0 anchor 失敗 / UNKNOWN 過半 / V2 無結果) で従来 band-crop blackout path へ fall back (floor 保証)。cache key は `vtuber_algo` (`_VTUBER_ALGO_VERSION`) で管理し、アルゴリズム変更時に bump する (**値の正は実装 `allaganeye/commands/split_matches.py` 側。本 doc は値を複製しない**)。cache ヒット時 (`--vtuber` 影響 run のみ) verbose に `vtuber_algo=N` トークンを表示 |
 | `--keep-trailing` | `false` | default は試合後 trailing を `post_match: true` フラグ化して metadata に保持し、default split (MP4) から除外する (#805 段階2 で不可逆削除を廃止)。本フラグ指定時は flagging を skip し、trailing を通常 match として MP4 分割・保持する (#797 probe 無効化)。段階2 で `post_match_trailing_dropped` warning は emit されなくなった (flag が代替) |
 | `--no-audio` | `false` | 音声ベースの試合境界昇格（Fanfare スキャン）を無効化する。**現在は音声モジュールが凍結中（#327）のため、本フラグの値に関わらずスキャンは常にスキップされる。verbose 出力では `audio=frozen` と表示される (#384)** |
 | `--masked` | `false` | チャット欄マスク画像が全画面に合成された録画向け。mask のない領域を自動検出して再検知する。暗転が一部見つかる場合でも本フラグ指定でこの経路を強制する。**`--vtuber` と同時指定は排他エラー (exit 5)** |
@@ -196,7 +197,7 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
   Splitting: 9 matches, 1m02s
 ```
 
-上記の `masked L2` 行は **masked fallback 採用 run のみ表示**される (OBS 通常 run では出力されない)。
+上記の `masked L2` 行は **masked fallback 採用 run のみ表示**され、`Timeline (vtuber)` / `V3:` 行は **`--vtuber` 採用 run のみ表示**される (OBS 通常 run では出力されない)。
 
 | 行 | 内容 |
 | --- | --- |
@@ -206,6 +207,8 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 | `Filter` | Scorebar 通過後の候補数 → 最終 match 数。`below_min_match_duration` / `other` が 0 より大きい場合のみ内訳を追加出力 (#388)。masked fallback 採用 run では Filter 後に Layer 2 validation (drop/merge) が match 数をさらに変更する。録画途中で開始 / 終了する `unknown` 試合 (Detected には含まれるが Filter "kept" には含まれない) がある場合、内訳の直下に `+ N unknown match (録画途中試合)` 行を出力 (#433) |
 | `masked L2 validation` | masked fallback 採用 run のみ。`_validate_match_segments` が 15-probe at-anchor quorum (>=2) 判定で除去した segment 数 (#822) |
 | `masked L2 zero-gap merge` | masked fallback 採用 run のみ。flank flicker 由来の零ギャップ隣接 validated ペアをマージした件数 (#822) |
+| `Timeline (vtuber)` | `--vtuber` 採用 run のみ。V1 scan のプローブ総数と V0 anchor confidence を表示。例: `Timeline (vtuber): 1450 probes, anchor conf 0.62` (#895) |
+| `V3: ... gaps tested` | `--vtuber` 採用 run のみ。V3 gap 裁定の tested / merged / peek-overridden 件数と V4 dropped / low-confidence 件数を表示。例: `V3: 3 gaps tested, 1 merged, 0 peek-overridden; V4: 0 dropped, 0 low-confidence` (#895) |
 | `Splitting` | 分割フェーズの match 数・所要時間 (#387) |
 
 `Filter` セクションは候補数がゼロかつドロップがゼロの場合 (whole-video fallback により match が生成されたケース) は出力を省略する。`dropped (below min_match_duration)` は **セグメント長が `min_match_duration` に満たなかった数**、`dropped (other)` は短尺動画の whole-video 候補不適合等の残余カウント。`in_match` / `non_fl` はここに含まれず、上の Scorebar 行がそのカウントを担う (重複防止)。
@@ -277,6 +280,9 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 | `no_audio` | bool | 音声ベースの境界昇格 (Fanfare スキャン) を無効化したか |
 | `use_gpu` | bool \| null | GPU 検知の指定値。`null` は CLI で `--gpu` を指定せずコーデック自動選択に任せたことを示す |
 | `workers` | int \| null | 並列ワーカー数の指定値。`null` は auto (`_resolve_workers` が実装の cap で解決) を示す |
+| `vtuber` | bool | VTuber timeline 検出 (`--vtuber`) を使用したか。`false` は OBS/masked path の bit-exact 動作を示す |
+| `masked` | bool | masked-OBS fallback (`--masked`) を要求したか |
+| `masked_fallback_used` | bool | masked fallback が実際に採用されたか (auto-trigger 含む、`masked` flag と乖離しうる) |
 
 ## detect コマンド
 
@@ -309,6 +315,7 @@ allaganeye detect <video_path> [OPTIONS]
 | `--gpu` / `--no-gpu` | auto | GPU 強制 / CPU 強制 (排他) |
 | `--gpu-vendor` | `auto` | 使用する GPU vendor を明示指定 (`auto` / `nvidia` / `amd` / `intel`)。split と同仕様 |
 | `--no-cache` | `false` | キャッシュ無視で再検知 |
+| `--vtuber` | `false` | VTuber 配信録画向け timeline 検出を有効化 (split と同仕様、#895) |
 | `--keep-trailing` | `false` | post-match trailing の flagging を skip し通常 match として保持 (#805 段階2、default は flag して MP4 除外・metadata 保持) |
 | `--no-audio` | `false` | 音声昇格無効化 (現在 frozen) |
 | `--masked` | `false` | チャット欄マスク録画向けの mask-free 領域自動検出 + 再検知。split と同仕様 |

@@ -87,7 +87,12 @@ _MASKED_ALGO_VERSION = 3
 # version 1 = pre-#895 legacy band-crop blackout path (key absent = 1)
 # version 2 = #895 timeline segmentation (V0-V2, presence x motion)
 # version 3 = #895 P2 V3/V4 integration (gap refinement + at-anchor validation)
-_VTUBER_ALGO_VERSION = 3
+# version 4 = #895 P3 snap physical edge (frozen exclude + blackout adjacency limit + +-45s ext)
+# version 5 = #895 P3 adjudicate_gap blackout run in-match guard (Codex HIGH, snap rule unification)
+# version 6 = #895 P3 review: blackout boundary rule single-source (_boundary_blackout_runs)
+#             = merge override / snap Priority 2 にも in-match guard 適用 + UNKNOWN 分断 +
+#               outer edge snap の粗 edge semantics / 交差 guard + rescue の evidence 実数化
+_VTUBER_ALGO_VERSION = 6
 
 
 def run_split(
@@ -1952,7 +1957,8 @@ def _print_detection_stats(stats: DetectionStats) -> None:
         )
         typer.echo(
             f"  V3: {stats.get('vtuber_gaps_tested', 0)} gaps tested, "
-            f"{stats.get('vtuber_gaps_merged', 0)} merged; "
+            f"{stats.get('vtuber_gaps_merged', 0)} merged, "
+            f"{stats.get('vtuber_merge_overridden', 0)} peek-overridden; "
             f"V4: {stats.get('vtuber_v4_dropped', 0)} dropped, "
             f"{stats.get('vtuber_low_confidence_segments', 0)} low-confidence"
         )
