@@ -1,11 +1,13 @@
 """Tests for CLI entry point."""
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
 import click
 import pytest
+from typer import rich_utils
 from typer.main import get_command
 from typer.testing import CliRunner
 
@@ -25,24 +27,60 @@ DETECT_MODULE = "allaganeye.commands.detect.run_detect"
 
 # --- help assertion helpers ---
 #
-# rich splits option names into several escape-separated spans whenever colour is
-# enabled (`--vtuber` renders as ESC[1;36m-ESC[0mESC[1;36m-vtuberESC[0m), so a bare
-# `"--opt" in result.stdout` is width/colour/rich-version dependent: it fails under
-# colour and, worse, a negated form (`"--opt" not in result.stdout`) passes
-# unconditionally under colour. Assert the click model for the contract and use the
-# ANSI-stripped rendering only as a smoke check.
+# Two independent hazards make a bare `"--opt" in result.stdout` unreliable here:
+#
+# 1. rich splits option names into escape-separated spans whenever colour is enabled
+#    (`--vtuber` renders as ESC[1;36m-ESC[0mESC[1;36m-vtuberESC[0m) and wraps long help
+#    sentences across panel rows, inserting box-drawing borders mid-sentence. A
+#    positive assert then fails, and a negated one (`"--opt" not in stdout`) passes
+#    unconditionally -- the false-green that let the --vtuber hidden pin rot.
+# 2. Colour cannot be steered through the invocation environment. typer reads
+#    GITHUB_ACTIONS / FORCE_COLOR / PY_COLORS *once at import time* into the module
+#    constant `typer.rich_utils.FORCE_TERMINAL` and hands it to rich explicitly, which
+#    short-circuits rich's own tty/env detection. On CI (GITHUB_ACTIONS=true) an
+#    env-driven "no-color" leg is therefore still coloured, so the plain rendering path
+#    would never run and looking plain locally is just a legacy-Windows accident.
+#
+# So: assert the click model for the contract, and check the rendering through the
+# `render_help` fixture, which pins the mode by monkeypatching that constant and
+# verifies per leg that the output really was plain / coloured.
 
-# CSI sequences (SGR colour codes and friends).
-_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+# Escape sequences that may appear in rendered help. CSI is what typer emits today;
+# OSC and the nF/Fe forms are pre-emptive -- a CSI-only regex leaves `ESC]8;;url ESC\`
+# residue mid-token the moment a help string gains a hyperlink, which re-opens exactly
+# the "negative assert passes on a split token" hole this module exists to close.
+_ANSI_RE = re.compile(
+    r"\x1b(?:"
+    r"\[[0-9;?]*[ -/]*[@-~]"  # CSI: SGR colours, cursor control
+    r"|\][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC: hyperlink/title, BEL- or ST-terminated
+    r"|[ -/]+[0-~]"  # nF: charset designation, e.g. ESC ( B
+    r"|[@-Z\\-_]"  # Fe: two-character escapes, e.g. ESC M
+    r")"
+)
 
-# Both ends of the colour spectrum: every help assertion must hold in each.
-_COLOR_ENVS = [
-    pytest.param({"FORCE_COLOR": None, "NO_COLOR": "1", "TERM": "dumb"}, id="no-color"),
-    pytest.param(
-        {"FORCE_COLOR": "1", "NO_COLOR": None, "TERM": "xterm-256color"},
-        id="force-color",
-    ),
-]
+# rich frames option panels with box-drawing borders, so a wrapped sentence reads
+# "... from a |" / "|   scorebar-presence ...". Dropping the glyphs before collapsing
+# whitespace keeps the sentence contiguous; without it a wording pin would only ever
+# match whichever fragment happened to fit on one row.
+# Built via chr() so this file stays ASCII: test_ascii_guard.py scans string literal
+# *values* (via AST), not source bytes, so a \u escape would not satisfy it.
+_PANEL_BORDER_CODEPOINTS = (
+    0x2502,
+    0x2503,
+    0x2506,
+    0x2507,
+    0x250A,
+    0x250B,
+    0x254E,
+    0x254F,
+    0x2551,
+)
+_PANEL_BORDER_RE = re.compile("[" + "".join(map(chr, _PANEL_BORDER_CODEPOINTS)) + "]")
+
+# A foreground-colour SGR (3x/9x). typer draws the panel frame "dim" (ESC[2m) only, so
+# this separates "content was colourised" from "only the frame carried escapes" -- a
+# guard that accepts frame escapes stays green even if option names go plain.
+_COLOR_SGR_RE = re.compile(r"\x1b\[[0-9;]*(?:3[0-7]|9[0-7])m")
 
 
 def _strip_ansi(text: str) -> str:
@@ -50,16 +88,48 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
-def _help_text(argv: list[str], color_env: dict[str, str | None]) -> str:
-    """Render ``--help`` for *argv* under *color_env*, ANSI escapes removed.
+def _normalize_help(text: str) -> str:
+    """Return *text* with escapes, panel borders and rich's wrapping collapsed away.
 
-    ``COLUMNS`` is pinned so panel wrapping does not depend on the ambient
-    terminal width.
+    Whitespace runs become single spaces, so a pinned sentence matches wherever rich
+    chose to break the line. Collapsing can only join text, never split it, so negative
+    asserts on the result are at least as strong as on the raw rendering.
     """
-    env: dict[str, str | None] = {"COLUMNS": "120", **color_env}
-    result = runner.invoke(app, argv, env=env)
-    assert result.exit_code == 0, result.stdout
-    return _strip_ansi(result.stdout)
+    return " ".join(_PANEL_BORDER_RE.sub(" ", _strip_ansi(text)).split())
+
+
+@pytest.fixture(params=[False, True], ids=["plain", "ansi"])
+def render_help(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Callable[[list[str]], str]:
+    """Render ``--help`` in a pinned colour mode and return the normalized text.
+
+    Each leg self-verifies that the rendering matched its id. Without that assert the
+    "plain" leg silently degrades into a second coloured run on CI (see note above),
+    every escape-handling helper here goes untested, and the module reports two legs of
+    coverage while exercising one.
+    """
+    force_terminal: bool = request.param
+    monkeypatch.setattr(rich_utils, "FORCE_TERMINAL", force_terminal)
+
+    def _render(argv: list[str]) -> str:
+        # COLUMNS is pinned so wrapping (and therefore every pin below) does not depend
+        # on the ambient terminal width.
+        result = runner.invoke(app, argv, env={"COLUMNS": "120"})
+        assert result.exit_code == 0, result.stdout
+        raw = result.stdout
+        has_escape = "\x1b" in raw
+        assert has_escape is force_terminal, (
+            f"leg force_terminal={force_terminal!r} rendered with escapes="
+            f"{has_escape!r}; this leg is not covering what its id claims"
+        )
+        normalized = _normalize_help(raw)
+        # Residue would let a token stay split, which is how a negative assert goes
+        # vacuous; fail loudly instead of matching against half-stripped text.
+        assert "\x1b" not in normalized, f"unstripped escape in {normalized!r}"
+        return normalized
+
+    return _render
 
 
 def _sub_command(name: str) -> click.Command:
@@ -119,8 +189,43 @@ def test_version_short_flag(monkeypatch: pytest.MonkeyPatch):
     assert "allaganeye" in result.stdout
 
 
-@pytest.mark.parametrize("color_env", _COLOR_ENVS)
-def test_verbose_short_flag_unchanged(color_env: dict[str, str | None]):
+def test_strip_ansi_handles_non_csi_escapes():
+    """_strip_ansi must clear OSC / charset / Fe escapes, not just CSI colour codes.
+
+    A CSI-only regex leaves `ESC]8;;url ESC\\` residue in the middle of a token, so the
+    day a help string gains a hyperlink `--vtuber` splits again and every negative
+    assert in this module turns vacuous. Pin the failure mode before it can land.
+    """
+    hyperlinked = (
+        "\x1b]8;;https://example.com/docs\x1b\\"  # OSC 8 open, ST-terminated
+        "\x1b[1;36m--vtuber\x1b[0m"  # CSI (what typer emits today)
+        "\x1b]8;;\x1b\\"  # OSC 8 close
+    )
+    assert _strip_ansi(hyperlinked) == "--vtuber"
+    # BEL-terminated OSC (window title), charset designation (ESC ( B), Fe (ESC M).
+    assert _strip_ansi("\x1b]0;title\x07\x1b(Bplain\x1bMtext") == "plaintext"
+    # Belt and braces: no escape byte may survive, whatever the form.
+    assert "\x1b" not in _strip_ansi(hyperlinked)
+
+
+def test_normalize_help_joins_wrapped_panel_rows():
+    """Panel borders and wrapping must not break a pinned sentence.
+
+    Without border stripping the wording pins below would silently degrade into
+    matching only whichever fragment fits one row at COLUMNS=120.
+    """
+    bar = chr(0x2502)  # chr(): keep this file ASCII (test_ascii_guard.py)
+    wrapped = (
+        f"{bar} --vtuber   detects matches from a {bar}\n"
+        f"{bar}            scorebar-presence x motion timeline {bar}\n"
+    )
+    assert (
+        "detects matches from a scorebar-presence x motion timeline"
+        in _normalize_help(wrapped)
+    )
+
+
+def test_verbose_short_flag_unchanged(render_help: Callable[[list[str]], str]):
     """-v must still map to --verbose (not --version) on the split command.
 
     Breaking-change policy for v0.1.x: we add -V for --version but keep
@@ -129,10 +234,12 @@ def test_verbose_short_flag_unchanged(color_env: dict[str, str | None]):
     param = _click_option("split", "-v")
     assert param.name == "verbose"
     assert "--verbose" in param.opts
-    # -v appears in the verbose flag help
-    help_text = _help_text(["split", "--help"], color_env)
-    assert "-v" in help_text
-    assert "verbose" in help_text.lower()
+    help_text = render_help(["split", "--help"])
+    # The old `"-v" in help_text` was vacuous: it is a substring of "--verbose",
+    # "--vtuber", "-vf", ... Pin the rendered row, where rich puts the long spelling
+    # next to the short one, so a dropped `-v` alias is actually caught on screen.
+    assert "--verbose -v" in help_text
+    assert "Verbose output" in help_text
 
 
 def test_help():
@@ -418,40 +525,96 @@ def test_detect_keep_trailing_default_false(mock_run_detect, fake_video):
     assert config.keep_trailing is False
 
 
+# Load-bearing claims of the --vtuber help (commit 0ea55a2): who it is for, what it
+# actually does, and the limitation users must know about.
+_VTUBER_HELP_REQUIRED = (
+    "VTuber recording",
+    "scorebar-presence x motion timeline",
+    "70s may merge",
+)
+# Pre-P3 wording. Kept as negative pins so a revert to the deferred/experimental
+# framing fails instead of quietly shipping (lower-cased before matching).
+_VTUBER_HELP_RETIRED = ("experimental", "deferred", "under-detects", "#480")
+
+
 @pytest.mark.parametrize("command_name", ["split", "detect"])
-@pytest.mark.parametrize("color_env", _COLOR_ENVS)
-def test_vtuber_shown_in_help(command_name: str, color_env: dict[str, str | None]):
-    """--vtuber は split/detect --help に出る (#895 P3 で hidden 解除、Idios 承認 2026-07-30).
+def test_vtuber_shown_in_help(
+    command_name: str, render_help: Callable[[list[str]], str]
+):
+    """--vtuber は split/detect --help に出る + help 文言も pin する (#895 P3).
+
+    #895 P3 で hidden 解除 (Idios 承認 2026-07-30): timeline 検出 (V0-V4) が 6 source /
+    GT 76 試合で recall 100% を実証し、OBS/masked path の bit-exact 非接触も実機 gate で
+    確認したため公開扱いにした。
 
     substring を stdout に直接 assert しないのは、色付き環境 (CI) で rich が option 名を
     ANSI で分割する (`--vtuber` -> ESC[1;36m-ESC[0mESC[1;36m-vtuberESC[0m) ため。
     前身の hidden pin (`"--vtuber" not in result.stdout`) はこの分割により色付き環境で
     常に真になる false-green で、hidden 状態を CI で一度も gate していなかった。
-    そのため click model (`param.hidden`) を主 assert とし、描画側は ANSI 除去後の
-    smoke に留める。
 
-    P3 で timeline 検出 (V0-V4) が 6 source / GT 76 試合で recall 100% を実証し、
-    OBS/masked path の bit-exact 非接触も実機 gate で確認したため公開扱いにした。
+    見逃しの塞ぎ方: `hidden is False` だけでは help=None でも green (この PR の出荷物の
+    半分である文言更新が空でも通る) なので model 側で文言を pin し、model pin だけでは
+    「書いてあるが描画されない」(再 hidden 化・truncate) を見逃すので描画側でも pin する。
     """
-    assert _click_option(command_name, "--vtuber").hidden is False
-    assert "--vtuber" in _help_text([command_name, "--help"], color_env)
+    option = _click_option(command_name, "--vtuber")
+    assert option.hidden is False
+
+    # --- model side: the wording itself is part of the contract ---
+    help_str = " ".join((option.help or "").split())
+    for phrase in _VTUBER_HELP_REQUIRED:
+        assert phrase in help_str, (
+            f"{command_name} --vtuber help lost {phrase!r}: {help_str!r}"
+        )
+    lowered = help_str.lower()
+    # Scoped to this option's own help on purpose: a whole-page negative would be
+    # wrong-scoped (other options legitimately say "frozen"/reference deferred work)
+    # and would rot into a flaky pin on unrelated help edits.
+    for phrase in _VTUBER_HELP_RETIRED:
+        assert phrase not in lowered, (
+            f"{command_name} --vtuber help resurrected pre-P3 wording {phrase!r}: "
+            f"{help_str!r}"
+        )
+
+    # --- render side: the model text must actually reach the screen ---
+    rendered = render_help([command_name, "--help"])
+    assert "--vtuber" in rendered
+    # Containment of the *whole* model string also catches truncation and a re-hidden
+    # option, which a phrase-only render pin would miss.
+    assert help_str in rendered, f"--vtuber help not rendered verbatim: {rendered!r}"
 
 
-def test_force_color_env_actually_colorizes():
-    """The force-color parametrization must really emit ANSI, or the smoke rots.
+def test_vtuber_help_identical_across_commands():
+    """split と detect の --vtuber help は cli.py 内の複製なので drift させない。
 
-    Without this guard a rich/typer change that stops colorizing under
-    ``FORCE_COLOR`` would silently turn the "force-color" case into a duplicate of
-    the plain one, and the ANSI-stripping smoke would stop covering anything.
+    Each command declares its own literal; without this pin a wording fix applied to one
+    copy leaves the other stale while both per-command tests stay green.
     """
-    result = runner.invoke(
-        app,
-        ["split", "--help"],
-        env={"COLUMNS": "120", "FORCE_COLOR": "1", "NO_COLOR": None},
+    split_help = _click_option("split", "--vtuber").help
+    detect_help = _click_option("detect", "--vtuber").help
+    # Non-empty first: `None == None` would otherwise satisfy the equality below.
+    assert split_help, "split --vtuber has no help"
+    assert split_help == detect_help
+
+
+def test_ansi_leg_colourises_option_content():
+    """The coloured leg must colourise option *content*, not just the panel frame.
+
+    Guarding on "any escape in stdout" is too weak: typer draws the panel border with
+    ESC[2m, so such a guard stays green even if rich stopped styling option names --
+    at which point the escape-stripping helpers would cover nothing. Pin a foreground
+    colour on the --vtuber row instead.
+    """
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(rich_utils, "FORCE_TERMINAL", True)
+        result = runner.invoke(app, ["split", "--help"], env={"COLUMNS": "120"})
+    assert result.exit_code == 0, result.stdout
+    rows = [
+        line for line in result.stdout.splitlines() if "--vtuber" in _strip_ansi(line)
+    ]
+    assert rows, "no --vtuber row in rendered help"
+    assert _COLOR_SGR_RE.search(rows[0]) is not None, (
+        f"--vtuber row carries no foreground-colour SGR: {rows[0]!r}"
     )
-    assert result.exit_code == 0
-    assert _ANSI_RE.search(result.stdout) is not None, "expected colorized help"
-    assert "--vtuber" in _strip_ansi(result.stdout)
 
 
 @patch(MODULE)
@@ -1165,16 +1328,16 @@ class TestCliOptionCombinations:
 # --- detect command + split --from-metadata (#463) ---
 
 
-@pytest.mark.parametrize("color_env", _COLOR_ENVS)
-def test_detect_help(color_env: dict[str, str | None]):
+def test_detect_help(render_help: Callable[[list[str]], str]):
     """detect --help renders and keeps --dry-run removed (detect *is* the dry-run).
 
-    The absence check must run on ANSI-stripped output: a raw
+    The absence check must run on normalized output: a raw
     `"--dry-run" not in result.stdout` passes unconditionally under colour, because
     rich splits option names into escape-separated spans (the same false-green that
-    hid the --vtuber pin).
+    hid the --vtuber pin). The click-model assert carries the contract; the rendered
+    negative alone would still pass if stripping ever regressed.
     """
-    help_text = _help_text(["detect", "--help"], color_env)
+    help_text = render_help(["detect", "--help"])
     assert "detect" in help_text.lower()
     # --dry-run removed from detect (it *is* the dry-run)
     assert _find_click_option("detect", "--dry-run") is None
