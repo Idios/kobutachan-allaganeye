@@ -137,7 +137,7 @@ ffmpeg [-hwaccel <name> [-hwaccel_output_format <fmt>] -c:v <decoder>] \
 - dual seek: `-ss <chunk_start - SEEK_LEAD_SECONDS>` を `-i` 前に (keyframe への高速ジャンプ)、`-ss <output_seek>` を `-i` 後に (GOP pre-roll の正確な trim)
 - `select='not(mod(n,N))'`: frame index `n` ベースで N 枚おきに抽出（PTS ベースの `fps` filter とは異なり ffmpeg version 非依存）
 - 1 プロセスあたり多数フレームをデコードするため、GPU 初期化コストが分散される
-- legacy path (`fps=1/{interval}` filter) は env var `ALLAGANEYE_DETECT_FPS_FILTER=1` 指定時のみ (詳細: §ffmpeg fps filter の version 依存制約)
+- legacy path (`fps=1/{interval}` filter) に落ちるのは env var `ALLAGANEYE_DETECT_FPS_FILTER=1` 指定時、および fps metadata (`source_fps_num` / `source_fps_den` / `source_fps`) が 1 つも解決できない場合 (正: `_scan_cpu` / `scan_gpu` の docstring。詳細: §ffmpeg fps filter の version 依存制約)
 
 **CPU モードとの差異**: CPU / GPU いずれもチャンク分割デコードだが、GPU モードは `-hwaccel` によるハードウェアデコードを使い、チャンク数を動画長に応じて動的調整する (#437) 点が異なる。CPU モードのチャンク数は CPU コア数のみで決まる (正: `_scan_cpu`)。Pass 1 以降（transition expansion, Pass 2, フィルタリング）は共通。
 

@@ -84,7 +84,7 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 
 暗転検知だけでは分類できないパターン（キャラダウン暗転、非 FL コンテンツ暗転）を、FL スコアバーの有無で判別する。`detect_match_boundaries()` に `src_resolution` が渡された場合に有効化。
 
-**スコアバー検出**: 暗転前後のフレームを RGB プローブし、画面上部中央（水平 35-65%、垂直 0-4%）の ROI を分析。ROI 内の RGB チャンネル間標準偏差が閾値を超える場合、FL スコアバー（3GC 色帯: 赤/青/黄）が存在すると判定。
+**スコアバー検出**: 暗転前後のフレームを RGB プローブし、画面上部中央の ROI を分析する。現行 default は V2 (`_has_scorebar_v2`) で、1920x1080 リサイズ後に GC 紋章 3 点の AND 判定を絶対位置 / dynamic span の two-path OR で行う (#307 / #522)。V1 (`_has_scorebar`、RGB チャンネル間標準偏差 + エッジ) は `raw_rgb` 不在時 / opencv 未インストール時のフォールバックとして残る。閾値・ROI の具体値は [scorebar-detection-design.md](scorebar-detection-design.md) が正。
 
 **暗転分類**: 前後 3 フレーム（1 秒間隔）の多数決で 4 種に分類:
 
