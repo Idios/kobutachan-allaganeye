@@ -27,7 +27,7 @@
 | `gui/src-tauri/tauri.conf.json` | `version` | Tauri bundle metadata / exe ファイルバージョン |
 | `gui/src-tauri/Cargo.toml` | `package.version` | `env!("CARGO_PKG_VERSION")` 経由で `probe_environment_info().allaganeye_version` (GUI の環境情報表示) |
 | `gui/package.json` | `version` | npm package metadata |
-| `gui/package-lock.json` | `version` / `packages[""].version` | npm が `package.json` から同期 |
+| `gui/package-lock.json` | `version` と `packages[""].version` の**両方** | npm が `package.json` から同期 |
 | `gui/src-tauri/Cargo.lock` | `package[name=allaganeye-gui].version` | cargo が `Cargo.toml` から同期 |
 
 タグ push 時は [`.github/workflows/release.yml`](../.github/workflows/release.yml) の `version-check` job が
