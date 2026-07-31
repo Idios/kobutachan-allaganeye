@@ -67,13 +67,15 @@ GUI は以下のタイミングで CLI を subprocess として呼び出す (`to
 
 **本表が GUI → CLI 呼び出し口の正 (SSoT) であり、網羅である。**他節・他 doc は呼び出し口の一覧と argv を再掲せず本表を参照すること (#818 の doc SSoT 規約を doc 内の列挙にも適用。同じ列挙が複数箇所にあると、そのたびに片方だけ古くなる余地が生まれるため)。個別の呼び出しに言及すること自体は妨げないが、その場合も argv 全体は書かず本表に委ねる。
 
+argv 列の各行には末尾に `gui/src-tauri/src/lib.rs` 側の argv 構築関数名を括弧書きで添える。argv を変更したときにどの行を直すべきかが一意に決まり、突合先が行ごとに固定されるため。`[...]` は条件付きで付く引数を表す。
+
 網羅性の根拠は `gui/src-tauri/src/lib.rs` で CLI (`cmd_spec.program`) を spawn する箇所が以下 5 つに限られること: `start_detect` / `enumerate_h264_encoders` / `start_export` / `start_minimap` / `detect_minimap_regions`。ffprobe / ffmpeg / explorer.exe を Rust から直接 spawn する経路 (サムネイル生成・フォルダを開く等) は CLI 呼び出しではないため本表の対象外 (プロセス木と孤児対策の観点での spawn 一覧は [process-tree-orphan-audit.md](process-tree-orphan-audit.md) が別途持つ)。
 
 | GUI 画面 | subprocess 引数 | 生成物 | 実装 PR |
 | --- | --- | --- | --- |
-| DetectingScreen | `allaganeye detect <video> -o <output> --progress-format json` | metadata.json | [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) Phase 3 / [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) |
-| ExportScreen | `allaganeye export <meta> \| --stdin -o <dir> [--codec h264] --json` | MP4 (per match) | [#466](https://github.com/Idios/kobutachan-allaganeye/issues/466) Phase 4 / [#761](https://github.com/Idios/kobutachan-allaganeye/issues/761) |
-| ExportScreen (マウント時) | `allaganeye encoder-slots` | EncoderSlot 一覧 (JSON) | [#761](https://github.com/Idios/kobutachan-allaganeye/issues/761) |
+| DetectingScreen | `allaganeye detect <video> -o <output> --progress-format json [--blackout-threshold V] [--min-blackout-duration V] [--min-match-duration V] [--workers N] [--no-audio] [--no-cache] [--gpu` or `--no-gpu] [--gpu-vendor V]` (`detect_command_args`) | metadata.json | [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) Phase 3 / [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) |
+| ExportScreen | `allaganeye export --stdin --json --output-dir <dir> --codec <codec> --name-pattern <pat> [--exclude i,j]` (`start_export`。metadata は positional ではなく stdin で渡す) | MP4 (per match) | [#466](https://github.com/Idios/kobutachan-allaganeye/issues/466) Phase 4 / [#761](https://github.com/Idios/kobutachan-allaganeye/issues/761) |
+| ExportScreen (マウント時) | `allaganeye encoder-slots --vendors <a,b> --preference <a,b> --gpu-models <a,b>` (`enumerate_h264_encoders`) | EncoderSlot 一覧 (JSON) | [#761](https://github.com/Idios/kobutachan-allaganeye/issues/761) |
 | MinimapScreen (自動検出 = 提案モード) | `allaganeye minimap <meta> --json [--exclude i,j]` (`detect_minimap_regions`) | 領域候補一覧 (JSON、stdout)。exit 0 / 4 の双方を成功扱い | [#893](https://github.com/Idios/kobutachan-allaganeye/issues/893) |
 | MinimapScreen (切抜き実行 = crop モード) | `allaganeye minimap <meta> --json --region X,Y,W,H --output-dir <dir> --name-pattern <pat> [--expected-mtime <ms>] [--exclude i,j]` (`start_minimap`) | minimap MP4 per match + metadata.json write-back | [#893](https://github.com/Idios/kobutachan-allaganeye/issues/893) |
 
