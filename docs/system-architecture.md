@@ -49,7 +49,7 @@ Allagan Eye は **別 exe 方式**を採用する (2026-04-23 確定、#527)。�
 | 起動ターゲット | 起動方法 | 実体 | 状態 |
 | --- | --- | --- | --- |
 | `allaganeye.bat` 引数なし (Portable ZIP) | ダブルクリック | `start "" allaganeye-gui.exe` で GUI 起動 (CLI-only ZIP 時はヘルプ表示にフォールバック) | v0.2.0 で対応 (#617) |
-| `allaganeye.bat` 引数付き (Portable ZIP) | Cmd / PowerShell で `allaganeye.bat <subcommand>` または動画ドラッグ | 同梱 Python + `python -m allaganeye` | リリース済み (v0.1.1) |
+| `allaganeye.bat` 引数付き (Portable ZIP) | Cmd / PowerShell で `allaganeye.bat <subcommand>` または動画ドラッグ | PyInstaller frozen CLI `allaganeye\allaganeye.exe` (v0.3.0+ #752。v0.2.x までは同梱 Python + `python -m allaganeye`) | リリース済み (v0.1.1) |
 | `allaganeye` (Python venv 内) | `python -m allaganeye <cmd>` | pyproject.toml の console_scripts | 開発時 |
 | `allaganeye-gui.exe` (Tauri bundle) | ダブルクリック / start menu | Tauri 2 ランタイム | v0.2.0 で対応 (#570)。Portable ZIP に同梱、`tauri.conf.json` の `bundle.active = false` のまま `.exe` 単体を生成し `scripts/build-portable-zip.ps1` で `allaganeye-gui.exe` をそのまま payload にコピー (リネームなし、Cargo binary 名を直接使用)。productName "Allagan Eye" は Tauri のウィンドウタイトルにのみ使われる。NSIS / MSI installer は現バージョンでは生成しない |
 
@@ -62,12 +62,13 @@ Allagan Eye は **別 exe 方式**を採用する (2026-04-23 確定、#527)。�
 
 ### 2.3 GUI → CLI subprocess 経路
 
-GUI は以下のタイミングで CLI を subprocess として呼び出す (本仕様は Phase 3/4 の本物化で `tokio::process::Command` で実装される):
+GUI は以下のタイミングで CLI を subprocess として呼び出す (`tokio::process::Command` で実装済み):
 
 | GUI 画面 | subprocess 引数 | 生成物 | 実装 PR |
 | --- | --- | --- | --- |
-| DetectingScreen (本物化予定) | `allaganeye detect <video> -o <output>` | metadata.json | [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) Phase 3 |
-| ExportScreen (本物化予定) | `allaganeye split --from-metadata <meta>` | metadata.json + MP4 | [#466](https://github.com/Idios/kobutachan-allaganeye/issues/466) Phase 4 |
+| DetectingScreen | `allaganeye detect <video> -o <output> --progress-format json` | metadata.json | [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) Phase 3 / [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) |
+| ExportScreen | `allaganeye export <meta> \| --stdin -o <dir> [--codec h264] --json` | MP4 (per match) | [#466](https://github.com/Idios/kobutachan-allaganeye/issues/466) Phase 4 / [#761](https://github.com/Idios/kobutachan-allaganeye/issues/761) |
+| ExportScreen (マウント時) | `allaganeye encoder-slots` | EncoderSlot 一覧 (JSON) | [#761](https://github.com/Idios/kobutachan-allaganeye/issues/761) |
 | MinimapScreen | `allaganeye minimap <meta> --region X,Y,W,H --json --expected-mtime <ms>` | minimap MP4 per match + metadata.json write-back | [#893](https://github.com/Idios/kobutachan-allaganeye/issues/893) |
 
 ExportScreen の H.264 再エンコード時のエンコーダ選択 (#591, #761) は `enumerate_h264_encoders` Tauri command (`allaganeye encoder-slots` サブコマンドを subprocess 呼び出し) で行う。detect/split が metadata.json `system_info` に保存した `gpu_vendors_available` / `vendor_preference` / `gpu` (GPU モデル名、#761) を渡して NVENC / QSV / AMF / libx264 のスロット一覧を取得し、並列エクスポートは `start_export` command が担う。

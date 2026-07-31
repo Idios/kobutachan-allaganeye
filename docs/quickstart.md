@@ -31,10 +31,11 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を、試合�
 
 ```text
 allaganeye-vX.Y.Z\
-├── python\            Python ランタイム（同梱済み、別途インストール不要）
-├── lib\               allaganeye 本体
-├── ffmpeg\            動画処理エンジン（同梱済み、別途インストール不要）
-├── allaganeye.bat     ← このファイルを使います
+├── allaganeye\             allaganeye 本体（Python ランタイム同梱済み、別途インストール不要）
+├── ffmpeg\                 動画処理エンジン（同梱済み、別途インストール不要）
+├── allaganeye.bat          ← このファイルを使います
+├── allaganeye-gui.exe      GUI 本体（allaganeye.bat のダブルクリックで起動します）
+├── integrity-manifest.json 同梱物の整合性検査に使います（削除しないでください）
 └── README.txt
 ```
 
