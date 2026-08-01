@@ -459,6 +459,27 @@ in-match guard を通過した blackout run はそれ自体が物理境界の証
 長さでは足切りしない (境界 blackout は 1-3s しかないことがある: PoC sec.2)。
 snap (_snap_start) と裁定 (adjudicate_gap) の双方でこの値を使う。"""
 
+INTRA_MATCH_FLICKER_MAX_PROBES = 4
+"""in-match guard を適用する blackout run の最大長 (probe 数)。
+
+この値以下の run のみ in-match guard (前後 evidence チェック) を適用する。
+この値を超える run は guard をスキップして常に境界 marker として採用する。
+
+根拠 (GT 実測):
+- in-match 瞬断の実測最大: 2 probe (shinryu M5: t=5780-5781、t=8460-8461)
+- 真の zone-in 境界の実測最小: 1 probe (shirurori [1490,1490])
+- shirurori M3 問題の境界: 9 probe ([2714,2722])
+  -> この zone-in の前後に evidence が両方あるため guard が誤発火し境界を棄却
+  -> matched 6/7 -> 試合 2 本が 1 本に結合する regression (R1d 問題)
+
+4 に設定する理由:
+- 2 probe 以下 (瞬断) は guard 対象 (正しく除外)
+- 5 probe 以上は guard スキップ (shirurori 9 probe を正しく境界として採用)
+- 3-4 probe の短い真境界は guard 対象だが、真の境界では
+  evidence_after=False (境界後は試合開始前 lobby) が多いため guard は不発になる
+
+この値より長い blackout は evidence 近接に関わらず境界とみなす。"""
+
 PEEK_BLACKOUT_MIN_PROBES = 2
 """in-match guard が構造的に効かない領域で boundary blackout run に要求する最小 probe 数。
 
@@ -537,21 +558,31 @@ def _boundary_blackout_runs(
     blackout_b_max: float = BLACKOUT_B_MAX,
     frozen_max: float = FROZEN_MAX,
     min_run: int = BOUNDARY_BLACKOUT_MIN_PROBES,
+    max_flicker_probes: int = INTRA_MATCH_FLICKER_MAX_PROBES,
 ) -> list[tuple[int, int]]:
     """in-match guard を通過した blackout run (= 真の境界 marker) を返す (純関数)。
 
-    物理規則の単一実装 (#895 P3 review F1/F14/F15):
+    物理規則の単一実装 (#895 P3 review F1/F14/F15、R1d で run 長 gate 追加):
     - blackout run = band_b <= blackout_b_max の「連続」 probe。UNKNOWN
       (band_b None) は blackout ではないので run を分断する。
       呼び出し側で valid (band_b not None) に filter してから渡すと
       UNKNOWN を挟んだ 2 run が 1 run に連結し、guard を run 全体の端点で
       評価してしまう (旧 adjudicate_gap の穴) ため、必ず生の probe 列を渡す。
-    - in-match guard: run 先頭 t から INTRA_EVIDENCE_BEFORE_S 以内前と
+    - in-match guard: run 長 <= max_flicker_probes の短い run のみに適用する。
+      run 先頭 t から INTRA_EVIDENCE_BEFORE_S 以内前と
       run 末尾 t から INTRA_EVIDENCE_AFTER_S 以内後の「両方」に evidence probe が
       あれば試合中の瞬断 (intra-match flicker) とみなして除外する。
+      run 長 > max_flicker_probes の長い run は guard をスキップして常に
+      境界 marker として採用する (R1d: shirurori 9 probe zone-in 誤排除修正)。
     - min_run 未満の run は除外する (peek 窓のみ厳しめ: PEEK_BLACKOUT_MIN_PROBES)。
 
-    probe 窓の端で guard 窓が切れている run は「窓外の evidence が見えないから
+    guard スキップの根拠 (GT 実測):
+    - in-match 瞬断の実測最大: 2 probe (shinryu M5 実測)
+    - 真の zone-in の実測最小: 1 probe
+    - INTRA_MATCH_FLICKER_MAX_PROBES=4 で 2 probe 瞬断は guard 対象、
+      5+ probe は guard スキップ (shirurori 9 probe zone-in を正しく採用)
+
+    probe 窓の端で guard 窓が切れている短い run は「窓外の evidence が見えないから
     guard が発火しない」だけで、run 長では真の zone-in と in-match 瞬断を区別できない。
     この pure 関数は窓端の截断を検出するが補正は行わない。呼び出し側が
     _snap_window_needs_extension で截断を検知し probe 窓を延長してから再呼び出しする
@@ -568,7 +599,14 @@ def _boundary_blackout_runs(
     for start, end in _blackout_runs(probes_list, blackout_b_max):
         t_start = probes_list[start].t
         t_end = probes_list[end].t
-        if (end - start + 1) < min_run:
+        run_len = end - start + 1
+        if run_len < min_run:
+            continue
+        # run 長 > max_flicker_probes の長い run は guard をスキップして常に採用する。
+        # 真の zone-in (例: shirurori 9 probe) は前後に evidence があっても境界。
+        # in-match 瞬断は実測最大 2 probe であり、max_flicker_probes=4 なら安全マージンあり。
+        if run_len > max_flicker_probes:
+            out.append((start, end))
             continue
         has_evidence_before = any(
             flags[j]

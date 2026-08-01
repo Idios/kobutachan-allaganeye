@@ -419,14 +419,15 @@ class TestAdjudicateGap:
         probes = _gap_probes("M" * 2 + "b" + "M" * 2)
         assert adjudicate_gap(probes) == "merge"
 
-    def test_long_blackout_run_intra_match_merges(self):
-        # Long run (10 probes) but evidence before AND after -> intra-match -> merge.
-        # Docstring pin: run length does not distinguish; only before/after evidence windows.
-        # "M"*3 + "b"*10 + "M"*30: before t=2 within 5s of t=3 -> True;
-        # after t=13 within 10s of t=12 -> True -> intra-match -> excluded -> falls to rate
-        # present rate: 33/(33+10) >> 15% -> merge
+    def test_long_blackout_run_exceeds_flicker_max_is_boundary(self):
+        # R1d: run 長 10 > INTRA_MATCH_FLICKER_MAX_PROBES -> guard スキップ -> boundary。
+        # 旧: "run length does not distinguish; only before/after evidence windows" と
+        # コメントしていたが R1d でこの設計を変更した。
+        # 変更根拠: shirurori 9 probe zone-in が前後 evidence ありで誤排除される regression。
+        # 10 probe は guard をスキップして priority 1 が発火 -> boundary。
+        # present rate: 33/(33+10) >> 15% だが priority 1 が優先。
         probes = _gap_probes("M" * 3 + "b" * 10 + "M" * 30)
-        assert adjudicate_gap(probes) == "merge"
+        assert adjudicate_gap(probes) == "boundary"
 
     def test_frozen_run_forces_boundary(self):
         # replay/result: present but frozen run (>= FROZEN_RUN_MIN_PROBES)
@@ -3195,3 +3196,188 @@ class TestFrozenMaxForwarding:
         assert len(probes) == 105
         assert _snap_start(probes, 0.0, 100.0) is None
         assert _snap_start(probes, 0.0, 100.0, frozen_max=20.0) == pytest.approx(12.0)
+
+
+# ---------------------------------------------------------------------------
+# Round 1d: INTRA_MATCH_FLICKER_MAX_PROBES -- run 長による in-match guard 限定適用
+# ---------------------------------------------------------------------------
+
+
+class TestIntraMatchFlickerMaxProbes:
+    """R1d: _boundary_blackout_runs の in-match guard は run 長 <=
+    INTRA_MATCH_FLICKER_MAX_PROBES のときのみ適用する。長い run は guard をスキップして
+    常に境界 marker として採用する。
+
+    根拠 (GT 実測):
+    - in-match 瞬断の実測最大: 2 probe (shinryu M5: t=5780-5781)
+    - 真の zone-in 境界の最短: 1 probe (shirurori [1490,1490])
+    - shirurori M3 問題の境界: 9 probe ([2714,2722])
+      -> 前後 evidence 両方あるため guard が誤発火し境界を捨てていた (shirurori regress)
+
+    INTRA_MATCH_FLICKER_MAX_PROBES=4: 2 probe 瞬断は guard 対象、5+ probe は guard スキップ。
+    3-4 probe の真境界も guard 対象だが、真境界では after に evidence がないため
+    guard が発火しない (evidence_after=False -> guard 条件 and が不成立)。
+
+    この green が見逃さないもの: 長さ条件だけで判別すると、
+    「短い真境界 (1-4 probe) で after も evidence がある稀ケース」が
+    依然 intra-match 扱いになる可能性を gate できない。
+    そのケースは窓延長 (SNAP_WINDOW_EXTEND_MAX_S) で対処する。
+    """
+
+    def test_long_run_with_both_evidence_is_adopted_as_boundary(self):
+        """shirurori M3 再現: 9 probe zone-in + 前後 evidence -> 境界として採用。
+
+        現行 (R1d 前) では guard が発火して境界を棄却 -> Red。
+        R1d 実装後: run 長 9 > INTRA_MATCH_FLICKER_MAX_PROBES -> guard スキップ -> 採用 -> Green。
+
+        実測系列 (GAP_STRIDE=1s):
+        t=2708 present=True (evidence before, 6s 前)
+        t=2713 present=True (evidence before, 1s 前)
+        t=2714..2722 (9s) blackout  <- 真の zone-in
+        t=2723 present=True (evidence after, 1s 後)
+
+        この green が見逃さないもの: 「長さ条件を完全に除去」すると全 run が
+        guard スキップになり、本来 2 probe の瞬断も通過してしまう。
+        max_probes 上限の存在を確認しないと瞬断排除機能の消失を見逃す。
+        """
+        from allaganeye.video.vtuber_timeline import (
+            INTRA_MATCH_FLICKER_MAX_PROBES,
+            _boundary_blackout_runs,
+        )
+
+        # 9 probe zone-in: INTRA_MATCH_FLICKER_MAX_PROBES より長いことを確認
+        assert INTRA_MATCH_FLICKER_MAX_PROBES < 9, (
+            "定数が >= 9 だと shirurori 9 probe をガードするため常に boundary になり"
+            "このテストは緑でも regression を gate できない"
+        )
+
+        # 実測形状: lobby(5) + evidence(2) + lobby(1) + blackout(9) + evidence(1)
+        # before: t=7 and t=8 are within 5s of blackout start t=9 -> evidence_before=True
+        # after: t=19 is within 10s of blackout end t=17 -> evidence_after=True
+        # run 長=9 > INTRA_MATCH_FLICKER_MAX_PROBES -> guard スキップ -> 採用
+        probes = _gap_probes("l" * 5 + "M" * 2 + "l" + "b" * 9 + "M" + "l" * 30)
+        runs = _boundary_blackout_runs(probes)
+        # R1d 実装後: 9 probe run は guard をスキップして採用される
+        assert len(runs) == 1, (
+            f"9 probe zone-in が境界として採用されるべきだが採用されなかった (guard 誤発火): {runs}"
+        )
+        assert runs[0] == (8, 16), f"expected (8, 16), got {runs[0]}"
+
+    def test_short_run_with_both_evidence_is_excluded_as_intra_match(self):
+        """shinryu M5 再現 (反対側 pin): 2 probe 瞬断 + 前後 evidence -> guard 発火 -> 除外。
+
+        R1d の前後ともに緑であるべき。この green が見逃さないもの:
+        「全 run をガードスキップ」するバグは瞬断を通過させ、
+        test_long_run_with_both_evidence_is_adopted_as_boundary は緑のまま
+        このテストが赤になる。
+        """
+        from allaganeye.video.vtuber_timeline import _boundary_blackout_runs
+
+        # 2 probe 瞬断: evidence before (t=4) AND after (t=7) -> guard 発火 -> 除外
+        # M*5 + bb + M*10: blackout at t=5,6
+        # before: t=4 within 5s of t=5 -> True
+        # after: t=7 within 10s of t=6 -> True
+        probes = _gap_probes("M" * 5 + "bb" + "M" * 10 + "l" * 83)
+        runs = _boundary_blackout_runs(probes)
+        # 2 probe run <= INTRA_MATCH_FLICKER_MAX_PROBES -> guard 適用 -> 除外
+        assert len(runs) == 0, (
+            f"2 probe 瞬断 (shinryu M5 型) は guard で除外されるべきだが通過した: {runs}"
+        )
+
+    def test_run_length_threshold_boundary_value(self):
+        """閾値ちょうどの run 長で挙動が切り替わること (境界値テスト)。
+
+        run 長 == INTRA_MATCH_FLICKER_MAX_PROBES -> guard 適用 (除外)。
+        run 長 == INTRA_MATCH_FLICKER_MAX_PROBES + 1 -> guard スキップ (採用)。
+
+        この green が見逃さないもの: off-by-one (< vs <= の取り違え) を gate する。
+        """
+        from allaganeye.video.vtuber_timeline import (
+            INTRA_MATCH_FLICKER_MAX_PROBES,
+            _boundary_blackout_runs,
+        )
+
+        max_p = INTRA_MATCH_FLICKER_MAX_PROBES
+
+        # run 長 == max_p: guard 適用 (evidence before AND after -> 除外)
+        # pattern: evidence(3) + blackout(max_p) + evidence(10) + lobby(rest)
+        # before: within 5s -> True; after: within 10s -> True -> guard fires -> excluded
+        at_threshold = _gap_probes("M" * 3 + "b" * max_p + "M" * 10 + "l" * 50)
+        runs_at = _boundary_blackout_runs(at_threshold)
+        assert len(runs_at) == 0, (
+            f"run 長 {max_p} == max_p: guard 適用で除外されるべきだが採用された: {runs_at}"
+        )
+
+        # run 長 == max_p + 1: guard スキップ (採用)
+        # evidence before AND after があっても長さで guard を免除
+        over_threshold = _gap_probes("M" * 3 + "b" * (max_p + 1) + "M" * 10 + "l" * 50)
+        runs_over = _boundary_blackout_runs(over_threshold)
+        assert len(runs_over) == 1, (
+            f"run 長 {max_p + 1} > max_p: guard スキップで採用されるべきだが除外された: {runs_over}"
+        )
+
+    def test_window_extension_still_needed_for_short_run_guard(self):
+        """窓延長 (SNAP_WINDOW_EXTEND_MAX_S) は短い run の guard 判定材料確保に依然必要。
+
+        R1d 実装後も SNAP_WINDOW_EXTEND_MAX_S が存在すること (設計判断の pin)。
+        短い run (<= INTRA_MATCH_FLICKER_MAX_PROBES) で after 窓が窓端で切れる
+        ケースは延長で対処する。
+
+        この green が見逃さないもの: 定数削除による設計の silent 破棄。
+        """
+        from allaganeye.video.vtuber_timeline import SNAP_WINDOW_EXTEND_MAX_S
+
+        assert SNAP_WINDOW_EXTEND_MAX_S > 0, (
+            "SNAP_WINDOW_EXTEND_MAX_S が 0 以下: 短い run の窓延長が無効になった"
+        )
+
+
+class TestIntraMatchFlickerMutationRed:
+    """mutation によって R1d の green が実装に依存していることを実証する。
+
+    実装: run_len > max_flicker_probes のとき guard スキップ (採用)。
+    よって:
+    (M1) max_flicker_probes=0 -> 全 run が guard スキップ (run_len > 0 は常に真)
+         -> 瞬断が境界になる = test_short_run_excluded に対応する機能が消える
+    (M2) max_flicker_probes=無限大 -> 全 run が guard 適用 (run_len > INF は常に偽)
+         -> shirurori 9 probe も除外される = test_long_run_adopted に対応する機能が消える
+
+    実証形: _boundary_blackout_runs を直接呼び出し max_flicker_probes 引数を
+    mutation 値で上書きして動作を確認する。
+    """
+
+    def test_mutation_m1_threshold_zero_passes_short_run(self):
+        """(M1) max_flicker_probes=0 -> run_len > 0 は常に真 -> 全 run が guard スキップ
+        -> 2 probe 瞬断 (evidence 両側あり) が採用される。
+
+        この確認が無いと「test_short_run_excluded が緑」という事実だけでは
+        「guard が全 run に適用されているが evidence after がたまたまないから緑」
+        という実装でも緑になる可能性を排除できない。
+        """
+        from allaganeye.video.vtuber_timeline import _boundary_blackout_runs
+
+        # 2 probe 瞬断 + 前後 evidence (guard が発火すれば除外されるべき)
+        probes = _gap_probes("M" * 5 + "bb" + "M" * 10 + "l" * 83)
+        # max_flicker_probes=0 -> run_len=2 > 0 -> guard スキップ -> 採用
+        runs_mutated = _boundary_blackout_runs(probes, max_flicker_probes=0)
+        assert len(runs_mutated) == 1, (
+            "(M1) max_flicker_probes=0: 2 probe run が guard スキップで採用されるべき"
+        )
+
+    def test_mutation_m2_threshold_infinite_excludes_long_run(self):
+        """(M2) max_flicker_probes=無限大 -> run_len > INF は常に偽 -> 全 run が guard 適用
+        -> 9 probe zone-in (evidence 両側あり) が除外される。
+
+        この確認が無いと「test_long_run_adopted が緑」という事実だけでは
+        「guard が全 run をスキップしているが evidence after がたまたまないから緑」
+        という実装でも緑になる可能性を排除できない。
+        """
+        from allaganeye.video.vtuber_timeline import _boundary_blackout_runs
+
+        # 9 probe zone-in + 前後 evidence
+        probes = _gap_probes("l" * 5 + "M" * 2 + "l" + "b" * 9 + "M" + "l" * 30)
+        # max_flicker_probes=無限大 -> run_len=9 > INF は偽 -> guard 適用 -> 除外
+        runs_mutated = _boundary_blackout_runs(probes, max_flicker_probes=10**9)
+        assert len(runs_mutated) == 0, (
+            "(M2) max_flicker_probes=INF: 9 probe run も guard 適用で除外されるべき"
+        )
