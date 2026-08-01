@@ -25,6 +25,7 @@ import { useMetadataStore } from '../state/metadataStore';
 import { fmtMatchDuration, fmtTime } from '../utils/time';
 import { stripExtendedPathPrefix } from '../utils/path';
 import { elementRectToSourcePx, validateRegionPx, type RegionPx } from '../utils/region';
+import { deriveDefaultOutDir } from './ExportScreen';
 import { minimapReducer } from './reducers/minimap';
 import styles from './MinimapScreen.module.css';
 
@@ -43,25 +44,6 @@ interface MinimapProgressPayload {
   percent: number;
   stage: 'encoding' | 'done' | 'error';
   message?: string;
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-/**
- * Derive default output dir: parent directory of metadata.json.
- * e.g. "C:/x/metadata.json" → "C:/x"
- *
- * #893 R2: Changed from "<parent>/minimap" to just "<parent>" so that
- * MinimapScreen defaults to the same directory as ExportScreen when
- * lastExportOutputDir is not set. When lastExportOutputDir is set in the
- * store, MinimapScreen uses that value directly.
- */
-function deriveMetadataParentDir(filePath: string | null): string {
-  if (!filePath) return '';
-  const normalized = stripExtendedPathPrefix(filePath);
-  const idx = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
-  if (idx <= 0) return '';
-  return normalized.slice(0, idx);
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -105,10 +87,17 @@ export function MinimapScreen() {
 
   // ── Settings ──────────────────────────────────────────────────────────────
 
-  // #893 R2: default to lastExportOutputDir (the dir used in the last export),
-  // falling back to the metadata.json parent directory (NOT the old /minimap subdir).
+  // #893 R2: default to lastExportOutputDir (the dir used in the last export).
+  //
+  // #928: the fallback derives from `videoSource`, not from the metadata.json
+  // path. The GUI detect flow always writes metadata.json to
+  // "<video dir>/<stem>_allaganeye/" (deriveDetectOutputDir), so deriving the
+  // fallback from filePath put minimap output in the metadata folder instead of
+  // next to the match videos -- the opposite of #902's intent, even though the
+  // old comment claimed it matched ExportScreen. Sharing ExportScreen's
+  // deriveDefaultOutDir keeps the two screens on one basis by construction.
   const [outDir, setOutDir] = useState<string>(
-    () => lastExportOutputDir ?? deriveMetadataParentDir(filePath),
+    () => lastExportOutputDir ?? deriveDefaultOutDir(videoSource),
   );
   const [namePattern, setNamePattern] = useState('{idx:03}_{type}_{start}_minimap.mp4');
 

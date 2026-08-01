@@ -21,8 +21,10 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   領域を自動提案する提案モード (exit 4)。
 - **GUI の minimap 統合** (#893): MinimapScreen を追加し、drag-select / 数値入力 /
   自動検出 / 進捗表示まで GUI 内で完結する (Tauri `start_minimap` command)。
-- **GUI ExportScreen からの minimap 導線** (#902): 書き出し後に minimap へ進める
-  entry を追加。minimap の default 出力先が直近の export 先になる。
+- **GUI ExportScreen からの minimap 導線** (#902 / #928): 書き出し後に minimap へ進める
+  entry を追加。minimap の default 出力先は、同一セッションで書き出しを実行済みなら
+  直近の export 先、未実行なら**動画と同じフォルダ** (ExportScreen の既定と同じ基準) に
+  なる。いずれの場合も出力先は画面上で変更できる。
 - **`export` コマンド** (#761): `metadata.json` から試合を書き出す。`--codec h264` で
   NVENC / QSV / AMF / libx264 を自動選択し、NVENC 選択時は GPU SKU テーブルの engine 数
   だけ並列スロットを確保する (default の `--codec copy` はディスク I/O 競合を避けるため

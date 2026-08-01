@@ -280,13 +280,50 @@ describe('MinimapScreen', () => {
       expect(input.value).toBe('E:/videos/exported');
     });
 
-    it('defaults outDir to metadata parent dir (not /minimap) when lastExportOutputDir is null', () => {
-      // Ensure lastExportOutputDir is null (reset() sets it null)
-      renderMinimapWithPath('C:/recordings/metadata.json');
-      // Should default to "C:/recordings" NOT "C:/recordings/minimap"
+    it('defaults outDir to the video parent dir (same as ExportScreen) when lastExportOutputDir is null', () => {
+      // #928: the GUI detect flow always writes metadata.json to
+      // "<video dir>/<stem>_allaganeye/", so falling back to the metadata
+      // parent put minimap output in the metadata folder rather than next to
+      // the match videos. ExportScreen defaults to the *video* parent
+      // (deriveDefaultOutDir), so MinimapScreen must use the same basis.
+      useAppStateStore.getState().reset();
+      useMetadataStore.getState().clear();
+      useMetadataStore.getState().loadSample();
+      useMetadataStore.setState({
+        filePath: 'C:/recordings/clip_allaganeye/metadata.json',
+        loadedMtimeMs: 42,
+        dirty: false,
+      });
+      useAppStateStore.getState().setSelectedVideoPath('C:/recordings/clip.mkv');
+      useAppStateStore.getState().navigate('minimap' as AppScreen);
+      render(<MinimapScreen />);
+
       const input = screen.getByLabelText('output directory') as HTMLInputElement;
       expect(input.value).toBe('C:/recordings');
+      // Neither the old "/minimap" subdir nor the metadata folder.
       expect(input.value).not.toContain('minimap');
+      expect(input.value).not.toContain('_allaganeye');
+    });
+
+    it('falls back to the metadata source when no video path is selected', () => {
+      // Reload-from-disk entry: selectedVideoPath is null, so videoSource
+      // resolves via metadata.source -- same precedence as ExportScreen.
+      useAppStateStore.getState().reset();
+      useMetadataStore.getState().clear();
+      useMetadataStore.getState().loadSample();
+      useMetadataStore.setState({
+        filePath: 'D:/out/meta_allaganeye/metadata.json',
+        loadedMtimeMs: 42,
+        dirty: false,
+      });
+      useMetadataStore.setState((s) => ({
+        metadata: s.metadata ? { ...s.metadata, source: 'D:/vods/session.mkv' } : s.metadata,
+      }));
+      useAppStateStore.getState().navigate('minimap' as AppScreen);
+      render(<MinimapScreen />);
+
+      const input = screen.getByLabelText('output directory') as HTMLInputElement;
+      expect(input.value).toBe('D:/vods');
     });
   });
 
