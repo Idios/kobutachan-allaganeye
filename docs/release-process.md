@@ -106,7 +106,21 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 
 - [ ] 2026-06-10 full audit の監査 P1 対応 ([audit-remediation spec](./superpowers/specs/2026-06-10-audit-remediation-design.md) Wave 1) が全クローズ: [#812](https://github.com/Idios/kobutachan-allaganeye/issues/812) / [#813](https://github.com/Idios/kobutachan-allaganeye/issues/813) / [#814](https://github.com/Idios/kobutachan-allaganeye/issues/814) / [#815](https://github.com/Idios/kobutachan-allaganeye/issues/815) / [#816](https://github.com/Idios/kobutachan-allaganeye/issues/816) / [#817](https://github.com/Idios/kobutachan-allaganeye/issues/817) / [#818](https://github.com/Idios/kobutachan-allaganeye/issues/818)。G4 は [#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) の段階1 (metadata 痕跡) で消化済みのため、#805 自体の close は本ゲートの対象外 (残 scope は #805 を参照)
 
-他の想定ゲート項目は次節「v0.3.0 以降のレイヤー固有ゲート枠組み」に従って確定する。
+L117 の想定ゲート項目を、リリース PR [#924](https://github.com/Idios/kobutachan-allaganeye/pull/924) で以下のとおり確定した (L122 の恒久化)。
+
+**自動ゲート (G)** — リリース PR の HEAD を独立ワークツリーに checkout して実行する。実行前後で `HEAD` が一致することを guard で確認し、実行中に flip した場合は結果を無効として再実行する ([worktree の branch flip は長時間ゲートを silent に無効化する](l2-workflow.md))。
+
+- [ ] **G1: OBS baseline bit-exact 回帰** — `pytest -m "slow_detect and not baseline_regen" tests/test_v030_baseline_regression.py`。5 本の OBS 録画 (obs-20260116 / 118 / 119 / 127 / 209) の検知結果が pin 済み baseline と一致すること。**本ゲートに masked / VTuber の動画は含まれない** (`_CLASS_A_BASELINES` は OBS のみ)。L117 の「masked baseline 検知 ground truth 一致」という表現は実態と異なるため、masked の根拠は下記の注記を参照
+- [ ] **G2: minimap 領域提案の回帰** — `pytest tests/test_areamap_slow.py`。エリアマップ window の seed 検出と per-match consensus の提案精度を検証する。**crop / encode 経路は対象外**で、切り抜き映像そのものの妥当性は M3 で目視確認する
+- [ ] **G3: VTuber timeline GT 回帰** — `pytest -m "slow_detect and not baseline_regen" tests/test_vtuber_gt_regression.py`。6 配信者 / GT 67 試合に対する recall と spurious を検証する。`--vtuber` を当該リリースで公開扱いにする場合は必須 (`/release` Step 0c で判断)。**検出ロジック / GT データ / ハーネスのいずれかを触った commit の後は再実行する**。`allaganeye/commands/split_matches.py` の `_VTUBER_ALGO_VERSION` の bump が再実行要否の目印になる
+
+> **masked 検出の根拠 (v0.3.0 時点)**: masked は専用の baseline ゲートを持たない。根拠は PR [#915](https://github.com/Idios/kobutachan-allaganeye/pull/915) で実施した 3 サンプルの不変性確認 (masked fallback 発動時の segment 数が再実行間で一致) に留まり、**出力の正しさは検証していない**。G1 と同形の pin 済み baseline への置き換えは [#925](https://github.com/Idios/kobutachan-allaganeye/issues/925) で追跡する。
+
+**手動検証 (M)** — GPU / 長時間動画 / GUI / 配布物は mock 不可のため Idios 実機で実施する (Iron Law 6)。PR 本文には machine-unverifiable として plain bullet で記録する。
+
+- [ ] **M1: export 並列の encoder 出力 visual spot check** — `--codec h264` で並列書き出しした MP4 を再生し、映像 / 音声 / 尺に破綻がないことを確認する
+- [ ] **M2: Portable ZIP 起動回帰** — 配布 ZIP を展開し、`allaganeye.bat` の引数なしダブルクリック (GUI 起動) と `allaganeye.bat --version` (CLI 起動) の両方を確認する。タグ push 前はリリース PR の CI artifact、タグ push 後は Release 添付の本番 ZIP で二段確認する
+- [ ] **M3: minimap crop の目視確認** — `minimap --region` で切り抜いた MP4 を再生し、エリアマップが意図した領域に収まっていることを確認する (G2 は提案モードのみを検証するため、crop 経路はここでしか担保されない)
 
 ### v0.3.0 以降のレイヤー固有ゲート枠組み
 
@@ -114,7 +128,7 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 
 | バージョン | レイヤー | 想定ゲート項目 |
 | --- | --- | --- |
-| v0.3.0 | L3 (new): 配信形式対応 + 性能改善 | masked baseline 検知 ground truth 一致 + minimap 切抜き検証 (VTuber 対応ゲートは 2026-07-06 rescope で一旦後送 → 2026-07-17 再開 #895。v0.3.0 に含めるかは /release Step 0c 判断)、export 並列で encoder 出力 visual spot check、Portable ZIP 起動回帰 |
+| v0.3.0 | L3 (new): 配信形式対応 + 性能改善 | **確定済 → 前節「v0.3.0 (L3) 固有項目」の G1-G3 / M1-M3 を参照**。当初の想定は「masked baseline 検知 ground truth 一致 + minimap 切抜き検証 + export 並列で encoder 出力 visual spot check + Portable ZIP 起動回帰」だったが、確定時に masked baseline が未整備であること (→ [#925](https://github.com/Idios/kobutachan-allaganeye/issues/925)) と minimap の自動ゲートが提案モードのみを覆うことが判明し、実態に合わせて再定義した |
 | v0.4.0 | L4 (former L3): メタデータ化 | キルログ OCR / 音声認識統合の精度ベンチ、metadata schema 拡張の互換性検証 |
 | v0.5.0 | L5 (former L4): 価値評価 | ローカル ML model 評価指標、サンプル動画群での評価分布 |
 | v0.6.0 | L6 (former L5): 自動編集 | クリップ生成成功率、投稿提案の妥当性レビュー |
