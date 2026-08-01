@@ -88,7 +88,8 @@ def register(app: typer.Typer) -> None:
             int | None,
             typer.Option(
                 "--concurrency",
-                help="Override slot count (default: auto from SKU table).",
+                help="Cap the number of parallel encoder slots. Upper bound "
+                "only -- this cannot raise the auto-detected count.",
             ),
         ] = None,
         name_pattern: Annotated[

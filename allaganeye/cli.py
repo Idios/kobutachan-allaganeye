@@ -171,8 +171,9 @@ def split(
         bool,
         typer.Option(
             "--keep-trailing",
-            help="Keep the post-match trailing segment instead of dropping it "
-            "when no scorebar is detected (disables the #797 trailing drop; #805).",
+            help="Emit the post-match trailing segment as a normal match. "
+            "By default it is kept in metadata with post_match=true but "
+            "excluded from the split output (#805).",
         ),
     ] = False,
     verbose: Annotated[
@@ -375,8 +376,9 @@ def detect(
         bool,
         typer.Option(
             "--keep-trailing",
-            help="Keep the post-match trailing segment instead of dropping it "
-            "when no scorebar is detected (disables the #797 trailing drop; #805).",
+            help="Emit the post-match trailing segment as a normal match. "
+            "By default it is kept in metadata with post_match=true but "
+            "excluded from the split output (#805).",
         ),
     ] = False,
     verbose: Annotated[

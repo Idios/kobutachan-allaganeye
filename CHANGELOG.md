@@ -29,8 +29,9 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   1 並列固定)。`--concurrency` は自動決定されたスロット数を上限として**絞る**方向にのみ
   効く (OBS が NVENC engine を占有している場合などの調整用で、これでスロット数は増えない)。
   スロット数そのものを**引き上げる**には環境変数 `ALLAGANEYE_EXPORT_CONCURRENCY` を使う
-  (SKU テーブル未収録の GPU は既定 1 スロットのため、Workstation / Datacenter GPU では
-  こちらで指定する)。GUI の書き出しも同じ Python コアを共有する。
+  (**NVENC が選択された場合にのみ有効**。SKU テーブル未収録の NVIDIA GPU は既定 1 スロット
+  のため、Workstation / Datacenter GPU ではこちらで指定する)。QSV / AMF / libx264 は
+  常に 1 スロットで、本環境変数の影響を受けない。GUI の書き出しも同じ Python コアを共有する。
 - **masked (チャット欄マスク) 録画の検出対応** (#821 / #822): 全画面にマスク画像が
   合成された録画向けに、mask のない領域を自動検出して再検知する `--masked` を追加。
   anchor presence と segment 検証の 2 層構成で過分割を抑制する。暗転が 1 件も検出
@@ -46,8 +47,8 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   **OBS / masked path は非接触** (フラグ未指定時の出力は bit-exact で不変)。縮退 3
   trigger (V0 anchor 失敗 / UNKNOWN 過半 / V2 無結果) で従来の band-crop blackout path
   へ fall back する floor 保証付き。`--masked` との同時指定は排他エラー (exit 5)。
-  metadata.json の `vtuber` フィールドと verbose の `Timeline (vtuber)` / `V3:` 行で
-  採用可否を確認できる。精度 gate は 6 配信者 / GT 67 試合
+  採用可否は verbose の `Timeline (vtuber)` / `V3:` 行で確認できる (metadata.json の
+  `detection_params.vtuber` はフラグの要求値を記録するだけで、縮退時も true のまま)。精度 gate は 6 配信者 / GT 67 試合
   (`tests/baselines/v0.3.0/vtuber-gt/*.json`) に対する slow テスト
   `tests/test_vtuber_gt_regression.py` で、短 gap の 1 組を `expected_merge_with_next`
   で合成した実効 66 セグメントと突合し **recall 100% (66/66、missed 0) / spurious 0**。
@@ -61,15 +62,7 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   `metadata.json` に永続化。
 - **Portable ZIP CLI の frozen 化** (#752): 同梱 CLI を PyInstaller `--onedir` で
   frozen exe 化し、従来の `python/` (embeddable Python) + `lib/` 展開を廃止。展開後の
-  Python 関連ファイル数が ~2500 → 数百規模に減り、ZIP 展開が速くなった。
-- `probe.py::ProbeResult` に `fps_num`/`fps_den` フィールドを追加
-  (NTSC 60000/1001 等の rational frame rate を float 精度損失なく
-  detector まで伝搬)。
-- `scripts/validate-fps-retirement.py` を新規追加 (#576 実装中 evidence
-  用 one-off スクリプト、CI gate ではない)。
-- `scripts/v3-normalize-source-path.py` を新規追加 (PR #793 reexamination V3
-  baseline regen 時の絶対 path → 相対 path 正規化用 one-off スクリプト、
-  audit-compare の source-vs-ground-truth 整合のため必要)。
+  Python 関連ファイル数が大幅に減少した (旧構成は推定 ~2500、frozen 後は数百規模)。
 
 ### Changed
 
@@ -83,6 +76,11 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   15m52s に短縮。この新 Match 2 (1686-2610) は 2026-05-21 の Idios 視覚再確認で
   real boundary と確定、`tests/baselines/v0.3.0/ground-truth/obs-20260118.json`
   を 5→6 matches に update 済 (#796 audit 後追補)。
+  **detect の所要時間は v0.2.x より延びる**: 取りこぼしていた短時間 blackout を
+  拾うために Pass 2 refinement の発火範囲を広げた結果、probe 数が増えている。
+  実測 (RTX 5090) で 5 OBS baseline 合計 ~31 min → ~52 min (約 1.7x)、最も影響の
+  大きい obs-20260118 は 7 min → 18 min。検出精度と引き換えの trade-off で、
+  更なる最適化は v0.3.x で検討する (#576 spec §10 R12)。
 - **metadata.json スキーマ**: `matches[].output_file` を必須から任意に変更 (#805)。
   `post_match: true` の entry は MP4 を生成しないため `output_file` を持たず、
   `matches[]` の件数と出力 MP4 の件数は一致しなくなった。`schema_version` は `"1"` の
@@ -128,8 +126,9 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   出力から削除する実装だったが、scorebar 検出が FN する環境 (未対応 HUD /
   4K Game DVR 等) で実試合を silent に失う構造リスクがあったため、
   リリース時点では **削除せず `post_match: true` を付与する非破壊方式**に
-  置き換えている (#805)。obs-20260116 は ground truth と完全一致の 6 match を
-  出力する。
+  置き換えている (#805)。obs-20260116 では ground truth の 6 試合すべてを許容誤差
+  (±5s) 内で検出し、MP4 出力も 6 本になる。trailing は 7 件目の entry として
+  `post_match: true` / `output_file` なしで metadata に残る (`matches[]` は 7 件)。
 - **GPU / CPU / メモリ検出の wmic 依存を解消** (#860): `wmic` が既定で削除された
   Windows 11 24H2 以降で PowerShell `Get-CimInstance` にフォールバックする。
   GPU vendor を検出できず CPU モードに縮退していた環境を救済。
@@ -148,14 +147,33 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   1 つでも不一致なら fail する gate に置き換え。
 - **`scripts/validate-fps-retirement.py` の PTS 抽出** (#804): boundary timestamp に
   対して常に固定値 `0.021` を返していた bug を、放出フレーム基準の parse に修正。
-- CI: typer<0.25 / click<8.4 に pin して CI 赤化を解消 (#808)。
+- **依存の上限 pin** (#808): `typer<0.25` / `click<8.4` を追加。両者の新版で CLI が
+  起動しなくなる非互換があり、CI 赤化として顕在化したもの。runtime 依存の pin なので
+  配布物にも効く。
+
+### Security
+
+- **cargo audit high × 2** (リリース作業中に検出、Refs #862): RUSTSEC-2026-0194
+  (start tag の重複属性チェックが quadratic) / RUSTSEC-2026-0195 (`NsReader` の
+  namespace 宣言が無制限に確保される) — いずれも CVSS 7.5、quick-xml 0.38.4 が対象。
+  tauri 2.11.1 → plist の transitive のため quick-xml 単独では上げられず、
+  `cargo update -p plist` で plist 1.8.0 → 1.10.0 / quick-xml 0.38.4 → 0.41.0 と
+  semver 互換の範囲で解消した。`Cargo.toml` は無変更 (tauri は `=2.11.1` のまま)。
+  quick-xml は Tauri の plist 読み込み経路にあるため、**配布 GUI に同梱される依存**。
+- **npm audit high × 4** (リリース作業中に検出、Refs #862): `npm audit fix` (非
+  `--force`) の transitive bump で解消。brace-expansion 5.0.6 → 5.0.9 /
+  fast-uri 3.1.2 → 3.1.5 / js-yaml 4.2.0 → 4.3.1 / nanoid 3.3.15 → 3.3.16 /
+  postcss 8.5.15 → 8.5.25。`gui/package.json` は無変更。いずれも dev/build
+  ツールチェーン依存で、配布 Tauri bundle には同梱されないため利用者への影響はない。
 
 ### Performance
 
 - **NVENC export の NVDEC zero-copy decode** (#791): `-hwaccel cuda
   -hwaccel_output_format cuda` で decode → encode を GPU 内に留める。NVDEC decode 段の
-  失敗も libx264 fallback の trigger に含めた。実測 (RTX 5090、H.264 並列 export):
-  10:54 → 約 6:53 = 1.58x 短縮 (NVDEC 稼働 69% / NVENC 94%)。
+  失敗も libx264 fallback の trigger に含めた。RTX 5090 / 2 時間動画 8 試合の
+  H.264 並列 export で、ffmpeg の ETA 比較が 10:54 → 約 6:53 (≒1.58x)。
+  **この倍率は完了実時間ではなく ETA 同士の比較**である点に注意。GPU 稼働率は
+  Task Manager 実測で NVDEC 69% / NVENC 94%。
 - **minimap crop (フィルタ有り NVENC) の NVDEC decode** (#899): `-vf crop` があると
   zero-copy が使えないため `-hwaccel cuda` 単独で NVDEC decode + CPU crop + NVENC
   encode する 3-tier fallback を実装。AV1 ソースで 2.29x。
@@ -207,6 +225,13 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   audit-prepare / audit-compare の再現性硬化とクラッシュ復旧 (#796 / #798 / #800)、
   #805 段階2 追随の baseline 再生成 (#881)。
 - probe 失敗 semantics の tri-state 統一契約を導入 (#824、挙動不変)。
+- `probe.py::ProbeResult` に `fps_num` / `fps_den` フィールドを追加 (#576)。
+  NTSC 60000/1001 等の rational frame rate を float 精度損失なく detector まで
+  伝搬させるための内部 API 拡張で、`metadata.json` には出力されない。
+- one-off の開発用スクリプトを 2 本追加 (いずれも CI gate ではなく、配布物からも
+  参照されない): `scripts/validate-fps-retirement.py` (#576 実装中の evidence 収集用)、
+  `scripts/v3-normalize-source-path.py` (PR #793 reexamination の V3 baseline regen で
+  絶対 path → 相対 path を正規化し、audit-compare の source-vs-ground-truth 整合を取るため)。
 - 開発運用の用途別モデルルーティングを導入 (#889)。
 - v0.2.0 / v0.2.1 retrospective 機構化 + Codex 統合 (#775)、PR 作成 Pre-flight
   Step 5 の 3-tier invocation path を明文化 (#795)。
