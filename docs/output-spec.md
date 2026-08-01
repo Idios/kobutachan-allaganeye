@@ -17,11 +17,11 @@
 detect に該当しない行 (この 4 点で網羅):
 
 - **行 6 (`Dry-run 通知`)**: `detect` に `--dry-run` オプションは存在しない (`allaganeye/cli.py` 参照)。`--dry-run` 系列の列 (3 列) は detect では意味を持たない
-- **行 11 のうち `Splitting` elapsed**: `Splitting: N matches, Xs` (2 space indent 付き) は `_emit_splitting_elapsed` が出力し、その呼び出し元は `run_split` のみ (`allaganeye/commands/split_matches.py:1831` 定義)。detect は `_print_detection_stats` のみを呼ぶ (`detect.py:231`) ため、`Pass 1` / `Pass 2` / `Scorebar` / Filter drop 内訳は出力されるが `Splitting` elapsed は出力されない
+- **行 11 のうち `Splitting` elapsed**: `Splitting: N matches, Xs` (2 space indent 付き) は `_emit_splitting_elapsed` (`allaganeye/commands/split_matches.py` で定義) が出力し、その呼び出し元は `run_split` のみ。detect (`allaganeye/commands/detect.py` の `run_detect`) は `_print_detection_stats` のみを呼ぶため、`Pass 1` / `Pass 2` / `Scorebar` / Filter drop 内訳は出力されるが `Splitting` elapsed は出力されない
 - **行 16 (`Splitting` 進捗バー)**: 分割フェーズが存在しないため detect では常に非出力
-- **行 17 のうち `Output: <dir>` + ファイル一覧**: 分割フェーズが存在しないため detect では出力されない。`Metadata: <path>` のみ detect も出力するが、`show` が真のとき (= `-q` でも `--progress-format json` でもないとき) に限る (`allaganeye/commands/detect.py:330-331` 参照)
+- **行 17 のうち `Output: <dir>` + ファイル一覧**: 分割フェーズが存在しないため detect では出力されない。`Metadata: <path>` のみ detect も出力するが、`show` が真のとき (= `-q` でも `--progress-format json` でもないとき) に限る (`run_detect` 末尾の `if show:` ガード)
 
-行 12a (`Region:`) は #908 で後から追加した行のため上記 #862 突合には含まれないが、split (`allaganeye/commands/split_matches.py:288-291`) / detect (`allaganeye/commands/detect.py:230-233`) が同一のガード条件で出力するため、**表の値がそのまま detect にも適用される**。この行だけは `_print_detection_stats` の内側ではなく呼び出し元に置かれており (行 11 / 行 12 は同ヘルパ内)、それが #862 PR-A の突合をすり抜けた原因。
+行 12a (`Region:`) は #908 で後から追加した行のため上記 #862 突合には含まれないが、split (`run_split`) / detect (`run_detect`) が同一のガード条件 (`if captured_region is not None:`) で出力するため、**表の値がそのまま detect にも適用される**。この行だけは `_print_detection_stats` の内側ではなく呼び出し元に置かれており (行 11 / 行 12 は同ヘルパ内)、それが #862 PR-A の突合をすり抜けた原因。
 
 **`-q` の挙動は split と異なる**: detect の `-q` は `show = not quiet and not json_mode` の評価により、`Metadata: <path>` 行も含め stdout を全抑制する。下記「強制 silent 契約 (`-q`)」節は **split 専用**の契約であり、detect の `-q` 挙動には適用されない。
 
@@ -92,9 +92,9 @@ Error: --quiet and --verbose are mutually exclusive
 
 ### マトリクスの読み方
 
-- 行 12a (`Region:`) が条件付きなのは、`captured_region` が解決済み (非 `None`) のときだけ出力するため (`split_matches.py:290` / `detect.py:232` の `if captured_region is not None:`)。実運用上これは **cache miss (実際に検知を走らせた) と同義**である:
-  - **cache miss 時**: `detect_match_boundaries` は標準 / vtuber / masked のどの経路を通っても `region_callback` を必ず呼ぶ。`region_callback(...)` の呼び出しは vtuber timeline 採用時 (`detector.py:689`) / masked fallback 採用時 (`:817`) / 標準 path 確定時 (`:823`) の 3 箇所で、同関数の早期 return 2 箇所 (`:695` の `return timeline_boundaries` / `:818` の `return masked_segments`) はいずれも**直前に**呼び出しを済ませている。したがって `captured_region` は常に埋まり、`-v` なら必ず出力される
-  - **cache hit 時**: `captured_region` は cache 記録値から復元される (split は `capture_regions=hit.capture_regions` を渡す `split_matches.py:188`、detect は `captured_region = hit.capture_regions` の `detect.py:148`) が、cache-hit 分岐は `Region:` 行に到達する前に return / スキップするため **表示されない**。split は cache-hit 分岐 (`split_matches.py:140` の `if hit is not None:`) が `:194` の `return` で抜けるため `:290` のガードに到達しない。detect は `Region:` 出力ガード (`detect.py:232-233`) が cache-miss ブロック (`detect.py:156` の `if boundaries is None:`) の**内側**にあるため、cache hit ではブロックごとスキップされる。`--no-cache` を付ければ cache miss 扱いになり出力される
+- 行 12a (`Region:`) が条件付きなのは、`captured_region` が解決済み (非 `None`) のときだけ出力するため (`run_split` / `run_detect` の `if captured_region is not None:` ガード)。実運用上これは **cache miss (実際に検知を走らせた) と同義**である:
+  - **cache miss 時**: `detect_match_boundaries` は標準 / vtuber / masked のどの経路を通っても `region_callback` を必ず呼ぶ。`region_callback(...)` の呼び出しは同関数内の 3 箇所 (vtuber timeline 採用時 / masked fallback 採用時 / 標準 path 確定時) で、早期 return 2 箇所 (`return timeline_boundaries` / `return masked_segments`) はいずれも**直前に**呼び出しを済ませている。したがって `captured_region` は常に埋まり、`-v` なら必ず出力される
+  - **cache hit 時**: `captured_region` は cache 記録値から復元される (split は `_split_and_write_metadata` へ `capture_regions=hit.capture_regions` を渡し、detect は `captured_region = hit.capture_regions` を代入する) が、cache-hit 分岐は `Region:` 行に到達する前に return / スキップするため **表示されない**。split は cache-hit 分岐 (`run_split` の `if hit is not None:`) がブロック末尾の `return` で抜けるため `Region:` のガードに到達しない。detect は `Region:` 出力ガードが cache-miss ブロック (`run_detect` の `if boundaries is None:`) の**内側**にあるため、cache hit ではブロックごとスキップされる。`--no-cache` を付ければ cache miss 扱いになり出力される
 - 行 6 (`Dry-run 通知`) で default / `-v` / `-q` 列が `-` なのは、これらの組合せでは `--dry-run` 自体が指定されていないため「通知する場面が存在しない」という意味
 - 行 16-17 で `--dry-run` 系列が `-` なのは、dry-run は分割処理を skip するため split 出力・Splitting バーが発生しない
 - 行 19 の `stderr` は「該当モードで該当フォーマットのエラーメッセージが stderr に出る」を意味し、エラーが発生した場合にのみ到達する条件行

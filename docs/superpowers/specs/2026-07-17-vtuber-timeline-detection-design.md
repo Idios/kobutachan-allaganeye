@@ -192,10 +192,24 @@ spec §3.2 の「境界誤差 +-15s」対称 tolerance を以下の非対称 gat
 内訳: gyawa 6 / kyuma 11 / meteor 14 / shikke 16 / shinryu 12 / shirurori 8
 (SSoT = `tests/baselines/v0.3.0/vtuber-gt/*.json` の `matches[]` 総数)。
 
-### 7.5 V2 hard-gap break は不採用: 短 gap known-limitation として残存 (P3)
+### 7.5 V2 hard-gap break は不採用: 試合間 merge を known-limitation として残存 (P3)
 
-試合間 gap が ~70s 未満の場合、V2 rolling window (TIMELINE_WINDOW=9、stride 10s) が
-構造的に橋渡しし 2 試合が 1 segment に結合されうる (6 source 中 1 境界で実測)。
+V2 は evidence (probe の `present AND band_mad >= mad_min` = presence AND 画面運動) を
+rolling window (TIMELINE_WINDOW=9、TIMELINE_QUORUM=2、stride 10s) で平滑化するため、
+試合間で evidence が落ちる区間が **平滑化を割り込めるだけの長さ・密度にならない**と、
+両者が橋渡しされ 2 試合が 1 segment に結合されうる。6 source / GT 67 試合中 **1 境界**
+(shirurori M7-M8、gap 59s) で実測。当該箇所は result 画面がスコアバーとほぼ同座標に
+スコア UI を表示し (result-mimic)、evidence の落ち方が浅かった。
+
+**gap の長さは結合の予測子ではない**。GT 全体の隣接 gap を計測すると 75s 以下は 9 本
+存在するが、結合したのは上記 1 本のみで、shikke の 55-71s の 8 本 (55.0 / 56.0 / 60.0 /
+60.0 / 65.0 / 66.0 / 69.0 / 71.0) はすべて正しく分割されている。V3 は gap の merge 裁定
+しか行わず split はしないため、V2 が橋渡ししていれば GT gate は落ちる = これら 8 本は
+V2 段階で evidence が途切れていた、ということになる。判定条件として「gap ~Ns 未満は
+結合される」と述べてはならない。実際の決定要因は **試合間で evidence が途切れる区間の
+長さ** (window/quorum 平滑化を割り込めるだけの非 evidence run が存在するか) である。
+
 当初 V2 に hard-gap break を追加する案を検討したが、Onsal マップのダウンタイム (FN
 run 120s+) が誤 break を引き起こす副作用があり採用しなかった。
-GT 側に `expected_merge_with_next` 注釈を付与して既知 limitation として管理する。
+GT 側に `expected_merge_with_next` 注釈を付与して既知 limitation として管理する
+(追跡 issue: #921)。
