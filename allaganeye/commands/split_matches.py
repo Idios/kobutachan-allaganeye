@@ -92,7 +92,10 @@ _MASKED_ALGO_VERSION = 3
 # version 6 = #895 P3 review: blackout boundary rule single-source (_boundary_blackout_runs)
 #             = merge override / snap Priority 2 にも in-match guard 適用 + UNKNOWN 分断 +
 #               outer edge snap の粗 edge semantics / 交差 guard + rescue の evidence 実数化
-_VTUBER_ALGO_VERSION = 6
+# version 7 = #895 P3 R1d: INTRA_MATCH_FLICKER_MAX_PROBES -- in-match guard を短い run
+#             (run 長 <= 4) のみに適用し、長い run (5+) は guard スキップで常に境界採用
+#             (shirurori M3 9 probe zone-in が前後 evidence ありでも境界と認識されるように)
+_VTUBER_ALGO_VERSION = 7
 
 
 def run_split(
