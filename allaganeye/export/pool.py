@@ -76,6 +76,15 @@ def _format_start_for_filename(seconds: float) -> str:
     return f"{m:02d}-{s:02d}"
 
 
+_IS_WINDOWS = os.name == "nt"
+"""Platform switch for the Windows-specific name rules below.
+
+A module constant rather than an inline ``os.name`` test so those rules can be
+exercised on every platform: CI runs pytest on ubuntu only, which would
+otherwise make every Windows-gated test in this module a silent no-op there.
+"""
+
+
 def _render_and_sandbox(
     m: ExportMatch,
     pattern: str,
@@ -120,16 +129,23 @@ def _render_and_sandbox(
             f"--name-pattern would overwrite the source video: {rendered!r} "
             f"resolves to {resolved}. Choose a different --output-dir or pattern"
         )
+    # ``a.mp4::$DATA`` is NTFS alternate-data-stream syntax: it writes ``a.mp4``
+    # while staying a distinct string *and* a distinct resolved path, so it
+    # slips past both the duplicate check and _identity_key. Rather than fold
+    # yet another piece of Win32 syntax into the key, constrain the name: ':'
+    # cannot occur in a Windows file or directory name at all, and its only
+    # other meaning -- the drive separator -- lives in the anchor, which the
+    # containment check above already covers. (Checked after containment so an
+    # escaping pattern still reports the more specific escape message.)
+    if _IS_WINDOWS and any(":" in part for part in resolved.parts[1:]):
+        raise ConfigValidationError(
+            f"--name-pattern produced an invalid Windows filename {rendered!r}: "
+            "':' cannot appear in a file or directory name. Windows reads it as "
+            "an NTFS alternate data stream and writes the file named before the "
+            "':', so two matches can silently land on one file (note: the "
+            "{type} token is taken verbatim from metadata.json)"
+        )
     return rendered, candidate, resolved
-
-
-_IS_WINDOWS = os.name == "nt"
-"""Platform switch for :func:`_identity_key`.
-
-A module constant rather than an inline ``os.name`` test so the folding logic
-can be exercised on every platform: CI runs pytest on ubuntu only, which would
-otherwise make the Windows-gated tests below a silent no-op there.
-"""
 
 
 def _identity_key(resolved: Path) -> Path:

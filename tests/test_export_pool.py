@@ -796,3 +796,97 @@ def test_pool_rejects_win32_folded_identity_collision(tmp_path: Path):
                 matches=_pair("clip.mp4", "clip.mp4."),
                 output_dir=out_dir,
             )
+
+
+# --------------------------------------------------------------------------
+# NTFS alternate data streams (Codex adversarial-review round 2, follow-up)
+#
+# ``clip.mp4::$DATA`` names the default stream of ``clip.mp4`` -- writing it
+# writes that file -- yet it is a distinct string AND a distinct resolved
+# Path, so neither the string check nor the identity key catches the pair.
+# Folding it would mean modelling still more Win32 syntax. The rendered name
+# is constrained instead: ``:`` is not legal in a Windows filename at all, and
+# its only other meaning is the drive separator, which lives in the anchor and
+# is already handled by the containment check.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "type_label",
+    ["clip.mp4::$DATA", "clip.mp4:stream", "clip.mp4:stream:$DATA"],
+    ids=["default-stream", "named-stream", "named-stream-typed"],
+)
+def test_render_rejects_alternate_data_stream_syntax(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, type_label: str
+):
+    """Driven through the platform switch so CI (ubuntu-only) gates it too."""
+    monkeypatch.setattr(pool_module, "_IS_WINDOWS", True)
+    m = ExportMatch(index=0, start=0.0, end=10.0, type_label=type_label)
+    with pytest.raises(ConfigValidationError) as exc:
+        resolve_export_output_path(
+            m, "{type}", output_dir=tmp_path / "out", source_video=tmp_path / "in.mp4"
+        )
+    assert exc.value.exit_code == 5
+    assert type_label in str(exc.value)
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="':' is a legal filename character on POSIX"
+)
+def test_resolve_export_output_paths_rejects_ads_identity_collision(tmp_path: Path):
+    """``clip.mp4`` and ``clip.mp4::$DATA`` are one file with two resolved keys.
+
+    Both halves of that premise are pinned against the real OS below, and the
+    order matters: ``resolve()`` only collapses the stream suffix once the
+    target *exists* (it can then ask the filesystem). At preflight time the
+    outputs do not exist yet, which is exactly when the identity key fails.
+    """
+    # 1. the state the preflight actually runs in: nothing written yet
+    assert (tmp_path / "none.mp4").resolve() != (tmp_path / "none.mp4::$DATA").resolve()
+    # 2. ... and the two names are nonetheless one file
+    probe = tmp_path / "_probe"
+    probe.mkdir()
+    (probe / "clip.mp4").write_bytes(b"A")
+    (probe / "clip.mp4::$DATA").write_bytes(b"B")
+    assert sorted(p.name for p in probe.iterdir()) == ["clip.mp4"]
+    shutil.rmtree(probe)
+
+    with pytest.raises(ConfigValidationError) as exc:
+        resolve_export_output_paths(
+            _pair("clip.mp4", "clip.mp4::$DATA"),
+            "{type}",
+            output_dir=tmp_path / "out",
+            source_video=tmp_path / "in.mp4",
+        )
+    assert exc.value.exit_code == 5
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="':' is a legal filename character on POSIX"
+)
+def test_colon_stays_legal_off_windows(tmp_path: Path):
+    """Over-rejection guard: POSIX filenames may contain ``:``."""
+    out_dir = tmp_path / "out"
+    got = resolve_export_output_paths(
+        _pair("a:b", "c:d"),
+        "{type}",
+        output_dir=out_dir,
+        source_video=tmp_path / "in.mp4",
+    )
+    assert got == [out_dir / "a:b", out_dir / "c:d"]
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="':' is a legal filename character on POSIX"
+)
+def test_pool_rejects_alternate_data_stream(tmp_path: Path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=_explode):
+        with pytest.raises(ConfigValidationError):
+            _run_pool(
+                tmp_path,
+                pattern="{type}",
+                matches=_pair("clip.mp4", "clip.mp4::$DATA"),
+                output_dir=out_dir,
+            )

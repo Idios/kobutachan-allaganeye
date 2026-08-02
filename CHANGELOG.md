@@ -140,6 +140,10 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   上書きされた match も成功として集計されるため、書き出し件数だけでは気付けない。
   ファイル名の展開元である `{type}` は `metadata.json` の値をそのまま使う
   (GUI で編集可能) ため、CLI 引数だけでは防げない経路だった。
+  あわせて Windows では、展開結果のファイル名/ディレクトリ名に `:` が含まれる場合も
+  **exit 5** で拒否する。Windows は `:` を NTFS の代替データストリーム指定として
+  読むため、`clip.mp4::$DATA` のような名前は `clip.mp4` に書き込まれる (パスとしては
+  別物のまま同一ファイルを指すので、上記の同一性判定だけでは捕まらない)。
 - **detect (scorebar V2)**: post-match content (試合終了後の Limsa /
   colorful interior 等) の彩度高領域を Rescue path が scorebar と誤検出
   する false positive を解消 (#803)。`_find_scorebar_horizontal_range` に
