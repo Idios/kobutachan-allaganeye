@@ -773,6 +773,41 @@ def test_identity_key_folding_runs_on_every_platform(
     assert _identity_key(tmp_path / raw).anchor == tmp_path.anchor
 
 
+def test_identity_key_folds_interior_directory_components(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Interior components fold too -- see the premise test below for why.
+
+    Codex round 3 read this as an over-rejection and recommended folding only
+    the filename. That would reopen a real collision (``sub./a.mp4`` lands in
+    ``sub/``), so the behaviour is pinned here deliberately.
+    """
+    monkeypatch.setattr(pool_module, "_IS_WINDOWS", True)
+    assert _identity_key(tmp_path / "sub." / "a.mp4") == tmp_path / "sub" / "a.mp4"
+    assert _identity_key(tmp_path / "sub " / "a.mp4") == tmp_path / "sub" / "a.mp4"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Win32 name-trimming premise")
+def test_win32_directory_trailing_dot_and_space_premise(tmp_path: Path):
+    """Pins the measurement the interior-component folding rests on.
+
+    1. a trailing dot on a directory component really does alias -- so folding
+       it is required, not optional
+    2. a directory whose name ends in a space cannot exist at all (``mkdir``
+       trims it), so the spelling that folding collapses never denotes a
+       writable file and nothing addressable is lost
+    """
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (tmp_path / "sub." / "a.mp4").write_bytes(b"X")
+    assert (sub / "a.mp4").exists(), "a trailing dot on a directory DOES alias"
+
+    (tmp_path / "spaced ").mkdir()
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith("spaced")] == [
+        "spaced"
+    ], "a directory name ending in a space cannot exist"
+
+
 def test_identity_key_is_a_no_op_off_windows(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):

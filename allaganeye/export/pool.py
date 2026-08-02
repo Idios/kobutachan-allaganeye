@@ -175,6 +175,24 @@ def _identity_key(resolved: Path) -> Path:
     resolves inside ``output_dir`` still folds to somewhere inside it; the
     only direction this could disagree is rejecting a name Win32 would have
     kept inside, which is the safe direction.
+
+    Interior directory components are folded too, and measurement says that is
+    a deliberate superset rather than an over-rejection (Codex round 3 read it
+    as the latter). What was measured on Windows:
+
+    * a trailing dot on a *directory* component IS trimmed -- ``sub./a.mp4``
+      lands in ``sub/``, so not folding it would leave a real collision open,
+      which is what "fold only the filename" would have caused
+    * a trailing space on a directory component is NOT trimmed, so
+      ``sub /a.mp4`` fails to open... but ``mkdir("sub ")`` creates ``sub``,
+      i.e. a directory whose name ends in a space cannot exist in the first
+      place. The folded-away spelling therefore never denotes a writable file,
+      and folding it turns a confusing mid-export ffmpeg failure into an
+      up-front exit 5
+
+    Folding the whole component is also the conservative choice: if this
+    reading of Win32 is ever wrong on some build or filesystem, the superset
+    still catches the collision, whereas the narrower rule would miss it.
     """
     if not _IS_WINDOWS:
         return resolved
