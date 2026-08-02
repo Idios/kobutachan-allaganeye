@@ -126,7 +126,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `tools/regen_audio_refs.py` | 同梱参照特徴量 (`audio/refs/*.npz`) をメンテナ手元の録画から再生成する開発用スクリプト |
 | `gui/` | L2a Tauri GUI (React 19 + TS + Vite + Zustand + zod)。`#483` で bootstrap、`#463` で data 層、`#464` で画面骨格 + CSS Modules、`#516` で `[元に戻す]` 機能、`#514` で排他管理 (mtime 検知 + ConflictModal)、`#587` で a11y polish (focus trap / Escape / DisabledTooltip / jest-axe)、`#893` で minimap crop GUI 統合 (MinimapScreen + `start_minimap` Tauri command、GUI 完結)。詳細は [docs/gui-development.md](docs/gui-development.md) / [docs/design/README.md](docs/design/README.md) / [docs/ui-architecture.md](docs/ui-architecture.md) / [docs/ui-interaction-spec.md](docs/ui-interaction-spec.md) (#590, UI 部品ごとの操作 → 状態遷移 / store mutation / 例外処理) / [docs/a11y-policy.md](docs/a11y-policy.md) (#587, screen reader scope / キーボード全機能 / focus visible 等) |
 | `gui/src/screens/` | 6 画面 (drop / detecting / complete / preview / export / minimap) + phase reducer。#464 で追加、#893 で MinimapScreen 追加（minimap crop GUI 統合、drag-select + 数値入力 + 自動検出 + 進捗表示） |
-| `gui/src/components/` | 共通 UI コンポーネント (AllaganCorner / AllaganSigil / WindowChrome / BrightnessTimeline / RestoreButton / SampleModeBanner / ConflictModal 等)。#464 で追加、#633 で sample mode 全画面 read-only |
+| `gui/src/components/` | 共通 UI コンポーネント (AllaganCorner / AllaganFrame / AllaganSigil / StateSwitcher / BrightnessTimeline / FrameStrip / MatchThumb / RestoreButton / SampleModeBanner / ConflictModal / DraftRestoreModal / ErrorModal / DisabledTooltip 等)。#464 で追加、#633 で sample mode 全画面 read-only。カスタム title bar は不採用 (prototype の `WindowChrome` は未実装。Windows-only #451 のため Tauri ネイティブ title bar に一本化 — 正は [docs/ui-architecture.md](docs/ui-architecture.md) §コンポーネント階層) |
 | `gui/src/state/` | Zustand store (`appStateStore` = screen + selection + detectionParams / `metadataStore` = load/apply/restore/loadSample / `recentStore` = `<install dir>/recent.json` 履歴 #571 + PR #655 Round 2 で exe ディレクトリ配置に変更) |
 | `gui/src/styles/tokens.css` | `aetherTheme` の CSS 変数定義 (#464 で追加) |
 | `gui/src/styles/path-display.module.css` | 5 画面横断のファイルパス表示 CSS Module (`.pathDisplay` container / `.pathSecondary` parent dir 行 RTL ellipsis truncate)、#676 で追加 (`docs/ui-interaction-spec.md §1.6` 参照) |
@@ -199,13 +199,16 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | 5 | 設定値不正（パラメータの範囲外等） |
 | 6 | metadata write-back の CAS 衝突 (外部変更検知、GUI が ConflictModal 表示) |
 | 7 | 同梱物欠損 (Portable ZIP integrity-manifest.json で listed file が missing / size 不一致、#668) |
+| 130 | SIGINT (Ctrl+C) によるキャンセル。`export` (#761) / `minimap` crop (#481) が並列処理の中断時に返す |
+
+> コマンド別の詳細 (どのコマンドがどのコードを返すか) は [`docs/cli-spec.md`](docs/cli-spec.md) の各コマンド §Exit Codes を参照。
 
 ### 外部依存
 
 - **ffmpeg / ffprobe**: 4.1 以上。PATH、`ALLAGANEYE_FFMPEG` 環境変数、または OS 別既知パスから自動検索（`allaganeye/ffmpeg_path.py`）。配布版・開発環境ともに LGPLv3 版 (BtbN FFmpeg-Builds `win64-lgpl-shared`、libdav1d 入り) の使用を推奨 (#508)
   - Windows: `ALLAGANEYE_FFMPEG` で BtbN LGPL ビルドを指定する運用を推奨。既存 winget (`Gyan.FFmpeg`, GPL) のインストール先も後方互換で自動検索される
   - macOS: Homebrew (`/opt/homebrew/bin`, `/usr/local/bin`) を自動検索
-- **Python パッケージ**: numpy, typer, scipy, opencv-python-headless（scorebar V2 検出で使用 #307）
+- **Python パッケージ**: numpy, typer, click, scipy, opencv-python-headless（scorebar V2 検出で使用 #307）。click は `allaganeye/cli.py` / `commands/split_matches.py` / tests が直接 import するため明示依存として宣言し、`typer<0.25` / `click<8.4` に pin している (#808)
 - **対応プラットフォーム**: Windows のみ（実動画での動作確認済み）。Linux・macOS は未検証（CI では lint/型チェックのみ ubuntu で実行）
 
 ### 動画サンプルデータ

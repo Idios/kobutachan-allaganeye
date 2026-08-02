@@ -23,6 +23,7 @@ import { isAppError } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 import { fmtMatchDuration, fmtTime } from '../utils/time';
+import { formatMatchFilename } from '../utils/filename';
 import { stripExtendedPathPrefix } from '../utils/path';
 import { elementRectToSourcePx, validateRegionPx, type RegionPx } from '../utils/region';
 import { deriveDefaultOutDir } from './ExportScreen';
@@ -37,13 +38,17 @@ interface MatchState {
   status: MatchStatus;
   percent: number;
   error?: string;
+  /** #899 -- NVENC 失敗で libx264 へ retry したときの per-match notice。 */
+  fallbackNotice?: string;
 }
 
 interface MinimapProgressPayload {
   match_index: number;
   percent: number;
-  stage: 'encoding' | 'done' | 'error';
+  stage: 'encoding' | 'done' | 'error' | 'fallback';
   message?: string;
+  /** #899 -- e.g. `"h264_nvenc -> libx264"`. Present when stage === 'fallback'. */
+  fallback_from?: string;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -163,6 +168,21 @@ export function MinimapScreen() {
           if (p.stage === 'encoding') status = 'running';
           else if (p.stage === 'done') status = 'done';
           else if (p.stage === 'error') status = 'error';
+          // #899 -- `-vf crop` 経路の NVENC encode 失敗で libx264 へ retry した
+          // とき、Rust 側は stage="fallback" / percent=0 を emit する。通知を
+          // per-match に刻み「なぜ巻き戻って遅くなったのか」を UI から辿れる
+          // ようにする (libx264 で encode がやり直しになるので percent が 0 に
+          // 戻ること自体は正しい)。
+          //
+          // status も running へ倒す: NVENC の初期化失敗は 1 frame も encode
+          // せずに落ちるため fallback がその match の最初の event になるのが
+          // 通常ケースで、prior (= pending) を保つと「○ (未着手) なのに
+          // libx264 で再試行中と書いてある」矛盾表示になる。
+          else if (p.stage === 'fallback') status = 'running';
+          const fallbackNotice =
+            p.stage === 'fallback'
+              ? (p.message ?? `${p.fallback_from ?? 'GPU encoder'} 失敗、libx264 で再試行`)
+              : prior.fallbackNotice;
           return {
             ...prev,
             [p.match_index]: {
@@ -170,6 +190,7 @@ export function MinimapScreen() {
               status,
               percent: p.percent,
               error: p.stage === 'error' ? p.message : prior.error,
+              fallbackNotice,
             },
           };
         });
@@ -758,7 +779,9 @@ export function MinimapScreen() {
             )}
           </DisabledTooltip>
           <div className={styles.nameHint}>
-            変数: {'{idx}'} {'{idx:03}'} {'{start}'} {'{type}'}
+            {/* #932: `{date}` は cli-spec.md §minimap でも ExportScreen でも
+                サポート済トークンだが、この hint だけ取りこぼしていた */}
+            変数: {'{idx}'} {'{idx:03}'} {'{start}'} {'{type}'} {'{date}'}
           </div>
         </div>
       </div>
@@ -934,6 +957,15 @@ export function MinimapScreen() {
               const durationDisplay = m.edited
                 ? fmtMatchDuration(effectiveEnd - effectiveStart)
                 : m.duration_display;
+              // #932: CLI (`minimap.py` の `--name-pattern`) が実際に書く名前と
+              // 一致させる。旧実装は `match_NNN_minimap.mp4` を決め打ちしており、
+              // 命名規則を変えても一覧が追従せず実ファイル名とも食い違っていた。
+              const name = formatMatchFilename(
+                namePattern,
+                m.index,
+                m.type,
+                effectiveStart,
+              );
               const isPostMatch = m.post_match === true;
               const mark = isPostMatch
                 ? '—'
@@ -987,9 +1019,7 @@ export function MinimapScreen() {
                     )}
                   </DisabledTooltip>
                   <span className={`${styles.listMark} ${markClass}`}>{mark}</span>
-                  <span className={styles.listName}>
-                    {`match_${String(m.index).padStart(3, '0')}_minimap.mp4`}
-                  </span>
+                  <span className={styles.listName}>{name}</span>
                   {isPostMatch && (
                     <span className={styles.postMatchBadge}>試合後</span>
                   )}
@@ -1007,6 +1037,19 @@ export function MinimapScreen() {
                   {s.status === 'error' && s.error && (
                     <span className={styles.listError} role="alert">
                       {s.error.slice(0, 120)}
+                    </span>
+                  )}
+                  {/* #932: ExportScreen から mirror した `--ae-accent` は
+                      tokens.css に存在しない token だった (IACVT で宣言ごと
+                      `unset` → class の赤も失われる)。ExportScreen 側も同時修正。 */}
+                  {s.fallbackNotice && (
+                    <span
+                      className={styles.listError}
+                      role="status"
+                      data-testid={`minimap-fallback-notice-${m.index}`}
+                      style={{ color: 'var(--ae-gold-bright)' }}
+                    >
+                      {s.fallbackNotice}
                     </span>
                   )}
                 </li>

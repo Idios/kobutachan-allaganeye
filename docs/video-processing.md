@@ -233,7 +233,7 @@ S「baseline drift の判定」を参照。
 
 **vendor 自動選択ロジック (`_resolve_gpu_mode` + `_select_gpu_vendor`)**
 
-1. `allaganeye.system_info.probe_gpu_vendors()` が platform 別 probe (nvidia-smi / wmic / lspci / system_profiler) で検出した vendor list を取得
+1. `allaganeye.system_info.probe_gpu_vendors()` が platform 別 probe で検出した vendor list を取得。probe 手段は nvidia-smi (全 platform 共通、最優先) / Windows: `wmic path win32_VideoController get Name` を第一候補とし、wmic 非搭載環境 (Windows 11 24H2 以降で既定削除) では PowerShell `Get-CimInstance Win32_VideoController` にフォールバック (#860) / Linux: `lspci` / macOS: `system_profiler`。Windows で wmic・PowerShell の双方が失敗し vendor が 0 件になった場合は `gpu_vendor_probe_warning()` が verbose header に警告を出し、GPU エンコーダ (NVENC/QSV/AMF) 不提示 = export が libx264 に縮退することをユーザーに可視化する (#860)
 2. `--gpu-vendor <vendor>` explicit の場合: `available` に含まれない、または `_VENDOR_HWACCEL_MAP` に未登録なら `ConfigValidationError` (exit 5)。現時点で nvidia / amd / intel すべて実装済みなので未登録分岐は将来の vendor 追加忘れガード
 3. `--gpu-vendor auto` (default) の場合: `_VENDOR_PREFERENCE = ("nvidia", "amd", "intel")` x `available` x 実装済み (`_VENDOR_HWACCEL_MAP` に含まれる) の最上位を選択。NVIDIA dGPU + Intel iGPU 環境では NVDEC が優先、AMD APU + Intel iGPU では AMD d3d11va が優先される
 4. codec が `_GPU_PREFERRED_CODECS` に含まれない場合は CPU mode。vendor が None (GPU 検出失敗 / 未実装 vendor のみ検出) でも codec match なら `use_gpu=True` を返し、`scan_gpu` の legacy path (`-hwaccel auto`) に入る。ffmpeg 側で GPU decode 失敗時は上記フォールバック経路で CPU 自動切替 (#334 既存挙動を維持)
@@ -291,10 +291,10 @@ FL 試合間の遷移は 2 つの暗転を伴うことがある:
 FL 試合 A → 暗転₁ (match_boundary) → ロビー/結果画面 → 暗転₂ (match_boundary) → FL 試合 B
 ```
 
-各暗転は正しく `match_boundary` と分類されるが、間のロビー区間が偽の短い「試合」として検出される。連続する `match_boundary` ペアのギャップ（≤ `_MERGE_GAP_MAX=600s`）を 9 点プローブし、全点でスコアバーが検出されなければ 1 つのリージョンにマージする。
+各暗転は正しく `match_boundary` と分類されるが、間のロビー区間が偽の短い「試合」として検出される。連続する `match_boundary` ペアのギャップを 9 点プローブし、全点でスコアバーが検出されなければ 1 つのリージョンにマージする。ギャップ長の上限は設けない（`_MERGE_GAP_MAX = None`。旧 600s 上限は #307 / PR #313 で撤廃）。
 
 - **9 点プローブの根拠**: FL 試合中はリスポーン等で一時的にスコアバーが消えるが、9 点中少なくとも 1 点は True になる（実測: 2/9）。ロビー/結果画面は 0/9。
-- **`_MERGE_GAP_MAX=600s` の根拠**: 実測のロビー/結果画面ギャップは 83-468s（1.4-7.8 分）。600s で十分なマージンを確保。
+- **ギャップ上限を設けない根拠 (#307 / PR #313)**: V2 スコアバー検出（1080p での GC 紋章 3 点 AND）は試合中フレームを確実に検出でき、FL 試合は 15-20 分あるため 9 点等間隔プローブのうち 2-3 点は必ずスコアバーを検出する。よって長いギャップでも誤マージは起きない。一方でオフピーク帯のロビー/キュー待ちは 1 時間を超えうるため、固定上限は正当なマージ機会を取りこぼす。実測のロビー/結果画面ギャップは 83-468s（1.4-7.8 分）だが、この分布に合わせた旧 600s 上限は撤廃した。
 
 #### 閾値の根拠データ
 
@@ -302,7 +302,7 @@ FL 試合 A → 暗転₁ (match_boundary) → ロビー/結果画面 → 暗転
 | --- | --- | --- |
 | `_SCOREBAR_CHANNEL_STD_THRESHOLD` | 15.0 | lobby=4-5, queue=8-9, **FL=26-48** |
 | `_IN_MATCH_MAX_DURATION` | 3.5s | キャラダウン=1.0-2.0s, **境界=4.5s+** |
-| `_MERGE_GAP_MAX` | 600s | 結果画面=83-266s, lobby=232-468s |
+| `_MERGE_GAP_MAX` | `None`（上限なし） | 結果画面=83-266s, lobby=232-468s（旧 600s 上限は PR #313 で撤廃） |
 
 #### 既知の制約
 

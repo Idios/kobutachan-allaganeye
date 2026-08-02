@@ -179,7 +179,7 @@ sequenceDiagram
 └── .detection_cache.json             # CLI の内部キャッシュ (再実行高速化)
 ```
 
-`~/.allaganeye/cache/<video_hash>/thumbs/*.webp` は GUI のサムネイルキャッシュ (#465)。出力ディレクトリとは別。
+`<install dir>/cache/<video_hash>/thumbs/*.webp` は GUI のサムネイルキャッシュ (#465)。出力ディレクトリとは別。PR #655 Round 2 で Portable ZIP 哲学 (削除 = アンインストール、ユーザープロファイルに残留物を残さない) に合わせ `~/.allaganeye/cache/` から exe ディレクトリ配下へ移設済み (`recent.json` #571 と同じ方針)。dev ビルドでは `target/debug/cache/...` (gitignored)。正の実装は `gui/src-tauri/src/lib.rs` の `thumb_cache_dir`。
 
 ## 4. 責務分離の原則
 

@@ -6,8 +6,9 @@
  * - a11y.css owns global :focus-visible outline, the shared spin
  *   keyframes, and the prefers-reduced-motion override.
  *
- * Loaded after tokens.css from gui/src/main.tsx so that var(--ae-*)
- * references resolve.
+ * Loaded after tokens.css from gui/src/main.tsx so that --ae-* references
+ * resolve. (Token names are written bare here on purpose — the guard in
+ * styles/tokens.test.ts scans comments too, by design.)
  */
 
 /* ---------------------------------------------------------------------

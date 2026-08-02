@@ -100,7 +100,10 @@
 .regionError {
   font-family: var(--ae-font-ui, sans-serif);
   font-size: 12px;
-  color: var(--ae-error, #e05555);
+  /* #932: `--ae-error` は tokens.css に存在しない token だった。fallback が
+     付いていたので描画自体はされていたが、アプリ全体のエラー色
+     (`--ae-danger`) から外れた赤が 1 箇所だけ紛れ込んでいた。 */
+  color: var(--ae-danger, #c87058);
   padding: 4px 0;
 }
 

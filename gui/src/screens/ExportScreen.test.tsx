@@ -22,11 +22,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: openDialogMock,
 }));
 
-import {
-  ExportScreen,
-  deriveDefaultOutDir,
-  formatStartForFilename,
-} from './ExportScreen';
+import { ExportScreen, deriveDefaultOutDir } from './ExportScreen';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 
@@ -79,30 +75,8 @@ describe('deriveDefaultOutDir', () => {
 });
 
 // stripExtendedPathPrefix の単体テストは utils/path.test.ts に移動済。
-
-// #545 review #8: filename `{start}` の HH-MM format helper
-describe('formatStartForFilename', () => {
-  it('formats sub-hour seconds as MM-SS', () => {
-    expect(formatStartForFilename(0)).toBe('00-00');
-    expect(formatStartForFilename(49)).toBe('00-49');
-    expect(formatStartForFilename(60)).toBe('01-00');
-    expect(formatStartForFilename(915.5)).toBe('15-15');
-  });
-
-  it('formats hour-plus seconds as H-MM-SS', () => {
-    expect(formatStartForFilename(3600)).toBe('1-00-00');
-    expect(formatStartForFilename(5021.5)).toBe('1-23-41');
-  });
-
-  it('clamps NaN / negative to 0', () => {
-    expect(formatStartForFilename(Number.NaN)).toBe('00-00');
-    expect(formatStartForFilename(-1)).toBe('00-00');
-  });
-
-  it('truncates fractional seconds (floor semantics)', () => {
-    expect(formatStartForFilename(59.9)).toBe('00-59');
-  });
-});
+// formatStartForFilename / formatMatchFilename の単体テストは
+// utils/filename.test.ts に移動済 (#932)。
 
 describe('ExportScreen (Phase 4 #466)', () => {
   it('renders empty state when metadata is null', () => {
@@ -951,6 +925,51 @@ describe('ExportScreen (Phase 4 #466)', () => {
       expect(
         screen.getByTestId('fallback-notice-1').textContent,
       ).toContain('libx264');
+    });
+  });
+
+  // Codex adversarial-review (#899 で minimap 側を直した際の類似バグ調査):
+  // NVENC の初期化失敗は 1 frame も encode せずに落ちるため、fallback が
+  // その match の *最初の* event になるのがむしろ通常ケース。status を
+  // running に倒さないと行は `○` (pending) のまま「libx264 で再試行中」
+  // 通知だけが出るという矛盾表示になる。
+  it('marks the row running when fallback is the first event for that match', async () => {
+    let progressHandler: ((e: {
+      payload: {
+        match_index: number;
+        percent: number;
+        stage: string;
+        message?: string;
+        fallback_from?: string;
+      };
+    }) => void) | null = null;
+    listenMock.mockImplementation(
+      async (_name: string, handler: (e: unknown) => void) => {
+        progressHandler = handler as typeof progressHandler;
+        return () => undefined;
+      },
+    );
+    render(<ExportScreen />);
+    await waitFor(() => expect(progressHandler).not.toBeNull());
+    // encoding を先に流さず fallback 単発。この時点では pending (`○`)。
+    expect(
+      within(screen.getByTestId('export-row-1')).getByText('○'),
+    ).toBeInTheDocument();
+    act(() => {
+      progressHandler!({
+        payload: {
+          match_index: 1,
+          percent: 0,
+          stage: 'fallback',
+          message: 'NVENC の初期化に失敗したため libx264 で再試行します',
+          fallback_from: 'h264_nvenc -> libx264',
+        },
+      });
+    });
+    await waitFor(() => {
+      const row = screen.getByTestId('export-row-1');
+      expect(within(row).getByText('●')).toBeInTheDocument();
+      expect(within(row).queryByText('○')).toBeNull();
     });
   });
 

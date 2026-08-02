@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -259,6 +259,186 @@ describe('MinimapScreen', () => {
     // While running, auto-detect button must be disabled
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '自動検出を試す' })).toBeDisabled();
+    });
+  });
+
+  // #899: `-vf crop` 経路は NVENC encode 失敗で libx264 へ retry する。Rust は
+  // stage="fallback" / percent=0 を `minimap-progress` に emit するので、通知が
+  // 無いと「進捗が 0% に巻き戻って遅くなっただけ」に見える (ExportScreen #591 と同型)。
+  it('shows a per-match fallback notice when a stage=fallback event arrives (#899)', async () => {
+    let progressHandler:
+      | ((e: {
+          payload: {
+            match_index: number;
+            percent: number;
+            stage: string;
+            message?: string;
+            fallback_from?: string;
+          };
+        }) => void)
+      | null = null;
+    mockListen.mockImplementation(async (_name: string, handler: (e: unknown) => void) => {
+      progressHandler = handler as NonNullable<typeof progressHandler>;
+      return () => undefined;
+    });
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'register_video'
+        ? Promise.resolve({ url: 'u', token: 't' })
+        : Promise.resolve(null),
+    );
+    renderMinimapWithPath();
+    await waitFor(() => expect(progressHandler).not.toBeNull());
+
+    act(() => {
+      progressHandler!({
+        payload: {
+          match_index: 1,
+          percent: 0,
+          stage: 'fallback',
+          message: 'NVENC の初期化に失敗したため libx264 で再試行します',
+          fallback_from: 'h264_nvenc -> libx264',
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('minimap-fallback-notice-1').textContent).toContain('libx264');
+    });
+  });
+
+  // Codex adversarial-review (#899): NVENC の初期化失敗は 1 frame も encode
+  // せずに落ちるため、fallback がその match の *最初の* event になるのが
+  // むしろ通常ケース。ここで status を running にしないと、行は `○` (pending)
+  // のまま「libx264 で再試行中」通知だけが出るという矛盾した表示になる。
+  it('marks the row running when fallback is the first event for that match (#899)', async () => {
+    let progressHandler:
+      | ((e: {
+          payload: {
+            match_index: number;
+            percent: number;
+            stage: string;
+            message?: string;
+            fallback_from?: string;
+          };
+        }) => void)
+      | null = null;
+    mockListen.mockImplementation(async (_name: string, handler: (e: unknown) => void) => {
+      progressHandler = handler as NonNullable<typeof progressHandler>;
+      return () => undefined;
+    });
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'register_video'
+        ? Promise.resolve({ url: 'u', token: 't' })
+        : Promise.resolve(null),
+    );
+    renderMinimapWithPath();
+    await waitFor(() => expect(progressHandler).not.toBeNull());
+
+    // pending の初期表示を確認してから fallback を単発で流す (encoding を先に流さない)
+    expect(screen.getByTestId('minimap-row-1').textContent).toContain('○');
+
+    act(() => {
+      progressHandler!({
+        payload: {
+          match_index: 1,
+          percent: 0,
+          stage: 'fallback',
+          message: 'NVENC の初期化に失敗したため libx264 で再試行します',
+          fallback_from: 'h264_nvenc -> libx264',
+        },
+      });
+    });
+
+    await waitFor(() => {
+      const row = screen.getByTestId('minimap-row-1');
+      expect(row.textContent).toContain('●');
+      expect(row.textContent).not.toContain('○');
+    });
+  });
+
+  it('falls back to a generated message when the fallback event carries no message (#899)', async () => {
+    let progressHandler:
+      | ((e: {
+          payload: {
+            match_index: number;
+            percent: number;
+            stage: string;
+            message?: string;
+            fallback_from?: string;
+          };
+        }) => void)
+      | null = null;
+    mockListen.mockImplementation(async (_name: string, handler: (e: unknown) => void) => {
+      progressHandler = handler as NonNullable<typeof progressHandler>;
+      return () => undefined;
+    });
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'register_video'
+        ? Promise.resolve({ url: 'u', token: 't' })
+        : Promise.resolve(null),
+    );
+    renderMinimapWithPath();
+    await waitFor(() => expect(progressHandler).not.toBeNull());
+
+    act(() => {
+      progressHandler!({
+        payload: {
+          match_index: 2,
+          percent: 0,
+          stage: 'fallback',
+          fallback_from: 'h264_nvenc -> libx264',
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('minimap-fallback-notice-2').textContent).toContain(
+        'h264_nvenc -> libx264',
+      );
+    });
+  });
+
+  // #932: 一覧のファイル名は `namePattern` を展開した実際の出力名でなければ
+  // ならない。ExportScreen は formatName() で展開しているが MinimapScreen は
+  // mirror 時に取りこぼしており、`match_NNN_minimap.mp4` という CLI が生成
+  // しない名前をハードコードしていた。
+  describe('#932 一覧の表示ファイル名は namePattern を展開する', () => {
+    beforeEach(() => {
+      mockInvoke.mockImplementation((cmd: string) =>
+        cmd === 'register_video'
+          ? Promise.resolve({ url: 'http://127.0.0.1/v', token: 't' })
+          : Promise.resolve(null),
+      );
+    });
+
+    it('expands the default pattern (sub-hour start → MM-SS)', async () => {
+      renderMinimap();
+      await screen.findByTestId('minimap-video');
+      // sample fixture match 2: type=fl_match, start_time=1129.5 → 18-49
+      expect(screen.getByTestId('minimap-row-2').textContent).toContain(
+        '002_fl_match_18-49_minimap.mp4',
+      );
+      expect(screen.getByTestId('minimap-row-2').textContent).not.toContain(
+        'match_002_minimap.mp4',
+      );
+    });
+
+    it('expands {start} as H-MM-SS past the 1-hour mark', async () => {
+      renderMinimap();
+      await screen.findByTestId('minimap-video');
+      // sample fixture match 5: type=fl_match, start_time=5021.5 → 1-23-41
+      expect(screen.getByTestId('minimap-row-5').textContent).toContain(
+        '005_fl_match_1-23-41_minimap.mp4',
+      );
+    });
+
+    it('follows edits to the 命名規則 input', async () => {
+      renderMinimapWithPath();
+      await screen.findByTestId('minimap-video');
+      fireEvent.change(screen.getByLabelText('name pattern'), {
+        target: { value: '{idx}-{type}.mp4' },
+      });
+      expect(screen.getByTestId('minimap-row-2').textContent).toContain('2-fl_match.mp4');
     });
   });
 

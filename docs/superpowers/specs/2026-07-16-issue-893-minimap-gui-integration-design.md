@@ -217,8 +217,12 @@ MinimapScreen (React)
 
 ### 6.3 設定・進捗 (export と同型)
 
-- **出力先**: default `<metadata dir>/minimap` (CLI default 準拠)。`open({directory})` の参照
-  ボタン + `stripExtendedPathPrefix` 正規化 (export と同じ)。
+- **出力先**: default は同一セッションで書き出し実行済みなら直近の export 先
+  (`lastExportOutputDir`)、未実行なら**動画と同じフォルダ** (`deriveDefaultOutDir(videoSource)`、
+  ExportScreen と同一基準)。#902 で「直近の export 先」を導入、#928 で fallback の基準を
+  metadata.json path から `videoSource` に是正した (CLI 単体の default `<metadata dir>/minimap`
+  とは異なる点に注意)。`open({directory})` の参照ボタン + `stripExtendedPathPrefix` 正規化
+  (export と同じ)。
 - **命名規則**: default `{idx:03}_{type}_{start}_minimap.mp4` (CLI default 準拠)。変数 hint 表示。
 - **per-match include**: export と同型の checkbox (default 全選択、post_match は強制除外 + 「試合後」
   badge、`type_override==='skip'` も除外)。`--exclude` に渡す。
