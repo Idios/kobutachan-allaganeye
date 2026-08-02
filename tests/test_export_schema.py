@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -44,17 +45,39 @@ def test_progress_event_fallback_serializes():
 
 
 def test_progress_event_result_includes_output_path_and_encoder():
+    absolute = Path(os.path.abspath("/tmp/match_001.mp4"))  # noqa: S108
     ev = ProgressEvent.result(
         match_index=1,
-        output_path=Path("/tmp/match_001.mp4"),  # noqa: S108
+        output_path=absolute,
         duration_ms=12345,
         encoder_used="h264_nvenc",
     )
     parsed = json.loads(ev.to_json_line())
     assert parsed["type"] == "result"
-    assert parsed["output_path"] == "/tmp/match_001.mp4"  # noqa: S108
+    assert parsed["output_path"] == absolute.as_posix()
     assert parsed["duration_ms"] == 12345
     assert parsed["encoder_used"] == "h264_nvenc"
+
+
+def test_progress_event_result_reports_absolute_path(tmp_path, monkeypatch):
+    """A relative -o must still tell the user where the file actually landed.
+
+    Reporting the path as given hides the destination whenever ``-o`` is
+    relative -- including the Windows drive-relative form (``E:out``) that a
+    lost shell quote turns ``E:\\a\\b`` into. Passing that through unchanged
+    names a location the reader cannot act on.
+    """
+    monkeypatch.chdir(tmp_path)
+    ev = ProgressEvent.result(
+        match_index=2,
+        output_path=Path("out") / "match_002.mp4",
+        duration_ms=1,
+        encoder_used="h264_nvenc",
+    )
+    reported = json.loads(ev.to_json_line())["output_path"]
+    assert Path(reported).is_absolute(), reported
+    expected = (Path(os.path.abspath(tmp_path)) / "out" / "match_002.mp4").as_posix()
+    assert reported == expected
 
 
 def test_progress_event_error_includes_hint():

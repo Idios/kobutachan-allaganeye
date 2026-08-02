@@ -24,10 +24,19 @@ from allaganeye.exceptions import (
     ConfigValidationError,
 )
 from allaganeye.export.encoder import enumerate_h264_encoders
-from allaganeye.export.pool import ExportMatch, _format_filename, export_matches
+from allaganeye.export.pool import (
+    ExportMatch,
+    _format_filename,
+    export_matches,
+    resolve_export_output_path,
+)
 from allaganeye.export.schema import ExportSummary, ProgressEvent
 from allaganeye.export.wire import WireWriter
-from allaganeye.detection.metadata_writer import read_metadata, write_metadata_atomic
+from allaganeye.detection.metadata_writer import (
+    read_metadata,
+    resolve_source_path,
+    write_metadata_atomic,
+)
 from allaganeye.video.areamap import resolve_match_regions
 from allaganeye.video.probe import probe_video
 
@@ -133,13 +142,13 @@ def register(app: typer.Typer) -> None:
 
         # ------ 2. source + probe ----------------------------------------------
         try:
-            source_value = metadata.get("source")
-            if not source_value:
-                typer.echo(
-                    "error: metadata.json missing required 'source' field", err=True
-                )
-                raise typer.Exit(code=2)
-            source_video = Path(source_value)
+            # #930 B2: source 解決は 3 経路 (split --from-metadata / export /
+            # minimap) 共通の helper に集約する。相対値は metadata.json の
+            # ディレクトリ起点 (cwd 起点ではない) で解決するので、同じ
+            # metadata から 3 経路が必ず同じ動画に着弾する。source 不在は
+            # InputFileError = exit 2 で報告する (以前は ffprobe まで落ちて
+            # exit 3 になっていた)。
+            source_video = resolve_source_path(metadata, metadata_path)
             sys_info = metadata.get("system_info") or {}
             vendors = list(sys_info.get("gpu_vendors_available") or [])
             preference = list(
@@ -322,7 +331,21 @@ def register(app: typer.Typer) -> None:
             vendors=vendors, preference=preference, gpu_models=gpu_models
         )
 
-        # filename 衝突 guard (export と同実装)
+        # 出力先は sandbox 判定の基準になるので name guard より前に確定させる
+        eff_output_dir = (
+            output_dir if output_dir is not None else metadata_path.parent / "minimap"
+        )
+
+        # filename 衝突 guard (export と同実装) + B1 sandbox guard
+        #
+        # B1 (データ損失): `eff_output_dir / rendered` は -o の外へ出られる
+        # (".." / 絶対パス / drive 相対 / metadata 由来の {type} 値)。minimap は
+        # crop 付き再エンコードなので escape すると ffmpeg が無関係のファイルを
+        # truncate してから失敗し、0 byte (moov atom not found) を残す。判定は
+        # pattern 文字列ではなく解決後のパスで行う (resolve_export_output_path)。
+        # ここ (preflight) は write-back / mkdir / ffmpeg より前に落とすため、
+        # export_matches 側の同じ検査は preflight を通らない caller (GUI 等) 向けの
+        # 最終防壁。どちらも省略しない。
         seen_names: dict[str, int] = {}
         export_matches_list: list[ExportMatch] = []
         for idx, start_t, end_t, type_label in filtered_tuples:
@@ -333,6 +356,16 @@ def register(app: typer.Typer) -> None:
                 type_label=type_label,
                 video_filter=crop_filter,
             )
+            try:
+                resolve_export_output_path(
+                    em,
+                    name_pattern,
+                    output_dir=eff_output_dir,
+                    source_video=source_video,
+                )
+            except ConfigValidationError as e:
+                _report_app_error(e, verbose=False, quiet=quiet, show_hint=False)
+                raise typer.Exit(code=e.exit_code) from None
             name = _format_filename(em, name_pattern)
             seen_names[name] = seen_names.get(name, 0) + 1
             export_matches_list.append(em)
@@ -348,10 +381,6 @@ def register(app: typer.Typer) -> None:
                 collision_err, verbose=False, quiet=quiet, show_hint=False
             )
             raise typer.Exit(code=collision_err.exit_code) from None
-
-        eff_output_dir = (
-            output_dir if output_dir is not None else metadata_path.parent / "minimap"
-        )
 
         # ------ 7. write-back (encode / mkdir 失敗でも座標は残す) -----------------
         # Finding 1 fix: filtered set の entry は上書き、対象外の既存 entry は保全
@@ -475,9 +504,12 @@ def register(app: typer.Typer) -> None:
 
                 def progress_cb(ev: ProgressEvent) -> None:
                     if ev.payload["type"] == "result":
+                        # Mirrors export: wire payload stays posix for the GUI,
+                        # the human line uses the platform's own separators.
+                        shown = Path(str(ev.payload["output_path"]))
                         typer.echo(
                             f"[OK] match {ev.payload['match_index']:03d} "
-                            f"-> {ev.payload['output_path']} ({ev.payload['encoder_used']})"
+                            f"-> {shown} ({ev.payload['encoder_used']})"
                         )
                     elif ev.payload["type"] == "error":
                         typer.echo(

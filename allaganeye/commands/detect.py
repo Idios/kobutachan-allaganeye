@@ -14,6 +14,7 @@ module matures further we can hoist those helpers into
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -327,8 +328,18 @@ def run_detect(
     metadata_path = config.output_dir / "metadata.json"
     write_metadata_atomic(metadata_path, payload)
 
+    # Report where the file actually landed, not the raw ``-o`` string
+    # (PR #930 did the same for export / minimap).  A relative ``-o`` --
+    # including a Windows drive-relative one like ``E:out``, which a lost
+    # shell quote turns ``E:\a\b`` into -- otherwise reaches the user as a
+    # path that does not say where anything was written.  ``abspath``
+    # normalises against the cwd without resolving symlinks, so the reported
+    # location is the one we wrote to, and ``Path`` keeps the platform's own
+    # separators so the line can be pasted back into a shell / explorer.
+    shown_metadata_path = Path(os.path.abspath(metadata_path))
+
     if show:
-        typer.echo(f"\nMetadata: {metadata_path}")
+        typer.echo(f"\nMetadata: {shown_metadata_path}")
 
     _emit_total_time(total_start, verbose, show)
 
@@ -338,6 +349,6 @@ def run_detect(
             # #805 段階2: total detected segments (active + post_match)。post_match
             # は MP4 化されないが「検出された試合数」の観測値としては数える
             # (post_match が無い常態では active と一致 = 従来挙動)。
-            metadata_path=str(metadata_path),
+            metadata_path=str(shown_metadata_path),
             matches=len(boundaries),
         )

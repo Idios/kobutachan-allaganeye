@@ -8,6 +8,7 @@ into ``ExportProgress`` Tauri events. See spec section 5.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -91,11 +92,17 @@ class ProgressEvent:
         duration_ms: int,
         encoder_used: str,
     ) -> ProgressEvent:
+        # Absolute before as_posix: a relative -o (including a Windows
+        # drive-relative one like ``E:out``, which a lost shell quote turns
+        # ``E:\a\b`` into) otherwise reaches the user as a path that does not
+        # say where the file actually landed. abspath normalises without
+        # resolving symlinks, so the reported location stays the one ffmpeg
+        # wrote to.
         return cls(
             {
                 "type": "result",
                 "match_index": match_index,
-                "output_path": output_path.as_posix(),
+                "output_path": Path(os.path.abspath(output_path)).as_posix(),
                 "duration_ms": duration_ms,
                 "encoder_used": encoder_used,
             }

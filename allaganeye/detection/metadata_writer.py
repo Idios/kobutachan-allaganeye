@@ -28,7 +28,59 @@ from typing import Any
 from allaganeye.detection.migrations import check_schema_version
 from allaganeye.exceptions import AllaganEyeError, InputFileError
 
-__all__ = ["read_metadata", "write_metadata_atomic"]
+__all__ = ["read_metadata", "resolve_source_path", "write_metadata_atomic"]
+
+
+def resolve_source_path(
+    payload: Mapping[str, Any],
+    metadata_path: Path | None,
+) -> Path:
+    """Resolve the ``source`` video recorded in ``metadata.json`` (#930).
+
+    Single source of truth for the three readers -- ``split --from-metadata``,
+    ``export`` and ``minimap``.  They used to each implement their own rule
+    (metadata-dir base / cwd base / cwd base) which let the *same*
+    ``metadata.json`` drive two commands onto two different video files, both
+    exiting 0 without a warning.
+
+    Contract:
+
+    * ``source`` is *written* as an **absolute** path (see the ``source``
+      description in ``schemas/metadata.schema.json`` and
+      ``docs/metadata-spec.md``).  Absolute values are used verbatim.
+    * A **relative** value -- pre-#930 output, a hand-edited file, or one that
+      travelled with its output directory -- is resolved against the *metadata
+      file's own directory*, never the process cwd.  This matches the
+      documented rule in ``docs/metadata-spec.md`` ("相対パスは metadata.json
+      のディレクトリ起点") and makes the result independent of where the CLI
+      happens to be invoked from.
+    * ``metadata_path=None`` is the ``export --stdin`` case (GUI subprocess):
+      the payload never touched the filesystem, so there is no anchor
+      directory and the process cwd is the only base available.  The GUI hands
+      over metadata produced by this tool (absolute ``source``), so the cwd
+      fallback only ever applies to hand-crafted relative payloads.
+
+    ``os.path.abspath`` (not ``Path.resolve``) is used deliberately, mirroring
+    the writer: symlinks are left intact so the path stays identical to the
+    one ffmpeg is handed.
+
+    Raises:
+        InputFileError: the field is missing/empty, or the resolved file does
+            not exist.  Exit code 2 for every reader (previously export
+            surfaced 1 and minimap 3 for the same condition).
+    """
+    source_value = payload.get("source")
+    if not isinstance(source_value, str) or not source_value:
+        where = f" file {metadata_path}" if metadata_path is not None else " payload"
+        raise InputFileError(f"metadata{where} missing required field 'source'")
+    source_path = Path(source_value)
+    if not source_path.is_absolute():
+        base = metadata_path.parent if metadata_path is not None else Path.cwd()
+        source_path = Path(os.path.abspath(base / source_path))
+    if not source_path.exists():
+        where = f" referenced by {metadata_path}" if metadata_path is not None else ""
+        raise InputFileError(f"source video{where} not found: {source_path}")
+    return source_path
 
 
 def write_metadata_atomic(path: Path, payload: Mapping[str, Any]) -> None:

@@ -3,6 +3,7 @@
 import json
 import logging
 import math
+import os
 import re
 import shutil
 import sys
@@ -24,6 +25,7 @@ from allaganeye.detection.format import (
 )
 from allaganeye.detection.metadata_writer import (
     read_metadata,
+    resolve_source_path,
     write_metadata_atomic,
 )
 from allaganeye.detection.progress_emitter import ProgressEmitter
@@ -383,9 +385,11 @@ def run_split_from_metadata(
     ``allaganeye split <video>`` run), resolves the source video path, and
     runs only the ffmpeg ``-c copy`` split phase.  Detection is skipped.
 
-    The source path stored in ``metadata.json`` is resolved relative to the
-    metadata file's directory when it is not absolute, so a metadata file
-    that travels alongside its output directory keeps working after a move.
+    The source path stored in ``metadata.json`` is resolved by the shared
+    :func:`resolve_source_path` helper (#930): absolute verbatim, relative
+    against the metadata file's directory, so a metadata file that travels
+    alongside its output directory keeps working after a move -- and so
+    ``export`` / ``minimap`` land on the exact same video file.
 
     Output files are written into ``config.output_dir`` (not necessarily the
     metadata file's directory), and the metadata file is **rewritten** with
@@ -396,18 +400,7 @@ def run_split_from_metadata(
 
     payload = read_metadata(metadata_path)
 
-    source_value = payload.get("source")
-    if not isinstance(source_value, str) or not source_value:
-        raise InputFileError(
-            f"metadata file {metadata_path} missing required field 'source'"
-        )
-    source_path = Path(source_value)
-    if not source_path.is_absolute():
-        source_path = (metadata_path.parent / source_path).resolve()
-    if not source_path.exists():
-        raise InputFileError(
-            f"source video referenced by {metadata_path} not found: {source_path}"
-        )
+    source_path = resolve_source_path(payload, metadata_path)
 
     matches = payload.get("matches")
     if not isinstance(matches, list) or not matches:
@@ -1536,10 +1529,18 @@ def _split_and_write_metadata(
     metadata_path = config.output_dir / "metadata.json"
     write_metadata_atomic(metadata_path, result)
 
-    typer.echo(f"\nOutput: {config.output_dir}")
+    # Report where the files actually landed, not the raw ``-o`` string
+    # (PR #930 did this for export / minimap, detect.py for its own line).
+    # A relative ``-o`` -- including a Windows drive-relative one like
+    # ``E:out``, which a lost shell quote turns ``E:\a\b`` into -- otherwise
+    # reaches the user as a path that does not say where anything was written.
+    # ``abspath`` normalises against the cwd without resolving symlinks, so the
+    # reported location is the one we wrote to, and ``Path`` keeps the
+    # platform's own separators so the line can be pasted into a shell.
+    typer.echo(f"\nOutput: {Path(os.path.abspath(config.output_dir))}")
     for f in output_files:
         typer.echo(f"  {f.name}")
-    typer.echo(f"Metadata: {metadata_path}")
+    typer.echo(f"Metadata: {Path(os.path.abspath(metadata_path))}")
 
 
 def _build_metadata_payload(
@@ -1604,7 +1605,16 @@ def _build_metadata_payload(
     post_match_boundaries = post_match_boundaries or []
     payload: Metadata = {
         "schema_version": "1",
-        "source": str(video_path),
+        # #930 B2: `source` is contractually ABSOLUTE (see the field
+        # description in schemas/metadata.schema.json and docs/metadata-spec.md).
+        # `video_path` is the argv value, which is cwd-relative whenever the
+        # user typed a relative path -- persisting it verbatim made the file
+        # only interpretable from the cwd that produced it, and the readers
+        # (which anchor relative values on the metadata directory) then
+        # resolved it somewhere else entirely. `os.path.abspath` rather than
+        # `Path.resolve` so symlinks stay intact and the recorded path is
+        # byte-identical to what ffmpeg was handed.
+        "source": os.path.abspath(video_path),
         "source_duration": source_duration,
         "source_duration_display": _format_timestamp(source_duration),
         "source_fps": source_fps,

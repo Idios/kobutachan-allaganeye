@@ -125,6 +125,12 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
 
 ### Fixed
 
+- **export / minimap の出力パス表示**: 完了行 (`[OK] match NNN -> ...`) と `--json` の
+  `output_path` が**絶対パス**になった。従来は `-o` に渡された相対パスをそのまま表示して
+  いたため、書き出し先が実際にどこになったのか読み取れなかった。特に shell の quote 忘れで
+  `-o E:\a\b` が `E:ab` (ドライブ相対パス) に化けた場合、Windows がカレント基準で解決した
+  結果と表示が食い違う。あわせて CLI のテキスト表示は OS ネイティブの区切り文字を使う
+  (`--json` 側は GUI 互換のため posix 形式を維持)。
 - **detect (scorebar V2)**: post-match content (試合終了後の Limsa /
   colorful interior 等) の彩度高領域を Rescue path が scorebar と誤検出
   する false positive を解消 (#803)。`_find_scorebar_horizontal_range` に

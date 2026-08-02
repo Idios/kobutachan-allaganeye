@@ -7,6 +7,7 @@ condition.
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from pathlib import Path
@@ -15,11 +16,13 @@ from unittest.mock import patch
 
 import pytest
 
+from allaganeye.exceptions import ConfigValidationError
 from allaganeye.export.encoder import EncoderSlot, H264Encoder
 from allaganeye.export.pool import (
     ExportMatch,
     _format_start_for_filename,
     export_matches,
+    resolve_export_output_path,
 )
 from allaganeye.export.schema import ExportError, ExportResult
 
@@ -231,4 +234,244 @@ def test_empty_slots_raises(tmp_path: Path):
             name_pattern="{idx:03}.mp4",
             progress_cb=lambda ev: None,
             cancel_event=threading.Event(),
+        )
+
+
+# ---------------------------------------------------------------------------
+# B1: --name-pattern sandbox (data loss)
+#
+# ``output_dir / rendered_name`` lets any pattern (or any metadata-supplied
+# ``{type}`` value) escape ``-o`` via ``..`` / an absolute path / a
+# drive-relative path, silently overwriting an unrelated file -- with exit 0.
+# The predicate is the RESOLVED path, never the pattern string.
+# ---------------------------------------------------------------------------
+
+
+def _explode(*args: Any, **kwargs: Any) -> ExportResult:
+    raise AssertionError(
+        "run_export_attempt must not be reached for a rejected name pattern"
+    )
+
+
+def _run_pool(
+    tmp_path: Path,
+    *,
+    pattern: str,
+    matches: list[ExportMatch] | None = None,
+    output_dir: Path | None = None,
+    source_video: Path | None = None,
+):
+    return export_matches(
+        matches=_matches(1) if matches is None else matches,
+        slots=_slots(1),
+        source_video=source_video or (tmp_path / "in.mp4"),
+        output_dir=output_dir if output_dir is not None else tmp_path / "out",
+        codec="h264",
+        name_pattern=pattern,
+        progress_cb=lambda ev: None,
+        cancel_event=threading.Event(),
+    )
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "../victim.mp4",
+        "../../victim.mp4",
+        "sub/../../victim.mp4",
+        "{idx:03}/../../victim.mp4",
+    ],
+)
+def test_pool_rejects_parent_traversal_pattern(tmp_path: Path, pattern: str):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=_explode):
+        with pytest.raises(ConfigValidationError):
+            _run_pool(tmp_path, pattern=pattern, output_dir=out_dir)
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="backslash separator is Windows-only"
+)
+def test_pool_rejects_backslash_traversal_pattern(tmp_path: Path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=_explode):
+        with pytest.raises(ConfigValidationError):
+            _run_pool(tmp_path, pattern="..\\victim.mp4", output_dir=out_dir)
+
+
+def test_pool_rejects_absolute_pattern(tmp_path: Path):
+    """An absolute pattern ignores -o entirely (Path.__truediv__ semantics)."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    absolute = str(tmp_path / "victim.mp4")
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=_explode):
+        with pytest.raises(ConfigValidationError):
+            _run_pool(tmp_path, pattern=absolute, output_dir=out_dir)
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="drive-relative paths are Windows-only"
+)
+def test_pool_rejects_drive_relative_pattern(tmp_path: Path):
+    """``D:victim.mp4`` is resolved against D:'s own CWD, not against -o.
+
+    The drive letter must differ from -o's: a *same-drive* drive-relative name
+    (``C:x.mp4`` under a C: output dir) joins inside the sandbox and stays
+    legal, which is exactly the behaviour Windows itself has.
+    """
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    other_drive = "Z:" if out_dir.drive.upper() != "Z:" else "Y:"
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=_explode):
+        with pytest.raises(ConfigValidationError):
+            _run_pool(tmp_path, pattern=f"{other_drive}victim.mp4", output_dir=out_dir)
+
+
+def test_pool_rejects_escape_via_type_token(tmp_path: Path):
+    """The escape can come from metadata, not from the pattern string.
+
+    ``{type}`` is an unvalidated metadata value, so a pattern that looks
+    perfectly safe ({idx:03} + no separators) still escapes. Pattern-string
+    validation cannot catch this -- only the resolved path can.
+    """
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    evil = [
+        ExportMatch(
+            index=1, start=0.0, end=10.0, type_label="../../../victim"
+        )  # -> out/001_../../../victim.mp4 -> tmp_path.parent/victim.mp4
+    ]
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=_explode):
+        with pytest.raises(ConfigValidationError):
+            _run_pool(
+                tmp_path,
+                pattern="{idx:03}_{type}.mp4",
+                matches=evil,
+                output_dir=out_dir,
+            )
+
+
+def test_pool_rejects_pattern_resolving_to_source_video(tmp_path: Path):
+    """-o pointed at the source's own directory must not overwrite the source."""
+    source = tmp_path / "in.mp4"
+    source.write_bytes(b"SOURCE")
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=_explode):
+        with pytest.raises(ConfigValidationError):
+            _run_pool(
+                tmp_path,
+                pattern="in.mp4",
+                output_dir=tmp_path,
+                source_video=source,
+            )
+    assert source.read_bytes() == b"SOURCE"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="NTFS is case-insensitive")
+def test_pool_rejects_source_collision_case_insensitively(tmp_path: Path):
+    source = tmp_path / "in.mp4"
+    source.write_bytes(b"SOURCE")
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=_explode):
+        with pytest.raises(ConfigValidationError):
+            _run_pool(
+                tmp_path,
+                pattern="IN.MP4",
+                output_dir=tmp_path,
+                source_video=source,
+            )
+
+
+def test_pool_accepts_plain_pattern_inside_output_dir(tmp_path: Path):
+    """Reverse pin: a normal pattern keeps working, unchanged (no over-reject)."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    seen: list[Path] = []
+
+    def fake_run(*args: Any, **kwargs: Any) -> ExportResult:
+        seen.append(kwargs["output"])
+        return ExportResult(
+            match_index=-1,
+            output_path=kwargs["output"],
+            duration_ms=1,
+            encoder_used="libx264",
+        )
+
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=fake_run):
+        summary = _run_pool(
+            tmp_path,
+            pattern="{idx:03}_{type}_{start}.mp4",
+            matches=_matches(2),
+            output_dir=out_dir,
+        )
+    assert summary.success == 2
+    assert sorted(p.name for p in seen) == [
+        "000_match_00-00.mp4",
+        "001_match_00-10.mp4",
+    ]
+    assert all(p.parent == out_dir for p in seen)
+
+
+def test_pool_accepts_subdirectory_pattern(tmp_path: Path):
+    """Reverse pin: a pattern that stays inside -o is NOT rejected.
+
+    A sub-directory pattern is inside the sandbox, so the guard leaves it to
+    ffmpeg exactly as before (which fails on the missing dir -- unchanged
+    behaviour). The guard must reject escapes only.
+    """
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    with patch(
+        "allaganeye.export.pool.run_export_attempt",
+        side_effect=lambda *a, **kw: ExportResult(
+            match_index=-1,
+            output_path=kw["output"],
+            duration_ms=1,
+            encoder_used="libx264",
+        ),
+    ):
+        summary = _run_pool(tmp_path, pattern="sub/{idx:03}.mp4", output_dir=out_dir)
+    assert summary.success == 1
+
+
+def test_resolve_export_output_path_returns_path_inside_output_dir(tmp_path: Path):
+    """Worker-level primitive: accepted patterns resolve under -o."""
+    out_dir = tmp_path / "out"
+    got = resolve_export_output_path(
+        ExportMatch(index=3, start=65.0, end=75.0, type_label="match"),
+        "{idx:03}_{type}_{start}.mp4",
+        output_dir=out_dir,
+        source_video=tmp_path / "in.mp4",
+    )
+    assert got == out_dir / "003_match_01-05.mp4"
+
+
+def test_resolve_export_output_path_rejects_escape(tmp_path: Path):
+    """Worker-level primitive rejects on its own (callers that skip the CLI
+    preflight -- GUI / future callers -- are still covered)."""
+    with pytest.raises(ConfigValidationError) as exc:
+        resolve_export_output_path(
+            ExportMatch(index=1, start=0.0, end=10.0, type_label="match"),
+            "../victim.mp4",
+            output_dir=tmp_path / "out",
+            source_video=tmp_path / "in.mp4",
+        )
+    assert exc.value.exit_code == 5
+
+
+@pytest.mark.parametrize("pattern", ["", ".", "./"])
+def test_resolve_export_output_path_rejects_output_dir_itself(
+    tmp_path: Path, pattern: str
+):
+    """A pattern that renders to nothing resolves to -o itself (a directory).
+
+    ``output_dir / ""`` is ``output_dir``, which is not a writable file
+    target -- reject it instead of handing a directory path to ffmpeg.
+    """
+    with pytest.raises(ConfigValidationError):
+        resolve_export_output_path(
+            ExportMatch(index=1, start=0.0, end=10.0, type_label="match"),
+            pattern,
+            output_dir=tmp_path / "out",
+            source_video=tmp_path / "in.mp4",
         )
