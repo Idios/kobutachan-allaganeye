@@ -123,6 +123,15 @@ def _render_and_sandbox(
     return rendered, candidate, resolved
 
 
+_IS_WINDOWS = os.name == "nt"
+"""Platform switch for :func:`_identity_key`.
+
+A module constant rather than an inline ``os.name`` test so the folding logic
+can be exercised on every platform: CI runs pytest on ubuntu only, which would
+otherwise make the Windows-gated tests below a silent no-op there.
+"""
+
+
 def _identity_key(resolved: Path) -> Path:
     """Fold ``resolved`` onto the identity the OS uses when it opens the file.
 
@@ -139,8 +148,11 @@ def _identity_key(resolved: Path) -> Path:
     legal. Rejecting it would be a regression, not a fix.
 
     A component made *only* of dots/spaces is left alone -- stripping it would
-    invent an empty component, and Windows cannot create such a name at all,
-    so it fails loudly at ffmpeg instead of silently overwriting a sibling.
+    invent an empty component. This is safe against the obvious worry, that
+    ``...`` or ``.. `` folds into a ``..`` traversal: measured on Windows,
+    ``<out>/.../victim.mp4`` and ``<out>/.. /victim.mp4`` are both rejected by
+    the containment check *and* fail to open (a trailing space on a directory
+    component is not trimmed, so the component simply does not exist).
 
     Only the uniqueness key is folded, never the containment check. Folding
     can shorten a component but can never introduce a ``..``, so a path that
@@ -148,7 +160,7 @@ def _identity_key(resolved: Path) -> Path:
     only direction this could disagree is rejecting a name Win32 would have
     kept inside, which is the safe direction.
     """
-    if os.name != "nt":
+    if not _IS_WINDOWS:
         return resolved
     parts = resolved.parts
     if not parts:  # pragma: no cover - a resolved path always has an anchor

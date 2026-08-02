@@ -18,10 +18,12 @@ from unittest.mock import patch
 import pytest
 
 from allaganeye.exceptions import ConfigValidationError
+from allaganeye.export import pool as pool_module
 from allaganeye.export.encoder import EncoderSlot, H264Encoder
 from allaganeye.export.pool import (
     ExportMatch,
     _format_start_for_filename,
+    _identity_key,
     export_matches,
     resolve_export_output_path,
     resolve_export_output_paths,
@@ -740,6 +742,44 @@ def test_resolve_export_output_paths_keeps_dots_only_component_distinct(
         source_video=tmp_path / "in.mp4",
     )
     assert got == [out_dir / "...", out_dir / "clip"]
+
+
+@pytest.mark.parametrize(
+    ("raw", "folded"),
+    [
+        ("clip.mp4.", "clip.mp4"),
+        ("clip.mp4 ", "clip.mp4"),
+        ("clip.mp4. . ", "clip.mp4"),
+        ("clip.mp4", "clip.mp4"),  # nothing to strip -> unchanged
+        ("...", "..."),  # dots-only: folding would invent an empty component
+        (". ", ". "),
+    ],
+)
+def test_identity_key_folding_runs_on_every_platform(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, raw: str, folded: str
+):
+    """The folding *logic* must be gated even where the OS does not fold.
+
+    CI runs pytest on ubuntu-latest only (`.github/workflows/ci.yml`), so the
+    ``skipif(sys.platform != "win32")`` tests in this section never execute
+    there -- they gate nothing until Idios runs the suite locally. Driving the
+    platform switch directly keeps the logic itself covered on every runner.
+    The Windows-only tests stay: they pin the OS *premise*, which cannot be
+    faked.
+    """
+    monkeypatch.setattr(pool_module, "_IS_WINDOWS", True)
+    assert _identity_key(tmp_path / raw) == tmp_path / folded
+    # ... and the anchor is never folded, only the components below it
+    assert _identity_key(tmp_path / raw).anchor == tmp_path.anchor
+
+
+def test_identity_key_is_a_no_op_off_windows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """POSIX keeps trailing dots/spaces significant -- folding would over-reject."""
+    monkeypatch.setattr(pool_module, "_IS_WINDOWS", False)
+    for raw in ("clip.mp4.", "clip.mp4 ", "clip.mp4"):
+        assert _identity_key(tmp_path / raw) == tmp_path / raw
 
 
 @pytest.mark.skipif(
