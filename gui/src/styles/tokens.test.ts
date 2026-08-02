@@ -35,6 +35,26 @@ import { describe, expect, it } from 'vitest';
  *    定義の有無を見るまでもなく違反とする。
  * 3. **行単位ではなく全文を走査する**。`var(` と token 名が改行で分かれた
  *    CSS を取りこぼさないため。
+ * 4. **関数名と `--ae-` の大小を無視する**。CSS の関数名は case-insensitive
+ *    なので `VAR(--ae-accent)` は実際に解決される。一方 custom property 名は
+ *    case-sensitive なので `--AE-gold` は別物 (= 未定義) であり、規約違反として
+ *    落とす。
+ *
+ * ## 既知の限界 (この guard が見ないもの)
+ *
+ * 構文解析をしない正規表現スキャナである以上、網羅的な fail closed には
+ * 原理的に到達できない。以下は **意図的に検出対象外**であり、無自覚な
+ * 取りこぼしではない。現コードには 1 件も存在しないことを確認済み。
+ * スキャナを強化したら「既知の限界の pin」テストの一覧も更新すること。
+ *
+ * - `var(` と token 名の間に CSS コメントを挟む形
+ * - CSS 識別子エスケープ (`var(\2d -ae-x)`)
+ * - 名前を実行時に組み立てる形 (`'var(' + name + ')'`)
+ *
+ * これらを塞ぐには postcss / typescript AST での走査が要るが、devDependency
+ * 追加を伴う規模のためリリースブランチには載せない (Iron Law 3)。実際に出荷
+ * された欠陥 (手書きの `var(--ae-typo)`) はいずれの形でもないので、費用対
+ * 効果として現状の走査で足りている。
  */
 
 // environment: 'jsdom' では `import.meta.url` が http URL になり
@@ -45,10 +65,14 @@ const TOKENS_CSS = join(SRC_DIR, 'styles', 'tokens.css');
 /**
  * `var(` に続く custom property 名を区切り (空白 / `,` / `)`) まで捕らえる。
  *
+ * 関数名と `--ae-` の綴りは大小を許容する (`i` フラグは使わない。名前の残り
+ * まで case-insensitive になると `--ae-Gold` と `--ae-gold` を同一視して
+ * しまうため、頭の 2 語だけ文字クラスで畳む)。
+ *
  * 毎回 `new RegExp` するのは `g` フラグ付き正規表現を module scope で使い回す
  * ときの `lastIndex` 依存を避けるため。
  */
-const VAR_REFERENCE = String.raw`var\(\s*(--ae-[^\s,)]*)`;
+const VAR_REFERENCE = String.raw`[Vv][Aa][Rr]\(\s*(--[Aa][Ee]-[^\s,)]*)`;
 
 /** tokens.css の定義行から名前を捕らえる (こちらも途中で切らない)。 */
 const TOKEN_DEFINITION = String.raw`^[ \t]*(--ae-[^\s:;{}]*)[ \t]*:`;
@@ -216,6 +240,54 @@ describe('#932 --ae-* CSS custom property の定義漏れ guard', () => {
     expect(scanText(sample, 'fixture')).toEqual([
       { token: '--ae-multiline-missing', location: 'fixture:3' },
     ]);
+  });
+
+  it('CSS 関数名の大小差では逃げられない / 名前の大小差は別 token 扱い', () => {
+    // CSS の関数名は case-insensitive なので VAR( も実際に解決される。
+    // 一方 custom property 名は case-sensitive なので --AE-gold は
+    // 定義済みの --ae-gold とは別物 = 未定義。
+    const sample = [
+      'a { color: VAR(--ae-accent); }',
+      'b { color: Var(--ae-accent); }',
+      'c { color: var(--AE-gold); }',
+      'd { color: var(--ae-gold); }',
+    ].join('\n');
+
+    const usages = scanText(sample, 'fixture');
+    expect(usages.map((u) => u.token)).toEqual([
+      '--ae-accent',
+      '--ae-accent',
+      '--AE-gold',
+      '--ae-gold',
+    ]);
+    expect(violationsIn(usages, definedTokens())).toEqual([
+      '--ae-accent  fixture:1',
+      '--ae-accent  fixture:2',
+      '--AE-gold  fixture:3',
+    ]);
+  });
+
+  it('検出対象外の書き方が変わっていない (既知の限界の pin)', () => {
+    // 正規表現スキャナである以上ここは塞げない。塞ぐには postcss /
+    // typescript AST が要り、devDependency 追加を伴うためリリース
+    // ブランチには載せない (Iron Law 3)。
+    //
+    // **この assert が落ちたらスキャナが強くなった証拠**なので、落ちた行を
+    // 消してファイル冒頭の「既知の限界」からも該当項目を消すこと。無自覚に
+    // 取りこぼしているのではなく意図的に見ていない、という区別を保つための pin。
+    const backslash = String.fromCharCode(92);
+    const KNOWN_EVASIONS = [
+      // var( と token 名の間の CSS コメント
+      'a { color: var(/* accent */--ae-evade-comment); }',
+      // CSS 識別子エスケープ (\2d = '-')
+      `a { color: var(${backslash}2d -ae-evade-escape); }`,
+      // 実行時の文字列組み立て
+      "const s = 'var(' + tokenName + ')';",
+    ];
+
+    for (const sample of KNOWN_EVASIONS) {
+      expect(scanText(sample, 'fixture')).toEqual([]);
+    }
   });
 
   it('参照されている --ae-* は fallback の有無に関わらず全て tokens.css で定義済み', () => {
