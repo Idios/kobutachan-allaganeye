@@ -39,16 +39,19 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   anchor presence と segment 検証の 2 層構成で過分割を抑制する。暗転が 1 件も検出
   できなかった録画では `--masked` 未指定でも本 fallback が自動発動する (`--masked` は
   暗転が一部見つかる場合でも強制するためのフラグ)。発動有無は metadata の
-  `detection_params.masked_fallback_used` と `-v` の `masked_fallback=on` で確認できる。
+  `detection_params.masked_fallback_used` で常に確認できる。`-v` の `masked_fallback=on`
+  トークンは **cache hit 時のパラメータ要約行にのみ**出力される点に注意 (fallback が実際に
+  発火する cache miss の初回 run では出ない)。初回 run の確認は metadata 側を見ること。
 - **detect / split `--vtuber`** (#895): VTuber 配信録画 (ゲーム画面が inset、装飾
   オーバーレイ多数) 向けの timeline 検出を新規追加。暗転起点ではなく「試合中である」
   証拠 (scorebar presence AND 画面運動) の timeline から試合区間を抽出する (V0 anchor
   解決 / V1 全域 10s stride scan / V2 rolling-window 粗 segmentation / V3 gap 裁定 +
   blackout-peek override + 境界 snap / V4 segment 検証)。v0.3.0 開発中は hidden の
   experimental フラグとして先行実装し、GT gate 通過をもって公開扱いにした。
-  **OBS / masked path は非接触** (フラグ未指定時の出力は bit-exact で不変)。縮退 3
-  trigger (V0 anchor 失敗 / UNKNOWN 過半 / V2 無結果) で従来の band-crop blackout path
-  へ fall back する floor 保証付き。`--masked` との同時指定は排他エラー (exit 5)。
+  **OBS / masked path は非接触** (フラグ未指定時の出力は bit-exact で不変)。縮退 4
+  trigger (V0 anchor 失敗 / UNKNOWN 過半 / V2 無結果 / V4 が全 segment を drop) で
+  従来の band-crop blackout path へ fall back する floor 保証付き。`--masked` との
+  同時指定は排他エラー (exit 5)。
   採用可否は verbose の `Timeline (vtuber)` / `V3:` 行で確認できる (metadata.json の
   `detection_params.vtuber` はフラグの要求値を記録するだけで、縮退時も true のまま)。精度 gate は 6 配信者 / GT 67 試合
   (`tests/baselines/v0.3.0/vtuber-gt/*.json`) に対する slow テスト
@@ -72,12 +75,19 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   (`-ss` を `-i` の前後に二重指定: keyframe への高速ジャンプ + GOP pre-roll の
   正確な trim) + `-fps_mode passthrough` + ffmpeg `select='not(mod(n,N))'`
   (frame-index ベース、PTS 非依存) 方式に移行 (#576)。ffmpeg version 依存の
-  frame-selection drift (#560 / #575 / #577) を構造的に除去。obs-20260118 で
-  見逃されていた 3 件の短時間 blackout (1.4-2.1s) を正しく検出するように動作が
-  変わる。Match 1 が 17m24s に短縮、新 Match 2 (15m24s) が追加、Match 3 が
+  frame-selection drift (#560 / #575 / #577) を構造的に除去。**ffmpeg 8.1 上で
+  legacy fps filter path を走らせた場合との比較**では、obs-20260118 で見逃されて
+  いた 3 件の短時間 blackout (1.4-2.1s) を正しく検出するように動作が変わる
+  (legacy 側の結果は 5 matches で、M1 = 177-2610 が単一 match に潰れていた)。
+  新 path では Match 1 が 17m23s に短縮、新 Match 2 (15m24s) が追加、Match 3 が
   15m52s に短縮。この新 Match 2 (1686-2610) は 2026-05-21 の Idios 視覚再確認で
   real boundary と確定、`tests/baselines/v0.3.0/ground-truth/obs-20260118.json`
   を 5→6 matches に update 済 (#796 audit 後追補)。
+  **v0.2.x からの実差分ではない点に注意**: repo に pin 済みの v0.2.x baseline
+  (`tests/baselines/20260118.json`) は既に 6 matches を記録しており、v0.3.0
+  baseline との差分は M5 end の 2.25s (6467.5 → 6465.25) のみ。上記の 3 件は
+  あくまで legacy path を ffmpeg 8.1 で走らせたときに現れる drift に対する差分
+  (詳細は `docs/v030-baseline-audit.md`)。
   **detect の所要時間は v0.2.x より延びる**: 取りこぼしていた短時間 blackout を
   拾うために Pass 2 refinement の発火範囲を広げた結果、probe 数が増えている。
   実測 (RTX 5090) で 5 OBS baseline 合計 ~31 min → ~52 min (約 1.7x)、最も影響の
@@ -201,14 +211,19 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
 
 ### Known Issues
 
-- **`--vtuber` の短 gap merge** (#895、追跡: #921): 試合間 gap が約 70s 未満の場合、
-  V2 の rolling window (window 9 × stride 10s) が構造的に橋渡しし、2 試合が 1 segment
-  に結合されうる (6 source / GT 67 試合中 1 境界で実測)。V2 に hard-gap break を入れる
-  案は Onsal マップのダウンタイム (scorebar FN が 120s 以上続く) で誤 break を誘発する
-  副作用があり不採用とし、既知 limitation として GT 側に `expected_merge_with_next`
-  注釈で管理する。試合内容の損失は起きない (結合方向のみ) ため、必要なら書き出し後に
-  手動で分割する。暗転ベースの標準 path には影響しない。詳細は
-  `docs/superpowers/specs/2026-07-17-vtuber-timeline-detection-design.md` §7.5。
+- **`--vtuber` の試合間 merge** (#895、追跡: #921): V2 は「試合中である」証拠
+  (scorebar presence AND 画面運動) を rolling window (window 9 x stride 10s、quorum 2)
+  で平滑化するため、**試合間で証拠が落ちる区間が平滑化を割り込めるだけの長さ・密度に
+  ならないと**、2 試合が 1 segment に結合されうる。6 source / GT 67 試合中 **1 境界**
+  (shirurori の M7-M8、gap 59s) で実測。当該箇所は試合後の result 画面がスコアバーと
+  ほぼ同座標にスコア UI を表示し (result-mimic)、証拠の落ち方が浅かった。
+  **gap の長さ単独では結合の可否は決まらない** (境界前後の証拠密度に依存する): 同じ GT
+  には 75s 以下の隣接 gap が 9 本あるが、結合したのは上記 1 本だけで、shikke の
+  55-71s の 8 本はいずれも正しく分割されている。V2 に hard-gap break を入れる案は Onsal マップのダウンタイム (scorebar FN
+  が 120s 以上続く) で誤 break を誘発する副作用があり不採用とし、既知 limitation として
+  GT 側に `expected_merge_with_next` 注釈で管理する。試合内容の損失は起きない (結合方向
+  のみ) ため、必要なら書き出し後に手動で分割する。暗転ベースの標準 path には影響しない。
+  詳細は `docs/superpowers/specs/2026-07-17-vtuber-timeline-detection-design.md` §7.5。
 
 ### Internal
 

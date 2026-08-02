@@ -163,8 +163,9 @@ OBS/masked path は bit-exact で非接触。
   V3: refine_segments          gap merge 裁定 (MERGE_RATE 0.15) + blackout-peek override
                                + start=zone-in blackout 明け snap / end=evidence collapse snap
   V4: _validate_match_segments 15-probe at-anchor quorum (on_all_drop="empty")
-  -> MatchBoundary[]  --  縮退 3 trigger (anchor 失敗 / UNKNOWN >50% / V2 空) は
-                          従来 band-crop blackout path へ fall back (floor 保証)
+  -> MatchBoundary[]  --  縮退 4 trigger (anchor 失敗 / UNKNOWN >50% / V2 空 /
+                          V4 全 segment drop) は従来 band-crop blackout path へ
+                          fall back (floor 保証)
 ```
 
 各 layer の判定:

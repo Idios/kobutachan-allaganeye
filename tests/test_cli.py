@@ -531,16 +531,32 @@ def test_detect_keep_trailing_default_false(mock_run_detect, fake_video):
     assert config.keep_trailing is False
 
 
-# Load-bearing claims of the --vtuber help (commit 0ea55a2): who it is for, what it
-# actually does, and the limitation users must know about.
+# Load-bearing claims of the --vtuber help: who it is for, what it actually does, and
+# the limitation users must know about. The limitation phrase says the evidence *barely
+# lapses* rather than naming a gap length or claiming it never lapses: V2 smooths with a
+# rolling window (TIMELINE_WINDOW=9, TIMELINE_QUORUM=2), so what bridges a boundary is a
+# lapse too short or too sparse to break that window -- neither the wall-clock gap nor an
+# unbroken run.
 _VTUBER_HELP_REQUIRED = (
     "VTuber recording",
     "scorebar-presence x motion timeline",
-    "70s may merge",
+    "barely lapses between them",
 )
-# Pre-P3 wording. Kept as negative pins so a revert to the deferred/experimental
-# framing fails instead of quietly shipping (lower-cased before matching).
-_VTUBER_HELP_RETIRED = ("experimental", "deferred", "under-detects", "#480")
+# Wording that must not come back (lower-cased before matching). The first four are the
+# pre-P3 deferred/experimental framing. "70s" is the retired gap-length claim: the GT set
+# (tests/baselines/v0.3.0/vtuber-gt) holds eight 55-71s gaps that split correctly and one
+# 59s gap that merged, so gap length never predicted the merge and must not be re-stated
+# as a threshold. "unbroken" is the retired causal claim: the GT annotation itself records
+# an evidence collapse inside that 59s gap, so "evidence never lapses" was not what
+# happened either.
+_VTUBER_HELP_RETIRED = (
+    "experimental",
+    "deferred",
+    "under-detects",
+    "#480",
+    "70s",
+    "unbroken",
+)
 
 
 @pytest.mark.parametrize("command_name", ["split", "detect"])
@@ -577,7 +593,7 @@ def test_vtuber_shown_in_help(
     # and would rot into a flaky pin on unrelated help edits.
     for phrase in _VTUBER_HELP_RETIRED:
         assert phrase not in lowered, (
-            f"{command_name} --vtuber help resurrected pre-P3 wording {phrase!r}: "
+            f"{command_name} --vtuber help resurrected retired wording {phrase!r}: "
             f"{help_str!r}"
         )
 

@@ -155,7 +155,8 @@ def split(
             "--vtuber",
             help="VTuber recording (game inset, decorated overlays): detects "
             "matches from a scorebar-presence x motion timeline instead of "
-            "blackouts. Matches separated by less than about 70s may merge.",
+            "blackouts. Adjacent matches may merge when that evidence barely "
+            "lapses between them (e.g. an animated result screen).",
         ),
     ] = False,
     masked: Annotated[
@@ -360,7 +361,8 @@ def detect(
             "--vtuber",
             help="VTuber recording (game inset, decorated overlays): detects "
             "matches from a scorebar-presence x motion timeline instead of "
-            "blackouts. Matches separated by less than about 70s may merge.",
+            "blackouts. Adjacent matches may merge when that evidence barely "
+            "lapses between them (e.g. an animated result screen).",
         ),
     ] = False,
     masked: Annotated[

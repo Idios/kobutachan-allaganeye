@@ -13,6 +13,12 @@
 > (`allaganeye/commands/split_matches.py` の `_VTUBER_ALGO_VERSION` + pin test) 側にある。
 > 同じく GT 試合数は実データで **67 試合** (gyawa 6 / kyuma 11 / meteor 14 / shikke 16 /
 > shinryu 12 / shirurori 8) が正 (一部 doc にあった「76 試合」は誤記、同 round で訂正)。
+>
+> **Erratum 2 (v0.3.0 リリース前監査)**: Task 6 Step 2 の「縮退 3 trigger」は誤り。実装
+> (`allaganeye/video/vtuber_timeline.py` の `detect_matches_timeline`) の縮退経路は
+> **4 つ** (V0 anchor consensus 失敗 / UNKNOWN 過半 / V2 空 / V4 が全 segment を drop)。
+> 4 番目は放棄した timeline 統計を verbose に出さないよう `_PRE_V4_STATS_KEYS` を pop
+> する独立経路。CHANGELOG / CLAUDE.md / cli-spec / detection-map は 4 trigger に訂正済み。
 
 ## Global Constraints
 
