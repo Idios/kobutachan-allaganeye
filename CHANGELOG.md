@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] - 2026-08-01
+## [0.3.0] - 2026-08-03
 
 L3 (配信形式対応 + 性能改善) リリース。エリアマップ切り抜き (`minimap` CLI + GUI 画面) と
 並列 export (`export` CLI、GUI 書き出しの Python コア共有) を新設し、masked (チャット欄
@@ -18,7 +18,10 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
 
 - **`minimap` コマンド** (#481): エリアマップ window を試合ごとに切り抜く。
   `--region X,Y,W,H` 指定で crop + H.264 encode + metadata write-back、省略時は
-  領域を自動提案する提案モード (exit 4)。
+  領域を自動提案する提案モード (exit 4)。`--name-pattern` の拒否条件は `export` と同一で、
+  minimap では **metadata write-back / mkdir / ffmpeg のいずれよりも前**に停止するため、
+  拒否時は `metadata.json` も更新されない (`-o` 省略時の基準は `<metadata dir>/minimap/`、
+  #930 / #938)。
 - **GUI の minimap 統合** (#893): MinimapScreen を追加し、drag-select / 数値入力 /
   自動検出 / 進捗表示まで GUI 内で完結する (Tauri `start_minimap` command)。
 - **GUI ExportScreen からの minimap 導線** (#902 / #928): 書き出し後に minimap へ進める
@@ -34,6 +37,12 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   (**NVENC が選択された場合にのみ有効**。SKU テーブル未収録の NVIDIA GPU は既定 1 スロット
   のため、Workstation / Datacenter GPU ではこちらで指定する)。QSV / AMF / libx264 は
   常に 1 スロットで、本環境変数の影響を受けない。GUI の書き出しも同じ Python コアを共有する。
+  `--name-pattern` は、展開・解決後のパスが **`-o` の外 / `-o` 自身 / 元動画 (`source`)** を
+  指す場合と、**OS がパスとして解決できない場合** (不正文字 / NUL / 存在しないドライブ等) に、
+  ffmpeg を起動する前に **exit 5** で停止する (#930)。判定はパターン文字列ではなく解決後の
+  パスで行うため、`..` / 絶対パス / Windows のドライブ相対パスを含んでいても、解決結果が
+  `-o` 内に収まるものは通る。残る 2 条件 (同一ファイルへの解決 / Windows の `:`) は下の
+  Fixed を参照。
 - **masked (チャット欄マスク) 録画の検出対応** (#821 / #822): 全画面にマスク画像が
   合成された録画向けに、mask のない領域を自動検出して再検知する `--masked` を追加。
   anchor presence と segment 検証の 2 層構成で過分割を抑制する。暗転が 1 件も検出
@@ -100,6 +109,18 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   `output_file` の有無を存在チェックで判定すること。なお v0.3.0 が書いた post_match 入り
   metadata.json は v0.2.x の GUI では読み込めない (旧 zod が `output_file` を必須として
   いるため)。
+- **metadata.json の `source` フィールド**: `detect` / `split` が記録する値が**絶対パス**に
+  なった (#930)。従来は argv の値 (pathlib 正規化のみ) を相対のまま保存していたため、相対
+  パスで実行した run の metadata.json は、それを生成したカレントディレクトリからしか解釈
+  できなかった。`minimap` の write-back は既存の `source` を書き換えないので、v0.2.x や
+  手編集由来の相対値はそのまま残る。あわせて `source` を読む 3 経路
+  (`split --from-metadata` / `export` / `minimap`) の解決を共通 helper に集約し、相対値は
+  **metadata.json 自身のディレクトリ起点**で解決する (字句正規化のみで symlink は追わない
+  ため、表示される値と ffmpeg に渡す値が一致する)。これは v0.2.x の `split --from-metadata`
+  と同じ規則で、この経路の挙動は変わらない (`export` / `minimap` は v0.3.0 新規のため、
+  出荷済みバージョンとの差異は無い)。**例外**: `export --stdin` は metadata ファイルを持た
+  ないので基準ディレクトリが存在せず、相対値はプロセスの cwd 起点のままになる — GUI の
+  書き出しはこの経路を使う (v0.3.0 が書く絶対 `source` では差は出ない)。
 - **検知キャッシュの全無効化**: 検知結果の形が変わったため cache version を 2 → 4 に
   更新 (#821 / #805)。v0.2.x が書いた `.detection_cache.json` は再利用されず、
   **処理済みの動画でも v0.3.0 の初回実行はフル再検知になる** (2 回目以降は従来どおり
@@ -125,25 +146,29 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
 
 ### Fixed
 
-- **export / minimap の出力パス表示**: 完了行 (`[OK] match NNN -> ...`) と `--json` の
-  `output_path` が**絶対パス**になった。従来は `-o` に渡された相対パスをそのまま表示して
-  いたため、書き出し先が実際にどこになったのか読み取れなかった。特に shell の quote 忘れで
-  `-o E:\a\b` が `E:ab` (ドライブ相対パス) に化けた場合、Windows がカレント基準で解決した
-  結果と表示が食い違う。あわせて CLI のテキスト表示は OS ネイティブの区切り文字を使う
-  (`--json` 側は GUI 互換のため posix 形式を維持)。
+- **出力パス表示の絶対化** (#930): `split` の完了行 (`Output:` / `Metadata:`) と `detect` の
+  完了行 (`Metadata:`) が**絶対パス**になった (**v0.2.x からの修正**)。従来は `-o` に渡された
+  相対パスをそのまま表示していたため、書き出し先が実際にどこになったのか読み取れなかった。
+  特に shell の quote 忘れで `-o E:\a\b` が `E:ab` (ドライブ相対パス) に化けた場合、Windows が
+  カレント基準で解決した結果と表示が食い違う。v0.3.0 で新規追加の `export` / `minimap` も
+  同じ規則で、完了行 (`[OK] match NNN -> ...`) と `--json` の `output_path` が絶対パスになる。
+  `export` / `minimap` のテキスト表示は OS ネイティブの区切り文字、`--json` の `output_path`
+  は posix 形式 (`/` 区切り) で出力する。
 - **export / minimap の出力ファイル取り違え**: 2 つ以上の match が同一ファイルに
-  解決される `--name-pattern` を、書き出し前に **exit 5** で拒否するようになった。
-  従来の重複検査は展開後の**文字列**が一致する場合しか見ていなかったため、
-  文字列としては異なるのに同じファイルを指す名前 (Windows が開くときに無視する
-  大文字小文字違い・末尾のドット/空白、および `..` を含むパス) が検査をすり抜け、
-  後勝ちの match が先の出力を上書きしていた。
-  上書きされた match も成功として集計されるため、書き出し件数だけでは気付けない。
-  ファイル名の展開元である `{type}` は `metadata.json` の値をそのまま使う
-  (GUI で編集可能) ため、CLI 引数だけでは防げない経路だった。
-  あわせて Windows では、展開結果のファイル名/ディレクトリ名に `:` が含まれる場合も
-  **exit 5** で拒否する。Windows は `:` を NTFS の代替データストリーム指定として
-  読むため、`clip.mp4::$DATA` のような名前は `clip.mp4` に書き込まれる (パスとしては
-  別物のまま同一ファイルを指すので、上記の同一性判定だけでは捕まらない)。
+  解決される `--name-pattern` を、書き出し前に **exit 5** で拒否する。
+  **両コマンドとも v0.3.0 新規のため、この不具合が出荷されたことはない** — 開発中の
+  実装では重複検査が展開後の**文字列**一致しか見ておらず、文字列としては異なるのに
+  同じファイルを指す名前 (Windows が開くときに無視する大文字小文字違い・末尾の
+  ドット/空白、および `..` を含むパス) がすり抜けて、後勝ちの match が先の出力を
+  上書きしていた。上書きされた match も成功として集計されるため書き出し件数では
+  気付けず、出荷前に**解決後パスの同一性**による判定へ置き換えた。ファイル名の
+  展開元である `{type}` は `metadata.json` の値をそのまま使う (GUI で編集可能) ため、
+  CLI 引数だけでは塞げない経路だった。あわせて Windows では、解決後パスの
+  ファイル名/ディレクトリ名の成分に `:` が含まれる場合も **exit 5** で拒否する
+  (ドライブ文字の `:` は対象外)。Windows は `:` を NTFS の代替データストリーム指定と
+  して読むため、`clip.mp4::$DATA` のような名前は `clip.mp4` に書き込まれる (パスと
+  しては別物のまま同一ファイルを指すので、上記の同一性判定だけでは捕まらない)。
+  POSIX では `:` は正当なファイル名文字なので拒否しない。
 - **detect (scorebar V2)**: post-match content (試合終了後の Limsa /
   colorful interior 等) の彩度高領域を Rescue path が scorebar と誤検出
   する false positive を解消 (#803)。`_find_scorebar_horizontal_range` に
@@ -181,13 +206,15 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
 - **依存の上限 pin** (#808): `typer<0.25` / `click<8.4` を追加。両者の新版で CLI が
   起動しなくなる非互換があり、CI 赤化として顕在化したもの。runtime 依存の pin なので
   配布物にも効く。
-- **GPU fallback 時に行が「未着手」表示のまま残る** (#591 / #899): export 画面・
-  minimap 画面で GPU エンコーダが失敗し libx264 で再試行に入ったとき、その試合の行に
-  「libx264 で再試行します」という通知だけが出て、行のマークは `○` (未着手) のまま
-  だった。NVENC の初期化失敗は 1 フレームも encode せずに落ちるため fallback がその
-  試合の最初の進捗イベントになるのが通常ケースで、「未着手なのに再試行中」という
-  矛盾した表示になっていた。fallback を受けた時点で行を実行中 (`●`) に倒すよう修正。
-  進捗が 0% に戻ること自体は libx264 で encode をやり直すため正しい挙動なので据え置き。
+- **GPU fallback 時に行が「未着手」表示のまま残る** (#591、v0.2.0 から): export 画面で
+  GPU エンコーダが失敗し libx264 で再試行に入ったとき、その試合の行に「libx264 で
+  再試行します」という通知だけが出て、行のマークは `○` (未着手) のままだった。NVENC の
+  初期化失敗は 1 フレームも encode せずに落ちるため fallback がその試合の最初の進捗
+  イベントになるのが通常ケースで、「未着手なのに再試行中」という矛盾した表示になって
+  いた。fallback を受けた時点で行を実行中 (`●`) に倒すよう修正。進捗が 0% に戻ること
+  自体は libx264 で encode をやり直すため正しい挙動なので据え置き。minimap 画面
+  (#893、v0.3.0 で新規追加のため未出荷) も fallback イベントを無視して同じ表示になって
+  いたため、同時に対応した。
 - **GPU fallback 通知が地の文と同じ色で描画される** (#591、v0.2.0 から): export 画面の
   「libx264 で再試行します」通知が、定義されていない CSS 変数を fallback なしで参照して
   いたため宣言ごと無効化され、周囲の文字と同じ色で表示されていた (強調されず埋もれる)。
@@ -219,7 +246,8 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   データを流す経路も無いため実影響は無い。
   **本件は `cargo audit` では検出できない**: RustSec advisory-db に `serde_with` の
   advisory が存在せず、当該 lockfile に対して `cargo audit` は exit 0 (green) を返す。
-  詳細は [`docs/ci-security-audit.md`](docs/ci-security-audit.md) §Dependabot との関係 を参照。
+  詳細は [`docs/ci-security-audit.md`](https://github.com/Idios/kobutachan-allaganeye/blob/v0.3.0/docs/ci-security-audit.md)
+  §Dependabot との関係 を参照。
 
 ### Performance
 
@@ -232,19 +260,9 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
 - **minimap crop (フィルタ有り NVENC) の NVDEC decode** (#899): `-vf crop` があると
   zero-copy が使えないため `-hwaccel cuda` 単独で NVDEC decode + CPU crop + NVENC
   encode する 3-tier fallback を実装。AV1 ソースで 2.29x。
-- 当初 v0.3.0 で detect 高速化 path に切替 (#576) で ~10x slowdown が
-  発生していたが、Codex perf rescue Option 1 (dual seek: input seek for
-  fast container index jump + output seek for accurate chunk_start) を
-  commit `a864834` で実装し、perf を legacy 同等以下に復元。
-- ただし dual seek 後の accuracy 検証で sub-sample-interval blackout
-  (例: obs-20260116 t=2178 = 試合境界、Idios 視覚確認済) を Pass 1 が
-  取りこぼすケースを発見。A3 borderline range を `[15, 30) -> [15, 55)`
-  に拡張 (#576 A5) して Pass 2 refinement を活性化、accuracy regression
-  ゼロに到達。trade-off として Pass 2 probe 数増加で perf cost +1.7x。
-- 実測 (RTX 5090): 5 OBS baseline 合計 **~52 min** (legacy ~31 min)。
-  spec §7.4 perf gate を 60 min/合計に revise。
-- v0.3.x で更なる最適化 (gradient-based trigger / packet PTS parse /
-  single-process design) 検討 (#576 spec §10 R12 defer)。
+- **detect は v0.2.x より遅くなる** (#576): 実測 (RTX 5090) で 5 OBS baseline 合計
+  **~52 min** (legacy ~31 min、約 1.7x)。`split <video>` の一気通貫実行と GUI の検知も
+  同じ経路なので同様に延びる。背景と内訳は ### Changed の detect entry を参照。
 
 ### Deprecated
 
@@ -285,6 +303,15 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   audit-prepare / audit-compare の再現性硬化とクラッシュ復旧 (#796 / #798 / #800)、
   #805 段階2 追随の baseline 再生成 (#881)。
 - probe 失敗 semantics の tri-state 統一契約を導入 (#824、挙動不変)。
+- detect の frame-index path (#576) の perf 収束経緯: 初期実装は legacy 比 ~10x slowdown
+  で、Codex perf rescue Option 1 (dual seek = container index への高速 input seek +
+  chunk_start を正確に取る output seek) を PR #793 (squash merge `80ab4fb`) で実装して
+  legacy 同等以下に復元。その後の accuracy 検証で sub-sample-interval blackout
+  (obs-20260116 t=2178 = 試合境界、Idios 視覚確認済) を Pass 1 が取りこぼすことが判明し、
+  A3 borderline range を `[15, 30) -> [15, 55)` に拡張 (#576 A5) して Pass 2 refinement を
+  活性化、accuracy regression ゼロに到達した。この Pass 2 probe 増が最終的な約 1.7x の
+  perf cost (実測値は ### Performance を参照) で、spec §7.4 の perf gate は 60 min/合計に
+  revise した。更なる最適化は v0.3.0 のスコープ外として defer と判断している (#576)。
 - `probe.py::ProbeResult` に `fps_num` / `fps_den` フィールドを追加 (#576)。
   NTSC 60000/1001 等の rational frame rate を float 精度損失なく detector まで
   伝搬させるための内部 API 拡張で、`metadata.json` には出力されない。
