@@ -19,9 +19,9 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
 - **`minimap` コマンド** (#481): エリアマップ window を試合ごとに切り抜く。
   `--region X,Y,W,H` 指定で crop + H.264 encode + metadata write-back、省略時は
   領域を自動提案する提案モード (exit 4)。`--name-pattern` の展開・解決後のパスが
-  **`-o` の外 / `-o` 自身 / 元動画 (`source`)** を指す場合は `export` と同じく **exit 5**。
-  minimap は metadata write-back / mkdir / ffmpeg のいずれよりも前に停止する
-  (`-o` 省略時の基準は `<metadata dir>/minimap/`、#930)。
+  **`-o` の外 / `-o` 自身 / 元動画 (`source`)** を指す場合、および OS がパスとして解決
+  できない場合は `export` と同じく **exit 5**。minimap は metadata write-back / mkdir /
+  ffmpeg のいずれよりも前に停止する (`-o` 省略時の基準は `<metadata dir>/minimap/`、#930)。
 - **GUI の minimap 統合** (#893): MinimapScreen を追加し、drag-select / 数値入力 /
   自動検出 / 進捗表示まで GUI 内で完結する (Tauri `start_minimap` command)。
 - **GUI ExportScreen からの minimap 導線** (#902 / #928): 書き出し後に minimap へ進める
@@ -38,9 +38,10 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   のため、Workstation / Datacenter GPU ではこちらで指定する)。QSV / AMF / libx264 は
   常に 1 スロットで、本環境変数の影響を受けない。GUI の書き出しも同じ Python コアを共有する。
   `--name-pattern` の展開・解決後のパスが **`-o` の外 / `-o` 自身 / 元動画 (`source`)** を
-  指す場合は、ffmpeg を起動する前に **exit 5** で停止する (`..` / 絶対パス / Windows の
-  ドライブ相対パス、および `{type}` の値経由でそれらが混入する場合。判定はパターン文字列
-  ではなく解決後のパスで行うため、解決結果が `-o` 内に収まるものは通る、#930)。
+  指す場合、および **OS がパスとして解決できない場合** (不正文字 / NUL / 存在しないドライブ
+  等) は、ffmpeg を起動する前に **exit 5** で停止する (`..` / 絶対パス / Windows のドライブ
+  相対パス、および `{type}` の値経由でそれらが混入する場合。判定はパターン文字列ではなく
+  解決後のパスで行うため、解決結果が `-o` 内に収まるものは通る、#930)。
 - **masked (チャット欄マスク) 録画の検出対応** (#821 / #822): 全画面にマスク画像が
   合成された録画向けに、mask のない領域を自動検出して再検知する `--masked` を追加。
   anchor presence と segment 検証の 2 層構成で過分割を抑制する。暗転が 1 件も検出
@@ -294,8 +295,7 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   A3 borderline range を `[15, 30) -> [15, 55)` に拡張 (#576 A5) して Pass 2 refinement を
   活性化、accuracy regression ゼロに到達した。この Pass 2 probe 増が最終的な約 1.7x の
   perf cost (実測値は ### Performance を参照) で、spec §7.4 の perf gate は 60 min/合計に
-  revise した。v0.3.x の最適化候補は gradient-based trigger / packet PTS parse /
-  single-process design (#576 spec §10 R12)。
+  revise した。更なる最適化は v0.3.0 のスコープ外として defer と判断している (#576)。
 - `probe.py::ProbeResult` に `fps_num` / `fps_den` フィールドを追加 (#576)。
   NTSC 60000/1001 等の rational frame rate を float 精度損失なく detector まで
   伝搬させるための内部 API 拡張で、`metadata.json` には出力されない。
