@@ -34,6 +34,34 @@ jobs:
         # は通過させる (現状 19 件の deferred warnings が存在、tauri 上流 patch 待ち)
         run: cargo audit
 
+  dependency-review:
+    name: dependency review (GitHub Advisory DB)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # cargo audit / npm audit が構造的に見えない脆弱性を塞ぐ 3 本目の gate。
+      # 参照 DB が違う: cargo audit = RustSec、npm audit = npm registry、本 job =
+      # GitHub Advisory Database。実例として serde_with の GHSA-7gcf-g7xr-8hxj は
+      # RustSec に advisory が無く、当該 lockfile に対して cargo audit は exit 0
+      # (green) を返していた (#931 で doc 化した構造的ギャップ)。
+      #
+      # 本 workflow の `on: pull_request` には `branches:` フィルタが無いため、
+      # ci.yml が起動しない release/* 宛の PR でも走る。依存更新はまさにその経路で
+      # 入ることがある (#931 は release/v0.3.0 宛で Cargo.lock を変更した)。
+      #
+      # バージョンは exact pin。本 action は moving major tag (v5 等) を発行して
+      # おらず v5.0.0 のような完全版タグしか無いため、更新は手動 bump が必要。
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v5.0.0
+        with:
+          # moderate 以上で fail。動機となった serde_with は medium だったので
+          # high では取りこぼす。npm audit の `--audit-level=high` より厳しいが、
+          # 本 job は manifest が変わった PR でしか起動しない (上の paths filter)
+          # ため、ノイズは依存を触る PR に限定される。
+          fail-on-severity: moderate
+
   npm-audit:
     name: npm audit (JavaScript)
     runs-on: ubuntu-latest

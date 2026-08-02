@@ -22,6 +22,15 @@ paths filter により、Python のみ変更の PR では本 workflow は走ら�
 | --- | --- | --- |
 | cargo-audit | `cargo audit` (default) | vulnerability (CVE 相当) 検出のみ fail。warning (unmaintained / unsound) は通過 |
 | npm-audit | `npm audit --audit-level=high` | high 以上の advisory 検出。dev-only の moderate/low は warning として通過 |
+| dependency-review | `actions/dependency-review-action@v5.0.0` (`fail-on-severity: moderate`) | **base→head で追加された**依存が moderate 以上の GitHub Advisory に該当したら fail (Refs #862) |
+
+### dependency review を追加した理由 (v0.3.0)
+
+`cargo audit` / `npm audit` はそれぞれ RustSec / npm registry を参照するため、GitHub Advisory Database にしか無い advisory を構造的に検出できない (下記 §「本 workflow が green でも Dependabot alert が出るケース」 の 1)。本 job は Dependabot と同じ GitHub Advisory Database を参照するので、この差を PR 段階で埋める。
+
+閾値を `moderate` にしたのは、動機となった `serde_with` GHSA-7gcf-g7xr-8hxj が medium (= GHSA の `moderate`) であり `high` では取りこぼすため。`npm audit --audit-level=high` より厳しいが、本 workflow は manifest を変更した PR でしか起動しないので、影響は依存を触る PR に限定される。
+
+本 action は moving major tag (`v4` / `v5` 等) を発行しておらず `v5.0.0` のような完全版タグしか存在しないため、バージョンは exact pin で、更新は手動 bump が必要。
 
 ### cargo audit を default 設定にした理由 (v0.2.1 Track C)
 
@@ -61,7 +70,8 @@ tauri 2.10.3 → 2.11.1 bump (PR #760) を実施したが、以下の transitive
 | --- | --- | --- |
 | `cargo audit` | [RustSec advisory-db](https://github.com/rustsec/advisory-db) | RustSec に登録された crate のみ |
 | `npm audit` | npm registry advisory (GitHub Advisory Database 由来) | 閾値 `--audit-level` 以上のみ |
-| Dependabot | [GitHub Advisory Database](https://github.com/advisories) | Rust / npm 双方、severity 問わず全件 |
+| `dependency-review` | [GitHub Advisory Database](https://github.com/advisories) | Rust / npm 双方、moderate 以上。ただし**当該 PR が追加・変更した依存のみ** |
+| Dependabot | [GitHub Advisory Database](https://github.com/advisories) | Rust / npm 双方、severity 問わず全件。ただし**既定ブランチのみ** |
 
 ### 本 workflow が green でも Dependabot alert が出るケース
 
@@ -73,12 +83,22 @@ tauri 2.10.3 → 2.11.1 bump (PR #760) を実施したが、以下の transitive
    RustSec advisory-db に `crates/serde_with/` ディレクトリ自体が存在しない。
    当該 alert が指すのと同一の `Cargo.lock` (serde_with 3.18.0) に対して
    `cargo audit -f <Cargo.lock>` を実行しても **exit 0 (green)** が返る。
+   → **v0.3.0 で追加した dependency-review job がこの差を埋める** (同じ GitHub
+   Advisory Database を参照するため)。ただし下記 3 の限界は残る。
 
 2. **`npm audit --audit-level=high` は medium / low を素通しする。**
    Dependabot は severity を問わず全件 alert を上げるため、medium / low の
    advisory は本 workflow を green のまま通過する。
+   → dependency-review job (`fail-on-severity: moderate`) が moderate を拾うので、
+   素通しするのは **low のみ**に縮んだ。
 
-したがって **「security-audit.yml が green だから脆弱性なし」とは言えない。**
+3. **dependency-review は「その PR が追加・変更した依存」しか見ない。**
+   base→head の依存グラフ差分を評価する action なので、**変更されていない既存依存に
+   対して後から advisory が公開された場合、どの PR も fail しない**。この経路を
+   拾えるのは Dependabot 本体だけである。同じ理由で、依存を触らない PR
+   (paths filter で本 workflow 自体が起動しない) も当然素通りする。
+
+したがって **「security-audit.yml が green だから脆弱性なし」とは依然として言えない。**
 リリース前には Dependabot alert 一覧を直接確認すること:
 
 ```bash
