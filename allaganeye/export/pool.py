@@ -8,6 +8,7 @@ propagates to workers and kills in-flight ffmpeg processes. See spec section 4.4
 from __future__ import annotations
 
 import math
+import os
 import threading
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -122,6 +123,40 @@ def _render_and_sandbox(
     return rendered, candidate, resolved
 
 
+def _identity_key(resolved: Path) -> Path:
+    """Fold ``resolved`` onto the identity the OS uses when it opens the file.
+
+    ``PurePath`` equality already models case-insensitivity on Windows, but it
+    is a *string* model and stops there. Win32 additionally strips trailing
+    dots and spaces from every path component before it opens anything, so
+    ``clip.mp4`` and ``clip.mp4.`` compare unequal as paths while naming one
+    file. Fold them here so the duplicate check upstream sees a single key.
+    (Codex adversarial-review round 2; the premise is pinned by an actual
+    two-writes-one-file probe in ``tests/test_export_pool.py``.)
+
+    On POSIX this is a no-op: a trailing dot or space is a significant part of
+    the name there, so ``clip.mp4.`` really is a second file and must stay
+    legal. Rejecting it would be a regression, not a fix.
+
+    A component made *only* of dots/spaces is left alone -- stripping it would
+    invent an empty component, and Windows cannot create such a name at all,
+    so it fails loudly at ffmpeg instead of silently overwriting a sibling.
+
+    Only the uniqueness key is folded, never the containment check. Folding
+    can shorten a component but can never introduce a ``..``, so a path that
+    resolves inside ``output_dir`` still folds to somewhere inside it; the
+    only direction this could disagree is rejecting a name Win32 would have
+    kept inside, which is the safe direction.
+    """
+    if os.name != "nt":
+        return resolved
+    parts = resolved.parts
+    if not parts:  # pragma: no cover - a resolved path always has an anchor
+        return resolved
+    # parts[0] is the anchor (``C:\``); never touch it.
+    return Path(parts[0], *(p.rstrip(". ") or p for p in parts[1:]))
+
+
 def resolve_export_output_paths(
     matches: Sequence[ExportMatch],
     pattern: str,
@@ -151,6 +186,8 @@ def resolve_export_output_paths(
     normalisation, because ``PurePath`` equality and hashing already follow
     the platform's own rules (case-insensitive on Windows, case-sensitive on
     POSIX -- where ``Clip.mp4`` really is a second file and must stay legal).
+    :func:`_identity_key` then folds the one Win32 rule ``PurePath`` does not
+    model, trailing dots and spaces (``clip.mp4`` vs ``clip.mp4.``).
 
     The rendered names -- not the resolved key -- are quoted in the error, so
     the message points at the ``--name-pattern`` / ``{type}`` values the user
@@ -165,12 +202,13 @@ def resolve_export_output_paths(
             match. Exit code 5.
     """
     out: list[Path] = []
-    seen: dict[Path, str] = {}  # resolved identity -> first rendered name
+    seen: dict[Path, str] = {}  # output identity -> first rendered name
     for m in matches:
         rendered, candidate, resolved = _render_and_sandbox(
             m, pattern, output_dir=output_dir, source_video=source_video
         )
-        first = seen.get(resolved)
+        key = _identity_key(resolved)
+        first = seen.get(key)
         if first is not None:
             if first == rendered:
                 # Same string as well as same file: the long-standing
@@ -182,13 +220,14 @@ def resolve_export_output_paths(
                 )
             raise ConfigValidationError(
                 "name pattern maps two matches onto the same output file: "
-                f"{first!r} and {rendered!r} both resolve to {resolved}; add "
+                f"{first!r} and {rendered!r} both denote {key}; add "
                 "{idx} or {idx:03} to the --name-pattern (two names can differ "
-                "as text yet denote one file -- e.g. letter case on Windows, or "
-                "a '..' segment; the {type} token is taken verbatim from "
-                "metadata.json)"
+                "as text yet denote one file -- on Windows, letter case and a "
+                "trailing dot or space are all ignored when the file is opened; "
+                "a '..' segment is normalised away on every platform; the "
+                "{type} token is taken verbatim from metadata.json)"
             )
-        seen[resolved] = rendered
+        seen[key] = rendered
         out.append(candidate)
     return out
 

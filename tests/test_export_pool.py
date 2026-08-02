@@ -7,6 +7,7 @@ condition.
 
 from __future__ import annotations
 
+import shutil
 import sys
 import threading
 import time
@@ -641,5 +642,117 @@ def test_pool_rejects_dotdot_identity_collision(tmp_path: Path):
                 tmp_path,
                 pattern="{type}.mp4",
                 matches=_pair("sub/../clip", "clip"),
+                output_dir=out_dir,
+            )
+
+
+# --------------------------------------------------------------------------
+# Win32 name folding (Codex adversarial-review, round 2)
+#
+# ``PurePath`` comparison models case-insensitivity, but it is a *string*
+# model and stops there. Win32 also strips trailing dots and spaces from every
+# path component before opening anything, so ``clip.mp4`` and ``clip.mp4.``
+# compare unequal as paths yet name one file -- the exact shape of the bug
+# this section is meant to close, one layer deeper.
+# --------------------------------------------------------------------------
+
+
+def _assert_os_treats_as_one_file(tmp_path: Path, a: str, b: str) -> None:
+    """Precondition pin: on THIS machine the two names really are one file.
+
+    The guard is only worth having if the OS folds these names together. Pin
+    the premise here, so a future Windows / pathlib change surfaces as a
+    failed assumption instead of a silently pointless test.
+    """
+    probe = tmp_path / "_probe"
+    probe.mkdir(parents=True)
+    (probe / a).write_bytes(b"A")
+    (probe / b).write_bytes(b"B")
+    names = sorted(p.name for p in probe.iterdir())
+    assert len(names) == 1, f"expected {a!r} and {b!r} to be one file, got {names}"
+    shutil.rmtree(probe)
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="Win32 strips trailing dots/spaces; POSIX does not"
+)
+@pytest.mark.parametrize(
+    "second", ["clip.mp4.", "clip.mp4 "], ids=["trailing-dot", "trailing-space"]
+)
+def test_resolve_export_output_paths_rejects_win32_folded_identity_collision(
+    tmp_path: Path, second: str
+):
+    """A trailing dot / space is dropped by Win32 but kept by ``PurePath``."""
+    out_dir = tmp_path / "out"
+    source = tmp_path / "in.mp4"
+    # The pattern is bare ``{type}`` so the trailing character stays last.
+    matches = _pair("clip.mp4", second)
+    # ... and the two renderings differ as text, so a string-keyed check --
+    # the very thing this section replaced -- would not have caught them.
+    assert second != "clip.mp4"
+    _assert_each_passes_containment(matches, "{type}", out_dir, source)
+    _assert_os_treats_as_one_file(tmp_path, "clip.mp4", second)
+
+    with pytest.raises(ConfigValidationError) as exc:
+        resolve_export_output_paths(
+            matches, "{type}", output_dir=out_dir, source_video=source
+        )
+    assert exc.value.exit_code == 5
+    assert "'clip.mp4'" in str(exc.value)
+    assert repr(second) in str(exc.value)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="trailing dots/spaces are significant on POSIX"
+)
+@pytest.mark.parametrize("second", ["clip.mp4.", "clip.mp4 "], ids=["dot", "space"])
+def test_resolve_export_output_paths_keeps_trailing_dot_pair_legal_on_posix(
+    tmp_path: Path, second: str
+):
+    """Over-rejection guard: POSIX really does have two files here."""
+    out_dir = tmp_path / "out"
+    got = resolve_export_output_paths(
+        _pair("clip.mp4", second),
+        "{type}",
+        output_dir=out_dir,
+        source_video=tmp_path / "in.mp4",
+    )
+    assert got == [out_dir / "clip.mp4", out_dir / second]
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="Win32 strips trailing dots/spaces; POSIX does not"
+)
+def test_resolve_export_output_paths_keeps_dots_only_component_distinct(
+    tmp_path: Path,
+):
+    """A component that is *only* dots must not be folded to nothing.
+
+    Stripping ``...`` would invent an empty component and make every such name
+    collide with its own directory. Windows cannot create the name at all, so
+    ffmpeg fails loudly -- there is no silent overwrite to prevent here.
+    """
+    out_dir = tmp_path / "out"
+    got = resolve_export_output_paths(
+        _pair("...", "clip"),
+        "{type}",
+        output_dir=out_dir,
+        source_video=tmp_path / "in.mp4",
+    )
+    assert got == [out_dir / "...", out_dir / "clip"]
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="Win32 strips trailing dots/spaces; POSIX does not"
+)
+def test_pool_rejects_win32_folded_identity_collision(tmp_path: Path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=_explode):
+        with pytest.raises(ConfigValidationError):
+            _run_pool(
+                tmp_path,
+                pattern="{type}",
+                matches=_pair("clip.mp4", "clip.mp4."),
                 output_dir=out_dir,
             )
