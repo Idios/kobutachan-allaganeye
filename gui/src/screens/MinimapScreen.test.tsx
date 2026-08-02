@@ -398,6 +398,50 @@ describe('MinimapScreen', () => {
     });
   });
 
+  // #932: 一覧のファイル名は `namePattern` を展開した実際の出力名でなければ
+  // ならない。ExportScreen は formatName() で展開しているが MinimapScreen は
+  // mirror 時に取りこぼしており、`match_NNN_minimap.mp4` という CLI が生成
+  // しない名前をハードコードしていた。
+  describe('#932 一覧の表示ファイル名は namePattern を展開する', () => {
+    beforeEach(() => {
+      mockInvoke.mockImplementation((cmd: string) =>
+        cmd === 'register_video'
+          ? Promise.resolve({ url: 'http://127.0.0.1/v', token: 't' })
+          : Promise.resolve(null),
+      );
+    });
+
+    it('expands the default pattern (sub-hour start → MM-SS)', async () => {
+      renderMinimap();
+      await screen.findByTestId('minimap-video');
+      // sample fixture match 2: type=fl_match, start_time=1129.5 → 18-49
+      expect(screen.getByTestId('minimap-row-2').textContent).toContain(
+        '002_fl_match_18-49_minimap.mp4',
+      );
+      expect(screen.getByTestId('minimap-row-2').textContent).not.toContain(
+        'match_002_minimap.mp4',
+      );
+    });
+
+    it('expands {start} as H-MM-SS past the 1-hour mark', async () => {
+      renderMinimap();
+      await screen.findByTestId('minimap-video');
+      // sample fixture match 5: type=fl_match, start_time=5021.5 → 1-23-41
+      expect(screen.getByTestId('minimap-row-5').textContent).toContain(
+        '005_fl_match_1-23-41_minimap.mp4',
+      );
+    });
+
+    it('follows edits to the 命名規則 input', async () => {
+      renderMinimapWithPath();
+      await screen.findByTestId('minimap-video');
+      fireEvent.change(screen.getByLabelText('name pattern'), {
+        target: { value: '{idx}-{type}.mp4' },
+      });
+      expect(screen.getByTestId('minimap-row-2').textContent).toContain('2-fl_match.mp4');
+    });
+  });
+
   // #893 R2: MinimapScreen default outDir uses lastExportOutputDir when set
   describe('#893 R2 MinimapScreen default outDir', () => {
     it('defaults outDir to lastExportOutputDir when set in the store', () => {

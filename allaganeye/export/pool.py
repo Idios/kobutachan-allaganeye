@@ -43,7 +43,7 @@ def _format_filename(m: ExportMatch, pattern: str) -> str:
     """Render the output filename per ``pattern``.
 
     Tokens: ``{idx}`` / ``{idx:03}`` / ``{type}`` / ``{start}`` / ``{date}``.
-    Mirrors gui/src/screens/ExportScreen.tsx formatName().
+    Mirrors gui/src/utils/filename.ts ``formatMatchFilename`` (#932).
     """
     start_disp = _format_start_for_filename(m.start)
     today = datetime.now(UTC).strftime("%Y-%m-%d")
@@ -59,8 +59,8 @@ def _format_filename(m: ExportMatch, pattern: str) -> str:
 def _format_start_for_filename(seconds: float) -> str:
     """H-MM-SS / MM-SS form (`:` is invalid in Windows filenames).
 
-    Mirrors gui/src/screens/ExportScreen.tsx ``formatStartForFilename`` so the
-    GUI preview and the CLI's actual output agree past the 1-hour mark
+    Mirrors gui/src/utils/filename.ts ``formatStartForFilename`` so the GUI
+    preview and the CLI's actual output agree past the 1-hour mark
     (audit P2-20). Non-finite / negative inputs clamp to 0.
     """
     if not math.isfinite(seconds) or seconds < 0:

@@ -9,6 +9,7 @@ import { SampleModeBanner } from '../components/SampleModeBanner';
 import { toErrorState } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
+import { formatMatchFilename } from '../utils/filename';
 import { splitPath, stripExtendedPathPrefix } from '../utils/path';
 import pathStyles from '../styles/path-display.module.css';
 import { fmtMatchDuration, fmtTime } from '../utils/time';
@@ -352,19 +353,8 @@ export function ExportScreen() {
   }, []);
 
   function formatName(index: number, type: string, startSec: number): string {
-    // #545 review #8 (2026-04-25): {start} は MM-SS / H-MM-SS 形式
-    // (design mock の `m.start_display.replace(/:/g, '-')` 準拠)。
-    // 旧実装は秒数 0 埋め (例: '0915') だったが、ユーザー視点で start_display
-    // (mm:ss) との対応が取れず混乱の元。Windows filename で `:` は使えない
-    // ので `-` 置換版を採用。
-    const startDisplay = formatStartForFilename(startSec);
-    const today = new Date().toISOString().slice(0, 10);
-    return namePattern
-      .replace(/\{idx:03\}/g, String(index).padStart(3, '0'))
-      .replace(/\{idx\}/g, String(index))
-      .replace(/\{type\}/g, type)
-      .replace(/\{start\}/g, startDisplay)
-      .replace(/\{date\}/g, today);
+    // #932: 展開処理の実体は utils/filename.ts に移設 (MinimapScreen と共有)。
+    return formatMatchFilename(namePattern, index, type, startSec);
   }
 
   async function handlePickDir() {
@@ -1063,12 +1053,18 @@ export function ExportScreen() {
                       )}
                     </span>
                   )}
+                  {/* #932: 旧実装は `var(--ae-accent)` を参照していたが
+                      tokens.css に該当 token がない。未定義 custom property を
+                      fallback なしで参照すると宣言全体が IACVT で `unset` に
+                      なり、inline style が cascade で class に勝つため
+                      `.listError` の赤も失われ地の文と同じ色で描画されていた
+                      (v0.2.0 から出荷。MinimapScreen が mirror 時に複製)。 */}
                   {s.fallbackNotice && (
                     <span
                       className={styles.listError}
                       role="status"
                       data-testid={`fallback-notice-${m.index}`}
-                      style={{ color: 'var(--ae-accent)' }}
+                      style={{ color: 'var(--ae-gold-bright)' }}
                     >
                       {s.fallbackNotice}
                     </span>
@@ -1081,30 +1077,6 @@ export function ExportScreen() {
       </div>
     </div>
   );
-}
-
-/**
- * #545 review #8 (2026-04-25): filename 用の `{start}` 変数を `MM-SS` /
- * `H-MM-SS` 形式に format する。`fmtTime` の `:` を `-` に置換した形と等価
- * (Windows filename で `:` が使えないため)。
- *
- * 例:
- * - 0       → `00-00`
- * - 915.5   → `15-15`
- * - 5021.5  → `1-23-41`
- */
-export function formatStartForFilename(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) {
-    seconds = 0;
-  }
-  const total = Math.floor(seconds);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  if (h > 0) {
-    return `${h}-${String(m).padStart(2, '0')}-${String(s).padStart(2, '0')}`;
-  }
-  return `${String(m).padStart(2, '0')}-${String(s).padStart(2, '0')}`;
 }
 
 /**

@@ -22,11 +22,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: openDialogMock,
 }));
 
-import {
-  ExportScreen,
-  deriveDefaultOutDir,
-  formatStartForFilename,
-} from './ExportScreen';
+import { ExportScreen, deriveDefaultOutDir } from './ExportScreen';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 
@@ -79,30 +75,8 @@ describe('deriveDefaultOutDir', () => {
 });
 
 // stripExtendedPathPrefix の単体テストは utils/path.test.ts に移動済。
-
-// #545 review #8: filename `{start}` の HH-MM format helper
-describe('formatStartForFilename', () => {
-  it('formats sub-hour seconds as MM-SS', () => {
-    expect(formatStartForFilename(0)).toBe('00-00');
-    expect(formatStartForFilename(49)).toBe('00-49');
-    expect(formatStartForFilename(60)).toBe('01-00');
-    expect(formatStartForFilename(915.5)).toBe('15-15');
-  });
-
-  it('formats hour-plus seconds as H-MM-SS', () => {
-    expect(formatStartForFilename(3600)).toBe('1-00-00');
-    expect(formatStartForFilename(5021.5)).toBe('1-23-41');
-  });
-
-  it('clamps NaN / negative to 0', () => {
-    expect(formatStartForFilename(Number.NaN)).toBe('00-00');
-    expect(formatStartForFilename(-1)).toBe('00-00');
-  });
-
-  it('truncates fractional seconds (floor semantics)', () => {
-    expect(formatStartForFilename(59.9)).toBe('00-59');
-  });
-});
+// formatStartForFilename / formatMatchFilename の単体テストは
+// utils/filename.test.ts に移動済 (#932)。
 
 describe('ExportScreen (Phase 4 #466)', () => {
   it('renders empty state when metadata is null', () => {

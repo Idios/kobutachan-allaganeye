@@ -23,6 +23,7 @@ import { isAppError } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 import { fmtMatchDuration, fmtTime } from '../utils/time';
+import { formatMatchFilename } from '../utils/filename';
 import { stripExtendedPathPrefix } from '../utils/path';
 import { elementRectToSourcePx, validateRegionPx, type RegionPx } from '../utils/region';
 import { deriveDefaultOutDir } from './ExportScreen';
@@ -778,7 +779,9 @@ export function MinimapScreen() {
             )}
           </DisabledTooltip>
           <div className={styles.nameHint}>
-            変数: {'{idx}'} {'{idx:03}'} {'{start}'} {'{type}'}
+            {/* #932: `{date}` は cli-spec.md §minimap でも ExportScreen でも
+                サポート済トークンだが、この hint だけ取りこぼしていた */}
+            変数: {'{idx}'} {'{idx:03}'} {'{start}'} {'{type}'} {'{date}'}
           </div>
         </div>
       </div>
@@ -954,6 +957,15 @@ export function MinimapScreen() {
               const durationDisplay = m.edited
                 ? fmtMatchDuration(effectiveEnd - effectiveStart)
                 : m.duration_display;
+              // #932: CLI (`minimap.py` の `--name-pattern`) が実際に書く名前と
+              // 一致させる。旧実装は `match_NNN_minimap.mp4` を決め打ちしており、
+              // 命名規則を変えても一覧が追従せず実ファイル名とも食い違っていた。
+              const name = formatMatchFilename(
+                namePattern,
+                m.index,
+                m.type,
+                effectiveStart,
+              );
               const isPostMatch = m.post_match === true;
               const mark = isPostMatch
                 ? '—'
@@ -1007,9 +1019,7 @@ export function MinimapScreen() {
                     )}
                   </DisabledTooltip>
                   <span className={`${styles.listMark} ${markClass}`}>{mark}</span>
-                  <span className={styles.listName}>
-                    {`match_${String(m.index).padStart(3, '0')}_minimap.mp4`}
-                  </span>
+                  <span className={styles.listName}>{name}</span>
                   {isPostMatch && (
                     <span className={styles.postMatchBadge}>試合後</span>
                   )}
@@ -1029,12 +1039,15 @@ export function MinimapScreen() {
                       {s.error.slice(0, 120)}
                     </span>
                   )}
+                  {/* #932: ExportScreen から mirror した `var(--ae-accent)` は
+                      tokens.css に存在しない token だった (IACVT で宣言ごと
+                      `unset` → class の赤も失われる)。ExportScreen 側も同時修正。 */}
                   {s.fallbackNotice && (
                     <span
                       className={styles.listError}
                       role="status"
                       data-testid={`minimap-fallback-notice-${m.index}`}
-                      style={{ color: 'var(--ae-accent)' }}
+                      style={{ color: 'var(--ae-gold-bright)' }}
                     >
                       {s.fallbackNotice}
                     </span>
