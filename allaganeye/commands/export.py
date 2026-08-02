@@ -306,9 +306,13 @@ def register(app: typer.Typer) -> None:
                 # Plain text mode: 1 line per match start/done; no rich here to keep deps light
                 def progress_cb(ev: ProgressEvent) -> None:
                     if ev.payload["type"] == "result":
+                        # The wire payload is posix-normalised for the GUI; humans
+                        # get the platform's own separators so the line can be
+                        # pasted back into a shell / explorer as-is.
+                        shown = Path(str(ev.payload["output_path"]))
                         typer.echo(
                             f"[OK] match {ev.payload['match_index']:03d} "
-                            f"-> {ev.payload['output_path']} ({ev.payload['encoder_used']})"
+                            f"-> {shown} ({ev.payload['encoder_used']})"
                         )
                     elif ev.payload["type"] == "error":
                         typer.echo(

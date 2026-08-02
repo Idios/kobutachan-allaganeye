@@ -475,9 +475,12 @@ def register(app: typer.Typer) -> None:
 
                 def progress_cb(ev: ProgressEvent) -> None:
                     if ev.payload["type"] == "result":
+                        # Mirrors export: wire payload stays posix for the GUI,
+                        # the human line uses the platform's own separators.
+                        shown = Path(str(ev.payload["output_path"]))
                         typer.echo(
                             f"[OK] match {ev.payload['match_index']:03d} "
-                            f"-> {ev.payload['output_path']} ({ev.payload['encoder_used']})"
+                            f"-> {shown} ({ev.payload['encoder_used']})"
                         )
                     elif ev.payload["type"] == "error":
                         typer.echo(
