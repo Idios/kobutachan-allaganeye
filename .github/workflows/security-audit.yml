@@ -37,6 +37,10 @@ jobs:
   dependency-review:
     name: dependency review (GitHub Advisory DB)
     runs-on: ubuntu-latest
+    # 本 action は base/head を持つイベントでしか動かない。この workflow は
+    # workflow_dispatch も受けるため、その経路では skip する (付けないと手動実行が
+    # 常に red になる)。cargo-audit / npm-audit は従来どおり手動実行できる。
+    if: github.event_name == 'pull_request'
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -61,6 +65,11 @@ jobs:
           # 本 job は manifest が変わった PR でしか起動しない (上の paths filter)
           # ため、ノイズは依存を触る PR に限定される。
           fail-on-severity: moderate
+          # 既定は `runtime, development` で **unknown を除外する**。本 repo の
+          # 現状は cargo=runtime / npm=development / pip=runtime で unknown は 0 件
+          # だが、scope を解決できない依存が将来現れたとき silent に素通しさせない
+          # ため明示する (false green を作らない)。
+          fail-on-scope: runtime, development, unknown
 
   npm-audit:
     name: npm audit (JavaScript)

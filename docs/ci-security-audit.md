@@ -30,7 +30,29 @@ paths filter により、Python のみ変更の PR では本 workflow は走ら�
 
 閾値を `moderate` にしたのは、動機となった `serde_with` GHSA-7gcf-g7xr-8hxj が medium (= GHSA の `moderate`) であり `high` では取りこぼすため。`npm audit --audit-level=high` より厳しいが、本 workflow は manifest を変更した PR でしか起動しないので、影響は依存を触る PR に限定される。
 
+`fail-on-scope` は既定 (`runtime, development`) が **`unknown` を除外する**ため、`runtime, development, unknown` を明示している。現状の依存グラフは cargo=runtime / npm=development / pip=runtime で `unknown` は 0 件だが、scope を解決できない依存が将来現れたときに silent に素通りさせないための予防。
+
+本 job は base / head を持つイベントでしか動かないため `if: github.event_name == 'pull_request'` を付けている。これが無いと本 workflow の `workflow_dispatch` 手動実行が常に fail する (`cargo-audit` / `npm-audit` は従来どおり手動実行できる)。
+
 本 action は moving major tag (`v4` / `v5` 等) を発行しておらず `v5.0.0` のような完全版タグしか存在しないため、バージョンは exact pin で、更新は手動 bump が必要。
+
+#### この job が no-op でないことの実証 (Refs #862)
+
+保護機構は「不発でも green」なので、発火する側を実測した。action が消費するのと同じ dependency review API を、設定と同じ閾値 (`fail-on-severity: moderate` / `fail-on-scope: runtime, development, unknown`) で、脆弱バージョンが実際に導入された履歴コミット対 (v0.2.0 リリース merge `dc9e24f...22031f6`) に対して評価したところ、**追加依存 22 件が gate に該当**した。その中には
+
+```text
+('cargo', 'serde_with', '3.18.0', 'runtime', 'moderate', 'GHSA-7gcf-g7xr-8hxj')
+```
+
+すなわち **`cargo audit` が exit 0 を返す当の依存**が含まれる。
+
+```bash
+# 再現手順 (base は head の祖先である必要がある。`base...head` は merge base 基準)
+gh api "repos/Idios/kobutachan-allaganeye/dependency-graph/compare/<base>...<head>" \
+  | jq '[.[] | select(.change_type=="added") | . as $d | (.vulnerabilities // [])[]
+         | select(.severity as $s | ["critical","high","moderate"] | index($s))
+         | [$d.ecosystem, $d.name, $d.version, $d.scope, .severity, .advisory_ghsa_id]] | unique'
+```
 
 ### cargo audit を default 設定にした理由 (v0.2.1 Track C)
 
