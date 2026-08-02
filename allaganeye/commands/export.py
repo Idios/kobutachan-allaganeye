@@ -23,15 +23,13 @@ import typer
 from allaganeye.detection.metadata_writer import resolve_source_path
 from allaganeye.exceptions import (
     AllaganEyeError,
-    ConfigValidationError,
     InputFileError,
 )
 from allaganeye.export.encoder import enumerate_h264_encoders
 from allaganeye.export.pool import (
     ExportMatch,
-    _format_filename,
     export_matches,
-    resolve_export_output_path,
+    resolve_export_output_paths,
 )
 from allaganeye.export.schema import ExportSummary, ProgressEvent
 from allaganeye.export.wire import WireWriter
@@ -350,7 +348,7 @@ def register(app: typer.Typer) -> None:
             # race, and a misleading "success" summary. Fail hard BEFORE any ffmpeg
             # work (inside the P2-7 frame -> exit 5, clean stderr, no summary line).
             #
-            # B1 (data loss): the same loop sandboxes each rendered name to
+            # B1 (data loss): the same call sandboxes each rendered name to
             # --output-dir. `output_dir / rendered` is not confined to
             # --output-dir, so "../victim.mp4" (or a "{type}" value carrying
             # ".." straight out of metadata.json) used to overwrite an
@@ -358,20 +356,19 @@ def register(app: typer.Typer) -> None:
             # (preflight) gives the user the error before mkdir / ffmpeg;
             # export_matches validates again for callers that never pass
             # through this command (GUI / in-process). Both are required.
-            seen_names: dict[str, int] = {}
-            for m in filtered:
-                resolve_export_output_path(
-                    m, name_pattern, output_dir=output_dir, source_video=source_video
-                )
-                name = _format_filename(m, name_pattern)
-                seen_names[name] = seen_names.get(name, 0) + 1
-            collisions = [n for n, c in seen_names.items() if c > 1]
-            if collisions:
-                raise ConfigValidationError(
-                    "name pattern produces duplicate output filenames "
-                    f"(e.g. {collisions[0]!r}); add {{idx}} or {{idx:03}} to the "
-                    "--name-pattern"
-                )
+            #
+            # Containment and uniqueness must be judged on the SAME
+            # representation. This used to sandbox the resolved path but count
+            # duplicates on the rendered string, so two names that differ as
+            # text yet denote one file (letter case on Windows, a '..' segment)
+            # passed both checks and both got written -- one silently lost. The
+            # batch resolver keys on the resolved path for both.
+            resolve_export_output_paths(
+                filtered,
+                name_pattern,
+                output_dir=output_dir,
+                source_video=source_video,
+            )
 
             # P2-10: create the output dir up front (mirrors split/detect).
             # Without this every match's ffmpeg fails to write and the run

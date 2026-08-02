@@ -377,7 +377,7 @@ echo '<metadata-json>' | allaganeye export --stdin [...]
 | `-o DIR` / `--output-dir DIR` | (必須) | 出力先ディレクトリ (省略不可) |
 | `--codec copy\|h264` | `copy` | `copy` (FFmpeg `-c copy`、無劣化分割) または `h264` (NVENC / QSV / AMF / libx264 で再エンコード) |
 | `--concurrency N` | SKU テーブル値 | 同時 export スロット数を上書き (`enumerate_h264_encoders` が返す値のデフォルト: RTX 5090 → 3、RTX 4090/4080/4070 → 2、RTX 4060 / 不明 NVIDIA → 1、QSV / AMF / libx264 → 1)。**`--codec copy` 時は本フラグより先にスロットが 1 に切り詰められるため無効** — 再エンコードしない `-c copy` を並列化してもディスク I/O を奪い合うだけでスループットが上がらないため (`allaganeye/commands/export.py`) |
-| `--name-pattern PATTERN` | `{idx:03}_{type}_{start}.mp4` | 出力ファイル名テンプレート。使用可能トークン: `{idx}` / `{idx:03}` / `{type}` / `{start}` (MM-SS 形式。1 時間以上の場合は H-MM-SS、例: `1-23-41`) / `{date}`。**展開・解決後のパスが `-o` の外 / `-o` 自身 / 元動画 (`source`) を指す場合、および OS がパスとして解決できない場合 (不正文字 / NUL / 存在しないドライブ等で `Path.resolve()` が `OSError` / `ValueError`) は ffmpeg 起動前に exit 5** (`..` / 絶対パス / Windows のドライブ相対パス、および `{type}` の値経由でそれらが混入する場合。判定はパターン文字列ではなく解決後のパスで行うため、解決結果が `-o` 内に収まるものは通る、#930) |
+| `--name-pattern PATTERN` | `{idx:03}_{type}_{start}.mp4` | 出力ファイル名テンプレート。使用可能トークン: `{idx}` / `{idx:03}` / `{type}` / `{start}` (MM-SS 形式。1 時間以上の場合は H-MM-SS、例: `1-23-41`) / `{date}`。**以下のいずれかに該当すると 1 件も書き出さずに ffmpeg 起動前に exit 5**: (a) 展開・解決後のパスが `--output-dir` の外 / `--output-dir` 自身を指す (b) 元動画 (`source`) に解決する (c) 2 つ以上の match が同一ファイルに解決する (d) Windows で展開結果に `:` が含まれる (e) OS がパスとして解決できない (不正文字 / NUL / 存在しないドライブ等で `Path.resolve()` が `OSError` / `ValueError`)。(a)(b) の判定はパターン文字列ではなく解決後のパスで行うため、`..` / 絶対パス / ドライブ相対パスを含んでいても解決結果が `--output-dir` 内に収まるものは通る (#930)。(c) は `{idx}` / `{idx:03}` を含めれば回避でき、同一性は OS がファイルを開くときの規則に畳んで比較するので、文字列としては異なるのに同じファイルを指す名前 (Windows が無視する大文字小文字違い・末尾のドット/空白、および `..` を含むパス) も捕まる (#938)。(d) は NTFS 代替データストリーム指定と解釈され `:` より前のファイルに書き込まれるため。なお `{type}` は `metadata.json` の値をそのまま使う (GUI で編集可能) ため、CLI 引数だけでは防げない混入経路がある |
 | `--include I,J,K` | (すべて対象) | metadata の `matches[].index` (**1 始まり**) と照合する match フィルタ (カンマ区切り)。`--exclude` との併用時は `include - exclude` が有効集合 |
 | `--exclude I,J,K` | (なし) | metadata の `matches[].index` (**1 始まり**) と照合する除外フィルタ (カンマ区切り)。`type_override == "skip"` の match は本フラグに関係なく常に除外。`post_match: true` の match も無条件除外 (`--include` 指定でも MP4 化されない、#805 Phase 1 契約) |
 | `--quiet` | `false` | 進捗出力を抑制 (success/error 行は stderr に出力される)。`--json` と排他 |
@@ -437,7 +437,7 @@ ALLAGANEYE_EXPORT_CONCURRENCY=2 allaganeye export <metadata.json> --codec h264
 | 1 | 1 件以上の match が失敗 (部分失敗または全失敗) または予期せぬ例外 |
 | 2 | 入力エラー (metadata 読み込み失敗 / JSON 不正 / `source` フィールド欠落 / `--concurrency <= 0` 等の引数不正)。出力ディレクトリは不在でも自動作成されるため exit 2 にはならない |
 | 3 | ffmpeg / IO エラー (VideoProcessingError 等の `AllaganEyeError` を exit code にマッピング) |
-| 5 | 設定値不正 (ConfigValidationError 等の `AllaganEyeError` を exit code にマッピング)。`--name-pattern` の展開・解決後パスが `-o` の外 / `-o` 自身 / 元動画 (`source`) を指す場合、および解決不能パスの場合もここ (#930)。複数 match が同一ファイル名に解決する衝突もここ |
+| 5 | 設定値不正 (ConfigValidationError 等の `AllaganEyeError` を exit code にマッピング)。`--name-pattern` の拒否 5 条件 (`-o` の外 / `-o` 自身 / 元動画 / 2 match が同一ファイルに解決 / 解決不能パス、Windows は `:` も) もここ (#930 / #938) |
 | 130 | SIGINT (Ctrl+C) によるキャンセル |
 
 ### Wire protocol (`--json` モード)
@@ -486,7 +486,7 @@ allaganeye minimap <metadata.json> --region X,Y,W,H [-o DIR] [--include I,J,K]
 | `-o DIR` / `--output-dir DIR` | `<metadata dir>/minimap/` | 出力 MP4 の書き出し先ディレクトリ |
 | `--include I,J,K` | (全試合) | 対象 match index（`matches[].index`、**1 始まり**）をカンマ区切りで指定。`--exclude` との併用時は `include - exclude` が有効集合。`post_match` 試合は `--include` 指定時も常に除外 |
 | `--exclude I,J,K` | (なし) | 除外する match index（`matches[].index`、**1 始まり**）をカンマ区切りで指定。提案モード・crop モードの双方に適用される。GUI (MinimapScreen) は非選択試合を本フラグで渡す (#893、argv の正は [system-architecture.md](system-architecture.md) §2.3) |
-| `--name-pattern PATTERN` | `{idx:03}_{type}_{start}_minimap.mp4` | 出力ファイル名テンプレート。使用可能トークン: `{idx}` / `{idx:03}` / `{type}` / `{start}` (MM-SS 形式。1 時間以上の場合は H-MM-SS) / `{date}`。**展開・解決後のパスが `-o` の外 / `-o` 自身 / 元動画 (`source`) を指す場合、および OS がパスとして解決できない場合は metadata write-back / mkdir / ffmpeg より前に exit 5** (export と同判定。`-o` 省略時の基準は `<metadata dir>/minimap/`、#930) |
+| `--name-pattern PATTERN` | `{idx:03}_{type}_{start}_minimap.mp4` | 出力ファイル名テンプレート。使用可能トークン: `{idx}` / `{idx:03}` / `{type}` / `{start}` (MM-SS 形式。1 時間以上の場合は H-MM-SS) / `{date}`。**拒否条件は export の同名オプションと同一** ((a) `-o` の外 / `-o` 自身 (b) 元動画 (`source`) (c) 2 つ以上の match が同一ファイルに解決 (d) Windows の `:` (e) 解決不能パス)。**判定は metadata write-back / mkdir / ffmpeg のいずれよりも前**に行うため、拒否時は `metadata.json` も更新されない。`-o` 省略時の基準は `<metadata dir>/minimap/` (#930 / #938) |
 | `--quiet` | `false` | 進捗出力を抑制する |
 | `--json` | `false` | JSON Lines モードで stdout に出力（GUI subprocess 用）。`metadata_path` は stdin ではなく positional 引数として渡す。各行の形式は [output-spec.md §「minimap コマンド出力」](output-spec.md) を参照 |
 | `--expected-mtime MS` | (なし) | crop モード書き込み前の CAS guard。`metadata.json` の現在 mtime (Unix ms) を指定する。実 mtime と不一致なら **exit 6** で即終了（外部変更検知）。GUI の ConflictModal 検知に対応 |
@@ -509,7 +509,7 @@ allaganeye minimap <metadata.json> --region X,Y,W,H [-o DIR] [--include I,J,K]
 | 1 | 1 件以上の match が encode 失敗（部分失敗含む）または予期せぬ例外 |
 | 2 | 入力エラー（`metadata.json` 読み込み失敗 / `source` フィールド欠落等） |
 | 4 | 提案モード正常終了（常に exit 4。crop なし） |
-| 5 | `--region` 値不正（非整数 / 負値 / `W` か `H` が 16 未満 / フレーム境界越え等 ConfigValidationError）。`--name-pattern` の展開・解決後パスが `-o` の外 / `-o` 自身 / 元動画 (`source`) を指す場合、および解決不能パスの場合もここ (#930)。複数 match が同一ファイル名に解決する衝突もここ |
+| 5 | `--region` 値不正（非整数 / 負値 / `W` か `H` が 16 未満 / フレーム境界越え等 ConfigValidationError）。`--name-pattern` の拒否 5 条件（`-o` の外 / `-o` 自身 / 元動画 / 2 match が同一ファイルに解決 / 解決不能パス、Windows は `:` も）も同じ ConfigValidationError で exit 5 になる（判定は `minimap_regions` の write-back より前に行うため、拒否時は `metadata.json` も更新されない、#930 / #938） |
 | 6 | metadata write-back の CAS 衝突（`--expected-mtime` と実 mtime の不一致）。GUI が ConflictModal を表示する |
 | 130 | SIGINT (Ctrl+C) によるキャンセル |
 

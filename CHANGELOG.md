@@ -18,10 +18,10 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
 
 - **`minimap` コマンド** (#481): エリアマップ window を試合ごとに切り抜く。
   `--region X,Y,W,H` 指定で crop + H.264 encode + metadata write-back、省略時は
-  領域を自動提案する提案モード (exit 4)。`--name-pattern` の展開・解決後のパスが
-  **`-o` の外 / `-o` 自身 / 元動画 (`source`)** を指す場合、および OS がパスとして解決
-  できない場合は `export` と同じく **exit 5**。minimap は metadata write-back / mkdir /
-  ffmpeg のいずれよりも前に停止する (`-o` 省略時の基準は `<metadata dir>/minimap/`、#930)。
+  領域を自動提案する提案モード (exit 4)。`--name-pattern` の拒否条件は `export` と同一で、
+  minimap では **metadata write-back / mkdir / ffmpeg のいずれよりも前**に停止するため、
+  拒否時は `metadata.json` も更新されない (`-o` 省略時の基準は `<metadata dir>/minimap/`、
+  #930 / #938)。
 - **GUI の minimap 統合** (#893): MinimapScreen を追加し、drag-select / 数値入力 /
   自動検出 / 進捗表示まで GUI 内で完結する (Tauri `start_minimap` command)。
 - **GUI ExportScreen からの minimap 導線** (#902 / #928): 書き出し後に minimap へ進める
@@ -37,11 +37,12 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   (**NVENC が選択された場合にのみ有効**。SKU テーブル未収録の NVIDIA GPU は既定 1 スロット
   のため、Workstation / Datacenter GPU ではこちらで指定する)。QSV / AMF / libx264 は
   常に 1 スロットで、本環境変数の影響を受けない。GUI の書き出しも同じ Python コアを共有する。
-  `--name-pattern` の展開・解決後のパスが **`-o` の外 / `-o` 自身 / 元動画 (`source`)** を
-  指す場合、および **OS がパスとして解決できない場合** (不正文字 / NUL / 存在しないドライブ
-  等) は、ffmpeg を起動する前に **exit 5** で停止する (`..` / 絶対パス / Windows のドライブ
-  相対パス、および `{type}` の値経由でそれらが混入する場合。判定はパターン文字列ではなく
-  解決後のパスで行うため、解決結果が `-o` 内に収まるものは通る、#930)。
+  `--name-pattern` は、展開・解決後のパスが **`-o` の外 / `-o` 自身 / 元動画 (`source`)** を
+  指す場合と、**OS がパスとして解決できない場合** (不正文字 / NUL / 存在しないドライブ等) に、
+  ffmpeg を起動する前に **exit 5** で停止する (#930)。判定はパターン文字列ではなく解決後の
+  パスで行うため、`..` / 絶対パス / Windows のドライブ相対パスを含んでいても、解決結果が
+  `-o` 内に収まるものは通る。残る 2 条件 (同一ファイルへの解決 / Windows の `:`) は下の
+  Fixed を参照。
 - **masked (チャット欄マスク) 録画の検出対応** (#821 / #822): 全画面にマスク画像が
   合成された録画向けに、mask のない領域を自動検出して再検知する `--masked` を追加。
   anchor presence と segment 検証の 2 層構成で過分割を抑制する。暗転が 1 件も検出
@@ -153,6 +154,19 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   同じ規則で、完了行 (`[OK] match NNN -> ...`) と `--json` の `output_path` が絶対パスになる。
   `export` / `minimap` のテキスト表示は OS ネイティブの区切り文字、`--json` の `output_path`
   は posix 形式 (`/` 区切り) で出力する。
+- **export / minimap の出力ファイル取り違え**: 2 つ以上の match が同一ファイルに
+  解決される `--name-pattern` を、書き出し前に **exit 5** で拒否するようになった。
+  従来の重複検査は展開後の**文字列**が一致する場合しか見ていなかったため、
+  文字列としては異なるのに同じファイルを指す名前 (Windows が開くときに無視する
+  大文字小文字違い・末尾のドット/空白、および `..` を含むパス) が検査をすり抜け、
+  後勝ちの match が先の出力を上書きしていた。
+  上書きされた match も成功として集計されるため、書き出し件数だけでは気付けない。
+  ファイル名の展開元である `{type}` は `metadata.json` の値をそのまま使う
+  (GUI で編集可能) ため、CLI 引数だけでは防げない経路だった。
+  あわせて Windows では、展開結果のファイル名/ディレクトリ名に `:` が含まれる場合も
+  **exit 5** で拒否する。Windows は `:` を NTFS の代替データストリーム指定として
+  読むため、`clip.mp4::$DATA` のような名前は `clip.mp4` に書き込まれる (パスとしては
+  別物のまま同一ファイルを指すので、上記の同一性判定だけでは捕まらない)。
 - **detect (scorebar V2)**: post-match content (試合終了後の Limsa /
   colorful interior 等) の彩度高領域を Rescue path が scorebar と誤検出
   する false positive を解消 (#803)。`_find_scorebar_horizontal_range` に
