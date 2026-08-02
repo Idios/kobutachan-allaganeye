@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -1699,3 +1700,120 @@ def test_minimap_normal_name_pattern_still_allowed(
     assert out_dir.exists()
     written = json.loads(meta_path.read_text(encoding="utf-8"))
     assert written["minimap_regions"][0]["match_index"] == 1
+
+
+# --------------------------------------------------------------------------
+# 出力 identity の一意性 (#930 follow-up)
+#
+# sandbox guard は「-o の内側か」を見る。ここで見るのは別の invariant =
+# 「2 つの match が同一ファイルを指していないか」。表現の違う 2 名は文字列
+# 比較では別物なので、どちらも書かれて片方が silent に消え、summary は成功を
+# 報告していた。判定は rendered 文字列ではなく解決後 Path (= ファイルの identity)。
+# --------------------------------------------------------------------------
+
+
+def _identity_colliding_metadata(
+    tmp_path: Path, *, source: Path, type_a: str, type_b: str
+) -> Path:
+    """{type}.mp4 の下で同一ファイルに落ちる 2 match の metadata。"""
+    meta = {
+        "schema_version": "1",
+        "source": str(source),
+        "matches": [
+            {"index": 1, "type": type_a, "start_time": 10.0, "end_time": 60.0},
+            {"index": 2, "type": type_b, "start_time": 70.0, "end_time": 120.0},
+        ],
+    }
+    p = tmp_path / "metadata.json"
+    p.write_text(json.dumps(meta), encoding="utf-8")
+    return p
+
+
+def _invoke_minimap_with_types(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    type_a: str,
+    type_b: str,
+    pattern: str,
+):
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _identity_colliding_metadata(
+        tmp_path, source=source, type_a=type_a, type_b=type_b
+    )
+    meta_before = meta_path.read_bytes()
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+    called: list[int] = []
+
+    def fake_export_matches(**kwargs):
+        called.append(1)
+        return ExportSummary(success=2, failure=0)
+
+    monkeypatch.setattr(minimap_mod, "export_matches", fake_export_matches)
+
+    result = runner.invoke(
+        _cli_app,
+        [
+            "minimap",
+            str(meta_path),
+            "--region",
+            "10,20,300,400",
+            "--name-pattern",
+            pattern,
+            "-o",
+            str(tmp_path / "minimap_out"),
+        ],
+    )
+    return result, called, meta_path, meta_before
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="path identity は Windows のみ case-insensitive"
+)
+def test_minimap_rejects_case_only_identity_collision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result, called, meta_path, meta_before = _invoke_minimap_with_types(
+        tmp_path, monkeypatch, type_a="Clip", type_b="clip", pattern="{type}.mp4"
+    )
+    assert result.exit_code == 5, result.output
+    assert not called, "encode must not start for a colliding name pattern"
+    # preflight は write-back より前 (座標が先に書かれてはならない)
+    assert meta_path.read_bytes() == meta_before
+
+
+def test_minimap_rejects_dotdot_identity_collision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result, called, meta_path, meta_before = _invoke_minimap_with_types(
+        tmp_path,
+        monkeypatch,
+        type_a="sub/../clip",
+        type_b="clip",
+        pattern="{type}.mp4",
+    )
+    assert result.exit_code == 5, result.output
+    assert not called
+    assert meta_path.read_bytes() == meta_before
+
+
+@pytest.mark.parametrize(
+    ("type_a", "type_b"),
+    [("Clip", "clip"), ("sub/../clip", "clip")],
+)
+def test_minimap_allows_identity_pairs_once_idx_disambiguates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, type_a: str, type_b: str
+) -> None:
+    """対照: これらの {type} 値自体は不正ではない (衝突だけが不正)。"""
+    result, called, _meta_path, _meta_before = _invoke_minimap_with_types(
+        tmp_path,
+        monkeypatch,
+        type_a=type_a,
+        type_b=type_b,
+        pattern="{idx:03}_{type}.mp4",
+    )
+    assert result.exit_code == 0, result.output
+    assert called == [1]

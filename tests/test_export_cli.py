@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -1330,3 +1331,102 @@ def test_export_normal_name_pattern_still_allowed(app: typer.Typer, tmp_path: Pa
     assert result.exit_code == 0, result.output
     mock_export.assert_called_once()
     assert out_dir.exists()
+
+
+# --------------------------------------------------------------------------
+# Output *identity* collisions (#930 follow-up).
+#
+# The sandbox guard above asks "does this land inside -o?". This section asks
+# the separate question "do two matches land on the SAME file?". A string-keyed
+# duplicate check answers it wrongly: two different strings can denote one
+# file, so both matches were written and one was silently lost while the
+# summary still reported success.
+# --------------------------------------------------------------------------
+
+
+def _make_identity_colliding_metadata(tmp_path: Path, type_a: str, type_b: str) -> Path:
+    """2 matches whose ``{type}`` values render to one file under ``{type}.mp4``."""
+    payload = {
+        "schema_version": "1",
+        "source": str(tmp_path / "in.mp4"),
+        "matches": [
+            {"index": 0, "start_time": 0.0, "end_time": 10.0, "type": type_a},
+            {"index": 1, "start_time": 10.0, "end_time": 20.0, "type": type_b},
+        ],
+        "system_info": {
+            "gpu_vendors_available": [],
+            "vendor_preference": ["nvidia"],
+            "gpu": [],
+        },
+    }
+    path = tmp_path / "metadata.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def _invoke_export_with_types(
+    app: typer.Typer, tmp_path: Path, type_a: str, type_b: str, pattern: str
+):
+    metadata_path = _make_identity_colliding_metadata(tmp_path, type_a, type_b)
+    with patch(
+        "allaganeye.commands.export.export_matches",
+        return_value=ExportSummary(success=2),
+    ) as mock_export:
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                str(metadata_path),
+                "--output-dir",
+                str(tmp_path / "outdir"),
+                "--codec",
+                "copy",
+                "--name-pattern",
+                pattern,
+                "--quiet",
+            ],
+        )
+    return result, mock_export
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="path identity is case-insensitive on Windows only"
+)
+def test_export_rejects_case_only_identity_collision(app: typer.Typer, tmp_path: Path):
+    """'Clip.mp4' vs 'clip.mp4': distinct strings, one file on NTFS."""
+    result, mock_export = _invoke_export_with_types(
+        app, tmp_path, "Clip", "clip", "{type}.mp4"
+    )
+    assert result.exit_code == 5, result.output
+    mock_export.assert_not_called()
+    assert "Traceback" not in result.output
+
+
+def test_export_rejects_dotdot_identity_collision(app: typer.Typer, tmp_path: Path):
+    """'sub/../clip.mp4' stays inside -o yet denotes 'clip.mp4'."""
+    result, mock_export = _invoke_export_with_types(
+        app, tmp_path, "sub/../clip", "clip", "{type}.mp4"
+    )
+    assert result.exit_code == 5, result.output
+    mock_export.assert_not_called()
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize(
+    ("type_a", "type_b"),
+    [("Clip", "clip"), ("sub/../clip", "clip")],
+)
+def test_export_allows_identity_pairs_once_idx_disambiguates(
+    app: typer.Typer, tmp_path: Path, type_a: str, type_b: str
+):
+    """Control: those ``{type}`` values are legal; only the collision is not.
+
+    Without this the two tests above could be passing for an unrelated
+    reason (a rejected token, a parse error) and would still be green on the
+    unfixed code.
+    """
+    result, mock_export = _invoke_export_with_types(
+        app, tmp_path, type_a, type_b, "{idx:03}_{type}.mp4"
+    )
+    assert result.exit_code == 0, result.output
+    mock_export.assert_called_once()
