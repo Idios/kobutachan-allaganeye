@@ -1,6 +1,7 @@
 """Tests for split_matches pipeline orchestration."""
 
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -181,7 +182,9 @@ def test_pipeline_metadata_json_content(mock_probe, mock_detect, mock_split, tmp
     run_split(Path("input.mp4"), config)
 
     data = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
-    assert data["source"] == "input.mp4"
+    # #930 B2: `source` is persisted as an ABSOLUTE path (schema contract),
+    # even when argv carried a cwd-relative one.
+    assert data["source"] == os.path.abspath("input.mp4")
     assert data["source_duration"] == 1800.0
     # #465 review: source_fps is propagated from probe -> metadata.json
     assert data["source_fps"] == 30.0
@@ -5576,6 +5579,92 @@ def test_quiet_no_cache_only_output_listing(
 
 
 # ============================================================
+# 完了行の出力パス報告 (PR #930 の export / minimap と同じ方針)
+# ============================================================
+#
+# 上の `assert f"Output: {tmp_path}" in out` 系は tmp_path が絶対なので、
+# 生値をそのまま表示していても通ってしまう。cwd を移して**相対**の
+# output_dir を渡すことで「実際に書いた場所」を報告しているかを pin する。
+
+
+def _completion_line_value(stdout: str, label: str) -> str:
+    """Extract the path shown on the ``<label>: ...`` completion line."""
+    prefix = f"{label}:"
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        if line.startswith(prefix):
+            return line.split(prefix, 1)[1].strip()
+    raise AssertionError(f"no {prefix!r} line in stdout: {stdout!r}")
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_split_completion_lines_absolute_for_relative_output_dir(
+    mock_probe, mock_detect, mock_split, tmp_path, monkeypatch, capsys
+):
+    """相対 ``-o`` でも Output / Metadata 行は絶対パスを出す。
+
+    Windows で quote を落として ``-o E:\\a\\b`` が ``E:ab`` (ドライブ相対) に
+    化けると、生値表示は実際の書き出し先と食い違う。
+    """
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(Path("out"))
+    config = SplitConfig(output_dir=Path("out"), min_match_duration=60.0, no_cache=True)
+
+    run_split(Path("input.mp4"), config)
+
+    out = capsys.readouterr().out
+    shown_output = Path(_completion_line_value(out, "Output"))
+    shown_metadata = Path(_completion_line_value(out, "Metadata"))
+
+    assert shown_output.is_absolute(), (
+        f"'Output:' must report an absolute path, got {str(shown_output)!r}"
+    )
+    assert shown_metadata.is_absolute(), (
+        f"'Metadata:' must report an absolute path, got {str(shown_metadata)!r}"
+    )
+    # ...and they must be where we actually wrote, not just any absolute path.
+    assert shown_output.resolve() == out_dir.resolve()
+    assert shown_metadata.resolve() == (out_dir / "metadata.json").resolve()
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_split_completion_lines_use_native_separators(
+    mock_probe, mock_detect, mock_split, tmp_path, monkeypatch, capsys
+):
+    """完了行は貼り戻せる OS ネイティブ区切りで出す (posix 化しない)。"""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(Path("./out"))
+    config = SplitConfig(
+        output_dir=Path("./out"), min_match_duration=60.0, no_cache=True
+    )
+
+    run_split(Path("input.mp4"), config)
+
+    out = capsys.readouterr().out
+    foreign_sep = "/" if os.sep == "\\" else "\\"
+    for label in ("Output", "Metadata"):
+        shown = _completion_line_value(out, label)
+        assert foreign_sep not in shown, (
+            f"'{label}:' must use {os.sep!r} separators, got {shown!r}"
+        )
+        assert "./" not in shown and ".\\" not in shown
+
+
+# ============================================================
 # #365: progress bar ETA ラベル付与の format 検証
 # ============================================================
 
@@ -6887,3 +6976,359 @@ def test_masked_fallback_from_cache_data_pure():
         is True
     )
     assert split_matches._masked_fallback_from_cache_data({}) is False
+
+
+# ---------------------------------------------------------------------------
+# metadata `source` の書き手 / 読み手契約 (#930 B2)
+#
+# 書き手 (`_build_metadata_payload`) は schema (`schemas/metadata.schema.json`
+# の "Absolute path of the source video file") / `docs/metadata-spec.md`
+# どおり絶対パスを書く。読み手 3 経路 (`split --from-metadata` / `export` /
+# `minimap`) は相対 source を metadata.json のディレクトリ起点で解決する
+# (`docs/metadata-spec.md` の「相対パスは metadata.json のディレクトリ起点」)。
+# 過去は書き手が argv 生値 (cwd 基準) を書き、読み手が metadata dir 基準 /
+# cwd 基準に割れていたため、同じ metadata から split と export が別ファイルを
+# 選び、両方 exit 0 で silent に食い違う経路があった。
+# ---------------------------------------------------------------------------
+
+_SOURCE_METADATA_SYSTEM_INFO = {
+    "gpu_vendors_available": [],
+    "vendor_preference": ["nvidia", "amd", "intel"],
+    "gpu": [],
+}
+
+
+def _write_source_metadata(meta_path: Path, source: str) -> Path:
+    """1 match だけ持つ最小 metadata.json を `source` 指定で書く。"""
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "source": source,
+                "source_duration": 25.0,
+                "matches": [
+                    {
+                        "index": 1,
+                        "start_time": 0.0,
+                        "end_time": 10.0,
+                        "type": "match",
+                    }
+                ],
+                "system_info": _SOURCE_METADATA_SYSTEM_INFO,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return meta_path
+
+
+def _legacy_relative_layout(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """metadata dir 相対の source + cwd 相対の decoy を用意する。
+
+    Returns ``(metadata_path, real_video, decoy_video)``.
+
+    ``real_video``  = ``<tmp>/out/media/sample.mp4`` (metadata dir 起点で正解)
+    ``decoy_video`` = ``<tmp>/media/sample.mp4``     (cwd 起点だと誤って当たる)
+    """
+    real_video = tmp_path / "out" / "media" / "sample.mp4"
+    real_video.parent.mkdir(parents=True, exist_ok=True)
+    real_video.write_bytes(b"")
+    decoy_video = tmp_path / "media" / "sample.mp4"
+    decoy_video.parent.mkdir(parents=True, exist_ok=True)
+    decoy_video.write_bytes(b"")
+    meta_path = _write_source_metadata(
+        tmp_path / "out" / "metadata.json", "media/sample.mp4"
+    )
+    return meta_path, real_video, decoy_video
+
+
+def _export_app():
+    import typer
+
+    from allaganeye.commands.export import register as register_export
+
+    a = typer.Typer()
+
+    @a.callback()
+    def _():
+        pass
+
+    register_export(a)
+    return a
+
+
+def _minimap_app():
+    import typer
+
+    from allaganeye.commands.minimap import register as register_minimap
+
+    a = typer.Typer()
+
+    @a.callback()
+    def _():
+        pass
+
+    register_minimap(a)
+    return a
+
+
+_MINIMAP_PROBE: ProbeResult = {
+    "duration": 25.0,
+    "width": 1920,
+    "height": 1080,
+    "fps": 60.0,
+    "fps_num": 60,
+    "fps_den": 1,
+    "codec": "h264",
+    "audio_codec": None,
+}
+
+
+def _source_seen_by_split(meta_path: Path, out_dir: Path) -> Path:
+    """``split --from-metadata`` が実際に開く動画パスを捕捉する。"""
+    from allaganeye.commands.split_matches import run_split_from_metadata
+
+    seen: list[Path] = []
+
+    def _probe(path: Path):
+        seen.append(Path(path))
+        return PROBE_RESULT
+
+    # split_video must hand back one path per match, otherwise the metadata
+    # rewrite's zip() raises.
+    n_matches = len(json.loads(meta_path.read_text(encoding="utf-8"))["matches"])
+    config = SplitConfig(output_dir=out_dir, min_match_duration=1.0)
+    with (
+        patch(f"{MODULE}.probe_video", side_effect=_probe),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[out_dir / f"match_{i + 1:03}.mp4" for i in range(n_matches)],
+        ),
+        patch(f"{MODULE}._check_disk_space"),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+    assert seen, "probe_video was never called by split --from-metadata"
+    return seen[0]
+
+
+def _source_seen_by_export(meta_path: Path, out_dir: Path) -> Path:
+    """``export`` が実際に開く動画パスを捕捉する。"""
+    from typer.testing import CliRunner
+
+    from allaganeye.export.schema import ExportSummary
+
+    captured: dict[str, Path] = {}
+
+    def _fake_export(**kwargs):
+        captured["source_video"] = Path(kwargs["source_video"])
+        return ExportSummary(success=1, failure=0)
+
+    with patch("allaganeye.commands.export.export_matches", side_effect=_fake_export):
+        result = CliRunner().invoke(
+            _export_app(),
+            [
+                "export",
+                str(meta_path),
+                "--output-dir",
+                str(out_dir),
+                "--codec",
+                "copy",
+                "--quiet",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    return captured["source_video"]
+
+
+def _source_seen_by_minimap(meta_path: Path) -> Path:
+    """``minimap`` (提案モード) が実際に開く動画パスを捕捉する。"""
+    from typer.testing import CliRunner
+
+    seen: list[Path] = []
+
+    def _probe(path: Path):
+        seen.append(Path(path))
+        return _MINIMAP_PROBE
+
+    with (
+        patch("allaganeye.commands.minimap.probe_video", side_effect=_probe),
+        patch(
+            "allaganeye.commands.minimap.resolve_match_regions",
+            return_value=([], []),
+        ),
+    ):
+        result = CliRunner().invoke(
+            _minimap_app(), ["minimap", str(meta_path), "--quiet"]
+        )
+    # 提案モードは crop せず exit 4 (docs/cli-spec.md)。source 解決までは到達する。
+    assert result.exit_code == 4, result.output
+    assert seen, "probe_video was never called by minimap"
+    return seen[0]
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_split_writes_absolute_source_for_relative_argv(
+    mock_probe, mock_detect, mock_split, tmp_path, monkeypatch
+):
+    """argv が cwd 相対でも metadata の ``source`` は絶対で永続化される (#930 B2)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    mock_split.return_value = _output_files(out_dir)
+    (tmp_path / "input.mp4").write_bytes(b"")
+    monkeypatch.chdir(tmp_path)
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    written = Path(
+        json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))["source"]
+    )
+    assert written.is_absolute()
+    assert written.resolve() == (tmp_path / "input.mp4").resolve()
+
+
+def test_split_from_metadata_roundtrip_survives_relative_argv(tmp_path, monkeypatch):
+    """detect(相対 argv) -> split --from-metadata が同じ動画に着弾する (#930 B2 (a))."""
+    workdir = tmp_path / "work"
+    (workdir / "vid").mkdir(parents=True)
+    video = workdir / "vid" / "sample.mp4"
+    video.write_bytes(b"")
+    out_dir = workdir / "out1"
+    out_dir.mkdir()
+    monkeypatch.chdir(workdir)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE}.detect_match_boundaries", return_value=BOUNDARIES),
+        patch(f"{MODULE}.split_video", return_value=_output_files(out_dir)),
+    ):
+        run_split(
+            Path("vid/sample.mp4"),
+            SplitConfig(output_dir=out_dir, min_match_duration=60.0),
+        )
+
+    split_out = workdir / "out_split"
+    split_out.mkdir()
+    seen = _source_seen_by_split(out_dir / "metadata.json", split_out)
+    assert seen.resolve() == video.resolve()
+
+
+def test_relative_source_resolves_against_metadata_dir_in_all_readers(
+    tmp_path, monkeypatch
+):
+    """相対 source を持つ既存 metadata を 3 経路とも metadata dir 起点で解決する。
+
+    #930 B2 (b) の再発防止 pin: cwd 側に同名の decoy を置いても、
+    ``split --from-metadata`` / ``export`` / ``minimap`` の 3 経路が
+    **同じ 1 本の動画** を選ぶ。
+    """
+    meta_path, real_video, decoy_video = _legacy_relative_layout(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    split_out = tmp_path / "o_split"
+    split_out.mkdir()
+    export_out = tmp_path / "o_export"
+    export_out.mkdir()
+
+    from_split = _source_seen_by_split(meta_path, split_out)
+    from_export = _source_seen_by_export(meta_path, export_out)
+    from_minimap = _source_seen_by_minimap(meta_path)
+
+    assert from_split.resolve() == real_video.resolve()
+    assert from_export.resolve() == real_video.resolve()
+    assert from_minimap.resolve() == real_video.resolve()
+    assert from_split.resolve() != decoy_video.resolve()
+
+
+def test_missing_source_file_exits_2_in_all_readers(tmp_path, monkeypatch):
+    """source が実在しないとき 3 経路とも exit 2 (#930 B2 (c))."""
+    from typer.testing import CliRunner
+
+    from allaganeye.commands.split_matches import run_split_from_metadata
+    from allaganeye.exceptions import InputFileError
+
+    meta_path = _write_source_metadata(
+        tmp_path / "out" / "metadata.json", "media/gone.mp4"
+    )
+    monkeypatch.chdir(tmp_path)
+    out_dir = tmp_path / "o"
+    out_dir.mkdir()
+
+    with pytest.raises(InputFileError) as exc:
+        run_split_from_metadata(
+            meta_path,
+            SplitConfig(output_dir=out_dir, min_match_duration=1.0),
+            quiet=True,
+        )
+    assert exc.value.exit_code == 2
+
+    export_result = CliRunner().invoke(
+        _export_app(),
+        [
+            "export",
+            str(meta_path),
+            "--output-dir",
+            str(out_dir),
+            "--codec",
+            "copy",
+            "--quiet",
+        ],
+    )
+    assert export_result.exit_code == 2, export_result.output
+
+    minimap_result = CliRunner().invoke(
+        _minimap_app(), ["minimap", str(meta_path), "--quiet"]
+    )
+    assert minimap_result.exit_code == 2, minimap_result.output
+
+
+def test_export_stdin_resolves_relative_source_against_cwd(tmp_path, monkeypatch):
+    """``export --stdin`` は metadata dir を持たないので cwd 基準 (documented)."""
+    from typer.testing import CliRunner
+
+    from allaganeye.export.schema import ExportSummary
+
+    video = tmp_path / "media" / "sample.mp4"
+    video.parent.mkdir(parents=True)
+    video.write_bytes(b"")
+    monkeypatch.chdir(tmp_path)
+
+    captured: dict[str, Path] = {}
+
+    def _fake_export(**kwargs):
+        captured["source_video"] = Path(kwargs["source_video"])
+        return ExportSummary(success=1, failure=0)
+
+    payload = json.dumps(
+        {
+            "schema_version": "1",
+            "source": "media/sample.mp4",
+            "matches": [
+                {"index": 1, "start_time": 0.0, "end_time": 5.0, "type": "match"}
+            ],
+            "system_info": _SOURCE_METADATA_SYSTEM_INFO,
+        }
+    )
+    out_dir = tmp_path / "o"
+    out_dir.mkdir()
+    with patch("allaganeye.commands.export.export_matches", side_effect=_fake_export):
+        result = CliRunner().invoke(
+            _export_app(),
+            [
+                "export",
+                "--stdin",
+                "--output-dir",
+                str(out_dir),
+                "--codec",
+                "copy",
+                "--quiet",
+            ],
+            input=payload,
+        )
+    assert result.exit_code == 0, result.output
+    assert captured["source_video"].resolve() == video.resolve()

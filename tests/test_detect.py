@@ -1,6 +1,7 @@
 """Tests for the ``allaganeye detect`` command (#463)."""
 
 import json
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -63,11 +64,35 @@ def test_detect_writes_metadata_without_note(tmp_path):
     payload = json.loads(meta_path.read_text(encoding="utf-8"))
     # `note` was retired in #463
     assert "note" not in payload
-    assert payload["source"] == str(Path("input.mp4"))
+    # #930 B2: `source` follows the schema contract (absolute path), so a
+    # cwd-relative argv is absolutised before it is persisted.
+    assert payload["source"] == os.path.abspath("input.mp4")
     assert payload["source_duration"] == PROBE_RESULT["duration"]
     assert len(payload["matches"]) == len(BOUNDARIES)
     assert payload["matches"][0]["output_file"] == "match_001.mp4"
     assert payload["matches"][1]["output_file"] == "match_002.mp4"
+
+
+def test_detect_writes_absolute_source_for_relative_argv(tmp_path, monkeypatch):
+    """detect も相対 argv を絶対 source として永続化する (#930 B2).
+
+    `detect <video> -o out` -> `split --from-metadata out/metadata.json` は
+    公式フローなので、metadata dir 起点で解決される読み手と argv 生値
+    (cwd 起点) を書く書き手が食い違うと round-trip が壊れる。
+    """
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (tmp_path / "input.mp4").write_bytes(b"")
+    monkeypatch.chdir(tmp_path)
+    probe, detect = _mock_detect_only(out_dir)
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+    with probe, detect:
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+    written = Path(payload["source"])
+    assert written.is_absolute()
+    assert written.resolve() == (tmp_path / "input.mp4").resolve()
 
 
 def test_detect_writes_detection_started_and_completed_at(tmp_path):
@@ -453,6 +478,95 @@ def test_detect_text_mode_still_writes_human_status(tmp_path, capsys):
     captured = capsys.readouterr().out
     assert "Probing:" in captured
     assert "Metadata:" in captured
+
+
+# --- 完了行の出力パス報告 (PR #930 の export / minimap と同じ方針) ---
+
+
+def _metadata_line_value(stdout: str) -> str:
+    """Extract the path shown on the ``Metadata: ...`` completion line."""
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        if line.startswith("Metadata:"):
+            return line.split("Metadata:", 1)[1].strip()
+    raise AssertionError(f"no 'Metadata:' line in stdout: {stdout!r}")
+
+
+def test_detect_metadata_line_is_absolute_for_relative_output_dir(
+    tmp_path, monkeypatch, capsys
+):
+    """相対 ``-o`` でも完了行は絶対パスを出す。
+
+    ``tmp_path`` をそのまま渡すテストは元から絶対なので、生値表示のままでも
+    通ってしまう。cwd を移して**相対**の output_dir を渡すことで、生値表示
+    (``Metadata: out/metadata.json``) を赤にする。
+    """
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    probe, detect = _mock_detect_only(tmp_path)
+    config = SplitConfig(output_dir=Path("out"), min_match_duration=60.0)
+    with probe, detect:
+        run_detect(Path("input.mp4"), config, quiet=False, progress_format="text")
+
+    shown = Path(_metadata_line_value(capsys.readouterr().out))
+    assert shown.is_absolute(), (
+        f"completion line must report an absolute path, got {str(shown)!r}"
+    )
+    # ...and it must be the file we actually wrote, not just any absolute path.
+    assert shown.resolve() == (out_dir / "metadata.json").resolve()
+
+
+def test_detect_metadata_line_uses_native_separators(tmp_path, monkeypatch, capsys):
+    """完了行はそのまま shell / explorer に貼れる OS ネイティブ区切りで出す。
+
+    Windows で ``-o E:/foo`` のように POSIX 区切りを渡されても、表示は
+    ``E:\\foo`` に正規化される (PR #930 の export / minimap と同じ文言方針)。
+    """
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    probe, detect = _mock_detect_only(tmp_path)
+    config = SplitConfig(output_dir=Path("./out"), min_match_duration=60.0)
+    with probe, detect:
+        run_detect(Path("input.mp4"), config, quiet=False, progress_format="text")
+
+    shown = _metadata_line_value(capsys.readouterr().out)
+    foreign_sep = "/" if os.sep == "\\" else "\\"
+    assert foreign_sep not in shown, (
+        f"completion line must use {os.sep!r} separators, got {shown!r}"
+    )
+    assert "./" not in shown and ".\\" not in shown
+
+
+def test_detect_json_done_metadata_path_is_absolute(tmp_path, monkeypatch, capsys):
+    """``--progress-format json`` の done イベントも絶対パスで報告する。
+
+    GUI は常に絶対 ``-o`` を渡すので実挙動は不変 (abspath は no-op) だが、
+    CLI と同じ「実際に書いた場所」を wire でも保証する。
+    """
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    probe, detect = _mock_detect_only(tmp_path)
+    config = SplitConfig(output_dir=Path("out"), min_match_duration=60.0)
+    with probe, detect:
+        run_detect(Path("input.mp4"), config, quiet=False, progress_format="json")
+
+    lines = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip()
+    ]
+    done = next(e for e in lines if e["phase"] == "done")
+    shown = Path(done["metadata_path"])
+    assert shown.is_absolute(), (
+        f"done event must report an absolute metadata_path, got {done['metadata_path']!r}"
+    )
+    assert shown.resolve() == (out_dir / "metadata.json").resolve()
 
 
 def test_detect_writes_brightness_samples_when_callback_fires(tmp_path):

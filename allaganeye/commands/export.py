@@ -20,9 +20,19 @@ from typing import Annotated
 
 import typer
 
-from allaganeye.exceptions import AllaganEyeError, ConfigValidationError
+from allaganeye.detection.metadata_writer import resolve_source_path
+from allaganeye.exceptions import (
+    AllaganEyeError,
+    ConfigValidationError,
+    InputFileError,
+)
 from allaganeye.export.encoder import enumerate_h264_encoders
-from allaganeye.export.pool import ExportMatch, _format_filename, export_matches
+from allaganeye.export.pool import (
+    ExportMatch,
+    _format_filename,
+    export_matches,
+    resolve_export_output_path,
+)
 from allaganeye.export.schema import ExportSummary, ProgressEvent
 from allaganeye.export.wire import WireWriter
 
@@ -146,23 +156,31 @@ def register(app: typer.Typer) -> None:
             typer.echo(f"error: cannot read metadata: {e}", err=True)
             raise typer.Exit(code=2) from e
 
-        # Round 1 FIX 1 (b): the metadata-content parsing below (source field,
-        # the include/exclude filter loop's int(raw["index"]) / float(...), and
+        # #930 B2: resolve `source` through the shared helper so export lands
+        # on the exact same file as `split --from-metadata` / `minimap`. A
+        # relative value is anchored on the metadata file's directory (NOT the
+        # process cwd, which used to make export and split disagree silently);
+        # `--stdin` has no metadata file, so cwd is the only available base --
+        # see resolve_source_path's docstring. The preflight existence check
+        # also normalises the missing-source exit code to 2 (it used to fall
+        # through to a plain ffmpeg failure = exit 1).
+        try:
+            source_video = resolve_source_path(
+                metadata, None if stdin else metadata_path
+            )
+        except InputFileError as e:
+            typer.echo(f"error: {e}", err=True)
+            raise typer.Exit(code=2) from e
+
+        # Round 1 FIX 1 (b): the metadata-content parsing below (the
+        # include/exclude filter loop's int(raw["index"]) / float(...), and
         # the I-4 valid_indexes set comprehension) runs BEFORE the P2-7 frame and
         # can raise KeyError/ValueError/TypeError on malformed metadata. Wrap it
         # so a bad payload on the GUI --json --stdin path maps to exit 2 + clean
-        # stderr instead of a raw traceback / exit 1. The existing
-        # typer.Exit(code=2) (missing-source) and _parse_indexes_csv's
-        # typer.BadParameter are NOT KeyError/ValueError/TypeError, so they keep
-        # propagating with their own exit codes (2 / click usage).
+        # stderr instead of a raw traceback / exit 1. ``_parse_indexes_csv``'s
+        # typer.BadParameter is NOT KeyError/ValueError/TypeError, so it keeps
+        # propagating with its own exit code (click usage).
         try:
-            source_value = metadata.get("source")
-            if not source_value:
-                typer.echo(
-                    "error: metadata.json missing required 'source' field", err=True
-                )
-                raise typer.Exit(code=2)
-            source_video = Path(source_value)
             sys_info = metadata.get("system_info") or {}
             vendors = list(sys_info.get("gpu_vendors_available") or [])
             preference = list(
@@ -331,8 +349,20 @@ def register(app: typer.Typer) -> None:
             # maps every match to the same output file -- overwrite, parallel-write
             # race, and a misleading "success" summary. Fail hard BEFORE any ffmpeg
             # work (inside the P2-7 frame -> exit 5, clean stderr, no summary line).
+            #
+            # B1 (data loss): the same loop sandboxes each rendered name to
+            # --output-dir. `output_dir / rendered` is not confined to
+            # --output-dir, so "../victim.mp4" (or a "{type}" value carrying
+            # ".." straight out of metadata.json) used to overwrite an
+            # unrelated file -- and the run still exited 0. Validating here
+            # (preflight) gives the user the error before mkdir / ffmpeg;
+            # export_matches validates again for callers that never pass
+            # through this command (GUI / in-process). Both are required.
             seen_names: dict[str, int] = {}
             for m in filtered:
+                resolve_export_output_path(
+                    m, name_pattern, output_dir=output_dir, source_video=source_video
+                )
                 name = _format_filename(m, name_pattern)
                 seen_names[name] = seen_names.get(name, 0) + 1
             collisions = [n for n, c in seen_names.items() if c > 1]

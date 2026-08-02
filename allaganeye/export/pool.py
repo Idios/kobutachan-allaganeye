@@ -16,6 +16,7 @@ from datetime import datetime, UTC
 from pathlib import Path
 from queue import Empty, Queue
 
+from allaganeye.exceptions import ConfigValidationError
 from allaganeye.export.encoder import EncoderSlot, H264Encoder
 from allaganeye.export.ffmpeg_runner import run_export_attempt
 from allaganeye.export.schema import (
@@ -74,6 +75,71 @@ def _format_start_for_filename(seconds: float) -> str:
     return f"{m:02d}-{s:02d}"
 
 
+def resolve_export_output_path(
+    m: ExportMatch,
+    pattern: str,
+    *,
+    output_dir: Path,
+    source_video: Path,
+) -> Path:
+    """Render ``pattern`` for ``m`` and sandbox the result to ``output_dir`` (B1).
+
+    ``output_dir / rendered`` is not confined to ``output_dir``:
+    ``Path.__truediv__`` happily accepts ``..`` segments, an absolute path, or
+    (on Windows) a drive-relative path, all of which land outside ``-o``. That
+    made ``--name-pattern "../victim.mp4"`` silently overwrite an unrelated
+    file and exit 0.
+
+    The predicate is the **resolved path**, never the pattern string: the
+    ``{type}`` token is an unvalidated metadata.json value, so a pattern that
+    contains no separator at all can still render one. (Same lesson as the
+    project's "destructive predicates must use identity, not names" rule.)
+
+    Rejects (``ConfigValidationError`` -> exit 5):
+
+    1. the rendered path resolves outside ``output_dir`` (or *is*
+       ``output_dir`` itself, which is not a writable file target)
+    2. the rendered path resolves onto ``source_video`` -- exporting a match
+       onto its own source truncates the input mid-read
+
+    A rendered name that stays inside ``output_dir`` is returned unchanged
+    (``output_dir / rendered``, not the resolved form) so accepted patterns
+    behave exactly as before, symlinks included.
+
+    This runs BOTH here (per match, inside :func:`export_matches`) and in the
+    CLI preflight of ``export`` / ``minimap``. The preflight exists to fail
+    early with a readable message before any ffmpeg / metadata write-back
+    work; this copy is the last line of defence for callers that never go
+    through the preflight (the GUI passes a free-text pattern straight to the
+    Tauri command, and future in-process callers would too). Neither layer may
+    be dropped on the grounds that "the other one checks".
+    """
+    rendered = _format_filename(m, pattern)
+    candidate = output_dir / rendered
+    try:
+        root = output_dir.resolve()
+        resolved = candidate.resolve()
+        source = source_video.resolve()
+    except (OSError, ValueError) as e:  # invalid chars / NUL byte / bad drive
+        raise ConfigValidationError(
+            f"--name-pattern produced an unusable output path {rendered!r}: {e}"
+        ) from e
+
+    if resolved == root or not resolved.is_relative_to(root):
+        raise ConfigValidationError(
+            f"--name-pattern must stay inside the output directory: {rendered!r} "
+            f"resolves to {resolved} (outside {root}). Remove '..' segments and "
+            "absolute/drive-relative paths (note: the {type} token is taken "
+            "verbatim from metadata.json)"
+        )
+    if resolved == source:
+        raise ConfigValidationError(
+            f"--name-pattern would overwrite the source video: {rendered!r} "
+            f"resolves to {resolved}. Choose a different --output-dir or pattern"
+        )
+    return candidate
+
+
 def export_matches(
     matches: list[ExportMatch],
     slots: list[EncoderSlot],
@@ -98,6 +164,16 @@ def export_matches(
     """
     if not slots:
         raise ValueError("export_matches: slots is empty (need at least 1)")
+
+    # B1: sandbox every rendered name BEFORE spawning a single ffmpeg. Doing it
+    # here (and not only inside the worker) keeps the run all-or-nothing: with a
+    # {type}-driven escape only some matches are out of bounds, and a
+    # worker-only check would already have written the earlier ones.
+    for m in matches:
+        resolve_export_output_path(
+            m, name_pattern, output_dir=output_dir, source_video=source_video
+        )
+
     cancel_event = cancel_event or threading.Event()
 
     queue: Queue[ExportMatch] = Queue()
@@ -123,7 +199,11 @@ def export_matches(
             ) -> None:
                 progress_cb(ProgressEvent.fallback(_idx, src.value, dst.value, msg))
 
-            output_path = output_dir / _format_filename(m, name_pattern)
+            # B1: re-validate on the path that is actually handed to ffmpeg, so
+            # no future edit can reintroduce an unchecked `output_dir / name`.
+            output_path = resolve_export_output_path(
+                m, name_pattern, output_dir=output_dir, source_video=source_video
+            )
             try:
                 result = run_export_attempt(
                     video=source_video,

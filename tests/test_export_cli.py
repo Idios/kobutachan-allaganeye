@@ -30,6 +30,20 @@ def app() -> typer.Typer:
     return a
 
 
+@pytest.fixture(autouse=True)
+def _source_video_on_disk(tmp_path: Path) -> Path:
+    """#930 B2: export preflights that ``source`` actually exists.
+
+    Every fixture payload in this module points ``source`` at
+    ``<tmp_path>/in.mp4``; materialise it so the tests exercise the export
+    logic rather than the new missing-source guard (which has its own
+    coverage in ``tests/test_split_matches.py``).
+    """
+    path = tmp_path / "in.mp4"
+    path.write_bytes(b"")
+    return path
+
+
 def _make_metadata(tmp_path: Path) -> Path:
     """metadata.json on disk with 2 matches."""
     payload = {
@@ -686,7 +700,10 @@ def test_export_stdin_reads_utf8_buffer(app: typer.Typer, tmp_path: Path):
     # UTF-8 bytes: the old json.load(sys.stdin) text path mis-decodes, the new
     # buffer path round-trips.
     cp932_runner = CliRunner(charset="cp932")
-    non_ascii_source = str(tmp_path / "録画" / "試合.mp4")
+    non_ascii_video = tmp_path / "録画" / "試合.mp4"
+    non_ascii_video.parent.mkdir(parents=True, exist_ok=True)
+    non_ascii_video.write_bytes(b"")  # #930 B2: export preflights existence
+    non_ascii_source = str(non_ascii_video)
     # ensure_ascii=False so the wire carries raw UTF-8 multibyte bytes. With the
     # old json.load(sys.stdin) cp932 text path those bytes mis-decode (mojibake);
     # only sys.stdin.buffer + UTF-8 decode round-trips. (ASCII-escaped JSON would
@@ -1095,3 +1112,221 @@ def test_export_metadata_non_numeric_start_time_exits_2(
     )
     assert result.exit_code == 2, result.output
     assert "Traceback" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# B1: --name-pattern sandbox (data loss)
+#
+# Preflight layer: reject BEFORE mkdir / export_matches so a rejected run
+# leaves the filesystem completely untouched. export_matches is mocked in these
+# tests on purpose -- that bypasses the pool's own guard and therefore pins the
+# CLI preflight itself (both layers are required; neither is redundant).
+# ---------------------------------------------------------------------------
+
+
+def _make_sandbox_metadata(
+    tmp_path: Path, *, source: Path | None = None, type_label: str = "match"
+) -> Path:
+    src = source or (tmp_path / "in.mp4")
+    if not src.exists():
+        src.write_bytes(b"SOURCE")
+    payload = {
+        "schema_version": "1",
+        "source": str(src),
+        "matches": [
+            {"index": 1, "start_time": 0.0, "end_time": 10.0, "type": type_label},
+        ],
+        "system_info": {
+            "gpu_vendors_available": [],
+            "vendor_preference": ["nvidia"],
+            "gpu": [],
+        },
+    }
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+    return metadata_path
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    ["../victim.mp4", "../../victim.mp4", "sub/../../victim.mp4"],
+)
+def test_export_rejects_name_pattern_escaping_output_dir(
+    app: typer.Typer, tmp_path: Path, pattern: str
+):
+    metadata_path = _make_sandbox_metadata(tmp_path)
+    victim = tmp_path / "victim.mp4"
+    victim.write_bytes(b"VICTIM")
+    out_dir = tmp_path / "outdir"
+    with patch(
+        "allaganeye.commands.export.export_matches",
+        return_value=ExportSummary(success=1),
+    ) as mock_export:
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                str(metadata_path),
+                "--output-dir",
+                str(out_dir),
+                "--codec",
+                "copy",
+                "--name-pattern",
+                pattern,
+                "--quiet",
+            ],
+        )
+    assert result.exit_code == 5, result.output
+    mock_export.assert_not_called()
+    assert victim.read_bytes() == b"VICTIM"
+    # rejected before mkdir: no stray output dir left behind
+    assert not out_dir.exists()
+    assert "Traceback" not in result.output
+
+
+def test_export_rejects_absolute_name_pattern(app: typer.Typer, tmp_path: Path):
+    metadata_path = _make_sandbox_metadata(tmp_path)
+    victim = tmp_path / "victim.mp4"
+    victim.write_bytes(b"VICTIM")
+    with patch(
+        "allaganeye.commands.export.export_matches",
+        return_value=ExportSummary(success=1),
+    ) as mock_export:
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                str(metadata_path),
+                "--output-dir",
+                str(tmp_path / "outdir"),
+                "--codec",
+                "copy",
+                "--name-pattern",
+                str(victim),  # absolute -> ignores -o entirely
+                "--quiet",
+            ],
+        )
+    assert result.exit_code == 5, result.output
+    mock_export.assert_not_called()
+    assert victim.read_bytes() == b"VICTIM"
+
+
+def test_export_rejects_name_pattern_hitting_source_video(
+    app: typer.Typer, tmp_path: Path
+):
+    """-o pointed at the source's own directory must not overwrite the source."""
+    source = tmp_path / "in.mp4"
+    source.write_bytes(b"SOURCE")
+    metadata_path = _make_sandbox_metadata(tmp_path, source=source)
+    with patch(
+        "allaganeye.commands.export.export_matches",
+        return_value=ExportSummary(success=1),
+    ) as mock_export:
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                str(metadata_path),
+                "--output-dir",
+                str(tmp_path),
+                "--codec",
+                "copy",
+                "--name-pattern",
+                "in.mp4",
+                "--quiet",
+            ],
+        )
+    assert result.exit_code == 5, result.output
+    mock_export.assert_not_called()
+    assert source.read_bytes() == b"SOURCE"
+
+
+def test_export_rejects_escape_via_metadata_type_token(
+    app: typer.Typer, tmp_path: Path
+):
+    """The escape can be supplied by metadata.json, not by the pattern.
+
+    The {type} token is copied verbatim from metadata, so a pattern that
+    carries {idx:03} and no separator still escapes -- pattern-string
+    validation cannot see this.
+    """
+    metadata_path = _make_sandbox_metadata(tmp_path, type_label="../../../victim")
+    with patch(
+        "allaganeye.commands.export.export_matches",
+        return_value=ExportSummary(success=1),
+    ) as mock_export:
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                str(metadata_path),
+                "--output-dir",
+                str(tmp_path / "outdir"),
+                "--codec",
+                "copy",
+                "--name-pattern",
+                "{idx:03}_{type}.mp4",
+                "--quiet",
+            ],
+        )
+    assert result.exit_code == 5, result.output
+    mock_export.assert_not_called()
+
+
+def test_export_sandbox_reject_json_emits_no_summary(app: typer.Typer, tmp_path: Path):
+    """--json: the rejection must NOT emit a summary line.
+
+    lib.rs start_export treats any summary line as success, so emitting one
+    here would show the GUI a successful export that never ran (same contract
+    as the collision guard).
+    """
+    metadata_path = _make_sandbox_metadata(tmp_path)
+    with patch(
+        "allaganeye.commands.export.export_matches",
+        return_value=ExportSummary(success=1),
+    ) as mock_export:
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                str(metadata_path),
+                "--output-dir",
+                str(tmp_path / "outdir"),
+                "--codec",
+                "copy",
+                "--name-pattern",
+                "../victim.mp4",
+                "--json",
+            ],
+        )
+    assert result.exit_code == 5
+    mock_export.assert_not_called()
+    assert '"type": "summary"' not in result.stdout
+    assert '"type":"summary"' not in result.stdout
+
+
+def test_export_normal_name_pattern_still_allowed(app: typer.Typer, tmp_path: Path):
+    """Reverse pin: an ordinary pattern is untouched by the sandbox guard."""
+    metadata_path = _make_sandbox_metadata(tmp_path)
+    out_dir = tmp_path / "outdir"
+    with patch(
+        "allaganeye.commands.export.export_matches",
+        return_value=ExportSummary(success=1),
+    ) as mock_export:
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                str(metadata_path),
+                "--output-dir",
+                str(out_dir),
+                "--codec",
+                "copy",
+                "--name-pattern",
+                "{idx:03}_{type}_{start}.mp4",
+                "--quiet",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    mock_export.assert_called_once()
+    assert out_dir.exists()

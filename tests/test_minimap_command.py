@@ -42,6 +42,19 @@ def app() -> typer.Typer:
     return a
 
 
+@pytest.fixture(autouse=True)
+def _source_video_on_disk(tmp_path: Path) -> Path:
+    """#930 B2: minimap preflights that ``source`` actually exists.
+
+    ``_make_metadata`` points ``source`` at ``<tmp_path>/in.mp4``; materialise
+    it so these tests exercise the minimap logic rather than the new
+    missing-source guard (covered in ``tests/test_split_matches.py``).
+    """
+    path = tmp_path / "in.mp4"
+    path.write_bytes(b"")
+    return path
+
+
 def _make_metadata(
     tmp_path: Path,
     *,
@@ -1501,3 +1514,188 @@ def test_cas_conflict_does_not_create_output_dir(tmp_path, monkeypatch):
     assert not out_dir.exists(), (
         "output dir must NOT be created when CAS conflict aborts (F1 fix)"
     )
+
+
+# ---------------------------------------------------------------------------
+# 13. B1: --name-pattern sandbox (data loss)
+#
+# minimap は crop 付き再エンコードなので、escape すると ffmpeg が犠牲ファイルを
+# truncate してから失敗し 0 byte / moov atom not found を残す (export の上書きより
+# 破壊的)。preflight は write-back / mkdir より前に発火しなければならない。
+# export_matches を mock して pool 側 guard を意図的に迂回し、minimap の
+# preflight 自体を pin する (2 層とも必要 = どちらも冗長ではない)。
+# ---------------------------------------------------------------------------
+
+
+def _sandbox_metadata(
+    tmp_path: Path, *, source: Path, type_label: str = "match"
+) -> Path:
+    meta = {
+        "schema_version": "1",
+        "source": str(source),
+        "matches": [
+            {"index": 1, "type": type_label, "start_time": 10.0, "end_time": 60.0},
+        ],
+    }
+    p = tmp_path / "metadata.json"
+    p.write_text(json.dumps(meta), encoding="utf-8")
+    return p
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    ["../victim.mp4", "../../victim.mp4", "sub/../../victim.mp4"],
+)
+def test_minimap_rejects_name_pattern_escaping_output_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pattern: str
+) -> None:
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _sandbox_metadata(tmp_path, source=source)
+    meta_before = meta_path.read_bytes()
+    victim = tmp_path / "victim.mp4"
+    victim.write_bytes(b"VICTIM")
+    out_dir = tmp_path / "minimap_out"
+
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+    called: list[int] = []
+
+    def fake_export_matches(**kwargs):
+        called.append(1)
+        return ExportSummary(success=1, failure=0)
+
+    monkeypatch.setattr(minimap_mod, "export_matches", fake_export_matches)
+
+    result = runner.invoke(
+        _cli_app,
+        [
+            "minimap",
+            str(meta_path),
+            "--region",
+            "10,20,300,400",
+            "--name-pattern",
+            pattern,
+            "-o",
+            str(out_dir),
+        ],
+    )
+    assert result.exit_code == 5, (
+        f"expected exit 5, got {result.exit_code}\n{result.output}"
+    )
+    assert not called, "encode must not start for a rejected name pattern"
+    assert victim.read_bytes() == b"VICTIM", "犠牲ファイルが破壊されている"
+    # preflight は write-back / mkdir より前
+    assert meta_path.read_bytes() == meta_before
+    assert not out_dir.exists()
+    assert "Traceback" not in result.output
+
+
+def test_minimap_rejects_name_pattern_hitting_source_video(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"SOURCE")
+    meta_path = _sandbox_metadata(tmp_path, source=source)
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+    called: list[int] = []
+
+    def fake_export_matches(**kwargs):
+        called.append(1)
+        return ExportSummary(success=1, failure=0)
+
+    monkeypatch.setattr(minimap_mod, "export_matches", fake_export_matches)
+
+    result = runner.invoke(
+        _cli_app,
+        [
+            "minimap",
+            str(meta_path),
+            "--region",
+            "10,20,300,400",
+            "--name-pattern",
+            "vid.mp4",
+            "-o",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 5, result.output
+    assert not called
+    assert source.read_bytes() == b"SOURCE"
+
+
+def test_minimap_rejects_escape_via_metadata_type_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """pattern 文字列は安全に見えても {type} (metadata 由来) が escape する。"""
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _sandbox_metadata(tmp_path, source=source, type_label="../../../victim")
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+    called: list[int] = []
+
+    def fake_export_matches(**kwargs):
+        called.append(1)
+        return ExportSummary(success=1, failure=0)
+
+    monkeypatch.setattr(minimap_mod, "export_matches", fake_export_matches)
+
+    result = runner.invoke(
+        _cli_app,
+        [
+            "minimap",
+            str(meta_path),
+            "--region",
+            "10,20,300,400",
+            "--name-pattern",
+            "{idx:03}_{type}.mp4",
+            "-o",
+            str(tmp_path / "minimap_out"),
+        ],
+    )
+    assert result.exit_code == 5, result.output
+    assert not called
+
+
+def test_minimap_normal_name_pattern_still_allowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """反対側 pin: 通常の pattern は従来どおり通り、write-back も encode も走る。"""
+    source = tmp_path / "vid.mp4"
+    source.write_bytes(b"\x00")
+    meta_path = _sandbox_metadata(tmp_path, source=source)
+    out_dir = tmp_path / "minimap_out"
+    monkeypatch.setattr(
+        minimap_mod, "probe_video", lambda p: {"width": 1920, "height": 1080}
+    )
+    called: list[int] = []
+
+    def fake_export_matches(**kwargs):
+        called.append(1)
+        return ExportSummary(success=1, failure=0)
+
+    monkeypatch.setattr(minimap_mod, "export_matches", fake_export_matches)
+
+    result = runner.invoke(
+        _cli_app,
+        [
+            "minimap",
+            str(meta_path),
+            "--region",
+            "10,20,300,400",
+            "--name-pattern",
+            "{idx:03}_{type}_minimap.mp4",
+            "-o",
+            str(out_dir),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert called == [1]
+    assert out_dir.exists()
+    written = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert written["minimap_regions"][0]["match_index"] == 1
