@@ -87,10 +87,12 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 
 ### VTuber 検証用 VOD (`ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER`)
 
-L3 の VTuber/masked 系 slow テスト（`tests/test_l3_phase2_parity.py` / `tests/test_vtuber_region_e2e.py`）は、`ALLAGANEYE_SAMPLE_VIDEO_DIR` とは別の VOD 置き場を `ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER` で参照する（未設定時の既定: `E:/allaganeye-samples`）。
+L3 の VTuber/masked 系 slow テスト（`tests/test_l3_phase2_parity.py` / `tests/test_vtuber_region_e2e.py` / `tests/test_vtuber_ground_truth.py` / `tests/test_vtuber_gt_regression.py` / `tests/test_areamap_slow.py` の masked ケース）は、`ALLAGANEYE_SAMPLE_VIDEO_DIR` とは別の VOD 置き場を `ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER` で参照する（未設定時の既定: `E:/allaganeye-samples`）。
 
 - 配置: 配信者別の FF14 FL VOD（mp4）。未配置・未設定の場合、該当テストは skip される
 - 空文字で設定した場合も未設定と同様に既定 path へフォールバックする（`os.environ.get(...) or` 規約で統一）
+- `tests/test_vtuber_gt_regression.py` は release gate **G3** ([`docs/release-process.md`](release-process.md) §レイヤーリリース受け入れゲート) の実体 (#895 P3 / PR #915)。6 source GT のうち gyawa のみ別 root を使い、`ALLAGANEYE_SAMPLE_VIDEO_DIR_GYAWA`（既定 `E:/videos/gyawa_vatos`）で解決する (#915 F18 で絶対 path 直書きを廃止)
+- `ALLAGANEYE_VTUBER_GT_REQUIRE_ALL=1` を設定すると、VOD 不在による skip を fail に格上げできる。「6 source gate が silent に 5 source へ縮退」する事故の検出用 (#915 F18)
 
 ### 音声統合テスト primary 録画 (`ALLAGANEYE_AUDIO_TEST_VIDEO`)
 
@@ -130,7 +132,7 @@ primary 8/8 で ~30s。cumulative sample-dir tests (~90s) と合わせて音声�
 | `obs-baseline-source` / `obs-baseline-manual-split` | `$ALLAGANEYE_SAMPLE_VIDEO_DIR` (`2026-02-09 23-12-24.mkv` + subdir `20260116` / `20260118` / `20260119` / `20260127` 丸ごと) | v0.3.0 baseline 5 本の source MKV + 手動分割 MP4 | bit-exact baseline gate (§v0.3.0 L3 work 用 regression baseline、#778/#779) |
 | `masked-obs-source` | `$ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER/20250527-29/20250527-29/` | masked 検証用 OBS MKV 3 本 | masked GT 検証 (L3 Phase 2) |
 | `vtuber-vod` / `vtuber-mask` | `$ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER` 直下 | 配信者 VOD 5 本 (mp4) + mask PNG 3 枚。**Twitch archive 消滅後は再入手不能** | L3 位置独立検証 (multi-source) |
-| `vtuber-primary` | `E:\videos\gyawa_vatos\` | primary GT の source VOD (gyawa 提供 2026-05-18、7.5 GB) | `vtuber-primary-ground-truth.json` (±10s 突合) |
+| `vtuber-primary` | `$ALLAGANEYE_SAMPLE_VIDEO_DIR_GYAWA`（既定 `E:\videos\gyawa_vatos\`） | primary GT の source VOD (gyawa 提供 2026-05-18、7.5 GB) | `vtuber-primary-ground-truth.json` (±10s 突合) / VTuber timeline GT gate G3 の gyawa source (#915) |
 | `game-dvr-4k` | `E:\videos\M1wa_zeromus\` 直下 | 4K Game DVR source 5 本 (mp4)。`split_*/` 配下は allaganeye 出力 = 再生成可能なため対象外 | scorebar V2 Rescue path (#522) の HUD スケール差異検証 |
 | `audio-primary` | `E:\videos\2026-04-08 21-14-05.mkv` | `fanfare.npz` source (§音声統合テスト primary 録画) | 音声統合 baseline (`ALLAGANEYE_AUDIO_TEST_VIDEO`) |
 

@@ -40,6 +40,7 @@ L2 完了後の拡張フェーズ。L3 (new)〜L6 (former L5) の開発で新た
 
 ```text
 main (リリースタグ時のみ更新、L1: v0.1.0-preview / v0.1.1 / L2: v0.2.0 / v0.2.1 タグ済み)
+ ├── release/vX.Y.Z (リリース PR の head。develop-X.Y.0 から分岐し、CHANGELOG / version bump / 出荷ブロッカー fix を載せる)
  └── develop-0.3.0 (L3 開発の統合先)
       ├── claude/l3-minimap-*        ← minimap 切抜き (#481, parent #753)
       ├── claude/l3-perf-*           ← export 並列 (#761 #762) / detect 高速化 (#576)
@@ -49,7 +50,7 @@ main (リリースタグ時のみ更新、L1: v0.1.0-preview / v0.1.1 / L2: v0.2
 
 ### ルール
 
-1. **`main` は保護ブランチ** — リリース時の `develop-x.x.0 → main` マージのみ
+1. **`main` は保護ブランチ** — リリース時の `release/vX.Y.Z → main` マージのみ (`release/vX.Y.Z` は `develop-X.Y.0` から分岐。v0.2.x までは `develop-x.x.x → main` を直接使用していた)
 2. **`develop-x.x.x`** が日常の統合先 — 開発対象のバージョンを明示（例: `develop-0.2.0`）
 3. **作業ブランチ** (`claude/<scope>-<short-description>` または `claude/<issue-N>-<slug>`) で作業し、PR を `develop-x.x.x` に出す
 4. **リリース完了後** — 次バージョンの `develop-x.x.x` を `main` から作成
@@ -65,7 +66,7 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 
 ## タグ運用
 
-- リリース判断後、`develop-x.x.0 → main` の PR を作成・マージ
+- リリース判断後、`/release` skill が `develop-x.x.0` から `release/v<新バージョン>` を切り、`release/v<新バージョン> → main` の PR を作成・マージする (実例: v0.3.0 = PR [#924](https://github.com/Idios/kobutachan-allaganeye/pull/924))
 - `main` の HEAD にタグを打つ
 - タグ形式: `v<major>.<minor>.<patch>`
 - コマンド: `git tag -a v0.x.0 -m "Release v0.x.0: <レイヤー名>"`
@@ -81,12 +82,12 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 
 ## レイヤーリリース受け入れゲート
 
-各 minor リリース (`develop-x.x.0 → main`) の実行前に、本節のチェックリストを全件達成する。共通項目はすべての minor リリースに適用、レイヤー固有項目は対応するバージョンで適用する。`/release` skill の Step 0 で本節を参照する (`.claude/skills/release/SKILL.md`)。
+各 minor リリース (`release/vX.Y.Z → main`) の実行前に、本節のチェックリストを全件達成する。共通項目はすべての minor リリースに適用、レイヤー固有項目は対応するバージョンで適用する。`/release` skill の Step 0 で本節を参照する (`.claude/skills/release/SKILL.md`)。
 
 ### 共通項目 (全 minor リリース)
 
 - [ ] `develop-x.x.0` 上で対象スコープの全 PR がマージ済み
-- [ ] CI 全ジョブ (Python / GUI frontend / GUI Rust / Pester) が直近の develop tip で緑
+- [ ] CI 全ジョブ (Python / GUI frontend / GUI Rust / Pester) が**リリース PR の HEAD** (`release/vX.Y.Z` tip) で緑 — develop tip は release ブランチに載せた出荷直前 commit を含まないため基準にしない
 - [ ] [バージョン保持箇所](versioning.md#バージョン管理場所)が**全箇所**`x.y.0` に更新されている (`python scripts/check_version_consistency.py` が exit 0)
 - [ ] `CHANGELOG.md` に対象バージョンセクションが存在 (日付 / 主要変更点 / breaking changes)
 - [ ] `deferred` ラベル付き issue を全件レビュー済 (close、または次バージョン `deferred` 維持判断、または当該バージョンに引き取り)
@@ -106,12 +107,12 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 
 - [ ] 2026-06-10 full audit の監査 P1 対応 ([audit-remediation spec](./superpowers/specs/2026-06-10-audit-remediation-design.md) Wave 1) が全クローズ: [#812](https://github.com/Idios/kobutachan-allaganeye/issues/812) / [#813](https://github.com/Idios/kobutachan-allaganeye/issues/813) / [#814](https://github.com/Idios/kobutachan-allaganeye/issues/814) / [#815](https://github.com/Idios/kobutachan-allaganeye/issues/815) / [#816](https://github.com/Idios/kobutachan-allaganeye/issues/816) / [#817](https://github.com/Idios/kobutachan-allaganeye/issues/817) / [#818](https://github.com/Idios/kobutachan-allaganeye/issues/818)。G4 は [#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) の段階1 (metadata 痕跡) で消化済みのため、#805 自体の close は本ゲートの対象外 (残 scope は #805 を参照)
 
-L117 の想定ゲート項目を、リリース PR [#924](https://github.com/Idios/kobutachan-allaganeye/pull/924) で以下のとおり確定した (L122 の恒久化)。
+§v0.3.0 以降のレイヤー固有ゲート枠組み の表が挙げていた v0.3.0 の想定ゲート項目を、リリース PR [#924](https://github.com/Idios/kobutachan-allaganeye/pull/924) で以下のとおり確定した (同節末尾の「確定後は本 doc に追記して恒久化する」に従う)。
 
-**自動ゲート (G)** — リリース PR の HEAD を独立ワークツリーに checkout して実行する。実行前後で `HEAD` が一致することを guard で確認し、実行中に flip した場合は結果を無効として再実行する ([worktree の branch flip は長時間ゲートを silent に無効化する](l2-workflow.md))。
+**自動ゲート (G)** — リリース PR の HEAD を独立ワークツリーに checkout して実行する。実行前後で `HEAD` が一致することを guard で確認し、実行中に flip した場合は結果を無効として再実行する ([worktree の branch flip は長時間ゲートを silent に無効化する](l2-workflow.md))。各ゲートは **collect 件数が 0 でないこと**も確認する (`pyproject.toml` の `addopts = "-m 'not slow and not baseline_regen'"` により、marker 指定を省いたコマンドは全件 deselect されて「0 件実行のまま緑」になる)。
 
-- [ ] **G1: OBS baseline bit-exact 回帰** — `pytest -m "slow_detect and not baseline_regen" tests/test_v030_baseline_regression.py`。5 本の OBS 録画 (obs-20260116 / 118 / 119 / 127 / 209) の検知結果が pin 済み baseline と一致すること。**本ゲートに masked / VTuber の動画は含まれない** (`_CLASS_A_BASELINES` は OBS のみ)。L117 の「masked baseline 検知 ground truth 一致」という表現は実態と異なるため、masked の根拠は下記の注記を参照
-- [ ] **G2: minimap 領域提案の回帰** — `pytest tests/test_areamap_slow.py`。エリアマップ window の seed 検出と per-match consensus の提案精度を検証する。**crop / encode 経路は対象外**で、切り抜き映像そのものの妥当性は M3 で目視確認する
+- [ ] **G1: OBS baseline bit-exact 回帰** — `pytest -m "slow_detect and not baseline_regen" tests/test_v030_baseline_regression.py`。5 本の OBS 録画 (obs-20260116 / 118 / 119 / 127 / 209) の検知結果が pin 済み baseline と一致すること。**本ゲートに masked / VTuber の動画は含まれない** (`_CLASS_A_BASELINES` は OBS のみ)。§v0.3.0 以降のレイヤー固有ゲート枠組み の表にある「masked baseline 検知 ground truth 一致」という当初想定の表現は実態と異なるため、masked の根拠は下記の注記を参照
+- [ ] **G2: minimap 領域提案の回帰** — `pytest -m "slow_detect and not baseline_regen" tests/test_areamap_slow.py`。エリアマップ window の seed 検出と per-match consensus の提案精度を検証する。**crop / encode 経路は対象外**で、切り抜き映像そのものの妥当性は M3 で目視確認する。**8 件が collect され PASS することを確認する** (marker を省くと `pyproject.toml` の `addopts = "-m 'not slow and not baseline_regen'"` により全件 deselect され、無検証のままゲートが通る)
 - [ ] **G3: VTuber timeline GT 回帰** — `pytest -m "slow_detect and not baseline_regen" tests/test_vtuber_gt_regression.py`。6 配信者 / GT 67 試合に対する recall と spurious を検証する。`--vtuber` を当該リリースで公開扱いにする場合は必須 (`/release` Step 0c で判断)。**検出ロジック / GT データ / ハーネスのいずれかを触った commit の後は再実行する**。`allaganeye/commands/split_matches.py` の `_VTUBER_ALGO_VERSION` の bump が再実行要否の目印になる
 
 > **masked 検出の根拠 (v0.3.0 時点)**: masked は専用の baseline ゲートを持たない。根拠は PR [#915](https://github.com/Idios/kobutachan-allaganeye/pull/915) で実施した 3 サンプルの不変性確認 (masked fallback 発動時の segment 数が再実行間で一致) に留まり、**出力の正しさは検証していない**。G1 と同形の pin 済み baseline への置き換えは [#925](https://github.com/Idios/kobutachan-allaganeye/issues/925) で追跡する。
@@ -140,7 +141,7 @@ L117 の想定ゲート項目を、リリース PR [#924](https://github.com/Idi
 各レイヤー完了時:
 
 1. **§レイヤーリリース受け入れゲート** のチェックリストを全件達成 (共通項目 + 当該レイヤー固有項目)
-2. `develop-x.x.0 → main` のリリース PR を作成・マージ
+2. `develop-x.x.0` から `release/vX.Y.Z` を切り、`release/vX.Y.Z → main` のリリース PR を作成・マージ
 3. `main` にタグを打つ (`v0.x.0`)
 4. GitHub Release を作成（変更内容サマリ付き、`release.yml` 自動 or `docs/release-process.md` §手動リリース手順）
 5. `main` から次バージョンの `develop-x.x.0` ブランチを作成し、その時点で[バージョン保持箇所](versioning.md#バージョン管理場所)を**全箇所**まとめて `x.y.0` に更新（`.dev` 等の pre-release 識別子は付けない。PyPI 未公開のため不要）。更新後に `python scripts/check_version_consistency.py` で全箇所一致を確認する
@@ -153,7 +154,7 @@ L117 の想定ゲート項目を、リリース PR [#924](https://github.com/Idi
 ### 前提
 
 - ローカル環境に Python 3.11.9 + PowerShell (Windows PowerShell 5.1 以上 or pwsh 7+) + Git がインストール済み ([Developer Setup](developer-setup.md) §1)
-- `develop-x.x.x` で全テスト pass、`develop-x.x.0 → main` PR マージ済み
+- `develop-x.x.x` で全テスト pass、`release/vX.Y.Z → main` PR マージ済み
 - 公開対象バージョン (`x.y.z`) と[バージョン保持箇所](versioning.md#バージョン管理場所)が**全箇所**一致していること (`python scripts/check_version_consistency.py --tag vx.y.z` が exit 0。CI を迂回する手順のため `version-check` job の代わりに手元で実行する)
 
 ### 手順
@@ -171,7 +172,7 @@ L117 の想定ゲート項目を、リリース PR [#924](https://github.com/Idi
    pwsh ./scripts/build-portable-zip.ps1 -Version 'x.y.z'
    ```
 
-   `dist/allaganeye-vx.y.z-windows.zip` が生成される (Python 3.11.9 embed + BtbN LGPLv3 FFmpeg n8.1 + 各 LICENSE 同梱、SHA256 検証付き)。
+   `dist/allaganeye-vx.y.z-windows.zip` が生成される (PyInstaller `--onedir` で frozen 化した CLI (`allaganeye/` 配下に Python interpreter + 全依存を内包、#752) + BtbN LGPLv3 FFmpeg n8.1 + 各 LICENSE 同梱。FFmpeg は SHA256 検証付き)。
 
 1. **Release notes の抽出**:
 

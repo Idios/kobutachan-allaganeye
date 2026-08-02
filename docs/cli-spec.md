@@ -14,8 +14,8 @@ CLI コマンド・引数・オプションの**構文**をまとめる。各オ
 
 | オプション | 説明 |
 | --- | --- |
-| `--version` | バージョン表示 |
-| `--help` | ヘルプ表示 |
+| `--version`, `-V` | バージョン表示 (#337)。Portable ZIP では同梱物 integrity 検査を兼ね、欠損時 exit 7 (#668)。検査は `allaganeye/cli.py` の `version_callback` からのみ呼ばれるため、他のサブコマンド実行経路では exit 7 は発生しない |
+| `--help` | ヘルプ表示 (短縮形なし) |
 
 ## split コマンド
 
@@ -374,7 +374,7 @@ echo '<metadata-json>' | allaganeye export --stdin [...]
 
 | オプション | デフォルト | 説明 |
 | --- | --- | --- |
-| `--output-dir DIR` | (必須) | 出力先ディレクトリ (省略不可) |
+| `-o DIR` / `--output-dir DIR` | (必須) | 出力先ディレクトリ (省略不可) |
 | `--codec copy\|h264` | `copy` | `copy` (FFmpeg `-c copy`、無劣化分割) または `h264` (NVENC / QSV / AMF / libx264 で再エンコード) |
 | `--concurrency N` | SKU テーブル値 | 同時 export スロット数を上書き (`enumerate_h264_encoders` が返す値のデフォルト: RTX 5090 → 3、RTX 4090/4080/4070 → 2、RTX 4060 / 不明 NVIDIA → 1、QSV / AMF / libx264 → 1)。**`--codec copy` 時は本フラグより先にスロットが 1 に切り詰められるため無効** — 再エンコードしない `-c copy` を並列化してもディスク I/O を奪い合うだけでスループットが上がらないため (`allaganeye/commands/export.py`) |
 | `--name-pattern PATTERN` | `{idx:03}_{type}_{start}.mp4` | 出力ファイル名テンプレート。使用可能トークン: `{idx}` / `{idx:03}` / `{type}` / `{start}` (MM-SS 形式。1 時間以上の場合は H-MM-SS、例: `1-23-41`) / `{date}` |
@@ -469,7 +469,7 @@ allaganeye minimap <metadata.json>
 
 # crop モード (指定領域で切り抜き、H.264 encode)
 allaganeye minimap <metadata.json> --region X,Y,W,H [-o DIR] [--include I,J,K]
-                  [--name-pattern PATTERN] [--quiet]
+                  [--exclude I,J,K] [--name-pattern PATTERN] [--quiet]
 ```
 
 ### 引数
@@ -484,18 +484,22 @@ allaganeye minimap <metadata.json> --region X,Y,W,H [-o DIR] [--include I,J,K]
 | --- | --- | --- |
 | `--region X,Y,W,H` | (なし) | 切り抜き領域をピクセル座標で指定（左上原点）。省略時は提案モードになる |
 | `-o DIR` / `--output-dir DIR` | `<metadata dir>/minimap/` | 出力 MP4 の書き出し先ディレクトリ |
-| `--include I,J,K` | (全試合) | 対象 match index（`matches[].index`、**1 始まり**）をカンマ区切りで指定。`post_match` 試合は `--include` 指定時も常に除外 |
+| `--include I,J,K` | (全試合) | 対象 match index（`matches[].index`、**1 始まり**）をカンマ区切りで指定。`--exclude` との併用時は `include - exclude` が有効集合。`post_match` 試合は `--include` 指定時も常に除外 |
+| `--exclude I,J,K` | (なし) | 除外する match index（`matches[].index`、**1 始まり**）をカンマ区切りで指定。提案モード・crop モードの双方に適用される。GUI (MinimapScreen) は非選択試合を本フラグで渡す (#893、argv の正は [system-architecture.md](system-architecture.md) §2.3) |
 | `--name-pattern PATTERN` | `{idx:03}_{type}_{start}_minimap.mp4` | 出力ファイル名テンプレート。使用可能トークン: `{idx}` / `{idx:03}` / `{type}` / `{start}` (MM-SS 形式。1 時間以上の場合は H-MM-SS) / `{date}` |
 | `--quiet` | `false` | 進捗出力を抑制する |
 | `--json` | `false` | JSON Lines モードで stdout に出力（GUI subprocess 用）。`metadata_path` は stdin ではなく positional 引数として渡す。各行の形式は [output-spec.md §「minimap コマンド出力」](output-spec.md) を参照 |
 | `--expected-mtime MS` | (なし) | crop モード書き込み前の CAS guard。`metadata.json` の現在 mtime (Unix ms) を指定する。実 mtime と不一致なら **exit 6** で即終了（外部変更検知）。GUI の ConflictModal 検知に対応 |
 
-### 対象試合の決定順序 (crop モード)
+### 対象試合の決定順序 (提案モード / crop モード 共通)
+
+フィルタはモード分岐より前に評価されるため、`--include` / `--exclude` は提案モードにも効く (`allaganeye/commands/minimap.py` の `minimap` コマンド本体):
 
 1. `post_match: true` の試合を**無条件除外**（`--include` より優先、#805 Phase 1 契約）
 2. `--include` 指定時は指定 index のみに絞る
-3. `type_override == "skip"` の試合を除外
-4. `edited.start_time` / `edited.end_time` が存在する場合はそちらを採用（`metadata.json` GUI 編集値を尊重）
+3. `--exclude` 指定 index を除外する（`--include` との併用時は `include - exclude`）
+4. `type_override == "skip"` の試合を除外
+5. `edited.start_time` / `edited.end_time` が存在する場合はそちらを採用（`metadata.json` GUI 編集値を尊重）
 
 ### Exit Codes
 
@@ -559,9 +563,9 @@ timestamp,brightness
 | 1 | 一般エラー |
 | 2 | 入力ファイル不正 |
 | 3 | FFmpeg / ffprobe エラー |
-| 4 | 試合境界が見つからない |
 | 5 | 設定値不正（パラメータの範囲外等）。`--interval <= 0` は ConfigValidationError (exit 5) で即終了 |
-| 7 | 同梱物欠損 (Portable ZIP integrity-manifest.json で listed file が missing / size 不一致) #668 |
+
+`debug-brightness` は試合境界の判定を行わないため **exit 4 (DetectionError) は発生しない** (`DetectionError` の raise は `detect` / `split` / `minimap` の各コマンド実装のみ)。**exit 7 (同梱物欠損) も `allaganeye --version` の integrity 検査専用** (`allaganeye/cli.py` の `version_callback`) であり、本コマンドの実行経路では発生しない (#668、§グローバルオプション参照)。
 
 ### エラー表示 (#428 / #405 matrix v2)
 
@@ -607,7 +611,7 @@ Error: ffmpeg failed
 
 ### click-level option-parse error (#440 / PR #632)
 
-`split` / `debug-brightness` 等のサブコマンド entrypoint より前で発生する click-level option-parse error (例: `allaganeye -version` のような single-dash long-option typo) は AllaganEyeError 系の `-v` / `-q` 切替制御の対象外。`allaganeye/cli.py` の `_suggest_long_option_hint` (line 537-571) と `main()` (line 574-611) で捕捉し、click 標準メッセージに続けて `Did you mean --<name>?` ヒントを stderr に出力する。
+`split` / `debug-brightness` 等のサブコマンド entrypoint より前で発生する click-level option-parse error (例: `allaganeye -version` のような single-dash long-option typo) は AllaganEyeError 系の `-v` / `-q` 切替制御の対象外。`allaganeye/cli.py` の `_suggest_long_option_hint` と `main()` で捕捉し、click 標準メッセージに続けて `Did you mean --<name>?` ヒントを stderr に出力する。
 
 捕捉対象は `click.exceptions.NoSuchOption` / `UsageError` / `ClickException` (および `Abort`)。`NoSuchOption` 経路では `_suggest_long_option_hint` が argv を走査し、`-` 始まり (`--` でない) かつ長さ >= 2 の token を `--<name>` として既知の long option (typer app + 全 subcommand + `help`) と照合する。マッチしないときは hint を出さず、無関係な typo に誤導しないようにする。
 

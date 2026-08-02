@@ -285,7 +285,8 @@ async fn check_backup_exists(path: String) -> Result<bool, AppError> {
 }
 
 /// #571 — single entry of the recent-videos history persisted at
-/// `<home>/.allaganeye/recent.json`.
+/// `<install dir>/recent.json` (relocated from `<home>/.allaganeye/` in
+/// PR #655 Round 2; resolution logic lives in `recent_path()`).
 ///
 /// `path` is the absolute file path with the Windows extended-length `\\?\`
 /// prefix already stripped (see `setSelectedVideoPath` on the TS side).

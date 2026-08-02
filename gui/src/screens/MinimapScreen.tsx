@@ -37,13 +37,17 @@ interface MatchState {
   status: MatchStatus;
   percent: number;
   error?: string;
+  /** #899 -- NVENC 失敗で libx264 へ retry したときの per-match notice。 */
+  fallbackNotice?: string;
 }
 
 interface MinimapProgressPayload {
   match_index: number;
   percent: number;
-  stage: 'encoding' | 'done' | 'error';
+  stage: 'encoding' | 'done' | 'error' | 'fallback';
   message?: string;
+  /** #899 -- e.g. `"h264_nvenc -> libx264"`. Present when stage === 'fallback'. */
+  fallback_from?: string;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -163,6 +167,15 @@ export function MinimapScreen() {
           if (p.stage === 'encoding') status = 'running';
           else if (p.stage === 'done') status = 'done';
           else if (p.stage === 'error') status = 'error';
+          // #899 -- `-vf crop` 経路の NVENC encode 失敗で libx264 へ retry した
+          // とき、Rust 側は stage="fallback" / percent=0 を emit する。ExportScreen
+          // (#591) と同じく status は running のまま (libx264 で encode がやり直し
+          // になるので進捗が 0% に戻るのは正しい) 通知だけを per-match に刻み、
+          // 「なぜ巻き戻って遅くなったのか」を UI から辿れるようにする。
+          const fallbackNotice =
+            p.stage === 'fallback'
+              ? (p.message ?? `${p.fallback_from ?? 'GPU encoder'} 失敗、libx264 で再試行`)
+              : prior.fallbackNotice;
           return {
             ...prev,
             [p.match_index]: {
@@ -170,6 +183,7 @@ export function MinimapScreen() {
               status,
               percent: p.percent,
               error: p.stage === 'error' ? p.message : prior.error,
+              fallbackNotice,
             },
           };
         });
@@ -1007,6 +1021,16 @@ export function MinimapScreen() {
                   {s.status === 'error' && s.error && (
                     <span className={styles.listError} role="alert">
                       {s.error.slice(0, 120)}
+                    </span>
+                  )}
+                  {s.fallbackNotice && (
+                    <span
+                      className={styles.listError}
+                      role="status"
+                      data-testid={`minimap-fallback-notice-${m.index}`}
+                      style={{ color: 'var(--ae-accent)' }}
+                    >
+                      {s.fallbackNotice}
                     </span>
                   )}
                 </li>

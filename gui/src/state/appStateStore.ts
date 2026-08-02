@@ -68,8 +68,11 @@ export interface AppState {
   detectionParams: DetectionParams;
   /**
    * #893 R2: The output directory last used by ExportScreen.
-   * MinimapScreen uses this as its default output dir when set,
-   * falling back to the metadata parent directory otherwise.
+   * MinimapScreen uses this as its default output dir when set.
+   * #928: when unset it falls back to ExportScreen's shared
+   * `deriveDefaultOutDir(videoSource)` (the video's parent directory),
+   * not the metadata.json parent -- the two screens stay on one basis
+   * by construction.
    * In-memory only; reset() clears it.
    */
   lastExportOutputDir: string | null;

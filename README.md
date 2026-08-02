@@ -153,7 +153,7 @@ flowchart LR
   </a>
   <br/>
   <b>② 検知中&nbsp;&nbsp;·&nbsp;&nbsp;D E T E C T I N G</b><br/>
-  <sub>4 フェーズの進捗 (Detecting → Refining → Scorebar → Splitting) をリアルタイム表示。</sub>
+  <sub>粗スキャン (Detecting) → 精密計測 (Refining、scorebar 分類含む) の 2 フェーズをバーとライブログでリアルタイム表示。</sub>
 </td>
 </tr>
 <tr>

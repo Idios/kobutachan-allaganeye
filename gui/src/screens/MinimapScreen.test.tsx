@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -259,6 +259,92 @@ describe('MinimapScreen', () => {
     // While running, auto-detect button must be disabled
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '自動検出を試す' })).toBeDisabled();
+    });
+  });
+
+  // #899: `-vf crop` 経路は NVENC encode 失敗で libx264 へ retry する。Rust は
+  // stage="fallback" / percent=0 を `minimap-progress` に emit するので、通知が
+  // 無いと「進捗が 0% に巻き戻って遅くなっただけ」に見える (ExportScreen #591 と同型)。
+  it('shows a per-match fallback notice when a stage=fallback event arrives (#899)', async () => {
+    let progressHandler:
+      | ((e: {
+          payload: {
+            match_index: number;
+            percent: number;
+            stage: string;
+            message?: string;
+            fallback_from?: string;
+          };
+        }) => void)
+      | null = null;
+    mockListen.mockImplementation(async (_name: string, handler: (e: unknown) => void) => {
+      progressHandler = handler as NonNullable<typeof progressHandler>;
+      return () => undefined;
+    });
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'register_video'
+        ? Promise.resolve({ url: 'u', token: 't' })
+        : Promise.resolve(null),
+    );
+    renderMinimapWithPath();
+    await waitFor(() => expect(progressHandler).not.toBeNull());
+
+    act(() => {
+      progressHandler!({
+        payload: {
+          match_index: 1,
+          percent: 0,
+          stage: 'fallback',
+          message: 'NVENC の初期化に失敗したため libx264 で再試行します',
+          fallback_from: 'h264_nvenc -> libx264',
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('minimap-fallback-notice-1').textContent).toContain('libx264');
+    });
+  });
+
+  it('falls back to a generated message when the fallback event carries no message (#899)', async () => {
+    let progressHandler:
+      | ((e: {
+          payload: {
+            match_index: number;
+            percent: number;
+            stage: string;
+            message?: string;
+            fallback_from?: string;
+          };
+        }) => void)
+      | null = null;
+    mockListen.mockImplementation(async (_name: string, handler: (e: unknown) => void) => {
+      progressHandler = handler as NonNullable<typeof progressHandler>;
+      return () => undefined;
+    });
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'register_video'
+        ? Promise.resolve({ url: 'u', token: 't' })
+        : Promise.resolve(null),
+    );
+    renderMinimapWithPath();
+    await waitFor(() => expect(progressHandler).not.toBeNull());
+
+    act(() => {
+      progressHandler!({
+        payload: {
+          match_index: 2,
+          percent: 0,
+          stage: 'fallback',
+          fallback_from: 'h264_nvenc -> libx264',
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('minimap-fallback-notice-2').textContent).toContain(
+        'h264_nvenc -> libx264',
+      );
     });
   });
 
