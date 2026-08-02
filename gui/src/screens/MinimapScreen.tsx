@@ -168,10 +168,16 @@ export function MinimapScreen() {
           else if (p.stage === 'done') status = 'done';
           else if (p.stage === 'error') status = 'error';
           // #899 -- `-vf crop` 経路の NVENC encode 失敗で libx264 へ retry した
-          // とき、Rust 側は stage="fallback" / percent=0 を emit する。ExportScreen
-          // (#591) と同じく status は running のまま (libx264 で encode がやり直し
-          // になるので進捗が 0% に戻るのは正しい) 通知だけを per-match に刻み、
-          // 「なぜ巻き戻って遅くなったのか」を UI から辿れるようにする。
+          // とき、Rust 側は stage="fallback" / percent=0 を emit する。通知を
+          // per-match に刻み「なぜ巻き戻って遅くなったのか」を UI から辿れる
+          // ようにする (libx264 で encode がやり直しになるので percent が 0 に
+          // 戻ること自体は正しい)。
+          //
+          // status も running へ倒す: NVENC の初期化失敗は 1 frame も encode
+          // せずに落ちるため fallback がその match の最初の event になるのが
+          // 通常ケースで、prior (= pending) を保つと「○ (未着手) なのに
+          // libx264 で再試行中と書いてある」矛盾表示になる。
+          else if (p.stage === 'fallback') status = 'running';
           const fallbackNotice =
             p.stage === 'fallback'
               ? (p.message ?? `${p.fallback_from ?? 'GPU encoder'} 失敗、libx264 で再試行`)

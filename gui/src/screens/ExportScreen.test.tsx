@@ -954,6 +954,51 @@ describe('ExportScreen (Phase 4 #466)', () => {
     });
   });
 
+  // Codex adversarial-review (#899 で minimap 側を直した際の類似バグ調査):
+  // NVENC の初期化失敗は 1 frame も encode せずに落ちるため、fallback が
+  // その match の *最初の* event になるのがむしろ通常ケース。status を
+  // running に倒さないと行は `○` (pending) のまま「libx264 で再試行中」
+  // 通知だけが出るという矛盾表示になる。
+  it('marks the row running when fallback is the first event for that match', async () => {
+    let progressHandler: ((e: {
+      payload: {
+        match_index: number;
+        percent: number;
+        stage: string;
+        message?: string;
+        fallback_from?: string;
+      };
+    }) => void) | null = null;
+    listenMock.mockImplementation(
+      async (_name: string, handler: (e: unknown) => void) => {
+        progressHandler = handler as typeof progressHandler;
+        return () => undefined;
+      },
+    );
+    render(<ExportScreen />);
+    await waitFor(() => expect(progressHandler).not.toBeNull());
+    // encoding を先に流さず fallback 単発。この時点では pending (`○`)。
+    expect(
+      within(screen.getByTestId('export-row-1')).getByText('○'),
+    ).toBeInTheDocument();
+    act(() => {
+      progressHandler!({
+        payload: {
+          match_index: 1,
+          percent: 0,
+          stage: 'fallback',
+          message: 'NVENC の初期化に失敗したため libx264 で再試行します',
+          fallback_from: 'h264_nvenc -> libx264',
+        },
+      });
+    });
+    await waitFor(() => {
+      const row = screen.getByTestId('export-row-1');
+      expect(within(row).getByText('●')).toBeInTheDocument();
+      expect(within(row).queryByText('○')).toBeNull();
+    });
+  });
+
   // ---- #587 a11y polish ---------------------------------------------------
 
   it('idle export screen has no axe violations (#587)', async () => {

@@ -304,9 +304,16 @@ export function ExportScreen() {
           if (p.stage === 'encoding') status = 'running';
           else if (p.stage === 'done') status = 'done';
           else if (p.stage === 'error') status = 'error';
-          // #591 -- "fallback" keeps the running status (the libx264
-          // attempt restarts encoding) but stamps the per-match notice
-          // so the UI can surface why this match is slower.
+          // #591 -- "fallback" stamps the per-match notice so the UI can
+          // surface why this match is slower (the libx264 attempt restarts
+          // encoding, so percent legitimately rewinds to 0).
+          //
+          // It also forces the row to `running`: a NVENC init failure dies
+          // before a single frame is encoded, so the fallback event is
+          // typically the *first* event for that match. Keeping `prior`
+          // would leave the row at `○` (pending) while showing a "retrying
+          // with libx264" notice -- a contradictory state.
+          else if (p.stage === 'fallback') status = 'running';
           const fallbackNotice =
             p.stage === 'fallback'
               ? p.message ?? `${p.fallback_from ?? 'GPU encoder'} 失敗、libx264 で再試行`
