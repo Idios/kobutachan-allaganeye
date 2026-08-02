@@ -26,9 +26,8 @@ from allaganeye.exceptions import (
 from allaganeye.export.encoder import enumerate_h264_encoders
 from allaganeye.export.pool import (
     ExportMatch,
-    _format_filename,
     export_matches,
-    resolve_export_output_path,
+    resolve_export_output_paths,
 )
 from allaganeye.export.schema import ExportSummary, ProgressEvent
 from allaganeye.export.wire import WireWriter
@@ -342,45 +341,35 @@ def register(app: typer.Typer) -> None:
         # (".." / 絶対パス / drive 相対 / metadata 由来の {type} 値)。minimap は
         # crop 付き再エンコードなので escape すると ffmpeg が無関係のファイルを
         # truncate してから失敗し、0 byte (moov atom not found) を残す。判定は
-        # pattern 文字列ではなく解決後のパスで行う (resolve_export_output_path)。
+        # pattern 文字列ではなく解決後のパスで行う (resolve_export_output_paths)。
         # ここ (preflight) は write-back / mkdir / ffmpeg より前に落とすため、
         # export_matches 側の同じ検査は preflight を通らない caller (GUI 等) 向けの
         # 最終防壁。どちらも省略しない。
-        seen_names: dict[str, int] = {}
-        export_matches_list: list[ExportMatch] = []
-        for idx, start_t, end_t, type_label in filtered_tuples:
-            em = ExportMatch(
+        #
+        # 衝突判定も同じ「解決後パス」で行う。旧実装は sandbox を解決後パスで、
+        # 衝突を rendered 文字列で判定していたため、文字列は違うが同一ファイルを
+        # 指す 2 名 (Windows の大小文字違い / '..' 混じり) が両方通過し、後勝ちで
+        # 片方が silent に消えていた。
+        export_matches_list: list[ExportMatch] = [
+            ExportMatch(
                 index=idx,
                 start=start_t,
                 end=end_t,
                 type_label=type_label,
                 video_filter=crop_filter,
             )
-            try:
-                resolve_export_output_path(
-                    em,
-                    name_pattern,
-                    output_dir=eff_output_dir,
-                    source_video=source_video,
-                )
-            except ConfigValidationError as e:
-                _report_app_error(e, verbose=False, quiet=quiet, show_hint=False)
-                raise typer.Exit(code=e.exit_code) from None
-            name = _format_filename(em, name_pattern)
-            seen_names[name] = seen_names.get(name, 0) + 1
-            export_matches_list.append(em)
-
-        collisions = [n for n, c in seen_names.items() if c > 1]
-        if collisions:
-            collision_err = ConfigValidationError(
-                "name pattern produces duplicate output filenames "
-                f"(e.g. {collisions[0]!r}); add {{idx}} or {{idx:03}} to the "
-                "--name-pattern"
+            for idx, start_t, end_t, type_label in filtered_tuples
+        ]
+        try:
+            resolve_export_output_paths(
+                export_matches_list,
+                name_pattern,
+                output_dir=eff_output_dir,
+                source_video=source_video,
             )
-            _report_app_error(
-                collision_err, verbose=False, quiet=quiet, show_hint=False
-            )
-            raise typer.Exit(code=collision_err.exit_code) from None
+        except ConfigValidationError as e:
+            _report_app_error(e, verbose=False, quiet=quiet, show_hint=False)
+            raise typer.Exit(code=e.exit_code) from None
 
         # ------ 7. write-back (encode / mkdir 失敗でも座標は残す) -----------------
         # Finding 1 fix: filtered set の entry は上書き、対象外の既存 entry は保全

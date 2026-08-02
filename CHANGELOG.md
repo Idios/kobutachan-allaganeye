@@ -131,6 +131,14 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   `-o E:\a\b` が `E:ab` (ドライブ相対パス) に化けた場合、Windows がカレント基準で解決した
   結果と表示が食い違う。あわせて CLI のテキスト表示は OS ネイティブの区切り文字を使う
   (`--json` 側は GUI 互換のため posix 形式を維持)。
+- **export / minimap の出力ファイル取り違え**: 2 つ以上の match が同一ファイルに
+  解決される `--name-pattern` を、書き出し前に **exit 5** で拒否するようになった。
+  従来の重複検査は展開後の**文字列**が一致する場合しか見ていなかったため、
+  文字列としては異なるのに同じファイルを指す名前 (Windows での大文字小文字違い、
+  `..` を含むパス等) が検査をすり抜け、後勝ちの match が先の出力を上書きしていた。
+  上書きされた match も成功として集計されるため、書き出し件数だけでは気付けない。
+  ファイル名の展開元である `{type}` は `metadata.json` の値をそのまま使う
+  (GUI で編集可能) ため、CLI 引数だけでは防げない経路だった。
 - **detect (scorebar V2)**: post-match content (試合終了後の Limsa /
   colorful interior 等) の彩度高領域を Rescue path が scorebar と誤検出
   する false positive を解消 (#803)。`_find_scorebar_horizontal_range` に

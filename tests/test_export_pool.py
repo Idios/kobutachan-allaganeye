@@ -23,6 +23,7 @@ from allaganeye.export.pool import (
     _format_start_for_filename,
     export_matches,
     resolve_export_output_path,
+    resolve_export_output_paths,
 )
 from allaganeye.export.schema import ExportError, ExportResult
 
@@ -475,3 +476,170 @@ def test_resolve_export_output_path_rejects_output_dir_itself(
             output_dir=tmp_path / "out",
             source_video=tmp_path / "in.mp4",
         )
+
+
+# --------------------------------------------------------------------------
+# Output *identity* uniqueness (#930 follow-up).
+#
+# Containment and uniqueness are separate invariants. Two matches can render
+# to different STRINGS that denote the SAME file; both then pass containment
+# and both pass a string-keyed duplicate check, so both are written and one is
+# silently lost while the summary still reports success.
+#
+# The batch resolver keys on the resolved Path, which is the file's identity:
+# PurePath equality/hashing is case-insensitive on Windows, and ``resolve()``
+# collapses ``sub/../name`` even when ``sub`` does not exist.
+# --------------------------------------------------------------------------
+
+
+def _pair(a: str, b: str) -> list[ExportMatch]:
+    """Two matches whose only difference is the ``{type}`` token."""
+    return [
+        ExportMatch(index=0, start=0.0, end=10.0, type_label=a),
+        ExportMatch(index=1, start=10.0, end=20.0, type_label=b),
+    ]
+
+
+def _assert_each_passes_containment(
+    matches: list[ExportMatch], pattern: str, out_dir: Path, source: Path
+) -> None:
+    """Anti-false-green guard.
+
+    A uniqueness test is worthless if the input would have been rejected
+    anyway by the pre-existing containment / source-collision checks -- the
+    test would go green on the OLD code path for the WRONG reason. Assert
+    up front that every name is individually legal, so the only thing left
+    to reject is the shared identity.
+    """
+    for m in matches:
+        resolve_export_output_path(m, pattern, output_dir=out_dir, source_video=source)
+
+
+def test_resolve_export_output_paths_returns_one_path_per_match(tmp_path: Path):
+    """Reverse pin: distinct names are returned in order, unresolved."""
+    out_dir = tmp_path / "out"
+    got = resolve_export_output_paths(
+        _matches(3),
+        "{idx:03}_{type}.mp4",
+        output_dir=out_dir,
+        source_video=tmp_path / "in.mp4",
+    )
+    assert got == [
+        out_dir / "000_match.mp4",
+        out_dir / "001_match.mp4",
+        out_dir / "002_match.mp4",
+    ]
+
+
+def test_resolve_export_output_paths_accepts_empty_match_list(tmp_path: Path):
+    assert (
+        resolve_export_output_paths(
+            [],
+            "{idx:03}.mp4",
+            output_dir=tmp_path / "out",
+            source_video=tmp_path / "in.mp4",
+        )
+        == []
+    )
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="path identity is case-insensitive on Windows only"
+)
+def test_resolve_export_output_paths_rejects_case_only_identity_collision(
+    tmp_path: Path,
+):
+    """``Clip.mp4`` and ``clip.mp4`` are two strings for one file (NTFS)."""
+    out_dir = tmp_path / "out"
+    source = tmp_path / "in.mp4"
+    matches = _pair("Clip", "clip")
+    _assert_each_passes_containment(matches, "{type}.mp4", out_dir, source)
+
+    with pytest.raises(ConfigValidationError) as exc:
+        resolve_export_output_paths(
+            matches, "{type}.mp4", output_dir=out_dir, source_video=source
+        )
+    assert exc.value.exit_code == 5
+    # both renderings must be named so the user can act on the message
+    assert "Clip.mp4" in str(exc.value)
+    assert "clip.mp4" in str(exc.value)
+
+
+def test_resolve_export_output_paths_rejects_dotdot_identity_collision(tmp_path: Path):
+    """``sub/../clip.mp4`` stays inside -o and *is* ``clip.mp4``.
+
+    Windows normalises the ``..`` even though ``sub`` never exists, so the
+    second write lands on the first file. Verified on this platform: writing
+    ``sub/../clip.mp4`` then ``clip.mp4`` leaves exactly one file.
+    """
+    out_dir = tmp_path / "out"
+    source = tmp_path / "in.mp4"
+    matches = _pair("sub/../clip", "clip")
+    _assert_each_passes_containment(matches, "{type}.mp4", out_dir, source)
+
+    with pytest.raises(ConfigValidationError) as exc:
+        resolve_export_output_paths(
+            matches, "{type}.mp4", output_dir=out_dir, source_video=source
+        )
+    assert exc.value.exit_code == 5
+
+
+def test_resolve_export_output_paths_rejects_exact_string_collision(tmp_path: Path):
+    """Regression: the pre-existing identical-string case still fails."""
+    with pytest.raises(ConfigValidationError) as exc:
+        resolve_export_output_paths(
+            _matches(2),
+            "{type}.mp4",  # no {idx}: both render "match.mp4"
+            output_dir=tmp_path / "out",
+            source_video=tmp_path / "in.mp4",
+        )
+    assert exc.value.exit_code == 5
+
+
+def test_resolve_export_output_paths_allows_identity_pairs_once_idx_disambiguates(
+    tmp_path: Path,
+):
+    """Control: the ``{type}`` values above are not illegal in themselves.
+
+    With ``{idx:03}`` in the pattern the two matches land on different files,
+    so the guard must stay quiet. This is what proves the rejections above are
+    caused by the shared identity and not by the token's content.
+    """
+    out_dir = tmp_path / "out"
+    got = resolve_export_output_paths(
+        _pair("Clip", "clip"),
+        "{idx:03}_{type}.mp4",
+        output_dir=out_dir,
+        source_video=tmp_path / "in.mp4",
+    )
+    assert got == [out_dir / "000_Clip.mp4", out_dir / "001_clip.mp4"]
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="path identity is case-insensitive on Windows only"
+)
+def test_pool_rejects_case_only_identity_collision(tmp_path: Path):
+    """export_matches is the last line of defence for preflight-less callers."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=_explode):
+        with pytest.raises(ConfigValidationError):
+            _run_pool(
+                tmp_path,
+                pattern="{type}.mp4",
+                matches=_pair("Clip", "clip"),
+                output_dir=out_dir,
+            )
+
+
+def test_pool_rejects_dotdot_identity_collision(tmp_path: Path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=_explode):
+        with pytest.raises(ConfigValidationError):
+            _run_pool(
+                tmp_path,
+                pattern="{type}.mp4",
+                matches=_pair("sub/../clip", "clip"),
+                output_dir=out_dir,
+            )
