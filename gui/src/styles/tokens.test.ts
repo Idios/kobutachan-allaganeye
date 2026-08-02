@@ -16,12 +16,26 @@ import { describe, expect, it } from 'vitest';
  *
  * fallback 付きの参照は描画自体はされるが、tokens.css のテーマから外れた色が
  * silent に紛れ込むので同じく違反扱いにする。
+ *
+ * **走査は fail closed**: コメント / 文字列リテラルの区別をせず、実装ファイル
+ * 中の `var(--ae-*)` という**文字列すべて**を参照として数える。コメントを
+ * 除去してから走査する版も検討したが、正規表現によるコメント除去は
+ * 「文字列リテラル中の `/x` と後続コメントの `x/` に挟まれた実コードごと
+ * 空白化してしまう」経路があり、guard が無音で緑になりうる (Codex
+ * adversarial-review medium finding)。guard の誤検知 (安全側) より
+ * 見逃し (危険側) を潰すことを優先する。
+ *
+ * 結果として **コメントに `var(--ae-未定義token)` と書くとこのテストが落ちる**。
+ * 経緯説明でトークン名に言及したいときは `var(...)` 形を避けて
+ * `--ae-accent` のように bare で書くこと。
  */
 
 // environment: 'jsdom' では `import.meta.url` が http URL になり
 // fileURLToPath が使えないため、vitest の cwd (= gui/) 起点で解決する。
 const SRC_DIR = join(process.cwd(), 'src');
 const TOKENS_CSS = join(SRC_DIR, 'styles', 'tokens.css');
+
+const VAR_REFERENCE = /var\(\s*(--ae-[a-z0-9-]+)/g;
 
 /** tokens.css の `--ae-foo: ...;` 定義行から token 名を集める。 */
 function definedTokens(): Set<string> {
@@ -49,38 +63,32 @@ function sourceFiles(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
-/**
- * コメントを空白に潰す (行番号は保つ)。
- *
- * 「旧実装は var(--ae-xxx) を参照していた」という**説明**を違反として数えて
- * しまうと、修正の経緯をコードに残せなくなるため。逆に潰しすぎると実参照を
- * 見落として guard が無音化するので、`collectUsages` の総数を別テストで
- * 下限 assert している。
- */
-function stripComments(text: string): string {
-  // /* ... */ … CSS block comment / TS block comment / JSX の {/* ... */}
-  let out = text.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
-  // // ... … 行コメント。`https://` 等を壊さないよう `:` 直後の `//` は除外
-  out = out.replace(/(^|[^:])\/\/[^\n]*/g, (_full, lead: string) => lead);
-  return out;
-}
-
 interface Usage {
   token: string;
   location: string;
 }
 
-/** src/ 実装ファイル中の `var(--ae-*)` 参照を (コメントを除いて) 集める。 */
+/**
+ * テキスト中の `var(--ae-*)` 参照を行番号付きで集める。
+ *
+ * 構文解析は行わない (前述のとおり意図的に fail closed)。
+ */
+function scanText(text: string, label: string): Usage[] {
+  const usages: Usage[] = [];
+  text.split('\n').forEach((line, i) => {
+    for (const m of line.matchAll(VAR_REFERENCE)) {
+      usages.push({ token: m[1], location: `${label}:${i + 1}` });
+    }
+  });
+  return usages;
+}
+
+/** src/ 実装ファイル中の `var(--ae-*)` 参照を集める。 */
 function collectUsages(): Usage[] {
   const usages: Usage[] = [];
   for (const file of sourceFiles(SRC_DIR)) {
     const rel = relative(SRC_DIR, file).replace(/\\/g, '/');
-    const lines = stripComments(readFileSync(file, 'utf8')).split('\n');
-    lines.forEach((line, i) => {
-      for (const m of line.matchAll(/var\(\s*(--ae-[a-z0-9-]+)/g)) {
-        usages.push({ token: m[1], location: `${rel}:${i + 1}` });
-      }
-    });
+    usages.push(...scanText(readFileSync(file, 'utf8'), rel));
   }
   return usages;
 }
@@ -102,9 +110,9 @@ describe('#932 --ae-* CSS custom property の定義漏れ guard', () => {
     expect(files.some((f) => f.endsWith('MinimapScreen.module.css'))).toBe(true);
   });
 
-  it('コメント除去後も実参照を取りこぼしていない (guard 無音化の検出)', () => {
+  it('実参照を取りこぼしていない (guard 無音化の検出)', () => {
     const usages = collectUsages();
-    // 潰しすぎ (= 常に violations 0 の false green) をここで落とす
+    // 走査が壊れて常に violations 0 になる false green をここで落とす
     expect(usages.length).toBeGreaterThan(100);
     // CSS Module / inline style の両系統が実際に拾えていること
     expect(
@@ -123,19 +131,26 @@ describe('#932 --ae-* CSS custom property の定義漏れ guard', () => {
     ).toBe(true);
   });
 
-  it('コメント内の token 名は参照として数えない', () => {
+  it('コメント風の綴りで走査を回避できない (fail closed)', () => {
+    // Codex adversarial-review が指摘した回避経路の regression fixture:
+    // 文字列リテラル中の `/*` と後続コメントの `*/` に挟まれた実参照。
+    // コメント除去を挟む実装ではこの区間ごと空白化され、live な inline style が
+    // 走査から消えていた。
     const sample = [
-      '/* 旧実装は var(--ae-phantom-block) を参照していた */',
-      '// 旧実装は var(--ae-phantom-line) を参照していた',
-      'a { color: var(--ae-gold); background: url(https://example.invalid/a.png); }',
+      "const glyph = '/*';",
+      "const style = { color: 'var(--ae-missing)' };",
+      '/* 経緯: 昔は var(--ae-legacy) だった */',
+      'a { color: var(--ae-gold); }',
     ].join('\n');
-    const stripped = stripComments(sample);
-    expect(stripped).not.toContain('--ae-phantom-block');
-    expect(stripped).not.toContain('--ae-phantom-line');
-    // 実参照と URL の `//` は残ること + 行番号がズレないこと
-    expect(stripped).toContain('var(--ae-gold)');
-    expect(stripped).toContain('https://example.invalid/a.png');
-    expect(stripped.split('\n')).toHaveLength(3);
+
+    const tokens = scanText(sample, 'fixture').map((u) => u.token);
+    // 文字列リテラル中の `/*` に続く実参照が生き残ること (無音化の否定)
+    expect(tokens).toContain('--ae-missing');
+    // コメント中の参照も数える = fail closed (見逃しより誤検知を選ぶ)
+    expect(tokens).toContain('--ae-legacy');
+    expect(tokens).toContain('--ae-gold');
+    // 行番号がズレていないこと
+    expect(scanText(sample, 'fixture')[0].location).toBe('fixture:2');
   });
 
   it('参照されている --ae-* は fallback の有無に関わらず全て tokens.css で定義済み', () => {
@@ -144,6 +159,11 @@ describe('#932 --ae-* CSS custom property の定義漏れ guard', () => {
       .filter((u) => !defined.has(u.token))
       .map((u) => `${u.token}  ${u.location}`);
 
-    expect(violations).toEqual([]);
+    expect(
+      violations,
+      'tokens.css に定義がない --ae-* が参照されている。' +
+        'token を tokens.css に追加するか既存 token に寄せること。' +
+        'コメント中で未定義 token に言及したい場合は var(...) 形を避け bare で書く。',
+    ).toEqual([]);
   });
 });

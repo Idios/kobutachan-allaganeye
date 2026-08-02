@@ -1039,7 +1039,7 @@ export function MinimapScreen() {
                       {s.error.slice(0, 120)}
                     </span>
                   )}
-                  {/* #932: ExportScreen から mirror した `var(--ae-accent)` は
+                  {/* #932: ExportScreen から mirror した `--ae-accent` は
                       tokens.css に存在しない token だった (IACVT で宣言ごと
                       `unset` → class の赤も失われる)。ExportScreen 側も同時修正。 */}
                   {s.fallbackNotice && (

@@ -1053,12 +1053,14 @@ export function ExportScreen() {
                       )}
                     </span>
                   )}
-                  {/* #932: 旧実装は `var(--ae-accent)` を参照していたが
-                      tokens.css に該当 token がない。未定義 custom property を
-                      fallback なしで参照すると宣言全体が IACVT で `unset` に
-                      なり、inline style が cascade で class に勝つため
-                      `.listError` の赤も失われ地の文と同じ色で描画されていた
-                      (v0.2.0 から出荷。MinimapScreen が mirror 時に複製)。 */}
+                  {/* #932: 旧実装は `--ae-accent` を参照していたが tokens.css に
+                      該当 token がない。未定義 custom property を fallback なしで
+                      参照すると宣言全体が IACVT で `unset` になり、inline style が
+                      cascade で class に勝つため `.listError` の赤も失われ地の文と
+                      同じ色で描画されていた (v0.2.0 から出荷。MinimapScreen が
+                      mirror 時に複製)。token 名を `var(...)` 形で書かないのは
+                      styles/tokens.test.ts の guard がコメントも走査対象に
+                      含める (fail closed) ため。 */}
                   {s.fallbackNotice && (
                     <span
                       className={styles.listError}
