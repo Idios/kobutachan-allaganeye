@@ -6,6 +6,8 @@
 
 PR を `develop-x.x.x` や `main` にマージする前に、cargo audit + npm audit を自動実行し、Dependabot より早く脆弱性を検出する。
 
+ただし本 workflow は Dependabot の**上位互換ではない**。参照 DB と閾値の差により、green でも Dependabot alert が残るケースが構造的に存在する (§[Dependabot との関係](#dependabot-との関係) 参照)。
+
 ## 発火条件
 
 - `pull_request` trigger
@@ -53,7 +55,40 @@ tauri 2.10.3 → 2.11.1 bump (PR #760) を実施したが、以下の transitive
 - Dependabot: 既存依存の脆弱性を post-merge で検出 (auto PR で patch を提案)
 - 本 workflow: PR 提案 (Dependabot or 手動) を merge する**前**に検証
 
-両者は補完関係。本 workflow が green でも Dependabot alert は別途出る可能性 (advisory DB の更新タイミング差)。
+両者は補完関係だが、**参照している advisory database が別物**である点に注意する。
+
+| | 参照 DB | 検出範囲 |
+| --- | --- | --- |
+| `cargo audit` | [RustSec advisory-db](https://github.com/rustsec/advisory-db) | RustSec に登録された crate のみ |
+| `npm audit` | npm registry advisory (GitHub Advisory Database 由来) | 閾値 `--audit-level` 以上のみ |
+| Dependabot | [GitHub Advisory Database](https://github.com/advisories) | Rust / npm 双方、severity 問わず全件 |
+
+### 本 workflow が green でも Dependabot alert が出るケース
+
+**「advisory DB の更新タイミング差」だけが原因ではない。以下は構造的なギャップであり、待っても解消しない。**
+
+1. **RustSec に存在しない advisory は `cargo audit` が永久に検出しない。**
+   実例 (v0.3.0 リリース作業中、Refs #862): Dependabot alert #22 `serde_with < 3.21.0`
+   (GHSA-7gcf-g7xr-8hxj、medium) は GitHub Advisory Database には登録されているが、
+   RustSec advisory-db に `crates/serde_with/` ディレクトリ自体が存在しない。
+   当該 alert が指すのと同一の `Cargo.lock` (serde_with 3.18.0) に対して
+   `cargo audit -f <Cargo.lock>` を実行しても **exit 0 (green)** が返る。
+
+2. **`npm audit --audit-level=high` は medium / low を素通しする。**
+   Dependabot は severity を問わず全件 alert を上げるため、medium / low の
+   advisory は本 workflow を green のまま通過する。
+
+したがって **「security-audit.yml が green だから脆弱性なし」とは言えない。**
+リリース前には Dependabot alert 一覧を直接確認すること:
+
+```bash
+gh api repos/Idios/kobutachan-allaganeye/dependabot/alerts --paginate \
+  -q '.[] | select(.state=="open") | [.number, .security_advisory.severity, .dependency.package.name, (.security_vulnerability.first_patched_version.identifier // "NONE")] | @tsv'
+```
+
+なお Dependabot が scan するのは**既定ブランチ (`main`) のみ**である。
+release ブランチ上で lockfile を修正しても、`main` に merge されるまで alert は open のまま残る
+(v0.3.0 では npm 18 件がこの状態だった)。
 
 ## 参照
 
