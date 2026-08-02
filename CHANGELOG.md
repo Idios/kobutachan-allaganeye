@@ -177,6 +177,17 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   fast-uri 3.1.2 → 3.1.5 / js-yaml 4.2.0 → 4.3.1 / nanoid 3.3.15 → 3.3.16 /
   postcss 8.5.15 → 8.5.25。`gui/package.json` は無変更。いずれも dev/build
   ツールチェーン依存で、配布 Tauri bundle には同梱されないため利用者への影響はない。
+- **serde_with medium × 1** (Dependabot alert #22、Refs #862): GHSA-7gcf-g7xr-8hxj
+  — `KeyValueMap` の serializer が要素長から `1` を引いてから最初の key field の
+  存在を検証するため、空の内部 sequence / map entry を渡すと `Vec::with_capacity`
+  が panic し DoS になる。`tauri 2.11.1 → tauri-utils 2.9.1` の transitive のため
+  直接依存ではなく、`cargo update -p serde_with --precise 3.21.0` で semver 互換の
+  範囲で 3.18.0 → 3.21.0 と解消した (`Cargo.toml` は無変更、tauri は `=2.11.1` のまま)。
+  本プロジェクトは `serde_with` を直接使用しておらず、`KeyValueMap` に攻撃者制御
+  データを流す経路も無いため実影響は無い。
+  **本件は `cargo audit` では検出できない**: RustSec advisory-db に `serde_with` の
+  advisory が存在せず、当該 lockfile に対して `cargo audit` は exit 0 (green) を返す。
+  詳細は [`docs/ci-security-audit.md`](docs/ci-security-audit.md) §Dependabot との関係 を参照。
 
 ### Performance
 
