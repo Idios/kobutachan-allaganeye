@@ -327,6 +327,14 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
 - `scripts/cleanup-claude-branches` の squash merge 検出を branch 名一致から
   OID 同一性ベースに変更 (#827)。
 - pyright の解析対象から `.claude/worktrees` を恒久除外 (#828)。
+- `security-audit.yml` に **dependency review** job を追加 (Refs #862)。参照する DB が
+  `cargo audit` (RustSec) / `npm audit` (npm registry) と異なり GitHub Advisory
+  Database なので、既存 2 job が構造的に見えない脆弱性を捕まえる。本リリースで
+  対処した `serde_with` の GHSA-7gcf-g7xr-8hxj は RustSec に advisory が無く、
+  当該 lockfile に対して `cargo audit` が exit 0 を返していた事例。`moderate` 以上で
+  fail し、manifest (`Cargo.lock` / `Cargo.toml` / `package-lock.json` /
+  `package.json`) を変更した PR でのみ起動する。本 workflow は `branches:` フィルタを
+  持たないため、`ci.yml` が起動しない `release/*` 宛の PR でも走る。
 - V6.2 (scorebar HUD 二分探索) を #797 fix として一時実装 (commit
   `f7f8879`)、obs-20260116 実機検証で scorebar V2 detection が 5700-6850 の
   全範囲で True を返し、post-match content (6540 以降) と in-match を区別できない
